@@ -27,6 +27,10 @@ These cut across many documents and shape all future code:
 - **Cosmetics are separate from physics.** Visual component data never implies a performance advantage; physics comes from a small curated set of profiles (P-5).
 - **Networking/backend stack:** Tokio, Quinn (QUIC; unreliable datagrams for positions), Protobuf via `prost` (P-2), Axum, PostgreSQL, OIDC. The backend starts as a modular monolith.
 
+## Platform rollout
+
+Linux first, then Windows, then macOS (spec §11). Linux is the primary dev/test platform; keep platform-specific code behind traits so the later ports stay cheap, and keep the Windows/macOS build-only CI check green. A **web companion** (no riding; Leptos + Axum, P-20) comes with Phase 5. A full web client and native mobile apps are future development: the core crates (`ocw-sim`, `ocw-protocol`, `ocw-world`, `ocw-core`) must stay buildable for `wasm32-unknown-unknown`.
+
 ## Licensing constraints
 
 - Code: dual MIT/Apache-2.0 (proposed).

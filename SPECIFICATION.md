@@ -85,6 +85,8 @@ The presentation includes:
 - Lighting and shadows.
 - Weather and times of day.
 
+**Navigation in free ride:** At junctions, the rider chooses the direction with the Left / Right arrow keys; on-screen overlay arrows show the available roads and the current selection. If no key is pressed, the rider rides straight on / follows the road. Dead-end roads are marked in the overlay and end with an automatic U-turn. Details: PROPOSALS.md, P-19.
+
 The graphical presentation does not need to match reality exactly. However, route layout and elevation profiles shall match the geographic data as closely as possible.
 
 ### 2.3 Real-Time Multiplayer
@@ -746,6 +748,24 @@ Target platforms:
 
 Each platform gets a native CI runner.
 
+### Platform Rollout Order
+
+Platforms are implemented one after another, not in parallel:
+
+| Order | Platform | Graphics backend | Bluetooth stack | Packaging |
+|---|---|---|---|---|
+| 1 | **Linux** x86_64 | Vulkan | BlueZ (D-Bus) | AppImage, Flatpak |
+| 2 | **Windows** x86_64 | Direct3D 12 (Vulkan as fallback) | WinRT BLE | EXE/MSI installer, code signing |
+| 3 | **macOS** Apple Silicon | Metal | CoreBluetooth | App bundle, DMG, code signing, notarization |
+
+- **Linux is the primary development and test platform** from Phase 1 on. All features are first implemented, tested and released on Linux.
+- **Windows** follows once the single-player core runs on Linux (end of Phase 3: real trainer + OSM world).
+- **macOS** follows after Windows, before the release-ready milestone (Phase 7).
+- Optional targets (Linux ARM64, macOS Intel) come after their main platform.
+- **Web companion** (browser app without riding: profile, history, Strava, routes, events) is developed alongside, starting in Phase 5. See PROPOSALS.md, P-20.
+- **Future development (not scheduled):** a full web client for riding in the browser (Web Bluetooth; Chromium browsers on Windows, macOS, ChromeOS and Android) and native mobile apps (iPad / iOS, Android). The architecture keeps these possible: the simulation, protocol and world crates don't depend on Bevy or on native-only APIs.
+- **Portability from day one:** platform-specific code stays behind traits in `platform` / `ocw-devices`. From Phase 1, CI also runs a build-only check (`cargo check` / `cargo clippy`) for Windows and macOS, so platform problems are found early even though those platforms are not yet tested or packaged.
+
 ### Build Process
 
 1. Install Rust toolchain.
@@ -780,7 +800,7 @@ Each platform gets a native CI runner.
 - Code signing.
 - Installer.
 
-Build and release pipelines must be automated for all three operating systems.
+Build and release pipelines must be automated for all three operating systems, introduced in the rollout order above.
 
 ---
 
@@ -833,7 +853,7 @@ Before commercial release, a review of data and asset licenses is required.
 
 - Cargo workspace.
 - Bevy application.
-- Linux/macOS/Windows builds.
+- Linux build (Windows and macOS: build-only CI check, see §11 rollout order).
 - Rendering.
 - Camera.
 - Simple test route.
@@ -883,6 +903,7 @@ Before commercial release, a review of data and asset licenses is required.
 - Group rides.
 - Races.
 - Leaderboards.
+- Web companion, first version (account, profile, training history, Strava linking; P-20).
 
 **Result:** Shared virtual rides.
 
@@ -924,7 +945,7 @@ The application shall pursue the following technical goals:
 - Bounded memory consumption through world streaming.
 - No dependency on a single GPU API.
 - Consistent behavior on Linux, macOS and Windows.
-- Automated tests on all three operating systems.
+- Automated tests on all three operating systems (added per platform in the rollout order, §11).
 
 These values are development targets, not guaranteed performance figures.
 

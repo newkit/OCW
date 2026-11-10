@@ -197,7 +197,7 @@ Smoothing toward the trainer is covered in P-8.
 
 - `ocw-devices` runs on its own Tokio runtime/thread and talks to the app over channels. It has no Bevy dependency (spec §3.4).
 - It defines a `DeviceBackend` trait. BLE is the first implementation; ANT+ (deferred) will be the second.
-- Per-platform requirements:
+- Per-platform requirements (implemented in the rollout order Linux → Windows → macOS, spec §11):
   - macOS: `NSBluetoothAlwaysUsageDescription` in `Info.plist` plus the matching entitlement.
   - Linux: BlueZ via D-Bus; document the minimum BlueZ version.
   - Windows: WinRT BLE APIs (Windows 10 or later).
@@ -296,7 +296,8 @@ GPX **export** of ridden routes is also offered (in addition to FIT).
 open-cycling-world/
 ├── apps/
 │   ├── desktop/          # Bevy app, wires all plugins together
-│   └── world-builder/    # CLI: OSM + DEM → world packages, route editor
+│   ├── world-builder/    # CLI: OSM + DEM → world packages, route editor
+│   └── web-companion/    # browser app without riding (P-20)
 ├── services/
 │   └── server/           # modular monolith: Axum API + QUIC game server
 ├── crates/
@@ -444,9 +445,145 @@ A developer and power-user console inside the running app.
 
 1. Render a 10 km × 10 km area: streamed 1 km tiles, terrain with splat materials, road meshes, a floating origin.
 2. 100,000+ instanced trees/bushes with LOD, plus 100 animated rider avatars.
-3. Run on Linux (Vulkan), macOS (Metal) and Windows (D3D12) on minimum-spec hardware (P-12).
+3. Run on Linux (Vulkan) on minimum-spec hardware (P-12). Following the platform rollout order (spec §11), repeat the same spike on Windows (D3D12) and macOS (Metal) at the start of each port.
 4. Measure FPS, frame-time spikes during tile loading, RAM/VRAM and load times.
 
 **Go criterion:** stable 60 FPS on the reference hardware with no visible hitches during streaming. If Bevy clearly fails and cannot be fixed in reasonable time, run the same spike on Godot.
 
 **Supporting crates to evaluate:** `bevy_egui` (console, editor panels), `big_space` (floating origin), KTX2/Basis texture support (built into Bevy), `bevy_mod_billboard` or impostors for distant trees.
+
+---
+
+## P-19 Steering at Junctions (Free Ride)
+
+**Requirement:** In free ride, the rider chooses turns at junctions with the **Left / Right arrow keys**. **On-screen overlay arrows** show the options. If no key is pressed, the rider **goes straight on / follows the road**.
+
+### Junction detection
+
+- A **junction** is a road-graph node with more than two rideable edges (P-13: the route graph from the world package).
+- A junction becomes **active** when it comes within the **look-ahead distance**: the larger of 150 m or 10 s at current speed. Only the next junction is active.
+- **Rideable exits** exclude:
+  - the edge the rider arrived on,
+  - roads not allowed for bicycles (`highway=motorway|trunk` without bicycle access, `bicycle=no`),
+  - `oneway=yes` against the direction of travel, unless `oneway:bicycle=no`. This mainly matters for dual carriageways, which OSM maps as two separate one-way roads.
+  - Depending on bike type, unpaved tracks / paths are shown with a warning icon for road bikes (allowed, not hidden).
+
+### Classifying exits
+
+Each exit gets a **turn angle** relative to the current heading, measured over the first ~30 m of the exit (not just the first OSM segment, which is often very short):
+
+| Angle | Class |
+|---|---|
+| −30° … +30° | straight |
+| < −30° | left (sharp left below −120°) |
+| > +30° | right (sharp right above +120°) |
+
+Exits are **ordered from leftmost to rightmost**. Keys move the selection through this ordered list.
+
+### Default when no key is pressed ("follow the road")
+
+Pick the first match in this list:
+
+1. The exit continuing the **same road** (same OSM way, `name` or `ref`) whose angle is within ±60°.
+2. Otherwise, the **most straight** exit within ±30°.
+3. Otherwise (e.g. T-junction): the exit with the **higher road category** (`primary` > `secondary` > … > `track`).
+4. Otherwise (both equal): **right** (matches right-hand traffic). This is configurable to "left" in settings for left-hand-traffic regions.
+5. **Dead-end exits** (see below) are never chosen as the default if any other exit exists.
+
+### Key behaviour
+
+- **Left / Right** moves the selection **one step** left or right in the ordered exit list. From "straight", Left selects the nearest left exit; pressing Left again selects the next one further left (e.g. sharp left).
+- Pressing the **opposite key** moves back step by step; returning to the default exit is "no choice".
+- A pre-selection is allowed **before** the junction becomes active ("next junction: turn left") and is kept until the junction is reached.
+- **Lock point:** ~20 m before the junction the choice is locked; key presses after that apply to the following junction.
+- **Down arrow:** U-turn (see dead ends). Only in free ride; rate-limited (e.g. once per 10 s).
+- All bindings are remappable. Later, gamepad and handlebar controller buttons map to the same actions (`turn_left`, `turn_right`, `u_turn`).
+
+### On-screen overlay
+
+- When a junction is active, a **fan of arrows** appears at the lower centre of the HUD. There is one arrow per rideable exit, drawn at its real turn angle.
+- **Selected** arrow highlighted. The **default** arrow is marked while nothing else is chosen; once locked, the arrow pulses or turns solid.
+- Labels: **distance to junction** (counting down), the **street name / ref** of the selected exit, and icons for **dead end**, **unpaved** and **steep climb** (> 8 % in the next 500 m).
+- Optional: the minimap highlights the selected exit.
+- The overlay fades out after the junction is passed.
+
+### Modes
+
+| Mode | Steering |
+|---|---|
+| **Free ride** (solo, or shared free ride) | Keys and overlay active |
+| **Route / workout / event / race** | The path is fixed by the route. Arrows show only the route direction ahead (informational); turn keys are disabled. Optional "leave route" via a console/menu action in solo rides |
+| **Group ride "follow leader"** | Turns follow the ride leader's choices; keys disabled for followers |
+
+### Simulation and multiplayer
+
+- Riders move in 1D along a path (P-1). In free ride the path is an **edge list that is extended on the fly** by each junction decision.
+- The client sends a reliable message `TurnIntent { junction_id, exit_edge_id }` (P-2) as soon as the choice changes. The **server decides** at the lock point and broadcasts the chosen edge. The client predicts with its own choice and is corrected only in the rare case of disagreement (e.g. intent arrived too late → server default applies).
+- The lateral offset is blended across the junction so the avatar follows a smooth curve, not the raw graph corner.
+- **Sharp turns** (> 120°): an automatic short slow-down is applied in the physics (the rider can't brake on a trainer), so the avatar does not take a hairpin at 40 km/h.
+
+### Dead-end roads
+
+**At build time (world-builder):** remove the data artefacts, keep the real dead ends.
+
+1. Keep only the **largest connected component** of the rideable graph per region (drops disconnected fragments).
+2. **Prune short spurs** shorter than ~50 m, and leave out driveways / parking aisles (`service=driveway|parking_aisle`) entirely.
+3. **Flag remaining dead ends:** every edge leading only into a dead-end subtree is marked `dead_end` with the distance to its end. This includes cul-de-sacs, valley roads ending at a village, and pass roads ending at a summit.
+4. **Region borders:** edges cut by the package boundary are marked `boundary`. Neighbouring packages share stable edge IDs at the border (P-13), so an installed neighbour package continues the road seamlessly.
+
+**At runtime:**
+
+- **Prevention:** dead-end exits show a dead-end icon in the overlay and are never the default. While riding into a dead end, the HUD shows "Dead end in 800 m" once it is within 1 km.
+- **Automatic U-turn at the end:** the rider slows to ~10 km/h, the avatar turns around in a short loop, and the ride continues on the same road in the opposite direction. Power and physics simply continue, so no workout or ride is interrupted.
+- **Manual U-turn** at any time with the Down arrow key (free ride only), using the same animation.
+- **Region border:** if the neighbouring package is installed, the ride continues across the border without interruption. Otherwise there is an automatic U-turn with the message "End of region – download <neighbour>" (download only after the ride; nothing is downloaded during a ride, see P-15).
+- **Routes and GPX imports** (P-13a) are checked when they are created: a route that runs into a dead end must contain an explicit turnaround point (out-and-back routes are valid).
+
+**Phase:** junction steering and dead-end handling are part of Phase 3 (OSM world). The multiplayer `TurnIntent` is part of Phase 5.
+
+---
+
+## P-20 Web Companion
+
+**Scope:** a browser app for everything **except riding**. It runs in any modern browser, including iOS / iPadOS. It uses no Bluetooth and no 3D rendering.
+
+> **Future development (not scheduled):** a full web client for riding in the browser and native mobile apps (iPad / iOS, Android). See the platform rollout order in spec §11. Nothing in the current design may block them (see "Keeping the future options open" below).
+
+### Features
+
+| Area | Features | Phase |
+|---|---|---|
+| Account | Sign-up / sign-in (same OIDC provider as the desktop app), profile, weight / FTP / height, privacy settings, data export and account deletion (P-12) | 5 |
+| Training history | List of rides, ride detail (power, heart rate, cadence, speed, elevation charts; power-duration curve), personal bests, FIT / GPX download | 5 |
+| Strava | Link / unlink account, auto-upload setting, re-upload of single rides (P-13b) | 5 |
+| Devices | Read-only list of the user's known trainers and sensors (pairing stays in the desktop app) | 5 |
+| Social | Friends, groups, invitations | 5 |
+| Events | Calendar, event pages, sign-up, start lists, results and live leaderboards | 7 |
+| Routes | Browse routes per world package with map + elevation profile; **GPX upload** with server-side map matching (P-13a); simple route planner (click junctions on the map) | 7 |
+| World packages | List of available regions, sizes and versions; mark regions for download on the desktop app | 7 |
+
+### Technology
+
+- **Frontend: Leptos** (Rust → WebAssembly, with server-side rendering).
+  - It keeps the stack in Rust and reuses types from `ocw-core` and `ocw-protocol` (P-2).
+  - **Server-side rendering on Axum** gives fast first loads, and public event and result pages that work as normal, shareable links.
+  - Alternative if Leptos falls short: a TypeScript frontend (e.g. SvelteKit) against the same API.
+- **Backend:** no new service. The pages are served by the existing modular monolith (`services/server`, Axum) under a separate route group, using the same database and permission checks as the desktop API.
+- **Maps:** **MapLibre GL JS** with our **own vector tiles**, generated by `world-builder` from the same OSM extracts and served as **PMTiles** files from our CDN.
+  - No public OSM tile servers (P-9). Attribution "© OpenStreetMap contributors" stays visible on the map.
+  - Routes and elevation profiles come from the world package data, so the web and the desktop app show the same road geometry.
+- **GPX map matching** runs on the server with the same `ocw-world` code as the desktop app (P-13a), so routes created on the web are identical in the desktop app.
+- **Live data** (event leaderboards): server-sent events or WebSocket from the backend. They are read-only, so no WebTransport is needed.
+- **Security:**
+  - Short-lived session cookies (`HttpOnly`, `Secure`, `SameSite=Lax`) and a strict Content Security Policy.
+  - CSRF protection for state-changing requests.
+  - Strava tokens never reach the browser (P-13b).
+
+### Keeping the future options open
+
+These rules keep a later full web client and native mobile apps possible without redesign:
+
+- `ocw-sim`, `ocw-protocol`, `ocw-world` and `ocw-core` must **compile to `wasm32-unknown-unknown`**. They may not use threads, the file system or sockets directly; those go through traits. A CI check builds them for wasm from Phase 1.
+- The device layer stays behind `DeviceBackend` (P-11), so Web Bluetooth (web) or CoreBluetooth (iOS) can be added as further backends.
+- The game protocol is transport-independent (P-2). A WebTransport endpoint can later be added next to native QUIC on the server.
+- World packages keep a format that can be streamed over HTTP in tile-sized chunks, not only read as one large archive from disk.
