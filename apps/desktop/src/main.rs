@@ -21,6 +21,7 @@ mod monitor;
 mod platform;
 mod recording;
 mod restart;
+mod settings;
 mod strava;
 mod trainer;
 mod video;
@@ -30,7 +31,7 @@ use std::path::PathBuf;
 
 use bevy::prelude::*;
 use bevy::window::{MonitorSelection, PresentMode, WindowMode, WindowResolution};
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches, Parser};
 use ocw_core::SIM_TICK_HZ;
 use ocw_render::console::{ConsoleState, Permission};
 use ocw_render::hud::VersionLabel;
@@ -63,7 +64,7 @@ impl Args {
     args_override_self = true
 )]
 pub struct Args {
-    /// Display name of the local rider.
+    /// Display name of the local rider (default: the rider profile's).
     #[arg(long, default_value = "Rider")]
     pub name: String,
     /// Initial power of the virtual trainer in watts.
@@ -146,6 +147,15 @@ pub struct Args {
     /// File with remembered devices (default: ~/.config/ocw/devices.toml).
     #[arg(long, value_name = "PATH")]
     pub devices_file: Option<PathBuf>,
+    /// Settings file (default: ~/.config/ocw/settings.toml); the rider
+    /// profiles are read from riders.toml next to it. Command-line options
+    /// override its values for the session.
+    #[arg(long, value_name = "PATH")]
+    pub settings_file: Option<PathBuf>,
+    /// Ride as this rider profile (riders.toml) for this session, instead
+    /// of the one chosen in the Workshop.
+    #[arg(long, value_name = "NAME")]
+    pub rider: Option<String>,
     /// Console commands to run at startup (in addition to autoexec.cfg).
     #[arg(long = "exec", value_name = "FILE")]
     pub exec: Vec<PathBuf>,
@@ -391,7 +401,14 @@ fn main() -> AppExit {
     if let Some(msg) = &defaults {
         eprintln!("{msg}");
     }
-    let args = Args::parse_from(argv);
+    let matches = Args::command().get_matches_from(argv);
+    let mut args = Args::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
+    // settings.toml and riders.toml (spec §3.2.1): before anything reads
+    // the options they fill in.
+    let loaded = settings::load(&mut args, &matches);
+    for w in &loaded.warnings {
+        eprintln!("settings: {w}");
+    }
     worlds::handle_cli(&args);
     // Desktop entry and icons for menus, docks and file managers (not for
     // the headless screenshot / capture runs).
@@ -420,6 +437,9 @@ fn main() -> AppExit {
         ),
     };
     let mut app = App::new();
+    app.insert_resource(loaded.settings)
+        .insert_resource(loaded.riders)
+        .insert_resource(settings::LoadWarnings(loaded.warnings));
     if let Some(spec) = &args.world {
         let loaded = worlds::load(&args, spec);
         app.insert_resource(worlds::WorldInfo::of(spec, &loaded));
@@ -465,6 +485,10 @@ fn main() -> AppExit {
     .insert_resource(VersionLabel(build_id().to_string()))
     .add_systems(Startup, || info!("Open Cycling World {}", build_id()))
     .add_plugins(OcwRenderPlugins)
+    .add_plugins((
+        settings::SettingsPlugin,
+        settings::panel::SettingsPanelPlugin,
+    ))
     .add_plugins((
         connection::ConnectionPlugin { route },
         devices::DevicesPlugin,
@@ -552,10 +576,20 @@ fn timed_commands(
     }
 }
 
-/// Enables dev commands (local server) and queues autoexec / --exec / --cmd.
-fn startup_commands(args: Res<Args>, mut console: ResMut<ConsoleState>) {
+/// Enables dev commands (local server) and queues the settings' commands,
+/// autoexec / --exec / --cmd (in this order: later ones win).
+fn startup_commands(
+    args: Res<Args>,
+    settings: Option<Res<settings::UserSettings>>,
+    mut console: ResMut<ConsoleState>,
+) {
     // Phase 1 always rides on the in-process local server.
     console.permission = Permission::Dev;
+    if let Some(s) = settings {
+        for line in s.settings.startup_commands() {
+            console.queue(line);
+        }
+    }
     // Relative to the working directory, which is `/` for an app started
     // from Finder: the macOS app bundle does not read one.
     if std::path::Path::new("autoexec.cfg").exists() {

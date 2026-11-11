@@ -176,6 +176,17 @@ mod tests {
         assert_eq!(t.update(0.1, &route(), at(500.8, 8.0), Some(90.0)), None);
     }
 
+    /// The active rider's weight plus the bike is the SIM mass (spec §3.2.1).
+    #[test]
+    fn sim_mass_is_the_rider_profile_weight() {
+        let mut t = TrainerControl::new(RiderProfile::for_rider_weight(64.0));
+        let Some(DeviceCommand::SetSimulation(p)) = t.update(0.0, &route(), at(10.0, 8.0), None)
+        else {
+            panic!("expected a SIM command");
+        };
+        assert_eq!(p.mass_kg, 72.0);
+    }
+
     #[test]
     fn sim_looks_ahead_before_the_climb() {
         let mut t = TrainerControl::new(RiderProfile::default());

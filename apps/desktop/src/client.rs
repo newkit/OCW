@@ -89,6 +89,8 @@ pub struct ClientCore {
     lean: Option<f64>,
     /// Wild mode: not bound to the road.
     wild: bool,
+    /// Autodrive on when the ride starts (setting `controls.autodrive`).
+    autodrive_at_start: bool,
     steer_seq: u32,
     /// Last steering intent sent ((lean mode, mrad or cm, wild)) and when.
     steer_sent: Option<((bool, i32, bool), f64)>,
@@ -121,6 +123,7 @@ impl ClientCore {
             lateral_target: None,
             lean: None,
             wild: false,
+            autodrive_at_start: true,
             steer_seq: 0,
             steer_sent: None,
             others: SnapshotBuffer::default(),
@@ -186,6 +189,13 @@ impl ClientCore {
         self
     }
 
+    /// The same client starting with autodrive off (lean steering) when
+    /// `on` is false (setting `controls.autodrive`, spec §3.2.1).
+    pub fn with_autodrive_at_start(mut self, on: bool) -> Self {
+        self.autodrive_at_start = on;
+        self
+    }
+
     /// Name of what is ridden (the route's, or "Free ride").
     pub fn course_name(&self) -> &str {
         self.route.name()
@@ -212,8 +222,10 @@ impl ClientCore {
         encode(&client_message(C::Hello(v1::Hello {
             protocol_version: PROTOCOL_VERSION,
             display_name: self.name.clone(),
-            profile: Some(self.profile.into()),
+            // The server uses its curated profile with our weight (§2.5).
+            profile: None,
             world: self.free.as_ref().map(|f| ocw_protocol::world_id(&f.net)),
+            rider_weight_kg: Some(self.profile.rider_mass_kg as f32),
         })))
     }
 
@@ -291,6 +303,9 @@ impl ClientCore {
                 }
                 let id = RiderId(w.rider_id);
                 self.rider_id = Some(id);
+                if !self.autodrive_at_start {
+                    self.set_autodrive(false);
+                }
                 Some(Notice::Joined {
                     rider_id: id,
                     route_id: w.route_id,
@@ -1130,6 +1145,47 @@ mod tests {
         assert!(h.client.rider_id().is_some());
         h.ride(200.0, 0.0);
         assert_eq!(h.client.view(0.0, 1.0).len(), 1);
+    }
+
+    /// The rider profile's weight goes to the server in the hello (spec
+    /// §3.2.1) and both sides simulate with it, so the prediction agrees.
+    #[test]
+    fn the_rider_weight_reaches_the_server_and_the_prediction_agrees() {
+        let server = GameServer::new(
+            route(),
+            ServerConfig {
+                allow_dev_commands: false,
+                bots: 0,
+                start_m: 0.0,
+            },
+        );
+        let client = ClientCore::new(route(), "Light", RiderProfile::for_rider_weight(58.0));
+        let mut h = Harness::with(server, client);
+        let id = h.client.rider_id().expect("joined");
+        let p = h.server.session().rider_profile(id).unwrap();
+        assert_eq!(p, RiderProfile::for_rider_weight(58.0));
+        h.ride(250.0, 20.0);
+        let server = h.server.session().rider_state(id).unwrap();
+        let client = h.client.state();
+        assert!(
+            (client.speed - server.speed).abs() < 0.3,
+            "client {} m/s, server {} m/s",
+            client.speed,
+            server.speed
+        );
+    }
+
+    /// Setting `controls.autodrive off`: the ride starts with lean steering.
+    #[test]
+    fn autodrive_can_be_off_at_the_start() {
+        let server = GameServer::new(route(), ServerConfig::default());
+        let client = ClientCore::new(route(), "Manual", RiderProfile::default())
+            .with_autodrive_at_start(false);
+        let mut h = Harness::with(server, client);
+        assert!(!h.client.autodrive());
+        h.ride(200.0, 1.0);
+        assert!(!h.client.autodrive());
+        assert!(Harness::new(0, false).client.autodrive());
     }
 
     #[test]

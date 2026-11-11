@@ -42,10 +42,35 @@ pub struct RiderProfile {
     pub crr: f64,
 }
 
+/// Lightest rider weight the simulation accepts, in kg (spec §3.2.1).
+pub const MIN_RIDER_WEIGHT_KG: f64 = 30.0;
+/// Heaviest rider weight the simulation accepts, in kg.
+pub const MAX_RIDER_WEIGHT_KG: f64 = 200.0;
+
+/// A rider weight within [`MIN_RIDER_WEIGHT_KG`]..=[`MAX_RIDER_WEIGHT_KG`];
+/// a weight that is not a number becomes the default rider's 75 kg.
+pub fn clamp_rider_weight(kg: f64) -> f64 {
+    if kg.is_nan() {
+        RiderProfile::default().rider_mass_kg
+    } else {
+        kg.clamp(MIN_RIDER_WEIGHT_KG, MAX_RIDER_WEIGHT_KG)
+    }
+}
+
 impl RiderProfile {
     /// Total moving mass in kg.
     pub fn total_mass_kg(&self) -> f64 {
         self.rider_mass_kg + self.bike_mass_kg
+    }
+
+    /// The default physics profile (bike, drag, rolling resistance) for a
+    /// rider of `weight_kg` (clamped, [`clamp_rider_weight`]). Riders choose
+    /// only their weight; the rest comes from the curated profile (§2.5).
+    pub fn for_rider_weight(weight_kg: f64) -> Self {
+        Self {
+            rider_mass_kg: clamp_rider_weight(weight_kg),
+            ..Self::default()
+        }
     }
 }
 
@@ -79,5 +104,16 @@ mod tests {
     #[test]
     fn default_profile_mass() {
         assert_eq!(RiderProfile::default().total_mass_kg(), 83.0);
+    }
+
+    #[test]
+    fn rider_weight_is_clamped() {
+        assert_eq!(RiderProfile::for_rider_weight(62.5).total_mass_kg(), 70.5);
+        assert_eq!(clamp_rider_weight(5.0), MIN_RIDER_WEIGHT_KG);
+        assert_eq!(clamp_rider_weight(500.0), MAX_RIDER_WEIGHT_KG);
+        assert_eq!(clamp_rider_weight(f64::NAN), 75.0);
+        assert_eq!(clamp_rider_weight(f64::INFINITY), MAX_RIDER_WEIGHT_KG);
+        let p = RiderProfile::for_rider_weight(90.0);
+        assert_eq!((p.cda_m2, p.crr, p.bike_mass_kg), (0.32, 0.004, 8.0));
     }
 }

@@ -4999,6 +4999,7 @@ name = "ocw-desktop"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "bevy_egui",
  "clap",
  "dirs",
  "ocw-core",
