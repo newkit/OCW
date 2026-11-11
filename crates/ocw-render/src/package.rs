@@ -527,7 +527,7 @@ pub fn land_colour(class: LandClass) -> [f32; 3] {
         LandClass::Forest => [0.21, 0.33, 0.16],
         LandClass::Orchard => [0.38, 0.52, 0.25],
         LandClass::Vineyard => [0.50, 0.50, 0.30],
-        LandClass::Residential => [0.50, 0.52, 0.43],
+        LandClass::Residential => [0.43, 0.52, 0.34],
         LandClass::Commercial => [0.56, 0.55, 0.52],
         LandClass::Industrial => [0.52, 0.51, 0.49],
         LandClass::Park => [0.32, 0.56, 0.24],
@@ -1226,5 +1226,44 @@ mod tests {
             })
             .sum();
         assert!((roof_area - 160.0).abs() < 1e-3, "{roof_area}");
+    }
+
+    /// Tile meshing time on a real package (not run by default):
+    /// `OCW_PACKAGE=data/pilot/liechtenstein-landuse.ocwpkg cargo test
+    /// --release -p ocw-render tile_build_time -- --ignored --nocapture`
+    #[test]
+    #[ignore = "needs a world package"]
+    fn tile_build_time() {
+        let path = std::env::var("OCW_PACKAGE").expect("OCW_PACKAGE");
+        let p = WorldPackage::from_bytes(&std::fs::read(path).unwrap()).unwrap();
+        let mut keys: Vec<(usize, TileKey)> = p
+            .tiles
+            .keys()
+            .map(|k| {
+                let n = p
+                    .buildings
+                    .as_ref()
+                    .and_then(|b| b.get(k))
+                    .map_or(0, Vec::len);
+                (n, *k)
+            })
+            .collect();
+        keys.sort();
+        let (mut worst, mut total, mut trees, mut verts) = (0.0f64, 0.0, 0, 0);
+        for &(_, key) in keys.iter().rev().take(25) {
+            let t = std::time::Instant::now();
+            let m = build_tile_meshes(&p, key).unwrap();
+            let s = t.elapsed().as_secs_f64();
+            worst = worst.max(s);
+            total += s;
+            trees += m.tree_cones.len();
+            verts +=
+                m.trees.positions.len() + m.buildings.positions.len() + m.terrain.positions.len();
+        }
+        println!(
+            "25 busiest tiles: {:.1} ms mean, {:.1} ms worst, {trees} trees, {verts} vertices",
+            total / 25.0 * 1e3,
+            worst * 1e3
+        );
     }
 }

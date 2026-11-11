@@ -225,7 +225,7 @@ fn fill_area(out: &mut [LandClass], g: &Grid, area: &Area) {
     }
     for (k, row) in rows.iter_mut().enumerate() {
         row.sort_by(f64::total_cmp);
-        for span in row.chunks_exact(2) {
+        for span in row.as_chunks::<2>().0 {
             let i0 = ((span[0] - g.origin[0]) / g.spacing).ceil().max(0.0);
             let i1 = ((span[1] - g.origin[0]) / g.spacing)
                 .ceil()
@@ -279,10 +279,14 @@ pub fn rasterise(g: &Grid, areas: &[&Area], lines: &[&WaterLine]) -> Vec<LandCla
         fill_area(&mut out, g, a);
     }
     for l in lines {
-        fill_line(&mut out, g, l, g.spacing / 2.0);
+        // At least half a cell diagonal, so thin lines stay connected.
+        fill_line(&mut out, g, l, g.spacing * 0.71);
     }
     out
 }
+
+/// One tile's land use and its carved heights (vertex index, height).
+type TileResult = (TileKey, LandUseTile, Vec<(u32, f32)>);
 
 /// What [`add_landuse`] did.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -447,7 +451,7 @@ pub fn add_landuse(
     };
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
     let chunk = keys.len().div_ceil(threads).max(1);
-    let results: Vec<(TileKey, LandUseTile, Vec<(u32, f32)>)> = std::thread::scope(|s| {
+    let results: Vec<TileResult> = std::thread::scope(|s| {
         let handles: Vec<_> = keys
             .chunks(chunk)
             .map(|part| {

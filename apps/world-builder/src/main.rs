@@ -419,7 +419,7 @@ fn landuse_summary(cells: &[usize]) -> String {
         .enumerate()
         .filter(|c| c.1 > 0)
         .collect();
-    v.sort_by(|a, b| b.1.cmp(&a.1));
+    v.sort_by_key(|a| std::cmp::Reverse(a.1));
     v.iter()
         .map(|&(code, n)| {
             let class = ocw_world::landuse::LandClass::from_code(code as u8).expect("known code");
