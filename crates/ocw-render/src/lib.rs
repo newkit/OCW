@@ -8,6 +8,7 @@ pub mod camera;
 pub mod console;
 pub mod hud;
 pub mod riders;
+pub mod terrain;
 pub mod world;
 
 use bevy::prelude::*;
@@ -70,4 +71,17 @@ impl Plugin for OcwRenderPlugins {
 /// coordinates and a floating origin (spec §4.5).
 pub fn to_vec3(p: [f64; 3]) -> Vec3 {
     Vec3::new(p[0] as f32, p[1] as f32, p[2] as f32)
+}
+
+/// Horizontal bounding box of a route: `([min_x, min_z], [max_x, max_z])`.
+pub fn route_bounds(route: &Route) -> ([f64; 2], [f64; 2]) {
+    route.points().iter().fold(
+        ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]),
+        |(min, max), p| {
+            (
+                [min[0].min(p[0]), min[1].min(p[2])],
+                [max[0].max(p[0]), max[1].max(p[2])],
+            )
+        },
+    )
 }

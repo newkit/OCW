@@ -1,12 +1,15 @@
 //! Static world: ground, road, scenery, light (Phase 1 test route only).
 
 use bevy::asset::RenderAssetUsages;
-use bevy::light::{CascadeShadowConfigBuilder, GlobalAmbientLight};
+use bevy::light::{CascadeShadowConfigBuilder, GlobalAmbientLight, NotShadowCaster};
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
 
-use crate::{RideView, to_vec3};
+use ocw_world::{Route, Terrain, TerrainParams};
+
+use crate::terrain::{far_ring_mesh, terrain_grids};
+use crate::{RideView, route_bounds, to_vec3};
 
 pub struct WorldPlugin;
 
@@ -49,39 +52,51 @@ fn spawn_world(
         .build(),
     ));
 
-    // Ground, slightly below the lowest road point.
-    let min_y = route
-        .points()
-        .iter()
-        .map(|p| p[1])
-        .fold(f64::INFINITY, f64::min) as f32;
-    commands.spawn((
-        Mesh3d(meshes.add(Plane3d::default().mesh().size(6000.0, 6000.0))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.33, 0.52, 0.25),
-            perceptual_roughness: 1.0,
-            ..default()
-        })),
-        Transform::from_xyz(0.0, min_y - 0.6, 0.0),
-    ));
+    // Terrain conformed to the road (spec §4.3), in three levels of detail.
+    let terrain = Terrain::from_route(route, TerrainParams::default());
+    let (route_min, route_max) = route_bounds(route);
+    let (near, middle) = terrain_grids(&terrain, route_min, route_max);
+    let ground = materials.add(StandardMaterial {
+        base_color: Color::WHITE, // vertex colours
+        perceptual_roughness: 1.0,
+        ..default()
+    });
+    for mesh in [
+        near.mesh(None),
+        middle.mesh(Some((near.origin, near.max()))),
+        far_ring_mesh(middle.origin, middle.max(), terrain.mean_height()),
+    ] {
+        // Receives shadows but casts none: gentle hills barely cast visible
+        // shadows, and the shadow pass would draw the whole terrain again.
+        commands.spawn((
+            Mesh3d(meshes.add(mesh)),
+            MeshMaterial3d(ground.clone()),
+            NotShadowCaster,
+        ));
+    }
 
-    // Road and its embankment (a wider, lower ribbon, so the road never floats).
+    // Road surface.
     let width = route.road_width_m() as f32;
     commands.spawn((
-        Mesh3d(meshes.add(ribbon_mesh(&view, width + 6.0, -0.05, -0.65))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.38, 0.5, 0.28),
-            perceptual_roughness: 1.0,
-            ..default()
-        })),
-    ));
-    commands.spawn((
-        Mesh3d(meshes.add(ribbon_mesh(&view, width, 0.0, 0.0))),
+        Mesh3d(meshes.add(ribbon_mesh(&view, width))),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: Color::srgb(0.22, 0.22, 0.24),
             perceptual_roughness: 0.9,
             ..default()
         })),
+    ));
+    // Road edges: side faces down into the terrain, so the gap between road
+    // and terrain (road clearance) is never visible from the side.
+    commands.spawn((
+        Mesh3d(meshes.add(road_edge_mesh(&view, width, ROAD_EDGE_DEPTH_M))),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: Color::srgb(0.45, 0.43, 0.38),
+            perceptual_roughness: 1.0,
+            cull_mode: None,
+            double_sided: true,
+            ..default()
+        })),
+        NotShadowCaster,
     ));
     commands.spawn((
         Mesh3d(meshes.add(center_line_mesh(&view))),
@@ -92,13 +107,17 @@ fn spawn_world(
         })),
     ));
 
-    spawn_trees(&mut commands, &view, &mut meshes, &mut materials, min_y);
+    spawn_trees(
+        &mut commands,
+        &tree_positions(route, &terrain),
+        &mut meshes,
+        &mut materials,
+    );
     spawn_start_arch(&mut commands, &view, &mut meshes, &mut materials);
 }
 
-/// A strip along the route, `width` wide, raised by `lift` at the centre and
-/// `edge_drop` at the edges.
-fn ribbon_mesh(view: &RideView, width: f32, lift: f32, edge_drop: f32) -> Mesh {
+/// The road surface: a flat strip along the route, `width` wide.
+fn ribbon_mesh(view: &RideView, width: f32) -> Mesh {
     let route = &view.route;
     let step = 2.0;
     let n = (route.length() / step).ceil() as usize;
@@ -109,10 +128,8 @@ fn ribbon_mesh(view: &RideView, width: f32, lift: f32, edge_drop: f32) -> Mesh {
         let d = (i as f64 * step).min(route.length());
         let p = route.sample(d);
         let half = f64::from(width / 2.0);
-        let mut left = to_vec3(p.offset_position(-half));
-        let mut right = to_vec3(p.offset_position(half));
-        left.y += lift + edge_drop;
-        right.y += lift + edge_drop;
+        let left = to_vec3(p.offset_position(-half));
+        let right = to_vec3(p.offset_position(half));
         positions.push(left.to_array());
         positions.push(right.to_array());
         normals.extend([[0.0, 1.0, 0.0]; 2]);
@@ -133,6 +150,49 @@ fn ribbon_mesh(view: &RideView, width: f32, lift: f32, edge_drop: f32) -> Mesh {
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_indices(Indices::U32(indices));
+    mesh
+}
+
+/// How far the road edge faces reach below the road surface. Must exceed the
+/// terrain's road clearance plus the grid interpolation error.
+const ROAD_EDGE_DEPTH_M: f32 = 0.5;
+
+/// Vertical strips along both road edges, from the surface down `depth`.
+fn road_edge_mesh(view: &RideView, width: f32, depth: f32) -> Mesh {
+    let route = &view.route;
+    let step = 2.0;
+    let n = (route.length() / step).ceil() as usize;
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let mut indices = Vec::new();
+    for side in [-1.0f64, 1.0] {
+        let first = positions.len() as u32;
+        for i in 0..=n {
+            let p = route.sample((i as f64 * step).min(route.length()));
+            let top = to_vec3(p.offset_position(side * f64::from(width / 2.0)));
+            positions.push(top.to_array());
+            positions.push((top - Vec3::Y * depth).to_array());
+            let r = p.right();
+            let out = [(side * r[0]) as f32, 0.0, (side * r[1]) as f32];
+            normals.extend([out, out]);
+        }
+        for i in 0..n as u32 {
+            let (t0, b0, t1, b1) = (
+                first + i * 2,
+                first + i * 2 + 1,
+                first + i * 2 + 2,
+                first + i * 2 + 3,
+            );
+            indices.extend([t0, b0, t1, b0, b1, t1]);
+        }
+    }
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     mesh.insert_indices(Indices::U32(indices));
     mesh
 }
@@ -181,10 +241,9 @@ impl Lcg {
 /// Bevy batches them (instancing, spec §4.5).
 fn spawn_trees(
     commands: &mut Commands,
-    view: &RideView,
+    trees: &[(Vec3, f32)],
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
-    ground_y: f32,
 ) {
     let crown = meshes.add(Cone {
         radius: 2.2,
@@ -201,16 +260,7 @@ fn spawn_trees(
         perceptual_roughness: 1.0,
         ..default()
     });
-    let route = &view.route;
-    let mut rng = Lcg(42);
-    let mut d = 0.0;
-    while d < route.length() {
-        let p = route.sample(d);
-        let side = if rng.next_f32() < 0.5 { -1.0 } else { 1.0 };
-        let dist = route.road_width_m() / 2.0 + 6.0 + f64::from(rng.next_f32()) * 40.0;
-        let mut pos = to_vec3(p.offset_position(side * dist));
-        pos.y = pos.y.min(ground_y + 30.0) - 0.5;
-        let scale = 0.7 + rng.next_f32() * 0.8;
+    for &(pos, scale) in trees {
         commands
             .spawn((
                 Transform::from_translation(pos).with_scale(Vec3::splat(scale)),
@@ -228,8 +278,34 @@ fn spawn_trees(
                     Transform::from_xyz(0.0, 5.0, 0.0),
                 ));
             });
-        d += 6.0 + f64::from(rng.next_f32()) * 14.0;
     }
+}
+
+/// How deep tree trunks are sunk into the ground (hides the cut on slopes).
+const TREE_SINK_M: f64 = 0.3;
+
+/// Deterministic roadside tree positions (base of the trunk) and scales.
+/// Trees stand on the terrain and never inside any road corridor.
+pub fn tree_positions(route: &Route, terrain: &Terrain) -> Vec<(Vec3, f32)> {
+    let mut rng = Lcg(42);
+    let mut trees = Vec::new();
+    let mut d = 0.0;
+    while d < route.length() {
+        let p = route.sample(d);
+        let side = if rng.next_f32() < 0.5 { -1.0 } else { 1.0 };
+        let dist = route.road_width_m() / 2.0 + 6.0 + f64::from(rng.next_f32()) * 40.0;
+        let scale = 0.7 + rng.next_f32() * 0.8;
+        d += 6.0 + f64::from(rng.next_f32()) * 14.0;
+        let [x, _, z] = p.offset_position(side * dist);
+        let clear = terrain
+            .road_proximity(x, z)
+            .is_none_or(|r| r.distance_m > terrain.corridor_half_width_m() + 1.0);
+        if clear {
+            let y = terrain.height(x, z) - TREE_SINK_M;
+            trees.push((Vec3::new(x as f32, y as f32, z as f32), scale));
+        }
+    }
+    trees
 }
 
 /// Start/finish arch at distance 0.
@@ -275,5 +351,48 @@ pub fn fog() -> DistanceFog {
             end: 1800.0,
         },
         ..default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn road_edges_reach_below_the_terrain() {
+        // The edge faces must end below the terrain at the road edge, or a gap
+        // would show between road and terrain.
+        let route = Route::test_loop();
+        let params = TerrainParams::default();
+        let terrain = Terrain::from_route(&route, params);
+        let depth = f64::from(ROAD_EDGE_DEPTH_M);
+        assert!(depth > params.road_clearance_m + 0.2);
+        let half = route.road_width_m() / 2.0;
+        let mut d = 0.0;
+        while d < route.length() {
+            let p = route.sample(d);
+            for side in [-1.0, 1.0] {
+                let q = p.offset_position(side * half);
+                assert!(q[1] - depth < terrain.height(q[0], q[2]) - 0.1);
+            }
+            d += 11.0;
+        }
+    }
+
+    #[test]
+    fn trees_stand_on_the_terrain_and_off_the_road() {
+        let route = Route::test_loop();
+        let terrain = Terrain::from_route(&route, TerrainParams::default());
+        let trees = tree_positions(&route, &terrain);
+        assert!(trees.len() > 200, "{} trees", trees.len());
+        for (pos, _) in &trees {
+            let (x, z) = (f64::from(pos.x), f64::from(pos.z));
+            let ground = terrain.height(x, z);
+            assert!((f64::from(pos.y) - (ground - TREE_SINK_M)).abs() < 1e-3);
+            let road = terrain.road_proximity(x, z);
+            assert!(road.is_none_or(|r| r.distance_m > terrain.corridor_half_width_m()));
+        }
+        // Deterministic.
+        assert_eq!(trees, tree_positions(&route, &terrain));
     }
 }

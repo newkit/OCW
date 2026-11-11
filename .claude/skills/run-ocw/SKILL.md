@@ -108,6 +108,10 @@ unit-tested without Bevy windows; prefer adding tests there over GUI runs.
   response` is harmless (no desktop portal for the window decoration theme).
 - Road meshes are built in code: triangles must be counter-clockwise seen from
   above, otherwise the road is culled and invisible (looks like plain grass).
+- Vertex colours (`Mesh::ATTRIBUTE_COLOR`) are linear RGB: convert sRGB values
+  with `Color::srgb(..).to_linear()`, otherwise surfaces look washed out.
+- `fps on` shows the frame rate; with software Vulkan expect ~8-10 FPS at
+  1280x720. Compare against a run of the previous commit before blaming a change.
 - The default Bevy font has no `·`, `±`, `…`: they render as boxes. Use ASCII in HUD text.
 
 ## Troubleshooting
