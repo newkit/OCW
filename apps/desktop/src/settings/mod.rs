@@ -544,7 +544,7 @@ mod tests {
             "--name",
             "Guest",
             "--rider",
-            "nils",
+            "alex",
         ]);
         assert_eq!(args.bots, 7);
         assert_eq!(args.name, "Guest");
