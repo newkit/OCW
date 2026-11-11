@@ -124,7 +124,7 @@ run_windows() {
   local jobs_num jobs_ps=""
   jobs_num=$(printf '%s' "$jobs_env" | grep -o '[0-9]*' || true)
   [ -n "$jobs_num" ] && jobs_ps="\$env:CARGO_BUILD_JOBS='$jobs_num'; "
-  "${SSH[@]}" "$target" "Set-Location -LiteralPath $(psq "$repo"); \$env:Path = \"\$env:USERPROFILE\\.cargo\\bin;\" + \$env:Path; ${jobs_ps}$*; exit \$LASTEXITCODE"
+  "${SSH[@]}" "$target" "Set-Location -LiteralPath $(psq "$repo"); \$env:Path = \"\$env:USERPROFILE\\.cargo\\bin;\" + \$env:Path; \$env:OCW_BUILD_ID='${build_id:-}'; ${jobs_ps}$*; exit \$LASTEXITCODE"
 }
 
 case "$action" in
@@ -132,6 +132,9 @@ case "$action" in
   run)
     sync_tree
     status=0
+    # The remote copy has no .git: pass the commit for the build id
+    # (apps/desktop/build.rs, scripts/build-id.sh).
+    build_id=$(scripts/build-id.sh)
     if [ "$os" = windows ]; then
       run_windows "$@" || status=$?
       "${SSH[@]}" "$target" "tar -cf - -C $(psq "$repo") Cargo.lock" 2>/dev/null | tar -xf - 2>/dev/null || true
@@ -145,7 +148,7 @@ case "$action" in
     if [ "$os" != macos ] && [ "$slots" -gt 0 ] 2>/dev/null; then
       slot_guard="ocw_slot() { for s in \$(seq 1 $slots); do exec 9>/tmp/ocw-build-slot-\$s.lock; flock -n 9 && return; done; echo 'remote.sh: waiting for a free build slot' >&2; exec 9>/tmp/ocw-build-slot-1.lock; flock 9; }; ocw_slot; "
     fi
-    "${SSH[@]}" "$target" "${slot_guard}cd $repo && . ~/.cargo/env && export ${jobs_env:-OCW_REMOTE=1} && $*" || status=$?
+    "${SSH[@]}" "$target" "${slot_guard}cd $repo && . ~/.cargo/env && export ${jobs_env:-OCW_REMOTE=1} OCW_BUILD_ID='$build_id' && $*" || status=$?
     # Builds only happen remotely: bring back a Cargo.lock that cargo
     # updated there (new dependencies), so it can be committed.
     rsync -a -e "${SSH[*]}" "$target:$repo/Cargo.lock" ./Cargo.lock 2>/dev/null || true

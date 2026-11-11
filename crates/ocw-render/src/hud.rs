@@ -16,6 +16,47 @@ impl Plugin for HudPlugin {
         app.init_resource::<ShowFps>()
             .add_systems(Startup, spawn_hud)
             .add_systems(Update, (update_hud, update_gps));
+        add_version_label(app);
+    }
+}
+
+/// The build id shown small in the lower right corner (set by the app,
+/// e.g. `0.1.0-7d538c0-dirty (debug)`; empty = not shown).
+#[derive(Resource, Default, Clone, Debug, PartialEq, Eq)]
+pub struct VersionLabel(pub String);
+
+#[derive(Component)]
+struct VersionText;
+
+fn add_version_label(app: &mut App) {
+    app.init_resource::<VersionLabel>()
+        .add_systems(Startup, spawn_version_label)
+        .add_systems(Update, update_version_label);
+}
+
+fn spawn_version_label(mut commands: Commands, label: Res<VersionLabel>) {
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: px(4),
+            right: px(6),
+            ..default()
+        },
+        Text::new(label.0.clone()),
+        TextFont {
+            font_size: 11.0.into(),
+            ..default()
+        },
+        TextColor(Color::srgba(1.0, 1.0, 1.0, 0.45)),
+        VersionText,
+    ));
+}
+
+fn update_version_label(label: Res<VersionLabel>, mut text: Query<&mut Text, With<VersionText>>) {
+    if label.is_changed() {
+        for mut t in &mut text {
+            t.0.clone_from(&label.0);
+        }
     }
 }
 
@@ -349,5 +390,28 @@ mod tests {
             super::gps_line(-0.000001, -0.000004, 0.0),
             "0.00000 N  0.00000 E  0 m"
         );
+    }
+
+    #[test]
+    fn version_label_in_the_lower_right_corner() {
+        use super::*;
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(VersionLabel("0.1.0-abc1234".into()));
+        add_version_label(&mut app);
+        app.update();
+        let mut q = app
+            .world_mut()
+            .query_filtered::<(&Text, &Node), With<VersionText>>();
+        let (text, node) = q.single(app.world()).unwrap();
+        assert_eq!(text.0, "0.1.0-abc1234");
+        assert_eq!(node.position_type, PositionType::Absolute);
+        assert!(node.bottom != Val::Auto && node.right != Val::Auto);
+        assert!(node.top == Val::Auto && node.left == Val::Auto);
+        // A later change reaches the text.
+        app.world_mut().resource_mut::<VersionLabel>().0 = "0.2.0".into();
+        app.update();
+        let mut q = app.world_mut().query_filtered::<&Text, With<VersionText>>();
+        assert_eq!(q.single(app.world()).unwrap().0, "0.2.0");
     }
 }
