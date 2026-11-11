@@ -2,10 +2,12 @@
 //!
 //! Every hardware stack is a [`DeviceBackend`]. Backends run on their own
 //! thread and talk to the app only through channels, so this crate never
-//! depends on the engine. Phase 1 ships the [`VirtualTrainer`] (power set by
-//! the user, e.g. via the console command `sim.power`). The Bluetooth (FTMS)
-//! backend follows in Phase 2; ANT+ is deferred.
+//! depends on the engine. Backends: the [`VirtualTrainer`] (power set by
+//! the user, e.g. via the console command `sim.power`) and the Bluetooth LE
+//! backend ([`ble`]: FTMS trainers, power meters, cadence and heart-rate
+//! sensors). ANT+ is deferred.
 
+pub mod ble;
 pub mod gatt;
 mod virtual_trainer;
 
@@ -33,14 +35,26 @@ pub enum DeviceEvent {
 /// Commands sent from the app to a backend.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DeviceCommand {
-    /// Simulation mode: road gradient (rise over run) to be applied as resistance.
-    SetGrade(f64),
+    /// SIM mode: simulate this road (FTMS *Set Indoor Bike Simulation Parameters*).
+    SetSimulation(SimulationParameters),
     /// ERG mode: target power in watts.
     SetTargetPower(f64),
     /// Virtual devices only: the power to report, in watts.
     SetVirtualPower(f64),
     /// Stop the backend thread.
     Shutdown,
+}
+
+/// Road parameters for a trainer in SIM mode.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SimulationParameters {
+    /// Gradient as rise over run (0.05 = 5 %), after trainer difficulty.
+    pub grade: f64,
+    pub wind_speed_mps: f64,
+    /// Rolling resistance coefficient.
+    pub crr: f64,
+    /// Wind resistance coefficient 0.5 · ρ · CdA, in kg/m.
+    pub cw_kg_per_m: f64,
 }
 
 /// The app side of a running backend.
@@ -54,6 +68,8 @@ pub struct DeviceHandle {
 pub enum DeviceError {
     #[error("failed to start device backend: {0}")]
     Start(String),
+    #[error("Bluetooth: {0}")]
+    Bluetooth(String),
 }
 
 /// A source of trainer / sensor data.
