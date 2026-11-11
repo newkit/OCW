@@ -130,10 +130,16 @@ fn predict(mut client: ResMut<ClientState>) {
 }
 
 /// Publishes what the renderer should draw.
-fn update_view(time: Res<Time>, client: Res<ClientState>, mut view: ResMut<RideView>) {
+fn update_view(
+    time: Res<Time>,
+    fixed: Res<Time<Fixed>>,
+    client: Res<ClientState>,
+    mut view: ResMut<RideView>,
+) {
     let now = time.elapsed_secs_f64();
     view.elapsed_s = now;
-    view.riders = client.0.view(now);
+    // Interpolate between the last two 50 Hz prediction steps.
+    view.riders = client.0.view(now, fixed.overstep_fraction_f64());
 }
 
 fn register_commands(app: &mut App) {

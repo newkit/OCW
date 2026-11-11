@@ -37,6 +37,9 @@ pub struct ClientCore {
     name: String,
     rider_id: Option<RiderId>,
     predictor: Predictor,
+    /// Predicted state before the last physics step: rendering interpolates
+    /// between it and the current one, so motion is smooth at any frame rate.
+    prev_state: RiderState,
     others: SnapshotBuffer,
     /// Latest known state of the other riders, advanced every physics tick
     /// (for predicting the local rider's drafting).
@@ -57,6 +60,7 @@ impl ClientCore {
             name: name.into(),
             rider_id: None,
             predictor: Predictor::new(profile, RiderState::default()),
+            prev_state: RiderState::default(),
             others: SnapshotBuffer::default(),
             others_now: Vec::new(),
             names: BTreeMap::new(),
@@ -146,6 +150,10 @@ impl ClientCore {
                 // In-process server: the snapshot is fresh (age ≈ 0).
                 self.predictor
                     .reconcile(&self.route, state, 0.0, self.power_w);
+                // A snap (teleport, large error) must not be interpolated.
+                if self.predictor.last_error().abs() > ocw_sim::prediction::SNAP_THRESHOLD_M {
+                    self.prev_state = self.predictor.state();
+                }
             } else {
                 others.push((id, state));
             }
@@ -167,6 +175,7 @@ impl ClientCore {
                 .map(|o| (o.distance, o.lateral_offset)),
         );
         self.predictor.set_drag_factor(drag);
+        self.prev_state = self.predictor.state();
         self.predictor.step(&self.route, self.power_w);
         for o in &mut self.others_now {
             o.distance += o.speed * ocw_core::SIM_DT;
@@ -175,7 +184,9 @@ impl ClientCore {
 
     /// Riders to render at client time `now_s`: the local rider first
     /// (predicted), then the others (interpolated, slightly in the past).
-    pub fn view(&self, now_s: f64) -> Vec<RiderView> {
+    /// `alpha` (0–1) is how far the frame lies between the last two physics
+    /// steps (Bevy's `Time<Fixed>::overstep_fraction`).
+    pub fn view(&self, now_s: f64, alpha: f64) -> Vec<RiderView> {
         let Some(own) = self.rider_id else {
             return Vec::new();
         };
@@ -186,7 +197,7 @@ impl ClientCore {
                 .get(&own)
                 .map(|n| n.0.clone())
                 .unwrap_or_default(),
-            state: self.predictor.state(),
+            state: lerp_state(self.prev_state, self.predictor.state(), alpha),
             power_w: self.power_w,
             cadence_rpm: self.cadence_rpm,
             heart_rate_bpm: self.heart_rate_bpm,
@@ -227,6 +238,16 @@ impl ClientCore {
     }
     pub fn stats(&self) -> &NetStats {
         &self.stats
+    }
+}
+
+/// Linear interpolation of a rider state (`t` clamped to 0–1).
+fn lerp_state(a: RiderState, b: RiderState, t: f64) -> RiderState {
+    let t = t.clamp(0.0, 1.0);
+    RiderState {
+        distance: a.distance + (b.distance - a.distance) * t,
+        speed: a.speed + (b.speed - a.speed) * t,
+        lateral_offset: a.lateral_offset + (b.lateral_offset - a.lateral_offset) * t,
     }
 }
 
@@ -318,12 +339,12 @@ mod tests {
     #[test]
     fn joins_and_shows_nothing_before_welcome() {
         let client = ClientCore::new(route(), "A", RiderProfile::default());
-        assert!(client.view(0.0).is_empty());
+        assert!(client.view(0.0, 1.0).is_empty());
         let mut h = Harness::new(0, false);
         assert!(matches!(h.notices[0], Notice::Joined { .. }));
         assert!(h.client.rider_id().is_some());
         h.ride(200.0, 0.0);
-        assert_eq!(h.client.view(0.0).len(), 1);
+        assert_eq!(h.client.view(0.0, 1.0).len(), 1);
     }
 
     #[test]
@@ -386,7 +407,7 @@ mod tests {
     fn view_contains_local_rider_first_and_interpolated_bots() {
         let mut h = Harness::new(3, false);
         h.ride(200.0, 5.0);
-        let view = h.client.view(h.time_s);
+        let view = h.client.view(h.time_s, 1.0);
         assert_eq!(view.len(), 4);
         assert!(view[0].is_local && view[0].name == "Tester");
         assert_eq!(view.iter().filter(|r| r.is_local).count(), 1);
@@ -496,7 +517,7 @@ mod tests {
         assert!(client.power_w() > 250.0);
         assert!(client.stats().snapshots >= 10);
         assert!(client.state().distance > 0.5);
-        assert_eq!(client.view(start.elapsed().as_secs_f64()).len(), 3);
+        assert_eq!(client.view(start.elapsed().as_secs_f64(), 1.0).len(), 3);
     }
 
     /// Drafting a bot: the client predicts the server's drafting, so the
@@ -523,6 +544,43 @@ mod tests {
             h.client.prediction_error().abs() < 0.3,
             "error {}",
             h.client.prediction_error()
+        );
+    }
+
+    /// Renders at 144 Hz with 50 Hz physics steps: the rider must move by
+    /// (nearly) the same amount every frame, not in 0-or-1-step jumps
+    /// (regression test for the bouncing rider and scenery).
+    #[test]
+    fn rendered_motion_is_smooth_between_physics_steps() {
+        let mut h = Harness::new(0, false);
+        h.ride(250.0, 8.0); // get up to speed
+        let dt = 1.0 / 144.0;
+        let mut acc = 0.0;
+        let mut last = None;
+        let mut moves = Vec::new();
+        for frame in 0..288 {
+            acc += dt;
+            while acc >= ocw_core::SIM_DT {
+                h.client.predict_step();
+                acc -= ocw_core::SIM_DT;
+            }
+            let alpha = acc / ocw_core::SIM_DT;
+            let d = h.client.view(h.time_s + f64::from(frame) * dt, alpha)[0]
+                .state
+                .distance;
+            if let Some(prev) = last {
+                moves.push(d - prev);
+            }
+            last = Some(d);
+        }
+        let mean = moves.iter().sum::<f64>() / moves.len() as f64;
+        let (min, max) = moves.iter().fold((f64::INFINITY, 0.0f64), |(lo, hi), m| {
+            (lo.min(*m), hi.max(*m))
+        });
+        assert!(mean > 0.03, "rider should move: {mean}");
+        assert!(
+            min > mean * 0.8 && max < mean * 1.2,
+            "uneven motion per frame: min {min:.4}, mean {mean:.4}, max {max:.4} m"
         );
     }
 }

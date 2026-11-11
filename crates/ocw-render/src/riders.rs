@@ -40,6 +40,19 @@ struct PedalLeg {
     phase: f32,
 }
 
+/// Jersey colour of the local rider: #FF1472.
+pub const LOCAL_JERSEY: Color = Color::srgb(1.0, 20.0 / 255.0, 114.0 / 255.0);
+
+/// Jersey colour: the local rider's own colour, greens to violets for others.
+pub fn jersey_color(id: RiderId, is_local: bool) -> Color {
+    if is_local {
+        LOCAL_JERSEY
+    } else {
+        // Green to violet only (150°–290°), never the local rider's pink.
+        Color::hsl(150.0 + (id.0 as f32 * 47.0) % 140.0, 0.6, 0.45)
+    }
+}
+
 /// Cadence assumed for riders without cadence data while they move.
 pub const DEFAULT_CADENCE_RPM: f64 = 85.0;
 /// Maximum leg swing about the hip, in radians.
@@ -141,14 +154,8 @@ fn spawn_avatar(
     is_local: bool,
     transform: Transform,
 ) -> Entity {
-    // Jersey colour: orange for the local rider, varied blues/greens for others.
-    let jersey = if is_local {
-        Color::srgb(1.0, 0.45, 0.05)
-    } else {
-        Color::hsl((190.0 + id.0 as f32 * 47.0) % 360.0, 0.6, 0.45)
-    };
     let jersey = materials.add(StandardMaterial {
-        base_color: jersey,
+        base_color: jersey_color(id, is_local),
         ..default()
     });
     let dark = materials.add(StandardMaterial {
@@ -206,17 +213,43 @@ fn spawn_avatar(
                     ));
                 });
             }
-            // Head with helmet.
+            // Head.
             a.spawn((
                 Mesh3d(meshes.add(Sphere::new(0.12))),
                 MeshMaterial3d(skin.clone()),
                 Transform::from_xyz(0.0, 1.45, -0.32),
             ));
-            a.spawn((
-                Mesh3d(meshes.add(Sphere::new(0.135))),
-                MeshMaterial3d(jersey.clone()),
-                Transform::from_xyz(0.0, 1.5, -0.3).with_scale(Vec3::new(1.0, 0.7, 1.2)),
-            ));
+            if is_local {
+                // Classic cotton cycling cap: white crown, band in the
+                // jersey colour, short brim flipped up.
+                let white = materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.95, 0.95, 0.93),
+                    perceptual_roughness: 0.9,
+                    ..default()
+                });
+                a.spawn((
+                    Mesh3d(meshes.add(Sphere::new(0.126))),
+                    MeshMaterial3d(white),
+                    Transform::from_xyz(0.0, 1.5, -0.32).with_scale(Vec3::new(1.0, 0.62, 1.05)),
+                ));
+                a.spawn((
+                    Mesh3d(meshes.add(Cylinder::new(0.127, 0.035))),
+                    MeshMaterial3d(jersey.clone()),
+                    Transform::from_xyz(0.0, 1.49, -0.32),
+                ));
+                a.spawn((
+                    Mesh3d(meshes.add(Cuboid::new(0.17, 0.012, 0.075))),
+                    MeshMaterial3d(jersey.clone()),
+                    Transform::from_xyz(0.0, 1.5, -0.47).with_rotation(Quat::from_rotation_x(0.45)),
+                ));
+            } else {
+                // Helmet.
+                a.spawn((
+                    Mesh3d(meshes.add(Sphere::new(0.135))),
+                    MeshMaterial3d(jersey.clone()),
+                    Transform::from_xyz(0.0, 1.5, -0.3).with_scale(Vec3::new(1.0, 0.7, 1.2)),
+                ));
+            }
         })
         .id()
 }
@@ -233,6 +266,22 @@ mod tests {
 
     fn close(a: Vec3, b: Vec3) -> bool {
         (a - b).length() < 1e-3
+    }
+
+    #[test]
+    fn local_rider_wears_ff1472() {
+        let c = jersey_color(RiderId(7), true).to_srgba();
+        let hex = (
+            (c.red * 255.0).round() as u8,
+            (c.green * 255.0).round() as u8,
+            (c.blue * 255.0).round() as u8,
+        );
+        assert_eq!(hex, (0xFF, 0x14, 0x72));
+        // Other riders are never pink/red (hue 150°–290°).
+        for id in 0..200 {
+            let hue = Hsla::from(jersey_color(RiderId(id), false)).hue;
+            assert!((150.0..=290.0).contains(&hue), "rider {id}: hue {hue}");
+        }
     }
 
     #[test]
