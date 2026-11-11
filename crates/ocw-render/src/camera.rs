@@ -70,6 +70,9 @@ pub type SolidTop = Arc<dyn Fn(f64, f64) -> Option<f64> + Send + Sync>;
 pub struct ObstacleLayer {
     /// What they are ("buildings", …).
     pub kind: &'static str,
+    /// The world package of the tile (index in the world set: 0 = the
+    /// home package, neighbours from 1, spec §2.2.2).
+    pub package: u32,
     /// The tile they belong to (route mode: (0, 0)).
     pub tile: (i32, i32),
 }
@@ -97,9 +100,11 @@ impl CameraObstacles {
         self.layers.remove(&layer);
     }
 
-    /// Removes every layer of a tile (when the tile is unloaded).
-    pub fn remove_tile(&mut self, tile: (i32, i32)) {
-        self.layers.retain(|l, _| l.tile != tile);
+    /// Removes every layer of a tile of a package (when the tile is
+    /// unloaded).
+    pub fn remove_tile(&mut self, package: u32, tile: (i32, i32)) {
+        self.layers
+            .retain(|l, _| (l.package, l.tile) != (package, tile));
     }
 
     pub fn is_empty(&self) -> bool {
@@ -590,6 +595,7 @@ mod tests {
         // A 12 m house at x 0 … 10 (any z) on tile (0, 0).
         let house = ObstacleLayer {
             kind: "buildings",
+            package: 0,
             tile: (0, 0),
         };
         obstacles.insert(house, |x, _| (0.0..=10.0).contains(&x).then_some(112.0));
@@ -606,15 +612,19 @@ mod tests {
         // The highest layer wins.
         let tower = ObstacleLayer {
             kind: "towers",
+            package: 0,
             tile: (0, 0),
         };
         obstacles.insert(tower, |x, _| (x < 6.0).then_some(130.0));
         assert_eq!(obstacles.top_at(5.0, 0.0), Some(130.0));
         obstacles.remove(tower);
         assert_eq!(obstacles.top_at(5.0, 0.0), Some(112.0));
-        obstacles.remove_tile((1, 0));
+        obstacles.remove_tile(0, (1, 0));
         assert!(!obstacles.is_empty());
-        obstacles.remove_tile((0, 0));
+        // The same tile key of a neighbouring package is another tile.
+        obstacles.remove_tile(1, (0, 0));
+        assert!(!obstacles.is_empty());
+        obstacles.remove_tile(0, (0, 0));
         assert!(obstacles.is_empty());
     }
 
@@ -655,6 +665,7 @@ mod tests {
         obstacles.insert(
             ObstacleLayer {
                 kind: "buildings",
+                package: 0,
                 tile: (0, 0),
             },
             |x, _| (3.0..=5.0).contains(&x).then_some(6.0),
@@ -723,6 +734,7 @@ mod tests {
         app.world_mut().resource_mut::<CameraObstacles>().insert(
             ObstacleLayer {
                 kind: "buildings",
+                package: 0,
                 tile: (0, 0),
             },
             move |x, z| {

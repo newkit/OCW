@@ -1,7 +1,8 @@
 //! World packages in the desktop app (spec §4.7, §12): `--world PATH | ID`,
-//! the local cache, `--fetch-world`, the trust flags and the console
-//! commands `worlds.list` and `worlds.verify`. The logic lives in
-//! `ocw-worldstore`; this is the glue.
+//! the local cache, `--fetch-world`, the trust flags, the installed
+//! neighbouring packages (spec §2.2.2, `--no-neighbours`) and the console
+//! commands `worlds.info`, `worlds.list` and `worlds.verify`. The logic
+//! lives in `ocw-worldstore`; this is the glue.
 
 use bevy::prelude::*;
 use clap::{Arg, Command};
@@ -9,7 +10,7 @@ use ocw_render::console::{ConsoleAppExt, ConsoleCommand, Permission};
 use ocw_world::PackageIdentity;
 use ocw_world::manifest::UnsignedPolicy;
 use ocw_worldstore::trust::TrustConfig;
-use ocw_worldstore::{LoadOptions, LoadedWorld, WorldCache, load_world};
+use ocw_worldstore::{LoadOptions, LoadedWorld, Neighbourhood, WorldCache, load_world};
 
 use crate::Args;
 
@@ -22,20 +23,54 @@ pub struct WorldInfo {
     /// One line: identity, trust, file.
     pub description: String,
     pub trusted: bool,
-    /// Credits (spec §13).
+    /// Credits (spec §13), of the neighbours too.
     pub attributions: Vec<String>,
+    /// The joined neighbouring packages, one line each.
+    pub neighbours: Vec<String>,
 }
 
 impl WorldInfo {
-    pub fn of(spec: &str, w: &LoadedWorld) -> Self {
+    pub fn of(spec: &str, w: &LoadedWorld, hood: &Neighbourhood) -> Self {
+        let mut attributions = w.attributions();
+        for n in &hood.worlds {
+            for a in n.attributions() {
+                if !attributions.contains(&a) {
+                    attributions.push(a);
+                }
+            }
+        }
         Self {
             spec: spec.into(),
             identity: w.identity.clone(),
             description: w.describe(),
-            trusted: w.trust.is_trusted(),
-            attributions: w.attributions(),
+            trusted: w.trust.is_trusted() && hood.worlds.iter().all(|n| n.trust.is_trusted()),
+            attributions,
+            neighbours: hood.worlds.iter().map(LoadedWorld::describe).collect(),
         }
     }
+}
+
+/// The installed neighbours of the loaded package that its roads continue
+/// into, verified like it (none with `--no-neighbours`).
+pub fn neighbourhood(args: &Args, spec: &str, home: &LoadedWorld) -> Neighbourhood {
+    let opts = load_options(args).unwrap_or_else(|e| fail(e));
+    let hood = ocw_worldstore::neighbourhood(home, spec, &opts, !args.no_neighbours);
+    for line in &hood.log {
+        info!("{line}");
+        println!("{line}");
+    }
+    hood
+}
+
+/// The render resource: the world set, with a loader that reads (and
+/// verifies) a neighbour's tiles again when the rider comes near it.
+pub fn package_world(args: &Args, hood: Neighbourhood) -> ocw_render::package::PackageWorld {
+    let set = std::sync::Arc::new(hood.set.clone());
+    let loader: Option<ocw_render::package::PackageLoader> = match load_options(args) {
+        Ok(opts) if set.len() > 1 => Some(std::sync::Arc::new(move |i| hood.reload(i, &opts))),
+        _ => None,
+    };
+    ocw_render::package::PackageWorld { set, loader }
 }
 
 pub fn cache(args: &Args) -> WorldCache {
@@ -188,8 +223,13 @@ impl Plugin for WorldsPlugin {
                 let w = world
                     .get_resource::<WorldInfo>()
                     .ok_or("no world package loaded")?;
+                let neighbours = if w.neighbours.is_empty() {
+                    "neighbours: none".to_string()
+                } else {
+                    format!("neighbours:\n  {}", w.neighbours.join("\n  "))
+                };
                 Ok(format!(
-                    "{}\nidentity: {} (sha256 {})\ntrusted: {}\n{}",
+                    "{}\nidentity: {} (sha256 {})\ntrusted: {}\n{neighbours}\n{}",
                     w.description,
                     w.identity,
                     w.identity.content_hash,

@@ -143,6 +143,27 @@ bigger road). At dead ends and the region border the rider turns round; U
 turns round any time (in a loop as wide as the road, steered to the middle
 first). Sharp turns slow the rider down automatically.
 
+**Neighbouring packages** (spec §2.2.2): if a package for the region next
+door is installed, the ride continues across the border instead of turning
+round. Neighbours are found by their region box (in the manifest): the newest
+version of every other package in the cache, and the packages in the same
+directory as a `--world` path. Each is verified like the main package and
+joined when at least one road crosses the border; the start-up log and
+`worlds.info` list them (`--no-neighbours` rides the package alone). The road
+graphs are joined at the start; a neighbour's terrain, buildings and trees are
+loaded when you come within 3 km of it and dropped beyond 5 km (at most two
+neighbours at a time). Packages built before the region section (`REGN`)
+have no neighbours. To cut a region into neighbouring packages, build each
+part with the same `--poly`, its own `--bbox` and one common `--origin`:
+
+```bash
+world-builder package --bbox 47.04,9.46,47.15,9.64 --origin 47.1595,9.5536 \
+    --name "Liechtenstein Süd" --id test/li-south --out data/split/li-south.ocwpkg
+world-builder package --bbox 47.15,9.46,47.28,9.64 --origin 47.1595,9.5536 \
+    --name "Liechtenstein Nord" --id test/li-north --out data/split/li-north.ocwpkg
+ocw-desktop --world data/split/li-south.ocwpkg --free-ride
+```
+
 **Route rides on the road graph** (spec §2.7, §2.2.1): ride a route of the
 package, or import a GPX file and ride it:
 
@@ -270,6 +291,7 @@ records with a fixed time step instead). Needs `ffmpeg` (`make deps` installs it
 | `--allow-unsigned` / `--require-signed` | Accept untrusted packages from the cache too / refuse them also from paths |
 | `--trust-root FILE`, `--trust-dev-root` | Also trust this root public key / the development roots (debug builds always do) |
 | `--free-ride` | Free ride on the package's road graph (needs `--world`) |
+| `--no-neighbours` | Do not join the installed neighbouring packages (the ride turns at the region border) |
 | `--start X,Z` | Free ride start: the road nearest local X,Z metres (default: random) |
 | `--random-start BOOL` | Start at a random point (default on, off for screenshot/capture runs) |
 | `--virtual` | Use the virtual trainer even if Bluetooth devices are remembered |
@@ -368,7 +390,9 @@ It prints the riders' positions and speeds while it runs. Options:
 Ctrl+C), `--fast` (no real-time pacing), `--world PKG|ID` and `--seed N` (free
 ride on a world package's road graph, start point seed; verified like in the
 desktop app, `--allow-unsigned` and `--trust-root FILE` as there), `--route NAME`
-(with `--world`: ride one of the package's routes).
+(with `--world`: ride one of the package's routes), `--no-neighbours` (ride
+the package without its installed neighbours; by default their road graphs
+are joined as in the desktop app).
 
 Clients and the server must use the same build of a world package (junctions
 are identified by vertex index): the Hello and Welcome carry the package name
@@ -538,7 +562,7 @@ to *Public* are the usual causes; the server log is in Event Viewer under
 |---|---|
 | `make help` | All make targets: deps, build, test, check, smoke screenshots, videos, deploy |
 | `cargo run -p ocw-server -- --bots 3 --seconds 10 --fast` | Headless game server (`--world PKG [--seed N]`: free ride on a package) |
-| `world-builder graph` / `route` / `package` / `check` | OSM + elevation import: road graph statistics, route files, world packages, package validation (`cargo run --release -p world-builder -- help`) |
+| `world-builder graph` / `route` / `package` / `check` | OSM + elevation import: road graph statistics, route files, world packages (`--bbox S,W,N,E --origin LAT,LON`: one part of a region, for neighbouring packages), package validation (`cargo run --release -p world-builder -- help`) |
 | `world-builder gpx --world PKG --gpx FILE [--name N] [--route-file F] [--dry-run]` | Import a GPX track: map-match it onto the package's road graph and store it as a package route (section `ROUT`; optionally also as an `ocw-graph-route` file); off-road stretches and gaps are reported |
 | `world-builder route --world PKG --from LAT,LON --to LAT,LON --name N` | Store the shortest main-road route between two points as a package route |
 | `world-builder routes --world PKG [--from OLD_PKG] [--remove N] [--export-gpx]` | List and check a package's routes; carry the routes of an older build over (by stable edge ID, re-matching broken ones); export them as GPX |

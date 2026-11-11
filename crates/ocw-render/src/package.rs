@@ -9,8 +9,20 @@
 //! never on roads, water or buildings) and water is drawn flat at its
 //! level. Packages without land use keep plain grass and placeholder tree
 //! patches.
+//!
+//! **Neighbouring packages** (spec §2.2.2): the resource holds a
+//! [`WorldSet`] – the home package and its installed neighbours. Tiles of
+//! every package with loaded tiles are streamed around the rider, each
+//! placed with its package's [`ocw_world::Frame`] (a shift and an x scale
+//! into the home metres). Where packages overlap, a package draws only the
+//! terrain cells, water, trees and buildings on ground it owns
+//! ([`WorldSet::draws`]), so the border has no double terrain. A
+//! neighbour's tiles are loaded when the rider comes near it and dropped
+//! again far away ([`WorldSet::plan_residency`]); the loading itself (file
+//! access, signature check) is the app's [`PackageLoader`], run on a
+//! background task.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::Arc;
 
 use bevy::asset::RenderAssetUsages;
@@ -26,6 +38,8 @@ use ocw_world::buildings::{Building, BuildingKind, Roof, triangulate};
 use ocw_world::graph::RoadClass;
 use ocw_world::landuse::{LandClass, LandUseTile};
 use ocw_world::package::{RoadStrip, Tile, TileKey, WorldPackage};
+use ocw_world::world_set::Residency;
+use ocw_world::{Frame, WorldSet};
 
 use crate::RideView;
 use crate::camera::{CameraInteraction, CameraObstacles, ObstacleLayer, SolidFootprints};
@@ -36,24 +50,70 @@ pub const STREAM_RADIUS: i32 = 2;
 /// Road edge faces reach this far down (covers the terrain clearance).
 const EDGE_DEPTH_M: f32 = 2.0;
 
-/// The loaded world package (inserted by the app with `--world`).
+/// Loads the tiles of member `i` of the world set again (verified), for
+/// neighbours that come into range. Runs on a background task.
+pub type PackageLoader = Arc<dyn Fn(usize) -> Result<WorldPackage, String> + Send + Sync>;
+
+/// The loaded world packages (inserted by the app with `--world`).
 #[derive(Resource, Clone)]
-pub struct PackageWorld(pub Arc<WorldPackage>);
+pub struct PackageWorld {
+    pub set: Arc<WorldSet>,
+    /// Without one, neighbours keep the tiles they were added with.
+    pub loader: Option<PackageLoader>,
+}
+
+impl PackageWorld {
+    /// A single package.
+    pub fn single(pkg: Arc<WorldPackage>) -> Self {
+        Self {
+            set: Arc::new(WorldSet::new("", pkg)),
+            loader: None,
+        }
+    }
+
+    pub fn home(&self) -> &Arc<WorldPackage> {
+        self.set
+            .home()
+            .package()
+            .expect("the home package stays loaded")
+    }
+
+    /// The terrain surface in home metres (camera and riders stand on it).
+    pub fn ground(&self) -> crate::Ground {
+        let set = self.set.clone();
+        crate::Ground(Arc::new(move |x, z| set.surface_height([x, z])))
+    }
+}
 
 pub struct PackagePlugin;
 
 impl Plugin for PackagePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TileStreamer>()
+            .init_resource::<NeighbourLoads>()
             .add_systems(Startup, setup_materials)
             .add_systems(
                 Update,
-                (stream_tiles, upload_tiles)
+                (load_neighbours, stream_tiles, upload_tiles)
                     .chain()
                     .run_if(resource_exists::<PackageWorld>),
             );
     }
 }
+
+/// Where a tile of a package is drawn: the package's frame as an entity
+/// transform (y up stays; x scaled and shifted, z shifted).
+pub fn frame_transform(f: &Frame) -> Transform {
+    Transform {
+        translation: Vec3::new(f.offset[0] as f32, 0.0, f.offset[1] as f32),
+        scale: Vec3::new(f.scale_x as f32, 1.0, 1.0),
+        ..default()
+    }
+}
+
+/// Which ground of a tile its package draws, in the package's metres
+/// (`None` = all of it).
+pub type Keep<'a> = Option<&'a (dyn Fn([f64; 2]) -> bool + Sync)>;
 
 /// Mesh arrays of one tile (built off the main thread).
 #[derive(Default)]
@@ -144,6 +204,11 @@ fn lin(r: f32, g: f32, b: f32) -> [f32; 4] {
 /// Terrain mesh of a tile, in world coordinates (local metres). With land
 /// use the colours come from the colour map and the vertices stay white.
 pub fn terrain_arrays(pkg: &WorldPackage, tile: &Tile) -> MeshArrays {
+    terrain_arrays_kept(pkg, tile, None)
+}
+
+/// [`terrain_arrays`] with only the grid cells whose centre `keep` accepts.
+pub fn terrain_arrays_kept(pkg: &WorldPackage, tile: &Tile, keep: Keep) -> MeshArrays {
     let textured = tile_landuse(pkg, tile.key).is_some();
     let n = pkg.samples as usize;
     let s = pkg.spacing_m() as f32;
@@ -179,12 +244,20 @@ pub fn terrain_arrays(pkg: &WorldPackage, tile: &Tile) -> MeshArrays {
     }
     for k in 0..n - 1 {
         for i in 0..n - 1 {
+            if !cell_kept(keep, o, f64::from(s), i, k) {
+                continue;
+            }
             let v = |i: usize, k: usize| (k * n + i) as u32;
             let (a, b, c, d) = (v(i, k), v(i + 1, k), v(i, k + 1), v(i + 1, k + 1));
             m.indices.extend([a, c, b, b, c, d]);
         }
     }
     m
+}
+
+/// Whether grid cell (i, k) of a tile at `o` with spacing `s` is drawn.
+fn cell_kept(keep: Keep, o: [f64; 2], s: f64, i: usize, k: usize) -> bool {
+    keep.is_none_or(|f| f([o[0] + (i as f64 + 0.5) * s, o[1] + (k as f64 + 0.5) * s]))
 }
 
 fn road_colour(class: RoadClass) -> [f32; 4] {
@@ -608,6 +681,16 @@ pub fn colour_map(pkg: &WorldPackage, tile: &Tile, lu: &LandUseTile, cells: u32)
 /// Flat water surfaces: a quad over every terrain grid cell whose four
 /// corners have a water level (the terrain is carved below it).
 pub fn water_arrays(pkg: &WorldPackage, tile: &Tile, lu: &LandUseTile) -> MeshArrays {
+    water_arrays_kept(pkg, tile, lu, None)
+}
+
+/// [`water_arrays`] on the cells `keep` accepts.
+pub fn water_arrays_kept(
+    pkg: &WorldPackage,
+    tile: &Tile,
+    lu: &LandUseTile,
+    keep: Keep,
+) -> MeshArrays {
     let mut m = MeshArrays::default();
     if lu.water.is_empty() {
         return m;
@@ -636,7 +719,7 @@ pub fn water_arrays(pkg: &WorldPackage, tile: &Tile, lu: &LandUseTile) -> MeshAr
                 vertex[(k + 1) * n + i],
                 vertex[(k + 1) * n + i + 1],
             );
-            if [a, b, c, d].contains(&u32::MAX) {
+            if [a, b, c, d].contains(&u32::MAX) || !cell_kept(keep, o, f64::from(s), i, k) {
                 continue;
             }
             m.indices.extend([a, c, b, b, c, d]);
@@ -796,22 +879,52 @@ pub fn building_footprints(buildings: &[Building]) -> SolidFootprints {
 }
 
 pub fn build_tile_meshes(pkg: &WorldPackage, key: TileKey) -> Option<TileMeshes> {
+    build_tile_meshes_kept(pkg, key, None)
+}
+
+/// [`build_tile_meshes`] with only the ground `keep` accepts (package
+/// metres): terrain and water cells by their centre, trees by their foot,
+/// buildings by the centroid of their outline. Road strips are always
+/// drawn (the builder cuts them at the package's border).
+pub fn build_tile_meshes_kept(pkg: &WorldPackage, key: TileKey, keep: Keep) -> Option<TileMeshes> {
     let tile = pkg.tiles.get(&key)?;
-    let sites = tree_sites(pkg, tile);
+    let mut sites = tree_sites(pkg, tile);
+    if let Some(f) = keep {
+        sites.retain(|(p, _)| f([f64::from(p.x), f64::from(p.z)]));
+    }
     let lu = tile_landuse(pkg, key);
-    let tile_buildings = pkg.buildings.as_ref().and_then(|b| b.get(&key));
-    let buildings = tile_buildings.map_or_else(MeshArrays::default, |b| building_arrays(b));
-    let solid = tile_buildings.map_or_else(SolidFootprints::default, |b| building_footprints(b));
+    let kept: Option<Vec<Building>> = pkg.buildings.as_ref().and_then(|b| b.get(&key)).map(|b| {
+        b.iter()
+            .filter(|b| keep.is_none_or(|f| f(outline_centroid(&b.outline))))
+            .cloned()
+            .collect()
+    });
+    let buildings = kept
+        .as_deref()
+        .map_or_else(MeshArrays::default, building_arrays);
+    let solid = kept
+        .as_deref()
+        .map_or_else(SolidFootprints::default, building_footprints);
     Some(TileMeshes {
         key,
-        terrain: terrain_arrays(pkg, tile),
+        terrain: terrain_arrays_kept(pkg, tile, keep),
         colour_map: lu.map(|(lu, cells)| colour_map(pkg, tile, lu, cells)),
         roads: road_arrays(&tile.roads),
-        water: lu.map_or_else(MeshArrays::default, |(lu, _)| water_arrays(pkg, tile, lu)),
+        water: lu.map_or_else(MeshArrays::default, |(lu, _)| {
+            water_arrays_kept(pkg, tile, lu, keep)
+        }),
         trees: tree_arrays(&sites),
         buildings,
         solid,
     })
+}
+
+fn outline_centroid(outline: &[[f32; 2]]) -> [f64; 2] {
+    let n = outline.len().max(1) as f64;
+    let (x, z) = outline.iter().fold((0.0, 0.0), |(x, z), p| {
+        (x + f64::from(p[0]), z + f64::from(p[1]))
+    });
+    [x / n, z / n]
 }
 
 #[derive(Resource)]
@@ -846,20 +959,148 @@ fn setup_materials(
     });
 }
 
+/// A tile of member `.0` of the world set.
+type TileId = (usize, TileKey);
+
 #[derive(Resource, Default)]
 struct TileStreamer {
-    loaded: HashMap<TileKey, Entity>,
-    building: HashMap<TileKey, Task<Option<TileMeshes>>>,
-    ready: VecDeque<TileMeshes>,
+    loaded: HashMap<TileId, Entity>,
+    building: HashMap<TileId, Task<Option<TileMeshes>>>,
+    ready: VecDeque<(TileId, TileMeshes)>,
+    /// World set generation the loaded tiles were clipped for.
+    generation: u64,
 }
 
-fn rider_tile(view: &RideView, pkg: &WorldPackage) -> Option<TileKey> {
+/// Neighbour tiles being loaded.
+#[derive(Resource, Default)]
+struct NeighbourLoads {
+    tasks: HashMap<usize, Task<Result<WorldPackage, String>>>,
+}
+
+/// The local rider's position in home metres.
+fn rider_position(view: &RideView) -> Option<[f64; 2]> {
     let local = view.local()?;
     let p = view.track(local.id).sample(local.state.distance).position;
-    Some(TileKey::containing(
-        [p[0], p[2]],
-        f64::from(pkg.tile_size_m),
-    ))
+    Some([p[0], p[2]])
+}
+
+/// The tiles to show around `p` (home metres), nearest first: of every
+/// package with loaded tiles, those within [`STREAM_RADIUS`].
+pub fn wanted_tiles(set: &WorldSet, p: [f64; 2]) -> Vec<TileId> {
+    let mut out: Vec<(i32, TileId)> = Vec::new();
+    for (i, m) in set.members().iter().enumerate() {
+        let Some(pkg) = m.package() else {
+            continue;
+        };
+        let centre = TileKey::containing(m.frame.invert(p), f64::from(pkg.tile_size_m));
+        for dz in -STREAM_RADIUS..=STREAM_RADIUS {
+            for dx in -STREAM_RADIUS..=STREAM_RADIUS {
+                let key = TileKey {
+                    x: centre.x + dx,
+                    z: centre.z + dz,
+                };
+                if pkg.tiles.contains_key(&key) {
+                    out.push((key.ring(centre), (i, key)));
+                }
+            }
+        }
+    }
+    out.sort_by_key(|&(ring, (i, _))| (ring, i));
+    out.into_iter().map(|(_, id)| id).collect()
+}
+
+/// Tiles to drop: of packages without loaded tiles, or too far away.
+pub fn far_tiles<'a>(
+    set: &WorldSet,
+    p: [f64; 2],
+    loaded: impl IntoIterator<Item = &'a TileId>,
+) -> Vec<TileId> {
+    loaded
+        .into_iter()
+        .filter(|(i, key)| {
+            let m = &set.members()[*i];
+            match m.package() {
+                None => true,
+                Some(pkg) => {
+                    let centre = TileKey::containing(m.frame.invert(p), f64::from(pkg.tile_size_m));
+                    key.ring(centre) > STREAM_RADIUS + 1
+                }
+            }
+        })
+        .copied()
+        .collect()
+}
+
+fn build_task(set: &Arc<WorldSet>, (i, key): TileId) -> Task<Option<TileMeshes>> {
+    let set = set.clone();
+    AsyncComputeTaskPool::get().spawn(async move {
+        let pkg = set.members()[i].package()?.clone();
+        if set.has_seams() {
+            let keep = |q: [f64; 2]| set.draws(i, q);
+            build_tile_meshes_kept(&pkg, key, Some(&keep))
+        } else {
+            build_tile_meshes(&pkg, key)
+        }
+    })
+}
+
+/// Loads and drops neighbour tiles by the rider's distance (spec §2.2.2).
+fn load_neighbours(
+    mut commands: Commands,
+    mut world: ResMut<PackageWorld>,
+    view: Res<RideView>,
+    mut loads: ResMut<NeighbourLoads>,
+) {
+    if world.set.len() < 2 {
+        return;
+    }
+    let Some(p) = rider_position(&view) else {
+        return;
+    };
+    let mut changed = false;
+    // Finished loads.
+    let done: Vec<usize> = loads.tasks.keys().copied().collect();
+    for i in done {
+        let task = loads.tasks.get_mut(&i).expect("key exists");
+        if let Some(result) = check_ready(task) {
+            loads.tasks.remove(&i);
+            match result {
+                Ok(pkg) => {
+                    info!("world: tiles of {} loaded", world.set.members()[i].id);
+                    Arc::make_mut(&mut world.set).set_resident(i, Some(Arc::new(pkg)));
+                    changed = true;
+                }
+                Err(e) => warn!("world: {e}"),
+            }
+        }
+    }
+    let loading: BTreeSet<usize> = loads.tasks.keys().copied().collect();
+    for r in world.set.plan_residency(p, &loading) {
+        match r {
+            Residency::Load(i) => {
+                let Some(loader) = world.loader.clone() else {
+                    continue;
+                };
+                info!("world: loading the tiles of {}", world.set.members()[i].id);
+                loads.tasks.insert(
+                    i,
+                    AsyncComputeTaskPool::get().spawn(async move { loader(i) }),
+                );
+            }
+            Residency::Unload(i) => {
+                // Without a loader they could not come back.
+                if world.loader.is_none() {
+                    continue;
+                }
+                info!("world: dropping the tiles of {}", world.set.members()[i].id);
+                Arc::make_mut(&mut world.set).set_resident(i, None);
+                changed = true;
+            }
+        }
+    }
+    if changed {
+        commands.insert_resource(world.ground());
+    }
 }
 
 fn stream_tiles(
@@ -869,56 +1110,54 @@ fn stream_tiles(
     mut streamer: ResMut<TileStreamer>,
     mut obstacles: ResMut<CameraObstacles>,
 ) {
-    let pkg = &world.0;
-    let Some(center) = rider_tile(&view, pkg) else {
+    let set = &world.set;
+    let Some(p) = rider_position(&view) else {
         return;
     };
-    let pool = AsyncComputeTaskPool::get();
-    let mut wanted: Vec<TileKey> = (-STREAM_RADIUS..=STREAM_RADIUS)
-        .flat_map(|dz| {
-            (-STREAM_RADIUS..=STREAM_RADIUS).map(move |dx| TileKey {
-                x: center.x + dx,
-                z: center.z + dz,
-            })
-        })
-        .filter(|k| pkg.tiles.contains_key(k))
-        .collect();
-    wanted.sort_by_key(|k| k.ring(center));
-    for key in wanted {
-        if streamer.loaded.contains_key(&key) || streamer.building.contains_key(&key) {
-            continue;
-        }
-        let pkg = world.0.clone();
-        streamer
-            .building
-            .insert(key, pool.spawn(async move { build_tile_meshes(&pkg, key) }));
-    }
-    let keys: Vec<TileKey> = streamer.building.keys().copied().collect();
-    for key in keys {
-        let task = streamer.building.get_mut(&key).expect("key exists");
-        if let Some(result) = check_ready(task) {
-            streamer.building.remove(&key);
-            if let Some(meshes) = result {
-                streamer.ready.push_back(meshes);
+    // Packages came or went: the tiles on the seams are clipped anew (the
+    // old meshes stay until the new ones are uploaded). Tasks for the old
+    // set are discarded.
+    if streamer.generation != set.generation() {
+        streamer.generation = set.generation();
+        streamer.building.clear();
+        let loaded: Vec<TileId> = streamer.loaded.keys().copied().collect();
+        for id in loaded {
+            if set.members()[id.0].is_resident() {
+                streamer.building.insert(id, build_task(set, id));
             }
         }
     }
-    let far: Vec<TileKey> = streamer
-        .loaded
-        .keys()
-        .filter(|k| k.ring(center) > STREAM_RADIUS + 1)
-        .copied()
-        .collect();
-    for key in far {
-        if let Some(e) = streamer.loaded.remove(&key) {
-            commands.entity(e).despawn();
-            obstacles.remove_tile((key.x, key.z));
+    for id in wanted_tiles(set, p) {
+        if streamer.loaded.contains_key(&id) || streamer.building.contains_key(&id) {
+            continue;
         }
+        streamer.building.insert(id, build_task(set, id));
+    }
+    let ids: Vec<TileId> = streamer.building.keys().copied().collect();
+    for id in ids {
+        let task = streamer.building.get_mut(&id).expect("key exists");
+        if let Some(result) = check_ready(task) {
+            streamer.building.remove(&id);
+            if let Some(meshes) = result {
+                streamer.ready.push_back((id, meshes));
+            }
+        }
+    }
+    let far = far_tiles(set, p, streamer.loaded.keys());
+    for id in far {
+        if let Some(e) = streamer.loaded.remove(&id) {
+            commands.entity(e).despawn();
+            obstacles.remove_tile(id.0 as u32, (id.1.x, id.1.z));
+        }
+        streamer.building.remove(&id);
+        streamer.ready.retain(|(r, _)| *r != id);
     }
 }
 
+#[allow(clippy::too_many_arguments)] // a Bevy system
 fn upload_tiles(
     mut commands: Commands,
+    world: Res<PackageWorld>,
     mut streamer: ResMut<TileStreamer>,
     materials: Res<PackageMaterials>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -926,20 +1165,30 @@ fn upload_tiles(
     mut standard: ResMut<Assets<StandardMaterial>>,
     mut obstacles: ResMut<CameraObstacles>,
 ) {
-    let Some(mut t) = streamer.ready.pop_front() else {
+    let Some((id, mut t)) = streamer.ready.pop_front() else {
         return;
     };
-    // Buildings are camera-solid: the camera stays out of and above them.
+    let Some(member) = world.set.members().get(id.0) else {
+        return;
+    };
+    let frame = member.frame;
+    // Buildings are camera-solid: the camera stays out of and above them
+    // (the camera asks in home metres).
     let tile = (t.key.x, t.key.z);
-    obstacles.remove_tile(tile);
+    let package = id.0 as u32;
+    obstacles.remove_tile(package, tile);
     let solid = std::mem::take(&mut t.solid);
     if !solid.is_empty() {
         obstacles.insert(
             ObstacleLayer {
                 kind: "buildings",
+                package,
                 tile,
             },
-            move |x, z| solid.top_at(x, z),
+            move |x, z| {
+                let q = frame.invert([x, z]);
+                solid.top_at(q[0], q[1])
+            },
         );
     }
     let mat = materials.vertex_coloured.clone();
@@ -956,9 +1205,9 @@ fn upload_tiles(
     };
     let parent = commands
         .spawn((
-            Transform::default(),
+            frame_transform(&frame),
             Visibility::default(),
-            Name::new(format!("tile {} {}", t.key.x, t.key.z)),
+            Name::new(format!("tile {} {} of {}", t.key.x, t.key.z, member.id)),
         ))
         .with_children(|c| {
             c.spawn((
@@ -998,7 +1247,7 @@ fn upload_tiles(
             }
         })
         .id();
-    if let Some(old) = streamer.loaded.insert(t.key, parent) {
+    if let Some(old) = streamer.loaded.insert(id, parent) {
         commands.entity(old).despawn();
     }
 }
@@ -1006,6 +1255,8 @@ fn upload_tiles(
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+
+    use ocw_world::geo::LocalProjection;
 
     use super::*;
 
@@ -1031,6 +1282,7 @@ mod tests {
             landuse: None,
             buildings: None,
             routes: Vec::new(),
+            region: None,
         }
     }
 
@@ -1133,6 +1385,187 @@ mod tests {
             }],
         )]));
         p
+    }
+
+    #[test]
+    fn a_package_draws_only_the_ground_it_owns() {
+        // Keep the west half (x < 50 m) of the land-use tile.
+        let p = landuse_package();
+        let key = TileKey { x: 0, z: 0 };
+        let full = build_tile_meshes(&p, key).unwrap();
+        let west = |q: [f64; 2]| q[0] < 50.0;
+        let half = build_tile_meshes_kept(&p, key, Some(&west)).unwrap();
+        // Half of the 10 × 10 terrain cells, two triangles each.
+        assert_eq!(full.terrain.indices.len(), 100 * 6);
+        assert_eq!(half.terrain.indices.len(), 50 * 6);
+        let used = |m: &MeshArrays| -> Vec<[f32; 3]> {
+            m.indices.iter().map(|&i| m.positions[i as usize]).collect()
+        };
+        assert!(used(&half.terrain).iter().all(|v| v[0] <= 50.0));
+        // The water (x 60 … 100) is east: gone. Trees only in the west.
+        assert!(!full.water.indices.is_empty());
+        assert!(half.water.indices.is_empty());
+        // Every tree has the same number of vertices.
+        let sites = tree_sites(&p, &p.tiles[&key]);
+        let west_sites = sites.iter().filter(|(s, _)| s.x < 50.0).count();
+        assert!(west_sites > 0);
+        assert_eq!(
+            half.trees.positions.len() * sites.len(),
+            full.trees.positions.len() * west_sites
+        );
+        // The house (centroid x = 16) stays; the roads are always drawn.
+        assert_eq!(half.buildings.indices.len(), full.buildings.indices.len());
+        assert_eq!(half.roads.indices.len(), full.roads.indices.len());
+        let east = |q: [f64; 2]| q[0] >= 50.0;
+        let other = build_tile_meshes_kept(&p, key, Some(&east)).unwrap();
+        assert!(other.buildings.indices.is_empty());
+        assert!(other.solid.is_empty());
+        assert_eq!(other.terrain.indices.len(), 50 * 6);
+    }
+
+    /// Two 100 m packages side by side: home tiles x −2..=0, a neighbour
+    /// with its own origin 0.001° east (about 76 m) and tiles 0..=2.
+    fn two_packages() -> WorldSet {
+        let home = LocalProjection::new(47.0, 9.0);
+        let region = |w: f64, e: f64| {
+            let (n, s) = (
+                home.unproject([0.0, -100.0]).0,
+                home.unproject([0.0, 200.0]).0,
+            );
+            ocw_world::region::PackageRegion::bbox(
+                s,
+                home.unproject([w, 0.0]).1,
+                n,
+                home.unproject([e, 0.0]).1,
+            )
+        };
+        let mut graph = ocw_world::graph::RoadGraph {
+            vertices: vec![[-150.0, 50.0], [0.0, 50.0]],
+            ..Default::default()
+        };
+        let edge = |id: u64, pts: Vec<[f64; 2]>| ocw_world::graph::Edge {
+            id: ocw_world::graph::EdgeId(id),
+            from: ocw_world::graph::VertexId(0),
+            to: ocw_world::graph::VertexId(1),
+            points: pts,
+            class: RoadClass::Residential,
+            name: None,
+            width_m: 5.0,
+            bridge: false,
+            tunnel: false,
+            dead_end_m: None,
+            boundary: true,
+            oneway: ocw_world::graph::Oneway::No,
+            osm_way: 5,
+            profile: vec![],
+        };
+        graph.edges = vec![edge(1, vec![[-150.0, 50.0], [0.0, 50.0]])];
+        graph
+            .boundary_vertices
+            .insert(ocw_world::graph::VertexId(1));
+        let mut a = package();
+        a.tiles = (-2..=0)
+            .map(|x| {
+                let key = TileKey { x, z: 0 };
+                (
+                    key,
+                    Tile {
+                        key,
+                        ..package().tiles[&TileKey { x: 0, z: 0 }].clone()
+                    },
+                )
+            })
+            .collect();
+        a.graph = Some(graph.clone());
+        a.region = Some(region(-300.0, 0.0));
+        let mut b = a.clone();
+        b.name = "b".into();
+        b.origin = (47.0, 9.001);
+        let shift = LocalProjection::new(47.0, 9.001).project(47.0, 9.0)[0];
+        b.tiles = (0..=2)
+            .map(|x| {
+                let key = TileKey { x, z: 0 };
+                (
+                    key,
+                    Tile {
+                        key,
+                        ..package().tiles[&TileKey { x: 0, z: 0 }].clone()
+                    },
+                )
+            })
+            .collect();
+        let mut g = graph;
+        g.vertices = vec![[150.0 + shift, 50.0], [shift, 50.0]];
+        g.edges = vec![edge(2, vec![[150.0 + shift, 50.0], [shift, 50.0]])];
+        b.graph = Some(g);
+        b.region = Some(region(0.0, 300.0));
+        let mut set = WorldSet::new("a", Arc::new(a));
+        set.add_neighbour("b", Arc::new(b)).unwrap();
+        set
+    }
+
+    #[test]
+    fn tiles_of_both_packages_stream_around_the_rider() {
+        let set = two_packages();
+        let f = set.members()[1].frame;
+        assert!(f.offset[0] > 70.0, "{f:?}");
+        // At the border: home tiles −2..=0 and neighbour tiles 0..=2.
+        let wanted = wanted_tiles(&set, [0.0, 50.0]);
+        let of =
+            |i: usize| -> Vec<i32> { wanted.iter().filter(|w| w.0 == i).map(|w| w.1.x).collect() };
+        let mut home = of(0);
+        home.sort();
+        assert_eq!(home, vec![-2, -1, 0]);
+        // The neighbour's metres are shifted by about 76 m: its tile 2 is
+        // more than two tiles away.
+        let mut nb = of(1);
+        nb.sort();
+        assert_eq!(nb, vec![0, 1]);
+        // Nearest first.
+        assert_eq!(wanted[0].1.ring(TileKey { x: 0, z: 0 }), 0);
+        // Far west: the neighbour's tiles go first.
+        let loaded: Vec<TileId> = wanted.clone();
+        let far = far_tiles(&set, [-250.0, 50.0], &loaded);
+        assert!(far.iter().all(|t| t.0 == 1));
+        assert!(far.contains(&(1, TileKey { x: 1, z: 0 })));
+        // Without its tiles, all of the neighbour's go.
+        let mut set = set;
+        set.set_resident(1, None);
+        assert!(wanted_tiles(&set, [0.0, 50.0]).iter().all(|w| w.0 == 0));
+        assert_eq!(
+            far_tiles(&set, [0.0, 50.0], &loaded).len(),
+            loaded.iter().filter(|t| t.0 == 1).count()
+        );
+    }
+
+    #[test]
+    fn the_frame_transform_places_tiles_like_the_frame() {
+        let set = two_packages();
+        let f = set.members()[1].frame;
+        let t = frame_transform(&f);
+        let q = [123.0, -45.0];
+        let p = f.apply(q);
+        let v = t.transform_point(Vec3::new(q[0] as f32, 7.0, q[1] as f32));
+        assert!((f64::from(v.x) - p[0]).abs() < 1e-3 && (f64::from(v.z) - p[1]).abs() < 1e-3);
+        assert_eq!(v.y, 7.0);
+        assert_eq!(frame_transform(&Frame::IDENTITY), Transform::default());
+        // The ground is the owner's: the home package's west of the
+        // border, the neighbour's east of it (both slope 1 m per 10 m in
+        // their own metres).
+        let world = PackageWorld {
+            set: Arc::new(set),
+            loader: None,
+        };
+        let ground = world.ground();
+        let west = (ground.0)(-50.0, 50.0).unwrap();
+        assert!((west - 5.0).abs() < 1e-6, "{west}");
+        let east = (ground.0)(150.0, 50.0).unwrap();
+        let local = f.invert([150.0, 50.0])[0].rem_euclid(100.0) / 10.0;
+        assert!((east - local).abs() < 1e-6, "{east} vs {local}");
+        // In the neighbour's region but outside its tiles: the home
+        // package's margin tile draws (no hole).
+        let margin = (ground.0)(50.0, 50.0).unwrap();
+        assert!((margin - 5.0).abs() < 1e-6, "{margin}");
     }
 
     #[test]

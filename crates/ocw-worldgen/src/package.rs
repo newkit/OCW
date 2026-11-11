@@ -267,6 +267,7 @@ pub fn build_package<F: Fn(f64, f64) -> f64 + Sync>(
         landuse: None,
         buildings: None,
         routes: Vec::new(),
+        region: None,
     }
 }
 

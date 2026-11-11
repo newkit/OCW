@@ -687,6 +687,7 @@ mod tests {
             landuse: None,
             buildings: None,
             routes: Vec::new(),
+            region: None,
         }
     }
 
