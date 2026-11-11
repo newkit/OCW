@@ -25,6 +25,12 @@ use ocw_render::console::{ConsoleState, Permission};
 use ocw_render::{OcwRenderPlugins, RideView};
 use ocw_world::Route;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum RouteChoice {
+    Hills,
+    Loop,
+}
+
 #[derive(Parser, Debug, Clone, Resource)]
 #[command(version, about = "Open Cycling World desktop client")]
 pub struct Args {
@@ -43,6 +49,9 @@ pub struct Args {
     /// Borderless fullscreen on the current monitor (ignores --window).
     #[arg(long)]
     pub fullscreen: bool,
+    /// Test route: hills (steep, changing gradients) or loop (gentle).
+    #[arg(long, value_enum, default_value_t = RouteChoice::Hills)]
+    pub route: RouteChoice,
     /// Use the virtual trainer even if Bluetooth devices are remembered.
     #[arg(long = "virtual")]
     pub virtual_trainer: bool,
@@ -87,7 +96,10 @@ fn parse_size(s: &str) -> Result<(u32, u32), String> {
 
 fn main() -> AppExit {
     let args = Args::parse();
-    let route = Route::test_loop();
+    let route = match args.route {
+        RouteChoice::Hills => Route::test_hills(),
+        RouteChoice::Loop => Route::test_loop(),
+    };
     let mut app = App::new();
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {

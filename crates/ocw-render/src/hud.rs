@@ -102,7 +102,7 @@ fn update_hud(
         heart
     );
     let mut lines = format!(
-        "{} | {:.2} km | {:+.1} % | {} | riders: {}\nPgUp/PgDn: virtual power +/-10 W | ` or F12: console",
+        "{} | {:.2} km | {:+.1} % | {} | riders: {}\nPgUp/PgDn: virtual power +/-10 W | mouse drag/wheel: camera, R: reset | ` or F12: console",
         view.route.name(),
         local.state.distance / 1000.0,
         grade,

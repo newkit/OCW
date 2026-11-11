@@ -12,9 +12,9 @@ use bevy::app::AppExit;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
-use clap::{Arg, ArgMatches, Command};
+use clap::{Arg, ArgMatches, Command, value_parser};
 
-use crate::camera::CameraMode;
+use crate::camera::{CameraMode, CameraOrbit, MAX_DISTANCE, MAX_PITCH, MIN_DISTANCE, MIN_PITCH};
 use crate::hud::ShowFps;
 
 /// Console with its egui overlay (toggle with `` ` `` or F12).
@@ -41,6 +41,7 @@ impl Plugin for ConsoleCorePlugin {
             .init_resource::<ConsoleState>()
             .init_resource::<ShowFps>()
             .init_resource::<CameraMode>()
+            .init_resource::<CameraOrbit>()
             .add_systems(Update, run_pending_commands);
         register_builtin_commands(app);
     }
@@ -418,6 +419,32 @@ fn register_builtin_commands(app: &mut App) {
     ))
     .console_command(ConsoleCommand::new(
         User,
+        Command::new("camera.orbit")
+            .about("Orbit the chase camera: yaw (0 = behind, 180 = in front) and pitch in degrees, distance in m")
+            .arg(Arg::new("yaw").required(true).allow_negative_numbers(true).value_parser(value_parser!(f32)))
+            .arg(Arg::new("pitch").required(true).allow_negative_numbers(true).value_parser(value_parser!(f32)))
+            .arg(Arg::new("distance").value_parser(value_parser!(f32))),
+        |world, m| {
+            let mut orbit = world.resource_mut::<CameraOrbit>();
+            orbit.yaw = m.get_one::<f32>("yaw").expect("required").to_radians();
+            orbit.pitch = m
+                .get_one::<f32>("pitch")
+                .expect("required")
+                .to_radians()
+                .clamp(MIN_PITCH, MAX_PITCH);
+            if let Some(d) = m.get_one::<f32>("distance") {
+                orbit.distance = d.clamp(MIN_DISTANCE, MAX_DISTANCE);
+            }
+            Ok(format!(
+                "camera orbit yaw {:.0}, pitch {:.0}, distance {:.1} m",
+                orbit.yaw.to_degrees(),
+                orbit.pitch.to_degrees(),
+                orbit.distance
+            ))
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        User,
         Command::new("screenshot")
             .about("Save a screenshot of the window as PNG")
             .arg(Arg::new("path").default_value("screenshot.png")),
@@ -497,6 +524,12 @@ mod tests {
         assert_eq!(*app.world().resource::<CameraMode>(), CameraMode::Top);
         assert!(run(&mut app, "camera.mode sideways")[1].starts_with("error:"));
         assert_eq!(*app.world().resource::<CameraMode>(), CameraMode::Top);
+        // camera.orbit sets the orbit in degrees, clamped.
+        assert!(run(&mut app, "camera.orbit 90 30 12")[1].starts_with("camera orbit yaw 90"));
+        let o = *app.world().resource::<CameraOrbit>();
+        assert!((o.yaw - std::f32::consts::FRAC_PI_2).abs() < 1e-5 && o.distance == 12.0);
+        run(&mut app, "camera.orbit -45 200");
+        assert_eq!(app.world().resource::<CameraOrbit>().pitch, MAX_PITCH);
         // help lists commands.
         assert!(run(&mut app, "help").iter().any(|l| l.starts_with("echo")));
     }

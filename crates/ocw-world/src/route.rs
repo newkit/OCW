@@ -120,6 +120,45 @@ impl Route {
         Self::from_points("test-loop", "Test Loop", points, true, 7.0).expect("test loop is valid")
     }
 
+    /// A hilly test loop for trying trainer resistance: the same ~3.9 km
+    /// shape as [`Route::test_loop`], with climbs and descents of changing
+    /// length and steepness (about −10 % … +12 %, ~100 m climbing per lap).
+    /// The elevation is a function of the distance along the road, so the
+    /// gradients do not depend on how tight the curves are.
+    pub fn test_hills() -> Self {
+        const SAMPLES: usize = 900;
+        // (amplitude m, waves per lap, phase)
+        const WAVES: [(f64, f64, f64); 4] = [
+            (17.0, 2.0, 0.3),
+            (7.0, 4.0, 1.2),
+            (3.3, 7.0, 2.0),
+            (1.0, 13.0, 0.5),
+        ];
+        let flat: Vec<[f64; 3]> = (0..SAMPLES)
+            .map(|i| {
+                let t = i as f64 / SAMPLES as f64 * TAU;
+                [
+                    650.0 * t.cos() + 120.0 * (3.0 * t).cos(),
+                    0.0,
+                    520.0 * t.sin() + 90.0 * (2.0 * t).sin(),
+                ]
+            })
+            .collect();
+        let shape = Self::from_points("tmp", "tmp", flat.clone(), true, 7.0).expect("valid");
+        let length = shape.length();
+        let points = flat
+            .iter()
+            .zip(&shape.cumulative)
+            .map(|(p, s)| {
+                let u = s / length * TAU;
+                let y: f64 = WAVES.iter().map(|(a, k, ph)| a * (k * u + ph).sin()).sum();
+                [p[0], y + 30.0, p[2]]
+            })
+            .collect();
+        Self::from_points("test-hills", "Test Hills", points, true, 7.0)
+            .expect("test hills are valid")
+    }
+
     /// Stable identifier of the route.
     pub fn id(&self) -> &str {
         &self.id
@@ -396,5 +435,26 @@ mod tests {
         let p = r.sample(10.0);
         assert!(p.direction[0].is_finite() && p.direction[1].is_finite());
         assert!((p.direction[0].hypot(p.direction[1]) - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_hills_are_steep_but_rideable() {
+        let r = Route::test_hills();
+        assert!(r.is_loop());
+        let (mut max, mut min, mut steep) = (0.0f64, 0.0f64, 0usize);
+        let n = 2000;
+        for i in 0..n {
+            let g = r.sample(i as f64 * r.length() / n as f64).grade;
+            max = max.max(g);
+            min = min.min(g);
+            if g > 0.06 {
+                steep += 1;
+            }
+        }
+        assert!((0.10..0.14).contains(&max), "max {max}");
+        assert!((-0.13..-0.08).contains(&min), "min {min}");
+        // A good part of the lap is steeper than 6 %.
+        assert!(steep as f64 / n as f64 > 0.1, "{steep}");
+        assert!(r.elevation_gain() > 80.0, "{}", r.elevation_gain());
     }
 }
