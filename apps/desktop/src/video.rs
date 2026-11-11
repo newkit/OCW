@@ -1,9 +1,12 @@
 //! V (and the console command `video`): record the window to an MP4.
 //!
-//! Frames are taken with Bevy's screenshot API at up to [`VIDEO_FPS`] and
+//! A screenshot (Bevy's screenshot API) is requested on every 1/[`VIDEO_FPS`]
+//! tick, several in flight at once (the GPU readback takes a few frames),
+//! and each lands at the video frame of its *request* time; the frames are
 //! streamed as raw pixels into `ffmpeg` (H.264), which must be installed
-//! (`make deps` installs it). Slow frames are repeated, so the video keeps
-//! real time. Files go to `~/Videos/OCW/` (or `<data dir>/ocw/videos/`).
+//! (`make deps` installs it). A tick the game skipped (slower than 25 fps)
+//! repeats the previous frame, so the video keeps real time; the game never
+//! waits for the encoder (a frame it cannot take is dropped and counted). Files go to `~/Videos/OCW/` (or `<data dir>/ocw/videos/`).
 //! A recording still running when the app exits is finished first.
 //! While recording, the HUD shows a small red "REC m:ss" (top right); after
 //! stopping, "Video saved: <file>" for a few seconds.
@@ -11,7 +14,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command as Process, Stdio};
-use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
+use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 use std::thread::JoinHandle;
 
 use bevy::prelude::*;
@@ -26,6 +29,12 @@ pub const VIDEO_FPS: f64 = 25.0;
 /// At most this many copies of one frame (after a long stall, the video
 /// skips instead of freezing for seconds).
 const MAX_REPEATS: u64 = 12;
+/// Screenshots requested but not yet captured at most.
+const MAX_IN_FLIGHT: usize = 6;
+/// Frames buffered for the encoder thread (raw: up to 16 MB each).
+const ENCODER_QUEUE: usize = 4;
+/// Wider windows are scaled down to this width in the video.
+const MAX_VIDEO_WIDTH: u32 = 1920;
 /// How long a start/stop message stays in the HUD (s).
 pub const MESSAGE_S: f64 = 4.0;
 
@@ -84,18 +93,37 @@ pub struct VideoRecorder {
 struct Active {
     path: PathBuf,
     started_s: f64,
-    /// Frames written so far (including repeats).
-    frames: u64,
-    /// A screenshot is on its way (one at a time).
-    pending: bool,
+    /// Video frame index of the next screenshot request.
+    next_request: u64,
+    /// Screenshots requested and not yet captured.
+    in_flight: usize,
+    /// Next video frame index to write (all before it are written).
+    next_index: u64,
+    stats: FrameStats,
     /// Set up with the first frame (its size and pixel format).
     encoder: Option<Encoder>,
     /// Size of the first frame; later frames of another size are skipped.
     size: Option<(u32, u32)>,
 }
 
+/// What happened to the frames of a recording (logged when it stops).
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+struct FrameStats {
+    /// Captured images written to the video.
+    unique: u64,
+    /// Extra copies written to fill ticks without an image.
+    repeated: u64,
+    /// Images dropped because the encoder was behind.
+    dropped: u64,
+    /// Images that arrived after a later one (skipped).
+    late: u64,
+}
+
+/// One image for the encoder thread and how many video frames it fills.
+type EncoderFrame = (Vec<u8>, u64);
+
 struct Encoder {
-    tx: SyncSender<Vec<u8>>,
+    tx: SyncSender<EncoderFrame>,
     writer: JoinHandle<std::io::Result<()>>,
 }
 
@@ -123,7 +151,11 @@ impl VideoRecorder {
 
     pub fn status(&self) -> String {
         match &self.active {
-            Some(a) => format!("recording to {} ({} frames)", a.path.display(), a.frames),
+            Some(a) => format!(
+                "recording to {} ({} frames)",
+                a.path.display(),
+                a.next_index
+            ),
             None => "not recording".into(),
         }
     }
@@ -157,8 +189,10 @@ impl VideoRecorder {
         self.active = Some(Active {
             path: path.clone(),
             started_s: now_s,
-            frames: 0,
-            pending: false,
+            next_request: 0,
+            in_flight: 0,
+            next_index: 0,
+            stats: FrameStats::default(),
             encoder: None,
             size: None,
         });
@@ -171,6 +205,14 @@ impl VideoRecorder {
     pub fn stop(&mut self, now_s: f64) -> Option<PathBuf> {
         let a = self.active.take()?;
         let path = a.path.clone();
+        let st = a.stats;
+        info!(
+            unique = st.unique,
+            repeated = st.repeated,
+            dropped = st.dropped,
+            late = st.late,
+            "video frames"
+        );
         let name = path.file_name().map_or_else(
             || path.display().to_string(),
             |n| n.to_string_lossy().into(),
@@ -200,12 +242,26 @@ impl VideoRecorder {
         }
     }
 
-    /// Takes a captured frame (`now_s`: game time).
-    fn frame(&mut self, image: &Image, now_s: f64) {
+    /// Video frame index of the screenshot to request at game time
+    /// `now_s`, if one is due (one per tick, a limited number in flight).
+    fn request(&mut self, now_s: f64) -> Option<u64> {
+        let a = self.active.as_mut()?;
+        let index = frame_index(now_s - a.started_s);
+        if index < a.next_request || a.in_flight >= MAX_IN_FLIGHT {
+            return None;
+        }
+        a.next_request = index + 1;
+        a.in_flight += 1;
+        Some(index)
+    }
+
+    /// Takes the captured screenshot that was requested for video frame
+    /// `index` (`now_s`: game time, for messages).
+    fn frame(&mut self, image: &Image, index: u64, now_s: f64) {
         let Some(a) = self.active.as_mut() else {
             return;
         };
-        a.pending = false;
+        a.in_flight = a.in_flight.saturating_sub(1);
         let (w, h) = (image.width(), image.height());
         let Some(data) = image.data.as_ref() else {
             return;
@@ -233,25 +289,45 @@ impl VideoRecorder {
         if a.size != Some((w, h)) {
             return; // window resized: keep the first size
         }
-        let copies = frames_due(now_s - a.started_s, a.frames).min(MAX_REPEATS);
+        let copies = frame_copies(a.next_index, index);
+        if copies == 0 {
+            a.stats.late += 1;
+            return;
+        }
         let enc = a.encoder.as_ref().expect("set above");
-        for _ in 0..copies {
-            if enc.tx.send(data.clone()).is_err() {
+        match enc.tx.try_send((data.clone(), copies)) {
+            Ok(()) => {
+                a.next_index = index + 1;
+                a.stats.unique += 1;
+                a.stats.repeated += copies - 1;
+            }
+            // The encoder is behind: drop this image, never stall the game
+            // (the next one fills the gap).
+            Err(TrySendError::Full(_)) => a.stats.dropped += 1,
+            Err(TrySendError::Disconnected(_)) => {
                 error!("video: ffmpeg stopped; recording ended");
                 self.active = None;
                 self.set_message("Video failed: ffmpeg stopped", now_s);
-                return;
             }
-            a.frames += 1;
         }
     }
 }
 
-/// How many frames to write now so that `written` frames cover
-/// `elapsed_s` seconds at [`VIDEO_FPS`] (at least one for a new image).
-pub fn frames_due(elapsed_s: f64, written: u64) -> u64 {
-    let should = (elapsed_s.max(0.0) * VIDEO_FPS).floor() as u64 + 1;
-    should.saturating_sub(written).max(1)
+/// The video frame shown at `elapsed_s` into the recording.
+pub fn frame_index(elapsed_s: f64) -> u64 {
+    (elapsed_s.max(0.0) * VIDEO_FPS).floor() as u64
+}
+
+/// How many video frames the image for frame `index` fills when the next
+/// frame to write is `next_index`: one, plus a copy for every earlier frame
+/// that got no image (at most [`MAX_REPEATS`]: after a long stall the video
+/// skips ahead); 0 for an image that came too late (its frame is written).
+pub fn frame_copies(next_index: u64, index: u64) -> u64 {
+    if index < next_index {
+        0
+    } else {
+        (index - next_index + 1).min(MAX_REPEATS)
+    }
 }
 
 /// ffmpeg's raw pixel format for a screenshot's texture format.
@@ -263,8 +339,9 @@ pub fn pixel_format(format: TextureFormat) -> Option<&'static str> {
     }
 }
 
-/// ffmpeg arguments: raw frames on stdin → H.264 MP4 (even size, yuv420p
-/// for players).
+/// ffmpeg arguments: raw frames on stdin → H.264 MP4 (at most
+/// [`MAX_VIDEO_WIDTH`] wide, even size, yuv420p for players; a fast preset
+/// so the encoder keeps up with large windows).
 pub fn ffmpeg_args(pix: &str, w: u32, h: u32, out: &Path) -> Vec<String> {
     [
         "-loglevel",
@@ -281,13 +358,13 @@ pub fn ffmpeg_args(pix: &str, w: u32, h: u32, out: &Path) -> Vec<String> {
         "-i",
         "-",
         "-vf",
-        "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+        &format!("scale=trunc(min({MAX_VIDEO_WIDTH}\\,iw)/2)*2:-2"),
         "-c:v",
         "libx264",
         "-preset",
-        "veryfast",
+        "ultrafast",
         "-crf",
-        "22",
+        "20",
         "-pix_fmt",
         "yuv420p",
         "-movflags",
@@ -333,7 +410,7 @@ fn spawn_encoder(path: &Path, pix: &str, w: u32, h: u32) -> std::io::Result<Enco
     let stdin = child.stdin.take().expect("piped");
     // A few frames of buffer: the game never waits for the encoder, unless
     // it falls far behind.
-    let (tx, rx) = sync_channel::<Vec<u8>>(8);
+    let (tx, rx) = sync_channel::<EncoderFrame>(ENCODER_QUEUE);
     let writer = std::thread::Builder::new()
         .name("ocw-video".into())
         .spawn(move || write_frames(rx, stdin, child))?;
@@ -341,12 +418,14 @@ fn spawn_encoder(path: &Path, pix: &str, w: u32, h: u32) -> std::io::Result<Enco
 }
 
 fn write_frames(
-    rx: Receiver<Vec<u8>>,
+    rx: Receiver<EncoderFrame>,
     mut stdin: ChildStdin,
     mut child: Child,
 ) -> std::io::Result<()> {
-    for frame in rx {
-        stdin.write_all(&frame)?;
+    for (frame, copies) in rx {
+        for _ in 0..copies {
+            stdin.write_all(&frame)?;
+        }
     }
     drop(stdin);
     let status = child.wait()?;
@@ -401,18 +480,15 @@ fn show_in_hud(time: Res<Time>, rec: Res<VideoRecorder>, view: Option<ResMut<Rid
     }
 }
 
-/// Asks for the next frame while recording (one screenshot at a time).
-fn capture(mut commands: Commands, mut rec: ResMut<VideoRecorder>) {
-    let Some(a) = rec.active.as_mut() else {
+/// Requests a screenshot on every video frame tick while recording; each
+/// remembers the frame it was requested for.
+fn capture(mut commands: Commands, time: Res<Time>, mut rec: ResMut<VideoRecorder>) {
+    let Some(index) = rec.request(time.elapsed_secs_f64()) else {
         return;
     };
-    if a.pending {
-        return;
-    }
-    a.pending = true;
     commands.spawn(Screenshot::primary_window()).observe(
-        |ev: On<ScreenshotCaptured>, time: Res<Time>, mut rec: ResMut<VideoRecorder>| {
-            rec.frame(&ev.image, time.elapsed_secs_f64());
+        move |ev: On<ScreenshotCaptured>, time: Res<Time>, mut rec: ResMut<VideoRecorder>| {
+            rec.frame(&ev.image, index, time.elapsed_secs_f64());
         },
     );
 }
@@ -428,13 +504,47 @@ mod tests {
     use super::*;
 
     #[test]
-    fn frames_keep_real_time() {
-        // First frame at once; a fast game does not write more than due.
-        assert_eq!(frames_due(0.0, 0), 1);
-        assert_eq!(frames_due(0.01, 1), 1); // a new image still counts once
-        // A slow game repeats frames to keep 25 fps: 1 s in, 10 written.
-        assert_eq!(frames_due(1.0, 10), 26 - 10);
-        assert_eq!(frames_due(-1.0, 0), 1);
+    fn frames_land_at_their_request_time() {
+        assert_eq!(frame_index(0.0), 0);
+        assert_eq!(frame_index(0.039), 0);
+        assert_eq!(frame_index(0.041), 1);
+        assert_eq!(frame_index(1.001), 25);
+        assert_eq!(frame_index(-1.0), 0);
+        // In order, one image per tick: one frame each.
+        assert_eq!(frame_copies(0, 0), 1);
+        assert_eq!(frame_copies(1, 1), 1);
+        // Ticks without an image (slow game, dropped image): the next image
+        // fills them.
+        assert_eq!(frame_copies(2, 4), 3);
+        // Late (an image for frame 3 after frame 4 was written): skipped.
+        assert_eq!(frame_copies(5, 3), 0);
+        // A long stall: capped, the video skips ahead.
+        assert_eq!(frame_copies(0, 1000), MAX_REPEATS);
+    }
+
+    /// Regression (choppy videos): one screenshot at a time, timed when it
+    /// arrived, gave far fewer than 25 images per second. Now one is
+    /// requested per tick, several in flight.
+    #[test]
+    fn a_screenshot_per_tick_with_several_in_flight() {
+        let mut rec = VideoRecorder::default();
+        fake_active(&mut rec, "/tmp/v.mp4", 10.0);
+        // A 100 fps game; nothing arrives yet.
+        let mut requested = Vec::new();
+        for f in 0..20 {
+            let now = 10.0 + f as f64 * 0.01 + 0.001;
+            if let Some(i) = rec.request(now) {
+                requested.push(i);
+            }
+            assert_eq!(rec.request(now), None); // same tick: nothing new
+        }
+        // 0.2 s at 25 fps: frames 0..=4, one per tick.
+        assert_eq!(requested, vec![0, 1, 2, 3, 4]);
+        // The in-flight limit holds while nothing arrives.
+        for k in 5..20 {
+            let _ = rec.request(10.001 + k as f64 * 0.04);
+        }
+        assert_eq!(rec.active.as_ref().unwrap().in_flight, MAX_IN_FLIGHT);
     }
 
     #[test]
@@ -480,8 +590,10 @@ mod tests {
         rec.active = Some(Active {
             path: PathBuf::from(path),
             started_s,
-            frames: 0,
-            pending: false,
+            next_request: 0,
+            in_flight: 0,
+            next_index: 0,
+            stats: FrameStats::default(),
             encoder: None,
             size: None,
         });
@@ -538,7 +650,7 @@ mod tests {
         // A stop with an encoder running says "Video saved: <file name>".
         {
             let mut rec = app.world_mut().resource_mut::<VideoRecorder>();
-            let (tx, rx) = sync_channel::<Vec<u8>>(1);
+            let (tx, rx) = sync_channel::<EncoderFrame>(1);
             let writer = std::thread::spawn(move || {
                 for _ in rx {}
                 Ok(())
