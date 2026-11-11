@@ -70,9 +70,11 @@ The ride does not pause under the menu: the trainer keeps its mode, the ride
 time, the recording and a video go on, and the ride keys (↑ ↓ ← →, A, W, U,
 R, V, …, the mouse camera) are ignored while it is open. Steering falls back
 to autodrive and junctions take their default exit, so the rider stays on
-the road; closing the menu restores manual steering / wild mode. In M1 the
-Ride, Workshop, Navi and Settings pages say what is coming (Settings already
-toggles the FPS counter).
+the road; closing the menu restores manual steering / wild mode. *Workshop*
+chooses the rider profile, *Settings* has Riders, Controls, Trainer, Display
+and Strava: ← / → (D-pad left / right) change the focused value, Q / E,
+PgUp / PgDn or LB / RB switch between these pages (see
+[Settings](#settings-and-rider-profiles)); Ride and Navi say what is coming.
 
 In manual steering, the keys ramp the lean and it stays when released (press
 the other way to straighten up); the stick sets the lean directly, centred is
@@ -286,7 +288,9 @@ records with a fixed time step instead). Needs `ffmpeg` (`make deps` installs it
 
 | Option | Meaning |
 |---|---|
-| `--name NAME` | Display name of your rider (default `Rider`) |
+| `--name NAME` | Display name of your rider for this session (default: the rider profile's name) |
+| `--rider NAME` | Ride as this rider profile for this session (default: the one chosen in the Workshop) |
+| `--settings-file PATH` | Settings file (default `~/.config/ocw/settings.toml`; `riders.toml` is read next to it) |
 | `--power W` | Initial power of the virtual trainer (default 200) |
 | `--bots N` | Number of test riders (default 10; they start in rows of up to three behind you) |
 | `--server HOST[:PORT]` | Ride on a remote `ocw-server --listen` over QUIC (default port 47800) instead of the local server; see [Running the server](#running-the-server) |
@@ -319,6 +323,69 @@ records with a fixed time step instead). Needs `ffmpeg` (`make deps` installs it
 | `--capture DIR`, `--capture-fps N`, `--capture-seconds S`, `--capture-warmup S` | Save every frame with a fixed game-time step (smooth videos), then exit |
 | `--version` | Print the build id, e.g. `0.1.0-7d538c0-dirty (debug)`: version, commit, `-dirty` for uncommitted changes, `(debug)` for debug builds. It is also shown small in the HUD's lower right corner and logged at startup |
 
+## Settings and rider profiles
+
+Settings live in `~/.config/ocw/settings.toml` (macOS: `~/Library/Application
+Support/ocw/`, Windows: `%APPDATA%\ocw\`; `OCW_CONFIG_DIR` or
+`--settings-file` choose another place). Change them with `set KEY VALUE` in the
+console (saved at once), or by editing the file; `get` lists them all:
+
+| Key | Values (default) | Applies |
+|---|---|---|
+| `controls.autodrive` | on / off (on): autodrive at the start of a ride | next start |
+| `trainer.difficulty` | 0 to 100 (50): % of the road gradient in SIM mode | at once |
+| `trainer.virtual_power` | 0 to 2000 W (200): the virtual trainer at the start (`--power`) | next start |
+| `display.hud` | on / off (on) | at once |
+| `display.units` | metric / imperial (metric) | at once |
+| `display.fps` | on / off (off): FPS counter | at once |
+| `display.camera` | chase / side / top (chase) | at once |
+| `display.fullscreen` | on / off (off): borderless fullscreen (`--fullscreen`) | next start |
+| `ride.bots` | 0 to 50 (10): test riders (`--bots`) | next start |
+| `ride.random_start` | on / off (on): random start point (`--random-start`) | next start |
+| `ride.record` | on / off (on): save rides as FIT (`--record`) | next start |
+
+```toml
+[display]
+units = "imperial"
+camera = "side"
+
+[ride]
+bots = 2
+```
+
+Precedence: defaults < `settings.toml` < `autoexec.cfg` < command-line options.
+Command-line options and `set --temp` hold only for the session and are never
+saved. Unknown keys are kept in the file (and reported at the start); an
+invalid value (wrong type, out of range) is reported and the default used. A
+file that is not valid TOML is left alone: the app then uses the defaults and
+saves nothing.
+
+**Rider profiles** are in `riders.toml` next to `settings.toml`: name, weight
+(30–200 kg; values outside are clamped), optional height and FTP, and which
+rider is chosen. The chosen rider's weight is the rider mass of the physics:
+it goes to the server when joining (the server clamps it again and uses its
+own bike, drag and rolling resistance, spec §2.5) and, plus 8 kg for the bike,
+to the trainer as SIM mass (Wahoo trainers; FTMS has no field for it). Without
+profiles you ride as `Rider` with 75 kg. Changes apply from the next start
+(R restarts).
+
+```toml
+active = "Nils"
+
+[[rider]]
+name = "Nils"
+weight_kg = 78.0
+height_cm = 182.0
+ftp_w = 250
+```
+
+Manage them in the in-game menu (Esc / Start): *Workshop* chooses the rider,
+*Settings → Riders* edits them (weight, height, FTP with ← / →; add, delete),
+and the other *Settings* pages (Controls, Trainer, Display, Strava) change the
+settings above with ← / → (D-pad) and Enter (A); Q / E (LB / RB) switch between
+these pages. In the console: `riders.add` / `riders.edit` (also `--rename`) /
+`riders.select`.
+
 ## Console commands
 
 Open the console with `` ` `` or F12; `help` lists the commands, `help NAME`
@@ -334,11 +401,15 @@ for now).
 | `echo TEXT` | Print text |
 | `exec FILE` | Run the commands in a file, one per line |
 | `fps [on\|off]` | Show or hide the FPS counter |
+| `hud [on\|off]` | Show or hide the HUD |
+| `hud.units metric\|imperial` | Speed and distance in km/h and km, or mph and miles |
+| `set [--temp] KEY VALUE` | Change a setting and save it in `settings.toml` (`--temp`: this session only); see [Settings](#settings-and-rider-profiles) |
+| `get [KEY]` | Show all settings with where their value comes from, or one with its range and description |
 | `hud.profile [on\|off]` | Show or hide the elevation profile of the road ahead (bottom left; on by default) |
 | `screenshot [PATH]` | Save a screenshot of the window (default `screenshot.png`) |
 | `reset` | Start everything again as at program start (key R); the ride is saved first |
 | `video [start\|stop\|toggle]` | Record the window as an MP4 (key V; needs `ffmpeg`) |
-| `menu [open\|close\|toggle\|up\|down\|select\|back]` | Open, close or drive the in-game menu (Esc / Start) |
+| `menu [open\|close\|toggle\|up\|down\|left\|right\|select\|back\|tab-next\|tab-prev]` | Open, close or drive the in-game menu (Esc / Start) |
 | `quit` | Exit the app |
 | **Rider** | |
 | `rider.autodrive on\|off` | Autodrive (key A) |
@@ -346,6 +417,11 @@ for now).
 | `rider.lean DEGREES` | Lean into a curve (positive = right, 0 = upright; manual steering) |
 | `rider.steer METRES` | Autodrive line: lateral position on the road (positive = right) |
 | `rider.state` | Print your rider's state |
+| `riders.list` | Rider profiles (`*` = chosen for the next start) and who rides now |
+| `riders.add NAME [--weight KG] [--height CM] [--ftp W]` | Add a rider profile (weight default 75 kg) |
+| `riders.edit NAME [--weight KG] [--height CM] [--ftp W] [--rename NEW] [--no-height] [--no-ftp]` | Change a rider profile |
+| `riders.remove NAME` | Delete a rider profile |
+| `riders.select NAME` | Choose who rides (Workshop); applies from the next start |
 | `rider.gps` | Your rider's GPS position (also bottom-left in the HUD; route files and world packages only), with a copyable `lat, lon` line |
 | `teleport KM` | *Dev:* move your rider to a distance on the route (free ride: along the path, taking default exits) |
 | `teleport.xz X Z` | *Dev:* free ride: move to the road nearest local x / z metres |

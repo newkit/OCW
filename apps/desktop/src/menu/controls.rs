@@ -6,6 +6,8 @@
 //! | Move focus | ↑ ↓, Tab / Shift+Tab, hover | D-pad, left stick (with repeat) |
 //! | Confirm | Enter, Space, click | South (A / ✕) |
 //! | Back (closes at the top) | Esc, Backspace, right click | East (B / ○) |
+//! | Change a value | ← / → | D-pad left / right |
+//! | Switch tab (Settings, Workshop) | Q / E, PgUp / PgDn | LB / RB |
 //!
 //! Esc never quits: at the top page Back only closes the menu.
 
@@ -33,6 +35,8 @@ pub struct Pressed {
     pub confirm: bool,
     pub left: bool,
     pub right: bool,
+    /// Tab switch: −1 previous, +1 next, 0 none.
+    pub tab: i32,
     /// Focus steps from presses that do not repeat (Tab / Shift+Tab).
     pub step: i32,
     /// Up / down held this frame (−1 up, +1 down, 0 none): repeats.
@@ -50,6 +54,7 @@ impl Pressed {
             confirm: self.confirm || o.confirm,
             left: self.left || o.left,
             right: self.right || o.right,
+            tab: (self.tab + o.tab).signum(),
             step: self.step + o.step,
             held: (self.held + o.held).signum(),
             tapped: (self.tapped + o.tapped).signum(),
@@ -73,6 +78,10 @@ pub fn keyboard(keys: &ButtonInput<KeyCode>) -> Pressed {
         confirm: any(&[KeyCode::Enter, KeyCode::NumpadEnter, KeyCode::Space]),
         left: keys.just_pressed(KeyCode::ArrowLeft),
         right: keys.just_pressed(KeyCode::ArrowRight),
+        tab: dir(
+            any(&[KeyCode::KeyQ, KeyCode::PageUp]),
+            any(&[KeyCode::KeyE, KeyCode::PageDown]),
+        ),
         step: match (tab, shift) {
             (false, _) => 0,
             (true, false) => 1,
@@ -101,6 +110,9 @@ pub struct PadState {
     pub dpad_down_pressed: bool,
     pub dpad_left: bool,
     pub dpad_right: bool,
+    /// LB / RB (L1 / R1) pressed this frame.
+    pub lb: bool,
+    pub rb: bool,
     pub stick_y: f32,
 }
 
@@ -116,6 +128,8 @@ impl PadState {
             dpad_down_pressed: p.just_pressed(GamepadButton::DPadDown),
             dpad_left: p.just_pressed(GamepadButton::DPadLeft),
             dpad_right: p.just_pressed(GamepadButton::DPadRight),
+            lb: p.just_pressed(GamepadButton::LeftTrigger),
+            rb: p.just_pressed(GamepadButton::RightTrigger),
             stick_y: p.get(GamepadAxis::LeftStickY).unwrap_or(0.0),
         }
     }
@@ -138,6 +152,7 @@ pub fn gamepad(p: PadState) -> Pressed {
         confirm: p.south,
         left: p.dpad_left,
         right: p.dpad_right,
+        tab: dir(p.lb, p.rb),
         step: 0,
         held: (dir(p.dpad_up, p.dpad_down) + stick).signum(),
         tapped: dir(p.dpad_up_pressed, p.dpad_down_pressed),
@@ -197,6 +212,11 @@ pub fn actions(p: &Pressed, step: i32, menu_open: bool) -> Vec<Action> {
     if p.right {
         out.push(Action::Right);
     }
+    match p.tab {
+        -1 => out.push(Action::TabPrev),
+        1 => out.push(Action::TabNext),
+        _ => {}
+    }
     if p.confirm {
         out.push(Action::Confirm);
     } else if p.escape || p.back {
@@ -242,6 +262,12 @@ mod tests {
         assert_eq!(k(&[KeyCode::Backspace], true), [Back]);
         assert_eq!(k(&[KeyCode::ArrowLeft], true), [Left]);
         assert_eq!(k(&[KeyCode::ArrowRight], true), [Right]);
+        assert_eq!(k(&[KeyCode::KeyQ], true), [TabPrev]);
+        assert_eq!(k(&[KeyCode::PageDown], true), [TabNext]);
+        assert!(
+            k(&[KeyCode::KeyE], false).is_empty(),
+            "a ride key when closed"
+        );
         // Ride keys do nothing in the menu.
         for key in [KeyCode::KeyA, KeyCode::KeyR, KeyCode::KeyV, KeyCode::KeyU] {
             assert!(k(&[key], true).is_empty(), "{key:?}");
@@ -295,6 +321,16 @@ mod tests {
             ..default()
         };
         assert_eq!(g(left, true), [Left]);
+        let rb = PadState {
+            rb: true,
+            ..default()
+        };
+        assert_eq!(g(rb, true), [TabNext]);
+        let lb = PadState {
+            lb: true,
+            ..default()
+        };
+        assert_eq!(g(lb, true), [TabPrev]);
     }
 
     #[test]

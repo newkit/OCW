@@ -769,6 +769,46 @@ mod tests {
         assert_eq!(reply(&mut p, 0x46, 3, 3.2).warnings.len(), 1);
     }
 
+    /// The rider profile's weight (spec §3.2.1) reaches a Wahoo trainer as
+    /// the SIM mode mass; another weight sends the SIM mode again. FTMS has
+    /// no mass field: there only the gradient goes out.
+    #[test]
+    fn rider_weight_is_the_wahoo_sim_mass() {
+        let with_mass = |mass_kg: f64| {
+            DeviceCommand::SetSimulation(SimulationParameters {
+                grade: 0.0,
+                wind_speed_mps: 0.0,
+                crr: 0.004,
+                cw_kg_per_m: 0.51,
+                mass_kg,
+            })
+        };
+        let reply = |p: &mut TrainerProtocol, op: u8, t: f64| {
+            p.on_notification(uuids::WAHOO_TRAINER_CONTROL, &[0x01, op, 1], s(t))
+        };
+        let mut p = TrainerProtocol::new(&WAHOO_KICKR, None);
+        p.on_command(with_mass(66.0), s(0.0)); // unlock
+        let out = reply(&mut p, 0x20, 0.1);
+        // 66 kg = 6600 = 0x19C8 (little endian), then crr and cw.
+        assert_eq!(
+            out.control_writes,
+            vec![vec![0x43, 0xC8, 0x19, 0x28, 0x00, 0xFE, 0x01]]
+        );
+        reply(&mut p, 0x43, 0.2);
+        reply(&mut p, 0x46, 0.3);
+        // Same mass: only the gradient.
+        assert_eq!(
+            p.on_command(with_mass(66.0), s(1.0)).control_writes[0][0],
+            0x46
+        );
+        reply(&mut p, 0x46, 1.1);
+        // 120 kg + 8 kg bike: SIM mode again with 12800 = 0x3200.
+        assert_eq!(
+            p.on_command(with_mass(128.0), s(2.0)).control_writes,
+            vec![vec![0x43, 0x00, 0x32, 0x28, 0x00, 0xFE, 0x01]]
+        );
+    }
+
     /// Gradients arriving faster than the trainer answers: only the newest
     /// queued one is sent (recorded failure: a second write before the
     /// answer is rejected with ATT error 0x80).

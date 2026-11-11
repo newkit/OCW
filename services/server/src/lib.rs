@@ -220,10 +220,10 @@ impl GameServer {
                 ),
             });
         }
-        let profile = hello.profile.map(Into::into).unwrap_or_default();
+        let profile = physics_profile(&hello);
         let rider = self.session.add_rider(hello.display_name.clone(), profile);
         self.riders.insert(conn, rider);
-        tracing::info!(%rider, name = %hello.display_name, "rider joined");
+        tracing::info!(%rider, name = %hello.display_name, weight_kg = profile.rider_mass_kg, "rider joined");
         S::Welcome(v1::Welcome {
             protocol_version: PROTOCOL_VERSION,
             rider_id: rider.0,
@@ -305,6 +305,19 @@ impl GameServer {
     }
 }
 
+/// The physics profile of a joining rider (spec §2.5, §3.2.1): the curated
+/// default profile with the rider's weight from the hello (clamped to
+/// 30–200 kg). Drag, rolling resistance and bike mass sent by the client
+/// are ignored: the server is the truth (§6.1).
+pub fn physics_profile(hello: &v1::Hello) -> ocw_core::RiderProfile {
+    hello
+        .rider_weight_kg
+        .or(hello.profile.as_ref().map(|p| p.rider_mass_kg))
+        .map_or_else(ocw_core::RiderProfile::default, |kg| {
+            ocw_core::RiderProfile::for_rider_weight(f64::from(kg))
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -320,7 +333,102 @@ mod tests {
             display_name: "Tester".into(),
             profile: Some(ocw_core::RiderProfile::default().into()),
             world,
+            rider_weight_kg: None,
         })))
+    }
+
+    fn join_with_weight(server: &mut GameServer, weight: Option<f32>) -> RiderId {
+        let conn = server.connect();
+        let reply = server.handle(
+            conn,
+            &encode(&client_message(C::Hello(v1::Hello {
+                protocol_version: PROTOCOL_VERSION,
+                display_name: "Weighed".into(),
+                profile: None,
+                world: None,
+                rider_weight_kg: weight,
+            }))),
+        );
+        match decode_server(&reply[0]).unwrap() {
+            S::Welcome(w) => RiderId(w.rider_id),
+            other => panic!("expected a welcome, got {other:?}"),
+        }
+    }
+
+    /// The rider weight from the hello is the rider's mass in the server's
+    /// physics (spec §3.2.1), clamped; the rest is the curated profile.
+    #[test]
+    fn the_hello_weight_reaches_the_physics_profile() {
+        let mut server = GameServer::new(Route::test_hills(), ServerConfig::default());
+        let light = join_with_weight(&mut server, Some(58.0));
+        let p = server.session().rider_profile(light).unwrap();
+        assert_eq!(p.rider_mass_kg, 58.0);
+        assert_eq!(p.total_mass_kg(), 66.0);
+        let heavy = join_with_weight(&mut server, Some(900.0));
+        assert_eq!(
+            server.session().rider_profile(heavy).unwrap().rider_mass_kg,
+            ocw_core::MAX_RIDER_WEIGHT_KG
+        );
+        let none = join_with_weight(&mut server, None);
+        assert_eq!(
+            server.session().rider_profile(none).unwrap(),
+            ocw_core::RiderProfile::default()
+        );
+        // The weight changes the ride: on the climb the same power carries
+        // the light rider faster than the heavy one.
+        for rider in [light, heavy] {
+            let conn = server
+                .riders
+                .iter()
+                .find(|(_, r)| **r == rider)
+                .map(|(c, _)| *c)
+                .unwrap();
+            let sample = v1::SensorSample {
+                seq: 1,
+                power_w: Some(250.0),
+                ..Default::default()
+            };
+            server.handle(conn, &encode(&client_message(C::Sample(sample))));
+        }
+        for _ in 0..(50 * 60) {
+            server.tick();
+        }
+        let distance = |r| server.session().rider_state(r).unwrap().distance;
+        assert!(
+            distance(light) > distance(heavy) + 10.0,
+            "{} vs {}",
+            distance(light),
+            distance(heavy)
+        );
+    }
+
+    /// A client cannot choose its own drag or rolling resistance (§2.5):
+    /// from the deprecated profile field only the rider mass counts.
+    #[test]
+    fn client_physics_parameters_are_ignored() {
+        let hello = v1::Hello {
+            profile: Some(v1::RiderProfile {
+                rider_mass_kg: 70.0,
+                bike_mass_kg: 1.0,
+                cda_m2: 0.01,
+                crr: 0.0,
+            }),
+            ..Default::default()
+        };
+        assert_eq!(
+            physics_profile(&hello),
+            ocw_core::RiderProfile::for_rider_weight(70.0)
+        );
+        let hello = v1::Hello {
+            rider_weight_kg: Some(64.0),
+            ..hello
+        };
+        assert_eq!(physics_profile(&hello).rider_mass_kg, 64.0);
+        let hello = v1::Hello {
+            rider_weight_kg: Some(f32::NAN),
+            ..hello
+        };
+        assert_eq!(physics_profile(&hello).rider_mass_kg, 75.0);
     }
 
     fn line_network(name: &str, length: f64) -> Arc<RoadNetwork> {

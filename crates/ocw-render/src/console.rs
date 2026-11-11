@@ -17,7 +17,7 @@ use clap::{Arg, ArgMatches, Command, value_parser};
 use crate::camera::{
     CameraMode, CameraOrbit, CameraTilt, MAX_DISTANCE, MAX_PITCH, MIN_DISTANCE, MIN_PITCH,
 };
-use crate::hud::{ShowFps, ShowProfile};
+use crate::hud::{ShowFps, ShowHud, ShowProfile, Units};
 
 /// Console with its egui overlay (toggle with `` ` `` or F12).
 pub struct ConsolePlugin;
@@ -43,6 +43,8 @@ impl Plugin for ConsoleCorePlugin {
             .init_resource::<ConsoleState>()
             .init_resource::<ShowFps>()
             .init_resource::<ShowProfile>()
+            .init_resource::<ShowHud>()
+            .init_resource::<Units>()
             .init_resource::<CameraMode>()
             .init_resource::<CameraOrbit>()
             .init_resource::<CameraTilt>()
@@ -408,6 +410,36 @@ fn register_builtin_commands(app: &mut App) {
     ))
     .console_command(ConsoleCommand::new(
         User,
+        Command::new("hud")
+            .about("Show or hide the HUD")
+            .arg(Arg::new("on").value_parser(["on", "off"])),
+        |world, m| {
+            let mut show = world.resource_mut::<ShowHud>();
+            show.0 = match m.get_one::<String>("on").map(String::as_str) {
+                Some("on") => true,
+                Some(_) => false,
+                None => !show.0,
+            };
+            Ok(format!("HUD {}", if show.0 { "on" } else { "off" }))
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        User,
+        Command::new("hud.units")
+            .about("Units of speed and distance in the HUD")
+            .arg(
+                Arg::new("units")
+                    .required(true)
+                    .value_parser(["metric", "imperial"]),
+            ),
+        |world, m| {
+            let units: Units = m.get_one::<String>("units").expect("required").parse()?;
+            *world.resource_mut::<Units>() = units;
+            Ok(format!("HUD units {units:?}"))
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        User,
         Command::new("hud.profile")
             .about("Show or hide the elevation profile of the road ahead")
             .arg(Arg::new("on").value_parser(["on", "off"])),
@@ -568,6 +600,12 @@ mod tests {
         );
         assert!(run(&mut app, "fps on")[1].contains("on"));
         assert!(app.world().resource::<ShowFps>().0);
+        assert_eq!(run(&mut app, "hud off")[1], "HUD off");
+        assert!(!app.world().resource::<ShowHud>().0);
+        assert_eq!(run(&mut app, "hud")[1], "HUD on");
+        assert_eq!(run(&mut app, "hud.units imperial")[1], "HUD units Imperial");
+        assert_eq!(*app.world().resource::<Units>(), Units::Imperial);
+        assert!(run(&mut app, "hud.units furlongs")[1].starts_with("error:"));
         assert!(run(&mut app, "nope")[1].starts_with("error: unknown command"));
         assert!(run(&mut app, "dev.thing")[1].contains("needs Dev permission"));
         app.world_mut().resource_mut::<ConsoleState>().permission = Permission::Dev;

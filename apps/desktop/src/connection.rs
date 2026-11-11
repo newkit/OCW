@@ -6,7 +6,6 @@ use std::sync::{Arc, Mutex};
 
 use bevy::prelude::*;
 use clap::{Arg, Command, value_parser};
-use ocw_core::RiderProfile;
 use ocw_protocol::v1::{self, client_message::Msg as C};
 use ocw_protocol::{client_message, encode};
 use ocw_render::RideView;
@@ -40,6 +39,10 @@ impl Plugin for ConnectionPlugin {
     fn build(&self, app: &mut App) {
         let args = app.world().resource::<Args>().clone();
         let free = app.world().get_resource::<FreeRideSetup>().cloned();
+        // The rider profile's weight goes to the server in the hello and
+        // into the prediction (spec §3.2.1).
+        let profile = crate::settings::local_rider(app.world()).physics();
+        let autodrive = crate::settings::autodrive_at_start(app.world());
         let (course, client) = match free {
             Some(FreeRideSetup {
                 net,
@@ -51,7 +54,7 @@ impl Plugin for ConnectionPlugin {
                     net: net.clone(),
                     plan: plan.clone(),
                 },
-                ClientCore::free_ride(net, args.name.clone(), RiderProfile::default())
+                ClientCore::free_ride(net, args.name.clone(), profile)
                     .with_geo_origin(origin)
                     .with_route_plan(plan),
             ),
@@ -60,18 +63,14 @@ impl Plugin for ConnectionPlugin {
                     net: f.net.clone(),
                     start: f.start,
                 },
-                ClientCore::free_ride(f.net, args.name.clone(), RiderProfile::default())
-                    .with_geo_origin(f.origin),
+                ClientCore::free_ride(f.net, args.name.clone(), profile).with_geo_origin(f.origin),
             ),
             None => (
                 Course::Route(self.route.clone()),
-                ClientCore::new(
-                    self.route.clone(),
-                    args.name.clone(),
-                    RiderProfile::default(),
-                ),
+                ClientCore::new(self.route.clone(), args.name.clone(), profile),
             ),
         };
+        let client = client.with_autodrive_at_start(autodrive);
         let start_m = match &course {
             Course::Route(route) => crate::start_point(&args, route),
             Course::FreeRide { .. } | Course::RouteRide { .. } => 0.0,

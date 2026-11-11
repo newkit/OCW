@@ -2,6 +2,12 @@
 //! stack, the focused item. Input arrives as abstract [`Action`]s; what the
 //! app has to do comes back as an [`Effect`]. Menu functions are console
 //! command lines, so menu, console and scripts share one code path.
+//!
+//! The Settings sub pages and the Workshop (M2) are [`Page::Sub`]: their
+//! rows come from `settings::pages` (current values, left / right change
+//! them), passed in with [`Menu::apply_with`].
+
+use crate::settings::pages::{self as sub, Activate, Row};
 
 /// Abstract menu input (keyboard, mouse and gamepad map onto these).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -12,9 +18,13 @@ pub enum Action {
     Close,
     Up,
     Down,
-    /// Change a value (no value rows in M1: ignored).
+    /// Change the focused row's value (value rows of [`Page::Sub`]).
     Left,
     Right,
+    /// The previous / next tab of the Settings and Workshop pages (Q / E,
+    /// PgUp / PgDn, LB / RB).
+    TabPrev,
+    TabNext,
     Confirm,
     /// One page up; closes the menu at the top page.
     Back,
@@ -41,9 +51,10 @@ pub enum Effect {
 pub enum Page {
     Top,
     Ride,
-    Workshop,
     Navi,
     Settings,
+    /// A Settings sub page or the Workshop, with rows from `settings::pages`.
+    Sub(sub::Page),
     ConfirmRestart,
     ConfirmQuit,
 }
@@ -76,20 +87,18 @@ const BACK: Item = item("Back", ItemKind::Back);
 const TOP_ITEMS: &[Item] = &[
     item("Resume", ItemKind::Resume),
     item("Ride", ItemKind::Open(Page::Ride)),
-    item("Workshop", ItemKind::Open(Page::Workshop)),
+    item("Workshop", ItemKind::Open(Page::Sub(sub::Page::Workshop))),
     item("Navi", ItemKind::Open(Page::Navi)),
     item("Settings", ItemKind::Open(Page::Settings)),
     item("Restart", ItemKind::Open(Page::ConfirmRestart)),
     item("Quit", ItemKind::Open(Page::ConfirmQuit)),
 ];
 const SETTINGS_ITEMS: &[Item] = &[
-    item(
-        "FPS counter on / off",
-        ItemKind::Command {
-            line: "fps",
-            close: false,
-        },
-    ),
+    item("Riders", ItemKind::Open(Page::Sub(sub::Page::Riders))),
+    item("Controls", ItemKind::Open(Page::Sub(sub::Page::Controls))),
+    item("Trainer", ItemKind::Open(Page::Sub(sub::Page::Trainer))),
+    item("Display", ItemKind::Open(Page::Sub(sub::Page::Display))),
+    item("Strava", ItemKind::Open(Page::Sub(sub::Page::Strava))),
     BACK,
 ];
 const RESTART_ITEMS: &[Item] = &[
@@ -139,15 +148,6 @@ impl Page {
                 items: &[BACK],
                 initial_focus: 0,
             },
-            Page::Workshop => PageDef {
-                title: "Workshop",
-                text: &[
-                    "Coming with Phase 4 (M6): the bike (frame, wheels, paint) and the character (clothing, helmet), with a 3D preview. Cosmetic choices never change the physics.",
-                    "Before that (M2): choose the active rider profile here.",
-                ],
-                items: &[BACK],
-                initial_focus: 0,
-            },
             Page::Navi => PageDef {
                 title: "Navi",
                 text: &[
@@ -160,10 +160,16 @@ impl Page {
             Page::Settings => PageDef {
                 title: "Settings",
                 text: &[
-                    "Coming soon (M2): Controls, Trainer (devices, SIM / ERG, difficulty), Strava, Display and Riders (name, weight, FTP), saved in settings.toml.",
-                    "Audio comes with game audio (M5).",
+                    "Saved in settings.toml and riders.toml (console: set, get, riders.*). Audio comes with game audio (M5).",
                 ],
                 items: SETTINGS_ITEMS,
+                initial_focus: 0,
+            },
+            // The rows are dynamic (`Menu::refresh`); Back is added after them.
+            Page::Sub(p) => PageDef {
+                title: p.title(),
+                text: p.notes(),
+                items: &[],
                 initial_focus: 0,
             },
             Page::ConfirmRestart => PageDef {
@@ -187,6 +193,8 @@ impl Page {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Menu {
     stack: Vec<(Page, usize)>,
+    /// The rows of the current [`Page::Sub`] (refreshed by `apply_with`).
+    rows: Vec<Row>,
 }
 
 impl Menu {
@@ -213,6 +221,45 @@ impl Menu {
         self.page().map_or(&[], |p| p.def().items)
     }
 
+    /// Number of focusable items on the current page.
+    pub fn item_count(&self) -> usize {
+        match self.page() {
+            Some(Page::Sub(_)) => self.rows.len() + 1,
+            _ => self.items().len(),
+        }
+    }
+
+    /// The item labels of the current page, as the menu shows them: value
+    /// rows as "Label:  < value >".
+    pub fn labels(&self) -> Vec<String> {
+        match self.page() {
+            Some(Page::Sub(_)) => self
+                .rows
+                .iter()
+                .map(row_label)
+                .chain(["Back".to_string()])
+                .collect(),
+            _ => self.items().iter().map(|i| i.label.to_string()).collect(),
+        }
+    }
+
+    /// Replaces the current tab page (Settings sub pages, Workshop) with
+    /// the previous / next one.
+    fn switch_tab(&mut self, dir: isize) {
+        let Some(Page::Sub(p)) = self.page() else {
+            return;
+        };
+        let p = p.parent().unwrap_or(p);
+        let Some(at) = sub::Page::TABS.iter().position(|t| *t == p) else {
+            return;
+        };
+        let n = sub::Page::TABS.len() as isize;
+        let next = sub::Page::TABS[(at as isize + dir).rem_euclid(n) as usize];
+        self.stack.pop();
+        self.push(Page::Sub(next));
+        self.rows.clear();
+    }
+
     fn push(&mut self, page: Page) {
         self.stack.push((page, page.def().initial_focus));
     }
@@ -222,6 +269,7 @@ impl Menu {
             return Effect::None;
         }
         self.stack.clear();
+        self.rows.clear();
         Effect::Closed
     }
 
@@ -233,7 +281,7 @@ impl Menu {
 
     /// Moves the focus by `step`, wrapping around at both ends.
     fn move_focus(&mut self, step: isize) {
-        let n = self.items().len();
+        let n = self.item_count();
         if n == 0 {
             return;
         }
@@ -242,6 +290,9 @@ impl Menu {
     }
 
     fn select(&mut self, i: usize) -> Effect {
+        if let Some(Page::Sub(_)) = self.page() {
+            return self.select_row(i);
+        }
         let Some(item) = self.items().get(i).copied() else {
             return Effect::None;
         };
@@ -262,9 +313,68 @@ impl Menu {
         }
     }
 
+    fn select_row(&mut self, i: usize) -> Effect {
+        if i >= self.item_count() {
+            return Effect::None;
+        }
+        self.set_focus(i);
+        match self.rows.get(i).map(|r| r.confirm.clone()) {
+            None => self.back(),
+            Some(Some(Activate::Command(line))) => Effect::Command(line),
+            Some(Some(Activate::Open(p))) => {
+                self.push(Page::Sub(p));
+                self.rows.clear();
+                Effect::None
+            }
+            Some(None) => Effect::None,
+        }
+    }
+
+    /// Left / right on a value row: its command line.
+    fn change(&self, right: bool) -> Effect {
+        let Some(row) = self.rows.get(self.focus()) else {
+            return Effect::None;
+        };
+        match if right { &row.right } else { &row.left } {
+            Some(line) => Effect::Command(line.clone()),
+            None => Effect::None,
+        }
+    }
+
+    /// Applies one action, with the rows of the [`Page::Sub`] pages from
+    /// `rows` (read again before and after the action, so they show the
+    /// current values).
+    pub fn apply_with(&mut self, action: Action, rows: impl Fn(sub::Page) -> Vec<Row>) -> Effect {
+        self.refresh(&rows);
+        let effect = self.apply(action);
+        self.refresh(&rows);
+        effect
+    }
+
+    /// Reads the current page's rows again. A rider editor whose rider is
+    /// gone (deleted) goes back to the list.
+    pub fn refresh(&mut self, rows: &impl Fn(sub::Page) -> Vec<Row>) {
+        match self.page() {
+            Some(Page::Sub(p)) => {
+                self.rows = rows(p);
+                if matches!(p, sub::Page::Rider(_)) && self.rows.is_empty() {
+                    self.stack.pop();
+                    self.refresh(rows);
+                    return;
+                }
+                let n = self.item_count();
+                if self.focus() >= n {
+                    self.set_focus(n - 1);
+                }
+            }
+            _ => self.rows.clear(),
+        }
+    }
+
     fn back(&mut self) -> Effect {
         if self.stack.len() > 1 {
             self.stack.pop();
+            self.rows.clear();
             Effect::None
         } else {
             self.close()
@@ -284,7 +394,12 @@ impl Menu {
             };
         }
         match action {
-            Action::Open | Action::Left | Action::Right => Effect::None,
+            Action::Open => Effect::None,
+            Action::Left | Action::Right => self.change(action == Action::Right),
+            Action::TabPrev | Action::TabNext => {
+                self.switch_tab(if action == Action::TabNext { 1 } else { -1 });
+                Effect::None
+            }
             Action::Close => self.close(),
             Action::Up => {
                 self.move_focus(-1);
@@ -297,13 +412,22 @@ impl Menu {
             Action::Confirm => self.select(self.focus()),
             Action::Back => self.back(),
             Action::Hover(i) => {
-                if i < self.items().len() {
+                if i < self.item_count() {
                     self.set_focus(i);
                 }
                 Effect::None
             }
             Action::Click(i) => self.select(i),
         }
+    }
+}
+
+/// "Label:  < value >" for a value row, "Label:  value" for a shown value.
+pub fn row_label(r: &Row) -> String {
+    match &r.value {
+        Some(v) if r.left.is_some() || r.right.is_some() => format!("{}:  < {v} >", r.label),
+        Some(v) => format!("{}:  {v}", r.label),
+        None => r.label.clone(),
     }
 }
 
@@ -415,13 +539,150 @@ mod tests {
         assert_eq!(m.apply(Action::Click(0)), Effect::Command("quit".into()));
     }
 
+    use crate::settings::registry::Settings;
+    use crate::settings::riders::{Rider, Riders};
+
+    fn riders() -> Riders {
+        let mut r = Riders::default();
+        for (name, kg) in [("Nils", 78.0), ("Anna", 61.0)] {
+            r.add(Rider {
+                name: name.into(),
+                weight_kg: kg,
+                ..Rider::default()
+            })
+            .unwrap();
+        }
+        r
+    }
+
+    /// Applies `a` with the rows of the given settings and riders.
+    fn act(m: &mut Menu, a: Action, s: &Settings, r: &Riders) -> Effect {
+        m.apply_with(a, |p| sub::rows(p, s, r))
+    }
+
     #[test]
-    fn settings_runs_a_command_and_stays_open() {
+    fn settings_pages_change_values_with_left_and_right() {
+        let (s, r) = (Settings::default(), riders());
         let mut m = Menu::default();
-        m.apply(Action::Open);
-        m.apply(Action::Click(4));
-        assert_eq!(m.apply(Action::Confirm), Effect::Command("fps".into()));
+        act(&mut m, Action::Open, &s, &r);
+        act(&mut m, Action::Click(4), &s, &r);
         assert_eq!(m.page(), Some(Page::Settings));
+        // Display: value rows.
+        act(&mut m, Action::Click(3), &s, &r);
+        assert_eq!(m.page(), Some(Page::Sub(sub::Page::Display)));
+        assert_eq!(m.labels()[0], "HUD:  < on >");
+        assert_eq!(m.labels().last().unwrap(), "Back");
+        assert_eq!(
+            act(&mut m, Action::Right, &s, &r),
+            Effect::Command("set display.hud off".into())
+        );
+        act(&mut m, Action::Down, &s, &r);
+        assert_eq!(
+            act(&mut m, Action::Left, &s, &r),
+            Effect::Command("set display.units imperial".into())
+        );
+        assert_eq!(
+            act(&mut m, Action::Confirm, &s, &r),
+            Effect::Command("set display.units imperial".into())
+        );
+        // A row without left / right (the Back item): nothing.
+        act(&mut m, Action::Up, &s, &r);
+        act(&mut m, Action::Up, &s, &r);
+        assert_eq!(m.focus(), m.item_count() - 1);
+        assert_eq!(act(&mut m, Action::Right, &s, &r), Effect::None);
+        // Back (the item) returns to Settings.
+        assert_eq!(act(&mut m, Action::Confirm, &s, &r), Effect::None);
+        assert_eq!(m.page(), Some(Page::Settings));
+        // Trainer: an action row runs its command.
+        act(&mut m, Action::Click(2), &s, &r);
+        let scan = m
+            .labels()
+            .iter()
+            .position(|l| l == "Scan for devices")
+            .unwrap();
+        assert_eq!(
+            act(&mut m, Action::Click(scan), &s, &r),
+            Effect::Command("devices.scan".into())
+        );
+        // Left / right do nothing on pages without value rows.
+        let mut top = Menu::default();
+        top.apply(Action::Open);
+        assert_eq!(top.apply(Action::Right), Effect::None);
+    }
+
+    #[test]
+    fn tabs_switch_between_the_settings_pages_and_the_workshop() {
+        let (s, r) = (Settings::default(), riders());
+        let mut m = Menu::default();
+        act(&mut m, Action::Open, &s, &r);
+        act(&mut m, Action::Click(2), &s, &r);
+        assert_eq!(m.page(), Some(Page::Sub(sub::Page::Workshop)));
+        assert_eq!(m.depth(), 2);
+        act(&mut m, Action::TabNext, &s, &r);
+        assert_eq!(m.page(), Some(Page::Sub(sub::Page::Riders)));
+        act(&mut m, Action::TabPrev, &s, &r);
+        act(&mut m, Action::TabPrev, &s, &r);
+        assert_eq!(m.page(), Some(Page::Sub(sub::Page::Strava)), "wraps");
+        assert_eq!(m.depth(), 2, "tabs replace the page");
+        // Not on the top page.
+        let mut top = Menu::default();
+        top.apply(Action::Open);
+        top.apply(Action::TabNext);
+        assert_eq!(top.page(), Some(Page::Top));
+    }
+
+    #[test]
+    fn workshop_chooses_the_rider_and_opens_the_editor() {
+        let s = Settings::default();
+        let mut r = riders();
+        let mut m = Menu::default();
+        act(&mut m, Action::Open, &s, &r);
+        act(&mut m, Action::Click(2), &s, &r);
+        assert_eq!(m.labels()[0], "Nils:  78 kg - riding");
+        assert_eq!(
+            act(&mut m, Action::Click(1), &s, &r),
+            Effect::Command("riders.select \"Anna\"".into())
+        );
+        // "Edit riders" opens the list, a rider opens the editor.
+        act(&mut m, Action::Click(2), &s, &r);
+        assert_eq!(m.page(), Some(Page::Sub(sub::Page::Riders)));
+        act(&mut m, Action::Click(0), &s, &r);
+        assert_eq!(m.page(), Some(Page::Sub(sub::Page::Rider(0))));
+        act(&mut m, Action::Down, &s, &r);
+        assert_eq!(m.labels()[1], "Weight:  < 78 kg >");
+        assert_eq!(
+            act(&mut m, Action::Left, &s, &r),
+            Effect::Command("riders.edit \"Nils\" --weight 77".into())
+        );
+        // Q / E from the editor: the tab after Riders.
+        let mut tabbed = m.clone();
+        act(&mut tabbed, Action::TabNext, &s, &r);
+        assert_eq!(tabbed.page(), Some(Page::Sub(sub::Page::Controls)));
+        // The rider was deleted: the editor goes back to the list.
+        r.remove("Nils").unwrap();
+        r.remove("Anna").unwrap();
+        act(&mut m, Action::Hover(0), &s, &r);
+        assert_eq!(m.page(), Some(Page::Sub(sub::Page::Riders)));
+        assert_eq!(m.labels(), ["Add a rider", "Back"]);
+        // Back at the depth of the Workshop page.
+        act(&mut m, Action::Back, &s, &r);
+        assert_eq!(m.page(), Some(Page::Sub(sub::Page::Workshop)));
+    }
+
+    #[test]
+    fn sub_pages_fit_the_ten_foot_limits() {
+        let (s, r) = (Settings::default(), riders());
+        for p in sub::Page::TABS.into_iter().chain([sub::Page::Rider(0)]) {
+            let rows = sub::rows(p, &s, &r);
+            assert!(!rows.is_empty() && rows.len() < 7, "{p:?}");
+            for row in &rows {
+                assert!(row_label(row).is_ascii(), "{p:?}: {row:?}");
+            }
+            for t in p.notes() {
+                assert!(t.is_ascii(), "{p:?}: {t}");
+            }
+            assert!(p.title().is_ascii());
+        }
     }
 
     #[test]
@@ -429,7 +690,6 @@ mod tests {
         for page in [
             Page::Top,
             Page::Ride,
-            Page::Workshop,
             Page::Navi,
             Page::Settings,
             Page::ConfirmRestart,

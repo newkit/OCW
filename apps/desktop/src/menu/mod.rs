@@ -23,6 +23,10 @@ use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permissio
 use ocw_render::menu::{InputContext, MenuCorePlugin, MenuPointer, MenuPointerEvent, MenuView};
 
 use crate::connection::ClientState;
+use crate::settings::pages as settings_pages;
+use crate::settings::registry::Settings;
+use crate::settings::riders::Riders;
+use crate::settings::{RiderProfiles, UserSettings};
 use controls::{NavRepeat, PadState};
 use model::{Action, Effect, Menu, Page};
 
@@ -42,7 +46,8 @@ impl Plugin for MenuPlugin {
                     .arg(
                         Arg::new("action")
                             .value_parser([
-                                "open", "close", "toggle", "up", "down", "select", "back",
+                                "open", "close", "toggle", "up", "down", "left", "right", "select",
+                                "back", "tab-next", "tab-prev",
                             ])
                             .default_value("toggle"),
                     ),
@@ -54,6 +59,10 @@ impl Plugin for MenuPlugin {
                         Some("close") => Action::Close,
                         Some("up") => Action::Up,
                         Some("down") => Action::Down,
+                        Some("left") => Action::Left,
+                        Some("right") => Action::Right,
+                        Some("tab-next") => Action::TabNext,
+                        Some("tab-prev") => Action::TabPrev,
                         Some("select") => Action::Confirm,
                         Some("back") => Action::Back,
                         _ if open => Action::Close,
@@ -86,6 +95,8 @@ fn menu_input(
     mut pointer: ResMut<MenuPointer>,
     mut state: ResMut<MenuState>,
     client: Option<ResMut<ClientState>>,
+    settings: Option<Res<UserSettings>>,
+    riders: Option<Res<RiderProfiles>>,
 ) {
     let pressed = pads.iter().fold(
         keys.map(|k| controls::keyboard(&k)).unwrap_or_default(),
@@ -121,8 +132,9 @@ fn menu_input(
             MenuPointerEvent::Back => Some(Action::Back),
         }));
     }
+    let rows = |p| sub_rows(p, settings.as_deref(), riders.as_deref());
     for action in actions {
-        if let Effect::Command(line) = state.menu.apply(action) {
+        if let Effect::Command(line) = state.menu.apply_with(action, rows) {
             console.queue(line);
         }
     }
@@ -155,7 +167,32 @@ pub fn status_line(view: &RideView) -> String {
     }
 }
 
-fn write_view(state: Res<MenuState>, ride: Option<Res<RideView>>, mut view: ResMut<MenuView>) {
+/// The rows of a Settings sub page or the Workshop (defaults without the
+/// settings plugin, e.g. in tests of the menu alone).
+fn sub_rows(
+    page: settings_pages::Page,
+    settings: Option<&UserSettings>,
+    riders: Option<&RiderProfiles>,
+) -> Vec<settings_pages::Row> {
+    let default_settings = Settings::default();
+    let default_riders = Riders::default();
+    settings_pages::rows(
+        page,
+        settings.map_or(&default_settings, |s| &s.settings),
+        riders.map_or(&default_riders, |r| &r.riders),
+    )
+}
+
+fn write_view(
+    mut state: ResMut<MenuState>,
+    ride: Option<Res<RideView>>,
+    settings: Option<Res<UserSettings>>,
+    riders: Option<Res<RiderProfiles>>,
+    mut view: ResMut<MenuView>,
+) {
+    // Values changed by the menu's commands (or the console) show at once.
+    let rows = |p| sub_rows(p, settings.as_deref(), riders.as_deref());
+    state.menu.refresh(&rows);
     let menu = &state.menu;
     let new = match menu.page() {
         None => MenuView::default(),
@@ -169,10 +206,15 @@ fn write_view(state: Res<MenuState>, ride: Option<Res<RideView>>, mut view: ResM
                     _ => String::new(),
                 },
                 text: def.text.iter().map(|&s| s.into()).collect(),
-                items: def.items.iter().map(|i| i.label.into()).collect(),
+                items: menu.labels(),
                 focused: menu.focus(),
                 hint: format!(
-                    "Up/Down move   Enter/A select   Esc/B {}",
+                    "Up/Down move   {}Enter/A select   Esc/B {}",
+                    if matches!(page, Page::Sub(_)) {
+                        "Left/Right change   Q/E, LB/RB tab   "
+                    } else {
+                        ""
+                    },
                     if menu.depth() > 1 { "back" } else { "close" }
                 ),
             }

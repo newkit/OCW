@@ -25,6 +25,8 @@ impl Plugin for HudPlugin {
             app.add_plugins(FrameTimeDiagnosticsPlugin::default());
         }
         app.init_resource::<ShowFps>()
+            .init_resource::<ShowHud>()
+            .init_resource::<Units>()
             .init_resource::<ShowProfile>()
             .init_resource::<LookAhead>()
             .add_systems(Startup, (spawn_hud, spawn_recording))
@@ -35,6 +37,7 @@ impl Plugin for HudPlugin {
                     (update_hud, update_profile),
                     update_gps,
                     update_recording,
+                    show_hud,
                 )
                     .chain(),
             );
@@ -85,6 +88,78 @@ fn update_version_label(label: Res<VersionLabel>, mut text: Query<&mut Text, Wit
 /// Whether the FPS counter is shown (console command `fps`).
 #[derive(Resource, Default)]
 pub struct ShowFps(pub bool);
+
+/// Whether the HUD is shown (console command `hud`, setting `display.hud`).
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShowHud(pub bool);
+
+impl Default for ShowHud {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
+/// Units of speed and distance in the HUD (console command `hud.units`,
+/// setting `display.units`).
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Units {
+    /// km/h and km.
+    #[default]
+    Metric,
+    /// mph and miles.
+    Imperial,
+}
+
+/// Metres in a mile.
+pub const METRES_PER_MILE: f64 = 1609.344;
+
+impl std::str::FromStr for Units {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "metric" => Ok(Self::Metric),
+            "imperial" => Ok(Self::Imperial),
+            other => Err(format!("unknown units '{other}' (metric, imperial)")),
+        }
+    }
+}
+
+impl Units {
+    /// A speed given in km/h, in these units, and its unit.
+    pub fn speed(self, kmh: f64) -> (f64, &'static str) {
+        match self {
+            Self::Metric => (kmh, "km/h"),
+            Self::Imperial => (kmh * 1000.0 / METRES_PER_MILE, "mph"),
+        }
+    }
+
+    /// A distance given in metres, in these units, and its unit.
+    pub fn distance(self, m: f64) -> (f64, &'static str) {
+        match self {
+            Self::Metric => (m / 1000.0, "km"),
+            Self::Imperial => (m / METRES_PER_MILE, "mi"),
+        }
+    }
+}
+
+/// The HUD's panels (hidden with `hud off`).
+#[derive(Component)]
+struct HudPanel;
+
+/// Shows or hides the HUD panels.
+fn show_hud(show: Res<ShowHud>, mut panels: Query<&mut Visibility, With<HudPanel>>) {
+    let want = if show.0 {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    };
+    for mut v in &mut panels {
+        if *v != want {
+            *v = want;
+        }
+    }
+}
 
 /// Whether the elevation profile is shown (console command `hud.profile`).
 #[derive(Resource)]
@@ -206,15 +281,18 @@ fn spawn_hud(mut commands: Commands) {
     // Bottom left: the elevation profile above the GPS line (the version
     // label is bottom right, the REC indicator top right).
     commands
-        .spawn(Node {
-            position_type: PositionType::Absolute,
-            bottom: px(12),
-            left: px(12),
-            flex_direction: FlexDirection::Column,
-            align_items: AlignItems::FlexStart,
-            row_gap: px(6),
-            ..default()
-        })
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                bottom: px(12),
+                left: px(12),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::FlexStart,
+                row_gap: px(6),
+                ..default()
+            },
+            HudPanel,
+        ))
         .with_children(|col| {
             spawn_profile(col);
             col.spawn((
@@ -253,6 +331,7 @@ fn spawn_hud(mut commands: Commands) {
                 ..default()
             },
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+            HudPanel,
         ))
         .with_children(|hud| {
             hud.spawn((
@@ -285,7 +364,9 @@ pub fn main_line(
     grade_percent: f64,
     ahead_percent: Option<f64>,
     heart_rate_bpm: Option<f64>,
+    units: Units,
 ) -> String {
+    let (speed, unit) = units.speed(speed_kmh);
     let cadence = cadence_rpm.map_or_else(|| "- rpm".into(), |c| format!("{c:.0} rpm"));
     // Avoid "-0.0 %" on the flat.
     let tidy = |g: f64| if g.abs() < 0.05 { 0.0 } else { g };
@@ -296,7 +377,7 @@ pub fn main_line(
     let heart = heart_rate_bpm
         .map(|h| format!("   HR {h:.0}"))
         .unwrap_or_default();
-    format!("{power_w:>4.0} W   {speed_kmh:>5.1} km/h   {cadence}   {grade:+.1} %{ahead}{heart}")
+    format!("{power_w:>4.0} W   {speed:>5.1} {unit}   {cadence}   {grade:+.1} %{ahead}{heart}")
 }
 
 /// Colour of a profile bar of gradient band `band` (dimmed behind the
@@ -718,10 +799,12 @@ fn format_time(seconds: f64) -> String {
     format!("{}:{:02}:{:02}", s / 3600, (s / 60) % 60, s % 60)
 }
 
+#[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
 fn update_hud(
     view: Res<RideView>,
     ahead: Res<LookAhead>,
     show_fps: Res<ShowFps>,
+    units: Res<Units>,
     diagnostics: Res<DiagnosticsStore>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     mut big: Query<&mut Text, (With<HudText>, Without<HudSmallText>)>,
@@ -748,6 +831,7 @@ fn update_hud(
         grade,
         Some(avg),
         local.heart_rate_bpm,
+        *units,
     );
     if big.0 != line {
         big.0 = line;
@@ -768,9 +852,9 @@ fn update_hud(
             "up: faster, down: stop, left/right: steer, A: autodrive, W: wild",
         )
     };
+    let (distance, distance_unit) = units.distance(local.state.distance);
     let mut lines = format!(
-        "{place} | {:.2} km | {} | riders: {}\n{keys} | mouse: camera, C: camera reset, R: restart, V: video | F11: screen | ` or F12: console",
-        local.state.distance / 1000.0,
+        "{place} | {distance:.2} {distance_unit} | {} | riders: {}\n{keys} | mouse: camera, C: camera reset, R: restart, V: video | F11: screen | ` or F12: console",
         format_time(view.elapsed_s),
         view.riders.len()
     );
@@ -867,19 +951,52 @@ mod tests {
     #[test]
     fn main_line_shows_the_gradient() {
         assert_eq!(
-            super::main_line(330.0, 10.66, Some(86.0), 11.43, None, None),
+            super::main_line(330.0, 10.66, Some(86.0), 11.43, None, None, Units::Metric),
             " 330 W    10.7 km/h   86 rpm   +11.4 %"
         );
         assert_eq!(
-            super::main_line(0.0, 0.0, None, -0.02, Some(0.01), Some(142.0)),
+            super::main_line(
+                0.0,
+                0.0,
+                None,
+                -0.02,
+                Some(0.01),
+                Some(142.0),
+                Units::Metric
+            ),
             "   0 W     0.0 km/h   - rpm   +0.0 % (100 m +0.0 %)   HR 142"
         );
-        assert!(super::main_line(200.0, 35.0, None, -8.25, None, None).ends_with("-8.2 %"));
+        assert!(
+            super::main_line(200.0, 35.0, None, -8.25, None, None, Units::Metric)
+                .ends_with("-8.2 %")
+        );
         // The average over the next 100 m in brackets.
         assert!(
-            super::main_line(250.0, 14.0, Some(80.0), 9.4, Some(7.81), None)
-                .ends_with("+9.4 % (100 m +7.8 %)")
+            super::main_line(
+                250.0,
+                14.0,
+                Some(80.0),
+                9.4,
+                Some(7.81),
+                None,
+                Units::Metric
+            )
+            .ends_with("+9.4 % (100 m +7.8 %)")
         );
+        // 40 km/h = 24.9 mph.
+        assert_eq!(
+            super::main_line(250.0, 40.0, None, 0.0, None, None, Units::Imperial),
+            " 250 W    24.9 mph   - rpm   +0.0 %"
+        );
+    }
+
+    #[test]
+    fn units_convert_speed_and_distance() {
+        assert_eq!(Units::Metric.distance(12_340.0), (12.34, "km"));
+        let (mi, unit) = Units::Imperial.distance(METRES_PER_MILE * 3.0);
+        assert!((mi - 3.0).abs() < 1e-12 && unit == "mi");
+        assert_eq!("imperial".parse(), Ok(Units::Imperial));
+        assert!("furlongs".parse::<Units>().is_err());
     }
 
     /// A straight road along x: flat 200 m, +8 % for 500 m, -4 % to 1 km.
