@@ -63,8 +63,7 @@ impl Page {
     pub fn notes(self) -> &'static [&'static str] {
         match self {
             Self::Workshop => &[
-                "Choose who rides: their weight goes into the physics and the",
-                "trainer (from the next start). Bike and character: Phase 4.",
+                "Choose who rides: their weight goes into the physics and the trainer (from the next start). Bike and character: Phase 4.",
             ],
             Self::Riders => &["Rider profiles: weight, height, FTP. Choose one in the Workshop."],
             Self::Rider(_) => &["Changes apply from the next start (Restart)."],
@@ -191,7 +190,7 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
             setting_row(settings, "display.units", "Units"),
             setting_row(settings, "display.camera", "Camera"),
             setting_row(settings, "display.fps", "FPS counter"),
-            setting_row(settings, "display.fullscreen", "Fullscreen at the start"),
+            setting_row(settings, "display.fullscreen", "Fullscreen (next start)"),
         ],
         Page::Riders => {
             let mut out: Vec<Row> = riders
