@@ -8,7 +8,10 @@ use crate::{DeviceBackend, DeviceCommand, DeviceError, DeviceEvent, DeviceHandle
 ///
 /// Behaves like a real trainer from the app's point of view: it runs on its
 /// own thread and sends samples at a fixed rate (real FTMS trainers report at
-/// roughly 1–4 Hz).
+/// roughly 1–4 Hz). In ERG mode it acts like an ideal ERG trainer with a
+/// rider who keeps pedalling: it reports the target power (while the set
+/// power is above 0, i.e. the virtual rider pedals) until a SIM command
+/// ends ERG mode.
 pub struct VirtualTrainer {
     initial_power_w: f64,
     rate_hz: f64,
@@ -19,6 +22,39 @@ impl VirtualTrainer {
         Self {
             initial_power_w,
             rate_hz: 4.0,
+        }
+    }
+}
+
+/// The virtual trainer's power: set by the user, or the ERG target.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct VirtualPower {
+    set_w: f64,
+    erg_w: Option<f64>,
+}
+
+impl VirtualPower {
+    fn new(set_w: f64) -> Self {
+        Self {
+            set_w: set_w.max(0.0),
+            erg_w: None,
+        }
+    }
+
+    fn command(&mut self, cmd: DeviceCommand) {
+        match cmd {
+            DeviceCommand::SetVirtualPower(w) => self.set_w = w.max(0.0),
+            DeviceCommand::SetTargetPower(w) => self.erg_w = Some(w.max(0.0)),
+            DeviceCommand::SetSimulation(_) => self.erg_w = None,
+            DeviceCommand::Shutdown => {}
+        }
+    }
+
+    /// ERG: the target while the virtual rider pedals; otherwise the set power.
+    fn reported(&self) -> f64 {
+        match self.erg_w {
+            Some(t) if self.set_w > 0.0 => t,
+            _ => self.set_w,
         }
     }
 }
@@ -37,7 +73,7 @@ impl DeviceBackend for VirtualTrainer {
         let (event_tx, events) = mpsc::channel();
         let (commands, command_rx) = mpsc::channel();
         let period = Duration::from_secs_f64(1.0 / self.rate_hz);
-        let mut power = self.initial_power_w;
+        let mut power = VirtualPower::new(self.initial_power_w);
         thread::Builder::new()
             .name("ocw-virtual-trainer".into())
             .spawn(move || {
@@ -46,20 +82,17 @@ impl DeviceBackend for VirtualTrainer {
                 loop {
                     let wait = next.saturating_duration_since(Instant::now());
                     match command_rx.recv_timeout(wait) {
-                        Ok(DeviceCommand::SetVirtualPower(w)) => {
-                            power = w.max(0.0);
-                            continue;
-                        }
                         Ok(DeviceCommand::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
-                        Ok(other) => {
-                            tracing::debug!(?other, "virtual trainer ignores command");
+                        Ok(cmd) => {
+                            power.command(cmd);
                             continue;
                         }
                         Err(RecvTimeoutError::Timeout) => {}
                     }
+                    let watts = power.reported();
                     let event = DeviceEvent::Power {
-                        watts: power,
-                        cadence_rpm: cadence_for(power),
+                        watts,
+                        cadence_rpm: cadence_for(watts),
                         timestamp: start.elapsed(),
                     };
                     if event_tx.send(event).is_err() {
@@ -103,6 +136,29 @@ mod tests {
             assert!(Instant::now() < deadline, "power never changed");
         }
         h.commands.send(DeviceCommand::Shutdown).unwrap();
+    }
+
+    #[test]
+    fn erg_target_replaces_the_set_power_until_sim() {
+        let mut p = VirtualPower::new(150.0);
+        assert_eq!(p.reported(), 150.0);
+        p.command(DeviceCommand::SetTargetPower(240.0));
+        assert_eq!(p.reported(), 240.0);
+        // The virtual rider stops: no power, also in ERG.
+        p.command(DeviceCommand::SetVirtualPower(0.0));
+        assert_eq!(p.reported(), 0.0);
+        p.command(DeviceCommand::SetVirtualPower(100.0));
+        assert_eq!(p.reported(), 240.0);
+        p.command(DeviceCommand::SetSimulation(crate::SimulationParameters {
+            grade: 0.0,
+            wind_speed_mps: 0.0,
+            crr: 0.004,
+            cw_kg_per_m: 0.4,
+            mass_kg: 80.0,
+        }));
+        assert_eq!(p.reported(), 100.0);
+        p.command(DeviceCommand::SetTargetPower(-5.0));
+        assert_eq!(p.reported(), 0.0);
     }
 
     #[test]
