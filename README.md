@@ -228,10 +228,15 @@ package is installed only when all its files match the manifest.
 - ↑ adds power on top of any device (25 W per press), ↓ stops (power 0 and
   brake).
 
-**Videos:** V starts and stops recording the window as an MP4 (H.264,
-25 fps) into `~/Videos/OCW/` (or `~/.local/share/ocw/videos/`); slow frames
-are repeated so the video keeps real time. Needs `ffmpeg` (`make deps`
-installs it).
+**Videos:** V starts recording the window as an MP4 (H.264, 25 fps) into
+`~/Videos/OCW/` (or `~/.local/share/ocw/videos/`), V again stops it (ignored
+while the console is open; console: `video start|stop`). While recording,
+the HUD shows a small red "REC m:ss" at the top right; after stopping,
+"Video saved: <file>" for a few seconds. Windows wider than 1920 px are
+scaled down; ticks without a new image repeat the last one so the video
+keeps real time (on the kiosk test machine all 25 images per second are
+new; a slow screenshot readback can lower that elsewhere – `make video`
+records with a fixed time step instead). Needs `ffmpeg` (`make deps` installs it).
 
 **Rides and Strava** (spec §2.8)
 
