@@ -70,6 +70,26 @@ jobs:
       - name: Clippy (build check)
         run: cargo clippy --workspace --all-targets
 
+  # macOS app bundle, DMG and zip (spec §11.3), ad-hoc signed; only on
+  # pushes to main to save macOS runner minutes.
+  macos-app:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Build and package the app
+        run: scripts/build-macos-app.sh target/macos
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-app
+          path: |
+            target/macos/*.dmg
+            target/macos/*.zip
+          if-no-files-found: error
+
   # Core crates must build for WebAssembly (spec §3.5).
   wasm:
     runs-on: ubuntu-24.04
