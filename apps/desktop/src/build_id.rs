@@ -5,6 +5,7 @@
 //! `build.rs` includes this file too, so keep it free of crate imports.
 
 /// The commit part: `7d538c0` or `7d538c0-dirty`; empty without a commit.
+#[allow(dead_code)] // only build.rs uses it (and the tests)
 pub fn commit_id(sha: &str, dirty: bool) -> String {
     let sha = sha.trim();
     if sha.is_empty() {
