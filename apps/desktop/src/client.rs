@@ -45,9 +45,12 @@ pub struct ClientCore {
     prev_state: RiderState,
     /// Steering target (lateral offset); set from the first own snapshot.
     lateral_target: Option<f64>,
+    /// Lean steering (rad, positive = right), the arrow keys; replaces the
+    /// target while set.
+    lean: Option<f64>,
     steer_seq: u32,
-    /// Last steering target sent (cm) and when.
-    steer_sent: Option<(i32, f64)>,
+    /// Last steering intent sent ((lean mode, mrad or cm)) and when.
+    steer_sent: Option<((bool, i32), f64)>,
     others: SnapshotBuffer,
     /// Latest known state of the other riders, advanced every physics tick
     /// (for predicting the local rider's drafting).
@@ -74,6 +77,7 @@ impl ClientCore {
             predictor: Predictor::new(profile, RiderState::default()),
             prev_state: RiderState::default(),
             lateral_target: None,
+            lean: None,
             steer_seq: 0,
             steer_sent: None,
             others: SnapshotBuffer::default(),
@@ -207,14 +211,6 @@ impl ClientCore {
         self.others.push(now_s, others);
     }
 
-    /// Moves the steering target sideways by `delta_m` (positive = right),
-    /// within the road.
-    pub fn steer_by(&mut self, delta_m: f64) {
-        if let Some(t) = self.lateral_target {
-            self.steer_to(t + delta_m);
-        }
-    }
-
     /// Sets the steering target (lateral offset in metres), within the road.
     pub fn steer_to(&mut self, target_m: f64) {
         if self.rider_id.is_none() {
@@ -223,7 +219,25 @@ impl ClientCore {
         let limit = ocw_sim::physics::lateral_limit(self.route.road_width_m());
         let t = target_m.clamp(-limit, limit);
         self.lateral_target = Some(t);
+        self.lean = None;
         self.predictor.set_lateral_target(t);
+    }
+
+    /// Lean steering (the arrow keys): the rider leans by `lean_rad`
+    /// (positive = right) and rides a curve until the lean is 0 again.
+    pub fn set_lean(&mut self, lean_rad: f64) {
+        if self.rider_id.is_none() {
+            return;
+        }
+        let max = ocw_sim::physics::MAX_STEER_LEAN;
+        let l = lean_rad.clamp(-max, max);
+        self.lean = Some(l);
+        self.predictor.set_lean(l);
+    }
+
+    /// The current lean steering, if the rider steers by leaning.
+    pub fn lean(&self) -> Option<f64> {
+        self.lean
     }
 
     pub fn lateral_target(&self) -> Option<f64> {
@@ -233,17 +247,23 @@ impl ClientCore {
     /// The steering intent to send now, if the target changed (at most
     /// every `STEER_SEND_INTERVAL_S` while it keeps changing).
     pub fn steer_message(&mut self, now_s: f64) -> Option<Vec<u8>> {
-        let cm = (self.lateral_target? * 100.0).round() as i32;
-        if let Some((sent_cm, at)) = self.steer_sent
-            && (sent_cm == cm || now_s - at < STEER_SEND_INTERVAL_S)
+        let key = match self.lean {
+            Some(l) => (true, (l * 1000.0).round() as i32),
+            None => (false, (self.lateral_target? * 100.0).round() as i32),
+        };
+        if let Some((sent, at)) = self.steer_sent
+            && (sent == key || now_s - at < STEER_SEND_INTERVAL_S)
         {
             return None;
         }
         self.steer_seq += 1;
-        self.steer_sent = Some((cm, now_s));
+        self.steer_sent = Some((key, now_s));
+        let (lean_steering, value) = key;
         Some(encode(&client_message(C::Steer(v1::SteerIntent {
             seq: self.steer_seq,
-            lateral_target_cm: cm,
+            lateral_target_cm: if lean_steering { 0 } else { value },
+            lean_steering,
+            lean_mrad: if lean_steering { value } else { 0 },
         }))))
     }
 
@@ -350,6 +370,8 @@ fn lerp_state(a: RiderState, b: RiderState, t: f64) -> RiderState {
         distance: a.distance + (b.distance - a.distance) * t,
         speed: a.speed + (b.speed - a.speed) * t,
         lateral_offset: a.lateral_offset + (b.lateral_offset - a.lateral_offset) * t,
+        heading: a.heading + (b.heading - a.heading) * t,
+        turn_curvature: a.turn_curvature + (b.turn_curvature - a.turn_curvature) * t,
     }
 }
 
@@ -698,14 +720,14 @@ mod tests {
         let first = h.client.steer_message(h.time_s).expect("initial intent");
         h.send(&first);
         assert!(h.client.steer_message(h.time_s + 1.0).is_none());
-        h.client.steer_by(1.5);
+        h.client.steer_to(start + 1.5);
         let msg = h.client.steer_message(h.time_s + 0.1).expect("changed");
         match ocw_protocol::decode_client(&msg).unwrap() {
             C::Steer(s) => assert_eq!(s.lateral_target_cm, ((start + 1.5) * 100.0).round() as i32),
             other => panic!("unexpected {other:?}"),
         }
         // Rate limited: a further change right away waits.
-        h.client.steer_by(0.1);
+        h.client.steer_to(start + 1.6);
         assert!(h.client.steer_message(h.time_s + 0.11).is_none());
         let msg = h
             .client
@@ -718,11 +740,57 @@ mod tests {
         assert!((server - (start + 1.6)).abs() < 1e-6, "server {server}");
         assert!((h.client.state().lateral_offset - server).abs() < 0.02);
         // Never off the road.
-        h.client.steer_by(100.0);
+        h.client.steer_to(100.0);
         assert_eq!(
             h.client.lateral_target(),
             Some(ocw_sim::physics::lateral_limit(7.0))
         );
+    }
+
+    /// Lean steering: the rider turns into a curve and keeps it until
+    /// straightened, the same on the client and the server.
+    #[test]
+    fn lean_steering_rides_a_curve_until_straightened() {
+        let mut h = Harness::new(0, false);
+        h.ride(250.0, 4.0);
+        let start = h.client.state().lateral_offset;
+        let own = h.client.rider_id().unwrap();
+        h.client.set_lean(-0.15);
+        let msg = h.client.steer_message(h.time_s).expect("lean intent");
+        match ocw_protocol::decode_client(&msg).unwrap() {
+            C::Steer(s) => assert!(s.lean_steering && s.lean_mrad == -150, "{s:?}"),
+            other => panic!("unexpected {other:?}"),
+        }
+        h.send(&msg);
+        h.ride(250.0, 0.6);
+        // Turning left: heading and offset to the left, on both sides.
+        let server = h.server.session().rider_state(own).unwrap();
+        let client = h.client.state();
+        assert!(
+            server.heading < -0.05 && server.turn_curvature < 0.0,
+            "{server:?}"
+        );
+        assert!(server.lateral_offset < start - 0.2, "{server:?}");
+        assert!(
+            (client.heading - server.heading).abs() < 0.05,
+            "{client:?} vs {server:?}"
+        );
+        assert!((client.lateral_offset - server.lateral_offset).abs() < 0.3);
+        // Upright again: straight on, lined up with the road.
+        h.client.set_lean(0.0);
+        let msg = h.client.steer_message(h.time_s + 1.0).expect("straighten");
+        h.send(&msg);
+        h.ride(250.0, 8.0);
+        let server = h.server.session().rider_state(own).unwrap();
+        assert!(
+            server.heading.abs() < 0.01 && server.turn_curvature == 0.0,
+            "{server:?}"
+        );
+        let limit = ocw_sim::physics::lateral_limit(7.0);
+        assert!(server.lateral_offset >= -limit - 1e-9);
+        // The console's target steering takes over again.
+        h.client.steer_to(0.0);
+        assert_eq!(h.client.lean(), None);
     }
 
     /// Down arrow: the brake reaches the server at once and stops the

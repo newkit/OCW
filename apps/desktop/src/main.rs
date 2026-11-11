@@ -76,6 +76,10 @@ pub struct Args {
     /// Run a console command at startup (repeatable).
     #[arg(long = "cmd", value_name = "COMMAND")]
     pub commands: Vec<String>,
+    /// Run a console command once the ride has lasted SECONDS (session
+    /// time), e.g. `--at "4=rider.lean 15"` (repeatable; for scripted rides).
+    #[arg(long = "at", value_name = "SECONDS=COMMAND", value_parser = parse_timed)]
+    pub timed: Vec<(f64, String)>,
     /// Save a screenshot to this path after --screenshot-delay seconds, then exit.
     #[arg(long, value_name = "PATH")]
     pub screenshot: Option<PathBuf>,
@@ -184,8 +188,36 @@ fn main() -> AppExit {
         platform::PlatformPlugin,
         monitor::MonitorPlugin,
     ))
-    .add_systems(Startup, startup_commands);
+    .add_systems(Startup, startup_commands)
+    .add_systems(Update, timed_commands);
     app.run()
+}
+
+/// `SECONDS=COMMAND` of `--at`.
+fn parse_timed(s: &str) -> Result<(f64, String), String> {
+    let (t, cmd) = s.split_once('=').ok_or("expected SECONDS=COMMAND")?;
+    let t: f64 = t.trim().parse().map_err(|e| format!("{t}: {e}"))?;
+    if t.is_nan() || t < 0.0 || cmd.trim().is_empty() {
+        return Err("expected SECONDS >= 0 and a command".into());
+    }
+    Ok((t, cmd.trim().to_string()))
+}
+
+/// Queues the `--at` commands whose time has come (each once).
+fn timed_commands(
+    args: Res<Args>,
+    view: Res<RideView>,
+    mut done: Local<usize>,
+    mut console: ResMut<ConsoleState>,
+) {
+    let mut due: Vec<&(f64, String)> = args.timed.iter().collect();
+    due.sort_by(|a, b| a.0.total_cmp(&b.0));
+    while let Some((t, cmd)) = due.get(*done)
+        && *t <= view.elapsed_s
+    {
+        console.queue(cmd.clone());
+        *done += 1;
+    }
 }
 
 /// Enables dev commands (local server) and queues autoexec / --exec / --cmd.
@@ -200,5 +232,21 @@ fn startup_commands(args: Res<Args>, mut console: ResMut<ConsoleState>) {
     }
     for cmd in &args.commands {
         console.queue(cmd.clone());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn timed_commands_parse() {
+        assert_eq!(
+            parse_timed("4.5=rider.lean -15"),
+            Ok((4.5, "rider.lean -15".to_string()))
+        );
+        assert!(parse_timed("rider.lean 15").is_err());
+        assert!(parse_timed("-1=x").is_err());
+        assert!(parse_timed("2=  ").is_err());
     }
 }

@@ -153,6 +153,7 @@ mod tests {
             distance,
             speed,
             lateral_offset: 0.0,
+            ..Default::default()
         }
     }
 

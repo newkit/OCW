@@ -26,6 +26,72 @@ pub fn steer(current: f64, target: f64, dt: f64) -> f64 {
     current + (target - current).clamp(-max, max)
 }
 
+/// How a rider steers across the road (spec §6.1: intents, applied by the
+/// server and predicted by the client with the same rule).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Steering {
+    /// Move to this lateral offset (m, positive = right) at up to
+    /// `MAX_LATERAL_SPEED`, keeping parallel to the road.
+    Target(f64),
+    /// Lean by this angle (rad, positive = right) and ride the curve it
+    /// gives, κ = g·tan(lean)/v², relative to the road. Leaning 0 rides
+    /// straight on and lines up with the road again.
+    Lean(f64),
+}
+
+/// Largest lean a rider can steer with (rad, 30°).
+pub const MAX_STEER_LEAN: f64 = 0.52;
+/// Tightest curve a rider rides relative to the road (1/m, radius 8 m).
+pub const MAX_TURN_CURVATURE: f64 = 0.125;
+/// Largest angle between the rider and the road (rad, ~17°).
+pub const MAX_HEADING: f64 = 0.3;
+/// Time constant with which a rider riding straight on lines up with the
+/// road again, in seconds.
+pub const ALIGN_TIME_S: f64 = 2.0;
+
+/// Applies `steering` for one tick: lateral offset, heading and the
+/// curvature ridden relative to the road. `limit` is the largest offset
+/// either side ([`lateral_limit`]).
+pub fn apply_steering(state: &mut RiderState, steering: Steering, limit: f64, dt: f64) {
+    match steering {
+        Steering::Target(target) => {
+            state.lateral_offset = steer(state.lateral_offset, target.clamp(-limit, limit), dt);
+            state.heading = 0.0;
+            state.turn_curvature = 0.0;
+        }
+        Steering::Lean(lean) => {
+            let v = state.speed;
+            let lean = lean.clamp(-MAX_STEER_LEAN, MAX_STEER_LEAN);
+            let mut k = if v > 0.1 {
+                (GRAVITY * lean.tan() / (v * v)).clamp(-MAX_TURN_CURVATURE, MAX_TURN_CURVATURE)
+            } else {
+                0.0
+            };
+            if lean.abs() < 1e-6 {
+                state.heading *= (-dt / ALIGN_TIME_S).exp();
+            } else {
+                let h = state.heading + v * k * dt;
+                if h.abs() > MAX_HEADING {
+                    k = 0.0; // turned as far as it goes: straight at that angle
+                }
+                state.heading = h.clamp(-MAX_HEADING, MAX_HEADING);
+            }
+            state.lateral_offset += v * state.heading.sin() * dt;
+            if state.lateral_offset.abs() >= limit {
+                // At the road edge: along it, no further turning outwards.
+                state.lateral_offset = state.lateral_offset.clamp(-limit, limit);
+                if state.heading * state.lateral_offset > 0.0 {
+                    state.heading = 0.0;
+                }
+                if k * state.lateral_offset > 0.0 {
+                    k = 0.0;
+                }
+            }
+            state.turn_curvature = k;
+        }
+    }
+}
+
 /// State of one rider along their path.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct RiderState {
@@ -35,6 +101,10 @@ pub struct RiderState {
     pub speed: f64,
     /// Sideways offset from the road centerline in metres (positive = right).
     pub lateral_offset: f64,
+    /// Direction of travel relative to the road in rad (positive = right).
+    pub heading: f64,
+    /// Curvature ridden relative to the road in 1/m (positive = right).
+    pub turn_curvature: f64,
 }
 
 /// Conditions at the rider's position.
@@ -144,6 +214,64 @@ pub fn steady_state_power(profile: &RiderProfile, env: &Environment, speed: f64)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn riding(speed: f64) -> RiderState {
+        RiderState {
+            speed,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn leaning_rides_a_curve_until_straightened() {
+        // 10 m/s, leaning 10° right: κ = g·tan(10°)/v² ≈ 0.0173 / m.
+        let mut s = riding(10.0);
+        let lean = 10f64.to_radians();
+        apply_steering(&mut s, Steering::Lean(lean), 3.0, 0.02);
+        assert!((s.turn_curvature - GRAVITY * lean.tan() / 100.0).abs() < 1e-9);
+        for _ in 0..25 {
+            apply_steering(&mut s, Steering::Lean(lean), 3.0, 0.02);
+        }
+        // Half a second later: turned right and moving right.
+        assert!(s.heading > 0.05 && s.lateral_offset > 0.0, "{s:?}");
+        // Upright again (the opposite key): no more turning, lines up with
+        // the road and stays on its new line.
+        let at = s.lateral_offset;
+        for _ in 0..500 {
+            apply_steering(&mut s, Steering::Lean(0.0), 3.0, 0.02);
+        }
+        assert_eq!(s.turn_curvature, 0.0);
+        assert!(s.heading.abs() < 0.001, "{}", s.heading);
+        assert!(s.lateral_offset > at && s.lateral_offset < 3.0, "{s:?}");
+    }
+
+    #[test]
+    fn leaning_stops_at_the_road_edge_and_the_heading_limit() {
+        let mut s = riding(12.0);
+        for _ in 0..1000 {
+            apply_steering(&mut s, Steering::Lean(-0.4), 2.5, 0.02);
+            assert!(s.heading.abs() <= MAX_HEADING + 1e-12);
+        }
+        assert_eq!(s.lateral_offset, -2.5);
+        assert_eq!((s.heading, s.turn_curvature), (0.0, 0.0));
+        // Standing still: no curve, no movement.
+        let mut s = riding(0.0);
+        apply_steering(&mut s, Steering::Lean(0.4), 2.5, 0.02);
+        assert_eq!(s, riding(0.0));
+        // Slow: the curvature is capped (no turning on the spot).
+        let mut s = riding(1.0);
+        apply_steering(&mut s, Steering::Lean(0.5), 2.5, 0.02);
+        assert_eq!(s.turn_curvature, MAX_TURN_CURVATURE);
+    }
+
+    #[test]
+    fn target_steering_keeps_parallel_to_the_road() {
+        let mut s = riding(10.0);
+        s.heading = 0.2;
+        apply_steering(&mut s, Steering::Target(5.0), 2.0, 0.02);
+        assert_eq!(s.heading, 0.0);
+        assert!((s.lateral_offset - MAX_LATERAL_SPEED * 0.02).abs() < 1e-12);
+    }
     use ocw_core::SIM_DT;
 
     fn ride(power: f64, grade: f64, seconds: f64) -> RiderState {

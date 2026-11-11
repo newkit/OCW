@@ -23,6 +23,11 @@ message SteerIntent {
   uint32 seq = 1;
   // Target offset from the centreline in cm (positive = right).
   sint32 lateral_target_cm = 2;
+  // Lean steering (the arrow keys): instead of a target offset, the rider
+  // leans by lean_mrad (positive = right) and rides a curve with it; the
+  // lean stays until the rider straightens up.
+  bool lean_steering = 3;
+  sint32 lean_mrad = 4;
 }
 
 // First message on a connection.
@@ -102,4 +107,8 @@ message RiderUpdate {
   uint32 last_input_seq = 6;
   uint32 power_w = 7;
   string display_name = 8;
+  // Heading relative to the road in mrad (positive = right) and the
+  // curvature the rider is riding on top of the road's, in 1e-4 / m.
+  sint32 heading_mrad = 9;
+  sint32 turn_curvature_e4 = 10;
 }

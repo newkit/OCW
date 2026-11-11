@@ -1,6 +1,8 @@
 //! Keyboard controls (when the console is closed):
-//! - ← / → steer across the road (held: 2 m/s, the rider follows at up to
-//!   1.5 m/s); later they also choose the turn at junctions (spec §2.2.1),
+//! - ← / → lean the rider into a curve (held: further, up to 30°); the
+//!   lean stays when released, the opposite key straightens up (it stops
+//!   at upright until the key is pressed again); later they also choose
+//!   the turn at junctions (spec §2.2.1),
 //! - ↑ accelerates: each press adds `POWER_STEP_W` to the rider's power,
 //!   holding adds `POWER_RAMP_W_PER_S` (up to `MAX_KEY_POWER_W`), on top of
 //!   the device's power (virtual or real trainer); it also releases the brake,
@@ -51,8 +53,28 @@ pub fn ramp(watts: f64, pressed: bool, held: bool, dt: f64) -> f64 {
     (watts + step + rise).min(MAX_KEY_POWER_W.max(watts))
 }
 
-/// How fast the steering target moves while an arrow key is held, in m/s.
-pub const STEER_KEY_RATE_MPS: f64 = 2.0;
+/// How fast the lean changes while an arrow key is held, in rad/s (~23°/s).
+pub const LEAN_KEY_RATE: f64 = 0.4;
+
+/// New lean (rad) after `dt` with the arrow key direction `dir`. Bringing
+/// the lean back through upright stops there (`latched`) until the keys
+/// are released, so straightening up is easy.
+pub fn lean_ramp(lean: f64, dir: f64, latched: &mut bool, dt: f64) -> f64 {
+    if dir == 0.0 {
+        *latched = false;
+        return lean;
+    }
+    if *latched {
+        return lean;
+    }
+    let max = ocw_sim::physics::MAX_STEER_LEAN;
+    let next = (lean + dir * LEAN_KEY_RATE * dt).clamp(-max, max);
+    if lean != 0.0 && (next == 0.0 || next.signum() != lean.signum()) {
+        *latched = true;
+        return 0.0;
+    }
+    next
+}
 
 /// Steering direction from the arrow keys: −1 left, +1 right, 0 none.
 pub fn steer_direction(left: bool, right: bool) -> f64 {
@@ -69,6 +91,7 @@ fn steer(
     console: Res<ConsoleState>,
     time: Res<Time>,
     mut client: ResMut<ClientState>,
+    mut latched: Local<bool>,
 ) {
     if console.is_open() {
         return;
@@ -77,10 +100,10 @@ fn steer(
         keys.pressed(KeyCode::ArrowLeft),
         keys.pressed(KeyCode::ArrowRight),
     );
-    if dir != 0.0 {
-        client
-            .0
-            .steer_by(dir * STEER_KEY_RATE_MPS * time.delta_secs_f64());
+    let lean = client.0.lean().unwrap_or(0.0);
+    let next = lean_ramp(lean, dir, &mut latched, time.delta_secs_f64());
+    if dir != 0.0 && (next != lean || client.0.lean().is_none()) {
+        client.0.set_lean(next);
     }
 }
 
@@ -143,6 +166,31 @@ mod tests {
         assert_eq!(steer_direction(false, true), 1.0);
         assert_eq!(steer_direction(true, true), 0.0);
         assert_eq!(steer_direction(false, false), 0.0);
+    }
+
+    #[test]
+    fn lean_keys_ramp_hold_and_stop_at_upright() {
+        let mut latched = false;
+        // Hold right for half a second: leaning right.
+        let mut lean = 0.0;
+        for _ in 0..30 {
+            lean = lean_ramp(lean, 1.0, &mut latched, 1.0 / 60.0);
+        }
+        assert!((lean - 0.2).abs() < 1e-9, "{lean}");
+        // Released: the lean stays.
+        assert_eq!(lean_ramp(lean, 0.0, &mut latched, 1.0), lean);
+        // Left straightens up and stops at upright while held.
+        for _ in 0..120 {
+            lean = lean_ramp(lean, -1.0, &mut latched, 1.0 / 60.0);
+        }
+        assert_eq!(lean, 0.0);
+        // Released and pressed again: now it leans left.
+        lean = lean_ramp(lean, 0.0, &mut latched, 1.0 / 60.0);
+        lean = lean_ramp(lean, -1.0, &mut latched, 0.5);
+        assert!(lean < 0.0);
+        // Never beyond the limit.
+        lean = lean_ramp(lean, -1.0, &mut latched, 100.0);
+        assert_eq!(lean, -ocw_sim::physics::MAX_STEER_LEAN);
         assert_eq!(power_delta(true, false), 10.0);
         assert_eq!(power_delta(false, true), -10.0);
         assert_eq!(power_delta(true, true), 0.0);

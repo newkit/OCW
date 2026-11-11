@@ -8,7 +8,7 @@ use ocw_core::{RiderId, RiderProfile, SIM_DT};
 use ocw_world::Route;
 
 use crate::drafting;
-use crate::physics::{self, Environment, RiderState};
+use crate::physics::{self, Environment, RiderState, Steering};
 
 /// Latest sensor input of a rider.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -37,8 +37,8 @@ struct Rider {
     input: RiderInput,
     last_input_seq: u32,
     control: Control,
-    /// Lateral offset the rider steers to (client riders only).
-    lateral_target: Option<f64>,
+    /// How the rider steers (client riders only).
+    steering: Option<Steering>,
     last_steer_seq: u32,
 }
 
@@ -127,7 +127,7 @@ impl Session {
                 input: RiderInput::default(),
                 last_input_seq: 0,
                 control,
-                lateral_target: None,
+                steering: None,
                 last_steer_seq: 0,
             },
         );
@@ -162,7 +162,21 @@ impl Session {
         match self.riders.get_mut(&id) {
             Some(r) if r.control == Control::Client && seq > r.last_steer_seq => {
                 r.last_steer_seq = seq;
-                r.lateral_target = Some(target_m.clamp(-limit, limit));
+                r.steering = Some(Steering::Target(target_m.clamp(-limit, limit)));
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Lean steering intent of a client rider (the arrow keys): rides a
+    /// curve with this lean (rad, positive = right) until it is 0 again.
+    /// Same sequence numbers as [`Session::set_lateral_target`].
+    pub fn set_lean(&mut self, id: RiderId, seq: u32, lean_rad: f64) -> bool {
+        match self.riders.get_mut(&id) {
+            Some(r) if r.control == Control::Client && seq > r.last_steer_seq => {
+                r.last_steer_seq = seq;
+                r.steering = Some(Steering::Lean(lean_rad));
                 true
             }
             _ => false,
@@ -183,6 +197,7 @@ impl Session {
     /// Advances the session by one physics tick.
     pub fn step(&mut self) {
         self.tick += 1;
+        let limit = physics::lateral_limit(self.route.road_width_m());
         let t = self.time_s();
         // Drafting uses everyone's position at the start of the tick.
         let positions: Vec<(RiderId, f64, f64)> = self
@@ -213,9 +228,8 @@ impl Session {
                 &env,
                 SIM_DT,
             );
-            if let Some(target) = rider.lateral_target {
-                rider.state.lateral_offset =
-                    physics::steer(rider.state.lateral_offset, target, SIM_DT);
+            if let Some(steering) = rider.steering {
+                physics::apply_steering(&mut rider.state, steering, limit, SIM_DT);
             }
         }
     }

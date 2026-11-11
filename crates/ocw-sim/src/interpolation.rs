@@ -54,6 +54,9 @@ impl SnapshotBuffer {
                         speed: sa.speed + (sb.speed - sa.speed) * t,
                         lateral_offset: sa.lateral_offset
                             + (sb.lateral_offset - sa.lateral_offset) * t,
+                        heading: sa.heading + (sb.heading - sa.heading) * t,
+                        turn_curvature: sa.turn_curvature
+                            + (sb.turn_curvature - sa.turn_curvature) * t,
                     },
                     None => *sb,
                 };
@@ -72,6 +75,7 @@ mod tests {
             distance,
             speed: 10.0,
             lateral_offset: 0.0,
+            ..Default::default()
         }
     }
 

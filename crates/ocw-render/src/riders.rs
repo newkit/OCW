@@ -150,6 +150,19 @@ pub fn lean_rotation(lean: f64) -> Quat {
     Quat::from_rotation_z(-lean as f32)
 }
 
+/// The avatar: on the road like [`rider_transform`], turned by the rider's
+/// heading relative to the road and leaning for the road's curve plus the
+/// rider's own (lean steering).
+pub fn avatar_transform(view: &RideView, state: &ocw_sim::RiderState) -> Transform {
+    let mut t = rider_transform(view, state.distance, state.lateral_offset);
+    let k = curvature(view, state.distance) + state.turn_curvature;
+    // Positive heading = right; Bevy turns left for a positive Y rotation.
+    let pitch_free_yaw = Quat::from_rotation_y(-state.heading as f32);
+    t.rotation = pitch_free_yaw * t.rotation;
+    t.rotation *= lean_rotation(lean_angle(k, state.speed));
+    t
+}
+
 fn sync_riders(
     mut commands: Commands,
     view: Res<RideView>,
@@ -168,9 +181,7 @@ fn sync_riders(
         keep
     });
     for r in &view.riders {
-        let mut t = rider_transform(&view, r.state.distance, r.state.lateral_offset);
-        let lean = lean_angle(curvature(&view, r.state.distance), r.state.speed);
-        t.rotation *= lean_rotation(lean);
+        let t = avatar_transform(&view, &r.state);
         match entities.0.get(&r.id) {
             Some(e) => {
                 if let Ok(mut tr) = transforms.get_mut(*e) {
@@ -393,6 +404,32 @@ mod tests {
         assert_eq!(lean_angle(k, 0.0), 0.0);
         assert_eq!(lean_angle(k, 40.0), MAX_LEAN);
         assert_eq!(lean_angle(-k, 40.0), -MAX_LEAN);
+    }
+
+    #[test]
+    fn lean_steering_turns_and_tilts_the_avatar() {
+        let v = view(vec![[0.0, 0.0, 0.0], [500.0, 0.0, 0.0]]);
+        let state = ocw_sim::RiderState {
+            distance: 100.0,
+            speed: 10.0,
+            heading: 0.2,
+            turn_curvature: 0.02,
+            ..Default::default()
+        };
+        let t = avatar_transform(&v, &state);
+        // Heading east, turned 0.2 rad to the right (towards +z, south).
+        let f = t.forward().as_vec3();
+        assert!((f.z - 0.2f32.sin()).abs() < 1e-3, "forward {f:?}");
+        // Leaning right: the top tilts towards the rider's right.
+        let upright = avatar_transform(
+            &v,
+            &ocw_sim::RiderState {
+                turn_curvature: 0.0,
+                ..state
+            },
+        );
+        let shift = (t.up().as_vec3() - upright.up().as_vec3()).dot(upright.right().as_vec3());
+        assert!(shift > 0.15, "shift {shift}");
     }
 
     #[test]

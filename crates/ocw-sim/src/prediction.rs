@@ -3,7 +3,7 @@
 use ocw_core::{RiderProfile, SIM_DT};
 use ocw_world::Route;
 
-use crate::physics::{self, Environment, RiderState};
+use crate::physics::{self, Environment, RiderState, Steering};
 
 /// Errors above this distance (m) are corrected immediately instead of smoothed.
 pub const SNAP_THRESHOLD_M: f64 = 5.0;
@@ -24,8 +24,8 @@ pub struct Predictor {
     last_error: f64,
     /// Drafting factor on the drag, predicted by the client (1.0 = none).
     drag_factor: f64,
-    /// Steering target (same rule as the server, so steering reacts at once).
-    lateral_target: Option<f64>,
+    /// Steering (same rule as the server, so steering reacts at once).
+    steering: Option<Steering>,
     /// Brake key held (predicted like the server applies it).
     braking: bool,
     /// Remaining lateral error to blend in, and its rate (m/s).
@@ -42,7 +42,7 @@ impl Predictor {
             correction_rate: 0.0,
             last_error: 0.0,
             drag_factor: 1.0,
-            lateral_target: None,
+            steering: None,
             braking: false,
             pending_lateral: 0.0,
             lateral_rate: 0.0,
@@ -64,7 +64,12 @@ impl Predictor {
 
     /// Sets the steering target (already clamped to the road by the caller).
     pub fn set_lateral_target(&mut self, target_m: f64) {
-        self.lateral_target = Some(target_m);
+        self.steering = Some(Steering::Target(target_m));
+    }
+
+    /// Sets lean steering (rad, positive = right).
+    pub fn set_lean(&mut self, lean_rad: f64) {
+        self.steering = Some(Steering::Lean(lean_rad));
     }
 
     /// Sets the predicted drafting factor (from the positions of others).
@@ -78,8 +83,9 @@ impl Predictor {
             .with_drag_factor(self.drag_factor)
             .with_brake(self.braking);
         physics::step(&mut self.state, &self.profile, power_w, &env, SIM_DT);
-        if let Some(target) = self.lateral_target {
-            self.state.lateral_offset = physics::steer(self.state.lateral_offset, target, SIM_DT);
+        let limit = physics::lateral_limit(route.road_width_m());
+        if let Some(steering) = self.steering {
+            physics::apply_steering(&mut self.state, steering, limit, SIM_DT);
         }
         if self.pending_lateral != 0.0 {
             let max_step = self.lateral_rate.abs() * SIM_DT;
@@ -108,9 +114,9 @@ impl Predictor {
                 .with_drag_factor(self.drag_factor)
                 .with_brake(self.braking);
             physics::step(&mut extrapolated, &self.profile, power_w, &env, SIM_DT);
-            if let Some(target) = self.lateral_target {
-                extrapolated.lateral_offset =
-                    physics::steer(extrapolated.lateral_offset, target, SIM_DT);
+            if let Some(steering) = self.steering {
+                let limit = physics::lateral_limit(route.road_width_m());
+                physics::apply_steering(&mut extrapolated, steering, limit, SIM_DT);
             }
         }
         let error = extrapolated.distance - self.state.distance;
@@ -128,6 +134,8 @@ impl Predictor {
             let lateral_error = extrapolated.lateral_offset - self.state.lateral_offset;
             self.pending_lateral = lateral_error;
             self.lateral_rate = lateral_error / CORRECTION_TIME_S;
+            // The heading follows the server halfway per snapshot (10 Hz).
+            self.state.heading += (extrapolated.heading - self.state.heading) * 0.5;
         }
     }
 }
@@ -186,6 +194,7 @@ mod tests {
             distance: 50.0,
             speed: 8.0,
             lateral_offset: 0.0,
+            ..Default::default()
         };
         p.reconcile(&route, server, 0.0, 200.0);
         assert_eq!(p.state(), server);
@@ -221,6 +230,7 @@ mod tests {
             distance: 100.0,
             speed: 9.0,
             lateral_offset: 0.0,
+            ..Default::default()
         };
         let old = server;
         // The server state is 0.1 s old; meanwhile we rode on.

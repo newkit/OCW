@@ -15,7 +15,7 @@ pub mod session;
 pub mod trainer;
 
 pub use interpolation::SnapshotBuffer;
-pub use physics::{Environment, RiderState};
+pub use physics::{Environment, RiderState, Steering};
 pub use prediction::Predictor;
 pub use session::{RiderInput, RiderSnapshot, Session};
 pub use trainer::{ErgController, ErgSettings, SimController, SimSettings, SimTarget};

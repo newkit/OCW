@@ -85,6 +85,8 @@ pub fn quantize(s: &ocw_sim::RiderSnapshot) -> v1::RiderUpdate {
         last_input_seq: s.last_input_seq,
         power_w: s.power_w.round().max(0.0) as u32,
         display_name: s.name.clone(),
+        heading_mrad: (s.state.heading * 1000.0).round() as i32,
+        turn_curvature_e4: (s.state.turn_curvature * 1e4).round() as i32,
     }
 }
 
@@ -96,6 +98,8 @@ pub fn dequantize(u: &v1::RiderUpdate) -> (RiderId, RiderState) {
             distance: f64::from(u.distance_cm) / 100.0,
             speed: f64::from(u.speed_mm_s) / 1000.0,
             lateral_offset: f64::from(u.lateral_offset_cm) / 100.0,
+            heading: f64::from(u.heading_mrad) / 1000.0,
+            turn_curvature: f64::from(u.turn_curvature_e4) / 1e4,
         },
     )
 }
@@ -135,6 +139,8 @@ mod tests {
                         distance: 3949.99,
                         speed: 12.5,
                         lateral_offset: -1.2,
+                        heading: 0.123,
+                        turn_curvature: -0.0345,
                     },
                     power_w: 310.0,
                     last_input_seq: 77,
@@ -146,6 +152,7 @@ mod tests {
                         distance: 0.0,
                         speed: 0.0,
                         lateral_offset: 1.2,
+                        ..Default::default()
                     },
                     power_w: 0.0,
                     last_input_seq: 0,
@@ -184,6 +191,7 @@ mod tests {
                 distance: -3.0,
                 speed: -1.0,
                 lateral_offset: 0.004,
+                ..Default::default()
             },
             power_w: -5.0,
             last_input_seq: 0,
@@ -210,6 +218,8 @@ mod tests {
                 distance: 1234.567,
                 speed: 9.8765,
                 lateral_offset: -1.234,
+                heading: -0.2004,
+                turn_curvature: 0.01234,
             },
             power_w: 201.6,
             last_input_seq: 9,
@@ -221,5 +231,7 @@ mod tests {
         assert!((s.distance - 1234.57).abs() < 1e-9);
         assert!((s.speed - 9.877).abs() < 1e-9);
         assert!((s.lateral_offset + 1.23).abs() < 1e-9);
+        assert!((s.heading + 0.2).abs() < 1e-9);
+        assert!((s.turn_curvature - 0.0123).abs() < 1e-9);
     }
 }

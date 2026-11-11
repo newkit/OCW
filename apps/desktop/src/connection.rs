@@ -209,6 +209,26 @@ fn register_commands(app: &mut App) {
     ))
     .console_command(ConsoleCommand::new(
         Permission::User,
+        Command::new("rider.lean")
+            .about("Lean into a curve by DEGREES (positive = right, 0 = straighten up; like the arrow keys)")
+            .arg(
+                Arg::new("degrees")
+                    .required(true)
+                    .allow_negative_numbers(true)
+                    .value_parser(value_parser!(f64)),
+            ),
+        |world, m| {
+            let deg = *m.get_one::<f64>("degrees").expect("required");
+            let mut c = world.resource_mut::<ClientState>();
+            c.0.set_lean(deg.to_radians());
+            match c.0.lean() {
+                Some(l) => Ok(format!("leaning {:+.0}°", l.to_degrees())),
+                None => Err("not riding yet".into()),
+            }
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
         Command::new("rider.state").about("Print the local rider's state"),
         |world, _| {
             let c = &world.resource::<ClientState>().0;
