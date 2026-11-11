@@ -50,7 +50,7 @@ field() {
 
 host=$(field host); user=$(field user); port=$(field port)
 key=$(field identity_file); ssh_dir=$(field ssh_dir); repo=$(field repo_path)
-timeout_s=$(field connect_timeout_s)
+timeout_s=$(field connect_timeout_s); os=$(field os)
 [ -n "$host" ] || { echo "machine '$machine' not found in $conf" >&2; exit 1; }
 case "$key" in /*) ;; *) key="$config_dir/${ssh_dir:-ssh}/$key" ;; esac
 # Branches other than main get their own checkout on the machine, so parallel
@@ -69,6 +69,19 @@ target="$user@$host"
 
 sync_tree() {
   "${SSH[@]}" "$target" "mkdir -p $repo"
+  if [ "$os" = macos ]; then
+    # macOS ships openrsync, which lacks --delete-missing-args: send only the
+    # files that exist and delete tracked files removed here with rm.
+    local files missing=()
+    files=$(git ls-files -co --exclude-standard | grep -v '^config/')
+    while IFS= read -r f; do [ -e "$f" ] || missing+=("'${f//\'/\'\\\'\'}'"); done <<<"$files"
+    if [ ${#missing[@]} -gt 0 ]; then
+      "${SSH[@]}" "$target" "cd $repo && rm -f ${missing[*]}"
+    fi
+    while IFS= read -r f; do if [ -e "$f" ]; then printf "%s\n" "$f"; fi; done <<<"$files" |
+      rsync -a --files-from=- -e "${SSH[*]}" ./ "$target:$repo/"
+    return
+  fi
   git ls-files -co --exclude-standard | grep -v '^config/' |
     rsync -a --delete-missing-args --files-from=- \
       -e "${SSH[*]}" ./ "$target:$repo/"
