@@ -100,11 +100,11 @@ class MaskTest(unittest.TestCase):
         mk = d.Masker(["win.example.lan", "claude", "10.1.2.3"], ["/home/claude"])
         text = ("ssh: connect to host win.example.lan port 22: Connection refused; "
                 "10.1.2.3 192.168.0.7:22 fe80::1%eth0 2001:db8:0:0:0:0:0:1 "
-                "builder@other.lan /home/claude/src/OCW /home/nils/x C:\\Users\\Someone\\.cargo "
+                "builder@other.lan /home/claude/src/OCW /home/someuser/x C:\\Users\\Someone\\.cargo "
                 "AA:BB:CC:DD:EE:FF at 21:32:41")
         out = mk(text)
         for leak in ("win.example.lan", "claude", "10.1.2.3", "192.168", "fe80", "2001:db8",
-                     "builder@", "nils", "Someone", "AA:BB", "port 22"):
+                     "builder@", "someuser", "Someone", "AA:BB", "port 22"):
             self.assertNotIn(leak, out)
         self.assertIn("~/src/OCW", out)
         self.assertIn("21:32:41", out)  # times are not addresses
