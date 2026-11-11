@@ -1,8 +1,9 @@
 //! Keyboard controls (when the console is closed):
 //! - ← / → steer across the road (held: 2 m/s, the rider follows at up to
 //!   1.5 m/s); later they also choose the turn at junctions (spec §2.2.1),
-//! - ↑ (held) accelerates: the virtual trainer's power rises by
-//!   `POWER_RAMP_W_PER_S` up to `MAX_KEY_POWER_W`, and releases the brake,
+//! - ↑ accelerates: each press adds `POWER_STEP_W` to the virtual trainer's
+//!   power, holding adds `POWER_RAMP_W_PER_S` (up to `MAX_KEY_POWER_W`); it
+//!   also releases the brake,
 //! - ↓ stops: virtual power 0 and the brake (with a real trainer only the
 //!   brake acts; its power comes from the rider's legs),
 //! - PageUp / PageDown change the virtual power by 10 W.
@@ -27,8 +28,10 @@ impl Plugin for InputPlugin {
     }
 }
 
+/// Power added by each press of ↑.
+pub const POWER_STEP_W: f64 = 25.0;
 /// Power rise per second while ↑ is held.
-pub const POWER_RAMP_W_PER_S: f64 = 200.0;
+pub const POWER_RAMP_W_PER_S: f64 = 250.0;
 /// Highest virtual power reachable with ↑.
 pub const MAX_KEY_POWER_W: f64 = 1000.0;
 
@@ -41,13 +44,15 @@ pub struct VirtualPowerTarget {
     pub sent: f64,
 }
 
-/// New power target after `dt` seconds with ↑ held or not.
-pub fn ramp(watts: f64, up_held: bool, dt: f64) -> f64 {
-    if up_held {
-        (watts + POWER_RAMP_W_PER_S * dt).min(MAX_KEY_POWER_W.max(watts))
-    } else {
-        watts
+/// New power target after `dt` seconds: `pressed` = ↑ went down this frame
+/// (a step), `held` = ↑ is down (a ramp).
+pub fn ramp(watts: f64, pressed: bool, held: bool, dt: f64) -> f64 {
+    let step = if pressed { POWER_STEP_W } else { 0.0 };
+    let rise = if held { POWER_RAMP_W_PER_S * dt } else { 0.0 };
+    if step + rise == 0.0 {
+        return watts;
     }
+    (watts + step + rise).min(MAX_KEY_POWER_W.max(watts))
 }
 
 /// How fast the steering target moves while an arrow key is held, in m/s.
@@ -107,7 +112,12 @@ fn throttle_and_brake(
     {
         link.send_bytes(msg);
     }
-    target.watts = ramp(target.watts, up, time.delta_secs_f64());
+    target.watts = ramp(
+        target.watts,
+        keys.just_pressed(KeyCode::ArrowUp),
+        up,
+        time.delta_secs_f64(),
+    );
     target.watts = (target.watts
         + power_delta(
             keys.just_pressed(KeyCode::PageUp),
@@ -138,10 +148,14 @@ mod tests {
 
     #[test]
     fn up_ramps_the_power_and_stops_at_the_cap() {
-        assert_eq!(ramp(200.0, false, 1.0), 200.0);
-        assert_eq!(ramp(200.0, true, 0.5), 300.0);
-        assert_eq!(ramp(950.0, true, 1.0), MAX_KEY_POWER_W);
+        assert_eq!(ramp(200.0, false, false, 1.0), 200.0);
+        // A short tap (one frame at 144 FPS) adds a full step.
+        let tap = ramp(200.0, true, true, 1.0 / 144.0);
+        assert!((tap - 226.7).abs() < 0.1, "{tap}");
+        // Holding: +250 W/s.
+        assert_eq!(ramp(200.0, false, true, 0.4), 300.0);
+        assert_eq!(ramp(990.0, true, true, 1.0), MAX_KEY_POWER_W);
         // Above the cap (set via the console) the key does not lower it.
-        assert_eq!(ramp(1500.0, true, 1.0), 1500.0);
+        assert_eq!(ramp(1500.0, false, true, 1.0), 1500.0);
     }
 }

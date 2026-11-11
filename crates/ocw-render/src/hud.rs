@@ -115,7 +115,7 @@ fn update_hud(
         local.heart_rate_bpm,
     );
     let mut lines = format!(
-        "{} | {:.2} km | {} | riders: {}\nup: faster, down: stop, left/right: steer | mouse: camera, R: reset | ` or F12: console",
+        "{} | {:.2} km | {} | riders: {}\nup: faster, down: stop, left/right: steer | mouse: camera, R: reset | F11: screen | ` or F12: console",
         view.route.name(),
         local.state.distance / 1000.0,
         format_time(view.elapsed_s),

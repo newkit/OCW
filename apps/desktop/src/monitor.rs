@@ -11,8 +11,10 @@ pub struct MonitorPlugin;
 
 impl Plugin for MonitorPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<MonitorChoice>()
-            .add_systems(Update, (log_monitors, place_on_monitor).chain());
+        app.init_resource::<MonitorChoice>().add_systems(
+            Update,
+            (log_monitors, place_on_monitor, cycle_monitor_key).chain(),
+        );
     }
 }
 
@@ -20,6 +22,56 @@ impl Plugin for MonitorPlugin {
 struct MonitorChoice {
     done: bool,
     frames_waited: u32,
+}
+
+/// Next state when cycling with F11: screen 0 → screen 1 → … → window →
+/// screen 0. `None` = windowed.
+pub fn next_monitor(current: Option<usize>, count: usize) -> Option<usize> {
+    match current {
+        _ if count == 0 => None,
+        None => Some(0),
+        Some(i) if i + 1 < count => Some(i + 1),
+        Some(_) => None,
+    }
+}
+
+/// F11: move the window fullscreen to the next screen, or back to a window.
+fn cycle_monitor_key(
+    keys: Res<ButtonInput<KeyCode>>,
+    console: Option<Res<ocw_render::console::ConsoleState>>,
+    monitors: Query<(Entity, &Monitor)>,
+    mut window: Query<&mut Window, With<PrimaryWindow>>,
+) {
+    if !keys.just_pressed(KeyCode::F11) || console.is_some_and(|c| c.is_open()) {
+        return;
+    }
+    let Ok(mut window) = window.single_mut() else {
+        return;
+    };
+    let mut list: Vec<(Entity, &Monitor)> = monitors.iter().collect();
+    list.sort_by_key(|(_, m)| (m.physical_position.x, m.physical_position.y));
+    let current = match window.mode {
+        WindowMode::BorderlessFullscreen(MonitorSelection::Entity(e))
+        | WindowMode::Fullscreen(MonitorSelection::Entity(e), _) => {
+            list.iter().position(|(m, _)| *m == e)
+        }
+        WindowMode::BorderlessFullscreen(_) | WindowMode::Fullscreen(..) => Some(0),
+        WindowMode::Windowed => None,
+    };
+    match next_monitor(current, list.len()) {
+        Some(i) => {
+            let (entity, m) = list[i];
+            info!(
+                monitor = m.name.as_deref().unwrap_or("?"),
+                "F11: fullscreen on monitor {i}"
+            );
+            window.mode = WindowMode::BorderlessFullscreen(MonitorSelection::Entity(entity));
+        }
+        None => {
+            info!("F11: windowed");
+            window.mode = WindowMode::Windowed;
+        }
+    }
 }
 
 /// One detected monitor, in detection order (= winit's index).
@@ -139,6 +191,15 @@ mod tests {
                 height: 1080,
             },
         ]
+    }
+
+    #[test]
+    fn f11_cycles_screens_then_window() {
+        assert_eq!(next_monitor(None, 2), Some(0));
+        assert_eq!(next_monitor(Some(0), 2), Some(1));
+        assert_eq!(next_monitor(Some(1), 2), None);
+        assert_eq!(next_monitor(Some(0), 1), None);
+        assert_eq!(next_monitor(None, 0), None);
     }
 
     #[test]
