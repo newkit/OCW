@@ -21,21 +21,47 @@ VIDEO ?= /tmp/ocw.mp4
 VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 
 .DEFAULT_GOAL := help
-.PHONY: help deps deps-system deps-rust build release test lint fmt fmt-check \
+.PHONY: help deps deps-linux deps-linux-packages deps-windows deps-macos deps-rust build release test lint fmt fmt-check \
 	clippy wasm check run server screenshot screenshot-wayland smoke video video-wayland clean clean-test-output
 
 help: ## Show this help
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-19s\033[0m %s\n", $$1, $$2}'
 
-deps: deps-system deps-rust ## Install system packages (sudo) and the Rust toolchain
+# Platform detection for `make deps` (Windows: GNU make from Git Bash/MSYS2).
+ifeq ($(OS),Windows_NT)
+  PLATFORM := windows
+else ifeq ($(shell uname -s),Darwin)
+  PLATFORM := macos
+else
+  PLATFORM := linux
+endif
 
-deps-system: ## Install the Debian/Ubuntu build and runtime packages (sudo)
+deps: deps-$(PLATFORM) ## Install everything for this platform (Linux, Windows or macOS)
+
+deps-linux: deps-linux-packages deps-rust ## Linux: Debian/Ubuntu packages (asks for sudo) + Rust toolchain
+
+deps-linux-packages: ## Linux: only the Debian/Ubuntu packages (sudo; also for other users' machines)
 	sudo apt-get update
 	sudo apt-get install -y $(APT_PACKAGES)
 	@echo "For GPU access without a desktop session (remote/benchmark machines): sudo usermod -aG render,video \$$USER"
 
-deps-rust: ## Install rustup (if missing) and the pinned toolchain incl. wasm target
+deps-windows: ## Windows: Git, VS Build Tools (C++), rustup via winget + Rust toolchain
+	winget install --id Git.Git -e --accept-source-agreements --accept-package-agreements
+	winget install --id Microsoft.VisualStudio.2022.BuildTools -e --accept-source-agreements --accept-package-agreements \
+		--override "--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+	winget install --id Rustlang.Rustup -e --accept-source-agreements --accept-package-agreements
+	rustup show active-toolchain || rustup toolchain install
+	@echo "Open a new terminal so PATH includes rustup, Git and the MSVC tools."
+
+deps-macos: ## macOS: Xcode Command Line Tools (+ ffmpeg if Homebrew is installed) + Rust toolchain
+	@xcode-select -p >/dev/null 2>&1 || { xcode-select --install; \
+		echo "Finish the Command Line Tools installer, then run 'make deps-macos' again."; exit 1; }
+	@if command -v brew >/dev/null 2>&1; then brew install ffmpeg; \
+		else echo "Homebrew not found: skipping ffmpeg (only needed for videos)."; fi
+	$(MAKE) deps-rust
+
+deps-rust: ## Linux/macOS: rustup (if missing) + the pinned toolchain incl. wasm target
 	@command -v rustup >/dev/null 2>&1 || \
 		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
 		sh -s -- -y --no-modify-path --default-toolchain none

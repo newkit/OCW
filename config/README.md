@@ -66,15 +66,17 @@ files such as `target/`) to `repo_path` and runs the command with
 
 ## Per-OS prerequisites on the machines
 
-- **Linux:** run `make deps-system` in a checkout (installs every needed
-  Debian/Ubuntu package), then `make deps-rust`. A user without a desktop
+- **Linux:** run `make deps-linux` in a checkout (Debian/Ubuntu packages via
+  sudo, then rustup with the pinned toolchain). An admin can install only the
+  packages for another user with `sudo make -C <checkout> deps-linux-packages`. A user without a desktop
   session needs `sudo usermod -aG render,video <user>` for GPU access.
   `vulkaninfo --summary` must show the real GPU, not llvmpipe. Benchmarks run
   on a headless weston, so no desktop session is needed.
-- **Windows:** OpenSSH Server, Git, rustup, Visual Studio Build Tools with the
-  "Desktop development with C++" workload. GUI runs need a logged-in user;
+- **Windows:** OpenSSH Server, plus `make deps-windows` (winget: Git, Visual
+  Studio Build Tools with the C++ workload, rustup; needs GNU make, e.g. from
+  MSYS2 or `winget install ezwinports.make`). GUI runs need a logged-in user;
   they are started as a scheduled task in that session (programs started over
   SSH cannot open windows).
-- **macOS:** Remote Login (System Settings → General → Sharing), Xcode Command
-  Line Tools, rustup. GUI runs need a logged-in user. Bluetooth access asks for
+- **macOS:** Remote Login (System Settings → General → Sharing), then
+  `make deps-macos` (Xcode Command Line Tools, rustup, ffmpeg via Homebrew). GUI runs need a logged-in user. Bluetooth access asks for
   permission once on screen.
