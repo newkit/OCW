@@ -17,7 +17,11 @@ pub const APP_ID: &str = "ocw-desktop";
 
 const ICON_PNG: &[u8] = include_bytes!("../../../artwork/logos/ocw-256.png");
 
+// Desktop integration (desktop entry, icon theme files) is Linux-only;
+// its tests run on every OS.
+
 /// The icon in the sizes of the freedesktop icon theme.
+#[cfg(any(target_os = "linux", test))]
 const ICON_SIZES: [(u32, &[u8]); 7] = [
     (16, include_bytes!("../../../artwork/logos/ocw-16.png")),
     (32, include_bytes!("../../../artwork/logos/ocw-32.png")),
@@ -27,12 +31,15 @@ const ICON_SIZES: [(u32, &[u8]); 7] = [
     (256, ICON_PNG),
     (512, include_bytes!("../../../artwork/logos/ocw-512.png")),
 ];
+#[cfg(any(target_os = "linux", test))]
 const ICON_SVG: &[u8] = include_bytes!("../../../artwork/logos/ocw.svg");
+#[cfg(any(target_os = "linux", test))]
 const DESKTOP_ENTRY: &str = include_str!("../../../packaging/linux/ocw-desktop.desktop");
 
 /// Files of the desktop integration (paths relative to the XDG data dir,
 /// e.g. `~/.local/share`): the desktop entry, launching `exe`, and the
 /// icons. Menus, docks, file managers and Wayland compositors use them.
+#[cfg(any(target_os = "linux", test))]
 pub fn desktop_integration_files(exe: &std::path::Path) -> Vec<(std::path::PathBuf, Vec<u8>)> {
     use std::path::PathBuf;
     let exec = format!("Exec=\"{}\"", exe.display());
@@ -56,6 +63,7 @@ pub fn desktop_integration_files(exe: &std::path::Path) -> Vec<(std::path::PathB
 
 /// Installs the desktop integration for this user (Linux), rewriting only
 /// files that changed. Returns how many files were written.
+#[cfg(target_os = "linux")]
 pub fn install_desktop_integration() -> std::io::Result<usize> {
     let (Some(data), Ok(exe)) = (dirs::data_dir(), std::env::current_exe()) else {
         return Ok(0);
@@ -63,6 +71,7 @@ pub fn install_desktop_integration() -> std::io::Result<usize> {
     write_changed(&data, &desktop_integration_files(&exe))
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn write_changed(
     root: &std::path::Path,
     files: &[(std::path::PathBuf, Vec<u8>)],
