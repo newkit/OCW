@@ -7,6 +7,7 @@
 //! - the Bevy renderer from `ocw-render`.
 
 mod automation;
+mod build_id;
 mod client;
 mod connection;
 mod devices;
@@ -28,6 +29,7 @@ use bevy::window::{MonitorSelection, PresentMode, WindowMode, WindowResolution};
 use clap::Parser;
 use ocw_core::SIM_TICK_HZ;
 use ocw_render::console::{ConsoleState, Permission};
+use ocw_render::hud::VersionLabel;
 use ocw_render::{OcwRenderPlugins, RideView};
 use ocw_world::Route;
 
@@ -38,7 +40,7 @@ pub enum RouteChoice {
 }
 
 #[derive(Parser, Debug, Clone, Resource)]
-#[command(version, about = "Open Cycling World desktop client")]
+#[command(version = build_id(), about = "Open Cycling World desktop client")]
 pub struct Args {
     /// Display name of the local rider.
     #[arg(long, default_value = "Rider")]
@@ -220,6 +222,19 @@ fn load_route_file(path: &std::path::Path) -> (Route, Option<ocw_world::Elevatio
     (route, file.grid)
 }
 
+/// This binary's build id (version, commit, profile; see `build_id`), shown
+/// in the HUD and by `--version`.
+pub fn build_id() -> &'static str {
+    static ID: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        build_id::build_id(
+            env!("CARGO_PKG_VERSION"),
+            env!("OCW_COMMIT"),
+            cfg!(debug_assertions),
+        )
+    });
+    &ID
+}
+
 fn main() -> AppExit {
     let args = Args::parse();
     // Desktop entry and icons for menus, docks and file managers (not for
@@ -282,6 +297,8 @@ fn main() -> AppExit {
         ..RideView::new(route.clone())
     })
     .insert_resource(args.clone())
+    .insert_resource(VersionLabel(build_id().to_string()))
+    .add_systems(Startup, || info!("Open Cycling World {}", build_id()))
     .add_plugins(OcwRenderPlugins)
     .add_plugins((
         connection::ConnectionPlugin { route },
@@ -403,6 +420,16 @@ mod tests {
         // --free-ride needs a world package.
         assert!(Args::try_parse_from(["ocw-desktop", "--free-ride"]).is_err());
         assert!(parse_xz("1;2").is_err());
+    }
+
+    #[test]
+    fn version_shows_the_build_id() {
+        let id = build_id();
+        assert!(id.starts_with(env!("CARGO_PKG_VERSION")));
+        assert_eq!(id.ends_with(" (debug)"), cfg!(debug_assertions));
+        let err = Args::try_parse_from(["ocw-desktop", "--version"]).unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::DisplayVersion);
+        assert!(err.to_string().contains(id));
     }
 
     #[test]

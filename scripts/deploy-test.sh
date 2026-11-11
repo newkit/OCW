@@ -9,7 +9,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 machine=${1:?usage: deploy-test.sh MACHINE}
-version="$(git rev-parse --short HEAD)$( [ -n "$(git status --porcelain --untracked-files=no)" ] && echo -dirty) $(date '+%F %T')"
+# Same commit id as the build id in the HUD (remote.sh passes it to the build).
+version="$(scripts/build-id.sh) $(date '+%F %T')"
 scripts/remote.sh "$machine" run "
   set -e
   cargo build -q --release -p ocw-desktop

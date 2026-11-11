@@ -100,7 +100,10 @@ case "$action" in
   run)
     sync_tree
     status=0
-    "${SSH[@]}" "$target" "cd $repo && . ~/.cargo/env && export ${jobs_env:-OCW_REMOTE=1} && $*" || status=$?
+    # The remote copy has no .git: pass the commit for the build id
+    # (apps/desktop/build.rs).
+    build_id=$(scripts/build-id.sh)
+    "${SSH[@]}" "$target" "cd $repo && . ~/.cargo/env && export ${jobs_env:-OCW_REMOTE=1} OCW_BUILD_ID='$build_id' && $*" || status=$?
     # Builds only happen remotely: bring back a Cargo.lock that cargo
     # updated there (new dependencies), so it can be committed.
     rsync -a -e "${SSH[*]}" "$target:$repo/Cargo.lock" ./Cargo.lock 2>/dev/null || true
