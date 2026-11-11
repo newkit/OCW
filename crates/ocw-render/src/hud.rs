@@ -44,7 +44,7 @@ struct RecText;
 #[derive(Component)]
 struct AppMessageText;
 
-const REC_RED: Color = Color::srgb(0.95, 0.15, 0.12);
+const REC_RED: Color = Color::srgb(1.0, 0.22, 0.18);
 
 fn spawn_hud(mut commands: Commands) {
     commands
@@ -138,7 +138,7 @@ fn spawn_recording(mut commands: Commands) {
                     border_radius: BorderRadius::all(px(6)),
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.75)),
                 RecRow,
             ))
             .with_children(|row| {
@@ -169,7 +169,7 @@ fn spawn_recording(mut commands: Commands) {
                     border_radius: BorderRadius::all(px(6)),
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.75)),
                 Text::new(""),
                 TextFont {
                     font_size: 15.0.into(),

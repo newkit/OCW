@@ -22,7 +22,7 @@ use std::thread::JoinHandle;
 
 use bevy::prelude::*;
 use bevy::render::render_resource::TextureFormat;
-use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
+use bevy::render::view::screenshot::{Capturing, Screenshot, ScreenshotCaptured};
 use clap::{Arg, Command};
 use ocw_render::RideView;
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
@@ -33,7 +33,9 @@ pub const VIDEO_FPS: f64 = 25.0;
 /// skips instead of freezing for seconds).
 const MAX_REPEATS: u64 = 12;
 /// Screenshots requested but not yet captured at most.
-const MAX_IN_FLIGHT: usize = 6;
+const MAX_IN_FLIGHT: usize = 16;
+/// A screenshot not captured after this long (s) is taken as lost.
+const IN_FLIGHT_TIMEOUT_S: f64 = 1.0;
 /// Frames buffered for the encoder thread (raw: up to 16 MB each).
 const ENCODER_QUEUE: usize = 4;
 /// Wider windows are scaled down to this width in the video.
@@ -46,7 +48,10 @@ pub struct VideoPlugin;
 impl Plugin for VideoPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<VideoRecorder>()
-            .add_systems(Update, (video_key, capture, show_in_hud).chain())
+            .add_systems(Update, (video_key, show_in_hud).chain())
+            // After Update, so screenshots asked for there (console
+            // `screenshot`, `--screenshot`) are seen and get the frame.
+            .add_systems(PostUpdate, capture)
             .add_systems(Last, finish_on_exit)
             .console_command(ConsoleCommand::new(
                 Permission::User,
@@ -100,8 +105,11 @@ struct Active {
     started_s: f64,
     /// Video frame index of the next screenshot request.
     next_request: u64,
-    /// Screenshots requested and not yet captured.
-    in_flight: usize,
+    /// Screenshots requested and not yet captured: (frame index, request
+    /// time). Bevy skips a screenshot without an event (e.g. two for one
+    /// window in one frame), so entries older than [`IN_FLIGHT_TIMEOUT_S`]
+    /// are forgotten.
+    in_flight: Vec<(u64, f64)>,
     /// Next video frame index to write (all before it are written).
     next_index: u64,
     stats: FrameStats,
@@ -114,6 +122,10 @@ struct Active {
 /// What happened to the frames of a recording (logged when it stops).
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 struct FrameStats {
+    /// Game frames (updates) during the recording.
+    updates: u64,
+    /// Screenshots requested.
+    requested: u64,
     /// Captured images written to the video.
     unique: u64,
     /// Extra copies written to fill ticks without an image.
@@ -122,6 +134,9 @@ struct FrameStats {
     dropped: u64,
     /// Images that arrived after a later one (skipped).
     late: u64,
+    /// Sum and maximum of the time from request to capture (s).
+    latency_sum_s: f64,
+    latency_max_s: f64,
 }
 
 /// One image for the encoder thread and how many video frames it fills.
@@ -196,7 +211,7 @@ impl VideoRecorder {
             ffmpeg,
             started_s: now_s,
             next_request: 0,
-            in_flight: 0,
+            in_flight: Vec::new(),
             next_index: 0,
             stats: FrameStats::default(),
             encoder: None,
@@ -213,10 +228,16 @@ impl VideoRecorder {
         let path = a.path.clone();
         let st = a.stats;
         info!(
+            updates = st.updates,
+            requested = st.requested,
             unique = st.unique,
             repeated = st.repeated,
             dropped = st.dropped,
             late = st.late,
+            latency_mean_ms = (1000.0 * st.latency_sum_s
+                / (st.unique + st.dropped + st.late).max(1) as f64)
+                .round(),
+            latency_max_ms = (1000.0 * st.latency_max_s).round(),
             "video frames"
         );
         let name = path.file_name().map_or_else(
@@ -252,12 +273,16 @@ impl VideoRecorder {
     /// `now_s`, if one is due (one per tick, a limited number in flight).
     fn request(&mut self, now_s: f64) -> Option<u64> {
         let a = self.active.as_mut()?;
+        a.stats.updates += 1;
         let index = frame_index(now_s - a.started_s);
-        if index < a.next_request || a.in_flight >= MAX_IN_FLIGHT {
+        a.in_flight
+            .retain(|&(_, t)| now_s - t < IN_FLIGHT_TIMEOUT_S);
+        if index < a.next_request || a.in_flight.len() >= MAX_IN_FLIGHT {
             return None;
         }
         a.next_request = index + 1;
-        a.in_flight += 1;
+        a.in_flight.push((index, now_s));
+        a.stats.requested += 1;
         Some(index)
     }
 
@@ -267,7 +292,12 @@ impl VideoRecorder {
         let Some(a) = self.active.as_mut() else {
             return;
         };
-        a.in_flight = a.in_flight.saturating_sub(1);
+        if let Some(&(_, t)) = a.in_flight.iter().find(|&&(i, _)| i == index) {
+            let latency = now_s - t;
+            a.stats.latency_sum_s += latency;
+            a.stats.latency_max_s = a.stats.latency_max_s.max(latency);
+        }
+        a.in_flight.retain(|&(i, _)| i != index);
         let (w, h) = (image.width(), image.height());
         let Some(data) = image.data.as_ref() else {
             return;
@@ -539,17 +569,34 @@ fn show_in_hud(time: Res<Time>, rec: Res<VideoRecorder>, view: Option<ResMut<Rid
     }
 }
 
+/// Marks the video's own screenshots.
+#[derive(Component)]
+struct VideoShot;
+
 /// Requests a screenshot on every video frame tick while recording; each
-/// remembers the frame it was requested for.
-fn capture(mut commands: Commands, time: Res<Time>, mut rec: ResMut<VideoRecorder>) {
+/// remembers the frame it was requested for. Bevy takes one screenshot per
+/// window and frame and skips any other, so a frame another screenshot asks
+/// for (console `screenshot`, `--screenshot`) is left to it; the next video
+/// image fills the gap.
+fn capture(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut rec: ResMut<VideoRecorder>,
+    others: Query<(), (With<Screenshot>, Without<Capturing>, Without<VideoShot>)>,
+) {
+    if !others.is_empty() {
+        return;
+    }
     let Some(index) = rec.request(time.elapsed_secs_f64()) else {
         return;
     };
-    commands.spawn(Screenshot::primary_window()).observe(
-        move |ev: On<ScreenshotCaptured>, time: Res<Time>, mut rec: ResMut<VideoRecorder>| {
-            rec.frame(&ev.image, index, time.elapsed_secs_f64());
-        },
-    );
+    commands
+        .spawn((Screenshot::primary_window(), VideoShot))
+        .observe(
+            move |ev: On<ScreenshotCaptured>, time: Res<Time>, mut rec: ResMut<VideoRecorder>| {
+                rec.frame(&ev.image, index, time.elapsed_secs_f64());
+            },
+        );
 }
 
 fn finish_on_exit(mut exit: MessageReader<AppExit>, mut rec: ResMut<VideoRecorder>) {
@@ -603,7 +650,16 @@ mod tests {
         for k in 5..20 {
             let _ = rec.request(10.001 + k as f64 * 0.04);
         }
-        assert_eq!(rec.active.as_ref().unwrap().in_flight, MAX_IN_FLIGHT);
+        assert_eq!(rec.active.as_ref().unwrap().in_flight.len(), MAX_IN_FLIGHT);
+        // Regression: a screenshot Bevy skipped (no event) must not block
+        // the recording for ever; after the timeout requests go on.
+        let later = 10.001 + 20.0 * 0.04 + IN_FLIGHT_TIMEOUT_S;
+        assert_eq!(rec.request(later), Some(frame_index(later - 10.0)));
+        assert_eq!(rec.active.as_ref().unwrap().in_flight.len(), 1);
+        assert_eq!(
+            rec.active.as_ref().unwrap().stats.requested,
+            MAX_IN_FLIGHT as u64 + 1
+        );
     }
 
     #[test]
@@ -701,7 +757,7 @@ mod tests {
             ffmpeg: PathBuf::from("ffmpeg"),
             started_s,
             next_request: 0,
-            in_flight: 0,
+            in_flight: Vec::new(),
             next_index: 0,
             stats: FrameStats::default(),
             encoder: None,
@@ -722,6 +778,43 @@ mod tests {
         assert!(rec.message(15.0).unwrap().contains("nothing saved"));
         assert!(rec.message(15.0 + MESSAGE_S - 0.1).is_some());
         assert_eq!(rec.message(15.0 + MESSAGE_S), None);
+    }
+
+    /// Regression: a screenshot asked for while recording (`--screenshot`,
+    /// console `screenshot`) was skipped by Bevy when the video took the
+    /// same frame.
+    #[test]
+    fn other_screenshots_get_their_frame() {
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default())
+            .init_resource::<VideoRecorder>()
+            .add_systems(Update, capture);
+        fake_active(
+            &mut app.world_mut().resource_mut::<VideoRecorder>(),
+            "/x/v.mp4",
+            0.0,
+        );
+        let other = app.world_mut().spawn(Screenshot::primary_window()).id();
+        advance(&mut app, 0.01);
+        let requested = |app: &App| {
+            app.world()
+                .resource::<VideoRecorder>()
+                .active
+                .as_ref()
+                .unwrap()
+                .stats
+                .requested
+        };
+        assert_eq!(requested(&app), 0);
+        app.world_mut().despawn(other);
+        advance(&mut app, 0.01);
+        assert_eq!(requested(&app), 1);
+        let ours = app
+            .world_mut()
+            .query_filtered::<(), With<VideoShot>>()
+            .iter(app.world())
+            .count();
+        assert_eq!(ours, 1);
     }
 
     fn hud_app() -> App {
