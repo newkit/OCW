@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 1.6 – November 2026
+Version 1.7 – November 2026
 
 | Version | Change |
 |---|---|
@@ -15,6 +15,7 @@ Version 1.6 – November 2026
 | 1.4 | Wahoo's proprietary trainer control as a fallback for trainers without FTMS (§3.4, §5.3) |
 | 1.5 | Lateral steering: autodrive, manual lean steering, road edge, wild mode; surfaces with their own rolling resistance (§5.2.1) |
 | 1.6 | FIT export: own writer crate `ocw-fit`, rides saved in the user data directory; interim direct Strava upload from the desktop with user-supplied API credentials until the backend exists (§2.8) |
+| 1.7 | Steering fixes (§5.2.1): only pushing into the road edge scrapes; a held opposite lean key pauses at upright, then leans on to the other side |
 
 ---
 
@@ -751,8 +752,8 @@ Fundamental resistive forces:
 #### 5.2.1 Lateral Steering and Surfaces
 
 - Besides `lateral_offset`, a rider has a **heading relative to the road** and rides a curve of its own; the road's curves turn the road under the rider. Lateral offset changes with `v · sin(heading)`; the distance along the road with `v · cos(heading)`. The avatar leans by `atan(v² κ / g)` for the curvature κ it rides.
-- **Autodrive** (default; bots always): an autopilot leans the rider to hold a line (the middle of the road, or where the rider moved it), through the road's curves. **Manual:** the rider leans (keys ramp the lean and it stays; a gamepad stick sets it), κ = g·tan(lean)/v²; the road's bends have to be steered, or the rider drifts to the edge.
-- **Road edge:** the rider stops at the edge (0.6 m inside) and scrapes along it with an extra deceleration. **Wild mode:** no edge; the rider may leave the road (up to 60 m either side, at up to ~70° to it) and rides on the terrain. Off-road gradients are still the road's (a simplification until riders move freely in 2D).
+- **Autodrive** (default; bots always): an autopilot leans the rider to hold a line (the middle of the road, or where the rider moved it), through the road's curves. **Manual:** the rider leans (keys ramp the lean and it stays; held through upright, the opposite key pauses there for ~0.3 s, then leans on to the other side; a gamepad stick sets it), κ = g·tan(lean)/v²; the road's bends have to be steered, or the rider drifts to the edge. Near the largest angle to the road (~17°, wild ~70°) the turn fades out, so the rider settles at it smoothly.
+- **Road edge:** the rider stops at the edge (0.6 m inside); while still steering (or carried by a bend) into it, the rider scrapes along it with an extra deceleration. Rolling straight along the edge or steering away from it does not scrape. **Wild mode:** no edge; the rider may leave the road (up to 60 m either side, at up to ~70° to it) and rides on the terrain. Off-road gradients are still the road's (a simplification until riders move freely in 2D).
 - **Surfaces:** asphalt, gravel (OSM tracks and paths; the `surface` tag later), grass (anything beside the road). Each has a factor on the rolling resistance coefficient (1, 2.5, 6), applied in the physics and sent to the trainer in SIM mode (Crr), so gravel and meadows are harder to ride.
 - Steering is an intent like the junction choice (§6.1): the server applies it, the client predicts it with the same rule; heading and ridden curvature are part of the rider state in snapshots.
 - **U-turns** (§2.2.2): slow-down to ~10 km/h, turn, continue in the opposite direction.

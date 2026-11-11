@@ -873,6 +873,47 @@ mod tests {
         assert!(server.lateral_offset.abs() < 0.3, "{server:?}");
     }
 
+    /// Regression: leaning hard into the road edge, then holding the other
+    /// arrow key stopped the lean at upright, and the rider scraped along
+    /// the edge until it nearly stopped. Now the lean goes on to the other
+    /// side and the rider leaves the edge, on the client and the server.
+    #[test]
+    fn steered_into_the_edge_the_rider_steers_back_out() {
+        let mut h = Harness::new(0, false);
+        h.ride(250.0, 8.0);
+        let own = h.client.rider_id().unwrap();
+        let limit = ocw_sim::physics::lateral_limit(7.0);
+        let mut lean = -ocw_sim::physics::MAX_STEER_LEAN;
+        h.client.set_lean(lean);
+        let msg = h.client.steer_message(h.time_s).expect("lean intent");
+        h.send(&msg);
+        h.ride(250.0, 3.0);
+        let server = h.server.session().rider_state(own).unwrap();
+        assert!((server.lateral_offset + limit).abs() < 1e-6, "{server:?}");
+        let pushed = server.speed;
+        // Hold → (frame = tick), as the input system does.
+        let mut pause = 0.0;
+        for _ in 0..(4 * ocw_core::SIM_TICK_HZ) {
+            lean = crate::input::lean_ramp(lean, 1.0, &mut pause, ocw_core::SIM_DT);
+            h.client.set_lean(lean);
+            if let Some(msg) = h.client.steer_message(h.time_s) {
+                h.send(&msg);
+            }
+            h.ride(250.0, ocw_core::SIM_DT);
+        }
+        assert!(lean > 0.2, "{lean}");
+        let server = h.server.session().rider_state(own).unwrap();
+        let client = h.client.state();
+        assert!(server.lateral_offset > -limit + 1.0, "{server:?}");
+        // Still rolling (scraping on held it near 2 m/s).
+        assert!(server.speed > 0.8 * pushed, "{pushed} {server:?}");
+        assert!(
+            (client.lateral_offset - server.lateral_offset).abs() < 0.3,
+            "{client:?} vs {server:?}"
+        );
+        assert!((client.speed - server.speed).abs() < 0.2);
+    }
+
     /// Down arrow: the brake reaches the server at once and stops the
     /// rider; the prediction brakes too.
     #[test]

@@ -2,9 +2,10 @@
 //! - A toggles autodrive (on at the start): the rider keeps to the middle
 //!   of the road by itself, ← / → move its line. Without autodrive, ← / →
 //!   lean the rider into a curve (held: further, up to 30°); the lean
-//!   stays when released, the opposite key straightens up (it stops at
-//!   upright until the key is pressed again), and the road's own bends
-//!   have to be steered. Later the keys also choose the turn at junctions
+//!   stays when released; the opposite key straightens up, pauses at
+//!   upright for `LEAN_UPRIGHT_PAUSE_S` (so riding straight is easy to
+//!   hit) and, still held, leans on to the other side. The road's own
+//!   bends have to be steered. Later the keys also choose the turn at junctions
 //!   (spec §2.2.1),
 //! - W toggles wild mode: not bound to the road,
 //! - gamepad: left stick steers (leans, or moves the autodrive line),
@@ -79,21 +80,27 @@ pub fn stick_lean(x: f32) -> f64 {
 /// How fast the lean changes while an arrow key is held, in rad/s (~23°/s).
 pub const LEAN_KEY_RATE: f64 = 0.4;
 
+/// How long a held arrow key keeps the rider upright when the lean comes
+/// back through it, before it leans on to the other side (s).
+pub const LEAN_UPRIGHT_PAUSE_S: f64 = 0.3;
+
 /// New lean (rad) after `dt` with the arrow key direction `dir`. Bringing
-/// the lean back through upright stops there (`latched`) until the keys
-/// are released, so straightening up is easy.
-pub fn lean_ramp(lean: f64, dir: f64, latched: &mut bool, dt: f64) -> f64 {
+/// the lean back through upright stops there for [`LEAN_UPRIGHT_PAUSE_S`]
+/// (`pause`: the time left), so straightening up is easy; held longer, it
+/// leans on to the other side. Releasing the keys ends the pause.
+pub fn lean_ramp(lean: f64, dir: f64, pause: &mut f64, dt: f64) -> f64 {
     if dir == 0.0 {
-        *latched = false;
+        *pause = 0.0;
         return lean;
     }
-    if *latched {
+    if *pause > 0.0 {
+        *pause -= dt;
         return lean;
     }
     let max = ocw_sim::physics::MAX_STEER_LEAN;
     let next = (lean + dir * LEAN_KEY_RATE * dt).clamp(-max, max);
     if lean != 0.0 && (next == 0.0 || next.signum() != lean.signum()) {
-        *latched = true;
+        *pause = LEAN_UPRIGHT_PAUSE_S;
         return 0.0;
     }
     next
@@ -115,7 +122,7 @@ fn steer(
     console: Res<ConsoleState>,
     time: Res<Time>,
     mut client: ResMut<ClientState>,
-    mut latched: Local<bool>,
+    mut upright_pause: Local<f64>,
     mut stick_was_used: Local<bool>,
 ) {
     if console.is_open() {
@@ -158,7 +165,7 @@ fn steer(
         return;
     }
     let lean = client.0.lean().unwrap_or(0.0);
-    let next = lean_ramp(lean, dir, &mut latched, dt);
+    let next = lean_ramp(lean, dir, &mut upright_pause, dt);
     if dir != 0.0 && next != lean {
         client.0.set_lean(next);
     }
@@ -236,31 +243,55 @@ mod tests {
     }
 
     #[test]
-    fn lean_keys_ramp_hold_and_stop_at_upright() {
-        let mut latched = false;
+    fn lean_keys_ramp_hold_and_pause_at_upright() {
+        let frame = 1.0 / 60.0;
+        let mut pause = 0.0;
         // Hold right for half a second: leaning right.
         let mut lean = 0.0;
         for _ in 0..30 {
-            lean = lean_ramp(lean, 1.0, &mut latched, 1.0 / 60.0);
+            lean = lean_ramp(lean, 1.0, &mut pause, frame);
         }
         assert!((lean - 0.2).abs() < 1e-9, "{lean}");
         // Released: the lean stays.
-        assert_eq!(lean_ramp(lean, 0.0, &mut latched, 1.0), lean);
-        // Left straightens up and stops at upright while held.
-        for _ in 0..120 {
-            lean = lean_ramp(lean, -1.0, &mut latched, 1.0 / 60.0);
+        assert_eq!(lean_ramp(lean, 0.0, &mut pause, 1.0), lean);
+        // Left straightens up (0.5 s) and pauses at upright while held.
+        for _ in 0..(30 + 17) {
+            lean = lean_ramp(lean, -1.0, &mut pause, frame);
         }
         assert_eq!(lean, 0.0);
-        // Released and pressed again: now it leans left.
-        lean = lean_ramp(lean, 0.0, &mut latched, 1.0 / 60.0);
-        lean = lean_ramp(lean, -1.0, &mut latched, 0.5);
+        // Released and pressed again: it leans left at once.
+        lean = lean_ramp(lean, 0.0, &mut pause, frame);
+        lean = lean_ramp(lean, -1.0, &mut pause, 0.5);
         assert!(lean < 0.0);
         // Never beyond the limit.
-        lean = lean_ramp(lean, -1.0, &mut latched, 100.0);
+        lean = lean_ramp(lean, -1.0, &mut pause, 100.0);
         assert_eq!(lean, -ocw_sim::physics::MAX_STEER_LEAN);
         assert_eq!(power_delta(true, false), 10.0);
         assert_eq!(power_delta(false, true), -10.0);
         assert_eq!(power_delta(true, true), 0.0);
+    }
+
+    /// Regression: holding the opposite key used to stop the lean at
+    /// upright until the key was released, so a rider leaning into the
+    /// road edge could not steer back out by holding it.
+    #[test]
+    fn held_opposite_key_leans_on_to_the_other_side() {
+        let frame = 1.0 / 60.0;
+        let mut pause = 0.0;
+        let mut lean = ocw_sim::physics::MAX_STEER_LEAN;
+        let mut upright_s = 0.0;
+        // Hold left for 3 s: through upright, a short pause, then left.
+        for _ in 0..180 {
+            lean = lean_ramp(lean, -1.0, &mut pause, frame);
+            if lean == 0.0 {
+                upright_s += frame;
+            }
+        }
+        assert!(
+            (upright_s - LEAN_UPRIGHT_PAUSE_S).abs() < 2.5 * frame,
+            "{upright_s}"
+        );
+        assert!(lean < -0.3, "{lean}");
     }
 
     #[test]
