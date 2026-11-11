@@ -4,12 +4,13 @@
 
 Project Description and Technical Architecture
 
-Version 1.1 – November 2026
+Version 1.2 – November 2026
 
 | Version | Change |
 |---|---|
 | 1.0 | Original specification (translated from German) |
 | 1.1 | Decisions from the specification review merged in (former PROPOSALS.md, P-1 … P-20; see Appendix A) |
+| 1.2 | Testing strategy (§11.4); unit tests required for every development step (§14) |
 
 ---
 
@@ -549,6 +550,8 @@ Supplementary sources: elevation models (§4.3), land cover and imagery (§4.6).
 
 The client then loads the package into Bevy.
 
+Every pipeline step is a separately testable function with its own unit tests on small, hand-made input data (see §11.4).
+
 ### 4.3 Terrain and Elevation
 
 OpenStreetMap does not contain precise elevation information with full coverage, so an additional digital elevation model (DEM) is required.
@@ -1004,6 +1007,28 @@ Build and release pipelines are automated for all three operating systems, intro
 
 ---
 
+### 11.4 Testing Strategy
+
+**Rule: no step is done without tests.** Every development step in §14, every feature and every pipeline step comes with unit tests that are merged together with the code. CI runs them on every change; a failing test blocks the merge.
+
+| Level | What | Where | When |
+|---|---|---|---|
+| **Unit tests** | Functions and modules in isolation: physics, route sampling, protocol encoding, session logic, parsers, pipeline steps | `#[cfg(test)]` modules next to the code in every crate | Every commit, all platforms in CI |
+| **Integration tests** | Several crates together: client ↔ local server over the protocol, world-builder on a small OSM extract, device backend ↔ app channel | `tests/` directory of the crate | Every commit (Linux); per platform once ported |
+| **End-to-end smoke test** | The real desktop app under Xvfb with software rendering (Mesa lavapipe): launch, ride on the virtual trainer, run console commands, take a screenshot, exit | `tools/` / run skill driver | Every commit on Linux |
+| **Hardware-in-the-loop** | Real trainers and sensors (FTMS, power meter, heart rate) | Manual test protocol, later a test bench | Before each release |
+| **Performance tests** | Frame time, streaming hitches, memory (§15) | `tools/performance-test` (console `exec` scripts, §2.9) | Nightly / before releases |
+
+**Principles:**
+
+- **Tests run without hardware, network or GPU.** Devices are replaced by the virtual trainer or mock backends (`DeviceBackend`, §3.4); network transports by in-process channels; rendering-free logic lives outside Bevy (§10) and is tested headless.
+- **Core crates are tested for wasm too:** `ocw-core`, `ocw-sim`, `ocw-protocol` and `ocw-world` must build for `wasm32-unknown-unknown` (§3.5).
+- **Physics tests check physical plausibility**, not only code paths: steady-state speed for given power and gradient, energy balance, no rolling backwards, stability at the 50 Hz tick.
+- **Protocol compatibility tests:** encoded messages of earlier protocol versions are kept as fixtures and must still decode (§6.2).
+- **World-builder tests** use small, checked-in OSM / DEM fixtures with known expected results (golden files), e.g. a junction, a bridge, a dead end.
+- **Regression rule:** every fixed bug gets a test that failed before the fix.
+- Commands: `cargo test --workspace` runs all unit and integration tests; `cargo clippy --workspace --all-targets -- -D warnings` must pass.
+
 ## 12. Security and Privacy
 
 Particularly important for multiplayer and voice communication:
@@ -1066,6 +1091,9 @@ Personal data, voice data and training data are handled separately.
 - Graphics engine spike (§3.1.1).
 - Linux build; build-only CI checks for Windows and macOS; wasm build of the core crates.
 
+- **Unit tests:** physics basics, route sampling, protocol encode/decode and quantization, session logic (inputs, sequence numbers, bots), client prediction and interpolation, virtual trainer, local server, console command parsing and permissions.
+- **Integration / smoke tests:** desktop app ↔ in-process local server; end-to-end launch under Xvfb with screenshot; CI pipeline with tests on Linux, build checks for Windows, macOS and wasm.
+
 **Result:** A launchable Linux application on the final client/server architecture.
 
 ### Phase 2 – Bicycle and Sensors
@@ -1077,6 +1105,9 @@ Personal data, voice data and training data are handled separately.
 - Virtual resistance: SIM mode with trainer difficulty (§5.3).
 - Basic workouts and ERG mode.
 - FIT export.
+
+- **Unit tests:** FTMS / Cycling Power / Heart Rate data parsing against recorded byte sequences, control point encoding (SIM, ERG, resistance), trainer difficulty and gradient rate limiting, drafting model, workout parsing (own format, `.erg` / `.mrc`, FIT), ERG target calculation, FIT writer (round-trip through a FIT reader).
+- **Integration tests:** device backend with a mock BLE peripheral ↔ app; hardware-in-the-loop protocol with at least one real FTMS trainer.
 
 **Result:** Ride with a real smart trainer.
 
@@ -1092,6 +1123,9 @@ Personal data, voice data and training data are handled separately.
 - Route format and route editor; GPX import (§2.7).
 - Junction steering and dead-end handling (§2.2.1, §2.2.2).
 
+- **Unit tests:** every world-builder step on fixtures — OSM extraction, projection, road graph and stable edge IDs, graph cleanup and dead-end flags, DEM sampling and smoothing (gradient limits, bridges, tunnels), terrain conformance, splat-map classification, tile cutting, package manifest and signature verification; route format, GPX parsing and map matching; junction detection, exit classification, default-exit rules, key selection and lock point, U-turn.
+- **Integration tests:** build a small region end-to-end and load it in the client headless; rebuild with changed OSM data and check route re-matching.
+
 **Result:** Ride a geographically realistic route locally in 3D. **Windows port starts.**
 
 ### Phase 4 – Avatar and Bicycle Editor
@@ -1101,6 +1135,9 @@ Personal data, voice data and training data are handled separately.
 - Components and physics profiles (§2.5).
 - Animations.
 - Configuration and persistence.
+
+- **Unit tests:** component and configuration model (IDs, physics profile references, cosmetic parts never change physics), profile caps, persistence round-trip, animation state selection from cadence / speed / riding state, asset validator rules (including licence metadata).
+- **Integration tests:** load all shipped glTF assets through the validator and into a headless Bevy app.
 
 **Result:** Individually customizable riders.
 
@@ -1119,6 +1156,9 @@ Personal data, voice data and training data are handled separately.
 - Strava upload (§2.8).
 - Web companion, first version (§2.10).
 
+- **Unit tests:** QUIC transport framing, handshake and version check, reconnect logic, interest management, steering intents and lock-point decisions, plausibility checks and trust levels, leaderboard ranking, API handlers (Axum) and database access, Strava upload flow against a mocked Strava API, web companion components.
+- **Integration tests:** server with many simulated clients (latency, packet loss, disconnects); load test toward 100 riders per session; web companion end-to-end tests in a headless browser.
+
 **Result:** Shared virtual rides.
 
 ### Phase 6 – Voice Chat
@@ -1129,6 +1169,9 @@ Personal data, voice data and training data are handled separately.
 - Push-to-talk.
 - Voice rooms.
 - Spatial audio.
+
+- **Unit tests:** voice room and token management (backend), spatial audio attenuation and nearest-N selection, push-to-talk and mute state, device selection logic; app builds and runs with the `voice` feature disabled.
+- **Integration tests:** client ↔ self-hosted LiveKit test server in CI (two simulated participants).
 
 **Result:** Shared rides with voice communication.
 
@@ -1145,6 +1188,9 @@ Personal data, voice data and training data are handled separately.
 - Installers and updates (signed, TUF evaluated).
 - Security audits.
 - macOS port.
+
+- **Unit tests:** weather and time-of-day logic, event scheduling, update / package verification (TUF), all macOS-specific code paths (CoreBluetooth backend, permissions); the full unit and integration test suite runs on all three operating systems.
+- **Release tests:** performance tests against §15, security tests, installer and update tests per platform, hardware-in-the-loop protocol.
 
 **Result:** A release-ready indoor cycling platform on Linux, Windows and macOS.
 
@@ -1164,6 +1210,7 @@ Personal data, voice data and training data are handled separately.
 | Streaming | Bounded memory consumption through world streaming; no hitches during tile loading |
 | Graphics APIs | No dependency on a single GPU API |
 | Platforms | Consistent behavior on Linux, Windows and macOS; automated tests on all three, added per platform in the rollout order (§11.1) |
+| Tests | Unit tests for every crate, feature and pipeline step; all tests pass in CI before merge (§11.4) |
 
 These values are development targets, not guaranteed performance figures.
 
