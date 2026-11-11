@@ -8,6 +8,7 @@
 //! (matches Bevy's convention, so the renderer can use them directly).
 //! This crate must build for `wasm32-unknown-unknown` (spec §3.5).
 
+pub mod graph;
 mod route;
 mod terrain;
 

@@ -1,0 +1,16 @@
+[package]
+name = "ocw-worldgen"
+description = "OSM and elevation import, road graph building and smoothing for world packages (spec §4)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ocw-world.workspace = true
+osmpbf = "0.3"
+thiserror.workspace = true
+
+[lints]
+workspace = true

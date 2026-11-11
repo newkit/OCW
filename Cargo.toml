@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "apps/desktop",
     "apps/spike",
+    "apps/world-builder",
     "services/server",
     "crates/ocw-core",
     "crates/ocw-sim",
@@ -10,6 +11,7 @@ members = [
     "crates/ocw-devices",
     "crates/ocw-world",
     "crates/ocw-render",
+    "crates/ocw-worldgen",
 ]
 
 [workspace.package]
@@ -25,6 +27,7 @@ ocw-sim = { path = "crates/ocw-sim" }
 ocw-protocol = { path = "crates/ocw-protocol" }
 ocw-devices = { path = "crates/ocw-devices" }
 ocw-world = { path = "crates/ocw-world" }
+ocw-worldgen = { path = "crates/ocw-worldgen" }
 ocw-render = { path = "crates/ocw-render" }
 ocw-server = { path = "services/server" }
 

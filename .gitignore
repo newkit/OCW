@@ -19,3 +19,6 @@ known_hosts
 
 # Archived screenshots and videos of test runs (drive.sh, make smoke/video).
 /test-output/
+
+# Downloaded source data (OSM extracts, elevation tiles), see scripts/fetch-pilot.sh.
+/data/
