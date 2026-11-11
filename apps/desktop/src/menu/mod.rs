@@ -41,7 +41,9 @@ impl Plugin for MenuPlugin {
                     .about("Open, close or drive the in-game menu (Esc / gamepad Start)")
                     .arg(
                         Arg::new("action")
-                            .value_parser(["open", "close", "toggle", "up", "down", "select", "back"])
+                            .value_parser([
+                                "open", "close", "toggle", "up", "down", "select", "back",
+                            ])
                             .default_value("toggle"),
                     ),
                 |world, m| {
@@ -273,7 +275,9 @@ mod tests {
     #[test]
     fn esc_closes_the_console_first_and_never_quits() {
         let mut app = app();
-        app.world_mut().resource_mut::<ConsoleState>().set_open(true);
+        app.world_mut()
+            .resource_mut::<ConsoleState>()
+            .set_open(true);
         app.update();
         tap(&mut app, KeyCode::Escape);
         assert!(!app.world().resource::<ConsoleState>().is_open());
@@ -297,7 +301,9 @@ mod tests {
         assert_eq!(exits(&app), 0);
         // The console over the menu: Esc closes the console, the menu stays.
         tap(&mut app, KeyCode::Escape);
-        app.world_mut().resource_mut::<ConsoleState>().set_open(true);
+        app.world_mut()
+            .resource_mut::<ConsoleState>()
+            .set_open(true);
         app.update();
         tap(&mut app, KeyCode::Escape);
         assert!(!app.world().resource::<ConsoleState>().is_open());
@@ -318,7 +324,12 @@ mod tests {
         assert!(view(&app).open);
         // In the menu: A, W, ↑ and ← do nothing to the ride.
         let line = client(&mut app).0.lateral_target();
-        for key in [KeyCode::KeyA, KeyCode::KeyW, KeyCode::ArrowUp, KeyCode::ArrowLeft] {
+        for key in [
+            KeyCode::KeyA,
+            KeyCode::KeyW,
+            KeyCode::ArrowUp,
+            KeyCode::ArrowLeft,
+        ] {
             tap(&mut app, key);
         }
         let c = client(&mut app);
@@ -378,7 +389,10 @@ mod tests {
         tap(&mut app, KeyCode::ArrowUp);
         tap(&mut app, KeyCode::Enter);
         let v = view(&app);
-        assert_eq!((v.title.as_str(), v.items[v.focused].as_str()), ("Quit?", "Cancel"));
+        assert_eq!(
+            (v.title.as_str(), v.items[v.focused].as_str()),
+            ("Quit?", "Cancel")
+        );
         tap(&mut app, KeyCode::Enter);
         assert_eq!(view(&app).title, "Open Cycling World");
         assert_eq!(exits(&app), 0);

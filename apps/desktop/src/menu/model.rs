@@ -73,7 +73,47 @@ const fn item(label: &'static str, kind: ItemKind) -> Item {
 
 const BACK: Item = item("Back", ItemKind::Back);
 
-/// Title, description lines, items and the initially focused item of a page.
+const TOP_ITEMS: &[Item] = &[
+    item("Resume", ItemKind::Resume),
+    item("Ride", ItemKind::Open(Page::Ride)),
+    item("Workshop", ItemKind::Open(Page::Workshop)),
+    item("Navi", ItemKind::Open(Page::Navi)),
+    item("Settings", ItemKind::Open(Page::Settings)),
+    item("Restart", ItemKind::Open(Page::ConfirmRestart)),
+    item("Quit", ItemKind::Open(Page::ConfirmQuit)),
+];
+const SETTINGS_ITEMS: &[Item] = &[
+    item(
+        "FPS counter on / off",
+        ItemKind::Command {
+            line: "fps",
+            close: false,
+        },
+    ),
+    BACK,
+];
+const RESTART_ITEMS: &[Item] = &[
+    item(
+        "Restart now",
+        ItemKind::Command {
+            line: "reset",
+            close: false,
+        },
+    ),
+    item("Cancel", ItemKind::Back),
+];
+const QUIT_ITEMS: &[Item] = &[
+    item(
+        "Quit now",
+        ItemKind::Command {
+            line: "quit",
+            close: false,
+        },
+    ),
+    item("Cancel", ItemKind::Back),
+];
+
+/// Title, description paragraphs (wrapped to the panel), items and the initially focused item of a page.
 pub struct PageDef {
     pub title: &'static str,
     pub text: &'static [&'static str],
@@ -83,30 +123,18 @@ pub struct PageDef {
 
 impl Page {
     pub fn def(self) -> PageDef {
-        use ItemKind::*;
         match self {
             Page::Top => PageDef {
                 title: "Open Cycling World",
                 text: &[],
-                items: &[
-                    item("Resume", Resume),
-                    item("Ride", Open(Page::Ride)),
-                    item("Workshop", Open(Page::Workshop)),
-                    item("Navi", Open(Page::Navi)),
-                    item("Settings", Open(Page::Settings)),
-                    item("Restart", Open(Page::ConfirmRestart)),
-                    item("Quit", Open(Page::ConfirmQuit)),
-                ],
+                items: TOP_ITEMS,
                 initial_focus: 0,
             },
             Page::Ride => PageDef {
                 title: "Ride",
                 text: &[
-                    "Coming soon (M3): pick the world and the mode - free ride from a",
-                    "random or named place, a route of the world package, the test",
-                    "routes - and the number of bots; then start the ride.",
-                    "Later: structured workouts in ERG mode, and events (group rides,",
-                    "races) once accounts exist (Phase 5).",
+                    "Coming soon (M3): pick the world and the mode - free ride from a random or named place, a route of the world package or a test route - and the number of bots, then start the ride.",
+                    "Later: structured workouts in ERG mode, and events (group rides, races) once accounts exist (Phase 5).",
                 ],
                 items: &[BACK],
                 initial_focus: 0,
@@ -114,9 +142,7 @@ impl Page {
             Page::Workshop => PageDef {
                 title: "Workshop",
                 text: &[
-                    "Coming with Phase 4 (M6): the bike (frame, wheels, paint) and",
-                    "the character (clothing, helmet), with a 3D preview. Cosmetic",
-                    "choices never change the physics.",
+                    "Coming with Phase 4 (M6): the bike (frame, wheels, paint) and the character (clothing, helmet), with a 3D preview. Cosmetic choices never change the physics.",
                     "Before that (M2): choose the active rider profile here.",
                 ],
                 items: &[BACK],
@@ -125,8 +151,7 @@ impl Page {
             Page::Navi => PageDef {
                 title: "Navi",
                 text: &[
-                    "Coming soon (M3): the route library, your saved rides with FIT",
-                    "export and their Strava sync state, Sync now / Retry failed.",
+                    "Coming soon (M3): the route library, your saved rides with FIT export and their Strava sync state, Sync now / Retry failed.",
                     "Later (M4): GPX import with map matching, GPX export.",
                 ],
                 items: &[BACK],
@@ -135,54 +160,23 @@ impl Page {
             Page::Settings => PageDef {
                 title: "Settings",
                 text: &[
-                    "Coming soon (M2): Controls, Trainer (devices, SIM / ERG,",
-                    "difficulty), Strava, Display and Riders (name, weight, FTP),",
-                    "saved in settings.toml. Audio comes with game audio (M5).",
+                    "Coming soon (M2): Controls, Trainer (devices, SIM / ERG, difficulty), Strava, Display and Riders (name, weight, FTP), saved in settings.toml.",
+                    "Audio comes with game audio (M5).",
                 ],
-                items: &[
-                    item(
-                        "FPS counter on / off",
-                        Command {
-                            line: "fps",
-                            close: false,
-                        },
-                    ),
-                    BACK,
-                ],
+                items: SETTINGS_ITEMS,
                 initial_focus: 0,
             },
             Page::ConfirmRestart => PageDef {
                 title: "Restart?",
-                text: &[
-                    "Start everything again as at program start.",
-                    "The ride is saved first.",
-                ],
-                items: &[
-                    item(
-                        "Restart now",
-                        Command {
-                            line: "reset",
-                            close: false,
-                        },
-                    ),
-                    item("Cancel", Back),
-                ],
+                text: &["Start everything again as at program start. The ride is saved first."],
+                items: RESTART_ITEMS,
                 // Cancel: a double press does not restart by accident.
                 initial_focus: 1,
             },
             Page::ConfirmQuit => PageDef {
                 title: "Quit?",
                 text: &["The ride is saved, then the app exits."],
-                items: &[
-                    item(
-                        "Quit now",
-                        Command {
-                            line: "quit",
-                            close: false,
-                        },
-                    ),
-                    item("Cancel", Back),
-                ],
+                items: QUIT_ITEMS,
                 initial_focus: 1,
             },
         }
@@ -450,10 +444,7 @@ mod tests {
             }
             // Every sub page can be left with an item, not only with Back.
             if page != Page::Top {
-                assert!(
-                    d.items.iter().any(|i| i.kind == ItemKind::Back),
-                    "{page:?}"
-                );
+                assert!(d.items.iter().any(|i| i.kind == ItemKind::Back), "{page:?}");
             }
         }
     }

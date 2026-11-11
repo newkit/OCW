@@ -31,7 +31,10 @@ pub struct VideoPlugin;
 impl Plugin for VideoPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<VideoRecorder>()
-            .add_systems(Update, (video_key.run_if(ocw_render::menu::ride_input), capture))
+            .add_systems(
+                Update,
+                (video_key.run_if(ocw_render::menu::ride_input), capture),
+            )
             .add_systems(Last, finish_on_exit)
             .console_command(ConsoleCommand::new(
                 Permission::User,
@@ -381,11 +384,7 @@ fn finish(writer: JoinHandle<std::io::Result<()>>, path: &Path) {
     }
 }
 
-fn video_key(
-    keys: Res<ButtonInput<KeyCode>>,
-    time: Res<Time>,
-    mut rec: ResMut<VideoRecorder>,
-) {
+fn video_key(keys: Res<ButtonInput<KeyCode>>, time: Res<Time>, mut rec: ResMut<VideoRecorder>) {
     if !keys.just_pressed(KeyCode::KeyV) {
         return;
     }

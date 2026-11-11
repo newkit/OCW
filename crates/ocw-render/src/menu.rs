@@ -55,7 +55,7 @@ pub struct MenuView {
     pub title: String,
     /// Status strip under the title (top page: power, speed, trainer).
     pub status: String,
-    /// Description lines (placeholder pages, confirmation questions).
+    /// Description paragraphs (placeholder pages, confirmation questions).
     pub text: Vec<String>,
     pub items: Vec<String>,
     pub focused: usize,
@@ -165,20 +165,22 @@ fn spawn_menu(mut commands: Commands) {
             GlobalZIndex(100),
             MenuRoot,
         ))
-        .observe(|click: On<PointerClick>, mut pointer: ResMut<MenuPointer>| {
-            if click.button == PointerButton::Secondary {
-                pointer.0.push(MenuPointerEvent::Back);
-            }
-        })
+        .observe(
+            |click: On<PointerClick>, mut pointer: ResMut<MenuPointer>| {
+                if click.button == PointerButton::Secondary {
+                    pointer.0.push(MenuPointerEvent::Back);
+                }
+            },
+        )
         .with_children(|root| {
             root.spawn((
                 Node {
                     width: vh(90),
                     max_width: vw(94),
                     max_height: vh(94),
-                    padding: UiRect::axes(vh(4), vh(3)),
+                    padding: UiRect::axes(vh(4), vh(2.5)),
                     flex_direction: FlexDirection::Column,
-                    row_gap: vh(1.2),
+                    row_gap: vh(1.0),
                     border: UiRect::all(vh(0.3)),
                     border_radius: BorderRadius::all(vh(1.5)),
                     ..default()
@@ -203,8 +205,8 @@ fn spawn_menu(mut commands: Commands) {
                 panel.spawn((
                     Node {
                         flex_direction: FlexDirection::Column,
-                        row_gap: vh(1.0),
-                        margin: UiRect::vertical(vh(1.0)),
+                        row_gap: vh(0.8),
+                        margin: UiRect::vertical(vh(0.6)),
                         ..default()
                     },
                     MenuList,
@@ -220,7 +222,7 @@ fn spawn_rows(commands: &mut Commands, list: Entity, items: &[String]) {
         for (i, label) in items.iter().enumerate() {
             l.spawn((
                 Node {
-                    padding: UiRect::axes(vh(2.5), vh(1.0)),
+                    padding: UiRect::axes(vh(2.5), vh(0.7)),
                     border: UiRect::all(vh(0.45)),
                     border_radius: BorderRadius::all(vh(1.0)),
                     ..default()
@@ -230,14 +232,18 @@ fn spawn_rows(commands: &mut Commands, list: Entity, items: &[String]) {
                 MenuRow(i),
                 children![(Text::new(label.clone()), font(ITEM_VH), TextColor(TEXT))],
             ))
-            .observe(move |_: On<PointerOver>, mut pointer: ResMut<MenuPointer>| {
-                pointer.0.push(MenuPointerEvent::Hover(i));
-            })
-            .observe(move |click: On<PointerClick>, mut pointer: ResMut<MenuPointer>| {
-                if click.button == PointerButton::Primary {
-                    pointer.0.push(MenuPointerEvent::Click(i));
-                }
-            });
+            .observe(
+                move |_: On<PointerOver>, mut pointer: ResMut<MenuPointer>| {
+                    pointer.0.push(MenuPointerEvent::Hover(i));
+                },
+            )
+            .observe(
+                move |click: On<PointerClick>, mut pointer: ResMut<MenuPointer>| {
+                    if click.button == PointerButton::Primary {
+                        pointer.0.push(MenuPointerEvent::Click(i));
+                    }
+                },
+            );
         }
     });
 }
@@ -253,7 +259,7 @@ fn draw_menu(
     mut page: Local<Option<PageKey>>,
     mut root: Query<&mut Node, With<MenuRoot>>,
     list: Query<Entity, With<MenuList>>,
-    mut rows: Query<(&MenuRow, &mut BackgroundColor, &mut BorderColor)>,
+    mut rows: Query<(Ref<MenuRow>, &mut BackgroundColor, &mut BorderColor)>,
     mut texts: ParamSet<(
         Query<&mut Text, With<MenuTitle>>,
         Query<&mut Text, With<MenuStatus>>,
@@ -261,7 +267,9 @@ fn draw_menu(
         Query<&mut Text, With<MenuHint>>,
     )>,
 ) {
-    if !view.is_changed() {
+    // Rows of a new page appear a frame after they were spawned: style them
+    // then, too.
+    if !view.is_changed() && !rows.iter().any(|(r, ..)| r.is_added()) {
         return;
     }
     let Ok(mut node) = root.single_mut() else {
@@ -320,30 +328,33 @@ mod tests {
     #[test]
     fn ride_input_only_in_the_ride_context() {
         let mut app = App::new();
-        app.add_plugins((MinimalPlugins, crate::console::ConsoleCorePlugin, MenuCorePlugin));
+        app.add_plugins((
+            MinimalPlugins,
+            crate::console::ConsoleCorePlugin,
+            MenuCorePlugin,
+        ));
         #[derive(Resource, Default)]
         struct Runs(u32);
-        app.init_resource::<Runs>().add_systems(
-            Update,
-            (|mut r: ResMut<Runs>| r.0 += 1).run_if(ride_input),
-        );
+        app.init_resource::<Runs>()
+            .add_systems(Update, (|mut r: ResMut<Runs>| r.0 += 1).run_if(ride_input));
         app.update();
         assert_eq!(app.world().resource::<Runs>().0, 1);
         app.world_mut().resource_mut::<MenuView>().open = true;
         app.update();
-        assert_eq!(
-            *app.world().resource::<InputContext>(),
-            InputContext::Menu
-        );
+        assert_eq!(*app.world().resource::<InputContext>(), InputContext::Menu);
         assert_eq!(app.world().resource::<Runs>().0, 1);
-        app.world_mut().resource_mut::<ConsoleState>().set_open(true);
+        app.world_mut()
+            .resource_mut::<ConsoleState>()
+            .set_open(true);
         app.update();
         assert_eq!(
             *app.world().resource::<InputContext>(),
             InputContext::Console
         );
         app.world_mut().resource_mut::<MenuView>().open = false;
-        app.world_mut().resource_mut::<ConsoleState>().set_open(false);
+        app.world_mut()
+            .resource_mut::<ConsoleState>()
+            .set_open(false);
         app.update();
         assert_eq!(app.world().resource::<Runs>().0, 2);
     }

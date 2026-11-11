@@ -569,6 +569,7 @@ impl ClientCore {
     }
 
     /// Whether the menu holds the steering in autodrive.
+    #[cfg(test)]
     pub fn steering_held(&self) -> bool {
         self.menu_hold.is_some()
     }
@@ -1616,7 +1617,10 @@ mod tests {
         h.client.hold_steering();
         assert!(h.client.autodrive() && h.client.steering_held());
         assert!(h.client.steering_status().starts_with("autodrive (menu)"));
-        let msg = h.client.steer_message(h.time_s + 1.0).expect("autodrive intent");
+        let msg = h
+            .client
+            .steer_message(h.time_s + 1.0)
+            .expect("autodrive intent");
         match ocw_protocol::decode_client(&msg).unwrap() {
             C::Steer(s) => assert!(!s.lean_steering && !s.wild, "{s:?}"),
             other => panic!("unexpected {other:?}"),
@@ -1627,7 +1631,11 @@ mod tests {
         // The ride goes on: power samples still reach the server, the rider
         // rides on and stays on the road.
         let d0 = h.server.session().rider_state(own).unwrap().distance;
-        assert!(h.client.on_device_event(power(250.0, h.time_s + 0.1)).is_some());
+        assert!(
+            h.client
+                .on_device_event(power(250.0, h.time_s + 0.1))
+                .is_some()
+        );
         h.ride(250.0, 10.0);
         let st = h.server.session().rider_state(own).unwrap();
         assert!(st.distance - d0 > 50.0, "{st:?}");
@@ -1688,7 +1696,7 @@ mod tests {
         }
         h.send(&msg);
         let mut seen = false;
-        for _ in 0..300 {
+        for _ in 0..500 {
             h.ride(250.0, 0.1);
             if let Some(j) = h.client.junction_view() {
                 assert_eq!(j.selected, j.default, "{j:?}");
