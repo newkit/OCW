@@ -6,7 +6,7 @@ use ocw_core::RiderProfile;
 use ocw_devices::{DeviceCommand, SimulationParameters};
 use ocw_sim::RiderState;
 use ocw_sim::trainer::{ErgController, ErgSettings, SimController, SimSettings};
-use ocw_world::Route;
+use ocw_world::Track;
 
 /// How far ahead (in seconds of riding) SIM mode looks for the gradient.
 pub const LOOK_AHEAD_S: f64 = 1.0;
@@ -86,7 +86,7 @@ impl TrainerControl {
     pub fn update(
         &mut self,
         now_s: f64,
-        route: &Route,
+        route: &dyn Track,
         rider: RiderState,
         cadence_rpm: Option<f64>,
     ) -> Option<DeviceCommand> {
@@ -130,6 +130,7 @@ impl TrainerControl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ocw_world::Route;
 
     /// 100 m flat, then a 6 % climb (constant from 200 m on; the gradient
     /// is interpolated between route points).

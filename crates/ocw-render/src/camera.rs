@@ -230,8 +230,9 @@ fn follow(
     };
     // Follow the avatar itself: on the terrain off the road (wild mode) and
     // along the rider's own heading, not the road's.
-    let rider = avatar_transform(&view, &local.state, ground.as_deref());
-    let p = view.route.sample(local.state.distance);
+    let track = view.track(local.id);
+    let rider = avatar_transform(track, &local.state, ground.as_deref());
+    let p = track.sample(local.state.distance);
     let road = Vec3::new(p.direction[0] as f32, 0.0, p.direction[1] as f32);
     // Positive heading = to the right; Bevy turns left for a positive Y rotation.
     let forward = Quat::from_rotation_y(-local.state.heading as f32) * road;

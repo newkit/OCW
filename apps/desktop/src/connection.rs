@@ -1,7 +1,7 @@
 //! Bevy glue between the local server thread and [`ClientCore`]. Devices
 //! (trainers, sensors) are handled in `devices.rs`.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use bevy::prelude::*;
 use clap::{Arg, Command, value_parser};
@@ -10,8 +10,10 @@ use ocw_protocol::v1::{self, client_message::Msg as C};
 use ocw_protocol::{client_message, encode};
 use ocw_render::RideView;
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
+use ocw_server::Course;
 use ocw_server::local::{LocalConnection, LocalServer, SteppedServer};
-use ocw_world::Route;
+use ocw_sim::FreeRideStart;
+use ocw_world::{RoadNetwork, Route};
 
 use crate::Args;
 use crate::client::{ClientCore, Notice};
@@ -20,24 +22,48 @@ pub struct ConnectionPlugin {
     pub route: Route,
 }
 
+/// Free ride on the road graph (`--free-ride`): inserted by the app before
+/// [`ConnectionPlugin`]; without it the session rides the route.
+#[derive(Resource, Clone)]
+pub struct FreeRideSetup {
+    pub net: Arc<RoadNetwork>,
+    pub start: FreeRideStart,
+}
+
 impl Plugin for ConnectionPlugin {
     fn build(&self, app: &mut App) {
         let args = app.world().resource::<Args>().clone();
-        let start_m = crate::start_point(&args, &self.route);
+        let free = app.world().get_resource::<FreeRideSetup>().cloned();
+        let (course, client) = match free {
+            Some(f) => (
+                Course::FreeRide {
+                    net: f.net.clone(),
+                    start: f.start,
+                },
+                ClientCore::free_ride(f.net, args.name.clone(), RiderProfile::default()),
+            ),
+            None => (
+                Course::Route(self.route.clone()),
+                ClientCore::new(
+                    self.route.clone(),
+                    args.name.clone(),
+                    RiderProfile::default(),
+                ),
+            ),
+        };
+        let start_m = match &course {
+            Course::Route(route) => crate::start_point(&args, route),
+            Course::FreeRide { .. } => 0.0,
+        };
         let mut server = if args.capture.is_some() {
             // Frame capture: the server shares the client's fixed-step game time.
-            ServerLink::Stepped(Box::new(SteppedServer::new(
-                self.route.clone(),
-                args.bots,
-                start_m,
-            )))
+            ServerLink::Stepped(Box::new(SteppedServer::new(course, args.bots, start_m)))
         } else {
             ServerLink::Threaded(
-                LocalServer::spawn(self.route.clone(), args.bots, start_m)
+                LocalServer::spawn(course, args.bots, start_m)
                     .expect("failed to start local server thread"),
             )
         };
-        let client = ClientCore::new(self.route.clone(), args.name, RiderProfile::default());
         server.send(client.hello());
         app.insert_resource(Link {
             server: Mutex::new(server),
@@ -134,11 +160,27 @@ fn predict(mut client: ResMut<ClientState>) {
     client.0.predict_step();
 }
 
-/// Publishes what the renderer should draw.
-/// Sends the steering intent when the target changed.
+/// Sends the steering intent when the target changed, and the exit choice
+/// for the next junction (free ride).
 fn send_steer(time: Res<Time>, link: Res<Link>, mut client: ResMut<ClientState>) {
     if let Some(msg) = client.0.steer_message(time.elapsed_secs_f64()) {
         link.send_bytes(msg);
+    }
+    if let Some(msg) = client.0.turn_message() {
+        link.send_bytes(msg);
+    }
+}
+
+/// Free ride: a U-turn (key U, console `ride.uturn`); sends it to the server.
+pub fn u_turn(world: &mut World) -> Result<String, String> {
+    let now = world.resource::<Time>().elapsed_secs_f64();
+    let msg = world.resource_mut::<ClientState>().0.u_turn(now);
+    match msg {
+        Some(m) => {
+            world.resource::<Link>().send_bytes(m);
+            Ok("U-turn".into())
+        }
+        None => Err("no U-turn possible (free ride only, at most every 10 s)".into()),
     }
 }
 
@@ -152,6 +194,11 @@ fn update_view(
     view.elapsed_s = now;
     // Interpolate between the last two 50 Hz prediction steps.
     view.riders = client.0.view(now, fixed.overstep_fraction_f64());
+    if client.0.is_free_ride() {
+        view.paths = client.0.paths();
+        view.junction = client.0.junction_view();
+        view.notice = client.0.notice();
+    }
 }
 
 fn register_commands(app: &mut App) {
@@ -269,8 +316,87 @@ fn register_commands(app: &mut App) {
                 s.distance,
                 s.speed * 3.6,
                 c.power_w(),
-                c.route().sample(s.distance).grade * 100.0
+                c.track().sample(s.distance).grade * 100.0
             ))
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("ride.turn")
+            .about("Choose the exit at the next junction (free ride): left, right, straight, default, + / - (one exit right / left) or the exit's number from the left (0, 1, ...)")
+            .arg(Arg::new("exit").required(true).allow_hyphen_values(true)),
+        |world, m| {
+            let exit = m.get_one::<String>("exit").expect("required").clone();
+            let mut c = world.resource_mut::<ClientState>();
+            let said = match exit.as_str() {
+                "+" => c.0.turn(1),
+                "-" => c.0.turn(-1),
+                "default" => c.0.clear_exit(),
+                "left" | "right" | "straight" => c.0.choose_direction(&exit),
+                n => match n.parse::<usize>() {
+                    Ok(i) => c.0.choose_exit(i),
+                    Err(_) => return Err(format!("unknown exit {n:?}")),
+                },
+            };
+            said.ok_or_else(|| "no such exit, or no junction ahead (free ride only)".into())
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("ride.uturn").about("Turn round (free ride; key U)"),
+        |world, _| u_turn(world),
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("ride.junction").about("Show the next junction's exits (free ride)"),
+        |world, _| {
+            let c = &world.resource::<ClientState>().0;
+            let Some(j) = c.junction_view() else {
+                return Ok("no junction ahead within the look-ahead".into());
+            };
+            let mut s = format!(
+                "junction in {:.0} m{}:",
+                j.distance_m,
+                if j.locked { " (locked)" } else { "" }
+            );
+            for (i, e) in j.exits.iter().enumerate() {
+                s.push_str(&format!(
+                    "\n {i}: {:+4.0} deg  {}{}{}",
+                    e.angle_deg,
+                    e.name,
+                    if i == j.selected { "  <- selected" } else { "" },
+                    if i == j.default { "  (default)" } else { "" }
+                ));
+            }
+            Ok(s)
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::Dev,
+        Command::new("teleport.xz")
+            .about("Free ride: move to the road nearest local x / z (metres)")
+            .arg(
+                Arg::new("x")
+                    .required(true)
+                    .allow_negative_numbers(true)
+                    .value_parser(value_parser!(f64)),
+            )
+            .arg(
+                Arg::new("z")
+                    .required(true)
+                    .allow_negative_numbers(true)
+                    .value_parser(value_parser!(f64)),
+            ),
+        |world, m| {
+            let x = *m.get_one::<f64>("x").expect("required");
+            let z = *m.get_one::<f64>("z").expect("required");
+            world.resource::<Link>().send(C::Dev(v1::DevCommand {
+                cmd: Some(v1::dev_command::Cmd::TeleportPoint(v1::TeleportPoint {
+                    x_m: x,
+                    z_m: z,
+                })),
+            }));
+            Ok(String::new())
         },
     ));
 }

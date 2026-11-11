@@ -72,6 +72,10 @@ fn spawn_world(
         commands.insert_resource(crate::Ground(std::sync::Arc::new(move |x, z| {
             pkg.surface_height(x, z)
         })));
+        if view.free_ride {
+            // No route: every rider rides their own path.
+            return;
+        }
         commands.spawn((
             Mesh3d(meshes.add(center_line_mesh(&view, CENTRE_LINE_LIFT_PACKAGE_M))),
             MeshMaterial3d(materials.add(StandardMaterial {

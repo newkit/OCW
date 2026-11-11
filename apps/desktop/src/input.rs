@@ -4,8 +4,13 @@
 //!   lean the rider into a curve (held: further, up to 30°); the lean
 //!   stays when released, the opposite key straightens up (it stops at
 //!   upright until the key is pressed again), and the road's own bends
-//!   have to be steered. Later the keys also choose the turn at junctions
-//!   (spec §2.2.1),
+//!   have to be steered,
+//! - free ride (spec §2.2.1): while a junction is ahead (within the
+//!   look-ahead, before the lock point) and autodrive is on, ← / → choose
+//!   the exit instead (one exit per press; the line stays). Q / E (and the
+//!   gamepad's D-pad left / right) choose the exit at any time, also for
+//!   manual steering, where the arrows keep leaning. U (D-pad down) turns
+//!   round (↓ stays the brake),
 //! - W toggles wild mode: not bound to the road,
 //! - gamepad: left stick steers (leans, or moves the autodrive line),
 //!   right trigger = ↑, left trigger = ↓, South (A) = autodrive, West (X)
@@ -21,6 +26,39 @@ use ocw_devices::DeviceCommand;
 use ocw_render::console::ConsoleState;
 
 use crate::connection::{ClientState, Link};
+
+/// Free ride: what the junction keys do this frame (spec §2.2.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JunctionKey {
+    /// Not a junction key: steer as usual.
+    None,
+    /// Move the exit selection by this many exits (negative = left).
+    Select(i32),
+}
+
+/// Maps the keys to a junction action: Q / E always; the arrows only in
+/// autodrive while a junction is active (then they do not move the line).
+/// Returns the action and whether the arrows are taken by the junction.
+pub fn junction_key(
+    q: bool,
+    e: bool,
+    left: bool,
+    right: bool,
+    autodrive: bool,
+    junction_active: bool,
+) -> (JunctionKey, bool) {
+    let arrows = autodrive && junction_active;
+    let mut steps = i32::from(e) - i32::from(q);
+    if arrows {
+        steps += i32::from(right) - i32::from(left);
+    }
+    let key = if steps == 0 {
+        JunctionKey::None
+    } else {
+        JunctionKey::Select(steps)
+    };
+    (key, arrows)
+}
 use crate::devices::Devices;
 
 pub struct InputPlugin;
@@ -109,11 +147,13 @@ pub fn power_delta(up: bool, down: bool) -> f64 {
     10.0 * f64::from(i8::from(up) - i8::from(down))
 }
 
+#[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
 fn steer(
     keys: Res<ButtonInput<KeyCode>>,
     pads: Query<&Gamepad>,
     console: Res<ConsoleState>,
     time: Res<Time>,
+    link: Res<Link>,
     mut client: ResMut<ClientState>,
     mut latched: Local<bool>,
     mut stick_was_used: Local<bool>,
@@ -122,6 +162,30 @@ fn steer(
         return;
     }
     let pad_pressed = |b: GamepadButton| pads.iter().any(|p| p.just_pressed(b));
+    if client.0.is_free_ride() {
+        if (keys.just_pressed(KeyCode::KeyU) || pad_pressed(GamepadButton::DPadDown))
+            && let Some(msg) = client.0.u_turn(time.elapsed_secs_f64())
+        {
+            info!("U-turn");
+            link.send_bytes(msg);
+        }
+        let (key, arrows_taken) = junction_key(
+            keys.just_pressed(KeyCode::KeyQ) || pad_pressed(GamepadButton::DPadLeft),
+            keys.just_pressed(KeyCode::KeyE) || pad_pressed(GamepadButton::DPadRight),
+            keys.just_pressed(KeyCode::ArrowLeft),
+            keys.just_pressed(KeyCode::ArrowRight),
+            client.0.autodrive(),
+            client.0.junction_active(),
+        );
+        if let JunctionKey::Select(steps) = key
+            && let Some(said) = client.0.turn(steps)
+        {
+            info!("{said}");
+        }
+        if arrows_taken {
+            return;
+        }
+    }
     if keys.just_pressed(KeyCode::KeyA) || pad_pressed(GamepadButton::South) {
         let on = !client.0.autodrive();
         client.0.set_autodrive(on);
@@ -218,6 +282,39 @@ fn throttle_and_brake(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn junction_keys_take_the_arrows_only_in_autodrive_near_a_junction() {
+        use JunctionKey::*;
+        // Q / E always.
+        assert_eq!(
+            junction_key(true, false, false, false, false, false),
+            (Select(-1), false)
+        );
+        assert_eq!(
+            junction_key(false, true, false, false, true, false),
+            (Select(1), false)
+        );
+        // Arrows: only with autodrive and an active junction.
+        assert_eq!(
+            junction_key(false, false, true, false, true, true),
+            (Select(-1), true)
+        );
+        assert_eq!(
+            junction_key(false, false, false, true, true, false),
+            (None, false)
+        );
+        // Manual steering keeps the arrows for leaning.
+        assert_eq!(
+            junction_key(false, false, false, true, false, true),
+            (None, false)
+        );
+        // Taken even when nothing is pressed (the line does not move).
+        assert_eq!(
+            junction_key(false, false, false, false, true, true),
+            (None, true)
+        );
+    }
 
     #[test]
     fn key_mapping() {

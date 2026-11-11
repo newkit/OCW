@@ -62,9 +62,20 @@ pub struct Args {
     #[arg(long, value_name = "PATH")]
     pub route_file: Option<PathBuf>,
     /// World package from `world-builder package`: terrain, all roads and
-    /// trees are streamed from it (use together with --route-file).
+    /// trees are streamed from it (use together with --route-file, or
+    /// --free-ride).
     #[arg(long, value_name = "PATH")]
     pub world: Option<PathBuf>,
+    /// Free ride on the world package's road graph (spec §2.2.1): choose
+    /// the exit at junctions (← / → or Q / E), U-turn with U. Needs
+    /// --world with a version 2 package (it has the road graph).
+    #[arg(long, requires = "world")]
+    pub free_ride: bool,
+    /// Free ride start: the road nearest local X,Z metres (x east, z
+    /// south of the package origin). Default: a random road (or a fixed one
+    /// for --screenshot / --capture runs; see --random-start).
+    #[arg(long, value_name = "X,Z", value_parser = parse_xz, allow_hyphen_values = true)]
+    pub start: Option<(f64, f64)>,
     /// Use the virtual trainer even if Bluetooth devices are remembered.
     #[arg(long = "virtual")]
     pub virtual_trainer: bool,
@@ -113,6 +124,65 @@ fn parse_size(s: &str) -> Result<(u32, u32), String> {
         w.parse().map_err(|_| "bad width")?,
         h.parse().map_err(|_| "bad height")?,
     ))
+}
+
+fn parse_xz(s: &str) -> Result<(f64, f64), String> {
+    let (x, z) = s.split_once(',').ok_or("expected X,Z")?;
+    let p = |v: &str| v.trim().parse::<f64>().map_err(|e| format!("{v}: {e}"));
+    Ok((p(x)?, p(z)?))
+}
+
+/// Free ride: the road network of the package and where to start.
+fn free_ride_setup(args: &Args, pkg: &ocw_world::WorldPackage) -> connection::FreeRideSetup {
+    let Some(graph) = pkg.graph.clone() else {
+        eprintln!(
+            "{}: no road graph in this world package; rebuild it with `world-builder package` (format OCWPKG02)",
+            args.world
+                .as_deref()
+                .unwrap_or(std::path::Path::new("?"))
+                .display()
+        );
+        std::process::exit(1);
+    };
+    let net = std::sync::Arc::new(ocw_world::RoadNetwork::new(graph));
+    let start = match args.start {
+        Some((x, z)) => net
+            .nearest([x, z])
+            .map(|(edge, offset)| (edge, offset, net.edge(edge).oneway.allows(true))),
+        None => {
+            let random = args
+                .random_start
+                .unwrap_or(args.screenshot.is_none() && args.capture.is_none());
+            let seed = if random {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_nanos() as u64)
+            } else {
+                1
+            };
+            net.random_start(seed)
+        }
+    };
+    let Some((edge, offset_m, forward)) = start else {
+        eprintln!("the road graph is empty");
+        std::process::exit(1);
+    };
+    let e = net.edge(edge);
+    println!(
+        "free ride from {} ({:?}), {:.0} m along edge {}",
+        e.name.as_deref().unwrap_or("unnamed road"),
+        e.class,
+        offset_m,
+        e.id.0
+    );
+    connection::FreeRideSetup {
+        net,
+        start: ocw_sim::FreeRideStart {
+            edge,
+            offset_m,
+            forward,
+        },
+    }
 }
 
 /// Loads an ocw-route file: the route and the terrain around it.
@@ -172,8 +242,12 @@ fn main() -> AppExit {
             eprintln!("{}: {e}", path.display());
             std::process::exit(1);
         });
+        if args.free_ride {
+            app.insert_resource(free_ride_setup(&args, &pkg));
+        }
         app.insert_resource(ocw_render::package::PackageWorld(std::sync::Arc::new(pkg)));
     }
+    let free_ride = app.world().contains_resource::<connection::FreeRideSetup>();
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
             title: "Open Cycling World".into(),
@@ -194,6 +268,7 @@ fn main() -> AppExit {
     .insert_resource(Time::<Fixed>::from_hz(f64::from(SIM_TICK_HZ)))
     .insert_resource(RideView {
         terrain_base,
+        free_ride,
         ..RideView::new(route.clone())
     })
     .insert_resource(args.clone())
@@ -289,6 +364,23 @@ fn startup_commands(args: Res<Args>, mut console: ResMut<ConsoleState>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn free_ride_arguments() {
+        let a = Args::parse_from([
+            "ocw-desktop",
+            "--world",
+            "w.ocwpkg",
+            "--free-ride",
+            "--start",
+            "-1200.5,5300",
+        ]);
+        assert!(a.free_ride);
+        assert_eq!(a.start, Some((-1200.5, 5300.0)));
+        // --free-ride needs a world package.
+        assert!(Args::try_parse_from(["ocw-desktop", "--free-ride"]).is_err());
+        assert!(parse_xz("1;2").is_err());
+    }
 
     #[test]
     fn timed_commands_parse() {
