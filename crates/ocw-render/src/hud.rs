@@ -15,7 +15,7 @@ impl Plugin for HudPlugin {
         }
         app.init_resource::<ShowFps>()
             .add_systems(Startup, spawn_hud)
-            .add_systems(Update, update_hud);
+            .add_systems(Update, (update_hud, update_gps));
     }
 }
 
@@ -29,7 +29,37 @@ struct HudText;
 #[derive(Component)]
 struct HudSmallText;
 
+/// The GPS line, bottom-left.
+#[derive(Component)]
+struct HudGps;
+
+#[derive(Component)]
+struct HudGpsText;
+
 fn spawn_hud(mut commands: Commands) {
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                bottom: px(12),
+                left: px(12),
+                padding: UiRect::axes(px(8), px(4)),
+                border_radius: BorderRadius::all(px(4)),
+                display: Display::None,
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+            HudGps,
+        ))
+        .with_child((
+            Text::new(""),
+            TextFont {
+                font_size: 15.0.into(),
+                ..default()
+            },
+            TextColor(Color::srgb(0.85, 0.85, 0.85)),
+            HudGpsText,
+        ));
     commands
         .spawn((
             Node {
@@ -85,6 +115,47 @@ pub fn main_line(
         .map(|h| format!("   HR {h:.0}"))
         .unwrap_or_default();
     format!("{power_w:>4.0} W   {speed_kmh:>5.1} km/h   {cadence}   {grade:+.1} %{heart}")
+}
+
+/// The GPS line: "47.12345° N  9.53210° E  812 m" (5 decimals ≈ 1 m).
+pub fn gps_line(lat: f64, lon: f64, altitude_m: f64) -> String {
+    fn coord(v: f64, pos: char, neg: char) -> String {
+        // Round first, so a value that rounds to zero shows no "S" / "W".
+        let r = (v * 1e5).round() / 1e5;
+        let h = if r < 0.0 { neg } else { pos };
+        format!("{:.5}° {h}", r.abs())
+    }
+    format!(
+        "{}  {}  {:.0} m",
+        coord(lat, 'N', 'S'),
+        coord(lon, 'E', 'W'),
+        altitude_m
+    )
+}
+
+/// Shows the GPS line while the position is known (not on test routes).
+fn update_gps(
+    view: Res<RideView>,
+    mut boxes: Query<&mut Node, With<HudGps>>,
+    mut texts: Query<&mut Text, With<HudGpsText>>,
+) {
+    let (Ok(mut node), Ok(mut text)) = (boxes.single_mut(), texts.single_mut()) else {
+        return;
+    };
+    let display = if view.position.is_some() {
+        Display::Flex
+    } else {
+        Display::None
+    };
+    if node.display != display {
+        node.display = display;
+    }
+    if let Some((lat, lon, alt)) = view.position {
+        let line = gps_line(lat, lon, alt);
+        if text.0 != line {
+            text.0 = line;
+        }
+    }
 }
 
 fn format_time(seconds: f64) -> String {
@@ -164,5 +235,22 @@ mod tests {
             "   0 W     0.0 km/h   - rpm   +0.0 %   HR 142"
         );
         assert!(super::main_line(200.0, 35.0, None, -8.25, None).ends_with("-8.2 %"));
+    }
+
+    #[test]
+    fn gps_line_hemispheres_and_rounding() {
+        assert_eq!(
+            super::gps_line(47.123454, 9.532104, 812.4),
+            "47.12345° N  9.53210° E  812 m"
+        );
+        assert_eq!(
+            super::gps_line(-33.856785, -151.215296, -3.6),
+            "33.85679° S  151.21530° W  -4 m"
+        );
+        // Rounds to zero: no southern / western hemisphere.
+        assert_eq!(
+            super::gps_line(-0.000001, -0.000004, 0.0),
+            "0.00000° N  0.00000° E  0 m"
+        );
     }
 }

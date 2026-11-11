@@ -43,6 +43,9 @@ pub struct RideView {
     /// Real terrain around the route (from a route file); `None` = terrain
     /// generated from the route's own elevation (test routes).
     pub terrain_base: Option<ocw_world::ElevationGrid>,
+    /// The local rider's GPS position (lat °, lon °, altitude m), if the
+    /// ride has a geographic origin (route files, world packages).
+    pub position: Option<(f64, f64, f64)>,
 }
 
 impl RideView {
@@ -57,6 +60,7 @@ impl RideView {
             free_ride: false,
             junction: None,
             notice: None,
+            position: None,
         }
     }
 
