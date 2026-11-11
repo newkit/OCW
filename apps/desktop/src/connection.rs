@@ -1,7 +1,6 @@
 //! Bevy glue between the threads (local server, trainer) and [`ClientCore`].
 
 use std::sync::Mutex;
-use std::time::Instant;
 
 use bevy::prelude::*;
 use clap::{Arg, Command, value_parser};
@@ -11,7 +10,7 @@ use ocw_protocol::v1::{self, client_message::Msg as C};
 use ocw_protocol::{client_message, encode};
 use ocw_render::RideView;
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
-use ocw_server::local::{LocalConnection, LocalServer};
+use ocw_server::local::{LocalConnection, LocalServer, SteppedServer};
 use ocw_world::Route;
 
 use crate::Args;
@@ -24,50 +23,69 @@ pub struct ConnectionPlugin {
 impl Plugin for ConnectionPlugin {
     fn build(&self, app: &mut App) {
         let args = app.world().resource::<Args>().clone();
-        let server = LocalServer::spawn(self.route.clone(), args.bots)
-            .expect("failed to start local server thread");
+        let mut server = if args.capture.is_some() {
+            // Frame capture: the server shares the client's fixed-step game time.
+            ServerLink::Stepped(Box::new(SteppedServer::new(self.route.clone(), args.bots)))
+        } else {
+            ServerLink::Threaded(
+                LocalServer::spawn(self.route.clone(), args.bots)
+                    .expect("failed to start local server thread"),
+            )
+        };
         let trainer = VirtualTrainer::new(args.power)
             .start()
             .expect("failed to start virtual trainer");
         let client = ClientCore::new(self.route.clone(), args.name, RiderProfile::default());
-        server
-            .to_server
-            .send(client.hello())
-            .expect("local server is running");
+        server.send(client.hello());
         app.insert_resource(Link {
             server: Mutex::new(server),
             device: Mutex::new(trainer),
-            started: Instant::now(),
         })
         .insert_resource(ClientState(client))
         .add_systems(PreUpdate, (poll_device, poll_server).chain())
-        .add_systems(FixedUpdate, predict)
+        .add_systems(FixedUpdate, (step_server, predict).chain())
         .add_systems(Update, update_view)
         .add_systems(Last, shutdown_on_exit);
         register_commands(app);
     }
 }
 
-/// Channels to the server and device threads (receivers are not `Sync`, hence the mutexes).
+/// The local server: on its own real-time thread, or stepped by the app
+/// (frame capture with a fixed time step per frame).
+pub enum ServerLink {
+    Threaded(LocalConnection),
+    Stepped(Box<SteppedServer>),
+}
+
+impl ServerLink {
+    fn send(&mut self, bytes: Vec<u8>) {
+        match self {
+            // A send error means the server thread ended; nothing to do then.
+            Self::Threaded(c) => {
+                let _ = c.to_server.send(bytes);
+            }
+            Self::Stepped(s) => s.send(&bytes),
+        }
+    }
+
+    fn receive(&mut self) -> Vec<Vec<u8>> {
+        match self {
+            Self::Threaded(c) => c.from_server.try_iter().collect(),
+            Self::Stepped(s) => s.drain(),
+        }
+    }
+}
+
+/// Links to the server and device thread (receivers are not `Sync`, hence the mutexes).
 #[derive(Resource)]
 pub struct Link {
-    server: Mutex<LocalConnection>,
+    server: Mutex<ServerLink>,
     device: Mutex<DeviceHandle>,
-    started: Instant,
 }
 
 impl Link {
-    fn now_s(&self) -> f64 {
-        self.started.elapsed().as_secs_f64()
-    }
-
     fn send_bytes(&self, bytes: Vec<u8>) {
-        let _ = self
-            .server
-            .lock()
-            .expect("not poisoned")
-            .to_server
-            .send(bytes);
+        self.server.lock().expect("not poisoned").send(bytes);
     }
 
     pub fn send(&self, msg: C) {
@@ -98,20 +116,25 @@ fn poll_device(link: Res<Link>, mut client: ResMut<ClientState>) {
     }
 }
 
+/// Ticks the stepped server (frame capture) at the fixed physics rate.
+fn step_server(link: Res<Link>) {
+    if let ServerLink::Stepped(s) = &mut *link.server.lock().expect("not poisoned") {
+        s.tick();
+    }
+}
+
 /// Handles server messages: welcome, snapshots, command results.
+///
+/// Times are game time (Bevy's virtual clock): equal to wall-clock time in
+/// normal runs, a fixed step per frame during frame capture.
 fn poll_server(
     link: Res<Link>,
+    time: Res<Time>,
     mut client: ResMut<ClientState>,
     mut console: ResMut<ConsoleState>,
 ) {
-    let messages: Vec<Vec<u8>> = link
-        .server
-        .lock()
-        .expect("not poisoned")
-        .from_server
-        .try_iter()
-        .collect();
-    let now = link.now_s();
+    let messages = link.server.lock().expect("not poisoned").receive();
+    let now = time.elapsed_secs_f64();
     for bytes in messages {
         match client.0.on_server_message(&bytes, now) {
             Some(Notice::Joined { rider_id, route_id }) => {
@@ -133,8 +156,8 @@ fn predict(mut client: ResMut<ClientState>) {
 }
 
 /// Publishes what the renderer should draw.
-fn update_view(link: Res<Link>, client: Res<ClientState>, mut view: ResMut<RideView>) {
-    let now = link.now_s();
+fn update_view(time: Res<Time>, client: Res<ClientState>, mut view: ResMut<RideView>) {
+    let now = time.elapsed_secs_f64();
     view.elapsed_s = now;
     view.riders = client.0.view(now);
 }
@@ -184,10 +207,15 @@ fn register_commands(app: &mut App) {
         Permission::User,
         Command::new("net.stats").about("Show connection statistics"),
         |world, _| {
+            let mode = match &*world.resource::<Link>().server.lock().expect("not poisoned") {
+                ServerLink::Threaded(_) => "in-process thread",
+                ServerLink::Stepped(_) => "stepped, frame capture",
+            };
             let c = &world.resource::<ClientState>().0;
             let s = c.stats();
             Ok(format!(
-                "server: local (in-process)\nrider: {}\nmessages in: {} ({} malformed)\nsnapshots: {} (last server tick {})\nsamples out: {}\nprediction error at last snapshot: {:.3} m",
+                "server: local ({})\nrider: {}\nmessages in: {} ({} malformed)\nsnapshots: {} (last server tick {})\nsamples out: {}\nprediction error at last snapshot: {:.3} m",
+                mode,
                 c.rider_id().map(|r| r.to_string()).unwrap_or("-".into()),
                 s.messages_in,
                 s.malformed,
@@ -217,7 +245,7 @@ fn register_commands(app: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use clap::Parser;
     use ocw_render::console::ConsoleCorePlugin;

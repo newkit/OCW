@@ -10,7 +10,7 @@ WASM_CRATES := -p ocw-core -p ocw-sim -p ocw-protocol -p ocw-world
 APT_PACKAGES := build-essential pkg-config curl \
 	libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-0 \
 	libdbus-1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
-	xvfb xauth weston cage wf-recorder ffmpeg mesa-vulkan-drivers
+	xvfb xauth weston ffmpeg mesa-vulkan-drivers
 SCREENSHOT ?= /tmp/ocw.png
 SCREENSHOT_WAYLAND ?= /tmp/ocw-wayland.png
 VIDEO ?= /tmp/ocw.mp4
@@ -76,10 +76,10 @@ screenshot-wayland: ## Headless smoke test on Wayland (weston); writes $(SCREENS
 
 smoke: screenshot screenshot-wayland ## Both desktop smoke tests (X11 and Wayland)
 
-video: ## Record a 6 s headless test ride (X11, ffmpeg); writes $(VIDEO)
+video: ## Record a smooth 6 s test ride (X11, frame capture); writes $(VIDEO)
 	.claude/skills/run-ocw/drive.sh video $(VIDEO)
 
-video-wayland: ## Record a 6 s headless test ride on Wayland (cage, wf-recorder); writes $(VIDEO_WAYLAND)
+video-wayland: ## Same on Wayland (weston); writes $(VIDEO_WAYLAND)
 	.claude/skills/run-ocw/drive.sh video-wayland $(VIDEO_WAYLAND)
 
 clean: ## Remove build artefacts

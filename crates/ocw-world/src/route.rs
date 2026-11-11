@@ -40,6 +40,12 @@ pub struct Route {
     points: Vec<[f64; 3]>,
     /// Cumulative horizontal distance at each point; `cumulative[0] == 0`.
     cumulative: Vec<f64>,
+    /// Direction at each point: the mean of the adjacent segments' directions.
+    /// `sample` interpolates between these, so the heading turns smoothly
+    /// instead of jumping at every point.
+    vertex_direction: Vec<[f64; 2]>,
+    /// Gradient at each point, the mean of the adjacent segments' gradients.
+    vertex_grade: Vec<f64>,
     is_loop: bool,
     road_width_m: f64,
 }
@@ -85,11 +91,14 @@ impl Route {
         if points.len() < 2 || total <= 0.0 {
             return Err(RouteError::TooFewPoints);
         }
+        let (vertex_direction, vertex_grade) = vertex_attributes(&points, is_loop);
         Ok(Self {
             id: id.into(),
             name: name.into(),
             points,
             cumulative,
+            vertex_direction,
+            vertex_grade,
             is_loop,
             road_width_m,
         })
@@ -174,18 +183,10 @@ impl Route {
             a[1] + (b[1] - a[1]) * t,
             a[2] + (b[2] - a[2]) * t,
         ];
-        let (dx, dz) = (b[0] - a[0], b[2] - a[2]);
-        let horiz = (dx * dx + dz * dz).sqrt();
-        let direction = if horiz > 0.0 {
-            [dx / horiz, dz / horiz]
-        } else {
-            [1.0, 0.0]
-        };
-        let grade = if horiz > 0.0 {
-            (b[1] - a[1]) / horiz
-        } else {
-            0.0
-        };
+        let (da, db) = (self.vertex_direction[i], self.vertex_direction[i + 1]);
+        let direction =
+            normalize([da[0] + (db[0] - da[0]) * t, da[1] + (db[1] - da[1]) * t]).unwrap_or(da);
+        let grade = self.vertex_grade[i] + (self.vertex_grade[i + 1] - self.vertex_grade[i]) * t;
         RoutePoint {
             position,
             direction,
@@ -205,6 +206,64 @@ impl Route {
 fn horizontal_distance(a: &[f64; 3], b: &[f64; 3]) -> f64 {
     let (dx, dz) = (b[0] - a[0], b[2] - a[2]);
     (dx * dx + dz * dz).sqrt()
+}
+
+fn normalize(v: [f64; 2]) -> Option<[f64; 2]> {
+    let len = (v[0] * v[0] + v[1] * v[1]).sqrt();
+    (len > 1e-12).then(|| [v[0] / len, v[1] / len])
+}
+
+/// Per-point direction and gradient, averaged over the adjacent segments
+/// (wrapping around for loops, whose last point repeats the first).
+fn vertex_attributes(points: &[[f64; 3]], is_loop: bool) -> (Vec<[f64; 2]>, Vec<f64>) {
+    let segments: Vec<([f64; 2], f64)> = points
+        .windows(2)
+        .map(|w| {
+            let (dx, dz) = (w[1][0] - w[0][0], w[1][2] - w[0][2]);
+            let horiz = (dx * dx + dz * dz).sqrt();
+            match normalize([dx, dz]) {
+                Some(dir) => (dir, (w[1][1] - w[0][1]) / horiz),
+                None => ([0.0, 0.0], 0.0), // duplicate point: ignored below
+            }
+        })
+        .collect();
+    let n = segments.len();
+    let mut directions = Vec::with_capacity(n + 1);
+    let mut grades = Vec::with_capacity(n + 1);
+    for v in 0..=n {
+        let before = if v > 0 {
+            Some(v - 1)
+        } else if is_loop {
+            Some(n - 1)
+        } else {
+            None
+        };
+        let after = if v < n {
+            Some(v)
+        } else if is_loop {
+            Some(0)
+        } else {
+            None
+        };
+        let adjacent: Vec<&([f64; 2], f64)> = [before, after]
+            .into_iter()
+            .flatten()
+            .map(|s| &segments[s])
+            .filter(|(d, _)| *d != [0.0, 0.0])
+            .collect();
+        let sum = adjacent
+            .iter()
+            .fold([0.0, 0.0], |acc, (d, _)| [acc[0] + d[0], acc[1] + d[1]]);
+        // A U-turn cancels out: fall back to the incoming direction.
+        let dir = normalize(sum).unwrap_or(adjacent.first().map_or([1.0, 0.0], |s| s.0));
+        directions.push(dir);
+        grades.push(if adjacent.is_empty() {
+            0.0
+        } else {
+            adjacent.iter().map(|s| s.1).sum::<f64>() / adjacent.len() as f64
+        });
+    }
+    (directions, grades)
 }
 
 #[cfg(test)]
@@ -277,5 +336,65 @@ mod tests {
             Route::from_points("x", "x", vec![[0.0; 3]], false, 5.0).unwrap_err(),
             RouteError::TooFewPoints
         );
+    }
+
+    /// The heading and gradient change continuously along the route, so the
+    /// rider and camera do not jerk at every route point.
+    #[test]
+    fn direction_and_grade_are_continuous() {
+        let r = Route::test_loop();
+        let step = 0.05;
+        let (mut max_turn, mut max_grade_step) = (0.0f64, 0.0f64);
+        let mut prev = r.sample(0.0);
+        let mut d = step;
+        // Include the loop seam.
+        while d <= r.length() + 50.0 {
+            let p = r.sample(d);
+            let cross = prev.direction[0] * p.direction[1] - prev.direction[1] * p.direction[0];
+            let dot = prev.direction[0] * p.direction[0] + prev.direction[1] * p.direction[1];
+            max_turn = max_turn.max(cross.atan2(dot).abs().to_degrees());
+            max_grade_step = max_grade_step.max((p.grade - prev.grade).abs());
+            prev = p;
+            d += step;
+        }
+        // Was up to 2 degrees in one step with per-segment directions.
+        assert!(max_turn < 0.05, "turn of {max_turn:.3} deg in {step} m");
+        assert!(max_grade_step < 0.001, "grade step {max_grade_step}");
+    }
+
+    #[test]
+    fn vertex_direction_is_the_mean_of_both_segments() {
+        // A 90-degree corner: east, then south.
+        let r = Route::from_points(
+            "c",
+            "Corner",
+            vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [10.0, 1.0, 10.0]],
+            false,
+            6.0,
+        )
+        .unwrap();
+        let s = std::f64::consts::FRAC_1_SQRT_2;
+        let at_corner = r.sample(10.0).direction;
+        assert!((at_corner[0] - s).abs() < 1e-9 && (at_corner[1] - s).abs() < 1e-9);
+        // Ends keep their segment's direction and gradient.
+        assert_eq!(r.sample(0.0).direction, [1.0, 0.0]);
+        assert_eq!(r.sample(20.0).direction, [0.0, 1.0]);
+        assert!((r.sample(20.0).grade - 0.1).abs() < 1e-9);
+        assert!((r.sample(10.0).grade - 0.05).abs() < 1e-9);
+    }
+
+    #[test]
+    fn u_turn_does_not_produce_nan() {
+        let r = Route::from_points(
+            "u",
+            "U-turn",
+            vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+            false,
+            6.0,
+        )
+        .unwrap();
+        let p = r.sample(10.0);
+        assert!(p.direction[0].is_finite() && p.direction[1].is_finite());
+        assert!((p.direction[0].hypot(p.direction[1]) - 1.0).abs() < 1e-9);
     }
 }

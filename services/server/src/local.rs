@@ -102,6 +102,58 @@ impl LocalServer {
     }
 }
 
+/// A local server that does not run on its own clock: the caller ticks it.
+///
+/// Used for deterministic frame capture (`ocw-desktop --capture`), where game
+/// time advances by a fixed step per rendered frame instead of with the wall
+/// clock, so client and server must share that time.
+pub struct SteppedServer {
+    server: GameServer,
+    conn: crate::ConnectionId,
+    outbox: std::collections::VecDeque<Vec<u8>>,
+}
+
+impl SteppedServer {
+    /// A stepped server with dev commands enabled and one connected client.
+    pub fn new(route: Route, bots: u32) -> Self {
+        let mut server = GameServer::new(
+            route,
+            ServerConfig {
+                allow_dev_commands: true,
+                bots,
+            },
+        );
+        let conn = server.connect();
+        Self {
+            server,
+            conn,
+            outbox: Default::default(),
+        }
+    }
+
+    /// Handles an encoded client message immediately.
+    pub fn send(&mut self, bytes: &[u8]) {
+        let replies = self.server.handle(self.conn, bytes);
+        self.outbox.extend(replies);
+    }
+
+    /// Advances the simulation by one 50 Hz tick.
+    pub fn tick(&mut self) {
+        if let Some(snapshot) = self.server.tick() {
+            self.outbox.push_back(snapshot);
+        }
+    }
+
+    /// Takes all messages sent to the client since the last call.
+    pub fn drain(&mut self) -> Vec<Vec<u8>> {
+        self.outbox.drain(..).collect()
+    }
+
+    pub fn server(&self) -> &GameServer {
+        &self.server
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,5 +187,28 @@ mod tests {
         assert!(welcomed);
         assert_eq!(riders, 3);
         conn.shutdown();
+    }
+
+    #[test]
+    fn stepped_server_advances_only_when_ticked() {
+        let mut s = SteppedServer::new(Route::test_loop(), 1);
+        s.send(&encode(&client_message(C::Hello(v1::Hello {
+            protocol_version: PROTOCOL_VERSION,
+            display_name: "Cap".into(),
+            profile: None,
+        }))));
+        let welcome = s.drain();
+        assert_eq!(welcome.len(), 1);
+        assert!(matches!(decode_server(&welcome[0]).unwrap(), S::Welcome(_)));
+        // No wall-clock progress: nothing happens without ticks.
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(s.drain().is_empty());
+        assert_eq!(s.server().session().tick(), 0);
+        for _ in 0..50 {
+            s.tick();
+        }
+        assert_eq!(s.server().session().tick(), 50);
+        // One snapshot per 5 ticks (10 Hz).
+        assert_eq!(s.drain().len(), 10);
     }
 }

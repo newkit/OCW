@@ -52,6 +52,20 @@ pub struct Args {
     /// Seconds of riding before the screenshot is taken.
     #[arg(long, default_value_t = 5.0)]
     pub screenshot_delay: f64,
+    /// Frame capture: save every frame as DIR/frame_NNNNN.png with game time
+    /// advancing exactly 1/--capture-fps per frame (smooth videos even when
+    /// rendering is slow), then exit. The server runs stepped, in-process.
+    #[arg(long, value_name = "DIR", conflicts_with = "screenshot")]
+    pub capture: Option<PathBuf>,
+    /// Frames per second of game time during capture.
+    #[arg(long, default_value_t = 25, value_parser = clap::value_parser!(u32).range(1..=120))]
+    pub capture_fps: u32,
+    /// Seconds of game time to capture.
+    #[arg(long, default_value_t = 6.0)]
+    pub capture_seconds: f64,
+    /// Seconds of game time to ride before capturing starts.
+    #[arg(long, default_value_t = 3.0)]
+    pub capture_warmup: f64,
 }
 
 fn parse_size(s: &str) -> Result<(u32, u32), String> {
