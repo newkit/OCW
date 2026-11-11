@@ -22,7 +22,8 @@ VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 
 .DEFAULT_GOAL := help
 .PHONY: help deps deps-linux deps-linux-packages deps-windows deps-macos deps-rust build release test lint fmt fmt-check \
-	clippy wasm check run server screenshot screenshot-wayland smoke video video-wayland deploy-test clean clean-test-output
+	clippy wasm check run server screenshot screenshot-wayland smoke video video-wayland deploy-test clean clean-test-output \
+	macos-app
 
 help: ## Show this help
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | \
@@ -115,6 +116,10 @@ video-wayland: ## Same on Wayland (weston); writes $(VIDEO_WAYLAND)
 
 deploy-test: ## Build on MACHINE (default marge) and deploy for its kiosk (scripts/ocw-kiosk.sh)
 	scripts/deploy-test.sh $(or $(MACHINE),marge)
+
+# macOS app bundle (spec §11.3).
+macos-app: ## macOS: Open Cycling World.app + DMG + zip in target/macos (ad-hoc signed)
+	scripts/build-macos-app.sh
 
 clean: ## Remove build artefacts
 	$(CARGO) clean

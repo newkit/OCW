@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.2 – November 2026
+Version 2.3 – November 2026
 
 | Version | Change |
 |---|---|
@@ -21,6 +21,7 @@ Version 2.2 – November 2026
 | 2.0 | Restart key R, camera reset on C, video recording on V; gamepad ↑ / ↓ also on the D-pad and the left stick, analog triggers, U-turn on East (§3.2) |
 | 2.1 | In-game menu plan (§3.2.1): structure (Ride, Workshop, Navi, Settings), gamepad navigation, settings file, increments M1–M9 mapped to phases; audio output device plan (§3.3) |
 | 2.2 | Menu decisions (§3.2.1): the ride never pauses (trainer unchanged, time and recording continue, autodrive while the menu is open); Esc never quits; rider weight affects physics, rider profiles in Settings, chosen in the Workshop |
+| 2.3 | macOS app bundle (§11.3): `scripts/build-macos-app.sh` (Info.plist with Bluetooth usage text, icon, ad-hoc signature, DMG and zip), logs to `~/Library/Logs/OCW/` when started from Finder, CI job building the app on pushes to main |
 
 ---
 
@@ -1189,6 +1190,7 @@ Build and release pipelines are automated for all three operating systems, intro
 
 - **App icon and desktop integration:** the logo (`artwork/logos/`, a unicorn riding a bike over a rainbow) is the window icon (X11, Windows); the window's app id `ocw-desktop` matches the desktop entry (`packaging/linux/ocw-desktop.desktop`), which Wayland compositors, docks and menus use. On Linux the app installs its desktop entry and hicolor icons into the user's data directory at start (only changed files).
 - **AppImage:** `scripts/build-appimage.sh` assembles the AppDir (binary, desktop entry, icons, `.DirIcon`) and packs it with `appimagetool` when installed.
+- **macOS app bundle:** `scripts/build-macos-app.sh` (`make macos-app`, runs on macOS) builds `Open Cycling World.app` (bundle id `org.opencyclingworld.desktop`; stripped binary; `Info.plist` with version + commit, minimum macOS read from the binary, `NSBluetoothAlwaysUsageDescription`, without which macOS ends the app when it uses CoreBluetooth; `ocw.icns` from `artwork/logos/`), signs it ad hoc and packs a DMG (with an Applications link) and a zip. Started from Finder, the app logs to `~/Library/Logs/OCW/ocw-desktop.log` (stderr has no terminal there). CI builds and uploads both on pushes to `main`. Still open: Developer ID signing with the hardened runtime and notarisation (`CODESIGN_IDENTITY` already signs with a given identity), a 1024 px icon render for the 512@2x slot.
 - **Release folder:** `release/<version>-<commit>/<platform>/` holds stripped release binaries (`ocw-desktop`, `ocw-server`, `world-builder`) with SHA-256 sums; binaries above GitHub's file size limits are stored xz-compressed. Map data is not included (ODbL, §13). `artwork/build-history/` keeps the screenshots and videos made during development with an index.
 
 ---

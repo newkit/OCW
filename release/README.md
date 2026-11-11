@@ -58,6 +58,10 @@ Built from commit `15d89d0` (workspace version 0.1.0) with
   notarised: remove the quarantine flag
   (`xattr -d com.apple.quarantine ocw-desktop`) or allow it in System
   Settings. Bluetooth access needs the system permission prompt.
+  For an app that starts from Finder (with icon and the Bluetooth usage
+  text macOS requires), build `Open Cycling World.app` and its DMG with
+  `scripts/build-macos-app.sh` on a Mac, or take the `macos-app` artifact of
+  a CI run on `main`.
 - `ocw-desktop` runs the built-in test routes and the virtual trainer with
   no extra files (`ocw-desktop --virtual`). `ocw-server` is the headless
   game server (`ocw-server --bots 3 --seconds 10 --fast`).
