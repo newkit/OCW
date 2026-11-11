@@ -13,6 +13,7 @@ mod devices;
 mod icon;
 mod input;
 mod known_devices;
+mod logfile;
 mod monitor;
 mod platform;
 mod recording;
@@ -374,22 +375,30 @@ fn main() -> AppExit {
         app.insert_resource(ocw_render::package::PackageWorld(std::sync::Arc::new(pkg)));
     }
     let free_ride = app.world().contains_resource::<connection::FreeRideSetup>();
-    app.add_plugins(DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(Window {
-            title: "Open Cycling World".into(),
-            // App id (Wayland) / WM_CLASS (X11): the desktop entry and its icon.
-            name: Some(icon::APP_ID.into()),
-            resolution: WindowResolution::new(args.window.0, args.window.1),
-            present_mode: PresentMode::AutoVsync,
-            mode: if args.fullscreen {
-                WindowMode::BorderlessFullscreen(MonitorSelection::Current)
-            } else {
-                WindowMode::Windowed
-            },
-            ..default()
-        }),
-        ..default()
-    }))
+    app.add_plugins(
+        DefaultPlugins
+            // macOS app bundle: log to ~/Library/Logs/OCW (no terminal).
+            .set(bevy::log::LogPlugin {
+                fmt_layer: logfile::fmt_layer,
+                ..default()
+            })
+            .set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "Open Cycling World".into(),
+                    // App id (Wayland) / WM_CLASS (X11): the desktop entry and its icon.
+                    name: Some(icon::APP_ID.into()),
+                    resolution: WindowResolution::new(args.window.0, args.window.1),
+                    present_mode: PresentMode::AutoVsync,
+                    mode: if args.fullscreen {
+                        WindowMode::BorderlessFullscreen(MonitorSelection::Current)
+                    } else {
+                        WindowMode::Windowed
+                    },
+                    ..default()
+                }),
+                ..default()
+            }),
+    )
     // The client prediction runs in FixedUpdate at the same rate as the server tick.
     .insert_resource(Time::<Fixed>::from_hz(f64::from(SIM_TICK_HZ)))
     .insert_resource(RideView {
@@ -489,6 +498,8 @@ fn timed_commands(
 fn startup_commands(args: Res<Args>, mut console: ResMut<ConsoleState>) {
     // Phase 1 always rides on the in-process local server.
     console.permission = Permission::Dev;
+    // Relative to the working directory, which is `/` for an app started
+    // from Finder: the macOS app bundle does not read one.
     if std::path::Path::new("autoexec.cfg").exists() {
         console.queue("exec autoexec.cfg");
     }
