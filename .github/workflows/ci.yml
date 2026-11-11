@@ -15,13 +15,24 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      # Normally ~30 s. When the Ubuntu archive or its DNS is unreachable, apt
+      # waits on every fetch and the step used to hang for ~1.5 h before
+      # failing (exit 100): short apt timeouts, three attempts, and a step
+      # timeout make it fail (or recover) within minutes.
       - name: Install system dependencies
+        timeout-minutes: 15
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libasound2-dev libudev-dev libwayland-dev \
-            libxkbcommon-dev libxkbcommon-x11-0 libdbus-1-dev \
-            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
-            xvfb xauth weston mesa-vulkan-drivers
+          apt_opts="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+          for attempt in 1 2 3; do
+            sudo apt-get $apt_opts update &&
+            sudo apt-get $apt_opts install -y libasound2-dev libudev-dev libwayland-dev \
+              libxkbcommon-dev libxkbcommon-x11-0 libdbus-1-dev \
+              libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+              xvfb xauth weston mesa-vulkan-drivers && exit 0
+            echo "::warning::apt-get failed (attempt $attempt of 3), retrying in 30 s"
+            sleep 30
+          done
+          exit 1
       - name: Install toolchain from rust-toolchain.toml
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
