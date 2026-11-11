@@ -35,6 +35,9 @@ directory is `/`). The app is only ad-hoc signed, not notarised, so Gatekeeper
 blocks the first start: right-click the app → Open, or System Settings →
 Privacy & Security → Open Anyway, or remove the quarantine flag with
 `xattr -dr com.apple.quarantine "/Applications/Open Cycling World.app"`.
+Video recording (key V) needs ffmpeg: install Homebrew, then `brew install
+ffmpeg` (`make deps-macos` prints both commands); the app also finds it in
+`/opt/homebrew/bin`, `/usr/local/bin` and `~/.local/bin` when started from Finder.
 
 ## Controls
 
@@ -44,7 +47,7 @@ Privacy & Security → Open Anyway, or remove the quarantine flag with
 | Stop: no power, brake | ↓ | D-pad down, left stick down or left trigger (LT / L2) |
 | Steer (autodrive: move the line; manual: lean into a curve) | ← / → | left stick (left/right) |
 | Autodrive on/off (on at the start) | A | South button (A / ✕) |
-| Wild mode on/off (leave the road) | W | West button (X / □) |
+| Wild mode on/off (leave the road; on also switches autodrive off) | W | West button (X / □) |
 | Free ride: choose the exit at the next junction | ← / → (autodrive, junction ahead) or Q / E | D-pad left / right |
 | Free ride: U-turn | U | East button (B / ○) |
 | Route ride: back to the route after leaving it | J | North button (Y / △) |
@@ -118,7 +121,10 @@ Then start the app: the left stick steers, the triggers ride and stop (see
   for you: miss one and the rider drifts to the edge, where it scrapes along
   and slows down.
 - **Wild** (key W): not bound to the road; ride onto the meadows, up to 60 m
-  either side. The camera follows over terrain and trees.
+  either side. Switching it on also switches autodrive off (upright, manual
+  lean steering), so ← / → steer you off the road; switching it off keeps the
+  steering mode (press A for autodrive). The HUD shows "manual | WILD". The
+  camera follows over terrain and trees.
 
 **Free ride** (spec §2.2.1, §2.2.2): ride anywhere on the world package's road
 network instead of a fixed route:
@@ -165,9 +171,21 @@ climb at 1.5–2.1 km) and grass beside the road roll increasingly harder
   `--route loop` (gentle).
 - Real roads: `--route-file data/pilot/vaduz-malbun.route` (from `world-builder
   route`), optionally with `--world data/pilot/liechtenstein.ocwpkg` (terrain,
-  all roads and trees of the region, streamed in 1 km tiles). The data comes
+  all roads of the region, streamed in 1 km tiles). The data comes
   from `scripts/fetch-pilot.sh` and `world-builder` (© OpenStreetMap
   contributors, ODbL).
+- Packages from `world-builder package` also carry the OSM land use and the
+  buildings: the ground is coloured by land use (forest floor, meadows,
+  fields, settlements, rock, scree, glaciers), lakes and rivers are flat water
+  surfaces, trees stand in the forests (a few on meadows, in gardens and
+  parks, never on roads, water or in buildings) and every building is
+  extruded from its OSM footprint with its height (`height`,
+  `building:levels`, or a default by type) and a flat or gable roof.
+  `world-builder check` lists what a package contains; older packages
+  without land use still load (plain grass and placeholder tree patches).
+- Default arguments: `ocw-desktop.args` beside the executable (or
+  `$OCW_ARGS_FILE`) is read before the command line, which wins
+  (`--no-args-file` ignores it; see config/README.md, kiosk).
 
 **World packages: signatures and cache** (spec §4.7, §12)
 
@@ -258,6 +276,7 @@ installs it).
 | `--at SECONDS=COMMAND` | Run a console command after SECONDS of riding (scripted rides) |
 | `--screenshot PATH`, `--screenshot-delay S` | Save a screenshot after S seconds (default 5), then exit |
 | `--capture DIR`, `--capture-fps N`, `--capture-seconds S`, `--capture-warmup S` | Save every frame with a fixed game-time step (smooth videos), then exit |
+| `--version` | Print the build id, e.g. `0.1.0-7d538c0-dirty (debug)`: version, commit, `-dirty` for uncommitted changes, `(debug)` for debug builds. It is also shown small in the HUD's lower right corner and logged at startup |
 
 ## Console commands
 
@@ -280,10 +299,11 @@ for now).
 | `quit` | Exit the app |
 | **Rider** | |
 | `rider.autodrive on\|off` | Autodrive (key A) |
-| `rider.wild on\|off` | Wild mode (key W) |
+| `rider.wild on\|off` | Wild mode (key W; on also switches autodrive off) |
 | `rider.lean DEGREES` | Lean into a curve (positive = right, 0 = upright; manual steering) |
 | `rider.steer METRES` | Autodrive line: lateral position on the road (positive = right) |
 | `rider.state` | Print your rider's state |
+| `rider.gps` | Your rider's GPS position (also bottom-left in the HUD; route files and world packages only), with a copyable `lat, lon` line |
 | `teleport KM` | *Dev:* move your rider to a distance on the route (free ride: along the path, taking default exits) |
 | `teleport.xz X Z` | *Dev:* free ride: move to the road nearest local x / z metres |
 | `ride.turn left\|right\|straight\|default\|+\|-\|N` | Free ride: choose the exit at the next junction |
@@ -446,8 +466,8 @@ scripts/remote.sh <name> ssh 'uname -a'                              # Windows: 
 
 | OS | Command (in the copied checkout, e.g. `scripts/remote.sh <name> run 'make …'`, or locally on the machine) |
 |---|---|
-| Linux | `make deps-linux` – detects Debian/Ubuntu (apt), Fedora (dnf) or Arch (pacman), installs the packages (sudo; run it yourself in a terminal there) and rustup with the pinned Rust; or the parts: `make deps-linux-debian` / `-fedora` / `-arch`, `make deps-rust` |
-| macOS | `make deps-macos` – Xcode Command Line Tools, rustup, ffmpeg (if Homebrew is installed) |
+| Linux | `make deps-linux` – detects Debian/Ubuntu (apt), Fedora (dnf) or Arch (pacman), installs the packages (sudo; run it yourself in a terminal there), rustup with the pinned Rust and appimagetool (to `~/.local/bin`, for AppImages); or the parts: `make deps-linux-debian` / `-fedora` / `-arch`, `make deps-rust`, `make deps-appimage` (no sudo) |
+| macOS | `make deps-macos` – Xcode Command Line Tools, rustup, ffmpeg (if Homebrew is installed; otherwise it prints the commands to install Homebrew and ffmpeg, which needs an admin password) |
 | Windows | `make deps-windows` – winget: Git, Visual Studio Build Tools (C++), rustup (needs GNU make, e.g. `winget install ezwinports.make`) |
 
 rustup can also be installed without sudo and without touching shell
@@ -463,9 +483,17 @@ scripts/remote.sh <name> fetch test-output ./from-machine     # copy results bac
 scripts/deploy-test.sh <name>                                  # release build for the kiosk on its screen
 ```
 
-- At most 2 `remote.sh run` commands run at once per machine (others wait;
-  `OCW_REMOTE_SLOTS`), because parallel Bevy builds can run a machine out of
-  memory; branch checkouts use 4 build jobs (`OCW_REMOTE_JOBS`).
+- Build slots: only so many `remote.sh run` commands run at once per machine
+  (2 on Linux, 1 on Windows and macOS by default), because each parallel Bevy
+  build needs ~4–5 GB; the others wait and take whichever slot frees first.
+  Set `slots = N` per machine in `config/machines.toml` (or `[defaults]`), or
+  `OCW_REMOTE_SLOTS=N` for one call. Branch checkouts use 4 build jobs
+  (`OCW_REMOTE_JOBS`).
+- `python3 tools/build-dashboard/dashboard.py` shows each machine's load, its
+  running tasks, the queue of runs waiting for a slot and the slots in use
+  (every run leaves a task marker while it runs); on
+  Windows, add the build user to "Performance Monitor Users" for the
+  processor queue length ([tools/build-dashboard/README.md](tools/build-dashboard/README.md#windows-permissions)).
 - Branches other than `main` get their own checkout on the machine
   (`<repo_path>-<branch>`), several GB each; delete the ones of merged branches
   now and then.
@@ -501,7 +529,7 @@ to *Public* are the usual causes; the server log is in Event Viewer under
 | `python3 tools/build-dashboard/dashboard.py` | Web page (port 8765) with the build machines' load and their running/queued tasks; `--once` prints it as text |
 | `scripts/deploy-test.sh MACHINE` | Release build on a test machine, deployed for its kiosk |
 | `scripts/ocw-kiosk.sh install\|run\|status` | Keep the test app running on a machine's screen, restarted on each deploy |
-| `scripts/build-appimage.sh` | Linux AppImage (needs `appimagetool`) |
+| `scripts/build-appimage.sh` | Linux AppImage (needs `appimagetool`: `make deps-appimage`, part of `make deps-linux`) |
 | `scripts/build-macos-app.sh` | macOS app bundle, DMG and zip, ad-hoc signed (`make macos-app`, on a Mac) |
 | `scripts/setup-windows-buildserver.ps1` | Windows build machine: OpenSSH server and a local build user |
 | `.claude/skills/run-ocw/drive.sh` | Headless screenshots and videos (X11 / Wayland) for tests |

@@ -23,9 +23,11 @@
 //! ```
 //!
 //! Sections: `GRPH` – the road graph (spec §4.4, §4.7) for free ride and
-//! junction steering (§2.2.1), see [`write_graph`]. `ROUT` – routes on the
-//! graph by stable edge ID (§2.7), see [`write_routes`]. A package without
-//! sections is written as version 1, byte for byte as before.
+//! junction steering (§2.2.1), see [`write_graph`]; `ROUT` – routes on the
+//! graph by stable edge ID (§2.7), see [`write_routes`]; `LUSE` – land use
+//! per tile and water levels (§4.6), see [`crate::landuse`]; `BLDG` –
+//! building footprints with heights and roofs, see [`crate::buildings`]. A
+//! package without sections is written as version 1, byte for byte as before.
 //!
 //! Tile `(x, z)` covers local metres `[x·size, (x+1)·size] × [z·size, (z+1)·size]`;
 //! the grid includes both borders, so neighbouring tiles share their edge
@@ -34,8 +36,10 @@
 
 use std::collections::BTreeMap;
 
+use crate::buildings::{BUILDINGS_TAG, Buildings, read_buildings, write_buildings};
 use crate::graph::{Edge, EdgeId, Oneway, RoadClass, RoadGraph, VertexId};
 use crate::graph_route::{GraphRoute, RouteStep};
+use crate::landuse::{LANDUSE_TAG, LandUse, read_landuse, write_landuse};
 
 pub const MAGIC: &[u8; 8] = b"OCWPKG01";
 /// Version 2: version 1 plus tagged sections (the road graph).
@@ -100,6 +104,11 @@ pub struct WorldPackage {
     pub tiles: BTreeMap<TileKey, Tile>,
     /// The road graph (version 2 packages; `None` in version 1).
     pub graph: Option<RoadGraph>,
+    /// Land use and water levels per tile (section `LUSE`; `None` in older
+    /// packages, the renderer then falls back to plain grass).
+    pub landuse: Option<LandUse>,
+    /// Buildings per tile (section `BLDG`).
+    pub buildings: Option<Buildings>,
     /// Routes on the road graph (section `ROUT`, spec §2.7).
     pub routes: Vec<GraphRoute>,
 }
@@ -202,11 +211,28 @@ impl WorldPackage {
 
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut b = Vec::new();
-        b.extend_from_slice(if self.graph.is_some() || !self.routes.is_empty() {
-            MAGIC_V2
-        } else {
-            MAGIC
-        });
+        let mut sections: Vec<(&[u8; 4], Vec<u8>)> = Vec::new();
+        if let Some(graph) = &self.graph {
+            let mut payload = Vec::new();
+            write_graph(graph, &mut payload);
+            sections.push((GRAPH_TAG, payload));
+        }
+        if !self.routes.is_empty() {
+            let mut payload = Vec::new();
+            write_routes(&self.routes, &mut payload);
+            sections.push((ROUTES_TAG, payload));
+        }
+        if let Some(l) = &self.landuse {
+            let mut payload = Vec::new();
+            write_landuse(l, &mut payload);
+            sections.push((LANDUSE_TAG, payload));
+        }
+        if let Some(t) = &self.buildings {
+            let mut payload = Vec::new();
+            write_buildings(t, &mut payload);
+            sections.push((BUILDINGS_TAG, payload));
+        }
+        b.extend_from_slice(if sections.is_empty() { MAGIC } else { MAGIC_V2 });
         b.extend((self.name.len() as u32).to_le_bytes());
         b.extend(self.name.as_bytes());
         b.extend(self.origin.0.to_le_bytes());
@@ -231,17 +257,6 @@ impl WorldPackage {
                     }
                 }
             }
-        }
-        let mut sections: Vec<(&[u8; 4], Vec<u8>)> = Vec::new();
-        if let Some(graph) = &self.graph {
-            let mut payload = Vec::new();
-            write_graph(graph, &mut payload);
-            sections.push((GRAPH_TAG, payload));
-        }
-        if !self.routes.is_empty() {
-            let mut payload = Vec::new();
-            write_routes(&self.routes, &mut payload);
-            sections.push((ROUTES_TAG, payload));
         }
         if !sections.is_empty() {
             b.extend((sections.len() as u32).to_le_bytes());
@@ -323,6 +338,7 @@ impl WorldPackage {
             );
         }
         let mut graph = None;
+        let (mut landuse, mut buildings) = (None, None);
         let mut routes = Vec::new();
         if version >= 2 {
             let sections = r.u32()?;
@@ -332,6 +348,10 @@ impl WorldPackage {
                 let payload = r.take(len)?;
                 if &tag == GRAPH_TAG {
                     graph = Some(read_graph(payload)?);
+                } else if &tag == LANDUSE_TAG {
+                    landuse = Some(read_landuse(payload, samples)?);
+                } else if &tag == BUILDINGS_TAG {
+                    buildings = Some(read_buildings(payload)?);
                 } else if &tag == ROUTES_TAG {
                     routes = read_routes(payload)?;
                 }
@@ -348,9 +368,42 @@ impl WorldPackage {
             samples,
             tiles,
             graph,
+            landuse,
+            buildings,
             routes,
         })
     }
+}
+
+/// Tags and payload sizes of the tagged sections of an encoded package
+/// (empty for version 1 or unreadable bytes), for reports.
+pub fn section_sizes(bytes: &[u8]) -> Vec<([u8; 4], u64)> {
+    fn walk(bytes: &[u8]) -> Result<Vec<([u8; 4], u64)>, String> {
+        let mut r = Bytes::new(bytes);
+        if r.take(8)? != MAGIC_V2 {
+            return Ok(Vec::new());
+        }
+        let name_len = r.u32()? as usize;
+        r.take(name_len + 16 + 4)?;
+        let samples = r.u32()? as usize;
+        for _ in 0..r.u32()? {
+            r.take(8 + samples * samples * 4)?;
+            for _ in 0..r.u32()? {
+                r.take(5)?;
+                let pts = r.u32()? as usize;
+                r.take(pts * 12)?;
+            }
+        }
+        let mut out = Vec::new();
+        for _ in 0..r.u32()? {
+            let tag: [u8; 4] = r.arr()?;
+            let len = r.u64()?;
+            r.take(usize::try_from(len).map_err(|_| "section too large")?)?;
+            out.push((tag, len));
+        }
+        Ok(out)
+    }
+    walk(bytes).unwrap_or_default()
 }
 
 /// Layout version inside the routes section.
@@ -626,13 +679,24 @@ fn class_from(code: u8) -> Result<RoadClass, String> {
         .ok_or_else(|| format!("unknown road class {code}"))
 }
 
-struct Bytes<'a> {
+pub(crate) struct Bytes<'a> {
     b: &'a [u8],
     pos: usize,
 }
 
 impl<'a> Bytes<'a> {
-    fn take(&mut self, n: usize) -> Result<&'a [u8], String> {
+    pub(crate) fn new(b: &'a [u8]) -> Self {
+        Self { b, pos: 0 }
+    }
+    /// Fails unless everything was read.
+    pub(crate) fn finish(&self, what: &str) -> Result<(), String> {
+        if self.pos == self.b.len() {
+            Ok(())
+        } else {
+            Err(format!("trailing bytes in the {what}"))
+        }
+    }
+    pub(crate) fn take(&mut self, n: usize) -> Result<&'a [u8], String> {
         let s = self
             .b
             .get(self.pos..self.pos + n)
@@ -640,28 +704,28 @@ impl<'a> Bytes<'a> {
         self.pos += n;
         Ok(s)
     }
-    fn arr<const N: usize>(&mut self) -> Result<[u8; N], String> {
+    pub(crate) fn arr<const N: usize>(&mut self) -> Result<[u8; N], String> {
         Ok(self.take(N)?.try_into().expect("length N"))
     }
-    fn u8(&mut self) -> Result<u8, String> {
+    pub(crate) fn u8(&mut self) -> Result<u8, String> {
         Ok(self.take(1)?[0])
     }
-    fn u32(&mut self) -> Result<u32, String> {
+    pub(crate) fn u32(&mut self) -> Result<u32, String> {
         Ok(u32::from_le_bytes(self.arr()?))
     }
-    fn i32(&mut self) -> Result<i32, String> {
+    pub(crate) fn i32(&mut self) -> Result<i32, String> {
         Ok(i32::from_le_bytes(self.arr()?))
     }
-    fn f32(&mut self) -> Result<f32, String> {
+    pub(crate) fn f32(&mut self) -> Result<f32, String> {
         Ok(f32::from_le_bytes(self.arr()?))
     }
-    fn f64(&mut self) -> Result<f64, String> {
+    pub(crate) fn f64(&mut self) -> Result<f64, String> {
         Ok(f64::from_le_bytes(self.arr()?))
     }
-    fn u64(&mut self) -> Result<u64, String> {
+    pub(crate) fn u64(&mut self) -> Result<u64, String> {
         Ok(u64::from_le_bytes(self.arr()?))
     }
-    fn i64(&mut self) -> Result<i64, String> {
+    pub(crate) fn i64(&mut self) -> Result<i64, String> {
         Ok(i64::from_le_bytes(self.arr()?))
     }
 }
@@ -697,6 +761,8 @@ mod tests {
             samples: 3,
             tiles,
             graph: None,
+            landuse: None,
+            buildings: None,
             routes: Vec::new(),
         }
     }
@@ -842,6 +908,74 @@ mod tests {
         b.extend(3u64.to_le_bytes());
         b.extend([1, 2, 3]);
         assert_eq!(WorldPackage::from_bytes(&b).unwrap(), p);
+    }
+
+    #[test]
+    fn land_use_and_buildings_sections_round_trip_and_old_readers_skip_them() {
+        use crate::buildings::{Building, BuildingKind, Roof};
+        let mut classes = vec![crate::landuse::LandClass::Forest; 4];
+        classes[3] = crate::landuse::LandClass::Water;
+        let landuse = LandUse {
+            cells: 2,
+            tiles: BTreeMap::from([(
+                TileKey { x: 0, z: 0 },
+                crate::landuse::LandUseTile {
+                    classes,
+                    water: vec![(8, 3.5)],
+                },
+            )]),
+        };
+        let buildings = Buildings::from([(
+            TileKey { x: 1, z: 0 },
+            vec![Building {
+                kind: BuildingKind::House,
+                outline: vec![
+                    [1010.0, 10.0],
+                    [1020.0, 10.0],
+                    [1020.0, 18.0],
+                    [1010.0, 18.0],
+                ],
+                holes: vec![],
+                base_y: 99.5,
+                eave_y: 106.0,
+                roof: Roof::Gabled { height_m: 3.0 },
+            }],
+        )]);
+        // Land use alone already makes a version 2 package.
+        let only = WorldPackage {
+            landuse: Some(landuse.clone()),
+            ..package()
+        };
+        let b = only.to_bytes();
+        assert_eq!(&b[..8], MAGIC_V2);
+        assert_eq!(WorldPackage::from_bytes(&b).unwrap(), only);
+        let full = WorldPackage {
+            graph: Some(graph()),
+            landuse: Some(landuse),
+            buildings: Some(buildings),
+            ..package()
+        };
+        let mut b = full.to_bytes();
+        assert_eq!(WorldPackage::from_bytes(&b).unwrap(), full);
+        // A reader that knows only the road graph (the builds before these
+        // sections) sees them as unknown tags: rename them and read again.
+        for tag in [LANDUSE_TAG, crate::buildings::BUILDINGS_TAG] {
+            let at = b.windows(4).rposition(|w| w == tag).unwrap();
+            b[at] = b'x';
+        }
+        let tags: Vec<[u8; 4]> = section_sizes(&full.to_bytes())
+            .iter()
+            .map(|s| s.0)
+            .collect();
+        assert_eq!(
+            tags,
+            vec![*GRAPH_TAG, *LANDUSE_TAG, *crate::buildings::BUILDINGS_TAG]
+        );
+        assert!(section_sizes(&package().to_bytes()).is_empty());
+        let old = WorldPackage::from_bytes(&b).unwrap();
+        assert_eq!(old.tiles, full.tiles);
+        assert_eq!(old.graph, full.graph);
+        assert_eq!((old.landuse, old.buildings), (None, None));
     }
 
     #[test]

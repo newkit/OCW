@@ -9,7 +9,9 @@ CARGO ?= cargo
 WASM_CRATES := -p ocw-core -p ocw-sim -p ocw-protocol -p ocw-world
 # Build: compiler, Bevy (audio, input, windowing), btleplug (D-Bus).
 # Run/test: Vulkan driver + vulkaninfo, BlueZ, headless displays (Xvfb, weston),
-# ffmpeg for videos, rsync/git for scripts/remote.sh.
+# ffmpeg for videos, rsync/git for scripts/remote.sh. FUSE 2 (to run
+# AppImages such as appimagetool) comes separately in deps-linux-debian:
+# libfuse2t64 on Debian 13 / Ubuntu 24.04, libfuse2 before.
 APT_PACKAGES := build-essential pkg-config curl git rsync \
 	libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-0 \
 	libdbus-1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
@@ -21,14 +23,14 @@ DNF_PACKAGES := gcc gcc-c++ pkgconf-pkg-config curl git rsync \
 	alsa-lib-devel systemd-devel wayland-devel libxkbcommon-devel libxkbcommon-x11-devel \
 	dbus-devel libX11-devel libXcursor-devel libXrandr-devel libXi-devel libxcb-devel \
 	mesa-vulkan-drivers vulkan-tools bluez \
-	xorg-x11-server-Xvfb xorg-x11-xauth weston
+	xorg-x11-server-Xvfb xorg-x11-xauth weston fuse-libs
 # The same for Arch / Manjaro (pacman); the Vulkan driver depends on the GPU
 # (vulkan-radeon, vulkan-intel, nvidia-utils), mesa covers OpenGL.
 PACMAN_PACKAGES := base-devel pkgconf curl git rsync \
 	alsa-lib systemd-libs wayland libxkbcommon libxkbcommon-x11 \
 	dbus libx11 libxcursor libxrandr libxi libxcb \
 	mesa vulkan-icd-loader vulkan-tools bluez bluez-utils \
-	xorg-server-xvfb xorg-xauth weston ffmpeg
+	xorg-server-xvfb xorg-xauth weston ffmpeg fuse2
 # Linux distribution family from /etc/os-release (ID, then ID_LIKE):
 # debian (Debian, Ubuntu, Mint, …), fedora (Fedora, RHEL, Rocky, Alma, …),
 # arch (Arch, Manjaro, EndeavourOS, …), or unknown.
@@ -42,13 +44,16 @@ else ifneq ($(filter arch archlinux manjaro,$(OS_RELEASE_IDS)),)
 else
   LINUX_FAMILY := unknown
 endif
+# appimagetool for scripts/build-appimage.sh (user-level download, no sudo).
+APPIMAGETOOL ?= $(HOME)/.local/bin/appimagetool
+APPIMAGETOOL_URL ?= https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-$(shell uname -m).AppImage
 SCREENSHOT ?= /tmp/ocw.png
 SCREENSHOT_WAYLAND ?= /tmp/ocw-wayland.png
 VIDEO ?= /tmp/ocw.mp4
 VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 
 .DEFAULT_GOAL := help
-.PHONY: help deps deps-linux deps-linux-packages deps-linux-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-windows deps-macos deps-rust build release test lint fmt fmt-check \
+.PHONY: help deps deps-linux deps-linux-packages deps-linux-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust build release test lint fmt fmt-check \
 	clippy wasm check run server screenshot screenshot-wayland smoke video video-wayland deploy-test clean clean-test-output \
 	macos-app
 
@@ -67,7 +72,7 @@ endif
 
 deps: deps-$(PLATFORM) ## Install everything for this platform (Linux, Windows or macOS)
 
-deps-linux: deps-linux-packages deps-rust ## Linux: system packages (detects Debian/Ubuntu, Fedora, Arch; sudo) + Rust toolchain
+deps-linux: deps-linux-packages deps-rust deps-appimage ## Linux: system packages (detects Debian/Ubuntu, Fedora, Arch; sudo) + Rust + appimagetool
 
 deps-linux-packages: deps-linux-$(LINUX_FAMILY) ## Linux: only the system packages for this distribution (sudo)
 	@echo "For GPU access without a desktop session (remote/benchmark machines): sudo usermod -aG render,video \$$USER"
@@ -75,6 +80,7 @@ deps-linux-packages: deps-linux-$(LINUX_FAMILY) ## Linux: only the system packag
 deps-linux-debian: ## Linux: Debian / Ubuntu packages (apt)
 	sudo apt-get update
 	sudo apt-get install -y $(APT_PACKAGES)
+	sudo apt-get install -y libfuse2t64 || sudo apt-get install -y libfuse2
 
 deps-linux-fedora: ## Linux: Fedora / RHEL packages (dnf; unavailable ones are skipped)
 	sudo dnf install -y --skip-unavailable $(DNF_PACKAGES)
@@ -94,6 +100,17 @@ deps-linux-unknown:
 	@echo "  $(APT_PACKAGES)" >&2
 	@exit 1
 
+deps-appimage: ## Linux: appimagetool to ~/.local/bin (no sudo; used by scripts/build-appimage.sh)
+	@if [ -x "$(APPIMAGETOOL)" ]; then echo "appimagetool already installed: $(APPIMAGETOOL)"; exit 0; fi; \
+	set -e; mkdir -p "$(dir $(APPIMAGETOOL))"; \
+	echo "Downloading $(APPIMAGETOOL_URL)"; \
+	curl --proto '=https' --tlsv1.2 -fsSL -o "$(APPIMAGETOOL).download" "$(APPIMAGETOOL_URL)"; \
+	chmod +x "$(APPIMAGETOOL).download"; \
+	if ! APPIMAGE_EXTRACT_AND_RUN=1 "$(APPIMAGETOOL).download" --version; then \
+		echo "The downloaded appimagetool does not run: $(APPIMAGETOOL).download" >&2; exit 1; fi; \
+	mv "$(APPIMAGETOOL).download" "$(APPIMAGETOOL)"; \
+	echo "Installed $(APPIMAGETOOL)"
+
 deps-windows: ## Windows: Git, VS Build Tools (C++), rustup via winget + Rust toolchain
 	winget install --id Git.Git -e --accept-source-agreements --accept-package-agreements
 	winget install --id Microsoft.VisualStudio.2022.BuildTools -e --accept-source-agreements --accept-package-agreements \
@@ -102,11 +119,18 @@ deps-windows: ## Windows: Git, VS Build Tools (C++), rustup via winget + Rust to
 	rustup show active-toolchain || rustup toolchain install
 	@echo "Open a new terminal so PATH includes rustup, Git and the MSVC tools."
 
-deps-macos: ## macOS: Xcode Command Line Tools (+ ffmpeg if Homebrew is installed) + Rust toolchain
+deps-macos: ## macOS: Xcode Command Line Tools + ffmpeg (Homebrew; prints how to get it if missing) + Rust toolchain
 	@xcode-select -p >/dev/null 2>&1 || { xcode-select --install; \
 		echo "Finish the Command Line Tools installer, then run 'make deps-macos' again."; exit 1; }
-	@if command -v brew >/dev/null 2>&1; then brew install ffmpeg; \
-		else echo "Homebrew not found: skipping ffmpeg (only needed for videos)."; fi
+	@ffmpeg=$$(command -v ffmpeg || ls /opt/homebrew/bin/ffmpeg /usr/local/bin/ffmpeg 2>/dev/null | head -n 1); \
+		brew=$$(command -v brew || ls /opt/homebrew/bin/brew /usr/local/bin/brew 2>/dev/null | head -n 1); \
+		if [ -n "$$ffmpeg" ]; then echo "ffmpeg found: $$ffmpeg"; \
+		elif [ -n "$$brew" ]; then "$$brew" install ffmpeg || \
+			echo "brew install ffmpeg failed (Homebrew owned by another user?): run it as the Homebrew admin user."; \
+		else echo "Homebrew not found: skipping ffmpeg (only needed for video recording, key V)."; \
+		echo "To record videos, install Homebrew (asks for an admin password), then ffmpeg:"; \
+		echo '  /bin/bash -c "$$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'; \
+		echo '  brew install ffmpeg'; fi
 	$(MAKE) deps-rust
 
 deps-rust: ## Linux/macOS: rustup (if missing) + the pinned toolchain incl. wasm target

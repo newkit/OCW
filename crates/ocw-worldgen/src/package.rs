@@ -262,6 +262,10 @@ pub fn build_package<F: Fn(f64, f64) -> f64 + Sync>(
         tiles,
         // The graph rides along for free ride and junction steering (spec §2.2.1).
         graph: Some(graph.clone()),
+        // Land use and buildings are added by `landuse::add_landuse` and
+        // `buildings::add_buildings`.
+        landuse: None,
+        buildings: None,
         routes: Vec::new(),
     }
 }

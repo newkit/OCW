@@ -16,6 +16,13 @@ ssh_dir = "ssh"
 repo_url = "git@github.com:newkit/OCW.git"
 # Seconds before an SSH connection attempt is abandoned.
 connect_timeout_s = 10
+# Build slots: how many `scripts/remote.sh run` commands may run at once on a
+# machine (the others wait for a free slot). Each parallel build of the Bevy
+# app needs ~4-5 GB of memory, so: about RAM / 5 GB, at most cores / 3.
+# Without this key (here or per machine) the OS default applies: linux 2,
+# windows 1 (8 GB, 6 cores), macos 1. OCW_REMOTE_SLOTS overrides it per call;
+# 0 = no limit.
+# slots = 2
 
 # One [[machine]] table per machine.
 #
@@ -37,6 +44,7 @@ connect_timeout_s = 10
 #                linux: "wayland" | "x11" (the logged-in desktop session)
 #                windows: "interactive-task" (scheduled task in the logged-in session)
 #                macos: "aqua" (logged-in GUI session via launchctl asuser)
+# slots          build slots (optional, see [defaults]; e.g. 4 on a 32 GB box)
 # notes          free text
 
 [[machine]]
