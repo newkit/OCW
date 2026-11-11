@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 1.5 – November 2026
+Version 1.6 – November 2026
 
 | Version | Change |
 |---|---|
@@ -14,6 +14,7 @@ Version 1.5 – November 2026
 | 1.3 | Graphics engine spike results (§3.1.1): Bevy confirmed on Linux; trees merged per tile |
 | 1.4 | Wahoo's proprietary trainer control as a fallback for trainers without FTMS (§3.4, §5.3) |
 | 1.5 | Lateral steering: autodrive, manual lean steering, road edge, wild mode; surfaces with their own rolling resistance (§5.2.1) |
+| 1.6 | FIT export: own writer crate `ocw-fit`, rides saved in the user data directory; interim direct Strava upload from the desktop with user-supplied API credentials until the backend exists (§2.8) |
 
 ---
 
@@ -336,6 +337,7 @@ GPX upload is also available in the web companion, where map matching runs on th
 
 - **Structured workouts:** our own open workout format (TOML/JSON: intervals, targets as % FTP, cadence hints). Import of the open formats `.erg` / `.mrc` and FIT workout files. Workouts use ERG mode (§5.3).
 - **Export:** every ride is saved as a **FIT** activity file (power, cadence, heart rate, speed, distance, elevation, virtual GPS track). Ridden routes can also be exported as **GPX**. A FIT writer is needed; existing Rust crates mainly read FIT.
+  - **Implementation (v1.6):** our own dependency-free, wasm-safe writer crate `ocw-fit` (file_id, device_info, timer events, 1 Hz records, lap, session, activity; sport cycling, sub-sport virtual activity). The desktop client records the local rider once per second and saves the ride on exit (rides under one minute are dropped) or with `ride.save` to `<user data dir>/ocw/rides/<UTC start>.fit`, with a `.toml` sidecar (title, description). The virtual GPS track is the road position unprojected with the route's geographic origin (`ocw_world::geo`); procedural test routes have none.
 - **Strava upload for finished rides:**
   - **Account linking via our backend:** Strava's OAuth flow requires a client secret, which must not ship in the desktop app. The backend handles the OAuth exchange and stores the refresh tokens encrypted. Tokens never reach the desktop app or the browser.
   - **Upload flow:** when a ride ends, the client writes the FIT file and sends it to our API. The API uploads it via the Strava `uploads` endpoint as `VirtualRide`, polls Strava for the upload status and reports the result to the client.
@@ -343,6 +345,7 @@ GPX upload is also available in the web companion, where map matching runs on th
   - **Offline:** uploads are queued and sent later.
   - **Constraints:** Strava API terms and rate limits apply. Beyond a small number of athletes, Strava requires an app review – apply early. The virtual GPS track uses real coordinates of the route; this is common practice for virtual rides, but it must be labelled as virtual.
   - Other services (intervals.icu, TrainingPeaks) may follow later.
+  - **Interim desktop upload (v1.6, until the backend's Strava integration in Phase 5):** a user may register their *own* Strava API application and give the desktop app its client id and secret (`OCW_STRAVA_CLIENT_ID` / `OCW_STRAVA_CLIENT_SECRET` or `<user config dir>/ocw/strava.toml`). No credentials ship with the app; without them the feature is off. The client then runs the OAuth authorization-code flow itself (browser, redirect to `http://127.0.0.1:<port>/strava/callback`), stores the tokens in `<user config dir>/ocw/strava-token.toml` (mode 0600) and refreshes them. A background thread uploads every saved ride not yet on Strava (`VirtualRide`, trainer), polls the upload status and keeps a sync state (`rides/strava-sync.toml`: uploaded / processing / failed with exponential backoff / rejected). Console: `strava.connect`, `strava.sync`, `strava.status`, `strava.disconnect`. Once the backend handles Strava, this path is replaced by the upload to our API described above.
 
 ### 2.9 In-Game Console
 
@@ -957,6 +960,7 @@ open-cycling-world/
 │   ├── ocw-world/        # package format, tiles, road graph, routes, map matching (no Bevy)
 │   ├── ocw-worldgen/     # OSM/DEM import, smoothing, meshing (used by world-builder)
 │   ├── ocw-render/       # Bevy plugins: terrain, roads, avatars, bikes, HUD, console
+│   ├── ocw-fit/          # FIT activity writer (no dependencies, wasm-safe)
 │   └── ocw-voice/        # LiveKit integration behind a trait (feature "voice")
 ├── proto/                # .proto schemas
 ├── assets/
