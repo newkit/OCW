@@ -4,7 +4,8 @@
 #   scripts/remote.sh MACHINE sync           copy the working tree (tracked and
 #                                            untracked, git-ignored files excluded)
 #   scripts/remote.sh MACHINE run CMD...     sync, then run CMD in the checkout
-#                                            (with ~/.cargo/env sourced)
+#                                            (with ~/.cargo/env sourced); copies
+#                                            Cargo.lock back afterwards
 #   scripts/remote.sh MACHINE ssh [CMD...]   plain ssh (no sync)
 #   scripts/remote.sh MACHINE fetch REMOTE_PATH LOCAL_DIR
 #                                            copy files back (e.g. test-output/)
@@ -77,7 +78,12 @@ case "$action" in
   sync) sync_tree ;;
   run)
     sync_tree
-    "${SSH[@]}" "$target" "cd $repo && . ~/.cargo/env && $*"
+    status=0
+    "${SSH[@]}" "$target" "cd $repo && . ~/.cargo/env && $*" || status=$?
+    # Builds only happen remotely: bring back a Cargo.lock that cargo
+    # updated there (new dependencies), so it can be committed.
+    rsync -a -e "${SSH[*]}" "$target:$repo/Cargo.lock" ./Cargo.lock 2>/dev/null || true
+    exit "$status"
     ;;
   ssh) "${SSH[@]}" "$target" "$@" ;;
   fetch)
