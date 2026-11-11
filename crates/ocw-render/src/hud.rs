@@ -90,11 +90,16 @@ fn update_hud(
         .cadence_rpm
         .map(|c| format!("{c:.0} rpm"))
         .unwrap_or_else(|| "- rpm".into());
+    let heart = local
+        .heart_rate_bpm
+        .map(|h| format!("   HR {h:.0}"))
+        .unwrap_or_default();
     big.0 = format!(
-        "{:>4.0} W   {:>5.1} km/h   {}",
+        "{:>4.0} W   {:>5.1} km/h   {}{}",
         local.power_w,
         mps_to_kmh(local.state.speed),
-        cadence
+        cadence,
+        heart
     );
     let mut lines = format!(
         "{} | {:.2} km | {:+.1} % | {} | riders: {}\nPgUp/PgDn: virtual power +/-10 W | ` or F12: console",
@@ -104,6 +109,10 @@ fn update_hud(
         format_time(view.elapsed_s),
         view.riders.len()
     );
+    if !view.status.is_empty() {
+        lines.push('\n');
+        lines.push_str(&view.status);
+    }
     if show_fps.0
         && let Some(fps) = diagnostics
             .get(&FrameTimeDiagnosticsPlugin::FPS)

@@ -23,6 +23,8 @@ pub struct RideView {
     pub riders: Vec<RiderView>,
     /// Session time in seconds.
     pub elapsed_s: f64,
+    /// Device and trainer status for the HUD.
+    pub status: String,
 }
 
 impl RideView {
@@ -31,6 +33,7 @@ impl RideView {
             route,
             riders: Vec::new(),
             elapsed_s: 0.0,
+            status: String::new(),
         }
     }
 
@@ -47,6 +50,7 @@ pub struct RiderView {
     pub state: RiderState,
     pub power_w: f64,
     pub cadence_rpm: Option<f64>,
+    pub heart_rate_bpm: Option<f64>,
     pub is_local: bool,
 }
 

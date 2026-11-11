@@ -38,9 +38,13 @@ pub struct ClientCore {
     rider_id: Option<RiderId>,
     predictor: Predictor,
     others: SnapshotBuffer,
+    /// Latest known state of the other riders, advanced every physics tick
+    /// (for predicting the local rider's drafting).
+    others_now: Vec<RiderState>,
     names: BTreeMap<RiderId, (String, f64)>,
     power_w: f64,
     cadence_rpm: Option<f64>,
+    heart_rate_bpm: Option<f64>,
     seq: u32,
     stats: NetStats,
 }
@@ -54,9 +58,11 @@ impl ClientCore {
             rider_id: None,
             predictor: Predictor::new(profile, RiderState::default()),
             others: SnapshotBuffer::default(),
+            others_now: Vec::new(),
             names: BTreeMap::new(),
             power_w: 0.0,
             cadence_rpm: None,
+            heart_rate_bpm: None,
             seq: 0,
             stats: NetStats::default(),
         }
@@ -72,14 +78,19 @@ impl ClientCore {
     }
 
     /// Handles a device event; returns the encoded sample to send, if any.
+    /// Heart rate is stored and sent with the next power sample.
     pub fn on_device_event(&mut self, event: DeviceEvent) -> Option<Vec<u8>> {
-        let DeviceEvent::Power {
-            watts,
-            cadence_rpm,
-            timestamp,
-        } = event
-        else {
-            return None;
+        let (watts, cadence_rpm, timestamp) = match event {
+            DeviceEvent::Power {
+                watts,
+                cadence_rpm,
+                timestamp,
+            } => (watts, cadence_rpm, timestamp),
+            DeviceEvent::HeartRate { bpm, .. } => {
+                self.heart_rate_bpm = Some(bpm);
+                return None;
+            }
+            DeviceEvent::Disconnected => return None,
         };
         self.power_w = watts;
         self.cadence_rpm = cadence_rpm;
@@ -90,7 +101,7 @@ impl ClientCore {
             client_time_us: timestamp.as_micros() as u64,
             power_w: Some(watts as f32),
             cadence_rpm: cadence_rpm.map(|c| c as f32),
-            heart_rate_bpm: None,
+            heart_rate_bpm: self.heart_rate_bpm.map(|h| h as f32),
         }))))
     }
 
@@ -139,13 +150,26 @@ impl ClientCore {
                 others.push((id, state));
             }
         }
+        self.others_now = others.iter().map(|(_, s)| *s).collect();
         self.others.push(now_s, others);
     }
 
     /// One fixed physics tick of the local prediction.
     pub fn predict_step(&mut self) {
-        if self.rider_id.is_some() {
-            self.predictor.step(&self.route, self.power_w);
+        if self.rider_id.is_none() {
+            return;
+        }
+        let me = self.predictor.state();
+        let drag = ocw_sim::drafting::drag_factor(
+            (me.distance, me.lateral_offset),
+            self.others_now
+                .iter()
+                .map(|o| (o.distance, o.lateral_offset)),
+        );
+        self.predictor.set_drag_factor(drag);
+        self.predictor.step(&self.route, self.power_w);
+        for o in &mut self.others_now {
+            o.distance += o.speed * ocw_core::SIM_DT;
         }
     }
 
@@ -165,6 +189,7 @@ impl ClientCore {
             state: self.predictor.state(),
             power_w: self.power_w,
             cadence_rpm: self.cadence_rpm,
+            heart_rate_bpm: self.heart_rate_bpm,
             is_local: true,
         }];
         for (id, state) in self.others.sample(now_s - INTERPOLATION_DELAY_S) {
@@ -175,6 +200,7 @@ impl ClientCore {
                 state,
                 power_w,
                 cadence_rpm: None,
+                heart_rate_bpm: None,
                 is_local: false,
             });
         }
@@ -192,6 +218,12 @@ impl ClientCore {
     }
     pub fn power_w(&self) -> f64 {
         self.power_w
+    }
+    pub fn cadence_rpm(&self) -> Option<f64> {
+        self.cadence_rpm
+    }
+    pub fn heart_rate_bpm(&self) -> Option<f64> {
+        self.heart_rate_bpm
     }
     pub fn prediction_error(&self) -> f64 {
         self.predictor.last_error()
@@ -318,6 +350,13 @@ mod tests {
             })
             .is_none()
         );
+        // Heart rate is sent along with the next power sample.
+        assert_eq!(c.heart_rate_bpm(), Some(120.0));
+        let bytes = c.on_device_event(power(150.0, 4.0)).unwrap();
+        match ocw_protocol::decode_client(&bytes).unwrap() {
+            C::Sample(s) => assert_eq!(s.heart_rate_bpm, Some(120.0)),
+            other => panic!("unexpected {other:?}"),
+        }
         assert!(c.on_device_event(DeviceEvent::Disconnected).is_none());
     }
 
@@ -462,5 +501,32 @@ mod tests {
         assert!(client.stats().snapshots >= 10);
         assert!(client.state().distance > 0.5);
         assert_eq!(client.view(start.elapsed().as_secs_f64()).len(), 3);
+    }
+
+    /// Drafting a bot: the client predicts the server's drafting, so the
+    /// prediction stays close (spec §5.2).
+    #[test]
+    fn prediction_includes_drafting() {
+        let mut h = Harness::new(1, true);
+        let bot = h
+            .server
+            .session()
+            .snapshot()
+            .into_iter()
+            .find(|r| Some(r.id) != h.client.rider_id())
+            .unwrap();
+        // Put the client rider 3 m behind the bot.
+        let cmd = encode(&client_message(C::Dev(v1::DevCommand {
+            cmd: Some(v1::dev_command::Cmd::TeleportDistanceM(
+                bot.state.distance - 3.0,
+            )),
+        })));
+        h.send(&cmd);
+        h.ride(220.0, 30.0);
+        assert!(
+            h.client.prediction_error().abs() < 0.3,
+            "error {}",
+            h.client.prediction_error()
+        );
     }
 }

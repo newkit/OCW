@@ -9,8 +9,11 @@
 mod automation;
 mod client;
 mod connection;
+mod devices;
 mod input;
+mod known_devices;
 mod platform;
+mod trainer;
 
 use std::path::PathBuf;
 
@@ -40,6 +43,12 @@ pub struct Args {
     /// Borderless fullscreen on the current monitor (ignores --window).
     #[arg(long)]
     pub fullscreen: bool,
+    /// Use the virtual trainer even if Bluetooth devices are remembered.
+    #[arg(long = "virtual")]
+    pub virtual_trainer: bool,
+    /// File with remembered devices (default: ~/.config/ocw/devices.toml).
+    #[arg(long, value_name = "PATH")]
+    pub devices_file: Option<PathBuf>,
     /// Console commands to run at startup (in addition to autoexec.cfg).
     #[arg(long = "exec", value_name = "FILE")]
     pub exec: Vec<PathBuf>,
@@ -101,6 +110,7 @@ fn main() -> AppExit {
     .add_plugins(OcwRenderPlugins)
     .add_plugins((
         connection::ConnectionPlugin { route },
+        devices::DevicesPlugin,
         input::InputPlugin,
         automation::AutomationPlugin,
         platform::PlatformPlugin,
