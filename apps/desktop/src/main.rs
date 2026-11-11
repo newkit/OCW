@@ -21,6 +21,7 @@ mod restart;
 mod strava;
 mod trainer;
 mod video;
+mod worlds;
 
 use std::path::PathBuf;
 
@@ -66,11 +67,41 @@ pub struct Args {
     /// Ride a route file from `world-builder route` (real roads and terrain).
     #[arg(long, value_name = "PATH")]
     pub route_file: Option<PathBuf>,
-    /// World package from `world-builder package`: terrain, all roads and
-    /// trees are streamed from it (use together with --route-file, or
-    /// --free-ride).
-    #[arg(long, value_name = "PATH")]
-    pub world: Option<PathBuf>,
+    /// World package: a file from `world-builder package`, or a package id
+    /// from the local cache (`europe/liechtenstein` or `ID@VERSION`, see
+    /// --list-worlds). Terrain, all roads and trees are streamed from it
+    /// (use together with --route-file, or --free-ride). It is verified
+    /// against its manifest on load (spec §4.7).
+    #[arg(long, value_name = "PATH|ID")]
+    pub world: Option<String>,
+    /// Accept world packages that are not signed by a trusted key from the
+    /// cache too (with a warning). Local files are accepted with a warning
+    /// anyway.
+    #[arg(long, conflicts_with = "require_signed")]
+    pub allow_unsigned: bool,
+    /// Refuse world packages that are not signed by a trusted key, also
+    /// local files.
+    #[arg(long)]
+    pub require_signed: bool,
+    /// Also trust world packages signed under this root public key file
+    /// (repeatable; also every *.pub.json in ~/.config/ocw/trusted-roots/).
+    #[arg(long, value_name = "FILE")]
+    pub trust_root: Vec<PathBuf>,
+    /// Trust the development root keys (always on in debug builds).
+    #[arg(long)]
+    pub trust_dev_root: bool,
+    /// World package cache (default: $OCW_WORLD_CACHE or
+    /// ~/.local/share/ocw/worlds).
+    #[arg(long, value_name = "DIR")]
+    pub world_cache: Option<PathBuf>,
+    /// Download a world package into the cache (resumable, verified): the
+    /// http(s) URL or local path of its manifest.json. Then exits, unless
+    /// --world is given.
+    #[arg(long, value_name = "URL")]
+    pub fetch_world: Option<String>,
+    /// List the world packages in the cache and exit.
+    #[arg(long)]
+    pub list_worlds: bool,
     /// Free ride on the world package's road graph (spec §2.2.1): choose
     /// the exit at junctions (← / → or Q / E), U-turn with U. Needs
     /// --world with a version 2 package (it has the road graph).
@@ -146,10 +177,7 @@ fn free_ride_setup(args: &Args, pkg: &ocw_world::WorldPackage) -> connection::Fr
     let Some(graph) = pkg.graph.clone() else {
         eprintln!(
             "{}: no road graph in this world package; rebuild it with `world-builder package` (format OCWPKG02)",
-            args.world
-                .as_deref()
-                .unwrap_or(std::path::Path::new("?"))
-                .display()
+            args.world.as_deref().unwrap_or("?")
         );
         std::process::exit(1);
     };
@@ -223,6 +251,7 @@ fn load_route_file(path: &std::path::Path) -> (Route, Option<ocw_world::Elevatio
 
 fn main() -> AppExit {
     let args = Args::parse();
+    worlds::handle_cli(&args);
     // Desktop entry and icons for menus, docks and file managers (not for
     // the headless screenshot / capture runs).
     #[cfg(target_os = "linux")]
@@ -244,15 +273,10 @@ fn main() -> AppExit {
         ),
     };
     let mut app = App::new();
-    if let Some(path) = &args.world {
-        let bytes = std::fs::read(path).unwrap_or_else(|e| {
-            eprintln!("{}: {e}", path.display());
-            std::process::exit(1);
-        });
-        let pkg = ocw_world::WorldPackage::from_bytes(&bytes).unwrap_or_else(|e| {
-            eprintln!("{}: {e}", path.display());
-            std::process::exit(1);
-        });
+    if let Some(spec) = &args.world {
+        let loaded = worlds::load(&args, spec);
+        app.insert_resource(worlds::WorldInfo::of(spec, &loaded));
+        let pkg = loaded.package;
         if args.free_ride {
             app.insert_resource(free_ride_setup(&args, &pkg));
         }
@@ -306,6 +330,7 @@ fn main() -> AppExit {
         strava::StravaPlugin::default(),
         restart::RestartPlugin,
         video::VideoPlugin,
+        worlds::WorldsPlugin,
     ))
     .add_systems(Startup, startup_commands)
     .add_systems(Update, timed_commands);
@@ -413,6 +438,12 @@ mod tests {
         assert_eq!(a.start, Some((-1200.5, 5300.0)));
         // --free-ride needs a world package.
         assert!(Args::try_parse_from(["ocw-desktop", "--free-ride"]).is_err());
+        // A cache id works as --world too; the trust flags exclude each other.
+        let a = Args::parse_from(["ocw-desktop", "--world", "europe/liechtenstein@3"]);
+        assert_eq!(a.world.as_deref(), Some("europe/liechtenstein@3"));
+        assert!(
+            Args::try_parse_from(["ocw-desktop", "--allow-unsigned", "--require-signed"]).is_err()
+        );
         assert!(parse_xz("1;2").is_err());
     }
 
