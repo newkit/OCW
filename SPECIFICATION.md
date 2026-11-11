@@ -839,6 +839,19 @@ Packages are **signed, versioned and updatable**:
 - Target size: 200–500 MB for a mid-sized region.
 - The format allows streaming over HTTP in tile-sized chunks (§3.5).
 
+**Manifest, signatures and cache (implemented, Phase 3):**
+
+- **Manifest** (`ocw_world::manifest`, pure and wasm-safe; ed25519-dalek + sha2): a JSON file next to the package (`<file>.ocwpkg.manifest.json`; `manifest.json` in published and cached directories). The signed part holds the format (1), the **package id** (lower-case path segments, e.g. `europe/liechtenstein`), region name, **version** (build number), creation time, generator (`world-builder 0.1.0`), package format (`OCWPKG02`), the **attributions** (© OpenStreetMap contributors with the ODbL Derivative Database notice for the road graph, the DEM source, §13) and every file with size and SHA-256 **plus each chunk** (header, every tile, every section) with offset, size and SHA-256, so single tiles fetched with range requests can be verified on their own.
+- **Signature format:** the signed part is kept as raw JSON bytes (`"signed": {…}`) and signatures cover exactly those bytes behind a per-kind context string (`OCW world package manifest v1\0`, `OCW signing key v1\0`). No canonical JSON is needed, and fields added later do not break old signatures; unknown fields are ignored.
+- **Key hierarchy:** the **root key** (Ed25519) is generated once (`world-builder keys init-root`) and kept offline; it only certifies **signing keys** (`keys new-signing`, default validity 365 days): a certificate with the signing key's public key, name, root key id and validity period. Each manifest carries its signing key certificate, so the client needs only the root public keys. Key id = the first 8 bytes of SHA-256 of the public key. Secret key files (`*.key`, mode 0600, never overwritten) live outside the repository (`~/.config/ocw/keys`, `$OCW_KEY_DIR`); `.gitignore` also ignores `*.key`.
+- **Verification chain:** certificate signed by a trusted root → neither key revoked (a revocation list compiled into the client) → manifest signature by the signing key → manifest created within the signing key's validity period and not more than a day in the future → each file's size and SHA-256. Validity is checked against the creation time, not today, so a cached package keeps working offline after its signing key expires, while an expired or stolen-and-revoked key cannot sign new packages.
+- **Trusted roots:** production roots are compiled into the client (none yet; they come with the distribution infrastructure). Development roots (`crates/ocw-worldstore/keys/dev-roots.json`, public keys only, marked development) are trusted by debug builds and with `--trust-dev-root`. More roots: `--trust-root FILE` and `~/.config/ocw/trusted-roots/*.pub.json` (private servers, own builds).
+- **Policy for packages not signed by a trusted root:** integrity failures (hash or size mismatch, bad signature, revoked key, malformed manifest) are **always refused**. Packages that are intact but unsigned, signed by an unknown root or outside the key's validity are a trust failure: from the **cache** (by id) they are **refused** unless `--allow-unsigned`; from a **path** (local builds, power users, §4.2) they load **with a warning** unless `--require-signed`. A package without a manifest counts as unsigned (id `local/<name>`, version 0). Multiplayer sessions (Phase 5) will require trusted packages.
+- **Identity:** id, version and the SHA-256 of the package file (`Manifest::identity()`, `PackageIdentity`) tell client and server whether they ride the same world (and the same stable edge IDs). Builds are deterministic, so the same input gives the same content hash on every build machine.
+- **Cache:** `$OCW_WORLD_CACHE` or `~/.local/share/ocw/worlds/<id>/<version>/{manifest.json, <files>}`; downloads collect in `.partial/<id>@<version>/` and are moved into place only when every file is verified. Packages are verified again on every load. `--world` takes a path or a cache id (`ID` = newest version, `ID@VERSION`); `--list-worlds` and the console commands `worlds.list` / `worlds.verify` show and check the cache.
+- **Download:** `ocw-desktop --fetch-world URL` fetches the manifest first and checks its signature before any large download, then the files next to it (the layout `world-builder publish` writes: `<base>/<id>/<version>/manifest.json`), resuming interrupted downloads with HTTP range requests (`Range: bytes=N-`; a server answering 200 restarts the file). Local directories and `file://` URLs install the same way. Downloads happen before the ride, never during it (§4.2). Tile-chunk streaming uses the chunk list of the manifest later; TUF remains under evaluation for app updates and key rotation metadata.
+- **Rebuilds:** `world-builder diff OLD NEW` (`ocw_worldgen::diff::GraphDiff`) lists the edges whose stable ID survived (unchanged or moved), was removed or added; routes over surviving edges re-match directly, the others are flagged.
+
 ---
 
 ## 5. Bicycle Physics and Training Simulation
@@ -1085,6 +1098,7 @@ open-cycling-world/
 │   ├── ocw-devices/      # DeviceBackend trait, BLE/FTMS backend (no Bevy)
 │   ├── ocw-world/        # package format, tiles, road graph, routes, map matching (no Bevy)
 │   ├── ocw-worldgen/     # OSM/DEM import, smoothing, meshing (used by world-builder)
+│   ├── ocw-worldstore/   # package files, keys, trusted roots, cache, download (not wasm)
 │   ├── ocw-render/       # Bevy plugins: terrain, roads, avatars, bikes, HUD, console
 │   ├── ocw-fit/          # FIT activity writer (no dependencies, wasm-safe)
 │   └── ocw-voice/        # LiveKit integration behind a trait (feature "voice")
@@ -1232,7 +1246,7 @@ Particularly important for multiplayer and voice communication:
 - Visible microphone activity.
 - Muting.
 - Privacy-friendly telemetry.
-- Signed world packages and updates (§4.7).
+- Signed world packages and updates (§4.7): Ed25519 root key kept offline, rotating signing keys with a validity period, SHA-256 of every file and tile chunk, verification on every load. Tampered or damaged packages are always refused; unsigned or untrusted ones only load from local paths with a warning (or with `--allow-unsigned`), never silently. Secret keys never enter the repository.
 
 **Data separation and GDPR:**
 

@@ -148,6 +148,30 @@ climb at 1.5–2.1 km) and grass beside the road roll increasingly harder
   all roads and trees of the region, streamed in 1 km tiles). The data comes
   from `scripts/fetch-pilot.sh` and `world-builder` (© OpenStreetMap
   contributors, ODbL).
+
+**World packages: signatures and cache** (spec §4.7, §12)
+
+Every package has a manifest next to it (`liechtenstein.ocwpkg.manifest.json`:
+id, version, attributions, SHA-256 of the file and of each tile) and is
+verified on every load. Damaged or tampered packages are always refused.
+Packages not signed by a trusted key load from a **path** with a warning
+(local builds), but from the **cache** only with `--allow-unsigned`;
+`--require-signed` refuses them everywhere. Debug builds trust the development
+root keys (`crates/ocw-worldstore/keys/dev-roots.json`), release builds only
+with `--trust-dev-root`; more roots with `--trust-root FILE` or as
+`~/.config/ocw/trusted-roots/*.pub.json`.
+
+```bash
+ocw-desktop --fetch-world https://HOST/worlds/europe/liechtenstein/3/manifest.json
+ocw-desktop --fetch-world /media/usb/worlds/europe/liechtenstein/3/manifest.json
+ocw-desktop --list-worlds
+ocw-desktop --world europe/liechtenstein --free-ride     # newest version; or ID@VERSION
+```
+
+Downloads go to the cache (`~/.local/share/ocw/worlds/<id>/<version>/`,
+`$OCW_WORLD_CACHE` or `--world-cache DIR`); the signature is checked before the
+large download, interrupted downloads resume (HTTP range requests), and a
+package is installed only when all its files match the manifest.
 - Everyone (bots too) starts at a random point of the route
   (`--random-start false` starts at 0). Bots ride at 85–250 W and push harder
   uphill.
@@ -192,7 +216,12 @@ installs it).
 | `--bots N` | Number of test riders (default 4) |
 | `--route hills\|loop` | Built-in test route (default `hills`) |
 | `--route-file PATH` | Ride a route file from `world-builder route` |
-| `--world PATH` | World package from `world-builder package` (with `--route-file`, or `--free-ride`) |
+| `--world PATH\|ID` | World package: a file from `world-builder package`, or a cache id (`europe/liechtenstein`, `ID@VERSION`); with `--route-file`, or `--free-ride` |
+| `--fetch-world URL` | Download (or install from a directory) a world package into the cache: URL or path of its `manifest.json`; exits unless `--world` is given |
+| `--list-worlds` | List the world packages in the cache and exit |
+| `--world-cache DIR` | World package cache (default `~/.local/share/ocw/worlds`, or `$OCW_WORLD_CACHE`) |
+| `--allow-unsigned` / `--require-signed` | Accept untrusted packages from the cache too / refuse them also from paths |
+| `--trust-root FILE`, `--trust-dev-root` | Also trust this root public key / the development roots (debug builds always do) |
 | `--free-ride` | Free ride on the package's road graph (needs `--world`) |
 | `--start X,Z` | Free ride start: the road nearest local X,Z metres (default: random) |
 | `--random-start BOOL` | Start at a random point (default on, off for screenshot/capture runs) |
@@ -239,6 +268,9 @@ for now).
 | `ride.uturn` | Free ride: turn round (key U) |
 | `ride.junction` | Free ride: show the next junction's exits |
 | `net.stats` | Connection statistics |
+| `worlds.info` | The loaded world package: id, version, content hash, trust, credits |
+| `worlds.list` | World packages in the local cache, with their trust state |
+| `worlds.verify [PATH\|ID]` | Verify a world package's hashes and signature (default: the loaded one) |
 | **Camera** | |
 | `camera.mode chase\|side\|top` | Camera perspective |
 | `camera.orbit YAW PITCH [DISTANCE]` | Orbit the chase camera (degrees; 0 = behind, 180 = in front; metres) |
@@ -282,8 +314,9 @@ cargo run --release -p ocw-server -- --world data/pilot/liechtenstein.ocwpkg \
 
 It prints the riders' positions and speeds while it runs. Options:
 `--bots N` (test riders, default 3), `--seconds S` (0 = until stopped with
-Ctrl+C), `--fast` (no real-time pacing), `--world PKG` and `--seed N` (free
-ride on a world package's road graph, start point seed).
+Ctrl+C), `--fast` (no real-time pacing), `--world PKG|ID` and `--seed N` (free
+ride on a world package's road graph, start point seed; verified like in the
+desktop app, `--allow-unsigned` and `--trust-root FILE` as there).
 
 ## Tools and scripts
 
@@ -292,6 +325,7 @@ ride on a world package's road graph, start point seed).
 | `make help` | All make targets: deps, build, test, check, smoke screenshots, videos, deploy |
 | `cargo run -p ocw-server -- --bots 3 --seconds 10 --fast` | Headless game server (`--world PKG [--seed N]`: free ride on a package) |
 | `world-builder graph` / `route` / `package` / `check` | OSM + elevation import: road graph statistics, route files, world packages, package validation (`cargo run --release -p world-builder -- help`) |
+| `world-builder keys init-root` / `keys new-signing` / `sign` / `verify` / `publish` / `diff` | Package signing and distribution, see below |
 | `scripts/fetch-pilot.sh` | Download the pilot region's OSM extract and elevation data |
 | `scripts/remote.sh MACHINE run 'CMD'` | Copy the tree to a build machine (`config/machines.toml`) and run a command there |
 | `scripts/deploy-test.sh MACHINE` | Release build on a test machine, deployed for its kiosk |
@@ -300,6 +334,26 @@ ride on a world package's road graph, start point seed).
 | `scripts/build-macos-app.sh` | macOS app bundle, DMG and zip, ad-hoc signed (`make macos-app`, on a Mac) |
 | `scripts/setup-windows-buildserver.ps1` | Windows build machine: OpenSSH server and a local build user |
 | `.claude/skills/run-ocw/drive.sh` | Headless screenshots and videos (X11 / Wayland) for tests |
+
+**Signing and publishing world packages** (spec §4.7): an offline root key
+certifies signing keys; a signing key signs package manifests. Secret keys
+(`*.key`) stay in `~/.config/ocw/keys` (`$OCW_KEY_DIR`), never in the
+repository.
+
+```bash
+world-builder keys init-root --name "OCW root"                  # once; keep root.key offline
+world-builder keys new-signing --name "builds 2026" --days 365  # signing key, certified by the root
+world-builder package --id europe/liechtenstein --sign-key ~/.config/ocw/keys/builds-2026.key
+world-builder sign --key ~/.config/ocw/keys/builds-2026.key data/pilot/liechtenstein.ocwpkg
+world-builder verify data/pilot/liechtenstein.ocwpkg [--trust-root root.pub.json]
+world-builder publish data/pilot/liechtenstein.ocwpkg --out /srv/worlds   # <id>/<version>/ layout
+world-builder diff old.ocwpkg new.ocwpkg                        # stable edge IDs kept / removed / added
+```
+
+`package` always writes the manifest (unsigned without `--sign-key`); the
+version counts up when the package content changes (`--pkg-version N` sets
+it), `--dem-attribution TEXT` replaces the SRTM notice. Clients trust a root
+by its public key file `root.pub.json`.
 
 Release builds for Linux and macOS are in `release/`, screenshots and videos
 from development in `artwork/build-history/`.
@@ -316,6 +370,7 @@ from development in `artwork/build-history/`.
 | `crates/ocw-devices` | Device backends: virtual trainer, Bluetooth trainers and sensors (FTMS, Cycling Power, CSC, Heart Rate, Wahoo) |
 | `crates/ocw-world` | Routes, road graph, terrain, world packages, surfaces |
 | `crates/ocw-worldgen`, `apps/world-builder` | OSM + elevation import: road graph, profiles, world packages |
+| `crates/ocw-worldstore` | World package files, keys, trusted roots, local cache, download |
 | `crates/ocw-fit` | FIT activity file writer (ride export) |
 | `crates/ocw-render` | Bevy plugins: world, riders, camera, HUD, console |
 | `artwork/` | Logos and other original artwork |
