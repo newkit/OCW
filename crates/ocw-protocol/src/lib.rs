@@ -122,10 +122,82 @@ mod tests {
     }
 
     #[test]
+    fn roundtrip_server_snapshot() {
+        use v1::server_message::Msg as S;
+        let snapshot = v1::Snapshot {
+            server_tick: 4242,
+            riders: vec![
+                quantize(&ocw_sim::RiderSnapshot {
+                    id: RiderId(1),
+                    name: "Ana".into(),
+                    state: RiderState {
+                        distance: 3949.99,
+                        speed: 12.5,
+                        lateral_offset: -1.2,
+                    },
+                    power_w: 310.0,
+                    last_input_seq: 77,
+                }),
+                quantize(&ocw_sim::RiderSnapshot {
+                    id: RiderId(2),
+                    name: "Bot".into(),
+                    state: RiderState {
+                        distance: 0.0,
+                        speed: 0.0,
+                        lateral_offset: 1.2,
+                    },
+                    power_w: 0.0,
+                    last_input_seq: 0,
+                }),
+            ],
+        };
+        let bytes = encode(&server_message(S::Snapshot(snapshot.clone())));
+        match decode_server(&bytes).unwrap() {
+            S::Snapshot(s) => {
+                assert_eq!(s, snapshot);
+                let (id, st) = dequantize(&s.riders[0]);
+                assert_eq!(id, RiderId(1));
+                assert!((st.distance - 3949.99).abs() < 1e-9);
+                assert!((st.lateral_offset + 1.2).abs() < 1e-9);
+                assert_eq!(s.riders[0].last_input_seq, 77);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        let welcome = v1::Welcome {
+            protocol_version: PROTOCOL_VERSION,
+            rider_id: 9,
+            tick_rate_hz: 50,
+            broadcast_rate_hz: 10,
+            route_id: "test-loop".into(),
+        };
+        let bytes = encode(&server_message(S::Welcome(welcome.clone())));
+        assert_eq!(decode_server(&bytes).unwrap(), S::Welcome(welcome));
+    }
+
+    #[test]
+    fn quantization_clamps_out_of_range_values() {
+        let u = quantize(&ocw_sim::RiderSnapshot {
+            id: RiderId(1),
+            name: String::new(),
+            state: RiderState {
+                distance: -3.0,
+                speed: -1.0,
+                lateral_offset: 0.004,
+            },
+            power_w: -5.0,
+            last_input_seq: 0,
+        });
+        assert_eq!((u.distance_cm, u.speed_mm_s, u.power_w), (0, 0, 0));
+        assert_eq!(u.lateral_offset_cm, 0);
+    }
+
+    #[test]
     fn empty_message_is_rejected() {
         let bytes = encode(&v1::ClientMessage { msg: None });
         assert!(matches!(decode_client(&bytes), Err(ProtocolError::Empty)));
         assert!(decode_client(&[0xff, 0xff]).is_err());
+        let bytes = encode(&v1::ServerMessage { msg: None });
+        assert!(matches!(decode_server(&bytes), Err(ProtocolError::Empty)));
     }
 
     #[test]

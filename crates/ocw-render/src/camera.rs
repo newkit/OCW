@@ -89,3 +89,18 @@ fn follow(
     };
     cam.look_at(target, Vec3::Y);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn camera_mode_parses() {
+        assert_eq!("chase".parse::<CameraMode>(), Ok(CameraMode::Chase));
+        assert_eq!("side".parse::<CameraMode>(), Ok(CameraMode::Side));
+        assert_eq!("top".parse::<CameraMode>(), Ok(CameraMode::Top));
+        assert!("Top".parse::<CameraMode>().is_err());
+        assert!("".parse::<CameraMode>().is_err());
+        assert_eq!(CameraMode::default(), CameraMode::Chase);
+    }
+}

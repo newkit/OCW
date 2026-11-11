@@ -1,21 +1,21 @@
-//! Connection to the (local) server, devices, prediction and interpolation.
+//! Bevy glue between the threads (local server, trainer) and [`ClientCore`].
 
 use std::sync::Mutex;
 use std::time::Instant;
 
 use bevy::prelude::*;
 use clap::{Arg, Command, value_parser};
-use ocw_core::{INTERPOLATION_DELAY_S, RiderId, RiderProfile};
-use ocw_devices::{DeviceBackend, DeviceCommand, DeviceEvent, DeviceHandle, VirtualTrainer};
-use ocw_protocol::v1::{self, client_message::Msg as C, server_message::Msg as S};
-use ocw_protocol::{PROTOCOL_VERSION, client_message, decode_server, dequantize, encode};
+use ocw_core::RiderProfile;
+use ocw_devices::{DeviceBackend, DeviceCommand, DeviceHandle, VirtualTrainer};
+use ocw_protocol::v1::{self, client_message::Msg as C};
+use ocw_protocol::{client_message, encode};
+use ocw_render::RideView;
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
-use ocw_render::{RideView, RiderView};
 use ocw_server::local::{LocalConnection, LocalServer};
-use ocw_sim::{Predictor, RiderState, SnapshotBuffer};
 use ocw_world::Route;
 
 use crate::Args;
+use crate::client::{ClientCore, Notice};
 
 pub struct ConnectionPlugin {
     pub route: Route,
@@ -29,31 +29,17 @@ impl Plugin for ConnectionPlugin {
         let trainer = VirtualTrainer::new(args.power)
             .start()
             .expect("failed to start virtual trainer");
-        let hello = encode(&client_message(C::Hello(v1::Hello {
-            protocol_version: PROTOCOL_VERSION,
-            display_name: args.name.clone(),
-            profile: Some(RiderProfile::default().into()),
-        })));
+        let client = ClientCore::new(self.route.clone(), args.name, RiderProfile::default());
         server
             .to_server
-            .send(hello)
+            .send(client.hello())
             .expect("local server is running");
         app.insert_resource(Link {
             server: Mutex::new(server),
             device: Mutex::new(trainer),
             started: Instant::now(),
         })
-        .insert_resource(ClientState {
-            route: self.route.clone(),
-            rider_id: None,
-            predictor: Predictor::new(RiderProfile::default(), RiderState::default()),
-            others: SnapshotBuffer::default(),
-            names: Default::default(),
-            power_w: 0.0,
-            cadence_rpm: None,
-            seq: 0,
-            stats: NetStats::default(),
-        })
+        .insert_resource(ClientState(client))
         .add_systems(PreUpdate, (poll_device, poll_server).chain())
         .add_systems(FixedUpdate, predict)
         .add_systems(Update, update_view)
@@ -75,8 +61,7 @@ impl Link {
         self.started.elapsed().as_secs_f64()
     }
 
-    pub fn send(&self, msg: C) {
-        let bytes = encode(&client_message(msg));
+    fn send_bytes(&self, bytes: Vec<u8>) {
         let _ = self
             .server
             .lock()
@@ -85,35 +70,21 @@ impl Link {
             .send(bytes);
     }
 
+    pub fn send(&self, msg: C) {
+        self.send_bytes(encode(&client_message(msg)));
+    }
+
     pub fn device_command(&self, cmd: DeviceCommand) {
         let _ = self.device.lock().expect("not poisoned").commands.send(cmd);
     }
 }
 
-#[derive(Debug, Default, Clone)]
-pub struct NetStats {
-    pub messages_in: u64,
-    pub snapshots: u64,
-    pub samples_out: u64,
-    pub last_snapshot_tick: u64,
-}
-
 #[derive(Resource)]
-pub struct ClientState {
-    route: Route,
-    rider_id: Option<RiderId>,
-    predictor: Predictor,
-    others: SnapshotBuffer,
-    names: std::collections::BTreeMap<RiderId, (String, f64)>,
-    pub power_w: f64,
-    cadence_rpm: Option<f64>,
-    seq: u32,
-    stats: NetStats,
-}
+pub struct ClientState(pub ClientCore);
 
 /// Reads trainer samples and forwards them to the server.
 fn poll_device(link: Res<Link>, mut client: ResMut<ClientState>) {
-    let events: Vec<DeviceEvent> = link
+    let events: Vec<_> = link
         .device
         .lock()
         .expect("not poisoned")
@@ -121,23 +92,8 @@ fn poll_device(link: Res<Link>, mut client: ResMut<ClientState>) {
         .try_iter()
         .collect();
     for event in events {
-        if let DeviceEvent::Power {
-            watts,
-            cadence_rpm,
-            timestamp,
-        } = event
-        {
-            client.power_w = watts;
-            client.cadence_rpm = cadence_rpm;
-            client.seq += 1;
-            client.stats.samples_out += 1;
-            link.send(C::Sample(v1::SensorSample {
-                seq: client.seq,
-                client_time_us: timestamp.as_micros() as u64,
-                power_w: Some(watts as f32),
-                cadence_rpm: cadence_rpm.map(|c| c as f32),
-                heart_rate_bpm: None,
-            }));
+        if let Some(sample) = client.0.on_device_event(event) {
+            link.send_bytes(sample);
         }
     }
 }
@@ -157,90 +113,30 @@ fn poll_server(
         .collect();
     let now = link.now_s();
     for bytes in messages {
-        client.stats.messages_in += 1;
-        let Ok(msg) = decode_server(&bytes) else {
-            warn!("malformed server message");
-            continue;
-        };
-        match msg {
-            S::Welcome(w) => {
-                info!(rider = w.rider_id, route = %w.route_id, "joined session");
-                client.rider_id = Some(RiderId(w.rider_id));
+        match client.0.on_server_message(&bytes, now) {
+            Some(Notice::Joined { rider_id, route_id }) => {
+                info!(rider = %rider_id, route = %route_id, "joined session");
             }
-            S::Reject(r) => {
-                error!(reason = %r.reason, "server rejected us");
-                console.print(format!("server rejected connection: {}", r.reason));
+            Some(Notice::Rejected(reason)) => {
+                error!(%reason, "server rejected us");
+                console.print(format!("server rejected connection: {reason}"));
             }
-            S::DevResult(r) => {
-                console.print(if r.ok {
-                    r.message
-                } else {
-                    format!("error: {}", r.message)
-                });
-            }
-            S::Snapshot(s) => {
-                client.stats.snapshots += 1;
-                client.stats.last_snapshot_tick = s.server_tick;
-                let own = client.rider_id;
-                let mut others = Vec::new();
-                for u in &s.riders {
-                    let (id, state) = dequantize(u);
-                    client
-                        .names
-                        .insert(id, (u.display_name.clone(), f64::from(u.power_w)));
-                    if Some(id) == own {
-                        // In-process server: the snapshot is fresh (age ≈ 0).
-                        let power = client.power_w;
-                        let route = client.route.clone();
-                        client.predictor.reconcile(&route, state, 0.0, power);
-                    } else {
-                        others.push((id, state));
-                    }
-                }
-                client.others.push(now, others);
-            }
+            Some(Notice::CommandResult(text)) => console.print(text),
+            None => {}
         }
     }
 }
 
 /// Client-side prediction of the local rider, at the fixed physics rate.
 fn predict(mut client: ResMut<ClientState>) {
-    if client.rider_id.is_none() {
-        return;
-    }
-    let power = client.power_w;
-    let route = client.route.clone();
-    client.predictor.step(&route, power);
+    client.0.predict_step();
 }
 
 /// Publishes what the renderer should draw.
 fn update_view(link: Res<Link>, client: Res<ClientState>, mut view: ResMut<RideView>) {
-    view.elapsed_s = link.now_s();
-    view.riders.clear();
-    let Some(own) = client.rider_id else { return };
-    view.riders.push(RiderView {
-        id: own,
-        name: client
-            .names
-            .get(&own)
-            .map(|n| n.0.clone())
-            .unwrap_or_default(),
-        state: client.predictor.state(),
-        power_w: client.power_w,
-        cadence_rpm: client.cadence_rpm,
-        is_local: true,
-    });
-    for (id, state) in client.others.sample(link.now_s() - INTERPOLATION_DELAY_S) {
-        let (name, power_w) = client.names.get(&id).cloned().unwrap_or_default();
-        view.riders.push(RiderView {
-            id,
-            name,
-            state,
-            power_w,
-            cadence_rpm: None,
-            is_local: false,
-        });
-    }
+    let now = link.now_s();
+    view.elapsed_s = now;
+    view.riders = client.0.view(now);
 }
 
 fn shutdown_on_exit(mut exit: MessageReader<AppExit>, link: Res<Link>) {
@@ -288,15 +184,17 @@ fn register_commands(app: &mut App) {
         Permission::User,
         Command::new("net.stats").about("Show connection statistics"),
         |world, _| {
-            let c = world.resource::<ClientState>();
+            let c = &world.resource::<ClientState>().0;
+            let s = c.stats();
             Ok(format!(
-                "server: local (in-process)\nrider: {}\nmessages in: {}\nsnapshots: {} (last server tick {})\nsamples out: {}\nprediction error at last snapshot: {:.3} m",
-                c.rider_id.map(|r| r.to_string()).unwrap_or("-".into()),
-                c.stats.messages_in,
-                c.stats.snapshots,
-                c.stats.last_snapshot_tick,
-                c.stats.samples_out,
-                c.predictor.last_error()
+                "server: local (in-process)\nrider: {}\nmessages in: {} ({} malformed)\nsnapshots: {} (last server tick {})\nsamples out: {}\nprediction error at last snapshot: {:.3} m",
+                c.rider_id().map(|r| r.to_string()).unwrap_or("-".into()),
+                s.messages_in,
+                s.malformed,
+                s.snapshots,
+                s.last_snapshot_tick,
+                s.samples_out,
+                c.prediction_error()
             ))
         },
     ))
@@ -304,15 +202,127 @@ fn register_commands(app: &mut App) {
         Permission::User,
         Command::new("rider.state").about("Print the local rider's state"),
         |world, _| {
-            let c = world.resource::<ClientState>();
-            let s = c.predictor.state();
+            let c = &world.resource::<ClientState>().0;
+            let s = c.state();
             Ok(format!(
                 "distance {:.1} m, speed {:.2} km/h, power {:.0} W, grade {:+.1} %",
                 s.distance,
                 s.speed * 3.6,
-                c.power_w,
-                c.route.sample(s.distance).grade * 100.0
+                c.power_w(),
+                c.route().sample(s.distance).grade * 100.0
             ))
         },
     ));
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use clap::Parser;
+    use ocw_render::console::ConsoleCorePlugin;
+
+    use super::*;
+
+    fn app() -> App {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, ConsoleCorePlugin))
+            .insert_resource(Args::parse_from([
+                "ocw-desktop",
+                "--bots",
+                "0",
+                "--power",
+                "150",
+            ]))
+            .insert_resource(RideView::new(Route::test_loop()))
+            .add_plugins(ConnectionPlugin {
+                route: Route::test_loop(),
+            });
+        app
+    }
+
+    fn run(app: &mut App, line: &str) -> Vec<String> {
+        app.world_mut().resource_mut::<ConsoleState>().queue(line);
+        app.update();
+        app.world().resource::<ConsoleState>().log().to_vec()
+    }
+
+    /// Updates the app until `done` holds or the timeout expires.
+    fn update_until(app: &mut App, done: impl Fn(&ClientCore) -> bool) -> bool {
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(3) {
+            app.update();
+            if done(&app.world().resource::<ClientState>().0) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        false
+    }
+
+    #[test]
+    fn joins_local_server_and_publishes_view() {
+        let mut app = app();
+        assert!(update_until(&mut app, |c| c.stats().snapshots > 2));
+        let view = app.world().resource::<RideView>();
+        assert_eq!(view.riders.len(), 1);
+        assert!(view.riders[0].is_local);
+        assert!(view.local().is_some());
+    }
+
+    #[test]
+    fn dev_commands_need_dev_permission() {
+        let mut app = app();
+        let log = run(&mut app, "sim.power 300");
+        assert!(
+            log.last().unwrap().contains("needs Dev permission"),
+            "{log:?}"
+        );
+        let log = run(&mut app, "teleport 1");
+        assert!(
+            log.last().unwrap().contains("needs Dev permission"),
+            "{log:?}"
+        );
+        // User commands work without Dev.
+        assert!(
+            run(&mut app, "net.stats")
+                .iter()
+                .any(|l| l.contains("snapshots"))
+        );
+        assert!(
+            run(&mut app, "rider.state")
+                .iter()
+                .any(|l| l.starts_with("distance"))
+        );
+    }
+
+    #[test]
+    fn sim_power_and_teleport_reach_trainer_and_server() {
+        let mut app = app();
+        app.world_mut().resource_mut::<ConsoleState>().permission = Permission::Dev;
+        assert!(update_until(&mut app, |c| c.rider_id().is_some()));
+        assert!(
+            run(&mut app, "sim.power 9000")
+                .last()
+                .unwrap()
+                .contains("between 0 and 2500")
+        );
+        assert_eq!(
+            run(&mut app, "sim.power 320").last().unwrap(),
+            "virtual power 320 W"
+        );
+        assert!(update_until(&mut app, |c| (c.power_w() - 320.0).abs() < 1e-6));
+        run(&mut app, "teleport 1.5");
+        assert!(update_until(&mut app, |c| (c.state().distance - 1500.0)
+            .abs()
+            < 10.0));
+        // The server's confirmation is printed to the console.
+        assert!(
+            app.world()
+                .resource::<ConsoleState>()
+                .log()
+                .iter()
+                .any(|l| l.contains("teleported to 1.500 km"))
+        );
+    }
 }

@@ -31,6 +31,6 @@ fn adjust_virtual_power(
     } else {
         return;
     };
-    let watts = (client.power_w + delta).clamp(0.0, 2500.0);
+    let watts = (client.0.power_w() + delta).clamp(0.0, 2500.0);
     link.device_command(DeviceCommand::SetVirtualPower(watts));
 }

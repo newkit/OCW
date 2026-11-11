@@ -9,22 +9,16 @@ multiplayer.
 
 ## Build and run (Linux)
 
-Install the system packages (Debian/Ubuntu):
-
 ```bash
-sudo apt-get install -y libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev \
-  libxkbcommon-x11-0 libdbus-1-dev libxcb-render0-dev libxcb-shape0-dev \
-  libxcb-xfixes0-dev mesa-vulkan-drivers
+make deps     # Debian/Ubuntu packages (sudo) + rustup with the pinned toolchain
+make check    # fmt, clippy, tests, wasm build – what CI runs
+make run      # desktop client with a virtual trainer and 4 test riders
+make help     # all targets (build, release, test, server, screenshot, ...)
 ```
 
-Install Rust with [rustup](https://rustup.rs). The toolchain version is pinned in
-`rust-toolchain.toml` and installed automatically.
-
-```bash
-cargo run -p ocw-desktop            # desktop client with a virtual trainer and 4 test riders
-cargo run -p ocw-server -- --help   # headless game server
-cargo test --workspace
-```
+The Rust version is pinned in `rust-toolchain.toml`; Debian's system Rust is too
+old for Bevy. `make` finds the rustup toolchain in `~/.cargo/bin` by itself; for
+plain `cargo`, add `. "$HOME/.cargo/env"` to your shell profile.
 
 In the desktop client, PgUp/PgDn change the virtual trainer's power. `` ` `` or
 F12 opens the console (`help` lists the commands).

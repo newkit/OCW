@@ -48,6 +48,8 @@ Other desktop flags: `--bots N` (default 4), `--power W` (default 200),
 
 ## Test
 
+`make check` runs all of the following; `make help` lists the other targets.
+
 ```bash
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings

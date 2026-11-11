@@ -7,6 +7,7 @@
 //! - the Bevy renderer from `ocw-render`.
 
 mod automation;
+mod client;
 mod connection;
 mod input;
 

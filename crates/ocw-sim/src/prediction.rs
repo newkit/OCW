@@ -140,4 +140,51 @@ mod tests {
         p.reconcile(&route, server, 0.0, 200.0);
         assert_eq!(p.state(), server);
     }
+
+    #[test]
+    fn agreeing_server_causes_no_correction() {
+        let route = flat();
+        let mut p = Predictor::new(RiderProfile::default(), RiderState::default());
+        let mut server = RiderState::default();
+        for tick in 1..=500 {
+            p.step(&route, 220.0);
+            physics::step(
+                &mut server,
+                &RiderProfile::default(),
+                220.0,
+                &Environment::with_grade(0.0),
+                SIM_DT,
+            );
+            if tick % 5 == 0 {
+                p.reconcile(&route, server, 0.0, 220.0);
+                assert!(p.last_error().abs() < 1e-9);
+            }
+        }
+        assert_eq!(p.state(), server);
+    }
+
+    #[test]
+    fn old_server_state_is_extrapolated_before_comparing() {
+        let route = flat();
+        let profile = RiderProfile::default();
+        let mut server = RiderState {
+            distance: 100.0,
+            speed: 9.0,
+            lateral_offset: 0.0,
+        };
+        let old = server;
+        // The server state is 0.1 s old; meanwhile we rode on.
+        for _ in 0..5 {
+            physics::step(
+                &mut server,
+                &profile,
+                200.0,
+                &Environment::with_grade(0.0),
+                SIM_DT,
+            );
+        }
+        let mut p = Predictor::new(profile, server);
+        p.reconcile(&route, old, 0.1, 200.0);
+        assert!(p.last_error().abs() < 1e-9, "error {}", p.last_error());
+    }
 }

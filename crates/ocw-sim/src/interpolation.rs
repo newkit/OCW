@@ -93,4 +93,38 @@ mod tests {
         assert_eq!(b.sample(5.0)[&RiderId(1)].distance, 11.0);
         assert_eq!(b.sample(1.05)[&RiderId(2)].distance, 3.0);
     }
+
+    #[test]
+    fn riders_missing_from_newer_snapshot_disappear() {
+        let mut b = SnapshotBuffer::default();
+        b.push(1.0, [(RiderId(1), st(10.0)), (RiderId(2), st(5.0))]);
+        b.push(1.1, [(RiderId(1), st(11.0))]);
+        let s = b.sample(1.05);
+        assert!(s.contains_key(&RiderId(1)));
+        assert!(!s.contains_key(&RiderId(2)));
+    }
+
+    #[test]
+    fn buffer_is_bounded_and_keeps_newest() {
+        let mut b = SnapshotBuffer::default();
+        for i in 0..(MAX_SNAPSHOTS * 3) {
+            b.push(i as f64 * 0.1, [(RiderId(1), st(i as f64))]);
+        }
+        assert_eq!(b.snapshots.len(), MAX_SNAPSHOTS);
+        let newest = (MAX_SNAPSHOTS * 3 - 1) as f64;
+        assert_eq!(b.sample(1e9)[&RiderId(1)].distance, newest);
+        // Older than the buffer: falls back to the newest state, never panics.
+        assert_eq!(b.sample(0.0)[&RiderId(1)].distance, newest);
+    }
+
+    #[test]
+    fn identical_timestamps_do_not_divide_by_zero() {
+        let mut b = SnapshotBuffer::default();
+        b.push(1.0, [(RiderId(1), st(10.0))]);
+        b.push(1.0, [(RiderId(1), st(12.0))]);
+        // The newest snapshot wins; no NaN from a zero time span.
+        assert_eq!(b.sample(1.0)[&RiderId(1)].distance, 12.0);
+        b.push(1.0, [(RiderId(1), st(13.0))]);
+        assert!(b.sample(0.99)[&RiderId(1)].distance.is_finite());
+    }
 }

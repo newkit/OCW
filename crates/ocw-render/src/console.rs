@@ -17,6 +17,7 @@ use clap::{Arg, ArgMatches, Command};
 use crate::camera::CameraMode;
 use crate::hud::ShowFps;
 
+/// Console with its egui overlay (toggle with `` ` `` or F12).
 pub struct ConsolePlugin;
 
 impl Plugin for ConsolePlugin {
@@ -24,10 +25,23 @@ impl Plugin for ConsolePlugin {
         if !app.is_plugin_added::<EguiPlugin>() {
             app.add_plugins(EguiPlugin::default());
         }
+        app.add_plugins(ConsoleCorePlugin)
+            .add_systems(Update, toggle_console.before(run_pending_commands))
+            .add_systems(EguiPrimaryContextPass, console_ui);
+    }
+}
+
+/// Command registry, state and execution without any UI or input handling.
+/// Usable headless (tests, `--cmd` automation).
+pub struct ConsoleCorePlugin;
+
+impl Plugin for ConsoleCorePlugin {
+    fn build(&self, app: &mut App) {
         app.init_resource::<ConsoleCommands>()
             .init_resource::<ConsoleState>()
-            .add_systems(Update, (toggle_console, run_pending_commands).chain())
-            .add_systems(EguiPrimaryContextPass, console_ui);
+            .init_resource::<ShowFps>()
+            .init_resource::<CameraMode>()
+            .add_systems(Update, run_pending_commands);
         register_builtin_commands(app);
     }
 }
@@ -447,12 +461,7 @@ mod tests {
 
     fn app() -> App {
         let mut app = App::new();
-        app.add_plugins(MinimalPlugins)
-            .init_resource::<ConsoleCommands>()
-            .init_resource::<ConsoleState>()
-            .init_resource::<ShowFps>()
-            .add_systems(Update, run_pending_commands);
-        register_builtin_commands(&mut app);
+        app.add_plugins((MinimalPlugins, ConsoleCorePlugin));
         app.console_command(ConsoleCommand::new(
             Permission::Dev,
             Command::new("dev.thing"),
@@ -483,6 +492,11 @@ mod tests {
         assert_eq!(run(&mut app, "dev.thing")[1], "did it");
         // clap validation errors are shown, not panicked on.
         assert!(run(&mut app, "fps maybe")[1].starts_with("error:"));
+        // camera.mode parses and sets the resource; bad values are errors.
+        assert!(run(&mut app, "camera.mode top")[1].contains("Top"));
+        assert_eq!(*app.world().resource::<CameraMode>(), CameraMode::Top);
+        assert!(run(&mut app, "camera.mode sideways")[1].starts_with("error:"));
+        assert_eq!(*app.world().resource::<CameraMode>(), CameraMode::Top);
         // help lists commands.
         assert!(run(&mut app, "help").iter().any(|l| l.starts_with("echo")));
     }

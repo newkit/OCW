@@ -151,3 +151,41 @@ fn spawn_avatar(
         })
         .id()
 }
+
+#[cfg(test)]
+mod tests {
+    use ocw_world::Route;
+
+    use super::*;
+
+    fn view(points: Vec<[f64; 3]>) -> RideView {
+        RideView::new(Route::from_points("t", "T", points, false, 6.0).unwrap())
+    }
+
+    fn close(a: Vec3, b: Vec3) -> bool {
+        (a - b).length() < 1e-3
+    }
+
+    #[test]
+    fn faces_along_the_road_and_offsets_to_the_right() {
+        // Road heading east (+x); right of east is south (+z).
+        let v = view(vec![[0.0, 0.0, 0.0], [100.0, 0.0, 0.0]]);
+        let t = rider_transform(&v, 10.0, 0.0);
+        assert!(close(t.translation, Vec3::new(10.0, 0.0, 0.0)));
+        assert!(close(t.forward().as_vec3(), Vec3::X));
+        let right = rider_transform(&v, 10.0, 1.5);
+        assert!(close(right.translation, Vec3::new(10.0, 0.0, 1.5)));
+        assert!(close(right.right().as_vec3(), Vec3::Z));
+    }
+
+    #[test]
+    fn pitches_up_on_climbs() {
+        // 10 % climb heading north (-z).
+        let v = view(vec![[0.0, 0.0, 0.0], [0.0, 10.0, -100.0]]);
+        let t = rider_transform(&v, 50.0, 0.0);
+        let f = t.forward().as_vec3();
+        assert!(f.y > 0.09 && f.y < 0.11, "forward {f:?}");
+        assert!(f.z < -0.99);
+        assert!((t.translation.y - 5.0).abs() < 0.1);
+    }
+}

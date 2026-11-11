@@ -1,0 +1,466 @@
+//! Engine-independent client logic: device samples → server, server messages →
+//! prediction (own rider) and interpolation (others) → render view.
+//!
+//! The Bevy systems in `connection.rs` only move bytes in and out of this type,
+//! so the whole client loop is unit-testable without a window or GPU.
+
+use std::collections::BTreeMap;
+
+use ocw_core::{INTERPOLATION_DELAY_S, RiderId, RiderProfile};
+use ocw_devices::DeviceEvent;
+use ocw_protocol::v1::{self, client_message::Msg as C, server_message::Msg as S};
+use ocw_protocol::{PROTOCOL_VERSION, client_message, decode_server, dequantize, encode};
+use ocw_render::RiderView;
+use ocw_sim::{Predictor, RiderState, SnapshotBuffer};
+use ocw_world::Route;
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct NetStats {
+    pub messages_in: u64,
+    pub malformed: u64,
+    pub snapshots: u64,
+    pub samples_out: u64,
+    pub last_snapshot_tick: u64,
+}
+
+/// Something the user should be told about (shown in the console).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Notice {
+    Joined { rider_id: RiderId, route_id: String },
+    Rejected(String),
+    CommandResult(String),
+}
+
+pub struct ClientCore {
+    route: Route,
+    profile: RiderProfile,
+    name: String,
+    rider_id: Option<RiderId>,
+    predictor: Predictor,
+    others: SnapshotBuffer,
+    names: BTreeMap<RiderId, (String, f64)>,
+    power_w: f64,
+    cadence_rpm: Option<f64>,
+    seq: u32,
+    stats: NetStats,
+}
+
+impl ClientCore {
+    pub fn new(route: Route, name: impl Into<String>, profile: RiderProfile) -> Self {
+        Self {
+            route,
+            profile,
+            name: name.into(),
+            rider_id: None,
+            predictor: Predictor::new(profile, RiderState::default()),
+            others: SnapshotBuffer::default(),
+            names: BTreeMap::new(),
+            power_w: 0.0,
+            cadence_rpm: None,
+            seq: 0,
+            stats: NetStats::default(),
+        }
+    }
+
+    /// The first message to send after connecting.
+    pub fn hello(&self) -> Vec<u8> {
+        encode(&client_message(C::Hello(v1::Hello {
+            protocol_version: PROTOCOL_VERSION,
+            display_name: self.name.clone(),
+            profile: Some(self.profile.into()),
+        })))
+    }
+
+    /// Handles a device event; returns the encoded sample to send, if any.
+    pub fn on_device_event(&mut self, event: DeviceEvent) -> Option<Vec<u8>> {
+        let DeviceEvent::Power {
+            watts,
+            cadence_rpm,
+            timestamp,
+        } = event
+        else {
+            return None;
+        };
+        self.power_w = watts;
+        self.cadence_rpm = cadence_rpm;
+        self.seq += 1;
+        self.stats.samples_out += 1;
+        Some(encode(&client_message(C::Sample(v1::SensorSample {
+            seq: self.seq,
+            client_time_us: timestamp.as_micros() as u64,
+            power_w: Some(watts as f32),
+            cadence_rpm: cadence_rpm.map(|c| c as f32),
+            heart_rate_bpm: None,
+        }))))
+    }
+
+    /// Handles one encoded server message received at client time `now_s`.
+    pub fn on_server_message(&mut self, bytes: &[u8], now_s: f64) -> Option<Notice> {
+        self.stats.messages_in += 1;
+        let Ok(msg) = decode_server(bytes) else {
+            self.stats.malformed += 1;
+            return None;
+        };
+        match msg {
+            S::Welcome(w) => {
+                let id = RiderId(w.rider_id);
+                self.rider_id = Some(id);
+                Some(Notice::Joined {
+                    rider_id: id,
+                    route_id: w.route_id,
+                })
+            }
+            S::Reject(r) => Some(Notice::Rejected(r.reason)),
+            S::DevResult(r) => Some(Notice::CommandResult(if r.ok {
+                r.message
+            } else {
+                format!("error: {}", r.message)
+            })),
+            S::Snapshot(s) => {
+                self.on_snapshot(&s, now_s);
+                None
+            }
+        }
+    }
+
+    fn on_snapshot(&mut self, s: &v1::Snapshot, now_s: f64) {
+        self.stats.snapshots += 1;
+        self.stats.last_snapshot_tick = s.server_tick;
+        let mut others = Vec::new();
+        for u in &s.riders {
+            let (id, state) = dequantize(u);
+            self.names
+                .insert(id, (u.display_name.clone(), f64::from(u.power_w)));
+            if Some(id) == self.rider_id {
+                // In-process server: the snapshot is fresh (age ≈ 0).
+                self.predictor
+                    .reconcile(&self.route, state, 0.0, self.power_w);
+            } else {
+                others.push((id, state));
+            }
+        }
+        self.others.push(now_s, others);
+    }
+
+    /// One fixed physics tick of the local prediction.
+    pub fn predict_step(&mut self) {
+        if self.rider_id.is_some() {
+            self.predictor.step(&self.route, self.power_w);
+        }
+    }
+
+    /// Riders to render at client time `now_s`: the local rider first
+    /// (predicted), then the others (interpolated, slightly in the past).
+    pub fn view(&self, now_s: f64) -> Vec<RiderView> {
+        let Some(own) = self.rider_id else {
+            return Vec::new();
+        };
+        let mut riders = vec![RiderView {
+            id: own,
+            name: self
+                .names
+                .get(&own)
+                .map(|n| n.0.clone())
+                .unwrap_or_default(),
+            state: self.predictor.state(),
+            power_w: self.power_w,
+            cadence_rpm: self.cadence_rpm,
+            is_local: true,
+        }];
+        for (id, state) in self.others.sample(now_s - INTERPOLATION_DELAY_S) {
+            let (name, power_w) = self.names.get(&id).cloned().unwrap_or_default();
+            riders.push(RiderView {
+                id,
+                name,
+                state,
+                power_w,
+                cadence_rpm: None,
+                is_local: false,
+            });
+        }
+        riders
+    }
+
+    pub fn route(&self) -> &Route {
+        &self.route
+    }
+    pub fn rider_id(&self) -> Option<RiderId> {
+        self.rider_id
+    }
+    pub fn state(&self) -> RiderState {
+        self.predictor.state()
+    }
+    pub fn power_w(&self) -> f64 {
+        self.power_w
+    }
+    pub fn prediction_error(&self) -> f64 {
+        self.predictor.last_error()
+    }
+    pub fn stats(&self) -> &NetStats {
+        &self.stats
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use ocw_server::{GameServer, ServerConfig};
+
+    use super::*;
+
+    fn route() -> Route {
+        Route::test_loop()
+    }
+
+    fn power(watts: f64, t: f64) -> DeviceEvent {
+        DeviceEvent::Power {
+            watts,
+            cadence_rpm: Some(90.0),
+            timestamp: Duration::from_secs_f64(t),
+        }
+    }
+
+    /// A client connected to an in-memory `GameServer`, driven tick by tick.
+    struct Harness {
+        server: GameServer,
+        conn: ocw_server::ConnectionId,
+        client: ClientCore,
+        notices: Vec<Notice>,
+        time_s: f64,
+    }
+
+    impl Harness {
+        fn new(bots: u32, allow_dev: bool) -> Self {
+            let mut server = GameServer::new(
+                route(),
+                ServerConfig {
+                    allow_dev_commands: allow_dev,
+                    bots,
+                },
+            );
+            let conn = server.connect();
+            let client = ClientCore::new(route(), "Tester", RiderProfile::default());
+            let mut h = Self {
+                server,
+                conn,
+                client,
+                notices: Vec::new(),
+                time_s: 0.0,
+            };
+            let hello = h.client.hello();
+            h.send(&hello);
+            h
+        }
+
+        fn send(&mut self, bytes: &[u8]) {
+            for reply in self.server.handle(self.conn, bytes) {
+                self.receive(&reply);
+            }
+        }
+
+        fn receive(&mut self, bytes: &[u8]) {
+            if let Some(n) = self.client.on_server_message(bytes, self.time_s) {
+                self.notices.push(n);
+            }
+        }
+
+        /// Runs `seconds` of simulated time at the real rates: 50 Hz server and
+        /// prediction, 4 Hz trainer samples.
+        fn ride(&mut self, watts: f64, seconds: f64) {
+            let ticks = (seconds * f64::from(ocw_core::SIM_TICK_HZ)).round() as u32;
+            for _ in 0..ticks {
+                if (self.time_s * 4.0).fract() < 1e-9
+                    && let Some(sample) = self.client.on_device_event(power(watts, self.time_s))
+                {
+                    self.send(&sample);
+                }
+                if let Some(snapshot) = self.server.tick() {
+                    self.receive(&snapshot);
+                }
+                self.client.predict_step();
+                self.time_s += ocw_core::SIM_DT;
+                // Avoid drift so the 4 Hz check stays exact.
+                self.time_s = (self.time_s * 1000.0).round() / 1000.0;
+            }
+        }
+    }
+
+    #[test]
+    fn joins_and_shows_nothing_before_welcome() {
+        let client = ClientCore::new(route(), "A", RiderProfile::default());
+        assert!(client.view(0.0).is_empty());
+        let mut h = Harness::new(0, false);
+        assert!(matches!(h.notices[0], Notice::Joined { .. }));
+        assert!(h.client.rider_id().is_some());
+        h.ride(200.0, 0.0);
+        assert_eq!(h.client.view(0.0).len(), 1);
+    }
+
+    #[test]
+    fn device_samples_have_increasing_sequence_numbers() {
+        let mut c = ClientCore::new(route(), "A", RiderProfile::default());
+        for i in 1..=3u32 {
+            let bytes = c.on_device_event(power(150.0, f64::from(i))).unwrap();
+            match ocw_protocol::decode_client(&bytes).unwrap() {
+                C::Sample(s) => {
+                    assert_eq!(s.seq, i);
+                    assert_eq!(s.power_w, Some(150.0));
+                }
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+        assert_eq!(c.stats().samples_out, 3);
+        assert!(
+            c.on_device_event(DeviceEvent::HeartRate {
+                bpm: 120.0,
+                timestamp: Duration::ZERO,
+            })
+            .is_none()
+        );
+        assert!(c.on_device_event(DeviceEvent::Disconnected).is_none());
+    }
+
+    /// Desktop client ↔ server through the real protocol (spec §14, Phase 1).
+    #[test]
+    fn prediction_tracks_server_over_a_long_ride() {
+        let mut h = Harness::new(3, false);
+        h.ride(250.0, 60.0);
+        let own = h.client.rider_id().unwrap();
+        let server = h.server.session().rider_state(own).unwrap();
+        let predicted = h.client.state();
+        assert!(
+            predicted.distance > 300.0,
+            "rode {:.0} m",
+            predicted.distance
+        );
+        // Same physics on both sides: only quantization and the sub-snapshot
+        // tick offset remain.
+        assert!(
+            (server.distance - predicted.distance).abs() < 0.5,
+            "server {:.2} m, predicted {:.2} m",
+            server.distance,
+            predicted.distance
+        );
+        assert!(h.client.prediction_error().abs() < 0.5);
+        assert!(h.client.stats().snapshots >= 590);
+        assert_eq!(h.client.stats().malformed, 0);
+    }
+
+    #[test]
+    fn view_contains_local_rider_first_and_interpolated_bots() {
+        let mut h = Harness::new(3, false);
+        h.ride(200.0, 5.0);
+        let view = h.client.view(h.time_s);
+        assert_eq!(view.len(), 4);
+        assert!(view[0].is_local && view[0].name == "Tester");
+        assert_eq!(view.iter().filter(|r| r.is_local).count(), 1);
+        for bot in &view[1..] {
+            assert!(!bot.name.is_empty());
+            assert!(bot.state.distance > 0.0);
+            assert!(bot.power_w > 0.0);
+        }
+    }
+
+    #[test]
+    fn teleport_snaps_prediction_on_next_snapshot() {
+        let mut h = Harness::new(0, true);
+        h.ride(200.0, 1.0);
+        let cmd = encode(&client_message(C::Dev(v1::DevCommand {
+            cmd: Some(v1::dev_command::Cmd::TeleportDistanceM(2000.0)),
+        })));
+        h.send(&cmd);
+        assert!(
+            matches!(h.notices.last(), Some(Notice::CommandResult(m)) if !m.starts_with("error"))
+        );
+        h.ride(200.0, 0.2);
+        assert!((h.client.state().distance - 2000.0).abs() < 5.0);
+    }
+
+    #[test]
+    fn dev_commands_are_refused_by_a_public_server() {
+        let mut h = Harness::new(0, false);
+        let cmd = encode(&client_message(C::Dev(v1::DevCommand {
+            cmd: Some(v1::dev_command::Cmd::TeleportDistanceM(2000.0)),
+        })));
+        h.send(&cmd);
+        assert!(
+            matches!(h.notices.last(), Some(Notice::CommandResult(m)) if m.starts_with("error"))
+        );
+    }
+
+    #[test]
+    fn prediction_is_continuous_across_the_loop_seam() {
+        let mut h = Harness::new(0, true);
+        let len = h.client.route().length();
+        let cmd = encode(&client_message(C::Dev(v1::DevCommand {
+            cmd: Some(v1::dev_command::Cmd::TeleportDistanceM(len - 20.0)),
+        })));
+        h.send(&cmd);
+        h.ride(300.0, 0.2);
+        let mut last = h.client.state().distance;
+        for _ in 0..30 {
+            h.ride(300.0, 0.5);
+            let d = h.client.state().distance;
+            // Never jumps backwards or by more than a few metres per step.
+            assert!(d >= last && d - last < 10.0, "{last:.2} -> {d:.2}");
+            last = d;
+        }
+        assert!(last > len, "crossed the seam: {last:.1} of {len:.1} m");
+        // Rendering wraps the cumulative distance onto the loop.
+        let p = h.client.route().sample(last).position;
+        let q = h.client.route().sample(last - len).position;
+        assert!((p[0] - q[0]).abs() < 1e-6 && (p[2] - q[2]).abs() < 1e-6);
+    }
+
+    #[test]
+    fn rejection_and_malformed_messages_are_reported() {
+        let mut c = ClientCore::new(route(), "A", RiderProfile::default());
+        assert_eq!(c.on_server_message(&[0xff, 0x01], 0.0), None);
+        assert_eq!(c.stats().malformed, 1);
+        let reject = encode(&ocw_protocol::server_message(S::Reject(v1::Reject {
+            reason: "full".into(),
+        })));
+        assert_eq!(
+            c.on_server_message(&reject, 0.0),
+            Some(Notice::Rejected("full".into()))
+        );
+        assert!(c.rider_id().is_none());
+    }
+
+    /// The real wiring: client core ↔ `LocalServer` thread ↔ virtual trainer thread.
+    #[test]
+    fn rides_against_threaded_local_server_and_virtual_trainer() {
+        use ocw_devices::{DeviceBackend, VirtualTrainer};
+        use std::time::Instant;
+
+        let server = ocw_server::local::LocalServer::spawn(route(), 2).unwrap();
+        let trainer = VirtualTrainer::new(300.0).start().unwrap();
+        let mut client = ClientCore::new(route(), "Live", RiderProfile::default());
+        server.to_server.send(client.hello()).unwrap();
+        let start = Instant::now();
+        let mut next_tick = 0.0;
+        while start.elapsed() < Duration::from_millis(1500) {
+            let now = start.elapsed().as_secs_f64();
+            for e in trainer.events.try_iter() {
+                if let Some(sample) = client.on_device_event(e) {
+                    server.to_server.send(sample).unwrap();
+                }
+            }
+            for msg in server.from_server.try_iter() {
+                client.on_server_message(&msg, now);
+            }
+            while next_tick <= now {
+                client.predict_step();
+                next_tick += ocw_core::SIM_DT;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let _ = trainer.commands.send(ocw_devices::DeviceCommand::Shutdown);
+        assert!(client.rider_id().is_some());
+        assert!(client.power_w() > 250.0);
+        assert!(client.stats().snapshots >= 10);
+        assert!(client.state().distance > 0.5);
+        assert_eq!(client.view(start.elapsed().as_secs_f64()).len(), 3);
+    }
+}

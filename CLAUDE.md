@@ -10,6 +10,8 @@ Open Cycling World (OCW) is a cross-platform (Linux/Windows/macOS) indoor cyclin
 
 Rust comes from rustup; `rust-toolchain.toml` pins the version (Bevy 0.20 needs a newer rustc than Debian ships). If `cargo` resolves to `/usr/bin/cargo`, run `source ~/.cargo/env` first.
 
+`make help` lists the Makefile targets (`deps`, `build`, `test`, `check` = everything CI checks on Linux, `screenshot`); they work without `~/.cargo/bin` on PATH.
+
 ```bash
 cargo test --workspace                                   # all unit tests
 cargo test -p ocw-sim prediction                         # one crate / test name filter
@@ -24,8 +26,8 @@ To run and screenshot the desktop app headlessly (Xvfb, software Vulkan), use th
 ## Code map
 
 - `services/server` (`ocw-server`): `GameServer` is transport-independent (encoded protobuf in/out). `local::LocalServer` runs it on a thread at 50 Hz inside the desktop app; the binary runs it headless. QUIC transport comes in Phase 5.
-- `apps/desktop/src/connection.rs`: the client loop: device events → `SensorSample` to the server; snapshots → `Predictor::reconcile` (own rider) and `SnapshotBuffer` (others); `RideView` for the renderer. Prediction steps in Bevy `FixedUpdate` at 50 Hz.
-- `crates/ocw-render`: renders only what is in the `RideView` resource; console commands are registered via `ConsoleAppExt::console_command` with a clap definition and a `Permission` level (`Dev` commands need a local server).
+- `apps/desktop/src/client.rs` (`ClientCore`): the Bevy-free client loop: device events → `SensorSample` to the server; snapshots → `Predictor::reconcile` (own rider) and `SnapshotBuffer` (others); `view()` for the renderer. Its tests drive it against an in-memory `GameServer`. `connection.rs` is only Bevy glue (channels, `FixedUpdate` prediction at 50 Hz, console commands).
+- `crates/ocw-render`: renders only what is in the `RideView` resource; console commands are registered via `ConsoleAppExt::console_command` with a clap definition and a `Permission` level (`Dev` commands need a local server). `ConsoleCorePlugin` runs commands without egui, for headless tests with `MinimalPlugins`.
 - Protocol schema: `proto/ocw/v1/messages.proto`, compiled by `ocw-protocol/build.rs` with protox (no `protoc` needed). Only add fields; never reuse numbers.
 
 ## Documents
