@@ -211,8 +211,10 @@ Downloads go to the cache (`~/.local/share/ocw/worlds/<id>/<version>/`,
 large download, interrupted downloads resume (HTTP range requests), and a
 package is installed only when all its files match the manifest.
 - Everyone (bots too) starts at a random point of the route
-  (`--random-start false` starts at 0). Bots ride at 85–250 W and push harder
-  uphill.
+  (`--random-start false` starts at 0), in rows of up to three behind you
+  (you start in the front row's centre). Ten bots by default (`--bots N`),
+  at twelve different strengths (85–280 W) so the field spreads out; they
+  push harder uphill.
 
 **Trainer and sensors**
 
@@ -256,7 +258,7 @@ records with a fixed time step instead). Needs `ffmpeg` (`make deps` installs it
 |---|---|
 | `--name NAME` | Display name of your rider (default `Rider`) |
 | `--power W` | Initial power of the virtual trainer (default 200) |
-| `--bots N` | Number of test riders (default 4) |
+| `--bots N` | Number of test riders (default 10; they start in rows of up to three behind you) |
 | `--route hills\|loop` | Built-in test route (default `hills`) |
 | `--route NAME\|FILE` (with `--world`) | Ride a route of the package by name, or an `ocw-graph-route` file, on the road graph |
 | `--route-gpx PATH` | Ride a GPX track or route, matched onto the `--world` package's roads at the start |
@@ -362,7 +364,7 @@ cargo run --release -p ocw-server -- --world data/pilot/liechtenstein.ocwpkg \
 ```
 
 It prints the riders' positions and speeds while it runs. Options:
-`--bots N` (test riders, default 3), `--seconds S` (0 = until stopped with
+`--bots N` (test riders, default 10), `--seconds S` (0 = until stopped with
 Ctrl+C), `--fast` (no real-time pacing), `--world PKG|ID` and `--seed N` (free
 ride on a world package's road graph, start point seed; verified like in the
 desktop app, `--allow-unsigned` and `--trust-root FILE` as there), `--route NAME`

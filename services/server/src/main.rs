@@ -19,7 +19,7 @@ use ocw_world::{RoadNetwork, Route};
 #[command(version, about = "Open Cycling World headless game server")]
 struct Args {
     /// Number of server-side test riders.
-    #[arg(long, default_value_t = 3)]
+    #[arg(long, default_value_t = 10)]
     bots: u32,
     /// Stop after this many seconds of simulated time (0 = run until killed).
     #[arg(long, default_value_t = 0.0)]
@@ -144,9 +144,16 @@ fn main() {
     );
     let tick = Duration::from_secs_f64(SIM_DT);
     let mut next = Instant::now();
+    // Time spent in the server tick (physics, bots, snapshot encoding).
+    let (mut busy, mut worst, mut ticks) = (Duration::ZERO, Duration::ZERO, 0u32);
     loop {
         // No network clients yet; snapshots would be sent to them here.
+        let started = Instant::now();
         let _snapshot = server.tick();
+        let took = started.elapsed();
+        busy += took;
+        worst = worst.max(took);
+        ticks += 1;
         let session = server.session();
         if session.tick().is_multiple_of(u64::from(SIM_TICK_HZ)) {
             for r in session.snapshot() {
@@ -175,5 +182,11 @@ fn main() {
             }
         }
     }
-    tracing::info!("session finished");
+    tracing::info!(
+        ticks,
+        mean_tick_us = format!("{:.1}", busy.as_secs_f64() * 1e6 / f64::from(ticks.max(1))),
+        max_tick_us = format!("{:.1}", worst.as_secs_f64() * 1e6),
+        budget_us = format!("{:.0}", SIM_DT * 1e6),
+        "session finished"
+    );
 }
