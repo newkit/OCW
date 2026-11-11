@@ -12,7 +12,8 @@
 //!   gamepad's D-pad left / right) choose the exit at any time, also for
 //!   manual steering, where the arrows keep leaning. U (gamepad East:
 //!   B / ○) turns round (↓ stays the brake),
-//! - W toggles wild mode: not bound to the road,
+//! - W toggles wild mode: not bound to the road; switching it on also
+//!   switches autodrive off (upright, lean steering),
 //! - gamepad: left stick left / right steers (leans, or moves the autodrive
 //!   line); ↑ = D-pad up, left stick up or right trigger; ↓ = D-pad down,
 //!   left stick down or left trigger; South (A / ✕) = autodrive, West

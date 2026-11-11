@@ -300,7 +300,9 @@ fn register_commands(app: &mut App) {
     .console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("rider.wild")
-            .about("Wild mode on (not bound to the road, ride anywhere) or off (key W)")
+            .about(
+                "Wild mode on (not bound to the road, ride anywhere; autodrive off) or off (key W)",
+            )
             .arg(Arg::new("on").required(true).value_parser(["on", "off"])),
         |world, m| {
             let on = m.get_one::<String>("on").expect("required") == "on";

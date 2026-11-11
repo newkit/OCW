@@ -29,7 +29,7 @@ plain `cargo`, add `. "$HOME/.cargo/env"` to your shell profile.
 | Stop: no power, brake | ↓ | D-pad down, left stick down or left trigger (LT / L2) |
 | Steer (autodrive: move the line; manual: lean into a curve) | ← / → | left stick (left/right) |
 | Autodrive on/off (on at the start) | A | South button (A / ✕) |
-| Wild mode on/off (leave the road) | W | West button (X / □) |
+| Wild mode on/off (leave the road; on also switches autodrive off) | W | West button (X / □) |
 | Free ride: choose the exit at the next junction | ← / → (autodrive, junction ahead) or Q / E | D-pad left / right |
 | Free ride: U-turn | U | East button (B / ○) |
 | Power ±10 W | PgUp / PgDn | |
@@ -102,7 +102,10 @@ Then start the app: the left stick steers, the triggers ride and stop (see
   for you: miss one and the rider drifts to the edge, where it scrapes along
   and slows down.
 - **Wild** (key W): not bound to the road; ride onto the meadows, up to 60 m
-  either side. The camera follows over terrain and trees.
+  either side. Switching it on also switches autodrive off (upright, manual
+  lean steering), so ← / → steer you off the road; switching it off keeps the
+  steering mode (press A for autodrive). The HUD shows "manual | WILD". The
+  camera follows over terrain and trees.
 
 **Free ride** (spec §2.2.1, §2.2.2): ride anywhere on the world package's road
 network instead of a fixed route:
@@ -214,7 +217,7 @@ for now).
 | `quit` | Exit the app |
 | **Rider** | |
 | `rider.autodrive on\|off` | Autodrive (key A) |
-| `rider.wild on\|off` | Wild mode (key W) |
+| `rider.wild on\|off` | Wild mode (key W; on also switches autodrive off) |
 | `rider.lean DEGREES` | Lean into a curve (positive = right, 0 = upright; manual steering) |
 | `rider.steer METRES` | Autodrive line: lateral position on the road (positive = right) |
 | `rider.state` | Print your rider's state |
