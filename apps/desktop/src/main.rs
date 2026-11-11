@@ -2,7 +2,8 @@
 //!
 //! Wires the pieces together (spec §6.1):
 //! - a device backend (Phase 1: the virtual trainer) on its own thread,
-//! - the in-process local server on its own thread at 50 Hz,
+//! - the in-process local server on its own thread at 50 Hz (or a remote
+//!   server over QUIC with `--server`),
 //! - client-side prediction of the local rider and interpolation of others,
 //! - the Bevy renderer from `ocw-render`.
 
@@ -74,6 +75,19 @@ pub struct Args {
     /// Number of test riders on the local server.
     #[arg(long, default_value_t = 10)]
     pub bots: u32,
+    /// Ride on a remote game server (`ocw-server --listen`) over QUIC
+    /// instead of the in-process local server: HOST[:PORT] (default port
+    /// 47800). Ride the same course as the server (--route / --world).
+    #[arg(long, value_name = "ADDR", conflicts_with = "capture")]
+    pub server: Option<String>,
+    /// SHA-256 fingerprint of the server's certificate (ocw-server prints
+    /// it at start); the connection is refused if it does not match.
+    #[arg(long, value_name = "SHA256", requires = "server")]
+    pub server_cert: Option<String>,
+    /// Development only: accept any server certificate. Refused unless the
+    /// server is on this machine (127.0.0.1 / ::1).
+    #[arg(long, requires = "server", conflicts_with = "server_cert")]
+    pub insecure_dev: bool,
     /// Window size as WIDTHxHEIGHT.
     #[arg(long, default_value = "1280x720", value_parser = parse_size)]
     pub window: (u32, u32),
@@ -574,8 +588,13 @@ fn timed_commands(
 
 /// Enables dev commands (local server) and queues autoexec / --exec / --cmd.
 fn startup_commands(args: Res<Args>, mut console: ResMut<ConsoleState>) {
-    // Phase 1 always rides on the in-process local server.
-    console.permission = Permission::Dev;
+    // Dev commands only on the in-process local server (spec §2.9); a
+    // remote server refuses them anyway.
+    console.permission = if args.server.is_some() {
+        Permission::User
+    } else {
+        Permission::Dev
+    };
     // Relative to the working directory, which is `/` for an app started
     // from Finder: the macOS app bundle does not read one.
     if std::path::Path::new("autoexec.cfg").exists() {
@@ -592,6 +611,37 @@ fn startup_commands(args: Res<Args>, mut console: ResMut<ConsoleState>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remote_server_options() {
+        let a = Args::parse_from(["ocw-desktop"]);
+        assert_eq!(a.server, None);
+        let a = Args::parse_from([
+            "ocw-desktop",
+            "--server",
+            "127.0.0.1:5000",
+            "--insecure-dev",
+        ]);
+        assert_eq!(a.server.as_deref(), Some("127.0.0.1:5000"));
+        assert!(a.insecure_dev);
+        // Trust options need --server; a pin and --insecure-dev exclude
+        // each other; capture runs stay local (stepped server).
+        for bad in [
+            &["ocw-desktop", "--insecure-dev"][..],
+            &["ocw-desktop", "--server-cert", "ab"],
+            &[
+                "ocw-desktop",
+                "--server",
+                "h",
+                "--server-cert",
+                "ab",
+                "--insecure-dev",
+            ],
+            &["ocw-desktop", "--server", "h", "--capture", "dir"],
+        ] {
+            assert!(Args::try_parse_from(bad).is_err(), "{bad:?}");
+        }
+    }
 
     #[test]
     fn ten_bots_by_default() {

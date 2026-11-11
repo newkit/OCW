@@ -289,6 +289,8 @@ records with a fixed time step instead). Needs `ffmpeg` (`make deps` installs it
 | `--name NAME` | Display name of your rider (default `Rider`) |
 | `--power W` | Initial power of the virtual trainer (default 200) |
 | `--bots N` | Number of test riders (default 10; they start in rows of up to three behind you) |
+| `--server HOST[:PORT]` | Ride on a remote `ocw-server --listen` over QUIC (default port 47800) instead of the local server; see [Running the server](#running-the-server) |
+| `--server-cert SHA256` / `--insecure-dev` | Trust the server's certificate by its fingerprint / accept any (only for a server on 127.0.0.1 or ::1) |
 | `--route hills\|loop` | Built-in test route (default `hills`) |
 | `--route NAME\|FILE` (with `--world`) | Ride a route of the package by name, or an `ocw-graph-route` file, on the road graph |
 | `--route-gpx PATH` | Ride a GPX track or route, matched onto the `--world` package's roads at the start |
@@ -449,16 +451,51 @@ workouts and are refused. FIT workout files are not imported yet.
 
 ## Running the server
 
-**There is no network server yet, so there is no port to open.** Today every
-ride runs on the *local server*: the same game-server logic (physics for all
-riders, bots, junction decisions) runs inside the desktop app on its own
-thread and talks to the client over in-process channels (spec §6.1). Hosting
-a session for other people comes with Phase 5 (multiplayer): a QUIC (UDP)
-game server with Quinn, plus an HTTPS API, accounts and a database; its port
-and deployment (Docker) will be documented then.
+By default every ride runs on the *local server*: the same game-server logic
+(physics for all riders, bots, junction decisions) runs inside the desktop app
+on its own thread and talks to the client over in-process channels (spec
+§6.1). The **headless server** `ocw-server` is the same logic as a standalone
+program; with `--listen` desktop clients ride on it over the network (QUIC,
+the first step of Phase 5 multiplayer; accounts, sessions and the HTTPS API
+follow).
 
-What exists already is the **headless server**: the same server logic as a
-standalone program, without graphics or network, for tests and simulations:
+### Hosting a ride over the network
+
+```bash
+cargo run --release -p ocw-server -- --listen --bots 3     # UDP 0.0.0.0:47800
+```
+
+**Port: UDP 47800** (QUIC; `--listen ADDR` for another address or port, e.g.
+`--listen 127.0.0.1:47801`). Open it for UDP in the firewall to accept clients
+from other machines; there is no TCP port. At start the server prints the
+SHA-256 fingerprint of its TLS certificate and the client command:
+
+```bash
+ocw-desktop --server HOST --server-cert 3f9a…c2   # HOST[:PORT]; the fingerprint the server printed
+ocw-desktop --server 127.0.0.1 --insecure-dev     # server on the same machine only
+```
+
+- **Same course on both sides.** The client rides what it would ride locally
+  and the server checks it: the server's test route is `--test-route loop`
+  (default) or `hills`, so start the desktop with `--route loop` (its own
+  default is `hills`); for a world package give both the same `--world`
+  (and `--route NAME`). A mismatch is refused with a message.
+- **Security (development mode).** The connection is always encrypted (TLS
+  1.3). The certificate is self-signed: a new one at every start, or kept in
+  `--tls-dir DIR` so the fingerprint stays the same. The client accepts only
+  the pinned certificate (`--server-cert`); `--insecure-dev` skips the check
+  and is refused for anything but 127.0.0.1 / ::1. There are no accounts yet:
+  anyone who can reach the port and knows the fingerprint can join. Real
+  certificates and sign-in (OIDC) come with the Phase 5 backend.
+- With `--server` the console has user permission only (no `teleport`,
+  `sim.power`); `--bots` is the server's option. If the connection drops,
+  the HUD says so ("Disconnected: …"); restart the app to reconnect.
+- The server runs until Ctrl+C (or SIGTERM), then closes all connections
+  ("server shutting down"); `--seconds S` stops it earlier.
+
+### Headless runs
+
+Without `--listen` it simulates without network, for tests and simulations:
 
 ```bash
 cargo run --release -p ocw-server -- --bots 5 --seconds 60          # test loop, real time
@@ -472,7 +509,8 @@ It prints the riders' positions and speeds while it runs. Options:
 Ctrl+C), `--fast` (no real-time pacing), `--world PKG|ID` and `--seed N` (free
 ride on a world package's road graph, start point seed; verified like in the
 desktop app, `--allow-unsigned` and `--trust-root FILE` as there), `--route NAME`
-(with `--world`: ride one of the package's routes).
+(with `--world`: ride one of the package's routes), `--test-route loop|hills`,
+`--listen [ADDR]` and `--tls-dir DIR` (see above).
 
 Clients and the server must use the same build of a world package (junctions
 are identified by vertex index): the Hello and Welcome carry the package name

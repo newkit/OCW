@@ -39,6 +39,9 @@ pub struct NetStats {
     pub snapshots: u64,
     pub samples_out: u64,
     pub last_snapshot_tick: u64,
+    /// Snapshots dropped because a newer one had arrived (datagrams can be
+    /// reordered on a network link).
+    pub stale_snapshots: u64,
     /// Free ride: path updates received, and own-path corrections among them.
     pub path_updates: u64,
 }
@@ -106,6 +109,9 @@ pub struct ClientCore {
     last_sample_us: u64,
     seq: u32,
     stats: NetStats,
+    /// How old a snapshot is on arrival (half the round trip; 0 for the
+    /// in-process server): the prediction extrapolates it by this much.
+    snapshot_age_s: f64,
     /// The steering mode saved while the menu holds autodrive.
     menu_hold: Option<HeldSteering>,
 }
@@ -143,6 +149,7 @@ impl ClientCore {
             last_sample_us: 0,
             seq: 0,
             stats: NetStats::default(),
+            snapshot_age_s: 0.0,
             menu_hold: None,
         }
     }
@@ -299,6 +306,25 @@ impl ClientCore {
                         fr.net.fingerprint()
                     )));
                 }
+                // Riders are distances along the course: both sides must
+                // ride the same one (graph rides are checked above).
+                if w.free_ride != self.free.is_some()
+                    || (!w.free_ride && w.route_id != self.route.id())
+                {
+                    let theirs = if w.free_ride {
+                        "on a world package's road graph".to_owned()
+                    } else {
+                        format!("route {:?}", w.route_id)
+                    };
+                    let ours = if self.free.is_some() {
+                        "on a world package's road graph".to_owned()
+                    } else {
+                        format!("route {:?}", self.route.id())
+                    };
+                    return Some(Notice::Rejected(format!(
+                        "course mismatch: the server rides {theirs}, this client {ours}; start both with the same --route / --world"
+                    )));
+                }
                 let id = RiderId(w.rider_id);
                 self.rider_id = Some(id);
                 Some(Notice::Joined {
@@ -370,7 +396,18 @@ impl ClientCore {
         }
     }
 
+    /// Sets how old snapshots are on arrival (half the network round trip).
+    pub fn set_snapshot_age(&mut self, age_s: f64) {
+        self.snapshot_age_s = age_s.clamp(0.0, 1.0);
+    }
+
     fn on_snapshot(&mut self, s: &v1::Snapshot, now_s: f64) {
+        // Datagrams may arrive out of order: an older snapshot would move
+        // everyone back in time.
+        if self.stats.snapshots > 0 && s.server_tick <= self.stats.last_snapshot_tick {
+            self.stats.stale_snapshots += 1;
+            return;
+        }
         self.stats.snapshots += 1;
         self.stats.last_snapshot_tick = s.server_tick;
         let mut others = Vec::new();
@@ -379,7 +416,6 @@ impl ClientCore {
             self.names
                 .insert(id, (u.display_name.clone(), f64::from(u.power_w)));
             if Some(id) == self.rider_id {
-                // In-process server: the snapshot is fresh (age ≈ 0).
                 if self.lateral_target.is_none() {
                     // Start steering from the lane the server assigned.
                     self.lateral_target = Some(state.lateral_offset);
@@ -390,7 +426,8 @@ impl ClientCore {
                     Some(p) => p,
                     None => &self.route,
                 };
-                self.predictor.reconcile(track, state, 0.0, power);
+                self.predictor
+                    .reconcile(track, state, self.snapshot_age_s, power);
                 // A snap (teleport, large error) must not be interpolated.
                 if self.predictor.last_error().abs() > ocw_sim::prediction::SNAP_THRESHOLD_M {
                     self.prev_state = self.predictor.state();
@@ -2096,6 +2133,66 @@ mod tests {
         h.receive(&welcome);
         assert!(matches!(h.notices.last(), Some(Notice::Rejected(_))));
         assert_eq!(h.client.rider_id(), None);
+    }
+
+    #[test]
+    fn a_server_on_another_course_is_refused() {
+        // Server on the loop, client on the hills: riding on would place
+        // everyone at the right distance on the wrong road.
+        let server = GameServer::new(Route::test_loop(), ServerConfig::default());
+        let h = Harness::with(
+            server,
+            ClientCore::new(Route::test_hills(), "Hills", RiderProfile::default()),
+        );
+        assert!(
+            matches!(&h.notices[..], [Notice::Rejected(r)] if r.contains("course mismatch") && r.contains("--route")),
+            "{:?}",
+            h.notices
+        );
+        assert_eq!(h.client.rider_id(), None);
+        // A free-ride client on a route server, too.
+        let server = GameServer::new(Route::test_loop(), ServerConfig::default());
+        let net = Arc::new(RoadNetwork::new(grid()));
+        let h = Harness::with(
+            server,
+            ClientCore::free_ride(net, "Free", RiderProfile::default()),
+        );
+        assert!(matches!(&h.notices[..], [Notice::Rejected(r)] if r.contains("course mismatch")));
+    }
+
+    #[test]
+    fn reordered_snapshots_are_dropped() {
+        let mut h = Harness::new(1, false);
+        h.ride(250.0, 2.0);
+        let before = h.client.stats().clone();
+        assert!(before.snapshots >= 10);
+        // A late datagram: an older tick than the last one.
+        let late = encode(&ocw_protocol::server_message(S::Snapshot(v1::Snapshot {
+            server_tick: before.last_snapshot_tick - 5,
+            riders: Vec::new(),
+        })));
+        h.receive(&late);
+        let after = h.client.stats();
+        assert_eq!(after.stale_snapshots, 1);
+        assert_eq!(after.snapshots, before.snapshots);
+        assert_eq!(after.last_snapshot_tick, before.last_snapshot_tick);
+        // The other rider was not dropped by the empty, stale snapshot.
+        assert_eq!(h.client.view(h.time_s, 1.0).len(), 2);
+    }
+
+    #[test]
+    fn snapshot_age_extrapolates_the_reconciled_state() {
+        // Same ride twice; one client believes snapshots are 100 ms old.
+        let mut fresh = Harness::new(0, false);
+        let mut aged = Harness::new(0, false);
+        aged.client.set_snapshot_age(0.1);
+        fresh.ride(300.0, 3.0);
+        aged.ride(300.0, 3.0);
+        let (a, b) = (fresh.client.state(), aged.client.state());
+        assert!(b.distance > a.distance, "{} vs {}", b.distance, a.distance);
+        // Ages are clamped.
+        aged.client.set_snapshot_age(-1.0);
+        assert_eq!(aged.client.snapshot_age_s, 0.0);
     }
 
     #[test]

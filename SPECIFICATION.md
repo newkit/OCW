@@ -1015,6 +1015,18 @@ The trainer and sensors are always connected to the client only. The server neve
 - **Unreliable datagrams** for position updates; **reliable streams** for login, session management, steering intents and important events.
 - The protocol is transport-independent, so a WebTransport endpoint can be added later (§3.5).
 
+**QUIC transport (decided, Phase 5 groundwork).** `ocw-server::net` carries the unchanged encoded `ClientMessage` / `ServerMessage` bytes; `GameServer` stays transport-independent and the desktop's `ClientCore` runs on the same channel interface as with the local server.
+
+- **Port:** UDP **47800** by default (`ocw-server --listen [ADDR]`, `ocw-desktop --server HOST[:PORT]`); no TCP port. ALPN `ocw/1`.
+- **Threads:** the game loop stays one synchronous thread at 50 Hz. `NetServer` owns a small Tokio runtime (two workers) with one task per connection; each tick the loop calls `pump` (connection events and received messages → `GameServer::connect` / `handle` / `disconnect`, replies to the sender) and `broadcast` (the tick's output to every joined client). The client's `NetClient` has its own one-worker runtime; the Bevy side only sends and drains channels.
+- **Streams and datagrams:** one bidirectional stream per connection, opened by the client, with every reliable message as a length-prefixed frame (4-byte little-endian length, at most 1 MiB): Hello / Welcome / Reject, steering, turn and U-turn intents, rejoins, dev commands, path updates. **Snapshots** (server → client) and **sensor samples** (client → server) – both superseded by the next one and sequence-numbered – go as unreliable QUIC datagrams. A message larger than the connection's datagram limit (a big field's snapshot exceeds ~1.2 kB; §6.3 interest management will shrink it) or a peer that accepts no datagrams falls back to the stream. The client sends samples on the stream until the server has answered its Hello, so no sample overtakes it. Datagrams may be reordered: the client drops a snapshot whose `server_tick` is not newer than the last one. Considered and not chosen: everything on one stream (simple, but a lost packet stalls all later snapshots – head-of-line blocking); a new unidirectional stream per snapshot (no head-of-line blocking, but per-stream overhead at 10 Hz × riders and still retransmits stale data).
+- **Flow control:** each connection has a queue of 256 messages; when it is full, snapshots are dropped and a client that cannot take reliable messages any more is disconnected ("too slow") instead of growing memory.
+- **Liveness:** keep-alive every 4 s, idle timeout 15 s; a vanished client's rider is removed after it. The client extrapolates snapshots by half the measured round trip when reconciling its prediction. The 2-minute session hold for reconnects (§6.3) is not implemented yet: a reconnect is a new join.
+- **Shutdown:** `ocw-server` stops on Ctrl+C / SIGTERM, closes every connection with "server shutting down" and waits up to 1 s for acknowledgements; the desktop shows "Disconnected: …" in the HUD and keeps running.
+- **Course check:** the client rides its own course data; besides the world package check (§6.5) it refuses a Welcome whose route (or free-ride mode) differs from its own.
+
+**TLS in development mode (decided; until the backend exists).** TLS 1.3 only, via rustls with the ***ring*** crypto provider (licence Apache-2.0 AND ISC; already in the tree through `ureq`; chosen over the default aws-lc-rs to avoid its CMake/C toolchain on all three platforms). The server uses a self-signed certificate from `rcgen`, new at every start or kept in `--tls-dir DIR` (`cert.der`, `key.der` with mode 0600), and prints its SHA-256 fingerprint. The client must say how to trust it – there is no default: `--server-cert SHA256` pins exactly that certificate (any address), `--insecure-dev` accepts any certificate but is refused for non-loopback addresses (checked when the options are parsed and again when the TLS configuration is built). Both verify the handshake signature, so the server must hold the key. Not yet: certificates from a public CA (WebPKI roots or the platform verifier), OIDC sign-in and per-session tokens (§6.4, §12); until then a reachable server accepts anyone who has its fingerprint. New dependency licences: quinn, quinn-proto, quinn-udp, rcgen MIT OR Apache-2.0; rustls Apache-2.0 OR ISC OR MIT; ring Apache-2.0 AND ISC. They are used only by `ocw-server` (and the desktop through it), never by the wasm crates (§3.5).
+
 ### 6.3 Synchronization
 
 The simulation accounts for differing frame rates, differing network latencies, packet loss, connection drops, reconnection, server-side timestamps, interpolation of other riders and client-side prediction.
@@ -1426,7 +1438,7 @@ Done so far for land use and buildings (§4.6): OSM land-use classes rasterised 
 
 - Accounts.
 - Sessions.
-- Networked server: the existing local-server logic runs remotely.
+- Networked server: the existing local-server logic runs remotely. (Started: QUIC transport, dev-mode TLS, `ocw-server --listen`, `ocw-desktop --server`, §6.2.)
 - Real-time synchronization and interest management (§6.3).
 - Other riders.
 - Group rides (including "follow leader").
