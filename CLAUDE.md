@@ -10,7 +10,7 @@ Open Cycling World (OCW) is a cross-platform (Linux/Windows/macOS) indoor cyclin
 
 Rust comes from rustup; `rust-toolchain.toml` pins the version (Bevy 0.20 needs a newer rustc than Debian ships). If `cargo` resolves to `/usr/bin/cargo`, run `source ~/.cargo/env` first.
 
-`make help` lists the Makefile targets (`deps`, `build`, `test`, `check` = everything CI checks on Linux, `screenshot`); they work without `~/.cargo/bin` on PATH.
+`make help` lists the Makefile targets (`deps`, `build`, `test`, `check` = fmt/clippy/tests/wasm, `smoke` = headless screenshot runs on X11 and Wayland, `video`/`video-wayland` = short recordings); they work without `~/.cargo/bin` on PATH.
 
 ```bash
 cargo test --workspace                                   # all unit tests
@@ -21,7 +21,7 @@ cargo check -p ocw-core -p ocw-sim -p ocw-protocol -p ocw-world --target wasm32-
 cargo run -p ocw-server -- --bots 3 --seconds 10 --fast  # headless server
 ```
 
-To run and screenshot the desktop app headlessly (Xvfb, software Vulkan), use the `run-ocw` skill: `.claude/skills/run-ocw/drive.sh shot /tmp/ocw.png 8 -- --cmd "teleport 1.2"`. The first build compiles Bevy (several minutes).
+To run and screenshot the desktop app headlessly (software Vulkan), use the `run-ocw` skill: `.claude/skills/run-ocw/drive.sh shot /tmp/ocw.png 8 -- --cmd "teleport 1.2"` on X11 (Xvfb), or `shot-wayland` on a headless weston. Linux builds support both window systems; keep both smoke runs green. The first build compiles Bevy (several minutes).
 
 ## Code map
 

@@ -21,7 +21,7 @@ jobs:
           sudo apt-get install -y libasound2-dev libudev-dev libwayland-dev \
             libxkbcommon-dev libxkbcommon-x11-0 libdbus-1-dev \
             libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
-            xvfb xauth mesa-vulkan-drivers
+            xvfb xauth weston mesa-vulkan-drivers
       - name: Install toolchain from rust-toolchain.toml
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
@@ -33,16 +33,15 @@ jobs:
         run: cargo test --workspace
       - name: Headless server smoke run
         run: cargo run -p ocw-server -- --bots 3 --seconds 10 --fast
-      - name: Desktop smoke run (Xvfb, software Vulkan)
-        run: |
-          xvfb-run -a -s "-screen 0 1280x720x24" env WGPU_BACKEND=vulkan \
-            cargo run -p ocw-desktop -- --screenshot smoke.png --screenshot-delay 8 --cmd "net.stats"
-          test -s smoke.png
+      - name: Desktop smoke run on X11 (Xvfb, software Vulkan)
+        run: .claude/skills/run-ocw/drive.sh shot smoke-x11.png 8 -- --cmd "net.stats"
+      - name: Desktop smoke run on Wayland (headless weston, software Vulkan)
+        run: .claude/skills/run-ocw/drive.sh shot-wayland smoke-wayland.png 8 -- --cmd "net.stats"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: linux-smoke-screenshot
-          path: smoke.png
+          name: linux-smoke-screenshots
+          path: smoke-*.*
           if-no-files-found: ignore
 
   # Windows and macOS: build-only checks until their ports start (spec §11.1).

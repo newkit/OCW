@@ -30,6 +30,7 @@ ocw-server = { path = "services/server" }
 # Bevy is pinned to an exact version (spec §3.1). Only ocw-render and apps/desktop may use it.
 bevy = "=0.20.1"
 bevy_egui = "=0.43.1"
+raw-window-handle = "0.6"
 
 prost = "0.14"
 prost-build = "0.14"

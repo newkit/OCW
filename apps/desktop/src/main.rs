@@ -10,11 +10,12 @@ mod automation;
 mod client;
 mod connection;
 mod input;
+mod platform;
 
 use std::path::PathBuf;
 
 use bevy::prelude::*;
-use bevy::window::{PresentMode, WindowResolution};
+use bevy::window::{MonitorSelection, PresentMode, WindowMode, WindowResolution};
 use clap::Parser;
 use ocw_core::SIM_TICK_HZ;
 use ocw_render::console::{ConsoleState, Permission};
@@ -36,6 +37,9 @@ pub struct Args {
     /// Window size as WIDTHxHEIGHT.
     #[arg(long, default_value = "1280x720", value_parser = parse_size)]
     pub window: (u32, u32),
+    /// Borderless fullscreen on the current monitor (ignores --window).
+    #[arg(long)]
+    pub fullscreen: bool,
     /// Console commands to run at startup (in addition to autoexec.cfg).
     #[arg(long = "exec", value_name = "FILE")]
     pub exec: Vec<PathBuf>,
@@ -67,6 +71,11 @@ fn main() -> AppExit {
             title: "Open Cycling World".into(),
             resolution: WindowResolution::new(args.window.0, args.window.1),
             present_mode: PresentMode::AutoVsync,
+            mode: if args.fullscreen {
+                WindowMode::BorderlessFullscreen(MonitorSelection::Current)
+            } else {
+                WindowMode::Windowed
+            },
             ..default()
         }),
         ..default()
@@ -80,6 +89,7 @@ fn main() -> AppExit {
         connection::ConnectionPlugin { route },
         input::InputPlugin,
         automation::AutomationPlugin,
+        platform::PlatformPlugin,
     ))
     .add_systems(Startup, startup_commands);
     app.run()

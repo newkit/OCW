@@ -10,16 +10,19 @@ WASM_CRATES := -p ocw-core -p ocw-sim -p ocw-protocol -p ocw-world
 APT_PACKAGES := build-essential pkg-config curl \
 	libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-0 \
 	libdbus-1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
-	xvfb xauth mesa-vulkan-drivers
+	xvfb xauth weston cage wf-recorder ffmpeg mesa-vulkan-drivers
 SCREENSHOT ?= /tmp/ocw.png
+SCREENSHOT_WAYLAND ?= /tmp/ocw-wayland.png
+VIDEO ?= /tmp/ocw.mp4
+VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 
 .DEFAULT_GOAL := help
 .PHONY: help deps deps-system deps-rust build release test lint fmt fmt-check \
-	clippy wasm check run server screenshot clean
+	clippy wasm check run server screenshot screenshot-wayland smoke video video-wayland clean
 
 help: ## Show this help
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | \
-		awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
+		awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-19s\033[0m %s\n", $$1, $$2}'
 
 deps: deps-system deps-rust ## Install system packages (sudo) and the Rust toolchain
 
@@ -57,7 +60,7 @@ lint: fmt-check clippy ## fmt-check + clippy
 wasm: ## Check that the core crates build for wasm32-unknown-unknown
 	$(CARGO) check $(WASM_CRATES) --target wasm32-unknown-unknown
 
-check: lint test wasm ## Everything CI checks on Linux (except the screenshot smoke test)
+check: lint test wasm ## fmt, clippy, tests, wasm (CI also runs the smoke tests)
 
 run: ## Start the desktop client (needs a display)
 	$(CARGO) run -p ocw-desktop
@@ -65,8 +68,19 @@ run: ## Start the desktop client (needs a display)
 server: ## Run the headless server for 10 s with 3 test riders
 	$(CARGO) run -p ocw-server -- --bots 3 --seconds 10 --fast
 
-screenshot: ## Headless smoke test under Xvfb; writes $(SCREENSHOT)
+screenshot: ## Headless smoke test on X11 (Xvfb); writes $(SCREENSHOT)
 	.claude/skills/run-ocw/drive.sh shot $(SCREENSHOT)
+
+screenshot-wayland: ## Headless smoke test on Wayland (weston); writes $(SCREENSHOT_WAYLAND)
+	.claude/skills/run-ocw/drive.sh shot-wayland $(SCREENSHOT_WAYLAND)
+
+smoke: screenshot screenshot-wayland ## Both desktop smoke tests (X11 and Wayland)
+
+video: ## Record a 6 s headless test ride (X11, ffmpeg); writes $(VIDEO)
+	.claude/skills/run-ocw/drive.sh video $(VIDEO)
+
+video-wayland: ## Record a 6 s headless test ride on Wayland (cage, wf-recorder); writes $(VIDEO_WAYLAND)
+	.claude/skills/run-ocw/drive.sh video-wayland $(VIDEO_WAYLAND)
 
 clean: ## Remove build artefacts
 	$(CARGO) clean
