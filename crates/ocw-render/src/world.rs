@@ -16,6 +16,8 @@ pub struct WorldPlugin;
 impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(ClearColor(Color::srgb(0.62, 0.78, 0.95)))
+            // 4096² per cascade (default 2048²): sharper, less shimmering shadows.
+            .insert_resource(bevy::light::DirectionalLightShadowMap { size: 4096 })
             .insert_resource(GlobalAmbientLight {
                 color: Color::WHITE,
                 brightness: 600.0,
@@ -41,13 +43,21 @@ fn spawn_world(
         DirectionalLight {
             illuminance: 12_000.0,
             shadow_maps_enabled: true,
+            // A bit more bias than the default: the coarse terrain triangles
+            // otherwise shadow themselves in flickering stripes.
+            shadow_depth_bias: 0.04,
+            shadow_normal_bias: 2.5,
             ..default()
         },
         Transform::from_xyz(300.0, 600.0, 200.0).looking_at(Vec3::ZERO, Vec3::Y),
+        // Four cascades over 250 m with generous overlap: more shadow-map
+        // texels per metre near the rider, softer cascade transitions.
         CascadeShadowConfigBuilder {
-            maximum_distance: 400.0,
-            first_cascade_far_bound: 30.0,
-            ..default()
+            num_cascades: 4,
+            minimum_distance: 0.1,
+            maximum_distance: 250.0,
+            first_cascade_far_bound: 20.0,
+            overlap_proportion: 0.3,
         }
         .build(),
     ));

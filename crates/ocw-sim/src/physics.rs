@@ -30,6 +30,8 @@ pub struct Environment {
     pub headwind: f64,
     /// Air density in kg/m³.
     pub air_density: f64,
+    /// Factor on the aerodynamic drag from drafting (1.0 = none, see `drafting`).
+    pub drag_factor: f64,
 }
 
 impl Environment {
@@ -39,6 +41,15 @@ impl Environment {
             grade,
             headwind: 0.0,
             air_density: AIR_DENSITY,
+            drag_factor: 1.0,
+        }
+    }
+
+    /// The same environment with a drafting drag factor.
+    pub fn with_drag_factor(self, drag_factor: f64) -> Self {
+        Self {
+            drag_factor,
+            ..self
         }
     }
 }
@@ -69,7 +80,7 @@ pub fn resistance(profile: &RiderProfile, env: &Environment, speed: f64) -> Resi
         } else {
             0.0
         },
-        aero: 0.5 * env.air_density * profile.cda_m2 * air * air.abs(),
+        aero: 0.5 * env.air_density * profile.cda_m2 * env.drag_factor * air * air.abs(),
     }
 }
 
@@ -156,5 +167,20 @@ mod tests {
     #[test]
     fn starts_from_standstill() {
         assert!(ride(150.0, 0.0, 5.0).speed > 3.0);
+    }
+
+    #[test]
+    fn drafting_is_faster_at_the_same_power() {
+        let profile = RiderProfile::default();
+        let speed_after = |factor: f64| {
+            let mut s = RiderState::default();
+            let env = Environment::with_grade(0.0).with_drag_factor(factor);
+            for _ in 0..(120 * 50) {
+                step(&mut s, &profile, 200.0, &env, SIM_DT);
+            }
+            s.speed
+        };
+        let (alone, drafting) = (speed_after(1.0), speed_after(0.7));
+        assert!(drafting > alone * 1.08, "{alone} vs {drafting}");
     }
 }

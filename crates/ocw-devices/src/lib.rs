@@ -55,6 +55,9 @@ pub struct SimulationParameters {
     pub crr: f64,
     /// Wind resistance coefficient 0.5 · ρ · CdA, in kg/m.
     pub cw_kg_per_m: f64,
+    /// Rider + bike mass in kg (Wahoo trainers simulate inertia with it;
+    /// FTMS has no field for it).
+    pub mass_kg: f64,
 }
 
 /// The app side of a running backend.

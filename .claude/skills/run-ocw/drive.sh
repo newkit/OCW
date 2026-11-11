@@ -100,7 +100,11 @@ encode_video() {
 
 # Starts a headless weston; sets $runtime and $socket. Stopped on exit.
 start_weston() {
-  local logfile=$1 renderer=${2:-pixman}
+  # GPU renderer when the machine has a GPU render node: a Vulkan app on a
+  # real GPU cannot present to a software-only (pixman) weston.
+  local default=pixman
+  [ -r /dev/dri/renderD128 ] && default=gl
+  local logfile=$1 renderer=${2:-${WESTON_RENDERER:-$default}}
   command -v weston >/dev/null || { echo "weston not installed (apt-get install weston)" >&2; exit 1; }
   runtime=${XDG_RUNTIME_DIR:-}
   if [ -z "$runtime" ] || [ ! -w "$runtime" ]; then

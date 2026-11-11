@@ -4,7 +4,8 @@ use bevy::prelude::*;
 use ocw_devices::DeviceCommand;
 use ocw_render::console::ConsoleState;
 
-use crate::connection::{ClientState, Link};
+use crate::connection::ClientState;
+use crate::devices::Devices;
 
 pub struct InputPlugin;
 
@@ -18,7 +19,7 @@ impl Plugin for InputPlugin {
 fn adjust_virtual_power(
     keys: Res<ButtonInput<KeyCode>>,
     console: Res<ConsoleState>,
-    link: Res<Link>,
+    devices: Res<Devices>,
     client: Res<ClientState>,
 ) {
     if console.is_open() {
@@ -32,5 +33,5 @@ fn adjust_virtual_power(
         return;
     };
     let watts = (client.0.power_w() + delta).clamp(0.0, 2500.0);
-    link.device_command(DeviceCommand::SetVirtualPower(watts));
+    devices.command_all(DeviceCommand::SetVirtualPower(watts));
 }

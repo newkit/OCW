@@ -62,6 +62,7 @@ pub async fn run<L: GattLink>(
         None
     };
     let mut protocol = TrainerProtocol::new(&available, features);
+    let control = protocol.control_characteristic();
     tracing::info!(kind = protocol.describe(), "BLE device ready");
     let mut stream = link.notifications().await?;
     for c in protocol.subscriptions() {
@@ -69,7 +70,7 @@ pub async fn run<L: GattLink>(
     }
     if let Some(cmd) = *last_target {
         let out = protocol.on_command(cmd, started.elapsed());
-        apply(link, events, out).await;
+        apply(link, events, out, control).await;
     }
 
     let mut tick = tokio::time::interval(TICK);
@@ -78,8 +79,11 @@ pub async fn run<L: GattLink>(
         tokio::select! {
             n = stream.next() => match n {
                 Some((c, value)) => {
+                    if c == control {
+                        tracing::debug!(?value, "control point response");
+                    }
                     let out = protocol.on_notification(c, &value, started.elapsed());
-                    apply(link, events, out).await;
+                    apply(link, events, out, control).await;
                 }
                 None => return Ok(RunEnd::Disconnected),
             },
@@ -94,13 +98,13 @@ pub async fn run<L: GattLink>(
                                 *last_target = Some(cmd);
                             }
                             let out = protocol.on_command(cmd, started.elapsed());
-                            apply(link, events, out).await;
+                            apply(link, events, out, control).await;
                         }
                         Err(TryRecvError::Empty) => break,
                     }
                 }
                 let out = protocol.on_tick(started.elapsed());
-                apply(link, events, out).await;
+                apply(link, events, out, control).await;
                 if last_check.elapsed() >= CONNECTION_CHECK {
                     last_check = Instant::now();
                     if !link.is_connected().await {
@@ -112,7 +116,7 @@ pub async fn run<L: GattLink>(
     }
 }
 
-async fn apply<L: GattLink>(link: &L, events: &Sender<DeviceEvent>, out: Output) {
+async fn apply<L: GattLink>(link: &L, events: &Sender<DeviceEvent>, out: Output, control: u16) {
     for w in out.warnings {
         tracing::warn!("{w}");
     }
@@ -121,10 +125,8 @@ async fn apply<L: GattLink>(link: &L, events: &Sender<DeviceEvent>, out: Output)
         let _ = events.send(e);
     }
     for value in out.control_writes {
-        if let Err(e) = link
-            .write(uuids::FITNESS_MACHINE_CONTROL_POINT, &value)
-            .await
-        {
+        tracing::debug!(?value, "control point write");
+        if let Err(e) = link.write(control, &value).await {
             tracing::warn!("control point write failed: {e}");
         }
     }
@@ -177,6 +179,18 @@ pub(crate) mod mock {
             }
         }
 
+        /// An older Wahoo KICKR: Cycling Power plus Wahoo's control point, no FTMS.
+        pub fn wahoo_kickr() -> Self {
+            Self {
+                available: vec![
+                    uuids::CYCLING_POWER_MEASUREMENT,
+                    uuids::WAHOO_TRAINER_CONTROL,
+                ],
+                features: Vec::new(),
+                ..Self::ftms()
+            }
+        }
+
         /// A sender to inject notifications from the test.
         pub fn notifier(&self) -> UnboundedSender<Notification> {
             self.tx.clone()
@@ -198,6 +212,9 @@ pub(crate) mod mock {
             self.writes.borrow_mut().push((c, value.to_vec()));
             if self.auto_respond && c == uuids::FITNESS_MACHINE_CONTROL_POINT {
                 let _ = self.tx.unbounded_send((c, vec![0x80, value[0], 0x01]));
+            }
+            if self.auto_respond && c == uuids::WAHOO_TRAINER_CONTROL {
+                let _ = self.tx.unbounded_send((c, vec![0x01, value[0], 0x01]));
             }
             Ok(())
         }
@@ -234,6 +251,7 @@ mod tests {
             wind_speed_mps: 0.0,
             crr: 0.004,
             cw_kg_per_m: 0.2,
+            mass_kg: 83.0,
         })
     }
 
@@ -335,5 +353,40 @@ mod tests {
         let (ev_tx, _ev_rx) = mpsc::channel();
         let end = rt().block_on(run(&trainer, &cmd_rx, &ev_tx, Instant::now(), &mut None));
         assert_eq!(end.unwrap(), RunEnd::Shutdown);
+    }
+
+    /// The Wahoo control path end to end against a mock KICKR (no FTMS).
+    #[test]
+    fn mock_wahoo_kickr_end_to_end() {
+        let trainer = MockTrainer::wahoo_kickr();
+        let notify = trainer.notifier();
+        let (cmd_tx, cmd_rx) = mpsc::channel();
+        let (ev_tx, ev_rx) = mpsc::channel();
+        cmd_tx.send(sim(0.03)).unwrap();
+        let mut last = None;
+        let end = rt().block_on(async {
+            let run = run(&trainer, &cmd_rx, &ev_tx, Instant::now(), &mut last);
+            let script = async {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                // 180 W from the Cycling Power service.
+                notify
+                    .unbounded_send((uuids::CYCLING_POWER_MEASUREMENT, vec![0, 0, 0xB4, 0]))
+                    .unwrap();
+                cmd_tx.send(DeviceCommand::SetTargetPower(150.0)).unwrap();
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                cmd_tx.send(DeviceCommand::Shutdown).unwrap();
+            };
+            let (end, ()) = tokio::join!(run, script);
+            end
+        });
+        assert_eq!(end.unwrap(), RunEnd::Shutdown);
+        let writes = trainer.writes.borrow();
+        assert!(writes.iter().all(|w| w.0 == uuids::WAHOO_TRAINER_CONTROL));
+        let ops: Vec<u8> = writes.iter().map(|w| w.1[0]).collect();
+        assert_eq!(ops, vec![0x20, 0x43, 0x46, 0x42]);
+        assert!(matches!(
+            ev_rx.try_iter().next(),
+            Some(DeviceEvent::Power { watts, .. }) if watts == 180.0
+        ));
     }
 }

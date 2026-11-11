@@ -9,12 +9,14 @@
 //! - [`csc`]: Cycling Speed and Cadence Measurement
 //! - [`heart_rate`]: Heart Rate Measurement
 //! - [`cadence`]: cadence from cumulative crank revolutions
+//! - [`wahoo`]: Wahoo's proprietary trainer control (KICKRs without FTMS)
 
 pub mod cadence;
 pub mod csc;
 pub mod cycling_power;
 pub mod ftms;
 pub mod heart_rate;
+pub mod wahoo;
 
 /// Bluetooth SIG assigned numbers (16-bit UUIDs) used by OCW.
 pub mod uuids {
@@ -33,6 +35,9 @@ pub mod uuids {
     pub const CYCLING_POWER_FEATURE: u16 = 0x2A65;
     pub const CSC_MEASUREMENT: u16 = 0x2A5B;
     pub const HEART_RATE_MEASUREMENT: u16 = 0x2A37;
+    /// Private stand-in number for Wahoo's 128-bit trainer control point
+    /// ([`super::wahoo::CONTROL_POINT_UUID`]); not a Bluetooth SIG number.
+    pub const WAHOO_TRAINER_CONTROL: u16 = 0xE005;
 
     /// The full 128-bit UUID of a 16-bit assigned number, as a string
     /// (`0000xxxx-0000-1000-8000-00805f9b34fb`).

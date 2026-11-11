@@ -12,17 +12,22 @@
 //! - Cadence: FTMS cadence if present, otherwise crank revolutions (Cycling
 //!   Power or CSC).
 //! - Heart rate: Heart Rate Service, otherwise the FTMS heart-rate field.
-//! - Control: the first SIM/ERG command requests control; once granted the
-//!   trainer is started and the latest command is sent. Unanswered control
-//!   requests are retried, then given up.
+//! - Control (FTMS): the first SIM/ERG command requests control; once granted
+//!   the trainer is started and the latest command is sent. Unanswered
+//!   control requests are retried, then given up.
+//! - Control (Wahoo, trainers without FTMS): unlock once, then SIM mode
+//!   parameters (mass, crr, cw; again after ERG or when they change) and the
+//!   gradient, or the ERG target.
 
 use std::time::Duration;
 
 use crate::gatt::cadence::{CadenceCalculator, CrankData};
 use crate::gatt::ftms::{self, ControlRequest, ControlResponse, Features, IndoorBikeData};
-use crate::gatt::{csc, cycling_power, heart_rate, uuids};
+use crate::gatt::{csc, cycling_power, heart_rate, uuids, wahoo};
 use crate::{DeviceCommand, DeviceEvent};
 
+/// How long a control write may stay unanswered before the next one is sent.
+pub const WRITE_TIMEOUT: Duration = Duration::from_millis(1500);
 /// How long to wait for the answer to a control request before retrying.
 pub const CONTROL_TIMEOUT: Duration = Duration::from_secs(3);
 /// Control requests sent before giving up.
@@ -61,7 +66,15 @@ pub enum ControlState {
     Refused,
 }
 
-#[derive(Debug, Clone)]
+/// State of the Wahoo control path.
+#[derive(Debug, Clone, Default)]
+struct WahooState {
+    unlocked: bool,
+    /// SIM mode parameters last sent (mass, crr, cw); `None` = not in SIM mode.
+    sim: Option<(f64, f64, f64)>,
+    wind_mps: f64,
+}
+
 pub struct TrainerProtocol {
     available: Vec<u16>,
     features: Option<Features>,
@@ -74,14 +87,27 @@ pub struct TrainerProtocol {
     ftms_reports_cadence: bool,
     cadence: CadenceCalculator,
     crank_cadence: Option<f64>,
+    /// Set when the trainer is controlled through Wahoo's control point.
+    wahoo: Option<WahooState>,
+    /// Control writes waiting to be sent: trainers handle one control
+    /// procedure at a time (a second write before the answer fails).
+    queue: std::collections::VecDeque<Vec<u8>>,
+    /// Op code and send time of the write awaiting its answer.
+    in_flight: Option<(u8, Duration)>,
 }
 
 impl TrainerProtocol {
     /// `available`: the SIG characteristic numbers the device offers;
     /// `features`: the parsed Fitness Machine Feature, if readable.
     pub fn new(available: &[u16], features: Option<Features>) -> Self {
-        let control = if available.contains(&uuids::FITNESS_MACHINE_CONTROL_POINT) {
+        let ftms = available.contains(&uuids::FITNESS_MACHINE_CONTROL_POINT);
+        // FTMS is preferred; Wahoo's own control point only without it.
+        let wahoo =
+            (!ftms && available.contains(&uuids::WAHOO_TRAINER_CONTROL)).then(WahooState::default);
+        let control = if ftms {
             ControlState::Idle
+        } else if wahoo.is_some() {
+            ControlState::Granted
         } else {
             ControlState::Unavailable
         };
@@ -95,6 +121,9 @@ impl TrainerProtocol {
             ftms_reports_cadence: false,
             cadence: CadenceCalculator::default(),
             crank_cadence: None,
+            wahoo,
+            queue: Default::default(),
+            in_flight: None,
         }
     }
 
@@ -110,6 +139,7 @@ impl TrainerProtocol {
             uuids::CSC_MEASUREMENT,
             uuids::HEART_RATE_MEASUREMENT,
             uuids::FITNESS_MACHINE_CONTROL_POINT,
+            uuids::WAHOO_TRAINER_CONTROL,
         ]
         .into_iter()
         .filter(|c| self.available.contains(c))
@@ -117,8 +147,66 @@ impl TrainerProtocol {
     }
 
     /// Whether this device is a controllable trainer, a power meter or a sensor.
+    /// Moves new control writes into the queue and releases the next one
+    /// when nothing is awaiting an answer. A newer target (gradient, power)
+    /// replaces a queued one with the same op code.
+    fn flush(&mut self, out: &mut Output, now: Duration) {
+        let replaceable: &[u8] = if self.wahoo.is_some() {
+            &[
+                wahoo::op::SET_ERG,
+                wahoo::op::SET_GRADE,
+                wahoo::op::SET_WIND_SPEED,
+            ]
+        } else {
+            &[
+                ftms::op::SET_TARGET_RESISTANCE,
+                ftms::op::SET_TARGET_POWER,
+                ftms::op::SET_INDOOR_BIKE_SIMULATION,
+            ]
+        };
+        for w in out.control_writes.drain(..) {
+            match self
+                .queue
+                .iter_mut()
+                .find(|q| q[0] == w[0] && replaceable.contains(&w[0]))
+            {
+                Some(q) => *q = w,
+                None => self.queue.push_back(w),
+            }
+        }
+        if let Some((_, since)) = self.in_flight
+            && now.saturating_sub(since) >= WRITE_TIMEOUT
+        {
+            out.warn("control write not answered in time");
+            self.in_flight = None;
+        }
+        if self.in_flight.is_none()
+            && let Some(w) = self.queue.pop_front()
+        {
+            self.in_flight = Some((w[0], now));
+            out.control_writes.push(w);
+        }
+    }
+
+    fn answered(&mut self, op_code: u8) {
+        if self.in_flight.is_some_and(|(op, _)| op == op_code) {
+            self.in_flight = None;
+        }
+    }
+
+    /// The characteristic that `Output::control_writes` go to.
+    pub fn control_characteristic(&self) -> u16 {
+        if self.wahoo.is_some() {
+            uuids::WAHOO_TRAINER_CONTROL
+        } else {
+            uuids::FITNESS_MACHINE_CONTROL_POINT
+        }
+    }
+
     pub fn describe(&self) -> &'static str {
-        if self.control != ControlState::Unavailable {
+        if self.wahoo.is_some() {
+            "smart trainer (Wahoo control)"
+        } else if self.control != ControlState::Unavailable {
             "smart trainer (FTMS)"
         } else if self.available.contains(&uuids::INDOOR_BIKE_DATA) {
             "trainer (FTMS, read-only)"
@@ -196,12 +284,25 @@ impl TrainerProtocol {
                 }),
                 Err(e) => out.warn(format!("heart rate measurement: {e}")),
             },
+            uuids::WAHOO_TRAINER_CONTROL => match wahoo::Response::parse(value) {
+                Ok(r) => {
+                    self.answered(r.op_code);
+                    if !r.is_ok() {
+                        out.warn(format!(
+                            "Wahoo trainer rejected request 0x{:02x} (result {})",
+                            r.op_code, r.result
+                        ));
+                    }
+                }
+                Err(e) => out.warn(format!("Wahoo control point: {e}")),
+            },
             uuids::FITNESS_MACHINE_CONTROL_POINT => match ControlResponse::parse(value) {
                 Ok(r) => self.on_control_response(&r, &mut out),
                 Err(e) => out.warn(format!("control point: {e}")),
             },
             _ => {}
         }
+        self.flush(&mut out, now);
         out
     }
 
@@ -220,6 +321,7 @@ impl TrainerProtocol {
     }
 
     fn on_control_response(&mut self, r: &ControlResponse, out: &mut Output) {
+        self.answered(r.request_op_code);
         if self.awaiting == Some(r.request_op_code) {
             self.awaiting = None;
         }
@@ -241,8 +343,12 @@ impl TrainerProtocol {
                 r.request_op_code, r.result
             ));
             if r.result == ftms::ResultCode::ControlNotPermitted {
-                // The trainer lost our control (e.g. another app took it).
+                // The trainer lost our control (e.g. another app took it):
+                // queued targets are stale; the next command requests
+                // control first.
                 self.control = ControlState::Idle;
+                self.queue.clear();
+                self.in_flight = None;
             }
         }
     }
@@ -271,6 +377,11 @@ impl TrainerProtocol {
     /// An app command (SIM / ERG target).
     pub fn on_command(&mut self, cmd: DeviceCommand, now: Duration) -> Output {
         let mut out = Output::default();
+        if let Some(w) = self.wahoo.as_mut() {
+            wahoo_command(w, cmd, &mut out);
+            self.flush(&mut out, now);
+            return out;
+        }
         let supported = match (cmd, self.features) {
             (DeviceCommand::SetSimulation(_), Some(f)) => f.supports_simulation(),
             (DeviceCommand::SetTargetPower(_), Some(f)) => f.supports_power_target(),
@@ -295,6 +406,7 @@ impl TrainerProtocol {
                 self.send(ControlRequest::RequestControl, &mut out);
             }
         }
+        self.flush(&mut out, now);
         out
     }
 
@@ -316,7 +428,46 @@ impl TrainerProtocol {
                 self.send(ControlRequest::RequestControl, &mut out);
             }
         }
+        self.flush(&mut out, now);
         out
+    }
+}
+
+/// Wahoo control path: unlock once, SIM mode when needed, then the target.
+fn wahoo_command(w: &mut WahooState, cmd: DeviceCommand, out: &mut Output) {
+    let mut send = |r: wahoo::Request| out.control_writes.push(r.encode());
+    if !matches!(
+        cmd,
+        DeviceCommand::SetSimulation(_) | DeviceCommand::SetTargetPower(_)
+    ) {
+        return;
+    }
+    if !w.unlocked {
+        send(wahoo::Request::Unlock);
+        w.unlocked = true;
+    }
+    match cmd {
+        DeviceCommand::SetSimulation(p) => {
+            let params = (p.mass_kg, p.crr, p.cw_kg_per_m);
+            if w.sim != Some(params) {
+                send(wahoo::Request::SimMode {
+                    mass_kg: p.mass_kg,
+                    crr: p.crr,
+                    cw_kg_per_m: p.cw_kg_per_m,
+                });
+                w.sim = Some(params);
+            }
+            if p.wind_speed_mps != w.wind_mps {
+                send(wahoo::Request::WindSpeed(p.wind_speed_mps));
+                w.wind_mps = p.wind_speed_mps;
+            }
+            send(wahoo::Request::Grade(p.grade));
+        }
+        DeviceCommand::SetTargetPower(watts) => {
+            send(wahoo::Request::Erg(watts));
+            w.sim = None; // leaving SIM: send the SIM parameters again later
+        }
+        _ => {}
     }
 }
 
@@ -342,6 +493,7 @@ mod tests {
             wind_speed_mps: 0.0,
             crr: 0.004,
             cw_kg_per_m: 0.51,
+            mass_kg: 83.0,
         })
     }
 
@@ -453,15 +605,20 @@ mod tests {
         assert!(p.on_command(sim(0.03), s(0.5)).control_writes.is_empty());
         let out = p.on_notification(uuids::FITNESS_MACHINE_CONTROL_POINT, &ok(0x00), s(0.6));
         assert_eq!(p.control_state(), ControlState::Granted);
+        // One procedure at a time: start first, the SIM target after its answer.
+        assert_eq!(out.control_writes, vec![vec![ftms::op::START_OR_RESUME]]);
+        let out = p.on_notification(uuids::FITNESS_MACHINE_CONTROL_POINT, &ok(0x07), s(0.7));
         assert_eq!(
             out.control_writes,
-            vec![
-                vec![ftms::op::START_OR_RESUME],
-                vec![0x11, 0x00, 0x00, 0x2C, 0x01, 0x28, 0x33] // 3 %
-            ]
+            vec![vec![0x11, 0x00, 0x00, 0x2C, 0x01, 0x28, 0x33]] // 3 %
         );
-        // Granted: further commands go out directly.
-        let out = p.on_command(DeviceCommand::SetTargetPower(200.0), s(1.0));
+        // Still waiting for the SIM answer: ERG is queued, sent after it.
+        assert!(
+            p.on_command(DeviceCommand::SetTargetPower(200.0), s(1.0))
+                .control_writes
+                .is_empty()
+        );
+        let out = p.on_notification(uuids::FITNESS_MACHINE_CONTROL_POINT, &ok(0x11), s(1.1));
         assert_eq!(out.control_writes, vec![vec![0x05, 0xC8, 0x00]]);
     }
 
@@ -554,5 +711,103 @@ mod tests {
                 timestamp: s(0.1)
             }]
         );
+    }
+
+    const WAHOO_KICKR: [u16; 2] = [
+        uuids::CYCLING_POWER_MEASUREMENT,
+        uuids::WAHOO_TRAINER_CONTROL,
+    ];
+
+    #[test]
+    fn wahoo_trainer_without_ftms() {
+        let mut p = TrainerProtocol::new(&WAHOO_KICKR, None);
+        assert_eq!(p.describe(), "smart trainer (Wahoo control)");
+        assert_eq!(p.control_characteristic(), uuids::WAHOO_TRAINER_CONTROL);
+        assert_eq!(
+            p.subscriptions(),
+            vec![
+                uuids::CYCLING_POWER_MEASUREMENT,
+                uuids::WAHOO_TRAINER_CONTROL
+            ]
+        );
+        let reply = |p: &mut TrainerProtocol, op: u8, result: u8, t: f64| {
+            p.on_notification(uuids::WAHOO_TRAINER_CONTROL, &[0x01, op, result], s(t))
+        };
+        // First SIM command: unlock, SIM mode, gradient, one after the other.
+        assert_eq!(
+            p.on_command(sim(0.0), s(0.0)).control_writes,
+            vec![vec![0x20, 0xEE, 0xFC]]
+        );
+        // Unlock answered with result 2 (not needed) is fine.
+        let out = reply(&mut p, 0x20, 2, 0.1);
+        assert!(out.warnings.is_empty());
+        assert_eq!(
+            out.control_writes,
+            vec![vec![0x43, 0x6C, 0x20, 0x28, 0x00, 0xFE, 0x01]] // 83 kg, 0.004, 0.51
+        );
+        assert_eq!(
+            reply(&mut p, 0x43, 1, 0.2).control_writes,
+            vec![vec![0x46, 0x00, 0x80]]
+        );
+        assert!(reply(&mut p, 0x46, 1, 0.3).control_writes.is_empty());
+        // Next gradient only.
+        assert_eq!(
+            p.on_command(sim(0.05), s(1.0)).control_writes,
+            vec![vec![0x46, 0x66, 0x86]]
+        );
+        reply(&mut p, 0x46, 1, 1.1);
+        // ERG, then back to SIM: the SIM parameters are sent again.
+        assert_eq!(
+            p.on_command(DeviceCommand::SetTargetPower(120.0), s(2.0))
+                .control_writes,
+            vec![vec![0x42, 0x78, 0x00]]
+        );
+        reply(&mut p, 0x42, 1, 2.1);
+        assert_eq!(p.on_command(sim(0.0), s(3.0)).control_writes[0][0], 0x43);
+        assert_eq!(reply(&mut p, 0x43, 1, 3.1).control_writes[0][0], 0x46);
+        // A rejected request is reported.
+        assert_eq!(reply(&mut p, 0x46, 3, 3.2).warnings.len(), 1);
+    }
+
+    /// Gradients arriving faster than the trainer answers: only the newest
+    /// queued one is sent (recorded failure: a second write before the
+    /// answer is rejected with ATT error 0x80).
+    #[test]
+    fn queued_targets_are_replaced_and_unanswered_writes_time_out() {
+        let mut p = TrainerProtocol::new(&WAHOO_KICKR, None);
+        p.on_command(sim(0.0), s(0.0)); // unlock in flight
+        for (i, g) in [0.01, 0.02, 0.03].iter().enumerate() {
+            assert!(
+                p.on_command(sim(*g), s(0.1 + i as f64 * 0.1))
+                    .control_writes
+                    .is_empty()
+            );
+        }
+        // Queue: SIM mode, then one gradient (3 %), not three.
+        let out = p.on_notification(uuids::WAHOO_TRAINER_CONTROL, &[1, 0x20, 1], s(0.5));
+        assert_eq!(out.control_writes[0][0], 0x43);
+        let out = p.on_notification(uuids::WAHOO_TRAINER_CONTROL, &[1, 0x43, 1, 0], s(0.6));
+        assert_eq!(
+            out.control_writes,
+            vec![wahoo::Request::Grade(0.03).encode()]
+        );
+        // No answer: after the timeout the next write goes out anyway.
+        p.on_command(DeviceCommand::SetTargetPower(150.0), s(0.7));
+        assert!(p.on_tick(s(1.0)).control_writes.is_empty());
+        let out = p.on_tick(s(0.6 + WRITE_TIMEOUT.as_secs_f64()));
+        assert_eq!(out.control_writes, vec![vec![0x42, 0x96, 0x00]]);
+        assert!(!out.warnings.is_empty());
+    }
+
+    #[test]
+    fn ftms_is_preferred_over_wahoo_control() {
+        let mut both = TRAINER.to_vec();
+        both.push(uuids::WAHOO_TRAINER_CONTROL);
+        let p = TrainerProtocol::new(&both, None);
+        assert_eq!(
+            p.control_characteristic(),
+            uuids::FITNESS_MACHINE_CONTROL_POINT
+        );
+        assert_eq!(p.describe(), "smart trainer (FTMS)");
     }
 }

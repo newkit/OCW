@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use ocw_core::{RiderId, RiderProfile, SIM_DT};
 use ocw_world::Route;
 
+use crate::drafting;
 use crate::physics::{self, Environment, RiderState};
 
 /// Latest sensor input of a rider.
@@ -161,13 +162,27 @@ impl Session {
     pub fn step(&mut self) {
         self.tick += 1;
         let t = self.time_s();
+        // Drafting uses everyone's position at the start of the tick.
+        let positions: Vec<(RiderId, f64, f64)> = self
+            .riders
+            .iter()
+            .map(|(id, r)| (*id, r.state.distance, r.state.lateral_offset))
+            .collect();
         for (id, rider) in &mut self.riders {
+            let drag = drafting::drag_factor(
+                (rider.state.distance, rider.state.lateral_offset),
+                positions
+                    .iter()
+                    .filter(|(other, _, _)| other != id)
+                    .map(|(_, d, l)| (*d, *l)),
+            );
             if let Control::Bot { base_power_w } = rider.control {
                 // Deterministic variation so bots don't ride in perfect lockstep.
                 let phase = id.0 as f64 * 1.7;
                 rider.input.power_w = base_power_w * (1.0 + 0.1 * (t * 0.2 + phase).sin());
             }
-            let env = Environment::with_grade(self.route.sample(rider.state.distance).grade);
+            let env = Environment::with_grade(self.route.sample(rider.state.distance).grade)
+                .with_drag_factor(drag);
             physics::step(
                 &mut rider.state,
                 &rider.profile,
@@ -238,5 +253,32 @@ mod tests {
             })
             .collect();
         assert_eq!(offsets, vec![0.0, -1.2, 1.2]);
+    }
+
+    #[test]
+    fn rider_behind_catches_up_by_drafting() {
+        let mut s = Session::new(Route::test_loop());
+        let leader = s.add_rider("Leader", RiderProfile::default());
+        let follower = s.add_rider("Follower", RiderProfile::default());
+        s.teleport(leader, 1005.0);
+        s.teleport(follower, 1000.0);
+        for (seq, id) in [(1, leader), (1, follower)] {
+            s.apply_input(
+                id,
+                seq,
+                RiderInput {
+                    power_w: 250.0,
+                    cadence_rpm: None,
+                    heart_rate_bpm: None,
+                },
+            );
+        }
+        for _ in 0..(60 * 50) {
+            s.step();
+        }
+        let gap =
+            s.rider_state(leader).unwrap().distance - s.rider_state(follower).unwrap().distance;
+        // Same power: without drafting the gap would stay at 5 m.
+        assert!(gap < 4.5, "gap {gap}");
     }
 }

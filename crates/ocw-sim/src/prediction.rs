@@ -22,6 +22,8 @@ pub struct Predictor {
     correction_rate: f64,
     /// Distance error measured at the last reconciliation (for diagnostics).
     last_error: f64,
+    /// Drafting factor on the drag, predicted by the client (1.0 = none).
+    drag_factor: f64,
 }
 
 impl Predictor {
@@ -32,6 +34,7 @@ impl Predictor {
             pending_correction: 0.0,
             correction_rate: 0.0,
             last_error: 0.0,
+            drag_factor: 1.0,
         }
     }
 
@@ -44,9 +47,15 @@ impl Predictor {
         self.last_error
     }
 
+    /// Sets the predicted drafting factor (from the positions of others).
+    pub fn set_drag_factor(&mut self, drag_factor: f64) {
+        self.drag_factor = drag_factor;
+    }
+
     /// Advances the prediction by one physics tick with the current power.
     pub fn step(&mut self, route: &Route, power_w: f64) {
-        let env = Environment::with_grade(route.sample(self.state.distance).grade);
+        let env = Environment::with_grade(route.sample(self.state.distance).grade)
+            .with_drag_factor(self.drag_factor);
         physics::step(&mut self.state, &self.profile, power_w, &env, SIM_DT);
         if self.pending_correction != 0.0 {
             // Apply the error linearly over CORRECTION_TIME_S.
@@ -65,7 +74,8 @@ impl Predictor {
         let mut extrapolated = server;
         let steps = (age_s.max(0.0) / SIM_DT).round() as usize;
         for _ in 0..steps {
-            let env = Environment::with_grade(route.sample(extrapolated.distance).grade);
+            let env = Environment::with_grade(route.sample(extrapolated.distance).grade)
+                .with_drag_factor(self.drag_factor);
             physics::step(&mut extrapolated, &self.profile, power_w, &env, SIM_DT);
         }
         let error = extrapolated.distance - self.state.distance;

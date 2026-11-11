@@ -11,8 +11,12 @@ pub struct RidersPlugin;
 
 impl Plugin for RidersPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<RiderEntities>()
-            .add_systems(PostUpdate, sync_riders.before(TransformSystems::Propagate));
+        app.init_resource::<RiderEntities>().add_systems(
+            PostUpdate,
+            (sync_riders, pedal)
+                .chain()
+                .before(TransformSystems::Propagate),
+        );
     }
 }
 
@@ -25,6 +29,58 @@ pub struct Avatar {
 
 #[derive(Resource, Default)]
 struct RiderEntities(BTreeMap<RiderId, Entity>);
+
+/// Crank angle of an avatar in radians.
+#[derive(Component, Default)]
+struct Crank(f32);
+
+/// A leg, rotating about the hip with the crank; `phase` is π for the right leg.
+#[derive(Component)]
+struct PedalLeg {
+    phase: f32,
+}
+
+/// Cadence assumed for riders without cadence data while they move.
+pub const DEFAULT_CADENCE_RPM: f64 = 85.0;
+/// Maximum leg swing about the hip, in radians.
+const LEG_SWING: f32 = 0.6;
+
+/// Crank speed in rad/s: the measured cadence, or a default cadence while
+/// the rider moves (others' cadence is not sent over the network).
+pub fn crank_rate(cadence_rpm: Option<f64>, speed_mps: f64) -> f32 {
+    let rpm = cadence_rpm.unwrap_or(if speed_mps > 1.0 {
+        DEFAULT_CADENCE_RPM
+    } else {
+        0.0
+    });
+    (rpm / 60.0 * std::f64::consts::TAU) as f32
+}
+
+/// Leg rotation about the hip for a crank angle.
+pub fn leg_rotation(crank: f32, phase: f32) -> Quat {
+    Quat::from_rotation_x((crank + phase).sin() * LEG_SWING)
+}
+
+/// Turns the cranks and swings the legs.
+fn pedal(
+    time: Res<Time>,
+    view: Res<RideView>,
+    mut avatars: Query<(&Avatar, &mut Crank)>,
+    mut legs: Query<(&PedalLeg, &ChildOf, &mut Transform)>,
+) {
+    let dt = time.delta_secs();
+    for (avatar, mut crank) in &mut avatars {
+        if let Some(r) = view.riders.iter().find(|r| r.id == avatar.id) {
+            let rate = crank_rate(r.cadence_rpm, r.state.speed);
+            crank.0 = (crank.0 + rate * dt) % std::f32::consts::TAU;
+        }
+    }
+    for (leg, parent, mut t) in &mut legs {
+        if let Ok((_, crank)) = avatars.get(parent.parent()) {
+            t.rotation = leg_rotation(crank.0, leg.phase);
+        }
+    }
+}
 
 /// Position and orientation of a rider on the route.
 pub fn rider_transform(view: &RideView, distance: f64, lateral_offset: f64) -> Transform {
@@ -106,7 +162,12 @@ fn spawn_avatar(
     });
     let wheel = meshes.add(Torus::new(0.3, 0.35));
     commands
-        .spawn((transform, Visibility::default(), Avatar { id, is_local }))
+        .spawn((
+            transform,
+            Visibility::default(),
+            Avatar { id, is_local },
+            Crank::default(),
+        ))
         .with_children(|a| {
             // Wheels (front at -Z).
             for z in [-0.55, 0.55] {
@@ -129,13 +190,21 @@ fn spawn_avatar(
                 MeshMaterial3d(jersey.clone()),
                 Transform::from_xyz(0.0, 1.15, 0.05).with_rotation(Quat::from_rotation_x(-1.0)),
             ));
-            // Legs.
-            for x in [-0.1, 0.1] {
+            // Legs: pivot at the hip, swinging with the crank.
+            let leg = meshes.add(Capsule3d::new(0.07, 0.5));
+            for (x, phase) in [(-0.1, 0.0), (0.1, std::f32::consts::PI)] {
                 a.spawn((
-                    Mesh3d(meshes.add(Capsule3d::new(0.07, 0.45))),
-                    MeshMaterial3d(dark.clone()),
-                    Transform::from_xyz(x, 0.75, 0.2),
-                ));
+                    Transform::from_xyz(x, 1.0, 0.2),
+                    Visibility::default(),
+                    PedalLeg { phase },
+                ))
+                .with_children(|hip| {
+                    hip.spawn((
+                        Mesh3d(leg.clone()),
+                        MeshMaterial3d(dark.clone()),
+                        Transform::from_xyz(0.0, -0.32, -0.05),
+                    ));
+                });
             }
             // Head with helmet.
             a.spawn((
@@ -164,6 +233,24 @@ mod tests {
 
     fn close(a: Vec3, b: Vec3) -> bool {
         (a - b).length() < 1e-3
+    }
+
+    #[test]
+    fn cranks_turn_with_cadence_or_movement() {
+        // 90 rpm = 1.5 turns per second.
+        assert!((crank_rate(Some(90.0), 0.0) - 3.0 * std::f32::consts::PI).abs() < 1e-5);
+        // Measured 0 rpm: legs stand still even when coasting.
+        assert_eq!(crank_rate(Some(0.0), 10.0), 0.0);
+        // Others (no cadence): default cadence while moving, still when stopped.
+        assert!(crank_rate(None, 8.0) > 0.0);
+        assert_eq!(crank_rate(None, 0.5), 0.0);
+        // Left and right legs swing in opposite directions.
+        let (l, r) = (
+            leg_rotation(1.0, 0.0),
+            leg_rotation(1.0, std::f32::consts::PI),
+        );
+        assert!((l.to_euler(EulerRot::XYZ).0 + r.to_euler(EulerRot::XYZ).0).abs() < 1e-5);
+        assert!(l.to_euler(EulerRot::XYZ).0.abs() <= LEG_SWING + 1e-6);
     }
 
     #[test]

@@ -1,11 +1,11 @@
-//! Bevy glue between the threads (local server, trainer) and [`ClientCore`].
+//! Bevy glue between the local server thread and [`ClientCore`]. Devices
+//! (trainers, sensors) are handled in `devices.rs`.
 
 use std::sync::Mutex;
 
 use bevy::prelude::*;
 use clap::{Arg, Command, value_parser};
 use ocw_core::RiderProfile;
-use ocw_devices::{DeviceBackend, DeviceCommand, DeviceHandle, VirtualTrainer};
 use ocw_protocol::v1::{self, client_message::Msg as C};
 use ocw_protocol::{client_message, encode};
 use ocw_render::RideView;
@@ -32,20 +32,15 @@ impl Plugin for ConnectionPlugin {
                     .expect("failed to start local server thread"),
             )
         };
-        let trainer = VirtualTrainer::new(args.power)
-            .start()
-            .expect("failed to start virtual trainer");
         let client = ClientCore::new(self.route.clone(), args.name, RiderProfile::default());
         server.send(client.hello());
         app.insert_resource(Link {
             server: Mutex::new(server),
-            device: Mutex::new(trainer),
         })
         .insert_resource(ClientState(client))
-        .add_systems(PreUpdate, (poll_device, poll_server).chain())
+        .add_systems(PreUpdate, poll_server)
         .add_systems(FixedUpdate, (step_server, predict).chain())
-        .add_systems(Update, update_view)
-        .add_systems(Last, shutdown_on_exit);
+        .add_systems(Update, update_view);
         register_commands(app);
     }
 }
@@ -76,45 +71,24 @@ impl ServerLink {
     }
 }
 
-/// Links to the server and device thread (receivers are not `Sync`, hence the mutexes).
+/// Link to the server (receivers are not `Sync`, hence the mutex).
 #[derive(Resource)]
 pub struct Link {
     server: Mutex<ServerLink>,
-    device: Mutex<DeviceHandle>,
 }
 
 impl Link {
-    fn send_bytes(&self, bytes: Vec<u8>) {
+    pub fn send_bytes(&self, bytes: Vec<u8>) {
         self.server.lock().expect("not poisoned").send(bytes);
     }
 
     pub fn send(&self, msg: C) {
         self.send_bytes(encode(&client_message(msg)));
     }
-
-    pub fn device_command(&self, cmd: DeviceCommand) {
-        let _ = self.device.lock().expect("not poisoned").commands.send(cmd);
-    }
 }
 
 #[derive(Resource)]
 pub struct ClientState(pub ClientCore);
-
-/// Reads trainer samples and forwards them to the server.
-fn poll_device(link: Res<Link>, mut client: ResMut<ClientState>) {
-    let events: Vec<_> = link
-        .device
-        .lock()
-        .expect("not poisoned")
-        .events
-        .try_iter()
-        .collect();
-    for event in events {
-        if let Some(sample) = client.0.on_device_event(event) {
-            link.send_bytes(sample);
-        }
-    }
-}
 
 /// Ticks the stepped server (frame capture) at the fixed physics rate.
 fn step_server(link: Res<Link>) {
@@ -162,34 +136,8 @@ fn update_view(time: Res<Time>, client: Res<ClientState>, mut view: ResMut<RideV
     view.riders = client.0.view(now);
 }
 
-fn shutdown_on_exit(mut exit: MessageReader<AppExit>, link: Res<Link>) {
-    if exit.read().next().is_some() {
-        link.device_command(DeviceCommand::Shutdown);
-    }
-}
-
 fn register_commands(app: &mut App) {
     app.console_command(ConsoleCommand::new(
-        Permission::Dev,
-        Command::new("sim.power")
-            .about("Set the virtual trainer's power in watts")
-            .arg(
-                Arg::new("watts")
-                    .required(true)
-                    .value_parser(value_parser!(f64)),
-            ),
-        |world, m| {
-            let watts = *m.get_one::<f64>("watts").expect("required");
-            if !(0.0..=2500.0).contains(&watts) {
-                return Err("power must be between 0 and 2500 W".into());
-            }
-            world
-                .resource::<Link>()
-                .device_command(DeviceCommand::SetVirtualPower(watts));
-            Ok(format!("virtual power {watts:.0} W"))
-        },
-    ))
-    .console_command(ConsoleCommand::new(
         Permission::Dev,
         Command::new("teleport")
             .about("Move the local rider to a distance on the route (km)")
@@ -261,11 +209,15 @@ mod tests {
                 "0",
                 "--power",
                 "150",
+                "--virtual",
             ]))
             .insert_resource(RideView::new(Route::test_loop()))
-            .add_plugins(ConnectionPlugin {
-                route: Route::test_loop(),
-            });
+            .add_plugins((
+                ConnectionPlugin {
+                    route: Route::test_loop(),
+                },
+                crate::devices::DevicesPlugin,
+            ));
         app
     }
 

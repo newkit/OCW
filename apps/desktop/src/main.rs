@@ -9,8 +9,11 @@
 mod automation;
 mod client;
 mod connection;
+mod devices;
 mod input;
+mod known_devices;
 mod platform;
+mod trainer;
 
 use std::path::PathBuf;
 
@@ -21,6 +24,12 @@ use ocw_core::SIM_TICK_HZ;
 use ocw_render::console::{ConsoleState, Permission};
 use ocw_render::{OcwRenderPlugins, RideView};
 use ocw_world::Route;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum RouteChoice {
+    Hills,
+    Loop,
+}
 
 #[derive(Parser, Debug, Clone, Resource)]
 #[command(version, about = "Open Cycling World desktop client")]
@@ -40,6 +49,15 @@ pub struct Args {
     /// Borderless fullscreen on the current monitor (ignores --window).
     #[arg(long)]
     pub fullscreen: bool,
+    /// Test route: hills (steep, changing gradients) or loop (gentle).
+    #[arg(long, value_enum, default_value_t = RouteChoice::Hills)]
+    pub route: RouteChoice,
+    /// Use the virtual trainer even if Bluetooth devices are remembered.
+    #[arg(long = "virtual")]
+    pub virtual_trainer: bool,
+    /// File with remembered devices (default: ~/.config/ocw/devices.toml).
+    #[arg(long, value_name = "PATH")]
+    pub devices_file: Option<PathBuf>,
     /// Console commands to run at startup (in addition to autoexec.cfg).
     #[arg(long = "exec", value_name = "FILE")]
     pub exec: Vec<PathBuf>,
@@ -78,7 +96,10 @@ fn parse_size(s: &str) -> Result<(u32, u32), String> {
 
 fn main() -> AppExit {
     let args = Args::parse();
-    let route = Route::test_loop();
+    let route = match args.route {
+        RouteChoice::Hills => Route::test_hills(),
+        RouteChoice::Loop => Route::test_loop(),
+    };
     let mut app = App::new();
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
@@ -101,6 +122,7 @@ fn main() -> AppExit {
     .add_plugins(OcwRenderPlugins)
     .add_plugins((
         connection::ConnectionPlugin { route },
+        devices::DevicesPlugin,
         input::InputPlugin,
         automation::AutomationPlugin,
         platform::PlatformPlugin,

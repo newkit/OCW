@@ -7,6 +7,7 @@
 //!
 //! No engine, OS or network dependencies; must build for `wasm32-unknown-unknown`.
 
+pub mod drafting;
 pub mod interpolation;
 pub mod physics;
 pub mod prediction;

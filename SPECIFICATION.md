@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 1.3 – November 2026
+Version 1.4 – November 2026
 
 | Version | Change |
 |---|---|
@@ -12,6 +12,7 @@ Version 1.3 – November 2026
 | 1.1 | Decisions from the specification review merged in (former PROPOSALS.md, P-1 … P-20; see Appendix A) |
 | 1.2 | Testing strategy (§11.4); unit tests required for every development step (§14) |
 | 1.3 | Graphics engine spike results (§3.1.1): Bevy confirmed on Linux; trees merged per tile |
+| 1.4 | Wahoo's proprietary trainer control as a fallback for trainers without FTMS (§3.4, §5.3) |
 
 ---
 
@@ -495,6 +496,12 @@ Library: **btleplug**.
   - macOS: CoreBluetooth; `NSBluetoothAlwaysUsageDescription` in `Info.plist` plus the matching entitlement.
 
 Trainer control is described in §5.3.
+
+**Trainers without FTMS.** Older Wahoo KICKRs (e.g. the KICKR on the Linux test machine) offer Cycling Power for data but no FTMS service; they are controlled through Wahoo's proprietary trainer control point (`a026e005-0a7d-4ab3-97fa-f1500f9feb8b` in the Cycling Power service). OCW supports it as a second control path; FTMS is used whenever a trainer offers both.
+
+- Commands: unlock (`0x20`), ERG target (`0x42`), SIM mode with rider + bike mass, Crr and wind coefficient (`0x43`), gradient (`0x46`), wind speed (`0x47`). Answers are indications `[0x01, op code, result, …]` with result `0x01` = success.
+- The layout is not officially documented; it was verified against the real KICKR with the hardware-in-the-loop tool (`cargo run -p ocw-devices --example ble -- ride <id>`), and the recorded answers are unit-test fixtures.
+- **One control procedure at a time** (FTMS and Wahoo): a second write before the answer is rejected (observed: ATT error `0x80`). The client queues control writes, sends the next after the answer or a 1.5 s timeout, and replaces a queued gradient or target with the newest one.
 
 ### 3.5 Keeping Future Clients Possible
 
