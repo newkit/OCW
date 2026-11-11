@@ -97,7 +97,10 @@ kiosk logic with a fake app.
   session needs `sudo usermod -aG render,video <user>` for GPU access.
   `vulkaninfo --summary` must show the real GPU, not llvmpipe. Benchmarks run
   on a headless weston, so no desktop session is needed.
-- **Windows:** OpenSSH Server, plus `make deps-windows` (winget: Git, Visual
+- **Windows:** OpenSSH Server and a local build user (not an administrator):
+  `scripts/setup-windows-buildserver.ps1 -PublicKeyFile <key>.pub` in PowerShell
+  as Administrator sets both up (any Windows language; user `claude` by
+  default), plus `make deps-windows` (winget: Git, Visual
   Studio Build Tools with the C++ workload, rustup; needs GNU make, e.g. from
   MSYS2 or `winget install ezwinports.make`). GUI runs need a logged-in user;
   they are started as a scheduled task in that session (programs started over
