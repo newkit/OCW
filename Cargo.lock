@@ -5201,6 +5201,8 @@ version = "0.1.0"
 dependencies = [
  "ocw-core",
  "ocw-world",
+ "serde",
+ "toml",
 ]
 
 [[package]]

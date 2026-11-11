@@ -283,6 +283,13 @@ async fn serve(incoming: Incoming, token: u64, events: mpsc::Sender<NetEvent>) {
                             }
                         }
                         Ok(None) => return "client closed its stream".to_owned(),
+                        // The connection ended (client quit, timeout): say why.
+                        Err(_) if conn.close_reason().is_some() => {
+                            return conn
+                                .close_reason()
+                                .map(|e| e.to_string())
+                                .unwrap_or_default();
+                        }
                         Err(e) => {
                             conn.close(VarInt::from_u32(close_code::PROTOCOL), b"bad frame");
                             return format!("bad frame: {e}");

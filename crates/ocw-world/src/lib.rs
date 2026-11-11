@@ -10,6 +10,7 @@ pub mod border;
 pub mod buildings;
 pub mod geo;
 pub mod gpx;
+pub mod gradient;
 pub mod graph;
 pub mod graph_route;
 pub mod landuse;
@@ -24,6 +25,7 @@ pub mod surface;
 mod terrain;
 pub mod track;
 
+pub use gradient::{AVERAGE_AHEAD_M, ElevationProfile, GradeBand, ProfileSpec, average_grade};
 pub use graph_route::{GraphRoute, RouteBreak, RoutePlan, RouteStep};
 pub use manifest::{Manifest, PackageIdentity, SignedManifest, TrustStore};
 pub use network::{Exit, Junction, RoadNetwork, TurnClass};

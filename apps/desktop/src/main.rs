@@ -18,6 +18,7 @@ mod icon;
 mod input;
 mod known_devices;
 mod logfile;
+mod menu;
 mod monitor;
 mod platform;
 mod recording;
@@ -25,6 +26,7 @@ mod restart;
 mod strava;
 mod trainer;
 mod video;
+mod workout;
 mod worlds;
 
 use std::path::PathBuf;
@@ -154,6 +156,14 @@ pub struct Args {
     /// for --screenshot / --capture runs; see --random-start).
     #[arg(long, value_name = "X,Z", value_parser = parse_xz, allow_hyphen_values = true)]
     pub start: Option<(f64, f64)>,
+    /// Structured workout to ride in ERG mode (spec §2.8): a `.toml`
+    /// workout, or an imported `.erg` / `.mrc` file. Loaded and started at
+    /// once; the workout clock starts when you pedal.
+    #[arg(long, value_name = "FILE")]
+    pub workout: Option<PathBuf>,
+    /// Functional threshold power in watts, for workout targets in % FTP.
+    #[arg(long, default_value_t = 200.0, value_parser = parse_ftp)]
+    pub ftp: f64,
     /// Use the virtual trainer even if Bluetooth devices are remembered.
     #[arg(long = "virtual")]
     pub virtual_trainer: bool,
@@ -210,6 +220,14 @@ fn parse_size(s: &str) -> Result<(u32, u32), String> {
         w.parse().map_err(|_| "bad width")?,
         h.parse().map_err(|_| "bad height")?,
     ))
+}
+
+fn parse_ftp(s: &str) -> Result<f64, String> {
+    match s.trim().parse::<f64>() {
+        Ok(w) if (50.0..=600.0).contains(&w) => Ok(w),
+        Ok(w) => Err(format!("{w} W: expected 50–600 W")),
+        Err(e) => Err(format!("{s}: {e}")),
+    }
 }
 
 fn parse_xz(s: &str) -> Result<(f64, f64), String> {
@@ -494,6 +512,8 @@ fn main() -> AppExit {
         restart::RestartPlugin,
         video::VideoPlugin,
         worlds::WorldsPlugin,
+        menu::MenuPlugin,
+        workout::WorkoutPlugin,
     ))
     .add_systems(Startup, startup_commands)
     .add_systems(Update, timed_commands);
@@ -650,6 +670,18 @@ mod tests {
             Args::try_parse_from(["ocw-desktop", "--allow-unsigned", "--require-signed"]).is_err()
         );
         assert!(parse_xz("1;2").is_err());
+    }
+
+    #[test]
+    fn workout_arguments() {
+        let a = Args::parse_from(["ocw-desktop"]);
+        assert_eq!((a.ftp, a.workout.clone()), (200.0, None));
+        assert_eq!(workout::ftp_w(&a), 200.0);
+        let a = Args::parse_from(["ocw-desktop", "--workout", "w.erg", "--ftp", "265"]);
+        assert_eq!(a.workout, Some(PathBuf::from("w.erg")));
+        assert_eq!(workout::ftp_w(&a), 265.0);
+        assert!(Args::try_parse_from(["ocw-desktop", "--ftp", "5"]).is_err());
+        assert!(Args::try_parse_from(["ocw-desktop", "--ftp", "lots"]).is_err());
     }
 
     #[test]

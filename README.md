@@ -43,6 +43,7 @@ ffmpeg` (`make deps-macos` prints both commands); the app also finds it in
 
 | Action | Keyboard | Gamepad |
 |---|---|---|
+| Menu (Resume, Ride, Workshop, Navi, Settings, Restart, Quit) | Esc | Start / Menu (☰, Options) |
 | Faster: +25 W per press, more while held | ↑ | D-pad up, left stick up or right trigger (RT / R2) |
 | Stop: no power, brake | ↓ | D-pad down, left stick down or left trigger (LT / L2) |
 | Steer (autodrive: move the line; manual: lean into a curve) | ← / → | left stick (left/right) |
@@ -58,6 +59,20 @@ ffmpeg` (`make deps-macos` prints both commands); the app also finds it in
 | Record a video (start / stop) | V | |
 | Next screen | F11 | |
 | Console (`help` lists the commands) | `` ` `` or F12 | |
+
+**Menu** (spec §3.2.1): ↑ / ↓ (or Tab / Shift+Tab, the D-pad, the left
+stick; held: repeats) move the focus, Enter / Space / South (A / ✕) or a click
+selects, Esc / Backspace / East (B / ○) or a right click goes back and closes
+the menu at the top page; Start closes it from any page. Esc closes the
+console first if it is open and never quits the app: only *Quit* in the menu
+(with a confirmation), the window's close button and the console's `quit` do.
+The ride does not pause under the menu: the trainer keeps its mode, the ride
+time, the recording and a video go on, and the ride keys (↑ ↓ ← →, A, W, U,
+R, V, …, the mouse camera) are ignored while it is open. Steering falls back
+to autodrive and junctions take their default exit, so the rider stays on
+the road; closing the menu restores manual steering / wild mode. In M1 the
+Ride, Workshop, Navi and Settings pages say what is coming (Settings already
+toggles the FPS counter).
 
 In manual steering, the keys ramp the lean and it stays when released (press
 the other way to straighten up); the stick sets the lean directly, centred is
@@ -230,6 +245,21 @@ package is installed only when all its files match the manifest.
 - ↑ adds power on top of any device (25 W per press), ↓ stops (power 0 and
   brake).
 
+**Gradient:** the HUD shows the gradient at the rider and, in brackets, the
+average over the next 100 m (`+9.4 % (100 m +7.8 %)`). Bottom left, a mini
+elevation profile shows the road from 150 m behind to 1.5 km ahead (white
+line = you; climbing / descending ahead above it), coloured by gradient:
+blue below -2 %, green to 3 %, yellow to 6 %, orange to 9 %, red to 12 %,
+wine red above; flat roads stay flat (at least 40 m of height range). In
+free ride it looks ahead along the exit currently selected at the next
+junction and the default exits after it. The chase camera tilts gently with
+the road (uphill it drops behind you and looks up the climb), smoothed and
+capped at 8 degrees (`camera.tilt`).
+
+**Workouts** (spec §2.8): `--workout FILE` (or `workout load FILE`, then
+`workout start`) rides a structured workout in ERG mode; targets in % FTP use
+`--ftp` (default 200 W). See [Workouts](#workouts).
+
 **Videos:** V starts recording the window as an MP4 (H.264, 25 fps) into
 `~/Videos/OCW/` (or `~/.local/share/ocw/videos/`), V again stops it (ignored
 while the console is open; console: `video start|stop`). While recording,
@@ -274,6 +304,8 @@ records with a fixed time step instead). Needs `ffmpeg` (`make deps` installs it
 | `--free-ride` | Free ride on the package's road graph (needs `--world`) |
 | `--start X,Z` | Free ride start: the road nearest local X,Z metres (default: random) |
 | `--random-start BOOL` | Start at a random point (default on, off for screenshot/capture runs) |
+| `--workout FILE` | Load and start a structured workout (`.toml`, `.erg`, `.mrc`; see [Workouts](#workouts)) |
+| `--ftp W` | Your FTP in watts for % FTP workout targets (default 200) |
 | `--virtual` | Use the virtual trainer even if Bluetooth devices are remembered |
 | `--devices-file PATH` | Remembered devices (default `~/.config/ocw/devices.toml`) |
 | `--record BOOL` | Record the ride as a FIT file (default on, off for screenshot/capture runs) |
@@ -302,9 +334,11 @@ for now).
 | `echo TEXT` | Print text |
 | `exec FILE` | Run the commands in a file, one per line |
 | `fps [on\|off]` | Show or hide the FPS counter |
+| `hud.profile [on\|off]` | Show or hide the elevation profile of the road ahead (bottom left; on by default) |
 | `screenshot [PATH]` | Save a screenshot of the window (default `screenshot.png`) |
 | `reset` | Start everything again as at program start (key R); the ride is saved first |
 | `video [start\|stop\|toggle]` | Record the window as an MP4 (key V; needs `ffmpeg`) |
+| `menu [open\|close\|toggle\|up\|down\|select\|back]` | Open, close or drive the in-game menu (Esc / Start) |
 | `quit` | Exit the app |
 | **Rider** | |
 | `rider.autodrive on\|off` | Autodrive (key A) |
@@ -327,11 +361,17 @@ for now).
 | **Camera** | |
 | `camera.mode chase\|side\|top` | Camera perspective |
 | `camera.orbit YAW PITCH [DISTANCE]` | Orbit the chase camera (degrees; 0 = behind, 180 = in front; metres) |
+| `camera.tilt [on\|off\|FRACTION]` | Tilt the chase camera with the road (default on, 0.7 of the slope angle, at most 8 degrees) |
 | **Trainer and devices** | |
 | `trainer.mode sim\|erg\|off` | Trainer control |
 | `trainer.difficulty PERCENT` | Scale the road gradient in SIM mode |
 | `erg.target WATTS` | ERG mode with this target power |
 | `sim.power WATTS` | *Dev:* the virtual trainer's power |
+| `workout load FILE` | Load a workout (`.toml`, `.erg`, `.mrc`) |
+| `workout start\|stop` | Start the loaded workout (again from the beginning) / stop it; the trainer returns to its previous mode |
+| `workout skip` | Skip to the next step |
+| `workout pause\|resume` | Pause / resume the workout clock by hand |
+| `workout status` | Step, target, time left, next step |
 | `devices.scan` | Scan for Bluetooth trainers and sensors (in the background) |
 | `devices.connect N\|ID` | Connect a device from the last scan, and remember it |
 | `devices.list` | Running and remembered devices |
@@ -344,6 +384,70 @@ for now).
 | `strava.status` | Strava link and upload state |
 | `strava.sync [--retry]` | Upload every saved ride not on Strava yet (`--retry`: also failed ones) |
 | `strava.disconnect` | Unlink Strava (deletes the stored tokens) |
+
+## Workouts
+
+A structured workout (spec §2.8) sets the trainer's target power step by
+step (ERG mode). Ride one with `--workout FILE`, or with `workout load FILE`
+and `workout start` in the console. The HUD shows a panel in the lower
+right corner: the current target, the step and time left, the next step,
+text cues, and the whole workout's profile (coloured by training zone) with
+your progress.
+
+- **Clock:** the workout time is your pedalling time. It starts when you
+  first pedal, keeps running through up to 3 s without power (shifting, a
+  short coast), then pauses until you pedal again. `workout pause` /
+  `workout resume` stop it by hand. The ride itself never pauses.
+- **Trainer:** while a workout runs it owns the trainer mode: ERG with the
+  step's target (ramps follow continuously; the ERG controller smooths steps
+  and eases off when your cadence drops), the previous mode (normally SIM,
+  the road's gradient) during `free` steps, and the previous mode again when
+  the workout ends or is stopped. With a power meter or a trainer without
+  control the targets are guidance only. The virtual trainer holds the ERG
+  target while its power is above 0.
+- **FTP:** targets in % FTP use `--ftp` (default 200 W).
+
+**Format** (`.toml`; examples in `crates/ocw-sim/test-data/workouts/`):
+
+```toml
+name = "Sweet spot 3 × 10"
+description = "Three 10-minute blocks at 90 % FTP"
+units = "ftp"              # bare numbers in power fields: % FTP (default) or "watts"
+
+[[steps]]
+type = "ramp"              # steady | ramp | intervals | free
+duration = "10:00"         # seconds, "M:SS", "H:MM:SS", "90s", "5min"
+from = 50                  # ramp: from / to; steady: power
+to = 75
+text = "Easy spin"         # optional, shown during the step
+
+[[steps]]
+type = "intervals"         # repeat × (on, off); off is optional
+repeat = 3
+on = { duration = "10:00", power = 90, cadence = 90 }   # cadence: optional hint (rpm)
+off = { duration = "5:00", power = "150W" }            # "…W" / "…%" override `units`
+
+[[steps]]
+type = "free"              # no target: SIM mode for this step
+duration = "5:00"
+
+[[cues]]                   # optional timed texts
+at = "12:00"               # workout time
+text = "Halfway through the first block"
+duration = 10              # seconds shown (default 10)
+```
+
+Unknown keys are errors (typos are reported with the line), as are
+durations ≤ 0 and targets above 1000 % FTP or 3000 W.
+
+**Import:** `.erg` (minutes + watts) and `.mrc` (minutes + % FTP) files, the
+plain-text format with `[COURSE HEADER]` / `[COURSE DATA]` (and optional
+`[COURSE TEXT]` cues: seconds, text, seconds shown), load the same way. Each
+pair of data points is a ramp (or a steady stretch); a minute that appears
+twice is a step. The `MINUTES WATTS` / `MINUTES PERCENT` header line decides
+the unit (without it: the file extension). Comments (`;`, `#`), blank lines,
+CRLF and extra columns are accepted; distance-based (slope) courses are not
+workouts and are refused. FIT workout files are not imported yet.
 
 ## Running the server
 
@@ -533,7 +637,19 @@ scripts/deploy-test.sh <name>                                  # release build f
   build needs ~4–5 GB; the others wait and take whichever slot frees first.
   Set `slots = N` per machine in `config/machines.toml` (or `[defaults]`), or
   `OCW_REMOTE_SLOTS=N` for one call. Branch checkouts use 4 build jobs
-  (`OCW_REMOTE_JOBS`).
+  (`OCW_REMOTE_JOBS`); `jobs = N` per machine caps them on main and branch
+  checkouts.
+- Windows (measured on 6 cores / 8 GB): the first `cargo build --workspace`
+  takes about 50 min, `cargo clippy --workspace --all-targets` 10 min, `cargo
+  test --workspace` 5 min on top. Each MSVC link of a Bevy binary (debug
+  info) needs ~5 GB, so 3 jobs ran out of memory (`LLVM ERROR: out of
+  memory`): set `jobs = 2` for an 8 GB machine. Commands run in PowerShell
+  5.1: chain with `;` (not `&&`), and leave out `2>&1` (it turns cargo's
+  stderr into error records); filter output locally instead
+  (`remote.sh … run 'cargo test --workspace' 2>&1 | grep …`). The exit code
+  is that of the last native program. GUI programs cannot open windows over
+  SSH (session 0); GUI runs need the scheduled-task approach (`display =
+  "interactive-task"`, not set up yet).
 - `python3 tools/build-dashboard/dashboard.py` shows each machine's load, its
   running tasks, the queue of runs waiting for a slot and the slots in use
   (every run leaves a task marker while it runs); on
@@ -573,6 +689,7 @@ to *Public* are the usual causes; the server log is in Event Viewer under
 | `scripts/remote.sh MACHINE run 'CMD'` | Copy the tree to a build machine (`config/machines.toml`) and run a command there |
 | `python3 tools/build-dashboard/dashboard.py` | Web page (port 8765) with the build machines' load and their running/queued tasks; `--once` prints it as text |
 | `scripts/deploy-test.sh MACHINE` | Release build on a test machine, deployed for its kiosk |
+| `scripts/collect-test-output.sh [CHECKOUT...]` | Merge screenshots and videos from agent worktrees (`.claude/worktrees/*`) into `test-output/` and its build history `test-output/index.md` |
 | `scripts/ocw-kiosk.sh install\|run\|status` | Keep the test app running on a machine's screen, restarted on each deploy |
 | `scripts/build-appimage.sh` | Linux AppImage (needs `appimagetool`: `make deps-appimage`, part of `make deps-linux`) |
 | `scripts/build-macos-app.sh` | macOS app bundle, DMG and zip, ad-hoc signed (`make macos-app`, on a Mac) |
@@ -609,7 +726,7 @@ from development in `artwork/build-history/`.
 | `apps/desktop` | Desktop client: wires devices, local server, prediction and rendering |
 | `services/server` | Game server logic, in-process local server, headless server binary |
 | `crates/ocw-core` | Shared types, units, constants |
-| `crates/ocw-sim` | Physics, session logic, client prediction, interpolation |
+| `crates/ocw-sim` | Physics, session logic, client prediction, interpolation, trainer control, workouts (format, `.erg` / `.mrc` import, runner) |
 | `crates/ocw-protocol` | Protobuf protocol (`proto/`) and conversions |
 | `crates/ocw-devices` | Device backends: virtual trainer, Bluetooth trainers and sensors (FTMS, Cycling Power, CSC, Heart Rate, Wahoo) |
 | `crates/ocw-world` | Routes, road graph, terrain, world packages, surfaces |
