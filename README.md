@@ -228,6 +228,10 @@ package is installed only when all its files match the manifest.
 - ↑ adds power on top of any device (25 W per press), ↓ stops (power 0 and
   brake).
 
+**Workouts** (spec §2.8): `--workout FILE` (or `workout load FILE`, then
+`workout start`) rides a structured workout in ERG mode; targets in % FTP use
+`--ftp` (default 200 W). See [Workouts](#workouts).
+
 **Videos:** V starts and stops recording the window as an MP4 (H.264,
 25 fps) into `~/Videos/OCW/` (or `~/.local/share/ocw/videos/`); slow frames
 are repeated so the video keeps real time. Needs `ffmpeg` (`make deps`
@@ -265,6 +269,8 @@ installs it).
 | `--free-ride` | Free ride on the package's road graph (needs `--world`) |
 | `--start X,Z` | Free ride start: the road nearest local X,Z metres (default: random) |
 | `--random-start BOOL` | Start at a random point (default on, off for screenshot/capture runs) |
+| `--workout FILE` | Load and start a structured workout (`.toml`, `.erg`, `.mrc`; see [Workouts](#workouts)) |
+| `--ftp W` | Your FTP in watts for % FTP workout targets (default 200) |
 | `--virtual` | Use the virtual trainer even if Bluetooth devices are remembered |
 | `--devices-file PATH` | Remembered devices (default `~/.config/ocw/devices.toml`) |
 | `--record BOOL` | Record the ride as a FIT file (default on, off for screenshot/capture runs) |
@@ -323,6 +329,11 @@ for now).
 | `trainer.difficulty PERCENT` | Scale the road gradient in SIM mode |
 | `erg.target WATTS` | ERG mode with this target power |
 | `sim.power WATTS` | *Dev:* the virtual trainer's power |
+| `workout load FILE` | Load a workout (`.toml`, `.erg`, `.mrc`) |
+| `workout start\|stop` | Start the loaded workout (again from the beginning) / stop it; the trainer returns to its previous mode |
+| `workout skip` | Skip to the next step |
+| `workout pause\|resume` | Pause / resume the workout clock by hand |
+| `workout status` | Step, target, time left, next step |
 | `devices.scan` | Scan for Bluetooth trainers and sensors (in the background) |
 | `devices.connect N\|ID` | Connect a device from the last scan, and remember it |
 | `devices.list` | Running and remembered devices |
@@ -335,6 +346,70 @@ for now).
 | `strava.status` | Strava link and upload state |
 | `strava.sync [--retry]` | Upload every saved ride not on Strava yet (`--retry`: also failed ones) |
 | `strava.disconnect` | Unlink Strava (deletes the stored tokens) |
+
+## Workouts
+
+A structured workout (spec §2.8) sets the trainer's target power step by
+step (ERG mode). Ride one with `--workout FILE`, or with `workout load FILE`
+and `workout start` in the console. The HUD shows a panel in the lower
+right corner: the current target, the step and time left, the next step,
+text cues, and the whole workout's profile (coloured by training zone) with
+your progress.
+
+- **Clock:** the workout time is your pedalling time. It starts when you
+  first pedal, keeps running through up to 3 s without power (shifting, a
+  short coast), then pauses until you pedal again. `workout pause` /
+  `workout resume` stop it by hand. The ride itself never pauses.
+- **Trainer:** while a workout runs it owns the trainer mode: ERG with the
+  step's target (ramps follow continuously; the ERG controller smooths steps
+  and eases off when your cadence drops), the previous mode (normally SIM,
+  the road's gradient) during `free` steps, and the previous mode again when
+  the workout ends or is stopped. With a power meter or a trainer without
+  control the targets are guidance only. The virtual trainer holds the ERG
+  target while its power is above 0.
+- **FTP:** targets in % FTP use `--ftp` (default 200 W).
+
+**Format** (`.toml`; examples in `crates/ocw-sim/test-data/workouts/`):
+
+```toml
+name = "Sweet spot 3 × 10"
+description = "Three 10-minute blocks at 90 % FTP"
+units = "ftp"              # bare numbers in power fields: % FTP (default) or "watts"
+
+[[steps]]
+type = "ramp"              # steady | ramp | intervals | free
+duration = "10:00"         # seconds, "M:SS", "H:MM:SS", "90s", "5min"
+from = 50                  # ramp: from / to; steady: power
+to = 75
+text = "Easy spin"         # optional, shown during the step
+
+[[steps]]
+type = "intervals"         # repeat × (on, off); off is optional
+repeat = 3
+on = { duration = "10:00", power = 90, cadence = 90 }   # cadence: optional hint (rpm)
+off = { duration = "5:00", power = "150W" }            # "…W" / "…%" override `units`
+
+[[steps]]
+type = "free"              # no target: SIM mode for this step
+duration = "5:00"
+
+[[cues]]                   # optional timed texts
+at = "12:00"               # workout time
+text = "Halfway through the first block"
+duration = 10              # seconds shown (default 10)
+```
+
+Unknown keys are errors (typos are reported with the line), as are
+durations ≤ 0 and targets above 1000 % FTP or 3000 W.
+
+**Import:** `.erg` (minutes + watts) and `.mrc` (minutes + % FTP) files, the
+plain-text format with `[COURSE HEADER]` / `[COURSE DATA]` (and optional
+`[COURSE TEXT]` cues: seconds, text, seconds shown), load the same way. Each
+pair of data points is a ramp (or a steady stretch); a minute that appears
+twice is a step. The `MINUTES WATTS` / `MINUTES PERCENT` header line decides
+the unit (without it: the file extension). Comments (`;`, `#`), blank lines,
+CRLF and extra columns are accepted; distance-based (slope) courses are not
+workouts and are refused. FIT workout files are not imported yet.
 
 ## Running the server
 
@@ -564,7 +639,7 @@ from development in `artwork/build-history/`.
 | `apps/desktop` | Desktop client: wires devices, local server, prediction and rendering |
 | `services/server` | Game server logic, in-process local server, headless server binary |
 | `crates/ocw-core` | Shared types, units, constants |
-| `crates/ocw-sim` | Physics, session logic, client prediction, interpolation |
+| `crates/ocw-sim` | Physics, session logic, client prediction, interpolation, trainer control, workouts (format, `.erg` / `.mrc` import, runner) |
 | `crates/ocw-protocol` | Protobuf protocol (`proto/`) and conversions |
 | `crates/ocw-devices` | Device backends: virtual trainer, Bluetooth trainers and sensors (FTMS, Cycling Power, CSC, Heart Rate, Wahoo) |
 | `crates/ocw-world` | Routes, road graph, terrain, world packages, surfaces |

@@ -12,6 +12,7 @@ pub mod package;
 pub mod riders;
 pub mod see_through;
 pub mod terrain;
+pub mod workout;
 pub mod world;
 
 use std::collections::BTreeMap;
@@ -49,6 +50,8 @@ pub struct RideView {
     /// The local rider's GPS position (lat °, lon °, altitude m), if the
     /// ride has a geographic origin (route files, world packages).
     pub position: Option<(f64, f64, f64)>,
+    /// The running workout's panel (spec §2.8), if any.
+    pub workout: Option<ocw_sim::workout::WorkoutPanel>,
 }
 
 impl RideView {
@@ -65,6 +68,7 @@ impl RideView {
             notice: None,
             position: None,
             route_status: None,
+            workout: None,
         }
     }
 
@@ -142,6 +146,7 @@ impl Plugin for OcwRenderPlugins {
             hud::HudPlugin,
             junction::JunctionPlugin,
             console::ConsolePlugin,
+            workout::WorkoutPanelPlugin,
         ));
     }
 }
