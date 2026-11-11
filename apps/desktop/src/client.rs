@@ -56,6 +56,8 @@ pub struct ClientCore {
     power_w: f64,
     cadence_rpm: Option<f64>,
     heart_rate_bpm: Option<f64>,
+    /// Extra power from the keyboard, on top of the device power.
+    key_power_w: f64,
     braking: bool,
     last_sample_us: u64,
     seq: u32,
@@ -80,6 +82,7 @@ impl ClientCore {
             power_w: 0.0,
             cadence_rpm: None,
             heart_rate_bpm: None,
+            key_power_w: 0.0,
             braking: false,
             last_sample_us: 0,
             seq: 0,
@@ -124,7 +127,7 @@ impl ClientCore {
         encode(&client_message(C::Sample(v1::SensorSample {
             seq: self.seq,
             client_time_us: self.last_sample_us,
-            power_w: Some(self.power_w as f32),
+            power_w: Some(self.power_w() as f32),
             cadence_rpm: self.cadence_rpm.map(|c| c as f32),
             heart_rate_bpm: self.heart_rate_bpm.map(|h| h as f32),
             brake: Some(self.braking),
@@ -191,7 +194,7 @@ impl ClientCore {
                     self.predictor.set_lateral_target(state.lateral_offset);
                 }
                 self.predictor
-                    .reconcile(&self.route, state, 0.0, self.power_w);
+                    .reconcile(&self.route, state, 0.0, self.power_w());
                 // A snap (teleport, large error) must not be interpolated.
                 if self.predictor.last_error().abs() > ocw_sim::prediction::SNAP_THRESHOLD_M {
                     self.prev_state = self.predictor.state();
@@ -258,7 +261,7 @@ impl ClientCore {
         );
         self.predictor.set_drag_factor(drag);
         self.prev_state = self.predictor.state();
-        self.predictor.step(&self.route, self.power_w);
+        self.predictor.step(&self.route, self.power_w());
         for o in &mut self.others_now {
             o.distance += o.speed * ocw_core::SIM_DT;
         }
@@ -280,7 +283,7 @@ impl ClientCore {
                 .map(|n| n.0.clone())
                 .unwrap_or_default(),
             state: lerp_state(self.prev_state, self.predictor.state(), alpha),
-            power_w: self.power_w,
+            power_w: self.power_w(),
             cadence_rpm: self.cadence_rpm,
             heart_rate_bpm: self.heart_rate_bpm,
             is_local: true,
@@ -309,8 +312,25 @@ impl ClientCore {
     pub fn state(&self) -> RiderState {
         self.predictor.state()
     }
+    /// The rider's power: the device's plus the keyboard's (↑).
     pub fn power_w(&self) -> f64 {
-        self.power_w
+        self.power_w + self.key_power_w
+    }
+
+    /// Extra power from the keyboard (↑ / ↓), added to the device's.
+    pub fn key_power_w(&self) -> f64 {
+        self.key_power_w
+    }
+
+    /// Sets the keyboard power; returns a sample to send when it changed
+    /// (the next device sample may be 250 ms away).
+    pub fn set_key_power(&mut self, watts: f64) -> Option<Vec<u8>> {
+        let watts = watts.max(0.0);
+        if (watts - self.key_power_w).abs() < 1e-9 {
+            return None;
+        }
+        self.key_power_w = watts;
+        Some(self.sample())
     }
     pub fn cadence_rpm(&self) -> Option<f64> {
         self.cadence_rpm
@@ -728,5 +748,27 @@ mod tests {
         h.send(&msg);
         h.ride(250.0, 3.0);
         assert!(h.client.state().speed > 1.0);
+    }
+
+    /// ↑ adds power on top of the device (e.g. a real trainer nobody pedals).
+    #[test]
+    fn keyboard_power_adds_to_the_device_power() {
+        let mut h = Harness::new(0, false);
+        h.ride(0.0, 1.0); // device reports 0 W
+        assert_eq!(h.client.power_w(), 0.0);
+        let msg = h.client.set_key_power(250.0).expect("sent at once");
+        match ocw_protocol::decode_client(&msg).unwrap() {
+            C::Sample(s) => assert_eq!(s.power_w, Some(250.0)),
+            other => panic!("unexpected {other:?}"),
+        }
+        assert!(h.client.set_key_power(250.0).is_none(), "unchanged");
+        h.send(&msg);
+        // Device samples keep 0 W, the keyboard's 250 W stay on top.
+        h.ride(0.0, 10.0);
+        assert_eq!(h.client.power_w(), 250.0);
+        let own = h.client.rider_id().unwrap();
+        assert!(h.server.session().rider_state(own).unwrap().speed > 5.0);
+        assert!(h.client.set_key_power(-5.0).is_some());
+        assert_eq!(h.client.key_power_w(), 0.0);
     }
 }

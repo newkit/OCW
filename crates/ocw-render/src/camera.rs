@@ -141,10 +141,22 @@ fn spawn_camera(mut commands: Commands) {
     ));
 }
 
+/// Lowest camera height above the ground (no looking through road or terrain).
+pub const MIN_CAMERA_CLEARANCE_M: f32 = 0.6;
+
+/// Lifts `eye` so it stays at least `MIN_CAMERA_CLEARANCE_M` above `ground`.
+pub fn above_ground(eye: Vec3, ground: Option<f64>) -> Vec3 {
+    match ground {
+        Some(h) => eye.with_y(eye.y.max(h as f32 + MIN_CAMERA_CLEARANCE_M)),
+        None => eye,
+    }
+}
+
 fn follow(
     view: Res<RideView>,
     mode: Res<CameraMode>,
     orbit: Res<CameraOrbit>,
+    ground: Option<Res<crate::Ground>>,
     time: Res<Time>,
     mut camera: Query<&mut Transform, With<FollowCamera>>,
 ) {
@@ -174,6 +186,9 @@ fn follow(
     } else {
         cam.translation.lerp(eye, k)
     };
+    // Never below the ground, also while smoothing towards a low eye.
+    let g = ground.and_then(|g| (g.0)(f64::from(cam.translation.x), f64::from(cam.translation.z)));
+    cam.translation = above_ground(cam.translation, g);
     cam.look_at(target, Vec3::Y);
 }
 
@@ -183,6 +198,17 @@ mod tests {
 
     fn close(a: Vec3, b: Vec3) -> bool {
         (a - b).length() < 1e-4
+    }
+
+    #[test]
+    fn camera_stays_above_the_ground() {
+        let eye = Vec3::new(1.0, 100.2, 2.0);
+        assert_eq!(
+            above_ground(eye, Some(100.0)).y,
+            100.0 + MIN_CAMERA_CLEARANCE_M
+        );
+        assert_eq!(above_ground(eye, Some(90.0)), eye);
+        assert_eq!(above_ground(eye, None), eye);
     }
 
     #[test]

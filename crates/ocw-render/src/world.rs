@@ -65,7 +65,11 @@ fn spawn_world(
 
     // With a world package, terrain, roads and trees are streamed from it
     // (package.rs); the route only adds its centre line and the start arch.
-    if package.is_some() {
+    if let Some(pkg) = &package {
+        let pkg = pkg.0.clone();
+        commands.insert_resource(crate::Ground(std::sync::Arc::new(move |x, z| {
+            pkg.height(x, z)
+        })));
         commands.spawn((
             Mesh3d(meshes.add(center_line_mesh(&view))),
             MeshMaterial3d(materials.add(StandardMaterial {
@@ -98,6 +102,12 @@ fn spawn_world(
         }),
         None => Terrain::from_route(route, params),
     };
+    {
+        let t = terrain.clone();
+        commands.insert_resource(crate::Ground(std::sync::Arc::new(move |x, z| {
+            Some(t.height(x, z))
+        })));
+    }
     let edge_depth = if coarse {
         COARSE_ROAD_EDGE_DEPTH_M
     } else {

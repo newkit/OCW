@@ -47,6 +47,11 @@ impl RideView {
     }
 }
 
+/// Ground height lookup (terrain or world package) at local (x, z), for
+/// keeping the camera above the ground.
+#[derive(Resource, Clone)]
+pub struct Ground(pub std::sync::Arc<dyn Fn(f64, f64) -> Option<f64> + Send + Sync>);
+
 /// One rider to draw.
 #[derive(Debug, Clone)]
 pub struct RiderView {

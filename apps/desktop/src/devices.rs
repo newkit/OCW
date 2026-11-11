@@ -421,10 +421,6 @@ fn register_commands(app: &mut App) {
             world
                 .resource::<Devices>()
                 .command_all(DeviceCommand::SetVirtualPower(watts));
-            if let Some(mut t) = world.get_resource_mut::<crate::input::VirtualPowerTarget>() {
-                t.watts = watts;
-                t.sent = watts;
-            }
             Ok(format!("virtual power {watts:.0} W"))
         },
     ));

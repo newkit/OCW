@@ -1,12 +1,11 @@
 //! Keyboard controls (when the console is closed):
 //! - ← / → steer across the road (held: 2 m/s, the rider follows at up to
 //!   1.5 m/s); later they also choose the turn at junctions (spec §2.2.1),
-//! - ↑ accelerates: each press adds `POWER_STEP_W` to the virtual trainer's
-//!   power, holding adds `POWER_RAMP_W_PER_S` (up to `MAX_KEY_POWER_W`); it
-//!   also releases the brake,
-//! - ↓ stops: virtual power 0 and the brake (with a real trainer only the
-//!   brake acts; its power comes from the rider's legs),
-//! - PageUp / PageDown change the virtual power by 10 W.
+//! - ↑ accelerates: each press adds `POWER_STEP_W` to the rider's power,
+//!   holding adds `POWER_RAMP_W_PER_S` (up to `MAX_KEY_POWER_W`), on top of
+//!   the device's power (virtual or real trainer); it also releases the brake,
+//! - ↓ stops: keyboard and virtual-trainer power to 0, and the brake,
+//! - PageUp / PageDown change the keyboard power by 10 W.
 
 use bevy::prelude::*;
 use ocw_devices::DeviceCommand;
@@ -19,12 +18,8 @@ pub struct InputPlugin;
 
 impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
-        let start = app.world().resource::<crate::Args>().power;
-        app.insert_resource(VirtualPowerTarget {
-            watts: start,
-            sent: start,
-        })
-        .add_systems(Update, (steer, throttle_and_brake));
+        app.init_resource::<KeyPower>()
+            .add_systems(Update, (steer, throttle_and_brake));
     }
 }
 
@@ -32,16 +27,17 @@ impl Plugin for InputPlugin {
 pub const POWER_STEP_W: f64 = 25.0;
 /// Power rise per second while ↑ is held.
 pub const POWER_RAMP_W_PER_S: f64 = 250.0;
-/// Highest virtual power reachable with ↑.
+/// Highest keyboard power reachable with ↑.
 pub const MAX_KEY_POWER_W: f64 = 1000.0;
+/// Minimum time between power updates while ↑ is held.
+pub const KEY_SEND_INTERVAL_S: f64 = 0.1;
 
-/// The virtual power the keys aim for (the trainer reports only at 4 Hz,
-/// so ramping from its last report would stutter).
-#[derive(Resource, Debug, Clone, Copy, PartialEq)]
-pub struct VirtualPowerTarget {
+/// Keyboard power (↑ / ↓, PageUp / PageDown): added to the rider's device
+/// power (virtual or real trainer), so the keys work with any device.
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
+pub struct KeyPower {
     pub watts: f64,
-    /// Last value sent to the trainer.
-    pub sent: f64,
+    pub last_sent_s: f64,
 }
 
 /// New power target after `dt` seconds: `pressed` = ↑ went down this frame
@@ -95,14 +91,16 @@ fn throttle_and_brake(
     devices: Res<Devices>,
     link: Res<Link>,
     mut client: ResMut<ClientState>,
-    mut target: ResMut<VirtualPowerTarget>,
+    mut key: ResMut<KeyPower>,
 ) {
     if console.is_open() {
         return;
     }
-    let up = keys.pressed(KeyCode::ArrowUp);
+    let now = time.elapsed_secs_f64();
     if keys.just_pressed(KeyCode::ArrowDown) {
-        target.watts = 0.0;
+        // Stop: no keyboard power, no virtual trainer power, brake.
+        key.watts = 0.0;
+        devices.command_all(DeviceCommand::SetVirtualPower(0.0));
         if let Some(msg) = client.0.set_brake(true) {
             link.send_bytes(msg);
         }
@@ -112,22 +110,26 @@ fn throttle_and_brake(
     {
         link.send_bytes(msg);
     }
-    target.watts = ramp(
-        target.watts,
+    key.watts = ramp(
+        key.watts,
         keys.just_pressed(KeyCode::ArrowUp),
-        up,
+        keys.pressed(KeyCode::ArrowUp),
         time.delta_secs_f64(),
     );
-    target.watts = (target.watts
+    key.watts = (key.watts
         + power_delta(
             keys.just_pressed(KeyCode::PageUp),
             keys.just_pressed(KeyCode::PageDown),
         ))
     .clamp(0.0, 2500.0);
-    // Send when it changed noticeably (or reached 0), not every frame.
-    if (target.watts - target.sent).abs() >= 5.0 || (target.watts == 0.0 && target.sent != 0.0) {
-        target.sent = target.watts;
-        devices.command_all(DeviceCommand::SetVirtualPower(target.watts));
+    // Send the rider's new power at most every KEY_SEND_INTERVAL_S while it
+    // changes, and at once when it reached 0.
+    let changed = (key.watts - client.0.key_power_w()).abs() > 1e-9;
+    if changed && (now - key.last_sent_s >= KEY_SEND_INTERVAL_S || key.watts == 0.0) {
+        key.last_sent_s = now;
+        if let Some(msg) = client.0.set_key_power(key.watts) {
+            link.send_bytes(msg);
+        }
     }
 }
 
