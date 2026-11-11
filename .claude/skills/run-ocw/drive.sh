@@ -19,6 +19,10 @@
 #   test-output/YYYY-MM-DD/ with commit and mode in the file name, plus a row
 #   in test-output/index.md. OCW_TEST_OUTPUT=DIR changes the folder,
 #   OCW_TEST_OUTPUT=off disables archiving.
+#   drive.sh spike REPORT.json [-- spike args...]
+#       Graphics spike benchmark (apps/spike, release build) on a headless
+#       weston with the GPU renderer (real GPU required, e.g. on marge).
+#       Writes REPORT.json, REPORT.png (last frame) and REPORT.log; archived.
 #   drive.sh server [args...]
 #       Run the headless game server, e.g. --bots 3 --seconds 10 --fast.
 set -euo pipefail
@@ -93,15 +97,16 @@ encode_video() {
 
 # Starts a headless weston; sets $runtime and $socket. Stopped on exit.
 start_weston() {
-  local logfile=$1
+  local logfile=$1 renderer=${2:-pixman}
   command -v weston >/dev/null || { echo "weston not installed (apt-get install weston)" >&2; exit 1; }
   runtime=${XDG_RUNTIME_DIR:-}
   if [ -z "$runtime" ] || [ ! -w "$runtime" ]; then
     runtime=$(mktemp -d); chmod 700 "$runtime"
   fi
   socket="ocw-wayland-$$"
-  XDG_RUNTIME_DIR=$runtime weston --backend=headless --renderer=pixman \
-    --socket="$socket" --width=1280 --height=720 --idle-time=0 >"$logfile" 2>&1 &
+  XDG_RUNTIME_DIR=$runtime weston --backend=headless --renderer="$renderer" \
+    --socket="$socket" --width="${WESTON_WIDTH:-1280}" --height="${WESTON_HEIGHT:-720}" \
+    --idle-time=0 >"$logfile" 2>&1 &
   weston_pid=$!
   trap 'kill $weston_pid 2>/dev/null || true' EXIT
   for _ in $(seq 50); do [ -S "$runtime/$socket" ] && break; sleep 0.1; done
@@ -179,11 +184,29 @@ case "$cmd" in
       "${APP_ENV[@]}" ./target/debug/ocw-desktop "${VIDEO_APP_ARGS[@]}" >"$log" 2>&1 || status=$?
     encode_video wayland "$status"
     ;;
+  spike)
+    out=${1:?usage: drive.sh spike REPORT.json [-- args...]}; shift
+    [ "${1:-}" = "--" ] && shift
+    log="${out%.*}.log"; shot="${out%.*}.png"
+    rm -f "$out" "$shot"
+    ARCHIVE_APP_ARGS=("$@")
+    cargo build -q --release -p ocw-spike
+    WESTON_WIDTH=1920 WESTON_HEIGHT=1080 start_weston "${out%.*}.weston.log" gl
+    status=0
+    timeout 1800 env -u DISPLAY XDG_RUNTIME_DIR="$runtime" WAYLAND_DISPLAY="$socket" \
+      WGPU_BACKEND=vulkan "RUST_LOG=${RUST_LOG:-info,wgpu=warn,naga=warn}" \
+      ./target/release/ocw-spike --report "$out" --screenshot "$shot" "$@" >"$log" 2>&1 || status=$?
+    [ "$status" -eq 0 ] || { echo "spike failed, see $log" >&2; tail -20 "$log" >&2; exit 1; }
+    [ -s "$out" ] || { echo "no report written, see $log" >&2; exit 1; }
+    sed 's/\x1b\[[0-9;]*m//g' "$log" | grep -E "AdapterInfo|window_system|initial tiles|report written|panicked|ERROR" | cut -c1-220 || true
+    echo "report:        $out"
+    archive spike wayland "$out" "$shot" "$log"
+    ;;
   server)
     cargo run -q -p ocw-server -- "$@"
     ;;
   *)
-    sed -n '2,23p' "$0"
+    sed -n '2,27p' "$0"
     exit 2
     ;;
 esac

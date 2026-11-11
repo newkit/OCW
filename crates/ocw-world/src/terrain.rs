@@ -97,6 +97,55 @@ pub struct RoadProximity {
 
 impl Terrain {
     pub fn from_route(route: &Route, params: TerrainParams) -> Self {
+        let t = Self::from_route_without_base(route, params);
+        let road = &t.road;
+        let mean_height = road.iter().map(|p| p[1]).sum::<f64>() / road.len() as f64;
+        let base = base_field(road, mean_height, &params);
+        Self {
+            mean_height,
+            base,
+            ..t
+        }
+    }
+
+    /// Terrain whose base comes from an elevation function (the DEM in
+    /// Phase 3, generated noise in the graphics spike), sampled on a 20 m grid
+    /// over `[min, max]`; outside that area the border values continue. The
+    /// road corridor is conformed as in [`Terrain::from_route`].
+    pub fn with_base(
+        route: &Route,
+        params: TerrainParams,
+        min: [f64; 2],
+        max: [f64; 2],
+        base: impl Fn(f64, f64) -> f64,
+    ) -> Self {
+        let roadless = Self::from_route_without_base(route, params);
+        let nx = ((max[0] - min[0]) / BASE_CELL_M).ceil() as usize + 1;
+        let nz = ((max[1] - min[1]) / BASE_CELL_M).ceil() as usize + 1;
+        let mut values = Vec::with_capacity(nx * nz);
+        for k in 0..nz {
+            for i in 0..nx {
+                values.push(base(
+                    min[0] + i as f64 * BASE_CELL_M,
+                    min[1] + k as f64 * BASE_CELL_M,
+                ));
+            }
+        }
+        let mean_height = values.iter().sum::<f64>() / values.len() as f64;
+        Self {
+            mean_height,
+            base: Grid {
+                origin: min,
+                cell: BASE_CELL_M,
+                nx,
+                nz,
+                values,
+            },
+            ..roadless
+        }
+    }
+
+    fn from_route_without_base(route: &Route, params: TerrainParams) -> Self {
         let n = (route.length() / ROAD_STEP_M).ceil().max(1.0) as usize;
         let road: Vec<[f64; 3]> = (0..=n)
             .map(|i| {
@@ -110,18 +159,35 @@ impl Terrain {
         let bucket_m = corridor_m + params.blend_m;
         let mut buckets: std::collections::HashMap<(i64, i64), Vec<u32>> = Default::default();
         for (i, seg) in road.windows(2).enumerate() {
-            let mut keys = [key(seg[0], bucket_m), key(seg[1], bucket_m)];
-            keys.sort_unstable();
-            for k in keys
-                .iter()
-                .copied()
-                .collect::<std::collections::BTreeSet<_>>()
-            {
-                buckets.entry(k).or_default().push(i as u32);
+            let (a, b) = (key(seg[0], bucket_m), key(seg[1], bucket_m));
+            buckets.entry(a).or_default().push(i as u32);
+            if b != a {
+                buckets.entry(b).or_default().push(i as u32);
             }
         }
-        let mean_height = road.iter().map(|p| p[1]).sum::<f64>() / road.len() as f64;
-        let base = base_field(&road, mean_height, &params);
+        let empty = Grid {
+            origin: [0.0, 0.0],
+            cell: BASE_CELL_M,
+            nx: 2,
+            nz: 2,
+            values: vec![0.0; 4],
+        };
+        Self::assemble(
+            params, corridor_m, road, segments, buckets, bucket_m, 0.0, empty,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn assemble(
+        params: TerrainParams,
+        corridor_m: f64,
+        road: Vec<[f64; 3]>,
+        segments: usize,
+        buckets: std::collections::HashMap<(i64, i64), Vec<u32>>,
+        bucket_m: f64,
+        mean_height: f64,
+        base: Grid,
+    ) -> Self {
         Self {
             params,
             corridor_m,
@@ -425,5 +491,32 @@ mod tests {
         assert!((p.road_height - 3.0).abs() < 1e-9);
         assert!(t.road_proximity(250.0, 500.0).is_none());
         assert_eq!(t.road_segments(), 500);
+    }
+
+    #[test]
+    fn external_base_is_used_away_from_the_road() {
+        // A road at 20 m over a tilted plane (height = x / 100).
+        let route = Route::from_points(
+            "r",
+            "R",
+            vec![[0.0, 20.0, 500.0], [1000.0, 20.0, 500.0]],
+            false,
+            6.0,
+        )
+        .unwrap();
+        let t = Terrain::with_base(
+            &route,
+            TerrainParams::default(),
+            [0.0, 0.0],
+            [1000.0, 1000.0],
+            |x, _| x / 100.0,
+        );
+        // On the road: just below the road surface.
+        assert!((t.height(300.0, 500.0) - (20.0 - t.params().road_clearance_m)).abs() < 1e-9);
+        // Far from the road: the base (bilinear on its 20 m grid is exact for a plane).
+        assert!((t.height(300.0, 100.0) - 3.0).abs() < 1e-9);
+        assert!((t.mean_height() - 5.0).abs() < 0.1);
+        // Outside the base area the border values continue.
+        assert!((t.base_height(-500.0, 100.0) - 0.0).abs() < 1e-9);
     }
 }

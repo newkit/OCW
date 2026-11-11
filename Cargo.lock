@@ -4807,6 +4807,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ocw-spike"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "clap",
+ "ocw-core",
+ "ocw-world",
+]
+
+[[package]]
 name = "ocw-world"
 version = "0.1.0"
 

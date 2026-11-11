@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "apps/desktop",
+    "apps/spike",
     "services/server",
     "crates/ocw-core",
     "crates/ocw-sim",
