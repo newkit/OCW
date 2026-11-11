@@ -6,12 +6,14 @@
 //! - [`projection`]: local metric projection
 //! - [`build`]: ways → road graph with stable edge IDs, cleanup, dead ends
 //! - [`dem`]: SRTM elevation tiles
+//! - [`chains`]: through-roads across the OSM way splits
 //! - [`profile`]: road elevation profiles (sampling, smoothing, limits)
 //! - [`package`]: road-conformed terrain and 1 km tiles → world package
 //! - [`route`]: routes through the graph with their elevation
 //! - [`svg`]: map of a road graph for visual checks
 
 pub mod build;
+pub mod chains;
 pub mod dem;
 pub mod filter;
 pub mod osm;

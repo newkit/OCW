@@ -254,14 +254,273 @@ pub fn relax_junction_heights(graph: &RoadGraph, vertex_h: &mut [f64]) {
     }
 }
 
+/// Junctions touched only by bridges and tunnels (a bridge mapped as
+/// several ways) have no road on the ground to take their height from; the
+/// DEM there is the valley under the bridge or the mountain above the
+/// tunnel. Their height is interpolated by distance along the structure
+/// between its anchored ends (Gauss–Seidel on the inverse-length weighted
+/// mean, exact for chains). Structures with no anchored end keep the DEM.
+pub fn interpolate_along_structures(graph: &RoadGraph, anchored: &[bool], vertex_h: &mut [f64]) {
+    let mut links: Vec<Vec<(usize, f64)>> = vec![Vec::new(); vertex_h.len()];
+    for e in graph.edges.iter().filter(|e| e.bridge || e.tunnel) {
+        let (a, b) = (e.from.0 as usize, e.to.0 as usize);
+        let w = 1.0 / e.length_m().max(0.1);
+        links[a].push((b, w));
+        links[b].push((a, w));
+    }
+    // Only free vertices connected (through structures) to an anchor move.
+    let mut reach = anchored.to_vec();
+    let mut stack: Vec<usize> = (0..reach.len()).filter(|&v| reach[v]).collect();
+    while let Some(v) = stack.pop() {
+        for &(u, _) in &links[v] {
+            if !reach[u] {
+                reach[u] = true;
+                stack.push(u);
+            }
+        }
+    }
+    let free: Vec<usize> = (0..vertex_h.len())
+        .filter(|&v| !anchored[v] && reach[v] && !links[v].is_empty())
+        .collect();
+    for _ in 0..10_000 {
+        let mut moved = 0.0f64;
+        for &v in &free {
+            let (num, den) = links[v]
+                .iter()
+                .fold((0.0, 0.0), |(n, d), &(u, w)| (n + vertex_h[u] * w, d + w));
+            let h = num / den;
+            moved = moved.max((h - vertex_h[v]).abs());
+            vertex_h[v] = h;
+        }
+        if moved < 1e-6 {
+            break;
+        }
+    }
+}
+
+/// Elevation filter along whole roads: the pieces of each through-road
+/// ([`crate::chains`]) are joined, sampled from the DEM every 5 m,
+/// median- and Gaussian-filtered and limited in gradient and gradient
+/// change as one profile, so there are no jumps in gradient where OSM
+/// splits a road. Main roads go first and fix the heights of their
+/// junctions; a later road is split into runs at junctions already fixed.
+/// Bridges and tunnels are part of the runs; the DEM along them (the
+/// valley below, the mountain above) is replaced by a straight line
+/// between the ground at their ends before filtering. Returns the profile
+/// per edge and updates the heights of the junctions inside the runs.
+pub fn filter_through_roads(
+    graph: &RoadGraph,
+    height: &impl Fn([f64; 2]) -> Option<f64>,
+    vertex_h: &mut [f64],
+) -> Vec<Option<Vec<f64>>> {
+    use crate::chains::{chain_vertices, through_chains};
+    let mut out: Vec<Option<Vec<f64>>> = vec![None; graph.edges.len()];
+    let mut fixed = vec![false; vertex_h.len()];
+    for chain in through_chains(graph, |_| true) {
+        let vs = chain_vertices(graph, &chain);
+        let mut start = 0;
+        let mut seen = vec![vs[0]];
+        for k in 1..=chain.len() {
+            let v = vs[k];
+            let split = k == chain.len() || fixed[v as usize] || seen.contains(&v);
+            seen.push(v);
+            if split {
+                filter_run(graph, &chain[start..k], height, vertex_h, &mut out);
+                for &v in &vs[start..=k] {
+                    fixed[v as usize] = true;
+                }
+                start = k;
+                seen = vec![v];
+            }
+        }
+    }
+    out
+}
+
+/// One run of a through-road between two fixed junction heights.
+fn filter_run(
+    graph: &RoadGraph,
+    run: &[(usize, bool)],
+    height: &impl Fn([f64; 2]) -> Option<f64>,
+    vertex_h: &mut [f64],
+    out: &mut [Option<Vec<f64>>],
+) {
+    let mut poly: Vec<[f64; 2]> = Vec::new();
+    let mut offsets = Vec::with_capacity(run.len());
+    // Stretches (from, to metres along the run) on bridges and tunnels.
+    let mut structures: Vec<(f64, f64)> = Vec::new();
+    let mut total = 0.0;
+    let (mut max_grade, mut sigma) = (f64::INFINITY, f64::INFINITY);
+    for &(e, fwd) in run {
+        let e = &graph.edges[e];
+        let mut pts = e.points.clone();
+        if !fwd {
+            pts.reverse();
+        }
+        let skip = usize::from(!poly.is_empty());
+        poly.extend_from_slice(&pts[skip..]);
+        offsets.push(total);
+        if e.bridge || e.tunnel {
+            structures.push((total, total + e.length_m()));
+        }
+        total += e.length_m();
+        max_grade = max_grade.min(limits(e.class).0);
+        sigma = sigma.min(smoothing_sigma_m(e.class));
+    }
+    let samples = sample_along(&poly, PROFILE_STEP_M, false);
+    let len = samples.last().expect("non-empty").1;
+    let raw: Vec<Option<f64>> = samples.iter().map(|&(p, _)| height(p)).collect();
+    let fallback = raw.iter().flatten().next().copied().unwrap_or(0.0);
+    let mut raw: Vec<f64> = raw.iter().map(|v| v.unwrap_or(fallback)).collect();
+    let edge_of = |k: usize| {
+        let (e, fwd) = run[k];
+        let e = &graph.edges[e];
+        if fwd {
+            (e.from.0, e.to.0)
+        } else {
+            (e.to.0, e.from.0)
+        }
+    };
+    let (first, last) = (edge_of(0).0, edge_of(run.len() - 1).1);
+    // Straight across structures: from the last ground sample before to
+    // the first after (the junction height where the run starts or ends
+    // on one).
+    let on_structure: Vec<bool> = samples
+        .iter()
+        .map(|&(_, s)| {
+            structures
+                .iter()
+                .any(|&(a, b)| s > a + 1e-6 && s < b - 1e-6)
+        })
+        .collect();
+    let mut k = 0;
+    while k < raw.len() {
+        if !on_structure[k] {
+            k += 1;
+            continue;
+        }
+        let a = k.checked_sub(1);
+        let mut b = k;
+        while b < raw.len() && on_structure[b] {
+            b += 1;
+        }
+        let ha = a.map_or(vertex_h[first as usize], |a| raw[a]);
+        let hb = if b < raw.len() {
+            raw[b]
+        } else {
+            vertex_h[last as usize]
+        };
+        let sa = a.map_or(0.0, |a| samples[a].1);
+        let sb = if b < raw.len() { samples[b].1 } else { len };
+        for j in k..b {
+            raw[j] = ha + (hb - ha) * (samples[j].1 - sa) / (sb - sa).max(1e-9);
+        }
+        k = b;
+    }
+    let target = gaussian(&median_filter(&raw, 2), sigma / PROFILE_STEP_M);
+    let (start_h, end_h) = (vertex_h[first as usize], vertex_h[last as usize]);
+    // No clipping and integrating along a whole road (that drifts off the
+    // terrain): local grade limit, light smoothing for the gradient changes,
+    // local limit again.
+    let local = limit_grade_locally(&target, len, start_h, end_h, max_grade);
+    let soft = gaussian(&local, CHANGE_SIGMA_M / PROFILE_STEP_M);
+    let h = limit_grade_locally(&soft, len, start_h, end_h, max_grade);
+    let d = distances(h.len(), len);
+    let at = |s: f64| {
+        if h.len() < 2 {
+            return h[0];
+        }
+        let s = s.clamp(0.0, len);
+        let i = ((s / PROFILE_STEP_M).floor() as usize).min(h.len() - 2);
+        let seg = (d[i + 1] - d[i]).max(1e-9);
+        h[i] + (h[i + 1] - h[i]) * ((s - d[i]) / seg).clamp(0.0, 1.0)
+    };
+    for (k, &(ei, fwd)) in run.iter().enumerate() {
+        let e = &graph.edges[ei];
+        let l = e.length_m();
+        let n = sample_along(&e.points, PROFILE_STEP_M, false).len();
+        let o = offsets[k];
+        out[ei] = Some(
+            distances(n, l)
+                .iter()
+                .map(|&x| at(if fwd { o + x } else { o + l - x }))
+                .collect(),
+        );
+        if k + 1 < run.len() {
+            vertex_h[edge_of(k).1 as usize] = at(o + l);
+        }
+    }
+}
+
+/// Smoothing (sigma, metres) that rounds the gradient changes where the
+/// grade limit clipped a road.
+const CHANGE_SIGMA_M: f64 = 20.0;
+
+/// Brings `target` within `max_grade` without drifting away from it: the
+/// ends are moved to `start`/`end` (the correction fading out over 200 m),
+/// then every interval that is too steep is flattened by moving both of its
+/// samples towards each other, repeated until it holds. Unlike clipping
+/// the gradient and integrating, the height a steep stretch loses stays
+/// there instead of being spread over the whole road.
+pub fn limit_grade_locally(
+    target: &[f64],
+    length: f64,
+    start: f64,
+    end: f64,
+    max_grade: f64,
+) -> Vec<f64> {
+    let n = target.len();
+    let mut h = target.to_vec();
+    if n < 2 {
+        return h;
+    }
+    let d = distances(n, length);
+    const FADE_M: f64 = 200.0;
+    let (ds, de) = (start - target[0], end - target[n - 1]);
+    for i in 0..n {
+        let from_start = (1.0 - d[i] / FADE_M).max(0.0);
+        let from_end = (1.0 - (length - d[i]) / FADE_M).max(0.0);
+        h[i] += ds * from_start + de * from_end;
+    }
+    h[0] = start;
+    h[n - 1] = end;
+    for _ in 0..2000 {
+        let mut worst = 0.0f64;
+        for i in 0..n - 1 {
+            let run = (d[i + 1] - d[i]).max(1e-9);
+            let dh = h[i + 1] - h[i];
+            let excess = dh.abs() - max_grade * run;
+            if excess <= 1e-9 {
+                continue;
+            }
+            worst = worst.max(excess);
+            let s = dh.signum() * excess;
+            match (i == 0, i + 1 == n - 1) {
+                (true, true) => {}
+                (true, false) => h[i + 1] -= s,
+                (false, true) => h[i] += s,
+                (false, false) => {
+                    h[i] += s / 2.0;
+                    h[i + 1] -= s / 2.0;
+                }
+            }
+        }
+        if worst < 1e-3 {
+            break;
+        }
+    }
+    h
+}
+
 /// Computes `profile` for every edge of `graph`.
 ///
 /// 1. Sample the DEM every 5 m; median filter; Gaussian smoothing per class.
 /// 2. Junction heights: the mean of the smoothed ends of the roads meeting
 ///    there (bridges and tunnels excluded; DEM at the vertex if none), so
 ///    noisy DEM samples at a single point cannot force impossible gradients.
-/// 3. Constrain each road to its class limits between those heights;
-///    bridges and tunnels are linear between their ends.
+/// 3. Filter along whole through-roads ([`filter_through_roads`]): one
+///    profile across the OSM way splits, limited in gradient (locally, so
+///    it stays on the terrain) and gradient change between fixed junctions.
 pub fn add_profiles(graph: &mut RoadGraph, dem: &Dem, proj: &LocalProjection) -> ProfileStats {
     let height = |p: [f64; 2]| {
         let (lat, lon) = proj.unproject(p);
@@ -309,22 +568,33 @@ pub fn add_profiles(graph: &mut RoadGraph, dem: &Dem, proj: &LocalProjection) ->
             }
         })
         .collect();
+    let anchored: Vec<bool> = sum.iter().map(|&(_, n)| n > 0).collect();
+    interpolate_along_structures(graph, &anchored, &mut vertex_h);
     relax_junction_heights(graph, &mut vertex_h);
-    // Pass 3: constrained profiles.
+    // Pass 3: filtered along whole roads (through the OSM splits), then
+    // bridges and tunnels linear between their ends.
+    let mut along_roads = filter_through_roads(&*graph, &height, &mut vertex_h);
     for (i, e) in graph.edges.iter_mut().enumerate() {
         let len = e.length_m();
         let (raw, smooth) = (&raws[i], &smooths[i]);
         let (start, end) = (vertex_h[e.from.0 as usize], vertex_h[e.to.0 as usize]);
         let (max_grade, max_change) = limits(e.class);
-        let profile = if e.bridge || e.tunnel {
+        if e.bridge || e.tunnel {
             stats.bridges_tunnels += 1;
-            distances(smooth.len(), len)
-                .iter()
-                .map(|x| start + (end - start) * x / len.max(1e-9))
-                .collect()
-        } else {
-            constrain(smooth, len, start, end, max_grade, max_change)
-        };
+        }
+        let mut profile: Vec<f64> = along_roads[i].take().unwrap_or_else(|| {
+            if e.bridge || e.tunnel {
+                distances(smooth.len(), len)
+                    .iter()
+                    .map(|x| start + (end - start) * x / len.max(1e-9))
+                    .collect()
+            } else {
+                constrain(smooth, len, start, end, max_grade, max_change)
+            }
+        });
+        // Exactly the junction heights at the ends (continuity).
+        profile[0] = start;
+        *profile.last_mut().expect("non-empty") = end;
         let raw_grade = steepest(raw, 5);
         let smoothed_grade = steepest(&profile, 5);
         if !(e.bridge || e.tunnel) && raw_grade > max_grade + 0.10 && len > 50.0 {
@@ -400,6 +670,179 @@ mod tests {
                 (w[1].1 - w[0].1 - d).abs() < 1e-9,
                 "distance must match the polyline"
             );
+        }
+    }
+
+    #[test]
+    fn junctions_inside_a_bridge_follow_the_bridge() {
+        // Road (anchored) - bridge 30 m - junction - bridge 60 m - road.
+        // Regression: the middle junction took the DEM of the valley floor
+        // (Steg, after the Stegertunnel: -24 %).
+        use ocw_world::graph::{Edge, EdgeId, VertexId};
+        let edge = |id, from, to, a: [f64; 2], b: [f64; 2], bridge| Edge {
+            id: EdgeId(id),
+            from: VertexId(from),
+            to: VertexId(to),
+            points: vec![a, b],
+            class: RoadClass::Secondary,
+            name: None,
+            width_m: 6.5,
+            bridge,
+            tunnel: false,
+            dead_end_m: None,
+            boundary: false,
+            osm_way: id as i64,
+            profile: vec![],
+        };
+        let v = [
+            [-100.0, 0.0],
+            [0.0, 0.0],
+            [30.0, 0.0],
+            [90.0, 0.0],
+            [190.0, 0.0],
+        ];
+        let g = RoadGraph {
+            vertices: v.to_vec(),
+            edges: vec![
+                edge(1, 0, 1, v[0], v[1], false),
+                edge(2, 1, 2, v[1], v[2], true),
+                edge(3, 2, 3, v[2], v[3], true),
+                edge(4, 3, 4, v[3], v[4], false),
+            ],
+            boundary_vertices: Default::default(),
+        };
+        let anchored = [true, true, false, true, true];
+        let mut h = vec![100.0, 100.0, 40.0, 109.0, 109.0];
+        interpolate_along_structures(&g, &anchored, &mut h);
+        assert!((h[2] - 103.0).abs() < 1e-4, "{}", h[2]);
+        assert_eq!((h[1], h[3]), (100.0, 109.0));
+        // A structure with no anchored end keeps the DEM.
+        let mut h = vec![100.0, 100.0, 40.0, 109.0, 109.0];
+        interpolate_along_structures(&g, &[false; 5], &mut h);
+        assert_eq!(h[2], 40.0);
+    }
+
+    #[test]
+    fn through_roads_are_filtered_across_way_splits() {
+        // A 5 % climb mapped as three ways; the consensus height of the
+        // middle junctions is off by 6 m (a noisy DEM sample). Filtered per
+        // piece, the gradient jumps at the splits; along the whole road it
+        // runs smoothly and the junctions follow the road.
+        use ocw_world::graph::{Edge, EdgeId, VertexId};
+        let v = [[0.0, 0.0], [300.0, 0.0], [330.0, 0.0], [700.0, 0.0]];
+        let edge = |id: u32, a: usize, b: usize, fwd: bool| {
+            let (a, b) = if fwd { (a, b) } else { (b, a) };
+            Edge {
+                id: EdgeId(u64::from(id)),
+                from: VertexId(a as u32),
+                to: VertexId(b as u32),
+                points: vec![v[a], v[b]],
+                class: RoadClass::Secondary,
+                name: Some("Climb".into()),
+                width_m: 6.5,
+                bridge: false,
+                tunnel: false,
+                dead_end_m: None,
+                boundary: false,
+                osm_way: i64::from(id),
+                profile: vec![],
+            }
+        };
+        let g = RoadGraph {
+            vertices: v.to_vec(),
+            edges: vec![
+                edge(1, 0, 1, true),
+                edge(2, 1, 2, false),
+                edge(3, 2, 3, true),
+            ],
+            boundary_vertices: Default::default(),
+        };
+        let dem = |p: [f64; 2]| Some(100.0 + 0.05 * p[0]);
+        let mut vertex_h = vec![100.0, 121.0, 110.5, 135.0];
+        let out = filter_through_roads(&g, &dem, &mut vertex_h);
+        assert!((vertex_h[1] - 115.0).abs() < 0.5, "{}", vertex_h[1]);
+        assert!((vertex_h[2] - 116.5).abs() < 0.5, "{}", vertex_h[2]);
+        // Reassemble the road west to east and check the gradient change.
+        let mut road: Vec<f64> = out[0].clone().unwrap();
+        let mut mid = out[1].clone().unwrap();
+        mid.reverse();
+        road.extend_from_slice(&mid[1..]);
+        road.extend_from_slice(&out[2].as_ref().unwrap()[1..]);
+        let grades: Vec<f64> = road.windows(2).map(|w| (w[1] - w[0]) / 5.0).collect();
+        let jump = grades
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0, f64::max);
+        assert!(jump < 0.01, "gradient jumps by {:.1} %", jump * 100.0);
+        // Ends meet the junction heights.
+        assert!((out[0].as_ref().unwrap().last().unwrap() - vertex_h[1]).abs() < 1e-9);
+        assert!((out[1].as_ref().unwrap()[0] - vertex_h[2]).abs() < 1e-9);
+    }
+
+    #[test]
+    fn bridges_in_a_through_road_ignore_the_valley_below() {
+        // Flat road at 200 m, a 60 m bridge over a 30 m deep gorge in the
+        // middle, mapped as road - bridge - road.
+        use ocw_world::graph::{Edge, EdgeId, VertexId};
+        let v = [[0.0, 0.0], [300.0, 0.0], [360.0, 0.0], [700.0, 0.0]];
+        let edge = |id: u32, a: usize, b: usize, bridge| Edge {
+            id: EdgeId(u64::from(id)),
+            from: VertexId(a as u32),
+            to: VertexId(b as u32),
+            points: vec![v[a], v[b]],
+            class: RoadClass::Secondary,
+            name: Some("Gorge".into()),
+            width_m: 6.5,
+            bridge,
+            tunnel: false,
+            dead_end_m: None,
+            boundary: false,
+            osm_way: i64::from(id),
+            profile: vec![],
+        };
+        let g = RoadGraph {
+            vertices: v.to_vec(),
+            edges: vec![
+                edge(1, 0, 1, false),
+                edge(2, 1, 2, true),
+                edge(3, 2, 3, false),
+            ],
+            boundary_vertices: Default::default(),
+        };
+        let dem = |p: [f64; 2]| {
+            Some(if p[0] > 300.5 && p[0] < 359.5 {
+                170.0
+            } else {
+                200.0
+            })
+        };
+        let mut vertex_h = vec![200.0, 200.0, 200.0, 200.0];
+        let out = filter_through_roads(&g, &dem, &mut vertex_h);
+        for p in out.iter().map(|p| p.as_ref().unwrap()) {
+            assert!(p.iter().all(|h| (h - 200.0).abs() < 0.01), "{p:?}");
+        }
+    }
+
+    #[test]
+    fn grade_limit_stays_local_on_long_roads() {
+        // 5 km at 8 % with three 50 m walls at 40 % (DEM noise): clipping
+        // and integrating would leave the rest of the road metres off; the
+        // local limit keeps it on the terrain away from the walls.
+        let n = 1001;
+        let len = 5000.0;
+        let mut t: Vec<f64> = (0..n).map(|i| i as f64 * 5.0 * 0.08).collect();
+        for &w in &[100usize, 500, 800] {
+            for (k, v) in t.iter_mut().enumerate().skip(w) {
+                *v += 20.0 * (((k - w) as f64) / 10.0).min(1.0);
+            }
+        }
+        let (a, b) = (t[0], t[n - 1]);
+        let h = limit_grade_locally(&t, len, a, b, 0.15);
+        assert!(steepest(&h, 1) <= 0.15 + 1e-3, "{}", steepest(&h, 1));
+        assert_eq!((h[0], h[n - 1]), (a, b));
+        // Away from the walls (> 400 m), the road is where the terrain is.
+        for i in [50usize, 300, 700, 950] {
+            assert!((h[i] - t[i]).abs() < 0.5, "{i}: {} vs {}", h[i], t[i]);
         }
     }
 

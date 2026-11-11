@@ -231,8 +231,11 @@ fn route(args: RouteArgs) {
     }
     for i in 0..file.points.len().saturating_sub(5) {
         let (a, b) = (file.points[i], file.points[i + 5]);
-        let run = ((b[0] - a[0]).powi(2) + (b[2] - a[2]).powi(2))
-            .sqrt()
+        // Along the road, not the chord (which cuts hairpins short).
+        let run = file.points[i..=i + 5]
+            .windows(2)
+            .map(|w| ((w[1][0] - w[0][0]).powi(2) + (w[1][2] - w[0][2]).powi(2)).sqrt())
+            .sum::<f64>()
             .max(1e-6);
         steep.push((
             (b[1] - a[1]) / run,
@@ -526,14 +529,20 @@ fn main() {
                     }
                     if best <= 40.0 {
                         println!(
-                            "  {:5.1} m  {:?} {:<22} bridge {} tunnel {}  road height {:.1} m  way {}",
+                            "  {:5.1} m  {:?} {:<22} bridge {} tunnel {}  road height {:.1} m  way {}\n         {:.0} m long, v{} {:.1} m -> v{} {:.1} m, steepest {:.1} %",
                             best,
                             e.class,
                             e.name.as_deref().unwrap_or("-"),
                             e.bridge,
                             e.tunnel,
                             e.height_at(at).unwrap_or(f64::NAN),
-                            e.osm_way
+                            e.osm_way,
+                            e.length_m(),
+                            e.from.0,
+                            e.profile.first().copied().unwrap_or(f64::NAN),
+                            e.to.0,
+                            e.profile.last().copied().unwrap_or(f64::NAN),
+                            100.0 * ocw_worldgen::profile::steepest(&e.profile, 1)
                         );
                     }
                 }
