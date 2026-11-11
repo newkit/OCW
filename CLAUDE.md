@@ -39,7 +39,7 @@ Build/test/benchmark machines (Windows, macOS, Linux with a real GPU) are descri
 
 ## Documents
 
-- `SPECIFICATION.md` (v1.2) – the single source of requirements and architecture decisions. The review proposals P-1 … P-20 were merged into it; Appendix A maps each former P-number to its section.
+- `SPECIFICATION.md` (v1.3) – the single source of requirements and architecture decisions. The review proposals P-1 … P-20 were merged into it; Appendix A maps each former P-number to its section.
 
 Reference the spec by section (e.g. "spec §6.1") in discussions and commits. New decisions go directly into the spec (bump the version table at the top) rather than into a separate document.
 

@@ -4,13 +4,14 @@
 
 Project Description and Technical Architecture
 
-Version 1.2 – November 2026
+Version 1.3 – November 2026
 
 | Version | Change |
 |---|---|
 | 1.0 | Original specification (translated from German) |
 | 1.1 | Decisions from the specification review merged in (former PROPOSALS.md, P-1 … P-20; see Appendix A) |
 | 1.2 | Testing strategy (§11.4); unit tests required for every development step (§14) |
+| 1.3 | Graphics engine spike results (§3.1.1): Bevy confirmed on Linux; trees merged per tile |
 
 ---
 
@@ -423,6 +424,31 @@ wgpu provides the cross-platform GPU abstraction with the backends Vulkan, Direc
 **Go criterion:** stable 60 FPS on the reference hardware with no visible hitches during streaming. If Bevy clearly fails and cannot be fixed in reasonable time, run the same spike on Godot.
 
 **Supporting crates to evaluate:** `bevy_egui` (console, editor panels), `big_space` (floating origin), KTX2/Basis texture support (built into Bevy), `bevy_mod_billboard` or impostors for distant trees.
+
+**Spike results, Linux (November 2026).** Implementation: `apps/spike` (`ocw-spike`), run with `drive.sh spike` / `spike-video`.
+
+- **Setup:** generated 10 × 10 km world (noise terrain standing in for the DEM, a 27.8 km winding road loop, road-conformed terrain), 1 km tiles in a 5 × 5 ring with three terrain LODs (10/25/50 m grids), built on background threads with one tile upload per frame, floating origin (rebasing per 1 km), about 140,000 trees in view, 100 riders, splat terrain material (four texture layers), cascaded shadows, fog.
+- **Machine:** AMD Radeon RX Vega 56/64 (8 GB, RADV / Vulkan), 12-core EPYC, Debian 13, 1920 × 1080, vsync off, headless Wayland compositor. This GPU is clearly above the minimum spec of §15.
+
+| Variant (40 km/h unless noted) | Mean FPS | p99 frame | Max frame | Frames > 16.7 ms | Frames > 33 ms |
+|---|---|---|---|---|---|
+| One entity per tree (`VisibilityRange` LOD), 10 km | 220 | 8.9 ms | 43 ms | 225 of 198k | 4 |
+| **Trees merged per tile (per-tile LOD), 10 km** | **447** | **5.5 ms** | **11.4 ms** | **0** | **0** |
+| One entity per tree, 150 km/h | 203 | 10.5 ms | 45 ms | 160 | 5 |
+| **Trees merged per tile, 150 km/h** | **298** | **7.1 ms** | **15.6 ms** | **0** | **0** |
+| Merged + splat material, 2 km | 387 | 6.6 ms | 11.7 ms | 0 | 0 |
+
+Tile builds take up to 23 ms on worker threads; uploads cost at most 4.6 ms on the main thread; initial load of the 25 tiles 0.3–0.4 s; process RAM 330–470 MB; VRAM about +360 MB. Single runs vary by ±30 % (the GPU is shared with a desktop session), so only differences larger than that count.
+
+**Decisions from the spike:**
+
+- **Go for Bevy on Linux:** the go criterion (stable 60 FPS, no visible hitches while streaming) is met with headroom.
+- **Vegetation is merged per tile and LOD**, not spawned as one entity per tree: spawning ~8,000 tree entities with a tile causes 40–45 ms hitches. Per-tile merged meshes (full trees near, impostors far) have no frame above 16.7 ms even at 150 km/h.
+- **Splat terrain material** (spec §4.6) as a Bevy `ExtendedMaterial` with a WESL shader: no measurable cost.
+- **Floating origin** with per-tile rebasing works; `big_space` is not needed for this world size.
+- Tiles are built off the main thread and uploaded with a per-frame budget; this pattern carries over to the world streaming of Phase 3.
+
+**Still open:** a run on minimum-spec hardware (§15, GTX 1050 / RX 560 class); skeletal animation (needs a rigged rider model, Phase 4); Windows (D3D12) and macOS (Metal) at the start of each port (§11.1); textures from real CC0 sources instead of procedural ones.
 
 ### 3.2 User Interface
 
@@ -1088,7 +1114,7 @@ Personal data, voice data and training data are handled separately.
 - Bevy application, rendering, camera, simple test route.
 - `ocw-sim`, `ocw-protocol` and a headless server skeleton. The desktop app talks to the in-process local server through the protocol from day one.
 - In-game console (§2.9).
-- Graphics engine spike (§3.1.1).
+- Graphics engine spike (§3.1.1) – done on Linux (results and decisions in §3.1.1); minimum-spec run still open.
 - Linux build; build-only CI checks for Windows and macOS; wasm build of the core crates.
 
 - **Unit tests:** physics basics, route sampling, protocol encode/decode and quantization, session logic (inputs, sequence numbers, bots), client prediction and interpolation, virtual trainer, local server, console command parsing and permissions.
