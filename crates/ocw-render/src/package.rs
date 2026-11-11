@@ -453,6 +453,7 @@ mod tests {
             samples: n as u32,
             tiles: BTreeMap::from([(key, tile)]),
             graph: None,
+            routes: Vec::new(),
         }
     }
 
