@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Hand-made test region for the end-to-end world pipeline test (tests/e2e.rs).
+     Not real map data. About 1.5 x 0.6 km around 46.4975 N, 9.5 E:
+
+       7
+       |  Sackgasse (dead end, 450 m)
+       6
+       |
+  1 -2-3-4- 5     Hauptstrasse (primary), junction at 3 with four arms
+  |    \     |
+  12    13   8    Einbahnweg (one-way 3 -> 10), Brückenstrasse (secondary)
+  |       \  |
+  11 ----- 10=9   bridge 10-9 over a valley
+-->
+<osm version="0.6" generator="hand-made fixture">
+  <node id="1" lat="46.5000" lon="9.4900"/>
+  <node id="2" lat="46.5000" lon="9.4950"/>
+  <node id="3" lat="46.5000" lon="9.5000"/>
+  <node id="4" lat="46.5000" lon="9.5050"/>
+  <node id="5" lat="46.5000" lon="9.5100"/>
+  <node id="6" lat="46.5020" lon="9.5000"/>
+  <node id="7" lat="46.5040" lon="9.5005"/>
+  <node id="8" lat="46.4970" lon="9.5100"/>
+  <node id="9" lat="46.4950" lon="9.5070"/>
+  <node id="10" lat="46.4950" lon="9.5040"/>
+  <node id="11" lat="46.4950" lon="9.4970"/>
+  <node id="12" lat="46.4970" lon="9.4910"/>
+  <node id="13" lat="46.4975" lon="9.5005"/>
+  <!-- A node no road uses, and a building: both ignored. -->
+  <node id="20" lat="46.5010" lon="9.5010"/>
+  <way id="100">
+    <nd ref="1"/><nd ref="2"/><nd ref="3"/><nd ref="4"/><nd ref="5"/>
+    <tag k="highway" v="primary"/>
+    <tag k="name" v="Hauptstrasse"/>
+  </way>
+  <way id="101">
+    <nd ref="3"/><nd ref="6"/><nd ref="7"/>
+    <tag k="highway" v="residential"/>
+    <tag k="name" v="Sackgasse"/>
+  </way>
+  <way id="102">
+    <nd ref="5"/><nd ref="8"/><nd ref="9"/>
+    <tag k="highway" v="secondary"/>
+    <tag k="name" v="Brückenstrasse"/>
+  </way>
+  <way id="103">
+    <nd ref="9"/><nd ref="10"/>
+    <tag k="highway" v="secondary"/>
+    <tag k="name" v="Brückenstrasse"/>
+    <tag k="bridge" v="yes"/>
+    <tag k="layer" v="1"/>
+  </way>
+  <way id="104">
+    <nd ref="10"/><nd ref="11"/><nd ref="12"/><nd ref="1"/>
+    <tag k="highway" v="secondary"/>
+    <tag k="name" v="Brückenstrasse"/>
+  </way>
+  <way id="105">
+    <nd ref="3"/><nd ref="13"/><nd ref="10"/>
+    <tag k="highway" v="residential"/>
+    <tag k="name" v="Einbahnweg"/>
+    <tag k="oneway" v="yes"/>
+  </way>
+  <way id="200">
+    <nd ref="20"/><nd ref="6"/><nd ref="3"/><nd ref="20"/>
+    <tag k="building" v="yes"/>
+  </way>
+</osm>
