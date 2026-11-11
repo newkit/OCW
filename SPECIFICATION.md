@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.0 – November 2026
+Version 2.1 – November 2026
 
 | Version | Change |
 |---|---|
@@ -19,6 +19,7 @@ Version 2.0 – November 2026
 | 1.8 | Steering fixes (§5.2.1): only pushing into the road edge scrapes; a held opposite lean key pauses at upright, then leans on to the other side |
 | 1.9 | Catch-up of implemented decisions: elevation filter along through-roads and terrain cut under roads (§4.3), road surfaces (§4.4), route file format (§4.7), console scripting (§2.9), input devices incl. gamepad, camera and avatar on the terrain (§3.2), start point and bots (§6.1), repository layout (§10), build machines, desktop integration, AppImage, release and build-history folders, CI resilience (§11), own artwork licence (§13) |
 | 2.0 | Restart key R, camera reset on C, video recording on V; gamepad ↑ / ↓ also on the D-pad and the left stick, analog triggers, U-turn on East (§3.2) |
+| 2.1 | In-game menu plan (§3.2.1): structure (Ride, Workshop, Navi, Settings), gamepad navigation, single-player pause, settings file, increments M1–M9 mapped to phases; audio output device plan (§3.3) |
 
 ---
 
