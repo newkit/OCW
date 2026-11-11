@@ -32,6 +32,7 @@ plain `cargo`, add `. "$HOME/.cargo/env"` to your shell profile.
 | Wild mode on/off (leave the road) | W | West button (X / □) |
 | Free ride: choose the exit at the next junction | ← / → (autodrive, junction ahead) or Q / E | D-pad left / right |
 | Free ride: U-turn | U | East button (B / ○) |
+| Route ride: back to the route after leaving it | J | North button (Y / △) |
 | Power ±10 W | PgUp / PgDn | |
 | Camera: orbit / zoom | mouse drag / wheel | |
 | Camera reset | C | |
@@ -118,7 +119,26 @@ one with ← / → (with autodrive, while a junction is ahead) or Q / E; the cho
 turns green when it locks (20 m before the junction, earlier at speed).
 Without a choice the rider takes the default exit (straightest, same road,
 bigger road). At dead ends and the region border the rider turns round; U
-turns round any time. Sharp turns slow the rider down automatically.
+turns round any time (in a loop as wide as the road, steered to the middle
+first). Sharp turns slow the rider down automatically.
+
+**Route rides on the road graph** (spec §2.7, §2.2.1): ride a route of the
+package, or import a GPX file and ride it:
+
+```bash
+# Import a GPX track into the package (matched onto its roads; problems are reported)
+world-builder gpx --world data/pilot/liechtenstein.ocwpkg --gpx ride.gpx --name "Rheintal"
+ocw-desktop --world data/pilot/liechtenstein.ocwpkg --route Rheintal
+# Or match a GPX file at the start, without storing it
+ocw-desktop --world data/pilot/liechtenstein.ocwpkg --route-gpx ride.gpx
+```
+
+The junction overlay shows the route's exit in blue (it is the default).
+Choosing another exit (← / →, Q / E) shows "[leaves the route]"; once it locks
+you are off the route and ride free. J (or `ride.rejoin`) adds the shortest
+way back to the route; riding onto a later part of the route in its direction
+rejoins it too. Bots stay on the route. The HUD shows the route's progress
+(and lap, for loops); after the finish of an open route you ride on freely.
 
 **Surfaces:** asphalt, gravel (tracks and paths; the Hills loop has a gravel
 climb at 1.5–2.1 km) and grass beside the road roll increasingly harder
@@ -176,8 +196,10 @@ installs it).
 | `--power W` | Initial power of the virtual trainer (default 200) |
 | `--bots N` | Number of test riders (default 4) |
 | `--route hills\|loop` | Built-in test route (default `hills`) |
-| `--route-file PATH` | Ride a route file from `world-builder route` |
-| `--world PATH` | World package from `world-builder package` (with `--route-file`, or `--free-ride`) |
+| `--route NAME\|FILE` (with `--world`) | Ride a route of the package by name, or an `ocw-graph-route` file, on the road graph |
+| `--route-gpx PATH` | Ride a GPX track or route, matched onto the `--world` package's roads at the start |
+| `--route-file PATH` | Ride a route file from `world-builder route` (interim format) |
+| `--world PATH` | World package from `world-builder package` (with `--route-file`, `--route`, `--route-gpx` or `--free-ride`) |
 | `--free-ride` | Free ride on the package's road graph (needs `--world`) |
 | `--start X,Z` | Free ride start: the road nearest local X,Z metres (default: random) |
 | `--random-start BOOL` | Start at a random point (default on, off for screenshot/capture runs) |
@@ -222,7 +244,9 @@ for now).
 | `teleport.xz X Z` | *Dev:* free ride: move to the road nearest local x / z metres |
 | `ride.turn left\|right\|straight\|default\|+\|-\|N` | Free ride: choose the exit at the next junction |
 | `ride.uturn` | Free ride: turn round (key U) |
-| `ride.junction` | Free ride: show the next junction's exits |
+| `ride.junction` | Free ride: show the next junction's exits (and the route's) |
+| `ride.rejoin` | Route ride: back to the route after leaving it (key J) |
+| `ride.route` | Route ride: name, progress and whether you are on the route |
 | `net.stats` | Connection statistics |
 | **Camera** | |
 | `camera.mode chase\|side\|top` | Camera perspective |
@@ -268,7 +292,12 @@ cargo run --release -p ocw-server -- --world data/pilot/liechtenstein.ocwpkg \
 It prints the riders' positions and speeds while it runs. Options:
 `--bots N` (test riders, default 3), `--seconds S` (0 = until stopped with
 Ctrl+C), `--fast` (no real-time pacing), `--world PKG` and `--seed N` (free
-ride on a world package's road graph, start point seed).
+ride on a world package's road graph, start point seed), `--route NAME`
+(with `--world`: ride one of the package's routes).
+
+Clients and the server must use the same build of a world package (junctions
+are identified by vertex index): the Hello and Welcome carry the package name
+and a fingerprint of its road graph, and a mismatch is refused.
 
 ## Tools and scripts
 
@@ -277,6 +306,9 @@ ride on a world package's road graph, start point seed).
 | `make help` | All make targets: deps, build, test, check, smoke screenshots, videos, deploy |
 | `cargo run -p ocw-server -- --bots 3 --seconds 10 --fast` | Headless game server (`--world PKG [--seed N]`: free ride on a package) |
 | `world-builder graph` / `route` / `package` / `check` | OSM + elevation import: road graph statistics, route files, world packages, package validation (`cargo run --release -p world-builder -- help`) |
+| `world-builder gpx --world PKG --gpx FILE [--name N] [--route-file F] [--dry-run]` | Import a GPX track: map-match it onto the package's road graph and store it as a package route (section `ROUT`; optionally also as an `ocw-graph-route` file); off-road stretches and gaps are reported |
+| `world-builder route --world PKG --from LAT,LON --to LAT,LON --name N` | Store the shortest main-road route between two points as a package route |
+| `world-builder routes --world PKG [--from OLD_PKG] [--remove N] [--export-gpx]` | List and check a package's routes; carry the routes of an older build over (by stable edge ID, re-matching broken ones); export them as GPX |
 | `scripts/fetch-pilot.sh` | Download the pilot region's OSM extract and elevation data |
 | `scripts/remote.sh MACHINE run 'CMD'` | Copy the tree to a build machine (`config/machines.toml`) and run a command there |
 | `scripts/deploy-test.sh MACHINE` | Release build on a test machine, deployed for its kiosk |
