@@ -6,6 +6,7 @@
 //! - client-side prediction of the local rider and interpolation of others,
 //! - the Bevy renderer from `ocw-render`.
 
+mod argsfile;
 mod automation;
 mod client;
 mod connection;
@@ -51,7 +52,13 @@ impl Args {
 }
 
 #[derive(Parser, Debug, Clone, Resource)]
-#[command(version, about = "Open Cycling World desktop client")]
+// A later occurrence of an option replaces an earlier one, so the command
+// line overrides the defaults file (argsfile.rs); repeatable options append.
+#[command(
+    version,
+    about = "Open Cycling World desktop client",
+    args_override_self = true
+)]
 pub struct Args {
     /// Display name of the local rider.
     #[arg(long, default_value = "Rider")]
@@ -174,6 +181,10 @@ pub struct Args {
     /// Seconds of game time to ride before capturing starts.
     #[arg(long, default_value_t = 3.0)]
     pub capture_warmup: f64,
+    /// Ignore the default arguments file (ocw-desktop.args beside the
+    /// executable, or $OCW_ARGS_FILE).
+    #[arg(long)]
+    pub no_args_file: bool,
 }
 
 fn parse_size(s: &str) -> Result<(u32, u32), String> {
@@ -360,7 +371,11 @@ fn load_route_file(path: &std::path::Path) -> (Route, Option<ocw_world::Elevatio
 }
 
 fn main() -> AppExit {
-    let args = Args::parse();
+    let (argv, defaults) = argsfile::args_os();
+    if let Some(msg) = &defaults {
+        eprintln!("{msg}");
+    }
+    let args = Args::parse_from(argv);
     worlds::handle_cli(&args);
     // Desktop entry and icons for menus, docks and file managers (not for
     // the headless screenshot / capture runs).
@@ -582,6 +597,44 @@ mod tests {
         ]);
         assert!(a.graph_route());
         assert!(Args::try_parse_from(["ocw-desktop", "--route-gpx", "ride.gpx"]).is_err());
+    }
+
+    #[test]
+    fn command_line_overrides_the_args_file() {
+        let file = argsfile::split(
+            "--world /var/tmp/ocw/w.ocwpkg --virtual --name Kiosk\n--cmd 'hud on' --at 2=a\n",
+        )
+        .unwrap();
+        let argv = |v: &[&str]| v.iter().map(std::ffi::OsString::from).collect::<Vec<_>>();
+        let a = Args::parse_from(argsfile::merge(
+            file.clone(),
+            argv(&[
+                "ocw-desktop",
+                "--route-file",
+                "r.route",
+                "--name",
+                "Nils",
+                "--virtual",
+                "--cmd",
+                "teleport 3.3",
+                "--at",
+                "5=b",
+            ]),
+        ));
+        // Single values: the command line wins; flags may repeat.
+        assert_eq!(a.name, "Nils");
+        assert_eq!(a.world.as_deref(), Some("/var/tmp/ocw/w.ocwpkg"));
+        assert_eq!(a.route_file, Some(PathBuf::from("r.route")));
+        assert!(a.virtual_trainer);
+        // Repeatable options accumulate, the file's first.
+        assert_eq!(a.commands, ["hud on", "teleport 3.3"]);
+        assert_eq!(a.timed, [(2.0, "a".into()), (5.0, "b".into())]);
+        let a = Args::parse_from(argsfile::merge(
+            file,
+            argv(&["ocw-desktop", "--world", "other.ocwpkg"]),
+        ));
+        assert_eq!(a.world.as_deref(), Some("other.ocwpkg"));
+        assert_eq!(a.name, "Kiosk");
     }
 
     #[test]
