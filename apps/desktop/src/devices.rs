@@ -32,10 +32,9 @@ pub struct DevicesPlugin;
 impl Plugin for DevicesPlugin {
     fn build(&self, app: &mut App) {
         let args = app.world().resource::<Args>().clone();
-        let known_path = args
-            .devices_file
-            .clone()
-            .or_else(known_devices::default_path);
+        let known_path =
+            known_devices::choose_path(args.devices_file.clone(), known_devices::default_path());
+        info!(path = ?known_path, "remembered devices file");
         let known = match &known_path {
             Some(p) => KnownDevices::load(p).unwrap_or_else(|e| {
                 warn!("cannot read remembered devices: {e}");
@@ -51,6 +50,11 @@ impl Plugin for DevicesPlugin {
             found: Vec::new(),
         };
         if args.virtual_trainer || devices.known.devices.is_empty() {
+            if !args.virtual_trainer {
+                warn!(
+                    "no remembered devices: riding with the virtual trainer (devices.scan / devices.connect to add one)"
+                );
+            }
             devices.start(VirtualTrainer::new(args.power));
         } else {
             for d in devices.known.devices.clone() {

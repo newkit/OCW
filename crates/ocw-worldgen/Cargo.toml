@@ -12,5 +12,13 @@ ocw-world.workspace = true
 osmpbf = "0.3"
 thiserror.workspace = true
 
+[dev-dependencies]
+# End-to-end test (tests/e2e.rs): package, cache, load, ride on the server.
+ocw-core.workspace = true
+ocw-sim.workspace = true
+ocw-server.workspace = true
+ocw-worldstore.workspace = true
+tempfile = "3"
+
 [lints]
 workspace = true

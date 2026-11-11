@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="OCW test fixture" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><time>2026-11-11T08:00:00Z</time></metadata>
+  <trk>
+    <name>Morning ride &amp; coffee</name>
+    <trkseg>
+      <trkpt lat="47.14" lon="9.52"><ele>455.5</ele><time>2026-11-11T08:00:00Z</time></trkpt>
+      <trkpt lat="47.1401" lon="9.5205"><ele>456.0</ele></trkpt>
+      <trkpt lat="47.1402" lon="9.5210"><ele>456.4</ele></trkpt>
+    </trkseg>
+    <!-- a pause: <trkpt lat="0" lon="0"/> is commented out -->
+    <trkseg>
+      <trkpt lat='47.1403' lon='9.523'/>
+      <trkpt lon="9.5232" lat="47.1404"><ele>457</ele></trkpt>
+    </trkseg>
+  </trk>
+</gpx>

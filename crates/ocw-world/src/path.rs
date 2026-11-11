@@ -12,10 +12,21 @@
 //!
 //! The geometry is a pure function of the step list, so the server, the
 //! client's prediction and the client's copy of other riders' paths agree.
+//!
+//! **Routes** (spec §2.7, §2.2.1 route mode): a path may follow a
+//! [`RoutePlan`]. It is then extended with the route's next step instead of
+//! the default exit (at a junction the route's exit becomes the default, so
+//! the overlay shows the route's direction); choosing another exit leaves
+//! the route, and [`RidePath::rejoin_route`] finds the way back. Whether a
+//! step is on the route is again a pure function of the step list (a step
+//! is on the route when it is the route's next step, or – off the route –
+//! when it rides a later route edge in the route's direction), so the
+//! server and the clients agree on it without sending it.
 
 use std::sync::Arc;
 
 use crate::graph::VertexId;
+use crate::graph_route::RoutePlan;
 use crate::network::{ARRIVAL_HEADING_M, Junction, RoadNetwork, SHARP_DEG, signed_angle, unit};
 use crate::route::{Route, RoutePoint};
 use crate::surface::Surface;
@@ -32,10 +43,38 @@ pub const FILLET_RADIUS_M: f64 = 8.0;
 /// A rounded corner starts at most this far before the junction (m); less
 /// than [`LOCK_M`], so it is never under the rider when the exit locks.
 pub const MAX_FILLET_TRIM_M: f64 = 10.0;
-/// Radius of the U-turn loop (m).
+/// Largest radius of the U-turn loop (m); on narrower roads it is smaller
+/// ([`uturn_radius`]).
 pub const UTURN_RADIUS_M: f64 = 4.0;
-/// Speed through the U-turn loop (m/s, ~10 km/h, spec §2.2.2).
+/// Smallest radius of the U-turn loop (m): on paths narrower than ~3.8 m
+/// the loop still overhangs a little, ridden at walking pace.
+pub const UTURN_MIN_RADIUS_M: f64 = 1.5;
+/// The loop stays this far inside the road edge (m).
+pub const UTURN_EDGE_MARGIN_M: f64 = 0.4;
+/// Before the loop the rider is steered to the centreline over this
+/// distance (m), so the loop – centred on it – stays on the road.
+pub const UTURN_RUNUP_M: f64 = 20.0;
+/// Highest speed through the U-turn loop (m/s, ~10 km/h, spec §2.2.2).
 pub const UTURN_SPEED_MPS: f64 = 2.8;
+/// Sideways acceleration through tight U-turn loops (m/s²).
+pub const UTURN_LATERAL_MPS2: f64 = 2.5;
+
+/// Radius of the U-turn loop on a road `width_m` wide: the loop is `2 r`
+/// wide, centred on the centreline, and stays [`UTURN_EDGE_MARGIN_M`]
+/// inside the edges (spec §2.2.2).
+pub fn uturn_radius(width_m: f64) -> f64 {
+    (width_m / 2.0 - UTURN_EDGE_MARGIN_M).clamp(UTURN_MIN_RADIUS_M, UTURN_RADIUS_M)
+}
+
+/// Speed through a U-turn loop of radius `r`.
+pub fn uturn_speed(r: f64) -> f64 {
+    (UTURN_LATERAL_MPS2 * r).sqrt().min(UTURN_SPEED_MPS)
+}
+
+/// How far a loop of radius `r` reaches ahead of where it starts (m).
+fn uturn_reach(r: f64) -> f64 {
+    (1.0 + 3f64.sqrt()) * r
+}
 /// Speed through a turn sharper than 120° (m/s, ~15 km/h, spec §5.2).
 pub const SHARP_TURN_SPEED_MPS: f64 = 4.2;
 /// Deceleration of the automatic slow-down (m/s²).
@@ -106,6 +145,35 @@ struct Step {
     len_m: f64,
     /// Turn angle into this step (degrees, positive = right).
     entry_angle_deg: f64,
+    /// Route progress after this step, and which route step this step
+    /// rides (`None`: off the route, or no route).
+    route: RouteState,
+    plan_index: Option<usize>,
+}
+
+/// Where a path is on its route (spec §2.7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RouteState {
+    /// On the route: step `next` of lap `lap` comes next.
+    On { next: usize, lap: u32 },
+    /// Off the route since route step `left_at`; a later step of the path
+    /// that rides a route edge (from `left_at` on) in the route's direction
+    /// rejoins it.
+    Off { left_at: usize, lap: u32 },
+    /// The route was ridden to its end (not a loop); free ride from here.
+    Finished,
+}
+
+/// Progress on the route at a point of the path (HUD, spec §2.7).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RouteProgress {
+    pub on_route: bool,
+    pub finished: bool,
+    /// Lap (0 = the first).
+    pub lap: u32,
+    /// Route distance ridden in this lap and the lap's length (m).
+    pub done_m: f64,
+    pub length_m: f64,
 }
 
 impl Step {
@@ -155,6 +223,8 @@ impl Step {
 #[derive(Debug, Clone)]
 pub struct RidePath {
     net: Arc<RoadNetwork>,
+    /// The route this path follows, if any.
+    plan: Option<Arc<RoutePlan>>,
     /// Index of `steps[0]` among all steps of this path.
     first_index: u64,
     steps: Vec<Step>,
@@ -209,6 +279,7 @@ impl RidePath {
         step.rebuild(0.0);
         let mut path = Self {
             route: placeholder_route(),
+            plan: None,
             net,
             first_index,
             steps: vec![step],
@@ -218,6 +289,149 @@ impl RidePath {
         }
         path.rebuild_route();
         Ok(path)
+    }
+
+    /// A path starting at the route's start and following it.
+    pub fn on_route(
+        net: Arc<RoadNetwork>,
+        plan: Arc<RoutePlan>,
+        start_m: f64,
+        first_index: u64,
+    ) -> Self {
+        let first = plan.steps[0];
+        Self::from_segments(net, &[first], start_m, first_index)
+            .expect("a route starts on an edge")
+            .with_plan(Some(plan))
+    }
+
+    /// The same path following `plan` (or none); whether each step is on
+    /// the route is worked out from the steps.
+    pub fn with_plan(mut self, plan: Option<Arc<RoutePlan>>) -> Self {
+        self.plan = plan;
+        let mut state = None;
+        for i in 0..self.steps.len() {
+            let (st, idx) = self.route_after(state, &self.steps[i].seg);
+            self.steps[i].route = st;
+            self.steps[i].plan_index = idx;
+            state = Some(st);
+        }
+        self
+    }
+
+    pub fn plan(&self) -> Option<&Arc<RoutePlan>> {
+        self.plan.as_ref()
+    }
+
+    /// Route state at the end of the known path (`None` without a route).
+    pub fn route_state(&self) -> Option<RouteState> {
+        self.plan.as_ref()?;
+        Some(self.steps.last().expect("never empty").route)
+    }
+
+    /// Route state and progress at path distance `d`.
+    pub fn route_progress(&self, d: f64) -> Option<RouteProgress> {
+        let plan = self.plan.as_ref()?;
+        let k = self.step_index_at(d);
+        let s = &self.steps[k];
+        let before = if k > 0 {
+            self.steps[k - 1].route
+        } else {
+            s.route
+        };
+        let lap = match before {
+            RouteState::On { lap, .. } | RouteState::Off { lap, .. } => lap,
+            RouteState::Finished => 0,
+        };
+        let mut p = RouteProgress {
+            on_route: s.plan_index.is_some(),
+            finished: matches!(before, RouteState::Finished),
+            lap,
+            done_m: 0.0,
+            length_m: plan.length_m(),
+        };
+        if let Some(i) = s.plan_index {
+            let from = match plan.step(&self.net, i, lap) {
+                Some(Segment::Edge { from_m, .. }) => from_m,
+                _ => 0.0,
+            };
+            let along = match (plan.steps[i], self.locate(d)) {
+                (Segment::Edge { .. }, Some((_, _, off))) => (off - from).abs(),
+                _ => 0.0,
+            };
+            let start = if i == 0 { 0.0 } else { plan.start_of(i) };
+            p.done_m = (start + along).min(plan.length_m());
+        }
+        Some(p)
+    }
+
+    /// The route step to ride next, if on the route.
+    fn planned(&self) -> Option<Segment> {
+        match self.steps.last()?.route {
+            RouteState::On { next, lap } => self.ridden(next, lap),
+            _ => None,
+        }
+    }
+
+    /// Route step `i` of lap `lap` as the path rides it: the route's last
+    /// step runs on to the edge's end, so the path ends at a vertex and
+    /// free ride can continue after the finish.
+    fn ridden(&self, i: usize, lap: u32) -> Option<Segment> {
+        let plan = self.plan.as_ref()?;
+        let mut s = plan.step(&self.net, i, lap)?;
+        if i + 1 == plan.steps.len()
+            && !plan.is_loop
+            && let Segment::Edge { edge, from_m, to_m } = s
+        {
+            let len = self.net.geometry(edge).length();
+            s = Segment::Edge {
+                edge,
+                from_m,
+                to_m: if to_m >= from_m { len } else { 0.0 },
+            };
+        }
+        Some(s)
+    }
+
+    /// Route state after riding `seg` from `prev` (`None`: the first step),
+    /// and which route step `seg` rides.
+    fn route_after(&self, prev: Option<RouteState>, seg: &Segment) -> (RouteState, Option<usize>) {
+        let Some(plan) = &self.plan else {
+            return (RouteState::Finished, None);
+        };
+        let advance = |i: usize, lap: u32| {
+            if i + 1 < plan.steps.len() {
+                RouteState::On { next: i + 1, lap }
+            } else if plan.is_loop {
+                RouteState::On {
+                    next: 0,
+                    lap: lap + 1,
+                }
+            } else {
+                RouteState::Finished
+            }
+        };
+        let rejoin = |from: usize, lap: u32| {
+            if !matches!(seg, Segment::Edge { .. }) {
+                return None;
+            }
+            (from..plan.steps.len())
+                .find(|&i| rides(seg, &plan.steps[i]))
+                .map(|i| (advance(i, lap), Some(i)))
+        };
+        match prev {
+            None => rejoin(0, 0).unwrap_or((RouteState::Off { left_at: 0, lap: 0 }, None)),
+            Some(RouteState::On { next, lap }) => {
+                if rides(seg, &plan.steps[next]) {
+                    (advance(next, lap), Some(next))
+                } else {
+                    (RouteState::Off { left_at: next, lap }, None)
+                }
+            }
+            Some(RouteState::Off { left_at, lap }) => {
+                rejoin(left_at, lap).unwrap_or((RouteState::Off { left_at, lap }, None))
+            }
+            Some(RouteState::Finished) => (RouteState::Finished, None),
+        }
     }
 
     pub fn network(&self) -> &Arc<RoadNetwork> {
@@ -278,7 +492,8 @@ impl RidePath {
         }
     }
 
-    fn arrival(&self) -> Option<(usize, bool)> {
+    /// The edge (and direction) the path ends on.
+    pub fn arrival(&self) -> Option<(usize, bool)> {
         let last = self.steps.last()?;
         match last.seg {
             Segment::Edge { edge, .. } => Some((edge, last.forward())),
@@ -295,9 +510,18 @@ impl RidePath {
         let heading = self
             .net
             .arriving_direction(edge, forward, ARRIVAL_HEADING_M);
-        self.net
-            .junction(v, Some((edge, forward)), heading)
-            .map(|j| (j, self.end_m()))
+        let mut j = self.net.junction(v, Some((edge, forward)), heading)?;
+        // Route mode: the route's exit is the default (spec §2.2.1).
+        if let Some(Segment::Edge { edge, from_m, to_m }) = self.planned()
+            && let Some(i) = j
+                .exits
+                .iter()
+                .position(|e| e.edge == edge && e.forward == (to_m >= from_m))
+        {
+            j.default = i;
+            j.route = Some(i);
+        }
+        Some((j, self.end_m()))
     }
 
     /// Appends a segment.
@@ -335,6 +559,7 @@ impl RidePath {
         self.steps[n - 1].rebuild(step.trim_start);
         step.start_m = self.steps[n - 1].end_m();
         step.rebuild(0.0);
+        (step.route, step.plan_index) = self.route_after(Some(self.steps[n - 1].route), &seg);
         self.steps.push(step);
         Ok(())
     }
@@ -380,6 +605,25 @@ impl RidePath {
         loop {
             // Plain continuations and road ends.
             while self.end_m() - rider_m < HORIZON_M {
+                // On a route: its next step, unless that is a junction
+                // decision (taken at the lock point below).
+                if let Some(seg) = self.planned() {
+                    match self.planned_action(seg) {
+                        Planned::Push => {
+                            mark(self.next_index(), &mut changed);
+                            self.push(seg).expect("valid edge");
+                            continue;
+                        }
+                        Planned::Turn => {
+                            let first = self.turn_here(rider_m);
+                            mark(first, &mut changed);
+                            continue;
+                        }
+                        Planned::Junction => break,
+                        // Not reachable from here: free ride (off the route).
+                        Planned::Mismatch => {}
+                    }
+                }
                 let (Some(v), Some((edge, forward))) = (self.end_vertex(), self.arrival()) else {
                     break;
                 };
@@ -412,8 +656,18 @@ impl RidePath {
                     let i = choose(&j).min(j.exits.len() - 1);
                     mark(self.next_index(), &mut changed);
                     let e = &j.exits[i];
-                    self.push(Segment::whole(&self.net, e.edge, e.forward))
-                        .expect("valid edge");
+                    // The route's step (it may end part-way along the edge).
+                    let seg = match self.planned() {
+                        Some(p @ Segment::Edge { edge, from_m, to_m })
+                            if Some(i) == j.route
+                                && edge == e.edge
+                                && (to_m >= from_m) == e.forward =>
+                        {
+                            p
+                        }
+                        _ => Segment::whole(&self.net, e.edge, e.forward),
+                    };
+                    self.push(seg).expect("valid edge");
                 }
                 _ => break,
             }
@@ -431,7 +685,8 @@ impl RidePath {
         let n = self.steps.len();
         let last = &self.steps[n - 1];
         let mut first = self.next_index();
-        let reach = (1.0 + 3f64.sqrt()) * UTURN_RADIUS_M + 1.0;
+        let r = uturn_radius(self.net.edge(last.edge).width_m);
+        let reach = uturn_reach(r) + 1.0;
         if let Segment::Edge { edge, from_m, to_m } = last.seg {
             let usable = (to_m - from_m).abs() - last.trim_start;
             let cut_at = last.end_m() - reach;
@@ -458,6 +713,9 @@ impl RidePath {
         step.fillet = old.fillet.clone();
         step.fillet_len = old.fillet_len;
         step.trim_start = old.trim_start;
+        // The same edge in the same direction: the route state is the same.
+        step.route = old.route;
+        step.plan_index = old.plan_index;
         step.rebuild(0.0);
         self.steps[n - 1] = step;
     }
@@ -485,7 +743,157 @@ impl RidePath {
         if let Some((_, at)) = self.next_junction() {
             return rider_m >= at - lock_distance(speed);
         }
-        self.end_vertex().is_some() && self.end_m() - rider_m < HORIZON_M
+        (self.end_vertex().is_some() || self.planned().is_some())
+            && self.end_m() - rider_m < HORIZON_M
+    }
+
+    /// What to do with the route's next step `seg` where the path ends.
+    fn planned_action(&self, seg: Segment) -> Planned {
+        let Segment::Edge { edge, from_m, to_m } = seg else {
+            return Planned::Turn;
+        };
+        let forward = to_m >= from_m;
+        let (Some(v), Some(arrival)) = (self.end_vertex(), self.arrival()) else {
+            return Planned::Mismatch;
+        };
+        if self.net.start_vertex(edge, forward) != v {
+            return Planned::Mismatch;
+        }
+        let heading = self
+            .net
+            .arriving_direction(arrival.0, arrival.1, ARRIVAL_HEADING_M);
+        let exits = self.net.exits(v, Some(arrival), heading);
+        if exits.len() >= 2 && exits.iter().any(|e| e.edge == edge && e.forward == forward) {
+            Planned::Junction
+        } else {
+            Planned::Push
+        }
+    }
+
+    /// A U-turn of the route where the path ends: at a road end or
+    /// junction like at a dead end (the last step is cut so the loop fits),
+    /// part-way along an edge right there. Returns the first changed step.
+    fn turn_here(&mut self, rider_m: f64) -> u64 {
+        match (self.end_vertex(), self.arrival()) {
+            (Some(v), Some(arrival)) => {
+                let heading = self
+                    .net
+                    .arriving_direction(arrival.0, arrival.1, ARRIVAL_HEADING_M);
+                let reason = if !self.net.exits(v, Some(arrival), heading).is_empty() {
+                    TurnReason::Manual
+                } else if self.net.graph().boundary_vertices.contains(&v) {
+                    TurnReason::Boundary
+                } else {
+                    TurnReason::DeadEnd
+                };
+                self.turn_at_end(rider_m, reason)
+            }
+            _ => {
+                let first = self.next_index();
+                self.push_turnaround(TurnReason::Manual);
+                first
+            }
+        }
+    }
+
+    /// Back to the route after leaving it (spec §2.2.1 "leave route"): the
+    /// path is kept up to the first vertex the rider can still turn at
+    /// (beyond the lock point at `speed`), then the shortest way to a route
+    /// point from where the rider left on (weighing route skipped against
+    /// the detour) and that route step are appended. Returns the first
+    /// changed step index.
+    pub fn rejoin_route(&mut self, rider_m: f64, speed: f64) -> Result<u64, String> {
+        let plan = self.plan.clone().ok_or("not riding a route")?;
+        let (left_at, lap) = match self.route_state() {
+            Some(RouteState::Off { left_at, lap }) => (left_at, lap),
+            Some(RouteState::On { .. }) => return Err("already on the route".into()),
+            _ => return Err("the route is finished".into()),
+        };
+        // Keep the path up to a vertex beyond the lock point.
+        let keep_to = rider_m + lock_distance(speed);
+        let mut k = self.step_index_at(keep_to);
+        loop {
+            let s = &self.steps[k];
+            let at_vertex = match s.seg {
+                Segment::Edge { edge, to_m, .. } => {
+                    let len = self.net.geometry(edge).length();
+                    to_m <= 0.0 || to_m >= len
+                }
+                Segment::Turnaround(_) => false,
+            };
+            if at_vertex || k + 1 == self.steps.len() {
+                break;
+            }
+            k += 1;
+        }
+        let first_changed = self.first_index + k as u64 + 1;
+        if k + 1 < self.steps.len() {
+            self.steps.truncate(k + 1);
+            self.steps[k].rebuild(0.0);
+        }
+        let (Some(v), Some((arr_edge, arr_fwd))) = (self.end_vertex(), self.arrival()) else {
+            self.rebuild_route();
+            return Err("no road to turn at ahead".into());
+        };
+        // Shortest ways from v (not straight back along the arrival).
+        let (dist, came) = directed_dijkstra(&self.net, v, Some((arr_edge, !arr_fwd)), 30_000.0);
+        let mut best: Option<(f64, usize)> = None;
+        for i in left_at..plan.steps.len() {
+            let Some(Segment::Edge { edge, from_m, to_m }) = plan.step(&self.net, i, lap) else {
+                continue;
+            };
+            let forward = to_m >= from_m;
+            let len = self.net.geometry(edge).length();
+            let starts_at_vertex = if forward {
+                from_m <= 0.5
+            } else {
+                from_m >= len - 0.5
+            };
+            if !starts_at_vertex {
+                continue;
+            }
+            let u = self.net.start_vertex(edge, forward);
+            let d = dist[u.0 as usize];
+            if !d.is_finite() {
+                continue;
+            }
+            // Not a U-turn into the route step.
+            let last_edge = came[u.0 as usize].map_or((arr_edge, arr_fwd), |(e, f, _)| (e, f));
+            if last_edge == (edge, !forward) {
+                continue;
+            }
+            let skipped = plan.start_of(i) - plan.start_of(left_at);
+            let score = d + 0.3 * skipped.max(0.0);
+            if best.is_none_or(|(b, _)| score < b) {
+                best = Some((score, i));
+            }
+        }
+        let Some((_, i)) = best else {
+            self.rebuild_route();
+            return Err("no way back to the route found".into());
+        };
+        let target = self.ridden(i, lap).expect("checked");
+        let Segment::Edge { edge, from_m, to_m } = target else {
+            unreachable!("edge steps only");
+        };
+        let mut detour = Vec::new();
+        let mut u = self.net.start_vertex(edge, to_m >= from_m);
+        while let Some((e, f, prev)) = came[u.0 as usize] {
+            detour.push(Segment::whole(&self.net, e, f));
+            u = prev;
+        }
+        detour.reverse();
+        for s in detour {
+            self.push(s)?;
+        }
+        self.push(target)?;
+        self.rebuild_route();
+        Ok(first_changed)
+    }
+
+    /// Whether path distance `d` lies on a step of the route.
+    pub fn on_route_at(&self, d: f64) -> bool {
+        self.steps[self.step_index_at(d)].plan_index.is_some()
     }
 
     /// Whether [`Self::trim_behind`] would drop steps.
@@ -499,9 +907,13 @@ impl RidePath {
     /// step index, or `None` if no U-turn fits (in a loop already, or no
     /// room before the next corner).
     pub fn u_turn(&mut self, rider_m: f64, speed: f64) -> Option<u64> {
-        let brake =
-            ((speed * speed - UTURN_SPEED_MPS * UTURN_SPEED_MPS) / (2.0 * SLOW_DOWN_MPS2)).max(0.0);
-        let at = rider_m + brake.max(6.0);
+        if self.in_turnaround(rider_m) {
+            return None;
+        }
+        let v0 = uturn_speed(uturn_radius(self.road_width_at(rider_m)));
+        let brake = ((speed * speed - v0 * v0) / (2.0 * SLOW_DOWN_MPS2)).max(0.0);
+        // Room to slow down and to steer to the centreline first.
+        let at = rider_m + brake.max(UTURN_RUNUP_M);
         let k = self.step_index_at(at);
         for k in k..(k + 3).min(self.steps.len()) {
             let s = &self.steps[k];
@@ -674,7 +1086,11 @@ impl Track for RidePath {
                 break;
             }
             let (v, at, span) = match s.seg {
-                Segment::Turnaround(_) => (UTURN_SPEED_MPS, s.start_m, s.len_m),
+                Segment::Turnaround(_) => (
+                    uturn_speed(uturn_radius(self.net.edge(s.edge).width_m)),
+                    s.start_m,
+                    s.len_m,
+                ),
                 Segment::Edge { .. } if s.entry_angle_deg.abs() > SHARP_DEG => {
                     (SHARP_TURN_SPEED_MPS, s.start_m, s.fillet_len)
                 }
@@ -699,8 +1115,13 @@ impl Track for RidePath {
         limit
     }
 
+    /// In a U-turn loop and on the run-up to it ([`UTURN_RUNUP_M`]): the
+    /// rider is steered along the centreline, so the loop stays on the road.
     fn assisted(&self, distance: f64) -> bool {
         self.in_turnaround(distance)
+            || self
+                .turnaround_ahead(distance)
+                .is_some_and(|(at, _)| at - distance <= UTURN_RUNUP_M)
     }
 
     fn name_at(&self, distance: f64) -> String {
@@ -709,6 +1130,89 @@ impl Track for RidePath {
             .clone()
             .unwrap_or_else(|| format!("{:?}", e.class).to_lowercase())
     }
+}
+
+/// What a route's next step means where the path ends.
+enum Planned {
+    /// Append it (the road just continues, or the route says so).
+    Push,
+    /// A U-turn.
+    Turn,
+    /// One of a junction's exits: chosen at the lock point.
+    Junction,
+    /// It does not start where the path ends.
+    Mismatch,
+}
+
+/// Whether path step `seg` rides route step `planned`: the same edge in the
+/// same direction (any part of it), or both U-turns.
+fn rides(seg: &Segment, planned: &Segment) -> bool {
+    match (seg, planned) {
+        (
+            Segment::Edge {
+                edge: a,
+                from_m: fa,
+                to_m: ta,
+            },
+            Segment::Edge {
+                edge: b,
+                from_m: fb,
+                to_m: tb,
+            },
+        ) => a == b && (ta >= fa) == (tb >= fb),
+        (Segment::Turnaround(_), Segment::Turnaround(_)) => true,
+        _ => false,
+    }
+}
+
+/// How a vertex was reached: (edge, forward, previous vertex).
+pub type Reached = (usize, bool, VertexId);
+
+/// Distances (m) from vertex `from` along rideable directions (one-way
+/// roads respected) up to `max_m`, and how each vertex was reached: (edge,
+/// forward, previous vertex). `forbid` is a first move not to take (back
+/// along the arrival).
+pub fn directed_dijkstra(
+    net: &RoadNetwork,
+    from: VertexId,
+    forbid: Option<(usize, bool)>,
+    max_m: f64,
+) -> (Vec<f64>, Vec<Option<Reached>>) {
+    use std::cmp::Reverse;
+    use std::collections::BinaryHeap;
+    let n = net.graph().vertices.len();
+    let mut dist = vec![f64::INFINITY; n];
+    let mut came: Vec<Option<Reached>> = vec![None; n];
+    let mut heap = BinaryHeap::new();
+    dist[from.0 as usize] = 0.0;
+    // Costs as integer millimetres (a total order for the heap).
+    heap.push(Reverse((0u64, from.0)));
+    while let Some(Reverse((c, v))) = heap.pop() {
+        let c = c as f64 / 1000.0;
+        if c > dist[v as usize] + 1e-6 || c > max_m {
+            continue;
+        }
+        let vid = VertexId(v);
+        for &e in net.edges_at(vid) {
+            let edge = net.edge(e);
+            for forward in [true, false] {
+                if net.start_vertex(e, forward) != vid || !edge.oneway.allows(forward) {
+                    continue;
+                }
+                if vid == from && forbid == Some((e, forward)) {
+                    continue;
+                }
+                let o = net.end_vertex(e, forward);
+                let nc = c + net.geometry(e).length();
+                if nc < dist[o.0 as usize] {
+                    dist[o.0 as usize] = nc;
+                    came[o.0 as usize] = Some((e, forward, vid));
+                    heap.push(Reverse(((nc * 1000.0) as u64, o.0)));
+                }
+            }
+        }
+    }
+    (dist, came)
 }
 
 fn same_segment(a: &Segment, b: &Segment) -> bool {
@@ -746,7 +1250,7 @@ fn make_step(
                 bulb(
                     *p.raw.last().expect("raw has points"),
                     p.raw_end_dir(),
-                    UTURN_RADIUS_M,
+                    uturn_radius(net.edge(p.edge).width_m),
                 ),
                 p.edge,
             )
@@ -765,6 +1269,8 @@ fn make_step(
         points: Vec::new(),
         len_m: 0.0,
         entry_angle_deg,
+        route: RouteState::Finished,
+        plan_index: None,
     };
     if let (Some(p), Segment::Edge { .. }) = (prev, seg)
         && matches!(p.seg, Segment::Edge { .. })
@@ -1035,8 +1541,13 @@ mod tests {
         // Speed limit: falls towards the loop, 10 km/h in it.
         let far = p.speed_limit(100.0).unwrap();
         assert!((far - 10.0).abs() < 0.2, "{far}");
-        assert_eq!(p.speed_limit(at + 3.0), Some(UTURN_SPEED_MPS));
-        assert!(p.assisted(at + 3.0) && !p.assisted(at - 3.0));
+        assert_eq!(
+            p.speed_limit(at + 3.0),
+            Some(uturn_speed(uturn_radius(5.0)))
+        );
+        // Steered on the run-up and in the loop.
+        assert!(p.assisted(at + 3.0) && p.assisted(at - 3.0));
+        assert!(!p.assisted(at - UTURN_RUNUP_M - 2.0));
         // After the loop: back west, on the other side of the centreline.
         let after = p.sample(at + 35.0);
         assert!(after.direction[0] < -0.99, "{after:?}");
@@ -1139,6 +1650,177 @@ mod tests {
         // The lock point moves out with the speed.
         assert_eq!(lock_distance(3.0), LOCK_M);
         assert!((lock_distance(18.0) - LOCK_M - 76.6).abs() < 0.5);
+    }
+
+    /// Edge index of the grid edge from vertex `a` to `b` and its direction.
+    fn grid_edge(n: &RoadNetwork, a: u32, b: u32) -> (usize, bool) {
+        (0..n.graph().edges.len())
+            .find_map(|i| {
+                let e = n.edge(i);
+                match (e.from.0, e.to.0) {
+                    (f, t) if (f, t) == (a, b) => Some((i, true)),
+                    (f, t) if (f, t) == (b, a) => Some((i, false)),
+                    _ => None,
+                }
+            })
+            .unwrap()
+    }
+
+    fn whole(n: &RoadNetwork, a: u32, b: u32) -> Segment {
+        let (e, f) = grid_edge(n, a, b);
+        Segment::whole(n, e, f)
+    }
+
+    /// On the grid: 20 m into 0→1, right (south) to 4, left (east) to 5,
+    /// right to 8, then west towards 7, ending 100 m along.
+    fn zigzag(n: &Arc<RoadNetwork>) -> Arc<RoutePlan> {
+        let (e01, _) = grid_edge(n, 0, 1);
+        let (e78, _) = grid_edge(n, 7, 8);
+        let steps = vec![
+            Segment::Edge {
+                edge: e01,
+                from_m: 20.0,
+                to_m: 200.0,
+            },
+            whole(n, 1, 4),
+            whole(n, 4, 5),
+            whole(n, 5, 8),
+            Segment::Edge {
+                edge: e78,
+                from_m: 200.0,
+                to_m: 100.0,
+            },
+        ];
+        Arc::new(RoutePlan::new(n, "zigzag", steps, false).unwrap())
+    }
+
+    /// Rides `p` from `from` to `to` m at standstill lock points, taking
+    /// `choose`'s exits.
+    fn ride(p: &mut RidePath, from: f64, to: f64, choose: &mut dyn FnMut(&Junction) -> usize) {
+        let mut d = from;
+        while d <= to {
+            p.extend(d, choose);
+            d += 5.0;
+        }
+    }
+
+    #[test]
+    fn a_route_is_followed_and_shows_its_exit() {
+        let n = net(grid());
+        let plan = zigzag(&n);
+        assert_eq!(plan.length_m(), 180.0 + 600.0 + 100.0);
+        let mut p = RidePath::on_route(n.clone(), plan.clone(), 0.0, 0);
+        assert_eq!(p.route_state(), Some(RouteState::On { next: 1, lap: 0 }));
+        p.extend(0.0, &mut |j| j.default);
+        // Vertex 1: the route's exit (south) is the default.
+        let (j, at) = p.next_junction().unwrap();
+        assert_eq!(at, 180.0);
+        let south = j.route.unwrap();
+        assert_eq!(j.default, south);
+        assert_eq!(
+            (j.exits[south].edge, j.exits[south].forward),
+            grid_edge(&n, 1, 4)
+        );
+        ride(&mut p, 0.0, 1100.0, &mut |j| j.default);
+        // All the way: south, east, south, west – then free ride.
+        assert!(p.sample(300.0).direction[1] > 0.99, "south");
+        assert!(p.sample(500.0).direction[0] > 0.99, "east");
+        assert!(p.sample(820.0).direction[0] < -0.99, "west");
+        let pr = p.route_progress(100.0).unwrap();
+        assert!(pr.on_route && !pr.finished);
+        assert!((pr.done_m - 100.0).abs() < 1e-6, "{pr:?}");
+        // Rounded corners make the path a little shorter than the route.
+        let pr = p.route_progress(500.0).unwrap();
+        assert!((pr.done_m - 500.0).abs() < 10.0, "{pr:?}");
+        assert_eq!(p.route_state(), Some(RouteState::Finished));
+        assert!(p.route_progress(1050.0).unwrap().finished);
+        assert!(!p.route_progress(1050.0).unwrap().on_route);
+    }
+
+    #[test]
+    fn another_exit_leaves_the_route_and_rejoin_finds_it_again() {
+        let n = net(grid());
+        let plan = zigzag(&n);
+        let mut p = RidePath::on_route(n.clone(), plan, 0.0, 0);
+        // Straight on at vertex 1 (the route turns right).
+        let straight = |j: &Junction| {
+            j.exits
+                .iter()
+                .position(|e| e.class == crate::network::TurnClass::Straight)
+                .unwrap()
+        };
+        p.extend(0.0, &mut |j| j.default);
+        p.extend(165.0, &mut |j| straight(j));
+        assert_eq!(
+            p.route_state(),
+            Some(RouteState::Off { left_at: 1, lap: 0 })
+        );
+        assert!(p.on_route_at(100.0) && !p.on_route_at(250.0));
+        assert!(!p.route_progress(250.0).unwrap().on_route);
+        // Off the route, junctions show no route exit (vertex 5 here).
+        assert_eq!(p.next_junction().unwrap().0.route, None);
+        // Back to the route: via 2 → 5, joining it where it goes 5 → 8.
+        let changed = p.rejoin_route(170.0, 0.0).unwrap();
+        assert_eq!(changed, 2);
+        assert_eq!(p.route_state(), Some(RouteState::On { next: 4, lap: 0 }));
+        assert!(!p.on_route_at(480.0), "the detour 2 → 5");
+        assert!(p.on_route_at(650.0), "on 5 → 8");
+        assert!(p.rejoin_route(170.0, 0.0).unwrap_err().contains("already"));
+        // The same steps sent to a client give the same route state.
+        let copy = RidePath::from_segments(n.clone(), &p.segments_from(0), 0.0, 0)
+            .unwrap()
+            .with_plan(p.plan().cloned());
+        assert_eq!(copy.route_state(), p.route_state());
+        // A path without a route cannot rejoin one.
+        let mut free = RidePath::start(n, 0, 0.0, true, 0.0, 0);
+        assert!(free.rejoin_route(0.0, 0.0).is_err());
+        assert_eq!(free.route_state(), None);
+    }
+
+    #[test]
+    fn route_u_turns_and_laps() {
+        // Out and back on a line: 150 m along edge 1, turn, back to 0.
+        let v: Vec<[f64; 2]> = (0..4).map(|i| [f64::from(i) * 300.0, 0.0]).collect();
+        let n = net(graph(&v, &[(0, 1), (1, 2), (2, 3)]));
+        let steps = vec![
+            Segment::Edge {
+                edge: 1,
+                from_m: 0.0,
+                to_m: 150.0,
+            },
+            Segment::Turnaround(TurnReason::Manual),
+            Segment::Edge {
+                edge: 1,
+                from_m: 150.0,
+                to_m: 0.0,
+            },
+            Segment::whole(&n, 0, false),
+        ];
+        let plan = Arc::new(RoutePlan::new(&n, "out-back", steps, false).unwrap());
+        let mut p = RidePath::on_route(n.clone(), plan, 0.0, 0);
+        p.extend(0.0, &mut straight);
+        let (at, reason) = p.turnaround_ahead(0.0).unwrap();
+        assert_eq!(reason, TurnReason::Manual);
+        assert!((at - 150.0).abs() < 1e-6, "{at}");
+        assert!(p.sample(at + 40.0).direction[0] < -0.99);
+        assert_eq!(p.route_state(), Some(RouteState::Finished));
+        // A loop round a block of the grid, ridden twice.
+        let g = net(grid());
+        let steps = vec![
+            whole(&g, 0, 1),
+            whole(&g, 1, 4),
+            whole(&g, 4, 3),
+            whole(&g, 3, 0),
+        ];
+        let plan = RoutePlan::new(&g, "block", steps, true).unwrap();
+        assert!(plan.closes(&g));
+        let mut p = RidePath::on_route(g.clone(), Arc::new(plan), 0.0, 0);
+        ride(&mut p, 0.0, 1300.0, &mut |j| j.default);
+        let pr = p.route_progress(900.0).unwrap();
+        assert_eq!(pr.lap, 1, "{pr:?}");
+        assert!(pr.on_route);
+        assert!((pr.done_m - 100.0).abs() < 25.0, "{pr:?}");
+        assert!(matches!(p.route_state(), Some(RouteState::On { .. })));
     }
 
     #[test]

@@ -4,9 +4,12 @@
 //! tick, several in flight at once (the GPU readback takes a few frames),
 //! and each lands at the video frame of its *request* time; the frames are
 //! streamed as raw pixels into `ffmpeg` (H.264), which must be installed
-//! (`make deps` installs it). A tick the game skipped (slower than 25 fps)
-//! repeats the previous frame, so the video keeps real time; the game never
-//! waits for the encoder (a frame it cannot take is dropped and counted). Files go to `~/Videos/OCW/` (or `<data dir>/ocw/videos/`).
+//! (`make deps` installs it). It is looked up on `PATH`, then in the usual
+//! Homebrew/local directories ([`ffmpeg_candidates`]): an app started from
+//! Finder gets a `PATH` without them. A tick the game skipped (slower than
+//! 25 fps) repeats the previous frame, so the video keeps real time; the
+//! game never waits for the encoder (an image it cannot take is dropped and
+//! counted). Files go to `~/Videos/OCW/` (or `<data dir>/ocw/videos/`).
 //! A recording still running when the app exits is finished first.
 //! While recording, the HUD shows a small red "REC m:ss" (top right); after
 //! stopping, "Video saved: <file>" for a few seconds.
@@ -92,6 +95,8 @@ pub struct VideoRecorder {
 
 struct Active {
     path: PathBuf,
+    /// The ffmpeg executable found by [`start`](VideoRecorder::start).
+    ffmpeg: PathBuf,
     started_s: f64,
     /// Video frame index of the next screenshot request.
     next_request: u64,
@@ -171,11 +176,11 @@ impl VideoRecorder {
     }
 
     fn start_inner(&mut self, now_s: f64) -> Result<PathBuf, String> {
-        if !ffmpeg_available() {
+        let Some(ffmpeg) = find_ffmpeg() else {
             return Err(
                 "ffmpeg not found: install ffmpeg (e.g. `make deps`) to record videos".into(),
             );
-        }
+        };
         let dir = self
             .dir
             .clone()
@@ -188,6 +193,7 @@ impl VideoRecorder {
         );
         self.active = Some(Active {
             path: path.clone(),
+            ffmpeg,
             started_s: now_s,
             next_request: 0,
             in_flight: 0,
@@ -273,7 +279,7 @@ impl VideoRecorder {
                 self.set_message("Video failed: unsupported pixel format", now_s);
                 return;
             };
-            match spawn_encoder(&a.path, pix, w, h) {
+            match spawn_encoder(&a.ffmpeg, &a.path, pix, w, h) {
                 Ok(enc) => {
                     a.encoder = Some(enc);
                     a.size = Some((w, h));
@@ -392,17 +398,70 @@ fn unique_path(dir: &Path, stem: &str) -> PathBuf {
     p
 }
 
-fn ffmpeg_available() -> bool {
-    Process::new("ffmpeg")
+/// Where to look for ffmpeg, in order: each `PATH` directory, then
+/// Homebrew (Apple Silicon, Intel) and `~/.local/bin`.
+pub fn ffmpeg_candidates(path_var: Option<&std::ffi::OsStr>, home: Option<&Path>) -> Vec<PathBuf> {
+    let exe = if cfg!(windows) {
+        "ffmpeg.exe"
+    } else {
+        "ffmpeg"
+    };
+    let mut search: Vec<PathBuf> = path_var
+        .map(|p| std::env::split_paths(p).collect())
+        .unwrap_or_default();
+    search.push("/opt/homebrew/bin".into());
+    search.push("/usr/local/bin".into());
+    if let Some(home) = home {
+        search.push(home.join(".local").join("bin"));
+    }
+    search
+        .into_iter()
+        .filter(|d| !d.as_os_str().is_empty())
+        .map(|d| d.join(exe))
+        .collect()
+}
+
+/// The first candidate that is an executable file.
+pub fn first_executable(candidates: &[PathBuf]) -> Option<PathBuf> {
+    candidates.iter().find(|p| is_executable(p)).cloned()
+}
+
+#[cfg(unix)]
+fn is_executable(p: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+}
+
+#[cfg(not(unix))]
+fn is_executable(p: &Path) -> bool {
+    p.is_file()
+}
+
+/// The ffmpeg executable that runs (`ffmpeg -version` succeeds). Falls back
+/// to the bare name, so the system's own lookup still gets its turn.
+fn find_ffmpeg() -> Option<PathBuf> {
+    let candidates = ffmpeg_candidates(
+        std::env::var_os("PATH").as_deref(),
+        dirs::home_dir().as_deref(),
+    );
+    let exe = first_executable(&candidates).unwrap_or_else(|| "ffmpeg".into());
+    Process::new(&exe)
         .arg("-version")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
         .is_ok_and(|s| s.success())
+        .then_some(exe)
 }
 
-fn spawn_encoder(path: &Path, pix: &str, w: u32, h: u32) -> std::io::Result<Encoder> {
-    let mut child = Process::new("ffmpeg")
+fn spawn_encoder(
+    ffmpeg: &Path,
+    path: &Path,
+    pix: &str,
+    w: u32,
+    h: u32,
+) -> std::io::Result<Encoder> {
+    let mut child = Process::new(ffmpeg)
         .args(ffmpeg_args(pix, w, h, path))
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
@@ -577,6 +636,56 @@ mod tests {
     }
 
     #[test]
+    fn ffmpeg_is_found_on_path_first_then_in_fallback_directories() {
+        let root = std::env::temp_dir().join(format!("ocw-ffmpeg-test-{}", std::process::id()));
+        let (a, b, home) = (root.join("a"), root.join("b"), root.join("home"));
+        for d in [&a, &b, &home.join(".local/bin")] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        let path_var = std::env::join_paths([&a, &b]).unwrap();
+        let candidates = ffmpeg_candidates(Some(&path_var), Some(&home));
+        let exe = if cfg!(windows) {
+            "ffmpeg.exe"
+        } else {
+            "ffmpeg"
+        };
+        assert_eq!(candidates[0], a.join(exe));
+        assert_eq!(candidates[1], b.join(exe));
+        assert_eq!(candidates[2], Path::new("/opt/homebrew/bin").join(exe));
+        assert_eq!(candidates[3], Path::new("/usr/local/bin").join(exe));
+        assert_eq!(candidates[4], home.join(".local").join("bin").join(exe));
+        assert_eq!(candidates.len(), 5);
+
+        // Only the test's own directories, so the machine's ffmpeg is not seen.
+        let mine = [a.join(exe), b.join(exe), home.join(".local/bin").join(exe)];
+        assert_eq!(first_executable(&mine), None);
+        let make = |p: &Path, mode: u32| {
+            std::fs::write(p, b"#!/bin/sh\n").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(p, std::fs::Permissions::from_mode(mode)).unwrap();
+            }
+            let _ = mode;
+        };
+        make(&mine[2], 0o755);
+        assert_eq!(first_executable(&mine), Some(mine[2].clone()), "fallback");
+        make(&mine[1], 0o755);
+        assert_eq!(first_executable(&mine), Some(mine[1].clone()), "PATH wins");
+        #[cfg(unix)]
+        {
+            make(&mine[0], 0o644); // not executable: skipped
+            assert_eq!(first_executable(&mine), Some(mine[1].clone()));
+        }
+        assert_eq!(
+            first_executable(std::slice::from_ref(&a)),
+            None,
+            "a directory is no executable"
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
     fn stopping_without_frames_saves_nothing() {
         let mut rec = VideoRecorder::default();
         assert!(!rec.is_recording());
@@ -589,6 +698,7 @@ mod tests {
     fn fake_active(rec: &mut VideoRecorder, path: &str, started_s: f64) {
         rec.active = Some(Active {
             path: PathBuf::from(path),
+            ffmpeg: PathBuf::from("ffmpeg"),
             started_s,
             next_request: 0,
             in_flight: 0,

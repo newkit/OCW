@@ -15,14 +15,42 @@ APT_PACKAGES := build-essential pkg-config curl git rsync \
 	libdbus-1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
 	mesa-vulkan-drivers vulkan-tools bluez \
 	xvfb xauth weston ffmpeg
+# The same for Fedora / RHEL (dnf). ffmpeg is handled separately in
+# deps-linux-fedora: Fedora's ffmpeg-free conflicts with RPM Fusion's ffmpeg.
+DNF_PACKAGES := gcc gcc-c++ pkgconf-pkg-config curl git rsync \
+	alsa-lib-devel systemd-devel wayland-devel libxkbcommon-devel libxkbcommon-x11-devel \
+	dbus-devel libX11-devel libXcursor-devel libXrandr-devel libXi-devel libxcb-devel \
+	mesa-vulkan-drivers vulkan-tools bluez \
+	xorg-x11-server-Xvfb xorg-x11-xauth weston
+# The same for Arch / Manjaro (pacman); the Vulkan driver depends on the GPU
+# (vulkan-radeon, vulkan-intel, nvidia-utils), mesa covers OpenGL.
+PACMAN_PACKAGES := base-devel pkgconf curl git rsync \
+	alsa-lib systemd-libs wayland libxkbcommon libxkbcommon-x11 \
+	dbus libx11 libxcursor libxrandr libxi libxcb \
+	mesa vulkan-icd-loader vulkan-tools bluez bluez-utils \
+	xorg-server-xvfb xorg-xauth weston ffmpeg
+# Linux distribution family from /etc/os-release (ID, then ID_LIKE):
+# debian (Debian, Ubuntu, Mint, …), fedora (Fedora, RHEL, Rocky, Alma, …),
+# arch (Arch, Manjaro, EndeavourOS, …), or unknown.
+OS_RELEASE_IDS := $(shell . /etc/os-release 2>/dev/null; echo $$ID $$ID_LIKE)
+ifneq ($(filter debian ubuntu,$(OS_RELEASE_IDS)),)
+  LINUX_FAMILY := debian
+else ifneq ($(filter fedora rhel centos,$(OS_RELEASE_IDS)),)
+  LINUX_FAMILY := fedora
+else ifneq ($(filter arch archlinux manjaro,$(OS_RELEASE_IDS)),)
+  LINUX_FAMILY := arch
+else
+  LINUX_FAMILY := unknown
+endif
 SCREENSHOT ?= /tmp/ocw.png
 SCREENSHOT_WAYLAND ?= /tmp/ocw-wayland.png
 VIDEO ?= /tmp/ocw.mp4
 VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 
 .DEFAULT_GOAL := help
-.PHONY: help deps deps-linux deps-linux-packages deps-windows deps-macos deps-rust build release test lint fmt fmt-check \
-	clippy wasm check run server screenshot screenshot-wayland smoke video video-wayland deploy-test clean clean-test-output
+.PHONY: help deps deps-linux deps-linux-packages deps-linux-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-windows deps-macos deps-rust build release test lint fmt fmt-check \
+	clippy wasm check run server screenshot screenshot-wayland smoke video video-wayland deploy-test clean clean-test-output \
+	macos-app
 
 help: ## Show this help
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | \
@@ -39,12 +67,32 @@ endif
 
 deps: deps-$(PLATFORM) ## Install everything for this platform (Linux, Windows or macOS)
 
-deps-linux: deps-linux-packages deps-rust ## Linux: Debian/Ubuntu packages (asks for sudo) + Rust toolchain
+deps-linux: deps-linux-packages deps-rust ## Linux: system packages (detects Debian/Ubuntu, Fedora, Arch; sudo) + Rust toolchain
 
-deps-linux-packages: ## Linux: only the Debian/Ubuntu packages (sudo; also for other users' machines)
+deps-linux-packages: deps-linux-$(LINUX_FAMILY) ## Linux: only the system packages for this distribution (sudo)
+	@echo "For GPU access without a desktop session (remote/benchmark machines): sudo usermod -aG render,video \$$USER"
+
+deps-linux-debian: ## Linux: Debian / Ubuntu packages (apt)
 	sudo apt-get update
 	sudo apt-get install -y $(APT_PACKAGES)
-	@echo "For GPU access without a desktop session (remote/benchmark machines): sudo usermod -aG render,video \$$USER"
+
+deps-linux-fedora: ## Linux: Fedora / RHEL packages (dnf; unavailable ones are skipped)
+	sudo dnf install -y --skip-unavailable $(DNF_PACKAGES)
+	@# Any ffmpeg will do (videos): keep an installed one (e.g. RPM Fusion's,
+	@# which conflicts with Fedora's ffmpeg-free), else prefer RPM Fusion's.
+	@if command -v ffmpeg >/dev/null 2>&1; then echo "ffmpeg already installed: $$(command -v ffmpeg)"; \
+	elif dnf repolist --enabled 2>/dev/null | grep -qi rpmfusion-free; then sudo dnf install -y ffmpeg; \
+	else sudo dnf install -y ffmpeg-free; fi
+
+deps-linux-arch: ## Linux: Arch / Manjaro packages (pacman; add your GPU's Vulkan driver)
+	sudo pacman -S --needed --noconfirm $(PACMAN_PACKAGES)
+
+deps-linux-unknown:
+	@echo "Unknown Linux distribution (/etc/os-release ID / ID_LIKE). Run one of" >&2
+	@echo "  make deps-linux-debian | deps-linux-fedora | deps-linux-arch" >&2
+	@echo "or install the equivalents of these Debian packages by hand:" >&2
+	@echo "  $(APT_PACKAGES)" >&2
+	@exit 1
 
 deps-windows: ## Windows: Git, VS Build Tools (C++), rustup via winget + Rust toolchain
 	winget install --id Git.Git -e --accept-source-agreements --accept-package-agreements
@@ -54,11 +102,18 @@ deps-windows: ## Windows: Git, VS Build Tools (C++), rustup via winget + Rust to
 	rustup show active-toolchain || rustup toolchain install
 	@echo "Open a new terminal so PATH includes rustup, Git and the MSVC tools."
 
-deps-macos: ## macOS: Xcode Command Line Tools (+ ffmpeg if Homebrew is installed) + Rust toolchain
+deps-macos: ## macOS: Xcode Command Line Tools + ffmpeg (Homebrew; prints how to get it if missing) + Rust toolchain
 	@xcode-select -p >/dev/null 2>&1 || { xcode-select --install; \
 		echo "Finish the Command Line Tools installer, then run 'make deps-macos' again."; exit 1; }
-	@if command -v brew >/dev/null 2>&1; then brew install ffmpeg; \
-		else echo "Homebrew not found: skipping ffmpeg (only needed for videos)."; fi
+	@ffmpeg=$$(command -v ffmpeg || ls /opt/homebrew/bin/ffmpeg /usr/local/bin/ffmpeg 2>/dev/null | head -n 1); \
+		brew=$$(command -v brew || ls /opt/homebrew/bin/brew /usr/local/bin/brew 2>/dev/null | head -n 1); \
+		if [ -n "$$ffmpeg" ]; then echo "ffmpeg found: $$ffmpeg"; \
+		elif [ -n "$$brew" ]; then "$$brew" install ffmpeg || \
+			echo "brew install ffmpeg failed (Homebrew owned by another user?): run it as the Homebrew admin user."; \
+		else echo "Homebrew not found: skipping ffmpeg (only needed for video recording, key V)."; \
+		echo "To record videos, install Homebrew (asks for an admin password), then ffmpeg:"; \
+		echo '  /bin/bash -c "$$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'; \
+		echo '  brew install ffmpeg'; fi
 	$(MAKE) deps-rust
 
 deps-rust: ## Linux/macOS: rustup (if missing) + the pinned toolchain incl. wasm target
@@ -115,6 +170,10 @@ video-wayland: ## Same on Wayland (weston); writes $(VIDEO_WAYLAND)
 
 deploy-test: ## Build on MACHINE (default marge) and deploy for its kiosk (scripts/ocw-kiosk.sh)
 	scripts/deploy-test.sh $(or $(MACHINE),marge)
+
+# macOS app bundle (spec §11.3).
+macos-app: ## macOS: Open Cycling World.app + DMG + zip in target/macos (ad-hoc signed)
+	scripts/build-macos-app.sh
 
 clean: ## Remove build artefacts
 	$(CARGO) clean

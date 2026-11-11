@@ -17,6 +17,7 @@ ocw-sim.workspace = true
 ocw-protocol.workspace = true
 ocw-devices.workspace = true
 ocw-world.workspace = true
+ocw-worldstore.workspace = true
 ocw-render.workspace = true
 ocw-server.workspace = true
 bevy.workspace = true
