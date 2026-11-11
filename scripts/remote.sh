@@ -61,6 +61,14 @@ if [ -n "${OCW_REMOTE_DIR:-}" ]; then
 elif [ "$branch" != "main" ]; then
   repo="$repo-${branch//\//-}"
 fi
+# Branch checkouts build from scratch (own target/); several agents doing
+# that at once overload the machine, so they get fewer parallel jobs.
+# OCW_REMOTE_JOBS overrides (empty = cargo's default, all cores).
+jobs_env=""
+if [ "$branch" != "main" ]; then
+  jobs=${OCW_REMOTE_JOBS-4}
+  [ -n "$jobs" ] && jobs_env="CARGO_BUILD_JOBS=$jobs "
+fi
 
 SSH=(ssh -i "$key" -p "${port:-22}" -o IdentitiesOnly=yes -o BatchMode=yes
      -o UserKnownHostsFile="$config_dir/${ssh_dir:-ssh}/known_hosts" -o StrictHostKeyChecking=yes
@@ -92,7 +100,7 @@ case "$action" in
   run)
     sync_tree
     status=0
-    "${SSH[@]}" "$target" "cd $repo && . ~/.cargo/env && $*" || status=$?
+    "${SSH[@]}" "$target" "cd $repo && . ~/.cargo/env && export ${jobs_env:-OCW_REMOTE=1} && $*" || status=$?
     # Builds only happen remotely: bring back a Cargo.lock that cargo
     # updated there (new dependencies), so it can be committed.
     rsync -a -e "${SSH[*]}" "$target:$repo/Cargo.lock" ./Cargo.lock 2>/dev/null || true
