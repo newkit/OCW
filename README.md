@@ -478,6 +478,10 @@ scripts/deploy-test.sh <name>                                  # release build f
 - At most 2 `remote.sh run` commands run at once per machine (others wait;
   `OCW_REMOTE_SLOTS`), because parallel Bevy builds can run a machine out of
   memory; branch checkouts use 4 build jobs (`OCW_REMOTE_JOBS`).
+- `python3 tools/build-dashboard/dashboard.py` shows each machine's load and
+  its background tasks (every run leaves a task marker while it runs); on
+  Windows, add the build user to "Performance Monitor Users" for the
+  processor queue length ([tools/build-dashboard/README.md](tools/build-dashboard/README.md#windows-permissions)).
 - Branches other than `main` get their own checkout on the machine
   (`<repo_path>-<branch>`), several GB each; delete the ones of merged branches
   now and then.

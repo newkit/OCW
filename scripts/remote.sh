@@ -13,6 +13,13 @@
 # On a branch other than main the remote checkout is REPO_PATH-BRANCH.
 #
 # Files are copied with rsync; config/ (machine config, keys) is never sent.
+#
+# Each `run` leaves a task marker on the machine while it runs (read by
+# tools/build-dashboard): a JSON file PID-START.json in /tmp/ocw-tasks/
+# (Windows: %TEMP%\ocw-tasks\) with the checkout, branch, command (shortened),
+# start time, the remote shell's PID and its state (waiting for a build slot,
+# running). The run removes it when it ends; markers whose PID is gone
+# (killed runs) are ignored by the dashboard and swept by the next run.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -118,13 +125,70 @@ sync_tree_windows() {
     tar -cf - -T - | "${SSH[@]}" "$target" "tar -xf - -C $(psq "$repo")"
 }
 
+# At most OCW_REMOTE_SLOTS commands (default 2) run at once on a machine
+# (Linux: flock on lock files; Windows: exclusively opened lock files; others
+# wait for a free slot): many parallel builds of the Bevy app run the machine
+# out of memory. macOS has no slots.
+slots=${OCW_REMOTE_SLOTS:-2}
+[ "$slots" -ge 0 ] 2>/dev/null || slots=2
+checkout_dir=${repo##*[\\/]}
+
+# The command for task markers: one line, at most 200 characters.
+short_cmd() {
+  local c
+  c=$(printf '%s' "$*" | tr '\000-\037' ' ')
+  [ ${#c} -gt 200 ] && c="${c:0:197}..."
+  printf '%s' "$c"
+}
+# A JSON string literal (input without control characters).
+# (Replacements are quoted: bash 5.2's patsub_replacement treats & and \.)
+json_str() { local b='\' q='"' s; s=${1//"$b"/"$b$b"}; printf '"%s"' "${s//"$q"/"$b$q"}"; }
+# A POSIX shell single-quoted literal.
+shq() { local q="'" r="'\\''"; printf "'%s'" "${1//"$q"/"$r"}"; }
+
+# Prelude of a run on Linux/macOS (bash or zsh, joined into one line):
+# `ocw_mark STATE [SLOT]` writes the task marker, the EXIT trap removes it,
+# markers of dead PIDs are swept.
+read -r -d '' marker_sh <<'EOF' || true
+ocw_d=/tmp/ocw-tasks; mkdir -p $ocw_d 2>/dev/null; ocw_t0=$(date +%s); ocw_f=$ocw_d/$$-$ocw_t0.json;
+for g in $(find $ocw_d/ -name '*.json' 2>/dev/null); do p=${g##*/}; ps -p ${p%%-*} >/dev/null 2>&1 || rm -f $g; done;
+ocw_mark() { printf '{"v":1,"pid":%s,"state":"%s","slot":%s,"start":%s,%s}\n' $$ $1 ${2:-null} $ocw_t0 "$ocw_meta" >$ocw_f.tmp 2>/dev/null && mv -f $ocw_f.tmp $ocw_f; };
+trap 'rm -f $ocw_f $ocw_f.tmp' EXIT; trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM;
+EOF
+
+# A run on Windows (PowerShell, joined into one line): task marker, build
+# slot (lock files opened with FileShare None, polled while all are taken),
+# the command (@RUN@) with its exit code passed on, marker removed in finally.
+read -r -d '' marker_ps <<'EOF' || true
+$ocwD = Join-Path $env:TEMP 'ocw-tasks'; [void](New-Item -ItemType Directory -Force -Path $ocwD);
+$ocwT0 = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds(); $ocwF = Join-Path $ocwD ('' + $PID + '-' + $ocwT0 + '.json');
+Get-ChildItem -LiteralPath $ocwD -Filter '*.json' | ForEach-Object { if (-not (Get-Process -Id ($_.BaseName -split '-')[0] -ErrorAction SilentlyContinue)) { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue } };
+function ocwMark($st, $sl) { $m = [ordered]@{ v = 1; pid = $PID; state = $st; slot = $sl; start = $ocwT0; checkout = @CHECKOUT@; branch = @BRANCH@; command = @CMD@; os = 'windows' }; [IO.File]::WriteAllText($ocwF + '.tmp', ($m | ConvertTo-Json -Compress)); Move-Item -Force -LiteralPath ($ocwF + '.tmp') -Destination $ocwF };
+$ocwRc = 0; $ocwLock = $null; $ocwSlot = $null; $ocwWarn = $false;
+try {
+if (@SLOTS@ -gt 0) { while (-not $ocwLock) { foreach ($s in 1..@SLOTS@) { try { $ocwLock = [IO.File]::Open((Join-Path $ocwD ('slot-' + $s + '.lock')), 'OpenOrCreate', 'ReadWrite', 'None'); $ocwSlot = $s; break } catch {} }; if (-not $ocwLock) { if (-not $ocwWarn) { ocwMark 'waiting' $null; [Console]::Error.WriteLine('remote.sh: waiting for a free build slot'); $ocwWarn = $true }; Start-Sleep -Milliseconds 1000 } } };
+ocwMark 'running' $ocwSlot;
+@RUN@; $ocwRc = $LASTEXITCODE
+} finally { if ($ocwLock) { $ocwLock.Dispose() }; Remove-Item -Force -ErrorAction SilentlyContinue -LiteralPath $ocwF, ($ocwF + '.tmp') };
+exit $ocwRc
+EOF
+
 # Runs a command in PowerShell in the checkout: rustup's cargo first on PATH,
 # fewer build jobs for branch checkouts, the command's exit code passed on.
 run_windows() {
-  local jobs_num jobs_ps=""
+  local jobs_num jobs_ps="" ps run
   jobs_num=$(printf '%s' "$jobs_env" | grep -o '[0-9]*' || true)
   [ -n "$jobs_num" ] && jobs_ps="\$env:CARGO_BUILD_JOBS='$jobs_num'; "
-  "${SSH[@]}" "$target" "Set-Location -LiteralPath $(psq "$repo"); \$env:Path = \"\$env:USERPROFILE\\.cargo\\bin;\" + \$env:Path; ${jobs_ps}$*; exit \$LASTEXITCODE"
+  # The command runs as a script block (dot-sourced): the wrapper is one
+  # line, which a `#` comment in the command would otherwise cut off.
+  run="Set-Location -LiteralPath $(psq "$repo"); \$env:Path = \"\$env:USERPROFILE\\.cargo\\bin;\" + \$env:Path; ${jobs_ps}. ([scriptblock]::Create($(psq "$*")))"
+  ps=${marker_ps//$'\n'/ }
+  ps=${ps//@CHECKOUT@/"$(psq "$checkout_dir")"}
+  ps=${ps//@BRANCH@/"$(psq "$branch")"}
+  ps=${ps//@CMD@/"$(psq "$(short_cmd "$@")")"}
+  ps=${ps//@SLOTS@/"$slots"}
+  ps=${ps//@RUN@/"$run"}
+  "${SSH[@]}" "$target" "$ps"
 }
 
 case "$action" in
@@ -137,15 +201,13 @@ case "$action" in
       "${SSH[@]}" "$target" "tar -cf - -C $(psq "$repo") Cargo.lock" 2>/dev/null | tar -xf - 2>/dev/null || true
       exit "$status"
     fi
-    # At most OCW_REMOTE_SLOTS commands (default 2) run at once on a machine
-    # (flock on lock files there; others wait for a free slot): many
-    # parallel builds of the Bevy app run the machine out of memory.
-    slots=${OCW_REMOTE_SLOTS:-2}
     slot_guard=""
-    if [ "$os" != macos ] && [ "$slots" -gt 0 ] 2>/dev/null; then
-      slot_guard="ocw_slot() { for s in \$(seq 1 $slots); do exec 9>/tmp/ocw-build-slot-\$s.lock; flock -n 9 && return; done; echo 'remote.sh: waiting for a free build slot' >&2; exec 9>/tmp/ocw-build-slot-1.lock; flock 9; }; ocw_slot; "
+    if [ "$os" != macos ] && [ "$slots" -gt 0 ]; then
+      slot_guard="ocw_slot() { for s in \$(seq 1 $slots); do exec 9>/tmp/ocw-build-slot-\$s.lock; flock -n 9 && { ocw_n=\$s; return; }; done; ocw_mark waiting; echo 'remote.sh: waiting for a free build slot' >&2; exec 9>/tmp/ocw-build-slot-1.lock; flock 9; ocw_n=1; }; ocw_slot; "
     fi
-    "${SSH[@]}" "$target" "${slot_guard}cd $repo && . ~/.cargo/env && export ${jobs_env:-OCW_REMOTE=1} && $*" || status=$?
+    meta="\"checkout\":$(json_str "$checkout_dir"),\"branch\":$(json_str "$branch"),\"command\":$(json_str "$(short_cmd "$@")"),\"os\":\"$os\""
+    marker="ocw_meta=$(shq "$meta"); ${marker_sh//$'\n'/ } "
+    "${SSH[@]}" "$target" "${marker}${slot_guard}ocw_mark running \$ocw_n; cd $repo && . ~/.cargo/env && export ${jobs_env:-OCW_REMOTE=1} && $*" || status=$?
     # Builds only happen remotely: bring back a Cargo.lock that cargo
     # updated there (new dependencies), so it can be committed.
     rsync -a -e "${SSH[*]}" "$target:$repo/Cargo.lock" ./Cargo.lock 2>/dev/null || true
