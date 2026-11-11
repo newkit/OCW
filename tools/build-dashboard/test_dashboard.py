@@ -79,6 +79,21 @@ class ConfigTest(unittest.TestCase):
         self.assertIn("ControlPath=/run/ctl/%C", argv)
         self.assertEqual(argv[-1], "builder@10.1.2.3")
 
+    def test_slot_counts_like_remote_sh(self):
+        # No `slots` keys: OS defaults linux 2, windows 1, macos 1.
+        defaults, machines = d.parse_machines(BROKEN_TOML)
+        ms = [d.Machine(m, defaults, Path("/cfg")) for m in machines]
+        self.assertEqual([m.slots for m in ms], [2, 1, 1])
+        # A machine's `slots` wins over [defaults] slots, which wins over the OS default.
+        text = BROKEN_TOML.replace("connect_timeout_s = 10", "connect_timeout_s = 10\nslots = 3")
+        text = text.replace('name = "Win11Builder"', 'name = "Win11Builder"\nslots = 2  # 16 GB now')
+        defaults, machines = d.parse_machines(text)
+        self.assertEqual([d.Machine(m, defaults, Path("/cfg")).slots for m in machines], [3, 2, 3])
+        self.assertEqual(d.slots_setting("0", "linux"), 0)
+        self.assertEqual(d.slots_setting("x", "windows"), 1)
+        self.assertEqual(d.slots_setting(-1, "macos"), 1)
+        self.assertEqual(d.default_slots("freebsd"), 2)
+
 
 class MaskTest(unittest.TestCase):
     def test_masks_hosts_users_addresses(self):
@@ -226,6 +241,9 @@ class GroupingTest(unittest.TestCase):
         self.assertEqual((q["used"], q["total"], q["waiting"]), (1, 2, 2))
         self.assertEqual(q["slots"][0]["holder"], "agent a08d34a9")
         self.assertEqual(sorted(q["waiting_checkouts"]), ["fix-x", "main"])
+        # Waiters of an older remote.sh (blocked in `flock 9`): waiting time from the flock process.
+        self.assertEqual(sorted((w["checkout"], w["elapsed"], w["command"]) for w in q["queued"]),
+                         [("fix-x", 49, None), ("main", 99, None)])
         k = out["kiosk"]
         self.assertTrue(k["running"])
         self.assertTrue(k["other_user"])
@@ -320,6 +338,16 @@ class MarkerTest(unittest.TestCase):
         self.assertEqual([(m["label"], m["state"], m["elapsed"]) for m in live],
                          [("agent a08d34a9", "running", 1000), ("main", "waiting", 900)])
 
+    def test_running_time_counts_from_getting_the_slot(self):
+        m = json.loads(marker(200, 1000, slot=2))
+        m["since"] = 1300  # waited 300 s for the slot
+        w = json.loads(marker(300, 1500, "waiting"))
+        w["since"] = 1500
+        live, _ = d.live_markers([d.parse_marker(json.dumps(m)), d.parse_marker(json.dumps(w))], 2000,
+                                 {200: {"pid": 200, "elapsed": 1000}, 300: {"pid": 300, "elapsed": 500}})
+        self.assertEqual([x["elapsed"] for x in live], [700, 500])
+        self.assertEqual(d.parse_marker(marker(1, 50))["since"], 50)  # older markers: start
+
     def test_live_markers_windows_alive_flags(self):
         ms = [d.parse_marker(marker(7, 1000, checkout="OCW-fix-x")), d.parse_marker(marker(8, 1000))]
         live, stale = d.live_markers(ms, 1060, alive={7: (True, 990), 8: (False, None)}, repo_path="B:\\src\\OCW")
@@ -364,6 +392,43 @@ class MarkerTest(unittest.TestCase):
         self.assertEqual(q["waiting_checkouts"], ["agent abcdef12"])
         self.assertEqual([s["holder"] for s in q["slots"]], ["main", "fix-x"])
         self.assertEqual(d.queue_from_markers([])["used"], 0)
+
+    def test_queue_lists_waiting_runs_and_uses_configured_total(self):
+        live = [dict(d.parse_marker(marker(1, 10, slot=1)), label="main", elapsed=90),
+                dict(d.parse_marker(marker(3, 40, "waiting", command="sleep 60")), label="agent abcdef12", elapsed=60),
+                dict(d.parse_marker(marker(4, 50, "waiting")), label="fix-x", elapsed=50)]
+        q = d.queue_from_markers(live, 1)
+        self.assertEqual((q["used"], q["total"], q["waiting"]), (1, 1, 2))
+        self.assertEqual(q["queued"], [
+            {"checkout": "agent abcdef12", "command": "sleep 60", "since": 40, "elapsed": 60},
+            {"checkout": "fix-x", "command": "cargo test", "since": 50, "elapsed": 50}])
+        # Slots held without a marker (older remote.sh) and waiters without one count too.
+        q = d.queue_from_markers(live, 2, held={1: "other", 2: None}, extra_waiting=["kiosk"])
+        self.assertEqual([(s["slot"], s["held"], s["holder"]) for s in q["slots"]],
+                         [(1, True, "main"), (2, True, None)])
+        self.assertEqual((q["used"], q["waiting"], q["waiting_checkouts"][-1]), (2, 3, "kiosk"))
+        # A run started with OCW_REMOTE_SLOTS=3 reports it in its marker.
+        m3 = json.loads(marker(5, 60, slot=3))
+        m3["slots"] = 3
+        q = d.queue_from_markers([dict(d.parse_marker(json.dumps(m3)), label="x", elapsed=1)], 2)
+        self.assertEqual((q["total"], q["used"], q["slots"][2]["holder"]), (3, 1, "x"))
+
+    def test_slot_dirs_macos(self):
+        procs = {70: {"pid": 70, "args": "zsh -c ocw_meta=...", "cwd": "/Users/u/src/OCW-fix-x"}}
+        held = d.parse_slot_dirs(["ocw-build-slot-1.d 70", "ocw-build-slot-2.d 71", "ocw-build-slot-3.d", "junk"],
+                                 procs, repo_path="~/src/OCW", home="/Users/u")
+        self.assertEqual(held, {1: "fix-x"})  # 2: owner gone (stale, free); 3: no PID yet
+
+    def test_summary_totals_use_per_machine_slots(self):
+        def q(total, used, waiting):
+            return {"total": total, "used": used, "waiting": waiting, "slots": [], "queued": [], "waiting_checkouts": []}
+        ms = [dict(name="marge", os="linux", online=True, tasks=[{"state": "running"}] * 2, queue=q(2, 2, 1)),
+              dict(name="leela", os="linux", online=True, tasks=[], queue=q(2, 0, 0)),
+              dict(name="Win11Builder", os="windows", online=True,
+                   tasks=[{"state": "running"}, {"state": "waiting"}], queue=q(1, 1, 1)),
+              dict(name="macos", os="macos", online=False, slots=1, error="timeout")]
+        o = d.summarize(ms)["overview"]
+        self.assertEqual((o["tasks"], o["waiting"], o["slots_used"], o["slots_total"]), (3, 2, 3, 6))
 
     def test_label_from_args_prefers_remote_sh_cd(self):
         args = ("bash -c ocw_meta='\"command\":\"cd /tmp && make\"'; ocw_d=/tmp/ocw-tasks; ocw_mark running 1; "
@@ -418,9 +483,53 @@ class CpuTest(unittest.TestCase):
         self.assertEqual((q["used"], q["waiting"]), (1, 1))
         text = d.format_text(d.summarize([dict(name="Win11Builder", os="windows", online=True, polled_at=0, **out)]))
         self.assertIn("processor queue n/a (add build user to Performance Monitor Users)", text)
-        self.assertIn("[main] waiting for slot: cargo test", text)
+        self.assertIn("queue: [main] cargo test  (waiting 50s)", text)
+        self.assertNotIn("[main] waiting", text)  # queued runs are listed in the queue, not as tasks
         self.assertIn("running (slot 1)", text)
         self.assertIn("1 stale task marker", text)
+
+    def test_linux_polling_waiters(self):
+        # New remote.sh: waiters poll with `flock -n` (no blocked flock
+        # process); the queue comes from their markers. A waiter that has a
+        # slot file open for a moment (fuser) is not its holder.
+        ps = PS.replace("    301     300  1002    99   1000 flock 9\n", "").replace(
+            "    401     400  1002    49   1000 flock 9\n", "")
+        text = (LINUX_OUTPUT.replace(PS, ps)
+                .replace("ocw-build-slot-2.lock 4445 :", "ocw-build-slot-2.lock 4445 : 400")
+                .replace("9: -> FLOCK  ADVISORY  WRITE 301 00:19:4444 0 EOF\n9: -> FLOCK  ADVISORY  WRITE 401 00:19:4444 0 EOF\n",
+                         "10: FLOCK  ADVISORY  WRITE 510 00:19:4445 0 EOF\n")
+                .replace("@@end\n", "@@now\n2000\n@@tasks\n"
+                         + marker(200, 1600, slot=1, checkout="OCW-worktree-agent-a08d34a9817282b1d") + "\n"
+                         + marker(300, 1900, "waiting", command="cargo build --release") + "\n"
+                         + marker(400, 1950, "waiting", checkout="OCW-fix-x", command="cargo clippy") + "\n@@end\n"))
+        out = d.parse_linux(text, "~/src/OCW")
+        # The polling shells of waiting runs are not listed as running tasks.
+        self.assertEqual([(t["checkout"], t["state"]) for t in out["tasks"]],
+                         [("agent a08d34a9", "running"), ("main", "waiting"), ("fix-x", "waiting")])
+        q = out["queue"]
+        self.assertEqual((q["used"], q["total"], q["waiting"]), (2, 2, 2))
+        self.assertEqual([(s["slot"], s["holder"]) for s in q["slots"]], [(1, "agent a08d34a9"), (2, None)])
+        self.assertEqual([(w["checkout"], w["command"], w["elapsed"]) for w in q["queued"]],
+                         [("main", "cargo build --release", 100), ("fix-x", "cargo clippy", 50)])
+        q = d.parse_linux(text, "~/src/OCW", slots=3)["queue"]
+        self.assertEqual((q["used"], q["total"]), (2, 3))
+
+    def test_macos_parse_with_slots_and_queue(self):
+        text = ("@@self\n50\n@@home\n/Users/ocw\n501\n@@sysctl\n8\n17179869184\n@@now\n2000\n"
+                "@@ps\n  60 1 501 05:00 3000 zsh -c ocw_meta=x; ocw_mark running $ocw_n; cd ~/src/OCW-fix-x && . ~/.cargo/env && sleep 60\n"
+                "  61 1 501 00:30 3000 zsh -c ocw_meta=x; ocw_mark running $ocw_n; cd ~/src/OCW && . ~/.cargo/env && sleep 60\n"
+                "@@tasks\n" + marker(60, 1700, slot=1, checkout="OCW-fix-x", command="sleep 60") + "\n"
+                + marker(61, 1970, "waiting", command="sleep 60") + "\n"
+                "@@slots\nocw-build-slot-1.d 60\n@@cwd\n@@end\n")
+        out = d.parse_macos(text, "~/src/OCW")
+        q = out["queue"]
+        self.assertEqual((q["used"], q["total"], q["waiting"]), (1, 1, 1))
+        self.assertEqual(q["slots"][0]["holder"], "fix-x")
+        self.assertEqual(q["queued"][0]["checkout"], "main")
+        text = d.format_text(d.summarize([dict(name="macos", os="macos", online=True, polled_at=0, **out)]))
+        self.assertIn("1/1 machines online: 1 running, 1 waiting, build slots 1 used of 1", text)
+        self.assertIn("queue: [main] sleep 60  (waiting 30s)", text)
+        self.assertIn("[fix-x] running (slot 1): sleep 60", text)
 
     def test_linux_parse_with_markers_and_ticks(self):
         extra = ("@@now\n2000\n@@clk\n100\n@@ticks1\n1000.00 9000.00\n203 1000\n204 50\n"

@@ -54,6 +54,11 @@ tr.grp td .cmd { font-weight: 400; color: var(--muted); font-family: ui-monospac
 .badge { font-size: 11px; font-weight: 500; border-radius: 6px; padding: 0 6px; margin-left: 4px; background: var(--chip); }
 .badge.ok { color: var(--ok); } .badge.warn { color: var(--warn); }
 .err { color: var(--bad); font-size: 13px; }
+h3 { font-size: 13px; font-weight: 600; margin: 12px 0 0; }
+.cmd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; color: var(--muted); word-break: break-all; }
+.pip { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 2px; vertical-align: -1px; background: var(--track); border: 1px solid var(--line); }
+.pip.on { background: var(--accent); border-color: var(--accent); }
+.warnt { color: var(--warn); }
 footer { padding: 0 16px 24px; font-size: 12px; color: var(--muted); }
 @media (max-width: 480px) { .meters { grid-template-columns: 1fr; } }
 </style>
@@ -120,9 +125,10 @@ function card(m, now) {
   if (c) html += `<div class="line"><span class="k">Processor queue</span>${c.ok && m.proc_queue != null ? esc(m.proc_queue.toFixed(0)) : `<span class="muted">${esc(c.hint)}</span>`}</div>`;
   const q = m.queue;
   if (q) {
-    const held = q.slots.filter((s) => s.held).map((s) => `slot ${s.slot}: ${esc(s.holder || "held")}`).join(", ");
-    const wait = q.waiting ? `<b>${q.waiting} waiting</b>${q.waiting_checkouts.length ? " (" + q.waiting_checkouts.map(esc).join(", ") + ")" : ""}` : "0 waiting";
-    html += `<div class="line"><span class="k">Queue</span>${q.used}/${q.total} build slots used${held ? " (" + held + ")" : ""} · ${wait}</div>`;
+    const pips = q.slots.map((s) => `<span class="pip${s.held ? " on" : ""}" title="slot ${s.slot}: ${s.held ? esc(s.holder || "held") : "free"}"></span>`).join("");
+    const held = q.slots.filter((s) => s.held).map((s) => `${s.slot}: ${esc(s.holder || "held")}`).join(", ");
+    html += `<div class="line"><span class="k">Build slots</span>${pips} ${q.used} of ${q.total} used${held ? ` <span class="muted">(${held})</span>` : ""}` +
+            ` · ${q.waiting ? `<b class="warnt">${q.waiting} waiting</b>` : "0 waiting"}</div>`;
   }
   const k = m.kiosk;
   if (k) {
@@ -130,13 +136,12 @@ function card(m, now) {
     const bt = (k.bluetooth || []).length ? k.bluetooth.map(esc).join(", ") : "none";
     html += `<div class="line"><span class="k">Kiosk</span>${st} · build ${esc(k.version || "?")} · Bluetooth: ${bt}</div>`;
   }
-  const tasks = m.tasks || [];
+  const tasks = (m.tasks || []).filter((t) => t.state !== "waiting");
   if (!tasks.length) html += `<div class="empty">No build tasks running.</div>`;
   else {
-    html += `<table><thead><tr><th>Background task / process</th><th class="n">#</th><th class="n">Running</th><th class="n">CPU</th><th class="n">Memory</th></tr></thead><tbody>`;
+    html += `<table><thead><tr><th>Running task / process</th><th class="n">#</th><th class="n">Running</th><th class="n">CPU</th><th class="n">Memory</th></tr></thead><tbody>`;
     for (const g of tasks) {
-      const st = g.state === "waiting" ? `<span class="badge warn">waiting for slot</span>`
-        : `<span class="badge ok">running${g.slot ? " · slot " + esc(g.slot) : ""}</span>`;
+      const st = `<span class="badge ok">running${g.slot ? " · slot " + esc(g.slot) : ""}</span>`;
       const src = g.source === "process" ? ` <span class="muted" title="processes only, no remote.sh task marker">(no marker)</span>` : "";
       html += `<tr class="grp"><td colspan="2">${esc(g.checkout)} ${st}${src}${g.command ? `<div class="cmd">${esc(g.command)}</div>` : ""}</td>` +
               `<td class="n">${dur(g.elapsed)}</td><td class="n">${cpu(g.cpu)}</td><td class="n">${g.rss ? bytes(g.rss) : ""}</td></tr>`;
@@ -144,6 +149,17 @@ function card(m, now) {
         html += `<tr><td title="${esc(kd.example)}">${esc(kd.kind)}</td><td class="n">${kd.count}</td><td class="n">${dur(kd.elapsed)}</td><td class="n">${cpu(kd.cpu)}</td><td class="n">${bytes(kd.rss)}</td></tr>`;
       }
     }
+    html += `</tbody></table>`;
+  }
+  const queued = (q && q.queued) || [];
+  if (queued.length) {
+    html += `<h3>Queue <span class="badge warn">${queued.length} waiting for a build slot</span></h3>`;
+    html += `<table class="queue"><thead><tr><th>#</th><th>Checkout / command</th><th class="n">Waiting</th><th class="n">Since</th></tr></thead><tbody>`;
+    queued.forEach((w, i) => {
+      const since = w.since ? new Date(w.since * 1000).toLocaleTimeString() : "?";
+      html += `<tr><td class="n">${i + 1}</td><td><b>${esc(w.checkout)}</b>${w.command ? `<div class="cmd">${esc(w.command)}</div>` : ` <span class="muted">(no marker)</span>`}</td>` +
+              `<td class="n">${dur(w.elapsed)}</td><td class="n">${esc(since)}</td></tr>`;
+    });
     html += `</tbody></table>`;
   }
   if (m.stale_markers) html += `<div class="empty">${m.stale_markers} stale task marker${m.stale_markers === 1 ? "" : "s"} of ended runs ignored.</div>`;
@@ -154,9 +170,9 @@ function render(st) {
   const now = st.generated_at, o = st.overview;
   $("overview").innerHTML = [
     [`${o.online}/${o.machines}`, "machines online"],
-    [o.tasks, "running tasks"],
-    [o.waiting, "queued runs"],
-    [`${o.slots_used}/${o.slots_total}`, "build slots used"],
+    [o.tasks, "running"],
+    [o.waiting, "waiting for a slot"],
+    [`${o.slots_used} of ${o.slots_total}`, "build slots used"],
   ].map(([v, l]) => `<div class="stat"><b>${esc(v)}</b><span>${esc(l)}</span></div>`).join("");
   $("chips").innerHTML = st.machines.map((m) => {
     const n = (m.tasks || []).filter((t) => t.state !== "waiting").length, w = (m.queue || {}).waiting || 0;

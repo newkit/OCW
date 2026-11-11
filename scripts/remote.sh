@@ -17,8 +17,8 @@
 # Each `run` leaves a task marker on the machine while it runs (read by
 # tools/build-dashboard): a JSON file PID-START.json in /tmp/ocw-tasks/
 # (Windows: %TEMP%\ocw-tasks\) with the checkout, branch, command (shortened),
-# start time, the remote shell's PID and its state (waiting for a build slot,
-# running). The run removes it when it ends; markers whose PID is gone
+# start time, the remote shell's PID, its state (waiting for a build slot,
+# running in slot N) and since when, and the machine's slot count. The run removes it when it ends; markers whose PID is gone
 # (killed runs) are ignored by the dashboard and swept by the next run.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -125,12 +125,21 @@ sync_tree_windows() {
     tar -cf - -T - | "${SSH[@]}" "$target" "tar -xf - -C $(psq "$repo")"
 }
 
-# At most OCW_REMOTE_SLOTS commands (default 2) run at once on a machine
-# (Linux: flock on lock files; Windows: exclusively opened lock files; others
-# wait for a free slot): many parallel builds of the Bevy app run the machine
-# out of memory. macOS has no slots.
-slots=${OCW_REMOTE_SLOTS:-2}
-[ "$slots" -ge 0 ] 2>/dev/null || slots=2
+# Build slots: at most N commands run at once on a machine, because many
+# parallel builds of the Bevy app (~4-5 GB each) run it out of memory.
+# N = OCW_REMOTE_SLOTS, else the machine's `slots` in machines.toml (or
+# [defaults] slots), else per OS: linux 2, windows 1, macos 1. 0 = no limit.
+# A run that finds all slots taken marks itself "waiting" and polls every
+# second, taking whichever slot frees first. Linux: flock on
+# /tmp/ocw-build-slot-N.lock; macOS (no flock): atomic mkdir of
+# /tmp/ocw-build-slot-N.d holding the owner's PID (taken over when that PID
+# is gone); Windows: %TEMP%\ocw-tasks\slot-N.lock opened exclusively.
+case "$os" in windows | macos) default_slots=1 ;; *) default_slots=2 ;; esac
+slots=${OCW_REMOTE_SLOTS:-$(field slots)}
+slots=${slots:-$default_slots}
+[ "$slots" -ge 0 ] 2>/dev/null || slots=$default_slots
+slot_list=""
+for ((i = 1; i <= slots; i++)); do slot_list+="$i "; done
 checkout_dir=${repo##*[\\/]}
 
 # The command for task markers: one line, at most 200 characters.
@@ -147,13 +156,14 @@ json_str() { local b='\' q='"' s; s=${1//"$b"/"$b$b"}; printf '"%s"' "${s//"$q"/
 shq() { local q="'" r="'\\''"; printf "'%s'" "${1//"$q"/"$r"}"; }
 
 # Prelude of a run on Linux/macOS (bash or zsh, joined into one line):
-# `ocw_mark STATE [SLOT]` writes the task marker, the EXIT trap removes it,
-# markers of dead PIDs are swept.
+# `ocw_mark STATE [SLOT]` writes the task marker, the EXIT trap removes it
+# (and frees a macOS slot dir, $ocw_ld), markers of dead PIDs are swept.
+# POSIX sh only: the remote shell is bash on Linux, zsh on macOS.
 read -r -d '' marker_sh <<'EOF' || true
 ocw_d=/tmp/ocw-tasks; mkdir -p $ocw_d 2>/dev/null; ocw_t0=$(date +%s); ocw_f=$ocw_d/$$-$ocw_t0.json;
 for g in $(find $ocw_d/ -name '*.json' 2>/dev/null); do p=${g##*/}; ps -p ${p%%-*} >/dev/null 2>&1 || rm -f $g; done;
-ocw_mark() { printf '{"v":1,"pid":%s,"state":"%s","slot":%s,"start":%s,%s}\n' $$ $1 ${2:-null} $ocw_t0 "$ocw_meta" >$ocw_f.tmp 2>/dev/null && mv -f $ocw_f.tmp $ocw_f; };
-trap 'rm -f $ocw_f $ocw_f.tmp' EXIT; trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM;
+ocw_mark() { printf '{"v":1,"pid":%s,"state":"%s","slot":%s,"start":%s,"since":%s,%s}\n' $$ $1 ${2:-null} $ocw_t0 $(date +%s) "$ocw_meta" >$ocw_f.tmp 2>/dev/null && mv -f $ocw_f.tmp $ocw_f; };
+ocw_ld=; trap 'rm -f $ocw_f $ocw_f.tmp; [ -n "$ocw_ld" ] && [ "$(cat $ocw_ld/pid 2>/dev/null)" = "$$" ] && rm -rf $ocw_ld; :' EXIT; trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM;
 EOF
 
 # A run on Windows (PowerShell, joined into one line): task marker, build
@@ -163,7 +173,7 @@ read -r -d '' marker_ps <<'EOF' || true
 $ocwD = Join-Path $env:TEMP 'ocw-tasks'; [void](New-Item -ItemType Directory -Force -Path $ocwD);
 $ocwT0 = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds(); $ocwF = Join-Path $ocwD ('' + $PID + '-' + $ocwT0 + '.json');
 Get-ChildItem -LiteralPath $ocwD -Filter '*.json' | ForEach-Object { if (-not (Get-Process -Id ($_.BaseName -split '-')[0] -ErrorAction SilentlyContinue)) { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue } };
-function ocwMark($st, $sl) { $m = [ordered]@{ v = 1; pid = $PID; state = $st; slot = $sl; start = $ocwT0; checkout = @CHECKOUT@; branch = @BRANCH@; command = @CMD@; os = 'windows' }; [IO.File]::WriteAllText($ocwF + '.tmp', ($m | ConvertTo-Json -Compress)); Move-Item -Force -LiteralPath ($ocwF + '.tmp') -Destination $ocwF };
+function ocwMark($st, $sl) { $m = [ordered]@{ v = 1; pid = $PID; state = $st; slot = $sl; start = $ocwT0; since = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds(); slots = @SLOTS@; checkout = @CHECKOUT@; branch = @BRANCH@; command = @CMD@; os = 'windows' }; [IO.File]::WriteAllText($ocwF + '.tmp', ($m | ConvertTo-Json -Compress)); Move-Item -Force -LiteralPath ($ocwF + '.tmp') -Destination $ocwF };
 $ocwRc = 0; $ocwLock = $null; $ocwSlot = $null; $ocwWarn = $false;
 try {
 if (@SLOTS@ -gt 0) { while (-not $ocwLock) { foreach ($s in 1..@SLOTS@) { try { $ocwLock = [IO.File]::Open((Join-Path $ocwD ('slot-' + $s + '.lock')), 'OpenOrCreate', 'ReadWrite', 'None'); $ocwSlot = $s; break } catch {} }; if (-not $ocwLock) { if (-not $ocwWarn) { ocwMark 'waiting' $null; [Console]::Error.WriteLine('remote.sh: waiting for a free build slot'); $ocwWarn = $true }; Start-Sleep -Milliseconds 1000 } } };
@@ -171,6 +181,31 @@ ocwMark 'running' $ocwSlot;
 @RUN@; $ocwRc = $LASTEXITCODE
 } finally { if ($ocwLock) { $ocwLock.Dispose() }; Remove-Item -Force -ErrorAction SilentlyContinue -LiteralPath $ocwF, ($ocwF + '.tmp') };
 exit $ocwRc
+EOF
+
+# Linux: flock(1) on a lock file per slot, held on fd 9 by the run's shell
+# (the kernel drops it when the shell dies).
+read -r -d '' slot_take_flock <<'EOF' || true
+ocw_take() { exec 9>/tmp/ocw-build-slot-$1.lock && flock -n 9; };
+ocw_free() { exec 9>&-; };
+EOF
+
+# macOS has no flock(1): a slot is the directory /tmp/ocw-build-slot-N.d
+# (mkdir is atomic) with the owner's PID in it. A slot whose owner is gone
+# (killed run; or no PID written after a minute) is taken over under a
+# second mkdir lock (N.d.take), re-checking that the PID is still the dead
+# one; the EXIT trap removes the directory (also after INT/TERM/HUP).
+read -r -d '' slot_take_macos <<'EOF' || true
+ocw_take() { ocw_s=/tmp/ocw-build-slot-$1.d;
+if mkdir $ocw_s 2>/dev/null; then echo $$ >$ocw_s/pid; ocw_ld=$ocw_s; return 0; fi;
+ocw_p=$(cat $ocw_s/pid 2>/dev/null);
+if [ -n "$ocw_p" ]; then ps -p $ocw_p >/dev/null 2>&1 && return 1;
+else [ -n "$(find $ocw_s -maxdepth 0 -mmin +1 2>/dev/null)" ] || return 1; fi;
+[ -n "$(find $ocw_s.take -maxdepth 0 -mmin +1 2>/dev/null)" ] && rmdir $ocw_s.take 2>/dev/null;
+mkdir $ocw_s.take 2>/dev/null || return 1;
+if [ -d $ocw_s ] && [ "$(cat $ocw_s/pid 2>/dev/null)" = "$ocw_p" ]; then echo $$ >$ocw_s/pid; ocw_ld=$ocw_s; rmdir $ocw_s.take; return 0; fi;
+rmdir $ocw_s.take; return 1; };
+ocw_free() { :; };
 EOF
 
 # Runs a command in PowerShell in the checkout: rustup's cargo first on PATH,
@@ -202,10 +237,19 @@ case "$action" in
       exit "$status"
     fi
     slot_guard=""
-    if [ "$os" != macos ] && [ "$slots" -gt 0 ]; then
-      slot_guard="ocw_slot() { for s in \$(seq 1 $slots); do exec 9>/tmp/ocw-build-slot-\$s.lock; flock -n 9 && { ocw_n=\$s; return; }; done; ocw_mark waiting; echo 'remote.sh: waiting for a free build slot' >&2; exec 9>/tmp/ocw-build-slot-1.lock; flock 9; ocw_n=1; }; ocw_slot; "
+    if [ "$slots" -gt 0 ]; then
+      # Shell functions (joined into one line): `ocw_take N` tries to take
+      # slot N; `ocw_slot` tries all slots once a second until one is free.
+      if [ "$os" = macos ]; then
+        take=${slot_take_macos//$'\n'/ }
+      else
+        take=${slot_take_flock//$'\n'/ }
+      fi
+      # A waiting run whose ssh session is gone (remote.sh interrupted; the
+      # shell's parent sshd ended) gives up instead of running later.
+      slot_guard="$take ocw_slot() { ocw_w=; ocw_pp=\$PPID; while :; do for s in $slot_list; do ocw_take \$s && { ocw_n=\$s; return 0; }; done; ocw_free; if [ -z \"\$ocw_w\" ]; then ocw_w=1; ocw_mark waiting; echo 'remote.sh: waiting for a free build slot' >&2; fi; sleep 1; ps -p \$ocw_pp >/dev/null 2>&1 || exit 129; done; }; ocw_slot; "
     fi
-    meta="\"checkout\":$(json_str "$checkout_dir"),\"branch\":$(json_str "$branch"),\"command\":$(json_str "$(short_cmd "$@")"),\"os\":\"$os\""
+    meta="\"slots\":$slots,\"checkout\":$(json_str "$checkout_dir"),\"branch\":$(json_str "$branch"),\"command\":$(json_str "$(short_cmd "$@")"),\"os\":\"$os\""
     marker="ocw_meta=$(shq "$meta"); ${marker_sh//$'\n'/ } "
     "${SSH[@]}" "$target" "${marker}${slot_guard}ocw_mark running \$ocw_n; cd $repo && . ~/.cargo/env && export ${jobs_env:-OCW_REMOTE=1} && $*" || status=$?
     # Builds only happen remotely: bring back a Cargo.lock that cargo

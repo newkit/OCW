@@ -25,25 +25,37 @@ are reused through an SSH control socket in `$XDG_RUNTIME_DIR` or the temp
 directory, never in the repository).
 
 - **Overview:** machines online, running tasks, runs waiting for a build slot,
-  build slots in use.
+  build slots used of the total (the sum of all machines' slots: 2 + 2 + 1 + 1
+  = 6 with the default counts).
 - **Per machine:** online/unreachable (with the error type: timeout,
   connection refused, no route to host, host key mismatch, …), CPU busy %,
   load per core (Windows: threads running or ready to run per core, plus the
   processor queue length when counters are allowed), memory and swap, free
   disk space, uptime.
-- **Background tasks:** one row per `remote.sh run` from its task marker
+- **Running tasks:** one row per running `remote.sh run` from its task marker
   (below): checkout – `main` (`~/src/OCW`), `agent <id>`
   (`~/src/OCW-worktree-agent-<id>`), a branch name (`~/src/OCW-<branch>`) –,
-  the command, running time, state (running in slot N / waiting for a build
-  slot), and the CPU (100 % = one core) and memory of the checkout's
-  processes, per process kind (cargo, build script, rustc, link, test binary,
+  the command, running time (since it got its slot), its slot, and the CPU
+  (100 % = one core) and memory of the checkout's processes, per process kind (cargo, build script, rustc, link, test binary,
   ocw-desktop/ocw-server, ffmpeg, weston, Xvfb). Processes of a checkout
   without a marker (older remote.sh, manual runs) are listed as "no marker".
   The checkout of a process comes from its working directory, its arguments
   or its parent.
-- **Queue** (Linux, Windows): which build slots are held and by which
-  checkout, and how many `remote.sh run` calls wait for one (Linux: the
-  `/tmp/ocw-build-slot-N.lock` flocks; Windows: the markers).
+- **Build slots:** used of total and which checkout holds each one (markers;
+  for runs without one, Linux: the `/tmp/ocw-build-slot-N.lock` flocks,
+  macOS: the `/tmp/ocw-build-slot-N.d` lock directories).
+- **Queue:** the runs waiting for a build slot, oldest first: checkout,
+  command, how long and since when they wait. Waiters of an older remote.sh
+  (blocked in `flock 9`, no marker) are listed with "(no marker)".
+- **Kiosk** (machines with `/var/tmp/ocw`): whether the kiosk app runs and
+  since when, the deployed build (`VERSION`), connected Bluetooth devices
+  (names only).
+
+The slot count of a machine is found like `scripts/remote.sh` does: its
+`slots` key in `machines.toml`, else `[defaults] slots`, else the OS default
+(linux 2, windows 1, macos 1). A run started with another `OCW_REMOTE_SLOTS`
+writes its count into its marker, and the dashboard then shows the larger
+one.
 
 ## Task markers
 
@@ -52,23 +64,33 @@ the command runs: `/tmp/ocw-tasks/PID-START.json` on Linux and macOS,
 `%TEMP%\ocw-tasks\PID-START.json` on Windows (no admin rights needed). It
 holds the checkout directory name, branch, command (one line, at most 200
 characters), start time (UTC epoch, from the machine's clock), the PID of the
-remote shell and the state (`waiting` for a build slot, `running` with the
-slot number). The run deletes it on exit (EXIT trap / `finally`). A marker
-whose PID is gone, or belongs to a process started after the marker (PID
+remote shell, the state (`waiting` for a build slot, `running` with the
+slot number), the time of the last state change (`since`) and the machine's
+slot count (`slots`). The run deletes it on exit (EXIT trap / `finally`). A
+marker whose PID is gone, or belongs to a process started after the marker (PID
 reused), is stale: the dashboard ignores it (and only counts it), the next
 `remote.sh run` on that machine deletes it.
 
-Windows build slots: like Linux, at most `OCW_REMOTE_SLOTS` (default 2) runs
-at once; each run opens `%TEMP%\ocw-tasks\slot-N.lock` with `FileShare.None`
-and polls every second while all are taken. The OS closes the file when the
-run's process dies, so a killed run frees its slot.
-- **Kiosk** (machines with `/var/tmp/ocw`): whether the kiosk app runs and
-  since when, the deployed build (`VERSION`), connected Bluetooth devices
-  (names only).
+## Build slots
 
-Platform notes: macOS has no build slots (remote.sh uses none there); its
-per-process CPU is ps's decaying `%cpu`. Linux samples per-process CPU from
-`/proc/*/stat` over the 0.5 s CPU interval.
+`scripts/remote.sh run` takes a build slot before it runs the command; when
+all are taken it writes a `waiting` marker, prints "remote.sh: waiting for a
+free build slot" and tries all slots again every second, so it gets whichever
+slot frees first (no strict first-come order). A waiting run whose ssh
+session ended (remote.sh interrupted) gives up on Linux and macOS.
+
+- Linux: `flock -n` on `/tmp/ocw-build-slot-N.lock`, held on fd 9 by the run's
+  shell; the kernel drops it when the shell dies.
+- macOS (no flock): `mkdir /tmp/ocw-build-slot-N.d` (atomic) with the owner's
+  PID in `pid`; the EXIT trap removes it (also after INT/TERM/HUP). A
+  directory whose PID is gone, or that has no PID after a minute, is taken
+  over by the next run (under a second `mkdir` lock, `N.d.take`).
+- Windows: `%TEMP%\ocw-tasks\slot-N.lock` opened with `FileShare.None`; the
+  OS closes it when the run's process dies, so a killed run frees its slot.
+  A waiting run keeps waiting after its ssh session ended.
+
+Platform notes: macOS per-process CPU is ps's decaying `%cpu`. Linux samples
+per-process CPU from `/proc/*/stat` over the 0.5 s CPU interval.
 
 ## Windows permissions
 
