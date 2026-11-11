@@ -458,7 +458,7 @@ scripts/remote.sh <name> ssh 'uname -a'                              # Windows: 
 
 | OS | Command (in the copied checkout, e.g. `scripts/remote.sh <name> run 'make …'`, or locally on the machine) |
 |---|---|
-| Linux | `make deps-linux` – detects Debian/Ubuntu (apt), Fedora (dnf) or Arch (pacman), installs the packages (sudo; run it yourself in a terminal there) and rustup with the pinned Rust; or the parts: `make deps-linux-debian` / `-fedora` / `-arch`, `make deps-rust` |
+| Linux | `make deps-linux` – detects Debian/Ubuntu (apt), Fedora (dnf) or Arch (pacman), installs the packages (sudo; run it yourself in a terminal there), rustup with the pinned Rust and appimagetool (to `~/.local/bin`, for AppImages); or the parts: `make deps-linux-debian` / `-fedora` / `-arch`, `make deps-rust`, `make deps-appimage` (no sudo) |
 | macOS | `make deps-macos` – Xcode Command Line Tools, rustup, ffmpeg (if Homebrew is installed) |
 | Windows | `make deps-windows` – winget: Git, Visual Studio Build Tools (C++), rustup (needs GNU make, e.g. `winget install ezwinports.make`) |
 
@@ -513,7 +513,7 @@ to *Public* are the usual causes; the server log is in Event Viewer under
 | `python3 tools/build-dashboard/dashboard.py` | Web page (port 8765) with the build machines' load and their running/queued tasks; `--once` prints it as text |
 | `scripts/deploy-test.sh MACHINE` | Release build on a test machine, deployed for its kiosk |
 | `scripts/ocw-kiosk.sh install\|run\|status` | Keep the test app running on a machine's screen, restarted on each deploy |
-| `scripts/build-appimage.sh` | Linux AppImage (needs `appimagetool`) |
+| `scripts/build-appimage.sh` | Linux AppImage (needs `appimagetool`: `make deps-appimage`, part of `make deps-linux`) |
 | `scripts/build-macos-app.sh` | macOS app bundle, DMG and zip, ad-hoc signed (`make macos-app`, on a Mac) |
 | `scripts/setup-windows-buildserver.ps1` | Windows build machine: OpenSSH server and a local build user |
 | `.claude/skills/run-ocw/drive.sh` | Headless screenshots and videos (X11 / Wayland) for tests |
