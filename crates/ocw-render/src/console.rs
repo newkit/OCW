@@ -14,8 +14,10 @@ use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use clap::{Arg, ArgMatches, Command, value_parser};
 
-use crate::camera::{CameraMode, CameraOrbit, MAX_DISTANCE, MAX_PITCH, MIN_DISTANCE, MIN_PITCH};
-use crate::hud::{ShowFps, ShowHud, Units};
+use crate::camera::{
+    CameraMode, CameraOrbit, CameraTilt, MAX_DISTANCE, MAX_PITCH, MIN_DISTANCE, MIN_PITCH,
+};
+use crate::hud::{ShowFps, ShowHud, ShowProfile, Units};
 
 /// Console with its egui overlay (toggle with `` ` `` or F12).
 pub struct ConsolePlugin;
@@ -40,10 +42,12 @@ impl Plugin for ConsoleCorePlugin {
         app.init_resource::<ConsoleCommands>()
             .init_resource::<ConsoleState>()
             .init_resource::<ShowFps>()
+            .init_resource::<ShowProfile>()
             .init_resource::<ShowHud>()
             .init_resource::<Units>()
             .init_resource::<CameraMode>()
             .init_resource::<CameraOrbit>()
+            .init_resource::<CameraTilt>()
             .add_systems(Update, run_pending_commands);
         register_builtin_commands(app);
     }
@@ -436,6 +440,57 @@ fn register_builtin_commands(app: &mut App) {
     ))
     .console_command(ConsoleCommand::new(
         User,
+        Command::new("hud.profile")
+            .about("Show or hide the elevation profile of the road ahead")
+            .arg(Arg::new("on").value_parser(["on", "off"])),
+        |world, m| {
+            let mut show = world.resource_mut::<ShowProfile>();
+            show.0 = match m.get_one::<String>("on").map(String::as_str) {
+                Some("on") => true,
+                Some(_) => false,
+                None => !show.0,
+            };
+            Ok(format!(
+                "elevation profile {}",
+                if show.0 { "on" } else { "off" }
+            ))
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        User,
+        Command::new("camera.tilt")
+            .about("Tilt the chase camera with the road: on, off, or the fraction of the slope angle (0-1)")
+            .arg(Arg::new("value")),
+        |world, m| {
+            let mut tilt = world.resource_mut::<CameraTilt>();
+            match m.get_one::<String>("value").map(String::as_str) {
+                None => tilt.enabled = !tilt.enabled,
+                Some("on") => tilt.enabled = true,
+                Some("off") => tilt.enabled = false,
+                Some(v) => {
+                    let f: f32 = v
+                        .parse()
+                        .map_err(|_| format!("'{v}': expected on, off or 0-1"))?;
+                    if !(0.0..=1.0).contains(&f) {
+                        return Err(format!("'{v}': the fraction is 0-1"));
+                    }
+                    tilt.fraction = f;
+                    tilt.enabled = f > 0.0;
+                }
+            }
+            Ok(if tilt.enabled {
+                format!(
+                    "camera tilt on ({:.0} % of the slope, at most {:.0} degrees)",
+                    tilt.fraction * 100.0,
+                    tilt.max.to_degrees()
+                )
+            } else {
+                "camera tilt off".into()
+            })
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        User,
         Command::new("camera.mode")
             .about("Set the camera perspective")
             .arg(
@@ -568,6 +623,25 @@ mod tests {
         assert!((o.yaw - std::f32::consts::FRAC_PI_2).abs() < 1e-5 && o.distance == 12.0);
         run(&mut app, "camera.orbit -45 200");
         assert_eq!(app.world().resource::<CameraOrbit>().pitch, MAX_PITCH);
+        // hud.profile toggles or sets the elevation profile.
+        assert!(app.world().resource::<ShowProfile>().0, "on by default");
+        assert!(run(&mut app, "hud.profile")[1].ends_with("off"));
+        assert!(!app.world().resource::<ShowProfile>().0);
+        assert!(run(&mut app, "hud.profile on")[1].ends_with("on"));
+        assert!(app.world().resource::<ShowProfile>().0);
+        assert!(run(&mut app, "hud.profile maybe")[1].starts_with("error:"));
+        // camera.tilt: on/off, or the fraction of the slope angle.
+        assert!(app.world().resource::<CameraTilt>().enabled);
+        assert_eq!(run(&mut app, "camera.tilt off")[1], "camera tilt off");
+        assert!(!app.world().resource::<CameraTilt>().enabled);
+        assert!(run(&mut app, "camera.tilt 0.5")[1].starts_with("camera tilt on (50 %"));
+        let t = *app.world().resource::<CameraTilt>();
+        assert!(t.enabled && t.fraction == 0.5);
+        assert!(run(&mut app, "camera.tilt 2")[1].starts_with("error:"));
+        assert!(run(&mut app, "camera.tilt steep")[1].starts_with("error:"));
+        assert_eq!(app.world().resource::<CameraTilt>().fraction, 0.5);
+        run(&mut app, "camera.tilt");
+        assert!(!app.world().resource::<CameraTilt>().enabled);
         // help lists commands.
         assert!(run(&mut app, "help").iter().any(|l| l.starts_with("echo")));
     }

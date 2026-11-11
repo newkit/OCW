@@ -2,7 +2,8 @@
 //!
 //! Wires the pieces together (spec §6.1):
 //! - a device backend (Phase 1: the virtual trainer) on its own thread,
-//! - the in-process local server on its own thread at 50 Hz,
+//! - the in-process local server on its own thread at 50 Hz (or a remote
+//!   server over QUIC with `--server`),
 //! - client-side prediction of the local rider and interpolation of others,
 //! - the Bevy renderer from `ocw-render`.
 
@@ -26,6 +27,7 @@ mod settings;
 mod strava;
 mod trainer;
 mod video;
+mod workout;
 mod worlds;
 
 use std::path::PathBuf;
@@ -74,6 +76,19 @@ pub struct Args {
     /// Number of test riders on the local server.
     #[arg(long, default_value_t = 10)]
     pub bots: u32,
+    /// Ride on a remote game server (`ocw-server --listen`) over QUIC
+    /// instead of the in-process local server: HOST[:PORT] (default port
+    /// 47800). Ride the same course as the server (--route / --world).
+    #[arg(long, value_name = "ADDR", conflicts_with = "capture")]
+    pub server: Option<String>,
+    /// SHA-256 fingerprint of the server's certificate (ocw-server prints
+    /// it at start); the connection is refused if it does not match.
+    #[arg(long, value_name = "SHA256", requires = "server")]
+    pub server_cert: Option<String>,
+    /// Development only: accept any server certificate. Refused unless the
+    /// server is on this machine (127.0.0.1 / ::1).
+    #[arg(long, requires = "server", conflicts_with = "server_cert")]
+    pub insecure_dev: bool,
     /// Window size as WIDTHxHEIGHT.
     #[arg(long, default_value = "1280x720", value_parser = parse_size)]
     pub window: (u32, u32),
@@ -142,6 +157,14 @@ pub struct Args {
     /// for --screenshot / --capture runs; see --random-start).
     #[arg(long, value_name = "X,Z", value_parser = parse_xz, allow_hyphen_values = true)]
     pub start: Option<(f64, f64)>,
+    /// Structured workout to ride in ERG mode (spec §2.8): a `.toml`
+    /// workout, or an imported `.erg` / `.mrc` file. Loaded and started at
+    /// once; the workout clock starts when you pedal.
+    #[arg(long, value_name = "FILE")]
+    pub workout: Option<PathBuf>,
+    /// Functional threshold power in watts, for workout targets in % FTP.
+    #[arg(long, default_value_t = 200.0, value_parser = parse_ftp)]
+    pub ftp: f64,
     /// Use the virtual trainer even if Bluetooth devices are remembered.
     #[arg(long = "virtual")]
     pub virtual_trainer: bool,
@@ -207,6 +230,14 @@ fn parse_size(s: &str) -> Result<(u32, u32), String> {
         w.parse().map_err(|_| "bad width")?,
         h.parse().map_err(|_| "bad height")?,
     ))
+}
+
+fn parse_ftp(s: &str) -> Result<f64, String> {
+    match s.trim().parse::<f64>() {
+        Ok(w) if (50.0..=600.0).contains(&w) => Ok(w),
+        Ok(w) => Err(format!("{w} W: expected 50–600 W")),
+        Err(e) => Err(format!("{s}: {e}")),
+    }
 }
 
 fn parse_xz(s: &str) -> Result<(f64, f64), String> {
@@ -503,6 +534,7 @@ fn main() -> AppExit {
         video::VideoPlugin,
         worlds::WorldsPlugin,
         menu::MenuPlugin,
+        workout::WorkoutPlugin,
     ))
     .add_systems(Startup, startup_commands)
     .add_systems(Update, timed_commands);
@@ -582,8 +614,13 @@ fn startup_commands(
     settings: Option<Res<settings::UserSettings>>,
     mut console: ResMut<ConsoleState>,
 ) {
-    // Phase 1 always rides on the in-process local server.
-    console.permission = Permission::Dev;
+    // Dev commands only on the in-process local server (spec §2.9); a
+    // remote server refuses them anyway.
+    console.permission = if args.server.is_some() {
+        Permission::User
+    } else {
+        Permission::Dev
+    };
     if let Some(s) = settings {
         for line in s.settings.startup_commands() {
             console.queue(line);
@@ -605,6 +642,37 @@ fn startup_commands(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remote_server_options() {
+        let a = Args::parse_from(["ocw-desktop"]);
+        assert_eq!(a.server, None);
+        let a = Args::parse_from([
+            "ocw-desktop",
+            "--server",
+            "127.0.0.1:5000",
+            "--insecure-dev",
+        ]);
+        assert_eq!(a.server.as_deref(), Some("127.0.0.1:5000"));
+        assert!(a.insecure_dev);
+        // Trust options need --server; a pin and --insecure-dev exclude
+        // each other; capture runs stay local (stepped server).
+        for bad in [
+            &["ocw-desktop", "--insecure-dev"][..],
+            &["ocw-desktop", "--server-cert", "ab"],
+            &[
+                "ocw-desktop",
+                "--server",
+                "h",
+                "--server-cert",
+                "ab",
+                "--insecure-dev",
+            ],
+            &["ocw-desktop", "--server", "h", "--capture", "dir"],
+        ] {
+            assert!(Args::try_parse_from(bad).is_err(), "{bad:?}");
+        }
+    }
 
     #[test]
     fn ten_bots_by_default() {
@@ -633,6 +701,18 @@ mod tests {
             Args::try_parse_from(["ocw-desktop", "--allow-unsigned", "--require-signed"]).is_err()
         );
         assert!(parse_xz("1;2").is_err());
+    }
+
+    #[test]
+    fn workout_arguments() {
+        let a = Args::parse_from(["ocw-desktop"]);
+        assert_eq!((a.ftp, a.workout.clone()), (200.0, None));
+        assert_eq!(workout::ftp_w(&a), 200.0);
+        let a = Args::parse_from(["ocw-desktop", "--workout", "w.erg", "--ftp", "265"]);
+        assert_eq!(a.workout, Some(PathBuf::from("w.erg")));
+        assert_eq!(workout::ftp_w(&a), 265.0);
+        assert!(Args::try_parse_from(["ocw-desktop", "--ftp", "5"]).is_err());
+        assert!(Args::try_parse_from(["ocw-desktop", "--ftp", "lots"]).is_err());
     }
 
     #[test]

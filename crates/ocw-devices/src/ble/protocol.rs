@@ -839,6 +839,40 @@ mod tests {
         assert!(!out.warnings.is_empty());
     }
 
+    /// A workout on an FTMS trainer: ERG targets while the previous one is
+    /// unanswered collapse to the newest; SIM takes over after the workout.
+    #[test]
+    fn ftms_workout_erg_targets_then_back_to_sim() {
+        let mut p = TrainerProtocol::new(&TRAINER, None);
+        let cp = uuids::FITNESS_MACHINE_CONTROL_POINT;
+        p.on_command(DeviceCommand::SetTargetPower(150.0), s(0.0));
+        assert_eq!(
+            p.on_notification(cp, &ok(0x00), s(0.1)).control_writes,
+            vec![vec![ftms::op::START_OR_RESUME]]
+        );
+        assert_eq!(
+            p.on_notification(cp, &ok(0x07), s(0.2)).control_writes,
+            vec![vec![0x05, 0x96, 0x00]] // 150 W
+        );
+        for (i, w) in [160.0, 170.0, 250.0].iter().enumerate() {
+            let out = p.on_command(DeviceCommand::SetTargetPower(*w), s(0.3 + i as f64 * 0.1));
+            assert!(out.control_writes.is_empty());
+        }
+        assert_eq!(
+            p.on_notification(cp, &ok(0x05), s(0.7)).control_writes,
+            vec![vec![0x05, 0xFA, 0x00]] // only the newest: 250 W
+        );
+        p.on_notification(cp, &ok(0x05), s(0.8));
+        // Workout over: SIM again, without a new control request.
+        let out = p.on_command(sim(0.02), s(1.0));
+        assert_eq!(out.control_writes.len(), 1);
+        assert_eq!(
+            out.control_writes[0][0],
+            ftms::op::SET_INDOOR_BIKE_SIMULATION
+        );
+        assert_eq!(p.control_state(), ControlState::Granted);
+    }
+
     #[test]
     fn ftms_is_preferred_over_wahoo_control() {
         let mut both = TRAINER.to_vec();

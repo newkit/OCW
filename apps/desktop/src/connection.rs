@@ -1,5 +1,6 @@
-//! Bevy glue between the local server thread and [`ClientCore`]. Devices
-//! (trainers, sensors) are handled in `devices.rs`.
+//! Bevy glue between the server link and [`ClientCore`]: the in-process
+//! local server (default), or a remote server over QUIC (`--server`, spec
+//! §6.2). Devices (trainers, sensors) are handled in `devices.rs`.
 
 use std::sync::{Arc, Mutex};
 
@@ -11,6 +12,7 @@ use ocw_render::RideView;
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
 use ocw_server::Course;
 use ocw_server::local::{LocalConnection, LocalServer, SteppedServer};
+use ocw_server::net::{ClientOptions, LinkStatus, NetClient, ServerTrust};
 use ocw_sim::FreeRideStart;
 use ocw_world::{RoadNetwork, Route, RoutePlan};
 
@@ -73,7 +75,9 @@ impl Plugin for ConnectionPlugin {
             Course::Route(route) => crate::start_point(&args, route),
             Course::FreeRide { .. } | Course::RouteRide { .. } => 0.0,
         };
-        let mut server = if args.capture.is_some() {
+        let mut server = if let Some(spec) = &args.server {
+            ServerLink::Remote(Box::new(connect_remote(&args, spec)))
+        } else if args.capture.is_some() {
             // Frame capture: the server shares the client's fixed-step game time.
             ServerLink::Stepped(Box::new(SteppedServer::new(course, args.bots, start_m)))
         } else {
@@ -87,18 +91,35 @@ impl Plugin for ConnectionPlugin {
             server: Mutex::new(server),
         })
         .insert_resource(ClientState(client))
-        .add_systems(PreUpdate, poll_server)
+        .init_resource::<LinkNotice>()
+        .add_systems(PreUpdate, (poll_server, link_status).chain())
         .add_systems(FixedUpdate, (step_server, predict).chain())
         .add_systems(Update, (send_steer, update_view));
         register_commands(app);
     }
 }
 
-/// The local server: on its own real-time thread, or stepped by the app
-/// (frame capture with a fixed time step per frame).
+/// Connects to a remote server (`--server ADDR`). Bad options end the
+/// program with a message; a server that cannot be reached is shown in the
+/// HUD instead (the link closes).
+fn connect_remote(args: &Args, spec: &str) -> NetClient {
+    let fail = |e: String| -> ! {
+        eprintln!("--server {spec}: {e}");
+        std::process::exit(2);
+    };
+    let (addr, name) = ocw_server::net::resolve(spec).unwrap_or_else(|e| fail(e));
+    let trust = ServerTrust::for_server(addr, args.server_cert.as_deref(), args.insecure_dev)
+        .unwrap_or_else(|e| fail(e));
+    info!(%addr, "connecting to remote server");
+    NetClient::connect(addr, &name, &trust, ClientOptions::default()).unwrap_or_else(|e| fail(e))
+}
+
+/// The server: the local one on its own real-time thread, stepped by the
+/// app (frame capture with a fixed time step per frame), or remote.
 pub enum ServerLink {
     Threaded(LocalConnection),
     Stepped(Box<SteppedServer>),
+    Remote(Box<NetClient>),
 }
 
 impl ServerLink {
@@ -109,6 +130,7 @@ impl ServerLink {
                 let _ = c.to_server.send(bytes);
             }
             Self::Stepped(s) => s.send(&bytes),
+            Self::Remote(c) => c.send(bytes),
         }
     }
 
@@ -116,6 +138,19 @@ impl ServerLink {
         match self {
             Self::Threaded(c) => c.from_server.try_iter().collect(),
             Self::Stepped(s) => s.drain(),
+            Self::Remote(c) => c.receive(),
+        }
+    }
+
+    /// A line for the HUD while the remote link is not up (none otherwise).
+    fn hud_line(&self) -> Option<String> {
+        match self {
+            Self::Remote(c) => match c.status() {
+                LinkStatus::Connecting => Some("Connecting to the server …".into()),
+                LinkStatus::Connected { .. } => None,
+                LinkStatus::Closed(reason) => Some(format!("Disconnected: {reason}")),
+            },
+            _ => None,
         }
     }
 }
@@ -125,6 +160,10 @@ impl ServerLink {
 pub struct Link {
     server: Mutex<ServerLink>,
 }
+
+/// The remote link's HUD line ([`ServerLink::hud_line`]), updated every frame.
+#[derive(Resource, Default)]
+pub struct LinkNotice(pub Option<String>);
 
 impl Link {
     pub fn send_bytes(&self, bytes: Vec<u8>) {
@@ -173,6 +212,31 @@ fn poll_server(
     }
 }
 
+/// Remote link: the HUD line, a console message when it drops, and the
+/// snapshot age for the prediction (half the round trip).
+fn link_status(
+    link: Res<Link>,
+    mut client: ResMut<ClientState>,
+    mut notice: ResMut<LinkNotice>,
+    mut console: ResMut<ConsoleState>,
+) {
+    let server = link.server.lock().expect("not poisoned");
+    let ServerLink::Remote(c) = &*server else {
+        return;
+    };
+    if let Some(rtt) = c.rtt() {
+        client.0.set_snapshot_age(rtt.as_secs_f64() / 2.0);
+    }
+    let line = server.hud_line();
+    if line != notice.0 {
+        if let Some(l) = line.as_deref().filter(|l| l.starts_with("Disconnected")) {
+            warn!("{l}");
+            console.print(l.to_owned());
+        }
+        notice.0 = line;
+    }
+}
+
 /// Client-side prediction of the local rider, at the fixed physics rate.
 fn predict(mut client: ResMut<ClientState>) {
     client.0.predict_step();
@@ -213,6 +277,7 @@ fn update_view(
     time: Res<Time>,
     fixed: Res<Time<Fixed>>,
     client: Res<ClientState>,
+    link: Res<LinkNotice>,
     mut view: ResMut<RideView>,
 ) {
     let now = time.elapsed_secs_f64();
@@ -227,6 +292,12 @@ fn update_view(
         view.junction = client.0.junction_view();
         view.notice = client.0.notice();
         view.route_status = client.0.route_status();
+    }
+    // A dropped connection matters more than any ride notice.
+    if let Some(line) = &link.0 {
+        view.notice = Some(line.clone());
+    } else if !client.0.is_free_ride() {
+        view.notice = None;
     }
 }
 
@@ -250,19 +321,32 @@ fn register_commands(app: &mut App) {
         Command::new("net.stats").about("Show connection statistics"),
         |world, _| {
             let mode = match &*world.resource::<Link>().server.lock().expect("not poisoned") {
-                ServerLink::Threaded(_) => "in-process thread",
-                ServerLink::Stepped(_) => "stepped, frame capture",
+                ServerLink::Threaded(_) => "local (in-process thread)".to_owned(),
+                ServerLink::Stepped(_) => "local (stepped, frame capture)".to_owned(),
+                ServerLink::Remote(c) => format!(
+                    "remote, QUIC: {}{}",
+                    match c.status() {
+                        LinkStatus::Connecting => "connecting".to_owned(),
+                        LinkStatus::Connected { datagrams: true } => "connected (datagrams)".to_owned(),
+                        LinkStatus::Connected { datagrams: false } => "connected (stream only)".to_owned(),
+                        LinkStatus::Closed(r) => format!("closed: {r}"),
+                    },
+                    c.rtt()
+                        .map(|r| format!(", rtt {:.1} ms", r.as_secs_f64() * 1000.0))
+                        .unwrap_or_default()
+                ),
             };
             let c = &world.resource::<ClientState>().0;
             let s = c.stats();
             Ok(format!(
-                "server: local ({})\nrider: {}\nmessages in: {} ({} malformed)\nsnapshots: {} (last server tick {})\nsamples out: {}\nprediction error at last snapshot: {:.3} m",
+                "server: {}\nrider: {}\nmessages in: {} ({} malformed)\nsnapshots: {} (last server tick {}, {} out of order)\nsamples out: {}\nprediction error at last snapshot: {:.3} m",
                 mode,
                 c.rider_id().map(|r| r.to_string()).unwrap_or("-".into()),
                 s.messages_in,
                 s.malformed,
                 s.snapshots,
                 s.last_snapshot_tick,
+                s.stale_snapshots,
                 s.samples_out,
                 c.prediction_error()
             ))
@@ -478,16 +562,15 @@ mod tests {
     use super::*;
 
     fn app() -> App {
+        app_with(&[])
+    }
+
+    fn app_with(extra: &[&str]) -> App {
+        let mut argv = vec!["ocw-desktop", "--bots", "0", "--power", "150", "--virtual"];
+        argv.extend_from_slice(extra);
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, ConsoleCorePlugin))
-            .insert_resource(Args::parse_from([
-                "ocw-desktop",
-                "--bots",
-                "0",
-                "--power",
-                "150",
-                "--virtual",
-            ]))
+            .insert_resource(Args::parse_from(argv))
             .insert_resource(RideView::new(Route::test_loop()))
             .add_plugins((
                 ConnectionPlugin {
@@ -515,6 +598,95 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         false
+    }
+
+    /// A networked game server on 127.0.0.1 (ephemeral port) with `bots`
+    /// test riders, run like `ocw-server --listen` until `stop` is set.
+    fn remote_server(
+        bots: u32,
+    ) -> (
+        std::net::SocketAddr,
+        String,
+        Arc<std::sync::atomic::AtomicBool>,
+        std::thread::JoinHandle<()>,
+    ) {
+        use ocw_server::net::{NetServer, ServerIdentity};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let (tx, rx) = std::sync::mpsc::channel();
+        let stop = Arc::new(AtomicBool::new(false));
+        let s = stop.clone();
+        let thread = std::thread::spawn(move || {
+            let id = ServerIdentity::self_signed().unwrap();
+            let mut net = NetServer::bind("127.0.0.1:0".parse().unwrap(), &id).unwrap();
+            tx.send((net.local_addr(), net.fingerprint().to_owned()))
+                .unwrap();
+            let mut game = ocw_server::GameServer::new(
+                Route::test_loop(),
+                ocw_server::ServerConfig {
+                    bots,
+                    ..Default::default()
+                },
+            );
+            while !s.load(Ordering::SeqCst) {
+                net.pump(&mut game);
+                let out = game.tick();
+                net.broadcast(&game, &out);
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            net.shutdown();
+        });
+        let (addr, fp) = rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        (addr, fp, stop, thread)
+    }
+
+    #[test]
+    fn rides_on_a_remote_server_and_survives_its_end() {
+        let (addr, fp, stop, thread) = remote_server(3);
+        let addr = addr.to_string();
+        let mut app = app_with(&["--route", "loop", "--server", &addr, "--server-cert", &fp]);
+        // The remote server's bots appear next to the local rider.
+        assert!(update_until(&mut app, |c| c.rider_id().is_some()
+            && c.stats().snapshots > 3));
+        assert!(update_until(&mut app, |_| true));
+        let view = app.world().resource::<RideView>();
+        assert_eq!(view.riders.len(), 4, "3 remote bots and us");
+        assert_eq!(view.notice, None);
+        // Remote: no dev commands.
+        assert_eq!(
+            app.world().resource::<ConsoleState>().permission,
+            Permission::User
+        );
+        assert!(
+            run(&mut app, "net.stats")
+                .iter()
+                .any(|l| l.contains("remote, QUIC: connected"))
+        );
+        // The server goes away: a HUD line and a console message, no panic.
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        thread.join().unwrap();
+        let start = Instant::now();
+        while app.world().resource::<RideView>().notice.is_none()
+            && start.elapsed() < Duration::from_secs(5)
+        {
+            app.update();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let notice = app.world().resource::<RideView>().notice.clone();
+        assert!(
+            notice
+                .as_deref()
+                .is_some_and(|n| n.starts_with("Disconnected") && n.contains("shutting down")),
+            "{notice:?}"
+        );
+        assert!(
+            app.world()
+                .resource::<ConsoleState>()
+                .log()
+                .iter()
+                .any(|l| l.starts_with("Disconnected"))
+        );
+        // The app keeps running.
+        app.update();
     }
 
     #[test]

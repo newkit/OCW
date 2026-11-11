@@ -152,7 +152,7 @@ fn poll_devices(
 }
 
 /// SIM/ERG control: road gradient or target power to the trainer.
-fn control_trainer(
+pub fn control_trainer(
     time: Res<Time>,
     client: Res<ClientState>,
     devices: Res<Devices>,

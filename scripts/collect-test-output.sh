@@ -51,6 +51,31 @@ for co in "$@"; do
     done <"$src/index.md"
   fi
 
+  # Archived files whose index row stayed on the build machine (fetched
+  # without index.md): one row per run (same HHMMSS-commit-mode stem).
+  for d in "$src"/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]; do
+    [ -d "$d" ] || continue
+    day=$(basename "$d")
+    declare -A runs=()
+    for f in "$d"/*; do
+      b=$(basename "$f")
+      grep -qF -- "($day/$b)" "$index" && continue
+      if [[ $b =~ ^([0-9]{6})-(.+)-(spike-video|spike|shot-wayland|video-wayland|shot|video)-(.+)$ ]]; then
+        stem="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]}"
+        runs[$stem]+="[${BASH_REMATCH[4]}]($day/$b) "
+      fi
+    done
+    for stem in "${!runs[@]}"; do
+      [[ $stem =~ ^([0-9]{2})([0-9]{2})([0-9]{2})-(.+)-(spike-video|spike|shot-wayland|video-wayland|shot|video)$ ]] || continue
+      ws=x11; case "${BASH_REMATCH[5]}" in *wayland | spike*) ws=wayland ;; esac
+      printf '| %s | %s:%s:%s | %s | %s | %s | `-` (from %s) | %s |\n' "$day" "${BASH_REMATCH[1]}" \
+        "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}" "${BASH_REMATCH[5]}" "$ws" "$name" \
+        "${runs[$stem]% }" >>"$index"
+      added_rows=$((added_rows + 1))
+    done
+    unset runs
+  done
+
   # 2. Loose media files, grouped by folder.
   while IFS= read -r dir; do
     files=()

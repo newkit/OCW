@@ -31,6 +31,12 @@ pub trait Track {
     fn name_at(&self, _distance: f64) -> String {
         String::new()
     }
+    /// The distances the track is known for, `(from, to)`; `None` = all
+    /// (a loop). Outside it [`Track::sample`] repeats the nearest end, so
+    /// look-ahead (gradient, elevation profile) stops at `to`.
+    fn extent(&self) -> Option<(f64, f64)> {
+        None
+    }
 }
 
 impl Track for Route {
@@ -49,6 +55,9 @@ impl Track for Route {
     fn name_at(&self, _distance: f64) -> String {
         self.name().to_string()
     }
+    fn extent(&self) -> Option<(f64, f64)> {
+        (!self.is_loop()).then(|| (0.0, self.length()))
+    }
 }
 
 #[cfg(test)]
@@ -66,5 +75,9 @@ mod tests {
         assert_eq!(t.speed_limit(5.0), None);
         assert!(!t.assisted(5.0));
         assert_eq!(t.name_at(0.0), "Test Hills");
+        assert_eq!(t.extent(), None, "a loop never ends");
+        let line =
+            Route::from_points("l", "L", vec![[0.0; 3], [100.0, 0.0, 0.0]], false, 5.0).unwrap();
+        assert_eq!((&line as &dyn Track).extent(), Some((0.0, 100.0)));
     }
 }

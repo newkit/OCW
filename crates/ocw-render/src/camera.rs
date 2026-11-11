@@ -17,6 +17,18 @@
 //!   never change the camera position. Where one would block the view (in
 //!   front of the lens, or between the camera and the rider) it fades out
 //!   instead ([`crate::see_through`]).
+//!
+//! # Tilting with the road (spec §3.2, "Gradient feel")
+//!
+//! A level chase camera makes climbs look flat. The chase orbit is
+//! therefore tilted with the road ([`CameraTilt`]): around the rider's
+//! right axis by a fraction of the slope angle (smoothed over about a
+//! second, capped), so uphill the eye drops behind the rider and looks up
+//! the road, downhill it rises and looks down. The tilt is applied to the
+//! orbit before the solid-object code ([`place_eye`]) sees the eye, so the
+//! camera still never ends up in a slope or behind a building; the mouse
+//! orbit and `C` (reset) stay relative to the tilted frame. Side and top
+//! views are not tilted.
 
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
@@ -36,6 +48,7 @@ impl Plugin for CameraPlugin {
             .init_resource::<CameraOrbit>()
             .init_resource::<CameraObstacles>()
             .init_resource::<CameraFocus>()
+            .init_resource::<CameraTilt>()
             .add_systems(Startup, spawn_camera)
             .add_systems(Update, orbit_input)
             .add_systems(PostUpdate, follow.before(TransformSystems::Propagate));
@@ -358,6 +371,82 @@ impl CameraOrbit {
     }
 }
 
+impl CameraOrbit {
+    /// [`Self::eye_and_target`] in a frame tilted by `tilt` radians around
+    /// the rider's right axis (positive = nose up, on climbs): the eye and
+    /// the look-ahead point turn around the rider; the rider stays put.
+    pub fn eye_and_target_tilted(&self, rider: Vec3, forward: Vec3, tilt: f32) -> (Vec3, Vec3) {
+        let (eye, target) = self.eye_and_target(rider, forward);
+        let right = Vec3::new(-forward.z, 0.0, forward.x).normalize_or_zero();
+        if tilt == 0.0 || right == Vec3::ZERO {
+            return (eye, target);
+        }
+        let q = Quat::from_axis_angle(right, tilt);
+        let head = rider + Vec3::Y;
+        (rider + q * (eye - rider), head + q * (target - head))
+    }
+}
+
+/// How the chase camera tilts with the road (see the module docs; console
+/// command `camera.tilt`).
+#[derive(Resource, Debug, Clone, Copy, PartialEq)]
+pub struct CameraTilt {
+    pub enabled: bool,
+    /// Fraction of the road's slope angle the camera follows (0 … 1).
+    pub fraction: f32,
+    /// Largest tilt either way (radians).
+    pub max: f32,
+    /// Time constant of the smoothing (s).
+    pub smoothing_s: f32,
+}
+
+impl Default for CameraTilt {
+    /// 70 % of the slope angle, at most 8°, smoothed over 1.2 s (tuned by
+    /// eye: a 10 % climb tilts the view by 4°).
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            fraction: 0.7,
+            max: 8f32.to_radians(),
+            smoothing_s: 1.2,
+        }
+    }
+}
+
+/// The road gradient the tilt follows is averaged from this far behind
+/// the rider (m) …
+pub const TILT_BEHIND_M: f64 = 5.0;
+/// … to this far ahead (m): about the camera's view of the road near the
+/// rider, so single bumps do not rock the view.
+pub const TILT_AHEAD_M: f64 = 20.0;
+
+impl CameraTilt {
+    /// The tilt (radians) the camera heads for on road gradient `grade`
+    /// (rise over run).
+    pub fn target(&self, grade: f64) -> f32 {
+        if !self.enabled {
+            return 0.0;
+        }
+        ((grade.atan() as f32) * self.fraction.clamp(0.0, 1.0)).clamp(-self.max, self.max)
+    }
+
+    /// One smoothing step from `current` towards `target` over `dt` seconds.
+    pub fn smooth(&self, current: f32, target: f32, dt: f32) -> f32 {
+        if self.smoothing_s <= 0.0 {
+            return target;
+        }
+        current + (target - current) * (1.0 - (-dt.max(0.0) / self.smoothing_s).exp())
+    }
+}
+
+/// Smoothed tilt of the follow camera and where the rider was (a jump
+/// snaps it).
+#[derive(Debug, Default)]
+pub(crate) struct TiltState {
+    tilt: f32,
+    rider: Option<Vec3>,
+}
+
 /// Mouse orbit (left button drag), zoom (wheel) and reset (`C`), only in
 /// the ride's input context (not while the menu or the console is open).
 fn orbit_input(
@@ -458,10 +547,12 @@ pub(crate) fn follow(
     orbit: Res<CameraOrbit>,
     ground: Option<Res<crate::Ground>>,
     obstacles: Res<CameraObstacles>,
+    tilt_cfg: Res<CameraTilt>,
     time: Res<Time>,
     mut camera: Query<&mut Transform, With<FollowCamera>>,
     mut focus: ResMut<CameraFocus>,
     mut smoothed_target: Local<Option<Vec3>>,
+    mut tilt: Local<TiltState>,
 ) {
     let Some(local) = view.local() else {
         focus.set_if_neq(CameraFocus(None));
@@ -479,8 +570,19 @@ pub(crate) fn follow(
     // Positive heading = to the right; Bevy turns left for a positive Y rotation.
     let forward = Quat::from_rotation_y(-local.state.heading as f32) * road;
     let right = Vec3::new(-forward.z, 0.0, forward.x);
+    // Tilt with the road (chase view only); snap after a jump (teleport).
+    let d = local.state.distance;
+    let grade = ocw_world::average_grade(track, d - TILT_BEHIND_M, TILT_BEHIND_M + TILT_AHEAD_M);
+    let goal = tilt_cfg.target(grade);
+    tilt.tilt = match tilt.rider {
+        Some(prev) if prev.distance(rider.translation) < 50.0 => {
+            tilt_cfg.smooth(tilt.tilt, goal, time.delta_secs())
+        }
+        _ => goal,
+    };
+    tilt.rider = Some(rider.translation);
     let (eye, target) = match *mode {
-        CameraMode::Chase => orbit.eye_and_target(rider.translation, forward),
+        CameraMode::Chase => orbit.eye_and_target_tilted(rider.translation, forward, tilt.tilt),
         CameraMode::Side => (
             rider.translation + right * 7.0 + Vec3::Y * 1.5,
             rider.translation + Vec3::Y * 0.9,
@@ -700,6 +802,7 @@ mod tests {
             .init_resource::<CameraOrbit>()
             .init_resource::<CameraObstacles>()
             .init_resource::<CameraFocus>()
+            .init_resource::<CameraTilt>()
             .add_systems(Update, follow);
         let cam = app
             .world_mut()
@@ -740,6 +843,145 @@ mod tests {
         let (eye, target) = CameraOrbit::default().eye_and_target(Vec3::ZERO, Vec3::NEG_Z);
         assert!(close(eye, Vec3::new(0.0, 2.6, 6.5)), "{eye}");
         assert!(close(target, Vec3::new(0.0, 1.0, -6.0)), "{target}");
+    }
+
+    #[test]
+    fn tilt_follows_a_fraction_of_the_slope_and_is_capped() {
+        let t = CameraTilt::default();
+        // 10 %: 5.7° slope, 70 % of it.
+        assert!((t.target(0.10).to_degrees() - 0.7 * 5.711).abs() < 0.01);
+        assert!((t.target(-0.10) + t.target(0.10)).abs() < 1e-6);
+        assert_eq!(t.target(0.0), 0.0);
+        // A 30 % wall: capped at 8°.
+        assert!((t.target(0.30) - 8f32.to_radians()).abs() < 1e-6);
+        assert!((t.target(-0.30) + 8f32.to_radians()).abs() < 1e-6);
+        let off = CameraTilt {
+            enabled: false,
+            ..t
+        };
+        assert_eq!(off.target(0.2), 0.0);
+        let full = CameraTilt { fraction: 1.0, ..t };
+        assert!((full.target(0.05) - 0.05f32.atan()).abs() < 1e-6);
+    }
+
+    #[test]
+    fn tilt_is_smoothed_over_about_a_second() {
+        let t = CameraTilt::default();
+        let goal = 0.1;
+        // After one time constant ~63 %, after five ~99 %; independent of
+        // the frame rate.
+        let mut a = 0.0;
+        for _ in 0..12 {
+            a = t.smooth(a, goal, 0.1);
+        }
+        let b = t.smooth(0.0, goal, 1.2);
+        assert!(
+            (a - b).abs() < 1e-5 && (b / goal - 0.632).abs() < 0.01,
+            "{a} {b}"
+        );
+        assert!((t.smooth(0.0, goal, 6.0) / goal) > 0.99);
+        assert_eq!(t.smooth(0.05, goal, 0.0), 0.05);
+        let instant = CameraTilt {
+            smoothing_s: 0.0,
+            ..t
+        };
+        assert_eq!(instant.smooth(0.0, goal, 0.01), goal);
+    }
+
+    #[test]
+    fn tilted_orbit_looks_up_the_climb() {
+        let o = CameraOrbit::default();
+        let rider = Vec3::new(3.0, 50.0, 7.0);
+        let (eye0, target0) = o.eye_and_target(rider, Vec3::NEG_Z);
+        assert_eq!(
+            o.eye_and_target_tilted(rider, Vec3::NEG_Z, 0.0),
+            (eye0, target0)
+        );
+        let a = 5f32.to_radians();
+        let (eye, target) = o.eye_and_target_tilted(rider, Vec3::NEG_Z, a);
+        // Same distance, the eye lower behind the rider, the look-ahead
+        // point higher; nothing moves sideways.
+        assert!((eye.distance(rider) - o.distance).abs() < 1e-4);
+        assert!(eye.y < eye0.y && target.y > target0.y, "{eye} {target}");
+        assert!((eye.x - rider.x).abs() < 1e-5 && (target.x - rider.x).abs() < 1e-5);
+        // The elevation above the rider drops by exactly the tilt.
+        let elev = ((eye.y - rider.y) / o.distance).asin();
+        assert!((elev - (o.pitch - a)).abs() < 1e-4, "{elev}");
+        // Downhill the other way.
+        let (eye_down, _) = o.eye_and_target_tilted(rider, Vec3::NEG_Z, -a);
+        assert!(eye_down.y > eye0.y);
+        // Orbited to the side, the eye is on the tilt axis: it stays.
+        let side = CameraOrbit {
+            yaw: std::f32::consts::FRAC_PI_2,
+            pitch: 0.0,
+            ..o
+        };
+        let (e0, _) = side.eye_and_target(rider, Vec3::NEG_Z);
+        let (e1, _) = side.eye_and_target_tilted(rider, Vec3::NEG_Z, a);
+        assert!(close(e0, e1), "{e0} {e1}");
+    }
+
+    /// On a climb the real `follow` system tilts the chase camera (eye
+    /// lower than with a level orbit, looking further up) and still keeps
+    /// it above the slope.
+    #[test]
+    fn follow_tilts_on_a_climb() {
+        use ocw_core::RiderId;
+        use ocw_world::Route;
+
+        // A straight 10 % ramp along +x.
+        let pts: Vec<[f64; 3]> = (0..=100)
+            .map(|i| {
+                let x = f64::from(i) * 5.0;
+                [x, x * 0.1, 0.0]
+            })
+            .collect();
+        let route = Route::from_points("ramp", "Ramp", pts, false, 6.0).unwrap();
+        let run = |tilt: CameraTilt| {
+            let mut view = RideView::new(route.clone());
+            view.riders.push(crate::RiderView {
+                id: RiderId(1),
+                name: "me".into(),
+                state: ocw_sim::RiderState {
+                    distance: 200.0,
+                    ..default()
+                },
+                power_w: 0.0,
+                cadence_rpm: None,
+                heart_rate_bpm: None,
+                is_local: true,
+            });
+            let mut app = App::new();
+            app.add_plugins(MinimalPlugins)
+                .insert_resource(view)
+                .insert_resource(crate::Ground(Arc::new(|x: f64, _: f64| Some(x * 0.1))))
+                .insert_resource(tilt)
+                .init_resource::<CameraMode>()
+                .init_resource::<CameraOrbit>()
+                .init_resource::<CameraObstacles>()
+                .init_resource::<CameraFocus>()
+                .add_systems(Update, follow);
+            let cam = app
+                .world_mut()
+                .spawn((Transform::from_xyz(1e4, 0.0, 1e4), FollowCamera))
+                .id();
+            app.update();
+            *app.world().get::<Transform>(cam).unwrap()
+        };
+        let level = run(CameraTilt {
+            enabled: false,
+            ..default()
+        });
+        let tilted = run(CameraTilt::default());
+        assert!(
+            tilted.translation.y < level.translation.y - 0.2,
+            "{level:?} {tilted:?}"
+        );
+        // Above the slope behind the rider.
+        let ground = tilted.translation.x * 0.1;
+        assert!(tilted.translation.y >= ground + MIN_CAMERA_CLEARANCE_M - 1e-3);
+        // Looking further up.
+        assert!(tilted.forward().y > level.forward().y);
     }
 
     #[test]

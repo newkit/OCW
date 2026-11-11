@@ -3,9 +3,11 @@
 //! [`GameServer`] is transport-independent: it consumes and produces encoded
 //! protocol messages. The same type runs
 //! - inside the desktop app as the **local server** ([`local::LocalServer`]), and
-//! - as the headless **remote server** binary (`ocw-server`; QUIC transport in Phase 5).
+//! - as the headless **remote server** binary (`ocw-server`), reachable over
+//!   QUIC with [`net`] (`--listen`, spec §6.2).
 
 pub mod local;
+pub mod net;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
