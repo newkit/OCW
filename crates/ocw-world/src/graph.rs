@@ -67,7 +67,13 @@ pub struct Edge {
     pub boundary: bool,
     /// OSM way this edge comes from (for diagnostics and re-matching).
     pub osm_way: i64,
+    /// Smoothed road elevation every [`PROFILE_STEP_M`] from `from` to `to`
+    /// (last sample at the end); empty until the elevation step ran.
+    pub profile: Vec<f64>,
 }
+
+/// Spacing of [`Edge::profile`] samples (spec §4.3: every 5 m).
+pub const PROFILE_STEP_M: f64 = 5.0;
 
 impl Edge {
     pub fn length_m(&self) -> f64 {
@@ -75,6 +81,26 @@ impl Edge {
             .windows(2)
             .map(|w| ((w[1][0] - w[0][0]).powi(2) + (w[1][1] - w[0][1]).powi(2)).sqrt())
             .sum()
+    }
+
+    /// Road elevation at `distance` metres from `from` (linear between
+    /// profile samples); `None` without a profile.
+    pub fn height_at(&self, distance: f64) -> Option<f64> {
+        let p = &self.profile;
+        if p.is_empty() {
+            return None;
+        }
+        let len = self.length_m();
+        let d = distance.clamp(0.0, len);
+        let f = d / PROFILE_STEP_M;
+        let i = (f.floor() as usize).min(p.len() - 1);
+        if i + 1 >= p.len() {
+            return p.last().copied();
+        }
+        // The last interval may be shorter than PROFILE_STEP_M.
+        let seg = (len - i as f64 * PROFILE_STEP_M).clamp(1e-9, PROFILE_STEP_M);
+        let t = ((d - i as f64 * PROFILE_STEP_M) / seg).clamp(0.0, 1.0);
+        Some(p[i] + (p[i + 1] - p[i]) * t)
     }
 
     /// The other end of the edge.
@@ -236,6 +262,7 @@ impl RoadGraph {
             if edge.from.0 as usize != parent {
                 std::mem::swap(&mut edge.from, &mut edge.to);
                 edge.points.reverse();
+                edge.profile.reverse();
             }
             depth[parent] = depth[parent].max(dist);
             degree[parent] -= 1;
@@ -270,6 +297,7 @@ mod tests {
                     dead_end_m: None,
                     boundary: false,
                     osm_way: i as i64,
+                    profile: Vec::new(),
                 })
                 .collect(),
             boundary_vertices: BTreeSet::new(),
@@ -398,5 +426,19 @@ mod tests {
         assert_eq!(g.edges[0].dead_end_m, None);
         assert_eq!(g.edges[1].dead_end_m, None);
         assert_eq!(g.edges[2].dead_end_m, Some(80.0));
+    }
+
+    #[test]
+    fn height_along_an_edge() {
+        let mut g = graph(&[[0.0, 0.0], [12.0, 0.0]], &[(0, 1)]);
+        let e = &mut g.edges[0];
+        assert_eq!(e.height_at(3.0), None);
+        // 12 m: samples at 0, 5, 10 and the end (12 m).
+        e.profile = vec![100.0, 101.0, 102.0, 103.0];
+        assert_eq!(e.height_at(0.0), Some(100.0));
+        assert_eq!(e.height_at(7.5), Some(101.5));
+        assert_eq!(e.height_at(11.0), Some(102.5));
+        assert_eq!(e.height_at(12.0), Some(103.0));
+        assert_eq!(e.height_at(99.0), Some(103.0));
     }
 }

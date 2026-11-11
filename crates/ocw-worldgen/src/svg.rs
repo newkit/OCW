@@ -17,9 +17,44 @@ fn style(class: RoadClass) -> (&'static str, f64) {
     }
 }
 
+/// How roads are coloured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Colouring {
+    /// By road class, with dead ends and boundary edges highlighted.
+    Class,
+    /// By the steepest 25 m gradient of the elevation profile.
+    Grade,
+}
+
+/// Colour for a gradient: green (flat) → yellow (6 %) → red (12 %) → dark red.
+pub fn grade_colour(grade: f64) -> String {
+    let g = grade.abs();
+    let (r, gr, b) = if g < 0.06 {
+        let t = g / 0.06;
+        (60.0 + 180.0 * t, 160.0 + 40.0 * t, 60.0)
+    } else if g < 0.12 {
+        let t = (g - 0.06) / 0.06;
+        (240.0, 200.0 - 150.0 * t, 60.0 - 30.0 * t)
+    } else {
+        let t = ((g - 0.12) / 0.08).min(1.0);
+        (240.0 - 110.0 * t, 50.0 - 40.0 * t, 30.0)
+    };
+    format!("#{:02x}{:02x}{:02x}", r as u8, gr as u8, b as u8)
+}
+
 /// Renders `graph` `width_px` wide: roads coloured by class, dead ends in
 /// violet, boundary edges in cyan, with a small legend and `title`.
 pub fn graph_svg(graph: &RoadGraph, width_px: f64, title: &str) -> String {
+    graph_svg_with(graph, width_px, title, Colouring::Class)
+}
+
+/// [`graph_svg`] with a choice of colouring.
+pub fn graph_svg_with(
+    graph: &RoadGraph,
+    width_px: f64,
+    title: &str,
+    colouring: Colouring,
+) -> String {
     let (mut min, mut max) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
     for e in &graph.edges {
         for p in &e.points {
@@ -63,13 +98,21 @@ pub fn graph_svg(graph: &RoadGraph, width_px: f64, title: &str) -> String {
     order.sort_by_key(|e| std::cmp::Reverse(e.class));
     for e in &order {
         let (color, width) = style(e.class);
-        draw(&mut s, e, color, width);
+        match colouring {
+            Colouring::Class => draw(&mut s, e, color, width),
+            Colouring::Grade => {
+                let grade = crate::profile::steepest(&e.profile, 5);
+                draw(&mut s, e, &grade_colour(grade), width.max(1.4));
+            }
+        }
     }
-    for e in &order {
-        if e.boundary {
-            draw(&mut s, e, "#19c3d6", 4.0);
-        } else if e.dead_end_m.is_some() {
-            draw(&mut s, e, "#9b3fd1", 1.6);
+    if colouring == Colouring::Class {
+        for e in &order {
+            if e.boundary {
+                draw(&mut s, e, "#19c3d6", 4.0);
+            } else if e.dead_end_m.is_some() {
+                draw(&mut s, e, "#9b3fd1", 1.6);
+            }
         }
     }
     let _ = writeln!(
@@ -77,7 +120,19 @@ pub fn graph_svg(graph: &RoadGraph, width_px: f64, title: &str) -> String {
         r##"<text x="10" y="22" font-family="sans-serif" font-size="16" fill="#222">{}</text>"##,
         title.replace('&', "&amp;").replace('<', "&lt;")
     );
-    let legend = [
+    let grade_legend: Vec<(String, &str)> = [
+        (0.0, "flat"),
+        (0.03, "3 %"),
+        (0.06, "6 %"),
+        (0.09, "9 %"),
+        (0.12, "12 %"),
+        (0.16, "16 %"),
+        (0.20, "20 %+"),
+    ]
+    .iter()
+    .map(|(g, l)| (grade_colour(*g), *l))
+    .collect();
+    let class_legend: Vec<(String, &str)> = [
         ("#d6453d", "primary/trunk"),
         ("#e8902c", "secondary"),
         ("#d8c03a", "tertiary"),
@@ -86,7 +141,15 @@ pub fn graph_svg(graph: &RoadGraph, width_px: f64, title: &str) -> String {
         ("#2f7fd8", "cycleway"),
         ("#9b3fd1", "dead end"),
         ("#19c3d6", "boundary"),
-    ];
+    ]
+    .iter()
+    .map(|(c, l)| (c.to_string(), *l))
+    .collect();
+    let legend = if colouring == Colouring::Grade {
+        grade_legend
+    } else {
+        class_legend
+    };
     for (i, (color, label)) in legend.iter().enumerate() {
         let x = 10.0 + i as f64 * (width_px - 20.0) / legend.len() as f64;
         let _ = writeln!(
@@ -105,6 +168,17 @@ mod tests {
     use ocw_world::graph::{Edge, EdgeId, VertexId};
 
     #[test]
+    fn grade_colours_go_from_green_to_red() {
+        assert_eq!(grade_colour(0.0), "#3ca03c");
+        assert_eq!(grade_colour(-0.06), grade_colour(0.06));
+        let red = |c: &str| u8::from_str_radix(&c[1..3], 16).unwrap();
+        let green = |c: &str| u8::from_str_radix(&c[3..5], 16).unwrap();
+        assert!(green(&grade_colour(0.12)) < green(&grade_colour(0.06)));
+        assert!(red(&grade_colour(0.06)) > red(&grade_colour(0.0)));
+        assert_eq!(grade_colour(0.5), grade_colour(0.25));
+    }
+
+    #[test]
     fn one_polyline_per_edge_plus_flags() {
         let edge = |i: u64, boundary: bool, dead: bool| Edge {
             id: EdgeId(i),
@@ -119,6 +193,7 @@ mod tests {
             dead_end_m: dead.then_some(100.0),
             boundary,
             osm_way: 1,
+            profile: Vec::new(),
         };
         let g = RoadGraph {
             vertices: vec![[0.0, 0.0], [100.0, 50.0]],
@@ -136,5 +211,8 @@ mod tests {
         assert!(svg.contains(r#"width="400""#));
         // An empty graph still renders.
         assert!(graph_svg(&RoadGraph::default(), 100.0, "empty").contains("</svg>"));
+        // Grade colouring: no flag overlays.
+        let svg = graph_svg_with(&g, 400.0, "grade", Colouring::Grade);
+        assert_eq!(svg.matches("<polyline").count(), 3);
     }
 }

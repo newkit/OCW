@@ -257,6 +257,7 @@ pub fn raw_graph(osm: &OsmData, region: &Region) -> (RoadGraph, BuildStats) {
                         dead_end_m: None,
                         boundary,
                         osm_way: w.id,
+                        profile: Vec::new(),
                     });
                     piece = vec![n];
                 }

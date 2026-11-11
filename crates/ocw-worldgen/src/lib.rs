@@ -5,10 +5,14 @@
 //! - [`filter`]: rideable ways and road classes
 //! - [`projection`]: local metric projection
 //! - [`build`]: ways → road graph with stable edge IDs, cleanup, dead ends
+//! - [`dem`]: SRTM elevation tiles
+//! - [`profile`]: road elevation profiles (sampling, smoothing, limits)
 //! - [`svg`]: map of a road graph for visual checks
 
 pub mod build;
+pub mod dem;
 pub mod filter;
 pub mod osm;
+pub mod profile;
 pub mod projection;
 pub mod svg;
