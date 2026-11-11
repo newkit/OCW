@@ -53,6 +53,21 @@ pub struct RiderSnapshot {
     pub last_input_seq: u32,
 }
 
+/// Slowest speed a bot climbs at (m/s, 10 km/h): like real riders, easy
+/// bots push harder uphill instead of crawling.
+pub const BOT_MIN_CLIMB_SPEED: f64 = 2.8;
+
+/// Power a bot needs to hold [`BOT_MIN_CLIMB_SPEED`] on `grade` (0 when
+/// flat or downhill).
+pub fn bot_climb_power_w(profile: &RiderProfile, grade: f64) -> f64 {
+    if grade <= 0.0 {
+        return 0.0;
+    }
+    let env = Environment::with_grade(grade);
+    let v = BOT_MIN_CLIMB_SPEED;
+    physics::resistance(profile, &env, v).total() * v / physics::DRIVETRAIN_EFFICIENCY
+}
+
 /// One ride: a route plus the riders on it.
 #[derive(Debug, Clone)]
 pub struct Session {
@@ -213,12 +228,14 @@ impl Session {
                     .filter(|(other, _, _)| other != id)
                     .map(|(_, d, l)| (*d, *l)),
             );
+            let grade = self.route.sample(rider.state.distance).grade;
             if let Control::Bot { base_power_w } = rider.control {
                 // Deterministic variation so bots don't ride in perfect lockstep.
                 let phase = id.0 as f64 * 1.7;
-                rider.input.power_w = base_power_w * (1.0 + 0.1 * (t * 0.2 + phase).sin());
+                let cruising = base_power_w * (1.0 + 0.1 * (t * 0.2 + phase).sin());
+                rider.input.power_w = cruising.max(bot_climb_power_w(&rider.profile, grade));
             }
-            let env = Environment::with_grade(self.route.sample(rider.state.distance).grade)
+            let env = Environment::with_grade(grade)
                 .with_drag_factor(drag)
                 .with_brake(rider.input.brake);
             physics::step(
@@ -269,6 +286,29 @@ mod tests {
         assert!(!s.apply_input(id, 1, input(900.0)));
         assert!(!s.apply_input(id, 2, input(900.0)));
         assert_eq!(s.snapshot()[0].power_w, 200.0);
+    }
+
+    #[test]
+    fn slow_bots_do_not_get_stuck_on_climbs() {
+        // Regression: an 85 W bot crawled up 12 % at ~3 km/h.
+        let climb = Route::from_points(
+            "c",
+            "C",
+            vec![[0.0, 0.0, 0.0], [2000.0, 240.0, 0.0]],
+            false,
+            7.0,
+        )
+        .unwrap();
+        let mut s = Session::new(climb);
+        let bot = s.add_bot("slow", 85.0);
+        for _ in 0..(60.0 / SIM_DT) as usize {
+            s.step();
+        }
+        let st = s.rider_state(bot).unwrap();
+        assert!(st.speed > BOT_MIN_CLIMB_SPEED - 0.1, "{st:?}");
+        assert!(st.distance > 120.0, "{st:?}");
+        // On the flat it rides at its own (easy) power.
+        assert_eq!(bot_climb_power_w(&RiderProfile::default(), 0.0), 0.0);
     }
 
     #[test]
