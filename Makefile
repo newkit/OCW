@@ -7,10 +7,14 @@ export PATH := $(HOME)/.cargo/bin:$(PATH)
 
 CARGO ?= cargo
 WASM_CRATES := -p ocw-core -p ocw-sim -p ocw-protocol -p ocw-world
-APT_PACKAGES := build-essential pkg-config curl \
+# Build: compiler, Bevy (audio, input, windowing), btleplug (D-Bus).
+# Run/test: Vulkan driver + vulkaninfo, BlueZ, headless displays (Xvfb, weston),
+# ffmpeg for videos, rsync/git for scripts/remote.sh.
+APT_PACKAGES := build-essential pkg-config curl git rsync \
 	libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-0 \
 	libdbus-1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
-	xvfb xauth weston ffmpeg mesa-vulkan-drivers
+	mesa-vulkan-drivers vulkan-tools bluez \
+	xvfb xauth weston ffmpeg
 SCREENSHOT ?= /tmp/ocw.png
 SCREENSHOT_WAYLAND ?= /tmp/ocw-wayland.png
 VIDEO ?= /tmp/ocw.mp4
@@ -29,6 +33,7 @@ deps: deps-system deps-rust ## Install system packages (sudo) and the Rust toolc
 deps-system: ## Install the Debian/Ubuntu build and runtime packages (sudo)
 	sudo apt-get update
 	sudo apt-get install -y $(APT_PACKAGES)
+	@echo "For GPU access without a desktop session (remote/benchmark machines): sudo usermod -aG render,video \$$USER"
 
 deps-rust: ## Install rustup (if missing) and the pinned toolchain incl. wasm target
 	@command -v rustup >/dev/null 2>&1 || \

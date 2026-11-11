@@ -27,6 +27,8 @@ To run and screenshot the desktop app headlessly (software Vulkan), use the `run
 
 Build/test/benchmark machines (Windows, macOS, Linux with a real GPU) are described in `config/machines.toml`, a git-ignored copy of `config/machines.example.toml`; SSH keys and `known_hosts` live in the git-ignored `config/ssh/`. Connect with `ssh -i config/ssh/<identity_file> -o IdentitiesOnly=yes -o UserKnownHostsFile=config/ssh/known_hosts <user>@<host>`. Never print, copy or commit their contents (host names, keys) outside these files. Setup steps: `config/README.md`.
 
+**All building and testing runs on the remote machine `marge`** (Linux, AMD GPU, Bluetooth), not locally: `scripts/remote.sh marge run 'cargo test --workspace'` copies the working tree there and runs the command. Long builds: run in the background.
+
 ## Code map
 
 - `services/server` (`ocw-server`): `GameServer` is transport-independent (encoded protobuf in/out). `local::LocalServer` runs it on a thread at 50 Hz inside the desktop app; the binary runs it headless. QUIC transport comes in Phase 5.

@@ -52,11 +52,25 @@ git check-ignore -v config/machines.toml config/ssh/ocw_linux_ed25519
        -o IdentitiesOnly=yes ocw@linux-gpu.example.lan 'uname -a'
    ```
 
+## Building and testing remotely
+
+```bash
+scripts/remote.sh marge run 'cargo test --workspace'   # copy working tree, run there
+scripts/remote.sh marge ssh 'vulkaninfo --summary'      # plain ssh, no copy
+scripts/remote.sh marge fetch test-output ./from-marge  # copy results back
+```
+
+`run` copies tracked and untracked files (never `config/` or git-ignored
+files such as `target/`) to `repo_path` and runs the command with
+`~/.cargo/env` loaded.
+
 ## Per-OS prerequisites on the machines
 
-- **Linux:** Git, rustup, and the packages from `make deps-system`. For
-  benchmarks, a logged-in desktop session (Wayland or X11) with the real GPU
-  driver (`vulkaninfo --summary` must show the GPU, not llvmpipe).
+- **Linux:** run `make deps-system` in a checkout (installs every needed
+  Debian/Ubuntu package), then `make deps-rust`. A user without a desktop
+  session needs `sudo usermod -aG render,video <user>` for GPU access.
+  `vulkaninfo --summary` must show the real GPU, not llvmpipe. Benchmarks run
+  on a headless weston, so no desktop session is needed.
 - **Windows:** OpenSSH Server, Git, rustup, Visual Studio Build Tools with the
   "Desktop development with C++" workload. GUI runs need a logged-in user;
   they are started as a scheduled task in that session (programs started over
