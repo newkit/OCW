@@ -15,6 +15,12 @@ APT_PACKAGES := build-essential pkg-config curl git rsync \
 	libdbus-1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
 	mesa-vulkan-drivers vulkan-tools bluez \
 	xvfb xauth weston ffmpeg
+# The same for Fedora (dnf); ffmpeg-free is Fedora's ffmpeg build.
+DNF_PACKAGES := gcc gcc-c++ pkgconf-pkg-config curl git rsync \
+	alsa-lib-devel systemd-devel wayland-devel libxkbcommon-devel libxkbcommon-x11-devel \
+	dbus-devel libX11-devel libXcursor-devel libXrandr-devel libXi-devel libxcb-devel \
+	mesa-vulkan-drivers vulkan-tools bluez \
+	xorg-x11-server-Xvfb xauth weston ffmpeg-free
 SCREENSHOT ?= /tmp/ocw.png
 SCREENSHOT_WAYLAND ?= /tmp/ocw-wayland.png
 VIDEO ?= /tmp/ocw.mp4
@@ -40,11 +46,14 @@ endif
 
 deps: deps-$(PLATFORM) ## Install everything for this platform (Linux, Windows or macOS)
 
-deps-linux: deps-linux-packages deps-rust ## Linux: Debian/Ubuntu packages (asks for sudo) + Rust toolchain
+deps-linux: deps-linux-packages deps-rust ## Linux: system packages (Debian/Ubuntu or Fedora; asks for sudo) + Rust toolchain
 
-deps-linux-packages: ## Linux: only the Debian/Ubuntu packages (sudo; also for other users' machines)
-	sudo apt-get update
-	sudo apt-get install -y $(APT_PACKAGES)
+deps-linux-packages: ## Linux: only the system packages, Debian/Ubuntu (apt) or Fedora (dnf) (sudo)
+	@if command -v apt-get >/dev/null 2>&1; then \
+		sudo apt-get update && sudo apt-get install -y $(APT_PACKAGES); \
+	elif command -v dnf >/dev/null 2>&1; then \
+		sudo dnf install -y $(DNF_PACKAGES); \
+	else echo "No apt-get or dnf: install the packages listed in the Makefile by hand." >&2; exit 1; fi
 	@echo "For GPU access without a desktop session (remote/benchmark machines): sudo usermod -aG render,video \$$USER"
 
 deps-windows: ## Windows: Git, VS Build Tools (C++), rustup via winget + Rust toolchain

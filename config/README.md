@@ -91,7 +91,7 @@ kiosk logic with a fake app.
 
 ## Per-OS prerequisites on the machines
 
-- **Linux:** run `make deps-linux` in a checkout (Debian/Ubuntu packages via
+- **Linux:** run `make deps-linux` in a checkout (Debian/Ubuntu or Fedora packages via
   sudo, then rustup with the pinned toolchain). An admin can install only the
   packages for another user with `sudo make -C <checkout> deps-linux-packages`. A user without a desktop
   session needs `sudo usermod -aG render,video <user>` for GPU access.
