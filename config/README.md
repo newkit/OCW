@@ -99,7 +99,8 @@ kiosk logic with a fake app.
   on a headless weston, so no desktop session is needed.
 - **Windows:** OpenSSH Server and a local build user (not an administrator):
   `scripts/setup-windows-buildserver.ps1 -PublicKeyFile <key>.pub` in PowerShell
-  as Administrator sets both up (any Windows language; user `claude` by
+  as Administrator (after `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`
+  to allow scripts in that window) sets both up (any Windows language; user `claude` by
   default), plus `make deps-windows` (winget: Git, Visual
   Studio Build Tools with the C++ workload, rustup; needs GNU make, e.g. from
   MSYS2 or `winget install ezwinports.make`). GUI runs need a logged-in user;

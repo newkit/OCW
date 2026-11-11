@@ -285,6 +285,116 @@ It prints the riders' positions and speeds while it runs. Options:
 Ctrl+C), `--fast` (no real-time pacing), `--world PKG` and `--seed N` (free
 ride on a world package's road graph, start point seed).
 
+## Build servers
+
+All building and testing runs on remote machines over SSH
+(`scripts/remote.sh`), described in `config/machines.toml` (git-ignored; keys
+in `config/ssh/`). Details and background: [config/README.md](config/README.md).
+
+### 1. On this machine: key and entry
+
+```bash
+cp config/machines.example.toml config/machines.toml      # once; then add an entry per machine
+mkdir -p config/ssh && chmod 700 config/ssh
+ssh-keygen -t ed25519 -N "" -C "ocw-build" -f config/ssh/ocw_build_ed25519   # one key per machine is best
+```
+
+An entry in `config/machines.toml` needs `name`, `os` (`linux` / `macos` /
+`windows`), `host`, `user`, `identity_file`, `shell` and `repo_path`; see the
+documented template.
+
+### 2. On the build machine: SSH server, build user, key
+
+**Linux (Debian / Ubuntu):**
+
+```bash
+sudo apt install openssh-server && sudo systemctl enable --now ssh
+```
+
+**Linux (Fedora):**
+
+```bash
+sudo dnf install openssh-server && sudo systemctl enable --now sshd
+sudo firewall-cmd --permanent --add-service=ssh && sudo firewall-cmd --reload   # if firewalld is active
+```
+
+Then, as the build user (a separate account is best), install the public key:
+
+```bash
+mkdir -p ~/.ssh && chmod 700 ~/.ssh
+echo '<contents of config/ssh/<key>.pub>' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
+```
+
+**macOS:** *System Settings → General → Sharing → Remote Login* on (for the
+build user), then add the public key to `~/.ssh/authorized_keys` as above.
+
+**Windows (10 / 11, any language):** copy `scripts/setup-windows-buildserver.ps1`
+and the public key (`.pub`, never the private key) to the machine, open
+**PowerShell as Administrator** and run:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass   # allow scripts in this window only
+.\setup-windows-buildserver.ps1 -PublicKeyFile .\ocw_build_ed25519.pub
+```
+
+It installs and starts the OpenSSH server (automatic start, firewall rule,
+PowerShell as login shell), creates the local, non-admin build user `claude`
+(`-User NAME` to change; asks for its password) with the key, and a writable
+repo folder (`-RepoPath`, default `C:\src\OCW`). It is safe to run again. To
+allow scripts permanently for your user instead:
+`Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned`, and
+`Unblock-File .\setup-windows-buildserver.ps1` for a downloaded script.
+
+### 3. On this machine: host key and test
+
+```bash
+ssh-keyscan -p 22 <host> >> config/ssh/known_hosts                  # once (connections are verified strictly)
+scripts/remote.sh <name> ssh 'uname -a'                              # Windows: '$PSVersionTable.PSVersion'
+```
+
+### 4. Build tools on the machine
+
+| OS | Command (in the copied checkout, e.g. `scripts/remote.sh <name> run 'make …'`, or locally on the machine) |
+|---|---|
+| Linux | `make deps-linux` – detects Debian/Ubuntu (apt), Fedora (dnf) or Arch (pacman), installs the packages (sudo; run it yourself in a terminal there) and rustup with the pinned Rust; or the parts: `make deps-linux-debian` / `-fedora` / `-arch`, `make deps-rust` |
+| macOS | `make deps-macos` – Xcode Command Line Tools, rustup, ffmpeg (if Homebrew is installed) |
+| Windows | `make deps-windows` – winget: Git, Visual Studio Build Tools (C++), rustup (needs GNU make, e.g. `winget install ezwinports.make`) |
+
+rustup can also be installed without sudo and without touching shell
+profiles: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path --default-toolchain none`
+(`remote.sh` loads `~/.cargo/env` itself).
+
+### 5. Use it
+
+```bash
+scripts/remote.sh <name> run 'cargo test --workspace'        # copy the working tree, run there
+scripts/remote.sh <name> run '.claude/skills/run-ocw/drive.sh shot-wayland /tmp/ocw.png 6 -- --virtual'
+scripts/remote.sh <name> fetch test-output ./from-machine     # copy results back
+scripts/deploy-test.sh <name>                                  # release build for the kiosk on its screen
+```
+
+- At most 2 `remote.sh run` commands run at once per machine (others wait;
+  `OCW_REMOTE_SLOTS`), because parallel Bevy builds can run a machine out of
+  memory; branch checkouts use 4 build jobs (`OCW_REMOTE_JOBS`).
+- Branches other than `main` get their own checkout on the machine
+  (`<repo_path>-<branch>`), several GB each; delete the ones of merged branches
+  now and then.
+- Screenshots and videos on machines with a real GPU: use the Wayland modes
+  (`shot-wayland`, `video-wayland`; headless weston). Xvfb (X11) cannot
+  present a real GPU's Vulkan output.
+- The kiosk (the app permanently on a machine's screen, restarted on every
+  deployment) is set up once on that machine's desktop: see
+  [config/README.md](config/README.md#test-app-on-a-machines-screen-kiosk).
+
+**Troubleshooting:** `Connection refused` – no SSH server running (step 2).
+`Connection timed out during banner exchange` – the machine is overloaded or
+hanging (e.g. out of memory). `Host key verification failed` – step 3 missing
+or the machine was reinstalled (remove its old line from
+`config/ssh/known_hosts`). On Windows, a key in the wrong file for an admin
+account (`C:\ProgramData\ssh\administrators_authorized_keys`) or a network set
+to *Public* are the usual causes; the server log is in Event Viewer under
+*Applications and Services Logs → OpenSSH*.
+
 ## Tools and scripts
 
 | Tool | Use |
