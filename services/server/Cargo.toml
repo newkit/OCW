@@ -24,6 +24,14 @@ ocw-worldstore.workspace = true
 clap.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+# QUIC transport (`net`, spec §6.2). Never in the wasm crates (spec §3.5).
+quinn.workspace = true
+rustls.workspace = true
+rcgen.workspace = true
+bytes.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "io-util", "signal"] }
 
 [lints]
 workspace = true

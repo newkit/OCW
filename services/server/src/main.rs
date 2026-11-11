@@ -1,8 +1,8 @@
-//! Headless game server (Phase 1 skeleton).
+//! Headless game server.
 //!
 //! Runs the authoritative session with test riders at the fixed tick rate and
-//! logs their progress. The QUIC transport for remote clients follows in
-//! Phase 5 (spec §6.2).
+//! logs their progress. With `--listen` it also accepts desktop clients over
+//! QUIC (spec §6.2; `ocw-desktop --server ADDR`).
 
 use std::thread;
 use std::time::{Duration, Instant};
@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use clap::Parser;
 use ocw_core::{SIM_DT, SIM_TICK_HZ, mps_to_kmh};
+use ocw_server::net::{DEFAULT_PORT, NetServer, ServerIdentity};
 use ocw_server::{Course, GameServer, ServerConfig};
 use ocw_world::{RoadNetwork, Route};
 
@@ -45,7 +46,24 @@ struct Args {
     /// --world`) instead of a free ride.
     #[arg(long, value_name = "NAME", requires = "world")]
     route: Option<String>,
+    /// Test route without --world: loop (gentle) or hills (steep). Clients
+    /// must ride the same one (`ocw-desktop --route loop|hills`).
+    #[arg(long, default_value = "loop", value_parser = ["loop", "hills"], conflicts_with = "world")]
+    test_route: String,
+    /// Accept desktop clients over QUIC on this UDP address (default
+    /// 0.0.0.0:47800 when given without a value). Runs until Ctrl-C unless
+    /// --seconds is set.
+    #[arg(long, value_name = "ADDR", num_args = 0..=1,
+          default_missing_value = DEFAULT_LISTEN)]
+    listen: Option<std::net::SocketAddr>,
+    /// Keep the self-signed TLS certificate in this directory (cert.der,
+    /// key.der), so its fingerprint stays the same across restarts.
+    /// Default: a new certificate at every start.
+    #[arg(long, value_name = "DIR", requires = "listen")]
+    tls_dir: Option<PathBuf>,
 }
+
+const DEFAULT_LISTEN: &str = "0.0.0.0:47800";
 
 /// Free ride on a world package's road graph (a path or a cached id, its
 /// signature checked), from a seeded random start, or along one of its routes.
@@ -113,6 +131,7 @@ fn main() {
     let args = Args::parse();
     let course = match &args.world {
         Some(spec) => free_ride(&args, spec),
+        None if args.test_route == "hills" => Course::Route(Route::test_hills()),
         None => Course::Route(Route::test_loop()),
     };
     match &course {
@@ -142,14 +161,21 @@ fn main() {
             start_m: 0.0,
         },
     );
+    let mut net = args.listen.map(|addr| listen(&args, addr));
+    let stop = net.as_ref().map(NetServer::shutdown_on_signal);
     let tick = Duration::from_secs_f64(SIM_DT);
     let mut next = Instant::now();
     // Time spent in the server tick (physics, bots, snapshot encoding).
     let (mut busy, mut worst, mut ticks) = (Duration::ZERO, Duration::ZERO, 0u32);
     loop {
-        // No network clients yet; snapshots would be sent to them here.
         let started = Instant::now();
-        let _snapshot = server.tick();
+        if let Some(net) = &mut net {
+            net.pump(&mut server);
+        }
+        let broadcast = server.tick();
+        if let Some(net) = &mut net {
+            net.broadcast(&server, &broadcast);
+        }
         let took = started.elapsed();
         busy += took;
         worst = worst.max(took);
@@ -175,6 +201,13 @@ fn main() {
         if args.seconds > 0.0 && session.time_s() >= args.seconds {
             break;
         }
+        if stop
+            .as_ref()
+            .is_some_and(|s| s.load(std::sync::atomic::Ordering::SeqCst))
+        {
+            tracing::info!("shutting down");
+            break;
+        }
         if !args.fast {
             next += tick;
             if let Some(wait) = next.checked_duration_since(Instant::now()) {
@@ -189,4 +222,45 @@ fn main() {
         budget_us = format!("{:.0}", SIM_DT * 1e6),
         "session finished"
     );
+    if let Some(net) = net {
+        net.shutdown();
+    }
+}
+
+/// Opens the QUIC endpoint and tells the user how to connect.
+fn listen(args: &Args, addr: std::net::SocketAddr) -> NetServer {
+    let identity = match &args.tls_dir {
+        Some(dir) => ServerIdentity::load_or_create(dir),
+        None => ServerIdentity::self_signed(),
+    }
+    .unwrap_or_else(|e| {
+        eprintln!("TLS certificate: {e}");
+        std::process::exit(1);
+    });
+    let net = NetServer::bind(addr, &identity).unwrap_or_else(|e| {
+        eprintln!("{e}");
+        std::process::exit(1);
+    });
+    let local = net.local_addr();
+    tracing::info!(addr = %local, cert_sha256 = net.fingerprint(), "listening (QUIC, UDP)");
+    let host = if local.ip().is_unspecified() {
+        "HOST".to_owned()
+    } else if local.is_ipv6() {
+        format!("[{}]", local.ip())
+    } else {
+        local.ip().to_string()
+    };
+    let port = if local.port() == DEFAULT_PORT {
+        String::new()
+    } else {
+        format!(":{}", local.port())
+    };
+    println!(
+        "Clients connect with:\n  ocw-desktop --server {host}{port} --server-cert {}",
+        net.fingerprint()
+    );
+    if local.ip().is_loopback() || local.ip().is_unspecified() {
+        println!("  (on this machine also: ocw-desktop --server 127.0.0.1{port} --insecure-dev)");
+    }
+    net
 }
