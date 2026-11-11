@@ -33,6 +33,7 @@ pub const SKY: Color = Color::srgb(0.62, 0.78, 0.95);
 fn spawn_world(
     mut commands: Commands,
     view: Res<RideView>,
+    package: Option<Res<crate::package::PackageWorld>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
@@ -61,6 +62,21 @@ fn spawn_world(
         }
         .build(),
     ));
+
+    // With a world package, terrain, roads and trees are streamed from it
+    // (package.rs); the route only adds its centre line and the start arch.
+    if package.is_some() {
+        commands.spawn((
+            Mesh3d(meshes.add(center_line_mesh(&view))),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::srgb(0.95, 0.95, 0.9),
+                perceptual_roughness: 0.6,
+                ..default()
+            })),
+        ));
+        spawn_start_arch(&mut commands, &view, &mut meshes, &mut materials);
+        return;
+    }
 
     // Terrain conformed to the road (spec §4.3), in three levels of detail.
     let (route_min, route_max) = route_bounds(route);

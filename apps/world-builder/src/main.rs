@@ -45,6 +45,26 @@ enum Cmd {
         #[arg(long)]
         svg_grade: Option<PathBuf>,
     },
+    /// Build the world package of a region: road-conformed terrain and road
+    /// strips in 1 km tiles (spec §4.5, §4.7).
+    Package {
+        #[arg(long, default_value = "data/pilot/liechtenstein.osm.pbf")]
+        pbf: PathBuf,
+        #[arg(long, default_value = "data/pilot/liechtenstein.poly")]
+        poly: PathBuf,
+        #[arg(long = "hgt", default_values = ["data/pilot/N47E009.hgt"])]
+        hgt: Vec<PathBuf>,
+        #[arg(long, default_value = "Liechtenstein")]
+        name: String,
+        /// Terrain samples per 1 km tile side (101 = 10 m grid).
+        #[arg(long, default_value_t = 101)]
+        samples: u32,
+        /// Extra ring of terrain-only tiles around the roads.
+        #[arg(long, default_value_t = 2)]
+        margin_tiles: i32,
+        #[arg(long, default_value = "data/pilot/liechtenstein.ocwpkg")]
+        out: PathBuf,
+    },
     /// Build a route along the road graph (preferring main roads) and write
     /// it with its elevation and the surrounding terrain (ocw-route file).
     Route {
@@ -250,8 +270,68 @@ fn parse_bbox(s: &str) -> Result<Region, String> {
     }
 }
 
+fn package(
+    pbf: PathBuf,
+    poly: PathBuf,
+    hgt: Vec<PathBuf>,
+    name: String,
+    samples: u32,
+    margin_tiles: i32,
+    out: PathBuf,
+) {
+    let t = Instant::now();
+    let region = load_region(&poly);
+    let proj = region.projection();
+    let osm = OsmData::read_pbf(&pbf).unwrap_or_else(|e| {
+        eprintln!("{}: {e}", pbf.display());
+        std::process::exit(1);
+    });
+    let (mut graph, stats) = build_road_graph(&osm, &region);
+    let dem = load_dem(&hgt);
+    add_profiles(&mut graph, &dem, &proj);
+    let base = |x: f64, z: f64| {
+        let (lat, lon) = proj.unproject([x, z]);
+        dem.elevation(lat, lon).unwrap_or(0.0)
+    };
+    let pkg = ocw_worldgen::package::build_package(
+        &name,
+        region.center(),
+        &graph,
+        base,
+        1000.0,
+        samples,
+        margin_tiles,
+    );
+    let bytes = pkg.to_bytes();
+    if let Some(dir) = out.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    std::fs::write(&out, &bytes).expect("write package");
+    let strips: usize = pkg.tiles.values().map(|t| t.roads.len()).sum();
+    println!(
+        "{name}: {} tiles ({} m grid), {} road strips from {} edges ({:.0} km), {:.1} MB, {:.1} s",
+        pkg.tiles.len(),
+        pkg.spacing_m(),
+        strips,
+        stats.edges,
+        stats.length_km,
+        bytes.len() as f64 / 1e6,
+        t.elapsed().as_secs_f64()
+    );
+    println!("package: {}", out.display());
+}
+
 fn main() {
     match Cli::parse().command {
+        Cmd::Package {
+            pbf,
+            poly,
+            hgt,
+            name,
+            samples,
+            margin_tiles,
+            out,
+        } => package(pbf, poly, hgt, name, samples, margin_tiles, out),
         Cmd::Route {
             pbf,
             poly,

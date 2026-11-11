@@ -7,6 +7,7 @@
 pub mod camera;
 pub mod console;
 pub mod hud;
+pub mod package;
 pub mod riders;
 pub mod terrain;
 pub mod world;
@@ -65,6 +66,7 @@ impl Plugin for OcwRenderPlugins {
     fn build(&self, app: &mut App) {
         app.add_plugins((
             world::WorldPlugin,
+            package::PackagePlugin,
             riders::RidersPlugin,
             camera::CameraPlugin,
             hud::HudPlugin,

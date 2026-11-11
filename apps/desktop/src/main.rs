@@ -60,6 +60,10 @@ pub struct Args {
     /// Ride a route file from `world-builder route` (real roads and terrain).
     #[arg(long, value_name = "PATH")]
     pub route_file: Option<PathBuf>,
+    /// World package from `world-builder package`: terrain, all roads and
+    /// trees are streamed from it (use together with --route-file).
+    #[arg(long, value_name = "PATH")]
+    pub world: Option<PathBuf>,
     /// Use the virtual trainer even if Bluetooth devices are remembered.
     #[arg(long = "virtual")]
     pub virtual_trainer: bool,
@@ -139,6 +143,17 @@ fn main() -> AppExit {
         ),
     };
     let mut app = App::new();
+    if let Some(path) = &args.world {
+        let bytes = std::fs::read(path).unwrap_or_else(|e| {
+            eprintln!("{}: {e}", path.display());
+            std::process::exit(1);
+        });
+        let pkg = ocw_world::WorldPackage::from_bytes(&bytes).unwrap_or_else(|e| {
+            eprintln!("{}: {e}", path.display());
+            std::process::exit(1);
+        });
+        app.insert_resource(ocw_render::package::PackageWorld(std::sync::Arc::new(pkg)));
+    }
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
             title: "Open Cycling World".into(),
