@@ -36,6 +36,8 @@ use crate::track::Track;
 pub const LOCK_M: f64 = 20.0;
 /// The path is extended through plain road continuations this far ahead.
 pub const HORIZON_M: f64 = 2000.0;
+/// Most junctions [`RidePath::preview`] decides ahead of the rider.
+pub const PREVIEW_MAX_STEPS: usize = 64;
 /// Steps that ended more than this far behind the rider are dropped.
 pub const KEEP_BEHIND_M: f64 = 600.0;
 /// Radius of the rounded corner at junctions (m).
@@ -678,6 +680,37 @@ impl RidePath {
         changed
     }
 
+    /// The most likely path ahead of a rider at `rider_m`, reaching at
+    /// least `ahead_m` beyond them where the road graph allows – for the
+    /// HUD look-ahead (average gradient, elevation profile; spec §3.2). The
+    /// real path ends at the next undecided junction, so this extends a
+    /// copy as if the rider rode on: at that junction with exit `first`
+    /// (the rider's current choice, an index into its exits; `None` = the
+    /// default), at later ones with the default exit (route mode: the
+    /// route's exit), and with the automatic U-turns at dead ends and the
+    /// region border. `None` when the path already reaches far enough (use
+    /// it as it is). The copy is display-only: never sent or ridden.
+    pub fn preview(&self, rider_m: f64, ahead_m: f64, first: Option<usize>) -> Option<RidePath> {
+        let want = rider_m + ahead_m;
+        if self.end_m() >= want {
+            return None;
+        }
+        let mut path = self.clone();
+        let mut first = first;
+        for _ in 0..PREVIEW_MAX_STEPS {
+            if path.end_m() >= want {
+                break;
+            }
+            // A rider standing at the junction: it is decided now.
+            let at = path.next_junction().map_or(path.end_m(), |(_, at)| at);
+            let changed = path.extend(at.max(rider_m), &mut |j| first.take().unwrap_or(j.default));
+            if changed.is_none() {
+                break;
+            }
+        }
+        Some(path)
+    }
+
     /// U-turn where the path ends at a road end: the last step is cut so
     /// the loop fits before the end (if the rider is not there yet), then
     /// the loop and the way back. Returns the first changed step index.
@@ -1122,6 +1155,10 @@ impl Track for RidePath {
             || self
                 .turnaround_ahead(distance)
                 .is_some_and(|(at, _)| at - distance <= UTURN_RUNUP_M)
+    }
+
+    fn extent(&self) -> Option<(f64, f64)> {
+        Some((self.begin_m(), self.end_m()))
     }
 
     fn name_at(&self, distance: f64) -> String {
@@ -1832,5 +1869,35 @@ mod tests {
         let (_, reason) = p.turnaround_ahead(0.0).unwrap();
         assert_eq!(reason, TurnReason::Boundary);
         assert!(p.dead_end_ahead(0.0).unwrap() > 250.0);
+    }
+
+    #[test]
+    fn preview_extends_a_copy_through_the_junctions_ahead() {
+        let n = net(grid());
+        // Riding 0 → 1 (east) from 20 m along; the path ends at vertex 1.
+        let (e01, f01) = grid_edge(&n, 0, 1);
+        let p = RidePath::start(n.clone(), e01, 20.0, f01, 0.0, 0);
+        let (j, at) = p.next_junction().unwrap();
+        assert_eq!(at, 180.0);
+        // Far enough already: nothing to preview.
+        assert!(p.preview(0.0, 150.0, None).is_none());
+        // 1 km ahead: through several junctions with the default exits.
+        let ahead = p.preview(0.0, 1000.0, None).expect("extended");
+        assert!(ahead.end_m() >= 1000.0, "{}", ahead.end_m());
+        assert_eq!(ahead.extent(), Some((0.0, ahead.end_m())));
+        // The original is unchanged (display only).
+        assert_eq!((p.end_m(), p.next_index()), (180.0, 1));
+        // The same geometry where both are known.
+        assert_eq!(ahead.sample(100.0), p.sample(100.0));
+        // The rider's choice at the next junction is taken there.
+        let south = j
+            .exits
+            .iter()
+            .position(|e| (e.edge, e.forward) == grid_edge(&n, 1, 4))
+            .unwrap();
+        let turned = p.preview(0.0, 1000.0, Some(south)).unwrap();
+        assert_eq!(turned.segments_from(1)[0], whole(&n, 1, 4));
+        let s = turned.sample(300.0);
+        assert!(s.direction[1] > 0.99, "heading south: {s:?}");
     }
 }
