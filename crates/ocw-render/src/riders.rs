@@ -106,6 +106,50 @@ pub fn rider_transform(view: &RideView, distance: f64, lateral_offset: f64) -> T
     Transform::from_translation(pos).with_rotation(yaw * Quat::from_rotation_x(pitch))
 }
 
+/// Half-width of the window over which the road curvature is averaged
+/// (the route is a polyline; this spreads each corner over a few metres).
+const CURVATURE_WINDOW_M: f64 = 8.0;
+/// Largest lean angle (radians, ~35°).
+const MAX_LEAN: f64 = 0.61;
+
+/// Signed horizontal curvature of the route at `distance` (1/m; positive
+/// = turning right), smoothed over ±[`CURVATURE_WINDOW_M`].
+pub fn curvature(view: &RideView, distance: f64) -> f64 {
+    let l = CURVATURE_WINDOW_M;
+    let steps = l as i32;
+    let dir = |s: f64| view.route.sample(s).direction;
+    let (mut turn, mut weight) = (0.0, 0.0);
+    for j in -steps..steps {
+        let (a, b) = (
+            dir(distance + f64::from(j)),
+            dir(distance + f64::from(j + 1)),
+        );
+        // x east, z south: a turn to the right (east -> south) has a
+        // positive cross product.
+        let angle = (a[0] * b[1] - a[1] * b[0]).atan2(a[0] * b[0] + a[1] * b[1]);
+        let w = 1.0 - (f64::from(j) + 0.5).abs() / l;
+        turn += angle * w;
+        weight += w;
+    }
+    // Weighted mean turn per metre.
+    turn / weight.max(1e-9)
+}
+
+/// Lean into a curve (radians, positive = to the right): a bike in a
+/// steady turn leans by atan(v² κ / g).
+pub fn lean_angle(curvature: f64, speed_mps: f64) -> f64 {
+    (speed_mps * speed_mps * curvature / 9.81)
+        .atan()
+        .clamp(-MAX_LEAN, MAX_LEAN)
+}
+
+/// Rotation (about the travel direction, through the tyre contact) that
+/// leans the avatar; Bevy models face -Z, so a lean to the right is a
+/// negative rotation about Z.
+pub fn lean_rotation(lean: f64) -> Quat {
+    Quat::from_rotation_z(-lean as f32)
+}
+
 fn sync_riders(
     mut commands: Commands,
     view: Res<RideView>,
@@ -124,7 +168,9 @@ fn sync_riders(
         keep
     });
     for r in &view.riders {
-        let t = rider_transform(&view, r.state.distance, r.state.lateral_offset);
+        let mut t = rider_transform(&view, r.state.distance, r.state.lateral_offset);
+        let lean = lean_angle(curvature(&view, r.state.distance), r.state.speed);
+        t.rotation *= lean_rotation(lean);
         match entities.0.get(&r.id) {
             Some(e) => {
                 if let Ok(mut tr) = transforms.get_mut(*e) {
@@ -312,6 +358,41 @@ mod tests {
         let right = rider_transform(&v, 10.0, 1.5);
         assert!(close(right.translation, Vec3::new(10.0, 0.0, 1.5)));
         assert!(close(right.right().as_vec3(), Vec3::Z));
+    }
+
+    #[test]
+    fn leans_into_curves() {
+        // A circle of radius 50 m, clockwise seen from above (x east, z
+        // south): heading east, then turning towards south = right.
+        let r = 50.0;
+        let pts: Vec<[f64; 3]> = (0..120)
+            .map(|i| {
+                let a = f64::from(i) / 120.0 * std::f64::consts::TAU;
+                [r * a.sin(), 0.0, r - r * a.cos()]
+            })
+            .collect();
+        let v = RideView::new(Route::from_points("c", "C", pts, true, 6.0).unwrap());
+        let k = curvature(&v, 80.0);
+        assert!((k - 1.0 / r).abs() < 0.002, "curvature {k}");
+        // 10 m/s on R 50: atan(100 / (50 * 9.81)) = 11.5° to the right.
+        let lean = lean_angle(k, 10.0);
+        assert!(
+            (lean.to_degrees() - 11.5).abs() < 0.6,
+            "{}",
+            lean.to_degrees()
+        );
+        let mut t = rider_transform(&v, 80.0, 0.0);
+        let up_before = t.up().as_vec3();
+        t.rotation *= lean_rotation(lean);
+        // The top of the rider moves to the right (towards the centre).
+        let shift = (t.up().as_vec3() - up_before).dot(t.right().as_vec3());
+        assert!(shift > 0.15, "shift {shift}");
+        // Straight road and standing still: upright; capped when too fast.
+        let straight = view(vec![[0.0, 0.0, 0.0], [100.0, 0.0, 0.0]]);
+        assert!(curvature(&straight, 50.0).abs() < 1e-9);
+        assert_eq!(lean_angle(k, 0.0), 0.0);
+        assert_eq!(lean_angle(k, 40.0), MAX_LEAN);
+        assert_eq!(lean_angle(-k, 40.0), -MAX_LEAN);
     }
 
     #[test]

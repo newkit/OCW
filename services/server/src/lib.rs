@@ -36,11 +36,20 @@ pub struct GameServer {
     next_connection: u64,
 }
 
+/// Base power of the bots, from easy riders to strong ones, so they spread
+/// out on the road instead of riding as one bunch.
+const BOT_POWERS_W: [f64; 6] = [210.0, 110.0, 160.0, 85.0, 250.0, 135.0];
+
+/// Base power of the `i`-th bot.
+pub fn bot_power_w(i: u32) -> f64 {
+    BOT_POWERS_W[i as usize % BOT_POWERS_W.len()]
+}
+
 impl GameServer {
     pub fn new(route: Route, config: ServerConfig) -> Self {
         let mut session = Session::new(route);
         for i in 0..config.bots {
-            session.add_bot(format!("Bot {}", i + 1), 160.0 + 25.0 * f64::from(i % 5));
+            session.add_bot(format!("Bot {}", i + 1), bot_power_w(i));
         }
         Self {
             config,
@@ -258,6 +267,23 @@ mod tests {
             };
             assert_eq!(r.ok, allow);
         }
+    }
+
+    #[test]
+    fn bots_ride_at_different_strengths() {
+        let powers: Vec<f64> = (0..6).map(bot_power_w).collect();
+        // Some are clearly slower, some faster, and they are all different.
+        assert!(
+            powers.iter().filter(|&&p| p < 140.0).count() >= 3,
+            "{powers:?}"
+        );
+        assert!(powers.iter().any(|&p| p > 200.0));
+        let mut sorted = powers.clone();
+        sorted.sort_by(f64::total_cmp);
+        sorted.dedup();
+        assert_eq!(sorted.len(), 6);
+        // The first bots (a small server) already mix slow and fast.
+        assert!(bot_power_w(1) < bot_power_w(0) - 50.0);
     }
 
     #[test]
