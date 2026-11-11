@@ -25,15 +25,18 @@ plain `cargo`, add `. "$HOME/.cargo/env"` to your shell profile.
 
 | Action | Keyboard | Gamepad |
 |---|---|---|
-| Faster: +25 W per press, more while held | ↑ | right trigger (RT / R2) |
-| Stop: no power, brake | ↓ | left trigger (LT / L2) |
+| Faster: +25 W per press, more while held | ↑ | D-pad up, left stick up or right trigger (RT / R2) |
+| Stop: no power, brake | ↓ | D-pad down, left stick down or left trigger (LT / L2) |
 | Steer (autodrive: move the line; manual: lean into a curve) | ← / → | left stick (left/right) |
 | Autodrive on/off (on at the start) | A | South button (A / ✕) |
 | Wild mode on/off (leave the road) | W | West button (X / □) |
 | Free ride: choose the exit at the next junction | ← / → (autodrive, junction ahead) or Q / E | D-pad left / right |
-| Free ride: U-turn | U | D-pad down |
+| Free ride: U-turn | U | East button (B / ○) |
 | Power ±10 W | PgUp / PgDn | |
-| Camera: orbit / zoom / reset | mouse drag / wheel / R | |
+| Camera: orbit / zoom | mouse drag / wheel | |
+| Camera reset | C | |
+| Restart everything (as at program start; the ride is saved first) | R | |
+| Record a video (start / stop) | V | |
 | Next screen | F11 | |
 | Console (`help` lists the commands) | `` ` `` or F12 | |
 
@@ -148,6 +151,11 @@ climb at 1.5–2.1 km) and grass beside the road roll increasingly harder
 - ↑ adds power on top of any device (25 W per press), ↓ stops (power 0 and
   brake).
 
+**Videos:** V starts and stops recording the window as an MP4 (H.264,
+25 fps) into `~/Videos/OCW/` (or `~/.local/share/ocw/videos/`); slow frames
+are repeated so the video keeps real time. Needs `ffmpeg` (`make deps`
+installs it).
+
 **Rides and Strava** (spec §2.8)
 
 - Every ride is recorded and saved as a FIT file when the app closes (rides of
@@ -201,6 +209,8 @@ for now).
 | `exec FILE` | Run the commands in a file, one per line |
 | `fps [on\|off]` | Show or hide the FPS counter |
 | `screenshot [PATH]` | Save a screenshot of the window (default `screenshot.png`) |
+| `reset` | Start everything again as at program start (key R); the ride is saved first |
+| `video [start\|stop\|toggle]` | Record the window as an MP4 (key V; needs `ffmpeg`) |
 | `quit` | Exit the app |
 | **Rider** | |
 | `rider.autodrive on\|off` | Autodrive (key A) |
@@ -234,6 +244,31 @@ for now).
 | `strava.status` | Strava link and upload state |
 | `strava.sync [--retry]` | Upload every saved ride not on Strava yet (`--retry`: also failed ones) |
 | `strava.disconnect` | Unlink Strava (deletes the stored tokens) |
+
+## Running the server
+
+**There is no network server yet, so there is no port to open.** Today every
+ride runs on the *local server*: the same game-server logic (physics for all
+riders, bots, junction decisions) runs inside the desktop app on its own
+thread and talks to the client over in-process channels (spec §6.1). Hosting
+a session for other people comes with Phase 5 (multiplayer): a QUIC (UDP)
+game server with Quinn, plus an HTTPS API, accounts and a database; its port
+and deployment (Docker) will be documented then.
+
+What exists already is the **headless server**: the same server logic as a
+standalone program, without graphics or network, for tests and simulations:
+
+```bash
+cargo run --release -p ocw-server -- --bots 5 --seconds 60          # test loop, real time
+cargo run --release -p ocw-server -- --bots 20 --seconds 600 --fast # as fast as possible
+cargo run --release -p ocw-server -- --world data/pilot/liechtenstein.ocwpkg \
+    --bots 3 --seconds 300 --fast [--seed N]                       # free ride on a package
+```
+
+It prints the riders' positions and speeds while it runs. Options:
+`--bots N` (test riders, default 3), `--seconds S` (0 = until stopped with
+Ctrl+C), `--fast` (no real-time pacing), `--world PKG` and `--seed N` (free
+ride on a world package's road graph, start point seed).
 
 ## Tools and scripts
 

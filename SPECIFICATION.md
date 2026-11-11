@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 1.9 – November 2026
+Version 2.0 – November 2026
 
 | Version | Change |
 |---|---|
@@ -18,6 +18,7 @@ Version 1.9 – November 2026
 | 1.7 | Free ride on the road graph: junction keys next to lean steering, U-turn key and loop (§2.2.1, §2.2.2); road graph in the world package, format 2 (§4.7); free-ride path and slow-downs (§5.2); `TurnIntent`, `UTurn`, `PathUpdate` (§6.5) |
 | 1.8 | Steering fixes (§5.2.1): only pushing into the road edge scrapes; a held opposite lean key pauses at upright, then leans on to the other side |
 | 1.9 | Catch-up of implemented decisions: elevation filter along through-roads and terrain cut under roads (§4.3), road surfaces (§4.4), route file format (§4.7), console scripting (§2.9), input devices incl. gamepad, camera and avatar on the terrain (§3.2), start point and bots (§6.1), repository layout (§10), build machines, desktop integration, AppImage, release and build-history folders, CI resilience (§11), own artwork licence (§13) |
+| 2.0 | Restart key R, camera reset on C, video recording on V; gamepad ↑ / ↓ also on the D-pad and the left stick, analog triggers, U-turn on East (§3.2) |
 
 ---
 
@@ -473,7 +474,9 @@ Tile builds take up to 23 ms on worker threads; uploads cost at most 4.6 ms on t
 - **Bevy UI** for the in-ride HUD (including the junction overlay, §2.2.1) and the main menus. The user interface is connected as directly as possible to the engine state.
 - **egui** (`bevy_egui`) for the editor parameter panels, the in-game console (§2.9) and development/diagnostic interfaces, to keep development fast. The editors are reviewed after Phase 4.
 
-**Input devices (v1.9):** keyboard and gamepads (Bevy's gamepad support, gilrs: Xbox, PlayStation, Switch Pro and generic pads, hot-plugged). Keyboard: ↑ adds power (25 W per press, more while held, on top of any device), ↓ stops (power 0 and brake), ← / → steer (§5.2.1) or choose exits (§2.2.1), A autodrive, W wild mode, U U-turn, Q / E exits, PgUp / PgDn ±10 W, F11 next screen, R camera reset. Gamepad: left stick steers (sets the lean directly, centred = upright), right / left trigger = ↑ / ↓, South = autodrive, West = wild, D-pad = exits and U-turn. Several pads: the largest stick deflection steers.
+**Input devices (v1.9):** keyboard and gamepads (Bevy's gamepad support, gilrs: Xbox, PlayStation, Switch Pro and generic pads, hot-plugged). Keyboard: ↑ adds power (25 W per press, more while held, on top of any device), ↓ stops (power 0 and brake), ← / → steer (§5.2.1) or choose exits (§2.2.1), A autodrive, W wild mode, U U-turn, Q / E exits, PgUp / PgDn ±10 W, F11 next screen, C camera reset, R restart (v2.0), V video (v2.0). Gamepad: left stick left / right steers (sets the lean directly, centred = upright); ↑ = D-pad up, left stick up or right trigger, ↓ = D-pad down, left stick down or left trigger (triggers and stick read as analog values, v2.0); South = autodrive, West = wild, D-pad left / right = exits, East = U-turn (v2.0). Several pads: the largest stick deflection steers.
+
+**Restart and video (v2.0):** R (console `reset`) starts the whole app again as at program start, with the same command line: the app exits normally (ride saved, devices shut down) and replaces its process with a fresh one (Unix `exec`, same process id for the kiosk). V (console `video`) records the window: screenshots at up to 25 fps streamed as raw pixels into `ffmpeg` (H.264 MP4 in the user's video directory); slow frames are repeated to keep real time, a running recording is finished on exit.
 
 **Camera and avatar (v1.9):** the chase camera follows the avatar itself (on the terrain when off the road) along the rider's own heading; it can be orbited with the mouse. It stays above the ground, never inside a tree crown, and lifts until the line of sight to the rider clears terrain and trees; its look-at point is smoothed. The avatar stands on the surface under both wheel contacts (front wheel first over a bump), leans by atan(v² κ / g) for the curve it rides, and is blended from road height onto the ground over 2 m beside the road.
 

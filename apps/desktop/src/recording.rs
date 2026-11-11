@@ -224,7 +224,7 @@ pub fn load_meta(fit_path: &Path) -> Option<RideMeta> {
     toml::from_str(&text).ok()
 }
 
-fn unix_now() -> i64 {
+pub(crate) fn unix_now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64)

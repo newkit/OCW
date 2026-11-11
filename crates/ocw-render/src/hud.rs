@@ -127,7 +127,7 @@ fn update_hud(
         )
     };
     let mut lines = format!(
-        "{place} | {:.2} km | {} | riders: {}\n{keys} | mouse: camera, R: reset | F11: screen | ` or F12: console",
+        "{place} | {:.2} km | {} | riders: {}\n{keys} | mouse: camera, C: camera reset, R: restart, V: video | F11: screen | ` or F12: console",
         local.state.distance / 1000.0,
         format_time(view.elapsed_s),
         view.riders.len()

@@ -1,7 +1,8 @@
 //! Camera that follows the local rider.
 //!
 //! In chase mode the camera can be orbited around the rider: drag with the
-//! left mouse button to turn and tilt, mouse wheel to zoom, `R` to reset.
+//! left mouse button to turn and tilt, mouse wheel to zoom, `C` to reset (`R`
+//! restarts the whole app).
 
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
@@ -99,8 +100,8 @@ impl CameraOrbit {
     }
 }
 
-/// Mouse orbit (left button drag), zoom (wheel) and reset (`R`), unless the
-/// console is open.
+/// Mouse orbit (left button drag), zoom (wheel) and reset (`C`), unless
+/// the console is open.
 fn orbit_input(
     buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -112,7 +113,7 @@ fn orbit_input(
     if console.is_some_and(|c| c.is_open()) {
         return;
     }
-    if keys.just_pressed(KeyCode::KeyR) {
+    if keys.just_pressed(KeyCode::KeyC) {
         *orbit = CameraOrbit::default();
         return;
     }
@@ -421,6 +422,30 @@ mod tests {
         assert_eq!((o.pitch, o.distance), (MIN_PITCH, MIN_DISTANCE));
         o.apply(Vec2::ZERO, -100.0);
         assert_eq!(o.distance, MAX_DISTANCE);
+    }
+
+    #[test]
+    fn c_resets_the_orbit() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<ButtonInput<MouseButton>>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<AccumulatedMouseMotion>()
+            .init_resource::<AccumulatedMouseScroll>()
+            .insert_resource(CameraOrbit {
+                yaw: 2.0,
+                pitch: 1.0,
+                distance: 30.0,
+            })
+            .add_systems(Update, orbit_input);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyC);
+        app.update();
+        assert_eq!(
+            *app.world().resource::<CameraOrbit>(),
+            CameraOrbit::default()
+        );
     }
 
     #[test]

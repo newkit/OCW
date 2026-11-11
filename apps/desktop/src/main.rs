@@ -16,8 +16,10 @@ mod known_devices;
 mod monitor;
 mod platform;
 mod recording;
+mod restart;
 mod strava;
 mod trainer;
+mod video;
 
 use std::path::PathBuf;
 
@@ -293,10 +295,19 @@ fn main() -> AppExit {
     .add_plugins((
         recording::RecordingPlugin::default(),
         strava::StravaPlugin::default(),
+        restart::RestartPlugin,
+        video::VideoPlugin,
     ))
     .add_systems(Startup, startup_commands)
     .add_systems(Update, timed_commands);
-    app.run()
+    let exit = app.run();
+    if restart::requested() {
+        // Everything is shut down (ride saved, devices stopped): start afresh.
+        drop(app);
+        let e = restart::exec_restart();
+        eprintln!("restart failed: {e}");
+    }
+    exit
 }
 
 /// Where everyone starts on the route, in metres (`--random-start`).

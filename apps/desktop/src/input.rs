@@ -10,12 +10,13 @@
 //!   look-ahead, before the lock point) and autodrive is on, ← / → choose
 //!   the exit instead (one exit per press; the line stays). Q / E (and the
 //!   gamepad's D-pad left / right) choose the exit at any time, also for
-//!   manual steering, where the arrows keep leaning. U (D-pad down) turns
-//!   round (↓ stays the brake),
+//!   manual steering, where the arrows keep leaning. U (gamepad East:
+//!   B / ○) turns round (↓ stays the brake),
 //! - W toggles wild mode: not bound to the road,
-//! - gamepad: left stick steers (leans, or moves the autodrive line),
-//!   right trigger = ↑, left trigger = ↓, South (A) = autodrive, West (X)
-//!   = wild mode,
+//! - gamepad: left stick left / right steers (leans, or moves the autodrive
+//!   line); ↑ = D-pad up, left stick up or right trigger; ↓ = D-pad down,
+//!   left stick down or left trigger; South (A / ✕) = autodrive, West
+//!   (X / □) = wild mode,
 //! - ↑ accelerates: each press adds `POWER_STEP_W` to the rider's power,
 //!   holding adds `POWER_RAMP_W_PER_S` (up to `MAX_KEY_POWER_W`), on top of
 //!   the device's power (virtual or real trainer); it also releases the brake,
@@ -170,7 +171,7 @@ fn steer(
     }
     let pad_pressed = |b: GamepadButton| pads.iter().any(|p| p.just_pressed(b));
     if client.0.is_free_ride() {
-        if (keys.just_pressed(KeyCode::KeyU) || pad_pressed(GamepadButton::DPadDown))
+        if (keys.just_pressed(KeyCode::KeyU) || pad_pressed(GamepadButton::East))
             && let Some(msg) = client.0.u_turn(time.elapsed_secs_f64())
         {
             info!("U-turn");
@@ -235,6 +236,25 @@ fn steer(
     }
 }
 
+/// Analog trigger / stick values above this count as pressed.
+pub const PAD_PRESS: f32 = 0.35;
+
+/// "Faster" and "stop" from one gamepad: D-pad up / down, left stick up /
+/// down, right / left trigger. Triggers and stick are read as analog values
+/// (many pads report the triggers as axes, so their button state alone is
+/// not reliable).
+pub fn pad_throttle(
+    stick_y: f32,
+    dpad_up: bool,
+    dpad_down: bool,
+    rt: f32,
+    lt: f32,
+) -> (bool, bool) {
+    let up = dpad_up || stick_y > PAD_PRESS + 0.15 || rt > PAD_PRESS;
+    let down = dpad_down || stick_y < -(PAD_PRESS + 0.15) || lt > PAD_PRESS;
+    (up && !down, down)
+}
+
 #[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
 fn throttle_and_brake(
     keys: Res<ButtonInput<KeyCode>>,
@@ -245,18 +265,27 @@ fn throttle_and_brake(
     link: Res<Link>,
     mut client: ResMut<ClientState>,
     mut key: ResMut<KeyPower>,
+    mut pad_was: Local<(bool, bool)>,
 ) {
     if console.is_open() {
         return;
     }
     let now = time.elapsed_secs_f64();
-    let pad = |f: &dyn Fn(&Gamepad) -> bool| pads.iter().any(f);
-    let up_pressed = keys.just_pressed(KeyCode::ArrowUp)
-        || pad(&|p| p.just_pressed(GamepadButton::RightTrigger2));
-    let up_held =
-        keys.pressed(KeyCode::ArrowUp) || pad(&|p| p.pressed(GamepadButton::RightTrigger2));
-    let down_pressed = keys.just_pressed(KeyCode::ArrowDown)
-        || pad(&|p| p.just_pressed(GamepadButton::LeftTrigger2));
+    let (pad_up, pad_down) = pads.iter().fold((false, false), |(u, d), p| {
+        let (pu, pd) = pad_throttle(
+            p.get(GamepadAxis::LeftStickY).unwrap_or(0.0),
+            p.pressed(GamepadButton::DPadUp),
+            p.pressed(GamepadButton::DPadDown),
+            p.get(GamepadButton::RightTrigger2).unwrap_or(0.0),
+            p.get(GamepadButton::LeftTrigger2).unwrap_or(0.0),
+        );
+        (u || pu, d || pd)
+    });
+    let (pad_up_pressed, pad_down_pressed) = (pad_up && !pad_was.0, pad_down && !pad_was.1);
+    *pad_was = (pad_up, pad_down);
+    let up_pressed = keys.just_pressed(KeyCode::ArrowUp) || pad_up_pressed;
+    let up_held = keys.pressed(KeyCode::ArrowUp) || pad_up;
+    let down_pressed = keys.just_pressed(KeyCode::ArrowDown) || pad_down_pressed;
     if down_pressed {
         // Stop: no keyboard power, no virtual trainer power, brake.
         key.watts = 0.0;
@@ -289,6 +318,21 @@ fn throttle_and_brake(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gamepad_faster_and_stop_from_dpad_stick_and_triggers() {
+        // Nothing pressed, small stick and trigger noise: nothing.
+        assert_eq!(pad_throttle(0.2, false, false, 0.1, 0.1), (false, false));
+        // Faster: D-pad up, stick up, right trigger half pressed.
+        assert_eq!(pad_throttle(0.0, true, false, 0.0, 0.0), (true, false));
+        assert_eq!(pad_throttle(0.9, false, false, 0.0, 0.0), (true, false));
+        assert_eq!(pad_throttle(0.0, false, false, 0.5, 0.0), (true, false));
+        // Stop: D-pad down, stick down, left trigger; stop wins over faster.
+        assert_eq!(pad_throttle(0.0, false, true, 0.0, 0.0), (false, true));
+        assert_eq!(pad_throttle(-0.9, false, false, 0.0, 0.0), (false, true));
+        assert_eq!(pad_throttle(0.0, false, false, 0.0, 0.6), (false, true));
+        assert_eq!(pad_throttle(0.0, true, false, 0.0, 0.9), (false, true));
+    }
 
     #[test]
     fn junction_keys_take_the_arrows_only_in_autodrive_near_a_junction() {
