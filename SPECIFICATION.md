@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.1 – November 2026
+Version 2.2 – November 2026
 
 | Version | Change |
 |---|---|
@@ -19,7 +19,8 @@ Version 2.1 – November 2026
 | 1.8 | Steering fixes (§5.2.1): only pushing into the road edge scrapes; a held opposite lean key pauses at upright, then leans on to the other side |
 | 1.9 | Catch-up of implemented decisions: elevation filter along through-roads and terrain cut under roads (§4.3), road surfaces (§4.4), route file format (§4.7), console scripting (§2.9), input devices incl. gamepad, camera and avatar on the terrain (§3.2), start point and bots (§6.1), repository layout (§10), build machines, desktop integration, AppImage, release and build-history folders, CI resilience (§11), own artwork licence (§13) |
 | 2.0 | Restart key R, camera reset on C, video recording on V; gamepad ↑ / ↓ also on the D-pad and the left stick, analog triggers, U-turn on East (§3.2) |
-| 2.1 | In-game menu plan (§3.2.1): structure (Ride, Workshop, Navi, Settings), gamepad navigation, single-player pause, settings file, increments M1–M9 mapped to phases; audio output device plan (§3.3) |
+| 2.1 | In-game menu plan (§3.2.1): structure (Ride, Workshop, Navi, Settings), gamepad navigation, settings file, increments M1–M9 mapped to phases; audio output device plan (§3.3) |
+| 2.2 | Menu decisions (§3.2.1): the ride never pauses (trainer unchanged, time and recording continue, autodrive while the menu is open); Esc never quits; rider weight affects physics, rider profiles in Settings, chosen in the Workshop |
 
 ---
 
@@ -510,8 +511,8 @@ One menu, reachable during a ride and (later) as the start screen, replaces comm
 | Switch tab | Q / E, PgUp / PgDn | LB / RB (L1 / R1) |
 
 - While the menu is open, ride inputs (↑ power, ← → steering, A, W, U, R, V, …) are **not** passed to the ride; one input-context resource (`Ride`, `Menu`, `Console`) replaces today's per-system `console.is_open()` checks. The power from the trainer keeps flowing.
-- **Single-player (local server): opening the menu pauses the ride** (setting *Pause when the menu opens*, default on). The local server stops advancing the local rider and the bots; the trainer gets a flat road (SIM grade 0, ERG target unchanged) so the rider can keep pedalling; the FIT recording gets timer stop / start events, so the paused time is not moving time (§2.8). Resume continues where the ride stopped.
-- **Multiplayer (remote server, Phase 5): no pause.** The menu is an overlay over the running ride; autodrive is forced on while it is open and junctions take the default exit (§2.2.1). Pages that would end the ride (Ride, Restart) ask for confirmation.
+- **The ride never pauses (decided, v2.2):** the menu is an overlay over the running ride, in single-player exactly as in multiplayer (in a shared ride the others keep riding, so one rider's menu cannot stop time). The trainer is left as it is (SIM keeps following the road, ERG keeps its target), the ride time and the FIT recording continue. While the menu is open, steering falls back to autodrive and junctions take the default exit (§2.2.1), so the rider stays on the road; the previous steering mode is restored on closing. Pages that would end the ride (Ride, Restart) ask for confirmation.
+- **Esc never quits** (decided, v2.2): only *Quit* in the menu ends the app (kiosk-safe).
 - The top page shows a status strip: power, speed, connected trainer, Strava sync state.
 
 **Menu tree**
@@ -533,7 +534,7 @@ One menu, reachable during a ride and (later) as the start screen, replaces comm
 | | Strava | Link / unlink, automatic upload on / off, account name, last result; without client credentials (§2.8 interim) a short explanation | now (interim), Phase 5 (via backend) |
 | | Audio | Mix: master, music, effects (bike, wind, ambience), voice; output device; later voice: microphone, push-to-talk key / open mic, spatial voice on / off | output + mix with game audio (see §3.3); voice Phase 6 |
 | | Display | Monitor, fullscreen / window, resolution, graphics quality (shadows, view distance, tree density, LOD bias), FPS counter, HUD size | now |
-| | Profile | Display name, weight, height, FTP, units (metric / imperial); later account sign-in, privacy | now (local); account Phase 5 |
+| | Riders | Rider profiles (decided, v2.2): add / edit / delete riders with display name, weight, height, FTP, units (metric / imperial); the active rider is chosen in the Workshop; later account sign-in, privacy | now (local); account Phase 5 |
 | **Restart** | | Same as R: start everything again, ride saved first | now |
 | **Quit** | | Save the ride and exit | now |
 
@@ -550,16 +551,15 @@ One menu, reachable during a ride and (later) as the start screen, replaces comm
 - **Actions are console commands.** Each menu item either runs a command line (`trainer.difficulty 60`, `devices.connect 2`, `strava.sync`, `reset`) through `ConsoleState::queue`, or reads / writes a setting variable. Menu, console, `--cmd` and `autoexec.cfg` therefore share one code path, and every menu function is scriptable and testable headless.
 - **Settings: one registry, one file.** Settings are variables with a name, type, range, default and an apply function (`set controls.autodrive_default on`, `get trainer.difficulty`, §2.9). They persist in `<user config dir>/ocw/settings.toml` (sections like the menu: `[controls]`, `[trainer]`, `[audio]`, `[display]`, `[profile]`, `[ride]` for the last world / route). Precedence: defaults < `settings.toml` < `autoexec.cfg` < command-line options; command-line options and `set --temp` apply only to the session and are not saved. Unknown keys are kept and reported, invalid values fall back to the default with a warning. Device memory (`devices.toml`), Strava credentials and tokens (`strava.toml`, `strava-token.toml`) stay in their own files – tokens never go into the settings file.
 - **Starting another ride** (Ride page) first reuses the restart path (`restart.rs`): the choice is written to `[ride]` in the settings and the app re-executes itself, which starts the new world / route exactly as at program start. An in-app switch (tear down the local server and world, start the new ones without restarting the process) can replace it later.
-- **Pause** is a new protocol message (`SessionControl { pause | resume }`, new field numbers only, `proto/ocw/v1/messages.proto`), honoured by the local server and rejected by remote servers, like `dev` commands (§2.9).
-- **Profile values that affect physics** (weight; later the bike's physics profile, §2.5) go to the server in the join message (new field) – the server stays the truth (§6.1); today's fixed 75 kg + 8 kg profile becomes the default.
+- **Rider weight affects the physics (decided, v2.2):** the active rider's weight (and later the bike's physics profile, §2.5) goes to the server in the join message (new field) – the server stays the truth (§6.1) – and to the trainer (SIM total mass); today's fixed 75 kg + 8 kg profile becomes the default rider. Riders are created in *Settings → Riders* and selected in the *Workshop* (the Workshop's rider choice comes before Phase 4's editors).
 - **Local now vs. backend later:** settings, devices, routes, GPX import, rides, the interim Strava upload and the Workshop configuration are local. Accounts and profile sync (§2.1), Events and sessions (§2.3), the backend Strava upload (§2.8), sharing routes and friends need the Phase 5 backend; those pages appear disabled with a short hint until it exists.
 
 **Increments** (each with unit tests, §11.4; the menu model, settings and actions are tested without Bevy or with `MinimalPlugins` + `ConsoleCorePlugin`)
 
 | # | Increment | Phase | Size | Tests |
 |---|---|---|---|---|
-| M1 | Input contexts, menu shell (Resume, Restart, Quit), Esc / Start, focus navigation for keyboard, mouse and gamepad, ten-foot theme; single-player pause (protocol message, local server, flat trainer grade, FIT timer events) | 3 (now) | M | navigation model (focus moves, wrap, page stack, Back at the top closes); key / button → action mapping; ride inputs ignored in `Menu`; Esc closes the console first; server: paused session does not advance riders, resume continues, remote rejects pause; FIT timer events; trainer gets grade 0 while paused; headless app opens the menu and selects Resume; X11 + Wayland smoke screenshot of the menu |
-| M2 | Settings registry, `settings.toml`, `set` / `get` commands; Settings pages Controls (options), Trainer, Strava, Display, Profile (name, weight via the join message, FTP, units) | 3 (now) | L | registry validation and ranges, TOML round-trip, precedence (file < autoexec < CLI, temp values not saved), unknown keys kept; each page item → expected command line; weight reaches the server's physics profile |
+| M1 | Input contexts, menu shell (Resume, Restart, Quit), Esc / Start, focus navigation for keyboard, mouse and gamepad, ten-foot theme; the ride continues under the menu (autodrive and default exits while it is open) | 3 (now) | M | navigation model (focus moves, wrap, page stack, Back at the top closes); key / button → action mapping; ride inputs ignored in `Menu`; Esc closes the console first and never quits; steering falls back to autodrive while the menu is open and is restored after; ride time, trainer and recording unaffected; headless app opens the menu and selects Resume; X11 + Wayland smoke screenshot of the menu |
+| M2 | Settings registry, `settings.toml`, `set` / `get` commands; Settings pages Controls (options), Trainer, Strava, Display, Riders (profiles: name, weight via the join message and SIM mass, FTP, units), rider choice in the Workshop | 3 (now) | L | registry validation and ranges, TOML round-trip, precedence (file < autoexec < CLI, temp values not saved), unknown keys kept; each page item → expected command line; weight reaches the server's physics profile |
 | M3 | Ride → World mode picker (installed packages, free ride / package routes / test routes, bots) via the restart path; Navi → Routes list, Rides list with Strava state and FIT export, Strava sync page | 3 (end) | M | package discovery on a fixture directory, `[ride]` choice → command line of the restarted process, ride list from fixture FIT + sidecar + `strava-sync.toml` |
 | M4 | Navi → GPX import with map-matching report; GPX export of rides | 3 (with §2.7) | M | GPX fixtures through import → route; problem sections listed; GPX export round-trip |
 | M5 | Game audio and Settings → Audio (mix, output device) | with game audio (see §3.3) | M | bus volume maths (master × bus), device selection fallback to the default device when the saved one is missing, settings round-trip |
@@ -570,12 +570,7 @@ One menu, reachable during a ride and (later) as the start screen, replaces comm
 
 **Open questions**
 
-1. Pause on a smart trainer: flat road (grade 0) as proposed, very low resistance (ERG/resistance minimum), or no change? And should pausing in single-player stop the FIT recording's timer (proposed) or keep recording?
-2. Should the menu pause single-player rides at all by default, or only on request (a *Pause* entry), so that changing a setting mid-climb keeps the ride going?
-3. Esc as the menu key: fine with the console on `` ` `` / F12, but Esc currently does nothing – is it acceptable that Esc in a kiosk never quits the app (only *Quit* does)?
-4. Starting another ride via restart (fast to build, a few seconds' reload) vs. an in-app session switch from the start?
-5. Events before the Phase 5 backend: are local "events" (scheduled bot races on the local server) wanted, or do Events wait for the backend?
-6. Profile weight: send it to the server now (protocol field, affects physics and SIM mass for Wahoo trainers), or keep 75 kg until accounts exist?
+Decided (v2.2): no pause (trainer unchanged, ride time and recording continue); Esc never quits; rider weight affects physics, riders managed in Settings and chosen in the Workshop. Still open: switching rides by restart vs. in-app session switch (M3), and local Events before the backend (M7).
 
 ### 3.3 Audio
 
