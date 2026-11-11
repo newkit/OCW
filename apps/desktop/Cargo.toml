@@ -26,6 +26,11 @@ winit.workspace = true
 serde.workspace = true
 toml.workspace = true
 dirs.workspace = true
+ocw-fit.workspace = true
+tracing.workspace = true
+serde_json.workspace = true
+# Strava uploads (MIT OR Apache-2.0; rustls, no OpenSSL).
+ureq.workspace = true
 
 [lints]
 workspace = true

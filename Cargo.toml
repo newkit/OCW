@@ -12,6 +12,7 @@ members = [
     "crates/ocw-world",
     "crates/ocw-render",
     "crates/ocw-worldgen",
+    "crates/ocw-fit",
 ]
 
 [workspace.package]
@@ -28,6 +29,7 @@ ocw-protocol = { path = "crates/ocw-protocol" }
 ocw-devices = { path = "crates/ocw-devices" }
 ocw-world = { path = "crates/ocw-world" }
 ocw-worldgen = { path = "crates/ocw-worldgen" }
+ocw-fit = { path = "crates/ocw-fit" }
 ocw-render = { path = "crates/ocw-render" }
 ocw-server = { path = "services/server" }
 
@@ -44,6 +46,8 @@ uuid = "1.29.2"
 serde = { version = "1", features = ["derive"] }
 toml = "1"
 dirs = "6"
+serde_json = "1"
+ureq = "3"
 
 prost = "0.14"
 prost-build = "0.14"

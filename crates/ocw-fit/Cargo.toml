@@ -1,0 +1,18 @@
+[package]
+name = "ocw-fit"
+description = "FIT activity file writer for Open Cycling World ride export (spec §2.8)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# No dependencies: pure, also builds for wasm32-unknown-unknown (web companion).
+[dependencies]
+
+[dev-dependencies]
+# Independent FIT reader for the round-trip test (spec §14 Phase 2). MIT.
+fitparser = "0.10"
+
+[lints]
+workspace = true

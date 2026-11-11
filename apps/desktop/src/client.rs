@@ -424,6 +424,9 @@ impl ClientCore {
     pub fn cadence_rpm(&self) -> Option<f64> {
         self.cadence_rpm
     }
+    pub fn heart_rate_bpm(&self) -> Option<f64> {
+        self.heart_rate_bpm
+    }
     pub fn prediction_error(&self) -> f64 {
         self.predictor.last_error()
     }

@@ -15,6 +15,8 @@ mod input;
 mod known_devices;
 mod monitor;
 mod platform;
+mod recording;
+mod strava;
 mod trainer;
 
 use std::path::PathBuf;
@@ -81,6 +83,10 @@ pub struct Args {
     /// on, except for --screenshot / --capture runs (reproducible).
     #[arg(long, value_name = "BOOL", action = clap::ArgAction::Set)]
     pub random_start: Option<bool>,
+    /// Record the ride and save it as a FIT file on exit (spec §2.8).
+    /// Default: on, except for --screenshot / --capture runs.
+    #[arg(long, value_name = "BOOL", action = clap::ArgAction::Set)]
+    pub record: Option<bool>,
     /// Run a console command once the ride has lasted SECONDS (session
     /// time), e.g. `--at "4=rider.lean 15"` (repeatable; for scripted rides).
     #[arg(long = "at", value_name = "SECONDS=COMMAND", value_parser = parse_timed)]
@@ -136,7 +142,8 @@ fn load_route_file(path: &std::path::Path) -> (Route, Option<ocw_world::Elevatio
         eprintln!("{}: {e}", path.display());
         std::process::exit(1);
     })
-    .with_surfaces(file.surfaces.clone());
+    .with_surfaces(file.surfaces.clone())
+    .with_geo_origin(file.origin);
     (route, file.grid)
 }
 
@@ -206,6 +213,10 @@ fn main() -> AppExit {
         platform::PlatformPlugin,
         monitor::MonitorPlugin,
         icon::IconPlugin,
+    ))
+    .add_plugins((
+        recording::RecordingPlugin::default(),
+        strava::StravaPlugin::default(),
     ))
     .add_systems(Startup, startup_commands)
     .add_systems(Update, timed_commands);
