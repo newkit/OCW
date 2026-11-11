@@ -17,6 +17,7 @@ mod icon;
 mod input;
 mod known_devices;
 mod logfile;
+mod menu;
 mod monitor;
 mod platform;
 mod recording;
@@ -480,6 +481,7 @@ fn main() -> AppExit {
         restart::RestartPlugin,
         video::VideoPlugin,
         worlds::WorldsPlugin,
+        menu::MenuPlugin,
     ))
     .add_systems(Startup, startup_commands)
     .add_systems(Update, timed_commands);

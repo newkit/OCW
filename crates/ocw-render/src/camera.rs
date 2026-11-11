@@ -24,7 +24,7 @@ use bevy::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::console::ConsoleState;
+use crate::menu::InputContext;
 use crate::riders::avatar_transform;
 use crate::{RideView, world};
 
@@ -358,17 +358,17 @@ impl CameraOrbit {
     }
 }
 
-/// Mouse orbit (left button drag), zoom (wheel) and reset (`C`), unless
-/// the console is open.
+/// Mouse orbit (left button drag), zoom (wheel) and reset (`C`), only in
+/// the ride's input context (not while the menu or the console is open).
 fn orbit_input(
     buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
     motion: Res<AccumulatedMouseMotion>,
     scroll: Res<AccumulatedMouseScroll>,
-    console: Option<Res<ConsoleState>>,
+    context: Option<Res<InputContext>>,
     mut orbit: ResMut<CameraOrbit>,
 ) {
-    if console.is_some_and(|c| c.is_open()) {
+    if !crate::menu::ride_input(context) {
         return;
     }
     if keys.just_pressed(KeyCode::KeyC) {
@@ -779,6 +779,41 @@ mod tests {
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
             .press(KeyCode::KeyC);
+        app.update();
+        assert_eq!(
+            *app.world().resource::<CameraOrbit>(),
+            CameraOrbit::default()
+        );
+    }
+
+    #[test]
+    fn the_mouse_and_c_do_not_move_the_camera_while_the_menu_is_open() {
+        let mut app = App::new();
+        let orbit = CameraOrbit {
+            yaw: 2.0,
+            pitch: 1.0,
+            distance: 30.0,
+        };
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<ButtonInput<MouseButton>>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .insert_resource(AccumulatedMouseMotion {
+                delta: Vec2::new(40.0, 10.0),
+            })
+            .init_resource::<AccumulatedMouseScroll>()
+            .insert_resource(InputContext::Menu)
+            .insert_resource(orbit)
+            .add_systems(Update, orbit_input);
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Left);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyC);
+        app.update();
+        assert_eq!(*app.world().resource::<CameraOrbit>(), orbit);
+        // Back in the ride: C resets.
+        *app.world_mut().resource_mut::<InputContext>() = InputContext::Ride;
         app.update();
         assert_eq!(
             *app.world().resource::<CameraOrbit>(),

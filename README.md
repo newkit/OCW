@@ -43,6 +43,7 @@ ffmpeg` (`make deps-macos` prints both commands); the app also finds it in
 
 | Action | Keyboard | Gamepad |
 |---|---|---|
+| Menu (Resume, Ride, Workshop, Navi, Settings, Restart, Quit) | Esc | Start / Menu (☰, Options) |
 | Faster: +25 W per press, more while held | ↑ | D-pad up, left stick up or right trigger (RT / R2) |
 | Stop: no power, brake | ↓ | D-pad down, left stick down or left trigger (LT / L2) |
 | Steer (autodrive: move the line; manual: lean into a curve) | ← / → | left stick (left/right) |
@@ -58,6 +59,20 @@ ffmpeg` (`make deps-macos` prints both commands); the app also finds it in
 | Record a video (start / stop) | V | |
 | Next screen | F11 | |
 | Console (`help` lists the commands) | `` ` `` or F12 | |
+
+**Menu** (spec §3.2.1): ↑ / ↓ (or Tab / Shift+Tab, the D-pad, the left
+stick; held: repeats) move the focus, Enter / Space / South (A / ✕) or a click
+selects, Esc / Backspace / East (B / ○) or a right click goes back and closes
+the menu at the top page; Start closes it from any page. Esc closes the
+console first if it is open and never quits the app: only *Quit* in the menu
+(with a confirmation), the window's close button and the console's `quit` do.
+The ride does not pause under the menu: the trainer keeps its mode, the ride
+time, the recording and a video go on, and the ride keys (↑ ↓ ← →, A, W, U,
+R, V, …, the mouse camera) are ignored while it is open. Steering falls back
+to autodrive and junctions take their default exit, so the rider stays on
+the road; closing the menu restores manual steering / wild mode. In M1 the
+Ride, Workshop, Navi and Settings pages say what is coming (Settings already
+toggles the FPS counter).
 
 In manual steering, the keys ramp the lean and it stays when released (press
 the other way to straighten up); the stick sets the lean directly, centred is
@@ -303,6 +318,7 @@ for now).
 | `screenshot [PATH]` | Save a screenshot of the window (default `screenshot.png`) |
 | `reset` | Start everything again as at program start (key R); the ride is saved first |
 | `video [start\|stop\|toggle]` | Record the window as an MP4 (key V; needs `ffmpeg`) |
+| `menu [open\|close\|toggle\|up\|down\|select\|back]` | Open, close or drive the in-game menu (Esc / Start) |
 | `quit` | Exit the app |
 | **Rider** | |
 | `rider.autodrive on\|off` | Autodrive (key A) |

@@ -25,7 +25,7 @@ use bevy::render::render_resource::TextureFormat;
 use bevy::render::view::screenshot::{Capturing, Screenshot, ScreenshotCaptured};
 use clap::{Arg, Command};
 use ocw_render::RideView;
-use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
+use ocw_render::console::{ConsoleAppExt, ConsoleCommand, Permission};
 
 /// Frames per second of the videos.
 pub const VIDEO_FPS: f64 = 25.0;
@@ -48,7 +48,10 @@ pub struct VideoPlugin;
 impl Plugin for VideoPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<VideoRecorder>()
-            .add_systems(Update, (video_key, show_in_hud).chain())
+            .add_systems(
+                Update,
+                (video_key.run_if(ocw_render::menu::ride_input), show_in_hud).chain(),
+            )
             // After Update, so screenshots asked for there (console
             // `screenshot`, `--screenshot`) are seen and get the frame.
             .add_systems(PostUpdate, capture)
@@ -535,13 +538,8 @@ fn finish(writer: JoinHandle<std::io::Result<()>>, path: &Path) {
     }
 }
 
-fn video_key(
-    keys: Res<ButtonInput<KeyCode>>,
-    console: Res<ConsoleState>,
-    time: Res<Time>,
-    mut rec: ResMut<VideoRecorder>,
-) {
-    if console.is_open() || !keys.just_pressed(KeyCode::KeyV) {
+fn video_key(keys: Res<ButtonInput<KeyCode>>, time: Res<Time>, mut rec: ResMut<VideoRecorder>) {
+    if !keys.just_pressed(KeyCode::KeyV) {
         return;
     }
     if rec.is_recording() {
