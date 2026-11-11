@@ -174,6 +174,7 @@ mod tests {
                 display_name: "Local".into(),
                 profile: None,
                 world: None,
+                rider_weight_kg: None,
             }))))
             .unwrap();
         let mut welcomed = false;
@@ -203,6 +204,7 @@ mod tests {
             display_name: "Cap".into(),
             profile: None,
             world: None,
+            rider_weight_kg: None,
         }))));
         let welcome = s.drain();
         assert_eq!(welcome.len(), 1);

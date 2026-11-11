@@ -15,6 +15,7 @@ pub mod prediction;
 pub mod ride;
 pub mod session;
 pub mod trainer;
+pub mod workout;
 
 pub use freeride::TurnChoice;
 pub use interpolation::SnapshotBuffer;

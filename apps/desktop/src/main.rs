@@ -2,7 +2,8 @@
 //!
 //! Wires the pieces together (spec §6.1):
 //! - a device backend (Phase 1: the virtual trainer) on its own thread,
-//! - the in-process local server on its own thread at 50 Hz,
+//! - the in-process local server on its own thread at 50 Hz (or a remote
+//!   server over QUIC with `--server`),
 //! - client-side prediction of the local rider and interpolation of others,
 //! - the Bevy renderer from `ocw-render`.
 
@@ -22,16 +23,18 @@ mod monitor;
 mod platform;
 mod recording;
 mod restart;
+mod settings;
 mod strava;
 mod trainer;
 mod video;
+mod workout;
 mod worlds;
 
 use std::path::PathBuf;
 
 use bevy::prelude::*;
 use bevy::window::{MonitorSelection, PresentMode, WindowMode, WindowResolution};
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches, Parser};
 use ocw_core::SIM_TICK_HZ;
 use ocw_render::console::{ConsoleState, Permission};
 use ocw_render::hud::VersionLabel;
@@ -64,7 +67,7 @@ impl Args {
     args_override_self = true
 )]
 pub struct Args {
-    /// Display name of the local rider.
+    /// Display name of the local rider (default: the rider profile's).
     #[arg(long, default_value = "Rider")]
     pub name: String,
     /// Initial power of the virtual trainer in watts.
@@ -73,6 +76,19 @@ pub struct Args {
     /// Number of test riders on the local server.
     #[arg(long, default_value_t = 10)]
     pub bots: u32,
+    /// Ride on a remote game server (`ocw-server --listen`) over QUIC
+    /// instead of the in-process local server: HOST[:PORT] (default port
+    /// 47800). Ride the same course as the server (--route / --world).
+    #[arg(long, value_name = "ADDR", conflicts_with = "capture")]
+    pub server: Option<String>,
+    /// SHA-256 fingerprint of the server's certificate (ocw-server prints
+    /// it at start); the connection is refused if it does not match.
+    #[arg(long, value_name = "SHA256", requires = "server")]
+    pub server_cert: Option<String>,
+    /// Development only: accept any server certificate. Refused unless the
+    /// server is on this machine (127.0.0.1 / ::1).
+    #[arg(long, requires = "server", conflicts_with = "server_cert")]
+    pub insecure_dev: bool,
     /// Window size as WIDTHxHEIGHT.
     #[arg(long, default_value = "1280x720", value_parser = parse_size)]
     pub window: (u32, u32),
@@ -141,12 +157,29 @@ pub struct Args {
     /// for --screenshot / --capture runs; see --random-start).
     #[arg(long, value_name = "X,Z", value_parser = parse_xz, allow_hyphen_values = true)]
     pub start: Option<(f64, f64)>,
+    /// Structured workout to ride in ERG mode (spec §2.8): a `.toml`
+    /// workout, or an imported `.erg` / `.mrc` file. Loaded and started at
+    /// once; the workout clock starts when you pedal.
+    #[arg(long, value_name = "FILE")]
+    pub workout: Option<PathBuf>,
+    /// Functional threshold power in watts, for workout targets in % FTP.
+    #[arg(long, default_value_t = 200.0, value_parser = parse_ftp)]
+    pub ftp: f64,
     /// Use the virtual trainer even if Bluetooth devices are remembered.
     #[arg(long = "virtual")]
     pub virtual_trainer: bool,
     /// File with remembered devices (default: ~/.config/ocw/devices.toml).
     #[arg(long, value_name = "PATH")]
     pub devices_file: Option<PathBuf>,
+    /// Settings file (default: ~/.config/ocw/settings.toml); the rider
+    /// profiles are read from riders.toml next to it. Command-line options
+    /// override its values for the session.
+    #[arg(long, value_name = "PATH")]
+    pub settings_file: Option<PathBuf>,
+    /// Ride as this rider profile (riders.toml) for this session, instead
+    /// of the one chosen in the Workshop.
+    #[arg(long, value_name = "NAME")]
+    pub rider: Option<String>,
     /// Console commands to run at startup (in addition to autoexec.cfg).
     #[arg(long = "exec", value_name = "FILE")]
     pub exec: Vec<PathBuf>,
@@ -197,6 +230,14 @@ fn parse_size(s: &str) -> Result<(u32, u32), String> {
         w.parse().map_err(|_| "bad width")?,
         h.parse().map_err(|_| "bad height")?,
     ))
+}
+
+fn parse_ftp(s: &str) -> Result<f64, String> {
+    match s.trim().parse::<f64>() {
+        Ok(w) if (50.0..=600.0).contains(&w) => Ok(w),
+        Ok(w) => Err(format!("{w} W: expected 50–600 W")),
+        Err(e) => Err(format!("{s}: {e}")),
+    }
 }
 
 fn parse_xz(s: &str) -> Result<(f64, f64), String> {
@@ -392,7 +433,14 @@ fn main() -> AppExit {
     if let Some(msg) = &defaults {
         eprintln!("{msg}");
     }
-    let args = Args::parse_from(argv);
+    let matches = Args::command().get_matches_from(argv);
+    let mut args = Args::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
+    // settings.toml and riders.toml (spec §3.2.1): before anything reads
+    // the options they fill in.
+    let loaded = settings::load(&mut args, &matches);
+    for w in &loaded.warnings {
+        eprintln!("settings: {w}");
+    }
     worlds::handle_cli(&args);
     // Desktop entry and icons for menus, docks and file managers (not for
     // the headless screenshot / capture runs).
@@ -421,6 +469,9 @@ fn main() -> AppExit {
         ),
     };
     let mut app = App::new();
+    app.insert_resource(loaded.settings)
+        .insert_resource(loaded.riders)
+        .insert_resource(settings::LoadWarnings(loaded.warnings));
     if let Some(spec) = &args.world {
         let loaded = worlds::load(&args, spec);
         app.insert_resource(worlds::WorldInfo::of(spec, &loaded));
@@ -466,6 +517,7 @@ fn main() -> AppExit {
     .insert_resource(VersionLabel(build_id().to_string()))
     .add_systems(Startup, || info!("Open Cycling World {}", build_id()))
     .add_plugins(OcwRenderPlugins)
+    .add_plugins(settings::SettingsPlugin)
     .add_plugins((
         connection::ConnectionPlugin { route },
         devices::DevicesPlugin,
@@ -482,6 +534,7 @@ fn main() -> AppExit {
         video::VideoPlugin,
         worlds::WorldsPlugin,
         menu::MenuPlugin,
+        workout::WorkoutPlugin,
     ))
     .add_systems(Startup, startup_commands)
     .add_systems(Update, timed_commands);
@@ -554,10 +607,25 @@ fn timed_commands(
     }
 }
 
-/// Enables dev commands (local server) and queues autoexec / --exec / --cmd.
-fn startup_commands(args: Res<Args>, mut console: ResMut<ConsoleState>) {
-    // Phase 1 always rides on the in-process local server.
-    console.permission = Permission::Dev;
+/// Enables dev commands (local server) and queues the settings' commands,
+/// autoexec / --exec / --cmd (in this order: later ones win).
+fn startup_commands(
+    args: Res<Args>,
+    settings: Option<Res<settings::UserSettings>>,
+    mut console: ResMut<ConsoleState>,
+) {
+    // Dev commands only on the in-process local server (spec §2.9); a
+    // remote server refuses them anyway.
+    console.permission = if args.server.is_some() {
+        Permission::User
+    } else {
+        Permission::Dev
+    };
+    if let Some(s) = settings {
+        for line in s.settings.startup_commands() {
+            console.queue(line);
+        }
+    }
     // Relative to the working directory, which is `/` for an app started
     // from Finder: the macOS app bundle does not read one.
     if std::path::Path::new("autoexec.cfg").exists() {
@@ -574,6 +642,37 @@ fn startup_commands(args: Res<Args>, mut console: ResMut<ConsoleState>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remote_server_options() {
+        let a = Args::parse_from(["ocw-desktop"]);
+        assert_eq!(a.server, None);
+        let a = Args::parse_from([
+            "ocw-desktop",
+            "--server",
+            "127.0.0.1:5000",
+            "--insecure-dev",
+        ]);
+        assert_eq!(a.server.as_deref(), Some("127.0.0.1:5000"));
+        assert!(a.insecure_dev);
+        // Trust options need --server; a pin and --insecure-dev exclude
+        // each other; capture runs stay local (stepped server).
+        for bad in [
+            &["ocw-desktop", "--insecure-dev"][..],
+            &["ocw-desktop", "--server-cert", "ab"],
+            &[
+                "ocw-desktop",
+                "--server",
+                "h",
+                "--server-cert",
+                "ab",
+                "--insecure-dev",
+            ],
+            &["ocw-desktop", "--server", "h", "--capture", "dir"],
+        ] {
+            assert!(Args::try_parse_from(bad).is_err(), "{bad:?}");
+        }
+    }
 
     #[test]
     fn ten_bots_by_default() {
@@ -602,6 +701,18 @@ mod tests {
             Args::try_parse_from(["ocw-desktop", "--allow-unsigned", "--require-signed"]).is_err()
         );
         assert!(parse_xz("1;2").is_err());
+    }
+
+    #[test]
+    fn workout_arguments() {
+        let a = Args::parse_from(["ocw-desktop"]);
+        assert_eq!((a.ftp, a.workout.clone()), (200.0, None));
+        assert_eq!(workout::ftp_w(&a), 200.0);
+        let a = Args::parse_from(["ocw-desktop", "--workout", "w.erg", "--ftp", "265"]);
+        assert_eq!(a.workout, Some(PathBuf::from("w.erg")));
+        assert_eq!(workout::ftp_w(&a), 265.0);
+        assert!(Args::try_parse_from(["ocw-desktop", "--ftp", "5"]).is_err());
+        assert!(Args::try_parse_from(["ocw-desktop", "--ftp", "lots"]).is_err());
     }
 
     #[test]
@@ -649,7 +760,7 @@ mod tests {
                 "--route-file",
                 "r.route",
                 "--name",
-                "Nils",
+                "Alex",
                 "--virtual",
                 "--cmd",
                 "teleport 3.3",
@@ -658,7 +769,7 @@ mod tests {
             ]),
         ));
         // Single values: the command line wins; flags may repeat.
-        assert_eq!(a.name, "Nils");
+        assert_eq!(a.name, "Alex");
         assert_eq!(a.world.as_deref(), Some("/var/tmp/ocw/w.ocwpkg"));
         assert_eq!(a.route_file, Some(PathBuf::from("r.route")));
         assert!(a.virtual_trainer);

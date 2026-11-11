@@ -1,0 +1,26 @@
+# Example workout in the OCW format (spec §2.8; README "Workouts").
+name = "Sweet spot 3 × 10"
+description = "Three 10-minute blocks at 90 % FTP with 5 minutes easy between them."
+units = "ftp"   # bare numbers in power fields are % FTP ("watts": absolute)
+
+[[steps]]
+type = "ramp"
+duration = "10:00"
+from = 50
+to = 75
+text = "Easy spin, get the legs going"
+
+[[steps]]
+type = "intervals"
+repeat = 3
+on = { duration = "10:00", power = 90, cadence = 90, text = "Sweet spot: steady and smooth" }
+off = { duration = "5:00", power = "150W", text = "Recover" }
+
+[[steps]]
+type = "free"
+duration = "5:00"
+text = "Cool down as you like"
+
+[[cues]]
+at = "12:00"
+text = "Settle in: 8 minutes to go in this block"

@@ -19,13 +19,18 @@ pub struct KnownDevices {
     pub devices: Vec<KnownDevice>,
 }
 
-/// Default location; `OCW_CONFIG_DIR` overrides the directory.
+/// The app's config directory (`~/.config/ocw` on Linux);
+/// `OCW_CONFIG_DIR` overrides it. Settings and rider profiles live here too.
+pub fn config_dir() -> Option<PathBuf> {
+    match std::env::var_os("OCW_CONFIG_DIR") {
+        Some(d) => Some(PathBuf::from(d)),
+        None => Some(dirs::config_dir()?.join("ocw")),
+    }
+}
+
+/// Default location of the devices file.
 pub fn default_path() -> Option<PathBuf> {
-    let dir = match std::env::var_os("OCW_CONFIG_DIR") {
-        Some(d) => PathBuf::from(d),
-        None => dirs::config_dir()?.join("ocw"),
-    };
-    Some(dir.join("devices.toml"))
+    Some(config_dir()?.join("devices.toml"))
 }
 
 /// The devices file to use: `--devices-file` if it exists, else the default.

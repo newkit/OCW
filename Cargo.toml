@@ -57,6 +57,16 @@ sha2 = { version = "0.10", default-features = false, features = ["std"] }
 # OS randomness for key generation in the world builder only (MIT OR Apache-2.0).
 getrandom = "0.3"
 
+# QUIC game transport (spec §6.2), only in ocw-server: quinn (MIT OR
+# Apache-2.0) on rustls (Apache-2.0 OR ISC OR MIT) with the *ring* crypto
+# provider (Apache-2.0 AND ISC; already used by ureq's rustls), so no
+# aws-lc-rs / CMake toolchain; rcgen (MIT OR Apache-2.0) for the dev
+# certificate; bytes (MIT) for datagrams.
+quinn = { version = "0.11.9", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }
+bytes = "1"
+
 prost = "0.14"
 prost-build = "0.14"
 protox = "0.10"
