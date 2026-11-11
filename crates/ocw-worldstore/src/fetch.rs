@@ -95,7 +95,7 @@ pub struct FileTransport;
 impl Transport for FileTransport {
     fn get(&self, url: &str, from: u64) -> Result<Response, String> {
         use std::io::Seek;
-        let path = url.strip_prefix("file://").unwrap_or(url);
+        let path = file_url_path(url);
         let mut f = std::fs::File::open(path).map_err(|e| format!("{path}: {e}"))?;
         if from > 0 {
             f.seek(std::io::SeekFrom::Start(from))
@@ -107,6 +107,19 @@ impl Transport for FileTransport {
             body: Box::new(f),
         })
     }
+}
+
+/// The local path of a `file://` URL or plain path. On Windows,
+/// `file:///C:/w/manifest.json` names `C:/w/manifest.json` (no leading `/`).
+fn file_url_path(url: &str) -> &str {
+    let path = url.strip_prefix("file://").unwrap_or(url);
+    #[cfg(windows)]
+    if let Some(rest) = path.strip_prefix('/')
+        && rest.as_bytes().get(1) == Some(&b':')
+    {
+        return rest;
+    }
+    path
 }
 
 /// HTTP(S) for `http://` and `https://`, else local files.
@@ -141,7 +154,17 @@ pub struct Fetched {
 
 /// URL of `file` next to the manifest at `manifest_url`.
 pub fn sibling_url(manifest_url: &str, file: &str) -> String {
-    match manifest_url.rfind('/') {
+    // Windows paths (`C:\w\manifest.json`) also separate with `\`; on Unix
+    // a backslash is an ordinary file name character.
+    #[cfg(windows)]
+    let sep = if manifest_url.contains("://") && !manifest_url.starts_with("file://") {
+        manifest_url.rfind('/')
+    } else {
+        manifest_url.rfind(['/', '\\'])
+    };
+    #[cfg(not(windows))]
+    let sep = manifest_url.rfind('/');
+    match sep {
         Some(i) => format!("{}{file}", &manifest_url[..=i]),
         None => file.to_string(),
     }
@@ -483,6 +506,24 @@ mod tests {
         );
         assert_eq!(sibling_url("manifest.json", "a"), "a");
         assert_eq!(sibling_url("/srv/w/manifest.json", "a"), "/srv/w/a");
+        // Regression (Windows): a local path with backslashes resolved the
+        // package relative to the working directory.
+        #[cfg(windows)]
+        {
+            assert_eq!(sibling_url(r"C:\w\3\manifest.json", "a"), r"C:\w\3\a");
+            assert_eq!(
+                sibling_url(r"file://C:\w\manifest.json", "a"),
+                r"file://C:\w\a"
+            );
+            assert_eq!(
+                sibling_url(r"https://h/w\x/m.json", "a"),
+                r"https://h/w\x/a"
+            );
+            assert_eq!(file_url_path("file:///C:/w/m.json"), "C:/w/m.json");
+        }
+        #[cfg(not(windows))]
+        assert_eq!(sibling_url(r"/srv/w\x/manifest.json", "a"), r"/srv/w\x/a");
+        assert_eq!(file_url_path("file:///srv/w/m.json"), "/srv/w/m.json");
         assert_eq!(parse_content_range_start("bytes 100-199/200"), Some(100));
         assert_eq!(parse_content_range_start("bytes */200"), None);
     }
