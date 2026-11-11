@@ -609,6 +609,15 @@ One menu, reachable during a ride and (later) as the start screen, replaces comm
 | M8 | Voice settings (microphone, push-to-talk, open mic, per-participant mute) | 6 | S | device selection and push-to-talk state (§14 Phase 6) |
 | M9 | Rebinding of keys and buttons, accessibility (text size, colour-blind safe HUD) | 7 | M | binding conflicts, persistence, defaults restore |
 
+**M1 implemented:** Esc / Start opens the menu over the running ride: Resume, Ride, Workshop, Navi, Settings, Restart, Quit; Ride, Workshop, Navi and Settings are placeholder pages that say what their increment brings (Settings already toggles the FPS counter). Restart and Quit ask first, with *Cancel* focused, and run the console commands `reset` / `quit`; the console command `menu open|close|toggle|up|down|select|back` drives the menu from scripts and `--cmd`. Code: the Bevy-free model (`apps/desktop/src/menu/model.rs`: pages, page stack, focus with wrap-around), the key / button → action mapping with hold repeat (`menu/controls.rs`), the drawing of a `MenuView` in `ocw-render::menu` (text sizes in % of the window height). Deviations from the plan above:
+
+- No Bevy state `UiMode`: one resource `InputContext { Ride, Menu, Console }` (console over menu over ride) is decided once per frame in `PreUpdate`, and the ride's input systems (power, steering, A / W / U / J / Q / E, R, V, F11, the mouse camera and C) run only in `Ride` (`run_if(ride_input)`); a key that closes the menu is therefore not also seen by the ride in that frame. The console keeps its own open flag.
+- Steering while the menu is open (`ClientCore::hold_steering` / `release_steering`, so server and prediction agree): wild mode off, autodrive on – from manual steering at the rider's current lateral position (no swerve), an autodrive line stays where it was; the next junction's choice is reset to its default exit and not restored on closing. Closing restores manual steering upright (the lean is not carried over) and wild mode; autodrive keeps its line. The HUD shows "autodrive (menu)".
+- The mouse hover moves the focus only while the mouse moves (rows of a new page appearing under a resting pointer do not take the focus); right click = Back.
+- ← / → and tab switching (Q / E, PgUp / PgDn, LB / RB) have no rows or tabs to act on yet: ← / → are mapped to actions the model ignores, tabs come with the first tabbed page (M2).
+- The status strip shows power, speed and the device / trainer / steering status line; the Strava sync state joins it with the Navi pages (M3).
+- Smoke screenshots of the open menu are taken on Wayland (1280×720 and 800×600); the build machines with a GPU have no X11 server.
+
 **Open questions**
 
 Decided (v2.2): no pause (trainer unchanged, ride time and recording continue); Esc never quits; rider weight affects physics, riders managed in Settings and chosen in the Workshop. Still open: switching rides by restart vs. in-app session switch (M3), and local Events before the backend (M7).
@@ -985,7 +994,7 @@ The trainer and sensors are always connected to the client only. The server neve
 
 **The server computes:** rider state, position, speed, drafting, race state, rankings, group membership and events. It then distributes updated states to the participants.
 
-**Start point and test riders (v1.9):** a session starts all riders together at a configured distance (`ServerConfig::start_m`); the desktop app picks a random point by default (on a route that ends, at least 1 km before the end; off for screenshot and capture runs, which must be reproducible). Server-side test riders (bots) ride at different strengths (85–250 W) so they spread out, push harder uphill (at least the power for 10 km/h on the current gradient, so easy bots do not crawl) and steer with autodrive.
+**Start point and test riders (v1.9):** a session starts all riders together at a configured distance (`ServerConfig::start_m`); the desktop app picks a random point by default (on a route that ends, at least 1 km before the end; off for screenshot and capture runs, which must be reproducible). Riders start in a formation: rows of up to three across the lane, 1.2 m apart and always 0.3 m inside the lateral limit (fewer per row on narrow roads), rows 3 m apart behind the start point; the front row's centre is kept for the client rider (bots fill the other places in order, so the formation is deterministic). The formation never starts before the road begins: on a route it is moved forward until its last row is at 0 m, in free ride every rider's path starts at their place on the start edge (moved forward if the edge behind is too short). Server-side test riders (bots, 10 by default) ride at twelve different strengths (85–280 W, easy and strong interleaved) so a field spreads out, push harder uphill (at least the power for 10 km/h on the current gradient, so easy bots do not crawl) and steer with autodrive.
 
 ### 6.2 Network Protocol
 

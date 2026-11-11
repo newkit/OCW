@@ -43,6 +43,7 @@ ffmpeg` (`make deps-macos` prints both commands); the app also finds it in
 
 | Action | Keyboard | Gamepad |
 |---|---|---|
+| Menu (Resume, Ride, Workshop, Navi, Settings, Restart, Quit) | Esc | Start / Menu (☰, Options) |
 | Faster: +25 W per press, more while held | ↑ | D-pad up, left stick up or right trigger (RT / R2) |
 | Stop: no power, brake | ↓ | D-pad down, left stick down or left trigger (LT / L2) |
 | Steer (autodrive: move the line; manual: lean into a curve) | ← / → | left stick (left/right) |
@@ -58,6 +59,20 @@ ffmpeg` (`make deps-macos` prints both commands); the app also finds it in
 | Record a video (start / stop) | V | |
 | Next screen | F11 | |
 | Console (`help` lists the commands) | `` ` `` or F12 | |
+
+**Menu** (spec §3.2.1): ↑ / ↓ (or Tab / Shift+Tab, the D-pad, the left
+stick; held: repeats) move the focus, Enter / Space / South (A / ✕) or a click
+selects, Esc / Backspace / East (B / ○) or a right click goes back and closes
+the menu at the top page; Start closes it from any page. Esc closes the
+console first if it is open and never quits the app: only *Quit* in the menu
+(with a confirmation), the window's close button and the console's `quit` do.
+The ride does not pause under the menu: the trainer keeps its mode, the ride
+time, the recording and a video go on, and the ride keys (↑ ↓ ← →, A, W, U,
+R, V, …, the mouse camera) are ignored while it is open. Steering falls back
+to autodrive and junctions take their default exit, so the rider stays on
+the road; closing the menu restores manual steering / wild mode. In M1 the
+Ride, Workshop, Navi and Settings pages say what is coming (Settings already
+toggles the FPS counter).
 
 In manual steering, the keys ramp the lean and it stays when released (press
 the other way to straighten up); the stick sets the lean directly, centred is
@@ -211,8 +226,10 @@ Downloads go to the cache (`~/.local/share/ocw/worlds/<id>/<version>/`,
 large download, interrupted downloads resume (HTTP range requests), and a
 package is installed only when all its files match the manifest.
 - Everyone (bots too) starts at a random point of the route
-  (`--random-start false` starts at 0). Bots ride at 85–250 W and push harder
-  uphill.
+  (`--random-start false` starts at 0), in rows of up to three behind you
+  (you start in the front row's centre). Ten bots by default (`--bots N`),
+  at twelve different strengths (85–280 W) so the field spreads out; they
+  push harder uphill.
 
 **Trainer and sensors**
 
@@ -267,7 +284,7 @@ records with a fixed time step instead). Needs `ffmpeg` (`make deps` installs it
 |---|---|
 | `--name NAME` | Display name of your rider (default `Rider`) |
 | `--power W` | Initial power of the virtual trainer (default 200) |
-| `--bots N` | Number of test riders (default 4) |
+| `--bots N` | Number of test riders (default 10; they start in rows of up to three behind you) |
 | `--route hills\|loop` | Built-in test route (default `hills`) |
 | `--route NAME\|FILE` (with `--world`) | Ride a route of the package by name, or an `ocw-graph-route` file, on the road graph |
 | `--route-gpx PATH` | Ride a GPX track or route, matched onto the `--world` package's roads at the start |
@@ -313,6 +330,7 @@ for now).
 | `screenshot [PATH]` | Save a screenshot of the window (default `screenshot.png`) |
 | `reset` | Start everything again as at program start (key R); the ride is saved first |
 | `video [start\|stop\|toggle]` | Record the window as an MP4 (key V; needs `ffmpeg`) |
+| `menu [open\|close\|toggle\|up\|down\|select\|back]` | Open, close or drive the in-game menu (Esc / Start) |
 | `quit` | Exit the app |
 | **Rider** | |
 | `rider.autodrive on\|off` | Autodrive (key A) |
@@ -375,7 +393,7 @@ cargo run --release -p ocw-server -- --world data/pilot/liechtenstein.ocwpkg \
 ```
 
 It prints the riders' positions and speeds while it runs. Options:
-`--bots N` (test riders, default 3), `--seconds S` (0 = until stopped with
+`--bots N` (test riders, default 10), `--seconds S` (0 = until stopped with
 Ctrl+C), `--fast` (no real-time pacing), `--world PKG|ID` and `--seed N` (free
 ride on a world package's road graph, start point seed; verified like in the
 desktop app, `--allow-unsigned` and `--trust-root FILE` as there), `--route NAME`
@@ -506,7 +524,19 @@ scripts/deploy-test.sh <name>                                  # release build f
   build needs ~4–5 GB; the others wait and take whichever slot frees first.
   Set `slots = N` per machine in `config/machines.toml` (or `[defaults]`), or
   `OCW_REMOTE_SLOTS=N` for one call. Branch checkouts use 4 build jobs
-  (`OCW_REMOTE_JOBS`).
+  (`OCW_REMOTE_JOBS`); `jobs = N` per machine caps them on main and branch
+  checkouts.
+- Windows (measured on 6 cores / 8 GB): the first `cargo build --workspace`
+  takes about 50 min, `cargo clippy --workspace --all-targets` 10 min, `cargo
+  test --workspace` 5 min on top. Each MSVC link of a Bevy binary (debug
+  info) needs ~5 GB, so 3 jobs ran out of memory (`LLVM ERROR: out of
+  memory`): set `jobs = 2` for an 8 GB machine. Commands run in PowerShell
+  5.1: chain with `;` (not `&&`), and leave out `2>&1` (it turns cargo's
+  stderr into error records); filter output locally instead
+  (`remote.sh … run 'cargo test --workspace' 2>&1 | grep …`). The exit code
+  is that of the last native program. GUI programs cannot open windows over
+  SSH (session 0); GUI runs need the scheduled-task approach (`display =
+  "interactive-task"`, not set up yet).
 - `python3 tools/build-dashboard/dashboard.py` shows each machine's load, its
   running tasks, the queue of runs waiting for a slot and the slots in use
   (every run leaves a task marker while it runs); on
@@ -546,6 +576,7 @@ to *Public* are the usual causes; the server log is in Event Viewer under
 | `scripts/remote.sh MACHINE run 'CMD'` | Copy the tree to a build machine (`config/machines.toml`) and run a command there |
 | `python3 tools/build-dashboard/dashboard.py` | Web page (port 8765) with the build machines' load and their running/queued tasks; `--once` prints it as text |
 | `scripts/deploy-test.sh MACHINE` | Release build on a test machine, deployed for its kiosk |
+| `scripts/collect-test-output.sh [CHECKOUT...]` | Merge screenshots and videos from agent worktrees (`.claude/worktrees/*`) into `test-output/` and its build history `test-output/index.md` |
 | `scripts/ocw-kiosk.sh install\|run\|status` | Keep the test app running on a machine's screen, restarted on each deploy |
 | `scripts/build-appimage.sh` | Linux AppImage (needs `appimagetool`: `make deps-appimage`, part of `make deps-linux`) |
 | `scripts/build-macos-app.sh` | macOS app bundle, DMG and zip, ad-hoc signed (`make macos-app`, on a Mac) |
