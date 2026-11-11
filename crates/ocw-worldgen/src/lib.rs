@@ -1,7 +1,8 @@
 //! OSM and elevation import for world packages (spec §4). Used by the
 //! `world-builder` tool on the build machines, never by the client.
 //!
-//! - [`osm`]: OSM data in memory, PBF reading
+//! - [`osm`]: OSM data in memory, PBF reading, OSM XML for fixtures
+//! - [`diff`]: which stable edge IDs survive a rebuild (route re-matching)
 //! - [`filter`]: rideable ways and road classes
 //! - [`projection`]: local metric projection
 //! - [`build`]: ways → road graph with stable edge IDs, cleanup, dead ends
@@ -15,6 +16,7 @@
 pub mod build;
 pub mod chains;
 pub mod dem;
+pub mod diff;
 pub mod filter;
 pub mod osm;
 pub mod package;

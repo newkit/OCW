@@ -28,9 +28,16 @@ struct Args {
     #[arg(long)]
     fast: bool,
     /// Free ride on the road graph of this world package (version 2,
-    /// from `world-builder package`) instead of the test loop.
-    #[arg(long, value_name = "PATH")]
-    world: Option<PathBuf>,
+    /// from `world-builder package`; a path or a cache id) instead of the
+    /// test loop. Verified on load (spec §4.7).
+    #[arg(long, value_name = "PATH|ID")]
+    world: Option<String>,
+    /// Accept cached world packages that are not signed by a trusted key.
+    #[arg(long)]
+    allow_unsigned: bool,
+    /// Also trust this root public key file (repeatable).
+    #[arg(long, value_name = "FILE")]
+    trust_root: Vec<PathBuf>,
     /// Seed of the free-ride start point.
     #[arg(long, default_value_t = 1)]
     seed: u64,
@@ -40,21 +47,35 @@ struct Args {
     route: Option<String>,
 }
 
-/// Free ride on a world package's road graph, from a seeded random start,
-/// or along one of its routes.
-fn free_ride(path: &std::path::Path, seed: u64, route: Option<&str>) -> Course {
+/// Free ride on a world package's road graph (a path or a cached id, its
+/// signature checked), from a seeded random start, or along one of its routes.
+fn free_ride(args: &Args, spec: &str) -> Course {
     let fail = |e: String| -> ! {
-        eprintln!("{}: {e}", path.display());
+        eprintln!("{spec}: {e}");
         std::process::exit(1);
     };
-    let bytes = std::fs::read(path).unwrap_or_else(|e| fail(e.to_string()));
-    let pkg = ocw_world::WorldPackage::from_bytes(&bytes).unwrap_or_else(|e| fail(e));
+    let trust = ocw_worldstore::trust::TrustConfig {
+        root_files: args.trust_root.clone(),
+        ..ocw_worldstore::trust::TrustConfig::for_build()
+    }
+    .trust_store()
+    .unwrap_or_else(|e| fail(e));
+    let opts = ocw_worldstore::LoadOptions {
+        allow_unsigned: args.allow_unsigned,
+        ..ocw_worldstore::LoadOptions::new(
+            trust,
+            ocw_worldstore::WorldCache::new(ocw_worldstore::WorldCache::default_root()),
+        )
+    };
+    let world = ocw_worldstore::load_world(spec, &opts).unwrap_or_else(|e| fail(e.to_string()));
+    tracing::info!(world = %world.describe(), "world package");
+    let pkg = world.package;
     let graph = pkg
         .graph
         .clone()
         .unwrap_or_else(|| fail("no road graph (rebuild it with world-builder package)".into()));
     let net = Arc::new(RoadNetwork::new(graph).with_package_name(pkg.name.clone()));
-    if let Some(name) = route {
+    if let Some(name) = args.route.as_deref() {
         let stored = pkg.route(name).unwrap_or_else(|| {
             let names: Vec<&str> = pkg.routes.iter().map(|r| r.name.as_str()).collect();
             fail(format!(
@@ -71,7 +92,7 @@ fn free_ride(path: &std::path::Path, seed: u64, route: Option<&str>) -> Course {
         };
     }
     let (edge, offset_m, forward) = net
-        .random_start(seed)
+        .random_start(args.seed)
         .unwrap_or_else(|| fail("empty road graph".into()));
     Course::FreeRide {
         net,
@@ -91,7 +112,7 @@ fn main() {
         .init();
     let args = Args::parse();
     let course = match &args.world {
-        Some(path) => free_ride(path, args.seed, args.route.as_deref()),
+        Some(spec) => free_ride(&args, spec),
         None => Course::Route(Route::test_loop()),
     };
     match &course {

@@ -29,7 +29,8 @@
 //!
 //! Tile `(x, z)` covers local metres `[x·size, (x+1)·size] × [z·size, (z+1)·size]`;
 //! the grid includes both borders, so neighbouring tiles share their edge
-//! samples (no cracks). Signing (§4.7) comes with the distribution step.
+//! samples (no cracks). The manifest with hashes and signatures (§4.7)
+//! travels next to the package: see [`crate::manifest`].
 
 use std::collections::BTreeMap;
 

@@ -6,7 +6,13 @@
 //! world-builder gpx --world PKG --gpx FILE [--name NAME] [--route-file FILE]   # GPX → package route
 //! world-builder routes --world PKG [--from OLD_PKG] [--remove NAME] [--export-gpx]
 //! world-builder route --world PKG --from LAT,LON --to LAT,LON --name NAME
+//! world-builder package [--id europe/liechtenstein] [--sign-key KEY]
+//! world-builder keys init-root --name "OCW root"     (once, then keep root.key offline)
+//! world-builder keys new-signing --name "builds 2026" [--days 365]
+//! world-builder sign --key KEY PKG | verify PKG | publish PKG --out DIR | diff OLD NEW
 //! ```
+
+mod dist;
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -70,7 +76,53 @@ enum Cmd {
         margin_tiles: i32,
         #[arg(long, default_value = "data/pilot/liechtenstein.ocwpkg")]
         out: PathBuf,
+        #[command(flatten)]
+        manifest: ManifestOpts,
+        /// Sign the manifest with this signing key (from `keys new-signing`);
+        /// without it the manifest is written unsigned.
+        #[arg(long, value_name = "KEY")]
+        sign_key: Option<PathBuf>,
     },
+    /// Key management (spec §4.7): an offline root key signs online
+    /// signing keys; signing keys sign package manifests.
+    Keys {
+        #[command(subcommand)]
+        command: KeysCmd,
+    },
+    /// Write the package's manifest (`PKG.manifest.json`: id, version,
+    /// attribution, SHA-256 of the file and its tile chunks) and sign it.
+    Sign {
+        package: PathBuf,
+        /// Signing key file (from `keys new-signing`).
+        #[arg(long, value_name = "KEY")]
+        key: PathBuf,
+        #[command(flatten)]
+        manifest: ManifestOpts,
+    },
+    /// Check a package against its manifest and the signature chain;
+    /// exits 1 unless intact and signed by a trusted root.
+    Verify {
+        package: PathBuf,
+        /// Also trust this root public key file (repeatable).
+        #[arg(long, value_name = "FILE")]
+        trust_root: Vec<PathBuf>,
+        /// Do not trust the development roots.
+        #[arg(long)]
+        no_dev_root: bool,
+        /// Accept intact but unsigned / untrusted packages (exit 0).
+        #[arg(long)]
+        allow_unsigned: bool,
+    },
+    /// Copy a package and its manifest into DIR/<id>/<version>/, the
+    /// layout clients download from (`ocw-desktop --fetch-world URL`).
+    Publish {
+        package: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Compare the road graphs of two builds by stable edge ID (which
+    /// roads and routes re-match after a rebuild, spec §4.4).
+    Diff { old: PathBuf, new: PathBuf },
     /// Validate a world package: where does the terrain show through roads?
     Check {
         #[arg(long, default_value = "data/pilot/liechtenstein.ocwpkg")]
@@ -390,6 +442,57 @@ fn package_route(world: PathBuf, from: (f64, f64), to: (f64, f64), name: String)
     println!("package: {} ({} routes)", world.display(), pkg.routes.len());
 }
 
+#[derive(clap::Args)]
+struct ManifestOpts {
+    /// Package id, e.g. europe/liechtenstein (default: from the existing
+    /// manifest, else from the name).
+    #[arg(long)]
+    id: Option<String>,
+    /// Build number (default: the existing manifest's, +1 if the package changed).
+    #[arg(long = "pkg-version", value_name = "N")]
+    version: Option<u64>,
+    /// Attribution notice of the elevation data (default: SRTM).
+    #[arg(long, value_name = "TEXT")]
+    dem_attribution: Option<String>,
+}
+
+#[derive(Subcommand)]
+enum KeysCmd {
+    /// Create the root key pair (DIR/root.key, DIR/root.pub.json).
+    InitRoot {
+        #[arg(long)]
+        name: String,
+        /// Key directory (default: $OCW_KEY_DIR or ~/.config/ocw/keys).
+        #[arg(long)]
+        dir: Option<PathBuf>,
+    },
+    /// Create a signing key certified by the root key.
+    NewSigning {
+        #[arg(long)]
+        name: String,
+        /// Root secret key (default: <key dir>/root.key).
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Validity in days.
+        #[arg(long, default_value_t = 365)]
+        days: u32,
+        /// Output file (default: next to the root key, <name>.key).
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+}
+
+impl ManifestOpts {
+    fn args(&self, name: Option<String>) -> dist::ManifestArgs {
+        dist::ManifestArgs {
+            id: self.id.clone(),
+            name,
+            version: self.version,
+            dem_attribution: self.dem_attribution.clone(),
+        }
+    }
+}
+
 fn parse_xz(s: &str) -> Result<(f64, f64), String> {
     let (a, b) = s.split_once(',').ok_or("expected x,z")?;
     Ok((
@@ -705,7 +808,49 @@ fn main() {
             samples,
             margin_tiles,
             out,
-        } => package(pbf, poly, hgt, name, samples, margin_tiles, out),
+            manifest,
+            sign_key,
+        } => {
+            // Read the key first: a bad key should not cost a whole build.
+            let key = sign_key.map(|k| {
+                ocw_worldstore::keys::read_signing_key(&k).unwrap_or_else(|e| {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                })
+            });
+            package(
+                pbf,
+                poly,
+                hgt,
+                name.clone(),
+                samples,
+                margin_tiles,
+                out.clone(),
+            );
+            dist::write_manifest(&out, &manifest.args(Some(name)), key.as_ref());
+        }
+        Cmd::Keys { command } => match command {
+            KeysCmd::InitRoot { name, dir } => dist::keys_init_root(&name, dir),
+            KeysCmd::NewSigning {
+                name,
+                root,
+                days,
+                out,
+            } => dist::keys_new_signing(root, &name, days, out),
+        },
+        Cmd::Sign {
+            package,
+            key,
+            manifest,
+        } => dist::sign(&package, &key, &manifest.args(None)),
+        Cmd::Verify {
+            package,
+            trust_root,
+            no_dev_root,
+            allow_unsigned,
+        } => dist::verify(&package, trust_root, !no_dev_root, allow_unsigned),
+        Cmd::Publish { package, out } => dist::publish(&package, &out),
+        Cmd::Diff { old, new } => dist::diff(&old, &new),
         Cmd::Gpx {
             world,
             gpx: file,

@@ -11,6 +11,7 @@ pub mod geo;
 pub mod gpx;
 pub mod graph;
 pub mod graph_route;
+pub mod manifest;
 pub mod matching;
 pub mod network;
 pub mod package;
@@ -22,6 +23,7 @@ mod terrain;
 pub mod track;
 
 pub use graph_route::{GraphRoute, RouteBreak, RoutePlan, RouteStep};
+pub use manifest::{Manifest, PackageIdentity, SignedManifest, TrustStore};
 pub use network::{Exit, Junction, RoadNetwork, TurnClass};
 pub use package::{RoadStrip, Tile, TileKey, WorldPackage};
 pub use path::{RidePath, RouteProgress, RouteState, Segment, TurnReason};
