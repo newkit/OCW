@@ -22,7 +22,7 @@ VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 
 .DEFAULT_GOAL := help
 .PHONY: help deps deps-linux deps-linux-packages deps-windows deps-macos deps-rust build release test lint fmt fmt-check \
-	clippy wasm check run server screenshot screenshot-wayland smoke video video-wayland clean clean-test-output
+	clippy wasm check run server screenshot screenshot-wayland smoke video video-wayland deploy-test clean clean-test-output
 
 help: ## Show this help
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | \
@@ -112,6 +112,9 @@ video: ## Record a smooth 6 s test ride (X11, frame capture); writes $(VIDEO)
 
 video-wayland: ## Same on Wayland (weston); writes $(VIDEO_WAYLAND)
 	.claude/skills/run-ocw/drive.sh video-wayland $(VIDEO_WAYLAND)
+
+deploy-test: ## Build on MACHINE (default marge) and deploy for its kiosk (scripts/ocw-kiosk.sh)
+	scripts/deploy-test.sh $(or $(MACHINE),marge)
 
 clean: ## Remove build artefacts
 	$(CARGO) clean

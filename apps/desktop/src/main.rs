@@ -12,6 +12,7 @@ mod connection;
 mod devices;
 mod input;
 mod known_devices;
+mod monitor;
 mod platform;
 mod trainer;
 
@@ -49,6 +50,10 @@ pub struct Args {
     /// Borderless fullscreen on the current monitor (ignores --window).
     #[arg(long)]
     pub fullscreen: bool,
+    /// Borderless fullscreen on this monitor: index (0, 1, ...), resolution
+    /// (2560x1600) or name substring (HDMI). Detected monitors are logged.
+    #[arg(long, value_name = "MONITOR")]
+    pub monitor: Option<String>,
     /// Test route: hills (steep, changing gradients) or loop (gentle).
     #[arg(long, value_enum, default_value_t = RouteChoice::Hills)]
     pub route: RouteChoice,
@@ -126,6 +131,7 @@ fn main() -> AppExit {
         input::InputPlugin,
         automation::AutomationPlugin,
         platform::PlatformPlugin,
+        monitor::MonitorPlugin,
     ))
     .add_systems(Startup, startup_commands);
     app.run()

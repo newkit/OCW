@@ -27,6 +27,8 @@ To run and screenshot the desktop app headlessly (software Vulkan), use the `run
 
 Build/test/benchmark machines (Windows, macOS, Linux with a real GPU) are described in `config/machines.toml`, a git-ignored copy of `config/machines.example.toml`; SSH keys and `known_hosts` live in the git-ignored `config/ssh/`. Connect with `ssh -i config/ssh/<identity_file> -o IdentitiesOnly=yes -o UserKnownHostsFile=config/ssh/known_hosts <user>@<host>`. Never print, copy or commit their contents (host names, keys) outside these files. Setup steps: `config/README.md`.
 
+Test build on marge's screen: `scripts/deploy-test.sh marge` (or `make deploy-test`) installs a release build to `/var/tmp/ocw`; the kiosk (`scripts/ocw-kiosk.sh`, running in the desktop user's session) restarts the app on each deployment. Deploy after user-visible changes so the user can try them.
+
 **All building and testing runs on the remote machine `marge`** (Linux, AMD GPU, Bluetooth), not locally: `scripts/remote.sh marge run 'cargo test --workspace'` copies the working tree there and runs the command. Long builds: run in the background.
 
 ## Code map

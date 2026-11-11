@@ -64,6 +64,31 @@ scripts/remote.sh marge fetch test-output ./from-marge  # copy results back
 files such as `target/`) to `repo_path` and runs the command with
 `~/.cargo/env` loaded.
 
+## Test app on a machine's screen (kiosk)
+
+A test machine can show the current build permanently on one of its
+screens, restarting it whenever a new build is deployed:
+
+```bash
+scripts/deploy-test.sh marge        # build there, install to /var/tmp/ocw (atomic)
+make deploy-test MACHINE=marge      # the same
+```
+
+Once, as the user of the machine's desktop session (in a terminal on that
+desktop, not over SSH):
+
+```bash
+/var/tmp/ocw/ocw-kiosk.sh install --monitor 2560x1600   # or an index (0, 1) or a name (HDMI)
+/var/tmp/ocw/ocw-kiosk.sh status                        # build, autostart, recent log
+/var/tmp/ocw/ocw-kiosk.sh uninstall
+```
+
+`install` adds an XDG autostart entry and starts the kiosk now. The kiosk
+restarts the app on every deployment and after crashes; logs are in
+`~/.local/state/ocw/` (`kiosk.log`, `app.log`). The detected monitors are
+listed as `monitor` lines in `app.log`. `scripts/test-kiosk.sh` tests the
+kiosk logic with a fake app.
+
 ## Per-OS prerequisites on the machines
 
 - **Linux:** run `make deps-linux` in a checkout (Debian/Ubuntu packages via
