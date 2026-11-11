@@ -323,7 +323,7 @@ struct TileStreamer {
 
 fn rider_tile(view: &RideView, pkg: &WorldPackage) -> Option<TileKey> {
     let local = view.local()?;
-    let p = view.route.sample(local.state.distance).position;
+    let p = view.track(local.id).sample(local.state.distance).position;
     Some(TileKey::containing(
         [p[0], p[2]],
         f64::from(pkg.tile_size_m),
@@ -452,6 +452,7 @@ mod tests {
             tile_size_m: 100.0,
             samples: n as u32,
             tiles: BTreeMap::from([(key, tile)]),
+            graph: None,
         }
     }
 

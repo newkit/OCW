@@ -191,6 +191,7 @@ mod tests {
             bridge: false,
             tunnel: false,
             dead_end_m: dead.then_some(100.0),
+            oneway: ocw_world::graph::Oneway::No,
             boundary,
             osm_way: 1,
             profile: Vec::new(),

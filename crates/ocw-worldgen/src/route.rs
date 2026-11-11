@@ -86,6 +86,7 @@ mod tests {
             bridge: false,
             tunnel: false,
             dead_end_m: None,
+            oneway: ocw_world::graph::Oneway::No,
             boundary: false,
             osm_way: 1,
             profile,

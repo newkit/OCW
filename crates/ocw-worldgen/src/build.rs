@@ -256,6 +256,7 @@ pub fn raw_graph(osm: &OsmData, region: &Region) -> (RoadGraph, BuildStats) {
                         tunnel: w.tag("tunnel").is_some_and(|v| v != "no"),
                         dead_end_m: None,
                         boundary,
+                        oneway: crate::filter::oneway(w),
                         osm_way: w.id,
                         profile: Vec::new(),
                     });

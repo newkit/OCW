@@ -338,6 +338,18 @@ fn package(
         bytes.len() as f64 / 1e6,
         t.elapsed().as_secs_f64()
     );
+    let adj = graph.adjacency();
+    println!(
+        "road graph (format OCWPKG02): {} vertices, {} junctions, {} one-way edges, {} dead-end edges",
+        graph.vertices.len(),
+        adj.iter().filter(|a| a.len() > 2).count(),
+        graph
+            .edges
+            .iter()
+            .filter(|e| e.oneway != ocw_world::graph::Oneway::No)
+            .count(),
+        stats.dead_end_edges
+    );
     println!("package: {}", out.display());
 }
 

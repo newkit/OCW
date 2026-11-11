@@ -13,15 +13,34 @@
 //!     class: u8   width: f32   point count: u32   points: [f32; 3] (x, y, z)
 //! ```
 //!
+//! Version 2 (`OCWPKG02`) is version 1 followed by tagged sections, which
+//! readers skip when they do not know the tag (so later sections can be
+//! added without a new version):
+//!
+//! ```text
+//! section count: u32, then per section:
+//!   tag: [u8; 4]   payload length: u64   payload
+//! ```
+//!
+//! Sections: `GRPH` – the road graph (spec §4.4, §4.7) for free ride and
+//! junction steering (§2.2.1), see [`write_graph`]. A package without a
+//! graph is written as version 1, byte for byte as before.
+//!
 //! Tile `(x, z)` covers local metres `[x·size, (x+1)·size] × [z·size, (z+1)·size]`;
 //! the grid includes both borders, so neighbouring tiles share their edge
 //! samples (no cracks). Signing (§4.7) comes with the distribution step.
 
 use std::collections::BTreeMap;
 
-use crate::graph::RoadClass;
+use crate::graph::{Edge, EdgeId, Oneway, RoadClass, RoadGraph, VertexId};
 
 pub const MAGIC: &[u8; 8] = b"OCWPKG01";
+/// Version 2: version 1 plus tagged sections (the road graph).
+pub const MAGIC_V2: &[u8; 8] = b"OCWPKG02";
+/// Section tag of the road graph.
+pub const GRAPH_TAG: &[u8; 4] = b"GRPH";
+/// Layout version inside the graph section.
+const GRAPH_VERSION: u32 = 1;
 
 /// Index of a tile in the package grid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -74,6 +93,8 @@ pub struct WorldPackage {
     /// Grid samples per tile side (including both borders).
     pub samples: u32,
     pub tiles: BTreeMap<TileKey, Tile>,
+    /// The road graph (version 2 packages; `None` in version 1).
+    pub graph: Option<RoadGraph>,
 }
 
 impl WorldPackage {
@@ -174,7 +195,11 @@ impl WorldPackage {
 
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut b = Vec::new();
-        b.extend_from_slice(MAGIC);
+        b.extend_from_slice(if self.graph.is_some() {
+            MAGIC_V2
+        } else {
+            MAGIC
+        });
         b.extend((self.name.len() as u32).to_le_bytes());
         b.extend(self.name.as_bytes());
         b.extend(self.origin.0.to_le_bytes());
@@ -200,14 +225,30 @@ impl WorldPackage {
                 }
             }
         }
+        if let Some(graph) = &self.graph {
+            b.extend(1u32.to_le_bytes());
+            let mut payload = Vec::new();
+            write_graph(graph, &mut payload);
+            b.extend_from_slice(GRAPH_TAG);
+            b.extend((payload.len() as u64).to_le_bytes());
+            b.extend(payload);
+        }
         b
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
         let mut r = Bytes { b: bytes, pos: 0 };
-        if r.take(8)? != MAGIC {
-            return Err("not an OCW world package (OCWPKG01)".into());
-        }
+        let version = match r.take(8)? {
+            m if m == MAGIC => 1,
+            m if m == MAGIC_V2 => 2,
+            m if m.starts_with(b"OCWPKG") => {
+                return Err(format!(
+                    "world package version {} is not supported (this build reads 01 and 02); please update",
+                    String::from_utf8_lossy(&m[6..])
+                ));
+            }
+            _ => return Err("not an OCW world package (OCWPKG01/02)".into()),
+        };
         let name_len = r.u32()? as usize;
         let name = String::from_utf8(r.take(name_len)?.to_vec()).map_err(|e| e.to_string())?;
         let origin = (r.f64()?, r.f64()?);
@@ -249,8 +290,21 @@ impl WorldPackage {
                 },
             );
         }
+        let mut graph = None;
+        if version >= 2 {
+            let sections = r.u32()?;
+            for _ in 0..sections {
+                let tag: [u8; 4] = r.arr()?;
+                let len = usize::try_from(r.u64()?).map_err(|_| "section too large")?;
+                let payload = r.take(len)?;
+                if &tag == GRAPH_TAG {
+                    graph = Some(read_graph(payload)?);
+                }
+                // Unknown sections (from newer builders) are skipped.
+            }
+        }
         if r.pos != bytes.len() {
-            return Err("trailing bytes after the last tile".into());
+            return Err("trailing bytes after the last tile or section".into());
         }
         Ok(Self {
             name,
@@ -258,8 +312,179 @@ impl WorldPackage {
             tile_size_m,
             samples,
             tiles,
+            graph,
         })
     }
+}
+
+const FLAG_BRIDGE: u8 = 1;
+const FLAG_TUNNEL: u8 = 2;
+const FLAG_BOUNDARY: u8 = 4;
+const FLAG_DEAD_END: u8 = 8;
+const FLAG_NAME: u8 = 16;
+
+/// Writes the graph section payload:
+///
+/// ```text
+/// layout version: u32 (1)
+/// vertex count: u32, vertices: [f64; 2] (x, z)
+/// boundary vertex count: u32, vertex indices: u32
+/// edge count: u32, then per edge:
+///   stable id: u64   from, to: u32 u32   class: u8
+///   oneway: u8 (0 no, 1 forward, 2 backward)
+///   flags: u8 (1 bridge, 2 tunnel, 4 boundary, 8 dead end, 16 name)
+///   width: f32   [dead-end distance: f64]   OSM way: i64
+///   [name: u16 length + UTF-8]
+///   point count: u32, points: [f64; 2]   profile count: u32, heights: f32
+/// ```
+pub fn write_graph(g: &RoadGraph, b: &mut Vec<u8>) {
+    b.extend(GRAPH_VERSION.to_le_bytes());
+    b.extend((g.vertices.len() as u32).to_le_bytes());
+    for v in &g.vertices {
+        b.extend(v[0].to_le_bytes());
+        b.extend(v[1].to_le_bytes());
+    }
+    b.extend((g.boundary_vertices.len() as u32).to_le_bytes());
+    for v in &g.boundary_vertices {
+        b.extend(v.0.to_le_bytes());
+    }
+    b.extend((g.edges.len() as u32).to_le_bytes());
+    for e in &g.edges {
+        b.extend(e.id.0.to_le_bytes());
+        b.extend(e.from.0.to_le_bytes());
+        b.extend(e.to.0.to_le_bytes());
+        b.push(class_code(e.class));
+        b.push(match e.oneway {
+            Oneway::No => 0,
+            Oneway::Forward => 1,
+            Oneway::Backward => 2,
+        });
+        // Names are short; a pathological one is cut at a char boundary.
+        let name = e.name.as_deref().map(|n| {
+            let mut end = n.len().min(usize::from(u16::MAX));
+            while !n.is_char_boundary(end) {
+                end -= 1;
+            }
+            &n.as_bytes()[..end]
+        });
+        let mut flags = 0;
+        for (on, flag) in [
+            (e.bridge, FLAG_BRIDGE),
+            (e.tunnel, FLAG_TUNNEL),
+            (e.boundary, FLAG_BOUNDARY),
+            (e.dead_end_m.is_some(), FLAG_DEAD_END),
+            (name.is_some(), FLAG_NAME),
+        ] {
+            if on {
+                flags |= flag;
+            }
+        }
+        b.push(flags);
+        b.extend((e.width_m as f32).to_le_bytes());
+        if let Some(d) = e.dead_end_m {
+            b.extend(d.to_le_bytes());
+        }
+        b.extend(e.osm_way.to_le_bytes());
+        if let Some(n) = name {
+            b.extend((n.len() as u16).to_le_bytes());
+            b.extend(n);
+        }
+        b.extend((e.points.len() as u32).to_le_bytes());
+        for p in &e.points {
+            b.extend(p[0].to_le_bytes());
+            b.extend(p[1].to_le_bytes());
+        }
+        b.extend((e.profile.len() as u32).to_le_bytes());
+        for h in &e.profile {
+            b.extend((*h as f32).to_le_bytes());
+        }
+    }
+}
+
+/// Reads a graph section payload written by [`write_graph`].
+pub fn read_graph(bytes: &[u8]) -> Result<RoadGraph, String> {
+    let mut r = Bytes { b: bytes, pos: 0 };
+    let version = r.u32()?;
+    if version != GRAPH_VERSION {
+        return Err(format!("road graph layout {version} is not supported"));
+    }
+    let n = r.u32()? as usize;
+    let vertices = (0..n)
+        .map(|_| Ok([r.f64()?, r.f64()?]))
+        .collect::<Result<Vec<_>, String>>()?;
+    let mut boundary_vertices = std::collections::BTreeSet::new();
+    for _ in 0..r.u32()? {
+        let v = r.u32()?;
+        if v as usize >= n {
+            return Err(format!("boundary vertex {v} out of range"));
+        }
+        boundary_vertices.insert(VertexId(v));
+    }
+    let ne = r.u32()?;
+    let mut edges = Vec::with_capacity(ne.min(1 << 20) as usize);
+    for _ in 0..ne {
+        let id = EdgeId(r.u64()?);
+        let (from, to) = (r.u32()?, r.u32()?);
+        if from as usize >= n || to as usize >= n {
+            return Err(format!("edge {} has a vertex out of range", id.0));
+        }
+        let class = class_from(r.u8()?)?;
+        let oneway = match r.u8()? {
+            0 => Oneway::No,
+            1 => Oneway::Forward,
+            2 => Oneway::Backward,
+            x => return Err(format!("unknown oneway code {x}")),
+        };
+        let flags = r.u8()?;
+        let width_m = f64::from(r.f32()?);
+        let dead_end_m = if flags & FLAG_DEAD_END != 0 {
+            Some(r.f64()?)
+        } else {
+            None
+        };
+        let osm_way = r.i64()?;
+        let name = if flags & FLAG_NAME != 0 {
+            let len = usize::from(u16::from_le_bytes(r.arr()?));
+            Some(String::from_utf8(r.take(len)?.to_vec()).map_err(|e| e.to_string())?)
+        } else {
+            None
+        };
+        let np = r.u32()?;
+        let points = (0..np)
+            .map(|_| Ok([r.f64()?, r.f64()?]))
+            .collect::<Result<Vec<_>, String>>()?;
+        if points.len() < 2 {
+            return Err(format!("edge {} has fewer than two points", id.0));
+        }
+        let nh = r.u32()?;
+        let profile = (0..nh)
+            .map(|_| r.f32().map(f64::from))
+            .collect::<Result<Vec<_>, String>>()?;
+        edges.push(Edge {
+            id,
+            from: VertexId(from),
+            to: VertexId(to),
+            points,
+            class,
+            name,
+            width_m,
+            bridge: flags & FLAG_BRIDGE != 0,
+            tunnel: flags & FLAG_TUNNEL != 0,
+            dead_end_m,
+            boundary: flags & FLAG_BOUNDARY != 0,
+            oneway,
+            osm_way,
+            profile,
+        });
+    }
+    if r.pos != bytes.len() {
+        return Err("trailing bytes in the road graph section".into());
+    }
+    Ok(RoadGraph {
+        vertices,
+        edges,
+        boundary_vertices,
+    })
 }
 
 const CLASSES: [RoadClass; 10] = [
@@ -321,6 +546,12 @@ impl<'a> Bytes<'a> {
     fn f64(&mut self) -> Result<f64, String> {
         Ok(f64::from_le_bytes(self.arr()?))
     }
+    fn u64(&mut self) -> Result<u64, String> {
+        Ok(u64::from_le_bytes(self.arr()?))
+    }
+    fn i64(&mut self) -> Result<i64, String> {
+        Ok(i64::from_le_bytes(self.arr()?))
+    }
 }
 
 #[cfg(test)]
@@ -353,7 +584,99 @@ mod tests {
             tile_size_m: 1000.0,
             samples: 3,
             tiles,
+            graph: None,
         }
+    }
+
+    /// A small graph with every kind of attribute (heights exact in f32).
+    pub(crate) fn graph() -> RoadGraph {
+        let edge = |id: u64, from: u32, to: u32| Edge {
+            id: EdgeId(id),
+            from: VertexId(from),
+            to: VertexId(to),
+            points: vec![[0.5, -1.25], [100.125, 7.0], [200.0, 0.0]],
+            class: RoadClass::Tertiary,
+            name: None,
+            width_m: 6.0,
+            bridge: false,
+            tunnel: false,
+            dead_end_m: None,
+            boundary: false,
+            oneway: Oneway::No,
+            osm_way: 42,
+            profile: vec![450.5, 451.25, 452.0],
+        };
+        RoadGraph {
+            vertices: vec![[0.5, -1.25], [200.0, 0.0], [300.0, 50.0]],
+            edges: vec![
+                edge(u64::MAX - 1, 0, 1),
+                Edge {
+                    name: Some("Landstrasse".into()),
+                    class: RoadClass::Primary,
+                    bridge: true,
+                    oneway: Oneway::Backward,
+                    ..edge(7, 1, 2)
+                },
+                Edge {
+                    dead_end_m: Some(812.5),
+                    boundary: true,
+                    tunnel: true,
+                    oneway: Oneway::Forward,
+                    name: Some("Größe".into()),
+                    profile: Vec::new(),
+                    ..edge(8, 2, 0)
+                },
+            ],
+            boundary_vertices: [VertexId(2)].into_iter().collect(),
+        }
+    }
+
+    #[test]
+    fn version_2_carries_the_road_graph() {
+        let p = WorldPackage {
+            graph: Some(graph()),
+            ..package()
+        };
+        let bytes = p.to_bytes();
+        assert_eq!(&bytes[..8], MAGIC_V2);
+        assert_eq!(WorldPackage::from_bytes(&bytes).unwrap(), p);
+        // Without a graph it stays version 1, byte for byte the old format,
+        // and version 2 has the same layout up to the sections.
+        let v1 = package().to_bytes();
+        assert_eq!(&v1[..8], MAGIC);
+        assert_eq!(WorldPackage::from_bytes(&v1).unwrap().graph, None);
+        assert_eq!(&bytes[8..v1.len()], &v1[8..]);
+        // Truncated graph sections and bad references are rejected.
+        assert!(WorldPackage::from_bytes(&bytes[..bytes.len() - 3]).is_err());
+        let mut bad = graph();
+        bad.edges[0].to = VertexId(99);
+        let mut b = Vec::new();
+        write_graph(&bad, &mut b);
+        assert!(read_graph(&b).unwrap_err().contains("out of range"));
+        // A newer version is reported as such.
+        let mut v3 = bytes.clone();
+        v3[7] = b'3';
+        assert!(
+            WorldPackage::from_bytes(&v3)
+                .unwrap_err()
+                .contains("please update")
+        );
+    }
+
+    #[test]
+    fn unknown_sections_are_skipped() {
+        let p = WorldPackage {
+            graph: Some(graph()),
+            ..package()
+        };
+        let mut b = p.to_bytes();
+        // Patch the section count to 2 and append an unknown section.
+        let count_at = package().to_bytes().len();
+        b[count_at..count_at + 4].copy_from_slice(&2u32.to_le_bytes());
+        b.extend_from_slice(b"XTRA");
+        b.extend(3u64.to_le_bytes());
+        b.extend([1, 2, 3]);
+        assert_eq!(WorldPackage::from_bytes(&b).unwrap(), p);
     }
 
     #[test]
