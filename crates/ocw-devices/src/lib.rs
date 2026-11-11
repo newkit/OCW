@@ -6,6 +6,7 @@
 //! the user, e.g. via the console command `sim.power`). The Bluetooth (FTMS)
 //! backend follows in Phase 2; ANT+ is deferred.
 
+pub mod gatt;
 mod virtual_trainer;
 
 use std::sync::mpsc::{Receiver, Sender};
