@@ -407,6 +407,34 @@ allow scripts permanently for your user instead:
 `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned`, and
 `Unblock-File .\setup-windows-buildserver.ps1` for a downloaded script.
 
+Then, still **as Administrator**, install the build toolchain. Rust on
+Windows links with Microsoft's linker, so the **Visual Studio Build Tools**
+with the C++ workload (MSVC compiler and linker, Windows SDK) are required;
+they are installed system-wide, which the non-admin build user cannot do
+itself, and `winget` is usually not available to that user either:
+
+```powershell
+winget install --id Microsoft.VisualStudio.2022.BuildTools -e `
+  --override "--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+```
+
+(Several GB; or use the installer *Build Tools for Visual Studio* from
+visualstudio.microsoft.com and select **Desktop development with C++**.)
+Git and make are optional: `remote.sh` copies the tree with `tar`, which
+Windows has built in.
+
+Rust itself is installed **as the build user** (no admin rights needed), e.g.
+over SSH from this machine:
+
+```bash
+scripts/remote.sh <name> ssh 'Invoke-WebRequest https://win.rustup.rs/x86_64 -OutFile $env:TEMP\rustup-init.exe; & $env:TEMP\rustup-init.exe -y --default-toolchain none'
+scripts/remote.sh <name> run 'rustup show active-toolchain'   # installs the pinned toolchain
+```
+
+Check the Windows machine: a *Private* network profile, sleep disabled
+(*Settings → System → Power*), and a fixed IP address (e.g. a DHCP
+reservation) – otherwise SSH fails with *no route to host*.
+
 ### 3. On this machine: host key and test
 
 ```bash
