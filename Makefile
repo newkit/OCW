@@ -15,12 +15,13 @@ APT_PACKAGES := build-essential pkg-config curl git rsync \
 	libdbus-1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
 	mesa-vulkan-drivers vulkan-tools bluez \
 	xvfb xauth weston ffmpeg
-# The same for Fedora / RHEL (dnf); ffmpeg-free is Fedora's ffmpeg build.
+# The same for Fedora / RHEL (dnf). ffmpeg is handled separately in
+# deps-linux-fedora: Fedora's ffmpeg-free conflicts with RPM Fusion's ffmpeg.
 DNF_PACKAGES := gcc gcc-c++ pkgconf-pkg-config curl git rsync \
 	alsa-lib-devel systemd-devel wayland-devel libxkbcommon-devel libxkbcommon-x11-devel \
 	dbus-devel libX11-devel libXcursor-devel libXrandr-devel libXi-devel libxcb-devel \
 	mesa-vulkan-drivers vulkan-tools bluez \
-	xorg-x11-server-Xvfb xorg-x11-xauth weston ffmpeg-free
+	xorg-x11-server-Xvfb xorg-x11-xauth weston
 # The same for Arch / Manjaro (pacman); the Vulkan driver depends on the GPU
 # (vulkan-radeon, vulkan-intel, nvidia-utils), mesa covers OpenGL.
 PACMAN_PACKAGES := base-devel pkgconf curl git rsync \
@@ -77,6 +78,11 @@ deps-linux-debian: ## Linux: Debian / Ubuntu packages (apt)
 
 deps-linux-fedora: ## Linux: Fedora / RHEL packages (dnf; unavailable ones are skipped)
 	sudo dnf install -y --skip-unavailable $(DNF_PACKAGES)
+	@# Any ffmpeg will do (videos): keep an installed one (e.g. RPM Fusion's,
+	@# which conflicts with Fedora's ffmpeg-free), else prefer RPM Fusion's.
+	@if command -v ffmpeg >/dev/null 2>&1; then echo "ffmpeg already installed: $$(command -v ffmpeg)"; \
+	elif dnf repolist --enabled 2>/dev/null | grep -qi rpmfusion-free; then sudo dnf install -y ffmpeg; \
+	else sudo dnf install -y ffmpeg-free; fi
 
 deps-linux-arch: ## Linux: Arch / Manjaro packages (pacman; add your GPU's Vulkan driver)
 	sudo pacman -S --needed --noconfirm $(PACMAN_PACKAGES)
