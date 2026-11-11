@@ -180,6 +180,9 @@ climb at 1.5–2.1 km) and grass beside the road roll increasingly harder
   `building:levels`, or a default by type) and a flat or gable roof.
   `world-builder check` lists what a package contains; older packages
   without land use still load (plain grass and placeholder tree patches).
+- Default arguments: `ocw-desktop.args` beside the executable (or
+  `$OCW_ARGS_FILE`) is read before the command line, which wins
+  (`--no-args-file` ignores it; see config/README.md, kiosk).
 
 **World packages: signatures and cache** (spec §4.7, §12)
 

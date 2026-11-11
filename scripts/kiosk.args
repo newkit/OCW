@@ -1,0 +1,5 @@
+# Default arguments of the test build on a kiosk machine: scripts/deploy-test.sh
+# installs this file as ocw-desktop.args beside the binary (@DIR@ = the
+# install directory), only if the world package was installed. The kiosk's
+# own command line comes after these and wins. Format: apps/desktop/src/argsfile.rs.
+--world @DIR@/liechtenstein.ocwpkg
