@@ -228,6 +228,17 @@ package is installed only when all its files match the manifest.
 - ↑ adds power on top of any device (25 W per press), ↓ stops (power 0 and
   brake).
 
+**Gradient:** the HUD shows the gradient at the rider and, in brackets, the
+average over the next 100 m (`+9.4 % (100 m +7.8 %)`). Bottom left, a mini
+elevation profile shows the road from 150 m behind to 1.5 km ahead (white
+line = you; climbing / descending ahead above it), coloured by gradient:
+blue below -2 %, green to 3 %, yellow to 6 %, orange to 9 %, red to 12 %,
+wine red above; flat roads stay flat (at least 40 m of height range). In
+free ride it looks ahead along the exit currently selected at the next
+junction and the default exits after it. The chase camera tilts gently with
+the road (uphill it drops behind you and looks up the climb), smoothed and
+capped at 8 degrees (`camera.tilt`).
+
 **Videos:** V starts recording the window as an MP4 (H.264, 25 fps) into
 `~/Videos/OCW/` (or `~/.local/share/ocw/videos/`), V again stops it (ignored
 while the console is open; console: `video start|stop`). While recording,
@@ -298,6 +309,7 @@ for now).
 | `echo TEXT` | Print text |
 | `exec FILE` | Run the commands in a file, one per line |
 | `fps [on\|off]` | Show or hide the FPS counter |
+| `hud.profile [on\|off]` | Show or hide the elevation profile of the road ahead (bottom left; on by default) |
 | `screenshot [PATH]` | Save a screenshot of the window (default `screenshot.png`) |
 | `reset` | Start everything again as at program start (key R); the ride is saved first |
 | `video [start\|stop\|toggle]` | Record the window as an MP4 (key V; needs `ffmpeg`) |
@@ -323,6 +335,7 @@ for now).
 | **Camera** | |
 | `camera.mode chase\|side\|top` | Camera perspective |
 | `camera.orbit YAW PITCH [DISTANCE]` | Orbit the chase camera (degrees; 0 = behind, 180 = in front; metres) |
+| `camera.tilt [on\|off\|FRACTION]` | Tilt the chase camera with the road (default on, 0.7 of the slope angle, at most 8 degrees) |
 | **Trainer and devices** | |
 | `trainer.mode sim\|erg\|off` | Trainer control |
 | `trainer.difficulty PERCENT` | Scale the road gradient in SIM mode |
