@@ -79,7 +79,11 @@ fn sig_uuid(short: u16) -> Uuid {
 }
 
 fn short_uuid(uuid: &Uuid) -> Option<u16> {
-    uuids::from_uuid128(&uuid.to_string())
+    let s = uuid.to_string();
+    if s == crate::gatt::wahoo::CONTROL_POINT_UUID {
+        return Some(uuids::WAHOO_TRAINER_CONTROL);
+    }
+    uuids::from_uuid128(&s)
 }
 
 fn ble_err(e: impl std::fmt::Display) -> DeviceError {
@@ -323,6 +327,8 @@ mod tests {
         assert_eq!(u.to_string(), "00001826-0000-1000-8000-00805f9b34fb");
         assert_eq!(short_uuid(&u), Some(0x1826));
         assert_eq!(short_uuid(&Uuid::nil()), None);
+        let wahoo = Uuid::parse_str(crate::gatt::wahoo::CONTROL_POINT_UUID).unwrap();
+        assert_eq!(short_uuid(&wahoo), Some(uuids::WAHOO_TRAINER_CONTROL));
     }
 
     #[test]

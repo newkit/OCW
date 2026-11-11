@@ -103,6 +103,7 @@ impl TrainerControl {
                     wind_speed_mps: target.wind_speed_mps,
                     crr: target.crr,
                     cw_kg_per_m: target.cw_kg_per_m,
+                    mass_kg: self.profile.rider_mass_kg + self.profile.bike_mass_kg,
                 }))
             }
             TrainerMode::Erg { target_w } => self
