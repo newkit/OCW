@@ -11,6 +11,7 @@ mod automation;
 mod client;
 mod connection;
 mod devices;
+mod gps;
 mod icon;
 mod input;
 mod known_devices;
