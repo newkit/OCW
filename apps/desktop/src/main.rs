@@ -76,6 +76,10 @@ pub struct Args {
     /// Run a console command at startup (repeatable).
     #[arg(long = "cmd", value_name = "COMMAND")]
     pub commands: Vec<String>,
+    /// Start at a random point of the route (everyone, bots too). Default:
+    /// on, except for --screenshot / --capture runs (reproducible).
+    #[arg(long, value_name = "BOOL", action = clap::ArgAction::Set)]
+    pub random_start: Option<bool>,
     /// Run a console command once the ride has lasted SECONDS (session
     /// time), e.g. `--at "4=rider.lean 15"` (repeatable; for scripted rides).
     #[arg(long = "at", value_name = "SECONDS=COMMAND", value_parser = parse_timed)]
@@ -193,6 +197,38 @@ fn main() -> AppExit {
     app.run()
 }
 
+/// Where everyone starts on the route, in metres (`--random-start`).
+pub fn start_point(args: &Args, route: &Route) -> f64 {
+    let random = args
+        .random_start
+        .unwrap_or(args.screenshot.is_none() && args.capture.is_none());
+    if !random {
+        return 0.0;
+    }
+    let seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos() as u64);
+    let start = random_start_m(route.length(), route.is_loop(), seed);
+    info!("random start at {:.2} km", start / 1000.0);
+    start
+}
+
+/// A start `seed` picks on a route of `length` m; on a route that ends,
+/// at least 1 km before the end (or the start, if it is shorter).
+pub fn random_start_m(length: f64, is_loop: bool, seed: u64) -> f64 {
+    let usable = if is_loop {
+        length
+    } else {
+        (length - 1000.0).max(0.0)
+    };
+    // SplitMix64 step: spreads close seeds (clock nanoseconds) evenly.
+    let mut z = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^= z >> 31;
+    usable * (z >> 11) as f64 / (1u64 << 53) as f64
+}
+
 /// `SECONDS=COMMAND` of `--at`.
 fn parse_timed(s: &str) -> Result<(f64, String), String> {
     let (t, cmd) = s.split_once('=').ok_or("expected SECONDS=COMMAND")?;
@@ -248,5 +284,19 @@ mod tests {
         assert!(parse_timed("rider.lean 15").is_err());
         assert!(parse_timed("-1=x").is_err());
         assert!(parse_timed("2=  ").is_err());
+    }
+
+    #[test]
+    fn random_starts_spread_over_the_route() {
+        let starts: Vec<f64> = (0..200)
+            .map(|s| random_start_m(13_000.0, false, s))
+            .collect();
+        assert!(starts.iter().all(|&s| (0.0..=12_000.0).contains(&s)));
+        // Neighbouring seeds land far apart; the whole route is used.
+        assert!((starts[0] - starts[1]).abs() > 100.0);
+        assert!(starts.iter().any(|&s| s < 2000.0) && starts.iter().any(|&s| s > 10_000.0));
+        // Short open routes start at the beginning; loops anywhere.
+        assert_eq!(random_start_m(800.0, false, 7), 0.0);
+        assert!(random_start_m(800.0, true, 7) > 0.0);
     }
 }

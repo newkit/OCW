@@ -411,6 +411,7 @@ mod tests {
                 ServerConfig {
                     allow_dev_commands: allow_dev,
                     bots,
+                    start_m: 0.0,
                 },
             );
             let conn = server.connect();
@@ -614,7 +615,7 @@ mod tests {
         use ocw_devices::{DeviceBackend, VirtualTrainer};
         use std::time::Instant;
 
-        let server = ocw_server::local::LocalServer::spawn(route(), 2).unwrap();
+        let server = ocw_server::local::LocalServer::spawn(route(), 2, 0.0).unwrap();
         let trainer = VirtualTrainer::new(300.0).start().unwrap();
         let mut client = ClientCore::new(route(), "Live", RiderProfile::default());
         server.to_server.send(client.hello()).unwrap();

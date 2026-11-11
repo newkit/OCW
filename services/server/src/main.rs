@@ -45,6 +45,7 @@ fn main() {
         ServerConfig {
             allow_dev_commands: false,
             bots: args.bots,
+            start_m: 0.0,
         },
     );
     let tick = Duration::from_secs_f64(SIM_DT);

@@ -75,6 +75,8 @@ pub struct Session {
     riders: BTreeMap<RiderId, Rider>,
     tick: u64,
     next_id: u32,
+    /// Where riders start on the route, in metres.
+    start_m: f64,
 }
 
 impl Session {
@@ -84,7 +86,14 @@ impl Session {
             riders: BTreeMap::new(),
             tick: 0,
             next_id: 1,
+            start_m: 0.0,
         }
+    }
+
+    /// The same session with riders starting `start_m` metres along the route.
+    pub fn with_start(mut self, start_m: f64) -> Self {
+        self.start_m = start_m.max(0.0);
+        self
     }
 
     pub fn route(&self) -> &Route {
@@ -136,6 +145,7 @@ impl Session {
                 name,
                 profile,
                 state: RiderState {
+                    distance: self.start_m,
                     lateral_offset,
                     ..Default::default()
                 },

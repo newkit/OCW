@@ -48,7 +48,8 @@ pub struct LocalServer;
 
 impl LocalServer {
     /// Starts a local server thread with dev commands enabled.
-    pub fn spawn(route: Route, bots: u32) -> std::io::Result<LocalConnection> {
+    /// Everyone starts `start_m` metres along the route.
+    pub fn spawn(route: Route, bots: u32, start_m: f64) -> std::io::Result<LocalConnection> {
         let (to_server, server_rx) = mpsc::channel::<Vec<u8>>();
         let (server_tx, from_server) = mpsc::channel::<Vec<u8>>();
         let mut server = GameServer::new(
@@ -56,6 +57,7 @@ impl LocalServer {
             ServerConfig {
                 allow_dev_commands: true,
                 bots,
+                start_m,
             },
         );
         let thread = thread::Builder::new()
@@ -115,12 +117,13 @@ pub struct SteppedServer {
 
 impl SteppedServer {
     /// A stepped server with dev commands enabled and one connected client.
-    pub fn new(route: Route, bots: u32) -> Self {
+    pub fn new(route: Route, bots: u32, start_m: f64) -> Self {
         let mut server = GameServer::new(
             route,
             ServerConfig {
                 allow_dev_commands: true,
                 bots,
+                start_m,
             },
         );
         let conn = server.connect();
@@ -162,7 +165,7 @@ mod tests {
 
     #[test]
     fn local_server_welcomes_and_broadcasts() {
-        let conn = LocalServer::spawn(Route::test_loop(), 2).unwrap();
+        let conn = LocalServer::spawn(Route::test_loop(), 2, 0.0).unwrap();
         conn.to_server
             .send(encode(&client_message(C::Hello(v1::Hello {
                 protocol_version: PROTOCOL_VERSION,
@@ -191,7 +194,7 @@ mod tests {
 
     #[test]
     fn stepped_server_advances_only_when_ticked() {
-        let mut s = SteppedServer::new(Route::test_loop(), 1);
+        let mut s = SteppedServer::new(Route::test_loop(), 1, 0.0);
         s.send(&encode(&client_message(C::Hello(v1::Hello {
             protocol_version: PROTOCOL_VERSION,
             display_name: "Cap".into(),

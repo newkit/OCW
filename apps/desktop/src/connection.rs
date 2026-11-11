@@ -23,12 +23,17 @@ pub struct ConnectionPlugin {
 impl Plugin for ConnectionPlugin {
     fn build(&self, app: &mut App) {
         let args = app.world().resource::<Args>().clone();
+        let start_m = crate::start_point(&args, &self.route);
         let mut server = if args.capture.is_some() {
             // Frame capture: the server shares the client's fixed-step game time.
-            ServerLink::Stepped(Box::new(SteppedServer::new(self.route.clone(), args.bots)))
+            ServerLink::Stepped(Box::new(SteppedServer::new(
+                self.route.clone(),
+                args.bots,
+                start_m,
+            )))
         } else {
             ServerLink::Threaded(
-                LocalServer::spawn(self.route.clone(), args.bots)
+                LocalServer::spawn(self.route.clone(), args.bots, start_m)
                     .expect("failed to start local server thread"),
             )
         };

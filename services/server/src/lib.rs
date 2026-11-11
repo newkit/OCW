@@ -25,6 +25,8 @@ pub struct ServerConfig {
     pub allow_dev_commands: bool,
     /// Number of server-side test riders.
     pub bots: u32,
+    /// Where on the route everyone starts, in metres.
+    pub start_m: f64,
 }
 
 /// Authoritative server for one session.
@@ -47,7 +49,7 @@ pub fn bot_power_w(i: u32) -> f64 {
 
 impl GameServer {
     pub fn new(route: Route, config: ServerConfig) -> Self {
-        let mut session = Session::new(route);
+        let mut session = Session::new(route).with_start(config.start_m);
         for i in 0..config.bots {
             session.add_bot(format!("Bot {}", i + 1), bot_power_w(i));
         }
@@ -263,6 +265,7 @@ mod tests {
                 ServerConfig {
                     allow_dev_commands: allow,
                     bots: 0,
+                    start_m: 0.0,
                 },
             );
             let conn = server.connect();
@@ -298,6 +301,7 @@ mod tests {
             ServerConfig {
                 allow_dev_commands: false,
                 bots: 3,
+                start_m: 0.0,
             },
         );
         let conn = server.connect();
