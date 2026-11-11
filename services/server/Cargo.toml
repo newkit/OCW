@@ -1,0 +1,27 @@
+[package]
+name = "ocw-server"
+description = "Open Cycling World game server (modular monolith) and in-process local server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "ocw-server"
+path = "src/main.rs"
+
+[dependencies]
+ocw-core.workspace = true
+ocw-sim.workspace = true
+ocw-protocol.workspace = true
+ocw-world.workspace = true
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

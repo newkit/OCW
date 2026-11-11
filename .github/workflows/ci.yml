@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  # Linux is the primary platform (spec §11.1): full checks, tests and a smoke run.
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libudev-dev libwayland-dev \
+            libxkbcommon-dev libxkbcommon-x11-0 libdbus-1-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            xvfb mesa-vulkan-drivers
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets
+      - name: Unit and integration tests
+        run: cargo test --workspace
+      - name: Headless server smoke run
+        run: cargo run -p ocw-server -- --bots 3 --seconds 10 --fast
+      - name: Desktop smoke run (Xvfb, software Vulkan)
+        run: |
+          xvfb-run -a -s "-screen 0 1280x720x24" env WGPU_BACKEND=vulkan \
+            cargo run -p ocw-desktop -- --screenshot smoke.png --screenshot-delay 8 --cmd "net.stats"
+          test -s smoke.png
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-smoke-screenshot
+          path: smoke.png
+          if-no-files-found: ignore
+
+  # Windows and macOS: build-only checks until their ports start (spec §11.1).
+  build-check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Clippy (build check)
+        run: cargo clippy --workspace --all-targets
+
+  # Core crates must build for WebAssembly (spec §3.5).
+  wasm:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Check core crates for wasm32
+        run: cargo check -p ocw-core -p ocw-sim -p ocw-protocol -p ocw-world --target wasm32-unknown-unknown

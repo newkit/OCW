@@ -4,11 +4,33 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-Open Cycling World (OCW) is a cross-platform (Linux/Windows/macOS) indoor cycling simulation in Rust. The repository is currently in the **specification phase**: there is no code, Cargo workspace or build tooling yet, so there are no build/lint/test commands. Add them here once the workspace exists.
+Open Cycling World (OCW) is a cross-platform (Linux/Windows/macOS) indoor cycling simulation in Rust. Development is in **Phase 1** (spec §14): Cargo workspace, local client/server architecture, test route, console.
+
+## Commands
+
+Rust comes from rustup; `rust-toolchain.toml` pins the version (Bevy 0.20 needs a newer rustc than Debian ships). If `cargo` resolves to `/usr/bin/cargo`, run `source ~/.cargo/env` first.
+
+```bash
+cargo test --workspace                                   # all unit tests
+cargo test -p ocw-sim prediction                         # one crate / test name filter
+cargo clippy --workspace --all-targets -- -D warnings    # CI treats warnings as errors
+cargo fmt --all
+cargo check -p ocw-core -p ocw-sim -p ocw-protocol -p ocw-world --target wasm32-unknown-unknown
+cargo run -p ocw-server -- --bots 3 --seconds 10 --fast  # headless server
+```
+
+To run and screenshot the desktop app headlessly (Xvfb, software Vulkan), use the `run-ocw` skill: `.claude/skills/run-ocw/drive.sh shot /tmp/ocw.png 8 -- --cmd "teleport 1.2"`. The first build compiles Bevy (several minutes).
+
+## Code map
+
+- `services/server` (`ocw-server`): `GameServer` is transport-independent (encoded protobuf in/out). `local::LocalServer` runs it on a thread at 50 Hz inside the desktop app; the binary runs it headless. QUIC transport comes in Phase 5.
+- `apps/desktop/src/connection.rs`: the client loop: device events → `SensorSample` to the server; snapshots → `Predictor::reconcile` (own rider) and `SnapshotBuffer` (others); `RideView` for the renderer. Prediction steps in Bevy `FixedUpdate` at 50 Hz.
+- `crates/ocw-render`: renders only what is in the `RideView` resource; console commands are registered via `ConsoleAppExt::console_command` with a clap definition and a `Permission` level (`Dev` commands need a local server).
+- Protocol schema: `proto/ocw/v1/messages.proto`, compiled by `ocw-protocol/build.rs` with protox (no `protoc` needed). Only add fields; never reuse numbers.
 
 ## Documents
 
-- `SPECIFICATION.md` (v1.1) – the single source of requirements and architecture decisions. The review proposals P-1 … P-20 were merged into it; Appendix A maps each former P-number to its section.
+- `SPECIFICATION.md` (v1.2) – the single source of requirements and architecture decisions. The review proposals P-1 … P-20 were merged into it; Appendix A maps each former P-number to its section.
 
 Reference the spec by section (e.g. "spec §6.1") in discussions and commits. New decisions go directly into the spec (bump the version table at the top) rather than into a separate document.
 
@@ -24,6 +46,10 @@ These cut across many sections and shape all future code:
 - **Voice is separate** from game state: LiveKit/WebRTC, never over the QUIC game connection.
 - **Cosmetics are separate from physics (§2.5).** Physics comes from a small curated set of profiles.
 - **Backend:** modular monolith (`services/server`): Axum API, Quinn/QUIC game server, Protobuf via `prost`, PostgreSQL, OIDC; the web companion (Leptos SSR) is a route group in it.
+
+## Testing
+
+No step is done without unit tests (spec §11.4, per-phase test lists in §14). Tests run without hardware, network or GPU: use the virtual trainer / mock `DeviceBackend`, in-process channels instead of sockets, and keep logic outside Bevy so it can be tested headless. Every bug fix gets a regression test.
 
 ## Platform rollout
 

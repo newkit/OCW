@@ -1,0 +1,15 @@
+[package]
+name = "ocw-devices"
+description = "Trainer and sensor access for Open Cycling World (no engine dependency)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

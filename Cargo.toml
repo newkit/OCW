@@ -1,0 +1,53 @@
+[workspace]
+resolver = "3"
+members = [
+    "apps/desktop",
+    "services/server",
+    "crates/ocw-core",
+    "crates/ocw-sim",
+    "crates/ocw-protocol",
+    "crates/ocw-devices",
+    "crates/ocw-world",
+    "crates/ocw-render",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[workspace.dependencies]
+ocw-core = { path = "crates/ocw-core" }
+ocw-sim = { path = "crates/ocw-sim" }
+ocw-protocol = { path = "crates/ocw-protocol" }
+ocw-devices = { path = "crates/ocw-devices" }
+ocw-world = { path = "crates/ocw-world" }
+ocw-render = { path = "crates/ocw-render" }
+ocw-server = { path = "services/server" }
+
+# Bevy is pinned to an exact version (spec §3.1). Only ocw-render and apps/desktop may use it.
+bevy = "=0.20.1"
+bevy_egui = "=0.43.1"
+
+prost = "0.14"
+prost-build = "0.14"
+protox = "0.10"
+clap = { version = "4.6", features = ["derive"] }
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+# Bevy recommendation: some optimisation for our code, full optimisation for dependencies.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

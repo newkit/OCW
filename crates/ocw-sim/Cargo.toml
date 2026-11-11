@@ -1,0 +1,15 @@
+[package]
+name = "ocw-sim"
+description = "Bicycle physics, rider state and session logic for Open Cycling World"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ocw-core.workspace = true
+ocw-world.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,92 @@
+// Open Cycling World game protocol, version 1 (spec §6.2).
+//
+// Compatibility rules: only add fields; never change or reuse field numbers.
+syntax = "proto3";
+
+package ocw.v1;
+
+// ---------------------------------------------------------------- client → server
+
+message ClientMessage {
+  oneof msg {
+    Hello hello = 1;
+    SensorSample sample = 2;
+    DevCommand dev = 3;
+  }
+}
+
+// First message on a connection.
+message Hello {
+  uint32 protocol_version = 1;
+  string display_name = 2;
+  RiderProfile profile = 3;
+}
+
+message RiderProfile {
+  float rider_mass_kg = 1;
+  float bike_mass_kg = 2;
+  float cda_m2 = 3;
+  float crr = 4;
+}
+
+// Measured values from the rider's devices (spec §6.1). Sent reliably.
+message SensorSample {
+  uint32 seq = 1;
+  uint64 client_time_us = 2;
+  optional float power_w = 3;
+  optional float cadence_rpm = 4;
+  optional float heart_rate_bpm = 5;
+}
+
+// Commands that change the simulation. Only accepted by a local server (spec §2.9).
+message DevCommand {
+  oneof cmd {
+    double teleport_distance_m = 1;
+  }
+}
+
+// ---------------------------------------------------------------- server → client
+
+message ServerMessage {
+  oneof msg {
+    Welcome welcome = 1;
+    Snapshot snapshot = 2;
+    Reject reject = 3;
+    DevCommandResult dev_result = 4;
+  }
+}
+
+message Welcome {
+  uint32 protocol_version = 1;
+  uint32 rider_id = 2;
+  uint32 tick_rate_hz = 3;
+  uint32 broadcast_rate_hz = 4;
+  string route_id = 5;
+}
+
+message Reject {
+  string reason = 1;
+}
+
+message DevCommandResult {
+  bool ok = 1;
+  string message = 2;
+}
+
+// State of all riders. Sent as unreliable datagrams over QUIC (Phase 5).
+message Snapshot {
+  uint64 server_tick = 1;
+  repeated RiderUpdate riders = 2;
+}
+
+// Quantized rider state (spec §6.2).
+message RiderUpdate {
+  uint32 rider_id = 1;
+  uint32 distance_cm = 2;
+  uint32 speed_mm_s = 3;
+  sint32 lateral_offset_cm = 4;
+  uint32 animation_state = 5;
+  uint32 last_input_seq = 6;
+  uint32 power_w = 7;
+  string display_name = 8;
+}
