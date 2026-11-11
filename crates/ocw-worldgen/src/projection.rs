@@ -1,43 +1,8 @@
-//! Local metric projection around a region centre.
-//!
-//! Spherical transverse-Mercator-like local plane: x east, z south (the
-//! crate convention of `ocw-world`), metres. For pilot-sized regions
-//! (tens of km) the scale error is well below 0.1 %; large regions will
-//! move to a proper UTM / transverse Mercator in a later step.
+//! Local metric projection around a region centre. The projection itself
+//! lives in `ocw_world::geo` (the client unprojects ride positions with it,
+//! spec §2.8); re-exported here.
 
-/// Mean Earth radius in metres.
-pub const EARTH_RADIUS_M: f64 = 6_371_008.8;
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct LocalProjection {
-    pub lat0: f64,
-    pub lon0: f64,
-    cos_lat0: f64,
-}
-
-impl LocalProjection {
-    pub fn new(lat0: f64, lon0: f64) -> Self {
-        Self {
-            lat0,
-            lon0,
-            cos_lat0: lat0.to_radians().cos(),
-        }
-    }
-
-    /// (lat, lon) in degrees → (x east, z south) in metres.
-    pub fn project(&self, lat: f64, lon: f64) -> [f64; 2] {
-        let x = (lon - self.lon0).to_radians() * EARTH_RADIUS_M * self.cos_lat0;
-        let north = (lat - self.lat0).to_radians() * EARTH_RADIUS_M;
-        [x, -north]
-    }
-
-    /// Inverse of [`LocalProjection::project`].
-    pub fn unproject(&self, p: [f64; 2]) -> (f64, f64) {
-        let lat = self.lat0 + (-p[1] / EARTH_RADIUS_M).to_degrees();
-        let lon = self.lon0 + (p[0] / (EARTH_RADIUS_M * self.cos_lat0)).to_degrees();
-        (lat, lon)
-    }
-}
+pub use ocw_world::geo::{EARTH_RADIUS_M, LocalProjection};
 
 /// Great-circle distance in metres (haversine), for checking the projection.
 pub fn haversine_m(a: (f64, f64), b: (f64, f64)) -> f64 {

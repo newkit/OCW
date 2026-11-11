@@ -51,6 +51,9 @@ pub struct Route {
     road_width_m: f64,
     /// Stretches (from, to metres) with another surface than asphalt.
     surfaces: Vec<(f64, f64, Surface)>,
+    /// Geographic centre (lat, lon) of the local metres, if the route is on
+    /// real roads (route files); for the virtual GPS track (spec §2.8).
+    geo_origin: Option<(f64, f64)>,
 }
 
 /// Errors when constructing a route.
@@ -105,6 +108,7 @@ impl Route {
             is_loop,
             road_width_m,
             surfaces: Vec::new(),
+            geo_origin: None,
         })
     }
 
@@ -113,6 +117,25 @@ impl Route {
     pub fn with_surfaces(mut self, surfaces: Vec<(f64, f64, Surface)>) -> Self {
         self.surfaces = surfaces;
         self
+    }
+
+    /// The same route placed on the globe: `origin` (lat, lon) is the
+    /// projection centre of its local metres.
+    pub fn with_geo_origin(mut self, origin: (f64, f64)) -> Self {
+        self.geo_origin = Some(origin);
+        self
+    }
+
+    /// Projection centre (lat, lon) of a route on real roads.
+    pub fn geo_origin(&self) -> Option<(f64, f64)> {
+        self.geo_origin
+    }
+
+    /// Latitude and longitude (degrees) of a local position (x east, z
+    /// south), if the route has a geographic origin.
+    pub fn lat_lon(&self, x: f64, z: f64) -> Option<(f64, f64)> {
+        let (lat0, lon0) = self.geo_origin?;
+        Some(crate::geo::LocalProjection::new(lat0, lon0).unproject([x, z]))
     }
 
     /// Surface stretches other than asphalt.
@@ -352,6 +375,18 @@ fn vertex_attributes(points: &[[f64; 3]], is_loop: bool) -> (Vec<[f64; 2]>, Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lat_lon_needs_a_geo_origin() {
+        let r = Route::test_loop();
+        assert_eq!(r.geo_origin(), None);
+        assert_eq!(r.lat_lon(0.0, 0.0), None);
+        let r = r.with_geo_origin((47.15, 9.55));
+        assert_eq!(r.lat_lon(0.0, 0.0), Some((47.15, 9.55)));
+        // North is -z.
+        let (lat, lon) = r.lat_lon(0.0, -1000.0).unwrap();
+        assert!(lat > 47.15 && (lon - 9.55).abs() < 1e-12);
+    }
 
     #[test]
     fn curvature_and_surfaces_along_the_route() {
