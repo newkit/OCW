@@ -1027,6 +1027,8 @@ mod tests {
             tiles,
             graph: graph.then(crate::graph::RoadGraph::default),
             routes: Vec::new(),
+            landuse: None,
+            buildings: None,
         }
         .to_bytes()
     }
@@ -1055,6 +1057,36 @@ mod tests {
         .unwrap();
         m.add_file("region.ocwpkg", bytes).unwrap();
         m
+    }
+
+    #[test]
+    fn land_use_and_buildings_sections_are_chunks() {
+        let mut p = WorldPackage::from_bytes(&package_bytes(true)).unwrap();
+        p.landuse = Some(crate::landuse::LandUse {
+            cells: 2,
+            tiles: [(
+                crate::package::TileKey { x: 0, z: 0 },
+                crate::landuse::LandUseTile {
+                    classes: vec![crate::landuse::LandClass::Forest; 4],
+                    water: vec![],
+                },
+            )]
+            .into_iter()
+            .collect(),
+        });
+        p.buildings = Some(Default::default());
+        let bytes = p.to_bytes();
+        let chunks = package_chunks(&bytes).unwrap();
+        let names: Vec<&str> = chunks.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(
+            names[3..],
+            ["sections", "section GRPH", "section LUSE", "section BLDG"]
+        );
+        let m = manifest(&bytes);
+        for (name, r) in &chunks {
+            m.verify_chunk("region.ocwpkg", name, &bytes[r.clone()])
+                .unwrap();
+        }
     }
 
     #[test]

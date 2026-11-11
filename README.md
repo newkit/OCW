@@ -165,9 +165,18 @@ climb at 1.5–2.1 km) and grass beside the road roll increasingly harder
   `--route loop` (gentle).
 - Real roads: `--route-file data/pilot/vaduz-malbun.route` (from `world-builder
   route`), optionally with `--world data/pilot/liechtenstein.ocwpkg` (terrain,
-  all roads and trees of the region, streamed in 1 km tiles). The data comes
+  all roads of the region, streamed in 1 km tiles). The data comes
   from `scripts/fetch-pilot.sh` and `world-builder` (© OpenStreetMap
   contributors, ODbL).
+- Packages from `world-builder package` also carry the OSM land use and the
+  buildings: the ground is coloured by land use (forest floor, meadows,
+  fields, settlements, rock, scree, glaciers), lakes and rivers are flat water
+  surfaces, trees stand in the forests (a few on meadows, in gardens and
+  parks, never on roads, water or in buildings) and every building is
+  extruded from its OSM footprint with its height (`height`,
+  `building:levels`, or a default by type) and a flat or gable roof.
+  `world-builder check` lists what a package contains; older packages
+  without land use still load (plain grass and placeholder tree patches).
 
 **World packages: signatures and cache** (spec §4.7, §12)
 

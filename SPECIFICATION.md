@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.5 – November 2026
+Version 2.6 – November 2026
 
 | Version | Change |
 |---|---|
@@ -24,6 +24,7 @@ Version 2.5 – November 2026
 | 2.3 | macOS app bundle (§11.3): `scripts/build-macos-app.sh` (Info.plist with Bluetooth usage text, icon, ad-hoc signature, DMG and zip), logs to `~/Library/Logs/OCW/` when started from Finder, CI job building the app on pushes to main |
 | 2.4 | Routes on the road graph (§2.2.1, §2.7, §4.4, §4.7): GPX import with HMM map matching, package routes (section `ROUT`, `ocw-graph-route` files), route arrows with leave / rejoin (J), re-matching after rebuilds; U-turn loop from the road width (§2.2.2); package check in Hello / Welcome (§6.5); border matching for neighbouring packages (runtime loading still open) |
 | 2.5 | Signed, cached world packages (§4.7, §12): manifest with file and chunk hashes, Ed25519 root → signing key chain (dev root committed, public only), trust policy for unsigned packages, cache `~/.local/share/ocw/worlds/<id>/<version>`, verified download with resume; end-to-end test from an OSM fixture to a bot ride and a rebuild |
+| 2.6 | Land use and buildings from OSM (§4.6, §4.7): 17 land classes on a 5 m grid per tile (`LUSE`), flat water with carved terrain, colour maps and trees by land use, extruded buildings with flat or gable roofs (`BLDG`) |
 
 ---
 
@@ -828,6 +829,14 @@ Ground textures are needed for different landscapes (meadow, field, forest floor
 
 Every imagery and land-cover source used in a package is listed in its metadata and shown on the credits screen (§13).
 
+**Implementation (Phase 3, land use and buildings):** the first step uses OSM only, no imagery and no textures yet.
+
+- **Classes:** OSM areas are classified into 17 land classes: default (no land use, grass), meadow, farmland, forest, orchard, vineyard, residential, commercial, industrial, park, water, wetland, rock, scree, glacier, bare (sand, quarries, construction sites) and scrub. Sources: closed ways and `type=multipolygon` relations (outer rings assembled from split member ways, inner rings as holes; even-odd fill) with `landuse`, `natural`, `leisure`, `waterway=riverbank` tags, plus `waterway=river|canal|stream|ditch|drain` lines buffered by their `width` (defaults 12 / 6 / 2 / 1.5 m; culverts and tunnels left out).
+- **Splat map:** each 1 km tile gets a class per **5 m cell** (200 × 200, scanline rasterisation at the cell centres in global coordinates, so neighbouring tiles agree at their edges). Where areas overlap, a fixed **priority** decides, not the drawing order: water > glacier > wetland > rock > scree > bare > park > forest > scrub > orchard / vineyard > meadow > farmland > commercial / industrial > residential > default; specific surfaces beat the large built-up areas they lie in.
+- **Water surfaces:** water polygons and rivers ≥ 8 m wide mark the terrain grid vertices in water. The water level at such a vertex is the mean terrain height of the water vertices within 50 m (flat on lakes, gently falling along rivers); the terrain there is carved 1 m below it. The level is also stored for the vertices next to water, so the client draws a flat water quad over every grid cell touching water and the shoreline is where the terrain rises through it. Narrower streams only colour the ground.
+- **Rendering:** the client turns the splat map into a per-tile **colour map** (one texel per cell, sRGB, mipmapped, class colour turning to rock on slopes above 60 %, a little noise), the terrain vertices stay white. Water is a separate flat, glossy mesh. **Trees** come from a jittered 8 m grid with a chance per class (forest 85 %, orchard 45 % small, scrub 30 % small, park 10 %, residential 6 %, meadow / farmland / default 1.2 %, none on water, rock, scree, glacier, bare or vineyards), never in cells near road strips (3 m beyond the edge) or under buildings (1.5 m around the footprint), not on rock faces; the same trees are the camera's obstacles. Packages without land use keep plain grass and provisional tree patches. Tiling PBR materials, ESA WorldCover and the satellite tint (steps 1–3 above) follow later.
+- **Buildings:** OSM `building=*` closed ways and multipolygons (not `building:part`). Wall height from `height` (metres, feet), else `building:levels` × 3 m, else by type: houses and farms 6 m, apartments 12 m, commercial and public 9 m, industrial 8 m, churches 12 m, garages / sheds / huts 3 m, unknown 6 m (3 m under 40 m²). Nearly rectangular footprints (≥ 85 % of their oriented bounding rectangle, no courtyard) of houses, farms, small buildings and churches up to 400 m² (barns 1,500 m²), or anything tagged with a pitched `roof:shape`, get a **gable roof** on that rectangle, ridge along the long side, 0.4 × the width high (`roof:height` overrides; `height` includes the roof); all others a flat roof. Placement: the walls start 0.5 m below the lowest terrain under the footprint (its corners and a 4 m grid inside) and end the wall height above the mean terrain, at least 2 m above the highest. Flat roofs are triangulated by ear clipping, courtyards bridged into the outline. Buildings belong to the tile of their centroid and are merged into one mesh per tile.
+
 ### 4.7 Data Packages
 
 Regions are stored as self-contained data packages.
@@ -851,6 +860,8 @@ Contents:
 - Version information.
 
 **Package format (v1.6):** the binary package (`.ocwpkg`) holds the 1 km tiles (terrain heights, road strips) and, from format version 2 (`OCWPKG02`), tagged sections after the tiles that readers skip when they do not know them. The first section is the **road graph** (`GRPH`: vertices, edges with stable ID, class, name, width, one-way, bridge / tunnel / boundary / dead-end flags, centreline and smoothed elevation profile), so the client and the server can ride free on it (§2.2.1). Packages without a graph are still written as version 1, and clients read both.
+
+**Land use and buildings sections (Phase 3):** `LUSE` holds the splat map of every tile (layout version, cells per side, then per tile the classes run-length coded row by row and the water levels as (terrain vertex index, level) pairs); `BLDG` holds the buildings per tile (kind, roof shape and height, base and eave height, outline and courtyard rings in tile-local metres). Both are optional: older clients skip them as unknown sections (tested), newer clients without them fall back to plain grass. The pilot package grows from about 26 MB to about 30 MB with them.
 
 **Routes section (decided):** `ROUT` holds the package's routes on the road graph (§2.7): per route its name, a loop flag and the steps (stable edge ID with from / to metres as `f64`, or a U-turn). A package with only routes and no graph is still version 2. `world-builder gpx` and `route --world` add routes; readers that do not know the section skip it.
 
@@ -1357,6 +1368,8 @@ Personal data, voice data and training data are handled separately.
 
 - **Unit tests:** every world-builder step on fixtures — OSM extraction, projection, road graph and stable edge IDs, graph cleanup and dead-end flags, DEM sampling and smoothing (gradient limits, bridges, tunnels), terrain conformance, splat-map classification, tile cutting, package manifest and signature verification; route format, GPX parsing and map matching; junction detection, exit classification, default-exit rules, key selection and lock point, U-turn.
 - **Integration tests:** build a small region end-to-end and load it in the client headless; rebuild with changed OSM data and check route re-matching.
+
+Done so far for land use and buildings (§4.6): OSM land-use classes rasterised to a 5 m splat map per tile, flat water surfaces with the terrain carved below, land-use colour maps, trees by land use, extruded buildings with flat and gable roofs (package sections `LUSE`, `BLDG`, §4.7). Unit tests: tag classification, ring assembly, polygon rasterisation with holes, priorities, tile edges, water levels, footprint heights and roofs, ear clipping with holes, placement, section round trips and old readers skipping the new sections.
 
 **Result:** Ride a geographically realistic route locally in 3D. **Windows port starts.**
 
