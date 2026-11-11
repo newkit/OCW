@@ -11,7 +11,7 @@ and architecture are in [SPECIFICATION.md](SPECIFICATION.md).
 ## Build and run (Linux)
 
 ```bash
-make deps     # this platform: make deps-linux | deps-windows | deps-macos (packages + pinned Rust)
+make deps     # this platform: deps-linux (detects Debian/Ubuntu, Fedora, Arch) | deps-windows | deps-macos
 make check    # fmt, clippy, tests, wasm build – what CI runs
 make run      # desktop client with a virtual trainer and 4 test riders
 make help     # all targets (build, release, test, server, screenshot, ...)
