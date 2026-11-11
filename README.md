@@ -488,7 +488,19 @@ scripts/deploy-test.sh <name>                                  # release build f
   build needs ~4–5 GB; the others wait and take whichever slot frees first.
   Set `slots = N` per machine in `config/machines.toml` (or `[defaults]`), or
   `OCW_REMOTE_SLOTS=N` for one call. Branch checkouts use 4 build jobs
-  (`OCW_REMOTE_JOBS`).
+  (`OCW_REMOTE_JOBS`); `jobs = N` per machine caps them on main and branch
+  checkouts.
+- Windows (measured on 6 cores / 8 GB): the first `cargo build --workspace`
+  takes about 50 min, `cargo clippy --workspace --all-targets` 10 min, `cargo
+  test --workspace` 5 min on top. Each MSVC link of a Bevy binary (debug
+  info) needs ~5 GB, so 3 jobs ran out of memory (`LLVM ERROR: out of
+  memory`): set `jobs = 2` for an 8 GB machine. Commands run in PowerShell
+  5.1: chain with `;` (not `&&`), and leave out `2>&1` (it turns cargo's
+  stderr into error records); filter output locally instead
+  (`remote.sh … run 'cargo test --workspace' 2>&1 | grep …`). The exit code
+  is that of the last native program. GUI programs cannot open windows over
+  SSH (session 0); GUI runs need the scheduled-task approach (`display =
+  "interactive-task"`, not set up yet).
 - `python3 tools/build-dashboard/dashboard.py` shows each machine's load, its
   running tasks, the queue of runs waiting for a slot and the slots in use
   (every run leaves a task marker while it runs); on
