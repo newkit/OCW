@@ -12,7 +12,17 @@ message ClientMessage {
     Hello hello = 1;
     SensorSample sample = 2;
     DevCommand dev = 3;
+    SteerIntent steer = 4;
   }
+}
+
+// Steering intent (spec §6.1): the lateral offset the rider wants to move
+// to; the server moves the rider there smoothly, within the road.
+message SteerIntent {
+  // Increasing per client; older intents are ignored.
+  uint32 seq = 1;
+  // Target offset from the centreline in cm (positive = right).
+  sint32 lateral_target_cm = 2;
 }
 
 // First message on a connection.

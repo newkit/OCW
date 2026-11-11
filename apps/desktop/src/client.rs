@@ -14,6 +14,9 @@ use ocw_render::RiderView;
 use ocw_sim::{Predictor, RiderState, SnapshotBuffer};
 use ocw_world::Route;
 
+/// Minimum time between steering messages while the target changes.
+pub const STEER_SEND_INTERVAL_S: f64 = 0.05;
+
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct NetStats {
     pub messages_in: u64,
@@ -40,6 +43,11 @@ pub struct ClientCore {
     /// Predicted state before the last physics step: rendering interpolates
     /// between it and the current one, so motion is smooth at any frame rate.
     prev_state: RiderState,
+    /// Steering target (lateral offset); set from the first own snapshot.
+    lateral_target: Option<f64>,
+    steer_seq: u32,
+    /// Last steering target sent (cm) and when.
+    steer_sent: Option<(i32, f64)>,
     others: SnapshotBuffer,
     /// Latest known state of the other riders, advanced every physics tick
     /// (for predicting the local rider's drafting).
@@ -61,6 +69,9 @@ impl ClientCore {
             rider_id: None,
             predictor: Predictor::new(profile, RiderState::default()),
             prev_state: RiderState::default(),
+            lateral_target: None,
+            steer_seq: 0,
+            steer_sent: None,
             others: SnapshotBuffer::default(),
             others_now: Vec::new(),
             names: BTreeMap::new(),
@@ -148,6 +159,11 @@ impl ClientCore {
                 .insert(id, (u.display_name.clone(), f64::from(u.power_w)));
             if Some(id) == self.rider_id {
                 // In-process server: the snapshot is fresh (age ≈ 0).
+                if self.lateral_target.is_none() {
+                    // Start steering from the lane the server assigned.
+                    self.lateral_target = Some(state.lateral_offset);
+                    self.predictor.set_lateral_target(state.lateral_offset);
+                }
                 self.predictor
                     .reconcile(&self.route, state, 0.0, self.power_w);
                 // A snap (teleport, large error) must not be interpolated.
@@ -160,6 +176,46 @@ impl ClientCore {
         }
         self.others_now = others.iter().map(|(_, s)| *s).collect();
         self.others.push(now_s, others);
+    }
+
+    /// Moves the steering target sideways by `delta_m` (positive = right),
+    /// within the road.
+    pub fn steer_by(&mut self, delta_m: f64) {
+        if let Some(t) = self.lateral_target {
+            self.steer_to(t + delta_m);
+        }
+    }
+
+    /// Sets the steering target (lateral offset in metres), within the road.
+    pub fn steer_to(&mut self, target_m: f64) {
+        if self.rider_id.is_none() {
+            return;
+        }
+        let limit = ocw_sim::physics::lateral_limit(self.route.road_width_m());
+        let t = target_m.clamp(-limit, limit);
+        self.lateral_target = Some(t);
+        self.predictor.set_lateral_target(t);
+    }
+
+    pub fn lateral_target(&self) -> Option<f64> {
+        self.lateral_target
+    }
+
+    /// The steering intent to send now, if the target changed (at most
+    /// every `STEER_SEND_INTERVAL_S` while it keeps changing).
+    pub fn steer_message(&mut self, now_s: f64) -> Option<Vec<u8>> {
+        let cm = (self.lateral_target? * 100.0).round() as i32;
+        if let Some((sent_cm, at)) = self.steer_sent
+            && (sent_cm == cm || now_s - at < STEER_SEND_INTERVAL_S)
+        {
+            return None;
+        }
+        self.steer_seq += 1;
+        self.steer_sent = Some((cm, now_s));
+        Some(encode(&client_message(C::Steer(v1::SteerIntent {
+            seq: self.steer_seq,
+            lateral_target_cm: cm,
+        }))))
     }
 
     /// One fixed physics tick of the local prediction.
@@ -581,6 +637,45 @@ mod tests {
         assert!(
             min > mean * 0.8 && max < mean * 1.2,
             "uneven motion per frame: min {min:.4}, mean {mean:.4}, max {max:.4} m"
+        );
+    }
+
+    /// Steering: the client reacts at once, sends the intent (rate
+    /// limited), and the server ends up at the same lateral offset.
+    #[test]
+    fn steering_is_predicted_and_applied_by_the_server() {
+        let mut h = Harness::new(0, false);
+        h.ride(200.0, 1.0);
+        let start = h.client.state().lateral_offset;
+        assert_eq!(h.client.lateral_target(), Some(start));
+        // The first intent is sent once; unchanged targets are not resent.
+        let first = h.client.steer_message(h.time_s).expect("initial intent");
+        h.send(&first);
+        assert!(h.client.steer_message(h.time_s + 1.0).is_none());
+        h.client.steer_by(1.5);
+        let msg = h.client.steer_message(h.time_s + 0.1).expect("changed");
+        match ocw_protocol::decode_client(&msg).unwrap() {
+            C::Steer(s) => assert_eq!(s.lateral_target_cm, ((start + 1.5) * 100.0).round() as i32),
+            other => panic!("unexpected {other:?}"),
+        }
+        // Rate limited: a further change right away waits.
+        h.client.steer_by(0.1);
+        assert!(h.client.steer_message(h.time_s + 0.11).is_none());
+        let msg = h
+            .client
+            .steer_message(h.time_s + 0.16)
+            .expect("after the interval");
+        h.send(&msg);
+        h.ride(200.0, 3.0);
+        let own = h.client.rider_id().unwrap();
+        let server = h.server.session().rider_state(own).unwrap().lateral_offset;
+        assert!((server - (start + 1.6)).abs() < 1e-6, "server {server}");
+        assert!((h.client.state().lateral_offset - server).abs() < 0.02);
+        // Never off the road.
+        h.client.steer_by(100.0);
+        assert_eq!(
+            h.client.lateral_target(),
+            Some(ocw_sim::physics::lateral_limit(7.0))
         );
     }
 }

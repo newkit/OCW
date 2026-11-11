@@ -9,6 +9,22 @@ pub const WHEEL_INERTIA_MASS_KG: f64 = 0.9;
 /// Below this speed the propulsive force is computed as if riding at this
 /// speed, which avoids an infinite force when starting from standstill.
 pub const MIN_PROPULSION_SPEED: f64 = 1.0;
+/// Fastest sideways movement when steering across the road, in m/s.
+pub const MAX_LATERAL_SPEED: f64 = 1.5;
+/// Distance kept from the road edge when steering, in metres.
+pub const EDGE_MARGIN_M: f64 = 0.6;
+
+/// Largest lateral offset (either side) a rider may steer to on a road.
+pub fn lateral_limit(road_width_m: f64) -> f64 {
+    (road_width_m / 2.0 - EDGE_MARGIN_M).max(0.0)
+}
+
+/// Moves the lateral offset towards `target` by at most
+/// `MAX_LATERAL_SPEED · dt` (steering is smooth, never a jump).
+pub fn steer(current: f64, target: f64, dt: f64) -> f64 {
+    let max = MAX_LATERAL_SPEED * dt;
+    current + (target - current).clamp(-max, max)
+}
 
 /// State of one rider along their path.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -182,5 +198,21 @@ mod tests {
         };
         let (alone, drafting) = (speed_after(1.0), speed_after(0.7));
         assert!(drafting > alone * 1.08, "{alone} vs {drafting}");
+    }
+
+    #[test]
+    fn steering_is_rate_limited_and_reaches_the_target() {
+        assert_eq!(lateral_limit(7.0), 2.9);
+        assert_eq!(lateral_limit(1.0), 0.0);
+        let mut x = 0.0;
+        for _ in 0..50 {
+            x = steer(x, 2.0, SIM_DT); // 1 s
+        }
+        assert!((x - 1.5).abs() < 1e-9, "{x}");
+        for _ in 0..50 {
+            x = steer(x, 2.0, SIM_DT);
+        }
+        assert_eq!(x, 2.0);
+        assert_eq!(steer(2.0, -1.0, 0.0), 2.0);
     }
 }

@@ -35,6 +35,9 @@ struct Rider {
     input: RiderInput,
     last_input_seq: u32,
     control: Control,
+    /// Lateral offset the rider steers to (client riders only).
+    lateral_target: Option<f64>,
+    last_steer_seq: u32,
 }
 
 /// State of one rider as broadcast to clients.
@@ -122,6 +125,8 @@ impl Session {
                 input: RiderInput::default(),
                 last_input_seq: 0,
                 control,
+                lateral_target: None,
+                last_steer_seq: 0,
             },
         );
         id
@@ -141,6 +146,21 @@ impl Session {
                     power_w: input.power_w.max(0.0),
                     ..input
                 };
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Steering intent of a client rider: lateral offset to move to, clamped
+    /// to the road (spec §6.1: clients send intents, the server moves the
+    /// rider). Stale sequence numbers and bots are ignored.
+    pub fn set_lateral_target(&mut self, id: RiderId, seq: u32, target_m: f64) -> bool {
+        let limit = physics::lateral_limit(self.route.road_width_m());
+        match self.riders.get_mut(&id) {
+            Some(r) if r.control == Control::Client && seq > r.last_steer_seq => {
+                r.last_steer_seq = seq;
+                r.lateral_target = Some(target_m.clamp(-limit, limit));
                 true
             }
             _ => false,
@@ -190,6 +210,10 @@ impl Session {
                 &env,
                 SIM_DT,
             );
+            if let Some(target) = rider.lateral_target {
+                rider.state.lateral_offset =
+                    physics::steer(rider.state.lateral_offset, target, SIM_DT);
+            }
         }
     }
 
@@ -280,5 +304,28 @@ mod tests {
             s.rider_state(leader).unwrap().distance - s.rider_state(follower).unwrap().distance;
         // Same power: without drafting the gap would stay at 5 m.
         assert!(gap < 4.5, "gap {gap}");
+    }
+
+    #[test]
+    fn client_riders_steer_across_the_road() {
+        let mut s = Session::new(Route::test_loop());
+        let me = s.add_rider("Me", RiderProfile::default());
+        let bot = s.add_bot("Bot", 200.0);
+        let start = s.rider_state(me).unwrap().lateral_offset;
+        assert!(s.set_lateral_target(me, 1, 2.0));
+        for _ in 0..25 {
+            s.step(); // 0.5 s
+        }
+        let moved = s.rider_state(me).unwrap().lateral_offset - start;
+        assert!((moved - 0.75).abs() < 1e-6, "{moved}");
+        // Clamped to the road (7 m wide → ±2.9 m).
+        assert!(s.set_lateral_target(me, 2, 10.0));
+        for _ in 0..500 {
+            s.step();
+        }
+        assert!((s.rider_state(me).unwrap().lateral_offset - 2.9).abs() < 1e-9);
+        // Stale intents and bots are ignored.
+        assert!(!s.set_lateral_target(me, 2, -2.0));
+        assert!(!s.set_lateral_target(bot, 3, 0.0));
     }
 }

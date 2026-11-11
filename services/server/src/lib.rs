@@ -91,6 +91,14 @@ impl GameServer {
                 None
             }
             (C::Dev(cmd), Some(rider)) => Some(self.dev_command(rider, cmd)),
+            (C::Steer(steer), Some(rider)) => {
+                self.session.set_lateral_target(
+                    rider,
+                    steer.seq,
+                    f64::from(steer.lateral_target_cm) / 100.0,
+                );
+                None
+            }
             (_, None) => Some(S::Reject(v1::Reject {
                 reason: "send Hello first".into(),
             })),

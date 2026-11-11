@@ -40,7 +40,7 @@ impl Plugin for ConnectionPlugin {
         .insert_resource(ClientState(client))
         .add_systems(PreUpdate, poll_server)
         .add_systems(FixedUpdate, (step_server, predict).chain())
-        .add_systems(Update, update_view);
+        .add_systems(Update, (send_steer, update_view));
         register_commands(app);
     }
 }
@@ -130,6 +130,13 @@ fn predict(mut client: ResMut<ClientState>) {
 }
 
 /// Publishes what the renderer should draw.
+/// Sends the steering intent when the target changed.
+fn send_steer(time: Res<Time>, link: Res<Link>, mut client: ResMut<ClientState>) {
+    if let Some(msg) = client.0.steer_message(time.elapsed_secs_f64()) {
+        link.send_bytes(msg);
+    }
+}
+
 fn update_view(
     time: Res<Time>,
     fixed: Res<Time<Fixed>>,
@@ -178,6 +185,26 @@ fn register_commands(app: &mut App) {
                 s.samples_out,
                 c.prediction_error()
             ))
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("rider.steer")
+            .about("Steer to a lateral position on the road in metres (positive = right; or use the arrow keys)")
+            .arg(
+                Arg::new("metres")
+                    .required(true)
+                    .allow_negative_numbers(true)
+                    .value_parser(value_parser!(f64)),
+            ),
+        |world, m| {
+            let target = *m.get_one::<f64>("metres").expect("required");
+            let mut c = world.resource_mut::<ClientState>();
+            c.0.steer_to(target);
+            match c.0.lateral_target() {
+                Some(t) => Ok(format!("steering to {t:+.1} m")),
+                None => Err("not riding yet".into()),
+            }
         },
     ))
     .console_command(ConsoleCommand::new(

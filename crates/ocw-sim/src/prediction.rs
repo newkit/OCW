@@ -24,6 +24,11 @@ pub struct Predictor {
     last_error: f64,
     /// Drafting factor on the drag, predicted by the client (1.0 = none).
     drag_factor: f64,
+    /// Steering target (same rule as the server, so steering reacts at once).
+    lateral_target: Option<f64>,
+    /// Remaining lateral error to blend in, and its rate (m/s).
+    pending_lateral: f64,
+    lateral_rate: f64,
 }
 
 impl Predictor {
@@ -35,6 +40,9 @@ impl Predictor {
             correction_rate: 0.0,
             last_error: 0.0,
             drag_factor: 1.0,
+            lateral_target: None,
+            pending_lateral: 0.0,
+            lateral_rate: 0.0,
         }
     }
 
@@ -47,6 +55,11 @@ impl Predictor {
         self.last_error
     }
 
+    /// Sets the steering target (already clamped to the road by the caller).
+    pub fn set_lateral_target(&mut self, target_m: f64) {
+        self.lateral_target = Some(target_m);
+    }
+
     /// Sets the predicted drafting factor (from the positions of others).
     pub fn set_drag_factor(&mut self, drag_factor: f64) {
         self.drag_factor = drag_factor;
@@ -57,6 +70,15 @@ impl Predictor {
         let env = Environment::with_grade(route.sample(self.state.distance).grade)
             .with_drag_factor(self.drag_factor);
         physics::step(&mut self.state, &self.profile, power_w, &env, SIM_DT);
+        if let Some(target) = self.lateral_target {
+            self.state.lateral_offset = physics::steer(self.state.lateral_offset, target, SIM_DT);
+        }
+        if self.pending_lateral != 0.0 {
+            let max_step = self.lateral_rate.abs() * SIM_DT;
+            let applied = self.pending_lateral.clamp(-max_step, max_step);
+            self.state.lateral_offset += applied;
+            self.pending_lateral -= applied;
+        }
         if self.pending_correction != 0.0 {
             // Apply the error linearly over CORRECTION_TIME_S.
             let max_step = self.correction_rate.abs() * SIM_DT;
@@ -77,17 +99,26 @@ impl Predictor {
             let env = Environment::with_grade(route.sample(extrapolated.distance).grade)
                 .with_drag_factor(self.drag_factor);
             physics::step(&mut extrapolated, &self.profile, power_w, &env, SIM_DT);
+            if let Some(target) = self.lateral_target {
+                extrapolated.lateral_offset =
+                    physics::steer(extrapolated.lateral_offset, target, SIM_DT);
+            }
         }
         let error = extrapolated.distance - self.state.distance;
         self.last_error = error;
         if error.abs() > SNAP_THRESHOLD_M {
             self.state = extrapolated;
             self.pending_correction = 0.0;
+            self.pending_lateral = 0.0;
         } else {
             self.pending_correction = error;
             self.correction_rate = error / CORRECTION_TIME_S;
             self.state.speed = extrapolated.speed;
-            self.state.lateral_offset = extrapolated.lateral_offset;
+            // Lateral errors are blended too (the steering intent reaches
+            // the server a little later than the prediction reacts).
+            let lateral_error = extrapolated.lateral_offset - self.state.lateral_offset;
+            self.pending_lateral = lateral_error;
+            self.lateral_rate = lateral_error / CORRECTION_TIME_S;
         }
     }
 }
