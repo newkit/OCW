@@ -32,10 +32,21 @@ use ocw_render::console::{ConsoleState, Permission};
 use ocw_render::{OcwRenderPlugins, RideView};
 use ocw_world::Route;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-pub enum RouteChoice {
-    Hills,
-    Loop,
+/// The built-in test routes.
+fn test_route(name: &str) -> Option<Route> {
+    match name {
+        "hills" => Some(Route::test_hills()),
+        "loop" => Some(Route::test_loop()),
+        _ => None,
+    }
+}
+
+impl Args {
+    /// A route on the road graph: `--route-gpx`, or `--route NAME` (not a
+    /// test route) with `--world`.
+    pub fn graph_route(&self) -> bool {
+        self.world.is_some() && (self.route_gpx.is_some() || test_route(&self.route).is_none())
+    }
 }
 
 #[derive(Parser, Debug, Clone, Resource)]
@@ -60,9 +71,16 @@ pub struct Args {
     /// (2560x1600) or name substring (HDMI). Detected monitors are logged.
     #[arg(long, value_name = "MONITOR")]
     pub monitor: Option<String>,
-    /// Test route: hills (steep, changing gradients) or loop (gentle).
-    #[arg(long, value_enum, default_value_t = RouteChoice::Hills)]
-    pub route: RouteChoice,
+    /// Test route: hills (steep, changing gradients) or loop (gentle). With
+    /// --world: a route of the package by name (`world-builder gpx` /
+    /// `route --world`), or an `ocw-graph-route` file; ridden on the road
+    /// graph (junction arrows show the route, another exit leaves it).
+    #[arg(long, default_value = "hills")]
+    pub route: String,
+    /// Ride a GPX track or route (spec §2.7): matched onto the road graph of
+    /// --world at the start; problems (off-road stretches) are reported.
+    #[arg(long, value_name = "PATH", requires = "world")]
+    pub route_gpx: Option<PathBuf>,
     /// Ride a route file from `world-builder route` (real roads and terrain).
     #[arg(long, value_name = "PATH")]
     pub route_file: Option<PathBuf>,
@@ -153,7 +171,32 @@ fn free_ride_setup(args: &Args, pkg: &ocw_world::WorldPackage) -> connection::Fr
         );
         std::process::exit(1);
     };
-    let net = std::sync::Arc::new(ocw_world::RoadNetwork::new(graph));
+    let net =
+        std::sync::Arc::new(ocw_world::RoadNetwork::new(graph).with_package_name(pkg.name.clone()));
+    if args.graph_route() {
+        let plan = graph_route_plan(args, pkg, &net).unwrap_or_else(|e| {
+            eprintln!("{e}");
+            std::process::exit(1);
+        });
+        println!(
+            "route {}: {:.1} km, {} steps{}",
+            plan.name,
+            plan.length_m() / 1000.0,
+            plan.steps.len(),
+            if plan.is_loop { ", a loop" } else { "" }
+        );
+        let (edge, offset_m, forward) = plan.start();
+        return connection::FreeRideSetup {
+            origin: pkg.origin,
+            net,
+            start: ocw_sim::FreeRideStart {
+                edge,
+                offset_m,
+                forward,
+            },
+            plan: Some(std::sync::Arc::new(plan)),
+        };
+    }
     let start = match args.start {
         Some((x, z)) => net
             .nearest([x, z])
@@ -192,7 +235,74 @@ fn free_ride_setup(args: &Args, pkg: &ocw_world::WorldPackage) -> connection::Fr
             offset_m,
             forward,
         },
+        plan: None,
     }
+}
+
+/// The route to ride on the road graph: a GPX file matched now, an
+/// `ocw-graph-route` file, or a route of the package by name.
+fn graph_route_plan(
+    args: &Args,
+    pkg: &ocw_world::WorldPackage,
+    net: &ocw_world::RoadNetwork,
+) -> Result<ocw_world::RoutePlan, String> {
+    if let Some(path) = &args.route_gpx {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let gpx =
+            ocw_world::gpx::Gpx::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+        let name = gpx.name.clone().unwrap_or_else(|| {
+            path.file_stem()
+                .map_or("GPX route".into(), |s| s.to_string_lossy().into_owned())
+        });
+        let report = ocw_world::matching::match_gpx(
+            net,
+            &gpx,
+            pkg.origin,
+            &name,
+            &ocw_world::matching::MatchParams::default(),
+        )
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+        println!("{}", report.summary());
+        return Ok(report.plan);
+    }
+    let file = std::path::Path::new(&args.route);
+    if file.is_file() {
+        let text = std::fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
+        let (route, package) =
+            ocw_world::GraphRoute::parse(&text).map_err(|e| format!("{}: {e}", file.display()))?;
+        if let Some((name, hash)) = package
+            && hash != net.fingerprint()
+        {
+            eprintln!(
+                "{}: made for {name} ({hash:016x}), this package is {} ({:016x}); trying the stable edge IDs",
+                file.display(),
+                pkg.name,
+                net.fingerprint()
+            );
+        }
+        return route.resolve(net).map_err(|e| {
+            format!(
+                "{}: the route does not fit this package's road graph: {e} (re-match it with world-builder gpx)",
+                file.display()
+            )
+        });
+    }
+    let route = pkg.route(&args.route).ok_or_else(|| {
+        let names: Vec<&str> = pkg.routes.iter().map(|r| r.name.as_str()).collect();
+        format!(
+            "no route {:?} in {} (it has: {}); add one with `world-builder gpx`",
+            args.route,
+            pkg.name,
+            if names.is_empty() {
+                "none".to_string()
+            } else {
+                names.join(", ")
+            }
+        )
+    })?;
+    route
+        .resolve(net)
+        .map_err(|e| format!("route {:?} does not fit the road graph: {e}", route.name))
 }
 
 /// Loads an ocw-route file: the route and the terrain around it.
@@ -236,10 +346,16 @@ fn main() -> AppExit {
     let (route, terrain_base) = match &args.route_file {
         Some(path) => load_route_file(path),
         None => (
-            match args.route {
-                RouteChoice::Hills => Route::test_hills(),
-                RouteChoice::Loop => Route::test_loop(),
-            },
+            test_route(&args.route).unwrap_or_else(|| {
+                if args.world.is_none() {
+                    eprintln!(
+                        "--route {}: not a test route (hills, loop); package routes need --world",
+                        args.route
+                    );
+                    std::process::exit(1);
+                }
+                Route::test_hills()
+            }),
             None,
         ),
     };
@@ -253,7 +369,7 @@ fn main() -> AppExit {
             eprintln!("{}: {e}", path.display());
             std::process::exit(1);
         });
-        if args.free_ride {
+        if args.free_ride || args.graph_route() {
             app.insert_resource(free_ride_setup(&args, &pkg));
         }
         app.insert_resource(ocw_render::package::PackageWorld(std::sync::Arc::new(pkg)));
@@ -414,6 +530,27 @@ mod tests {
         // --free-ride needs a world package.
         assert!(Args::try_parse_from(["ocw-desktop", "--free-ride"]).is_err());
         assert!(parse_xz("1;2").is_err());
+    }
+
+    #[test]
+    fn route_arguments() {
+        // Test routes stay test routes, also with a world package.
+        let a = Args::parse_from(["ocw-desktop", "--route", "loop"]);
+        assert!(!a.graph_route() && test_route(&a.route).is_some());
+        let a = Args::parse_from(["ocw-desktop", "--world", "w.ocwpkg", "--route", "hills"]);
+        assert!(!a.graph_route());
+        // A package route by name, or a GPX file: rides on the road graph.
+        let a = Args::parse_from(["ocw-desktop", "--world", "w.ocwpkg", "--route", "Rheintal"]);
+        assert!(a.graph_route());
+        let a = Args::parse_from([
+            "ocw-desktop",
+            "--world",
+            "w.ocwpkg",
+            "--route-gpx",
+            "ride.gpx",
+        ]);
+        assert!(a.graph_route());
+        assert!(Args::try_parse_from(["ocw-desktop", "--route-gpx", "ride.gpx"]).is_err());
     }
 
     #[test]

@@ -188,6 +188,16 @@ Exits are **ordered from leftmost to rightmost**. Keys move the selection throug
 | **Route / workout / event / race** | The path is fixed by the route. Arrows show only the route direction ahead (informational); turn keys are disabled. Optional "leave route" via a console/menu action in solo rides |
 | **Group ride "follow leader"** | Turns follow the ride leader's choices; keys disabled for followers |
 
+**Route rides on the road graph (decided).** A route of the package (§2.7) is ridden with the free-ride path machinery (§5.2): the path is extended with the route's next step instead of the default exit, so the same junctions, rounded corners, slow-downs and U-turns apply.
+
+- **Arrows:** at each junction the route's exit is the default and drawn in blue; it turns green when locked like any choice. The label says `[route]`.
+- **Leave route:** in solo rides the turn keys stay active. Selecting another exit marks it `[leaves the route]` in the overlay (the confirmation); once it locks, the rider is off the route and free rides. The HUD shows "Off the route – press J (`ride.rejoin`) to return".
+- **Rejoin:** **J** (gamepad north) or `ride.rejoin` keeps the path up to the first vertex beyond the lock point and adds the shortest way (one-way roads respected, no U-turn) to a route step from where the rider left on, weighing skipped route at 0.3 per metre against the detour. The rider also rejoins by riding onto a later route edge in the route's direction. The client sends `RouteRejoin { distance, speed }` (like `UTurn`), so the server finds the same way.
+- **Bots** always take the route's exit.
+- **Route state is derived from the path:** a step is on the route when it rides the route's next step (same edge, same direction), or – off the route – a later route step. Server and clients agree on it from the step list alone; no extra state is sent.
+- After the finish of a route that is not a loop, the ride continues as a free ride. Loops are ridden in laps.
+- The HUD shows the route name, distance done and length (and the lap); `ride.route` prints it.
+
 Simulation and network aspects of steering are described in §5.2 and §6.5.
 
 #### 2.2.2 Dead-End Roads
@@ -200,7 +210,9 @@ Simulation and network aspects of steering are described in §5.2 and §6.5.
 - **Automatic U-turn at the end:** the rider slows to ~10 km/h, the avatar turns around in a short loop, and the ride continues on the same road in the opposite direction. Power and physics simply continue, so no workout or ride is interrupted.
 - **Manual U-turn** at any time with the Down arrow key (free ride only), using the same animation.
 - **The loop (v1.6):** a U-turn is a "bulb" of radius 4 m (60° right, 300° left, 60° right – it ends where it began, heading the other way, about 30 m long). The rider slows down automatically to ~10 km/h before it and is steered through it (also with manual lean steering). At a dead end the loop starts ~12 m before the road's end, so it stays on the road; a manual U-turn starts after the slow-down distance. The path then continues on the same edge in the other direction.
+- **The loop stays on the road (decided):** the bulb is `2 r` wide and centred on the centreline, so its radius comes from the road width: `r = clamp(width / 2 − 0.4 m, 1.5 m, 4 m)` (5 m road: 2.1 m). It is ridden at `min(10 km/h, √(2.5 m/s² · r))` (~8 km/h on a 5 m road). On the last 20 m before it and in it the rider is steered to the centreline (autodrive with offset 0, also for lean steering), because a rider keeping a lane offset would ride a loop of radius `r + offset`. A manual U-turn starts at least these 20 m ahead. On paths narrower than ~3.8 m the 1.5 m loop still overhangs slightly (walking pace). Regression test: `u_turns_stay_on_the_road` (`ocw-sim`).
 - **Region border:** if the neighbouring package is installed, the ride continues across the border without interruption. Otherwise there is an automatic U-turn with the message "End of region – download <neighbour>". The download happens only after the ride; nothing is downloaded during a ride (§4.2).
+- **Neighbouring packages (data model decided, runtime pending):** the builder cuts a road at the region boundary and marks the cut end as a boundary vertex in both packages. `ocw_world::border::match_border` pairs the boundary vertices of two packages that are the same road (same OSM way or stable edge ID) at the same geographic point (within 8 m; each package keeps its own projection, points are compared through latitude / longitude). `join_graphs` builds one road graph in the first package's metres with the linked vertices merged and no longer boundary, so a free-ride path continues across (unit-tested); the neighbour's own outer border stays a border. Still to do: the client loads both packages (graph joined at start; tiles of the second package streamed with an offset into the first one's frame), and the server rides the joined graph – the Welcome then names both packages (§6.5). Until then a border always turns the rider round.
 - **Routes and GPX imports** (§2.7) are checked when they are created: a route that runs into a dead end must contain an explicit turnaround point (out-and-back routes are valid).
 
 ### 2.3 Real-Time Multiplayer
@@ -348,6 +360,15 @@ Bicycle and character must be correctly attached to each other in the 3D present
 6. **Result:** a personal route stored locally. It can optionally be shared with friends or used for a group ride; the server receives only the edge list, not the GPX.
 
 GPX upload is also available in the web companion, where map matching runs on the server with the same `ocw-world` code (§2.10).
+
+**Implementation (decided):**
+
+- **Route format:** `GraphRoute` = name, loop flag, steps: `edge <stable ID> <from m> <to m>` (metres from the edge's first vertex, `from > to` = against it) or `turn` (an explicit U-turn, required for out-and-back routes, §2.2.2). The first step may start and the last end part-way along an edge. Stored in the package as the tagged section `ROUT` (§4.7), or as a standalone text file `ocw-graph-route 1` that names its package and graph fingerprint (`package NAME HASH`). Lap count, start/finish markers and segments (sprints, KOMs) come later as more lines / fields. Binary in the package and plain text outside instead of TOML/JSON: no new dependencies in `ocw-world`, and the file stays readable.
+- **Resolving** a stored route against a graph checks every stable ID and the continuity of the steps (each starts where the previous one ends; a U-turn reverses the same edge) and reports the first break.
+- **GPX parsing:** a small hand-written scanner in `ocw-world` (`gpx.rs`) instead of the `gpx` crate, so `ocw-world` stays dependency-free and wasm-safe. GPX 1.0 / 1.1, tracks (segments joined) and routes, namespace prefixes, comments, CDATA, entities.
+- **Map matching** (`matching.rs`): points thinned to ≥ 10 m; up to 6 edges within 50 m per point as states, in each direction a one-way road allows; emission Gaussian (σ 10 m); transition `exp(−|road distance − straight distance| / 25 m)` with the road distance from a bounded Dijkstra (3 × straight distance + 300 m) over riding directions, no turning back at vertices; a U-turn on an edge costs 60 m extra; backwards jitter of up to 8 m on one edge costs 3 × its length. Points without a road within 50 m, or not connected to the previous point, are skipped and reported; more than 1.5 km of skipped track is an error ("the roads of this package do not connect the track near point N"). A track ending within 50 m of its start on the same edge becomes a loop starting at that edge's vertex. The report lists stretches more than 30 m from the matched road and skipped points.
+- **Tools:** `world-builder gpx --world PKG --gpx FILE [--name N] [--route-file F] [--dry-run]` matches and stores a route in the package; `world-builder route --world PKG --from LAT,LON --to LAT,LON --name N` stores the shortest main-road route; `world-builder routes --world PKG [--from OLD] [--remove N] [--export-gpx]` lists and checks the routes (and carries them over from an older build, §4.4). The desktop app rides one with `--world PKG --route NAME` (or `--route FILE` for an `ocw-graph-route` file) or matches a GPX file at the start with `--route-gpx FILE`; the headless server takes `--world PKG --route NAME`.
+- **Elevation** comes from the package's smoothed road profiles (step 4); GPX elevation is read but not used yet.
 
 ### 2.8 Training, Export and Strava
 
@@ -736,7 +757,7 @@ The road surface is generated from the line geometries.
 
 The road connections form the **road graph**, which is the basis for routes (§2.7), junction steering (§2.2.1) and navigation.
 
-- **Stable edge IDs:** derived from OSM way ID + node range plus a geometry hash. When a package is rebuilt from newer OSM data, routes are re-matched automatically and the world builder flags any that break.
+- **Stable edge IDs:** derived from OSM way ID + node range plus a geometry hash. When a package is rebuilt from newer OSM data, routes are re-matched automatically and the world builder flags any that break. (Decided: `world-builder routes --world NEW --from OLD` keeps a route whose stable IDs all resolve and join up; otherwise it reports the break and re-matches the route's old geometry – points every 10 m along the old graph, converted through latitude / longitude – onto the new graph with the GPX matcher (σ 4 m). Routes that cannot be re-matched are reported and dropped.)
 - **Graph cleanup and dead ends:**
   1. Keep only the **largest connected component** of the rideable graph per region (drops disconnected fragments).
   2. **Prune short spurs** shorter than ~50 m, and leave out driveways / parking aisles (`service=driveway|parking_aisle`) entirely.
@@ -829,7 +850,9 @@ Contents:
 
 **Package format (v1.6):** the binary package (`.ocwpkg`) holds the 1 km tiles (terrain heights, road strips) and, from format version 2 (`OCWPKG02`), tagged sections after the tiles that readers skip when they do not know them. The first section is the **road graph** (`GRPH`: vertices, edges with stable ID, class, name, width, one-way, bridge / tunnel / boundary / dead-end flags, centreline and smoothed elevation profile), so the client and the server can ride free on it (§2.2.1). Packages without a graph are still written as version 1, and clients read both.
 
-**Route files (v1.9, interim):** a plain-text `ocw-route 1` file holds one route with its elevation and the terrain grid around it (`name`, `origin` lat/lon of the local metres, `width`, `points` x y z every 5 m, optional `surface FROM TO NAME` stretches that are not asphalt, `grid`). It is written by `world-builder route` and ridden with `--route-file`, optionally together with a world package (`--world`) for the surroundings. Routes as part of packages (above) replace it.
+**Routes section (decided):** `ROUT` holds the package's routes on the road graph (§2.7): per route its name, a loop flag and the steps (stable edge ID with from / to metres as `f64`, or a U-turn). A package with only routes and no graph is still version 2. `world-builder gpx` and `route --world` add routes; readers that do not know the section skip it.
+
+**Route files (v1.9, interim):** a plain-text `ocw-route 1` file holds one route with its elevation and the terrain grid around it (`name`, `origin` lat/lon of the local metres, `width`, `points` x y z every 5 m, optional `surface FROM TO NAME` stretches that are not asphalt, `grid`). It is written by `world-builder route` and ridden with `--route-file`, optionally together with a world package (`--world`) for the surroundings. Routes as part of packages (above) replace it; it keeps working until the last users are moved to package routes.
 
 Packages are **signed, versioned and updatable**:
 
@@ -863,6 +886,7 @@ Fundamental resistive forces:
 - **Riders move in 1D along their path:** state = `distance_along_route: f64`, `lateral_offset: f32`, `speed: f64`. The 3D position is derived from the road geometry only for rendering. This makes the physics cheap, robust and easy to synchronize.
 - In free ride the path is an **edge list that is extended on the fly** by each junction decision (§2.2.1). The lateral offset is blended across junctions so the avatar follows a smooth curve, not the raw graph corner.
 - **Free-ride path (v1.6):** a list of steps – (part of) an edge with its riding direction, or a U-turn loop (§2.2.2). It is extended automatically where the road just continues (up to 2 km ahead), with a U-turn at dead ends and at the region border, and at the **lock point** (20 m before the next junction) with the chosen exit. Corners at junctions are rounded (a curve starting at most 10 m before the junction, so it is never under the rider at the lock point). The geometry is a pure function of the step list, so the server, the client's prediction and the client's copy of other riders' paths agree; steps more than 600 m behind the rider are dropped, step indices keep counting. Route files and test loops keep their fixed route; physics and rendering use either through the same interface (`Track`).
+- **Routes on the graph** use the same path: it may follow a route plan, which decides the steps the free ride would otherwise take by default (§2.2.1 route rides). Whether each step is on the route is a function of the steps, so the path stays the one source of truth for server and clients.
 - Riders on different paths are compared where their paths share a road in the same direction (drafting, §5.2).
 - **Sharp turns** and U-turns: the slow-down is a speed limit along the path – 15 km/h through turns sharper than 120°, 10 km/h through the U-turn loop – reached with ~2 m/s² before it. Junction turns sharper than 60° are taken with at most 4.5 m/s² sideways in the rounded corner (~22 km/h), so nobody turns off a descent at 60 km/h.
 - **Fixed timestep:** physics at **50 Hz** (20 ms) on client and server, independent of frame rate.
@@ -967,6 +991,8 @@ Goal: **detection and flagging of implausible data**. Power comes from user hard
 
 - The client sends a reliable `TurnIntent { junction_id, exit_edge_id }` as soon as the choice changes (§2.2.1). (v1.6: plus a sequence number and the exit's riding direction; no `exit_edge_id` = no choice, the default; `junction_id` is the vertex index in the world package's graph – client and server use the same package.)
 - A manual U-turn is a reliable `UTurn { distance, speed }`: where the client turned, so the server builds the same loop when it is close to its own state.
+- **Same package on both sides (decided):** because junctions are vertex indices, the client sends `Hello.world = WorldPackageId { name, graph_hash }` and the server sends its own in `Welcome.world`. `graph_hash` is the FNV-1a 64 fingerprint of the road graph's package encoding (the `GRPH` payload), so any rebuild that changes the graph changes it. The server rejects a Hello with another hash ("world package mismatch … install the same package version"); a client refuses a Welcome with another hash (for servers that do not check). Sessions without a road graph (route files, test routes) skip the check. Package signing and manifests (§4.7) are separate.
+- Route rides: `Welcome.graph_route` names the route; leaving it is an ordinary `TurnIntent`, rejoining a reliable `RouteRejoin { distance, speed }` (§2.2.1).
 - The server sends each rider's path as reliable `PathUpdate`s (the steps from an index on, or a new path after joining or a teleport); clients use them for the other riders and to correct their own prediction.
 - The **server decides** at the lock point and broadcasts the chosen edge.
 - The client predicts with its own choice and is corrected only in the rare case of disagreement (e.g. the intent arrived too late → the server default applies).

@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use ocw_core::{RiderId, RiderProfile, SIM_DT};
 use ocw_world::network::splitmix;
-use ocw_world::{RidePath, RoadNetwork, Route, Segment, Track};
+use ocw_world::{RidePath, RoadNetwork, Route, RoutePlan, Segment, Track};
 
 use crate::drafting;
 use crate::freeride::{self, TurnChoice, UTURN_INTERVAL_S};
@@ -121,6 +121,9 @@ pub struct Session {
     route: Route,
     /// Free ride: the road network and where riders start.
     free: Option<(Arc<RoadNetwork>, FreeRideStart)>,
+    /// A route on the road graph everyone follows (spec §2.7); riders may
+    /// leave it and rejoin.
+    plan: Option<Arc<RoutePlan>>,
     riders: BTreeMap<RiderId, Rider>,
     tick: u64,
     next_id: u32,
@@ -133,6 +136,7 @@ impl Session {
         Self {
             route,
             free: None,
+            plan: None,
             riders: BTreeMap::new(),
             tick: 0,
             next_id: 1,
@@ -156,6 +160,42 @@ impl Session {
             free: Some((net, start)),
             ..Self::new(first.route().clone())
         }
+    }
+
+    /// A ride along `plan` on `net` (spec §2.7): everyone starts at the
+    /// route's start and follows it through the junctions (bots always);
+    /// riders choosing another exit leave it and may rejoin
+    /// ([`Session::rejoin_route`]).
+    pub fn route_ride(net: Arc<RoadNetwork>, plan: Arc<RoutePlan>) -> Self {
+        let (edge, offset_m, forward) = plan.start();
+        let start = FreeRideStart {
+            edge,
+            offset_m,
+            forward,
+        };
+        let first = RidePath::on_route(net.clone(), plan.clone(), 0.0, 0);
+        let route = Route::from_points(
+            plan.name.clone(),
+            plan.name.clone(),
+            first.route().points().to_vec(),
+            false,
+            net.edge(edge).width_m,
+        )
+        .unwrap_or_else(|_| first.route().clone());
+        Self {
+            plan: Some(plan),
+            ..Self::free_ride(net, start).with_route(route)
+        }
+    }
+
+    fn with_route(mut self, route: Route) -> Self {
+        self.route = route;
+        self
+    }
+
+    /// The route everyone follows, if this is a route ride.
+    pub fn plan(&self) -> Option<&Arc<RoutePlan>> {
+        self.plan.as_ref()
     }
 
     /// The same session with riders starting `start_m` metres along the route.
@@ -231,7 +271,10 @@ impl Session {
         let mut lateral_offset = side * ((slot + 1.0) / 2.0).floor() * 1.2;
         let (path, distance) = match &self.free {
             Some((net, s)) => {
-                let mut p = RidePath::start(net.clone(), s.edge, s.offset_m, s.forward, 0.0, 0);
+                let mut p = match &self.plan {
+                    Some(plan) => RidePath::on_route(net.clone(), plan.clone(), 0.0, 0),
+                    None => RidePath::start(net.clone(), s.edge, s.offset_m, s.forward, 0.0, 0),
+                };
                 p.extend(0.0, &mut |j| j.default);
                 // Narrow roads: stay on them (off the edge, or it scrapes).
                 let limit = (physics::lateral_limit(p.road_width_at(0.0)) - 0.3).max(0.0);
@@ -379,6 +422,23 @@ impl Session {
         }
     }
 
+    /// Back to the route after leaving it (spec §2.2.1): the shortest way
+    /// to the route is added to the rider's path. `from` is where the
+    /// client asked (distance, speed), used when close to the server's
+    /// state so both find the same way.
+    pub fn rejoin_route(&mut self, id: RiderId, from: Option<(f64, f64)>) -> Result<(), String> {
+        let r = self.riders.get_mut(&id).ok_or("no such rider")?;
+        let (d, v) = match from {
+            Some((d, v)) if (d - r.state.distance).abs() < 10.0 => (d, v),
+            _ => (r.state.distance, r.state.speed),
+        };
+        let path = r.path.as_mut().ok_or("not riding a route")?;
+        let i = path.rejoin_route(d, v)?;
+        r.path_changed = Some(r.path_changed.map_or(i, |c| c.min(i)));
+        r.turn = None;
+        Ok(())
+    }
+
     /// Moves a rider to `distance` metres (dev command, local server only).
     /// In free ride only forwards along the path (junctions take their
     /// default exits on the way).
@@ -415,7 +475,8 @@ impl Session {
         let forward = net.edge(edge).oneway.allows(true);
         let next = r.path.as_ref().map_or(0, RidePath::next_index);
         let d = r.state.distance;
-        let mut path = RidePath::start(net, edge, offset, forward, d, next);
+        let mut path =
+            RidePath::start(net, edge, offset, forward, d, next).with_plan(self.plan.clone());
         path.extend(d, &mut |j| j.default);
         r.path = Some(path);
         r.path_reset = true;
@@ -849,6 +910,84 @@ mod tests {
             let on = |v: f64| (v / 300.0 - (v / 300.0).round()).abs() * 300.0 < 4.0;
             assert!(on(p[0]) || on(p[2]), "{p:?}");
         }
+    }
+
+    #[test]
+    fn route_ride_bots_stay_on_the_route_riders_may_leave_and_rejoin() {
+        let net = grid_network();
+        let e = |a: u32, b: u32| {
+            (0..net.graph().edges.len())
+                .find_map(|i| {
+                    let x = net.edge(i);
+                    if (x.from.0, x.to.0) == (a, b) {
+                        Some(Segment::whole(&net, i, true))
+                    } else if (x.from.0, x.to.0) == (b, a) {
+                        Some(Segment::whole(&net, i, false))
+                    } else {
+                        None
+                    }
+                })
+                .unwrap()
+        };
+        // East along the top row to vertex 2, south to 10, east to 11.
+        let plan = RoutePlan::new(
+            &net,
+            "test route",
+            vec![e(0, 1), e(1, 2), e(2, 6), e(6, 10), e(10, 11)],
+            false,
+        )
+        .unwrap();
+        let mut s = Session::route_ride(net.clone(), Arc::new(plan));
+        assert_eq!(s.route().name(), "test route");
+        assert!(s.plan().is_some() && s.is_free_ride());
+        let me = s.add_rider("me", RiderProfile::default());
+        let bot = s.add_bot("bot", 220.0);
+        pedal(&mut s, me, 250.0);
+        // At vertex 1 (straight on is the route) the client turns right.
+        let (j, _) = s.path(me).unwrap().next_junction().unwrap();
+        assert_eq!(j.route, Some(j.default));
+        let right = j
+            .exits
+            .iter()
+            .find(|x| x.class == ocw_world::TurnClass::Right)
+            .unwrap();
+        let choice = TurnChoice {
+            junction: j.vertex,
+            edge: right.edge,
+            forward: right.forward,
+        };
+        assert!(s.set_turn(me, 1, Some(choice)));
+        for _ in 0..(60 * 50) {
+            s.step();
+        }
+        let off = s.path(me).unwrap().route_state().unwrap();
+        assert!(
+            matches!(off, ocw_world::RouteState::Off { left_at: 1, .. }),
+            "{off:?}"
+        );
+        // The bot is still on it.
+        let bot_d = s.rider_state(bot).unwrap().distance;
+        assert!(s.path(bot).unwrap().on_route_at(bot_d));
+        // Back to the route.
+        s.rejoin_route(me, None).unwrap();
+        assert!(matches!(
+            s.path(me).unwrap().route_state(),
+            Some(ocw_world::RouteState::On { .. })
+        ));
+        assert!(!s.take_path_changes().is_empty());
+        assert!(s.rejoin_route(me, None).is_err(), "already on it");
+        for _ in 0..(150 * 50) {
+            s.step();
+        }
+        let d = s.rider_state(me).unwrap().distance;
+        assert!(
+            s.path(me).unwrap().on_route_at(d)
+                || s.path(me).unwrap().route_progress(d).unwrap().finished
+        );
+        // Plain free rides cannot rejoin anything.
+        let mut f = free_session();
+        let r = f.add_rider("r", RiderProfile::default());
+        assert!(f.rejoin_route(r, None).is_err());
     }
 
     #[test]

@@ -177,6 +177,16 @@ fn steer(
             info!("U-turn");
             link.send_bytes(msg);
         }
+        // Route ride: back to the route after leaving it.
+        if keys.just_pressed(KeyCode::KeyJ) || pad_pressed(GamepadButton::North) {
+            match client.0.rejoin_route() {
+                Ok(msg) => {
+                    info!("rejoining the route");
+                    link.send_bytes(msg);
+                }
+                Err(e) => info!("no rejoin: {e}"),
+            }
+        }
         let (key, arrows_taken) = junction_key(
             keys.just_pressed(KeyCode::KeyQ) || pad_pressed(GamepadButton::DPadLeft),
             keys.just_pressed(KeyCode::KeyE) || pad_pressed(GamepadButton::DPadRight),

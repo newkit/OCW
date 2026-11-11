@@ -163,6 +163,8 @@ pub struct Junction {
     pub exits: Vec<Exit>,
     /// Index into `exits` taken when the rider chooses none.
     pub default: usize,
+    /// Route mode: the route's exit (then also the default, spec §2.2.1).
+    pub route: Option<usize>,
 }
 
 /// The road graph prepared for riding. Shared (in an `Arc`) by the server's
@@ -175,6 +177,10 @@ pub struct RoadNetwork {
     by_id: HashMap<EdgeId, usize>,
     /// Default rule 4 on equal roads: right (right-hand traffic) or left.
     pub keep_left: bool,
+    /// Name of the world package the graph comes from (empty if none).
+    pub package: String,
+    /// [`RoadGraph::fingerprint`] of the graph.
+    fingerprint: u64,
 }
 
 impl RoadNetwork {
@@ -187,13 +193,28 @@ impl RoadNetwork {
             .enumerate()
             .map(|(i, e)| (e.id, i))
             .collect();
+        let fingerprint = graph.fingerprint();
         Self {
             graph,
             adjacency,
             geometry,
             by_id,
             keep_left: false,
+            package: String::new(),
+            fingerprint,
         }
+    }
+
+    /// The same network, named after its world package.
+    pub fn with_package_name(mut self, name: impl Into<String>) -> Self {
+        self.package = name.into();
+        self
+    }
+
+    /// Fingerprint of the road graph (spec §6.5: client and server must use
+    /// the same package).
+    pub fn fingerprint(&self) -> u64 {
+        self.fingerprint
     }
 
     pub fn graph(&self) -> &RoadGraph {
@@ -303,6 +324,7 @@ impl RoadNetwork {
             vertex: v,
             exits,
             default,
+            route: None,
         })
     }
 

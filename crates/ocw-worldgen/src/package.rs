@@ -262,6 +262,7 @@ pub fn build_package<F: Fn(f64, f64) -> f64 + Sync>(
         tiles,
         // The graph rides along for free ride and junction steering (spec §2.2.1).
         graph: Some(graph.clone()),
+        routes: Vec::new(),
     }
 }
 

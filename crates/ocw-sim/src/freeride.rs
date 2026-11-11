@@ -52,9 +52,13 @@ pub fn advance(
     (changed, used)
 }
 
-/// A bot's exit (deterministic for a `seed`): mostly the default, else
-/// another exit that is not a dead end.
+/// A bot's exit (deterministic for a `seed`): on a route always the
+/// route's; in free ride mostly the default, else another exit that is not
+/// a dead end.
 pub fn bot_exit(j: &Junction, seed: u64) -> usize {
+    if let Some(i) = j.route {
+        return i;
+    }
     let r = splitmix(seed);
     if r % 5 < 3 {
         return j.default;

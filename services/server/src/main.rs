@@ -34,10 +34,15 @@ struct Args {
     /// Seed of the free-ride start point.
     #[arg(long, default_value_t = 1)]
     seed: u64,
+    /// Ride this route of the world package (`world-builder gpx` / `route
+    /// --world`) instead of a free ride.
+    #[arg(long, value_name = "NAME", requires = "world")]
+    route: Option<String>,
 }
 
-/// Free ride on a world package's road graph, from a seeded random start.
-fn free_ride(path: &std::path::Path, seed: u64) -> Course {
+/// Free ride on a world package's road graph, from a seeded random start,
+/// or along one of its routes.
+fn free_ride(path: &std::path::Path, seed: u64, route: Option<&str>) -> Course {
     let fail = |e: String| -> ! {
         eprintln!("{}: {e}", path.display());
         std::process::exit(1);
@@ -46,8 +51,25 @@ fn free_ride(path: &std::path::Path, seed: u64) -> Course {
     let pkg = ocw_world::WorldPackage::from_bytes(&bytes).unwrap_or_else(|e| fail(e));
     let graph = pkg
         .graph
+        .clone()
         .unwrap_or_else(|| fail("no road graph (rebuild it with world-builder package)".into()));
-    let net = Arc::new(RoadNetwork::new(graph));
+    let net = Arc::new(RoadNetwork::new(graph).with_package_name(pkg.name.clone()));
+    if let Some(name) = route {
+        let stored = pkg.route(name).unwrap_or_else(|| {
+            let names: Vec<&str> = pkg.routes.iter().map(|r| r.name.as_str()).collect();
+            fail(format!(
+                "no route {name:?} (the package has: {})",
+                names.join(", ")
+            ))
+        });
+        let plan = stored
+            .resolve(&net)
+            .unwrap_or_else(|e| fail(format!("route {name:?} does not fit the road graph: {e}")));
+        return Course::RouteRide {
+            net,
+            plan: Arc::new(plan),
+        };
+    }
     let (edge, offset_m, forward) = net
         .random_start(seed)
         .unwrap_or_else(|| fail("empty road graph".into()));
@@ -69,7 +91,7 @@ fn main() {
         .init();
     let args = Args::parse();
     let course = match &args.world {
-        Some(path) => free_ride(path, args.seed),
+        Some(path) => free_ride(path, args.seed, args.route.as_deref()),
         None => Course::Route(Route::test_loop()),
     };
     match &course {
@@ -83,6 +105,12 @@ fn main() {
             edges = net.graph().edges.len(),
             bots = args.bots,
             "starting free ride"
+        ),
+        Course::RouteRide { plan, .. } => tracing::info!(
+            route = %plan.name,
+            length_km = plan.length_m() / 1000.0,
+            bots = args.bots,
+            "starting route ride"
         ),
     }
     let mut server = GameServer::new(
