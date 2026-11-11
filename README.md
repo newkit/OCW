@@ -35,6 +35,9 @@ directory is `/`). The app is only ad-hoc signed, not notarised, so Gatekeeper
 blocks the first start: right-click the app → Open, or System Settings →
 Privacy & Security → Open Anyway, or remove the quarantine flag with
 `xattr -dr com.apple.quarantine "/Applications/Open Cycling World.app"`.
+Video recording (key V) needs ffmpeg: install Homebrew, then `brew install
+ffmpeg` (`make deps-macos` prints both commands); the app also finds it in
+`/opt/homebrew/bin`, `/usr/local/bin` and `~/.local/bin` when started from Finder.
 
 ## Controls
 
@@ -447,7 +450,7 @@ scripts/remote.sh <name> ssh 'uname -a'                              # Windows: 
 | OS | Command (in the copied checkout, e.g. `scripts/remote.sh <name> run 'make …'`, or locally on the machine) |
 |---|---|
 | Linux | `make deps-linux` – detects Debian/Ubuntu (apt), Fedora (dnf) or Arch (pacman), installs the packages (sudo; run it yourself in a terminal there) and rustup with the pinned Rust; or the parts: `make deps-linux-debian` / `-fedora` / `-arch`, `make deps-rust` |
-| macOS | `make deps-macos` – Xcode Command Line Tools, rustup, ffmpeg (if Homebrew is installed) |
+| macOS | `make deps-macos` – Xcode Command Line Tools, rustup, ffmpeg (if Homebrew is installed; otherwise it prints the commands to install Homebrew and ffmpeg, which needs an admin password) |
 | Windows | `make deps-windows` – winget: Git, Visual Studio Build Tools (C++), rustup (needs GNU make, e.g. `winget install ezwinports.make`) |
 
 rustup can also be installed without sudo and without touching shell

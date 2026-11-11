@@ -102,11 +102,14 @@ deps-windows: ## Windows: Git, VS Build Tools (C++), rustup via winget + Rust to
 	rustup show active-toolchain || rustup toolchain install
 	@echo "Open a new terminal so PATH includes rustup, Git and the MSVC tools."
 
-deps-macos: ## macOS: Xcode Command Line Tools (+ ffmpeg if Homebrew is installed) + Rust toolchain
+deps-macos: ## macOS: Xcode Command Line Tools + ffmpeg (Homebrew; prints how to get it if missing) + Rust toolchain
 	@xcode-select -p >/dev/null 2>&1 || { xcode-select --install; \
 		echo "Finish the Command Line Tools installer, then run 'make deps-macos' again."; exit 1; }
 	@if command -v brew >/dev/null 2>&1; then brew install ffmpeg; \
-		else echo "Homebrew not found: skipping ffmpeg (only needed for videos)."; fi
+		else echo "Homebrew not found: skipping ffmpeg (only needed for video recording, key V)."; \
+		echo "To record videos, install Homebrew (asks for an admin password), then ffmpeg:"; \
+		echo '  /bin/bash -c "$$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'; \
+		echo '  brew install ffmpeg'; fi
 	$(MAKE) deps-rust
 
 deps-rust: ## Linux/macOS: rustup (if missing) + the pinned toolchain incl. wasm target
