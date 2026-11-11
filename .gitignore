@@ -1,3 +1,18 @@
 /target
 *.png
 !assets/**/*.png
+
+# Machine configuration and SSH keys stay local (see config/README.md).
+/config/*
+!/config/README.md
+!/config/*.example.*
+
+# Safety net: never commit private keys anywhere.
+id_rsa*
+id_ecdsa*
+id_ed25519*
+*_ed25519
+*_rsa
+*.pem
+*.key
+known_hosts

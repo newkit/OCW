@@ -1,0 +1,89 @@
+# Build, test and benchmark machines for Open Cycling World.
+#
+# Copy this file to `config/machines.toml` and fill in your machines:
+#
+#     cp config/machines.example.toml config/machines.toml
+#
+# `config/machines.toml` and everything in `config/ssh/` are ignored by git.
+# Never commit host names, user names or keys. See config/README.md.
+
+[defaults]
+# SSH port used when a machine does not set one.
+port = 22
+# Directory under config/ holding private keys and known_hosts (git-ignored).
+ssh_dir = "ssh"
+# Git remote the machines clone from.
+repo_url = "git@github.com:newkit/OCW.git"
+# Seconds before an SSH connection attempt is abandoned.
+connect_timeout_s = 10
+
+# One [[machine]] table per machine.
+#
+# name           short unique name used by the scripts (e.g. `linux-gpu`)
+# os             linux | windows | macos
+# roles          any of: build (cargo build/clippy), test (cargo test + smoke runs),
+#                bench (graphics spike / benchmarks, needs a real GPU and a
+#                logged-in desktop session), devices (Bluetooth trainer tests)
+# host           host name or IP address
+# port           SSH port (optional, defaults.port)
+# user           SSH user (ideally a dedicated account)
+# identity_file  private key, relative to config/<ssh_dir>/ or absolute
+# shell          bash | zsh | powershell | cmd: the login shell commands run in
+# repo_path      checkout location on the machine
+# gpu            GPU model, for benchmark reports
+# vram_gb        GPU memory, for benchmark reports
+# cpu, ram_gb    for benchmark reports
+# display        how a GUI run reaches the screen:
+#                linux: "wayland" | "x11" (the logged-in desktop session)
+#                windows: "interactive-task" (scheduled task in the logged-in session)
+#                macos: "aqua" (logged-in GUI session via launchctl asuser)
+# notes          free text
+
+[[machine]]
+name = "linux-gpu"
+os = "linux"
+roles = ["build", "test", "bench"]
+host = "linux-gpu.example.lan"
+user = "ocw"
+identity_file = "ocw_linux_ed25519"
+shell = "bash"
+repo_path = "~/src/OCW"
+gpu = "NVIDIA GeForce GTX 1050 Ti"
+vram_gb = 4
+cpu = "Intel Core i5-7500 (4 cores)"
+ram_gb = 8
+display = "wayland"
+notes = "Reference machine for the §3.1.1 spike (close to the §15 minimum spec)."
+
+[[machine]]
+name = "windows"
+os = "windows"
+roles = ["build", "test"]
+host = "192.0.2.20"
+user = "ocw"
+identity_file = "ocw_windows_ed25519"
+shell = "powershell"
+repo_path = "C:\\src\\OCW"
+gpu = "AMD Radeon RX 6600"
+vram_gb = 8
+cpu = "AMD Ryzen 5 5600 (6 cores)"
+ram_gb = 16
+display = "interactive-task"
+notes = "Needs OpenSSH Server, Git, rustup and the Visual Studio Build Tools (C++ workload)."
+
+[[machine]]
+name = "macos"
+os = "macos"
+roles = ["build", "test"]
+host = "mac.example.lan"
+port = 2222
+user = "ocw"
+identity_file = "ocw_macos_ed25519"
+shell = "zsh"
+repo_path = "~/src/OCW"
+gpu = "Apple M1 (integrated)"
+vram_gb = 8
+cpu = "Apple M1 (8 cores)"
+ram_gb = 16
+display = "aqua"
+notes = "Needs Remote Login enabled, Xcode Command Line Tools and rustup."

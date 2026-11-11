@@ -23,6 +23,10 @@ cargo run -p ocw-server -- --bots 3 --seconds 10 --fast  # headless server
 
 To run and screenshot the desktop app headlessly (software Vulkan), use the `run-ocw` skill: `.claude/skills/run-ocw/drive.sh shot /tmp/ocw.png 8 -- --cmd "teleport 1.2"` on X11 (Xvfb), or `shot-wayland` on a headless weston. Linux builds support both window systems; keep both smoke runs green. The first build compiles Bevy (several minutes).
 
+## Remote machines
+
+Build/test/benchmark machines (Windows, macOS, Linux with a real GPU) are described in `config/machines.toml`, a git-ignored copy of `config/machines.example.toml`; SSH keys and `known_hosts` live in the git-ignored `config/ssh/`. Connect with `ssh -i config/ssh/<identity_file> -o IdentitiesOnly=yes -o UserKnownHostsFile=config/ssh/known_hosts <user>@<host>`. Never print, copy or commit their contents (host names, keys) outside these files. Setup steps: `config/README.md`.
+
 ## Code map
 
 - `services/server` (`ocw-server`): `GameServer` is transport-independent (encoded protobuf in/out). `local::LocalServer` runs it on a thread at 50 Hz inside the desktop app; the binary runs it headless. QUIC transport comes in Phase 5.
