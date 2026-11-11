@@ -106,3 +106,35 @@ fn pilot_region_elevation_profiles() {
         g.edges.len()
     );
 }
+
+#[test]
+fn pilot_package_has_no_terrain_through_roads() {
+    let (Some(pbf), Some(poly), Some(hgt)) = (
+        pilot("liechtenstein.osm.pbf"),
+        pilot("liechtenstein.poly"),
+        pilot("N47E009.hgt"),
+    ) else {
+        eprintln!("skipped: run scripts/fetch-pilot.sh for the pilot data");
+        return;
+    };
+    let osm = OsmData::read_pbf(&pbf).unwrap();
+    let region =
+        Region::from_polygon(Polygon::parse_poly(&std::fs::read_to_string(poly).unwrap()).unwrap());
+    let proj = region.projection();
+    let (mut g, _) = build_road_graph(&osm, &region);
+    let dem = Dem {
+        tiles: vec![HgtTile::read(&hgt).unwrap()],
+    };
+    add_profiles(&mut g, &dem, &proj);
+    let base = |x: f64, z: f64| {
+        let (lat, lon) = proj.unproject([x, z]);
+        dem.elevation(lat, lon).unwrap_or(0.0)
+    };
+    let pkg =
+        ocw_worldgen::package::build_package("pilot", region.center(), &g, base, 1000.0, 101, 0);
+    let (worst, at, above, total) = pkg.road_pokes(2.0);
+    eprintln!("terrain above roads: {above} of {total}, worst {worst:.2} m at {at:?}");
+    // Remaining cases are only where two roads cross at different heights
+    // without a bridge tag; they must be rare and small.
+    assert!((above as f64) < total as f64 * 0.001, "{above} of {total}");
+}

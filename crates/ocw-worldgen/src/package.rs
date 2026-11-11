@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, HashMap};
 use ocw_world::graph::{PROFILE_STEP_M, RoadGraph};
 use ocw_world::package::{RoadStrip, Tile, TileKey, WorldPackage};
 
-use crate::profile::resample;
+use crate::profile::sample_along;
 
 /// Flat strip beside the road edge, in metres.
 pub const SHOULDER_M: f64 = 4.0;
@@ -27,6 +27,11 @@ fn smoothstep(t: f64) -> f64 {
 pub struct GraphTerrain<'a, F: Fn(f64, f64) -> f64> {
     graph: &'a RoadGraph,
     base: F,
+    /// Beside a road (up to half width + this), the terrain is never higher
+    /// than the road surface: a cutting on the uphill side. It must exceed
+    /// the diagonal of a terrain grid cell, or a mesh triangle spanning the
+    /// road edge pokes through the road.
+    cut_m: f64,
     /// Cumulative distance at each point of each edge.
     along: Vec<Vec<f64>>,
     buckets: HashMap<(i64, i64), Vec<(u32, u32)>>,
@@ -34,9 +39,9 @@ pub struct GraphTerrain<'a, F: Fn(f64, f64) -> f64> {
 }
 
 impl<'a, F: Fn(f64, f64) -> f64> GraphTerrain<'a, F> {
-    pub fn new(graph: &'a RoadGraph, base: F) -> Self {
+    pub fn new(graph: &'a RoadGraph, base: F, cut_m: f64) -> Self {
         let max_width = graph.edges.iter().map(|e| e.width_m).fold(0.0, f64::max);
-        let bucket_m = max_width / 2.0 + SHOULDER_M + BLEND_M;
+        let bucket_m = max_width / 2.0 + (SHOULDER_M + BLEND_M).max(cut_m);
         let key = |p: [f64; 2]| {
             (
                 (p[0] / bucket_m).floor() as i64,
@@ -51,7 +56,7 @@ impl<'a, F: Fn(f64, f64) -> f64> GraphTerrain<'a, F> {
                 acc.push(
                     acc[s] + ((w[1][0] - w[0][0]).powi(2) + (w[1][1] - w[0][1]).powi(2)).sqrt(),
                 );
-                if e.bridge || e.tunnel {
+                if e.tunnel {
                     continue;
                 }
                 // Register the segment in every bucket its box touches.
@@ -70,6 +75,7 @@ impl<'a, F: Fn(f64, f64) -> f64> GraphTerrain<'a, F> {
         Self {
             graph,
             base,
+            cut_m,
             along,
             buckets,
             bucket_m,
@@ -85,6 +91,8 @@ impl<'a, F: Fn(f64, f64) -> f64> GraphTerrain<'a, F> {
         );
         // Strongest road influence nearby: (blend weight towards the road, road height).
         let mut best: Option<(f64, f64)> = None;
+        // Lowest road surface whose cutting zone covers this point.
+        let mut ceiling = f64::INFINITY;
         for dx in -1..=1 {
             for dz in -1..=1 {
                 let Some(segs) = self.buckets.get(&(kx + dx, kz + dz)) else {
@@ -103,22 +111,31 @@ impl<'a, F: Fn(f64, f64) -> f64> GraphTerrain<'a, F> {
                     let c = [a[0] + ab[0] * t, a[1] + ab[1] * t];
                     let d = ((x - c[0]).powi(2) + (z - c[1]).powi(2)).sqrt();
                     let corridor = e.width_m / 2.0 + SHOULDER_M;
-                    if d > corridor + BLEND_M {
+                    let cut = e.width_m / 2.0 + self.cut_m;
+                    if d > (corridor + BLEND_M).max(cut) {
+                        continue;
+                    }
+                    let s = self.along[ei as usize][si as usize] + len2.sqrt() * t;
+                    let road = e.height_at(s).unwrap_or(base) - ROAD_CLEARANCE_M;
+                    if d <= cut {
+                        ceiling = ceiling.min(road);
+                    }
+                    // Bridges cut the terrain under them but do not pull it up.
+                    if e.bridge || d > corridor + BLEND_M {
                         continue;
                     }
                     let w = 1.0 - smoothstep(((d - corridor) / BLEND_M).clamp(0.0, 1.0));
                     if best.is_none_or(|(bw, _)| w > bw) {
-                        let s = self.along[ei as usize][si as usize] + len2.sqrt() * t;
-                        let road = e.height_at(s).unwrap_or(base) - ROAD_CLEARANCE_M;
                         best = Some((w, road));
                     }
                 }
             }
         }
-        match best {
+        let h = match best {
             Some((w, road)) => road * w + base * (1.0 - w),
             None => base,
-        }
+        };
+        h.min(ceiling)
     }
 }
 
@@ -159,7 +176,8 @@ pub fn build_package<F: Fn(f64, f64) -> f64 + Sync>(
     samples: u32,
     margin_tiles: i32,
 ) -> WorldPackage {
-    let terrain = GraphTerrain::new(graph, base);
+    // Cutting margin: 1.5 grid cells (more than a cell diagonal).
+    let terrain = GraphTerrain::new(graph, base, 1.5 * tile_size / f64::from(samples - 1));
     let (mut min, mut max) = ([i32::MAX; 2], [i32::MIN; 2]);
     for v in &graph.vertices {
         let k = TileKey::containing(*v, tile_size);
@@ -168,15 +186,10 @@ pub fn build_package<F: Fn(f64, f64) -> f64 + Sync>(
     }
     let mut roads: BTreeMap<TileKey, Vec<RoadStrip>> = BTreeMap::new();
     for e in graph.edges.iter().filter(|e| !e.tunnel) {
-        let pts = resample(&e.points, PROFILE_STEP_M);
-        let mut walked = 0.0;
-        let mut with_h = Vec::with_capacity(pts.len());
-        for (k, p) in pts.iter().enumerate() {
-            if k > 0 {
-                walked += ((p[0] - pts[k - 1][0]).powi(2) + (p[1] - pts[k - 1][1]).powi(2)).sqrt();
-            }
-            with_h.push([p[0], e.height_at(walked).unwrap_or(0.0), p[1]]);
-        }
+        let with_h: Vec<[f64; 3]> = sample_along(&e.points, PROFILE_STEP_M, true)
+            .into_iter()
+            .map(|(p, s)| [p[0], e.height_at(s).unwrap_or(0.0), p[1]])
+            .collect();
         for (key, run) in split_into_tiles(&with_h, tile_size) {
             roads.entry(key).or_default().push(RoadStrip {
                 class: e.class,
@@ -306,7 +319,7 @@ mod tests {
     #[test]
     fn terrain_follows_roads_and_blends_to_the_base() {
         let g = graph();
-        let t = GraphTerrain::new(&g, |_, _| 100.0);
+        let t = GraphTerrain::new(&g, |_, _| 100.0, 15.0);
         // On the road at 300 m along (x = 500): road height 15 m.
         let on = t.height(500.0, 500.0);
         assert!((on - (15.0 - ROAD_CLEARANCE_M)).abs() < 1e-6, "{on}");
@@ -319,6 +332,115 @@ mod tests {
         // Halfway through the blend: between road and base.
         let mid = t.height(300.0, 500.0 + 3.0 + SHOULDER_M + BLEND_M / 2.0);
         assert!(mid > 15.0 && mid < 100.0, "{mid}");
+    }
+
+    /// A road across a steep slope: no mesh triangle may rise above the
+    /// road surface (the artefact: green wedges sticking into the road).
+    #[test]
+    fn terrain_never_shows_through_a_road_on_a_slope() {
+        let edge = Edge {
+            id: EdgeId(1),
+            from: VertexId(0),
+            to: VertexId(1),
+            points: vec![[0.0, 500.0], [1000.0, 520.0]],
+            class: RoadClass::Secondary,
+            name: None,
+            width_m: 6.5,
+            bridge: false,
+            tunnel: false,
+            dead_end_m: None,
+            boundary: false,
+            osm_way: 1,
+            // Flat road at 300 m.
+            profile: vec![300.0; 201],
+        };
+        let g = RoadGraph {
+            vertices: vec![[0.0, 500.0], [1000.0, 520.0]],
+            edges: vec![edge],
+            boundary_vertices: Default::default(),
+        };
+        // 60 % side slope: the terrain rises steeply towards +z.
+        let p = build_package(
+            "slope",
+            (47.0, 9.0),
+            &g,
+            |_, z| 300.0 + 0.6 * (z - 500.0),
+            1000.0,
+            101,
+            0,
+        );
+        let (worst, at, above, total) = p.road_pokes(0.5);
+        assert!(total > 10_000);
+        assert_eq!(above, 0, "terrain {worst:.2} m above the road at {at:?}");
+        // The uphill side is cut down to the road, further out the slope returns.
+        let h = |x, z| p.surface_height(x, z).unwrap();
+        assert!(h(500.0, 520.0) <= 300.0);
+        assert!(h(500.0, 600.0) > 330.0);
+    }
+
+    #[test]
+    fn road_strips_on_winding_climbs_keep_the_profile_height() {
+        // Regression: strip heights were looked up by the chord length of
+        // the resampled points, which cuts every bend; on a tight zigzag
+        // climbing at 25 % the strip ended up metres below the road profile
+        // (and the terrain conformed to it showed through).
+        let points: Vec<[f64; 2]> = (0..=200)
+            .map(|i| {
+                [
+                    100.0 + i as f64 * 3.0,
+                    500.0 + if i % 2 == 0 { 0.0 } else { 3.0 },
+                ]
+            })
+            .collect();
+        let tmp = Edge {
+            id: EdgeId(1),
+            from: VertexId(0),
+            to: VertexId(1),
+            points: points.clone(),
+            class: RoadClass::Path,
+            name: None,
+            width_m: 2.0,
+            bridge: false,
+            tunnel: false,
+            dead_end_m: None,
+            boundary: false,
+            osm_way: 1,
+            profile: vec![],
+        };
+        let len = tmp.length_m();
+        let steps = (len / PROFILE_STEP_M).ceil() as usize;
+        let profile = (0..=steps)
+            .map(|i| 500.0 + 0.25 * (i as f64 * PROFILE_STEP_M).min(len))
+            .collect();
+        let edge = Edge { profile, ..tmp };
+        let g = RoadGraph {
+            vertices: vec![points[0], *points.last().unwrap()],
+            edges: vec![edge.clone()],
+            boundary_vertices: Default::default(),
+        };
+        let p = build_package("zigzag", (47.0, 9.0), &g, |_, _| 400.0, 1000.0, 101, 0);
+        for s in p.tiles.values().flat_map(|t| &t.roads) {
+            for q in &s.points {
+                // Every strip point is on the polyline; find its true distance.
+                let (mut walked, mut along) = (0.0, None);
+                for w in points.windows(2) {
+                    let l = ((w[1][0] - w[0][0]).powi(2) + (w[1][1] - w[0][1]).powi(2)).sqrt();
+                    let t = (f64::from(q[0]) - w[0][0]) / (w[1][0] - w[0][0]);
+                    if (0.0..=1.0).contains(&t) {
+                        along = Some(walked + l * t);
+                        break;
+                    }
+                    walked += l;
+                }
+                let want = edge.height_at(along.unwrap()).unwrap();
+                assert!(
+                    (f64::from(q[1]) - want).abs() < 0.05,
+                    "{q:?}: want {want:.2}"
+                );
+            }
+        }
+        let (worst, at, above, _) = p.road_pokes(0.5);
+        assert_eq!(above, 0, "terrain {worst:.2} m above the road at {at:?}");
     }
 
     #[test]

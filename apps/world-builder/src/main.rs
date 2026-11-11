@@ -44,6 +44,9 @@ enum Cmd {
         /// Write an SVG map coloured by gradient.
         #[arg(long)]
         svg_grade: Option<PathBuf>,
+        /// List the roads within 40 m of local x,z (diagnostics).
+        #[arg(long, value_parser = parse_xz)]
+        probe: Option<(f64, f64)>,
     },
     /// Build the world package of a region: road-conformed terrain and road
     /// strips in 1 km tiles (spec §4.5, §4.7).
@@ -64,6 +67,11 @@ enum Cmd {
         margin_tiles: i32,
         #[arg(long, default_value = "data/pilot/liechtenstein.ocwpkg")]
         out: PathBuf,
+    },
+    /// Validate a world package: where does the terrain show through roads?
+    Check {
+        #[arg(long, default_value = "data/pilot/liechtenstein.ocwpkg")]
+        world: PathBuf,
     },
     /// Build a route along the road graph (preferring main roads) and write
     /// it with its elevation and the surrounding terrain (ocw-route file).
@@ -88,6 +96,14 @@ enum Cmd {
         #[arg(long, default_value = "data/pilot/vaduz-malbun.route")]
         out: PathBuf,
     },
+}
+
+fn parse_xz(s: &str) -> Result<(f64, f64), String> {
+    let (a, b) = s.split_once(',').ok_or("expected x,z")?;
+    Ok((
+        a.trim().parse().map_err(|e| format!("{e}"))?,
+        b.trim().parse().map_err(|e| format!("{e}"))?,
+    ))
 }
 
 fn parse_latlon(s: &str) -> Result<(f64, f64), String> {
@@ -323,6 +339,56 @@ fn package(
 
 fn main() {
     match Cli::parse().command {
+        Cmd::Check { world } => {
+            let bytes = std::fs::read(&world).unwrap_or_else(|e| {
+                eprintln!("{}: {e}", world.display());
+                std::process::exit(1);
+            });
+            let pkg = ocw_world::WorldPackage::from_bytes(&bytes).unwrap_or_else(|e| {
+                eprintln!("{}: {e}", world.display());
+                std::process::exit(1);
+            });
+            let (worst, at, above, total) = pkg.road_pokes(1.0);
+            println!(
+                "terrain above road surface: {above} of {total} samples ({:.3} %), worst {:.2} m at x {:.0} z {:.0}",
+                100.0 * above as f64 / total.max(1) as f64,
+                worst,
+                at[0],
+                at[1]
+            );
+            // Diagnostics: the terrain cell and the road points around the worst spot.
+            let size = f64::from(pkg.tile_size_m);
+            let key = ocw_world::package::TileKey::containing(at, size);
+            if let Some(tile) = pkg.tiles.get(&key) {
+                let o = key.origin(size);
+                let (n, sp) = (pkg.samples as usize, pkg.spacing_m());
+                let (i, k) = (
+                    ((at[0] - o[0]) / sp) as usize,
+                    ((at[1] - o[1]) / sp) as usize,
+                );
+                for (di, dk) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                    println!(
+                        "  vertex ({:.0},{:.0}) {:.1} m",
+                        o[0] + (i + di) as f64 * sp,
+                        o[1] + (k + dk) as f64 * sp,
+                        tile.heights[(k + dk) * n + i + di]
+                    );
+                }
+                for r in &tile.roads {
+                    for p in &r.points {
+                        let d = ((f64::from(p[0]) - at[0]).powi(2)
+                            + (f64::from(p[2]) - at[1]).powi(2))
+                        .sqrt();
+                        if d < 15.0 {
+                            println!(
+                                "  road {:?} point ({:.1},{:.1}) {:.1} m, {:.1} m away",
+                                r.class, p[0], p[2], p[1], d
+                            );
+                        }
+                    }
+                }
+            }
+        }
         Cmd::Package {
             pbf,
             poly,
@@ -358,6 +424,7 @@ fn main() {
             hgt,
             svg,
             svg_grade,
+            probe,
         } => {
             let region = match bbox {
                 Some(r) => r,
@@ -432,6 +499,48 @@ fn main() {
                 println!(
                     "edges above their class limit: {over} of {}",
                     graph.edges.len()
+                );
+            }
+            if let Some((px, pz)) = probe {
+                println!("roads within 40 m of {px},{pz}:");
+                for e in &graph.edges {
+                    let (mut best, mut at) = (f64::INFINITY, 0.0);
+                    let mut walked = 0.0;
+                    for w in e.points.windows(2) {
+                        let (a, b) = (w[0], w[1]);
+                        let len = ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2)).sqrt();
+                        let t = if len > 0.0 {
+                            (((px - a[0]) * (b[0] - a[0]) + (pz - a[1]) * (b[1] - a[1]))
+                                / (len * len))
+                                .clamp(0.0, 1.0)
+                        } else {
+                            0.0
+                        };
+                        let c = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+                        let d = ((px - c[0]).powi(2) + (pz - c[1]).powi(2)).sqrt();
+                        if d < best {
+                            best = d;
+                            at = walked + len * t;
+                        }
+                        walked += len;
+                    }
+                    if best <= 40.0 {
+                        println!(
+                            "  {:5.1} m  {:?} {:<22} bridge {} tunnel {}  road height {:.1} m  way {}",
+                            best,
+                            e.class,
+                            e.name.as_deref().unwrap_or("-"),
+                            e.bridge,
+                            e.tunnel,
+                            e.height_at(at).unwrap_or(f64::NAN),
+                            e.osm_way
+                        );
+                    }
+                }
+                let (lat, lon) = region.projection().unproject([px, pz]);
+                println!(
+                    "  DEM there: {:.1} m  ({lat:.5}, {lon:.5})",
+                    dem.elevation(lat, lon).unwrap_or(f64::NAN)
                 );
             }
             println!("total {:.2} s", t.elapsed().as_secs_f64());

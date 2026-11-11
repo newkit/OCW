@@ -3,7 +3,7 @@
 
 use ocw_world::graph::{Edge, PROFILE_STEP_M, RoadClass, RoadGraph};
 
-use crate::profile::resample;
+use crate::profile::sample_along;
 
 /// Riding cost of an edge for automatic routes: its length, weighted so
 /// main roads are preferred over tracks and paths, and stretches steeper
@@ -32,21 +32,15 @@ pub fn path_points(graph: &RoadGraph, path: &[(usize, bool)]) -> Vec<[f64; 3]> {
     let mut out: Vec<[f64; 3]> = Vec::new();
     for &(i, forward) in path {
         let e = &graph.edges[i];
-        let len = e.length_m();
-        let mut pts = resample(&e.points, PROFILE_STEP_M);
+        let mut pts = sample_along(&e.points, PROFILE_STEP_M, false);
         if !forward {
             pts.reverse();
         }
-        let mut walked = 0.0;
-        for (k, p) in pts.iter().enumerate() {
-            if k > 0 {
-                walked += ((p[0] - pts[k - 1][0]).powi(2) + (p[1] - pts[k - 1][1]).powi(2)).sqrt();
-            }
+        for (k, &(p, s)) in pts.iter().enumerate() {
             if k == 0 && !out.is_empty() {
                 continue; // the junction is already the last point
             }
-            let along = if forward { walked } else { len - walked };
-            let y = e.height_at(along).unwrap_or(0.0);
+            let y = e.height_at(s).unwrap_or(0.0);
             out.push([p[0], y, p[1]]);
         }
     }

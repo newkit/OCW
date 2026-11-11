@@ -101,6 +101,77 @@ impl WorldPackage {
         Some(top * (1.0 - tz) + bottom * tz)
     }
 
+    /// Height of the rendered terrain surface: the tile grid triangulated
+    /// like the client mesh (cells split along (i+1, k)–(i, k+1)).
+    pub fn surface_height(&self, x: f64, z: f64) -> Option<f64> {
+        let size = f64::from(self.tile_size_m);
+        let key = TileKey::containing([x, z], size);
+        let tile = self.tiles.get(&key)?;
+        let o = key.origin(size);
+        let n = self.samples as usize;
+        let s = self.spacing_m();
+        let (fx, fz) = (
+            ((x - o[0]) / s).clamp(0.0, (n - 1) as f64),
+            ((z - o[1]) / s).clamp(0.0, (n - 1) as f64),
+        );
+        let (i, k) = ((fx as usize).min(n - 2), (fz as usize).min(n - 2));
+        let (tx, tz) = (fx - i as f64, fz - k as f64);
+        let h = |i: usize, k: usize| f64::from(tile.heights[k * n + i]);
+        let (h00, h10, h01, h11) = (h(i, k), h(i + 1, k), h(i, k + 1), h(i + 1, k + 1));
+        Some(if tx + tz <= 1.0 {
+            h00 + tx * (h10 - h00) + tz * (h01 - h00)
+        } else {
+            h11 + (1.0 - tx) * (h01 - h11) + (1.0 - tz) * (h10 - h11)
+        })
+    }
+
+    /// Where the terrain surface rises above a road (it would show through
+    /// the road surface): sampled every `step` m along each road strip and
+    /// every 0.25 m across it. Returns (worst excess in m, its position,
+    /// number of samples above the road, number of samples).
+    pub fn road_pokes(&self, step: f64) -> (f64, [f64; 2], usize, usize) {
+        let (mut worst, mut at, mut above, mut total) = (0.0f64, [0.0, 0.0], 0, 0);
+        for tile in self.tiles.values() {
+            for r in &tile.roads {
+                let half = f64::from(r.width_m) / 2.0;
+                for w in r.points.windows(2) {
+                    let (a, b) = (w[0].map(f64::from), w[1].map(f64::from));
+                    let len = ((b[0] - a[0]).powi(2) + (b[2] - a[2]).powi(2)).sqrt();
+                    if len < 1e-6 {
+                        continue;
+                    }
+                    let (dx, dz) = ((b[0] - a[0]) / len, (b[2] - a[2]) / len);
+                    let steps = (len / step).ceil() as usize;
+                    for j in 0..steps {
+                        let t = j as f64 * step / len;
+                        let (cx, cy, cz) = (
+                            a[0] + (b[0] - a[0]) * t,
+                            a[1] + (b[1] - a[1]) * t,
+                            a[2] + (b[2] - a[2]) * t,
+                        );
+                        let mut off = -half;
+                        while off <= half + 1e-9 {
+                            let (x, z) = (cx - dz * off, cz + dx * off);
+                            if let Some(h) = self.surface_height(x, z) {
+                                total += 1;
+                                let excess = h - cy;
+                                if excess > 0.0 {
+                                    above += 1;
+                                    if excess > worst {
+                                        worst = excess;
+                                        at = [x, z];
+                                    }
+                                }
+                            }
+                            off += 0.25;
+                        }
+                    }
+                }
+            }
+        }
+        (worst, at, above, total)
+    }
+
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut b = Vec::new();
         b.extend_from_slice(MAGIC);

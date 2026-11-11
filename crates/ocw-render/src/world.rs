@@ -71,7 +71,7 @@ fn spawn_world(
             pkg.height(x, z)
         })));
         commands.spawn((
-            Mesh3d(meshes.add(center_line_mesh(&view))),
+            Mesh3d(meshes.add(center_line_mesh(&view, CENTRE_LINE_LIFT_PACKAGE_M))),
             MeshMaterial3d(materials.add(StandardMaterial {
                 base_color: Color::srgb(0.95, 0.95, 0.9),
                 perceptual_roughness: 0.6,
@@ -157,7 +157,7 @@ fn spawn_world(
         NotShadowCaster,
     ));
     commands.spawn((
-        Mesh3d(meshes.add(center_line_mesh(&view))),
+        Mesh3d(meshes.add(center_line_mesh(&view, 0.02))),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: Color::srgb(0.95, 0.95, 0.9),
             perceptual_roughness: 0.6,
@@ -257,8 +257,12 @@ fn road_edge_mesh(view: &RideView, width: f32, depth: f32) -> Mesh {
     mesh
 }
 
-/// Dashed centre line: 3 m dash, 6 m gap.
-fn center_line_mesh(view: &RideView) -> Mesh {
+/// Centre line lift over package roads, whose surface is drawn 2 cm above
+/// the profile (the same height would z-fight and hide parts of the line).
+const CENTRE_LINE_LIFT_PACKAGE_M: f32 = 0.06;
+
+/// Dashed centre line: 3 m dash, 6 m gap, `lift` above the road.
+fn center_line_mesh(view: &RideView, lift: f32) -> Mesh {
     let route = &view.route;
     let mut positions = Vec::new();
     let mut indices = Vec::new();
@@ -267,7 +271,7 @@ fn center_line_mesh(view: &RideView) -> Mesh {
         let base = positions.len() as u32;
         for (dd, side) in [(0.0, -0.08), (0.0, 0.08), (3.0, -0.08), (3.0, 0.08)] {
             let mut v = to_vec3(route.sample(d + dd).offset_position(side));
-            v.y += 0.02;
+            v.y += lift;
             positions.push(v.to_array());
         }
         indices.extend([base, base + 1, base + 2, base + 1, base + 3, base + 2]);

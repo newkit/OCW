@@ -51,6 +51,36 @@ pub fn resample(points: &[[f64; 2]], step: f64) -> Vec<[f64; 2]> {
     out
 }
 
+/// Points every `step` m along `points` with their distance along the
+/// polyline (the true arc length, which matches `RoadEdge::height_at`; the
+/// chords between resampled points cut corners and are shorter). With
+/// `keep_vertices` the original vertices are kept too, so the samples follow
+/// the road exactly through bends.
+pub fn sample_along(points: &[[f64; 2]], step: f64, keep_vertices: bool) -> Vec<([f64; 2], f64)> {
+    let mut out = vec![(points[0], 0.0)];
+    let (mut walked, mut next) = (0.0, step);
+    for w in points.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let len = ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2)).sqrt();
+        while len > 0.0 && next <= walked + len + 1e-9 {
+            let t = ((next - walked) / len).min(1.0);
+            out.push(([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t], next));
+            next += step;
+        }
+        walked += len;
+        let last = out.last().expect("non-empty").1;
+        if keep_vertices && len > 0.0 && walked - last > 1e-6 {
+            out.push((b, walked));
+        }
+    }
+    let last = *points.last().expect("non-empty");
+    let end = out.last().expect("non-empty").0;
+    if (end[0] - last[0]).abs() + (end[1] - last[1]).abs() > 1e-6 {
+        out.push((last, walked));
+    }
+    out
+}
+
 fn median_filter(v: &[f64], half: usize) -> Vec<f64> {
     (0..v.len())
         .map(|i| {
@@ -333,6 +363,44 @@ mod tests {
         assert!((pts[1][0] - 3.0).abs() < 1e-9 && (pts[1][1] - 2.0).abs() < 1e-9);
         // Exactly on the step: no duplicate end point.
         assert_eq!(resample(&[[0.0, 0.0], [10.0, 0.0]], 5.0).len(), 3);
+    }
+
+    #[test]
+    fn samples_carry_the_true_distance_through_bends() {
+        // A zigzag: chords between 5 m samples are shorter than the path.
+        let zigzag: Vec<[f64; 2]> = (0..=40)
+            .map(|i| [i as f64 * 2.0, if i % 2 == 0 { 0.0 } else { 2.0 }])
+            .collect();
+        let length: f64 = zigzag
+            .windows(2)
+            .map(|w| ((w[1][0] - w[0][0]).powi(2) + (w[1][1] - w[0][1]).powi(2)).sqrt())
+            .sum();
+        let plain = sample_along(&zigzag, 5.0, false);
+        let chords: f64 = plain
+            .windows(2)
+            .map(|w| ((w[1].0[0] - w[0].0[0]).powi(2) + (w[1].0[1] - w[0].0[1]).powi(2)).sqrt())
+            .sum();
+        assert!(chords < length - 10.0, "chords {chords} vs {length}");
+        assert!((plain.last().unwrap().1 - length).abs() < 1e-9);
+        assert_eq!(
+            plain.iter().map(|p| p.0).collect::<Vec<_>>(),
+            resample(&zigzag, 5.0)
+        );
+        for w in plain.windows(2) {
+            assert!(w[1].1 > w[0].1);
+        }
+        // With the vertices kept, every original point is present.
+        let full = sample_along(&zigzag, 5.0, true);
+        for p in &zigzag {
+            assert!(full.iter().any(|q| q.0 == *p), "{p:?}");
+        }
+        for w in full.windows(2) {
+            let d = ((w[1].0[0] - w[0].0[0]).powi(2) + (w[1].0[1] - w[0].0[1]).powi(2)).sqrt();
+            assert!(
+                (w[1].1 - w[0].1 - d).abs() < 1e-9,
+                "distance must match the polyline"
+            );
+        }
     }
 
     #[test]
