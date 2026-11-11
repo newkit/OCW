@@ -79,6 +79,21 @@ class ConfigTest(unittest.TestCase):
         self.assertIn("ControlPath=/run/ctl/%C", argv)
         self.assertEqual(argv[-1], "builder@10.1.2.3")
 
+    def test_slot_counts_like_remote_sh(self):
+        # No `slots` keys: OS defaults linux 2, windows 1, macos 1.
+        defaults, machines = d.parse_machines(BROKEN_TOML)
+        ms = [d.Machine(m, defaults, Path("/cfg")) for m in machines]
+        self.assertEqual([m.slots for m in ms], [2, 1, 1])
+        # A machine's `slots` wins over [defaults] slots, which wins over the OS default.
+        text = BROKEN_TOML.replace("connect_timeout_s = 10", "connect_timeout_s = 10\nslots = 3")
+        text = text.replace('name = "Win11Builder"', 'name = "Win11Builder"\nslots = 2  # 16 GB now')
+        defaults, machines = d.parse_machines(text)
+        self.assertEqual([d.Machine(m, defaults, Path("/cfg")).slots for m in machines], [3, 2, 3])
+        self.assertEqual(d.slots_setting("0", "linux"), 0)
+        self.assertEqual(d.slots_setting("x", "windows"), 1)
+        self.assertEqual(d.slots_setting(-1, "macos"), 1)
+        self.assertEqual(d.default_slots("freebsd"), 2)
+
 
 class MaskTest(unittest.TestCase):
     def test_masks_hosts_users_addresses(self):
@@ -226,6 +241,9 @@ class GroupingTest(unittest.TestCase):
         self.assertEqual((q["used"], q["total"], q["waiting"]), (1, 2, 2))
         self.assertEqual(q["slots"][0]["holder"], "agent a08d34a9")
         self.assertEqual(sorted(q["waiting_checkouts"]), ["fix-x", "main"])
+        # Waiters of an older remote.sh (blocked in `flock 9`): waiting time from the flock process.
+        self.assertEqual(sorted((w["checkout"], w["elapsed"], w["command"]) for w in q["queued"]),
+                         [("fix-x", 49, None), ("main", 99, None)])
         k = out["kiosk"]
         self.assertTrue(k["running"])
         self.assertTrue(k["other_user"])
@@ -283,6 +301,252 @@ class GroupingTest(unittest.TestCase):
         self.assertIn("leela", text)
         self.assertIn("UNREACHABLE (timeout)", text)
         self.assertIn("Wahoo KICKR A208", text)
+
+
+def marker(pid, start, state="running", slot=None, checkout="OCW", command="cargo test"):
+    return json.dumps({"v": 1, "pid": pid, "state": state, "slot": slot, "start": start,
+                       "checkout": checkout, "branch": "b", "command": command, "os": "linux"})
+
+
+class MarkerTest(unittest.TestCase):
+    def test_parse_marker(self):
+        m = d.parse_marker(marker(200, 1000, slot=1, checkout="OCW-worktree-agent-a08d34a9817282b1d"))
+        self.assertEqual((m["pid"], m["start"], m["state"], m["slot"]), (200, 1000, "running", 1))
+        self.assertEqual(m["command"], "cargo test")
+        self.assertEqual(d.parse_marker('{"pid": 1, "start": 5, "state": "odd"}')["state"], "running")
+        for bad in ("", "not json", "[1, 2]", '{"pid": "1", "start": 5}', '{"pid": 1}'):
+            self.assertIsNone(d.parse_marker(bad))
+        lines = ["", "\ufeff" + marker(1, 2), "garbage", marker(3, 4, "waiting")]
+        self.assertEqual([m["pid"] for m in d.parse_marker_lines(lines)], [1, 3])
+
+    def test_stale_detection(self):
+        m = d.parse_marker(marker(200, 1000))
+        self.assertTrue(d.marker_stale(m, False, None))  # PID gone
+        self.assertFalse(d.marker_stale(m, True, None))
+        self.assertFalse(d.marker_stale(m, True, 999))  # shell started just before the marker
+        self.assertTrue(d.marker_stale(m, True, 1000 + d.PID_REUSE_SLACK_S + 1))  # PID reused
+
+    def test_live_markers_from_process_list(self):
+        ms = [d.parse_marker(marker(200, 1000, checkout="OCW-worktree-agent-a08d34a9817282b1d")),
+              d.parse_marker(marker(300, 1100, "waiting", checkout="OCW")),
+              d.parse_marker(marker(400, 900)),  # PID gone
+              d.parse_marker(marker(500, 900))]  # PID reused by a process started at 1900
+        procs = {200: {"pid": 200, "elapsed": 1000}, 300: {"pid": 300, "elapsed": 900},
+                 500: {"pid": 500, "elapsed": 100}}
+        live, stale = d.live_markers(ms, 2000, procs, repo_path="~/src/OCW", home="/home/u")
+        self.assertEqual(stale, 2)
+        self.assertEqual([(m["label"], m["state"], m["elapsed"]) for m in live],
+                         [("agent a08d34a9", "running", 1000), ("main", "waiting", 900)])
+
+    def test_running_time_counts_from_getting_the_slot(self):
+        m = json.loads(marker(200, 1000, slot=2))
+        m["since"] = 1300  # waited 300 s for the slot
+        w = json.loads(marker(300, 1500, "waiting"))
+        w["since"] = 1500
+        live, _ = d.live_markers([d.parse_marker(json.dumps(m)), d.parse_marker(json.dumps(w))], 2000,
+                                 {200: {"pid": 200, "elapsed": 1000}, 300: {"pid": 300, "elapsed": 500}})
+        self.assertEqual([x["elapsed"] for x in live], [700, 500])
+        self.assertEqual(d.parse_marker(marker(1, 50))["since"], 50)  # older markers: start
+
+    def test_live_markers_windows_alive_flags(self):
+        ms = [d.parse_marker(marker(7, 1000, checkout="OCW-fix-x")), d.parse_marker(marker(8, 1000))]
+        live, stale = d.live_markers(ms, 1060, alive={7: (True, 990), 8: (False, None)}, repo_path="B:\\src\\OCW")
+        self.assertEqual(stale, 1)
+        self.assertEqual(live[0]["label"], "fix-x")
+        self.assertEqual(live[0]["elapsed"], 60)
+
+    def test_label_unknown_dir_falls_back(self):
+        self.assertEqual(d.marker_label({"dir": "scratch", "branch": "x"}, "~/src/OCW"), "scratch")
+        self.assertEqual(d.marker_label({"dir": None, "branch": None}, "~/src/OCW"), "other")
+
+    def test_merge_tasks(self):
+        live = [dict(d.parse_marker(marker(1, 10, slot=2)), label="main", elapsed=50),
+                dict(d.parse_marker(marker(2, 20, "waiting", command="cargo build")), label="fix-x", elapsed=40)]
+        groups = [{"checkout": "main", "command": None, "elapsed": 45, "rss": 100, "cpu": 250.0,
+                   "kinds": [{"kind": "rustc"}]},
+                  {"checkout": "agent 1234abcd", "command": "cargo clippy", "elapsed": 5, "rss": 7, "cpu": None,
+                   "kinds": []}]
+        tasks = d.merge_tasks(live, groups)
+        self.assertEqual([(t["checkout"], t["state"], t["source"]) for t in tasks],
+                         [("main", "running", "marker"), ("fix-x", "waiting", "marker"),
+                          ("agent 1234abcd", "running", "process")])
+        self.assertEqual((tasks[0]["cpu"], tasks[0]["rss"], tasks[0]["slot"], tasks[0]["elapsed"]), (250.0, 100, 2, 50))
+        self.assertEqual(tasks[0]["command"], "cargo test")
+        self.assertEqual(tasks[1]["kinds"], [])  # a waiting run owns no processes
+
+    def test_single_run_adopts_only_processes_it_started(self):
+        live = [dict(d.parse_marker(marker(1, 10)), label="agent abcdef12", elapsed=60)]
+        procs = [{"pid": 7, "elapsed": 30}, {"pid": 8, "elapsed": 2400}, {"pid": 9, "elapsed": None}]
+        self.assertEqual(d.adopt_labels(procs, live), {7: "agent abcdef12"})  # 8: older than the run
+        two = live + [dict(d.parse_marker(marker(2, 11)), label="main", elapsed=50)]
+        self.assertEqual(d.adopt_labels(procs, two), {})  # ambiguous
+        waiting = [dict(d.parse_marker(marker(3, 12, "waiting")), label="x", elapsed=5)]
+        self.assertEqual(d.adopt_labels(procs, waiting), {})
+
+    def test_queue_from_markers(self):
+        live = [dict(d.parse_marker(marker(1, 10, slot=1)), label="main"),
+                dict(d.parse_marker(marker(2, 11, slot=2)), label="fix-x"),
+                dict(d.parse_marker(marker(3, 12, "waiting")), label="agent abcdef12")]
+        q = d.queue_from_markers(live)
+        self.assertEqual((q["used"], q["total"], q["waiting"]), (2, 2, 1))
+        self.assertEqual(q["waiting_checkouts"], ["agent abcdef12"])
+        self.assertEqual([s["holder"] for s in q["slots"]], ["main", "fix-x"])
+        self.assertEqual(d.queue_from_markers([])["used"], 0)
+
+    def test_queue_lists_waiting_runs_and_uses_configured_total(self):
+        live = [dict(d.parse_marker(marker(1, 10, slot=1)), label="main", elapsed=90),
+                dict(d.parse_marker(marker(3, 40, "waiting", command="sleep 60")), label="agent abcdef12", elapsed=60),
+                dict(d.parse_marker(marker(4, 50, "waiting")), label="fix-x", elapsed=50)]
+        q = d.queue_from_markers(live, 1)
+        self.assertEqual((q["used"], q["total"], q["waiting"]), (1, 1, 2))
+        self.assertEqual(q["queued"], [
+            {"checkout": "agent abcdef12", "command": "sleep 60", "since": 40, "elapsed": 60},
+            {"checkout": "fix-x", "command": "cargo test", "since": 50, "elapsed": 50}])
+        # Slots held without a marker (older remote.sh) and waiters without one count too.
+        q = d.queue_from_markers(live, 2, held={1: "other", 2: None}, extra_waiting=["kiosk"])
+        self.assertEqual([(s["slot"], s["held"], s["holder"]) for s in q["slots"]],
+                         [(1, True, "main"), (2, True, None)])
+        self.assertEqual((q["used"], q["waiting"], q["waiting_checkouts"][-1]), (2, 3, "kiosk"))
+        # A run started with OCW_REMOTE_SLOTS=3 reports it in its marker.
+        m3 = json.loads(marker(5, 60, slot=3))
+        m3["slots"] = 3
+        q = d.queue_from_markers([dict(d.parse_marker(json.dumps(m3)), label="x", elapsed=1)], 2)
+        self.assertEqual((q["total"], q["used"], q["slots"][2]["holder"]), (3, 1, "x"))
+
+    def test_slot_dirs_macos(self):
+        procs = {70: {"pid": 70, "args": "zsh -c ocw_meta=...", "cwd": "/Users/u/src/OCW-fix-x"}}
+        held = d.parse_slot_dirs(["ocw-build-slot-1.d 70", "ocw-build-slot-2.d 71", "ocw-build-slot-3.d", "junk"],
+                                 procs, repo_path="~/src/OCW", home="/Users/u")
+        self.assertEqual(held, {1: "fix-x"})  # 2: owner gone (stale, free); 3: no PID yet
+
+    def test_summary_totals_use_per_machine_slots(self):
+        def q(total, used, waiting):
+            return {"total": total, "used": used, "waiting": waiting, "slots": [], "queued": [], "waiting_checkouts": []}
+        ms = [dict(name="marge", os="linux", online=True, tasks=[{"state": "running"}] * 2, queue=q(2, 2, 1)),
+              dict(name="leela", os="linux", online=True, tasks=[], queue=q(2, 0, 0)),
+              dict(name="Win11Builder", os="windows", online=True,
+                   tasks=[{"state": "running"}, {"state": "waiting"}], queue=q(1, 1, 1)),
+              dict(name="macos", os="macos", online=False, slots=1, error="timeout")]
+        o = d.summarize(ms)["overview"]
+        self.assertEqual((o["tasks"], o["waiting"], o["slots_used"], o["slots_total"]), (3, 2, 3, 6))
+
+    def test_label_from_args_prefers_remote_sh_cd(self):
+        args = ("bash -c ocw_meta='\"command\":\"cd /tmp && make\"'; ocw_d=/tmp/ocw-tasks; ocw_mark running 1; "
+                "cd ~/src/OCW-fix-x && . ~/.cargo/env && export OCW_REMOTE=1 && cd /tmp && make")
+        self.assertEqual(d._label_from_args(args, "~/src/OCW", "/home/u"), "fix-x")
+        self.assertEqual(d.run_command(args), "cd /tmp && make")
+        self.assertEqual(d.classify_process(args), "run")
+
+
+class CpuTest(unittest.TestCase):
+    def test_cpu_per_pid(self):
+        a = ["100.00 900.00", "1 500", "2 1000", "3 7"]
+        b = ["100.50 901.00", "1 550", "2 1000", "4 9"]
+        self.assertEqual(d.cpu_per_pid(a, b, 100), {1: 100.0, 2: 0.0})
+        self.assertEqual(d.cpu_per_pid(a, a, 100), {})  # no time passed
+
+    def test_windows_counters(self):
+        ok = d.windows_counters({"pdh_status": 0, "proc_queue": 3.0})
+        self.assertEqual((ok["ok"], ok["hint"]), (True, None))
+        denied = d.windows_counters({"pdh_status": 0xC0000BC8, "perfmon_member": False})
+        self.assertFalse(denied["ok"])
+        self.assertEqual(denied["hint"], "n/a (add build user to Performance Monitor Users)")
+        self.assertEqual(denied["status"], "0xC0000BC8")
+        self.assertEqual(d.windows_counters({})["hint"], d.PERFMON_HINT)
+        member = d.windows_counters({"pdh_status": 0xC0000BC8, "perfmon_member": True})
+        self.assertIn("restart sshd", member["hint"])
+        self.assertIn("0xC0000BC8", member["hint"])
+
+    def test_windows_parse_with_markers_and_counters(self):
+        data = {"ncpu": 6, "uptime": 10.0, "home": "C:\\Users\\claude", "now": 1060, "cpu_busy": 93.88,
+                "runnable": 7, "pdh_status": 3221228488, "perfmon_member": False,
+                "procs": [{"pid": 7, "name": "rustc", "args": "rustc.exe", "elapsed": 12.5, "rss": 1000, "cpu": 139.4},
+                          {"pid": 8, "name": "cargo", "args": "cargo.exe", "elapsed": 50, "rss": 10, "cpu": None},
+                          {"pid": 9, "name": "cargo", "args": "cargo.exe", "elapsed": 2400, "rss": 5, "cpu": 1.0}],
+                "markers": [{"text": "\ufeff" + marker(40, 1000, slot=1, checkout="OCW-worktree-agent-abcdef1234"),
+                             "alive": True, "pstart": 999},
+                            {"text": marker(41, 1010, "waiting", checkout="OCW"), "alive": True, "pstart": 1009},
+                            {"text": marker(42, 500), "alive": False, "pstart": None}]}
+        out = d.parse_windows(json.dumps(data), "B:\\src\\OCW")
+        self.assertEqual(out["cpu_busy"], 93.9)
+        self.assertEqual(out["runnable"], 7)
+        self.assertEqual(out["counters"]["hint"], d.PERFMON_HINT)
+        self.assertEqual(out["stale_markers"], 1)
+        t = out["tasks"]
+        self.assertEqual([(x["checkout"], x["state"], x["source"]) for x in t],
+                         [("agent abcdef12", "running", "marker"), ("main", "waiting", "marker"),
+                          ("other", "running", "process")])
+        # The run's own processes (started after it) are adopted, the older cargo is not.
+        self.assertEqual((t[0]["elapsed"], t[0]["cpu"], t[0]["rss"]), (60, 139.4, 1010))
+        self.assertEqual((t[2]["cpu"], t[2]["rss"]), (1.0, 5))
+        q = out["queue"]
+        self.assertEqual((q["used"], q["waiting"]), (1, 1))
+        text = d.format_text(d.summarize([dict(name="Win11Builder", os="windows", online=True, polled_at=0, **out)]))
+        self.assertIn("processor queue n/a (add build user to Performance Monitor Users)", text)
+        self.assertIn("queue: [main] cargo test  (waiting 50s)", text)
+        self.assertNotIn("[main] waiting", text)  # queued runs are listed in the queue, not as tasks
+        self.assertIn("running (slot 1)", text)
+        self.assertIn("1 stale task marker", text)
+
+    def test_linux_polling_waiters(self):
+        # New remote.sh: waiters poll with `flock -n` (no blocked flock
+        # process); the queue comes from their markers. A waiter that has a
+        # slot file open for a moment (fuser) is not its holder.
+        ps = PS.replace("    301     300  1002    99   1000 flock 9\n", "").replace(
+            "    401     400  1002    49   1000 flock 9\n", "")
+        text = (LINUX_OUTPUT.replace(PS, ps)
+                .replace("ocw-build-slot-2.lock 4445 :", "ocw-build-slot-2.lock 4445 : 400")
+                .replace("9: -> FLOCK  ADVISORY  WRITE 301 00:19:4444 0 EOF\n9: -> FLOCK  ADVISORY  WRITE 401 00:19:4444 0 EOF\n",
+                         "10: FLOCK  ADVISORY  WRITE 510 00:19:4445 0 EOF\n")
+                .replace("@@end\n", "@@now\n2000\n@@tasks\n"
+                         + marker(200, 1600, slot=1, checkout="OCW-worktree-agent-a08d34a9817282b1d") + "\n"
+                         + marker(300, 1900, "waiting", command="cargo build --release") + "\n"
+                         + marker(400, 1950, "waiting", checkout="OCW-fix-x", command="cargo clippy") + "\n@@end\n"))
+        out = d.parse_linux(text, "~/src/OCW")
+        # The polling shells of waiting runs are not listed as running tasks.
+        self.assertEqual([(t["checkout"], t["state"]) for t in out["tasks"]],
+                         [("agent a08d34a9", "running"), ("main", "waiting"), ("fix-x", "waiting")])
+        q = out["queue"]
+        self.assertEqual((q["used"], q["total"], q["waiting"]), (2, 2, 2))
+        self.assertEqual([(s["slot"], s["holder"]) for s in q["slots"]], [(1, "agent a08d34a9"), (2, None)])
+        self.assertEqual([(w["checkout"], w["command"], w["elapsed"]) for w in q["queued"]],
+                         [("main", "cargo build --release", 100), ("fix-x", "cargo clippy", 50)])
+        q = d.parse_linux(text, "~/src/OCW", slots=3)["queue"]
+        self.assertEqual((q["used"], q["total"]), (2, 3))
+
+    def test_macos_parse_with_slots_and_queue(self):
+        text = ("@@self\n50\n@@home\n/Users/ocw\n501\n@@sysctl\n8\n17179869184\n@@now\n2000\n"
+                "@@ps\n  60 1 501 05:00 3000 zsh -c ocw_meta=x; ocw_mark running $ocw_n; cd ~/src/OCW-fix-x && . ~/.cargo/env && sleep 60\n"
+                "  61 1 501 00:30 3000 zsh -c ocw_meta=x; ocw_mark running $ocw_n; cd ~/src/OCW && . ~/.cargo/env && sleep 60\n"
+                "@@tasks\n" + marker(60, 1700, slot=1, checkout="OCW-fix-x", command="sleep 60") + "\n"
+                + marker(61, 1970, "waiting", command="sleep 60") + "\n"
+                "@@slots\nocw-build-slot-1.d 60\n@@cwd\n@@end\n")
+        out = d.parse_macos(text, "~/src/OCW")
+        q = out["queue"]
+        self.assertEqual((q["used"], q["total"], q["waiting"]), (1, 1, 1))
+        self.assertEqual(q["slots"][0]["holder"], "fix-x")
+        self.assertEqual(q["queued"][0]["checkout"], "main")
+        text = d.format_text(d.summarize([dict(name="macos", os="macos", online=True, polled_at=0, **out)]))
+        self.assertIn("1/1 machines online: 1 running, 1 waiting, build slots 1 used of 1", text)
+        self.assertIn("queue: [main] sleep 60  (waiting 30s)", text)
+        self.assertIn("[fix-x] running (slot 1): sleep 60", text)
+
+    def test_linux_parse_with_markers_and_ticks(self):
+        extra = ("@@now\n2000\n@@clk\n100\n@@ticks1\n1000.00 9000.00\n203 1000\n204 50\n"
+                 "@@ticks2\n1000.50 9001.00\n203 1100\n204 75\n@@stat2\n"
+                 "@@tasks\n" + marker(200, 1600, slot=1, checkout="OCW-worktree-agent-a08d34a9817282b1d") + "\n"
+                 + marker(300, 1900, "waiting", command="cargo build --release") + "\n" + marker(999, 1000) + "\n")
+        out = d.parse_linux(LINUX_OUTPUT.replace("@@end\n", extra + "@@end\n"), "~/src/OCW")
+        self.assertEqual(out["cpu_busy"], 50.0)
+        self.assertEqual(out["stale_markers"], 1)
+        t = {x["checkout"]: x for x in out["tasks"]}
+        a = t["agent a08d34a9"]
+        self.assertEqual((a["state"], a["slot"], a["elapsed"], a["source"]), ("running", 1, 400, "marker"))
+        self.assertEqual(a["cpu"], 250.0)  # rustc 203: 200 %, rustc 204: 50 %
+        self.assertEqual(t["main"]["state"], "waiting")
+        self.assertEqual(t["main"]["command"], "cargo build --release")
+        st = d.summarize([dict(name="marge", os="linux", online=True, polled_at=0, **out)])
+        self.assertEqual(st["overview"]["tasks"], 1)  # the waiting run is not counted as running
 
 
 if __name__ == "__main__":

@@ -33,7 +33,24 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 POLL_INTERVAL_S = 5.0
-DEFAULT_SLOTS = 2  # remote.sh: OCW_REMOTE_SLOTS default
+# Build slots per machine, as in scripts/remote.sh: the machine's `slots`
+# (or [defaults] slots) in machines.toml, else these per-OS defaults.
+OS_DEFAULT_SLOTS = {"linux": 2, "windows": 1, "macos": 1}
+DEFAULT_SLOTS = 2  # other OSes (remote.sh treats them like Linux)
+
+
+def default_slots(os_name: str) -> int:
+    return OS_DEFAULT_SLOTS.get(str(os_name).lower(), DEFAULT_SLOTS)
+
+
+def slots_setting(value, os_name: str) -> int:
+    """Build slot count from a config value (int or numeric string >= 0),
+    else the OS default."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return default_slots(os_name)
+    return n if n >= 0 else default_slots(os_name)
 
 # --------------------------------------------------------------------------
 # config/machines.toml
@@ -157,6 +174,7 @@ class Machine:
         self.timeout = int(g("connect_timeout_s", 10) or 10)
         self.repo_path = str(g("repo_path", "~/src/OCW"))
         self.roles = g("roles", []) or []
+        self.slots = slots_setting(g("slots"), self.os)
 
     def secrets(self) -> list:
         return [s for s in (self.host, self.user) if isinstance(s, str) and s]
@@ -262,9 +280,17 @@ echo @@loadavg; cat /proc/loadavg
 echo @@uptime; cat /proc/uptime
 echo @@meminfo; grep -E '^(MemTotal|MemAvailable|SwapTotal|SwapFree):' /proc/meminfo
 echo @@df; df -Pk "$HOME" | tail -n 1
-echo @@stat; head -n 1 /proc/stat; sleep 0.5; head -n 1 /proc/stat
-echo @@ps; ps -eo pid=,ppid=,uid=,etimes=,rss=,args= | cut -c1-500
+echo @@now; date +%s
+echo @@clk; getconf CLK_TCK
+ticks() { cat /proc/uptime; cat /proc/[0-9]*/stat 2>/dev/null | awk '{ n = split(substr($0, index($0, ") ") + 2), a, " "); print $1, a[12] + a[13] }'; }
+echo @@stat; head -n 1 /proc/stat
+echo @@ticks1; ticks
+sleep 0.5
+echo @@ticks2; ticks
+echo @@stat2; head -n 1 /proc/stat
+echo @@ps; ps -eo pid=,ppid=,uid=,etimes=,rss=,args= | cut -c1-2000
 echo @@cwd; find /proc/[0-9]*/cwd -maxdepth 0 -printf '%h %l\n' 2>/dev/null
+echo @@tasks; find /tmp/ocw-tasks/ -name '*.json' -exec cat {} \; -exec echo \; 2>/dev/null
 echo @@slots
 for f in /tmp/ocw-build-slot-*.lock; do
   [ -e "$f" ] || continue
@@ -287,7 +313,11 @@ echo @@now; date +%s
 echo @@vmstat; vm_stat
 echo @@df; df -Pk "$HOME" | tail -n 1
 echo @@cpu; top -l 2 -n 0 -s 1 | grep 'CPU usage' | tail -n 1
-echo @@ps; ps -axo pid=,ppid=,uid=,etime=,rss=,args= | cut -c1-500
+echo @@ps; ps -axo pid=,ppid=,uid=,etime=,rss=,args= | cut -c1-2000
+echo @@pcpu; ps -axo pid=,%cpu=
+echo @@tasks; find /tmp/ocw-tasks/ -name '*.json' -exec cat {} \; -exec echo \; 2>/dev/null
+echo @@slots
+for d in $(find /tmp/ -maxdepth 1 -name 'ocw-build-slot-*.d' 2>/dev/null); do echo "${d##*/} $(cat $d/pid 2>/dev/null)"; done
 echo @@cwd
 pids=$(ps -axo pid=,comm= | awk '/cargo|rustc|clippy|ld|cc|clang|ocw|OCW|build-script|deps|zsh|bash|sh$/ {print $1}' | paste -sd, -)
 [ -n "$pids" ] && lsof -b -w -a -d cwd -Fn -p "$pids" 2>/dev/null
@@ -298,32 +328,86 @@ WINDOWS_SCRIPT = r"""
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference = 'SilentlyContinue'
 # CIM/WMI, the Perflib registry key and performance counters are usually
-# denied to a non-admin SSH user (and a denied CIM query takes ~5 s): use .NET
-# and Get-Process; the CPU counter works only for "Performance Monitor Users".
+# denied to a non-admin SSH user (and a denied CIM query takes ~5 s): use .NET,
+# Get-Process and kernel32 GetSystemTimes (CPU busy %, no rights needed).
+# The processor queue length comes from PDH with the English counter name
+# (Get-Counter wants localized names); it needs "Performance Monitor Users".
 $r = [ordered]@{}
 $r.ncpu = [Environment]::ProcessorCount
 $r.uptime = [System.Diagnostics.Stopwatch]::GetTimestamp() / [System.Diagnostics.Stopwatch]::Frequency
 $r.home = $env:USERPROFILE
+$r.self = $PID
+$r.now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 try {
   Add-Type -AssemblyName Microsoft.VisualBasic
   $ci = New-Object Microsoft.VisualBasic.Devices.ComputerInfo
   $r.mem_total = [int64]$ci.TotalPhysicalMemory
   $r.mem_avail = [int64]$ci.AvailablePhysicalMemory
 } catch {}
+$r.perfmon_member = [bool]([Security.Principal.WindowsIdentity]::GetCurrent().Groups | Where-Object { $_.Value -eq 'S-1-5-32-558' })
+# P/Invoke through Reflection.Emit: in memory, no compiler run, no files.
+$N = $null
 try {
-  $r.cpu_busy = [double](Get-Counter '\Processor(_Total)\% Processor Time' -ErrorAction Stop).CounterSamples[0].CookedValue
+  $tb = [AppDomain]::CurrentDomain.DefineDynamicAssembly((New-Object Reflection.AssemblyName 'OcwNative'), 'Run').DefineDynamicModule('OcwNative').DefineType('OcwNative', 'Public,Abstract,Sealed')
+  $L = [Int64].MakeByRefType(); $P = [IntPtr].MakeByRefType()
+  foreach ($d in @(@('kernel32.dll', 'GetSystemTimes', [bool], @($L, $L, $L)),
+                   @('pdh.dll', 'PdhOpenQueryW', [uint32], @([IntPtr], [IntPtr], $P)),
+                   @('pdh.dll', 'PdhAddEnglishCounterW', [uint32], @([IntPtr], [string], [IntPtr], $P)),
+                   @('pdh.dll', 'PdhCollectQueryData', [uint32], @([IntPtr])),
+                   @('pdh.dll', 'PdhGetFormattedCounterValue', [uint32], @([IntPtr], [uint32], [IntPtr], [byte[]])))) {
+    $m = $tb.DefinePInvokeMethod($d[1], $d[0], 'Public,Static,PinvokeImpl', 'Standard', $d[2], [Type[]]$d[3], 'Winapi', 'Unicode')
+    $m.SetImplementationFlags('PreserveSig')
+  }
+  $N = $tb.CreateType()
 } catch {}
+$i1 = 0L; $k1 = 0L; $u1 = 0L; $times = $N -and $N::GetSystemTimes([ref]$i1, [ref]$k1, [ref]$u1)
+$pq = [IntPtr]::Zero; $pc = [IntPtr]::Zero
+if ($N) {
+  $st = $N::PdhOpenQueryW([IntPtr]::Zero, [IntPtr]::Zero, [ref]$pq)
+  if ($st -eq 0) { $st = $N::PdhAddEnglishCounterW($pq, '\System\Processor Queue Length', [IntPtr]::Zero, [ref]$pc) }
+  if ($st -eq 0) { $st = $N::PdhCollectQueryData($pq) }
+  $r.pdh_status = $st
+}
+$rx = '^(cargo|rustc|clippy-driver|link|lld-link|rust-lld|cl|build-script-build.*|ocw-.*|world-builder|ffmpeg|make)$'
+$sel = @(Get-Process | Where-Object { $_.ProcessName -match $rx -or $_.Path -like '*\target\*' })
+$cpu0 = @{}
+foreach ($p in $sel) { if ($null -ne $p.TotalProcessorTime) { $cpu0[$p.Id] = $p.TotalProcessorTime.TotalMilliseconds } }
+$w = [Diagnostics.Stopwatch]::StartNew()
+Start-Sleep -Milliseconds 500
+$i2 = 0L; $k2 = 0L; $u2 = 0L
+if ($times -and $N::GetSystemTimes([ref]$i2, [ref]$k2, [ref]$u2)) {
+  $tot = ($k2 - $k1) + ($u2 - $u1)  # kernel time includes idle time
+  if ($tot -gt 0) { $r.cpu_busy = 100.0 * ($tot - ($i2 - $i1)) / $tot }
+}
+if ($r.pdh_status -eq 0) {
+  $st = $N::PdhCollectQueryData($pq); $buf = New-Object byte[] 16
+  if ($st -eq 0) { $st = $N::PdhGetFormattedCounterValue($pc, 0x200, [IntPtr]::Zero, $buf) }  # PDH_FMT_DOUBLE
+  if ($st -eq 0) { $r.proc_queue = [BitConverter]::ToDouble($buf, 8) }
+  $r.pdh_status = $st
+}
+$ms = $w.Elapsed.TotalMilliseconds
+# Load-like value without counters: threads running or ready to run (the
+# idle process and this poll's own thread excluded).
+$run = 0
+foreach ($p in [Diagnostics.Process]::GetProcesses()) {
+  if ($p.Id -eq 0) { continue }
+  foreach ($t in $p.Threads) { $ts = $t.ThreadState; if ($ts -eq 'Running' -or $ts -eq 'Ready') { $run++ } }
+}
+$r.runnable = [Math]::Max(0, $run - 1)
 # Get-PSDrive can take ~40 s (it waits for optical drives) and reports 0 here.
 $r.disks = @([System.IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq 'Fixed' -and $_.IsReady } |
   ForEach-Object { [ordered]@{ name = $_.Name.Substring(0, 1); used = [int64]($_.TotalSize - $_.TotalFreeSpace); free = [int64]$_.AvailableFreeSpace } })
-$rx = '^(cargo|rustc|clippy-driver|link|lld-link|rust-lld|cl|build-script-build.*|ocw-.*|world-builder|ffmpeg|make)$'
 $now = Get-Date
-$r.procs = @(Get-Process | Where-Object { $_.ProcessName -match $rx -or $_.Path -like '*\target\*' } |
-  ForEach-Object { [ordered]@{ pid = $_.Id; ppid = $null; name = $_.ProcessName;
+$r.procs = @($sel | ForEach-Object { [ordered]@{ pid = $_.Id; ppid = $null; name = $_.ProcessName;
     args = if ($_.Path) { $_.Path } else { $_.ProcessName + '.exe' };
     elapsed = if ($_.StartTime) { ($now - $_.StartTime).TotalSeconds } else { $null };
+    cpu = if ($cpu0.ContainsKey($_.Id) -and $ms -gt 0) { 100.0 * ($_.TotalProcessorTime.TotalMilliseconds - $cpu0[$_.Id]) / $ms } else { $null };
     rss = [int64]$_.WorkingSet64 } })
-$r.self = $PID
+# Task markers of scripts/remote.sh runs; liveness checked here (read-only).
+$r.markers = @(Get-ChildItem -LiteralPath (Join-Path $env:TEMP 'ocw-tasks') -Filter '*.json' | ForEach-Object {
+  $mp = Get-Process -Id ($_.BaseName -split '-')[0]
+  [ordered]@{ text = [IO.File]::ReadAllText($_.FullName); alive = [bool]$mp;
+    pstart = if ($mp -and $mp.StartTime) { ([DateTimeOffset]$mp.StartTime).ToUnixTimeSeconds() } else { $null } } })
 $r | ConvertTo-Json -Depth 4 -Compress
 """
 
@@ -466,6 +550,200 @@ def parse_bluetooth(lines: list) -> list:
     return names
 
 
+def parse_ticks(lines: list):
+    """(uptime_s, {pid: cpu ticks}) from a `ticks` section (/proc/uptime, then
+    `pid utime+stime` lines)."""
+    up, ticks = None, {}
+    for l in lines:
+        f = l.split()
+        if len(f) == 2 and up is None and "." in f[0]:
+            try:
+                up = float(f[0])
+            except ValueError:
+                pass
+            continue
+        if len(f) == 2 and f[0].isdigit() and f[1].isdigit():
+            ticks[int(f[0])] = int(f[1])
+    return up, ticks
+
+
+def cpu_per_pid(a: list, b: list, clk: int = 100) -> dict:
+    """pid -> CPU % of one core between two `ticks` sections."""
+    up1, t1 = parse_ticks(a)
+    up2, t2 = parse_ticks(b)
+    if up1 is None or up2 is None or up2 <= up1 or clk <= 0:
+        return {}
+    dt = up2 - up1
+    return {pid: round(100.0 * max(0, v - t1[pid]) / clk / dt, 1) for pid, v in t2.items() if pid in t1}
+
+
+def parse_pcpu(lines: list) -> dict:
+    out = {}
+    for l in lines:
+        f = l.split()
+        if len(f) == 2 and f[0].isdigit():
+            try:
+                out[int(f[0])] = float(f[1].replace(",", "."))
+            except ValueError:
+                pass
+    return out
+
+
+# ---- task markers (scripts/remote.sh) ----------------------------------------
+
+# A marker whose PID belongs to a process started this much later than the
+# marker is a reused PID: the run is gone.
+PID_REUSE_SLACK_S = 120
+
+
+def parse_marker(text):
+    """One task marker (JSON written by scripts/remote.sh), normalized, or
+    None if it is not one."""
+    try:
+        m = json.loads(text)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(m, dict) or not isinstance(m.get("pid"), int) or not isinstance(m.get("start"), (int, float)):
+        return None
+    state = m.get("state") if m.get("state") in ("running", "waiting") else "running"
+    slot = m.get("slot") if isinstance(m.get("slot"), int) else None
+    slots = m.get("slots") if isinstance(m.get("slots"), int) and m["slots"] >= 0 else None
+    s = lambda k: m.get(k) if isinstance(m.get(k), str) else None  # noqa: E731
+    since = int(m["since"]) if isinstance(m.get("since"), (int, float)) and m["since"] >= m["start"] else int(m["start"])
+    return {"pid": m["pid"], "start": int(m["start"]), "since": since, "state": state, "slot": slot, "slots": slots,
+            "dir": s("checkout"), "branch": s("branch"), "command": s("command")}
+
+
+def parse_marker_lines(lines: list) -> list:
+    out = []
+    for l in lines:
+        l = l.strip().lstrip("\ufeff")
+        if l.startswith("{"):
+            m = parse_marker(l)
+            if m:
+                out.append(m)
+    return out
+
+
+def marker_stale(m: dict, alive: bool, proc_start, slack: float = PID_REUSE_SLACK_S) -> bool:
+    """A marker is stale when its PID is gone or now belongs to a process
+    started well after the marker (PID reused)."""
+    if not alive:
+        return True
+    return proc_start is not None and proc_start > m["start"] + slack
+
+
+def marker_label(m: dict, repo_path: str, home=None) -> str:
+    """Checkout label of a marker from the remote directory name."""
+    lab = checkout_label("/" + m["dir"], repo_path, home) if m.get("dir") else None
+    return lab or m.get("dir") or m.get("branch") or "other"
+
+
+def live_markers(markers: list, now, procs_by_pid=None, alive=None, repo_path="~/src/OCW", home=None):
+    """(live markers with label/elapsed, number of stale ones). Liveness comes
+    from the process list (Linux/macOS: procs_by_pid) or from per-marker
+    `alive`/`pstart` values checked on the machine (Windows: alive dict
+    pid -> (alive, pstart))."""
+    live, stale = [], 0
+    for m in markers:
+        if alive is not None:
+            ok, pstart = alive.get(m["pid"], (False, None))
+        else:
+            p = (procs_by_pid or {}).get(m["pid"])
+            ok = p is not None
+            pstart = (now - p["elapsed"]) if ok and now is not None and p.get("elapsed") is not None else None
+        if marker_stale(m, ok, pstart):
+            stale += 1
+            continue
+        live.append(dict(m, label=marker_label(m, repo_path, home),
+                         # running: since it got its slot; waiting: since it started
+                         elapsed=max(0, now - (m["since"] if m["state"] == "running" else m["start"]))
+                         if now is not None else None))
+    live.sort(key=lambda m: m["start"])
+    return live, stale
+
+
+def adopt_labels(procs: list, markers: list, slack: float = 5) -> dict:
+    """pid -> checkout label for processes that cannot be assigned otherwise
+    (Windows: no command lines or parents), when exactly one run is active:
+    the processes it started, i.e. those not older than the run."""
+    running = [m for m in markers if m["state"] == "running"]
+    if len(running) != 1 or running[0].get("elapsed") is None:
+        return {}
+    m = running[0]
+    return {p["pid"]: m["label"] for p in procs
+            if p.get("elapsed") is not None and p["elapsed"] <= m["elapsed"] + slack}
+
+
+def merge_tasks(markers: list, groups: list) -> list:
+    """Background tasks: one per live marker (checkout, command, state,
+    running time), with the CPU/memory of the processes of its checkout;
+    process groups without a marker (runs not started by remote.sh) follow."""
+    by_label = {g["checkout"]: g for g in groups}
+    used, tasks = set(), []
+    for m in markers:
+        t = {"checkout": m["label"], "command": m["command"], "state": m["state"], "slot": m["slot"],
+             "elapsed": m["elapsed"], "started": m["start"], "rss": None, "cpu": None, "kinds": [],
+             "source": "marker"}
+        if m["state"] == "running":
+            g = by_label.get(m["label"]) if m["label"] not in used else None
+            if g is not None:
+                used.add(m["label"])
+                t.update(rss=g["rss"], cpu=g.get("cpu"), kinds=g["kinds"])
+                t["command"] = t["command"] or g.get("command")
+        tasks.append(t)
+    for g in groups:
+        if g["checkout"] not in used:
+            tasks.append(dict(g, state="running", slot=None, started=None, source="process"))
+    return tasks
+
+
+def queue_from_markers(markers: list, total: int = DEFAULT_SLOTS, held=None, extra_waiting=()) -> dict:
+    """Build slots and queue of a machine.
+
+    markers: live markers (with label/elapsed); total: the configured slot
+    count (machines.toml or OS default); a run started with another
+    OCW_REMOTE_SLOTS reports its count in its marker, and the larger one
+    counts. held: slot -> holder label (or None) seen on the machine itself
+    (Linux flocks, macOS lock dirs), for runs without a marker; Windows'
+    exclusively opened lock files cannot be inspected, there the markers
+    are all. extra_waiting: labels of waiting runs without a marker (older
+    remote.sh blocked in `flock 9`), or dicts with label and elapsed)."""
+    holders = {m["slot"]: m["label"] for m in markers if m["state"] == "running" and m["slot"]}
+    for sl, lab in (held or {}).items():
+        if not holders.get(sl):
+            holders[sl] = lab
+    total = max([total] + [m["slots"] for m in markers if m.get("slots") is not None] + list(holders))
+    queued = [{"checkout": m["label"], "command": m.get("command"), "since": m["start"],
+               "elapsed": m.get("elapsed")} for m in markers if m["state"] == "waiting"]
+    for w in extra_waiting:
+        w = w if isinstance(w, dict) else {"label": w}
+        queued.append({"checkout": w["label"], "command": None, "since": None, "elapsed": w.get("elapsed")})
+    return {"total": total, "used": len(holders), "waiting": len(queued),
+            "waiting_checkouts": [q["checkout"] for q in queued], "queued": queued,
+            "slots": [{"slot": i, "held": i in holders, "holder": holders.get(i)} for i in range(1, total + 1)]}
+
+
+# ---- Windows performance counters ---------------------------------------------
+
+PERFMON_HINT = "n/a (add build user to Performance Monitor Users)"
+PDH_CANNOT_READ_NAME_STRINGS = 0xC0000BC8  # Perflib registry denied
+
+
+def windows_counters(data: dict) -> dict:
+    """State of the PDH counter query: {"ok", "hint", "status"}."""
+    st = data.get("pdh_status")
+    if st == 0 and data.get("proc_queue") is not None:
+        return {"ok": True, "hint": None, "status": 0}
+    code = ("0x%08X" % (st & 0xFFFFFFFF)) if isinstance(st, int) else None
+    if data.get("perfmon_member"):
+        hint = "n/a (counters denied%s although in Performance Monitor Users: restart sshd)" % (
+            " " + code if code else "")
+    else:
+        hint = PERFMON_HINT
+    return {"ok": False, "hint": hint, "status": code}
+
+
 # ---- processes -------------------------------------------------------------
 
 LINKERS = {"cc", "c++", "gcc", "g++", "clang", "clang++", "ld", "ld.lld", "ld.bfd", "ld.gold",
@@ -576,7 +854,10 @@ def checkout_label(path, repo_path: str = "~/src/OCW", home=None):
 
 
 def _label_from_args(args: str, repo_path: str, home):
-    m = re.search(r"(?:\bcd|Set-Location -LiteralPath)\s+'?([^\s']+)'?", args)
+    # remote.sh's `cd REPO && . ~/.cargo/env` first (its task marker prelude
+    # may quote a user command with another `cd`), then any cd.
+    m = (re.search(r"\bcd\s+'?([^\s']+)'?\s*&&\s*\.\s+~/\.cargo/env", args)
+         or re.search(r"(?:\bcd|Set-Location -LiteralPath)\s+'?([^\s']+)'?", args))
     if m:
         lab = checkout_label(m.group(1), repo_path, home)
         if lab:
@@ -594,7 +875,7 @@ def _shorten(cmd: str, n: int = 90) -> str:
     return cmd if len(cmd) <= n else cmd[: n - 1] + "…"
 
 
-def build_tasks(procs: list, repo_path: str, home=None, self_pid=None) -> dict:
+def build_tasks(procs: list, repo_path: str, home=None, self_pid=None, fallback=None, queued_pids=()) -> dict:
     """Groups classified processes by checkout. Returns
     {"groups": [...], "kiosk_proc": proc|None, "waiting": [labels]}."""
     by_pid = {p["pid"]: p for p in procs}
@@ -624,8 +905,9 @@ def build_tasks(procs: list, repo_path: str, home=None, self_pid=None) -> dict:
         own[p["pid"]] = lab
         return lab
 
-    # Sessions blocked in `flock 9` are queued, not running.
-    queued = {p["ppid"] for p in procs if classify_process(p["args"]) == "waiting for slot"}
+    # Sessions blocked in `flock 9` (older remote.sh) or whose task marker
+    # says "waiting" (queued_pids) are queued, not running.
+    queued = {p["ppid"] for p in procs if classify_process(p["args"]) == "waiting for slot"} | set(queued_pids)
     groups: dict = {}
     kiosk = None
     waiting = []
@@ -641,7 +923,7 @@ def build_tasks(procs: list, repo_path: str, home=None, self_pid=None) -> dict:
             continue
         if parent is not None and kind.startswith("cargo") and classify_process(parent["args"]) == kind:
             continue
-        lab = label(p) or "other"
+        lab = label(p) or (fallback or {}).get(p["pid"]) or "other"
         if kind == "ocw-desktop" and lab == "kiosk":
             kiosk = p
             continue
@@ -649,20 +931,25 @@ def build_tasks(procs: list, repo_path: str, home=None, self_pid=None) -> dict:
             continue
         if kind == "waiting for slot":
             wl = label(parent) if parent is not None else lab
-            waiting.append(wl or "other")
+            waiting.append({"pid": p["ppid"], "label": wl or "other", "elapsed": p.get("elapsed")})
             continue
         if kind == "run" and (p["pid"] in queued or (
                 parent is not None and classify_process(parent["args"]) == "run")):
             continue
-        g = groups.setdefault(lab, {"checkout": lab, "command": None, "elapsed": 0, "rss": 0, "kinds": {}})
+        g = groups.setdefault(lab, {"checkout": lab, "command": None, "elapsed": 0, "rss": 0, "cpu": None,
+                                    "kinds": {}})
         if kind == "run":
             g["command"] = _shorten(run_command(p["args"]) or "")
             g["elapsed"] = max(g["elapsed"], p["elapsed"] or 0)
             continue
-        k = g["kinds"].setdefault(kind, {"kind": kind, "count": 0, "elapsed": 0, "rss": 0, "example": None})
+        k = g["kinds"].setdefault(kind, {"kind": kind, "count": 0, "elapsed": 0, "rss": 0, "cpu": None,
+                                         "example": None})
         k["count"] += 1
         k["elapsed"] = max(k["elapsed"], p["elapsed"] or 0)
         k["rss"] += p["rss"] or 0
+        if p.get("cpu") is not None:
+            k["cpu"] = round((k["cpu"] or 0) + p["cpu"], 1)
+            g["cpu"] = round((g["cpu"] or 0) + p["cpu"], 1)
         if k["example"] is None:
             k["example"] = _shorten(p["args"])
         g["elapsed"] = max(g["elapsed"], p["elapsed"] or 0)
@@ -684,34 +971,59 @@ def build_tasks(procs: list, repo_path: str, home=None, self_pid=None) -> dict:
     return {"groups": out, "kiosk_proc": kiosk, "waiting": waiting}
 
 
-def build_slots(slot_lines: list, locks: dict, procs: list, tasks: dict, repo_path, home, waiting_count: int) -> dict:
+def held_flock_slots(slot_lines: list, locks: dict, procs: list, repo_path, home, skip_pids=()) -> dict:
+    """Linux: slot -> holder label (or None) of the held
+    /tmp/ocw-build-slot-N.lock flocks. Waiting runs (blocked in `flock 9`,
+    or polling with the file briefly open: skip_pids) are not holders."""
     by_pid = {p["pid"]: p for p in procs}
-    waiter_pids = set()
+    waiter_pids = set(skip_pids)
     for p in procs:
         if classify_process(p["args"]) == "waiting for slot":
             waiter_pids.add(p["pid"])
             waiter_pids.add(p["ppid"])
-    slots = []
+    held = {}
     for s in slot_lines:
-        st = locks.get(s["inode"], {"held": False, "waiting": 0})
+        if not locks.get(s["inode"], {}).get("held"):
+            continue
         holder = None
-        if st["held"]:
-            for pid in s["pids"]:
-                if pid in waiter_pids or pid not in by_pid:
-                    continue
-                p = by_pid[pid]
-                holder = (checkout_label(p.get("cwd"), repo_path, home)
-                          or _label_from_args(p["args"], repo_path, home))
-                if holder:
-                    break
-        slots.append({"slot": s["slot"], "held": st["held"], "holder": holder})
-    total = max(DEFAULT_SLOTS, len(slots))
-    lock_waiting = sum(v["waiting"] for k, v in locks.items() if k in {s["inode"] for s in slot_lines})
-    return {"total": total, "used": sum(1 for s in slots if s["held"]), "slots": slots,
-            "waiting": max(waiting_count, lock_waiting), "waiting_checkouts": tasks["waiting"]}
+        for pid in s["pids"]:
+            if pid in waiter_pids or pid not in by_pid:
+                continue
+            p = by_pid[pid]
+            holder = (checkout_label(p.get("cwd"), repo_path, home)
+                      or _label_from_args(p["args"], repo_path, home))
+            if holder:
+                break
+        held[s["slot"]] = holder
+    return held
 
 
-def parse_linux(text: str, machine_repo: str = "~/src/OCW") -> dict:
+def parse_slot_dirs(lines: list, procs_by_pid: dict, procs=(), repo_path="~/src/OCW", home=None) -> dict:
+    """macOS: slot -> holder label (or None) from `ocw-build-slot-N.d PID`
+    lines; a directory whose PID is gone is free (the next run takes it)."""
+    held = {}
+    for l in lines:
+        m = re.match(r"ocw-build-slot-(\d+)\.d(?:\s+(\d+))?\s*$", l.strip())
+        if not m:
+            continue
+        pid = int(m.group(2)) if m.group(2) else None
+        if pid is None or pid not in procs_by_pid:
+            continue
+        p = procs_by_pid[pid]
+        held[int(m.group(1))] = (checkout_label(p.get("cwd"), repo_path, home)
+                                 or _label_from_args(p["args"], repo_path, home))
+    return held
+
+
+def _int0(lines):
+    """First line of a section as int, or None."""
+    try:
+        return int(str((lines or [""])[0]).strip())
+    except ValueError:
+        return None
+
+
+def parse_linux(text: str, machine_repo: str = "~/src/OCW", slots: int = OS_DEFAULT_SLOTS["linux"]) -> dict:
     s = parse_sections(text)
     home = (s.get("home") or [None])[0]
     uid = int(s["home"][1]) if len(s.get("home", [])) > 1 and s["home"][1].strip().isdigit() else None
@@ -727,16 +1039,26 @@ def parse_linux(text: str, machine_repo: str = "~/src/OCW") -> dict:
     out["uptime"] = float(up[0]) if up else None
     out.update(parse_meminfo(s.get("meminfo", [])))
     out.update(parse_df(s.get("df", [])))
-    out["cpu_busy"] = parse_cpu_busy(s.get("stat", []))
+    out["cpu_busy"] = parse_cpu_busy(s.get("stat", []) + s.get("stat2", []))
     procs = parse_ps(s.get("ps", []))
     cwd = parse_cwd_linux(s.get("cwd", []))
+    clk = _int0(s.get("clk")) or 100
+    cpu = cpu_per_pid(s.get("ticks1", []), s.get("ticks2", []), clk)
     for p in procs:
         p["cwd"] = cwd.get(p["pid"])
-    tasks = build_tasks(procs, machine_repo, home, self_pid)
-    out["tasks"] = tasks["groups"]
-    waiting = len(tasks["waiting"])
-    out["queue"] = build_slots(parse_slot_lines(s.get("slots", [])), parse_proc_locks(s.get("locks", [])),
-                               procs, tasks, machine_repo, home, waiting)
+        p["cpu"] = cpu.get(p["pid"])
+    markers, out["stale_markers"] = live_markers(
+        parse_marker_lines(s.get("tasks", [])), _int0(s.get("now")),
+        {p["pid"]: p for p in procs}, repo_path=machine_repo, home=home)
+    tasks = build_tasks(procs, machine_repo, home, self_pid,
+                        queued_pids={m["pid"] for m in markers if m["state"] == "waiting"})
+    out["tasks"] = merge_tasks(markers, tasks["groups"])
+    waiting_pids = {m["pid"] for m in markers if m["state"] == "waiting"}
+    held = held_flock_slots(parse_slot_lines(s.get("slots", [])), parse_proc_locks(s.get("locks", [])),
+                            procs, machine_repo, home, waiting_pids)
+    q = queue_from_markers(markers, slots, held,
+                           [w for w in tasks["waiting"] if w["pid"] not in waiting_pids])
+    out["queue"] = q
     version = [l for l in s.get("kiosk", []) if l.strip()]
     kp = tasks["kiosk_proc"]
     if version or kp:
@@ -751,7 +1073,7 @@ def parse_linux(text: str, machine_repo: str = "~/src/OCW") -> dict:
     return out
 
 
-def parse_macos(text: str, machine_repo: str = "~/src/OCW") -> dict:
+def parse_macos(text: str, machine_repo: str = "~/src/OCW", slots: int = OS_DEFAULT_SLOTS["macos"]) -> dict:
     s = parse_sections(text)
     home = (s.get("home") or [None])[0]
     self_pid = int(s["self"][0]) if s.get("self") and s["self"][0].strip().isdigit() else None
@@ -795,20 +1117,31 @@ def parse_macos(text: str, machine_repo: str = "~/src/OCW") -> dict:
     out["cpu_busy"] = round(100.0 - float(m.group(1)), 1) if m else None
     procs = parse_ps(s.get("ps", []), etime=True)
     cwd = parse_cwd_lsof(s.get("cwd", []))
+    pcpu = parse_pcpu(s.get("pcpu", []))  # macOS %cpu: a recent (decaying) average
     for p in procs:
         p["cwd"] = cwd.get(p["pid"])
-    tasks = build_tasks(procs, machine_repo, home, self_pid)
-    out["tasks"] = tasks["groups"]
-    out["queue"] = None  # remote.sh uses no build slots on macOS
+        p["cpu"] = pcpu.get(p["pid"])
+    markers, out["stale_markers"] = live_markers(
+        parse_marker_lines(s.get("tasks", [])), _int0(s.get("now")),
+        {p["pid"]: p for p in procs}, repo_path=machine_repo, home=home)
+    tasks = build_tasks(procs, machine_repo, home, self_pid,
+                        queued_pids={m["pid"] for m in markers if m["state"] == "waiting"})
+    out["tasks"] = merge_tasks(markers, tasks["groups"])
+    by_pid = {p["pid"]: p for p in procs}
+    held = parse_slot_dirs(s.get("slots", []), by_pid, procs, machine_repo, home)
+    out["queue"] = queue_from_markers(markers, slots, held)
     return out
 
 
-def parse_windows(text: str, machine_repo: str = "B:\\src\\OCW") -> dict:
+def parse_windows(text: str, machine_repo: str = "B:\\src\\OCW", slots: int = OS_DEFAULT_SLOTS["windows"]) -> dict:
     start = text.find("{")
     data = json.loads(text[start:]) if start >= 0 else {}
     home = data.get("home")
-    out: dict = {"home": home, "ncpu": data.get("ncpu"), "load": None,
-                 "uptime": data.get("uptime"), "cpu_busy": data.get("cpu_busy")}
+    cpu_busy = data.get("cpu_busy")
+    out: dict = {"home": home, "ncpu": data.get("ncpu"), "load": None, "uptime": data.get("uptime"),
+                 "cpu_busy": round(float(cpu_busy), 1) if isinstance(cpu_busy, (int, float)) else None,
+                 "runnable": data.get("runnable"), "proc_queue": data.get("proc_queue"),
+                 "counters": windows_counters(data)}
     if data.get("mem_total"):
         out["mem_total"] = data["mem_total"]
         if data.get("mem_avail") is not None:
@@ -829,12 +1162,28 @@ def parse_windows(text: str, machine_repo: str = "B:\\src\\OCW") -> dict:
     procs = []
     for p in raw:
         el = p.get("elapsed")
+        cpu = p.get("cpu")
         procs.append({"pid": p.get("pid"), "ppid": p.get("ppid"), "uid": None,
                       "elapsed": int(el) if isinstance(el, (int, float)) else None,
+                      "cpu": round(max(0.0, cpu), 1) if isinstance(cpu, (int, float)) else None,
                       "rss": p.get("rss"), "args": p.get("args") or p.get("name") or "", "cwd": None})
-    tasks = build_tasks(procs, machine_repo, home, data.get("self"))
-    out["tasks"] = tasks["groups"]
-    out["queue"] = None  # remote.sh uses no build slots on Windows
+    raw_markers = data.get("markers") or []
+    if isinstance(raw_markers, dict):
+        raw_markers = [raw_markers]
+    markers, alive = [], {}
+    for rm in raw_markers:
+        m = parse_marker(str(rm.get("text") or "").strip().lstrip("\ufeff")) if isinstance(rm, dict) else None
+        if m:
+            markers.append(m)
+            alive[m["pid"]] = (bool(rm.get("alive")), rm.get("pstart"))
+    now = data.get("now")
+    markers, out["stale_markers"] = live_markers(markers, now if isinstance(now, (int, float)) else None,
+                                                 alive=alive, repo_path=machine_repo, home=home)
+    # No command lines or parents without CIM: when a single run is active,
+    # the processes started since it began are its own.
+    tasks = build_tasks(procs, machine_repo, home, data.get("self"), adopt_labels(procs, markers))
+    out["tasks"] = merge_tasks(markers, tasks["groups"])
+    out["queue"] = queue_from_markers(markers, slots)
     return out
 
 
@@ -873,7 +1222,7 @@ def ssh_argv(m: Machine, ctl: str | None) -> list:
 
 def poll_machine(m: Machine, ctl: str | None = None) -> dict:
     t0 = time.time()
-    base = {"name": m.name, "os": m.os, "roles": m.roles, "polled_at": t0}
+    base = {"name": m.name, "os": m.os, "roles": m.roles, "slots": m.slots, "polled_at": t0}
     if not m.host:
         return dict(base, online=False, error="no host configured")
     masker = Masker(m.secrets())
@@ -895,7 +1244,7 @@ def poll_machine(m: Machine, ctl: str | None = None) -> dict:
         return dict(base, online=False, error=classify_ssh_error(r.stderr, r.returncode),
                     detail=masker(err[-1] if err else ""))
     try:
-        data = parser(r.stdout, m.repo_path)
+        data = parser(r.stdout, m.repo_path, m.slots)
     except Exception as e:  # a parser bug must not kill the poller
         return dict(base, online=False, error="unexpected output", detail=masker("%s: %s" % (type(e).__name__, e)))
     home = data.pop("home", None)
@@ -910,7 +1259,7 @@ class Dashboard:
         self.interval = interval
         self.ctl = control_dir() if use_control else None
         self.lock = threading.Lock()
-        self.state = {m.name: {"name": m.name, "os": m.os, "roles": m.roles, "online": None,
+        self.state = {m.name: {"name": m.name, "os": m.os, "roles": m.roles, "slots": m.slots, "online": None,
                                "error": "connecting"} for m in machines}
         self.last_ok: dict = {}
         self.stop = threading.Event()
@@ -939,10 +1288,11 @@ class Dashboard:
 
 def summarize(machines: list) -> dict:
     online = [m for m in machines if m.get("online")]
-    tasks = sum(len(m.get("tasks") or []) for m in online)
+    tasks = sum(1 for m in online for t in (m.get("tasks") or []) if t.get("state") != "waiting")
     waiting = sum((m.get("queue") or {}).get("waiting", 0) for m in online)
     used = sum((m.get("queue") or {}).get("used", 0) for m in online)
-    total = sum((m.get("queue") or {}).get("total", 0) for m in online)
+    total = sum((m.get("queue") or {}).get("total", 0) if m.get("online") else (m.get("slots") or 0)
+                for m in machines)
     return {"generated_at": time.time(), "machines": machines,
             "overview": {"machines": len(machines), "online": len(online), "tasks": tasks,
                          "waiting": waiting, "slots_used": used, "slots_total": total}}
@@ -980,9 +1330,31 @@ def fmt_dur(s) -> str:
     return "%ds" % s
 
 
+def fmt_cpu(c) -> str:
+    """CPU % of one core (100 % = one core busy)."""
+    return "?" if c is None else "%.0f%%" % c
+
+
+def task_state(t: dict) -> str:
+    if t.get("state") == "waiting":
+        return "waiting for slot"
+    return "running" + (" (slot %d)" % t["slot"] if t.get("slot") else "")
+
+
+def task_usage(t: dict) -> list:
+    out = [fmt_dur(t.get("elapsed"))]
+    if t.get("cpu") is not None:
+        out.append("cpu " + fmt_cpu(t["cpu"]))
+    if t.get("rss"):
+        out.append(fmt_bytes(t["rss"]))
+    if t.get("source") == "process":
+        out.append("no marker")
+    return out
+
+
 def format_text(status: dict) -> str:
     o = status["overview"]
-    lines = ["%d/%d machines online, %d running task(s), %d waiting, build slots %d/%d"
+    lines = ["%d/%d machines online: %d running, %d waiting, build slots %d used of %d"
              % (o["online"], o["machines"], o["tasks"], o["waiting"], o["slots_used"], o["slots_total"]), ""]
     for m in status["machines"]:
         if not m.get("online"):
@@ -995,6 +1367,8 @@ def format_text(status: dict) -> str:
             parts.append("cpu %.0f%%" % m["cpu_busy"])
         if m.get("load"):
             parts.append("load %.2f/%s" % (m["load"][0], m.get("ncpu") or "?"))
+        elif m.get("runnable") is not None:
+            parts.append("runnable threads %s/%s" % (m["runnable"], m.get("ncpu") or "?"))
         elif m.get("ncpu"):
             parts.append("%s cpus" % m["ncpu"])
         if m.get("mem_total"):
@@ -1005,27 +1379,36 @@ def format_text(status: dict) -> str:
             parts.append("disk %s free" % fmt_bytes(m["disk_free"]))
         if m.get("uptime"):
             parts.append("up %s" % fmt_dur(m["uptime"]))
+        c = m.get("counters")
+        if c:
+            parts.append("processor queue %s" % (
+                ("%.0f" % m["proc_queue"]) if c.get("ok") and m.get("proc_queue") is not None else c.get("hint")))
         lines.append("%-14s %-7s online  %s" % (m["name"], m["os"], ", ".join(parts)))
         q = m.get("queue")
         if q:
             held = ", ".join("slot %d: %s" % (s["slot"], s["holder"] or "held") for s in q["slots"] if s["held"])
-            lines.append("  queue: %d/%d slots used%s, %d waiting%s" % (
-                q["used"], q["total"], (" (" + held + ")") if held else "", q["waiting"],
-                (" (" + ", ".join(q["waiting_checkouts"]) + ")") if q["waiting_checkouts"] else ""))
+            lines.append("  slots: %d used of %d%s, %d waiting" % (
+                q["used"], q["total"], (" (" + held + ")") if held else "", q["waiting"]))
+            for w in q.get("queued") or []:
+                lines.append("  queue: [%s] %s  (waiting %s)" % (
+                    w["checkout"], w.get("command") or "(command unknown)", fmt_dur(w.get("elapsed"))))
         k = m.get("kiosk")
         if k:
             st = ("running %s" % fmt_dur(k["elapsed"])) if k["running"] else "NOT running"
             bt = ", ".join(k.get("bluetooth") or []) or "none"
             lines.append("  kiosk: app %s, build %s, bluetooth: %s" % (st, k.get("version") or "?", bt))
-        tasks = m.get("tasks") or []
+        tasks = [t for t in (m.get("tasks") or []) if t.get("state") != "waiting"]
         if not tasks:
-            lines.append("  no build tasks")
+            lines.append("  no build tasks running")
         for g in tasks:
-            lines.append("  [%s] %s%s" % (g["checkout"], g["command"] or "", "  (%s, %s)" % (
-                fmt_dur(g["elapsed"]), fmt_bytes(g["rss"]))))
+            lines.append("  [%s] %s: %s  (%s)" % (g["checkout"], task_state(g), g["command"] or "(command unknown)",
+                                                 ", ".join(task_usage(g))))
             for kd in g["kinds"]:
-                lines.append("      %-16s x%-3d %8s %10s" % (kd["kind"], kd["count"], fmt_dur(kd["elapsed"]),
-                                                         fmt_bytes(kd["rss"])))
+                lines.append("      %-16s x%-3d %8s %7s %10s" % (
+                    kd["kind"], kd["count"], fmt_dur(kd["elapsed"]),
+                    fmt_cpu(kd.get("cpu")) if kd.get("cpu") is not None else "", fmt_bytes(kd["rss"])))
+        if m.get("stale_markers"):
+            lines.append("  (%d stale task marker(s) of ended runs ignored)" % m["stale_markers"])
         lines.append("")
     return "\n".join(lines)
 
