@@ -6,7 +6,10 @@
 # Assembles target/appimage/AppDir (binary, desktop entry, icons, .DirIcon,
 # which file managers show for the AppImage) and packs it with
 # appimagetool (https://github.com/AppImage/appimagetool) if it is on
-# PATH; otherwise it stops after the AppDir and says how to pack it.
+# PATH or in ~/.local/bin (`make deps-appimage` installs it there);
+# otherwise it stops after the AppDir and says how to pack it. Without
+# FUSE 2 (libfuse2t64 / libfuse2) appimagetool runs extracted
+# (APPIMAGE_EXTRACT_AND_RUN=1).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 out=${1:-target/OpenCyclingWorld-$(uname -m).AppImage}
@@ -31,11 +34,19 @@ here=$(dirname "$(readlink -f "$0")")
 exec "$here/usr/bin/ocw-desktop" "$@"
 RUN
 chmod 755 "$app/AppRun"
-if command -v appimagetool >/dev/null; then
-  ARCH=$(uname -m) appimagetool "$app" "$out"
+tool=$(command -v appimagetool || true)
+if [ -z "$tool" ] && [ -x "$HOME/.local/bin/appimagetool" ]; then
+  tool=$HOME/.local/bin/appimagetool
+fi
+if [ -n "$tool" ]; then
+  # Without FUSE 2 an AppImage cannot mount itself; it then runs extracted.
+  if ! { [ -e /dev/fuse ] && /sbin/ldconfig -p 2>/dev/null | grep -q 'libfuse\.so\.2'; }; then
+    export APPIMAGE_EXTRACT_AND_RUN=1
+  fi
+  ARCH=$(uname -m) "$tool" "$app" "$out"
   echo "AppImage: $out"
 else
   echo "AppDir ready: $app"
-  echo "appimagetool not found; install it (https://github.com/AppImage/appimagetool) and run:"
+  echo "appimagetool not found; install it ('make deps-appimage') and run this script again, or:"
   echo "  ARCH=$(uname -m) appimagetool $app $out"
 fi
