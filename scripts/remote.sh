@@ -100,7 +100,15 @@ case "$action" in
   run)
     sync_tree
     status=0
-    "${SSH[@]}" "$target" "cd $repo && . ~/.cargo/env && export ${jobs_env:-OCW_REMOTE=1} && $*" || status=$?
+    # At most OCW_REMOTE_SLOTS commands (default 2) run at once on a machine
+    # (flock on lock files there; others wait for a free slot): many
+    # parallel builds of the Bevy app run the machine out of memory.
+    slots=${OCW_REMOTE_SLOTS:-2}
+    slot_guard=""
+    if [ "$os" != macos ] && [ "$slots" -gt 0 ] 2>/dev/null; then
+      slot_guard="ocw_slot() { for s in \$(seq 1 $slots); do exec 9>/tmp/ocw-build-slot-\$s.lock; flock -n 9 && return; done; echo 'remote.sh: waiting for a free build slot' >&2; exec 9>/tmp/ocw-build-slot-1.lock; flock 9; }; ocw_slot; "
+    fi
+    "${SSH[@]}" "$target" "${slot_guard}cd $repo && . ~/.cargo/env && export ${jobs_env:-OCW_REMOTE=1} && $*" || status=$?
     # Builds only happen remotely: bring back a Cargo.lock that cargo
     # updated there (new dependencies), so it can be committed.
     rsync -a -e "${SSH[*]}" "$target:$repo/Cargo.lock" ./Cargo.lock 2>/dev/null || true

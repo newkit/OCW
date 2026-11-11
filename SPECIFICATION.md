@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.0 – November 2026
+Version 2.3 – November 2026
 
 | Version | Change |
 |---|---|
@@ -19,6 +19,9 @@ Version 2.0 – November 2026
 | 1.8 | Steering fixes (§5.2.1): only pushing into the road edge scrapes; a held opposite lean key pauses at upright, then leans on to the other side |
 | 1.9 | Catch-up of implemented decisions: elevation filter along through-roads and terrain cut under roads (§4.3), road surfaces (§4.4), route file format (§4.7), console scripting (§2.9), input devices incl. gamepad, camera and avatar on the terrain (§3.2), start point and bots (§6.1), repository layout (§10), build machines, desktop integration, AppImage, release and build-history folders, CI resilience (§11), own artwork licence (§13) |
 | 2.0 | Restart key R, camera reset on C, video recording on V; gamepad ↑ / ↓ also on the D-pad and the left stick, analog triggers, U-turn on East (§3.2) |
+| 2.1 | In-game menu plan (§3.2.1): structure (Ride, Workshop, Navi, Settings), gamepad navigation, settings file, increments M1–M9 mapped to phases; audio output device plan (§3.3) |
+| 2.2 | Menu decisions (§3.2.1): the ride never pauses (trainer unchanged, time and recording continue, autodrive while the menu is open); Esc never quits; rider weight affects physics, rider profiles in Settings, chosen in the Workshop |
+| 2.3 | macOS app bundle (§11.3): `scripts/build-macos-app.sh` (Info.plist with Bluetooth usage text, icon, ad-hoc signature, DMG and zip), logs to `~/Library/Logs/OCW/` when started from Finder, CI job building the app on pushes to main |
 
 ---
 
@@ -491,11 +494,92 @@ The interface is divided into modules:
 - Settings.
 - Route selection.
 
+These modules are reached through the in-game menu (§3.2.1); the dashboard of §2.1 is its start page once accounts exist (Phase 5).
+
+#### 3.2.1 In-Game Menu
+
+One menu, reachable during a ride and (later) as the start screen, replaces command-line options and console commands for everyday use. The console (§2.9) stays the power-user path; both drive the same functions.
+
+**Opening and pausing**
+
+| | Keyboard / mouse | Gamepad |
+|---|---|---|
+| Open / close | Esc (closes the console first if it is open) | Start / Menu (☰, Options) |
+| Move focus | ↑ ↓ ← →, Tab / Shift+Tab, mouse hover | D-pad, left stick (with repeat) |
+| Confirm | Enter, Space, click | South (A / ✕) |
+| Back (one page up; closes at the top) | Esc, Backspace, right click | East (B / ○) |
+| Change a value (slider, choice) | ← / → on the focused row, mouse drag / wheel | D-pad / stick left / right, shoulder buttons for big steps |
+| Switch tab | Q / E, PgUp / PgDn | LB / RB (L1 / R1) |
+
+- While the menu is open, ride inputs (↑ power, ← → steering, A, W, U, R, V, …) are **not** passed to the ride; one input-context resource (`Ride`, `Menu`, `Console`) replaces today's per-system `console.is_open()` checks. The power from the trainer keeps flowing.
+- **The ride never pauses (decided, v2.2):** the menu is an overlay over the running ride, in single-player exactly as in multiplayer (in a shared ride the others keep riding, so one rider's menu cannot stop time). The trainer is left as it is (SIM keeps following the road, ERG keeps its target), the ride time and the FIT recording continue. While the menu is open, steering falls back to autodrive and junctions take the default exit (§2.2.1), so the rider stays on the road; the previous steering mode is restored on closing. Pages that would end the ride (Ride, Restart) ask for confirmation.
+- **Esc never quits** (decided, v2.2): only *Quit* in the menu ends the app (kiosk-safe).
+- The top page shows a status strip: power, speed, connected trainer, Strava sync state.
+
+**Menu tree**
+
+| Top level | Page | Contents | Phase |
+|---|---|---|---|
+| **Resume** | | Close the menu, continue the ride | now |
+| **Ride** | World mode | Installed world packages (region, size, version, © OSM attribution); mode: free ride (start: random, named place, or last position) or a route of the package (laps); built-in test routes (hills, loop); number of bots. *Start ride* | now (picker); map-based start point: Phase 7 |
+| | Workouts | Structured workouts (§2.8): list, preview of the profile, start in ERG mode | with workouts (§2.8: basics Phase 2, full Phase 7) |
+| | Events | Scheduled group rides, races, time trials (§2.3): calendar, sign-up, join a running session, private sessions and invitations | Phase 5 (sessions), Phase 7 (calendar) |
+| **Workshop** | Bike | Bike type, frame, wheels, tyres, handlebars, saddle, accessories, paint; 3D preview; the physics profile shown separately ("road – aero", caps per §2.5), cosmetic choices never change it | Phase 4 |
+| | Character | Body, skin, face, hair, clothing, shoes, helmet, glasses, gloves (§2.6); 3D preview with pedalling animation | Phase 4 |
+| **Navi** | Routes | Route library: the package routes and the user's own routes with distance, elevation profile, region; ride, rename, delete | now (list) |
+| | GPX import | Pick a GPX file, region check, map matching with the problem sections highlighted, accept / cancel (§2.7); offers the missing package's download (after the ride, §4.2) | Phase 3 (with GPX import) |
+| | Rides and export | Saved rides (`rides/*.fit`): date, route, distance, time, Strava state; export as FIT / GPX, edit title and description, delete | now (list, FIT); GPX export with §2.8 |
+| | Strava sync | Per-ride sync state (uploaded / processing / failed / rejected), *Sync now*, *Retry failed* | now (interim upload, §2.8); backend upload Phase 5 |
+| **Settings** | Controls | Key and gamepad bindings (view now, rebinding later), autodrive on at start, steering sensitivity (lean rate, stick dead zone), power step (↑, PgUp/PgDn), invert camera, mouse orbit speed | now (view + options), rebinding Phase 7 |
+| | Trainer | Devices: scan, connect, forget, the running devices with battery and signal; virtual trainer and its power; control mode SIM / ERG / off; trainer difficulty (§5.3); downhill handling; spin-down calibration where supported | now; calibration with §5.3 |
+| | Strava | Link / unlink, automatic upload on / off, account name, last result; without client credentials (§2.8 interim) a short explanation | now (interim), Phase 5 (via backend) |
+| | Audio | Mix: master, music, effects (bike, wind, ambience), voice; output device; later voice: microphone, push-to-talk key / open mic, spatial voice on / off | output + mix with game audio (see §3.3); voice Phase 6 |
+| | Display | Monitor, fullscreen / window, resolution, graphics quality (shadows, view distance, tree density, LOD bias), FPS counter, HUD size | now |
+| | Riders | Rider profiles (decided, v2.2): add / edit / delete riders with display name, weight, height, FTP, units (metric / imperial); the active rider is chosen in the Workshop; later account sign-in, privacy | now (local); account Phase 5 |
+| **Restart** | | Same as R: start everything again, ride saved first | now |
+| **Quit** | | Save the ride and exit | now |
+
+**Interaction design**
+
+- **Ten-foot UI:** the app is used on a trainer, often from 2–3 m away and with a gamepad. Text at least 3 % of the window height (scales with it), high contrast, a clearly visible focus frame, at most about seven rows per page, no hover-only functions, no text input where a choice works (names and titles get an on-screen keyboard on the gamepad).
+- **Focus navigation** works identically for keyboard and gamepad (spatial navigation between focusable items, a page stack for Back); the mouse is optional. Every item is reachable without a mouse, in the kiosk's borderless fullscreen (§11.2).
+- **Values change in place** (slider, ← / → choice) and apply immediately; there is no "Apply" button. Settings are saved when the menu closes. Device scans and Strava actions show their progress inline.
+- **Rendering: Bevy UI** for the whole menu, as for the HUD (§3.2): it shares the HUD's theme and scaling, renders in the same window and screenshot / capture paths, and Bevy's input-focus and directional-navigation support fits gamepad control; egui's gamepad navigation is weak and it looks like a tool, not a game. egui stays for the console, dev panels and, in Phase 4, the advanced parameter panels of the editors (§3.2); the Workshop's main selection is Bevy UI.
+
+**Architecture**
+
+- **State:** a Bevy state `UiMode { Ride, Menu }` (the console stays an overlay flag); ride systems run only in `Ride` or check the input context. The menu itself is a **Bevy-free model** in `apps/desktop` (like `ClientCore`): the page tree, page stack, focused item, item values. Input is translated into abstract actions (`Up`, `Down`, `Left`, `Right`, `Confirm`, `Back`, `TabNext`, `TabPrev`); `ocw-render::menu` only draws a `MenuView` resource, as the HUD draws `RideView`.
+- **Actions are console commands.** Each menu item either runs a command line (`trainer.difficulty 60`, `devices.connect 2`, `strava.sync`, `reset`) through `ConsoleState::queue`, or reads / writes a setting variable. Menu, console, `--cmd` and `autoexec.cfg` therefore share one code path, and every menu function is scriptable and testable headless.
+- **Settings: one registry, one file.** Settings are variables with a name, type, range, default and an apply function (`set controls.autodrive_default on`, `get trainer.difficulty`, §2.9). They persist in `<user config dir>/ocw/settings.toml` (sections like the menu: `[controls]`, `[trainer]`, `[audio]`, `[display]`, `[profile]`, `[ride]` for the last world / route). Precedence: defaults < `settings.toml` < `autoexec.cfg` < command-line options; command-line options and `set --temp` apply only to the session and are not saved. Unknown keys are kept and reported, invalid values fall back to the default with a warning. Device memory (`devices.toml`), Strava credentials and tokens (`strava.toml`, `strava-token.toml`) stay in their own files – tokens never go into the settings file.
+- **Starting another ride** (Ride page) first reuses the restart path (`restart.rs`): the choice is written to `[ride]` in the settings and the app re-executes itself, which starts the new world / route exactly as at program start. An in-app switch (tear down the local server and world, start the new ones without restarting the process) can replace it later.
+- **Rider weight affects the physics (decided, v2.2):** the active rider's weight (and later the bike's physics profile, §2.5) goes to the server in the join message (new field) – the server stays the truth (§6.1) – and to the trainer (SIM total mass); today's fixed 75 kg + 8 kg profile becomes the default rider. Riders are created in *Settings → Riders* and selected in the *Workshop* (the Workshop's rider choice comes before Phase 4's editors).
+- **Local now vs. backend later:** settings, devices, routes, GPX import, rides, the interim Strava upload and the Workshop configuration are local. Accounts and profile sync (§2.1), Events and sessions (§2.3), the backend Strava upload (§2.8), sharing routes and friends need the Phase 5 backend; those pages appear disabled with a short hint until it exists.
+
+**Increments** (each with unit tests, §11.4; the menu model, settings and actions are tested without Bevy or with `MinimalPlugins` + `ConsoleCorePlugin`)
+
+| # | Increment | Phase | Size | Tests |
+|---|---|---|---|---|
+| M1 | Input contexts, menu shell (Resume, Restart, Quit), Esc / Start, focus navigation for keyboard, mouse and gamepad, ten-foot theme; the ride continues under the menu (autodrive and default exits while it is open) | 3 (now) | M | navigation model (focus moves, wrap, page stack, Back at the top closes); key / button → action mapping; ride inputs ignored in `Menu`; Esc closes the console first and never quits; steering falls back to autodrive while the menu is open and is restored after; ride time, trainer and recording unaffected; headless app opens the menu and selects Resume; X11 + Wayland smoke screenshot of the menu |
+| M2 | Settings registry, `settings.toml`, `set` / `get` commands; Settings pages Controls (options), Trainer, Strava, Display, Riders (profiles: name, weight via the join message and SIM mass, FTP, units), rider choice in the Workshop | 3 (now) | L | registry validation and ranges, TOML round-trip, precedence (file < autoexec < CLI, temp values not saved), unknown keys kept; each page item → expected command line; weight reaches the server's physics profile |
+| M3 | Ride → World mode picker (installed packages, free ride / package routes / test routes, bots) via the restart path; Navi → Routes list, Rides list with Strava state and FIT export, Strava sync page | 3 (end) | M | package discovery on a fixture directory, `[ride]` choice → command line of the restarted process, ride list from fixture FIT + sidecar + `strava-sync.toml` |
+| M4 | Navi → GPX import with map-matching report; GPX export of rides | 3 (with §2.7) | M | GPX fixtures through import → route; problem sections listed; GPX export round-trip |
+| M5 | Game audio and Settings → Audio (mix, output device) | with game audio (see §3.3) | M | bus volume maths (master × bus), device selection fallback to the default device when the saved one is missing, settings round-trip |
+| M6 | Workshop: bike and character pages with 3D preview | 4 | L | configuration model and persistence (§14 Phase 4); cosmetic choices never change the physics profile; menu items → configuration |
+| M7 | Accounts / profile sync, Events (sessions, join), backend Strava, route sharing; start-screen dashboard (§2.1) | 5 (calendar 7) | L | API client against a mocked backend, disabled-page states offline, event list and join flow |
+| M8 | Voice settings (microphone, push-to-talk, open mic, per-participant mute) | 6 | S | device selection and push-to-talk state (§14 Phase 6) |
+| M9 | Rebinding of keys and buttons, accessibility (text size, colour-blind safe HUD) | 7 | M | binding conflicts, persistence, defaults restore |
+
+**Open questions**
+
+Decided (v2.2): no pause (trainer unchanged, ride time and recording continue); Esc never quits; rider weight affects physics, riders managed in Settings and chosen in the Workshop. Still open: switching rides by restart vs. in-app session switch (M3), and local Events before the backend (M7).
+
 ### 3.3 Audio
 
 Two separate audio systems:
 
 **Game audio** (Bevy Audio): background music, ambient sounds, bicycle sounds, wind, tires, freewheel, gear shifting.
+
+**Status and output device (plan):** the app has no audio yet. Game audio comes as its own increment (M5 in §3.2.1), at the latest with Phase 4's riding animations. `bevy_audio` (rodio) always plays on the system's default output device and has no device list or bus mixer, so the user cannot pick the speakers (e.g. headphones vs. the TV on a trainer setup). Plan: a small audio module in `apps/desktop` behind a trait, on its own thread, that enumerates output devices with `cpal`, opens the chosen one with `rodio` and mixes four buses (master × music / effects / voice); evaluate `kira` (with its cpal backend) as the alternative before building it. The chosen device is saved by name (`audio.output`) and falls back to the default device when it is missing; hot-plugging is followed. Voice (Phase 6) plays through the same output setting via its own LiveKit audio path, with its own microphone selection.
 
 **Voice communication** (§7): WebRTC, Opus audio codec, LiveKit SFU, microphone and speaker selection, echo cancellation, noise suppression. Voice is provided via a separate service.
 
@@ -1116,6 +1200,7 @@ Build and release pipelines are automated for all three operating systems, intro
 
 - **App icon and desktop integration:** the logo (`artwork/logos/`, a unicorn riding a bike over a rainbow) is the window icon (X11, Windows); the window's app id `ocw-desktop` matches the desktop entry (`packaging/linux/ocw-desktop.desktop`), which Wayland compositors, docks and menus use. On Linux the app installs its desktop entry and hicolor icons into the user's data directory at start (only changed files).
 - **AppImage:** `scripts/build-appimage.sh` assembles the AppDir (binary, desktop entry, icons, `.DirIcon`) and packs it with `appimagetool` when installed.
+- **macOS app bundle:** `scripts/build-macos-app.sh` (`make macos-app`, runs on macOS) builds `Open Cycling World.app` (bundle id `org.opencyclingworld.desktop`; stripped binary; `Info.plist` with version + commit, minimum macOS read from the binary, `NSBluetoothAlwaysUsageDescription`, without which macOS ends the app when it uses CoreBluetooth; `ocw.icns` from `artwork/logos/`), signs it ad hoc and packs a DMG (with an Applications link) and a zip. Started from Finder, the app logs to `~/Library/Logs/OCW/ocw-desktop.log` (stderr has no terminal there). CI builds and uploads both on pushes to `main`. Still open: Developer ID signing with the hardened runtime and notarisation (`CODESIGN_IDENTITY` already signs with a given identity), a 1024 px icon render for the 512@2x slot.
 - **Release folder:** `release/<version>-<commit>/<platform>/` holds stripped release binaries (`ocw-desktop`, `ocw-server`, `world-builder`) with SHA-256 sums; binaries above GitHub's file size limits are stored xz-compressed. Map data is not included (ODbL, §13). `artwork/build-history/` keeps the screenshots and videos made during development with an index.
 
 ---
@@ -1236,6 +1321,7 @@ Personal data, voice data and training data are handled separately.
 - Local caching and regional data packages (§4.7).
 - Route format and route editor; GPX import (§2.7).
 - Junction steering and dead-end handling (§2.2.1, §2.2.2).
+- In-game menu, first increments (§3.2.1, M1–M4): pause menu, settings file and Settings pages (controls, trainer, Strava, display, profile), Ride picker, Navi (routes, rides, Strava sync, GPX import).
 
 - **Unit tests:** every world-builder step on fixtures — OSM extraction, projection, road graph and stable edge IDs, graph cleanup and dead-end flags, DEM sampling and smoothing (gradient limits, bridges, tunnels), terrain conformance, splat-map classification, tile cutting, package manifest and signature verification; route format, GPX parsing and map matching; junction detection, exit classification, default-exit rules, key selection and lock point, U-turn.
 - **Integration tests:** build a small region end-to-end and load it in the client headless; rebuild with changed OSM data and check route re-matching.
@@ -1251,6 +1337,7 @@ Done so far for land use and buildings (§4.6): OSM land-use classes rasterised 
 - Components and physics profiles (§2.5).
 - Animations.
 - Configuration and persistence.
+- Workshop pages of the in-game menu (§3.2.1, M6); game audio and audio settings at the latest here (M5, §3.3).
 
 - **Unit tests:** component and configuration model (IDs, physics profile references, cosmetic parts never change physics), profile caps, persistence round-trip, animation state selection from cadence / speed / riding state, asset validator rules (including licence metadata).
 - **Integration tests:** load all shipped glTF assets through the validator and into a headless Bevy app.
@@ -1271,6 +1358,7 @@ Done so far for land use and buildings (§4.6): OSM land-use classes rasterised 
 - Plausibility checks and trust levels (§6.4).
 - Strava upload (§2.8).
 - Web companion, first version (§2.10).
+- Menu: accounts and profile sync, Events (sessions), backend Strava, start-screen dashboard (§3.2.1, M7).
 
 - **Unit tests:** QUIC transport framing, handshake and version check, reconnect logic, interest management, steering intents and lock-point decisions, plausibility checks and trust levels, leaderboard ranking, API handlers (Axum) and database access, Strava upload flow against a mocked Strava API, web companion components.
 - **Integration tests:** server with many simulated clients (latency, packet loss, disconnects); load test toward 100 riders per session; web companion end-to-end tests in a headless browser.
@@ -1285,6 +1373,7 @@ Done so far for land use and buildings (§4.6): OSM land-use classes rasterised 
 - Push-to-talk.
 - Voice rooms.
 - Spatial audio.
+- Voice settings in the menu (§3.2.1, M8).
 
 - **Unit tests:** voice room and token management (backend), spatial audio attenuation and nearest-N selection, push-to-talk and mute state, device selection logic; app builds and runs with the `voice` feature disabled.
 - **Integration tests:** client ↔ self-hosted LiveKit test server in CI (two simulated participants).
@@ -1297,7 +1386,8 @@ Done so far for land use and buildings (§4.6): OSM land-use classes rasterised 
 - Large regions.
 - Weather and times of day.
 - Training history.
-- Events.
+- Events (menu: calendar, §3.2.1).
+- Key and button rebinding, accessibility (§3.2.1, M9).
 - Full workout and ERG support.
 - Web companion: events, routes, world packages.
 - Error monitoring.

@@ -11,7 +11,7 @@ and architecture are in [SPECIFICATION.md](SPECIFICATION.md).
 ## Build and run (Linux)
 
 ```bash
-make deps     # this platform: make deps-linux | deps-windows | deps-macos (packages + pinned Rust)
+make deps     # this platform: deps-linux (detects Debian/Ubuntu, Fedora, Arch) | deps-windows | deps-macos
 make check    # fmt, clippy, tests, wasm build – what CI runs
 make run      # desktop client with a virtual trainer and 4 test riders
 make help     # all targets (build, release, test, server, screenshot, ...)
@@ -20,6 +20,21 @@ make help     # all targets (build, release, test, server, screenshot, ...)
 The Rust version is pinned in `rust-toolchain.toml`; Debian's system Rust is too
 old for Bevy. `make` finds the rustup toolchain in `~/.cargo/bin` by itself; for
 plain `cargo`, add `. "$HOME/.cargo/env"` to your shell profile.
+
+### macOS app
+
+On a Mac, `make macos-app` (`scripts/build-macos-app.sh`) builds
+`target/macos/Open Cycling World.app` and packs it as a DMG and a zip
+(`OpenCyclingWorld-<version>-<commit>-macos-arm64.dmg`; CI builds them on every
+push to `main`, workflow artifact `macos-app`). Open the DMG and drag the app to
+Applications; it starts the Hills test route with the virtual trainer, or
+your remembered Bluetooth devices (macOS asks for Bluetooth access on first
+use). The log is in `~/Library/Logs/OCW/ocw-desktop.log` (Console.app → Log
+Reports); `autoexec.cfg` is not read when started from Finder (the working
+directory is `/`). The app is only ad-hoc signed, not notarised, so Gatekeeper
+blocks the first start: right-click the app → Open, or System Settings →
+Privacy & Security → Open Anyway, or remove the quarantine flag with
+`xattr -dr com.apple.quarantine "/Applications/Open Cycling World.app"`.
 
 ## Controls
 
@@ -291,6 +306,7 @@ ride on a world package's road graph, start point seed).
 | `scripts/deploy-test.sh MACHINE` | Release build on a test machine, deployed for its kiosk |
 | `scripts/ocw-kiosk.sh install\|run\|status` | Keep the test app running on a machine's screen, restarted on each deploy |
 | `scripts/build-appimage.sh` | Linux AppImage (needs `appimagetool`) |
+| `scripts/build-macos-app.sh` | macOS app bundle, DMG and zip, ad-hoc signed (`make macos-app`, on a Mac) |
 | `scripts/setup-windows-buildserver.ps1` | Windows build machine: OpenSSH server and a local build user |
 | `.claude/skills/run-ocw/drive.sh` | Headless screenshots and videos (X11 / Wayland) for tests |
 

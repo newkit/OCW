@@ -29,7 +29,7 @@ Build/test/benchmark machines (Windows, macOS, Linux with a real GPU) are descri
 
 Test build on marge's screen: `scripts/deploy-test.sh marge` (or `make deploy-test`) installs a release build to `/var/tmp/ocw`; the kiosk (`scripts/ocw-kiosk.sh`, running in the desktop user's session) restarts the app on each deployment. Deploy after user-visible changes so the user can try them.
 
-**All building and testing runs on the remote machine `marge`** (Linux, AMD GPU, Bluetooth), not locally: `scripts/remote.sh marge run 'cargo test --workspace'` copies the working tree there and runs the command. Long builds: run in the background.
+**All building and testing runs on remote Linux machines, not locally:** `marge` (Debian, AMD GPU, Bluetooth with the Wahoo KICKR, kiosk screen) and `leela` (Fedora, 16 cores, AMD GPU); spread parallel work over both. `remote.sh` lets at most 2 commands run at once per machine (`OCW_REMOTE_SLOTS`), because many parallel Bevy builds run a machine out of memory. `scripts/remote.sh marge run 'cargo test --workspace'` copies the working tree there and runs the command. Long builds: run in the background.
 
 ## Code map
 
