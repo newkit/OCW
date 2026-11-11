@@ -60,6 +60,10 @@ scripts/remote.sh marge ssh 'vulkaninfo --summary'      # plain ssh, no copy
 scripts/remote.sh marge fetch test-output ./from-marge  # copy results back
 ```
 
+`python3 tools/build-dashboard/dashboard.py` shows the load of these
+machines and the tasks running or waiting on them (read-only, see
+`tools/build-dashboard/README.md`).
+
 `run` copies tracked and untracked files (never `config/` or git-ignored
 files such as `target/`) to `repo_path` and runs the command with
 `~/.cargo/env` loaded.

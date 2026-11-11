@@ -498,6 +498,7 @@ to *Public* are the usual causes; the server log is in Event Viewer under
 | `world-builder keys init-root` / `keys new-signing` / `sign` / `verify` / `publish` / `diff` | Package signing and distribution, see below |
 | `scripts/fetch-pilot.sh` | Download the pilot region's OSM extract and elevation data |
 | `scripts/remote.sh MACHINE run 'CMD'` | Copy the tree to a build machine (`config/machines.toml`) and run a command there |
+| `python3 tools/build-dashboard/dashboard.py` | Web page (port 8765) with the build machines' load and their running/queued tasks; `--once` prints it as text |
 | `scripts/deploy-test.sh MACHINE` | Release build on a test machine, deployed for its kiosk |
 | `scripts/ocw-kiosk.sh install\|run\|status` | Keep the test app running on a machine's screen, restarted on each deploy |
 | `scripts/build-appimage.sh` | Linux AppImage (needs `appimagetool`) |
