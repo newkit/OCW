@@ -620,6 +620,7 @@ mod tests {
             graph: None,
             landuse: None,
             buildings: None,
+            routes: Vec::new(),
         };
         let stats = add_buildings(
             &mut p,

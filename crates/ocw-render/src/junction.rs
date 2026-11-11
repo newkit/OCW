@@ -126,20 +126,34 @@ pub fn label(j: &JunctionView) -> String {
             s.push_str(&format!("  [{icon}]"));
         }
     }
+    match j.route {
+        Some(r) if r == j.selected => s.push_str("  [route]"),
+        Some(_) => s.push_str("  [leaves the route]"),
+        None => {}
+    }
     s
 }
 
+/// Colour of the route's arrow when another exit is selected.
+const ROUTE_COLOUR: Color = Color::srgb(0.3, 0.75, 1.0);
+
 /// Colour and width of exit `i`'s arrow: selected (green when locked,
-/// yellow before), others grey; dead ends reddish.
+/// yellow before; on a route ride the route's arrow is blue, and so is the
+/// selected one while it is the route's), others grey; dead ends reddish.
 pub fn arrow_style(j: &JunctionView, i: usize) -> (Color, f32) {
     let e = &j.exits[i];
+    let on_route = j.route == Some(i);
     if i == j.selected {
         let c = if j.locked {
             Color::srgb(0.2, 0.95, 0.35)
+        } else if on_route {
+            ROUTE_COLOUR
         } else {
             Color::srgb(1.0, 0.9, 0.25)
         };
         (c, 14.0)
+    } else if on_route {
+        (ROUTE_COLOUR.with_alpha(0.85), 11.0)
     } else if e.dead_end {
         (Color::srgba(0.95, 0.4, 0.35, 0.8), 9.0)
     } else {
@@ -147,8 +161,9 @@ pub fn arrow_style(j: &JunctionView, i: usize) -> (Color, f32) {
     }
 }
 
-/// One arrow of the fan: (angle in degrees, selected, locked, dead end).
-type FanArrow = (i32, bool, bool, bool);
+/// One arrow of the fan: (angle in degrees, selected, locked, dead end,
+/// the route's).
+type FanArrow = (i32, bool, bool, bool, bool);
 
 /// What the fan shows (to respawn the arrows only when it changes).
 fn fan_key(j: &JunctionView) -> Vec<FanArrow> {
@@ -161,6 +176,7 @@ fn fan_key(j: &JunctionView) -> Vec<FanArrow> {
                 i == j.selected,
                 j.locked,
                 e.dead_end,
+                j.route == Some(i),
             )
         })
         .collect()
@@ -286,7 +302,26 @@ mod tests {
             selected: 1,
             default: 2,
             locked: false,
+            route: None,
         }
+    }
+
+    #[test]
+    fn route_rides_mark_the_route_exit_and_leaving_it() {
+        let mut j = view();
+        j.route = Some(2);
+        j.default = 2;
+        assert!(label(&j).ends_with("[leaves the route]"), "{}", label(&j));
+        let (route_arrow, _) = arrow_style(&j, 2);
+        let (plain, _) = arrow_style(&j, 0);
+        assert_ne!(route_arrow, plain);
+        j.selected = 2;
+        assert!(label(&j).ends_with("[route]"));
+        assert_eq!(arrow_style(&j, 2).0, ROUTE_COLOUR);
+        assert_ne!(fan_key(&j), fan_key(&view()));
+        // Locked: green as always.
+        j.locked = true;
+        assert_ne!(arrow_style(&j, 2).0, ROUTE_COLOUR);
     }
 
     #[test]

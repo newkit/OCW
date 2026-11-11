@@ -266,6 +266,7 @@ pub fn build_package<F: Fn(f64, f64) -> f64 + Sync>(
         // `buildings::add_buildings`.
         landuse: None,
         buildings: None,
+        routes: Vec::new(),
     }
 }
 

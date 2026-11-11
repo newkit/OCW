@@ -14,9 +14,11 @@ use ocw_core::{BROADCAST_HZ, RiderId, SIM_TICK_HZ, TICKS_PER_BROADCAST};
 use ocw_protocol::v1::{self, client_message::Msg as C, server_message::Msg as S};
 use ocw_protocol::{PROTOCOL_VERSION, decode_client, encode, server_message};
 use ocw_sim::{FreeRideStart, RiderInput, Session};
-use ocw_world::{RoadNetwork, Route};
+use ocw_world::{RoadNetwork, Route, RoutePlan};
 
-/// What a session rides: a fixed route, or free ride on the road graph.
+/// What a session rides: a fixed route, free ride on the road graph, or a
+/// route on the road graph (followed with the free-ride machinery, spec
+/// §2.7).
 #[derive(Debug, Clone)]
 pub enum Course {
     Route(Route),
@@ -24,7 +26,13 @@ pub enum Course {
         net: Arc<RoadNetwork>,
         start: FreeRideStart,
     },
+    RouteRide {
+        net: Arc<RoadNetwork>,
+        plan: Arc<RoutePlan>,
+    },
 }
+
+pub use ocw_protocol::world_id;
 
 impl From<Route> for Course {
     fn from(r: Route) -> Self {
@@ -70,6 +78,7 @@ impl GameServer {
         let mut session = match course.into() {
             Course::Route(route) => Session::new(route).with_start(config.start_m),
             Course::FreeRide { net, start } => Session::free_ride(net, start),
+            Course::RouteRide { net, plan } => Session::route_ride(net, plan),
         };
         for i in 0..config.bots {
             session.add_bot(format!("Bot {}", i + 1), bot_power_w(i));
@@ -140,6 +149,16 @@ impl GameServer {
                 self.session.u_turn(rider, Some(from));
                 None
             }
+            (C::RouteRejoin(u), Some(rider)) => {
+                let from = (
+                    f64::from(u.distance_cm) / 100.0,
+                    f64::from(u.speed_mm_s) / 1000.0,
+                );
+                if let Err(e) = self.session.rejoin_route(rider, Some(from)) {
+                    tracing::debug!(%rider, %e, "rejoin refused");
+                }
+                None
+            }
             (C::Steer(steer), Some(rider)) => {
                 self.session.set_wild(rider, steer.wild);
                 if steer.lean_steering {
@@ -183,6 +202,18 @@ impl GameServer {
                 ),
             });
         }
+        // Junctions are vertex indices: both sides need the same graph.
+        let ours = self.session.network().map(|n| world_id(n));
+        if let (Some(ours), Some(theirs)) = (&ours, &hello.world)
+            && ours.graph_hash != theirs.graph_hash
+        {
+            return S::Reject(v1::Reject {
+                reason: format!(
+                    "world package mismatch: the server rides {} ({:016x}), you have {} ({:016x}); install the same package version",
+                    ours.name, ours.graph_hash, theirs.name, theirs.graph_hash
+                ),
+            });
+        }
         let profile = hello.profile.map(Into::into).unwrap_or_default();
         let rider = self.session.add_rider(hello.display_name.clone(), profile);
         self.riders.insert(conn, rider);
@@ -194,6 +225,12 @@ impl GameServer {
             broadcast_rate_hz: BROADCAST_HZ,
             route_id: self.session.route().id().to_owned(),
             free_ride: self.session.is_free_ride(),
+            world: ours,
+            graph_route: self
+                .session
+                .plan()
+                .map(|p| p.name.clone())
+                .unwrap_or_default(),
         })
     }
 
@@ -268,11 +305,129 @@ mod tests {
     use ocw_protocol::{client_message, decode_server};
 
     fn hello(version: u32) -> Vec<u8> {
+        hello_with(version, None)
+    }
+
+    fn hello_with(version: u32, world: Option<v1::WorldPackageId>) -> Vec<u8> {
         encode(&client_message(C::Hello(v1::Hello {
             protocol_version: version,
             display_name: "Tester".into(),
             profile: Some(ocw_core::RiderProfile::default().into()),
+            world,
         })))
+    }
+
+    fn line_network(name: &str, length: f64) -> Arc<RoadNetwork> {
+        use ocw_world::graph::{Edge, EdgeId, Oneway, RoadClass, RoadGraph, VertexId};
+        let edge = Edge {
+            id: EdgeId(9),
+            from: VertexId(0),
+            to: VertexId(1),
+            points: vec![[0.0, 0.0], [length, 0.0]],
+            class: RoadClass::Tertiary,
+            name: None,
+            width_m: 6.0,
+            bridge: false,
+            tunnel: false,
+            dead_end_m: None,
+            boundary: false,
+            oneway: Oneway::No,
+            osm_way: 1,
+            profile: Vec::new(),
+        };
+        Arc::new(
+            RoadNetwork::new(RoadGraph {
+                vertices: vec![[0.0, 0.0], [length, 0.0]],
+                edges: vec![edge],
+                boundary_vertices: Default::default(),
+            })
+            .with_package_name(name),
+        )
+    }
+
+    #[test]
+    fn clients_with_another_world_package_are_rejected() {
+        let net = line_network("Testland", 500.0);
+        let course = || Course::FreeRide {
+            net: net.clone(),
+            start: FreeRideStart {
+                edge: 0,
+                offset_m: 10.0,
+                forward: true,
+            },
+        };
+        let mut server = GameServer::new(course(), ServerConfig::default());
+        // Same graph: welcome, with the server's package identity.
+        let conn = server.connect();
+        let S::Welcome(w) = decode_server(
+            &server.handle(conn, &hello_with(PROTOCOL_VERSION, Some(world_id(&net))))[0],
+        )
+        .unwrap() else {
+            panic!("expected welcome")
+        };
+        assert_eq!(w.world, Some(world_id(&net)));
+        assert!(w.free_ride);
+        assert_eq!(w.graph_route, "");
+        // Another build of the package (a longer road): rejected.
+        let other = line_network("Testland", 501.0);
+        assert_ne!(other.fingerprint(), net.fingerprint());
+        let conn = server.connect();
+        let S::Reject(r) = decode_server(
+            &server.handle(conn, &hello_with(PROTOCOL_VERSION, Some(world_id(&other))))[0],
+        )
+        .unwrap() else {
+            panic!("expected reject")
+        };
+        assert!(r.reason.contains("world package mismatch"), "{}", r.reason);
+        assert_eq!(server.session().rider_count(), 1);
+        // A route session (no graph): no package check, no package sent.
+        let mut plain = GameServer::new(Route::test_loop(), ServerConfig::default());
+        let conn = plain.connect();
+        let S::Welcome(w) = decode_server(
+            &plain.handle(conn, &hello_with(PROTOCOL_VERSION, Some(world_id(&other))))[0],
+        )
+        .unwrap() else {
+            panic!("expected welcome")
+        };
+        assert_eq!(w.world, None);
+    }
+
+    #[test]
+    fn route_rides_name_the_route_and_accept_rejoins() {
+        let net = line_network("Testland", 800.0);
+        let plan = ocw_world::RoutePlan::new(
+            &net,
+            "Line",
+            vec![ocw_world::Segment::Edge {
+                edge: 0,
+                from_m: 0.0,
+                to_m: 800.0,
+            }],
+            false,
+        )
+        .unwrap();
+        let mut server = GameServer::new(
+            Course::RouteRide {
+                net: net.clone(),
+                plan: Arc::new(plan),
+            },
+            ServerConfig::default(),
+        );
+        let conn = server.connect();
+        let replies = server.handle(conn, &hello(PROTOCOL_VERSION));
+        let S::Welcome(w) = decode_server(&replies[0]).unwrap() else {
+            panic!("expected welcome")
+        };
+        assert_eq!(w.graph_route, "Line");
+        assert_eq!(w.route_id, "Line");
+        // The joining client gets the paths.
+        assert!(replies.len() > 1);
+        // On the route already: a rejoin is refused quietly.
+        let rejoin = encode(&client_message(C::RouteRejoin(v1::RouteRejoin {
+            distance_cm: 0,
+            speed_mm_s: 0,
+        })));
+        assert!(server.handle(conn, &rejoin).is_empty());
     }
 
     fn sample(seq: u32, power: f32) -> Vec<u8> {

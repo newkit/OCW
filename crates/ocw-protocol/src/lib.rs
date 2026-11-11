@@ -176,6 +176,15 @@ pub fn turn_choice(t: &v1::TurnIntent, net: &RoadNetwork) -> Option<TurnChoice> 
     })
 }
 
+/// The world package identity of a road network (Hello / Welcome, spec
+/// §6.5): its package name and graph fingerprint.
+pub fn world_id(net: &RoadNetwork) -> v1::WorldPackageId {
+    v1::WorldPackageId {
+        name: net.package.clone(),
+        graph_hash: net.fingerprint(),
+    }
+}
+
 /// Converts a received rider update back to simulation units.
 pub fn dequantize(u: &v1::RiderUpdate) -> (RiderId, RiderState) {
     (
@@ -264,6 +273,11 @@ mod tests {
             broadcast_rate_hz: 10,
             route_id: "test-loop".into(),
             free_ride: false,
+            world: Some(v1::WorldPackageId {
+                name: "Liechtenstein".into(),
+                graph_hash: 0x0123_4567_89ab_cdef,
+            }),
+            graph_route: "Rheintal".into(),
         };
         let bytes = encode(&server_message(S::Welcome(welcome.clone())));
         assert_eq!(decode_server(&bytes).unwrap(), S::Welcome(welcome));

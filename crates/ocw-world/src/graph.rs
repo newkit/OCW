@@ -108,6 +108,17 @@ pub struct Edge {
     pub profile: Vec<f64>,
 }
 
+/// FNV-1a, 64 bit: a small, stable content hash (not cryptographic; the
+/// package signature, spec §4.7, covers tampering).
+pub fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for &b in bytes {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
+
 /// Spacing of [`Edge::profile`] samples (spec §4.3: every 5 m).
 pub const PROFILE_STEP_M: f64 = 5.0;
 
@@ -167,6 +178,15 @@ impl RoadGraph {
             }
         }
         adj
+    }
+
+    /// Fingerprint of the graph's content (FNV-1a 64 of its package
+    /// encoding): client and server must ride the same graph, since
+    /// junctions are vertex indices (spec §6.5); it is sent in the Welcome.
+    pub fn fingerprint(&self) -> u64 {
+        let mut bytes = Vec::new();
+        crate::package::write_graph(self, &mut bytes);
+        fnv1a(&bytes)
     }
 
     pub fn total_length_m(&self) -> f64 {

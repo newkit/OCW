@@ -23,19 +23,22 @@
 //! ```
 //!
 //! Sections: `GRPH` – the road graph (spec §4.4, §4.7) for free ride and
-//! junction steering (§2.2.1), see [`write_graph`]; `LUSE` – land use per
-//! tile and water levels (§4.6), see [`crate::landuse`]; `BLDG` – building
-//! footprints with heights and roofs, see [`crate::buildings`]. A package
-//! without any section is written as version 1, byte for byte as before.
+//! junction steering (§2.2.1), see [`write_graph`]; `ROUT` – routes on the
+//! graph by stable edge ID (§2.7), see [`write_routes`]; `LUSE` – land use
+//! per tile and water levels (§4.6), see [`crate::landuse`]; `BLDG` –
+//! building footprints with heights and roofs, see [`crate::buildings`]. A
+//! package without sections is written as version 1, byte for byte as before.
 //!
 //! Tile `(x, z)` covers local metres `[x·size, (x+1)·size] × [z·size, (z+1)·size]`;
 //! the grid includes both borders, so neighbouring tiles share their edge
-//! samples (no cracks). Signing (§4.7) comes with the distribution step.
+//! samples (no cracks). The manifest with hashes and signatures (§4.7)
+//! travels next to the package: see [`crate::manifest`].
 
 use std::collections::BTreeMap;
 
 use crate::buildings::{BUILDINGS_TAG, Buildings, read_buildings, write_buildings};
 use crate::graph::{Edge, EdgeId, Oneway, RoadClass, RoadGraph, VertexId};
+use crate::graph_route::{GraphRoute, RouteStep};
 use crate::landuse::{LANDUSE_TAG, LandUse, read_landuse, write_landuse};
 
 pub const MAGIC: &[u8; 8] = b"OCWPKG01";
@@ -43,6 +46,8 @@ pub const MAGIC: &[u8; 8] = b"OCWPKG01";
 pub const MAGIC_V2: &[u8; 8] = b"OCWPKG02";
 /// Section tag of the road graph.
 pub const GRAPH_TAG: &[u8; 4] = b"GRPH";
+/// Section tag of the routes on the road graph (spec §2.7).
+pub const ROUTES_TAG: &[u8; 4] = b"ROUT";
 /// Layout version inside the graph section.
 const GRAPH_VERSION: u32 = 1;
 
@@ -104,6 +109,8 @@ pub struct WorldPackage {
     pub landuse: Option<LandUse>,
     /// Buildings per tile (section `BLDG`).
     pub buildings: Option<Buildings>,
+    /// Routes on the road graph (section `ROUT`, spec §2.7).
+    pub routes: Vec<GraphRoute>,
 }
 
 impl WorldPackage {
@@ -210,6 +217,11 @@ impl WorldPackage {
             write_graph(graph, &mut payload);
             sections.push((GRAPH_TAG, payload));
         }
+        if !self.routes.is_empty() {
+            let mut payload = Vec::new();
+            write_routes(&self.routes, &mut payload);
+            sections.push((ROUTES_TAG, payload));
+        }
         if let Some(l) = &self.landuse {
             let mut payload = Vec::new();
             write_landuse(l, &mut payload);
@@ -255,6 +267,20 @@ impl WorldPackage {
             }
         }
         b
+    }
+
+    /// The route named `name` (case-insensitive), if the package has it.
+    pub fn route(&self, name: &str) -> Option<&GraphRoute> {
+        self.routes
+            .iter()
+            .find(|r| r.name.eq_ignore_ascii_case(name))
+    }
+
+    /// Adds `route`, replacing one with the same name.
+    pub fn put_route(&mut self, route: GraphRoute) {
+        self.routes
+            .retain(|r| !r.name.eq_ignore_ascii_case(&route.name));
+        self.routes.push(route);
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
@@ -313,6 +339,7 @@ impl WorldPackage {
         }
         let mut graph = None;
         let (mut landuse, mut buildings) = (None, None);
+        let mut routes = Vec::new();
         if version >= 2 {
             let sections = r.u32()?;
             for _ in 0..sections {
@@ -325,6 +352,8 @@ impl WorldPackage {
                     landuse = Some(read_landuse(payload, samples)?);
                 } else if &tag == BUILDINGS_TAG {
                     buildings = Some(read_buildings(payload)?);
+                } else if &tag == ROUTES_TAG {
+                    routes = read_routes(payload)?;
                 }
                 // Unknown sections (from newer builders) are skipped.
             }
@@ -341,6 +370,7 @@ impl WorldPackage {
             graph,
             landuse,
             buildings,
+            routes,
         })
     }
 }
@@ -374,6 +404,82 @@ pub fn section_sizes(bytes: &[u8]) -> Vec<([u8; 4], u64)> {
         Ok(out)
     }
     walk(bytes).unwrap_or_default()
+}
+
+/// Layout version inside the routes section.
+const ROUTES_VERSION: u32 = 1;
+
+/// Writes the routes section payload (spec §2.7: routes reference stable
+/// edge IDs, so they survive rebuilds):
+///
+/// ```text
+/// layout version: u32 (1)
+/// route count: u32, then per route:
+///   name: u16 length + UTF-8   flags: u8 (1 loop)   step count: u32
+///   per step: kind u8 (0 edge, 1 U-turn); edges: stable id u64, from, to: f64
+/// ```
+pub fn write_routes(routes: &[GraphRoute], b: &mut Vec<u8>) {
+    b.extend(ROUTES_VERSION.to_le_bytes());
+    b.extend((routes.len() as u32).to_le_bytes());
+    for r in routes {
+        let mut end = r.name.len().min(usize::from(u16::MAX));
+        while !r.name.is_char_boundary(end) {
+            end -= 1;
+        }
+        b.extend((end as u16).to_le_bytes());
+        b.extend(&r.name.as_bytes()[..end]);
+        b.push(u8::from(r.is_loop));
+        b.extend((r.steps.len() as u32).to_le_bytes());
+        for s in &r.steps {
+            match *s {
+                RouteStep::Edge { id, from_m, to_m } => {
+                    b.push(0);
+                    b.extend(id.0.to_le_bytes());
+                    b.extend(from_m.to_le_bytes());
+                    b.extend(to_m.to_le_bytes());
+                }
+                RouteStep::Turnaround => b.push(1),
+            }
+        }
+    }
+}
+
+/// Reads a routes section payload written by [`write_routes`].
+pub fn read_routes(bytes: &[u8]) -> Result<Vec<GraphRoute>, String> {
+    let mut r = Bytes { b: bytes, pos: 0 };
+    let version = r.u32()?;
+    if version != ROUTES_VERSION {
+        return Err(format!("routes layout {version} is not supported"));
+    }
+    let n = r.u32()?;
+    let mut out = Vec::new();
+    for _ in 0..n {
+        let len = u16::from_le_bytes(r.arr()?) as usize;
+        let name = String::from_utf8(r.take(len)?.to_vec()).map_err(|e| e.to_string())?;
+        let is_loop = r.u8()? & 1 != 0;
+        let count = r.u32()?;
+        let mut steps = Vec::new();
+        for _ in 0..count {
+            steps.push(match r.u8()? {
+                0 => RouteStep::Edge {
+                    id: EdgeId(r.u64()?),
+                    from_m: r.f64()?,
+                    to_m: r.f64()?,
+                },
+                1 => RouteStep::Turnaround,
+                k => return Err(format!("unknown route step kind {k}")),
+            });
+        }
+        out.push(GraphRoute {
+            name,
+            steps,
+            is_loop,
+        });
+    }
+    if r.pos != bytes.len() {
+        return Err("trailing bytes in the routes section".into());
+    }
+    Ok(out)
 }
 
 const FLAG_BRIDGE: u8 = 1;
@@ -657,7 +763,60 @@ mod tests {
             graph: None,
             landuse: None,
             buildings: None,
+            routes: Vec::new(),
         }
+    }
+
+    #[test]
+    fn routes_section_round_trip() {
+        let route = GraphRoute {
+            name: "Rund um Vaduz".into(),
+            steps: vec![
+                RouteStep::Edge {
+                    id: EdgeId(u64::MAX - 1),
+                    from_m: 12.5,
+                    to_m: 200.0,
+                },
+                RouteStep::Turnaround,
+                RouteStep::Edge {
+                    id: EdgeId(u64::MAX - 1),
+                    from_m: 200.0,
+                    to_m: 0.0,
+                },
+            ],
+            is_loop: true,
+        };
+        let mut p = WorldPackage {
+            graph: Some(graph()),
+            ..package()
+        };
+        p.put_route(route.clone());
+        p.put_route(GraphRoute {
+            name: "other".into(),
+            ..route.clone()
+        });
+        // Same name (any case): replaced.
+        p.put_route(GraphRoute {
+            name: "RUND UM VADUZ".into(),
+            ..route.clone()
+        });
+        assert_eq!(p.routes.len(), 2);
+        let back = WorldPackage::from_bytes(&p.to_bytes()).unwrap();
+        assert_eq!(back, p);
+        assert_eq!(back.route("rund um vaduz").unwrap().steps, route.steps);
+        assert!(back.route("nope").is_none());
+        // Routes alone make a version 2 package too.
+        let only = WorldPackage {
+            routes: vec![route],
+            ..package()
+        };
+        let b = only.to_bytes();
+        assert_eq!(&b[..8], MAGIC_V2);
+        assert_eq!(WorldPackage::from_bytes(&b).unwrap(), only);
+        let mut bad = Vec::new();
+        write_routes(&p.routes, &mut bad);
+        bad.push(0);
+        assert!(read_routes(&bad).is_err());
     }
 
     /// A small graph with every kind of attribute (heights exact in f32).

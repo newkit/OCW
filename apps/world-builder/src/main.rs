@@ -3,7 +3,16 @@
 //!
 //! ```text
 //! world-builder graph [--pbf data/pilot/liechtenstein.osm.pbf] [--poly data/pilot/liechtenstein.poly | --bbox S,W,N,E] [--svg graph.svg]
+//! world-builder gpx --world PKG --gpx FILE [--name NAME] [--route-file FILE]   # GPX → package route
+//! world-builder routes --world PKG [--from OLD_PKG] [--remove NAME] [--export-gpx]
+//! world-builder route --world PKG --from LAT,LON --to LAT,LON --name NAME
+//! world-builder package [--id europe/liechtenstein] [--sign-key KEY]
+//! world-builder keys init-root --name "OCW root"     (once, then keep root.key offline)
+//! world-builder keys new-signing --name "builds 2026" [--days 365]
+//! world-builder sign --key KEY PKG | verify PKG | publish PKG --out DIR | diff OLD NEW
 //! ```
+
+mod dist;
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -73,7 +82,53 @@ enum Cmd {
         no_areas: bool,
         #[arg(long, default_value = "data/pilot/liechtenstein.ocwpkg")]
         out: PathBuf,
+        #[command(flatten)]
+        manifest: ManifestOpts,
+        /// Sign the manifest with this signing key (from `keys new-signing`);
+        /// without it the manifest is written unsigned.
+        #[arg(long, value_name = "KEY")]
+        sign_key: Option<PathBuf>,
     },
+    /// Key management (spec §4.7): an offline root key signs online
+    /// signing keys; signing keys sign package manifests.
+    Keys {
+        #[command(subcommand)]
+        command: KeysCmd,
+    },
+    /// Write the package's manifest (`PKG.manifest.json`: id, version,
+    /// attribution, SHA-256 of the file and its tile chunks) and sign it.
+    Sign {
+        package: PathBuf,
+        /// Signing key file (from `keys new-signing`).
+        #[arg(long, value_name = "KEY")]
+        key: PathBuf,
+        #[command(flatten)]
+        manifest: ManifestOpts,
+    },
+    /// Check a package against its manifest and the signature chain;
+    /// exits 1 unless intact and signed by a trusted root.
+    Verify {
+        package: PathBuf,
+        /// Also trust this root public key file (repeatable).
+        #[arg(long, value_name = "FILE")]
+        trust_root: Vec<PathBuf>,
+        /// Do not trust the development roots.
+        #[arg(long)]
+        no_dev_root: bool,
+        /// Accept intact but unsigned / untrusted packages (exit 0).
+        #[arg(long)]
+        allow_unsigned: bool,
+    },
+    /// Copy a package and its manifest into DIR/<id>/<version>/, the
+    /// layout clients download from (`ocw-desktop --fetch-world URL`).
+    Publish {
+        package: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Compare the road graphs of two builds by stable edge ID (which
+    /// roads and routes re-match after a rebuild, spec §4.4).
+    Diff { old: PathBuf, new: PathBuf },
     /// Validate a world package: where does the terrain show through roads?
     Check {
         #[arg(long, default_value = "data/pilot/liechtenstein.ocwpkg")]
@@ -101,7 +156,347 @@ enum Cmd {
         margin: f64,
         #[arg(long, default_value = "data/pilot/vaduz-malbun.route")]
         out: PathBuf,
+        /// Instead of an ocw-route file: add the route (by stable edge IDs)
+        /// to this world package's routes (spec §2.7), on its road graph.
+        #[arg(long, value_name = "PKG")]
+        world: Option<PathBuf>,
     },
+    /// Import a GPX track or route (spec §2.7): match it onto the package's
+    /// road graph and store it in the package (section ROUT), optionally
+    /// also as an `ocw-graph-route` file. Problems are reported.
+    Gpx {
+        /// The world package (version 2, with a road graph).
+        #[arg(long, default_value = "data/pilot/liechtenstein.ocwpkg")]
+        world: PathBuf,
+        #[arg(long)]
+        gpx: PathBuf,
+        /// Route name (default: the GPX track's name, or the file name).
+        #[arg(long)]
+        name: Option<String>,
+        /// Write the package here instead of updating --world.
+        #[arg(long, value_name = "PKG")]
+        out: Option<PathBuf>,
+        /// Also write the route as a standalone `ocw-graph-route` file.
+        #[arg(long, value_name = "PATH")]
+        route_file: Option<PathBuf>,
+        /// Only report, write nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// List a package's routes and check them against its road graph; with
+    /// --from, carry the routes of an older build over (by stable edge ID,
+    /// re-matching the broken ones, spec §4.4).
+    Routes {
+        #[arg(long, default_value = "data/pilot/liechtenstein.ocwpkg")]
+        world: PathBuf,
+        /// An older build of the package whose routes are carried over.
+        #[arg(long, value_name = "PKG")]
+        from: Option<PathBuf>,
+        /// Remove the route with this name.
+        #[arg(long, value_name = "NAME")]
+        remove: Option<String>,
+        /// Write a GPX file of each route next to the package (for checking
+        /// in other tools; GPX elevation from the road profile).
+        #[arg(long)]
+        export_gpx: bool,
+    },
+}
+
+fn read_package(path: &std::path::Path) -> ocw_world::WorldPackage {
+    let bytes = std::fs::read(path).unwrap_or_else(|e| {
+        eprintln!("{}: {e}", path.display());
+        std::process::exit(1);
+    });
+    ocw_world::WorldPackage::from_bytes(&bytes).unwrap_or_else(|e| {
+        eprintln!("{}: {e}", path.display());
+        std::process::exit(1);
+    })
+}
+
+fn write_package(pkg: &ocw_world::WorldPackage, path: &std::path::Path) {
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    std::fs::write(path, pkg.to_bytes()).unwrap_or_else(|e| {
+        eprintln!("{}: {e}", path.display());
+        std::process::exit(1);
+    });
+}
+
+fn package_network(
+    pkg: &ocw_world::WorldPackage,
+    path: &std::path::Path,
+) -> ocw_world::RoadNetwork {
+    let graph = pkg.graph.clone().unwrap_or_else(|| {
+        eprintln!(
+            "{}: no road graph (rebuild it with `world-builder package`)",
+            path.display()
+        );
+        std::process::exit(1);
+    });
+    ocw_world::RoadNetwork::new(graph).with_package_name(pkg.name.clone())
+}
+
+/// `world-builder gpx`: match a GPX file and store the route.
+fn gpx(
+    world: PathBuf,
+    gpx: PathBuf,
+    name: Option<String>,
+    out: Option<PathBuf>,
+    route_file: Option<PathBuf>,
+    dry_run: bool,
+) {
+    let mut pkg = read_package(&world);
+    let net = package_network(&pkg, &world);
+    let text = std::fs::read_to_string(&gpx).unwrap_or_else(|e| {
+        eprintln!("{}: {e}", gpx.display());
+        std::process::exit(1);
+    });
+    let track = ocw_world::gpx::Gpx::parse(&text).unwrap_or_else(|e| {
+        eprintln!("{}: {e}", gpx.display());
+        std::process::exit(1);
+    });
+    let name = name.or_else(|| track.name.clone()).unwrap_or_else(|| {
+        gpx.file_stem()
+            .map_or("GPX".into(), |s| s.to_string_lossy().into_owned())
+    });
+    let (s, w, n, e) = track.bounds();
+    println!(
+        "{}: {} points in {} part(s), {:.2} km, {s:.4},{w:.4} - {n:.4},{e:.4}",
+        gpx.display(),
+        track.points.len(),
+        track.parts.max(1),
+        track.length_m() / 1000.0
+    );
+    let t = Instant::now();
+    let report = ocw_world::matching::match_gpx(
+        &net,
+        &track,
+        pkg.origin,
+        &name,
+        &ocw_world::matching::MatchParams::default(),
+    )
+    .unwrap_or_else(|e| {
+        eprintln!("{}: {e}", gpx.display());
+        std::process::exit(1);
+    });
+    println!("{} ({:.2} s)", report.summary(), t.elapsed().as_secs_f64());
+    let names: Vec<String> = route_streets(&net, &report.plan);
+    println!("via: {}", names.join(" > "));
+    if dry_run {
+        return;
+    }
+    let stored = ocw_world::GraphRoute::from_plan(&report.plan, &net);
+    if let Some(path) = &route_file {
+        std::fs::write(path, stored.to_text(Some((&pkg.name, net.fingerprint()))))
+            .expect("write route file");
+        println!("route file: {}", path.display());
+    }
+    pkg.put_route(stored);
+    let out = out.unwrap_or(world);
+    write_package(&pkg, &out);
+    println!(
+        "package: {} ({} routes: {})",
+        out.display(),
+        pkg.routes.len(),
+        pkg.routes
+            .iter()
+            .map(|r| r.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+}
+
+/// Street names along a route, without repeats.
+fn route_streets(net: &ocw_world::RoadNetwork, plan: &ocw_world::RoutePlan) -> Vec<String> {
+    let mut v: Vec<String> = Vec::new();
+    for s in &plan.steps {
+        if let ocw_world::Segment::Edge { edge, .. } = s
+            && let Some(n) = &net.edge(*edge).name
+            && v.last() != Some(n)
+        {
+            v.push(n.clone());
+        }
+    }
+    v
+}
+
+/// `world-builder routes`: list, check, carry over, remove, export.
+fn routes(world: PathBuf, from: Option<PathBuf>, remove: Option<String>, export_gpx: bool) {
+    let mut pkg = read_package(&world);
+    let net = package_network(&pkg, &world);
+    let mut changed = false;
+    if let Some(old_path) = &from {
+        let old_pkg = read_package(old_path);
+        let old_net = package_network(&old_pkg, old_path);
+        let mut broken = 0;
+        for route in &old_pkg.routes {
+            match ocw_world::matching::carry_over(route, &old_net, old_pkg.origin, &net, pkg.origin)
+            {
+                Ok(ocw_world::matching::CarriedOver::Kept(_)) => {
+                    println!("{}: kept (all stable edge IDs fit)", route.name);
+                    pkg.put_route(route.clone());
+                }
+                Ok(ocw_world::matching::CarriedOver::Rematched { why, report }) => {
+                    println!(
+                        "{}: BROKEN ({why}), re-matched: {}",
+                        route.name,
+                        report.summary()
+                    );
+                    pkg.put_route(ocw_world::GraphRoute::from_plan(&report.plan, &net));
+                }
+                Err(e) => {
+                    broken += 1;
+                    println!("{}: BROKEN, not carried over: {e}", route.name);
+                }
+            }
+        }
+        changed = true;
+        if broken > 0 {
+            eprintln!("{broken} route(s) could not be carried over; redo them (world-builder gpx)");
+        }
+    }
+    if let Some(name) = &remove {
+        let before = pkg.routes.len();
+        pkg.routes.retain(|r| !r.name.eq_ignore_ascii_case(name));
+        changed |= pkg.routes.len() != before;
+        if pkg.routes.len() == before {
+            eprintln!("no route {name:?}");
+        }
+    }
+    let proj = ocw_world::geo::LocalProjection::new(pkg.origin.0, pkg.origin.1);
+    for route in &pkg.routes {
+        match route.resolve(&net) {
+            Ok(plan) => {
+                println!(
+                    "{}: {:.2} km, {} steps{}, ok - via {}",
+                    route.name,
+                    plan.length_m() / 1000.0,
+                    plan.steps.len(),
+                    if plan.is_loop { ", loop" } else { "" },
+                    route_streets(&net, &plan).join(" > ")
+                );
+                if export_gpx {
+                    let pts: Vec<ocw_world::gpx::GpxPoint> = plan
+                        .points(&net, 10.0)
+                        .into_iter()
+                        .map(|p| {
+                            let (lat, lon) = proj.unproject(p);
+                            ocw_world::gpx::GpxPoint {
+                                lat,
+                                lon,
+                                ele: None,
+                            }
+                        })
+                        .collect();
+                    let file = world.with_file_name(format!(
+                        "{}.gpx",
+                        route.name.replace(['/', '\\', ' '], "_")
+                    ));
+                    std::fs::write(&file, ocw_world::gpx::Gpx::to_text(&route.name, &pts))
+                        .expect("write gpx");
+                    println!("  gpx: {}", file.display());
+                }
+            }
+            Err(e) => println!("{}: BROKEN: {e}", route.name),
+        }
+    }
+    if pkg.routes.is_empty() {
+        println!("{}: no routes", world.display());
+    }
+    if changed {
+        write_package(&pkg, &world);
+        println!("package: {}", world.display());
+    }
+}
+
+/// `world-builder route --world PKG`: the shortest path (preferring main
+/// roads) between two points on the package's graph, stored as a route.
+fn package_route(world: PathBuf, from: (f64, f64), to: (f64, f64), name: String) {
+    let mut pkg = read_package(&world);
+    let net = package_network(&pkg, &world);
+    let proj = ocw_world::geo::LocalProjection::new(pkg.origin.0, pkg.origin.1);
+    let graph = net.graph();
+    let (va, vb) = (
+        graph
+            .nearest_vertex(proj.project(from.0, from.1))
+            .expect("graph"),
+        graph
+            .nearest_vertex(proj.project(to.0, to.1))
+            .expect("graph"),
+    );
+    let Some(path) = graph.shortest_path(va, vb, ocw_worldgen::route::road_cost) else {
+        eprintln!("no path between the two points");
+        std::process::exit(1);
+    };
+    let steps: Vec<ocw_world::Segment> = path
+        .iter()
+        .map(|&(e, f)| ocw_world::Segment::whole(&net, e, f))
+        .collect();
+    let plan = ocw_world::RoutePlan::new(&net, name.clone(), steps, false).unwrap_or_else(|e| {
+        eprintln!("{name}: {e}");
+        std::process::exit(1);
+    });
+    println!(
+        "{name}: {:.1} km, {} edges, via {}",
+        plan.length_m() / 1000.0,
+        plan.steps.len(),
+        route_streets(&net, &plan).join(" > ")
+    );
+    pkg.put_route(ocw_world::GraphRoute::from_plan(&plan, &net));
+    write_package(&pkg, &world);
+    println!("package: {} ({} routes)", world.display(), pkg.routes.len());
+}
+
+#[derive(clap::Args)]
+struct ManifestOpts {
+    /// Package id, e.g. europe/liechtenstein (default: from the existing
+    /// manifest, else from the name).
+    #[arg(long)]
+    id: Option<String>,
+    /// Build number (default: the existing manifest's, +1 if the package changed).
+    #[arg(long = "pkg-version", value_name = "N")]
+    version: Option<u64>,
+    /// Attribution notice of the elevation data (default: SRTM).
+    #[arg(long, value_name = "TEXT")]
+    dem_attribution: Option<String>,
+}
+
+#[derive(Subcommand)]
+enum KeysCmd {
+    /// Create the root key pair (DIR/root.key, DIR/root.pub.json).
+    InitRoot {
+        #[arg(long)]
+        name: String,
+        /// Key directory (default: $OCW_KEY_DIR or ~/.config/ocw/keys).
+        #[arg(long)]
+        dir: Option<PathBuf>,
+    },
+    /// Create a signing key certified by the root key.
+    NewSigning {
+        #[arg(long)]
+        name: String,
+        /// Root secret key (default: <key dir>/root.key).
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Validity in days.
+        #[arg(long, default_value_t = 365)]
+        days: u32,
+        /// Output file (default: next to the root key, <name>.key).
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+}
+
+impl ManifestOpts {
+    fn args(&self, name: Option<String>) -> dist::ManifestArgs {
+        dist::ManifestArgs {
+            id: self.id.clone(),
+            name,
+            version: self.version,
+            dem_attribution: self.dem_attribution.clone(),
+        }
+    }
 }
 
 fn parse_xz(s: &str) -> Result<(f64, f64), String> {
@@ -541,17 +936,72 @@ fn main() {
             landuse_cells,
             no_areas,
             out,
-        } => package(PackageArgs {
-            pbf,
-            poly,
-            hgt,
+            manifest,
+            sign_key,
+        } => {
+            // Read the key first: a bad key should not cost a whole build.
+            let key = sign_key.map(|k| {
+                ocw_worldstore::keys::read_signing_key(&k).unwrap_or_else(|e| {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                })
+            });
+            package(PackageArgs {
+                pbf,
+                poly,
+                hgt,
+                name: name.clone(),
+                samples,
+                margin_tiles,
+                landuse_cells,
+                no_areas,
+                out: out.clone(),
+            });
+            dist::write_manifest(&out, &manifest.args(Some(name)), key.as_ref());
+        }
+        Cmd::Keys { command } => match command {
+            KeysCmd::InitRoot { name, dir } => dist::keys_init_root(&name, dir),
+            KeysCmd::NewSigning {
+                name,
+                root,
+                days,
+                out,
+            } => dist::keys_new_signing(root, &name, days, out),
+        },
+        Cmd::Sign {
+            package,
+            key,
+            manifest,
+        } => dist::sign(&package, &key, &manifest.args(None)),
+        Cmd::Verify {
+            package,
+            trust_root,
+            no_dev_root,
+            allow_unsigned,
+        } => dist::verify(&package, trust_root, !no_dev_root, allow_unsigned),
+        Cmd::Publish { package, out } => dist::publish(&package, &out),
+        Cmd::Diff { old, new } => dist::diff(&old, &new),
+        Cmd::Gpx {
+            world,
+            gpx: file,
             name,
-            samples,
-            margin_tiles,
-            landuse_cells,
-            no_areas,
             out,
-        }),
+            route_file,
+            dry_run,
+        } => gpx(world, file, name, out, route_file, dry_run),
+        Cmd::Routes {
+            world,
+            from,
+            remove,
+            export_gpx,
+        } => routes(world, from, remove, export_gpx),
+        Cmd::Route {
+            world: Some(world),
+            from,
+            to,
+            name,
+            ..
+        } => package_route(world, from, to, name),
         Cmd::Route {
             pbf,
             poly,
@@ -561,6 +1011,7 @@ fn main() {
             name,
             margin,
             out,
+            world: None,
         } => route(RouteArgs {
             pbf,
             poly,
