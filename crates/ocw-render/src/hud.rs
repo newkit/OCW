@@ -156,7 +156,12 @@ fn update_hud(
         grade,
         local.heart_rate_bpm,
     );
-    let (place, keys) = if view.free_ride {
+    let (place, keys) = if let Some(route) = &view.route_status {
+        (
+            format!("{route}: {}", track.name_at(local.state.distance)),
+            "up: faster, down: stop, left/right: steer or choose the exit (another than the route's leaves it), Q/E: exit, J: rejoin the route, U: U-turn, A: autodrive",
+        )
+    } else if view.free_ride {
         (
             format!("Free ride: {}", track.name_at(local.state.distance)),
             "up: faster, down: stop, left/right: steer or choose the exit at junctions, Q/E: exit, U: U-turn, A: autodrive, W: wild",

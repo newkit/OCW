@@ -1,0 +1,9 @@
+[
+  {
+    "kind": "ocw-root-public-key",
+    "name": "OCW development root (development only, never for production)",
+    "key_id": "ae3aa104c86e2e63",
+    "public_key": "32691685cb1d4e1af0016faf8c4c0616021de2b93b48bee819704f895f89fc86",
+    "dev_only": true
+  }
+]

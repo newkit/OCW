@@ -19,7 +19,7 @@ scripts/remote.sh "$machine" run "
   install -m 755 scripts/ocw-kiosk.sh \$D/ocw-kiosk.sh
   [ -f \$D/devices.toml ] || { [ -f /tmp/ocw/kickr/devices.toml ] && install -m 644 /tmp/ocw/kickr/devices.toml \$D/devices.toml; } || true
   echo '$version' > \$D/VERSION.new && chmod 644 \$D/VERSION.new && mv -f \$D/VERSION.new \$D/VERSION
-  for r in data/pilot/*.route data/pilot/*.ocwpkg; do [ -f \"\$r\" ] && install -m 644 \"\$r\" \$D/; done
+  for r in data/pilot/*.route data/pilot/*.ocwpkg data/pilot/*.ocwpkg.manifest.json; do [ -f \"\$r\" ] && install -m 644 \"\$r\" \$D/; done
   install -m 755 target/release/ocw-desktop \$D/.ocw-desktop.new
   mv -f \$D/.ocw-desktop.new \$D/ocw-desktop
   echo \"deployed \$(cat \$D/VERSION) to \$D\"
