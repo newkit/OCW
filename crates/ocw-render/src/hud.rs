@@ -66,6 +66,9 @@ fn spawn_hud(mut commands: Commands) {
                 position_type: PositionType::Absolute,
                 top: px(12),
                 left: px(12),
+                // Never wider than the window (12 px margins at 400 px and
+                // up); Bevy wraps text that is still too long.
+                max_width: Val::Vw(94.0),
                 padding: UiRect::all(px(10)),
                 flex_direction: FlexDirection::Column,
                 row_gap: px(4),
@@ -87,7 +90,7 @@ fn spawn_hud(mut commands: Commands) {
             hud.spawn((
                 Text::new(""),
                 TextFont {
-                    font_size: 15.0.into(),
+                    font_size: SMALL_FONT.into(),
                     ..default()
                 },
                 TextColor(Color::srgb(0.8, 0.8, 0.8)),
@@ -117,13 +120,14 @@ pub fn main_line(
     format!("{power_w:>4.0} W   {speed_kmh:>5.1} km/h   {cadence}   {grade:+.1} %{heart}")
 }
 
-/// The GPS line: "47.12345° N  9.53210° E  812 m" (5 decimals ≈ 1 m).
+/// The GPS line: "47.12345 N  9.53210 E  812 m" (5 decimals ≈ 1 m; no
+/// degree sign: Bevy's default font has no glyph for it).
 pub fn gps_line(lat: f64, lon: f64, altitude_m: f64) -> String {
     fn coord(v: f64, pos: char, neg: char) -> String {
         // Round first, so a value that rounds to zero shows no "S" / "W".
         let r = (v * 1e5).round() / 1e5;
         let h = if r < 0.0 { neg } else { pos };
-        format!("{:.5}° {h}", r.abs())
+        format!("{:.5} {h}", r.abs())
     }
     format!(
         "{}  {}  {:.0} m",
@@ -158,6 +162,58 @@ fn update_gps(
     }
 }
 
+/// Font size of the small HUD lines; their glyphs (Bevy's monospaced
+/// default font) are about 0.6 of it wide.
+const SMALL_FONT: f32 = 15.0;
+const SMALL_CHAR_W: f32 = SMALL_FONT * 0.6;
+
+/// Breaks each line of `text` that is longer than `max_chars` at its
+/// " | " separators (then at ", "), greedily, so the HUD stays inside the
+/// window; a single piece longer than `max_chars` stays whole (Bevy wraps
+/// it at word boundaries). Continuation lines start with no separator.
+pub fn wrap_hud_lines(text: &str, max_chars: usize) -> String {
+    fn wrap(line: &str, sep: &str, max: usize, out: &mut Vec<String>) {
+        let mut cur = String::new();
+        for piece in line.split(sep) {
+            let len = |s: &str| s.chars().count();
+            if !cur.is_empty() && len(&cur) + len(sep) + len(piece) > max {
+                out.push(std::mem::take(&mut cur));
+            }
+            if cur.is_empty() {
+                cur.push_str(piece);
+            } else {
+                cur.push_str(sep);
+                cur.push_str(piece);
+            }
+        }
+        out.push(cur);
+    }
+    let max = max_chars.max(1);
+    let mut out = Vec::new();
+    for line in text.lines() {
+        if line.chars().count() <= max {
+            out.push(line.to_string());
+            continue;
+        }
+        let mut parts = Vec::new();
+        wrap(line, " | ", max, &mut parts);
+        for part in parts {
+            if part.chars().count() > max {
+                wrap(&part, ", ", max, &mut out);
+            } else {
+                out.push(part);
+            }
+        }
+    }
+    out.join("\n")
+}
+
+/// Characters of the small HUD font that fit in a window `width` logical
+/// pixels wide (panel margins and padding taken off).
+fn small_chars_for(width: f32) -> usize {
+    ((width * 0.94 - 2.0 * 10.0 - 4.0) / SMALL_CHAR_W).max(10.0) as usize
+}
+
 fn format_time(seconds: f64) -> String {
     let s = seconds.max(0.0) as u64;
     format!("{}:{:02}:{:02}", s / 3600, (s / 60) % 60, s % 60)
@@ -167,6 +223,7 @@ fn update_hud(
     view: Res<RideView>,
     show_fps: Res<ShowFps>,
     diagnostics: Res<DiagnosticsStore>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     mut big: Query<&mut Text, (With<HudText>, Without<HudSmallText>)>,
     mut small: Query<&mut Text, (With<HudSmallText>, Without<HudText>)>,
 ) {
@@ -219,7 +276,11 @@ fn update_hud(
     {
         lines.push_str(&format!("\nFPS: {fps:.0}"));
     }
-    small.0 = lines;
+    let width = windows.single().map_or(1280.0, |w| w.width());
+    let lines = wrap_hud_lines(&lines, small_chars_for(width));
+    if small.0 != lines {
+        small.0 = lines;
+    }
 }
 
 #[cfg(test)]
@@ -243,19 +304,50 @@ mod tests {
     }
 
     #[test]
+    fn long_hud_lines_break_at_separators() {
+        use super::wrap_hud_lines as w;
+        assert_eq!(w("short | line", 40), "short | line");
+        assert_eq!(w("aaaa | bbbb | cccc", 11), "aaaa | bbbb\ncccc");
+        // Too long between separators: break at commas.
+        assert_eq!(
+            w("up: faster, down: stop, A: autodrive | F11: screen", 24),
+            "up: faster, down: stop\nA: autodrive\nF11: screen"
+        );
+        // Line breaks of the input are kept; an unbreakable piece stays whole.
+        assert_eq!(w("x\nabcdefghij", 4), "x\nabcdefghij");
+        // Nothing longer than the limit where a break is possible.
+        let keys = "Vaduz-Malbun: Landstrasse | 12.34 km | 0:42:00 | riders: 4\nup: faster, down: stop, left/right: steer, A: autodrive, W: wild | mouse: camera, C: camera reset, R: restart, V: video | F11: screen | ` or F12: console";
+        for max in [40, 80, 120] {
+            assert!(
+                w(keys, max).lines().all(|l| l.chars().count() <= max),
+                "{max}"
+            );
+        }
+        assert_eq!(w(keys, 1000), keys);
+    }
+
+    #[test]
+    fn hud_width_in_characters() {
+        // 800x600: about 80 characters of the small font.
+        assert!((75..=85).contains(&super::small_chars_for(800.0)));
+        assert!(super::small_chars_for(2560.0) > 250);
+        assert_eq!(super::small_chars_for(10.0), 10);
+    }
+
+    #[test]
     fn gps_line_hemispheres_and_rounding() {
         assert_eq!(
             super::gps_line(47.123454, 9.532104, 812.4),
-            "47.12345° N  9.53210° E  812 m"
+            "47.12345 N  9.53210 E  812 m"
         );
         assert_eq!(
             super::gps_line(-33.856785, -151.215296, -3.6),
-            "33.85679° S  151.21530° W  -4 m"
+            "33.85679 S  151.21530 W  -4 m"
         );
         // Rounds to zero: no southern / western hemisphere.
         assert_eq!(
             super::gps_line(-0.000001, -0.000004, 0.0),
-            "0.00000° N  0.00000° E  0 m"
+            "0.00000 N  0.00000 E  0 m"
         );
     }
 }
