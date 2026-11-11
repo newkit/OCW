@@ -13,6 +13,12 @@ It fails if the app reports a different window system than requested.
 **Always look at the screenshot**, and send screenshots and videos to the user
 (SendUserFile) – they want to follow visual test output.
 
+Every successful `shot`/`video` run is also archived in the git-ignored
+`test-output/YYYY-MM-DD/HHMMSS-<commit>[-dirty]-<mode>-<name>.{png,mp4,log}`,
+with one row per run in `test-output/index.md` (date, commit, mode, window
+system, app arguments, links). `OCW_TEST_OUTPUT=DIR` changes the folder,
+`OCW_TEST_OUTPUT=off` disables it. CI uploads `test-output/` as an artifact.
+
 ## Prerequisites (Debian/Ubuntu)
 
 ```bash

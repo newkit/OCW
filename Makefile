@@ -18,7 +18,7 @@ VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 
 .DEFAULT_GOAL := help
 .PHONY: help deps deps-system deps-rust build release test lint fmt fmt-check \
-	clippy wasm check run server screenshot screenshot-wayland smoke video video-wayland clean
+	clippy wasm check run server screenshot screenshot-wayland smoke video video-wayland clean clean-test-output
 
 help: ## Show this help
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | \
@@ -84,3 +84,6 @@ video-wayland: ## Same on Wayland (weston); writes $(VIDEO_WAYLAND)
 
 clean: ## Remove build artefacts
 	$(CARGO) clean
+
+clean-test-output: ## Delete the archived screenshots and videos in test-output/
+	rm -rf test-output

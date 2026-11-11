@@ -10,7 +10,7 @@ Open Cycling World (OCW) is a cross-platform (Linux/Windows/macOS) indoor cyclin
 
 Rust comes from rustup; `rust-toolchain.toml` pins the version (Bevy 0.20 needs a newer rustc than Debian ships). If `cargo` resolves to `/usr/bin/cargo`, run `source ~/.cargo/env` first.
 
-`make help` lists the Makefile targets (`deps`, `build`, `test`, `check` = fmt/clippy/tests/wasm, `smoke` = headless screenshot runs on X11 and Wayland, `video`/`video-wayland` = smooth recordings via `ocw-desktop --capture`, a fixed game-time step per frame); they work without `~/.cargo/bin` on PATH.
+`make help` lists the Makefile targets (`deps`, `build`, `test`, `check` = fmt/clippy/tests/wasm, `smoke` = headless screenshot runs on X11 and Wayland, `video`/`video-wayland` = smooth recordings via `ocw-desktop --capture`, a fixed game-time step per frame; all screenshots and videos are archived in the git-ignored `test-output/` with an `index.md`); they work without `~/.cargo/bin` on PATH.
 
 ```bash
 cargo test --workspace                                   # all unit tests

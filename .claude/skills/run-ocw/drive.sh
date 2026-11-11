@@ -15,6 +15,10 @@
 #       Rides 3 s of game time first. Also writes OUT.png (last frame), OUT.log.
 #   drive.sh video-wayland OUT.mp4 [SECONDS] [-- desktop args...]
 #       Same on Wayland (headless weston).
+#   Every successful shot/video is also archived (see archive() below) under
+#   test-output/YYYY-MM-DD/ with commit and mode in the file name, plus a row
+#   in test-output/index.md. OCW_TEST_OUTPUT=DIR changes the folder,
+#   OCW_TEST_OUTPUT=off disables archiving.
 #   drive.sh server [args...]
 #       Run the headless game server, e.g. --bots 3 --seconds 10 --fast.
 set -euo pipefail
@@ -30,6 +34,7 @@ parse_shot_args() {
   if [ $# -gt 0 ] && [ "$1" != "--" ]; then delay=$1; shift; fi
   [ "${1:-}" = "--" ] && shift
   APP_ARGS=(--screenshot "$out" --screenshot-delay "$delay" "$@")
+  ARCHIVE_APP_ARGS=("$@")
   log="${out%.*}.log"
   rm -f "$out"
 }
@@ -46,6 +51,7 @@ report() {
   echo "screenshot:    $out"
   echo "log:           $log"
   echo "window system: $actual"
+  archive "$MODE" "$actual" "$out" "$log"
   sed 's/\x1b\[[0-9;]*m//g' "$log" | grep -E "console|joined session|rejected|ERROR|panicked" || true
 }
 
@@ -59,6 +65,7 @@ parse_video_args() {
   log="${out%.*}.log"; shot="${out%.*}.png"
   frames=$(mktemp -d)
   VIDEO_APP_ARGS=(--capture "$frames" --capture-fps 25 --capture-seconds "$seconds" "$@")
+  ARCHIVE_APP_ARGS=(--capture-seconds "$seconds" "$@")
   rm -f "$out" "$shot"
   command -v ffmpeg >/dev/null || { echo "ffmpeg not installed (apt-get install ffmpeg)" >&2; exit 1; }
 }
@@ -80,6 +87,7 @@ encode_video() {
   echo "last frame:    $shot"
   echo "log:           $log"
   echo "window system: $actual"
+  archive "$MODE" "$actual" "$out" "$shot" "$log"
   sed 's/\x1b\[[0-9;]*m//g' "$log" | grep -E "console|joined session|capture finished|rejected|ERROR|panicked" || true
 }
 
@@ -100,7 +108,40 @@ start_weston() {
   [ -S "$runtime/$socket" ] || { echo "weston did not start, see $logfile" >&2; exit 1; }
 }
 
+# Copies the result (and its log) into the archive and adds an index row.
+# $1: mode (shot, shot-wayland, video, video-wayland), $2: window system,
+# remaining: files to archive.
+archive() {
+  local mode=$1 ws=$2; shift 2
+  local root=${OCW_TEST_OUTPUT:-$PWD/test-output}
+  [ "$root" = "off" ] && return 0
+  local day sha dir stem f name saved=()
+  day=$(date +%Y-%m-%d)
+  sha=$(git rev-parse --short HEAD 2>/dev/null || echo nogit)
+  if [ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]; then sha="$sha-dirty"; fi
+  dir="$root/$day"
+  mkdir -p "$dir"
+  stem="$(date +%H%M%S)-$sha-$mode"
+  for f in "$@"; do
+    [ -f "$f" ] || continue
+    name="$stem-$(basename "$f")"
+    cp "$f" "$dir/$name"
+    saved+=("$day/$name")
+  done
+  if [ ! -f "$root/index.md" ]; then
+    printf '# OCW test output\n\n| Date | Time | Commit | Mode | Window system | App arguments | Files |\n|---|---|---|---|---|---|---|\n' >"$root/index.md"
+  fi
+  local links="" args
+  for f in "${saved[@]}"; do links+="[$(basename "$f" | sed "s/^$stem-//")]($f) "; done
+  args=$(printf '%s ' "${ARCHIVE_APP_ARGS[@]}" | sed 's/|/\\|/g; s/ *$//')
+  printf '| %s | %s | %s | %s | %s | `%s` | %s|\n' "$day" "$(date +%H:%M:%S)" "$sha" "$mode" "$ws" \
+    "${args:--}" "$links" >>"$root/index.md"
+  echo "archived:      $dir/$stem-*"
+}
+
 cmd=${1:-}; shift || true
+MODE=$cmd
+ARCHIVE_APP_ARGS=()
 case "$cmd" in
   shot)
     parse_shot_args "$@"
@@ -142,7 +183,7 @@ case "$cmd" in
     cargo run -q -p ocw-server -- "$@"
     ;;
   *)
-    sed -n '2,19p' "$0"
+    sed -n '2,23p' "$0"
     exit 2
     ;;
 esac

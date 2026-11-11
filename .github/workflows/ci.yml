@@ -41,7 +41,7 @@ jobs:
         if: always()
         with:
           name: linux-smoke-screenshots
-          path: smoke-*.*
+          path: test-output/
           if-no-files-found: ignore
 
   # Windows and macOS: build-only checks until their ports start (spec §11.1).
