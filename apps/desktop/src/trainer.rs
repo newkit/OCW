@@ -82,11 +82,6 @@ impl TrainerControl {
         self.sim.set_settings(settings);
     }
 
-    /// The gradient most recently sent in SIM mode.
-    pub fn last_grade(&self) -> Option<f64> {
-        self.last_grade
-    }
-
     /// Advances to `now_s`; returns a command when one should be sent.
     pub fn update(
         &mut self,
@@ -134,12 +129,18 @@ impl TrainerControl {
 mod tests {
     use super::*;
 
-    /// 100 m flat, then a 6 % climb.
+    /// 100 m flat, then a 6 % climb (constant from 200 m on; the gradient
+    /// is interpolated between route points).
     fn route() -> Route {
         Route::from_points(
             "c",
             "Climb",
-            vec![[0.0, 0.0, 0.0], [100.0, 0.0, 0.0], [1100.0, 60.0, 0.0]],
+            vec![
+                [0.0, 0.0, 0.0],
+                [100.0, 0.0, 0.0],
+                [200.0, 6.0, 0.0],
+                [1100.0, 60.0, 0.0],
+            ],
             false,
             6.0,
         )

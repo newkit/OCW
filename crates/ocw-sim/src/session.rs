@@ -263,7 +263,15 @@ mod tests {
         s.teleport(leader, 1005.0);
         s.teleport(follower, 1000.0);
         for (seq, id) in [(1, leader), (1, follower)] {
-            s.apply_input(id, seq, RiderInput { power_w: 250.0 });
+            s.apply_input(
+                id,
+                seq,
+                RiderInput {
+                    power_w: 250.0,
+                    cadence_rpm: None,
+                    heart_rate_bpm: None,
+                },
+            );
         }
         for _ in 0..(60 * 50) {
             s.step();

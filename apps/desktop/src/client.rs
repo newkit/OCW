@@ -222,9 +222,6 @@ impl ClientCore {
     pub fn cadence_rpm(&self) -> Option<f64> {
         self.cadence_rpm
     }
-    pub fn heart_rate_bpm(&self) -> Option<f64> {
-        self.heart_rate_bpm
-    }
     pub fn prediction_error(&self) -> f64 {
         self.predictor.last_error()
     }
@@ -351,7 +348,6 @@ mod tests {
             .is_none()
         );
         // Heart rate is sent along with the next power sample.
-        assert_eq!(c.heart_rate_bpm(), Some(120.0));
         let bytes = c.on_device_event(power(150.0, 4.0)).unwrap();
         match ocw_protocol::decode_client(&bytes).unwrap() {
             C::Sample(s) => assert_eq!(s.heart_rate_bpm, Some(120.0)),
