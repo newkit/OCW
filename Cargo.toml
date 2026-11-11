@@ -13,6 +13,7 @@ members = [
     "crates/ocw-render",
     "crates/ocw-worldgen",
     "crates/ocw-fit",
+    "crates/ocw-worldstore",
 ]
 
 [workspace.package]
@@ -30,6 +31,7 @@ ocw-devices = { path = "crates/ocw-devices" }
 ocw-world = { path = "crates/ocw-world" }
 ocw-worldgen = { path = "crates/ocw-worldgen" }
 ocw-fit = { path = "crates/ocw-fit" }
+ocw-worldstore = { path = "crates/ocw-worldstore" }
 ocw-render = { path = "crates/ocw-render" }
 ocw-server = { path = "services/server" }
 
@@ -48,6 +50,12 @@ toml = "1"
 dirs = "6"
 serde_json = "1"
 ureq = "3"
+# Package signatures (spec §4.7). ed25519-dalek: BSD-3-Clause; sha2: MIT OR Apache-2.0.
+# Pure Rust, no default features (no OS randomness), so ocw-world stays wasm-safe.
+ed25519-dalek = { version = "2.2", default-features = false, features = ["std", "zeroize", "fast"] }
+sha2 = { version = "0.10", default-features = false, features = ["std"] }
+# OS randomness for key generation in the world builder only (MIT OR Apache-2.0).
+getrandom = "0.3"
 
 prost = "0.14"
 prost-build = "0.14"

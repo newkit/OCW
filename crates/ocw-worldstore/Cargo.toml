@@ -1,0 +1,26 @@
+[package]
+name = "ocw-worldstore"
+description = "World package files, keys, local cache and download for Open Cycling World (spec §4.7)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# File system and network: desktop app, server and tools only (not wasm).
+# The pure verification lives in ocw-world::manifest.
+[dependencies]
+ocw-world.workspace = true
+dirs.workspace = true
+getrandom.workspace = true
+thiserror.workspace = true
+serde_json.workspace = true
+# Downloads over HTTP(S) (MIT OR Apache-2.0; rustls, no OpenSSL).
+ureq.workspace = true
+
+[dev-dependencies]
+# Temporary directories in tests (MIT OR Apache-2.0).
+tempfile = "3"
+
+[lints]
+workspace = true

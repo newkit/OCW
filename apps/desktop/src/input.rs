@@ -178,6 +178,16 @@ fn steer(
             info!("U-turn");
             link.send_bytes(msg);
         }
+        // Route ride: back to the route after leaving it.
+        if keys.just_pressed(KeyCode::KeyJ) || pad_pressed(GamepadButton::North) {
+            match client.0.rejoin_route() {
+                Ok(msg) => {
+                    info!("rejoining the route");
+                    link.send_bytes(msg);
+                }
+                Err(e) => info!("no rejoin: {e}"),
+            }
+        }
         let (key, arrows_taken) = junction_key(
             keys.just_pressed(KeyCode::KeyQ) || pad_pressed(GamepadButton::DPadLeft),
             keys.just_pressed(KeyCode::KeyE) || pad_pressed(GamepadButton::DPadRight),
@@ -256,10 +266,21 @@ pub fn pad_throttle(
     (up && !down, down)
 }
 
+/// How far an analog trigger is pulled beyond its resting value. Pads and
+/// drivers differ in what a released trigger reads (0, 0.5, −1 …); the
+/// lowest value seen is taken as rest, so a released trigger never counts as
+/// pressed. Regression: a pad whose released left trigger read ~0.5 kept the
+/// brake on (power 0) from the start, so the trainer's power had no effect.
+pub fn trigger_pull(value: f32, rest: &mut Option<f32>) -> f32 {
+    let r = rest.map_or(value, |r| r.min(value));
+    *rest = Some(r);
+    value - r
+}
+
 #[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
 fn throttle_and_brake(
     keys: Res<ButtonInput<KeyCode>>,
-    pads: Query<&Gamepad>,
+    pads: Query<(Entity, &Gamepad)>,
     console: Res<ConsoleState>,
     time: Res<Time>,
     devices: Res<Devices>,
@@ -267,23 +288,37 @@ fn throttle_and_brake(
     mut client: ResMut<ClientState>,
     mut key: ResMut<KeyPower>,
     mut pad_was: Local<(bool, bool)>,
+    mut trigger_rest: Local<std::collections::HashMap<Entity, [Option<f32>; 2]>>,
 ) {
     if console.is_open() {
         return;
     }
     let now = time.elapsed_secs_f64();
-    let (pad_up, pad_down) = pads.iter().fold((false, false), |(u, d), p| {
+    trigger_rest.retain(|e, _| pads.contains(*e));
+    let (pad_up, pad_down) = pads.iter().fold((false, false), |(u, d), (e, p)| {
+        let rest = trigger_rest.entry(e).or_default();
+        let rt = trigger_pull(
+            p.get(GamepadButton::RightTrigger2).unwrap_or(0.0),
+            &mut rest[0],
+        );
+        let lt = trigger_pull(
+            p.get(GamepadButton::LeftTrigger2).unwrap_or(0.0),
+            &mut rest[1],
+        );
         let (pu, pd) = pad_throttle(
             p.get(GamepadAxis::LeftStickY).unwrap_or(0.0),
             p.pressed(GamepadButton::DPadUp),
             p.pressed(GamepadButton::DPadDown),
-            p.get(GamepadButton::RightTrigger2).unwrap_or(0.0),
-            p.get(GamepadButton::LeftTrigger2).unwrap_or(0.0),
+            rt,
+            lt,
         );
         (u || pu, d || pd)
     });
     let (pad_up_pressed, pad_down_pressed) = (pad_up && !pad_was.0, pad_down && !pad_was.1);
     *pad_was = (pad_up, pad_down);
+    if pad_down_pressed {
+        info!("gamepad: stop (power 0, brake)");
+    }
     let up_pressed = keys.just_pressed(KeyCode::ArrowUp) || pad_up_pressed;
     let up_held = keys.pressed(KeyCode::ArrowUp) || pad_up;
     let down_pressed = keys.just_pressed(KeyCode::ArrowDown) || pad_down_pressed;
@@ -319,6 +354,33 @@ fn throttle_and_brake(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_released_trigger_never_counts_as_pressed() {
+        // Regression: a pad whose released trigger reads 0.5 (centred axis
+        // mapping) kept "stop" pressed and the brake on.
+        let mut rest = None;
+        assert_eq!(trigger_pull(0.5, &mut rest), 0.0);
+        assert_eq!(
+            pad_throttle(0.0, false, false, 0.0, trigger_pull(0.5, &mut rest)),
+            (false, false)
+        );
+        // Pulled fully: pressed.
+        assert!(trigger_pull(1.0, &mut rest) > PAD_PRESS);
+        // A pad reading −1 at rest, +1 pulled.
+        let mut rest = None;
+        assert_eq!(trigger_pull(-1.0, &mut rest), 0.0);
+        assert!(trigger_pull(1.0, &mut rest) > PAD_PRESS);
+        // A normal pad (0 at rest): half pulled counts.
+        let mut rest = None;
+        trigger_pull(0.0, &mut rest);
+        assert!(trigger_pull(0.5, &mut rest) > PAD_PRESS);
+        // Pulled at the first reading: counts once the trigger was released.
+        let mut rest = None;
+        assert_eq!(trigger_pull(1.0, &mut rest), 0.0);
+        trigger_pull(0.0, &mut rest);
+        assert!(trigger_pull(1.0, &mut rest) > PAD_PRESS);
+    }
 
     #[test]
     fn gamepad_faster_and_stop_from_dpad_stick_and_triggers() {

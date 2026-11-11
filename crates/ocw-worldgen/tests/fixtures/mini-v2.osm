@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- mini-v1.osm after an OSM update (tests/e2e.rs, rebuild check):
+     - node 4 moved 33 m north (Hauptstrasse east keeps its stable edge ID),
+     - Brückenstrasse 10-1 got an extra node 14 (re-routed: new edge ID),
+     - Einbahnweg (way 105) deleted.
+-->
+<osm version="0.6" generator="hand-made fixture">
+  <node id="1" lat="46.5000" lon="9.4900"/>
+  <node id="2" lat="46.5000" lon="9.4950"/>
+  <node id="3" lat="46.5000" lon="9.5000"/>
+  <node id="4" lat="46.5003" lon="9.5050"/>
+  <node id="5" lat="46.5000" lon="9.5100"/>
+  <node id="6" lat="46.5020" lon="9.5000"/>
+  <node id="7" lat="46.5040" lon="9.5005"/>
+  <node id="8" lat="46.4970" lon="9.5100"/>
+  <node id="9" lat="46.4950" lon="9.5070"/>
+  <node id="10" lat="46.4950" lon="9.5040"/>
+  <node id="11" lat="46.4950" lon="9.4970"/>
+  <node id="12" lat="46.4970" lon="9.4910"/>
+  <node id="14" lat="46.4955" lon="9.4940"/>
+  <way id="100">
+    <nd ref="1"/><nd ref="2"/><nd ref="3"/><nd ref="4"/><nd ref="5"/>
+    <tag k="highway" v="primary"/>
+    <tag k="name" v="Hauptstrasse"/>
+  </way>
+  <way id="101">
+    <nd ref="3"/><nd ref="6"/><nd ref="7"/>
+    <tag k="highway" v="residential"/>
+    <tag k="name" v="Sackgasse"/>
+  </way>
+  <way id="102">
+    <nd ref="5"/><nd ref="8"/><nd ref="9"/>
+    <tag k="highway" v="secondary"/>
+    <tag k="name" v="Brückenstrasse"/>
+  </way>
+  <way id="103">
+    <nd ref="9"/><nd ref="10"/>
+    <tag k="highway" v="secondary"/>
+    <tag k="name" v="Brückenstrasse"/>
+    <tag k="bridge" v="yes"/>
+    <tag k="layer" v="1"/>
+  </way>
+  <way id="104">
+    <nd ref="10"/><nd ref="11"/><nd ref="14"/><nd ref="12"/><nd ref="1"/>
+    <tag k="highway" v="secondary"/>
+    <tag k="name" v="Brückenstrasse"/>
+  </way>
+</osm>

@@ -173,6 +173,7 @@ mod tests {
                 protocol_version: PROTOCOL_VERSION,
                 display_name: "Local".into(),
                 profile: None,
+                world: None,
             }))))
             .unwrap();
         let mut welcomed = false;
@@ -201,6 +202,7 @@ mod tests {
             protocol_version: PROTOCOL_VERSION,
             display_name: "Cap".into(),
             profile: None,
+            world: None,
         }))));
         let welcome = s.drain();
         assert_eq!(welcome.len(), 1);

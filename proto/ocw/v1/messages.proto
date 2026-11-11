@@ -15,7 +15,16 @@ message ClientMessage {
     SteerIntent steer = 4;
     TurnIntent turn = 5;
     UTurn u_turn = 6;
+    RouteRejoin route_rejoin = 7;
   }
+}
+
+// Route ride (spec §2.7, §2.2.1): back to the route after leaving it. Like
+// UTurn: where the client asked (predicted distance and speed), so server
+// and client add the same way back. Reliable.
+message RouteRejoin {
+  uint32 distance_cm = 1;
+  uint32 speed_mm_s = 2;
 }
 
 // Junction steering in free ride (spec §2.2.1, §6.5): the exit the rider
@@ -61,6 +70,17 @@ message Hello {
   uint32 protocol_version = 1;
   string display_name = 2;
   RiderProfile profile = 3;
+  // The world package the client rides on (free ride and routes on the
+  // road graph): junctions are vertex indices, so both sides must use the
+  // same graph (spec §6.5). The server rejects a different one.
+  WorldPackageId world = 4;
+}
+
+// Identifies a world package's road graph: its name and a fingerprint of
+// the graph's content (FNV-1a 64 of its package encoding).
+message WorldPackageId {
+  string name = 1;
+  fixed64 graph_hash = 2;
 }
 
 message RiderProfile {
@@ -142,6 +162,11 @@ message Welcome {
   string route_id = 5;
   // Free ride on the road graph: paths come as PathUpdate messages.
   bool free_ride = 6;
+  // The server's world package (free ride / route rides): clients with
+  // another one must not join (spec §6.5).
+  WorldPackageId world = 7;
+  // Route ride on the road graph: the route's name (route_id is the same).
+  string graph_route = 8;
 }
 
 message Reject {

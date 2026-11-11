@@ -81,10 +81,13 @@ pub fn tick(
     } else {
         physics::lateral_limit(track.road_width_at(state.distance))
     };
-    // Through a U-turn loop the rider is steered (also when leaning).
-    let steering = match controls.steering {
-        Steering::Lean(_) if track.assisted(state.distance) => Steering::Auto(0.0),
-        s => s,
+    // Through a U-turn loop (and on its run-up) the rider is steered along
+    // the centreline, also when leaning: the loop is centred on it and only
+    // as wide as the road (spec §2.2.2).
+    let steering = if track.assisted(state.distance) {
+        Steering::Auto(0.0)
+    } else {
+        controls.steering
     };
     *scraping = physics::apply_steering(
         state,
@@ -310,6 +313,83 @@ mod tests {
         let v = at_corner.unwrap();
         assert!(v < 7.0, "{} km/h at the corner", v * 3.6);
         assert!(s.distance > 700.0);
+    }
+
+    /// Regression: the U-turn loop (4 m radius, 8 m wide) left narrow roads,
+    /// and riders kept their lateral offset through it, so the avatar
+    /// dropped off the road surface during the turn.
+    #[test]
+    fn u_turns_stay_on_the_road() {
+        use ocw_world::graph::{Edge, EdgeId, Oneway, RoadClass, RoadGraph, VertexId};
+        use ocw_world::{RidePath, RoadNetwork};
+        for (width, start_lateral) in [(3.0, 0.9), (5.0, 1.9), (6.5, -2.6), (7.5, 3.1)] {
+            let graph = RoadGraph {
+                vertices: vec![[0.0, 0.0], [1200.0, 0.0]],
+                edges: vec![Edge {
+                    id: EdgeId(1),
+                    from: VertexId(0),
+                    to: VertexId(1),
+                    points: vec![[0.0, 0.0], [1200.0, 0.0]],
+                    class: RoadClass::Tertiary,
+                    name: None,
+                    width_m: width,
+                    bridge: false,
+                    tunnel: false,
+                    dead_end_m: None,
+                    boundary: false,
+                    oneway: Oneway::No,
+                    osm_way: 1,
+                    profile: Vec::new(),
+                }],
+                boundary_vertices: Default::default(),
+            };
+            let net = std::sync::Arc::new(RoadNetwork::new(graph));
+            let mut path = RidePath::start(net, 0, 400.0, true, 0.0, 0);
+            path.extend(0.0, &mut |j| j.default);
+            let profile = RiderProfile::default();
+            let mut s = RiderState {
+                speed: 9.0,
+                lateral_offset: start_lateral,
+                ..Default::default()
+            };
+            let controls = Controls {
+                steering: Steering::Auto(start_lateral),
+                ..Default::default()
+            };
+            let mut scraping = false;
+            let mut turned_at = None;
+            let mut worst: f64 = 0.0;
+            for _ in 0..(40 * 50) {
+                if turned_at.is_none() && s.distance > 50.0 {
+                    turned_at = path.u_turn(s.distance, s.speed);
+                    assert!(turned_at.is_some());
+                }
+                tick(
+                    &mut s,
+                    &profile,
+                    200.0,
+                    controls,
+                    &mut scraping,
+                    &path,
+                    1.0,
+                    0.02,
+                );
+                // Where the rider is: sideways from the road's centreline.
+                let at = path.sample(s.distance).offset_position(s.lateral_offset);
+                worst = worst.max(at[2].abs());
+            }
+            // Back on the way west, well after the loop.
+            assert!(
+                path.sample(s.distance).direction[0] < -0.99,
+                "{width}: {s:?}"
+            );
+            let (at, _) = path.turnaround_ahead(0.0).unwrap();
+            assert!(s.distance > at + 100.0, "{width}: {s:?}");
+            assert!(
+                worst <= width / 2.0 + 0.05,
+                "{width} m road: {worst:.2} m from the centreline"
+            );
+        }
     }
 
     #[test]

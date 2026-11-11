@@ -19,6 +19,8 @@ ocw-core.workspace = true
 ocw-sim.workspace = true
 ocw-protocol.workspace = true
 ocw-world.workspace = true
+# World packages for the binary's --world (load + verify).
+ocw-worldstore.workspace = true
 clap.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
