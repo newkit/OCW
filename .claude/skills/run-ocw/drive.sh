@@ -129,8 +129,12 @@ archive() {
   [ "$root" = "off" ] && return 0
   local day sha dir stem f name saved=()
   day=$(date +%Y-%m-%d)
-  sha=$(git rev-parse --short HEAD 2>/dev/null || echo nogit)
-  if [ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]; then sha="$sha-dirty"; fi
+  if sha=$(git rev-parse --short HEAD 2>/dev/null); then
+    if [ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]; then sha="$sha-dirty"; fi
+  else
+    # A copy made by scripts/remote.sh has no .git; it passes the commit.
+    sha=${OCW_BUILD_ID:-nogit}; sha=${sha// /-}
+  fi
   dir="$root/$day"
   mkdir -p "$dir"
   stem="$(date +%H%M%S)-$sha-$mode"

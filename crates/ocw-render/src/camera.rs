@@ -3,13 +3,30 @@
 //! In chase mode the camera can be orbited around the rider: drag with the
 //! left mouse button to turn and tilt, mouse wheel to zoom, `C` to reset (`R`
 //! restarts the whole app).
+//!
+//! # What moves the camera (spec §3.2, "Camera and avatar")
+//!
+//! Every world object is in one of two classes, [`CameraInteraction`]:
+//!
+//! - **Solid** – terrain, the road and (later) buildings. The camera avoids
+//!   them: it stays above them and lifts until the line of sight to the
+//!   rider clears them. The terrain comes in as [`crate::Ground`]; other
+//!   solid objects register the height of their top per area in
+//!   [`CameraObstacles`].
+//! - **See-through** – trees (later bushes, signs, other riders). They
+//!   never change the camera position. Where one would block the view (in
+//!   front of the lens, or between the camera and the rider) it fades out
+//!   instead ([`crate::see_through`]).
 
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
 
-use crate::console::ConsoleState;
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use crate::menu::InputContext;
 use crate::riders::avatar_transform;
-use crate::{RideView, TreeCone, world};
+use crate::{RideView, world};
 
 pub struct CameraPlugin;
 
@@ -17,11 +34,252 @@ impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CameraMode>()
             .init_resource::<CameraOrbit>()
+            .init_resource::<CameraObstacles>()
+            .init_resource::<CameraFocus>()
             .add_systems(Startup, spawn_camera)
             .add_systems(Update, orbit_input)
             .add_systems(PostUpdate, follow.before(TransformSystems::Propagate));
     }
 }
+
+/// How the camera treats a world object (see the module docs).
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CameraInteraction {
+    /// The camera avoids it: stays above it and keeps the line of sight to
+    /// the rider clear of it (terrain, road, buildings). Its shape reaches
+    /// the camera as [`crate::Ground`] or a [`CameraObstacles`] layer.
+    Solid,
+    /// Never moves the camera; faded out where it would block the view
+    /// (trees, bushes, signs, other riders).
+    SeeThrough,
+}
+
+impl CameraInteraction {
+    /// Whether objects of this class can change the camera position.
+    pub fn moves_camera(self) -> bool {
+        self == Self::Solid
+    }
+}
+
+/// Height of the top of a solid object at world (x, z), `None` where it
+/// has none (keep it cheap: reject by bounding box first).
+pub type SolidTop = Arc<dyn Fn(f64, f64) -> Option<f64> + Send + Sync>;
+
+/// One set of solid obstacles, e.g. the buildings of one tile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ObstacleLayer {
+    /// What they are ("buildings", …).
+    pub kind: &'static str,
+    /// The tile they belong to (route mode: (0, 0)).
+    pub tile: (i32, i32),
+}
+
+/// Solid obstacles besides the terrain ([`CameraInteraction::Solid`]): the
+/// camera stays above them and sees the rider over them like over terrain.
+/// Streaming code inserts a layer per tile when it loads the tile and
+/// removes it with the tile. See-through objects are never registered.
+#[derive(Resource, Default, Clone)]
+pub struct CameraObstacles {
+    layers: HashMap<ObstacleLayer, SolidTop>,
+}
+
+impl CameraObstacles {
+    /// Adds (or replaces) a layer.
+    pub fn insert(
+        &mut self,
+        layer: ObstacleLayer,
+        top: impl Fn(f64, f64) -> Option<f64> + Send + Sync + 'static,
+    ) {
+        self.layers.insert(layer, Arc::new(top));
+    }
+
+    pub fn remove(&mut self, layer: ObstacleLayer) {
+        self.layers.remove(&layer);
+    }
+
+    /// Removes every layer of a tile (when the tile is unloaded).
+    pub fn remove_tile(&mut self, tile: (i32, i32)) {
+        self.layers.retain(|l, _| l.tile != tile);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.layers.is_empty()
+    }
+
+    /// Highest solid top at (x, z) over all layers.
+    pub fn top_at(&self, x: f64, z: f64) -> Option<f64> {
+        self.layers
+            .values()
+            .filter_map(|top| top(x, z))
+            .reduce(f64::max)
+    }
+}
+
+/// Distance kept between the camera and the walls of a solid prism (m):
+/// points this close to a footprint count as inside it.
+pub const WALL_CLEARANCE_M: f32 = 0.5;
+
+/// Solid prisms – a footprint polygon from the ground up to a flat top –
+/// with a grid index, as a [`CameraObstacles`] layer (e.g. the buildings
+/// of one tile; a gable roof counts with its ridge height, courtyards as
+/// solid). Built off the main thread with the tile's meshes.
+#[derive(Debug, Clone, Default)]
+pub struct SolidFootprints {
+    prisms: Vec<Prism>,
+    origin: [f32; 2],
+    cell: f32,
+    cols: usize,
+    rows: usize,
+    grid: Vec<Vec<u32>>,
+}
+
+#[derive(Debug, Clone)]
+struct Prism {
+    outline: Vec<[f32; 2]>,
+    top: f32,
+    min: [f32; 2],
+    max: [f32; 2],
+}
+
+impl Prism {
+    /// Inside the footprint or within [`WALL_CLEARANCE_M`] of it.
+    fn covers(&self, x: f32, z: f32) -> bool {
+        let m = WALL_CLEARANCE_M;
+        if x < self.min[0] - m || x > self.max[0] + m || z < self.min[1] - m || z > self.max[1] + m
+        {
+            return false;
+        }
+        let ring = &self.outline;
+        let mut inside = false;
+        let mut near = false;
+        for i in 0..ring.len() {
+            let (a, b) = (ring[i], ring[(i + 1) % ring.len()]);
+            if (a[1] > z) != (b[1] > z) && x < a[0] + (z - a[1]) / (b[1] - a[1]) * (b[0] - a[0]) {
+                inside = !inside;
+            }
+            let (ab, ap) = (
+                Vec2::new(b[0] - a[0], b[1] - a[1]),
+                Vec2::new(x - a[0], z - a[1]),
+            );
+            let t = (ap.dot(ab) / ab.length_squared().max(1e-9)).clamp(0.0, 1.0);
+            near |= (ap - ab * t).length_squared() < m * m;
+        }
+        inside || near
+    }
+}
+
+/// Grid cell of the [`SolidFootprints`] index (m).
+const FOOTPRINT_CELL_M: f32 = 16.0;
+
+impl SolidFootprints {
+    /// From (outline in world (x, z), top height) pairs; outlines with
+    /// fewer than three points are skipped.
+    pub fn new(prisms: impl IntoIterator<Item = (Vec<[f32; 2]>, f32)>) -> Self {
+        let prisms: Vec<Prism> = prisms
+            .into_iter()
+            .filter(|(o, _)| o.len() >= 3)
+            .map(|(outline, top)| {
+                let (min, max) = outline.iter().fold(
+                    ([f32::INFINITY; 2], [f32::NEG_INFINITY; 2]),
+                    |(lo, hi), p| {
+                        (
+                            [lo[0].min(p[0]), lo[1].min(p[1])],
+                            [hi[0].max(p[0]), hi[1].max(p[1])],
+                        )
+                    },
+                );
+                Prism {
+                    outline,
+                    top,
+                    min,
+                    max,
+                }
+            })
+            .collect();
+        if prisms.is_empty() {
+            return Self::default();
+        }
+        let m = WALL_CLEARANCE_M;
+        let (lo, hi) = prisms.iter().fold(
+            ([f32::INFINITY; 2], [f32::NEG_INFINITY; 2]),
+            |(lo, hi), p| {
+                (
+                    [lo[0].min(p.min[0] - m), lo[1].min(p.min[1] - m)],
+                    [hi[0].max(p.max[0] + m), hi[1].max(p.max[1] + m)],
+                )
+            },
+        );
+        // At most 256 cells a side (a tile is 1 km: 63 cells of 16 m).
+        let cell = FOOTPRINT_CELL_M.max((hi[0] - lo[0]).max(hi[1] - lo[1]) / 256.0);
+        let cols = (((hi[0] - lo[0]) / cell).ceil() as usize).max(1);
+        let rows = (((hi[1] - lo[1]) / cell).ceil() as usize).max(1);
+        let mut grid = vec![Vec::new(); cols * rows];
+        let at = |v: f32, o: f32, n: usize| (((v - o) / cell) as usize).min(n - 1);
+        for (i, p) in prisms.iter().enumerate() {
+            for r in at(p.min[1] - m, lo[1], rows)..=at(p.max[1] + m, lo[1], rows) {
+                for c in at(p.min[0] - m, lo[0], cols)..=at(p.max[0] + m, lo[0], cols) {
+                    grid[r * cols + c].push(i as u32);
+                }
+            }
+        }
+        Self {
+            prisms,
+            origin: lo,
+            cell,
+            cols,
+            rows,
+            grid,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.prisms.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.prisms.len()
+    }
+
+    /// Highest top of the prisms covering (x, z) (see [`Prism::covers`]).
+    pub fn top_at(&self, x: f64, z: f64) -> Option<f64> {
+        if self.prisms.is_empty() {
+            return None;
+        }
+        let (x, z) = (x as f32, z as f32);
+        let (c, r) = (
+            ((x - self.origin[0]) / self.cell).floor(),
+            ((z - self.origin[1]) / self.cell).floor(),
+        );
+        if c < 0.0 || r < 0.0 || c as usize >= self.cols || r as usize >= self.rows {
+            return None;
+        }
+        self.grid[r as usize * self.cols + c as usize]
+            .iter()
+            .map(|&i| &self.prisms[i as usize])
+            .filter(|p| p.covers(x, z))
+            .map(|p| f64::from(p.top))
+            .reduce(f64::max)
+    }
+}
+
+/// Height of everything solid at (x, z): the terrain and the obstacles.
+pub fn solid_height(
+    ground: Option<&crate::Ground>,
+    obstacles: &CameraObstacles,
+    x: f64,
+    z: f64,
+) -> Option<f64> {
+    let terrain = ground.and_then(|g| (g.0)(x, z));
+    match (terrain, obstacles.top_at(x, z)) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (a, b) => a.or(b),
+    }
+}
+
+/// The point the camera keeps in view (the local rider's head), for fading
+/// see-through objects between it and the camera. `None` without a rider.
+#[derive(Resource, Debug, Default, Clone, Copy, PartialEq)]
+pub struct CameraFocus(pub Option<Vec3>);
 
 /// Camera perspective, switchable with the console command `camera.mode`.
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -100,17 +358,17 @@ impl CameraOrbit {
     }
 }
 
-/// Mouse orbit (left button drag), zoom (wheel) and reset (`C`), unless
-/// the console is open.
+/// Mouse orbit (left button drag), zoom (wheel) and reset (`C`), only in
+/// the ride's input context (not while the menu or the console is open).
 fn orbit_input(
     buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
     motion: Res<AccumulatedMouseMotion>,
     scroll: Res<AccumulatedMouseScroll>,
-    console: Option<Res<ConsoleState>>,
+    context: Option<Res<InputContext>>,
     mut orbit: ResMut<CameraOrbit>,
 ) {
-    if console.is_some_and(|c| c.is_open()) {
+    if !crate::menu::ride_input(context) {
         return;
     }
     if keys.just_pressed(KeyCode::KeyC) {
@@ -185,47 +443,30 @@ pub fn clear_line_of_sight(
     eye + Vec3::Y * lift.clamp(0.0, MAX_SIGHT_LIFT_M)
 }
 
-/// Gap kept between the camera and a tree crown (m).
-pub const TREE_CLEARANCE_M: f32 = 0.5;
-
-/// Pushes `eye` sideways out of any tree crown it is in (the camera would
-/// otherwise look out from inside a tree).
-pub fn out_of_trees<'a>(mut eye: Vec3, trees: impl IntoIterator<Item = &'a TreeCone>) -> Vec3 {
-    for t in trees {
-        let (dx, dz) = (eye.x - t.base.x, eye.z - t.base.z);
-        if dx.abs() > t.radius + TREE_CLEARANCE_M || dz.abs() > t.radius + TREE_CLEARANCE_M {
-            continue;
-        }
-        let Some(r) = t.radius_at(eye.y) else {
-            continue;
-        };
-        let r = r + TREE_CLEARANCE_M;
-        let d = (dx * dx + dz * dz).sqrt();
-        if d < r {
-            let dir = if d > 1e-4 {
-                Vec2::new(dx, dz) / d
-            } else {
-                Vec2::X
-            };
-            eye.x = t.base.x + dir.x * r;
-            eye.z = t.base.z + dir.y * r;
-        }
-    }
-    eye
+/// Keeps `eye` clear of solid objects (`solid` = their height at (x, z)):
+/// above them, and lifted until the line of sight to `rider_head` clears
+/// them. See-through objects are not part of `solid`.
+pub fn place_eye(eye: Vec3, rider_head: Vec3, solid: &dyn Fn(f64, f64) -> Option<f64>) -> Vec3 {
+    let eye = above_ground(eye, solid(f64::from(eye.x), f64::from(eye.z)));
+    clear_line_of_sight(eye, rider_head, solid)
 }
 
 #[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
-fn follow(
+pub(crate) fn follow(
     view: Res<RideView>,
     mode: Res<CameraMode>,
     orbit: Res<CameraOrbit>,
     ground: Option<Res<crate::Ground>>,
-    trees: Option<Res<crate::Trees>>,
+    obstacles: Res<CameraObstacles>,
     time: Res<Time>,
     mut camera: Query<&mut Transform, With<FollowCamera>>,
+    mut focus: ResMut<CameraFocus>,
     mut smoothed_target: Local<Option<Vec3>>,
 ) {
-    let Some(local) = view.local() else { return };
+    let Some(local) = view.local() else {
+        focus.set_if_neq(CameraFocus(None));
+        return;
+    };
     let Ok(mut cam) = camera.single_mut() else {
         return;
     };
@@ -256,52 +497,16 @@ fn follow(
     } else {
         cam.translation.lerp(eye, k)
     };
+    let rider_head = rider.translation + Vec3::Y * 1.2;
+    focus.set_if_neq(CameraFocus(Some(rider_head)));
+    // Only solid objects move the camera: never below them (also while
+    // smoothing towards a low eye), and none between the eye and the rider
+    // (the rider, not the look-ahead point: uphill that is in the slope).
+    // Trees are see-through: they fade out instead (see_through.rs).
+    let solid = |x: f64, z: f64| solid_height(ground.as_deref(), &obstacles, x, z);
+    cam.translation = place_eye(cam.translation, rider_head, &solid);
     let mut target = target;
     if let Some(g) = ground.as_deref() {
-        // Never below the ground, also while smoothing towards a low eye,
-        // and nothing of the terrain between the eye and the rider (the
-        // rider, not the look-ahead point: uphill that is in the slope).
-        let h = (g.0)(f64::from(cam.translation.x), f64::from(cam.translation.z));
-        cam.translation = above_ground(cam.translation, h);
-        let rider_head = rider.translation + Vec3::Y * 1.2;
-        // Trees between the eye and the rider count like terrain.
-        let (lo, hi) = (
-            cam.translation.min(rider_head),
-            cam.translation.max(rider_head),
-        );
-        let near_trees: Vec<TreeCone> = trees
-            .as_deref()
-            .map(|t| {
-                t.0.values()
-                    .flatten()
-                    .filter(|c| {
-                        c.base.x + c.radius >= lo.x
-                            && c.base.x - c.radius <= hi.x
-                            && c.base.z + c.radius >= lo.z
-                            && c.base.z - c.radius <= hi.z
-                    })
-                    .copied()
-                    .collect()
-            })
-            .unwrap_or_default();
-        let obstacles = |x: f64, z: f64| {
-            let terrain = (g.0)(x, z);
-            let tree = near_trees
-                .iter()
-                .filter_map(|c| c.surface_at(x as f32, z as f32))
-                .fold(None, |m: Option<f32>, h| Some(m.map_or(h, |m| m.max(h))));
-            match (terrain, tree) {
-                (Some(a), Some(b)) => Some(a.max(f64::from(b))),
-                (a, b) => a.or(b.map(f64::from)),
-            }
-        };
-        cam.translation = clear_line_of_sight(cam.translation, rider_head, &obstacles);
-        // Not inside a tree crown (riding through a forest).
-        if let Some(trees) = trees.as_deref() {
-            cam.translation = out_of_trees(cam.translation, trees.0.values().flatten());
-            let h = (g.0)(f64::from(cam.translation.x), f64::from(cam.translation.z));
-            cam.translation = above_ground(cam.translation, h);
-        }
         // The look-ahead point stays above the ground too, but not so far
         // above the rider that the rider leaves the picture.
         if let Some(h) = (g.0)(f64::from(target.x), f64::from(target.z)) {
@@ -368,33 +573,166 @@ mod tests {
     }
 
     #[test]
-    fn camera_is_pushed_out_of_tree_crowns() {
-        let tree = TreeCone {
-            base: Vec3::new(10.0, 0.0, 0.0),
-            crown_bottom: 2.0,
-            crown_top: 9.0,
-            radius: 2.2,
-        };
-        // In the crown, 1 m from the trunk at 2 m: out to radius + clearance.
-        let eye = out_of_trees(Vec3::new(11.0, 2.0, 0.0), [&tree]);
-        assert!(
-            (eye.x - (10.0 + 2.2 + TREE_CLEARANCE_M)).abs() < 1e-5,
-            "{eye}"
+    fn only_solid_objects_move_the_camera() {
+        assert!(CameraInteraction::Solid.moves_camera());
+        assert!(!CameraInteraction::SeeThrough.moves_camera());
+    }
+
+    #[test]
+    fn obstacle_layers_add_to_the_terrain_and_go_with_their_tile() {
+        let mut obstacles = CameraObstacles::default();
+        assert!(obstacles.is_empty());
+        let ground = crate::Ground(Arc::new(|_, _| Some(100.0)));
+        assert_eq!(
+            solid_height(Some(&ground), &obstacles, 5.0, 5.0),
+            Some(100.0)
         );
-        assert_eq!((eye.y, eye.z), (2.0, 0.0));
-        // Higher up the crown is narrower.
-        let eye = out_of_trees(Vec3::new(10.0, 8.0, 0.5), [&tree]);
-        let r = tree.radius_at(8.0).unwrap() + TREE_CLEARANCE_M;
-        assert!((eye.z - r).abs() < 1e-5, "{eye}");
-        // The crown's surface: highest at the trunk, its bottom at the rim.
-        assert_eq!(tree.surface_at(10.0, 0.0), Some(9.0));
-        assert!((tree.surface_at(12.2 - 1e-4, 0.0).unwrap() - 2.0).abs() < 1e-3);
-        assert_eq!(tree.surface_at(13.0, 0.0), None);
-        // Under the crown (trunk height) and above the tip: unchanged.
-        let below = Vec3::new(11.0, 1.0, 0.0);
-        assert_eq!(out_of_trees(below, [&tree]), below);
-        let above = Vec3::new(10.2, 9.5, 0.0);
-        assert_eq!(out_of_trees(above, [&tree]), above);
+        // A 12 m house at x 0 … 10 (any z) on tile (0, 0).
+        let house = ObstacleLayer {
+            kind: "buildings",
+            tile: (0, 0),
+        };
+        obstacles.insert(house, |x, _| (0.0..=10.0).contains(&x).then_some(112.0));
+        assert_eq!(
+            solid_height(Some(&ground), &obstacles, 5.0, 5.0),
+            Some(112.0)
+        );
+        assert_eq!(
+            solid_height(Some(&ground), &obstacles, 20.0, 5.0),
+            Some(100.0)
+        );
+        assert_eq!(solid_height(None, &obstacles, 5.0, 0.0), Some(112.0));
+        assert_eq!(solid_height(None, &obstacles, 20.0, 0.0), None);
+        // The highest layer wins.
+        let tower = ObstacleLayer {
+            kind: "towers",
+            tile: (0, 0),
+        };
+        obstacles.insert(tower, |x, _| (x < 6.0).then_some(130.0));
+        assert_eq!(obstacles.top_at(5.0, 0.0), Some(130.0));
+        obstacles.remove(tower);
+        assert_eq!(obstacles.top_at(5.0, 0.0), Some(112.0));
+        obstacles.remove_tile((1, 0));
+        assert!(!obstacles.is_empty());
+        obstacles.remove_tile((0, 0));
+        assert!(obstacles.is_empty());
+    }
+
+    #[test]
+    fn footprints_cover_their_outline_and_a_wall_clearance() {
+        // An L-shaped 8 m house and a 20 m tower inside its bounding box gap.
+        let l = vec![
+            [0.0, 0.0],
+            [10.0, 0.0],
+            [10.0, 4.0],
+            [4.0, 4.0],
+            [4.0, 10.0],
+            [0.0, 10.0],
+        ];
+        let tower = vec![[30.0, 30.0], [32.0, 30.0], [32.0, 32.0], [30.0, 32.0]];
+        let f = SolidFootprints::new([(l, 8.0), (tower, 20.0), (vec![[0.0, 0.0]], 99.0)]);
+        assert_eq!(f.len(), 2);
+        assert_eq!(f.top_at(2.0, 2.0), Some(8.0));
+        assert_eq!(f.top_at(8.0, 2.0), Some(8.0));
+        // The notch of the L is free, except within the wall clearance.
+        assert_eq!(f.top_at(8.0, 8.0), None);
+        assert_eq!(f.top_at(4.3, 8.0), Some(8.0));
+        assert_eq!(f.top_at(-0.4, 5.0), Some(8.0));
+        assert_eq!(f.top_at(-0.6, 5.0), None);
+        assert_eq!(f.top_at(31.0, 31.0), Some(20.0));
+        assert_eq!(f.top_at(500.0, -500.0), None);
+        assert!(SolidFootprints::new([]).top_at(0.0, 0.0).is_none());
+    }
+
+    #[test]
+    fn a_solid_obstacle_lifts_the_eye_like_terrain() {
+        let flat = |_: f64, _: f64| Some(0.0);
+        let head = Vec3::new(0.0, 1.2, 0.0);
+        let eye = Vec3::new(8.0, 2.0, 0.0);
+        assert_eq!(place_eye(eye, head, &flat), eye);
+        // A 6 m wall at x 3 … 5 between the eye and the rider.
+        let mut obstacles = CameraObstacles::default();
+        obstacles.insert(
+            ObstacleLayer {
+                kind: "buildings",
+                tile: (0, 0),
+            },
+            |x, _| (3.0..=5.0).contains(&x).then_some(6.0),
+        );
+        let ground = crate::Ground(Arc::new(|_, _| Some(0.0)));
+        let solid = |x: f64, z: f64| solid_height(Some(&ground), &obstacles, x, z);
+        let lifted = place_eye(eye, head, &solid);
+        assert!(lifted.y > 6.0 && lifted.xz() == eye.xz(), "{lifted}");
+        // An eye inside the wall goes on top of it.
+        let on_roof = place_eye(Vec3::new(4.0, 3.0, 0.0), Vec3::new(4.0, 7.2, 0.0), &solid);
+        assert!(on_roof.y >= 6.0 + MIN_CAMERA_CLEARANCE_M, "{on_roof}");
+    }
+
+    /// The real `follow` system with see-through trees at the eye and in
+    /// the line of sight: the camera stays exactly where the orbit puts it;
+    /// a solid block in the same place lifts it.
+    #[test]
+    fn trees_never_move_the_camera_but_solid_obstacles_do() {
+        use ocw_core::RiderId;
+        use ocw_world::Route;
+
+        let route = Route::test_loop();
+        let mut view = RideView::new(route.clone());
+        view.riders.push(crate::RiderView {
+            id: RiderId(1),
+            name: "me".into(),
+            state: ocw_sim::RiderState {
+                distance: 100.0,
+                ..default()
+            },
+            power_w: 0.0,
+            cadence_rpm: None,
+            heart_rate_bpm: None,
+            is_local: true,
+        });
+        let road_y = route.sample(100.0).position[1];
+        let ground = crate::Ground(Arc::new(move |_, _| Some(road_y - 0.1)));
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(view)
+            .insert_resource(ground)
+            .init_resource::<CameraMode>()
+            .init_resource::<CameraOrbit>()
+            .init_resource::<CameraObstacles>()
+            .init_resource::<CameraFocus>()
+            .add_systems(Update, follow);
+        let cam = app
+            .world_mut()
+            .spawn((Transform::from_xyz(1e4, 0.0, 1e4), FollowCamera))
+            .id();
+        app.update();
+        let free = app.world().get::<Transform>(cam).unwrap().translation;
+        let focus = app.world().resource::<CameraFocus>().0.expect("rider");
+        let mid = free.lerp(focus, 0.5);
+        // Trees at the eye and half way to the rider.
+        for p in [free, mid] {
+            app.world_mut().spawn((
+                Transform::from_translation(p.with_y(road_y as f32)),
+                CameraInteraction::SeeThrough,
+            ));
+        }
+        app.update();
+        let with_trees = app.world().get::<Transform>(cam).unwrap().translation;
+        assert!((with_trees - free).length() < 1e-3, "{free} → {with_trees}");
+        // A solid 8 m block around the half-way point lifts the eye.
+        app.world_mut().resource_mut::<CameraObstacles>().insert(
+            ObstacleLayer {
+                kind: "buildings",
+                tile: (0, 0),
+            },
+            move |x, z| {
+                ((x - f64::from(mid.x)).abs() < 1.5 && (z - f64::from(mid.z)).abs() < 1.5)
+                    .then_some(road_y + 8.0)
+            },
+        );
+        app.update();
+        let lifted = app.world().get::<Transform>(cam).unwrap().translation;
+        assert!(lifted.y > free.y + 2.0, "{free} → {lifted}");
     }
 
     #[test]
@@ -441,6 +779,41 @@ mod tests {
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
             .press(KeyCode::KeyC);
+        app.update();
+        assert_eq!(
+            *app.world().resource::<CameraOrbit>(),
+            CameraOrbit::default()
+        );
+    }
+
+    #[test]
+    fn the_mouse_and_c_do_not_move_the_camera_while_the_menu_is_open() {
+        let mut app = App::new();
+        let orbit = CameraOrbit {
+            yaw: 2.0,
+            pitch: 1.0,
+            distance: 30.0,
+        };
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<ButtonInput<MouseButton>>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .insert_resource(AccumulatedMouseMotion {
+                delta: Vec2::new(40.0, 10.0),
+            })
+            .init_resource::<AccumulatedMouseScroll>()
+            .insert_resource(InputContext::Menu)
+            .insert_resource(orbit)
+            .add_systems(Update, orbit_input);
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Left);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyC);
+        app.update();
+        assert_eq!(*app.world().resource::<CameraOrbit>(), orbit);
+        // Back in the ride: C resets.
+        *app.world_mut().resource_mut::<InputContext>() = InputContext::Ride;
         app.update();
         assert_eq!(
             *app.world().resource::<CameraOrbit>(),

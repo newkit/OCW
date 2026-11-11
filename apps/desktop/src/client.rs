@@ -108,6 +108,15 @@ pub struct ClientCore {
     last_sample_us: u64,
     seq: u32,
     stats: NetStats,
+    /// The steering mode saved while the menu holds autodrive.
+    menu_hold: Option<HeldSteering>,
+}
+
+/// Steering mode before the menu opened (spec §3.2.1), restored on closing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct HeldSteering {
+    autodrive: bool,
+    wild: bool,
 }
 
 impl ClientCore {
@@ -137,6 +146,7 @@ impl ClientCore {
             last_sample_us: 0,
             seq: 0,
             stats: NetStats::default(),
+            menu_hold: None,
         }
     }
 
@@ -504,6 +514,9 @@ impl ClientCore {
         if self.wild {
             s.push_str(" | WILD");
         }
+        if self.menu_hold.is_some() {
+            s.push_str(" (menu)");
+        }
         let surface = ocw_sim::ride::surface(self.track(), &self.predictor.state());
         if surface != ocw_world::Surface::Asphalt {
             s.push_str(" | ");
@@ -528,6 +541,52 @@ impl ClientCore {
                 self.lateral_target = Some(t.clamp(-limit, limit));
             }
         }
+    }
+
+    /// The menu opened (spec §3.2.1): the ride goes on, so the rider stays
+    /// on the road by itself: autodrive on (wild mode off; from manual
+    /// steering at the rider's current line, so it does not swerve) and the
+    /// next junction back to its default exit. [`Self::release_steering`]
+    /// restores the previous mode. Holding twice keeps the first mode.
+    pub fn hold_steering(&mut self) {
+        if self.menu_hold.is_some() {
+            return;
+        }
+        self.menu_hold = Some(HeldSteering {
+            autodrive: self.autodrive(),
+            wild: self.wild,
+        });
+        if self.wild {
+            self.set_wild(false);
+        }
+        if !self.autodrive() {
+            let line = self.predictor.state().lateral_offset;
+            self.steer_to(line);
+        }
+        self.clear_exit();
+    }
+
+    /// The menu closed: back to the steering mode before
+    /// [`Self::hold_steering`]: manual steering upright (no lean carried
+    /// over), wild mode again; autodrive keeps the line it rode.
+    pub fn release_steering(&mut self) {
+        let Some(h) = self.menu_hold.take() else {
+            return;
+        };
+        if h.wild {
+            // Directly: `set_wild` would also switch autodrive off.
+            self.wild = true;
+            self.predictor.set_wild(true);
+        }
+        if !h.autodrive {
+            self.set_lean(0.0);
+        }
+    }
+
+    /// Whether the menu holds the steering in autodrive.
+    #[cfg(test)]
+    pub fn steering_held(&self) -> bool {
+        self.menu_hold.is_some()
     }
 
     pub fn lateral_target(&self) -> Option<f64> {
@@ -1598,6 +1657,113 @@ mod tests {
         h.client.set_lean(0.1);
         h.client.set_wild(false);
         assert_eq!(h.client.lean(), Some(0.1));
+    }
+
+    /// The menu holds autodrive (spec §3.2.1): manual steering with a lean
+    /// would leave the road while the rider looks at the menu.
+    #[test]
+    fn menu_holds_autodrive_and_restores_manual_steering() {
+        let mut h = Harness::new(0, false);
+        h.ride(250.0, 2.0);
+        let own = h.client.rider_id().unwrap();
+        h.client.set_lean(0.2);
+        let msg = h.client.steer_message(h.time_s).expect("lean intent");
+        h.send(&msg);
+        h.ride(250.0, 0.5);
+        h.client.hold_steering();
+        assert!(h.client.autodrive() && h.client.steering_held());
+        assert!(h.client.steering_status().starts_with("autodrive (menu)"));
+        let msg = h
+            .client
+            .steer_message(h.time_s + 1.0)
+            .expect("autodrive intent");
+        match ocw_protocol::decode_client(&msg).unwrap() {
+            C::Steer(s) => assert!(!s.lean_steering && !s.wild, "{s:?}"),
+            other => panic!("unexpected {other:?}"),
+        }
+        h.send(&msg);
+        // Held twice (menu reopened from a sub page): the first mode stays.
+        h.client.hold_steering();
+        // The ride goes on: power samples still reach the server, the rider
+        // rides on and stays on the road.
+        let d0 = h.server.session().rider_state(own).unwrap().distance;
+        assert!(
+            h.client
+                .on_device_event(power(250.0, h.time_s + 0.1))
+                .is_some()
+        );
+        h.ride(250.0, 10.0);
+        let st = h.server.session().rider_state(own).unwrap();
+        assert!(st.distance - d0 > 50.0, "{st:?}");
+        let limit = ocw_sim::physics::lateral_limit(7.0);
+        assert!(st.lateral_offset.abs() <= limit + 0.05, "{st:?}");
+        assert!((h.client.state().lateral_offset - st.lateral_offset).abs() < 0.1);
+        // Closed: manual again, upright.
+        h.client.release_steering();
+        assert!(!h.client.steering_held());
+        assert_eq!(h.client.lean(), Some(0.0));
+        assert!(h.client.steering_status().starts_with("manual"));
+        // Released twice: nothing more happens.
+        h.client.set_lean(0.1);
+        h.client.release_steering();
+        assert_eq!(h.client.lean(), Some(0.1));
+    }
+
+    #[test]
+    fn menu_keeps_the_autodrive_line_and_restores_wild_mode() {
+        let mut h = Harness::new(0, false);
+        h.ride(250.0, 2.0);
+        // Autodrive on its own line: unchanged by the menu.
+        h.client.steer_to(1.0);
+        h.client.hold_steering();
+        assert_eq!(h.client.lateral_target(), Some(1.0));
+        h.client.release_steering();
+        assert!(h.client.autodrive());
+        assert_eq!(h.client.lateral_target(), Some(1.0));
+        // Wild mode: off while the menu is open (back within the road).
+        h.client.set_wild(true);
+        h.client.hold_steering();
+        assert!(!h.client.wild() && h.client.autodrive());
+        let limit = ocw_sim::physics::lateral_limit(7.0);
+        assert!(h.client.lateral_target().unwrap().abs() <= limit);
+        h.client.release_steering();
+        assert!(h.client.wild() && !h.client.autodrive());
+        // Wild with autodrive: both come back.
+        h.client.set_autodrive(true);
+        h.client.hold_steering();
+        h.client.release_steering();
+        assert!(h.client.wild() && h.client.autodrive());
+    }
+
+    /// While the menu is open the next junction takes its default exit.
+    #[test]
+    fn menu_resets_the_junction_choice_to_the_default_exit() {
+        let mut h = Harness::free(0);
+        h.ride(250.0, 1.0);
+        h.client.turn(1).expect("a junction ahead");
+        let msg = h.client.turn_message().expect("turn intent");
+        h.send(&msg);
+        h.client.hold_steering();
+        // Taking back the choice is sent to the server.
+        let msg = h.client.turn_message().expect("choice taken back");
+        match ocw_protocol::decode_client(&msg).unwrap() {
+            C::Turn(t) => assert!(t.exit_edge_id.is_none(), "{t:?}"),
+            other => panic!("unexpected {other:?}"),
+        }
+        h.send(&msg);
+        let mut seen = false;
+        for _ in 0..500 {
+            h.ride(250.0, 0.1);
+            if let Some(j) = h.client.junction_view() {
+                assert_eq!(j.selected, j.default, "{j:?}");
+                seen = true;
+            }
+        }
+        assert!(seen);
+        // Straight on through x = 600 m: still on the top row (z = 0).
+        let (c, s) = h.positions();
+        assert!(c.position[0] > 620.0 && c.position[2].abs() < 6.0, "{c:?}");
+        assert!(close(c.position, s.position, 1.0), "{c:?} vs {s:?}");
     }
 
     /// Down arrow: the brake reaches the server at once and stops the

@@ -1,4 +1,5 @@
-//! Keyboard controls (when the console is closed):
+//! Keyboard controls (in the ride's input context: not while the menu or
+//! the console is open, see `ocw_render::menu::InputContext`):
 //! - A toggles autodrive (on at the start): the rider keeps to the middle
 //!   of the road by itself, ← / → move its line. Without autodrive, ← / →
 //!   lean the rider into a curve (held: further, up to 30°); the lean
@@ -26,7 +27,7 @@
 
 use bevy::prelude::*;
 use ocw_devices::DeviceCommand;
-use ocw_render::console::ConsoleState;
+use ocw_render::menu::ride_input;
 
 use crate::connection::{ClientState, Link};
 
@@ -69,7 +70,7 @@ pub struct InputPlugin;
 impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<KeyPower>()
-            .add_systems(Update, (steer, throttle_and_brake));
+            .add_systems(Update, (steer, throttle_and_brake).run_if(ride_input));
     }
 }
 
@@ -160,16 +161,12 @@ pub fn power_delta(up: bool, down: bool) -> f64 {
 fn steer(
     keys: Res<ButtonInput<KeyCode>>,
     pads: Query<&Gamepad>,
-    console: Res<ConsoleState>,
     time: Res<Time>,
     link: Res<Link>,
     mut client: ResMut<ClientState>,
     mut upright_pause: Local<f64>,
     mut stick_was_used: Local<bool>,
 ) {
-    if console.is_open() {
-        return;
-    }
     let pad_pressed = |b: GamepadButton| pads.iter().any(|p| p.just_pressed(b));
     if client.0.is_free_ride() {
         if (keys.just_pressed(KeyCode::KeyU) || pad_pressed(GamepadButton::East))
@@ -281,7 +278,6 @@ pub fn trigger_pull(value: f32, rest: &mut Option<f32>) -> f32 {
 fn throttle_and_brake(
     keys: Res<ButtonInput<KeyCode>>,
     pads: Query<(Entity, &Gamepad)>,
-    console: Res<ConsoleState>,
     time: Res<Time>,
     devices: Res<Devices>,
     link: Res<Link>,
@@ -290,9 +286,6 @@ fn throttle_and_brake(
     mut pad_was: Local<(bool, bool)>,
     mut trigger_rest: Local<std::collections::HashMap<Entity, [Option<f32>; 2]>>,
 ) {
-    if console.is_open() {
-        return;
-    }
     let now = time.elapsed_secs_f64();
     trigger_rest.retain(|e, _| pads.contains(*e));
     let (pad_up, pad_down) = pads.iter().fold((false, false), |(u, d), (e, p)| {

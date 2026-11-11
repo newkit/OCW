@@ -199,7 +199,7 @@ pub const SETTINGS: &[SettingDef] = &[
             max: 50,
             step: 1,
         },
-        default: "4",
+        default: "10",
         description: "Number of test riders (bots) on the local server",
         scope: Scope::NextStart,
         apply: Apply::Arg("bots"),

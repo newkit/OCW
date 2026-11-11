@@ -4,17 +4,14 @@
 //! - [`riders`]: rider profiles in `riders.toml` (Bevy-free),
 //! - [`pages`]: the Settings / Workshop menu pages as rows of command lines
 //!   (Bevy-free; the menu shell renders them),
-//! - [`panel`]: an interim egui panel drawing those pages,
 //! - this module: loading at the start (before the other plugins read
-//!   [`Args`]), the console commands `set`, `get`, `riders.*` and
-//!   `settings.panel`.
+//!   [`Args`]), the console commands `set`, `get` and `riders.*`.
 //!
 //! Both files live in the user config directory (`~/.config/ocw/` on
 //! Linux, `OCW_CONFIG_DIR` overrides it); `--settings-file` names another
 //! settings file, and `riders.toml` is then read next to it.
 
 pub mod pages;
-pub mod panel;
 pub mod registry;
 pub mod riders;
 
@@ -224,7 +221,6 @@ impl Plugin for SettingsPlugin {
         app.init_resource::<UserSettings>()
             .init_resource::<RiderProfiles>()
             .init_resource::<LoadWarnings>()
-            .init_resource::<panel::SettingsPanel>()
             .add_systems(Startup, print_warnings);
         register_commands(app);
     }
@@ -484,23 +480,6 @@ fn register_commands(app: &mut App) {
                 p.next_start_note()
             ))
         },
-    ))
-    .console_command(ConsoleCommand::new(
-        Permission::User,
-        Command::new("settings.panel")
-            .about("Show the Settings / Workshop panel on a page, or close it")
-            .arg(Arg::new("page").default_value("workshop").value_parser([
-                "workshop", "riders", "controls", "trainer", "display", "strava", "close",
-            ])),
-        |world, m| {
-            let page = m.get_one::<String>("page").expect("has default");
-            let mut panel = world.resource_mut::<panel::SettingsPanel>();
-            panel.page = pages::Page::parse(page);
-            Ok(match panel.page {
-                Some(p) => format!("settings panel: {}", p.title()),
-                None => "settings panel closed".into(),
-            })
-        },
     ));
 }
 
@@ -588,7 +567,7 @@ mod tests {
         let (args, loaded) = startup(&["ocw-desktop", "--settings-file", f]);
         assert_eq!(
             (args.bots, args.power, args.name.as_str()),
-            (4, 200.0, "Rider")
+            (10, 200.0, "Rider")
         );
         assert_eq!(loaded.riders.riding, Rider::default());
         assert_eq!(loaded.settings.path.as_deref(), Some(file.as_path()));
@@ -754,23 +733,6 @@ mod tests {
                 "{line}: {out:?}"
             );
         }
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn settings_panel_command_opens_pages() {
-        let dir = temp_dir("panel");
-        let mut app = app(&dir);
-        assert_eq!(
-            run(&mut app, "settings.panel")[0],
-            "settings panel: Workshop"
-        );
-        assert_eq!(
-            app.world().resource::<panel::SettingsPanel>().page,
-            Some(pages::Page::Workshop)
-        );
-        run(&mut app, "settings.panel close");
-        assert_eq!(app.world().resource::<panel::SettingsPanel>().page, None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

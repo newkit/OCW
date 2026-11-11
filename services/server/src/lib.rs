@@ -64,8 +64,12 @@ pub struct GameServer {
 }
 
 /// Base power of the bots, from easy riders to strong ones, so they spread
-/// out on the road instead of riding as one bunch.
-const BOT_POWERS_W: [f64; 6] = [210.0, 110.0, 160.0, 85.0, 250.0, 135.0];
+/// out on the road instead of riding as one bunch: twelve distinct
+/// strengths from 85 to 280 W, easy and strong ones interleaved so even a
+/// small field mixes them.
+pub const BOT_POWERS_W: [f64; 12] = [
+    210.0, 110.0, 160.0, 85.0, 250.0, 135.0, 185.0, 95.0, 280.0, 120.0, 230.0, 145.0,
+];
 
 /// Base power of the `i`-th bot.
 pub fn bot_power_w(i: u32) -> f64 {
@@ -615,19 +619,56 @@ mod tests {
 
     #[test]
     fn bots_ride_at_different_strengths() {
-        let powers: Vec<f64> = (0..6).map(bot_power_w).collect();
+        let n = BOT_POWERS_W.len() as u32;
+        assert!(n >= 10);
+        let powers: Vec<f64> = (0..n).map(bot_power_w).collect();
         // Some are clearly slower, some faster, and they are all different.
         assert!(
-            powers.iter().filter(|&&p| p < 140.0).count() >= 3,
+            powers.iter().filter(|&&p| p < 140.0).count() >= 4,
             "{powers:?}"
         );
-        assert!(powers.iter().any(|&p| p > 200.0));
+        assert!(powers.iter().filter(|&&p| p > 200.0).count() >= 3);
+        assert!(powers.iter().all(|&p| (85.0..=280.0).contains(&p)));
         let mut sorted = powers.clone();
         sorted.sort_by(f64::total_cmp);
         sorted.dedup();
-        assert_eq!(sorted.len(), 6);
+        assert_eq!(sorted.len(), n as usize);
         // The first bots (a small server) already mix slow and fast.
         assert!(bot_power_w(1) < bot_power_w(0) - 50.0);
+        let first: Vec<f64> = (0..4).map(bot_power_w).collect();
+        assert!(first.iter().any(|&p| p < 100.0) && first.iter().any(|&p| p > 200.0));
+        // Deterministic, and it repeats for big fields.
+        assert_eq!(bot_power_w(n + 3), bot_power_w(3));
+    }
+
+    #[test]
+    fn many_bots_start_in_formation_on_the_road() {
+        let route = Route::test_loop();
+        let limit = ocw_sim::physics::lateral_limit(route.road_width_m());
+        let server = GameServer::new(
+            route,
+            ServerConfig {
+                allow_dev_commands: false,
+                bots: 20,
+                start_m: 200.0,
+            },
+        );
+        let snap = server.session().snapshot();
+        assert_eq!(snap.len(), 20);
+        let mut spots: Vec<(i64, i64)> = snap
+            .iter()
+            .map(|r| {
+                assert!(r.state.lateral_offset.abs() < limit, "{r:?}");
+                assert!(r.state.distance <= 200.0 && r.state.distance >= 180.0);
+                (
+                    (r.state.distance * 10.0).round() as i64,
+                    (r.state.lateral_offset * 10.0).round() as i64,
+                )
+            })
+            .collect();
+        spots.sort();
+        spots.dedup();
+        assert_eq!(spots.len(), 20);
     }
 
     #[test]

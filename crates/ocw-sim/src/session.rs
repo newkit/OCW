@@ -61,6 +61,8 @@ struct Rider {
     /// and whether the path was replaced as a whole.
     path_changed: Option<u64>,
     path_reset: bool,
+    /// Place in the start formation ([`formation_slot`]).
+    slot: usize,
 }
 
 /// State of one rider as broadcast to clients.
@@ -114,6 +116,39 @@ pub fn bot_climb_power_w(profile: &RiderProfile, grade: f64) -> f64 {
     physics::resistance(profile, &env, v).total() * v / physics::DRIVETRAIN_EFFICIENCY
 }
 
+/// Gap between two rows of the start formation along the road (m).
+pub const FORMATION_ROW_GAP_M: f64 = 3.0;
+/// Sideways gap between riders of one formation row (m).
+pub const FORMATION_SPACING_M: f64 = 1.2;
+/// Most riders in one formation row.
+pub const FORMATION_ROW_MAX: usize = 3;
+
+/// Lateral offsets of one start-formation row on a road `width_m` wide:
+/// up to [`FORMATION_ROW_MAX`] riders [`FORMATION_SPACING_M`] apart, centre
+/// first, always 0.3 m inside the lateral limit (so nobody starts
+/// scraping the road edge); narrow roads get fewer riders per row.
+pub fn formation_row(width_m: f64) -> Vec<f64> {
+    let limit = (physics::lateral_limit(width_m) - 0.3).max(0.0);
+    let n =
+        ((2.0 * limit / FORMATION_SPACING_M + 1e-9).floor() as usize + 1).min(FORMATION_ROW_MAX);
+    let s = FORMATION_SPACING_M;
+    match n {
+        1 => vec![0.0],
+        2 => vec![-s / 2.0, s / 2.0],
+        _ => vec![0.0, -s, s],
+    }
+}
+
+/// Place `slot` of the start formation on a road `width_m` wide: metres
+/// behind the start point and lateral offset. Rows of
+/// [`formation_row`] riders, [`FORMATION_ROW_GAP_M`] apart; slot 0 is the
+/// front row's centre (kept for the first client rider).
+pub fn formation_slot(slot: usize, width_m: f64) -> (f64, f64) {
+    let row = formation_row(width_m);
+    let back = (slot / row.len()) as f64 * FORMATION_ROW_GAP_M;
+    (back, row[slot % row.len()])
+}
+
 /// One ride: a route (or the road graph) plus the riders on it.
 #[derive(Debug, Clone)]
 pub struct Session {
@@ -129,6 +164,9 @@ pub struct Session {
     next_id: u32,
     /// Where riders start on the route, in metres.
     start_m: f64,
+    /// How far the start formation's front is moved forward so its last
+    /// row still starts on the road (routes that end, short start edges).
+    front_shift_m: f64,
 }
 
 impl Session {
@@ -141,6 +179,7 @@ impl Session {
             tick: 0,
             next_id: 1,
             start_m: 0.0,
+            front_shift_m: 0.0,
         }
     }
 
@@ -261,28 +300,38 @@ impl Session {
     fn insert(&mut self, name: String, profile: RiderProfile, control: Control) -> RiderId {
         let id = RiderId(self.next_id);
         self.next_id += 1;
-        // Spread riders across the lane: 0, +1.2, -1.2, +2.4, -2.4 m ...
-        let slot = self.riders.len() as f64;
-        let side = if self.riders.len().is_multiple_of(2) {
-            1.0
-        } else {
-            -1.0
+        // Start formation (spec §6.1): the first free slot; the front row's
+        // centre is kept for a client rider, who joins after the bots.
+        let first = match control {
+            Control::Client => 0,
+            Control::Bot { .. } => 1,
         };
-        let mut lateral_offset = side * ((slot + 1.0) / 2.0).floor() * 1.2;
-        let (path, distance) = match &self.free {
-            Some((net, s)) => {
-                let mut p = match &self.plan {
-                    Some(plan) => RidePath::on_route(net.clone(), plan.clone(), 0.0, 0),
-                    None => RidePath::start(net.clone(), s.edge, s.offset_m, s.forward, 0.0, 0),
-                };
-                p.extend(0.0, &mut |j| j.default);
-                // Narrow roads: stay on them (off the edge, or it scrapes).
-                let limit = (physics::lateral_limit(p.road_width_at(0.0)) - 0.3).max(0.0);
-                lateral_offset = lateral_offset.clamp(-limit, limit);
-                (Some(p), 0.0)
+        let slot = (first..)
+            .find(|s| !self.riders.values().any(|r| r.slot == *s))
+            .expect("a free slot");
+        let width = self.start_width();
+        let (back, lateral_offset) = formation_slot(slot, width);
+        // Before the ride starts, move the whole formation forward if its
+        // last row would start before the road begins.
+        if self.tick == 0 {
+            let needed = (back - self.room_behind()).min(self.room_ahead());
+            if needed > self.front_shift_m {
+                self.front_shift_m = needed;
+                let spots: Vec<(RiderId, usize)> =
+                    self.riders.iter().map(|(id, r)| (*id, r.slot)).collect();
+                for (other, s) in spots {
+                    let (path, distance) = self.start_spot(formation_slot(s, width).0);
+                    let r = self.riders.get_mut(&other).expect("listed rider");
+                    r.state.distance = distance;
+                    if path.is_some() {
+                        r.path = path;
+                        r.path_reset = true;
+                        r.path_changed = None;
+                    }
+                }
             }
-            None => (None, self.start_m),
-        };
+        }
+        let (path, distance) = self.start_spot(back);
         self.riders.insert(
             id,
             Rider {
@@ -306,9 +355,82 @@ impl Session {
                 last_turn_seq: 0,
                 last_u_turn_s: None,
                 path_changed: None,
+                slot,
             },
         );
         id
+    }
+
+    /// Road width at the start point.
+    fn start_width(&self) -> f64 {
+        match &self.free {
+            Some((net, s)) => net.edge(s.edge).width_m,
+            None => self.route.road_width_m(),
+        }
+    }
+
+    /// Road behind the start point the formation can use (m): on a route
+    /// back to its beginning (loops too, so distances stay positive), in
+    /// free ride back to the start edge's end; none in a route ride on the
+    /// road graph (the route begins there).
+    fn room_behind(&self) -> f64 {
+        match &self.free {
+            Some(_) if self.plan.is_some() => 0.0,
+            Some((net, s)) => {
+                let len = net.geometry(s.edge).length();
+                if s.forward {
+                    s.offset_m.max(0.0)
+                } else {
+                    (len - s.offset_m).max(0.0)
+                }
+            }
+            None => self.start_m,
+        }
+    }
+
+    /// Road ahead of the start point the formation may be moved onto (m).
+    fn room_ahead(&self) -> f64 {
+        match &self.free {
+            Some(_) if self.plan.is_some() => self.plan.as_ref().map_or(0.0, |p| p.length_m()),
+            Some((net, s)) => {
+                let len = net.geometry(s.edge).length();
+                if s.forward {
+                    (len - 1.0 - s.offset_m).max(0.0)
+                } else {
+                    (s.offset_m - 1.0).max(0.0)
+                }
+            }
+            None if self.route.is_loop() => f64::INFINITY,
+            None => (self.route.length() - self.start_m).max(0.0),
+        }
+    }
+
+    /// Where a rider `back` metres behind the formation's front starts:
+    /// their free-ride path (starting there, on the start edge; in a route
+    /// ride at the route's start) and their distance. Never before the road
+    /// begins.
+    fn start_spot(&self, back: f64) -> (Option<RidePath>, f64) {
+        let behind = (back - self.front_shift_m).min(self.room_behind());
+        match &self.free {
+            Some((net, _)) if self.plan.is_some() => {
+                let plan = self.plan.as_ref().expect("checked");
+                let d = (-behind).max(0.0);
+                let mut p = RidePath::on_route(net.clone(), plan.clone(), 0.0, 0);
+                p.extend(d, &mut |j| j.default);
+                (Some(p), d)
+            }
+            Some((net, s)) => {
+                let offset = if s.forward {
+                    s.offset_m - behind
+                } else {
+                    s.offset_m + behind
+                };
+                let mut p = RidePath::start(net.clone(), s.edge, offset, s.forward, 0.0, 0);
+                p.extend(0.0, &mut |j| j.default);
+                (Some(p), 0.0)
+            }
+            None => (None, (self.start_m - behind).max(0.0)),
+        }
     }
 
     pub fn remove_rider(&mut self, id: RiderId) -> bool {
@@ -687,14 +809,99 @@ mod tests {
 
     #[test]
     fn riders_get_separate_lanes() {
-        let mut s = Session::new(Route::test_loop());
-        let offsets: Vec<f64> = (0..3)
+        let mut s = Session::new(Route::test_loop()).with_start(100.0);
+        let spots: Vec<(f64, f64)> = (0..3)
             .map(|i| {
                 let id = s.add_bot(format!("b{i}"), 100.0);
-                s.rider_state(id).unwrap().lateral_offset
+                let st = s.rider_state(id).unwrap();
+                (st.distance, st.lateral_offset)
             })
             .collect();
-        assert_eq!(offsets, vec![0.0, -1.2, 1.2]);
+        // Bots leave the front row's centre to the client rider.
+        assert_eq!(spots, vec![(100.0, -1.2), (100.0, 1.2), (97.0, 0.0)]);
+        let me = s.add_rider("me", RiderProfile::default());
+        let st = s.rider_state(me).unwrap();
+        assert_eq!((st.distance, st.lateral_offset), (100.0, 0.0));
+    }
+
+    /// (distance, lateral offset) of every rider.
+    fn spots(s: &Session) -> Vec<(f64, f64)> {
+        s.snapshot()
+            .iter()
+            .map(|r| (r.state.distance, r.state.lateral_offset))
+            .collect()
+    }
+
+    fn assert_formation(spots: &[(f64, f64)], width: f64) {
+        let limit = physics::lateral_limit(width);
+        for (i, a) in spots.iter().enumerate() {
+            assert!(a.1.abs() < limit, "{a:?} off the road");
+            assert!(a.0 >= 0.0, "{a:?}");
+            for b in &spots[i + 1..] {
+                // Distinct spots, at least a rider's width apart sideways or
+                // a row apart along the road.
+                assert!(
+                    (a.0 - b.0).abs() >= FORMATION_ROW_GAP_M - 1e-9 || (a.1 - b.1).abs() >= 1.0,
+                    "{a:?} {b:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn start_formation_scales_in_rows_behind_the_start() {
+        let mut s = Session::new(Route::test_loop()).with_start(500.0);
+        for i in 0..20 {
+            s.add_bot(format!("b{i}"), 150.0);
+        }
+        s.add_rider("me", RiderProfile::default());
+        let spots = spots(&s);
+        assert_formation(&spots, Route::test_loop().road_width_m());
+        // Three a row on the 7 m test road, rows 3 m apart behind the start.
+        assert!(spots.iter().all(|&(d, _)| d <= 500.0));
+        assert_eq!(spots.iter().filter(|&&(d, _)| d == 500.0).count(), 3);
+        let last = spots.iter().map(|p| p.0).fold(f64::INFINITY, f64::min);
+        assert_eq!(last, 500.0 - 6.0 * FORMATION_ROW_GAP_M);
+        // Deterministic.
+        let mut again = Session::new(Route::test_loop()).with_start(500.0);
+        for i in 0..20 {
+            again.add_bot(format!("b{i}"), 150.0);
+        }
+        again.add_rider("me", RiderProfile::default());
+        assert_eq!(super::tests::spots(&again), spots);
+    }
+
+    #[test]
+    fn start_formation_shifts_forward_at_the_route_start() {
+        // Starting at 0: the rows go forward from the beginning instead.
+        let mut s = Session::new(Route::test_loop());
+        let bots: Vec<RiderId> = (0..10).map(|i| s.add_bot(format!("b{i}"), 150.0)).collect();
+        let me = s.add_rider("me", RiderProfile::default());
+        let spots = spots(&s);
+        assert_formation(&spots, Route::test_loop().road_width_m());
+        // 11 riders, slots 0..=10: four rows, the last one at 0.
+        let first = s.rider_state(bots[0]).unwrap().distance;
+        assert_eq!(first, 3.0 * FORMATION_ROW_GAP_M);
+        assert_eq!(s.rider_state(me).unwrap().distance, first);
+        assert_eq!(spots.iter().map(|p| p.0).fold(f64::INFINITY, f64::min), 0.0);
+    }
+
+    #[test]
+    fn narrow_roads_get_fewer_riders_per_row() {
+        assert_eq!(formation_row(7.0).len(), 3);
+        assert_eq!(formation_row(3.0).len(), 2);
+        assert_eq!(formation_row(2.0), vec![0.0]);
+        for w in [1.0, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 7.0, 12.0] {
+            let limit = physics::lateral_limit(w);
+            for l in formation_row(w) {
+                assert!(l.abs() <= (limit - 0.3).max(0.0) + 1e-9, "{w} {l}");
+            }
+            let (back, _) = formation_slot(7, w);
+            assert_eq!(
+                back,
+                (7 / formation_row(w).len()) as f64 * FORMATION_ROW_GAP_M
+            );
+        }
     }
 
     #[test]
@@ -918,6 +1125,75 @@ mod tests {
     }
 
     #[test]
+    fn free_ride_formation_starts_behind_on_the_start_edge() {
+        let mut s = free_session();
+        let bots: Vec<RiderId> = (0..10).map(|i| s.add_bot(format!("b{i}"), 200.0)).collect();
+        let me = s.add_rider("me", RiderProfile::default());
+        let width = s
+            .network()
+            .unwrap()
+            .edge(s.free.as_ref().unwrap().1.edge)
+            .width_m;
+        // Everyone at distance 0 of their own path; the paths start on
+        // the start edge at the formation's places.
+        let mut at: Vec<(f64, f64)> = Vec::new();
+        for &id in bots.iter().chain([&me]) {
+            let st = s.rider_state(id).unwrap();
+            assert_eq!(st.distance, 0.0);
+            let (e, fwd, o) = s.path(id).unwrap().locate(0.0).unwrap();
+            assert_eq!(e, s.free.as_ref().unwrap().1.edge);
+            assert!(fwd);
+            at.push((o, st.lateral_offset));
+        }
+        assert_formation(&at, width);
+        // Front row at the start point (50 m), the client in its centre.
+        assert_eq!(at[10], (50.0, 0.0));
+        assert!(at.iter().all(|&(o, _)| (41.0..=50.0).contains(&o)));
+        // They ride off without trouble.
+        for _ in 0..(30 * 50) {
+            s.step();
+        }
+        for &b in &bots {
+            assert!(s.rider_state(b).unwrap().distance > 100.0);
+        }
+    }
+
+    #[test]
+    fn free_ride_formation_moves_forward_near_the_edge_start() {
+        let net = grid_network();
+        let edge = (0..net.graph().edges.len())
+            .find(|&e| net.edge(e).from.0 == 1 && net.edge(e).to.0 == 2)
+            .unwrap();
+        let mut s = Session::free_ride(
+            net,
+            FreeRideStart {
+                edge,
+                offset_m: 2.0,
+                forward: true,
+            },
+        );
+        for i in 0..9 {
+            s.add_bot(format!("b{i}"), 200.0);
+        }
+        let at: Vec<(f64, f64)> = s
+            .snapshot()
+            .iter()
+            .map(|r| {
+                let (_, _, o) = s.path(r.id).unwrap().locate(0.0).unwrap();
+                (o, r.state.lateral_offset)
+            })
+            .collect();
+        assert_formation(&at, s.network().unwrap().edge(edge).width_m);
+        // Slots 1..=9: four rows, the last one at the edge's start.
+        let min = at.iter().map(|p| p.0).fold(f64::INFINITY, f64::min);
+        assert!(min.abs() < 1e-9, "{at:?}");
+        // The path changes broadcast the final places.
+        let changes = s.take_path_changes();
+        assert_eq!(changes.len(), 9);
+        assert!(changes.iter().all(|c| c.reset && c.start_m == 0.0));
+    }
+
+    #[test]
     fn route_ride_bots_stay_on_the_route_riders_may_leave_and_rejoin() {
         let net = grid_network();
         let e = |a: u32, b: u32| {
@@ -993,6 +1269,33 @@ mod tests {
         let mut f = free_session();
         let r = f.add_rider("r", RiderProfile::default());
         assert!(f.rejoin_route(r, None).is_err());
+    }
+
+    #[test]
+    fn route_ride_formation_starts_on_the_route_from_its_start() {
+        let net = grid_network();
+        let e = |a: u32, b: u32| {
+            let i = (0..net.graph().edges.len())
+                .find(|&i| (net.edge(i).from.0, net.edge(i).to.0) == (a, b))
+                .unwrap();
+            Segment::whole(&net, i, true)
+        };
+        let plan = RoutePlan::new(&net, "row", vec![e(0, 1), e(1, 2), e(2, 3)], false).unwrap();
+        let mut s = Session::route_ride(net.clone(), Arc::new(plan));
+        let bots: Vec<RiderId> = (0..9).map(|i| s.add_bot(format!("b{i}"), 200.0)).collect();
+        let me = s.add_rider("me", RiderProfile::default());
+        let spots = spots(&s);
+        assert_formation(&spots, 6.0);
+        // The route begins at the start point: the rows go forward from
+        // it, the client in the front row's centre, everyone on the route.
+        assert_eq!(spots.iter().map(|p| p.0).fold(f64::INFINITY, f64::min), 0.0);
+        let front = 3.0 * FORMATION_ROW_GAP_M;
+        let st = s.rider_state(me).unwrap();
+        assert_eq!((st.distance, st.lateral_offset), (front, 0.0));
+        for &id in bots.iter().chain([&me]) {
+            let d = s.rider_state(id).unwrap().distance;
+            assert!(s.path(id).unwrap().on_route_at(d));
+        }
     }
 
     #[test]

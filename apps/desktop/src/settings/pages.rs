@@ -9,8 +9,8 @@
 //! Controls / Trainer / Strava / Display / Riders and for the Workshop
 //! renders [`rows`] for its [`Page`], maps the abstract actions Left /
 //! Right / Confirm onto [`Row::left`] / [`Row::right`] / [`Row::confirm`]
-//! and queues the command lines with `ConsoleState::queue`. Until then the
-//! egui panel in `panel.rs` (`settings.panel`) draws the same rows.
+//! and queues the command lines with `ConsoleState::queue`; `menu::model`
+//! does this ([`crate::menu::model::Page::Sub`]).
 
 use super::registry::{Kind, Settings, def};
 use super::riders::Riders;
@@ -49,22 +49,6 @@ impl Page {
             Self::Rider(_) => "Rider",
             Self::Workshop => "Workshop",
         }
-    }
-
-    /// The page name in `settings.panel <page>`.
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Controls => "controls",
-            Self::Trainer => "trainer",
-            Self::Strava => "strava",
-            Self::Display => "display",
-            Self::Riders | Self::Rider(_) => "riders",
-            Self::Workshop => "workshop",
-        }
-    }
-
-    pub fn parse(name: &str) -> Option<Self> {
-        Self::TABS.into_iter().find(|p| p.name() == name)
     }
 
     /// One page up (the rider editor goes back to the list).
@@ -442,11 +426,7 @@ mod tests {
     }
 
     #[test]
-    fn page_names_and_parents() {
-        for p in Page::TABS {
-            assert_eq!(Page::parse(p.name()), Some(p));
-        }
-        assert_eq!(Page::parse("nope"), None);
+    fn page_parents() {
         assert_eq!(Page::Rider(2).parent(), Some(Page::Riders));
         assert_eq!(Page::Workshop.parent(), None);
     }

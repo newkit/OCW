@@ -45,6 +45,8 @@ connect_timeout_s = 10
 #                windows: "interactive-task" (scheduled task in the logged-in session)
 #                macos: "aqua" (logged-in GUI session via launchctl asuser)
 # slots          build slots (optional, see [defaults]; e.g. 4 on a 32 GB box)
+# jobs           cargo build jobs (optional; default: all cores on the main
+#                checkout, 4 on branch checkouts); e.g. 2 on an 8 GB Windows box
 # notes          free text
 
 [[machine]]
