@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Open Cycling World logo: a unicorn riding a bike over a rainbow.
+     Original artwork for this project, licensed like the code (MIT OR Apache-2.0). -->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7fc8ff"/>
+      <stop offset="1" stop-color="#d9c8ff"/>
+    </linearGradient>
+    <linearGradient id="horn" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#f7b500"/>
+      <stop offset="1" stop-color="#fff1a8"/>
+    </linearGradient>
+    <clipPath id="tile">
+      <rect x="16" y="16" width="480" height="480" rx="96"/>
+    </clipPath>
+  </defs>
+
+  <!-- Tile -->
+  <rect x="16" y="16" width="480" height="480" rx="96" fill="url(#sky)"/>
+
+  <g clip-path="url(#tile)">
+    <!-- Sun -->
+    <circle cx="410" cy="110" r="42" fill="#fff3b0" opacity="0.9"/>
+
+    <!-- Rainbow: concentric arcs around (256, 500) -->
+    <g fill="none" stroke-width="22">
+      <path d="M 26 500 A 230 230 0 0 1 486 500" stroke="#ff3b4e"/>
+      <path d="M 48 500 A 208 208 0 0 1 464 500" stroke="#ff9a1f"/>
+      <path d="M 70 500 A 186 186 0 0 1 442 500" stroke="#ffe11f"/>
+      <path d="M 92 500 A 164 164 0 0 1 420 500" stroke="#3fd16b"/>
+      <path d="M 114 500 A 142 142 0 0 1 398 500" stroke="#2f8cff"/>
+      <path d="M 136 500 A 120 120 0 0 1 376 500" stroke="#8a4dff"/>
+    </g>
+
+    <!-- Clouds at the rainbow's feet -->
+    <g fill="#ffffff">
+      <circle cx="60" cy="492" r="34"/>
+      <circle cx="104" cy="504" r="30"/>
+      <circle cx="30" cy="514" r="26"/>
+      <circle cx="452" cy="492" r="34"/>
+      <circle cx="408" cy="504" r="30"/>
+      <circle cx="482" cy="514" r="26"/>
+    </g>
+  </g>
+
+  <g transform="translate(0 25)">
+  <!-- Bike, riding on the top of the rainbow (outer edge at y = 259) -->
+  <g stroke="#2b2b3a" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <!-- Wheels -->
+    <circle cx="196" cy="196" r="38" stroke-width="9"/>
+    <circle cx="316" cy="196" r="38" stroke-width="9"/>
+    <circle cx="196" cy="196" r="5" fill="#2b2b3a" stroke-width="0"/>
+    <circle cx="316" cy="196" r="5" fill="#2b2b3a" stroke-width="0"/>
+    <!-- Frame -->
+    <g stroke="#ff1472" stroke-width="9">
+      <path d="M 196 196 L 252 196 L 230 140 Z"/>
+      <path d="M 252 196 L 298 140 L 230 140"/>
+      <path d="M 298 140 L 316 196"/>
+    </g>
+    <!-- Seat post, saddle, handlebar -->
+    <path d="M 230 140 L 224 124" stroke-width="7"/>
+    <path d="M 208 122 L 238 122" stroke-width="9"/>
+    <path d="M 298 140 L 302 118 L 318 112" stroke-width="7"/>
+    <!-- Crank and pedal -->
+    <path d="M 252 196 L 262 216" stroke-width="6"/>
+    <path d="M 254 218 L 272 218" stroke-width="6"/>
+  </g>
+
+  <!-- Unicorn -->
+  <g stroke="#3a2f55" stroke-width="4" stroke-linejoin="round" stroke-linecap="round">
+    <!-- Tail (rainbow strands) -->
+    <path d="M 196 96 C 160 92 146 120 150 150 C 158 128 172 118 192 112 Z" fill="#ff7ab8"/>
+    <path d="M 194 104 C 166 106 160 132 166 158 C 172 136 182 126 198 118 Z" fill="#b78bff"/>
+    <!-- Back leg to the pedal -->
+    <path d="M 226 112 L 246 160 L 262 214" fill="none" stroke-width="16" stroke="#3a2f55"/>
+    <path d="M 226 112 L 246 160 L 262 214" fill="none" stroke-width="10" stroke="#ffffff"/>
+    <!-- Body -->
+    <ellipse cx="238" cy="98" rx="46" ry="30" fill="#ffffff"/>
+    <!-- Front leg (arm) to the handlebar -->
+    <path d="M 262 96 L 292 112 L 316 112" fill="none" stroke-width="15" stroke="#3a2f55"/>
+    <path d="M 262 96 L 292 112 L 316 112" fill="none" stroke-width="9" stroke="#ffffff"/>
+    <!-- Hooves -->
+    <circle cx="263" cy="216" r="7" fill="#8a7aa8"/>
+    <circle cx="318" cy="112" r="7" fill="#8a7aa8"/>
+    <!-- Neck and head -->
+    <path d="M 262 82 C 270 62 280 52 292 46 L 312 62 C 300 70 290 86 282 100 Z" fill="#ffffff"/>
+    <path d="M 286 40 C 300 30 326 34 340 48 C 350 58 348 72 336 74 C 322 76 308 70 296 66 C 286 62 280 50 286 40 Z" fill="#ffffff"/>
+    <!-- Ear -->
+    <path d="M 292 38 L 290 20 L 304 32 Z" fill="#ffffff"/>
+    <!-- Horn -->
+    <path d="M 300 32 L 326 2 L 312 38 Z" fill="url(#horn)" stroke="#c98a00"/>
+    <path d="M 306 26 L 316 24 M 310 18 L 319 15" stroke="#c98a00" stroke-width="2.5" fill="none"/>
+    <!-- Mane -->
+    <path d="M 288 38 C 276 44 268 58 262 76 C 276 66 280 60 290 54 Z" fill="#ff7ab8"/>
+    <path d="M 284 48 C 272 58 264 72 258 88 C 272 80 276 72 286 64 Z" fill="#8fd3ff"/>
+    <path d="M 278 60 C 268 70 262 84 256 98 C 268 92 272 84 280 76 Z" fill="#b78bff"/>
+    <!-- Eye, cheek, nostril -->
+    <circle cx="318" cy="50" r="4.5" fill="#3a2f55" stroke-width="0"/>
+    <circle cx="319.5" cy="48.5" r="1.4" fill="#ffffff" stroke-width="0"/>
+    <circle cx="326" cy="62" r="5" fill="#ffb3cf" stroke-width="0"/>
+    <circle cx="340" cy="62" r="1.8" fill="#3a2f55" stroke-width="0"/>
+    <!-- Helmet strap feel: a pink cycling cap -->
+    <path d="M 296 40 C 304 30 320 30 328 38 L 334 40 L 296 44 Z" fill="#ff1472" stroke="#3a2f55" stroke-width="3"/>
+  </g>
+</g>
+</svg>

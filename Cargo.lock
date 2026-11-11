@@ -4808,6 +4808,7 @@ dependencies = [
  "raw-window-handle",
  "serde",
  "toml",
+ "winit",
 ]
 
 [[package]]

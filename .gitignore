@@ -22,3 +22,8 @@ known_hosts
 
 # Downloaded source data (OSM extracts, elevation tiles), see scripts/fetch-pilot.sh.
 /data/
+
+# Artwork renders are source assets (icons), not test output.
+!artwork/**/*.png
+# Agent worktrees.
+.claude/worktrees/

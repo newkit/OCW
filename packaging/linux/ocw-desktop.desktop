@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Open Cycling World
+GenericName=Indoor cycling
+Comment=Ride your smart trainer through a world built from OpenStreetMap
+Exec=ocw-desktop
+Icon=ocw-desktop
+Terminal=false
+Categories=Game;SportsGame;
+Keywords=cycling;trainer;bike;zwift;
+StartupWMClass=ocw-desktop

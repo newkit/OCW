@@ -10,6 +10,7 @@ mod automation;
 mod client;
 mod connection;
 mod devices;
+mod icon;
 mod input;
 mod known_devices;
 mod monitor;
@@ -141,6 +142,16 @@ fn load_route_file(path: &std::path::Path) -> (Route, Option<ocw_world::Elevatio
 
 fn main() -> AppExit {
     let args = Args::parse();
+    // Desktop entry and icons for menus, docks and file managers (not for
+    // the headless screenshot / capture runs).
+    #[cfg(target_os = "linux")]
+    if args.screenshot.is_none() && args.capture.is_none() {
+        match icon::install_desktop_integration() {
+            Ok(0) => {}
+            Ok(n) => info!("desktop integration: {n} files written"),
+            Err(e) => warn!("desktop integration: {e}"),
+        }
+    }
     let (route, terrain_base) = match &args.route_file {
         Some(path) => load_route_file(path),
         None => (
@@ -166,6 +177,8 @@ fn main() -> AppExit {
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
             title: "Open Cycling World".into(),
+            // App id (Wayland) / WM_CLASS (X11): the desktop entry and its icon.
+            name: Some(icon::APP_ID.into()),
             resolution: WindowResolution::new(args.window.0, args.window.1),
             present_mode: PresentMode::AutoVsync,
             mode: if args.fullscreen {
@@ -192,6 +205,7 @@ fn main() -> AppExit {
         automation::AutomationPlugin,
         platform::PlatformPlugin,
         monitor::MonitorPlugin,
+        icon::IconPlugin,
     ))
     .add_systems(Startup, startup_commands)
     .add_systems(Update, timed_commands);
