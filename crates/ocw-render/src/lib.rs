@@ -11,6 +11,7 @@ pub mod junction;
 pub mod menu;
 pub mod package;
 pub mod riders;
+pub mod see_through;
 pub mod terrain;
 pub mod world;
 
@@ -46,6 +47,12 @@ pub struct RideView {
     /// Real terrain around the route (from a route file); `None` = terrain
     /// generated from the route's own elevation (test routes).
     pub terrain_base: Option<ocw_world::ElevationGrid>,
+    /// A video recording is running: its length so far (s), for the "REC"
+    /// indicator.
+    pub recording_s: Option<f64>,
+    /// A short app message shown under the REC indicator for a few seconds
+    /// (e.g. "Video saved: <file>").
+    pub app_message: Option<String>,
     /// The local rider's GPS position (lat °, lon °, altitude m), if the
     /// ride has a geographic origin (route files, world packages).
     pub position: Option<(f64, f64, f64)>,
@@ -63,6 +70,8 @@ impl RideView {
             free_ride: false,
             junction: None,
             notice: None,
+            recording_s: None,
+            app_message: None,
             position: None,
             route_status: None,
         }
@@ -111,46 +120,10 @@ pub struct ExitView {
 }
 
 /// Ground height lookup (terrain or world package) at local (x, z), for
-/// keeping the camera above the ground.
+/// keeping the camera above the ground (the terrain is camera-solid, see
+/// [`camera::CameraInteraction`]).
 #[derive(Resource, Clone)]
 pub struct Ground(pub std::sync::Arc<dyn Fn(f64, f64) -> Option<f64> + Send + Sync>);
-
-/// A tree as an obstacle (for the camera): a cone crown over a trunk.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct TreeCone {
-    /// Foot of the trunk.
-    pub base: Vec3,
-    /// Height of the crown's bottom and tip above `base`.
-    pub crown_bottom: f32,
-    pub crown_top: f32,
-    /// Crown radius at its bottom.
-    pub radius: f32,
-}
-
-impl TreeCone {
-    /// Height of the crown's surface above the point (x, z) (world), if the
-    /// crown covers it: the cone's height at that distance from the trunk.
-    pub fn surface_at(&self, x: f32, z: f32) -> Option<f32> {
-        let d = ((x - self.base.x).powi(2) + (z - self.base.z).powi(2)).sqrt();
-        (d < self.radius).then(|| {
-            self.base.y
-                + self.crown_bottom
-                + (self.crown_top - self.crown_bottom) * (1.0 - d / self.radius)
-        })
-    }
-
-    /// Crown radius at height `y` (world), `None` outside the crown.
-    pub fn radius_at(&self, y: f32) -> Option<f32> {
-        let h = y - self.base.y;
-        (self.crown_bottom..=self.crown_top)
-            .contains(&h)
-            .then(|| self.radius * (self.crown_top - h) / (self.crown_top - self.crown_bottom))
-    }
-}
-
-/// The trees currently in the world, by tile (route mode: one entry).
-#[derive(Resource, Debug, Default)]
-pub struct Trees(pub std::collections::HashMap<(i32, i32), Vec<TreeCone>>);
 
 /// One rider to draw.
 #[derive(Debug, Clone)]
@@ -169,7 +142,8 @@ pub struct OcwRenderPlugins;
 
 impl Plugin for OcwRenderPlugins {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Trees>().add_plugins((
+        app.add_plugins((
+            see_through::SeeThroughPlugin,
             world::WorldPlugin,
             package::PackagePlugin,
             riders::RidersPlugin,

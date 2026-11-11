@@ -226,8 +226,10 @@ Downloads go to the cache (`~/.local/share/ocw/worlds/<id>/<version>/`,
 large download, interrupted downloads resume (HTTP range requests), and a
 package is installed only when all its files match the manifest.
 - Everyone (bots too) starts at a random point of the route
-  (`--random-start false` starts at 0). Bots ride at 85–250 W and push harder
-  uphill.
+  (`--random-start false` starts at 0), in rows of up to three behind you
+  (you start in the front row's centre). Ten bots by default (`--bots N`),
+  at twelve different strengths (85–280 W) so the field spreads out; they
+  push harder uphill.
 
 **Trainer and sensors**
 
@@ -243,10 +245,15 @@ package is installed only when all its files match the manifest.
 - ↑ adds power on top of any device (25 W per press), ↓ stops (power 0 and
   brake).
 
-**Videos:** V starts and stops recording the window as an MP4 (H.264,
-25 fps) into `~/Videos/OCW/` (or `~/.local/share/ocw/videos/`); slow frames
-are repeated so the video keeps real time. Needs `ffmpeg` (`make deps`
-installs it).
+**Videos:** V starts recording the window as an MP4 (H.264, 25 fps) into
+`~/Videos/OCW/` (or `~/.local/share/ocw/videos/`), V again stops it (ignored
+while the console is open; console: `video start|stop`). While recording,
+the HUD shows a small red "REC m:ss" at the top right; after stopping,
+"Video saved: <file>" for a few seconds. Windows wider than 1920 px are
+scaled down; ticks without a new image repeat the last one so the video
+keeps real time (on the kiosk test machine all 25 images per second are
+new; a slow screenshot readback can lower that elsewhere – `make video`
+records with a fixed time step instead). Needs `ffmpeg` (`make deps` installs it).
 
 **Rides and Strava** (spec §2.8)
 
@@ -266,7 +273,7 @@ installs it).
 |---|---|
 | `--name NAME` | Display name of your rider (default `Rider`) |
 | `--power W` | Initial power of the virtual trainer (default 200) |
-| `--bots N` | Number of test riders (default 4) |
+| `--bots N` | Number of test riders (default 10; they start in rows of up to three behind you) |
 | `--route hills\|loop` | Built-in test route (default `hills`) |
 | `--route NAME\|FILE` (with `--world`) | Ride a route of the package by name, or an `ocw-graph-route` file, on the road graph |
 | `--route-gpx PATH` | Ride a GPX track or route, matched onto the `--world` package's roads at the start |
@@ -373,7 +380,7 @@ cargo run --release -p ocw-server -- --world data/pilot/liechtenstein.ocwpkg \
 ```
 
 It prints the riders' positions and speeds while it runs. Options:
-`--bots N` (test riders, default 3), `--seconds S` (0 = until stopped with
+`--bots N` (test riders, default 10), `--seconds S` (0 = until stopped with
 Ctrl+C), `--fast` (no real-time pacing), `--world PKG|ID` and `--seed N` (free
 ride on a world package's road graph, start point seed; verified like in the
 desktop app, `--allow-unsigned` and `--trust-root FILE` as there), `--route NAME`
@@ -504,7 +511,19 @@ scripts/deploy-test.sh <name>                                  # release build f
   build needs ~4–5 GB; the others wait and take whichever slot frees first.
   Set `slots = N` per machine in `config/machines.toml` (or `[defaults]`), or
   `OCW_REMOTE_SLOTS=N` for one call. Branch checkouts use 4 build jobs
-  (`OCW_REMOTE_JOBS`).
+  (`OCW_REMOTE_JOBS`); `jobs = N` per machine caps them on main and branch
+  checkouts.
+- Windows (measured on 6 cores / 8 GB): the first `cargo build --workspace`
+  takes about 50 min, `cargo clippy --workspace --all-targets` 10 min, `cargo
+  test --workspace` 5 min on top. Each MSVC link of a Bevy binary (debug
+  info) needs ~5 GB, so 3 jobs ran out of memory (`LLVM ERROR: out of
+  memory`): set `jobs = 2` for an 8 GB machine. Commands run in PowerShell
+  5.1: chain with `;` (not `&&`), and leave out `2>&1` (it turns cargo's
+  stderr into error records); filter output locally instead
+  (`remote.sh … run 'cargo test --workspace' 2>&1 | grep …`). The exit code
+  is that of the last native program. GUI programs cannot open windows over
+  SSH (session 0); GUI runs need the scheduled-task approach (`display =
+  "interactive-task"`, not set up yet).
 - `python3 tools/build-dashboard/dashboard.py` shows each machine's load, its
   running tasks, the queue of runs waiting for a slot and the slots in use
   (every run leaves a task marker while it runs); on

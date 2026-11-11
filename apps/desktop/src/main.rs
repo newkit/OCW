@@ -71,7 +71,7 @@ pub struct Args {
     #[arg(long, default_value_t = 200.0)]
     pub power: f64,
     /// Number of test riders on the local server.
-    #[arg(long, default_value_t = 4)]
+    #[arg(long, default_value_t = 10)]
     pub bots: u32,
     /// Window size as WIDTHxHEIGHT.
     #[arg(long, default_value = "1280x720", value_parser = parse_size)]
@@ -574,6 +574,12 @@ fn startup_commands(args: Res<Args>, mut console: ResMut<ConsoleState>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ten_bots_by_default() {
+        assert_eq!(Args::parse_from(["ocw-desktop"]).bots, 10);
+        assert_eq!(Args::parse_from(["ocw-desktop", "--bots", "2"]).bots, 2);
+    }
 
     #[test]
     fn free_ride_arguments() {

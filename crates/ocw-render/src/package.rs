@@ -28,6 +28,8 @@ use ocw_world::landuse::{LandClass, LandUseTile};
 use ocw_world::package::{RoadStrip, Tile, TileKey, WorldPackage};
 
 use crate::RideView;
+use crate::camera::{CameraInteraction, CameraObstacles, ObstacleLayer, SolidFootprints};
+use crate::see_through::{SeeThroughMaterial, see_through};
 
 /// Tiles kept around the rider (radius in tiles; 2 = 5 × 5).
 pub const STREAM_RADIUS: i32 = 2;
@@ -90,8 +92,8 @@ pub struct TileMeshes {
     pub water: MeshArrays,
     pub trees: MeshArrays,
     pub buildings: MeshArrays,
-    /// The same trees as obstacles for the camera.
-    pub tree_cones: Vec<crate::TreeCone>,
+    /// The buildings as camera-solid obstacles.
+    pub solid: SolidFootprints,
 }
 
 /// An sRGB RGBA colour map with its mip chain (level 0 first).
@@ -270,19 +272,6 @@ pub type TreeSite = (Vec3, f32);
 pub fn tile_landuse(pkg: &WorldPackage, key: TileKey) -> Option<(&LandUseTile, u32)> {
     let l = pkg.landuse.as_ref()?;
     Some((l.tiles.get(&key)?, l.cells))
-}
-
-/// The trees of a tile as obstacles (see [`tree_arrays`]).
-pub fn tree_cones(sites: &[TreeSite]) -> Vec<crate::TreeCone> {
-    sites
-        .iter()
-        .map(|&(base, s)| crate::TreeCone {
-            base,
-            crown_bottom: CROWN.0 * s,
-            crown_top: CROWN.1 * s,
-            radius: CROWN.2 * s,
-        })
-        .collect()
 }
 
 /// Tree meshes (trunk and cone crown, crown shades varying per tree).
@@ -794,15 +783,25 @@ pub fn building_arrays(buildings: &[Building]) -> MeshArrays {
     m
 }
 
+/// The buildings as camera-solid prisms: the footprint up to the ridge
+/// (gable roofs) or the flat roof.
+pub fn building_footprints(buildings: &[Building]) -> SolidFootprints {
+    SolidFootprints::new(buildings.iter().map(|b| {
+        let top = match b.roof {
+            Roof::Flat => b.eave_y,
+            Roof::Gabled { height_m } => b.eave_y + height_m,
+        };
+        (b.outline.clone(), top)
+    }))
+}
+
 pub fn build_tile_meshes(pkg: &WorldPackage, key: TileKey) -> Option<TileMeshes> {
     let tile = pkg.tiles.get(&key)?;
     let sites = tree_sites(pkg, tile);
     let lu = tile_landuse(pkg, key);
-    let buildings = pkg
-        .buildings
-        .as_ref()
-        .and_then(|b| b.get(&key))
-        .map_or_else(MeshArrays::default, |b| building_arrays(b));
+    let tile_buildings = pkg.buildings.as_ref().and_then(|b| b.get(&key));
+    let buildings = tile_buildings.map_or_else(MeshArrays::default, |b| building_arrays(b));
+    let solid = tile_buildings.map_or_else(SolidFootprints::default, |b| building_footprints(b));
     Some(TileMeshes {
         key,
         terrain: terrain_arrays(pkg, tile),
@@ -811,23 +810,33 @@ pub fn build_tile_meshes(pkg: &WorldPackage, key: TileKey) -> Option<TileMeshes>
         water: lu.map_or_else(MeshArrays::default, |(lu, _)| water_arrays(pkg, tile, lu)),
         trees: tree_arrays(&sites),
         buildings,
-        tree_cones: tree_cones(&sites),
+        solid,
     })
 }
 
 #[derive(Resource)]
 struct PackageMaterials {
+    /// Terrain and roads (camera-solid).
     vertex_coloured: Handle<StandardMaterial>,
+    /// Trees: the same, but see-through for the camera (they fade out where
+    /// they block the view instead of moving it).
+    trees: Handle<SeeThroughMaterial>,
     water: Handle<StandardMaterial>,
 }
 
-fn setup_materials(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>) {
+fn setup_materials(
+    mut commands: Commands,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut tree_materials: ResMut<Assets<SeeThroughMaterial>>,
+) {
+    let vertex_coloured = StandardMaterial {
+        base_color: Color::WHITE,
+        perceptual_roughness: 1.0,
+        ..default()
+    };
     commands.insert_resource(PackageMaterials {
-        vertex_coloured: materials.add(StandardMaterial {
-            base_color: Color::WHITE,
-            perceptual_roughness: 1.0,
-            ..default()
-        }),
+        trees: tree_materials.add(see_through(vertex_coloured.clone())),
+        vertex_coloured: materials.add(vertex_coloured),
         water: materials.add(StandardMaterial {
             base_color: Color::WHITE,
             perceptual_roughness: 0.08,
@@ -858,7 +867,7 @@ fn stream_tiles(
     world: Res<PackageWorld>,
     view: Res<RideView>,
     mut streamer: ResMut<TileStreamer>,
-    mut trees: ResMut<crate::Trees>,
+    mut obstacles: ResMut<CameraObstacles>,
 ) {
     let pkg = &world.0;
     let Some(center) = rider_tile(&view, pkg) else {
@@ -903,7 +912,7 @@ fn stream_tiles(
     for key in far {
         if let Some(e) = streamer.loaded.remove(&key) {
             commands.entity(e).despawn();
-            trees.0.remove(&(key.x, key.z));
+            obstacles.remove_tile((key.x, key.z));
         }
     }
 }
@@ -915,14 +924,24 @@ fn upload_tiles(
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
     mut standard: ResMut<Assets<StandardMaterial>>,
-    mut trees: ResMut<crate::Trees>,
+    mut obstacles: ResMut<CameraObstacles>,
 ) {
     let Some(mut t) = streamer.ready.pop_front() else {
         return;
     };
-    trees
-        .0
-        .insert((t.key.x, t.key.z), std::mem::take(&mut t.tree_cones));
+    // Buildings are camera-solid: the camera stays out of and above them.
+    let tile = (t.key.x, t.key.z);
+    obstacles.remove_tile(tile);
+    let solid = std::mem::take(&mut t.solid);
+    if !solid.is_empty() {
+        obstacles.insert(
+            ObstacleLayer {
+                kind: "buildings",
+                tile,
+            },
+            move |x, z| solid.top_at(x, z),
+        );
+    }
     let mat = materials.vertex_coloured.clone();
     // The tile's own terrain material with its land-use colour map (freed
     // with the tile's entities).
@@ -946,6 +965,7 @@ fn upload_tiles(
                 Mesh3d(meshes.add(t.terrain.mesh())),
                 MeshMaterial3d(terrain_mat),
                 NotShadowCaster,
+                CameraInteraction::Solid,
             ));
             if !t.water.indices.is_empty() {
                 c.spawn((
@@ -958,17 +978,23 @@ fn upload_tiles(
                 c.spawn((
                     Mesh3d(meshes.add(t.buildings.mesh())),
                     MeshMaterial3d(mat.clone()),
+                    CameraInteraction::Solid,
                 ));
             }
             if !t.roads.indices.is_empty() {
                 c.spawn((
                     Mesh3d(meshes.add(t.roads.mesh())),
-                    MeshMaterial3d(mat.clone()),
+                    MeshMaterial3d(mat),
                     NotShadowCaster,
+                    CameraInteraction::Solid,
                 ));
             }
             if !t.trees.indices.is_empty() {
-                c.spawn((Mesh3d(meshes.add(t.trees.mesh())), MeshMaterial3d(mat)));
+                c.spawn((
+                    Mesh3d(meshes.add(t.trees.mesh())),
+                    MeshMaterial3d(materials.trees.clone()),
+                    CameraInteraction::SeeThrough,
+                ));
             }
         })
         .id();
@@ -1135,9 +1161,14 @@ mod tests {
             let in_house = (8.5..23.5).contains(&b.x) && (68.5..79.5).contains(&b.z);
             assert!(!in_house, "tree in the building at {b}");
         }
-        assert_eq!(tree_cones(&sites).len(), sites.len());
         let m = build_tile_meshes(&p, key).unwrap();
-        assert_eq!(m.tree_cones.len(), sites.len());
+        assert_eq!(m.trees.positions.len(), sites.len() * 14);
+        // The building is camera-solid, the forest is not.
+        assert_eq!(m.solid.len(), 1);
+        let roof = m.solid.top_at(16.0, 74.0).expect("solid building");
+        assert_eq!(roof, 10.5, "ridge height");
+        let (tree, _) = sites[0];
+        assert_eq!(m.solid.top_at(f64::from(tree.x), f64::from(tree.z)), None);
         // Textured terrain: white vertices with texture coordinates.
         assert!(m.terrain.colors.iter().all(|c| *c == [1.0; 4]));
         assert_eq!(m.terrain.uvs.len(), m.terrain.positions.len());
@@ -1257,7 +1288,7 @@ mod tests {
             let s = t.elapsed().as_secs_f64();
             worst = worst.max(s);
             total += s;
-            trees += m.tree_cones.len();
+            trees += m.trees.positions.len() / 14;
             verts +=
                 m.trees.positions.len() + m.buildings.positions.len() + m.terrain.positions.len();
         }
