@@ -70,12 +70,17 @@ elif [ "$branch" != "main" ]; then
 fi
 # Branch checkouts build from scratch (own target/); several agents doing
 # that at once overload the machine, so they get fewer parallel jobs.
-# OCW_REMOTE_JOBS overrides (empty = cargo's default, all cores).
+# OCW_REMOTE_JOBS overrides (empty = cargo's default, all cores). A machine's
+# `jobs` in machines.toml caps both (e.g. 2 on the 8 GB Windows machine,
+# where each MSVC link of a Bevy binary takes ~5 GB).
 jobs_env=""
+machine_jobs=$(field jobs)
 if [ "$branch" != "main" ]; then
-  jobs=${OCW_REMOTE_JOBS-4}
-  [ -n "$jobs" ] && jobs_env="CARGO_BUILD_JOBS=$jobs "
+  jobs=${OCW_REMOTE_JOBS-${machine_jobs:-4}}
+else
+  jobs=$machine_jobs
 fi
+[ -n "$jobs" ] && jobs_env="CARGO_BUILD_JOBS=$jobs "
 
 SSH=(ssh -i "$key" -p "${port:-22}" -o IdentitiesOnly=yes -o BatchMode=yes
      -o UserKnownHostsFile="$config_dir/${ssh_dir:-ssh}/known_hosts" -o StrictHostKeyChecking=yes
@@ -168,7 +173,9 @@ EOF
 
 # A run on Windows (PowerShell, joined into one line): task marker, build
 # slot (lock files opened with FileShare None, polled while all are taken),
-# the command (@RUN@) with its exit code passed on, marker removed in finally.
+# the command (@RUN@), marker removed in finally. Exit code: that of the last
+# native program (cargo ...), else 1 if the last PowerShell command failed
+# ($LASTEXITCODE alone gave 0 for a failed cmdlet such as Get-Item).
 read -r -d '' marker_ps <<'EOF' || true
 $ocwD = Join-Path $env:TEMP 'ocw-tasks'; [void](New-Item -ItemType Directory -Force -Path $ocwD);
 $ocwT0 = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds(); $ocwF = Join-Path $ocwD ('' + $PID + '-' + $ocwT0 + '.json');
@@ -178,7 +185,7 @@ $ocwRc = 0; $ocwLock = $null; $ocwSlot = $null; $ocwWarn = $false;
 try {
 if (@SLOTS@ -gt 0) { while (-not $ocwLock) { foreach ($s in 1..@SLOTS@) { try { $ocwLock = [IO.File]::Open((Join-Path $ocwD ('slot-' + $s + '.lock')), 'OpenOrCreate', 'ReadWrite', 'None'); $ocwSlot = $s; break } catch {} }; if (-not $ocwLock) { if (-not $ocwWarn) { ocwMark 'waiting' $null; [Console]::Error.WriteLine('remote.sh: waiting for a free build slot'); $ocwWarn = $true }; Start-Sleep -Milliseconds 1000 } } };
 ocwMark 'running' $ocwSlot;
-@RUN@; $ocwRc = $LASTEXITCODE
+@RUN@; $ocwRc = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } elseif ($ocwOk) { 0 } else { 1 }
 } finally { if ($ocwLock) { $ocwLock.Dispose() }; Remove-Item -Force -ErrorAction SilentlyContinue -LiteralPath $ocwF, ($ocwF + '.tmp') };
 exit $ocwRc
 EOF
@@ -209,14 +216,15 @@ ocw_free() { :; };
 EOF
 
 # Runs a command in PowerShell in the checkout: rustup's cargo first on PATH,
-# fewer build jobs for branch checkouts, the command's exit code passed on.
+# fewer build jobs for branch checkouts.
 run_windows() {
   local jobs_num jobs_ps="" ps run
   jobs_num=$(printf '%s' "$jobs_env" | grep -o '[0-9]*' || true)
   [ -n "$jobs_num" ] && jobs_ps="\$env:CARGO_BUILD_JOBS='$jobs_num'; "
   # The command runs as a script block (dot-sourced): the wrapper is one
-  # line, which a `#` comment in the command would otherwise cut off.
-  run="Set-Location -LiteralPath $(psq "$repo"); \$env:Path = \"\$env:USERPROFILE\\.cargo\\bin;\" + \$env:Path; \$env:OCW_BUILD_ID='${build_id:-}'; ${jobs_ps}. ([scriptblock]::Create($(psq "$*")))"
+  # line, which a `#` comment in the command would otherwise cut off. It
+  # records $? of its last statement in $ocwOk (for the exit code).
+  run="Set-Location -LiteralPath $(psq "$repo"); \$env:Path = \"\$env:USERPROFILE\\.cargo\\bin;\" + \$env:Path; \$env:OCW_BUILD_ID='${build_id:-}'; ${jobs_ps}. ([scriptblock]::Create($(psq "$*") + [char]10 + '\$ocwOk = \$?'))"
   ps=${marker_ps//$'\n'/ }
   ps=${ps//@CHECKOUT@/"$(psq "$checkout_dir")"}
   ps=${ps//@BRANCH@/"$(psq "$branch")"}
