@@ -3,6 +3,23 @@
 Prebuilt binaries of Open Cycling World for the platforms we can build on.
 These are development builds (spec §14 Phase 1/2), not signed or notarised.
 
+## 0.1.0-c3187a3 – macOS app
+
+Built from commit `c3187a3` (with free ride, Strava, video recording, R/C/V
+keys) on the Apple Silicon Mac by `scripts/build-macos-app.sh`:
+
+| Platform | File | Size |
+|---|---|---|
+| macos-arm64 | `OpenCyclingWorld-0.1.0-c3187a3-macos-arm64.dmg` | 37.7 MB |
+
+The DMG holds `Open Cycling World.app` (icon, Info.plist with the Bluetooth
+permission text, ad-hoc signature). To install: open the DMG and drag the app
+into *Applications*. The app is not notarised, so the first start needs
+right-click → *Open* (or *System Settings → Privacy & Security → Open
+Anyway*); a downloaded DMG may also need
+`xattr -dr com.apple.quarantine "/Applications/Open Cycling World.app"`.
+Checksum: `shasum -a 256 -c SHA256SUMS`.
+
 ## 0.1.0-15d89d0
 
 Built from commit `15d89d0` (workspace version 0.1.0) with
