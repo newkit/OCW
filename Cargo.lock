@@ -4830,6 +4830,7 @@ version = "0.1.0"
 dependencies = [
  "ocw-core",
  "ocw-sim",
+ "ocw-world",
  "prost",
  "prost-build",
  "protox",

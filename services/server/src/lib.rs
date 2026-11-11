@@ -8,12 +8,29 @@
 pub mod local;
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use ocw_core::{BROADCAST_HZ, RiderId, SIM_TICK_HZ, TICKS_PER_BROADCAST};
 use ocw_protocol::v1::{self, client_message::Msg as C, server_message::Msg as S};
 use ocw_protocol::{PROTOCOL_VERSION, decode_client, encode, server_message};
-use ocw_sim::{RiderInput, Session};
-use ocw_world::Route;
+use ocw_sim::{FreeRideStart, RiderInput, Session};
+use ocw_world::{RoadNetwork, Route};
+
+/// What a session rides: a fixed route, or free ride on the road graph.
+#[derive(Debug, Clone)]
+pub enum Course {
+    Route(Route),
+    FreeRide {
+        net: Arc<RoadNetwork>,
+        start: FreeRideStart,
+    },
+}
+
+impl From<Route> for Course {
+    fn from(r: Route) -> Self {
+        Self::Route(r)
+    }
+}
 
 /// Identifies one client connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -48,8 +65,12 @@ pub fn bot_power_w(i: u32) -> f64 {
 }
 
 impl GameServer {
-    pub fn new(route: Route, config: ServerConfig) -> Self {
-        let mut session = Session::new(route).with_start(config.start_m);
+    /// A session on `course` (a [`Route`] converts into one).
+    pub fn new(course: impl Into<Course>, config: ServerConfig) -> Self {
+        let mut session = match course.into() {
+            Course::Route(route) => Session::new(route).with_start(config.start_m),
+            Course::FreeRide { net, start } => Session::free_ride(net, start),
+        };
         for i in 0..config.bots {
             session.add_bot(format!("Bot {}", i + 1), bot_power_w(i));
         }
@@ -89,6 +110,7 @@ impl GameServer {
                 return Vec::new();
             }
         };
+        let had_rider = self.riders.contains_key(&conn);
         let reply = match (msg, self.riders.get(&conn).copied()) {
             (C::Hello(hello), None) => Some(self.hello(conn, hello)),
             (C::Hello(_), Some(_)) => None,
@@ -103,6 +125,21 @@ impl GameServer {
                 None
             }
             (C::Dev(cmd), Some(rider)) => Some(self.dev_command(rider, cmd)),
+            (C::Turn(turn), Some(rider)) => {
+                if let Some(net) = self.session.network() {
+                    let choice = ocw_protocol::turn_choice(&turn, net);
+                    self.session.set_turn(rider, turn.seq, choice);
+                }
+                None
+            }
+            (C::UTurn(u), Some(rider)) => {
+                let from = (
+                    f64::from(u.distance_cm) / 100.0,
+                    f64::from(u.speed_mm_s) / 1000.0,
+                );
+                self.session.u_turn(rider, Some(from));
+                None
+            }
             (C::Steer(steer), Some(rider)) => {
                 self.session.set_wild(rider, steer.wild);
                 if steer.lean_steering {
@@ -121,9 +158,20 @@ impl GameServer {
                 reason: "send Hello first".into(),
             })),
         };
-        reply
+        let mut out: Vec<Vec<u8>> = reply
             .map(|m| vec![encode(&server_message(m))])
-            .unwrap_or_default()
+            .unwrap_or_default();
+        // A client that just joined a free ride gets everyone's path.
+        let joined = !had_rider && self.riders.contains_key(&conn);
+        if joined && let Some(net) = self.session.network() {
+            out.extend(
+                self.session
+                    .all_paths()
+                    .iter()
+                    .map(|c| encode(&server_message(S::Path(ocw_protocol::path_update(c, net))))),
+            );
+        }
+        out
     }
 
     fn hello(&mut self, conn: ConnectionId, hello: v1::Hello) -> S {
@@ -145,6 +193,7 @@ impl GameServer {
             tick_rate_hz: SIM_TICK_HZ,
             broadcast_rate_hz: BROADCAST_HZ,
             route_id: self.session.route().id().to_owned(),
+            free_ride: self.session.is_free_ride(),
         })
     }
 
@@ -158,20 +207,42 @@ impl GameServer {
                 self.session.teleport(rider, d);
                 result(true, format!("teleported to {:.3} km", d / 1000.0))
             }
+            Some(v1::dev_command::Cmd::TeleportPoint(p)) => {
+                if self.session.teleport_to(rider, p.x_m, p.z_m) {
+                    result(
+                        true,
+                        format!(
+                            "teleported to the road nearest x {:.0} z {:.0}",
+                            p.x_m, p.z_m
+                        ),
+                    )
+                } else {
+                    result(false, "only in free ride".into())
+                }
+            }
             None => result(false, "empty dev command".into()),
         }
     }
 
-    /// Advances one physics tick. Returns an encoded snapshot to broadcast to
-    /// every connection when a broadcast is due (every 5th tick at 50/10 Hz).
-    pub fn tick(&mut self) -> Option<Vec<u8>> {
+    /// Advances one physics tick. Returns the encoded messages to broadcast
+    /// to every connection: free-ride path changes (reliable, at once) and
+    /// a snapshot when one is due (every 5th tick at 50/10 Hz).
+    pub fn tick(&mut self) -> Vec<Vec<u8>> {
         self.session.step();
+        let mut out = Vec::new();
+        if let Some(net) = self.session.network().cloned() {
+            for c in self.session.take_path_changes() {
+                out.push(encode(&server_message(S::Path(ocw_protocol::path_update(
+                    &c, &net,
+                )))));
+            }
+        }
         if !self
             .session
             .tick()
             .is_multiple_of(u64::from(TICKS_PER_BROADCAST))
         {
-            return None;
+            return out;
         }
         let snapshot = v1::Snapshot {
             server_tick: self.session.tick(),
@@ -182,7 +253,8 @@ impl GameServer {
                 .map(ocw_protocol::quantize)
                 .collect(),
         };
-        Some(encode(&server_message(S::Snapshot(snapshot))))
+        out.push(encode(&server_message(S::Snapshot(snapshot))));
+        out
     }
 
     pub fn connections(&self) -> impl Iterator<Item = ConnectionId> + '_ {
@@ -226,7 +298,7 @@ mod tests {
         server.handle(conn, &sample(1, 250.0));
         let mut snapshots = 0;
         for _ in 0..250 {
-            if let Some(bytes) = server.tick() {
+            for bytes in server.tick() {
                 snapshots += 1;
                 let S::Snapshot(s) = decode_server(&bytes).unwrap() else {
                     panic!()

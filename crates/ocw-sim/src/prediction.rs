@@ -1,7 +1,7 @@
 //! Client-side prediction of the local rider (spec §5.2, §6.1).
 
 use ocw_core::{RiderProfile, SIM_DT};
-use ocw_world::Route;
+use ocw_world::Track;
 
 use crate::physics::{RiderState, Steering};
 use crate::ride::{self, Controls};
@@ -85,7 +85,7 @@ impl Predictor {
     }
 
     /// Advances the prediction by one physics tick with the current power.
-    pub fn step(&mut self, route: &Route, power_w: f64) {
+    pub fn step(&mut self, route: &dyn Track, power_w: f64) {
         ride::tick(
             &mut self.state,
             &self.profile,
@@ -115,7 +115,7 @@ impl Predictor {
     ///
     /// The server state is extrapolated to "now" with the same physics and the
     /// current power, then compared with the prediction.
-    pub fn reconcile(&mut self, route: &Route, server: RiderState, age_s: f64, power_w: f64) {
+    pub fn reconcile(&mut self, route: &dyn Track, server: RiderState, age_s: f64, power_w: f64) {
         let mut extrapolated = server;
         let steps = (age_s.max(0.0) / SIM_DT).round() as usize;
         let mut scraping = self.scraping;
@@ -156,6 +156,7 @@ impl Predictor {
 mod tests {
     use super::*;
     use crate::physics::{self, Environment};
+    use ocw_world::Route;
 
     fn flat() -> Route {
         Route::from_points(

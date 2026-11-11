@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 ocw-core.workspace = true
 ocw-sim.workspace = true
+ocw-world.workspace = true
 prost.workspace = true
 thiserror.workspace = true
 
