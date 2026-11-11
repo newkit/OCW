@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 1.8 – November 2026
+Version 1.9 – November 2026
 
 | Version | Change |
 |---|---|
@@ -17,6 +17,7 @@ Version 1.8 – November 2026
 | 1.6 | FIT export: own writer crate `ocw-fit`, rides saved in the user data directory; interim direct Strava upload from the desktop with user-supplied API credentials until the backend exists (§2.8) |
 | 1.7 | Free ride on the road graph: junction keys next to lean steering, U-turn key and loop (§2.2.1, §2.2.2); road graph in the world package, format 2 (§4.7); free-ride path and slow-downs (§5.2); `TurnIntent`, `UTurn`, `PathUpdate` (§6.5) |
 | 1.8 | Steering fixes (§5.2.1): only pushing into the road edge scrapes; a held opposite lean key pauses at upright, then leans on to the other side |
+| 1.9 | Catch-up of implemented decisions: elevation filter along through-roads and terrain cut under roads (§4.3), road surfaces (§4.4), route file format (§4.7), console scripting (§2.9), input devices incl. gamepad, camera and avatar on the terrain (§3.2), start point and bots (§6.1), repository layout (§10), build machines, desktop integration, AppImage, release and build-history folders, CI resilience (§11), own artwork licence (§13) |
 
 ---
 
@@ -374,6 +375,7 @@ A developer and power-user console inside the running desktop app.
 
 - **Multiplayer safety:** `dev` commands that affect the simulation are rejected when connected to a remote server. The server is authoritative (§6.1), so a manipulated client cannot cheat with them anyway.
 - **Scripts:** an `autoexec.cfg` file runs commands at startup. `exec <file>` runs command files, e.g. for automated performance tests (`tools/performance-test`).
+- **Implemented (v1.9):** the commands listed in the README (rider, camera, trainer and devices, rides and Strava, `teleport`, `screenshot`, …). Scripted test rides use `--cmd COMMAND` (startup), `--exec FILE` and `--at SECONDS=COMMAND` (run once the ride has lasted that long, e.g. `--at "4=rider.lean 15"`).
 - **Settings:** settings are also reachable as variables (`set render.shadows high`), so the settings UI and the console share one source of truth.
 
 ### 2.10 Web Companion
@@ -470,6 +472,10 @@ Tile builds take up to 23 ms on worker threads; uploads cost at most 4.6 ms on t
 
 - **Bevy UI** for the in-ride HUD (including the junction overlay, §2.2.1) and the main menus. The user interface is connected as directly as possible to the engine state.
 - **egui** (`bevy_egui`) for the editor parameter panels, the in-game console (§2.9) and development/diagnostic interfaces, to keep development fast. The editors are reviewed after Phase 4.
+
+**Input devices (v1.9):** keyboard and gamepads (Bevy's gamepad support, gilrs: Xbox, PlayStation, Switch Pro and generic pads, hot-plugged). Keyboard: ↑ adds power (25 W per press, more while held, on top of any device), ↓ stops (power 0 and brake), ← / → steer (§5.2.1) or choose exits (§2.2.1), A autodrive, W wild mode, U U-turn, Q / E exits, PgUp / PgDn ±10 W, F11 next screen, R camera reset. Gamepad: left stick steers (sets the lean directly, centred = upright), right / left trigger = ↑ / ↓, South = autodrive, West = wild, D-pad = exits and U-turn. Several pads: the largest stick deflection steers.
+
+**Camera and avatar (v1.9):** the chase camera follows the avatar itself (on the terrain when off the road) along the rider's own heading; it can be orbited with the mouse. It stays above the ground, never inside a tree crown, and lifts until the line of sight to the rider clears terrain and trees; its look-at point is smoothed. The avatar stands on the surface under both wheel contacts (front wheel first over a bump), leans by atan(v² κ / g) for the curve it rides, and is blended from road height onto the ground over 2 m beside the road.
 
 The interface is divided into modules:
 
@@ -622,6 +628,15 @@ From the elevation data the following are generated: elevation profiles, terrain
 4. **Terrain conformance:** the terrain mesh is flattened and blended along a road corridor (road width + shoulder), so roads never float or sink.
 5. **Validation:** the world builder reports suspicious segments (gradient jumps, extreme climbs) for review.
 
+**Implementation (v1.9):**
+
+- **Filtering along whole roads:** OSM splits one road into many ways (tag changes, bridges, side roads). The pieces are joined into **through-roads** wherever the road continues (straightest continuation, same name, same class; main roads first) and each through-road is sampled, median- and Gaussian-filtered as one profile, so the gradient does not jump at the splits. Main roads fix the heights of their junctions first; later roads are split into runs at junctions already fixed.
+- **Gradient limit without drift:** the class limit is applied *locally* (each interval that is too steep is flattened by moving its two samples towards each other, repeated until it holds), then light smoothing (σ 20 m) rounds the gradient changes and the local limit is applied again. Clipping the gradient and integrating along a long road would move the whole road metres away from the terrain.
+- **Bridges and tunnels inside a through-road:** the DEM along them (valley below, mountain above) is replaced by a straight line between the ground at their ends before filtering. Junctions touched only by bridges or tunnels (a bridge mapped as several ways) are interpolated along the structure instead of taking the DEM of the valley floor.
+- **Distances along the road** are the true arc length of the centreline (also for road strips and route files), not the chords between 5 m samples, which cut every bend.
+- **Terrain under the road:** within the road width plus 1.5 grid cells the terrain is cut down to just below the road surface (0.3 m), so the 10 m grid cannot interpolate it through the road on side slopes; further out it blends into the DEM over 60 m.
+- **Checks:** `world-builder check` measures where the terrain rises above a road strip (sampled every metre along and 0.25 m across, with the same triangle split as the mesh); `world-builder graph --probe X,Z` lists the roads near a point with lengths, end heights and gradients. The pilot package's test requires < 0.1 % of road samples under terrain.
+
 Smoothing of the gradient sent to the trainer is covered in §5.3.
 
 ### 4.4 Road Reconstruction and Road Graph
@@ -629,6 +644,8 @@ Smoothing of the gradient sent to the trainer is covered in §5.3.
 Each road is converted into a 3D road segment with these properties: geographic centerline, road width, surface material, gradient, curve radius, road marking, connectivity information and road category.
 
 The road surface is generated from the line geometries.
+
+**Surfaces (v1.9):** asphalt, gravel and grass (off the road), with a rolling-resistance factor each (§5.2.1). Without an OSM `surface` tag, tracks and paths are gravel and all other classes asphalt; the `surface` tag refines this later.
 
 The road connections form the **road graph**, which is the basis for routes (§2.7), junction steering (§2.2.1) and navigation.
 
@@ -725,6 +742,8 @@ Contents:
 
 **Package format (v1.6):** the binary package (`.ocwpkg`) holds the 1 km tiles (terrain heights, road strips) and, from format version 2 (`OCWPKG02`), tagged sections after the tiles that readers skip when they do not know them. The first section is the **road graph** (`GRPH`: vertices, edges with stable ID, class, name, width, one-way, bridge / tunnel / boundary / dead-end flags, centreline and smoothed elevation profile), so the client and the server can ride free on it (§2.2.1). Packages without a graph are still written as version 1, and clients read both.
 
+**Route files (v1.9, interim):** a plain-text `ocw-route 1` file holds one route with its elevation and the terrain grid around it (`name`, `origin` lat/lon of the local metres, `width`, `points` x y z every 5 m, optional `surface FROM TO NAME` stretches that are not asphalt, `grid`). It is written by `world-builder route` and ridden with `--route-file`, optionally together with a world package (`--world`) for the surroundings. Routes as part of packages (above) replace it.
+
 Packages are **signed, versioned and updatable**:
 
 - **Ed25519** signatures. An offline root key signs rotating online signing keys. The client ships the root public key.
@@ -812,6 +831,8 @@ The trainer and sensors are always connected to the client only. The server neve
 **The client transmits** only inputs: timestamped power, cadence and heart-rate samples with sequence numbers, device information, steering inputs (§6.5) and riding state requests.
 
 **The server computes:** rider state, position, speed, drafting, race state, rankings, group membership and events. It then distributes updated states to the participants.
+
+**Start point and test riders (v1.9):** a session starts all riders together at a configured distance (`ServerConfig::start_m`); the desktop app picks a random point by default (on a route that ends, at least 1 km before the end; off for screenshot and capture runs, which must be reproducible). Server-side test riders (bots) ride at different strengths (85–250 W) so they spread out, push harder uphill (at least the power for 10 km/h on the current gradient, so easy bots do not crawl) and steer with autodrive.
 
 ### 6.2 Network Protocol
 
@@ -981,6 +1002,11 @@ open-cycling-world/
 │   ├── ocw-fit/          # FIT activity writer (no dependencies, wasm-safe)
 │   └── ocw-voice/        # LiveKit integration behind a trait (feature "voice")
 ├── proto/                # .proto schemas
+├── artwork/              # original artwork: logos/ (app icon), build-history/ (screenshots, videos)
+├── packaging/            # desktop entry (Linux), later installers
+├── release/              # release builds per version and platform (+ SHA256SUMS)
+├── scripts/              # build machines, deploy, kiosk, AppImage, Windows build server setup
+├── config/               # build machine config (only examples in git)
 ├── assets/
 │   ├── bicycles/
 │   ├── characters/
@@ -1059,6 +1085,10 @@ Platforms are implemented one after another, not in parallel:
 9. Create installers.
 10. Publish artifacts.
 
+**Build machines (v1.9):** all building and testing runs on remote machines described in `config/machines.toml` (git-ignored; keys in `config/ssh/`): a Linux machine with a real GPU and Bluetooth (development, tests, smoke screenshots and videos on X11 and Wayland, trainer tests, a kiosk that shows the latest build on its screen), a macOS Apple Silicon machine, and a Windows machine set up with `scripts/setup-windows-buildserver.ps1` (OpenSSH server and a local, non-admin build user). `scripts/remote.sh MACHINE run CMD` copies the working tree (git-tracked and untracked, not ignored) and runs the command; other branches get their own checkout and fewer parallel build jobs, so parallel work does not collide. `scripts/deploy-test.sh` installs a release build for the kiosk.
+
+**CI resilience (v1.9):** the Linux job's package installation retries with short timeouts and a step timeout, so an unreachable distribution mirror fails within minutes instead of holding a runner for hours.
+
 ### 11.3 Packaging
 
 **Linux:** AppImage, Flatpak, optionally native packages.
@@ -1068,6 +1098,12 @@ Platforms are implemented one after another, not in parallel:
 **macOS:** app bundle, code signing, Apple notarization, DMG.
 
 Build and release pipelines are automated for all three operating systems, introduced in the rollout order (§11.1).
+
+**Implemented so far (v1.9):**
+
+- **App icon and desktop integration:** the logo (`artwork/logos/`, a unicorn riding a bike over a rainbow) is the window icon (X11, Windows); the window's app id `ocw-desktop` matches the desktop entry (`packaging/linux/ocw-desktop.desktop`), which Wayland compositors, docks and menus use. On Linux the app installs its desktop entry and hicolor icons into the user's data directory at start (only changed files).
+- **AppImage:** `scripts/build-appimage.sh` assembles the AppDir (binary, desktop entry, icons, `.DirIcon`) and packs it with `appimagetool` when installed.
+- **Release folder:** `release/<version>-<commit>/<platform>/` holds stripped release binaries (`ocw-desktop`, `ocw-server`, `world-builder`) with SHA-256 sums; binaries above GitHub's file size limits are stored xz-compressed. Map data is not included (ODbL, §13). `artwork/build-history/` keeps the screenshots and videos made during development with an index.
 
 ---
 
@@ -1131,6 +1167,7 @@ Personal data, voice data and training data are handled separately.
 |---|---|---|
 | Source code | Own work | **Dual MIT / Apache-2.0** |
 | Own 3D assets, sounds | Own work | Decided separately; suggestion **CC BY 4.0**, or proprietary if monetized |
+| Own artwork (logo, icons, `artwork/`) | Own work | Like the code: **MIT / Apache-2.0** |
 | Third-party assets | External | Tracked in each asset's manifest (`license`, `source`, `author`); the asset validator rejects assets without a licence entry |
 | Road graph + attributes in world packages | **Derivative Database** (ODbL) | Published under ODbL; extracted data offered for download alongside each package |
 | Meshes, textures, rendered views | **Produced Work** (ODbL) | Attribution "© OpenStreetMap contributors" |

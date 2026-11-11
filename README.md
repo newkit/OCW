@@ -30,6 +30,8 @@ plain `cargo`, add `. "$HOME/.cargo/env"` to your shell profile.
 | Steer (autodrive: move the line; manual: lean into a curve) | ← / → | left stick (left/right) |
 | Autodrive on/off (on at the start) | A | South button (A / ✕) |
 | Wild mode on/off (leave the road) | W | West button (X / □) |
+| Free ride: choose the exit at the next junction | ← / → (autodrive, junction ahead) or Q / E | D-pad left / right |
+| Free ride: U-turn | U | D-pad down |
 | Power ±10 W | PgUp / PgDn | |
 | Camera: orbit / zoom / reset | mouse drag / wheel / R | |
 | Next screen | F11 | |
@@ -99,6 +101,22 @@ Then start the app: the left stick steers, the triggers ride and stop (see
 - **Wild** (key W): not bound to the road; ride onto the meadows, up to 60 m
   either side. The camera follows over terrain and trees.
 
+**Free ride** (spec §2.2.1, §2.2.2): ride anywhere on the world package's road
+network instead of a fixed route:
+
+```bash
+ocw-desktop --world data/pilot/liechtenstein.ocwpkg --free-ride [--start X,Z]
+```
+
+The package must contain the road graph (format 2, from `world-builder
+package`). Before each junction an overlay shows the exits (arrows at their
+real angles, street name, distance; dead end / unpaved / steep markers). Pick
+one with ← / → (with autodrive, while a junction is ahead) or Q / E; the choice
+turns green when it locks (20 m before the junction, earlier at speed).
+Without a choice the rider takes the default exit (straightest, same road,
+bigger road). At dead ends and the region border the rider turns round; U
+turns round any time. Sharp turns slow the rider down automatically.
+
 **Surfaces:** asphalt, gravel (tracks and paths; the Hills loop has a gravel
 climb at 1.5–2.1 km) and grass beside the road roll increasingly harder
 (rolling resistance ×1, ×2.5, ×6); a smart trainer in SIM mode feels it too.
@@ -151,7 +169,9 @@ climb at 1.5–2.1 km) and grass beside the road roll increasingly harder
 | `--bots N` | Number of test riders (default 4) |
 | `--route hills\|loop` | Built-in test route (default `hills`) |
 | `--route-file PATH` | Ride a route file from `world-builder route` |
-| `--world PATH` | World package from `world-builder package` (with `--route-file`) |
+| `--world PATH` | World package from `world-builder package` (with `--route-file`, or `--free-ride`) |
+| `--free-ride` | Free ride on the package's road graph (needs `--world`) |
+| `--start X,Z` | Free ride start: the road nearest local X,Z metres (default: random) |
 | `--random-start BOOL` | Start at a random point (default on, off for screenshot/capture runs) |
 | `--virtual` | Use the virtual trainer even if Bluetooth devices are remembered |
 | `--devices-file PATH` | Remembered devices (default `~/.config/ocw/devices.toml`) |
@@ -188,7 +208,11 @@ for now).
 | `rider.lean DEGREES` | Lean into a curve (positive = right, 0 = upright; manual steering) |
 | `rider.steer METRES` | Autodrive line: lateral position on the road (positive = right) |
 | `rider.state` | Print your rider's state |
-| `teleport KM` | *Dev:* move your rider to a distance on the route |
+| `teleport KM` | *Dev:* move your rider to a distance on the route (free ride: along the path, taking default exits) |
+| `teleport.xz X Z` | *Dev:* free ride: move to the road nearest local x / z metres |
+| `ride.turn left\|right\|straight\|default\|+\|-\|N` | Free ride: choose the exit at the next junction |
+| `ride.uturn` | Free ride: turn round (key U) |
+| `ride.junction` | Free ride: show the next junction's exits |
 | `net.stats` | Connection statistics |
 | **Camera** | |
 | `camera.mode chase\|side\|top` | Camera perspective |
@@ -216,7 +240,7 @@ for now).
 | Tool | Use |
 |---|---|
 | `make help` | All make targets: deps, build, test, check, smoke screenshots, videos, deploy |
-| `cargo run -p ocw-server -- --bots 3 --seconds 10 --fast` | Headless game server |
+| `cargo run -p ocw-server -- --bots 3 --seconds 10 --fast` | Headless game server (`--world PKG [--seed N]`: free ride on a package) |
 | `world-builder graph` / `route` / `package` / `check` | OSM + elevation import: road graph statistics, route files, world packages, package validation (`cargo run --release -p world-builder -- help`) |
 | `scripts/fetch-pilot.sh` | Download the pilot region's OSM extract and elevation data |
 | `scripts/remote.sh MACHINE run 'CMD'` | Copy the tree to a build machine (`config/machines.toml`) and run a command there |
