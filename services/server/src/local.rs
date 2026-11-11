@@ -8,10 +8,8 @@ use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use crate::{Course, GameServer, ServerConfig};
 use ocw_core::SIM_DT;
-use ocw_world::Route;
-
-use crate::{GameServer, ServerConfig};
 
 /// Client side of a local server connection.
 pub struct LocalConnection {
@@ -49,11 +47,15 @@ pub struct LocalServer;
 impl LocalServer {
     /// Starts a local server thread with dev commands enabled.
     /// Everyone starts `start_m` metres along the route.
-    pub fn spawn(route: Route, bots: u32, start_m: f64) -> std::io::Result<LocalConnection> {
+    pub fn spawn(
+        course: impl Into<Course>,
+        bots: u32,
+        start_m: f64,
+    ) -> std::io::Result<LocalConnection> {
         let (to_server, server_rx) = mpsc::channel::<Vec<u8>>();
         let (server_tx, from_server) = mpsc::channel::<Vec<u8>>();
         let mut server = GameServer::new(
-            route,
+            course,
             ServerConfig {
                 allow_dev_commands: true,
                 bots,
@@ -80,10 +82,10 @@ impl LocalServer {
                             Err(TryRecvError::Disconnected) => break 'run,
                         }
                     }
-                    if let Some(snapshot) = server.tick()
-                        && server_tx.send(snapshot).is_err()
-                    {
-                        break;
+                    for msg in server.tick() {
+                        if server_tx.send(msg).is_err() {
+                            break 'run;
+                        }
                     }
                     next += tick;
                     let now = Instant::now();
@@ -117,9 +119,9 @@ pub struct SteppedServer {
 
 impl SteppedServer {
     /// A stepped server with dev commands enabled and one connected client.
-    pub fn new(route: Route, bots: u32, start_m: f64) -> Self {
+    pub fn new(course: impl Into<Course>, bots: u32, start_m: f64) -> Self {
         let mut server = GameServer::new(
-            route,
+            course,
             ServerConfig {
                 allow_dev_commands: true,
                 bots,
@@ -142,9 +144,8 @@ impl SteppedServer {
 
     /// Advances the simulation by one 50 Hz tick.
     pub fn tick(&mut self) {
-        if let Some(snapshot) = self.server.tick() {
-            self.outbox.push_back(snapshot);
-        }
+        let messages = self.server.tick();
+        self.outbox.extend(messages);
     }
 
     /// Takes all messages sent to the client since the last call.
@@ -162,6 +163,7 @@ mod tests {
     use super::*;
     use ocw_protocol::v1::{self, client_message::Msg as C, server_message::Msg as S};
     use ocw_protocol::{PROTOCOL_VERSION, client_message, decode_server, encode};
+    use ocw_world::Route;
 
     #[test]
     fn local_server_welcomes_and_broadcasts() {

@@ -159,7 +159,7 @@ fn control_trainer(
     }
     if let Some(cmd) = trainer.0.update(
         time.elapsed_secs_f64(),
-        c.route(),
+        c.track(),
         c.state(),
         c.cadence_rpm(),
     ) {

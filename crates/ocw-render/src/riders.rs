@@ -5,6 +5,8 @@ use std::collections::BTreeMap;
 use bevy::prelude::*;
 use ocw_core::RiderId;
 
+use ocw_world::Track;
+
 use crate::{Ground, RideView, to_vec3};
 
 pub struct RidersPlugin;
@@ -96,8 +98,8 @@ fn pedal(
 }
 
 /// Position and orientation of a rider on the route.
-pub fn rider_transform(view: &RideView, distance: f64, lateral_offset: f64) -> Transform {
-    let p = view.route.sample(distance);
+pub fn rider_transform(track: &dyn Track, distance: f64, lateral_offset: f64) -> Transform {
+    let p = track.sample(distance);
     let pos = to_vec3(p.offset_position(lateral_offset));
     // Bevy models face -Z; the route direction is (x, z).
     let forward = Vec3::new(p.direction[0] as f32, 0.0, p.direction[1] as f32);
@@ -136,15 +138,15 @@ pub const HALF_WHEELBASE_M: f64 = 0.55;
 /// the road over [`OFF_ROAD_BLEND_M`] (no jump at the edge, no wheels in
 /// an embankment).
 fn contact_height(
-    view: &RideView,
+    track: &dyn Track,
     state: &ocw_sim::RiderState,
     ground: Option<&Ground>,
     along: f64,
 ) -> (Vec3, f32) {
     let d = state.distance + along * state.heading.cos();
     let lateral = state.lateral_offset + along * state.heading.sin();
-    let p = to_vec3(view.route.sample(d).offset_position(lateral));
-    let beyond = lateral.abs() - view.route.road_width_m() / 2.0;
+    let p = to_vec3(track.sample(d).offset_position(lateral));
+    let beyond = lateral.abs() - track.road_width_at(d) / 2.0;
     let mut y = p.y;
     if beyond > 0.0
         && let Some(h) = ground.and_then(|g| (g.0)(f64::from(p.x), f64::from(p.z)))
@@ -160,19 +162,19 @@ fn contact_height(
 /// (road, or the ground beside it): over a bump the front wheel rises
 /// first, then the rear.
 pub fn avatar_transform(
-    view: &RideView,
+    track: &dyn Track,
     state: &ocw_sim::RiderState,
     ground: Option<&Ground>,
 ) -> Transform {
-    let mut t = rider_transform(view, state.distance, state.lateral_offset);
-    let (front_p, front) = contact_height(view, state, ground, HALF_WHEELBASE_M);
-    let (rear_p, rear) = contact_height(view, state, ground, -HALF_WHEELBASE_M);
+    let mut t = rider_transform(track, state.distance, state.lateral_offset);
+    let (front_p, front) = contact_height(track, state, ground, HALF_WHEELBASE_M);
+    let (rear_p, rear) = contact_height(track, state, ground, -HALF_WHEELBASE_M);
     t.translation.y = 0.5 * (front + rear);
     let run = Vec2::new(front_p.x - rear_p.x, front_p.z - rear_p.z)
         .length()
         .max(1e-3);
     let pitch = (front - rear).atan2(run);
-    let p = view.route.sample(state.distance);
+    let p = track.sample(state.distance);
     let road = Vec3::new(p.direction[0] as f32, 0.0, p.direction[1] as f32);
     let yaw = Transform::default().looking_to(road, Vec3::Y).rotation;
     // Positive heading = right; Bevy turns left for a positive Y rotation.
@@ -202,7 +204,7 @@ fn sync_riders(
         keep
     });
     for r in &view.riders {
-        let t = avatar_transform(&view, &r.state, ground.as_deref());
+        let t = avatar_transform(view.track(r.id), &r.state, ground.as_deref());
         match entities.0.get(&r.id) {
             Some(e) => {
                 if let Ok(mut tr) = transforms.get_mut(*e) {
@@ -384,10 +386,10 @@ mod tests {
     fn faces_along_the_road_and_offsets_to_the_right() {
         // Road heading east (+x); right of east is south (+z).
         let v = view(vec![[0.0, 0.0, 0.0], [100.0, 0.0, 0.0]]);
-        let t = rider_transform(&v, 10.0, 0.0);
+        let t = rider_transform(&v.route, 10.0, 0.0);
         assert!(close(t.translation, Vec3::new(10.0, 0.0, 0.0)));
         assert!(close(t.forward().as_vec3(), Vec3::X));
-        let right = rider_transform(&v, 10.0, 1.5);
+        let right = rider_transform(&v.route, 10.0, 1.5);
         assert!(close(right.translation, Vec3::new(10.0, 0.0, 1.5)));
         assert!(close(right.right().as_vec3(), Vec3::Z));
     }
@@ -413,7 +415,7 @@ mod tests {
             "{}",
             lean.to_degrees()
         );
-        let mut t = rider_transform(&v, 80.0, 0.0);
+        let mut t = rider_transform(&v.route, 80.0, 0.0);
         let up_before = t.up().as_vec3();
         t.rotation *= lean_rotation(lean);
         // The top of the rider moves to the right (towards the centre).
@@ -437,13 +439,13 @@ mod tests {
             turn_curvature: 0.02,
             ..Default::default()
         };
-        let t = avatar_transform(&v, &state, None);
+        let t = avatar_transform(&v.route, &state, None);
         // Heading east, turned 0.2 rad to the right (towards +z, south).
         let f = t.forward().as_vec3();
         assert!((f.z - 0.2f32.sin()).abs() < 1e-3, "forward {f:?}");
         // Leaning right: the top tilts towards the rider's right.
         let upright = avatar_transform(
-            &v,
+            &v.route,
             &ocw_sim::RiderState {
                 turn_curvature: 0.0,
                 ..state
@@ -459,11 +461,15 @@ mod tests {
             ..state
         };
         assert_eq!(
-            avatar_transform(&v, &off, Some(&ground)).translation.y,
+            avatar_transform(&v.route, &off, Some(&ground))
+                .translation
+                .y,
             12.0
         );
         assert_eq!(
-            avatar_transform(&v, &state, Some(&ground)).translation.y,
+            avatar_transform(&v.route, &state, Some(&ground))
+                .translation
+                .y,
             0.0
         );
         // Just beside the road (1 m of the 2 m blend): halfway onto the ground.
@@ -471,7 +477,9 @@ mod tests {
             lateral_offset: v.route.road_width_m() / 2.0 + 1.0,
             ..state
         };
-        let y = avatar_transform(&v, &edge, Some(&ground)).translation.y;
+        let y = avatar_transform(&v.route, &edge, Some(&ground))
+            .translation
+            .y;
         assert!((y - 6.0).abs() < 1e-4, "{y}");
     }
 
@@ -491,7 +499,7 @@ mod tests {
                 speed: 5.0,
                 ..Default::default()
             };
-            let t = avatar_transform(&v, &s, None);
+            let t = avatar_transform(&v.route, &s, None);
             (t.translation.y, t.forward().as_vec3().y)
         };
         // Before the step: level. Front wheel on it: nose up, half lifted.
@@ -508,7 +516,7 @@ mod tests {
     fn pitches_up_on_climbs() {
         // 10 % climb heading north (-z).
         let v = view(vec![[0.0, 0.0, 0.0], [0.0, 10.0, -100.0]]);
-        let t = rider_transform(&v, 50.0, 0.0);
+        let t = rider_transform(&v.route, 50.0, 0.0);
         let f = t.forward().as_vec3();
         assert!(f.y > 0.09 && f.y < 0.11, "forward {f:?}");
         assert!(f.z < -0.99);

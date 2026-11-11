@@ -1,6 +1,6 @@
 //! Which OSM ways are rideable by bike, and their road class (spec §4.4).
 
-use ocw_world::graph::RoadClass;
+use ocw_world::graph::{Oneway, RoadClass};
 
 use crate::osm::Way;
 
@@ -42,6 +42,21 @@ pub fn rideable(way: &Way) -> Option<RoadClass> {
         _ => return None,
     };
     Some(class)
+}
+
+/// One-way restriction for bicycles: `oneway=yes|true|1|-1`, roundabouts
+/// (implied one-way); `oneway:bicycle=no` (contraflow cycling) lifts it.
+pub fn oneway(way: &Way) -> Oneway {
+    if matches!(way.tag("oneway:bicycle"), Some("no" | "false" | "0")) {
+        return Oneway::No;
+    }
+    match way.tag("oneway") {
+        Some("yes" | "true" | "1") => Oneway::Forward,
+        Some("-1" | "reverse") => Oneway::Backward,
+        Some(_) => Oneway::No,
+        None if matches!(way.tag("junction"), Some("roundabout" | "circular")) => Oneway::Forward,
+        None => Oneway::No,
+    }
 }
 
 /// Carriageway width: the `width` tag if it is a plain number of metres,
@@ -144,6 +159,36 @@ mod tests {
                 ("bicycle", "yes")
             ])),
             Some(RoadClass::Track)
+        );
+    }
+
+    #[test]
+    fn oneway_for_bicycles() {
+        assert_eq!(oneway(&way(&[("highway", "primary")])), Oneway::No);
+        assert_eq!(
+            oneway(&way(&[("highway", "primary"), ("oneway", "yes")])),
+            Oneway::Forward
+        );
+        assert_eq!(
+            oneway(&way(&[("highway", "primary"), ("oneway", "-1")])),
+            Oneway::Backward
+        );
+        assert_eq!(
+            oneway(&way(&[("highway", "primary"), ("oneway", "no")])),
+            Oneway::No
+        );
+        assert_eq!(
+            oneway(&way(&[("highway", "tertiary"), ("junction", "roundabout")])),
+            Oneway::Forward
+        );
+        // Contraflow cycling allowed.
+        assert_eq!(
+            oneway(&way(&[
+                ("highway", "residential"),
+                ("oneway", "yes"),
+                ("oneway:bicycle", "no")
+            ])),
+            Oneway::No
         );
     }
 

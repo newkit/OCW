@@ -260,6 +260,8 @@ pub fn build_package<F: Fn(f64, f64) -> f64 + Sync>(
         tile_size_m: tile_size as f32,
         samples,
         tiles,
+        // The graph rides along for free ride and junction steering (spec §2.2.1).
+        graph: Some(graph.clone()),
     }
 }
 
@@ -282,6 +284,7 @@ mod tests {
             bridge,
             tunnel: false,
             dead_end_m: None,
+            oneway: ocw_world::graph::Oneway::No,
             boundary: false,
             osm_way: id as i64,
             profile: prof,
@@ -349,6 +352,7 @@ mod tests {
             bridge: false,
             tunnel: false,
             dead_end_m: None,
+            oneway: ocw_world::graph::Oneway::No,
             boundary: false,
             osm_way: 1,
             // Flat road at 300 m.
@@ -403,6 +407,7 @@ mod tests {
             bridge: false,
             tunnel: false,
             dead_end_m: None,
+            oneway: ocw_world::graph::Oneway::No,
             boundary: false,
             osm_way: 1,
             profile: vec![],

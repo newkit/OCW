@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 1.6 – November 2026
+Version 1.7 – November 2026
 
 | Version | Change |
 |---|---|
@@ -15,6 +15,7 @@ Version 1.6 – November 2026
 | 1.4 | Wahoo's proprietary trainer control as a fallback for trainers without FTMS (§3.4, §5.3) |
 | 1.5 | Lateral steering: autodrive, manual lean steering, road edge, wild mode; surfaces with their own rolling resistance (§5.2.1) |
 | 1.6 | FIT export: own writer crate `ocw-fit`, rides saved in the user data directory; interim direct Strava upload from the desktop with user-supplied API credentials until the backend exists (§2.8) |
+| 1.7 | Free ride on the road graph: junction keys next to lean steering, U-turn key and loop (§2.2.1, §2.2.2); road graph in the world package, format 2 (§4.7); free-ride path and slow-downs (§5.2); `TurnIntent`, `UTurn`, `PathUpdate` (§6.5) |
 
 ---
 
@@ -153,9 +154,17 @@ Exits are **ordered from leftmost to rightmost**. Keys move the selection throug
 - **Left / Right** moves the selection **one step** left or right in the ordered exit list. From "straight", Left selects the nearest left exit; pressing Left again selects the next one further left (e.g. sharp left).
 - Pressing the **opposite key** moves back step by step; returning to the default exit is "no choice".
 - A pre-selection is allowed **before** the junction becomes active ("next junction: turn left") and is kept until the junction is reached.
-- **Lock point:** ~20 m before the junction the choice is locked; key presses after that apply to the following junction.
+- **Lock point:** ~20 m before the junction the choice is locked; key presses after that apply to the following junction. (v1.6: earlier at speed – 20 m plus the distance needed to slow down from the current speed to 15 km/h at 2 m/s², so the slow-down for the chosen turn (§5.2) fits; e.g. ~100 m at 65 km/h.)
 - **Down arrow:** U-turn (§2.2.2). Only in free ride; rate-limited (e.g. once per 10 s).
 - All bindings are remappable. Later, gamepad and handlebar controller buttons map to the same actions (`turn_left`, `turn_right`, `u_turn`).
+
+**Decided key bindings (v1.6).** The arrow keys also steer (§5.2.1) and ↑ / ↓ set the keyboard power and brake, so the defaults are:
+
+- With **autodrive**, ← / → choose the exit while a junction is **active** (within the look-ahead and before the lock point): one exit per press, and they do not move the line meanwhile. Otherwise they move the line as usual.
+- With **manual** (lean) steering the arrows keep leaning – the rider has to steer the turn anyway. **Q / E** choose the exit in every mode, also before the junction is active (pre-selection).
+- **U** is the U-turn key (↓ stays the brake). Gamepad: D-pad left / right / down = `turn_left` / `turn_right` / `u_turn`.
+- Console: `ride.turn left|right|straight|default|+|-|<n>`, `ride.uturn`, `ride.junction` (for scripted rides).
+- The overlay's arrow turns solid green once the choice is locked; the junction is identified by its graph vertex, the exit by its stable edge ID (§6.5).
 
 **On-screen overlay**
 
@@ -184,6 +193,7 @@ Simulation and network aspects of steering are described in §5.2 and §6.5.
 - **Prevention:** dead-end exits show a dead-end icon in the overlay and are never the default. While riding into a dead end, the HUD shows "Dead end in 800 m" once it is within 1 km.
 - **Automatic U-turn at the end:** the rider slows to ~10 km/h, the avatar turns around in a short loop, and the ride continues on the same road in the opposite direction. Power and physics simply continue, so no workout or ride is interrupted.
 - **Manual U-turn** at any time with the Down arrow key (free ride only), using the same animation.
+- **The loop (v1.6):** a U-turn is a "bulb" of radius 4 m (60° right, 300° left, 60° right – it ends where it began, heading the other way, about 30 m long). The rider slows down automatically to ~10 km/h before it and is steered through it (also with manual lean steering). At a dead end the loop starts ~12 m before the road's end, so it stays on the road; a manual U-turn starts after the slow-down distance. The path then continues on the same edge in the other direction.
 - **Region border:** if the neighbouring package is installed, the ride continues across the border without interruption. Otherwise there is an automatic U-turn with the message "End of region – download <neighbour>". The download happens only after the ride; nothing is downloaded during a ride (§4.2).
 - **Routes and GPX imports** (§2.7) are checked when they are created: a route that runs into a dead end must contain an explicit turnaround point (out-and-back routes are valid).
 
@@ -712,6 +722,8 @@ Contents:
 - Metadata, including source attributions.
 - Version information.
 
+**Package format (v1.6):** the binary package (`.ocwpkg`) holds the 1 km tiles (terrain heights, road strips) and, from format version 2 (`OCWPKG02`), tagged sections after the tiles that readers skip when they do not know them. The first section is the **road graph** (`GRPH`: vertices, edges with stable ID, class, name, width, one-way, bridge / tunnel / boundary / dead-end flags, centreline and smoothed elevation profile), so the client and the server can ride free on it (§2.2.1). Packages without a graph are still written as version 1, and clients read both.
+
 Packages are **signed, versioned and updatable**:
 
 - **Ed25519** signatures. An offline root key signs rotating online signing keys. The client ships the root public key.
@@ -743,6 +755,9 @@ Fundamental resistive forces:
 
 - **Riders move in 1D along their path:** state = `distance_along_route: f64`, `lateral_offset: f32`, `speed: f64`. The 3D position is derived from the road geometry only for rendering. This makes the physics cheap, robust and easy to synchronize.
 - In free ride the path is an **edge list that is extended on the fly** by each junction decision (§2.2.1). The lateral offset is blended across junctions so the avatar follows a smooth curve, not the raw graph corner.
+- **Free-ride path (v1.6):** a list of steps – (part of) an edge with its riding direction, or a U-turn loop (§2.2.2). It is extended automatically where the road just continues (up to 2 km ahead), with a U-turn at dead ends and at the region border, and at the **lock point** (20 m before the next junction) with the chosen exit. Corners at junctions are rounded (a curve starting at most 10 m before the junction, so it is never under the rider at the lock point). The geometry is a pure function of the step list, so the server, the client's prediction and the client's copy of other riders' paths agree; steps more than 600 m behind the rider are dropped, step indices keep counting. Route files and test loops keep their fixed route; physics and rendering use either through the same interface (`Track`).
+- Riders on different paths are compared where their paths share a road in the same direction (drafting, §5.2).
+- **Sharp turns** and U-turns: the slow-down is a speed limit along the path – 15 km/h through turns sharper than 120°, 10 km/h through the U-turn loop – reached with ~2 m/s² before it. Junction turns sharper than 60° are taken with at most 4.5 m/s² sideways in the rounded corner (~22 km/h), so nobody turns off a descent at 60 km/h.
 - **Fixed timestep:** physics at **50 Hz** (20 ms) on client and server, independent of frame rate.
 - **No strict bit-level determinism:** `f64` is used. The client predicts, receives authoritative state, and corrects small errors by smoothing (blending over ~0.5 s); it snaps only above a threshold (e.g. > 5 m). This avoids the cost of fixed-point math.
 - **Drafting** (reduced CdA behind other riders) is computed server-side because it depends on other riders. The client predicts it from the interpolated positions of nearby riders.
@@ -841,7 +856,9 @@ Goal: **detection and flagging of implausible data**. Power comes from user hard
 
 ### 6.5 Steering in Multiplayer
 
-- The client sends a reliable `TurnIntent { junction_id, exit_edge_id }` as soon as the choice changes (§2.2.1).
+- The client sends a reliable `TurnIntent { junction_id, exit_edge_id }` as soon as the choice changes (§2.2.1). (v1.6: plus a sequence number and the exit's riding direction; no `exit_edge_id` = no choice, the default; `junction_id` is the vertex index in the world package's graph – client and server use the same package.)
+- A manual U-turn is a reliable `UTurn { distance, speed }`: where the client turned, so the server builds the same loop when it is close to its own state.
+- The server sends each rider's path as reliable `PathUpdate`s (the steps from an index on, or a new path after joining or a teleport); clients use them for the other riders and to correct their own prediction.
 - The **server decides** at the lock point and broadcasts the chosen edge.
 - The client predicts with its own choice and is corrected only in the rare case of disagreement (e.g. the intent arrived too late → the server default applies).
 - In group rides with "follow leader", the server applies the leader's choice to all followers.

@@ -7,20 +7,34 @@
 pub mod camera;
 pub mod console;
 pub mod hud;
+pub mod junction;
 pub mod package;
 pub mod riders;
 pub mod terrain;
 pub mod world;
 
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
 use bevy::prelude::*;
 use ocw_core::RiderId;
 use ocw_sim::RiderState;
-use ocw_world::Route;
+use ocw_world::{RidePath, Route, Track};
 
 /// What the renderer should show this frame. Written by the app.
 #[derive(Resource)]
 pub struct RideView {
+    /// The route (in free ride: where the ride started; riders ride their
+    /// own paths, see [`RideView::paths`]).
     pub route: Route,
+    /// Free ride: every rider's path through the road graph.
+    pub paths: BTreeMap<RiderId, Arc<RidePath>>,
+    /// Free ride on the road graph (no route centre line or start arch).
+    pub free_ride: bool,
+    /// The junction ahead of the local rider (free ride, spec §2.2.1).
+    pub junction: Option<JunctionView>,
+    /// A message for the rider (e.g. "Dead end in 800 m", spec §2.2.2).
+    pub notice: Option<String>,
     pub riders: Vec<RiderView>,
     /// Session time in seconds.
     pub elapsed_s: f64,
@@ -39,12 +53,50 @@ impl RideView {
             elapsed_s: 0.0,
             status: String::new(),
             terrain_base: None,
+            paths: BTreeMap::new(),
+            free_ride: false,
+            junction: None,
+            notice: None,
         }
     }
 
     pub fn local(&self) -> Option<&RiderView> {
         self.riders.iter().find(|r| r.is_local)
     }
+
+    /// What rider `id` rides along: their free-ride path, or the route.
+    pub fn track(&self, id: RiderId) -> &dyn Track {
+        match self.paths.get(&id) {
+            Some(p) => p.as_ref(),
+            None => &self.route,
+        }
+    }
+}
+
+/// The junction ahead in free ride, for the overlay (spec §2.2.1).
+#[derive(Debug, Clone, PartialEq)]
+pub struct JunctionView {
+    /// Distance to the junction (m; negative just after it).
+    pub distance_m: f64,
+    /// Exits from leftmost to rightmost.
+    pub exits: Vec<ExitView>,
+    /// The exit that will be taken, and the default one.
+    pub selected: usize,
+    pub default: usize,
+    /// The choice is locked (within ~20 m of the junction).
+    pub locked: bool,
+}
+
+/// One exit of a junction in the overlay.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExitView {
+    /// Turn angle (degrees, positive = right).
+    pub angle_deg: f64,
+    /// Street name or ref, or the road class.
+    pub name: String,
+    pub dead_end: bool,
+    pub unpaved: bool,
+    pub steep: bool,
 }
 
 /// Ground height lookup (terrain or world package) at local (x, z), for
@@ -112,6 +164,7 @@ impl Plugin for OcwRenderPlugins {
             riders::RidersPlugin,
             camera::CameraPlugin,
             hud::HudPlugin,
+            junction::JunctionPlugin,
             console::ConsolePlugin,
         ));
     }

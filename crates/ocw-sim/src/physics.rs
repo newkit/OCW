@@ -43,7 +43,8 @@ pub enum Steering {
 
 /// Largest lean a rider can steer with (rad, 30°).
 pub const MAX_STEER_LEAN: f64 = 0.52;
-/// Tightest curve a rider rides (1/m, radius 5 m).
+/// Tightest curve a rider steers by leaning, and the largest correction
+/// the autopilot steers on top of the road's own curve (1/m, radius 5 m).
 pub const MAX_TURN_CURVATURE: f64 = 0.2;
 /// Largest angle between the rider and the road (rad, ~17°); in wild mode
 /// riders may ride across the road ([`WILD_MAX_HEADING`]).
@@ -84,14 +85,18 @@ pub fn apply_steering(
             let wanted = (error / lookahead)
                 .atan()
                 .clamp(-AUTO_MAX_HEADING, AUTO_MAX_HEADING);
-            road_curvature + (wanted - state.heading) / (AUTO_TIME_S * v.max(1.0))
+            // The correction is limited, not the road's own curve: the
+            // autopilot follows hairpins and the U-turn loop (§2.2.2).
+            let correction = ((wanted - state.heading) / (AUTO_TIME_S * v.max(1.0)))
+                .clamp(-MAX_TURN_CURVATURE, MAX_TURN_CURVATURE);
+            road_curvature + correction
         }
         Steering::Lean(lean) if v > 0.1 => {
-            GRAVITY * lean.clamp(-MAX_STEER_LEAN, MAX_STEER_LEAN).tan() / (v * v)
+            (GRAVITY * lean.clamp(-MAX_STEER_LEAN, MAX_STEER_LEAN).tan() / (v * v))
+                .clamp(-MAX_TURN_CURVATURE, MAX_TURN_CURVATURE)
         }
         Steering::Lean(_) => road_curvature,
-    }
-    .clamp(-MAX_TURN_CURVATURE, MAX_TURN_CURVATURE);
+    };
     let before = state.heading;
     state.heading =
         (state.heading + v * (k - road_curvature) * dt).clamp(-max_heading, max_heading);

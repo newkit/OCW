@@ -3,19 +3,34 @@
 //!
 //! The Bevy systems in `connection.rs` only move bytes in and out of this type,
 //! so the whole client loop is unit-testable without a window or GPU.
+//!
+//! In free ride (spec §2.2.1) the client also predicts its own path through
+//! the road graph: it locks the chosen exit at the lock point like the
+//! server does, sends the choice as a `TurnIntent`, and takes the server's
+//! `PathUpdate`s as corrections; other riders' paths come only from the
+//! server.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use ocw_core::{INTERPOLATION_DELAY_S, RiderId, RiderProfile};
 use ocw_devices::DeviceEvent;
 use ocw_protocol::v1::{self, client_message::Msg as C, server_message::Msg as S};
 use ocw_protocol::{PROTOCOL_VERSION, client_message, decode_server, dequantize, encode};
-use ocw_render::RiderView;
+use ocw_render::{ExitView, JunctionView, RiderView};
+use ocw_sim::freeride::{self, TurnChoice, UTURN_INTERVAL_S};
 use ocw_sim::{Predictor, RiderState, SnapshotBuffer};
-use ocw_world::Route;
+use ocw_world::path::lock_distance;
+use ocw_world::{Junction, RidePath, RoadNetwork, Route, Track, TurnReason};
 
 /// Minimum time between steering messages while the target changes.
 pub const STEER_SEND_INTERVAL_S: f64 = 0.05;
+/// The junction overlay appears within this distance, or within
+/// [`JUNCTION_LOOKAHEAD_S`] of riding, whichever is larger (spec §2.2.1).
+pub const JUNCTION_LOOKAHEAD_M: f64 = 150.0;
+pub const JUNCTION_LOOKAHEAD_S: f64 = 10.0;
+/// Dead-end warnings start this far before the end (spec §2.2.2).
+pub const DEAD_END_WARNING_M: f64 = 1000.0;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct NetStats {
@@ -24,6 +39,8 @@ pub struct NetStats {
     pub snapshots: u64,
     pub samples_out: u64,
     pub last_snapshot_tick: u64,
+    /// Free ride: path updates received, and own-path corrections among them.
+    pub path_updates: u64,
 }
 
 /// Something the user should be told about (shown in the console).
@@ -34,8 +51,28 @@ pub enum Notice {
     CommandResult(String),
 }
 
+/// Free-ride state of the client.
+#[derive(Debug, Clone)]
+struct FreeRide {
+    net: Arc<RoadNetwork>,
+    /// The own path, predicted (shared with the render view).
+    own: Option<Arc<RidePath>>,
+    /// The other riders' paths, from the server.
+    others: BTreeMap<RiderId, Arc<RidePath>>,
+    /// Exit chosen for the next junction (`None`: the default).
+    choice: Option<TurnChoice>,
+    turn_seq: u32,
+    /// Last choice sent: for which junction, and what.
+    turn_sent: Option<(ocw_world::graph::VertexId, Option<TurnChoice>)>,
+    last_u_turn_s: Option<f64>,
+    /// The junction locked last, until passed: (junction, its path
+    /// distance, the exit taken).
+    locked: Option<(Junction, f64, usize)>,
+}
+
 pub struct ClientCore {
     route: Route,
+    free: Option<FreeRide>,
     profile: RiderProfile,
     name: String,
     rider_id: Option<RiderId>,
@@ -56,7 +93,7 @@ pub struct ClientCore {
     others: SnapshotBuffer,
     /// Latest known state of the other riders, advanced every physics tick
     /// (for predicting the local rider's drafting).
-    others_now: Vec<RiderState>,
+    others_now: Vec<(RiderId, RiderState)>,
     names: BTreeMap<RiderId, (String, f64)>,
     power_w: f64,
     cadence_rpm: Option<f64>,
@@ -73,6 +110,7 @@ impl ClientCore {
     pub fn new(route: Route, name: impl Into<String>, profile: RiderProfile) -> Self {
         Self {
             route,
+            free: None,
             profile,
             name: name.into(),
             rider_id: None,
@@ -95,6 +133,57 @@ impl ClientCore {
             seq: 0,
             stats: NetStats::default(),
         }
+    }
+
+    /// A client for a free ride on `net` (the server sends the paths).
+    pub fn free_ride(
+        net: Arc<RoadNetwork>,
+        name: impl Into<String>,
+        profile: RiderProfile,
+    ) -> Self {
+        let v = net.graph().vertices.first().copied().unwrap_or([0.0, 0.0]);
+        let placeholder = Route::from_points(
+            "free-ride",
+            "Free ride",
+            vec![[v[0], 0.0, v[1]], [v[0] + 1.0, 0.0, v[1]]],
+            false,
+            5.0,
+        )
+        .expect("two distinct points");
+        Self {
+            free: Some(FreeRide {
+                net,
+                own: None,
+                others: BTreeMap::new(),
+                choice: None,
+                turn_seq: 0,
+                turn_sent: None,
+                last_u_turn_s: None,
+                locked: None,
+            }),
+            ..Self::new(placeholder, name, profile)
+        }
+    }
+
+    /// Name of what is ridden (the route's, or "Free ride").
+    pub fn course_name(&self) -> &str {
+        self.route.name()
+    }
+
+    /// (lat, lon) of the local metres, if known (route files, packages).
+    pub fn geo_origin(&self) -> Option<(f64, f64)> {
+        self.route.geo_origin()
+    }
+
+    /// The same client with the geographic origin of its local metres
+    /// (free ride: the world package's), for the GPS track of rides.
+    pub fn with_geo_origin(mut self, origin: (f64, f64)) -> Self {
+        self.route = self.route.clone().with_geo_origin(origin);
+        self
+    }
+
+    pub fn is_free_ride(&self) -> bool {
+        self.free.is_some()
     }
 
     /// The first message to send after connecting.
@@ -182,6 +271,50 @@ impl ClientCore {
                 self.on_snapshot(&s, now_s);
                 None
             }
+            S::Path(p) => {
+                self.on_path(&p);
+                None
+            }
+        }
+    }
+
+    /// A rider's path from the server: a new one, an extension, or a
+    /// correction of the own prediction (spec §6.5).
+    fn on_path(&mut self, u: &v1::PathUpdate) {
+        let own_id = self.rider_id;
+        let Some(fr) = &mut self.free else { return };
+        let Ok(segments) = ocw_protocol::path_segments(u, &fr.net) else {
+            self.stats.malformed += 1;
+            return;
+        };
+        self.stats.path_updates += 1;
+        let rider = RiderId(u.rider_id);
+        let current = if Some(rider) == own_id {
+            fr.own.take()
+        } else {
+            fr.others.remove(&rider)
+        };
+        let net = fr.net.clone();
+        let fresh = || {
+            RidePath::from_segments(net.clone(), &segments, u.start_m, u.first_index)
+                .ok()
+                .map(Arc::new)
+        };
+        let updated = match current {
+            Some(mut p) if !u.reset && u.first_index > p.first_index() => {
+                match Arc::make_mut(&mut p).replace_from(u.first_index, &segments) {
+                    Ok(()) => Some(p),
+                    Err(_) => fresh(),
+                }
+            }
+            _ => fresh(),
+        };
+        if let Some(p) = updated {
+            if Some(rider) == own_id {
+                fr.own = Some(p);
+            } else {
+                fr.others.insert(rider, p);
+            }
         }
     }
 
@@ -200,8 +333,12 @@ impl ClientCore {
                     self.lateral_target = Some(state.lateral_offset);
                     self.predictor.set_lateral_target(state.lateral_offset);
                 }
-                self.predictor
-                    .reconcile(&self.route, state, 0.0, self.power_w());
+                let power = self.power_w();
+                let track: &dyn Track = match self.free.as_ref().and_then(|f| f.own.as_deref()) {
+                    Some(p) => p,
+                    None => &self.route,
+                };
+                self.predictor.reconcile(track, state, 0.0, power);
                 // A snap (teleport, large error) must not be interpolated.
                 if self.predictor.last_error().abs() > ocw_sim::prediction::SNAP_THRESHOLD_M {
                     self.prev_state = self.predictor.state();
@@ -210,8 +347,39 @@ impl ClientCore {
                 others.push((id, state));
             }
         }
-        self.others_now = others.iter().map(|(_, s)| *s).collect();
+        if let Some(fr) = &mut self.free {
+            // Forget riders who left; drop what lies far behind the others.
+            fr.others
+                .retain(|id, _| others.iter().any(|(o, _)| o == id));
+            for (id, st) in &others {
+                if let Some(p) = fr.others.get_mut(id)
+                    && p.needs_trim(st.distance - 50.0)
+                {
+                    Arc::make_mut(p).trim_behind(st.distance - 50.0);
+                }
+            }
+        }
+        self.others_now = others.clone();
         self.others.push(now_s, others);
+    }
+
+    /// What the local rider rides along: the own free-ride path (once
+    /// known), or the route.
+    pub fn track(&self) -> &dyn Track {
+        match self.free.as_ref().and_then(|f| f.own.as_deref()) {
+            Some(p) => p,
+            None => &self.route,
+        }
+    }
+
+    /// The lateral limit at the rider (road edge, or wild mode's).
+    fn lateral_limit(&self) -> f64 {
+        if self.wild {
+            ocw_sim::physics::WILD_LIMIT_M
+        } else {
+            let d = self.predictor.state().distance;
+            ocw_sim::physics::lateral_limit(self.track().road_width_at(d))
+        }
     }
 
     /// Sets the steering target (lateral offset in metres), within the road.
@@ -219,11 +387,7 @@ impl ClientCore {
         if self.rider_id.is_none() {
             return;
         }
-        let limit = if self.wild {
-            ocw_sim::physics::WILD_LIMIT_M
-        } else {
-            ocw_sim::physics::lateral_limit(self.route.road_width_m())
-        };
+        let limit = self.lateral_limit();
         let t = target_m.clamp(-limit, limit);
         self.lateral_target = Some(t);
         self.lean = None;
@@ -283,7 +447,7 @@ impl ClientCore {
         if self.wild {
             s.push_str(" | WILD");
         }
-        let surface = ocw_sim::ride::surface(&self.route, &self.predictor.state());
+        let surface = ocw_sim::ride::surface(self.track(), &self.predictor.state());
         if surface != ocw_world::Surface::Asphalt {
             s.push_str(" | ");
             s.push_str(surface.name());
@@ -297,8 +461,8 @@ impl ClientCore {
         self.predictor.set_wild(wild);
         if !wild {
             // Back within the road for the autodrive line.
+            let limit = self.lateral_limit();
             if let Some(t) = self.lateral_target {
-                let limit = ocw_sim::physics::lateral_limit(self.route.road_width_m());
                 self.lateral_target = Some(t.clamp(-limit, limit));
             }
         }
@@ -336,22 +500,250 @@ impl ClientCore {
         }))))
     }
 
+    /// The junction the own path ends at (the next decision) and its path
+    /// distance.
+    fn next_junction(&self) -> Option<(Junction, f64)> {
+        self.free.as_ref()?.own.as_ref()?.next_junction()
+    }
+
+    /// Whether a junction is ahead within the overlay's look-ahead and not
+    /// locked yet (the arrow keys then choose the exit, spec §2.2.1).
+    pub fn junction_active(&self) -> bool {
+        let st = self.predictor.state();
+        self.next_junction().is_some_and(|(_, at)| {
+            let left = at - st.distance;
+            left >= lock_distance(st.speed)
+                && left <= JUNCTION_LOOKAHEAD_M.max(JUNCTION_LOOKAHEAD_S * st.speed)
+        })
+    }
+
+    /// Moves the exit selection of the next junction `steps` exits to the
+    /// right (negative: left), spec §2.2.1. Back at the default it is "no
+    /// choice". Returns the chosen exit's description.
+    pub fn turn(&mut self, steps: i32) -> Option<String> {
+        let (j, _) = self.next_junction()?;
+        let fr = self.free.as_mut()?;
+        let current = freeride::exit_index(&j, fr.choice.as_ref()) as i32;
+        let i = (current + steps).clamp(0, j.exits.len() as i32 - 1) as usize;
+        self.select_exit(&j, i)
+    }
+
+    /// Selects exit `i` (leftmost = 0) of the next junction.
+    pub fn choose_exit(&mut self, i: usize) -> Option<String> {
+        let (j, _) = self.next_junction()?;
+        (i < j.exits.len()).then_some(())?;
+        self.select_exit(&j, i)
+    }
+
+    /// Back to the default exit ("no choice").
+    pub fn clear_exit(&mut self) -> Option<String> {
+        let (j, _) = self.next_junction()?;
+        self.select_exit(&j, j.default)
+    }
+
+    /// Selects the leftmost / straightest / rightmost-like exit by name:
+    /// "left", "straight" or "right" (the nearest of that class).
+    pub fn choose_direction(&mut self, dir: &str) -> Option<String> {
+        let (j, _) = self.next_junction()?;
+        let i = match dir {
+            "left" => j
+                .exits
+                .iter()
+                .rposition(|e| e.angle_deg < -ocw_world::network::STRAIGHT_DEG)?,
+            "right" => j
+                .exits
+                .iter()
+                .position(|e| e.angle_deg > ocw_world::network::STRAIGHT_DEG)?,
+            "straight" => (0..j.exits.len()).min_by(|&a, &b| {
+                j.exits[a]
+                    .angle_deg
+                    .abs()
+                    .total_cmp(&j.exits[b].angle_deg.abs())
+            })?,
+            _ => return None,
+        };
+        self.select_exit(&j, i)
+    }
+
+    fn select_exit(&mut self, j: &Junction, i: usize) -> Option<String> {
+        let fr = self.free.as_mut()?;
+        let e = &j.exits[i];
+        fr.choice = (i != j.default).then_some(TurnChoice {
+            junction: j.vertex,
+            edge: e.edge,
+            forward: e.forward,
+        });
+        Some(format!(
+            "next junction: {} ({}){}",
+            e.class.name(),
+            exit_name(&fr.net, e.edge),
+            if i == j.default { ", the default" } else { "" }
+        ))
+    }
+
+    /// The exit choice to send, when it changed (spec §6.5: reliable,
+    /// whenever the choice changes).
+    pub fn turn_message(&mut self) -> Option<Vec<u8>> {
+        let (j, _) = self.next_junction()?;
+        let fr = self.free.as_mut()?;
+        let choice = fr.choice.filter(|c| c.junction == j.vertex);
+        let key = (j.vertex, choice);
+        if fr.turn_sent == Some(key) {
+            return None;
+        }
+        // "No choice" only needs sending to take back a choice.
+        let server_has_choice = matches!(fr.turn_sent, Some((_, Some(_))));
+        fr.turn_sent = Some(key);
+        if choice.is_none() && !server_has_choice {
+            return None;
+        }
+        fr.turn_seq += 1;
+        Some(encode(&client_message(C::Turn(ocw_protocol::turn_intent(
+            fr.turn_seq,
+            j.vertex,
+            choice.as_ref(),
+            &fr.net,
+        )))))
+    }
+
+    /// Manual U-turn (spec §2.2.2): predicted at once; returns the message
+    /// for the server. At most every [`UTURN_INTERVAL_S`].
+    pub fn u_turn(&mut self, now_s: f64) -> Option<Vec<u8>> {
+        let st = self.predictor.state();
+        let fr = self.free.as_mut()?;
+        if fr
+            .last_u_turn_s
+            .is_some_and(|t| now_s - t < UTURN_INTERVAL_S)
+        {
+            return None;
+        }
+        // Quantized like the message, so the server builds the same loop.
+        let (d_cm, v_mm) = (
+            (st.distance * 100.0).round().max(0.0) as u32,
+            (st.speed * 1000.0).round().max(0.0) as u32,
+        );
+        let own = fr.own.as_mut()?;
+        Arc::make_mut(own).u_turn(f64::from(d_cm) / 100.0, f64::from(v_mm) / 1000.0)?;
+        fr.last_u_turn_s = Some(now_s);
+        fr.choice = None;
+        Some(encode(&client_message(C::UTurn(v1::UTurn {
+            distance_cm: d_cm,
+            speed_mm_s: v_mm,
+        }))))
+    }
+
+    /// The junction overlay (spec §2.2.1): the next junction within the
+    /// look-ahead, or the one just locked until it is passed.
+    pub fn junction_view(&self) -> Option<JunctionView> {
+        let fr = self.free.as_ref()?;
+        let st = self.predictor.state();
+        let d = st.distance;
+        if let Some((j, at, chosen)) = &fr.locked
+            && d < at + 8.0
+        {
+            return Some(junction_view(&fr.net, j, *chosen, at - d, true));
+        }
+        let (j, at) = fr.own.as_ref()?.next_junction()?;
+        if at - d > JUNCTION_LOOKAHEAD_M.max(JUNCTION_LOOKAHEAD_S * st.speed) {
+            return None;
+        }
+        let i = freeride::exit_index(&j, fr.choice.as_ref());
+        Some(junction_view(&fr.net, &j, i, at - d, false))
+    }
+
+    /// A message for the rider: "Dead end in 800 m", "End of region",
+    /// "U-turn" (spec §2.2.2).
+    pub fn notice(&self) -> Option<String> {
+        let own = self.free.as_ref()?.own.as_ref()?;
+        let d = self.predictor.state().distance;
+        if own.in_turnaround(d) {
+            return Some("U-turn".into());
+        }
+        let round = |m: f64| (m / 10.0).round() * 10.0;
+        match own.turnaround_ahead(d) {
+            Some((at, TurnReason::Boundary)) if at - d < DEAD_END_WARNING_M => Some(format!(
+                "End of region in {:.0} m - install the neighbouring package to ride on",
+                round(at - d)
+            )),
+            Some((at, TurnReason::Manual)) => Some(format!("U-turn in {:.0} m", round(at - d))),
+            _ => own
+                .dead_end_ahead(d)
+                .filter(|m| *m < DEAD_END_WARNING_M)
+                .map(|m| format!("Dead end in {:.0} m", round(m.max(0.0)))),
+        }
+    }
+
+    /// Every rider's free-ride path (for rendering).
+    pub fn paths(&self) -> BTreeMap<RiderId, Arc<RidePath>> {
+        let Some(fr) = &self.free else {
+            return BTreeMap::new();
+        };
+        let mut out = fr.others.clone();
+        if let (Some(id), Some(own)) = (self.rider_id, &fr.own) {
+            out.insert(id, own.clone());
+        }
+        out
+    }
+
     /// One fixed physics tick of the local prediction.
     pub fn predict_step(&mut self) {
         if self.rider_id.is_none() {
             return;
         }
         let me = self.predictor.state();
-        let drag = ocw_sim::drafting::drag_factor(
-            (me.distance, me.lateral_offset),
-            self.others_now
+        // Free ride: extend the own path like the server (lock point).
+        if let Some(fr) = &mut self.free
+            && let Some(own) = &mut fr.own
+        {
+            let d = me.distance;
+            if own.needs_extend(d, me.speed) {
+                let pending = own.next_junction();
+                let (changed, used) =
+                    freeride::advance(Arc::make_mut(own), d, me.speed, fr.choice.as_ref());
+                if let (Some((j, at)), Some(_)) = (pending, changed)
+                    && d >= at - lock_distance(me.speed)
+                {
+                    let chosen = freeride::exit_index(&j, fr.choice.as_ref());
+                    fr.locked = Some((j, at, chosen));
+                }
+                if used {
+                    fr.choice = None;
+                }
+            }
+            if own.needs_trim(d) {
+                Arc::make_mut(own).trim_behind(d);
+            }
+        }
+        let others: Vec<(f64, f64)> = match self
+            .free
+            .as_ref()
+            .and_then(|f| f.own.as_ref().map(|o| (f, o)))
+        {
+            Some((fr, own)) => freeride::others_on_path(
+                own,
+                me.distance,
+                self.others_now.iter().filter_map(|(id, s)| {
+                    fr.others
+                        .get(id)
+                        .map(|p| (p.as_ref(), s.distance, s.lateral_offset))
+                }),
+            ),
+            None => self
+                .others_now
                 .iter()
-                .map(|o| (o.distance, o.lateral_offset)),
-        );
+                .map(|(_, o)| (o.distance, o.lateral_offset))
+                .collect(),
+        };
+        let drag = ocw_sim::drafting::drag_factor((me.distance, me.lateral_offset), others);
         self.predictor.set_drag_factor(drag);
         self.prev_state = self.predictor.state();
-        self.predictor.step(&self.route, self.power_w());
-        for o in &mut self.others_now {
+        let power = self.power_w();
+        let track: &dyn Track = match self.free.as_ref().and_then(|f| f.own.as_deref()) {
+            Some(p) => p,
+            None => &self.route,
+        };
+        self.predictor.step(track, power);
+        for (_, o) in &mut self.others_now {
             o.distance += o.speed * ocw_core::SIM_DT;
         }
     }
@@ -378,6 +770,12 @@ impl ClientCore {
             is_local: true,
         }];
         for (id, state) in self.others.sample(now_s - INTERPOLATION_DELAY_S) {
+            // Free ride: only riders whose path is known can be placed.
+            if let Some(fr) = &self.free
+                && !fr.others.contains_key(&id)
+            {
+                continue;
+            }
             let (name, power_w) = self.names.get(&id).cloned().unwrap_or_default();
             riders.push(RiderView {
                 id,
@@ -392,6 +790,7 @@ impl ClientCore {
         riders
     }
 
+    #[cfg(test)]
     pub fn route(&self) -> &Route {
         &self.route
     }
@@ -432,6 +831,40 @@ impl ClientCore {
     }
     pub fn stats(&self) -> &NetStats {
         &self.stats
+    }
+}
+
+/// Street name or ref of an edge, or its road class.
+fn exit_name(net: &RoadNetwork, edge: usize) -> String {
+    let e = net.edge(edge);
+    e.name
+        .clone()
+        .unwrap_or_else(|| format!("{:?}", e.class).to_lowercase())
+}
+
+fn junction_view(
+    net: &RoadNetwork,
+    j: &Junction,
+    selected: usize,
+    distance_m: f64,
+    locked: bool,
+) -> JunctionView {
+    JunctionView {
+        distance_m,
+        exits: j
+            .exits
+            .iter()
+            .map(|e| ExitView {
+                angle_deg: e.angle_deg,
+                name: exit_name(net, e.edge),
+                dead_end: e.dead_end,
+                unpaved: e.unpaved,
+                steep: e.steep,
+            })
+            .collect(),
+        selected,
+        default: j.default,
+        locked,
     }
 }
 
@@ -478,7 +911,7 @@ mod tests {
 
     impl Harness {
         fn new(bots: u32, allow_dev: bool) -> Self {
-            let mut server = GameServer::new(
+            let server = GameServer::new(
                 route(),
                 ServerConfig {
                     allow_dev_commands: allow_dev,
@@ -486,8 +919,40 @@ mod tests {
                     start_m: 0.0,
                 },
             );
-            let conn = server.connect();
             let client = ClientCore::new(route(), "Tester", RiderProfile::default());
+            Self::with(server, client)
+        }
+
+        /// Free ride on the grid (see [`grid`]), starting 50 m east of
+        /// vertex 1 on the top row, riding east.
+        fn free(bots: u32) -> Self {
+            let net = Arc::new(RoadNetwork::new(grid()));
+            let edge = (0..net.graph().edges.len())
+                .find(|&e| net.edge(e).from.0 == 1 && net.edge(e).to.0 == 2)
+                .unwrap();
+            let server = GameServer::new(
+                ocw_server::Course::FreeRide {
+                    net: net.clone(),
+                    start: ocw_sim::FreeRideStart {
+                        edge,
+                        offset_m: 50.0,
+                        forward: true,
+                    },
+                },
+                ServerConfig {
+                    allow_dev_commands: true,
+                    bots,
+                    start_m: 0.0,
+                },
+            );
+            Self::with(
+                server,
+                ClientCore::free_ride(net, "Free", RiderProfile::default()),
+            )
+        }
+
+        fn with(mut server: GameServer, client: ClientCore) -> Self {
+            let conn = server.connect();
             let mut h = Self {
                 server,
                 conn,
@@ -522,8 +987,8 @@ mod tests {
                 {
                     self.send(&sample);
                 }
-                if let Some(snapshot) = self.server.tick() {
-                    self.receive(&snapshot);
+                for msg in self.server.tick() {
+                    self.receive(&msg);
                 }
                 self.client.predict_step();
                 self.time_s += ocw_core::SIM_DT;
@@ -918,5 +1383,207 @@ mod tests {
         assert!(h.server.session().rider_state(own).unwrap().speed > 5.0);
         assert!(h.client.set_key_power(-5.0).is_some());
         assert_eq!(h.client.key_power_w(), 0.0);
+    }
+
+    /// A 4 × 4 grid of crossroads 300 m apart (vertex 4·row + col at
+    /// x = 300·col, z = 300·row; +z is south).
+    fn grid() -> ocw_world::graph::RoadGraph {
+        use ocw_world::graph::{Edge, EdgeId, Oneway, RoadClass, RoadGraph, VertexId};
+        let n = 4u32;
+        let mut vertices = Vec::new();
+        for row in 0..n {
+            for col in 0..n {
+                vertices.push([f64::from(col) * 300.0, f64::from(row) * 300.0]);
+            }
+        }
+        let mut pairs = Vec::new();
+        for row in 0..n {
+            for col in 0..n {
+                let i = row * n + col;
+                if col + 1 < n {
+                    pairs.push((i, i + 1));
+                }
+                if row + 1 < n {
+                    pairs.push((i, i + n));
+                }
+            }
+        }
+        RoadGraph {
+            edges: pairs
+                .iter()
+                .enumerate()
+                .map(|(k, &(a, b))| Edge {
+                    id: EdgeId(9000 + k as u64),
+                    from: VertexId(a),
+                    to: VertexId(b),
+                    points: vec![vertices[a as usize], vertices[b as usize]],
+                    class: RoadClass::Tertiary,
+                    name: Some(format!("Road {k}")),
+                    width_m: 6.0,
+                    bridge: false,
+                    tunnel: false,
+                    dead_end_m: None,
+                    boundary: false,
+                    oneway: Oneway::No,
+                    osm_way: k as i64,
+                    profile: Vec::new(),
+                })
+                .collect(),
+            vertices,
+            boundary_vertices: Default::default(),
+        }
+    }
+
+    impl Harness {
+        /// Where the local rider is on the client and on the server.
+        fn positions(&self) -> (ocw_world::RoutePoint, ocw_world::RoutePoint) {
+            let own = self.client.rider_id().unwrap();
+            let server = self.server.session().rider_state(own).unwrap();
+            (
+                self.client.track().sample(self.client.state().distance),
+                self.server.session().track(own).sample(server.distance),
+            )
+        }
+    }
+
+    fn close(a: [f64; 3], b: [f64; 3], tol: f64) -> bool {
+        (a[0] - b[0]).hypot(a[2] - b[2]) < tol
+    }
+
+    /// Free ride through two junctions (spec §14, Phase 3): a chosen exit
+    /// (right) and then the default (straight on). The client predicts its
+    /// path, the server takes the same exits, and both agree.
+    #[test]
+    fn free_ride_through_junctions_with_a_chosen_and_a_default_exit() {
+        let mut h = Harness::free(2);
+        h.ride(250.0, 1.0);
+        assert!(h.client.is_free_ride());
+        let own = h.client.rider_id().unwrap();
+        assert!(h.client.paths().contains_key(&own));
+        // The junction at x = 600 m is 250 m ahead: no overlay yet, but a
+        // pre-selection is allowed.
+        assert!(h.client.junction_view().is_none());
+        assert!(!h.client.junction_active());
+        let said = h.client.turn(1).expect("a junction ahead");
+        assert!(said.contains("right"), "{said}");
+        let msg = h.client.turn_message().expect("turn intent");
+        match ocw_protocol::decode_client(&msg).unwrap() {
+            C::Turn(t) => assert!(t.exit_edge_id.is_some() && t.junction_id == 2, "{t:?}"),
+            other => panic!("unexpected {other:?}"),
+        }
+        h.send(&msg);
+        assert!(h.client.turn_message().is_none(), "unchanged");
+        let (mut active, mut locked) = (false, false);
+        for _ in 0..400 {
+            h.ride(250.0, 0.1);
+            if let Some(j) = h.client.junction_view() {
+                assert!(j.exits[j.selected].angle_deg > 60.0, "{j:?}");
+                assert_ne!(j.selected, j.default);
+                if j.locked {
+                    locked = true;
+                    assert!(j.distance_m < lock_distance(12.0));
+                } else {
+                    active = true;
+                    assert!(j.distance_m <= 150.0 && j.distance_m >= ocw_world::path::LOCK_M - 1.0);
+                }
+            }
+        }
+        assert!(active && locked);
+        // Turned right: heading south on the x = 600 m road.
+        let (c, s) = h.positions();
+        assert!(
+            (c.position[0] - 600.0).abs() < 4.0 && c.position[2] > 30.0,
+            "{c:?}"
+        );
+        assert!(c.direction[1] > 0.99);
+        assert!(close(c.position, s.position, 1.0), "{c:?} vs {s:?}");
+        // The next junction (x 600, z 300): nothing chosen, straight on.
+        h.ride(250.0, 45.0);
+        let (c, s) = h.positions();
+        assert!(
+            (c.position[0] - 600.0).abs() < 4.0 && c.position[2] > 320.0,
+            "{c:?}"
+        );
+        assert!(c.direction[1] > 0.99, "{c:?}");
+        assert!(close(c.position, s.position, 1.0), "{c:?} vs {s:?}");
+        assert!(h.client.prediction_error().abs() < 0.5);
+        // Same path on both sides.
+        let d = h.client.state().distance;
+        let server_path = h.server.session().path(own).unwrap();
+        for k in [-150.0, -60.0, 0.0, 20.0] {
+            let a = h.client.track().sample(d + k).position;
+            let b = server_path.sample(d + k).position;
+            assert!(close(a, b, 1e-6), "{k}: {a:?} vs {b:?}");
+        }
+        // The bots ride their own ways and are drawn.
+        assert_eq!(h.client.view(h.time_s, 1.0).len(), 3);
+        assert_eq!(h.client.paths().len(), 3);
+        assert_eq!(h.client.stats().malformed, 0);
+    }
+
+    /// The choice did not reach the server in time: the server's default
+    /// applies and corrects the client's predicted path (spec §6.5).
+    #[test]
+    fn free_ride_late_choice_is_corrected_by_the_server() {
+        let mut h = Harness::free(0);
+        h.ride(250.0, 1.0);
+        h.client.turn(1).unwrap(); // right, but never sent
+        h.ride(250.0, 45.0);
+        let (c, s) = h.positions();
+        // Straight on (east) along the top row, like the server.
+        assert!(c.position[0] > 650.0 && c.position[2].abs() < 4.0, "{c:?}");
+        assert!(c.direction[0] > 0.99);
+        assert!(close(c.position, s.position, 1.0), "{c:?} vs {s:?}");
+    }
+
+    /// U-turn (spec §2.2.2): predicted at once, the server builds the same
+    /// loop from the client's position; rate limited.
+    #[test]
+    fn free_ride_u_turn_on_client_and_server() {
+        let mut h = Harness::free(0);
+        h.ride(250.0, 8.0);
+        let msg = h.client.u_turn(h.time_s).expect("u-turn");
+        assert!(h.client.u_turn(h.time_s + 1.0).is_none(), "rate limited");
+        assert_eq!(
+            h.client
+                .notice()
+                .as_deref()
+                .map(|n| n.starts_with("U-turn")),
+            Some(true)
+        );
+        h.send(&msg);
+        h.ride(250.0, 25.0);
+        let (c, s) = h.positions();
+        assert!(c.direction[0] < -0.99, "{c:?}");
+        assert!(close(c.position, s.position, 0.5), "{c:?} vs {s:?}");
+        assert!(h.client.prediction_error().abs() < 0.5);
+    }
+
+    #[test]
+    fn exit_selection_steps_through_the_exits() {
+        let mut h = Harness::free(0);
+        h.ride(250.0, 1.0);
+        // The top row's junction: straight on (the default) or right.
+        // Nothing to the left of straight.
+        assert!(h.client.turn(-1).unwrap().contains("default"));
+        assert!(h.client.turn(1).unwrap().contains("right"));
+        assert!(h.client.turn(1).unwrap().contains("right"));
+        // Back to straight: the default, "no choice".
+        assert!(h.client.turn(-1).unwrap().contains("default"));
+        assert!(h.client.choose_direction("left").is_none());
+        assert!(
+            h.client
+                .choose_direction("right")
+                .unwrap()
+                .contains("right")
+        );
+        assert!(h.client.clear_exit().unwrap().contains("default"));
+        assert!(h.client.choose_exit(9).is_none());
+        // Route rides have no junctions.
+        let mut r = Harness::new(0, false);
+        r.ride(200.0, 1.0);
+        assert!(r.client.turn(1).is_none());
+        assert!(r.client.u_turn(1.0).is_none());
+        assert!(r.client.junction_view().is_none());
     }
 }

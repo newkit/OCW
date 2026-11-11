@@ -12,7 +12,6 @@ use bevy::prelude::*;
 use clap::Command;
 use ocw_fit::{Activity, Record};
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, Permission};
-use ocw_world::Route;
 use serde::{Deserialize, Serialize};
 
 use crate::Args;
@@ -79,7 +78,15 @@ impl RideRecorder {
 
     /// Records `s` if a record is due; `wall_unix_s` is the wall clock (only
     /// the first record's is used: the start time). Returns whether it did.
-    pub fn observe(&mut self, route: &Route, s: Sample, wall_unix_s: i64) -> bool {
+    /// `track` is what the rider rides along (route or free-ride path),
+    /// `geo_origin` the (lat, lon) of its local metres, for the GPS track.
+    pub fn observe(
+        &mut self,
+        track: &dyn ocw_world::Track,
+        geo_origin: Option<(f64, f64)>,
+        s: Sample,
+        wall_unix_s: i64,
+    ) -> bool {
         if let Some((t, raw)) = self.last {
             let dt = s.game_s - t;
             if dt < RECORD_INTERVAL_S - 1e-6 {
@@ -94,7 +101,7 @@ impl RideRecorder {
             self.start_game_s = s.game_s;
         }
         self.last = Some((s.game_s, s.distance));
-        let p = route.sample(s.distance).offset_position(s.lateral_offset);
+        let p = track.sample(s.distance).offset_position(s.lateral_offset);
         self.records.push(Record {
             elapsed_s: s.game_s - self.start_game_s,
             distance_m: self.distance_m,
@@ -103,7 +110,9 @@ impl RideRecorder {
             cadence_rpm: s.cadence_rpm,
             heart_rate_bpm: s.heart_rate_bpm,
             altitude_m: Some(p[1]),
-            position: route.lat_lon(p[0], p[2]),
+            position: geo_origin.map(|(lat, lon)| {
+                ocw_world::geo::LocalProjection::new(lat, lon).unproject([p[0], p[2]])
+            }),
         });
         true
     }
@@ -262,8 +271,7 @@ impl Plugin for RecordingPlugin {
             .world()
             .resource::<ClientState>()
             .0
-            .route()
-            .name()
+            .course_name()
             .to_string();
         app.insert_resource(Recording {
             recorder: RideRecorder::new(route),
@@ -291,7 +299,8 @@ fn record(time: Res<Time>, client: Res<ClientState>, mut rec: ResMut<Recording>)
         cadence_rpm: c.cadence_rpm(),
         heart_rate_bpm: c.heart_rate_bpm(),
     };
-    rec.recorder.observe(c.route(), sample, unix_now());
+    rec.recorder
+        .observe(c.track(), c.geo_origin(), sample, unix_now());
 }
 
 fn save_on_exit(
@@ -364,6 +373,7 @@ fn register_commands(app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ocw_world::Route;
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("ocw-rec-{name}-{}", std::process::id()));
@@ -390,7 +400,12 @@ mod tests {
         let mut t = 10.0;
         let mut n = 0;
         while t < 20.0 {
-            n += usize::from(r.observe(&route, sample(t, (t - 10.0) * 8.0), 1000));
+            n += usize::from(r.observe(
+                &route,
+                route.geo_origin(),
+                sample(t, (t - 10.0) * 8.0),
+                1000,
+            ));
             t += 1.0 / 60.0;
         }
         assert_eq!(n, 10);
@@ -411,11 +426,11 @@ mod tests {
     fn teleports_do_not_count_as_distance() {
         let route = Route::test_loop();
         let mut r = RideRecorder::new("Loop");
-        r.observe(&route, sample(0.0, 0.0), 0);
-        r.observe(&route, sample(1.0, 8.0), 0);
-        r.observe(&route, sample(2.0, 1508.0), 0); // teleport 1.5 km
-        r.observe(&route, sample(3.0, 1516.0), 0);
-        r.observe(&route, sample(4.0, 200.0), 0); // teleport back
+        r.observe(&route, route.geo_origin(), sample(0.0, 0.0), 0);
+        r.observe(&route, route.geo_origin(), sample(1.0, 8.0), 0);
+        r.observe(&route, route.geo_origin(), sample(2.0, 1508.0), 0); // teleport 1.5 km
+        r.observe(&route, route.geo_origin(), sample(3.0, 1516.0), 0);
+        r.observe(&route, route.geo_origin(), sample(4.0, 200.0), 0); // teleport back
         assert_eq!(r.distance_m(), 16.0);
     }
 
@@ -423,7 +438,7 @@ mod tests {
     fn routes_on_real_roads_get_a_gps_track() {
         let route = Route::test_loop().with_geo_origin((47.15, 9.55));
         let mut r = RideRecorder::new("Loop");
-        r.observe(&route, sample(0.0, 0.0), 0);
+        r.observe(&route, route.geo_origin(), sample(0.0, 0.0), 0);
         let p = route.sample(0.0).position;
         let (lat, lon) = r.records()[0].position.unwrap();
         assert_eq!(Some((lat, lon)), route.lat_lon(p[0], p[2]));
@@ -435,11 +450,12 @@ mod tests {
         let route = Route::test_loop();
         let mut r = RideRecorder::new("Loop");
         assert_eq!(r.finish(), None);
-        r.observe(&route, sample(0.0, 0.0), 1_762_862_400);
+        r.observe(&route, route.geo_origin(), sample(0.0, 0.0), 1_762_862_400);
         assert_eq!(r.finish(), None, "one record is not a ride");
         for i in 0..5 {
             r.observe(
                 &route,
+                route.geo_origin(),
                 sample(f64::from(i), f64::from(i) * 8.0),
                 1_762_862_400 + 99,
             );
@@ -465,7 +481,12 @@ mod tests {
         let route = Route::test_loop();
         let mut r = RideRecorder::new("Loop");
         for i in 0..3 {
-            r.observe(&route, sample(f64::from(i), f64::from(i) * 8.0), 0);
+            r.observe(
+                &route,
+                route.geo_origin(),
+                sample(f64::from(i), f64::from(i) * 8.0),
+                0,
+            );
         }
         let ride = r.finish().unwrap();
         let a = save_ride(&dir, &ride).unwrap();
@@ -490,8 +511,12 @@ mod tests {
             enabled: true,
         };
         for i in 0..10 {
-            rec.recorder
-                .observe(&route, sample(f64::from(i), f64::from(i) * 8.0), 0);
+            rec.recorder.observe(
+                &route,
+                route.geo_origin(),
+                sample(f64::from(i), f64::from(i) * 8.0),
+                0,
+            );
         }
         assert_eq!(rec.save(MIN_AUTO_SAVE_S), Ok(None));
         let path = rec.save(0.0).unwrap().unwrap();

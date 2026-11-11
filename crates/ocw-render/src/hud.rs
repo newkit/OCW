@@ -106,7 +106,8 @@ fn update_hud(
         big.0 = "Connecting...".into();
         return;
     };
-    let grade = view.route.sample(local.state.distance).grade * 100.0;
+    let track = view.track(local.id);
+    let grade = track.sample(local.state.distance).grade * 100.0;
     big.0 = main_line(
         local.power_w,
         mps_to_kmh(local.state.speed),
@@ -114,9 +115,19 @@ fn update_hud(
         grade,
         local.heart_rate_bpm,
     );
+    let (place, keys) = if view.free_ride {
+        (
+            format!("Free ride: {}", track.name_at(local.state.distance)),
+            "up: faster, down: stop, left/right: steer or choose the exit at junctions, Q/E: exit, U: U-turn, A: autodrive, W: wild",
+        )
+    } else {
+        (
+            view.route.name().to_string(),
+            "up: faster, down: stop, left/right: steer, A: autodrive, W: wild",
+        )
+    };
     let mut lines = format!(
-        "{} | {:.2} km | {} | riders: {}\nup: faster, down: stop, left/right: steer, A: autodrive, W: wild | mouse: camera, R: reset | F11: screen | ` or F12: console",
-        view.route.name(),
+        "{place} | {:.2} km | {} | riders: {}\n{keys} | mouse: camera, R: reset | F11: screen | ` or F12: console",
         local.state.distance / 1000.0,
         format_time(view.elapsed_s),
         view.riders.len()

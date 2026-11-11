@@ -47,6 +47,40 @@ impl RoadClass {
     }
 }
 
+/// One-way restriction of an edge for bicycles (OSM `oneway`, unless
+/// `oneway:bicycle=no`; roundabouts are one-way).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Oneway {
+    /// Rideable in both directions.
+    #[default]
+    No,
+    /// Only from `from` to `to`.
+    Forward,
+    /// Only from `to` to `from`.
+    Backward,
+}
+
+impl Oneway {
+    /// The same restriction for the edge with `from` and `to` swapped.
+    pub fn reversed(self) -> Self {
+        match self {
+            Self::No => Self::No,
+            Self::Forward => Self::Backward,
+            Self::Backward => Self::Forward,
+        }
+    }
+
+    /// Whether the edge may be ridden in this direction (`forward` = from
+    /// `from` to `to`).
+    pub fn allows(self, forward: bool) -> bool {
+        match self {
+            Self::No => true,
+            Self::Forward => forward,
+            Self::Backward => !forward,
+        }
+    }
+}
+
 /// A road segment between two vertices.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Edge {
@@ -65,6 +99,8 @@ pub struct Edge {
     pub dead_end_m: Option<f64>,
     /// Cut by the region boundary (spec §4.4, step 4).
     pub boundary: bool,
+    /// One-way for bicycles (spec §2.2.1: no exits against it).
+    pub oneway: Oneway,
     /// OSM way this edge comes from (for diagnostics and re-matching).
     pub osm_way: i64,
     /// Smoothed road elevation every [`PROFILE_STEP_M`] from `from` to `to`
@@ -336,6 +372,7 @@ impl RoadGraph {
                 std::mem::swap(&mut edge.from, &mut edge.to);
                 edge.points.reverse();
                 edge.profile.reverse();
+                edge.oneway = edge.oneway.reversed();
             }
             depth[parent] = depth[parent].max(dist);
             degree[parent] -= 1;
@@ -368,6 +405,7 @@ mod tests {
                     bridge: false,
                     tunnel: false,
                     dead_end_m: None,
+                    oneway: Oneway::No,
                     boundary: false,
                     osm_way: i as i64,
                     profile: Vec::new(),

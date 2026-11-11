@@ -8,6 +8,7 @@
 //! No engine, OS or network dependencies; must build for `wasm32-unknown-unknown`.
 
 pub mod drafting;
+pub mod freeride;
 pub mod interpolation;
 pub mod physics;
 pub mod prediction;
@@ -15,8 +16,9 @@ pub mod ride;
 pub mod session;
 pub mod trainer;
 
+pub use freeride::TurnChoice;
 pub use interpolation::SnapshotBuffer;
 pub use physics::{Environment, RiderState, Steering};
 pub use prediction::Predictor;
-pub use session::{RiderInput, RiderSnapshot, Session};
+pub use session::{FreeRideStart, PathChange, RiderInput, RiderSnapshot, Session};
 pub use trainer::{ErgController, ErgSettings, SimController, SimSettings, SimTarget};

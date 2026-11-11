@@ -1,9 +1,10 @@
-//! One physics tick of a rider on a route (spec §5.1, §6.1): surface,
-//! road edge, longitudinal physics and steering. The server, the client's
-//! prediction and its extrapolation all use it, so they agree.
+//! One physics tick of a rider on a track (spec §5.1, §6.1): surface,
+//! road edge, automatic slow-down, longitudinal physics and steering. The
+//! server, the client's prediction and its extrapolation all use it, so
+//! they agree. The track is a fixed route or a free-ride path.
 
 use ocw_core::RiderProfile;
-use ocw_world::{Route, Surface};
+use ocw_world::{Surface, Track};
 
 use crate::physics::{self, Environment, RiderState, Steering};
 
@@ -27,10 +28,15 @@ impl Default for Controls {
     }
 }
 
+/// Deceleration of the automatic slow-down before sharp turns and U-turns
+/// (m/s², spec §5.2): applied while the rider is faster than the track's
+/// speed limit there.
+pub const SLOW_DOWN_DECELERATION_MPS2: f64 = 3.0;
+
 /// The surface under a rider: the road's, or grass beside it.
-pub fn surface(route: &Route, state: &RiderState) -> Surface {
-    if state.lateral_offset.abs() <= route.road_width_m() / 2.0 {
-        route.surface_at(state.distance)
+pub fn surface(track: &dyn Track, state: &RiderState) -> Surface {
+    if state.lateral_offset.abs() <= track.road_width_at(state.distance) / 2.0 {
+        track.surface_at(state.distance)
     } else {
         Surface::Grass
     }
@@ -46,29 +52,44 @@ pub fn tick(
     power_w: f64,
     controls: Controls,
     scraping: &mut bool,
-    route: &Route,
+    track: &dyn Track,
     drag_factor: f64,
     dt: f64,
 ) {
-    let env = Environment::with_grade(route.sample(state.distance).grade)
+    let d = state.distance;
+    let grade = track.sample(d).grade;
+    // Downhill the slow-down also holds against gravity.
+    let slow_down = match track.speed_limit(d) {
+        Some(v) if state.speed > v => {
+            SLOW_DOWN_DECELERATION_MPS2 + (-grade).max(0.0) * ocw_core::GRAVITY
+        }
+        _ => 0.0,
+    };
+    let scrub = if *scraping {
+        physics::EDGE_SCRUB_MPS2
+    } else {
+        0.0
+    };
+    let env = Environment::with_grade(grade)
         .with_drag_factor(drag_factor)
         .with_brake(controls.braking)
-        .with_surface(surface(route, state))
-        .with_extra_deceleration(if *scraping {
-            physics::EDGE_SCRUB_MPS2
-        } else {
-            0.0
-        });
+        .with_surface(surface(track, state))
+        .with_extra_deceleration(scrub + slow_down);
     physics::step(state, profile, power_w, &env, dt);
     let limit = if controls.wild {
         physics::WILD_LIMIT_M
     } else {
-        physics::lateral_limit(route.road_width_m())
+        physics::lateral_limit(track.road_width_at(state.distance))
+    };
+    // Through a U-turn loop the rider is steered (also when leaning).
+    let steering = match controls.steering {
+        Steering::Lean(_) if track.assisted(state.distance) => Steering::Auto(0.0),
+        s => s,
     };
     *scraping = physics::apply_steering(
         state,
-        controls.steering,
-        route.curvature(state.distance),
+        steering,
+        track.curvature(state.distance),
         limit,
         controls.wild,
         dt,
@@ -78,6 +99,7 @@ pub fn tick(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ocw_world::Route;
 
     fn bend() -> Route {
         // Straight 200 m, then a 90° bend to the left (radius 60 m), then straight.
@@ -146,6 +168,69 @@ mod tests {
             w.distance,
             auto.distance
         );
+    }
+
+    #[test]
+    fn the_slow_down_holds_on_steep_descents() {
+        use ocw_world::graph::{Edge, EdgeId, Oneway, RoadClass, RoadGraph, VertexId};
+        use ocw_world::{RidePath, RoadNetwork};
+        // A 600 m descent at 12 %, then a 90° turn into a flat road, plus a
+        // third arm so the corner is a junction.
+        let e = |id: u64, a: u32, b: u32, p: Vec<[f64; 2]>, prof: Vec<f64>| Edge {
+            id: EdgeId(id),
+            from: VertexId(a),
+            to: VertexId(b),
+            points: p,
+            class: RoadClass::Secondary,
+            name: None,
+            width_m: 6.0,
+            bridge: false,
+            tunnel: false,
+            dead_end_m: None,
+            boundary: false,
+            oneway: Oneway::No,
+            osm_way: id as i64,
+            profile: prof,
+        };
+        let descent: Vec<f64> = (0..=120).map(|i| 72.0 - f64::from(i) * 0.6).collect();
+        let graph = RoadGraph {
+            vertices: vec![[0.0, 0.0], [600.0, 0.0], [600.0, 400.0], [1000.0, 0.0]],
+            edges: vec![
+                e(1, 0, 1, vec![[0.0, 0.0], [600.0, 0.0]], descent),
+                e(2, 1, 2, vec![[600.0, 0.0], [600.0, 400.0]], vec![0.0; 81]),
+                e(3, 1, 3, vec![[600.0, 0.0], [1000.0, 0.0]], vec![0.0; 81]),
+            ],
+            boundary_vertices: Default::default(),
+        };
+        let net = std::sync::Arc::new(RoadNetwork::new(graph));
+        let mut path = RidePath::start(net, 0, 0.0, true, 0.0, 0);
+        let profile = RiderProfile::default();
+        let mut s = RiderState::default();
+        let mut scraping = false;
+        let mut at_corner = None;
+        for _ in 0..(120 * 50) {
+            // Turn right at the bottom.
+            path.extend_at_speed(s.distance, s.speed, &mut |j| {
+                j.exits.iter().position(|x| x.angle_deg > 45.0).unwrap()
+            });
+            tick(
+                &mut s,
+                &profile,
+                250.0,
+                Controls::default(),
+                &mut scraping,
+                &path,
+                1.0,
+                0.02,
+            );
+            if at_corner.is_none() && s.distance >= 597.0 {
+                at_corner = Some(s.speed);
+            }
+        }
+        // ~60 km/h down the hill, ~22 km/h through the corner.
+        let v = at_corner.unwrap();
+        assert!(v < 7.0, "{} km/h at the corner", v * 3.6);
+        assert!(s.distance > 700.0);
     }
 
     #[test]

@@ -13,7 +13,31 @@ message ClientMessage {
     SensorSample sample = 2;
     DevCommand dev = 3;
     SteerIntent steer = 4;
+    TurnIntent turn = 5;
+    UTurn u_turn = 6;
   }
+}
+
+// Junction steering in free ride (spec §2.2.1, §6.5): the exit the rider
+// chose for the next junction, sent reliably whenever the choice changes.
+// The server applies it at the lock point (~20 m before the junction);
+// if it arrives too late, the default exit applies.
+message TurnIntent {
+  // Increasing per client; older intents are ignored.
+  uint32 seq = 1;
+  // The junction: vertex index in the world package's road graph.
+  uint32 junction_id = 2;
+  // Stable ID of the exit edge and whether it is ridden from its first
+  // vertex to its last; absent = no choice (the default exit).
+  optional fixed64 exit_edge_id = 3;
+  bool exit_forward = 4;
+}
+
+// Manual U-turn in free ride (spec §2.2.2), where the client turned: its
+// predicted distance and speed, so server and client build the same loop.
+message UTurn {
+  uint32 distance_cm = 1;
+  uint32 speed_mm_s = 2;
 }
 
 // Steering intent (spec §6.1): the lateral offset the rider wants to move
@@ -62,7 +86,14 @@ message SensorSample {
 message DevCommand {
   oneof cmd {
     double teleport_distance_m = 1;
+    // Free ride: to the road nearest this point (local metres).
+    TeleportPoint teleport_point = 2;
   }
+}
+
+message TeleportPoint {
+  double x_m = 1;
+  double z_m = 2;
 }
 
 // ---------------------------------------------------------------- server → client
@@ -73,7 +104,34 @@ message ServerMessage {
     Snapshot snapshot = 2;
     Reject reject = 3;
     DevCommandResult dev_result = 4;
+    PathUpdate path = 5;
   }
+}
+
+// A rider's free-ride path (spec §5.2, §6.5): the server broadcasts the
+// edges each rider takes as the path grows (and corrections). Reliable.
+message PathUpdate {
+  uint32 rider_id = 1;
+  // A new path (joining, teleport): the old one is dropped.
+  bool reset = 2;
+  // Index of the first step below among all steps of the rider's path;
+  // they replace the known steps from there on.
+  uint64 first_index = 3;
+  // Path distance (m) where that step starts.
+  double start_m = 4;
+  repeated PathStep steps = 5;
+}
+
+// One piece of a path: part of an edge, or a U-turn loop.
+message PathStep {
+  // Stable edge ID and the part ridden, in metres from the edge's first
+  // vertex (from_m > to_m: against the edge's direction).
+  fixed64 edge_id = 1;
+  double from_m = 2;
+  double to_m = 3;
+  // Instead of an edge, a U-turn loop: 1 dead end, 2 region border,
+  // 3 manual (spec §2.2.2).
+  uint32 turnaround = 4;
 }
 
 message Welcome {
@@ -82,6 +140,8 @@ message Welcome {
   uint32 tick_rate_hz = 3;
   uint32 broadcast_rate_hz = 4;
   string route_id = 5;
+  // Free ride on the road graph: paths come as PathUpdate messages.
+  bool free_ride = 6;
 }
 
 message Reject {
