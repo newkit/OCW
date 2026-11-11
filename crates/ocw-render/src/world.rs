@@ -8,6 +8,8 @@ use bevy::prelude::*;
 
 use ocw_world::{Route, Terrain, TerrainParams};
 
+use crate::camera::CameraInteraction;
+use crate::see_through::{SeeThroughMaterial, see_through};
 use crate::terrain::{far_ring_mesh, terrain_grids};
 use crate::{RideView, route_bounds, to_vec3};
 
@@ -36,6 +38,7 @@ fn spawn_world(
     package: Option<Res<crate::package::PackageWorld>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut tree_materials: ResMut<Assets<SeeThroughMaterial>>,
 ) {
     let route = &view.route;
 
@@ -136,6 +139,7 @@ fn spawn_world(
             Mesh3d(meshes.add(mesh)),
             MeshMaterial3d(ground.clone()),
             NotShadowCaster,
+            CameraInteraction::Solid,
         ));
     }
 
@@ -172,21 +176,7 @@ fn spawn_world(
     ));
 
     let trees = tree_positions(route, &terrain);
-    // Crown of `spawn_trees` (scale 1): a 7 m cone centred 5 m up, radius 2.2 m.
-    let cones = trees
-        .iter()
-        .map(|&(base, s)| crate::TreeCone {
-            base,
-            crown_bottom: 1.5 * s,
-            crown_top: 8.5 * s,
-            radius: 2.2 * s,
-        })
-        .collect();
-    commands.insert_resource(crate::Trees(std::collections::HashMap::from([(
-        (0, 0),
-        cones,
-    )])));
-    spawn_trees(&mut commands, &trees, &mut meshes, &mut materials);
+    spawn_trees(&mut commands, &trees, &mut meshes, &mut tree_materials);
     spawn_start_arch(&mut commands, &view, &mut meshes, &mut materials);
 }
 
@@ -337,33 +327,35 @@ impl Lcg {
 }
 
 /// Trees along the roadside. All trees share one mesh and material each, so
-/// Bevy batches them (instancing, spec §4.5).
+/// Bevy batches them (instancing, spec §4.5). They are see-through for the
+/// camera: they never move it and fade out where they block the view.
 fn spawn_trees(
     commands: &mut Commands,
     trees: &[(Vec3, f32)],
     meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
+    materials: &mut Assets<SeeThroughMaterial>,
 ) {
     let crown = meshes.add(Cone {
         radius: 2.2,
         height: 7.0,
     });
     let trunk = meshes.add(Cylinder::new(0.25, 2.0));
-    let crown_mat = materials.add(StandardMaterial {
+    let crown_mat = materials.add(see_through(StandardMaterial {
         base_color: Color::srgb(0.13, 0.33, 0.15),
         perceptual_roughness: 1.0,
         ..default()
-    });
-    let trunk_mat = materials.add(StandardMaterial {
+    }));
+    let trunk_mat = materials.add(see_through(StandardMaterial {
         base_color: Color::srgb(0.35, 0.24, 0.15),
         perceptual_roughness: 1.0,
         ..default()
-    });
+    }));
     for &(pos, scale) in trees {
         commands
             .spawn((
                 Transform::from_translation(pos).with_scale(Vec3::splat(scale)),
                 Visibility::default(),
+                CameraInteraction::SeeThrough,
             ))
             .with_children(|tree| {
                 tree.spawn((

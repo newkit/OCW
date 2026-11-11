@@ -507,7 +507,14 @@ Tile builds take up to 23 ms on worker threads; uploads cost at most 4.6 ms on t
 
 **GPS position:** bottom-left, the HUD shows the local rider's position as latitude / longitude (5 decimals, N/S, E/W) and altitude in metres, unprojected from the predicted position with the route's or world package's geographic origin (the same as the FIT track); hidden on routes without one (built-in test routes). Console: `rider.gps`. The HUD panel never extends past the window: long lines break at their " | " separators (then at commas) to fit the window width.
 
-**Camera and avatar (v1.9):** the chase camera follows the avatar itself (on the terrain when off the road) along the rider's own heading; it can be orbited with the mouse. It stays above the ground, never inside a tree crown, and lifts until the line of sight to the rider clears terrain and trees; its look-at point is smoothed. The avatar stands on the surface under both wheel contacts (front wheel first over a bump), leans by atan(v² κ / g) for the curve it rides, and is blended from road height onto the ground over 2 m beside the road.
+**Camera and avatar (v1.9):** the chase camera follows the avatar itself (on the terrain when off the road) along the rider's own heading; it can be orbited with the mouse. It stays above everything camera-solid and lifts until the line of sight to the rider clears it; its look-at point is smoothed. The avatar stands on the surface under both wheel contacts (front wheel first over a bump), leans by atan(v² κ / g) for the curve it rides, and is blended from road height onto the ground over 2 m beside the road.
+
+**What moves the camera:** every world object is in one of two classes (`CameraInteraction` in `ocw-render::camera`):
+
+| Class | Objects | Camera |
+|---|---|---|
+| **Solid** | Terrain, road, buildings | Avoids them: stays above them (and 0.5 m away from walls) and lifts until the line of sight to the rider clears them. Terrain comes from the ground height function; every other solid object registers the height of its top per tile as a camera obstacle layer, removed with the tile (buildings: footprint prisms up to the ridge, courtyards counted as solid, grid-indexed). |
+| **See-through** | Trees; later bushes, signs, other riders | Never change the camera position. Where one would block the view – within ~3 m of the lens, or in a cone around the line of sight from the camera to the rider (≈0.8 m radius at the camera, 2 m at the rider, ending 1 m before the rider) – it is faded out with screen-door transparency (ordered dither in the fragment shader; no blending, so depth sorting stays opaque and the shadow stays). |
 
 The interface is divided into modules:
 
