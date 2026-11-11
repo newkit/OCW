@@ -170,6 +170,85 @@ mod tests {
         );
     }
 
+    fn straight() -> Route {
+        Route::from_points(
+            "s",
+            "S",
+            vec![[0.0, 0.0, 0.0], [5000.0, 0.0, 0.0]],
+            false,
+            7.0,
+        )
+        .unwrap()
+    }
+
+    /// Runs `ticks` manual ticks with `lean` and `power_w` on `route`.
+    fn lean_for(
+        s: &mut RiderState,
+        scraping: &mut bool,
+        route: &Route,
+        lean: f64,
+        power_w: f64,
+        seconds: f64,
+    ) {
+        let controls = Controls {
+            steering: Steering::Lean(lean),
+            ..Default::default()
+        };
+        for _ in 0..(seconds / 0.02) as usize {
+            tick(
+                s,
+                &RiderProfile::default(),
+                power_w,
+                controls,
+                scraping,
+                route,
+                1.0,
+                0.02,
+            );
+        }
+    }
+
+    /// Regression: steered hard into the edge and then upright, the rider
+    /// kept scraping along it and was braked almost to a standstill.
+    #[test]
+    fn upright_along_the_edge_the_rider_keeps_rolling_and_can_steer_away() {
+        let route = straight();
+        let limit = physics::lateral_limit(7.0);
+        let mut s = RiderState {
+            speed: 9.0,
+            ..Default::default()
+        };
+        let mut scraping = false;
+        lean_for(&mut s, &mut scraping, &route, 0.4, 250.0, 3.0);
+        assert_eq!(s.lateral_offset, limit, "{s:?}");
+        assert!(scraping);
+        let pushed = s.speed;
+        // Upright along the edge: no more scraping, back to cruising speed.
+        lean_for(&mut s, &mut scraping, &route, 0.0, 250.0, 10.0);
+        assert!(!scraping);
+        assert!(s.speed > pushed + 1.0 && s.speed > 8.0, "{pushed} {s:?}");
+        // Leaning the other way leaves the edge.
+        lean_for(&mut s, &mut scraping, &route, -0.3, 250.0, 1.0);
+        assert!(s.lateral_offset < limit - 1.0, "{s:?}");
+    }
+
+    /// Regression: stopped at the edge, the scraping brake held a rider
+    /// pedalling gently at a standstill for ever.
+    #[test]
+    fn stopped_at_the_edge_the_rider_gets_going_again() {
+        let route = straight();
+        let limit = physics::lateral_limit(7.0);
+        let mut s = RiderState {
+            lateral_offset: limit,
+            ..Default::default()
+        };
+        // As after pushing into the edge until stopped.
+        let mut scraping = true;
+        lean_for(&mut s, &mut scraping, &route, -0.1, 100.0, 3.0);
+        assert!(s.speed > 2.0, "{s:?}");
+        assert!(s.lateral_offset < limit - 0.5, "{s:?}");
+    }
+
     #[test]
     fn the_slow_down_holds_on_steep_descents() {
         use ocw_world::graph::{Edge, EdgeId, Oneway, RoadClass, RoadGraph, VertexId};

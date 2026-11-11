@@ -53,7 +53,11 @@ pub const MAX_HEADING: f64 = 0.3;
 pub const WILD_MAX_HEADING: f64 = 1.2;
 /// How far from the road riders in wild mode may go (m, either side).
 pub const WILD_LIMIT_M: f64 = 60.0;
-/// Deceleration while scraping along the road edge (m/s²).
+/// Up to this share of the largest angle to the road, turning is not
+/// limited ([`apply_steering`]); above it, turning away from the road fades
+/// out (autodrive stays below it).
+const HEADING_KNEE: f64 = 0.7;
+/// Deceleration while pushing into the road edge (m/s²).
 pub const EDGE_SCRUB_MPS2: f64 = 1.5;
 /// Autodrive: largest angle it steers to the road (rad) and how quickly it
 /// turns the rider to the heading it wants (s).
@@ -98,8 +102,21 @@ pub fn apply_steering(
         Steering::Lean(_) => road_curvature,
     };
     let before = state.heading;
-    state.heading =
-        (state.heading + v * (k - road_curvature) * dt).clamp(-max_heading, max_heading);
+    let mut turn = v * (k - road_curvature) * dt;
+    if turn * before > 0.0 {
+        // Turning further away from the road: the turn fades out towards
+        // the largest angle, so the rider (and the avatar's lean) settles
+        // there smoothly instead of stopping to turn from one tick to the
+        // next.
+        turn *= heading_room(before / max_heading);
+    }
+    state.heading = (before + turn).clamp(-max_heading, max_heading);
+    // The curvature actually ridden (for the lean of the avatar).
+    state.turn_curvature = if v > 0.1 {
+        road_curvature + (state.heading - before) / (v * dt)
+    } else {
+        0.0
+    };
     state.lateral_offset += v * state.heading.sin() * dt;
     // Riding at an angle to the road covers less of it.
     state.distance -= v * (1.0 - state.heading.cos()) * dt;
@@ -109,16 +126,24 @@ pub fn apply_steering(
         state.lateral_offset = state.lateral_offset.clamp(-limit, limit);
         if state.heading * state.lateral_offset > 0.0 {
             state.heading = 0.0;
+            // Along the edge, not leaning away from it (the turn was stopped).
+            if v > 0.1 {
+                state.turn_curvature = road_curvature;
+            }
+            // Only pushing into the edge scrapes; rolling along it or
+            // steering away from it does not.
+            scraping = !wild;
         }
-        scraping = !wild;
     }
-    // The curvature actually ridden (for the lean of the avatar).
-    state.turn_curvature = if v > 0.1 {
-        road_curvature + (state.heading - before) / (v * dt)
-    } else {
-        0.0
-    };
     scraping
+}
+
+/// Share of a turn away from the road that still applies at `x` = heading
+/// / largest heading: all of it up to [`HEADING_KNEE`], then less and less,
+/// none at the largest angle.
+fn heading_room(x: f64) -> f64 {
+    let over = ((x.abs() - HEADING_KNEE) / (1.0 - HEADING_KNEE)).max(0.0);
+    (1.0 - over * over).max(0.0)
 }
 
 /// State of one rider along their path.
@@ -310,6 +335,120 @@ mod tests {
             "{s:?}"
         );
         assert!((s.turn_curvature + 0.02).abs() < 1e-9);
+    }
+
+    /// Regression: once at the edge, the rider scraped (and was braked) on
+    /// every tick, even riding straight along it or steering away.
+    #[test]
+    fn only_pushing_into_the_edge_scrapes() {
+        let at_edge = || RiderState {
+            speed: 8.0,
+            lateral_offset: 3.0,
+            ..Default::default()
+        };
+        // Rolling along the edge, upright on a straight road.
+        let mut s = at_edge();
+        for _ in 0..100 {
+            assert!(!apply_steering(
+                &mut s,
+                Steering::Lean(0.0),
+                0.0,
+                3.0,
+                false,
+                0.02
+            ));
+        }
+        assert_eq!(s.lateral_offset, 3.0);
+        // Autodrive with its line at the edge.
+        let mut s = at_edge();
+        for _ in 0..100 {
+            assert!(!apply_steering(
+                &mut s,
+                Steering::Auto(3.0),
+                0.0,
+                3.0,
+                false,
+                0.02
+            ));
+        }
+        // Leaning into it scrapes; the other edge too.
+        let mut s = at_edge();
+        assert!(apply_steering(
+            &mut s,
+            Steering::Lean(0.3),
+            0.0,
+            3.0,
+            false,
+            0.02
+        ));
+        assert_eq!((s.lateral_offset, s.heading), (3.0, 0.0));
+        let mut s = RiderState {
+            lateral_offset: -3.0,
+            ..at_edge()
+        };
+        assert!(apply_steering(
+            &mut s,
+            Steering::Lean(-0.3),
+            0.0,
+            3.0,
+            false,
+            0.02
+        ));
+        // A bend that turns the road away under an upright rider pushes too.
+        let mut s = at_edge();
+        assert!(apply_steering(
+            &mut s,
+            Steering::Lean(0.0),
+            -0.02,
+            3.0,
+            false,
+            0.02
+        ));
+        // Steering away leaves the edge without scraping.
+        let mut s = at_edge();
+        for _ in 0..50 {
+            assert!(!apply_steering(
+                &mut s,
+                Steering::Lean(-0.3),
+                0.0,
+                3.0,
+                false,
+                0.02
+            ));
+        }
+        assert!(s.lateral_offset < 2.5, "{s:?}");
+    }
+
+    /// Regression: the ridden curvature (the avatar's lean) jumped to the
+    /// road's when the heading hit its limit, and to the other side when
+    /// the edge stopped the rider.
+    #[test]
+    fn the_lean_settles_smoothly_at_the_largest_angle_and_the_edge() {
+        for (limit, wild) in [(1000.0, false), (2.9, false), (WILD_LIMIT_M, true)] {
+            let max_heading = if wild { WILD_MAX_HEADING } else { MAX_HEADING };
+            let mut s = riding(10.0);
+            let lean = Steering::Lean(MAX_STEER_LEAN);
+            apply_steering(&mut s, lean, 0.0, limit, wild, 0.02);
+            let full = s.turn_curvature;
+            assert!(full > 0.05, "{s:?}");
+            let mut last = full;
+            for _ in 0..1000 {
+                apply_steering(&mut s, lean, 0.0, limit, wild, 0.02);
+                assert!(s.heading <= max_heading, "{s:?}");
+                assert!(s.turn_curvature >= 0.0, "{limit}: {s:?}");
+                assert!(
+                    (s.turn_curvature - last).abs() < 0.15 * full,
+                    "{limit}: jumps from {last} to {s:?}"
+                );
+                last = s.turn_curvature;
+            }
+            // It turned as far as it may (or got stopped by the edge).
+            if limit > 100.0 {
+                assert!(s.heading > 0.97 * max_heading, "{s:?}");
+            } else {
+                assert_eq!(s.lateral_offset, limit, "{s:?}");
+            }
+        }
     }
 
     #[test]
