@@ -43,6 +43,12 @@ pub struct RideView {
     /// Real terrain around the route (from a route file); `None` = terrain
     /// generated from the route's own elevation (test routes).
     pub terrain_base: Option<ocw_world::ElevationGrid>,
+    /// A video recording is running: its length so far (s), for the "REC"
+    /// indicator.
+    pub recording_s: Option<f64>,
+    /// A short app message shown under the REC indicator for a few seconds
+    /// (e.g. "Video saved: <file>").
+    pub app_message: Option<String>,
 }
 
 impl RideView {
@@ -57,6 +63,8 @@ impl RideView {
             free_ride: false,
             junction: None,
             notice: None,
+            recording_s: None,
+            app_message: None,
         }
     }
 

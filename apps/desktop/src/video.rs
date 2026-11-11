@@ -5,6 +5,8 @@
 //! (`make deps` installs it). Slow frames are repeated, so the video keeps
 //! real time. Files go to `~/Videos/OCW/` (or `<data dir>/ocw/videos/`).
 //! A recording still running when the app exits is finished first.
+//! While recording, the HUD shows a small red "REC m:ss" (top right); after
+//! stopping, "Video saved: <file>" for a few seconds.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -16,6 +18,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::TextureFormat;
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
 use clap::{Arg, Command};
+use ocw_render::RideView;
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
 
 /// Frames per second of the videos.
@@ -23,13 +26,15 @@ pub const VIDEO_FPS: f64 = 25.0;
 /// At most this many copies of one frame (after a long stall, the video
 /// skips instead of freezing for seconds).
 const MAX_REPEATS: u64 = 12;
+/// How long a start/stop message stays in the HUD (s).
+pub const MESSAGE_S: f64 = 4.0;
 
 pub struct VideoPlugin;
 
 impl Plugin for VideoPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<VideoRecorder>()
-            .add_systems(Update, (video_key, capture))
+            .add_systems(Update, (video_key, capture, show_in_hud).chain())
             .add_systems(Last, finish_on_exit)
             .console_command(ConsoleCommand::new(
                 Permission::User,
@@ -56,7 +61,7 @@ impl Plugin for VideoPlugin {
                         rec.start(now)
                             .map(|p| format!("recording to {}", p.display()))
                     } else {
-                        Ok(match rec.stop() {
+                        Ok(match rec.stop(now) {
                             Some(p) => format!("video saved to {}", p.display()),
                             None => "not recording".into(),
                         })
@@ -72,6 +77,8 @@ pub struct VideoRecorder {
     active: Option<Active>,
     /// Directory for videos (tests); default: [`default_video_dir`].
     pub dir: Option<PathBuf>,
+    /// A message for the HUD and the game time until which it is shown.
+    message: Option<(String, f64)>,
 }
 
 struct Active {
@@ -97,6 +104,23 @@ impl VideoRecorder {
         self.active.is_some()
     }
 
+    /// Length of the running recording at game time `now_s`.
+    pub fn elapsed_s(&self, now_s: f64) -> Option<f64> {
+        self.active.as_ref().map(|a| (now_s - a.started_s).max(0.0))
+    }
+
+    /// The HUD message (start error, "Video saved: ...") at `now_s`.
+    pub fn message(&self, now_s: f64) -> Option<&str> {
+        self.message
+            .as_ref()
+            .filter(|(_, until)| now_s < *until)
+            .map(|(m, _)| m.as_str())
+    }
+
+    fn set_message(&mut self, msg: impl Into<String>, now_s: f64) {
+        self.message = Some((msg.into(), now_s + MESSAGE_S));
+    }
+
     pub fn status(&self) -> String {
         match &self.active {
             Some(a) => format!("recording to {} ({} frames)", a.path.display(), a.frames),
@@ -106,6 +130,15 @@ impl VideoRecorder {
 
     /// Starts a recording at game time `now_s`; returns the file it goes to.
     pub fn start(&mut self, now_s: f64) -> Result<PathBuf, String> {
+        let r = self.start_inner(now_s);
+        match &r {
+            Ok(_) => self.message = None,
+            Err(e) => self.set_message(format!("Video: {e}"), now_s),
+        }
+        r
+    }
+
+    fn start_inner(&mut self, now_s: f64) -> Result<PathBuf, String> {
         if !ffmpeg_available() {
             return Err(
                 "ffmpeg not found: install ffmpeg (e.g. `make deps`) to record videos".into(),
@@ -133,18 +166,26 @@ impl VideoRecorder {
         Ok(path)
     }
 
-    /// Stops the recording; the encoder finishes the file in the background.
-    /// Returns the file.
-    pub fn stop(&mut self) -> Option<PathBuf> {
+    /// Stops the recording at game time `now_s`; the encoder finishes the
+    /// file in the background. Returns the file.
+    pub fn stop(&mut self, now_s: f64) -> Option<PathBuf> {
         let a = self.active.take()?;
         let path = a.path.clone();
+        let name = path.file_name().map_or_else(
+            || path.display().to_string(),
+            |n| n.to_string_lossy().into(),
+        );
         match a.encoder {
             Some(enc) => {
                 drop(enc.tx);
                 let p = path.clone();
                 std::thread::spawn(move || finish(enc.writer, &p));
+                self.set_message(format!("Video saved: {name}"), now_s);
             }
-            None => warn!("video stopped before the first frame; nothing saved"),
+            None => {
+                warn!("video stopped before the first frame; nothing saved");
+                self.set_message("Video stopped before the first frame: nothing saved", now_s);
+            }
         }
         Some(path)
     }
@@ -173,6 +214,7 @@ impl VideoRecorder {
             let Some(pix) = pixel_format(image.texture_descriptor.format) else {
                 warn!(format = ?image.texture_descriptor.format, "video: unsupported pixel format");
                 self.active = None;
+                self.set_message("Video failed: unsupported pixel format", now_s);
                 return;
             };
             match spawn_encoder(&a.path, pix, w, h) {
@@ -183,6 +225,7 @@ impl VideoRecorder {
                 Err(e) => {
                     error!("video: cannot start ffmpeg: {e}");
                     self.active = None;
+                    self.set_message(format!("Video failed: cannot start ffmpeg: {e}"), now_s);
                     return;
                 }
             }
@@ -196,6 +239,7 @@ impl VideoRecorder {
             if enc.tx.send(data.clone()).is_err() {
                 error!("video: ffmpeg stopped; recording ended");
                 self.active = None;
+                self.set_message("Video failed: ffmpeg stopped", now_s);
                 return;
             }
             a.frames += 1;
@@ -333,11 +377,27 @@ fn video_key(
         return;
     }
     if rec.is_recording() {
-        if let Some(p) = rec.stop() {
+        if let Some(p) = rec.stop(time.elapsed_secs_f64()) {
             info!(path = %p.display(), "video recording stopped");
         }
     } else if let Err(e) = rec.start(time.elapsed_secs_f64()) {
         warn!("{e}");
+    }
+}
+
+/// The REC indicator and the message in the HUD.
+fn show_in_hud(time: Res<Time>, rec: Res<VideoRecorder>, view: Option<ResMut<RideView>>) {
+    let Some(mut view) = view else {
+        return;
+    };
+    let now = time.elapsed_secs_f64();
+    let recording = rec.elapsed_s(now);
+    let message = rec.message(now).map(str::to_string);
+    if view.recording_s != recording {
+        view.recording_s = recording;
+    }
+    if view.app_message != message {
+        view.app_message = message;
     }
 }
 
@@ -410,7 +470,87 @@ mod tests {
     fn stopping_without_frames_saves_nothing() {
         let mut rec = VideoRecorder::default();
         assert!(!rec.is_recording());
-        assert_eq!(rec.stop(), None);
+        assert_eq!(rec.stop(0.0), None);
         assert_eq!(rec.status(), "not recording");
+        assert_eq!(rec.message(0.0), None);
+    }
+
+    /// A recording without ffmpeg (no frames are captured in the tests).
+    fn fake_active(rec: &mut VideoRecorder, path: &str, started_s: f64) {
+        rec.active = Some(Active {
+            path: PathBuf::from(path),
+            started_s,
+            frames: 0,
+            pending: false,
+            encoder: None,
+            size: None,
+        });
+    }
+
+    #[test]
+    fn elapsed_time_and_messages() {
+        let mut rec = VideoRecorder::default();
+        assert_eq!(rec.elapsed_s(5.0), None);
+        fake_active(&mut rec, "/tmp/v.mp4", 2.0);
+        assert_eq!(rec.elapsed_s(14.5), Some(12.5));
+        assert_eq!(rec.elapsed_s(1.0), Some(0.0));
+        assert_eq!(rec.stop(15.0), Some(PathBuf::from("/tmp/v.mp4")));
+        assert_eq!(rec.elapsed_s(15.0), None);
+        // No frame came: the message says nothing was saved; it expires.
+        assert!(rec.message(15.0).unwrap().contains("nothing saved"));
+        assert!(rec.message(15.0 + MESSAGE_S - 0.1).is_some());
+        assert_eq!(rec.message(15.0 + MESSAGE_S), None);
+    }
+
+    fn hud_app() -> App {
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default())
+            .insert_resource(RideView::new(ocw_world::Route::test_loop()))
+            .init_resource::<VideoRecorder>()
+            .add_systems(Update, show_in_hud);
+        app
+    }
+
+    fn advance(app: &mut App, s: f64) {
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs_f64(s));
+        app.update();
+    }
+
+    #[test]
+    fn hud_shows_recording_and_then_the_saved_file() {
+        let mut app = hud_app();
+        advance(&mut app, 1.0);
+        let view = app.world().resource::<RideView>();
+        assert_eq!((view.recording_s, view.app_message.clone()), (None, None));
+
+        fake_active(
+            &mut app.world_mut().resource_mut::<VideoRecorder>(),
+            "/x/v.mp4",
+            1.0,
+        );
+        advance(&mut app, 12.0);
+        let view = app.world().resource::<RideView>();
+        assert_eq!(view.recording_s, Some(12.0));
+        assert_eq!(view.app_message, None);
+
+        // A stop with an encoder running says "Video saved: <file name>".
+        {
+            let mut rec = app.world_mut().resource_mut::<VideoRecorder>();
+            let (tx, rx) = sync_channel::<Vec<u8>>(1);
+            let writer = std::thread::spawn(move || {
+                for _ in rx {}
+                Ok(())
+            });
+            rec.active.as_mut().unwrap().encoder = Some(Encoder { tx, writer });
+            assert_eq!(rec.stop(13.0), Some(PathBuf::from("/x/v.mp4")));
+        }
+        advance(&mut app, 0.5);
+        let view = app.world().resource::<RideView>();
+        assert_eq!(view.recording_s, None);
+        assert_eq!(view.app_message.as_deref(), Some("Video saved: v.mp4"));
+        advance(&mut app, MESSAGE_S);
+        assert_eq!(app.world().resource::<RideView>().app_message, None);
     }
 }
