@@ -8,6 +8,7 @@ pub mod camera;
 pub mod console;
 pub mod hud;
 pub mod junction;
+pub mod menu;
 pub mod package;
 pub mod riders;
 pub mod terrain;
@@ -175,6 +176,7 @@ impl Plugin for OcwRenderPlugins {
             camera::CameraPlugin,
             hud::HudPlugin,
             junction::JunctionPlugin,
+            menu::MenuPlugin,
             console::ConsolePlugin,
         ));
     }
