@@ -57,6 +57,9 @@ pub struct Args {
     /// Test route: hills (steep, changing gradients) or loop (gentle).
     #[arg(long, value_enum, default_value_t = RouteChoice::Hills)]
     pub route: RouteChoice,
+    /// Ride a route file from `world-builder route` (real roads and terrain).
+    #[arg(long, value_name = "PATH")]
+    pub route_file: Option<PathBuf>,
     /// Use the virtual trainer even if Bluetooth devices are remembered.
     #[arg(long = "virtual")]
     pub virtual_trainer: bool,
@@ -99,11 +102,41 @@ fn parse_size(s: &str) -> Result<(u32, u32), String> {
     ))
 }
 
+/// Loads an ocw-route file: the route and the terrain around it.
+fn load_route_file(path: &std::path::Path) -> (Route, Option<ocw_world::ElevationGrid>) {
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| {
+        eprintln!("{}: {e}", path.display());
+        std::process::exit(1);
+    });
+    let file = ocw_world::RouteFile::parse(&text).unwrap_or_else(|e| {
+        eprintln!("{}: {e}", path.display());
+        std::process::exit(1);
+    });
+    let route = Route::from_points(
+        file.name.clone(),
+        file.name.clone(),
+        file.points.clone(),
+        false,
+        file.width_m,
+    )
+    .unwrap_or_else(|e| {
+        eprintln!("{}: {e}", path.display());
+        std::process::exit(1);
+    });
+    (route, file.grid)
+}
+
 fn main() -> AppExit {
     let args = Args::parse();
-    let route = match args.route {
-        RouteChoice::Hills => Route::test_hills(),
-        RouteChoice::Loop => Route::test_loop(),
+    let (route, terrain_base) = match &args.route_file {
+        Some(path) => load_route_file(path),
+        None => (
+            match args.route {
+                RouteChoice::Hills => Route::test_hills(),
+                RouteChoice::Loop => Route::test_loop(),
+            },
+            None,
+        ),
     };
     let mut app = App::new();
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
@@ -122,7 +155,10 @@ fn main() -> AppExit {
     }))
     // The client prediction runs in FixedUpdate at the same rate as the server tick.
     .insert_resource(Time::<Fixed>::from_hz(f64::from(SIM_TICK_HZ)))
-    .insert_resource(RideView::new(route.clone()))
+    .insert_resource(RideView {
+        terrain_base,
+        ..RideView::new(route.clone())
+    })
     .insert_resource(args.clone())
     .add_plugins(OcwRenderPlugins)
     .add_plugins((

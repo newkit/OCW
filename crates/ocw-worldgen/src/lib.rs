@@ -7,6 +7,7 @@
 //! - [`build`]: ways → road graph with stable edge IDs, cleanup, dead ends
 //! - [`dem`]: SRTM elevation tiles
 //! - [`profile`]: road elevation profiles (sampling, smoothing, limits)
+//! - [`route`]: routes through the graph with their elevation
 //! - [`svg`]: map of a road graph for visual checks
 
 pub mod build;
@@ -15,4 +16,5 @@ pub mod filter;
 pub mod osm;
 pub mod profile;
 pub mod projection;
+pub mod route;
 pub mod svg;

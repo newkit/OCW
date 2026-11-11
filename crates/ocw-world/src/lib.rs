@@ -10,7 +10,9 @@
 
 pub mod graph;
 mod route;
+pub mod route_file;
 mod terrain;
 
 pub use route::{Route, RouteError, RoutePoint};
+pub use route_file::{ElevationGrid, RouteFile};
 pub use terrain::{RoadProximity, Terrain, TerrainParams};

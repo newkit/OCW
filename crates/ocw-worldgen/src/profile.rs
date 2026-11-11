@@ -187,6 +187,43 @@ pub fn steepest(h: &[f64], window: usize) -> f64 {
         .fold(0.0, f64::max)
 }
 
+/// Moves junction heights so no (non-bridge) edge needs more than its
+/// class gradient between its ends: on short edges a single noisy DEM
+/// sample would otherwise force an impossible wall. The excess is split
+/// between both ends (weighted towards the end with fewer roads), and
+/// repeated passes spread it over the neighbouring roads.
+pub fn relax_junction_heights(graph: &RoadGraph, vertex_h: &mut [f64]) {
+    let degree: Vec<f64> = graph
+        .adjacency()
+        .iter()
+        .map(|a| a.len().max(1) as f64)
+        .collect();
+    for _ in 0..50 {
+        let mut changed = false;
+        for e in &graph.edges {
+            if e.bridge || e.tunnel {
+                continue;
+            }
+            let (a, b) = (e.from.0 as usize, e.to.0 as usize);
+            let allowed = limits(e.class).0 * e.length_m();
+            let dh = vertex_h[b] - vertex_h[a];
+            let excess = dh.abs() - allowed;
+            if excess <= 1e-6 {
+                continue;
+            }
+            // Busier junctions are better anchored: they move less.
+            let (wa, wb) = (1.0 / degree[a], 1.0 / degree[b]);
+            let s = dh.signum() * excess;
+            vertex_h[a] += s * wa / (wa + wb);
+            vertex_h[b] -= s * wb / (wa + wb);
+            changed = true;
+        }
+        if !changed {
+            break;
+        }
+    }
+}
+
 /// Computes `profile` for every edge of `graph`.
 ///
 /// 1. Sample the DEM every 5 m; median filter; Gaussian smoothing per class.
@@ -231,7 +268,7 @@ pub fn add_profiles(graph: &mut RoadGraph, dem: &Dem, proj: &LocalProjection) ->
             sum[v as usize].1 += 1;
         }
     }
-    let vertex_h: Vec<f64> = sum
+    let mut vertex_h: Vec<f64> = sum
         .iter()
         .zip(&graph.vertices)
         .map(|(&(s, n), &p)| {
@@ -242,6 +279,7 @@ pub fn add_profiles(graph: &mut RoadGraph, dem: &Dem, proj: &LocalProjection) ->
             }
         })
         .collect();
+    relax_junction_heights(graph, &mut vertex_h);
     // Pass 3: constrained profiles.
     for (i, e) in graph.edges.iter_mut().enumerate() {
         let len = e.length_m();
@@ -339,6 +377,42 @@ mod tests {
         let h = constrain(&raw, 100.0, 0.0, 50.0, 0.15, 0.005);
         assert!((h[20] - 50.0).abs() < 1e-9);
         assert!((steepest(&h, 1) - 0.5).abs() < 1e-6, "everything at 50 %");
+    }
+
+    #[test]
+    fn junction_heights_are_relaxed_on_short_steep_edges() {
+        use ocw_world::graph::{Edge, EdgeId, VertexId};
+        // 0 —(100 m)— 1 —(13 m)— 2 —(100 m)— 3, residential (20 %); the DEM
+        // puts junction 2 6 m above junction 1 (46 % on 13 m).
+        let pts = [[0.0, 0.0], [100.0, 0.0], [113.0, 0.0], [213.0, 0.0]];
+        let edge = |i: u64, a: u32, b: u32| Edge {
+            id: EdgeId(i),
+            from: VertexId(a),
+            to: VertexId(b),
+            points: vec![pts[a as usize], pts[b as usize]],
+            class: RoadClass::Residential,
+            name: None,
+            width_m: 5.0,
+            bridge: false,
+            tunnel: false,
+            dead_end_m: None,
+            boundary: false,
+            osm_way: i as i64,
+            profile: vec![],
+        };
+        let g = RoadGraph {
+            vertices: pts.to_vec(),
+            edges: vec![edge(1, 0, 1), edge(2, 1, 2), edge(3, 2, 3)],
+            boundary_vertices: Default::default(),
+        };
+        let mut h = vec![500.0, 510.0, 516.0, 526.0];
+        relax_junction_heights(&g, &mut h);
+        for e in &g.edges {
+            let (a, b) = (e.from.0 as usize, e.to.0 as usize);
+            assert!((h[b] - h[a]).abs() <= 0.2 * e.length_m() + 1e-6, "{h:?}");
+        }
+        // The short edge got at most 20 %; the neighbours took over the rest.
+        assert!((h[2] - h[1] - 2.6).abs() < 1e-6, "{h:?}");
     }
 
     #[test]

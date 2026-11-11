@@ -197,6 +197,79 @@ impl RoadGraph {
         self.edges = edges;
     }
 
+    /// Vertex closest to `p` (local metres).
+    pub fn nearest_vertex(&self, p: [f64; 2]) -> Option<VertexId> {
+        self.vertices
+            .iter()
+            .enumerate()
+            .min_by(|a, b| {
+                let d = |v: &[f64; 2]| (v[0] - p[0]).powi(2) + (v[1] - p[1]).powi(2);
+                d(a.1).total_cmp(&d(b.1))
+            })
+            .map(|(i, _)| VertexId(i as u32))
+    }
+
+    /// Cheapest path from `from` to `to` (Dijkstra) as edges with their
+    /// direction (`true` = from `edge.from` to `edge.to`). `cost` gives the
+    /// cost of riding an edge (e.g. its length, weighted by road class).
+    pub fn shortest_path(
+        &self,
+        from: VertexId,
+        to: VertexId,
+        cost: impl Fn(&Edge) -> f64,
+    ) -> Option<Vec<(usize, bool)>> {
+        use std::cmp::Reverse;
+        use std::collections::BinaryHeap;
+        #[derive(PartialEq)]
+        struct Cost(f64);
+        impl Eq for Cost {}
+        impl PartialOrd for Cost {
+            fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+                Some(self.cmp(other))
+            }
+        }
+        impl Ord for Cost {
+            fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+                self.0.total_cmp(&other.0)
+            }
+        }
+        let adj = self.adjacency();
+        let n = self.vertices.len();
+        let mut best = vec![f64::INFINITY; n];
+        let mut came: Vec<Option<(usize, usize)>> = vec![None; n]; // (edge, previous vertex)
+        let mut heap = BinaryHeap::new();
+        best[from.0 as usize] = 0.0;
+        heap.push(Reverse((Cost(0.0), from.0 as usize)));
+        while let Some(Reverse((Cost(c), v))) = heap.pop() {
+            if v == to.0 as usize {
+                break;
+            }
+            if c > best[v] {
+                continue;
+            }
+            for &e in &adj[v] {
+                let o = self.edges[e].other(VertexId(v as u32)).0 as usize;
+                let nc = c + cost(&self.edges[e]).max(0.0);
+                if nc < best[o] {
+                    best[o] = nc;
+                    came[o] = Some((e, v));
+                    heap.push(Reverse((Cost(nc), o)));
+                }
+            }
+        }
+        if !best[to.0 as usize].is_finite() {
+            return None;
+        }
+        let mut path = Vec::new();
+        let mut v = to.0 as usize;
+        while let Some((e, prev)) = came[v] {
+            path.push((e, self.edges[e].from.0 as usize == prev));
+            v = prev;
+        }
+        path.reverse();
+        Some(path)
+    }
+
     /// Keeps only the largest connected component (spec §4.4, step 1).
     pub fn keep_largest_component(&mut self) {
         if let Some(largest) = self.components().into_iter().next() {
@@ -440,5 +513,42 @@ mod tests {
         assert_eq!(e.height_at(11.0), Some(102.5));
         assert_eq!(e.height_at(12.0), Some(103.0));
         assert_eq!(e.height_at(99.0), Some(103.0));
+    }
+
+    #[test]
+    fn shortest_path_prefers_cheap_edges() {
+        // Square 0-1-2-3 plus a diagonal 0-2 that is shorter but expensive.
+        let mut g = graph(
+            &[[0.0, 0.0], [100.0, 0.0], [100.0, 100.0], [0.0, 100.0]],
+            &[(0, 1), (1, 2), (2, 3), (3, 0), (2, 0)],
+        );
+        g.edges[4].class = RoadClass::Path;
+        let by_length = g
+            .shortest_path(VertexId(0), VertexId(2), Edge::length_m)
+            .unwrap();
+        assert_eq!(
+            by_length,
+            vec![(4, false)],
+            "diagonal, ridden from 0 to 2 (against its direction)"
+        );
+        let avoid_paths =
+            |e: &Edge| e.length_m() * if e.class == RoadClass::Path { 5.0 } else { 1.0 };
+        let path = g
+            .shortest_path(VertexId(0), VertexId(2), avoid_paths)
+            .unwrap();
+        assert_eq!(path.len(), 2);
+        assert!(path.iter().all(|(e, _)| *e != 4));
+        assert_eq!(
+            g.shortest_path(VertexId(1), VertexId(1), Edge::length_m),
+            Some(vec![])
+        );
+        assert_eq!(g.nearest_vertex([90.0, 95.0]), Some(VertexId(2)));
+        // Unreachable.
+        let mut g2 = graph(&[[0.0, 0.0], [1.0, 0.0], [5.0, 0.0]], &[(0, 1)]);
+        g2.vertices.push([9.0, 9.0]);
+        assert_eq!(
+            g2.shortest_path(VertexId(0), VertexId(2), Edge::length_m),
+            None
+        );
     }
 }

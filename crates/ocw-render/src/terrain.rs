@@ -167,6 +167,18 @@ impl HeightGrid {
     }
 }
 
+/// Near-grid spacing for a route bounding box: 5 m for small test routes,
+/// coarser (a divisor of the middle spacing) for long real routes so the
+/// near grid stays around 300k vertices.
+pub fn near_spacing(route_min: [f64; 2], route_max: [f64; 2]) -> f64 {
+    let area = (route_max[0] - route_min[0] + 2.0 * NEAR_MARGIN_M)
+        * (route_max[1] - route_min[1] + 2.0 * NEAR_MARGIN_M);
+    [NEAR_SPACING_M, MIDDLE_SPACING_M / 2.0, MIDDLE_SPACING_M]
+        .into_iter()
+        .find(|s| area / (s * s) <= 320_000.0)
+        .unwrap_or(MIDDLE_SPACING_M)
+}
+
 /// Near and middle grids for a terrain whose route has the given bounding box.
 pub fn terrain_grids(
     terrain: &Terrain,
@@ -186,7 +198,12 @@ pub fn terrain_grids(
         snap_up(route_max[0] + NEAR_MARGIN_M, mid_min[0]),
         snap_up(route_max[1] + NEAR_MARGIN_M, mid_min[1]),
     ];
-    let near = HeightGrid::sample(terrain, near_min, near_max, NEAR_SPACING_M);
+    let near = HeightGrid::sample(
+        terrain,
+        near_min,
+        near_max,
+        near_spacing(route_min, route_max),
+    );
     (near, middle)
 }
 
@@ -266,6 +283,23 @@ mod tests {
             worst
         );
         assert!(worst < 0.2, "road floats {:.3} m above the terrain", worst);
+    }
+
+    #[test]
+    fn long_routes_get_a_coarser_near_grid() {
+        assert_eq!(near_spacing([0.0, 0.0], [1500.0, 1200.0]), NEAR_SPACING_M);
+        // Vaduz - Malbun: ~7 × 5 km.
+        let s = near_spacing([0.0, 0.0], [7000.0, 5000.0]);
+        assert_eq!(s, MIDDLE_SPACING_M / 2.0);
+        assert_eq!(
+            (MIDDLE_SPACING_M / s).fract(),
+            0.0,
+            "divides the middle spacing"
+        );
+        assert_eq!(
+            near_spacing([0.0, 0.0], [40_000.0, 40_000.0]),
+            MIDDLE_SPACING_M
+        );
     }
 
     #[test]

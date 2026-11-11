@@ -63,8 +63,30 @@ fn spawn_world(
     ));
 
     // Terrain conformed to the road (spec §4.3), in three levels of detail.
-    let terrain = Terrain::from_route(route, TerrainParams::default());
     let (route_min, route_max) = route_bounds(route);
+    let coarse =
+        crate::terrain::near_spacing(route_min, route_max) > crate::terrain::NEAR_SPACING_M;
+    let params = TerrainParams {
+        // A coarser near grid interpolates more across the road: more
+        // clearance, covered by deeper road edge faces.
+        road_clearance_m: if coarse {
+            0.3
+        } else {
+            TerrainParams::default().road_clearance_m
+        },
+        ..TerrainParams::default()
+    };
+    let terrain = match &view.terrain_base {
+        Some(grid) => Terrain::with_base(route, params, grid.origin, grid.max(), |x, z| {
+            grid.sample(x, z)
+        }),
+        None => Terrain::from_route(route, params),
+    };
+    let edge_depth = if coarse {
+        COARSE_ROAD_EDGE_DEPTH_M
+    } else {
+        ROAD_EDGE_DEPTH_M
+    };
     let (near, middle) = terrain_grids(&terrain, route_min, route_max);
     let ground = materials.add(StandardMaterial {
         base_color: Color::WHITE, // vertex colours
@@ -98,7 +120,7 @@ fn spawn_world(
     // Road edges: side faces down into the terrain, so the gap between road
     // and terrain (road clearance) is never visible from the side.
     commands.spawn((
-        Mesh3d(meshes.add(road_edge_mesh(&view, width, ROAD_EDGE_DEPTH_M))),
+        Mesh3d(meshes.add(road_edge_mesh(&view, width, edge_depth))),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: Color::srgb(0.45, 0.43, 0.38),
             perceptual_roughness: 1.0,
@@ -167,6 +189,8 @@ fn ribbon_mesh(view: &RideView, width: f32) -> Mesh {
 /// How far the road edge faces reach below the road surface. Must exceed the
 /// terrain's road clearance plus the grid interpolation error.
 const ROAD_EDGE_DEPTH_M: f32 = 0.5;
+/// Road edge depth with a coarse near grid (long real routes).
+const COARSE_ROAD_EDGE_DEPTH_M: f32 = 2.0;
 
 /// Vertical strips along both road edges, from the surface down `depth`.
 fn road_edge_mesh(view: &RideView, width: f32, depth: f32) -> Mesh {

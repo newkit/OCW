@@ -45,6 +45,196 @@ enum Cmd {
         #[arg(long)]
         svg_grade: Option<PathBuf>,
     },
+    /// Build a route along the road graph (preferring main roads) and write
+    /// it with its elevation and the surrounding terrain (ocw-route file).
+    Route {
+        #[arg(long, default_value = "data/pilot/liechtenstein.osm.pbf")]
+        pbf: PathBuf,
+        #[arg(long, default_value = "data/pilot/liechtenstein.poly")]
+        poly: PathBuf,
+        #[arg(long = "hgt", default_values = ["data/pilot/N47E009.hgt"])]
+        hgt: Vec<PathBuf>,
+        /// Start as lat,lon (default: Vaduz).
+        #[arg(long, default_value = "47.1395,9.5220", value_parser = parse_latlon)]
+        from: (f64, f64),
+        /// End as lat,lon (default: Malbun).
+        #[arg(long, default_value = "47.1013,9.6094", value_parser = parse_latlon)]
+        to: (f64, f64),
+        #[arg(long, default_value = "Vaduz - Malbun")]
+        name: String,
+        /// Terrain margin around the route, in metres.
+        #[arg(long, default_value_t = 1500.0)]
+        margin: f64,
+        #[arg(long, default_value = "data/pilot/vaduz-malbun.route")]
+        out: PathBuf,
+    },
+}
+
+fn parse_latlon(s: &str) -> Result<(f64, f64), String> {
+    let (a, b) = s.split_once(',').ok_or("expected lat,lon")?;
+    let lat = a.trim().parse::<f64>().map_err(|e| e.to_string())?;
+    let lon = b.trim().parse::<f64>().map_err(|e| e.to_string())?;
+    if (-90.0..=90.0).contains(&lat) && (-180.0..=180.0).contains(&lon) {
+        Ok((lat, lon))
+    } else {
+        Err("latitude or longitude out of range".into())
+    }
+}
+
+fn load_region(poly: &PathBuf) -> Region {
+    let text = std::fs::read_to_string(poly).unwrap_or_else(|e| {
+        eprintln!("{}: {e} (or use --bbox)", poly.display());
+        std::process::exit(1);
+    });
+    Region::from_polygon(Polygon::parse_poly(&text).unwrap_or_else(|e| {
+        eprintln!("{}: {e}", poly.display());
+        std::process::exit(1);
+    }))
+}
+
+fn load_dem(hgt: &[PathBuf]) -> Dem {
+    let mut dem = Dem::default();
+    for path in hgt {
+        match HgtTile::read(path) {
+            Ok(tile) => dem.tiles.push(tile),
+            Err(e) => eprintln!("{}: {e} (no elevation)", path.display()),
+        }
+    }
+    dem
+}
+
+fn route(args: RouteArgs) {
+    let region = load_region(&args.poly);
+    let proj = region.projection();
+    let osm = OsmData::read_pbf(&args.pbf).unwrap_or_else(|e| {
+        eprintln!("{}: {e}", args.pbf.display());
+        std::process::exit(1);
+    });
+    let (mut graph, _) = build_road_graph(&osm, &region);
+    let dem = load_dem(&args.hgt);
+    add_profiles(&mut graph, &dem, &proj);
+    let (a, b) = (
+        proj.project(args.from.0, args.from.1),
+        proj.project(args.to.0, args.to.1),
+    );
+    let (va, vb) = (
+        graph.nearest_vertex(a).expect("graph"),
+        graph.nearest_vertex(b).expect("graph"),
+    );
+    let Some(path) = graph.shortest_path(va, vb, ocw_worldgen::route::road_cost) else {
+        eprintln!("no path between the two points");
+        std::process::exit(1);
+    };
+    let points = ocw_worldgen::route::path_points(&graph, &path);
+    let (mut min, mut max) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+    for p in &points {
+        min = [min[0].min(p[0]), min[1].min(p[2])];
+        max = [max[0].max(p[0]), max[1].max(p[2])];
+    }
+    let cell = 20.0;
+    let origin = [min[0] - args.margin, min[1] - args.margin];
+    let nx = ((max[0] - min[0] + 2.0 * args.margin) / cell).ceil() as usize + 1;
+    let nz = ((max[1] - min[1] + 2.0 * args.margin) / cell).ceil() as usize + 1;
+    let mut heights = Vec::with_capacity(nx * nz);
+    for k in 0..nz {
+        for i in 0..nx {
+            let (lat, lon) =
+                proj.unproject([origin[0] + i as f64 * cell, origin[1] + k as f64 * cell]);
+            heights.push(dem.elevation(lat, lon).unwrap_or(0.0) as f32);
+        }
+    }
+    let length: f64 = path.iter().map(|&(e, _)| graph.edges[e].length_m()).sum();
+    let gain: f64 = points
+        .windows(2)
+        .map(|w| (w[1][1] - w[0][1]).max(0.0))
+        .sum();
+    let names: Vec<String> = {
+        let mut v: Vec<String> = Vec::new();
+        for &(e, _) in &path {
+            if let Some(n) = &graph.edges[e].name
+                && v.last() != Some(n)
+            {
+                v.push(n.clone());
+            }
+        }
+        v
+    };
+    let file = ocw_world::RouteFile {
+        name: args.name.clone(),
+        origin: proj_origin(&region),
+        width_m: 6.5,
+        points,
+        grid: Some(ocw_world::ElevationGrid {
+            origin,
+            cell,
+            nx,
+            nz,
+            heights,
+        }),
+    };
+    if let Some(dir) = args.out.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    std::fs::write(&args.out, file.to_text()).expect("write route");
+    println!(
+        "{}: {:.1} km, {:.0} m climbing, {} edges, {} points, terrain {nx}x{nz} at {cell} m",
+        args.name,
+        length / 1000.0,
+        gain,
+        path.len(),
+        file.points.len()
+    );
+    println!("via: {}", names.join(" > "));
+    // Steepest stretches of the final route (25 m windows).
+    let mut walked = 0.0;
+    let mut steep: Vec<(f64, f64, usize)> = Vec::new();
+    let mut edge_at = Vec::new();
+    for &(e, _) in &path {
+        let n = (graph.edges[e].length_m() / 5.0).ceil() as usize;
+        edge_at.extend(std::iter::repeat_n(e, n.max(1)));
+    }
+    for i in 0..file.points.len().saturating_sub(5) {
+        let (a, b) = (file.points[i], file.points[i + 5]);
+        let run = ((b[0] - a[0]).powi(2) + (b[2] - a[2]).powi(2))
+            .sqrt()
+            .max(1e-6);
+        steep.push((
+            (b[1] - a[1]) / run,
+            walked,
+            edge_at.get(i).copied().unwrap_or(0),
+        ));
+        walked += ((file.points[i + 1][0] - a[0]).powi(2) + (file.points[i + 1][2] - a[2]).powi(2))
+            .sqrt();
+    }
+    steep.sort_by(|a, b| b.0.abs().total_cmp(&a.0.abs()));
+    for (g, at, e) in steep.iter().take(3) {
+        let e = &graph.edges[*e];
+        println!(
+            "  steepest: {:+.1} % at {:.2} km ({:?} {} m, {}, way {})",
+            g * 100.0,
+            at / 1000.0,
+            e.class,
+            e.length_m().round(),
+            e.name.as_deref().unwrap_or("unnamed"),
+            e.osm_way
+        );
+    }
+    println!("route file: {}", args.out.display());
+}
+
+fn proj_origin(region: &Region) -> (f64, f64) {
+    region.center()
+}
+
+struct RouteArgs {
+    pbf: PathBuf,
+    poly: PathBuf,
+    hgt: Vec<PathBuf>,
+    from: (f64, f64),
+    to: (f64, f64),
+    name: String,
+    margin: f64,
+    out: PathBuf,
 }
 
 fn parse_bbox(s: &str) -> Result<Region, String> {
@@ -62,6 +252,25 @@ fn parse_bbox(s: &str) -> Result<Region, String> {
 
 fn main() {
     match Cli::parse().command {
+        Cmd::Route {
+            pbf,
+            poly,
+            hgt,
+            from,
+            to,
+            name,
+            margin,
+            out,
+        } => route(RouteArgs {
+            pbf,
+            poly,
+            hgt,
+            from,
+            to,
+            name,
+            margin,
+            out,
+        }),
         Cmd::Graph {
             pbf,
             poly,
@@ -187,5 +396,8 @@ mod tests {
         assert!(parse_bbox("1,2,3").is_err());
         assert!(parse_bbox("47.3,9.47,47.28,9.64").is_err());
         assert!(parse_bbox("a,b,c,d").is_err());
+        assert_eq!(parse_latlon("47.1, 9.5"), Ok((47.1, 9.5)));
+        assert!(parse_latlon("95,9").is_err());
+        assert!(parse_latlon("47.1").is_err());
     }
 }

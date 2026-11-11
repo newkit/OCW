@@ -25,6 +25,9 @@ pub struct RideView {
     pub elapsed_s: f64,
     /// Device and trainer status for the HUD.
     pub status: String,
+    /// Real terrain around the route (from a route file); `None` = terrain
+    /// generated from the route's own elevation (test routes).
+    pub terrain_base: Option<ocw_world::ElevationGrid>,
 }
 
 impl RideView {
@@ -34,6 +37,7 @@ impl RideView {
             riders: Vec::new(),
             elapsed_s: 0.0,
             status: String::new(),
+            terrain_base: None,
         }
     }
 
