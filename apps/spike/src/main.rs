@@ -5,11 +5,12 @@
 //! build/upload times, RAM, VRAM).
 //!
 //! ```text
-//! ocw-spike --km 10 --speed-kmh 40 --report spike.json
-//! ocw-spike --km 10 --speed-kmh 150 --tree-mode merged   # streaming stress
+//! ocw-spike --report spike.json                       # 2 km at 40 km/h
+//! ocw-spike --km 5 --speed-kmh 150 --tree-mode merged  # streaming stress
 //! ```
 
 mod generate;
+mod splat;
 mod stats;
 
 use std::collections::{HashMap, VecDeque};
@@ -20,12 +21,18 @@ use std::time::Instant;
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::visibility::VisibilityRange;
 use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
+use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::light::{CascadeShadowConfigBuilder, GlobalAmbientLight};
 use bevy::mesh::{Indices, PrimitiveTopology};
-use bevy::pbr::{DistanceFog, FogFalloff};
+use bevy::pbr::{DistanceFog, ExtendedMaterial, FogFalloff, MaterialExtension};
 use bevy::prelude::*;
+use bevy::render::render_resource::{
+    AsBindGroup, Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
+    TextureViewDescriptor, TextureViewDimension,
+};
 use bevy::render::renderer::RenderAdapterInfo;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
+use bevy::shader::ShaderRef;
 use bevy::tasks::{AsyncComputeTaskPool, Task, futures::check_ready};
 use bevy::window::{PresentMode, WindowResolution};
 use clap::{Parser, ValueEnum};
@@ -43,11 +50,20 @@ enum TreeMode {
     Merged,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum TerrainMode {
+    /// Vertex colours only (no textures).
+    Vertex,
+    /// Four texture layers blended per pixel (spec §4.6).
+    Splat,
+}
+
 #[derive(Parser, Debug, Clone, Resource)]
 #[command(about = "OCW graphics engine spike (spec §3.1.1)")]
 struct Args {
-    /// Distance to ride, in km.
-    #[arg(long, default_value_t = 10.0)]
+    /// Distance to ride, in km. 2 km crosses several tiles at 40 km/h
+    /// (about 3 minutes); longer rides mostly repeat the same pattern.
+    #[arg(long, default_value_t = 2.0)]
     km: f64,
     /// Riding speed of the camera rider.
     #[arg(long, default_value_t = 40.0)]
@@ -60,6 +76,8 @@ struct Args {
     trees: u32,
     #[arg(long, value_enum, default_value_t = TreeMode::Instanced)]
     tree_mode: TreeMode,
+    #[arg(long, value_enum, default_value_t = TerrainMode::Splat)]
+    terrain: TerrainMode,
     /// Animated riders around the camera rider.
     #[arg(long, default_value_t = 100)]
     riders: usize,
@@ -78,6 +96,13 @@ struct Args {
     /// Save a screenshot at the end of the ride.
     #[arg(long)]
     screenshot: Option<PathBuf>,
+    /// Video capture instead of a benchmark: save every frame as
+    /// DIR/frame_NNNNN.png with game time advancing exactly 1/25 s per frame,
+    /// for --capture-seconds after the initial tiles are loaded.
+    #[arg(long, value_name = "DIR")]
+    capture: Option<PathBuf>,
+    #[arg(long, default_value_t = 8.0)]
+    capture_seconds: f64,
     /// Starting point on the loop, in km.
     #[arg(long, default_value_t = 0.0)]
     start_km: f64,
@@ -91,19 +116,34 @@ fn main() -> AppExit {
         .and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?)))
         .expect("--window WIDTHxHEIGHT");
     let mut app = App::new();
-    app.add_plugins(DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(Window {
-            title: "OCW spike".into(),
-            resolution: WindowResolution::new(w, h),
-            present_mode: if args.vsync {
-                PresentMode::AutoVsync
-            } else {
-                PresentMode::AutoNoVsync
-            },
-            ..default()
-        }),
-        ..default()
-    }))
+    if let Some(dir) = &args.capture {
+        std::fs::create_dir_all(dir).expect("cannot create capture directory");
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            std::time::Duration::from_secs_f64(1.0 / CAPTURE_FPS),
+        ));
+    }
+    app.add_plugins(
+        DefaultPlugins
+            .set(AssetPlugin {
+                // Shaders of the spike (built and run on the same machine).
+                file_path: concat!(env!("CARGO_MANIFEST_DIR"), "/assets").into(),
+                ..default()
+            })
+            .set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "OCW spike".into(),
+                    resolution: WindowResolution::new(w, h),
+                    present_mode: if args.vsync {
+                        PresentMode::AutoVsync
+                    } else {
+                        PresentMode::AutoNoVsync
+                    },
+                    ..default()
+                }),
+                ..default()
+            }),
+    )
+    .add_plugins(MaterialPlugin::<SplatMaterial>::default())
     .add_plugins(FrameTimeDiagnosticsPlugin::default())
     .insert_resource(ClearColor(SKY))
     .insert_resource(GlobalAmbientLight {
@@ -132,14 +172,72 @@ fn main() -> AppExit {
 const SKY: Color = Color::srgb(0.62, 0.78, 0.95);
 /// Rebase the floating origin when the rider is this far from it.
 const REBASE_DISTANCE_M: f64 = 1000.0;
+/// Frame rate of captured videos.
+const CAPTURE_FPS: f64 = 25.0;
+/// Frames rendered before capturing starts (pipeline compilation, see above).
+const CAPTURE_WARMUP_FRAMES: u32 = 30;
 /// Trees switch from the full mesh to the impostor at this distance.
 const TREE_LOD_DISTANCE_M: f32 = 250.0;
+
+/// Terrain material with splat textures (spec §4.6).
+type SplatMaterial = ExtendedMaterial<StandardMaterial, SplatExtension>;
+
+#[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
+struct SplatExtension {
+    #[texture(100, dimension = "2d_array")]
+    #[sampler(101)]
+    textures: Handle<Image>,
+}
+
+impl MaterialExtension for SplatExtension {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/splat.wesl".into()
+    }
+}
+
+/// The four splat layers as a mipmapped, repeating 2D texture array.
+fn splat_texture_array() -> Image {
+    const SIZE: u32 = 256;
+    Image {
+        data: Some(splat::texture_array_data(SIZE)),
+        texture_descriptor: TextureDescriptor {
+            label: Some("splat layers"),
+            size: Extent3d {
+                width: SIZE,
+                height: SIZE,
+                depth_or_array_layers: splat::LAYERS as u32,
+            },
+            mip_level_count: splat::mip_count(SIZE),
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::Rgba8UnormSrgb,
+            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+            view_formats: &[],
+        },
+        sampler: ImageSampler::Descriptor(ImageSamplerDescriptor {
+            address_mode_u: ImageAddressMode::Repeat,
+            address_mode_v: ImageAddressMode::Repeat,
+            mag_filter: ImageFilterMode::Linear,
+            min_filter: ImageFilterMode::Linear,
+            mipmap_filter: ImageFilterMode::Linear,
+            anisotropy_clamp: 8,
+            ..default()
+        }),
+        texture_view_descriptor: Some(TextureViewDescriptor {
+            dimension: Some(TextureViewDimension::D2Array),
+            ..default()
+        }),
+        asset_usage: RenderAssetUsages::RENDER_WORLD,
+        ..default()
+    }
+}
 
 #[derive(Resource)]
 struct Shared {
     world: Arc<World>,
     tree_material: Handle<StandardMaterial>,
     terrain_material: Handle<StandardMaterial>,
+    splat_material: Handle<SplatMaterial>,
     tree_lod0: [Handle<Mesh>; 2],
     tree_lod1: Handle<Mesh>,
 }
@@ -183,6 +281,9 @@ struct Bench {
     last_probe: Instant,
     max_tree_entities: usize,
     max_tiles: usize,
+    /// Frames saved in capture mode.
+    captured: u32,
+    warmup_frames: u32,
 }
 
 #[derive(Component)]
@@ -287,10 +388,12 @@ fn tree_impostor_data() -> MeshData {
             for (x, y, c) in tri {
                 m.positions.push([x * dx, y, x * dz]);
                 // Up-tilted normal so the impostor shades like a cone.
-                m.normals.push(Vec3::new(dz, 1.0, -dx).normalize().to_array());
+                m.normals
+                    .push(Vec3::new(dz, 1.0, -dx).normalize().to_array());
                 m.colors.push(c);
             }
-            m.indices.extend([base, base + 1, base + 2, base, base + 2, base + 1]);
+            m.indices
+                .extend([base, base + 1, base + 2, base, base + 2, base + 1]);
         }
     }
     m
@@ -322,6 +425,8 @@ fn setup(
     args: Res<Args>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut splat_materials: ResMut<Assets<SplatMaterial>>,
+    mut images: ResMut<Assets<Image>>,
 ) {
     let t0 = Instant::now();
     let world = World::generate();
@@ -337,6 +442,15 @@ fn setup(
     };
     let shared = Shared {
         tree_material: materials.add(vertex_colored.clone()),
+        splat_material: splat_materials.add(SplatMaterial {
+            base: StandardMaterial {
+                perceptual_roughness: 1.0,
+                ..default()
+            },
+            extension: SplatExtension {
+                textures: images.add(splat_texture_array()),
+            },
+        }),
         terrain_material: materials.add(vertex_colored),
         tree_lod0: [
             meshes.add(mesh_from(&tree_mesh_data(0))),
@@ -448,6 +562,8 @@ fn setup(
         last_probe: Instant::now(),
         max_tree_entities: 0,
         max_tiles: 0,
+        captured: 0,
+        warmup_frames: 0,
     });
 }
 
@@ -456,7 +572,7 @@ fn setup(
 fn advance(
     mut commands: Commands,
     args: Res<Args>,
-    time: Res<Time<Real>>,
+    time: Res<Time>,
     shared: Res<Shared>,
     streamer: Res<Streamer>,
     mut bench: ResMut<Bench>,
@@ -481,7 +597,28 @@ fn advance(
             }
         }
         Phase::Riding => {
+            // Game time: wall-clock time, or a fixed step per frame during capture.
             let step = args.speed_kmh / 3.6 * time.delta_secs_f64();
+            if let Some(dir) = &args.capture {
+                // Skip the first frames: Bevy compiles the render pipelines
+                // asynchronously, so the first frames are incomplete (sky only).
+                bench.warmup_frames += 1;
+                if bench.warmup_frames <= CAPTURE_WARMUP_FRAMES {
+                    bench.distance_m += step;
+                    return;
+                }
+                let n = bench.captured;
+                commands
+                    .spawn(Screenshot::primary_window())
+                    .observe(save_to_disk(dir.join(format!("frame_{n:05}.png"))));
+                bench.captured += 1;
+                if f64::from(bench.captured) >= args.capture_seconds * CAPTURE_FPS {
+                    info!(frames = bench.captured, "capture finished");
+                    bench.phase = Phase::Finishing(0);
+                }
+                bench.distance_m += step;
+                return;
+            }
             bench.distance_m += step;
             bench.ridden_m += step;
             if bench.ridden_m >= args.km * 1000.0 {
@@ -610,14 +747,25 @@ fn upload_tiles(
                 Visibility::default(),
             ))
             .id();
-        let terrain = meshes.add(mesh_from(&data.terrain));
+        let mut terrain_mesh = mesh_from(&data.terrain);
+        if args.terrain == TerrainMode::Splat {
+            terrain_mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, data.splat_weights.clone());
+        }
+        let terrain = meshes.add(terrain_mesh);
         let road = meshes.add(mesh_from(&data.road));
         commands.entity(tile).with_children(|c| {
-            c.spawn((
-                Mesh3d(terrain),
-                MeshMaterial3d(shared.terrain_material.clone()),
-                bevy::light::NotShadowCaster,
-            ));
+            match args.terrain {
+                TerrainMode::Vertex => c.spawn((
+                    Mesh3d(terrain),
+                    MeshMaterial3d(shared.terrain_material.clone()),
+                    bevy::light::NotShadowCaster,
+                )),
+                TerrainMode::Splat => c.spawn((
+                    Mesh3d(terrain),
+                    MeshMaterial3d(shared.splat_material.clone()),
+                    bevy::light::NotShadowCaster,
+                )),
+            };
             c.spawn((
                 Mesh3d(road),
                 MeshMaterial3d(shared.terrain_material.clone()),
@@ -676,7 +824,7 @@ fn upload_tiles(
 }
 
 fn place_riders(
-    time: Res<Time<Real>>,
+    time: Res<Time>,
     args: Res<Args>,
     bench: Res<Bench>,
     shared: Res<Shared>,
@@ -766,6 +914,7 @@ fn write_report(
         .int("radius_tiles", args.radius as u64)
         .int("trees_per_km2", u64::from(args.trees))
         .str("tree_mode", &format!("{:?}", args.tree_mode))
+        .str("terrain", &format!("{:?}", args.terrain))
         .int("riders", args.riders as u64)
         .int("uploads_per_frame", args.uploads_per_frame as u64)
         .str("window", &args.window)

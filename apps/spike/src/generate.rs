@@ -54,27 +54,43 @@ pub fn forest_density(x: f64, z: f64) -> f64 {
     ((n - 0.35) / 0.3).clamp(0.0, 1.0)
 }
 
-/// The road loop: ~25 km around the centre, elevation following the
+/// Shape of the loop: radius around the centre as a sum of waves
+/// (amplitude m, waves per lap, phase). The short waves make the road wind:
+/// tightest curve ≈ 44 m radius, about a fifth of the loop in curves under
+/// 150 m.
+const ROUTE_WAVES: [(f64, f64, f64); 5] = [
+    (500.0, 3.0, 0.0),
+    (250.0, 7.0, 1.0),
+    (110.0, 17.0, 2.0),
+    (55.0, 37.0, 0.5),
+    (20.0, 71.0, 1.3),
+];
+
+/// The road loop: ~28 km around the centre, elevation following the
 /// smoothed terrain with a grade limit (like the DEM smoothing of spec §4.3).
 pub fn main_route() -> Route {
-    let n = 5000;
+    let n: usize = 8000; // ≈ 3.5 m spacing, so tight curves stay round
     let c = WORLD_SIZE_M / 2.0;
     let mut pts: Vec<[f64; 3]> = (0..n)
         .map(|i| {
             let t = i as f64 / n as f64 * std::f64::consts::TAU;
-            let r = 3600.0 + 500.0 * (3.0 * t).sin() + 250.0 * (7.0 * t + 1.0).sin();
+            let r = 3600.0
+                + ROUTE_WAVES
+                    .iter()
+                    .map(|(a, k, p)| a * (k * t + p).sin())
+                    .sum::<f64>();
             let (x, z) = (c + r * t.cos(), c + r * t.sin());
             [x, base_height(x, z), z]
         })
         .collect();
-    // Smooth the elevation along the road (±40 samples ≈ ±200 m), twice.
+    // Smooth the elevation along the road (±60 samples ≈ ±210 m), twice.
     for _ in 0..2 {
         let ys: Vec<f64> = pts.iter().map(|p| p[1]).collect();
         for (i, p) in pts.iter_mut().enumerate() {
-            let sum: f64 = (-40..=40)
+            let sum: f64 = (-60..=60)
                 .map(|k| ys[(i as i64 + k).rem_euclid(n as i64) as usize])
                 .sum();
-            p[1] = sum / 81.0;
+            p[1] = sum / 121.0;
         }
     }
     Route::from_points("spike-loop", "Spike Loop", pts, true, 7.0).expect("valid loop")
@@ -179,6 +195,8 @@ pub struct TileData {
     pub id: TileId,
     pub spacing: f64,
     pub terrain: MeshData,
+    /// Per terrain vertex: splat weights (grass, forest floor, rock, verge).
+    pub splat_weights: Vec<[f32; 4]>,
     pub road: MeshData,
     pub trees: Vec<TreeInstance>,
 }
@@ -190,6 +208,18 @@ fn lin(c: f32) -> f32 {
     } else {
         ((c + 0.055) / 1.055).powf(2.4)
     }
+}
+
+/// Splat weights (grass, forest floor, rock, verge), summing to 1.
+pub fn splat_weights(slope: f64, forest: f64, verge: f64) -> [f32; 4] {
+    let r = ((slope - 0.35) / 0.25).clamp(0.0, 1.0) as f32;
+    let (f, v) = (forest as f32, verge as f32);
+    [
+        (1.0 - f) * (1.0 - r) * (1.0 - v),
+        f * (1.0 - r) * (1.0 - v),
+        r * (1.0 - v),
+        v,
+    ]
 }
 
 fn terrain_color(slope: f64, forest: f64, verge: f64) -> [f32; 4] {
@@ -219,6 +249,7 @@ pub fn build_tile(world: &World, id: TileId, spacing: f64, trees_per_km2: u32) -
     let h = |x: f64, z: f64| t.height(x, z);
 
     let mut terrain = MeshData::default();
+    let mut weights = Vec::with_capacity(n * n);
     for k in 0..n {
         for i in 0..n {
             let (x, z) = (ox + i as f64 * spacing, oz + k as f64 * spacing);
@@ -235,11 +266,9 @@ pub fn build_tile(world: &World, id: TileId, spacing: f64, trees_per_km2: u32) -
             let verge = t.road_proximity(x, z).map_or(0.0, |p| {
                 1.0 - ((p.distance_m - road_half) / 8.0).clamp(0.0, 1.0)
             });
-            terrain.colors.push(terrain_color(
-                (dx * dx + dz * dz).sqrt(),
-                forest_density(x, z),
-                verge,
-            ));
+            let (slope, forest) = ((dx * dx + dz * dz).sqrt(), forest_density(x, z));
+            terrain.colors.push(terrain_color(slope, forest, verge));
+            weights.push(splat_weights(slope, forest, verge));
         }
     }
     for k in 0..n - 1 {
@@ -254,6 +283,7 @@ pub fn build_tile(world: &World, id: TileId, spacing: f64, trees_per_km2: u32) -
         id,
         spacing,
         terrain,
+        splat_weights: weights,
         road: road_mesh(world, id),
         trees: trees(world, id, trees_per_km2),
     }
@@ -267,6 +297,7 @@ fn road_mesh(world: &World, id: TileId) -> MeshData {
     let step = 4.0;
     let mut m = MeshData::default();
     let asphalt = [lin(0.22), lin(0.22), lin(0.24), 1.0];
+    let marking = [lin(0.95), lin(0.95), lin(0.9), 1.0];
     let edge = [lin(0.45), lin(0.43), lin(0.38), 1.0];
     let inside = |d: f64| {
         let p = route.sample(d).position;
@@ -324,6 +355,23 @@ fn road_mesh(world: &World, id: TileId) -> MeshData {
             }
         }
         d += step;
+    }
+    // Dashed centre line: 3 m dash, 6 m gap, 2 cm above the asphalt.
+    let mut d = 0.0;
+    while d + 3.0 < route.length() {
+        if inside(d) {
+            let base = m.positions.len() as u32;
+            for (dd, side) in [(0.0, -0.08), (0.0, 0.08), (3.0, -0.08), (3.0, 0.08)] {
+                let p = route.sample(d + dd).offset_position(side);
+                m.positions
+                    .push([(p[0] - ox) as f32, (p[1] + 0.02) as f32, (p[2] - oz) as f32]);
+                m.normals.push([0.0, 1.0, 0.0]);
+                m.colors.push(marking);
+            }
+            m.indices
+                .extend([base, base + 1, base + 2, base + 1, base + 3, base + 2]);
+        }
+        d += 9.0;
     }
     m
 }
@@ -390,7 +438,7 @@ mod tests {
     fn route_is_a_rideable_loop_inside_the_world() {
         let r = main_route();
         assert!(r.is_loop());
-        assert!((20_000.0..32_000.0).contains(&r.length()), "{}", r.length());
+        assert!((25_000.0..32_000.0).contains(&r.length()), "{}", r.length());
         let mut max_grade: f64 = 0.0;
         let mut d = 0.0;
         while d < r.length() {
@@ -449,5 +497,53 @@ mod tests {
             let b = right.terrain.positions[k * 41][1];
             assert!((a - b).abs() < 1e-3);
         }
+    }
+
+    #[test]
+    fn splat_weights_sum_to_one() {
+        for (slope, forest, verge) in [
+            (0.0, 0.0, 0.0),
+            (0.5, 0.3, 0.0),
+            (0.9, 1.0, 0.4),
+            (0.1, 0.5, 1.0),
+        ] {
+            let w = splat_weights(slope, forest, verge);
+            assert!((w.iter().sum::<f32>() - 1.0).abs() < 1e-6, "{w:?}");
+            assert!(w.iter().all(|v| *v >= 0.0));
+        }
+        assert_eq!(splat_weights(0.0, 0.0, 0.0), [1.0, 0.0, 0.0, 0.0]);
+        assert_eq!(splat_weights(1.0, 0.0, 0.0)[2], 1.0);
+    }
+
+    #[test]
+    fn route_winds_but_stays_rideable() {
+        let r = main_route();
+        // Heading change over 10 m → curve radius.
+        let (mut min_radius, mut tight_m) = (f64::INFINITY, 0.0);
+        let step = 10.0;
+        let mut d = 0.0;
+        while d + step < r.length() {
+            let (a, b) = (r.sample(d).direction, r.sample(d + step).direction);
+            let turn = (a[0] * b[1] - a[1] * b[0])
+                .atan2(a[0] * b[0] + a[1] * b[1])
+                .abs();
+            let radius = if turn > 1e-9 {
+                step / turn
+            } else {
+                f64::INFINITY
+            };
+            min_radius = min_radius.min(radius);
+            if radius < 150.0 {
+                tight_m += step;
+            }
+            d += step;
+        }
+        assert!(min_radius > 30.0, "tightest curve {min_radius:.0} m");
+        let share = tight_m / r.length();
+        assert!(
+            share > 0.1,
+            "only {:.0} % in curves under 150 m",
+            share * 100.0
+        );
     }
 }

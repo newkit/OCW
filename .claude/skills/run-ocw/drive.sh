@@ -23,6 +23,9 @@
 #       Graphics spike benchmark (apps/spike, release build) on a headless
 #       weston with the GPU renderer (real GPU required, e.g. on marge).
 #       Writes REPORT.json, REPORT.png (last frame) and REPORT.log; archived.
+#   drive.sh spike-video OUT.mp4 [SECONDS] [-- spike args...]
+#       Smooth 25 fps video of the spike on the GPU (frame capture: game time
+#       advances 1/25 s per frame, so it is not a benchmark). Archived.
 #   drive.sh server [args...]
 #       Run the headless game server, e.g. --bots 3 --seconds 10 --fast.
 set -euo pipefail
@@ -202,11 +205,37 @@ case "$cmd" in
     echo "report:        $out"
     archive spike wayland "$out" "$shot" "$log"
     ;;
+  spike-video)
+    out=${1:?usage: drive.sh spike-video OUT.mp4 [SECONDS] [-- args...]}; shift
+    seconds=8
+    if [ $# -gt 0 ] && [ "$1" != "--" ]; then seconds=$1; shift; fi
+    [ "${1:-}" = "--" ] && shift
+    log="${out%.*}.log"; shot="${out%.*}.png"
+    frames=$(mktemp -d)
+    rm -f "$out" "$shot"
+    ARCHIVE_APP_ARGS=(--capture-seconds "$seconds" "$@")
+    cargo build -q --release -p ocw-spike
+    WESTON_WIDTH=1920 WESTON_HEIGHT=1080 start_weston "${out%.*}.weston.log" gl
+    status=0
+    timeout 1800 env -u DISPLAY XDG_RUNTIME_DIR="$runtime" WAYLAND_DISPLAY="$socket" \
+      WGPU_BACKEND=vulkan "RUST_LOG=${RUST_LOG:-info,wgpu=warn,naga=warn}" \
+      ./target/release/ocw-spike --capture "$frames" --capture-seconds "$seconds" \
+      --report "${out%.*}.json" "$@" >"$log" 2>&1 || status=$?
+    [ "$status" -eq 0 ] || { echo "spike failed, see $log" >&2; tail -20 "$log" >&2; exit 1; }
+    last=$(find "$frames" -name 'frame_*.png' | sort | tail -1)
+    [ -n "$last" ] || { echo "no frames captured, see $log" >&2; exit 1; }
+    cp "$last" "$shot"
+    ffmpeg -loglevel error -y -framerate 25 -i "$frames/frame_%05d.png" -c:v libx264 \
+      -preset veryfast -crf 24 -pix_fmt yuv420p -movflags +faststart "$out"
+    rm -rf "$frames"
+    echo "video:         $out ($(du -h "$out" | cut -f1))"
+    archive spike-video wayland "$out" "$shot" "$log"
+    ;;
   server)
     cargo run -q -p ocw-server -- "$@"
     ;;
   *)
-    sed -n '2,27p' "$0"
+    sed -n '2,30p' "$0"
     exit 2
     ;;
 esac
