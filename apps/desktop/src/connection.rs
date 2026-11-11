@@ -220,6 +220,9 @@ fn update_view(
     view.elapsed_s = now;
     // Interpolate between the last two 50 Hz prediction steps.
     view.riders = client.0.view(now, fixed.overstep_fraction_f64());
+    view.position = view
+        .local()
+        .and_then(|l| crate::gps::position(client.0.track(), client.0.geo_origin(), &l.state));
     if client.0.is_free_ride() {
         view.paths = client.0.paths();
         view.junction = client.0.junction_view();
@@ -264,6 +267,17 @@ fn register_commands(app: &mut App) {
                 s.samples_out,
                 c.prediction_error()
             ))
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("rider.gps").about("Show the rider's GPS position (lat, lon, altitude)"),
+        |world, _| match world.resource::<RideView>().position {
+            Some((lat, lon, alt)) => Ok(format!(
+                "{}\n{lat:.6}, {lon:.6}",
+                ocw_render::hud::gps_line(lat, lon, alt)
+            )),
+            None => Err("no GPS position (this route has no geographic origin)".into()),
         },
     ))
     .console_command(ConsoleCommand::new(
@@ -324,7 +338,9 @@ fn register_commands(app: &mut App) {
     .console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("rider.wild")
-            .about("Wild mode on (not bound to the road, ride anywhere) or off (key W)")
+            .about(
+                "Wild mode on (not bound to the road, ride anywhere; autodrive off) or off (key W)",
+            )
             .arg(Arg::new("on").required(true).value_parser(["on", "off"])),
         |world, m| {
             let on = m.get_one::<String>("on").expect("required") == "on";

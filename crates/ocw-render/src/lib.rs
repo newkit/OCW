@@ -51,6 +51,9 @@ pub struct RideView {
     /// A short app message shown under the REC indicator for a few seconds
     /// (e.g. "Video saved: <file>").
     pub app_message: Option<String>,
+    /// The local rider's GPS position (lat °, lon °, altitude m), if the
+    /// ride has a geographic origin (route files, world packages).
+    pub position: Option<(f64, f64, f64)>,
 }
 
 impl RideView {
@@ -67,6 +70,7 @@ impl RideView {
             notice: None,
             recording_s: None,
             app_message: None,
+            position: None,
             route_status: None,
         }
     }

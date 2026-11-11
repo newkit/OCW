@@ -93,10 +93,28 @@ restarts the app on every deployment and after crashes; logs are in
 listed as `monitor` lines in `app.log`. `scripts/test-kiosk.sh` tests the
 kiosk logic with a fake app.
 
+The kiosk's arguments are fixed in the autostart entry. To change what the
+deployed app does without the desktop user, `deploy-test.sh` writes
+`/var/tmp/ocw/ocw-desktop.args`: default arguments that `ocw-desktop` reads
+from beside its executable (or from `$OCW_ARGS_FILE`; `--no-args-file`
+ignores it) and puts **before** its command line, so the command line wins
+for single-value options while repeatable ones (`--cmd`, `--at`, `--exec`)
+accumulate, the file's first. Format: words as in a shell (whitespace or
+newlines, `'…'` / `"…"` quotes, `#` comments); the file used is logged in
+`app.log`. If the pilot data is on the machine (`scripts/fetch-pilot.sh`),
+`deploy-test.sh` also rebuilds the pilot world package (land use, buildings)
+and the file gets `scripts/kiosk.args`: `--world
+/var/tmp/ocw/liechtenstein.ocwpkg`, so the kiosk's `--route-file` ride shows
+the package's terrain, land use, forests and buildings. Overrides:
+`OCW_KIOSK_ARGS='…'` (the file's content), `OCW_DEPLOY_WORLD=0` (no package
+rebuild), `OCW_DEPLOY_DIR` (install directory, for testing the script).
+
 ## Per-OS prerequisites on the machines
 
 - **Linux:** run `make deps-linux` in a checkout (detects Debian/Ubuntu, Fedora or Arch; packages via
-  sudo, then rustup with the pinned toolchain). An admin can install only the
+  sudo, incl. FUSE 2 for AppImages, then rustup with the pinned toolchain and
+  appimagetool in `~/.local/bin` for `scripts/build-appimage.sh`; that part
+  alone, without sudo: `make deps-appimage`). An admin can install only the
   packages for another user with `sudo make -C <checkout> deps-linux-packages`. A user without a desktop
   session needs `sudo usermod -aG render,video <user>` for GPU access.
   `vulkaninfo --summary` must show the real GPU, not llvmpipe. Benchmarks run

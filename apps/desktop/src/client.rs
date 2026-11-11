@@ -498,10 +498,15 @@ impl ClientCore {
     }
 
     /// Wild mode: not bound to the road, ride anywhere (spec §2.2).
+    /// Switching it on also switches autodrive off (upright, lean
+    /// steering), so the rider can leave the road; switching it off keeps
+    /// the steering mode (spec §5.2.1).
     pub fn set_wild(&mut self, wild: bool) {
         self.wild = wild;
         self.predictor.set_wild(wild);
-        if !wild {
+        if wild {
+            self.set_autodrive(false);
+        } else {
             // Back within the road for the autodrive line.
             let limit = self.lateral_limit();
             if let Some(t) = self.lateral_target {
@@ -1495,6 +1500,48 @@ mod tests {
             "{client:?} vs {server:?}"
         );
         assert!((client.speed - server.speed).abs() < 0.2);
+    }
+
+    /// Wild mode on switches autodrive off (one intent carries both), so
+    /// the rider leans off the road; wild off keeps the steering mode.
+    #[test]
+    fn wild_mode_switches_autodrive_off_and_leaves_the_road() {
+        let mut h = Harness::new(0, false);
+        h.ride(250.0, 4.0);
+        let own = h.client.rider_id().unwrap();
+        let first = h.client.steer_message(h.time_s).expect("initial intent");
+        h.send(&first);
+        assert!(h.client.autodrive());
+        h.client.set_wild(true);
+        assert!(!h.client.autodrive());
+        assert_eq!(h.client.lean(), Some(0.0));
+        assert!(h.client.steering_status().starts_with("manual | WILD"));
+        let msg = h.client.steer_message(h.time_s + 1.0).expect("wild intent");
+        match ocw_protocol::decode_client(&msg).unwrap() {
+            C::Steer(s) => assert!(s.wild && s.lean_steering && s.lean_mrad == 0, "{s:?}"),
+            other => panic!("unexpected {other:?}"),
+        }
+        h.send(&msg);
+        assert!(h.client.steer_message(h.time_s + 2.0).is_none());
+        h.client.set_lean(-0.15);
+        let msg = h.client.steer_message(h.time_s + 2.0).expect("lean intent");
+        h.send(&msg);
+        h.ride(250.0, 3.0);
+        let limit = ocw_sim::physics::lateral_limit(7.0);
+        let server = h.server.session().rider_state(own).unwrap();
+        assert!(server.lateral_offset < -limit - 1.0, "{server:?}");
+        assert!((h.client.state().lateral_offset - server.lateral_offset).abs() < 0.3);
+        // Autodrive switched on in wild mode stays on when wild goes off.
+        h.client.set_autodrive(true);
+        h.client.set_wild(false);
+        assert!(h.client.autodrive());
+        assert!(!h.client.steering_status().contains("WILD"));
+        // Manual steering also stays manual.
+        h.client.set_wild(true);
+        h.client.set_autodrive(true);
+        h.client.set_lean(0.1);
+        h.client.set_wild(false);
+        assert_eq!(h.client.lean(), Some(0.1));
     }
 
     /// Down arrow: the brake reaches the server at once and stops the
