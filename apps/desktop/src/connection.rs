@@ -13,7 +13,7 @@ use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permissio
 use ocw_server::Course;
 use ocw_server::local::{LocalConnection, LocalServer, SteppedServer};
 use ocw_sim::FreeRideStart;
-use ocw_world::{RoadNetwork, Route};
+use ocw_world::{RoadNetwork, Route, RoutePlan};
 
 use crate::Args;
 use crate::client::{ClientCore, Notice};
@@ -30,6 +30,8 @@ pub struct FreeRideSetup {
     pub start: FreeRideStart,
     /// (lat, lon) of the package's local metres.
     pub origin: (f64, f64),
+    /// A route on the road graph to follow (`--route NAME`, `--route-gpx`).
+    pub plan: Option<Arc<RoutePlan>>,
 }
 
 impl Plugin for ConnectionPlugin {
@@ -37,6 +39,20 @@ impl Plugin for ConnectionPlugin {
         let args = app.world().resource::<Args>().clone();
         let free = app.world().get_resource::<FreeRideSetup>().cloned();
         let (course, client) = match free {
+            Some(FreeRideSetup {
+                net,
+                origin,
+                plan: Some(plan),
+                ..
+            }) => (
+                Course::RouteRide {
+                    net: net.clone(),
+                    plan: plan.clone(),
+                },
+                ClientCore::free_ride(net, args.name.clone(), RiderProfile::default())
+                    .with_geo_origin(origin)
+                    .with_route_plan(plan),
+            ),
             Some(f) => (
                 Course::FreeRide {
                     net: f.net.clone(),
@@ -56,7 +72,7 @@ impl Plugin for ConnectionPlugin {
         };
         let start_m = match &course {
             Course::Route(route) => crate::start_point(&args, route),
-            Course::FreeRide { .. } => 0.0,
+            Course::FreeRide { .. } | Course::RouteRide { .. } => 0.0,
         };
         let mut server = if args.capture.is_some() {
             // Frame capture: the server shares the client's fixed-step game time.
@@ -187,6 +203,13 @@ pub fn u_turn(world: &mut World) -> Result<String, String> {
     }
 }
 
+/// Route ride: back to the route (key J, console `ride.rejoin`).
+pub fn rejoin_route(world: &mut World) -> Result<String, String> {
+    let msg = world.resource_mut::<ClientState>().0.rejoin_route()?;
+    world.resource::<Link>().send_bytes(msg);
+    Ok("rejoining the route".into())
+}
+
 fn update_view(
     time: Res<Time>,
     fixed: Res<Time<Fixed>>,
@@ -204,6 +227,7 @@ fn update_view(
         view.paths = client.0.paths();
         view.junction = client.0.junction_view();
         view.notice = client.0.notice();
+        view.route_status = client.0.route_status();
     }
 }
 
@@ -365,6 +389,25 @@ fn register_commands(app: &mut App) {
     ))
     .console_command(ConsoleCommand::new(
         Permission::User,
+        Command::new("ride.rejoin")
+            .about("Route ride: back to the route after leaving it (key J; the shortest way to it is added)"),
+        |world, _| rejoin_route(world),
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("ride.route").about("Route ride: the route's name, progress and whether you are on it"),
+        |world, _| {
+            let c = &world.resource::<ClientState>().0;
+            c.route_status()
+                .map(|s| match c.on_route() {
+                    Some(false) => format!("{s}\nride.rejoin (key J) returns to the route"),
+                    _ => s,
+                })
+                .ok_or_else(|| "not riding a route (--world PKG --route NAME or --route-gpx FILE)".into())
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
         Command::new("ride.junction").about("Show the next junction's exits (free ride)"),
         |world, _| {
             let c = &world.resource::<ClientState>().0;
@@ -382,7 +425,13 @@ fn register_commands(app: &mut App) {
                     e.angle_deg,
                     e.name,
                     if i == j.selected { "  <- selected" } else { "" },
-                    if i == j.default { "  (default)" } else { "" }
+                    if j.route == Some(i) {
+                        "  (route)"
+                    } else if i == j.default {
+                        "  (default)"
+                    } else {
+                        ""
+                    }
                 ));
             }
             Ok(s)

@@ -35,6 +35,8 @@ pub struct RideView {
     pub junction: Option<JunctionView>,
     /// A message for the rider (e.g. "Dead end in 800 m", spec §2.2.2).
     pub notice: Option<String>,
+    /// Route ride: name and progress for the HUD ("Rheintal 3.2 / 12.4 km").
+    pub route_status: Option<String>,
     pub riders: Vec<RiderView>,
     /// Session time in seconds.
     pub elapsed_s: f64,
@@ -61,6 +63,7 @@ impl RideView {
             junction: None,
             notice: None,
             position: None,
+            route_status: None,
         }
     }
 
@@ -89,6 +92,9 @@ pub struct JunctionView {
     pub default: usize,
     /// The choice is locked (within ~20 m of the junction).
     pub locked: bool,
+    /// Route ride: the route's exit (spec §2.2.1: arrows show the route
+    /// direction; another exit leaves the route).
+    pub route: Option<usize>,
 }
 
 /// One exit of a junction in the overlay.

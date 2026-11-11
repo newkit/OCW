@@ -21,7 +21,7 @@ use ocw_render::{ExitView, JunctionView, RiderView};
 use ocw_sim::freeride::{self, TurnChoice, UTURN_INTERVAL_S};
 use ocw_sim::{Predictor, RiderState, SnapshotBuffer};
 use ocw_world::path::lock_distance;
-use ocw_world::{Junction, RidePath, RoadNetwork, Route, Track, TurnReason};
+use ocw_world::{Junction, RidePath, RoadNetwork, Route, RoutePlan, RouteState, Track, TurnReason};
 
 /// Minimum time between steering messages while the target changes.
 pub const STEER_SEND_INTERVAL_S: f64 = 0.05;
@@ -55,6 +55,8 @@ pub enum Notice {
 #[derive(Debug, Clone)]
 struct FreeRide {
     net: Arc<RoadNetwork>,
+    /// Route ride: the route the own path follows (spec §2.7).
+    plan: Option<Arc<RoutePlan>>,
     /// The own path, predicted (shared with the render view).
     own: Option<Arc<RidePath>>,
     /// The other riders' paths, from the server.
@@ -153,6 +155,7 @@ impl ClientCore {
         Self {
             free: Some(FreeRide {
                 net,
+                plan: None,
                 own: None,
                 others: BTreeMap::new(),
                 choice: None,
@@ -163,6 +166,24 @@ impl ClientCore {
             }),
             ..Self::new(placeholder, name, profile)
         }
+    }
+
+    /// A route ride on the road graph (spec §2.7): the own path follows
+    /// `plan` (the server's session rides the same route).
+    pub fn with_route_plan(mut self, plan: Arc<RoutePlan>) -> Self {
+        if let Some(fr) = &mut self.free {
+            let v = self.route.points()[0];
+            self.route = Route::from_points(
+                plan.name.clone(),
+                plan.name.clone(),
+                vec![v, [v[0] + 1.0, v[1], v[2]]],
+                false,
+                5.0,
+            )
+            .expect("two distinct points");
+            fr.plan = Some(plan);
+        }
+        self
     }
 
     /// Name of what is ridden (the route's, or "Free ride").
@@ -192,6 +213,7 @@ impl ClientCore {
             protocol_version: PROTOCOL_VERSION,
             display_name: self.name.clone(),
             profile: Some(self.profile.into()),
+            world: self.free.as_ref().map(|f| ocw_protocol::world_id(&f.net)),
         })))
     }
 
@@ -254,6 +276,19 @@ impl ClientCore {
         };
         match msg {
             S::Welcome(w) => {
+                // Junctions are vertex indices: riding on another graph
+                // than the server's would go wrong at every junction.
+                if let (Some(fr), Some(theirs)) = (&self.free, &w.world)
+                    && theirs.graph_hash != fr.net.fingerprint()
+                {
+                    return Some(Notice::Rejected(format!(
+                        "world package mismatch: the server rides {} ({:016x}), this client has {} ({:016x})",
+                        theirs.name,
+                        theirs.graph_hash,
+                        fr.net.package,
+                        fr.net.fingerprint()
+                    )));
+                }
                 let id = RiderId(w.rider_id);
                 self.rider_id = Some(id);
                 Some(Notice::Joined {
@@ -295,10 +330,17 @@ impl ClientCore {
             fr.others.remove(&rider)
         };
         let net = fr.net.clone();
+        // The own path follows the route (others' paths only come from the
+        // server and need no route).
+        let plan = if Some(rider) == own_id {
+            fr.plan.clone()
+        } else {
+            None
+        };
         let fresh = || {
             RidePath::from_segments(net.clone(), &segments, u.start_m, u.first_index)
                 .ok()
-                .map(Arc::new)
+                .map(|p| Arc::new(p.with_plan(plan.clone())))
         };
         let updated = match current {
             Some(mut p) if !u.reset && u.first_index > p.first_index() => {
@@ -573,11 +615,16 @@ impl ClientCore {
             edge: e.edge,
             forward: e.forward,
         });
+        let note = match j.route {
+            Some(r) if r == i => ", the route",
+            Some(_) => ", leaves the route (ride.rejoin returns to it)",
+            None if i == j.default => ", the default",
+            None => "",
+        };
         Some(format!(
-            "next junction: {} ({}){}",
+            "next junction: {} ({}){note}",
             e.class.name(),
             exit_name(&fr.net, e.edge),
-            if i == j.default { ", the default" } else { "" }
         ))
     }
 
@@ -651,13 +698,83 @@ impl ClientCore {
         Some(junction_view(&fr.net, &j, i, at - d, false))
     }
 
+    /// Route ride: back to the route after leaving it (console
+    /// `ride.rejoin`, key J). Predicted at once; returns the message for the
+    /// server, or why it is not possible.
+    pub fn rejoin_route(&mut self) -> Result<Vec<u8>, String> {
+        let st = self.predictor.state();
+        let fr = self.free.as_mut().ok_or("not riding a route")?;
+        let own = fr.own.as_mut().ok_or("not riding yet")?;
+        // Quantized like the message, so the server finds the same way.
+        let (d_cm, v_mm) = (
+            (st.distance * 100.0).round().max(0.0) as u32,
+            (st.speed * 1000.0).round().max(0.0) as u32,
+        );
+        Arc::make_mut(own).rejoin_route(f64::from(d_cm) / 100.0, f64::from(v_mm) / 1000.0)?;
+        fr.choice = None;
+        Ok(encode(&client_message(C::RouteRejoin(v1::RouteRejoin {
+            distance_cm: d_cm,
+            speed_mm_s: v_mm,
+        }))))
+    }
+
+    /// Route ride: whether the rider is on the route right now.
+    pub fn on_route(&self) -> Option<bool> {
+        let own = self.free.as_ref()?.own.as_ref()?;
+        own.plan()?;
+        Some(own.on_route_at(self.predictor.state().distance))
+    }
+
+    /// Route ride: the route's name and progress for the HUD, e.g.
+    /// "Rheintal 3.2 / 12.4 km", "Rheintal lap 2 0.4 / 3.1 km", or
+    /// "Rheintal (off the route)".
+    pub fn route_status(&self) -> Option<String> {
+        let fr = self.free.as_ref()?;
+        let plan = fr.plan.as_ref()?;
+        let Some(own) = fr.own.as_ref() else {
+            return Some(plan.name.clone());
+        };
+        let p = own.route_progress(self.predictor.state().distance)?;
+        Some(if p.finished {
+            format!("{} (finished)", plan.name)
+        } else if !p.on_route {
+            format!("{} (off the route)", plan.name)
+        } else if plan.is_loop {
+            format!(
+                "{} lap {} {:.1} / {:.1} km",
+                plan.name,
+                p.lap + 1,
+                p.done_m / 1000.0,
+                p.length_m / 1000.0
+            )
+        } else {
+            format!(
+                "{} {:.1} / {:.1} km",
+                plan.name,
+                p.done_m / 1000.0,
+                p.length_m / 1000.0
+            )
+        })
+    }
+
     /// A message for the rider: "Dead end in 800 m", "End of region",
-    /// "U-turn" (spec §2.2.2).
+    /// "U-turn" (spec §2.2.2); on a route ride also that the rider left it.
     pub fn notice(&self) -> Option<String> {
         let own = self.free.as_ref()?.own.as_ref()?;
         let d = self.predictor.state().distance;
         if own.in_turnaround(d) {
             return Some("U-turn".into());
+        }
+        if own.plan().is_some() && !own.on_route_at(d) {
+            let progress = own.route_progress(d);
+            let back = matches!(own.route_state(), Some(RouteState::On { .. }));
+            if !progress.is_some_and(|p| p.finished) {
+                return Some(if back {
+                    "Off the route - heading back to it".into()
+                } else {
+                    "Off the route - press J (ride.rejoin) to return".into()
+                });
+            }
         }
         let round = |m: f64| (m / 10.0).round() * 10.0;
         match own.turnaround_ahead(d) {
@@ -865,6 +982,7 @@ fn junction_view(
         selected,
         default: j.default,
         locked,
+        route: j.route,
     }
 }
 
@@ -1598,6 +1716,173 @@ mod tests {
         assert!(c.direction[0] < -0.99, "{c:?}");
         assert!(close(c.position, s.position, 0.5), "{c:?} vs {s:?}");
         assert!(h.client.prediction_error().abs() < 0.5);
+    }
+
+    /// A route on the grid: from vertex 1 east to 2, south to 6 and 10,
+    /// east to 11.
+    fn grid_route(net: &RoadNetwork) -> Arc<RoutePlan> {
+        let e = |a: u32, b: u32| {
+            (0..net.graph().edges.len())
+                .find_map(|i| {
+                    let x = net.edge(i);
+                    if (x.from.0, x.to.0) == (a, b) {
+                        Some(ocw_world::Segment::whole(net, i, true))
+                    } else if (x.from.0, x.to.0) == (b, a) {
+                        Some(ocw_world::Segment::whole(net, i, false))
+                    } else {
+                        None
+                    }
+                })
+                .unwrap()
+        };
+        let steps = vec![e(1, 2), e(2, 6), e(6, 10), e(10, 11)];
+        Arc::new(RoutePlan::new(net, "Grid route", steps, false).unwrap())
+    }
+
+    impl Harness {
+        /// A route ride on the grid with `bots` bots.
+        fn route_ride(bots: u32) -> Self {
+            let net = Arc::new(RoadNetwork::new(grid()).with_package_name("Grid"));
+            let plan = grid_route(&net);
+            let server = GameServer::new(
+                ocw_server::Course::RouteRide {
+                    net: net.clone(),
+                    plan: plan.clone(),
+                },
+                ServerConfig {
+                    allow_dev_commands: true,
+                    bots,
+                    start_m: 0.0,
+                },
+            );
+            Self::with(
+                server,
+                ClientCore::free_ride(net, "Routed", RiderProfile::default()).with_route_plan(plan),
+            )
+        }
+    }
+
+    /// Route ride (spec §2.7, §2.2.1): the overlay shows the route's exit
+    /// as the default, the client and the server follow it; another exit
+    /// leaves the route, `ride.rejoin` brings the rider back; bots stay on
+    /// it.
+    #[test]
+    fn route_ride_follow_leave_and_rejoin() {
+        let mut h = Harness::route_ride(1);
+        h.ride(250.0, 1.0);
+        assert_eq!(h.client.course_name(), "Grid route");
+        assert!(
+            matches!(&h.notices[0], Notice::Joined { route_id, .. } if route_id == "Grid route")
+        );
+        assert_eq!(h.client.on_route(), Some(true));
+        assert!(
+            h.client
+                .route_status()
+                .unwrap()
+                .starts_with("Grid route 0.0 / 1.2 km"),
+            "{:?}",
+            h.client.route_status()
+        );
+        // At vertex 2 the route turns right (south): that is the default.
+        let mut saw_route_arrow = false;
+        for _ in 0..450 {
+            h.ride(250.0, 0.1);
+            if let Some(j) = h.client.junction_view() {
+                assert_eq!(j.route, Some(j.default), "{j:?}");
+                assert_eq!(j.selected, j.default);
+                assert!(j.exits[j.default].angle_deg > 60.0, "right: {j:?}");
+                saw_route_arrow = true;
+            }
+        }
+        assert!(saw_route_arrow);
+        let (c, s) = h.positions();
+        assert!(c.direction[1] > 0.99, "south on the route: {c:?}");
+        assert!(close(c.position, s.position, 1.0), "{c:?} vs {s:?}");
+        assert_eq!(h.client.on_route(), Some(true));
+        // Vertex 6: leave the route (straight on is the route; turn left).
+        h.ride(250.0, 5.0);
+        let said = h.client.choose_direction("left").expect("junction at 6");
+        assert!(said.contains("leaves the route"), "{said}");
+        let msg = h.client.turn_message().unwrap();
+        h.send(&msg);
+        h.ride(250.0, 40.0);
+        let (c, s) = h.positions();
+        assert!(c.direction[0] > 0.99, "left = east, off the route: {c:?}");
+        assert!(close(c.position, s.position, 1.0), "{c:?} vs {s:?}");
+        assert_eq!(h.client.on_route(), Some(false));
+        assert!(h.client.notice().unwrap().contains("ride.rejoin"));
+        assert!(h.client.route_status().unwrap().contains("off the route"));
+        // Back to the route: predicted, and the server agrees.
+        let msg = h.client.rejoin_route().expect("a way back");
+        assert!(h.client.rejoin_route().unwrap_err().contains("already"));
+        h.send(&msg);
+        h.ride(250.0, 150.0);
+        let status = h.client.route_status().unwrap();
+        assert!(!status.contains("off the route"), "{status}");
+        let (c, s) = h.positions();
+        assert!(close(c.position, s.position, 1.0), "{c:?} vs {s:?}");
+        // The bot never left the route.
+        let bot = h
+            .server
+            .session()
+            .snapshot()
+            .iter()
+            .map(|r| r.id)
+            .find(|&id| Some(id) != h.client.rider_id())
+            .unwrap();
+        let bd = h.server.session().rider_state(bot).unwrap().distance;
+        let bp = h.server.session().path(bot).unwrap();
+        assert!(bp.on_route_at(bd) || bp.route_progress(bd).unwrap().finished);
+        assert_eq!(h.client.stats().malformed, 0);
+    }
+
+    /// Package version check (spec §6.5): a client with another build of the
+    /// package is refused, by the server or (for servers that do not check)
+    /// by the client itself.
+    #[test]
+    fn another_world_package_is_refused() {
+        let net = Arc::new(RoadNetwork::new(grid()).with_package_name("Grid"));
+        let mut other = grid();
+        other.edges[0].points[1][0] += 1.0;
+        let other = Arc::new(RoadNetwork::new(other).with_package_name("Grid"));
+        let server = GameServer::new(
+            ocw_server::Course::FreeRide {
+                net,
+                start: ocw_sim::FreeRideStart {
+                    edge: 1,
+                    offset_m: 10.0,
+                    forward: true,
+                },
+            },
+            ServerConfig::default(),
+        );
+        let mut h = Harness::with(
+            server,
+            ClientCore::free_ride(other.clone(), "Old", RiderProfile::default()),
+        );
+        assert!(
+            matches!(&h.notices[..], [Notice::Rejected(r)] if r.contains("world package mismatch")),
+            "{:?}",
+            h.notices
+        );
+        assert_eq!(h.client.rider_id(), None);
+        // A Welcome naming another graph is refused by the client too.
+        let welcome = encode(&ocw_protocol::server_message(S::Welcome(v1::Welcome {
+            protocol_version: PROTOCOL_VERSION,
+            rider_id: 7,
+            tick_rate_hz: 50,
+            broadcast_rate_hz: 10,
+            route_id: String::new(),
+            free_ride: true,
+            world: Some(v1::WorldPackageId {
+                name: "Grid".into(),
+                graph_hash: other.fingerprint() ^ 1,
+            }),
+            graph_route: String::new(),
+        })));
+        h.receive(&welcome);
+        assert!(matches!(h.notices.last(), Some(Notice::Rejected(_))));
+        assert_eq!(h.client.rider_id(), None);
     }
 
     #[test]
