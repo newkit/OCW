@@ -5062,6 +5062,7 @@ dependencies = [
  "ocw-core",
  "ocw-sim",
  "ocw-world",
+ "ttf-parser",
 ]
 
 [[package]]

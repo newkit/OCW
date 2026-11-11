@@ -6,6 +6,7 @@
 
 pub mod camera;
 pub mod console;
+pub mod font;
 pub mod hud;
 pub mod junction;
 pub mod menu;
@@ -143,6 +144,7 @@ pub struct OcwRenderPlugins;
 impl Plugin for OcwRenderPlugins {
     fn build(&self, app: &mut App) {
         app.add_plugins((
+            font::UiFontPlugin,
             see_through::SeeThroughPlugin,
             world::WorldPlugin,
             package::PackagePlugin,
