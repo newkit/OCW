@@ -7,8 +7,8 @@ use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseSc
 use bevy::prelude::*;
 
 use crate::console::ConsoleState;
-use crate::riders::rider_transform;
-use crate::{RideView, world};
+use crate::riders::avatar_transform;
+use crate::{RideView, TreeCone, world};
 
 pub struct CameraPlugin;
 
@@ -152,21 +152,89 @@ pub fn above_ground(eye: Vec3, ground: Option<f64>) -> Vec3 {
     }
 }
 
+/// Clearance kept between the line of sight and the terrain.
+pub const SIGHT_CLEARANCE_M: f32 = 0.5;
+/// Highest lift of the eye to see over terrain (m).
+const MAX_SIGHT_LIFT_M: f32 = 40.0;
+
+/// Lifts `eye` until the line of sight to `target` clears `ground` (with
+/// [`SIGHT_CLEARANCE_M`]): a hill or embankment between the camera and the
+/// rider would otherwise cut through the view. Raising the eye by Δ raises
+/// the line at fraction t of the way by Δ·(1 − t), so the lift needed is the
+/// largest (ground + clearance − line) / (1 − t) along the line; the last
+/// part next to the rider is skipped (the rider stands on that ground).
+pub fn clear_line_of_sight(
+    eye: Vec3,
+    target: Vec3,
+    ground: &dyn Fn(f64, f64) -> Option<f64>,
+) -> Vec3 {
+    const SAMPLES: usize = 24;
+    let mut lift = 0.0f32;
+    for i in 1..SAMPLES {
+        let t = i as f32 / SAMPLES as f32;
+        if t > 0.85 {
+            break;
+        }
+        let p = eye.lerp(target, t);
+        if let Some(h) = ground(f64::from(p.x), f64::from(p.z)) {
+            let need = (h as f32 + SIGHT_CLEARANCE_M - p.y) / (1.0 - t);
+            lift = lift.max(need);
+        }
+    }
+    eye + Vec3::Y * lift.clamp(0.0, MAX_SIGHT_LIFT_M)
+}
+
+/// Gap kept between the camera and a tree crown (m).
+pub const TREE_CLEARANCE_M: f32 = 0.5;
+
+/// Pushes `eye` sideways out of any tree crown it is in (the camera would
+/// otherwise look out from inside a tree).
+pub fn out_of_trees<'a>(mut eye: Vec3, trees: impl IntoIterator<Item = &'a TreeCone>) -> Vec3 {
+    for t in trees {
+        let (dx, dz) = (eye.x - t.base.x, eye.z - t.base.z);
+        if dx.abs() > t.radius + TREE_CLEARANCE_M || dz.abs() > t.radius + TREE_CLEARANCE_M {
+            continue;
+        }
+        let Some(r) = t.radius_at(eye.y) else {
+            continue;
+        };
+        let r = r + TREE_CLEARANCE_M;
+        let d = (dx * dx + dz * dz).sqrt();
+        if d < r {
+            let dir = if d > 1e-4 {
+                Vec2::new(dx, dz) / d
+            } else {
+                Vec2::X
+            };
+            eye.x = t.base.x + dir.x * r;
+            eye.z = t.base.z + dir.y * r;
+        }
+    }
+    eye
+}
+
+#[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
 fn follow(
     view: Res<RideView>,
     mode: Res<CameraMode>,
     orbit: Res<CameraOrbit>,
     ground: Option<Res<crate::Ground>>,
+    trees: Option<Res<crate::Trees>>,
     time: Res<Time>,
     mut camera: Query<&mut Transform, With<FollowCamera>>,
+    mut smoothed_target: Local<Option<Vec3>>,
 ) {
     let Some(local) = view.local() else { return };
     let Ok(mut cam) = camera.single_mut() else {
         return;
     };
-    let rider = rider_transform(&view, local.state.distance, local.state.lateral_offset);
+    // Follow the avatar itself: on the terrain off the road (wild mode) and
+    // along the rider's own heading, not the road's.
+    let rider = avatar_transform(&view, &local.state, ground.as_deref());
     let p = view.route.sample(local.state.distance);
-    let forward = Vec3::new(p.direction[0] as f32, 0.0, p.direction[1] as f32);
+    let road = Vec3::new(p.direction[0] as f32, 0.0, p.direction[1] as f32);
+    // Positive heading = to the right; Bevy turns left for a positive Y rotation.
+    let forward = Quat::from_rotation_y(-local.state.heading as f32) * road;
     let right = Vec3::new(-forward.z, 0.0, forward.x);
     let (eye, target) = match *mode {
         CameraMode::Chase => orbit.eye_and_target(rider.translation, forward),
@@ -186,9 +254,66 @@ fn follow(
     } else {
         cam.translation.lerp(eye, k)
     };
-    // Never below the ground, also while smoothing towards a low eye.
-    let g = ground.and_then(|g| (g.0)(f64::from(cam.translation.x), f64::from(cam.translation.z)));
-    cam.translation = above_ground(cam.translation, g);
+    let mut target = target;
+    if let Some(g) = ground.as_deref() {
+        // Never below the ground, also while smoothing towards a low eye,
+        // and nothing of the terrain between the eye and the rider (the
+        // rider, not the look-ahead point: uphill that is in the slope).
+        let h = (g.0)(f64::from(cam.translation.x), f64::from(cam.translation.z));
+        cam.translation = above_ground(cam.translation, h);
+        let rider_head = rider.translation + Vec3::Y * 1.2;
+        // Trees between the eye and the rider count like terrain.
+        let (lo, hi) = (
+            cam.translation.min(rider_head),
+            cam.translation.max(rider_head),
+        );
+        let near_trees: Vec<TreeCone> = trees
+            .as_deref()
+            .map(|t| {
+                t.0.values()
+                    .flatten()
+                    .filter(|c| {
+                        c.base.x + c.radius >= lo.x
+                            && c.base.x - c.radius <= hi.x
+                            && c.base.z + c.radius >= lo.z
+                            && c.base.z - c.radius <= hi.z
+                    })
+                    .copied()
+                    .collect()
+            })
+            .unwrap_or_default();
+        let obstacles = |x: f64, z: f64| {
+            let terrain = (g.0)(x, z);
+            let tree = near_trees
+                .iter()
+                .filter_map(|c| c.surface_at(x as f32, z as f32))
+                .fold(None, |m: Option<f32>, h| Some(m.map_or(h, |m| m.max(h))));
+            match (terrain, tree) {
+                (Some(a), Some(b)) => Some(a.max(f64::from(b))),
+                (a, b) => a.or(b.map(f64::from)),
+            }
+        };
+        cam.translation = clear_line_of_sight(cam.translation, rider_head, &obstacles);
+        // Not inside a tree crown (riding through a forest).
+        if let Some(trees) = trees.as_deref() {
+            cam.translation = out_of_trees(cam.translation, trees.0.values().flatten());
+            let h = (g.0)(f64::from(cam.translation.x), f64::from(cam.translation.z));
+            cam.translation = above_ground(cam.translation, h);
+        }
+        // The look-ahead point stays above the ground too, but not so far
+        // above the rider that the rider leaves the picture.
+        if let Some(h) = (g.0)(f64::from(target.x), f64::from(target.z)) {
+            let rider_y = rider.translation.y;
+            target.y = target.y.max(h as f32 + 1.0).min(rider_y + 3.0);
+        }
+    }
+    // Smooth the look-at point like the eye (bumpy ground ahead would make
+    // the view jerk); snap when far (teleport).
+    let target = match *smoothed_target {
+        Some(t) if t.distance(target) < 50.0 => t.lerp(target, k),
+        _ => target,
+    };
+    *smoothed_target = Some(target);
     cam.look_at(target, Vec3::Y);
 }
 
@@ -209,6 +334,65 @@ mod tests {
         );
         assert_eq!(above_ground(eye, Some(90.0)), eye);
         assert_eq!(above_ground(eye, None), eye);
+    }
+
+    #[test]
+    fn camera_sees_over_a_hill_between_it_and_the_rider() {
+        // Rider at x = 0 on flat ground (0 m); a 5 m ridge at x 3 … 5 m
+        // between the rider and the eye at x = 8, 2 m high.
+        let ridge = |x: f64, _z: f64| Some(if (3.0..=5.0).contains(&x) { 5.0 } else { 0.0 });
+        let target = Vec3::new(0.0, 1.0, 0.0);
+        let eye = clear_line_of_sight(Vec3::new(8.0, 2.0, 0.0), target, &ridge);
+        assert!(eye.y > 2.0 && eye.x == 8.0 && eye.z == 0.0, "{eye}");
+        // Now the whole line is above the ridge (+ clearance).
+        for i in 1..20 {
+            let p = eye.lerp(target, i as f32 / 20.0);
+            if (3.0..=5.0).contains(&p.x) {
+                assert!(p.y >= 5.0 + SIGHT_CLEARANCE_M - 0.3, "{p}");
+            }
+        }
+        // Nothing in the way: unchanged.
+        let flat = |_: f64, _: f64| Some(0.0);
+        assert_eq!(
+            clear_line_of_sight(Vec3::new(8.0, 2.0, 0.0), target, &flat),
+            Vec3::new(8.0, 2.0, 0.0)
+        );
+        // Outside the terrain data: unchanged.
+        let none = |_: f64, _: f64| None;
+        assert_eq!(
+            clear_line_of_sight(Vec3::new(8.0, 2.0, 0.0), target, &none),
+            Vec3::new(8.0, 2.0, 0.0)
+        );
+    }
+
+    #[test]
+    fn camera_is_pushed_out_of_tree_crowns() {
+        let tree = TreeCone {
+            base: Vec3::new(10.0, 0.0, 0.0),
+            crown_bottom: 2.0,
+            crown_top: 9.0,
+            radius: 2.2,
+        };
+        // In the crown, 1 m from the trunk at 2 m: out to radius + clearance.
+        let eye = out_of_trees(Vec3::new(11.0, 2.0, 0.0), [&tree]);
+        assert!(
+            (eye.x - (10.0 + 2.2 + TREE_CLEARANCE_M)).abs() < 1e-5,
+            "{eye}"
+        );
+        assert_eq!((eye.y, eye.z), (2.0, 0.0));
+        // Higher up the crown is narrower.
+        let eye = out_of_trees(Vec3::new(10.0, 8.0, 0.5), [&tree]);
+        let r = tree.radius_at(8.0).unwrap() + TREE_CLEARANCE_M;
+        assert!((eye.z - r).abs() < 1e-5, "{eye}");
+        // The crown's surface: highest at the trunk, its bottom at the rim.
+        assert_eq!(tree.surface_at(10.0, 0.0), Some(9.0));
+        assert!((tree.surface_at(12.2 - 1e-4, 0.0).unwrap() - 2.0).abs() < 1e-3);
+        assert_eq!(tree.surface_at(13.0, 0.0), None);
+        // Under the crown (trunk height) and above the tip: unchanged.
+        let below = Vec3::new(11.0, 1.0, 0.0);
+        assert_eq!(out_of_trees(below, [&tree]), below);
+        let above = Vec3::new(10.2, 9.5, 0.0);
+        assert_eq!(out_of_trees(above, [&tree]), above);
     }
 
     #[test]

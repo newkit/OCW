@@ -106,6 +106,10 @@ pub fn rider_transform(view: &RideView, distance: f64, lateral_offset: f64) -> T
     Transform::from_translation(pos).with_rotation(yaw * Quat::from_rotation_x(pitch))
 }
 
+/// Distance beside the road over which the avatar goes from the road's
+/// height onto the ground (m).
+pub const OFF_ROAD_BLEND_M: f64 = 2.0;
+
 /// Largest lean angle (radians, ~35°).
 const MAX_LEAN: f64 = 0.61;
 
@@ -124,26 +128,58 @@ pub fn lean_rotation(lean: f64) -> Quat {
     Quat::from_rotation_z(-lean as f32)
 }
 
-/// The avatar: on the road like [`rider_transform`] (off it, on the
-/// ground), turned by the rider's heading relative to the road and leaning
-/// for the curve it rides.
+/// Half the wheelbase of the avatar (wheel contacts at ±this along the bike).
+pub const HALF_WHEELBASE_M: f64 = 0.55;
+
+/// Height of the surface under a point `along` metres ahead of the rider
+/// (along its heading): the road there, blended onto the ground beside
+/// the road over [`OFF_ROAD_BLEND_M`] (no jump at the edge, no wheels in
+/// an embankment).
+fn contact_height(
+    view: &RideView,
+    state: &ocw_sim::RiderState,
+    ground: Option<&Ground>,
+    along: f64,
+) -> (Vec3, f32) {
+    let d = state.distance + along * state.heading.cos();
+    let lateral = state.lateral_offset + along * state.heading.sin();
+    let p = to_vec3(view.route.sample(d).offset_position(lateral));
+    let beyond = lateral.abs() - view.route.road_width_m() / 2.0;
+    let mut y = p.y;
+    if beyond > 0.0
+        && let Some(h) = ground.and_then(|g| (g.0)(f64::from(p.x), f64::from(p.z)))
+    {
+        let w = (beyond / OFF_ROAD_BLEND_M).min(1.0) as f32;
+        y += (h as f32 - y) * w;
+    }
+    (p, y)
+}
+
+/// The avatar: turned by the rider's heading relative to the road, leaning
+/// for the curve it rides, and standing on the surface under both wheels
+/// (road, or the ground beside it): over a bump the front wheel rises
+/// first, then the rear.
 pub fn avatar_transform(
     view: &RideView,
     state: &ocw_sim::RiderState,
     ground: Option<&Ground>,
 ) -> Transform {
     let mut t = rider_transform(view, state.distance, state.lateral_offset);
-    if state.lateral_offset.abs() > view.route.road_width_m() / 2.0
-        && let Some(h) =
-            ground.and_then(|g| (g.0)(f64::from(t.translation.x), f64::from(t.translation.z)))
-    {
-        t.translation.y = h as f32;
-    }
-    let k = state.turn_curvature;
+    let (front_p, front) = contact_height(view, state, ground, HALF_WHEELBASE_M);
+    let (rear_p, rear) = contact_height(view, state, ground, -HALF_WHEELBASE_M);
+    t.translation.y = 0.5 * (front + rear);
+    let run = Vec2::new(front_p.x - rear_p.x, front_p.z - rear_p.z)
+        .length()
+        .max(1e-3);
+    let pitch = (front - rear).atan2(run);
+    let p = view.route.sample(state.distance);
+    let road = Vec3::new(p.direction[0] as f32, 0.0, p.direction[1] as f32);
+    let yaw = Transform::default().looking_to(road, Vec3::Y).rotation;
     // Positive heading = right; Bevy turns left for a positive Y rotation.
-    let pitch_free_yaw = Quat::from_rotation_y(-state.heading as f32);
-    t.rotation = pitch_free_yaw * t.rotation;
-    t.rotation *= lean_rotation(lean_angle(k, state.speed));
+    t.rotation = Quat::from_rotation_y(-state.heading as f32)
+        * yaw
+        * Quat::from_rotation_x(pitch)
+        * lean_rotation(lean_angle(state.turn_curvature, state.speed));
     t
 }
 
@@ -430,6 +466,42 @@ mod tests {
             avatar_transform(&v, &state, Some(&ground)).translation.y,
             0.0
         );
+        // Just beside the road (1 m of the 2 m blend): halfway onto the ground.
+        let edge = ocw_sim::RiderState {
+            lateral_offset: v.route.road_width_m() / 2.0 + 1.0,
+            ..state
+        };
+        let y = avatar_transform(&v, &edge, Some(&ground)).translation.y;
+        assert!((y - 6.0).abs() < 1e-4, "{y}");
+    }
+
+    #[test]
+    fn front_wheel_climbs_a_bump_first() {
+        // Flat road at 0 m with a 0.3 m step up at x = 50 (5 cm ramp).
+        let pts: Vec<[f64; 3]> = (0..=400)
+            .map(|i| {
+                let x = f64::from(i) * 0.25;
+                [x, if x >= 50.0 { 0.3 } else { 0.0 }, 0.0]
+            })
+            .collect();
+        let v = view(pts);
+        let at = |d: f64| {
+            let s = ocw_sim::RiderState {
+                distance: d,
+                speed: 5.0,
+                ..Default::default()
+            };
+            let t = avatar_transform(&v, &s, None);
+            (t.translation.y, t.forward().as_vec3().y)
+        };
+        // Before the step: level. Front wheel on it: nose up, half lifted.
+        let (y0, f0) = at(48.0);
+        assert!(y0.abs() < 1e-4 && f0.abs() < 1e-4, "{y0} {f0}");
+        let (y1, f1) = at(50.0);
+        assert!(f1 > 0.2 && (y1 - 0.15).abs() < 0.03, "{y1} {f1}");
+        // Both wheels up: level again, 0.3 m higher.
+        let (y2, f2) = at(52.0);
+        assert!((y2 - 0.3).abs() < 1e-4 && f2.abs() < 1e-4, "{y2} {f2}");
     }
 
     #[test]

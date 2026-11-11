@@ -68,6 +68,8 @@ pub struct TileMeshes {
     pub terrain: MeshArrays,
     pub roads: MeshArrays,
     pub trees: MeshArrays,
+    /// The same trees as obstacles for the camera.
+    pub tree_cones: Vec<crate::TreeCone>,
 }
 
 fn lin(r: f32, g: f32, b: f32) -> [f32; 4] {
@@ -188,16 +190,63 @@ fn hash(x: i64, z: i64, seed: u64) -> f32 {
     (h >> 40) as f32 / (1u64 << 24) as f32
 }
 
+/// Crown of a package tree (scale 1): bottom, tip and radius in metres.
+const CROWN: (f32, f32, f32) = (1.8, 9.0, 2.2);
+
+/// The trees of a tile as obstacles (see [`tree_arrays`]).
+pub fn tree_cones(pkg: &WorldPackage, tile: &Tile) -> Vec<crate::TreeCone> {
+    tree_sites(pkg, tile)
+        .into_iter()
+        .map(|(base, s)| crate::TreeCone {
+            base,
+            crown_bottom: CROWN.0 * s,
+            crown_top: CROWN.1 * s,
+            radius: CROWN.2 * s,
+        })
+        .collect()
+}
+
 /// Provisional vegetation: trees on a jittered grid in patches, not on
 /// steep rock and never on a road (land use from OSM replaces this).
 pub fn tree_arrays(pkg: &WorldPackage, tile: &Tile) -> MeshArrays {
+    let mut m = MeshArrays::default();
+    let crown = lin(0.13, 0.33, 0.15);
+    let trunk = lin(0.35, 0.24, 0.15);
+    for (base, s) in tree_sites(pkg, tile) {
+        for (y0, y1, r, colour, seg) in [
+            (0.0, 2.2, 0.25, trunk, 5u32),
+            (CROWN.0, CROWN.1, CROWN.2, crown, 7),
+        ] {
+            let b = m.positions.len() as u32;
+            for j in 0..seg {
+                let a = j as f32 / seg as f32 * std::f32::consts::TAU;
+                m.positions
+                    .push((base + Vec3::new(r * a.cos(), y0, r * a.sin()) * s).to_array());
+                m.normals.push(
+                    Vec3::new(a.cos(), r / (y1 - y0), a.sin())
+                        .normalize()
+                        .to_array(),
+                );
+                m.colors.push(colour);
+            }
+            m.positions.push((base + Vec3::Y * y1 * s).to_array());
+            m.normals.push([0.0, 1.0, 0.0]);
+            m.colors.push(colour);
+            for j in 0..seg {
+                m.indices.extend([b + j, b + seg, b + (j + 1) % seg]);
+            }
+        }
+    }
+    m
+}
+
+/// Where the trees of a tile stand (foot of the trunk) and their scale.
+fn tree_sites(pkg: &WorldPackage, tile: &Tile) -> Vec<(Vec3, f32)> {
     let size = f64::from(pkg.tile_size_m);
     let o = tile.key.origin(size);
     let cell = 18.0;
     let cells = (size / cell) as i64;
-    let mut m = MeshArrays::default();
-    let crown = lin(0.13, 0.33, 0.15);
-    let trunk = lin(0.35, 0.24, 0.15);
+    let mut sites = Vec::new();
     let road_pts: Vec<(Vec2, f32)> = tile
         .roads
         .iter()
@@ -233,31 +282,10 @@ pub fn tree_arrays(pkg: &WorldPackage, tile: &Tile) -> MeshArrays {
             }
             let s = 0.7 + 0.7 * hash(gx, gz, 4);
             let base = Vec3::new(x as f32, y as f32 - 0.3, z as f32);
-            for (y0, y1, r, colour, seg) in
-                [(0.0, 2.2, 0.25, trunk, 5u32), (1.8, 9.0, 2.2, crown, 7)]
-            {
-                let b = m.positions.len() as u32;
-                for j in 0..seg {
-                    let a = j as f32 / seg as f32 * std::f32::consts::TAU;
-                    m.positions
-                        .push((base + Vec3::new(r * a.cos(), y0, r * a.sin()) * s).to_array());
-                    m.normals.push(
-                        Vec3::new(a.cos(), r / (y1 - y0), a.sin())
-                            .normalize()
-                            .to_array(),
-                    );
-                    m.colors.push(colour);
-                }
-                m.positions.push((base + Vec3::Y * y1 * s).to_array());
-                m.normals.push([0.0, 1.0, 0.0]);
-                m.colors.push(colour);
-                for j in 0..seg {
-                    m.indices.extend([b + j, b + seg, b + (j + 1) % seg]);
-                }
-            }
+            sites.push((base, s));
         }
     }
-    m
+    sites
 }
 
 pub fn build_tile_meshes(pkg: &WorldPackage, key: TileKey) -> Option<TileMeshes> {
@@ -267,6 +295,7 @@ pub fn build_tile_meshes(pkg: &WorldPackage, key: TileKey) -> Option<TileMeshes>
         terrain: terrain_arrays(pkg, tile),
         roads: road_arrays(&tile.roads),
         trees: tree_arrays(pkg, tile),
+        tree_cones: tree_cones(pkg, tile),
     })
 }
 
@@ -306,6 +335,7 @@ fn stream_tiles(
     world: Res<PackageWorld>,
     view: Res<RideView>,
     mut streamer: ResMut<TileStreamer>,
+    mut trees: ResMut<crate::Trees>,
 ) {
     let pkg = &world.0;
     let Some(center) = rider_tile(&view, pkg) else {
@@ -350,6 +380,7 @@ fn stream_tiles(
     for key in far {
         if let Some(e) = streamer.loaded.remove(&key) {
             commands.entity(e).despawn();
+            trees.0.remove(&(key.x, key.z));
         }
     }
 }
@@ -359,10 +390,14 @@ fn upload_tiles(
     mut streamer: ResMut<TileStreamer>,
     materials: Res<PackageMaterials>,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut trees: ResMut<crate::Trees>,
 ) {
-    let Some(t) = streamer.ready.pop_front() else {
+    let Some(mut t) = streamer.ready.pop_front() else {
         return;
     };
+    trees
+        .0
+        .insert((t.key.x, t.key.z), std::mem::take(&mut t.tree_cones));
     let mat = materials.vertex_coloured.clone();
     let parent = commands
         .spawn((

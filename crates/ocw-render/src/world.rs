@@ -67,8 +67,10 @@ fn spawn_world(
     // (package.rs); the route only adds its centre line and the start arch.
     if let Some(pkg) = &package {
         let pkg = pkg.0.clone();
+        // The surface exactly as meshed (triangles), not bilinear: on steep
+        // slopes they differ by metres within a cell.
         commands.insert_resource(crate::Ground(std::sync::Arc::new(move |x, z| {
-            pkg.height(x, z)
+            pkg.surface_height(x, z)
         })));
         commands.spawn((
             Mesh3d(meshes.add(center_line_mesh(&view, CENTRE_LINE_LIFT_PACKAGE_M))),
@@ -165,12 +167,22 @@ fn spawn_world(
         })),
     ));
 
-    spawn_trees(
-        &mut commands,
-        &tree_positions(route, &terrain),
-        &mut meshes,
-        &mut materials,
-    );
+    let trees = tree_positions(route, &terrain);
+    // Crown of `spawn_trees` (scale 1): a 7 m cone centred 5 m up, radius 2.2 m.
+    let cones = trees
+        .iter()
+        .map(|&(base, s)| crate::TreeCone {
+            base,
+            crown_bottom: 1.5 * s,
+            crown_top: 8.5 * s,
+            radius: 2.2 * s,
+        })
+        .collect();
+    commands.insert_resource(crate::Trees(std::collections::HashMap::from([(
+        (0, 0),
+        cones,
+    )])));
+    spawn_trees(&mut commands, &trees, &mut meshes, &mut materials);
     spawn_start_arch(&mut commands, &view, &mut meshes, &mut materials);
 }
 
