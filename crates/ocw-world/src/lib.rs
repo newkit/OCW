@@ -12,9 +12,11 @@ pub mod graph;
 pub mod package;
 mod route;
 pub mod route_file;
+pub mod surface;
 mod terrain;
 
 pub use package::{RoadStrip, Tile, TileKey, WorldPackage};
 pub use route::{Route, RouteError, RoutePoint};
 pub use route_file::{ElevationGrid, RouteFile};
+pub use surface::Surface;
 pub use terrain::{RoadProximity, Terrain, TerrainParams};

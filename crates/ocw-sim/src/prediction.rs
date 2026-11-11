@@ -3,7 +3,8 @@
 use ocw_core::{RiderProfile, SIM_DT};
 use ocw_world::Route;
 
-use crate::physics::{self, Environment, RiderState, Steering};
+use crate::physics::{RiderState, Steering};
+use crate::ride::{self, Controls};
 
 /// Errors above this distance (m) are corrected immediately instead of smoothed.
 pub const SNAP_THRESHOLD_M: f64 = 5.0;
@@ -24,10 +25,11 @@ pub struct Predictor {
     last_error: f64,
     /// Drafting factor on the drag, predicted by the client (1.0 = none).
     drag_factor: f64,
-    /// Steering (same rule as the server, so steering reacts at once).
-    steering: Option<Steering>,
-    /// Brake key held (predicted like the server applies it).
-    braking: bool,
+    /// Steering, wild mode and brake (the same rule as the server, so the
+    /// bike reacts at once).
+    controls: Controls,
+    /// Scraped along the road edge in the last predicted tick.
+    scraping: bool,
     /// Remaining lateral error to blend in, and its rate (m/s).
     pending_lateral: f64,
     lateral_rate: f64,
@@ -42,8 +44,8 @@ impl Predictor {
             correction_rate: 0.0,
             last_error: 0.0,
             drag_factor: 1.0,
-            steering: None,
-            braking: false,
+            controls: Controls::default(),
+            scraping: false,
             pending_lateral: 0.0,
             lateral_rate: 0.0,
         }
@@ -59,17 +61,22 @@ impl Predictor {
     }
 
     pub fn set_braking(&mut self, braking: bool) {
-        self.braking = braking;
+        self.controls.braking = braking;
     }
 
     /// Sets the steering target (already clamped to the road by the caller).
     pub fn set_lateral_target(&mut self, target_m: f64) {
-        self.steering = Some(Steering::Target(target_m));
+        self.controls.steering = Steering::Auto(target_m);
     }
 
     /// Sets lean steering (rad, positive = right).
     pub fn set_lean(&mut self, lean_rad: f64) {
-        self.steering = Some(Steering::Lean(lean_rad));
+        self.controls.steering = Steering::Lean(lean_rad);
+    }
+
+    /// Wild mode: not bound to the road.
+    pub fn set_wild(&mut self, wild: bool) {
+        self.controls.wild = wild;
     }
 
     /// Sets the predicted drafting factor (from the positions of others).
@@ -79,14 +86,16 @@ impl Predictor {
 
     /// Advances the prediction by one physics tick with the current power.
     pub fn step(&mut self, route: &Route, power_w: f64) {
-        let env = Environment::with_grade(route.sample(self.state.distance).grade)
-            .with_drag_factor(self.drag_factor)
-            .with_brake(self.braking);
-        physics::step(&mut self.state, &self.profile, power_w, &env, SIM_DT);
-        let limit = physics::lateral_limit(route.road_width_m());
-        if let Some(steering) = self.steering {
-            physics::apply_steering(&mut self.state, steering, limit, SIM_DT);
-        }
+        ride::tick(
+            &mut self.state,
+            &self.profile,
+            power_w,
+            self.controls,
+            &mut self.scraping,
+            route,
+            self.drag_factor,
+            SIM_DT,
+        );
         if self.pending_lateral != 0.0 {
             let max_step = self.lateral_rate.abs() * SIM_DT;
             let applied = self.pending_lateral.clamp(-max_step, max_step);
@@ -109,15 +118,18 @@ impl Predictor {
     pub fn reconcile(&mut self, route: &Route, server: RiderState, age_s: f64, power_w: f64) {
         let mut extrapolated = server;
         let steps = (age_s.max(0.0) / SIM_DT).round() as usize;
+        let mut scraping = self.scraping;
         for _ in 0..steps {
-            let env = Environment::with_grade(route.sample(extrapolated.distance).grade)
-                .with_drag_factor(self.drag_factor)
-                .with_brake(self.braking);
-            physics::step(&mut extrapolated, &self.profile, power_w, &env, SIM_DT);
-            if let Some(steering) = self.steering {
-                let limit = physics::lateral_limit(route.road_width_m());
-                physics::apply_steering(&mut extrapolated, steering, limit, SIM_DT);
-            }
+            ride::tick(
+                &mut extrapolated,
+                &self.profile,
+                power_w,
+                self.controls,
+                &mut scraping,
+                route,
+                self.drag_factor,
+                SIM_DT,
+            );
         }
         let error = extrapolated.distance - self.state.distance;
         self.last_error = error;
@@ -143,6 +155,7 @@ impl Predictor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::physics::{self, Environment};
 
     fn flat() -> Route {
         Route::from_points(

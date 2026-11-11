@@ -48,9 +48,11 @@ pub struct ClientCore {
     /// Lean steering (rad, positive = right), the arrow keys; replaces the
     /// target while set.
     lean: Option<f64>,
+    /// Wild mode: not bound to the road.
+    wild: bool,
     steer_seq: u32,
-    /// Last steering intent sent ((lean mode, mrad or cm)) and when.
-    steer_sent: Option<((bool, i32), f64)>,
+    /// Last steering intent sent ((lean mode, mrad or cm, wild)) and when.
+    steer_sent: Option<((bool, i32, bool), f64)>,
     others: SnapshotBuffer,
     /// Latest known state of the other riders, advanced every physics tick
     /// (for predicting the local rider's drafting).
@@ -78,6 +80,7 @@ impl ClientCore {
             prev_state: RiderState::default(),
             lateral_target: None,
             lean: None,
+            wild: false,
             steer_seq: 0,
             steer_sent: None,
             others: SnapshotBuffer::default(),
@@ -216,7 +219,11 @@ impl ClientCore {
         if self.rider_id.is_none() {
             return;
         }
-        let limit = ocw_sim::physics::lateral_limit(self.route.road_width_m());
+        let limit = if self.wild {
+            ocw_sim::physics::WILD_LIMIT_M
+        } else {
+            ocw_sim::physics::lateral_limit(self.route.road_width_m())
+        };
         let t = target_m.clamp(-limit, limit);
         self.lateral_target = Some(t);
         self.lean = None;
@@ -240,6 +247,63 @@ impl ClientCore {
         self.lean
     }
 
+    /// Autodrive: the rider keeps to its line (the middle of the road
+    /// unless moved) by itself; otherwise the rider steers by leaning.
+    pub fn autodrive(&self) -> bool {
+        self.lean.is_none()
+    }
+
+    /// Switches autodrive on (to the middle of the road) or off (upright,
+    /// steering by leaning from now on).
+    pub fn set_autodrive(&mut self, on: bool) {
+        if on {
+            self.steer_to(0.0);
+        } else {
+            self.set_lean(0.0);
+        }
+    }
+
+    /// Moves the autodrive line sideways by `delta_m` (positive = right).
+    pub fn steer_by(&mut self, delta_m: f64) {
+        let t = self.lateral_target.unwrap_or(0.0);
+        self.steer_to(t + delta_m);
+    }
+
+    pub fn wild(&self) -> bool {
+        self.wild
+    }
+
+    /// Steering mode and surface for the HUD, e.g. "manual | WILD | grass".
+    pub fn steering_status(&self) -> String {
+        let mut s = String::from(if self.autodrive() {
+            "autodrive"
+        } else {
+            "manual"
+        });
+        if self.wild {
+            s.push_str(" | WILD");
+        }
+        let surface = ocw_sim::ride::surface(&self.route, &self.predictor.state());
+        if surface != ocw_world::Surface::Asphalt {
+            s.push_str(" | ");
+            s.push_str(surface.name());
+        }
+        s
+    }
+
+    /// Wild mode: not bound to the road, ride anywhere (spec §2.2).
+    pub fn set_wild(&mut self, wild: bool) {
+        self.wild = wild;
+        self.predictor.set_wild(wild);
+        if !wild {
+            // Back within the road for the autodrive line.
+            if let Some(t) = self.lateral_target {
+                let limit = ocw_sim::physics::lateral_limit(self.route.road_width_m());
+                self.lateral_target = Some(t.clamp(-limit, limit));
+            }
+        }
+    }
+
     pub fn lateral_target(&self) -> Option<f64> {
         self.lateral_target
     }
@@ -248,8 +312,12 @@ impl ClientCore {
     /// every `STEER_SEND_INTERVAL_S` while it keeps changing).
     pub fn steer_message(&mut self, now_s: f64) -> Option<Vec<u8>> {
         let key = match self.lean {
-            Some(l) => (true, (l * 1000.0).round() as i32),
-            None => (false, (self.lateral_target? * 100.0).round() as i32),
+            Some(l) => (true, (l * 1000.0).round() as i32, self.wild),
+            None => (
+                false,
+                (self.lateral_target? * 100.0).round() as i32,
+                self.wild,
+            ),
         };
         if let Some((sent, at)) = self.steer_sent
             && (sent == key || now_s - at < STEER_SEND_INTERVAL_S)
@@ -258,12 +326,13 @@ impl ClientCore {
         }
         self.steer_seq += 1;
         self.steer_sent = Some((key, now_s));
-        let (lean_steering, value) = key;
+        let (lean_steering, value, wild) = key;
         Some(encode(&client_message(C::Steer(v1::SteerIntent {
             seq: self.steer_seq,
             lateral_target_cm: if lean_steering { 0 } else { value },
             lean_steering,
             lean_mrad: if lean_steering { value } else { 0 },
+            wild,
         }))))
     }
 
@@ -735,11 +804,12 @@ mod tests {
             .steer_message(h.time_s + 0.16)
             .expect("after the interval");
         h.send(&msg);
-        h.ride(200.0, 3.0);
+        h.ride(200.0, 8.0);
         let own = h.client.rider_id().unwrap();
         let server = h.server.session().rider_state(own).unwrap().lateral_offset;
-        assert!((server - (start + 1.6)).abs() < 1e-6, "server {server}");
-        assert!((h.client.state().lateral_offset - server).abs() < 0.02);
+        // Autodrive steers there smoothly (it leans over, it does not slide).
+        assert!((server - (start + 1.6)).abs() < 0.1, "server {server}");
+        assert!((h.client.state().lateral_offset - server).abs() < 0.05);
         // Never off the road.
         h.client.steer_to(100.0);
         assert_eq!(
@@ -777,21 +847,27 @@ mod tests {
             "{client:?} vs {server:?}"
         );
         assert!((client.lateral_offset - server.lateral_offset).abs() < 0.3);
-        // Upright again: straight on, lined up with the road.
+        // Upright on the curving loop: nobody steers the bends, so the
+        // rider ends up at an edge; client and server agree.
         h.client.set_lean(0.0);
         let msg = h.client.steer_message(h.time_s + 1.0).expect("straighten");
         h.send(&msg);
-        h.ride(250.0, 8.0);
+        h.ride(250.0, 20.0);
         let server = h.server.session().rider_state(own).unwrap();
+        let limit = ocw_sim::physics::lateral_limit(7.0);
         assert!(
-            server.heading.abs() < 0.01 && server.turn_curvature == 0.0,
+            (server.lateral_offset.abs() - limit).abs() < 1e-6,
             "{server:?}"
         );
-        let limit = ocw_sim::physics::lateral_limit(7.0);
-        assert!(server.lateral_offset >= -limit - 1e-9);
-        // The console's target steering takes over again.
-        h.client.steer_to(0.0);
+        assert!((h.client.state().lateral_offset - server.lateral_offset).abs() < 0.3);
+        // Autodrive brings it back to the middle.
+        h.client.set_autodrive(true);
         assert_eq!(h.client.lean(), None);
+        let msg = h.client.steer_message(h.time_s + 2.0).expect("autodrive");
+        h.send(&msg);
+        h.ride(250.0, 10.0);
+        let server = h.server.session().rider_state(own).unwrap();
+        assert!(server.lateral_offset.abs() < 0.3, "{server:?}");
     }
 
     /// Down arrow: the brake reaches the server at once and stops the

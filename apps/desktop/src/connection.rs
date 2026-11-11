@@ -234,6 +234,32 @@ fn register_commands(app: &mut App) {
     ))
     .console_command(ConsoleCommand::new(
         Permission::User,
+        Command::new("rider.autodrive")
+            .about("Autodrive on (keeps to the middle of the road) or off (steer by leaning; key A)")
+            .arg(Arg::new("on").required(true).value_parser(["on", "off"])),
+        |world, m| {
+            let on = m.get_one::<String>("on").expect("required") == "on";
+            let mut c = world.resource_mut::<ClientState>();
+            if c.0.rider_id().is_none() {
+                return Err("not riding yet".into());
+            }
+            c.0.set_autodrive(on);
+            Ok(format!("autodrive {}", if on { "on" } else { "off" }))
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("rider.wild")
+            .about("Wild mode on (not bound to the road, ride anywhere) or off (key W)")
+            .arg(Arg::new("on").required(true).value_parser(["on", "off"])),
+        |world, m| {
+            let on = m.get_one::<String>("on").expect("required") == "on";
+            world.resource_mut::<ClientState>().0.set_wild(on);
+            Ok(format!("wild mode {}", if on { "on" } else { "off" }))
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
         Command::new("rider.state").about("Print the local rider's state"),
         |world, _| {
             let c = &world.resource::<ClientState>().0;

@@ -138,7 +138,7 @@ fn spawn_world(
     commands.spawn((
         Mesh3d(meshes.add(ribbon_mesh(&view, width))),
         MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.22, 0.22, 0.24),
+            base_color: Color::WHITE, // vertex colours: the surface
             perceptual_roughness: 0.9,
             ..default()
         })),
@@ -175,6 +175,15 @@ fn spawn_world(
 }
 
 /// The road surface: a flat strip along the route, `width` wide.
+/// Colour of a road surface.
+pub fn surface_color(surface: ocw_world::Surface) -> Color {
+    match surface {
+        ocw_world::Surface::Asphalt => Color::srgb(0.22, 0.22, 0.24),
+        ocw_world::Surface::Gravel => Color::srgb(0.58, 0.52, 0.42),
+        ocw_world::Surface::Grass => Color::srgb(0.30, 0.45, 0.22),
+    }
+}
+
 fn ribbon_mesh(view: &RideView, width: f32) -> Mesh {
     let route = &view.route;
     let step = 2.0;
@@ -182,9 +191,14 @@ fn ribbon_mesh(view: &RideView, width: f32) -> Mesh {
     let mut positions = Vec::with_capacity((n + 1) * 2);
     let mut normals = Vec::with_capacity((n + 1) * 2);
     let mut uvs = Vec::with_capacity((n + 1) * 2);
+    let mut colors = Vec::with_capacity((n + 1) * 2);
     for i in 0..=n {
         let d = (i as f64 * step).min(route.length());
         let p = route.sample(d);
+        let c = surface_color(route.surface_at(d))
+            .to_linear()
+            .to_f32_array();
+        colors.extend([c, c]);
         let half = f64::from(width / 2.0);
         let left = to_vec3(p.offset_position(-half));
         let right = to_vec3(p.offset_position(half));
@@ -208,6 +222,7 @@ fn ribbon_mesh(view: &RideView, width: f32) -> Mesh {
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
     mesh.insert_indices(Indices::U32(indices));
     mesh
 }
@@ -268,6 +283,10 @@ fn center_line_mesh(view: &RideView, lift: f32) -> Mesh {
     let mut indices = Vec::new();
     let mut d = 0.0;
     while d + 3.0 < route.length() {
+        if route.surface_at(d) != ocw_world::Surface::Asphalt {
+            d += 9.0; // no markings on gravel
+            continue;
+        }
         let base = positions.len() as u32;
         for (dd, side) in [(0.0, -0.08), (0.0, 0.08), (3.0, -0.08), (3.0, 0.08)] {
             let mut v = to_vec3(route.sample(d + dd).offset_position(side));

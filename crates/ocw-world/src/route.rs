@@ -1,3 +1,4 @@
+use crate::surface::Surface;
 use std::f64::consts::TAU;
 
 /// A sampled point on a route.
@@ -48,6 +49,8 @@ pub struct Route {
     vertex_grade: Vec<f64>,
     is_loop: bool,
     road_width_m: f64,
+    /// Stretches (from, to metres) with another surface than asphalt.
+    surfaces: Vec<(f64, f64, Surface)>,
 }
 
 /// Errors when constructing a route.
@@ -101,7 +104,46 @@ impl Route {
             vertex_grade,
             is_loop,
             road_width_m,
+            surfaces: Vec::new(),
         })
+    }
+
+    /// The same route with these surface stretches (from, to metres along
+    /// the route); everything else is asphalt.
+    pub fn with_surfaces(mut self, surfaces: Vec<(f64, f64, Surface)>) -> Self {
+        self.surfaces = surfaces;
+        self
+    }
+
+    /// Surface stretches other than asphalt.
+    pub fn surfaces(&self) -> &[(f64, f64, Surface)] {
+        &self.surfaces
+    }
+
+    /// The road surface at `distance` (asphalt unless a stretch says otherwise).
+    pub fn surface_at(&self, distance: f64) -> Surface {
+        let d = self.normalize_distance(distance);
+        self.surfaces
+            .iter()
+            .find(|(a, b, _)| d >= *a && d < *b)
+            .map_or(Surface::Asphalt, |s| s.2)
+    }
+
+    /// Signed horizontal curvature at `distance` (1/m, positive = turning
+    /// right), averaged over ±8 m so the corners of the polyline do not jerk.
+    pub fn curvature(&self, distance: f64) -> f64 {
+        const WINDOW_M: i32 = 8;
+        let (mut turn, mut weight) = (0.0, 0.0);
+        for j in -WINDOW_M..WINDOW_M {
+            let a = self.sample(distance + f64::from(j)).direction;
+            let b = self.sample(distance + f64::from(j + 1)).direction;
+            // x east, z south: east -> south (right) is a positive cross product.
+            let angle = (a[0] * b[1] - a[1] * b[0]).atan2(a[0] * b[0] + a[1] * b[1]);
+            let w = 1.0 - (f64::from(j) + 0.5).abs() / f64::from(WINDOW_M);
+            turn += angle * w;
+            weight += w;
+        }
+        turn / weight
     }
 
     /// The Phase 1 test route: a rolling ~4 km loop with one climb of about
@@ -157,6 +199,8 @@ impl Route {
             .collect();
         Self::from_points("test-hills", "Test Hills", points, true, 7.0)
             .expect("test hills are valid")
+            // A gravel stretch on the second climb, to feel the surface.
+            .with_surfaces(vec![(1500.0, 2100.0, Surface::Gravel)])
     }
 
     /// Stable identifier of the route.
@@ -308,6 +352,29 @@ fn vertex_attributes(points: &[[f64; 3]], is_loop: bool) -> (Vec<[f64; 2]>, Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn curvature_and_surfaces_along_the_route() {
+        // Circle of radius 40 m, clockwise seen from above (x east, z south).
+        let pts: Vec<[f64; 3]> = (0..100)
+            .map(|i| {
+                let a = f64::from(i) / 100.0 * TAU;
+                [40.0 * a.sin(), 0.0, 40.0 - 40.0 * a.cos()]
+            })
+            .collect();
+        let r = Route::from_points("c", "C", pts, true, 6.0).unwrap();
+        assert!(
+            (r.curvature(50.0) - 1.0 / 40.0).abs() < 0.001,
+            "{}",
+            r.curvature(50.0)
+        );
+        assert!(straight().curvature(50.0).abs() < 1e-12);
+        let r = r.with_surfaces(vec![(20.0, 60.0, Surface::Gravel)]);
+        assert_eq!(r.surface_at(10.0), Surface::Asphalt);
+        assert_eq!(r.surface_at(30.0), Surface::Gravel);
+        // On a loop, the second lap has the same surfaces.
+        assert_eq!(r.surface_at(30.0 + r.length()), Surface::Gravel);
+    }
 
     fn straight() -> Route {
         Route::from_points(

@@ -1,6 +1,7 @@
 //! Routes through the road graph: a path of edges → route points with the
 //! smoothed road elevation (spec §2.7, §4.3).
 
+use ocw_world::Surface;
 use ocw_world::graph::{Edge, PROFILE_STEP_M, RoadClass, RoadGraph};
 
 use crate::profile::sample_along;
@@ -24,6 +25,27 @@ fn class_cost(e: &Edge) -> f64 {
         RoadClass::Path => 6.0,
     };
     e.length_m() * factor
+}
+
+/// Stretches of `path` (from, to metres) whose surface is not asphalt,
+/// from the road classes (tracks and paths are gravel).
+pub fn path_surfaces(graph: &RoadGraph, path: &[(usize, bool)]) -> Vec<(f64, f64, Surface)> {
+    let mut out: Vec<(f64, f64, Surface)> = Vec::new();
+    let mut at = 0.0;
+    for &(i, _) in path {
+        let e = &graph.edges[i];
+        let (a, b) = (at, at + e.length_m());
+        at = b;
+        let s = Surface::of_class(e.class);
+        if s == Surface::Asphalt {
+            continue;
+        }
+        match out.last_mut() {
+            Some(last) if last.2 == s && (last.1 - a).abs() < 1e-6 => last.1 = b,
+            _ => out.push((a, b, s)),
+        }
+    }
+    out
 }
 
 /// Points every 5 m along `path` (edges with direction), with the height
@@ -87,6 +109,34 @@ mod tests {
         let ys: Vec<f64> = pts.iter().map(|p| p[1]).collect();
         assert_eq!(xs, vec![0.0, 5.0, 10.0, 15.0, 20.0]);
         assert_eq!(ys, vec![0.0, 1.0, 2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn gravel_stretches_follow_the_road_classes() {
+        let mut edges: Vec<Edge> = (0..4)
+            .map(|i| {
+                let x = f64::from(i) * 10.0;
+                edge(
+                    u64::from(i),
+                    i,
+                    i + 1,
+                    vec![[x, 0.0], [x + 10.0, 0.0]],
+                    vec![0.0; 3],
+                )
+            })
+            .collect();
+        edges[1].class = RoadClass::Track;
+        edges[2].class = RoadClass::Path;
+        let g = RoadGraph {
+            vertices: (0..5).map(|i| [f64::from(i) * 10.0, 0.0]).collect(),
+            edges,
+            boundary_vertices: Default::default(),
+        };
+        let path: Vec<(usize, bool)> = (0..4).map(|i| (i, true)).collect();
+        assert_eq!(
+            path_surfaces(&g, &path),
+            vec![(10.0, 30.0, Surface::Gravel)]
+        );
     }
 
     #[test]

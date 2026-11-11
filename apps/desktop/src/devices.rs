@@ -219,9 +219,10 @@ fn publish_status(
         ""
     };
     view.status = format!(
-        "{} | {}{brake}",
+        "{} | {} | {}{brake}",
         devices.names().join(", "),
-        trainer.0.status()
+        trainer.0.status(),
+        client.0.steering_status()
     );
 }
 

@@ -11,6 +11,7 @@ pub mod drafting;
 pub mod interpolation;
 pub mod physics;
 pub mod prediction;
+pub mod ride;
 pub mod session;
 pub mod trainer;
 

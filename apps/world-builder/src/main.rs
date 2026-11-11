@@ -200,6 +200,7 @@ fn route(args: RouteArgs) {
         origin: proj_origin(&region),
         width_m: 6.5,
         points,
+        surfaces: ocw_worldgen::route::path_surfaces(&graph, &path),
         grid: Some(ocw_world::ElevationGrid {
             origin,
             cell,

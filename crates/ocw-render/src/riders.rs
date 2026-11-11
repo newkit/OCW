@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use bevy::prelude::*;
 use ocw_core::RiderId;
 
-use crate::{RideView, to_vec3};
+use crate::{Ground, RideView, to_vec3};
 
 pub struct RidersPlugin;
 
@@ -106,34 +106,8 @@ pub fn rider_transform(view: &RideView, distance: f64, lateral_offset: f64) -> T
     Transform::from_translation(pos).with_rotation(yaw * Quat::from_rotation_x(pitch))
 }
 
-/// Half-width of the window over which the road curvature is averaged
-/// (the route is a polyline; this spreads each corner over a few metres).
-const CURVATURE_WINDOW_M: f64 = 8.0;
 /// Largest lean angle (radians, ~35°).
 const MAX_LEAN: f64 = 0.61;
-
-/// Signed horizontal curvature of the route at `distance` (1/m; positive
-/// = turning right), smoothed over ±[`CURVATURE_WINDOW_M`].
-pub fn curvature(view: &RideView, distance: f64) -> f64 {
-    let l = CURVATURE_WINDOW_M;
-    let steps = l as i32;
-    let dir = |s: f64| view.route.sample(s).direction;
-    let (mut turn, mut weight) = (0.0, 0.0);
-    for j in -steps..steps {
-        let (a, b) = (
-            dir(distance + f64::from(j)),
-            dir(distance + f64::from(j + 1)),
-        );
-        // x east, z south: a turn to the right (east -> south) has a
-        // positive cross product.
-        let angle = (a[0] * b[1] - a[1] * b[0]).atan2(a[0] * b[0] + a[1] * b[1]);
-        let w = 1.0 - (f64::from(j) + 0.5).abs() / l;
-        turn += angle * w;
-        weight += w;
-    }
-    // Weighted mean turn per metre.
-    turn / weight.max(1e-9)
-}
 
 /// Lean into a curve (radians, positive = to the right): a bike in a
 /// steady turn leans by atan(v² κ / g).
@@ -150,12 +124,22 @@ pub fn lean_rotation(lean: f64) -> Quat {
     Quat::from_rotation_z(-lean as f32)
 }
 
-/// The avatar: on the road like [`rider_transform`], turned by the rider's
-/// heading relative to the road and leaning for the road's curve plus the
-/// rider's own (lean steering).
-pub fn avatar_transform(view: &RideView, state: &ocw_sim::RiderState) -> Transform {
+/// The avatar: on the road like [`rider_transform`] (off it, on the
+/// ground), turned by the rider's heading relative to the road and leaning
+/// for the curve it rides.
+pub fn avatar_transform(
+    view: &RideView,
+    state: &ocw_sim::RiderState,
+    ground: Option<&Ground>,
+) -> Transform {
     let mut t = rider_transform(view, state.distance, state.lateral_offset);
-    let k = curvature(view, state.distance) + state.turn_curvature;
+    if state.lateral_offset.abs() > view.route.road_width_m() / 2.0
+        && let Some(h) =
+            ground.and_then(|g| (g.0)(f64::from(t.translation.x), f64::from(t.translation.z)))
+    {
+        t.translation.y = h as f32;
+    }
+    let k = state.turn_curvature;
     // Positive heading = right; Bevy turns left for a positive Y rotation.
     let pitch_free_yaw = Quat::from_rotation_y(-state.heading as f32);
     t.rotation = pitch_free_yaw * t.rotation;
@@ -170,6 +154,7 @@ fn sync_riders(
     mut transforms: Query<&mut Transform, With<Avatar>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    ground: Option<Res<Ground>>,
 ) {
     // Remove riders that left.
     let present: Vec<RiderId> = view.riders.iter().map(|r| r.id).collect();
@@ -181,7 +166,7 @@ fn sync_riders(
         keep
     });
     for r in &view.riders {
-        let t = avatar_transform(&view, &r.state);
+        let t = avatar_transform(&view, &r.state, ground.as_deref());
         match entities.0.get(&r.id) {
             Some(e) => {
                 if let Ok(mut tr) = transforms.get_mut(*e) {
@@ -383,7 +368,7 @@ mod tests {
             })
             .collect();
         let v = RideView::new(Route::from_points("c", "C", pts, true, 6.0).unwrap());
-        let k = curvature(&v, 80.0);
+        let k = v.route.curvature(80.0);
         assert!((k - 1.0 / r).abs() < 0.002, "curvature {k}");
         // 10 m/s on R 50: atan(100 / (50 * 9.81)) = 11.5° to the right.
         let lean = lean_angle(k, 10.0);
@@ -400,7 +385,7 @@ mod tests {
         assert!(shift > 0.15, "shift {shift}");
         // Straight road and standing still: upright; capped when too fast.
         let straight = view(vec![[0.0, 0.0, 0.0], [100.0, 0.0, 0.0]]);
-        assert!(curvature(&straight, 50.0).abs() < 1e-9);
+        assert!(straight.route.curvature(50.0).abs() < 1e-9);
         assert_eq!(lean_angle(k, 0.0), 0.0);
         assert_eq!(lean_angle(k, 40.0), MAX_LEAN);
         assert_eq!(lean_angle(-k, 40.0), -MAX_LEAN);
@@ -416,7 +401,7 @@ mod tests {
             turn_curvature: 0.02,
             ..Default::default()
         };
-        let t = avatar_transform(&v, &state);
+        let t = avatar_transform(&v, &state, None);
         // Heading east, turned 0.2 rad to the right (towards +z, south).
         let f = t.forward().as_vec3();
         assert!((f.z - 0.2f32.sin()).abs() < 1e-3, "forward {f:?}");
@@ -427,9 +412,24 @@ mod tests {
                 turn_curvature: 0.0,
                 ..state
             },
+            None,
         );
         let shift = (t.up().as_vec3() - upright.up().as_vec3()).dot(upright.right().as_vec3());
         assert!(shift > 0.15, "shift {shift}");
+        // Off the road (wild mode), on the ground instead of the road plane.
+        let ground = Ground(std::sync::Arc::new(|_, _| Some(12.0)));
+        let off = ocw_sim::RiderState {
+            lateral_offset: 20.0,
+            ..state
+        };
+        assert_eq!(
+            avatar_transform(&v, &off, Some(&ground)).translation.y,
+            12.0
+        );
+        assert_eq!(
+            avatar_transform(&v, &state, Some(&ground)).translation.y,
+            0.0
+        );
     }
 
     #[test]

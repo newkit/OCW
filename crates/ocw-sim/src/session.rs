@@ -9,6 +9,7 @@ use ocw_world::Route;
 
 use crate::drafting;
 use crate::physics::{self, Environment, RiderState, Steering};
+use crate::ride::{self, Controls};
 
 /// Latest sensor input of a rider.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -37,8 +38,12 @@ struct Rider {
     input: RiderInput,
     last_input_seq: u32,
     control: Control,
-    /// How the rider steers (client riders only).
-    steering: Option<Steering>,
+    /// How the rider steers (autodrive in their lane until a client says
+    /// otherwise; bots always) and whether they are in wild mode.
+    steering: Steering,
+    wild: bool,
+    /// Scraped along the road edge in the last tick.
+    scraping: bool,
     last_steer_seq: u32,
 }
 
@@ -152,7 +157,9 @@ impl Session {
                 input: RiderInput::default(),
                 last_input_seq: 0,
                 control,
-                steering: None,
+                steering: Steering::Auto(lateral_offset),
+                wild: false,
+                scraping: false,
                 last_steer_seq: 0,
             },
         );
@@ -187,7 +194,7 @@ impl Session {
         match self.riders.get_mut(&id) {
             Some(r) if r.control == Control::Client && seq > r.last_steer_seq => {
                 r.last_steer_seq = seq;
-                r.steering = Some(Steering::Target(target_m.clamp(-limit, limit)));
+                r.steering = Steering::Auto(target_m.clamp(-limit, limit));
                 true
             }
             _ => false,
@@ -201,7 +208,18 @@ impl Session {
         match self.riders.get_mut(&id) {
             Some(r) if r.control == Control::Client && seq > r.last_steer_seq => {
                 r.last_steer_seq = seq;
-                r.steering = Some(Steering::Lean(lean_rad));
+                r.steering = Steering::Lean(lean_rad);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Wild mode of a client rider: not bound to the road.
+    pub fn set_wild(&mut self, id: RiderId, wild: bool) -> bool {
+        match self.riders.get_mut(&id) {
+            Some(r) if r.control == Control::Client => {
+                r.wild = wild;
                 true
             }
             _ => false,
@@ -222,7 +240,6 @@ impl Session {
     /// Advances the session by one physics tick.
     pub fn step(&mut self) {
         self.tick += 1;
-        let limit = physics::lateral_limit(self.route.road_width_m());
         let t = self.time_s();
         // Drafting uses everyone's position at the start of the tick.
         let positions: Vec<(RiderId, f64, f64)> = self
@@ -245,19 +262,21 @@ impl Session {
                 let cruising = base_power_w * (1.0 + 0.1 * (t * 0.2 + phase).sin());
                 rider.input.power_w = cruising.max(bot_climb_power_w(&rider.profile, grade));
             }
-            let env = Environment::with_grade(grade)
-                .with_drag_factor(drag)
-                .with_brake(rider.input.brake);
-            physics::step(
+            let controls = Controls {
+                steering: rider.steering,
+                wild: rider.wild,
+                braking: rider.input.brake,
+            };
+            ride::tick(
                 &mut rider.state,
                 &rider.profile,
                 rider.input.power_w,
-                &env,
+                controls,
+                &mut rider.scraping,
+                &self.route,
+                drag,
                 SIM_DT,
             );
-            if let Some(steering) = rider.steering {
-                physics::apply_steering(&mut rider.state, steering, limit, SIM_DT);
-            }
         }
     }
 
@@ -384,14 +403,28 @@ mod tests {
         for _ in 0..25 {
             s.step(); // 0.5 s
         }
-        let moved = s.rider_state(me).unwrap().lateral_offset - start;
-        assert!((moved - 0.75).abs() < 1e-6, "{moved}");
-        // Clamped to the road (7 m wide → ±2.9 m).
-        assert!(s.set_lateral_target(me, 2, 10.0));
-        for _ in 0..500 {
+        // Standing still, a bike cannot move sideways.
+        assert_eq!(s.rider_state(me).unwrap().lateral_offset, start);
+        let ride = RiderInput {
+            power_w: 250.0,
+            cadence_rpm: None,
+            heart_rate_bpm: None,
+            brake: false,
+        };
+        s.apply_input(me, 1, ride);
+        for _ in 0..(15 * 50) {
             s.step();
         }
-        assert!((s.rider_state(me).unwrap().lateral_offset - 2.9).abs() < 1e-9);
+        // Autodrive leans over to the new line and holds it in the curves.
+        let at = s.rider_state(me).unwrap().lateral_offset;
+        assert!((at - 2.0).abs() < 0.15, "{at}");
+        // Clamped to the road (7 m wide → ±2.9 m).
+        assert!(s.set_lateral_target(me, 2, 10.0));
+        for _ in 0..(15 * 50) {
+            s.step();
+        }
+        let at = s.rider_state(me).unwrap().lateral_offset;
+        assert!(at <= 2.9 + 1e-9 && at > 2.7, "{at}");
         // Stale intents and bots are ignored.
         assert!(!s.set_lateral_target(me, 2, -2.0));
         assert!(!s.set_lateral_target(bot, 3, 0.0));

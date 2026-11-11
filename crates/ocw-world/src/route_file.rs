@@ -10,6 +10,7 @@
 //! points 2
 //! 0.0 455.2 0.0              # x (east) y (up) z (south), metres
 //! 5.0 455.4 -0.2
+//! surface 120 480 gravel     # optional: stretch (from, to m) not asphalt
 //! grid -100 -100 20 3 2      # origin x z, cell size, columns, rows
 //! 450 451 452                # rows of heights, z increasing
 //! 453 454 455
@@ -55,6 +56,8 @@ pub struct RouteFile {
     pub origin: (f64, f64),
     pub width_m: f64,
     pub points: Vec<[f64; 3]>,
+    /// Stretches (from, to metres) with a surface other than asphalt.
+    pub surfaces: Vec<(f64, f64, crate::Surface)>,
     pub grid: Option<ElevationGrid>,
 }
 
@@ -70,6 +73,9 @@ impl RouteFile {
         );
         for p in &self.points {
             s.push_str(&format!("{:.2} {:.2} {:.2}\n", p[0], p[1], p[2]));
+        }
+        for (a, b, surface) in &self.surfaces {
+            s.push_str(&format!("surface {a:.1} {b:.1} {}\n", surface.name()));
         }
         if let Some(g) = &self.grid {
             s.push_str(&format!(
@@ -109,6 +115,7 @@ impl RouteFile {
             origin: (0.0, 0.0),
             width_m: 6.0,
             points: Vec::new(),
+            surfaces: Vec::new(),
             grid: None,
         };
         while let Some(line) = lines.next() {
@@ -126,6 +133,21 @@ impl RouteFile {
                         let v = nums(lines.next().ok_or("missing points")?, 3)?;
                         f.points.push([v[0], v[1], v[2]]);
                     }
+                }
+                "surface" => {
+                    let mut it = rest.split_whitespace();
+                    let mut num = || -> Result<f64, String> {
+                        let t = it.next().ok_or("surface FROM TO NAME")?;
+                        t.parse().map_err(|e| format!("{t}: {e}"))
+                    };
+                    let (a, b) = (num()?, num()?);
+                    let name = rest
+                        .split_whitespace()
+                        .nth(2)
+                        .ok_or("surface FROM TO NAME")?;
+                    let surface = crate::Surface::parse(name)
+                        .ok_or_else(|| format!("unknown surface: {name}"))?;
+                    f.surfaces.push((a, b, surface));
                 }
                 "grid" => {
                     let v = nums(rest, 5)?;
@@ -166,6 +188,7 @@ mod tests {
             origin: (47.15, 9.55),
             width_m: 6.5,
             points: vec![[0.0, 455.2, 0.0], [5.0, 455.4, -0.2], [10.0, 456.0, -0.5]],
+            surfaces: vec![(5.0, 10.0, crate::Surface::Gravel)],
             grid: Some(ElevationGrid {
                 origin: [-100.0, -100.0],
                 cell: 20.0,

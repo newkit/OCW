@@ -80,7 +80,7 @@ pub struct SimController {
     /// Rate-limited gradient (what the trainer is moving towards).
     current: Option<f64>,
     last_update_s: Option<f64>,
-    last_sent: Option<(f64, f64)>, // (time, grade)
+    last_sent: Option<(f64, f64, f64)>, // (time, grade, rolling factor)
 }
 
 impl SimController {
@@ -109,6 +109,18 @@ impl SimController {
     /// short distance ahead (look-ahead, e.g. one second at the current
     /// speed). Returns a target when one should be sent now.
     pub fn update(&mut self, now_s: f64, grade_here: f64, grade_ahead: f64) -> Option<SimTarget> {
+        self.update_on(now_s, grade_here, grade_ahead, 1.0)
+    }
+
+    /// [`SimController::update`] on a surface with this rolling resistance
+    /// factor (gravel, grass: harder to pedal); a change is sent at once.
+    pub fn update_on(
+        &mut self,
+        now_s: f64,
+        grade_here: f64,
+        grade_ahead: f64,
+        rolling_factor: f64,
+    ) -> Option<SimTarget> {
         // Look-ahead: aim between the gradient here and the one ahead, so the
         // trainer starts changing before the rider reaches a gradient change.
         let target = self
@@ -127,21 +139,22 @@ impl SimController {
 
         let send = match self.last_sent {
             None => true,
-            Some((t, sent)) => {
+            Some((t, sent, factor)) => {
                 let since = now_s - t;
                 since >= self.settings.update_interval_s
                     && ((current - sent).abs() >= self.settings.min_change
+                        || (rolling_factor - factor).abs() > 1e-9
                         || since >= self.settings.keepalive_s)
             }
         };
         if !send {
             return None;
         }
-        self.last_sent = Some((now_s, current));
+        self.last_sent = Some((now_s, current, rolling_factor));
         Some(SimTarget {
             grade: current,
             wind_speed_mps: 0.0,
-            crr: self.crr,
+            crr: self.crr * rolling_factor,
             cw_kg_per_m: self.cw_kg_per_m,
         })
     }
@@ -276,6 +289,20 @@ mod tests {
 
     fn sim() -> SimController {
         SimController::new(SimSettings::default(), &RiderProfile::default())
+    }
+
+    #[test]
+    fn rougher_surfaces_raise_the_trainer_rolling_resistance() {
+        let profile = RiderProfile::default();
+        let mut c = SimController::new(SimSettings::default(), &profile);
+        let first = c.update_on(0.0, 0.02, 0.02, 1.0).expect("first");
+        assert_eq!(first.crr, profile.crr);
+        // Onto gravel: sent at the next update interval, with 2.5 × Crr.
+        let dt = c.settings().update_interval_s;
+        let gravel = c.update_on(dt, 0.02, 0.02, 2.5).expect("surface changed");
+        assert!((gravel.crr - 2.5 * profile.crr).abs() < 1e-12);
+        // Unchanged afterwards: nothing new to send.
+        assert!(c.update_on(2.0 * dt, 0.02, 0.02, 2.5).is_none());
     }
 
     #[test]

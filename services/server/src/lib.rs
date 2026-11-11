@@ -104,6 +104,7 @@ impl GameServer {
             }
             (C::Dev(cmd), Some(rider)) => Some(self.dev_command(rider, cmd)),
             (C::Steer(steer), Some(rider)) => {
+                self.session.set_wild(rider, steer.wild);
                 if steer.lean_steering {
                     self.session
                         .set_lean(rider, steer.seq, f64::from(steer.lean_mrad) / 1000.0);

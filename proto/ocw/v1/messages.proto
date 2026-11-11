@@ -28,6 +28,8 @@ message SteerIntent {
   // lean stays until the rider straightens up.
   bool lean_steering = 3;
   sint32 lean_mrad = 4;
+  // Wild mode: the rider is not bound to the road (spec §2.2).
+  bool wild = 5;
 }
 
 // First message on a connection.

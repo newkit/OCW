@@ -134,7 +134,8 @@ fn load_route_file(path: &std::path::Path) -> (Route, Option<ocw_world::Elevatio
     .unwrap_or_else(|e| {
         eprintln!("{}: {e}", path.display());
         std::process::exit(1);
-    });
+    })
+    .with_surfaces(file.surfaces.clone());
     (route, file.grid)
 }
 

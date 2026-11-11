@@ -1,8 +1,15 @@
 //! Keyboard controls (when the console is closed):
-//! - ← / → lean the rider into a curve (held: further, up to 30°); the
-//!   lean stays when released, the opposite key straightens up (it stops
-//!   at upright until the key is pressed again); later they also choose
-//!   the turn at junctions (spec §2.2.1),
+//! - A toggles autodrive (on at the start): the rider keeps to the middle
+//!   of the road by itself, ← / → move its line. Without autodrive, ← / →
+//!   lean the rider into a curve (held: further, up to 30°); the lean
+//!   stays when released, the opposite key straightens up (it stops at
+//!   upright until the key is pressed again), and the road's own bends
+//!   have to be steered. Later the keys also choose the turn at junctions
+//!   (spec §2.2.1),
+//! - W toggles wild mode: not bound to the road,
+//! - gamepad: left stick steers (leans, or moves the autodrive line),
+//!   right trigger = ↑, left trigger = ↓, South (A) = autodrive, West (X)
+//!   = wild mode,
 //! - ↑ accelerates: each press adds `POWER_STEP_W` to the rider's power,
 //!   holding adds `POWER_RAMP_W_PER_S` (up to `MAX_KEY_POWER_W`), on top of
 //!   the device's power (virtual or real trainer); it also releases the brake,
@@ -53,6 +60,22 @@ pub fn ramp(watts: f64, pressed: bool, held: bool, dt: f64) -> f64 {
     (watts + step + rise).min(MAX_KEY_POWER_W.max(watts))
 }
 
+/// How fast the autodrive line moves while an arrow key is held, in m/s.
+pub const LINE_KEY_RATE_MPS: f64 = 2.0;
+/// Gamepad stick values below this are treated as centred.
+pub const STICK_DEAD_ZONE: f32 = 0.08;
+
+/// Lean (rad) for a gamepad stick deflection (−1 … 1): proportional, so
+/// a centred stick rides upright.
+pub fn stick_lean(x: f32) -> f64 {
+    let x = if x.abs() < STICK_DEAD_ZONE {
+        0.0
+    } else {
+        x.clamp(-1.0, 1.0)
+    };
+    f64::from(x) * ocw_sim::physics::MAX_STEER_LEAN
+}
+
 /// How fast the lean changes while an arrow key is held, in rad/s (~23°/s).
 pub const LEAN_KEY_RATE: f64 = 0.4;
 
@@ -88,27 +111,63 @@ pub fn power_delta(up: bool, down: bool) -> f64 {
 
 fn steer(
     keys: Res<ButtonInput<KeyCode>>,
+    pads: Query<&Gamepad>,
     console: Res<ConsoleState>,
     time: Res<Time>,
     mut client: ResMut<ClientState>,
     mut latched: Local<bool>,
+    mut stick_was_used: Local<bool>,
 ) {
     if console.is_open() {
         return;
     }
+    let pad_pressed = |b: GamepadButton| pads.iter().any(|p| p.just_pressed(b));
+    if keys.just_pressed(KeyCode::KeyA) || pad_pressed(GamepadButton::South) {
+        let on = !client.0.autodrive();
+        client.0.set_autodrive(on);
+        info!("autodrive {}", if on { "on" } else { "off" });
+    }
+    if keys.just_pressed(KeyCode::KeyW) || pad_pressed(GamepadButton::West) {
+        let wild = !client.0.wild();
+        client.0.set_wild(wild);
+        info!("wild mode {}", if wild { "on" } else { "off" });
+    }
+    let dt = time.delta_secs_f64();
     let dir = steer_direction(
         keys.pressed(KeyCode::ArrowLeft),
         keys.pressed(KeyCode::ArrowRight),
     );
+    let stick = pads
+        .iter()
+        .map(|p| p.get(GamepadAxis::LeftStickX).unwrap_or(0.0))
+        .max_by(|a, b| a.abs().total_cmp(&b.abs()))
+        .unwrap_or(0.0);
+    let stick_active = stick.abs() >= STICK_DEAD_ZONE;
+    if client.0.autodrive() {
+        let shift = dir + if stick_active { f64::from(stick) } else { 0.0 };
+        if shift != 0.0 {
+            client.0.steer_by(shift * LINE_KEY_RATE_MPS * dt);
+        }
+        *stick_was_used = false;
+        return;
+    }
+    if stick_active || *stick_was_used {
+        // The stick sets the lean directly; back to centre = upright.
+        client.0.set_lean(stick_lean(stick));
+        *stick_was_used = stick_active;
+        return;
+    }
     let lean = client.0.lean().unwrap_or(0.0);
-    let next = lean_ramp(lean, dir, &mut latched, time.delta_secs_f64());
-    if dir != 0.0 && (next != lean || client.0.lean().is_none()) {
+    let next = lean_ramp(lean, dir, &mut latched, dt);
+    if dir != 0.0 && next != lean {
         client.0.set_lean(next);
     }
 }
 
+#[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
 fn throttle_and_brake(
     keys: Res<ButtonInput<KeyCode>>,
+    pads: Query<&Gamepad>,
     console: Res<ConsoleState>,
     time: Res<Time>,
     devices: Res<Devices>,
@@ -120,7 +179,14 @@ fn throttle_and_brake(
         return;
     }
     let now = time.elapsed_secs_f64();
-    if keys.just_pressed(KeyCode::ArrowDown) {
+    let pad = |f: &dyn Fn(&Gamepad) -> bool| pads.iter().any(f);
+    let up_pressed = keys.just_pressed(KeyCode::ArrowUp)
+        || pad(&|p| p.just_pressed(GamepadButton::RightTrigger2));
+    let up_held =
+        keys.pressed(KeyCode::ArrowUp) || pad(&|p| p.pressed(GamepadButton::RightTrigger2));
+    let down_pressed = keys.just_pressed(KeyCode::ArrowDown)
+        || pad(&|p| p.just_pressed(GamepadButton::LeftTrigger2));
+    if down_pressed {
         // Stop: no keyboard power, no virtual trainer power, brake.
         key.watts = 0.0;
         devices.command_all(DeviceCommand::SetVirtualPower(0.0));
@@ -128,17 +194,10 @@ fn throttle_and_brake(
             link.send_bytes(msg);
         }
     }
-    if keys.just_pressed(KeyCode::ArrowUp)
-        && let Some(msg) = client.0.set_brake(false)
-    {
+    if up_pressed && let Some(msg) = client.0.set_brake(false) {
         link.send_bytes(msg);
     }
-    key.watts = ramp(
-        key.watts,
-        keys.just_pressed(KeyCode::ArrowUp),
-        keys.pressed(KeyCode::ArrowUp),
-        time.delta_secs_f64(),
-    );
+    key.watts = ramp(key.watts, up_pressed, up_held, time.delta_secs_f64());
     key.watts = (key.watts
         + power_delta(
             keys.just_pressed(KeyCode::PageUp),
@@ -166,6 +225,14 @@ mod tests {
         assert_eq!(steer_direction(false, true), 1.0);
         assert_eq!(steer_direction(true, true), 0.0);
         assert_eq!(steer_direction(false, false), 0.0);
+    }
+
+    #[test]
+    fn stick_leans_proportionally_with_a_dead_zone() {
+        assert_eq!(stick_lean(0.05), 0.0);
+        assert_eq!(stick_lean(-0.05), 0.0);
+        assert!((stick_lean(0.5) - 0.5 * ocw_sim::physics::MAX_STEER_LEAN).abs() < 1e-6);
+        assert_eq!(stick_lean(-3.0), -ocw_sim::physics::MAX_STEER_LEAN);
     }
 
     #[test]

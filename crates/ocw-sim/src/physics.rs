@@ -26,70 +26,94 @@ pub fn steer(current: f64, target: f64, dt: f64) -> f64 {
     current + (target - current).clamp(-max, max)
 }
 
-/// How a rider steers across the road (spec §6.1: intents, applied by the
-/// server and predicted by the client with the same rule).
+/// How a rider steers (spec §6.1: intents, applied by the server and
+/// predicted by the client with the same rule). Riders have a heading
+/// relative to the road; the road's curves turn the road under them, so
+/// keeping on it needs steering.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Steering {
-    /// Move to this lateral offset (m, positive = right) at up to
-    /// `MAX_LATERAL_SPEED`, keeping parallel to the road.
-    Target(f64),
-    /// Lean by this angle (rad, positive = right) and ride the curve it
-    /// gives, κ = g·tan(lean)/v², relative to the road. Leaning 0 rides
-    /// straight on and lines up with the road again.
+    /// Autodrive: an autopilot leans the rider to hold this lateral offset
+    /// (m, positive = right; 0 = the middle of the road), through curves.
+    Auto(f64),
+    /// Manual: lean by this angle (rad, positive = right) and ride the
+    /// curve it gives, κ = g·tan(lean)/v². The road's own curves have to be
+    /// steered, or the rider drifts to the edge.
     Lean(f64),
 }
 
 /// Largest lean a rider can steer with (rad, 30°).
 pub const MAX_STEER_LEAN: f64 = 0.52;
-/// Tightest curve a rider rides relative to the road (1/m, radius 8 m).
-pub const MAX_TURN_CURVATURE: f64 = 0.125;
-/// Largest angle between the rider and the road (rad, ~17°).
+/// Tightest curve a rider rides (1/m, radius 5 m).
+pub const MAX_TURN_CURVATURE: f64 = 0.2;
+/// Largest angle between the rider and the road (rad, ~17°); in wild mode
+/// riders may ride across the road ([`WILD_MAX_HEADING`]).
 pub const MAX_HEADING: f64 = 0.3;
-/// Time constant with which a rider riding straight on lines up with the
-/// road again, in seconds.
-pub const ALIGN_TIME_S: f64 = 2.0;
+/// Largest angle to the road in wild mode (rad, ~70°).
+pub const WILD_MAX_HEADING: f64 = 1.2;
+/// How far from the road riders in wild mode may go (m, either side).
+pub const WILD_LIMIT_M: f64 = 60.0;
+/// Deceleration while scraping along the road edge (m/s²).
+pub const EDGE_SCRUB_MPS2: f64 = 1.5;
+/// Autodrive: largest angle it steers to the road (rad) and how quickly it
+/// turns the rider to the heading it wants (s).
+const AUTO_MAX_HEADING: f64 = 0.2;
+const AUTO_TIME_S: f64 = 0.6;
+/// Autodrive aims at the target this far ahead (s of riding, at least 4 m).
+const AUTO_LOOKAHEAD_S: f64 = 1.5;
 
-/// Applies `steering` for one tick: lateral offset, heading and the
-/// curvature ridden relative to the road. `limit` is the largest offset
-/// either side ([`lateral_limit`]).
-pub fn apply_steering(state: &mut RiderState, steering: Steering, limit: f64, dt: f64) {
-    match steering {
-        Steering::Target(target) => {
-            state.lateral_offset = steer(state.lateral_offset, target.clamp(-limit, limit), dt);
-            state.heading = 0.0;
-            state.turn_curvature = 0.0;
+/// Applies `steering` for one tick: heading, lateral offset and progress
+/// along the road, and the curvature ridden (`turn_curvature`, absolute).
+/// `road_curvature` is the road's at the rider (1/m, positive = right),
+/// `limit` the largest offset either side ([`lateral_limit`], or
+/// [`WILD_LIMIT_M`] in wild mode). Returns whether the rider scrapes along
+/// the road edge (never in wild mode).
+pub fn apply_steering(
+    state: &mut RiderState,
+    steering: Steering,
+    road_curvature: f64,
+    limit: f64,
+    wild: bool,
+    dt: f64,
+) -> bool {
+    let v = state.speed;
+    let max_heading = if wild { WILD_MAX_HEADING } else { MAX_HEADING };
+    let k = match steering {
+        Steering::Auto(target) => {
+            let error = target.clamp(-limit, limit) - state.lateral_offset;
+            let lookahead = (v * AUTO_LOOKAHEAD_S).max(4.0);
+            let wanted = (error / lookahead)
+                .atan()
+                .clamp(-AUTO_MAX_HEADING, AUTO_MAX_HEADING);
+            road_curvature + (wanted - state.heading) / (AUTO_TIME_S * v.max(1.0))
         }
-        Steering::Lean(lean) => {
-            let v = state.speed;
-            let lean = lean.clamp(-MAX_STEER_LEAN, MAX_STEER_LEAN);
-            let mut k = if v > 0.1 {
-                (GRAVITY * lean.tan() / (v * v)).clamp(-MAX_TURN_CURVATURE, MAX_TURN_CURVATURE)
-            } else {
-                0.0
-            };
-            if lean.abs() < 1e-6 {
-                state.heading *= (-dt / ALIGN_TIME_S).exp();
-            } else {
-                let h = state.heading + v * k * dt;
-                if h.abs() > MAX_HEADING {
-                    k = 0.0; // turned as far as it goes: straight at that angle
-                }
-                state.heading = h.clamp(-MAX_HEADING, MAX_HEADING);
-            }
-            state.lateral_offset += v * state.heading.sin() * dt;
-            if state.lateral_offset.abs() >= limit {
-                // At the road edge: along it, no further turning outwards.
-                state.lateral_offset = state.lateral_offset.clamp(-limit, limit);
-                if state.heading * state.lateral_offset > 0.0 {
-                    state.heading = 0.0;
-                }
-                if k * state.lateral_offset > 0.0 {
-                    k = 0.0;
-                }
-            }
-            state.turn_curvature = k;
+        Steering::Lean(lean) if v > 0.1 => {
+            GRAVITY * lean.clamp(-MAX_STEER_LEAN, MAX_STEER_LEAN).tan() / (v * v)
         }
+        Steering::Lean(_) => road_curvature,
     }
+    .clamp(-MAX_TURN_CURVATURE, MAX_TURN_CURVATURE);
+    let before = state.heading;
+    state.heading =
+        (state.heading + v * (k - road_curvature) * dt).clamp(-max_heading, max_heading);
+    state.lateral_offset += v * state.heading.sin() * dt;
+    // Riding at an angle to the road covers less of it.
+    state.distance -= v * (1.0 - state.heading.cos()) * dt;
+    let mut scraping = false;
+    if state.lateral_offset.abs() >= limit {
+        // At the edge: along it, no further outwards.
+        state.lateral_offset = state.lateral_offset.clamp(-limit, limit);
+        if state.heading * state.lateral_offset > 0.0 {
+            state.heading = 0.0;
+        }
+        scraping = !wild;
+    }
+    // The curvature actually ridden (for the lean of the avatar).
+    state.turn_curvature = if v > 0.1 {
+        road_curvature + (state.heading - before) / (v * dt)
+    } else {
+        0.0
+    };
+    scraping
 }
 
 /// State of one rider along their path.
@@ -103,7 +127,8 @@ pub struct RiderState {
     pub lateral_offset: f64,
     /// Direction of travel relative to the road in rad (positive = right).
     pub heading: f64,
-    /// Curvature ridden relative to the road in 1/m (positive = right).
+    /// Curvature of the rider's own path in 1/m (positive = right): the
+    /// road's plus the rider's steering; the avatar leans for it.
     pub turn_curvature: f64,
 }
 
@@ -120,6 +145,8 @@ pub struct Environment {
     pub drag_factor: f64,
     /// Braking deceleration in m/s² (0 = not braking).
     pub brake_mps2: f64,
+    /// Factor on the rolling resistance from the surface (asphalt = 1).
+    pub rolling_factor: f64,
 }
 
 /// Deceleration of the brake key: a firm stop (~3.5 s from 36 km/h).
@@ -134,6 +161,24 @@ impl Environment {
             air_density: AIR_DENSITY,
             drag_factor: 1.0,
             brake_mps2: 0.0,
+            rolling_factor: 1.0,
+        }
+    }
+
+    /// The same environment on another surface.
+    pub fn with_surface(self, surface: ocw_world::Surface) -> Self {
+        Self {
+            rolling_factor: surface.rolling_factor(),
+            ..self
+        }
+    }
+
+    /// The same environment with an extra deceleration (m/s², e.g. scraping
+    /// along the road edge) on top of the brake.
+    pub fn with_extra_deceleration(self, mps2: f64) -> Self {
+        Self {
+            brake_mps2: self.brake_mps2 + mps2,
+            ..self
         }
     }
 
@@ -180,7 +225,7 @@ pub fn resistance(profile: &RiderProfile, env: &Environment, speed: f64) -> Resi
     Resistance {
         gravity: m * GRAVITY * angle.sin(),
         rolling: if speed > 0.0 {
-            profile.crr * m * GRAVITY * angle.cos()
+            profile.crr * env.rolling_factor * m * GRAVITY * angle.cos()
         } else {
             0.0
         },
@@ -223,54 +268,97 @@ mod tests {
     }
 
     #[test]
-    fn leaning_rides_a_curve_until_straightened() {
-        // 10 m/s, leaning 10° right: κ = g·tan(10°)/v² ≈ 0.0173 / m.
+    fn leaning_rides_a_curve_and_the_road_does_not_steer() {
+        // Straight road, 10 m/s, leaning 10° right: κ = g·tan(10°)/v².
         let mut s = riding(10.0);
         let lean = 10f64.to_radians();
-        apply_steering(&mut s, Steering::Lean(lean), 3.0, 0.02);
-        assert!((s.turn_curvature - GRAVITY * lean.tan() / 100.0).abs() < 1e-9);
+        apply_steering(&mut s, Steering::Lean(lean), 0.0, 3.0, false, 0.02);
+        assert!((s.turn_curvature - GRAVITY * lean.tan() / 100.0).abs() < 1e-6);
         for _ in 0..25 {
-            apply_steering(&mut s, Steering::Lean(lean), 3.0, 0.02);
+            apply_steering(&mut s, Steering::Lean(lean), 0.0, 3.0, false, 0.02);
         }
-        // Half a second later: turned right and moving right.
         assert!(s.heading > 0.05 && s.lateral_offset > 0.0, "{s:?}");
-        // Upright again (the opposite key): no more turning, lines up with
-        // the road and stays on its new line.
-        let at = s.lateral_offset;
-        for _ in 0..500 {
-            apply_steering(&mut s, Steering::Lean(0.0), 3.0, 0.02);
-        }
-        assert_eq!(s.turn_curvature, 0.0);
-        assert!(s.heading.abs() < 0.001, "{}", s.heading);
-        assert!(s.lateral_offset > at && s.lateral_offset < 3.0, "{s:?}");
-    }
-
-    #[test]
-    fn leaning_stops_at_the_road_edge_and_the_heading_limit() {
-        let mut s = riding(12.0);
-        for _ in 0..1000 {
-            apply_steering(&mut s, Steering::Lean(-0.4), 2.5, 0.02);
-            assert!(s.heading.abs() <= MAX_HEADING + 1e-12);
-        }
-        assert_eq!(s.lateral_offset, -2.5);
-        assert_eq!((s.heading, s.turn_curvature), (0.0, 0.0));
-        // Standing still: no curve, no movement.
-        let mut s = riding(0.0);
-        apply_steering(&mut s, Steering::Lean(0.4), 2.5, 0.02);
-        assert_eq!(s, riding(0.0));
-        // Slow: the curvature is capped (no turning on the spot).
-        let mut s = riding(1.0);
-        apply_steering(&mut s, Steering::Lean(0.5), 2.5, 0.02);
-        assert_eq!(s.turn_curvature, MAX_TURN_CURVATURE);
-    }
-
-    #[test]
-    fn target_steering_keeps_parallel_to_the_road() {
+        // Upright on a road curving left: the rider keeps going straight,
+        // so relative to the road they drift right until the edge.
         let mut s = riding(10.0);
-        s.heading = 0.2;
-        apply_steering(&mut s, Steering::Target(5.0), 2.0, 0.02);
-        assert_eq!(s.heading, 0.0);
-        assert!((s.lateral_offset - MAX_LATERAL_SPEED * 0.02).abs() < 1e-12);
+        let mut scraped = false;
+        for _ in 0..500 {
+            scraped |= apply_steering(&mut s, Steering::Lean(0.0), -0.02, 3.0, false, 0.02);
+        }
+        assert_eq!(s.lateral_offset, 3.0);
+        assert!(scraped);
+        // Leaning just right for the curve keeps the line.
+        let mut s = riding(10.0);
+        let follow = (100.0 * -0.02 / GRAVITY).atan();
+        for _ in 0..500 {
+            assert!(!apply_steering(
+                &mut s,
+                Steering::Lean(follow),
+                -0.02,
+                3.0,
+                false,
+                0.02
+            ));
+        }
+        assert!(
+            s.lateral_offset.abs() < 1e-6 && s.heading.abs() < 1e-9,
+            "{s:?}"
+        );
+        assert!((s.turn_curvature + 0.02).abs() < 1e-9);
+    }
+
+    #[test]
+    fn autodrive_holds_its_line_through_curves() {
+        let mut s = riding(12.0);
+        s.lateral_offset = 2.0;
+        let mut worst: f64 = 0.0;
+        for i in 0..1500 {
+            // Left, straight, then right curves.
+            let k = [-0.03, 0.0, 0.025][i / 500];
+            apply_steering(&mut s, Steering::Auto(0.0), k, 3.0, false, 0.02);
+            if i > 300 {
+                worst = worst.max(s.lateral_offset.abs());
+            }
+        }
+        // It got to the middle and stays there through the curves.
+        assert!(worst < 0.2, "worst {worst}");
+        assert!((s.turn_curvature - 0.025).abs() < 0.002, "{s:?}");
+    }
+
+    #[test]
+    fn wild_riders_leave_the_road() {
+        let mut s = riding(8.0);
+        let mut scraped = false;
+        for _ in 0..1500 {
+            scraped |= apply_steering(&mut s, Steering::Lean(0.3), 0.0, WILD_LIMIT_M, true, 0.02);
+            assert!(s.heading <= WILD_MAX_HEADING);
+        }
+        assert!(!scraped);
+        assert_eq!(s.lateral_offset, WILD_LIMIT_M);
+        // Riding at an angle covers less road.
+        assert!(s.distance < 0.0);
+    }
+
+    #[test]
+    fn surfaces_and_the_edge_slow_the_rider() {
+        let profile = RiderProfile::default();
+        let speed_after = |env: Environment| {
+            let mut s = riding(10.0);
+            for _ in 0..500 {
+                step(&mut s, &profile, 150.0, &env, 0.02);
+            }
+            s.speed
+        };
+        let flat = Environment::with_grade(0.0);
+        let asphalt = speed_after(flat);
+        let gravel = speed_after(flat.with_surface(ocw_world::Surface::Gravel));
+        let grass = speed_after(flat.with_surface(ocw_world::Surface::Grass));
+        let edge = speed_after(flat.with_extra_deceleration(EDGE_SCRUB_MPS2));
+        assert!(
+            asphalt > gravel + 0.3 && gravel > grass + 0.3,
+            "{asphalt} {gravel} {grass}"
+        );
+        assert!(edge < asphalt - 2.0, "{edge}");
     }
     use ocw_core::SIM_DT;
 

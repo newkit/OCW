@@ -96,7 +96,8 @@ impl TrainerControl {
                 let here = route.sample(rider.distance).grade;
                 let ahead_m = (rider.speed * LOOK_AHEAD_S).max(MIN_LOOK_AHEAD_M);
                 let ahead = route.sample(rider.distance + ahead_m).grade;
-                let target = self.sim.update(now_s, here, ahead)?;
+                let rolling = ocw_sim::ride::surface(route, &rider).rolling_factor();
+                let target = self.sim.update_on(now_s, here, ahead, rolling)?;
                 self.last_grade = Some(target.grade);
                 Some(DeviceCommand::SetSimulation(SimulationParameters {
                     grade: target.grade,
