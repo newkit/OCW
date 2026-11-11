@@ -8,6 +8,7 @@
 
 pub mod geo;
 pub mod graph;
+pub mod manifest;
 pub mod network;
 pub mod package;
 pub mod path;
@@ -17,6 +18,7 @@ pub mod surface;
 mod terrain;
 pub mod track;
 
+pub use manifest::{Manifest, PackageIdentity, SignedManifest, TrustStore};
 pub use network::{Exit, Junction, RoadNetwork, TurnClass};
 pub use package::{RoadStrip, Tile, TileKey, WorldPackage};
 pub use path::{RidePath, Segment, TurnReason};
