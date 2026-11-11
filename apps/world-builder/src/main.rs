@@ -65,6 +65,12 @@ enum Cmd {
         /// Extra ring of terrain-only tiles around the roads.
         #[arg(long, default_value_t = 2)]
         margin_tiles: i32,
+        /// Land-use cells per tile side (200 = 5 m splat map).
+        #[arg(long, default_value_t = ocw_worldgen::landuse::CELLS)]
+        landuse_cells: u32,
+        /// Leave out land use and buildings (roads and terrain only).
+        #[arg(long)]
+        no_areas: bool,
         #[arg(long, default_value = "data/pilot/liechtenstein.ocwpkg")]
         out: PathBuf,
     },
@@ -290,15 +296,30 @@ fn parse_bbox(s: &str) -> Result<Region, String> {
     }
 }
 
-fn package(
+struct PackageArgs {
     pbf: PathBuf,
     poly: PathBuf,
     hgt: Vec<PathBuf>,
     name: String,
     samples: u32,
     margin_tiles: i32,
+    landuse_cells: u32,
+    no_areas: bool,
     out: PathBuf,
-) {
+}
+
+fn package(args: PackageArgs) {
+    let PackageArgs {
+        pbf,
+        poly,
+        hgt,
+        name,
+        samples,
+        margin_tiles,
+        landuse_cells,
+        no_areas,
+        out,
+    } = args;
     let t = Instant::now();
     let region = load_region(&poly);
     let proj = region.projection();
@@ -313,7 +334,7 @@ fn package(
         let (lat, lon) = proj.unproject([x, z]);
         dem.elevation(lat, lon).unwrap_or(0.0)
     };
-    let pkg = ocw_worldgen::package::build_package(
+    let mut pkg = ocw_worldgen::package::build_package(
         &name,
         region.center(),
         &graph,
@@ -322,6 +343,38 @@ fn package(
         samples,
         margin_tiles,
     );
+    let terrain_s = t.elapsed().as_secs_f64();
+    let mut area_report = Vec::new();
+    if !no_areas {
+        let ta = Instant::now();
+        let data = ocw_worldgen::areas::AreaData::read_pbf(&pbf).unwrap_or_else(|e| {
+            eprintln!("{}: {e}", pbf.display());
+            std::process::exit(1);
+        });
+        let (areas, lines) = ocw_worldgen::landuse::extract(&data, &proj);
+        let footprints = ocw_worldgen::buildings::footprints(&data, &proj);
+        let read_s = ta.elapsed().as_secs_f64();
+        let tl = Instant::now();
+        let ls = ocw_worldgen::landuse::add_landuse(&mut pkg, &areas, &lines, landuse_cells);
+        let landuse_s = tl.elapsed().as_secs_f64();
+        let tb = Instant::now();
+        let bs = ocw_worldgen::buildings::add_buildings(&mut pkg, &footprints);
+        let buildings_s = tb.elapsed().as_secs_f64();
+        area_report.push(format!(
+            "areas: read {} areas, {} waterways, {} footprints in {read_s:.1} s",
+            ls.areas, ls.water_lines, bs.footprints
+        ));
+        area_report.push(format!(
+            "land use (LUSE, {landuse_cells} cells/tile): {}; {} vertices under water, {} with a water level; {landuse_s:.1} s",
+            landuse_summary(&ls.cells),
+            ls.water_vertices,
+            ls.level_vertices
+        ));
+        area_report.push(format!(
+            "buildings (BLDG): {} placed ({} gable roofs, {} with courtyards), {} outside the tiles; {buildings_s:.1} s",
+            bs.placed, bs.gabled, bs.with_holes, bs.outside
+        ));
+    }
     let bytes = pkg.to_bytes();
     if let Some(dir) = out.parent() {
         let _ = std::fs::create_dir_all(dir);
@@ -329,7 +382,7 @@ fn package(
     std::fs::write(&out, &bytes).expect("write package");
     let strips: usize = pkg.tiles.values().map(|t| t.roads.len()).sum();
     println!(
-        "{name}: {} tiles ({} m grid), {} road strips from {} edges ({:.0} km), {:.1} MB, {:.1} s",
+        "{name}: {} tiles ({} m grid), {} road strips from {} edges ({:.0} km), {:.1} MB, {:.1} s (terrain {terrain_s:.1} s)",
         pkg.tiles.len(),
         pkg.spacing_m(),
         strips,
@@ -338,6 +391,10 @@ fn package(
         bytes.len() as f64 / 1e6,
         t.elapsed().as_secs_f64()
     );
+    for line in area_report {
+        println!("{line}");
+    }
+    print_sections(&bytes);
     let adj = graph.adjacency();
     println!(
         "road graph (format OCWPKG02): {} vertices, {} junctions, {} one-way edges, {} dead-end edges",
@@ -353,6 +410,45 @@ fn package(
     println!("package: {}", out.display());
 }
 
+/// The share of each land class, largest first.
+fn landuse_summary(cells: &[usize]) -> String {
+    let total: usize = cells.iter().sum::<usize>().max(1);
+    let mut v: Vec<(usize, usize)> = cells
+        .iter()
+        .copied()
+        .enumerate()
+        .filter(|c| c.1 > 0)
+        .collect();
+    v.sort_by(|a, b| b.1.cmp(&a.1));
+    v.iter()
+        .map(|&(code, n)| {
+            let class = ocw_world::landuse::LandClass::from_code(code as u8).expect("known code");
+            format!("{class:?} {:.1} %", 100.0 * n as f64 / total as f64)
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Prints the tagged sections of a package (tag and size).
+fn print_sections(bytes: &[u8]) {
+    let sections = ocw_world::package::section_sizes(bytes);
+    if sections.is_empty() {
+        println!("format OCWPKG01 (no sections)");
+    } else {
+        let list: Vec<String> = sections
+            .iter()
+            .map(|(tag, len)| {
+                format!(
+                    "{} {:.2} MB",
+                    String::from_utf8_lossy(tag),
+                    *len as f64 / 1e6
+                )
+            })
+            .collect();
+        println!("format OCWPKG02, sections: {}", list.join(", "));
+    }
+}
+
 fn main() {
     match Cli::parse().command {
         Cmd::Check { world } => {
@@ -364,6 +460,36 @@ fn main() {
                 eprintln!("{}: {e}", world.display());
                 std::process::exit(1);
             });
+            print_sections(&bytes);
+            if let Some(l) = &pkg.landuse {
+                println!(
+                    "land use: {} tiles at {} cells/side: {}; {} water-level vertices",
+                    l.tiles.len(),
+                    l.cells,
+                    landuse_summary(&l.histogram()),
+                    l.tiles.values().map(|t| t.water.len()).sum::<usize>()
+                );
+            } else {
+                println!("land use: none (the client shows plain grass and placeholder trees)");
+            }
+            if let Some(b) = &pkg.buildings {
+                let all: Vec<&ocw_world::buildings::Building> = b.values().flatten().collect();
+                let gabled = all
+                    .iter()
+                    .filter(|b| matches!(b.roof, ocw_world::buildings::Roof::Gabled { .. }))
+                    .count();
+                let tallest = all
+                    .iter()
+                    .map(|b| b.eave_y - b.base_y)
+                    .fold(0.0f32, f32::max);
+                println!(
+                    "buildings: {} in {} tiles, {gabled} with gable roofs, tallest wall {tallest:.1} m",
+                    all.len(),
+                    b.len()
+                );
+            } else {
+                println!("buildings: none");
+            }
             let (worst, at, above, total) = pkg.road_pokes(1.0);
             println!(
                 "terrain above road surface: {above} of {total} samples ({:.3} %), worst {:.2} m at x {:.0} z {:.0}",
@@ -412,8 +538,20 @@ fn main() {
             name,
             samples,
             margin_tiles,
+            landuse_cells,
+            no_areas,
             out,
-        } => package(pbf, poly, hgt, name, samples, margin_tiles, out),
+        } => package(PackageArgs {
+            pbf,
+            poly,
+            hgt,
+            name,
+            samples,
+            margin_tiles,
+            landuse_cells,
+            no_areas,
+            out,
+        }),
         Cmd::Route {
             pbf,
             poly,
