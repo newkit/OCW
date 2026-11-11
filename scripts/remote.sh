@@ -74,8 +74,16 @@ SSH=(ssh -i "$key" -p "${port:-22}" -o IdentitiesOnly=yes -o BatchMode=yes
      -o UserKnownHostsFile="$config_dir/${ssh_dir:-ssh}/known_hosts" -o StrictHostKeyChecking=yes
      -o ConnectTimeout="${timeout_s:-10}")
 target="$user@$host"
+# TOML basic strings escape backslashes ("B:\\src\\OCW"): unescape for Windows.
+if [ "$os" = windows ]; then repo=${repo//\\\\/\\}; fi
+# A PowerShell single-quoted string literal.
+psq() { local q="'"; printf "'%s'" "${1//$q/$q$q}"; }
 
 sync_tree() {
+  if [ "$os" = windows ]; then
+    sync_tree_windows
+    return
+  fi
   "${SSH[@]}" "$target" "mkdir -p $repo"
   if [ "$os" = macos ]; then
     # macOS ships openrsync, which lacks --delete-missing-args: send only the
@@ -95,11 +103,40 @@ sync_tree() {
       -e "${SSH[*]}" ./ "$target:$repo/"
 }
 
+# Windows has no rsync; its built-in tar.exe unpacks a tar stream. Files
+# deleted here are removed there with Remove-Item.
+sync_tree_windows() {
+  "${SSH[@]}" "$target" "New-Item -ItemType Directory -Force -Path $(psq "$repo") | Out-Null"
+  local files gone=() f list
+  files=$(git ls-files -co --exclude-standard | grep -v '^config/')
+  while IFS= read -r f; do [ -e "$f" ] || gone+=("$(psq "$f")"); done <<<"$files"
+  if [ ${#gone[@]} -gt 0 ]; then
+    list=$(IFS=,; echo "${gone[*]}")
+    "${SSH[@]}" "$target" "Set-Location -LiteralPath $(psq "$repo"); Remove-Item -Force -ErrorAction SilentlyContinue -LiteralPath $list"
+  fi
+  while IFS= read -r f; do if [ -e "$f" ]; then printf '%s\n' "$f"; fi; done <<<"$files" |
+    tar -cf - -T - | "${SSH[@]}" "$target" "tar -xf - -C $(psq "$repo")"
+}
+
+# Runs a command in PowerShell in the checkout: rustup's cargo first on PATH,
+# fewer build jobs for branch checkouts, the command's exit code passed on.
+run_windows() {
+  local jobs_num jobs_ps=""
+  jobs_num=$(printf '%s' "$jobs_env" | grep -o '[0-9]*' || true)
+  [ -n "$jobs_num" ] && jobs_ps="\$env:CARGO_BUILD_JOBS='$jobs_num'; "
+  "${SSH[@]}" "$target" "Set-Location -LiteralPath $(psq "$repo"); \$env:Path = \"\$env:USERPROFILE\\.cargo\\bin;\" + \$env:Path; ${jobs_ps}$*; exit \$LASTEXITCODE"
+}
+
 case "$action" in
   sync) sync_tree ;;
   run)
     sync_tree
     status=0
+    if [ "$os" = windows ]; then
+      run_windows "$@" || status=$?
+      "${SSH[@]}" "$target" "tar -cf - -C $(psq "$repo") Cargo.lock" 2>/dev/null | tar -xf - 2>/dev/null || true
+      exit "$status"
+    fi
     # At most OCW_REMOTE_SLOTS commands (default 2) run at once on a machine
     # (flock on lock files there; others wait for a free slot): many
     # parallel builds of the Bevy app run the machine out of memory.
@@ -118,7 +155,11 @@ case "$action" in
   fetch)
     src=${1:?remote path}; dst=${2:?local dir}
     mkdir -p "$dst"
-    rsync -a -e "${SSH[*]}" "$target:$repo/$src" "$dst/"
+    if [ "$os" = windows ]; then
+      "${SSH[@]}" "$target" "tar -cf - -C $(psq "$repo") $(psq "$src")" | tar -xf - -C "$dst"
+    else
+      rsync -a -e "${SSH[*]}" "$target:$repo/$src" "$dst/"
+    fi
     ;;
   *) echo "unknown action '$action'" >&2; exit 2 ;;
 esac
