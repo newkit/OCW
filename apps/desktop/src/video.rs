@@ -33,7 +33,7 @@ pub const VIDEO_FPS: f64 = 25.0;
 /// skips instead of freezing for seconds).
 const MAX_REPEATS: u64 = 12;
 /// Screenshots requested but not yet captured at most.
-const MAX_IN_FLIGHT: usize = 16;
+const MAX_IN_FLIGHT: usize = 4;
 /// A screenshot not captured after this long (s) is taken as lost.
 const IN_FLIGHT_TIMEOUT_S: f64 = 1.0;
 /// Frames buffered for the encoder thread (raw: up to 16 MB each).
@@ -573,6 +573,9 @@ fn show_in_hud(time: Res<Time>, rec: Res<VideoRecorder>, view: Option<ResMut<Rid
 #[derive(Component)]
 struct VideoShot;
 
+/// Screenshots of others not yet being captured.
+type OtherPendingScreenshot = (With<Screenshot>, Without<Capturing>, Without<VideoShot>);
+
 /// Requests a screenshot on every video frame tick while recording; each
 /// remembers the frame it was requested for. Bevy takes one screenshot per
 /// window and frame and skips any other, so a frame another screenshot asks
@@ -582,7 +585,7 @@ fn capture(
     mut commands: Commands,
     time: Res<Time>,
     mut rec: ResMut<VideoRecorder>,
-    others: Query<(), (With<Screenshot>, Without<Capturing>, Without<VideoShot>)>,
+    others: Query<(), OtherPendingScreenshot>,
 ) {
     if !others.is_empty() {
         return;
@@ -635,7 +638,7 @@ mod tests {
     fn a_screenshot_per_tick_with_several_in_flight() {
         let mut rec = VideoRecorder::default();
         fake_active(&mut rec, "/tmp/v.mp4", 10.0);
-        // A 100 fps game; nothing arrives yet.
+        // A 100 fps game; screenshots arrive two ticks after the request.
         let mut requested = Vec::new();
         for f in 0..20 {
             let now = 10.0 + f as f64 * 0.01 + 0.001;
@@ -643,6 +646,9 @@ mod tests {
                 requested.push(i);
             }
             assert_eq!(rec.request(now), None); // same tick: nothing new
+            let a = rec.active.as_mut().unwrap();
+            let due = frame_index(now - 10.0).saturating_sub(2);
+            a.in_flight.retain(|&(i, _)| i > due);
         }
         // 0.2 s at 25 fps: frames 0..=4, one per tick.
         assert_eq!(requested, vec![0, 1, 2, 3, 4]);
@@ -656,9 +662,10 @@ mod tests {
         let later = 10.001 + 20.0 * 0.04 + IN_FLIGHT_TIMEOUT_S;
         assert_eq!(rec.request(later), Some(frame_index(later - 10.0)));
         assert_eq!(rec.active.as_ref().unwrap().in_flight.len(), 1);
+        // 5 at first (2 still in flight), up to the limit, one after it.
         assert_eq!(
             rec.active.as_ref().unwrap().stats.requested,
-            MAX_IN_FLIGHT as u64 + 1
+            5 + (MAX_IN_FLIGHT as u64 - 2) + 1
         );
     }
 
