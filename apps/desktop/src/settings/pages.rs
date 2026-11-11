@@ -298,7 +298,7 @@ mod tests {
     fn riders() -> Riders {
         let mut r = Riders::default();
         r.add(Rider {
-            name: "Nils".into(),
+            name: "Alex".into(),
             weight_kg: 78.0,
             height_cm: None,
             ftp_w: Some(250),
@@ -385,26 +385,26 @@ mod tests {
         assert_eq!(weight.value.as_deref(), Some("78 kg"));
         assert_eq!(
             weight.left.as_deref(),
-            Some("riders.edit \"Nils\" --weight 77")
+            Some("riders.edit \"Alex\" --weight 77")
         );
         assert_eq!(
             weight.right.as_deref(),
-            Some("riders.edit \"Nils\" --weight 79")
+            Some("riders.edit \"Alex\" --weight 79")
         );
         // No height yet: ← / → start at 175 cm.
         let height = row(&nils, "Height");
         assert_eq!(height.value.as_deref(), Some("-"));
         assert_eq!(
             height.right.as_deref(),
-            Some("riders.edit \"Nils\" --height 175")
+            Some("riders.edit \"Alex\" --height 175")
         );
         assert_eq!(
             row(&nils, "FTP").left.as_deref(),
-            Some("riders.edit \"Nils\" --ftp 245")
+            Some("riders.edit \"Alex\" --ftp 245")
         );
         assert_eq!(
             row(&nils, "Delete this rider").confirm,
-            cmd("riders.remove \"Nils\"")
+            cmd("riders.remove \"Alex\"")
         );
         // The weight stays in range at the ends.
         let mut light = Riders::default();

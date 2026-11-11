@@ -544,7 +544,7 @@ mod tests {
 
     fn riders() -> Riders {
         let mut r = Riders::default();
-        for (name, kg) in [("Nils", 78.0), ("Anna", 61.0)] {
+        for (name, kg) in [("Alex", 78.0), ("Anna", 61.0)] {
             r.add(Rider {
                 name: name.into(),
                 weight_kg: kg,
@@ -638,7 +638,7 @@ mod tests {
         let mut m = Menu::default();
         act(&mut m, Action::Open, &s, &r);
         act(&mut m, Action::Click(2), &s, &r);
-        assert_eq!(m.labels()[0], "Nils:  78 kg - riding");
+        assert_eq!(m.labels()[0], "Alex:  78 kg - riding");
         assert_eq!(
             act(&mut m, Action::Click(1), &s, &r),
             Effect::Command("riders.select \"Anna\"".into())
@@ -652,14 +652,14 @@ mod tests {
         assert_eq!(m.labels()[1], "Weight:  < 78 kg >");
         assert_eq!(
             act(&mut m, Action::Left, &s, &r),
-            Effect::Command("riders.edit \"Nils\" --weight 77".into())
+            Effect::Command("riders.edit \"Alex\" --weight 77".into())
         );
         // Q / E from the editor: the tab after Riders.
         let mut tabbed = m.clone();
         act(&mut tabbed, Action::TabNext, &s, &r);
         assert_eq!(tabbed.page(), Some(Page::Sub(sub::Page::Controls)));
         // The rider was deleted: the editor goes back to the list.
-        r.remove("Nils").unwrap();
+        r.remove("Alex").unwrap();
         r.remove("Anna").unwrap();
         act(&mut m, Action::Hover(0), &s, &r);
         assert_eq!(m.page(), Some(Page::Sub(sub::Page::Riders)));

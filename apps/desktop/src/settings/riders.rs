@@ -3,10 +3,10 @@
 //! `riders.toml` next to `settings.toml`:
 //!
 //! ```toml
-//! active = "Nils"
+//! active = "Alex"
 //!
 //! [[rider]]
-//! name = "Nils"
+//! name = "Alex"
 //! weight_kg = 78.0
 //! height_cm = 182.0
 //! ftp_w = 250
@@ -351,9 +351,9 @@ mod tests {
     #[test]
     fn add_select_edit_remove() {
         let mut r = Riders::default();
-        r.add(rider("Nils", 78.0)).unwrap();
+        r.add(rider("Alex", 78.0)).unwrap();
         // The first rider becomes active.
-        assert_eq!(r.active().name, "Nils");
+        assert_eq!(r.active().name, "Alex");
         r.add(rider("Anna", 61.5)).unwrap();
         assert!(r.add(rider("anna", 60.0)).unwrap_err().contains("already"));
         assert!(r.add(rider("Heavy", 250.0)).unwrap_err().contains("weight"));
@@ -390,17 +390,17 @@ mod tests {
         assert!(r.edit("Nobody", RiderEdit::default()).is_err());
         // Removing the active rider activates the first.
         r.remove("Anna B").unwrap();
-        assert_eq!(r.active().name, "Nils");
-        r.remove("Nils").unwrap();
+        assert_eq!(r.active().name, "Alex");
+        r.remove("Alex").unwrap();
         assert_eq!(r.active(), Rider::default());
-        assert!(r.remove("Nils").is_err());
+        assert!(r.remove("Alex").is_err());
     }
 
     #[test]
     fn toml_round_trip() {
         let mut r = Riders::default();
         r.add(Rider {
-            name: "Nils".into(),
+            name: "Alex".into(),
             weight_kg: 78.0,
             height_cm: Some(182.0),
             ftp_w: Some(250),
@@ -408,7 +408,7 @@ mod tests {
         .unwrap();
         r.add(rider("Guest", 70.0)).unwrap();
         let text = r.to_toml();
-        assert!(text.contains("active = \"Nils\""), "{text}");
+        assert!(text.contains("active = \"Alex\""), "{text}");
         assert!(
             text.contains("[[rider]]") && text.contains("ftp_w = 250"),
             "{text}"
@@ -466,7 +466,7 @@ ftp_w = 5000
         let path = dir.join("riders.toml");
         assert_eq!(Riders::load(&path).unwrap().0, Riders::default());
         let mut r = Riders::default();
-        r.add(rider("Nils", 80.0)).unwrap();
+        r.add(rider("Alex", 80.0)).unwrap();
         r.save(&path).unwrap();
         assert_eq!(Riders::load(&path).unwrap().0, r);
         let _ = std::fs::remove_dir_all(&dir);

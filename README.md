@@ -370,10 +370,10 @@ profiles you ride as `Rider` with 75 kg. Changes apply from the next start
 (R restarts).
 
 ```toml
-active = "Nils"
+active = "Alex"
 
 [[rider]]
-name = "Nils"
+name = "Alex"
 weight_kg = 78.0
 height_cm = 182.0
 ftp_w = 250

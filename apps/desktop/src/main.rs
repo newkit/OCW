@@ -760,7 +760,7 @@ mod tests {
                 "--route-file",
                 "r.route",
                 "--name",
-                "Nils",
+                "Alex",
                 "--virtual",
                 "--cmd",
                 "teleport 3.3",
@@ -769,7 +769,7 @@ mod tests {
             ]),
         ));
         // Single values: the command line wins; flags may repeat.
-        assert_eq!(a.name, "Nils");
+        assert_eq!(a.name, "Alex");
         assert_eq!(a.world.as_deref(), Some("/var/tmp/ocw/w.ocwpkg"));
         assert_eq!(a.route_file, Some(PathBuf::from("r.route")));
         assert!(a.virtual_trainer);

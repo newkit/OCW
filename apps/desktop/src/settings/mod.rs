@@ -518,7 +518,7 @@ mod tests {
         .unwrap();
         std::fs::write(
             dir.join("riders.toml"),
-            "active = \"Anna\"\n[[rider]]\nname = \"Nils\"\nweight_kg = 80.0\n[[rider]]\nname = \"Anna\"\nweight_kg = 60.0\n",
+            "active = \"Anna\"\n[[rider]]\nname = \"Alex\"\nweight_kg = 80.0\n[[rider]]\nname = \"Anna\"\nweight_kg = 60.0\n",
         )
         .unwrap();
         let f = file.to_str().unwrap();
@@ -548,7 +548,7 @@ mod tests {
         ]);
         assert_eq!(args.bots, 7);
         assert_eq!(args.name, "Guest");
-        assert_eq!(loaded.riders.riding.name, "Nils");
+        assert_eq!(loaded.riders.riding.name, "Alex");
         let s = &loaded.settings.settings;
         assert_eq!(s.line("ride.bots").unwrap(), "ride.bots = 7 (command line)");
         // ... and is not saved.
@@ -668,8 +668,8 @@ mod tests {
         let mut app = app(&dir);
         assert!(run(&mut app, "riders.list")[0].starts_with("no profiles"));
         assert_eq!(
-            run(&mut app, "riders.add Nils --weight 78 --ftp 250")[0],
-            "added Nils: 78 kg, FTP 250 W (applies from the next start; R restarts)"
+            run(&mut app, "riders.add Alex --weight 78 --ftp 250")[0],
+            "added Alex: 78 kg, FTP 250 W (applies from the next start; R restarts)"
         );
         run(&mut app, "riders.add \"Anna B\" --weight 61.5 --height 168");
         assert!(run(&mut app, "riders.add Heavy --weight 260")[0].starts_with("error: weight"));
@@ -678,11 +678,11 @@ mod tests {
             "riding as Anna B (61.5 kg, 168 cm) (applies from the next start; R restarts)"
         );
         assert_eq!(
-            run(&mut app, "riders.edit Nils --weight 77 --no-ftp")[0],
-            "Nils: 77 kg (applies from the next start; R restarts)"
+            run(&mut app, "riders.edit Alex --weight 77 --no-ftp")[0],
+            "Alex: 77 kg (applies from the next start; R restarts)"
         );
         let list = run(&mut app, "riders.list");
-        assert_eq!(list[0], "  Nils: 77 kg");
+        assert_eq!(list[0], "  Alex: 77 kg");
         assert_eq!(list[1], "* Anna B: 61.5 kg, 168 cm");
         assert_eq!(list[2], "riding now: Rider (75 kg)");
         // Saved: the next start rides Anna B with 61.5 kg.
@@ -692,7 +692,7 @@ mod tests {
         run(&mut app, "riders.remove \"Anna B\"");
         assert_eq!(
             app.world().resource::<RiderProfiles>().riders.active().name,
-            "Nils"
+            "Alex"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -704,7 +704,7 @@ mod tests {
     fn page_rows_run_valid_commands() {
         let dir = temp_dir("pages");
         let mut app = app(&dir);
-        run(&mut app, "riders.add Nils --weight 78");
+        run(&mut app, "riders.add Alex --weight 78");
         let mut lines = Vec::new();
         for page in pages::Page::TABS.into_iter().chain([pages::Page::Rider(0)]) {
             let rows = {
