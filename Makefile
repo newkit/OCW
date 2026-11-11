@@ -105,7 +105,8 @@ deps-windows: ## Windows: Git, VS Build Tools (C++), rustup via winget + Rust to
 deps-macos: ## macOS: Xcode Command Line Tools + ffmpeg (Homebrew; prints how to get it if missing) + Rust toolchain
 	@xcode-select -p >/dev/null 2>&1 || { xcode-select --install; \
 		echo "Finish the Command Line Tools installer, then run 'make deps-macos' again."; exit 1; }
-	@if command -v brew >/dev/null 2>&1; then brew install ffmpeg; \
+	@brew=$$(command -v brew || ls /opt/homebrew/bin/brew /usr/local/bin/brew 2>/dev/null | head -n 1); \
+		if [ -n "$$brew" ]; then "$$brew" install ffmpeg; \
 		else echo "Homebrew not found: skipping ffmpeg (only needed for video recording, key V)."; \
 		echo "To record videos, install Homebrew (asks for an admin password), then ffmpeg:"; \
 		echo '  /bin/bash -c "$$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'; \
