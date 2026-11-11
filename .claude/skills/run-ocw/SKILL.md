@@ -86,6 +86,9 @@ unit-tested without Bevy windows; prefer adding tests there over GUI runs.
 
 ## Gotchas
 
+- On a machine with a real GPU (marge), the X11 modes (`shot`, `video`) under
+  Xvfb panic with "Fallback system failed to choose present mode ... Options: []";
+  use `shot-wayland` / `video-wayland` there (via `scripts/remote.sh marge run`).
 - `--cmd` commands run at **startup** (t ≈ 0), so `rider.state` printed via
   `--cmd` shows distance 0. Read later state from the screenshot's HUD.
 - The rider starts from standstill; with constant power the speed builds up
