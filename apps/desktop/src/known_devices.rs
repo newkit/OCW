@@ -28,6 +28,21 @@ pub fn default_path() -> Option<PathBuf> {
     Some(dir.join("devices.toml"))
 }
 
+/// The devices file to use: `--devices-file` if it exists, else the default.
+/// Regression: the test machine's kiosk passed a file under /tmp, which a
+/// reboot deleted; the app then silently rode the virtual trainer and the
+/// trainer on the bike had no effect.
+pub fn choose_path(given: Option<PathBuf>, default: Option<PathBuf>) -> Option<PathBuf> {
+    match given {
+        Some(p) if p.exists() => Some(p),
+        Some(p) => {
+            tracing::warn!(missing = %p.display(), fallback = ?default, "--devices-file not found, using the default devices file");
+            default.or(Some(p))
+        }
+        None => default,
+    }
+}
+
 impl KnownDevices {
     /// Loads the file; a missing file means no devices.
     pub fn load(path: &Path) -> Result<Self, String> {
@@ -65,6 +80,27 @@ impl KnownDevices {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_missing_devices_file_falls_back_to_the_default() {
+        let dir = std::env::temp_dir().join(format!("ocw-known-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let given = dir.join("devices.toml");
+        let default = Some(dir.join("default.toml"));
+        // Missing: the default.
+        assert_eq!(choose_path(Some(given.clone()), default.clone()), default);
+        // Present: the given file.
+        std::fs::write(&given, "").unwrap();
+        assert_eq!(
+            choose_path(Some(given.clone()), default.clone()),
+            Some(given.clone())
+        );
+        // Nothing given: the default; no default at all: the given path.
+        assert_eq!(choose_path(None, default.clone()), default);
+        std::fs::remove_file(&given).unwrap();
+        assert_eq!(choose_path(Some(given.clone()), None), Some(given));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("ocw-known-{name}-{}", std::process::id()));
