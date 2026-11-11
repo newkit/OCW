@@ -3,6 +3,27 @@
 Prebuilt binaries of Open Cycling World for the platforms we can build on.
 These are development builds (spec §14 Phase 1/2), not signed or notarised.
 
+## 0.1.0-310360b – macOS app
+
+Built from commit `310360b` on the Apple Silicon Mac by
+`scripts/build-macos-app.sh`. New since `c3187a3`: routes from GPX files and
+world packages on the road graph (route arrows, leaving and rejoining the
+route), signed and versioned world packages, a missing `--devices-file`
+falls back to the default file, gamepad triggers calibrated to their resting
+value, and ffmpeg for video recording (V) is found when the app is started
+from Finder (Homebrew's `/opt/homebrew/bin`, `/usr/local/bin`,
+`~/.local/bin`).
+
+| Platform | File | Size |
+|---|---|---|
+| macos-arm64 | `OpenCyclingWorld-0.1.0-310360b-macos-arm64.dmg` | 37.9 MB |
+
+Install as for `c3187a3` below (drag to *Applications*, right-click →
+*Open* on the first start). Video recording needs ffmpeg: install Homebrew
+(`/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`,
+asks for an admin password), then `brew install ffmpeg`.
+Checksum: `shasum -a 256 -c SHA256SUMS`.
+
 ## 0.1.0-c3187a3 – macOS app
 
 Built from commit `c3187a3` (with free ride, Strava, video recording, R/C/V
