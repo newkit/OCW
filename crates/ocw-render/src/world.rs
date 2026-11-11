@@ -365,15 +365,21 @@ fn spawn_start_arch(
             Transform::from_translation(pos),
         ));
     }
-    let mut top = to_vec3(p.position);
-    top.y += 5.0;
-    let yaw = (p.direction[0] as f32).atan2(p.direction[1] as f32);
     commands.spawn((
         Mesh3d(meshes.add(Cuboid::new(half as f32 * 2.0 + 0.4, 0.8, 0.4))),
         MeshMaterial3d(mat),
-        Transform::from_translation(top)
-            .with_rotation(Quat::from_rotation_y(yaw + std::f32::consts::FRAC_PI_2)),
+        arch_bar_transform(&p),
     ));
+}
+
+/// Transform of the start arch's top bar: 5 m above the road, its long
+/// (local X) axis across the road from post to post.
+pub fn arch_bar_transform(p: &ocw_world::RoutePoint) -> Transform {
+    let mut top = to_vec3(p.position);
+    top.y += 5.0;
+    let forward = Vec3::new(p.direction[0] as f32, 0.0, p.direction[1] as f32);
+    // looking_to points local -Z along the road, so local X is the road's right.
+    Transform::from_translation(top).looking_to(forward, Vec3::Y)
 }
 
 /// Distance fog component to attach to the camera.
@@ -391,6 +397,31 @@ pub fn fog() -> DistanceFog {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn start_arch_bar_spans_the_road_between_the_posts() {
+        for route in [Route::test_loop(), Route::test_hills()] {
+            let p = route.sample(0.0);
+            let t = arch_bar_transform(&p);
+            let along = t.rotation * Vec3::X;
+            let right = p.right();
+            let right = Vec3::new(right[0] as f32, 0.0, right[1] as f32);
+            assert!(
+                along.dot(right).abs() > 0.999,
+                "bar along {along}, road right {right}"
+            );
+            // Both bar ends sit above the posts.
+            let half = route.road_width_m() / 2.0 + 0.8;
+            for side in [-half, half] {
+                let post = to_vec3(p.offset_position(side));
+                let end = t.translation + along * side as f32 * along.dot(right).signum();
+                assert!(
+                    (end.xz() - post.xz()).length() < 1e-3,
+                    "end {end} post {post}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn road_edges_reach_below_the_terrain() {

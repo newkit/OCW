@@ -113,6 +113,7 @@ mod tests {
             power_w: Some(250.0),
             cadence_rpm: Some(90.0),
             heart_rate_bpm: None,
+            brake: Some(true),
         };
         let bytes = encode(&client_message(Msg::Sample(sample)));
         match decode_client(&bytes).unwrap() {

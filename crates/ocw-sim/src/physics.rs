@@ -48,7 +48,12 @@ pub struct Environment {
     pub air_density: f64,
     /// Factor on the aerodynamic drag from drafting (1.0 = none, see `drafting`).
     pub drag_factor: f64,
+    /// Braking deceleration in m/s² (0 = not braking).
+    pub brake_mps2: f64,
 }
+
+/// Deceleration of the brake key: a firm stop (~3.5 s from 36 km/h).
+pub const BRAKE_DECELERATION_MPS2: f64 = 3.0;
 
 impl Environment {
     /// Still air at sea level on the given gradient.
@@ -58,6 +63,19 @@ impl Environment {
             headwind: 0.0,
             air_density: AIR_DENSITY,
             drag_factor: 1.0,
+            brake_mps2: 0.0,
+        }
+    }
+
+    /// The same environment, braking (`true`) or not.
+    pub fn with_brake(self, braking: bool) -> Self {
+        Self {
+            brake_mps2: if braking {
+                BRAKE_DECELERATION_MPS2
+            } else {
+                0.0
+            },
+            ..self
         }
     }
 
@@ -114,7 +132,7 @@ pub fn step(
         DRIVETRAIN_EFFICIENCY * power_w.max(0.0) / state.speed.max(MIN_PROPULSION_SPEED);
     let net = propulsion - resistance(profile, env, state.speed).total();
     let accel = net / (profile.total_mass_kg() + WHEEL_INERTIA_MASS_KG);
-    state.speed = (state.speed + accel * dt).max(0.0);
+    state.speed = (state.speed + (accel - env.brake_mps2) * dt).max(0.0);
     state.distance += state.speed * dt;
 }
 
@@ -214,5 +232,28 @@ mod tests {
         }
         assert_eq!(x, 2.0);
         assert_eq!(steer(2.0, -1.0, 0.0), 2.0);
+    }
+
+    #[test]
+    fn braking_stops_the_rider() {
+        let profile = RiderProfile::default();
+        let mut s = RiderState {
+            speed: 10.0,
+            ..Default::default()
+        };
+        let env = Environment::with_grade(0.0).with_brake(true);
+        let mut t = 0.0;
+        while s.speed > 0.0 && t < 10.0 {
+            step(&mut s, &profile, 0.0, &env, SIM_DT);
+            t += SIM_DT;
+        }
+        assert!((2.5..3.5).contains(&t), "stopped after {t} s");
+        // Stays stopped, never rolls backwards.
+        step(&mut s, &profile, 0.0, &env, SIM_DT);
+        assert_eq!(s.speed, 0.0);
+        assert_eq!(
+            Environment::with_grade(0.0).with_brake(false).brake_mps2,
+            0.0
+        );
     }
 }

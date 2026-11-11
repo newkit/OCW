@@ -16,6 +16,8 @@ pub struct RiderInput {
     pub power_w: f64,
     pub cadence_rpm: Option<f64>,
     pub heart_rate_bpm: Option<f64>,
+    /// Brake key held (stop the rider).
+    pub brake: bool,
 }
 
 /// How a rider's power is produced.
@@ -202,7 +204,8 @@ impl Session {
                 rider.input.power_w = base_power_w * (1.0 + 0.1 * (t * 0.2 + phase).sin());
             }
             let env = Environment::with_grade(self.route.sample(rider.state.distance).grade)
-                .with_drag_factor(drag);
+                .with_drag_factor(drag)
+                .with_brake(rider.input.brake);
             physics::step(
                 &mut rider.state,
                 &rider.profile,
@@ -294,6 +297,7 @@ mod tests {
                     power_w: 250.0,
                     cadence_rpm: None,
                     heart_rate_bpm: None,
+                    brake: false,
                 },
             );
         }
@@ -327,5 +331,34 @@ mod tests {
         // Stale intents and bots are ignored.
         assert!(!s.set_lateral_target(me, 2, -2.0));
         assert!(!s.set_lateral_target(bot, 3, 0.0));
+    }
+
+    #[test]
+    fn brake_input_stops_a_client_rider() {
+        let mut s = Session::new(Route::test_loop());
+        let me = s.add_rider("Me", RiderProfile::default());
+        let ride = |brake| RiderInput {
+            power_w: 250.0,
+            cadence_rpm: None,
+            heart_rate_bpm: None,
+            brake,
+        };
+        s.apply_input(me, 1, ride(false));
+        for _ in 0..(20 * 50) {
+            s.step();
+        }
+        assert!(s.rider_state(me).unwrap().speed > 5.0);
+        s.apply_input(
+            me,
+            2,
+            RiderInput {
+                power_w: 0.0,
+                ..ride(true)
+            },
+        );
+        for _ in 0..(5 * 50) {
+            s.step();
+        }
+        assert_eq!(s.rider_state(me).unwrap().speed, 0.0);
     }
 }

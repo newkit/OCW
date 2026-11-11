@@ -207,8 +207,22 @@ fn poll_scan(mut devices: ResMut<Devices>, mut console: ResMut<ConsoleState>) {
     }
 }
 
-fn publish_status(devices: Res<Devices>, trainer: Res<Trainer>, mut view: ResMut<RideView>) {
-    view.status = format!("{} | {}", devices.names().join(", "), trainer.0.status());
+fn publish_status(
+    devices: Res<Devices>,
+    trainer: Res<Trainer>,
+    client: Res<ClientState>,
+    mut view: ResMut<RideView>,
+) {
+    let brake = if client.0.braking() {
+        " | BRAKE (up: ride on)"
+    } else {
+        ""
+    };
+    view.status = format!(
+        "{} | {}{brake}",
+        devices.names().join(", "),
+        trainer.0.status()
+    );
 }
 
 fn shutdown_on_exit(mut exit: MessageReader<AppExit>, devices: Res<Devices>) {
@@ -407,6 +421,10 @@ fn register_commands(app: &mut App) {
             world
                 .resource::<Devices>()
                 .command_all(DeviceCommand::SetVirtualPower(watts));
+            if let Some(mut t) = world.get_resource_mut::<crate::input::VirtualPowerTarget>() {
+                t.watts = watts;
+                t.sent = watts;
+            }
             Ok(format!("virtual power {watts:.0} W"))
         },
     ));

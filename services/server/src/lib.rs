@@ -86,6 +86,7 @@ impl GameServer {
                     power_w: sample.power_w.map(f64::from).unwrap_or(0.0),
                     cadence_rpm: sample.cadence_rpm.map(f64::from),
                     heart_rate_bpm: sample.heart_rate_bpm.map(f64::from),
+                    brake: sample.brake.unwrap_or(false),
                 };
                 self.session.apply_input(rider, sample.seq, input);
                 None
@@ -192,6 +193,7 @@ mod tests {
             power_w: Some(power),
             cadence_rpm: None,
             heart_rate_bpm: None,
+            brake: None,
         })))
     }
 

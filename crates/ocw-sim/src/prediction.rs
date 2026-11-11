@@ -26,6 +26,8 @@ pub struct Predictor {
     drag_factor: f64,
     /// Steering target (same rule as the server, so steering reacts at once).
     lateral_target: Option<f64>,
+    /// Brake key held (predicted like the server applies it).
+    braking: bool,
     /// Remaining lateral error to blend in, and its rate (m/s).
     pending_lateral: f64,
     lateral_rate: f64,
@@ -41,6 +43,7 @@ impl Predictor {
             last_error: 0.0,
             drag_factor: 1.0,
             lateral_target: None,
+            braking: false,
             pending_lateral: 0.0,
             lateral_rate: 0.0,
         }
@@ -53,6 +56,10 @@ impl Predictor {
     /// Distance error (server − prediction) at the last reconciliation, in metres.
     pub fn last_error(&self) -> f64 {
         self.last_error
+    }
+
+    pub fn set_braking(&mut self, braking: bool) {
+        self.braking = braking;
     }
 
     /// Sets the steering target (already clamped to the road by the caller).
@@ -68,7 +75,8 @@ impl Predictor {
     /// Advances the prediction by one physics tick with the current power.
     pub fn step(&mut self, route: &Route, power_w: f64) {
         let env = Environment::with_grade(route.sample(self.state.distance).grade)
-            .with_drag_factor(self.drag_factor);
+            .with_drag_factor(self.drag_factor)
+            .with_brake(self.braking);
         physics::step(&mut self.state, &self.profile, power_w, &env, SIM_DT);
         if let Some(target) = self.lateral_target {
             self.state.lateral_offset = physics::steer(self.state.lateral_offset, target, SIM_DT);
@@ -97,7 +105,8 @@ impl Predictor {
         let steps = (age_s.max(0.0) / SIM_DT).round() as usize;
         for _ in 0..steps {
             let env = Environment::with_grade(route.sample(extrapolated.distance).grade)
-                .with_drag_factor(self.drag_factor);
+                .with_drag_factor(self.drag_factor)
+                .with_brake(self.braking);
             physics::step(&mut extrapolated, &self.profile, power_w, &env, SIM_DT);
             if let Some(target) = self.lateral_target {
                 extrapolated.lateral_offset =

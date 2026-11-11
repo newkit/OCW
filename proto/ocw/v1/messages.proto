@@ -46,6 +46,9 @@ message SensorSample {
   optional float power_w = 3;
   optional float cadence_rpm = 4;
   optional float heart_rate_bpm = 5;
+  // Brake key held: the server stops the rider (dev/test convenience; a
+  // real trainer cannot brake).
+  optional bool brake = 6;
 }
 
 // Commands that change the simulation. Only accepted by a local server (spec §2.9).

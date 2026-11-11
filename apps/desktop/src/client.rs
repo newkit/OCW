@@ -56,6 +56,8 @@ pub struct ClientCore {
     power_w: f64,
     cadence_rpm: Option<f64>,
     heart_rate_bpm: Option<f64>,
+    braking: bool,
+    last_sample_us: u64,
     seq: u32,
     stats: NetStats,
 }
@@ -78,6 +80,8 @@ impl ClientCore {
             power_w: 0.0,
             cadence_rpm: None,
             heart_rate_bpm: None,
+            braking: false,
+            last_sample_us: 0,
             seq: 0,
             stats: NetStats::default(),
         }
@@ -109,15 +113,37 @@ impl ClientCore {
         };
         self.power_w = watts;
         self.cadence_rpm = cadence_rpm;
+        self.last_sample_us = timestamp.as_micros() as u64;
+        Some(self.sample())
+    }
+
+    /// Encodes the current inputs as the next sensor sample.
+    fn sample(&mut self) -> Vec<u8> {
         self.seq += 1;
         self.stats.samples_out += 1;
-        Some(encode(&client_message(C::Sample(v1::SensorSample {
+        encode(&client_message(C::Sample(v1::SensorSample {
             seq: self.seq,
-            client_time_us: timestamp.as_micros() as u64,
-            power_w: Some(watts as f32),
-            cadence_rpm: cadence_rpm.map(|c| c as f32),
+            client_time_us: self.last_sample_us,
+            power_w: Some(self.power_w as f32),
+            cadence_rpm: self.cadence_rpm.map(|c| c as f32),
             heart_rate_bpm: self.heart_rate_bpm.map(|h| h as f32),
-        }))))
+            brake: Some(self.braking),
+        })))
+    }
+
+    /// Brake key pressed or released; returns a sample to send at once when
+    /// the state changed (the next trainer sample may be 250 ms away).
+    pub fn set_brake(&mut self, braking: bool) -> Option<Vec<u8>> {
+        if braking == self.braking {
+            return None;
+        }
+        self.braking = braking;
+        self.predictor.set_braking(braking);
+        Some(self.sample())
+    }
+
+    pub fn braking(&self) -> bool {
+        self.braking
     }
 
     /// Handles one encoded server message received at client time `now_s`.
@@ -677,5 +703,30 @@ mod tests {
             h.client.lateral_target(),
             Some(ocw_sim::physics::lateral_limit(7.0))
         );
+    }
+
+    /// Down arrow: the brake reaches the server at once and stops the
+    /// rider; the prediction brakes too.
+    #[test]
+    fn braking_stops_the_rider_on_server_and_client() {
+        let mut h = Harness::new(0, false);
+        h.ride(250.0, 15.0);
+        assert!(h.client.state().speed > 5.0);
+        let msg = h.client.set_brake(true).expect("brake sent at once");
+        match ocw_protocol::decode_client(&msg).unwrap() {
+            C::Sample(s) => assert_eq!(s.brake, Some(true)),
+            other => panic!("unexpected {other:?}"),
+        }
+        assert!(h.client.set_brake(true).is_none(), "unchanged");
+        h.send(&msg);
+        h.ride(0.0, 5.0);
+        let own = h.client.rider_id().unwrap();
+        assert_eq!(h.server.session().rider_state(own).unwrap().speed, 0.0);
+        assert!(h.client.state().speed < 0.05, "{}", h.client.state().speed);
+        // Released: riding again.
+        let msg = h.client.set_brake(false).unwrap();
+        h.send(&msg);
+        h.ride(250.0, 3.0);
+        assert!(h.client.state().speed > 1.0);
     }
 }
