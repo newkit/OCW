@@ -122,20 +122,27 @@ pub fn waterway_width(tags: &Tags) -> Option<f64> {
     {
         return None;
     }
+    let width = tags
+        .get("width")
+        .and_then(|w| crate::buildings::parse_length(w))
+        .filter(|w| (0.1..=500.0).contains(w));
     let default = match tags.get("waterway")?.as_str() {
         "river" => 12.0,
         "canal" => 6.0,
         "stream" => 2.0,
-        "ditch" | "drain" => 1.5,
+        // Ditches and drains are mostly gutters a hand wide (Freiburg's
+        // Bächle run along every old-town street): drawn at least a cell
+        // diagonal wide they covered whole towns in water. Only those
+        // tagged as wide channels are drawn.
+        "ditch" | "drain" => return width.filter(|w| *w >= MIN_DRAIN_WIDTH_M),
         _ => return None,
     };
-    Some(
-        tags.get("width")
-            .and_then(|w| crate::buildings::parse_length(w))
-            .filter(|w| (0.3..=500.0).contains(w))
-            .unwrap_or(default),
-    )
+    Some(width.filter(|w| *w >= 0.3).unwrap_or(default))
 }
+
+/// Ditches and drains narrower than this (or without a `width`) are left
+/// out of the land use.
+pub const MIN_DRAIN_WIDTH_M: f64 = 2.0;
 
 /// The classified areas and water lines of an extract, in local metres.
 pub fn extract(data: &AreaData, proj: &LocalProjection) -> (Vec<Area>, Vec<WaterLine>) {
@@ -548,6 +555,41 @@ mod tests {
             None
         );
         assert_eq!(waterway_width(&tags(&[("waterway", "dam")])), None);
+    }
+
+    /// Regression (Black Forest, Freiburg): the Bächle, drains 0.15-0.3 m
+    /// wide (or untagged) along every old-town street, were drawn as water
+    /// bands a cell diagonal wide and turned the whole old town blue.
+    #[test]
+    fn gutters_are_not_water_but_wide_channels_are() {
+        let w = |pairs: &[(&str, &str)]| waterway_width(&tags(pairs));
+        assert_eq!(w(&[("waterway", "drain"), ("width", "0.3")]), None);
+        assert_eq!(w(&[("waterway", "drain"), ("width", "0.15")]), None);
+        assert_eq!(w(&[("waterway", "drain")]), None);
+        assert_eq!(w(&[("waterway", "ditch")]), None);
+        assert_eq!(w(&[("waterway", "ditch"), ("width", "3")]), Some(3.0));
+        assert_eq!(w(&[("waterway", "stream")]), Some(2.0));
+        // A Bächle street block: residential cells, no water at all.
+        let res = Area::new(
+            LandClass::Residential,
+            vec![vec![[0.0, 0.0], [100.0, 0.0], [100.0, 100.0], [0.0, 100.0]]],
+        );
+        let lines: Vec<WaterLine> = [("drain", Some("0.3")), ("drain", None)]
+            .iter()
+            .filter_map(|(kind, width)| {
+                let mut t = vec![("waterway", *kind)];
+                if let Some(width) = width {
+                    t.push(("width", width));
+                }
+                Some(WaterLine {
+                    width_m: waterway_width(&tags(&t))?,
+                    points: vec![[0.0, 50.0], [100.0, 50.0]],
+                })
+            })
+            .collect();
+        assert!(lines.is_empty());
+        let classes = rasterise(&grid10(), &[&res], &lines.iter().collect::<Vec<_>>());
+        assert!(classes.iter().all(|c| *c == LandClass::Residential));
     }
 
     fn grid10() -> Grid {
