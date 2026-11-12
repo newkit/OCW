@@ -280,11 +280,32 @@ impl RoadNetwork {
         arrival: Option<(usize, bool)>,
         heading: [f64; 2],
     ) -> Vec<Exit> {
+        let out = self.exits_with(v, arrival, heading, false);
+        // A rider who arrives against a one-way road (only after an
+        // automatic U-turn at a dead end or the region border on one) and
+        // finds no legal way on rides on against it rather than turning
+        // again, which would send them back into the dead end for ever.
+        let contraflow = arrival.is_some_and(|(e, f)| !self.graph.edges[e].oneway.allows(f));
+        if out.is_empty() && contraflow {
+            return self.exits_with(v, arrival, heading, true);
+        }
+        out
+    }
+
+    fn exits_with(
+        &self,
+        v: VertexId,
+        arrival: Option<(usize, bool)>,
+        heading: [f64; 2],
+        ignore_oneway: bool,
+    ) -> Vec<Exit> {
         let mut out = Vec::new();
         for &e in self.edges_at(v) {
             let edge = &self.graph.edges[e];
             for forward in [true, false] {
-                if self.start_vertex(e, forward) != v || !edge.oneway.allows(forward) {
+                if self.start_vertex(e, forward) != v
+                    || !(ignore_oneway || edge.oneway.allows(forward))
+                {
                     continue;
                 }
                 if arrival == Some((e, !forward)) {
@@ -614,6 +635,43 @@ pub(crate) mod tests {
         let j = n.junction(VertexId(4), Some((0, false)), EAST).unwrap();
         let edges: Vec<usize> = j.exits.iter().map(|e| e.edge).collect();
         assert_eq!(edges, vec![1, 3]);
+    }
+
+    /// Regression: a rider arriving against a one-way road (after an
+    /// automatic U-turn on it) with no legal way on rides on against the
+    /// one-way roads instead of finding no exit (another U-turn, back and
+    /// forth for ever). With a legal way on, only that one counts.
+    #[test]
+    fn against_a_one_way_road_without_a_legal_exit_ride_on() {
+        // A one-way chain west → centre → east: edge 0 (centre → west) only
+        // towards the centre, edge 1 (centre → east) only away from it.
+        let mut g = graph(
+            &[[-200.0, 0.0], [200.0, 0.0], [0.0, 0.0]],
+            &[(2, 0), (2, 1)],
+        );
+        g.edges[0].oneway = Oneway::Backward;
+        g.edges[1].oneway = Oneway::Forward;
+        let n = RoadNetwork::new(g.clone());
+        // Along the one-way roads: on east.
+        let along = n.exits(VertexId(2), Some((0, false)), EAST);
+        assert_eq!(along.len(), 1);
+        assert_eq!((along[0].edge, along[0].forward), (1, true));
+        // Against edge 1 (arriving westwards): no legal exit, so on west
+        // against edge 0, never straight back.
+        let against = n.exits(VertexId(2), Some((1, false)), [-1.0, 0.0]);
+        assert_eq!(against.len(), 1);
+        assert_eq!((against[0].edge, against[0].forward), (0, true));
+        // A legal way on (a two-way side road) wins over riding against.
+        let mut g = graph(
+            &[[-200.0, 0.0], [200.0, 0.0], [0.0, 200.0], [0.0, 0.0]],
+            &[(3, 0), (3, 1), (3, 2)],
+        );
+        g.edges[0].oneway = Oneway::Backward;
+        g.edges[1].oneway = Oneway::Forward;
+        let n = RoadNetwork::new(g);
+        let against = n.exits(VertexId(3), Some((1, false)), [-1.0, 0.0]);
+        assert_eq!(against.len(), 1);
+        assert_eq!(against[0].edge, 2);
     }
 
     #[test]
