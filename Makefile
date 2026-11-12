@@ -16,7 +16,7 @@ APT_PACKAGES := build-essential pkg-config curl git rsync \
 	libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-0 \
 	libdbus-1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
 	mesa-vulkan-drivers vulkan-tools bluez \
-	xvfb xauth weston ffmpeg
+	xvfb xauth weston ffmpeg libglib2.0-dev
 # The same for Fedora / RHEL (dnf). ffmpeg is handled separately in
 # deps-linux-fedora: Fedora's ffmpeg-free conflicts with RPM Fusion's ffmpeg.
 DNF_PACKAGES := gcc gcc-c++ pkgconf-pkg-config curl git rsync \
@@ -44,6 +44,13 @@ else ifneq ($(filter arch archlinux manjaro,$(OS_RELEASE_IDS)),)
 else
   LINUX_FAMILY := unknown
 endif
+# Clang for the voice feature (LiveKit's webrtc-sys, spec §7) needs a newer
+# version than Debian / Ubuntu ship (Debian 13: clang 19): installed from the
+# LLVM project's apt repository (https://apt.llvm.org) by deps-llvm-debian.
+LLVM_VERSION ?= 21
+LLVM_APT_KEY_URL ?= https://apt.llvm.org/llvm-snapshot.gpg.key
+LLVM_APT_KEYRING ?= /etc/apt/keyrings/apt.llvm.org.asc
+LLVM_PACKAGES := clang-$(LLVM_VERSION) lld-$(LLVM_VERSION) libclang-$(LLVM_VERSION)-dev
 # appimagetool for scripts/build-appimage.sh (user-level download, no sudo).
 APPIMAGETOOL ?= $(HOME)/.local/bin/appimagetool
 APPIMAGETOOL_URL ?= https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-$(shell uname -m).AppImage
@@ -53,7 +60,7 @@ VIDEO ?= /tmp/ocw.mp4
 VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 
 .DEFAULT_GOAL := help
-.PHONY: help deps deps-linux deps-linux-packages deps-linux-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust build release test lint fmt fmt-check \
+.PHONY: help deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust build release test lint fmt fmt-check \
 	clippy wasm check run server screenshot screenshot-wayland smoke video video-wayland deploy-test clean clean-test-output \
 	macos-app
 
@@ -77,10 +84,26 @@ deps-linux: deps-linux-packages deps-rust deps-appimage ## Linux: system package
 deps-linux-packages: deps-linux-$(LINUX_FAMILY) ## Linux: only the system packages for this distribution (sudo)
 	@echo "For GPU access without a desktop session (remote/benchmark machines): sudo usermod -aG render,video \$$USER"
 
-deps-linux-debian: ## Linux: Debian / Ubuntu packages (apt)
+deps-linux-debian: ## Linux: Debian / Ubuntu packages (apt), incl. clang from apt.llvm.org (deps-llvm-debian)
 	sudo apt-get update
 	sudo apt-get install -y $(APT_PACKAGES)
 	sudo apt-get install -y libfuse2t64 || sudo apt-get install -y libfuse2
+	$(MAKE) deps-llvm-debian
+
+deps-llvm-debian: ## Linux: clang, lld, libclang (LLVM_VERSION, default 21) from the LLVM apt repository (Debian / Ubuntu; sudo)
+	@set -e; . /etc/os-release; codename=$${VERSION_CODENAME:-}; \
+	if [ -z "$$codename" ]; then echo "No VERSION_CODENAME in /etc/os-release" >&2; exit 1; fi; \
+	if [ "$$codename" = sid ]; then path=unstable; suite=llvm-toolchain-$(LLVM_VERSION); \
+	else path=$$codename; suite=llvm-toolchain-$$codename-$(LLVM_VERSION); fi; \
+	if ! curl --proto '=https' --tlsv1.2 -fsSI "https://apt.llvm.org/$$path/dists/$$suite/Release" >/dev/null; then \
+		echo "apt.llvm.org has no $$suite for $$codename: install clang >= $(LLVM_VERSION) by hand" >&2; exit 1; fi; \
+	sudo install -d -m 0755 "$(dir $(LLVM_APT_KEYRING))"; \
+	curl --proto '=https' --tlsv1.2 -fsSL "$(LLVM_APT_KEY_URL)" | sudo tee "$(LLVM_APT_KEYRING)" >/dev/null; \
+	echo "deb [signed-by=$(LLVM_APT_KEYRING)] https://apt.llvm.org/$$path/ $$suite main" | \
+		sudo tee /etc/apt/sources.list.d/llvm-$(LLVM_VERSION).list >/dev/null; \
+	sudo apt-get update; \
+	sudo apt-get install -y $(LLVM_PACKAGES); \
+	clang-$(LLVM_VERSION) --version | head -n 1
 
 deps-linux-fedora: ## Linux: Fedora / RHEL packages (dnf; unavailable ones are skipped)
 	sudo dnf install -y --skip-unavailable $(DNF_PACKAGES)
