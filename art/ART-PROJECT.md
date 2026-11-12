@@ -1,10 +1,11 @@
 # OCW Build Diary – Art Project Specification
 
-Version 1.0 – 12 November 2026
+Version 1.1 – 12 November 2026
 
 | Version | Change |
 |---|---|
 | 1.0 | The brief, the diary format, the media archive, the tool (`art/diary.py`), day scripts for 11 and 12 November 2026 |
+| 1.1 | Every photo and video carries its ISO 8601 date and time, in the file and in the picture (§2.1) |
 
 ## 1. The brief
 
@@ -63,6 +64,22 @@ selection happens only in the video.
 - **Time** of a file: the `HHMMSS-` prefix (local time of the run), else the time
   in its folder name, else its modification time. Commits use local time as well.
 - Identical files (same SHA-256) are kept once.
+
+### 2.1 Date and time on every photo and video
+
+Every photo and video carries its **ISO 8601 date and time** (local time with
+UTC offset, e.g. `2026-11-12T22:14:05+01:00`) twice:
+
+- **In the picture:** the app draws it in the in-game HUD's **top-right corner**
+  on every screenshot and every video frame, also when the HUD is otherwise
+  off (spec §3.2). In frame-exact `--capture` videos it is the capture start
+  plus the video time.
+- **In the file:** PNG `tEXt` chunk `Creation Time` (plus `Software`); MP4
+  `creation_time` (UTC, the start of the recording). The diary videos carry
+  their render time.
+- **Older material** (made before this rule): `art/diary.py stamp` (run by
+  `gather`) writes the capture time from the file name into the archive copy's
+  metadata; the picture itself is left as it was taken.
 
 ## 3. The day video
 
@@ -163,7 +180,7 @@ old), ffmpeg with libass, `zip`, and `gh` (logged in) for fetching/publishing.
 The tool runs on the dev machine (no Rust build involved).
 
 ```bash
-make art-gather DAY=2026-11-13    # collect everything of the day + journal
+make art-gather DAY=2026-11-13    # collect everything of the day, stamp times, journal
 make art-sheets DAY=2026-11-13    # contact sheets: artwork/build-history/.work/DAY/sheets/
 # write art/days/2026-11-13.toml (story, shots, jokes)
 make art-render DAY=2026-11-13    # → artwork/build-history/diary/ocw-diary-day-NN-DAY.mp4
