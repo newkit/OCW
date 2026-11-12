@@ -115,7 +115,7 @@ impl Page {
             Self::Trainer => &["Devices, SIM difficulty and the virtual trainer."],
             Self::Strava => &["Uploads rides to Strava (needs API credentials, see README)."],
             Self::Audio => &[
-                "All sounds are made by OCW itself. Enter on a volume plays a test sound. No music yet; voice chat comes later. A missing output device falls back to the default.",
+                "Sounds are made by OCW itself; Enter on a volume plays a test sound. Output: the device (default = the system's).",
             ],
             Self::Controls | Self::Display => &[],
             Self::Worlds => &[
@@ -303,13 +303,13 @@ pub struct AudioDevices {
 
 /// Longest device name shown on the Audio page (ten-foot UI); longer
 /// ones are cut with "...".
-const MAX_DEVICE_LABEL: usize = 34;
+const MAX_DEVICE_LABEL: usize = 16;
 
-fn short(name: &str) -> String {
-    if name.chars().count() <= MAX_DEVICE_LABEL {
+fn short(name: &str, max: usize) -> String {
+    if name.chars().count() <= max {
         name.to_string()
     } else {
-        let cut: String = name.chars().take(MAX_DEVICE_LABEL - 3).collect();
+        let cut: String = name.chars().take(max - 3).collect();
         format!("{}...", cut.trim_end())
     }
 }
@@ -341,15 +341,17 @@ pub fn audio_rows(settings: &Settings, devices: &AudioDevices) -> Vec<Row> {
         let o = &options[(at as isize + dir).rem_euclid(n) as usize];
         format!("set audio.output \"{o}\"")
     };
+    // Short values: the row has room for about 16 characters (ten-foot
+    // UI); `audio.status` and `audio.devices` show the full names.
     let value = if is_default {
         match &devices.current {
-            Some(c) => format!("default ({})", short(c)),
-            None => "default (no device)".into(),
+            Some(_) => "default".into(),
+            None => "default (none)".into(),
         }
     } else if !listed || devices.fell_back {
-        format!("{} (missing)", short(&saved))
+        format!("{} (gone)", short(&saved, MAX_DEVICE_LABEL - 7))
     } else {
-        short(&saved)
+        short(&saved, MAX_DEVICE_LABEL)
     };
     vec![
         volume("audio.master", "Master volume", "test"),
@@ -741,7 +743,7 @@ mod tests {
         assert_eq!(row(&a, "Voice").confirm, cmd("audio.play test-voice"));
         assert_eq!(row(&a, "Mute").confirm, cmd("set audio.mute on"));
         let out = row(&a, "Output");
-        assert_eq!(out.value.as_deref(), Some("default (Speakers)"));
+        assert_eq!(out.value.as_deref(), Some("default"));
         assert_eq!(out.right.as_deref(), Some("set audio.output \"Speakers\""));
         assert_eq!(
             out.left.as_deref(),
@@ -755,24 +757,28 @@ mod tests {
         // Unplugged: still in the list, marked; the default plays.
         let (s, _) = Settings::parse("[audio]\noutput = \"Old DAC\"\n").unwrap();
         let out = row(&audio_rows(&s, &devices), "Output").clone();
-        assert_eq!(out.value.as_deref(), Some("Old DAC (missing)"));
+        assert_eq!(out.value.as_deref(), Some("Old DAC (gone)"));
         assert_eq!(out.left.as_deref(), Some("set audio.output \"default\""));
         assert_eq!(out.right.as_deref(), Some("set audio.output \"Speakers\""));
         // No devices (headless): the default, said plainly.
         let a = rows(Page::Audio, &Settings::default(), &Riders::default());
         let out = row(&a, "Output");
-        assert_eq!(out.value.as_deref(), Some("default (no device)"));
+        assert_eq!(out.value.as_deref(), Some("default (none)"));
         assert_eq!(out.right.as_deref(), Some("set audio.output \"default\""));
         // Long names are cut for the ten-foot UI.
+        let name = "Default ALSA Output (currently PipeWire Media Server)";
         let long = AudioDevices {
-            current: Some("Default ALSA Output (currently PipeWire Media Server)".into()),
-            ..AudioDevices::default()
+            names: vec![name.into()],
+            current: Some(name.into()),
+            fell_back: false,
         };
-        let v = row(&audio_rows(&Settings::default(), &long), "Output")
+        let (s, _) = Settings::parse(&format!("[audio]\noutput = \"{name}\"\n")).unwrap();
+        let v = row(&audio_rows(&s, &long), "Output").value.clone();
+        assert_eq!(v.as_deref(), Some("Default ALSA..."));
+        let v = row(&audio_rows(&s, &AudioDevices::default()), "Output")
             .value
-            .clone()
-            .unwrap();
-        assert_eq!(v, "default (Default ALSA Output (currently...)");
+            .clone();
+        assert_eq!(v.as_deref(), Some("Defaul... (gone)"));
     }
 
     #[test]
