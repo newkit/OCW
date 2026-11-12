@@ -3,6 +3,22 @@
 Prebuilt binaries of Open Cycling World for the platforms we can build on.
 These are development builds (spec §14 Phase 1/2), not signed or notarised.
 
+## 0.1.0-dddee37 – macOS app
+
+Built from commit `dddee37` on the Apple Silicon Mac by
+`scripts/build-macos-app.sh` at the end of the autonomous night (spec 2.8,
+Appendix B). New since `310360b`: in-game menu (Esc / Start) with settings,
+rider profiles, bikes and looks, ride switching without restart, Navi pages
+and GPX import; structured workouts with ERG; local events (race, group ride,
+time trial against your ghost); gradient average, elevation profile and
+camera tilt; trees fade instead of moving the camera; tunnels; neighbour world
+packages; QUIC networking (`--server`); full-Latin UI font; U-turn and
+steep-ramp fixes. 726 tests passed on macOS for this commit.
+
+| Platform | File | Size |
+|---|---|---|
+| macos-arm64 | `OpenCyclingWorld-0.1.0-dddee37-macos-arm64.dmg` | 39.6 MB |
+
 ## 0.1.0-310360b – macOS app
 
 Built from commit `310360b` on the Apple Silicon Mac by

@@ -1929,4 +1929,13 @@ that had already been pushed and was fixed.
 
 ### B.4 Platform builds at the end of the night
 
-(filled in after the final runs)
+Final runs on commit `dddee37` (all features of the night plus this appendix):
+
+| Platform | Machine | Checks | Result |
+|---|---|---|---|
+| Linux (Debian, AMD GPU) | marge | fmt, clippy `-D warnings`, wasm build of the engine-independent crates, all tests, Wayland screenshot from the world package | 726 passed, 0 failed; clean |
+| macOS 26 (Apple Silicon M1) | Mac build machine | clippy `-D warnings`, all tests, app bundle | 726 passed, 0 failed; `release/0.1.0-dddee37/macos-arm64/` (DMG, ad-hoc signed) |
+| Windows 11 (x86-64, MSVC) | Windows build machine | clippy `-D warnings`, all tests, release build of `ocw-desktop` and `ocw-server` | 726 passed, 0 failed; release `ocw-desktop.exe` 106 MB built (not packaged) |
+
+leela (Fedora) was unreachable from about 01:00 and is not part of the final runs. The marge
+kiosk runs `18f0ae3` (the same code without this appendix).
