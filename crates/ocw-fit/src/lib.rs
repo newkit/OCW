@@ -2,8 +2,9 @@
 //!
 //! Writes the subset of the Garmin FIT protocol (2.0, little endian) that
 //! training platforms such as Strava need for a virtual ride: `file_id`,
-//! `device_info`, timer `event`s, one `record` per sample, one `lap`, one
-//! `session` and the `activity`, with the header and file CRCs.
+//! `device_info`, timer `event`s, one `record` per sample, the `lap`s (one
+//! per [`Activity::laps`] segment), one `session` and the `activity`, with
+//! the header and file CRCs.
 //!
 //! Pure and dependency-free, so it also builds for `wasm32-unknown-unknown`
 //! (the web companion can offer FIT downloads with the same code).
@@ -67,6 +68,41 @@ pub struct Activity {
     pub product_name: String,
     /// Software version × 100 (e.g. 10 for 0.10).
     pub software_version: u16,
+    /// Lap marks: elapsed seconds at which a new lap begins (a workout
+    /// step, an event's start or finish, an event lap). Marks outside the
+    /// records or closer than a second to another are ignored; empty: the
+    /// whole activity is one lap.
+    pub laps: Vec<f64>,
+}
+
+impl Activity {
+    /// The records of each lap. Neighbouring laps share the boundary
+    /// record, so the laps' times and distances add up to the session's.
+    pub fn lap_records(&self) -> Vec<&[Record]> {
+        let r = &self.records;
+        let (Some(first), Some(last)) = (r.first(), r.last()) else {
+            return vec![r.as_slice()];
+        };
+        let mut marks: Vec<f64> = self
+            .laps
+            .iter()
+            .copied()
+            .filter(|&t| t > first.elapsed_s + 0.5 && t < last.elapsed_s - 0.5)
+            .collect();
+        marks.sort_by(f64::total_cmp);
+        let mut out = Vec::new();
+        let mut from = 0;
+        for t in marks {
+            // The first record at or after the mark starts the new lap.
+            let i = r.partition_point(|x| x.elapsed_s < t - 1e-6);
+            if i > from && i < r.len() - 1 {
+                out.push(&r[from..=i]);
+                from = i;
+            }
+        }
+        out.push(&r[from..]);
+        out
+    }
 }
 
 /// Totals over an activity's records (lap and session messages).
@@ -94,7 +130,8 @@ impl Summary {
             return Self::default();
         };
         let elapsed_s = (last.elapsed_s - first.elapsed_s).max(0.0);
-        let distance_m = last.distance_m.max(0.0);
+        // Distance of these records (a lap starts part-way into the ride).
+        let distance_m = (last.distance_m - first.distance_m).max(0.0);
         let stat = |f: fn(&Record) -> Option<f64>| {
             let v: Vec<f64> = records.iter().filter_map(f).collect();
             if v.is_empty() {
@@ -351,34 +388,45 @@ pub fn encode(activity: &Activity) -> Vec<u8> {
         Some((lat, lon)) => (Some(semicircles(lat)), Some(semicircles(lon))),
         None => (None, None),
     };
-    w.message(
-        MESG_LAP,
-        &[
-            (254, Value::U16(Some(0))),
-            (253, Value::U32(Some(end))),
-            (0, Value::Enum(Some(EVENT_LAP))),
-            (1, Value::Enum(Some(EVENT_TYPE_STOP))),
-            (2, Value::U32(Some(start))),
-            (3, Value::S32(start_lat)),
-            (4, Value::S32(start_lon)),
-            (7, u32_of(time_ms, 1000.0)),
-            (8, u32_of(time_ms, 1000.0)),
-            (9, u32_of(Some(s.distance_m), 100.0)),
-            (11, u16_of(Some(s.work_kj), 1.0, 0.0)),
-            (13, u16_of(Some(s.avg_speed_mps), 1000.0, 0.0)),
-            (14, u16_of(Some(s.max_speed_mps), 1000.0, 0.0)),
-            (15, u8_of(s.avg_heart_rate_bpm)),
-            (16, u8_of(s.max_heart_rate_bpm)),
-            (17, u8_of(s.avg_cadence_rpm)),
-            (18, u8_of(s.max_cadence_rpm)),
-            (19, u16_of(s.avg_power_w, 1.0, 0.0)),
-            (20, u16_of(s.max_power_w, 1.0, 0.0)),
-            (21, u16_of(Some(s.ascent_m), 1.0, 0.0)),
-            (22, u16_of(Some(s.descent_m), 1.0, 0.0)),
-            (25, Value::Enum(Some(SPORT_CYCLING))),
-            (39, Value::Enum(Some(SUB_SPORT_VIRTUAL_ACTIVITY))),
-        ],
-    );
+    let laps = activity.lap_records();
+    for (i, records) in laps.iter().enumerate() {
+        let l = Summary::of(records);
+        let lap_start = records.first().map_or(start, ts_of);
+        let lap_end = records.last().map_or(start, ts_of);
+        let lap_time = Some(l.elapsed_s);
+        let (lat, lon) = match records.iter().find_map(|r| r.position) {
+            Some((lat, lon)) => (Some(semicircles(lat)), Some(semicircles(lon))),
+            None => (None, None),
+        };
+        w.message(
+            MESG_LAP,
+            &[
+                (254, Value::U16(Some(i as u16))),
+                (253, Value::U32(Some(lap_end))),
+                (0, Value::Enum(Some(EVENT_LAP))),
+                (1, Value::Enum(Some(EVENT_TYPE_STOP))),
+                (2, Value::U32(Some(lap_start))),
+                (3, Value::S32(lat)),
+                (4, Value::S32(lon)),
+                (7, u32_of(lap_time, 1000.0)),
+                (8, u32_of(lap_time, 1000.0)),
+                (9, u32_of(Some(l.distance_m), 100.0)),
+                (11, u16_of(Some(l.work_kj), 1.0, 0.0)),
+                (13, u16_of(Some(l.avg_speed_mps), 1000.0, 0.0)),
+                (14, u16_of(Some(l.max_speed_mps), 1000.0, 0.0)),
+                (15, u8_of(l.avg_heart_rate_bpm)),
+                (16, u8_of(l.max_heart_rate_bpm)),
+                (17, u8_of(l.avg_cadence_rpm)),
+                (18, u8_of(l.max_cadence_rpm)),
+                (19, u16_of(l.avg_power_w, 1.0, 0.0)),
+                (20, u16_of(l.max_power_w, 1.0, 0.0)),
+                (21, u16_of(Some(l.ascent_m), 1.0, 0.0)),
+                (22, u16_of(Some(l.descent_m), 1.0, 0.0)),
+                (25, Value::Enum(Some(SPORT_CYCLING))),
+                (39, Value::Enum(Some(SUB_SPORT_VIRTUAL_ACTIVITY))),
+            ],
+        );
+    }
     w.message(
         MESG_SESSION,
         &[
@@ -405,8 +453,8 @@ pub fn encode(activity: &Activity) -> Vec<u8> {
             (21, u16_of(s.max_power_w, 1.0, 0.0)),
             (22, u16_of(Some(s.ascent_m), 1.0, 0.0)),
             (23, u16_of(Some(s.descent_m), 1.0, 0.0)),
-            (25, Value::U16(Some(0))), // first_lap_index
-            (26, Value::U16(Some(1))), // num_laps
+            (25, Value::U16(Some(0))),                 // first_lap_index
+            (26, Value::U16(Some(laps.len() as u16))), // num_laps
         ],
     );
     w.message(
@@ -463,6 +511,7 @@ mod tests {
             records,
             product_name: "Open Cycling World".into(),
             software_version: 10,
+            laps: Vec::new(),
         }
     }
 
@@ -578,6 +627,36 @@ mod tests {
         let act = of_kind(&msgs, MesgNum::Activity);
         assert_eq!(act.len(), 1);
         assert_eq!(field(act[0], "num_sessions").and_then(num), Some(1.0));
+    }
+
+    #[test]
+    fn lap_marks_split_the_ride_into_laps() {
+        let mut a = ride(600, true);
+        // Unsorted, one before the start, one past the end, one too close.
+        a.laps = vec![400.0, 120.0, -5.0, 900.0, 599.8];
+        let parts = a.lap_records();
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0].last().unwrap().elapsed_s, 120.0);
+        assert_eq!(parts[1].first().unwrap().elapsed_s, 120.0);
+        assert_eq!(parts[2].first().unwrap().elapsed_s, 400.0);
+        let msgs = fitparser::from_bytes(&encode(&a)).expect("valid FIT file");
+        let laps = of_kind(&msgs, MesgNum::Lap);
+        assert_eq!(laps.len(), 3);
+        let get = |m: &FitDataRecord, name: &str| field(m, name).and_then(num).unwrap();
+        let times: Vec<f64> = laps.iter().map(|l| get(l, "total_elapsed_time")).collect();
+        assert_eq!(times, [120.0, 280.0, 199.0]);
+        // The laps' distances add up to the session's.
+        let sum: f64 = laps.iter().map(|l| get(l, "total_distance")).sum();
+        let session = of_kind(&msgs, MesgNum::Session)[0];
+        assert!((sum - get(session, "total_distance")).abs() < 0.05);
+        assert_eq!(get(session, "num_laps"), 3.0);
+        // Each lap starts where the previous one ended.
+        let ts = |m: &FitDataRecord, name: &str| match field(m, name) {
+            Some(V::Timestamp(t)) => t.timestamp(),
+            other => panic!("{name}: {other:?}"),
+        };
+        assert_eq!(ts(laps[1], "start_time"), ts(laps[0], "timestamp"));
+        assert_eq!(ts(laps[2], "start_time"), a.start_unix_s + 400);
     }
 
     #[test]

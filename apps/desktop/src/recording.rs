@@ -62,6 +62,8 @@ pub struct RideRecorder {
     /// Distance ridden (teleports excluded).
     distance_m: f64,
     records: Vec<Record>,
+    /// Lap marks (elapsed s) for the FIT laps.
+    laps: Vec<f64>,
 }
 
 impl RideRecorder {
@@ -73,7 +75,22 @@ impl RideRecorder {
             last: None,
             distance_m: 0.0,
             records: Vec::new(),
+            laps: Vec::new(),
         }
+    }
+
+    /// Starts a new FIT lap at game time `game_s` (a workout step, an
+    /// event's start or finish, an event lap). Ignored before the first
+    /// record: the ride starts a lap anyway.
+    pub fn mark_lap(&mut self, game_s: f64) {
+        if self.start_unix_s.is_some() {
+            self.laps.push(game_s - self.start_game_s);
+        }
+    }
+
+    #[cfg(test)]
+    pub fn laps(&self) -> &[f64] {
+        &self.laps
     }
 
     /// Records `s` if a record is due; `wall_unix_s` is the wall clock (only
@@ -133,6 +150,7 @@ impl RideRecorder {
     /// a new recording.
     pub fn finish(&mut self) -> Option<FinishedRide> {
         let records = std::mem::take(&mut self.records);
+        let laps = std::mem::take(&mut self.laps);
         let start_unix_s = self.start_unix_s.take()?;
         self.last = None;
         self.distance_m = 0.0;
@@ -145,6 +163,7 @@ impl RideRecorder {
                 records,
                 product_name: "Open Cycling World".into(),
                 software_version: software_version(),
+                laps,
             },
             meta: RideMeta {
                 name: format!("Open Cycling World: {}", self.route_name),
@@ -278,7 +297,7 @@ impl Plugin for RecordingPlugin {
             dir: self.dir.clone().or_else(default_rides_dir),
             enabled,
         })
-        .add_systems(Update, record)
+        .add_systems(Update, (mark_laps, record).chain())
         .add_systems(Last, save_on_exit);
         register_commands(app);
     }
@@ -301,6 +320,41 @@ fn record(time: Res<Time>, client: Res<ClientState>, mut rec: ResMut<Recording>)
     };
     rec.recorder
         .observe(c.track(), c.geo_origin(), sample, unix_now());
+}
+
+/// What starts a FIT lap: the workout's lap count, the event segment.
+pub type LapKey = (u64, Option<(u32, u32)>);
+
+/// Whether going from `before` to `now` starts a new FIT lap: a workout
+/// start/step/end/stop, or a change of event part (start, lap, finish)
+/// within the same event. Joining or leaving an event is no lap of its
+/// own: the countdown and the finish are.
+pub fn starts_lap(before: LapKey, now: LapKey) -> bool {
+    let workout = now.0 != before.0;
+    let event = match (before.1, now.1) {
+        (Some((a, sa)), Some((b, sb))) => a != b || sa != sb,
+        _ => false,
+    };
+    workout || event
+}
+
+/// Marks FIT laps at workout steps and event starts, laps and finishes.
+fn mark_laps(
+    time: Res<Time>,
+    client: Res<ClientState>,
+    workouts: Option<Res<crate::workout::Workouts>>,
+    mut rec: ResMut<Recording>,
+    mut last: Local<LapKey>,
+) {
+    let now = (
+        workouts.map_or(0, |w| w.0.lap_count()),
+        client.0.event_lap_segment(),
+    );
+    if starts_lap(*last, now) {
+        let t = time.elapsed_secs_f64();
+        rec.recorder.mark_lap(t);
+    }
+    *last = now;
 }
 
 fn save_on_exit(
@@ -420,6 +474,41 @@ mod tests {
         let alt = route.sample(rec.distance_m).position[1];
         assert!((rec.altitude_m.unwrap() - alt).abs() < 1.0);
         assert_eq!(rec.position, None);
+    }
+
+    #[test]
+    fn lap_marks_go_into_the_fit_file() {
+        let route = Route::test_loop();
+        let mut r = RideRecorder::new("Loop");
+        r.mark_lap(1.0); // before the first record: ignored
+        for i in 0..30 {
+            let t = 5.0 + f64::from(i);
+            if i == 10 || i == 20 {
+                r.mark_lap(t);
+            }
+            r.observe(&route, None, sample(t, f64::from(i) * 8.0), 1000);
+        }
+        assert_eq!(r.laps(), [10.0, 20.0]);
+        let ride = r.finish().unwrap();
+        assert_eq!(ride.activity.laps, [10.0, 20.0]);
+        assert_eq!(ride.activity.lap_records().len(), 3);
+        assert!(r.laps().is_empty(), "a new recording starts without laps");
+    }
+
+    #[test]
+    fn workout_steps_and_event_parts_start_laps() {
+        let none = (0, None);
+        assert!(!starts_lap(none, none));
+        assert!(starts_lap(none, (1, None)), "workout start");
+        assert!(starts_lap((1, None), (2, None)), "workout step");
+        // Joining an event: no lap; its start, laps and finish: laps.
+        assert!(!starts_lap(none, (0, Some((7, 0)))));
+        assert!(starts_lap((0, Some((7, 0))), (0, Some((7, 1)))));
+        assert!(starts_lap((0, Some((7, 1))), (0, Some((7, 2)))));
+        assert!(!starts_lap((0, Some((7, 2))), (0, Some((7, 2)))));
+        assert!(!starts_lap((0, Some((7, 3))), none));
+        // A new event right after another.
+        assert!(starts_lap((0, Some((7, 3))), (0, Some((8, 0)))));
     }
 
     #[test]

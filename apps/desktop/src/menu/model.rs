@@ -9,7 +9,8 @@
 //! them), passed in with [`Menu::apply_with`]. Longer lists are paged
 //! ([`PAGE_ROWS`] rows, then Previous / Next), so no page has more than
 //! [`MAX_ITEMS`] items (ten-foot rule). Rows that would end the ride
-//! (another ride) ask first ([`Page::ConfirmSwitch`]).
+//! (another ride) ask first ([`Page::ConfirmSwitch`]), as do event starts
+//! ([`Page::ConfirmEvent`]); Cancel is focused on both.
 
 use crate::settings::pages::{self as sub, Activate, Row};
 
@@ -74,6 +75,8 @@ pub enum Page {
     ConfirmQuit,
     /// "Change the ride?" before a `ride.switch` line ([`Menu::pending`]).
     ConfirmSwitch,
+    /// "Start the event?" before an `event …` line ([`Menu::pending`]).
+    ConfirmEvent,
 }
 
 /// What an item does when selected.
@@ -89,6 +92,8 @@ pub enum ItemKind {
     Command { line: &'static str, close: bool },
     /// Ask first ([`Page::ConfirmSwitch`]), then run the line and close.
     Ask(&'static str),
+    /// Ask first ([`Page::ConfirmEvent`]), then start the event and close.
+    AskEvent(&'static str),
     /// Run the asked line ([`Menu::pending`]) and close the menu.
     RunPending,
 }
@@ -114,30 +119,18 @@ const TOP_ITEMS: &[Item] = &[
     item("Restart", ItemKind::Open(Page::ConfirmRestart)),
     item("Quit", ItemKind::Open(Page::ConfirmQuit)),
 ];
-/// Ride page: local events (spec §2.3), started at once as console
-/// commands; the menu closes so the countdown is visible.
+/// Ride page: local events (spec §2.3), started as console commands after
+/// a confirmation; the menu closes so the countdown is visible.
 const RIDE_ITEMS: &[Item] = &[
     item(
         "Race: 1 lap / 5 km, 5 bots",
-        ItemKind::Command {
-            line: "event race --bots 5",
-            close: true,
-        },
+        ItemKind::AskEvent("event race --bots 5"),
     ),
     item(
         "Group ride at 150 W",
-        ItemKind::Command {
-            line: "event group --watts 150",
-            close: true,
-        },
+        ItemKind::AskEvent("event group --watts 150"),
     ),
-    item(
-        "Time trial vs your ghost",
-        ItemKind::Command {
-            line: "event tt",
-            close: true,
-        },
-    ),
+    item("Time trial vs your ghost", ItemKind::AskEvent("event tt")),
     item(
         "End the event",
         ItemKind::Command {
@@ -146,6 +139,7 @@ const RIDE_ITEMS: &[Item] = &[
         },
     ),
     item("Change ride", ItemKind::Open(Page::RideChange)),
+    item("Workouts", ItemKind::Open(Page::Sub(sub::Page::Workouts))),
     BACK,
 ];
 /// Ride → Change ride (M3): another world, route or test route.
@@ -206,6 +200,10 @@ const SWITCH_ITEMS: &[Item] = &[
     item("Ride now", ItemKind::RunPending),
     item("Cancel", ItemKind::Back),
 ];
+const EVENT_ITEMS: &[Item] = &[
+    item("Start now", ItemKind::RunPending),
+    item("Cancel", ItemKind::Back),
+];
 
 /// Title, description paragraphs (wrapped to the panel), items and the initially focused item of a page.
 pub struct PageDef {
@@ -228,7 +226,7 @@ impl Page {
                 title: "Ride",
                 text: &[
                     "Local events on this route: everyone lines up at the start, 3-2-1-GO. Races and time trials end at the finish with a results table; a time trial races your best effort (the ghost).",
-                    "Change ride: another world package (free ride or one of its routes) or a test route, without restarting.",
+                    "Change ride: another world package or a test route, without restarting. Workouts: structured workouts in ERG mode.",
                 ],
                 items: RIDE_ITEMS,
                 initial_focus: 0,
@@ -292,6 +290,14 @@ impl Page {
                     "The ride so far is saved and the new one starts at once. Devices stay connected.",
                 ],
                 items: SWITCH_ITEMS,
+                initial_focus: 1,
+            },
+            Page::ConfirmEvent => PageDef {
+                title: "Start the event?",
+                text: &[
+                    "You are moved to the start line for the countdown; a running event ends. The ride recording goes on.",
+                ],
+                items: EVENT_ITEMS,
                 initial_focus: 1,
             },
         }
@@ -497,9 +503,21 @@ impl Menu {
     }
 
     fn ask(&mut self, line: String) -> Effect {
+        self.ask_on(Page::ConfirmSwitch, line)
+    }
+
+    fn ask_on(&mut self, page: Page, line: String) -> Effect {
         self.pending = Some(line);
-        self.push(Page::ConfirmSwitch);
+        self.push(page);
         Effect::None
+    }
+
+    /// Closes the menu and runs `line`.
+    fn run_and_close(&mut self, line: String) -> Effect {
+        self.stack.clear();
+        self.rows.clear();
+        self.pending = None;
+        Effect::Command(line)
     }
 
     fn select(&mut self, i: usize) -> Effect {
@@ -524,12 +542,9 @@ impl Menu {
                 Effect::Command(line.to_owned())
             }
             ItemKind::Ask(line) => self.ask(line.to_owned()),
+            ItemKind::AskEvent(line) => self.ask_on(Page::ConfirmEvent, line.to_owned()),
             ItemKind::RunPending => match self.pending.take() {
-                Some(line) => {
-                    self.stack.clear();
-                    self.rows.clear();
-                    Effect::Command(line)
-                }
+                Some(line) => self.run_and_close(line),
                 None => self.back(),
             },
         }
@@ -555,6 +570,7 @@ impl Menu {
         match self.rows[row].confirm.clone() {
             Some(Activate::Command(line)) => Effect::Command(line),
             Some(Activate::Ask(line)) => self.ask(line),
+            Some(Activate::Run(line)) => self.run_and_close(line),
             Some(Activate::Open(p)) => {
                 self.push(Page::Sub(p));
                 self.rows.clear();
@@ -621,7 +637,7 @@ impl Menu {
 
     fn back(&mut self) -> Effect {
         if self.stack.len() > 1 {
-            if self.page() == Some(Page::ConfirmSwitch) {
+            if matches!(self.page(), Some(Page::ConfirmSwitch | Page::ConfirmEvent)) {
                 self.pending = None;
             }
             self.stack.pop();
@@ -758,7 +774,7 @@ mod tests {
         // The Back item of a page goes up too.
         m.apply(Action::Click(1));
         assert_eq!(m.page(), Some(Page::Ride));
-        assert_eq!(labels(&m)[4..], ["Change ride", "Back"]);
+        assert_eq!(labels(&m)[4..], ["Change ride", "Workouts", "Back"]);
         m.apply(Action::Click(4));
         assert_eq!(m.page(), Some(Page::RideChange));
         assert_eq!(
@@ -772,7 +788,7 @@ mod tests {
         );
         m.apply(Action::Click(3));
         assert_eq!((m.page(), m.focus()), (Some(Page::Ride), 4));
-        m.apply(Action::Click(5));
+        m.apply(Action::Click(6));
         assert_eq!((m.page(), m.focus()), (Some(Page::Top), 1));
         // Back at the top closes.
         assert_eq!(m.apply(Action::Back), Effect::Closed);
@@ -844,23 +860,49 @@ mod tests {
                 "Time trial vs your ghost",
                 "End the event",
                 "Change ride",
+                "Workouts",
                 "Back"
             ]
         );
+        // An event start asks first, with Cancel focused.
+        assert_eq!(m.apply(Action::Confirm), Effect::None);
+        assert_eq!(m.page(), Some(Page::ConfirmEvent));
+        assert_eq!(m.labels(), ["Start now", "Cancel"]);
+        assert_eq!(m.focus(), 1);
+        assert_eq!(m.pending(), Some("event race --bots 5"));
+        // Cancel: back on the Ride page, nothing run.
+        assert_eq!(m.apply(Action::Confirm), Effect::None);
+        assert_eq!((m.page(), m.focus()), (Some(Page::Ride), 0));
+        assert_eq!(m.pending(), None);
+        // Start now: runs the line and closes for the countdown.
+        m.apply(Action::Confirm);
         assert_eq!(
-            m.apply(Action::Confirm),
+            m.apply(Action::Click(0)),
             Effect::Command("event race --bots 5".into())
         );
         assert!(!m.is_open(), "closes for the countdown");
         m.apply(Action::Open);
         m.apply(Action::Click(1));
+        m.apply(Action::Click(2));
+        assert_eq!(m.pending(), Some("event tt"));
+        // Back (Esc) cancels too.
+        m.apply(Action::Back);
+        assert_eq!((m.page(), m.pending()), (Some(Page::Ride), None));
+        m.apply(Action::Click(2));
         assert_eq!(
-            m.apply(Action::Click(2)),
+            m.apply(Action::Click(0)),
             Effect::Command("event tt".into())
+        );
+        // Ending an event is not asked.
+        m.apply(Action::Open);
+        m.apply(Action::Click(1));
+        assert_eq!(
+            m.apply(Action::Click(3)),
+            Effect::Command("event cancel".into())
         );
         m.apply(Action::Open);
         m.apply(Action::Click(1));
-        m.apply(Action::Click(5));
+        m.apply(Action::Click(6));
         assert_eq!(m.page(), Some(Page::Top));
     }
 
@@ -1021,6 +1063,7 @@ mod tests {
             Page::ConfirmRestart,
             Page::ConfirmQuit,
             Page::ConfirmSwitch,
+            Page::ConfirmEvent,
         ] {
             let d = page.def();
             assert!(!d.items.is_empty() && d.items.len() <= 7, "{page:?}");

@@ -16,7 +16,7 @@ impl Plugin for RidersPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RiderEntities>().add_systems(
             PostUpdate,
-            (sync_riders, pedal)
+            (sync_riders, ghost_casts_no_shadow, pedal)
                 .chain()
                 .before(TransformSystems::Propagate),
         );
@@ -28,6 +28,34 @@ impl Plugin for RidersPlugin {
 pub struct Avatar {
     pub id: RiderId,
     pub is_local: bool,
+}
+
+/// Marks a ghost avatar whose parts no longer take part in shadows.
+#[derive(Component)]
+struct ShadowsOff;
+
+/// The translucent ghost neither casts nor receives shadows: a solid
+/// shadow under a see-through bike looks wrong, and its own parts would
+/// darken each other.
+fn ghost_casts_no_shadow(
+    mut commands: Commands,
+    ghosts: Query<(Entity, &Avatar), Without<ShadowsOff>>,
+    children: Query<&Children>,
+    meshes: Query<(), With<Mesh3d>>,
+) {
+    for (e, a) in &ghosts {
+        if a.id != GHOST_ID {
+            continue;
+        }
+        for d in children.iter_descendants(e) {
+            if meshes.contains(d) {
+                commands
+                    .entity(d)
+                    .insert((bevy::light::NotShadowCaster, bevy::light::NotShadowReceiver));
+            }
+        }
+        commands.entity(e).insert(ShadowsOff);
+    }
 }
 
 #[derive(Resource, Default)]
@@ -834,6 +862,38 @@ mod tests {
             .collect();
         assert_eq!(ghost.len(), 1);
         assert!(close(ghost[0], Vec3::new(42.0, 0.0, 1.0)), "{ghost:?}");
+        // No ghost part casts or receives a shadow; the local rider's do.
+        let mut parts = app.world_mut().query_filtered::<(
+            &ChildOf,
+            Has<bevy::light::NotShadowCaster>,
+            Has<bevy::light::NotShadowReceiver>,
+        ), With<Mesh3d>>();
+        let mut avatars = app.world_mut().query::<&Avatar>();
+        let root = |w: &World, mut e: Entity| {
+            while let Some(p) = w.get::<ChildOf>(e) {
+                e = p.parent();
+            }
+            e
+        };
+        let (mut ghost_parts, mut own_parts) = (0, 0);
+        let rows: Vec<_> = parts
+            .iter(app.world())
+            .map(|(c, caster, receiver)| (c.parent(), caster, receiver))
+            .collect();
+        for (parent, caster, receiver) in rows {
+            let a = avatars.get(app.world(), root(app.world(), parent)).unwrap();
+            if a.id == GHOST_ID {
+                assert!(caster && receiver);
+                ghost_parts += 1;
+            } else {
+                assert!(!caster && !receiver);
+                own_parts += 1;
+            }
+        }
+        assert!(
+            ghost_parts > 10 && own_parts > 10,
+            "{ghost_parts} {own_parts}"
+        );
         // Gone with the view's ghost.
         app.world_mut().resource_mut::<RideView>().ghost = None;
         app.update();

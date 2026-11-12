@@ -39,6 +39,8 @@ pub enum Page {
     Rides,
     /// Navi → GPX import: GPX files to match onto the loaded package.
     GpxImport,
+    /// Ride → Workouts: start, skip and stop structured workouts.
+    Workouts,
 }
 
 impl Page {
@@ -67,6 +69,7 @@ impl Page {
             Self::Routes => "Routes",
             Self::Rides => "Rides",
             Self::GpxImport => "GPX import",
+            Self::Workouts => "Workouts",
         }
     }
 
@@ -74,7 +77,12 @@ impl Page {
     pub fn is_ride_page(self) -> bool {
         matches!(
             self,
-            Self::Worlds | Self::World(_) | Self::Routes | Self::Rides | Self::GpxImport
+            Self::Worlds
+                | Self::World(_)
+                | Self::Routes
+                | Self::Rides
+                | Self::GpxImport
+                | Self::Workouts
         )
     }
 
@@ -113,6 +121,9 @@ impl Page {
             Self::GpxImport => &[
                 "GPX files from the gpx folder of the OCW data folder and from Downloads, matched onto the roads of the loaded world package.",
             ],
+            Self::Workouts => &[
+                "Structured workouts in ERG mode: yours from the workouts folder of the OCW data folder (.toml, .erg, .mrc), then the examples. % FTP targets use the rider's FTP (Settings -> Riders).",
+            ],
         }
     }
 }
@@ -126,6 +137,9 @@ pub enum Activate {
     Ask(String),
     /// Open a page.
     Open(Page),
+    /// Run a console command line and close the menu (starting a workout:
+    /// its panel shows at once).
+    Run(String),
 }
 
 /// One row of a page.
@@ -367,7 +381,12 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
             bike_rows(r)
         }
         // From the ride catalog (`ride::pages::rows`).
-        Page::Worlds | Page::World(_) | Page::Routes | Page::Rides | Page::GpxImport => Vec::new(),
+        Page::Worlds
+        | Page::World(_)
+        | Page::Routes
+        | Page::Rides
+        | Page::GpxImport
+        | Page::Workouts => Vec::new(),
         Page::Workshop => {
             let mut out: Vec<Row> = riders
                 .riders
