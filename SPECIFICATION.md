@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.15 – November 2026
+Version 2.16 – November 2026
 
 | Version | Change |
 |---|---|
@@ -34,6 +34,7 @@ Version 2.15 – November 2026
 | 2.13 | Build-history media out of git: one zip per day on the GitHub release `build-history`, day folders git-ignored, history rewritten again (`release/commit-map.txt`) (§11) |
 | 2.14 | Phase 4 models and animation (§2.5, §2.6, §8.1, §14): generated glTF bikes per physics profile and a rigid-part rider (ocw-assets, MIT OR Apache-2.0), asset manifest and validator, rider-on-bike IK pose, riding states (seated, climbing, standing, sprint, coasting) and far LOD at 40 m |
 | 2.15 | `artwork/build-history/` removed from the repository; the build history (zips per day and `index.md`) lives only on the GitHub release `build-history` (§11) |
+| 2.16 | Game audio (M5, §3.3): own audio module (cpal behind an `OutputBackend` trait on its own thread; kira rejected, Bevy audio disabled), output device by name with default fallback and hot-plugging, buses master × music / effects / voice, ride sounds and cues synthesised in code; Settings → Audio, `audio.*` settings and console commands, `--no-audio` (§3.2.1); synthesised sounds are code (§13) |
 
 ---
 
