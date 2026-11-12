@@ -97,6 +97,20 @@ pub fn tick(
         controls.wild,
         dt,
     );
+    stop_at_finish(state, track);
+}
+
+/// At the end of a route that ends ([`Track::finish`]) the rider stops:
+/// distance there, speed 0 (spec §5.2). Before, the distance ran on past
+/// the end while the avatar, gradient and profile stayed at the last point.
+/// Server and prediction share it.
+pub fn stop_at_finish(state: &mut RiderState, track: &dyn Track) {
+    if let Some(end) = track.finish()
+        && state.distance >= end
+    {
+        state.distance = end;
+        state.speed = 0.0;
+    }
 }
 
 #[cfg(test)]

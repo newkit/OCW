@@ -37,6 +37,12 @@ pub trait Track {
     fn extent(&self) -> Option<(f64, f64)> {
         None
     }
+    /// Where the track ends for good: riders stop there (the end of a
+    /// route that is not a loop). `None`: it goes on (loops, free-ride
+    /// paths, which grow ahead of the rider).
+    fn finish(&self) -> Option<f64> {
+        None
+    }
 }
 
 impl Track for Route {
@@ -57,6 +63,9 @@ impl Track for Route {
     }
     fn extent(&self) -> Option<(f64, f64)> {
         (!self.is_loop()).then(|| (0.0, self.length()))
+    }
+    fn finish(&self) -> Option<f64> {
+        (!self.is_loop()).then(|| self.length())
     }
 }
 

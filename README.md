@@ -246,7 +246,11 @@ climb at 1.5–2.1 km) and grass beside the road roll increasingly harder
   `--route loop` (gentle).
 - Real roads: `--route-file data/pilot/vaduz-malbun.route` (from `world-builder
   route`), optionally with `--world data/pilot/liechtenstein.ocwpkg` (terrain,
-  all roads of the region, streamed in 1 km tiles). The data comes
+  all roads of the region, streamed in 1 km tiles; after a teleport the 3 × 3
+  tiles around the rider are there in the next frame). At the end of a route
+  that is not a loop the rider stops (speed 0, the full length in the HUD).
+  `--world` without a route option rides the package's first route, else a
+  free ride. The data comes
   from `scripts/fetch-pilot.sh` and `world-builder` (© OpenStreetMap
   contributors, ODbL).
 - Packages from `world-builder package` also carry the OSM land use and the
@@ -316,7 +320,8 @@ junction and the default exits after it. The chase camera tilts gently with
 the road (uphill it drops behind you and looks up the climb), smoothed and
 capped at 8 degrees (`camera.tilt`). In a tunnel (the road under the
 terrain, e.g. the Steg tunnel on the Vaduz–Malbun route at km 8.8) a simple
-tube is drawn and the camera follows close behind you inside it.
+tube is drawn (cut into the hillside at the portals) and the camera follows
+close behind you inside it.
 
 **Workouts** (spec §2.8): the menu (*Ride → Workouts*), `--workout FILE` or
 `workout start FILE` ride a structured workout in ERG mode; targets in % FTP
@@ -350,7 +355,7 @@ event status | event cancel | event dismiss
   start line - at the start / finish arch on a loop, at the beginning of a
   route that ends - and waits there through the countdown ("Get ready",
   3-2-1, GO!); pedalling does not move you before GO. `--bots N` replaces
-  the field with N bots (twelve strengths, as at the start); without it the
+  the field with N bots (twelve strengths, bikes and kits, as at the start); without it the
   current bots ride. A time trial removes them: you ride alone.
 - The server decides the start, who finished when (to the hundredth of a
   second within the 50 Hz tick) and the ranking; after the first finisher
@@ -396,11 +401,11 @@ event status | event cancel | event dismiss
 | `--bots N` | Number of test riders (default 10; they start in rows of up to three behind you) |
 | `--server HOST[:PORT]` | Ride on a remote `ocw-server --listen` over QUIC (default port 47800) instead of the local server; see [Running the server](#running-the-server) |
 | `--server-cert SHA256` / `--insecure-dev` | Trust the server's certificate by its fingerprint / accept any (only for a server on 127.0.0.1 or ::1) |
-| `--route hills\|loop` | Built-in test route (default `hills`) |
+| `--route hills\|loop` | Built-in test route (default `hills`; with `--world`, a test route only when given) |
 | `--route NAME\|FILE` (with `--world`) | Ride a route of the package by name, or an `ocw-graph-route` file, on the road graph |
 | `--route-gpx PATH` | Ride a GPX track or route, matched onto the `--world` package's roads at the start |
 | `--route-file PATH` | Ride a route file from `world-builder route` (interim format) |
-| `--world PATH\|ID` | World package: a file from `world-builder package`, or a cache id (`europe/liechtenstein`, `ID@VERSION`); with `--route-file`, `--route`, `--route-gpx` or `--free-ride` |
+| `--world PATH\|ID` | World package: a file from `world-builder package`, or a cache id (`europe/liechtenstein`, `ID@VERSION`); with `--route-file`, `--route`, `--route-gpx` or `--free-ride`. Alone it rides the package's first route (section `ROUT`), or a free ride if it has none (the log says which; with `--server` a free ride, as the server's `--world` alone) |
 | `--fetch-world URL` | Download (or install from a directory) a world package into the cache: URL or path of its `manifest.json`; exits unless `--world` is given |
 | `--list-worlds` | List the world packages in the cache and exit |
 | `--world-cache DIR` | World package cache (default `~/.local/share/ocw/worlds`, or `$OCW_WORLD_CACHE`) |
@@ -597,7 +602,7 @@ for now).
 | `riders.remove NAME` | Delete a rider profile |
 | `riders.select NAME` | Choose who rides (Workshop); applies from the next start |
 | `rider.gps` | Your rider's GPS position (also bottom-left in the HUD; route files and world packages only), with a copyable `lat, lon` line |
-| `teleport KM` | *Dev:* move your rider to a distance on the route (free ride: along the path, taking default exits) |
+| `teleport KM` | *Dev:* move your rider to a distance on the route (free ride: along the path, taking default exits). On a route that ends, a distance past the end moves you to the end, where riders stop, and the reply says so; a loop takes any distance (laps on) |
 | `teleport.xz X Z` | *Dev:* free ride: move to the road nearest local x / z metres |
 | `ride.turn left\|right\|straight\|default\|+\|-\|N` | Free ride: choose the exit at the next junction |
 | `ride.uturn` | Free ride: turn round (key U) |

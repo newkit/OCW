@@ -192,6 +192,21 @@ pub fn status_line(view: &RideView) -> String {
     }
 }
 
+/// The control hint at the bottom of `page` (`list_pages` pages of a
+/// list, `depth` pages open).
+pub fn hint(page: Page, list_pages: usize, depth: usize) -> String {
+    format!(
+        "Up/Down move   {}Enter/A select   Esc/B {}",
+        match page {
+            Page::Sub(p) if p.is_ride_page() && list_pages > 1 => "Left/Right page   ",
+            Page::Sub(p) if p.is_ride_page() => "",
+            Page::Sub(_) => "Left/Right change   Q/E, LB/RB tab   ",
+            _ => "",
+        },
+        if depth > 1 { "back" } else { "close" }
+    )
+}
+
 /// The rows of a Settings sub page, the Workshop or a Ride / Navi list
 /// (defaults without the settings or ride plugin, e.g. in tests of the
 /// menu alone).
@@ -272,18 +287,7 @@ fn write_view(
                 text: def.text.iter().map(|&s| s.into()).collect(),
                 items: menu.labels(),
                 focused: menu.focus(),
-                hint: format!(
-                    "Up/Down move   {}Enter/A select   Esc/B {}",
-                    match page {
-                        Page::Sub(p) if p.is_ride_page() && menu.list_pages() > 1 => {
-                            "Left/Right page   "
-                        }
-                        Page::Sub(p) if p.is_ride_page() => "",
-                        Page::Sub(_) => "Left/Right change   Q/E, LB/RB tab   ",
-                        _ => "",
-                    },
-                    if menu.depth() > 1 { "back" } else { "close" }
-                ),
+                hint: hint(page, menu.list_pages(), menu.depth()),
             }
         }
     };
@@ -298,6 +302,90 @@ mod tests {
     use clap::Parser;
     use ocw_render::console::ConsoleCorePlugin;
     use ocw_world::Route;
+
+    /// Every sub page (a new one must be added here: the match below does
+    /// not compile otherwise).
+    fn all_sub_pages() -> Vec<settings_pages::Page> {
+        use settings_pages::Page::*;
+        let all = vec![
+            Controls,
+            Trainer,
+            Strava,
+            Display,
+            Audio,
+            Riders,
+            Rider(0),
+            Workshop,
+            Bike(0),
+            Worlds,
+            World(0),
+            Routes,
+            Rides,
+            GpxImport,
+            Workouts,
+            Voice,
+            VoiceDevices,
+            VoiceParticipants,
+        ];
+        for p in &all {
+            match p {
+                Controls | Trainer | Strava | Display | Audio | Riders | Rider(_) | Workshop
+                | Bike(_) | Worlds | World(_) | Routes | Rides | GpxImport | Workouts | Voice
+                | VoiceDevices | VoiceParticipants => {}
+            }
+        }
+        all
+    }
+
+    /// Regression (scene `menu-ride`): the Ride page ran off the bottom of
+    /// a 1280x720 window and "Back" was cut off. Every page fits into the
+    /// panel at 16:9 (all sizes are in % of the window height, so this
+    /// holds for 1280x720 and every larger 16:9 window) with all its text;
+    /// sub pages with as many items as a page can have (paged lists).
+    #[test]
+    fn every_menu_page_fits_a_16_9_window_with_its_text() {
+        use ocw_render::menu::{PANEL_MAX_VH, fitted_paragraphs, page_height_vh};
+        let aspect = 16.0 / 9.0;
+        let check = |view: MenuView| {
+            let h = page_height_vh(&view, aspect, view.text.len());
+            assert!(h <= PANEL_MAX_VH, "{}: {h:.1} vh", view.title);
+            assert_eq!(fitted_paragraphs(&view, aspect), view.text.len());
+        };
+        let pages = [
+            Page::Top,
+            Page::Ride,
+            Page::RideChange,
+            Page::Navi,
+            Page::Settings,
+            Page::ConfirmRestart,
+            Page::ConfirmQuit,
+            Page::ConfirmSwitch,
+            Page::ConfirmEvent,
+        ];
+        let sub = all_sub_pages().into_iter().map(Page::Sub);
+        for page in pages.into_iter().chain(sub) {
+            let def = page.def();
+            let items: Vec<String> = match page {
+                // A full page of a paged list: rows, Previous, Next, Back.
+                Page::Sub(_) => (0..model::MAX_ITEMS)
+                    .map(|i| format!("Setting {i}:  < some value >"))
+                    .collect(),
+                _ => def.items.iter().map(|i| i.label.to_string()).collect(),
+            };
+            check(MenuView {
+                open: true,
+                title: def.title.into(),
+                status: match page {
+                    Page::Top => "250 W   32.4 km/h   Trainer: virtual (SIM)".into(),
+                    _ => String::new(),
+                },
+                text: def.text.iter().map(|&s| s.into()).collect(),
+                items,
+                focused: 0,
+                hint: hint(page, 2, 3),
+            });
+        }
+    }
 
     /// The desktop's ride, input and menu plugins without a window: a
     /// stepped local server (as in frame capture), the virtual trainer.

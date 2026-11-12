@@ -133,7 +133,7 @@ impl Page {
             Self::Rider(_) => &["Changes apply from the next start (Restart)."],
             Self::Trainer => &["Devices, SIM difficulty and the virtual trainer."],
             Self::Strava => &[
-                "Uploads rides to Strava after saving when an account is linked (needs API credentials, see README); the sync state is in Navi -> Rides. Later (Phase 5): upload through the OCW backend, Strava routes as GPX routes.",
+                "Uploads saved rides to Strava when an account is linked (API credentials: see README); the sync state is in Navi -> Rides.",
             ],
             Self::Audio => &[
                 "Sounds are made by OCW itself; Enter on a volume plays a test sound. Output: the device (default = the system's).",
@@ -151,7 +151,7 @@ impl Page {
                 "GPX files from the gpx folder of the OCW data folder and from Downloads, matched onto the roads of the loaded world package.",
             ],
             Self::Voice => &[
-                "Voice chat is always on, like a call: on shared rides you join automatically. M mutes your microphone, Shift+M the voices (gamepad: Select, R3).",
+                "Voice chat is always on, like a call: shared rides join you automatically. M mutes your microphone, Shift+M the voices (pad: Select, R3).",
             ],
             Self::VoiceDevices => &[
                 "Microphone and speaker for voice chat; a missing device falls back to the default.",
@@ -160,7 +160,7 @@ impl Page {
                 &["Riders in the voice room. Confirm mutes or unmutes one for you."]
             }
             Self::Workouts => &[
-                "Structured workouts in ERG mode: yours from the workouts folder of the OCW data folder (.toml, .erg, .mrc), then the examples. % FTP targets use the rider's FTP (Settings -> Riders).",
+                "Structured workouts in ERG mode: yours from the workouts folder (.toml, .erg, .mrc), then the examples. % FTP targets use the rider's FTP.",
             ],
         }
     }

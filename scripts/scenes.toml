@@ -276,3 +276,34 @@ args = ["--route", "hills", "--bots", "4"]
 at = ["2=menu open", "2.4=menu down", "2.8=menu down", "3.2=menu down", "3.6=menu select"]
 shot = 5
 
+
+[[scene]]
+name = "event-bots"
+description = "Local group ride with 6 bots on the Hills test route, orbit camera from the front: every event bot on its own bike and kit"
+args = ["--route", "hills", "--bots", "0"]
+at = ["1=event group --bots 6", "1.5=camera.orbit 160 18 14"]
+shot = 6
+
+[[scene]]
+name = "teleport-video"
+description = "Video: teleport from Vaduz to km 5 of the Vaduz-Malbun route at 4 s; the near terrain and road tiles are there in the first frame after the jump"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "250"]
+at = ["4=teleport 5.0"]
+warmup = 3
+video = 3
+
+[[scene]]
+name = "route-end-teleport"
+description = "teleport 15 on the 14 km Vaduz-Malbun route: clamped to the finish in Malbun, the console reports it"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "250"]
+at = ["2.5=teleport 15", "2.6=console open"]
+shot = 8
+
+[[scene]]
+name = "world-only"
+description = "--world without a route option: the package's first route (else free ride) instead of the built-in test route in the hillside"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--bots", "0"]
+shot = 8

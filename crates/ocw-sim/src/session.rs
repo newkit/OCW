@@ -602,13 +602,15 @@ impl Session {
         Ok(())
     }
 
-    /// Moves a rider to `distance` metres (dev command, local server only).
-    /// In free ride only forwards along the path (junctions take their
-    /// default exits on the way).
-    pub fn teleport(&mut self, id: RiderId, distance: f64) -> bool {
-        let Some(r) = self.riders.get_mut(&id) else {
-            return false;
-        };
+    /// Moves a rider to `distance` metres (dev command, local server
+    /// only); the distance moved to, `None` for an unknown rider. In free
+    /// ride only forwards along the path (junctions take their default
+    /// exits on the way). On a route that ends, a distance past its end is
+    /// clamped to the end ([`Track::finish`], where riders stop); a loop
+    /// takes any distance (it is that many laps on).
+    pub fn teleport(&mut self, id: RiderId, distance: f64) -> Option<f64> {
+        let finish = self.route.finish();
+        let r = self.riders.get_mut(&id)?;
         match &mut r.path {
             Some(path) => {
                 if let Some(i) = path.extend(distance, &mut |j| j.default) {
@@ -616,9 +618,15 @@ impl Session {
                 }
                 r.state.distance = distance.max(path.begin_m());
             }
-            None => r.state.distance = distance.max(0.0),
+            None => {
+                let d = distance.max(0.0);
+                r.state.distance = finish.map_or(d, |end| d.min(end));
+                if finish.is_some_and(|end| r.state.distance >= end) {
+                    r.state.speed = 0.0;
+                }
+            }
         }
-        true
+        Some(r.state.distance)
     }
 
     /// Moves a free-ride rider to the road nearest the point (x, z): a new
@@ -985,6 +993,48 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A straight 1 km route that ends (not a loop).
+    fn ending_route() -> Route {
+        let pts = (0..=100).map(|i| [f64::from(i) * 10.0, 0.0, 0.0]).collect();
+        Route::from_points("end", "End", pts, false, 6.0).unwrap()
+    }
+
+    /// Regression: `teleport 15` on the 14 km Vaduz-Malbun route put the
+    /// rider at 15 km; the HUD counted on to 18 km while the avatar, the
+    /// gradient and the profile stayed at the end and the speed kept
+    /// rising. Now a teleport past the end goes to the end, and riders stop
+    /// there (server and prediction alike); loops take any distance.
+    #[test]
+    fn teleport_and_riding_stop_at_the_end_of_a_route() {
+        let mut s = Session::new(ending_route());
+        let id = s.add_rider("a", RiderProfile::default());
+        pedal(&mut s, id, 300.0);
+        assert_eq!(s.teleport(id, 1500.0), Some(1000.0));
+        assert_eq!(s.teleport(id, -20.0), Some(0.0));
+        assert_eq!(s.teleport(RiderId(99), 10.0), None);
+        // Riding into the end: stopped there, however long one pedals.
+        assert_eq!(s.teleport(id, 980.0), Some(980.0));
+        for _ in 0..(ocw_core::SIM_TICK_HZ as usize * 20) {
+            s.step();
+        }
+        let st = s.rider_state(id).unwrap();
+        assert_eq!(st.distance, 1000.0);
+        assert_eq!(st.speed, 0.0);
+        // The client's prediction stops there too.
+        let mut p = crate::prediction::Predictor::new(RiderProfile::default(), st);
+        let route = ending_route();
+        for _ in 0..100 {
+            p.step(&route, 300.0);
+        }
+        assert_eq!(p.state().distance, 1000.0);
+        assert_eq!(p.state().speed, 0.0);
+        // A loop: any distance (laps on).
+        let mut s = Session::new(Route::test_loop());
+        let id = s.add_rider("a", RiderProfile::default());
+        let len = Route::test_loop().length();
+        assert_eq!(s.teleport(id, len + 100.0), Some(len + 100.0));
+    }
 
     #[test]
     fn stale_inputs_are_ignored() {

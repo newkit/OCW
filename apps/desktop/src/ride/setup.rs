@@ -54,13 +54,13 @@ pub fn build(args: &Args) -> Result<RideSetup, String> {
     let choice = RideChoice::from_args(args);
     let (route, terrain_base) = match &args.route_file {
         Some(path) => load_route_file(path)?,
-        None => match test_route(&args.route) {
+        None => match test_route(args.route_name()) {
             Some(r) => (r, None),
             None if args.world.is_some() => (Route::test_hills(), None),
             None => {
                 return Err(format!(
                     "--route {}: not a test route (hills, loop); package routes need --world",
-                    args.route
+                    args.route_name()
                 ));
             }
         },
@@ -84,13 +84,43 @@ pub fn build(args: &Args) -> Result<RideSetup, String> {
         .graph()
         .cloned()
         .map(|graph| Arc::new(RoadNetwork::new(graph).with_package_name(hood.set.name())));
+    // `--world` alone: the package's first route, else a free ride.
+    let world_alone = args.world_alone();
+    let alone;
+    let args = if world_alone {
+        // On a remote server: a free ride, as `ocw-server --world` alone.
+        let first = match &args.server {
+            Some(_) => None,
+            None => pkg.routes.first().map(|r| r.name.as_str()),
+        };
+        let (resolved, note) = world_alone_ride(args, first, net.is_some());
+        println!("{note}");
+        alone = resolved;
+        &alone
+    } else {
+        args
+    };
+    setup.choice = RideChoice::from_args(args);
     if args.free_ride || args.graph_route() {
         let Some(net) = &net else {
             return Err(format!(
                 "{spec}: no road graph in this world package; rebuild it with `world-builder package` (format OCWPKG02)"
             ));
         };
-        setup.free = Some(free_ride_setup(args, pkg, net.clone())?);
+        let free = match free_ride_setup(args, pkg, net.clone()) {
+            // The package's own first route does not fit its graph: a free
+            // ride rather than no ride.
+            Err(e) if world_alone && args.route.is_some() => {
+                eprintln!("{e}; free ride instead");
+                let mut fallback = args.clone();
+                fallback.route = None;
+                fallback.free_ride = true;
+                setup.choice = RideChoice::from_args(&fallback);
+                free_ride_setup(&fallback, pkg, net.clone())?
+            }
+            other => other?,
+        };
+        setup.free = Some(free);
     }
     let routes = pkg
         .routes
@@ -106,6 +136,31 @@ pub fn build(args: &Args) -> Result<RideSetup, String> {
         origin,
     });
     Ok(setup)
+}
+
+/// What `--world` without a route option rides ([`Args::world_alone`]):
+/// the package's first route (section `ROUT`), else a free ride; a
+/// package without a road graph keeps the default test route. The ride
+/// options for it and a line for the log.
+pub fn world_alone_ride(args: &Args, first_route: Option<&str>, has_graph: bool) -> (Args, String) {
+    let mut a = args.clone();
+    let note = match (has_graph, first_route) {
+        (false, _) => format!(
+            "--world without a route option: the package has no road graph, riding the test route {}",
+            args.route_name()
+        ),
+        (true, Some(name)) => {
+            a.route = Some(name.to_string());
+            format!(
+                "--world without a route option: riding the package's first route {name:?} (--free-ride for a free ride)"
+            )
+        }
+        (true, None) => {
+            a.free_ride = true;
+            "--world without a route option: the package has no routes, free ride".to_string()
+        }
+    };
+    (a, note)
 }
 
 /// The length of a stored route (sum of its edge steps).
@@ -220,15 +275,15 @@ fn graph_route_plan(
         println!("{}", report.summary());
         return Ok(report.plan);
     }
-    let file = std::path::Path::new(&args.route);
+    let file = std::path::Path::new(args.route_name());
     if file.is_file() {
         return read_graph_route(file, net, &pkg.name);
     }
-    let route = pkg.route(&args.route).ok_or_else(|| {
+    let route = pkg.route(args.route_name()).ok_or_else(|| {
         let names: Vec<&str> = pkg.routes.iter().map(|r| r.name.as_str()).collect();
         format!(
             "no route {:?} in {} (it has: {}); add one with `world-builder gpx`",
-            args.route,
+            args.route_name(),
             pkg.name,
             if names.is_empty() {
                 "none".to_string()
@@ -288,6 +343,7 @@ pub fn load_route_file(path: &std::path::Path) -> Result<(Route, Option<Elevatio
 
 #[cfg(test)]
 mod tests {
+    use super::super::choice::WorldMode;
     use super::*;
     use clap::Parser;
 
@@ -321,6 +377,66 @@ mod tests {
                 "--free-ride"
             ]))
             .is_err()
+        );
+    }
+
+    /// Regression: `--world PKG` without a route option rode the built-in
+    /// hills test route through the package's terrain (the camera inside a
+    /// hillside). Now it rides the package's first route, else a free
+    /// ride; any route option keeps winning (the kiosk adds its own
+    /// --route-file to a --world from the defaults file).
+    #[test]
+    fn a_world_alone_rides_its_first_route_or_free() {
+        let alone = args(&["--world", "w.ocwpkg"]);
+        assert!(alone.world_alone());
+        assert_eq!(
+            RideChoice::from_args(&alone),
+            RideChoice::World {
+                world: "w.ocwpkg".into(),
+                mode: WorldMode::TestRoute("hills".into())
+            },
+            "before the package is loaded"
+        );
+        let (a, note) = world_alone_ride(&alone, Some("Vaduz - Malbun"), true);
+        assert!(a.graph_route() && !a.free_ride);
+        assert_eq!(a.route.as_deref(), Some("Vaduz - Malbun"));
+        assert!(note.contains("first route \"Vaduz - Malbun\""), "{note}");
+        assert_eq!(
+            RideChoice::from_args(&a),
+            RideChoice::World {
+                world: "w.ocwpkg".into(),
+                mode: WorldMode::Route("Vaduz - Malbun".into())
+            }
+        );
+        let (a, note) = world_alone_ride(&alone, None, true);
+        assert!(a.free_ride && !a.graph_route(), "{note}");
+        assert!(note.contains("free ride"), "{note}");
+        // Without a road graph: the test route as before.
+        let (a, note) = world_alone_ride(&alone, Some("R"), false);
+        assert!(
+            !a.free_ride && !a.graph_route() && a.route.is_none(),
+            "{note}"
+        );
+        // Any ride option is not "alone".
+        for more in [
+            &["--route-file", "r.route"][..],
+            &["--route", "hills"],
+            &["--route", "Valley"],
+            &["--route-gpx", "t.gpx"],
+            &["--free-ride"],
+            &["--start", "1,2"],
+        ] {
+            let v: Vec<&str> = ["--world", "w.ocwpkg"]
+                .iter()
+                .chain(more)
+                .copied()
+                .collect();
+            assert!(!args(&v).world_alone(), "{more:?}");
+        }
+        // Without --world the default test route.
+        assert_eq!(
+            RideChoice::from_args(&args(&[])),
+            RideChoice::TestRoute("hills".into())
         );
     }
 

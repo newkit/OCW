@@ -33,7 +33,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{
     Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
 };
-use bevy::tasks::{AsyncComputeTaskPool, Task, futures::check_ready};
+use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures::check_ready};
 use ocw_world::buildings::{Building, BuildingKind, Roof, triangulate};
 use ocw_world::graph::RoadClass;
 use ocw_world::landuse::{LandClass, LandUseTile};
@@ -44,9 +44,17 @@ use ocw_world::{Frame, WorldSet};
 use crate::RideView;
 use crate::camera::{CameraInteraction, CameraObstacles, ObstacleLayer, SolidFootprints};
 use crate::see_through::{SeeThroughMaterial, see_through};
+use crate::tunnel_cut::{TerrainMaterial, TunnelCut, terrain_material};
 
 /// Tiles kept around the rider (radius in tiles; 2 = 5 × 5).
 pub const STREAM_RADIUS: i32 = 2;
+/// The rider moving farther than this between two frames is a jump
+/// (teleport, start of a ride): the near tiles are then built and uploaded
+/// at once ([`urgent_tiles`]).
+pub const JUMP_M: f64 = 200.0;
+/// After a jump, the tiles up to this ring around the rider (1 = 3 × 3)
+/// are there in the next frame.
+pub const URGENT_RING: i32 = 1;
 /// Road edge faces reach this far down (covers the terrain clearance).
 const EDGE_DEPTH_M: f32 = 2.0;
 
@@ -929,7 +937,8 @@ fn outline_centroid(outline: &[[f32; 2]]) -> [f64; 2] {
 
 #[derive(Resource)]
 struct PackageMaterials {
-    /// Terrain and roads (camera-solid).
+    /// Roads and buildings (camera-solid; the terrain has its own
+    /// [`TerrainMaterial`] per tile).
     vertex_coloured: Handle<StandardMaterial>,
     /// Trees: the same, but see-through for the camera (they fade out where
     /// they block the view instead of moving it).
@@ -969,6 +978,10 @@ struct TileStreamer {
     ready: VecDeque<(TileId, TileMeshes)>,
     /// World set generation the loaded tiles were clipped for.
     generation: u64,
+    /// The rider's position in the last frame (jump detection).
+    last_position: Option<[f64; 2]>,
+    /// Tiles at the front of `ready` to upload in this frame (after a jump).
+    urgent: usize,
 }
 
 /// Neighbour tiles being loaded.
@@ -1007,6 +1020,30 @@ fn rider_position(view: &RideView) -> Option<[f64; 2]> {
 /// The tiles to show around `p` (home metres), nearest first: of every
 /// package with loaded tiles, those within [`STREAM_RADIUS`].
 pub fn wanted_tiles(set: &WorldSet, p: [f64; 2]) -> Vec<TileId> {
+    wanted_tile_rings(set, p)
+        .into_iter()
+        .map(|(_, id)| id)
+        .collect()
+}
+
+/// The tiles [`urgent_tiles`] builds at once after a jump: of the
+/// [`wanted_tiles`], those up to [`URGENT_RING`], nearest first.
+pub fn urgent_tiles(set: &WorldSet, p: [f64; 2]) -> Vec<TileId> {
+    wanted_tile_rings(set, p)
+        .into_iter()
+        .filter(|&(ring, _)| ring <= URGENT_RING)
+        .map(|(_, id)| id)
+        .collect()
+}
+
+/// Whether the rider moved from `last` to `p` by a jump ([`JUMP_M`]); the
+/// first position (no `last`) is one too.
+pub fn is_jump(last: Option<[f64; 2]>, p: [f64; 2]) -> bool {
+    last.is_none_or(|q| (p[0] - q[0]).hypot(p[1] - q[1]) > JUMP_M)
+}
+
+/// [`wanted_tiles`] with their ring around the rider.
+fn wanted_tile_rings(set: &WorldSet, p: [f64; 2]) -> Vec<(i32, TileId)> {
     let mut out: Vec<(i32, TileId)> = Vec::new();
     for (i, m) in set.members().iter().enumerate() {
         let Some(pkg) = m.package() else {
@@ -1026,7 +1063,7 @@ pub fn wanted_tiles(set: &WorldSet, p: [f64; 2]) -> Vec<TileId> {
         }
     }
     out.sort_by_key(|&(ring, (i, _))| (ring, i));
-    out.into_iter().map(|(_, id)| id).collect()
+    out
 }
 
 /// Tiles to drop: of packages without loaded tiles, or too far away.
@@ -1147,11 +1184,45 @@ fn stream_tiles(
             }
         }
     }
-    for id in wanted_tiles(set, p) {
+    let jumped = is_jump(streamer.last_position, p);
+    streamer.last_position = Some(p);
+    let wanted = wanted_tiles(set, p);
+    if jumped {
+        // Work for the old place is dropped (its tiles go below).
+        streamer.building.retain(|id, _| wanted.contains(id));
+        streamer.ready.retain(|(id, _)| wanted.contains(id));
+    }
+    for &id in &wanted {
         if streamer.loaded.contains_key(&id) || streamer.building.contains_key(&id) {
             continue;
         }
         streamer.building.insert(id, build_task(set, id));
+    }
+    if jumped {
+        // A teleport (or the start): the 3 × 3 tiles around the rider are
+        // built now – their tasks run in parallel on the task pool, this
+        // frame waits for them – and uploaded in this frame, so the ground
+        // is there in the first frame at the new place instead of tile by
+        // tile over half a second (spec §4.5).
+        let urgent: Vec<TileId> = urgent_tiles(set, p)
+            .into_iter()
+            .filter(|id| !streamer.loaded.contains_key(id))
+            .collect();
+        let mut done = Vec::new();
+        for id in urgent {
+            if let Some(task) = streamer.building.remove(&id)
+                && let Some(meshes) = block_on(task)
+            {
+                done.push((id, meshes));
+            }
+        }
+        streamer
+            .ready
+            .retain(|(id, _)| !done.iter().any(|(d, _)| d == id));
+        streamer.urgent = done.len();
+        for t in done.into_iter().rev() {
+            streamer.ready.push_front(t);
+        }
     }
     let ids: Vec<TileId> = streamer.building.keys().copied().collect();
     for id in ids {
@@ -1182,12 +1253,48 @@ fn upload_tiles(
     materials: Res<PackageMaterials>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
-    mut standard: ResMut<Assets<StandardMaterial>>,
+    mut terrain: ResMut<Assets<TerrainMaterial>>,
     mut obstacles: ResMut<CameraObstacles>,
+    tunnels: Option<Res<crate::tunnel::Tunnels>>,
 ) {
-    let Some((id, mut t)) = streamer.ready.pop_front() else {
-        return;
-    };
+    let no_cut = TunnelCut::default();
+    let cut = tunnels.as_deref().map_or(&no_cut, |t| &t.cut);
+    // One tile per frame, all urgent ones after a jump.
+    let count = std::mem::take(&mut streamer.urgent).max(1);
+    for _ in 0..count {
+        let Some((id, t)) = streamer.ready.pop_front() else {
+            return;
+        };
+        upload_tile(
+            &mut commands,
+            &world,
+            &mut streamer,
+            &materials,
+            (&mut meshes, &mut images, &mut terrain),
+            &mut obstacles,
+            cut,
+            id,
+            t,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn upload_tile(
+    commands: &mut Commands,
+    world: &PackageWorld,
+    streamer: &mut TileStreamer,
+    materials: &PackageMaterials,
+    (meshes, images, terrain): (
+        &mut Assets<Mesh>,
+        &mut Assets<Image>,
+        &mut Assets<TerrainMaterial>,
+    ),
+    obstacles: &mut CameraObstacles,
+    cut: &TunnelCut,
+    id: TileId,
+    mut t: TileMeshes,
+) {
     let Some(member) = world.set.members().get(id.0) else {
         return;
     };
@@ -1213,16 +1320,17 @@ fn upload_tiles(
     }
     let mat = materials.vertex_coloured.clone();
     // The tile's own terrain material with its land-use colour map (freed
-    // with the tile's entities).
-    let terrain_mat = match t.colour_map.take() {
-        Some(map) => standard.add(StandardMaterial {
+    // with the tile's entities), with the tunnel tubes cut out
+    // (`tunnel_cut`).
+    let terrain_mat = terrain.add(terrain_material(
+        StandardMaterial {
             base_color: Color::WHITE,
-            base_color_texture: Some(images.add(map.image())),
+            base_color_texture: t.colour_map.take().map(|map| images.add(map.image())),
             perceptual_roughness: 1.0,
             ..default()
-        }),
-        None => mat.clone(),
-    };
+        },
+        cut,
+    ));
     let parent = commands
         .spawn((
             frame_transform(&frame),
@@ -1556,6 +1664,107 @@ mod tests {
             far_tiles(&set, [0.0, 50.0], &loaded).len(),
             loaded.iter().filter(|t| t.0 == 1).count()
         );
+    }
+
+    #[test]
+    fn jumps_and_urgent_tiles() {
+        assert!(is_jump(None, [0.0, 0.0]));
+        assert!(!is_jump(Some([0.0, 0.0]), [3.0, 4.0]));
+        assert!(is_jump(Some([0.0, 0.0]), [0.0, JUMP_M + 1.0]));
+        let set = two_packages();
+        let urgent = urgent_tiles(&set, [-150.0, 50.0]);
+        // Around home tile −2: tiles −2 and −1, nearest first (the
+        // neighbour's tiles are farther).
+        assert_eq!(
+            urgent,
+            vec![(0, TileKey { x: -2, z: 0 }), (0, TileKey { x: -1, z: 0 })]
+        );
+        let wanted = wanted_tiles(&set, [-150.0, 50.0]);
+        assert!(urgent.iter().all(|u| wanted.contains(u)));
+    }
+
+    /// Regression: for about half a second after a teleport the ground
+    /// was missing (only the sky and the route's road): the tiles around
+    /// the new place were built on background tasks and uploaded one per
+    /// frame. Now the 3 × 3 tiles around the rider are there in the first
+    /// frame after the jump.
+    #[test]
+    fn after_a_teleport_the_near_tiles_are_there_in_the_next_frame() {
+        use ocw_core::RiderId;
+        use ocw_world::Route;
+        let mut pkg = package();
+        let tile = pkg.tiles[&TileKey { x: 0, z: 0 }].clone();
+        pkg.tiles = (0..10)
+            .map(|x| {
+                let key = TileKey { x, z: 0 };
+                (
+                    key,
+                    Tile {
+                        key,
+                        ..tile.clone()
+                    },
+                )
+            })
+            .collect();
+        let pts = (0..=100)
+            .map(|i| [f64::from(i) * 10.0, 5.0, 50.0])
+            .collect();
+        let route = Route::from_points("r", "R", pts, false, 6.0).unwrap();
+        let mut view = RideView::new(route);
+        view.riders.push(crate::RiderView {
+            id: RiderId(1),
+            name: "me".into(),
+            state: ocw_sim::RiderState {
+                distance: 50.0,
+                ..default()
+            },
+            power_w: 0.0,
+            cadence_rpm: None,
+            heart_rate_bpm: None,
+            is_local: true,
+            bike: Default::default(),
+            look: None,
+        });
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Mesh>()
+            .init_asset::<Image>()
+            .init_asset::<StandardMaterial>()
+            .init_asset::<SeeThroughMaterial>()
+            .init_asset::<TerrainMaterial>()
+            .init_resource::<CameraObstacles>()
+            .insert_resource(PackageWorld::single(Arc::new(pkg)))
+            .insert_resource(view)
+            .add_plugins(PackagePlugin);
+        let loaded = |app: &App| -> Vec<i32> {
+            let mut x: Vec<i32> = app
+                .world()
+                .resource::<TileStreamer>()
+                .loaded
+                .keys()
+                .map(|(_, k)| k.x)
+                .collect();
+            x.sort();
+            x
+        };
+        // The start is a jump too: tiles 0 and 1 at once.
+        app.update();
+        assert_eq!(loaded(&app), vec![0, 1]);
+        // Teleport to 850 m (tile 8): its ring is there after one frame.
+        app.world_mut().resource_mut::<RideView>().riders[0]
+            .state
+            .distance = 850.0;
+        app.update();
+        let now = loaded(&app);
+        for x in 7..=9 {
+            assert!(now.contains(&x), "{now:?}");
+        }
+        assert!(!now.contains(&0) && !now.contains(&1), "{now:?}");
+        // With their meshes.
+        let streamer = app.world().resource::<TileStreamer>();
+        let e = streamer.loaded[&(0, TileKey { x: 8, z: 0 })];
+        let children = app.world().get::<Children>(e).expect("tile meshes");
+        assert!(!children.is_empty());
     }
 
     #[test]

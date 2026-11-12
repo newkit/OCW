@@ -123,55 +123,15 @@ pub fn tunnel_camera_wanted(stretches: &[(f64, f64)], distance: f64) -> bool {
         .any(|&(a, b)| distance >= a - ENTER_AHEAD_M && distance <= b + LEAVE_AFTER_M)
 }
 
-/// Rider head height above the road (m).
-pub const HEAD_M: f64 = 1.7;
-/// Lowest camera height above the road in a tunnel (m).
-pub const TUNNEL_CAM_MIN_M: f64 = 0.25;
-/// The camera stays this far below the terrain at a portal (m).
-const UNDER_TERRAIN_M: f64 = 0.3;
-
 /// Eye and look-at point of the camera in a tunnel: on the road (half the
 /// rider's lateral offset) behind the rider, inside the tube even in a
-/// curve.
-///
-/// At the entry portal the hillside slopes over the road. Once the rider's
-/// wheels are under the terrain (cover over [`TUNNEL_CAM_MIN_M`] + 0.3 m),
-/// a camera above the terrain would look at the hillside (its front faces)
-/// instead of the rider, so the eye moves closer to the rider (at most 1 m
-/// behind), to the first point behind it with that much cover, and stays
-/// 0.3 m under the terrain there: seen from below, the terrain is culled
-/// (back faces) and the rider is in view. At the exit the eye is under the
-/// terrain anyway.
-pub fn tunnel_eye(
-    track: &dyn Track,
-    ground: &dyn Fn(f64, f64) -> Option<f64>,
-    distance: f64,
-    lateral: f64,
-) -> (Vec3, Vec3) {
+/// curve. At the portals the terrain inside the tube is cut away
+/// ([`crate::tunnel_cut`]), so the eye stays there too (it used to dive
+/// under the hillside, close behind the rider, which still showed the
+/// hillside for a few frames and then jumped).
+pub fn tunnel_eye(track: &dyn Track, distance: f64, lateral: f64) -> (Vec3, Vec3) {
     let at = |d: f64| to_vec3(track.sample(d).offset_position(lateral * 0.5));
-    let cover_at = |d: f64, lateral: f64| {
-        let p = track.sample(d).offset_position(lateral);
-        ground(p[0], p[2]).map(|h| h - p[1])
-    };
-    let cover = |d: f64| cover_at(d, lateral * 0.5);
-    let height = f64::from(TUNNEL_CAM_HEIGHT_M);
-    let mut eye_d = distance - TUNNEL_CAM_BEHIND_M;
-    let mut eye_h = height;
-    let need = TUNNEL_CAM_MIN_M + UNDER_TERRAIN_M;
-    let under = |c: Option<f64>| c.is_some_and(|c| c > need);
-    if under(cover_at(distance, lateral)) || under(cover(distance)) {
-        // The first point from the full distance on with enough cover.
-        let steps = ((TUNNEL_CAM_BEHIND_M - 1.0) / 0.5) as usize;
-        if let Some((d, c)) = (0..=steps)
-            .map(|i| distance - TUNNEL_CAM_BEHIND_M + i as f64 * 0.5)
-            .filter_map(|d| cover(d).map(|c| (d, c)))
-            .find(|&(_, c)| c >= need)
-        {
-            eye_d = d;
-            eye_h = (c - UNDER_TERRAIN_M).clamp(TUNNEL_CAM_MIN_M, height);
-        }
-    }
-    let eye = at(eye_d) + Vec3::Y * eye_h as f32;
+    let eye = at(distance - TUNNEL_CAM_BEHIND_M) + Vec3::Y * TUNNEL_CAM_HEIGHT_M;
     let target = at(distance + TUNNEL_LOOK_AHEAD_M) + Vec3::Y * 1.2;
     (eye, target)
 }
@@ -272,6 +232,8 @@ pub fn tube_mesh(track: &dyn Track, from: f64, to: f64) -> Mesh {
 pub struct Tunnels {
     /// Tunnels (from, to distance) on the local rider's track near the rider.
     pub stretches: Vec<(f64, f64)>,
+    /// Their tubes as cut into the terrain near the rider (the portals).
+    pub cut: crate::tunnel_cut::TunnelCut,
     /// Spawned tubes by their end points (rounded to 0.1 m).
     tubes: HashMap<[i64; 4], Entity>,
     since_scan: f32,
@@ -332,6 +294,14 @@ fn update_tunnels(
         ),
         None => Vec::new(),
     };
+    let pieces = match &ground {
+        Some(g) => crate::tunnel_cut::cut_pieces(track, &|x, z| (g.0)(x, z), &stretches, d),
+        None => Vec::new(),
+    };
+    let cut = crate::tunnel_cut::TunnelCut::new(&pieces);
+    if cut != tunnels.cut {
+        tunnels.cut = cut;
+    }
     let wanted: HashMap<[i64; 4], (f64, f64)> =
         stretches.iter().map(|&s| (tube_key(track, s), s)).collect();
     tunnels.tubes.retain(|key, entity| {
@@ -474,38 +444,25 @@ mod tests {
     #[test]
     fn the_tunnel_eye_is_inside_the_tube_behind_the_rider() {
         let r = road();
-        let (eye, target) = tunnel_eye(&r, &hill, 1000.0, 1.0);
+        let (eye, target) = tunnel_eye(&r, 1000.0, 1.0);
         assert!((eye.x - (1000.0 - TUNNEL_CAM_BEHIND_M as f32)).abs() < 1e-3);
         assert!(eye.y > 100.0 + 1.0 && eye.y < 100.0 + TUBE_WALL_M as f32);
         assert!(eye.z.abs() < r.road_width_m() as f32 / 2.0);
         assert!(target.x > 1000.0 && target.y < 100.0 + TUBE_WALL_M as f32);
     }
 
-    /// At the entry the hillside rises over the road at 30 % (cover 0 at
-    /// x = 800): as soon as the rider's head is under it, the eye is under
-    /// the terrain too (never above it with the rider below), and it never
-    /// gets ahead of the rider.
+    /// At the entry the hillside rises over the road at 30 %: the eye
+    /// stays at its place behind the rider inside the tube (where the
+    /// terrain is cut away), no jump close to the rider.
     #[test]
-    fn at_the_entry_portal_the_eye_goes_under_the_hillside() {
+    fn at_the_entry_portal_the_eye_stays_behind_the_rider() {
         let r = road();
-        let slope = |x: f64, _: f64| Some(100.0 + (x - 800.0) * 0.3);
-        let ground_at = |x: f32| 100.0 + (f64::from(x) - 800.0) * 0.3;
         for i in 0..40 {
             let d = 800.0 + f64::from(i) * 0.5;
-            let (eye, _) = tunnel_eye(&r, &slope, d, 0.0);
-            assert!(f64::from(eye.x) <= d - 1.0 + 1e-3, "{d}: {eye}");
-            let cover = (d - 800.0) * 0.3;
-            if cover > HEAD_M {
-                assert!(f64::from(eye.y) < ground_at(eye.x), "{d}: {eye}");
-                assert!(eye.y >= 100.0 + TUNNEL_CAM_MIN_M as f32 - 1e-3);
-            } else if cover <= TUNNEL_CAM_MIN_M + UNDER_TERRAIN_M {
-                assert!((eye.x - (d - TUNNEL_CAM_BEHIND_M) as f32).abs() < 1e-3);
-            }
+            let (eye, _) = tunnel_eye(&r, d, 0.0);
+            assert!((eye.x - (d - TUNNEL_CAM_BEHIND_M) as f32).abs() < 1e-3);
+            assert!((eye.y - (100.0 + TUNNEL_CAM_HEIGHT_M)).abs() < 1e-3);
         }
-        // Deep inside: the normal tunnel eye.
-        let (eye, _) = tunnel_eye(&r, &slope, 900.0, 0.0);
-        assert!((eye.x - (900.0 - TUNNEL_CAM_BEHIND_M) as f32).abs() < 1e-3);
-        assert!((eye.y - (100.0 + TUNNEL_CAM_HEIGHT_M)).abs() < 1e-3);
     }
 
     #[test]

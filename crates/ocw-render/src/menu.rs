@@ -119,6 +119,106 @@ const ITEM_VH: f32 = 4.2;
 const TEXT_VH: f32 = 3.2;
 const HINT_VH: f32 = 3.0;
 
+/// Panel layout in % of the window height (vh). [`page_height_vh`] adds
+/// these up; `spawn_menu` / `spawn_rows` use the same numbers.
+const PANEL_WIDTH_VH: f32 = 110.0;
+/// … but at most this share of the window width (narrow windows).
+const PANEL_MAX_VW: f32 = 94.0;
+/// The panel's height budget: the page must fit into it.
+pub const PANEL_MAX_VH: f32 = 94.0;
+const PANEL_PAD_X_VH: f32 = 4.0;
+const PANEL_PAD_Y_VH: f32 = 2.5;
+const PANEL_BORDER_VH: f32 = 0.3;
+const PANEL_GAP_VH: f32 = 1.0;
+const LIST_GAP_VH: f32 = 0.8;
+const LIST_MARGIN_VH: f32 = 0.6;
+const ROW_PAD_X_VH: f32 = 2.5;
+const ROW_PAD_Y_VH: f32 = 0.7;
+const ROW_BORDER_VH: f32 = 0.45;
+/// Bevy's default line height, in font sizes.
+const LINE_HEIGHT: f32 = 1.2;
+/// Advance of every glyph of the UI font (Fira Mono: 600 / 1000 em).
+const ADVANCE_EM: f32 = 0.6;
+
+/// Lines `text` takes in a box `width_vh` wide at font size `font_vh`:
+/// each paragraph (`\n`) wrapped at word boundaries, as the text layout
+/// does with the monospaced UI font; an empty text is one line.
+pub fn wrapped_lines(text: &str, width_vh: f32, font_vh: f32) -> usize {
+    let cols = ((width_vh / (ADVANCE_EM * font_vh)).floor() as usize).max(1);
+    text.split('\n')
+        .map(|para| {
+            let (mut lines, mut used) = (1, 0usize);
+            for word in para.split_whitespace() {
+                let mut len = word.chars().count();
+                let need = if used == 0 { len } else { used + 1 + len };
+                if need <= cols {
+                    used = need;
+                    continue;
+                }
+                if used > 0 {
+                    lines += 1;
+                }
+                // A word longer than a line is broken.
+                while len > cols {
+                    lines += 1;
+                    len -= cols;
+                }
+                used = len;
+            }
+            lines
+        })
+        .sum()
+}
+
+/// Width of the menu panel's content (vh) in a window of `aspect`
+/// (width / height).
+pub fn content_width_vh(aspect: f32) -> f32 {
+    PANEL_WIDTH_VH.min(PANEL_MAX_VW * aspect) - 2.0 * (PANEL_PAD_X_VH + PANEL_BORDER_VH)
+}
+
+/// Height of the menu panel for `view` (vh) in a window of `aspect`,
+/// showing the first `paragraphs` paragraphs of its text.
+pub fn page_height_vh(view: &MenuView, aspect: f32, paragraphs: usize) -> f32 {
+    let w = content_width_vh(aspect);
+    // Empty status and text lines are hidden (no room, no gap).
+    let lines = |s: &str, font: f32| {
+        if s.is_empty() {
+            -PANEL_GAP_VH
+        } else {
+            wrapped_lines(s, w, font) as f32 * font * LINE_HEIGHT
+        }
+    };
+    let text = view.text[..paragraphs.min(view.text.len())].join("\n");
+    let row_w = w - 2.0 * (ROW_PAD_X_VH + ROW_BORDER_VH);
+    let rows: f32 = view
+        .items
+        .iter()
+        .map(|label| {
+            wrapped_lines(label, row_w, ITEM_VH) as f32 * ITEM_VH * LINE_HEIGHT
+                + 2.0 * (ROW_PAD_Y_VH + ROW_BORDER_VH)
+        })
+        .sum();
+    let list =
+        rows + LIST_GAP_VH * view.items.len().saturating_sub(1) as f32 + 2.0 * LIST_MARGIN_VH;
+    2.0 * (PANEL_PAD_Y_VH + PANEL_BORDER_VH)
+        + 4.0 * PANEL_GAP_VH
+        + lines(&view.title, TITLE_VH)
+        + lines(&view.status, TEXT_VH)
+        + lines(&text, TEXT_VH)
+        + list
+        + lines(&view.hint, HINT_VH)
+}
+
+/// How many of the page's text paragraphs fit (all of them, if the page
+/// fits into [`PANEL_MAX_VH`]): a page too tall for the window drops its
+/// description from the end rather than cutting off its last items.
+pub fn fitted_paragraphs(view: &MenuView, aspect: f32) -> usize {
+    (0..=view.text.len())
+        .rev()
+        .find(|&k| page_height_vh(view, aspect, k) <= PANEL_MAX_VH)
+        .unwrap_or(0)
+}
+
 const PANEL: Color = Color::srgba(0.02, 0.03, 0.05, 0.88);
 const ROW: Color = Color::srgba(1.0, 1.0, 1.0, 0.07);
 const ROW_FOCUSED: Color = Color::srgba(1.0, 0.78, 0.24, 0.22);
@@ -175,13 +275,13 @@ fn spawn_menu(mut commands: Commands) {
         .with_children(|root| {
             root.spawn((
                 Node {
-                    width: vh(90),
-                    max_width: vw(94),
-                    max_height: vh(94),
-                    padding: UiRect::axes(vh(4), vh(2.5)),
+                    width: vh(PANEL_WIDTH_VH),
+                    max_width: vw(PANEL_MAX_VW),
+                    max_height: vh(PANEL_MAX_VH),
+                    padding: UiRect::axes(vh(PANEL_PAD_X_VH), vh(PANEL_PAD_Y_VH)),
                     flex_direction: FlexDirection::Column,
-                    row_gap: vh(1.0),
-                    border: UiRect::all(vh(0.3)),
+                    row_gap: vh(PANEL_GAP_VH),
+                    border: UiRect::all(vh(PANEL_BORDER_VH)),
                     border_radius: BorderRadius::all(vh(1.5)),
                     ..default()
                 },
@@ -190,11 +290,19 @@ fn spawn_menu(mut commands: Commands) {
             ))
             .with_children(|panel| {
                 panel.spawn((Text::new(""), font(TITLE_VH), TextColor(TEXT), MenuTitle));
-                panel.spawn((Text::new(""), font(TEXT_VH), TextColor(FOCUS), MenuStatus));
                 panel.spawn((
                     Node {
-                        flex_direction: FlexDirection::Column,
-                        row_gap: vh(0.6),
+                        display: Display::None,
+                        ..default()
+                    },
+                    Text::new(""),
+                    font(TEXT_VH),
+                    TextColor(FOCUS),
+                    MenuStatus,
+                ));
+                panel.spawn((
+                    Node {
+                        display: Display::None,
                         ..default()
                     },
                     Text::new(""),
@@ -205,8 +313,8 @@ fn spawn_menu(mut commands: Commands) {
                 panel.spawn((
                     Node {
                         flex_direction: FlexDirection::Column,
-                        row_gap: vh(0.8),
-                        margin: UiRect::vertical(vh(0.6)),
+                        row_gap: vh(LIST_GAP_VH),
+                        margin: UiRect::vertical(vh(LIST_MARGIN_VH)),
                         ..default()
                     },
                     MenuList,
@@ -222,8 +330,8 @@ fn spawn_rows(commands: &mut Commands, list: Entity, items: &[String]) {
         for (i, label) in items.iter().enumerate() {
             l.spawn((
                 Node {
-                    padding: UiRect::axes(vh(2.5), vh(0.7)),
-                    border: UiRect::all(vh(0.45)),
+                    padding: UiRect::axes(vh(ROW_PAD_X_VH), vh(ROW_PAD_Y_VH)),
+                    border: UiRect::all(vh(ROW_BORDER_VH)),
                     border_radius: BorderRadius::all(vh(1.0)),
                     ..default()
                 },
@@ -262,14 +370,21 @@ fn draw_menu(
     mut rows: Query<(Ref<MenuRow>, &mut BackgroundColor, &mut BorderColor)>,
     mut texts: ParamSet<(
         Query<&mut Text, With<MenuTitle>>,
-        Query<&mut Text, With<MenuStatus>>,
-        Query<&mut Text, With<MenuText>>,
+        Query<(&mut Text, &mut Node), (With<MenuStatus>, Without<MenuRoot>)>,
+        Query<(&mut Text, &mut Node), (With<MenuText>, Without<MenuRoot>)>,
         Query<&mut Text, With<MenuHint>>,
     )>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    mut last_aspect: Local<f32>,
 ) {
+    let aspect = windows
+        .single()
+        .map_or(16.0 / 9.0, |w| w.width() / w.height().max(1.0));
+    let resized = (aspect - *last_aspect).abs() > 1e-3;
+    *last_aspect = aspect;
     // Rows of a new page appear a frame after they were spawned: style them
     // then, too.
-    if !view.is_changed() && !rows.iter().any(|(r, ..)| r.is_added()) {
+    if !view.is_changed() && !resized && !rows.iter().any(|(r, ..)| r.is_added()) {
         return;
     }
     let Ok(mut node) = root.single_mut() else {
@@ -300,9 +415,31 @@ fn draw_menu(
         *border = BorderColor::all(if focused { FOCUS } else { Color::NONE });
     }
     set_text(&mut texts.p0(), &view.title);
-    set_text(&mut texts.p1(), &view.status);
-    set_text(&mut texts.p2(), &view.text.join("\n"));
+    set_text_or_hide(&mut texts.p1(), &view.status);
+    // A page too tall for the window drops description paragraphs.
+    let shown = fitted_paragraphs(&view, aspect);
+    set_text_or_hide(&mut texts.p2(), &view.text[..shown].join("\n"));
     set_text(&mut texts.p3(), &view.hint);
+}
+
+/// Sets the text; an empty one takes no room (as [`page_height_vh`] counts).
+fn set_text_or_hide(
+    q: &mut Query<(&mut Text, &mut Node), impl bevy::ecs::query::QueryFilter>,
+    s: &str,
+) {
+    for (mut t, mut node) in q.iter_mut() {
+        if t.0 != s {
+            s.clone_into(&mut t.0);
+        }
+        let display = if s.is_empty() {
+            Display::None
+        } else {
+            Display::Flex
+        };
+        if node.display != display {
+            node.display = display;
+        }
+    }
 }
 
 fn set_text(q: &mut Query<&mut Text, impl bevy::ecs::query::QueryFilter>, s: &str) {
@@ -316,6 +453,66 @@ fn set_text(q: &mut Query<&mut Text, impl bevy::ecs::query::QueryFilter>, s: &st
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn text_wraps_at_words_like_the_monospaced_font() {
+        // 10 columns at 2 vh (1.2 vh per glyph) in 12 vh.
+        assert_eq!(wrapped_lines("", 12.0, 2.0), 1);
+        assert_eq!(wrapped_lines("0123456789", 12.0, 2.0), 1);
+        assert_eq!(wrapped_lines("aaaa bbbbb", 12.0, 2.0), 1);
+        assert_eq!(wrapped_lines("aaaa bbbbbb", 12.0, 2.0), 2);
+        assert_eq!(wrapped_lines("a\nb", 12.0, 2.0), 2);
+        // A word longer than a line is broken.
+        assert_eq!(wrapped_lines("0123456789012345678901", 12.0, 2.0), 3);
+    }
+
+    fn page(text: &[&str], items: usize) -> MenuView {
+        MenuView {
+            open: true,
+            title: "Ride".into(),
+            status: String::new(),
+            text: text.iter().map(|s| s.to_string()).collect(),
+            items: (0..items).map(|i| format!("Item {i}")).collect(),
+            focused: 0,
+            hint: "Up/Down move   Enter/A select   Esc/B back".into(),
+        }
+    }
+
+    #[test]
+    fn the_page_height_adds_up_the_parts() {
+        let empty = page(&[], 0);
+        let one = page(&[], 1);
+        let row = ITEM_VH * LINE_HEIGHT + 2.0 * (ROW_PAD_Y_VH + ROW_BORDER_VH);
+        let h = |v: &MenuView| page_height_vh(v, 16.0 / 9.0, v.text.len());
+        assert!((h(&one) - h(&empty) - row).abs() < 1e-4);
+        let two = page(&[], 2);
+        assert!((h(&two) - h(&one) - row - LIST_GAP_VH).abs() < 1e-4);
+        // A text line and its gap; a status line likewise.
+        let text = page(&["Short."], 2);
+        assert!((h(&text) - h(&two) - TEXT_VH * LINE_HEIGHT - PANEL_GAP_VH).abs() < 1e-4);
+        // A narrower window wraps more.
+        let words = "word ".repeat(40);
+        let long = page(&[words.trim_end()], 2);
+        assert!(page_height_vh(&long, 1.0, 1) > page_height_vh(&long, 16.0 / 9.0, 1));
+        assert!(content_width_vh(1.0) < content_width_vh(16.0 / 9.0));
+    }
+
+    /// Regression: the Ride page (seven items and two paragraphs) ran off
+    /// the bottom of a 1280x720 window, "Back" was cut off. A page too
+    /// tall drops description paragraphs from the end, never items.
+    #[test]
+    fn a_page_too_tall_drops_its_text_not_its_items() {
+        let para = "Local events on this route: everyone lines up at the start, 3-2-1-GO. Races and time trials end at the finish with a results table.";
+        let v = page(&[para, para, para], 7);
+        for aspect in [16.0 / 9.0, 4.0 / 3.0, 1.0] {
+            let k = fitted_paragraphs(&v, aspect);
+            assert!(k < 3, "{aspect}: {k}");
+            assert!(page_height_vh(&v, aspect, k) <= PANEL_MAX_VH, "{aspect}");
+        }
+        // Short pages keep everything.
+        let v = page(&[para], 3);
+        assert_eq!(fitted_paragraphs(&v, 16.0 / 9.0), 1);
+    }
 
     #[test]
     fn the_console_takes_the_input_before_the_menu() {

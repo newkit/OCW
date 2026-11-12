@@ -601,7 +601,7 @@ mod tests {
             w.resource::<RideView>().route.name(),
             Route::test_hills().name()
         );
-        assert_eq!(w.resource::<Args>().route, "hills");
+        assert_eq!(w.resource::<Args>().route.as_deref(), Some("hills"));
         assert!(w.resource::<CurrentRide>().switched);
         assert_eq!(
             w.resource::<CurrentRide>().choice,

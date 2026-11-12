@@ -118,6 +118,7 @@ impl Predictor {
             self.state.distance += applied;
             self.pending_correction -= applied;
         }
+        ride::stop_at_finish(&mut self.state, route);
     }
 
     /// Reconciles with an authoritative state that is `age_s` seconds old.

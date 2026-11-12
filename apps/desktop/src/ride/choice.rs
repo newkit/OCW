@@ -47,19 +47,19 @@ impl RideChoice {
         let Some(world) = args.world.clone() else {
             return match &args.route_file {
                 Some(f) => Self::RouteFile(f.clone()),
-                None => Self::TestRoute(args.route.clone()),
+                None => Self::TestRoute(args.route_name().to_string()),
             };
         };
         let mode = if let Some(gpx) = &args.route_gpx {
             WorldMode::Gpx(gpx.clone())
         } else if args.graph_route() {
-            WorldMode::Route(args.route.clone())
+            WorldMode::Route(args.route_name().to_string())
         } else if args.free_ride {
             WorldMode::FreeRide { start: args.start }
         } else if let Some(f) = &args.route_file {
             WorldMode::RouteFile(f.clone())
         } else {
-            WorldMode::TestRoute(args.route.clone())
+            WorldMode::TestRoute(args.route_name().to_string())
         };
         Self::World { world, mode }
     }
@@ -67,14 +67,14 @@ impl RideChoice {
     /// Sets the ride options of `args` to this choice (all others stay:
     /// bots, trust flags, recording, …).
     pub fn apply_to(&self, args: &mut Args) {
-        args.route = "hills".into();
+        args.route = None;
         args.route_gpx = None;
         args.route_file = None;
         args.world = None;
         args.free_ride = false;
         args.start = None;
         match self {
-            Self::TestRoute(name) => args.route.clone_from(name),
+            Self::TestRoute(name) => args.route = Some(name.clone()),
             Self::RouteFile(f) => args.route_file = Some(f.clone()),
             Self::World { world, mode } => {
                 args.world = Some(world.clone());
@@ -83,10 +83,10 @@ impl RideChoice {
                         args.free_ride = true;
                         args.start = *start;
                     }
-                    WorldMode::Route(r) => args.route.clone_from(r),
+                    WorldMode::Route(r) => args.route = Some(r.clone()),
                     WorldMode::Gpx(g) => args.route_gpx = Some(g.clone()),
                     WorldMode::RouteFile(f) => args.route_file = Some(f.clone()),
-                    WorldMode::TestRoute(r) => args.route.clone_from(r),
+                    WorldMode::TestRoute(r) => args.route = Some(r.clone()),
                 }
             }
         }

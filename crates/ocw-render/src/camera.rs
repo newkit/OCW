@@ -668,15 +668,9 @@ pub(crate) fn follow(
     *smoothed_target = Some(target);
     let target = if tilt.tunnel > 0.0 {
         tilt.outside_eye = Some(cam.translation);
-        let tunnel_ground = |x: f64, z: f64| ground.as_deref().and_then(|g| (g.0)(x, z));
-        let (eye, inside) = crate::tunnel::tunnel_eye(
-            track,
-            &tunnel_ground,
-            local.state.distance,
-            local.state.lateral_offset,
-        );
-        // A very quick glide where the eye moves closer at the entry
-        // portal (a slower one would show the hillside for a moment).
+        let (eye, inside) =
+            crate::tunnel::tunnel_eye(track, local.state.distance, local.state.lateral_offset);
+        // A very quick glide (smooths the eye's steps along the road).
         let eye = match tilt.tunnel_eye {
             Some(prev) if !jumped && prev.distance(eye) < 20.0 => {
                 prev.lerp(eye, 1.0 - (-time.delta_secs() / 0.05).exp())

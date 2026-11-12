@@ -16,6 +16,7 @@ pub mod riders;
 pub mod see_through;
 pub mod terrain;
 pub mod tunnel;
+pub mod tunnel_cut;
 pub mod voice;
 pub mod workout;
 pub mod world;
@@ -202,6 +203,7 @@ impl Plugin for OcwRenderPlugins {
             riders::RidersPlugin,
             camera::CameraPlugin,
             tunnel::TunnelPlugin,
+            tunnel_cut::TunnelCutPlugin,
             hud::HudPlugin,
             event_hud::EventHudPlugin,
             junction::JunctionPlugin,

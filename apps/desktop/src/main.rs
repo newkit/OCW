@@ -51,9 +51,33 @@ impl Args {
     /// test route) with `--world`.
     pub fn graph_route(&self) -> bool {
         self.world.is_some()
-            && (self.route_gpx.is_some() || ride::setup::test_route(&self.route).is_none())
+            && (self.route_gpx.is_some()
+                || self
+                    .route
+                    .as_deref()
+                    .is_some_and(|r| ride::setup::test_route(r).is_none()))
+    }
+
+    /// The `--route` given, else the default test route (hills).
+    pub fn route_name(&self) -> &str {
+        self.route.as_deref().unwrap_or(DEFAULT_TEST_ROUTE)
+    }
+
+    /// `--world` without anything to ride in it (no --route, --route-file,
+    /// --route-gpx, --free-ride or --start): the package's first route, or
+    /// a free ride ([`ride::setup::build`]).
+    pub fn world_alone(&self) -> bool {
+        self.world.is_some()
+            && self.route.is_none()
+            && self.route_file.is_none()
+            && self.route_gpx.is_none()
+            && !self.free_ride
+            && self.start.is_none()
     }
 }
+
+/// The test route ridden without `--route` (and without `--world`).
+pub const DEFAULT_TEST_ROUTE: &str = "hills";
 
 #[derive(Parser, Debug, Clone, Resource)]
 // A later occurrence of an option replaces an earlier one, so the command
@@ -96,12 +120,14 @@ pub struct Args {
     /// (2560x1600) or name substring (HDMI). Detected monitors are logged.
     #[arg(long, value_name = "MONITOR")]
     pub monitor: Option<String>,
-    /// Test route: hills (steep, changing gradients) or loop (gentle). With
-    /// --world: a route of the package by name (`world-builder gpx` /
-    /// `route --world`), or an `ocw-graph-route` file; ridden on the road
-    /// graph (junction arrows show the route, another exit leaves it).
-    #[arg(long, default_value = "hills")]
-    pub route: String,
+    /// Test route: hills (steep, changing gradients; the default) or loop
+    /// (gentle). With --world: a route of the package by name
+    /// (`world-builder gpx` / `route --world`), or an `ocw-graph-route`
+    /// file; ridden on the road graph (junction arrows show the route,
+    /// another exit leaves it). --world without a route option rides the
+    /// package's first route, or a free ride if it has none.
+    #[arg(long, value_name = "NAME|FILE")]
+    pub route: Option<String>,
     /// Ride a GPX track or route (spec §2.7): matched onto the road graph of
     /// --world at the start; problems (off-road stretches) are reported.
     #[arg(long, value_name = "PATH", requires = "world")]
@@ -112,8 +138,9 @@ pub struct Args {
     /// World package: a file from `world-builder package`, or a package id
     /// from the local cache (`europe/liechtenstein` or `ID@VERSION`, see
     /// --list-worlds). Terrain, all roads and trees are streamed from it
-    /// (use together with --route-file, or --free-ride). It is verified
-    /// against its manifest on load (spec §4.7).
+    /// (use together with --route, --route-file, --route-gpx or
+    /// --free-ride; alone it rides the package's first route, else a free
+    /// ride). It is verified against its manifest on load (spec §4.7).
     #[arg(long, value_name = "PATH|ID")]
     pub world: Option<String>,
     /// Accept world packages that are not signed by a trusted key from the
@@ -580,7 +607,8 @@ mod tests {
     fn route_arguments() {
         // Test routes stay test routes, also with a world package.
         let a = Args::parse_from(["ocw-desktop", "--route", "loop"]);
-        assert!(!a.graph_route() && ride::setup::test_route(&a.route).is_some());
+        assert!(!a.graph_route() && ride::setup::test_route(a.route_name()).is_some());
+        assert!(!a.world_alone());
         let a = Args::parse_from(["ocw-desktop", "--world", "w.ocwpkg", "--route", "hills"]);
         assert!(!a.graph_route());
         // A package route by name, or a GPX file: rides on the road graph.

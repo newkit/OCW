@@ -225,8 +225,8 @@ impl Page {
             Page::Ride => PageDef {
                 title: "Ride",
                 text: &[
-                    "Local events on this route: everyone lines up at the start, 3-2-1-GO. Races and time trials end at the finish with a results table; a time trial races your best effort (the ghost).",
-                    "Change ride: another world package or a test route, without restarting. Workouts: structured workouts in ERG mode.",
+                    "Local events start on the line with 3-2-1-GO and end with results; a time trial races your ghost.",
+                    "Change ride: another world package or a test route, without restarting. Workouts: ERG mode.",
                 ],
                 items: RIDE_ITEMS,
                 initial_focus: 0,

@@ -131,6 +131,19 @@ pub fn bot_bike(i: u32) -> (ocw_core::ProfileId, ocw_core::RiderLook) {
     (BIKES[i % BIKES.len()], look)
 }
 
+/// Adds the `i`-th server bot ("Bot i+1") with its power, bike and look
+/// from [`bot_power_w`] and [`bot_bike`]: the same field for the server's
+/// startup bots and an event's bots.
+fn add_numbered_bot(session: &mut Session, i: u32) -> RiderId {
+    let (bike, look) = bot_bike(i);
+    session.add_bot_with(
+        format!("Bot {}", i + 1),
+        bot_power_w(i),
+        ocw_core::RiderProfile::curated(bike, 75.0),
+        look,
+    )
+}
+
 impl GameServer {
     /// A session on `course` (a [`Route`] converts into one).
     pub fn new(course: impl Into<Course>, config: ServerConfig) -> Self {
@@ -140,13 +153,7 @@ impl GameServer {
             Course::RouteRide { net, plan } => Session::route_ride(net, plan),
         };
         for i in 0..config.bots {
-            let (bike, look) = bot_bike(i);
-            session.add_bot_with(
-                format!("Bot {}", i + 1),
-                bot_power_w(i),
-                ocw_core::RiderProfile::curated(bike, 75.0),
-                look,
-            );
+            add_numbered_bot(&mut session, i);
         }
         Self {
             config,
@@ -322,8 +329,21 @@ impl GameServer {
         }
         match cmd.cmd {
             Some(v1::dev_command::Cmd::TeleportDistanceM(d)) => {
-                self.session.teleport(rider, d);
-                result(true, format!("teleported to {:.3} km", d / 1000.0))
+                match self.session.teleport(rider, d) {
+                    Some(at) if at < d - 0.5 => result(
+                        true,
+                        format!(
+                            "teleported to {:.3} km, the end of the route (it is not a loop; riders stop there)",
+                            at / 1000.0
+                        ),
+                    ),
+                    Some(at) if at > d + 0.5 => result(
+                        true,
+                        format!("teleported to {:.3} km, the start", at / 1000.0),
+                    ),
+                    Some(at) => result(true, format!("teleported to {:.3} km", at / 1000.0)),
+                    None => result(false, "no rider to teleport".into()),
+                }
             }
             Some(v1::dev_command::Cmd::TeleportPoint(p)) => {
                 if self.session.teleport_to(rider, p.x_m, p.z_m) {
@@ -417,8 +437,7 @@ impl GameServer {
                         self.session.remove_rider(id);
                     }
                     for i in 0..n {
-                        self.session
-                            .add_bot(format!("Bot {}", i + 1), bot_power_w(i));
+                        add_numbered_bot(&mut self.session, i);
                     }
                 }
                 match self.session.start_event(spec) {
@@ -1046,6 +1065,50 @@ mod tests {
         }
     }
 
+    /// Regression: `teleport` past the end of a route that ends was
+    /// accepted as it was; now it goes to the end and says so.
+    #[test]
+    fn teleport_past_the_end_of_a_route_goes_to_its_end() {
+        let pts = (0..=100).map(|i| [f64::from(i) * 10.0, 0.0, 0.0]).collect();
+        let route = Route::from_points("end", "End", pts, false, 6.0).unwrap();
+        let mut server = GameServer::new(
+            route,
+            ServerConfig {
+                allow_dev_commands: true,
+                bots: 0,
+                ..Default::default()
+            },
+        );
+        let conn = server.connect();
+        let S::Welcome(w) =
+            decode_server(&server.handle(conn, &hello(PROTOCOL_VERSION))[0]).unwrap()
+        else {
+            panic!("expected a welcome")
+        };
+        let teleport = |km: f64| {
+            encode(&client_message(C::Dev(v1::DevCommand {
+                cmd: Some(v1::dev_command::Cmd::TeleportDistanceM(km * 1000.0)),
+            })))
+        };
+        let S::DevResult(r) = decode_server(&server.handle(conn, &teleport(1.5))[0]).unwrap()
+        else {
+            panic!()
+        };
+        assert!(r.ok, "{}", r.message);
+        assert!(
+            r.message.contains("1.000 km, the end of the route"),
+            "{}",
+            r.message
+        );
+        let state = server.session().rider_state(RiderId(w.rider_id)).unwrap();
+        assert_eq!(state.distance, 1000.0);
+        let S::DevResult(r) = decode_server(&server.handle(conn, &teleport(0.5))[0]).unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(r.message, "teleported to 0.500 km");
+    }
+
     #[test]
     fn bots_ride_at_different_strengths() {
         let n = BOT_POWERS_W.len() as u32;
@@ -1240,6 +1303,21 @@ mod tests {
         assert_eq!(server.session().rider_count(), 1);
         server.handle(conn, &start(group, Some(4)));
         assert_eq!(server.session().rider_count(), 5);
+        // Event bots are as varied as the startup bots (regression: they
+        // all were the pink default rider on the standard road bike).
+        let bots = server.session().bots();
+        let field: Vec<_> = server
+            .session()
+            .snapshot()
+            .into_iter()
+            .filter(|r| bots.contains(&r.id))
+            .collect();
+        assert_eq!(field.len(), 4);
+        let bikes: std::collections::BTreeSet<_> = field.iter().map(|r| r.bike.bike()).collect();
+        assert_eq!(bikes.len(), 4, "{bikes:?}");
+        for r in &field {
+            assert_ne!(r.look.jersey, ocw_core::RiderLook::default().jersey);
+        }
         // Remote server: not by riders.
         let mut remote = GameServer::new(Route::test_loop(), ServerConfig::default());
         let conn = remote.connect();
