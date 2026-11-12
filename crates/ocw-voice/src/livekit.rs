@@ -59,6 +59,8 @@ pub struct LiveKitBackend {
     inputs: (Option<Instant>, Vec<String>),
     outputs: (Option<Instant>, Vec<String>),
     shared: Arc<Shared>,
+    /// The network thread; joined on drop (see `Drop`).
+    worker: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Default for LiveKitBackend {
@@ -126,15 +128,34 @@ impl LiveKitBackend {
                 };
                 rt.block_on(Worker::new(worker_shared, ev_tx).run(rx));
             });
-        if let Err(e) = spawned {
-            tracing::error!(%e, "voice thread did not start");
-        }
+        let worker = spawned
+            .inspect_err(|e| tracing::error!(%e, "voice thread did not start"))
+            .ok();
         Self {
             commands,
             events,
             inputs: (None, Vec::new()),
             outputs: (None, Vec::new()),
             shared,
+            worker,
+        }
+    }
+}
+
+/// Leaves the call and waits until the network and audio threads have
+/// ended, so libwebrtc's objects (audio processing, the runtime's tasks) are
+/// gone when the backend is. Without this they were torn down on those
+/// threads while a new backend was being built: an access violation on
+/// Windows (desktop tests that build one app after another).
+impl Drop for LiveKitBackend {
+    fn drop(&mut self) {
+        // Closing the command channel ends the worker's loop.
+        let (closed, _) = tmpsc::unbounded_channel();
+        drop(std::mem::replace(&mut self.commands, closed));
+        if let Some(worker) = self.worker.take()
+            && worker.join().is_err()
+        {
+            tracing::warn!("voice thread panicked");
         }
     }
 }
@@ -386,18 +407,19 @@ struct Worker {
     /// Running receive tasks per identity.
     streams: BTreeMap<String, tokio::task::JoinHandle<()>>,
     capture_task: Option<tokio::task::JoinHandle<()>>,
+    /// Joined when the worker ends (after `audio` is dropped).
+    audio_thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Worker {
     fn new(shared: Arc<Shared>, events: mpsc::Sender<BackendEvent>) -> Self {
         let (audio, audio_rx) = mpsc::channel();
         let (s, e) = (shared.clone(), events.clone());
-        if let Err(err) = std::thread::Builder::new()
+        let audio_thread = std::thread::Builder::new()
             .name("ocw-voice-audio".into())
             .spawn(move || audio_thread(s, audio_rx, e))
-        {
-            tracing::error!(%err, "voice audio thread did not start");
-        }
+            .inspect_err(|err| tracing::error!(%err, "voice audio thread did not start"))
+            .ok();
         Self {
             shared,
             events,
@@ -411,6 +433,7 @@ impl Worker {
             wanted: BTreeSet::new(),
             streams: BTreeMap::new(),
             capture_task: None,
+            audio_thread,
         }
     }
 
@@ -446,6 +469,13 @@ impl Worker {
             }
         }
         self.leave().await;
+        // Dropping the worker closes the audio channel; the audio thread
+        // then closes its streams and ends.
+        let audio = self.audio_thread.take();
+        drop(self);
+        if let Some(audio) = audio {
+            let _ = audio.join();
+        }
     }
 
     async fn command(
@@ -756,5 +786,23 @@ impl Worker {
             let _ = room.close().await;
         }
         self.cleanup();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression (Windows access violation): dropping the backend waits
+    /// for its threads, so everything it shared with them is gone at once.
+    #[test]
+    fn drop_ends_the_threads() {
+        for _ in 0..3 {
+            let mut b = LiveKitBackend::headless();
+            b.send(BackendCommand::SetMicMuted(true));
+            let shared = Arc::downgrade(&b.shared);
+            drop(b);
+            assert!(shared.upgrade().is_none(), "threads still hold the state");
+        }
     }
 }
