@@ -15,6 +15,7 @@ pub mod package;
 pub mod riders;
 pub mod see_through;
 pub mod terrain;
+pub mod tunnel;
 pub mod workout;
 pub mod world;
 
@@ -199,6 +200,7 @@ impl Plugin for OcwRenderPlugins {
             package::PackagePlugin,
             riders::RidersPlugin,
             camera::CameraPlugin,
+            tunnel::TunnelPlugin,
             hud::HudPlugin,
             event_hud::EventHudPlugin,
             junction::JunctionPlugin,
@@ -229,6 +231,9 @@ pub fn rebuild_scene(world: &mut World) {
     riders::reset_avatars(world);
     if let Some(mut o) = world.get_resource_mut::<camera::CameraObstacles>() {
         o.clear();
+    }
+    if let Some(mut t) = world.get_resource_mut::<tunnel::Tunnels>() {
+        t.reset();
     }
     world.remove_resource::<Ground>();
     let renders = world.contains_resource::<Assets<Mesh>>()

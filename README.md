@@ -312,7 +312,9 @@ wine red above; flat roads stay flat (at least 40 m of height range). In
 free ride it looks ahead along the exit currently selected at the next
 junction and the default exits after it. The chase camera tilts gently with
 the road (uphill it drops behind you and looks up the climb), smoothed and
-capped at 8 degrees (`camera.tilt`).
+capped at 8 degrees (`camera.tilt`). In a tunnel (the road under the
+terrain, e.g. the Steg tunnel on the Vaduz–Malbun route at km 8.8) a simple
+tube is drawn and the camera follows close behind you inside it.
 
 **Workouts** (spec §2.8): `--workout FILE` (or `workout load FILE`, then
 `workout start`) rides a structured workout in ERG mode; targets in % FTP use
