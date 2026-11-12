@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.17 – November 2026
+Version 2.18 – November 2026
 
 | Version | Change |
 |---|---|
@@ -36,6 +36,7 @@ Version 2.17 – November 2026
 | 2.15 | `artwork/build-history/` removed from the repository; the build history (zips per day and `index.md`) lives only on the GitHub release `build-history` (§11) |
 | 2.16 | Game audio (M5, §3.3): own audio module (cpal behind an `OutputBackend` trait on its own thread; kira rejected, Bevy audio disabled), output device by name with default fallback and hot-plugging, buses master × music / effects / voice, ride sounds and cues synthesised in code; Settings → Audio, `audio.*` settings and console commands, `--no-audio` (§3.2.1); synthesised sounds are code (§13) |
 | 2.17 | Phase 6 voice chat, first increment (§2.4, §7, §6.5, §3.2.1 M8, §14): game server issues LiveKit tokens per room (VoiceTokenRequest / VoiceGrant, Welcome.voice, Snapshot.human_riders); ocw-voice crate (pure, wasm-safe: mute, hotkeys, auto join, spatial audio, nearest-N, devices, mixer); LiveKit backend behind the voice feature (livekit 0.10.1, Linux needs clang ≥ 21); HUD indicator, Settings → Voice; the Strava account page moved from Settings to Navi → Strava (Settings keeps at most 7 entries) |
+| 2.18 | Scene-rendering harness (§11.4): `scripts/scenes.toml` + `scripts/render-scenes.sh` (`make test-scenes`, `--remote`, `--pick`) renders reproducible screenshots and videos headlessly on Wayland for the build history (zips on the GitHub release `build-history`) |
 
 ---
 
