@@ -109,6 +109,11 @@ impl CameraObstacles {
         self.layers.insert(layer, Arc::new(top));
     }
 
+    /// Removes all layers (a ride switch).
+    pub fn clear(&mut self) {
+        self.layers.clear();
+    }
+
     pub fn remove(&mut self, layer: ObstacleLayer) {
         self.layers.remove(&layer);
     }

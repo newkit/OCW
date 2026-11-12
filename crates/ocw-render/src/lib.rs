@@ -6,6 +6,8 @@
 
 pub mod camera;
 pub mod console;
+pub mod event_hud;
+pub mod font;
 pub mod hud;
 pub mod junction;
 pub mod menu;
@@ -57,6 +59,11 @@ pub struct RideView {
     /// The local rider's GPS position (lat °, lon °, altitude m), if the
     /// ride has a geographic origin (route files, world packages).
     pub position: Option<(f64, f64, f64)>,
+    /// The current event (spec §2.3): countdown, standings, results.
+    pub event: Option<EventView>,
+    /// A time trial's ghost (the rider's best previous effort) on the
+    /// local rider's track, drawn as a translucent rider.
+    pub ghost: Option<RiderState>,
     /// The running workout's panel (spec §2.8), if any.
     pub workout: Option<ocw_sim::workout::WorkoutPanel>,
 }
@@ -77,6 +84,8 @@ impl RideView {
             app_message: None,
             position: None,
             route_status: None,
+            event: None,
+            ghost: None,
             workout: None,
         }
     }
@@ -92,6 +101,39 @@ impl RideView {
             None => &self.route,
         }
     }
+}
+
+/// What the HUD shows of an event (spec §2.3); the app computes the
+/// texts (Bevy-free), the HUD only lays them out.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct EventView {
+    /// The big centre text: "Get ready", "3", "2", "1", "GO!".
+    pub countdown: Option<String>,
+    /// "Race - 1 lap (4.0 km)".
+    pub title: String,
+    /// "P3/11  +4.2 s to Bot 4", "2.31 km to go", "Ghost -1.8 s".
+    pub lines: Vec<String>,
+    /// The results panel, until dismissed.
+    pub results: Option<ResultsView>,
+}
+
+/// The results panel of a race or time trial.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ResultsView {
+    pub title: String,
+    pub rows: Vec<ResultRow>,
+    /// Under the table: the ghost comparison, how to close the panel.
+    pub footer: Vec<String>,
+}
+
+/// One row of the results: "3", "Bot 4", "10:12.3", "+0:04.2".
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ResultRow {
+    pub position: String,
+    pub name: String,
+    pub time: String,
+    pub gap: String,
+    pub is_local: bool,
 }
 
 /// The junction ahead in free ride, for the overlay (spec §2.2.1).
@@ -151,17 +193,53 @@ pub struct OcwRenderPlugins;
 impl Plugin for OcwRenderPlugins {
     fn build(&self, app: &mut App) {
         app.add_plugins((
+            font::UiFontPlugin,
             see_through::SeeThroughPlugin,
             world::WorldPlugin,
             package::PackagePlugin,
             riders::RidersPlugin,
             camera::CameraPlugin,
             hud::HudPlugin,
+            event_hud::EventHudPlugin,
             junction::JunctionPlugin,
             menu::MenuPlugin,
             console::ConsolePlugin,
             workout::WorkoutPanelPlugin,
         ));
+    }
+}
+
+/// A ride switch (spec §3.2.1, M3): despawns the world of the old ride
+/// (light, terrain, road, trees, streamed package tiles, avatars), then
+/// spawns it again from the current [`RideView`] and
+/// [`package::PackageWorld`] (the caller replaced them before). Camera,
+/// HUD, menu and console stay. Without the render plugins (headless tests
+/// with `MinimalPlugins`) only the despawning runs.
+pub fn rebuild_scene(world: &mut World) {
+    let old: Vec<Entity> = world
+        .query_filtered::<Entity, With<world::SceneEntity>>()
+        .iter(world)
+        .collect();
+    for e in old {
+        if let Ok(e) = world.get_entity_mut(e) {
+            e.despawn();
+        }
+    }
+    package::reset_streaming(world);
+    riders::reset_avatars(world);
+    if let Some(mut o) = world.get_resource_mut::<camera::CameraObstacles>() {
+        o.clear();
+    }
+    world.remove_resource::<Ground>();
+    let renders = world.contains_resource::<Assets<Mesh>>()
+        && world.contains_resource::<Assets<StandardMaterial>>()
+        && world.contains_resource::<Assets<see_through::SeeThroughMaterial>>()
+        && world.contains_resource::<RideView>();
+    if renders {
+        use bevy::ecs::system::RunSystemOnce;
+        if let Err(e) = world.run_system_once(world::spawn_world) {
+            error!("rebuilding the world: {e}");
+        }
     }
 }
 
@@ -184,4 +262,65 @@ pub fn route_bounds(route: &Route) -> ([f64; 2], [f64; 2]) {
             )
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scene(app: &mut App) -> Vec<Entity> {
+        let w = app.world_mut();
+        let mut q = w.query_filtered::<Entity, With<world::SceneEntity>>();
+        let mut v: Vec<Entity> = q.iter(w).collect();
+        v.sort();
+        v
+    }
+
+    fn avatars(app: &mut App) -> usize {
+        let w = app.world_mut();
+        w.query::<&riders::Avatar>().iter(w).count()
+    }
+
+    #[test]
+    fn a_ride_switch_rebuilds_the_world_and_the_riders() {
+        let mut view = RideView::new(Route::test_loop());
+        view.riders.push(RiderView {
+            id: RiderId(1),
+            name: "a".into(),
+            state: RiderState::default(),
+            power_w: 0.0,
+            cadence_rpm: None,
+            heart_rate_bpm: None,
+            is_local: true,
+            bike: ocw_core::ProfileId::Road,
+            look: None,
+        });
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Mesh>()
+            .init_asset::<StandardMaterial>()
+            .init_asset::<see_through::SeeThroughMaterial>()
+            .insert_resource(view)
+            .add_plugins((world::WorldPlugin, riders::RidersPlugin));
+        app.update();
+        let first = scene(&mut app);
+        assert!(first.len() > 100, "light, terrain, road, trees, arch");
+        assert!(app.world().contains_resource::<Ground>());
+        assert_eq!(avatars(&mut app), 1);
+        // The app replaces the view (another route, a new session), then
+        // rebuilds: nothing of the old world is left.
+        app.world_mut().resource_mut::<RideView>().route = Route::test_hills();
+        rebuild_scene(app.world_mut());
+        let second = scene(&mut app);
+        assert!(second.len() > 100);
+        assert!(second.iter().all(|e| !first.contains(e)));
+        assert_eq!(avatars(&mut app), 0, "the avatars are spawned afresh");
+        app.update();
+        assert_eq!(avatars(&mut app), 1);
+        assert_eq!(scene(&mut app), second, "built once");
+        // Without the render assets (headless app tests) only the despawning runs.
+        let mut bare = App::new();
+        bare.add_plugins(MinimalPlugins);
+        rebuild_scene(bare.world_mut());
+    }
 }

@@ -18,6 +18,8 @@ use ocw_world::{RoadNetwork, Route, RoutePlan};
 
 use crate::Args;
 use crate::client::{ClientCore, Notice};
+use crate::event::GhostOutcome;
+use crate::ghost::GhostStore;
 
 pub struct ConnectionPlugin {
     pub route: Route,
@@ -37,70 +39,93 @@ pub struct FreeRideSetup {
 
 impl Plugin for ConnectionPlugin {
     fn build(&self, app: &mut App) {
-        let args = app.world().resource::<Args>().clone();
-        let free = app.world().get_resource::<FreeRideSetup>().cloned();
-        // The rider profile's weight and bike (physics profile id) go to
-        // the server in the hello and into the prediction (spec §2.5,
-        // §3.2.1); the look is cosmetic, for the other clients.
-        let rider = crate::settings::local_rider(app.world());
-        let profile = rider.physics();
-        let autodrive = crate::settings::autodrive_at_start(app.world());
-        let (course, client) = match free {
-            Some(FreeRideSetup {
-                net,
-                origin,
-                plan: Some(plan),
-                ..
-            }) => (
-                Course::RouteRide {
-                    net: net.clone(),
-                    plan: plan.clone(),
-                },
-                ClientCore::free_ride(net, args.name.clone(), profile)
-                    .with_geo_origin(origin)
-                    .with_route_plan(plan),
-            ),
-            Some(f) => (
-                Course::FreeRide {
-                    net: f.net.clone(),
-                    start: f.start,
-                },
-                ClientCore::free_ride(f.net, args.name.clone(), profile).with_geo_origin(f.origin),
-            ),
-            None => (
-                Course::Route(self.route.clone()),
-                ClientCore::new(self.route.clone(), args.name.clone(), profile),
-            ),
-        };
-        let client = client
-            .with_autodrive_at_start(autodrive)
-            .with_look(rider.look());
-        let start_m = match &course {
-            Course::Route(route) => crate::start_point(&args, route),
-            Course::FreeRide { .. } | Course::RouteRide { .. } => 0.0,
-        };
-        let mut server = if let Some(spec) = &args.server {
-            ServerLink::Remote(Box::new(connect_remote(&args, spec)))
-        } else if args.capture.is_some() {
-            // Frame capture: the server shares the client's fixed-step game time.
-            ServerLink::Stepped(Box::new(SteppedServer::new(course, args.bots, start_m)))
-        } else {
-            ServerLink::Threaded(
-                LocalServer::spawn(course, args.bots, start_m)
-                    .expect("failed to start local server thread"),
-            )
-        };
-        server.send(client.hello());
-        app.insert_resource(Link {
-            server: Mutex::new(server),
-        })
-        .insert_resource(ClientState(client))
-        .init_resource::<LinkNotice>()
-        .add_systems(PreUpdate, (poll_server, link_status).chain())
-        .add_systems(FixedUpdate, (step_server, predict).chain())
-        .add_systems(Update, (send_steer, update_view));
+        start_session(app.world_mut(), self.route.clone());
+        if !app.world().contains_resource::<Ghosts>() {
+            app.insert_resource(Ghosts(crate::ghost::default_dir().map(GhostStore::new)));
+        }
+        app.init_resource::<LinkNotice>()
+            .add_systems(PreUpdate, (poll_server, link_status).chain())
+            .add_systems(FixedUpdate, (step_server, predict).chain())
+            .add_systems(Update, (send_steer, ghost_io, update_view));
         register_commands(app);
     }
+}
+
+/// When the current ride session started (game time, s): the HUD's ride
+/// time counts from it (an in-app ride switch starts a new session).
+#[derive(Resource, Debug, Clone, Copy, Default)]
+pub struct SessionStart(pub f64);
+
+/// Starts a ride session: the server (local thread, stepped or remote)
+/// for `route` or the [`FreeRideSetup`] in `world`, and a new
+/// [`ClientCore`] that joins it. Inserts [`Link`] and [`ClientState`],
+/// replacing the old session's (dropping the old local server's link ends
+/// its thread). Used at the start and by the ride switch (`ride` module).
+pub fn start_session(world: &mut World, route: Route) {
+    let args = world.resource::<Args>().clone();
+    let free = world.get_resource::<FreeRideSetup>().cloned();
+    // The rider profile's weight and bike (physics profile id) go to
+    // the server in the hello and into the prediction (spec §2.5,
+    // §3.2.1); the look is cosmetic, for the other clients.
+    let rider = crate::settings::local_rider(world);
+    let profile = rider.physics();
+    let autodrive = crate::settings::autodrive_at_start(world);
+    let (course, client) = match free {
+        Some(FreeRideSetup {
+            net,
+            origin,
+            plan: Some(plan),
+            ..
+        }) => (
+            Course::RouteRide {
+                net: net.clone(),
+                plan: plan.clone(),
+            },
+            ClientCore::free_ride(net, args.name.clone(), profile)
+                .with_geo_origin(origin)
+                .with_route_plan(plan),
+        ),
+        Some(f) => (
+            Course::FreeRide {
+                net: f.net.clone(),
+                start: f.start,
+            },
+            ClientCore::free_ride(f.net, args.name.clone(), profile).with_geo_origin(f.origin),
+        ),
+        None => (
+            Course::Route(route.clone()),
+            ClientCore::new(route, args.name.clone(), profile),
+        ),
+    };
+    let client = client
+        .with_autodrive_at_start(autodrive)
+        .with_look(rider.look());
+    let start_m = match &course {
+        Course::Route(route) => crate::start_point(&args, route),
+        Course::FreeRide { .. } | Course::RouteRide { .. } => 0.0,
+    };
+    // The old session's link goes first: its local server thread ends.
+    world.remove_resource::<Link>();
+    let mut server = if let Some(spec) = &args.server {
+        ServerLink::Remote(Box::new(connect_remote(&args, spec)))
+    } else if args.capture.is_some() {
+        // Frame capture: the server shares the client's fixed-step game time.
+        ServerLink::Stepped(Box::new(SteppedServer::new(course, args.bots, start_m)))
+    } else {
+        ServerLink::Threaded(
+            LocalServer::spawn(course, args.bots, start_m)
+                .expect("failed to start local server thread"),
+        )
+    };
+    server.send(client.hello());
+    let now = world
+        .get_resource::<Time>()
+        .map_or(0.0, |t| t.elapsed_secs_f64());
+    world.insert_resource(Link {
+        server: Mutex::new(server),
+    });
+    world.insert_resource(ClientState(client));
+    world.insert_resource(SessionStart(now));
 }
 
 /// Connects to a remote server (`--server ADDR`). Bad options end the
@@ -181,6 +206,42 @@ impl Link {
 
 #[derive(Resource)]
 pub struct ClientState(pub ClientCore);
+
+/// Where time-trial ghosts are kept (`None`: nowhere, e.g. in tests).
+#[derive(Resource)]
+pub struct Ghosts(pub Option<GhostStore>);
+
+/// Loads the ghost a time trial needs and keeps a finished effort if it
+/// is the best (spec §2.3).
+fn ghost_io(
+    ghosts: Res<Ghosts>,
+    mut client: ResMut<ClientState>,
+    mut console: ResMut<ConsoleState>,
+) {
+    if let Some(key) = client.0.wants_ghost() {
+        let ghost = ghosts.0.as_ref().and_then(|g| g.load(&key));
+        match &ghost {
+            Some(g) => {
+                info!(course = %key.course, length_m = key.length_m, best_s = g.duration_s(), "ghost loaded")
+            }
+            None => info!(course = %key.course, length_m = key.length_m, "no ghost yet"),
+        }
+        client.0.set_ghost(key, ghost);
+    }
+    if let Some((key, trace)) = client.0.take_finished_trace() {
+        let outcome = match &ghosts.0 {
+            Some(store) => store.save_if_better(&key, &trace),
+            None => GhostOutcome::Failed,
+        };
+        let line = crate::event::outcome_line(outcome, trace.duration_s());
+        info!(course = %key.course, length_m = key.length_m, time_s = trace.duration_s(), ?outcome, "time trial finished");
+        console.print(format!(
+            "time trial: {} - {line}",
+            crate::event::race_time(trace.duration_s())
+        ));
+        client.0.set_ghost_outcome(outcome);
+    }
+}
 
 /// Ticks the stepped server (frame capture) at the fixed physics rate.
 fn step_server(link: Res<Link>) {
@@ -282,31 +343,164 @@ fn update_view(
     fixed: Res<Time<Fixed>>,
     client: Res<ClientState>,
     link: Res<LinkNotice>,
+    session: Option<Res<SessionStart>>,
+    loading: Option<Res<crate::ride::Loading>>,
     mut view: ResMut<RideView>,
 ) {
     let now = time.elapsed_secs_f64();
-    view.elapsed_s = now;
+    view.elapsed_s = now - session.map_or(0.0, |s| s.0);
     // Interpolate between the last two 50 Hz prediction steps.
     view.riders = client.0.view(now, fixed.overstep_fraction_f64());
     view.position = view
         .local()
         .and_then(|l| crate::gps::position(client.0.track(), client.0.geo_origin(), &l.state));
+    view.event = client.0.event_view(now);
+    view.ghost = client.0.ghost_state(now);
     if client.0.is_free_ride() {
         view.paths = client.0.paths();
         view.junction = client.0.junction_view();
         view.notice = client.0.notice();
         view.route_status = client.0.route_status();
     }
-    // A dropped connection matters more than any ride notice.
+    // A dropped connection matters more than any ride notice; a ride
+    // being loaded (ride switch) shows over the ride's own notices.
     if let Some(line) = &link.0 {
         view.notice = Some(line.clone());
+    } else if let Some(line) = loading.as_ref().and_then(|l| l.0.clone()) {
+        view.notice = Some(line);
     } else if !client.0.is_free_ride() {
         view.notice = None;
     }
 }
 
+/// The console command `event` (spec §2.3): start a local event, cancel
+/// it, or show its state.
+fn event_command() -> Command {
+    let finish = |c: Command| {
+        c.arg(
+            Arg::new("laps")
+                .long("laps")
+                .value_parser(value_parser!(u32).range(1..=100))
+                .help("Laps of a loop"),
+        )
+        .arg(
+            Arg::new("km")
+                .long("km")
+                .value_parser(value_parser!(f64))
+                .conflicts_with("laps")
+                .help("Distance to the finish (km)"),
+        )
+    };
+    let bots = Arg::new("bots")
+        .long("bots")
+        .value_parser(value_parser!(u32).range(0..=50))
+        .help("Bots in the field (default: the current ones)");
+    Command::new("event")
+        .about("Local events: a race, group ride or time trial against your ghost (spec 2.3)")
+        .subcommand_required(true)
+        .subcommand(
+            finish(Command::new("race").about(
+                "Race from the start formation to the finish (default: one lap of a loop, 5 km of a route that ends)",
+            ))
+            .arg(bots.clone()),
+        )
+        .subcommand(
+            Command::new("group")
+                .about("Group ride: the bots hold a pace and regroup; no ranking")
+                .arg(
+                    Arg::new("watts")
+                        .long("watts")
+                        .value_parser(value_parser!(f64))
+                        .help("The group's pace (W; default 150)"),
+                )
+                .arg(bots),
+        )
+        .subcommand(finish(
+            Command::new("tt").about("Time trial alone against your best effort (the ghost)"),
+        ))
+        .subcommand(Command::new("cancel").about("End the current event"))
+        .subcommand(Command::new("status").about("The current event and its standings"))
+        .subcommand(Command::new("dismiss").about("Close the results panel"))
+}
+
+/// Starts, cancels or shows the event (console `event ...`).
+fn run_event(world: &mut World, m: &clap::ArgMatches) -> Result<String, String> {
+    let (sub, args) = m
+        .subcommand()
+        .ok_or("event race | group | tt | cancel | status")?;
+    let laps = || args.get_one::<u32>("laps").copied();
+    let km = || args.get_one::<f64>("km").map(|k| k * 1000.0);
+    let bots = || args.get_one::<u32>("bots").copied();
+    let msg = match sub {
+        "race" => ClientCore::event_start_message(
+            &ocw_sim::EventSpec::Race {
+                laps: laps(),
+                length_m: km(),
+            },
+            bots(),
+        ),
+        "tt" => ClientCore::event_start_message(
+            &ocw_sim::EventSpec::TimeTrial {
+                laps: laps(),
+                length_m: km(),
+            },
+            None,
+        ),
+        "group" => ClientCore::event_start_message(
+            &ocw_sim::EventSpec::GroupRide {
+                target_w: args.get_one::<f64>("watts").copied(),
+            },
+            bots(),
+        ),
+        "cancel" => ClientCore::event_cancel_message(),
+        "dismiss" => {
+            let now = world.resource::<Time>().elapsed_secs_f64();
+            return if world.resource_mut::<ClientState>().0.dismiss_results(now) {
+                Ok("results closed".into())
+            } else {
+                Err("no results panel open".into())
+            };
+        }
+        _ => {
+            let now = world.resource::<Time>().elapsed_secs_f64();
+            return Ok(event_status(&world.resource::<ClientState>().0, now));
+        }
+    };
+    // The server answers (printed when it arrives).
+    world.resource::<Link>().send_bytes(msg);
+    Ok(String::new())
+}
+
+/// `event status`: the event's title, the HUD lines and the standings.
+pub fn event_status(client: &ClientCore, now_s: f64) -> String {
+    let (Some(info), Some(view)) = (client.event_info(), client.event_view(now_s)) else {
+        return "no event (event race | group | tt)".into();
+    };
+    let mut s = format!("{} ({:?})", view.title, info.phase);
+    for l in &view.lines {
+        s.push_str("\n  ");
+        s.push_str(l);
+    }
+    for r in crate::event::result_rows(&info.kind, &info.standings, client.rider_id()) {
+        s.push_str(&format!(
+            "\n{:>4} {:<16} {:>10} {}{}",
+            r.position,
+            r.name,
+            r.time,
+            r.gap,
+            if r.is_local { "  <- you" } else { "" }
+        ));
+    }
+    s
+}
+
 fn register_commands(app: &mut App) {
     app.console_command(ConsoleCommand::new(
+        Permission::User,
+        event_command(),
+        run_event,
+    ))
+    .console_command(ConsoleCommand::new(
         Permission::Dev,
         Command::new("teleport")
             .about("Move the local rider to a distance on the route (km)")
@@ -576,6 +770,7 @@ mod tests {
         app.add_plugins((MinimalPlugins, ConsoleCorePlugin))
             .insert_resource(Args::parse_from(argv))
             .insert_resource(RideView::new(Route::test_loop()))
+            .insert_resource(Ghosts(None))
             .add_plugins((
                 ConnectionPlugin {
                     route: Route::test_loop(),
@@ -701,6 +896,47 @@ mod tests {
         assert_eq!(view.riders.len(), 1);
         assert!(view.riders[0].is_local);
         assert!(view.local().is_some());
+    }
+
+    #[test]
+    fn event_commands_start_show_and_cancel_an_event() {
+        let mut app = app();
+        assert!(update_until(&mut app, |c| c.rider_id().is_some()));
+        let log = run(&mut app, "event race --laps 1 --km 2");
+        assert!(
+            log.iter().any(|l| l.contains("cannot be used with")),
+            "{log:?}"
+        );
+        assert!(
+            run(&mut app, "event status")
+                .iter()
+                .any(|l| l.starts_with("no event"))
+        );
+        run(&mut app, "event race --bots 2 --km 0.5");
+        assert!(update_until(&mut app, |c| c.event_info().is_some()));
+        let log = app.world().resource::<ConsoleState>().log().to_vec();
+        assert!(
+            log.iter().any(|l| l.contains("race over 0.5 km, 3 riders")),
+            "{log:?}"
+        );
+        let log = run(&mut app, "event status");
+        assert!(
+            log.iter().any(|l| l.starts_with("Race - 0.5 km")),
+            "{log:?}"
+        );
+        // The HUD gets the countdown.
+        app.update();
+        let view = app.world().resource::<RideView>();
+        assert!(view.event.as_ref().is_some_and(|e| e.countdown.is_some()));
+        assert!(
+            run(&mut app, "event dismiss")
+                .last()
+                .unwrap()
+                .contains("no results")
+        );
+        run(&mut app, "event cancel");
+        assert!(update_until(&mut app, |c| c.event_info().is_none()));
+        assert!(app.world().resource::<RideView>().event.is_none());
     }
 
     #[test]

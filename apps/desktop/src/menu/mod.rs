@@ -23,6 +23,7 @@ use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permissio
 use ocw_render::menu::{InputContext, MenuCorePlugin, MenuPointer, MenuPointerEvent, MenuView};
 
 use crate::connection::ClientState;
+use crate::ride::RideCatalog;
 use crate::settings::pages as settings_pages;
 use crate::settings::registry::Settings;
 use crate::settings::riders::Riders;
@@ -97,6 +98,7 @@ fn menu_input(
     client: Option<ResMut<ClientState>>,
     settings: Option<Res<UserSettings>>,
     riders: Option<Res<RiderProfiles>>,
+    catalog: Option<Res<RideCatalog>>,
 ) {
     let pressed = pads.iter().fold(
         keys.map(|k| controls::keyboard(&k)).unwrap_or_default(),
@@ -105,7 +107,18 @@ fn menu_input(
     let mut actions = std::mem::take(&mut state.queued);
     let pointer_events = std::mem::take(&mut pointer.0);
     let open = state.menu.is_open();
-    if console.is_open() {
+    let mut client = client;
+    let now = time.elapsed_secs_f64();
+    let results =
+        !open && !console.is_open() && client.as_ref().is_some_and(|c| c.0.results_showing(now));
+    if results && (pressed.escape || pressed.confirm || pressed.back) {
+        // An event's results panel is up: Esc / Enter / B close it first
+        // (spec §2.3), the menu opens on the next press.
+        if let Some(c) = client.as_mut() {
+            c.0.dismiss_results(now);
+        }
+        state.repeat.reset();
+    } else if console.is_open() {
         // The console has the keys; Esc closes it first (never the app).
         if pressed.escape {
             console.set_open(false);
@@ -132,7 +145,14 @@ fn menu_input(
             MenuPointerEvent::Back => Some(Action::Back),
         }));
     }
-    let rows = |p| sub_rows(p, settings.as_deref(), riders.as_deref());
+    let rows = |p| {
+        sub_rows(
+            p,
+            settings.as_deref(),
+            riders.as_deref(),
+            catalog.as_deref(),
+        )
+    };
     for action in actions {
         if let Effect::Command(line) = state.menu.apply_with(action, rows) {
             console.queue(line);
@@ -167,13 +187,19 @@ pub fn status_line(view: &RideView) -> String {
     }
 }
 
-/// The rows of a Settings sub page or the Workshop (defaults without the
-/// settings plugin, e.g. in tests of the menu alone).
+/// The rows of a Settings sub page, the Workshop or a Ride / Navi list
+/// (defaults without the settings or ride plugin, e.g. in tests of the
+/// menu alone).
 fn sub_rows(
     page: settings_pages::Page,
     settings: Option<&UserSettings>,
     riders: Option<&RiderProfiles>,
+    catalog: Option<&RideCatalog>,
 ) -> Vec<settings_pages::Row> {
+    if page.is_ride_page() {
+        let empty = crate::ride::pages::Catalog::default();
+        return crate::ride::pages::rows(page, catalog.map_or(&empty, |c| &c.0));
+    }
     let default_settings = Settings::default();
     let default_riders = Riders::default();
     settings_pages::rows(
@@ -188,10 +214,18 @@ fn write_view(
     ride: Option<Res<RideView>>,
     settings: Option<Res<UserSettings>>,
     riders: Option<Res<RiderProfiles>>,
+    catalog: Option<Res<RideCatalog>>,
     mut view: ResMut<MenuView>,
 ) {
     // Values changed by the menu's commands (or the console) show at once.
-    let rows = |p| sub_rows(p, settings.as_deref(), riders.as_deref());
+    let rows = |p| {
+        sub_rows(
+            p,
+            settings.as_deref(),
+            riders.as_deref(),
+            catalog.as_deref(),
+        )
+    };
     state.menu.refresh(&rows);
     let menu = &state.menu;
     let new = match menu.page() {
@@ -210,10 +244,13 @@ fn write_view(
                 focused: menu.focus(),
                 hint: format!(
                     "Up/Down move   {}Enter/A select   Esc/B {}",
-                    if matches!(page, Page::Sub(_)) {
-                        "Left/Right change   Q/E, LB/RB tab   "
-                    } else {
-                        ""
+                    match page {
+                        Page::Sub(p) if p.is_ride_page() && menu.list_pages() > 1 => {
+                            "Left/Right page   "
+                        }
+                        Page::Sub(p) if p.is_ride_page() => "",
+                        Page::Sub(_) => "Left/Right change   Q/E, LB/RB tab   ",
+                        _ => "",
                     },
                     if menu.depth() > 1 { "back" } else { "close" }
                 ),
@@ -255,6 +292,7 @@ mod tests {
             .init_resource::<ButtonInput<KeyCode>>()
             .insert_resource(args)
             .insert_resource(RideView::new(Route::test_loop()))
+            .insert_resource(crate::connection::Ghosts(None))
             .add_plugins((
                 ConnectionPlugin {
                     route: Route::test_loop(),
@@ -297,6 +335,55 @@ mod tests {
 
     fn client(app: &mut App) -> Mut<'_, ClientState> {
         app.world_mut().resource_mut::<ClientState>()
+    }
+
+    /// The server's word that the local rider finished event `id` (a time
+    /// trial): the results panel comes up.
+    fn finish_event(app: &mut App, id: u32) {
+        use ocw_protocol::v1::server_message::Msg as S;
+        let now = app.world().resource::<Time>().elapsed_secs_f64();
+        let mut c = client(app);
+        let own = c.0.rider_id().unwrap();
+        let mut ev = ocw_sim::Event::new(
+            id,
+            ocw_sim::EventKind::TimeTrial {
+                length_m: 1000.0,
+                laps: None,
+            },
+            0,
+            0.0,
+            vec![(own, "me".into())],
+        );
+        ev.phase = ocw_sim::EventPhase::Finished;
+        ev.entrants[0].finish_s = Some(100.0);
+        let standings = ev.standings(&[(own, 1000.0, 0.0)]);
+        let bytes = ocw_protocol::encode(&ocw_protocol::server_message(S::Event(
+            ocw_protocol::event_state(Some(&ev), &standings, 0),
+        )));
+        c.0.on_server_message(&bytes, now);
+        assert!(c.0.results_showing(now));
+    }
+
+    #[test]
+    fn esc_and_a_close_the_results_first() {
+        let mut app = app();
+        finish_event(&mut app, 1);
+        tap(&mut app, KeyCode::Escape);
+        assert!(
+            !view(&app).open,
+            "Esc closed the results, not opened the menu"
+        );
+        let now = app.world().resource::<Time>().elapsed_secs_f64();
+        assert!(!client(&mut app).0.results_showing(now));
+        // A closes them too, without switching autodrive off.
+        finish_event(&mut app, 2);
+        tap(&mut app, KeyCode::KeyA);
+        let now = app.world().resource::<Time>().elapsed_secs_f64();
+        assert!(!client(&mut app).0.results_showing(now));
+        assert!(client(&mut app).0.autodrive());
+        // Without results Esc opens the menu as always.
+        tap(&mut app, KeyCode::Escape);
+        assert!(view(&app).open);
     }
 
     #[test]

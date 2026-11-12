@@ -16,7 +16,41 @@ message ClientMessage {
     TurnIntent turn = 5;
     UTurn u_turn = 6;
     RouteRejoin route_rejoin = 7;
+    EventRequest event = 8;
   }
+}
+
+// Events (spec §2.3): group ride, race, time trial. The server decides
+// the start, the finish and the ranking (spec §6.1). Today only a local
+// server accepts these from a rider (single player, started on demand);
+// on a remote server organizers schedule events. Answered with a
+// DevCommandResult (ok + message). Reliable.
+message EventRequest {
+  oneof req {
+    EventStart start = 1;
+    // Cancel the current event (riders ride on where they are).
+    bool cancel = 2;
+  }
+}
+
+enum EventKind {
+  EVENT_KIND_UNSPECIFIED = 0;
+  EVENT_KIND_GROUP_RIDE = 1;
+  EVENT_KIND_RACE = 2;
+  EVENT_KIND_TIME_TRIAL = 3;
+}
+
+message EventStart {
+  EventKind kind = 1;
+  // Finish of a race / time trial: laps of a loop or a distance; neither
+  // = the default (one lap of a loop, 5 km of a route that ends).
+  optional uint32 laps = 2;
+  optional uint32 length_m = 3;
+  // Bots in a race or group ride (absent = keep the current ones); a time
+  // trial has none.
+  optional uint32 bots = 4;
+  // Group ride pace (W; absent = 150 W).
+  optional uint32 target_w = 5;
 }
 
 // Route ride (spec §2.7, §2.2.1): back to the route after leaving it. Like
@@ -148,7 +182,54 @@ message ServerMessage {
     Reject reject = 3;
     DevCommandResult dev_result = 4;
     PathUpdate path = 5;
+    EventState event = 6;
   }
+}
+
+enum EventPhase {
+  // No event (none started, or cancelled).
+  EVENT_PHASE_NONE = 0;
+  EVENT_PHASE_SCHEDULED = 1;
+  EVENT_PHASE_COUNTDOWN = 2;
+  EVENT_PHASE_RUNNING = 3;
+  EVENT_PHASE_FINISHED = 4;
+}
+
+// The current event (spec §2.3): sent reliably when it starts, changes
+// phase, a rider finishes, and twice a second while a race or time trial
+// runs (the standings). Times are server ticks (50 Hz, spec §5.2).
+message EventState {
+  uint32 event_id = 1;
+  EventKind kind = 2;
+  EventPhase phase = 3;
+  uint64 countdown_tick = 4;
+  uint64 go_tick = 5;
+  // The server tick this state is from.
+  uint64 server_tick = 6;
+  // Course distance of the start line; the finish is length_m after it.
+  double start_line_m = 7;
+  double length_m = 8;
+  // Laps of a loop, if the length was given that way (0 = a distance).
+  uint32 laps = 9;
+  // Group ride pace (W).
+  uint32 target_w = 10;
+  // Ranking, first to last (empty for group rides).
+  repeated EventStanding standings = 11;
+  optional uint64 finished_tick = 12;
+}
+
+message EventStanding {
+  uint32 rider_id = 1;
+  string display_name = 2;
+  // 1-based.
+  uint32 position = 3;
+  // Distance past the start line (cm; negative behind it).
+  sint32 progress_cm = 4;
+  // Time from GO to the finish line (ms), once finished.
+  optional uint32 finish_ms = 5;
+  bool dnf = 6;
+  // Time to the rider one place ahead (ms; absent for the leader, DNFs).
+  optional uint32 gap_ahead_ms = 7;
 }
 
 // A rider's free-ride path (spec §5.2, §6.5): the server broadcasts the

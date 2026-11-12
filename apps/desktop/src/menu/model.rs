@@ -3,11 +3,20 @@
 //! app has to do comes back as an [`Effect`]. Menu functions are console
 //! command lines, so menu, console and scripts share one code path.
 //!
-//! The Settings sub pages and the Workshop (M2) are [`Page::Sub`]: their
-//! rows come from `settings::pages` (current values, left / right change
-//! them), passed in with [`Menu::apply_with`].
+//! The Settings sub pages, the Workshop (M2) and the lists of the Ride and
+//! Navi pages (M3) are [`Page::Sub`]: their rows come from
+//! `settings::pages` / `ride::pages` (current values, left / right change
+//! them), passed in with [`Menu::apply_with`]. Longer lists are paged
+//! ([`PAGE_ROWS`] rows, then Previous / Next), so no page has more than
+//! [`MAX_ITEMS`] items (ten-foot rule). Rows that would end the ride
+//! (another ride) ask first ([`Page::ConfirmSwitch`]).
 
 use crate::settings::pages::{self as sub, Activate, Row};
+
+/// At most this many items on a page (ten-foot UI, spec §3.2.1).
+pub const MAX_ITEMS: usize = 7;
+/// Rows per page of a paged list (+ Previous, Next and Back).
+pub const PAGE_ROWS: usize = 4;
 
 /// Abstract menu input (keyboard, mouse and gamepad map onto these).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,7 +27,8 @@ pub enum Action {
     Close,
     Up,
     Down,
-    /// Change the focused row's value (value rows of [`Page::Sub`]).
+    /// Change the focused row's value (value rows of [`Page::Sub`]); on a
+    /// row without a value of a paged list: the previous / next page.
     Left,
     Right,
     /// The previous / next tab of the Settings and Workshop pages (Q / E,
@@ -51,12 +61,19 @@ pub enum Effect {
 pub enum Page {
     Top,
     Ride,
+    /// Ride → Change ride: world packages and test routes (M3).
+    RideChange,
     Navi,
     Settings,
-    /// A Settings sub page or the Workshop, with rows from `settings::pages`.
+    /// A Settings sub page, the Workshop or a list of the Ride / Navi
+    /// pages, with rows from `settings::pages` / `ride::pages`.
     Sub(sub::Page),
+    /// Navi → Strava: what comes later (no network calls here).
+    NaviStrava,
     ConfirmRestart,
     ConfirmQuit,
+    /// "Change the ride?" before a `ride.switch` line ([`Menu::pending`]).
+    ConfirmSwitch,
 }
 
 /// What an item does when selected.
@@ -70,6 +87,10 @@ pub enum ItemKind {
     Back,
     /// Run a console command line; `close` = close the menu afterwards.
     Command { line: &'static str, close: bool },
+    /// Ask first ([`Page::ConfirmSwitch`]), then run the line and close.
+    Ask(&'static str),
+    /// Run the asked line ([`Menu::pending`]) and close the menu.
+    RunPending,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,6 +113,66 @@ const TOP_ITEMS: &[Item] = &[
     item("Settings", ItemKind::Open(Page::Settings)),
     item("Restart", ItemKind::Open(Page::ConfirmRestart)),
     item("Quit", ItemKind::Open(Page::ConfirmQuit)),
+];
+/// Ride page: local events (spec §2.3), started at once as console
+/// commands; the menu closes so the countdown is visible.
+const RIDE_ITEMS: &[Item] = &[
+    item(
+        "Race: 1 lap / 5 km, 5 bots",
+        ItemKind::Command {
+            line: "event race --bots 5",
+            close: true,
+        },
+    ),
+    item(
+        "Group ride at 150 W",
+        ItemKind::Command {
+            line: "event group --watts 150",
+            close: true,
+        },
+    ),
+    item(
+        "Time trial vs your ghost",
+        ItemKind::Command {
+            line: "event tt",
+            close: true,
+        },
+    ),
+    item(
+        "End the event",
+        ItemKind::Command {
+            line: "event cancel",
+            close: true,
+        },
+    ),
+    item("Change ride", ItemKind::Open(Page::RideChange)),
+    BACK,
+];
+/// Ride → Change ride (M3): another world, route or test route.
+const CHANGE_ITEMS: &[Item] = &[
+    item(
+        "World packages",
+        ItemKind::Open(Page::Sub(sub::Page::Worlds)),
+    ),
+    item(
+        "Test route: Hills",
+        ItemKind::Ask("ride.switch --route hills"),
+    ),
+    item(
+        "Test route: Loop",
+        ItemKind::Ask("ride.switch --route loop"),
+    ),
+    BACK,
+];
+const NAVI_ITEMS: &[Item] = &[
+    item("Routes", ItemKind::Open(Page::Sub(sub::Page::Routes))),
+    item("Rides", ItemKind::Open(Page::Sub(sub::Page::Rides))),
+    item(
+        "GPX import",
+        ItemKind::Open(Page::Sub(sub::Page::GpxImport)),
+    ),
+    item("Strava", ItemKind::Open(Page::NaviStrava)),
+    BACK,
 ];
 const SETTINGS_ITEMS: &[Item] = &[
     item("Riders", ItemKind::Open(Page::Sub(sub::Page::Riders))),
@@ -121,6 +202,10 @@ const QUIT_ITEMS: &[Item] = &[
     ),
     item("Cancel", ItemKind::Back),
 ];
+const SWITCH_ITEMS: &[Item] = &[
+    item("Ride now", ItemKind::RunPending),
+    item("Cancel", ItemKind::Back),
+];
 
 /// Title, description paragraphs (wrapped to the panel), items and the initially focused item of a page.
 pub struct PageDef {
@@ -142,17 +227,33 @@ impl Page {
             Page::Ride => PageDef {
                 title: "Ride",
                 text: &[
-                    "Coming soon (M3): pick the world and the mode - free ride from a random or named place, a route of the world package or a test route - and the number of bots, then start the ride.",
-                    "Later: structured workouts in ERG mode, and events (group rides, races) once accounts exist (Phase 5).",
+                    "Local events on this route: everyone lines up at the start, 3-2-1-GO. Races and time trials end at the finish with a results table; a time trial races your best effort (the ghost).",
+                    "Change ride: another world package (free ride or one of its routes) or a test route, without restarting.",
                 ],
-                items: &[BACK],
+                items: RIDE_ITEMS,
+                initial_focus: 0,
+            },
+            Page::RideChange => PageDef {
+                title: "Change ride",
+                text: &[
+                    "Ride something else without restarting: a world package (free ride or one of its routes, Navi -> Routes) or a test route. The ride so far is saved; devices stay connected.",
+                ],
+                items: CHANGE_ITEMS,
                 initial_focus: 0,
             },
             Page::Navi => PageDef {
                 title: "Navi",
                 text: &[
-                    "Coming soon (M3): the route library, your saved rides with FIT export and their Strava sync state, Sync now / Retry failed.",
-                    "Later (M4): GPX import with map matching, GPX export.",
+                    "Routes of this world, your saved rides, GPX import onto the roads of the loaded world package.",
+                ],
+                items: NAVI_ITEMS,
+                initial_focus: 0,
+            },
+            Page::NaviStrava => PageDef {
+                title: "Strava",
+                text: &[
+                    "Rides are uploaded to Strava after saving when an account is linked (Settings -> Strava; the sync state is in Navi -> Rides).",
+                    "Later (Phase 5): the upload through the OCW backend without own API credentials, importing Strava routes and segments as GPX routes.",
                 ],
                 items: &[BACK],
                 initial_focus: 0,
@@ -185,16 +286,44 @@ impl Page {
                 items: QUIT_ITEMS,
                 initial_focus: 1,
             },
+            Page::ConfirmSwitch => PageDef {
+                title: "Change the ride?",
+                text: &[
+                    "The ride so far is saved and the new one starts at once. Devices stay connected.",
+                ],
+                items: SWITCH_ITEMS,
+                initial_focus: 1,
+            },
         }
     }
 }
 
-/// The menu: closed, or a stack of (page, focused item).
+/// One open page: which, the focused item, the shown part of a paged list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Level {
+    page: Page,
+    focus: usize,
+    /// Page of a paged list (0 = the first [`PAGE_ROWS`] rows).
+    scroll: usize,
+}
+
+/// An item of a [`Page::Sub`] page as shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Slot {
+    Row(usize),
+    Prev,
+    Next,
+    Back,
+}
+
+/// The menu: closed, or a stack of open pages.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Menu {
-    stack: Vec<(Page, usize)>,
+    stack: Vec<Level>,
     /// The rows of the current [`Page::Sub`] (refreshed by `apply_with`).
     rows: Vec<Row>,
+    /// The command line [`Page::ConfirmSwitch`] runs when confirmed.
+    pending: Option<String>,
 }
 
 impl Menu {
@@ -204,12 +333,12 @@ impl Menu {
 
     /// The current page, if open.
     pub fn page(&self) -> Option<Page> {
-        self.stack.last().map(|(p, _)| *p)
+        self.stack.last().map(|l| l.page)
     }
 
     /// The focused item index on the current page.
     pub fn focus(&self) -> usize {
-        self.stack.last().map_or(0, |(_, f)| *f)
+        self.stack.last().map_or(0, |l| l.focus)
     }
 
     /// Pages from the top page to the current one.
@@ -217,14 +346,55 @@ impl Menu {
         self.stack.len()
     }
 
+    /// The line a confirmation page would run.
+    #[cfg(test)]
+    pub fn pending(&self) -> Option<&str> {
+        self.pending.as_deref()
+    }
+
     pub fn items(&self) -> &'static [Item] {
         self.page().map_or(&[], |p| p.def().items)
+    }
+
+    fn scroll(&self) -> usize {
+        self.stack.last().map_or(0, |l| l.scroll)
+    }
+
+    /// Pages of the current list (1 if it is not paged).
+    pub fn list_pages(&self) -> usize {
+        if self.rows.len() < MAX_ITEMS {
+            1
+        } else {
+            self.rows.len().div_ceil(PAGE_ROWS)
+        }
+    }
+
+    /// The items of the current [`Page::Sub`] page: all rows and Back, or
+    /// one page of rows, Previous / Next and Back.
+    fn slots(&self) -> Vec<Slot> {
+        let n = self.rows.len();
+        let pages = self.list_pages();
+        if pages == 1 {
+            return (0..n).map(Slot::Row).chain([Slot::Back]).collect();
+        }
+        let p = self.scroll().min(pages - 1);
+        let mut out: Vec<Slot> = (p * PAGE_ROWS..(p * PAGE_ROWS + PAGE_ROWS).min(n))
+            .map(Slot::Row)
+            .collect();
+        if p > 0 {
+            out.push(Slot::Prev);
+        }
+        if p + 1 < pages {
+            out.push(Slot::Next);
+        }
+        out.push(Slot::Back);
+        out
     }
 
     /// Number of focusable items on the current page.
     pub fn item_count(&self) -> usize {
         match self.page() {
-            Some(Page::Sub(_)) => self.rows.len() + 1,
+            Some(Page::Sub(_)) => self.slots().len(),
             _ => self.items().len(),
         }
     }
@@ -233,12 +403,18 @@ impl Menu {
     /// rows as "Label:  < value >".
     pub fn labels(&self) -> Vec<String> {
         match self.page() {
-            Some(Page::Sub(_)) => self
-                .rows
-                .iter()
-                .map(row_label)
-                .chain(["Back".to_string()])
-                .collect(),
+            Some(Page::Sub(_)) => {
+                let (p, pages) = (self.scroll() + 1, self.list_pages());
+                self.slots()
+                    .into_iter()
+                    .map(|s| match s {
+                        Slot::Row(i) => row_label(&self.rows[i]),
+                        Slot::Prev => format!("Previous ({p}/{pages})"),
+                        Slot::Next => format!("Next ({p}/{pages})"),
+                        Slot::Back => "Back".to_string(),
+                    })
+                    .collect()
+            }
             _ => self.items().iter().map(|i| i.label.to_string()).collect(),
         }
     }
@@ -261,7 +437,11 @@ impl Menu {
     }
 
     fn push(&mut self, page: Page) {
-        self.stack.push((page, page.def().initial_focus));
+        self.stack.push(Level {
+            page,
+            focus: page.def().initial_focus,
+            scroll: 0,
+        });
     }
 
     fn close(&mut self) -> Effect {
@@ -270,12 +450,13 @@ impl Menu {
         }
         self.stack.clear();
         self.rows.clear();
+        self.pending = None;
         Effect::Closed
     }
 
     fn set_focus(&mut self, i: usize) {
-        if let Some((_, f)) = self.stack.last_mut() {
-            *f = i;
+        if let Some(l) = self.stack.last_mut() {
+            l.focus = i;
         }
     }
 
@@ -287,6 +468,38 @@ impl Menu {
         }
         let f = (self.focus() as isize + step).rem_euclid(n as isize);
         self.set_focus(f as usize);
+    }
+
+    /// Shows the previous / next page of a paged list; the focus stays on
+    /// the same kind of item (Next stays on Next while there is one).
+    fn turn_page(&mut self, dir: isize) -> bool {
+        let pages = self.list_pages() as isize;
+        let at = self.scroll() as isize;
+        let to = at + dir;
+        if pages < 2 || !(0..pages).contains(&to) {
+            return false;
+        }
+        let was = self.slots().get(self.focus()).copied();
+        if let Some(l) = self.stack.last_mut() {
+            l.scroll = to as usize;
+        }
+        let slots = self.slots();
+        let f = was
+            .and_then(|w| slots.iter().position(|s| *s == w))
+            .or_else(|| {
+                slots
+                    .iter()
+                    .position(|s| matches!(s, Slot::Prev | Slot::Next))
+            })
+            .unwrap_or(0);
+        self.set_focus(f);
+        true
+    }
+
+    fn ask(&mut self, line: String) -> Effect {
+        self.pending = Some(line);
+        self.push(Page::ConfirmSwitch);
+        Effect::None
     }
 
     fn select(&mut self, i: usize) -> Effect {
@@ -310,34 +523,60 @@ impl Menu {
                 }
                 Effect::Command(line.to_owned())
             }
+            ItemKind::Ask(line) => self.ask(line.to_owned()),
+            ItemKind::RunPending => match self.pending.take() {
+                Some(line) => {
+                    self.stack.clear();
+                    self.rows.clear();
+                    Effect::Command(line)
+                }
+                None => self.back(),
+            },
         }
     }
 
     fn select_row(&mut self, i: usize) -> Effect {
-        if i >= self.item_count() {
+        let Some(slot) = self.slots().get(i).copied() else {
             return Effect::None;
-        }
+        };
         self.set_focus(i);
-        match self.rows.get(i).map(|r| r.confirm.clone()) {
-            None => self.back(),
-            Some(Some(Activate::Command(line))) => Effect::Command(line),
-            Some(Some(Activate::Open(p))) => {
+        let row = match slot {
+            Slot::Back => return self.back(),
+            Slot::Prev => {
+                self.turn_page(-1);
+                return Effect::None;
+            }
+            Slot::Next => {
+                self.turn_page(1);
+                return Effect::None;
+            }
+            Slot::Row(r) => r,
+        };
+        match self.rows[row].confirm.clone() {
+            Some(Activate::Command(line)) => Effect::Command(line),
+            Some(Activate::Ask(line)) => self.ask(line),
+            Some(Activate::Open(p)) => {
                 self.push(Page::Sub(p));
                 self.rows.clear();
                 Effect::None
             }
-            Some(None) => Effect::None,
+            None => Effect::None,
         }
     }
 
-    /// Left / right on a value row: its command line.
-    fn change(&self, right: bool) -> Effect {
-        let Some(row) = self.rows.get(self.focus()) else {
-            return Effect::None;
+    /// Left / right on a value row: its command line; on another row of a
+    /// paged list: the previous / next page.
+    fn change(&mut self, right: bool) -> Effect {
+        let row = match self.slots().get(self.focus()) {
+            Some(Slot::Row(r)) => self.rows.get(*r),
+            _ => None,
         };
-        match if right { &row.right } else { &row.left } {
-            Some(line) => Effect::Command(line.clone()),
-            None => Effect::None,
+        match row.and_then(|row| if right { &row.right } else { &row.left }.clone()) {
+            Some(line) => Effect::Command(line),
+            None => {
+                self.turn_page(if right { 1 } else { -1 });
+                Effect::None
+            }
         }
     }
 
@@ -352,15 +591,24 @@ impl Menu {
     }
 
     /// Reads the current page's rows again. A rider editor whose rider is
-    /// gone (deleted) goes back to the list.
+    /// gone (deleted), or a world that is no longer listed, goes back to
+    /// the list.
     pub fn refresh(&mut self, rows: &impl Fn(sub::Page) -> Vec<Row>) {
         match self.page() {
             Some(Page::Sub(p)) => {
                 self.rows = rows(p);
-                if matches!(p, sub::Page::Rider(_) | sub::Page::Bike(_)) && self.rows.is_empty() {
+                if matches!(
+                    p,
+                    sub::Page::Rider(_) | sub::Page::Bike(_) | sub::Page::World(_)
+                ) && self.rows.is_empty()
+                {
                     self.stack.pop();
                     self.refresh(rows);
                     return;
+                }
+                let pages = self.list_pages();
+                if let Some(l) = self.stack.last_mut() {
+                    l.scroll = l.scroll.min(pages - 1);
                 }
                 let n = self.item_count();
                 if self.focus() >= n {
@@ -373,6 +621,9 @@ impl Menu {
 
     fn back(&mut self) -> Effect {
         if self.stack.len() > 1 {
+            if self.page() == Some(Page::ConfirmSwitch) {
+                self.pending = None;
+            }
             self.stack.pop();
             self.rows.clear();
             Effect::None
@@ -395,7 +646,13 @@ impl Menu {
         }
         match action {
             Action::Open => Effect::None,
-            Action::Left | Action::Right => self.change(action == Action::Right),
+            Action::Left | Action::Right => {
+                if matches!(self.page(), Some(Page::Sub(_))) {
+                    self.change(action == Action::Right)
+                } else {
+                    Effect::None
+                }
+            }
             Action::TabPrev | Action::TabNext => {
                 self.switch_tab(if action == Action::TabNext { 1 } else { -1 });
                 Effect::None
@@ -498,11 +755,24 @@ mod tests {
         // Back returns to the top page with the focus where it was.
         assert_eq!(m.apply(Action::Back), Effect::None);
         assert_eq!((m.page(), m.focus()), (Some(Page::Top), 4));
-        // Placeholder pages: their Back item goes up too.
+        // The Back item of a page goes up too.
         m.apply(Action::Click(1));
         assert_eq!(m.page(), Some(Page::Ride));
-        assert_eq!(labels(&m), ["Back"]);
-        m.apply(Action::Confirm);
+        assert_eq!(labels(&m)[4..], ["Change ride", "Back"]);
+        m.apply(Action::Click(4));
+        assert_eq!(m.page(), Some(Page::RideChange));
+        assert_eq!(
+            labels(&m),
+            [
+                "World packages",
+                "Test route: Hills",
+                "Test route: Loop",
+                "Back"
+            ]
+        );
+        m.apply(Action::Click(3));
+        assert_eq!((m.page(), m.focus()), (Some(Page::Ride), 4));
+        m.apply(Action::Click(5));
         assert_eq!((m.page(), m.focus()), (Some(Page::Top), 1));
         // Back at the top closes.
         assert_eq!(m.apply(Action::Back), Effect::Closed);
@@ -558,6 +828,40 @@ mod tests {
     /// Applies `a` with the rows of the given settings and riders.
     fn act(m: &mut Menu, a: Action, s: &Settings, r: &Riders) -> Effect {
         m.apply_with(a, |p| sub::rows(p, s, r))
+    }
+
+    #[test]
+    fn ride_page_starts_events_and_closes() {
+        let mut m = Menu::default();
+        m.apply(Action::Open);
+        m.apply(Action::Click(1));
+        assert_eq!(m.page(), Some(Page::Ride));
+        assert_eq!(
+            labels(&m),
+            [
+                "Race: 1 lap / 5 km, 5 bots",
+                "Group ride at 150 W",
+                "Time trial vs your ghost",
+                "End the event",
+                "Change ride",
+                "Back"
+            ]
+        );
+        assert_eq!(
+            m.apply(Action::Confirm),
+            Effect::Command("event race --bots 5".into())
+        );
+        assert!(!m.is_open(), "closes for the countdown");
+        m.apply(Action::Open);
+        m.apply(Action::Click(1));
+        assert_eq!(
+            m.apply(Action::Click(2)),
+            Effect::Command("event tt".into())
+        );
+        m.apply(Action::Open);
+        m.apply(Action::Click(1));
+        m.apply(Action::Click(5));
+        assert_eq!(m.page(), Some(Page::Top));
     }
 
     #[test]
@@ -710,22 +1014,59 @@ mod tests {
         for page in [
             Page::Top,
             Page::Ride,
+            Page::RideChange,
             Page::Navi,
             Page::Settings,
+            Page::NaviStrava,
             Page::ConfirmRestart,
             Page::ConfirmQuit,
+            Page::ConfirmSwitch,
         ] {
             let d = page.def();
             assert!(!d.items.is_empty() && d.items.len() <= 7, "{page:?}");
             assert!(d.initial_focus < d.items.len(), "{page:?}");
-            // Bevy's default font: ASCII only.
+            // Every character has a glyph in the bundled UI font.
             for s in d.text.iter().chain(d.items.iter().map(|i| &i.label)) {
-                assert!(s.is_ascii(), "{page:?}: {s}");
+                let missing = ocw_render::font::missing(s);
+                assert!(missing.is_empty(), "{page:?}: {s}: {missing:?}");
             }
             // Every sub page can be left with an item, not only with Back.
             if page != Page::Top {
                 assert!(d.items.iter().any(|i| i.kind == ItemKind::Back), "{page:?}");
             }
         }
+    }
+
+    #[test]
+    fn many_riders_are_paged_in_the_workshop() {
+        let s = Settings::default();
+        let mut r = Riders::default();
+        for i in 0..8 {
+            r.add(Rider {
+                name: format!("Rider {i}"),
+                ..Rider::default()
+            })
+            .unwrap();
+        }
+        let mut m = Menu::default();
+        act(&mut m, Action::Open, &s, &r);
+        act(&mut m, Action::Click(2), &s, &r);
+        assert_eq!(m.page(), Some(Page::Sub(sub::Page::Workshop)));
+        // 8 riders, Bike and Edit riders: three pages of four rows.
+        let l = m.labels();
+        assert!(l.len() <= MAX_ITEMS, "{l:?}");
+        assert_eq!(&l[4..], ["Next (1/3)", "Back"]);
+        act(&mut m, Action::Click(4), &s, &r);
+        act(&mut m, Action::Click(5), &s, &r);
+        let l = m.labels();
+        assert_eq!(l[l.len() - 2], "Previous (3/3)");
+        assert!(l.iter().any(|x| x == "Edit riders"), "{l:?}");
+        // A row's command still runs from a later page.
+        let at = l.iter().position(|x| x == "Edit riders").unwrap();
+        act(&mut m, Action::Click(at), &s, &r);
+        assert_eq!(m.page(), Some(Page::Sub(sub::Page::Riders)));
+        // Back: the Workshop keeps its page.
+        act(&mut m, Action::Back, &s, &r);
+        assert_eq!(m.labels()[m.labels().len() - 2], "Previous (3/3)");
     }
 }

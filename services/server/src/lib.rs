@@ -15,7 +15,7 @@ use std::sync::Arc;
 use ocw_core::{BROADCAST_HZ, RiderId, SIM_TICK_HZ, TICKS_PER_BROADCAST};
 use ocw_protocol::v1::{self, client_message::Msg as C, server_message::Msg as S};
 use ocw_protocol::{PROTOCOL_VERSION, decode_client, encode, server_message};
-use ocw_sim::{FreeRideStart, RiderInput, Session};
+use ocw_sim::{EventKind, EventPhase, EventSpec, FreeRideStart, RiderInput, Session};
 use ocw_world::{RoadNetwork, Route, RoutePlan};
 
 /// What a session rides: a fixed route, free ride on the road graph, or a
@@ -54,7 +54,15 @@ pub struct ServerConfig {
     pub bots: u32,
     /// Where on the route everyone starts, in metres.
     pub start_m: f64,
+    /// Riders may start and cancel events ([`v1::EventRequest`]): only the
+    /// in-process local server, where the single player is the organizer
+    /// (spec §2.3); on a remote server events are scheduled.
+    pub allow_local_events: bool,
 }
+
+/// Ticks between two event-state broadcasts while a race or time trial
+/// runs (2 Hz: the standings and gaps).
+pub const EVENT_STATE_TICKS: u64 = 25;
 
 /// Authoritative server for one session.
 pub struct GameServer {
@@ -63,6 +71,8 @@ pub struct GameServer {
     /// Connection → rider, once the client said hello.
     riders: BTreeMap<ConnectionId, RiderId>,
     next_connection: u64,
+    /// The event changed outside a tick (cancelled): send its state.
+    event_dirty: bool,
 }
 
 /// Base power of the bots, from easy riders to strong ones, so they spread
@@ -72,6 +82,21 @@ pub struct GameServer {
 pub const BOT_POWERS_W: [f64; 12] = [
     210.0, 110.0, 160.0, 85.0, 250.0, 135.0, 185.0, 95.0, 280.0, 120.0, 230.0, 145.0,
 ];
+
+/// Most bots in an event's field.
+pub const MAX_EVENT_BOTS: u32 = 50;
+
+/// "2 laps (8.0 km)" or "5.0 km".
+pub fn distance_label(length_m: f64, laps: Option<u32>) -> String {
+    match laps {
+        Some(n) => format!(
+            "{n} lap{} ({:.1} km)",
+            if n == 1 { "" } else { "s" },
+            length_m / 1000.0
+        ),
+        None => format!("{:.1} km", length_m / 1000.0),
+    }
+}
 
 /// Base power of the `i`-th bot.
 pub fn bot_power_w(i: u32) -> f64 {
@@ -120,6 +145,7 @@ impl GameServer {
             session,
             riders: BTreeMap::new(),
             next_connection: 1,
+            event_dirty: false,
         }
     }
 
@@ -166,6 +192,7 @@ impl GameServer {
                 None
             }
             (C::Dev(cmd), Some(rider)) => Some(self.dev_command(rider, cmd)),
+            (C::Event(req), Some(_)) => Some(self.event_request(req)),
             (C::Turn(turn), Some(rider)) => {
                 if let Some(net) = self.session.network() {
                     let choice = ocw_protocol::turn_choice(&turn, net);
@@ -214,6 +241,9 @@ impl GameServer {
             .unwrap_or_default();
         // A client that just joined a free ride gets everyone's path.
         let joined = !had_rider && self.riders.contains_key(&conn);
+        if joined && self.session.event().is_some() {
+            out.push(encode(&server_message(S::Event(self.event_state()))));
+        }
         if joined && let Some(net) = self.session.network() {
             out.extend(
                 self.session
@@ -297,12 +327,104 @@ impl GameServer {
         }
     }
 
+    /// Starts or cancels an event (spec §2.3; local server only).
+    fn event_request(&mut self, req: v1::EventRequest) -> S {
+        let result = |ok: bool, message: String| S::DevResult(v1::DevCommandResult { ok, message });
+        if !self.config.allow_local_events {
+            return result(
+                false,
+                "events on this server are scheduled by the organizer".into(),
+            );
+        }
+        match req.req {
+            Some(v1::event_request::Req::Cancel(_)) => match self.session.cancel_event() {
+                Some(ev) => {
+                    self.event_dirty = true;
+                    result(true, format!("{} cancelled", ev.kind.name()))
+                }
+                None => result(false, "no event to cancel".into()),
+            },
+            Some(v1::event_request::Req::Start(start)) => {
+                let Some(spec) = ocw_protocol::event_spec(&start) else {
+                    return result(false, "unknown event kind".into());
+                };
+                if self.session.course_length().is_none() {
+                    return result(
+                        false,
+                        "events need a route (free ride has no fixed course)".into(),
+                    );
+                }
+                // The field: a time trial is ridden alone; races and group
+                // rides get the bots asked for (or keep the current ones).
+                let bots = match spec {
+                    EventSpec::TimeTrial { .. } => Some(0),
+                    _ => start.bots.map(|b| b.min(MAX_EVENT_BOTS)),
+                };
+                if let Some(n) = bots {
+                    for id in self.session.bots() {
+                        self.session.remove_rider(id);
+                    }
+                    for i in 0..n {
+                        self.session
+                            .add_bot(format!("Bot {}", i + 1), bot_power_w(i));
+                    }
+                }
+                match self.session.start_event(spec) {
+                    Ok(ev) => {
+                        let what = match ev.kind {
+                            EventKind::GroupRide { target_w } => {
+                                format!("group ride at {target_w:.0} W")
+                            }
+                            EventKind::Race { length_m, laps } => {
+                                format!("race over {}", distance_label(length_m, laps))
+                            }
+                            EventKind::TimeTrial { length_m, laps } => {
+                                format!("time trial over {}", distance_label(length_m, laps))
+                            }
+                        };
+                        result(
+                            true,
+                            format!(
+                                "{what}, {} rider{}: start in {:.0} s",
+                                ev.entrants.len(),
+                                if ev.entrants.len() == 1 { "" } else { "s" },
+                                ocw_sim::event::COUNTDOWN_S
+                            ),
+                        )
+                    }
+                    Err(e) => result(false, e),
+                }
+            }
+            None => result(false, "empty event request".into()),
+        }
+    }
+
+    /// The event state to send now.
+    fn event_state(&self) -> v1::EventState {
+        ocw_protocol::event_state(
+            self.session.event(),
+            &self.session.event_standings(),
+            self.session.tick(),
+        )
+    }
+
     /// Advances one physics tick. Returns the encoded messages to broadcast
     /// to every connection: free-ride path changes (reliable, at once) and
     /// a snapshot when one is due (every 5th tick at 50/10 Hz).
     pub fn tick(&mut self) -> Vec<Vec<u8>> {
         self.session.step();
         let mut out = Vec::new();
+        // The event: at once on a change, and at 2 Hz while a race or time
+        // trial runs.
+        let changed = !self.session.take_event_changes().is_empty();
+        let live = self
+            .session
+            .event()
+            .is_some_and(|e| e.phase == EventPhase::Running && e.kind.length_m().is_some())
+            && self.session.tick().is_multiple_of(EVENT_STATE_TICKS);
+        if changed || live || std::mem::take(&mut self.event_dirty) {
+            out.push(encode(&server_message(S::Event(self.event_state()))));
+        }
         if let Some(net) = self.session.network().cloned() {
             for c in self.session.take_path_changes() {
                 out.push(encode(&server_message(S::Path(ocw_protocol::path_update(
@@ -748,6 +870,7 @@ mod tests {
                     allow_dev_commands: allow,
                     bots: 0,
                     start_m: 0.0,
+                    allow_local_events: false,
                 },
             );
             let conn = server.connect();
@@ -793,6 +916,7 @@ mod tests {
                 allow_dev_commands: false,
                 bots: 20,
                 start_m: 200.0,
+                allow_local_events: false,
             },
         );
         let snap = server.session().snapshot();
@@ -821,12 +945,177 @@ mod tests {
                 allow_dev_commands: false,
                 bots: 3,
                 start_m: 0.0,
+                allow_local_events: false,
             },
         );
         let conn = server.connect();
         server.handle(conn, &hello(PROTOCOL_VERSION));
         assert_eq!(server.session().rider_count(), 4);
         server.disconnect(conn);
+        assert_eq!(server.session().rider_count(), 3);
+    }
+
+    fn event_msg(req: v1::event_request::Req) -> Vec<u8> {
+        encode(&client_message(C::Event(v1::EventRequest {
+            req: Some(req),
+        })))
+    }
+
+    fn start(spec: EventSpec, bots: Option<u32>) -> Vec<u8> {
+        event_msg(v1::event_request::Req::Start(ocw_protocol::event_start(
+            &spec, bots,
+        )))
+    }
+
+    fn local(bots: u32) -> GameServer {
+        GameServer::new(
+            Route::test_loop(),
+            ServerConfig {
+                allow_dev_commands: true,
+                bots,
+                start_m: 500.0,
+                allow_local_events: true,
+            },
+        )
+    }
+
+    /// Ticks `n` times; the event states broadcast meanwhile.
+    fn tick_events(server: &mut GameServer, n: usize) -> Vec<ocw_protocol::EventInfo> {
+        let mut out = Vec::new();
+        for _ in 0..n {
+            for bytes in server.tick() {
+                if let S::Event(e) = decode_server(&bytes).unwrap()
+                    && let Some(info) = ocw_protocol::event_info(&e)
+                {
+                    out.push(info);
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn local_race_over_the_wire() {
+        let mut server = local(10);
+        let conn = server.connect();
+        server.handle(conn, &hello(PROTOCOL_VERSION));
+        let race = EventSpec::Race {
+            laps: None,
+            length_m: Some(300.0),
+        };
+        let S::DevResult(r) =
+            decode_server(&server.handle(conn, &start(race, Some(3)))[0]).unwrap()
+        else {
+            panic!()
+        };
+        assert!(r.ok, "{}", r.message);
+        assert!(
+            r.message.contains("race over 0.3 km, 4 riders"),
+            "{}",
+            r.message
+        );
+        // The field: three bots and the rider.
+        assert_eq!(server.session().rider_count(), 4);
+        let states = tick_events(&mut server, 1);
+        assert_eq!(states.len(), 1);
+        assert_eq!(states[0].phase, EventPhase::Countdown);
+        assert_eq!(states[0].standings.len(), 4);
+        // GO is broadcast at once, then the standings at 2 Hz.
+        let states = tick_events(&mut server, ocw_sim::event::COUNTDOWN_TICKS as usize + 50);
+        assert_eq!(states[0].phase, EventPhase::Running);
+        assert!((2..=4).contains(&states.len()), "{}", states.len());
+        // A rider who joins later gets the event at once.
+        let late = server.connect();
+        let replies = server.handle(late, &hello(PROTOCOL_VERSION));
+        assert!(
+            replies
+                .iter()
+                .any(|b| matches!(decode_server(b), Ok(S::Event(_))))
+        );
+        server.disconnect(late);
+        // Cancel: an empty state.
+        let S::DevResult(r) = decode_server(
+            &server.handle(conn, &event_msg(v1::event_request::Req::Cancel(true)))[0],
+        )
+        .unwrap() else {
+            panic!()
+        };
+        assert!(r.ok);
+        let mut cancelled = false;
+        for bytes in server.tick() {
+            if let S::Event(e) = decode_server(&bytes).unwrap() {
+                cancelled = ocw_protocol::event_info(&e).is_none();
+            }
+        }
+        assert!(cancelled);
+        assert!(server.session().event().is_none());
+    }
+
+    #[test]
+    fn time_trials_are_ridden_alone_and_remote_servers_refuse() {
+        let mut server = local(5);
+        let conn = server.connect();
+        server.handle(conn, &hello(PROTOCOL_VERSION));
+        let tt = EventSpec::TimeTrial {
+            laps: None,
+            length_m: None,
+        };
+        let S::DevResult(r) = decode_server(&server.handle(conn, &start(tt, Some(5)))[0]).unwrap()
+        else {
+            panic!()
+        };
+        assert!(r.ok, "{}", r.message);
+        assert!(r.message.contains("1 lap"), "{}", r.message);
+        assert_eq!(server.session().rider_count(), 1);
+        // A group ride without a bot count keeps the field (none now).
+        let group = EventSpec::GroupRide { target_w: None };
+        server.handle(conn, &start(group, None));
+        assert_eq!(server.session().rider_count(), 1);
+        server.handle(conn, &start(group, Some(4)));
+        assert_eq!(server.session().rider_count(), 5);
+        // Remote server: not by riders.
+        let mut remote = GameServer::new(Route::test_loop(), ServerConfig::default());
+        let conn = remote.connect();
+        remote.handle(conn, &hello(PROTOCOL_VERSION));
+        let S::DevResult(r) = decode_server(&remote.handle(conn, &start(tt, None))[0]).unwrap()
+        else {
+            panic!()
+        };
+        assert!(!r.ok && r.message.contains("organizer"), "{}", r.message);
+        assert!(remote.session().event().is_none());
+    }
+
+    #[test]
+    fn free_rides_have_no_events() {
+        let net = line_network("Testland", 500.0);
+        let mut server = GameServer::new(
+            Course::FreeRide {
+                net,
+                start: FreeRideStart {
+                    edge: 0,
+                    offset_m: 10.0,
+                    forward: true,
+                },
+            },
+            ServerConfig {
+                allow_local_events: true,
+                bots: 2,
+                ..Default::default()
+            },
+        );
+        let conn = server.connect();
+        server.handle(conn, &hello(PROTOCOL_VERSION));
+        let race = EventSpec::Race {
+            laps: None,
+            length_m: None,
+        };
+        let S::DevResult(r) =
+            decode_server(&server.handle(conn, &start(race, Some(1)))[0]).unwrap()
+        else {
+            panic!()
+        };
+        assert!(!r.ok && r.message.contains("route"), "{}", r.message);
+        // The bots were not touched.
         assert_eq!(server.session().rider_count(), 3);
     }
 }

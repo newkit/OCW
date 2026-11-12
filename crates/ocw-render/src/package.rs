@@ -977,6 +977,26 @@ struct NeighbourLoads {
     tasks: HashMap<usize, Task<Result<WorldPackage, String>>>,
 }
 
+/// Drops all streamed tiles and pending loads (a ride switch,
+/// [`crate::rebuild_scene`]): the next frames stream the new world set.
+pub(crate) fn reset_streaming(world: &mut World) {
+    let loaded: Vec<Entity> = world
+        .get_resource_mut::<TileStreamer>()
+        .map(|mut s| {
+            let s = std::mem::take(&mut *s);
+            s.loaded.into_values().collect()
+        })
+        .unwrap_or_default();
+    for e in loaded {
+        if let Ok(e) = world.get_entity_mut(e) {
+            e.despawn();
+        }
+    }
+    if let Some(mut l) = world.get_resource_mut::<NeighbourLoads>() {
+        l.tasks.clear();
+    }
+}
+
 /// The local rider's position in home metres.
 fn rider_position(view: &RideView) -> Option<[f64; 2]> {
     let local = view.local()?;

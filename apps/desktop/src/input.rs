@@ -168,8 +168,11 @@ fn steer(
     mut stick_was_used: Local<bool>,
 ) {
     let pad_pressed = |b: GamepadButton| pads.iter().any(|p| p.just_pressed(b));
+    // An event's results panel takes A / B (spec §2.3).
+    let now = time.elapsed_secs_f64();
+    let results = client.0.results_input(now);
     if client.0.is_free_ride() {
-        if (keys.just_pressed(KeyCode::KeyU) || pad_pressed(GamepadButton::East))
+        if (keys.just_pressed(KeyCode::KeyU) || (pad_pressed(GamepadButton::East) && !results))
             && let Some(msg) = client.0.u_turn(time.elapsed_secs_f64())
         {
             info!("U-turn");
@@ -202,7 +205,9 @@ fn steer(
             return;
         }
     }
-    if keys.just_pressed(KeyCode::KeyA) || pad_pressed(GamepadButton::South) {
+    if (keys.just_pressed(KeyCode::KeyA) || pad_pressed(GamepadButton::South)) && results {
+        client.0.dismiss_results(now);
+    } else if keys.just_pressed(KeyCode::KeyA) || pad_pressed(GamepadButton::South) {
         let on = !client.0.autodrive();
         client.0.set_autodrive(on);
         info!("autodrive {}", if on { "on" } else { "off" });
