@@ -2280,6 +2280,7 @@ mod tests {
                 allow_dev_commands: true,
                 bots: 0,
                 start_m: 0.0,
+                allow_local_events: true,
             },
         );
         let mut h = Harness::with(
