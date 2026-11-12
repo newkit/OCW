@@ -3,6 +3,31 @@
 Prebuilt binaries of Open Cycling World for the platforms we can build on.
 These are development builds (spec §14 Phase 1/2), not signed or notarised.
 
+## 0.1.0-fc5947f – Linux and Windows
+
+Built from commit `fc5947f` (same code as the macOS app `dddee37` below; the
+later commits only add docs and the DMG) with
+`cargo build --release -p ocw-desktop -p ocw-server -p world-builder`.
+726 tests passed on Linux, macOS and Windows for this code (spec 2.8,
+Appendix B.4).
+
+| Platform | Built on | File | Size |
+|---|---|---|---|
+| linux-x86_64 | Linux build machine (`marge`) | `OpenCyclingWorld-0.1.0-fc5947f-x86_64.AppImage` | 44.6 MB |
+| linux-x86_64 | | `ocw-desktop.xz` (stripped, 123 MB unpacked) | 22.8 MB |
+| linux-x86_64 | | `ocw-server` | 6.2 MB |
+| linux-x86_64 | | `world-builder` | 2.7 MB |
+| windows-x86_64 | Windows 11 build machine | `OpenCyclingWorld-0.1.0-fc5947f-windows-x86_64.zip` (`ocw-desktop.exe`, `ocw-server.exe`, `world-builder.exe`) | 39.1 MB |
+
+- **Linux AppImage:** `chmod +x OpenCyclingWorld-*.AppImage && ./OpenCyclingWorld-*.AppImage`.
+  Without FUSE 2 (`libfuse2t64` / `libfuse2`) start it with
+  `APPIMAGE_EXTRACT_AND_RUN=1`. Packed by `scripts/build-appimage.sh`.
+- **Windows:** unzip and start `ocw-desktop.exe`. The binaries are not
+  signed, so SmartScreen warns on the first start (*More info* → *Run
+  anyway*). Needs a DirectX 12 or Vulkan GPU driver. No installer yet.
+- Checksums: `SHA256SUMS` in each platform folder (Linux also
+  `SHA256SUMS.uncompressed` for the unpacked `ocw-desktop`).
+
 ## 0.1.0-dddee37 – macOS app
 
 Built from commit `dddee37` on the Apple Silicon Mac by
