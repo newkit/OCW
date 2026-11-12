@@ -1,9 +1,10 @@
-//! Rider avatars (placeholder geometry until the asset pipeline exists, Phase 4).
+//! Rider avatars: procedural bikes per bike type and riders in their
+//! colours (spec §2.5; placeholder geometry until the glTF assets of §8).
 
 use std::collections::BTreeMap;
 
 use bevy::prelude::*;
-use ocw_core::RiderId;
+use ocw_core::{ProfileId, RiderId, RiderLook};
 
 use ocw_world::Track;
 
@@ -185,11 +186,161 @@ pub fn avatar_transform(
     t
 }
 
+/// Handlebars of a bike model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Bars {
+    /// Road and gravel: a bar with drops curving down.
+    Drop,
+    /// Time trial: a base bar with two extensions pointing forward.
+    Aero,
+    /// Mountain bike: a wide straight bar.
+    Flat,
+}
+
+/// The procedural bike model of a physics profile (spec §2.5: the bike
+/// type picks the model; placeholder geometry until the glTF assets of
+/// §8): what makes the silhouettes of the bike types distinguishable.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BikeModel {
+    pub bars: Bars,
+    /// Tyre width (m): road 25 mm, gravel 40 mm, MTB 60 mm.
+    pub tyre_m: f32,
+    /// Outer wheel radius incl. the tyre (m).
+    pub wheel_radius_m: f32,
+    /// Rim depth (m): deep aero rims show as a band inside the tyre.
+    pub rim_depth_m: f32,
+    /// A closed disc rear wheel (time trial).
+    pub rear_disc: bool,
+    /// Frame tube thickness (m); aero frames are deeper.
+    pub tube_m: f32,
+    /// Suspension fork (thicker, two legs; MTB).
+    pub suspension: bool,
+    /// Height of the saddle and top tube above the ground (m): sloping
+    /// MTB frames are lower at the back.
+    pub seat_height_m: f32,
+    /// Forward lean of the rider's torso from upright (rad): flat on the
+    /// TT bike, upright on the MTB.
+    pub torso_lean: f32,
+}
+
+/// The model of a bike.
+pub fn bike_model(bike: ProfileId) -> BikeModel {
+    let road = BikeModel {
+        bars: Bars::Drop,
+        tyre_m: 0.025,
+        wheel_radius_m: 0.34,
+        rim_depth_m: 0.02,
+        rear_disc: false,
+        tube_m: 0.035,
+        suspension: false,
+        seat_height_m: 0.88,
+        torso_lean: 1.0,
+    };
+    match bike {
+        ProfileId::Road => road,
+        ProfileId::RoadAero => BikeModel {
+            rim_depth_m: 0.06,
+            tube_m: 0.045,
+            ..road
+        },
+        ProfileId::RoadClimbing => BikeModel {
+            tube_m: 0.03,
+            ..road
+        },
+        ProfileId::TimeTrial => BikeModel {
+            bars: Bars::Aero,
+            rim_depth_m: 0.08,
+            rear_disc: true,
+            tube_m: 0.055,
+            torso_lean: 1.3,
+            ..road
+        },
+        ProfileId::Gravel => BikeModel {
+            tyre_m: 0.04,
+            wheel_radius_m: 0.35,
+            tube_m: 0.04,
+            torso_lean: 0.9,
+            ..road
+        },
+        ProfileId::Mountain => BikeModel {
+            bars: Bars::Flat,
+            tyre_m: 0.06,
+            wheel_radius_m: 0.37,
+            tube_m: 0.05,
+            suspension: true,
+            seat_height_m: 0.8,
+            torso_lean: 0.7,
+            ..road
+        },
+    }
+}
+
+/// The transform that stretches a Y-axis primitive of length 1 (a
+/// [`Cylinder`] of height 1) from `a` to `b`, and the length.
+pub fn tube_between(a: Vec3, b: Vec3) -> (f32, Transform) {
+    let d = b - a;
+    let len = d.length().max(1e-4);
+    let rot = Quat::from_rotation_arc(Vec3::Y, d / len);
+    (
+        len,
+        Transform::from_translation((a + b) * 0.5)
+            .with_rotation(rot)
+            .with_scale(Vec3::new(1.0, len, 1.0)),
+    )
+}
+
+/// The colours an avatar is drawn with.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AvatarColours {
+    pub frame: Color,
+    pub jersey: Color,
+    pub helmet: Color,
+    /// The kit pattern's colour: white on dark jerseys, black on light.
+    pub accent: Color,
+}
+
+fn rgb(c: ocw_core::Rgb) -> Color {
+    let [r, g, b] = c.channels();
+    Color::srgb_u8(r, g, b)
+}
+
+/// The colours of a rider: their look, or (an old server without looks)
+/// the jersey colour by id with a dark frame.
+pub fn avatar_colours(id: RiderId, is_local: bool, look: Option<&RiderLook>) -> AvatarColours {
+    let (frame, jersey, helmet) = match look {
+        Some(l) => (rgb(l.frame), rgb(l.jersey), rgb(l.helmet)),
+        None => {
+            let j = jersey_color(id, is_local);
+            (Color::srgb(0.08, 0.08, 0.09), j, j)
+        }
+    };
+    let s = jersey.to_srgba();
+    let luminance = 0.2126 * s.red + 0.7152 * s.green + 0.0722 * s.blue;
+    let accent = if luminance > 0.55 {
+        Color::srgb(0.06, 0.06, 0.07)
+    } else {
+        Color::srgb(0.96, 0.96, 0.94)
+    };
+    AvatarColours {
+        frame,
+        jersey,
+        helmet,
+        accent,
+    }
+}
+
+/// What an avatar was built from: rebuilt when it changes.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+struct AvatarLook {
+    bike: ProfileId,
+    look: Option<RiderLook>,
+}
+
 fn sync_riders(
     mut commands: Commands,
     view: Res<RideView>,
     mut entities: ResMut<RiderEntities>,
-    mut transforms: Query<&mut Transform, With<Avatar>>,
+    mut avatars: Query<(&mut Transform, &AvatarLook), With<Avatar>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     ground: Option<Res<Ground>>,
@@ -205,25 +356,62 @@ fn sync_riders(
     });
     for r in &view.riders {
         let t = avatar_transform(view.track(r.id), &r.state, ground.as_deref());
-        match entities.0.get(&r.id) {
-            Some(e) => {
-                if let Ok(mut tr) = transforms.get_mut(*e) {
+        let wanted = AvatarLook {
+            bike: r.bike,
+            look: r.look,
+        };
+        if let Some(e) = entities.0.get(&r.id).copied() {
+            match avatars.get_mut(e) {
+                Ok((mut tr, built)) if *built == wanted => {
                     *tr = t;
+                    continue;
                 }
-            }
-            None => {
-                let e = spawn_avatar(
-                    &mut commands,
-                    &mut meshes,
-                    &mut materials,
-                    r.id,
-                    r.is_local,
-                    t,
-                );
-                entities.0.insert(r.id, e);
+                // Another bike or look: build the avatar again.
+                _ => commands.entity(e).despawn(),
             }
         }
+        let e = spawn_avatar(
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            r.id,
+            r.is_local,
+            wanted,
+            t,
+        );
+        entities.0.insert(r.id, e);
     }
+}
+
+/// Spawns a part: `mesh` with `material` at `transform`.
+fn part(
+    a: &mut ChildSpawnerCommands<'_>,
+    mesh: &Handle<Mesh>,
+    material: &Handle<StandardMaterial>,
+    transform: Transform,
+) {
+    a.spawn((
+        Mesh3d(mesh.clone()),
+        MeshMaterial3d(material.clone()),
+        transform,
+    ));
+}
+
+/// A tube of radius `r` from `a` to `b` (a unit cylinder stretched).
+fn tube(
+    a: &mut ChildSpawnerCommands<'_>,
+    unit: &Handle<Mesh>,
+    material: &Handle<StandardMaterial>,
+    (from, to): (Vec3, Vec3),
+    r: f32,
+) {
+    let (_, t) = tube_between(from, to);
+    part(
+        a,
+        unit,
+        material,
+        t.with_scale(t.scale * Vec3::new(r, 1.0, r)),
+    );
 }
 
 fn spawn_avatar(
@@ -232,61 +420,237 @@ fn spawn_avatar(
     materials: &mut Assets<StandardMaterial>,
     id: RiderId,
     is_local: bool,
+    built: AvatarLook,
     transform: Transform,
 ) -> Entity {
-    let jersey = materials.add(StandardMaterial {
-        base_color: jersey_color(id, is_local),
-        ..default()
-    });
-    let dark = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.08, 0.08, 0.09),
-        perceptual_roughness: 0.5,
-        ..default()
-    });
-    let skin = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.85, 0.68, 0.55),
-        ..default()
-    });
-    let wheel = meshes.add(Torus::new(0.3, 0.35));
+    let model = bike_model(built.bike);
+    let colours = avatar_colours(id, is_local, built.look.as_ref());
+    let mat = |materials: &mut Assets<StandardMaterial>, c: Color, rough: f32| {
+        materials.add(StandardMaterial {
+            base_color: c,
+            perceptual_roughness: rough,
+            ..default()
+        })
+    };
+    let jersey = mat(materials, colours.jersey, 0.8);
+    let frame = mat(materials, colours.frame, 0.35);
+    let helmet = mat(materials, colours.helmet, 0.5);
+    let accent = mat(materials, colours.accent, 0.8);
+    let dark = mat(materials, Color::srgb(0.08, 0.08, 0.09), 0.5);
+    let rim = mat(materials, Color::srgb(0.18, 0.18, 0.2), 0.3);
+    let skin = mat(materials, Color::srgb(0.85, 0.68, 0.55), 0.7);
+    // A unit cylinder (radius 1, height 1) for all tubes.
+    let unit = meshes.add(Cylinder::new(1.0, 1.0));
+    let r = model.wheel_radius_m;
+    let tyre = meshes.add(Torus::new(r - model.tyre_m, r));
+    let rim_mesh = meshes.add(Torus::new(
+        r - model.tyre_m - model.rim_depth_m,
+        r - model.tyre_m + 0.004,
+    ));
+    let disc = meshes.add(Cylinder::new(r - model.tyre_m, 0.025));
+    let rear_hub = Vec3::new(0.0, r, 0.55);
+    let front_hub = Vec3::new(0.0, r, -0.55);
+    let bb = Vec3::new(0.0, 0.3, 0.08);
+    let seat = Vec3::new(0.0, model.seat_height_m, 0.28);
+    let head_top = Vec3::new(0.0, 0.86, -0.4);
+    let head_bottom = Vec3::new(0.0, 0.7, -0.44);
+    let tube_r = model.tube_m * 0.5;
     commands
         .spawn((
             transform,
             Visibility::default(),
             Avatar { id, is_local },
+            built,
             Crank::default(),
         ))
         .with_children(|a| {
-            // Wheels (front at -Z).
-            for z in [-0.55, 0.55] {
-                a.spawn((
-                    Mesh3d(wheel.clone()),
-                    MeshMaterial3d(dark.clone()),
-                    Transform::from_xyz(0.0, 0.35, z)
-                        .with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
-                ));
+            // Wheels (front at -Z), lying in the YZ plane.
+            let wheel_rot = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+            for hub in [front_hub, rear_hub] {
+                part(
+                    a,
+                    &tyre,
+                    &dark,
+                    Transform::from_translation(hub).with_rotation(wheel_rot),
+                );
+                // Deep rims: a band inside the tyre, flattened sideways.
+                part(
+                    a,
+                    &rim_mesh,
+                    &rim,
+                    Transform::from_translation(hub)
+                        .with_rotation(wheel_rot)
+                        .with_scale(Vec3::new(1.0, 0.5, 1.0)),
+                );
             }
-            // Frame.
-            a.spawn((
-                Mesh3d(meshes.add(Cuboid::new(0.06, 0.08, 1.05))),
-                MeshMaterial3d(dark.clone()),
-                Transform::from_xyz(0.0, 0.62, 0.0),
-            ));
-            // Torso, leaning forward.
-            a.spawn((
-                Mesh3d(meshes.add(Capsule3d::new(0.17, 0.5))),
-                MeshMaterial3d(jersey.clone()),
-                Transform::from_xyz(0.0, 1.15, 0.05).with_rotation(Quat::from_rotation_x(-1.0)),
-            ));
+            if model.rear_disc {
+                part(
+                    a,
+                    &disc,
+                    &rim,
+                    Transform::from_translation(rear_hub).with_rotation(wheel_rot),
+                );
+            }
+            // Diamond frame in the frame colour.
+            for ends in [(seat, head_top), (bb, head_bottom), (bb, seat)] {
+                tube(a, &unit, &frame, ends, tube_r);
+            }
+            for x in [-0.045, 0.045] {
+                let hub = rear_hub + Vec3::X * x;
+                tube(a, &unit, &frame, (bb, hub), tube_r * 0.6);
+                tube(
+                    a,
+                    &unit,
+                    &frame,
+                    (seat - Vec3::new(0.0, 0.05, 0.0), hub),
+                    tube_r * 0.55,
+                );
+                // Fork legs (thick suspension legs on the MTB).
+                let fork_r = if model.suspension {
+                    0.022
+                } else {
+                    tube_r * 0.6
+                };
+                tube(
+                    a,
+                    &unit,
+                    &frame,
+                    (head_bottom + Vec3::X * x, front_hub + Vec3::X * x),
+                    fork_r,
+                );
+            }
+            tube(a, &unit, &frame, (head_bottom, head_top), tube_r);
+            // Stem, saddle and seat post.
+            let stem = head_top + Vec3::new(0.0, 0.06, -0.06);
+            tube(a, &unit, &dark, (head_top, stem), 0.016);
+            let saddle = seat + Vec3::new(0.0, 0.08, 0.0);
+            tube(a, &unit, &dark, (seat, saddle), 0.014);
+            part(
+                a,
+                &meshes.add(Cuboid::new(0.13, 0.04, 0.26)),
+                &dark,
+                Transform::from_translation(saddle + Vec3::new(0.0, 0.02, -0.03)),
+            );
+            // Handlebars; `hands` are where the arms end.
+            let hands = match model.bars {
+                Bars::Drop => {
+                    let w = 0.21;
+                    tube(
+                        a,
+                        &unit,
+                        &dark,
+                        (stem + Vec3::X * -w, stem + Vec3::X * w),
+                        0.013,
+                    );
+                    for x in [-w, w] {
+                        let top = stem + Vec3::X * x;
+                        let low = top + Vec3::new(0.0, -0.13, 0.06);
+                        tube(
+                            a,
+                            &unit,
+                            &dark,
+                            (top, top + Vec3::new(0.0, -0.05, -0.07)),
+                            0.012,
+                        );
+                        tube(
+                            a,
+                            &unit,
+                            &dark,
+                            (top + Vec3::new(0.0, -0.05, -0.07), low),
+                            0.012,
+                        );
+                    }
+                    [
+                        stem + Vec3::new(-w, 0.0, -0.02),
+                        stem + Vec3::new(w, 0.0, -0.02),
+                    ]
+                }
+                Bars::Aero => {
+                    let w = 0.2;
+                    tube(
+                        a,
+                        &unit,
+                        &dark,
+                        (stem + Vec3::X * -w, stem + Vec3::X * w),
+                        0.014,
+                    );
+                    let mut hands = [Vec3::ZERO; 2];
+                    for (i, x) in [-0.07f32, 0.07].into_iter().enumerate() {
+                        let base = stem + Vec3::new(x, 0.04, 0.0);
+                        let tip = base + Vec3::new(0.0, 0.03, -0.34);
+                        tube(a, &unit, &dark, (base, tip), 0.011);
+                        // Arm pads.
+                        part(
+                            a,
+                            &meshes.add(Cuboid::new(0.08, 0.02, 0.1)),
+                            &dark,
+                            Transform::from_translation(base + Vec3::new(0.0, 0.02, 0.02)),
+                        );
+                        hands[i] = tip;
+                    }
+                    hands
+                }
+                Bars::Flat => {
+                    let w = 0.36;
+                    let bar = stem + Vec3::new(0.0, 0.05, 0.0);
+                    tube(a, &unit, &dark, (stem, bar), 0.016);
+                    tube(
+                        a,
+                        &unit,
+                        &dark,
+                        (bar + Vec3::X * -w, bar + Vec3::X * w),
+                        0.013,
+                    );
+                    [bar + Vec3::X * -(w - 0.06), bar + Vec3::X * (w - 0.06)]
+                }
+            };
+            // Torso, leaning forward from the hips over the saddle.
+            let hip = saddle + Vec3::new(0.0, 0.1, 0.0);
+            let dir = Vec3::new(0.0, model.torso_lean.cos(), -model.torso_lean.sin());
+            let torso_rot = Quat::from_rotation_arc(Vec3::Y, dir);
+            let torso_at = hip + dir * 0.3;
+            part(
+                a,
+                &meshes.add(Capsule3d::new(0.17, 0.4)),
+                &jersey,
+                Transform::from_translation(torso_at).with_rotation(torso_rot),
+            );
+            // Kit pattern: a band or a diagonal sash around the torso.
+            let pattern = built
+                .look
+                .map_or(ocw_core::KitPattern::Plain, |l| l.pattern);
+            let ring = meshes.add(Cylinder::new(0.176, 0.075));
+            match pattern {
+                ocw_core::KitPattern::Plain => {}
+                ocw_core::KitPattern::Band => part(
+                    a,
+                    &ring,
+                    &accent,
+                    Transform::from_translation(torso_at + dir * 0.05).with_rotation(torso_rot),
+                ),
+                ocw_core::KitPattern::Sash => part(
+                    a,
+                    &ring,
+                    &accent,
+                    Transform::from_translation(torso_at)
+                        .with_rotation(torso_rot * Quat::from_rotation_z(0.7)),
+                ),
+            }
+            // Arms from the shoulders to the hands.
+            let shoulder = hip + dir * 0.55;
+            for (x, hand) in [-0.17f32, 0.17].into_iter().zip(hands) {
+                tube(a, &unit, &jersey, (shoulder + Vec3::X * x, hand), 0.045);
+            }
             // Legs: pivot at the hip, swinging with the crank.
             let leg = meshes.add(Capsule3d::new(0.07, 0.5));
             for (x, phase) in [(-0.1, 0.0), (0.1, std::f32::consts::PI)] {
                 a.spawn((
-                    Transform::from_xyz(x, 1.0, 0.2),
+                    Transform::from_translation(hip + Vec3::new(x, -0.05, 0.0)),
                     Visibility::default(),
                     PedalLeg { phase },
                 ))
-                .with_children(|hip| {
-                    hip.spawn((
+                .with_children(|h| {
+                    h.spawn((
                         Mesh3d(leg.clone()),
                         MeshMaterial3d(dark.clone()),
                         Transform::from_xyz(0.0, -0.32, -0.05),
@@ -294,41 +658,50 @@ fn spawn_avatar(
                 });
             }
             // Head.
-            a.spawn((
-                Mesh3d(meshes.add(Sphere::new(0.12))),
-                MeshMaterial3d(skin.clone()),
-                Transform::from_xyz(0.0, 1.45, -0.32),
-            ));
+            let head = hip + dir * 0.72 + Vec3::new(0.0, 0.07, -0.02);
+            part(
+                a,
+                &meshes.add(Sphere::new(0.12)),
+                &skin,
+                Transform::from_translation(head),
+            );
+            let top = head + Vec3::new(0.0, 0.05, 0.0);
             if is_local {
-                // Classic cotton cycling cap: white crown, band in the
-                // jersey colour, short brim flipped up.
-                let white = materials.add(StandardMaterial {
-                    base_color: Color::srgb(0.95, 0.95, 0.93),
-                    perceptual_roughness: 0.9,
-                    ..default()
-                });
-                a.spawn((
-                    Mesh3d(meshes.add(Sphere::new(0.126))),
-                    MeshMaterial3d(white),
-                    Transform::from_xyz(0.0, 1.5, -0.32).with_scale(Vec3::new(1.0, 0.62, 1.05)),
-                ));
-                a.spawn((
-                    Mesh3d(meshes.add(Cylinder::new(0.127, 0.035))),
-                    MeshMaterial3d(jersey.clone()),
-                    Transform::from_xyz(0.0, 1.49, -0.32),
-                ));
-                a.spawn((
-                    Mesh3d(meshes.add(Cuboid::new(0.17, 0.012, 0.075))),
-                    MeshMaterial3d(jersey.clone()),
-                    Transform::from_xyz(0.0, 1.5, -0.47).with_rotation(Quat::from_rotation_x(0.45)),
-                ));
+                // Classic cotton cycling cap: crown in the helmet colour
+                // (white by default), band in the jersey colour, short
+                // brim flipped up.
+                part(
+                    a,
+                    &meshes.add(Sphere::new(0.126)),
+                    &helmet,
+                    Transform::from_translation(top).with_scale(Vec3::new(1.0, 0.62, 1.05)),
+                );
+                part(
+                    a,
+                    &meshes.add(Cylinder::new(0.127, 0.035)),
+                    &jersey,
+                    Transform::from_translation(top - Vec3::new(0.0, 0.01, 0.0)),
+                );
+                part(
+                    a,
+                    &meshes.add(Cuboid::new(0.17, 0.012, 0.075)),
+                    &jersey,
+                    Transform::from_translation(top + Vec3::new(0.0, 0.0, -0.15))
+                        .with_rotation(Quat::from_rotation_x(0.45)),
+                );
             } else {
-                // Helmet.
-                a.spawn((
-                    Mesh3d(meshes.add(Sphere::new(0.135))),
-                    MeshMaterial3d(jersey.clone()),
-                    Transform::from_xyz(0.0, 1.5, -0.3).with_scale(Vec3::new(1.0, 0.7, 1.2)),
-                ));
+                // Helmet; an aero helmet with a long tail on the TT bike.
+                let scale = if model.bars == Bars::Aero {
+                    Vec3::new(1.0, 0.7, 1.7)
+                } else {
+                    Vec3::new(1.0, 0.7, 1.2)
+                };
+                part(
+                    a,
+                    &meshes.add(Sphere::new(0.135)),
+                    &helmet,
+                    Transform::from_translation(top + Vec3::new(0.0, 0.0, 0.02)).with_scale(scale),
+                );
             }
         })
         .id()
@@ -362,6 +735,119 @@ mod tests {
             let hue = Hsla::from(jersey_color(RiderId(id), false)).hue;
             assert!((150.0..=290.0).contains(&hue), "rider {id}: hue {hue}");
         }
+    }
+
+    /// The bike types have distinguishable silhouettes (spec §2.5): each
+    /// differs from the others in bars, tyres or wheels.
+    #[test]
+    fn bike_types_look_different() {
+        use ocw_core::BikeType;
+        let models: Vec<BikeModel> = BikeType::ALL
+            .iter()
+            .map(|b| bike_model(b.default_profile()))
+            .collect();
+        for (i, a) in models.iter().enumerate() {
+            for b in &models[i + 1..] {
+                assert!(
+                    a.bars != b.bars
+                        || (a.tyre_m - b.tyre_m).abs() > 0.01
+                        || a.rear_disc != b.rear_disc,
+                    "{a:?} vs {b:?}"
+                );
+            }
+        }
+        let tt = bike_model(ProfileId::TimeTrial);
+        assert!(tt.rear_disc && tt.bars == Bars::Aero);
+        let mtb = bike_model(ProfileId::Mountain);
+        assert!(mtb.bars == Bars::Flat && mtb.suspension && mtb.tyre_m > 0.05);
+        assert!(bike_model(ProfileId::Gravel).tyre_m > bike_model(ProfileId::Road).tyre_m);
+        // Aero road: deeper rims than the standard road bike.
+        assert!(
+            bike_model(ProfileId::RoadAero).rim_depth_m > bike_model(ProfileId::Road).rim_depth_m
+        );
+        // The TT rider is lowest, the MTB rider most upright.
+        assert!(tt.torso_lean > bike_model(ProfileId::Road).torso_lean);
+        assert!(mtb.torso_lean < bike_model(ProfileId::Road).torso_lean);
+    }
+
+    #[test]
+    fn tubes_join_their_ends() {
+        let (a, b) = (Vec3::new(0.0, 0.3, 0.1), Vec3::new(0.2, 0.9, -0.4));
+        let (len, t) = tube_between(a, b);
+        assert!((len - (b - a).length()).abs() < 1e-6);
+        // The unit cylinder's ends (y = ±0.5) land on a and b.
+        assert!(close(t.transform_point(Vec3::new(0.0, -0.5, 0.0)), a));
+        assert!(close(t.transform_point(Vec3::new(0.0, 0.5, 0.0)), b));
+    }
+
+    #[test]
+    fn riders_wear_their_look() {
+        let look = RiderLook {
+            jersey: ocw_core::Rgb(0x1E88E5),
+            frame: ocw_core::Rgb(0xFDD835),
+            ..Default::default()
+        };
+        let c = avatar_colours(RiderId(3), false, Some(&look));
+        assert_eq!(c.jersey, Color::srgb_u8(0x1E, 0x88, 0xE5));
+        assert_eq!(c.frame, Color::srgb_u8(0xFD, 0xD8, 0x35));
+        // White pattern on the dark blue jersey, black on a light one.
+        assert_eq!(c.accent, Color::srgb(0.96, 0.96, 0.94));
+        let light = RiderLook {
+            jersey: ocw_core::Rgb(0xF2F2EE),
+            ..look
+        };
+        assert_eq!(
+            avatar_colours(RiderId(3), false, Some(&light)).accent,
+            Color::srgb(0.06, 0.06, 0.07)
+        );
+        // No look (old server): the colour by id, as before.
+        assert_eq!(
+            avatar_colours(RiderId(3), false, None).jersey,
+            jersey_color(RiderId(3), false)
+        );
+        // The default look is the local rider's #FF1472.
+        assert_eq!(
+            avatar_colours(RiderId(1), true, Some(&RiderLook::default())).jersey,
+            LOCAL_JERSEY
+        );
+    }
+
+    /// A changed bike or look rebuilds the avatar; the same one keeps it.
+    #[test]
+    fn avatars_are_rebuilt_when_the_look_changes() {
+        let route = Route::test_loop();
+        let mut view = RideView::new(route);
+        view.riders.push(crate::RiderView {
+            id: RiderId(1),
+            name: "a".into(),
+            state: ocw_sim::RiderState {
+                distance: 10.0,
+                ..Default::default()
+            },
+            power_w: 0.0,
+            cadence_rpm: None,
+            heart_rate_bpm: None,
+            is_local: false,
+            bike: ProfileId::Road,
+            look: None,
+        });
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Mesh>()
+            .init_asset::<StandardMaterial>()
+            .insert_resource(view)
+            .add_plugins(RidersPlugin);
+        app.update();
+        let entity = |app: &App| app.world().resource::<RiderEntities>().0[&RiderId(1)];
+        let first = entity(&app);
+        app.update();
+        assert_eq!(entity(&app), first);
+        app.world_mut().resource_mut::<RideView>().riders[0].bike = ProfileId::Mountain;
+        app.update();
+        let second = entity(&app);
+        assert_ne!(second, first);
+        let built = *app.world().get::<AvatarLook>(second).unwrap();
+        assert_eq!(built.bike, ProfileId::Mountain);
     }
 
     #[test]

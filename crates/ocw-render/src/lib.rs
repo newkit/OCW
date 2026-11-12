@@ -139,6 +139,10 @@ pub struct RiderView {
     pub cadence_rpm: Option<f64>,
     pub heart_rate_bpm: Option<f64>,
     pub is_local: bool,
+    /// The rider's bike (physics profile; picks the model, spec §2.5).
+    pub bike: ocw_core::ProfileId,
+    /// The rider's cosmetic look; `None` (an old server): colours by id.
+    pub look: Option<ocw_core::RiderLook>,
 }
 
 /// All rendering plugins of the desktop client.

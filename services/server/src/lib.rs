@@ -78,6 +78,26 @@ pub fn bot_power_w(i: u32) -> f64 {
     BOT_POWERS_W[i as usize % BOT_POWERS_W.len()]
 }
 
+/// Bike and look of the `i`-th bot: the bike types in turn (road, TT,
+/// gravel, MTB, then the other road profiles), colours from the palette,
+/// so a small field shows every bike model (spec §2.5).
+pub fn bot_bike(i: u32) -> (ocw_core::ProfileId, ocw_core::RiderLook) {
+    use ocw_core::ProfileId::*;
+    use ocw_core::bike::PALETTE;
+    const BIKES: [ocw_core::ProfileId; 6] =
+        [Road, TimeTrial, Gravel, Mountain, RoadAero, RoadClimbing];
+    let i = i as usize;
+    let n = PALETTE.len();
+    let look = ocw_core::RiderLook {
+        // Not the local rider's #FF1472 (palette 0) for the jersey.
+        jersey: PALETTE[1 + (i * 5) % (n - 1)],
+        frame: PALETTE[(i * 7 + 3) % n],
+        helmet: PALETTE[(i * 3 + 9) % n],
+        pattern: ocw_core::KitPattern::ALL[i % ocw_core::KitPattern::ALL.len()],
+    };
+    (BIKES[i % BIKES.len()], look)
+}
+
 impl GameServer {
     /// A session on `course` (a [`Route`] converts into one).
     pub fn new(course: impl Into<Course>, config: ServerConfig) -> Self {
@@ -87,7 +107,13 @@ impl GameServer {
             Course::RouteRide { net, plan } => Session::route_ride(net, plan),
         };
         for i in 0..config.bots {
-            session.add_bot(format!("Bot {}", i + 1), bot_power_w(i));
+            let (bike, look) = bot_bike(i);
+            session.add_bot_with(
+                format!("Bot {}", i + 1),
+                bot_power_w(i),
+                ocw_core::RiderProfile::curated(bike, 75.0),
+                look,
+            );
         }
         Self {
             config,
@@ -222,8 +248,12 @@ impl GameServer {
         }
         let profile = physics_profile(&hello);
         let rider = self.session.add_rider(hello.display_name.clone(), profile);
+        // Cosmetic only (§2.5): validated, then passed through.
+        if let Some(look) = &hello.look {
+            self.session.set_look(rider, look.into());
+        }
         self.riders.insert(conn, rider);
-        tracing::info!(%rider, name = %hello.display_name, weight_kg = profile.rider_mass_kg, "rider joined");
+        tracing::info!(%rider, name = %hello.display_name, weight_kg = profile.rider_mass_kg, bike = profile.bike.id(), "rider joined");
         S::Welcome(v1::Welcome {
             protocol_version: PROTOCOL_VERSION,
             rider_id: rider.0,
@@ -305,17 +335,19 @@ impl GameServer {
     }
 }
 
-/// The physics profile of a joining rider (spec §2.5, §3.2.1): the curated
-/// default profile with the rider's weight from the hello (clamped to
-/// 30–200 kg). Drag, rolling resistance and bike mass sent by the client
-/// are ignored: the server is the truth (§6.1).
+/// The physics profile of a joining rider (spec §2.5, §3.2.1): the
+/// curated profile the hello names (`bike_profile`; unknown or absent:
+/// the default road profile) from the server's own table, with the
+/// rider's weight from the hello (clamped to 30–200 kg). Drag, rolling
+/// resistance and bike mass sent by the client are ignored: the server is
+/// the truth (§6.1).
 pub fn physics_profile(hello: &v1::Hello) -> ocw_core::RiderProfile {
-    hello
+    let bike = ocw_core::ProfileId::from_wire(hello.bike_profile.as_deref());
+    let kg = hello
         .rider_weight_kg
         .or(hello.profile.as_ref().map(|p| p.rider_mass_kg))
-        .map_or_else(ocw_core::RiderProfile::default, |kg| {
-            ocw_core::RiderProfile::for_rider_weight(f64::from(kg))
-        })
+        .map_or(ocw_core::RiderProfile::default().rider_mass_kg, f64::from);
+    ocw_core::RiderProfile::curated(bike, kg)
 }
 
 #[cfg(test)]
@@ -334,6 +366,8 @@ mod tests {
             profile: Some(ocw_core::RiderProfile::default().into()),
             world,
             rider_weight_kg: None,
+            bike_profile: None,
+            look: None,
         })))
     }
 
@@ -347,6 +381,8 @@ mod tests {
                 profile: None,
                 world: None,
                 rider_weight_kg: weight,
+                bike_profile: None,
+                look: None,
             }))),
         );
         match decode_server(&reply[0]).unwrap() {
@@ -421,14 +457,118 @@ mod tests {
         );
         let hello = v1::Hello {
             rider_weight_kg: Some(64.0),
+            bike_profile: None,
+            look: None,
             ..hello
         };
         assert_eq!(physics_profile(&hello).rider_mass_kg, 64.0);
         let hello = v1::Hello {
             rider_weight_kg: Some(f32::NAN),
+            bike_profile: None,
+            look: None,
             ..hello
         };
         assert_eq!(physics_profile(&hello).rider_mass_kg, 75.0);
+    }
+
+    /// The hello's bike profile id selects the server's curated profile;
+    /// unknown ids fall back to the default, client numbers never count.
+    #[test]
+    fn the_hello_bike_profile_selects_the_curated_profile() {
+        for id in ocw_core::ProfileId::ALL {
+            let hello = v1::Hello {
+                bike_profile: Some(id.id().into()),
+                rider_weight_kg: Some(70.0),
+                profile: Some(v1::RiderProfile {
+                    rider_mass_kg: 70.0,
+                    bike_mass_kg: 1.0,
+                    cda_m2: 0.01,
+                    crr: 0.0,
+                }),
+                ..Default::default()
+            };
+            assert_eq!(
+                physics_profile(&hello),
+                ocw_core::RiderProfile::curated(id, 70.0)
+            );
+        }
+        let unknown = v1::Hello {
+            bike_profile: Some("jetpack".into()),
+            ..Default::default()
+        };
+        assert_eq!(physics_profile(&unknown), ocw_core::RiderProfile::default());
+        let upper = v1::Hello {
+            bike_profile: Some("MTB".into()),
+            ..Default::default()
+        };
+        assert_eq!(physics_profile(&upper).bike, ocw_core::ProfileId::Mountain);
+    }
+
+    /// The look from the hello reaches the snapshots (validated), with the
+    /// bike profile the server chose; bots ride varied bikes.
+    #[test]
+    fn looks_pass_through_to_the_snapshots() {
+        let mut server = GameServer::new(
+            Route::test_hills(),
+            ServerConfig {
+                bots: 4,
+                ..Default::default()
+            },
+        );
+        let conn = server.connect();
+        let reply = server.handle(
+            conn,
+            &encode(&client_message(C::Hello(v1::Hello {
+                protocol_version: PROTOCOL_VERSION,
+                display_name: "Styled".into(),
+                bike_profile: Some("gravel".into()),
+                look: Some(v1::RiderLook {
+                    frame_rgb: 0xFF12_3456,
+                    jersey_rgb: 0x00FF00,
+                    helmet_rgb: 0x0000FF,
+                    kit_pattern: 2,
+                }),
+                ..Default::default()
+            }))),
+        );
+        let S::Welcome(w) = decode_server(&reply[0]).unwrap() else {
+            panic!("expected a welcome");
+        };
+        let mut snapshot = None;
+        for _ in 0..TICKS_PER_BROADCAST {
+            for bytes in server.tick() {
+                if let Ok(S::Snapshot(s)) = decode_server(&bytes) {
+                    snapshot = Some(s);
+                }
+            }
+        }
+        let snapshot = snapshot.expect("a snapshot");
+        let me = snapshot
+            .riders
+            .iter()
+            .find(|r| r.rider_id == w.rider_id)
+            .unwrap();
+        let (bike, look) = ocw_protocol::rider_look(me);
+        assert_eq!(bike, ocw_core::ProfileId::Gravel);
+        let look = look.unwrap();
+        assert_eq!(look.frame, ocw_core::Rgb(0x123456));
+        assert_eq!(look.pattern, ocw_core::KitPattern::Sash);
+        let bikes: std::collections::BTreeSet<_> = snapshot
+            .riders
+            .iter()
+            .filter(|r| r.rider_id != w.rider_id)
+            .map(|r| ocw_protocol::rider_look(r).0.bike())
+            .collect();
+        assert_eq!(bikes.len(), 4, "{bikes:?}");
+    }
+
+    #[test]
+    fn bots_get_distinct_bikes_and_never_the_local_pink() {
+        for i in 0..40 {
+            let (_, look) = bot_bike(i);
+            assert_ne!(look.jersey, ocw_core::RiderLook::default().jersey);
+        }
+        assert_ne!(bot_bike(0).0.bike(), bot_bike(1).0.bike());
     }
 
     fn line_network(name: &str, length: f64) -> Arc<RoadNetwork> {

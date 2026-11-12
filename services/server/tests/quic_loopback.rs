@@ -96,6 +96,8 @@ fn hello(name: &str) -> Vec<u8> {
         profile: Some(ocw_core::RiderProfile::default().into()),
         world: None,
         rider_weight_kg: None,
+        bike_profile: None,
+        look: None,
     })))
 }
 

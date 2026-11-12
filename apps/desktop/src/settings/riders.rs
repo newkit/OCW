@@ -1,6 +1,7 @@
 //! Rider profiles (spec §3.2.1, Settings → Riders; chosen in the
-//! Workshop): name, weight, optional height and FTP. Stored in
-//! `riders.toml` next to `settings.toml`:
+//! Workshop): name, weight, optional height and FTP, and the bike and
+//! look (spec §2.5, Workshop → Bike). Stored in `riders.toml` next to
+//! `settings.toml`:
 //!
 //! ```toml
 //! active = "Alex"
@@ -10,15 +11,25 @@
 //! weight_kg = 78.0
 //! height_cm = 182.0
 //! ftp_w = 250
+//! bike = "road-aero"
+//! frame_color = "#1E88E5"
+//! jersey_color = "#FF1472"
+//! helmet_color = "#F2F2EE"
+//! kit = "band"
 //! ```
 //!
-//! The active rider's weight is the rider mass of the physics (sent to the
-//! server in the hello, §6.1) and, with the bike, the trainer's SIM mass.
-//! Bevy-free.
+//! The bike and look keys are optional (files from before Phase 4 have
+//! none: the default road bike and colours). The active rider's weight is
+//! the rider mass of the physics (sent to the server in the hello, §6.1)
+//! and, with the bike, the trainer's SIM mass; `bike` names one of the
+//! curated physics profiles (`ocw_core::ProfileId`), which also picks the
+//! bike model; the colours and kit are cosmetic only. Bevy-free.
 
 use std::path::Path;
 
-use ocw_core::{MAX_RIDER_WEIGHT_KG, MIN_RIDER_WEIGHT_KG, RiderProfile};
+use ocw_core::{
+    KitPattern, MAX_RIDER_WEIGHT_KG, MIN_RIDER_WEIGHT_KG, ProfileId, Rgb, RiderLook, RiderProfile,
+};
 use serde::{Deserialize, Serialize};
 
 /// Accepted body heights in cm.
@@ -36,6 +47,20 @@ pub struct Rider {
     pub height_cm: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ftp_w: Option<u32>,
+    /// Bike and look (spec §2.5); `None` = the default. Kept as the
+    /// file's text and checked on loading ([`Riders::parse`] drops
+    /// invalid values with a warning); read them with [`Rider::bike`] and
+    /// [`Rider::look`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bike: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame_color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jersey_color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub helmet_color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kit: Option<String>,
 }
 
 impl Default for Rider {
@@ -46,15 +71,72 @@ impl Default for Rider {
             weight_kg: RiderProfile::default().rider_mass_kg,
             height_cm: None,
             ftp_w: None,
+            bike: None,
+            frame_color: None,
+            jersey_color: None,
+            helmet_color: None,
+            kit: None,
         }
     }
 }
 
 impl Rider {
     /// The physics profile this rider rides with (spec §2.5): the curated
-    /// default with the rider's (clamped) weight.
+    /// profile of the bike with the rider's (clamped) weight.
     pub fn physics(&self) -> RiderProfile {
-        RiderProfile::for_rider_weight(self.weight_kg)
+        RiderProfile::curated(self.bike(), self.weight_kg)
+    }
+
+    /// The bike's physics profile (the default road bike if none is set).
+    pub fn bike(&self) -> ProfileId {
+        self.bike
+            .as_deref()
+            .and_then(ProfileId::parse)
+            .unwrap_or_default()
+    }
+
+    /// The cosmetic look; unset parts are the default look's.
+    pub fn look(&self) -> RiderLook {
+        let d = RiderLook::default();
+        let colour = |v: &Option<String>, d| v.as_deref().and_then(Rgb::parse).unwrap_or(d);
+        RiderLook {
+            frame: colour(&self.frame_color, d.frame),
+            jersey: colour(&self.jersey_color, d.jersey),
+            helmet: colour(&self.helmet_color, d.helmet),
+            pattern: self
+                .kit
+                .as_deref()
+                .and_then(KitPattern::parse)
+                .unwrap_or(d.pattern),
+        }
+    }
+
+    /// Sets the bike's physics profile.
+    pub fn set_bike(&mut self, bike: ProfileId) {
+        self.bike = Some(bike.id().into());
+    }
+
+    /// Sets the look (all parts written to the file).
+    pub fn set_look(&mut self, look: RiderLook) {
+        self.frame_color = Some(look.frame.to_string());
+        self.jersey_color = Some(look.jersey.to_string());
+        self.helmet_color = Some(look.helmet.to_string());
+        self.kit = Some(look.pattern.id().into());
+    }
+
+    /// "Road - aero, frame #1E88E5, jersey #FF1472 (band)".
+    pub fn bike_summary(&self) -> String {
+        let l = self.look();
+        let mut s = format!(
+            "{}, frame {}, jersey {}",
+            self.bike().name(),
+            l.frame,
+            l.jersey
+        );
+        if l.pattern != KitPattern::Plain {
+            s.push_str(&format!(" ({})", l.pattern.id()));
+        }
+        s
     }
 
     /// "78 kg, 182 cm, FTP 250 W".
@@ -90,6 +172,40 @@ impl Rider {
             ));
         }
         Ok(())
+    }
+}
+
+impl Rider {
+    /// Drops bike and look values that are not valid (unknown bike or kit,
+    /// not `#RRGGBB`) and writes valid ones in their canonical form;
+    /// returns warnings for the dropped ones.
+    fn repair_look(&mut self) -> Vec<String> {
+        let mut warnings = Vec::new();
+        let name = self.name.clone();
+        let mut check = |field: &mut Option<String>,
+                         what: &str,
+                         canon: &dyn Fn(&str) -> Option<String>| {
+            if let Some(v) = field.as_deref() {
+                match canon(v) {
+                    Some(c) => *field = Some(c),
+                    None => {
+                        warnings.push(format!("rider {name:?}: {what} {v:?} ignored (unknown)"));
+                        *field = None;
+                    }
+                }
+            }
+        };
+        check(&mut self.bike, "bike", &|v| {
+            ProfileId::parse(v).map(|p| p.id().into())
+        });
+        let colour = |v: &str| Rgb::parse(v).map(|c| c.to_string());
+        check(&mut self.frame_color, "frame colour", &colour);
+        check(&mut self.jersey_color, "jersey colour", &colour);
+        check(&mut self.helmet_color, "helmet colour", &colour);
+        check(&mut self.kit, "kit", &|v| {
+            KitPattern::parse(v).map(|k| k.id().into())
+        });
+        warnings
     }
 }
 
@@ -136,6 +252,11 @@ pub struct RiderEdit {
     /// `Some(None)` clears the height.
     pub height_cm: Option<Option<f64>>,
     pub ftp_w: Option<Option<u32>>,
+    pub bike: Option<ProfileId>,
+    pub frame: Option<Rgb>,
+    pub jersey: Option<Rgb>,
+    pub helmet: Option<Rgb>,
+    pub pattern: Option<KitPattern>,
 }
 
 /// The rider profiles and which one is active.
@@ -211,6 +332,7 @@ impl Riders {
                 warnings.push(format!("rider {:?}: FTP ignored (out of range)", r.name));
                 r.ftp_w = None;
             }
+            warnings.extend(r.repair_look());
             kept.push(r);
         }
         self.riders = kept;
@@ -281,6 +403,22 @@ impl Riders {
         }
         if let Some(f) = edit.ftp_w {
             r.ftp_w = f;
+        }
+        if let Some(b) = edit.bike {
+            r.set_bike(b);
+        }
+        if edit.frame.is_some()
+            || edit.jersey.is_some()
+            || edit.helmet.is_some()
+            || edit.pattern.is_some()
+        {
+            let l = r.look();
+            r.set_look(RiderLook {
+                frame: edit.frame.unwrap_or(l.frame),
+                jersey: edit.jersey.unwrap_or(l.jersey),
+                helmet: edit.helmet.unwrap_or(l.helmet),
+                pattern: edit.pattern.unwrap_or(l.pattern),
+            });
         }
         r.validate()?;
         if self.is_active(name) {
@@ -404,6 +542,7 @@ mod tests {
             weight_kg: 78.0,
             height_cm: Some(182.0),
             ftp_w: Some(250),
+            ..Rider::default()
         })
         .unwrap();
         r.add(rider("Guest", 70.0)).unwrap();
@@ -418,6 +557,89 @@ mod tests {
         let (again, warnings) = Riders::parse(&text).unwrap();
         assert!(warnings.is_empty());
         assert_eq!(again, r);
+        // No bike keys until a bike is chosen.
+        assert!(!text.contains("bike"), "{text}");
+    }
+
+    /// Bike and look (spec §2.5): persisted per rider, read back, and only
+    /// the bike reaches the physics.
+    #[test]
+    fn bike_and_look_round_trip_and_only_the_bike_is_physics() {
+        let mut r = Riders::default();
+        r.add(rider("Alex", 78.0)).unwrap();
+        let plain = r.active().physics();
+        let e = r
+            .edit(
+                "Alex",
+                RiderEdit {
+                    frame: Some(Rgb(0x1E88E5)),
+                    jersey: Some(Rgb(0x43A047)),
+                    pattern: Some(KitPattern::Band),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        // Cosmetic choices never change the physics profile.
+        assert_eq!(e.physics(), plain);
+        assert_eq!(e.look().frame, Rgb(0x1E88E5));
+        assert_eq!(e.look().helmet, RiderLook::default().helmet);
+        let e = r
+            .edit(
+                "Alex",
+                RiderEdit {
+                    bike: Some(ProfileId::Mountain),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            e.physics(),
+            RiderProfile::curated(ProfileId::Mountain, 78.0)
+        );
+        assert_eq!(e.look().frame, Rgb(0x1E88E5), "the look stays");
+        assert_eq!(
+            e.bike_summary(),
+            "Mountain bike, frame #1E88E5, jersey #43A047 (band)"
+        );
+        let text = r.to_toml();
+        assert!(text.contains("bike = \"mtb\""), "{text}");
+        assert!(text.contains("frame_color = \"#1E88E5\""), "{text}");
+        assert!(text.contains("kit = \"band\""), "{text}");
+        let (again, warnings) = Riders::parse(&text).unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(again, r);
+    }
+
+    /// Files from before Phase 4 parse unchanged; invalid bike and look
+    /// values are dropped with a warning, valid ones normalised.
+    #[test]
+    fn bike_values_are_checked_on_loading() {
+        let old = "active = \"Alex\"\n[[rider]]\nname = \"Alex\"\nweight_kg = 78.0\n";
+        let (r, warnings) = Riders::parse(old).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(r.active().bike(), ProfileId::Road);
+        assert_eq!(r.active().look(), RiderLook::default());
+        let text = "\
+[[rider]]
+name = \"Odd\"
+weight_kg = 70.0
+bike = \"Unicycle\"
+frame_color = \"blue\"
+jersey_color = \"#00ff00\"
+kit = \"stars\"
+helmet_color = \"#ABCDEF\"
+";
+        let (r, warnings) = Riders::parse(text).unwrap();
+        assert_eq!(warnings.len(), 3, "{warnings:?}");
+        let o = &r.riders[0];
+        assert_eq!(o.bike, None);
+        assert_eq!(o.frame_color, None);
+        assert_eq!(o.jersey_color.as_deref(), Some("#00FF00"));
+        assert_eq!(o.kit, None);
+        assert_eq!(o.look().helmet, Rgb(0xABCDEF));
+        let (r, _) =
+            Riders::parse("[[rider]]\nname = \"A\"\nweight_kg = 70.0\nbike = \"TT\"\n").unwrap();
+        assert_eq!(r.riders[0].bike.as_deref(), Some("tt"));
     }
 
     #[test]

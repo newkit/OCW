@@ -26,6 +26,8 @@ pub enum Page {
     /// Editing one rider (index into the profiles).
     Rider(usize),
     Workshop,
+    /// A rider's bike and look (index into the profiles; Workshop → Bike).
+    Bike(usize),
 }
 
 impl Page {
@@ -48,6 +50,7 @@ impl Page {
             Self::Riders => "Riders",
             Self::Rider(_) => "Rider",
             Self::Workshop => "Workshop",
+            Self::Bike(_) => "Bike",
         }
     }
 
@@ -55,6 +58,7 @@ impl Page {
     pub fn parent(self) -> Option<Self> {
         match self {
             Self::Rider(_) => Some(Self::Riders),
+            Self::Bike(_) => Some(Self::Workshop),
             _ => None,
         }
     }
@@ -63,7 +67,10 @@ impl Page {
     pub fn notes(self) -> &'static [&'static str] {
         match self {
             Self::Workshop => &[
-                "Choose who rides: their weight goes into the physics and the trainer (from the next start). Bike and character: Phase 4.",
+                "Choose who rides and their bike: weight and bike go into the physics and the trainer (from the next start).",
+            ],
+            Self::Bike(_) => &[
+                "Bike type and setup choose the physics profile (differences capped); colours are only for the looks. From the next start.",
             ],
             Self::Riders => &["Rider profiles: weight, height, FTP. Choose one in the Workshop."],
             Self::Rider(_) => &["Changes apply from the next start (Restart)."],
@@ -160,6 +167,69 @@ fn number_row(
     }
 }
 
+/// One step through `items` from `current` (wrapping).
+fn cycle<T: Copy + PartialEq>(items: &[T], current: T, dir: isize) -> T {
+    let at = items.iter().position(|x| *x == current).unwrap_or(0) as isize;
+    items[(at + dir).rem_euclid(items.len() as isize) as usize]
+}
+
+/// A row whose ← / → run `line(previous)` / `line(next)`.
+fn choice_row(label: &str, value: String, left: String, right: String) -> Row {
+    Row {
+        label: label.into(),
+        value: Some(value),
+        left: Some(left.clone()),
+        right: Some(right.clone()),
+        confirm: Some(Activate::Command(right)),
+    }
+}
+
+/// The Bike page of a rider (spec §2.5, §3.2.1 Workshop → Bike): the
+/// bike (one of the curated physics profiles, grouped by bike type:
+/// "Road - aero"), the profile's numbers, then the cosmetic colours and
+/// kit; each change is a `riders.edit` line. Six rows (ten-foot limit).
+fn bike_rows(r: &super::riders::Rider) -> Vec<Row> {
+    use ocw_core::{KitPattern, ProfileId, bike::palette_step};
+    let n = &r.name;
+    let bike = r.bike();
+    let look = r.look();
+    let bike_line = |p: ProfileId| edit(n, &format!("--bike {}", p.id()));
+    let p = bike.profile();
+    let colour = |label: &str, flag: &str, c: ocw_core::Rgb| {
+        let line = |dir| edit(n, &format!("--{flag} {}", palette_step(c, dir)));
+        choice_row(label, c.to_string(), line(-1), line(1))
+    };
+    let kit_line = |k: KitPattern| edit(n, &format!("--kit {}", k.id()));
+    vec![
+        choice_row(
+            "Bike",
+            bike.name().into(),
+            bike_line(cycle(&ProfileId::ALL, bike, -1)),
+            bike_line(cycle(&ProfileId::ALL, bike, 1)),
+        ),
+        // Shown separately: cosmetic choices never change it (§2.5).
+        Row {
+            label: "Physics".into(),
+            value: Some(format!(
+                "{} kg bike, CdA {:.3}, Crr {:.4}",
+                p.bike_mass_kg, p.cda_m2, p.crr
+            )),
+            left: None,
+            right: None,
+            confirm: None,
+        },
+        colour("Frame colour", "frame-color", look.frame),
+        colour("Jersey colour", "jersey-color", look.jersey),
+        colour("Helmet colour", "helmet-color", look.helmet),
+        choice_row(
+            "Kit",
+            look.pattern.id().into(),
+            kit_line(cycle(&KitPattern::ALL, look.pattern, -1)),
+            kit_line(cycle(&KitPattern::ALL, look.pattern, 1)),
+        ),
+    ]
+}
+
 /// The rows of `page`.
 pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
     match page {
@@ -252,6 +322,12 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
                 Row::action("Delete this rider", format!("riders.remove \"{n}\"")),
             ]
         }
+        Page::Bike(i) => {
+            let Some(r) = riders.riders.get(i) else {
+                return Vec::new();
+            };
+            bike_rows(r)
+        }
         Page::Workshop => {
             let mut out: Vec<Row> = riders
                 .riders
@@ -278,6 +354,22 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
                     confirm: None,
                 });
             }
+            // The bike of the rider who rides next.
+            let active = riders.active();
+            out.push(Row {
+                label: "Bike".into(),
+                value: Some(if riders.riders.is_empty() {
+                    format!("{} (add a rider to change it)", active.bike().name())
+                } else {
+                    active.bike_summary()
+                }),
+                left: None,
+                right: None,
+                confirm: riders
+                    .find(&active.name)
+                    .filter(|_| !riders.riders.is_empty())
+                    .map(|i| Activate::Open(Page::Bike(i))),
+            });
             out.push(Row {
                 label: "Edit riders".into(),
                 value: None,
@@ -302,6 +394,7 @@ mod tests {
             weight_kg: 78.0,
             height_cm: None,
             ftp_w: Some(250),
+            ..Rider::default()
         })
         .unwrap();
         r.add(Rider {
@@ -361,16 +454,24 @@ mod tests {
         let s = Settings::default();
         let r = riders();
         let w = rows(Page::Workshop, &s, &r);
-        assert_eq!(w.len(), 3);
+        assert_eq!(w.len(), 4);
         assert_eq!(w[0].value.as_deref(), Some("78 kg, FTP 250 W - riding"));
         assert_eq!(w[1].value.as_deref(), Some("61.5 kg"));
         assert_eq!(w[1].confirm, cmd("riders.select \"Anna\""));
-        assert_eq!(w[2].confirm, Some(Activate::Open(Page::Riders)));
+        // The bike of the active rider (the first).
+        assert_eq!(w[2].label, "Bike");
+        assert_eq!(
+            w[2].value.as_deref(),
+            Some("Road - standard, frame #1E1E22, jersey #FF1472")
+        );
+        assert_eq!(w[2].confirm, Some(Activate::Open(Page::Bike(0))));
+        assert_eq!(w[3].confirm, Some(Activate::Open(Page::Riders)));
         // Without profiles: the default rider, and the way to the editor.
         let w = rows(Page::Workshop, &s, &Riders::default());
         assert_eq!(w[0].value.as_deref(), Some("75 kg - riding (default)"));
         assert_eq!(w[0].confirm, None);
-        assert_eq!(w[1].confirm, Some(Activate::Open(Page::Riders)));
+        assert_eq!(w[1].confirm, None, "no profile to give a bike");
+        assert_eq!(w[2].confirm, Some(Activate::Open(Page::Riders)));
     }
 
     #[test]
@@ -425,7 +526,59 @@ mod tests {
     }
 
     #[test]
+    fn bike_page_edits_bike_and_look() {
+        let s = Settings::default();
+        let mut r = riders();
+        let b = rows(Page::Bike(1), &s, &r);
+        let bike = row(&b, "Bike");
+        assert_eq!(bike.value.as_deref(), Some("Road - standard"));
+        assert_eq!(
+            bike.right.as_deref(),
+            Some("riders.edit \"Anna\" --bike road-aero")
+        );
+        assert_eq!(
+            bike.left.as_deref(),
+            Some("riders.edit \"Anna\" --bike mtb")
+        );
+        assert_eq!(
+            row(&b, "Physics").value.as_deref(),
+            Some("8 kg bike, CdA 0.320, Crr 0.0040")
+        );
+        let jersey = row(&b, "Jersey colour");
+        assert_eq!(jersey.value.as_deref(), Some("#FF1472"));
+        assert_eq!(
+            jersey.right.as_deref(),
+            Some("riders.edit \"Anna\" --jersey-color #E53935")
+        );
+        assert_eq!(
+            row(&b, "Kit").right.as_deref(),
+            Some("riders.edit \"Anna\" --kit band")
+        );
+        // Another bike: its own numbers; the colours stay.
+        r.edit(
+            "Anna",
+            super::super::riders::RiderEdit {
+                bike: Some(ocw_core::ProfileId::Gravel),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let b = rows(Page::Bike(1), &s, &r);
+        assert_eq!(row(&b, "Bike").value.as_deref(), Some("Gravel"));
+        assert_eq!(
+            row(&b, "Physics").value.as_deref(),
+            Some("9 kg bike, CdA 0.325, Crr 0.0045")
+        );
+        assert_eq!(
+            row(&b, "Bike").right.as_deref(),
+            Some("riders.edit \"Anna\" --bike mtb")
+        );
+        assert!(rows(Page::Bike(9), &s, &r).is_empty());
+    }
+
+    #[test]
     fn page_parents() {
+        assert_eq!(Page::Bike(0).parent(), Some(Page::Workshop));
         assert_eq!(Page::Rider(2).parent(), Some(Page::Riders));
         assert_eq!(Page::Workshop.parent(), None);
     }

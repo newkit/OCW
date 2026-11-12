@@ -357,7 +357,7 @@ impl Menu {
         match self.page() {
             Some(Page::Sub(p)) => {
                 self.rows = rows(p);
-                if matches!(p, sub::Page::Rider(_)) && self.rows.is_empty() {
+                if matches!(p, sub::Page::Rider(_) | sub::Page::Bike(_)) && self.rows.is_empty() {
                     self.stack.pop();
                     self.refresh(rows);
                     return;
@@ -643,8 +643,25 @@ mod tests {
             act(&mut m, Action::Click(1), &s, &r),
             Effect::Command("riders.select \"Anna\"".into())
         );
-        // "Edit riders" opens the list, a rider opens the editor.
+        // "Bike" opens the active rider's bike page; Back returns.
+        assert_eq!(
+            m.labels()[2],
+            "Bike:  Road - standard, frame #1E1E22, jersey #FF1472"
+        );
         act(&mut m, Action::Click(2), &s, &r);
+        assert_eq!(m.page(), Some(Page::Sub(sub::Page::Bike(0))));
+        assert_eq!(m.labels()[0], "Bike:  < Road - standard >");
+        assert_eq!(
+            act(&mut m, Action::Right, &s, &r),
+            Effect::Command("riders.edit \"Alex\" --bike road-aero".into())
+        );
+        let mut tabbed = m.clone();
+        act(&mut tabbed, Action::TabNext, &s, &r);
+        assert_eq!(tabbed.page(), Some(Page::Sub(sub::Page::Riders)));
+        act(&mut m, Action::Back, &s, &r);
+        assert_eq!(m.page(), Some(Page::Sub(sub::Page::Workshop)));
+        // "Edit riders" opens the list, a rider opens the editor.
+        act(&mut m, Action::Click(3), &s, &r);
         assert_eq!(m.page(), Some(Page::Sub(sub::Page::Riders)));
         act(&mut m, Action::Click(0), &s, &r);
         assert_eq!(m.page(), Some(Page::Sub(sub::Page::Rider(0))));
@@ -672,7 +689,10 @@ mod tests {
     #[test]
     fn sub_pages_fit_the_ten_foot_limits() {
         let (s, r) = (Settings::default(), riders());
-        for p in sub::Page::TABS.into_iter().chain([sub::Page::Rider(0)]) {
+        for p in sub::Page::TABS
+            .into_iter()
+            .chain([sub::Page::Rider(0), sub::Page::Bike(0)])
+        {
             let rows = sub::rows(p, &s, &r);
             assert!(!rows.is_empty() && rows.len() < 7, "{p:?}");
             for row in &rows {

@@ -80,6 +80,23 @@ message Hello {
   // The active rider profile's body weight in kg (spec §3.2.1); the server
   // clamps it to 30–200 kg. Absent: the default rider (75 kg).
   optional float rider_weight_kg = 5;
+  // The curated physics profile of the rider's bike (spec §2.5), e.g.
+  // "road", "road-aero", "tt", "gravel", "mtb". The server looks it up in
+  // its own table; an unknown or absent id is the default ("road").
+  optional string bike_profile = 6;
+  // The rider's cosmetic look (spec §2.5): passed to the other clients
+  // for rendering, never used by the physics. Absent: the default look.
+  RiderLook look = 7;
+}
+
+// Cosmetic look of a rider and bike (spec §2.5). Colours are sRGB
+// 0xRRGGBB (higher bits are ignored).
+message RiderLook {
+  fixed32 frame_rgb = 1;
+  fixed32 jersey_rgb = 2;
+  fixed32 helmet_rgb = 3;
+  // 0 plain, 1 band, 2 sash; unknown values are plain.
+  uint32 kit_pattern = 4;
 }
 
 // Identifies a world package's road graph: its name and a fingerprint of
@@ -204,4 +221,9 @@ message RiderUpdate {
   // curvature the rider is riding on top of the road's, in 1e-4 / m.
   sint32 heading_mrad = 9;
   sint32 turn_curvature_e4 = 10;
+  // The rider's physics profile id as the server validated it (it also
+  // picks the bike model, spec §2.5) and their cosmetic look; absent for
+  // riders of servers without cosmetics.
+  string bike_profile = 11;
+  RiderLook look = 12;
 }

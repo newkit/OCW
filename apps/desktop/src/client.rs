@@ -13,7 +13,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use ocw_core::{INTERPOLATION_DELAY_S, RiderId, RiderProfile};
+use ocw_core::{INTERPOLATION_DELAY_S, ProfileId, RiderId, RiderLook, RiderProfile};
 use ocw_devices::DeviceEvent;
 use ocw_protocol::v1::{self, client_message::Msg as C, server_message::Msg as S};
 use ocw_protocol::{PROTOCOL_VERSION, client_message, decode_server, dequantize, encode};
@@ -79,6 +79,8 @@ pub struct ClientCore {
     route: Route,
     free: Option<FreeRide>,
     profile: RiderProfile,
+    /// The own cosmetic look (sent in the hello, spec §2.5).
+    look: RiderLook,
     name: String,
     rider_id: Option<RiderId>,
     predictor: Predictor,
@@ -102,6 +104,9 @@ pub struct ClientCore {
     /// (for predicting the local rider's drafting).
     others_now: Vec<(RiderId, RiderState)>,
     names: BTreeMap<RiderId, (String, f64)>,
+    /// Every rider's bike and look from the snapshots (no look: an old
+    /// server; the renderer picks colours).
+    looks: BTreeMap<RiderId, (ProfileId, Option<RiderLook>)>,
     power_w: f64,
     cadence_rpm: Option<f64>,
     heart_rate_bpm: Option<f64>,
@@ -131,6 +136,7 @@ impl ClientCore {
             route,
             free: None,
             profile,
+            look: RiderLook::default(),
             name: name.into(),
             rider_id: None,
             predictor: Predictor::new(profile, RiderState::default()),
@@ -144,6 +150,7 @@ impl ClientCore {
             others: SnapshotBuffer::default(),
             others_now: Vec::new(),
             names: BTreeMap::new(),
+            looks: BTreeMap::new(),
             power_w: 0.0,
             cadence_rpm: None,
             heart_rate_bpm: None,
@@ -206,6 +213,12 @@ impl ClientCore {
         self
     }
 
+    /// The same client with a cosmetic look (spec §2.5), sent in the hello.
+    pub fn with_look(mut self, look: RiderLook) -> Self {
+        self.look = look;
+        self
+    }
+
     /// The same client starting with autodrive off (lean steering) when
     /// `on` is false (setting `controls.autodrive`, spec §3.2.1).
     pub fn with_autodrive_at_start(mut self, on: bool) -> Self {
@@ -243,6 +256,9 @@ impl ClientCore {
             profile: None,
             world: self.free.as_ref().map(|f| ocw_protocol::world_id(&f.net)),
             rider_weight_kg: Some(self.profile.rider_mass_kg as f32),
+            // Only the profile's id: the server has its own table (§2.5).
+            bike_profile: Some(self.profile.bike.id().into()),
+            look: Some(self.look.into()),
         })))
     }
 
@@ -430,6 +446,7 @@ impl ClientCore {
             let (id, state) = dequantize(u);
             self.names
                 .insert(id, (u.display_name.clone(), f64::from(u.power_w)));
+            self.looks.insert(id, ocw_protocol::rider_look(u));
             if Some(id) == self.rider_id {
                 if self.lateral_target.is_none() {
                     // Start steering from the lane the server assigned.
@@ -1001,6 +1018,9 @@ impl ClientCore {
             cadence_rpm: self.cadence_rpm,
             heart_rate_bpm: self.heart_rate_bpm,
             is_local: true,
+            // The own bike and look are known locally.
+            bike: self.profile.bike,
+            look: Some(self.look),
         }];
         for (id, state) in self.others.sample(now_s - INTERPOLATION_DELAY_S) {
             // Free ride: only riders whose path is known can be placed.
@@ -1010,6 +1030,7 @@ impl ClientCore {
                 continue;
             }
             let (name, power_w) = self.names.get(&id).cloned().unwrap_or_default();
+            let (bike, look) = self.looks.get(&id).copied().unwrap_or_default();
             riders.push(RiderView {
                 id,
                 name,
@@ -1018,6 +1039,8 @@ impl ClientCore {
                 cadence_rpm: None,
                 heart_rate_bpm: None,
                 is_local: false,
+                bike,
+                look,
             });
         }
         riders
@@ -1269,6 +1292,71 @@ mod tests {
             client.speed,
             server.speed
         );
+    }
+
+    /// The bike profile reaches the server by its id; server and prediction
+    /// ride the same curated profile, so they agree (spec §2.5), for every
+    /// profile, on asphalt and on gravel.
+    #[test]
+    fn every_bike_profile_reaches_the_server_and_the_prediction_agrees() {
+        for gravel in [false, true] {
+            for bike in ProfileId::ALL {
+                let course = if gravel {
+                    route().with_surfaces(vec![(0.0, 1.0e5, ocw_world::Surface::Gravel)])
+                } else {
+                    route()
+                };
+                let server = GameServer::new(course.clone(), ServerConfig::default());
+                let profile = RiderProfile::curated(bike, 68.0);
+                let client = ClientCore::new(course, "Bike", profile);
+                let mut h = Harness::with(server, client);
+                let id = h.client.rider_id().expect("joined");
+                assert_eq!(h.server.session().rider_profile(id).unwrap(), profile);
+                h.ride(250.0, 20.0);
+                let server = h.server.session().rider_state(id).unwrap();
+                let client = h.client.state();
+                assert!(
+                    (client.speed - server.speed).abs() < 0.3,
+                    "{bike:?} gravel {gravel}: client {} m/s, server {} m/s",
+                    client.speed,
+                    server.speed
+                );
+            }
+        }
+    }
+
+    /// The own look goes out in the hello; the others' looks come back in
+    /// the snapshots and reach the render view with their bikes.
+    #[test]
+    fn looks_reach_the_view() {
+        let server = GameServer::new(
+            route(),
+            ServerConfig {
+                bots: 3,
+                ..Default::default()
+            },
+        );
+        let look = RiderLook {
+            frame: ocw_core::Rgb(0x00FF00),
+            ..Default::default()
+        };
+        let client = ClientCore::new(
+            route(),
+            "Styled",
+            RiderProfile::curated(ProfileId::TimeTrial, 75.0),
+        )
+        .with_look(look);
+        let mut h = Harness::with(server, client);
+        h.ride(150.0, 2.0);
+        let view = h.client.view(h.time_s, 1.0);
+        assert_eq!(view[0].look, Some(look));
+        assert_eq!(view[0].bike, ProfileId::TimeTrial);
+        let others: Vec<_> = view[1..].iter().map(|r| (r.bike, r.look)).collect();
+        assert_eq!(others.len(), 3);
+        for (i, (bike, look)) in others.iter().enumerate() {
+            let (b, l) = ocw_server::bot_bike(i as u32);
+            assert_eq!((*bike, *look), (b, Some(l)));
+        }
     }
 
     /// Setting `controls.autodrive off`: the ride starts with lean steering.
