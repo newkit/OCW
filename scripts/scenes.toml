@@ -307,3 +307,24 @@ description = "--world without a route option: the package's first route (else f
 world = true
 args = ["--world", "{world}", "--no-neighbours", "--bots", "0"]
 shot = 8
+
+# --- Start page pictures (README): riders in the mountains, no HUD ---------------
+# Free ride with 8 bots from km 11 of the Vaduz–Malbun road (1388 m; route
+# file coordinates = package coordinates). Render with OCW_FPS=0 (no FPS
+# badge); the files are assets of the GitHub release `build-history`.
+
+[[scene]]
+name = "readme-climb-behind"
+description = "Start page: a group of riders climbing the Malbun road at km 11 (1390 m), seen from behind and above, mountains ahead (no HUD)"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "2433,5295", "--bots", "8", "--power", "260", "--window", "1920x1080"]
+at = ["0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 15 14 16"]
+shot = 12
+
+[[scene]]
+name = "readme-climb-front"
+description = "Start page: the group coming up the Malbun road at km 11, seen from the front, the valley and mountains behind (no HUD)"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "2433,5295", "--bots", "8", "--power", "260", "--window", "1920x1080"]
+at = ["0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 165 10 14"]
+shot = 12

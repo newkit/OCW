@@ -1,8 +1,18 @@
+<p align="center">
+  <img src="artwork/logos/ocw.svg" alt="Open Cycling World logo" width="160">
+</p>
+
 # Open Cycling World
 
 A cross-platform indoor cycling simulation in Rust: real bicycle hardware, real
 routes from OpenStreetMap, rendered locally with Bevy, with server-authoritative
 multiplayer.
+
+<p align="center">
+  <img src="https://github.com/newkit/OCW/releases/download/build-history/readme-climb-behind.png" alt="A group of riders climbing the Malbun road in Liechtenstein, mountains ahead" width="49%">
+  <img src="https://github.com/newkit/OCW/releases/download/build-history/readme-climb-front.png" alt="The group coming up the Malbun road, seen from the front, with the valley and mountains behind" width="49%">
+</p>
+<p align="center"><sub>Free ride with bots on the Vaduz–Malbun road (Liechtenstein, 1390 m), rendered by the app (scenes <code>readme-climb-behind</code> / <code>readme-climb-front</code> in <code>scripts/scenes.toml</code>). Map data © OpenStreetMap contributors (ODbL), elevation SRTM (NASA / USGS).</sub></p>
 
 **Status:** Phase 3 (OpenStreetMap world; pilot region Liechtenstein). Phases 1
 (technical foundation) and 2 (trainers and sensors) are done. The requirements
