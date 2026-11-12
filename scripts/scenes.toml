@@ -231,17 +231,18 @@ video = 8
 
 [[scene]]
 name = "vaduz-buildings"
-description = "Free ride in Vaduz centre: extruded OSM buildings with gable roofs along the street, high orbit camera"
+description = "Free ride in Vaduz centre: extruded OSM buildings with flat and gable roofs along the street, orbit camera from the front"
 world = true
 args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "0"]
-at = ["2.5=camera.orbit 30 28 30"]
+at = ["2.5=camera.orbit 165 14 40"]
 shot = 7
 
 [[scene]]
 name = "vaduz-video"
-description = "Video: free ride through Vaduz centre among the buildings (chase camera)"
+description = "Video: free ride through Vaduz centre among the buildings (raised chase camera), junction HUD counting down"
 world = true
-args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "2", "--power", "280"]
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "0", "--power", "280"]
+at = ["1=camera.orbit 0 24 11"]
 video = 6
 
 [[scene]]
