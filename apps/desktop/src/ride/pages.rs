@@ -55,6 +55,7 @@ fn ask(label: impl Into<String>, value: impl Into<String>, line: String) -> Row 
 }
 
 /// A row label of at most this many characters fits in two lines.
+#[cfg(test)]
 pub const MAX_ROW_CHARS: usize = 48;
 
 fn km(m: f64) -> String {

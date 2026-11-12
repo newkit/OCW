@@ -711,4 +711,76 @@ mod tests {
         let log = run(&mut app, "ride.switch --route hills");
         assert!(log.contains("remote server"), "{log}");
     }
+
+    /// A straight road 0 – 1 – 2 along x (400 m), as a package's network.
+    fn line_network() -> std::sync::Arc<ocw_world::RoadNetwork> {
+        use ocw_world::graph::{Edge, EdgeId, Oneway, RoadClass, RoadGraph, VertexId};
+        let vertices = vec![[0.0, 0.0], [200.0, 0.0], [400.0, 0.0]];
+        let edges = [(0u32, 1u32), (1, 2)]
+            .iter()
+            .enumerate()
+            .map(|(i, &(a, b))| Edge {
+                id: EdgeId(100 + i as u64),
+                from: VertexId(a),
+                to: VertexId(b),
+                points: vec![vertices[a as usize], vertices[b as usize]],
+                class: RoadClass::Residential,
+                name: None,
+                width_m: 5.0,
+                bridge: false,
+                tunnel: false,
+                dead_end_m: None,
+                boundary: false,
+                oneway: Oneway::No,
+                osm_way: i as i64,
+                profile: Vec::new(),
+            })
+            .collect();
+        let graph = RoadGraph {
+            vertices,
+            edges,
+            boundary_vertices: Default::default(),
+        };
+        std::sync::Arc::new(ocw_world::RoadNetwork::new(graph))
+    }
+
+    #[test]
+    fn gpx_import_matches_onto_the_package_and_saves_a_route() {
+        let (mut app, rides) = app("gpx");
+        let origin = (47.1, 9.5);
+        app.world_mut().resource_mut::<CurrentRide>().world = Some(CurrentWorld {
+            spec: "example.ocwpkg".into(),
+            name: "Example Land".into(),
+            routes: Vec::new(),
+            net: Some(line_network()),
+            origin,
+        });
+        // A GPS track along the road, 30 m to 370 m.
+        let proj = ocw_world::geo::LocalProjection::new(origin.0, origin.1);
+        let mut gpx = String::from("<gpx><trk><name>Along the road</name><trkseg>");
+        for i in 0..=34 {
+            let (lat, lon) = proj.unproject([30.0 + f64::from(i) * 10.0, 1.5]);
+            gpx.push_str(&format!("<trkpt lat=\"{lat:.7}\" lon=\"{lon:.7}\"/>"));
+        }
+        gpx.push_str("</trkseg></trk></gpx>");
+        std::fs::create_dir_all(&rides).unwrap();
+        let file = rides.join("track.gpx");
+        std::fs::write(&file, gpx).unwrap();
+        let dir = rides.join("routes");
+        let out = import_gpx(app.world_mut(), &file, &dir, false).unwrap();
+        assert!(out.contains("Along the road"), "{out}");
+        let routes = catalog::user_routes(&dir, "Example Land");
+        assert_eq!(routes.len(), 1, "{out}");
+        assert_eq!(routes[0].name, "Along the road");
+        assert!((routes[0].length_m - 340.0).abs() < 20.0, "{routes:?}");
+        // The saved route resolves on the package's network.
+        let plan = setup::read_graph_route(&routes[0].path, &line_network(), "Example Land");
+        assert!(plan.is_ok(), "{plan:?}");
+        // Listed under Navi → Routes as one of yours.
+        refresh_catalog(app.world_mut());
+        // --ride starts the switch to it.
+        let out = import_gpx(app.world_mut(), &file, &dir, true).unwrap();
+        assert!(out.contains("loading example, route"), "{out}");
+        assert!(app.world().resource::<Loading>().0.is_some());
+    }
 }
