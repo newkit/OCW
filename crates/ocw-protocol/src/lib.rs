@@ -12,7 +12,7 @@ pub mod v1 {
 }
 
 use ocw_core::RiderId;
-use ocw_sim::{RiderState, TurnChoice};
+use ocw_sim::{Event, EventKind, EventPhase, EventSpec, RiderState, Standing, TurnChoice};
 use ocw_world::graph::{EdgeId, VertexId};
 use ocw_world::{RoadNetwork, Segment, TurnReason};
 use prost::Message;
@@ -199,10 +199,253 @@ pub fn dequantize(u: &v1::RiderUpdate) -> (RiderId, RiderState) {
     )
 }
 
+/// An event request for the wire (`bots`: the field size, if given).
+pub fn event_start(spec: &EventSpec, bots: Option<u32>) -> v1::EventStart {
+    let len = |l: Option<f64>| l.map(|m| m.round().clamp(0.0, u32::MAX as f64) as u32);
+    let (kind, laps, length_m, target_w) = match *spec {
+        EventSpec::GroupRide { target_w } => (
+            v1::EventKind::GroupRide,
+            None,
+            None,
+            target_w.map(|w| w.round().max(0.0) as u32),
+        ),
+        EventSpec::Race { laps, length_m } => (v1::EventKind::Race, laps, len(length_m), None),
+        EventSpec::TimeTrial { laps, length_m } => {
+            (v1::EventKind::TimeTrial, laps, len(length_m), None)
+        }
+    };
+    v1::EventStart {
+        kind: kind as i32,
+        laps,
+        length_m,
+        bots,
+        target_w,
+    }
+}
+
+/// The request of a received event start (`None`: unknown kind).
+pub fn event_spec(s: &v1::EventStart) -> Option<EventSpec> {
+    let length_m = s.length_m.map(f64::from);
+    Some(match v1::EventKind::try_from(s.kind).ok()? {
+        v1::EventKind::GroupRide => EventSpec::GroupRide {
+            target_w: s.target_w.map(f64::from),
+        },
+        v1::EventKind::Race => EventSpec::Race {
+            laps: s.laps,
+            length_m,
+        },
+        v1::EventKind::TimeTrial => EventSpec::TimeTrial {
+            laps: s.laps,
+            length_m,
+        },
+        v1::EventKind::Unspecified => return None,
+    })
+}
+
+/// The event state for the wire at server tick `tick` (`None`: no event).
+pub fn event_state(ev: Option<&Event>, standings: &[Standing], tick: u64) -> v1::EventState {
+    let Some(ev) = ev else {
+        return v1::EventState {
+            server_tick: tick,
+            ..Default::default()
+        };
+    };
+    let (kind, target_w) = match ev.kind {
+        EventKind::GroupRide { target_w } => (v1::EventKind::GroupRide, target_w.round() as u32),
+        EventKind::Race { .. } => (v1::EventKind::Race, 0),
+        EventKind::TimeTrial { .. } => (v1::EventKind::TimeTrial, 0),
+    };
+    let ms = |s: f64| (s * 1000.0).round().clamp(0.0, u32::MAX as f64) as u32;
+    v1::EventState {
+        event_id: ev.id,
+        kind: kind as i32,
+        phase: match ev.phase {
+            EventPhase::Scheduled => v1::EventPhase::Scheduled,
+            EventPhase::Countdown => v1::EventPhase::Countdown,
+            EventPhase::Running => v1::EventPhase::Running,
+            EventPhase::Finished => v1::EventPhase::Finished,
+        } as i32,
+        countdown_tick: ev.countdown_tick,
+        go_tick: ev.go_tick,
+        server_tick: tick,
+        start_line_m: ev.start_line_m,
+        length_m: ev.kind.length_m().unwrap_or(0.0),
+        laps: ev.kind.laps().unwrap_or(0),
+        target_w,
+        standings: standings
+            .iter()
+            .map(|s| v1::EventStanding {
+                rider_id: s.id.0,
+                display_name: s.name.clone(),
+                position: s.position,
+                progress_cm: (s.progress_m * 100.0)
+                    .round()
+                    .clamp(i32::MIN as f64, i32::MAX as f64) as i32,
+                finish_ms: s.finish_s.map(ms),
+                dnf: s.dnf,
+                gap_ahead_ms: s.gap_ahead_s.map(ms),
+            })
+            .collect(),
+        finished_tick: ev.finished_tick,
+    }
+}
+
+/// A received event state, in simulation units.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EventInfo {
+    pub id: u32,
+    pub kind: EventKind,
+    pub phase: EventPhase,
+    pub countdown_tick: u64,
+    pub go_tick: u64,
+    /// The server tick the state is from.
+    pub server_tick: u64,
+    pub start_line_m: f64,
+    pub finished_tick: Option<u64>,
+    pub standings: Vec<Standing>,
+}
+
+impl EventInfo {
+    /// Seconds since GO at server tick `tick` (negative before).
+    pub fn race_time_s(&self, tick: f64) -> f64 {
+        (tick - self.go_tick as f64) * ocw_core::SIM_DT
+    }
+}
+
+/// Decodes an event state; `None` = no event (none, or cancelled).
+pub fn event_info(e: &v1::EventState) -> Option<EventInfo> {
+    let phase = match v1::EventPhase::try_from(e.phase).ok()? {
+        v1::EventPhase::None => return None,
+        v1::EventPhase::Scheduled => EventPhase::Scheduled,
+        v1::EventPhase::Countdown => EventPhase::Countdown,
+        v1::EventPhase::Running => EventPhase::Running,
+        v1::EventPhase::Finished => EventPhase::Finished,
+    };
+    let laps = (e.laps > 0).then_some(e.laps);
+    let kind = match v1::EventKind::try_from(e.kind).ok()? {
+        v1::EventKind::GroupRide => EventKind::GroupRide {
+            target_w: f64::from(e.target_w),
+        },
+        v1::EventKind::Race => EventKind::Race {
+            length_m: e.length_m,
+            laps,
+        },
+        v1::EventKind::TimeTrial => EventKind::TimeTrial {
+            length_m: e.length_m,
+            laps,
+        },
+        v1::EventKind::Unspecified => return None,
+    };
+    Some(EventInfo {
+        id: e.event_id,
+        kind,
+        phase,
+        countdown_tick: e.countdown_tick,
+        go_tick: e.go_tick,
+        server_tick: e.server_tick,
+        start_line_m: e.start_line_m,
+        finished_tick: e.finished_tick,
+        standings: e
+            .standings
+            .iter()
+            .map(|s| Standing {
+                id: RiderId(s.rider_id),
+                name: s.display_name.clone(),
+                position: s.position,
+                progress_m: f64::from(s.progress_cm) / 100.0,
+                finish_s: s.finish_ms.map(|m| f64::from(m) / 1000.0),
+                dnf: s.dnf,
+                gap_ahead_s: s.gap_ahead_ms.map(|m| f64::from(m) / 1000.0),
+            })
+            .collect(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use v1::client_message::Msg;
+
+    #[test]
+    fn event_messages_roundtrip() {
+        for spec in [
+            EventSpec::GroupRide {
+                target_w: Some(180.0),
+            },
+            EventSpec::Race {
+                laps: Some(3),
+                length_m: None,
+            },
+            EventSpec::TimeTrial {
+                laps: None,
+                length_m: Some(4200.0),
+            },
+            EventSpec::Race {
+                laps: None,
+                length_m: None,
+            },
+        ] {
+            let start = event_start(&spec, Some(4));
+            let bytes = encode(&client_message(Msg::Event(v1::EventRequest {
+                req: Some(v1::event_request::Req::Start(start)),
+            })));
+            let Msg::Event(v1::EventRequest {
+                req: Some(v1::event_request::Req::Start(back)),
+            }) = decode_client(&bytes).unwrap()
+            else {
+                panic!()
+            };
+            assert_eq!(back.bots, Some(4));
+            assert_eq!(event_spec(&back), Some(spec));
+        }
+        assert_eq!(event_spec(&v1::EventStart::default()), None);
+        // The state, with standings.
+        let mut ev = Event::new(
+            7,
+            EventKind::Race {
+                length_m: 8000.0,
+                laps: Some(2),
+            },
+            100,
+            4000.0,
+            vec![(RiderId(1), "Ana".into()), (RiderId(2), "Bot 1".into())],
+        );
+        ev.update(100, &[]);
+        let standings = vec![
+            Standing {
+                id: RiderId(2),
+                name: "Bot 1".into(),
+                position: 1,
+                progress_m: 8000.0,
+                finish_s: Some(612.345),
+                dnf: false,
+                gap_ahead_s: None,
+            },
+            Standing {
+                id: RiderId(1),
+                name: "Ana".into(),
+                position: 2,
+                progress_m: 7990.5,
+                finish_s: None,
+                dnf: false,
+                gap_ahead_s: Some(1.25),
+            },
+        ];
+        let wire = event_state(Some(&ev), &standings, 123);
+        let info = event_info(&wire).unwrap();
+        assert_eq!(info.id, 7);
+        assert_eq!(info.kind, ev.kind);
+        assert_eq!(info.phase, EventPhase::Countdown);
+        assert_eq!((info.go_tick, info.server_tick), (ev.go_tick, 123));
+        assert_eq!(info.start_line_m, 4000.0);
+        assert_eq!(info.standings, standings);
+        assert_eq!(info.race_time_s(ev.go_tick as f64 + 25.0), 0.5);
+        // No event (cancelled).
+        assert_eq!(event_info(&event_state(None, &[], 5)), None);
+        let group = Event::new(1, EventKind::GroupRide { target_w: 150.0 }, 0, 0.0, vec![]);
+        let info = event_info(&event_state(Some(&group), &[], 0)).unwrap();
+        assert_eq!(info.kind, EventKind::GroupRide { target_w: 150.0 });
+    }
 
     #[test]
     fn roundtrip_client_message() {

@@ -51,6 +51,15 @@ impl Predictor {
         }
     }
 
+    /// Takes the server's state as it is, dropping pending corrections
+    /// (the rider is held, e.g. at an event's start line).
+    pub fn set_state(&mut self, state: RiderState) {
+        self.last_error = state.distance - self.state.distance;
+        self.state = state;
+        self.pending_correction = 0.0;
+        self.pending_lateral = 0.0;
+    }
+
     pub fn state(&self) -> RiderState {
         self.state
     }
@@ -167,6 +176,31 @@ mod tests {
             6.0,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn set_state_drops_pending_corrections() {
+        let route = flat();
+        let mut p = Predictor::new(RiderProfile::default(), RiderState::default());
+        p.reconcile(
+            &route,
+            RiderState {
+                distance: 2.0,
+                ..Default::default()
+            },
+            0.0,
+            0.0,
+        );
+        let held = RiderState {
+            distance: 3.0,
+            lateral_offset: 1.2,
+            ..Default::default()
+        };
+        p.set_state(held);
+        assert_eq!(p.state(), held);
+        assert_eq!(p.last_error(), 3.0);
+        p.step(&route, 0.0);
+        assert_eq!(p.state().distance, 3.0, "no correction left to blend in");
     }
 
     #[test]

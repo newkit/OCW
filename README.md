@@ -72,7 +72,8 @@ R, V, …, the mouse camera) are ignored while it is open. Steering falls back
 to autodrive and junctions take their default exit, so the rider stays on
 the road; closing the menu restores manual steering / wild mode. In M1 the
 Ride, Workshop, Navi and Settings pages say what is coming (Settings already
-toggles the FPS counter).
+toggles the FPS counter). The Ride page starts local events (race,
+group ride, time trial; see *Events* below).
 
 In manual steering, the keys ramp the lean and it stays when released (press
 the other way to straighten up); the stick sets the lean directly, centred is
@@ -266,6 +267,43 @@ keeps real time (on the kiosk test machine all 25 images per second are
 new; a slow screenshot readback can lower that elsewhere – `make video`
 records with a fixed time step instead). Needs `ffmpeg` (`make deps` installs it).
 
+**Events** (spec §2.3): a race, a group ride or a time trial against your
+own ghost, started on demand on the current route (single player with bots
+on the in-process server; the same server logic will run networked
+events). Start them from the menu (*Ride*) or the console:
+
+```bash
+event race [--laps N | --km X] [--bots N]   # default: 1 lap of a loop, 5 km of a route that ends
+event group [--watts W] [--bots N]          # bots hold W (default 150) and regroup; no ranking
+event tt [--laps N | --km X]                # alone, no drafting, against your best effort
+event status | event cancel | event dismiss
+```
+
+- Everyone (you and the bots) lines up in the start formation behind the
+  start line - at the start / finish arch on a loop, at the beginning of a
+  route that ends - and waits there through the countdown ("Get ready",
+  3-2-1, GO!); pedalling does not move you before GO. `--bots N` replaces
+  the field with N bots (twelve strengths, as at the start); without it the
+  current bots ride. A time trial removes them: you ride alone.
+- The server decides the start, who finished when (to the hundredth of a
+  second within the 50 Hz tick) and the ranking; after the first finisher
+  the others have 2 minutes (or a quarter of the winner's time) before they
+  are DNF. You ride on after the finish.
+- The HUD (right) shows the event, your position and the gap to the rider
+  ahead ("P3/11  +4.2 s to Bot 4"), the time and the distance to go (with
+  the lap), in a time trial the gap to the ghost ("Ghost -1.8 s (ahead)"),
+  in a group ride where you are relative to the group. At your finish the
+  results panel shows positions, times and gaps to the winner (provisional
+  while others ride); Esc, Enter or A (gamepad A / B) closes it, or it
+  closes after 30 s.
+- **Ghost:** a time trial records your distance over time (2 Hz); your best
+  effort per route and length is kept in `~/.local/share/ocw/ghosts/`
+  (`$OCW_DATA_DIR/ghosts`) and rides with you the next time as a
+  translucent rider beside you. It exists only on your client - nobody
+  drafts it.
+- Events need a route (test routes, route files, package routes); free ride
+  has no fixed course.
+
 **Rides and Strava** (spec §2.8)
 
 - Every ride is recorded and saved as a FIT file when the app closes (rides of
@@ -350,6 +388,13 @@ for now).
 | `worlds.info` | The loaded world package: id, version, content hash, trust, credits |
 | `worlds.list` | World packages in the local cache, with their trust state |
 | `worlds.verify [PATH\|ID]` | Verify a world package's hashes and signature (default: the loaded one) |
+| **Events** (spec §2.3) | |
+| `event race [--laps N\|--km X] [--bots N]` | Race from the start formation to the finish (default 1 lap / 5 km) |
+| `event group [--watts W] [--bots N]` | Group ride: bots hold the pace and regroup |
+| `event tt [--laps N\|--km X]` | Time trial alone against your ghost |
+| `event status` | The event, your HUD lines and the standings |
+| `event cancel` | End the event (everyone rides on) |
+| `event dismiss` | Close the results panel (Esc / A) |
 | **Camera** | |
 | `camera.mode chase\|side\|top` | Camera perspective |
 | `camera.orbit YAW PITCH [DISTANCE]` | Orbit the chase camera (degrees; 0 = behind, 180 = in front; metres) |

@@ -140,6 +140,7 @@ fn main() {
             allow_dev_commands: false,
             bots: args.bots,
             start_m: 0.0,
+            allow_local_events: false,
         },
     );
     let tick = Duration::from_secs_f64(SIM_DT);

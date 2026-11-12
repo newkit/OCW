@@ -60,6 +60,7 @@ impl LocalServer {
                 allow_dev_commands: true,
                 bots,
                 start_m,
+                allow_local_events: true,
             },
         );
         let thread = thread::Builder::new()
@@ -126,6 +127,7 @@ impl SteppedServer {
                 allow_dev_commands: true,
                 bots,
                 start_m,
+                allow_local_events: true,
             },
         );
         let conn = server.connect();

@@ -12,6 +12,8 @@ mod build_id;
 mod client;
 mod connection;
 mod devices;
+mod event;
+mod ghost;
 mod gps;
 mod icon;
 mod input;
