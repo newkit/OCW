@@ -154,7 +154,9 @@ graphs are joined at the start; a neighbour's terrain, buildings and trees are
 loaded when you come within 3 km of it and dropped beyond 5 km (at most two
 neighbours at a time). Packages built before the region section (`REGN`)
 have no neighbours. To cut a region into neighbouring packages, build each
-part with the same `--poly`, its own `--bbox` and one common `--origin`:
+part with the same `--poly`, its own `--bbox` and one common `--origin` (a
+`--bbox` part takes its road profiles and terrain from the roads up to about
+1 km around it, so neighbouring parts meet without a step):
 
 ```bash
 world-builder package --bbox 47.04,9.46,47.15,9.64 --origin 47.1595,9.5536 \

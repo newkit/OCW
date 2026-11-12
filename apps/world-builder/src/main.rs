@@ -673,6 +673,10 @@ fn route(args: RouteArgs) {
     println!("route file: {}", args.out.display());
 }
 
+/// How far beyond a `--bbox` part the roads shape its profiles and terrain
+/// (degrees, about 1 km).
+const CONTEXT_DEG: f64 = 0.01;
+
 fn proj_origin(region: &Region) -> (f64, f64) {
     region.center()
 }
@@ -731,6 +735,17 @@ fn package(args: PackageArgs) {
     } = args;
     let t = Instant::now();
     let mut region = load_region(&poly);
+    // A part of the region (--bbox): the roads up to CONTEXT_DEG beyond it
+    // give the profiles and the terrain near the border, so the
+    // neighbouring part, built the same way, meets it without a step.
+    let mut context = bbox.as_ref().map(|b| {
+        region.clone().clipped_to(
+            b.min_lat - CONTEXT_DEG,
+            b.min_lon - CONTEXT_DEG,
+            b.max_lat + CONTEXT_DEG,
+            b.max_lon + CONTEXT_DEG,
+        )
+    });
     if let Some(b) = bbox {
         region = region.clipped_to(b.min_lat, b.min_lon, b.max_lat, b.max_lon);
         if region.min_lat >= region.max_lat || region.min_lon >= region.max_lon {
@@ -747,14 +762,27 @@ fn package(args: PackageArgs) {
     let (mut graph, stats) = build_road_graph(&osm, &region);
     let dem = load_dem(&hgt);
     add_profiles(&mut graph, &dem, &proj);
+    let context_graph = context.as_mut().map(|c| {
+        c.origin = Some(region.origin());
+        let (mut g, _) = build_road_graph(&osm, c);
+        add_profiles(&mut g, &dem, &proj);
+        let taken = ocw_worldgen::profile::transfer_profiles(&mut graph, &g, 0.5);
+        println!(
+            "context: {} road edges up to {CONTEXT_DEG}° around the box; {taken} of {} profiles taken from them",
+            g.edges.len(),
+            graph.edges.len()
+        );
+        g
+    });
     let base = |x: f64, z: f64| {
         let (lat, lon) = proj.unproject([x, z]);
         dem.elevation(lat, lon).unwrap_or(0.0)
     };
-    let mut pkg = ocw_worldgen::package::build_package(
+    let mut pkg = ocw_worldgen::package::build_package_with_terrain(
         &name,
         region.origin(),
         &graph,
+        context_graph.as_ref().unwrap_or(&graph),
         base,
         1000.0,
         samples,

@@ -155,8 +155,17 @@ pub fn neighbourhood(
             .add_neighbour(&w.identity.id, Arc::new(w.package.clone()))
         {
             Ok(links) => {
+                let at = n.set.members().last().map_or(String::new(), |m| {
+                    let pts: Vec<String> = m
+                        .crossings
+                        .iter()
+                        .take(24)
+                        .map(|p| format!("{:.0},{:.0}", p[0], p[1]))
+                        .collect();
+                    format!(" at x,z {}", pts.join(" "))
+                });
                 n.log.push(format!(
-                    "neighbour {} joined: {links} road(s) across the border",
+                    "neighbour {} joined: {links} road(s) across the border{at}",
                     w.describe()
                 ));
                 n.specs.push(c.spec);

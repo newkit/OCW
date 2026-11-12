@@ -60,12 +60,32 @@ fn build_half(
     let (mut graph, stats) = build_road_graph(&osm, &region);
     assert!(stats.boundary_edges >= 3, "{file}: {stats:?}");
     add_profiles(&mut graph, dem, &proj);
+    // As `world-builder package --bbox`: the roads around the part (here
+    // the whole fixture) give the profiles and the terrain.
+    let context = Region {
+        origin: Some(region.origin()),
+        ..Region::bbox(46.490, 9.485, 46.510, 9.515)
+    };
+    let (mut around, _) = build_road_graph(&osm, &context);
+    add_profiles(&mut around, dem, &proj);
+    assert_eq!(
+        ocw_worldgen::profile::transfer_profiles(&mut graph, &around, 0.5),
+        graph.edges.len()
+    );
     let base = |x: f64, z: f64| {
         let (lat, lon) = proj.unproject([x, z]);
         dem.elevation(lat, lon).unwrap_or(0.0)
     };
-    let mut pkg =
-        ocw_worldgen::package::build_package(file, region.origin(), &graph, base, 1000.0, 51, 1);
+    let mut pkg = ocw_worldgen::package::build_package_with_terrain(
+        file,
+        region.origin(),
+        &graph,
+        &around,
+        base,
+        1000.0,
+        51,
+        1,
+    );
     pkg.region = Some(region.package_region());
     let bytes = pkg.to_bytes();
     let mut m =
@@ -105,7 +125,7 @@ fn ride_across(origin_east: Option<(f64, f64)>) {
         },
         &dem,
     );
-    build_half(
+    let e = build_half(
         &dir,
         "east.ocwpkg",
         "test/east",
@@ -140,6 +160,48 @@ fn ride_across(origin_east: Option<(f64, f64)>) {
     }
     .projection();
     let border_x = proj.project(46.5, BORDER_LON)[0];
+    // The two meet without a step: along the border line, the terrain of
+    // both packages and the road heights where the roads cross agree.
+    let f = hood.set.members()[1].frame;
+    for k in 0..=40 {
+        let p = [border_x, -900.0 + 45.0 * f64::from(k)];
+        let q = f.invert(p);
+        if let (Some(a), Some(b)) = (w.surface_height(p[0], p[1]), e.surface_height(q[0], q[1])) {
+            assert!((a - b).abs() < 0.3, "terrain at {p:?}: {a:.2} vs {b:.2}");
+        }
+    }
+    for c in &hood.set.members()[1].crossings {
+        let near = |g: &ocw_world::graph::RoadGraph| -> f64 {
+            let e = g
+                .edges
+                .iter()
+                .find(|e| {
+                    e.boundary
+                        && [e.points[0], *e.points.last().unwrap()]
+                            .iter()
+                            .any(|p| (p[0] - c[0]).hypot(p[1] - c[1]) < 1.0)
+                })
+                .unwrap();
+            if (e.points[0][0] - c[0]).hypot(e.points[0][1] - c[1]) < 1.0 {
+                e.profile[0]
+            } else {
+                *e.profile.last().unwrap()
+            }
+        };
+        let (a, b) = (near(w.graph.as_ref().unwrap()), {
+            let mut g = e.graph.clone().unwrap();
+            for v in &mut g.vertices {
+                *v = f.apply(*v);
+            }
+            for ed in &mut g.edges {
+                for p in &mut ed.points {
+                    *p = f.apply(*p);
+                }
+            }
+            near(&g)
+        });
+        assert!((a - b).abs() < 0.05, "road at {c:?}: {a:.2} vs {b:.2}");
+    }
     // Hauptstrasse from junction 3 east to the border.
     let west_net = RoadNetwork::new(alone);
     let start = |net: &RoadNetwork| {

@@ -619,9 +619,141 @@ pub fn add_profiles(graph: &mut RoadGraph, dem: &Dem, proj: &LocalProjection) ->
     stats
 }
 
+/// The point at arc length `d` along a polyline.
+fn point_at(points: &[[f64; 2]], d: f64) -> [f64; 2] {
+    let mut walked = 0.0;
+    for w in points.windows(2) {
+        let len = ((w[1][0] - w[0][0]).powi(2) + (w[1][1] - w[0][1]).powi(2)).sqrt();
+        if walked + len >= d && len > 0.0 {
+            let t = ((d - walked) / len).clamp(0.0, 1.0);
+            return [
+                w[0][0] + (w[1][0] - w[0][0]) * t,
+                w[0][1] + (w[1][1] - w[0][1]) * t,
+            ];
+        }
+        walked += len;
+    }
+    *points.last().expect("non-empty")
+}
+
+/// Distance of `p` from a polyline and the arc length of its foot point.
+fn project_onto(points: &[[f64; 2]], p: [f64; 2]) -> (f64, f64) {
+    let (mut best, mut at, mut walked) = (f64::INFINITY, 0.0, 0.0);
+    for w in points.windows(2) {
+        let (dx, dz) = (w[1][0] - w[0][0], w[1][1] - w[0][1]);
+        let len2 = dx * dx + dz * dz;
+        let t = if len2 > 0.0 {
+            (((p[0] - w[0][0]) * dx + (p[1] - w[0][1]) * dz) / len2).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let q = [w[0][0] + dx * t, w[0][1] + dz * t];
+        let d = (p[0] - q[0]).hypot(p[1] - q[1]);
+        if d < best {
+            best = d;
+            at = walked + t * len2.sqrt();
+        }
+        walked += len2.sqrt();
+    }
+    (best, at)
+}
+
+/// Takes the road profiles of `target` from a larger graph of the same
+/// roads (`source`, same projection): every sample is read from the source
+/// edge of the same OSM way that passes within `tolerance_m`. For a package
+/// cut out of a bigger region (spec §2.2.2): its profiles near the border
+/// are those of the whole road, so the neighbouring package (built the same
+/// way) has the same heights where the road crosses. Edges not fully
+/// covered by the source keep their own profile. Returns the edges taken over.
+pub fn transfer_profiles(target: &mut RoadGraph, source: &RoadGraph, tolerance_m: f64) -> usize {
+    let mut by_way: std::collections::HashMap<i64, Vec<usize>> = Default::default();
+    for (i, e) in source.edges.iter().enumerate() {
+        if !e.profile.is_empty() {
+            by_way.entry(e.osm_way).or_default().push(i);
+        }
+    }
+    let mut taken = 0;
+    for e in &mut target.edges {
+        let Some(candidates) = by_way.get(&e.osm_way) else {
+            continue;
+        };
+        let len = e.length_m();
+        let n = e.profile.len().max(2);
+        let new: Option<Vec<f64>> = (0..n)
+            .map(|k| {
+                let d = if k == n - 1 {
+                    len
+                } else {
+                    (k as f64 * PROFILE_STEP_M).min(len)
+                };
+                let p = point_at(&e.points, d);
+                candidates
+                    .iter()
+                    .map(|&i| (i, project_onto(&source.edges[i].points, p)))
+                    .filter(|(_, (dist, _))| *dist <= tolerance_m)
+                    .min_by(|a, b| a.1.0.total_cmp(&b.1.0))
+                    .and_then(|(i, (_, at))| source.edges[i].height_at(at))
+            })
+            .collect();
+        if let Some(profile) = new {
+            e.profile = profile;
+            taken += 1;
+        }
+    }
+    taken
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn profiles_are_taken_over_from_the_whole_road() {
+        use ocw_world::graph::{Edge, EdgeId, Oneway, VertexId};
+        let edge = |way: i64, pts: Vec<[f64; 2]>, profile: Vec<f64>| Edge {
+            id: EdgeId(way as u64),
+            from: VertexId(0),
+            to: VertexId(1),
+            points: pts,
+            class: RoadClass::Residential,
+            name: None,
+            width_m: 5.0,
+            bridge: false,
+            tunnel: false,
+            dead_end_m: None,
+            boundary: false,
+            oneway: Oneway::No,
+            osm_way: way,
+            profile,
+        };
+        // The whole road: 100 m east, rising 1 m per 10 m.
+        let whole = RoadGraph {
+            vertices: vec![[0.0, 0.0], [100.0, 0.0]],
+            edges: vec![edge(
+                7,
+                vec![[0.0, 0.0], [50.0, 0.0], [100.0, 0.0]],
+                (0..=20).map(|k| f64::from(k) * 0.5).collect(),
+            )],
+            boundary_vertices: Default::default(),
+        };
+        // A package's piece of it from x = 50 to a border at x = 62.5,
+        // with a flat profile of its own; another road is left alone.
+        let mut part = RoadGraph {
+            vertices: vec![[50.0, 0.0], [62.5, 0.0]],
+            edges: vec![
+                edge(7, vec![[50.0, 0.0], [62.5, 0.0]], vec![0.0; 4]),
+                edge(8, vec![[50.0, 0.0], [62.5, 0.0]], vec![0.0; 4]),
+            ],
+            boundary_vertices: Default::default(),
+        };
+        assert_eq!(transfer_profiles(&mut part, &whole, 1.0), 1);
+        let p = &part.edges[0].profile;
+        assert_eq!(p.len(), 4);
+        for (got, want) in p.iter().zip([5.0, 5.5, 6.0, 6.25]) {
+            assert!((got - want).abs() < 1e-9, "{p:?}");
+        }
+        assert_eq!(part.edges[1].profile, vec![0.0; 4]);
+    }
 
     #[test]
     fn resampling_every_five_metres() {

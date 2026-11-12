@@ -149,6 +149,8 @@ pub struct Member {
     pub frame: Frame,
     /// Roads linked to the packages before it (0 for the home package).
     pub links: usize,
+    /// Where they cross the border (home metres).
+    pub crossings: Vec<[f64; 2]>,
     region: Option<MetricRegion>,
     tile_size_m: f64,
     tile_keys: BTreeSet<TileKey>,
@@ -236,6 +238,7 @@ fn member(id: &str, pkg: &Arc<WorldPackage>, home_origin: (f64, f64), links: usi
         origin: pkg.origin,
         frame,
         links,
+        crossings: Vec::new(),
         region: pkg.region.as_ref().map(|r| MetricRegion::new(r, &home)),
         tile_size_m: size,
         tile_keys: pkg.tiles.keys().copied().collect(),
@@ -300,10 +303,15 @@ impl WorldSet {
         if links.is_empty() {
             return Err(format!("{id}: no road crosses the border to it"));
         }
+        let crossings = links
+            .iter()
+            .map(|l| joined.vertices[l.here.0 as usize])
+            .collect();
         let graph = join_graphs(a, b, &links);
         self.graph = Some(graph);
-        self.members
-            .push(member(id, &pkg, home_origin, links.len()));
+        let mut m = member(id, &pkg, home_origin, links.len());
+        m.crossings = crossings;
+        self.members.push(m);
         self.generation += 1;
         Ok(links.len())
     }
@@ -586,6 +594,7 @@ mod tests {
             let (west, east) = west_east(east_origin);
             let mut set = WorldSet::new("test/west", west.clone());
             assert_eq!(set.add_neighbour("test/east", east.clone()), Ok(1));
+            assert_eq!(set.members()[1].crossings, vec![[0.0, 0.0]]);
             assert_eq!(set.name(), "West + East");
             assert_eq!(set.len(), 2);
             let g = set.graph().unwrap().clone();

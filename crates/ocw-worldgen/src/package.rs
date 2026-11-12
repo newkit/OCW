@@ -164,6 +164,26 @@ pub fn split_into_tiles(points: &[[f64; 3]], size: f64) -> Vec<(TileKey, Vec<[f6
     out
 }
 
+/// How far a road strip reaches beyond a cut at the region border (m).
+pub const BORDER_OVERLAP_M: f64 = 0.5;
+
+/// Moves the last point `m` further along the last segment's direction.
+fn extend_end(points: &mut [[f64; 3]], m: f64) {
+    let n = points.len();
+    if n < 2 {
+        return;
+    }
+    let (a, b) = (points[n - 2], points[n - 1]);
+    let len = (b[0] - a[0]).hypot(b[2] - a[2]);
+    if len > 1e-6 {
+        points[n - 1] = [
+            b[0] + (b[0] - a[0]) / len * m,
+            b[1],
+            b[2] + (b[2] - a[2]) / len * m,
+        ];
+    }
+}
+
 /// Builds the package: tiles covering all roads plus `margin_tiles`, terrain
 /// with `samples` per tile side, road strips (tunnels left out: they run
 /// inside the terrain).
@@ -176,8 +196,40 @@ pub fn build_package<F: Fn(f64, f64) -> f64 + Sync>(
     samples: u32,
     margin_tiles: i32,
 ) -> WorldPackage {
+    build_package_with_terrain(
+        name,
+        origin,
+        graph,
+        graph,
+        base,
+        tile_size,
+        samples,
+        margin_tiles,
+    )
+}
+
+/// [`build_package`] with the terrain conformed to `terrain_graph` instead
+/// of `graph` – for a package cut out of a bigger region, the roads around
+/// it (spec §2.2.2): the terrain along the border then follows the roads
+/// on both sides, as the neighbouring package's does, so the two meet
+/// without a step. Road strips and tiles come from `graph`.
+#[allow(clippy::too_many_arguments)]
+pub fn build_package_with_terrain<F: Fn(f64, f64) -> f64 + Sync>(
+    name: &str,
+    origin: (f64, f64),
+    graph: &RoadGraph,
+    terrain_graph: &RoadGraph,
+    base: F,
+    tile_size: f64,
+    samples: u32,
+    margin_tiles: i32,
+) -> WorldPackage {
     // Cutting margin: 1.5 grid cells (more than a cell diagonal).
-    let terrain = GraphTerrain::new(graph, base, 1.5 * tile_size / f64::from(samples - 1));
+    let terrain = GraphTerrain::new(
+        terrain_graph,
+        base,
+        1.5 * tile_size / f64::from(samples - 1),
+    );
     let (mut min, mut max) = ([i32::MAX; 2], [i32::MIN; 2]);
     for v in &graph.vertices {
         let k = TileKey::containing(*v, tile_size);
@@ -186,10 +238,20 @@ pub fn build_package<F: Fn(f64, f64) -> f64 + Sync>(
     }
     let mut roads: BTreeMap<TileKey, Vec<RoadStrip>> = BTreeMap::new();
     for e in graph.edges.iter().filter(|e| !e.tunnel) {
-        let with_h: Vec<[f64; 3]> = sample_along(&e.points, PROFILE_STEP_M, true)
+        let mut with_h: Vec<[f64; 3]> = sample_along(&e.points, PROFILE_STEP_M, true)
             .into_iter()
             .map(|(p, s)| [p[0], e.height_at(s).unwrap_or(0.0), p[1]])
             .collect();
+        // At the region border the strip reaches a little beyond the cut,
+        // under the neighbouring package's strip (no hairline gap).
+        if graph.boundary_vertices.contains(&e.to) {
+            extend_end(&mut with_h, BORDER_OVERLAP_M);
+        }
+        if graph.boundary_vertices.contains(&e.from) {
+            with_h.reverse();
+            extend_end(&mut with_h, BORDER_OVERLAP_M);
+            with_h.reverse();
+        }
         for (key, run) in split_into_tiles(&with_h, tile_size) {
             roads.entry(key).or_default().push(RoadStrip {
                 class: e.class,
@@ -494,5 +556,25 @@ mod tests {
         }
         // Survives the binary round trip.
         assert_eq!(WorldPackage::from_bytes(&p.to_bytes()).unwrap(), p);
+    }
+
+    #[test]
+    fn road_strips_reach_a_little_beyond_a_border_cut() {
+        // The road along x ends at the border at x = 800 (vertex 1); the
+        // bridge's ends are ordinary.
+        let mut g = graph();
+        g.boundary_vertices.insert(VertexId(1));
+        let p = build_package("test", (47.0, 9.0), &g, |_, _| 100.0, 500.0, 51, 1);
+        let max_x = |p: &WorldPackage| {
+            p.tiles
+                .values()
+                .flat_map(|t| &t.roads)
+                .flat_map(|s| &s.points)
+                .map(|q| q[0])
+                .fold(f32::MIN, f32::max)
+        };
+        assert!((max_x(&p) - (800.0 + BORDER_OVERLAP_M as f32)).abs() < 1e-3);
+        let plain = build_package("test", (47.0, 9.0), &graph(), |_, _| 100.0, 500.0, 51, 1);
+        assert!((max_x(&plain) - 800.0).abs() < 1e-3);
     }
 }
