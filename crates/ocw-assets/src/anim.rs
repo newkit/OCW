@@ -144,8 +144,13 @@ pub fn cadence(state: Riding, measured: Option<f64>) -> f64 {
     }
 }
 
-/// Pose weights a state aims for.
-pub fn targets(state: Riding, speed_mps: f64, grade: f64) -> PoseParams {
+/// Grade from which a rider on a TT bike leaves the extensions for the
+/// base bar when climbing seated.
+pub const TT_BASE_BAR_GRADE: f64 = 0.06;
+
+/// Pose weights a state aims for (`aero_bars`: a TT bike, whose "hoods"
+/// are the extensions).
+pub fn targets(state: Riding, speed_mps: f64, grade: f64, aero_bars: bool) -> PoseParams {
     let mut p = PoseParams::default();
     match state {
         Riding::Stopped | Riding::Seated => {}
@@ -156,7 +161,12 @@ pub fn targets(state: Riding, speed_mps: f64, grade: f64) -> PoseParams {
                 p.tuck = 1.0;
             }
         }
-        Riding::Climbing => p.tops = 1.0,
+        // On the TT bike: on the extensions until it gets steep.
+        Riding::Climbing => {
+            if !aero_bars || grade >= TT_BASE_BAR_GRADE {
+                p.tops = 1.0;
+            }
+        }
         Riding::Standing => {
             p.stand = 1.0;
             p.rock = 0.1;
@@ -335,13 +345,19 @@ mod tests {
 
     #[test]
     fn pose_weights_blend_smoothly() {
-        let target = targets(Standing, 4.0, 0.1);
+        let target = targets(Standing, 4.0, 0.1, false);
         assert_eq!(target.stand, 1.0);
         assert!(target.rock > 0.0);
-        assert_eq!(targets(Climbing, 4.0, 0.06).tops, 1.0);
-        assert_eq!(targets(Sprinting, 14.0, 0.0).drops, 1.0);
-        assert_eq!(targets(Coasting, 16.0, -0.06).tuck, 1.0);
-        assert_eq!(targets(Coasting, 8.0, 0.0), PoseParams::default());
+        assert_eq!(targets(Climbing, 4.0, 0.06, false).tops, 1.0);
+        assert_eq!(
+            targets(Climbing, 6.0, 0.04, true).tops,
+            0.0,
+            "TT: on the extensions"
+        );
+        assert_eq!(targets(Climbing, 4.0, 0.07, true).tops, 1.0);
+        assert_eq!(targets(Sprinting, 14.0, 0.0, false).drops, 1.0);
+        assert_eq!(targets(Coasting, 16.0, -0.06, false).tuck, 1.0);
+        assert_eq!(targets(Coasting, 8.0, 0.0, false), PoseParams::default());
         let mut p = PoseParams::default();
         blend(&mut p, &target, 0.02);
         assert!(p.stand > 0.0 && p.stand < 0.1);

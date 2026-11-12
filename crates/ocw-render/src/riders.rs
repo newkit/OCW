@@ -241,6 +241,7 @@ struct AvatarLook {
     look: Option<RiderLook>,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn sync_riders(
     mut commands: Commands,
     view: Res<RideView>,
@@ -677,7 +678,7 @@ fn animate(
         };
         let rig = &mut *rig;
         let state = rig.selector.update(&input, f64::from(dt));
-        let target = anim::targets(state, input.speed_mps, input.grade);
+        let target = anim::targets(state, input.speed_mps, input.grade, rig.bike.aero_bars);
         anim::blend(&mut rig.params, &target, dt);
         let cadence = anim::cadence(state, input.cadence_rpm);
         rig.params.crank = anim::advance_crank(rig.params.crank, cadence, dt);

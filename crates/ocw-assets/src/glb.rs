@@ -51,7 +51,7 @@ pub fn write(model: &Model) -> Vec<u8> {
     let mut views = Vec::new();
     let mut accessors = Vec::new();
     let mut add_view = |bin: &mut Vec<u8>, bytes: &[u8], target: u32| -> usize {
-        while bin.len() % 4 != 0 {
+        while !bin.len().is_multiple_of(4) {
             bin.push(0);
         }
         let offset = bin.len();
@@ -157,14 +157,14 @@ pub fn write(model: &Model) -> Vec<u8> {
             json!({
                 "name": m.name,
                 "pbrMetallicRoughness": {
-                    "baseColorFactor": m.color.map(|c| q(c)),
+                    "baseColorFactor": m.color.map(q),
                     "metallicFactor": m.metallic,
                     "roughnessFactor": m.roughness
                 }
             })
         })
         .collect();
-    while bin.len() % 4 != 0 {
+    while !bin.len().is_multiple_of(4) {
         bin.push(0);
     }
     let mut doc = json!({
@@ -184,7 +184,7 @@ pub fn write(model: &Model) -> Vec<u8> {
         doc["accessors"] = json!(accessors);
     }
     let mut text = serde_json::to_vec(&doc).expect("JSON");
-    while text.len() % 4 != 0 {
+    while !text.len().is_multiple_of(4) {
         text.push(b' ');
     }
     let total = 12 + 8 + text.len() + 8 + bin.len();
@@ -268,7 +268,7 @@ pub fn read(bytes: &[u8]) -> Result<Model, GlbError> {
                     None => (0..positions.len() as u32).collect(),
                 };
                 if normals.len() != positions.len()
-                    || indices.len() % 3 != 0
+                    || !indices.len().is_multiple_of(3)
                     || indices.iter().any(|&i| i as usize >= positions.len())
                 {
                     return Err(err(format!("node {}: broken primitive", node.name)));
