@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.8 – November 2026
+Version 2.9 – November 2026
 
 | Version | Change |
 |---|---|
@@ -27,6 +27,7 @@ Version 2.8 – November 2026
 | 2.6 | Land use and buildings from OSM (§4.6, §4.7): 17 land classes on a 5 m grid per tile (`LUSE`), flat water with carved terrain, colour maps and trees by land use, extruded buildings with flat or gable roofs (`BLDG`) |
 | 2.7 | Menu M2 (§3.2.1): settings registry (keys, scopes, layers) and `settings.toml`, `set` / `get`; rider profiles in `riders.toml`, weight 30–200 kg in `Hello.rider_weight_kg` (the client's physics parameters are ignored, §2.5, §6.5) and as Wahoo SIM mass; Settings / Workshop pages as rows of command lines; HUD on / off and imperial units |
 | 2.8 | Autonomous night 2026-11-11/12 (Appendix B): menu M1–M3 (in-app ride switch, Navi, GPX import), workouts with ERG (§2.8), local events with ghost (§2.3.1), gradient aids and camera tilt, camera classes and tunnels (§3.2), physics profiles and bike looks (§2.5), neighbour packages (§4.7), QUIC transport (§6.2), fixes for one-way U-turns, steep starts and gradient artefacts; all assumptions listed in Appendix B |
+| 2.9 | Priorities 2026-11-12: the route editor (§2.7) is postponed (Phase 3 is closed without it); Phase 4 models, animations and game audio (M5, §3.3) and Phase 6 voice chat (§7) start in parallel, ahead of the Phase 5 backend |
 
 ---
 
@@ -1491,7 +1492,7 @@ Personal data, voice data and training data are handled separately.
 - Road meshes, splat materials and color maps (§4.6).
 - Coordinates, tiles, streaming, floating origin (§4.5).
 - Local caching and regional data packages (§4.7).
-- Route format and route editor; GPX import (§2.7).
+- Route format and route editor; GPX import (§2.7). The **route editor is postponed** (decided 2026-11-12): routes come from GPX import and the package for now.
 - Junction steering and dead-end handling (§2.2.1, §2.2.2).
 - In-game menu, first increments (§3.2.1, M1–M4): pause menu, settings file and Settings pages (controls, trainer, Strava, display, profile), Ride picker, Navi (routes, rides, Strava sync, GPX import).
 
