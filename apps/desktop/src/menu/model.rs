@@ -532,11 +532,11 @@ mod tests {
         assert_eq!(m.apply(Action::Back), Effect::None);
         assert_eq!((m.page(), m.focus()), (Some(Page::Top), 4));
         // Placeholder pages: their Back item goes up too.
-        m.apply(Action::Click(2));
-        assert_eq!(m.page(), Some(Page::Workshop));
+        m.apply(Action::Click(3));
+        assert_eq!(m.page(), Some(Page::Navi));
         assert_eq!(labels(&m), ["Back"]);
         m.apply(Action::Confirm);
-        assert_eq!((m.page(), m.focus()), (Some(Page::Top), 2));
+        assert_eq!((m.page(), m.focus()), (Some(Page::Top), 3));
         // Back at the top closes.
         assert_eq!(m.apply(Action::Back), Effect::Closed);
         assert!(!m.is_open());

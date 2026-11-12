@@ -1408,6 +1408,7 @@ mod tests {
                 allow_dev_commands: false,
                 bots: 0,
                 start_m: 0.0,
+                allow_local_events: false,
             },
         );
         let client = ClientCore::new(route(), "Light", RiderProfile::for_rider_weight(58.0));
