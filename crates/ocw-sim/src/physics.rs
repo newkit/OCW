@@ -7,8 +7,11 @@ use ocw_core::{AIR_DENSITY, GRAVITY, RiderProfile};
 pub const DRIVETRAIN_EFFICIENCY: f64 = 0.976;
 /// Extra mass equivalent of the rotating wheels, in kg.
 pub const WHEEL_INERTIA_MASS_KG: f64 = 0.9;
-/// Below this speed the propulsive force is computed as if riding at this
-/// speed, which avoids an infinite force when starting from standstill.
+/// Below this speed the propulsive force P/v is taken at the end of the
+/// tick (implicitly, see [`step`]): finite from standstill, and a rider
+/// with positive power always moves, crawling up even the steepest ramp.
+/// With the brake key held it is taken as if riding at this speed, so the
+/// brake holds a pedalling rider at standstill (as before).
 pub const MIN_PROPULSION_SPEED: f64 = 1.0;
 /// Fastest sideways movement when steering across the road, in m/s.
 pub const MAX_LATERAL_SPEED: f64 = 1.5;
@@ -180,6 +183,9 @@ pub struct Environment {
     /// (asphalt = 1); each profile feels its own share of it
     /// (`RiderProfile::surface_factor`).
     pub rolling_factor: f64,
+    /// The brake key is held: like a real brake it holds the rider at
+    /// standstill against moderate pedalling (see [`step`]).
+    pub brake_holds: bool,
 }
 
 /// Deceleration of the brake key: a firm stop (~3.5 s from 36 km/h).
@@ -195,6 +201,7 @@ impl Environment {
             drag_factor: 1.0,
             brake_mps2: 0.0,
             rolling_factor: 1.0,
+            brake_holds: false,
         }
     }
 
@@ -223,6 +230,7 @@ impl Environment {
             } else {
                 0.0
             },
+            brake_holds: braking,
             ..self
         }
     }
@@ -268,7 +276,18 @@ pub fn resistance(profile: &RiderProfile, env: &Environment, speed: f64) -> Resi
 
 /// Advances `state` by `dt` seconds with `power_w` watts at the pedals.
 ///
-/// Semi-implicit Euler; stable at the 50 Hz tick rate.
+/// Semi-implicit Euler; stable at the 50 Hz tick rate. Below
+/// [`MIN_PROPULSION_SPEED`] the propulsive force P/v uses the speed at the
+/// end of the tick (implicit in that term, the resistance explicit):
+/// `m·(v₁ − v₀)/dt = P/v₁ − R`, a quadratic with exactly one positive root.
+/// It is finite from standstill, unconditionally stable however small the
+/// speed, and its fixed point is the exact steady speed P = R·v. So a rider
+/// with positive power never stays at 0 km/h: on a ramp too steep for the
+/// power they crawl at that steady speed (33 % at 200 W: ~2.6 km/h), and
+/// they never roll backwards (speed is never negative; at 0 W they stop).
+/// With the brake key held ([`Environment::brake_holds`]) the old floor
+/// applies (the force as if riding at [`MIN_PROPULSION_SPEED`]), so the
+/// brake still holds a pedalling rider at standstill.
 pub fn step(
     state: &mut RiderState,
     profile: &RiderProfile,
@@ -276,11 +295,18 @@ pub fn step(
     env: &Environment,
     dt: f64,
 ) {
-    let propulsion =
-        profile.drivetrain_efficiency * power_w.max(0.0) / state.speed.max(MIN_PROPULSION_SPEED);
-    let net = propulsion - resistance(profile, env, state.speed).total();
-    let accel = net / (profile.total_mass_kg() + WHEEL_INERTIA_MASS_KG);
-    state.speed = (state.speed + (accel - env.brake_mps2) * dt).max(0.0);
+    let m = profile.total_mass_kg() + WHEEL_INERTIA_MASS_KG;
+    let drive = profile.drivetrain_efficiency * power_w.max(0.0);
+    let resist = resistance(profile, env, state.speed).total();
+    let v0 = state.speed;
+    state.speed = if v0 < MIN_PROPULSION_SPEED && drive > 0.0 && !env.brake_holds && dt > 0.0 {
+        // m·v₁² − b·v₁ − drive·dt = 0 with b = m·v₀ − (R + m·a_brake)·dt.
+        let b = m * v0 - (resist + m * env.brake_mps2) * dt;
+        (b + (b * b + 4.0 * m * drive * dt).sqrt()) / (2.0 * m)
+    } else {
+        let accel = (drive / v0.max(MIN_PROPULSION_SPEED) - resist) / m;
+        (v0 + (accel - env.brake_mps2) * dt).max(0.0)
+    };
     state.distance += state.speed * dt;
 }
 
@@ -564,6 +590,82 @@ mod tests {
     #[test]
     fn starts_from_standstill() {
         assert!(ride(150.0, 0.0, 5.0).speed > 3.0);
+    }
+
+    /// Regression (free ride, Liechtenstein): at 200 W on a 33 % ramp the
+    /// rider stalled at exactly 0 km/h for ever, because the drive force
+    /// from standstill was floored at 1 m/s (195 N < 270 N of gravity).
+    /// Now they start, crawl up at the analytic steady speed and keep going.
+    #[test]
+    fn starts_and_crawls_up_a_33_percent_ramp_at_200w() {
+        let profile = RiderProfile::default();
+        let env = Environment::with_grade(0.33);
+        // Analytic: 0.976 · 200 W = v · (m g sin θ + Crr m g cos θ + ½ ρ CdA v²).
+        let m = profile.total_mass_kg();
+        let theta = 0.33f64.atan();
+        let resist = m * GRAVITY * (theta.sin() + profile.crr * theta.cos());
+        let analytic = profile.drivetrain_efficiency * 200.0 / resist;
+        assert!((0.6..0.8).contains(&analytic), "{analytic} m/s");
+        let mut s = RiderState::default();
+        let mut last = 0.0;
+        for i in 0..(60.0 / SIM_DT) as usize {
+            step(&mut s, &profile, 200.0, &env, SIM_DT);
+            assert!(
+                s.speed > 0.0 && s.distance > last,
+                "stuck at tick {i}: {s:?}"
+            );
+            last = s.distance;
+        }
+        // Equilibrium: the analytic speed (aero is negligible at ~2.6 km/h).
+        assert!(
+            (s.speed - analytic).abs() < 0.01 * analytic,
+            "{} vs {analytic} m/s",
+            s.speed
+        );
+        assert!(
+            (s.speed - steady_speed(&profile, &env, 200.0)).abs() < 1e-3,
+            "{s:?}"
+        );
+        assert!(s.distance > 0.95 * analytic * 60.0, "{s:?}");
+        // From standstill, stopped on the ramp (e.g. after a U-turn) too.
+        let mut s = RiderState::default();
+        step(&mut s, &profile, 200.0, &env, SIM_DT);
+        assert!(s.speed > 0.05, "{s:?}");
+    }
+
+    /// Positive power never leaves a rider at 0 km/h, however steep and
+    /// weak; nobody rolls backwards; the low-speed solve is stable (no
+    /// oscillation around the crawl speed).
+    #[test]
+    fn positive_power_always_moves_forwards() {
+        let profile = RiderProfile::default();
+        for (grade, power) in [(0.5, 50.0), (1.0, 20.0), (0.33, 200.0), (0.15, 5.0)] {
+            let env = Environment::with_grade(grade);
+            let mut s = RiderState::default();
+            let mut speeds = Vec::new();
+            for _ in 0..(30.0 / SIM_DT) as usize {
+                step(&mut s, &profile, power, &env, SIM_DT);
+                assert!(s.speed > 0.0, "{grade}, {power} W: {s:?}");
+                speeds.push(s.speed);
+            }
+            let tail = &speeds[speeds.len() - 100..];
+            let (lo, hi) = tail
+                .iter()
+                .fold((f64::MAX, 0.0f64), |(a, b), &v| (a.min(v), b.max(v)));
+            assert!(hi - lo < 1e-6 + 1e-3 * hi, "{grade}, {power} W: {lo}..{hi}");
+        }
+    }
+
+    /// The brake key still holds a rider pedalling moderately at standstill.
+    #[test]
+    fn the_brake_holds_a_pedalling_rider() {
+        let profile = RiderProfile::default();
+        let env = Environment::with_grade(0.0).with_brake(true);
+        let mut s = RiderState::default();
+        for _ in 0..100 {
+            step(&mut s, &profile, 200.0, &env, SIM_DT);
+        }
+        assert_eq!((s.speed, s.distance), (0.0, 0.0));
     }
 
     #[test]
