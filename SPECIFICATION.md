@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.20 – November 2026
+Version 2.21 – November 2026
 
 | Version | Change |
 |---|---|
@@ -39,6 +39,7 @@ Version 2.20 – November 2026
 | 2.18 | Scene-rendering harness (§11.4): `scripts/scenes.toml` + `scripts/render-scenes.sh` (`make test-scenes`, `--remote`, `--pick`) renders reproducible screenshots and videos headlessly on Wayland for the build history (zips on the GitHub release `build-history`) |
 | 2.19 | Fixes: event bots varied; every menu page fits 16:9 (layout maths); riders stop at the end of a route, teleport clamped; near tiles built at once after a jump (§4.5); tunnel portals cut into the terrain; `--world` alone rides the first package route or free ride |
 | 2.20 | Multiplayer test across machines (§11.4.1): headless `ocw-bot` client and verdict, `ocw-server --route-file` / `--stats-file`, kiosk and camera clients, locked-screen and Mac-sleep handling; every test is a `test-*` make target, old names deprecated (§11.4); cross-references §6.2, §10, §14 |
+| 2.21 | Game audio (§3.3): the freehub ticks only while the wheel overruns (coasting: power ≤ 10 W and no cadence able to drive the wheel), fades in 80 ms / out 8 ms, exactly silent while pedalling; drivetrain is a continuous whir, not a click train; demo ride in separated sections |
 
 ---
 
