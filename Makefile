@@ -7,7 +7,8 @@ export PATH := $(HOME)/.cargo/bin:$(PATH)
 
 CARGO ?= cargo
 WASM_CRATES := -p ocw-core -p ocw-sim -p ocw-protocol -p ocw-world
-# Build: compiler, Bevy (audio, input, windowing), btleplug (D-Bus).
+# Build: compiler, Bevy (audio, input, windowing), btleplug (D-Bus), GLib / GIO
+# headers for the voice feature (webrtc-sys always needs them on Linux).
 # Run/test: Vulkan driver + vulkaninfo, BlueZ, headless displays (Xvfb, weston),
 # ffmpeg for videos, rsync/git for scripts/remote.sh. FUSE 2 (to run
 # AppImages such as appimagetool) comes separately in deps-linux-debian:
@@ -23,14 +24,14 @@ DNF_PACKAGES := gcc gcc-c++ pkgconf-pkg-config curl git rsync \
 	alsa-lib-devel systemd-devel wayland-devel libxkbcommon-devel libxkbcommon-x11-devel \
 	dbus-devel libX11-devel libXcursor-devel libXrandr-devel libXi-devel libxcb-devel \
 	mesa-vulkan-drivers vulkan-tools bluez \
-	xorg-x11-server-Xvfb xorg-x11-xauth weston fuse-libs
+	xorg-x11-server-Xvfb xorg-x11-xauth weston fuse-libs glib2-devel
 # The same for Arch / Manjaro (pacman); the Vulkan driver depends on the GPU
 # (vulkan-radeon, vulkan-intel, nvidia-utils), mesa covers OpenGL.
 PACMAN_PACKAGES := base-devel pkgconf curl git rsync \
 	alsa-lib systemd-libs wayland libxkbcommon libxkbcommon-x11 \
 	dbus libx11 libxcursor libxrandr libxi libxcb \
 	mesa vulkan-icd-loader vulkan-tools bluez bluez-utils \
-	xorg-server-xvfb xorg-xauth weston ffmpeg fuse2
+	xorg-server-xvfb xorg-xauth weston ffmpeg fuse2 glib2
 # Linux distribution family from /etc/os-release (ID, then ID_LIKE):
 # debian (Debian, Ubuntu, Mint, …), fedora (Fedora, RHEL, Rocky, Alma, …),
 # arch (Arch, Manjaro, EndeavourOS, …), or unknown.
