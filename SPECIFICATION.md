@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.13 – November 2026
+Version 2.14 – November 2026
 
 | Version | Change |
 |---|---|
@@ -32,6 +32,7 @@ Version 2.13 – November 2026
 | 2.11 | Releases on GitHub Releases with the world package (ODbL data licence, OSM source attached); binaries removed from the git history (`release/commit-map.txt`) (§11) |
 | 2.12 | Voice platform plan: LiveKit on every platform – Rust SDK on the desktop (Linux build needs clang ≥ 21), `livekit-client` from wasm in the browser, native or Rust SDKs on iOS / Android; `ocw-voice` trait stays open for them (§7) |
 | 2.13 | Build-history media out of git: one zip per day on the GitHub release `build-history`, day folders git-ignored, history rewritten again (`release/commit-map.txt`) (§11) |
+| 2.14 | Phase 4 models and animation (§2.5, §2.6, §8.1, §14): generated glTF bikes per physics profile and a rigid-part rider (ocw-assets, MIT OR Apache-2.0), asset manifest and validator, rider-on-bike IK pose, riding states (seated, climbing, standing, sprint, coasting) and far LOD at 40 m |
 
 ---
 
