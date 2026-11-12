@@ -13,6 +13,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 out=${1:-target/OpenCyclingWorld-$(uname -m).AppImage}
+mkdir -p "$(dirname "$out")"
 # OCW_FEATURES: extra cargo features, e.g. ocw-desktop/voice (release builds).
 cargo build --release -p ocw-desktop ${OCW_FEATURES:+--features "$OCW_FEATURES"}
 app=target/appimage/AppDir
