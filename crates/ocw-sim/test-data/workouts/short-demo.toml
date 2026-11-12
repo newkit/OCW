@@ -1,0 +1,24 @@
+# A two-minute demo workout (screenshots, trying ERG mode).
+name = "Demo: 2-minute intervals"
+description = "Ramp, two short efforts, free ride."
+
+[[steps]]
+type = "ramp"
+duration = 20
+from = 60
+to = 90
+
+[[steps]]
+type = "intervals"
+repeat = 2
+on = { duration = 20, power = 120, cadence = 95 }
+off = { duration = 20, power = 55 }
+
+[[steps]]
+type = "free"
+duration = 20
+text = "Ride as you like"
+
+[[cues]]
+at = 20
+text = "First effort: hold 120 %"

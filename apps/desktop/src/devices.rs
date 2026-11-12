@@ -14,7 +14,6 @@ use std::time::Duration;
 
 use bevy::prelude::*;
 use clap::{Arg, Command, value_parser};
-use ocw_core::RiderProfile;
 use ocw_devices::ble::{self, BleDevice, FoundDevice};
 use ocw_devices::{
     DeviceBackend, DeviceCommand, DeviceError, DeviceEvent, DeviceHandle, VirtualTrainer,
@@ -62,8 +61,11 @@ impl Plugin for DevicesPlugin {
                 devices.start(BleDevice::new(d.id, d.name));
             }
         }
+        // The rider profile's weight + the bike: the SIM mass (§3.2.1); the
+        // bike's profile also scales the rolling resistance off the asphalt.
+        let profile = crate::settings::local_rider(app.world()).physics();
         app.insert_resource(devices)
-            .insert_resource(Trainer(TrainerControl::new(RiderProfile::default())))
+            .insert_resource(Trainer(TrainerControl::new(profile)))
             .add_systems(PreUpdate, poll_devices)
             .add_systems(Update, (poll_scan, control_trainer, publish_status))
             .add_systems(Last, shutdown_on_exit);
@@ -151,7 +153,7 @@ fn poll_devices(
 }
 
 /// SIM/ERG control: road gradient or target power to the trainer.
-fn control_trainer(
+pub fn control_trainer(
     time: Res<Time>,
     client: Res<ClientState>,
     devices: Res<Devices>,

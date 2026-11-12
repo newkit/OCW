@@ -96,7 +96,10 @@ impl TrainerControl {
                 let here = route.sample(rider.distance).grade;
                 let ahead_m = (rider.speed * LOOK_AHEAD_S).max(MIN_LOOK_AHEAD_M);
                 let ahead = route.sample(rider.distance + ahead_m).grade;
-                let rolling = ocw_sim::ride::surface(route, &rider).rolling_factor();
+                // This bike's share of the surface's rolling resistance (§2.5).
+                let rolling = self
+                    .profile
+                    .surface_factor(ocw_sim::ride::surface(route, &rider).rolling_factor());
                 let target = self.sim.update_on(now_s, here, ahead, rolling)?;
                 self.last_grade = Some(target.grade);
                 Some(DeviceCommand::SetSimulation(SimulationParameters {
@@ -174,6 +177,35 @@ mod tests {
         assert!(t.status().contains("+3.0 %"));
         // Rate limited and at most 2 Hz: nothing new 0.1 s later.
         assert_eq!(t.update(0.1, &route(), at(500.8, 8.0), Some(90.0)), None);
+    }
+
+    /// The active rider's weight plus the bike is the SIM mass (spec §3.2.1).
+    #[test]
+    fn sim_mass_is_the_rider_profile_weight() {
+        let mut t = TrainerControl::new(RiderProfile::for_rider_weight(64.0));
+        let Some(DeviceCommand::SetSimulation(p)) = t.update(0.0, &route(), at(10.0, 8.0), None)
+        else {
+            panic!("expected a SIM command");
+        };
+        assert_eq!(p.mass_kg, 72.0);
+    }
+
+    /// The trainer gets the bike's own rolling resistance on gravel (§2.5):
+    /// the mountain bike's wide tyres feel less of it than the road bike.
+    #[test]
+    fn sim_crr_follows_the_bike_profile_on_gravel() {
+        let gravel = route().with_surfaces(vec![(0.0, 1000.0, ocw_world::Surface::Gravel)]);
+        let crr = |profile| {
+            let mut t = TrainerControl::new(profile);
+            match t.update(0.0, &gravel, at(10.0, 8.0), None) {
+                Some(DeviceCommand::SetSimulation(p)) => p.crr,
+                other => panic!("expected a SIM command, got {other:?}"),
+            }
+        };
+        let road = crr(RiderProfile::default());
+        assert!((road - 0.004 * 2.5).abs() < 1e-9, "{road}");
+        let mtb = crr(RiderProfile::curated(ocw_core::ProfileId::Mountain, 75.0));
+        assert!(mtb < road, "{mtb} vs {road}");
     }
 
     #[test]

@@ -7,6 +7,7 @@
 pub mod camera;
 pub mod console;
 pub mod event_hud;
+pub mod font;
 pub mod hud;
 pub mod junction;
 pub mod menu;
@@ -14,6 +15,7 @@ pub mod package;
 pub mod riders;
 pub mod see_through;
 pub mod terrain;
+pub mod workout;
 pub mod world;
 
 use std::collections::BTreeMap;
@@ -62,6 +64,8 @@ pub struct RideView {
     /// A time trial's ghost (the rider's best previous effort) on the
     /// local rider's track, drawn as a translucent rider.
     pub ghost: Option<RiderState>,
+    /// The running workout's panel (spec §2.8), if any.
+    pub workout: Option<ocw_sim::workout::WorkoutPanel>,
 }
 
 impl RideView {
@@ -82,6 +86,7 @@ impl RideView {
             route_status: None,
             event: None,
             ghost: None,
+            workout: None,
         }
     }
 
@@ -176,6 +181,10 @@ pub struct RiderView {
     pub cadence_rpm: Option<f64>,
     pub heart_rate_bpm: Option<f64>,
     pub is_local: bool,
+    /// The rider's bike (physics profile; picks the model, spec §2.5).
+    pub bike: ocw_core::ProfileId,
+    /// The rider's cosmetic look; `None` (an old server): colours by id.
+    pub look: Option<ocw_core::RiderLook>,
 }
 
 /// All rendering plugins of the desktop client.
@@ -184,6 +193,7 @@ pub struct OcwRenderPlugins;
 impl Plugin for OcwRenderPlugins {
     fn build(&self, app: &mut App) {
         app.add_plugins((
+            font::UiFontPlugin,
             see_through::SeeThroughPlugin,
             world::WorldPlugin,
             package::PackagePlugin,
@@ -194,6 +204,7 @@ impl Plugin for OcwRenderPlugins {
             junction::JunctionPlugin,
             menu::MenuPlugin,
             console::ConsolePlugin,
+            workout::WorkoutPanelPlugin,
         ));
     }
 }

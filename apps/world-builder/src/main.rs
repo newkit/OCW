@@ -6,7 +6,7 @@
 //! world-builder gpx --world PKG --gpx FILE [--name NAME] [--route-file FILE]   # GPX → package route
 //! world-builder routes --world PKG [--from OLD_PKG] [--remove NAME] [--export-gpx]
 //! world-builder route --world PKG --from LAT,LON --to LAT,LON --name NAME
-//! world-builder package [--id europe/liechtenstein] [--sign-key KEY]
+//! world-builder package [--id europe/liechtenstein] [--sign-key KEY] [--bbox S,W,N,E] [--origin LAT,LON]
 //! world-builder keys init-root --name "OCW root"     (once, then keep root.key offline)
 //! world-builder keys new-signing --name "builds 2026" [--days 365]
 //! world-builder sign --key KEY PKG | verify PKG | publish PKG --out DIR | diff OLD NEW
@@ -80,6 +80,16 @@ enum Cmd {
         /// Leave out land use and buildings (roads and terrain only).
         #[arg(long)]
         no_areas: bool,
+        /// Only the part of the --poly region inside this box
+        /// (south,west,north,east): splits a region into neighbouring
+        /// packages that share the border line (spec §2.2.2).
+        #[arg(long, value_parser = parse_bbox)]
+        bbox: Option<Region>,
+        /// Projection origin of the local metres (lat,lon; default: the
+        /// region's centre). Neighbouring packages built with the same
+        /// origin share their metres and tile grid exactly.
+        #[arg(long, value_parser = parse_latlon)]
+        origin: Option<(f64, f64)>,
         #[arg(long, default_value = "data/pilot/liechtenstein.ocwpkg")]
         out: PathBuf,
         #[command(flatten)]
@@ -663,6 +673,10 @@ fn route(args: RouteArgs) {
     println!("route file: {}", args.out.display());
 }
 
+/// How far beyond a `--bbox` part the roads shape its profiles and terrain
+/// (degrees, about 1 km).
+const CONTEXT_DEG: f64 = 0.01;
+
 fn proj_origin(region: &Region) -> (f64, f64) {
     region.center()
 }
@@ -700,6 +714,8 @@ struct PackageArgs {
     margin_tiles: i32,
     landuse_cells: u32,
     no_areas: bool,
+    bbox: Option<Region>,
+    origin: Option<(f64, f64)>,
     out: PathBuf,
 }
 
@@ -713,10 +729,31 @@ fn package(args: PackageArgs) {
         margin_tiles,
         landuse_cells,
         no_areas,
+        bbox,
+        origin,
         out,
     } = args;
     let t = Instant::now();
-    let region = load_region(&poly);
+    let mut region = load_region(&poly);
+    // A part of the region (--bbox): the roads up to CONTEXT_DEG beyond it
+    // give the profiles and the terrain near the border, so the
+    // neighbouring part, built the same way, meets it without a step.
+    let mut context = bbox.as_ref().map(|b| {
+        region.clone().clipped_to(
+            b.min_lat - CONTEXT_DEG,
+            b.min_lon - CONTEXT_DEG,
+            b.max_lat + CONTEXT_DEG,
+            b.max_lon + CONTEXT_DEG,
+        )
+    });
+    if let Some(b) = bbox {
+        region = region.clipped_to(b.min_lat, b.min_lon, b.max_lat, b.max_lon);
+        if region.min_lat >= region.max_lat || region.min_lon >= region.max_lon {
+            eprintln!("--bbox does not overlap the region of {}", poly.display());
+            std::process::exit(1);
+        }
+    }
+    region.origin = origin;
     let proj = region.projection();
     let osm = OsmData::read_pbf(&pbf).unwrap_or_else(|e| {
         eprintln!("{}: {e}", pbf.display());
@@ -725,19 +762,33 @@ fn package(args: PackageArgs) {
     let (mut graph, stats) = build_road_graph(&osm, &region);
     let dem = load_dem(&hgt);
     add_profiles(&mut graph, &dem, &proj);
+    let context_graph = context.as_mut().map(|c| {
+        c.origin = Some(region.origin());
+        let (mut g, _) = build_road_graph(&osm, c);
+        add_profiles(&mut g, &dem, &proj);
+        let taken = ocw_worldgen::profile::transfer_profiles(&mut graph, &g, 0.5);
+        println!(
+            "context: {} road edges up to {CONTEXT_DEG}° around the box; {taken} of {} profiles taken from them",
+            g.edges.len(),
+            graph.edges.len()
+        );
+        g
+    });
     let base = |x: f64, z: f64| {
         let (lat, lon) = proj.unproject([x, z]);
         dem.elevation(lat, lon).unwrap_or(0.0)
     };
-    let mut pkg = ocw_worldgen::package::build_package(
+    let mut pkg = ocw_worldgen::package::build_package_with_terrain(
         &name,
-        region.center(),
+        region.origin(),
         &graph,
+        context_graph.as_ref().unwrap_or(&graph),
         base,
         1000.0,
         samples,
         margin_tiles,
     );
+    pkg.region = Some(region.package_region());
     let terrain_s = t.elapsed().as_secs_f64();
     let mut area_report = Vec::new();
     if !no_areas {
@@ -935,6 +986,8 @@ fn main() {
             margin_tiles,
             landuse_cells,
             no_areas,
+            bbox,
+            origin,
             out,
             manifest,
             sign_key,
@@ -955,6 +1008,8 @@ fn main() {
                 margin_tiles,
                 landuse_cells,
                 no_areas,
+                bbox,
+                origin,
                 out: out.clone(),
             });
             dist::write_manifest(&out, &manifest.args(Some(name)), key.as_ref());

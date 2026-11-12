@@ -13,7 +13,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use ocw_core::{INTERPOLATION_DELAY_S, RiderId, RiderProfile};
+use ocw_core::{INTERPOLATION_DELAY_S, ProfileId, RiderId, RiderLook, RiderProfile};
 use ocw_devices::DeviceEvent;
 use ocw_protocol::v1::{self, client_message::Msg as C, server_message::Msg as S};
 use ocw_protocol::{PROTOCOL_VERSION, client_message, decode_server, dequantize, encode};
@@ -44,6 +44,9 @@ pub struct NetStats {
     pub snapshots: u64,
     pub samples_out: u64,
     pub last_snapshot_tick: u64,
+    /// Snapshots dropped because a newer one had arrived (datagrams can be
+    /// reordered on a network link).
+    pub stale_snapshots: u64,
     /// Free ride: path updates received, and own-path corrections among them.
     pub path_updates: u64,
 }
@@ -81,6 +84,8 @@ pub struct ClientCore {
     route: Route,
     free: Option<FreeRide>,
     profile: RiderProfile,
+    /// The own cosmetic look (sent in the hello, spec §2.5).
+    look: RiderLook,
     name: String,
     rider_id: Option<RiderId>,
     predictor: Predictor,
@@ -94,6 +99,8 @@ pub struct ClientCore {
     lean: Option<f64>,
     /// Wild mode: not bound to the road.
     wild: bool,
+    /// Autodrive on when the ride starts (setting `controls.autodrive`).
+    autodrive_at_start: bool,
     steer_seq: u32,
     /// Last steering intent sent ((lean mode, mrad or cm, wild)) and when.
     steer_sent: Option<((bool, i32, bool), f64)>,
@@ -102,6 +109,9 @@ pub struct ClientCore {
     /// (for predicting the local rider's drafting).
     others_now: Vec<(RiderId, RiderState)>,
     names: BTreeMap<RiderId, (String, f64)>,
+    /// Every rider's bike and look from the snapshots (no look: an old
+    /// server; the renderer picks colours).
+    looks: BTreeMap<RiderId, (ProfileId, Option<RiderLook>)>,
     power_w: f64,
     cadence_rpm: Option<f64>,
     heart_rate_bpm: Option<f64>,
@@ -111,6 +121,9 @@ pub struct ClientCore {
     last_sample_us: u64,
     seq: u32,
     stats: NetStats,
+    /// How old a snapshot is on arrival (half the round trip; 0 for the
+    /// in-process server): the prediction extrapolates it by this much.
+    snapshot_age_s: f64,
     /// The steering mode saved while the menu holds autodrive.
     menu_hold: Option<HeldSteering>,
     /// The current event (spec §2.3) and the time trial's ghost.
@@ -131,6 +144,7 @@ impl ClientCore {
         Self {
             free: None,
             profile,
+            look: RiderLook::default(),
             name: name.into(),
             rider_id: None,
             predictor: Predictor::new(profile, RiderState::default()),
@@ -138,11 +152,13 @@ impl ClientCore {
             lateral_target: None,
             lean: None,
             wild: false,
+            autodrive_at_start: true,
             steer_seq: 0,
             steer_sent: None,
             others: SnapshotBuffer::default(),
             others_now: Vec::new(),
             names: BTreeMap::new(),
+            looks: BTreeMap::new(),
             power_w: 0.0,
             cadence_rpm: None,
             heart_rate_bpm: None,
@@ -151,6 +167,7 @@ impl ClientCore {
             last_sample_us: 0,
             seq: 0,
             stats: NetStats::default(),
+            snapshot_age_s: 0.0,
             menu_hold: None,
             event: EventClient::new(route.id()),
             last_snapshot_at: None,
@@ -208,6 +225,19 @@ impl ClientCore {
         self
     }
 
+    /// The same client with a cosmetic look (spec §2.5), sent in the hello.
+    pub fn with_look(mut self, look: RiderLook) -> Self {
+        self.look = look;
+        self
+    }
+
+    /// The same client starting with autodrive off (lean steering) when
+    /// `on` is false (setting `controls.autodrive`, spec §3.2.1).
+    pub fn with_autodrive_at_start(mut self, on: bool) -> Self {
+        self.autodrive_at_start = on;
+        self
+    }
+
     /// Name of what is ridden (the route's, or "Free ride").
     pub fn course_name(&self) -> &str {
         self.route.name()
@@ -234,8 +264,13 @@ impl ClientCore {
         encode(&client_message(C::Hello(v1::Hello {
             protocol_version: PROTOCOL_VERSION,
             display_name: self.name.clone(),
-            profile: Some(self.profile.into()),
+            // The server uses its curated profile with our weight (§2.5).
+            profile: None,
             world: self.free.as_ref().map(|f| ocw_protocol::world_id(&f.net)),
+            rider_weight_kg: Some(self.profile.rider_mass_kg as f32),
+            // Only the profile's id: the server has its own table (§2.5).
+            bike_profile: Some(self.profile.bike.id().into()),
+            look: Some(self.look.into()),
         })))
     }
 
@@ -311,8 +346,30 @@ impl ClientCore {
                         fr.net.fingerprint()
                     )));
                 }
+                // Riders are distances along the course: both sides must
+                // ride the same one (graph rides are checked above).
+                if w.free_ride != self.free.is_some()
+                    || (!w.free_ride && w.route_id != self.route.id())
+                {
+                    let theirs = if w.free_ride {
+                        "on a world package's road graph".to_owned()
+                    } else {
+                        format!("route {:?}", w.route_id)
+                    };
+                    let ours = if self.free.is_some() {
+                        "on a world package's road graph".to_owned()
+                    } else {
+                        format!("route {:?}", self.route.id())
+                    };
+                    return Some(Notice::Rejected(format!(
+                        "course mismatch: the server rides {theirs}, this client {ours}; start both with the same --route / --world"
+                    )));
+                }
                 let id = RiderId(w.rider_id);
                 self.rider_id = Some(id);
+                if !self.autodrive_at_start {
+                    self.set_autodrive(false);
+                }
                 Some(Notice::Joined {
                     rider_id: id,
                     route_id: w.route_id,
@@ -393,7 +450,18 @@ impl ClientCore {
         }
     }
 
+    /// Sets how old snapshots are on arrival (half the network round trip).
+    pub fn set_snapshot_age(&mut self, age_s: f64) {
+        self.snapshot_age_s = age_s.clamp(0.0, 1.0);
+    }
+
     fn on_snapshot(&mut self, s: &v1::Snapshot, now_s: f64) {
+        // Datagrams may arrive out of order: an older snapshot would move
+        // everyone back in time.
+        if self.stats.snapshots > 0 && s.server_tick <= self.stats.last_snapshot_tick {
+            self.stats.stale_snapshots += 1;
+            return;
+        }
         self.stats.snapshots += 1;
         self.stats.last_snapshot_tick = s.server_tick;
         self.last_snapshot_at = Some((s.server_tick, now_s));
@@ -402,9 +470,9 @@ impl ClientCore {
             let (id, state) = dequantize(u);
             self.names
                 .insert(id, (u.display_name.clone(), f64::from(u.power_w)));
+            self.looks.insert(id, ocw_protocol::rider_look(u));
             if Some(id) == self.rider_id {
                 self.event.on_own_snapshot(s.server_tick, state.distance);
-                // In-process server: the snapshot is fresh (age ≈ 0).
                 if self.lateral_target.is_none() {
                     // Start steering from the lane the server assigned.
                     self.lateral_target = Some(state.lateral_offset);
@@ -420,7 +488,8 @@ impl ClientCore {
                     self.predictor.set_state(state);
                     self.prev_state = state;
                 } else {
-                    self.predictor.reconcile(track, state, 0.0, power);
+                    self.predictor
+                        .reconcile(track, state, self.snapshot_age_s, power);
                 }
                 // A snap (teleport, large error) must not be interpolated.
                 if self.predictor.last_error().abs() > ocw_sim::prediction::SNAP_THRESHOLD_M {
@@ -985,6 +1054,9 @@ impl ClientCore {
             cadence_rpm: self.cadence_rpm,
             heart_rate_bpm: self.heart_rate_bpm,
             is_local: true,
+            // The own bike and look are known locally.
+            bike: self.profile.bike,
+            look: Some(self.look),
         }];
         for (id, state) in self.others.sample(now_s - INTERPOLATION_DELAY_S) {
             // Free ride: only riders whose path is known can be placed.
@@ -994,6 +1066,7 @@ impl ClientCore {
                 continue;
             }
             let (name, power_w) = self.names.get(&id).cloned().unwrap_or_default();
+            let (bike, look) = self.looks.get(&id).copied().unwrap_or_default();
             riders.push(RiderView {
                 id,
                 name,
@@ -1002,6 +1075,8 @@ impl ClientCore {
                 cadence_rpm: None,
                 heart_rate_bpm: None,
                 is_local: false,
+                bike,
+                look,
             });
         }
         riders
@@ -1321,6 +1396,112 @@ mod tests {
         assert!(h.client.rider_id().is_some());
         h.ride(200.0, 0.0);
         assert_eq!(h.client.view(0.0, 1.0).len(), 1);
+    }
+
+    /// The rider profile's weight goes to the server in the hello (spec
+    /// §3.2.1) and both sides simulate with it, so the prediction agrees.
+    #[test]
+    fn the_rider_weight_reaches_the_server_and_the_prediction_agrees() {
+        let server = GameServer::new(
+            route(),
+            ServerConfig {
+                allow_dev_commands: false,
+                bots: 0,
+                start_m: 0.0,
+            },
+        );
+        let client = ClientCore::new(route(), "Light", RiderProfile::for_rider_weight(58.0));
+        let mut h = Harness::with(server, client);
+        let id = h.client.rider_id().expect("joined");
+        let p = h.server.session().rider_profile(id).unwrap();
+        assert_eq!(p, RiderProfile::for_rider_weight(58.0));
+        h.ride(250.0, 20.0);
+        let server = h.server.session().rider_state(id).unwrap();
+        let client = h.client.state();
+        assert!(
+            (client.speed - server.speed).abs() < 0.3,
+            "client {} m/s, server {} m/s",
+            client.speed,
+            server.speed
+        );
+    }
+
+    /// The bike profile reaches the server by its id; server and prediction
+    /// ride the same curated profile, so they agree (spec §2.5), for every
+    /// profile, on asphalt and on gravel.
+    #[test]
+    fn every_bike_profile_reaches_the_server_and_the_prediction_agrees() {
+        for gravel in [false, true] {
+            for bike in ProfileId::ALL {
+                let course = if gravel {
+                    route().with_surfaces(vec![(0.0, 1.0e5, ocw_world::Surface::Gravel)])
+                } else {
+                    route()
+                };
+                let server = GameServer::new(course.clone(), ServerConfig::default());
+                let profile = RiderProfile::curated(bike, 68.0);
+                let client = ClientCore::new(course, "Bike", profile);
+                let mut h = Harness::with(server, client);
+                let id = h.client.rider_id().expect("joined");
+                assert_eq!(h.server.session().rider_profile(id).unwrap(), profile);
+                h.ride(250.0, 20.0);
+                let server = h.server.session().rider_state(id).unwrap();
+                let client = h.client.state();
+                assert!(
+                    (client.speed - server.speed).abs() < 0.3,
+                    "{bike:?} gravel {gravel}: client {} m/s, server {} m/s",
+                    client.speed,
+                    server.speed
+                );
+            }
+        }
+    }
+
+    /// The own look goes out in the hello; the others' looks come back in
+    /// the snapshots and reach the render view with their bikes.
+    #[test]
+    fn looks_reach_the_view() {
+        let server = GameServer::new(
+            route(),
+            ServerConfig {
+                bots: 3,
+                ..Default::default()
+            },
+        );
+        let look = RiderLook {
+            frame: ocw_core::Rgb(0x00FF00),
+            ..Default::default()
+        };
+        let client = ClientCore::new(
+            route(),
+            "Styled",
+            RiderProfile::curated(ProfileId::TimeTrial, 75.0),
+        )
+        .with_look(look);
+        let mut h = Harness::with(server, client);
+        h.ride(150.0, 2.0);
+        let view = h.client.view(h.time_s, 1.0);
+        assert_eq!(view[0].look, Some(look));
+        assert_eq!(view[0].bike, ProfileId::TimeTrial);
+        let others: Vec<_> = view[1..].iter().map(|r| (r.bike, r.look)).collect();
+        assert_eq!(others.len(), 3);
+        for (i, (bike, look)) in others.iter().enumerate() {
+            let (b, l) = ocw_server::bot_bike(i as u32);
+            assert_eq!((*bike, *look), (b, Some(l)));
+        }
+    }
+
+    /// Setting `controls.autodrive off`: the ride starts with lean steering.
+    #[test]
+    fn autodrive_can_be_off_at_the_start() {
+        let server = GameServer::new(route(), ServerConfig::default());
+        let client = ClientCore::new(route(), "Manual", RiderProfile::default())
+            .with_autodrive_at_start(false);
+        let mut h = Harness::with(server, client);
+        assert!(!h.client.autodrive());
+        h.ride(200.0, 1.0);
+        assert!(!h.client.autodrive());
+        assert!(Harness::new(0, false).client.autodrive());
     }
 
     #[test]
@@ -2229,6 +2410,66 @@ mod tests {
         h.receive(&welcome);
         assert!(matches!(h.notices.last(), Some(Notice::Rejected(_))));
         assert_eq!(h.client.rider_id(), None);
+    }
+
+    #[test]
+    fn a_server_on_another_course_is_refused() {
+        // Server on the loop, client on the hills: riding on would place
+        // everyone at the right distance on the wrong road.
+        let server = GameServer::new(Route::test_loop(), ServerConfig::default());
+        let h = Harness::with(
+            server,
+            ClientCore::new(Route::test_hills(), "Hills", RiderProfile::default()),
+        );
+        assert!(
+            matches!(&h.notices[..], [Notice::Rejected(r)] if r.contains("course mismatch") && r.contains("--route")),
+            "{:?}",
+            h.notices
+        );
+        assert_eq!(h.client.rider_id(), None);
+        // A free-ride client on a route server, too.
+        let server = GameServer::new(Route::test_loop(), ServerConfig::default());
+        let net = Arc::new(RoadNetwork::new(grid()));
+        let h = Harness::with(
+            server,
+            ClientCore::free_ride(net, "Free", RiderProfile::default()),
+        );
+        assert!(matches!(&h.notices[..], [Notice::Rejected(r)] if r.contains("course mismatch")));
+    }
+
+    #[test]
+    fn reordered_snapshots_are_dropped() {
+        let mut h = Harness::new(1, false);
+        h.ride(250.0, 2.0);
+        let before = h.client.stats().clone();
+        assert!(before.snapshots >= 10);
+        // A late datagram: an older tick than the last one.
+        let late = encode(&ocw_protocol::server_message(S::Snapshot(v1::Snapshot {
+            server_tick: before.last_snapshot_tick - 5,
+            riders: Vec::new(),
+        })));
+        h.receive(&late);
+        let after = h.client.stats();
+        assert_eq!(after.stale_snapshots, 1);
+        assert_eq!(after.snapshots, before.snapshots);
+        assert_eq!(after.last_snapshot_tick, before.last_snapshot_tick);
+        // The other rider was not dropped by the empty, stale snapshot.
+        assert_eq!(h.client.view(h.time_s, 1.0).len(), 2);
+    }
+
+    #[test]
+    fn snapshot_age_extrapolates_the_reconciled_state() {
+        // Same ride twice; one client believes snapshots are 100 ms old.
+        let mut fresh = Harness::new(0, false);
+        let mut aged = Harness::new(0, false);
+        aged.client.set_snapshot_age(0.1);
+        fresh.ride(300.0, 3.0);
+        aged.ride(300.0, 3.0);
+        let (a, b) = (fresh.client.state(), aged.client.state());
+        assert!(b.distance > a.distance, "{} vs {}", b.distance, a.distance);
+        // Ages are clamped.
+        aged.client.set_snapshot_age(-1.0);
+        assert_eq!(aged.client.snapshot_age_s, 0.0);
     }
 
     #[test]

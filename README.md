@@ -70,10 +70,12 @@ The ride does not pause under the menu: the trainer keeps its mode, the ride
 time, the recording and a video go on, and the ride keys (↑ ↓ ← →, A, W, U,
 R, V, …, the mouse camera) are ignored while it is open. Steering falls back
 to autodrive and junctions take their default exit, so the rider stays on
-the road; closing the menu restores manual steering / wild mode. In M1 the
-Ride, Workshop, Navi and Settings pages say what is coming (Settings already
-toggles the FPS counter). The Ride page starts local events (race,
-group ride, time trial; see *Events* below).
+the road; closing the menu restores manual steering / wild mode. *Workshop*
+chooses the rider profile and their bike (*Workshop → Bike*), *Settings* has Riders, Controls, Trainer, Display
+and Strava: ← / → (D-pad left / right) change the focused value, Q / E,
+PgUp / PgDn or LB / RB switch between these pages (see
+[Settings](#settings-and-rider-profiles)); *Ride* starts local events (race,
+group ride, time trial; see *Events* below), Navi says what is coming.
 
 In manual steering, the keys ramp the lean and it stays when released (press
 the other way to straighten up); the stick sets the lean directly, centred is
@@ -158,6 +160,29 @@ Without a choice the rider takes the default exit (straightest, same road,
 bigger road). At dead ends and the region border the rider turns round; U
 turns round any time (in a loop as wide as the road, steered to the middle
 first). Sharp turns slow the rider down automatically.
+
+**Neighbouring packages** (spec §2.2.2): if a package for the region next
+door is installed, the ride continues across the border instead of turning
+round. Neighbours are found by their region box (in the manifest): the newest
+version of every other package in the cache, and the packages in the same
+directory as a `--world` path. Each is verified like the main package and
+joined when at least one road crosses the border; the start-up log and
+`worlds.info` list them (`--no-neighbours` rides the package alone). The road
+graphs are joined at the start; a neighbour's terrain, buildings and trees are
+loaded when you come within 3 km of it and dropped beyond 5 km (at most two
+neighbours at a time). Packages built before the region section (`REGN`)
+have no neighbours. To cut a region into neighbouring packages, build each
+part with the same `--poly`, its own `--bbox` and one common `--origin` (a
+`--bbox` part takes its road profiles and terrain from the roads up to about
+1 km around it, so neighbouring parts meet without a step):
+
+```bash
+world-builder package --bbox 47.04,9.46,47.15,9.64 --origin 47.1595,9.5536 \
+    --name "Liechtenstein Süd" --id test/li-south --out data/split/li-south.ocwpkg
+world-builder package --bbox 47.15,9.46,47.28,9.64 --origin 47.1595,9.5536 \
+    --name "Liechtenstein Nord" --id test/li-north --out data/split/li-north.ocwpkg
+ocw-desktop --world data/split/li-south.ocwpkg --free-ride
+```
 
 **Route rides on the road graph** (spec §2.7, §2.2.1): ride a route of the
 package, or import a GPX file and ride it:
@@ -257,6 +282,10 @@ junction and the default exits after it. The chase camera tilts gently with
 the road (uphill it drops behind you and looks up the climb), smoothed and
 capped at 8 degrees (`camera.tilt`).
 
+**Workouts** (spec §2.8): `--workout FILE` (or `workout load FILE`, then
+`workout start`) rides a structured workout in ERG mode; targets in % FTP use
+`--ftp` (default 200 W). See [Workouts](#workouts).
+
 **Videos:** V starts recording the window as an MP4 (H.264, 25 fps) into
 `~/Videos/OCW/` (or `~/.local/share/ocw/videos/`), V again stops it (ignored
 while the console is open; console: `video start|stop`). While recording,
@@ -320,9 +349,13 @@ event status | event cancel | event dismiss
 
 | Option | Meaning |
 |---|---|
-| `--name NAME` | Display name of your rider (default `Rider`) |
+| `--name NAME` | Display name of your rider for this session (default: the rider profile's name) |
+| `--rider NAME` | Ride as this rider profile for this session (default: the one chosen in the Workshop) |
+| `--settings-file PATH` | Settings file (default `~/.config/ocw/settings.toml`; `riders.toml` is read next to it) |
 | `--power W` | Initial power of the virtual trainer (default 200) |
 | `--bots N` | Number of test riders (default 10; they start in rows of up to three behind you) |
+| `--server HOST[:PORT]` | Ride on a remote `ocw-server --listen` over QUIC (default port 47800) instead of the local server; see [Running the server](#running-the-server) |
+| `--server-cert SHA256` / `--insecure-dev` | Trust the server's certificate by its fingerprint / accept any (only for a server on 127.0.0.1 or ::1) |
 | `--route hills\|loop` | Built-in test route (default `hills`) |
 | `--route NAME\|FILE` (with `--world`) | Ride a route of the package by name, or an `ocw-graph-route` file, on the road graph |
 | `--route-gpx PATH` | Ride a GPX track or route, matched onto the `--world` package's roads at the start |
@@ -334,8 +367,11 @@ event status | event cancel | event dismiss
 | `--allow-unsigned` / `--require-signed` | Accept untrusted packages from the cache too / refuse them also from paths |
 | `--trust-root FILE`, `--trust-dev-root` | Also trust this root public key / the development roots (debug builds always do) |
 | `--free-ride` | Free ride on the package's road graph (needs `--world`) |
+| `--no-neighbours` | Do not join the installed neighbouring packages (the ride turns at the region border) |
 | `--start X,Z` | Free ride start: the road nearest local X,Z metres (default: random) |
 | `--random-start BOOL` | Start at a random point (default on, off for screenshot/capture runs) |
+| `--workout FILE` | Load and start a structured workout (`.toml`, `.erg`, `.mrc`; see [Workouts](#workouts)) |
+| `--ftp W` | Your FTP in watts for % FTP workout targets (default 200) |
 | `--virtual` | Use the virtual trainer even if Bluetooth devices are remembered |
 | `--devices-file PATH` | Remembered devices (default `~/.config/ocw/devices.toml`) |
 | `--record BOOL` | Record the ride as a FIT file (default on, off for screenshot/capture runs) |
@@ -348,6 +384,99 @@ event status | event cancel | event dismiss
 | `--screenshot PATH`, `--screenshot-delay S` | Save a screenshot after S seconds (default 5), then exit |
 | `--capture DIR`, `--capture-fps N`, `--capture-seconds S`, `--capture-warmup S` | Save every frame with a fixed game-time step (smooth videos), then exit |
 | `--version` | Print the build id, e.g. `0.1.0-7d538c0-dirty (debug)`: version, commit, `-dirty` for uncommitted changes, `(debug)` for debug builds. It is also shown small in the HUD's lower right corner and logged at startup |
+
+## Settings and rider profiles
+
+Settings live in `~/.config/ocw/settings.toml` (macOS: `~/Library/Application
+Support/ocw/`, Windows: `%APPDATA%\ocw\`; `OCW_CONFIG_DIR` or
+`--settings-file` choose another place). Change them with `set KEY VALUE` in the
+console (saved at once), or by editing the file; `get` lists them all:
+
+| Key | Values (default) | Applies |
+|---|---|---|
+| `controls.autodrive` | on / off (on): autodrive at the start of a ride | next start |
+| `trainer.difficulty` | 0 to 100 (50): % of the road gradient in SIM mode | at once |
+| `trainer.virtual_power` | 0 to 2000 W (200): the virtual trainer at the start (`--power`) | next start |
+| `display.hud` | on / off (on) | at once |
+| `display.units` | metric / imperial (metric) | at once |
+| `display.fps` | on / off (off): FPS counter | at once |
+| `display.camera` | chase / side / top (chase) | at once |
+| `display.fullscreen` | on / off (off): borderless fullscreen (`--fullscreen`) | next start |
+| `ride.bots` | 0 to 50 (10): test riders (`--bots`) | next start |
+| `ride.random_start` | on / off (on): random start point (`--random-start`) | next start |
+| `ride.record` | on / off (on): save rides as FIT (`--record`) | next start |
+
+```toml
+[display]
+units = "imperial"
+camera = "side"
+
+[ride]
+bots = 2
+```
+
+Precedence: defaults < `settings.toml` < `autoexec.cfg` < command-line options.
+Command-line options and `set --temp` hold only for the session and are never
+saved. Unknown keys are kept in the file (and reported at the start); an
+invalid value (wrong type, out of range) is reported and the default used. A
+file that is not valid TOML is left alone: the app then uses the defaults and
+saves nothing.
+
+**Rider profiles** are in `riders.toml` next to `settings.toml`: name, weight
+(30–200 kg; values outside are clamped), optional height and FTP, and which
+rider is chosen, and each rider's bike and look. The chosen rider's weight is
+the rider mass of the physics: it goes to the server when joining (the server
+clamps it again) and, plus the bike's mass, to the trainer as SIM mass (Wahoo
+trainers; FTMS has no field for it). Without profiles you ride as `Rider` with
+75 kg on the standard road bike. Changes apply from the next start (R
+restarts).
+
+```toml
+active = "Alex"
+
+[[rider]]
+name = "Alex"
+weight_kg = 78.0
+height_cm = 182.0
+ftp_w = 250
+bike = "road-aero"        # optional, see below
+frame_color = "#1E88E5"   # optional colours, #RRGGBB
+jersey_color = "#FF1472"
+helmet_color = "#F2F2EE"
+kit = "band"              # plain, band or sash
+```
+
+**Bikes** (spec §2.5): the bike names one of a small set of curated physics
+profiles; the client sends only its id, the server takes drag, rolling
+resistance, bike mass and drivetrain efficiency from its own table (an
+unknown id rides the standard road bike). At 250 W on flat asphalt they are
+within ±3 % of the road bike's speed (±5 % on a 6 % climb); off the asphalt
+wider tyres feel less of the gravel's and grass's rolling resistance, which
+also goes to the trainer in SIM mode.
+
+| `bike` | Model | Bike mass | CdA | Crr | Off-road |
+|---|---|---|---|---|---|
+| `road` (default) | Road – standard: drop bars | 8.0 kg | 0.320 m² | 0.0040 | full |
+| `road-aero` | Road – aero: deep rims | 8.6 kg | 0.305 m² | 0.0040 | full |
+| `road-climbing` | Road – climbing: light frame | 6.8 kg | 0.330 m² | 0.0040 | full |
+| `tt` | Time trial: aero bars, disc wheel, aero helmet | 9.2 kg | 0.295 m² | 0.0039 | 130 % |
+| `gravel` | Gravel: drop bars, 40 mm tyres | 9.0 kg | 0.325 m² | 0.0045 | 50 % |
+| `mtb` | Mountain bike: flat bar, 60 mm tyres, suspension fork | 11.0 kg | 0.330 m² | 0.0048 | 30 % |
+
+*Off-road* is the share of a rough surface's extra rolling resistance the bike
+feels (gravel is 2.5 ×, grass 6 × the road bike's asphalt value). Colours and
+kit are cosmetic only: the other riders see them (bots ride varied bikes and
+colours), the physics never does.
+
+Manage them in the in-game menu (Esc / Start): *Workshop* chooses the rider
+and opens their *Bike* page (the bike, its physics numbers, frame / jersey /
+helmet colour and kit, all with ← / →),
+*Settings → Riders* edits them (weight, height, FTP with ← / →; add, delete),
+and the other *Settings* pages (Controls, Trainer, Display, Strava) change the
+settings above with ← / → (D-pad) and Enter (A); Q / E (LB / RB) switch between
+these pages. In the console: `riders.add` / `riders.edit` (also `--rename`,
+`--bike`, `--frame-color` …) / `riders.select`, e.g.
+`riders.edit Alex --bike gravel --frame-color #43A047 --kit sash`.
 
 ## Console commands
 
@@ -364,11 +493,15 @@ for now).
 | `echo TEXT` | Print text |
 | `exec FILE` | Run the commands in a file, one per line |
 | `fps [on\|off]` | Show or hide the FPS counter |
+| `hud [on\|off]` | Show or hide the HUD |
+| `hud.units metric\|imperial` | Speed and distance in km/h and km, or mph and miles |
+| `set [--temp] KEY VALUE` | Change a setting and save it in `settings.toml` (`--temp`: this session only); see [Settings](#settings-and-rider-profiles) |
+| `get [KEY]` | Show all settings with where their value comes from, or one with its range and description |
 | `hud.profile [on\|off]` | Show or hide the elevation profile of the road ahead (bottom left; on by default) |
 | `screenshot [PATH]` | Save a screenshot of the window (default `screenshot.png`) |
 | `reset` | Start everything again as at program start (key R); the ride is saved first |
 | `video [start\|stop\|toggle]` | Record the window as an MP4 (key V; needs `ffmpeg`) |
-| `menu [open\|close\|toggle\|up\|down\|select\|back]` | Open, close or drive the in-game menu (Esc / Start) |
+| `menu [open\|close\|toggle\|up\|down\|left\|right\|select\|back\|tab-next\|tab-prev]` | Open, close or drive the in-game menu (Esc / Start) |
 | `quit` | Exit the app |
 | **Rider** | |
 | `rider.autodrive on\|off` | Autodrive (key A) |
@@ -376,6 +509,11 @@ for now).
 | `rider.lean DEGREES` | Lean into a curve (positive = right, 0 = upright; manual steering) |
 | `rider.steer METRES` | Autodrive line: lateral position on the road (positive = right) |
 | `rider.state` | Print your rider's state |
+| `riders.list` | Rider profiles (`*` = chosen for the next start) and who rides now |
+| `riders.add NAME [--weight KG] [--height CM] [--ftp W] [BIKE OPTIONS]` | Add a rider profile (weight default 75 kg) |
+| `riders.edit NAME [--weight KG] [--height CM] [--ftp W] [--rename NEW] [--no-height] [--no-ftp] [BIKE OPTIONS]` | Change a rider profile; bike options: `--bike road\|road-aero\|road-climbing\|tt\|gravel\|mtb`, `--frame-color`, `--jersey-color`, `--helmet-color` `#RRGGBB`, `--kit plain\|band\|sash` |
+| `riders.remove NAME` | Delete a rider profile |
+| `riders.select NAME` | Choose who rides (Workshop); applies from the next start |
 | `rider.gps` | Your rider's GPS position (also bottom-left in the HUD; route files and world packages only), with a copyable `lat, lon` line |
 | `teleport KM` | *Dev:* move your rider to a distance on the route (free ride: along the path, taking default exits) |
 | `teleport.xz X Z` | *Dev:* free ride: move to the road nearest local x / z metres |
@@ -404,6 +542,11 @@ for now).
 | `trainer.difficulty PERCENT` | Scale the road gradient in SIM mode |
 | `erg.target WATTS` | ERG mode with this target power |
 | `sim.power WATTS` | *Dev:* the virtual trainer's power |
+| `workout load FILE` | Load a workout (`.toml`, `.erg`, `.mrc`) |
+| `workout start\|stop` | Start the loaded workout (again from the beginning) / stop it; the trainer returns to its previous mode |
+| `workout skip` | Skip to the next step |
+| `workout pause\|resume` | Pause / resume the workout clock by hand |
+| `workout status` | Step, target, time left, next step |
 | `devices.scan` | Scan for Bluetooth trainers and sensors (in the background) |
 | `devices.connect N\|ID` | Connect a device from the last scan, and remember it |
 | `devices.list` | Running and remembered devices |
@@ -417,18 +560,117 @@ for now).
 | `strava.sync [--retry]` | Upload every saved ride not on Strava yet (`--retry`: also failed ones) |
 | `strava.disconnect` | Unlink Strava (deletes the stored tokens) |
 
+## Workouts
+
+A structured workout (spec §2.8) sets the trainer's target power step by
+step (ERG mode). Ride one with `--workout FILE`, or with `workout load FILE`
+and `workout start` in the console. The HUD shows a panel in the lower
+right corner: the current target, the step and time left, the next step,
+text cues, and the whole workout's profile (coloured by training zone) with
+your progress.
+
+- **Clock:** the workout time is your pedalling time. It starts when you
+  first pedal, keeps running through up to 3 s without power (shifting, a
+  short coast), then pauses until you pedal again. `workout pause` /
+  `workout resume` stop it by hand. The ride itself never pauses.
+- **Trainer:** while a workout runs it owns the trainer mode: ERG with the
+  step's target (ramps follow continuously; the ERG controller smooths steps
+  and eases off when your cadence drops), the previous mode (normally SIM,
+  the road's gradient) during `free` steps, and the previous mode again when
+  the workout ends or is stopped. With a power meter or a trainer without
+  control the targets are guidance only. The virtual trainer holds the ERG
+  target while its power is above 0.
+- **FTP:** targets in % FTP use `--ftp` (default 200 W).
+
+**Format** (`.toml`; examples in `crates/ocw-sim/test-data/workouts/`):
+
+```toml
+name = "Sweet spot 3 × 10"
+description = "Three 10-minute blocks at 90 % FTP"
+units = "ftp"              # bare numbers in power fields: % FTP (default) or "watts"
+
+[[steps]]
+type = "ramp"              # steady | ramp | intervals | free
+duration = "10:00"         # seconds, "M:SS", "H:MM:SS", "90s", "5min"
+from = 50                  # ramp: from / to; steady: power
+to = 75
+text = "Easy spin"         # optional, shown during the step
+
+[[steps]]
+type = "intervals"         # repeat × (on, off); off is optional
+repeat = 3
+on = { duration = "10:00", power = 90, cadence = 90 }   # cadence: optional hint (rpm)
+off = { duration = "5:00", power = "150W" }            # "…W" / "…%" override `units`
+
+[[steps]]
+type = "free"              # no target: SIM mode for this step
+duration = "5:00"
+
+[[cues]]                   # optional timed texts
+at = "12:00"               # workout time
+text = "Halfway through the first block"
+duration = 10              # seconds shown (default 10)
+```
+
+Unknown keys are errors (typos are reported with the line), as are
+durations ≤ 0 and targets above 1000 % FTP or 3000 W.
+
+**Import:** `.erg` (minutes + watts) and `.mrc` (minutes + % FTP) files, the
+plain-text format with `[COURSE HEADER]` / `[COURSE DATA]` (and optional
+`[COURSE TEXT]` cues: seconds, text, seconds shown), load the same way. Each
+pair of data points is a ramp (or a steady stretch); a minute that appears
+twice is a step. The `MINUTES WATTS` / `MINUTES PERCENT` header line decides
+the unit (without it: the file extension). Comments (`;`, `#`), blank lines,
+CRLF and extra columns are accepted; distance-based (slope) courses are not
+workouts and are refused. FIT workout files are not imported yet.
+
 ## Running the server
 
-**There is no network server yet, so there is no port to open.** Today every
-ride runs on the *local server*: the same game-server logic (physics for all
-riders, bots, junction decisions) runs inside the desktop app on its own
-thread and talks to the client over in-process channels (spec §6.1). Hosting
-a session for other people comes with Phase 5 (multiplayer): a QUIC (UDP)
-game server with Quinn, plus an HTTPS API, accounts and a database; its port
-and deployment (Docker) will be documented then.
+By default every ride runs on the *local server*: the same game-server logic
+(physics for all riders, bots, junction decisions) runs inside the desktop app
+on its own thread and talks to the client over in-process channels (spec
+§6.1). The **headless server** `ocw-server` is the same logic as a standalone
+program; with `--listen` desktop clients ride on it over the network (QUIC,
+the first step of Phase 5 multiplayer; accounts, sessions and the HTTPS API
+follow).
 
-What exists already is the **headless server**: the same server logic as a
-standalone program, without graphics or network, for tests and simulations:
+### Hosting a ride over the network
+
+```bash
+cargo run --release -p ocw-server -- --listen --bots 3     # UDP 0.0.0.0:47800
+```
+
+**Port: UDP 47800** (QUIC; `--listen ADDR` for another address or port, e.g.
+`--listen 127.0.0.1:47801`). Open it for UDP in the firewall to accept clients
+from other machines; there is no TCP port. At start the server prints the
+SHA-256 fingerprint of its TLS certificate and the client command:
+
+```bash
+ocw-desktop --server HOST --server-cert 3f9a…c2   # HOST[:PORT]; the fingerprint the server printed
+ocw-desktop --server 127.0.0.1 --insecure-dev     # server on the same machine only
+```
+
+- **Same course on both sides.** The client rides what it would ride locally
+  and the server checks it: the server's test route is `--test-route loop`
+  (default) or `hills`, so start the desktop with `--route loop` (its own
+  default is `hills`); for a world package give both the same `--world`
+  (and `--route NAME`). A mismatch is refused with a message.
+- **Security (development mode).** The connection is always encrypted (TLS
+  1.3). The certificate is self-signed: a new one at every start, or kept in
+  `--tls-dir DIR` so the fingerprint stays the same. The client accepts only
+  the pinned certificate (`--server-cert`); `--insecure-dev` skips the check
+  and is refused for anything but 127.0.0.1 / ::1. There are no accounts yet:
+  anyone who can reach the port and knows the fingerprint can join. Real
+  certificates and sign-in (OIDC) come with the Phase 5 backend.
+- With `--server` the console has user permission only (no `teleport`,
+  `sim.power`); `--bots` is the server's option. If the connection drops,
+  the HUD says so ("Disconnected: …"); restart the app to reconnect.
+- The server runs until Ctrl+C (or SIGTERM), then closes all connections
+  ("server shutting down"); `--seconds S` stops it earlier.
+
+### Headless runs
+
+Without `--listen` it simulates without network, for tests and simulations:
 
 ```bash
 cargo run --release -p ocw-server -- --bots 5 --seconds 60          # test loop, real time
@@ -442,7 +684,10 @@ It prints the riders' positions and speeds while it runs. Options:
 Ctrl+C), `--fast` (no real-time pacing), `--world PKG|ID` and `--seed N` (free
 ride on a world package's road graph, start point seed; verified like in the
 desktop app, `--allow-unsigned` and `--trust-root FILE` as there), `--route NAME`
-(with `--world`: ride one of the package's routes).
+(with `--world`: ride one of the package's routes), `--no-neighbours` (ride
+the package without its installed neighbours; by default their road graphs
+are joined as in the desktop app), `--test-route loop|hills`,
+`--listen [ADDR]` and `--tls-dir DIR` (see above).
 
 Clients and the server must use the same build of a world package (junctions
 are identified by vertex index): the Hello and Welcome carry the package name
@@ -612,7 +857,7 @@ to *Public* are the usual causes; the server log is in Event Viewer under
 |---|---|
 | `make help` | All make targets: deps, build, test, check, smoke screenshots, videos, deploy |
 | `cargo run -p ocw-server -- --bots 3 --seconds 10 --fast` | Headless game server (`--world PKG [--seed N]`: free ride on a package) |
-| `world-builder graph` / `route` / `package` / `check` | OSM + elevation import: road graph statistics, route files, world packages, package validation (`cargo run --release -p world-builder -- help`) |
+| `world-builder graph` / `route` / `package` / `check` | OSM + elevation import: road graph statistics, route files, world packages (`--bbox S,W,N,E --origin LAT,LON`: one part of a region, for neighbouring packages), package validation (`cargo run --release -p world-builder -- help`) |
 | `world-builder gpx --world PKG --gpx FILE [--name N] [--route-file F] [--dry-run]` | Import a GPX track: map-match it onto the package's road graph and store it as a package route (section `ROUT`; optionally also as an `ocw-graph-route` file); off-road stretches and gaps are reported |
 | `world-builder route --world PKG --from LAT,LON --to LAT,LON --name N` | Store the shortest main-road route between two points as a package route |
 | `world-builder routes --world PKG [--from OLD_PKG] [--remove N] [--export-gpx]` | List and check a package's routes; carry the routes of an older build over (by stable edge ID, re-matching broken ones); export them as GPX |
@@ -658,16 +903,22 @@ from development in `artwork/build-history/`.
 | `apps/desktop` | Desktop client: wires devices, local server, prediction and rendering |
 | `services/server` | Game server logic, in-process local server, headless server binary |
 | `crates/ocw-core` | Shared types, units, constants |
-| `crates/ocw-sim` | Physics, session logic, client prediction, interpolation |
+| `crates/ocw-sim` | Physics, session logic, client prediction, interpolation, trainer control, workouts (format, `.erg` / `.mrc` import, runner) |
 | `crates/ocw-protocol` | Protobuf protocol (`proto/`) and conversions |
 | `crates/ocw-devices` | Device backends: virtual trainer, Bluetooth trainers and sensors (FTMS, Cycling Power, CSC, Heart Rate, Wahoo) |
 | `crates/ocw-world` | Routes, road graph, terrain, world packages, surfaces |
 | `crates/ocw-worldgen`, `apps/world-builder` | OSM + elevation import: road graph, profiles, world packages |
 | `crates/ocw-worldstore` | World package files, keys, trusted roots, local cache, download |
 | `crates/ocw-fit` | FIT activity file writer (ride export) |
-| `crates/ocw-render` | Bevy plugins: world, riders, camera, HUD, console |
+| `crates/ocw-render` | Bevy plugins: world, riders, camera, HUD, console; the bundled UI font (`assets/fonts/`) |
 | `artwork/` | Logos and other original artwork |
 
 ## License
 
 Code is dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
+
+Third-party assets keep their own licences, listed next to them:
+
+- UI font Fira Mono (© The Mozilla Foundation and Telefonica S.A.), compiled
+  into `ocw-desktop`: SIL Open Font License 1.1, see
+  [`crates/ocw-render/assets/fonts/`](crates/ocw-render/assets/fonts/README.md).

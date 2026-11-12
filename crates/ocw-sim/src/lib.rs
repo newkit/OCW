@@ -16,6 +16,7 @@ pub mod prediction;
 pub mod ride;
 pub mod session;
 pub mod trainer;
+pub mod workout;
 
 pub use event::{Event, EventKind, EventSpec, GhostTrace, Phase as EventPhase, Standing};
 pub use freeride::TurnChoice;
