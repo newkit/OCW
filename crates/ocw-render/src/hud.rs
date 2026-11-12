@@ -1,8 +1,19 @@
 //! In-ride heads-up display (Bevy UI, spec §3.2).
+//!
+//! Gradient feel (spec §3.2): next to the gradient at the rider the main
+//! line shows the average over the next 100 m, and a mini elevation
+//! profile (bottom left, above the GPS line; console `hud.profile`) shows
+//! the road from 150 m behind to 1.5 km ahead, coloured by gradient band
+//! ([`GradeBand`]). In free ride both look ahead on the path's
+//! [`RidePath::preview`]: the exit currently selected at the next junction,
+//! the default exits after it.
+
+use std::sync::Arc;
 
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
-use ocw_core::mps_to_kmh;
+use ocw_core::{RiderId, mps_to_kmh};
+use ocw_world::{AVERAGE_AHEAD_M, ElevationProfile, GradeBand, ProfileSpec, RidePath, Track};
 
 use crate::RideView;
 
@@ -14,8 +25,22 @@ impl Plugin for HudPlugin {
             app.add_plugins(FrameTimeDiagnosticsPlugin::default());
         }
         app.init_resource::<ShowFps>()
+            .init_resource::<ShowHud>()
+            .init_resource::<Units>()
+            .init_resource::<ShowProfile>()
+            .init_resource::<LookAhead>()
             .add_systems(Startup, (spawn_hud, spawn_recording))
-            .add_systems(Update, (update_hud, update_gps, update_recording));
+            .add_systems(
+                Update,
+                (
+                    update_look_ahead,
+                    (update_hud, update_profile),
+                    update_gps,
+                    update_recording,
+                    show_hud,
+                )
+                    .chain(),
+            );
         add_version_label(app);
     }
 }
@@ -64,6 +89,143 @@ fn update_version_label(label: Res<VersionLabel>, mut text: Query<&mut Text, Wit
 #[derive(Resource, Default)]
 pub struct ShowFps(pub bool);
 
+/// Whether the HUD is shown (console command `hud`, setting `display.hud`).
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShowHud(pub bool);
+
+impl Default for ShowHud {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
+/// Units of speed and distance in the HUD (console command `hud.units`,
+/// setting `display.units`).
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Units {
+    /// km/h and km.
+    #[default]
+    Metric,
+    /// mph and miles.
+    Imperial,
+}
+
+/// Metres in a mile.
+pub const METRES_PER_MILE: f64 = 1609.344;
+
+impl std::str::FromStr for Units {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "metric" => Ok(Self::Metric),
+            "imperial" => Ok(Self::Imperial),
+            other => Err(format!("unknown units '{other}' (metric, imperial)")),
+        }
+    }
+}
+
+impl Units {
+    /// A speed given in km/h, in these units, and its unit.
+    pub fn speed(self, kmh: f64) -> (f64, &'static str) {
+        match self {
+            Self::Metric => (kmh, "km/h"),
+            Self::Imperial => (kmh * 1000.0 / METRES_PER_MILE, "mph"),
+        }
+    }
+
+    /// A distance given in metres, in these units, and its unit.
+    pub fn distance(self, m: f64) -> (f64, &'static str) {
+        match self {
+            Self::Metric => (m / 1000.0, "km"),
+            Self::Imperial => (m / METRES_PER_MILE, "mi"),
+        }
+    }
+}
+
+/// The HUD's panels (hidden with `hud off`).
+#[derive(Component)]
+struct HudPanel;
+
+/// Shows or hides the HUD panels.
+fn show_hud(show: Res<ShowHud>, mut panels: Query<&mut Visibility, With<HudPanel>>) {
+    let want = if show.0 {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    };
+    for mut v in &mut panels {
+        if *v != want {
+            *v = want;
+        }
+    }
+}
+
+/// Whether the elevation profile is shown (console command `hud.profile`).
+#[derive(Resource)]
+pub struct ShowProfile(pub bool);
+
+impl Default for ShowProfile {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
+/// How far the HUD looks ahead (m): the profile's reach.
+const LOOK_AHEAD_M: f64 = 1500.0;
+
+/// The local rider's path ahead for the HUD (free ride: the
+/// [`RidePath::preview`], rebuilt when the path or the selected exit
+/// changes; route mode: `None`, the route is known).
+#[derive(Resource, Default)]
+pub struct LookAhead {
+    key: Option<(usize, u64, u64, Option<usize>)>,
+    rider_m: f64,
+    path: Option<Arc<RidePath>>,
+}
+
+impl LookAhead {
+    /// What the HUD looks ahead on for rider `id` (the local rider).
+    pub fn track<'a>(&'a self, view: &'a RideView, id: RiderId) -> &'a dyn Track {
+        match &self.path {
+            Some(p) => p.as_ref(),
+            None => view.track(id),
+        }
+    }
+}
+
+fn update_look_ahead(view: Res<RideView>, mut ahead: ResMut<LookAhead>) {
+    let path = view.local().and_then(|l| Some((view.paths.get(&l.id)?, l)));
+    let Some((path, local)) = path else {
+        if ahead.key.is_some() {
+            *ahead = LookAhead::default();
+        }
+        return;
+    };
+    let d = local.state.distance;
+    // The rider's current choice at the next junction (not yet locked).
+    let first = view
+        .junction
+        .as_ref()
+        .filter(|j| !j.locked)
+        .map(|j| j.selected);
+    let key = (
+        Arc::as_ptr(path) as usize,
+        path.next_index(),
+        path.end_m().to_bits(),
+        first,
+    );
+    // Reaching too short by now (the rider rode on): look again.
+    let reach = ahead.path.as_ref().map_or(path.end_m(), |p| p.end_m());
+    let stale = reach < d + LOOK_AHEAD_M && (d - ahead.rider_m).abs() > 50.0;
+    if ahead.key == Some(key) && !stale {
+        return;
+    }
+    ahead.key = Some(key);
+    ahead.rider_m = d;
+    ahead.path = path.preview(d, LOOK_AHEAD_M, first).map(Arc::new);
+}
+
 #[derive(Component)]
 struct HudText;
 
@@ -91,33 +253,68 @@ const REC_RED: Color = Color::srgb(1.0, 0.22, 0.18);
 #[derive(Component)]
 struct HudGps;
 
+/// The elevation profile box (bottom left, above the GPS line).
+#[derive(Component)]
+struct ProfilePanel;
+
+#[derive(Component)]
+struct ProfileCaption;
+
+/// Bar `i` of the profile (from slot `i` to `i + 1`).
+#[derive(Component)]
+struct ProfileBar(usize);
+
+/// The rider's position in the profile.
+#[derive(Component)]
+struct ProfileRider;
+
+/// Size of the profile chart (logical px).
+const PROFILE_W: f32 = 300.0;
+const PROFILE_H: f32 = 56.0;
+/// The lowest point of the profile keeps this much of the height.
+const PROFILE_BASE: f64 = 0.08;
+
 #[derive(Component)]
 struct HudGpsText;
 
 fn spawn_hud(mut commands: Commands) {
+    // Bottom left: the elevation profile above the GPS line (the version
+    // label is bottom right, the REC indicator top right).
     commands
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
                 bottom: px(12),
                 left: px(12),
-                padding: UiRect::axes(px(8), px(4)),
-                border_radius: BorderRadius::all(px(4)),
-                display: Display::None,
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::FlexStart,
+                row_gap: px(6),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
-            HudGps,
+            HudPanel,
         ))
-        .with_child((
-            Text::new(""),
-            TextFont {
-                font_size: 15.0.into(),
-                ..default()
-            },
-            TextColor(Color::srgb(0.85, 0.85, 0.85)),
-            HudGpsText,
-        ));
+        .with_children(|col| {
+            spawn_profile(col);
+            col.spawn((
+                Node {
+                    padding: UiRect::axes(px(8), px(4)),
+                    border_radius: BorderRadius::all(px(4)),
+                    display: Display::None,
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+                HudGps,
+            ))
+            .with_child((
+                Text::new(""),
+                TextFont {
+                    font_size: 15.0.into(),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.85, 0.85, 0.85)),
+                HudGpsText,
+            ));
+        });
     commands
         .spawn((
             Node {
@@ -134,6 +331,7 @@ fn spawn_hud(mut commands: Commands) {
                 ..default()
             },
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+            HudPanel,
         ))
         .with_children(|hud| {
             hud.spawn((
@@ -157,25 +355,220 @@ fn spawn_hud(mut commands: Commands) {
         });
 }
 
-/// The large HUD line: power, speed, cadence, road gradient, heart rate.
+/// The large HUD line: power, speed, cadence, road gradient (at the rider
+/// and, in brackets, the average over the next 100 m), heart rate.
 pub fn main_line(
     power_w: f64,
     speed_kmh: f64,
     cadence_rpm: Option<f64>,
     grade_percent: f64,
+    ahead_percent: Option<f64>,
     heart_rate_bpm: Option<f64>,
+    units: Units,
 ) -> String {
+    let (speed, unit) = units.speed(speed_kmh);
     let cadence = cadence_rpm.map_or_else(|| "- rpm".into(), |c| format!("{c:.0} rpm"));
     // Avoid "-0.0 %" on the flat.
-    let grade = if grade_percent.abs() < 0.05 {
-        0.0
-    } else {
-        grade_percent
-    };
+    let tidy = |g: f64| if g.abs() < 0.05 { 0.0 } else { g };
+    let grade = tidy(grade_percent);
+    let ahead = ahead_percent
+        .map(|a| format!(" ({:.0} m {:+.1} %)", AVERAGE_AHEAD_M, tidy(a)))
+        .unwrap_or_default();
     let heart = heart_rate_bpm
         .map(|h| format!("   HR {h:.0}"))
         .unwrap_or_default();
-    format!("{power_w:>4.0} W   {speed_kmh:>5.1} km/h   {cadence}   {grade:+.1} %{heart}")
+    format!("{power_w:>4.0} W   {speed:>5.1} {unit}   {cadence}   {grade:+.1} %{ahead}{heart}")
+}
+
+/// Colour of a profile bar of gradient band `band` (dimmed behind the
+/// rider): blue descents, green flat, yellow, orange, red, and wine-red
+/// walls – the usual climb-profile colours.
+pub fn band_color(band: GradeBand, behind: bool) -> Color {
+    let (r, g, b) = match band {
+        GradeBand::Descent => (0.35, 0.62, 0.95),
+        GradeBand::Flat => (0.35, 0.78, 0.38),
+        GradeBand::Moderate => (0.96, 0.84, 0.25),
+        GradeBand::Hard => (0.98, 0.55, 0.16),
+        GradeBand::VeryHard => (0.90, 0.20, 0.16),
+        GradeBand::Wall => (0.62, 0.08, 0.30),
+    };
+    Color::srgba(r, g, b, if behind { 0.4 } else { 0.92 })
+}
+
+/// One bar of the profile: its height (fraction of the chart), gradient
+/// band and whether it is behind the rider.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProfileBarView {
+    pub level: f64,
+    pub band: GradeBand,
+    pub behind: bool,
+}
+
+/// The bars of `profile`, one per pair of neighbouring slots; `None` where
+/// the road is not known (before the start, after a route's finish).
+pub fn profile_bars(profile: &ElevationProfile) -> Vec<Option<ProfileBarView>> {
+    let n = profile.heights.len().saturating_sub(1);
+    (0..n)
+        .map(|i| {
+            let (a, b) = (
+                profile.level(i, PROFILE_BASE)?,
+                profile.level(i + 1, PROFILE_BASE)?,
+            );
+            Some(ProfileBarView {
+                level: (a + b) / 2.0,
+                band: GradeBand::of(profile.grade(i)?),
+                behind: (i as f64 + 0.5) / n as f64 <= profile.rider_frac,
+            })
+        })
+        .collect()
+}
+
+/// The profile caption: "next 1.5 km  +86 m  -12 m" (climbing and
+/// descending ahead).
+pub fn profile_caption(profile: &ElevationProfile, ahead_m: f64) -> String {
+    let (up, down) = profile.ahead_gain_loss();
+    format!("next {:.1} km  +{up:.0} m  -{down:.0} m", ahead_m / 1000.0)
+}
+
+fn spawn_profile(parent: &mut ChildSpawnerCommands) {
+    let spec = ProfileSpec::default();
+    let bars = ((spec.behind_m + spec.ahead_m) / spec.spacing_m).round() as usize;
+    parent
+        .spawn((
+            Node {
+                display: Display::None,
+                flex_direction: FlexDirection::Column,
+                row_gap: px(3),
+                padding: UiRect::axes(px(8), px(5)),
+                border_radius: BorderRadius::all(px(4)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+            ProfilePanel,
+        ))
+        .with_children(|panel| {
+            panel.spawn((
+                Text::new(""),
+                TextFont {
+                    font_size: 12.0.into(),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.8, 0.8, 0.8)),
+                ProfileCaption,
+            ));
+            panel
+                .spawn(Node {
+                    width: px(PROFILE_W),
+                    max_width: Val::Vw(60.0),
+                    height: px(PROFILE_H),
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::FlexEnd,
+                    ..default()
+                })
+                .with_children(|chart| {
+                    for i in 0..bars {
+                        chart.spawn((
+                            Node {
+                                width: Val::Percent(100.0 / bars as f32),
+                                height: Val::Percent(0.0),
+                                ..default()
+                            },
+                            BackgroundColor(Color::NONE),
+                            ProfileBar(i),
+                        ));
+                    }
+                    chart.spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Percent(0.0),
+                            top: px(0),
+                            width: px(2),
+                            height: Val::Percent(100.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.9)),
+                        ProfileRider,
+                    ));
+                });
+        });
+}
+
+type BarParts = (
+    &'static ProfileBar,
+    &'static mut Node,
+    &'static mut BackgroundColor,
+);
+
+#[allow(clippy::type_complexity)] // a Bevy system: disjoint UI queries
+fn update_profile(
+    view: Res<RideView>,
+    show: Res<ShowProfile>,
+    ahead: Res<LookAhead>,
+    mut panel: Query<
+        &mut Node,
+        (
+            With<ProfilePanel>,
+            Without<ProfileBar>,
+            Without<ProfileRider>,
+        ),
+    >,
+    mut bars: Query<BarParts, (Without<ProfilePanel>, Without<ProfileRider>)>,
+    mut rider: Query<
+        &mut Node,
+        (
+            With<ProfileRider>,
+            Without<ProfilePanel>,
+            Without<ProfileBar>,
+        ),
+    >,
+    mut caption: Query<&mut Text, With<ProfileCaption>>,
+) {
+    let Ok(mut panel) = panel.single_mut() else {
+        return;
+    };
+    let local = view.local().filter(|_| show.0);
+    let display = if local.is_some() {
+        Display::Flex
+    } else {
+        Display::None
+    };
+    if panel.display != display {
+        panel.display = display;
+    }
+    let Some(local) = local else {
+        return;
+    };
+    let spec = ProfileSpec::default();
+    let track = ahead.track(&view, local.id);
+    let profile = ElevationProfile::sample(track, local.state.distance, &spec);
+    let views = profile_bars(&profile);
+    for (bar, mut node, mut color) in &mut bars {
+        let (h, c) = match views.get(bar.0).copied().flatten() {
+            Some(v) => (
+                Val::Percent((v.level * 100.0) as f32),
+                band_color(v.band, v.behind),
+            ),
+            None => (Val::Percent(0.0), Color::NONE),
+        };
+        if node.height != h {
+            node.height = h;
+        }
+        if color.0 != c {
+            color.0 = c;
+        }
+    }
+    if let Ok(mut node) = rider.single_mut() {
+        let left = Val::Percent((profile.rider_frac * 100.0) as f32);
+        if node.left != left {
+            node.left = left;
+        }
+    }
+    if let Ok(mut text) = caption.single_mut() {
+        let line = profile_caption(&profile, spec.ahead_m);
+        if text.0 != line {
+            text.0 = line;
+        }
+    }
 }
 
 /// The recording indicator's text: "REC 0:12" (minutes:seconds, hours
@@ -406,9 +799,12 @@ fn format_time(seconds: f64) -> String {
     format!("{}:{:02}:{:02}", s / 3600, (s / 60) % 60, s % 60)
 }
 
+#[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
 fn update_hud(
     view: Res<RideView>,
+    ahead: Res<LookAhead>,
     show_fps: Res<ShowFps>,
+    units: Res<Units>,
     diagnostics: Res<DiagnosticsStore>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     mut big: Query<&mut Text, (With<HudText>, Without<HudSmallText>)>,
@@ -423,13 +819,23 @@ fn update_hud(
     };
     let track = view.track(local.id);
     let grade = track.sample(local.state.distance).grade * 100.0;
-    big.0 = main_line(
+    let avg = ocw_world::average_grade(
+        ahead.track(&view, local.id),
+        local.state.distance,
+        AVERAGE_AHEAD_M,
+    ) * 100.0;
+    let line = main_line(
         local.power_w,
         mps_to_kmh(local.state.speed),
         local.cadence_rpm,
         grade,
+        Some(avg),
         local.heart_rate_bpm,
+        *units,
     );
+    if big.0 != line {
+        big.0 = line;
+    }
     let (place, keys) = if let Some(route) = &view.route_status {
         (
             format!("{route}: {}", track.name_at(local.state.distance)),
@@ -446,9 +852,9 @@ fn update_hud(
             "up: faster, down: stop, left/right: steer, A: autodrive, W: wild",
         )
     };
+    let (distance, distance_unit) = units.distance(local.state.distance);
     let mut lines = format!(
-        "{place} | {:.2} km | {} | riders: {}\n{keys} | mouse: camera, C: camera reset, R: restart, V: video | F11: screen | ` or F12: console",
-        local.state.distance / 1000.0,
+        "{place} | {distance:.2} {distance_unit} | {} | riders: {}\n{keys} | mouse: camera, C: camera reset, R: restart, V: video | F11: screen | ` or F12: console",
         format_time(view.elapsed_s),
         view.riders.len()
     );
@@ -545,14 +951,159 @@ mod tests {
     #[test]
     fn main_line_shows_the_gradient() {
         assert_eq!(
-            super::main_line(330.0, 10.66, Some(86.0), 11.43, None),
+            super::main_line(330.0, 10.66, Some(86.0), 11.43, None, None, Units::Metric),
             " 330 W    10.7 km/h   86 rpm   +11.4 %"
         );
         assert_eq!(
-            super::main_line(0.0, 0.0, None, -0.02, Some(142.0)),
-            "   0 W     0.0 km/h   - rpm   +0.0 %   HR 142"
+            super::main_line(
+                0.0,
+                0.0,
+                None,
+                -0.02,
+                Some(0.01),
+                Some(142.0),
+                Units::Metric
+            ),
+            "   0 W     0.0 km/h   - rpm   +0.0 % (100 m +0.0 %)   HR 142"
         );
-        assert!(super::main_line(200.0, 35.0, None, -8.25, None).ends_with("-8.2 %"));
+        assert!(
+            super::main_line(200.0, 35.0, None, -8.25, None, None, Units::Metric)
+                .ends_with("-8.2 %")
+        );
+        // The average over the next 100 m in brackets.
+        assert!(
+            super::main_line(
+                250.0,
+                14.0,
+                Some(80.0),
+                9.4,
+                Some(7.81),
+                None,
+                Units::Metric
+            )
+            .ends_with("+9.4 % (100 m +7.8 %)")
+        );
+        // 40 km/h = 24.9 mph.
+        assert_eq!(
+            super::main_line(250.0, 40.0, None, 0.0, None, None, Units::Imperial),
+            " 250 W    24.9 mph   - rpm   +0.0 %"
+        );
+    }
+
+    #[test]
+    fn units_convert_speed_and_distance() {
+        assert_eq!(Units::Metric.distance(12_340.0), (12.34, "km"));
+        let (mi, unit) = Units::Imperial.distance(METRES_PER_MILE * 3.0);
+        assert!((mi - 3.0).abs() < 1e-12 && unit == "mi");
+        assert_eq!("imperial".parse(), Ok(Units::Imperial));
+        assert!("furlongs".parse::<Units>().is_err());
+    }
+
+    /// A straight road along x: flat 200 m, +8 % for 500 m, -4 % to 1 km.
+    fn ramp() -> Route {
+        let pts = (0..=200)
+            .map(|i| {
+                let x = f64::from(i) * 5.0;
+                let y = if x <= 200.0 {
+                    0.0
+                } else if x <= 700.0 {
+                    (x - 200.0) * 0.08
+                } else {
+                    40.0 - (x - 700.0) * 0.04
+                };
+                [x, y, 0.0]
+            })
+            .collect();
+        Route::from_points("ramp", "Ramp", pts, false, 6.0).unwrap()
+    }
+
+    #[test]
+    fn profile_bars_are_coloured_by_gradient() {
+        let r = ramp();
+        let p = ElevationProfile::sample(&r, 150.0, &ProfileSpec::default());
+        let bars = profile_bars(&p);
+        assert_eq!(bars.len(), p.heights.len() - 1);
+        // Slots from 0 m (rider at 150 m): flat behind, then the climb,
+        // then the descent, then nothing after the finish (1 km).
+        let first = bars[0].unwrap();
+        assert_eq!((first.band, first.behind), (GradeBand::Flat, true));
+        assert!((first.level - PROFILE_BASE).abs() < 0.02, "{first:?}");
+        let climb = bars[20].unwrap(); // 300 … 315 m
+        assert_eq!((climb.band, climb.behind), (GradeBand::Hard, false));
+        assert_eq!(bars[60].unwrap().band, GradeBand::Descent); // 900 m
+        assert!(bars[70].is_none() && bars.last().unwrap().is_none());
+        // The top of the climb is the top of the chart.
+        let top = bars.iter().flatten().map(|b| b.level).fold(0.0, f64::max);
+        assert!(top > 0.95, "{top}");
+        assert_eq!(profile_caption(&p, 1500.0), "next 1.5 km  +40 m  -11 m");
+    }
+
+    #[test]
+    fn band_colours_differ_and_dim_behind() {
+        use GradeBand::*;
+        let all = [Descent, Flat, Moderate, Hard, VeryHard, Wall];
+        for (i, a) in all.iter().enumerate() {
+            for b in &all[i + 1..] {
+                assert_ne!(band_color(*a, false), band_color(*b, false));
+            }
+            assert!(band_color(*a, true).alpha() < band_color(*a, false).alpha());
+        }
+    }
+
+    fn panel_display(app: &mut App) -> Display {
+        let w = app.world_mut();
+        w.query_filtered::<&Node, With<ProfilePanel>>()
+            .single(w)
+            .unwrap()
+            .display
+    }
+
+    #[test]
+    fn profile_panel_follows_the_rider_and_the_toggle() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(RideView::new(ramp()))
+            .init_resource::<ShowProfile>()
+            .init_resource::<LookAhead>()
+            .add_systems(Startup, spawn_hud)
+            .add_systems(Update, (update_look_ahead, update_profile).chain());
+        app.update();
+        // No rider yet: hidden.
+        assert_eq!(panel_display(&mut app), Display::None);
+        app.world_mut()
+            .resource_mut::<RideView>()
+            .riders
+            .push(crate::RiderView {
+                id: RiderId(1),
+                name: "me".into(),
+                state: ocw_sim::RiderState {
+                    distance: 400.0,
+                    ..default()
+                },
+                power_w: 0.0,
+                cadence_rpm: None,
+                heart_rate_bpm: None,
+                is_local: true,
+            });
+        app.update();
+        assert_eq!(panel_display(&mut app), Display::Flex);
+        let w = app.world_mut();
+        let caption = w
+            .query_filtered::<&Text, With<ProfileCaption>>()
+            .single(w)
+            .unwrap()
+            .0
+            .clone();
+        assert!(caption.starts_with("next 1.5 km  +23 m"), "{caption}");
+        let coloured = w
+            .query::<(&ProfileBar, &BackgroundColor)>()
+            .iter(w)
+            .filter(|(_, c)| c.0 != Color::NONE)
+            .count();
+        assert!(coloured > 30, "{coloured}");
+        app.world_mut().resource_mut::<ShowProfile>().0 = false;
+        app.update();
+        assert_eq!(panel_display(&mut app), Display::None);
     }
 
     #[test]

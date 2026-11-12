@@ -39,6 +39,9 @@ pub struct NetStats {
     pub snapshots: u64,
     pub samples_out: u64,
     pub last_snapshot_tick: u64,
+    /// Snapshots dropped because a newer one had arrived (datagrams can be
+    /// reordered on a network link).
+    pub stale_snapshots: u64,
     /// Free ride: path updates received, and own-path corrections among them.
     pub path_updates: u64,
 }
@@ -89,6 +92,8 @@ pub struct ClientCore {
     lean: Option<f64>,
     /// Wild mode: not bound to the road.
     wild: bool,
+    /// Autodrive on when the ride starts (setting `controls.autodrive`).
+    autodrive_at_start: bool,
     steer_seq: u32,
     /// Last steering intent sent ((lean mode, mrad or cm, wild)) and when.
     steer_sent: Option<((bool, i32, bool), f64)>,
@@ -106,6 +111,18 @@ pub struct ClientCore {
     last_sample_us: u64,
     seq: u32,
     stats: NetStats,
+    /// How old a snapshot is on arrival (half the round trip; 0 for the
+    /// in-process server): the prediction extrapolates it by this much.
+    snapshot_age_s: f64,
+    /// The steering mode saved while the menu holds autodrive.
+    menu_hold: Option<HeldSteering>,
+}
+
+/// Steering mode before the menu opened (spec §3.2.1), restored on closing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct HeldSteering {
+    autodrive: bool,
+    wild: bool,
 }
 
 impl ClientCore {
@@ -121,6 +138,7 @@ impl ClientCore {
             lateral_target: None,
             lean: None,
             wild: false,
+            autodrive_at_start: true,
             steer_seq: 0,
             steer_sent: None,
             others: SnapshotBuffer::default(),
@@ -134,6 +152,8 @@ impl ClientCore {
             last_sample_us: 0,
             seq: 0,
             stats: NetStats::default(),
+            snapshot_age_s: 0.0,
+            menu_hold: None,
         }
     }
 
@@ -186,6 +206,13 @@ impl ClientCore {
         self
     }
 
+    /// The same client starting with autodrive off (lean steering) when
+    /// `on` is false (setting `controls.autodrive`, spec §3.2.1).
+    pub fn with_autodrive_at_start(mut self, on: bool) -> Self {
+        self.autodrive_at_start = on;
+        self
+    }
+
     /// Name of what is ridden (the route's, or "Free ride").
     pub fn course_name(&self) -> &str {
         self.route.name()
@@ -212,8 +239,10 @@ impl ClientCore {
         encode(&client_message(C::Hello(v1::Hello {
             protocol_version: PROTOCOL_VERSION,
             display_name: self.name.clone(),
-            profile: Some(self.profile.into()),
+            // The server uses its curated profile with our weight (§2.5).
+            profile: None,
             world: self.free.as_ref().map(|f| ocw_protocol::world_id(&f.net)),
+            rider_weight_kg: Some(self.profile.rider_mass_kg as f32),
         })))
     }
 
@@ -289,8 +318,30 @@ impl ClientCore {
                         fr.net.fingerprint()
                     )));
                 }
+                // Riders are distances along the course: both sides must
+                // ride the same one (graph rides are checked above).
+                if w.free_ride != self.free.is_some()
+                    || (!w.free_ride && w.route_id != self.route.id())
+                {
+                    let theirs = if w.free_ride {
+                        "on a world package's road graph".to_owned()
+                    } else {
+                        format!("route {:?}", w.route_id)
+                    };
+                    let ours = if self.free.is_some() {
+                        "on a world package's road graph".to_owned()
+                    } else {
+                        format!("route {:?}", self.route.id())
+                    };
+                    return Some(Notice::Rejected(format!(
+                        "course mismatch: the server rides {theirs}, this client {ours}; start both with the same --route / --world"
+                    )));
+                }
                 let id = RiderId(w.rider_id);
                 self.rider_id = Some(id);
+                if !self.autodrive_at_start {
+                    self.set_autodrive(false);
+                }
                 Some(Notice::Joined {
                     rider_id: id,
                     route_id: w.route_id,
@@ -360,7 +411,18 @@ impl ClientCore {
         }
     }
 
+    /// Sets how old snapshots are on arrival (half the network round trip).
+    pub fn set_snapshot_age(&mut self, age_s: f64) {
+        self.snapshot_age_s = age_s.clamp(0.0, 1.0);
+    }
+
     fn on_snapshot(&mut self, s: &v1::Snapshot, now_s: f64) {
+        // Datagrams may arrive out of order: an older snapshot would move
+        // everyone back in time.
+        if self.stats.snapshots > 0 && s.server_tick <= self.stats.last_snapshot_tick {
+            self.stats.stale_snapshots += 1;
+            return;
+        }
         self.stats.snapshots += 1;
         self.stats.last_snapshot_tick = s.server_tick;
         let mut others = Vec::new();
@@ -369,7 +431,6 @@ impl ClientCore {
             self.names
                 .insert(id, (u.display_name.clone(), f64::from(u.power_w)));
             if Some(id) == self.rider_id {
-                // In-process server: the snapshot is fresh (age ≈ 0).
                 if self.lateral_target.is_none() {
                     // Start steering from the lane the server assigned.
                     self.lateral_target = Some(state.lateral_offset);
@@ -380,7 +441,8 @@ impl ClientCore {
                     Some(p) => p,
                     None => &self.route,
                 };
-                self.predictor.reconcile(track, state, 0.0, power);
+                self.predictor
+                    .reconcile(track, state, self.snapshot_age_s, power);
                 // A snap (teleport, large error) must not be interpolated.
                 if self.predictor.last_error().abs() > ocw_sim::prediction::SNAP_THRESHOLD_M {
                     self.prev_state = self.predictor.state();
@@ -489,6 +551,9 @@ impl ClientCore {
         if self.wild {
             s.push_str(" | WILD");
         }
+        if self.menu_hold.is_some() {
+            s.push_str(" (menu)");
+        }
         let surface = ocw_sim::ride::surface(self.track(), &self.predictor.state());
         if surface != ocw_world::Surface::Asphalt {
             s.push_str(" | ");
@@ -513,6 +578,52 @@ impl ClientCore {
                 self.lateral_target = Some(t.clamp(-limit, limit));
             }
         }
+    }
+
+    /// The menu opened (spec §3.2.1): the ride goes on, so the rider stays
+    /// on the road by itself: autodrive on (wild mode off; from manual
+    /// steering at the rider's current line, so it does not swerve) and the
+    /// next junction back to its default exit. [`Self::release_steering`]
+    /// restores the previous mode. Holding twice keeps the first mode.
+    pub fn hold_steering(&mut self) {
+        if self.menu_hold.is_some() {
+            return;
+        }
+        self.menu_hold = Some(HeldSteering {
+            autodrive: self.autodrive(),
+            wild: self.wild,
+        });
+        if self.wild {
+            self.set_wild(false);
+        }
+        if !self.autodrive() {
+            let line = self.predictor.state().lateral_offset;
+            self.steer_to(line);
+        }
+        self.clear_exit();
+    }
+
+    /// The menu closed: back to the steering mode before
+    /// [`Self::hold_steering`]: manual steering upright (no lean carried
+    /// over), wild mode again; autodrive keeps the line it rode.
+    pub fn release_steering(&mut self) {
+        let Some(h) = self.menu_hold.take() else {
+            return;
+        };
+        if h.wild {
+            // Directly: `set_wild` would also switch autodrive off.
+            self.wild = true;
+            self.predictor.set_wild(true);
+        }
+        if !h.autodrive {
+            self.set_lean(0.0);
+        }
+    }
+
+    /// Whether the menu holds the steering in autodrive.
+    #[cfg(test)]
+    pub fn steering_held(&self) -> bool {
+        self.menu_hold.is_some()
     }
 
     pub fn lateral_target(&self) -> Option<f64> {
@@ -1132,6 +1243,47 @@ mod tests {
         assert_eq!(h.client.view(0.0, 1.0).len(), 1);
     }
 
+    /// The rider profile's weight goes to the server in the hello (spec
+    /// §3.2.1) and both sides simulate with it, so the prediction agrees.
+    #[test]
+    fn the_rider_weight_reaches_the_server_and_the_prediction_agrees() {
+        let server = GameServer::new(
+            route(),
+            ServerConfig {
+                allow_dev_commands: false,
+                bots: 0,
+                start_m: 0.0,
+            },
+        );
+        let client = ClientCore::new(route(), "Light", RiderProfile::for_rider_weight(58.0));
+        let mut h = Harness::with(server, client);
+        let id = h.client.rider_id().expect("joined");
+        let p = h.server.session().rider_profile(id).unwrap();
+        assert_eq!(p, RiderProfile::for_rider_weight(58.0));
+        h.ride(250.0, 20.0);
+        let server = h.server.session().rider_state(id).unwrap();
+        let client = h.client.state();
+        assert!(
+            (client.speed - server.speed).abs() < 0.3,
+            "client {} m/s, server {} m/s",
+            client.speed,
+            server.speed
+        );
+    }
+
+    /// Setting `controls.autodrive off`: the ride starts with lean steering.
+    #[test]
+    fn autodrive_can_be_off_at_the_start() {
+        let server = GameServer::new(route(), ServerConfig::default());
+        let client = ClientCore::new(route(), "Manual", RiderProfile::default())
+            .with_autodrive_at_start(false);
+        let mut h = Harness::with(server, client);
+        assert!(!h.client.autodrive());
+        h.ride(200.0, 1.0);
+        assert!(!h.client.autodrive());
+        assert!(Harness::new(0, false).client.autodrive());
+    }
+
     #[test]
     fn device_samples_have_increasing_sequence_numbers() {
         let mut c = ClientCore::new(route(), "A", RiderProfile::default());
@@ -1544,6 +1696,113 @@ mod tests {
         assert_eq!(h.client.lean(), Some(0.1));
     }
 
+    /// The menu holds autodrive (spec §3.2.1): manual steering with a lean
+    /// would leave the road while the rider looks at the menu.
+    #[test]
+    fn menu_holds_autodrive_and_restores_manual_steering() {
+        let mut h = Harness::new(0, false);
+        h.ride(250.0, 2.0);
+        let own = h.client.rider_id().unwrap();
+        h.client.set_lean(0.2);
+        let msg = h.client.steer_message(h.time_s).expect("lean intent");
+        h.send(&msg);
+        h.ride(250.0, 0.5);
+        h.client.hold_steering();
+        assert!(h.client.autodrive() && h.client.steering_held());
+        assert!(h.client.steering_status().starts_with("autodrive (menu)"));
+        let msg = h
+            .client
+            .steer_message(h.time_s + 1.0)
+            .expect("autodrive intent");
+        match ocw_protocol::decode_client(&msg).unwrap() {
+            C::Steer(s) => assert!(!s.lean_steering && !s.wild, "{s:?}"),
+            other => panic!("unexpected {other:?}"),
+        }
+        h.send(&msg);
+        // Held twice (menu reopened from a sub page): the first mode stays.
+        h.client.hold_steering();
+        // The ride goes on: power samples still reach the server, the rider
+        // rides on and stays on the road.
+        let d0 = h.server.session().rider_state(own).unwrap().distance;
+        assert!(
+            h.client
+                .on_device_event(power(250.0, h.time_s + 0.1))
+                .is_some()
+        );
+        h.ride(250.0, 10.0);
+        let st = h.server.session().rider_state(own).unwrap();
+        assert!(st.distance - d0 > 50.0, "{st:?}");
+        let limit = ocw_sim::physics::lateral_limit(7.0);
+        assert!(st.lateral_offset.abs() <= limit + 0.05, "{st:?}");
+        assert!((h.client.state().lateral_offset - st.lateral_offset).abs() < 0.1);
+        // Closed: manual again, upright.
+        h.client.release_steering();
+        assert!(!h.client.steering_held());
+        assert_eq!(h.client.lean(), Some(0.0));
+        assert!(h.client.steering_status().starts_with("manual"));
+        // Released twice: nothing more happens.
+        h.client.set_lean(0.1);
+        h.client.release_steering();
+        assert_eq!(h.client.lean(), Some(0.1));
+    }
+
+    #[test]
+    fn menu_keeps_the_autodrive_line_and_restores_wild_mode() {
+        let mut h = Harness::new(0, false);
+        h.ride(250.0, 2.0);
+        // Autodrive on its own line: unchanged by the menu.
+        h.client.steer_to(1.0);
+        h.client.hold_steering();
+        assert_eq!(h.client.lateral_target(), Some(1.0));
+        h.client.release_steering();
+        assert!(h.client.autodrive());
+        assert_eq!(h.client.lateral_target(), Some(1.0));
+        // Wild mode: off while the menu is open (back within the road).
+        h.client.set_wild(true);
+        h.client.hold_steering();
+        assert!(!h.client.wild() && h.client.autodrive());
+        let limit = ocw_sim::physics::lateral_limit(7.0);
+        assert!(h.client.lateral_target().unwrap().abs() <= limit);
+        h.client.release_steering();
+        assert!(h.client.wild() && !h.client.autodrive());
+        // Wild with autodrive: both come back.
+        h.client.set_autodrive(true);
+        h.client.hold_steering();
+        h.client.release_steering();
+        assert!(h.client.wild() && h.client.autodrive());
+    }
+
+    /// While the menu is open the next junction takes its default exit.
+    #[test]
+    fn menu_resets_the_junction_choice_to_the_default_exit() {
+        let mut h = Harness::free(0);
+        h.ride(250.0, 1.0);
+        h.client.turn(1).expect("a junction ahead");
+        let msg = h.client.turn_message().expect("turn intent");
+        h.send(&msg);
+        h.client.hold_steering();
+        // Taking back the choice is sent to the server.
+        let msg = h.client.turn_message().expect("choice taken back");
+        match ocw_protocol::decode_client(&msg).unwrap() {
+            C::Turn(t) => assert!(t.exit_edge_id.is_none(), "{t:?}"),
+            other => panic!("unexpected {other:?}"),
+        }
+        h.send(&msg);
+        let mut seen = false;
+        for _ in 0..500 {
+            h.ride(250.0, 0.1);
+            if let Some(j) = h.client.junction_view() {
+                assert_eq!(j.selected, j.default, "{j:?}");
+                seen = true;
+            }
+        }
+        assert!(seen);
+        // Straight on through x = 600 m: still on the top row (z = 0).
+        let (c, s) = h.positions();
+        assert!(c.position[0] > 620.0 && c.position[2].abs() < 6.0, "{c:?}");
+        assert!(close(c.position, s.position, 1.0), "{c:?} vs {s:?}");
+    }
+
     /// Down arrow: the brake reaches the server at once and stops the
     /// rider; the prediction brakes too.
     #[test]
@@ -1930,6 +2189,66 @@ mod tests {
         h.receive(&welcome);
         assert!(matches!(h.notices.last(), Some(Notice::Rejected(_))));
         assert_eq!(h.client.rider_id(), None);
+    }
+
+    #[test]
+    fn a_server_on_another_course_is_refused() {
+        // Server on the loop, client on the hills: riding on would place
+        // everyone at the right distance on the wrong road.
+        let server = GameServer::new(Route::test_loop(), ServerConfig::default());
+        let h = Harness::with(
+            server,
+            ClientCore::new(Route::test_hills(), "Hills", RiderProfile::default()),
+        );
+        assert!(
+            matches!(&h.notices[..], [Notice::Rejected(r)] if r.contains("course mismatch") && r.contains("--route")),
+            "{:?}",
+            h.notices
+        );
+        assert_eq!(h.client.rider_id(), None);
+        // A free-ride client on a route server, too.
+        let server = GameServer::new(Route::test_loop(), ServerConfig::default());
+        let net = Arc::new(RoadNetwork::new(grid()));
+        let h = Harness::with(
+            server,
+            ClientCore::free_ride(net, "Free", RiderProfile::default()),
+        );
+        assert!(matches!(&h.notices[..], [Notice::Rejected(r)] if r.contains("course mismatch")));
+    }
+
+    #[test]
+    fn reordered_snapshots_are_dropped() {
+        let mut h = Harness::new(1, false);
+        h.ride(250.0, 2.0);
+        let before = h.client.stats().clone();
+        assert!(before.snapshots >= 10);
+        // A late datagram: an older tick than the last one.
+        let late = encode(&ocw_protocol::server_message(S::Snapshot(v1::Snapshot {
+            server_tick: before.last_snapshot_tick - 5,
+            riders: Vec::new(),
+        })));
+        h.receive(&late);
+        let after = h.client.stats();
+        assert_eq!(after.stale_snapshots, 1);
+        assert_eq!(after.snapshots, before.snapshots);
+        assert_eq!(after.last_snapshot_tick, before.last_snapshot_tick);
+        // The other rider was not dropped by the empty, stale snapshot.
+        assert_eq!(h.client.view(h.time_s, 1.0).len(), 2);
+    }
+
+    #[test]
+    fn snapshot_age_extrapolates_the_reconciled_state() {
+        // Same ride twice; one client believes snapshots are 100 ms old.
+        let mut fresh = Harness::new(0, false);
+        let mut aged = Harness::new(0, false);
+        aged.client.set_snapshot_age(0.1);
+        fresh.ride(300.0, 3.0);
+        aged.ride(300.0, 3.0);
+        let (a, b) = (fresh.client.state(), aged.client.state());
+        assert!(b.distance > a.distance, "{} vs {}", b.distance, a.distance);
+        // Ages are clamped.
+        aged.client.set_snapshot_age(-1.0);
+        assert_eq!(aged.client.snapshot_age_s, 0.0);
     }
 
     #[test]

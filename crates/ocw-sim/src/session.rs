@@ -746,6 +746,11 @@ impl Session {
     pub fn rider_state(&self, id: RiderId) -> Option<RiderState> {
         self.riders.get(&id).map(|r| r.state)
     }
+
+    /// The physics profile a rider rides with.
+    pub fn rider_profile(&self, id: RiderId) -> Option<RiderProfile> {
+        self.riders.get(&id).map(|r| r.profile)
+    }
 }
 
 #[cfg(test)]

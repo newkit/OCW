@@ -11,7 +11,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use bevy::prelude::*;
 use clap::Command;
-use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
+use ocw_render::console::{ConsoleAppExt, ConsoleCommand, Permission};
+use ocw_render::menu::ride_input;
 
 static REQUESTED: AtomicBool = AtomicBool::new(false);
 
@@ -19,7 +20,7 @@ pub struct RestartPlugin;
 
 impl Plugin for RestartPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, reset_key)
+        app.add_systems(Update, reset_key.run_if(ride_input))
             .console_command(ConsoleCommand::new(
                 Permission::User,
                 Command::new("reset").about(
@@ -34,12 +35,8 @@ impl Plugin for RestartPlugin {
     }
 }
 
-fn reset_key(
-    keys: Res<ButtonInput<KeyCode>>,
-    console: Res<ConsoleState>,
-    mut exit: MessageWriter<AppExit>,
-) {
-    if !console.is_open() && keys.just_pressed(KeyCode::KeyR) {
+fn reset_key(keys: Res<ButtonInput<KeyCode>>, mut exit: MessageWriter<AppExit>) {
+    if keys.just_pressed(KeyCode::KeyR) {
         info!("reset: restarting the app");
         REQUESTED.store(true, Ordering::SeqCst);
         exit.write(AppExit::Success);
@@ -105,8 +102,7 @@ mod tests {
         app.add_plugins(MinimalPlugins)
             .add_message::<AppExit>()
             .init_resource::<ButtonInput<KeyCode>>()
-            .init_resource::<ConsoleState>()
-            .add_systems(Update, reset_key);
+            .add_systems(Update, reset_key.run_if(ride_input));
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
             .press(KeyCode::KeyR);
@@ -114,5 +110,24 @@ mod tests {
         assert!(requested());
         let exits = app.world().resource::<Messages<AppExit>>();
         assert_eq!(exits.len(), 1);
+    }
+
+    #[test]
+    fn r_is_ignored_while_the_menu_or_the_console_is_open() {
+        use ocw_render::menu::InputContext;
+        for context in [InputContext::Menu, InputContext::Console] {
+            let mut app = App::new();
+            app.add_plugins(MinimalPlugins)
+                .add_message::<AppExit>()
+                .init_resource::<ButtonInput<KeyCode>>()
+                .insert_resource(context)
+                .add_systems(Update, reset_key.run_if(ride_input));
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .press(KeyCode::KeyR);
+            app.update();
+            let exits = app.world().resource::<Messages<AppExit>>();
+            assert!(exits.is_empty(), "{context:?}");
+        }
     }
 }

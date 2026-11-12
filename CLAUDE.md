@@ -33,7 +33,7 @@ Test build on marge's screen: `scripts/deploy-test.sh marge` (or `make deploy-te
 
 ## Code map
 
-- `services/server` (`ocw-server`): `GameServer` is transport-independent (encoded protobuf in/out). `local::LocalServer` runs it on a thread at 50 Hz inside the desktop app; the binary runs it headless. QUIC transport comes in Phase 5.
+- `services/server` (`ocw-server`): `GameServer` is transport-independent (encoded protobuf in/out). `local::LocalServer` runs it on a thread at 50 Hz inside the desktop app; the binary runs it headless. `net` is the QUIC transport (spec §6.2): `NetServer` (pumped by the game loop, `ocw-server --listen`) and `NetClient` (`ocw-desktop --server`), loopback tests in `services/server/tests/`.
 - `apps/desktop/src/client.rs` (`ClientCore`): the Bevy-free client loop: device events → `SensorSample` to the server; snapshots → `Predictor::reconcile` (own rider) and `SnapshotBuffer` (others); `view()` for the renderer. Its tests drive it against an in-memory `GameServer`. `connection.rs` is only Bevy glue (channels, `FixedUpdate` prediction at 50 Hz, console commands).
 - `crates/ocw-render`: renders only what is in the `RideView` resource; console commands are registered via `ConsoleAppExt::console_command` with a clap definition and a `Permission` level (`Dev` commands need a local server). `ConsoleCorePlugin` runs commands without egui, for headless tests with `MinimalPlugins`.
 - `ocw-world::Terrain`: road-conformed height field (spec §4.3 step 4), pure and unit-tested; Phase 1 uses a smoothed road-elevation base, Phase 3 swaps in the DEM. `ocw-render::terrain` turns it into near/middle/far meshes; anything placed in the world (trees, later buildings) takes its height from `Terrain::height`, never from the road.
