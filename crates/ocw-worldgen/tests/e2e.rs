@@ -282,6 +282,7 @@ fn small_region_end_to_end() {
             allow_dev_commands: false,
             bots: 1,
             start_m: 0.0,
+            allow_local_events: false,
         },
     );
     let bot = server.session().snapshot()[0].id;

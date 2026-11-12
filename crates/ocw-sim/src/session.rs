@@ -13,6 +13,7 @@ use ocw_world::network::splitmix;
 use ocw_world::{RidePath, RoadNetwork, Route, RoutePlan, Segment, Track};
 
 use crate::drafting;
+use crate::event::{self, Event, EventChange, EventKind, EventSpec, Progress, Standing};
 use crate::freeride::{self, TurnChoice, UTURN_INTERVAL_S};
 use crate::physics::{self, Environment, RiderState, Steering};
 use crate::ride::{self, Controls};
@@ -173,6 +174,11 @@ pub struct Session {
     /// How far the start formation's front is moved forward so its last
     /// row still starts on the road (routes that end, short start edges).
     front_shift_m: f64,
+    /// The current event (spec §2.3), started on demand or scheduled.
+    event: Option<Event>,
+    next_event_id: u32,
+    /// Event changes since the last [`Session::take_event_changes`].
+    event_changes: Vec<EventChange>,
 }
 
 impl Session {
@@ -186,6 +192,9 @@ impl Session {
             next_id: 1,
             start_m: 0.0,
             front_shift_m: 0.0,
+            event: None,
+            next_event_id: 1,
+            event_changes: Vec::new(),
         }
     }
 
@@ -687,6 +696,24 @@ impl Session {
     pub fn step(&mut self) {
         self.tick += 1;
         let t = self.time_s();
+        let held = self.event.as_ref().is_some_and(Event::holds);
+        let drafting = self.event.as_ref().is_none_or(|e| e.kind.drafting());
+        let group = match self.event.as_ref().map(|e| (e.kind, e.phase)) {
+            Some((EventKind::GroupRide { target_w }, event::Phase::Running)) => {
+                let (bots, clients): (Vec<_>, Vec<_>) = self
+                    .riders
+                    .values()
+                    .partition(|r| matches!(r.control, Control::Bot { .. }));
+                let d = |v: Vec<&Rider>| v.iter().map(|r| r.state.distance).collect::<Vec<_>>();
+                event::group_anchor(&d(bots), &d(clients)).map(|a| (target_w, a))
+            }
+            _ => None,
+        };
+        let before: Vec<(RiderId, f64)> = self
+            .riders
+            .iter()
+            .map(|(id, r)| (*id, r.state.distance))
+            .collect();
         // Drafting uses everyone's position at the start of the tick (in
         // free ride also where on the road graph they are).
         let positions: Vec<(RiderId, f64, f64, Option<EdgePoint>)> = self
@@ -699,6 +726,11 @@ impl Session {
             .collect();
         for (id, rider) in &mut self.riders {
             let d = rider.state.distance;
+            if held {
+                // Countdown: the field waits at the start line.
+                rider.state.speed = 0.0;
+                continue;
+            }
             // Free ride: extend the path, lock the next junction's exit.
             if let Some(path) = &mut rider.path {
                 let (changed, used) = match rider.control {
@@ -731,7 +763,11 @@ impl Session {
                     .collect(),
                 None => others.map(|&(_, od, l, _)| (od, l)).collect(),
             };
-            let drag = drafting::drag_factor((d, rider.state.lateral_offset), ahead);
+            let drag = if drafting {
+                drafting::drag_factor((d, rider.state.lateral_offset), ahead)
+            } else {
+                1.0
+            };
             let track: &dyn Track = match &rider.path {
                 Some(p) => p,
                 None => &self.route,
@@ -740,7 +776,14 @@ impl Session {
             if let Control::Bot { base_power_w } = rider.control {
                 // Deterministic variation so bots don't ride in perfect lockstep.
                 let phase = id.0 as f64 * 1.7;
-                let cruising = base_power_w * (1.0 + 0.1 * (t * 0.2 + phase).sin());
+                let cruising = match group {
+                    // Group ride: the target pace, regrouping (spec §2.3).
+                    Some((target_w, anchor)) => {
+                        let personal = event::GROUP_BAND * (t * 0.05 + phase).sin();
+                        event::group_power_w(target_w, personal, d - anchor)
+                    }
+                    None => base_power_w * (1.0 + 0.1 * (t * 0.2 + phase).sin()),
+                };
                 rider.input.power_w = cruising.max(bot_climb_power_w(&rider.profile, grade));
             }
             let controls = Controls {
@@ -758,6 +801,22 @@ impl Session {
                 drag,
                 SIM_DT,
             );
+        }
+        if let Some(ev) = &mut self.event {
+            let progress: Vec<Progress> = before
+                .iter()
+                .filter_map(|&(id, before_m)| {
+                    let r = self.riders.get(&id)?;
+                    Some(Progress {
+                        id,
+                        before_m,
+                        after_m: r.state.distance,
+                        speed: r.state.speed,
+                    })
+                })
+                .collect();
+            let changes = ev.update(self.tick, &progress);
+            self.event_changes.extend(changes);
         }
     }
 
@@ -779,6 +838,142 @@ impl Session {
 
     pub fn rider_state(&self, id: RiderId) -> Option<RiderState> {
         self.riders.get(&id).map(|r| r.state)
+    }
+
+    /// The server-side test riders.
+    pub fn bots(&self) -> Vec<RiderId> {
+        self.riders
+            .iter()
+            .filter(|(_, r)| matches!(r.control, Control::Bot { .. }))
+            .map(|(id, _)| *id)
+            .collect()
+    }
+
+    /// The current event, if any (also a finished one, until the next).
+    pub fn event(&self) -> Option<&Event> {
+        self.event.as_ref()
+    }
+
+    /// Event changes since the last call (for broadcasting).
+    pub fn take_event_changes(&mut self) -> Vec<EventChange> {
+        std::mem::take(&mut self.event_changes)
+    }
+
+    /// The course's length and whether it is a loop: the route, or the
+    /// route on the road graph; `None` in free ride (no fixed course).
+    pub fn course_length(&self) -> Option<(f64, bool)> {
+        match (&self.free, &self.plan) {
+            (None, _) => Some((self.route.length(), self.route.is_loop())),
+            (Some(_), Some(plan)) => Some((plan.length_m(), plan.is_loop)),
+            (Some(_), None) => None,
+        }
+    }
+
+    /// Starts an event now (spec §2.3; replaces a running one): every rider
+    /// in the session is in it, lined up in the start formation behind the
+    /// start line - at the start / finish of a loop (one lap in), at the
+    /// formation's length on a route that ends - and held there through
+    /// the countdown. Needs a fixed course (a route; not free ride).
+    pub fn start_event(&mut self, spec: EventSpec) -> Result<&Event, String> {
+        let (course_m, is_loop) = self
+            .course_length()
+            .ok_or("events need a route (free ride has no fixed course)")?;
+        if self.riders.is_empty() {
+            return Err("no riders".into());
+        }
+        // Formation slots: client riders first (the front row's centre),
+        // then the bots, each in joining order.
+        let mut order: Vec<RiderId> = self.riders.keys().copied().collect();
+        order.sort_by_key(|id| (matches!(self.riders[id].control, Control::Bot { .. }), *id));
+        let width = self.start_width();
+        let last_back = formation_slot(order.len() - 1, width).0;
+        let start_line = if is_loop {
+            course_m
+        } else {
+            last_back.min(course_m)
+        };
+        if is_loop && course_m < last_back + 1.0 {
+            return Err("the loop is too short for the start formation".into());
+        }
+        let kind = match spec {
+            EventSpec::GroupRide { target_w } => EventKind::GroupRide {
+                target_w: target_w
+                    .unwrap_or(event::DEFAULT_GROUP_W)
+                    .clamp(50.0, 600.0),
+            },
+            EventSpec::Race { laps, length_m } => {
+                let (length_m, laps) =
+                    event::resolve_length(laps, length_m, course_m, is_loop, start_line)?;
+                EventKind::Race { length_m, laps }
+            }
+            EventSpec::TimeTrial { laps, length_m } => {
+                let (length_m, laps) =
+                    event::resolve_length(laps, length_m, course_m, is_loop, start_line)?;
+                EventKind::TimeTrial { length_m, laps }
+            }
+        };
+        for (slot, id) in order.iter().enumerate() {
+            let (back, lateral) = formation_slot(slot, width);
+            self.place(*id, slot, (start_line - back).max(0.0), lateral);
+        }
+        let entrants = order
+            .iter()
+            .map(|id| (*id, self.riders[id].name.clone()))
+            .collect();
+        let id = self.next_event_id;
+        self.next_event_id += 1;
+        let mut ev = Event::new(id, kind, self.tick, start_line, entrants);
+        let changes = ev.update(self.tick, &[]);
+        self.event_changes.extend(changes);
+        Ok(self.event.insert(ev))
+    }
+
+    /// Ends the current event (riders ride on where they are).
+    pub fn cancel_event(&mut self) -> Option<Event> {
+        self.event.take()
+    }
+
+    /// Moves a rider to `distance` in formation place `slot`, standing.
+    fn place(&mut self, id: RiderId, slot: usize, distance: f64, lateral: f64) {
+        let net_plan = match (&self.free, &self.plan) {
+            (Some((net, _)), Some(plan)) => Some((net.clone(), plan.clone())),
+            _ => None,
+        };
+        let Some(r) = self.riders.get_mut(&id) else {
+            return;
+        };
+        if let Some((net, plan)) = net_plan {
+            let next = r.path.as_ref().map_or(0, RidePath::next_index);
+            let mut p = RidePath::on_route(net, plan, 0.0, next);
+            p.extend(distance, &mut |j| j.default);
+            p.trim_behind(distance);
+            r.path = Some(p);
+            r.path_reset = true;
+            r.path_changed = None;
+            r.turn = None;
+        }
+        r.state = RiderState {
+            distance,
+            lateral_offset: lateral,
+            ..Default::default()
+        };
+        r.steering = Steering::Auto(lateral);
+        r.wild = false;
+        r.scraping = false;
+        r.slot = slot;
+    }
+
+    /// The event's ranking now (empty without an event).
+    pub fn event_standings(&self) -> Vec<Standing> {
+        let Some(ev) = &self.event else {
+            return Vec::new();
+        };
+        let riders: Vec<(RiderId, f64, f64)> = self
+            .riders
+            .iter()
+            .map(|(id, r)| (*id, r.state.distance, r.state.speed))
+            .collect();
+        ev.standings(&riders)
     }
 
     /// The physics profile a rider rides with.
@@ -1407,5 +1602,222 @@ mod tests {
         }
         let gap = s.rider_state(a).unwrap().distance - s.rider_state(b).unwrap().distance;
         assert!(gap < 4.5, "gap {gap}");
+    }
+
+    fn steps(s: &mut Session, seconds: f64) {
+        for _ in 0..(seconds / SIM_DT).round() as usize {
+            s.step();
+        }
+    }
+
+    #[test]
+    fn race_lines_up_holds_through_the_countdown_and_ranks_the_finish() {
+        use crate::event::{COUNTDOWN_S, EventChange, Phase};
+        let mut s = Session::new(Route::test_loop()).with_start(300.0);
+        let slow = s.add_bot("slow", 100.0);
+        let fast = s.add_bot("fast", 300.0);
+        let me = s.add_rider("me", RiderProfile::default());
+        pedal(&mut s, me, 200.0);
+        steps(&mut s, 10.0);
+        let lap = s.route().length();
+        let ev = s
+            .start_event(EventSpec::Race {
+                laps: None,
+                length_m: Some(400.0),
+            })
+            .unwrap();
+        // A loop: the start line is the start / finish, one lap in.
+        assert_eq!(ev.start_line_m, lap);
+        assert_eq!(ev.phase, Phase::Countdown);
+        assert_eq!(ev.entrants.len(), 3);
+        assert_eq!(
+            s.take_event_changes(),
+            vec![EventChange::Phase(Phase::Countdown)]
+        );
+        // The client in the front row's centre, the bots beside it.
+        let st = s.rider_state(me).unwrap();
+        assert_eq!((st.distance, st.lateral_offset, st.speed), (lap, 0.0, 0.0));
+        assert_eq!(s.rider_state(slow).unwrap().distance, lap);
+        assert_eq!(s.rider_state(fast).unwrap().lateral_offset, 1.2);
+        // Held during the countdown although everyone pedals.
+        steps(&mut s, COUNTDOWN_S - 0.5);
+        assert_eq!(s.rider_state(me).unwrap().distance, lap);
+        assert_eq!(s.event().unwrap().phase, Phase::Countdown);
+        steps(&mut s, 1.0);
+        assert_eq!(s.event().unwrap().phase, Phase::Running);
+        assert!(s.rider_state(me).unwrap().distance > lap);
+        assert!(
+            s.take_event_changes()
+                .contains(&EventChange::Phase(Phase::Running))
+        );
+        // Live standings: the strong bot leads.
+        steps(&mut s, 20.0);
+        let st = s.event_standings();
+        assert_eq!(st[0].id, fast, "{st:?}");
+        assert_eq!(st.last().unwrap().id, slow);
+        // Everyone finishes; times in order, the race is over.
+        steps(&mut s, 120.0);
+        let ev = s.event().unwrap();
+        assert_eq!(ev.phase, Phase::Finished, "{ev:?}");
+        let st = s.event_standings();
+        assert_eq!(
+            st.iter().map(|r| r.id).collect::<Vec<_>>(),
+            [fast, me, slow]
+        );
+        let times: Vec<f64> = st.iter().map(|r| r.finish_s.unwrap()).collect();
+        assert!(times.windows(2).all(|w| w[0] < w[1]), "{times:?}");
+        // 400 m at 300 W from standing: roughly 35 to 60 s.
+        assert!((30.0..70.0).contains(&times[0]), "{times:?}");
+        let finishes = s
+            .take_event_changes()
+            .iter()
+            .filter(|c| matches!(c, EventChange::Finished { .. }))
+            .count();
+        assert_eq!(finishes, 3);
+        // After the finish everyone rides on.
+        let d = s.rider_state(me).unwrap().distance;
+        steps(&mut s, 1.0);
+        assert!(s.rider_state(me).unwrap().distance > d);
+        assert!(s.cancel_event().is_some());
+        assert!(s.event().is_none());
+    }
+
+    #[test]
+    fn open_routes_start_behind_the_formation_and_check_the_length() {
+        let road = Route::from_points(
+            "road",
+            "Road",
+            vec![[0.0, 0.0, 0.0], [2000.0, 0.0, 0.0]],
+            false,
+            7.0,
+        )
+        .unwrap();
+        let mut s = Session::new(road).with_start(800.0);
+        for i in 0..5 {
+            s.add_bot(format!("b{i}"), 200.0);
+        }
+        s.add_rider("me", RiderProfile::default());
+        let err = s
+            .start_event(EventSpec::Race {
+                laps: Some(2),
+                length_m: None,
+            })
+            .unwrap_err();
+        assert!(err.contains("loop"), "{err}");
+        assert!(
+            s.start_event(EventSpec::Race {
+                laps: None,
+                length_m: Some(2500.0),
+            })
+            .is_err()
+        );
+        let ev = s
+            .start_event(EventSpec::Race {
+                laps: None,
+                length_m: None,
+            })
+            .unwrap();
+        // Six riders: two rows, the last at 0 m, the line 3 m ahead.
+        assert_eq!(ev.start_line_m, FORMATION_ROW_GAP_M);
+        assert_eq!(
+            ev.kind.length_m(),
+            Some(crate::event::DEFAULT_LENGTH_M.min(2000.0 - FORMATION_ROW_GAP_M))
+        );
+        let min = spots(&s).iter().map(|p| p.0).fold(f64::INFINITY, f64::min);
+        assert_eq!(min, 0.0);
+        // Free ride has no course.
+        let mut f = free_session();
+        f.add_rider("r", RiderProfile::default());
+        assert!(
+            f.start_event(EventSpec::TimeTrial {
+                laps: None,
+                length_m: None
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn time_trials_have_no_drafting() {
+        // Two equal riders, one 2 m straight behind the other: in a race
+        // the one behind drafts and closes up; in a time trial the gap
+        // stays.
+        let run = |spec: EventSpec| {
+            let mut s = Session::new(Route::test_loop());
+            let a = s.add_rider("a", RiderProfile::default());
+            let b = s.add_rider("b", RiderProfile::default());
+            pedal(&mut s, a, 200.0);
+            pedal(&mut s, b, 200.0);
+            s.start_event(spec).unwrap();
+            let d = s.rider_state(a).unwrap().distance;
+            s.teleport(b, d - 2.0);
+            s.set_lateral_target(b, 1, 0.0);
+            steps(&mut s, crate::event::COUNTDOWN_S + 60.0);
+            s.rider_state(a).unwrap().distance - s.rider_state(b).unwrap().distance
+        };
+        let race = run(EventSpec::Race {
+            laps: None,
+            length_m: Some(3000.0),
+        });
+        let tt = run(EventSpec::TimeTrial {
+            laps: None,
+            length_m: Some(3000.0),
+        });
+        assert!((tt - 2.0).abs() < 0.3, "tt gap {tt}");
+        assert!(race < tt - 0.5, "race gap {race}, tt gap {tt}");
+    }
+
+    #[test]
+    fn group_ride_bots_hold_the_pace_and_regroup() {
+        let mut s = Session::new(Route::test_loop());
+        // A strong and an easy bot would split up on their own.
+        let strong = s.add_bot("strong", 280.0);
+        let easy = s.add_bot("easy", 85.0);
+        s.start_event(EventSpec::GroupRide {
+            target_w: Some(160.0),
+        })
+        .unwrap();
+        steps(&mut s, crate::event::COUNTDOWN_S + 300.0);
+        let gap = s.rider_state(strong).unwrap().distance - s.rider_state(easy).unwrap().distance;
+        assert!(gap.abs() < 30.0, "gap {gap}");
+        // Their power stays around the target.
+        for r in s.snapshot() {
+            assert!((60.0..300.0).contains(&r.power_w), "{r:?}");
+        }
+        assert!(s.event_standings().iter().all(|r| r.finish_s.is_none()));
+        assert_eq!(s.event().unwrap().phase, crate::event::Phase::Running);
+    }
+
+    #[test]
+    fn route_ride_events_put_everyone_back_on_the_route() {
+        let net = grid_network();
+        let e = |a: u32, b: u32| {
+            let i = (0..net.graph().edges.len())
+                .find(|&i| (net.edge(i).from.0, net.edge(i).to.0) == (a, b))
+                .unwrap();
+            Segment::whole(&net, i, true)
+        };
+        let plan = RoutePlan::new(&net, "row", vec![e(0, 1), e(1, 2), e(2, 3)], false).unwrap();
+        let mut s = Session::route_ride(net.clone(), Arc::new(plan));
+        let bot = s.add_bot("b", 200.0);
+        let me = s.add_rider("me", RiderProfile::default());
+        steps(&mut s, 30.0);
+        s.take_path_changes();
+        let ev = s
+            .start_event(EventSpec::TimeTrial {
+                laps: None,
+                length_m: Some(600.0),
+            })
+            .unwrap();
+        assert_eq!(ev.start_line_m, 0.0);
+        for id in [me, bot] {
+            let st = s.rider_state(id).unwrap();
+            assert!(st.distance.abs() < 1e-9, "{st:?}");
+            assert!(s.path(id).unwrap().on_route_at(st.distance));
+        }
+        // The clients get the new paths.
+        let changes = s.take_path_changes();
+        assert_eq!(changes.len(), 2);
+        assert!(changes.iter().all(|c| c.reset));
     }
 }

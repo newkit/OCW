@@ -105,7 +105,18 @@ fn menu_input(
     let mut actions = std::mem::take(&mut state.queued);
     let pointer_events = std::mem::take(&mut pointer.0);
     let open = state.menu.is_open();
-    if console.is_open() {
+    let mut client = client;
+    let now = time.elapsed_secs_f64();
+    let results =
+        !open && !console.is_open() && client.as_ref().is_some_and(|c| c.0.results_showing(now));
+    if results && (pressed.escape || pressed.confirm || pressed.back) {
+        // An event's results panel is up: Esc / Enter / B close it first
+        // (spec §2.3), the menu opens on the next press.
+        if let Some(c) = client.as_mut() {
+            c.0.dismiss_results(now);
+        }
+        state.repeat.reset();
+    } else if console.is_open() {
         // The console has the keys; Esc closes it first (never the app).
         if pressed.escape {
             console.set_open(false);
@@ -255,6 +266,7 @@ mod tests {
             .init_resource::<ButtonInput<KeyCode>>()
             .insert_resource(args)
             .insert_resource(RideView::new(Route::test_loop()))
+            .insert_resource(crate::connection::Ghosts(None))
             .add_plugins((
                 ConnectionPlugin {
                     route: Route::test_loop(),
@@ -297,6 +309,55 @@ mod tests {
 
     fn client(app: &mut App) -> Mut<'_, ClientState> {
         app.world_mut().resource_mut::<ClientState>()
+    }
+
+    /// The server's word that the local rider finished event `id` (a time
+    /// trial): the results panel comes up.
+    fn finish_event(app: &mut App, id: u32) {
+        use ocw_protocol::v1::server_message::Msg as S;
+        let now = app.world().resource::<Time>().elapsed_secs_f64();
+        let mut c = client(app);
+        let own = c.0.rider_id().unwrap();
+        let mut ev = ocw_sim::Event::new(
+            id,
+            ocw_sim::EventKind::TimeTrial {
+                length_m: 1000.0,
+                laps: None,
+            },
+            0,
+            0.0,
+            vec![(own, "me".into())],
+        );
+        ev.phase = ocw_sim::EventPhase::Finished;
+        ev.entrants[0].finish_s = Some(100.0);
+        let standings = ev.standings(&[(own, 1000.0, 0.0)]);
+        let bytes = ocw_protocol::encode(&ocw_protocol::server_message(S::Event(
+            ocw_protocol::event_state(Some(&ev), &standings, 0),
+        )));
+        c.0.on_server_message(&bytes, now);
+        assert!(c.0.results_showing(now));
+    }
+
+    #[test]
+    fn esc_and_a_close_the_results_first() {
+        let mut app = app();
+        finish_event(&mut app, 1);
+        tap(&mut app, KeyCode::Escape);
+        assert!(
+            !view(&app).open,
+            "Esc closed the results, not opened the menu"
+        );
+        let now = app.world().resource::<Time>().elapsed_secs_f64();
+        assert!(!client(&mut app).0.results_showing(now));
+        // A closes them too, without switching autodrive off.
+        finish_event(&mut app, 2);
+        tap(&mut app, KeyCode::KeyA);
+        let now = app.world().resource::<Time>().elapsed_secs_f64();
+        assert!(!client(&mut app).0.results_showing(now));
+        assert!(client(&mut app).0.autodrive());
+        // Without results Esc opens the menu as always.
+        tap(&mut app, KeyCode::Escape);
+        assert!(view(&app).open);
     }
 
     #[test]

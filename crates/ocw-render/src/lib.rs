@@ -6,6 +6,7 @@
 
 pub mod camera;
 pub mod console;
+pub mod event_hud;
 pub mod font;
 pub mod hud;
 pub mod junction;
@@ -58,6 +59,11 @@ pub struct RideView {
     /// The local rider's GPS position (lat °, lon °, altitude m), if the
     /// ride has a geographic origin (route files, world packages).
     pub position: Option<(f64, f64, f64)>,
+    /// The current event (spec §2.3): countdown, standings, results.
+    pub event: Option<EventView>,
+    /// A time trial's ghost (the rider's best previous effort) on the
+    /// local rider's track, drawn as a translucent rider.
+    pub ghost: Option<RiderState>,
     /// The running workout's panel (spec §2.8), if any.
     pub workout: Option<ocw_sim::workout::WorkoutPanel>,
 }
@@ -78,6 +84,8 @@ impl RideView {
             app_message: None,
             position: None,
             route_status: None,
+            event: None,
+            ghost: None,
             workout: None,
         }
     }
@@ -93,6 +101,39 @@ impl RideView {
             None => &self.route,
         }
     }
+}
+
+/// What the HUD shows of an event (spec §2.3); the app computes the
+/// texts (Bevy-free), the HUD only lays them out.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct EventView {
+    /// The big centre text: "Get ready", "3", "2", "1", "GO!".
+    pub countdown: Option<String>,
+    /// "Race - 1 lap (4.0 km)".
+    pub title: String,
+    /// "P3/11  +4.2 s to Bot 4", "2.31 km to go", "Ghost -1.8 s".
+    pub lines: Vec<String>,
+    /// The results panel, until dismissed.
+    pub results: Option<ResultsView>,
+}
+
+/// The results panel of a race or time trial.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ResultsView {
+    pub title: String,
+    pub rows: Vec<ResultRow>,
+    /// Under the table: the ghost comparison, how to close the panel.
+    pub footer: Vec<String>,
+}
+
+/// One row of the results: "3", "Bot 4", "10:12.3", "+0:04.2".
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ResultRow {
+    pub position: String,
+    pub name: String,
+    pub time: String,
+    pub gap: String,
+    pub is_local: bool,
 }
 
 /// The junction ahead in free ride, for the overlay (spec §2.2.1).
@@ -159,6 +200,7 @@ impl Plugin for OcwRenderPlugins {
             riders::RidersPlugin,
             camera::CameraPlugin,
             hud::HudPlugin,
+            event_hud::EventHudPlugin,
             junction::JunctionPlugin,
             menu::MenuPlugin,
             console::ConsolePlugin,

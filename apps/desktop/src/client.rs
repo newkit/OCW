@@ -23,12 +23,17 @@ use ocw_sim::{Predictor, RiderState, SnapshotBuffer};
 use ocw_world::path::lock_distance;
 use ocw_world::{Junction, RidePath, RoadNetwork, Route, RoutePlan, RouteState, Track, TurnReason};
 
+use crate::event::{EventClient, GhostKey, GhostOutcome};
+
 /// Minimum time between steering messages while the target changes.
 pub const STEER_SEND_INTERVAL_S: f64 = 0.05;
 /// The junction overlay appears within this distance, or within
 /// [`JUNCTION_LOOKAHEAD_S`] of riding, whichever is larger (spec §2.2.1).
 pub const JUNCTION_LOOKAHEAD_M: f64 = 150.0;
 pub const JUNCTION_LOOKAHEAD_S: f64 = 10.0;
+/// The ghost rides this far right of the centre line (m), beside the
+/// rider (who starts a time trial in the middle of the road).
+pub const GHOST_LATERAL_M: f64 = 1.0;
 /// Dead-end warnings start this far before the end (spec §2.2.2).
 pub const DEAD_END_WARNING_M: f64 = 1000.0;
 
@@ -121,6 +126,10 @@ pub struct ClientCore {
     snapshot_age_s: f64,
     /// The steering mode saved while the menu holds autodrive.
     menu_hold: Option<HeldSteering>,
+    /// The current event (spec §2.3) and the time trial's ghost.
+    event: EventClient,
+    /// The last snapshot's server tick and client time it arrived.
+    last_snapshot_at: Option<(u64, f64)>,
 }
 
 /// Steering mode before the menu opened (spec §3.2.1), restored on closing.
@@ -133,7 +142,6 @@ struct HeldSteering {
 impl ClientCore {
     pub fn new(route: Route, name: impl Into<String>, profile: RiderProfile) -> Self {
         Self {
-            route,
             free: None,
             profile,
             look: RiderLook::default(),
@@ -161,6 +169,9 @@ impl ClientCore {
             stats: NetStats::default(),
             snapshot_age_s: 0.0,
             menu_hold: None,
+            event: EventClient::new(route.id()),
+            last_snapshot_at: None,
+            route,
         }
     }
 
@@ -208,6 +219,7 @@ impl ClientCore {
                 5.0,
             )
             .expect("two distinct points");
+            self.event = EventClient::new(plan.name.clone());
             fr.plan = Some(plan);
         }
         self
@@ -377,6 +389,17 @@ impl ClientCore {
                 self.on_path(&p);
                 None
             }
+            S::Event(e) => {
+                let info = ocw_protocol::event_info(&e);
+                if self.event.on_state(info, self.rider_id, now_s) {
+                    // Moved to the start formation: steer from the new
+                    // place on (autodrive, the lane the server gave).
+                    self.lateral_target = None;
+                    self.lean = None;
+                    self.steer_sent = None;
+                }
+                None
+            }
         }
     }
 
@@ -441,6 +464,7 @@ impl ClientCore {
         }
         self.stats.snapshots += 1;
         self.stats.last_snapshot_tick = s.server_tick;
+        self.last_snapshot_at = Some((s.server_tick, now_s));
         let mut others = Vec::new();
         for u in &s.riders {
             let (id, state) = dequantize(u);
@@ -448,6 +472,7 @@ impl ClientCore {
                 .insert(id, (u.display_name.clone(), f64::from(u.power_w)));
             self.looks.insert(id, ocw_protocol::rider_look(u));
             if Some(id) == self.rider_id {
+                self.event.on_own_snapshot(s.server_tick, state.distance);
                 if self.lateral_target.is_none() {
                     // Start steering from the lane the server assigned.
                     self.lateral_target = Some(state.lateral_offset);
@@ -458,8 +483,14 @@ impl ClientCore {
                     Some(p) => p,
                     None => &self.route,
                 };
-                self.predictor
-                    .reconcile(track, state, self.snapshot_age_s, power);
+                if self.event.holds(self.rider_id) {
+                    // Held at an event's start line: exactly the server's.
+                    self.predictor.set_state(state);
+                    self.prev_state = state;
+                } else {
+                    self.predictor
+                        .reconcile(track, state, self.snapshot_age_s, power);
+                }
                 // A snap (teleport, large error) must not be interpolated.
                 if self.predictor.last_error().abs() > ocw_sim::prediction::SNAP_THRESHOLD_M {
                     self.prev_state = self.predictor.state();
@@ -940,6 +971,11 @@ impl ClientCore {
         if self.rider_id.is_none() {
             return;
         }
+        if self.event.holds(self.rider_id) {
+            // The countdown: the server holds the field at the start line.
+            self.prev_state = self.predictor.state();
+            return;
+        }
         let me = self.predictor.state();
         // Free ride: extend the own path like the server (lock point).
         if let Some(fr) = &mut self.free
@@ -1044,6 +1080,100 @@ impl ClientCore {
             });
         }
         riders
+    }
+
+    /// The server tick now, estimated from the last snapshot.
+    fn server_tick_now(&self, now_s: f64) -> f64 {
+        self.last_snapshot_at
+            .map_or(0.0, |(t, at)| crate::event::estimate_tick(t, at, now_s))
+    }
+
+    /// The event's HUD view at client time `now_s` (spec §2.3).
+    pub fn event_view(&self, now_s: f64) -> Option<ocw_render::EventView> {
+        let others: Vec<f64> = self.others_now.iter().map(|(_, s)| s.distance).collect();
+        self.event.view(
+            now_s,
+            self.server_tick_now(now_s),
+            self.rider_id,
+            self.predictor.state().distance,
+            &others,
+        )
+    }
+
+    /// The current event as the server last sent it.
+    pub fn event_info(&self) -> Option<&ocw_protocol::EventInfo> {
+        self.event.info()
+    }
+
+    /// The time trial's ghost at client time `now_s`, beside the rider's
+    /// line (it is not on the server, so nobody drafts it).
+    pub fn ghost_state(&self, now_s: f64) -> Option<RiderState> {
+        let tick = self.server_tick_now(now_s);
+        let d = self.event.ghost_distance(tick, self.rider_id)?;
+        let half = 0.25 / ocw_core::SIM_DT;
+        let speed = match (
+            self.event.ghost_distance(tick - half, self.rider_id),
+            self.event.ghost_distance(tick + half, self.rider_id),
+        ) {
+            (Some(a), Some(b)) => (b - a) / 0.5,
+            _ => 0.0,
+        };
+        Some(RiderState {
+            distance: d,
+            speed,
+            lateral_offset: GHOST_LATERAL_M,
+            ..Default::default()
+        })
+    }
+
+    /// The time trial's ghost to load, if not loaded yet.
+    pub fn wants_ghost(&self) -> Option<GhostKey> {
+        self.event.wants_ghost()
+    }
+
+    pub fn set_ghost(&mut self, key: GhostKey, ghost: Option<ocw_sim::GhostTrace>) {
+        self.event.set_ghost(key, ghost);
+    }
+
+    /// A finished time trial's effort, to keep if it is the best.
+    pub fn take_finished_trace(&mut self) -> Option<(GhostKey, ocw_sim::GhostTrace)> {
+        self.event.take_finished_trace()
+    }
+
+    pub fn set_ghost_outcome(&mut self, outcome: GhostOutcome) {
+        self.event.set_outcome(outcome);
+    }
+
+    /// Whether the results panel is up.
+    pub fn results_showing(&self, now_s: f64) -> bool {
+        self.event.results_showing(now_s)
+    }
+
+    /// Closes the results panel (Esc / A); false if none was up.
+    pub fn dismiss_results(&mut self, now_s: f64) -> bool {
+        self.event.dismiss_results(now_s)
+    }
+
+    /// Whether the results panel takes the input at `now_s` (up, or closed
+    /// in this very frame: the key that closed it does nothing else).
+    pub fn results_input(&self, now_s: f64) -> bool {
+        self.event.results_input(now_s)
+    }
+
+    /// The request to start an event (the local server decides, spec §2.3).
+    pub fn event_start_message(spec: &ocw_sim::EventSpec, bots: Option<u32>) -> Vec<u8> {
+        encode(&client_message(C::Event(v1::EventRequest {
+            req: Some(v1::event_request::Req::Start(ocw_protocol::event_start(
+                spec, bots,
+            ))),
+        })))
+    }
+
+    /// The request to cancel the current event.
+    pub fn event_cancel_message() -> Vec<u8> {
+        encode(&client_message(C::Event(v1::EventRequest {
+            req: Some(v1::event_request::Req::Cancel(true)),
+        })))
     }
 
     #[cfg(test)]
@@ -1174,6 +1304,7 @@ mod tests {
                     allow_dev_commands: allow_dev,
                     bots,
                     start_m: 0.0,
+                    allow_local_events: true,
                 },
             );
             let client = ClientCore::new(route(), "Tester", RiderProfile::default());
@@ -1200,6 +1331,7 @@ mod tests {
                     allow_dev_commands: true,
                     bots,
                     start_m: 0.0,
+                    allow_local_events: true,
                 },
             );
             Self::with(
@@ -1276,6 +1408,7 @@ mod tests {
                 allow_dev_commands: false,
                 bots: 0,
                 start_m: 0.0,
+                allow_local_events: false,
             },
         );
         let client = ClientCore::new(route(), "Light", RiderProfile::for_rider_weight(58.0));
@@ -2147,6 +2280,7 @@ mod tests {
                     allow_dev_commands: true,
                     bots,
                     start_m: 0.0,
+                    allow_local_events: true,
                 },
             );
             Self::with(
@@ -2365,5 +2499,113 @@ mod tests {
         assert!(r.client.turn(1).is_none());
         assert!(r.client.u_turn(1.0).is_none());
         assert!(r.client.junction_view().is_none());
+    }
+
+    #[test]
+    fn race_countdown_holds_the_prediction_then_ranks() {
+        let mut h = Harness::new(5, true);
+        h.ride(200.0, 3.0);
+        h.client.steer_to(1.5);
+        h.ride(200.0, 1.0);
+        let race = ocw_sim::EventSpec::Race {
+            laps: None,
+            length_m: Some(300.0),
+        };
+        h.send(&ClientCore::event_start_message(&race, Some(3)));
+        assert!(
+            matches!(&h.notices[..], [.., Notice::CommandResult(m)] if m.contains("4 riders")),
+            "{:?}",
+            h.notices
+        );
+        h.ride(200.0, 2.5);
+        // Lined up at the start line, in the front row's centre: the
+        // prediction stays there although the rider pedals.
+        let line = h.client.event_info().unwrap().start_line_m;
+        let st = h.client.state();
+        assert!(
+            (st.distance - line).abs() < 0.01,
+            "{} at {line}",
+            st.distance
+        );
+        assert_eq!(
+            h.client.lateral_target(),
+            Some(0.0),
+            "steers from its place"
+        );
+        let v = h.client.event_view(h.time_s).unwrap();
+        assert_eq!(v.countdown.as_deref(), Some("3"));
+        assert_eq!(v.title, "Race - 0.3 km");
+        h.ride(200.0, 6.0);
+        assert!(h.client.state().distance > line + 5.0);
+        let v = h.client.event_view(h.time_s).unwrap();
+        assert!(
+            v.lines[0].starts_with('P') && v.lines[0].contains("/4"),
+            "{v:?}"
+        );
+        assert!(h.client.prediction_error().abs() < 1.0);
+        // To the finish: the results panel, until dismissed.
+        h.ride(200.0, 60.0);
+        assert!(h.client.results_showing(h.time_s));
+        let v = h.client.event_view(h.time_s).unwrap();
+        assert!(v.lines[0].starts_with("Finished P"), "{v:?}");
+        assert_eq!(v.results.unwrap().rows.len(), 4);
+        assert!(h.client.dismiss_results(h.time_s));
+        assert!(h.client.event_view(h.time_s).unwrap().results.is_none());
+        // No ghost for races.
+        assert!(h.client.wants_ghost().is_none());
+        assert!(h.client.take_finished_trace().is_none());
+        // Cancelled: no event any more.
+        h.send(&ClientCore::event_cancel_message());
+        h.ride(200.0, 0.2);
+        assert!(h.client.event_view(h.time_s).is_none());
+    }
+
+    #[test]
+    fn time_trial_records_the_effort_and_rides_against_it() {
+        let mut h = Harness::new(2, true);
+        let tt = ocw_sim::EventSpec::TimeTrial {
+            laps: None,
+            length_m: Some(250.0),
+        };
+        h.send(&ClientCore::event_start_message(&tt, None));
+        h.ride(250.0, 0.5);
+        // Alone: the bots are gone.
+        assert_eq!(h.server.session().rider_count(), 1);
+        let key = h.client.wants_ghost().unwrap();
+        assert_eq!(key.length_m, 250);
+        h.client.set_ghost(key.clone(), None);
+        assert!(h.client.ghost_state(h.time_s).is_none());
+        h.ride(250.0, 60.0);
+        let (k, first) = h.client.take_finished_trace().unwrap();
+        assert_eq!(k, key);
+        assert_eq!(first.length_m(), 250.0);
+        assert!(first.samples().len() > 20);
+        h.client
+            .set_ghost_outcome(crate::event::GhostOutcome::First);
+        let r = h.client.event_view(h.time_s).unwrap().results.unwrap();
+        assert!(r.footer[0].contains("your ghost now"), "{r:?}");
+        // Again, slower, against the first effort.
+        h.send(&ClientCore::event_start_message(&tt, None));
+        h.ride(150.0, 0.5);
+        let key = h.client.wants_ghost().unwrap();
+        h.client.set_ghost(key, Some(first.clone()));
+        h.ride(150.0, 15.0);
+        let ghost = h.client.ghost_state(h.time_s).unwrap();
+        let me = h.client.state();
+        assert!(ghost.distance > me.distance, "{ghost:?} {me:?}");
+        assert!(ghost.speed > 1.0);
+        let v = h.client.event_view(h.time_s).unwrap();
+        assert!(
+            v.lines.last().unwrap().contains("(behind)"),
+            "{:?}",
+            v.lines
+        );
+        h.ride(150.0, 60.0);
+        let (_, second) = h.client.take_finished_trace().unwrap();
+        assert!(second.duration_s() > first.duration_s());
+        assert!(
+            h.client.ghost_state(h.time_s).is_none(),
+            "gone at the finish"
+        );
     }
 }

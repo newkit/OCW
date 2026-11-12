@@ -259,6 +259,28 @@ The position, speed, heading and animation of other participants are continuousl
 
 The simulation must not depend on the client's frame rate.
 
+#### 2.3.1 Events: Model and Local Events
+
+Group rides, races and time trials are **events** of a session. The first increment runs them **locally** (single player with bots on the in-process server, started on demand); the event logic lives in the server's session (`ocw-sim::event`, `Session::start_event`) so the networked server (Phase 5) runs the same code, with events scheduled by organizers instead of started by a rider.
+
+**Kinds**
+
+| Kind | Field | Finish and ranking |
+|---|---|---|
+| Group ride | everyone in the session; bots hold a target power (default 150 W ≈ 2 W/kg; each bot within ±10 %) and regroup: a bot ahead of the group's anchor eases off, one behind pushes (2.5 % of the target per metre, 0.5–1.6 × the target; never below the climbing minimum, §6.1). The anchor is halfway between the bots' mean and the riders' mean, so the group waits for the riders | none: runs until cancelled |
+| Race | everyone, from the start formation (§6.1) | a finish line `length` after the start line (laps of a loop or a distance; default one lap of a loop, 5 km of a route that ends); ranked by finish time, then by distance for riders still riding; DNF for riders who leave the session and for everyone still riding when the time limit after the first finisher is over (max(2 min, 25 % of the winner's time)) |
+| Time trial | the rider alone (the bots are removed), **no drafting** | like a race; the comparison is the rider's own **ghost** |
+
+**State machine (server-authoritative, §6.1).** `Scheduled → Countdown → Running → Finished`, in server ticks. A local event is scheduled at the current tick, so it starts with the countdown (5 s: "Get ready", 3-2-1, GO!). At the start every rider is placed in the start formation (§6.1: the client rider in the front row's centre, bots in joining order, standing still, autodrive in their lane) behind the start line: on a loop the start line is the start / finish (one lap in, so distances stay positive), on a route that ends it is the formation's length after the route's beginning (the last row at 0 m); on a route on the road graph (§2.7) everyone's path is rebuilt from the route's start (broadcast as path resets, §6.5). During the countdown the session holds every rider (no physics), and the client stops predicting its own rider (so the bike does not creep forward and snap back). A rider's finish time is the crossing interpolated within the 50 Hz tick. Group rides need no finish; races and time trials end when every entrant finished or is DNF. Riders ride on after the finish. Events need a fixed course: free ride (§2.2.1) refuses them. A new event replaces the old one; `cancel` ends it (everyone rides on where they are).
+
+**Protocol** (only added messages, §6.2): `EventRequest` (client → server: `EventStart { kind, laps?, length_m?, bots?, target_w? }` or `cancel`), answered with `DevCommandResult`; only a server with `allow_local_events` (the local server) accepts it, a remote server answers that organizers schedule events. `EventState` (server → client, reliable): kind, phase, countdown / GO / finish ticks, start line, length, laps, target power and the standings (`EventStanding`: position, progress, finish time, DNF, gap to the rider ahead in ms); sent when the event starts, changes phase or a rider finishes, twice a second while a race or time trial runs, and to riders who join; phase `NONE` = no event (cancelled). The gap to the rider ahead is the difference of the finish times, or for riders still riding the distance gap at the own speed (at least 1 m/s).
+
+**Ghost (decided: client-side).** The ghost is the rider's own best previous effort on the same course and length, replayed as a translucent rider; it is a rendering and a gap computation only, so the server never needs it (and nobody drafts it). The client records its authoritative distance past the start line every 0.5 s (from the snapshots) and the exact finish time; the best trace per course (route id; routes are ridden in their own direction) and length is kept as a small text file `<user data dir>/ocw/ghosts/<route>_<length>m.ghost` (header with course, length and time, then `seconds metres` lines; ~30 KB for 20 min; replaced only by a faster effort, written through a temporary name). Gap to the ghost = time now − the ghost's time at the rider's distance (positive = behind). Later options: ghosts of friends from the backend, ghosts in races.
+
+**HUD** (§3.2): the big countdown in the middle; on the right the event's title, the position and gap ("P3/11  +4.2 s to Bot 4"), time and distance to go (with the lap), the ghost's gap, or the place relative to the group; at the own finish (or the event's) the results panel in the middle (position, name, time, gap to the winner; provisional while others ride; at most ten rows plus the own; the ghost comparison for time trials) until Esc / Enter / A / B closes it or after 30 s. The texts are built Bevy-free in the app (`apps/desktop/src/event.rs`), the HUD only lays them out. Starting: console `event race [--laps N|--km X] [--bots N]`, `event group [--watts W]`, `event tt`, `event cancel`, `event status`, `event dismiss`, and the menu's Ride page (§3.2.1).
+
+Open: scheduled events and sign-up (Phase 5/7), "follow leader" steering in group rides (§6.5), weight lock and trust levels for races (§6.4), ghosts across devices.
+
 ### 2.4 Voice Communication
 
 The application includes integrated real-time voice communication.
@@ -662,7 +684,7 @@ One menu, reachable during a ride and (later) as the start screen, replaces comm
 
 **Open questions**
 
-Decided (v2.2): no pause (trainer unchanged, ride time and recording continue); Esc never quits; rider weight affects physics, riders managed in Settings and chosen in the Workshop. Still open: switching rides by restart vs. in-app session switch (M3), and local Events before the backend (M7).
+Decided (v2.2): no pause (trainer unchanged, ride time and recording continue); Esc never quits; rider weight affects physics, riders managed in Settings and chosen in the Workshop. Decided: local events before the backend (§2.3.1) - the Ride page starts a race, a group ride or a time trial on the current route (console command lines `event race --bots 5`, `event group --watts 150`, `event tt`, `event cancel`; the menu closes for the countdown). Still open: switching rides by restart vs. in-app session switch (M3).
 
 ### 3.3 Audio
 

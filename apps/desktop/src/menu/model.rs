@@ -93,6 +93,39 @@ const TOP_ITEMS: &[Item] = &[
     item("Restart", ItemKind::Open(Page::ConfirmRestart)),
     item("Quit", ItemKind::Open(Page::ConfirmQuit)),
 ];
+/// Ride page: local events (spec §2.3), started at once as console
+/// commands; the menu closes so the countdown is visible.
+const RIDE_ITEMS: &[Item] = &[
+    item(
+        "Race: 1 lap / 5 km, 5 bots",
+        ItemKind::Command {
+            line: "event race --bots 5",
+            close: true,
+        },
+    ),
+    item(
+        "Group ride at 150 W",
+        ItemKind::Command {
+            line: "event group --watts 150",
+            close: true,
+        },
+    ),
+    item(
+        "Time trial vs your ghost",
+        ItemKind::Command {
+            line: "event tt",
+            close: true,
+        },
+    ),
+    item(
+        "End the event",
+        ItemKind::Command {
+            line: "event cancel",
+            close: true,
+        },
+    ),
+    BACK,
+];
 const SETTINGS_ITEMS: &[Item] = &[
     item("Riders", ItemKind::Open(Page::Sub(sub::Page::Riders))),
     item("Controls", ItemKind::Open(Page::Sub(sub::Page::Controls))),
@@ -142,10 +175,10 @@ impl Page {
             Page::Ride => PageDef {
                 title: "Ride",
                 text: &[
-                    "Coming soon (M3): pick the world and the mode - free ride from a random or named place, a route of the world package or a test route - and the number of bots, then start the ride.",
-                    "Later: structured workouts in ERG mode, and events (group rides, races) once accounts exist (Phase 5).",
+                    "Local events on this route: everyone lines up at the start, 3-2-1-GO. Races and time trials end at the finish with a results table; a time trial races your best effort (the ghost).",
+                    "Coming soon (M3): pick the world, the mode and the bots; later workouts and online events.",
                 ],
-                items: &[BACK],
+                items: RIDE_ITEMS,
                 initial_focus: 0,
             },
             Page::Navi => PageDef {
@@ -499,11 +532,11 @@ mod tests {
         assert_eq!(m.apply(Action::Back), Effect::None);
         assert_eq!((m.page(), m.focus()), (Some(Page::Top), 4));
         // Placeholder pages: their Back item goes up too.
-        m.apply(Action::Click(1));
-        assert_eq!(m.page(), Some(Page::Ride));
+        m.apply(Action::Click(3));
+        assert_eq!(m.page(), Some(Page::Navi));
         assert_eq!(labels(&m), ["Back"]);
         m.apply(Action::Confirm);
-        assert_eq!((m.page(), m.focus()), (Some(Page::Top), 1));
+        assert_eq!((m.page(), m.focus()), (Some(Page::Top), 3));
         // Back at the top closes.
         assert_eq!(m.apply(Action::Back), Effect::Closed);
         assert!(!m.is_open());
@@ -558,6 +591,39 @@ mod tests {
     /// Applies `a` with the rows of the given settings and riders.
     fn act(m: &mut Menu, a: Action, s: &Settings, r: &Riders) -> Effect {
         m.apply_with(a, |p| sub::rows(p, s, r))
+    }
+
+    #[test]
+    fn ride_page_starts_events_and_closes() {
+        let mut m = Menu::default();
+        m.apply(Action::Open);
+        m.apply(Action::Click(1));
+        assert_eq!(m.page(), Some(Page::Ride));
+        assert_eq!(
+            labels(&m),
+            [
+                "Race: 1 lap / 5 km, 5 bots",
+                "Group ride at 150 W",
+                "Time trial vs your ghost",
+                "End the event",
+                "Back"
+            ]
+        );
+        assert_eq!(
+            m.apply(Action::Confirm),
+            Effect::Command("event race --bots 5".into())
+        );
+        assert!(!m.is_open(), "closes for the countdown");
+        m.apply(Action::Open);
+        m.apply(Action::Click(1));
+        assert_eq!(
+            m.apply(Action::Click(2)),
+            Effect::Command("event tt".into())
+        );
+        m.apply(Action::Open);
+        m.apply(Action::Click(1));
+        m.apply(Action::Click(4));
+        assert_eq!(m.page(), Some(Page::Top));
     }
 
     #[test]
