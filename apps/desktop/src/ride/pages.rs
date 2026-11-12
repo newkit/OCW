@@ -54,6 +54,9 @@ fn ask(label: impl Into<String>, value: impl Into<String>, line: String) -> Row 
     }
 }
 
+/// A row label of at most this many characters fits in two lines.
+pub const MAX_ROW_CHARS: usize = 48;
+
 fn km(m: f64) -> String {
     format!("{:.1} km", m / 1000.0)
 }
@@ -82,16 +85,13 @@ pub fn rows(page: Page, c: &Catalog) -> Vec<Row> {
     match page {
         Page::Worlds => {
             if c.worlds.is_empty() {
-                return vec![info(
-                    "No world packages found",
-                    Some("see README: world packages".into()),
-                )];
+                return vec![info("No world packages found", Some("see README".into()))];
             }
             c.worlds
                 .iter()
                 .enumerate()
                 .map(|(i, w)| Row {
-                    label: short(&w.name, 28),
+                    label: short(&w.name, 24),
                     value: Some(if c.is_current(&w.spec) {
                         format!("{} - riding", w.detail)
                     } else {
@@ -131,20 +131,14 @@ pub fn rows(page: Page, c: &Catalog) -> Vec<Row> {
                     confirm: Some(Activate::Open(Page::Routes)),
                 });
             } else {
-                out.push(info(
-                    "Routes",
-                    Some("listed once you ride here (Navi)".into()),
-                ));
+                out.push(info("Routes", Some("ride here first".into())));
             }
-            out.push(info("Package", Some(short(&w.detail, 30))));
+            out.push(info("Package", Some(short(&w.detail, 24))));
             out
         }
         Page::Routes => {
             let Some(w) = &c.world else {
-                return vec![info(
-                    "No world package loaded",
-                    Some("Ride -> World packages".into()),
-                )];
+                return vec![info("No world loaded", Some("Ride -> Change ride".into()))];
             };
             let route = |r: &str| {
                 RideChoice::World {
@@ -156,20 +150,17 @@ pub fn rows(page: Page, c: &Catalog) -> Vec<Row> {
             let mut out: Vec<Row> = w
                 .routes
                 .iter()
-                .map(|(name, m)| ask(short(name, 28), km(*m), route(name)))
+                .map(|(name, m)| ask(short(name, 24), km(*m), route(name)))
                 .collect();
             out.extend(c.user_routes.iter().map(|r| {
                 ask(
-                    short(&r.name, 28),
+                    short(&r.name, 24),
                     format!("{}, yours", km(r.length_m)),
                     route(&r.path.display().to_string()),
                 )
             }));
             if out.is_empty() {
-                out.push(info(
-                    "No routes in this package",
-                    Some("import one: Navi -> GPX import".into()),
-                ));
+                out.push(info("No routes here", Some("Navi -> GPX import".into())));
             }
             out
         }
@@ -182,18 +173,18 @@ pub fn rows(page: Page, c: &Catalog) -> Vec<Row> {
                 .map(|r| {
                     info(
                         &r.date,
-                        Some(format!("{} - {}", short(&r.route, 20), r.strava)),
+                        Some(format!("{} - {}", short(&r.route, 14), r.strava)),
                     )
                 })
                 .collect()
         }
         Page::GpxImport => {
-            let Some(w) = c.world.as_ref().filter(|w| w.has_graph) else {
+            if !c.world.as_ref().is_some_and(|w| w.has_graph) {
                 return vec![info(
-                    "Load a world package first",
-                    Some("Ride -> World packages".into()),
+                    "Load a world first",
+                    Some("Ride -> Change ride".into()),
                 )];
-            };
+            }
             if c.gpx.is_empty() {
                 return vec![info("No GPX files found", None)];
             }
@@ -204,8 +195,8 @@ pub fn rows(page: Page, c: &Catalog) -> Vec<Row> {
                         .file_name()
                         .map_or_else(|| p.display().to_string(), |n| n.to_string_lossy().into());
                     ask(
-                        short(&name, 28),
-                        format!("import, ride in {}", short(&w.name, 16)),
+                        short(&name, 24),
+                        "import and ride",
                         format!("ride.import-gpx \"{}\" --ride", p.display()),
                     )
                 })
@@ -325,7 +316,7 @@ mod tests {
         let m = open(&c, &[1, 4, 0, 2]);
         assert_eq!(m.page(), Some(MenuPage::Sub(Page::World(2))));
         assert_eq!(m.labels().len(), 4);
-        assert!(m.labels()[1].starts_with("Routes:  listed once"));
+        assert!(m.labels()[1].starts_with("Routes:  ride here first"));
     }
 
     #[test]
@@ -351,7 +342,7 @@ mod tests {
         assert_eq!(m.apply_with(Action::Click(0), rows_of), Effect::None);
         // GPX import: import and ride, after asking.
         let mut m = open(&c, &[3, 2]);
-        assert_eq!(m.labels()[0], "morning.gpx:  import, ride in World 1");
+        assert_eq!(m.labels()[0], "morning.gpx:  import and ride");
         m.apply_with(Action::Click(0), rows_of);
         assert_eq!(
             m.apply_with(Action::Up, rows_of),
@@ -397,7 +388,8 @@ mod tests {
         ] {
             for row in rows(p, &c) {
                 let l = row_label(&row);
-                assert!(l.chars().count() <= 64, "{p:?}: {l}");
+                // Two lines of the menu panel at most.
+                assert!(l.chars().count() <= MAX_ROW_CHARS, "{p:?}: {l}");
                 let missing = ocw_render::font::missing(&l);
                 assert!(missing.is_empty(), "{p:?}: {l}: {missing:?}");
             }

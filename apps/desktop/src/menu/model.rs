@@ -1036,4 +1036,37 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn many_riders_are_paged_in_the_workshop() {
+        let s = Settings::default();
+        let mut r = Riders::default();
+        for i in 0..8 {
+            r.add(Rider {
+                name: format!("Rider {i}"),
+                ..Rider::default()
+            })
+            .unwrap();
+        }
+        let mut m = Menu::default();
+        act(&mut m, Action::Open, &s, &r);
+        act(&mut m, Action::Click(2), &s, &r);
+        assert_eq!(m.page(), Some(Page::Sub(sub::Page::Workshop)));
+        // 8 riders, Bike and Edit riders: three pages of four rows.
+        let l = m.labels();
+        assert!(l.len() <= MAX_ITEMS, "{l:?}");
+        assert_eq!(&l[4..], ["Next (1/3)", "Back"]);
+        act(&mut m, Action::Click(4), &s, &r);
+        act(&mut m, Action::Click(5), &s, &r);
+        let l = m.labels();
+        assert_eq!(l[l.len() - 2], "Previous (3/3)");
+        assert!(l.iter().any(|x| x == "Edit riders"), "{l:?}");
+        // A row's command still runs from a later page.
+        let at = l.iter().position(|x| x == "Edit riders").unwrap();
+        act(&mut m, Action::Click(at), &s, &r);
+        assert_eq!(m.page(), Some(Page::Sub(sub::Page::Riders)));
+        // Back: the Workshop keeps its page.
+        act(&mut m, Action::Back, &s, &r);
+        assert_eq!(m.labels()[m.labels().len() - 2], "Previous (3/3)");
+    }
 }
