@@ -532,7 +532,11 @@ mod tests {
         let rider_fails = |f: &dyn Fn(&mut RiderReport)| failed(&|_, b| f(&mut b[0].riders[0]));
         let one = vec!["rider linux-1 [linux]".to_owned()];
         assert_eq!(
-            rider_fails(&|r| r.closed = Some("connection lost: timed out".into())),
+            rider_fails(&|r| {
+                // Lost a minute before the end: a real disconnect.
+                r.closed = Some("connection lost: timed out".into());
+                r.last_tick = 100;
+            }),
             one
         );
         // A reset right at the server's end: its closing message was lost.
