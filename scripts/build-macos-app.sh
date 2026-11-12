@@ -25,7 +25,8 @@ version=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version *= *"\(.*\)"/\1/p' Ca
 # OCW_SHA: commit for copies without .git (scripts/remote.sh).
 sha=${OCW_SHA:-$(git rev-parse --short HEAD 2>/dev/null || echo nogit)}
 arch=$(uname -m)
-cargo build --release -p ocw-desktop
+# OCW_FEATURES: extra cargo features, e.g. ocw-desktop/voice (release builds).
+cargo build --release -p ocw-desktop ${OCW_FEATURES:+--features "$OCW_FEATURES"}
 bin=target/release/$exe
 
 # Minimum macOS version the binary was built for (LC_BUILD_VERSION minos).
