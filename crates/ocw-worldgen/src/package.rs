@@ -405,6 +405,28 @@ mod tests {
         assert!(mid > 15.0 && mid < 100.0, "{mid}");
     }
 
+    /// A tunnel (spec §4.3): the terrain is neither pulled down to the
+    /// road nor cut above it, so it stays the natural hill (the client
+    /// finds the road under it and draws a tube there); it gets no road
+    /// strip either.
+    #[test]
+    fn terrain_stays_natural_above_a_tunnel() {
+        let mut g = graph();
+        g.edges[0].tunnel = true;
+        g.edges[1].bridge = false;
+        g.edges.truncate(1);
+        let t = GraphTerrain::new(&g, |_, _| 100.0, 15.0);
+        // Over the road (15 m) and beside it: the natural 100 m.
+        assert_eq!(t.height(500.0, 500.0), 100.0);
+        assert_eq!(t.height(500.0, 503.0), 100.0);
+        let pkg = build_package("t", (47.0, 9.5), &g, |_, _| 100.0, 1000.0, 11, 0);
+        assert!(pkg.tiles.values().all(|t| t.roads.is_empty()));
+        // The same road outside a tunnel pulls the terrain down to it.
+        g.edges[0].tunnel = false;
+        let t = GraphTerrain::new(&g, |_, _| 100.0, 15.0);
+        assert!(t.height(500.0, 500.0) < 20.0);
+    }
+
     /// A road across a steep slope: no mesh triangle may rise above the
     /// road surface (the artefact: green wedges sticking into the road).
     #[test]

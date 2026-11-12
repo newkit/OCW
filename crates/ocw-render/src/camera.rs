@@ -29,6 +29,14 @@
 //! camera still never ends up in a slope or behind a building; the mouse
 //! orbit and `C` (reset) stay relative to the tilted frame. Side and top
 //! views are not tilted.
+//!
+//! # Tunnels (spec §3.2)
+//!
+//! Where the road runs under the terrain ([`crate::tunnel`]) the solid
+//! terrain above would push the camera over the hill and hide the rider.
+//! There the camera (in every mode) blends into a tunnel camera close
+//! behind the rider inside the tube, below the terrain; terrain and
+//! buildings above do not move it, and the mouse orbit is ignored.
 
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
@@ -455,6 +463,12 @@ impl CameraTilt {
 pub(crate) struct TiltState {
     tilt: f32,
     rider: Option<Vec3>,
+    /// 0 = chase (or side, top) camera … 1 = tunnel camera ([`crate::tunnel`]).
+    tunnel: f32,
+    /// The smoothed eye of the chase camera while the tunnel camera blends in.
+    outside_eye: Option<Vec3>,
+    /// The smoothed eye of the tunnel camera.
+    tunnel_eye: Option<Vec3>,
 }
 
 /// Mouse orbit (left button drag), zoom (wheel) and reset (`C`), only in
@@ -558,6 +572,7 @@ pub(crate) fn follow(
     ground: Option<Res<crate::Ground>>,
     obstacles: Res<CameraObstacles>,
     tilt_cfg: Res<CameraTilt>,
+    tunnels: Option<Res<crate::tunnel::Tunnels>>,
     time: Res<Time>,
     mut camera: Query<&mut Transform, With<FollowCamera>>,
     mut focus: ResMut<CameraFocus>,
@@ -584,13 +599,26 @@ pub(crate) fn follow(
     let d = local.state.distance;
     let grade = ocw_world::average_grade(track, d - TILT_BEHIND_M, TILT_BEHIND_M + TILT_AHEAD_M);
     let goal = tilt_cfg.target(grade);
-    tilt.tilt = match tilt.rider {
-        Some(prev) if prev.distance(rider.translation) < 50.0 => {
-            tilt_cfg.smooth(tilt.tilt, goal, time.delta_secs())
-        }
-        _ => goal,
+    let jumped = tilt
+        .rider
+        .is_none_or(|prev| prev.distance(rider.translation) >= 50.0);
+    tilt.tilt = if jumped {
+        goal
+    } else {
+        tilt_cfg.smooth(tilt.tilt, goal, time.delta_secs())
     };
     tilt.rider = Some(rider.translation);
+    // In a tunnel the camera follows close behind the rider inside the
+    // tube; blended in before the portal and out after the exit.
+    let in_tunnel = tunnels
+        .as_deref()
+        .is_some_and(|t| crate::tunnel::tunnel_camera_wanted(&t.stretches, local.state.distance));
+    let was_in_tunnel = tilt.tunnel > 0.0;
+    tilt.tunnel = if jumped {
+        if in_tunnel { 1.0 } else { 0.0 }
+    } else {
+        crate::tunnel::smooth_blend(tilt.tunnel, in_tunnel, time.delta_secs())
+    };
     let (eye, target) = match *mode {
         CameraMode::Chase => orbit.eye_and_target_tilted(rider.translation, forward, tilt.tilt),
         CameraMode::Side => (
@@ -603,11 +631,16 @@ pub(crate) fn follow(
         ),
     };
     // Smooth the eye position; snap if far away (teleport, mode switch at start).
+    // While the tunnel camera is (partly) on, the chase eye is kept apart.
     let k = 1.0 - (-8.0 * time.delta_secs()).exp();
-    cam.translation = if cam.translation.distance(eye) > 50.0 {
+    let prev = match tilt.outside_eye {
+        Some(e) if was_in_tunnel => e,
+        _ => cam.translation,
+    };
+    cam.translation = if prev.distance(eye) > 50.0 {
         eye
     } else {
-        cam.translation.lerp(eye, k)
+        prev.lerp(eye, k)
     };
     let rider_head = rider.translation + Vec3::Y * 1.2;
     focus.set_if_neq(CameraFocus(Some(rider_head)));
@@ -633,6 +666,33 @@ pub(crate) fn follow(
         _ => target,
     };
     *smoothed_target = Some(target);
+    let target = if tilt.tunnel > 0.0 {
+        tilt.outside_eye = Some(cam.translation);
+        let tunnel_ground = |x: f64, z: f64| ground.as_deref().and_then(|g| (g.0)(x, z));
+        let (eye, inside) = crate::tunnel::tunnel_eye(
+            track,
+            &tunnel_ground,
+            local.state.distance,
+            local.state.lateral_offset,
+        );
+        // A very quick glide where the eye moves closer at the entry
+        // portal (a slower one would show the hillside for a moment).
+        let eye = match tilt.tunnel_eye {
+            Some(prev) if !jumped && prev.distance(eye) < 20.0 => {
+                prev.lerp(eye, 1.0 - (-time.delta_secs() / 0.05).exp())
+            }
+            _ => eye,
+        };
+        tilt.tunnel_eye = Some(eye);
+        // Smoothstep: no jerk where the blend starts and ends.
+        let u = tilt.tunnel * tilt.tunnel * (3.0 - 2.0 * tilt.tunnel);
+        cam.translation = cam.translation.lerp(eye, u);
+        target.lerp(inside, u)
+    } else {
+        tilt.outside_eye = None;
+        tilt.tunnel_eye = None;
+        target
+    };
     cam.look_at(target, Vec3::Y);
 }
 
@@ -1003,6 +1063,82 @@ mod tests {
         assert!(tilted.translation.y >= ground + MIN_CAMERA_CLEARANCE_M - 1e-3);
         // Looking further up.
         assert!(tilted.forward().y > level.forward().y);
+    }
+
+    /// In a tunnel (the road under a hill) the real `follow` system puts
+    /// the camera close behind the rider inside the tube, below the
+    /// terrain, instead of lifting it over the hill; outside it is the
+    /// chase camera above the ground again.
+    #[test]
+    fn follow_stays_in_the_tunnel_with_the_rider() {
+        use crate::tunnel::{TUBE_WALL_M, Tunnels, covered_stretches};
+        use ocw_core::RiderId;
+        use ocw_world::Route;
+
+        // A straight road at 100 m along +x, under a 40 m hill at x 800 … 1200.
+        let pts: Vec<[f64; 3]> = (0..=400)
+            .map(|i| [f64::from(i) * 5.0, 100.0, 0.0])
+            .collect();
+        let route = Route::from_points("tunnel", "Tunnel", pts, false, 6.0).unwrap();
+        let hill = |x: f64, _: f64| {
+            Some(if (800.0..=1200.0).contains(&x) {
+                140.0
+            } else {
+                99.7
+            })
+        };
+        let run = |distance: f64| {
+            let mut view = RideView::new(route.clone());
+            view.riders.push(crate::RiderView {
+                id: RiderId(1),
+                name: "me".into(),
+                state: ocw_sim::RiderState {
+                    distance,
+                    ..default()
+                },
+                power_w: 0.0,
+                cadence_rpm: None,
+                heart_rate_bpm: None,
+                is_local: true,
+                bike: Default::default(),
+                look: None,
+            });
+            let mut tunnels = Tunnels::default();
+            tunnels.stretches = covered_stretches(&route, &hill, 0.0, 2000.0);
+            let mut app = App::new();
+            app.add_plugins(MinimalPlugins)
+                .insert_resource(view)
+                .insert_resource(crate::Ground(Arc::new(hill)))
+                .insert_resource(tunnels)
+                .init_resource::<CameraTilt>()
+                .init_resource::<CameraMode>()
+                .init_resource::<CameraOrbit>()
+                .init_resource::<CameraObstacles>()
+                .init_resource::<CameraFocus>()
+                .add_systems(Update, follow);
+            let cam = app
+                .world_mut()
+                .spawn((Transform::from_xyz(1e4, 0.0, 1e4), FollowCamera))
+                .id();
+            app.update();
+            *app.world().get::<Transform>(cam).unwrap()
+        };
+        let inside = run(1000.0);
+        let p = inside.translation;
+        assert!(
+            p.y > 100.0 + MIN_CAMERA_CLEARANCE_M && p.y < 100.0 + TUBE_WALL_M as f32,
+            "{p}"
+        );
+        assert!(p.x < 1000.0 && p.x > 1000.0 - 6.0, "close behind: {p}");
+        assert!(p.z.abs() < 3.0, "on the road: {p}");
+        assert!(inside.forward().y.abs() < 0.2, "looking along the tube");
+        // Just before the portal the tunnel camera is already on …
+        assert!(run(790.0).translation.y < 100.0 + TUBE_WALL_M as f32);
+        // … and well outside it is the chase camera again, above the ground.
+        let outside = run(500.0).translation;
+        let chase = CameraOrbit::default();
+        assert!(outside.x < 500.0 - chase.distance * 0.5, "{outside}");
+        assert!(outside.y >= 99.7 + MIN_CAMERA_CLEARANCE_M, "{outside}");
     }
 
     #[test]
