@@ -546,7 +546,8 @@ Manage them in the in-game menu (Esc / Start): *Workshop* chooses the rider
 and opens their *Bike* page (the bike, its physics numbers, frame / jersey /
 helmet colour and kit, all with ← / →),
 *Settings → Riders* edits them (weight, height, FTP with ← / →; add, delete),
-and the other *Settings* pages (Controls, Trainer, Audio, Display, Strava) change the
+and the other *Settings* pages (Controls, Trainer, Audio, Display, Voice; the
+Strava account page is under *Navi → Strava*, also reachable as a tab) change the
 settings above with ← / → (D-pad) and Enter (A); Q / E (LB / RB) switch between
 these pages. In the console: `riders.add` / `riders.edit` (also `--rename`,
 `--bike`, `--frame-color` …) / `riders.select`, e.g.

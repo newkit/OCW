@@ -17,7 +17,7 @@ cargo test --workspace                                   # all unit tests
 cargo test -p ocw-sim prediction                         # one crate / test name filter
 cargo clippy --workspace --all-targets -- -D warnings    # CI treats warnings as errors
 cargo fmt --all
-cargo check -p ocw-core -p ocw-sim -p ocw-protocol -p ocw-world --target wasm32-unknown-unknown
+cargo check -p ocw-core -p ocw-sim -p ocw-protocol -p ocw-world -p ocw-voice --target wasm32-unknown-unknown
 cargo run -p ocw-server -- --bots 3 --seconds 10 --fast  # headless server
 ```
 
@@ -53,7 +53,7 @@ These cut across many sections and shape all future code:
 
 - **Server-authoritative simulation (§6.1, §5.2).** The desktop client sends only timestamped sensor inputs (power, cadence, heart rate) and steering intents. The game server runs physics for all riders and is the truth. The client predicts only its own rider and reconciles. Single-player/offline runs the same server logic in-process ("local server"), so there is one code path.
 - **Riders move in 1D along their path** (distance along route + lateral offset); in free ride the path is extended at each junction. 3D positions are derived from road geometry only for rendering. Fixed 50 Hz physics, 10 Hz state broadcast.
-- **Engine independence (§10).** Only `ocw-render` and `apps/desktop` depend on Bevy. `ocw-core`, `ocw-sim`, `ocw-protocol` and `ocw-world` must also build for `wasm32-unknown-unknown` (§3.5) – no direct threads, file system or sockets there.
+- **Engine independence (§10).** Only `ocw-render` and `apps/desktop` depend on Bevy. `ocw-core`, `ocw-sim`, `ocw-protocol`, `ocw-world` and `ocw-voice` (without its `livekit` feature) must also build for `wasm32-unknown-unknown` (§3.5) – no direct threads, file system or sockets there.
 - **Hardware talks only to the client.** BLE (btleplug, FTMS) runs on its own runtime behind a `DeviceBackend` trait. ANT+ is **deferred**.
 - **World data (§4).** OSM PBF vector data + DEM are converted by `world-builder` on our build infrastructure into signed world packages. The client downloads them once and renders locally; no map images, no downloads during a ride. The road is the elevation reference and the terrain adapts to it. 1 km tiles with tile-local `f32` coordinates and a floating origin.
 - **Voice is separate** from game state: LiveKit/WebRTC, never over the QUIC game connection.
