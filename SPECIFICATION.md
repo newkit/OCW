@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.24 – November 2026
+Version 2.25 – November 2026
 
 | Version | Change |
 |---|---|
@@ -43,6 +43,7 @@ Version 2.24 – November 2026
 | 2.22 | Render rate and FPS counter (§3.2): wall-clock FPS badge, `--log-fps`, `--no-vsync`, `--max-fps`; multiplayer test (§11.4.1): no client-side multiplayer bottleneck (measured), real-time 25 fps kiosk/camera videos with the FPS counter, locked kiosk draws with `--no-vsync --max-fps 60`, camera on the release build; §15 frame-rate measurement |
 | 2.23 | Release builds with voice on all platforms (§11.3, §7): every release binary is built with the LiveKit backend (`--features ocw-desktop/voice`; `OCW_FEATURES` in the packaging scripts); Windows links the C runtime statically (`.cargo/config.toml`, required by LiveKit's /MT libwebrtc, no VC++ redistributable needed); the macOS app script works around Command Line Tools that hide the SDK's libc++ headers; dropping the LiveKit backend joins its threads (Windows access violation in tests). Release `v0.1.0-72238db` |
 | 2.24 | Phase 8 planned: textures and regional look (§14 Phase 8): licence rule for textures/imagery/models, research results on open aerial and satellite imagery (Orthophoto Liechtenstein / SWISSIMAGE, LGL DOP20, own Sentinel-2 composite, Copernicus forest type), CC0 material libraries, procedural generation, region calibration (palettes, roof colour per building), milestones T1–T7 and open questions Q1–Q11; §4.6 imagery table corrected (EOX licences per year) |
+| 2.25 | Phase 9 planned: sky, time, seasons and weather (§14 Phase 9): real local time and sky at the rider's world position (sun, moon, stars moving, twilight, night lighting), seasons by date and altitude, time machine (any date/time, time speed, presets), weather simulation and weather machine (presets, custom, transitions), optional weather physics (wind, wetness, air density; per session), real weather from open providers via the server (MeteoSwiss, DWD, MET Norway; Open-Meteo non-commercial; ERA5 for historic weather), milestones S1–S8, open questions Q1–Q10 |
 
 ---
 
@@ -1713,7 +1714,7 @@ Done so far for land use and buildings (§4.6): OSM land-use classes rasterised 
 
 - Performance optimization.
 - Large regions.
-- Weather and times of day.
+- Weather and times of day (planned in detail as Phase 9: sky, time machine, weather machine, real weather).
 - Training history.
 - Events (menu: calendar, §3.2.1).
 - Key and button rebinding, accessibility (§3.2.1, M9).
@@ -1818,6 +1819,141 @@ Yes, usable imagery exists for both regions, at very high resolution and under o
 - **Q9 – Better terrain:** switch from SRTM (30 m) to swissALTI3D (Liechtenstein) and DGM1 (Black Forest), both open? Cliffs, hairpins and riverbanks would match much better; packages grow.
 - **Q10 – Priority:** what first: ground and roads (most visible while riding), houses (towns), or riders and bikes?
 - **Q11 – Brands:** confirm: no real bike or kit brands / logos, also not as cosmetics.
+
+---
+
+### Phase 9 – Sky, Time, Seasons and Weather (planning, 2026-11-12)
+
+**Goal:** the world shows the **real sky, season and weather of the place the rider is riding**, at the real moment: the sun, moon and stars in the right position and moving, daylight and night, the season of the date, and today's weather there. On top, two machines let riders choose. The **time machine** sets any date and time; the **weather machine** sets any weather.
+
+#### 9A – Principles
+
+- **Default = real.** "Now" means the real current instant (UTC) shown at the position of the rider **in the world**: the world's local time zone and daylight saving time, the sun's position over that spot, today's weather there. Example: a rider in Tokyo riding Liechtenstein at 14:00 Tokyo time sees 06:00 in Liechtenstein, i.e. sunrise (Q1).
+- **One clock and one weather per session, owned by the game server** (server-authoritative, §6.1): `WorldClock` (instant, time speed, mode real/fixed) and `WeatherState` are server state, sent in `Welcome` and in snapshots (new protobuf fields, only added). Single-player runs the same code in the local server, so solo riders are their own "host".
+- **Visual vs. physical.** Light, sky, season and most weather effects are visual. Wind, road wetness and air density can also change the **physics** (§5). They are server-side and switched per session or event ("weather affects physics": on / off; off by default in races for fairness, Q4).
+- **Deterministic and testable.** All astronomy, time-zone, season and weather logic is pure Rust outside Bevy, builds for wasm (§3.5), and is unit-tested against reference values. The renderer only draws the state.
+- **No network in the client for weather.** The game server or backend fetches real weather (9F). The client never sends the rider's position to a weather provider (privacy, §12).
+
+#### 9B – Day and night: sun, moon, stars (circadian)
+
+| Element | How | Accuracy target |
+|---|---|---|
+| Local time | IANA time-zone database (tzdb, public domain) via a Rust crate (e.g. `jiff` / `chrono-tz`). Each world package stores the time-zone id(s) of its area (package metadata, set by the world builder from the region) | DST changes exactly as in reality |
+| Sun | Solar position (NOAA / Meeus algorithms; SPA for higher precision) from instant + latitude / longitude: azimuth, elevation, sunrise / sunset, civil / nautical / astronomical twilight | < 0.05° (well below what is visible) |
+| Moon | Position and phase (Meeus, truncated ELP series), illuminated fraction and orientation of the terminator, earthshine; rises and sets, moves through the night | < 0.3° |
+| Stars | Bright star catalogue (≈ 9 000 stars to magnitude 6.5, real colours from B–V index) placed on the celestial sphere, rotated by local sidereal time (GMST + longitude) around the celestial pole; twinkling near the horizon | constellations exactly where they are |
+| Planets (optional) | Venus, Mars, Jupiter, Saturn (VSOP87 truncated / Meeus) | < 0.5° |
+| Milky Way | procedural band from galactic coordinates (own work), not a photo (photo maps are CC BY-SA, 9H) | – |
+| Sky colour and light | physically based atmosphere (Bevy's atmosphere rendering if available in the Bevy version used, else own Preetham / Hillaire model): sky colour, sun colour and intensity, aerial perspective, sunrise / sunset glow, blue hour; auto-exposure | believable, not measured |
+| Mountains block the sun | the sun's horizon from the DEM (§4.3): in the Malbun valley the sun sets behind the ridge earlier than the astronomical sunset; long shadows | per tile, computed by the world builder |
+| Night | moonlight (intensity from phase and elevation), starlight, light pollution near towns (fewer stars), **street lamps** from OSM (`highway=street_lamp`, roads with `lit=yes`), lit windows in houses at night, **bike lights**: front and rear lamps on all riders (cosmetic, §2.5), automatic or by setting | – |
+| HUD | world local time (24 h) and an optional sun / moon icon; the ISO timestamp of photos stays separate (art project, top right) | – |
+
+The celestial bodies move continuously with the session clock: at time speed ×1 a sunset takes as long as in reality; with the time machine (9D) it can be a time-lapse.
+
+#### 9C – Seasons
+
+The date drives the look of the landscape (connects to Phase 8, Q5):
+
+- **Vegetation:** deciduous trees (by forest type, Phase 8) leaf out in spring, are green in summer, colour in autumn and are bare in winter; conifers stay green. Meadows and fields follow a crop calendar (green → yellow → harvested / ploughed). Timing shifts with latitude and **altitude** (spring arrives later at 1 600 m in Malbun than at 450 m in Vaduz): a phenology model with simple degree-day rules, tunable per region.
+- **Snow cover:** snow line by date and altitude (climatology) or, with real weather, from the actual snow (9F); snow on roofs, trees, meadows; roads cleared (they stay rideable).
+- **Day length and sun height** follow automatically from 9B.
+- **Imagery:** Phase 8 tints come from summer imagery; seasons modify them by rules. Optional per-season tints from Sentinel-2 composites (Q5 of Phase 8).
+
+#### 9D – Time machine
+
+The rider (in solo) or the host / event organiser (in a shared session) sets **any date and time**:
+
+- **Modes:** *Real* (now, default), *Fixed* (a chosen instant, e.g. 21 June 2026 21:15), *Offset* (now + n hours), plus a **time speed** (paused, ×1, ×10, ×60, ×600: a whole day in a few minutes of riding, the time-lapse sunset).
+- **Presets:** sunrise, golden hour, noon, sunset, blue hour, midnight, next full moon, summer / winter solstice, and "same time as at home" (the rider's own time zone instead of the world's).
+- **Range:** years 1900–2100. The astronomy is valid there; seasons and snow follow the date. "Historic weather" (9F) combines naturally: ride the Malbun climb on a past date with the weather of that day.
+- **UI:** menu page *Time machine* (Navi / Ride), a world clock in the HUD with the mode, console `time` (today a dev command, §3.2.1; it becomes a user command, with permissions in shared sessions).
+
+#### 9E – Weather simulation and weather machine
+
+**Weather state** (server, per session; optionally per area for large worlds): cloud cover and type (cumulus, stratus, cirrus, cumulonimbus), precipitation (none, drizzle, rain, thunderstorm, snow, hail) and intensity, visibility / fog (including valley fog and low cloud on the climb), wind speed, direction and gusts, temperature, humidity, pressure, **road wetness** (builds up in rain, dries afterwards depending on sun, wind and temperature; puddles in hollows), lightning.
+
+**Rendering and sound:**
+
+- **Visual:** procedural / volumetric clouds and their shadows on the terrain, rain and snow particles around the camera, wet roads (darker, glossy, reflections, spray from wheels), fog, lightning, snow accumulation.
+- **Movement:** wind moves trees, grass and flags.
+- **Sound** (game audio, §3.3): rain, wind gusts, thunder, wet tyre hiss.
+
+**Physics (optional per session, 9A):**
+
+- **Wind** enters the aero drag as the air speed relative to the rider (head-, tail- and crosswind along the road's bearing). It also changes drafting: with crosswind the shelter shifts sideways (echelons).
+- **Wetness** raises rolling resistance slightly.
+- **Temperature, pressure and altitude** give the air density in the drag term.
+- **Trainer:** the gradient sent to the trainer in SIM mode stays the road's gradient. The extra wind load is added as resistance where the trainer supports it (FTMS wind speed / Wahoo wind), else only in the simulated speed.
+
+**Weather machine:** the rider / host chooses
+
+- **Mode:** *Real* (9F), *Preset* (clear, fair-weather clouds, overcast, fog, drizzle, rain, thunderstorm, snowfall, windy, storm), or *Custom* (sliders: clouds, precipitation, wind speed / direction, temperature, fog, road wetness).
+- **Transitions:** smooth over a chosen time, or immediate.
+- **Mixed modes:** combinations such as "real weather but no rain".
+
+UI: menu page *Weather machine*, HUD weather icon with temperature and a wind arrow relative to the rider's heading, console `weather` (today a dev command, §3.2.1).
+
+**Without real data**, the weather simulation itself evolves the weather plausibly (a simple stochastic model: fronts passing, showers, diurnal cumulus, valley fog in the morning), seeded per session, so a long ride is not static.
+
+#### 9F – Real weather data
+
+The backend / game server fetches weather for the **area of the world package** (a coarse grid, e.g. one point per 5–10 km and per altitude band, not per rider). It caches it (refresh every 15–60 min, interpolated in time and space) and feeds the session's weather state. Results are cached per region, so many riders cause few requests. Without network, the session falls back to the simulation (9E).
+
+| Provider | Coverage | Licence / terms (as found 2026-11-12) | Use |
+|---|---|---|---|
+| **MeteoSwiss Open Data** (Switzerland and Liechtenstein, gradually since 2025-05-22) | CH / LI, stations and models (ICON-CH) | **CC BY 4.0**, "Source: MeteoSwiss"; fair-use limits on the infrastructure | Liechtenstein world |
+| **DWD Open Data** (opendata.dwd.de) | Germany, ICON-D2 model, stations, radar | open data, "Source: Deutscher Wetterdienst" (exact licence to be verified) | Black Forest world |
+| **MET Norway** api.met.no Locationforecast 2.0 | global point forecasts | free; requires an identifying User-Agent and caching; licence reported as CC BY 4.0 / NLOD (to be verified) | global fallback (server-side only, generic product User-Agent, never personal data) |
+| **Open-Meteo** | global, forecast + historical | data CC BY 4.0, but the **free API is non-commercial only** (< 10 000 calls/day); commercial use needs a subscription; can also be self-hosted (open source) | prototyping; production only self-hosted or with a subscription (Q6) |
+| **Copernicus ERA5 / ERA5-Land** (reanalysis, hourly since 1940) | global, 9–31 km | Copernicus licence: free, attribution | **historic weather** for the time machine |
+| NOAA GFS | global model, GRIB | public domain | heavy raw data; server-side alternative |
+
+Attribution of the provider used appears on the credits screen and in the weather panel ("Weather: MeteoSwiss"), as for map data (§13).
+
+#### 9G – Architecture and milestones (proposal)
+
+- **New crates:**
+  - `ocw-sky`: time zones, ephemeris for sun, moon, stars and planets, twilight, sidereal time, season and phenology. Pure, wasm.
+  - `ocw-weather`: weather state, transitions, stochastic simulation, physics coefficients. Pure, wasm. Provider clients sit behind a `WeatherProvider` trait on the server side only (no network in tests: recorded fixtures).
+- **Server:** session clock and weather in `GameServer`; host / event permissions for the machines; protocol fields added to `Welcome` / `Snapshot`.
+- **Renderer (`ocw-render`):**
+  - sky and atmosphere, sun / moon / star rendering;
+  - light colour and shadows, night lighting (street lamps, windows, bike lights);
+  - clouds, precipitation, wetness and fog;
+  - seasonal vegetation parameters and snow.
+- **World builder:** time-zone id per package, horizon / sun-blocking per tile from the DEM, street-lamp and `lit` data, phenology parameters per region.
+- **Milestones:**
+  - **S1** – time & sun: world clock, real local time with DST, sun position, day / night light, HUD clock;
+  - **S2** – night sky: moon (phases), stars, planets, Milky Way, night lighting;
+  - **S3** – time machine: modes, presets, time speed, menu, console, session permissions;
+  - **S4** – weather simulation and rendering: clouds, rain / snow, fog, wet roads, wind in vegetation, sound;
+  - **S5** – weather machine: presets, custom, transitions, menu, console;
+  - **S6** – physics: wind / wetness / air density (server-side, per-session switch, trainer wind resistance);
+  - **S7** – real weather: providers, caching, region grid, fallback, attribution; historic weather (ERA5);
+  - **S8** – seasons: phenology, snow cover, crop calendar.
+- **Unit tests:**
+  - **Astronomy:** sunrise / sunset / solar noon for Vaduz and Freiburg on fixed dates against NOAA reference values (± 1 min); sun azimuth / elevation against SPA reference points; moon phases against known new / full moon dates (± 1 h); a star's altitude / azimuth against reference at a given instant; sidereal time.
+  - **Time:** DST transitions in Europe/Vaduz and Europe/Berlin (the skipped and the repeated hour); time-machine arithmetic (speed, pause, offset); session clock in snapshots.
+  - **Weather:** state transitions (deterministic with a seed); road wetness build-up and drying; provider parsing from recorded fixtures (no network); caching and fallback; attribution.
+  - **Physics:** a headwind needs more power for the same speed, a tailwind less, a crosswind none; drafting offset in crosswind; air density from temperature / altitude; switch off = identical physics to today.
+  - **Seasons and protocol:** phenology dates shifting with altitude; protocol round-trips.
+- **Visual tests:** the scene harness (§11.4) renders fixed viewpoints at fixed instants (sunrise / noon / sunset / full-moon midnight / winter / storm) for comparison and for the art project's build history.
+
+**Result:** riding Vaduz–Malbun at 20:30 in June shows the real sunset behind the ridge, the first stars and the street lamps of Malbun; the time machine makes it a winter night with full moon and snow; the weather machine adds a thunderstorm or today's real weather.
+
+#### 9H – Open questions (for the user)
+
+- **Q1 – Whose "now"?** The world's local time at the rider's world position (recommended, it matches the place), or the rider's own local time (riding in the evening at home = evening in the world)? Proposal: world time by default, "same time as at home" as a preset.
+- **Q2 – Shared sessions:** who controls the time and weather machines in group rides and events: host / organiser only (recommended), or a personal visual-only override per rider (my sky differs from yours, physics stays the session's)?
+- **Q3 – Night riding:** is riding in full darkness desired (with bike lights), or should night have a minimum brightness for training comfort?
+- **Q4 – Weather and physics:** should wind and wet roads change the physics (more realism, but power/speed differ from the trainer feel), and in races too? Proposal: on in free ride and solo, off in races unless the organiser enables it.
+- **Q5 – Trainer wind resistance:** send the wind load to trainers that support it (FTMS / Wahoo wind), or keep the trainer on gradient only?
+- **Q6 – Weather provider:** MeteoSwiss + DWD (regional, open) with MET Norway as a global fallback (recommended), or Open-Meteo (simplest API; non-commercial on the free tier, else self-hosting or a subscription)? Is a commercial release planned (same as Phase 8 Q2)?
+- **Q7 – Star catalogue licence:** the Yale Bright Star Catalogue's licence is not clearly documented (Debian ships it in *non-free*), and the HYG database is CC BY-SA 4.0. Acceptable alternatives: ESA Hipparcos / Gaia-derived lists (terms to check), or a catalogue we derive ourselves from public-domain data. Decide after checking; the code doesn't depend on the choice.
+- **Q8 – Historic weather:** wanted (ride a famous day, e.g. a race day in the past, with its real weather)? It needs ERA5 downloads on our infrastructure.
+- **Q9 – Extreme weather:** allow storms, hail and heavy snow (visually), or cap at "rideable" weather?
+- **Q10 – Priority:** order of S1–S8. Proposal: S1 → S3 → S2 → S4 → S5 → S7 → S8 → S6.
 
 ---
 
