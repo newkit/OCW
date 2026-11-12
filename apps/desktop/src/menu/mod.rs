@@ -238,8 +238,11 @@ fn write_view(
     settings: Option<Res<UserSettings>>,
     riders: Option<Res<RiderProfiles>>,
     catalog: Option<Res<RideCatalog>>,
-    audio: Option<Res<AudioDeviceList>>,
-    voice: Option<Res<crate::voice::VoiceMenuInfo>>,
+    // Audio and voice device lists, grouped (system parameter limit).
+    (audio, voice): (
+        Option<Res<AudioDeviceList>>,
+        Option<Res<crate::voice::VoiceMenuInfo>>,
+    ),
     mut view: ResMut<MenuView>,
 ) {
     // Values changed by the menu's commands (or the console) show at once.
