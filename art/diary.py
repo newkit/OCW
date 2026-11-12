@@ -1101,6 +1101,11 @@ def publish(days: list[str]):
         run(["zip", "-q", "-r", z, d], cwd=HIST)
         files.append(z)
     files += sorted(OUT.glob("*.mp4"))
+    # Checksums of every zip and video known locally (all days, not only these).
+    sums = HIST / "SHA256SUMS"
+    sums.write_text("".join(f"{sha(f)}  {f.name}\n" for f in
+                            [*sorted(HIST.glob("ocw-build-history-*.zip")), *sorted(OUT.glob("*.mp4"))]))
+    files.append(sums)
     for f in files:
         log(f"upload {f.name} ({f.stat().st_size / 1e6:.1f} MB)")
     run(["gh", "release", "upload", RELEASE, "-R", "newkit/OCW", "--clobber", *files])
