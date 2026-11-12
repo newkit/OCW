@@ -2245,6 +2245,64 @@ mod tests {
         assert!(h.client.prediction_error().abs() < 0.5);
     }
 
+    /// Regression (pilot package, Fürst-Franz-Josef-Strasse in Vaduz): a
+    /// U-turn on a one-way street sent the rider back against it; at the
+    /// vertex behind there was no exit, so an automatic U-turn followed a
+    /// few metres on and the rider turned back and forth in place. Now the
+    /// rider rides on against the one-way road to the first legal exit, and
+    /// client and server agree.
+    #[test]
+    fn free_ride_u_turn_on_a_one_way_street_rides_back() {
+        use ocw_world::graph::Oneway;
+        let mut g = grid();
+        // The top row one-way eastwards; vertex 1 only joins it (no road
+        // south), so riding back west it has no legal exit.
+        g.edges.retain(|e| !(e.from.0 == 1 && e.to.0 == 5));
+        for e in &mut g.edges {
+            if e.from.0 < 3 && e.to.0 == e.from.0 + 1 {
+                e.oneway = Oneway::Forward;
+            }
+        }
+        let net = Arc::new(RoadNetwork::new(g));
+        let edge = (0..net.graph().edges.len())
+            .find(|&e| net.edge(e).from.0 == 1 && net.edge(e).to.0 == 2)
+            .unwrap();
+        let server = GameServer::new(
+            ocw_server::Course::FreeRide {
+                net: net.clone(),
+                start: ocw_sim::FreeRideStart {
+                    edge,
+                    offset_m: 100.0,
+                    forward: true,
+                },
+            },
+            ServerConfig {
+                allow_dev_commands: true,
+                bots: 0,
+                start_m: 0.0,
+                allow_local_events: true,
+            },
+        );
+        let mut h = Harness::with(
+            server,
+            ClientCore::free_ride(net, "Oneway", RiderProfile::default()),
+        );
+        h.ride(250.0, 3.0);
+        let msg = h.client.u_turn(h.time_s).expect("u-turn");
+        h.send(&msg);
+        // Back west past vertex 1 (x = 300) on the one-way road against it.
+        let mut west_of_vertex_1 = false;
+        for _ in 0..50 {
+            h.ride(250.0, 1.0);
+            let (c, s) = h.positions();
+            assert!(close(c.position, s.position, 0.5), "{c:?} vs {s:?}");
+            west_of_vertex_1 |= c.position[0] < 250.0;
+        }
+        let (c, _) = h.positions();
+        assert!(west_of_vertex_1, "still near the U-turn: {c:?}");
+        assert!(h.client.prediction_error().abs() < 0.5);
+    }
+
     /// A route on the grid: from vertex 1 east to 2, south to 6 and 10,
     /// east to 11.
     fn grid_route(net: &RoadNetwork) -> Arc<RoutePlan> {

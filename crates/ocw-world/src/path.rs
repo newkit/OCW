@@ -56,6 +56,9 @@ pub const UTURN_EDGE_MARGIN_M: f64 = 0.4;
 /// Before the loop the rider is steered to the centreline over this
 /// distance (m), so the loop – centred on it – stays on the road.
 pub const UTURN_RUNUP_M: f64 = 20.0;
+/// How far beyond the slow-down a manual U-turn on a one-way road may move
+/// ahead to the first stretch that may be ridden back (m).
+pub const UTURN_ONEWAY_AHEAD_M: f64 = 300.0;
 /// Highest speed through the U-turn loop (m/s, ~10 km/h, spec §2.2.2).
 pub const UTURN_SPEED_MPS: f64 = 2.8;
 /// Sideways acceleration through tight U-turn loops (m/s²).
@@ -936,9 +939,12 @@ impl RidePath {
 
     /// Manual U-turn (spec §2.2.2) for a rider at `rider_m` riding at
     /// `speed`: the loop starts after the slow-down to U-turn speed; the
-    /// path beyond is replaced by the way back. Returns the first changed
-    /// step index, or `None` if no U-turn fits (in a loop already, or no
-    /// room before the next corner).
+    /// path beyond is replaced by the way back. On a one-way road the loop
+    /// moves ahead to the first stretch of the known path that may be
+    /// ridden back (at most [`UTURN_ONEWAY_AHEAD_M`] further); without one
+    /// the rider turns anyway and rides back against the one-way road.
+    /// Returns the first changed step index, or `None` if no U-turn fits
+    /// (in a loop already, or no room before the next corner).
     pub fn u_turn(&mut self, rider_m: f64, speed: f64) -> Option<u64> {
         if self.in_turnaround(rider_m) {
             return None;
@@ -947,31 +953,51 @@ impl RidePath {
         let brake = ((speed * speed - v0 * v0) / (2.0 * SLOW_DOWN_MPS2)).max(0.0);
         // Room to slow down and to steer to the centreline first.
         let at = rider_m + brake.max(UTURN_RUNUP_M);
-        let k = self.step_index_at(at);
-        for k in k..(k + 3).min(self.steps.len()) {
+        let first = self.step_index_at(at);
+        // Where the loop fits: (step index, metres into its raw edge line).
+        let fits = |k: usize| -> Option<f64> {
             let s = &self.steps[k];
-            let Segment::Edge { edge, from_m, to_m } = s.seg else {
-                return None; // turning already
-            };
             let next_trim = self.steps.get(k + 1).map_or(0.0, |n| n.trim_start);
             // Metres into the raw edge line (after the rounded corner).
             let into = at.max(s.start_m) - s.start_m;
             let raw_s = (into - s.fillet_len).max(1.0) + s.trim_start;
-            if raw_s > s.raw_len() - next_trim - 1.0 {
-                continue;
+            (raw_s <= s.raw_len() - next_trim - 1.0).then_some(raw_s)
+        };
+        let mut window = Vec::new();
+        for k in first..(first + 3).min(self.steps.len()) {
+            if !matches!(self.steps[k].seg, Segment::Edge { .. }) {
+                break; // turning already
             }
-            let cut = if to_m >= from_m {
-                from_m + raw_s
-            } else {
-                from_m - raw_s
-            };
-            self.steps.truncate(k + 1);
-            self.cut_last(edge, from_m, cut);
-            self.push_turnaround(TurnReason::Manual);
-            self.rebuild_route();
-            return Some(self.first_index + k as u64);
+            window.push(k);
         }
-        None
+        // Rather not back against a one-way road (or round a roundabout the
+        // wrong way): the first stretch ahead within reach that may be
+        // ridden back; only if there is none, here against the one-way road
+        // (the rider then rides on against it to the first legal exit,
+        // `RoadNetwork::exits`).
+        let two_way = window
+            .iter()
+            .copied()
+            .filter(|&k| {
+                let s = &self.steps[k];
+                s.start_m <= at + UTURN_ONEWAY_AHEAD_M
+                    && self.net.edge(s.edge).oneway.allows(!s.forward())
+            })
+            .find_map(|k| Some((k, fits(k)?)));
+        let (k, raw_s) = two_way.or_else(|| window.iter().find_map(|&k| Some((k, fits(k)?))))?;
+        let Segment::Edge { edge, from_m, to_m } = self.steps[k].seg else {
+            unreachable!("edge steps only");
+        };
+        let cut = if to_m >= from_m {
+            from_m + raw_s
+        } else {
+            from_m - raw_s
+        };
+        self.steps.truncate(k + 1);
+        self.cut_last(edge, from_m, cut);
+        self.push_turnaround(TurnReason::Manual);
+        self.rebuild_route();
+        Some(self.first_index + k as u64)
     }
 
     /// Replaces the steps from `index` on with `segments` (a server
@@ -1596,6 +1622,74 @@ mod tests {
         assert!(p.sample(t2).position[0] < 20.0);
         // No U-turn inside a loop.
         assert_eq!(p.u_turn(at + 2.0, 2.8), None);
+    }
+
+    /// Regression (pilot package: Fürst-Franz-Josef-Strasse in Vaduz, a
+    /// one-way street, and roundabouts): a manual U-turn on a one-way road
+    /// sent the rider back against it; at the next vertex there was no
+    /// exit, so an automatic U-turn followed a few metres on and the rider
+    /// turned back and forth in place. Now the loop goes on the first
+    /// stretch ahead that may be ridden back, and without one the rider
+    /// rides on against the one-way road to the first legal exit.
+    #[test]
+    fn manual_u_turn_on_a_one_way_road_turns_once() {
+        // West → east: a one-way stretch 0 → 1 (edge 0, 60 m), then a
+        // two-way road 1 → 2 (edge 1); a side road at 1 (edge 2) so the
+        // way back has more than one exit.
+        let v = [[0.0, 0.0], [60.0, 0.0], [400.0, 0.0], [60.0, 300.0]];
+        let mut g = graph(&v, &[(0, 1), (1, 2), (1, 3)]);
+        g.edges[0].oneway = crate::graph::Oneway::Forward;
+        let n = net(g);
+        let mut p = RidePath::start(n.clone(), 0, 5.0, true, 0.0, 0);
+        // At the lock point of the junction at vertex 1: straight on east.
+        p.extend(45.0, &mut |j| {
+            j.exits.iter().position(|e| e.edge == 1).expect("east exit")
+        });
+        assert!(p.u_turn(10.0, 5.0).is_some());
+        let (at, reason) = p.turnaround_ahead(10.0).unwrap();
+        assert_eq!(reason, TurnReason::Manual);
+        // Not on the one-way stretch: just after the junction (55 m on).
+        assert!(at > 55.0 && at < 70.0, "{at}");
+        // No step of the path runs against a one-way road.
+        let against = |p: &RidePath| {
+            p.segments_from(p.first_index()).iter().any(|s| match *s {
+                Segment::Edge { edge, from_m, to_m } => !n.edge(edge).oneway.allows(to_m >= from_m),
+                Segment::Turnaround(_) => false,
+            })
+        };
+        assert!(!against(&p));
+        // Riding on: back at vertex 1 the only way on is the side road (the
+        // one-way stretch may not be ridden west) – no second U-turn.
+        p.extend(at + 40.0, &mut |j| j.default);
+        let (next, why) = p.turnaround_ahead(at + 40.0).unwrap();
+        // The next turn is the side road's dead end, 300 m on.
+        assert_eq!(why, TurnReason::DeadEnd, "{:?}", p.segments_from(0));
+        assert!(next > at + 300.0, "{next} vs {at}");
+        assert!(!against(&p));
+        assert_eq!(
+            p.locate(at + 60.0).map(|l| l.0),
+            Some(2),
+            "on the side road"
+        );
+        // Only one-way road ahead (a chain 0 → 1 → 2 of one-way edges, the
+        // rider on the second): the U-turn goes back against it and at
+        // vertex 1, with no legal exit, on against edge 0 – not a second
+        // U-turn a few metres on.
+        let v = [[-500.0, 0.0], [0.0, 0.0], [500.0, 0.0]];
+        let mut g = graph(&v, &[(0, 1), (1, 2)]);
+        g.edges[0].oneway = crate::graph::Oneway::Forward;
+        g.edges[1].oneway = crate::graph::Oneway::Forward;
+        let mut p = RidePath::start(net(g), 1, 100.0, true, 0.0, 0);
+        p.extend(0.0, &mut straight);
+        assert!(p.u_turn(10.0, 5.0).is_some());
+        let (at, reason) = p.turnaround_ahead(10.0).unwrap();
+        assert_eq!(reason, TurnReason::Manual);
+        assert!(at < 40.0, "{at}");
+        p.extend(at + 40.0, &mut straight);
+        let (next, why) = p.turnaround_ahead(at + 40.0).unwrap();
+        assert_eq!(why, TurnReason::DeadEnd);
+        // At the west end: back 100 m along edge 1, then all of edge 0.
+        assert!(next > at + 550.0, "{next} vs {at}");
     }
 
     #[test]
