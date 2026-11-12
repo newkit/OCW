@@ -1,0 +1,112 @@
+# OCW Build Diary – day 2 (art/ART-PROJECT.md describes every field).
+# Shots are files in artwork/build-history/2026-11-12/ (or repo paths).
+
+title = "The night shift, the glow-up and a peloton across three operating systems"
+tagline = "In which the agents work through the night and the capsules finally get bodies."
+hero = "122149-scenes-readme1-readme-climb-behind.png"
+bpm = 112
+key = "D"
+tests = 903
+outro = "100 commits. 903 tests. The capsules are gone. Nobody misses them."
+teaser = "TO BE CONTINUED – same road, same time, tomorrow."
+
+[[chapter]]
+time = "00:17"
+title = "The night shift"
+caption = "While the humans sleep, the agents build: workouts, menus, settings and the feel of a gradient."
+shots = [
+  { file = "002148-video-wayland-ocw-workout-agent.mp4", seconds = 3.5, note = "ERG mode. resistance is futile." },
+  { file = "003501-shot-wayland-ocw-m2-display.png", seconds = 3.0, note = "units: imperial?!" },
+]
+
+[[chapter]]
+time = "01:59"
+title = "Race day"
+caption = "Local events: races, group rides – and time trials against your own ghost. The ghost casts no shadow. Spooky."
+shots = [
+  { file = "014445-video-wayland-ev-go.mp4", seconds = 3.5, note = "3… 2… 1…" },
+  { file = "015627-video-wayland-ev-tt-ghost.mp4", seconds = 3.5, note = "racing yourself. and losing." },
+]
+
+[[chapter]]
+time = "02:55"
+title = "Into the mountain"
+caption = "The Stegertunnel arrives. The camera learns not to film the inside of a mountain."
+shots = [
+  { file = "025457-video-wayland-af2d-tunnel-entry.mp4", seconds = 3.5 },
+  { file = "025432-shot-wayland-af2d-tunnel-km9.2.png", seconds = 2.8, note = "the grey is intentional." },
+]
+
+[[chapter]]
+time = "04:31"
+title = "Clocking out"
+caption = "Final runs on Linux, macOS and Windows: 726 tests each. The night shift goes home. There is no home."
+shots = [
+  { file = "031801-shot-wayland-climb.png", seconds = 3.5, note = "sunrise (not rendered yet)" },
+]
+
+[[chapter]]
+time = "07:53"
+title = "The glow-up"
+caption = "Phase 4: generated bikes and riders. The capsules have evolved. Darwin would be proud."
+sound = "075420-audio-ride-sounds.wav"
+sound_gain = 0.9
+shots = [
+  { split = ["013515-shot-wayland-ocw-bikes-side.png", "080642-models-side.png"], seconds = 3.5, note = "01:35 | 07:53" },
+  { file = "080811-models-ride.mp4", seconds = 4.0 },
+  { file = "083649-models-tt.png", seconds = 3.0, note = "TT bike: aero is everything" },
+]
+
+[[chapter]]
+time = "08:52"
+title = "Can you hear me now?"
+caption = "Voice chat, always on like a call. M mutes you. Like a real group ride, minus the heavy breathing."
+shots = [
+  { file = "084411-voice-hud.png", seconds = 3.5, note = "M = mute. Shift+M = mute everyone." },
+]
+
+[[chapter]]
+time = "09:06"
+title = "Lights, camera, Liechtenstein"
+caption = "A scene harness renders the world on demand: close-ups, orbits, Malbun from above."
+shots = [
+  { file = "102118-camera-close.png", seconds = 2.8, note = "close-up. hello!" },
+  { file = "091150-malbun-climb-video.mp4", seconds = 3.5 },
+  { file = "091325-far-view.png", seconds = 3.0, note = "hairpins, as far as the eye can see" },
+]
+
+[[chapter]]
+time = "10:17"
+title = "One peloton, three operating systems"
+caption = "Bots on Linux, macOS and Windows join one server over QUIC. 13 checks, all green. Zero arguments about Linux."
+shots = [
+  { file = "194052-multiplayer-kiosk-kiosk.mp4", seconds = 6.0, note = "Linux + macOS + Windows" },
+]
+
+[[chapter]]
+time = "10:58"
+title = "It makes noises now"
+caption = "Game audio, synthesised from scratch: wind, drivetrain – and the freehub, which now only ticks while you coast."
+sound = "104859-audio-demo-freehub.wav"
+sound_gain = 1.4
+shots = [
+  { file = "080752-models-freewheel.png", seconds = 3.5, note = "tick tick tick (coasting)" },
+  { file = "080739-models-sprint.png", seconds = 3.0, note = "silence (pedalling)" },
+]
+
+[[chapter]]
+time = "12:23"
+title = "Postcards"
+caption = "The README gets postcards from the Malbun road. The Liechtenstein tourism board has not called. Yet."
+shots = [
+  { file = "122149-scenes-readme1-readme-climb-behind.png", seconds = 3.5 },
+  { file = "122202-scenes-readme1-readme-climb-front.png", seconds = 3.5 },
+]
+
+[[chapter]]
+time = "19:36"
+title = "Ship it (with voice)"
+caption = "Release for every platform. Windows wanted a static runtime, the Mac misplaced its C++ headers, a test crashed. All fixed."
+shots = [
+  { file = "194052-multiplayer-kiosk-still-25.png", seconds = 4.0, note = "v0.1.0-72238db" },
+]

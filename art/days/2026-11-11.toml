@@ -1,0 +1,103 @@
+# OCW Build Diary – day 1 (art/ART-PROJECT.md describes every field).
+# Shots are files in artwork/build-history/2026-11-11/ (or repo paths).
+
+title = "From five capsules to the Principality of Liechtenstein"
+tagline = "In which a spec is written at 00:38 and the riders are mostly capsules."
+hero = "150218-lie-c.png"
+bpm = 108
+key = "C"
+outro = "155 commits later, the capsules have a country. Sleep remains unimplemented."
+teaser = "NEXT TIME: the night shift, a tunnel, and a glow-up nobody saw coming."
+
+[[chapter]]
+time = "00:38"
+title = "In the beginning was the spec"
+caption = "First commit: a specification. First picture: five capsules on a test loop. Ambitious."
+shots = [
+  { file = "012829-shot1.png", seconds = 3.5, note = "these are riders. trust us." },
+  { file = "012928-shot3.png", seconds = 3.0, note = "a console. very serious." },
+]
+
+[[chapter]]
+time = "08:15"
+title = "Phase 1: it moves!"
+caption = "Road-conformed terrain: the hills politely step aside for the road."
+shots = [
+  { file = "084502-ride.mp4", seconds = 3.5 },
+  { split = ["090934-terrain-before-after.png", "090950-terrain-ride.png"], seconds = 3.0, note = "before | after" },
+  { file = "090945-terrain-ride.mp4", seconds = 3.0, speed = 2 },
+]
+
+[[chapter]]
+time = "10:40"
+title = "The graphics spike"
+caption = "Engine test: 150 riders, a forest, and a road that finally learned to wind."
+shots = [
+  { file = "111445-bench-instanced-150.png", seconds = 3.0, note = "150 riders. GPU: fine." },
+  { file = "113724-spike-winding.mp4", seconds = 4.0, speed = 2 },
+]
+
+[[chapter]]
+time = "13:25"
+title = "Legs! A cap! Priorities."
+caption = "Pedalling legs, an orbit camera – and our hero gets a pink cycling cap. #FF1472, to be exact."
+shots = [
+  { file = "132425-hills-orbit.mp4", seconds = 3.5 },
+  { file = "140719-cap.png", seconds = 3.5, note = "the cap." },
+]
+
+[[chapter]]
+time = "15:02"
+title = "Hello, Liechtenstein"
+caption = "Real roads, real elevation: Vaduz to Malbun, a thousand metres up. The bots are thrilled."
+shots = [
+  { file = "143803-graph.png", seconds = 2.8, note = "the real road graph (OSM)" },
+  { file = "150218-liechtenstein.mp4", seconds = 4.5 },
+  { file = "150923-arch.png", seconds = 2.8, note = "a start arch. very official." },
+]
+
+[[chapter]]
+time = "16:21"
+title = "Lean, steer, go wild"
+caption = "Riders lean into curves. In wild mode they also lean into trees. Bots now climb instead of giving up."
+shots = [
+  { file = "162121-lean.mp4", seconds = 3.5, note = "53 km/h. downhill. no brakes." },
+  { file = "165919-wildcam.mp4", seconds = 3.5, note = "wild mode: off-road, through a tree" },
+]
+
+[[chapter]]
+time = "17:13"
+title = "A logo is born"
+caption = "Branding meeting outcome: a unicorn riding a bike over a rainbow. The vote was unanimous."
+shots = [
+  { file = "artwork/logos/ocw-512.png", seconds = 4.0, note = "no further questions." },
+]
+
+[[chapter]]
+time = "18:30"
+title = "Free ride"
+caption = "Ride anywhere on the real road graph: junctions, U-turns and the occasional dead end."
+shots = [
+  { file = "182129-agent-freeride-video-wayland-freeride.mp4", seconds = 3.5, note = "dead end in 610 m. noted." },
+  { file = "182936-agent-freeride-video-wayland-freeride.mp4", seconds = 3.5, note = "U-turn!" },
+]
+
+[[chapter]]
+time = "21:05"
+title = "Liechtenstein gets furnished"
+caption = "Land use from OpenStreetMap: villages, forests, streams – and the Rhine."
+shots = [
+  { file = "221544-agent-landuse-ride.mp4", seconds = 3.5 },
+  { file = "221544-agent-landuse-steg-stream.png", seconds = 3.0, note = "houses! with roofs!" },
+  { file = "221544-agent-landuse-rhine-chase.png", seconds = 3.0, note = "the Rhine, probably wet" },
+]
+
+[[chapter]]
+time = "23:45"
+title = "Nobody goes to bed"
+caption = "Quarter to midnight: ten bots line up in formation, trees learn to fade, and a menu appears."
+shots = [
+  { file = "233403-agent-bots-formation.png", seconds = 3.0, note = "formation. discipline." },
+  { file = "233952-agent-see-through-ocw-a13997-forest.mp4", seconds = 3.0 },
+  { file = "234931-shot-wayland-menu-1280.png", seconds = 3.0, note = "Esc never quits. ever." },
+]

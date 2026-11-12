@@ -46,6 +46,8 @@ Test build on marge's screen: `scripts/deploy-test.sh marge` (or `make deploy-te
 
 - `SPECIFICATION.md` (v1.3) – the single source of requirements and architecture decisions. The review proposals P-1 … P-20 were merged into it; Appendix A maps each former P-number to its section.
 
+- `art/ART-PROJECT.md` – the art project: the **OCW Build Diary**, a video per build day plus a growing diary video, made from *every* screenshot, video, sound, log, commit, merge and test of the day (`art/diary.py`, `make art-*`; day scripts in `art/days/`). Keep all media of test runs in `test-output/`; never delete build-history material. At the end of a build day: gather, write the day script, render, publish.
+
 Reference the spec by section (e.g. "spec §6.1") in discussions and commits. New decisions go directly into the spec (bump the version table at the top) rather than into a separate document.
 
 ## Architecture essentials

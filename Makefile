@@ -70,7 +70,7 @@ VIDEO ?= /tmp/ocw.mp4
 VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 
 .DEFAULT_GOAL := help
-.PHONY: help deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust build release lint fmt fmt-check \
+.PHONY: help art-gather art-sheets art-render art-diary art-publish deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust build release lint fmt fmt-check \
 	clippy check run server deploy-test clean clean-test-output macos-app \
 	test test-unit test-wasm test-kiosk test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
 	test-multiplayer test-multiplayer-local test-scenes test-scenes-list \
@@ -269,3 +269,23 @@ clean: ## Remove build artefacts
 
 clean-test-output: ## Delete the archived screenshots and videos in test-output/
 	rm -rf test-output
+
+# Art project: the OCW Build Diary (art/ART-PROJECT.md). DAY=YYYY-MM-DD;
+# without DAY: every day (gather/publish) or every day with a script (render).
+ART_PYTHON ?= $(firstword $(wildcard /usr/bin/python3.13 /usr/bin/python3.12 /usr/bin/python3.11 /usr/bin/python3) python3)
+
+art-gather: ## Art: collect the day's images/videos/sounds/logs and write its journal (DAY=YYYY-MM-DD)
+	$(ART_PYTHON) art/diary.py gather $(DAY)
+	$(ART_PYTHON) art/diary.py journal $(DAY)
+
+art-sheets: ## Art: contact sheets of the day's media for writing art/days/DAY.toml
+	$(ART_PYTHON) art/diary.py sheet $(DAY)
+
+art-render: ## Art: render the day video(s) from art/days/*.toml
+	$(ART_PYTHON) art/diary.py render $(DAY)
+
+art-diary: ## Art: join all day videos into the diary video
+	$(ART_PYTHON) art/diary.py diary
+
+art-publish: ## Art: upload day zips and videos to the GitHub release build-history
+	$(ART_PYTHON) art/diary.py publish $(DAY)
