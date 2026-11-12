@@ -75,7 +75,39 @@ chooses the rider profile and their bike (*Workshop → Bike*), *Settings* has R
 and Strava: ← / → (D-pad left / right) change the focused value, Q / E,
 PgUp / PgDn or LB / RB switch between these pages (see
 [Settings](#settings-and-rider-profiles)); *Ride* starts local events (race,
-group ride, time trial; see *Events* below), Navi says what is coming.
+group ride, time trial; see *Events* below) and changes the ride (see
+[Changing the ride](#changing-the-ride-without-restarting)), *Navi* lists
+the routes, saved rides and GPX files to import. Long lists are paged
+(*Previous* / *Next*, or ← / → on a list row).
+
+### Changing the ride without restarting
+
+*Ride → Change ride* (spec §3.2.1, M3) switches to another world package
+(*World packages*: the cache and `.ocwpkg` files next to the app, in
+`data/` and `data/pilot/`; then *Free ride* from a random road or *from
+here*, or one of its routes under *Navi → Routes*) or a test route (Hills,
+Loop) while the app keeps running: the ride so far is saved (FIT, Strava
+sync), the new one is loaded in the background (the HUD shows "Loading …"),
+then a new session starts. Bluetooth trainers, sensors and gamepads stay
+connected, the trainer mode stays, a video recording goes on; a running
+event ends. Every switch asks first (*Change the ride?*). After a switch, R
+restarts the current ride in the app. The same from the console:
+
+```text
+ride.switch --route loop
+ride.switch --world europe/example@3              # free ride, random start
+ride.switch --world /var/tmp/ocw/example.ocwpkg --free-ride --start 1200,-300
+ride.switch --world example.ocwpkg --route "Valley loop"
+ride.switch --world example.ocwpkg --route-gpx tour.gpx
+ride.import-gpx ~/Downloads/tour.gpx --ride       # needs a loaded package
+```
+
+`ride.import-gpx` matches the GPX file onto the loaded package's roads (the
+same matcher as `--route-gpx`), prints the report and saves the route in
+`~/.local/share/ocw/routes/`, where *Navi → Routes* lists it for that
+package. *Navi → GPX import* offers the `.gpx` files from
+`~/.local/share/ocw/gpx/` and the downloads folder. Not with `--server`
+(the server chooses the course).
 
 In manual steering, the keys ramp the lean and it stays when released (press
 the other way to straighten up); the stick sets the lean directly, centred is
@@ -380,7 +412,7 @@ event status | event cancel | event dismiss
 | `--monitor SPEC` | Fullscreen on a monitor: index, resolution (`2560x1600`) or name part (`HDMI`) |
 | `--cmd COMMAND` | Run a console command at startup (repeatable) |
 | `--exec FILE` | Run the console commands in a file at startup (also `autoexec.cfg` if present) |
-| `--at SECONDS=COMMAND` | Run a console command after SECONDS of riding (scripted rides) |
+| `--at SECONDS=COMMAND` | Run a console command when the app has run SECONDS (game time; a ride switch does not reset it; scripted rides) |
 | `--screenshot PATH`, `--screenshot-delay S` | Save a screenshot after S seconds (default 5), then exit |
 | `--capture DIR`, `--capture-fps N`, `--capture-seconds S`, `--capture-warmup S` | Save every frame with a fixed game-time step (smooth videos), then exit |
 | `--version` | Print the build id, e.g. `0.1.0-7d538c0-dirty (debug)`: version, commit, `-dirty` for uncommitted changes, `(debug)` for debug builds. It is also shown small in the HUD's lower right corner and logged at startup |
@@ -555,6 +587,10 @@ for now).
 | **Rides and Strava** | |
 | `ride.status` | The current recording |
 | `ride.save` | End the ride, save it as FIT (and upload if Strava is linked); a new recording starts |
+| `ride.switch --route NAME \| --route-file FILE \| --world PKG [--free-ride] [--start X,Z] [--route NAME\|FILE] [--route-gpx FILE]` | Ride something else without restarting (the ride so far is saved, devices stay connected) |
+| `ride.restart` | Start the current ride again in the app (R after a switch) |
+| `ride.current` | What is ridden now, as a `ride.switch` line |
+| `ride.import-gpx FILE [--ride]` | Match a GPX file onto the loaded package and save it as your route (Navi → Routes); `--ride` rides it |
 | `strava.connect` | Link your Strava account (opens the browser) |
 | `strava.status` | Strava link and upload state |
 | `strava.sync [--retry]` | Upload every saved ride not on Strava yet (`--retry`: also failed ones) |

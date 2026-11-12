@@ -209,6 +209,40 @@ impl Plugin for OcwRenderPlugins {
     }
 }
 
+/// A ride switch (spec §3.2.1, M3): despawns the world of the old ride
+/// (light, terrain, road, trees, streamed package tiles, avatars), then
+/// spawns it again from the current [`RideView`] and
+/// [`package::PackageWorld`] (the caller replaced them before). Camera,
+/// HUD, menu and console stay. Without the render plugins (headless tests
+/// with `MinimalPlugins`) only the despawning runs.
+pub fn rebuild_scene(world: &mut World) {
+    let old: Vec<Entity> = world
+        .query_filtered::<Entity, With<world::SceneEntity>>()
+        .iter(world)
+        .collect();
+    for e in old {
+        if let Ok(e) = world.get_entity_mut(e) {
+            e.despawn();
+        }
+    }
+    package::reset_streaming(world);
+    riders::reset_avatars(world);
+    if let Some(mut o) = world.get_resource_mut::<camera::CameraObstacles>() {
+        o.clear();
+    }
+    world.remove_resource::<Ground>();
+    let renders = world.contains_resource::<Assets<Mesh>>()
+        && world.contains_resource::<Assets<StandardMaterial>>()
+        && world.contains_resource::<Assets<see_through::SeeThroughMaterial>>()
+        && world.contains_resource::<RideView>();
+    if renders {
+        use bevy::ecs::system::RunSystemOnce;
+        if let Err(e) = world.run_system_once(world::spawn_world) {
+            error!("rebuilding the world: {e}");
+        }
+    }
+}
+
 /// Converts route coordinates (f64, metres) to a Bevy vector.
 ///
 /// Phase 1 routes are small enough for f32. Large worlds use tile-local
@@ -228,4 +262,65 @@ pub fn route_bounds(route: &Route) -> ([f64; 2], [f64; 2]) {
             )
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scene(app: &mut App) -> Vec<Entity> {
+        let w = app.world_mut();
+        let mut q = w.query_filtered::<Entity, With<world::SceneEntity>>();
+        let mut v: Vec<Entity> = q.iter(w).collect();
+        v.sort();
+        v
+    }
+
+    fn avatars(app: &mut App) -> usize {
+        let w = app.world_mut();
+        w.query::<&riders::Avatar>().iter(w).count()
+    }
+
+    #[test]
+    fn a_ride_switch_rebuilds_the_world_and_the_riders() {
+        let mut view = RideView::new(Route::test_loop());
+        view.riders.push(RiderView {
+            id: RiderId(1),
+            name: "a".into(),
+            state: RiderState::default(),
+            power_w: 0.0,
+            cadence_rpm: None,
+            heart_rate_bpm: None,
+            is_local: true,
+            bike: ocw_core::ProfileId::Road,
+            look: None,
+        });
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Mesh>()
+            .init_asset::<StandardMaterial>()
+            .init_asset::<see_through::SeeThroughMaterial>()
+            .insert_resource(view)
+            .add_plugins((world::WorldPlugin, riders::RidersPlugin));
+        app.update();
+        let first = scene(&mut app);
+        assert!(first.len() > 100, "light, terrain, road, trees, arch");
+        assert!(app.world().contains_resource::<Ground>());
+        assert_eq!(avatars(&mut app), 1);
+        // The app replaces the view (another route, a new session), then
+        // rebuilds: nothing of the old world is left.
+        app.world_mut().resource_mut::<RideView>().route = Route::test_hills();
+        rebuild_scene(app.world_mut());
+        let second = scene(&mut app);
+        assert!(second.len() > 100);
+        assert!(second.iter().all(|e| !first.contains(e)));
+        assert_eq!(avatars(&mut app), 0, "the avatars are spawned afresh");
+        app.update();
+        assert_eq!(avatars(&mut app), 1);
+        assert_eq!(scene(&mut app), second, "built once");
+        // Without the render assets (headless app tests) only the despawning runs.
+        let mut bare = App::new();
+        bare.add_plugins(MinimalPlugins);
+        rebuild_scene(bare.world_mut());
+    }
 }

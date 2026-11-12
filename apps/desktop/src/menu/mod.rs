@@ -23,6 +23,7 @@ use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permissio
 use ocw_render::menu::{InputContext, MenuCorePlugin, MenuPointer, MenuPointerEvent, MenuView};
 
 use crate::connection::ClientState;
+use crate::ride::RideCatalog;
 use crate::settings::pages as settings_pages;
 use crate::settings::registry::Settings;
 use crate::settings::riders::Riders;
@@ -97,6 +98,7 @@ fn menu_input(
     client: Option<ResMut<ClientState>>,
     settings: Option<Res<UserSettings>>,
     riders: Option<Res<RiderProfiles>>,
+    catalog: Option<Res<RideCatalog>>,
 ) {
     let pressed = pads.iter().fold(
         keys.map(|k| controls::keyboard(&k)).unwrap_or_default(),
@@ -143,7 +145,14 @@ fn menu_input(
             MenuPointerEvent::Back => Some(Action::Back),
         }));
     }
-    let rows = |p| sub_rows(p, settings.as_deref(), riders.as_deref());
+    let rows = |p| {
+        sub_rows(
+            p,
+            settings.as_deref(),
+            riders.as_deref(),
+            catalog.as_deref(),
+        )
+    };
     for action in actions {
         if let Effect::Command(line) = state.menu.apply_with(action, rows) {
             console.queue(line);
@@ -178,13 +187,19 @@ pub fn status_line(view: &RideView) -> String {
     }
 }
 
-/// The rows of a Settings sub page or the Workshop (defaults without the
-/// settings plugin, e.g. in tests of the menu alone).
+/// The rows of a Settings sub page, the Workshop or a Ride / Navi list
+/// (defaults without the settings or ride plugin, e.g. in tests of the
+/// menu alone).
 fn sub_rows(
     page: settings_pages::Page,
     settings: Option<&UserSettings>,
     riders: Option<&RiderProfiles>,
+    catalog: Option<&RideCatalog>,
 ) -> Vec<settings_pages::Row> {
+    if page.is_ride_page() {
+        let empty = crate::ride::pages::Catalog::default();
+        return crate::ride::pages::rows(page, catalog.map_or(&empty, |c| &c.0));
+    }
     let default_settings = Settings::default();
     let default_riders = Riders::default();
     settings_pages::rows(
@@ -199,10 +214,18 @@ fn write_view(
     ride: Option<Res<RideView>>,
     settings: Option<Res<UserSettings>>,
     riders: Option<Res<RiderProfiles>>,
+    catalog: Option<Res<RideCatalog>>,
     mut view: ResMut<MenuView>,
 ) {
     // Values changed by the menu's commands (or the console) show at once.
-    let rows = |p| sub_rows(p, settings.as_deref(), riders.as_deref());
+    let rows = |p| {
+        sub_rows(
+            p,
+            settings.as_deref(),
+            riders.as_deref(),
+            catalog.as_deref(),
+        )
+    };
     state.menu.refresh(&rows);
     let menu = &state.menu;
     let new = match menu.page() {
@@ -221,10 +244,13 @@ fn write_view(
                 focused: menu.focus(),
                 hint: format!(
                     "Up/Down move   {}Enter/A select   Esc/B {}",
-                    if matches!(page, Page::Sub(_)) {
-                        "Left/Right change   Q/E, LB/RB tab   "
-                    } else {
-                        ""
+                    match page {
+                        Page::Sub(p) if p.is_ride_page() && menu.list_pages() > 1 => {
+                            "Left/Right page   "
+                        }
+                        Page::Sub(p) if p.is_ride_page() => "",
+                        Page::Sub(_) => "Left/Right change   Q/E, LB/RB tab   ",
+                        _ => "",
                     },
                     if menu.depth() > 1 { "back" } else { "close" }
                 ),

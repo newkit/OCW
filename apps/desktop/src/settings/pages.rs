@@ -28,6 +28,17 @@ pub enum Page {
     Workshop,
     /// A rider's bike and look (index into the profiles; Workshop → Bike).
     Bike(usize),
+    /// Ride → World packages: the known packages (M3; rows from
+    /// `ride::pages`, like the following).
+    Worlds,
+    /// One of them (index into the list): free ride, its routes.
+    World(usize),
+    /// Navi → Routes: the routes of the loaded package and the user's.
+    Routes,
+    /// Navi → Rides: the saved rides with their Strava state.
+    Rides,
+    /// Navi → GPX import: GPX files to match onto the loaded package.
+    GpxImport,
 }
 
 impl Page {
@@ -51,7 +62,20 @@ impl Page {
             Self::Rider(_) => "Rider",
             Self::Workshop => "Workshop",
             Self::Bike(_) => "Bike",
+            Self::Worlds => "World packages",
+            Self::World(_) => "World package",
+            Self::Routes => "Routes",
+            Self::Rides => "Rides",
+            Self::GpxImport => "GPX import",
         }
+    }
+
+    /// The Ride and Navi lists (rows from `ride::pages`).
+    pub fn is_ride_page(self) -> bool {
+        matches!(
+            self,
+            Self::Worlds | Self::World(_) | Self::Routes | Self::Rides | Self::GpxImport
+        )
     }
 
     /// One page up (the rider editor goes back to the list).
@@ -59,6 +83,7 @@ impl Page {
         match self {
             Self::Rider(_) => Some(Self::Riders),
             Self::Bike(_) => Some(Self::Workshop),
+            Self::World(_) => Some(Self::Worlds),
             _ => None,
         }
     }
@@ -77,6 +102,17 @@ impl Page {
             Self::Trainer => &["Devices, SIM difficulty and the virtual trainer."],
             Self::Strava => &["Uploads rides to Strava (needs API credentials, see README)."],
             Self::Controls | Self::Display => &[],
+            Self::Worlds => &[
+                "Installed world packages (cache, and package files next to the app). Choose one for a free ride or its routes.",
+            ],
+            Self::World(_) => &["Free ride from a random road, or from where you are now."],
+            Self::Routes => &[
+                "Routes of the loaded world package and your imported ones (GPX import). Choose one to ride it.",
+            ],
+            Self::Rides => &["Saved rides (FIT files), newest first, with their Strava state."],
+            Self::GpxImport => &[
+                "GPX files from the gpx folder of the OCW data folder and from Downloads, matched onto the roads of the loaded world package.",
+            ],
         }
     }
 }
@@ -86,6 +122,8 @@ impl Page {
 pub enum Activate {
     /// Run a console command line.
     Command(String),
+    /// Ask first ("Change the ride?"), then run the line and close the menu.
+    Ask(String),
     /// Open a page.
     Open(Page),
 }
@@ -328,6 +366,8 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
             };
             bike_rows(r)
         }
+        // From the ride catalog (`ride::pages::rows`).
+        Page::Worlds | Page::World(_) | Page::Routes | Page::Rides | Page::GpxImport => Vec::new(),
         Page::Workshop => {
             let mut out: Vec<Row> = riders
                 .riders
