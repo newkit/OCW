@@ -268,7 +268,7 @@ mod tests {
         let c = catalog();
         let rows_of = |p: Page| rows(p, &c);
         // Top → Ride → World packages.
-        let mut m = open(&c, &[1, 0]);
+        let mut m = open(&c, &[1, 4, 0]);
         assert_eq!(m.page(), Some(MenuPage::Sub(Page::Worlds)));
         let l = m.labels();
         assert!(l.len() <= MAX_ITEMS, "{l:?}");
@@ -322,7 +322,7 @@ mod tests {
         );
         assert!(!m.is_open());
         // Another world: no position, no routes yet.
-        let m = open(&c, &[1, 0, 2]);
+        let m = open(&c, &[1, 4, 0, 2]);
         assert_eq!(m.page(), Some(MenuPage::Sub(Page::World(2))));
         assert_eq!(m.labels().len(), 4);
         assert!(m.labels()[1].starts_with("Routes:  listed once"));
@@ -377,7 +377,7 @@ mod tests {
         }
         // A World page of a world no longer listed is empty (the menu goes back).
         assert!(rows(Page::World(3), &c).is_empty());
-        let mut m = open(&catalog(), &[1, 0, 4, 5, 0]);
+        let mut m = open(&catalog(), &[1, 4, 0, 4, 5, 0]);
         assert_eq!(m.page(), Some(MenuPage::Sub(Page::World(8))));
         m.apply_with(Action::Hover(0), |p| rows(p, &Catalog::default()));
         assert_eq!(m.page(), Some(MenuPage::Sub(Page::Worlds)));

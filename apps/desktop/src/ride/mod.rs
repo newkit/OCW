@@ -673,10 +673,21 @@ mod tests {
         for line in ["menu open", "menu down", "menu select"] {
             run(&mut app, line);
         }
-        // Ride → Test route: Hills → "Change the ride?" → Ride now.
-        for line in ["menu down", "menu select", "menu up", "menu select"] {
+        // Ride → Change ride → Test route: Hills → "Change the ride?" → Ride now.
+        for line in [
+            "menu up",
+            "menu up",
+            "menu select",
+            "menu down",
+            "menu select",
+            "menu up",
+            "menu select",
+        ] {
             run(&mut app, line);
         }
+        // Menu actions from the console apply in the next frame.
+        app.update();
+        app.update();
         assert!(
             !app.world()
                 .resource::<crate::menu::MenuState>()

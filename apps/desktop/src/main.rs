@@ -193,8 +193,8 @@ pub struct Args {
     /// Default: on, except for --screenshot / --capture runs.
     #[arg(long, value_name = "BOOL", action = clap::ArgAction::Set)]
     pub record: Option<bool>,
-    /// Run a console command once the ride has lasted SECONDS (session
-    /// time), e.g. `--at "4=rider.lean 15"` (repeatable; for scripted rides).
+    /// Run a console command once the app has run SECONDS (game time; an
+    /// in-app ride switch does not reset it), e.g. `--at "4=rider.lean 15"` (repeatable; for scripted rides).
     #[arg(long = "at", value_name = "SECONDS=COMMAND", value_parser = parse_timed)]
     pub timed: Vec<(f64, String)>,
     /// Save a screenshot to this path after --screenshot-delay seconds, then exit.
@@ -405,14 +405,14 @@ fn parse_timed(s: &str) -> Result<(f64, String), String> {
 /// Queues the `--at` commands whose time has come (each once).
 fn timed_commands(
     args: Res<Args>,
-    view: Res<RideView>,
+    time: Res<Time>,
     mut done: Local<usize>,
     mut console: ResMut<ConsoleState>,
 ) {
     let mut due: Vec<&(f64, String)> = args.timed.iter().collect();
     due.sort_by(|a, b| a.0.total_cmp(&b.0));
     while let Some((t, cmd)) = due.get(*done)
-        && *t <= view.elapsed_s
+        && *t <= time.elapsed_secs_f64()
     {
         console.queue(cmd.clone());
         *done += 1;

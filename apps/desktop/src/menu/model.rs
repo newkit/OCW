@@ -843,6 +843,7 @@ mod tests {
                 "Group ride at 150 W",
                 "Time trial vs your ghost",
                 "End the event",
+                "Change ride",
                 "Back"
             ]
         );
@@ -859,7 +860,7 @@ mod tests {
         );
         m.apply(Action::Open);
         m.apply(Action::Click(1));
-        m.apply(Action::Click(4));
+        m.apply(Action::Click(5));
         assert_eq!(m.page(), Some(Page::Top));
     }
 
