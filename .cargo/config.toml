@@ -1,0 +1,6 @@
+# Windows: link the C runtime statically. LiveKit's prebuilt libwebrtc (the
+# voice backend, `--features ocw-desktop/voice`) is built with /MT, and mixing
+# it with Rust's default /MD fails with LNK2038 "RuntimeLibrary" mismatches.
+# It also means the .exe files need no Visual C++ redistributable.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

@@ -25,6 +25,14 @@ version=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version *= *"\(.*\)"/\1/p' Ca
 # OCW_SHA: commit for copies without .git (scripts/remote.sh).
 sha=${OCW_SHA:-$(git rev-parse --short HEAD 2>/dev/null || echo nogit)}
 arch=$(uname -m)
+# Command Line Tools whose usr/include/c++/v1 is a near-empty leftover (seen
+# after macOS upgrades) shadow the SDK's libc++ headers, so C++ builds such as
+# the voice backend (webrtc-sys, cxx) fail with "'string' file not found".
+# Point the compiler at the SDK's headers then.
+if ! printf '#include <string>\n' | c++ -x c++ -std=c++17 -fsyntax-only - 2>/dev/null; then
+  export CXXFLAGS="${CXXFLAGS:-} -nostdinc++ -isystem $(xcrun --show-sdk-path)/usr/include/c++/v1"
+  echo "libc++ headers not found by c++; using the SDK's ($CXXFLAGS)"
+fi
 # OCW_FEATURES: extra cargo features, e.g. ocw-desktop/voice (release builds).
 cargo build --release -p ocw-desktop ${OCW_FEATURES:+--features "$OCW_FEATURES"}
 bin=target/release/$exe
