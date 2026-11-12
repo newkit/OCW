@@ -295,7 +295,7 @@ video = 3
 
 [[scene]]
 name = "route-end-teleport"
-description = "teleport 15 on the 14 km Vaduz-Malbun route: clamped to the finish in Malbun, the console reports it"
+description = "teleport 15 on the 13.3 km Vaduz-Malbun route: moved to its end in Malbun (speed 0), the console reports it"
 world = true
 args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "250"]
 at = ["2.5=teleport 15", "2.6=console open"]
