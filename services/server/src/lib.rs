@@ -8,6 +8,7 @@
 
 pub mod local;
 pub mod net;
+pub mod voice;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -58,6 +59,9 @@ pub struct ServerConfig {
     /// in-process local server, where the single player is the organizer
     /// (spec §2.3); on a remote server events are scheduled.
     pub allow_local_events: bool,
+    /// LiveKit server and API key pair for voice chat (spec §7); `None`:
+    /// no voice on this server (token requests are refused).
+    pub voice: Option<voice::VoiceConfig>,
 }
 
 /// Ticks between two event-state broadcasts while a race or time trial
@@ -73,6 +77,10 @@ pub struct GameServer {
     next_connection: u64,
     /// The event changed outside a tick (cancelled): send its state.
     event_dirty: bool,
+    /// Display names from the hellos (voice tokens carry them).
+    names: BTreeMap<ConnectionId, String>,
+    /// When each connection got its last voice token (unix s).
+    voice_issued: BTreeMap<ConnectionId, u64>,
 }
 
 /// Base power of the bots, from easy riders to strong ones, so they spread
@@ -146,6 +154,8 @@ impl GameServer {
             riders: BTreeMap::new(),
             next_connection: 1,
             event_dirty: false,
+            names: BTreeMap::new(),
+            voice_issued: BTreeMap::new(),
         }
     }
 
@@ -162,6 +172,8 @@ impl GameServer {
 
     /// Removes a connection and its rider.
     pub fn disconnect(&mut self, conn: ConnectionId) {
+        self.names.remove(&conn);
+        self.voice_issued.remove(&conn);
         if let Some(rider) = self.riders.remove(&conn) {
             self.session.remove_rider(rider);
             tracing::info!(%rider, "rider left");
@@ -193,6 +205,7 @@ impl GameServer {
             }
             (C::Dev(cmd), Some(rider)) => Some(self.dev_command(rider, cmd)),
             (C::Event(req), Some(_)) => Some(self.event_request(req)),
+            (C::Voice(req), Some(rider)) => Some(S::Voice(self.voice_grant(conn, rider, &req))),
             (C::Turn(turn), Some(rider)) => {
                 if let Some(net) = self.session.network() {
                     let choice = ocw_protocol::turn_choice(&turn, net);
@@ -283,6 +296,7 @@ impl GameServer {
             self.session.set_look(rider, look.into());
         }
         self.riders.insert(conn, rider);
+        self.names.insert(conn, hello.display_name.clone());
         tracing::info!(%rider, name = %hello.display_name, weight_kg = profile.rider_mass_kg, bike = profile.bike.id(), "rider joined");
         S::Welcome(v1::Welcome {
             protocol_version: PROTOCOL_VERSION,
@@ -297,6 +311,7 @@ impl GameServer {
                 .plan()
                 .map(|p| p.name.clone())
                 .unwrap_or_default(),
+            voice: self.config.voice.is_some(),
         })
     }
 
@@ -325,6 +340,43 @@ impl GameServer {
             }
             None => result(false, "empty dev command".into()),
         }
+    }
+
+    /// A voice token for the rider of `conn` (spec §7), or why not.
+    fn voice_grant(
+        &mut self,
+        conn: ConnectionId,
+        rider: RiderId,
+        req: &v1::VoiceTokenRequest,
+    ) -> v1::VoiceGrant {
+        let Some(cfg) = &self.config.voice else {
+            return voice::refused(
+                req.channel,
+                if self.config.allow_dev_commands {
+                    "voice chat needs a multiplayer server (ocw-desktop --server)"
+                } else {
+                    "voice chat is not configured on this server"
+                },
+            );
+        };
+        let now = (cfg.clock)();
+        if let Some(&last) = self.voice_issued.get(&conn)
+            && now < last + voice::MIN_REQUEST_INTERVAL_S
+        {
+            return voice::refused(
+                req.channel,
+                "too many voice token requests; try again in a moment",
+            );
+        }
+        let name = self.names.get(&conn).map_or("", String::as_str);
+        let grant = voice::grant(cfg, req, rider, name, self.session.event(), now);
+        if grant.error.is_empty() {
+            self.voice_issued.insert(conn, now);
+            tracing::info!(%rider, room = %grant.room, "voice token issued");
+        } else {
+            tracing::debug!(%rider, error = %grant.error, "voice token refused");
+        }
+        grant
     }
 
     /// Starts or cancels an event (spec §2.3; local server only).
@@ -447,6 +499,7 @@ impl GameServer {
                 .iter()
                 .map(ocw_protocol::quantize)
                 .collect(),
+            human_riders: self.riders.len() as u32,
         };
         out.push(encode(&server_message(S::Snapshot(snapshot))));
         out
@@ -510,6 +563,116 @@ mod tests {
         match decode_server(&reply[0]).unwrap() {
             S::Welcome(w) => RiderId(w.rider_id),
             other => panic!("expected a welcome, got {other:?}"),
+        }
+    }
+
+    fn voice_server(now: Arc<std::sync::atomic::AtomicU64>) -> GameServer {
+        let clock: voice::Clock = Arc::new(move || now.load(std::sync::atomic::Ordering::SeqCst));
+        GameServer::new(
+            Route::test_loop(),
+            ServerConfig {
+                voice: Some(voice::VoiceConfig {
+                    instance: "test".into(),
+                    clock,
+                    ..voice::VoiceConfig::new("ws://127.0.0.1:7880", "devkey", "devsecret")
+                }),
+                ..Default::default()
+            },
+        )
+    }
+
+    fn ask_voice(
+        server: &mut GameServer,
+        conn: ConnectionId,
+        channel: v1::VoiceChannel,
+        group: &str,
+    ) -> v1::VoiceGrant {
+        let reply = server.handle(conn, &encode(&ocw_protocol::voice_request(channel, group)));
+        match decode_server(&reply[0]).unwrap() {
+            S::Voice(g) => g,
+            other => panic!("expected a voice grant, got {other:?}"),
+        }
+    }
+
+    /// Voice tokens (spec §7): bound to the connection's rider, for the
+    /// session room, rate limited, refused before the hello.
+    #[test]
+    fn voice_tokens_for_joined_riders() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        let now = Arc::new(AtomicU64::new(1_900_000_000));
+        let mut server = voice_server(now.clone());
+        let conn = server.connect();
+        // Before the hello: rejected like any other message.
+        let reply = server.handle(
+            conn,
+            &encode(&ocw_protocol::voice_request(v1::VoiceChannel::Session, "")),
+        );
+        assert!(matches!(decode_server(&reply[0]).unwrap(), S::Reject(_)));
+        let welcome = server.handle(conn, &hello(PROTOCOL_VERSION));
+        let S::Welcome(w) = decode_server(&welcome[0]).unwrap() else {
+            panic!("no welcome")
+        };
+        assert!(w.voice, "the welcome says voice is offered");
+        let g = ask_voice(&mut server, conn, v1::VoiceChannel::Session, "");
+        assert_eq!(g.error, "");
+        assert_eq!(
+            g.identity,
+            ocw_protocol::voice_identity(RiderId(w.rider_id))
+        );
+        assert_eq!(g.room, "ocw-test");
+        assert_eq!(g.url, "ws://127.0.0.1:7880");
+        let claims = voice::verify_jwt_hs256(&g.token, b"devsecret").unwrap();
+        assert_eq!(claims["sub"], g.identity.as_str());
+        assert_eq!(claims["name"], "Tester");
+        assert_eq!(claims["exp"], 1_900_000_000u64 + voice::DEFAULT_TOKEN_TTL_S);
+        // At once again: too many requests; later: fine.
+        let again = ask_voice(&mut server, conn, v1::VoiceChannel::Session, "");
+        assert!(
+            again.token.is_empty() && again.error.contains("too many"),
+            "{again:?}"
+        );
+        now.fetch_add(voice::MIN_REQUEST_INTERVAL_S, Ordering::SeqCst);
+        let g = ask_voice(&mut server, conn, v1::VoiceChannel::Group, "team-1");
+        assert_eq!(g.room, "ocw-test-group-team-1");
+        // A second rider gets their own identity in the same room.
+        let other = server.connect();
+        server.handle(other, &hello(PROTOCOL_VERSION));
+        let g2 = ask_voice(&mut server, other, v1::VoiceChannel::Session, "");
+        assert_eq!(g2.room, "ocw-test");
+        assert_ne!(g2.identity, g.identity);
+        // Snapshots count the connected riders (not bots) for the
+        // automatic join.
+        let snap = (0..TICKS_PER_BROADCAST)
+            .flat_map(|_| server.tick())
+            .find_map(|b| match decode_server(&b) {
+                Ok(S::Snapshot(s)) => Some(s),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(snap.human_riders, 2);
+    }
+
+    #[test]
+    fn voice_refused_without_configuration() {
+        for (config, text) in [
+            (ServerConfig::default(), "not configured"),
+            (
+                ServerConfig {
+                    allow_dev_commands: true,
+                    ..Default::default()
+                },
+                "multiplayer server",
+            ),
+        ] {
+            let mut server = GameServer::new(Route::test_loop(), config);
+            let conn = server.connect();
+            let welcome = server.handle(conn, &hello(PROTOCOL_VERSION));
+            let S::Welcome(w) = decode_server(&welcome[0]).unwrap() else {
+                panic!("no welcome")
+            };
+            assert!(!w.voice);
+            let g = ask_voice(&mut server, conn, v1::VoiceChannel::Session, "");
+            assert!(g.token.is_empty() && g.error.contains(text), "{g:?}");
         }
     }
 
@@ -871,6 +1034,7 @@ mod tests {
                     bots: 0,
                     start_m: 0.0,
                     allow_local_events: false,
+                    voice: None,
                 },
             );
             let conn = server.connect();
@@ -917,6 +1081,7 @@ mod tests {
                 bots: 20,
                 start_m: 200.0,
                 allow_local_events: false,
+                voice: None,
             },
         );
         let snap = server.session().snapshot();
@@ -946,6 +1111,7 @@ mod tests {
                 bots: 3,
                 start_m: 0.0,
                 allow_local_events: false,
+                voice: None,
             },
         );
         let conn = server.connect();
@@ -975,6 +1141,7 @@ mod tests {
                 bots,
                 start_m: 500.0,
                 allow_local_events: true,
+                voice: None,
             },
         )
     }
@@ -1099,6 +1266,7 @@ mod tests {
             },
             ServerConfig {
                 allow_local_events: true,
+                voice: None,
                 bots: 2,
                 ..Default::default()
             },

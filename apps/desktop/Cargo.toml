@@ -34,6 +34,13 @@ serde_json.workspace = true
 ureq.workspace = true
 # Game audio output (Apache-2.0; spec §3.3).
 cpal.workspace = true
+# Voice chat logic (spec §7); the LiveKit backend only with `voice`.
+ocw-voice.workspace = true
+
+[features]
+# Voice chat with the LiveKit Rust SDK (spec §7). Off by default; on Linux
+# build with clang >= 21: `CXX=clang++-21 cargo build --features voice`.
+voice = ["ocw-voice/livekit"]
 
 [lints]
 workspace = true

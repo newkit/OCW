@@ -15,6 +15,7 @@ members = [
     "crates/ocw-fit",
     "crates/ocw-worldstore",
     "crates/ocw-assets",
+    "crates/ocw-voice",
 ]
 
 [workspace.package]
@@ -36,6 +37,7 @@ ocw-worldstore = { path = "crates/ocw-worldstore" }
 ocw-render = { path = "crates/ocw-render" }
 ocw-assets = { path = "crates/ocw-assets" }
 ocw-server = { path = "services/server" }
+ocw-voice = { path = "crates/ocw-voice" }
 
 # Bevy is pinned to an exact version (spec §3.1). Only ocw-render and apps/desktop may use it.
 bevy = "=0.20.1"

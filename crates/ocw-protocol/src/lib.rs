@@ -397,10 +397,90 @@ pub fn event_info(e: &v1::EventState) -> Option<EventInfo> {
     })
 }
 
+/// Voice chat (spec §7): the LiveKit participant identity of a rider.
+/// Server and clients derive it from the rider id, so a client maps the
+/// voices it hears to riders on the road (spatial audio).
+pub fn voice_identity(rider: RiderId) -> String {
+    format!("rider-{}", rider.0)
+}
+
+/// The rider behind a LiveKit participant identity ([`voice_identity`]);
+/// `None` for other participants.
+pub fn rider_of_voice_identity(identity: &str) -> Option<RiderId> {
+    let id = identity.strip_prefix("rider-")?;
+    // No sign, no leading zeros: exactly the form `voice_identity` writes.
+    if id.is_empty() || id.starts_with('+') || (id.len() > 1 && id.starts_with('0')) {
+        return None;
+    }
+    id.parse().ok().map(RiderId)
+}
+
+/// Longest voice group name ([`v1::VoiceTokenRequest::group`]).
+pub const MAX_VOICE_GROUP_LEN: usize = 32;
+
+/// Checks a voice group name: 1 to [`MAX_VOICE_GROUP_LEN`] characters of
+/// `a-z`, `0-9` and `-` (it becomes part of the LiveKit room name).
+pub fn valid_voice_group(name: &str) -> bool {
+    (1..=MAX_VOICE_GROUP_LEN).contains(&name.len())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
+/// A voice token request (spec §7).
+pub fn voice_request(channel: v1::VoiceChannel, group: &str) -> v1::ClientMessage {
+    client_message(v1::client_message::Msg::Voice(v1::VoiceTokenRequest {
+        channel: channel as i32,
+        group: group.to_owned(),
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use v1::client_message::Msg;
+
+    #[test]
+    fn voice_identity_roundtrip() {
+        for id in [0, 1, 42, u32::MAX] {
+            let s = voice_identity(RiderId(id));
+            assert_eq!(rider_of_voice_identity(&s), Some(RiderId(id)), "{s}");
+        }
+        for bad in [
+            "",
+            "rider-",
+            "rider-x",
+            "rider--1",
+            "rider-+1",
+            "rider-01",
+            "bot-1",
+            "rider-4294967296",
+        ] {
+            assert_eq!(rider_of_voice_identity(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn voice_group_names() {
+        assert!(valid_voice_group("team-7"));
+        assert!(valid_voice_group(&"a".repeat(MAX_VOICE_GROUP_LEN)));
+        for bad in ["", "Team", "a b", "ä", "a_b", "../x"] {
+            assert!(!valid_voice_group(bad), "{bad}");
+        }
+        assert!(!valid_voice_group(&"a".repeat(MAX_VOICE_GROUP_LEN + 1)));
+    }
+
+    #[test]
+    fn voice_request_roundtrip() {
+        let bytes = encode(&voice_request(v1::VoiceChannel::Group, "team-7"));
+        match decode_client(&bytes).unwrap() {
+            Msg::Voice(r) => {
+                assert_eq!(r.channel(), v1::VoiceChannel::Group);
+                assert_eq!(r.group, "team-7");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
 
     #[test]
     fn event_messages_roundtrip() {
@@ -540,6 +620,7 @@ mod tests {
                     look: Default::default(),
                 }),
             ],
+            human_riders: 2,
         };
         let bytes = encode(&server_message(S::Snapshot(snapshot.clone())));
         match decode_server(&bytes).unwrap() {
@@ -571,6 +652,7 @@ mod tests {
                 graph_hash: 0x0123_4567_89ab_cdef,
             }),
             graph_route: "Rheintal".into(),
+            voice: true,
         };
         let bytes = encode(&server_message(S::Welcome(welcome.clone())));
         assert_eq!(decode_server(&bytes).unwrap(), S::Welcome(welcome));

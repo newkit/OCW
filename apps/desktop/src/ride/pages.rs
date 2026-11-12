@@ -432,9 +432,12 @@ mod tests {
             m.apply_with(Action::Confirm, rows_of),
             Effect::Command("ride.import-gpx \"/home/u/Downloads/morning.gpx\" --ride".into())
         );
-        // Strava: the placeholder page.
+        // Strava: the account page (moved from Settings, which is full).
         let m = open(&c, &[3, 3]);
-        assert_eq!(m.page(), Some(MenuPage::NaviStrava));
+        assert_eq!(
+            m.page(),
+            Some(MenuPage::Sub(crate::settings::pages::Page::Strava))
+        );
     }
 
     #[test]

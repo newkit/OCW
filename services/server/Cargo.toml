@@ -30,6 +30,8 @@ rustls.workspace = true
 rcgen.workspace = true
 bytes.workspace = true
 sha2.workspace = true
+# Voice access tokens (JWT claims, spec §7).
+serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "io-util", "signal"] }
 

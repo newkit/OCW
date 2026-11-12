@@ -235,6 +235,7 @@ fn ride_across(origin_east: Option<(f64, f64)>) {
             bots: 1,
             start_m: 0.0,
             allow_local_events: false,
+            voice: None,
         },
     );
     let bot = server.session().snapshot()[0].id;

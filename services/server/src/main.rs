@@ -65,6 +65,14 @@ struct Args {
     /// Default: a new certificate at every start.
     #[arg(long, value_name = "DIR", requires = "listen")]
     tls_dir: Option<PathBuf>,
+    /// LiveKit server for voice chat (spec §7), e.g. ws://127.0.0.1:7880;
+    /// default: $OCW_LIVEKIT_URL. Voice is off without it.
+    #[arg(long, value_name = "URL")]
+    livekit_url: Option<String>,
+    /// LiveKit API key; default: $OCW_LIVEKIT_API_KEY. The secret is read
+    /// only from $OCW_LIVEKIT_API_SECRET.
+    #[arg(long, value_name = "KEY")]
+    livekit_api_key: Option<String>,
 }
 
 const DEFAULT_LISTEN: &str = "0.0.0.0:47800";
@@ -162,6 +170,24 @@ fn main() {
             "starting route ride"
         ),
     }
+    // Voice chat (spec §7): LiveKit from the options or the environment;
+    // the API secret only from the environment (not visible in `ps`).
+    let voice = ocw_server::voice::VoiceConfig::from_parts(
+        args.livekit_url.clone(),
+        args.livekit_api_key.clone(),
+        None,
+        |k| std::env::var(k).ok(),
+    )
+    .unwrap_or_else(|e| {
+        eprintln!("{e}");
+        std::process::exit(2);
+    });
+    match &voice {
+        Some(v) => tracing::info!(url = %v.url, room = %v.session_room(), "voice chat on"),
+        None => tracing::info!(
+            "voice chat off (set OCW_LIVEKIT_URL, OCW_LIVEKIT_API_KEY, OCW_LIVEKIT_API_SECRET)"
+        ),
+    }
     let mut server = GameServer::new(
         course,
         ServerConfig {
@@ -169,6 +195,7 @@ fn main() {
             bots: args.bots,
             start_m: 0.0,
             allow_local_events: false,
+            voice,
         },
     );
     let mut net = args.listen.map(|addr| listen(&args, addr));

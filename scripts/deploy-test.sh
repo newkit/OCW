@@ -32,7 +32,12 @@ scripts/remote.sh "$machine" run "
   set -e
   D=$(printf '%q' "$dir")
   put() { install -m \$1 \"\$2\" \"\$D/.\$3.new\" && mv -f \"\$D/.\$3.new\" \"\$D/\$3\"; }
-  cargo build -q --release -p ocw-desktop
+  # Voice chat (spec §7) where clang 21 is installed (its bindings need it).
+  if command -v clang++-21 >/dev/null; then
+    CC=clang-21 CXX=clang++-21 cargo build -q --release -p ocw-desktop --features voice
+  else
+    cargo build -q --release -p ocw-desktop
+  fi
   if [ '$world' != 0 ] && [ -f data/pilot/liechtenstein.osm.pbf ] && [ -f data/pilot/liechtenstein.poly ] && [ -f data/pilot/N47E009.hgt ]; then
     echo 'building the pilot world package'
     cargo run -q --release -p world-builder -- package

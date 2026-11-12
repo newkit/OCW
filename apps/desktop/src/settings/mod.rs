@@ -39,7 +39,7 @@ impl UserSettings {
         self.settings.get(key).expect("a registered setting")
     }
 
-    fn save(&self) -> Result<(), String> {
+    pub(crate) fn save(&self) -> Result<(), String> {
         match &self.path {
             Some(p) => self.settings.save(p),
             None => Err("no configuration directory".into()),
@@ -58,7 +58,7 @@ pub struct RiderProfiles {
 }
 
 impl RiderProfiles {
-    fn save(&self) -> Result<(), String> {
+    pub(crate) fn save(&self) -> Result<(), String> {
         match &self.path {
             Some(p) => self.riders.save(p),
             None => Err("no configuration directory".into()),

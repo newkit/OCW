@@ -101,6 +101,7 @@ fn menu_input(
     riders: Option<Res<RiderProfiles>>,
     catalog: Option<Res<RideCatalog>>,
     audio: Option<Res<AudioDeviceList>>,
+    voice: Option<Res<crate::voice::VoiceMenuInfo>>,
 ) {
     let pressed = pads.iter().fold(
         keys.map(|k| controls::keyboard(&k)).unwrap_or_default(),
@@ -154,6 +155,7 @@ fn menu_input(
             riders.as_deref(),
             catalog.as_deref(),
             audio.as_deref(),
+            voice.as_deref(),
         )
     };
     for action in actions {
@@ -199,7 +201,17 @@ fn sub_rows(
     riders: Option<&RiderProfiles>,
     catalog: Option<&RideCatalog>,
     audio: Option<&AudioDeviceList>,
+    voice: Option<&crate::voice::VoiceMenuInfo>,
 ) -> Vec<settings_pages::Row> {
+    let default_settings = Settings::default();
+    if page.is_voice_page() {
+        let empty = crate::voice::VoiceMenuInfo::default();
+        return crate::voice::page::rows(
+            page,
+            settings.map_or(&default_settings, |s| &s.settings),
+            voice.unwrap_or(&empty),
+        );
+    }
     if page.is_ride_page() {
         let empty = crate::ride::pages::Catalog::default();
         return crate::ride::pages::rows(page, catalog.map_or(&empty, |c| &c.0));
@@ -227,6 +239,7 @@ fn write_view(
     riders: Option<Res<RiderProfiles>>,
     catalog: Option<Res<RideCatalog>>,
     audio: Option<Res<AudioDeviceList>>,
+    voice: Option<Res<crate::voice::VoiceMenuInfo>>,
     mut view: ResMut<MenuView>,
 ) {
     // Values changed by the menu's commands (or the console) show at once.
@@ -237,6 +250,7 @@ fn write_view(
             riders.as_deref(),
             catalog.as_deref(),
             audio.as_deref(),
+            voice.as_deref(),
         )
     };
     state.menu.refresh(&rows);

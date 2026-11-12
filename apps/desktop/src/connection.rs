@@ -259,7 +259,9 @@ fn poll_server(
     time: Res<Time>,
     mut client: ResMut<ClientState>,
     mut console: ResMut<ConsoleState>,
+    voice: Option<ResMut<crate::voice::PendingVoiceGrants>>,
 ) {
+    let mut voice = voice;
     let messages = link.server.lock().expect("not poisoned").receive();
     let now = time.elapsed_secs_f64();
     for bytes in messages {
@@ -272,6 +274,11 @@ fn poll_server(
                 console.print(format!("server rejected connection: {reason}"));
             }
             Some(Notice::CommandResult(text)) => console.print(text),
+            Some(Notice::Voice(grant)) => {
+                if let Some(v) = voice.as_mut() {
+                    v.0.push(grant);
+                }
+            }
             None => {}
         }
     }

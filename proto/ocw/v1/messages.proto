@@ -17,7 +17,30 @@ message ClientMessage {
     UTurn u_turn = 6;
     RouteRejoin route_rejoin = 7;
     EventRequest event = 8;
+    VoiceTokenRequest voice = 9;
   }
+}
+
+// Voice chat (spec §7, §2.4): asks the game server for a short-lived
+// LiveKit access token. The server decides the room from the rider's
+// session (and event or group); voice itself never goes over this
+// connection. Answered with a VoiceGrant. Reliable.
+message VoiceTokenRequest {
+  VoiceChannel channel = 1;
+  // VOICE_CHANNEL_GROUP: the group's name (1–32 characters of a–z, 0–9
+  // and '-'; others are refused). Anyone in the session who knows the name
+  // can join until accounts and invitations exist (Phase 5).
+  string group = 2;
+}
+
+enum VoiceChannel {
+  // Everyone in the session (spatial: the client attenuates by distance).
+  VOICE_CHANNEL_UNSPECIFIED = 0;
+  VOICE_CHANNEL_SESSION = 1;
+  // The entrants of the current event (group ride, race).
+  VOICE_CHANNEL_EVENT = 2;
+  // A named group of the session (private room).
+  VOICE_CHANNEL_GROUP = 3;
 }
 
 // Events (spec §2.3): group ride, race, time trial. The server decides
@@ -183,7 +206,25 @@ message ServerMessage {
     DevCommandResult dev_result = 4;
     PathUpdate path = 5;
     EventState event = 6;
+    VoiceGrant voice = 7;
   }
+}
+
+// Answer to a VoiceTokenRequest (spec §7): the LiveKit server URL and an
+// access token (JWT, HS256) for one room, bound to the rider (identity
+// "rider-<rider_id>", so clients map voices to riders on the road). An
+// empty token means refused; error says why (no voice on this server,
+// not in the event, too many requests).
+message VoiceGrant {
+  string url = 1;
+  string token = 2;
+  string room = 3;
+  string identity = 4;
+  // Unix time (s) after which the token cannot be used to join; ask again
+  // before reconnecting.
+  uint64 expires_unix_s = 5;
+  VoiceChannel channel = 6;
+  string error = 7;
 }
 
 enum EventPhase {
@@ -271,6 +312,9 @@ message Welcome {
   WorldPackageId world = 7;
   // Route ride on the road graph: the route's name (route_id is the same).
   string graph_route = 8;
+  // The server issues voice tokens (VoiceTokenRequest, spec §7): clients
+  // join the voice room automatically once the ride is shared (§2.4).
+  bool voice = 9;
 }
 
 message Reject {
@@ -286,6 +330,9 @@ message DevCommandResult {
 message Snapshot {
   uint64 server_tick = 1;
   repeated RiderUpdate riders = 2;
+  // Riders of connected clients (humans, the receiver included; bots are
+  // not counted): voice joins automatically only on a shared ride (§2.4).
+  uint32 human_riders = 3;
 }
 
 // Quantized rider state (spec §6.2).

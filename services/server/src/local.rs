@@ -61,6 +61,7 @@ impl LocalServer {
                 bots,
                 start_m,
                 allow_local_events: true,
+                voice: None,
             },
         );
         let thread = thread::Builder::new()
@@ -128,6 +129,7 @@ impl SteppedServer {
                 bots,
                 start_m,
                 allow_local_events: true,
+                voice: None,
             },
         );
         let conn = server.connect();

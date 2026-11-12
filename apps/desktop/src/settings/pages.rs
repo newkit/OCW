@@ -44,6 +44,13 @@ pub enum Page {
     GpxImport,
     /// Ride → Workouts: start, skip and stop structured workouts.
     Workouts,
+    /// Settings → Voice (M8; rows from `voice::page`): mute switches,
+    /// volume, participants, devices.
+    Voice,
+    /// Voice → Devices and options.
+    VoiceDevices,
+    /// Voice → Participants: mute single riders.
+    VoiceParticipants,
 }
 
 impl Page {
@@ -75,6 +82,9 @@ impl Page {
             Self::Rides => "Rides",
             Self::GpxImport => "GPX import",
             Self::Workouts => "Workouts",
+            Self::Voice => "Voice",
+            Self::VoiceDevices => "Voice devices",
+            Self::VoiceParticipants => "Voice participants",
         }
     }
 
@@ -91,12 +101,21 @@ impl Page {
         )
     }
 
+    /// The voice pages (rows from `voice::page`).
+    pub fn is_voice_page(self) -> bool {
+        matches!(
+            self,
+            Self::Voice | Self::VoiceDevices | Self::VoiceParticipants
+        )
+    }
+
     /// One page up (the rider editor goes back to the list).
     pub fn parent(self) -> Option<Self> {
         match self {
             Self::Rider(_) => Some(Self::Riders),
             Self::Bike(_) => Some(Self::Workshop),
             Self::World(_) => Some(Self::Worlds),
+            Self::VoiceDevices | Self::VoiceParticipants => Some(Self::Voice),
             _ => None,
         }
     }
@@ -113,7 +132,9 @@ impl Page {
             Self::Riders => &["Rider profiles: weight, height, FTP. Choose one in the Workshop."],
             Self::Rider(_) => &["Changes apply from the next start (Restart)."],
             Self::Trainer => &["Devices, SIM difficulty and the virtual trainer."],
-            Self::Strava => &["Uploads rides to Strava (needs API credentials, see README)."],
+            Self::Strava => &[
+                "Uploads rides to Strava after saving when an account is linked (needs API credentials, see README); the sync state is in Navi -> Rides. Later (Phase 5): upload through the OCW backend, Strava routes as GPX routes.",
+            ],
             Self::Audio => &[
                 "Sounds are made by OCW itself; Enter on a volume plays a test sound. Output: the device (default = the system's).",
             ],
@@ -129,6 +150,15 @@ impl Page {
             Self::GpxImport => &[
                 "GPX files from the gpx folder of the OCW data folder and from Downloads, matched onto the roads of the loaded world package.",
             ],
+            Self::Voice => &[
+                "Voice chat is always on, like a call: on shared rides you join automatically. M mutes your microphone, Shift+M the voices (gamepad: Select, R3).",
+            ],
+            Self::VoiceDevices => &[
+                "Microphone and speaker for voice chat; a missing device falls back to the default.",
+            ],
+            Self::VoiceParticipants => {
+                &["Riders in the voice room. Confirm mutes or unmutes one for you."]
+            }
             Self::Workouts => &[
                 "Structured workouts in ERG mode: yours from the workouts folder of the OCW data folder (.toml, .erg, .mrc), then the examples. % FTP targets use the rider's FTP (Settings -> Riders).",
             ],
@@ -477,6 +507,8 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         | Page::Rides
         | Page::GpxImport
         | Page::Workouts => Vec::new(),
+        // From the voice state (`voice::page::rows`).
+        Page::Voice | Page::VoiceDevices | Page::VoiceParticipants => Vec::new(),
         Page::Workshop => {
             let mut out: Vec<Row> = riders
                 .riders

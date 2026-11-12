@@ -54,9 +54,14 @@ pub struct NetStats {
 /// Something the user should be told about (shown in the console).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Notice {
-    Joined { rider_id: RiderId, route_id: String },
+    Joined {
+        rider_id: RiderId,
+        route_id: String,
+    },
     Rejected(String),
     CommandResult(String),
+    /// The answer to a voice token request (spec §7).
+    Voice(v1::VoiceGrant),
 }
 
 /// Free-ride state of the client.
@@ -130,6 +135,10 @@ pub struct ClientCore {
     event: EventClient,
     /// The last snapshot's server tick and client time it arrived.
     last_snapshot_at: Option<(u64, f64)>,
+    /// The server offers voice chat (`Welcome.voice`).
+    voice_offered: bool,
+    /// Human riders in the session (from the last snapshot).
+    human_riders: u32,
 }
 
 /// Steering mode before the menu opened (spec §3.2.1), restored on closing.
@@ -171,6 +180,8 @@ impl ClientCore {
             menu_hold: None,
             event: EventClient::new(route.id()),
             last_snapshot_at: None,
+            voice_offered: false,
+            human_riders: 0,
             route,
         }
     }
@@ -367,6 +378,7 @@ impl ClientCore {
                 }
                 let id = RiderId(w.rider_id);
                 self.rider_id = Some(id);
+                self.voice_offered = w.voice;
                 if !self.autodrive_at_start {
                     self.set_autodrive(false);
                 }
@@ -389,6 +401,7 @@ impl ClientCore {
                 self.on_path(&p);
                 None
             }
+            S::Voice(g) => Some(Notice::Voice(g)),
             S::Event(e) => {
                 let info = ocw_protocol::event_info(&e);
                 if self.event.on_state(info, self.rider_id, now_s) {
@@ -465,6 +478,7 @@ impl ClientCore {
         self.stats.snapshots += 1;
         self.stats.last_snapshot_tick = s.server_tick;
         self.last_snapshot_at = Some((s.server_tick, now_s));
+        self.human_riders = s.human_riders;
         let mut others = Vec::new();
         for u in &s.riders {
             let (id, state) = dequantize(u);
@@ -1186,6 +1200,22 @@ impl ClientCore {
     pub fn route(&self) -> &Route {
         &self.route
     }
+    /// The server issues voice tokens (spec §7); false before the welcome.
+    pub fn voice_offered(&self) -> bool {
+        self.voice_offered
+    }
+
+    /// Riders of connected clients in the session, the own one included
+    /// (0 before the first snapshot or from an old server).
+    pub fn human_riders(&self) -> u32 {
+        self.human_riders
+    }
+
+    /// A voice token request for the server.
+    pub fn voice_request_message(req: v1::VoiceTokenRequest) -> Vec<u8> {
+        encode(&client_message(C::Voice(req)))
+    }
+
     pub fn rider_id(&self) -> Option<RiderId> {
         self.rider_id
     }
@@ -1311,6 +1341,7 @@ mod tests {
                     bots,
                     start_m: 0.0,
                     allow_local_events: true,
+                    voice: None,
                 },
             );
             let client = ClientCore::new(route(), "Tester", RiderProfile::default());
@@ -1338,6 +1369,7 @@ mod tests {
                     bots,
                     start_m: 0.0,
                     allow_local_events: true,
+                    voice: None,
                 },
             );
             Self::with(
@@ -1393,6 +1425,52 @@ mod tests {
         }
     }
 
+    /// Voice (spec §7): the welcome says whether the server offers voice,
+    /// snapshots count the human riders, and a token request is answered
+    /// with a grant for the client's rider.
+    #[test]
+    fn voice_offer_human_count_and_grant() {
+        let mut h = Harness::new(2, false);
+        assert!(!h.client.voice_offered(), "this server has no voice");
+        h.ride(100.0, 0.3);
+        assert_eq!(h.client.human_riders(), 1, "bots are not counted");
+        h.send(&ClientCore::voice_request_message(v1::VoiceTokenRequest {
+            channel: v1::VoiceChannel::Session as i32,
+            group: String::new(),
+        }));
+        assert!(
+            matches!(h.notices.last(), Some(Notice::Voice(g)) if g.token.is_empty() && !g.error.is_empty())
+        );
+
+        let server = GameServer::new(
+            route(),
+            ServerConfig {
+                voice: Some(ocw_server::voice::VoiceConfig::new(
+                    "ws://127.0.0.1:7880",
+                    "k",
+                    "s",
+                )),
+                ..Default::default()
+            },
+        );
+        let mut h = Harness::with(
+            server,
+            ClientCore::new(route(), "Tester", RiderProfile::default()),
+        );
+        assert!(h.client.voice_offered());
+        h.send(&ClientCore::voice_request_message(
+            v1::VoiceTokenRequest::default(),
+        ));
+        let Some(Notice::Voice(g)) = h.notices.last() else {
+            panic!("no grant: {:?}", h.notices)
+        };
+        assert_eq!(
+            g.identity,
+            ocw_protocol::voice_identity(h.client.rider_id().unwrap())
+        );
+        assert!(!g.token.is_empty() && g.error.is_empty());
+    }
+
     #[test]
     fn joins_and_shows_nothing_before_welcome() {
         let client = ClientCore::new(route(), "A", RiderProfile::default());
@@ -1415,6 +1493,7 @@ mod tests {
                 bots: 0,
                 start_m: 0.0,
                 allow_local_events: false,
+                voice: None,
             },
         );
         let client = ClientCore::new(route(), "Light", RiderProfile::for_rider_weight(58.0));
@@ -2287,6 +2366,7 @@ mod tests {
                 bots: 0,
                 start_m: 0.0,
                 allow_local_events: true,
+                voice: None,
             },
         );
         let mut h = Harness::with(
@@ -2345,6 +2425,7 @@ mod tests {
                     bots,
                     start_m: 0.0,
                     allow_local_events: true,
+                    voice: None,
                 },
             );
             Self::with(
@@ -2471,6 +2552,7 @@ mod tests {
                 graph_hash: other.fingerprint() ^ 1,
             }),
             graph_route: String::new(),
+            voice: false,
         })));
         h.receive(&welcome);
         assert!(matches!(h.notices.last(), Some(Notice::Rejected(_))));
@@ -2512,6 +2594,7 @@ mod tests {
         let late = encode(&ocw_protocol::server_message(S::Snapshot(v1::Snapshot {
             server_tick: before.last_snapshot_tick - 5,
             riders: Vec::new(),
+            human_riders: 1,
         })));
         h.receive(&late);
         let after = h.client.stats();

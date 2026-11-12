@@ -1,0 +1,36 @@
+[package]
+name = "ocw-voice"
+description = "Open Cycling World voice chat (spec §7): always-on voice logic, spatial audio, LiveKit backend"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# The LiveKit backend (LiveKit Rust SDK on libwebrtc, cpal for the audio
+# devices). Off by default: without it the crate is pure logic and the app
+# reports voice as not built in. The desktop's `voice` feature turns it on.
+livekit = ["dep:livekit", "dep:cpal", "dep:tokio", "dep:futures"]
+
+[dependencies]
+ocw-core.workspace = true
+ocw-protocol.workspace = true
+tracing.workspace = true
+# LiveKit Rust SDK (Apache-2.0); downloads LiveKit's prebuilt libwebrtc
+# (BSD-3-Clause) at build time. rustls with webpki roots for wss://.
+# On Linux its bindings must be compiled with clang >= 21 (the prebuilt
+# libwebrtc uses Chromium's hermetic libc++): build with
+# `CXX=clang++-21` (`make deps-llvm-debian`, apt.llvm.org), spec §7.
+livekit = { version = "0.10.1", optional = true, features = ["rustls-tls-webpki-roots"] }
+# Audio devices (Apache-2.0); the same version Bevy's audio uses.
+cpal = { version = "0.17", optional = true }
+tokio = { workspace = true, optional = true, features = ["rt-multi-thread"] }
+futures = { workspace = true, optional = true }
+
+[dev-dependencies]
+# The env-gated LiveKit test mints its tokens like the game server.
+ocw-server.workspace = true
+
+[lints]
+workspace = true

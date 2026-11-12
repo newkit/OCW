@@ -25,10 +25,12 @@ pub enum Kind {
     Int { min: i64, max: i64, step: i64 },
     /// One of these words.
     Choice(&'static [&'static str]),
-    /// Free text (a device name), without double quotes; menus offer
-    /// their own choices for it.
+    /// Free text (a device name), at most [`MAX_TEXT_LEN`] characters.
     Text,
 }
+
+/// Longest [`Kind::Text`] value.
+pub const MAX_TEXT_LEN: usize = 200;
 
 /// When a changed value takes effect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -288,6 +290,80 @@ pub const SETTINGS: &[SettingDef] = &[
         scope: Scope::Live,
         apply: Apply::Command("audio.output \"{}\""),
     },
+    // Voice chat (spec §2.4, §7, M8): always on like a call; every change
+    // is handed to the voice controller by `voice.apply`.
+    SettingDef {
+        key: "voice.enabled",
+        kind: Kind::Bool,
+        default: "on",
+        description: "Voice chat: join the voice room automatically on shared rides",
+        scope: Scope::Live,
+        apply: Apply::Command("voice.apply enabled {}"),
+    },
+    SettingDef {
+        key: "voice.mic_muted",
+        kind: Kind::Bool,
+        default: "off",
+        description: "Own microphone muted (M, gamepad Select)",
+        scope: Scope::Live,
+        apply: Apply::Command("voice.apply mic_muted {}"),
+    },
+    SettingDef {
+        key: "voice.speaker_muted",
+        kind: Kind::Bool,
+        default: "off",
+        description: "Speaker muted: no voices (Shift+M, gamepad R3); game sounds stay",
+        scope: Scope::Live,
+        apply: Apply::Command("voice.apply speaker_muted {}"),
+    },
+    SettingDef {
+        key: "voice.volume",
+        kind: Kind::Int {
+            min: 0,
+            max: 200,
+            step: 10,
+        },
+        default: "100",
+        description: "Voice volume in percent",
+        scope: Scope::Live,
+        apply: Apply::Command("voice.apply volume {}"),
+    },
+    SettingDef {
+        key: "voice.spatial",
+        kind: Kind::Bool,
+        default: "on",
+        description: "Spatial voice: riders further away on the road sound quieter",
+        scope: Scope::Live,
+        apply: Apply::Command("voice.apply spatial {}"),
+    },
+    SettingDef {
+        key: "voice.max_voices",
+        kind: Kind::Int {
+            min: 1,
+            max: 20,
+            step: 1,
+        },
+        default: "10",
+        description: "Hear at most this many riders at once (the nearest)",
+        scope: Scope::Live,
+        apply: Apply::Command("voice.apply max_voices {}"),
+    },
+    SettingDef {
+        key: "voice.input",
+        kind: Kind::Text,
+        default: "default",
+        description: "Microphone by name (default: the system's)",
+        scope: Scope::Live,
+        apply: Apply::Command("voice.apply input {}"),
+    },
+    SettingDef {
+        key: "voice.output",
+        kind: Kind::Text,
+        default: "default",
+        description: "Speaker for voices by name (default: the system's)",
+        scope: Scope::Live,
+        apply: Apply::Command("voice.apply output {}"),
+    },
 ];
 
 /// The setting registered under `key`.
@@ -322,11 +398,18 @@ impl SettingDef {
                         choices.join(", ")
                     )
                 }),
-            Kind::Text if text.is_empty() || text.contains('"') => Err(format!(
-                "{}: expected a name without double quotes, not {text:?}",
-                self.key
-            )),
-            Kind::Text => Ok(Value::Text(text.to_string())),
+            Kind::Text => {
+                if text.is_empty() {
+                    Err(format!("{}: expected a name", self.key))
+                } else if text.chars().count() > MAX_TEXT_LEN || text.contains(['\n', '"']) {
+                    Err(format!(
+                        "{}: at most {MAX_TEXT_LEN} characters on one line, without quotes",
+                        self.key
+                    ))
+                } else {
+                    Ok(Value::Text(text.to_string()))
+                }
+            }
         }
     }
 
@@ -604,6 +687,30 @@ mod tests {
         let cam = def("display.camera").unwrap();
         assert_eq!(cam.parse("Top"), Ok(Value::Text("top".into())));
         assert!(cam.parse("bird").unwrap_err().contains("chase, side, top"));
+    }
+
+    #[test]
+    fn text_settings_hold_device_names() {
+        let d = def("voice.input").unwrap();
+        assert_eq!(
+            d.parse(" USB Headset "),
+            Ok(Value::Text("USB Headset".into()))
+        );
+        assert!(d.parse("").is_err());
+        assert!(d.parse("a\"b").is_err());
+        assert!(d.parse(&"x".repeat(MAX_TEXT_LEN + 1)).is_err());
+        let v = Value::Text("USB Headset".into());
+        assert_eq!(d.step(&v, 1), v, "devices are stepped by the voice page");
+        let (s, warnings) =
+            Settings::parse("[voice]\ninput = \"USB Headset\"\nmic_muted = true\n").unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(s.get("voice.input"), Ok(v));
+        assert_eq!(s.get("voice.mic_muted"), Ok(Value::Bool(true)));
+        // First start: microphone and speaker on (not muted).
+        let s = Settings::default();
+        assert_eq!(s.get("voice.mic_muted"), Ok(Value::Bool(false)));
+        assert_eq!(s.get("voice.speaker_muted"), Ok(Value::Bool(false)));
+        assert_eq!(s.get("voice.enabled"), Ok(Value::Bool(true)));
     }
 
     #[test]

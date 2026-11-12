@@ -164,7 +164,7 @@ ARCHIVE_APP_ARGS=()
 case "$cmd" in
   shot)
     parse_shot_args "$@"
-    cargo build -q -p ocw-desktop
+    cargo build -q -p ocw-desktop ${OCW_FEATURES:+--features "$OCW_FEATURES"}
     status=0
     timeout 180 xvfb-run -a -s "-screen 0 1280x720x24" \
       env -u WAYLAND_DISPLAY "${APP_ENV[@]}" ./target/debug/ocw-desktop "${APP_ARGS[@]}" \
@@ -173,7 +173,7 @@ case "$cmd" in
     ;;
   shot-wayland)
     parse_shot_args "$@"
-    cargo build -q -p ocw-desktop
+    cargo build -q -p ocw-desktop ${OCW_FEATURES:+--features "$OCW_FEATURES"}
     start_weston "${out%.*}.weston.log"
     status=0
     timeout 180 env -u DISPLAY XDG_RUNTIME_DIR="$runtime" WAYLAND_DISPLAY="$socket" \
@@ -182,7 +182,7 @@ case "$cmd" in
     ;;
   video)
     parse_video_args "$@"
-    cargo build -q -p ocw-desktop
+    cargo build -q -p ocw-desktop ${OCW_FEATURES:+--features "$OCW_FEATURES"}
     status=0
     timeout 600 xvfb-run -a -s "-screen 0 1280x720x24" \
       env -u WAYLAND_DISPLAY "${APP_ENV[@]}" ./target/debug/ocw-desktop "${VIDEO_APP_ARGS[@]}" \
@@ -191,7 +191,7 @@ case "$cmd" in
     ;;
   video-wayland)
     parse_video_args "$@"
-    cargo build -q -p ocw-desktop
+    cargo build -q -p ocw-desktop ${OCW_FEATURES:+--features "$OCW_FEATURES"}
     start_weston "${out%.*}.weston.log"
     status=0
     timeout 600 env -u DISPLAY XDG_RUNTIME_DIR="$runtime" WAYLAND_DISPLAY="$socket" \

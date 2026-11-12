@@ -6,7 +6,16 @@
 export PATH := $(HOME)/.cargo/bin:$(PATH)
 
 CARGO ?= cargo
-WASM_CRATES := -p ocw-core -p ocw-sim -p ocw-protocol -p ocw-world
+WASM_CRATES := -p ocw-core -p ocw-sim -p ocw-protocol -p ocw-world -p ocw-voice
+# Voice chat (spec §7): the LiveKit SDK's bindings need clang >= 21 on Linux
+# (`make deps-llvm-debian`). With clang-21 installed, `build` and `release`
+# include the desktop's `voice` feature; without it they build as before.
+# VOICE=0 turns it off, VOICE=1 insists on it.
+VOICE ?= $(if $(shell command -v clang++-21 2>/dev/null),1,0)
+ifeq ($(VOICE),1)
+VOICE_ENV := CC=clang-21 CXX=clang++-21
+VOICE_FEATURES := --features ocw-desktop/voice
+endif
 # Build: compiler, Bevy (audio, input, windowing), btleplug (D-Bus), GLib / GIO
 # headers for the voice feature (webrtc-sys always needs them on Linux).
 # Run/test: Vulkan driver + vulkaninfo, BlueZ, headless displays (Xvfb, weston),
@@ -164,11 +173,11 @@ deps-rust: ## Linux/macOS: rustup (if missing) + the pinned toolchain incl. wasm
 	rustup show active-toolchain || rustup toolchain install
 	@echo "Toolchain ready. Add ~/.cargo/bin to PATH (e.g. '. \"\$$HOME/.cargo/env\"' in ~/.profile) to use cargo outside make."
 
-build: ## Debug build of all crates and apps
-	$(CARGO) build --workspace
+build: ## Debug build of all crates and apps (with voice if clang-21 is installed)
+	$(VOICE_ENV) $(CARGO) build --workspace $(VOICE_FEATURES)
 
-release: ## Optimized build of ocw-desktop and ocw-server
-	$(CARGO) build --release -p ocw-desktop -p ocw-server
+release: ## Optimized build of ocw-desktop and ocw-server (with voice if clang-21 is installed)
+	$(VOICE_ENV) $(CARGO) build --release -p ocw-desktop -p ocw-server $(VOICE_FEATURES)
 
 test: ## Run all unit and integration tests (no hardware, network or GPU)
 	$(CARGO) test --workspace

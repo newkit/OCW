@@ -57,6 +57,8 @@ ffmpeg` (`make deps-macos` prints both commands); the app also finds it in
 | Camera reset | C | |
 | Restart everything (as at program start; the ride is saved first) | R | |
 | Record a video (start / stop) | V | |
+| Voice: mute / unmute your microphone | M | Select (Back / View / Share) |
+| Voice: mute / unmute the speaker (all voices; game sounds stay) | Shift+M | right-stick click (R3) |
 | Next screen | F11 | |
 | Console (`help` lists the commands) | `` ` `` or F12 | |
 
@@ -761,6 +763,73 @@ ocw-desktop --server 127.0.0.1 --insecure-dev     # server on the same machine o
 - The server runs until Ctrl+C (or SIGTERM), then closes all connections
   ("server shutting down"); `--seconds S` stops it earlier.
 
+### Voice chat
+
+Voice is **always on, like a call** (spec §2.4, §7): on a shared ride – a
+server with other riders, or a voice group – the app joins the voice room by
+itself with an open microphone; solo rides (the local server, bots only)
+never connect. **M** / gamepad **Select** mutes your microphone, **Shift+M** /
+**R3** mutes all voices; both are remembered in `settings.toml` and shown in
+the HUD's voice indicator (with the connection state and who is talking).
+Settings → Voice has the switches, the voice volume, the participants (mute
+one rider for yourself), the microphone and speaker and spatial voice (riders
+further away on the road sound quieter; only the nearest 10 are heard).
+Console: `voice.status`, `voice.mute-mic [on|off|toggle]`,
+`voice.mute-speaker [on|off|toggle]`, `voice.mute RIDER`, `voice.group NAME`
+(a private room; `--leave` goes back), `voice.devices`; settings
+`voice.enabled`, `voice.volume`, `voice.spatial`, `voice.max_voices`,
+`voice.input`, `voice.output`.
+
+Voice needs three things:
+
+1. **A desktop build with voice.** It is a cargo feature, off by default
+   (the app builds and runs without it and says "not built in"):
+   ```bash
+   CC=clang-21 CXX=clang++-21 cargo build --release -p ocw-desktop --features voice   # Linux
+   cargo build --release -p ocw-desktop --features voice                              # macOS
+   ```
+   `make build` / `make release` and `scripts/deploy-test.sh` turn the
+   feature on by themselves when `clang++-21` is installed (`VOICE=0` /
+   `VOICE=1` to force it off / on).
+   The LiveKit Rust SDK downloads LiveKit's prebuilt libwebrtc when it is
+   built. On Linux its C++ bindings need **clang 21 or newer** (the prebuilt
+   libwebrtc uses Chromium's own libc++); Debian: `make deps-llvm-debian`
+   installs clang-21 from apt.llvm.org (`make deps-linux-debian` includes it
+   and `libglib2.0-dev`). On
+   macOS the Command Line Tools must have working C++ headers (`echo
+   '#include <algorithm>' | clang++ -x c++ -fsyntax-only -` must pass).
+2. **A LiveKit server** (self-hosted, Apache-2.0; voice never goes over the
+   game connection and is never recorded). For development, its dev mode
+   on the same machine is enough:
+   ```bash
+   livekit-server --dev       # ws://127.0.0.1:7880, API key "devkey", secret "secret"
+   ```
+   (install it from <https://docs.livekit.io/home/self-hosting/local/>; for
+   other machines run it with `--bind 0.0.0.0` and open TCP 7880 and UDP
+   7881–7882, or give it a config file with your own key pair).
+3. **A game server that knows it.** `ocw-server` issues short-lived access
+   tokens (10 minutes, one room, microphone only) to the riders connected to
+   it; the URL and key pair come from the environment (never from the
+   repository):
+   ```bash
+   export OCW_LIVEKIT_URL=ws://127.0.0.1:7880 OCW_LIVEKIT_API_KEY=devkey OCW_LIVEKIT_API_SECRET=secret
+   cargo run --release -p ocw-server -- --listen --bots 3
+   ```
+   (`--livekit-url`, `--livekit-api-key` override the first two; the secret
+   is only read from the environment.) Without them the server logs "voice
+   chat off" and the clients show "no voice on this server".
+
+There are no accounts yet (Phase 5): a token is bound to the rider of the
+connection (`rider-<id>`), and a voice group is open to everyone on the
+server who knows its name.
+
+**Integration test.** With a LiveKit server running and the three variables
+set, `cargo test -p ocw-voice --features livekit --test
+livekit_two_participants -- --nocapture` connects two simulated
+participants (no sound card needed): one speaks a tone, the other must hear
+it and see the mute. Without the variables the test passes without doing
+anything, so `cargo test --workspace` stays offline.
+
 ### Headless runs
 
 Without `--listen` it simulates without network, for tests and simulations:
@@ -1009,6 +1078,7 @@ git-ignored `test-output/`.
 | `crates/ocw-worldgen`, `apps/world-builder` | OSM + elevation import: road graph, profiles, world packages |
 | `crates/ocw-worldstore` | World package files, keys, trusted roots, local cache, download |
 | `crates/ocw-fit` | FIT activity file writer (ride export) |
+| `crates/ocw-voice` | Voice chat (always-on logic, spatial audio, mixer; LiveKit backend with the `livekit` feature) |
 | `crates/ocw-render` | Bevy plugins: world, riders, camera, HUD, console; the bundled UI font (`assets/fonts/`) |
 | `crates/ocw-assets` | Bike and rider models: generator, glTF reader, asset validator, rider-on-bike pose, riding animation states (no Bevy) |
 | `assets/models/` | The shipped glTF models and their licence manifest (embedded in the app) |

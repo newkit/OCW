@@ -18,6 +18,8 @@ Every successful `shot`/`video` run is also archived in the git-ignored
 with one row per run in `test-output/index.md` (date, commit, mode, window
 system, app arguments, links). `OCW_TEST_OUTPUT=DIR` changes the folder,
 `OCW_TEST_OUTPUT=off` disables it. CI uploads `test-output/` as an artifact.
+`OCW_FEATURES=voice` builds the app with extra cargo features (voice needs
+`CC=clang-21 CXX=clang++-21` on Linux, spec §7).
 
 ## Prerequisites (Debian/Ubuntu)
 

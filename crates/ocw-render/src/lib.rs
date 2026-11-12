@@ -16,6 +16,7 @@ pub mod riders;
 pub mod see_through;
 pub mod terrain;
 pub mod tunnel;
+pub mod voice;
 pub mod workout;
 pub mod world;
 
@@ -207,6 +208,7 @@ impl Plugin for OcwRenderPlugins {
             menu::MenuPlugin,
             console::ConsolePlugin,
             workout::WorkoutPanelPlugin,
+            voice::VoiceHudPlugin,
         ));
     }
 }

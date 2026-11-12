@@ -31,6 +31,7 @@ mod settings;
 mod strava;
 mod trainer;
 mod video;
+mod voice;
 mod workout;
 mod worlds;
 
@@ -370,6 +371,7 @@ fn main() -> AppExit {
         menu::MenuPlugin,
         workout::WorkoutPlugin,
         ride::RidePlugin,
+        voice::VoicePlugin,
     ))
     .add_systems(Startup, startup_commands)
     .add_systems(Update, timed_commands);

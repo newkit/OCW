@@ -69,8 +69,6 @@ pub enum Page {
     /// A Settings sub page, the Workshop or a list of the Ride / Navi
     /// pages, with rows from `settings::pages` / `ride::pages`.
     Sub(sub::Page),
-    /// Navi → Strava: what comes later (no network calls here).
-    NaviStrava,
     ConfirmRestart,
     ConfirmQuit,
     /// "Change the ride?" before a `ride.switch` line ([`Menu::pending`]).
@@ -165,7 +163,8 @@ const NAVI_ITEMS: &[Item] = &[
         "GPX import",
         ItemKind::Open(Page::Sub(sub::Page::GpxImport)),
     ),
-    item("Strava", ItemKind::Open(Page::NaviStrava)),
+    // The Strava account page lives here (Settings is full, ten-foot rule).
+    item("Strava", ItemKind::Open(Page::Sub(sub::Page::Strava))),
     BACK,
 ];
 const SETTINGS_ITEMS: &[Item] = &[
@@ -174,7 +173,7 @@ const SETTINGS_ITEMS: &[Item] = &[
     item("Trainer", ItemKind::Open(Page::Sub(sub::Page::Trainer))),
     item("Audio", ItemKind::Open(Page::Sub(sub::Page::Audio))),
     item("Display", ItemKind::Open(Page::Sub(sub::Page::Display))),
-    item("Strava", ItemKind::Open(Page::Sub(sub::Page::Strava))),
+    item("Voice", ItemKind::Open(Page::Sub(sub::Page::Voice))),
     BACK,
 ];
 const RESTART_ITEMS: &[Item] = &[
@@ -246,15 +245,6 @@ impl Page {
                     "Routes of this world, your saved rides, GPX import onto the roads of the loaded world package.",
                 ],
                 items: NAVI_ITEMS,
-                initial_focus: 0,
-            },
-            Page::NaviStrava => PageDef {
-                title: "Strava",
-                text: &[
-                    "Rides are uploaded to Strava after saving when an account is linked (Settings -> Strava; the sync state is in Navi -> Rides).",
-                    "Later (Phase 5): the upload through the OCW backend without own API credentials, importing Strava routes and segments as GPX routes.",
-                ],
-                items: &[BACK],
                 initial_focus: 0,
             },
             Page::Settings => PageDef {
@@ -1060,7 +1050,6 @@ mod tests {
             Page::RideChange,
             Page::Navi,
             Page::Settings,
-            Page::NaviStrava,
             Page::ConfirmRestart,
             Page::ConfirmQuit,
             Page::ConfirmSwitch,

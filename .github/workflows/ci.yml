@@ -99,4 +99,4 @@ jobs:
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - name: Check core crates for wasm32
-        run: cargo check -p ocw-core -p ocw-sim -p ocw-protocol -p ocw-world --target wasm32-unknown-unknown
+        run: cargo check -p ocw-core -p ocw-sim -p ocw-protocol -p ocw-world -p ocw-voice --target wasm32-unknown-unknown
