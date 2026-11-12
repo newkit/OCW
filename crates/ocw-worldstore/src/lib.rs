@@ -11,16 +11,19 @@
 //! - [`cache`]: `<cache>/<id>/<version>/{manifest.json, files}`
 //! - [`load`]: `--world PATH | ID[@VERSION]` with verify-on-load
 //! - [`fetch`]: download a package into the cache, resumable, verified
+//! - [`neighbours`]: installed neighbour packages joined to a world set
 
 pub mod cache;
 pub mod fetch;
 pub mod keys;
 pub mod load;
+pub mod neighbours;
 pub mod trust;
 
 pub use cache::{CacheEntry, WorldCache};
 pub use fetch::{FileTransport, Transport, UreqTransport, fetch};
 pub use load::{LoadError, LoadOptions, LoadedWorld, load_world, manifest_path_for};
+pub use neighbours::{Neighbourhood, neighbourhood};
 
 /// Seconds since the Unix epoch (0 if the clock is before it).
 pub fn now_unix_s() -> i64 {

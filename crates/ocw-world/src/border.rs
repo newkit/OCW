@@ -134,10 +134,19 @@ pub fn join_graphs(a: Placed, b: Placed, links: &[BorderLink]) -> RoadGraph {
             continue;
         }
         let mut e = e.clone();
+        let ends = (linked.contains_key(&e.from), linked.contains_key(&e.to));
         e.from = map[e.from.0 as usize];
         e.to = map[e.to.0 as usize];
         for p in &mut e.points {
             *p = b.in_frame_of(*p, a.origin);
+        }
+        // The road meets the linked vertex exactly (the two cut ends may be
+        // up to LINK_TOLERANCE_M apart).
+        if let (true, Some(p)) = (ends.0, e.points.first_mut()) {
+            *p = g.vertices[e.from.0 as usize];
+        }
+        if let (true, Some(p)) = (ends.1, e.points.last_mut()) {
+            *p = g.vertices[e.to.0 as usize];
         }
         g.edges.push(e);
     }
@@ -291,6 +300,27 @@ mod tests {
         let (at, reason) = q.turnaround_ahead(0.0).unwrap();
         assert_eq!(reason, TurnReason::Boundary);
         assert!(at < 200.0, "{at}");
+    }
+
+    #[test]
+    fn the_neighbour_road_starts_exactly_at_the_linked_vertex() {
+        let (a, oa, mut b, ob) = split();
+        // B's cut end lies 3 m off A's (still the same point).
+        b.vertices[0][0] += 3.0;
+        b.edges[0].points[0][0] += 3.0;
+        let pa = Placed {
+            graph: &a,
+            origin: oa,
+        };
+        let pb = Placed {
+            graph: &b,
+            origin: ob,
+        };
+        let links = match_border(pa, pb);
+        assert_eq!(links.len(), 1);
+        let joined = join_graphs(pa, pb, &links);
+        let e = joined.edges.iter().find(|e| e.id == b.edges[0].id).unwrap();
+        assert_eq!(e.points[0], joined.vertices[2]);
     }
 
     #[test]

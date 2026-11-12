@@ -208,6 +208,29 @@ pub struct Manifest {
     pub package_format: String,
     pub attribution: Vec<Attribution>,
     pub files: Vec<FileEntry>,
+    /// The region box of the package (from its `REGN` section), so a
+    /// client finds installed neighbours without reading every package
+    /// (spec §2.2.2). Absent in older manifests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bounds: Option<Bounds>,
+}
+
+/// A latitude / longitude box in degrees.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Bounds {
+    pub south: f64,
+    pub west: f64,
+    pub north: f64,
+    pub east: f64,
+}
+
+// Bounds come from finite coordinates (never NaN), so equality is total.
+impl Eq for Bounds {}
+
+impl Bounds {
+    pub fn region(&self) -> crate::region::PackageRegion {
+        crate::region::PackageRegion::bbox(self.south, self.west, self.north, self.east)
+    }
 }
 
 /// Id, version and content hash of a package: what client and server
@@ -304,6 +327,7 @@ impl Manifest {
             package_format: String::new(),
             attribution,
             files: Vec::new(),
+            bounds: None,
         })
     }
 
@@ -323,6 +347,19 @@ impl Manifest {
             }
             if self.package_format.is_empty() {
                 self.package_format = String::from_utf8_lossy(&bytes[..8]).into_owned();
+            }
+            if let Some(region) = chunks
+                .iter()
+                .find(|c| c.name == "section REGN")
+                .and_then(|c| bytes.get(c.offset as usize + 12..(c.offset + c.size) as usize))
+                .and_then(|payload| crate::region::read_region(payload).ok())
+            {
+                self.bounds = Some(Bounds {
+                    south: region.south,
+                    west: region.west,
+                    north: region.north,
+                    east: region.east,
+                });
             }
         }
         let entry = FileEntry {
@@ -1027,6 +1064,7 @@ mod tests {
             tiles,
             graph: graph.then(crate::graph::RoadGraph::default),
             routes: Vec::new(),
+            region: None,
             landuse: None,
             buildings: None,
         }
@@ -1134,6 +1172,36 @@ mod tests {
         let mut long = package_bytes(true);
         long.push(0);
         assert!(package_chunks(&long).is_err());
+    }
+
+    #[test]
+    fn the_region_box_goes_into_the_manifest() {
+        let (root, signing) = keys();
+        // Without a region section: no bounds, and the field is left out
+        // (older readers and signatures see the same JSON as before).
+        let m = manifest(&package_bytes(true));
+        assert_eq!(m.bounds, None);
+        assert!(!SignedManifest::unsigned(&m).to_json().contains("bounds"));
+        let mut p = WorldPackage::from_bytes(&package_bytes(true)).unwrap();
+        p.region = Some(crate::region::PackageRegion::bbox(47.0, 9.4, 47.1, 9.6));
+        let bytes = p.to_bytes();
+        let m = manifest(&bytes);
+        assert_eq!(
+            m.bounds,
+            Some(Bounds {
+                south: 47.0,
+                west: 9.4,
+                north: 47.1,
+                east: 9.6
+            })
+        );
+        let json = SignedManifest::signed(&m, &signing).to_json();
+        let parsed = SignedManifest::parse(&json).unwrap();
+        assert_eq!(parsed.manifest.bounds, m.bounds);
+        parsed
+            .verify_signature(&TrustStore::new([root.public()]), T0)
+            .unwrap();
+        assert!(m.bounds.unwrap().region().contains((47.05, 9.5)));
     }
 
     #[test]

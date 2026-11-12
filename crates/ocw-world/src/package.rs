@@ -26,7 +26,9 @@
 //! junction steering (§2.2.1), see [`write_graph`]; `ROUT` – routes on the
 //! graph by stable edge ID (§2.7), see [`write_routes`]; `LUSE` – land use
 //! per tile and water levels (§4.6), see [`crate::landuse`]; `BLDG` –
-//! building footprints with heights and roofs, see [`crate::buildings`]. A
+//! building footprints with heights and roofs, see [`crate::buildings`];
+//! `REGN` – the region the package was cut to (box and polygon in
+//! latitude / longitude), for neighbouring packages, see [`crate::region`]. A
 //! package without sections is written as version 1, byte for byte as before.
 //!
 //! Tile `(x, z)` covers local metres `[x·size, (x+1)·size] × [z·size, (z+1)·size]`;
@@ -40,6 +42,7 @@ use crate::buildings::{BUILDINGS_TAG, Buildings, read_buildings, write_buildings
 use crate::graph::{Edge, EdgeId, Oneway, RoadClass, RoadGraph, VertexId};
 use crate::graph_route::{GraphRoute, RouteStep};
 use crate::landuse::{LANDUSE_TAG, LandUse, read_landuse, write_landuse};
+use crate::region::{PackageRegion, REGION_TAG, read_region, write_region};
 
 pub const MAGIC: &[u8; 8] = b"OCWPKG01";
 /// Version 2: version 1 plus tagged sections (the road graph).
@@ -111,6 +114,9 @@ pub struct WorldPackage {
     pub buildings: Option<Buildings>,
     /// Routes on the road graph (section `ROUT`, spec §2.7).
     pub routes: Vec<GraphRoute>,
+    /// The region the roads were cut to (section `REGN`; `None` in older
+    /// packages, which then cannot have neighbours, spec §2.2.2).
+    pub region: Option<PackageRegion>,
 }
 
 impl WorldPackage {
@@ -232,6 +238,11 @@ impl WorldPackage {
             write_buildings(t, &mut payload);
             sections.push((BUILDINGS_TAG, payload));
         }
+        if let Some(r) = &self.region {
+            let mut payload = Vec::new();
+            write_region(r, &mut payload);
+            sections.push((REGION_TAG, payload));
+        }
         b.extend_from_slice(if sections.is_empty() { MAGIC } else { MAGIC_V2 });
         b.extend((self.name.len() as u32).to_le_bytes());
         b.extend(self.name.as_bytes());
@@ -340,6 +351,7 @@ impl WorldPackage {
         let mut graph = None;
         let (mut landuse, mut buildings) = (None, None);
         let mut routes = Vec::new();
+        let mut region = None;
         if version >= 2 {
             let sections = r.u32()?;
             for _ in 0..sections {
@@ -354,6 +366,8 @@ impl WorldPackage {
                     buildings = Some(read_buildings(payload)?);
                 } else if &tag == ROUTES_TAG {
                     routes = read_routes(payload)?;
+                } else if &tag == REGION_TAG {
+                    region = Some(read_region(payload)?);
                 }
                 // Unknown sections (from newer builders) are skipped.
             }
@@ -371,6 +385,7 @@ impl WorldPackage {
             landuse,
             buildings,
             routes,
+            region,
         })
     }
 }
@@ -764,6 +779,7 @@ mod tests {
             landuse: None,
             buildings: None,
             routes: Vec::new(),
+            region: None,
         }
     }
 
@@ -976,6 +992,29 @@ mod tests {
         assert_eq!(old.tiles, full.tiles);
         assert_eq!(old.graph, full.graph);
         assert_eq!((old.landuse, old.buildings), (None, None));
+    }
+
+    #[test]
+    fn region_section_round_trip_and_old_readers_skip_it() {
+        let mut region = PackageRegion::bbox(47.0, 9.4, 47.2, 9.6);
+        region
+            .outer
+            .push(vec![(47.0, 9.4), (47.2, 9.4), (47.1, 9.6)]);
+        let p = WorldPackage {
+            graph: Some(graph()),
+            region: Some(region.clone()),
+            ..package()
+        };
+        let mut b = p.to_bytes();
+        assert_eq!(&b[..8], MAGIC_V2);
+        let back = WorldPackage::from_bytes(&b).unwrap();
+        assert_eq!(back.region, Some(region));
+        // A reader from before the section sees an unknown tag.
+        let at = b.windows(4).rposition(|w| w == REGION_TAG).unwrap();
+        b[at] = b'x';
+        let old = WorldPackage::from_bytes(&b).unwrap();
+        assert_eq!(old.region, None);
+        assert_eq!(old.graph, p.graph);
     }
 
     #[test]

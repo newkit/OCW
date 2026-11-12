@@ -46,6 +46,10 @@ struct Args {
     /// --world`) instead of a free ride.
     #[arg(long, value_name = "NAME", requires = "world")]
     route: Option<String>,
+    /// Ride the world package alone, without the installed neighbouring
+    /// packages its roads continue into (spec §2.2.2).
+    #[arg(long, requires = "world")]
+    no_neighbours: bool,
     /// Test route without --world: loop (gentle) or hills (steep). Clients
     /// must ride the same one (`ocw-desktop --route loop|hills`).
     #[arg(long, default_value = "loop", value_parser = ["loop", "hills"], conflicts_with = "world")]
@@ -87,12 +91,17 @@ fn free_ride(args: &Args, spec: &str) -> Course {
     };
     let world = ocw_worldstore::load_world(spec, &opts).unwrap_or_else(|e| fail(e.to_string()));
     tracing::info!(world = %world.describe(), "world package");
+    // The installed neighbours the roads continue into: one joined graph.
+    let hood = ocw_worldstore::neighbourhood(&world, spec, &opts, !args.no_neighbours);
+    for line in &hood.log {
+        tracing::info!("{line}");
+    }
     let pkg = world.package;
-    let graph = pkg
-        .graph
-        .clone()
-        .unwrap_or_else(|| fail("no road graph (rebuild it with world-builder package)".into()));
-    let net = Arc::new(RoadNetwork::new(graph).with_package_name(pkg.name.clone()));
+    let graph =
+        hood.set.graph().cloned().unwrap_or_else(|| {
+            fail("no road graph (rebuild it with world-builder package)".into())
+        });
+    let net = Arc::new(RoadNetwork::new(graph).with_package_name(hood.set.name()));
     if let Some(name) = args.route.as_deref() {
         let stored = pkg.route(name).unwrap_or_else(|| {
             let names: Vec<&str> = pkg.routes.iter().map(|r| r.name.as_str()).collect();

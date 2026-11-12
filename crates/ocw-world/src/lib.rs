@@ -19,11 +19,13 @@ pub mod matching;
 pub mod network;
 pub mod package;
 pub mod path;
+pub mod region;
 mod route;
 pub mod route_file;
 pub mod surface;
 mod terrain;
 pub mod track;
+pub mod world_set;
 
 pub use gradient::{AVERAGE_AHEAD_M, ElevationProfile, GradeBand, ProfileSpec, average_grade};
 pub use graph_route::{GraphRoute, RouteBreak, RoutePlan, RouteStep};
@@ -36,3 +38,4 @@ pub use route_file::{ElevationGrid, RouteFile};
 pub use surface::Surface;
 pub use terrain::{RoadProximity, Terrain, TerrainParams};
 pub use track::Track;
+pub use world_set::{Frame, WorldSet};

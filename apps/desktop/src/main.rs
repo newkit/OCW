@@ -152,6 +152,10 @@ pub struct Args {
     /// --world with a version 2 package (it has the road graph).
     #[arg(long, requires = "world")]
     pub free_ride: bool,
+    /// Ride the world package alone: do not join the installed
+    /// neighbouring packages its roads continue into (spec §2.2.2).
+    #[arg(long, requires = "world")]
+    pub no_neighbours: bool,
     /// Free ride start: the road nearest local X,Z metres (x east, z
     /// south of the package origin). Default: a random road (or a fixed one
     /// for --screenshot / --capture runs; see --random-start).
@@ -246,17 +250,21 @@ fn parse_xz(s: &str) -> Result<(f64, f64), String> {
     Ok((p(x)?, p(z)?))
 }
 
-/// Free ride: the road network of the package and where to start.
-fn free_ride_setup(args: &Args, pkg: &ocw_world::WorldPackage) -> connection::FreeRideSetup {
-    let Some(graph) = pkg.graph.clone() else {
+/// Free ride: the road network of the package (joined with its
+/// neighbours, spec §2.2.2) and where to start.
+fn free_ride_setup(
+    args: &Args,
+    pkg: &ocw_world::WorldPackage,
+    set: &ocw_world::WorldSet,
+) -> connection::FreeRideSetup {
+    let Some(graph) = set.graph().cloned() else {
         eprintln!(
             "{}: no road graph in this world package; rebuild it with `world-builder package` (format OCWPKG02)",
             args.world.as_deref().unwrap_or("?")
         );
         std::process::exit(1);
     };
-    let net =
-        std::sync::Arc::new(ocw_world::RoadNetwork::new(graph).with_package_name(pkg.name.clone()));
+    let net = std::sync::Arc::new(ocw_world::RoadNetwork::new(graph).with_package_name(set.name()));
     if args.graph_route() {
         let plan = graph_route_plan(args, pkg, &net).unwrap_or_else(|e| {
             eprintln!("{e}");
@@ -474,12 +482,12 @@ fn main() -> AppExit {
         .insert_resource(settings::LoadWarnings(loaded.warnings));
     if let Some(spec) = &args.world {
         let loaded = worlds::load(&args, spec);
-        app.insert_resource(worlds::WorldInfo::of(spec, &loaded));
-        let pkg = loaded.package;
+        let hood = worlds::neighbourhood(&args, spec, &loaded);
+        app.insert_resource(worlds::WorldInfo::of(spec, &loaded, &hood));
         if args.free_ride || args.graph_route() {
-            app.insert_resource(free_ride_setup(&args, &pkg));
+            app.insert_resource(free_ride_setup(&args, &loaded.package, &hood.set));
         }
-        app.insert_resource(ocw_render::package::PackageWorld(std::sync::Arc::new(pkg)));
+        app.insert_resource(worlds::package_world(&args, hood));
     }
     let free_ride = app.world().contains_resource::<connection::FreeRideSetup>();
     app.add_plugins(

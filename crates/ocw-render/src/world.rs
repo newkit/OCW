@@ -69,12 +69,10 @@ fn spawn_world(
     // With a world package, terrain, roads and trees are streamed from it
     // (package.rs); the route only adds its centre line and the start arch.
     if let Some(pkg) = &package {
-        let pkg = pkg.0.clone();
         // The surface exactly as meshed (triangles), not bilinear: on steep
-        // slopes they differ by metres within a cell.
-        commands.insert_resource(crate::Ground(std::sync::Arc::new(move |x, z| {
-            pkg.surface_height(x, z)
-        })));
+        // slopes they differ by metres within a cell. Across all packages
+        // of the world set (updated when neighbours load).
+        commands.insert_resource(pkg.ground());
         if view.free_ride {
             // No route: every rider rides their own path.
             return;

@@ -4,6 +4,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use ocw_world::graph::{Edge, EdgeId, RoadGraph, VertexId};
+use ocw_world::region::{PackageRegion, in_ring};
 
 use crate::filter::{rideable, width_m};
 use crate::osm::{OsmData, Way};
@@ -20,6 +21,10 @@ pub struct Region {
     pub max_lon: f64,
     /// Outer rings and holes as (lat, lon); empty = the box only.
     pub polygon: Polygon,
+    /// Projection origin of the package's local metres; `None` = the box
+    /// centre. Packages meant as neighbours can share one (`world-builder
+    /// package --origin`), so their metres differ by nothing at all.
+    pub origin: Option<(f64, f64)>,
 }
 
 /// Rings of a region boundary, (lat, lon) in degrees.
@@ -27,19 +32,6 @@ pub struct Region {
 pub struct Polygon {
     pub outer: Vec<Vec<(f64, f64)>>,
     pub holes: Vec<Vec<(f64, f64)>>,
-}
-
-/// Even-odd point-in-ring test (ray casting along longitude).
-fn in_ring(ring: &[(f64, f64)], (lat, lon): (f64, f64)) -> bool {
-    let mut inside = false;
-    let n = ring.len();
-    for i in 0..n {
-        let (a, b) = (ring[i], ring[(i + n - 1) % n]);
-        if (a.0 > lat) != (b.0 > lat) && lon < (b.1 - a.1) * (lat - a.0) / (b.0 - a.0) + a.1 {
-            inside = !inside;
-        }
-    }
-    inside
 }
 
 impl Polygon {
@@ -88,6 +80,7 @@ impl Region {
             max_lat,
             max_lon,
             polygon: Polygon::default(),
+            origin: None,
         }
     }
 
@@ -122,9 +115,57 @@ impl Region {
         )
     }
 
+    /// The projection origin: [`Region::origin`] or the box centre.
+    pub fn origin(&self) -> (f64, f64) {
+        self.origin.unwrap_or_else(|| self.center())
+    }
+
     pub fn projection(&self) -> LocalProjection {
-        let (lat, lon) = self.center();
+        let (lat, lon) = self.origin();
         LocalProjection::new(lat, lon)
+    }
+
+    /// Narrowed to a box (`--bbox` together with `--poly`).
+    pub fn clipped_to(mut self, min_lat: f64, min_lon: f64, max_lat: f64, max_lon: f64) -> Self {
+        self.min_lat = self.min_lat.max(min_lat);
+        self.min_lon = self.min_lon.max(min_lon);
+        self.max_lat = self.max_lat.min(max_lat);
+        self.max_lon = self.max_lon.min(max_lon);
+        self
+    }
+
+    /// Where the segment from `inside` to `outside` (lat, lon) leaves the
+    /// region (bisection on [`Region::contains`], so a neighbouring region
+    /// with the same border line finds the same point).
+    pub fn crossing(&self, inside: (f64, f64), outside: (f64, f64)) -> (f64, f64) {
+        let lerp = |t: f64| {
+            (
+                inside.0 + (outside.0 - inside.0) * t,
+                inside.1 + (outside.1 - inside.1) * t,
+            )
+        };
+        let (mut lo, mut hi) = (0.0f64, 1.0f64);
+        for _ in 0..60 {
+            let mid = 0.5 * (lo + hi);
+            if self.contains(lerp(mid)) {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        lerp(0.5 * (lo + hi))
+    }
+
+    /// What the package stores of the region (section `REGN`).
+    pub fn package_region(&self) -> PackageRegion {
+        PackageRegion {
+            south: self.min_lat,
+            west: self.min_lon,
+            north: self.max_lat,
+            east: self.max_lon,
+            outer: self.polygon.outer.clone(),
+            holes: self.polygon.holes.clone(),
+        }
     }
 }
 
@@ -166,6 +207,14 @@ pub fn stable_edge_id(way: i64, nodes: &[i64]) -> EdgeId {
     EdgeId(fnv1a([way as u64, first as u64, last as u64, geometry]))
 }
 
+/// Two (lat, lon) points less than 0.5 m apart.
+fn close(a: (f64, f64), b: (f64, f64)) -> bool {
+    let m = 111_195.0;
+    let dx = (a.1 - b.1) * m * a.0.to_radians().cos();
+    let dz = (a.0 - b.0) * m;
+    dx.hypot(dz) < 0.5
+}
+
 /// Builds the raw graph: no cleanup yet.
 pub fn raw_graph(osm: &OsmData, region: &Region) -> (RoadGraph, BuildStats) {
     let proj = region.projection();
@@ -199,13 +248,13 @@ pub fn raw_graph(osm: &OsmData, region: &Region) -> (RoadGraph, BuildStats) {
         })
     };
     for (w, class) in ways {
-        // Runs of consecutive nodes inside the region; a run cut by the
-        // border is marked as boundary at that end.
-        let inside: Vec<bool> = w
-            .nodes
-            .iter()
-            .map(|n| region.contains(osm.nodes[n]))
-            .collect();
+        // Runs of consecutive nodes inside the region. A run cut by the
+        // border ends exactly where the road crosses it (a new vertex,
+        // marked as boundary), so a neighbouring package cut along the same
+        // border line has its boundary vertex at the same point (spec
+        // §4.4 step 4, §2.2.2).
+        let at = |k: usize| osm.nodes[&w.nodes[k]];
+        let inside: Vec<bool> = (0..w.nodes.len()).map(|k| region.contains(at(k))).collect();
         let mut i = 0;
         while i < w.nodes.len() {
             if !inside[i] {
@@ -216,38 +265,63 @@ pub fn raw_graph(osm: &OsmData, region: &Region) -> (RoadGraph, BuildStats) {
             while i < w.nodes.len() && inside[i] {
                 i += 1;
             }
-            let run = &w.nodes[start..i];
-            let cut_start = start > 0;
-            let cut_end = i < w.nodes.len();
+            // (node or `None` for a border crossing, lat/lon, on the border).
+            let mut run: Vec<(Option<i64>, (f64, f64), bool)> = Vec::with_capacity(i - start + 2);
+            run.extend((start..i).map(|k| (Some(w.nodes[k]), at(k), false)));
+            // A node (almost) on the border line is the cut end itself.
+            if start > 0 {
+                let x = region.crossing(at(start), at(start - 1));
+                if close(x, at(start)) {
+                    run[0].2 = true;
+                } else {
+                    run.insert(0, (None, x, true));
+                }
+            }
+            if i < w.nodes.len() {
+                let x = region.crossing(at(i - 1), at(i));
+                if close(x, at(i - 1)) {
+                    run.last_mut().expect("not empty").2 = true;
+                } else {
+                    run.push((None, x, true));
+                }
+            }
             if run.len() < 2 {
                 continue;
             }
             // Split the run at junctions.
             let mut piece = vec![run[0]];
-            for (k, &n) in run.iter().enumerate().skip(1) {
-                piece.push(n);
+            for (k, &pt) in run.iter().enumerate().skip(1) {
+                piece.push(pt);
                 let last = k == run.len() - 1;
-                if last || uses.get(&n).copied().unwrap_or(0) > 1 {
-                    let (from, to) = (vertex(&mut graph, piece[0]), vertex(&mut graph, n));
-                    let cut_from = cut_start && piece[0] == run[0];
-                    let cut_to = cut_end && last;
-                    if cut_from {
-                        graph.boundary_vertices.insert(from);
-                    }
-                    if cut_to {
-                        graph.boundary_vertices.insert(to);
-                    }
-                    let boundary = cut_from || cut_to;
+                let junction = pt.0.is_some_and(|n| uses.get(&n).copied().unwrap_or(0) > 1);
+                if last || junction {
+                    let mut end_vertex =
+                        |graph: &mut RoadGraph, (node, (lat, lon), border): (Option<i64>, _, bool)| {
+                            let v = match node {
+                                Some(n) => vertex(graph, n),
+                                None => {
+                                    graph.vertices.push(proj.project(lat, lon));
+                                    VertexId(graph.vertices.len() as u32 - 1)
+                                }
+                            };
+                            if border {
+                                graph.boundary_vertices.insert(v);
+                            }
+                            v
+                        };
+                    let (from, to) = (end_vertex(&mut graph, piece[0]), end_vertex(&mut graph, pt));
+                    let boundary = piece[0].2 || pt.2;
+                    // The ID covers the OSM nodes; a cut end counts as a
+                    // marker, so the two halves of a road cut in one
+                    // segment differ.
+                    let nodes: Vec<i64> = piece.iter().map(|p| p.0.unwrap_or(i64::MIN)).collect();
                     graph.edges.push(Edge {
-                        id: stable_edge_id(w.id, &piece),
+                        id: stable_edge_id(w.id, &nodes),
                         from,
                         to,
                         points: piece
                             .iter()
-                            .map(|n| {
-                                let (lat, lon) = osm.nodes[n];
-                                proj.project(lat, lon)
-                            })
+                            .map(|&(_, (lat, lon), _)| proj.project(lat, lon))
                             .collect(),
                         class,
                         name: w.tag("name").map(str::to_string),
@@ -260,7 +334,7 @@ pub fn raw_graph(osm: &OsmData, region: &Region) -> (RoadGraph, BuildStats) {
                         osm_way: w.id,
                         profile: Vec::new(),
                     });
-                    piece = vec![n];
+                    piece = vec![pt];
                 }
             }
         }
@@ -290,6 +364,8 @@ pub fn build_road_graph(osm: &OsmData, region: &Region) -> (RoadGraph, BuildStat
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
     use crate::osm::Tags;
 
@@ -407,9 +483,110 @@ mod tests {
         assert_eq!(g.edges.len(), 1);
         let e = &g.edges[0];
         assert!(e.boundary);
-        assert_eq!(e.points.len(), 5);
+        // Five nodes inside plus the point where the road crosses the border.
+        assert_eq!(e.points.len(), 6);
+        let v = *g.boundary_vertices.iter().next().unwrap();
+        let cut = r.projection().unproject(g.vertices[v.0 as usize]);
+        assert!((cut.1 - r.max_lon).abs() < 1e-9, "{cut:?} vs {}", r.max_lon);
+        assert!(e.from == v || e.to == v);
         // A road into the neighbouring region is not a dead end at the border.
         assert!(e.dead_end_m.is_some(), "the far (inner) end is a real end");
+    }
+
+    #[test]
+    fn neighbouring_regions_cut_a_road_at_the_same_point() {
+        // Way 1 along row 5, way 2 diagonal; the border between the
+        // regions lies between columns 4 and 5, both share the origin.
+        let osm = OsmData {
+            nodes: grid(),
+            ways: vec![
+                way(
+                    1,
+                    &[5000, 5001, 5002, 5003, 5004, 5005, 5006, 5007, 5008, 5009],
+                    &[],
+                ),
+                way(2, &[1002, 2003, 3004, 4005, 5006], &[]),
+            ],
+        };
+        let border = 9.55 + 4.5 * 0.0013;
+        let origin = Some((47.15, 9.55));
+        let west = Region {
+            origin,
+            ..Region::bbox(47.0, 9.0, 48.0, border)
+        };
+        let east = Region {
+            origin,
+            ..Region::bbox(47.0, border, 48.0, 10.0)
+        };
+        let (gw, _) = raw_graph(&osm, &west);
+        let (ge, _) = raw_graph(&osm, &east);
+        let ends = |g: &RoadGraph| -> Vec<[f64; 2]> {
+            g.boundary_vertices
+                .iter()
+                .map(|v| g.vertices[v.0 as usize])
+                .collect()
+        };
+        let (mut a, mut b) = (ends(&gw), ends(&ge));
+        assert_eq!((a.len(), b.len()), (2, 2), "both roads cross");
+        a.sort_by(|p, q| p[1].total_cmp(&q[1]));
+        b.sort_by(|p, q| p[1].total_cmp(&q[1]));
+        for (p, q) in a.iter().zip(&b) {
+            assert!(
+                (p[0] - q[0]).abs() < 1e-6 && (p[1] - q[1]).abs() < 1e-6,
+                "{p:?} {q:?}"
+            );
+        }
+        // The two halves are different edges (different stable IDs).
+        let ids: BTreeSet<EdgeId> = gw.edges.iter().chain(&ge.edges).map(|e| e.id).collect();
+        assert_eq!(ids.len(), gw.edges.len() + ge.edges.len());
+        // A road cut in a single segment: still two different IDs.
+        let osm = OsmData {
+            nodes: grid(),
+            ways: vec![way(3, &[7004, 7005], &[])],
+        };
+        let (gw, _) = raw_graph(&osm, &west);
+        let (ge, _) = raw_graph(&osm, &east);
+        assert_eq!((gw.edges.len(), ge.edges.len()), (1, 1));
+        assert_ne!(gw.edges[0].id, ge.edges[0].id);
+        assert_eq!(gw.edges[0].points.len(), 2);
+    }
+
+    #[test]
+    fn a_node_on_the_border_is_the_cut_end() {
+        let osm = OsmData {
+            nodes: grid(),
+            ways: vec![way(1, &[5000, 5001, 5002, 5003], &[])],
+        };
+        // Exactly through node 5002 (inclusive on both sides).
+        let border = 9.55 + 2.0 * 0.0013;
+        let west = Region::bbox(47.0, 9.0, 48.0, border);
+        let east = Region::bbox(47.0, border, 48.0, 10.0);
+        let (gw, _) = raw_graph(&osm, &west);
+        let (ge, _) = raw_graph(&osm, &east);
+        assert_eq!(gw.vertices.len(), 2, "no extra vertex next to node 5002");
+        assert_eq!(gw.edges[0].points.len(), 3);
+        assert_eq!(ge.edges[0].points.len(), 2);
+        assert_eq!(gw.boundary_vertices.len(), 1);
+        assert_eq!(ge.boundary_vertices.len(), 1);
+        assert!(gw.edges[0].boundary && ge.edges[0].boundary);
+    }
+
+    #[test]
+    fn regions_keep_an_origin_and_export_their_bounds() {
+        let r = Region::bbox(47.0, 9.0, 48.0, 10.0);
+        assert_eq!(r.origin(), (47.5, 9.5));
+        let r = Region {
+            origin: Some((47.2, 9.2)),
+            ..r
+        }
+        .clipped_to(47.1, 8.0, 49.0, 9.8);
+        assert_eq!(r.origin(), (47.2, 9.2));
+        assert_eq!(r.projection().project(47.2, 9.2), [0.0, 0.0]);
+        let p = r.package_region();
+        assert_eq!(p.bounds(), [47.1, 9.0, 48.0, 9.8]);
+        for q in [(47.05, 9.5), (47.5, 9.5), (47.5, 9.9)] {
+            assert_eq!(p.contains(q), r.contains(q), "{q:?}");
+        }
     }
 
     #[test]
@@ -515,7 +692,8 @@ mod tests {
         let (g, _) = build_road_graph(&osm, &Region::from_polygon(tri));
         assert_eq!(g.edges.len(), 1);
         assert!(g.edges[0].boundary);
-        assert_eq!(g.edges[0].points.len(), 3);
+        // Three nodes and the crossing on the slanted edge.
+        assert_eq!(g.edges[0].points.len(), 4);
         assert_eq!(g.boundary_vertices.len(), 1);
     }
 }

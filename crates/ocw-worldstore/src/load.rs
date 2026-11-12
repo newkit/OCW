@@ -250,6 +250,7 @@ pub(crate) mod tests {
             .into(),
             graph: None,
             routes: Vec::new(),
+            region: None,
             landuse: None,
             buildings: None,
         }
