@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.9 – November 2026
+Version 2.10 – November 2026
 
 | Version | Change |
 |---|---|
@@ -28,6 +28,7 @@ Version 2.9 – November 2026
 | 2.7 | Menu M2 (§3.2.1): settings registry (keys, scopes, layers) and `settings.toml`, `set` / `get`; rider profiles in `riders.toml`, weight 30–200 kg in `Hello.rider_weight_kg` (the client's physics parameters are ignored, §2.5, §6.5) and as Wahoo SIM mass; Settings / Workshop pages as rows of command lines; HUD on / off and imperial units |
 | 2.8 | Autonomous night 2026-11-11/12 (Appendix B): menu M1–M3 (in-app ride switch, Navi, GPX import), workouts with ERG (§2.8), local events with ghost (§2.3.1), gradient aids and camera tilt, camera classes and tunnels (§3.2), physics profiles and bike looks (§2.5), neighbour packages (§4.7), QUIC transport (§6.2), fixes for one-way U-turns, steep starts and gradient artefacts; all assumptions listed in Appendix B |
 | 2.9 | Priorities 2026-11-12: the route editor (§2.7) is postponed (Phase 3 is closed without it); Phase 4 models, animations and game audio (M5, §3.3) and Phase 6 voice chat (§7) start in parallel, ahead of the Phase 5 backend |
+| 2.10 | Voice chat always on like a call (Teams / Meet): automatic join, open microphone, no push-to-talk; hotkeys on keyboard (`M`, `Shift+M`) and gamepad (Select, right-stick click) to mute the own microphone and the speaker (all voices); mute state on the HUD (§2.4, §7, M8, §14 Phase 6) |
 
 ---
 
@@ -294,8 +295,7 @@ Features:
 - Group voice channels.
 - Private voice rooms.
 - Voice communication during shared rides.
-- Push-to-talk.
-- Permanently enableable (open) microphone.
+- **Always on, like a call** (Teams, Google Meet; decided 2026-11-12, see below).
 - Microphone and speaker selection.
 - Muting of individual participants.
 - Global mute.
@@ -305,6 +305,22 @@ Features:
 - Connection status.
 
 Additionally, spatial audio is provided: voices of riders who are virtually behind the local rider sound quieter than voices of immediately adjacent riders.
+
+**Always-on behaviour (decided 2026-11-12):**
+
+- Voice works like a video conference or phone call, not like a radio: as soon as the rider is in a shared ride (a session with other human riders, or a group / event), the client joins the voice room **automatically** with an **open microphone**. Solo rides (local server, bots only) do not connect. There is **no push-to-talk** mode (dropped from the earlier feature list; it may return later as an option if riders ask for it).
+- **Two mute switches**, each a toggle with a hotkey on the keyboard and on the gamepad:
+
+  | Action | Keyboard | Gamepad | Effect |
+  |---|---|---|---|
+  | Mute / unmute own microphone | `M` | Select (Back / View / Share) | Nobody hears the rider; the microphone track is muted (not unpublished), so unmuting is instant |
+  | Mute / unmute speaker | `Shift+M` | Right-stick click (R3) | The rider hears no voices at all; game sounds stay (they have their own volume and mute in Settings → Audio, §3.3); the own microphone keeps its state |
+
+  The same toggles exist in the menu (Settings → Voice) and as console commands (`voice.mute-mic`, `voice.mute-speaker`, with `on` / `off` / toggle). Hotkeys are fixed for now and become rebindable with key rebinding (M9).
+- **State is remembered** across rides and restarts (`settings.toml`): a rider who left with the microphone muted joins the next ride muted. First start: microphone and speaker on.
+- **HUD:** a small voice indicator while connected: microphone on / muted (crossed out), speaker on / muted, connection status (connecting, connected, reconnecting, failed), and a speaking marker at riders who are talking. A short sound confirms each toggle and someone joining / leaving.
+- Muting individual participants (§2.4 list) stays available in the menu's participant list.
+- **Assumptions / uncertainty:** "mute speaker" is taken to mean *all incoming voices*, not all app sound (the master mute in Settings → Audio covers that). Options for the gamepad were (a) Select = microphone and a long press of Select = speaker, (b) Select = microphone and R3 = speaker, (c) a button combination; (b) is chosen because two separate buttons are easier to learn and a long press delays feedback. R3 is otherwise unused; Select is free (Start opens the menu). `M` is not used by any other key.
 
 Voice communication is technically separated from the actual game state (§7).
 
@@ -634,7 +650,7 @@ One menu, reachable during a ride and (later) as the start screen, replaces comm
 | **Settings** | Controls | Key and gamepad bindings (view now, rebinding later), autodrive on at start, steering sensitivity (lean rate, stick dead zone), power step (↑, PgUp/PgDn), invert camera, mouse orbit speed | now (view + options), rebinding Phase 7 |
 | | Trainer | Devices: scan, connect, forget, the running devices with battery and signal; virtual trainer and its power; control mode SIM / ERG / off; trainer difficulty (§5.3); downhill handling; spin-down calibration where supported | now; calibration with §5.3 |
 | | Strava | Link / unlink, automatic upload on / off, account name, last result; without client credentials (§2.8 interim) a short explanation | now (interim), Phase 5 (via backend) |
-| | Audio | Mix: master, music, effects (bike, wind, ambience), voice; output device; later voice: microphone, push-to-talk key / open mic, spatial voice on / off | output + mix with game audio (see §3.3); voice Phase 6 |
+| | Audio | Mix: master, music, effects (bike, wind, ambience), voice; output device; later voice: microphone, microphone / speaker mute, spatial voice on / off | output + mix with game audio (see §3.3); voice Phase 6 |
 | | Display | Monitor, fullscreen / window, resolution, graphics quality (shadows, view distance, tree density, LOD bias), FPS counter, HUD size | now |
 | | Riders | Rider profiles (decided, v2.2): add / edit / delete riders with display name, weight, height, FTP, units (metric / imperial); the active rider is chosen in the Workshop; later account sign-in, privacy | now (local); account Phase 5 |
 | **Restart** | | Same as R: start everything again, ride saved first | now |
@@ -685,7 +701,7 @@ One menu, reachable during a ride and (later) as the start screen, replaces comm
 | M5 | Game audio and Settings → Audio (mix, output device) | with game audio (see §3.3) | M | bus volume maths (master × bus), device selection fallback to the default device when the saved one is missing, settings round-trip |
 | M6 | Workshop: bike and character pages with 3D preview | 4 | L | configuration model and persistence (§14 Phase 4); cosmetic choices never change the physics profile; menu items → configuration |
 | M7 | Accounts / profile sync, Events (sessions, join), backend Strava, route sharing; start-screen dashboard (§2.1) | 5 (calendar 7) | L | API client against a mocked backend, disabled-page states offline, event list and join flow |
-| M8 | Voice settings (microphone, push-to-talk, open mic, per-participant mute) | 6 | S | device selection and push-to-talk state (§14 Phase 6) |
+| M8 | Voice settings (microphone device, microphone mute, speaker mute, voice volume, per-participant mute, spatial voice on / off) | 6 | S | device selection and mute state (§14 Phase 6) |
 | M9 | Rebinding of keys and buttons, accessibility (text size, colour-blind safe HUD) | 7 | M | binding conflicts, persistence, defaults restore |
 
 **M1 implemented:** Esc / Start opens the menu over the running ride: Resume, Ride, Workshop, Navi, Settings, Restart, Quit; Ride, Workshop, Navi and Settings are placeholder pages that say what their increment brings (Settings already toggles the FPS counter). Restart and Quit ask first, with *Cancel* focused, and run the console commands `reset` / `quit`; the console command `menu open|close|toggle|up|down|select|back` drives the menu from scripts and `--cmd`. Code: the Bevy-free model (`apps/desktop/src/menu/model.rs`: pages, page stack, focus with wrap-around), the key / button → action mapping with hold repeat (`menu/controls.rs`), the drawing of a `MenuView` in `ocw-render::menu` (text sizes in % of the window height). Deviations from the plan above:
@@ -1158,7 +1174,7 @@ Goal: **detection and flagging of implausible data**. Power comes from user hard
 
 Infrastructure: **LiveKit** (WebRTC SFU).
 
-Features: voice rooms, participant management, audio transmission, dynamic subscription to audio tracks, push-to-talk, group communication.
+Features: voice rooms, participant management, audio transmission, dynamic subscription to audio tracks, group communication. Always on with automatic join and open microphone; microphone mute and speaker mute toggles with keyboard and gamepad hotkeys (§2.4); no push-to-talk.
 
 - The client uses the official **LiveKit Rust SDK**. It wraps libwebrtc, but LiveKit provides prebuilt binaries for all target platforms.
 - It is isolated in the `ocw-voice` crate behind a trait, with a cargo feature `voice`, so the app also builds and runs without it (CI, minimal builds).
@@ -1543,12 +1559,12 @@ Done so far for land use and buildings (§4.6): OSM land-use classes rasterised 
 - LiveKit (self-hosted) and the LiveKit Rust SDK.
 - WebRTC.
 - Microphone management.
-- Push-to-talk.
+- Always-on voice with automatic join; microphone and speaker mute toggles with keyboard and gamepad hotkeys and a HUD indicator (§2.4).
 - Voice rooms.
 - Spatial audio.
 - Voice settings in the menu (§3.2.1, M8).
 
-- **Unit tests:** voice room and token management (backend), spatial audio attenuation and nearest-N selection, push-to-talk and mute state, device selection logic; app builds and runs with the `voice` feature disabled.
+- **Unit tests:** voice room and token management (backend), spatial audio attenuation and nearest-N selection, microphone / speaker mute state and hotkeys (keyboard and gamepad), automatic join / leave on shared and solo rides, remembered mute state, device selection logic; app builds and runs with the `voice` feature disabled.
 - **Integration tests:** client ↔ self-hosted LiveKit test server in CI (two simulated participants).
 
 **Result:** Shared rides with voice communication.
