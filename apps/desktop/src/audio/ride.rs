@@ -1,11 +1,12 @@
 //! The ride sounds (spec §3.3): wind rising with speed, the tyres on the
-//! road surface, the freewheel ticking while coasting and the drivetrain
-//! at the cadence. All procedurally synthesised here (our own work, no
-//! samples).
+//! road surface, the freehub ticking while coasting and the drivetrain
+//! whirring while pedalling. All procedurally synthesised here (our own
+//! work, no samples).
 //!
 //! [`ride_params`] maps what the rider does (speed, cadence, power,
-//! surface) onto sound parameters – pure and unit-tested; [`RideSynth`]
-//! turns the parameters into samples.
+//! surface) onto sound parameters, [`RideParams::approach`] ramps between
+//! them – both pure and unit-tested; [`RideSynth`] turns the parameters
+//! into samples.
 
 use ocw_world::Surface;
 
@@ -13,16 +14,32 @@ use super::dsp::{Burst, Noise, Pink, Svf, sine};
 
 /// Wheel circumference of a 700×28c tyre in metres.
 pub const WHEEL_CIRCUMFERENCE_M: f64 = 2.1;
-/// Engagement points of the rear hub: ticks per wheel revolution.
+/// Engagement points (POE) of the rear hub's ratchet: ticks per wheel
+/// revolution while the wheel overruns the cassette. 24 is a typical road
+/// freehub (common hubs have 18–54); at 30 km/h that is about 95 ticks/s.
 pub const FREEWHEEL_POINTS: f64 = 24.0;
 /// Chainring teeth (the chain's tooth rate is cadence × this).
 pub const CHAINRING_TEETH: f64 = 50.0;
-/// Below this cadence the rider is coasting (rpm).
+/// The top gear (50 × 11): the fastest the legs can drive the wheel per
+/// crank revolution.
+pub const TOP_GEAR_RATIO: f64 = CHAINRING_TEETH / 11.0;
+/// Below this cadence the cranks do not drive the wheel (rpm).
 pub const PEDALLING_RPM: f64 = 15.0;
-/// Without a cadence sensor: pedalling above this power (W).
+/// Above this power (W) the rider drives the wheel, whatever the cadence
+/// reads (no sensor, a dropout, a trainer that reports power only).
 pub const PEDALLING_W: f64 = 10.0;
 /// The speed (m/s, 54 km/h) the wind and tyre levels are scaled to.
 const V_REF: f64 = 15.0;
+/// Gains below this are silence (the synthesis skips the voice).
+pub const SILENT: f32 = 1e-4;
+/// Time constant of the parameter smoothing (no zipper noise).
+pub const PARAM_TAU_S: f32 = 0.06;
+/// The freehub fades in over about a quarter of a second when pedalling
+/// stops (no burst of ticks) …
+pub const FREEWHEEL_IN_TAU_S: f32 = 0.08;
+/// … and is gone within a few tens of milliseconds when pedalling starts
+/// again (the pawls stop ticking the moment the hub engages).
+pub const FREEWHEEL_OUT_TAU_S: f32 = 0.008;
 
 /// What the local rider does now.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -34,13 +51,33 @@ pub struct RideInput {
     pub surface: Surface,
 }
 
-/// The cadence the drivetrain sound uses: the measured one, else an
-/// estimate from the power (a virtual trainer or a power-only trainer).
+/// The cadence the drivetrain sound uses: the measured one, else (no
+/// sensor, or it reads 0 while the rider puts out power) an estimate from
+/// the power.
 pub fn effective_cadence(input: &RideInput) -> f64 {
     match input.cadence_rpm {
+        Some(c) if c >= PEDALLING_RPM => c,
+        _ if input.power_w > PEDALLING_W => (75.0 + input.power_w / 20.0).clamp(75.0, 100.0),
         Some(c) => c.max(0.0),
-        None if input.power_w > PEDALLING_W => (75.0 + input.power_w / 20.0).clamp(75.0, 100.0),
         None => 0.0,
+    }
+}
+
+/// Whether the rider's legs drive the rear wheel: then the freehub is
+/// engaged and silent. Otherwise the wheel overruns the cassette and the
+/// pawls tick. Power drives the wheel; without power, turning cranks drive
+/// it only if the top gear at that cadence reaches the speed (spinning the
+/// legs at 60 km/h downhill still lets the freehub tick).
+pub fn drives_wheel(input: &RideInput) -> bool {
+    if input.power_w > PEDALLING_W {
+        return true;
+    }
+    match input.cadence_rpm {
+        Some(c) if c >= PEDALLING_RPM => {
+            let top_speed = c / 60.0 * TOP_GEAR_RATIO * WHEEL_CIRCUMFERENCE_M;
+            top_speed + 0.5 >= input.speed_mps
+        }
+        _ => false,
     }
 }
 
@@ -59,10 +96,12 @@ pub struct RideParams {
     pub grit_gain: f32,
     /// Grass brushing the tyres.
     pub swish_gain: f32,
-    /// Freewheel pawls: ticks per second while coasting.
+    /// Freehub pawls: ticks per second while the wheel overruns.
     pub freewheel_rate_hz: f32,
+    /// Exactly 0 whenever the rider drives the wheel.
     pub freewheel_gain: f32,
-    /// Chain over the chainring: teeth per second while pedalling.
+    /// Chain over the chainring: teeth per second while pedalling (the
+    /// pitch of the drivetrain's whir and hum).
     pub chain_rate_hz: f32,
     pub chain_gain: f32,
     /// Pedal strokes per second (two per crank revolution).
@@ -74,7 +113,6 @@ pub fn ride_params(input: &RideInput) -> RideParams {
     let v = input.speed_mps.max(0.0);
     let rel = v / V_REF;
     let cadence = effective_cadence(input);
-    let pedalling = cadence >= PEDALLING_RPM;
     let mut p = RideParams {
         wind_cutoff_hz: (250.0 + 120.0 * v).min(4000.0) as f32,
         roll_cutoff_hz: (150.0 + 30.0 * v).min(1500.0) as f32,
@@ -94,12 +132,13 @@ pub fn ride_params(input: &RideInput) -> RideParams {
         p.grit_gain = (grit * level.sqrt()) as f32;
         p.swish_gain = (swish * level.min(1.0)) as f32;
     }
-    if pedalling {
+    if cadence >= PEDALLING_RPM {
         p.chain_rate_hz = (cadence / 60.0 * CHAINRING_TEETH) as f32;
         p.stroke_hz = (2.0 * cadence / 60.0) as f32;
         // A little louder under load.
         p.chain_gain = (0.05 + 0.07 * (input.power_w / 400.0).clamp(0.0, 1.0)) as f32;
-    } else if v > 0.3 {
+    }
+    if !drives_wheel(input) && v > 0.3 {
         let rate = v / WHEEL_CIRCUMFERENCE_M * FREEWHEEL_POINTS;
         p.freewheel_rate_hz = rate as f32;
         // Dense ticks add up: keep the buzz at high speed about as loud as
@@ -109,20 +148,38 @@ pub fn ride_params(input: &RideInput) -> RideParams {
     p
 }
 
+/// The fraction a one-pole ramp with time constant `tau_s` moves in `dt_s`.
+fn ramp(dt_s: f32, tau_s: f32) -> f32 {
+    1.0 - (-dt_s.max(0.0) / tau_s).exp()
+}
+
 impl RideParams {
-    /// Moves every parameter the fraction `a` towards `target` (smooth
-    /// changes, no zipper noise).
-    pub fn approach(&mut self, t: &RideParams, a: f32) {
-        let f = |x: &mut f32, y: f32| *x += (y - *x) * a;
-        f(&mut self.wind_gain, t.wind_gain);
-        f(&mut self.wind_cutoff_hz, t.wind_cutoff_hz);
-        f(&mut self.roll_gain, t.roll_gain);
-        f(&mut self.roll_cutoff_hz, t.roll_cutoff_hz);
-        f(&mut self.grit_rate_hz, t.grit_rate_hz);
-        f(&mut self.grit_gain, t.grit_gain);
-        f(&mut self.swish_gain, t.swish_gain);
-        f(&mut self.freewheel_gain, t.freewheel_gain);
-        f(&mut self.chain_gain, t.chain_gain);
+    /// Moves every parameter towards `t` for `dt_s` seconds: smooth
+    /// changes (no zipper noise), the freehub fading in slowly when
+    /// pedalling stops and out fast when it starts. A gain heading for 0
+    /// reaches exactly 0.
+    pub fn approach(&mut self, t: &RideParams, dt_s: f32) {
+        let a = ramp(dt_s, PARAM_TAU_S);
+        let f = |x: &mut f32, y: f32, a: f32| {
+            *x += (y - *x) * a;
+            if y == 0.0 && x.abs() < SILENT {
+                *x = 0.0;
+            }
+        };
+        f(&mut self.wind_gain, t.wind_gain, a);
+        f(&mut self.wind_cutoff_hz, t.wind_cutoff_hz, a);
+        f(&mut self.roll_gain, t.roll_gain, a);
+        f(&mut self.roll_cutoff_hz, t.roll_cutoff_hz, a);
+        f(&mut self.grit_rate_hz, t.grit_rate_hz, a);
+        f(&mut self.grit_gain, t.grit_gain, a);
+        f(&mut self.swish_gain, t.swish_gain, a);
+        f(&mut self.chain_gain, t.chain_gain, a);
+        let fw = if t.freewheel_gain > self.freewheel_gain {
+            ramp(dt_s, FREEWHEEL_IN_TAU_S)
+        } else {
+            ramp(dt_s, FREEWHEEL_OUT_TAU_S)
+        };
+        f(&mut self.freewheel_gain, t.freewheel_gain, fw);
         // Rates jump (a rate gliding from 0 would tick slowly first);
         // only their gains fade.
         if t.freewheel_rate_hz > 0.0 {
@@ -159,6 +216,7 @@ pub struct RideSynth {
     chain_phase: f32,
     stroke_phase: f32,
     chain_bp: Svf,
+    chain_lp: Svf,
 }
 
 impl RideSynth {
@@ -183,7 +241,8 @@ impl RideSynth {
             click_ring: 0.0,
             chain_phase: 0.0,
             stroke_phase: 0.0,
-            chain_bp: Svf::new(1100.0, 0.9, sr),
+            chain_bp: Svf::new(700.0, 0.7, sr),
+            chain_lp: Svf::new(1800.0, 0.6, sr),
         }
     }
 
@@ -194,6 +253,9 @@ impl RideSynth {
         self.wind_lp.set(p.wind_cutoff_hz * gust, 0.6, sr);
         self.wind_bp.set(p.wind_cutoff_hz * 0.7 * gust, 1.6, sr);
         self.roll_lp.set(p.roll_cutoff_hz, 0.8, sr);
+        // The whir rises a little with the cadence.
+        self.chain_bp
+            .set((350.0 + 5.0 * p.chain_rate_hz).min(1200.0), 0.7, sr);
         // Gusts: a slow random walk, a new target now and then.
         if self.noise.unit() < 0.01 {
             self.gust_target = self.noise.unit();
@@ -233,8 +295,9 @@ impl RideSynth {
             let n = self.noise.white();
             out += p.swish_gain * (0.6 + 0.4 * self.gust) * self.swish_hp.process(n).high * 0.5;
         }
-        // Freewheel: one short metallic click per pawl engagement.
-        if p.freewheel_gain > 1e-4 && p.freewheel_rate_hz > 0.0 {
+        // Freehub: one short metallic click per pawl engagement, only while
+        // the wheel overruns (the gain is 0 while pedalling).
+        if p.freewheel_gain > SILENT && p.freewheel_rate_hz > 0.0 {
             self.freewheel_phase += p.freewheel_rate_hz / sr / self.freewheel_jitter;
             if self.freewheel_phase >= 1.0 {
                 self.freewheel_phase -= 1.0;
@@ -249,14 +312,16 @@ impl RideSynth {
                 out += p.freewheel_gain * env * (self.click_bp.process(n).band * 2.5 + ring * 0.35);
             }
         }
-        // Chain: noise pulsing with the teeth, a soft hum at the tooth
-        // rate, swelling with each pedal stroke.
-        if p.chain_gain > 1e-4 && p.chain_rate_hz > 0.0 {
-            let tooth = sine(&mut self.chain_phase, p.chain_rate_hz, sr);
+        // Drivetrain: a soft, continuous whir – broad band noise, gently
+        // swelling with each pedal stroke – with a faint hum at the chain's
+        // tooth rate. No pulses: the chain over the teeth is too fast and
+        // even to be heard as single clicks (ticks are the freehub's).
+        if p.chain_gain > SILENT && p.chain_rate_hz > 0.0 {
+            let hum = sine(&mut self.chain_phase, p.chain_rate_hz, sr);
             let stroke = sine(&mut self.stroke_phase, p.stroke_hz, sr);
             let n = self.noise.white();
-            let rattle = self.chain_bp.process(n).band * (0.55 + 0.45 * tooth);
-            out += p.chain_gain * (1.0 + 0.3 * stroke) * (rattle * 1.8 + tooth * 0.25);
+            let whir = self.chain_lp.process(self.chain_bp.process(n).band).low;
+            out += p.chain_gain * (1.0 + 0.15 * stroke) * (whir * 2.2 + hum * 0.12);
         }
         out
     }
@@ -328,21 +393,80 @@ mod tests {
         assert!(slow.grit_rate_hz < g.grit_rate_hz);
     }
 
+    /// Coasting: the legs still, no power.
+    fn coasting(kmh: f64) -> RideParams {
+        ride_params(&input(kmh, Some(0.0), 0.0, Surface::Asphalt))
+    }
+
     #[test]
-    fn freewheel_ticks_only_while_coasting() {
-        let coasting = asphalt(18.0, 0.0);
+    fn freehub_ticks_while_coasting() {
+        let c = coasting(18.0);
         let expected = 5.0 / WHEEL_CIRCUMFERENCE_M * FREEWHEEL_POINTS;
-        assert!((f64::from(coasting.freewheel_rate_hz) - expected).abs() < 1e-3);
-        assert!(coasting.freewheel_gain > 0.0 && coasting.chain_gain == 0.0);
+        assert!((f64::from(c.freewheel_rate_hz) - expected).abs() < 1e-3);
+        assert!(c.freewheel_gain > 0.0 && c.chain_gain == 0.0);
         // Twice the speed, twice the ticks.
-        let fast = asphalt(36.0, 0.0);
-        assert!((fast.freewheel_rate_hz / coasting.freewheel_rate_hz - 2.0).abs() < 1e-4);
-        let pedalling = asphalt(18.0, 85.0);
-        assert_eq!(pedalling.freewheel_gain, 0.0);
-        // Below the pedalling cadence: coasting (soft pedal turns).
-        assert!(asphalt(18.0, 10.0).freewheel_gain > 0.0);
-        // Not when standing.
-        assert_eq!(asphalt(0.5, 0.0).freewheel_gain, 0.0);
+        let fast = coasting(36.0);
+        assert!((fast.freewheel_rate_hz / c.freewheel_rate_hz - 2.0).abs() < 1e-4);
+        // No cadence sensor and no power: coasting too.
+        assert!(ride_params(&input(25.0, None, 0.0, Surface::Asphalt)).freewheel_gain > 0.0);
+        // A slow crank turn (below the pedalling cadence) without power.
+        assert!(ride_params(&input(18.0, Some(10.0), 0.0, Surface::Asphalt)).freewheel_gain > 0.0);
+        // Not when stopped: the wheel does not turn.
+        assert_eq!(coasting(0.0).freewheel_gain, 0.0);
+        assert_eq!(coasting(0.5).freewheel_gain, 0.0);
+    }
+
+    #[test]
+    fn freehub_is_silent_while_pedalling() {
+        for kmh in [0.0, 5.0, 18.0, 30.0, 45.0, 70.0] {
+            for cadence in [40.0, 60.0, 85.0, 110.0] {
+                let p = asphalt(kmh, cadence);
+                assert_eq!(p.freewheel_gain, 0.0, "{kmh} km/h, {cadence} rpm");
+                assert!(p.chain_gain > 0.0, "{kmh} km/h, {cadence} rpm");
+            }
+            // No cadence sensor: power means pedalling.
+            for power in [11.0, 80.0, 250.0, 900.0] {
+                let p = ride_params(&input(kmh, None, power, Surface::Gravel));
+                assert_eq!(p.freewheel_gain, 0.0, "{kmh} km/h, {power} W");
+                assert!(p.chain_gain > 0.0);
+            }
+            // The cadence reads 0 (a dropout) while the power flows.
+            let p = ride_params(&input(kmh, Some(0.0), 200.0, Surface::Asphalt));
+            assert_eq!(p.freewheel_gain, 0.0, "{kmh} km/h");
+            assert!(p.chain_gain > 0.0);
+        }
+        // Turning the cranks without measured power at a speed they can
+        // drive: the hub is engaged.
+        assert_eq!(
+            ride_params(&input(30.0, Some(85.0), 0.0, Surface::Asphalt)).freewheel_gain,
+            0.0
+        );
+    }
+
+    /// Spinning the legs slower than the wheel (no power): the wheel
+    /// overruns the cassette, the freehub ticks under the chain.
+    #[test]
+    fn freehub_ticks_when_the_wheel_overruns_the_legs() {
+        let p = ride_params(&input(55.0, Some(30.0), 0.0, Surface::Asphalt));
+        assert!(p.freewheel_gain > 0.0 && p.chain_gain > 0.0);
+        assert!(!drives_wheel(&input(
+            55.0,
+            Some(30.0),
+            0.0,
+            Surface::Asphalt
+        )));
+        assert!(drives_wheel(&input(
+            30.0,
+            Some(90.0),
+            0.0,
+            Surface::Asphalt
+        )));
+        assert!(drives_wheel(&input(
+            55.0,
+            Some(30.0),
+            150.0,
+            Surface::Asphalt
+        )));
     }
 
     #[test]
@@ -362,55 +486,161 @@ mod tests {
 
     #[test]
     fn cadence_is_estimated_without_a_sensor() {
-        let p = ride_params(&input(30.0, None, 200.0, Surface::Asphalt));
-        assert!(p.chain_gain > 0.0 && p.freewheel_gain == 0.0);
-        assert_eq!(
-            effective_cadence(&input(30.0, None, 200.0, Surface::Asphalt)),
-            85.0
-        );
+        let at = |cadence, power| effective_cadence(&input(30.0, cadence, power, Surface::Asphalt));
+        assert_eq!(at(None, 200.0), 85.0);
+        assert_eq!(at(None, 2000.0), 100.0);
+        // A sensor reading 0 under power: the estimate too.
+        assert_eq!(at(Some(0.0), 200.0), 85.0);
+        // A measured cadence wins.
+        assert_eq!(at(Some(70.0), 200.0), 70.0);
         // No power, no cadence: coasting.
+        assert_eq!(at(None, 0.0), 0.0);
         let p = ride_params(&input(30.0, None, 0.0, Surface::Asphalt));
         assert!(p.freewheel_gain > 0.0 && p.chain_gain == 0.0);
+    }
+
+    /// One mixer block (32 samples at 48 kHz).
+    const DT: f32 = 32.0 / 48_000.0;
+
+    /// Approaches `t` for `seconds`, yielding the freewheel gain each block.
+    fn ramp_for(p: &mut RideParams, t: &RideParams, seconds: f32) -> Vec<f32> {
+        (0..(seconds / DT).round() as usize)
+            .map(|_| {
+                p.approach(t, DT);
+                p.freewheel_gain
+            })
+            .collect()
     }
 
     #[test]
     fn parameters_approach_the_target() {
         let target = asphalt(30.0, 90.0);
         let mut p = RideParams::default();
-        p.approach(&target, 0.5);
-        assert_eq!(p.wind_gain, target.wind_gain / 2.0);
+        // One time constant × ln 2: half way.
+        p.approach(&target, PARAM_TAU_S * std::f32::consts::LN_2);
+        assert!((p.wind_gain - target.wind_gain / 2.0).abs() < 1e-6);
         // Rates jump to the target, gains fade.
         assert_eq!(p.chain_rate_hz, target.chain_rate_hz);
-        for _ in 0..60 {
-            p.approach(&target, 0.5);
-        }
+        ramp_for(&mut p, &target, 1.0);
         assert!((p.wind_gain - target.wind_gain).abs() < 1e-6);
-        // Coasting afterwards: the chain fades out at its last rate.
-        p.approach(&asphalt(30.0, 0.0), 0.5);
+        // Coasting afterwards: the chain fades out at its last rate …
+        let coast = coasting(30.0);
+        p.approach(&coast, DT);
         assert_eq!(p.chain_rate_hz, target.chain_rate_hz);
-        assert!(p.chain_gain < target.chain_gain);
+        assert!(p.chain_gain < target.chain_gain && p.chain_gain > 0.0);
+        // … and reaches exactly 0.
+        ramp_for(&mut p, &coast, 1.0);
+        assert_eq!(p.chain_gain, 0.0);
+    }
+
+    /// Pedalling stops: the freehub fades in smoothly (no burst), without
+    /// overshooting its level.
+    #[test]
+    fn freehub_fades_in_when_pedalling_stops() {
+        let mut p = asphalt(30.0, 90.0);
+        let target = coasting(30.0);
+        let g = ramp_for(&mut p, &target, 0.6);
+        let at = |s: f32| g[(s / DT) as usize - 1];
+        assert!(g.windows(2).all(|w| w[1] >= w[0]), "rising");
+        assert!(g.iter().all(|&x| x <= target.freewheel_gain));
+        assert!(at(0.02) < 0.3 * target.freewheel_gain, "{}", at(0.02));
+        assert!(at(0.1) > 0.5 * target.freewheel_gain);
+        assert!(at(0.5) > 0.95 * target.freewheel_gain);
+    }
+
+    /// Pedalling starts: the ticks are gone within tens of milliseconds,
+    /// and the gain is exactly 0 after that.
+    #[test]
+    fn freehub_fades_out_fast_when_pedalling_starts() {
+        let mut p = coasting(30.0);
+        let start = p.freewheel_gain;
+        // With a cadence sensor, and without one (power only).
+        for target in [
+            asphalt(30.0, 90.0),
+            ride_params(&input(30.0, None, 200.0, Surface::Asphalt)),
+        ] {
+            let mut q = p;
+            let g = ramp_for(&mut q, &target, 0.2);
+            let at = |s: f32| g[(s / DT) as usize - 1];
+            assert!(g.windows(2).all(|w| w[1] <= w[0]), "falling");
+            assert!(at(0.03) < 0.05 * start, "{}", at(0.03));
+            assert_eq!(at(0.1), 0.0);
+        }
+        // The synthesis plays no tick once the gain is 0.
+        ramp_for(&mut p, &asphalt(30.0, 90.0), 0.2);
+        let only_ticks = RideParams {
+            freewheel_gain: p.freewheel_gain,
+            freewheel_rate_hz: p.freewheel_rate_hz,
+            ..RideParams::default()
+        };
+        assert!(p.freewheel_rate_hz > 0.0);
+        assert_eq!(rms(&only_ticks, 0.2), 0.0);
+    }
+
+    fn render(p: &RideParams, seconds: f32) -> Vec<f32> {
+        let mut s = RideSynth::new(48_000.0);
+        let n = (48_000.0 * seconds) as usize;
+        (0..n)
+            .map(|i| {
+                if i % 32 == 0 {
+                    s.set_filters(p);
+                }
+                let v = s.sample(p);
+                assert!(v.is_finite() && v.abs() < 2.0, "{v}");
+                v
+            })
+            .collect()
     }
 
     fn rms(p: &RideParams, seconds: f32) -> f32 {
-        let mut s = RideSynth::new(48_000.0);
-        let n = (48_000.0 * seconds) as usize;
-        let mut sum = 0.0;
-        for i in 0..n {
-            if i % 32 == 0 {
-                s.set_filters(p);
-            }
-            let v = s.sample(p);
-            assert!(v.is_finite() && v.abs() < 2.0, "{v}");
-            sum += v * v;
+        let x = render(p, seconds);
+        (x.iter().map(|v| v * v).sum::<f32>() / x.len() as f32).sqrt()
+    }
+
+    /// How much the loudness varies from one 10 ms window to the next
+    /// (coefficient of variation): small for a continuous sound, large for
+    /// a click train.
+    fn roughness(x: &[f32]) -> f32 {
+        let w: Vec<f32> = x
+            .chunks(480)
+            .map(|c| (c.iter().map(|v| v * v).sum::<f32>() / c.len() as f32).sqrt())
+            .collect();
+        let mean = w.iter().sum::<f32>() / w.len() as f32;
+        let var = w.iter().map(|v| (v - mean).powi(2)).sum::<f32>() / w.len() as f32;
+        var.sqrt() / mean
+    }
+
+    /// The drivetrain is a continuous whir, not a train of clicks; the
+    /// clicks are the freehub's.
+    #[test]
+    fn the_drivetrain_whirs_and_the_freehub_ticks() {
+        for cadence in [60.0, 90.0, 110.0] {
+            let p = asphalt(25.0, cadence);
+            let chain = RideParams {
+                chain_gain: p.chain_gain,
+                chain_rate_hz: p.chain_rate_hz,
+                stroke_hz: p.stroke_hz,
+                ..RideParams::default()
+            };
+            let x = render(&chain, 1.1);
+            let r = roughness(&x[4800..]);
+            assert!(r < 0.35, "chain at {cadence} rpm: {r}");
         }
-        (sum / n as f32).sqrt()
+        let c = coasting(15.0);
+        let ticks = RideParams {
+            freewheel_gain: c.freewheel_gain,
+            freewheel_rate_hz: c.freewheel_rate_hz,
+            ..RideParams::default()
+        };
+        let r = roughness(&render(&ticks, 1.1)[4800..]);
+        assert!(r > 0.8, "freehub: {r}");
     }
 
     /// The synthesised level follows the parameters: louder when faster,
     /// gravel louder than asphalt.
     #[test]
     fn synth_level_follows_the_parameters() {
-        let slow = rms(&asphalt(10.0, 0.0), 0.5);
+        let slow = rms(&coasting(10.0), 0.5);
         let fast = rms(&asphalt(45.0, 90.0), 0.5);
         assert!(slow > 0.003, "{slow}");
         assert!(fast > 2.0 * slow, "{fast} vs {slow}");
@@ -418,7 +648,7 @@ mod tests {
             &ride_params(&input(20.0, Some(0.0), 0.0, Surface::Gravel)),
             0.5,
         );
-        let road = rms(&asphalt(20.0, 0.0), 0.5);
+        let road = rms(&coasting(20.0), 0.5);
         assert!(gravel > road, "{gravel} vs {road}");
     }
 }

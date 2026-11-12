@@ -139,7 +139,8 @@ impl Mixer {
 
     fn next_sample(&mut self) -> f32 {
         if self.phase == 0 {
-            self.ride_now.approach(&self.ride_target, self.smooth);
+            self.ride_now
+                .approach(&self.ride_target, BLOCK as f32 / self.sr);
             self.gains_now.approach(&self.gains_target, self.smooth);
             self.ride.set_filters(&self.ride_now);
         }

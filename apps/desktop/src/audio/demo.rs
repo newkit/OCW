@@ -19,13 +19,14 @@ const SR: u32 = 48_000;
 const FPS: u32 = 60;
 
 /// One stretch of the demo ride: from `t0` s, speed (km/h) going from
-/// `from` to `to`, cadence (0 = coasting), power, surface.
+/// `from` to `to`, cadence (`None` = no cadence sensor, 0 = legs still),
+/// power, surface.
 struct Stretch {
     t0: f64,
     t1: f64,
     from: f64,
     to: f64,
-    cadence: f64,
+    cadence: Option<f64>,
     power: f64,
     surface: Surface,
 }
@@ -35,7 +36,7 @@ const fn stretch(
     t1: f64,
     from: f64,
     to: f64,
-    cadence: f64,
+    cadence: Option<f64>,
     power: f64,
     surface: Surface,
 ) -> Stretch {
@@ -50,22 +51,25 @@ const fn stretch(
     }
 }
 
+/// Clearly separated sections, so pedalling (drivetrain whir, no ticks)
+/// and coasting (freehub ticks) can be told apart.
 const RIDE: &[Stretch] = &[
-    // Start and accelerate on asphalt.
-    stretch(0.0, 4.0, 0.0, 34.0, 92.0, 280.0, Surface::Asphalt),
-    // Cruise, then coast: the freewheel ticks as the speed falls.
-    stretch(4.0, 6.0, 34.0, 34.0, 88.0, 220.0, Surface::Asphalt),
-    stretch(6.0, 9.0, 34.0, 22.0, 0.0, 0.0, Surface::Asphalt),
-    // Gravel, pedalling.
-    stretch(9.0, 12.0, 22.0, 24.0, 85.0, 230.0, Surface::Gravel),
-    // Off the road onto the grass, coasting.
-    stretch(12.0, 14.0, 20.0, 12.0, 0.0, 0.0, Surface::Grass),
-    // Back on asphalt and a fast descent.
-    stretch(14.0, 18.0, 25.0, 62.0, 0.0, 0.0, Surface::Asphalt),
-    stretch(18.0, 20.0, 62.0, 30.0, 70.0, 120.0, Surface::Asphalt),
+    // 0–6 s pedalling: start, accelerate and cruise on asphalt.
+    stretch(0.0, 4.0, 0.0, 32.0, Some(92.0), 280.0, Surface::Asphalt),
+    stretch(4.0, 6.0, 32.0, 32.0, Some(88.0), 220.0, Surface::Asphalt),
+    // 6–10 s coasting: the freehub ticks, slower as the speed falls.
+    stretch(6.0, 10.0, 32.0, 22.0, Some(0.0), 0.0, Surface::Asphalt),
+    // 10–14 s pedalling again, a power-only trainer (no cadence sensor):
+    // the ticks stop at once.
+    stretch(10.0, 14.0, 22.0, 30.0, None, 240.0, Surface::Asphalt),
+    // 14–17 s pedalling on gravel.
+    stretch(14.0, 17.0, 30.0, 28.0, Some(85.0), 230.0, Surface::Gravel),
+    // 17–20 s coasting off the road onto the grass.
+    stretch(17.0, 20.0, 28.0, 14.0, Some(0.0), 0.0, Surface::Grass),
 ];
 
-/// (time s, cue).
+/// (time s, cue). None of them in the coasting sections, so the ticks
+/// heard there are the freehub's alone.
 const CUES: &[(f64, Cue)] = &[
     (0.4, Cue::UiConfirm),
     (0.7, Cue::UiMove),
@@ -76,9 +80,7 @@ const CUES: &[(f64, Cue)] = &[
     (3.0, Cue::CountdownBeep),
     (4.0, Cue::CountdownBeep),
     (5.0, Cue::CountdownGo),
-    (8.0, Cue::GearShift),
-    (10.0, Cue::WorkoutStep),
-    (19.0, Cue::Finish),
+    (14.0, Cue::WorkoutStep),
 ];
 
 fn input_at(t: f64) -> RideInput {
@@ -89,7 +91,7 @@ fn input_at(t: f64) -> RideInput {
     let f = ((t - s.t0) / (s.t1 - s.t0)).clamp(0.0, 1.0);
     RideInput {
         speed_mps: (s.from + (s.to - s.from) * f) / 3.6,
-        cadence_rpm: Some(s.cadence),
+        cadence_rpm: s.cadence,
         power_w: s.power,
         surface: s.surface,
     }
@@ -152,15 +154,27 @@ mod tests {
         &x[i(a)..i(b)]
     }
 
+    /// The freehub is heard in the coasting sections only.
+    #[test]
+    fn demo_ride_ticks_only_while_coasting() {
+        for i in 0..20 * FPS {
+            let t = f64::from(i) / f64::from(FPS);
+            let p = ride_params(&input_at(t));
+            let coasting = (6.0..10.0).contains(&t) || t >= 17.0;
+            assert_eq!(p.freewheel_gain > 0.0, coasting, "{t} s");
+            assert_eq!(p.chain_gain > 0.0, !coasting, "{t} s");
+        }
+    }
+
     #[test]
     fn demo_ride_renders_and_optionally_writes_a_wav() {
         let out = render();
         assert!(out.iter().all(|s| s.is_finite() && s.abs() <= 1.0));
         // Standing at the start is quieter than riding at speed.
         let start = rms(span(&out, 0.0, 0.3));
-        let fast = rms(span(&out, 16.0, 18.0));
-        assert!(fast > 3.0 * start, "{fast} vs {start}");
-        assert!(rms(span(&out, 9.5, 11.5)) > 0.01, "gravel is heard");
+        let riding = rms(span(&out, 4.5, 5.9));
+        assert!(riding > 3.0 * start, "{riding} vs {start}");
+        assert!(rms(span(&out, 14.5, 16.5)) > 0.01, "gravel is heard");
         // Deterministic: the same ride sounds the same.
         assert_eq!(render()[..48_000], out[..48_000]);
         let bytes = wav(&out, 2, SR);
