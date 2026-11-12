@@ -8,6 +8,7 @@ pub mod camera;
 pub mod console;
 pub mod event_hud;
 pub mod font;
+pub mod frame_rate;
 pub mod hud;
 pub mod junction;
 pub mod menu;

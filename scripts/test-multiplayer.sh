@@ -20,9 +20,12 @@
 #                    in machines.toml)
 #   OCW_MP_BUILD     0: skip the builds (binaries already there)
 #   OCW_MP_CAMERA    a headless desktop client "Camera" on the server machine
-#                    (weston, drive.sh) that rides along and takes the
-#                    screenshots and video: auto (default: when the kiosk's
-#                    screen is locked or there is no kiosk), 1, 0
+#                    (weston, drive.sh, release build) that rides along and
+#                    takes the screenshots and video: auto (default: when there
+#                    is no kiosk, or its screen is locked and its build is
+#                    too old to draw anyway), 1, 0
+#   OCW_MP_VIDEO_S   length of the kiosk's and the camera's real-time 25 fps
+#                    videos (app recorder, FPS counter on; default 15)
 #
 # The server address is read from config/machines.toml here and passed to the
 # remote commands only; it is never printed, and the logs kept in test-output/
@@ -47,6 +50,8 @@ kiosk_dir=/var/tmp/ocw
 # dev command, refused on a remote server); the bots catch up and ride ahead
 # of it. Screenshots and video frames are taken after app game time T1 (s).
 t1=${OCW_MP_T1:-50}
+# Length of the kiosk's and the camera's videos (s).
+video_s=${OCW_MP_VIDEO_S:-15}
 remote_mp=target/mp
 
 stamp=$(date +%Y%m%d-%H%M%S)
@@ -102,8 +107,9 @@ if [ "$build" != 0 ]; then
     cmd="cargo build --release -p ocw-bot"
     if [ "$m" = "$server_m" ]; then
       cmd="cargo build --release -p ocw-server -p ocw-bot"
-      # The camera client runs the debug build, like drive.sh.
-      [ "$camera" != 0 ] && cmd="$cmd && cargo build -p ocw-desktop"
+      # The camera client runs the release build: a real-time video needs
+      # 25 rendered frames a second, which the debug build does not reach.
+      [ "$camera" != 0 ] && cmd="cargo build --release -p ocw-server -p ocw-bot -p ocw-desktop"
     fi
     (R "$m" run "$cmd" 2>&1 | redact_stream >"$out/build-$m.log") &
     bpid[$m]=$!
@@ -241,16 +247,26 @@ trap 'say "interrupted"; cleanup_remote; exit 130' INT TERM
 
 if [ "$kiosk" = 1 ]; then
   at() { printf -- '--at "%s=%s"\n' "$1" "$2"; }
+  # A kiosk build older than --video-dir / --no-vsync / --max-fps would not
+  # start with them: then stills only (deploy first, `make deploy-test`).
+  kiosk_new=0
+  R "$server_m" ssh "$kiosk_dir/ocw-desktop --help 2>/dev/null | grep -q -- --max-fps" >/dev/null 2>&1 && kiosk_new=1
+  [ "$kiosk_new" = 1 ] || say "note: the kiosk's build is older than this test (no --video-dir, --max-fps): stills only, no kiosk video, nothing while its screen is locked (make deploy-test first)"
   {
     echo "# multiplayer test $stamp (scripts/test-multiplayer.sh); restored afterwards"
     echo "--server 127.0.0.1:$port --server-cert $fp"
     echo "--name $kiosk_name --virtual --power 200 --record false"
+    # The FPS counter (real render rate) in every picture, and a real-time
+    # 25 fps video of $video_s s from the app's own recorder (console `video`).
+    echo "--cmd \"fps on\""
     for d in 12 25 40; do at "$((t1 + d))" "screenshot $shots/still-$d.png"; done
-    # Video frames: 3 per second for 12 s.
-    for i in $(seq 0 35); do
-      at "$(awk -v a="$t1" -v i="$i" 'BEGIN { printf "%.2f", a + 14 + i / 3 }')" \
-        "screenshot $shots/frame-$(printf %03d "$i").png"
-    done
+    if [ "$kiosk_new" = 1 ]; then
+      # No waiting for the display's refresh, 60 fps at most: the app
+      # draws (and records) even while the screen is locked and off.
+      echo "--no-vsync --max-fps 60 --video-dir $shots"
+      at "$((t1 + 14))" "video start"
+      at "$((t1 + 14 + video_s))" "video stop"
+    fi
   } >"$out/kiosk-mp.args"
   R "$server_m" ssh "mkdir -p $shots && chmod 777 $shots && cat > $shots/kiosk-mp.args" <"$out/kiosk-mp.args" 2>&1 | redact_stream
   if R "$server_m" ssh "D=$kiosk_dir; S=$shots; set -e
@@ -265,18 +281,23 @@ if [ "$kiosk" = 1 ]; then
   fi
 fi
 
-# A locked desktop session hides the kiosk's window: the compositor then
-# hardly lets the app draw (about one frame a second), so its game time
-# (--at) crawls and no screenshot is taken.
+# A locked desktop session turns the kiosk's screen off: the X server then
+# paces a window that waits for the refresh (vsync) at one frame a second,
+# so its game time (--at) crawls and no screenshot is taken. A kiosk build
+# with --no-vsync --max-fps (above) draws at 60 fps anyway.
 locked=no
 if [ "$kiosk" = 1 ]; then
   locked=$(R "$server_m" ssh "s=\$(loginctl list-sessions --no-legend 2>/dev/null | awk '\$4==\"seat0\" {print \$1; exit}'); [ -n \"\$s\" ] && loginctl show-session \"\$s\" -p LockedHint --value" 2>/dev/null || true)
-  [ "$locked" = yes ] && say "note: the kiosk's desktop session is locked: its window is not drawn, so it takes no screenshots (unlock the screen on $server_m for kiosk pictures)"
+  if [ "$locked" = yes ] && [ "${kiosk_new:-0}" = 1 ]; then
+    say "note: the kiosk's desktop session is locked: it draws anyway (--no-vsync --max-fps 60 for the test)"
+  elif [ "$locked" = yes ]; then
+    say "note: the kiosk's desktop session is locked: its old build draws about once a second, so it takes no screenshots (deploy first, or unlock the screen on $server_m)"
+  fi
 fi
 use_camera=0
 case "$camera" in
   1) use_camera=1 ;;
-  auto) { [ "$kiosk" != 1 ] || [ "$locked" = yes ]; } && use_camera=1 ;;
+  auto) { [ "$kiosk" != 1 ] || { [ "$locked" = yes ] && [ "${kiosk_new:-0}" != 1 ]; }; } && use_camera=1 ;;
 esac
 cam=/tmp/ocw-mp-camera-$stamp
 cam_pid=""
@@ -284,14 +305,15 @@ if [ "$use_camera" = 1 ]; then
   {
     echo "--server 127.0.0.1:$port --server-cert $fp --name $camera_name --virtual --power 200 --record false"
     echo "${cam_course[*]}"
-    for d in 30 45 60; do echo "--at \"$d=screenshot $cam/still-$d.png\""; done
-    # Video frames: 5 per second for 12 s.
-    for i in $(seq 0 59); do
-      echo "--at \"$(awk -v i="$i" 'BEGIN { printf "%.2f", 32 + i / 5 }')=screenshot $cam/frame-$(printf %03d "$i").png\""
-    done
+    echo "--video-dir $cam --no-audio"
+    for d in 30 50 65; do echo "--at \"$d=screenshot $cam/still-$d.png\""; done
+    # A real-time 25 fps video from the app's own recorder (console
+    # `video`); drive.sh shows the FPS counter and logs the render rate.
+    echo "--at \"32=video start\""
+    echo "--at \"$((32 + video_s))=video stop\""
   } >"$out/camera.args"
   R "$server_m" ssh "rm -rf $cam && mkdir -p $cam && cat > $cam/camera.args" <"$out/camera.args" 2>&1 | redact_stream
-  (OCW_REMOTE_SLOTS=0 R "$server_m" run "OCW_ARGS_FILE=$cam/camera.args OCW_TEST_OUTPUT=off .claude/skills/run-ocw/drive.sh shot-wayland $cam/final.png $run_s" 2>&1 | redact_stream >"$out/camera.log") &
+  (OCW_REMOTE_SLOTS=0 R "$server_m" run "OCW_PROFILE=release OCW_ARGS_FILE=$cam/camera.args OCW_TEST_OUTPUT=off .claude/skills/run-ocw/drive.sh shot-wayland $cam/final.png $run_s" 2>&1 | redact_stream >"$out/camera.log") &
   cam_pid=$!
   say "camera:       headless client \"$camera_name\" on $server_m (weston) rides along and takes the pictures"
 fi
@@ -331,6 +353,15 @@ say "server and bots finished"
 restore_kiosk
 
 # --- 7. Results -----------------------------------------------------------
+# "1280x720, 25 fps, 15.0 s" of a video (ffprobe on this machine, if any).
+video_info() {
+  command -v ffprobe >/dev/null || { echo "?"; return; }
+  ffprobe -v error -select_streams v:0 -show_entries stream=width,height,avg_frame_rate:format=duration \
+    -of default=nw=1 "$1" 2>/dev/null | awk -F= '
+      $1 == "width" { w = $2 } $1 == "height" { h = $2 } $1 == "duration" { d = $2 }
+      $1 == "avg_frame_rate" { split($2, r, "/"); if (r[2] > 0) f = r[1] / r[2] }
+      END { printf "%sx%s, %.0f fps, %.1f s", w, h, f, d }'
+}
 R "$server_m" fetch "$remote_mp/stats.json" "$out" >/dev/null 2>&1 || say "note: no stats.json from the server"
 R "$server_m" put "${logs[@]}" "$remote_mp/bots" >/dev/null 2>&1
 kiosk_opt=()
@@ -352,19 +383,31 @@ done
 # Kiosk screenshots and a short video from the frames (made on the server
 # machine, which has ffmpeg).
 if [ "$kiosk" = 1 ]; then
-  R "$server_m" ssh "cd $shots 2>/dev/null && ls frame-*.png >/dev/null 2>&1 && ffmpeg -loglevel error -y -framerate 3 -pattern_type glob -i 'frame-*.png' -vf 'scale=1280:-2,format=yuv420p' -c:v libx264 -preset veryfast kiosk.mp4" >/dev/null 2>&1 || true
+  # The recorder names its file by date: the one MP4 there is the video.
+  R "$server_m" ssh "cd $shots 2>/dev/null && v=\$(ls -t *.mp4 2>/dev/null | head -n 1) && [ -n \"\$v\" ] && mv -f \"\$v\" kiosk.mp4" >/dev/null 2>&1 || true
   mkdir -p "$out/kiosk"
   R "$server_m" ssh "cd $shots && tar -cf - still-*.png kiosk.mp4 2>/dev/null" 2>/dev/null | tar -xf - -C "$out/kiosk" 2>/dev/null || true
-  R "$server_m" ssh "cd $shots && ls frame-*.png 2>/dev/null | wc -l" 2>/dev/null | tr -d ' ' >"$out/kiosk/frames.txt"
-  say "kiosk images: $(ls "$out/kiosk" | grep -c png) stills, $(cat "$out/kiosk/frames.txt" 2>/dev/null || echo 0) video frames$([ -f "$out/kiosk/kiosk.mp4" ] && echo ', kiosk.mp4')"
+  say "kiosk images: $(ls "$out/kiosk" | grep -c png) stills$([ -f "$out/kiosk/kiosk.mp4" ] && echo ", kiosk.mp4 ($(video_info "$out/kiosk/kiosk.mp4"))")"
   R "$server_m" ssh "rm -rf $shots" >/dev/null 2>&1 || true
 fi
 
 if [ "$use_camera" = 1 ]; then
-  R "$server_m" ssh "cd $cam 2>/dev/null && ls frame-*.png >/dev/null 2>&1 && ffmpeg -loglevel error -y -framerate 5 -pattern_type glob -i 'frame-*.png' -vf 'scale=1280:-2,format=yuv420p' -c:v libx264 -preset veryfast camera.mp4" >/dev/null 2>&1 || true
+  R "$server_m" ssh "cd $cam 2>/dev/null && v=\$(ls -t *.mp4 2>/dev/null | head -n 1) && [ -n \"\$v\" ] && mv -f \"\$v\" camera.mp4" >/dev/null 2>&1 || true
   mkdir -p "$out/camera"
-  R "$server_m" ssh "cd $cam && tar -cf - still-*.png final.png camera.mp4 2>/dev/null" 2>/dev/null | tar -xf - -C "$out/camera" 2>/dev/null || true
-  say "camera images: $(ls "$out/camera" 2>/dev/null | grep -c png) stills$([ -f "$out/camera/camera.mp4" ] && echo ', camera.mp4')"
+  R "$server_m" ssh "cd $cam && tar -cf - still-*.png final.png final.log camera.mp4 2>/dev/null" 2>/dev/null | tar -xf - -C "$out/camera" 2>/dev/null || true
+  if [ -f "$out/camera/final.log" ]; then
+    sed 's/\x1b\[[0-9;]*m//g' "$out/camera/final.log" | redact_stream >"$out/camera/app.log"
+    rm -f "$out/camera/final.log"
+  fi
+  say "camera images: $(ls "$out/camera" 2>/dev/null | grep -c png) stills$([ -f "$out/camera/camera.mp4" ] && echo ", camera.mp4 ($(video_info "$out/camera/camera.mp4"))")"
+  # The camera's real render rate (wall clock) while it rode in the session.
+  if [ -f "$out/camera/app.log" ]; then
+    rate=$(grep 'render rate' "$out/camera/app.log" | grep -oE 'fps="?[0-9.]+' | grep -oE '[0-9.]+$' |
+      awk '{ s += $1; n++; if (min == "" || $1 < min) min = $1 } END { if (n) printf "mean %.1f fps, lowest %.1f fps (%d samples of 5 s)", s / n, min, n }')
+    [ -n "$rate" ] && say "camera render rate: $rate"
+    frames=$(grep 'video frames' "$out/camera/app.log" | tail -n 1 | grep -oE '(unique|repeated|dropped)=[0-9]+' | tr '\n' ' ')
+    [ -n "$frames" ] && say "camera video frames: $frames"
+  fi
   R "$server_m" ssh "rm -rf $cam" >/dev/null 2>&1 || true
 fi
 

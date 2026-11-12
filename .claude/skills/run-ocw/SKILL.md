@@ -20,6 +20,9 @@ system, app arguments, links). `OCW_TEST_OUTPUT=DIR` changes the folder,
 `OCW_TEST_OUTPUT=off` disables it. CI uploads `test-output/` as an artifact.
 `OCW_FEATURES=voice` builds the app with extra cargo features (voice needs
 `CC=clang-21 CXX=clang++-21` on Linux, spec §7).
+Every run shows the FPS counter (top right: the real, wall-clock render rate,
+also during `--capture`) and logs `render rate fps=…` every 5 s; `OCW_FPS=0`
+turns both off. `OCW_PROFILE=release` runs the release build.
 
 ## Prerequisites (Debian/Ubuntu)
 
@@ -133,8 +136,10 @@ the kiosk's screenshots and video in `test-output/`.
   above, otherwise the road is culled and invisible (looks like plain grass).
 - Vertex colours (`Mesh::ATTRIBUTE_COLOR`) are linear RGB: convert sRGB values
   with `Color::srgb(..).to_linear()`, otherwise surfaces look washed out.
-- `fps on` shows the frame rate; with software Vulkan expect ~8-10 FPS at
-  1280x720. Compare against a run of the previous commit before blaming a change.
+- The FPS counter shows the real render rate; with software Vulkan expect ~8-10 FPS at
+  1280x720, on a headless weston with a GPU (marge) about 40 (weston paces
+  vsync; `--no-vsync` shows what the app could draw). Compare against a run of
+  the previous commit before blaming a change.
 - The default Bevy font has no `·`, `±`, `…`: they render as boxes. Use ASCII in HUD text.
 
 ## Troubleshooting

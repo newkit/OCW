@@ -47,7 +47,11 @@ pub struct VideoPlugin;
 
 impl Plugin for VideoPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<VideoRecorder>()
+        let dir = app
+            .world()
+            .get_resource::<crate::Args>()
+            .and_then(|a| a.video_dir.clone());
+        app.insert_resource(VideoRecorder { dir, ..default() })
             .add_systems(
                 Update,
                 (video_key.run_if(ocw_render::menu::ride_input), show_in_hud).chain(),

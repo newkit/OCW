@@ -893,6 +893,39 @@ mod tests {
         assert_eq!(built.bike, ProfileId::Mountain);
     }
 
+    /// New snapshots move the riders every frame (multiplayer: 10 Hz
+    /// snapshots, interpolated): the avatars are moved, never respawned,
+    /// and no mesh or material is added after the first frame.
+    #[test]
+    fn moving_riders_keep_their_avatars_and_assets() {
+        let mut view = RideView::new(Route::test_loop());
+        view.riders = (1..=9)
+            .map(|i| rider(i, ProfileId::ALL[i as usize % ProfileId::ALL.len()], i == 1))
+            .collect();
+        let mut app = app(view);
+        app.update();
+        let entities = app.world().resource::<RiderEntities>().0.clone();
+        let counts = |app: &mut App| {
+            let w = app.world_mut();
+            let spawned = w.query::<Entity>().iter(w).count();
+            (
+                w.resource::<Assets<Mesh>>().len(),
+                w.resource::<Assets<StandardMaterial>>().len(),
+                spawned,
+            )
+        };
+        let before = counts(&mut app);
+        for frame in 0..60 {
+            for r in &mut app.world_mut().resource_mut::<RideView>().riders {
+                r.state.distance += 0.2;
+                r.state.lateral_offset = (f64::from(frame) * 0.1).sin();
+            }
+            app.update();
+        }
+        assert_eq!(app.world().resource::<RiderEntities>().0, entities);
+        assert_eq!(counts(&mut app), before);
+    }
+
     fn rider(id: u32, bike: ProfileId, is_local: bool) -> crate::RiderView {
         crate::RiderView {
             id: RiderId(id),

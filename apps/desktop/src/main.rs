@@ -251,6 +251,22 @@ pub struct Args {
     /// executable, or $OCW_ARGS_FILE).
     #[arg(long)]
     pub no_args_file: bool,
+    /// Draw as fast as possible instead of waiting for the display's
+    /// refresh (benchmarks: the render rate the app could reach).
+    #[arg(long)]
+    pub no_vsync: bool,
+    /// Draw at most this many frames per second (with --no-vsync: the
+    /// render rate where the display gives no refresh to wait for).
+    #[arg(long, value_name = "FPS")]
+    pub max_fps: Option<f64>,
+    /// Directory for videos (key V, console `video`; default
+    /// ~/Videos/OCW/).
+    #[arg(long, value_name = "DIR")]
+    pub video_dir: Option<PathBuf>,
+    /// Log the real render rate (wall-clock frames per second, also during
+    /// --capture) every SECONDS: `render rate fps=… worst_ms=…`.
+    #[arg(long, value_name = "SECONDS")]
+    pub log_fps: Option<f64>,
     /// No sound: do not open an audio output (also off during --capture,
     /// whose game time does not run in real time).
     #[arg(long)]
@@ -351,7 +367,11 @@ fn main() -> AppExit {
                     // App id (Wayland) / WM_CLASS (X11): the desktop entry and its icon.
                     name: Some(icon::APP_ID.into()),
                     resolution: WindowResolution::new(args.window.0, args.window.1),
-                    present_mode: PresentMode::AutoVsync,
+                    present_mode: if args.no_vsync {
+                        PresentMode::AutoNoVsync
+                    } else {
+                        PresentMode::AutoVsync
+                    },
                     mode: if args.fullscreen {
                         WindowMode::BorderlessFullscreen(MonitorSelection::Current)
                     } else {
@@ -374,6 +394,10 @@ fn main() -> AppExit {
     })
     .insert_resource(args.clone())
     .insert_resource(VersionLabel(build_id().to_string()))
+    .insert_resource(ocw_render::frame_rate::FrameLimit::new(args.max_fps))
+    .insert_resource(ocw_render::frame_rate::LogRenderRate(
+        args.log_fps.filter(|s| *s > 0.0),
+    ))
     .add_systems(Startup, || info!("Open Cycling World {}", build_id()))
     .add_plugins(OcwRenderPlugins)
     .add_plugins(settings::SettingsPlugin)

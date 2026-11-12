@@ -28,11 +28,24 @@
 #       advances 1/25 s per frame, so it is not a benchmark). Archived.
 #   drive.sh server [args...]
 #       Run the headless game server, e.g. --bots 3 --seconds 10 --fast.
+#   OCW_PROFILE=release runs the release build of ocw-desktop instead of the
+#   debug build (faster rendering, e.g. for a client that records a real-time
+#   video). OCW_FPS=0 hides the FPS counter, which every run shows by default
+#   (the real render rate, also during --capture).
 set -euo pipefail
 
 [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
 
 APP_ENV=(WGPU_BACKEND=vulkan "RUST_LOG=${RUST_LOG:-info,wgpu=warn,naga=warn}")
+# Debug (default) or release build of ocw-desktop.
+case "${OCW_PROFILE:-debug}" in
+  release) BUILD_FLAGS=(--release); APP=./target/release/ocw-desktop ;;
+  *) BUILD_FLAGS=(); APP=./target/debug/ocw-desktop ;;
+esac
+# The FPS counter (real render rate) and its log line every 5 s, in every
+# test picture unless OCW_FPS=0.
+FPS_ARGS=(--cmd "fps on" --log-fps 5)
+[ "${OCW_FPS:-1}" = 0 ] && FPS_ARGS=()
 
 # Parses OUT [DELAY] [-- args...] into $out, $delay, $log and APP_ARGS.
 parse_shot_args() {
@@ -40,7 +53,7 @@ parse_shot_args() {
   delay=8
   if [ $# -gt 0 ] && [ "$1" != "--" ]; then delay=$1; shift; fi
   [ "${1:-}" = "--" ] && shift
-  APP_ARGS=(--screenshot "$out" --screenshot-delay "$delay" "$@")
+  APP_ARGS=(--screenshot "$out" --screenshot-delay "$delay" "${FPS_ARGS[@]}" "$@")
   ARCHIVE_APP_ARGS=("$@")
   log="${out%.*}.log"
   rm -f "$out"
@@ -71,7 +84,7 @@ parse_video_args() {
   [ "${1:-}" = "--" ] && shift
   log="${out%.*}.log"; shot="${out%.*}.png"
   frames=$(mktemp -d)
-  VIDEO_APP_ARGS=(--capture "$frames" --capture-fps 25 --capture-seconds "$seconds" "$@")
+  VIDEO_APP_ARGS=(--capture "$frames" --capture-fps 25 --capture-seconds "$seconds" "${FPS_ARGS[@]}" "$@")
   ARCHIVE_APP_ARGS=(--capture-seconds "$seconds" "$@")
   rm -f "$out" "$shot"
   command -v ffmpeg >/dev/null || { echo "ffmpeg not installed (apt-get install ffmpeg)" >&2; exit 1; }
@@ -164,38 +177,38 @@ ARCHIVE_APP_ARGS=()
 case "$cmd" in
   shot)
     parse_shot_args "$@"
-    cargo build -q -p ocw-desktop ${OCW_FEATURES:+--features "$OCW_FEATURES"}
+    cargo build -q "${BUILD_FLAGS[@]}" -p ocw-desktop ${OCW_FEATURES:+--features "$OCW_FEATURES"}
     status=0
     timeout 180 xvfb-run -a -s "-screen 0 1280x720x24" \
-      env -u WAYLAND_DISPLAY "${APP_ENV[@]}" ./target/debug/ocw-desktop "${APP_ARGS[@]}" \
+      env -u WAYLAND_DISPLAY "${APP_ENV[@]}" "$APP" "${APP_ARGS[@]}" \
       >"$log" 2>&1 || status=$?
     report x11 "$status"
     ;;
   shot-wayland)
     parse_shot_args "$@"
-    cargo build -q -p ocw-desktop ${OCW_FEATURES:+--features "$OCW_FEATURES"}
+    cargo build -q "${BUILD_FLAGS[@]}" -p ocw-desktop ${OCW_FEATURES:+--features "$OCW_FEATURES"}
     start_weston "${out%.*}.weston.log"
     status=0
     timeout 180 env -u DISPLAY XDG_RUNTIME_DIR="$runtime" WAYLAND_DISPLAY="$socket" \
-      "${APP_ENV[@]}" ./target/debug/ocw-desktop "${APP_ARGS[@]}" >"$log" 2>&1 || status=$?
+      "${APP_ENV[@]}" "$APP" "${APP_ARGS[@]}" >"$log" 2>&1 || status=$?
     report wayland "$status"
     ;;
   video)
     parse_video_args "$@"
-    cargo build -q -p ocw-desktop ${OCW_FEATURES:+--features "$OCW_FEATURES"}
+    cargo build -q "${BUILD_FLAGS[@]}" -p ocw-desktop ${OCW_FEATURES:+--features "$OCW_FEATURES"}
     status=0
     timeout 600 xvfb-run -a -s "-screen 0 1280x720x24" \
-      env -u WAYLAND_DISPLAY "${APP_ENV[@]}" ./target/debug/ocw-desktop "${VIDEO_APP_ARGS[@]}" \
+      env -u WAYLAND_DISPLAY "${APP_ENV[@]}" "$APP" "${VIDEO_APP_ARGS[@]}" \
       >"$log" 2>&1 || status=$?
     encode_video x11 "$status"
     ;;
   video-wayland)
     parse_video_args "$@"
-    cargo build -q -p ocw-desktop ${OCW_FEATURES:+--features "$OCW_FEATURES"}
+    cargo build -q "${BUILD_FLAGS[@]}" -p ocw-desktop ${OCW_FEATURES:+--features "$OCW_FEATURES"}
     start_weston "${out%.*}.weston.log"
     status=0
     timeout 600 env -u DISPLAY XDG_RUNTIME_DIR="$runtime" WAYLAND_DISPLAY="$socket" \
-      "${APP_ENV[@]}" ./target/debug/ocw-desktop "${VIDEO_APP_ARGS[@]}" >"$log" 2>&1 || status=$?
+      "${APP_ENV[@]}" "$APP" "${VIDEO_APP_ARGS[@]}" >"$log" 2>&1 || status=$?
     encode_video wayland "$status"
     ;;
   spike)

@@ -349,6 +349,15 @@ keeps real time (on the kiosk test machine all 25 images per second are
 new; a slow screenshot readback can lower that elsewhere – `make test-video`
 records with a fixed time step instead). Needs `ffmpeg` (`make deps` installs it).
 
+**FPS counter:** `fps on` (console), *Settings → Display* or `set display.fps
+on` shows a small green badge at the top right, e.g. `58 fps  max 21 ms`: the
+frames the app really drew in the last second (wall clock) and the longest of
+them. It is off for riders by default and on in every test picture and video
+(`drive.sh`, the scene harness, `make test-multiplayer`; `OCW_FPS=0` hides it
+there). During frame capture (`--capture`) it still shows the real render
+rate, not the 25 frames per second of the video; `--log-fps S` writes the same
+rate to the log every S seconds.
+
 **Events** (spec §2.3): a race, a group ride or a time trial against your
 own ghost, started on demand on the current route (single player with bots
 on the in-process server; the same server logic will run networked
@@ -440,6 +449,10 @@ event status | event cancel | event dismiss
 | `--screenshot PATH`, `--screenshot-delay S` | Save a screenshot after S seconds (default 5), then exit |
 | `--capture DIR`, `--capture-fps N`, `--capture-seconds S`, `--capture-warmup S` | Save every frame with a fixed game-time step (smooth videos), then exit |
 | `--no-audio` | No sound: open no audio output (frame capture with `--capture` is silent anyway) |
+| `--no-vsync` | Draw as fast as possible instead of waiting for the display's refresh (benchmarks) |
+| `--max-fps N` | Draw at most N frames per second (with `--no-vsync`: a steady rate even where the display gives no refresh, e.g. on a locked screen) |
+| `--log-fps S` | Log the real render rate every S seconds (`render rate fps=… worst_ms=…`; wall clock, also during `--capture`) |
+| `--video-dir DIR` | Where videos (key V, console `video`) are saved (default `~/Videos/OCW/`) |
 | `--version` | Print the build id, e.g. `0.1.0-7d538c0-dirty (debug)`: version, commit, `-dirty` for uncommitted changes, `(debug)` for debug builds. It is also shown small in the HUD's lower right corner and logged at startup |
 
 ## Settings and rider profiles
@@ -456,7 +469,7 @@ console (saved at once), or by editing the file; `get` lists them all:
 | `trainer.virtual_power` | 0 to 2000 W (200): the virtual trainer at the start (`--power`) | next start |
 | `display.hud` | on / off (on) | at once |
 | `display.units` | metric / imperial (metric) | at once |
-| `display.fps` | on / off (off): FPS counter | at once |
+| `display.fps` | on / off (off): FPS counter (top right: the real render rate over the last second and its longest frame, e.g. `58 fps  max 21 ms`) | at once |
 | `display.camera` | chase / side / top (chase) | at once |
 | `display.fullscreen` | on / off (off): borderless fullscreen (`--fullscreen`) | next start |
 | `ride.bots` | 0 to 50 (10): test riders (`--bots`) | next start |
@@ -583,7 +596,7 @@ for now).
 | `clear` | Clear the console output |
 | `echo TEXT` | Print text |
 | `exec FILE` | Run the commands in a file, one per line |
-| `fps [on\|off]` | Show or hide the FPS counter |
+| `fps [on\|off]` | Show or hide the FPS counter (this session; `set display.fps on` keeps it) |
 | `hud [on\|off]` | Show or hide the HUD |
 | `hud.units metric\|imperial` | Speed and distance in km/h and km, or mph and miles |
 | `set [--temp] KEY VALUE` | Change a setting and save it in `settings.toml` (`--temp`: this session only); see [Settings](#settings-and-rider-profiles) |
@@ -920,13 +933,17 @@ with a verdict (`RESULT: PASS` / `FAIL`): all clients joined and stayed,
 everyone saw everyone moving, snapshots at 10 Hz without gaps, prediction
 error, server tick timing. Logs, `stats.json`, the verdict and the kiosk's
 screenshots and short video are in `test-output/multiplayer/<run>/`, the
-images also in the `test-output/` build history. The kiosk draws (and takes
-pictures) only while its desktop session is unlocked; when it is locked, the
-test says so and a headless desktop client "Camera" (weston on the same
-machine) rides along and takes the pictures instead (`OCW_MP_CAMERA=auto`,
-`1` always, `0` never). On macOS the bots run under `caffeinate -i -s`, so the
+images also in the `test-output/` build history. While the kiosk's desktop
+session is locked (screen off), a window that waits for the display's refresh
+draws only once a second, so the test runs the kiosk with `--no-vsync
+--max-fps 60` and it takes its pictures anyway. Without a kiosk (or with a
+kiosk build older than these options while locked) a headless desktop client
+"Camera" (weston on the same machine, release build on the GPU) rides along
+and takes the pictures instead (`OCW_MP_CAMERA=auto`, `1` always, `0` never). The videos (15 s, `OCW_MP_VIDEO_S`) are the app's own
+real-time 25 fps recordings with the FPS counter on; the summary lists the
+camera's measured render rate. On macOS the bots run under `caffeinate -i -s`, so the
 Mac does not doze off during the run. Settings: `OCW_MP_BOTS`
-(machines), `OCW_MP_RIDERS`, `OCW_MP_SECONDS`, `OCW_MP_PORT`, `OCW_MP_KIOSK=0`
+(machines), `OCW_MP_RIDERS`, `OCW_MP_SECONDS`, `OCW_MP_VIDEO_S`, `OCW_MP_PORT`, `OCW_MP_KIOSK=0`
 (bots only), `OCW_MP_CAMERA`, `OCW_MP_BUILD=0`, `OCW_MP_SERVER`, `OCW_MP_HOST` (see the
 script's header and spec §11.4.1). The server's address comes from
 `config/machines.toml` and is never printed (logs have it replaced). The

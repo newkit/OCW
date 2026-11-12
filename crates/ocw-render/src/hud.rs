@@ -10,7 +10,6 @@
 
 use std::sync::Arc;
 
-use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use ocw_core::{RiderId, mps_to_kmh};
 use ocw_world::{AVERAGE_AHEAD_M, ElevationProfile, GradeBand, ProfileSpec, RidePath, Track};
@@ -21,8 +20,8 @@ pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        if !app.is_plugin_added::<FrameTimeDiagnosticsPlugin>() {
-            app.add_plugins(FrameTimeDiagnosticsPlugin::default());
+        if !app.is_plugin_added::<crate::frame_rate::FrameRatePlugin>() {
+            app.add_plugins(crate::frame_rate::FrameRatePlugin);
         }
         app.init_resource::<ShowFps>()
             .init_resource::<ShowHud>()
@@ -85,7 +84,8 @@ fn update_version_label(label: Res<VersionLabel>, mut text: Query<&mut Text, Wit
     }
 }
 
-/// Whether the FPS counter is shown (console command `fps`).
+/// Whether the FPS counter is shown (console command `fps`, setting
+/// `display.fps`): the real, wall-clock render rate ([`crate::frame_rate`]).
 #[derive(Resource, Default)]
 pub struct ShowFps(pub bool);
 
@@ -645,6 +645,7 @@ fn spawn_recording(mut commands: Commands) {
                 TextColor(Color::WHITE),
                 AppMessageText,
             ));
+            top.spawn(crate::frame_rate::badge_bundle());
         });
 }
 
@@ -802,9 +803,7 @@ fn format_time(seconds: f64) -> String {
 fn update_hud(
     view: Res<RideView>,
     ahead: Res<LookAhead>,
-    show_fps: Res<ShowFps>,
     units: Res<Units>,
-    diagnostics: Res<DiagnosticsStore>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     mut big: Query<&mut Text, (With<HudText>, Without<HudSmallText>)>,
     mut small: Query<&mut Text, (With<HudSmallText>, Without<HudText>)>,
@@ -860,13 +859,6 @@ fn update_hud(
     if !view.status.is_empty() {
         lines.push('\n');
         lines.push_str(&view.status);
-    }
-    if show_fps.0
-        && let Some(fps) = diagnostics
-            .get(&FrameTimeDiagnosticsPlugin::FPS)
-            .and_then(|d| d.smoothed())
-    {
-        lines.push_str(&format!("\nFPS: {fps:.0}"));
     }
     let width = windows.single().map_or(1280.0, |w| w.width());
     let lines = wrap_hud_lines(&lines, small_chars_for(width));
