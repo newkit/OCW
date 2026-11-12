@@ -865,9 +865,15 @@ from development in `artwork/build-history/`.
 | `crates/ocw-worldgen`, `apps/world-builder` | OSM + elevation import: road graph, profiles, world packages |
 | `crates/ocw-worldstore` | World package files, keys, trusted roots, local cache, download |
 | `crates/ocw-fit` | FIT activity file writer (ride export) |
-| `crates/ocw-render` | Bevy plugins: world, riders, camera, HUD, console |
+| `crates/ocw-render` | Bevy plugins: world, riders, camera, HUD, console; the bundled UI font (`assets/fonts/`) |
 | `artwork/` | Logos and other original artwork |
 
 ## License
 
 Code is dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
+
+Third-party assets keep their own licences, listed next to them:
+
+- UI font Fira Mono (© The Mozilla Foundation and Telefonica S.A.), compiled
+  into `ocw-desktop`: SIL Open Font License 1.1, see
+  [`crates/ocw-render/assets/fonts/`](crates/ocw-render/assets/fonts/README.md).

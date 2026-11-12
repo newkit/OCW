@@ -700,14 +700,13 @@ fn update_recording(
     }
 }
 
-/// The GPS line: "47.12345 N  9.53210 E  812 m" (5 decimals ≈ 1 m; no
-/// degree sign: Bevy's default font has no glyph for it).
+/// The GPS line: "47.12345° N  9.53210° E  812 m" (5 decimals ≈ 1 m).
 pub fn gps_line(lat: f64, lon: f64, altitude_m: f64) -> String {
     fn coord(v: f64, pos: char, neg: char) -> String {
         // Round first, so a value that rounds to zero shows no "S" / "W".
         let r = (v * 1e5).round() / 1e5;
         let h = if r < 0.0 { neg } else { pos };
-        format!("{:.5} {h}", r.abs())
+        format!("{:.5}° {h}", r.abs())
     }
     format!(
         "{}  {}  {:.0} m",
@@ -742,8 +741,8 @@ fn update_gps(
     }
 }
 
-/// Font size of the small HUD lines; their glyphs (Bevy's monospaced
-/// default font) are about 0.6 of it wide.
+/// Font size of the small HUD lines; their glyphs (the monospaced UI font,
+/// [`crate::font`]) are about 0.6 of it wide.
 const SMALL_FONT: f32 = 15.0;
 const SMALL_CHAR_W: f32 = SMALL_FONT * 0.6;
 
@@ -1143,16 +1142,16 @@ mod tests {
     fn gps_line_hemispheres_and_rounding() {
         assert_eq!(
             super::gps_line(47.123454, 9.532104, 812.4),
-            "47.12345 N  9.53210 E  812 m"
+            "47.12345° N  9.53210° E  812 m"
         );
         assert_eq!(
             super::gps_line(-33.856785, -151.215296, -3.6),
-            "33.85679 S  151.21530 W  -4 m"
+            "33.85679° S  151.21530° W  -4 m"
         );
         // Rounds to zero: no southern / western hemisphere.
         assert_eq!(
             super::gps_line(-0.000001, -0.000004, 0.0),
-            "0.00000 N  0.00000 E  0 m"
+            "0.00000° N  0.00000° E  0 m"
         );
     }
 

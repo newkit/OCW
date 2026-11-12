@@ -718,9 +718,10 @@ mod tests {
             let d = page.def();
             assert!(!d.items.is_empty() && d.items.len() <= 7, "{page:?}");
             assert!(d.initial_focus < d.items.len(), "{page:?}");
-            // Bevy's default font: ASCII only.
+            // Every character has a glyph in the bundled UI font.
             for s in d.text.iter().chain(d.items.iter().map(|i| &i.label)) {
-                assert!(s.is_ascii(), "{page:?}: {s}");
+                let missing = ocw_render::font::missing(s);
+                assert!(missing.is_empty(), "{page:?}: {s}: {missing:?}");
             }
             // Every sub page can be left with an item, not only with Back.
             if page != Page::Top {
