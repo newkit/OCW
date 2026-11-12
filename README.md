@@ -958,9 +958,10 @@ it), `--dem-attribution TEXT` replaces the SRTM notice. Clients trust a root
 by its public key file `root.pub.json`.
 
 Release builds are published as GitHub Releases (`release/README.md` has the
-build notes); screenshots and videos from development are indexed in
-`artwork/build-history/README.md` and stored as one zip per day on the GitHub
-release `build-history` (the day folders are git-ignored).
+build notes); screenshots and videos from development
+are not in the repository: they are stored as one zip per day with an index
+(`index.md`) on the GitHub release `build-history`; new test runs land in the
+git-ignored `test-output/`.
 
 ## Repository layout
 

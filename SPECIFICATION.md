@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.14 – November 2026
+Version 2.15 – November 2026
 
 | Version | Change |
 |---|---|
@@ -33,6 +33,7 @@ Version 2.14 – November 2026
 | 2.12 | Voice platform plan: LiveKit on every platform – Rust SDK on the desktop (Linux build needs clang ≥ 21), `livekit-client` from wasm in the browser, native or Rust SDKs on iOS / Android; `ocw-voice` trait stays open for them (§7) |
 | 2.13 | Build-history media out of git: one zip per day on the GitHub release `build-history`, day folders git-ignored, history rewritten again (`release/commit-map.txt`) (§11) |
 | 2.14 | Phase 4 models and animation (§2.5, §2.6, §8.1, §14): generated glTF bikes per physics profile and a rigid-part rider (ocw-assets, MIT OR Apache-2.0), asset manifest and validator, rider-on-bike IK pose, riding states (seated, climbing, standing, sprint, coasting) and far LOD at 40 m |
+| 2.15 | `artwork/build-history/` removed from the repository; the build history (zips per day and `index.md`) lives only on the GitHub release `build-history` (§11) |
 
 ---
 
@@ -1324,7 +1325,7 @@ open-cycling-world/
 │   ├── ocw-fit/          # FIT activity writer (no dependencies, wasm-safe)
 │   └── ocw-voice/        # LiveKit integration behind a trait (feature "voice")
 ├── proto/                # .proto schemas
-├── artwork/              # original artwork: logos/ (app icon), build-history/ (screenshots, videos)
+├── artwork/              # original artwork: logos/ (app icon)
 ├── packaging/            # desktop entry (Linux), later installers
 ├── release/              # release builds per version and platform (+ SHA256SUMS)
 ├── scripts/              # build machines, deploy, kiosk, AppImage, Windows build server setup
@@ -1428,7 +1429,7 @@ Build and release pipelines are automated for all three operating systems, intro
 - **App icon and desktop integration:** the logo (`artwork/logos/`, a unicorn riding a bike over a rainbow) is the window icon (X11, Windows); the window's app id `ocw-desktop` matches the desktop entry (`packaging/linux/ocw-desktop.desktop`), which Wayland compositors, docks and menus use. On Linux the app installs its desktop entry and hicolor icons into the user's data directory at start (only changed files).
 - **AppImage:** `scripts/build-appimage.sh` assembles the AppDir (binary, desktop entry, icons, `.DirIcon`) and packs it with `appimagetool` when installed.
 - **macOS app bundle:** `scripts/build-macos-app.sh` (`make macos-app`, runs on macOS) builds `Open Cycling World.app` (bundle id `org.opencyclingworld.desktop`; stripped binary; `Info.plist` with version + commit, minimum macOS read from the binary, `NSBluetoothAlwaysUsageDescription`, without which macOS ends the app when it uses CoreBluetooth; `ocw.icns` from `artwork/logos/`), signs it ad hoc and packs a DMG (with an Applications link) and a zip. Started from Finder, the app logs to `~/Library/Logs/OCW/ocw-desktop.log` (stderr has no terminal there). CI builds and uploads both on pushes to `main`. Still open: Developer ID signing with the hardened runtime and notarisation (`CODESIGN_IDENTITY` already signs with a given identity), a 1024 px icon render for the 512@2x slot.
-- **Releases:** binaries and world packages are published as **GitHub Releases** (pre-releases while in development), never committed to git (decided 2026-11-12; the history was rewritten to remove the former `release/<version>-<commit>/<platform>/` binaries, `release/commit-map.txt` maps old to new commit ids). Each release carries the AppImage and a tarball of the stripped Linux binaries, a Windows zip, the macOS DMG, the world package with its manifest and data licence (ODbL, §13), the OSM extract it was built from (the ODbL "offer the data" duty) and `SHA256SUMS`. `release/README.md` keeps the build notes. `artwork/build-history/README.md` indexes the screenshots and videos made during development; the media themselves are not in git (removed from the history on 2026-11-12) but published as one zip per day (`ocw-build-history-YYYY-MM-DD.zip`) on the GitHub release `build-history`; the day folders `artwork/build-history/YYYY-MM-DD/` are git-ignored.
+- **Releases:** binaries and world packages are published as **GitHub Releases** (pre-releases while in development), never committed to git (decided 2026-11-12; the history was rewritten to remove the former `release/<version>-<commit>/<platform>/` binaries, `release/commit-map.txt` maps old to new commit ids). Each release carries the AppImage and a tarball of the stripped Linux binaries, a Windows zip, the macOS DMG, the world package with its manifest and data licence (ODbL, §13), the OSM extract it was built from (the ODbL "offer the data" duty) and `SHA256SUMS`. `release/README.md` keeps the build notes. Screenshots and videos made during development are not in the repository (removed from the history on 2026-11-12, `artwork/build-history/` dropped entirely): they are published as one zip per day (`ocw-build-history-YYYY-MM-DD.zip`) with an index (`index.md`) on the GitHub release `build-history`. New test runs land in the git-ignored `test-output/` (with its `index.md`); the ones worth keeping go into that day's zip.
 
 ---
 

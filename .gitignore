@@ -27,5 +27,5 @@ known_hosts
 !artwork/**/*.png
 # Agent worktrees.
 .claude/worktrees/
-# Build-history media live in zip files on the GitHub release "build-history", not in git.
-/artwork/build-history/20*/
+# The build history lives on the GitHub release "build-history", not in git.
+/artwork/build-history/
