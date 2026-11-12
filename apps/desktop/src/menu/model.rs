@@ -61,6 +61,8 @@ pub enum Effect {
 pub enum Page {
     Top,
     Ride,
+    /// Ride → Change ride: world packages and test routes (M3).
+    RideChange,
     Navi,
     Settings,
     /// A Settings sub page, the Workshop or a list of the Ride / Navi
@@ -112,7 +114,42 @@ const TOP_ITEMS: &[Item] = &[
     item("Restart", ItemKind::Open(Page::ConfirmRestart)),
     item("Quit", ItemKind::Open(Page::ConfirmQuit)),
 ];
+/// Ride page: local events (spec §2.3), started at once as console
+/// commands; the menu closes so the countdown is visible.
 const RIDE_ITEMS: &[Item] = &[
+    item(
+        "Race: 1 lap / 5 km, 5 bots",
+        ItemKind::Command {
+            line: "event race --bots 5",
+            close: true,
+        },
+    ),
+    item(
+        "Group ride at 150 W",
+        ItemKind::Command {
+            line: "event group --watts 150",
+            close: true,
+        },
+    ),
+    item(
+        "Time trial vs your ghost",
+        ItemKind::Command {
+            line: "event tt",
+            close: true,
+        },
+    ),
+    item(
+        "End the event",
+        ItemKind::Command {
+            line: "event cancel",
+            close: true,
+        },
+    ),
+    item("Change ride", ItemKind::Open(Page::RideChange)),
+    BACK,
+];
+/// Ride → Change ride (M3): another world, route or test route.
+const CHANGE_ITEMS: &[Item] = &[
     item(
         "World packages",
         ItemKind::Open(Page::Sub(sub::Page::Worlds)),
@@ -190,9 +227,18 @@ impl Page {
             Page::Ride => PageDef {
                 title: "Ride",
                 text: &[
-                    "Change what you ride without restarting: a world package (free ride or one of its routes, Navi -> Routes) or a test route. The ride so far is saved; devices stay connected.",
+                    "Local events on this route: everyone lines up at the start, 3-2-1-GO. Races and time trials end at the finish with a results table; a time trial races your best effort (the ghost).",
+                    "Change ride: another world package (free ride or one of its routes) or a test route, without restarting.",
                 ],
                 items: RIDE_ITEMS,
+                initial_focus: 0,
+            },
+            Page::RideChange => PageDef {
+                title: "Change ride",
+                text: &[
+                    "Ride something else without restarting: a world package (free ride or one of its routes, Navi -> Routes) or a test route. The ride so far is saved; devices stay connected.",
+                ],
+                items: CHANGE_ITEMS,
                 initial_focus: 0,
             },
             Page::Navi => PageDef {
@@ -712,6 +758,9 @@ mod tests {
         // The Back item of a page goes up too.
         m.apply(Action::Click(1));
         assert_eq!(m.page(), Some(Page::Ride));
+        assert_eq!(labels(&m)[4..], ["Change ride", "Back"]);
+        m.apply(Action::Click(4));
+        assert_eq!(m.page(), Some(Page::RideChange));
         assert_eq!(
             labels(&m),
             [
@@ -722,6 +771,8 @@ mod tests {
             ]
         );
         m.apply(Action::Click(3));
+        assert_eq!((m.page(), m.focus()), (Some(Page::Ride), 4));
+        m.apply(Action::Click(5));
         assert_eq!((m.page(), m.focus()), (Some(Page::Top), 1));
         // Back at the top closes.
         assert_eq!(m.apply(Action::Back), Effect::Closed);
@@ -777,6 +828,39 @@ mod tests {
     /// Applies `a` with the rows of the given settings and riders.
     fn act(m: &mut Menu, a: Action, s: &Settings, r: &Riders) -> Effect {
         m.apply_with(a, |p| sub::rows(p, s, r))
+    }
+
+    #[test]
+    fn ride_page_starts_events_and_closes() {
+        let mut m = Menu::default();
+        m.apply(Action::Open);
+        m.apply(Action::Click(1));
+        assert_eq!(m.page(), Some(Page::Ride));
+        assert_eq!(
+            labels(&m),
+            [
+                "Race: 1 lap / 5 km, 5 bots",
+                "Group ride at 150 W",
+                "Time trial vs your ghost",
+                "End the event",
+                "Back"
+            ]
+        );
+        assert_eq!(
+            m.apply(Action::Confirm),
+            Effect::Command("event race --bots 5".into())
+        );
+        assert!(!m.is_open(), "closes for the countdown");
+        m.apply(Action::Open);
+        m.apply(Action::Click(1));
+        assert_eq!(
+            m.apply(Action::Click(2)),
+            Effect::Command("event tt".into())
+        );
+        m.apply(Action::Open);
+        m.apply(Action::Click(1));
+        m.apply(Action::Click(4));
+        assert_eq!(m.page(), Some(Page::Top));
     }
 
     #[test]
@@ -929,6 +1013,7 @@ mod tests {
         for page in [
             Page::Top,
             Page::Ride,
+            Page::RideChange,
             Page::Navi,
             Page::Settings,
             Page::NaviStrava,

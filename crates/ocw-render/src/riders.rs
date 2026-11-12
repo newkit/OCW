@@ -57,6 +57,11 @@ struct PedalLeg {
     phase: f32,
 }
 
+/// The time trial's ghost (spec §2.3) is drawn as a rider with this id.
+pub const GHOST_ID: RiderId = RiderId(u32::MAX);
+/// The ghost's colour: a pale, translucent blue.
+pub const GHOST_COLOR: Color = Color::srgba(0.55, 0.8, 1.0, 0.35);
+
 /// Jersey colour of the local rider: #FF1472.
 pub const LOCAL_JERSEY: Color = Color::srgb(1.0, 20.0 / 255.0, 114.0 / 255.0);
 
@@ -100,8 +105,15 @@ fn pedal(
 ) {
     let dt = time.delta_secs();
     for (avatar, mut crank) in &mut avatars {
-        if let Some(r) = view.riders.iter().find(|r| r.id == avatar.id) {
-            let rate = crank_rate(r.cadence_rpm, r.state.speed);
+        let rate = if avatar.id == GHOST_ID {
+            view.ghost.map(|g| crank_rate(None, g.speed))
+        } else {
+            view.riders
+                .iter()
+                .find(|r| r.id == avatar.id)
+                .map(|r| crank_rate(r.cadence_rpm, r.state.speed))
+        };
+        if let Some(rate) = rate {
             crank.0 = (crank.0 + rate * dt) % std::f32::consts::TAU;
         }
     }
@@ -359,8 +371,18 @@ fn sync_riders(
     mut materials: ResMut<Assets<StandardMaterial>>,
     ground: Option<Res<Ground>>,
 ) {
+    // The ghost rides on the local rider's track.
+    let ghost = view
+        .ghost
+        .zip(view.local())
+        .map(|(g, l)| (GHOST_ID, g, l.id));
     // Remove riders that left.
-    let present: Vec<RiderId> = view.riders.iter().map(|r| r.id).collect();
+    let present: Vec<RiderId> = view
+        .riders
+        .iter()
+        .map(|r| r.id)
+        .chain(ghost.map(|g| g.0))
+        .collect();
     entities.0.retain(|id, e| {
         let keep = present.contains(id);
         if !keep {
@@ -368,13 +390,19 @@ fn sync_riders(
         }
         keep
     });
-    for r in &view.riders {
-        let t = avatar_transform(view.track(r.id), &r.state, ground.as_deref());
-        let wanted = AvatarLook {
-            bike: r.bike,
-            look: r.look,
-        };
-        if let Some(e) = entities.0.get(&r.id).copied() {
+    // The ghost: the local rider's bike, all translucent.
+    let all = view
+        .riders
+        .iter()
+        .map(|r| (r.id, r.state, r.id, r.is_local, r.bike, r.look))
+        .chain(ghost.and_then(|(id, state, on)| {
+            let local = view.local()?;
+            Some((id, state, on, false, local.bike, None))
+        }));
+    for (id, state, track_of, is_local, bike, look) in all {
+        let t = avatar_transform(view.track(track_of), &state, ground.as_deref());
+        let wanted = AvatarLook { bike, look };
+        if let Some(e) = entities.0.get(&id).copied() {
             match avatars.get_mut(e) {
                 Ok((mut tr, built)) if *built == wanted => {
                     *tr = t;
@@ -388,12 +416,24 @@ fn sync_riders(
             &mut commands,
             &mut meshes,
             &mut materials,
-            r.id,
-            r.is_local,
+            id,
+            is_local,
             wanted,
             t,
         );
-        entities.0.insert(r.id, e);
+        entities.0.insert(id, e);
+    }
+}
+
+/// The ghost's material: translucent, lit only a little (it glows
+/// faintly), so it reads as "not really there".
+pub fn ghost_material() -> StandardMaterial {
+    StandardMaterial {
+        base_color: GHOST_COLOR,
+        emissive: LinearRgba::rgb(0.08, 0.16, 0.25),
+        alpha_mode: AlphaMode::Blend,
+        perceptual_roughness: 0.8,
+        ..default()
     }
 }
 
@@ -453,6 +493,21 @@ fn spawn_avatar(
     let dark = mat(materials, Color::srgb(0.08, 0.08, 0.09), 0.5);
     let rim = mat(materials, Color::srgb(0.18, 0.18, 0.2), 0.3);
     let skin = mat(materials, Color::srgb(0.85, 0.68, 0.55), 0.7);
+    // The ghost (spec §2.3): one translucent material for every part.
+    let (jersey, frame, helmet, accent, dark, rim, skin) = if id == GHOST_ID {
+        let g = materials.add(ghost_material());
+        (
+            g.clone(),
+            g.clone(),
+            g.clone(),
+            g.clone(),
+            g.clone(),
+            g.clone(),
+            g,
+        )
+    } else {
+        (jersey, frame, helmet, accent, dark, rim, skin)
+    };
     // A unit cylinder (radius 1, height 1) for all tubes.
     let unit = meshes.add(Cylinder::new(1.0, 1.0));
     let r = model.wheel_radius_m;
@@ -733,6 +788,57 @@ mod tests {
 
     fn close(a: Vec3, b: Vec3) -> bool {
         (a - b).length() < 1e-3
+    }
+
+    #[test]
+    fn the_ghost_is_a_translucent_rider_on_the_local_track() {
+        let m = ghost_material();
+        assert_eq!(m.alpha_mode, AlphaMode::Blend);
+        assert!(m.base_color.alpha() < 0.5);
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .insert_resource(view(vec![[0.0, 0.0, 0.0], [500.0, 0.0, 0.0]]))
+            .add_plugins(RidersPlugin);
+        let local = crate::RiderView {
+            id: RiderId(1),
+            name: "me".into(),
+            state: ocw_sim::RiderState {
+                distance: 10.0,
+                ..Default::default()
+            },
+            power_w: 0.0,
+            cadence_rpm: None,
+            heart_rate_bpm: None,
+            is_local: true,
+            bike: Default::default(),
+            look: None,
+        };
+        {
+            let mut v = app.world_mut().resource_mut::<RideView>();
+            v.riders = vec![local];
+            v.ghost = Some(ocw_sim::RiderState {
+                distance: 42.0,
+                lateral_offset: 1.0,
+                speed: 9.0,
+                ..Default::default()
+            });
+        }
+        app.update();
+        let mut q = app.world_mut().query::<(&Avatar, &Transform)>();
+        let ghost: Vec<Vec3> = q
+            .iter(app.world())
+            .filter(|(a, _)| a.id == GHOST_ID)
+            .map(|(_, t)| t.translation)
+            .collect();
+        assert_eq!(ghost.len(), 1);
+        assert!(close(ghost[0], Vec3::new(42.0, 0.0, 1.0)), "{ghost:?}");
+        // Gone with the view's ghost.
+        app.world_mut().resource_mut::<RideView>().ghost = None;
+        app.update();
+        let mut q = app.world_mut().query::<&Avatar>();
+        assert_eq!(q.iter(app.world()).count(), 1);
     }
 
     #[test]

@@ -369,6 +369,8 @@ pub fn apply_switch(world: &mut World, mut args: Args, setup: RideSetup) {
         v.notice = None;
         v.route_status = None;
         v.position = None;
+        // A running event ends with its session (server and client are new).
+        v.event = None;
     }
     // 3. A new session (the old server thread ends with its link).
     connection::start_session(world, route);
@@ -573,6 +575,9 @@ mod tests {
                 );
             }
         }
+        // A running event ends with the switch.
+        run(&mut app, "event race --bots 2 --km 0.5");
+        assert!(update_until(&mut app, |w| client(w).event_info().is_some()));
         let log = run(&mut app, "ride.switch --route hills");
         assert!(log.contains("loading test route hills"), "{log}");
         assert!(update_until(&mut app, |w| w
@@ -623,6 +628,8 @@ mod tests {
                 .contains("trainer SIM"),
             "the trainer stays"
         );
+        assert!(client(app.world()).event_info().is_none());
+        assert!(app.world().resource::<RideView>().event.is_none());
         // The ride switch is scriptable; R now restarts this ride in the app.
         assert!(run(&mut app, "ride.current").contains("ride.switch --route hills"));
     }
