@@ -175,6 +175,8 @@ mod tests {
                 profile: None,
                 world: None,
                 rider_weight_kg: None,
+                bike_profile: None,
+                look: None,
             }))))
             .unwrap();
         let mut welcomed = false;
@@ -205,6 +207,8 @@ mod tests {
             profile: None,
             world: None,
             rider_weight_kg: None,
+            bike_profile: None,
+            look: None,
         }))));
         let welcome = s.drain();
         assert_eq!(welcome.len(), 1);

@@ -1084,6 +1084,8 @@ mod tests {
                 cadence_rpm: None,
                 heart_rate_bpm: None,
                 is_local: true,
+                bike: Default::default(),
+                look: None,
             });
         app.update();
         assert_eq!(panel_display(&mut app), Display::Flex);

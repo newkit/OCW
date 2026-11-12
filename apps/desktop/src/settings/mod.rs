@@ -255,10 +255,70 @@ fn rider_args(c: Command) -> Command {
             .value_parser(value_parser!(f64))
             .help("Functional threshold power in W"),
     )
+    .arg(
+        Arg::new("bike")
+            .long("bike")
+            .value_name("PROFILE")
+            .value_parser(parse_bike)
+            .help(bike_help()),
+    )
+    .arg(colour_arg(
+        "frame_color",
+        "frame-color",
+        "Frame colour, #RRGGBB",
+    ))
+    .arg(colour_arg(
+        "jersey_color",
+        "jersey-color",
+        "Jersey colour, #RRGGBB",
+    ))
+    .arg(colour_arg(
+        "helmet_color",
+        "helmet-color",
+        "Helmet colour, #RRGGBB",
+    ))
+    .arg(
+        Arg::new("kit")
+            .long("kit")
+            .value_name("PATTERN")
+            .value_parser(|s: &str| {
+                ocw_core::KitPattern::parse(s).ok_or_else(|| "plain, band or sash".to_string())
+            })
+            .help("Jersey pattern: plain, band or sash"),
+    )
+}
+
+fn bike_help() -> String {
+    let ids: Vec<&str> = ocw_core::ProfileId::ALL.iter().map(|p| p.id()).collect();
+    format!("Bike (physics profile): {}", ids.join(", "))
+}
+
+fn parse_bike(s: &str) -> Result<ocw_core::ProfileId, String> {
+    ocw_core::ProfileId::parse(s).ok_or_else(|| format!("unknown bike {s:?}; {}", bike_help()))
+}
+
+fn colour_arg(id: &'static str, long: &'static str, help: &'static str) -> Arg {
+    Arg::new(id)
+        .long(long)
+        .value_name("#RRGGBB")
+        .value_parser(|s: &str| {
+            ocw_core::Rgb::parse(s).ok_or_else(|| format!("{s:?} is not a colour #RRGGBB"))
+        })
+        .help(help)
 }
 
 fn ftp(m: &ArgMatches) -> Option<u32> {
     m.get_one::<f64>("ftp").map(|f| f.round().max(0.0) as u32)
+}
+
+/// The bike and look options of `riders.add` / `riders.edit`.
+fn bike_edit(m: &ArgMatches, mut edit: RiderEdit) -> RiderEdit {
+    edit.bike = m.get_one::<ocw_core::ProfileId>("bike").copied();
+    edit.frame = m.get_one::<ocw_core::Rgb>("frame_color").copied();
+    edit.jersey = m.get_one::<ocw_core::Rgb>("jersey_color").copied();
+    edit.helmet = m.get_one::<ocw_core::Rgb>("helmet_color").copied();
+    edit.pattern = m.get_one::<ocw_core::KitPattern>("kit").copied();
+    edit
 }
 
 fn register_commands(app: &mut App) {
@@ -386,9 +446,16 @@ fn register_commands(app: &mut App) {
                 weight_kg: m.get_one::<f64>("weight").copied().unwrap_or(75.0),
                 height_cm: m.get_one::<f64>("height").copied(),
                 ftp_w: ftp(m),
+                ..Rider::default()
             };
             let mut p = world.resource_mut::<RiderProfiles>();
             p.riders.add(rider.clone())?;
+            let bike = bike_edit(m, RiderEdit::default());
+            let rider = if bike == RiderEdit::default() {
+                rider
+            } else {
+                p.riders.edit(&rider.name, bike)?
+            };
             p.save()?;
             Ok(format!(
                 "added {}: {}{}",
@@ -438,12 +505,24 @@ fn register_commands(app: &mut App) {
                 } else {
                     ftp(m).map(Some)
                 },
+                ..RiderEdit::default()
             };
+            let edit = bike_edit(m, edit);
+            let bike_changed = edit.bike.is_some()
+                || edit.frame.is_some()
+                || edit.jersey.is_some()
+                || edit.helmet.is_some()
+                || edit.pattern.is_some();
             let mut p = world.resource_mut::<RiderProfiles>();
             let r = p.riders.edit(&name, edit)?;
             p.save()?;
+            let bike = if bike_changed {
+                format!("; {}", r.bike_summary())
+            } else {
+                String::new()
+            };
             Ok(format!(
-                "{}: {}{}",
+                "{}: {}{bike}{}",
                 r.name,
                 r.summary(),
                 p.next_start_note()
@@ -697,6 +776,41 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Bike and look from the console (spec §2.5): validated, saved in
+    /// riders.toml, the bike picks the physics profile.
+    #[test]
+    fn riders_bike_options() {
+        let dir = temp_dir("bike");
+        let mut app = app(&dir);
+        assert_eq!(
+            run(&mut app, "riders.add Alex --weight 78 --bike tt")[0],
+            "added Alex: 78 kg (applies from the next start; R restarts)"
+        );
+        assert_eq!(
+            run(
+                &mut app,
+                "riders.edit Alex --bike gravel --frame-color #1E88E5 --kit sash"
+            )[0],
+            "Alex: 78 kg; Gravel, frame #1E88E5, jersey #FF1472 (sash) (applies from the next start; R restarts)"
+        );
+        for bad in [
+            "riders.edit Alex --bike rocket",
+            "riders.edit Alex --frame-color blue",
+            "riders.edit Alex --kit stars",
+        ] {
+            assert!(run(&mut app, bad)[0].starts_with("error"), "{bad}");
+        }
+        let (r, _) = Riders::load(&dir.join("riders.toml")).unwrap();
+        let alex = r.active();
+        assert_eq!(
+            alex.physics(),
+            ocw_core::RiderProfile::curated(ocw_core::ProfileId::Gravel, 78.0)
+        );
+        assert_eq!(alex.look().frame, ocw_core::Rgb(0x1E88E5));
+        assert_eq!(alex.look().pattern, ocw_core::KitPattern::Sash);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Every row of every page runs a command line the console accepts
     /// (registered command, valid arguments) – except the ones that need
     /// the rest of the app (devices, Strava, the HUD), checked by name.
@@ -706,7 +820,10 @@ mod tests {
         let mut app = app(&dir);
         run(&mut app, "riders.add Alex --weight 78");
         let mut lines = Vec::new();
-        for page in pages::Page::TABS.into_iter().chain([pages::Page::Rider(0)]) {
+        for page in pages::Page::TABS
+            .into_iter()
+            .chain([pages::Page::Rider(0), pages::Page::Bike(0)])
+        {
             let rows = {
                 let w = app.world();
                 pages::rows(

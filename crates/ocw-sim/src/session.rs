@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use ocw_core::{RiderId, RiderProfile, SIM_DT};
+use ocw_core::{ProfileId, RiderId, RiderLook, RiderProfile, SIM_DT};
 use ocw_world::network::splitmix;
 use ocw_world::{RidePath, RoadNetwork, Route, RoutePlan, Segment, Track};
 
@@ -40,6 +40,8 @@ enum Control {
 struct Rider {
     name: String,
     profile: RiderProfile,
+    /// Cosmetic only (spec §2.5): passed through to the snapshots.
+    look: RiderLook,
     state: RiderState,
     input: RiderInput,
     last_input_seq: u32,
@@ -70,6 +72,10 @@ struct Rider {
 pub struct RiderSnapshot {
     pub id: RiderId,
     pub name: String,
+    /// The rider's physics profile (it also picks the bike model).
+    pub bike: ProfileId,
+    /// The rider's cosmetic look.
+    pub look: RiderLook,
     pub state: RiderState,
     pub power_w: f64,
     /// Sequence number of the last input from this rider's client the server applied.
@@ -113,7 +119,7 @@ pub fn bot_climb_power_w(profile: &RiderProfile, grade: f64) -> f64 {
     }
     let env = Environment::with_grade(grade);
     let v = BOT_MIN_CLIMB_SPEED;
-    physics::resistance(profile, &env, v).total() * v / physics::DRIVETRAIN_EFFICIENCY
+    physics::resistance(profile, &env, v).total() * v / profile.drivetrain_efficiency
 }
 
 /// Gap between two rows of the start formation along the road (m).
@@ -290,11 +296,36 @@ impl Session {
 
     /// Adds a server-side test rider ("bot") riding around `base_power_w`.
     pub fn add_bot(&mut self, name: impl Into<String>, base_power_w: f64) -> RiderId {
-        self.insert(
-            name.into(),
+        self.add_bot_with(
+            name,
+            base_power_w,
             RiderProfile::default(),
-            Control::Bot { base_power_w },
+            RiderLook::default(),
         )
+    }
+
+    /// Adds a bot riding a given physics profile, with a look.
+    pub fn add_bot_with(
+        &mut self,
+        name: impl Into<String>,
+        base_power_w: f64,
+        profile: RiderProfile,
+        look: RiderLook,
+    ) -> RiderId {
+        let id = self.insert(name.into(), profile, Control::Bot { base_power_w });
+        self.set_look(id, look);
+        id
+    }
+
+    /// Sets a rider's cosmetic look (spec §2.5); false for unknown riders.
+    pub fn set_look(&mut self, id: RiderId, look: RiderLook) -> bool {
+        match self.riders.get_mut(&id) {
+            Some(r) => {
+                r.look = look;
+                true
+            }
+            None => false,
+        }
     }
 
     fn insert(&mut self, name: String, profile: RiderProfile, control: Control) -> RiderId {
@@ -337,6 +368,7 @@ impl Session {
             Rider {
                 name,
                 profile,
+                look: RiderLook::default(),
                 state: RiderState {
                     distance,
                     lateral_offset,
@@ -736,6 +768,8 @@ impl Session {
             .map(|(id, r)| RiderSnapshot {
                 id: *id,
                 name: r.name.clone(),
+                bike: r.profile.bike,
+                look: r.look,
                 state: r.state,
                 power_w: r.input.power_w,
                 last_input_seq: r.last_input_seq,

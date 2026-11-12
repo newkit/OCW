@@ -61,7 +61,8 @@ impl Plugin for DevicesPlugin {
                 devices.start(BleDevice::new(d.id, d.name));
             }
         }
-        // The rider profile's weight + the bike: the SIM mass (§3.2.1).
+        // The rider profile's weight + the bike: the SIM mass (§3.2.1); the
+        // bike's profile also scales the rolling resistance off the asphalt.
         let profile = crate::settings::local_rider(app.world()).physics();
         app.insert_resource(devices)
             .insert_resource(Trainer(TrainerControl::new(profile)))

@@ -71,7 +71,7 @@ time, the recording and a video go on, and the ride keys (↑ ↓ ← →, A, W,
 R, V, …, the mouse camera) are ignored while it is open. Steering falls back
 to autodrive and junctions take their default exit, so the rider stays on
 the road; closing the menu restores manual steering / wild mode. *Workshop*
-chooses the rider profile, *Settings* has Riders, Controls, Trainer, Display
+chooses the rider profile and their bike (*Workshop → Bike*), *Settings* has Riders, Controls, Trainer, Display
 and Strava: ← / → (D-pad left / right) change the focused value, Q / E,
 PgUp / PgDn or LB / RB switch between these pages (see
 [Settings](#settings-and-rider-profiles)); Ride and Navi say what is coming.
@@ -362,12 +362,12 @@ saves nothing.
 
 **Rider profiles** are in `riders.toml` next to `settings.toml`: name, weight
 (30–200 kg; values outside are clamped), optional height and FTP, and which
-rider is chosen. The chosen rider's weight is the rider mass of the physics:
-it goes to the server when joining (the server clamps it again and uses its
-own bike, drag and rolling resistance, spec §2.5) and, plus 8 kg for the bike,
-to the trainer as SIM mass (Wahoo trainers; FTMS has no field for it). Without
-profiles you ride as `Rider` with 75 kg. Changes apply from the next start
-(R restarts).
+rider is chosen, and each rider's bike and look. The chosen rider's weight is
+the rider mass of the physics: it goes to the server when joining (the server
+clamps it again) and, plus the bike's mass, to the trainer as SIM mass (Wahoo
+trainers; FTMS has no field for it). Without profiles you ride as `Rider` with
+75 kg on the standard road bike. Changes apply from the next start (R
+restarts).
 
 ```toml
 active = "Alex"
@@ -377,14 +377,44 @@ name = "Alex"
 weight_kg = 78.0
 height_cm = 182.0
 ftp_w = 250
+bike = "road-aero"        # optional, see below
+frame_color = "#1E88E5"   # optional colours, #RRGGBB
+jersey_color = "#FF1472"
+helmet_color = "#F2F2EE"
+kit = "band"              # plain, band or sash
 ```
 
-Manage them in the in-game menu (Esc / Start): *Workshop* chooses the rider,
+**Bikes** (spec §2.5): the bike names one of a small set of curated physics
+profiles; the client sends only its id, the server takes drag, rolling
+resistance, bike mass and drivetrain efficiency from its own table (an
+unknown id rides the standard road bike). At 250 W on flat asphalt they are
+within ±3 % of the road bike's speed (±5 % on a 6 % climb); off the asphalt
+wider tyres feel less of the gravel's and grass's rolling resistance, which
+also goes to the trainer in SIM mode.
+
+| `bike` | Model | Bike mass | CdA | Crr | Off-road |
+|---|---|---|---|---|---|
+| `road` (default) | Road – standard: drop bars | 8.0 kg | 0.320 m² | 0.0040 | full |
+| `road-aero` | Road – aero: deep rims | 8.6 kg | 0.305 m² | 0.0040 | full |
+| `road-climbing` | Road – climbing: light frame | 6.8 kg | 0.330 m² | 0.0040 | full |
+| `tt` | Time trial: aero bars, disc wheel, aero helmet | 9.2 kg | 0.295 m² | 0.0039 | 130 % |
+| `gravel` | Gravel: drop bars, 40 mm tyres | 9.0 kg | 0.325 m² | 0.0045 | 50 % |
+| `mtb` | Mountain bike: flat bar, 60 mm tyres, suspension fork | 11.0 kg | 0.330 m² | 0.0048 | 30 % |
+
+*Off-road* is the share of a rough surface's extra rolling resistance the bike
+feels (gravel is 2.5 ×, grass 6 × the road bike's asphalt value). Colours and
+kit are cosmetic only: the other riders see them (bots ride varied bikes and
+colours), the physics never does.
+
+Manage them in the in-game menu (Esc / Start): *Workshop* chooses the rider
+and opens their *Bike* page (the bike, its physics numbers, frame / jersey /
+helmet colour and kit, all with ← / →),
 *Settings → Riders* edits them (weight, height, FTP with ← / →; add, delete),
 and the other *Settings* pages (Controls, Trainer, Display, Strava) change the
 settings above with ← / → (D-pad) and Enter (A); Q / E (LB / RB) switch between
-these pages. In the console: `riders.add` / `riders.edit` (also `--rename`) /
-`riders.select`.
+these pages. In the console: `riders.add` / `riders.edit` (also `--rename`,
+`--bike`, `--frame-color` …) / `riders.select`, e.g.
+`riders.edit Alex --bike gravel --frame-color #43A047 --kit sash`.
 
 ## Console commands
 
@@ -418,8 +448,8 @@ for now).
 | `rider.steer METRES` | Autodrive line: lateral position on the road (positive = right) |
 | `rider.state` | Print your rider's state |
 | `riders.list` | Rider profiles (`*` = chosen for the next start) and who rides now |
-| `riders.add NAME [--weight KG] [--height CM] [--ftp W]` | Add a rider profile (weight default 75 kg) |
-| `riders.edit NAME [--weight KG] [--height CM] [--ftp W] [--rename NEW] [--no-height] [--no-ftp]` | Change a rider profile |
+| `riders.add NAME [--weight KG] [--height CM] [--ftp W] [BIKE OPTIONS]` | Add a rider profile (weight default 75 kg) |
+| `riders.edit NAME [--weight KG] [--height CM] [--ftp W] [--rename NEW] [--no-height] [--no-ftp] [BIKE OPTIONS]` | Change a rider profile; bike options: `--bike road\|road-aero\|road-climbing\|tt\|gravel\|mtb`, `--frame-color`, `--jersey-color`, `--helmet-color` `#RRGGBB`, `--kit plain\|band\|sash` |
 | `riders.remove NAME` | Delete a rider profile |
 | `riders.select NAME` | Choose who rides (Workshop); applies from the next start |
 | `rider.gps` | Your rider's GPS position (also bottom-left in the HUD; route files and world packages only), with a copyable `lat, lon` line |

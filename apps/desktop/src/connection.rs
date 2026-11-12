@@ -39,9 +39,11 @@ impl Plugin for ConnectionPlugin {
     fn build(&self, app: &mut App) {
         let args = app.world().resource::<Args>().clone();
         let free = app.world().get_resource::<FreeRideSetup>().cloned();
-        // The rider profile's weight goes to the server in the hello and
-        // into the prediction (spec §3.2.1).
-        let profile = crate::settings::local_rider(app.world()).physics();
+        // The rider profile's weight and bike (physics profile id) go to
+        // the server in the hello and into the prediction (spec §2.5,
+        // §3.2.1); the look is cosmetic, for the other clients.
+        let rider = crate::settings::local_rider(app.world());
+        let profile = rider.physics();
         let autodrive = crate::settings::autodrive_at_start(app.world());
         let (course, client) = match free {
             Some(FreeRideSetup {
@@ -70,7 +72,9 @@ impl Plugin for ConnectionPlugin {
                 ClientCore::new(self.route.clone(), args.name.clone(), profile),
             ),
         };
-        let client = client.with_autodrive_at_start(autodrive);
+        let client = client
+            .with_autodrive_at_start(autodrive)
+            .with_look(rider.look());
         let start_m = match &course {
             Course::Route(route) => crate::start_point(&args, route),
             Course::FreeRide { .. } | Course::RouteRide { .. } => 0.0,

@@ -2,7 +2,8 @@
 
 use ocw_core::{AIR_DENSITY, GRAVITY, RiderProfile};
 
-/// Fraction of pedal power that reaches the rear wheel.
+/// Fraction of pedal power that reaches the rear wheel on the default
+/// road bike (each profile has its own, `RiderProfile::drivetrain_efficiency`).
 pub const DRIVETRAIN_EFFICIENCY: f64 = 0.976;
 /// Extra mass equivalent of the rotating wheels, in kg.
 pub const WHEEL_INERTIA_MASS_KG: f64 = 0.9;
@@ -175,7 +176,9 @@ pub struct Environment {
     pub drag_factor: f64,
     /// Braking deceleration in m/s² (0 = not braking).
     pub brake_mps2: f64,
-    /// Factor on the rolling resistance from the surface (asphalt = 1).
+    /// Factor on the road bike's rolling resistance from the surface
+    /// (asphalt = 1); each profile feels its own share of it
+    /// (`RiderProfile::surface_factor`).
     pub rolling_factor: f64,
 }
 
@@ -255,7 +258,7 @@ pub fn resistance(profile: &RiderProfile, env: &Environment, speed: f64) -> Resi
     Resistance {
         gravity: m * GRAVITY * angle.sin(),
         rolling: if speed > 0.0 {
-            profile.crr * env.rolling_factor * m * GRAVITY * angle.cos()
+            profile.crr * profile.surface_factor(env.rolling_factor) * m * GRAVITY * angle.cos()
         } else {
             0.0
         },
@@ -274,7 +277,7 @@ pub fn step(
     dt: f64,
 ) {
     let propulsion =
-        DRIVETRAIN_EFFICIENCY * power_w.max(0.0) / state.speed.max(MIN_PROPULSION_SPEED);
+        profile.drivetrain_efficiency * power_w.max(0.0) / state.speed.max(MIN_PROPULSION_SPEED);
     let net = propulsion - resistance(profile, env, state.speed).total();
     let accel = net / (profile.total_mass_kg() + WHEEL_INERTIA_MASS_KG);
     state.speed = (state.speed + (accel - env.brake_mps2) * dt).max(0.0);
@@ -283,7 +286,7 @@ pub fn step(
 
 /// Power in watts needed to hold `speed` steadily under `env`.
 pub fn steady_state_power(profile: &RiderProfile, env: &Environment, speed: f64) -> f64 {
-    resistance(profile, env, speed).total() * speed / DRIVETRAIN_EFFICIENCY
+    resistance(profile, env, speed).total() * speed / profile.drivetrain_efficiency
 }
 
 #[cfg(test)]
@@ -615,5 +618,76 @@ mod tests {
             Environment::with_grade(0.0).with_brake(false).brake_mps2,
             0.0
         );
+    }
+
+    /// Speed (m/s) at which `power` holds steady under `env` (bisection).
+    fn steady_speed(profile: &RiderProfile, env: &Environment, power: f64) -> f64 {
+        let (mut lo, mut hi) = (0.1, 40.0);
+        for _ in 0..80 {
+            let v = 0.5 * (lo + hi);
+            if steady_state_power(profile, env, v) > power {
+                hi = v;
+            } else {
+                lo = v;
+            }
+        }
+        lo
+    }
+
+    /// Each profile's steady speed at 250 W relative to the road bike's.
+    fn relative_speeds(env: Environment) -> Vec<(ocw_core::ProfileId, f64)> {
+        let road = steady_speed(&RiderProfile::default(), &env, 250.0);
+        ocw_core::ProfileId::ALL
+            .into_iter()
+            .map(|id| {
+                let p = RiderProfile::curated(id, 75.0);
+                (id, steady_speed(&p, &env, 250.0) / road - 1.0)
+            })
+            .collect()
+    }
+
+    fn of(v: &[(ocw_core::ProfileId, f64)], id: ocw_core::ProfileId) -> f64 {
+        v.iter().find(|p| p.0 == id).expect("listed").1
+    }
+
+    /// Spec §2.5: at 250 W on flat asphalt every curated profile is within
+    /// ±3 % of the road bike's speed; on a 6 % climb within ±5 %.
+    #[test]
+    fn profile_differences_are_capped() {
+        use ocw_core::ProfileId::*;
+        for (env, cap) in [
+            (Environment::with_grade(0.0), 0.03),
+            (Environment::with_grade(0.06), 0.05),
+        ] {
+            for (id, d) in relative_speeds(env) {
+                assert!(d.abs() <= cap, "{id:?} at grade {}: {d:+.4}", env.grade);
+            }
+        }
+        // The profiles do differ: aero is faster on the flat, climbing
+        // faster uphill.
+        let flat = relative_speeds(Environment::with_grade(0.0));
+        let climb = relative_speeds(Environment::with_grade(0.06));
+        assert!(of(&flat, RoadAero) > 0.005 && of(&flat, TimeTrial) > of(&flat, RoadAero));
+        assert!(of(&climb, RoadClimbing) > 0.005 && of(&flat, RoadClimbing) < 0.0);
+        assert!(of(&flat, Mountain) < of(&flat, Gravel) && of(&flat, Gravel) < 0.0);
+    }
+
+    /// Surface-dependent rolling resistance (spec §5.2.1): wide tyres feel
+    /// less of gravel and grass, so off the asphalt gravel and mountain
+    /// bikes are faster than the road bike, the TT bike slower on grass.
+    #[test]
+    fn wide_tyres_pay_off_off_road() {
+        use ocw_core::ProfileId::*;
+        let on = |s| Environment::with_grade(0.0).with_surface(s);
+        let gravel = relative_speeds(on(ocw_world::Surface::Gravel));
+        let grass = relative_speeds(on(ocw_world::Surface::Grass));
+        assert!(of(&gravel, Gravel) > 0.01, "{gravel:?}");
+        assert!(of(&gravel, Mountain) > 0.01, "{gravel:?}");
+        assert!(of(&grass, Mountain) > of(&grass, Gravel), "{grass:?}");
+        assert!(of(&grass, Gravel) > 0.05, "{grass:?}");
+        assert!(of(&grass, TimeTrial) < 0.0, "{grass:?}");
+        for id in ocw_core::ProfileId::ALL {
+            assert_eq!(RiderProfile::curated(id, 70.0).surface_factor(1.0), 1.0);
+        }
     }
 }

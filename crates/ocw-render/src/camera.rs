@@ -791,6 +791,8 @@ mod tests {
             cadence_rpm: None,
             heart_rate_bpm: None,
             is_local: true,
+            bike: Default::default(),
+            look: None,
         });
         let road_y = route.sample(100.0).position[1];
         let ground = crate::Ground(Arc::new(move |_, _| Some(road_y - 0.1)));
@@ -950,6 +952,8 @@ mod tests {
                 cadence_rpm: None,
                 heart_rate_bpm: None,
                 is_local: true,
+                bike: Default::default(),
+                look: None,
             });
             let mut app = App::new();
             app.add_plugins(MinimalPlugins)

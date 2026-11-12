@@ -70,8 +70,42 @@ impl From<v1::RiderProfile> for ocw_core::RiderProfile {
             bike_mass_kg: f64::from(p.bike_mass_kg),
             cda_m2: f64::from(p.cda_m2),
             crr: f64::from(p.crr),
+            ..Self::default()
         }
     }
+}
+
+impl From<ocw_core::RiderLook> for v1::RiderLook {
+    fn from(l: ocw_core::RiderLook) -> Self {
+        Self {
+            frame_rgb: l.frame.0,
+            jersey_rgb: l.jersey.0,
+            helmet_rgb: l.helmet.0,
+            kit_pattern: l.pattern.wire(),
+        }
+    }
+}
+
+/// A look from the network, validated (spec §2.5): colours are cut to
+/// 24-bit sRGB, unknown patterns are plain.
+impl From<&v1::RiderLook> for ocw_core::RiderLook {
+    fn from(l: &v1::RiderLook) -> Self {
+        Self {
+            frame: ocw_core::Rgb::from_wire(l.frame_rgb),
+            jersey: ocw_core::Rgb::from_wire(l.jersey_rgb),
+            helmet: ocw_core::Rgb::from_wire(l.helmet_rgb),
+            pattern: ocw_core::KitPattern::from_wire(l.kit_pattern),
+        }
+    }
+}
+
+/// The bike (physics profile, which picks the model) and look of a
+/// received rider update; `None` for the look when the server sent none.
+pub fn rider_look(u: &v1::RiderUpdate) -> (ocw_core::ProfileId, Option<ocw_core::RiderLook>) {
+    (
+        ocw_core::ProfileId::from_wire(Some(&u.bike_profile)),
+        u.look.as_ref().map(ocw_core::RiderLook::from),
+    )
 }
 
 /// Quantizes a simulation snapshot entry for the wire.
@@ -87,6 +121,8 @@ pub fn quantize(s: &ocw_sim::RiderSnapshot) -> v1::RiderUpdate {
         last_input_seq: s.last_input_seq,
         power_w: s.power_w.round().max(0.0) as u32,
         display_name: s.name.clone(),
+        bike_profile: s.bike.id().into(),
+        look: Some(s.look.into()),
         heading_mrad: (s.state.heading * 1000.0).round() as i32,
         turn_curvature_e4: (s.state.turn_curvature * 1e4).round() as i32,
     }
@@ -239,6 +275,12 @@ mod tests {
                     },
                     power_w: 310.0,
                     last_input_seq: 77,
+                    bike: ocw_core::ProfileId::Gravel,
+                    look: ocw_core::RiderLook {
+                        frame: ocw_core::Rgb(0x123456),
+                        pattern: ocw_core::KitPattern::Sash,
+                        ..Default::default()
+                    },
                 }),
                 quantize(&ocw_sim::RiderSnapshot {
                     id: RiderId(2),
@@ -251,6 +293,8 @@ mod tests {
                     },
                     power_w: 0.0,
                     last_input_seq: 0,
+                    bike: Default::default(),
+                    look: Default::default(),
                 }),
             ],
         };
@@ -263,6 +307,12 @@ mod tests {
                 assert!((st.distance - 3949.99).abs() < 1e-9);
                 assert!((st.lateral_offset + 1.2).abs() < 1e-9);
                 assert_eq!(s.riders[0].last_input_seq, 77);
+                let (bike, look) = rider_look(&s.riders[0]);
+                assert_eq!(bike, ocw_core::ProfileId::Gravel);
+                let look = look.unwrap();
+                assert_eq!(look.frame, ocw_core::Rgb(0x123456));
+                assert_eq!(look.pattern, ocw_core::KitPattern::Sash);
+                assert_eq!(rider_look(&s.riders[1]).0, ocw_core::ProfileId::Road);
             }
             other => panic!("unexpected {other:?}"),
         }
@@ -296,6 +346,8 @@ mod tests {
             },
             power_w: -5.0,
             last_input_seq: 0,
+            bike: Default::default(),
+            look: Default::default(),
         });
         assert_eq!((u.distance_cm, u.speed_mm_s, u.power_w), (0, 0, 0));
         assert_eq!(u.lateral_offset_cm, 0);
@@ -401,6 +453,8 @@ mod tests {
             },
             power_w: 201.6,
             last_input_seq: 9,
+            bike: Default::default(),
+            look: Default::default(),
         };
         let u = quantize(&snap);
         assert_eq!(u.power_w, 202);
@@ -411,5 +465,31 @@ mod tests {
         assert!((s.lateral_offset + 1.23).abs() < 1e-9);
         assert!((s.heading + 0.2).abs() < 1e-9);
         assert!((s.turn_curvature - 0.0123).abs() < 1e-9);
+    }
+
+    /// Looks from the network are validated: colours to 24 bits, unknown
+    /// patterns plain, unknown bikes the default profile.
+    #[test]
+    fn looks_from_the_wire_are_validated() {
+        let wire = v1::RiderLook {
+            frame_rgb: 0xFF00_00FF,
+            jersey_rgb: 0x00AB_CDEF,
+            helmet_rgb: 0,
+            kit_pattern: 77,
+        };
+        let l = ocw_core::RiderLook::from(&wire);
+        assert_eq!(l.frame, ocw_core::Rgb(0x0000FF));
+        assert_eq!(l.jersey, ocw_core::Rgb(0xABCDEF));
+        assert_eq!(l.pattern, ocw_core::KitPattern::Plain);
+        let u = v1::RiderUpdate {
+            bike_profile: "hovercraft".into(),
+            ..Default::default()
+        };
+        assert_eq!(rider_look(&u), (ocw_core::ProfileId::Road, None));
+        let back = v1::RiderLook::from(ocw_core::RiderLook::default());
+        assert_eq!(
+            ocw_core::RiderLook::from(&back),
+            ocw_core::RiderLook::default()
+        );
     }
 }
