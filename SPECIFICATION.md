@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.11 – November 2026
+Version 2.12 – November 2026
 
 | Version | Change |
 |---|---|
@@ -30,6 +30,7 @@ Version 2.11 – November 2026
 | 2.9 | Priorities 2026-11-12: the route editor (§2.7) is postponed (Phase 3 is closed without it); Phase 4 models, animations and game audio (M5, §3.3) and Phase 6 voice chat (§7) start in parallel, ahead of the Phase 5 backend |
 | 2.10 | Voice chat always on like a call (Teams / Meet): automatic join, open microphone, no push-to-talk; hotkeys on keyboard (`M`, `Shift+M`) and gamepad (Select, right-stick click) to mute the own microphone and the speaker (all voices); mute state on the HUD (§2.4, §7, M8, §14 Phase 6) |
 | 2.11 | Releases on GitHub Releases with the world package (ODbL data licence, OSM source attached); binaries removed from the git history (`release/commit-map.txt`) (§11) |
+| 2.12 | Voice platform plan: LiveKit on every platform – Rust SDK on the desktop (Linux build needs clang ≥ 21), `livekit-client` from wasm in the browser, native or Rust SDKs on iOS / Android; `ocw-voice` trait stays open for them (§7) |
 
 ---
 
@@ -1179,6 +1180,16 @@ Features: voice rooms, participant management, audio transmission, dynamic subsc
 
 - The client uses the official **LiveKit Rust SDK**. It wraps libwebrtc, but LiveKit provides prebuilt binaries for all target platforms.
 - It is isolated in the `ocw-voice` crate behind a trait, with a cargo feature `voice`, so the app also builds and runs without it (CI, minimal builds).
+- **Platform plan (decided 2026-11-12): LiveKit on every platform.** One self-hosted LiveKit server for all clients; the game server issues the tokens and decides the rooms, so rooms, tokens, spatial selection and mute logic are shared. Each platform plugs its own LiveKit client in behind the `ocw-voice` trait:
+
+  | Client | LiveKit client | Notes |
+  |---|---|---|
+  | Desktop (Linux, Windows, macOS) | LiveKit Rust SDK (libwebrtc) | Building it on Linux needs clang ≥ 21 (`make deps-llvm-debian`, apt.llvm.org; Debian 13 ships 19) |
+  | Browser (future web client, §3.5) | `livekit-client` (JS), called from the Rust/wasm client through bindings | Uses the browser's own WebRTC; no native build |
+  | iOS / Android (future apps) | Native LiveKit Swift / Android SDK, or the Rust SDK if the app is Rust | Prebuilt WebRTC from the SDKs |
+
+  The trait therefore must not assume threads, a file system or a native audio device in its API (the browser backend is asynchronous JS); the pure logic (mute state, hotkeys, auto-join, spatial attenuation, nearest-N) stays in platform-independent code that also builds for wasm.
+  Options considered: (1) LiveKit everywhere – chosen; (2) another WebRTC SFU (mediasoup, Janus, Jitsi, own on Pion / webrtc-rs) – no gain, the browser and mobile still use WebRTC and we would rewrite LiveKit's signalling and room logic per client; (3) own Opus over QUIC / WebTransport without WebRTC – possible in browsers (WebTransport + WebCodecs) and on mobile (OS echo cancellation), but needs own jitter buffer, loss concealment, NAT traversal and scaling, and the desktop still needs a C/C++ echo canceller; much more work for likely worse quality. Uncertainty: Rust SDK support for iOS / Android not verified yet.
 - The **LiveKit server is self-hosted** (Apache 2.0) as a separate service. Our API issues short-lived LiveKit access tokens (JWT) per room.
 - Voice is **not** transmitted over the QUIC game-state connection. Voice and game server are separate services with separate scaling.
 - **Spatial audio** on the client:
