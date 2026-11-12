@@ -6,9 +6,10 @@
 # Keys of a scene ([defaults] gives defaults; args/cmds/at are prepended):
 #   name         file name, for --only (globs: --only 'menu-*')
 #   description  what the image shows (also the build-history README row)
-#   world        true: needs the world package ({world}, {world_dir} in args,
-#                cmds and at are replaced by its path and folder; the
-#                Vaduz-Malbun route file lies beside it); skipped without one
+#   world        true: needs the Liechtenstein package ({world}, {world_dir} in
+#                args, cmds and at are replaced by its path and folder; the
+#                Vaduz-Malbun route file lies beside it); "blackforest": the
+#                Black Forest package instead; skipped without the package
 #   args         ocw-desktop arguments (README, "Command-line options")
 #   cmds         console commands at startup (--cmd)
 #   at           timed console commands "SECONDS=COMMAND" (--at, game time
@@ -328,3 +329,92 @@ world = true
 args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "2433,5295", "--bots", "8", "--power", "260", "--window", "1920x1080"]
 at = ["0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 165 10 14"]
 shot = 12
+
+# --- Black Forest world package (world = "blackforest") ---------------------
+# scripts/fetch-pilot.sh blackforest && scripts/build-blackforest.sh
+# (data/blackforest/blackforest.ocwpkg, the southern Black Forest, spec §4.7).
+# Local X east, Z south of the origin 47.92 N 7.96 E: Freiburg Münsterplatz
+# about -8020,-8410, Schauinsland summit -4650,950, Feldberg pass 5600,6540,
+# Titisee 13800,3000. Route files beside the package:
+# freiburg-schauinsland.route (19.9 km, Freiburg 281 m - Günterstal km 5 -
+# summit 1267 m) and titisee-feldberg.route (13.5 km, B317 via Bärental,
+# Feldberg pass 1272 m). Render with OCW_PROFILE=release (260 MB package).
+
+[[scene]]
+name = "bf-freiburg-freeride"
+description = "Black Forest: free ride in Freiburg's old town near the Münster, extruded OSM buildings with gable roofs, orbit camera from the front"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-8018,-8406", "--bots", "0"]
+at = ["2.5=camera.orbit 165 35 70"]
+shot = 9
+
+[[scene]]
+name = "bf-freiburg-video"
+description = "Video: free ride through Freiburg (raised chase camera), junction HUD with the street names"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-8018,-8406", "--bots", "0", "--power", "280"]
+at = ["1=camera.orbit 0 24 11"]
+video = 6
+
+[[scene]]
+name = "bf-schauinsland-climb"
+description = "Black Forest: the Schauinsland climb at km 12 of Freiburg - Schauinsland (780 m), forest on both sides, gradient HUD and the elevation profile"
+world = "blackforest"
+args = ["--world", "{world}", "--route-file", "{world_dir}/freiburg-schauinsland.route", "--no-neighbours", "--bots", "2", "--power", "300"]
+at = ["2.5=teleport 12.0"]
+shot = 10
+
+[[scene]]
+name = "bf-schauinsland-climb-video"
+description = "Video: climbing the Schauinslandstraße (km 15, 980 m) through the forest in the side camera"
+world = "blackforest"
+args = ["--world", "{world}", "--route-file", "{world_dir}/freiburg-schauinsland.route", "--no-neighbours", "--bots", "2", "--power", "320"]
+at = ["2.5=teleport 15.0", "2.5=camera.mode side"]
+video = 6
+
+[[scene]]
+name = "bf-schauinsland-group"
+description = "Black Forest: a group of riders climbing the Schauinsland road at km 14.5 (940 m) in the forest, seen from the front (no HUD)"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-5942,568", "--bots", "8", "--power", "260", "--window", "1920x1080"]
+at = ["0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 165 10 14"]
+shot = 12
+
+[[scene]]
+name = "bf-schauinsland-far-view"
+description = "Black Forest: far view from the top of the Schauinsland road (km 19.6, 1240 m) over the forested ridges"
+world = "blackforest"
+args = ["--world", "{world}", "--route-file", "{world_dir}/freiburg-schauinsland.route", "--no-neighbours", "--bots", "0", "--power", "200"]
+at = ["2.5=teleport 19.6", "2.5=camera.orbit 180 10 80"]
+shot = 12
+
+[[scene]]
+name = "bf-feldberg"
+description = "Black Forest: Titisee - Feldberg below the Feldberg pass (km 12, 1230 m), forest and the Feldberg massif around the road"
+world = "blackforest"
+args = ["--world", "{world}", "--route-file", "{world_dir}/titisee-feldberg.route", "--no-neighbours", "--bots", "0", "--power", "250"]
+at = ["2.5=teleport 12.0", "2.5=camera.orbit 15 22 18"]
+shot = 10
+
+[[scene]]
+name = "bf-titisee-water"
+description = "Black Forest: free ride on the Bruderhalde road above the Titisee: the lake behind the forest, houses of Titisee"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "13560,2700", "--bots", "0", "--power", "200"]
+at = ["2.5=camera.orbit 120 25 60"]
+shot = 10
+
+[[scene]]
+name = "bf-titisee-video"
+description = "Video: riding the Bruderhalde road along the Titisee with 4 bots, raised camera"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "13560,2700", "--bots", "4", "--power", "230"]
+at = ["2.5=camera.orbit 120 22 40"]
+video = 6
+
+[[scene]]
+name = "bf-world-only"
+description = "Black Forest: --world without a route option rides the package's first route (Freiburg - Schauinsland) from Freiburg"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--bots", "3"]
+shot = 10

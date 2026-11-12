@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.26 – November 2026
+Version 2.27 – November 2026
 
 | Version | Change |
 |---|---|
@@ -45,6 +45,7 @@ Version 2.26 – November 2026
 | 2.24 | Phase 8 planned: textures and regional look (§14 Phase 8): licence rule for textures/imagery/models, research results on open aerial and satellite imagery (Orthophoto Liechtenstein / SWISSIMAGE, LGL DOP20, own Sentinel-2 composite, Copernicus forest type), CC0 material libraries, procedural generation, region calibration (palettes, roof colour per building), milestones T1–T7 and open questions Q1–Q11; §4.6 imagery table corrected (EOX licences per year) |
 | 2.25 | Phase 9 planned: sky, time, seasons and weather (§14 Phase 9): real local time and sky at the rider's world position (sun, moon, stars moving, twilight, night lighting), seasons by date and altitude, time machine (any date/time, time speed, presets), weather simulation and weather machine (presets, custom, transitions), optional weather physics (wind, wetness, air density; per session), real weather from open providers via the server (MeteoSwiss, DWD, MET Norway; Open-Meteo non-commercial; ERA5 for historic weather), milestones S1–S8, open questions Q1–Q10 |
 | 2.26 | Phase 8D: reference photos (Wikimedia Commons, web image search, own photos) to learn how things look; looking is free, copying only under 8A licences; reference boards `art/reference/<region>.md` |
+| 2.27 | Second world: the southern Black Forest (§4.7): Geofabrik Regierungsbezirk Freiburg + SRTM (`fetch-pilot.sh blackforest`), one 260 MB package of 2,260 km² (47.72–48.12 N, 7.62–8.30 E, origin 47.92 N 7.96 E) chosen by measured build and client memory (core 1,000 km² / 124 MB, large 5,370 km² / 564 MB over the §15 memory budget), more of it as neighbour packages later; routes Freiburg – Schauinsland and Titisee – Feldberg (`build-blackforest.sh`); `world-builder route --bbox / --origin`, `world-builder areas`; fixes: gutters (`ditch` / `drain` under 2 m) no longer water (§4.6), bike-open pedestrian streets paved (§4.4), a package rewritten in place gets a new manifest (§4.7); scene harness with named worlds (§11.4) |
 
 ---
 
@@ -935,7 +936,7 @@ Each road is converted into a 3D road segment with these properties: geographic 
 
 The road surface is generated from the line geometries.
 
-**Surfaces (v1.9):** asphalt, gravel and grass (off the road), with a rolling-resistance factor each (§5.2.1). Without an OSM `surface` tag, tracks and paths are gravel and all other classes asphalt; the `surface` tag refines this later.
+**Surfaces (v1.9):** asphalt, gravel and grass (off the road), with a rolling-resistance factor each (§5.2.1). Without an OSM `surface` tag, tracks and paths are gravel and all other classes asphalt; the `surface` tag refines this later. Pedestrian streets open to bikes (`highway=pedestrian` with `bicycle=yes|designated|permissive`) are residential streets (paved, residential width), not paths (v2.24, Freiburg's old town).
 
 The road connections form the **road graph**, which is the basis for routes (§2.7), junction steering (§2.2.1) and navigation.
 
@@ -1012,7 +1013,7 @@ Every imagery and land-cover source used in a package is listed in its metadata 
 
 **Implementation (Phase 3, land use and buildings):** the first step uses OSM only, no imagery and no textures yet.
 
-- **Classes:** OSM areas are classified into 17 land classes: default (no land use, grass), meadow, farmland, forest, orchard, vineyard, residential, commercial, industrial, park, water, wetland, rock, scree, glacier, bare (sand, quarries, construction sites) and scrub. Sources: closed ways and `type=multipolygon` relations (outer rings assembled from split member ways, inner rings as holes; even-odd fill) with `landuse`, `natural`, `leisure`, `waterway=riverbank` tags, plus `waterway=river|canal|stream|ditch|drain` lines buffered by their `width` (defaults 12 / 6 / 2 / 1.5 m; culverts and tunnels left out).
+- **Classes:** OSM areas are classified into 17 land classes: default (no land use, grass), meadow, farmland, forest, orchard, vineyard, residential, commercial, industrial, park, water, wetland, rock, scree, glacier, bare (sand, quarries, construction sites) and scrub. Sources: closed ways and `type=multipolygon` relations (outer rings assembled from split member ways, inner rings as holes; even-odd fill) with `landuse`, `natural`, `leisure`, `waterway=riverbank` tags, plus `waterway=river|canal|stream` lines buffered by their `width` (defaults 12 / 6 / 2 m; culverts and tunnels left out); `ditch` and `drain` lines only when tagged at least 2 m wide (v2.24: Freiburg's Bächle, gutters 0.15–0.3 m wide along every old-town street, were drawn as water bands a cell diagonal wide and turned the old town blue).
 - **Splat map:** each 1 km tile gets a class per **5 m cell** (200 × 200, scanline rasterisation at the cell centres in global coordinates, so neighbouring tiles agree at their edges). Where areas overlap, a fixed **priority** decides, not the drawing order: water > glacier > wetland > rock > scree > bare > park > forest > scrub > orchard / vineyard > meadow > farmland > commercial / industrial > residential > default; specific surfaces beat the large built-up areas they lie in.
 - **Water surfaces:** water polygons and rivers ≥ 8 m wide mark the terrain grid vertices in water. The water level at such a vertex is the mean terrain height of the water vertices within 50 m (flat on lakes, gently falling along rivers); the terrain there is carved 1 m below it. The level is also stored for the vertices next to water, so the client draws a flat water quad over every grid cell touching water and the shoreline is where the terrain rises through it. Narrower streams only colour the ground.
 - **Rendering:** the client turns the splat map into a per-tile **colour map** (one texel per cell, sRGB, mipmapped, class colour turning to rock on slopes above 60 %, a little noise), the terrain vertices stay white. Water is a separate flat, glossy mesh. **Trees** come from a jittered 8 m grid with a chance per class (forest 85 %, orchard 45 % small, scrub 30 % small, park 10 %, residential 6 %, meadow / farmland / default 1.2 %, none on water, rock, scree, glacier, bare or vineyards), never in cells near road strips (3 m beyond the edge) or under buildings (1.5 m around the footprint), not on rock faces; the same trees are the camera's obstacles. Packages without land use keep plain grass and provisional tree patches. Tiling PBR materials, ESA WorldCover and the satellite tint (steps 1–3 above) follow later.
@@ -1050,6 +1051,23 @@ Contents:
 
 **Route files (v1.9, interim):** a plain-text `ocw-route 1` file holds one route with its elevation and the terrain grid around it (`name`, `origin` lat/lon of the local metres, `width`, `points` x y z every 5 m, optional `surface FROM TO NAME` stretches that are not asphalt, `grid`). It is written by `world-builder route` and ridden with `--route-file`, optionally together with a world package (`--world`) for the surroundings. Routes as part of packages (above) replace it; it keeps working until the last users are moved to package routes.
 
+**Second world: the Black Forest (decided 2026-11-12, v2.24).** After the Liechtenstein pilot (about 160 km², 30 MB) the second package is the **southern Black Forest** (Schwarzwald, Germany), id `europe/germany/black-forest`, file `blackforest.ocwpkg`.
+
+- **Sources:** the Geofabrik extract of the Regierungsbezirk Freiburg (Baden-Württemberg, 160 MB PBF; it holds the southern and central Black Forest, the northern part lies in the Regierungsbezirk Karlsruhe) and the SRTM tiles N47E007, N47E008, N48E007, N48E008; `scripts/fetch-pilot.sh blackforest` downloads them into `data/blackforest/` with a licence table (`SOURCES.md`; OSM ODbL 1.0, SRTM public domain). `scripts/build-blackforest.sh` builds the package and the routes.
+- **Extent:** the box 47.72–48.12 N, 7.62–8.30 E (`--bbox`, 44 × 51 km, about 2,260 km² or 14 times the pilot), projection origin 47.92 N 7.96 E (`--origin`, fixed so that later neighbour parts share its metres and tile grid). It reaches from the Rhine plain west of Freiburg to Neustadt and from Waldkirch / the Kandel to St. Blasien: Freiburg, Schauinsland, Feldberg, Titisee, Belchen, Blauen, Schluchsee, Todtnau.
+- **Measurements** (build machine `marge`, release build, one package each; client = `ocw-desktop` free ride on software Vulkan, whose RSS includes what a GPU would hold as VRAM):
+
+| Extent | Area | Tiles | Edges | Package | Build | Builder RSS | Client peak RSS |
+|---|---|---|---|---|---|---|---|
+| Liechtenstein pilot | 160 km² | – | – | 30 MB | – | – | 0.68 GB |
+| Core: Freiburg – Schauinsland – Feldberg – Titisee (47.84–48.08 N, 7.70–8.20 E) | 1,000 km² | 1,344 | 66,340 | 124 MB | 53 s | 2.9 GB | 0.99 GB |
+| **South (chosen)** | 2,260 km² | 2,800 | 141,245 | 260 MB | 101–131 s | 3.2 GB | 1.76 GB |
+| Large: Rhine to Baar, Waldshut to Elz (47.58–48.30 N, 7.55–8.45 E) | 5,370 km² | 6,192 | 300,190 | 564 MB | 251 s | 3.9 GB | 3.31 GB |
+
+- **Why this extent:** building is cheap at every size (minutes, under 4 GB), so the client decides. It decodes the whole package into memory (tiles, graph, land use, buildings; about 5.5 MB of RAM per MB of package on top of 0.65 GB), so the large extent breaks the memory budget of §15 (≤ 2 GB) and is above the 200–500 MB disk target, while the south extent stays within both and holds every iconic climb of the southern Black Forest. More of the Black Forest (north of the Elz, the Karlsruhe part, the Baar) comes as **neighbour packages** (§2.2.2): the same `--poly` extract or the Karlsruhe one, their own `--bbox`, the same `--origin`; only their tiles near the rider are loaded. Loading tiles from a package on demand instead of decoding all of it would allow larger single packages later.
+- **Routes:** `Freiburg - Schauinsland` (19.9 km, 1,055 m climbing: Bertoldsbrunnen 281 m – Günterstal – Schauinslandstraße – road end below the summit at 1,267 m) and `Titisee - Feldberg` (13.5 km, 500 m climbing: Titisee 857 m – B317 via Bärental – Feldberg pass, about 1,280 m), both as package routes (`ROUT`; the first is ridden by `--world` alone) and as route files (`freiburg-schauinsland.route`, `titisee-feldberg.route`). `world-builder route` takes `--bbox` / `--origin` like `package`, so a route file is in the package's metres with its road heights (the context profiles of the part).
+- **Check:** 0.003 % of the road samples lie under the terrain (8,818 of 333 million, worst 4.7 m on a track at the western border of the box), below the 0.1 % of the pilot test; land use 55 % forest, 20 % meadow, 10 % farmland, 5 % residential; 306,476 buildings.
+
 Packages are **signed, versioned and updatable**:
 
 - **Ed25519** signatures. An offline root key signs rotating online signing keys. The client ships the root public key.
@@ -1070,6 +1088,7 @@ Packages are **signed, versioned and updatable**:
 - **Cache:** `$OCW_WORLD_CACHE` or `~/.local/share/ocw/worlds/<id>/<version>/{manifest.json, <files>}`; downloads collect in `.partial/<id>@<version>/` and are moved into place only when every file is verified. Packages are verified again on every load. `--world` takes a path or a cache id (`ID` = newest version, `ID@VERSION`); `--list-worlds` and the console commands `worlds.list` / `worlds.verify` show and check the cache.
 - **Download:** `ocw-desktop --fetch-world URL` fetches the manifest first and checks its signature before any large download, then the files next to it (the layout `world-builder publish` writes: `<base>/<id>/<version>/manifest.json`), resuming interrupted downloads with HTTP range requests (`Range: bytes=N-`; a server answering 200 restarts the file). Local directories and `file://` URLs install the same way. Downloads happen before the ride, never during it (§4.2). Tile-chunk streaming uses the chunk list of the manifest later; TUF remains under evaluation for app updates and key rotation metadata.
 - **Rebuilds:** `world-builder diff OLD NEW` (`ocw_worldgen::diff::GraphDiff`) lists the edges whose stable ID survived (unchanged or moved), was removed or added; routes over surviving edges re-match directly, the others are flagged.
+- **Rewrites (v2.24):** commands that change a built package in place (`route --world`, `gpx`, `routes --from / --remove`) write its manifest again (same id, name and attribution, next version), because the old one lists the old SHA-256 and every client refused the package as damaged. A signed manifest becomes unsigned (the key is not at hand); the command says to sign it again.
 
 ---
 
@@ -1489,7 +1508,7 @@ Build and release pipelines are automated for all three operating systems, intro
 | **Unit tests** | Functions and modules in isolation: physics, route sampling, protocol encoding, session logic, parsers, pipeline steps | `#[cfg(test)]` modules next to the code in every crate | Every commit, all platforms in CI |
 | **Integration tests** | Several crates together: client ↔ local server over the protocol, world-builder on a small OSM extract, device backend ↔ app channel | `tests/` directory of the crate | Every commit (Linux); per platform once ported |
 | **End-to-end smoke test** | The real desktop app under Xvfb with software rendering (Mesa lavapipe): launch, ride on the virtual trainer, run console commands, take a screenshot, exit | `tools/` / run skill driver | Every commit on Linux |
-| **Scene renders** | Reproducible scenes of the real desktop app (`scripts/scenes.toml`: arguments, timed console commands, screenshot / short video) rendered headlessly on Wayland on a Linux build machine (`scripts/render-scenes.sh`, `make test-scenes`); reviewed by eye, the good ones kept in the build history | `scripts/` + run skill driver | After user-visible changes, before releases |
+| **Scene renders** | Reproducible scenes of the real desktop app (`scripts/scenes.toml`: arguments, timed console commands, screenshot / short video; a scene names the world package it needs, `world = true` for Liechtenstein, `world = "blackforest"` for the Black Forest) rendered headlessly on Wayland on a Linux build machine (`scripts/render-scenes.sh`, `make test-scenes`); reviewed by eye, the good ones kept in the build history | `scripts/` + run skill driver | After user-visible changes, before releases |
 | **Multiplayer over the network** | Server + kiosk client on one build machine, headless `ocw-bot` riders on the others (Linux, macOS, Windows); joins, snapshots, visibility, prediction, tick timing; kiosk screenshots and video | `scripts/test-multiplayer.sh` (`make test-multiplayer`, §11.4.1) | On demand, before Phase 5 milestones |
 | **Hardware-in-the-loop** | Real trainers and sensors (FTMS, power meter, heart rate) | Manual test protocol, later a test bench | Before each release |
 | **Performance tests** | Frame time, streaming hitches, memory (§15) | `tools/performance-test` (console `exec` scripts, §2.9) | Nightly / before releases |
