@@ -9,6 +9,7 @@
 pub mod local;
 pub mod net;
 pub mod voice;
+pub mod stats;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -81,6 +82,10 @@ pub struct GameServer {
     names: BTreeMap<ConnectionId, String>,
     /// When each connection got its last voice token (unix s).
     voice_issued: BTreeMap<ConnectionId, u64>,
+    /// Display names of the clients that joined and left, in order (for
+    /// the server's statistics, `ocw-server --stats-file`).
+    joined: Vec<String>,
+    left: Vec<String>,
 }
 
 /// Base power of the bots, from easy riders to strong ones, so they spread
@@ -163,11 +168,23 @@ impl GameServer {
             event_dirty: false,
             names: BTreeMap::new(),
             voice_issued: BTreeMap::new(),
+            joined: Vec::new(),
+            left: Vec::new(),
         }
     }
 
     pub fn session(&self) -> &Session {
         &self.session
+    }
+
+    /// Display names of the clients that joined so far, in order.
+    pub fn joined(&self) -> &[String] {
+        &self.joined
+    }
+
+    /// Display names of the clients that left (disconnected) so far.
+    pub fn left(&self) -> &[String] {
+        &self.left
     }
 
     /// Registers a new connection.
@@ -182,6 +199,14 @@ impl GameServer {
         self.names.remove(&conn);
         self.voice_issued.remove(&conn);
         if let Some(rider) = self.riders.remove(&conn) {
+            let name = self
+                .session
+                .snapshot()
+                .into_iter()
+                .find(|r| r.id == rider)
+                .map(|r| r.name.clone())
+                .unwrap_or_default();
+            self.left.push(name);
             self.session.remove_rider(rider);
             tracing::info!(%rider, "rider left");
         }
@@ -304,6 +329,7 @@ impl GameServer {
         }
         self.riders.insert(conn, rider);
         self.names.insert(conn, hello.display_name.clone());
+        self.joined.push(hello.display_name.clone());
         tracing::info!(%rider, name = %hello.display_name, weight_kg = profile.rider_mass_kg, bike = profile.bike.id(), "rider joined");
         S::Welcome(v1::Welcome {
             protocol_version: PROTOCOL_VERSION,
@@ -1180,8 +1206,15 @@ mod tests {
         let conn = server.connect();
         server.handle(conn, &hello(PROTOCOL_VERSION));
         assert_eq!(server.session().rider_count(), 4);
+        assert_eq!(server.joined(), ["Tester"]);
+        assert!(server.left().is_empty());
         server.disconnect(conn);
         assert_eq!(server.session().rider_count(), 3);
+        assert_eq!(server.left(), ["Tester"]);
+        // A connection that never said hello leaves no trace.
+        let quiet = server.connect();
+        server.disconnect(quiet);
+        assert_eq!((server.joined().len(), server.left().len()), (1, 1));
     }
 
     fn event_msg(req: v1::event_request::Req) -> Vec<u8> {

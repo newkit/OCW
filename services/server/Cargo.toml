@@ -33,6 +33,9 @@ sha2.workspace = true
 # Voice access tokens (JWT claims, spec §7).
 serde_json.workspace = true
 thiserror.workspace = true
+# Session statistics (`--stats-file`, `stats::ServerReport`).
+serde.workspace = true
+serde_json.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "io-util", "signal"] }
 
 [lints]

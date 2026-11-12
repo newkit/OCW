@@ -14,8 +14,19 @@ and architecture are in [SPECIFICATION.md](SPECIFICATION.md).
 make deps     # this platform: deps-linux (detects Debian/Ubuntu, Fedora, Arch) | deps-windows | deps-macos
 make check    # fmt, clippy, tests, wasm build – what CI runs
 make run      # desktop client with a virtual trainer and 4 test riders
-make help     # all targets (build, release, test, server, screenshot, ...)
+make help     # all targets (build, release, server, deploy, the test-* targets, ...)
 ```
+
+Tests are the `test-*` targets: `make test` (= `test-unit`, all unit and
+integration tests), `test-wasm`, `test-kiosk`, `test-screenshot` /
+`test-screenshot-wayland` / `test-smoke` (both) and `test-video` /
+`test-video-wayland` (headless desktop runs), `test-multiplayer` (server
+and kiosk on one build machine, bot riders on the others; see
+[Multiplayer test](#multiplayer-test-across-machines)) and
+`test-multiplayer-local` (server and three bot riders on this machine over
+loopback, as in CI). The old names `smoke`,
+`screenshot`, `screenshot-wayland`, `video`, `video-wayland` and `wasm` still
+work for now but are deprecated.
 
 The Rust version is pinned in `rust-toolchain.toml`; Debian's system Rust is too
 old for Bevy. `make` finds the rustup toolchain in `~/.cargo/bin` by itself; for
@@ -335,7 +346,7 @@ the HUD shows a small red "REC m:ss" at the top right; after stopping,
 "Video saved: <file>" for a few seconds. Windows wider than 1920 px are
 scaled down; ticks without a new image repeat the last one so the video
 keeps real time (on the kiosk test machine all 25 images per second are
-new; a slow screenshot readback can lower that elsewhere – `make video`
+new; a slow screenshot readback can lower that elsewhere – `make test-video`
 records with a fixed time step instead). Needs `ffmpeg` (`make deps` installs it).
 
 **Events** (spec §2.3): a race, a group ride or a time trial against your
@@ -855,11 +866,67 @@ desktop app, `--allow-unsigned` and `--trust-root FILE` as there), `--route NAME
 (with `--world`: ride one of the package's routes), `--no-neighbours` (ride
 the package without its installed neighbours; by default their road graphs
 are joined as in the desktop app), `--test-route loop|hills`,
+`--route-file F.route` (ride a route file from `world-builder route`, like
+`ocw-desktop --route-file`), `--stats-file PATH` (write the session's
+statistics as JSON at the end: tick timing, ticks over budget or late, peak
+riders, who joined and left, route id and SHA-256 of the route file),
 `--listen [ADDR]` and `--tls-dir DIR` (see above).
 
 Clients and the server must use the same build of a world package (junctions
 are identified by vertex index): the Hello and Welcome carry the package name
 and a fingerprint of its road graph, and a mismatch is refused.
+
+### Bot clients (`ocw-bot`)
+
+`ocw-bot` (crate `apps/bot`, no Bevy) is a headless client: remote riders
+that join an `ocw-server --listen` over QUIC like the desktop app does
+(Hello, sensor samples from a virtual rider at 4 Hz, snapshots, prediction of
+the own rider) and report what they saw:
+
+```bash
+cargo run --release -p ocw-bot -- --server HOST[:PORT] --server-cert 3f9a…c2 \
+    --riders 3 --seconds 120 [--route loop|hills | --route-file F.route] [--follow NAME]
+```
+
+Options: `--riders N` (one connection each, named `PREFIX-1`, …;
+`--name-prefix`, default the `--label`, which defaults to the OS),
+`--seconds S` (0 = until the server shuts down), `--power W` (base power,
+default 200), `--weight KG`, `--follow NAME` (keep a few metres ahead of that
+rider, e.g. a desktop client, instead of riding the own power), `--index K`
+(first rider's index across several processes: gaps and looks),
+`--insecure-dev` (server on this machine), `--join-timeout S`, `--report
+PATH` (JSON). It ends with one `OCW-BOT-REPORT {json}` line; the exit code is
+0 if every rider joined and none lost its connection. The course must be the
+server's (`--route` = its `--test-route`, or the same `--route-file`); bots do
+not ride road graphs (free ride, package routes). `ocw-bot verdict
+--server-stats stats.json --processes N --riders-per-process R [--kiosk NAME]
+BOT-OUTPUT...` checks a whole run (used by the multiplayer test).
+
+### Multiplayer test across machines
+
+```bash
+make test-multiplayer        # scripts/test-multiplayer.sh
+```
+
+Runs `ocw-server --listen` and the kiosk's desktop client on `marge` (the
+kiosk joins as "Kiosk" over 127.0.0.1) and two `ocw-bot` riders on each
+reachable build machine (`marge`, `macos`, `Win11Builder`, `leela`;
+unreachable ones are skipped), all on the kiosk's course (its route file is
+copied to the bot machines), for 180 s. It builds the release binaries
+first, pins the server's certificate on every client, switches the kiosk
+into the session (through `ocw-desktop.args`) and back afterwards, and ends
+with a verdict (`RESULT: PASS` / `FAIL`): all clients joined and stayed,
+everyone saw everyone moving, snapshots at 10 Hz without gaps, prediction
+error, server tick timing. Logs, `stats.json`, the verdict and the kiosk's
+screenshots and short video are in `test-output/multiplayer/<run>/`, the
+images also in the `test-output/` build history. Settings: `OCW_MP_BOTS`
+(machines), `OCW_MP_RIDERS`, `OCW_MP_SECONDS`, `OCW_MP_PORT`, `OCW_MP_KIOSK=0`
+(bots only), `OCW_MP_BUILD=0`, `OCW_MP_SERVER`, `OCW_MP_HOST` (see the
+script's header and spec §11.4.1). The server's address comes from
+`config/machines.toml` and is never printed (logs have it replaced). The
+test changes no firewall: if a bot gets no answer, it reports that UDP 47800
+on the server machine seems blocked from that machine – open it there for
+UDP to fix it.
 
 ## Build servers
 
@@ -1023,15 +1090,18 @@ to *Public* are the usual causes; the server log is in Event Viewer under
 
 | Tool | Use |
 |---|---|
-| `make help` | All make targets: deps, build, test, check, smoke screenshots, videos, deploy |
-| `cargo run -p ocw-server -- --bots 3 --seconds 10 --fast` | Headless game server (`--world PKG [--seed N]`: free ride on a package) |
+| `make help` | All make targets: deps, build, check, deploy and the tests (`test`, `test-wasm`, `test-kiosk`, `test-smoke`, `test-video`, `test-multiplayer`, …) |
+| `cargo run -p ocw-server -- --bots 3 --seconds 10 --fast` | Headless game server (`--world PKG [--seed N]`: free ride on a package; `--route-file F`; `--stats-file PATH`) |
+| `cargo run -p ocw-bot -- --server HOST --server-cert FP --riders N` | Headless bot riders on a remote server; `ocw-bot verdict` checks a multiplayer test run |
+| `scripts/test-multiplayer.sh` | Multiplayer test across the build machines (`make test-multiplayer`) |
+| `scripts/test-kiosk.sh` | Tests the kiosk script with a fake app (`make test-kiosk`) |
 | `world-builder graph` / `route` / `package` / `check` | OSM + elevation import: road graph statistics, route files, world packages (`--bbox S,W,N,E --origin LAT,LON`: one part of a region, for neighbouring packages), package validation (`cargo run --release -p world-builder -- help`) |
 | `world-builder gpx --world PKG --gpx FILE [--name N] [--route-file F] [--dry-run]` | Import a GPX track: map-match it onto the package's road graph and store it as a package route (section `ROUT`; optionally also as an `ocw-graph-route` file); off-road stretches and gaps are reported |
 | `world-builder route --world PKG --from LAT,LON --to LAT,LON --name N` | Store the shortest main-road route between two points as a package route |
 | `world-builder routes --world PKG [--from OLD_PKG] [--remove N] [--export-gpx]` | List and check a package's routes; carry the routes of an older build over (by stable edge ID, re-matching broken ones); export them as GPX |
 | `world-builder keys init-root` / `keys new-signing` / `sign` / `verify` / `publish` / `diff` | Package signing and distribution, see below |
 | `scripts/fetch-pilot.sh` | Download the pilot region's OSM extract and elevation data |
-| `scripts/remote.sh MACHINE run 'CMD'` | Copy the tree to a build machine (`config/machines.toml`) and run a command there |
+| `scripts/remote.sh MACHINE run 'CMD'` | Copy the tree to a build machine (`config/machines.toml`) and run a command there (`sync`, `ssh`, `fetch`, `put LOCAL... DIR`: copy git-ignored files into the checkout, `field KEY`: a machine setting for scripts) |
 | `python3 tools/build-dashboard/dashboard.py` | Web page (port 8765) with the build machines' load and their running/queued tasks; `--once` prints it as text |
 | `scripts/deploy-test.sh MACHINE` | Release build on a test machine, deployed for its kiosk |
 | `scripts/collect-test-output.sh [CHECKOUT...]` | Merge screenshots and videos from agent worktrees (`.claude/worktrees/*`) into `test-output/` and its build history `test-output/index.md` |
@@ -1110,6 +1180,7 @@ GitHub release `build-history`. Look at every image before picking it.
 | Path | Contents |
 |---|---|
 | `apps/desktop` | Desktop client: wires devices, local server, prediction and rendering |
+| `apps/bot` | `ocw-bot`: headless bot clients for remote servers, multiplayer test verdict |
 | `services/server` | Game server logic, in-process local server, headless server binary |
 | `crates/ocw-core` | Shared types, units, constants |
 | `crates/ocw-sim` | Physics, session logic, client prediction, interpolation, trainer control, workouts (format, `.erg` / `.mrc` import, runner) |

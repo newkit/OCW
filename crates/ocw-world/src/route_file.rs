@@ -176,6 +176,22 @@ impl RouteFile {
         }
         Ok(f)
     }
+
+    /// The ridable route: id and name are the file's name, not a loop,
+    /// with the file's surfaces and geo origin. Every side that rides a
+    /// route file (desktop, server, bot client) builds it this way, so the
+    /// same file gives the same route (spec §6.2 course check).
+    pub fn to_route(&self) -> Result<crate::Route, crate::RouteError> {
+        Ok(crate::Route::from_points(
+            self.name.clone(),
+            self.name.clone(),
+            self.points.clone(),
+            false,
+            self.width_m,
+        )?
+        .with_surfaces(self.surfaces.clone())
+        .with_geo_origin(self.origin))
+    }
 }
 
 #[cfg(test)]
@@ -197,6 +213,19 @@ mod tests {
                 heights: vec![450.0, 451.0, 452.0, 453.0, 454.0, 455.0],
             }),
         }
+    }
+
+    #[test]
+    fn builds_the_route_with_name_and_surfaces() {
+        let r = file().to_route().unwrap();
+        assert_eq!((r.id(), r.name()), ("Vaduz - Malbun", "Vaduz - Malbun"));
+        assert!(!r.is_loop());
+        assert!((r.length() - 10.0).abs() < 0.1, "{}", r.length());
+        let one = RouteFile {
+            points: vec![[0.0, 0.0, 0.0]],
+            ..file()
+        };
+        assert!(one.to_route().is_err());
     }
 
     #[test]

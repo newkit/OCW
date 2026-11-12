@@ -70,13 +70,17 @@ VIDEO ?= /tmp/ocw.mp4
 VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 
 .DEFAULT_GOAL := help
-.PHONY: help deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust build release test lint fmt fmt-check \
-	clippy wasm check run server screenshot screenshot-wayland smoke video video-wayland test-scenes test-scenes-list deploy-test clean clean-test-output \
-	macos-app
+.PHONY: help deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust build release lint fmt fmt-check \
+	clippy check run server deploy-test clean clean-test-output macos-app \
+	test test-unit test-wasm test-kiosk test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
+	test-multiplayer test-multiplayer-local test-scenes test-scenes-list \
+	wasm screenshot screenshot-wayland smoke video video-wayland
 
 help: ## Show this help
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | \
-		awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-19s\033[0m %s\n", $$1, $$2}'
+		awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-23s\033[0m %s\n", $$1, $$2}'
+	@echo "  Deprecated aliases (removed later): wasm, screenshot, screenshot-wayland, smoke, video, video-wayland"
+	@echo "  -> test-wasm, test-screenshot, test-screenshot-wayland, test-smoke, test-video, test-video-wayland"
 
 # Platform detection for `make deps` (Windows: GNU make from Git Bash/MSYS2).
 ifeq ($(OS),Windows_NT)
@@ -179,7 +183,13 @@ build: ## Debug build of all crates and apps (with voice if clang-21 is installe
 release: ## Optimized build of ocw-desktop and ocw-server (with voice if clang-21 is installed)
 	$(VOICE_ENV) $(CARGO) build --release -p ocw-desktop -p ocw-server $(VOICE_FEATURES)
 
-test: ## Run all unit and integration tests (no hardware, network or GPU)
+# Tests are the test-* targets (spec §11.4): test-unit, test-wasm and
+# test-kiosk need no display, GPU or other machine; test-screenshot*,
+# test-smoke and test-video* run the desktop app headlessly (Linux);
+# test-multiplayer uses the build machines of config/machines.toml.
+test: test-unit ## All unit and integration tests (= test-unit; no hardware, network or GPU)
+
+test-unit: ## Run all unit and integration tests (cargo test --workspace)
 	$(CARGO) test --workspace
 
 fmt: ## Format all code
@@ -193,10 +203,13 @@ clippy: ## Lint; warnings are errors (as in CI)
 
 lint: fmt-check clippy ## fmt-check + clippy
 
-wasm: ## Check that the core crates build for wasm32-unknown-unknown
+test-wasm: ## Check that the core crates build for wasm32-unknown-unknown (spec §3.5)
 	$(CARGO) check $(WASM_CRATES) --target wasm32-unknown-unknown
 
-check: lint test wasm ## fmt, clippy, tests, wasm (CI also runs the smoke tests)
+test-kiosk: ## Test the kiosk script with a fake app (no display or build needed)
+	scripts/test-kiosk.sh
+
+check: lint test-unit test-wasm ## fmt, clippy, tests, wasm (CI also runs the smoke tests)
 
 run: ## Start the desktop client (needs a display)
 	$(CARGO) run -p ocw-desktop
@@ -204,18 +217,18 @@ run: ## Start the desktop client (needs a display)
 server: ## Run the headless server for 10 s with 3 test riders
 	$(CARGO) run -p ocw-server -- --bots 3 --seconds 10 --fast
 
-screenshot: ## Headless smoke test on X11 (Xvfb); writes $(SCREENSHOT)
+test-screenshot: ## Headless smoke test on X11 (Xvfb); writes $(SCREENSHOT)
 	.claude/skills/run-ocw/drive.sh shot $(SCREENSHOT)
 
-screenshot-wayland: ## Headless smoke test on Wayland (weston); writes $(SCREENSHOT_WAYLAND)
+test-screenshot-wayland: ## Headless smoke test on Wayland (weston); writes $(SCREENSHOT_WAYLAND)
 	.claude/skills/run-ocw/drive.sh shot-wayland $(SCREENSHOT_WAYLAND)
 
-smoke: screenshot screenshot-wayland ## Both desktop smoke tests (X11 and Wayland)
+test-smoke: test-screenshot test-screenshot-wayland ## Both desktop smoke tests (X11 and Wayland)
 
-video: ## Record a smooth 6 s test ride (X11, frame capture); writes $(VIDEO)
+test-video: ## Record a smooth 6 s test ride (X11, frame capture); writes $(VIDEO)
 	.claude/skills/run-ocw/drive.sh video $(VIDEO)
 
-video-wayland: ## Same on Wayland (weston); writes $(VIDEO_WAYLAND)
+test-video-wayland: ## Same on Wayland (weston); writes $(VIDEO_WAYLAND)
 	.claude/skills/run-ocw/drive.sh video-wayland $(VIDEO_WAYLAND)
 
 test-scenes: ## Render scripts/scenes.toml headlessly (Wayland) into test-output/scenes/ (ONLY=glob,..., WORLD=pkg, REMOTE=machine)
@@ -223,6 +236,26 @@ test-scenes: ## Render scripts/scenes.toml headlessly (Wayland) into test-output
 
 test-scenes-list: ## List the scenes of scripts/scenes.toml
 	scripts/render-scenes.sh --list
+test-multiplayer: ## Server + kiosk on marge, ocw-bot riders on the other build machines over QUIC (spec §11.4.1)
+	scripts/test-multiplayer.sh
+
+MP_LOCAL := target/mp-local
+test-multiplayer-local: ## ocw-server + 3 ocw-bot riders on this machine (loopback QUIC) and the verdict
+	$(CARGO) build -p ocw-server -p ocw-bot
+	@set -e; mkdir -p $(MP_LOCAL); rm -f $(MP_LOCAL)/*.log $(MP_LOCAL)/stats.json; \
+	target/debug/ocw-server --listen 127.0.0.1:47899 --bots 1 --seconds 25 \
+		--stats-file $(MP_LOCAL)/stats.json >$(MP_LOCAL)/server.log 2>&1 & server=$$!; \
+	sleep 2; \
+	target/debug/ocw-bot --server 127.0.0.1:47899 --insecure-dev --riders 3 --seconds 0 \
+		>$(MP_LOCAL)/bot.log 2>&1 || true; \
+	wait $$server; \
+	target/debug/ocw-bot verdict --server-stats $(MP_LOCAL)/stats.json --processes 1 \
+		--riders-per-process 3 $(MP_LOCAL)/bot.log
+
+# Deprecated names of the test targets (kept for a while; not in `help`).
+wasm screenshot screenshot-wayland smoke video video-wayland:
+	@echo "make $@ is deprecated: use make test-$@" >&2
+	@$(MAKE) --no-print-directory test-$@
 
 deploy-test: ## Build on MACHINE (default marge) and deploy for its kiosk (scripts/ocw-kiosk.sh)
 	scripts/deploy-test.sh $(or $(MACHINE),marge)

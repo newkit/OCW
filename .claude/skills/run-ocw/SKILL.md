@@ -70,7 +70,9 @@ Reproducible scenes (camera, teleport, events, menus, tunnel, world package):
 `scripts/scenes.toml` with this driver (`make test-scenes`; README, "Scene harness").
 
 `drive.sh` prints the window system the app used and the console output
-(`INFO console: …` lines) from the log. `make smoke` runs both X11 and Wayland.
+(`INFO console: …` lines) from the log. `make test-smoke` runs both X11 and Wayland
+(`make test-screenshot`, `test-screenshot-wayland`, `test-video`, `test-video-wayland`
+run one mode each).
 
 ## Test
 
@@ -84,6 +86,11 @@ cargo check -p ocw-core -p ocw-sim -p ocw-protocol -p ocw-world --target wasm32-
 
 Most logic (physics, session, prediction, protocol, server, console parsing) is
 unit-tested without Bevy windows; prefer adding tests there over GUI runs.
+Every test has a `test-*` make target (`test-unit`, `test-wasm`, `test-kiosk`,
+`test-smoke`, …). `make test-multiplayer` (`scripts/test-multiplayer.sh`, spec
+§11.4.1) runs a real multiplayer session: `ocw-server` and the kiosk app on
+marge, headless `ocw-bot` riders on the other build machines, a verdict and
+the kiosk's screenshots and video in `test-output/`.
 
 ## Run (human path)
 

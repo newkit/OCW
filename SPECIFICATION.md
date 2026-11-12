@@ -1170,7 +1170,8 @@ The trainer and sensors are always connected to the client only. The server neve
 - **Flow control:** each connection has a queue of 256 messages; when it is full, snapshots are dropped and a client that cannot take reliable messages any more is disconnected ("too slow") instead of growing memory.
 - **Liveness:** keep-alive every 4 s, idle timeout 15 s; a vanished client's rider is removed after it. The client extrapolates snapshots by half the measured round trip when reconciling its prediction. The 2-minute session hold for reconnects (§6.3) is not implemented yet: a reconnect is a new join.
 - **Shutdown:** `ocw-server` stops on Ctrl+C / SIGTERM, closes every connection with "server shutting down" and waits up to 1 s for acknowledgements; the desktop shows "Disconnected: …" in the HUD and keeps running.
-- **Course check:** the client rides its own course data; besides the world package check (§6.5) it refuses a Welcome whose route (or free-ride mode) differs from its own.
+- **Course check:** the client rides its own course data; besides the world package check (§6.5) it refuses a Welcome whose route (or free-ride mode) differs from its own. `ocw-server --route-file` rides a route file (as `ocw-desktop --route-file`; both build the route with `RouteFile::to_route`).
+- **Tested over the network:** `make test-multiplayer` runs the server and the kiosk's client on one build machine and headless `ocw-bot` riders on the others (Linux, macOS, Windows) and checks joins, snapshots, mutual visibility, progress, prediction error and tick timing (§11.4.1).
 
 **TLS in development mode (decided; until the backend exists).** TLS 1.3 only, via rustls with the ***ring*** crypto provider (licence Apache-2.0 AND ISC; already in the tree through `ureq`; chosen over the default aws-lc-rs to avoid its CMake/C toolchain on all three platforms). The server uses a self-signed certificate from `rcgen`, new at every start or kept in `--tls-dir DIR` (`cert.der`, `key.der` with mode 0600), and prints its SHA-256 fingerprint. The client must say how to trust it – there is no default: `--server-cert SHA256` pins exactly that certificate (any address), `--insecure-dev` accepts any certificate but is refused for non-loopback addresses (checked when the options are parsed and again when the TLS configuration is built). Both verify the handshake signature, so the server must hold the key. Not yet: certificates from a public CA (WebPKI roots or the platform verifier), OIDC sign-in and per-session tokens (§6.4, §12); until then a reachable server accepts anyone who has its fingerprint. New dependency licences: quinn, quinn-proto, quinn-udp, rcgen MIT OR Apache-2.0; rustls Apache-2.0 OR ISC OR MIT; ring Apache-2.0 AND ISC. They are used only by `ocw-server` (and the desktop through it), never by the wasm crates (§3.5).
 
@@ -1344,6 +1345,7 @@ open-cycling-world/
 ├── rust-toolchain.toml
 ├── apps/
 │   ├── desktop/          # Bevy app, wires all plugins together
+│   ├── bot/              # ocw-bot: headless remote riders over QUIC, multiplayer test verdict (no Bevy, §11.4.1)
 │   ├── world-builder/    # CLI: OSM + DEM → world packages, route editor
 │   └── web-companion/    # browser app without riding (Leptos)
 ├── services/
@@ -1364,7 +1366,7 @@ open-cycling-world/
 ├── artwork/              # original artwork: logos/ (app icon)
 ├── packaging/            # desktop entry (Linux), later installers
 ├── release/              # release builds per version and platform (+ SHA256SUMS)
-├── scripts/              # build machines, deploy, kiosk, AppImage, Windows build server setup
+├── scripts/              # build machines, deploy, kiosk, AppImage, Windows build server setup, multiplayer test
 ├── config/               # build machine config (only examples in git)
 ├── assets/
 │   ├── bicycles/
@@ -1479,6 +1481,7 @@ Build and release pipelines are automated for all three operating systems, intro
 | **Integration tests** | Several crates together: client ↔ local server over the protocol, world-builder on a small OSM extract, device backend ↔ app channel | `tests/` directory of the crate | Every commit (Linux); per platform once ported |
 | **End-to-end smoke test** | The real desktop app under Xvfb with software rendering (Mesa lavapipe): launch, ride on the virtual trainer, run console commands, take a screenshot, exit | `tools/` / run skill driver | Every commit on Linux |
 | **Scene renders** | Reproducible scenes of the real desktop app (`scripts/scenes.toml`: arguments, timed console commands, screenshot / short video) rendered headlessly on Wayland on a Linux build machine (`scripts/render-scenes.sh`, `make test-scenes`); reviewed by eye, the good ones kept in the build history | `scripts/` + run skill driver | After user-visible changes, before releases |
+| **Multiplayer over the network** | Server + kiosk client on one build machine, headless `ocw-bot` riders on the others (Linux, macOS, Windows); joins, snapshots, visibility, prediction, tick timing; kiosk screenshots and video | `scripts/test-multiplayer.sh` (`make test-multiplayer`, §11.4.1) | On demand, before Phase 5 milestones |
 | **Hardware-in-the-loop** | Real trainers and sensors (FTMS, power meter, heart rate) | Manual test protocol, later a test bench | Before each release |
 | **Performance tests** | Frame time, streaming hitches, memory (§15) | `tools/performance-test` (console `exec` scripts, §2.9) | Nightly / before releases |
 
@@ -1492,6 +1495,50 @@ Build and release pipelines are automated for all three operating systems, intro
 - **Build history:** the harness keeps every scene reproducible (fresh config and data folders, virtual trainer, fixed start, world package from `--world` / `$OCW_WORLD` / `data/pilot/` / the kiosk install); `render-scenes.sh --pick` copies the reviewed renders, kept small (PNG palette above 600 KB, videos ≤ 3 MB), into `test-output/build-history/` with an index, for the zip on the GitHub release `build-history` (media are not committed to git).
 - **Regression rule:** every fixed bug gets a test that failed before the fix.
 - Commands: `cargo test --workspace` runs all unit and integration tests; `cargo clippy --workspace --all-targets -- -D warnings` must pass.
+- **Make targets (decided 2026-11-12):** every test is a `test-*` target: `test-unit` (`cargo test --workspace`; `make test` runs the same), `test-wasm` (the §3.5 build check), `test-kiosk` (`scripts/test-kiosk.sh` with a fake app), `test-screenshot` / `test-screenshot-wayland` / `test-smoke` (both) and `test-video` / `test-video-wayland` (headless desktop runs, run-ocw skill), `test-multiplayer` (§11.4.1) and `test-multiplayer-local` (the same pieces on one machine over loopback: `ocw-server` with a bot, three `ocw-bot` riders, the verdict; in CI). `check` (= `lint test-unit test-wasm`), `lint`, `fmt`, `clippy` keep their names – they are checks, not tests – and so does `deploy-test` (a deployment). Options for the old names (`smoke`, `screenshot`, `screenshot-wayland`, `video`, `video-wayland`, `wasm`): remove them at once (clean, but breaks habits and notes), keep silent aliases forever (no reason to move), or **deprecated aliases** that print "use make test-…" and run the new target (chosen); they are left out of `make help` and can go once nobody uses them.
+
+#### 11.4.1 Multiplayer Test over the Network (decided 2026-11-12)
+
+**Purpose.** The loopback tests (`services/server/tests/quic_loopback.rs`) prove the QUIC transport on one host. `make test-multiplayer` (`scripts/test-multiplayer.sh`) checks the whole Phase 5 path (§6.2, §14) on real machines and a real network: several operating systems as clients at once, one remote server, the GUI client among them, and a picture of the result on a screen. It is an on-demand test (it needs the build machines of `config/machines.toml`, a few minutes and the kiosk screen), not part of CI; CI runs `make test-multiplayer-local`, the server, three bot riders and the verdict on one machine over loopback.
+
+**Topology and roles.**
+
+| Machine (`config/machines.toml`) | Role |
+|---|---|
+| `marge` (Linux, the kiosk screen; `OCW_MP_SERVER`) | `ocw-server --listen 0.0.0.0:47800 --bots 0 --seconds S --stats-file …`; the kiosk's `ocw-desktop`, which joins it over `127.0.0.1` as rider "Kiosk"; one bot process; the verdict |
+| `macos`, `Win11Builder`, `leela` (`OCW_MP_BOTS`) | one `ocw-bot` process each with `OCW_MP_RIDERS` (default 2) riders, joining the server over the LAN |
+
+Machines that do not answer ssh within the connect timeout are skipped and listed as such; the server machine must be reachable. Riders are named by OS (`lin-1`, `mac-2`, `win-1`), never by host name. The script first builds the release binaries on all machines in parallel (`ocw-server` + `ocw-bot` on the server machine, `ocw-bot` elsewhere; `remote.sh` queues for build slots).
+
+**Bot client (`apps/bot`, binary `ocw-bot`).** Options considered: a headless mode of `ocw-desktop` (reuses `ClientCore` exactly, but `ClientCore` uses the renderer's view types, so every bot machine would build Bevy – about an hour on the 8 GB Windows machine – for a client that never draws); moving `ClientCore` out of the desktop crate (right eventually; a larger refactor of the view types); **a small Bevy-free crate (chosen)** that builds in minutes everywhere and reuses the pieces `ClientCore` is made of: `NetClient` (§6.2), `Predictor` and the drafting rule (`ocw-sim`), the protocol helpers, the server's `physics_profile` (the prediction uses exactly the profile the server derives from the bot's Hello) and the `bot_bike` looks. Uncertainty: the bot and `ClientCore` can drift apart; the kiosk's real client in the same session covers the desktop path. A process runs `--riders N` riders, one QUIC connection each, in one 50 Hz loop: samples at 4 Hz like a trainer (power, a plausible cadence, brake), prediction every tick, reconciliation on every own snapshot with half the round trip as the snapshot's age. Pacing: its own power (`--power`, a few per cent apart per rider, ±10 % slow variation), or `--follow NAME`: keep 6, 10, 14 … m ahead of that rider (wanted speed from the gap error; the leader's power plus a speed correction; brake when much too fast), so the remote riders gather in front of the kiosk's camera; without that rider in the session a bot rides its own power. `ocw-bot verdict` evaluates a run (below). All logic is in the library and unit-tested against an in-memory `GameServer`; the binary only adds the network loop.
+
+**Configuration and address discovery.** The server address is the server machine's `host` from `config/machines.toml`, read by the script with `scripts/remote.sh MACHINE field host` and passed only on the bots' command lines (`OCW_MP_HOST` overrides it, e.g. for another interface). It is never shown: everything the script prints or keeps goes through a filter that replaces the host name and every IPv4 address except loopback (ssh errors and the server's connection log contain them). Options considered: mDNS / broadcast discovery (no configuration, but multicast through every firewall and a new dependency, while the address is configured anyway); a rendezvous service (comes with the backend, §9). Further settings: `OCW_MP_SECONDS` (server run time, default 180 s), `OCW_MP_PORT` (47800), `OCW_MP_RIDERS`, `OCW_MP_KIOSK=0` (bots only), `OCW_MP_BUILD=0` (skip the builds), `OCW_MP_T1` (when the kiosk starts riding).
+
+**Network, port and TLS.** One UDP port (47800, §6.2), no TCP. TLS as in §6.2's development mode: the server keeps its certificate in the checkout's `target/mp/tls` (`--tls-dir`); the script reads the SHA-256 fingerprint from the server's output and passes it as `--server-cert` to every bot and to the kiosk (pinning; `--insecure-dev` is only valid for loopback and not used). **Firewalls are never changed** by the test. A blocked port shows as bots without an answer: the QUIC handshake times out ("no answer from the server" after the 15 s idle timeout; a bot gives up on a rider without a Welcome after 25 s), the bot prints a hint (is the server running, does a firewall let UDP 47800 through?), and the script reports per machine that UDP 47800 on the server machine seems blocked from there and what to open. The bot on the server machine itself separates "server down" from "port blocked from outside". A port already in use (another server) fails at the start with a message.
+
+**World data and course.** Both sides must ride the same course (§6.2 course check, §6.5). The kiosk normally rides a route file (`--route-file …/vaduz-malbun.route`, with the world package for the terrain, §4.7), i.e. a 1D `Route`. The script reads the kiosk's effective arguments on the server machine (its command line and `ocw-desktop.args`) and makes the server ride exactly that: `ocw-server --route-file` (new) with the kiosk's file, which the script copies to every bot machine (`scripts/remote.sh … put` into the checkout's git-ignored `target/mp/`); the bots load it with `ocw-bot --route-file`. Every side builds the route with the same `RouteFile::to_route`; the server records the file's SHA-256 in its statistics, every bot reports the SHA-256 it loaded, and the verdict compares them and the route ids (a bot also refuses a Welcome for another route, like the desktop). Without a route file the kiosk's test route is used (`--test-route` / `--route`); without a kiosk the test loop. Options considered: every bot machine fetching the pilot data and building the world package (slow and large, and the bots need no terrain); sending the route in the Welcome (a protocol change for a test); thin bots that send no world and do not predict (no desync check). Limitation: the bot rides no road graph (free ride and package routes need the package's graph and the path messages of §6.5); with a kiosk in free ride the run is "bots only".
+
+**Duration and kiosk timeline.** The server runs `OCW_MP_SECONDS` (180 s) and then shuts down, which ends every client normally ("server shutting down"); the bots' own limit is 60 s longer, as a safety net. The kiosk's app starts at 0 W (virtual trainer) and the bots gather 6–14 m ahead of it; at app time T1 (50 s) the kiosk rides at 200 W and the bots follow.
+
+**Kiosk handling.** The kiosk (`ocw-kiosk.sh`, in the desktop user's session) cannot be restarted with other arguments over ssh, but it restarts the app whenever the binary changes, and the app reads `ocw-desktop.args` beside the binary first (the kiosk's own command line wins). So the script saves `ocw-desktop.args`, writes it with the saved content plus `--server 127.0.0.1:47800 --server-cert FP --name Kiosk --virtual --power 0 --record false` and timed console commands (`--at`: `sim.power 200` at T1, three screenshots and 36 video frames), and replaces the binary by a copy of itself (a new inode: the kiosk restarts the app). Afterwards – also after a failure or Ctrl+C (exit trap) – it puts the saved file back and restarts the app the same way, but only if the file is still the one it wrote (a deployment in between wins). The kiosk is never left in multiplayer mode, and no FIT file is recorded for the test ride. The app (desktop user) writes its screenshots into a fresh `/var/tmp/ocw-mp/<run>/` (mode 0777) that the script owns and deletes afterwards.
+
+**Checks and pass criteria** (`ocw-bot verdict`; every check is printed as PASS / FAIL with its numbers):
+
+| Check | Passes when |
+|---|---|
+| Bot processes reported | every started process printed its `OCW-BOT-REPORT` line, with all its riders |
+| All clients joined | every bot rider and the kiosk are in the server's `joined` list |
+| No client left early | nobody disconnected before the server's end (it writes its statistics before closing the connections) |
+| All riders at once | the server's peak rider count ≥ bot riders + kiosk |
+| Real time, tick timing | a real-time run; mean tick work ≤ 25 % of the 20 ms budget, ≤ 0.1 % of the ticks over budget, ≤ 1 % of the ticks started a whole tick late |
+| Same course | every bot's route id (and route-file SHA-256) equals the server's |
+| Per rider | joined (no Reject, no course mismatch); ended normally (server shutdown or its own end, not a timeout or lost connection); ≥ 90 % of the 10 Hz snapshots over its connected time and no gap > 1 s; saw every other client by name and each of them moving (≥ 5 m); one snapshot with all riders; rode ≥ 20 m; the server applied its samples (`last_input_seq`); prediction error at reconciliation after a 3 s warm-up: mean ≤ 0.5 m, max ≤ 5 m (the snap threshold, §5.2) |
+
+The thresholds are first guesses for a LAN (uncertain; adjust after more runs). The server's numbers come from `ocw-server --stats-file` (`ocw_server::stats`: ticks, mean / max tick work, ticks over budget, late ticks, peak riders, who joined and left, route id and SHA-256).
+
+**Outputs.** On the terminal: machines used and skipped, the course, the verdict's lines and `RESULT: PASS` / `RESULT: FAIL` (exit code 0 / 1). Kept in `test-output/multiplayer/<run>/` (git-ignored): `summary.txt`, the build, server and bot logs, `stats.json`, `verdict.txt`, the kiosk's arguments and `kiosk/` with the stills and `kiosk.mp4` (made from the frames with ffmpeg on the server machine, 3 fps, 1280 px wide). Stills, video, verdict and summary are also archived like the run-ocw skill's runs (`test-output/YYYY-MM-DD/HHMMSS-<commit>-multiplayer-*` with a row in `test-output/index.md`, mode `multiplayer`).
+
+**Limitations.** Route rides only (no road graph, see above); one server machine; no packet loss or latency injection (later: `tc netem` needs root, a userspace UDP relay would not); the video is a 3 fps series of app screenshots (another user's desktop session cannot be recorded over ssh); the kiosk's trainer is the virtual one during the test; the thresholds are uncertain; the test uses the kiosk build that is deployed – if its protocol version differs from the server's, it is rejected and "all clients joined" fails (deploy first: `make deploy-test`).
 
 ## 12. Security and Privacy
 
@@ -1617,7 +1664,7 @@ Done so far for land use and buildings (§4.6): OSM land-use classes rasterised 
 
 - Accounts.
 - Sessions.
-- Networked server: the existing local-server logic runs remotely. (Started: QUIC transport, dev-mode TLS, `ocw-server --listen`, `ocw-desktop --server`, §6.2.)
+- Networked server: the existing local-server logic runs remotely. (Started: QUIC transport, dev-mode TLS, `ocw-server --listen`, `ocw-desktop --server`, §6.2; tested across machines and operating systems with headless `ocw-bot` clients and the kiosk, `make test-multiplayer`, §11.4.1.)
 - Real-time synchronization and interest management (§6.3).
 - Other riders.
 - Group rides (including "follow leader").

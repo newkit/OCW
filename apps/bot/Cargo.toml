@@ -1,0 +1,30 @@
+[package]
+name = "ocw-bot"
+description = "Headless bot client for Open Cycling World: remote riders on a game server over QUIC (multiplayer test, spec §11.4)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "ocw-bot"
+path = "src/main.rs"
+
+# No Bevy, no Bluetooth: builds quickly on every platform (spec §10).
+[dependencies]
+ocw-core.workspace = true
+ocw-sim.workspace = true
+ocw-protocol.workspace = true
+ocw-world.workspace = true
+# NetClient (QUIC, spec §6.2), the server's physics profile rule and its
+# statistics report.
+ocw-server.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

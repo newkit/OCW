@@ -328,16 +328,9 @@ pub fn load_route_file(path: &std::path::Path) -> Result<(Route, Option<Elevatio
     let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let file =
         ocw_world::RouteFile::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-    let route = Route::from_points(
-        file.name.clone(),
-        file.name.clone(),
-        file.points.clone(),
-        false,
-        file.width_m,
-    )
-    .map_err(|e| format!("{}: {e}", path.display()))?
-    .with_surfaces(file.surfaces.clone())
-    .with_geo_origin(file.origin);
+    let route = file
+        .to_route()
+        .map_err(|e| format!("{}: {e}", path.display()))?;
     Ok((route, file.grid))
 }
 

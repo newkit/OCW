@@ -10,7 +10,7 @@ Open Cycling World (OCW) is a cross-platform (Linux/Windows/macOS) indoor cyclin
 
 Rust comes from rustup; `rust-toolchain.toml` pins the version (Bevy 0.20 needs a newer rustc than Debian ships). If `cargo` resolves to `/usr/bin/cargo`, run `source ~/.cargo/env` first.
 
-`make help` lists the Makefile targets (`deps`, `build`, `test`, `check` = fmt/clippy/tests/wasm, `smoke` = headless screenshot runs on X11 and Wayland, `video`/`video-wayland` = smooth recordings via `ocw-desktop --capture`, a fixed game-time step per frame; all screenshots and videos are archived in the git-ignored `test-output/` with an `index.md`); they work without `~/.cargo/bin` on PATH.
+`make help` lists the Makefile targets (`deps`, `build`, `check` = fmt/clippy/tests/wasm, and every test as `test-*`: `test` = `test-unit`, `test-wasm`, `test-kiosk`, `test-smoke` = headless screenshot runs on X11 and Wayland (`test-screenshot`, `test-screenshot-wayland`), `test-video`/`test-video-wayland` = smooth recordings via `ocw-desktop --capture`, a fixed game-time step per frame, `test-multiplayer` = server + kiosk on marge with `ocw-bot` riders on the other build machines over QUIC (spec §11.4.1); the old names `smoke`, `video`, … are deprecated aliases; all screenshots and videos are archived in the git-ignored `test-output/` with an `index.md`); they work without `~/.cargo/bin` on PATH.
 
 ```bash
 cargo test --workspace                                   # all unit tests
@@ -33,6 +33,7 @@ Test build on marge's screen: `scripts/deploy-test.sh marge` (or `make deploy-te
 
 ## Code map
 
+- `apps/bot` (`ocw-bot`): Bevy-free headless bot clients (`NetClient`, `Predictor`, pacing with `--follow`) and `ocw-bot verdict` for the multiplayer test (`scripts/test-multiplayer.sh`).
 - `services/server` (`ocw-server`): `GameServer` is transport-independent (encoded protobuf in/out). `local::LocalServer` runs it on a thread at 50 Hz inside the desktop app; the binary runs it headless. `net` is the QUIC transport (spec §6.2): `NetServer` (pumped by the game loop, `ocw-server --listen`) and `NetClient` (`ocw-desktop --server`), loopback tests in `services/server/tests/`.
 - `apps/desktop/src/client.rs` (`ClientCore`): the Bevy-free client loop: device events → `SensorSample` to the server; snapshots → `Predictor::reconcile` (own rider) and `SnapshotBuffer` (others); `view()` for the renderer. Its tests drive it against an in-memory `GameServer`. `connection.rs` is only Bevy glue (channels, `FixedUpdate` prediction at 50 Hz, console commands).
 - `crates/ocw-render`: renders only what is in the `RideView` resource; console commands are registered via `ConsoleAppExt::console_command` with a clap definition and a `Permission` level (`Dev` commands need a local server). `ConsoleCorePlugin` runs commands without egui, for headless tests with `MinimalPlugins`.

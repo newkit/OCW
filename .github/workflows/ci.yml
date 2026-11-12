@@ -40,13 +40,17 @@ jobs:
         run: cargo fmt --all --check
       - name: Clippy
         run: cargo clippy --workspace --all-targets
-      - name: Unit and integration tests
+      - name: Unit and integration tests (make test-unit)
         run: cargo test --workspace
+      - name: Kiosk script with a fake app (make test-kiosk)
+        run: scripts/test-kiosk.sh
+      - name: Multiplayer over loopback QUIC, ocw-server + ocw-bot (make test-multiplayer-local)
+        run: make test-multiplayer-local
       - name: Headless server smoke run
         run: cargo run -p ocw-server -- --bots 3 --seconds 10 --fast
-      - name: Desktop smoke run on X11 (Xvfb, software Vulkan)
+      - name: Desktop smoke run on X11 (Xvfb, software Vulkan; make test-screenshot)
         run: .claude/skills/run-ocw/drive.sh shot smoke-x11.png 8 -- --cmd "net.stats"
-      - name: Desktop smoke run on Wayland (headless weston, software Vulkan)
+      - name: Desktop smoke run on Wayland (headless weston, software Vulkan; make test-screenshot-wayland)
         run: .claude/skills/run-ocw/drive.sh shot-wayland smoke-wayland.png 8 -- --cmd "net.stats"
       - uses: actions/upload-artifact@v4
         if: always()
@@ -98,5 +102,5 @@ jobs:
       - name: Install toolchain from rust-toolchain.toml
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
-      - name: Check core crates for wasm32
+      - name: Check core crates for wasm32 (make test-wasm)
         run: cargo check -p ocw-core -p ocw-sim -p ocw-protocol -p ocw-world -p ocw-voice --target wasm32-unknown-unknown

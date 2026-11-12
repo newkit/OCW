@@ -9,6 +9,13 @@
 #   scripts/remote.sh MACHINE ssh [CMD...]   plain ssh (no sync)
 #   scripts/remote.sh MACHINE fetch REMOTE_PATH LOCAL_DIR
 #                                            copy files back (e.g. test-output/)
+#   scripts/remote.sh MACHINE put LOCAL_FILE... REMOTE_DIR
+#                                            copy files (also git-ignored ones,
+#                                            e.g. logs, data) into REMOTE_DIR of
+#                                            the checkout (no sync)
+#   scripts/remote.sh MACHINE field KEY      print the machine's KEY from
+#                                            machines.toml (os, slots, …; for
+#                                            scripts: never log `host`)
 #
 # On a branch other than main the remote checkout is REPO_PATH-BRANCH.
 #
@@ -23,8 +30,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-machine=${1:?usage: remote.sh MACHINE sync|run|ssh|fetch ...}; shift
-action=${1:?usage: remote.sh MACHINE sync|run|ssh|fetch ...}; shift
+machine=${1:?usage: remote.sh MACHINE sync|run|ssh|fetch|put|field ...}; shift
+action=${1:?usage: remote.sh MACHINE sync|run|ssh|fetch|put|field ...}; shift
 
 # config/ is git-ignored, so another worktree uses the main checkout's copy.
 config_dir=config
@@ -269,6 +276,24 @@ case "$action" in
     exit "$status"
     ;;
   ssh) "${SSH[@]}" "$target" "$@" ;;
+  field) field "${1:?usage: remote.sh MACHINE field KEY}" ;;
+  put)
+    [ $# -ge 2 ] || { echo "usage: remote.sh MACHINE put LOCAL_FILE... REMOTE_DIR" >&2; exit 2; }
+    dst=${*: -1}
+    set -- "${@:1:$#-1}"
+    # One tar stream (Windows has tar.exe but no rsync), files flat in dst.
+    tar_args=()
+    for f in "$@"; do
+      [ -f "$f" ] || { echo "$f: no such file" >&2; exit 1; }
+      tar_args+=(-C "$(cd "$(dirname "$f")" && pwd)" "$(basename "$f")")
+    done
+    if [ "$os" = windows ]; then
+      tar -cf - "${tar_args[@]}" | "${SSH[@]}" "$target" \
+        "\$d = Join-Path $(psq "$repo") $(psq "$dst"); New-Item -ItemType Directory -Force -Path \$d | Out-Null; tar -xf - -C \$d"
+    else
+      tar -cf - "${tar_args[@]}" | "${SSH[@]}" "$target" "mkdir -p $repo/$(shq "$dst") && tar -xf - -C $repo/$(shq "$dst")"
+    fi
+    ;;
   fetch)
     src=${1:?remote path}; dst=${2:?local dir}
     mkdir -p "$dst"

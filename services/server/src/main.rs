@@ -13,6 +13,7 @@ use std::sync::Arc;
 use clap::Parser;
 use ocw_core::{SIM_DT, SIM_TICK_HZ, mps_to_kmh};
 use ocw_server::net::{DEFAULT_PORT, NetServer, ServerIdentity};
+use ocw_server::stats::{ServerReport, TickStats};
 use ocw_server::{Course, GameServer, ServerConfig};
 use ocw_world::{RoadNetwork, Route};
 
@@ -54,6 +55,15 @@ struct Args {
     /// must ride the same one (`ocw-desktop --route loop|hills`).
     #[arg(long, default_value = "loop", value_parser = ["loop", "hills"], conflicts_with = "world")]
     test_route: String,
+    /// Ride a route file from `world-builder route` (`ocw-route 1`)
+    /// instead of a test route. Clients ride the same file
+    /// (`ocw-desktop --route-file`, `ocw-bot --route-file`).
+    #[arg(long, value_name = "PATH", conflicts_with_all = ["world", "test_route"])]
+    route_file: Option<PathBuf>,
+    /// Write the session's statistics (tick timing, who joined and left)
+    /// as JSON to this file at the end (`ocw_server::stats::ServerReport`).
+    #[arg(long, value_name = "PATH")]
+    stats_file: Option<PathBuf>,
     /// Accept desktop clients over QUIC on this UDP address (default
     /// 0.0.0.0:47800 when given without a value). Runs until Ctrl-C unless
     /// --seconds is set.
@@ -146,10 +156,20 @@ fn main() {
         )
         .init();
     let args = Args::parse();
-    let course = match &args.world {
-        Some(spec) => free_ride(&args, spec),
-        None if args.test_route == "hills" => Course::Route(Route::test_hills()),
-        None => Course::Route(Route::test_loop()),
+    let mut route_sha256 = String::new();
+    let course = match (&args.world, &args.route_file) {
+        (Some(spec), _) => free_ride(&args, spec),
+        (None, Some(path)) => {
+            let (route, sha) = load_route_file(path).unwrap_or_else(|e| {
+                eprintln!("{}: {e}", path.display());
+                std::process::exit(1);
+            });
+            tracing::info!(route = route.id(), sha256 = %sha, "route file");
+            route_sha256 = sha;
+            Course::Route(route)
+        }
+        (None, None) if args.test_route == "hills" => Course::Route(Route::test_hills()),
+        (None, None) => Course::Route(Route::test_loop()),
     };
     match &course {
         Course::Route(route) => tracing::info!(
@@ -202,10 +222,16 @@ fn main() {
     let stop = net.as_ref().map(NetServer::shutdown_on_signal);
     let tick = Duration::from_secs_f64(SIM_DT);
     let mut next = Instant::now();
-    // Time spent in the server tick (physics, bots, snapshot encoding).
-    let (mut busy, mut worst, mut ticks) = (Duration::ZERO, Duration::ZERO, 0u32);
+    // Time spent in the server tick (physics, bots, snapshot encoding) and
+    // how late each tick starts against the fixed schedule.
+    let mut stats = TickStats::default();
     loop {
         let started = Instant::now();
+        let late = if args.fast {
+            Duration::ZERO
+        } else {
+            started.saturating_duration_since(next)
+        };
         if let Some(net) = &mut net {
             net.pump(&mut server);
         }
@@ -214,9 +240,7 @@ fn main() {
             net.broadcast(&server, &broadcast);
         }
         let took = started.elapsed();
-        busy += took;
-        worst = worst.max(took);
-        ticks += 1;
+        stats.record(took, late, server.session().rider_count());
         let session = server.session();
         if session.tick().is_multiple_of(u64::from(SIM_TICK_HZ)) {
             for r in session.snapshot() {
@@ -253,15 +277,52 @@ fn main() {
         }
     }
     tracing::info!(
-        ticks,
-        mean_tick_us = format!("{:.1}", busy.as_secs_f64() * 1e6 / f64::from(ticks.max(1))),
-        max_tick_us = format!("{:.1}", worst.as_secs_f64() * 1e6),
+        ticks = stats.ticks(),
+        mean_tick_us = format!("{:.1}", stats.mean_tick_us()),
+        max_tick_us = format!("{:.1}", stats.max_tick_us()),
         budget_us = format!("{:.0}", SIM_DT * 1e6),
+        over_budget = stats.over_budget(),
+        late_ticks = stats.late_ticks(),
+        max_late_ms = format!("{:.1}", stats.max_late_ms()),
         "session finished"
     );
+    if let Some(path) = &args.stats_file {
+        // Before the shutdown: whoever is connected now stayed to the end.
+        let session = server.session();
+        let report = ServerReport {
+            sim_time_s: session.time_s(),
+            bots: args.bots,
+            joined: server.joined().to_vec(),
+            left: server.left().to_vec(),
+            riders_at_end: session.rider_count(),
+            route_id: if session.is_free_ride() {
+                String::new()
+            } else {
+                session.route().id().to_owned()
+            },
+            route_sha256,
+            ..Default::default()
+        }
+        .with_timing(&stats, !args.fast);
+        if let Err(e) = std::fs::write(path, report.to_json()) {
+            eprintln!("{}: {e}", path.display());
+        }
+    }
     if let Some(net) = net {
         net.shutdown();
     }
+}
+
+/// Loads an `ocw-route` file: the route and the SHA-256 of the file (so
+/// clients can check they ride the same one).
+fn load_route_file(path: &std::path::Path) -> Result<(Route, String), String> {
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    // The same hex SHA-256 as certificate fingerprints.
+    let sha = ocw_server::net::tls::fingerprint(&bytes);
+    let text = String::from_utf8(bytes).map_err(|e| e.to_string())?;
+    let file = ocw_world::RouteFile::parse(&text)?;
+    let route = file.to_route().map_err(|e| e.to_string())?;
+    Ok((route, sha))
 }
 
 /// Opens the QUIC endpoint and tells the user how to connect.

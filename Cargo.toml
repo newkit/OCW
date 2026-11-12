@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "apps/desktop",
+    "apps/bot",
     "apps/spike",
     "apps/world-builder",
     "services/server",
