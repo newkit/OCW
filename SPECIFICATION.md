@@ -376,7 +376,21 @@ Visual properties are separated from physical properties:
 - *Caps (tested):* at 250 W, 75 kg, on flat asphalt every profile is within ±3 % of `road`'s steady speed (TT +2.7 %, aero +1.5 %, MTB −2.3 %); on a 6 % climb within ±5 % (climbing +1 %, MTB −4.4 %). Off the asphalt the differences are larger on purpose (grass: MTB about +17 %, gravel +12 %), since choosing the bike for the terrain is the point of the types. *Equal* race mode (one profile for all) comes with sessions (Phase 5).
 - *Look* (`RiderLook`, cosmetic): frame, jersey and helmet colour (sRGB `0xRRGGBB`; the server keeps only the low 24 bits) and a kit pattern (plain, band, sash; unknown values are plain). Sent as `Hello.look`, stored per rider by the server and passed through in every `RiderUpdate` (`bike_profile`, `look`) together with the display name; a reliable roster message can replace these per-snapshot fields when bandwidth matters (Phase 5). Riders without a look (old servers) are drawn in the colours by id.
 - *Persistence:* per rider in `riders.toml` (`bike`, `frame_color`, `jersey_color`, `helmet_color`, `kit`; all optional, so files from before are read unchanged; invalid values are dropped with a warning).
-- *Models (`ocw-render::riders`):* procedural placeholders until the glTF assets (§8): a diamond frame in the frame colour, arms to the bars and a torso lean per bike type – drop bars (road, gravel), aero extensions with a disc rear wheel and an aero helmet (TT), a wide flat bar, 60 mm tyres and a suspension fork (MTB), 40 mm tyres (gravel), deep rims (aero road). An avatar is rebuilt when its bike or look changes.
+- *Models (§8, Phase 4):* glTF 2.0 files in `assets/models/`: one bike per profile (`bike-<profile>.glb`) and one rider (`rider.glb`), listed in `assets/models/manifest.toml`. They are made by a generator in `crates/ocw-assets` (`cargo run -p ocw-assets -- generate`) from real geometry numbers (stack, reach, seat and head angle, chainstay, bottom-bracket drop, fork rake, wheel and tyre size, crank length), so the silhouettes differ the way real bikes do:
+  - `road`: compact frame with a slightly sloping top tube, 35 mm rims, 24 spokes, two bottles, rim brakes;
+  - `road-aero`: deep aero tubes, dropped seat stays, aero seat post, 60 mm rims;
+  - `road-climbing`: thin round tubes, level top tube, shallow 28-spoke wheels;
+  - `tt`: 78° seat angle, low front, base bar with extensions and arm pads, three-spoke front wheel, disc rear wheel;
+  - `gravel`: taller head tube, flared drops, 40 mm tan-wall tyres with tread, disc brakes, top-tube bag;
+  - `mtb`: long and slack (66°), suspension fork, 760 mm flat bar, 2.3" knobby tyres, disc brakes.
+
+  Nodes: `bike` (frame, fork, drivetrain), `wheel_front` / `wheel_rear` (spin about X), `crank` with `pedal_l` / `pedal_r`, `handlebar` with the grip anchors `grip_hoods_*`, `grip_tops_*`, `grip_drops_*`, `saddle` (where the sit bones rest) and `lod1` (far model). Materials are *paint slots* (`ocw_assets::slots`): `frame`, `jersey`, `helmet` and `accent` (kit pattern; white on dark jerseys, black on light) take the rider's look, the others (tyre, rim, metal, component, bar tape, decal, bottle, shorts, skin, shoe, sock, lens, hair, …) keep the colour in the file. An avatar is rebuilt when its bike or look changes; riders with the same colours share materials, and all avatars share the meshes.
+- *Asset decisions (Phase 4):*
+  - *Where the models come from.* Options: model them in Blender and export; download CC0 models; generate them in code. **Generated in code**: reproducible, reviewable as a diff, the licence is clear (own work), the six bikes follow from their geometry numbers, and the anchors the pose uses come from the same numbers. The test `shipped_assets_match_the_generator` fails when the files are stale. Medium – the look is "engineered low-poly"; an artist's models can replace any file later, since the validator and the loader accept any rigid-part glTF that has the required nodes and paint slots.
+  - *Licence of the own 3D assets.* §13 suggested CC BY 4.0. **MIT OR Apache-2.0**, like the code and `artwork/`. The validator accepts `MIT OR Apache-2.0`, `MIT`, `Apache-2.0`, `CC0-1.0` and `CC-BY-4.0` (with an author) and rejects anything else (share-alike, non-commercial, no licence). Medium – review by a lawyer before a commercial release (§13).
+  - *Loading.* Options: Bevy's glTF loader (asset server, scenes, asynchronous), or reading the files with the `gltf` crate (the one Bevy uses) into our own model and building Bevy meshes directly. **Own reader, files embedded in the binary** (`include_bytes!`): spawning is synchronous (no "scene not loaded yet" frames, one rebuild path), there are no asset paths to package on Linux / Windows / macOS / AppImage, and the validator and the app read the same way. The files are plain glTF facing +Z (glTF convention); the reader turns them to the app's −Z. Medium – textures, skins and morph targets are not supported yet (not needed by the generated models).
+  - *Far LOD.* Each bike file has a `lod1` node: frame, wheels, bars and a seated rider (posed by the same code as the near model) in at most 8 meshes (≈ 1/5 of the triangles). Switch at **40 m** from the camera with Bevy's `VisibilityRange` (4 m dither cross-fade); beyond it the near model is hidden and not posed. Low – the distance is a first tuning.
+- *Bike type is the profile's.* The model follows only from `ProfileId`; the manifest names the profile a bike shows and the validator rejects physics values (`mass`, `cda`, `crr`, …) in an asset entry: cosmetic assets never change physics.
 - *Bots* ride the profiles in turn (road, TT, gravel, MTB, aero, climbing) with palette colours and patterns (never the local rider's #FF1472 jersey).
 - **Race modes:**
   - *Open* – the chosen profile applies.
@@ -419,6 +433,15 @@ Planned animations:
 - Victory animation.
 
 Bicycle and character must be correctly attached to each other in the 3D presentation.
+
+**Implemented (Phase 4: rider model and riding animation):**
+
+- *Model:* one generated low-poly rider (`assets/models/rider.glb`, about 1.78 m) for everyone: jersey (look colour) with a zip and the kit pattern as separate nodes (`kit_band`, `kit_sash`), bib shorts, gloves, socks, shoes, glasses; three head wears as nodes (`helmet_road`, `helmet_aero`, `cap`), one shown: the local rider keeps the cotton cap (white crown in the helmet colour, band and brim in the jersey colour), TT riders the aero helmet, the others the road helmet. Body model, skin colour, hair, shoes etc. are not yet choices (open: needs `RiderLook` fields and the Character page).
+- *Rig: rigid parts, no skinning.* Options: a skinned mesh with a skeleton, or rigid parts on a node hierarchy (`rider` → `pelvis` → `thigh_*` → `shin_*` → `foot_*` (+ `cleat_*` anchor); `pelvis` → `torso` → `head`, `upper_arm_*` → `forearm_*` → `hand_*` (+ `grip_*` anchor)). **Rigid parts**: no GPU skinning cost per rider, trivially cheap far LOD, the same nodes for every future body; joints are covered by small spheres. Medium – a skinned rider looks smoother up close; the pose code (below) would stay the same.
+- *Pose (`ocw_assets::pose`, pure):* the rig is read from the rider model, the anchors from the bike model. The saddle height of each generated bike is fitted to the rider's legs (largest hip-to-ankle distance 95 % of the leg); seated, the hips are 9 cm above and 3 cm ahead of the saddle anchor; standing, they move forward over the cranks and up until the legs reach 98.5 %. The torso lean is solved so that the shoulders are 90 % of the arm length from the grips: TT riders lie low, MTB riders sit upright, without per-bike lean values. Legs and arms are two-bone IK (knees forward, elbows out; on the TT bike down onto the pads); the feet follow the pedals with a little ankling; the pedals turn with the feet.
+- *Riding states (`ocw_assets::anim`, pure):* Stopped (< 0.3 m/s; moves again above 0.6 m/s), Coasting (measured cadence < 15 rpm, or for others without cadence < 10 W; hysteresis 25 rpm / 20 W), Seated, Climbing (seated, hands on the tops, from 4 % down to 3 %), Standing (from 8.5 % down to 6.5 %, only with ≥ 120 W), Sprinting (≥ 650 W and ≥ 7 m/s, down to 480 W; standing on the drops). Each rider's climbing thresholds move by up to ±1.5 % (from the id), so a group does not stand up all at once; pedalling states change at most every 0.8 s, stopping and coasting at once. Pose weights blend with a 0.35 s time constant. Uncertainty: medium – thresholds are tuned by eye.
+- *Cranks and wheels:* the wheels turn at speed / radius. The cranks turn at the measured cadence (local rider), else at a typical cadence for the state (seated 88, climbing 80, standing 66, sprint 108 rpm), since others' cadence is not sent; freewheeling they ease forward to level (3 and 9 o'clock) and stay. Standing rocks the bike ±0.10 rad with the pedal strokes (sprint ±0.16), the rider keeps 80 % upright over the contact line; seated the hips rock a little. Fast descents (coasting > 12 m/s below −2 %): on the drops, tucked.
+- *Not yet:* cornering beyond the lean, U-turn, finish and victory animations, foot down at a stop.
 
 ### 2.7 Routes and GPX Import
 
@@ -1214,7 +1237,7 @@ Import process:
 2. Define materials.
 3. Create skeleton and animations.
 4. Export glTF.
-5. Validate assets (`tools/asset-validator`, including licence metadata, §13).
+5. Validate assets (`cargo run -p ocw-assets -- validate [DIR]`, including licence metadata, §13): the manifest `manifest.toml` next to the models has an entry with `license`, `source` and `author` for every `.glb` / `.gltf` (files without an entry are rejected), licences from the allowed list (§2.5), no physics keys, bikes name a known physics profile; every model reads as glTF 2.0, uses only paint slots as materials, has the nodes the app animates (bike: wheels, crank, pedals, handlebar, grip and saddle anchors, `lod1`; rider: the rig of §2.6, head wear and kit nodes), plausible rig dimensions and stays within the triangle budget (bike 15 000, rider 8 000, far LOD 4 000). The validator is a subcommand of the asset crate instead of a separate `tools/asset-validator` (one crate shares the reader with the app; low).
 6. Import into Bevy.
 7. Register components.
 
@@ -1296,6 +1319,7 @@ open-cycling-world/
 │   ├── ocw-worldgen/     # OSM/DEM import, smoothing, meshing (used by world-builder)
 │   ├── ocw-worldstore/   # package files, keys, trusted roots, cache, download (not wasm)
 │   ├── ocw-render/       # Bevy plugins: terrain, roads, avatars, bikes, HUD, console
+│   ├── ocw-assets/       # bike/rider glTF generator and reader, asset validator, pose, animation states (no Bevy)
 │   ├── ocw-fit/          # FIT activity writer (no dependencies, wasm-safe)
 │   └── ocw-voice/        # LiveKit integration behind a trait (feature "voice")
 ├── proto/                # .proto schemas
@@ -1332,7 +1356,7 @@ Mapping from the original (v1.0) layout:
 | `device-manager`, `bluetooth-ftms` | `ocw-devices` |
 | `osm-import`, `terrain`, `road-generator` | `ocw-worldgen` |
 | `world` | `ocw-world` |
-| `renderer`, `avatar`, `bicycle`, `*-editor` | `ocw-render` and `apps/desktop` |
+| `renderer`, `avatar`, `bicycle`, `*-editor` | `ocw-render` and `apps/desktop`; models, pose and animation logic in `ocw-assets` (Bevy-free) |
 | `voice` | `ocw-voice` |
 | `core`, `platform`, `telemetry` | `ocw-core` (split out when needed) |
 | `api`, `game-server`, `account-service`, `world-distribution` | `services/server` (modules) |
@@ -1466,7 +1490,8 @@ Personal data, voice data and training data are handled separately.
 | Item | Classification | Licence / Obligation |
 |---|---|---|
 | Source code | Own work | **Dual MIT / Apache-2.0** |
-| Own 3D assets, sounds | Own work | Decided separately; suggestion **CC BY 4.0**, or proprietary if monetized |
+| Own 3D assets (`assets/models/`, generated) | Own work | Like the code: **MIT / Apache-2.0** (Phase 4, §2.5); each listed in `assets/models/manifest.toml` |
+| Own sounds | Own work | Decided separately; suggestion **CC BY 4.0**, or proprietary if monetized |
 | Own artwork (logo, icons, `artwork/`) | Own work | Like the code: **MIT / Apache-2.0** |
 | Third-party assets | External | Tracked in each asset's manifest (`license`, `source`, `author`); the asset validator rejects assets without a licence entry |
 | Road graph + attributes in world packages | **Derivative Database** (ODbL) | Published under ODbL; extracted data offered for download alongside each package |

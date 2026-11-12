@@ -5101,6 +5101,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ocw-assets"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "glam",
+ "gltf",
+ "ocw-core",
+ "serde",
+ "serde_json",
+ "toml",
+]
+
+[[package]]
 name = "ocw-core"
 version = "0.1.0"
 
@@ -5169,6 +5182,7 @@ dependencies = [
  "bevy",
  "bevy_egui",
  "clap",
+ "ocw-assets",
  "ocw-core",
  "ocw-sim",
  "ocw-world",

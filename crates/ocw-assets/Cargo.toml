@@ -1,0 +1,27 @@
+[package]
+name = "ocw-assets"
+description = "Bike and rider 3D assets for Open Cycling World: glTF generator and reader, asset manifest and validator, riding animation (Bevy-free)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "ocw-assets"
+path = "src/bin/ocw-assets.rs"
+
+[dependencies]
+ocw-core.workspace = true
+# The same glam as Bevy's (bevy_math), so poses need no conversion.
+glam.workspace = true
+# glTF 2.0 reader (MIT OR Apache-2.0), the version Bevy's loader uses; no
+# `import` feature (no image decoding, no file access).
+gltf.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+clap.workspace = true
+
+[lints]
+workspace = true

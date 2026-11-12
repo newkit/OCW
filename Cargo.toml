@@ -14,6 +14,7 @@ members = [
     "crates/ocw-worldgen",
     "crates/ocw-fit",
     "crates/ocw-worldstore",
+    "crates/ocw-assets",
 ]
 
 [workspace.package]
@@ -33,11 +34,17 @@ ocw-worldgen = { path = "crates/ocw-worldgen" }
 ocw-fit = { path = "crates/ocw-fit" }
 ocw-worldstore = { path = "crates/ocw-worldstore" }
 ocw-render = { path = "crates/ocw-render" }
+ocw-assets = { path = "crates/ocw-assets" }
 ocw-server = { path = "services/server" }
 
 # Bevy is pinned to an exact version (spec §3.1). Only ocw-render and apps/desktop may use it.
 bevy = "=0.20.1"
 bevy_egui = "=0.43.1"
+# Bevy's own math and glTF crates (both MIT OR Apache-2.0), for the
+# Bevy-free asset crate ocw-assets (spec §8): no `import` feature (no image
+# decoding, no file access).
+glam = "0.33"
+gltf = { version = "1.4.1", default-features = false, features = ["utils", "names"] }
 raw-window-handle = "0.6"
 # Same major version as Bevy's winit backend (window icon).
 winit = "0.30"

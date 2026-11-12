@@ -506,6 +506,15 @@ feels (gravel is 2.5 ×, grass 6 × the road bike's asphalt value). Colours and
 kit are cosmetic only: the other riders see them (bots ride varied bikes and
 colours), the physics never does.
 
+Each bike is a 3D model (`assets/models/bike-<bike>.glb`) with the rider on
+it (`rider.glb`), in the frame, jersey and helmet colours (your own rider wears
+a cotton cap). The wheels turn with the speed and the legs with your cadence
+(others at a typical cadence); riders sit up on the tops on climbs from 4 %,
+stand on the pedals from about 8.5 % and in sprints (650 W and more) with the
+bike rocking under them, and stop pedalling with the cranks level when they
+freewheel. Riders more than 40 m from the camera are drawn with a simpler
+model.
+
 Manage them in the in-game menu (Esc / Start): *Workshop* chooses the rider
 and opens their *Bike* page (the bike, its physics numbers, frame / jersey /
 helmet colour and kit, all with ← / →),
@@ -924,6 +933,9 @@ to *Public* are the usual causes; the server log is in Event Viewer under
 | `scripts/build-macos-app.sh` | macOS app bundle, DMG and zip, ad-hoc signed (`make macos-app`, on a Mac) |
 | `scripts/setup-windows-buildserver.ps1` | Windows build machine: OpenSSH server and a local build user |
 | `.claude/skills/run-ocw/drive.sh` | Headless screenshots and videos (X11 / Wayland) for tests |
+| `cargo run -p ocw-assets -- generate [--check]` | Regenerate the bike and rider models in `assets/models/` (glTF, own work); `--check` only compares |
+| `cargo run -p ocw-assets -- validate [DIR]` | Asset validator: licence entry (`license`, `source`, `author`) in `manifest.toml` for every model, no physics values, required nodes and paint slots, triangle budgets |
+| `cargo run -p ocw-assets -- info FILE.glb` | A model's nodes, positions, triangles and materials |
 
 **Signing and publishing world packages** (spec §4.7): an offline root key
 certifies signing keys; a signing key signs package manifests. Secret keys
@@ -965,6 +977,8 @@ release `build-history` (the day folders are git-ignored).
 | `crates/ocw-worldstore` | World package files, keys, trusted roots, local cache, download |
 | `crates/ocw-fit` | FIT activity file writer (ride export) |
 | `crates/ocw-render` | Bevy plugins: world, riders, camera, HUD, console; the bundled UI font (`assets/fonts/`) |
+| `crates/ocw-assets` | Bike and rider models: generator, glTF reader, asset validator, rider-on-bike pose, riding animation states (no Bevy) |
+| `assets/models/` | The shipped glTF models and their licence manifest (embedded in the app) |
 | `artwork/` | Logos and other original artwork |
 
 ## License
