@@ -412,7 +412,7 @@ event status | event cancel | event dismiss
 | `--monitor SPEC` | Fullscreen on a monitor: index, resolution (`2560x1600`) or name part (`HDMI`) |
 | `--cmd COMMAND` | Run a console command at startup (repeatable) |
 | `--exec FILE` | Run the console commands in a file at startup (also `autoexec.cfg` if present) |
-| `--at SECONDS=COMMAND` | Run a console command after SECONDS of riding (scripted rides) |
+| `--at SECONDS=COMMAND` | Run a console command when the app has run SECONDS (game time; a ride switch does not reset it; scripted rides) |
 | `--screenshot PATH`, `--screenshot-delay S` | Save a screenshot after S seconds (default 5), then exit |
 | `--capture DIR`, `--capture-fps N`, `--capture-seconds S`, `--capture-warmup S` | Save every frame with a fixed game-time step (smooth videos), then exit |
 | `--version` | Print the build id, e.g. `0.1.0-7d538c0-dirty (debug)`: version, commit, `-dirty` for uncommitted changes, `(debug)` for debug builds. It is also shown small in the HUD's lower right corner and logged at startup |
