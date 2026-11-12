@@ -467,6 +467,8 @@ pub(crate) struct TiltState {
     tunnel: f32,
     /// The smoothed eye of the chase camera while the tunnel camera blends in.
     outside_eye: Option<Vec3>,
+    /// The smoothed eye of the tunnel camera.
+    tunnel_eye: Option<Vec3>,
 }
 
 /// Mouse orbit (left button drag), zoom (wheel) and reset (`C`), only in
@@ -666,14 +668,29 @@ pub(crate) fn follow(
     *smoothed_target = Some(target);
     let target = if tilt.tunnel > 0.0 {
         tilt.outside_eye = Some(cam.translation);
-        let (eye, inside) =
-            crate::tunnel::tunnel_eye(track, local.state.distance, local.state.lateral_offset);
+        let tunnel_ground = |x: f64, z: f64| ground.as_deref().and_then(|g| (g.0)(x, z));
+        let (eye, inside) = crate::tunnel::tunnel_eye(
+            track,
+            &tunnel_ground,
+            local.state.distance,
+            local.state.lateral_offset,
+        );
+        // A very quick glide where the eye moves closer at the entry
+        // portal (a slower one would show the hillside for a moment).
+        let eye = match tilt.tunnel_eye {
+            Some(prev) if !jumped && prev.distance(eye) < 20.0 => {
+                prev.lerp(eye, 1.0 - (-time.delta_secs() / 0.05).exp())
+            }
+            _ => eye,
+        };
+        tilt.tunnel_eye = Some(eye);
         // Smoothstep: no jerk where the blend starts and ends.
         let u = tilt.tunnel * tilt.tunnel * (3.0 - 2.0 * tilt.tunnel);
         cam.translation = cam.translation.lerp(eye, u);
         target.lerp(inside, u)
     } else {
         tilt.outside_eye = None;
+        tilt.tunnel_eye = None;
         target
     };
     cam.look_at(target, Vec3::Y);
