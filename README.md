@@ -316,9 +316,10 @@ capped at 8 degrees (`camera.tilt`). In a tunnel (the road under the
 terrain, e.g. the Steg tunnel on the Vaduz–Malbun route at km 8.8) a simple
 tube is drawn and the camera follows close behind you inside it.
 
-**Workouts** (spec §2.8): `--workout FILE` (or `workout load FILE`, then
-`workout start`) rides a structured workout in ERG mode; targets in % FTP use
-`--ftp` (default 200 W). See [Workouts](#workouts).
+**Workouts** (spec §2.8): the menu (*Ride → Workouts*), `--workout FILE` or
+`workout start FILE` ride a structured workout in ERG mode; targets in % FTP
+use the rider profile's FTP (`--ftp` overrides it, default 200 W). See
+[Workouts](#workouts).
 
 **Videos:** V starts recording the window as an MP4 (H.264, 25 fps) into
 `~/Videos/OCW/` (or `~/.local/share/ocw/videos/`), V again stops it (ignored
@@ -333,7 +334,8 @@ records with a fixed time step instead). Needs `ffmpeg` (`make deps` installs it
 **Events** (spec §2.3): a race, a group ride or a time trial against your
 own ghost, started on demand on the current route (single player with bots
 on the in-process server; the same server logic will run networked
-events). Start them from the menu (*Ride*) or the console:
+events). Start them from the menu (*Ride*; it asks first, with Cancel
+focused) or the console:
 
 ```bash
 event race [--laps N | --km X] [--bots N]   # default: 1 lap of a loop, 5 km of a route that ends
@@ -362,8 +364,8 @@ event status | event cancel | event dismiss
 - **Ghost:** a time trial records your distance over time (2 Hz); your best
   effort per route and length is kept in `~/.local/share/ocw/ghosts/`
   (`$OCW_DATA_DIR/ghosts`) and rides with you the next time as a
-  translucent rider beside you. It exists only on your client - nobody
-  drafts it.
+  translucent rider beside you (casting no shadow). It exists only on your
+  client - nobody drafts it.
 - Events need a route (test routes, route files, package routes); free ride
   has no fixed course.
 
@@ -371,7 +373,9 @@ event status | event cancel | event dismiss
 
 - Every ride is recorded and saved as a FIT file when the app closes (rides of
   at least a minute) or with `ride.save`: `~/.local/share/ocw/rides/`
-  (`--record false` turns it off).
+  (`--record false` turns it off). The FIT file has a lap at each workout
+  step (start, step change, end, stop) and at an event's start, each event
+  lap and your finish, so Strava and analysis tools show them as laps.
 - Strava (optional; interim direct upload until the backend exists): create a
   Strava API app at <https://www.strava.com/settings/api> with the callback
   domain `localhost`, set `OCW_STRAVA_CLIENT_ID` / `OCW_STRAVA_CLIENT_SECRET`
@@ -405,7 +409,7 @@ event status | event cancel | event dismiss
 | `--start X,Z` | Free ride start: the road nearest local X,Z metres (default: random) |
 | `--random-start BOOL` | Start at a random point (default on, off for screenshot/capture runs) |
 | `--workout FILE` | Load and start a structured workout (`.toml`, `.erg`, `.mrc`; see [Workouts](#workouts)) |
-| `--ftp W` | Your FTP in watts for % FTP workout targets (default 200) |
+| `--ftp W` | Your FTP in watts for % FTP workout targets (default: the rider profile's FTP, else 200) |
 | `--virtual` | Use the virtual trainer even if Bluetooth devices are remembered |
 | `--devices-file PATH` | Remembered devices (default `~/.config/ocw/devices.toml`) |
 | `--record BOOL` | Record the ride as a FIT file (default on, off for screenshot/capture runs) |
@@ -577,7 +581,9 @@ for now).
 | `erg.target WATTS` | ERG mode with this target power |
 | `sim.power WATTS` | *Dev:* the virtual trainer's power |
 | `workout load FILE` | Load a workout (`.toml`, `.erg`, `.mrc`) |
-| `workout start\|stop` | Start the loaded workout (again from the beginning) / stop it; the trainer returns to its previous mode |
+| `workout start [FILE \| --example NAME]` | Start the loaded workout (again from the beginning), or load a file / bundled example and start it |
+| `workout stop` | Stop the workout; the trainer returns to its previous mode |
+| `workout list` | The workouts of the workouts folder and the bundled examples |
 | `workout skip` | Skip to the next step |
 | `workout pause\|resume` | Pause / resume the workout clock by hand |
 | `workout status` | Step, target, time left, next step |
@@ -601,8 +607,14 @@ for now).
 ## Workouts
 
 A structured workout (spec §2.8) sets the trainer's target power step by
-step (ERG mode). Ride one with `--workout FILE`, or with `workout load FILE`
-and `workout start` in the console. The HUD shows a panel in the lower
+step (ERG mode). Start one from the menu: *Ride → Workouts* lists your
+workout files in `~/.local/share/ocw/workouts/` (`$OCW_DATA_DIR/workouts`;
+`.toml`, `.erg`, `.mrc`), then the bundled examples; choosing one starts it
+and closes the menu. While one runs, the page shows its step, *Skip step*
+and *Stop workout*. Or use `--workout FILE`, or the console: `workout start
+FILE`, `workout start --example short-demo` (examples: `short-demo`,
+`sweet-spot`, `two-by-five`, `over-unders`), `workout load FILE` then
+`workout start`, `workout list`. The HUD shows a panel in the lower
 right corner: the current target, the step and time left, the next step,
 text cues, and the whole workout's profile (coloured by training zone) with
 your progress.
@@ -618,7 +630,9 @@ your progress.
   the workout ends or is stopped. With a power meter or a trainer without
   control the targets are guidance only. The virtual trainer holds the ERG
   target while its power is above 0.
-- **FTP:** targets in % FTP use `--ftp` (default 200 W).
+- **FTP:** targets in % FTP use the riding profile's FTP (Settings → Riders,
+  `riders.edit NAME --ftp W`); `--ftp W` on the command line overrides it;
+  without either, 200 W.
 
 **Format** (`.toml`; examples in `crates/ocw-sim/test-data/workouts/`):
 

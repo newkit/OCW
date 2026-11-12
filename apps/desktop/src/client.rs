@@ -1100,6 +1100,12 @@ impl ClientCore {
         )
     }
 
+    /// The own rider's part of the event, for the FIT laps
+    /// ([`EventClient::lap_segment`]).
+    pub fn event_lap_segment(&self) -> Option<(u32, u32)> {
+        self.event.lap_segment(self.rider_id)
+    }
+
     /// The current event as the server last sent it.
     pub fn event_info(&self) -> Option<&ocw_protocol::EventInfo> {
         self.event.info()

@@ -161,9 +161,10 @@ pub struct Args {
     /// once; the workout clock starts when you pedal.
     #[arg(long, value_name = "FILE")]
     pub workout: Option<PathBuf>,
-    /// Functional threshold power in watts, for workout targets in % FTP.
-    #[arg(long, default_value_t = 200.0, value_parser = parse_ftp)]
-    pub ftp: f64,
+    /// Functional threshold power in watts, for workout targets in % FTP
+    /// (default: the rider profile's FTP, else 200 W).
+    #[arg(long, value_parser = parse_ftp)]
+    pub ftp: Option<f64>,
     /// Use the virtual trainer even if Bluetooth devices are remembered.
     #[arg(long = "virtual")]
     pub virtual_trainer: bool,
@@ -518,11 +519,14 @@ mod tests {
     #[test]
     fn workout_arguments() {
         let a = Args::parse_from(["ocw-desktop"]);
-        assert_eq!((a.ftp, a.workout.clone()), (200.0, None));
-        assert_eq!(workout::ftp_w(&a), 200.0);
+        assert_eq!((a.ftp, a.workout.clone()), (None, None));
+        assert_eq!(workout::ftp_w(&a, None), 200.0);
+        // The rider profile's FTP, unless --ftp is given.
+        assert_eq!(workout::ftp_w(&a, Some(240)), 240.0);
         let a = Args::parse_from(["ocw-desktop", "--workout", "w.erg", "--ftp", "265"]);
         assert_eq!(a.workout, Some(PathBuf::from("w.erg")));
-        assert_eq!(workout::ftp_w(&a), 265.0);
+        assert_eq!(workout::ftp_w(&a, None), 265.0);
+        assert_eq!(workout::ftp_w(&a, Some(240)), 265.0);
         assert!(Args::try_parse_from(["ocw-desktop", "--ftp", "5"]).is_err());
         assert!(Args::try_parse_from(["ocw-desktop", "--ftp", "lots"]).is_err());
     }

@@ -167,6 +167,10 @@ pub fn refresh_catalog(world: &mut World) {
     let mut c = Catalog {
         worlds: catalog::known_worlds(&crate::worlds::cache(&args), &world_dirs(&args)),
         gpx: catalog::gpx_files(&gpx_dirs()),
+        workouts: crate::workout::catalog(crate::workout::workouts_dir().as_deref()),
+        workout_now: world
+            .get_resource::<crate::workout::Workouts>()
+            .and_then(|w| w.0.now()),
         here,
         ..Catalog::default()
     };
@@ -675,6 +679,7 @@ mod tests {
         }
         // Ride → Change ride → Test route: Hills → "Change the ride?" → Ride now.
         for line in [
+            "menu up",
             "menu up",
             "menu up",
             "menu select",

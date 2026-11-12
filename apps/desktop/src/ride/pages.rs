@@ -24,6 +24,37 @@ pub struct Catalog {
     pub gpx: Vec<PathBuf>,
     /// The local rider's position in the package's metres (x, z).
     pub here: Option<(f64, f64)>,
+    /// Ride -> Workouts: the user's workouts and the bundled examples.
+    pub workouts: Vec<WorkoutEntry>,
+    /// The running workout: (name, "step 2/6"); kept current every frame.
+    pub workout_now: Option<(String, String)>,
+}
+
+/// A workout of the Workouts list.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkoutEntry {
+    pub name: String,
+    /// The duration: "45:00".
+    pub detail: String,
+    pub source: WorkoutSource,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum WorkoutSource {
+    /// A file of `<data dir>/ocw/workouts`.
+    File(PathBuf),
+    /// A bundled example, by name.
+    Example(String),
+}
+
+impl WorkoutSource {
+    /// The console line that loads and starts it.
+    pub fn line(&self) -> String {
+        match self {
+            Self::File(p) => format!("workout start \"{}\"", p.display()),
+            Self::Example(name) => format!("workout start --example {name}"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -203,6 +234,40 @@ pub fn rows(page: Page, c: &Catalog) -> Vec<Row> {
                 })
                 .collect()
         }
+        Page::Workouts => {
+            let mut out = Vec::new();
+            if let Some((name, step)) = &c.workout_now {
+                out.push(info(&short(name, 24), Some(step.clone())));
+                out.push(Row {
+                    label: "Skip step".into(),
+                    value: None,
+                    left: None,
+                    right: None,
+                    confirm: Some(Activate::Command("workout skip".into())),
+                });
+                out.push(Row {
+                    label: "Stop workout".into(),
+                    value: None,
+                    left: None,
+                    right: None,
+                    confirm: Some(Activate::Run("workout stop".into())),
+                });
+            }
+            out.extend(c.workouts.iter().map(|w| Row {
+                label: short(&w.name, 24),
+                value: Some(match w.source {
+                    WorkoutSource::File(_) => w.detail.clone(),
+                    WorkoutSource::Example(_) => format!("{}, example", w.detail),
+                }),
+                left: None,
+                right: None,
+                confirm: Some(Activate::Run(w.source.line())),
+            }));
+            if out.is_empty() {
+                out.push(info("No workouts found", Some("see README".into())));
+            }
+            out
+        }
         _ => Vec::new(),
     }
 }
@@ -241,6 +306,19 @@ mod tests {
             }],
             gpx: vec!["/home/u/Downloads/morning.gpx".into()],
             here: Some((120.4, -88.0)),
+            workouts: vec![
+                WorkoutEntry {
+                    name: "My intervals".into(),
+                    detail: "45:00".into(),
+                    source: WorkoutSource::File("/home/u/ocw/workouts/my intervals.erg".into()),
+                },
+                WorkoutEntry {
+                    name: "Demo: 2-minute intervals".into(),
+                    detail: "2:00".into(),
+                    source: WorkoutSource::Example("short-demo".into()),
+                },
+            ],
+            workout_now: None,
         }
     }
 
@@ -376,6 +454,54 @@ mod tests {
     }
 
     #[test]
+    fn workouts_start_from_the_menu_and_can_be_skipped_and_stopped() {
+        let mut c = catalog();
+        // Top → Ride → Workouts.
+        let mut m = open(&c, &[1, 5]);
+        assert_eq!(m.page(), Some(MenuPage::Sub(Page::Workouts)));
+        assert_eq!(
+            m.labels(),
+            [
+                "My intervals:  45:00",
+                "Demo: 2-minute intervals:  2:00, example",
+                "Back"
+            ]
+        );
+        // A workout starts at once and the menu closes (its panel shows).
+        assert_eq!(
+            m.apply_with(Action::Click(0), |p| rows(p, &c)),
+            Effect::Command("workout start \"/home/u/ocw/workouts/my intervals.erg\"".into())
+        );
+        assert!(!m.is_open());
+        let mut m = open(&c, &[1, 5]);
+        assert_eq!(
+            m.apply_with(Action::Click(1), |p| rows(p, &c)),
+            Effect::Command("workout start --example short-demo".into())
+        );
+        // While one runs: its step, Skip (stays open) and Stop (closes).
+        c.workout_now = Some(("Demo: 2-minute intervals".into(), "step 2/6".into()));
+        let mut m = open(&c, &[1, 5]);
+        let l = m.labels();
+        assert_eq!(l[0], "Demo: 2-minute intervals:  step 2/6");
+        assert_eq!(&l[1..3], ["Skip step", "Stop workout"]);
+        assert_eq!(
+            m.apply_with(Action::Click(1), |p| rows(p, &c)),
+            Effect::Command("workout skip".into())
+        );
+        assert!(m.is_open());
+        assert_eq!(
+            m.apply_with(Action::Click(2), |p| rows(p, &c)),
+            Effect::Command("workout stop".into())
+        );
+        assert!(!m.is_open());
+        // Nothing found: a hint instead of an empty page.
+        let empty = Catalog::default();
+        let r = rows(Page::Workouts, &empty);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].confirm, None);
+    }
+
+    #[test]
     fn rows_fit_the_ten_foot_limits() {
         let mut c = catalog();
         c.worlds[0].name = "A very long world package name that goes on".into();
@@ -386,6 +512,7 @@ mod tests {
             Page::Routes,
             Page::Rides,
             Page::GpxImport,
+            Page::Workouts,
         ] {
             for row in rows(p, &c) {
                 let l = row_label(&row);

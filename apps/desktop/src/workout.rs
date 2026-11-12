@@ -7,7 +7,9 @@
 //! step's target, the mode from before the workout (normally SIM) in free
 //! ride steps, and that mode again when it ends or is stopped.
 //!
-//! Console: `workout load <file>`, `workout start|stop|skip|pause|resume|status`.
+//! Console: `workout load <file>`, `workout start [<file> | --example <name>]`,
+//! `workout stop|skip|pause|resume|status`, `workout list`. Menu: Ride ->
+//! Workouts lists `<data dir>/ocw/workouts/` and the bundled examples.
 //! Command line: `--workout <file>` (loaded and started), `--ftp <W>`.
 
 use std::sync::Arc;
@@ -23,10 +25,102 @@ use crate::connection::ClientState;
 use crate::devices::Trainer;
 use crate::trainer::{TrainerControl, TrainerMode};
 
-/// The rider's FTP in watts. The single place it comes from (today
-/// `--ftp`; later the rider profile's setting).
-pub fn ftp_w(args: &Args) -> f64 {
+/// FTP when neither `--ftp` nor the rider profile gives one (W).
+pub const DEFAULT_FTP_W: f64 = 200.0;
+
+/// The rider's FTP in watts, the single place it comes from: `--ftp`, else
+/// the riding profile's FTP (`riders.toml`), else [`DEFAULT_FTP_W`].
+pub fn ftp_w(args: &Args, profile_ftp_w: Option<u32>) -> f64 {
     args.ftp
+        .or(profile_ftp_w.map(f64::from))
+        .unwrap_or(DEFAULT_FTP_W)
+}
+
+/// [`ftp_w`] with the profile of the rider riding now.
+fn ftp_of(world: &World) -> f64 {
+    let profile = world
+        .get_resource::<crate::settings::RiderProfiles>()
+        .and_then(|r| r.riding.ftp_w);
+    ftp_w(world.resource::<Args>(), profile)
+}
+
+/// The example workouts built into the app (`workout start --example`).
+pub const EXAMPLES: &[(&str, &str)] = &[
+    (
+        "short-demo.toml",
+        include_str!("../../../crates/ocw-sim/test-data/workouts/short-demo.toml"),
+    ),
+    (
+        "sweet-spot.toml",
+        include_str!("../../../crates/ocw-sim/test-data/workouts/sweet-spot.toml"),
+    ),
+    (
+        "two-by-five.erg",
+        include_str!("../../../crates/ocw-sim/test-data/workouts/two-by-five.erg"),
+    ),
+    (
+        "over-unders.mrc",
+        include_str!("../../../crates/ocw-sim/test-data/workouts/over-unders.mrc"),
+    ),
+];
+
+fn stem(file: &str) -> &str {
+    file.rsplit_once('.').map_or(file, |(s, _)| s)
+}
+
+/// A bundled example by its name with or without extension
+/// (`short-demo`, `two-by-five.erg`).
+pub fn example(name: &str) -> Result<Workout, String> {
+    let (file, text) = EXAMPLES
+        .iter()
+        .find(|(f, _)| *f == name || stem(f) == name)
+        .ok_or_else(|| {
+            let names: Vec<&str> = EXAMPLES.iter().map(|(f, _)| stem(f)).collect();
+            format!("no example {name} (examples: {})", names.join(", "))
+        })?;
+    Workout::parse_file(file, text).map_err(|e| e.to_string())
+}
+
+/// `<data dir>/ocw/workouts`: the user's workout files.
+pub fn workouts_dir() -> Option<std::path::PathBuf> {
+    crate::ride::data_dir().map(|d| d.join("workouts"))
+}
+
+/// The workouts the menu offers: the files in `dir` (`.toml`, `.erg`,
+/// `.mrc`, by file name; unreadable ones are left out), then the examples.
+pub fn catalog(dir: Option<&std::path::Path>) -> Vec<crate::ride::pages::WorkoutEntry> {
+    use crate::ride::pages::{WorkoutEntry, WorkoutSource};
+    let mut files: Vec<std::path::PathBuf> = dir
+        .and_then(|d| std::fs::read_dir(d).ok())
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.extension()
+                .and_then(|x| x.to_str())
+                .is_some_and(|x| ["toml", "erg", "mrc"].contains(&x.to_ascii_lowercase().as_str()))
+        })
+        .collect();
+    files.sort();
+    let entry = |w: &Workout, source| WorkoutEntry {
+        name: w.name.clone(),
+        detail: format_duration(w.duration_s()),
+        source,
+    };
+    let mut out: Vec<WorkoutEntry> = files
+        .into_iter()
+        .filter_map(|p| {
+            let w = load_file(&p).ok()?;
+            Some(entry(&w, WorkoutSource::File(p)))
+        })
+        .collect();
+    for (file, text) in EXAMPLES {
+        if let Ok(w) = Workout::parse_file(file, text) {
+            out.push(entry(&w, WorkoutSource::Example(stem(file).into())));
+        }
+    }
+    out
 }
 
 /// How long the panel stays after the workout is done (s).
@@ -50,6 +144,9 @@ pub struct WorkoutSession {
     run: Option<WorkoutRun>,
     control: Control,
     done_for_s: f64,
+    /// Counts the starts, step changes, ends and stops: each one begins a
+    /// new lap in the ride's FIT file (spec §2.8).
+    laps: u64,
 }
 
 impl Default for WorkoutSession {
@@ -59,6 +156,7 @@ impl Default for WorkoutSession {
             run: None,
             control: Control::Off,
             done_for_s: 0.0,
+            laps: 0,
         }
     }
 }
@@ -81,6 +179,12 @@ impl WorkoutSession {
     #[cfg(test)]
     pub fn run(&self) -> Option<&WorkoutRun> {
         self.run.as_ref()
+    }
+
+    /// Grows by one at each workout start, step change, end and stop: the
+    /// recorder starts a FIT lap when it changes.
+    pub fn lap_count(&self) -> u64 {
+        self.laps
     }
 
     fn running(&self) -> bool {
@@ -107,6 +211,7 @@ impl WorkoutSession {
         let text = format!("started {}; the clock starts when you pedal", summary(&w));
         self.run = Some(WorkoutRun::new(w));
         self.done_for_s = 0.0;
+        self.laps += 1;
         // A restart keeps the mode to return to.
         if !matches!(self.control, Control::Active { .. }) {
             self.control = Control::Starting;
@@ -118,6 +223,9 @@ impl WorkoutSession {
     pub fn stop(&mut self, trainer: &mut TrainerControl) -> Result<String, String> {
         let run = self.run.take().ok_or("no workout running")?;
         self.release(trainer);
+        if !run.is_finished() {
+            self.laps += 1;
+        }
         Ok(format!(
             "stopped {} at {}; trainer {}",
             run.workout().name,
@@ -139,6 +247,7 @@ impl WorkoutSession {
             .as_mut()
             .filter(|r| !r.is_finished())
             .ok_or("no workout running")?;
+        self.laps += 1;
         Ok(match run.skip() {
             Some(Change::Step(i)) => step_message(run, i, ftp_w),
             _ => "skipped the last step".into(),
@@ -198,8 +307,14 @@ impl WorkoutSession {
             };
         }
         match run.advance(dt_s, power_w) {
-            Some(Change::Step(i)) => out.push(step_message(run, i, ftp_w)),
-            Some(Change::Finished) => out.push(format!("workout {} done", run.workout().name)),
+            Some(Change::Step(i)) => {
+                self.laps += 1;
+                out.push(step_message(run, i, ftp_w));
+            }
+            Some(Change::Finished) => {
+                self.laps += 1;
+                out.push(format!("workout {} done", run.workout().name));
+            }
             None => {}
         }
         if let Control::Active { resume } = self.control {
@@ -214,6 +329,16 @@ impl WorkoutSession {
             self.release(trainer);
         }
         out
+    }
+
+    /// The running workout for the menu: (name, "step 2/6").
+    pub fn now(&self) -> Option<(String, String)> {
+        let r = self.run.as_ref().filter(|r| !r.is_finished())?;
+        let s = r.status(DEFAULT_FTP_W);
+        Some((
+            r.workout().name.clone(),
+            format!("step {}/{}", s.index + 1, s.count),
+        ))
     }
 
     pub fn panel(&self, ftp_w: f64) -> Option<WorkoutPanel> {
@@ -267,7 +392,10 @@ impl Plugin for WorkoutPlugin {
         }
         app.insert_resource(Workouts(session)).add_systems(
             Update,
-            drive_workout.before(crate::devices::control_trainer),
+            (
+                drive_workout.before(crate::devices::control_trainer),
+                show_in_menu,
+            ),
         );
         register_commands(app);
     }
@@ -277,14 +405,14 @@ impl Plugin for WorkoutPlugin {
 /// publishes the panel.
 fn drive_workout(
     time: Res<Time>,
-    args: Res<Args>,
+    (args, riders): (Res<Args>, Option<Res<crate::settings::RiderProfiles>>),
     client: Res<ClientState>,
     mut workouts: ResMut<Workouts>,
     mut trainer: ResMut<Trainer>,
     mut view: ResMut<RideView>,
     mut console: ResMut<ConsoleState>,
 ) {
-    let ftp = ftp_w(&args);
+    let ftp = ftp_w(&args, riders.and_then(|r| r.riding.ftp_w));
     if client.0.rider_id().is_some() {
         let lines = workouts.0.update(
             time.delta_secs_f64(),
@@ -302,25 +430,45 @@ fn drive_workout(
     }
 }
 
+/// Keeps the menu's Workouts page on the running workout.
+fn show_in_menu(workouts: Res<Workouts>, catalog: Option<ResMut<crate::ride::RideCatalog>>) {
+    let Some(mut catalog) = catalog else { return };
+    let now = workouts.0.now();
+    if catalog.0.workout_now != now {
+        catalog.0.workout_now = now;
+    }
+}
+
 fn register_commands(app: &mut App) {
     app.console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("workout")
-            .about("Structured workouts in ERG mode: load <file> (.toml, .erg, .mrc), start, stop, skip, pause, resume, status")
+            .about("Structured workouts in ERG mode: load <file> (.toml, .erg, .mrc), start [<file> | --example <name>], stop, skip, pause, resume, status, list")
             .subcommand_required(true)
             .subcommand(
                 Command::new("load")
                     .about("Load a workout file (.toml, .erg or .mrc)")
                     .arg(Arg::new("file").required(true)),
             )
-            .subcommand(Command::new("start").about("Start the loaded workout (again from the beginning)"))
+            .subcommand(
+                Command::new("start")
+                    .about("Start the loaded workout (again from the beginning), or load a file or bundled example and start it")
+                    .arg(Arg::new("file"))
+                    .arg(
+                        Arg::new("example")
+                            .long("example")
+                            .conflicts_with("file")
+                            .help("A bundled example: short-demo, sweet-spot, two-by-five, over-unders"),
+                    ),
+            )
+            .subcommand(Command::new("list").about("List the workouts of the workouts folder and the examples"))
             .subcommand(Command::new("stop").about("Stop the workout; the trainer returns to its previous mode"))
             .subcommand(Command::new("skip").about("Skip to the next step"))
             .subcommand(Command::new("pause").about("Pause the workout clock"))
             .subcommand(Command::new("resume").about("Resume after workout pause"))
             .subcommand(Command::new("status").about("Show the step, target and time left")),
         |world, m| {
-            let ftp = ftp_w(world.resource::<Args>());
+            let ftp = ftp_of(world);
             let Some((sub, sm)) = m.subcommand() else {
                 return Err("expected a subcommand".into());
             };
@@ -330,7 +478,34 @@ fn register_commands(app: &mut App) {
                     let w = load_file(std::path::Path::new(path))?;
                     world.resource_mut::<Workouts>().0.load(w)
                 }
-                "start" => world.resource_mut::<Workouts>().0.start(),
+                "start" => {
+                    let w = match (
+                        sm.get_one::<String>("file"),
+                        sm.get_one::<String>("example"),
+                    ) {
+                        (Some(f), _) => Some(load_file(std::path::Path::new(f))?),
+                        (None, Some(e)) => Some(example(e)?),
+                        (None, None) => None,
+                    };
+                    let mut ws = world.resource_mut::<Workouts>();
+                    if let Some(w) = w {
+                        ws.0.load(w)?;
+                    }
+                    ws.0.start()
+                }
+                "list" => {
+                    let dir = workouts_dir();
+                    let lines: Vec<String> = catalog(dir.as_deref())
+                        .iter()
+                        .map(|e| format!("{} ({}): {}", e.name, e.detail, e.source.line()))
+                        .collect();
+                    Ok(format!(
+                        "workouts in {}:\n{}",
+                        dir.as_deref()
+                            .map_or("(no data directory)".into(), |d| d.display().to_string()),
+                        lines.join("\n")
+                    ))
+                }
                 "stop" => world.resource_scope(|world, mut w: Mut<Workouts>| {
                     w.0.stop(&mut world.resource_mut::<Trainer>().0)
                 }),
@@ -412,6 +587,67 @@ mod tests {
         ride(&mut s, &mut t, DONE_PANEL_S, 150.0);
         assert!(s.panel(200.0).is_none());
         assert!(s.status(200.0).unwrap().contains("not started"));
+    }
+
+    #[test]
+    fn the_menu_lists_the_users_workouts_then_the_examples() {
+        use crate::ride::pages::WorkoutSource;
+        let dir = std::env::temp_dir().join(format!("ocw-workouts-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("b-demo.toml"), DEMO).unwrap();
+        std::fs::write(dir.join("a-broken.erg"), "not a workout").unwrap();
+        std::fs::write(dir.join("notes.txt"), "ignored").unwrap();
+        let list = catalog(Some(&dir));
+        assert_eq!(list.len(), 1 + EXAMPLES.len());
+        assert_eq!(list[0].name, "Demo: 2-minute intervals");
+        assert_eq!(list[0].detail, "2:00");
+        assert_eq!(list[0].source, WorkoutSource::File(dir.join("b-demo.toml")));
+        assert_eq!(list[1].source.line(), "workout start --example short-demo");
+        // Every example parses and is found by its name.
+        for (file, _) in EXAMPLES {
+            assert!(example(stem(file)).is_ok(), "{file}");
+            assert!(example(file).is_ok(), "{file}");
+        }
+        assert!(example("nope").unwrap_err().contains("sweet-spot"));
+        // No data directory: the examples only.
+        assert_eq!(catalog(None).len(), EXAMPLES.len());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_menu_shows_the_running_step() {
+        let mut t = TrainerControl::new(RiderProfile::default());
+        let mut s = WorkoutSession::default();
+        assert_eq!(s.now(), None);
+        s.load(demo()).unwrap();
+        s.start().unwrap();
+        assert_eq!(
+            s.now(),
+            Some(("Demo: 2-minute intervals".into(), "step 1/6".into()))
+        );
+        s.skip(200.0).unwrap();
+        assert_eq!(s.now().unwrap().1, "step 2/6");
+        s.stop(&mut t).unwrap();
+        assert_eq!(s.now(), None);
+    }
+
+    #[test]
+    fn starts_steps_skips_and_stops_count_as_fit_laps() {
+        let mut t = TrainerControl::new(RiderProfile::default());
+        let mut s = WorkoutSession::default();
+        s.load(demo()).unwrap();
+        assert_eq!(s.lap_count(), 0);
+        s.start().unwrap();
+        assert_eq!(s.lap_count(), 1);
+        ride(&mut s, &mut t, 1.0, 150.0);
+        assert_eq!(s.lap_count(), 1);
+        ride(&mut s, &mut t, 20.0, 150.0);
+        assert_eq!(s.lap_count(), 2, "the ramp ended");
+        s.skip(200.0).unwrap();
+        assert_eq!(s.lap_count(), 3);
+        s.stop(&mut t).unwrap();
+        assert_eq!(s.lap_count(), 4);
     }
 
     #[test]

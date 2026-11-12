@@ -358,6 +358,31 @@ impl EventClient {
         }
     }
 
+    /// Which part of the event the own rider is in, for the ride's FIT laps
+    /// (spec §2.8): (event id, 0 before the start, 1… the lap being
+    /// ridden, laps + 1 after the own finish or the event's end). `None`
+    /// without an event or when the own rider is not in it.
+    pub fn lap_segment(&self, own: Option<RiderId>) -> Option<(u32, u32)> {
+        let info = self.info.as_ref()?;
+        let mine = info.standings.iter().find(|s| Some(s.id) == own)?;
+        let laps = info.kind.laps().unwrap_or(1).max(1);
+        let segment = if mine.finish_s.is_some() || mine.dnf || info.phase == EventPhase::Finished {
+            laps + 1
+        } else if info.phase < EventPhase::Running {
+            0
+        } else {
+            match info.kind.length_m() {
+                Some(length) if length > 0.0 => {
+                    let lap_m = length / f64::from(laps);
+                    (mine.progress_m.max(0.0) / lap_m).floor() as u32 + 1
+                }
+                _ => 1,
+            }
+            .min(laps)
+        };
+        Some((info.id, segment))
+    }
+
     /// Whether the own rider is held at the start line (the countdown).
     pub fn holds(&self, own: Option<RiderId>) -> bool {
         self.info.as_ref().is_some_and(|i| {
@@ -606,6 +631,47 @@ mod tests {
         length_m: 1000.0,
         laps: None,
     };
+
+    #[test]
+    fn lap_segments_for_the_fit_laps() {
+        let own = Some(RiderId(1));
+        let mut c = EventClient::new("loop");
+        assert_eq!(c.lap_segment(own), None);
+        let at = |c: &mut EventClient, phase, progress, finish| {
+            c.on_state(
+                Some(info(
+                    RACE,
+                    phase,
+                    vec![standing(1, 1, progress, finish, None)],
+                )),
+                own,
+                0.0,
+            );
+            c.lap_segment(own)
+        };
+        assert_eq!(at(&mut c, EventPhase::Countdown, 0.0, None), Some((1, 0)));
+        assert_eq!(at(&mut c, EventPhase::Running, 10.0, None), Some((1, 1)));
+        assert_eq!(at(&mut c, EventPhase::Running, 4001.0, None), Some((1, 2)));
+        // Past the line but not yet finished by the server: still lap 2.
+        assert_eq!(at(&mut c, EventPhase::Running, 8001.0, None), Some((1, 2)));
+        assert_eq!(
+            at(&mut c, EventPhase::Running, 8001.0, Some(600.0)),
+            Some((1, 3))
+        );
+        // Not an entrant: no laps.
+        assert_eq!(c.lap_segment(Some(RiderId(9))), None);
+        // A time trial without laps: before, riding, after.
+        c.on_state(
+            Some(info(
+                TT,
+                EventPhase::Running,
+                vec![standing(1, 1, 500.0, None, None)],
+            )),
+            own,
+            0.0,
+        );
+        assert_eq!(c.lap_segment(own), Some((1, 1)));
+    }
 
     #[test]
     fn times_and_gaps_format() {
