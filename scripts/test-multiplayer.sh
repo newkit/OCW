@@ -63,11 +63,17 @@ host=${OCW_MP_HOST:-$(R "$server_m" field host 2>/dev/null)}
 addr="$host:$port"
 case "$host" in *:*) addr="[$host]:$port" ;; esac
 
-# Everything shown or logged goes through this: the server's host name and
-# every IPv4 address but loopback are replaced (ssh errors and the server's
-# connection log name them). Unbuffered, so a log can be watched.
-redact_perl='BEGIN { $| = 1 } s/\Q$ENV{OCW_MP_H}\E/<server>/g; s/\b(?!127\.0\.0\.1\b)(\d{1,3}\.){3}\d{1,3}\b/<ip>/g'
-redact_stream() { OCW_MP_H=$host perl -pe "$redact_perl"; }
+# Everything shown or logged goes through this: the machines' host names
+# (one per line in $redact_hosts; the bot machines are added once known),
+# the peers in the server's connection log (IPv4 or IPv6) and every IPv4
+# address but loopback are replaced (ssh errors name them too).
+# Unbuffered, so a log can be watched.
+redact_hosts=$host
+redact_perl='BEGIN { $| = 1; @h = grep { length } split /\n/, $ENV{OCW_MP_H} }
+  for my $x (@h) { s/\Q$x\E/<host>/g }
+  s/(remote(?:\e\[[0-9;]*m)*=(?:\e\[[0-9;]*m)*)[^\s\e]+/$1<peer>/g;
+  s/\b(?!127\.0\.0\.1\b)(\d{1,3}\.){3}\d{1,3}\b/<ip>/g'
+redact_stream() { OCW_MP_H=$redact_hosts perl -pe "$redact_perl"; }
 
 # --- 1. Machines --------------------------------------------------------
 os_of() { R "$1" field os 2>/dev/null; }
@@ -80,6 +86,9 @@ up "$server_m" || { say "FAIL: server machine $server_m is not reachable"; exit 
 used=() skipped=()
 for m in $bot_ms; do
   if [ "$m" = "$server_m" ] || up "$m"; then used+=("$m"); else skipped+=("$m"); fi
+done
+for m in $bot_ms; do
+  h=$(R "$m" field host 2>/dev/null) && [ -n "$h" ] && redact_hosts+=$'\n'"$h"
 done
 say "server:       $server_m (UDP $port)"
 say "bot machines: ${used[*]:-none}${skipped:+ (skipped, unreachable: ${skipped[*]})}"
