@@ -74,6 +74,10 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }
 bytes = "1"
 
+# Audio output (spec §3.3), only in apps/desktop: cpal (Apache-2.0), the same
+# version Bevy's own audio links, so no second copy (and one libasound).
+cpal = "0.17"
+
 prost = "0.14"
 prost-build = "0.14"
 protox = "0.10"

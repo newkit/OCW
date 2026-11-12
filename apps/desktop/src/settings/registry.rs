@@ -25,6 +25,9 @@ pub enum Kind {
     Int { min: i64, max: i64, step: i64 },
     /// One of these words.
     Choice(&'static [&'static str]),
+    /// Free text (a device name), without double quotes; menus offer
+    /// their own choices for it.
+    Text,
 }
 
 /// When a changed value takes effect.
@@ -220,6 +223,71 @@ pub const SETTINGS: &[SettingDef] = &[
         scope: Scope::NextStart,
         apply: Apply::Arg("record"),
     },
+    // Audio (spec §3.3): volumes in percent, master × bus.
+    SettingDef {
+        key: "audio.master",
+        kind: Kind::Int {
+            min: 0,
+            max: 100,
+            step: 5,
+        },
+        default: "80",
+        description: "Master volume in percent (scales all buses)",
+        scope: Scope::Live,
+        apply: Apply::Command("audio.volume master {}"),
+    },
+    SettingDef {
+        key: "audio.effects",
+        kind: Kind::Int {
+            min: 0,
+            max: 100,
+            step: 5,
+        },
+        default: "80",
+        description: "Volume of the game sounds (bike, wind, tyres, menu, event cues) in percent",
+        scope: Scope::Live,
+        apply: Apply::Command("audio.volume effects {}"),
+    },
+    SettingDef {
+        key: "audio.music",
+        kind: Kind::Int {
+            min: 0,
+            max: 100,
+            step: 5,
+        },
+        default: "60",
+        description: "Music volume in percent (no music yet)",
+        scope: Scope::Live,
+        apply: Apply::Command("audio.volume music {}"),
+    },
+    SettingDef {
+        key: "audio.voice",
+        kind: Kind::Int {
+            min: 0,
+            max: 100,
+            step: 5,
+        },
+        default: "100",
+        description: "Voice chat volume in percent (voice chat comes in Phase 6)",
+        scope: Scope::Live,
+        apply: Apply::Command("audio.volume voice {}"),
+    },
+    SettingDef {
+        key: "audio.mute",
+        kind: Kind::Bool,
+        default: "off",
+        description: "Mute all sound",
+        scope: Scope::Live,
+        apply: Apply::Command("audio.mute {}"),
+    },
+    SettingDef {
+        key: "audio.output",
+        kind: Kind::Text,
+        default: "default",
+        description: "Output device by name (audio.devices lists them), or default; a missing device falls back to the default",
+        scope: Scope::Live,
+        apply: Apply::Command("audio.output \"{}\""),
+    },
 ];
 
 /// The setting registered under `key`.
@@ -254,6 +322,11 @@ impl SettingDef {
                         choices.join(", ")
                     )
                 }),
+            Kind::Text if text.is_empty() || text.contains('"') => Err(format!(
+                "{}: expected a name without double quotes, not {text:?}",
+                self.key
+            )),
+            Kind::Text => Ok(Value::Text(text.to_string())),
         }
     }
 
@@ -262,7 +335,7 @@ impl SettingDef {
         match (self.kind, v) {
             (Kind::Bool, toml::Value::Boolean(b)) => Ok(Value::Bool(*b)),
             (Kind::Int { .. }, toml::Value::Integer(i)) => self.check(Value::Int(*i)),
-            (Kind::Choice(_), toml::Value::String(s)) => self.parse(s),
+            (Kind::Choice(_) | Kind::Text, toml::Value::String(s)) => self.parse(s),
             (_, other) => Err(format!(
                 "{}: expected {}, not {other}",
                 self.key,
@@ -292,12 +365,13 @@ impl SettingDef {
             Kind::Bool => "on / off".into(),
             Kind::Int { min, max, .. } => format!("{min} to {max}"),
             Kind::Choice(c) => c.join(", "),
+            Kind::Text => "a name".into(),
         }
     }
 
     /// The value one step down (`dir` < 0) or up from `v`, for menus:
     /// toggles a switch, moves a number by its step (within the range),
-    /// cycles through the choices.
+    /// cycles through the choices; leaves text as it is.
     pub fn step(&self, v: &Value, dir: i32) -> Value {
         match (self.kind, v) {
             (Kind::Bool, Value::Bool(b)) => Value::Bool(!b),
@@ -309,6 +383,7 @@ impl SettingDef {
                 let at = c.iter().position(|x| x == s).unwrap_or(0) as i32;
                 Value::Text(c[(at + dir.signum()).rem_euclid(n) as usize].to_string())
             }
+            (Kind::Text, Value::Text(_)) => v.clone(),
             _ => self.default_value(),
         }
     }
@@ -555,7 +630,7 @@ fps = true
 hud = false
 future_option = \"x\"
 
-[audio]
+[sound]
 master = 80
 ";
         let (mut s, warnings) = Settings::parse(text).unwrap();
@@ -572,7 +647,7 @@ master = 80
         unknown.sort();
         assert_eq!(
             unknown,
-            ["audio.master", "display.future_option", "top_level"]
+            ["display.future_option", "sound.master", "top_level"]
         );
         assert_eq!(warnings.len(), 3, "{warnings:?}");
         s.set("trainer.difficulty", "70").unwrap();
@@ -656,6 +731,42 @@ master = 80
             ]
         );
         assert!(Settings::default().startup_commands().is_empty());
+    }
+
+    /// The Audio page's settings (M5): saved in `[audio]`, read back, and
+    /// applied by their commands.
+    #[test]
+    fn audio_settings_round_trip() {
+        let mut s = Settings::default();
+        s.set("audio.master", "55").unwrap();
+        s.set("audio.mute", "on").unwrap();
+        s.set("audio.output", " USB Audio Device, Analog ").unwrap();
+        assert!(s.set("audio.output", "say \"hi\"").is_err());
+        assert!(s.set("audio.output", "  ").is_err());
+        assert!(s.set("audio.voice", "101").is_err());
+        let text = s.to_toml();
+        assert!(text.contains("[audio]"), "{text}");
+        let (again, warnings) = Settings::parse(&text).unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(again.get("audio.master"), Ok(Value::Int(55)));
+        assert_eq!(again.get("audio.mute"), Ok(Value::Bool(true)));
+        assert_eq!(again.get("audio.effects"), Ok(Value::Int(80)));
+        let out = again.get("audio.output").unwrap();
+        assert_eq!(out, Value::Text("USB Audio Device, Analog".into()));
+        let d = def("audio.output").unwrap();
+        assert_eq!(d.step(&out, 1), out, "text does not step");
+        assert_eq!(
+            again.startup_commands(),
+            [
+                "audio.volume master 55",
+                "audio.mute on",
+                "audio.output \"USB Audio Device, Analog\"",
+            ]
+        );
+        // A number in the file where a name belongs: the default.
+        let (bad, w) = Settings::parse("[audio]\noutput = 3\n").unwrap();
+        assert_eq!(bad.get("audio.output"), Ok(Value::Text("default".into())));
+        assert_eq!(w.len(), 1);
     }
 
     #[test]

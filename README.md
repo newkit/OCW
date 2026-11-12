@@ -71,7 +71,7 @@ time, the recording and a video go on, and the ride keys (↑ ↓ ← →, A, W,
 R, V, …, the mouse camera) are ignored while it is open. Steering falls back
 to autodrive and junctions take their default exit, so the rider stays on
 the road; closing the menu restores manual steering / wild mode. *Workshop*
-chooses the rider profile and their bike (*Workshop → Bike*), *Settings* has Riders, Controls, Trainer, Display
+chooses the rider profile and their bike (*Workshop → Bike*), *Settings* has Riders, Controls, Trainer, Audio, Display
 and Strava: ← / → (D-pad left / right) change the focused value, Q / E,
 PgUp / PgDn or LB / RB switch between these pages (see
 [Settings](#settings-and-rider-profiles)); *Ride* starts local events (race,
@@ -421,6 +421,7 @@ event status | event cancel | event dismiss
 | `--at SECONDS=COMMAND` | Run a console command when the app has run SECONDS (game time; a ride switch does not reset it; scripted rides) |
 | `--screenshot PATH`, `--screenshot-delay S` | Save a screenshot after S seconds (default 5), then exit |
 | `--capture DIR`, `--capture-fps N`, `--capture-seconds S`, `--capture-warmup S` | Save every frame with a fixed game-time step (smooth videos), then exit |
+| `--no-audio` | No sound: open no audio output (frame capture with `--capture` is silent anyway) |
 | `--version` | Print the build id, e.g. `0.1.0-7d538c0-dirty (debug)`: version, commit, `-dirty` for uncommitted changes, `(debug)` for debug builds. It is also shown small in the HUD's lower right corner and logged at startup |
 
 ## Settings and rider profiles
@@ -443,6 +444,12 @@ console (saved at once), or by editing the file; `get` lists them all:
 | `ride.bots` | 0 to 50 (10): test riders (`--bots`) | next start |
 | `ride.random_start` | on / off (on): random start point (`--random-start`) | next start |
 | `ride.record` | on / off (on): save rides as FIT (`--record`) | next start |
+| `audio.master` | 0 to 100 (80): master volume in %, scales every bus | at once |
+| `audio.effects` | 0 to 100 (80): game sounds (bike, wind, tyres, menu, event and workout cues) | at once |
+| `audio.music` | 0 to 100 (60): music (none yet) | at once |
+| `audio.voice` | 0 to 100 (100): voice chat (Phase 6) | at once |
+| `audio.mute` | on / off (off): mute all sound | at once |
+| `audio.output` | a device name from `audio.devices`, or `default` (default) | at once |
 
 ```toml
 [display]
@@ -451,7 +458,25 @@ camera = "side"
 
 [ride]
 bots = 2
+
+[audio]
+master = 70
+output = "USB Audio Device, USB Audio"
 ```
+
+**Audio** (spec §3.3): every sound is synthesised by OCW itself – wind rising
+with the speed, the tyres on asphalt, gravel and grass, the freewheel ticking
+while you coast, the chain at your cadence (estimated from the power without a
+cadence sensor), menu clicks, the event countdown beeps and finish chime, the
+workout step cue. A bus's loudness is master × bus, both on a squared curve
+(50 % ≈ -12 dB). The output device is saved by name; when it is missing (USB
+headset unplugged) the default device plays and the saved one is taken again
+as soon as it is back (the device list is re-read every 3 s). Without any
+output device (headless runs, CI) the app runs silently and logs
+`audio: no audio output: …`; `--no-audio` (and frame capture with `--capture`)
+opens none. *Settings → Audio* has the volumes (Enter plays a test sound on
+that bus), Mute and the Output (← / → step through `default` and the
+devices).
 
 Precedence: defaults < `settings.toml` < `autoexec.cfg` < command-line options.
 Command-line options and `set --temp` hold only for the session and are never
@@ -519,7 +544,7 @@ Manage them in the in-game menu (Esc / Start): *Workshop* chooses the rider
 and opens their *Bike* page (the bike, its physics numbers, frame / jersey /
 helmet colour and kit, all with ← / →),
 *Settings → Riders* edits them (weight, height, FTP with ← / →; add, delete),
-and the other *Settings* pages (Controls, Trainer, Display, Strava) change the
+and the other *Settings* pages (Controls, Trainer, Audio, Display, Strava) change the
 settings above with ← / → (D-pad) and Enter (A); Q / E (LB / RB) switch between
 these pages. In the console: `riders.add` / `riders.edit` (also `--rename`,
 `--bike`, `--frame-color` …) / `riders.select`, e.g.
@@ -550,6 +575,13 @@ for now).
 | `video [start\|stop\|toggle]` | Record the window as an MP4 (key V; needs `ffmpeg`) |
 | `menu [open\|close\|toggle\|up\|down\|left\|right\|select\|back\|tab-next\|tab-prev]` | Open, close or drive the in-game menu (Esc / Start) |
 | `quit` | Exit the app |
+| **Audio** (spec §3.3) | |
+| `audio.volume master\|effects\|music\|voice PERCENT` | Set a volume for this session (`set audio.effects 60` also saves it) |
+| `audio.mute [on\|off\|toggle]` | Mute or unmute all sound (`set audio.mute on` saves it) |
+| `audio.output NAME\|default` | Play on this output device (`set audio.output "NAME"` saves it); a missing device falls back to the default until it appears |
+| `audio.devices` | List the output devices (`*` = playing now) and read the list again |
+| `audio.status` | The output playing now and the mix |
+| `audio.play SOUND` | Play a sound: `move`, `value`, `confirm`, `back`, `beep`, `go`, `finish`, `step`, `shift`, `test`, `test-music`, `test-effects`, `test-voice` |
 | **Rider** | |
 | `rider.autodrive on\|off` | Autodrive (key A) |
 | `rider.wild on\|off` | Wild mode (key W; on also switches autodrive off) |

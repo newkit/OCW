@@ -172,6 +172,7 @@ const SETTINGS_ITEMS: &[Item] = &[
     item("Riders", ItemKind::Open(Page::Sub(sub::Page::Riders))),
     item("Controls", ItemKind::Open(Page::Sub(sub::Page::Controls))),
     item("Trainer", ItemKind::Open(Page::Sub(sub::Page::Trainer))),
+    item("Audio", ItemKind::Open(Page::Sub(sub::Page::Audio))),
     item("Display", ItemKind::Open(Page::Sub(sub::Page::Display))),
     item("Strava", ItemKind::Open(Page::Sub(sub::Page::Strava))),
     BACK,
@@ -259,7 +260,7 @@ impl Page {
             Page::Settings => PageDef {
                 title: "Settings",
                 text: &[
-                    "Saved in settings.toml and riders.toml (console: set, get, riders.*). Audio comes with game audio (M5).",
+                    "Saved in settings.toml and riders.toml (console: set, get, riders.*, audio.*).",
                 ],
                 items: SETTINGS_ITEMS,
                 initial_focus: 0,
@@ -914,7 +915,7 @@ mod tests {
         act(&mut m, Action::Click(4), &s, &r);
         assert_eq!(m.page(), Some(Page::Settings));
         // Display: value rows.
-        act(&mut m, Action::Click(3), &s, &r);
+        act(&mut m, Action::Click(4), &s, &r);
         assert_eq!(m.page(), Some(Page::Sub(sub::Page::Display)));
         assert_eq!(m.labels()[0], "HUD:  < on >");
         assert_eq!(m.labels().last().unwrap(), "Back");

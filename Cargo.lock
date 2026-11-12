@@ -5123,6 +5123,7 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "clap",
+ "cpal",
  "dirs",
  "ocw-core",
  "ocw-devices",

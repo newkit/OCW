@@ -667,26 +667,33 @@ mod tests {
     fn app(dir: &Path) -> App {
         let path = dir.join("settings.toml");
         let mut app = App::new();
-        app.add_plugins((MinimalPlugins, ConsoleCorePlugin, SettingsPlugin))
-            .insert_resource(UserSettings {
-                settings: Settings::default(),
-                path: Some(path.clone()),
-            })
-            .insert_resource(RiderProfiles {
-                riders: Riders::default(),
-                path: Some(riders_path(&path)),
-                riding: Rider::default(),
-            })
-            // Registered by the devices plugin in the app.
-            .console_command(ConsoleCommand::new(
-                Permission::User,
-                Command::new("trainer.difficulty").arg(
-                    Arg::new("percent")
-                        .required(true)
-                        .value_parser(value_parser!(f64)),
-                ),
-                |_, _| Ok(String::new()),
-            ));
+        app.add_plugins((
+            MinimalPlugins,
+            ConsoleCorePlugin,
+            SettingsPlugin,
+            crate::audio::GameAudioPlugin {
+                backend: crate::audio::Backend::Null,
+            },
+        ))
+        .insert_resource(UserSettings {
+            settings: Settings::default(),
+            path: Some(path.clone()),
+        })
+        .insert_resource(RiderProfiles {
+            riders: Riders::default(),
+            path: Some(riders_path(&path)),
+            riding: Rider::default(),
+        })
+        // Registered by the devices plugin in the app.
+        .console_command(ConsoleCommand::new(
+            Permission::User,
+            Command::new("trainer.difficulty").arg(
+                Arg::new("percent")
+                    .required(true)
+                    .value_parser(value_parser!(f64)),
+            ),
+            |_, _| Ok(String::new()),
+        ));
         app
     }
 

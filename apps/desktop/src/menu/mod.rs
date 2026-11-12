@@ -22,6 +22,7 @@ use ocw_render::RideView;
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
 use ocw_render::menu::{InputContext, MenuCorePlugin, MenuPointer, MenuPointerEvent, MenuView};
 
+use crate::audio::AudioDeviceList;
 use crate::connection::ClientState;
 use crate::ride::RideCatalog;
 use crate::settings::pages as settings_pages;
@@ -99,6 +100,7 @@ fn menu_input(
     settings: Option<Res<UserSettings>>,
     riders: Option<Res<RiderProfiles>>,
     catalog: Option<Res<RideCatalog>>,
+    audio: Option<Res<AudioDeviceList>>,
 ) {
     let pressed = pads.iter().fold(
         keys.map(|k| controls::keyboard(&k)).unwrap_or_default(),
@@ -151,6 +153,7 @@ fn menu_input(
             settings.as_deref(),
             riders.as_deref(),
             catalog.as_deref(),
+            audio.as_deref(),
         )
     };
     for action in actions {
@@ -195,12 +198,20 @@ fn sub_rows(
     settings: Option<&UserSettings>,
     riders: Option<&RiderProfiles>,
     catalog: Option<&RideCatalog>,
+    audio: Option<&AudioDeviceList>,
 ) -> Vec<settings_pages::Row> {
     if page.is_ride_page() {
         let empty = crate::ride::pages::Catalog::default();
         return crate::ride::pages::rows(page, catalog.map_or(&empty, |c| &c.0));
     }
     let default_settings = Settings::default();
+    if page == settings_pages::Page::Audio {
+        let empty = settings_pages::AudioDevices::default();
+        return settings_pages::audio_rows(
+            settings.map_or(&default_settings, |s| &s.settings),
+            audio.map_or(&empty, |a| &a.0),
+        );
+    }
     let default_riders = Riders::default();
     settings_pages::rows(
         page,
@@ -215,6 +226,7 @@ fn write_view(
     settings: Option<Res<UserSettings>>,
     riders: Option<Res<RiderProfiles>>,
     catalog: Option<Res<RideCatalog>>,
+    audio: Option<Res<AudioDeviceList>>,
     mut view: ResMut<MenuView>,
 ) {
     // Values changed by the menu's commands (or the console) show at once.
@@ -224,6 +236,7 @@ fn write_view(
             settings.as_deref(),
             riders.as_deref(),
             catalog.as_deref(),
+            audio.as_deref(),
         )
     };
     state.menu.refresh(&rows);

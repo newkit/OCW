@@ -8,6 +8,7 @@
 //! - the Bevy renderer from `ocw-render`.
 
 mod argsfile;
+mod audio;
 mod automation;
 mod build_id;
 mod client;
@@ -222,6 +223,21 @@ pub struct Args {
     /// executable, or $OCW_ARGS_FILE).
     #[arg(long)]
     pub no_args_file: bool,
+    /// No sound: do not open an audio output (also off during --capture,
+    /// whose game time does not run in real time).
+    #[arg(long)]
+    pub no_audio: bool,
+}
+
+impl Args {
+    /// The audio output for this run (spec §3.3).
+    pub fn audio_backend(&self) -> audio::Backend {
+        if self.no_audio || self.capture.is_some() {
+            audio::Backend::Null
+        } else {
+            audio::Backend::Device
+        }
+    }
 }
 
 fn parse_size(s: &str) -> Result<(u32, u32), String> {
@@ -316,7 +332,10 @@ fn main() -> AppExit {
                     ..default()
                 }),
                 ..default()
-            }),
+            })
+            // Bevy's own audio (rodio) only plays on the default device and
+            // has no bus mixer; game audio is `audio::GameAudioPlugin`.
+            .disable::<bevy::audio::AudioPlugin>(),
     )
     // The client prediction runs in FixedUpdate at the same rate as the server tick.
     .insert_resource(Time::<Fixed>::from_hz(f64::from(SIM_TICK_HZ)))
@@ -330,6 +349,9 @@ fn main() -> AppExit {
     .add_systems(Startup, || info!("Open Cycling World {}", build_id()))
     .add_plugins(OcwRenderPlugins)
     .add_plugins(settings::SettingsPlugin)
+    .add_plugins(audio::GameAudioPlugin {
+        backend: args.audio_backend(),
+    })
     .add_plugins((
         connection::ConnectionPlugin { route },
         devices::DevicesPlugin,
@@ -485,6 +507,17 @@ mod tests {
         ] {
             assert!(Args::try_parse_from(bad).is_err(), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn audio_is_off_for_capture_and_no_audio() {
+        let a = |v: &[&str]| Args::parse_from(v).audio_backend();
+        assert_eq!(a(&["ocw-desktop"]), audio::Backend::Device);
+        assert_eq!(a(&["ocw-desktop", "--no-audio"]), audio::Backend::Null);
+        assert_eq!(
+            a(&["ocw-desktop", "--capture", "frames"]),
+            audio::Backend::Null
+        );
     }
 
     #[test]
