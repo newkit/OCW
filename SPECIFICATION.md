@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.7 – November 2026
+Version 2.8 – November 2026
 
 | Version | Change |
 |---|---|
@@ -26,6 +26,7 @@ Version 2.7 – November 2026
 | 2.5 | Signed, cached world packages (§4.7, §12): manifest with file and chunk hashes, Ed25519 root → signing key chain (dev root committed, public only), trust policy for unsigned packages, cache `~/.local/share/ocw/worlds/<id>/<version>`, verified download with resume; end-to-end test from an OSM fixture to a bot ride and a rebuild |
 | 2.6 | Land use and buildings from OSM (§4.6, §4.7): 17 land classes on a 5 m grid per tile (`LUSE`), flat water with carved terrain, colour maps and trees by land use, extruded buildings with flat or gable roofs (`BLDG`) |
 | 2.7 | Menu M2 (§3.2.1): settings registry (keys, scopes, layers) and `settings.toml`, `set` / `get`; rider profiles in `riders.toml`, weight 30–200 kg in `Hello.rider_weight_kg` (the client's physics parameters are ignored, §2.5, §6.5) and as Wahoo SIM mass; Settings / Workshop pages as rows of command lines; HUD on / off and imperial units |
+| 2.8 | Autonomous night 2026-11-11/12 (Appendix B): menu M1–M3 (in-app ride switch, Navi, GPX import), workouts with ERG (§2.8), local events with ghost (§2.3.1), gradient aids and camera tilt, camera classes and tunnels (§3.2), physics profiles and bike looks (§2.5), neighbour packages (§4.7), QUIC transport (§6.2), fixes for one-way U-turns, steep starts and gradient artefacts; all assumptions listed in Appendix B |
 
 ---
 
@@ -1669,3 +1670,263 @@ The specification review produced proposals P-1 … P-20 (formerly `PROPOSALS.md
 | P-18 | 3D graphics stack evaluation | §3.1.1 |
 | P-19 | Junction steering and dead ends | §2.2.1, §2.2.2, §4.4, §6.5 |
 | P-20 | Web companion and future clients | §1.2, §2.10, §3.5, §3.6 |
+
+---
+
+## Appendix B – Autonomous Development, 2026-11-11/12: Additions and Assumptions
+
+In the night from 11 to 12 November 2026 the open tasks and phases were implemented without
+user interaction (instruction: "where unsure, take the best guess but document your
+uncertainty, your options and your choice"). This appendix lists what was added, every
+decision taken on the user's behalf, how sure it is, and what is still open. The details sit
+in the sections named in each entry; this appendix is the place to review the choices and
+overrule them.
+
+**How the work was done.** Each item was built in its own branch, tested on the Linux build
+machines (marge, leela until it became unreachable at about 01:00; the Mac for
+platform-independent checks), reviewed, merged into `main`, checked again on the merged tree
+(clippy with warnings as errors, all unit tests, the wasm build of the engine-independent
+crates), pushed and deployed to marge's kiosk. All screenshots and videos are in the build
+history `test-output/index.md`. Uncertainty is given as low / medium / high.
+
+### B.1 Overview
+
+| Area | Spec | Merge |
+|---|---|---|
+| Build slots per machine (2 Linux, 1 Windows, 1 macOS), queue in the build dashboard | §11, README | 5ae61ea |
+| Video: REC indicator, smooth live recording | §3.2 | 31f4194 |
+| Bots: 10 by default, start formation, 12 strengths | §6.1 | a8a45c9 |
+| Camera: solid vs see-through objects, trees fade, buildings are obstacles | §3.2 | 98b7f68 |
+| Windows build machine: full workspace builds and tests | §11.1 | 6f6c3fd |
+| In-game menu M1 (shell, input contexts, gamepad) | §3.2.1 | b6221e9 |
+| Gradient feel: 100 m average, elevation profile, camera tilt | §3.2 | f0af9aa |
+| Structured workouts with ERG (Phase 2) | §2.8, §5.3 | 5231f62 |
+| QUIC transport, networked server (Phase 5 groundwork) | §6.2 | 2dcf299 |
+| Menu M2: settings, rider profiles, weight in the physics | §3.2.1, §2.5, §6.5 | 7f3d1cd |
+| Phase 4 groundwork: physics profiles, bike and look, bike types | §2.5, §5.2.1, §6.5 | 44244b7 |
+| Neighbour world packages at runtime (Phase 3) | §4.7 | 0352f81 |
+| UI font with full Latin coverage | §3.2, §13 | a986f42 |
+| Local events: race, group ride, time trial against the own ghost | §2.3.1 | 16c7c37 |
+| Menu M3: in-app ride switch, Navi pages, GPX import, paging | §3.2.1 | 899d56e |
+| Fix: U-turn on one-way roads (no double turn, no roundabout circling) | §2.2.1, §2.2.2 | b89e077 |
+| Fix: riders start on any grade; grade limit across junctions; corner heights | §4.3, §5.1, §5.2 | 97a99e2 |
+| Fix: tunnels (tube and tunnel camera; Stegertunnel at km 8.8) | §3.2, §4.3 | 7182ebe |
+| Events and workouts: FIT laps, ghost without shadows, event confirmation, Workouts page, FTP from the profile | §2.3.1, §2.8 | 18f0ae3 |
+
+### B.2 Decisions and assumptions
+
+Each entry: the question, the options, the choice (**bold**) and the uncertainty.
+
+**Build infrastructure**
+
+- *Build slots.* Per machine: `OCW_REMOTE_SLOTS`, else `slots` in `machines.toml`, else the OS
+  default (**Linux 2, Windows 1, macOS 1**). A waiting run polls all slots once a second, so
+  there is no strict first-come order. Linux and macOS waiters give up when their ssh session
+  ends; a Windows waiter cannot detect that and runs later. Low.
+- *Build jobs.* A Bevy link with MSVC needs about 5.3 GB; the 8 GB Windows machine therefore
+  needs 2 jobs (`jobs` key in `machines.toml`, or `OCW_REMOTE_JOBS`, now honoured on `main`
+  too). **The user's `machines.toml` was not edited**; add `jobs = 2` for the Windows machine.
+- *Disk space.* Agent checkouts on the build machines grow to 15–45 GB each; they are deleted
+  after each merge. Low.
+- *Build history.* `scripts/collect-test-output.sh` merges every worktree's screenshots and
+  videos into `test-output/` with index rows (on the user's request). Low.
+
+**Rendering and camera (§3.2)**
+
+- *Camera classes.* Options: ray casts against meshes, or height functions per object layer.
+  **Height functions** (`CameraObstacles` layers per tile): cheap, matches the terrain path.
+  Buildings count as a prism up to the ridge with 0.5 m clearance (errs high). Medium.
+- *Camera spot inside a building.* Options: move onto the roof, or pull in towards the rider.
+  **Onto the roof.** In narrow streets with an orbited camera this gives a view from the roof
+  edge. Medium – the other option may look better.
+- *Trees.* **Screen-door dither** (no blending, shadows stay) in a cone between camera and
+  rider: 3 m near the lens, 0.8 → 2 m wide, ending 1 m before the rider. Tuned by eye on one
+  run; grainy at 720p. Medium.
+- *Gradient display.* Average = height difference over horizontal distance across the next
+  **100 m**; profile from 150 m behind to **1.5 km** ahead on a fixed 15 m grid, at least 40 m
+  vertical range so flat roads stay flat; colour bands < −2 / 3 / 6 / 9 / 12 % (blue, green,
+  yellow, orange, red, wine). In free ride the look-ahead is a **display-only preview** through
+  the junctions ahead (selected exit, then defaults). Low.
+- *Camera tilt.* **0.7 × the slope angle**, averaged from 5 m behind to 20 m ahead, 1.2 s
+  smoothing, capped at **8°**, chase view only. The effect is subtle; `camera.tilt 1` makes it
+  stronger. Medium – not yet tried on a real ride.
+- *Video.* A screenshot is requested every 1/25 s (up to 4 in flight) and placed at its
+  request time; the game never waits for ffmpeg; ffmpeg `ultrafast` (larger files, size not
+  measured). Full 25 fps on marge (release); about 12 new frames/s in debug builds on leela,
+  limited by Bevy's screenshot path. Medium.
+- *Font.* **Fira Mono 3.206** (SIL OFL 1.1), the full version of Bevy's ASCII-only default
+  font, so the look and the HUD's text widths stay; embedded in the binary (+171 KiB); not
+  subset. Low.
+
+**Menu (§3.2.1)**
+
+- *Input routing.* Options: a Bevy state `UiMode` (as planned), or a resource. **Resource
+  `InputContext { Ride, Menu, Console }`** set once per frame, so the console fits in too. Low.
+- *Steering while the menu is open.* Autodrive takes over at the current lateral position;
+  wild mode is suspended and restored; the junction choice falls back to the default and is
+  **not** restored; manual steering comes back upright. Medium.
+- *Confirmations* focus Cancel; mouse hover moves the focus only when the mouse moves. Low.
+- *Settings.* `settings.toml` plus a separate **`riders.toml`** (profiles are a list). Order:
+  default < file < `autoexec.cfg` < command line / `set --temp`; a setting replaces an option's
+  default only if it is actually in the file, so scripted runs stay reproducible; `set` saves at
+  once. Units are **global** (`display.units`), not per rider. Medium.
+- *Ride switch (M3).* Options: re-exec the app (the planned restart path) or rebuild the
+  session in-app. **In-app**: a re-exec reconnects the BLE trainer, which is slow and can fail.
+  The old ride is saved; video recording continues; the ride time restarts at 0; switching is
+  refused when connected to a remote server; `--at` now counts time since the app started.
+  Medium.
+- *Package discovery* for the menu: cache, files next to the executable, `data/`,
+  `data/pilot/`, the current package's folder – a heuristic. Medium.
+- *GPX import* needs a loaded package with a road graph (existing HMM matcher) and is saved as
+  a route file; GPX files are offered from `<data>/ocw/gpx/` and Downloads (no file dialog on a
+  gamepad). Matching runs on the main thread. Medium; tested only on a synthetic network.
+- *Long lists* page at four rows (Previous / Next); rows are cut at 48 characters. Low.
+
+**Riders, physics and bikes (§2.5, §5, §6.5)**
+
+- *What the server trusts.* Options: keep the client's full physics profile in the hello, or
+  only an id and the weight. **Id and weight only** (`Hello.rider_weight_kg`,
+  `Hello.bike_profile`); the server computes everything from its own table. The old profile
+  field is deprecated. Medium – changes behaviour for clients that sent custom profiles.
+- *Weight.* 30–200 kg; typed values outside are refused, values from files or the network are
+  clamped, NaN becomes 75 kg. Trainer SIM mass = rider + **8 kg**; only the Wahoo protocol can
+  send it (FTMS has no mass field). Low–medium.
+- *When changes apply.* Rider, weight, bike and look apply **at the next start or ride
+  switch**, not live: there is no server message to change a rider mid-session. Medium.
+- *Physics profiles.* Six: **road (default), road-aero, road-climbing, tt, gravel, mtb**; the
+  bike type follows from the profile, so cosmetics cannot contradict physics. Values are own
+  tuning. On flat asphalt at 250 W all stay within **±3 %** of road (spec cap), on a 6 % climb
+  within ±5 %; off-road differences are deliberately larger (MTB about +17 % on grass). High
+  for the exact values – they need review.
+- *Surface.* Packages have Asphalt / Gravel / Grass by road class; each profile scales the
+  off-road part of rolling resistance. The OSM `surface` tag is later. Medium.
+- *Looks* (three colours, kit pattern) are resent in every snapshot; a reliable roster message
+  can replace that in Phase 5. Low.
+
+**Simulation, bots and events (§2.3.1, §6.1)**
+
+- *Bots.* **10** by default (desktop and server). Rows of up to three, 1.2 m apart, 3 m between
+  rows, behind the start; the **front-row centre is kept for the own rider**; if there is not
+  enough road behind the start the whole formation moves forward (also on loops). Twelve
+  strengths 85–280 W. Low.
+- *Where an event starts.* Options: where the rider is, or at the course's start line. **Start
+  line**, so laps and ghosts stay comparable. Medium.
+- *Free ride and events.* **Refused** – bots take random exits, there is no fixed course. Low.
+- *Who may start events.* Only the in-process local server (`allow_local_events`); a remote
+  server leaves it to organisers. Low.
+- *Ghost.* **Client-side only** (nobody can draft it), per route and time-trial length, best
+  effort only, plain text (about 30 KB per 20 min). Only time trials record ghosts. Low.
+- *Group ride.* Bots hold the target power ±10 % and regroup halfway between their own average
+  and the rider. No ranking. Medium.
+- *DNF.* Left the session, or still riding max(2 min, 25 % of the winner's time) after the
+  first finisher. Gaps of riders still riding = distance ÷ own speed. Medium.
+
+**Workouts (§2.8, §5.3)**
+
+- *Location.* Options: own crate, `ocw-core`, `ocw-sim`. **`ocw-sim::workout`** (wasm-safe, next
+  to the ERG controller); `ocw-sim` gains `serde` and `toml`. Medium.
+- *Format.* Own TOML (steady, ramp, intervals, free; cadence and text cues; bare numbers = %
+  FTP; unknown keys are errors); `.erg` / `.mrc` import is lenient, distance-based courses are
+  refused, an `FTP =` header is ignored. Low.
+- *Workout clock.* Options: wall clock, or pedalling time. **Pedalling time**: starts at the
+  first power, pauses after 3 s without power; the ride itself never pauses. Medium.
+- *Trainer mode.* While a workout runs it owns the trainer: ERG on target steps, the previous
+  mode (normally SIM) on free steps and at the end. Manual trainer commands are overridden.
+  The server is not involved. Low.
+- *FTP.* `--ftp` if given, else the FTP of the rider profile riding now, else 200 W. Low.
+- *Workouts page.* Files from `<data>/ocw/workouts/`, then **bundled examples built into the
+  binary** (so the kiosk lists them too). Choosing one starts it at once (no confirmation: it
+  ends nothing). Low.
+- *FIT laps.* A lap at workout start, every step change, skip, end and stop; for events at GO,
+  each lap and the finish. Event lap changes can be off by one 10 Hz state update. Low.
+
+**World data (§4.7)**
+
+- *Finding neighbour packages.* Options: neighbour ids in the manifest, or a geographic
+  lookup. **Geographic**: a new `REGN` section (box and polygon) and `bounds` in the signed
+  manifest; candidates from the cache and the `--world` folder whose box touches within 0.01°,
+  verified with the same trust policy, joined only if a road crosses. Only direct neighbours;
+  at most 2 loaded at once (tiles within 3 km, dropped beyond 5 km). Low–medium.
+- *Matching roads at the border.* The builder now cuts roads **at the exact border crossing**,
+  so both sides meet; stable ids of boundary edges change on rebuild (route re-matching
+  handles it). Low.
+- *No step at the seam.* `world-builder package --bbox` builds 1 km of context roads so both
+  parts conform the terrain to the same road profiles. **Splitting from one extract is the
+  supported way**; packages built from separate extracts may still show a small step. Medium.
+- *Frame between packages.* Exact affine map, valid because the projection is
+  equirectangular; a move to UTM / transverse Mercator would need to revisit it.
+
+**Networking (§6.2, Phase 5 groundwork)**
+
+- *Channels.* Options: one stream for everything, a stream per message, or a stream plus
+  datagrams. **One reliable stream** (4-byte length prefix) for control, **datagrams** for
+  snapshots and sensor samples, falling back to the stream if a message is too large. A full
+  100-rider snapshot exceeds a datagram until interest management (§6.3) shrinks it. Medium.
+- *Port.* **UDP 47800** (unassigned in the registered range; not certain nothing else uses it).
+- *TLS.* TLS 1.3 with a self-signed certificate; the client **pins its SHA-256 fingerprint**
+  (`--server-cert`) or uses `--insecure-dev`, which is refused for anything but loopback. No
+  accounts yet: anyone who reaches the port and knows the fingerprint can join. Crypto
+  provider **ring** (Apache-2.0 AND ISC), avoiding aws-lc-rs's C toolchain. Low.
+- *Course.* The client rides its own course data; a server with a different course is refused.
+  The server's test route defaults to `loop`, the desktop's to `hills` (remote clients need
+  `--route loop`). Low.
+- *Limits.* 256 queued messages per client (snapshots dropped first, then "too slow"),
+  keep-alive 4 s, idle timeout 15 s. Medium.
+
+**Fixes found during the night (§2.2, §3.2, §4.3, §5)**
+
+- *U-turn on a one-way road.* The way back ran against the one-way, which left no exit and
+  triggered a second, automatic U-turn (double turn, endless circling in roundabouts). Options:
+  refuse the U-turn, keep it pending until a two-way road, or turn anyway. **Turn on the first
+  stretch of the known path that may be ridden back (at most 300 m ahead), else turn in place;
+  a rider against a one-way without a legal exit rides on against it** until the first legal
+  exit. Medium – the rider may be sent into the first legal side road.
+- *Starting on steep grades.* Below 1 m/s the force P/v used a 1 m/s floor, so a rider at
+  200 W stayed at 0 km/h on 33 % for ever. Options: roll back, stop, or crawl. **Positive power
+  always moves forward** (never negative speed while pedalling; the brake still holds). The
+  rider accelerates faster from standstill than before. Medium.
+- *Gradient artefacts in packages.* Short connectors and bridges kept impossible slopes (up to
+  203 % in the pilot); a new pass enforces the road-class limit across junctions, and heights
+  through rounded corners now follow the distance along the road (blended over up to 20 m).
+  Pilot maxima: edges 203 % → 25.8 %, corners 242 % → 34 %. Steep tracks that are really
+  steeper than 25 % are now flattened to the class limit. Medium.
+- *Tunnels.* Options: tunnel flags from the road graph (route files have none), hiding the
+  terrain above the road, or only lowering the camera. **The renderer detects tunnels from the
+  ground height along the rider's track**, draws a dark tube with lamps and switches to a close
+  tunnel camera that blends in and out. No package change. Limits: a short, very close camera
+  at the entry; riders are lit by the sun inside; mouse orbit is off inside; only the own
+  rider's track is searched. Medium.
+
+**Privacy.** Agents used the user's first name and login as example data; it was replaced by
+neutral names ("Alex", `someuser`) before anything was pushed, apart from one dashboard test
+that had already been pushed and was fixed.
+
+### B.3 Open items found during the night
+
+- Events: no "follow the leader" or scheduled events; "End the event" is not confirmed.
+- Workouts: FIT workout import, changing FTP mid-ride.
+- Networking: reconnect and the 2-minute session hold (§6.3), tokens / OIDC, certificates from
+  a public CA, rate limiting, tests under latency, loss and load.
+- Neighbour packages: neighbours of neighbours, packages that touch without a crossing road,
+  terrain-only neighbours.
+- Phase 4: 3D preview, components, character page, *Equal* race mode, glTF assets.
+- Menu: on-screen keyboard (renaming is console-only), more control options, bots per ride,
+  named start places, route rename / delete, FIT / GPX export rows, package downloads.
+- Free ride: a very short start edge can still squeeze the start formation together.
+- Tiles may still be empty for a few seconds after a long teleport (streaming lag).
+- Windows: running the app on the machine's screen (needs the interactive scheduled task),
+  installer, tests in CI.
+- `appimagetool` is downloaded from the continuous release without a pinned checksum.
+- Tunnels: a very close camera for about half a second at the entry; riders lit by the sun
+  inside; mouse orbit has no effect inside.
+- Corners between very short edges can still reach about 34 %; riders crawl through.
+- The Vaduz screenshot after the kiosk change showed the rider partly inside a building next
+  to the road (route-file road against the package's buildings) – to check.
+- The camera tilt values and the bike physics values are first tunings and need riding
+  feedback.
+- The build machine leela became unreachable at about 01:00 ("No route to host") and needs a
+  look; marge and the Mac took over.
+
+### B.4 Platform builds at the end of the night
+
+(filled in after the final runs)
