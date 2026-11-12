@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.23 – November 2026
+Version 2.24 – November 2026
 
 | Version | Change |
 |---|---|
@@ -42,6 +42,7 @@ Version 2.23 – November 2026
 | 2.21 | Game audio (§3.3): the freehub ticks only while the wheel overruns (coasting: power ≤ 10 W and no cadence able to drive the wheel), fades in 80 ms / out 8 ms, exactly silent while pedalling; drivetrain is a continuous whir, not a click train; demo ride in separated sections |
 | 2.22 | Render rate and FPS counter (§3.2): wall-clock FPS badge, `--log-fps`, `--no-vsync`, `--max-fps`; multiplayer test (§11.4.1): no client-side multiplayer bottleneck (measured), real-time 25 fps kiosk/camera videos with the FPS counter, locked kiosk draws with `--no-vsync --max-fps 60`, camera on the release build; §15 frame-rate measurement |
 | 2.23 | Release builds with voice on all platforms (§11.3, §7): every release binary is built with the LiveKit backend (`--features ocw-desktop/voice`; `OCW_FEATURES` in the packaging scripts); Windows links the C runtime statically (`.cargo/config.toml`, required by LiveKit's /MT libwebrtc, no VC++ redistributable needed); the macOS app script works around Command Line Tools that hide the SDK's libc++ headers; dropping the LiveKit backend joins its threads (Windows access violation in tests). Release `v0.1.0-72238db` |
+| 2.24 | Phase 8 planned: textures and regional look (§14 Phase 8): licence rule for textures/imagery/models, research results on open aerial and satellite imagery (Orthophoto Liechtenstein / SWISSIMAGE, LGL DOP20, own Sentinel-2 composite, Copernicus forest type), CC0 material libraries, procedural generation, region calibration (palettes, roof colour per building), milestones T1–T7 and open questions Q1–Q11; §4.6 imagery table corrected (EOX licences per year) |
 
 ---
 
@@ -999,13 +1000,13 @@ Ground textures are needed for different landscapes (meadow, field, forest floor
 
 | Source | Resolution | Licence | Usable? |
 |---|---|---|---|
-| **Copernicus Sentinel-2** (cloud-free mosaics, e.g. EOX Sentinel-2 cloudless) | 10 m | Copernicus data: free, attribution. Third-party mosaics have their own terms (EOX: CC BY-NC-SA for some years, commercial licence needed) | Yes; check the mosaic's licence |
+| **Copernicus Sentinel-2** (own cloud-free composite; EOX Sentinel-2 cloudless only the 2016 layer) | 10 m | Copernicus data: free, attribution. EOX: 2016 CC BY 4.0, 2018–2025 CC BY-NC-SA 4.0 (not usable) | Yes: own composite (Phase 8) |
 | **ESA WorldCover** (land-cover classification, not imagery) | 10 m | CC BY 4.0 | Yes |
 | **Official orthophotos** (e.g. German states' DOP20/DOP40, many under dl-de/by-2-0 or dl-de/zero-2-0; other EU countries similar) | 0.2–0.4 m | Open, varies by country/state | Yes, region by region |
 | **USGS NAIP** (USA) | 0.6–1 m | Public domain | Yes |
 | Google, Bing, Apple, Esri, Mapbox satellite layers | high | Proprietary; terms forbid extraction / offline use like this | **No** |
 
-Every imagery and land-cover source used in a package is listed in its metadata and shown on the credits screen (§13).
+Every imagery and land-cover source used in a package is listed in its metadata and shown on the credits screen (§13). Region sources found so far (Liechtenstein, Black Forest) and how imagery calibrates the look: Phase 8 (§14).
 
 **Implementation (Phase 3, land use and buildings):** the first step uses OSM only, no imagery and no textures yet.
 
@@ -1727,6 +1728,96 @@ Done so far for land use and buildings (§4.6): OSM land-use classes rasterised 
 - **Release tests:** performance tests against §15, security tests, installer and update tests per platform, hardware-in-the-loop protocol.
 
 **Result:** A release-ready indoor cycling platform on Linux, Windows and macOS.
+
+### Phase 8 – Textures and Regional Look (planning, 2026-11-12)
+
+**Goal:** the world looks like the real place. Meadows, forests, roads, roofs and façades in Liechtenstein look like Liechtenstein; in the Black Forest like the Black Forest. Riders and bikes get real materials instead of flat paint slots. Everything shipped must have a licence compatible with our MIT / Apache-2.0 code, and nothing may come from proprietary map imagery (§4.6, §13).
+
+#### 8A – Licence rule for textures, imagery and models
+
+Code stays MIT / Apache-2.0. Data and assets keep their own licence and are listed in the package / asset manifest (§8.1, §13). "Compatible" here means permissive, without share-alike, non-commercial or no-derivatives clauses:
+
+| Licence | Shipped in packages / app? | Obligation |
+|---|---|---|
+| CC0 1.0, public domain, own work (MIT / Apache-2.0) | Yes | none (we still credit the source) |
+| CC BY 4.0 (e.g. ESA WorldCover) | Yes | attribution on the credits screen |
+| Datenlizenz Deutschland zero / by 2.0 (German state geodata) | Yes | by-2.0: source note (e.g. "© LGL, www.lgl-bw.de") |
+| Swiss / Liechtenstein OGD "BY" (open use, source must be named) | Yes | source note, also downstream |
+| Copernicus Sentinel data licence | Yes | "Contains modified Copernicus Sentinel data [year]" |
+| ODbL (OSM) | Yes (Produced Work) | "© OpenStreetMap contributors", as today |
+| CC BY-SA 4.0 (e.g. Mapillary, older EOX mosaics) | **No** in packages; reference use only (looking at it, never copying pixels) | – |
+| CC BY-NC(-SA) (EOX Sentinel-2 cloudless 2018–2025) | **No** | – |
+| Google / Bing / Apple / Esri / Mapbox imagery, Street View | **No**, not even as reference for tracing | – |
+
+#### 8B – Research results: aerial and satellite imagery
+
+Yes, usable imagery exists for both regions, at very high resolution and under open licences (as of 2026-11-12; the exact terms must be re-checked per dataset and year before use, see Q1):
+
+| Region | Source | Resolution | Licence (found) | Notes |
+|---|---|---|---|---|
+| Liechtenstein | **Orthophoto Liechtenstein** (Amt für Tiefbau und Geoinformation, geodaten.llv.li; listed on opendata.swiss for 2003 … 2025, 2025 = SwissImage) | 10–25 cm | varies by year: 2018 "Opendata BY – open use, source must be named"; older years non-commercial | GeoTIFF download and WMS; ATG holds the distribution rights for SWISSIMAGE and swissALTI3D in Liechtenstein |
+| Liechtenstein / Switzerland | **swisstopo SWISSIMAGE 10 cm** | 10 cm (plains, main valleys), 25 cm (Alps) | OGD: open use, source must be named (central attribution accepted) | also **swissALTI3D** (0.5–2 m terrain) for a better DEM than SRTM |
+| Black Forest (Baden-Württemberg) | **LGL DOP20** (digital orthophotos) via opengeodata.lgl-bw.de | 20 cm | **dl-de/by-2.0**, free of charge since 2024-06-09 | also **DGM1** (1 m terrain) as open data since 2024; **LoD2 building models**: open-data status unclear (an LGL price list exists) → Q8 |
+| Europe / world | **Copernicus Sentinel-2** L2A scenes (Copernicus Data Space) | 10 m | Copernicus Sentinel data licence: free, full and open, attribution | we build **our own** cloud-free summer median composite, so no third-party mosaic licence applies |
+| Europe / world | EOX Sentinel-2 cloudless **2016** | 10 m | CC BY 4.0 | usable but old; 2018–2025 layers are CC BY-NC-SA → not usable |
+| Europe / world | **ESA WorldCover** (land cover) | 10 m | CC BY 4.0 | already planned (§4.6) |
+| Europe | **Copernicus HRL Forest Type / Tree Cover Density** (land monitoring) | 10–20 m | Copernicus land data: free and open, attribution | conifer vs. broadleaf and density → which trees grow where |
+
+**How imagery is used (extends §4.6):**
+
+1. **Far and mid distance:** the satellite / orthophoto colour tints the terrain (as planned in §4.6), now from the regional orthophoto where available, else Sentinel-2.
+2. **Calibration (the main use):** the world builder *measures* the region instead of guessing it:
+   - **Regional palettes** per land class: the median colour of meadow, farmland, forest, rock, settlement, asphalt in the orthophoto drives the tint of the tiling CC0 materials.
+   - **Roof colour per building:** sample the orthophoto inside each OSM building footprint (eroded by 1 m), store one colour per building in the package (3 bytes). Red tiles in Vaduz, dark shingles on Black Forest farms come out right automatically. OSM `roof:colour` wins where it is set.
+   - **Tree species and density** from Copernicus Forest Type / Tree Cover Density plus OSM `leaf_type`: spruce/fir in the Black Forest, mixed forest in the Rhine valley.
+   - **Road surface and markings:** asphalt tone from the orthophoto along the road; OSM `surface`, `lanes`, `width` as today.
+3. **Optional orthophoto drape near the road:** a corridor of about ±50 m around ridden roads at 0.4–0.5 m/pixel, blended with the materials at mid distance (never as the close-up texture, see §4.6). Estimate: 1 km of road ≈ 0.4 Mpx ≈ 50–100 KB as KTX2/Basis; Liechtenstein's network (≈ 600–800 km) ≈ 30–80 MB. To be measured (Q4).
+
+#### 8C – Research results: textures and models for close-up surfaces, houses, riders and bikes
+
+| What | Where from | Licence | Regional match |
+|---|---|---|---|
+| Ground (grass, forest floor, rock, gravel, snow, soil) | **ambientCG**, **Poly Haven** (also cgbookcase, ShareTextures – to verify) | CC0 | tinted with the regional palette (8B) |
+| Road surfaces (asphalt types, cobbles, gravel, dirt), markings | ambientCG / Poly Haven + procedural markings | CC0 / own | OSM `surface`, colour from the orthophoto |
+| Houses: roofs and façades | CC0 roof tile / plaster / timber / shingle materials + **procedural façades** (windows and doors from `building:levels`, `building` type, `roof:shape`, `roof:levels`, `building:material`, `building:colour`) | CC0 / own | **regional style presets**: Rhine valley (plaster, red tile, gable), Alpine Liechtenstein (timber upper floors, wide eaves), Black Forest farmhouse (huge hipped roof down to the ground floor, dark shingles, wood); roof colour from the orthophoto |
+| Trees, bushes, grass | Poly Haven models, Quaternius / Kenney packs (CC0), or own procedural trees | CC0 / own | species and density from 8B |
+| Riders (skin, kit fabric, helmets, shoes) | **generated** (Phase 4 rig and meshes), fabric normal maps from CC0 libraries, procedural jersey designs (stripes, panels, numbers) | own / CC0 | – (cosmetics, §2.5) |
+| Bikes (frame paint, carbon weave, metal, rubber, saddle) | **generated** procedural materials (carbon weave, brushed aluminium, rubber) | own | – ; **no real brand names or logos** (trademarks) |
+| Street furniture (signs, barriers, benches, fountains) | own low-poly models; sign faces drawn procedurally from OSM `traffic_sign` | own | country sign styles (CH/LI vs. DE) |
+
+**Can they be generated? Yes – in three ways, in this order of preference:**
+
+1. **Procedural (code):** noise-based materials, façades, jersey patterns, carbon weave and tree generators in the world builder / asset tool. Deterministic, tiny, MIT / Apache-2.0 by construction, testable (golden-image tests at low resolution). First choice for riders, bikes, façades and markings.
+2. **Example-based from our own photos:** photos taken by us in the regions (bark, roof tiles, asphalt, walls) turned into tiling PBR materials (photogrammetry / texture synthesis). Own work, licensed like the code. Best for "looks like the real place".
+3. **AI-generated textures:** possible, but the copyright of the output and the licences of models and training data are unclear and vary by model. Not for shipped assets until decided (Q3).
+
+#### 8D – Pipeline and milestones (proposal)
+
+- **T1 – Material library:** CC0 PBR set (ground, road, roof, façade, bark, fabric), KTX2/Basis compression, manifest entries with licence / source / author, validator extension (no unknown licence, no NC/SA/ND), credits screen entries.
+- **T2 – Terrain materials:** splat map (§4.6) → tiling materials with triplanar mapping on slopes; regional tint maps from Sentinel-2 (own composite) / orthophoto; far LOD colour.
+- **T3 – Region calibration in the world builder:** orthophoto and Sentinel download per region (`fetch` scripts, licence table per source as for OSM/SRTM), palettes per land class, roof colour per building, forest type and density; package format extension (new sections, only added fields).
+- **T4 – Houses:** procedural façades and roof shapes from OSM tags with regional style presets; roof colour from T3; LOD.
+- **T5 – Roads:** surface materials, markings, kerbs and sidewalks in towns, wear and patches.
+- **T6 – Riders and bikes:** procedural fabric / carbon / metal / rubber materials on the Phase 4 models, jersey designer (patterns, colours, number), helmet and shoe variants.
+- **T7 – Optional orthophoto corridor** near ridden roads (after Q4).
+- **Unit tests:** licence validator (rejects NC/SA/ND/unknown), palette extraction on synthetic orthophoto tiles, roof-colour sampling (footprint erosion, nodata, `roof:colour` precedence), forest-type mapping, façade generator (window counts from levels, deterministic output), package section round-trips, KTX2 encoding of a sample, golden-image tests of the generated materials at low resolution.
+- **Comparison tests:** the scene harness (§11.4) renders the same viewpoints before and after, next to a photo of the real place taken by us where available (never Google / Street View), for the build history and the art project.
+
+**Result:** recognisable regions: the red roofs of Vaduz, the dark farmhouses and spruce forests of the Black Forest, real road surfaces, riders and bikes with real materials, all under open licences with full attribution.
+
+#### 8E – Open questions (for the user)
+
+- **Q1 – Attribution licences:** are CC BY 4.0, dl-de/by-2.0 and the Swiss / Liechtenstein OGD "BY" terms acceptable (attribution on the credits screen and in the package), or only CC0 / public domain? Recommendation: accept them; without them there is no high-resolution imagery for either region.
+- **Q2 – Commercial use:** is a commercial release planned? It decides whether anything with grey areas can ever be considered (e.g. EOX commercial licence) and when a legal review is needed (§13).
+- **Q3 – AI-generated textures:** allowed for shipped assets? If yes, with which model and licence, and is "generated by model X" enough provenance in the manifest? Recommendation: no for now; procedural + CC0 + own photos first.
+- **Q4 – Package size:** how much extra per region is acceptable for the orthophoto corridor (estimate 30–80 MB for Liechtenstein, far more for the Black Forest)? Optional download, or part of the package?
+- **Q5 – Season and time of day:** summer only, or seasonal variants (autumn colours, snow in the Black Forest / Malbun)? It changes which imagery dates we pick and doubles the palettes.
+- **Q6 – Own photos:** can someone take reference and texture photos in Liechtenstein and the Black Forest (roof tiles, façades, bark, asphalt, signs)? They would become own-work textures and the "real photo" side of the comparison tests.
+- **Q7 – Mapillary / street-level imagery:** OK as visual reference only (CC BY-SA 4.0, never copied into assets)? Recommendation: yes, reference only.
+- **Q8 – 3D building data:** use official LoD2 building models where they are open (roof shapes far better than OSM), after checking LGL's LoD2 terms? Liechtenstein / Swiss equivalents (swissBUILDINGS3D) too?
+- **Q9 – Better terrain:** switch from SRTM (30 m) to swissALTI3D (Liechtenstein) and DGM1 (Black Forest), both open? Cliffs, hairpins and riverbanks would match much better; packages grow.
+- **Q10 – Priority:** what first: ground and roads (most visible while riding), houses (towns), or riders and bikes?
+- **Q11 – Brands:** confirm: no real bike or kit brands / logos, also not as cosmetics.
 
 ---
 
