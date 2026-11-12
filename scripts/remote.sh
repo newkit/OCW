@@ -70,7 +70,7 @@ elif [ "$branch" != "main" ]; then
 fi
 # Branch checkouts build from scratch (own target/); several agents doing
 # that at once overload the machine, so they get fewer parallel jobs.
-# OCW_REMOTE_JOBS overrides (empty = cargo's default, all cores). A machine's
+# OCW_REMOTE_JOBS overrides on any branch (empty = cargo's default, all cores). A machine's
 # `jobs` in machines.toml caps both (e.g. 2 on the 8 GB Windows machine,
 # where each MSVC link of a Bevy binary takes ~5 GB).
 jobs_env=""
@@ -78,7 +78,7 @@ machine_jobs=$(field jobs)
 if [ "$branch" != "main" ]; then
   jobs=${OCW_REMOTE_JOBS-${machine_jobs:-4}}
 else
-  jobs=$machine_jobs
+  jobs=${OCW_REMOTE_JOBS-$machine_jobs}
 fi
 [ -n "$jobs" ] && jobs_env="CARGO_BUILD_JOBS=$jobs "
 
