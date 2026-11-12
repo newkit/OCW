@@ -945,8 +945,10 @@ version counts up when the package content changes (`--pkg-version N` sets
 it), `--dem-attribution TEXT` replaces the SRTM notice. Clients trust a root
 by its public key file `root.pub.json`.
 
-Release builds for Linux and macOS are in `release/`, screenshots and videos
-from development in `artwork/build-history/`.
+Release builds are published as GitHub Releases (`release/README.md` has the
+build notes); screenshots and videos from development are indexed in
+`artwork/build-history/README.md` and stored as one zip per day on the GitHub
+release `build-history` (the day folders are git-ignored).
 
 ## Repository layout
 

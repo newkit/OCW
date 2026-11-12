@@ -22,6 +22,12 @@ with a real GPU, plus contact sheets and crops made from them for review.
   © OpenStreetMap contributors (ODbL).
 - New archived runs land in the git-ignored `test-output/`; copy the ones
   worth keeping here and add a row below.
+- **The media are not in git** (decided 2026-11-12; the history was rewritten
+  to remove them, see `release/commit-map.txt`): the day folders
+  `YYYY-MM-DD/` are git-ignored and published as one zip per day,
+  `ocw-build-history-YYYY-MM-DD.zip`, on the GitHub release
+  [`build-history`](https://github.com/newkit/OCW/releases/tag/build-history).
+  This index stays in git; unzip a day's file here to make its links work.
 
 | Date | File | What it shows |
 |---|---|---|
