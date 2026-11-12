@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.25 – November 2026
+Version 2.26 – November 2026
 
 | Version | Change |
 |---|---|
@@ -44,6 +44,7 @@ Version 2.25 – November 2026
 | 2.23 | Release builds with voice on all platforms (§11.3, §7): every release binary is built with the LiveKit backend (`--features ocw-desktop/voice`; `OCW_FEATURES` in the packaging scripts); Windows links the C runtime statically (`.cargo/config.toml`, required by LiveKit's /MT libwebrtc, no VC++ redistributable needed); the macOS app script works around Command Line Tools that hide the SDK's libc++ headers; dropping the LiveKit backend joins its threads (Windows access violation in tests). Release `v0.1.0-72238db` |
 | 2.24 | Phase 8 planned: textures and regional look (§14 Phase 8): licence rule for textures/imagery/models, research results on open aerial and satellite imagery (Orthophoto Liechtenstein / SWISSIMAGE, LGL DOP20, own Sentinel-2 composite, Copernicus forest type), CC0 material libraries, procedural generation, region calibration (palettes, roof colour per building), milestones T1–T7 and open questions Q1–Q11; §4.6 imagery table corrected (EOX licences per year) |
 | 2.25 | Phase 9 planned: sky, time, seasons and weather (§14 Phase 9): real local time and sky at the rider's world position (sun, moon, stars moving, twilight, night lighting), seasons by date and altitude, time machine (any date/time, time speed, presets), weather simulation and weather machine (presets, custom, transitions), optional weather physics (wind, wetness, air density; per session), real weather from open providers via the server (MeteoSwiss, DWD, MET Norway; Open-Meteo non-commercial; ERA5 for historic weather), milestones S1–S8, open questions Q1–Q10 |
+| 2.26 | Phase 8D: reference photos (Wikimedia Commons, web image search, own photos) to learn how things look; looking is free, copying only under 8A licences; reference boards `art/reference/<region>.md` |
 
 ---
 
@@ -1748,7 +1749,7 @@ Code stays MIT / Apache-2.0. Data and assets keep their own licence and are list
 | ODbL (OSM) | Yes (Produced Work) | "© OpenStreetMap contributors", as today |
 | CC BY-SA 4.0 (e.g. Mapillary, older EOX mosaics) | **No** in packages; reference use only (looking at it, never copying pixels) | – |
 | CC BY-NC(-SA) (EOX Sentinel-2 cloudless 2018–2025) | **No** | – |
-| Google / Bing / Apple / Esri / Mapbox imagery, Street View | **No**, not even as reference for tracing | – |
+| Google / Bing / Apple / Esri / Mapbox imagery, Street View | **No** pixels in assets, and never traced into geodata (positions, outlines, road widths). Looking at photos to learn what things look like is fine (8D) | – |
 
 #### 8B – Research results: aerial and satellite imagery
 
@@ -1792,7 +1793,17 @@ Yes, usable imagery exists for both regions, at very high resolution and under o
 2. **Example-based from our own photos:** photos taken by us in the regions (bark, roof tiles, asphalt, walls) turned into tiling PBR materials (photogrammetry / texture synthesis). Own work, licensed like the code. Best for "looks like the real place".
 3. **AI-generated textures:** possible, but the copyright of the output and the licences of models and training data are unclear and vary by model. Not for shipped assets until decided (Q3).
 
-#### 8D – Pipeline and milestones (proposal)
+#### 8D – Reference photos: how things really look
+
+Before a material, house style, tree, sign or bike part is designed, we look at **real photos of the region** to learn what it looks like: roof shapes and colours, façade materials, the asphalt, kerbs and markings, the forest, fences, signs, farm buildings, typical bikes and kit.
+
+- **Sources:** Wikipedia / **Wikimedia Commons** (searchable by place and category, e.g. "Category:Vaduz", "Category:Black Forest houses", every file with its licence), municipal and tourism websites, general image search, and our own photos (Phase 8 Q6).
+- **Looking vs. copying:** looking at any photo to understand shapes, proportions, colours and materials is fine, because facts and styles are not protected. Copying is a different matter: pixels in an asset, tracing outlines, or a recognisable reproduction of a specific photo are allowed only from files whose licence permits it under 8A (CC0, public domain, CC BY with attribution). CC BY-SA and unlicensed web images stay reference-only.
+- **Reference boards:** per region a short Markdown file `art/reference/<region>.md` (in git) with links (not copies) to the photos used, what each shows (e.g. "Black Forest farmhouse: hipped roof down to the ground floor, dark wood shingles, balcony under the eaves") and its licence. Downloads for viewing go to a git-ignored cache; only permitted files may be used for textures, with a manifest entry.
+- **Colour picking from photos** (e.g. the typical roof red of Vaduz) is reference use; the orthophoto sampling of 8B gives the measured values per building.
+- **Agents** doing Phase 8 work start each design task by collecting 5–15 reference photos (Wikimedia Commons first), write them into the board, and compare their render with the references in the scene harness.
+
+#### 8E – Pipeline and milestones (proposal)
 
 - **T1 – Material library:** CC0 PBR set (ground, road, roof, façade, bark, fabric), KTX2/Basis compression, manifest entries with licence / source / author, validator extension (no unknown licence, no NC/SA/ND), credits screen entries.
 - **T2 – Terrain materials:** splat map (§4.6) → tiling materials with triplanar mapping on slopes; regional tint maps from Sentinel-2 (own composite) / orthophoto; far LOD colour.
@@ -1806,7 +1817,7 @@ Yes, usable imagery exists for both regions, at very high resolution and under o
 
 **Result:** recognisable regions: the red roofs of Vaduz, the dark farmhouses and spruce forests of the Black Forest, real road surfaces, riders and bikes with real materials, all under open licences with full attribution.
 
-#### 8E – Open questions (for the user)
+#### 8F – Open questions (for the user)
 
 - **Q1 – Attribution licences:** are CC BY 4.0, dl-de/by-2.0 and the Swiss / Liechtenstein OGD "BY" terms acceptable (attribution on the credits screen and in the package), or only CC0 / public domain? Recommendation: accept them; without them there is no high-resolution imagery for either region.
 - **Q2 – Commercial use:** is a commercial release planned? It decides whether anything with grey areas can ever be considered (e.g. EOX commercial licence) and when a legal review is needed (§13).
@@ -1814,7 +1825,7 @@ Yes, usable imagery exists for both regions, at very high resolution and under o
 - **Q4 – Package size:** how much extra per region is acceptable for the orthophoto corridor (estimate 30–80 MB for Liechtenstein, far more for the Black Forest)? Optional download, or part of the package?
 - **Q5 – Season and time of day:** summer only, or seasonal variants (autumn colours, snow in the Black Forest / Malbun)? It changes which imagery dates we pick and doubles the palettes.
 - **Q6 – Own photos:** can someone take reference and texture photos in Liechtenstein and the Black Forest (roof tiles, façades, bark, asphalt, signs)? They would become own-work textures and the "real photo" side of the comparison tests.
-- **Q7 – Mapillary / street-level imagery:** OK as visual reference only (CC BY-SA 4.0, never copied into assets)? Recommendation: yes, reference only.
+- **Q7 – Mapillary / street-level imagery:** OK as visual reference only, like other web photos (8D; CC BY-SA 4.0, never copied into assets)? Recommendation: yes, reference only.
 - **Q8 – 3D building data:** use official LoD2 building models where they are open (roof shapes far better than OSM), after checking LGL's LoD2 terms? Liechtenstein / Swiss equivalents (swissBUILDINGS3D) too?
 - **Q9 – Better terrain:** switch from SRTM (30 m) to swissALTI3D (Liechtenstein) and DGM1 (Black Forest), both open? Cliffs, hairpins and riverbanks would match much better; packages grow.
 - **Q10 – Priority:** what first: ground and roads (most visible while riding), houses (towns), or riders and bikes?
