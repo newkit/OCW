@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.27 – November 2026
+Version 2.28 – November 2026
 
 | Version | Change |
 |---|---|
@@ -46,6 +46,7 @@ Version 2.27 – November 2026
 | 2.25 | Phase 9 planned: sky, time, seasons and weather (§14 Phase 9): real local time and sky at the rider's world position (sun, moon, stars moving, twilight, night lighting), seasons by date and altitude, time machine (any date/time, time speed, presets), weather simulation and weather machine (presets, custom, transitions), optional weather physics (wind, wetness, air density; per session), real weather from open providers via the server (MeteoSwiss, DWD, MET Norway; Open-Meteo non-commercial; ERA5 for historic weather), milestones S1–S8, open questions Q1–Q10 |
 | 2.26 | Phase 8D: reference photos (Wikimedia Commons, web image search, own photos) to learn how things look; looking is free, copying only under 8A licences; reference boards `art/reference/<region>.md` |
 | 2.27 | Second world: the southern Black Forest (§4.7): Geofabrik Regierungsbezirk Freiburg + SRTM (`fetch-pilot.sh blackforest`), one 260 MB package of 2,260 km² (47.72–48.12 N, 7.62–8.30 E, origin 47.92 N 7.96 E) chosen by measured build and client memory (core 1,000 km² / 124 MB, large 5,370 km² / 564 MB over the §15 memory budget), more of it as neighbour packages later; routes Freiburg – Schauinsland and Titisee – Feldberg (`build-blackforest.sh`); `world-builder route --bbox / --origin`, `world-builder areas`; fixes: gutters (`ditch` / `drain` under 2 m) no longer water (§4.6), bike-open pedestrian streets paved (§4.4), a package rewritten in place gets a new manifest (§4.7); scene harness with named worlds (§11.4) |
+| 2.28 | Phase 9 decisions: time = local time of the rider's place in the virtual world, never the person's physical location (Q1); weather realistic including extreme weather, no cap (Q9) |
 
 ---
 
@@ -1858,7 +1859,7 @@ Before a material, house style, tree, sign or bike part is designed, we look at 
 
 #### 9A – Principles
 
-- **Default = real.** "Now" means the real current instant (UTC) shown at the position of the rider **in the world**: the world's local time zone and daylight saving time, the sun's position over that spot, today's weather there. Example: a rider in Tokyo riding Liechtenstein at 14:00 Tokyo time sees 06:00 in Liechtenstein, i.e. sunrise (Q1).
+- **Default = real.** "Now" means the real current instant (UTC) shown at the position of the rider **in the world**: the world's local time zone and daylight saving time, the sun's position over that spot, today's weather there. Example: a rider in Tokyo riding Liechtenstein at 14:00 Tokyo time sees 06:00 in Liechtenstein, i.e. sunrise. The time of the virtual place counts, never the time where the person physically is (decided, Q1).
 - **One clock and one weather per session, owned by the game server** (server-authoritative, §6.1): `WorldClock` (instant, time speed, mode real/fixed) and `WeatherState` are server state, sent in `Welcome` and in snapshots (new protobuf fields, only added). Single-player runs the same code in the local server, so solo riders are their own "host".
 - **Visual vs. physical.** Light, sky, season and most weather effects are visual. Wind, road wetness and air density can also change the **physics** (§5). They are server-side and switched per session or event ("weather affects physics": on / off; off by default in races for fairness, Q4).
 - **Deterministic and testable.** All astronomy, time-zone, season and weather logic is pure Rust outside Bevy, builds for wasm (§3.5), and is unit-tested against reference values. The renderer only draws the state.
@@ -1895,7 +1896,7 @@ The date drives the look of the landscape (connects to Phase 8, Q5):
 The rider (in solo) or the host / event organiser (in a shared session) sets **any date and time**:
 
 - **Modes:** *Real* (now, default), *Fixed* (a chosen instant, e.g. 21 June 2026 21:15), *Offset* (now + n hours), plus a **time speed** (paused, ×1, ×10, ×60, ×600: a whole day in a few minutes of riding, the time-lapse sunset).
-- **Presets:** sunrise, golden hour, noon, sunset, blue hour, midnight, next full moon, summer / winter solstice, and "same time as at home" (the rider's own time zone instead of the world's).
+- **Presets:** sunrise, golden hour, noon, sunset, blue hour, midnight, next full moon, summer / winter solstice.
 - **Range:** years 1900–2100. The astronomy is valid there; seasons and snow follow the date. "Historic weather" (9F) combines naturally: ride the Malbun climb on a past date with the weather of that day.
 - **UI:** menu page *Time machine* (Navi / Ride), a world clock in the HUD with the mode, console `time` (today a dev command, §3.2.1; it becomes a user command, with permissions in shared sessions).
 
@@ -1915,6 +1916,8 @@ The rider (in solo) or the host / event organiser (in a shared session) sets **a
 - **Wetness** raises rolling resistance slightly.
 - **Temperature, pressure and altitude** give the air density in the drag term.
 - **Trainer:** the gradient sent to the trainer in SIM mode stays the road's gradient. The extra wind load is added as resistance where the trainer supports it (FTMS wind speed / Wahoo wind), else only in the simulated speed.
+
+**Extreme weather is included, uncapped** (decided, Q9): storms, hail, heavy snow, thunderstorms, dense fog, gale-force wind, in the simulation, the presets and real weather.
 
 **Weather machine:** the rider / host chooses
 
@@ -1974,7 +1977,7 @@ Attribution of the provider used appears on the credits screen and in the weathe
 
 #### 9H – Open questions (for the user)
 
-- **Q1 – Whose "now"?** The world's local time at the rider's world position (recommended, it matches the place), or the rider's own local time (riding in the evening at home = evening in the world)? Proposal: world time by default, "same time as at home" as a preset.
+- **Q1 – Whose "now"? Decided (2026-11-12):** the time of the place **in the virtual world** where the rider is: its local time zone and DST, its sun, moon and stars. The real location of the person at home plays no role. A "same time as at home" preset is not planned.
 - **Q2 – Shared sessions:** who controls the time and weather machines in group rides and events: host / organiser only (recommended), or a personal visual-only override per rider (my sky differs from yours, physics stays the session's)?
 - **Q3 – Night riding:** is riding in full darkness desired (with bike lights), or should night have a minimum brightness for training comfort?
 - **Q4 – Weather and physics:** should wind and wet roads change the physics (more realism, but power/speed differ from the trainer feel), and in races too? Proposal: on in free ride and solo, off in races unless the organiser enables it.
@@ -1982,7 +1985,7 @@ Attribution of the provider used appears on the credits screen and in the weathe
 - **Q6 – Weather provider:** MeteoSwiss + DWD (regional, open) with MET Norway as a global fallback (recommended), or Open-Meteo (simplest API; non-commercial on the free tier, else self-hosting or a subscription)? Is a commercial release planned (same as Phase 8 Q2)?
 - **Q7 – Star catalogue licence:** the Yale Bright Star Catalogue's licence is not clearly documented (Debian ships it in *non-free*), and the HYG database is CC BY-SA 4.0. Acceptable alternatives: ESA Hipparcos / Gaia-derived lists (terms to check), or a catalogue we derive ourselves from public-domain data. Decide after checking; the code doesn't depend on the choice.
 - **Q8 – Historic weather:** wanted (ride a famous day, e.g. a race day in the past, with its real weather)? It needs ERA5 downloads on our infrastructure.
-- **Q9 – Extreme weather:** allow storms, hail and heavy snow (visually), or cap at "rideable" weather?
+- **Q9 – Extreme weather: decided (2026-11-12):** realistic, **no cap**. Storms, hail, heavy snow, thunderstorms with lightning, dense fog and gale-force wind are all part of the simulation, the weather machine and real weather. The only limit is the physics switch (Q4).
 - **Q10 – Priority:** order of S1–S8. Proposal: S1 → S3 → S2 → S4 → S5 → S7 → S8 → S6.
 
 ---
