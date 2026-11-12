@@ -12,9 +12,45 @@ files on the GitHub release `build-history`), which changed the commit ids.
 `commit-map.txt` maps the original ids and those after the first rewrite to
 the current ones; the ids below are the current ones. The builds
 `0.1.0-15d89d0`, `-c3187a3` and `-310360b` (old ids) are not downloadable any
-more; the latest build is on the Releases page. Its files and the apps'
-`--version` still show the old commit ids `fc5947f` (Linux, Windows) and
-`dddee37` (macOS), because they were built before the rewrite.
+more. The files and `--version` of `0.1.0-c5255a1` still show the old ids
+`fc5947f` (Linux, Windows) and `dddee37` (macOS), because they were built
+before the rewrite.
+
+## 0.1.0-72238db – all platforms, with voice
+
+Built from commit `72238db` on all three build machines, every binary with
+the LiveKit voice backend (spec 2.23). Tests with `--features
+ocw-desktop/voice`: 903 passed on Linux and macOS, 904 on Windows, 0 failed;
+fmt, clippy (with and without voice) and the wasm check clean.
+
+| Platform | Built on | File | Size |
+|---|---|---|---|
+| linux-x86_64 | Linux build machine (`marge`, clang 21) | `OpenCyclingWorld-0.1.0-72238db-x86_64.AppImage` | 56.5 MB |
+| linux-x86_64 | | `OpenCyclingWorld-0.1.0-72238db-linux-x86_64.tar.xz` (stripped `ocw-desktop`, `ocw-server`, `world-builder`) | 34.9 MB |
+| windows-x86_64 | Windows 11 build machine (MSVC, static CRT) | `OpenCyclingWorld-0.1.0-72238db-windows-x86_64.zip` (`ocw-desktop.exe`, `ocw-server.exe`, `world-builder.exe`) | 51.0 MB |
+| macos-arm64 | Apple Silicon Mac | `OpenCyclingWorld-0.1.0-72238db-macos-arm64.dmg` | 49.7 MB |
+
+How they were built:
+
+```bash
+# Linux (CC=clang-21 CXX=clang++-21)
+cargo build --release -p ocw-desktop -p ocw-server -p world-builder --features ocw-desktop/voice
+OCW_FEATURES=ocw-desktop/voice scripts/build-appimage.sh target/rel/OpenCyclingWorld-0.1.0-<sha>-x86_64.AppImage
+# macOS
+OCW_SHA=<sha> OCW_FEATURES=ocw-desktop/voice scripts/build-macos-app.sh
+# Windows: the same cargo build, then the three .exe files zipped
+```
+
+- Voice needs a LiveKit server, given to the game server with
+  `ocw-server --listen … --livekit-url ws://HOST:7880 --livekit-api-key KEY`
+  and `OCW_LIVEKIT_API_SECRET` (spec §7); without it voice is off and the
+  app runs as before.
+- **Windows:** the C runtime is linked statically (`.cargo/config.toml`), so
+  no Visual C++ redistributable is needed.
+- **macOS:** the voice parts are compiled for the SDK version of the build
+  machine (macOS 15.2); tested on macOS 26.
+- The world package is unchanged (`ocw-world-liechtenstein-v3.zip`, world
+  builder unchanged since `c5255a1`).
 
 ## 0.1.0-c5255a1 – Linux and Windows
 
