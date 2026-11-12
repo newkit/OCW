@@ -93,18 +93,19 @@ fn pilot_region_elevation_profiles() {
             assert!((prev - h).abs() < 1e-6, "junction {v}: {prev} vs {h}");
         }
     }
-    // Nearly every edge respects its class limit (the rest are physically
-    // impossible junction-height pairs, reported as suspicious).
-    let within = g
-        .edges
-        .iter()
-        .filter(|e| steepest(&e.profile, 1) <= limits(e.class).0 + 0.01)
-        .count();
-    assert!(
-        within as f64 / g.edges.len() as f64 > 0.97,
-        "{within} of {}",
-        g.edges.len()
-    );
+    // Every edge respects its class limit, also short connectors between
+    // roads filtered on their own and bridges (before the limit across
+    // junctions, 42 edges did not: up to 203 %, riders stalled on them).
+    for (i, e) in g.edges.iter().enumerate() {
+        let s = steepest(&e.profile, 1);
+        assert!(
+            s <= limits(e.class).0 + 0.01,
+            "edge {i} ({:?}, {:.1} m): {:.1} %",
+            e.class,
+            e.length_m(),
+            s * 100.0
+        );
+    }
 }
 
 #[test]

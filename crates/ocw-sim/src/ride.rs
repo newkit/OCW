@@ -173,6 +173,39 @@ mod tests {
         );
     }
 
+    /// Regression: a rider stopped on a 33 % ramp with 200 W (free ride,
+    /// after a U-turn) never got going again. The server and the client's
+    /// prediction both tick through here.
+    #[test]
+    fn a_stopped_rider_starts_up_a_steep_ramp() {
+        let ramp = Route::from_points(
+            "r",
+            "R",
+            vec![[0.0, 0.0, 0.0], [300.0, 99.0, 0.0]],
+            false,
+            5.0,
+        )
+        .unwrap();
+        let profile = RiderProfile::default();
+        let mut s = RiderState::default();
+        let mut scraping = false;
+        for _ in 0..(20.0 / 0.02) as usize {
+            tick(
+                &mut s,
+                &profile,
+                200.0,
+                Controls::default(),
+                &mut scraping,
+                &ramp,
+                1.0,
+                0.02,
+            );
+        }
+        // ~0.73 m/s (2.6 km/h) steady.
+        assert!((0.65..0.8).contains(&s.speed), "{s:?}");
+        assert!(s.distance > 12.0, "{s:?}");
+    }
+
     fn straight() -> Route {
         Route::from_points(
             "s",

@@ -512,6 +512,121 @@ pub fn limit_grade_locally(
     h
 }
 
+/// Brings every edge of `graph` within its class gradient, across the
+/// junctions. The through-road filter fixes junction heights road by road,
+/// so a short connector between two roads filtered on their own (or a
+/// bridge between junctions of two roads) can end up far steeper than its
+/// class allows: up to 200 % on the pilot region before this pass.
+///
+/// 1. Junction heights are relaxed again, now over all edges (bridges and
+///    tunnels too): an edge whose ends are too far apart moves both
+///    (weighted towards the end with fewer roads), repeated until every
+///    edge can hold its limit between its ends.
+/// 2. Every road whose end moved, or that is still too steep, is limited
+///    locally between its new ends ([`limit_grade_locally`]: the end
+///    correction fades out over 200 m); bridges and tunnels stay straight.
+/// 3. What is left is flattened sample by sample across the junctions
+///    (a junction's height is shared by all its roads).
+///
+/// Profiles that hold their limit and whose ends did not move are not
+/// touched.
+pub fn limit_grades_across_junctions(graph: &mut RoadGraph, vertex_h: &mut [f64]) {
+    let before = vertex_h.to_vec();
+    let degree: Vec<f64> = graph
+        .adjacency()
+        .iter()
+        .map(|a| a.len().max(1) as f64)
+        .collect();
+    for _ in 0..1000 {
+        let mut changed = false;
+        for e in &graph.edges {
+            let (a, b) = (e.from.0 as usize, e.to.0 as usize);
+            let dh = vertex_h[b] - vertex_h[a];
+            let excess = dh.abs() - limits(e.class).0 * e.length_m();
+            if a == b || excess <= 1e-6 {
+                continue;
+            }
+            let (wa, wb) = (1.0 / degree[a], 1.0 / degree[b]);
+            let s = dh.signum() * excess;
+            vertex_h[a] += s * wa / (wa + wb);
+            vertex_h[b] -= s * wb / (wa + wb);
+            changed = true;
+        }
+        if !changed {
+            break;
+        }
+    }
+    for e in &mut graph.edges {
+        let n = e.profile.len();
+        if n < 2 {
+            continue;
+        }
+        let (a, b) = (e.from.0 as usize, e.to.0 as usize);
+        let max_grade = limits(e.class).0;
+        let moved =
+            (vertex_h[a] - before[a]).abs() > 1e-9 || (vertex_h[b] - before[b]).abs() > 1e-9;
+        if !moved && steepest(&e.profile, 1) <= max_grade + 1e-6 {
+            continue;
+        }
+        let len = e.length_m();
+        let (ha, hb) = (vertex_h[a], vertex_h[b]);
+        e.profile = if e.bridge || e.tunnel {
+            distances(n, len)
+                .iter()
+                .map(|x| ha + (hb - ha) * x / len.max(1e-9))
+                .collect()
+        } else {
+            limit_grade_locally(&e.profile, len, ha, hb, max_grade)
+        };
+    }
+    let runs: Vec<(Vec<f64>, f64)> = graph
+        .edges
+        .iter()
+        .map(|e| {
+            let d = distances(e.profile.len(), e.length_m());
+            let runs = d.windows(2).map(|w| (w[1] - w[0]).max(0.0)).collect();
+            (runs, limits(e.class).0)
+        })
+        .collect();
+    for _ in 0..2000 {
+        let mut worst = 0.0f64;
+        for (e, (run, max_grade)) in graph.edges.iter_mut().zip(&runs) {
+            let p = &mut e.profile;
+            let n = p.len();
+            if n < 2 {
+                continue;
+            }
+            let (a, b) = (e.from.0 as usize, e.to.0 as usize);
+            p[0] = vertex_h[a];
+            p[n - 1] = vertex_h[b];
+            for (k, &r) in run.iter().enumerate() {
+                let dh = p[k + 1] - p[k];
+                let excess = dh.abs() - max_grade * r;
+                if excess <= 1e-9 {
+                    continue;
+                }
+                worst = worst.max(excess);
+                let s = dh.signum() * excess / 2.0;
+                p[k] += s;
+                p[k + 1] -= s;
+            }
+            vertex_h[a] = p[0];
+            vertex_h[b] = p[n - 1];
+        }
+        if worst < 1e-4 {
+            break;
+        }
+    }
+    // Exactly the junction heights at the ends (continuity).
+    for e in &mut graph.edges {
+        let n = e.profile.len();
+        if n >= 2 {
+            e.profile[0] = vertex_h[e.from.0 as usize];
+            e.profile[n - 1] = vertex_h[e.to.0 as usize];
+        }
+    }
+}
+
 /// Computes `profile` for every edge of `graph`.
 ///
 /// 1. Sample the DEM every 5 m; median filter; Gaussian smoothing per class.
@@ -521,6 +636,8 @@ pub fn limit_grade_locally(
 /// 3. Filter along whole through-roads ([`filter_through_roads`]): one
 ///    profile across the OSM way splits, limited in gradient (locally, so
 ///    it stays on the terrain) and gradient change between fixed junctions.
+/// 4. The class gradient across junctions
+///    ([`limit_grades_across_junctions`]).
 pub fn add_profiles(graph: &mut RoadGraph, dem: &Dem, proj: &LocalProjection) -> ProfileStats {
     let height = |p: [f64; 2]| {
         let (lat, lon) = proj.unproject(p);
@@ -576,7 +693,7 @@ pub fn add_profiles(graph: &mut RoadGraph, dem: &Dem, proj: &LocalProjection) ->
     let mut along_roads = filter_through_roads(&*graph, &height, &mut vertex_h);
     for (i, e) in graph.edges.iter_mut().enumerate() {
         let len = e.length_m();
-        let (raw, smooth) = (&raws[i], &smooths[i]);
+        let smooth = &smooths[i];
         let (start, end) = (vertex_h[e.from.0 as usize], vertex_h[e.to.0 as usize]);
         let (max_grade, max_change) = limits(e.class);
         if e.bridge || e.tunnel {
@@ -595,8 +712,19 @@ pub fn add_profiles(graph: &mut RoadGraph, dem: &Dem, proj: &LocalProjection) ->
         // Exactly the junction heights at the ends (continuity).
         profile[0] = start;
         *profile.last_mut().expect("non-empty") = end;
+        e.profile = profile;
+    }
+    // Pass 4: the class limit across junctions (short connectors between
+    // roads filtered on their own, bridges between junctions of different
+    // roads).
+    limit_grades_across_junctions(graph, &mut vertex_h);
+    for (i, e) in graph.edges.iter().enumerate() {
+        let len = e.length_m();
+        let raw = &raws[i];
+        let max_grade = limits(e.class).0;
+        let profile = &e.profile;
         let raw_grade = steepest(raw, 5);
-        let smoothed_grade = steepest(&profile, 5);
+        let smoothed_grade = steepest(profile, 5);
         if !(e.bridge || e.tunnel) && raw_grade > max_grade + 0.10 && len > 50.0 {
             stats.suspicious.push(Suspicious {
                 edge: i,
@@ -607,11 +735,10 @@ pub fn add_profiles(graph: &mut RoadGraph, dem: &Dem, proj: &LocalProjection) ->
         }
         stats.samples += profile.len();
         stats.max_grade = stats.max_grade.max(smoothed_grade);
-        for &h in &profile {
+        for &h in profile {
             stats.min_m = stats.min_m.min(h);
             stats.max_m = stats.max_m.max(h);
         }
-        e.profile = profile;
     }
     stats
         .suspicious
@@ -1060,6 +1187,64 @@ mod tests {
         }
         // The short edge got at most 20 %; the neighbours took over the rest.
         assert!((h[2] - h[1] - 2.6).abs() < 1e-6, "{h:?}");
+    }
+
+    /// Regression (pilot region): a short connector between two roads
+    /// whose junction heights were fixed by their own filtering kept a
+    /// 50–200 % ramp (riders stalled on it in free ride). The limit across
+    /// junctions spreads it into the neighbouring roads.
+    #[test]
+    fn short_connectors_between_filtered_roads_keep_their_class_limit() {
+        use ocw_world::graph::{Edge, EdgeId, VertexId};
+        // 0 —(100 m, flat at 500 m)— 1 —(10 m)— 2 —(100 m, flat at 505 m)— 3;
+        // the connector is residential (20 %), the others primary (15 %).
+        let pts = [[0.0, 0.0], [100.0, 0.0], [110.0, 0.0], [210.0, 0.0]];
+        let edge = |i: u64, a: u32, b: u32, class, profile: Vec<f64>| Edge {
+            id: EdgeId(i),
+            from: VertexId(a),
+            to: VertexId(b),
+            points: vec![pts[a as usize], pts[b as usize]],
+            class,
+            name: None,
+            width_m: 5.0,
+            bridge: false,
+            tunnel: false,
+            dead_end_m: None,
+            oneway: ocw_world::graph::Oneway::No,
+            boundary: false,
+            osm_way: i as i64,
+            profile,
+        };
+        let mut g = RoadGraph {
+            vertices: pts.to_vec(),
+            edges: vec![
+                edge(1, 0, 1, RoadClass::Primary, vec![500.0; 21]),
+                edge(2, 1, 2, RoadClass::Residential, vec![500.0, 504.0, 505.0]),
+                edge(3, 2, 3, RoadClass::Primary, vec![505.0; 21]),
+            ],
+            boundary_vertices: Default::default(),
+        };
+        let mut h = vec![500.0, 500.0, 505.0, 505.0];
+        assert!(steepest(&g.edges[1].profile, 1) > 0.7);
+        limit_grades_across_junctions(&mut g, &mut h);
+        for e in &g.edges {
+            let limit = limits(e.class).0;
+            assert!(steepest(&e.profile, 1) <= limit + 1e-3, "{:?}", e.profile);
+            // Continuous at the junctions.
+            assert_eq!(e.profile[0], h[e.from.0 as usize]);
+            assert_eq!(*e.profile.last().unwrap(), h[e.to.0 as usize]);
+        }
+        // The height difference stays (spread out), the far ends barely move.
+        assert!((h[3] - h[0] - 5.0).abs() < 1e-6, "{h:?}");
+        assert!(h[0] > 499.9 && h[3] < 505.1, "{h:?}");
+        // Profiles within their limit are left alone.
+        let mut flat = g.clone();
+        for e in &mut flat.edges {
+            e.profile = vec![500.0; e.profile.len()];
+        }
+        let before = flat.clone();
+        limit_grades_across_junctions(&mut flat, &mut [500.0; 4]);
+        assert_eq!(flat, before);
     }
 
     #[test]

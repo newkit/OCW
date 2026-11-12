@@ -42,6 +42,9 @@ pub const PREVIEW_MAX_STEPS: usize = 64;
 pub const KEEP_BEHIND_M: f64 = 600.0;
 /// Radius of the rounded corner at junctions (m).
 pub const FILLET_RADIUS_M: f64 = 8.0;
+/// The climb of a rounded corner is spread over up to this much road
+/// before and after it (m, see `RidePath::blend_corner_heights`).
+pub const CORNER_BLEND_M: f64 = 20.0;
 /// A rounded corner starts at most this far before the junction (m); less
 /// than [`LOCK_M`], so it is never under the rider when the exit locks.
 pub const MAX_FILLET_TRIM_M: f64 = 10.0;
@@ -557,6 +560,7 @@ impl RidePath {
             let corner = *prev.raw.last().expect("raw has points");
             let p2 = point_at(&step.raw, &step.raw_cum, t);
             step.fillet = bezier(p0, corner, p2);
+            // Its heights: `blend_corner_heights`.
             step.fillet_len = polyline_len(&step.fillet);
             step.trim_start = t;
         }
@@ -569,12 +573,55 @@ impl RidePath {
         Ok(())
     }
 
+    /// Spreads the climb of each rounded corner over up to
+    /// [`CORNER_BLEND_M`] of road before and after it: the corner is
+    /// shorter than the 2t metres of road it replaces but climbs as much,
+    /// so on its own it would be up to twice as steep as the road (at a
+    /// hairpin). In the window the path position maps linearly onto the
+    /// road position (road length 2t + 2X onto path length L + 2X) and
+    /// takes the road's height there; outside it nothing changes. A pure
+    /// function of the steps, like the rest of the path.
+    fn blend_corner_heights(&self, pts: &mut [[f64; 3]]) {
+        let cum = cumulative(pts);
+        let base = self.steps[0].start_m;
+        for k in 1..self.steps.len() {
+            let (prev, step) = (&self.steps[k - 1], &self.steps[k]);
+            let (t, l) = (step.trim_start, step.fillet_len);
+            if l < 0.05 || t < 0.05 {
+                continue;
+            }
+            let prev_body = prev.len_m - prev.fillet_len;
+            let step_body = step.len_m - l;
+            let x = CORNER_BLEND_M
+                .min(prev_body / 2.0)
+                .min(step_body / 2.0)
+                .max(0.0);
+            let (from, to) = (step.start_m - base - x, step.start_m - base + l + x);
+            let scale = (2.0 * t + 2.0 * x) / (l + 2.0 * x);
+            let road = |a: f64| {
+                if a < 0.0 {
+                    point_at(&prev.raw, &prev.raw_cum, prev.raw_len() + a)[1]
+                } else {
+                    point_at(&step.raw, &step.raw_cum, a)[1]
+                }
+            };
+            let lo = cum.partition_point(|&c| c <= from);
+            for i in lo..pts.len() {
+                if cum[i] >= to {
+                    break;
+                }
+                pts[i][1] = road(-t - x + (cum[i] - from) * scale);
+            }
+        }
+    }
+
     fn rebuild_route(&mut self) {
         let mut pts: Vec<[f64; 3]> = Vec::new();
         for s in &self.steps {
             let skip = usize::from(!pts.is_empty());
             pts.extend(s.points.iter().skip(skip));
         }
+        self.blend_corner_heights(&mut pts);
         let width = self.net.edge(self.steps[0].edge).width_m;
         self.route = Route::from_points("free-ride", "Free ride", pts, false, width)
             .unwrap_or_else(|_| placeholder_route_at(self.steps[0].points[0]));
@@ -1518,6 +1565,59 @@ mod tests {
         // The rider ends up heading north again after the loop.
         let back = p.sample(at_turn + 40.0);
         assert!(back.direction[1] < -0.99, "{back:?}");
+    }
+
+    /// Regression (free ride, Liechtenstein): through a sharp rounded
+    /// corner on a climb the heights followed the Bézier parameter, so the
+    /// whole climb of the cut-off 2 × 10 m was bunched into the apex (a
+    /// ~33 % ramp at 120° on a 15 % road, far more at hairpins).
+    #[test]
+    fn rounded_corners_keep_the_road_gradient_through_hairpins() {
+        // A hairpin (~177°) at vertex 1, climbing 10 % all the way.
+        let mut g = graph(&[[0.0, 0.0], [100.0, 0.0], [0.0, 6.0]], &[(0, 1), (1, 2)]);
+        let mut h0 = 0.0;
+        for e in &mut g.edges {
+            let len = e.length_m();
+            let mut d: Vec<f64> = (0..)
+                .map(|k| f64::from(k) * crate::graph::PROFILE_STEP_M)
+                .take_while(|&d| d < len - 1e-9)
+                .collect();
+            d.push(len);
+            e.profile = d.iter().map(|&d| h0 + 0.1 * d).collect();
+            h0 += 0.1 * len;
+        }
+        let n = net(g);
+        let segs = [
+            Segment::Edge {
+                edge: 0,
+                from_m: 0.0,
+                to_m: 100.0,
+            },
+            Segment::Edge {
+                edge: 1,
+                from_m: 0.0,
+                to_m: n.geometry(1).length(),
+            },
+        ];
+        let p = RidePath::from_segments(n, &segs, 0.0, 0).unwrap();
+        let corner = p.step_start_m(1).unwrap();
+        let (mut worst, mut d) = (0.0f64, corner - 30.0);
+        let mut prev = p.sample(d).position[1];
+        while d < corner + 40.0 {
+            d += 0.25;
+            let s = p.sample(d);
+            worst = worst.max(s.grade.abs());
+            // Continuous heights, never downhill.
+            assert!(s.position[1] >= prev - 1e-9, "{d}: {s:?}");
+            assert!(s.position[1] - prev < 0.25 * 0.3, "{d}: {s:?}");
+            prev = s.position[1];
+        }
+        // The rider climbs the 2 m of the cut-off 20 m on the ~10 m curve,
+        // spread over 20 m of road before and after it: 60 m of road on
+        // ~50 m of path, ~12 % (the apex was > 100 %, the curve alone 19 %).
+        assert!(worst > 0.1 && worst < 0.13, "{worst}");
+        assert!((p.sample(corner - 25.0).grade - 0.1).abs() < 1e-6);
+        assert!((p.sample(corner + 40.0).grade - 0.1).abs() < 1e-6);
     }
 
     #[test]
