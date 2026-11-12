@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, VecDeque};
 
 use bevy::app::AppExit;
 use bevy::prelude::*;
-use bevy::render::view::screenshot::{Screenshot, save_to_disk};
+use bevy::render::view::screenshot::Screenshot;
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use clap::{Arg, ArgMatches, Command, value_parser};
 
@@ -533,14 +533,15 @@ fn register_builtin_commands(app: &mut App) {
     .console_command(ConsoleCommand::new(
         User,
         Command::new("screenshot")
-            .about("Save a screenshot of the window as PNG")
-            .arg(Arg::new("path").default_value("screenshot.png")),
+            .about("Save a screenshot of the window: JPEG with its time in EXIF (a .png path: PNG)")
+            .arg(Arg::new("path").default_value("screenshot.jpg")),
         |world, m| {
             let path = m.get_one::<String>("path").expect("has default").clone();
+            let meta = crate::stamp::ShotMeta::of(world);
             world
                 .commands()
                 .spawn(Screenshot::primary_window())
-                .observe(save_to_disk(path.clone()));
+                .observe(crate::stamp::save_shot(path.clone(), meta));
             Ok(format!("saving screenshot to {path}"))
         },
     ))

@@ -64,8 +64,8 @@ LLVM_PACKAGES := clang-$(LLVM_VERSION) lld-$(LLVM_VERSION) libclang-$(LLVM_VERSI
 # appimagetool for scripts/build-appimage.sh (user-level download, no sudo).
 APPIMAGETOOL ?= $(HOME)/.local/bin/appimagetool
 APPIMAGETOOL_URL ?= https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-$(shell uname -m).AppImage
-SCREENSHOT ?= /tmp/ocw.png
-SCREENSHOT_WAYLAND ?= /tmp/ocw-wayland.png
+SCREENSHOT ?= /tmp/ocw.jpg
+SCREENSHOT_WAYLAND ?= /tmp/ocw-wayland.jpg
 VIDEO ?= /tmp/ocw.mp4
 VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 

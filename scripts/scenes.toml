@@ -1,7 +1,8 @@
 # Scenes for the scene-rendering harness (scripts/render-scenes.sh, `make
 # test-scenes`; README.md, "Scene harness"). Each [[scene]] is rendered headlessly
-# by .claude/skills/run-ocw/drive.sh into test-output/scenes/<time>/NAME.png
-# (screenshot) and/or NAME.mp4 (video; NAME.png is then its last frame).
+# by .claude/skills/run-ocw/drive.sh into test-output/scenes/<time>/NAME.jpg
+# (screenshot, JPEG with EXIF time) and/or NAME.mp4 (video with sound; NAME.jpg
+# is then its last frame).
 #
 # Keys of a scene ([defaults] gives defaults; args/cmds/at are prepended):
 #   name         file name, for --only (globs: --only 'menu-*')
@@ -24,7 +25,7 @@
 # ghosts or saved rides of the machine's user) and the virtual trainer.
 
 [defaults]
-args = ["--virtual", "--window", "1280x720"]
+args = ["--virtual", "--window", "2560x1440"]
 
 # --- Test route (no world package needed) -----------------------------------
 

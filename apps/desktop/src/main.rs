@@ -227,7 +227,8 @@ pub struct Args {
     /// in-app ride switch does not reset it), e.g. `--at "4=rider.lean 15"` (repeatable; for scripted rides).
     #[arg(long = "at", value_name = "SECONDS=COMMAND", value_parser = parse_timed)]
     pub timed: Vec<(f64, String)>,
-    /// Save a screenshot to this path after --screenshot-delay seconds, then exit.
+    /// Save a screenshot to this path after --screenshot-delay seconds, then
+    /// exit: JPEG (quality 90) with its time in EXIF, PNG for a .png path.
     #[arg(long, value_name = "PATH")]
     pub screenshot: Option<PathBuf>,
     /// Seconds of riding before the screenshot is taken.
@@ -236,6 +237,9 @@ pub struct Args {
     /// Frame capture: save every frame as DIR/frame_NNNNN.png with game time
     /// advancing exactly 1/--capture-fps per frame (smooth videos even when
     /// rendering is slow), then exit. The server runs stepped, in-process.
+    /// Also writes DIR/audio.wav (the game sound, rendered in step with the
+    /// frames), DIR/metadata.txt (ffmpeg metadata: creation time, build)
+    /// and DIR/still.jpg (the last frame with EXIF).
     #[arg(long, value_name = "DIR", conflicts_with = "screenshot")]
     pub capture: Option<PathBuf>,
     /// Frames per second of game time during capture.
