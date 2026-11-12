@@ -29,10 +29,15 @@ impl Plugin for WorldPlugin {
     }
 }
 
+/// Marks what [`spawn_world`] spawned (light, terrain, road, trees, arch),
+/// so a ride switch can despawn it ([`crate::rebuild_scene`]).
+#[derive(Component)]
+pub struct SceneEntity;
+
 /// Sky color, also used for the distance fog.
 pub const SKY: Color = Color::srgb(0.62, 0.78, 0.95);
 
-fn spawn_world(
+pub(crate) fn spawn_world(
     mut commands: Commands,
     view: Res<RideView>,
     package: Option<Res<crate::package::PackageWorld>>,
@@ -44,6 +49,7 @@ fn spawn_world(
 
     // Sun.
     commands.spawn((
+        SceneEntity,
         DirectionalLight {
             illuminance: 12_000.0,
             shadow_maps_enabled: true,
@@ -78,6 +84,7 @@ fn spawn_world(
             return;
         }
         commands.spawn((
+            SceneEntity,
             Mesh3d(meshes.add(center_line_mesh(&view, CENTRE_LINE_LIFT_PACKAGE_M))),
             MeshMaterial3d(materials.add(StandardMaterial {
                 base_color: Color::srgb(0.95, 0.95, 0.9),
@@ -134,6 +141,7 @@ fn spawn_world(
         // Receives shadows but casts none: gentle hills barely cast visible
         // shadows, and the shadow pass would draw the whole terrain again.
         commands.spawn((
+            SceneEntity,
             Mesh3d(meshes.add(mesh)),
             MeshMaterial3d(ground.clone()),
             NotShadowCaster,
@@ -144,6 +152,7 @@ fn spawn_world(
     // Road surface.
     let width = route.road_width_m() as f32;
     commands.spawn((
+        SceneEntity,
         Mesh3d(meshes.add(ribbon_mesh(&view, width))),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: Color::WHITE, // vertex colours: the surface
@@ -154,6 +163,7 @@ fn spawn_world(
     // Road edges: side faces down into the terrain, so the gap between road
     // and terrain (road clearance) is never visible from the side.
     commands.spawn((
+        SceneEntity,
         Mesh3d(meshes.add(road_edge_mesh(&view, width, edge_depth))),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: Color::srgb(0.45, 0.43, 0.38),
@@ -165,6 +175,7 @@ fn spawn_world(
         NotShadowCaster,
     ));
     commands.spawn((
+        SceneEntity,
         Mesh3d(meshes.add(center_line_mesh(&view, 0.02))),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: Color::srgb(0.95, 0.95, 0.9),
@@ -351,6 +362,7 @@ fn spawn_trees(
     for &(pos, scale) in trees {
         commands
             .spawn((
+                SceneEntity,
                 Transform::from_translation(pos).with_scale(Vec3::splat(scale)),
                 Visibility::default(),
                 CameraInteraction::SeeThrough,
@@ -415,12 +427,14 @@ fn spawn_start_arch(
         let mut pos = to_vec3(p.offset_position(side));
         pos.y += 2.5;
         commands.spawn((
+            SceneEntity,
             Mesh3d(post.clone()),
             MeshMaterial3d(mat.clone()),
             Transform::from_translation(pos),
         ));
     }
     commands.spawn((
+        SceneEntity,
         Mesh3d(meshes.add(Cuboid::new(half as f32 * 2.0 + 0.4, 0.8, 0.4))),
         MeshMaterial3d(mat),
         arch_bar_transform(&p),

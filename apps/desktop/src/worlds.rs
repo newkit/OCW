@@ -52,14 +52,18 @@ impl WorldInfo {
 
 /// The installed neighbours of the loaded package that its roads continue
 /// into, verified like it (none with `--no-neighbours`).
-pub fn neighbourhood(args: &Args, spec: &str, home: &LoadedWorld) -> Neighbourhood {
-    let opts = load_options(args).unwrap_or_else(|e| fail(e));
+pub fn try_neighbourhood(
+    args: &Args,
+    spec: &str,
+    home: &LoadedWorld,
+) -> Result<Neighbourhood, String> {
+    let opts = load_options(args)?;
     let hood = ocw_worldstore::neighbourhood(home, spec, &opts, !args.no_neighbours);
     for line in &hood.log {
         info!("{line}");
         println!("{line}");
     }
-    hood
+    Ok(hood)
 }
 
 /// The render resource: the world set, with a loader that reads (and
@@ -156,21 +160,21 @@ pub fn handle_cli(args: &Args) {
     }
 }
 
-/// Loads `--world`, verified; exits with the reason if it is refused.
-pub fn load(args: &Args, spec: &str) -> LoadedWorld {
-    let opts = load_options(args).unwrap_or_else(|e| fail(e));
-    let w = load_world(spec, &opts).unwrap_or_else(|e| {
-        fail(format!(
+/// Loads `--world`, verified; the reason if it is refused.
+pub fn try_load(args: &Args, spec: &str) -> Result<LoadedWorld, String> {
+    let opts = load_options(args)?;
+    let w = load_world(spec, &opts).map_err(|e| {
+        format!(
             "{e}\n(world packages: spec §4.7; local builds load with a warning, cached ones must be signed unless --allow-unsigned)"
-        ))
-    });
+        )
+    })?;
     if w.trust.is_trusted() {
         info!("world package {}", w.describe());
     } else {
         warn!("world package {}", w.describe());
         eprintln!("warning: world package {}", w.describe());
     }
-    w
+    Ok(w)
 }
 
 /// The cache contents, one line per package version.

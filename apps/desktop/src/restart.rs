@@ -27,6 +27,14 @@ impl Plugin for RestartPlugin {
                     "Start everything again as at program start (key R); the ride is saved first",
                 ),
                 |world, _| {
+                    // After an in-app ride switch the command line would
+                    // start the first ride again: restart this one in the app.
+                    if switched(world) {
+                        return crate::ride::begin_switch(
+                            world,
+                            world.resource::<crate::ride::CurrentRide>().choice.clone(),
+                        );
+                    }
                     REQUESTED.store(true, Ordering::SeqCst);
                     world.write_message(AppExit::Success);
                     Ok("restarting".into())
@@ -35,12 +43,32 @@ impl Plugin for RestartPlugin {
     }
 }
 
-fn reset_key(keys: Res<ButtonInput<KeyCode>>, mut exit: MessageWriter<AppExit>) {
-    if keys.just_pressed(KeyCode::KeyR) {
-        info!("reset: restarting the app");
-        REQUESTED.store(true, Ordering::SeqCst);
-        exit.write(AppExit::Success);
+/// Whether the ride was switched in the app (R then restarts it in the app).
+fn switched(world: &World) -> bool {
+    world
+        .get_resource::<crate::ride::CurrentRide>()
+        .is_some_and(|c| c.switched)
+}
+
+fn reset_key(
+    keys: Res<ButtonInput<KeyCode>>,
+    current: Option<Res<crate::ride::CurrentRide>>,
+    console: Option<ResMut<ocw_render::console::ConsoleState>>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    if !keys.just_pressed(KeyCode::KeyR) {
+        return;
     }
+    if let (Some(c), Some(mut console)) = (current, console)
+        && c.switched
+    {
+        info!("reset: restarting the ride in the app");
+        console.queue("reset");
+        return;
+    }
+    info!("reset: restarting the app");
+    REQUESTED.store(true, Ordering::SeqCst);
+    exit.write(AppExit::Success);
 }
 
 /// Whether the app exited to be started again.
@@ -129,5 +157,32 @@ mod tests {
             let exits = app.world().resource::<Messages<AppExit>>();
             assert!(exits.is_empty(), "{context:?}");
         }
+    }
+
+    #[test]
+    fn after_a_ride_switch_r_restarts_the_ride_in_the_app() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, ocw_render::console::ConsoleCorePlugin))
+            .add_message::<AppExit>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .insert_resource(crate::ride::CurrentRide {
+                choice: crate::ride::choice::RideChoice::TestRoute("loop".into()),
+                world: None,
+                switched: true,
+            })
+            .add_systems(Update, reset_key.run_if(ride_input));
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyR);
+        app.update();
+        // The console's `reset`, which then switches to the same ride.
+        assert!(app.world().resource::<Messages<AppExit>>().is_empty());
+        app.update();
+        let console = app.world().resource::<ocw_render::console::ConsoleState>();
+        assert!(
+            console.log().iter().any(|l| l == "> reset"),
+            "{:?}",
+            console.log()
+        );
     }
 }

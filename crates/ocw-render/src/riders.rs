@@ -33,6 +33,20 @@ pub struct Avatar {
 #[derive(Resource, Default)]
 struct RiderEntities(BTreeMap<RiderId, Entity>);
 
+/// Despawns all avatars (a ride switch, [`crate::rebuild_scene`]): the
+/// riders of the new session are spawned afresh.
+pub(crate) fn reset_avatars(world: &mut World) {
+    let all = world
+        .get_resource_mut::<RiderEntities>()
+        .map(|mut r| std::mem::take(&mut r.0))
+        .unwrap_or_default();
+    for e in all.into_values() {
+        if let Ok(e) = world.get_entity_mut(e) {
+            e.despawn();
+        }
+    }
+}
+
 /// Crank angle of an avatar in radians.
 #[derive(Component, Default)]
 struct Crank(f32);

@@ -37,70 +37,90 @@ pub struct FreeRideSetup {
 
 impl Plugin for ConnectionPlugin {
     fn build(&self, app: &mut App) {
-        let args = app.world().resource::<Args>().clone();
-        let free = app.world().get_resource::<FreeRideSetup>().cloned();
-        // The rider profile's weight and bike (physics profile id) go to
-        // the server in the hello and into the prediction (spec §2.5,
-        // §3.2.1); the look is cosmetic, for the other clients.
-        let rider = crate::settings::local_rider(app.world());
-        let profile = rider.physics();
-        let autodrive = crate::settings::autodrive_at_start(app.world());
-        let (course, client) = match free {
-            Some(FreeRideSetup {
-                net,
-                origin,
-                plan: Some(plan),
-                ..
-            }) => (
-                Course::RouteRide {
-                    net: net.clone(),
-                    plan: plan.clone(),
-                },
-                ClientCore::free_ride(net, args.name.clone(), profile)
-                    .with_geo_origin(origin)
-                    .with_route_plan(plan),
-            ),
-            Some(f) => (
-                Course::FreeRide {
-                    net: f.net.clone(),
-                    start: f.start,
-                },
-                ClientCore::free_ride(f.net, args.name.clone(), profile).with_geo_origin(f.origin),
-            ),
-            None => (
-                Course::Route(self.route.clone()),
-                ClientCore::new(self.route.clone(), args.name.clone(), profile),
-            ),
-        };
-        let client = client
-            .with_autodrive_at_start(autodrive)
-            .with_look(rider.look());
-        let start_m = match &course {
-            Course::Route(route) => crate::start_point(&args, route),
-            Course::FreeRide { .. } | Course::RouteRide { .. } => 0.0,
-        };
-        let mut server = if let Some(spec) = &args.server {
-            ServerLink::Remote(Box::new(connect_remote(&args, spec)))
-        } else if args.capture.is_some() {
-            // Frame capture: the server shares the client's fixed-step game time.
-            ServerLink::Stepped(Box::new(SteppedServer::new(course, args.bots, start_m)))
-        } else {
-            ServerLink::Threaded(
-                LocalServer::spawn(course, args.bots, start_m)
-                    .expect("failed to start local server thread"),
-            )
-        };
-        server.send(client.hello());
-        app.insert_resource(Link {
-            server: Mutex::new(server),
-        })
-        .insert_resource(ClientState(client))
-        .init_resource::<LinkNotice>()
-        .add_systems(PreUpdate, (poll_server, link_status).chain())
-        .add_systems(FixedUpdate, (step_server, predict).chain())
-        .add_systems(Update, (send_steer, update_view));
+        start_session(app.world_mut(), self.route.clone());
+        app.init_resource::<LinkNotice>()
+            .add_systems(PreUpdate, (poll_server, link_status).chain())
+            .add_systems(FixedUpdate, (step_server, predict).chain())
+            .add_systems(Update, (send_steer, update_view));
         register_commands(app);
     }
+}
+
+/// When the current ride session started (game time, s): the HUD's ride
+/// time counts from it (an in-app ride switch starts a new session).
+#[derive(Resource, Debug, Clone, Copy, Default)]
+pub struct SessionStart(pub f64);
+
+/// Starts a ride session: the server (local thread, stepped or remote)
+/// for `route` or the [`FreeRideSetup`] in `world`, and a new
+/// [`ClientCore`] that joins it. Inserts [`Link`] and [`ClientState`],
+/// replacing the old session's (dropping the old local server's link ends
+/// its thread). Used at the start and by the ride switch (`ride` module).
+pub fn start_session(world: &mut World, route: Route) {
+    let args = world.resource::<Args>().clone();
+    let free = world.get_resource::<FreeRideSetup>().cloned();
+    // The rider profile's weight and bike (physics profile id) go to
+    // the server in the hello and into the prediction (spec §2.5,
+    // §3.2.1); the look is cosmetic, for the other clients.
+    let rider = crate::settings::local_rider(world);
+    let profile = rider.physics();
+    let autodrive = crate::settings::autodrive_at_start(world);
+    let (course, client) = match free {
+        Some(FreeRideSetup {
+            net,
+            origin,
+            plan: Some(plan),
+            ..
+        }) => (
+            Course::RouteRide {
+                net: net.clone(),
+                plan: plan.clone(),
+            },
+            ClientCore::free_ride(net, args.name.clone(), profile)
+                .with_geo_origin(origin)
+                .with_route_plan(plan),
+        ),
+        Some(f) => (
+            Course::FreeRide {
+                net: f.net.clone(),
+                start: f.start,
+            },
+            ClientCore::free_ride(f.net, args.name.clone(), profile).with_geo_origin(f.origin),
+        ),
+        None => (
+            Course::Route(route.clone()),
+            ClientCore::new(route, args.name.clone(), profile),
+        ),
+    };
+    let client = client
+        .with_autodrive_at_start(autodrive)
+        .with_look(rider.look());
+    let start_m = match &course {
+        Course::Route(route) => crate::start_point(&args, route),
+        Course::FreeRide { .. } | Course::RouteRide { .. } => 0.0,
+    };
+    // The old session's link goes first: its local server thread ends.
+    world.remove_resource::<Link>();
+    let mut server = if let Some(spec) = &args.server {
+        ServerLink::Remote(Box::new(connect_remote(&args, spec)))
+    } else if args.capture.is_some() {
+        // Frame capture: the server shares the client's fixed-step game time.
+        ServerLink::Stepped(Box::new(SteppedServer::new(course, args.bots, start_m)))
+    } else {
+        ServerLink::Threaded(
+            LocalServer::spawn(course, args.bots, start_m)
+                .expect("failed to start local server thread"),
+        )
+    };
+    server.send(client.hello());
+    let now = world
+        .get_resource::<Time>()
+        .map_or(0.0, |t| t.elapsed_secs_f64());
+    world.insert_resource(Link {
+        server: Mutex::new(server),
+    });
+    world.insert_resource(ClientState(client));
+    world.insert_resource(SessionStart(now));
 }
 
 /// Connects to a remote server (`--server ADDR`). Bad options end the
@@ -282,10 +302,12 @@ fn update_view(
     fixed: Res<Time<Fixed>>,
     client: Res<ClientState>,
     link: Res<LinkNotice>,
+    session: Option<Res<SessionStart>>,
+    loading: Option<Res<crate::ride::Loading>>,
     mut view: ResMut<RideView>,
 ) {
     let now = time.elapsed_secs_f64();
-    view.elapsed_s = now;
+    view.elapsed_s = now - session.map_or(0.0, |s| s.0);
     // Interpolate between the last two 50 Hz prediction steps.
     view.riders = client.0.view(now, fixed.overstep_fraction_f64());
     view.position = view
@@ -297,9 +319,12 @@ fn update_view(
         view.notice = client.0.notice();
         view.route_status = client.0.route_status();
     }
-    // A dropped connection matters more than any ride notice.
+    // A dropped connection matters more than any ride notice; a ride
+    // being loaded (ride switch) shows over the ride's own notices.
     if let Some(line) = &link.0 {
         view.notice = Some(line.clone());
+    } else if let Some(line) = loading.as_ref().and_then(|l| l.0.clone()) {
+        view.notice = Some(line);
     } else if !client.0.is_free_ride() {
         view.notice = None;
     }
