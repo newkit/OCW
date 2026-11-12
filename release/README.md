@@ -1,11 +1,22 @@
 # Release builds
 
-Prebuilt binaries of Open Cycling World for the platforms we can build on.
-These are development builds (spec §14 Phase 1/2), not signed or notarised.
+Prebuilt binaries of Open Cycling World are published as **GitHub Releases**:
+https://github.com/newkit/OCW/releases (with the world packages, which are
+ODbL data and are not part of this repository). They are development builds
+(spec §14), not signed or notarised. This file keeps the build notes.
 
-## 0.1.0-fc5947f – Linux and Windows
+Binaries are no longer committed to git: on 2026-11-12 the history was
+rewritten to remove the former `release/<version>/<platform>/` folders, which
+changed every commit id since the first release commit. `commit-map.txt` maps
+the old ids to the new ones; the ids below are the new ones. The builds
+`0.1.0-15d89d0`, `-c3187a3` and `-310360b` (old ids) are not downloadable any
+more; the latest build is on the Releases page. Its files and the apps'
+`--version` still show the old commit ids `fc5947f` (Linux, Windows) and
+`dddee37` (macOS), because they were built before the rewrite.
 
-Built from commit `fc5947f` (same code as the macOS app `dddee37` below; the
+## 0.1.0-e648845 – Linux and Windows
+
+Built from commit `e648845` (same code as the macOS app `f69cc48` below; the
 later commits only add docs and the DMG) with
 `cargo build --release -p ocw-desktop -p ocw-server -p world-builder`.
 726 tests passed on Linux, macOS and Windows for this code (spec 2.8,
@@ -28,11 +39,11 @@ Appendix B.4).
 - Checksums: `SHA256SUMS` in each platform folder (Linux also
   `SHA256SUMS.uncompressed` for the unpacked `ocw-desktop`).
 
-## 0.1.0-dddee37 – macOS app
+## 0.1.0-f69cc48 – macOS app
 
-Built from commit `dddee37` on the Apple Silicon Mac by
+Built from commit `f69cc48` on the Apple Silicon Mac by
 `scripts/build-macos-app.sh` at the end of the autonomous night (spec 2.8,
-Appendix B). New since `310360b`: in-game menu (Esc / Start) with settings,
+Appendix B). New since `16b311d`: in-game menu (Esc / Start) with settings,
 rider profiles, bikes and looks, ride switching without restart, Navi pages
 and GPX import; structured workouts with ERG; local events (race, group ride,
 time trial against your ghost); gradient average, elevation profile and
@@ -44,10 +55,10 @@ steep-ramp fixes. 726 tests passed on macOS for this commit.
 |---|---|---|
 | macos-arm64 | `OpenCyclingWorld-0.1.0-dddee37-macos-arm64.dmg` | 39.6 MB |
 
-## 0.1.0-310360b – macOS app
+## 0.1.0-16b311d – macOS app
 
-Built from commit `310360b` on the Apple Silicon Mac by
-`scripts/build-macos-app.sh`. New since `c3187a3`: routes from GPX files and
+Built from commit `16b311d` on the Apple Silicon Mac by
+`scripts/build-macos-app.sh`. New since `3322cc2`: routes from GPX files and
 world packages on the road graph (route arrows, leaving and rejoining the
 route), signed and versioned world packages, a missing `--devices-file`
 falls back to the default file, gamepad triggers calibrated to their resting
@@ -59,15 +70,15 @@ from Finder (Homebrew's `/opt/homebrew/bin`, `/usr/local/bin`,
 |---|---|---|
 | macos-arm64 | `OpenCyclingWorld-0.1.0-310360b-macos-arm64.dmg` | 37.9 MB |
 
-Install as for `c3187a3` below (drag to *Applications*, right-click →
+Install as for `3322cc2` below (drag to *Applications*, right-click →
 *Open* on the first start). Video recording needs ffmpeg: install Homebrew
 (`/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`,
 asks for an admin password), then `brew install ffmpeg`.
 Checksum: `shasum -a 256 -c SHA256SUMS`.
 
-## 0.1.0-c3187a3 – macOS app
+## 0.1.0-3322cc2 – macOS app
 
-Built from commit `c3187a3` (with free ride, Strava, video recording, R/C/V
+Built from commit `3322cc2` (with free ride, Strava, video recording, R/C/V
 keys) on the Apple Silicon Mac by `scripts/build-macos-app.sh`:
 
 | Platform | File | Size |

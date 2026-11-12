@@ -1,0 +1,155 @@
+# Commit ids before and after the history rewrite of 2026-11-12, which removed the
+# release binaries (release/<version>/<platform>/) from all commits. Old id, new id, subject.
+# Old ids still appear in older binaries (--version), file names of earlier downloads and links.
+
+01ad27d918 26ba8bdb09 README: --at counts app time
+0352f81c9b 0777ff4ef9 Merge neighbour packages at runtime: REGN region, WorldSet, seamless borders, free ride across package borders
+0659203f28 25b8acbdc3 Route rides on the road graph, rejoin, package check in Hello/Welcome
+0751b2a751 b306c4d460 Spec §4.7/§12, README: package signing, trust policy, cache, download
+0b1c86b808 01c8f8d9bd Events after the merge: ServerConfig in the new tests, menu test on the Navi placeholder
+1146662e84 535feeae48 Camera: solid vs see-through objects; trees fade instead of moving the camera (spec §3.2)
+14ea963db7 dd9f18dfdc WIP in-game menu M1
+15c3a6fd69 20f8710772 Add release/0.1.0-15d89d0: Linux x86_64 and macOS arm64 builds
+16c7c370c8 29b1263c9b Merge local events: race, group ride, time trial vs own ghost (spec §2.3.1)
+1851eeb3e0 a4e27513d3 Merge branch 'main' into worktree-agent-ae002a0855f7ede36
+185b9695f4 9c0dfac40e In-game menu M1: input contexts, menu shell, autodrive while open (spec §3.2.1)
+185d523739 24f6d1590c Second Linux build machine (leela, Fedora): make deps for dnf; remote.sh build slots
+18f0ae3a12 20c35c2742 Merge events/workouts polish: FIT laps, ghost without shadows, event start confirmation, Workouts menu page, FTP from the rider profile
+198da97caa 06ab96d62e Merge main (QUIC transport, elevation profile, camera tilt)
+1ac2e05ec4 2d9cde402a make deps-linux-fedora: install ffmpeg without conflicting with RPM Fusion
+1cd51c561e 54bf7a6b06 WIP smooth video
+1e3568e050 202bfd34b6 Merge main
+1ed24044a8 dca92deb3e Merge main
+1f9421e770 5e68d018a4 README: build server setup (Linux, macOS, Windows incl. the PowerShell execution policy)
+21a09071a3 8aab1f2527 Gradient feel: average gradient ahead, mini elevation profile, camera tilt (spec §3.2)
+23039c7532 b947f05d10 Build slots per machine, any-slot waiting, macOS slots; dashboard queue
+240790b1f6 2d3e86bd5c remote.sh: OCW_REMOTE_JOBS also applies to main checkouts
+2ad08f9515 3d3344340a Merge kiosk args file and world package deploy (ocw-desktop.args, deploy-test.sh)
+2b8b022180 a5cf756dbd Merge branch 'worktree-agent-ac86d7155a2f5ab78' into worktree-agent-a92c0d2a727e217b2
+2d59b57a2c e42c229b34 Spec 1.9: catch-up of all implemented decisions; README: free ride
+2d7282644a b80e23879b Merge main
+2dcf2997bd 4688dd1008 Merge QUIC transport groundwork: ocw-server --listen, ocw-desktop --server (spec §6.2)
+2eb9ad7260 d0faf1528d Merge main (local events) into M3: Ride -> Change ride sub page
+310360b722 16b311d003 make deps-macos: skip brew when ffmpeg is installed; a failed brew install only warns
+3127522ffa 7c3b447bdd World package manifests, Ed25519 signatures, cache and download (spec §4.7, §12)
+31f4194bf1 901b1f069a Merge video REC indicator in the HUD and smooth live recording (fixed-rate capture)
+3456c3728c c839e04863 Steep ramps: riders crawl instead of stalling; grade limit across junctions; corner heights by arc length
+35b659ea87 ce7a1179de Ghost: no shadows (spec §2.3.1)
+36e27ad963 a97655cc2e Spec 2.9: route editor postponed; Phase 4 models/audio and Phase 6 voice start
+38f770d8c6 899fcdf2a7 More bots: 10 by default, start formation in rows, 12 bot strengths (spec §6.1)
+399d82705c c3d6516bc8 README: Windows build machine notes (build times, memory, jobs, PowerShell)
+3daec68cf9 ccd95fb0d7 Tunnel camera: under the hillside at the entry portal
+3fc8c4341f adbf69babc Merge branch 'main' into worktree-agent-a7db2db773f1023e3
+3fcd5ec4f5 05980a7441 Desktop and server: --world PATH|ID with verification, --fetch-world, worlds.* console commands
+43558d8dc8 64c644f432 Neighbour packages at runtime: free ride crosses package borders (spec §2.2.2)
+44244b7668 e043838411 Merge Phase 4 groundwork: curated physics profiles, bike and look per rider, procedural bike types, Workshop Bike page
+46a86c21e0 8dd4ce4270 Example rider names: lower-case variants too
+478763f279 d424de8094 Merge main into land use and buildings
+4b23e7d304 551dc40ce1 Merge branch 'main' into worktree-agent-a06e0b830e326ed78
+4d49367902 a9debcc14f Merge main into the gradient-feel branch (camera: menu input context)
+4f23bb7f45 1be5572892 Merge branch 'main' into worktree-agent-af4905a2faee382c1
+5231f62ca0 fe23312cd0 Merge structured workouts: TOML format, .erg/.mrc import, ERG control, HUD workout panel
+5780cbd627 0104f988b5 Merge macOS: ffmpeg found from Finder, deps-macos with Homebrew, DMG 0.1.0-16b311d
+57bcf8deaa 89255b9c27 Spec: in-game menu plan (§3.2.1): menu tree, input and pause, settings file, phases; audio output device (§3.3)
+582b1f16f2 2b6f4fd239 HUD: red "REC m:ss" while recording a video, "Video saved: <file>" after V stops it
+5ae61ea87d b88dfd6a80 Merge build slots per machine (2 Linux, 1 Windows, 1 macOS), any-slot waiting; dashboard queue view
+5c8dfd1071 1d7c66ce29 Wild mode on switches autodrive off (spec §5.2.1)
+5d9c53e76a f53b7cb4f4 FIT laps, event start confirmation, Workouts menu page, FTP from the rider profile
+5e02851cae 6ecb061c0f collect-test-output: index rows for fetched archive files without their index row
+5e8264385a b810fbffb1 Merge Phase 3 A: land use, water and buildings from OSM (spec 2.6)
+61ece62e86 1470a8edc4 remote.sh: Windows build machines (tar sync, PowerShell run, fetch)
+6b9f6f8a23 f41d98545e ocw-world: GPX import, map matching, graph routes, ROUT section, border links
+6c33ad4165 5fab431a2c Merge main into video HUD branch
+6d74e90c9d c4a0fbc6e2 worldgen: OSM land use, water surfaces and buildings (spec §4.6)
+6f4db1b49e a0b4e38d3d Dashboard mask test: neutral example home directory
+6f6c3fdc3b d071d835d4 Merge Windows build: worldstore paths with backslashes, remote.sh Windows exit codes, per-machine jobs key
+710f2b1bbf d0b0b5aecb Curated physics profiles, bike and look per rider, procedural bike types, Workshop Bike page (spec §2.5)
+7182ebe1c5 5a45b413d0 Merge tunnels: tube and tunnel camera where the road runs under the terrain (Stegertunnel)
+7266646364 ed134ff555 WIP: in-app ride switch, Ride/Navi lists, menu paging (M3)
+7284a3e964 c0756c196f Collect agent screenshots and videos into the test-output build history
+730210effd 7f7ce23601 release: macOS app (DMG) built from 16b311d
+7840d50100 58ad83c205 Merge free ride on the road graph: junctions, U-turns, dead ends (spec 1.7)
+79285f344c 5605607d38 tools/build-dashboard: web page with build server load and tasks
+7d538c01a9 05796b1533 R restarts everything, C resets the camera, V records a video; gamepad up/down
+7dd7168421 f582c8f354 README: riding modes, trainer and devices, rides and Strava, all command-line options, console commands and tools
+7f3d1cd87d bf0b2cb51d Merge menu M2: settings registry and settings.toml, set/get, rider profiles (weight to server physics and trainer), Settings and Workshop pages
+80b49ec268 6778da17b2 README: Windows build server toolchain (VS Build Tools as admin, rustup as the build user)
+8181bca372 aef7259742 Build dashboard: task markers, Windows CPU load and build slots
+848a5d82cd 402ee431b6 End-to-end world pipeline test from checked-in OSM fixtures (spec §14 Phase 3)
+84bb9d0cc7 34b1553f00 Spec and README: routes on the road graph, GPX import, U-turn width, package check, borders
+860743a7d1 9e32a010d1 WIP build id
+864b346016 10cf03f2d9 make deps-macos: print how to install Homebrew and ffmpeg when brew is missing
+897a139b6f c0dcf7ff64 M3: shorter list rows (two lines at most), Workshop paging test
+899d56ee5a 8ac72bf093 Merge menu M3: in-app ride switch, Change ride and Navi pages, GPX import, list paging
+8ad7a26d8a cdf995cc34 Gamepad triggers calibrated to their resting value: a connected pad no longer brakes the rider
+8ee4465b95 4ab224f799 Merge branch 'main' into worktree-agent-a1fda7ac7113f788d
+91509d253a c8d29a1c59 M3 docs: README and spec (in-app ride switch, Navi lists, GPX import)
+91665d8714 c87effd574 Merge build history (screenshots, videos) and release builds for Linux and macOS
+92f433cca8 4b4b925217 Merge branch 'main' into worktree-agent-a29fa2740ef9e3048
+9588b92305 ef7a1799a4 Merge branch 'main' into worktree-agent-aba411746b9949897
+97304d377b 0da14ffbf6 release: macOS app (DMG) built from 3322cc2
+97431e4b18 01a4e77b12 Build id in the HUD's lower right corner, --version and startup log
+97a99e2ac9 caa7916f6f Merge steep-ramp fixes: start from standstill on any grade, grade limit across junctions, corner heights by distance
+98b7f68276 b0b0bd46d4 Merge camera classes: trees see-through (dithered fade), buildings as solid camera obstacles
+9ad789157b 81e63e5d34 Merge main (routes ROUT, signed packages and manifest) into land use and buildings
+9b8e542a97 93e2b859b1 world-builder: keys, sign, verify, publish, diff; OSM XML fixture reader
+9c59863663 a885a57452 Menu pages: Workshop note as one paragraph, shorter fullscreen label
+9ec0abe94e 2defc91520 Local events: race, group ride, time trial vs ghost (spec §2.3.1)
+9ff3079736 6d613905e8 Tunnels: tube and tunnel camera where the road runs under the terrain
+a0c64ce4d8 aba14ff35e ocw-worldstore: resolve package files next to a Windows manifest path
+a19acca18d 0a6eefe09d Structured workouts with ERG control (spec §2.8, §5.3)
+a48ae01ffc d2237380e4 Spec 2.1: version entry for the in-game menu plan
+a811b99d9d 1b44e87148 Devices: a missing --devices-file falls back to the default file; log it
+a8a45c951b 0840fdc5d0 Merge 10 bots by default, start formation in rows behind the start, 12 bot strengths
+a986f422ee 74c23983f1 Merge bundled Fira Mono UI font: non-ASCII street names, degree sign (OFL 1.1)
+ad2042250d 0c2747a38b make deps-linux: per-distribution targets with detection (Debian/Ubuntu, Fedora, Arch)
+aee1c6d6d6 9acfe57b41 Merge build id in the HUD corner, --version, OCW_BUILD_ID through remote.sh
+b2117eb59d 95f9bcdbf0 HUD: rider GPS position bottom-left, rider.gps; wrap long HUD lines to the window (spec §3.2)
+b3b96ee9b0 6124bdcab1 Merge Phase 3 C: signed, versioned, cached world packages; end-to-end test (spec 2.4, 2.5)
+b6221e923d 55a10b0e19 Merge in-game menu M1: input contexts, Esc/Start menu, gamepad navigation, ride continues on autodrive
+b63d8a2f23 8ff9abff8f Render land use: colour maps, flat water, trees by land use, buildings
+b66f9df252 d3e8f96934 Merge macOS app bundle packaging (scripts/build-macos-app.sh, make macos-app, CI job); spec 2.3
+b6e65e2dba e5f701e3c3 Video: smooth recordings – a screenshot per 1/25 s tick, placed at its request time, never blocking the game
+b73b9771e4 b09ae8fe2a Merge main (remote.sh slots) into video branch
+b89e077f1c 86708e6220 Merge U-turn fix on one-way roads (no double U-turn, no roundabout circling)
+bac8f1f9ab 0b6ae46fe8 Merge CI apt retry/timeout and the macOS/Windows clippy fix
+baf9c22a4b f8c1a3dfff Video: per-tick screenshots in flight, never block the game (in progress)
+bb317f0538 8d63c0f92f One-way U-turn test: ServerConfig field from main
+c0aac88838 4561778bf7 Free ride: no back-and-forth after a U-turn on a one-way road (spec §2.2.1, §2.2.2)
+c0f35f238b 6e92a28018 Merge Phase 3 B: GPX import and map matching, routes on the road graph, route arrows with leave/rejoin, U-turn width, package check, border matching
+c18bd2b15c af68c9cb72 Land use: clippy fixes, connected thin streams, greener settlements, tile meshing benchmark
+c22e14ebae 721f6397df WIP gps
+c249ce3165 57edb8bd9d Merge main
+c3187a36f5 3322cc25b3 Spec 2.2: menu decisions (no pause, Esc never quits, rider profiles with weight)
+c380600643 535f3a6a00 Menu M2: settings registry, settings.toml, set/get, rider profiles (spec §3.2.1)
+c417352fdd e07b4d566b Example rider names: neutral names in docs and tests
+c6ad562caf af1f359124 Spec 2.10: voice chat always on like a call; mic and speaker mute hotkeys (M / Shift+M, Select / R3)
+c967215309 b1a3776e38 Merge wild mode turns autodrive off; appimagetool in the Linux deps
+c9ff01b8d7 1f84f3ac1c Merge in-game menu plan (spec §3.2.1, §3.3, §14)
+cb7ccbc26b e8f92bb481 Merge main into routes branch
+cd088f68d2 7bf316c395 Merge main (menu M1); hook the Settings and Workshop pages into the menu
+d0f956cbd7 a7ced1aaab make deps-macos: find brew in /opt/homebrew or /usr/local when not on PATH
+d11014df77 12d3f2c595 Merge main into the local-events branch
+d2bde38950 a8e18562b1 remote.sh: Windows exit code for failed cmdlets; per-machine build jobs
+d2c182286b 9091ac05dc CLAUDE.md: the Mac build machine takes platform-independent checks too
+d4bce4ef3c 087d330bc1 Merge build server dashboard (tools/build-dashboard)
+d59b64f0de 0cbb1ccbfb Release 0.1.0-e648845 for Linux (AppImage, binaries) and Windows (zip)
+d5f5b20de9 57258435de make deps-appimage: appimagetool to ~/.local/bin; FUSE 2 in the Linux deps
+d7a075f45f ae5e736add macOS app bundle, DMG and zip (spec §11.3)
+ddb27172f2 350fe7c923 M3: GPX import test on a small road network
+dddee37d27 f69cc48281 Spec 2.8: Appendix B – autonomous development 2026-11-11/12, additions and assumptions
+de4ce35185 6f1a1142ae M3: fix tests after the events merge; --at runs on app time (a ride switch does not reset it)
+df49d28986 a4d151e989 Merge steering fixes: edge scraping only when pushing into it, lean key pauses at upright then continues (spec 1.8)
+e323eea6d7 7774878a77 Bundle Fira Mono as the UI font: non-ASCII street names, degree sign
+e6e4b86899 4625a2d88d Merge main into workouts (menu plugin, README video text)
+ea4bfae161 fdb9209aad Merge main
+eed11ab896 80171a6941 world-builder: package writes land use and buildings, check reports them; spec and README
+f0af9aa8fc b4a79868de Merge gradient feel: 100 m average gradient, mini elevation profile, camera tilt with the road
+f1491bd50f abbf482faf QUIC transport groundwork: ocw-server --listen, ocw-desktop --server (spec §6.2)
+f28d4f08db e7deb9458e Merge branch 'main' into worktree-agent-af2d574dade06721e
+f47dc54c19 33c7360819 World package: land-use (LUSE) and buildings (BLDG) sections (spec §4.6, §4.7)
+fa32d982f7 80ef82fea2 Kiosk: default arguments file; deploy-test builds the pilot world package
+fb4a54a749 7f790fd81c Video recording: find ffmpeg outside PATH (app started from Finder)
+fc5947f520 e6488458ba Final platform runs on f69cc48 (Linux, macOS, Windows: 726 tests each); macOS DMG in release/; drive.sh prefers OCW_BUILD_ID
+fc8d759ba7 a817cab502 Seamless borders: --bbox parts take profiles and terrain from the roads around them; strips overlap the cut
+fc97fe6f37 921eaf6e16 Merge HUD: rider GPS position bottom-left, rider.gps; wrap long HU

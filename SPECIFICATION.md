@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.10 – November 2026
+Version 2.11 – November 2026
 
 | Version | Change |
 |---|---|
@@ -29,6 +29,7 @@ Version 2.10 – November 2026
 | 2.8 | Autonomous night 2026-11-11/12 (Appendix B): menu M1–M3 (in-app ride switch, Navi, GPX import), workouts with ERG (§2.8), local events with ghost (§2.3.1), gradient aids and camera tilt, camera classes and tunnels (§3.2), physics profiles and bike looks (§2.5), neighbour packages (§4.7), QUIC transport (§6.2), fixes for one-way U-turns, steep starts and gradient artefacts; all assumptions listed in Appendix B |
 | 2.9 | Priorities 2026-11-12: the route editor (§2.7) is postponed (Phase 3 is closed without it); Phase 4 models, animations and game audio (M5, §3.3) and Phase 6 voice chat (§7) start in parallel, ahead of the Phase 5 backend |
 | 2.10 | Voice chat always on like a call (Teams / Meet): automatic join, open microphone, no push-to-talk; hotkeys on keyboard (`M`, `Shift+M`) and gamepad (Select, right-stick click) to mute the own microphone and the speaker (all voices); mute state on the HUD (§2.4, §7, M8, §14 Phase 6) |
+| 2.11 | Releases on GitHub Releases with the world package (ODbL data licence, OSM source attached); binaries removed from the git history (`release/commit-map.txt`) (§11) |
 
 ---
 
@@ -1371,7 +1372,7 @@ Platforms are implemented one after another, not in parallel:
 
 **Build machines (v1.9):** all building and testing runs on remote machines described in `config/machines.toml` (git-ignored; keys in `config/ssh/`): a Linux machine with a real GPU and Bluetooth (development, tests, smoke screenshots and videos on X11 and Wayland, trainer tests, a kiosk that shows the latest build on its screen), a macOS Apple Silicon machine, and a Windows machine set up with `scripts/setup-windows-buildserver.ps1` (OpenSSH server and a local, non-admin build user). `scripts/remote.sh MACHINE run CMD` copies the working tree (git-tracked and untracked, not ignored) and runs the command; other branches get their own checkout and fewer parallel build jobs, so parallel work does not collide. `scripts/deploy-test.sh` installs a release build for the kiosk.
 
-**Build id:** every desktop build carries a build id: the workspace version, the short git commit, `-dirty` for uncommitted changes to tracked files and ` (debug)` for debug builds (e.g. `0.1.0-7d538c0-dirty`). It is shown small in the HUD's lower right corner, by `ocw-desktop --version` and in the startup log. Remote builds get no `.git`, so `scripts/remote.sh` passes the commit as `OCW_BUILD_ID` (`scripts/build-id.sh`); otherwise the build script asks `git`.
+**Build id:** every desktop build carries a build id: the workspace version, the short git commit, `-dirty` for uncommitted changes to tracked files and ` (debug)` for debug builds (e.g. `0.1.0-05796b1-dirty`). It is shown small in the HUD's lower right corner, by `ocw-desktop --version` and in the startup log. Remote builds get no `.git`, so `scripts/remote.sh` passes the commit as `OCW_BUILD_ID` (`scripts/build-id.sh`); otherwise the build script asks `git`.
 
 **CI resilience (v1.9):** the Linux job's package installation retries with short timeouts and a step timeout, so an unreachable distribution mirror fails within minutes instead of holding a runner for hours.
 
@@ -1390,7 +1391,7 @@ Build and release pipelines are automated for all three operating systems, intro
 - **App icon and desktop integration:** the logo (`artwork/logos/`, a unicorn riding a bike over a rainbow) is the window icon (X11, Windows); the window's app id `ocw-desktop` matches the desktop entry (`packaging/linux/ocw-desktop.desktop`), which Wayland compositors, docks and menus use. On Linux the app installs its desktop entry and hicolor icons into the user's data directory at start (only changed files).
 - **AppImage:** `scripts/build-appimage.sh` assembles the AppDir (binary, desktop entry, icons, `.DirIcon`) and packs it with `appimagetool` when installed.
 - **macOS app bundle:** `scripts/build-macos-app.sh` (`make macos-app`, runs on macOS) builds `Open Cycling World.app` (bundle id `org.opencyclingworld.desktop`; stripped binary; `Info.plist` with version + commit, minimum macOS read from the binary, `NSBluetoothAlwaysUsageDescription`, without which macOS ends the app when it uses CoreBluetooth; `ocw.icns` from `artwork/logos/`), signs it ad hoc and packs a DMG (with an Applications link) and a zip. Started from Finder, the app logs to `~/Library/Logs/OCW/ocw-desktop.log` (stderr has no terminal there). CI builds and uploads both on pushes to `main`. Still open: Developer ID signing with the hardened runtime and notarisation (`CODESIGN_IDENTITY` already signs with a given identity), a 1024 px icon render for the 512@2x slot.
-- **Release folder:** `release/<version>-<commit>/<platform>/` holds stripped release binaries (`ocw-desktop`, `ocw-server`, `world-builder`) with SHA-256 sums; binaries above GitHub's file size limits are stored xz-compressed. Map data is not included (ODbL, §13). `artwork/build-history/` keeps the screenshots and videos made during development with an index.
+- **Releases:** binaries and world packages are published as **GitHub Releases** (pre-releases while in development), never committed to git (decided 2026-11-12; the history was rewritten to remove the former `release/<version>-<commit>/<platform>/` binaries, `release/commit-map.txt` maps old to new commit ids). Each release carries the AppImage and a tarball of the stripped Linux binaries, a Windows zip, the macOS DMG, the world package with its manifest and data licence (ODbL, §13), the OSM extract it was built from (the ODbL "offer the data" duty) and `SHA256SUMS`. `release/README.md` keeps the build notes. `artwork/build-history/` keeps the screenshots and videos made during development with an index.
 
 ---
 
@@ -1710,25 +1711,25 @@ history `test-output/index.md`. Uncertainty is given as low / medium / high.
 
 | Area | Spec | Merge |
 |---|---|---|
-| Build slots per machine (2 Linux, 1 Windows, 1 macOS), queue in the build dashboard | §11, README | 5ae61ea |
-| Video: REC indicator, smooth live recording | §3.2 | 31f4194 |
-| Bots: 10 by default, start formation, 12 strengths | §6.1 | a8a45c9 |
-| Camera: solid vs see-through objects, trees fade, buildings are obstacles | §3.2 | 98b7f68 |
-| Windows build machine: full workspace builds and tests | §11.1 | 6f6c3fd |
-| In-game menu M1 (shell, input contexts, gamepad) | §3.2.1 | b6221e9 |
-| Gradient feel: 100 m average, elevation profile, camera tilt | §3.2 | f0af9aa |
-| Structured workouts with ERG (Phase 2) | §2.8, §5.3 | 5231f62 |
-| QUIC transport, networked server (Phase 5 groundwork) | §6.2 | 2dcf299 |
-| Menu M2: settings, rider profiles, weight in the physics | §3.2.1, §2.5, §6.5 | 7f3d1cd |
-| Phase 4 groundwork: physics profiles, bike and look, bike types | §2.5, §5.2.1, §6.5 | 44244b7 |
-| Neighbour world packages at runtime (Phase 3) | §4.7 | 0352f81 |
-| UI font with full Latin coverage | §3.2, §13 | a986f42 |
-| Local events: race, group ride, time trial against the own ghost | §2.3.1 | 16c7c37 |
-| Menu M3: in-app ride switch, Navi pages, GPX import, paging | §3.2.1 | 899d56e |
-| Fix: U-turn on one-way roads (no double turn, no roundabout circling) | §2.2.1, §2.2.2 | b89e077 |
-| Fix: riders start on any grade; grade limit across junctions; corner heights | §4.3, §5.1, §5.2 | 97a99e2 |
-| Fix: tunnels (tube and tunnel camera; Stegertunnel at km 8.8) | §3.2, §4.3 | 7182ebe |
-| Events and workouts: FIT laps, ghost without shadows, event confirmation, Workouts page, FTP from the profile | §2.3.1, §2.8 | 18f0ae3 |
+| Build slots per machine (2 Linux, 1 Windows, 1 macOS), queue in the build dashboard | §11, README | b88dfd6 |
+| Video: REC indicator, smooth live recording | §3.2 | 901b1f0 |
+| Bots: 10 by default, start formation, 12 strengths | §6.1 | 0840fdc |
+| Camera: solid vs see-through objects, trees fade, buildings are obstacles | §3.2 | b0b0bd4 |
+| Windows build machine: full workspace builds and tests | §11.1 | d071d83 |
+| In-game menu M1 (shell, input contexts, gamepad) | §3.2.1 | 55a10b0 |
+| Gradient feel: 100 m average, elevation profile, camera tilt | §3.2 | b4a7986 |
+| Structured workouts with ERG (Phase 2) | §2.8, §5.3 | fe23312 |
+| QUIC transport, networked server (Phase 5 groundwork) | §6.2 | 4688dd1 |
+| Menu M2: settings, rider profiles, weight in the physics | §3.2.1, §2.5, §6.5 | bf0b2cb |
+| Phase 4 groundwork: physics profiles, bike and look, bike types | §2.5, §5.2.1, §6.5 | e043838 |
+| Neighbour world packages at runtime (Phase 3) | §4.7 | 0777ff4 |
+| UI font with full Latin coverage | §3.2, §13 | 74c2398 |
+| Local events: race, group ride, time trial against the own ghost | §2.3.1 | 29b1263 |
+| Menu M3: in-app ride switch, Navi pages, GPX import, paging | §3.2.1 | 8ac72bf |
+| Fix: U-turn on one-way roads (no double turn, no roundabout circling) | §2.2.1, §2.2.2 | 86708e6 |
+| Fix: riders start on any grade; grade limit across junctions; corner heights | §4.3, §5.1, §5.2 | caa7916 |
+| Fix: tunnels (tube and tunnel camera; Stegertunnel at km 8.8) | §3.2, §4.3 | 5a45b41 |
+| Events and workouts: FIT laps, ghost without shadows, event confirmation, Workouts page, FTP from the profile | §2.3.1, §2.8 | 20c35c2 |
 
 ### B.2 Decisions and assumptions
 
@@ -1946,13 +1947,13 @@ that had already been pushed and was fixed.
 
 ### B.4 Platform builds at the end of the night
 
-Final runs on commit `dddee37` (all features of the night plus this appendix):
+Final runs on commit `f69cc48` (all features of the night plus this appendix):
 
 | Platform | Machine | Checks | Result |
 |---|---|---|---|
 | Linux (Debian, AMD GPU) | marge | fmt, clippy `-D warnings`, wasm build of the engine-independent crates, all tests, Wayland screenshot from the world package | 726 passed, 0 failed; clean |
-| macOS 26 (Apple Silicon M1) | Mac build machine | clippy `-D warnings`, all tests, app bundle | 726 passed, 0 failed; `release/0.1.0-dddee37/macos-arm64/` (DMG, ad-hoc signed) |
+| macOS 26 (Apple Silicon M1) | Mac build machine | clippy `-D warnings`, all tests, app bundle | 726 passed, 0 failed; `release/0.1.0-f69cc48/macos-arm64/` (DMG, ad-hoc signed) |
 | Windows 11 (x86-64, MSVC) | Windows build machine | clippy `-D warnings`, all tests, release build of `ocw-desktop` and `ocw-server` | 726 passed, 0 failed; release `ocw-desktop.exe` 106 MB built (not packaged) |
 
 leela (Fedora) was unreachable from about 01:00 and is not part of the final runs. The marge
-kiosk runs `18f0ae3` (the same code without this appendix).
+kiosk runs `20c35c2` (the same code without this appendix).
