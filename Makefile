@@ -71,7 +71,7 @@ VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 
 .DEFAULT_GOAL := help
 .PHONY: help deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust build release test lint fmt fmt-check \
-	clippy wasm check run server screenshot screenshot-wayland smoke video video-wayland deploy-test clean clean-test-output \
+	clippy wasm check run server screenshot screenshot-wayland smoke video video-wayland test-scenes test-scenes-list deploy-test clean clean-test-output \
 	macos-app
 
 help: ## Show this help
@@ -217,6 +217,12 @@ video: ## Record a smooth 6 s test ride (X11, frame capture); writes $(VIDEO)
 
 video-wayland: ## Same on Wayland (weston); writes $(VIDEO_WAYLAND)
 	.claude/skills/run-ocw/drive.sh video-wayland $(VIDEO_WAYLAND)
+
+test-scenes: ## Render scripts/scenes.toml headlessly (Wayland) into test-output/scenes/ (ONLY=glob,..., WORLD=pkg, REMOTE=machine)
+	scripts/render-scenes.sh $(if $(ONLY),--only '$(ONLY)') $(if $(WORLD),--world '$(WORLD)') $(if $(REMOTE),--remote $(REMOTE))
+
+test-scenes-list: ## List the scenes of scripts/scenes.toml
+	scripts/render-scenes.sh --list
 
 deploy-test: ## Build on MACHINE (default marge) and deploy for its kiosk (scripts/ocw-kiosk.sh)
 	scripts/deploy-test.sh $(or $(MACHINE),marge)

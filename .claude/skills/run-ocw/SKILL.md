@@ -65,6 +65,10 @@ Other desktop flags: `--bots N` (default 4), `--power W` (default 200),
 `--window 1920x1080`, `--fullscreen`, `--exec FILE`, `--capture DIR` (with
 `--capture-fps`, `--capture-seconds`, `--capture-warmup`).
 
+Reproducible scenes (camera, teleport, events, menus, tunnel, world package):
+`scripts/render-scenes.sh --list | --only NAME | --remote marge` renders
+`scripts/scenes.toml` with this driver (`make test-scenes`; README, "Scene harness").
+
 `drive.sh` prints the window system the app used and the console output
 (`INFO console: …` lines) from the log. `make smoke` runs both X11 and Wayland.
 

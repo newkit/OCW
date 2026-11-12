@@ -1,0 +1,277 @@
+# Scenes for the scene-rendering harness (scripts/render-scenes.sh, `make
+# test-scenes`; README.md, "Scene harness"). Each [[scene]] is rendered headlessly
+# by .claude/skills/run-ocw/drive.sh into test-output/scenes/<time>/NAME.png
+# (screenshot) and/or NAME.mp4 (video; NAME.png is then its last frame).
+#
+# Keys of a scene ([defaults] gives defaults; args/cmds/at are prepended):
+#   name         file name, for --only (globs: --only 'menu-*')
+#   description  what the image shows (also the build-history README row)
+#   world        true: needs the world package ({world}, {world_dir} in args,
+#                cmds and at are replaced by its path and folder; the
+#                Vaduz-Malbun route file lies beside it); skipped without one
+#   args         ocw-desktop arguments (README, "Command-line options")
+#   cmds         console commands at startup (--cmd)
+#   at           timed console commands "SECONDS=COMMAND" (--at, game time
+#                since the app started; world packages load for 1-3 s first)
+#   shot         take a screenshot after this many seconds (real time)
+#   video        record this many seconds of game time (25 fps frame capture)
+#   warmup       seconds of game time before the video starts (default 3)
+#   riders       content of riders.toml (rider profiles) for this scene
+#   max_video_mb --pick re-encodes larger videos (default 3)
+#   pick         false: never picked (--pick) for the build history
+#
+# Every scene runs with fresh config/data folders (no settings, devices,
+# ghosts or saved rides of the machine's user) and the virtual trainer.
+
+[defaults]
+args = ["--virtual", "--window", "1280x720"]
+
+# --- Test route (no world package needed) -----------------------------------
+
+[[scene]]
+name = "testroute-hills"
+description = "Built-in Hills test route: own rider and bots in the chase camera, HUD and elevation profile"
+args = ["--route", "hills", "--bots", "6", "--power", "300"]
+shot = 10
+
+[[scene]]
+name = "console-overlay"
+description = "Console overlay over the Hills test route: the command list from `help`"
+args = ["--route", "hills", "--bots", "4"]
+cmds = ["help", "console open"]
+shot = 6
+
+[[scene]]
+name = "workout-erg"
+description = "Bundled sweet-spot workout in ERG mode on the Loop test route: workout HUD panel with target, step, time left and zone-coloured profile"
+args = ["--route", "loop", "--bots", "3"]
+at = ["1=workout start --example sweet-spot"]
+shot = 14
+
+[[scene]]
+name = "race-results"
+description = "Local race over 0.4 km on the Loop test route at 700 W: provisional results panel after your finish"
+args = ["--route", "loop", "--bots", "0"]
+at = ["1=event race --km 0.4 --bots 5", "1=sim.power 700"]
+shot = 50
+
+[[scene]]
+name = "tt-ghost"
+description = "Time trial on the Loop test route, second attempt: your translucent ghost from the first run rides beside you, ghost gap in the event HUD"
+args = ["--route", "loop", "--bots", "0"]
+at = ["1=event tt --km 0.3", "1=sim.power 650", "40=event dismiss", "41=event tt --km 0.3", "41=sim.power 520", "41=camera.orbit 25 18 9"]
+shot = 56
+
+[[scene]]
+name = "menu-main"
+description = "In-game menu (Esc), top page over the Hills test route"
+args = ["--route", "hills", "--bots", "4"]
+at = ["2=menu open"]
+shot = 4
+
+[[scene]]
+name = "menu-settings"
+description = "In-game menu: Settings page (Riders, Controls, Trainer, Display, Strava)"
+args = ["--route", "hills", "--bots", "4"]
+at = ["2=menu open", "2.4=menu down", "2.8=menu down", "3.2=menu down", "3.6=menu down", "4=menu select"]
+shot = 5.5
+
+[[scene]]
+name = "menu-settings-display"
+description = "In-game menu: Settings -> Display page with its values (HUD, units, FPS, camera, fullscreen)"
+args = ["--route", "hills", "--bots", "4"]
+at = ["2=menu open", "2.4=menu down", "2.8=menu down", "3.2=menu down", "3.6=menu down", "4=menu select", "4.4=menu down", "4.8=menu down", "5.2=menu down", "5.6=menu select"]
+shot = 7
+
+[[scene]]
+name = "menu-workshop-bike"
+description = "In-game menu: Workshop -> Bike page of a rider profile (gravel bike, colours, kit) with the rider behind it"
+args = ["--route", "hills", "--bots", "0"]
+riders = """
+active = "Demo Rider"
+
+[[rider]]
+name = "Demo Rider"
+weight_kg = 72.0
+ftp_w = 240
+bike = "gravel"
+frame_color = "#43A047"
+jersey_color = "#1E88E5"
+helmet_color = "#F2F2EE"
+kit = "sash"
+"""
+at = ["2=menu open", "2.4=menu down", "2.8=menu down", "3.2=menu select", "3.6=menu down", "4=menu select"]
+shot = 5.5
+
+[[scene]]
+name = "menu-workouts"
+description = "In-game menu: Ride -> Workouts list (bundled examples)"
+args = ["--route", "hills", "--bots", "4"]
+at = ["2=menu open", "2.4=menu down", "2.8=menu select", "3.2=menu down", "3.4=menu down", "3.6=menu down", "3.8=menu down", "4.0=menu down", "4.4=menu select"]
+shot = 6
+
+[[scene]]
+name = "menu-ride"
+description = "In-game menu: Ride page (local race, group ride, time trial, change ride, workouts)"
+args = ["--route", "hills", "--bots", "4"]
+at = ["2=menu open", "2.4=menu down", "2.8=menu select"]
+shot = 4.5
+
+# --- Liechtenstein world package (world = true) -----------------------------
+# Vaduz-Malbun route file: Vaduz (km 0, 458 m), Steg tunnel (km 8.75-9.4),
+# Malbun (km 14, 1607 m). Free ride: local X east, Z south of the package
+# origin; Vaduz centre is about -2430,2220, the Rhine dam -3680,2170.
+
+[[scene]]
+name = "route-start-formation"
+description = "Vaduz-Malbun route in Vaduz: start formation of a local race with 8 bots during the countdown, seen from the front"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "8"]
+at = ["2.5=event race --km 3", "2.5=camera.orbit 165 22 16"]
+shot = 6
+
+[[scene]]
+name = "race-start-video"
+description = "Video: countdown (3-2-1, GO!) and start of a local race with 8 bots in Vaduz, orbiting camera in front of the field"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "8", "--power", "350"]
+at = ["2.5=event race --km 3", "2.5=camera.orbit 165 22 16", "8.5=camera.orbit 140 18 12"]
+warmup = 3
+video = 8
+
+[[scene]]
+name = "camera-chase"
+description = "Chase camera on the Vaduz-Malbun route leaving Vaduz: bots passing the own rider between the houses"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "8", "--power", "130"]
+at = ["1=camera.mode chase"]
+shot = 16
+
+[[scene]]
+name = "camera-side"
+description = "Side camera on the Vaduz-Malbun route in Vaduz: rider and bots from the side of the road"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "8", "--power", "130"]
+at = ["1=camera.mode side"]
+shot = 16
+
+[[scene]]
+name = "camera-top"
+description = "Top camera on the Vaduz-Malbun route in Vaduz: looking down on the riders, the road and the houses"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "8", "--power", "130"]
+at = ["1=camera.mode top"]
+shot = 16
+
+[[scene]]
+name = "camera-close"
+description = "Close orbit camera (3 m, front-left) on the own rider: bike, kit and helmet in detail"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "220"]
+at = ["2.5=teleport 0.3", "2.5=camera.orbit 140 12 3.2"]
+shot = 7
+
+[[scene]]
+name = "orbit-video"
+description = "Video: the chase camera orbits once around the rider climbing out of Vaduz (camera.orbit stepped by --at)"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "3", "--power", "280"]
+at = ["2.5=teleport 1.6", "3=camera.orbit 0 20 12", "3.25=camera.orbit 11.25 20 12", "3.5=camera.orbit 22.5 20 12", "3.75=camera.orbit 33.75 20 12", "4=camera.orbit 45 20 12", "4.25=camera.orbit 56.25 20 12", "4.5=camera.orbit 67.5 20 12", "4.75=camera.orbit 78.75 20 12", "5=camera.orbit 90 20 12", "5.25=camera.orbit 101.25 20 12", "5.5=camera.orbit 112.5 20 12", "5.75=camera.orbit 123.75 20 12", "6=camera.orbit 135 20 12", "6.25=camera.orbit 146.25 20 12", "6.5=camera.orbit 157.5 20 12", "6.75=camera.orbit 168.75 20 12", "7=camera.orbit 180 20 12", "7.25=camera.orbit 191.25 20 12", "7.5=camera.orbit 202.5 20 12", "7.75=camera.orbit 213.75 20 12", "8=camera.orbit 225 20 12", "8.25=camera.orbit 236.25 20 12", "8.5=camera.orbit 247.5 20 12", "8.75=camera.orbit 258.75 20 12", "9=camera.orbit 270 20 12", "9.25=camera.orbit 281.25 20 12", "9.5=camera.orbit 292.5 20 12", "9.75=camera.orbit 303.75 20 12", "10=camera.orbit 315 20 12", "10.25=camera.orbit 326.25 20 12", "10.5=camera.orbit 337.5 20 12", "10.75=camera.orbit 348.75 20 12", "11=camera.orbit 360 20 12"]
+warmup = 3
+video = 8
+
+[[scene]]
+name = "malbun-climb"
+description = "Steep climb on the Malbun road (km 10, about 11 %): gradient HUD with the 100 m average and the gradient-coloured elevation profile"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "2", "--power", "300"]
+at = ["2.5=teleport 10.0"]
+shot = 9
+
+[[scene]]
+name = "malbun-climb-video"
+description = "Video: climbing the Malbun road (km 10) in the side camera"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "2", "--power", "320"]
+at = ["2.5=teleport 10.0", "2.5=camera.mode side"]
+video = 6
+
+[[scene]]
+name = "malbun-arrival"
+description = "Arrival in Malbun (km 13.9, 1600 m): chalets and the mountains around the valley head"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "250"]
+at = ["2.5=teleport 13.85", "2.5=camera.orbit 15 22 18"]
+shot = 9
+
+[[scene]]
+name = "tunnel-entry"
+description = "Steg tunnel portal on the Vaduz-Malbun route (km 8.77, 1265 m): the road disappears into the hillside"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "250"]
+at = ["2.5=teleport 8.768"]
+shot = 8
+
+[[scene]]
+name = "tunnel-inside"
+description = "Inside the Steg tunnel (km 8.9): tunnel tube and the close tunnel camera, exit light ahead"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "2", "--power", "250"]
+at = ["2.5=teleport 8.9"]
+shot = 8
+
+[[scene]]
+name = "tunnel-video"
+description = "Video: riding into the Steg tunnel at km 8.75 at 800 W (15 %), the camera blends into the tunnel camera"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "800"]
+at = ["2.5=teleport 8.745"]
+warmup = 6
+video = 8
+
+[[scene]]
+name = "vaduz-buildings"
+description = "Free ride in Vaduz centre: extruded OSM buildings with gable roofs along the street, high orbit camera"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "0"]
+at = ["2.5=camera.orbit 30 28 30"]
+shot = 7
+
+[[scene]]
+name = "vaduz-video"
+description = "Video: free ride through Vaduz centre among the buildings (chase camera)"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "2", "--power", "280"]
+video = 6
+
+[[scene]]
+name = "freeride-junction"
+description = "Free ride junction HUD in Vaduz: exits at their real angles with street name and distance, the chosen (left) exit locked in"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "0"]
+at = ["3=ride.turn left"]
+shot = 6
+
+[[scene]]
+name = "rhine-water"
+description = "The Rhine at Vaduz from above: water surface, the dam track, meadows and land use"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-3679,2171", "--bots", "0"]
+at = ["2.5=camera.orbit 70 45 80"]
+shot = 7
+
+[[scene]]
+name = "far-view"
+description = "Long-distance view from the hairpins above Vaduz (km 3, 725 m) over the Rhine valley: far terrain tiles, forests, Vaduz and the mountains beyond"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "200"]
+at = ["2.5=teleport 3.0", "2.5=camera.orbit 180 10 80"]
+shot = 12
+
+[[scene]]
+name = "menu-navi"
+description = "In-game menu: Navi page (routes, saved rides, GPX import, Strava)"
+args = ["--route", "hills", "--bots", "4"]
+at = ["2=menu open", "2.4=menu down", "2.8=menu down", "3.2=menu down", "3.6=menu select"]
+shot = 5
+

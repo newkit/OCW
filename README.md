@@ -1038,6 +1038,7 @@ to *Public* are the usual causes; the server log is in Event Viewer under
 | `cargo run -p ocw-assets -- generate [--check]` | Regenerate the bike and rider models in `assets/models/` (glTF, own work); `--check` only compares |
 | `cargo run -p ocw-assets -- validate [DIR]` | Asset validator: licence entry (`license`, `source`, `author`) in `manifest.toml` for every model, no physics values, required nodes and paint slots, triangle budgets |
 | `cargo run -p ocw-assets -- info FILE.glb` | A model's nodes, positions, triangles and materials |
+| `scripts/render-scenes.sh [--list] [--only NAME,GLOB] [--remote MACHINE] [--pick DIR]` | Scene harness: renders the scenes of `scripts/scenes.toml` (screenshots, short videos) headlessly on Wayland (`make test-scenes`), see [Scene harness](#scene-harness) |
 
 **Signing and publishing world packages** (spec §4.7): an offline root key
 certifies signing keys; a signing key signs package manifests. Secret keys
@@ -1064,6 +1065,40 @@ build notes); screenshots and videos from development
 are not in the repository: they are stored as one zip per day with an index
 (`index.md`) on the GitHub release `build-history`; new test runs land in the
 git-ignored `test-output/`.
+
+### Scene harness
+
+`scripts/scenes.toml` lists reproducible scenes: name, description,
+`ocw-desktop` arguments, console commands at startup (`cmds`) and at given
+game times (`at = ["4=teleport 8.8", "6=camera.mode side"]`), and the output:
+a screenshot after `shot` seconds and/or a video of `video` seconds (25 fps
+frame capture). `scripts/render-scenes.sh` renders them with
+`.claude/skills/run-ocw/drive.sh` on a headless weston (`--x11`: Xvfb) into
+`test-output/scenes/<date-time>/NAME.png|mp4` (each run is also archived in
+`test-output/YYYY-MM-DD/` with an `index.md` row). Every scene starts with
+empty config and data folders (`OCW_CONFIG_DIR`, `OCW_DATA_DIR`; a scene can
+bring its own `riders.toml`) and the virtual trainer, so the machine's
+settings, devices and ghosts never leak in.
+
+```bash
+scripts/render-scenes.sh --list                       # scenes, and which world package is used
+make test-scenes                                      # all scenes on this machine
+make test-scenes ONLY='menu-*,tunnel-*'               # some of them (comma-separated globs)
+scripts/render-scenes.sh --remote marge               # on a build machine, then fetched into test-output/scenes/
+scripts/render-scenes.sh --pick test-output/scenes/2026-11-12-093000 --only 'menu-*'   # into test-output/build-history/
+```
+
+Scenes with `world = true` need the Liechtenstein package (`data/` is not
+synced by `scripts/remote.sh`): `--world PKG` or `$OCW_WORLD`, else
+`data/pilot/liechtenstein.ocwpkg`, the main checkout's `data/pilot/` (git
+worktrees) or the kiosk install `/var/tmp/ocw/liechtenstein.ocwpkg`; the
+Vaduz-Malbun route file is taken from beside it (`{world}`, `{world_dir}` in
+the arguments). Without a package these scenes are skipped; the test-route
+scenes always run. `--pick` copies the good renders of a folder into
+`test-output/build-history/YYYY-MM-DD/HHMMSS-NAME.png|mp4` (PNGs over 600 KB
+get a 256-colour palette, videos over 3 MB are re-encoded) with one row per
+file in its `index.md` (the scene's description), ready for the zip of the
+GitHub release `build-history`. Look at every image before picking it.
 
 ## Repository layout
 

@@ -1472,6 +1472,7 @@ Build and release pipelines are automated for all three operating systems, intro
 | **Unit tests** | Functions and modules in isolation: physics, route sampling, protocol encoding, session logic, parsers, pipeline steps | `#[cfg(test)]` modules next to the code in every crate | Every commit, all platforms in CI |
 | **Integration tests** | Several crates together: client ↔ local server over the protocol, world-builder on a small OSM extract, device backend ↔ app channel | `tests/` directory of the crate | Every commit (Linux); per platform once ported |
 | **End-to-end smoke test** | The real desktop app under Xvfb with software rendering (Mesa lavapipe): launch, ride on the virtual trainer, run console commands, take a screenshot, exit | `tools/` / run skill driver | Every commit on Linux |
+| **Scene renders** | Reproducible scenes of the real desktop app (`scripts/scenes.toml`: arguments, timed console commands, screenshot / short video) rendered headlessly on Wayland on a Linux build machine (`scripts/render-scenes.sh`, `make test-scenes`); reviewed by eye, the good ones kept in the build history | `scripts/` + run skill driver | After user-visible changes, before releases |
 | **Hardware-in-the-loop** | Real trainers and sensors (FTMS, power meter, heart rate) | Manual test protocol, later a test bench | Before each release |
 | **Performance tests** | Frame time, streaming hitches, memory (§15) | `tools/performance-test` (console `exec` scripts, §2.9) | Nightly / before releases |
 
@@ -1482,6 +1483,7 @@ Build and release pipelines are automated for all three operating systems, intro
 - **Physics tests check physical plausibility**, not only code paths: steady-state speed for given power and gradient, energy balance, no rolling backwards, stability at the 50 Hz tick.
 - **Protocol compatibility tests:** encoded messages of earlier protocol versions are kept as fixtures and must still decode (§6.2).
 - **World-builder tests** use small, checked-in OSM / DEM fixtures with known expected results (golden files), e.g. a junction, a bridge, a dead end.
+- **Build history:** the harness keeps every scene reproducible (fresh config and data folders, virtual trainer, fixed start, world package from `--world` / `$OCW_WORLD` / `data/pilot/` / the kiosk install); `render-scenes.sh --pick` copies the reviewed renders, kept small (PNG palette above 600 KB, videos ≤ 3 MB), into `test-output/build-history/` with an index, for the zip on the GitHub release `build-history` (media are not committed to git).
 - **Regression rule:** every fixed bug gets a test that failed before the fix.
 - Commands: `cargo test --workspace` runs all unit and integration tests; `cargo clippy --workspace --all-targets -- -D warnings` must pass.
 
