@@ -18,7 +18,11 @@
 #                    and take screenshots (default); 0: bots only
 #   OCW_MP_HOST      address the bots use for the server (default: its `host`
 #                    in machines.toml)
-#   OCW_MP_BUILD     0: skip the release builds (binaries already there)
+#   OCW_MP_BUILD     0: skip the builds (binaries already there)
+#   OCW_MP_CAMERA    a headless desktop client "Camera" on the server machine
+#                    (weston, drive.sh) that rides along and takes the
+#                    screenshots and video: auto (default: when the kiosk's
+#                    screen is locked or there is no kiosk), 1, 0
 #
 # The server address is read from config/machines.toml here and passed to the
 # remote commands only; it is never printed, and the logs kept in test-output/
@@ -35,10 +39,13 @@ run_s=${OCW_MP_SECONDS:-180}
 port=${OCW_MP_PORT:-47800}
 use_kiosk=${OCW_MP_KIOSK:-1}
 build=${OCW_MP_BUILD:-1}
+camera=${OCW_MP_CAMERA:-auto}
+camera_name=Camera
 kiosk_name=Kiosk
 kiosk_dir=/var/tmp/ocw
-# The kiosk's ride (app game time, s): it waits until T1 (the bots gather
-# ahead of it), then rides at 200 W; screenshots and video frames after T1.
+# The kiosk rides at 200 W from its start (virtual trainer; `sim.power` is a
+# dev command, refused on a remote server); the bots catch up and ride ahead
+# of it. Screenshots and video frames are taken after app game time T1 (s).
 t1=${OCW_MP_T1:-50}
 remote_mp=target/mp
 
@@ -83,9 +90,13 @@ if [ "$build" != 0 ]; then
   say "building (release): ocw-server + ocw-bot on $server_m, ocw-bot on the bot machines"
   declare -A bpid
   for m in $(printf '%s\n' "$server_m" "${used[@]}" | awk '!seen[$0]++'); do
-    pkgs="-p ocw-bot"
-    [ "$m" = "$server_m" ] && pkgs="-p ocw-server -p ocw-bot"
-    (R "$m" run "cargo build --release $pkgs" 2>&1 | redact_stream >"$out/build-$m.log") &
+    cmd="cargo build --release -p ocw-bot"
+    if [ "$m" = "$server_m" ]; then
+      cmd="cargo build --release -p ocw-server -p ocw-bot"
+      # The camera client runs the debug build, like drive.sh.
+      [ "$camera" != 0 ] && cmd="$cmd && cargo build -p ocw-desktop"
+    fi
+    (R "$m" run "$cmd" 2>&1 | redact_stream >"$out/build-$m.log") &
     bpid[$m]=$!
   done
   for m in "${!bpid[@]}"; do
@@ -133,6 +144,17 @@ if [ "$use_kiosk" = 1 ]; then
     fi
   fi
 fi
+# The camera client rides the same course (with the kiosk's world package
+# for the scenery, if it has one).
+cam_course=()
+if [ -n "$route_file" ]; then
+  cam_course=(--route-file "$route_file")
+elif [ ${#bot_route[@]} -gt 0 ]; then
+  cam_course=("${bot_route[@]}")
+else
+  cam_course=(--route loop)
+fi
+[ -n "${world:-}" ] && cam_course+=(--world "$world")
 if [ -n "$route_file" ]; then
   rname=$(basename "$route_file")
   say "course:       route file $rname (the kiosk's)"
@@ -153,6 +175,7 @@ fi
 pids=()
 cleanup_remote() {
   R "$server_m" ssh "pkill -f -- '--stats-file $remote_mp/stats.json'" >/dev/null 2>&1 || true
+  R "$server_m" ssh "pkill -f -- '/tmp/ocw-mp-camera-$stamp/final.png'" >/dev/null 2>&1 || true
   for m in "${used[@]}"; do
     if [ "$(os_of "$m")" = windows ]; then
       R "$m" ssh "Stop-Process -Name ocw-bot -ErrorAction SilentlyContinue" >/dev/null 2>&1 || true
@@ -186,15 +209,19 @@ restore_kiosk() {
   kiosk_on=0
   # Back to the saved arguments – only if nobody deployed meanwhile (the
   # file is still ours) – and restart the app (a new binary inode).
-  if R "$server_m" ssh "D=$kiosk_dir; S=$shots
+  local r
+  r=$(R "$server_m" ssh "D=$kiosk_dir; S=$shots
     if cmp -s \$S/args.mp \$D/ocw-desktop.args; then
       if [ -f \$S/args.saved ]; then cp \$S/args.saved \$D/.args.tmp && chmod 644 \$D/.args.tmp && mv -f \$D/.args.tmp \$D/ocw-desktop.args
       else rm -f \$D/ocw-desktop.args; fi
       cp -p \$D/ocw-desktop \$D/.ocw-desktop.mp && mv -f \$D/.ocw-desktop.mp \$D/ocw-desktop
       echo restored
-    else echo 'arguments changed meanwhile (a deployment?): left as they are'; fi" 2>&1 | redact_stream | tee -a "$summary"; then
-    say "kiosk: back to its normal arguments (restarting)"
-  fi
+    else echo changed; fi" 2>&1 | redact_stream)
+  case "$r" in
+    *restored*) say "kiosk: back to its normal arguments (restarting)" ;;
+    *changed*) say "kiosk: its arguments were replaced meanwhile (a deployment, which restarted it normally): left as they are" ;;
+    *) say "WARNING: could not restore the kiosk: $r (check $kiosk_dir/ocw-desktop.args on $server_m)" ;;
+  esac
 }
 on_exit() {
   restore_kiosk
@@ -208,8 +235,7 @@ if [ "$kiosk" = 1 ]; then
   {
     echo "# multiplayer test $stamp (scripts/test-multiplayer.sh); restored afterwards"
     echo "--server 127.0.0.1:$port --server-cert $fp"
-    echo "--name $kiosk_name --virtual --power 0 --record false"
-    at "$t1" "sim.power 200"
+    echo "--name $kiosk_name --virtual --power 200 --record false"
     for d in 12 25 40; do at "$((t1 + d))" "screenshot $shots/still-$d.png"; done
     # Video frames: 3 per second for 12 s.
     for i in $(seq 0 35); do
@@ -224,15 +250,50 @@ if [ "$kiosk" = 1 ]; then
     cp \$S/args.mp \$D/.args.tmp && chmod 644 \$D/.args.tmp && mv -f \$D/.args.tmp \$D/ocw-desktop.args
     cp -p \$D/ocw-desktop \$D/.ocw-desktop.mp && mv -f \$D/.ocw-desktop.mp \$D/ocw-desktop" 2>&1 | redact_stream; then
     kiosk_on=1
-    say "kiosk: joins as \"$kiosk_name\" (restarting with --server 127.0.0.1:$port); rides from app time ${t1} s"
+    say "kiosk: joins as \"$kiosk_name\" (restarting with --server 127.0.0.1:$port); screenshots from app time ${t1} s"
   else
     say "FAIL: could not switch the kiosk"
   fi
 fi
 
+# A locked desktop session hides the kiosk's window: the compositor then
+# hardly lets the app draw (about one frame a second), so its game time
+# (--at) crawls and no screenshot is taken.
+locked=no
+if [ "$kiosk" = 1 ]; then
+  locked=$(R "$server_m" ssh "s=\$(loginctl list-sessions --no-legend 2>/dev/null | awk '\$4==\"seat0\" {print \$1; exit}'); [ -n \"\$s\" ] && loginctl show-session \"\$s\" -p LockedHint --value" 2>/dev/null || true)
+  [ "$locked" = yes ] && say "note: the kiosk's desktop session is locked: its window is not drawn, so it takes no screenshots (unlock the screen on $server_m for kiosk pictures)"
+fi
+use_camera=0
+case "$camera" in
+  1) use_camera=1 ;;
+  auto) { [ "$kiosk" != 1 ] || [ "$locked" = yes ]; } && use_camera=1 ;;
+esac
+cam=/tmp/ocw-mp-camera-$stamp
+cam_pid=""
+if [ "$use_camera" = 1 ]; then
+  {
+    echo "--server 127.0.0.1:$port --server-cert $fp --name $camera_name --virtual --power 200 --record false"
+    echo "${cam_course[*]}"
+    for d in 30 45 60; do echo "--at \"$d=screenshot $cam/still-$d.png\""; done
+    # Video frames: 5 per second for 12 s.
+    for i in $(seq 0 59); do
+      echo "--at \"$(awk -v i="$i" 'BEGIN { printf "%.2f", 32 + i / 5 }')=screenshot $cam/frame-$(printf %03d "$i").png\""
+    done
+  } >"$out/camera.args"
+  R "$server_m" ssh "rm -rf $cam && mkdir -p $cam && cat > $cam/camera.args" <"$out/camera.args" 2>&1 | redact_stream
+  (OCW_REMOTE_SLOTS=0 R "$server_m" run "OCW_ARGS_FILE=$cam/camera.args OCW_TEST_OUTPUT=off .claude/skills/run-ocw/drive.sh shot-wayland $cam/final.png $run_s" 2>&1 | redact_stream >"$out/camera.log") &
+  cam_pid=$!
+  say "camera:       headless client \"$camera_name\" on $server_m (weston) rides along and takes the pictures"
+fi
+
 # --- 6. Bots ------------------------------------------------------------
 follow=()
-[ "$kiosk" = 1 ] && follow=(--follow "$kiosk_name")
+if [ "$use_camera" = 1 ]; then
+  follow=(--follow "$camera_name")
+elif [ "$kiosk" = 1 ]; then
+  follow=(--follow "$kiosk_name")
+fi
 j=0
 logs=()
 for m in "${used[@]}"; do
@@ -241,6 +302,10 @@ for m in "${used[@]}"; do
   host_for=$addr
   bin=target/release/ocw-bot
   [ "$os" = windows ] && bin='.\target\release\ocw-bot.exe'
+  # macOS stops the monotonic clock and the network while it idles to
+  # sleep: keep it awake for the run (no setting is changed).
+  [ "$os" = macos ] && bin="caffeinate -i -s $bin"
+
   args="--server $host_for --server-cert $fp --riders $riders --seconds $((run_s + 60)) --label $label --name-prefix $(prefix_of "$os") --index $((j * riders)) ${bot_route[*]} ${follow[*]}"
   log=$out/bot-$m.log
   logs+=("$log")
@@ -251,7 +316,7 @@ for m in "${used[@]}"; do
 done
 
 wait "$server_pid"
-for p in "${pids[@]}"; do wait "$p"; done
+for p in "${pids[@]}" $cam_pid; do wait "$p"; done
 pids=()
 say "server and bots finished"
 restore_kiosk
@@ -260,7 +325,8 @@ restore_kiosk
 R "$server_m" fetch "$remote_mp/stats.json" "$out" >/dev/null 2>&1 || say "note: no stats.json from the server"
 R "$server_m" put "${logs[@]}" "$remote_mp/bots" >/dev/null 2>&1
 kiosk_opt=()
-[ "$kiosk" = 1 ] && kiosk_opt=(--kiosk "$kiosk_name")
+[ "$kiosk" = 1 ] && kiosk_opt+=(--client "$kiosk_name")
+[ "$use_camera" = 1 ] && kiosk_opt+=(--client "$camera_name")
 remote_logs=$(for l in "${logs[@]}"; do printf '%s/bots/%s ' "$remote_mp" "$(basename "$l")"; done)
 OCW_REMOTE_SLOTS=0 R "$server_m" run "target/release/ocw-bot verdict --server-stats $remote_mp/stats.json --processes ${#logs[@]} --riders-per-process $riders ${kiosk_opt[*]} $remote_logs" 2>&1 |
   redact_stream | tee "$out/verdict.txt"
@@ -285,16 +351,27 @@ if [ "$kiosk" = 1 ]; then
   R "$server_m" ssh "rm -rf $shots" >/dev/null 2>&1 || true
 fi
 
+if [ "$use_camera" = 1 ]; then
+  R "$server_m" ssh "cd $cam 2>/dev/null && ls frame-*.png >/dev/null 2>&1 && ffmpeg -loglevel error -y -framerate 5 -pattern_type glob -i 'frame-*.png' -vf 'scale=1280:-2,format=yuv420p' -c:v libx264 -preset veryfast camera.mp4" >/dev/null 2>&1 || true
+  mkdir -p "$out/camera"
+  R "$server_m" ssh "cd $cam && tar -cf - still-*.png final.png camera.mp4 2>/dev/null" 2>/dev/null | tar -xf - -C "$out/camera" 2>/dev/null || true
+  say "camera images: $(ls "$out/camera" 2>/dev/null | grep -c png) stills$([ -f "$out/camera/camera.mp4" ] && echo ', camera.mp4')"
+  R "$server_m" ssh "rm -rf $cam" >/dev/null 2>&1 || true
+fi
+
 # Archive like the run-ocw skill's drive.sh: test-output/YYYY-MM-DD/ + index row.
 root=${OCW_TEST_OUTPUT:-$PWD/test-output}
 day=$(date +%Y-%m-%d)
 stem="$(date +%H%M%S)-$sha-multiplayer"
 mkdir -p "$root/$day"
 links=""
-for f in "$out"/kiosk/still-*.png "$out"/kiosk/kiosk.mp4 "$out/verdict.txt" "$out/summary.txt"; do
+for f in "$out"/kiosk/still-*.png "$out"/kiosk/kiosk.mp4 "$out"/camera/still-*.png "$out"/camera/final.png \
+  "$out"/camera/camera.mp4 "$out/verdict.txt" "$out/summary.txt"; do
   [ -f "$f" ] || continue
-  cp "$f" "$root/$day/$stem-$(basename "$f")"
-  links+="[$(basename "$f")]($day/$stem-$(basename "$f")) "
+  name=$(basename "$(dirname "$f")")-$(basename "$f")
+  case "$f" in "$out"/verdict.txt | "$out"/summary.txt) name=$(basename "$f") ;; esac
+  cp "$f" "$root/$day/$stem-$name"
+  links+="[$name]($day/$stem-$name) "
 done
 if [ ! -f "$root/index.md" ]; then
   printf '# OCW test output\n\n| Date | Time | Commit | Mode | Window system | App arguments | Files |\n|---|---|---|---|---|---|---|\n' >"$root/index.md"

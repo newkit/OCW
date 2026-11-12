@@ -15,7 +15,7 @@
 
 use std::path::PathBuf;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use clap::{Args as ClapArgs, Parser, Subcommand};
 use ocw_bot::report::NORMAL_CLOSE;
@@ -106,9 +106,10 @@ struct VerdictArgs {
     processes: usize,
     #[arg(long, default_value_t = 1)]
     riders_per_process: u32,
-    /// Display name of the GUI client that takes part (the kiosk).
-    #[arg(long, value_name = "NAME")]
-    kiosk: Option<String>,
+    /// Display name of a GUI client that takes part (the kiosk, a camera
+    /// client); repeatable.
+    #[arg(long = "client", value_name = "NAME")]
+    clients: Vec<String>,
     /// Minimum metres every bot rider must ride.
     #[arg(long, default_value_t = 20.0)]
     min_ridden_m: f64,
@@ -183,6 +184,9 @@ fn ride(args: &RideArgs) -> i32 {
         "starting bots"
     );
     let start = Instant::now();
+    // The wall clock goes on while a machine sleeps, the monotonic one
+    // does not (macOS): the difference is the time suspended.
+    let wall_start = SystemTime::now();
     let mut links: Vec<Link> = (0..args.riders)
         .map(|i| {
             let k = args.index + i;
@@ -268,6 +272,8 @@ fn ride(args: &RideArgs) -> i32 {
         }
     }
     let end = start.elapsed().as_secs_f64();
+    let wall = wall_start.elapsed().map_or(end, |d| d.as_secs_f64());
+    let suspended_s = (wall - end).max(0.0);
     for l in &mut links {
         l.rider.close("bot finished", end);
         if let Some(net) = l.net.take() {
@@ -280,10 +286,14 @@ fn ride(args: &RideArgs) -> i32 {
         route_id: route.id().to_owned(),
         route_sha256,
         seconds: end,
+        suspended_s,
         riders: links.iter().map(|l| l.rider.report()).collect(),
     };
     let mut ok = true;
     let port = addr.port();
+    if let Some(n) = ocw_bot::report::suspend_note(suspended_s) {
+        println!("note: {n}");
+    }
     for r in &report.riders {
         let closed = r.closed.clone().unwrap_or_default();
         let normal = NORMAL_CLOSE.iter().any(|n| closed.contains(n));
@@ -336,7 +346,7 @@ fn run_verdict(args: &VerdictArgs) -> i32 {
     let expect = Expect {
         bot_processes: args.processes,
         riders_per_process: args.riders_per_process,
-        kiosk: args.kiosk.clone(),
+        clients: args.clients.clone(),
         min_ridden_m: args.min_ridden_m,
         ..Default::default()
     };

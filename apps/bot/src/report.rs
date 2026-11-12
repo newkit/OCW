@@ -12,6 +12,39 @@ pub const REPORT_MARKER: &str = "OCW-BOT-REPORT ";
 /// Close reasons of a normal end: the server's shutdown, or the bot's own.
 pub const NORMAL_CLOSE: [&str; 2] = ["server shutting down", "bot finished"];
 
+/// What a client sees when the server's closing message was lost: the
+/// server's endpoint answers with a reset, or nothing comes any more.
+pub const LOST_CLOSE: [&str; 2] = ["reset by peer", "timed out"];
+
+/// A rider whose last snapshot is this close to the server's last tick
+/// (ticks; 5 s) and whose link then broke saw the server's end.
+pub const END_SLACK_TICKS: u64 = 5 * ocw_core::SIM_TICK_HZ as u64;
+
+/// Whether a rider's link ended normally: the server's shutdown or the
+/// bot's own end, or a lost closing message right at the server's end
+/// (`server_ticks`: the ticks the server ran).
+pub fn ended_normally(r: &RiderReport, server_ticks: u64) -> bool {
+    match &r.closed {
+        None => true,
+        Some(c) if NORMAL_CLOSE.iter().any(|n| c.contains(n)) => true,
+        Some(c) => {
+            LOST_CLOSE.iter().any(|n| c.contains(n))
+                && r.last_tick + END_SLACK_TICKS >= server_ticks
+        }
+    }
+}
+
+/// A note when the machine was suspended (sleep) during the run: the
+/// monotonic clock stopped while the wall clock went on.
+pub fn suspend_note(suspended_s: f64) -> Option<String> {
+    (suspended_s > 0.5).then(|| {
+        format!(
+            "the machine was suspended for {suspended_s:.1} s during the run (sleep): \
+             snapshots stop and the link may break meanwhile"
+        )
+    })
+}
+
 /// One bot rider's view of the session. Times are seconds since the bot
 /// process started.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -75,6 +108,9 @@ pub struct BotReport {
     pub route_id: String,
     pub route_sha256: String,
     pub seconds: f64,
+    /// Seconds the machine was suspended (wall clock minus monotonic clock).
+    #[serde(default)]
+    pub suspended_s: f64,
     pub riders: Vec<RiderReport>,
 }
 
@@ -103,8 +139,9 @@ pub struct Expect {
     pub bot_processes: usize,
     /// Riders per process.
     pub riders_per_process: u32,
-    /// The GUI client's display name, if one takes part (the kiosk).
-    pub kiosk: Option<String>,
+    /// Display names of the GUI clients that take part (the kiosk, a
+    /// headless camera client).
+    pub clients: Vec<String>,
     /// Minimum metres every bot rider must ride.
     pub min_ridden_m: f64,
     /// Snapshot rate as a share of 10 Hz over the connected time.
@@ -124,7 +161,7 @@ impl Default for Expect {
         Self {
             bot_processes: 1,
             riders_per_process: 1,
-            kiosk: None,
+            clients: Vec::new(),
             min_ridden_m: 20.0,
             min_snapshot_share: 0.9,
             max_snapshot_gap_s: 1.0,
@@ -211,7 +248,7 @@ pub fn verdict(server: &ServerReport, bots: &[BotReport], expect: &Expect) -> Ve
     );
     // Server side.
     let mut clients: Vec<String> = riders.iter().map(|(_, r)| r.name.clone()).collect();
-    clients.extend(expect.kiosk.clone());
+    clients.extend(expect.clients.iter().cloned());
     let missing: Vec<&String> = clients
         .iter()
         .filter(|n| !server.joined.contains(n))
@@ -300,11 +337,13 @@ pub fn verdict(server: &ServerReport, bots: &[BotReport], expect: &Expect) -> Ve
         if r.joined_at_s.is_none() {
             problems.push("never joined".to_owned());
         }
-        match &r.closed {
-            Some(c) if !NORMAL_CLOSE.iter().any(|n| c.contains(n)) => {
-                problems.push(format!("disconnected: {c}"))
-            }
-            _ => {}
+        if !ended_normally(r, server.ticks) {
+            problems.push(format!(
+                "disconnected: {} (last snapshot at tick {} of {})",
+                r.closed.as_deref().unwrap_or_default(),
+                r.last_tick,
+                server.ticks
+            ));
         }
         let connected_s = match (r.first_snapshot_s, r.last_snapshot_s) {
             (Some(a), Some(b)) => b - a,
@@ -369,6 +408,10 @@ pub fn verdict(server: &ServerReport, bots: &[BotReport], expect: &Expect) -> Ve
             r.prediction_error_max_m,
             r.rtt_ms_max
         );
+        let detail = match suspend_note(b.suspended_s) {
+            Some(n) => format!("{detail}; note: {n}"),
+            None => detail,
+        };
         v.check(
             format!("rider {who}"),
             problems.is_empty(),
@@ -392,6 +435,7 @@ mod tests {
             route_id: "loop".into(),
             joined_at_s: Some(1.0),
             closed: Some("the server closed the connection: server shutting down".into()),
+            last_tick: 3100,
             snapshots: 600,
             first_snapshot_s: Some(1.0),
             last_snapshot_s: Some(61.0),
@@ -439,7 +483,7 @@ mod tests {
         let expect = Expect {
             bot_processes: 2,
             riders_per_process: 1,
-            kiosk: Some("Kiosk".into()),
+            clients: vec!["Kiosk".into()],
             ..Default::default()
         };
         (server, bots, expect)
@@ -491,6 +535,13 @@ mod tests {
             rider_fails(&|r| r.closed = Some("connection lost: timed out".into())),
             one
         );
+        // A reset right at the server's end: its closing message was lost.
+        let (s, mut b, e) = setup();
+        b[0].riders[0].closed = Some("connection lost: reset by peer".into());
+        b[0].riders[0].last_tick = 3000;
+        assert!(verdict(&s, &b, &e).passed());
+        b[0].riders[0].last_tick = 2000;
+        assert!(!verdict(&s, &b, &e).passed());
         assert_eq!(rider_fails(&|r| r.snapshots = 100), one);
         assert_eq!(rider_fails(&|r| r.max_snapshot_gap_s = 3.0), one);
         assert_eq!(
@@ -506,6 +557,17 @@ mod tests {
             one
         );
         assert_eq!(rider_fails(&|r| r.max_riders_seen = 2), one);
+    }
+
+    #[test]
+    fn suspends_are_noted() {
+        assert!(suspend_note(0.1).is_none());
+        assert!(suspend_note(2.4).unwrap().contains("2.4 s"));
+        let (s, mut b, e) = setup();
+        b[1].suspended_s = 3.0;
+        let v = verdict(&s, &b, &e);
+        assert!(v.passed());
+        assert!(v.lines().iter().any(|l| l.contains("suspended for 3.0 s")));
     }
 
     #[test]

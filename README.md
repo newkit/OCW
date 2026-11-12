@@ -899,8 +899,9 @@ PATH` (JSON). It ends with one `OCW-BOT-REPORT {json}` line; the exit code is
 0 if every rider joined and none lost its connection. The course must be the
 server's (`--route` = its `--test-route`, or the same `--route-file`); bots do
 not ride road graphs (free ride, package routes). `ocw-bot verdict
---server-stats stats.json --processes N --riders-per-process R [--kiosk NAME]
-BOT-OUTPUT...` checks a whole run (used by the multiplayer test).
+--server-stats stats.json --processes N --riders-per-process R [--client NAME]...
+BOT-OUTPUT...` checks a whole run (used by the multiplayer test; `--client`
+names the GUI clients that took part).
 
 ### Multiplayer test across machines
 
@@ -919,9 +920,14 @@ with a verdict (`RESULT: PASS` / `FAIL`): all clients joined and stayed,
 everyone saw everyone moving, snapshots at 10 Hz without gaps, prediction
 error, server tick timing. Logs, `stats.json`, the verdict and the kiosk's
 screenshots and short video are in `test-output/multiplayer/<run>/`, the
-images also in the `test-output/` build history. Settings: `OCW_MP_BOTS`
+images also in the `test-output/` build history. The kiosk draws (and takes
+pictures) only while its desktop session is unlocked; when it is locked, the
+test says so and a headless desktop client "Camera" (weston on the same
+machine) rides along and takes the pictures instead (`OCW_MP_CAMERA=auto`,
+`1` always, `0` never). On macOS the bots run under `caffeinate -i -s`, so the
+Mac does not doze off during the run. Settings: `OCW_MP_BOTS`
 (machines), `OCW_MP_RIDERS`, `OCW_MP_SECONDS`, `OCW_MP_PORT`, `OCW_MP_KIOSK=0`
-(bots only), `OCW_MP_BUILD=0`, `OCW_MP_SERVER`, `OCW_MP_HOST` (see the
+(bots only), `OCW_MP_CAMERA`, `OCW_MP_BUILD=0`, `OCW_MP_SERVER`, `OCW_MP_HOST` (see the
 script's header and spec §11.4.1). The server's address comes from
 `config/machines.toml` and is never printed (logs have it replaced). The
 test changes no firewall: if a bot gets no answer, it reports that UDP 47800
