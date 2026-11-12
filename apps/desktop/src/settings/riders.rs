@@ -521,7 +521,7 @@ mod tests {
         assert!(r.edit("Anna B", bad).is_err());
         assert_eq!(r.active().weight_kg, 62.0);
         let clash = RiderEdit {
-            name: Some("nils".into()),
+            name: Some("alex".into()),
             ..Default::default()
         };
         assert!(r.edit("Anna B", clash).is_err());

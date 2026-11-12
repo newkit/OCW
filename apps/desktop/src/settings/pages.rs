@@ -481,8 +481,8 @@ mod tests {
         let list = rows(Page::Riders, &s, &r);
         assert_eq!(list[1].confirm, Some(Activate::Open(Page::Rider(1))));
         assert_eq!(list.last().unwrap().confirm, cmd("riders.add \"Rider\""));
-        let nils = rows(Page::Rider(0), &s, &r);
-        let weight = row(&nils, "Weight");
+        let alex = rows(Page::Rider(0), &s, &r);
+        let weight = row(&alex, "Weight");
         assert_eq!(weight.value.as_deref(), Some("78 kg"));
         assert_eq!(
             weight.left.as_deref(),
@@ -493,18 +493,18 @@ mod tests {
             Some("riders.edit \"Alex\" --weight 79")
         );
         // No height yet: ← / → start at 175 cm.
-        let height = row(&nils, "Height");
+        let height = row(&alex, "Height");
         assert_eq!(height.value.as_deref(), Some("-"));
         assert_eq!(
             height.right.as_deref(),
             Some("riders.edit \"Alex\" --height 175")
         );
         assert_eq!(
-            row(&nils, "FTP").left.as_deref(),
+            row(&alex, "FTP").left.as_deref(),
             Some("riders.edit \"Alex\" --ftp 245")
         );
         assert_eq!(
-            row(&nils, "Delete this rider").confirm,
+            row(&alex, "Delete this rider").confirm,
             cmd("riders.remove \"Alex\"")
         );
         // The weight stays in range at the ends.
