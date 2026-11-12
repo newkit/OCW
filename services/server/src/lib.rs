@@ -8,8 +8,8 @@
 
 pub mod local;
 pub mod net;
-pub mod voice;
 pub mod stats;
+pub mod voice;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

@@ -5702,6 +5702,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "ocw-bot"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "ocw-core",
+ "ocw-protocol",
+ "ocw-server",
+ "ocw-sim",
+ "ocw-world",
+ "serde",
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "ocw-core"
 version = "0.1.0"
 
@@ -5793,6 +5809,7 @@ dependencies = [
  "quinn",
  "rcgen",
  "rustls",
+ "serde",
  "serde_json",
  "sha2",
  "thiserror 2.0.21",
