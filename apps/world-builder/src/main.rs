@@ -72,7 +72,7 @@ enum Cmd {
         #[arg(long)]
         no_areas: bool,
         /// Skip the world cleaning passes (spec §4.8): the package as
-        /// before v2.37, e.g. for before/after comparisons.
+        /// before v2.39, e.g. for before/after comparisons.
         #[arg(long)]
         no_clean: bool,
         /// Only the part of the --poly region inside this box

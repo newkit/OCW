@@ -431,6 +431,7 @@ mod tests {
             time_zone: None,
             routes: vec![],
             region: Some(PackageRegion::bbox(46.99, w, 47.01, e)),
+            time_zone: None,
         }
     }
 
