@@ -38,7 +38,10 @@ pub fn rideable(way: &Way) -> Option<RoadClass> {
         }
         "track" => RoadClass::Track,
         "cycleway" => RoadClass::Cycleway,
-        "path" | "footway" | "bridleway" | "pedestrian" if bike_allowed => RoadClass::Path,
+        // Pedestrian streets open to bikes are paved town streets as wide
+        // as residential ones (Freiburg's old town), not gravel paths.
+        "pedestrian" if bike_allowed => RoadClass::Residential,
+        "path" | "footway" | "bridleway" if bike_allowed => RoadClass::Path,
         _ => return None,
     };
     Some(class)
@@ -140,6 +143,21 @@ mod tests {
         );
         assert_eq!(rideable(&way(&[("highway", "construction")])), None);
         assert_eq!(rideable(&way(&[("building", "yes")])), None);
+    }
+
+    /// Regression (Black Forest, Freiburg): the old town's pedestrian
+    /// streets (bicycle=yes) were narrow gravel paths ("unpaved").
+    #[test]
+    fn pedestrian_streets_open_to_bikes_are_paved_town_streets() {
+        assert_eq!(
+            rideable(&way(&[("highway", "pedestrian"), ("bicycle", "yes")])),
+            Some(RoadClass::Residential)
+        );
+        assert_eq!(
+            ocw_world::Surface::of_class(RoadClass::Residential),
+            ocw_world::Surface::Asphalt
+        );
+        assert_eq!(rideable(&way(&[("highway", "pedestrian")])), None);
     }
 
     #[test]

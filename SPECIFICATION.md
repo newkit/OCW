@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.24 – November 2026
+Version 2.30 – November 2026
 
 | Version | Change |
 |---|---|
@@ -42,7 +42,13 @@ Version 2.24 – November 2026
 | 2.21 | Game audio (§3.3): the freehub ticks only while the wheel overruns (coasting: power ≤ 10 W and no cadence able to drive the wheel), fades in 80 ms / out 8 ms, exactly silent while pedalling; drivetrain is a continuous whir, not a click train; demo ride in separated sections |
 | 2.22 | Render rate and FPS counter (§3.2): wall-clock FPS badge, `--log-fps`, `--no-vsync`, `--max-fps`; multiplayer test (§11.4.1): no client-side multiplayer bottleneck (measured), real-time 25 fps kiosk/camera videos with the FPS counter, locked kiosk draws with `--no-vsync --max-fps 60`, camera on the release build; §15 frame-rate measurement |
 | 2.23 | Release builds with voice on all platforms (§11.3, §7): every release binary is built with the LiveKit backend (`--features ocw-desktop/voice`; `OCW_FEATURES` in the packaging scripts); Windows links the C runtime statically (`.cargo/config.toml`, required by LiveKit's /MT libwebrtc, no VC++ redistributable needed); the macOS app script works around Command Line Tools that hide the SDK's libc++ headers; dropping the LiveKit backend joins its threads (Windows access violation in tests). Release `v0.1.0-72238db` |
-| 2.24 | Timestamped captures (§3.2, §11.4): every screenshot and video frame shows an ISO 8601 local timestamp with UTC offset at the top right (always, also with `hud off`), and every file carries it as metadata – screenshots as JPEG (quality 90) with EXIF `DateTimeOriginal` / `CreateDate` / `OffsetTimeOriginal` / `Software` (PNG with `tEXt` `Creation Time` / `Software` for a `.png` path and the lossless `--capture` frames), MP4s with `creation_time` and the build in `comment`; frame capture stamps the capture start plus game time. Test media at 2560×1440, H.264 CRF 18. Videos with game sound (§3.3): live recordings tap the device's mixer output (or render it with game time without a device), frame capture renders exactly one frame's worth of samples per frame; AAC 192k, 48 kHz stereo |
+| 2.24 | Phase 8 planned: textures and regional look (§14 Phase 8): licence rule for textures/imagery/models, research results on open aerial and satellite imagery (Orthophoto Liechtenstein / SWISSIMAGE, LGL DOP20, own Sentinel-2 composite, Copernicus forest type), CC0 material libraries, procedural generation, region calibration (palettes, roof colour per building), milestones T1–T7 and open questions Q1–Q11; §4.6 imagery table corrected (EOX licences per year) |
+| 2.25 | Phase 9 planned: sky, time, seasons and weather (§14 Phase 9): real local time and sky at the rider's world position (sun, moon, stars moving, twilight, night lighting), seasons by date and altitude, time machine (any date/time, time speed, presets), weather simulation and weather machine (presets, custom, transitions), optional weather physics (wind, wetness, air density; per session), real weather from open providers via the server (MeteoSwiss, DWD, MET Norway; Open-Meteo non-commercial; ERA5 for historic weather), milestones S1–S8, open questions Q1–Q10 |
+| 2.26 | Phase 8D: reference photos (Wikimedia Commons, web image search, own photos) to learn how things look; looking is free, copying only under 8A licences; reference boards `art/reference/<region>.md` |
+| 2.27 | Second world: the southern Black Forest (§4.7): Geofabrik Regierungsbezirk Freiburg + SRTM (`fetch-pilot.sh blackforest`), one 260 MB package of 2,260 km² (47.72–48.12 N, 7.62–8.30 E, origin 47.92 N 7.96 E) chosen by measured build and client memory (core 1,000 km² / 124 MB, large 5,370 km² / 564 MB over the §15 memory budget), more of it as neighbour packages later; routes Freiburg – Schauinsland and Titisee – Feldberg (`build-blackforest.sh`); `world-builder route --bbox / --origin`, `world-builder areas`; fixes: gutters (`ditch` / `drain` under 2 m) no longer water (§4.6), bike-open pedestrian streets paved (§4.4), a package rewritten in place gets a new manifest (§4.7); scene harness with named worlds (§11.4) |
+| 2.28 | Phase 9 decisions: time = local time of the rider's place in the virtual world, never the person's physical location (Q1); weather realistic including extreme weather, no cap (Q9) |
+| 2.29 | Decisions: weather changes the physics realistically, races per organiser (Phase 9 Q4); best open data for every region – high-resolution official DTMs, freshest OSM, best open imagery (Phase 8 Q9); attribution licences accepted (Phase 8 Q1) |
+| 2.30 | Timestamped captures (§3.2, §11.4): every screenshot and video frame shows an ISO 8601 local timestamp with UTC offset at the top right (always, also with `hud off`), and every file carries it as metadata – screenshots as JPEG (quality 90) with EXIF `DateTimeOriginal` / `CreateDate` / `OffsetTimeOriginal` / `Software` (PNG with `tEXt` `Creation Time` / `Software` for a `.png` path and the lossless `--capture` frames), MP4s with `creation_time` and the build in `comment`; frame capture stamps the capture start plus game time. Test media at 2560×1440, H.264 CRF 18. Videos with game sound (§3.3): live recordings tap the device's mixer output (or render it with game time without a device), frame capture renders exactly one frame's worth of samples per frame; AAC 192k, 48 kHz stereo |
 
 ---
 
@@ -618,11 +624,11 @@ Tile builds take up to 23 ms on worker threads; uploads cost at most 4.6 ms on t
 
 **Input devices (v1.9):** keyboard and gamepads (Bevy's gamepad support, gilrs: Xbox, PlayStation, Switch Pro and generic pads, hot-plugged). Keyboard: ↑ adds power (25 W per press, more while held, on top of any device), ↓ stops (power 0 and brake), ← / → steer (§5.2.1) or choose exits (§2.2.1), A autodrive, W wild mode, U U-turn, Q / E exits, PgUp / PgDn ±10 W, F11 next screen, C camera reset, R restart (v2.0), V video (v2.0). Gamepad: left stick left / right steers (sets the lean directly, centred = upright); ↑ = D-pad up, left stick up or right trigger, ↓ = D-pad down, left stick down or left trigger (triggers and stick read as analog values, v2.0); South = autodrive, West = wild, D-pad left / right = exits, East = U-turn (v2.0). Several pads: the largest stick deflection steers.
 
-**Restart and video (v2.0):** R (console `reset`) starts the whole app again as at program start, with the same command line: the app exits normally (ride saved, devices shut down) and replaces its process with a fresh one (Unix `exec`, same process id for the kiosk). V (console `video`) records the window: a screenshot is requested on every 1/25 s tick (several in flight, since the GPU readback takes a few frames), each image is placed at the video frame of its request time, and the frames are streamed as raw pixels into `ffmpeg` (H.264 MP4, CRF 18 with the `veryfast` preset since v2.24 – before `ultrafast` CRF 20 –, at most 2560 px wide, in the user's video directory, with the game sound since v2.24, §3.3); a tick without an image repeats the previous one to keep real time, the game never waits for the encoder (an image it cannot take is dropped and counted), a screenshot requested by the user or a script in the same frame takes precedence, and a running recording is finished on exit. V again stops it (the key is ignored while the console is open). While recording, the HUD shows a small blinking red dot with "REC m:ss" (recording length) at the top right; after stopping, "Video saved: <file>" (or the error) for 4 s.
+**Restart and video (v2.0):** R (console `reset`) starts the whole app again as at program start, with the same command line: the app exits normally (ride saved, devices shut down) and replaces its process with a fresh one (Unix `exec`, same process id for the kiosk). V (console `video`) records the window: a screenshot is requested on every 1/25 s tick (several in flight, since the GPU readback takes a few frames), each image is placed at the video frame of its request time, and the frames are streamed as raw pixels into `ffmpeg` (H.264 MP4, CRF 18 with the `veryfast` preset since v2.30 – before `ultrafast` CRF 20 –, at most 2560 px wide, in the user's video directory, with the game sound since v2.30, §3.3); a tick without an image repeats the previous one to keep real time, the game never waits for the encoder (an image it cannot take is dropped and counted), a screenshot requested by the user or a script in the same frame takes precedence, and a running recording is finished on exit. V again stops it (the key is ignored while the console is open). While recording, the HUD shows a small blinking red dot with "REC m:ss" (recording length) at the top right; after stopping, "Video saved: <file>" (or the error) for 4 s.
 
 **FPS counter (decided 2026-11-12):** console `fps on|off`, setting `display.fps` (*Settings → Display*): a small green badge at the top right, below the REC indicator, e.g. `58 fps  max 21 ms` – the frames drawn in the last second and the longest of them, renewed twice a second. It measures the **real render rate on the wall clock** (`ocw-render::frame_rate`, one `Instant::now()` per frame), not Bevy's `Time<Real>`, which frame capture (`--capture`) steps by a fixed 1/25 s per frame and would always show 25. `--log-fps S` logs the same rate every S seconds (`render rate fps=… worst_ms=…`, mean and longest frame over the period). Options considered: on by default for everyone (a number riders do not need, and the HUD is busy enough), only in debug builds (the release kiosk and the test videos need it too), **off by default for riders and on in every test picture and video (chosen):** `drive.sh` (screenshots, `--capture` videos, scene harness) passes `--cmd "fps on" --log-fps 5` unless `OCW_FPS=0`, and the multiplayer test turns it on for the kiosk and the camera client (§11.4.1). Before, the counter was one more line at the end of the small HUD text, off by default and never on in tests – the user could not find it in the multiplayer video. For benchmarks `--no-vsync` draws without waiting for the display's refresh and `--max-fps N` caps the rate by sleeping at the end of a frame.
 
-**Timestamp on every capture (decided 2026-11-12, v2.24):** the top-right column starts with a small ISO 8601 local time with UTC offset and seconds, e.g. `2026-11-12T22:14:05+01:00` (Fira Mono 14 px on a dark pill, above REC, the app message and the FPS counter; the event panel starts at 21 % of the height, below them), so every screenshot and every video frame shows when it was taken (the build diary, `art/ART-PROJECT.md`). It is **part of the capture, not of the optional HUD**: `hud off` and `display.hud` do not hide it, and it is drawn above every other UI (menus). Options considered: only while a screenshot or video is being taken (cleaner screen, but a screenshot captures the frame it is requested in, so the stamp would have to appear one frame early, and pictures the app does not take itself – OS screenshots, screen recorders, the kiosk photographed – would carry none), a setting (one more thing a test could leave off), **always visible (chosen):** a clock in the corner is common in games and costs a line of pixels. Clock: the wall clock in normal play, for screenshots and for live recordings (V); during frame capture (`--capture`) the wall clock at the start of the run plus the stepped game time (`Time<Real>`, advanced exactly 1/fps per frame), so the seconds advance once per 25 frames however slowly the frames render (`ocw-core::timestamp::MediaClock`). Formatting, the clock and the UTC offset (chrono's local zone, looked up once a second, daylight saving included) are pure functions with unit tests; the file metadata is described in §11.4.
+**Timestamp on every capture (decided 2026-11-12, v2.30):** the top-right column starts with a small ISO 8601 local time with UTC offset and seconds, e.g. `2026-11-12T22:14:05+01:00` (Fira Mono 14 px on a dark pill, above REC, the app message and the FPS counter; the event panel starts at 21 % of the height, below them), so every screenshot and every video frame shows when it was taken (the build diary, `art/ART-PROJECT.md`). It is **part of the capture, not of the optional HUD**: `hud off` and `display.hud` do not hide it, and it is drawn above every other UI (menus). Options considered: only while a screenshot or video is being taken (cleaner screen, but a screenshot captures the frame it is requested in, so the stamp would have to appear one frame early, and pictures the app does not take itself – OS screenshots, screen recorders, the kiosk photographed – would carry none), a setting (one more thing a test could leave off), **always visible (chosen):** a clock in the corner is common in games and costs a line of pixels. Clock: the wall clock in normal play, for screenshots and for live recordings (V); during frame capture (`--capture`) the wall clock at the start of the run plus the stepped game time (`Time<Real>`, advanced exactly 1/fps per frame), so the seconds advance once per 25 frames however slowly the frames render (`ocw-core::timestamp::MediaClock`). Formatting, the clock and the UTC offset (chrono's local zone, looked up once a second, daylight saving included) are pure functions with unit tests; the file metadata is described in §11.4.
 
 **GPS position:** bottom-left, the HUD shows the local rider's position as latitude / longitude (5 decimals, N/S, E/W) and altitude in metres, unprojected from the predicted position with the route's or world package's geographic origin (the same as the FIT track); hidden on routes without one (built-in test routes). Console: `rider.gps`. The HUD panel never extends past the window: long lines break at their " | " separators (then at commas) to fit the window width.
 
@@ -775,7 +781,7 @@ Two separate audio systems:
 - *Options evaluated:* (a) `bevy_audio` (rodio) – plays only on the default device, no device list, no bus mixer: rejected (it is now disabled in the app). (b) `kira` 0.12 – a good game mixer (tracks, tweens, spatial), but it links **cpal 0.18** while Bevy 0.20 links cpal 0.17, so the app would carry two cpal copies (two ALSA bindings), and it is built around sample files we do not have; its device choice is no better than cpal's. (c) **cpal directly with an own small mixer** (chosen): cpal 0.17 is already in the lock file through Bevy (Apache-2.0, no new system library: `libasound` is linked anyway), it lists and opens devices by name on ALSA / WASAPI / CoreAudio, and since every sound is synthesised in code a sample-playing layer (rodio) is not needed – the mixer renders straight into the device buffer at the device's rate, channel count and sample format (f32, i16, u16, i32). If music files come later, rodio's decoders (or symphonia) can feed the music bus.
 - *Engine:* an `OutputBackend` trait (list devices, default device, open by name, close, stream failed) with the cpal backend, a `NullBackend` (no sound) and a mock for tests. The engine runs on its own thread (cpal streams are not `Send` on every platform) and talks to the game through channels: commands (output, refresh) one way, a status (device list, default, playing device, fell back, message) the other; the mixer gets its input (ride parameters, cues, bus gains) through a bounded queue, read at the start of each device buffer (cues older than 0.4 s are dropped, so nothing stale plays after a device came back).
 - *Device choice:* `audio.output` is a device name (cpal's device description, e.g. "USB Audio Device, USB Audio" on ALSA) or `default`; matching ignores case and surrounding spaces; several devices with one name (ALSA lists a card as `hw:`, `plughw:`, `sysdefault:`) are tried in order until one opens. A missing device falls back to the default device (shown as "NAME (gone)" on the Audio page). **Hot-plugging:** the device list is re-read every 3 s (cheap: cpal's ALSA listing does not open devices); a device that comes back is opened again, a stream that fails (unplugged: cpal's `DeviceNotAvailable`, `StreamInvalidated`, backend errors; underruns are ignored) is closed and the default opened. A failed open is retried after 15 s. Without any device (headless Xvfb / weston runs, CI) the app runs silently with one log line ("audio: no audio output: …"); `--no-audio` and frame capture (`--capture`, game time not real time) use the null backend (the mixer still runs for recordings, below).
-- *Sound in videos (decided 2026-11-12, v2.24):* recorded videos carry the game mix (`audio::record`), muxed as AAC 192 kbit/s, 48 kHz stereo. **Live recording** (V, console `video`): while a device plays, the mixer copies every buffer it renders for the device to the recorder (a tap: exactly what the rider hears, in step with the real-time video); without a device (`--no-audio`, headless) the game thread renders the mixer itself, as many samples as game time has passed. The samples go to a hidden WAV beside the hidden H.264 file; after the stop ffmpeg muxes both into the final MP4 (`-c:v copy -c:a aac`), else the picture alone is kept. **Frame capture** (`--capture`): a capture source pulls exactly `frame × rate / fps` samples (integer accounting, no drift; 1920 per frame at 48 kHz and 25 fps) from the mixer per rendered frame – also during the warm-up, so the sound is settled, but only the captured frames are written to `DIR/audio.wav` – so picture and sound match whatever the render speed, with no audio device; the scripts mux it (`drive.sh`). Options considered: recording the system's output (PulseAudio monitor, WASAPI loopback: platform-specific, records other apps too, impossible headless), an offline backend behind the `OutputBackend` trait that opens like a device (the engine thread would drive it on its own clock, not the frame's), **pulling from the shared mixer in the game thread (chosen)** for capture and the tap for live. Voice (LiveKit) plays through its own path and is not in the recordings yet.
+- *Sound in videos (decided 2026-11-12, v2.30):* recorded videos carry the game mix (`audio::record`), muxed as AAC 192 kbit/s, 48 kHz stereo. **Live recording** (V, console `video`): while a device plays, the mixer copies every buffer it renders for the device to the recorder (a tap: exactly what the rider hears, in step with the real-time video); without a device (`--no-audio`, headless) the game thread renders the mixer itself, as many samples as game time has passed. The samples go to a hidden WAV beside the hidden H.264 file; after the stop ffmpeg muxes both into the final MP4 (`-c:v copy -c:a aac`), else the picture alone is kept. **Frame capture** (`--capture`): a capture source pulls exactly `frame × rate / fps` samples (integer accounting, no drift; 1920 per frame at 48 kHz and 25 fps) from the mixer per rendered frame – also during the warm-up, so the sound is settled, but only the captured frames are written to `DIR/audio.wav` – so picture and sound match whatever the render speed, with no audio device; the scripts mux it (`drive.sh`). Options considered: recording the system's output (PulseAudio monitor, WASAPI loopback: platform-specific, records other apps too, impossible headless), an offline backend behind the `OutputBackend` trait that opens like a device (the engine thread would drive it on its own clock, not the frame's), **pulling from the shared mixer in the game thread (chosen)** for capture and the tap for live. Voice (LiveKit) plays through its own path and is not in the recordings yet.
 - *Buses:* master × music / effects / voice; each volume is 0–100 % on a squared curve (gain = (v/100)², 50 % ≈ -12 dB), the bus gain is master gain × bus gain, mute sets all to 0; gains are smoothed (60 ms) so changes do not click; a soft limiter (linear to 0.8, tanh knee) keeps the sum within ±1. Pure and unit-tested (`mix.rs`, `mixer.rs`).
 - *Sounds (all procedurally synthesised, our own work – no sample files, nothing to license, §13):* **wind** – pink noise, low-pass (250 Hz + 120 Hz per m/s) plus a resonant band, level ∝ (v / 54 km/h)^1.6 with slow gusts; **tyres** – rolling rumble on every surface, louder on gravel; gravel adds random grit bursts (6 per metre ridden), grass a high swish (surface from the track and the rider's lateral position, §4.4 / §5.2.1, as for the physics); **freehub (freewheel)** – the clicking is heard **only while the wheel turns and the rider does not drive it** (coasting): a short metallic click per pawl engagement, 24 engagement points per wheel revolution (a typical road hub; common hubs have 18–54), so ticks/s = 24 × speed / 2.1 m wheel (about 95/s at 30 km/h), jittered, level kept even as the ticks become a buzz. The rider drives the wheel – and the freehub is **silent (gain exactly 0)** – when the power is above 10 W (whatever the cadence reads: no sensor, a dropout, a power-only trainer), or when the cadence is at least 15 rpm and the top gear (50 × 11) at that cadence reaches the speed; turning the legs slower than that (spinning out downhill without power) lets the wheel overrun and tick. Stopped (< 0.3 m/s): no ticks. Transitions: the ticks fade in over about 0.25 s when pedalling stops (time constant 80 ms, no burst) and are gone within about 30 ms when it starts again (8 ms); other parameters glide with 60 ms. **drivetrain** – while pedalling, a soft continuous whir (broad band noise around 350 Hz + 5 × the chain's tooth rate, low-passed), a faint hum at the chainring tooth rate (cadence × 50 teeth / 60) and a gentle swell per pedal stroke, a little louder under load – no clicks (unit-tested: its 10 ms loudness varies little, the freehub's a lot); without a cadence sensor, or with a sensor reading 0 under power, the cadence is estimated from the power (75–100 rpm); **cues** – menu move / value / page open / back, countdown beeps (3, 2, 1) and a higher GO, a rising finish chime (results panel of a race or time trial), a two-tone workout step cue (each start, step change, end, stop), a gear-shift double click (`audio.play shift`; not triggered automatically yet: the protocol has no gear) and a test tone per bus. The mapping ride state → sound parameters (`ride.rs`) and the cue triggers (`cues.rs`: from the `MenuView`, the event countdown text, the results panel, the workout's change counter) are pure and unit-tested; a scripted 20 s demo ride renders offline through the whole mixer (`audio::demo`, `OCW_AUDIO_DEMO=FILE.wav` writes it) in separated sections: 0–6 s pedalling, 6–10 s coasting (freehub), 10–14 s pedalling again without a cadence sensor, 14–17 s pedalling on gravel, 17–20 s coasting on grass.
 - *Settings and commands:* `audio.master` (80), `audio.effects` (80), `audio.music` (60), `audio.voice` (100), `audio.mute` (off), `audio.output` (`default`; a new setting type *text*) in `[audio]` of `settings.toml`, live; console `audio.volume BUS PERCENT`, `audio.mute [on|off|toggle]`, `audio.output NAME|default`, `audio.devices`, `audio.status`, `audio.play SOUND`.
@@ -936,7 +942,7 @@ Each road is converted into a 3D road segment with these properties: geographic 
 
 The road surface is generated from the line geometries.
 
-**Surfaces (v1.9):** asphalt, gravel and grass (off the road), with a rolling-resistance factor each (§5.2.1). Without an OSM `surface` tag, tracks and paths are gravel and all other classes asphalt; the `surface` tag refines this later.
+**Surfaces (v1.9):** asphalt, gravel and grass (off the road), with a rolling-resistance factor each (§5.2.1). Without an OSM `surface` tag, tracks and paths are gravel and all other classes asphalt; the `surface` tag refines this later. Pedestrian streets open to bikes (`highway=pedestrian` with `bicycle=yes|designated|permissive`) are residential streets (paved, residential width), not paths (v2.24, Freiburg's old town).
 
 The road connections form the **road graph**, which is the basis for routes (§2.7), junction steering (§2.2.1) and navigation.
 
@@ -1003,17 +1009,17 @@ Ground textures are needed for different landscapes (meadow, field, forest floor
 
 | Source | Resolution | Licence | Usable? |
 |---|---|---|---|
-| **Copernicus Sentinel-2** (cloud-free mosaics, e.g. EOX Sentinel-2 cloudless) | 10 m | Copernicus data: free, attribution. Third-party mosaics have their own terms (EOX: CC BY-NC-SA for some years, commercial licence needed) | Yes; check the mosaic's licence |
+| **Copernicus Sentinel-2** (own cloud-free composite; EOX Sentinel-2 cloudless only the 2016 layer) | 10 m | Copernicus data: free, attribution. EOX: 2016 CC BY 4.0, 2018–2025 CC BY-NC-SA 4.0 (not usable) | Yes: own composite (Phase 8) |
 | **ESA WorldCover** (land-cover classification, not imagery) | 10 m | CC BY 4.0 | Yes |
 | **Official orthophotos** (e.g. German states' DOP20/DOP40, many under dl-de/by-2-0 or dl-de/zero-2-0; other EU countries similar) | 0.2–0.4 m | Open, varies by country/state | Yes, region by region |
 | **USGS NAIP** (USA) | 0.6–1 m | Public domain | Yes |
 | Google, Bing, Apple, Esri, Mapbox satellite layers | high | Proprietary; terms forbid extraction / offline use like this | **No** |
 
-Every imagery and land-cover source used in a package is listed in its metadata and shown on the credits screen (§13).
+Every imagery and land-cover source used in a package is listed in its metadata and shown on the credits screen (§13). Region sources found so far (Liechtenstein, Black Forest) and how imagery calibrates the look: Phase 8 (§14).
 
 **Implementation (Phase 3, land use and buildings):** the first step uses OSM only, no imagery and no textures yet.
 
-- **Classes:** OSM areas are classified into 17 land classes: default (no land use, grass), meadow, farmland, forest, orchard, vineyard, residential, commercial, industrial, park, water, wetland, rock, scree, glacier, bare (sand, quarries, construction sites) and scrub. Sources: closed ways and `type=multipolygon` relations (outer rings assembled from split member ways, inner rings as holes; even-odd fill) with `landuse`, `natural`, `leisure`, `waterway=riverbank` tags, plus `waterway=river|canal|stream|ditch|drain` lines buffered by their `width` (defaults 12 / 6 / 2 / 1.5 m; culverts and tunnels left out).
+- **Classes:** OSM areas are classified into 17 land classes: default (no land use, grass), meadow, farmland, forest, orchard, vineyard, residential, commercial, industrial, park, water, wetland, rock, scree, glacier, bare (sand, quarries, construction sites) and scrub. Sources: closed ways and `type=multipolygon` relations (outer rings assembled from split member ways, inner rings as holes; even-odd fill) with `landuse`, `natural`, `leisure`, `waterway=riverbank` tags, plus `waterway=river|canal|stream` lines buffered by their `width` (defaults 12 / 6 / 2 m; culverts and tunnels left out); `ditch` and `drain` lines only when tagged at least 2 m wide (v2.24: Freiburg's Bächle, gutters 0.15–0.3 m wide along every old-town street, were drawn as water bands a cell diagonal wide and turned the old town blue).
 - **Splat map:** each 1 km tile gets a class per **5 m cell** (200 × 200, scanline rasterisation at the cell centres in global coordinates, so neighbouring tiles agree at their edges). Where areas overlap, a fixed **priority** decides, not the drawing order: water > glacier > wetland > rock > scree > bare > park > forest > scrub > orchard / vineyard > meadow > farmland > commercial / industrial > residential > default; specific surfaces beat the large built-up areas they lie in.
 - **Water surfaces:** water polygons and rivers ≥ 8 m wide mark the terrain grid vertices in water. The water level at such a vertex is the mean terrain height of the water vertices within 50 m (flat on lakes, gently falling along rivers); the terrain there is carved 1 m below it. The level is also stored for the vertices next to water, so the client draws a flat water quad over every grid cell touching water and the shoreline is where the terrain rises through it. Narrower streams only colour the ground.
 - **Rendering:** the client turns the splat map into a per-tile **colour map** (one texel per cell, sRGB, mipmapped, class colour turning to rock on slopes above 60 %, a little noise), the terrain vertices stay white. Water is a separate flat, glossy mesh. **Trees** come from a jittered 8 m grid with a chance per class (forest 85 %, orchard 45 % small, scrub 30 % small, park 10 %, residential 6 %, meadow / farmland / default 1.2 %, none on water, rock, scree, glacier, bare or vineyards), never in cells near road strips (3 m beyond the edge) or under buildings (1.5 m around the footprint), not on rock faces; the same trees are the camera's obstacles. Packages without land use keep plain grass and provisional tree patches. Tiling PBR materials, ESA WorldCover and the satellite tint (steps 1–3 above) follow later.
@@ -1051,6 +1057,23 @@ Contents:
 
 **Route files (v1.9, interim):** a plain-text `ocw-route 1` file holds one route with its elevation and the terrain grid around it (`name`, `origin` lat/lon of the local metres, `width`, `points` x y z every 5 m, optional `surface FROM TO NAME` stretches that are not asphalt, `grid`). It is written by `world-builder route` and ridden with `--route-file`, optionally together with a world package (`--world`) for the surroundings. Routes as part of packages (above) replace it; it keeps working until the last users are moved to package routes.
 
+**Second world: the Black Forest (decided 2026-11-12, v2.24).** After the Liechtenstein pilot (about 160 km², 30 MB) the second package is the **southern Black Forest** (Schwarzwald, Germany), id `europe/germany/black-forest`, file `blackforest.ocwpkg`.
+
+- **Sources:** the Geofabrik extract of the Regierungsbezirk Freiburg (Baden-Württemberg, 160 MB PBF; it holds the southern and central Black Forest, the northern part lies in the Regierungsbezirk Karlsruhe) and the SRTM tiles N47E007, N47E008, N48E007, N48E008; `scripts/fetch-pilot.sh blackforest` downloads them into `data/blackforest/` with a licence table (`SOURCES.md`; OSM ODbL 1.0, SRTM public domain). `scripts/build-blackforest.sh` builds the package and the routes.
+- **Extent:** the box 47.72–48.12 N, 7.62–8.30 E (`--bbox`, 44 × 51 km, about 2,260 km² or 14 times the pilot), projection origin 47.92 N 7.96 E (`--origin`, fixed so that later neighbour parts share its metres and tile grid). It reaches from the Rhine plain west of Freiburg to Neustadt and from Waldkirch / the Kandel to St. Blasien: Freiburg, Schauinsland, Feldberg, Titisee, Belchen, Blauen, Schluchsee, Todtnau.
+- **Measurements** (build machine `marge`, release build, one package each; client = `ocw-desktop` free ride on software Vulkan, whose RSS includes what a GPU would hold as VRAM):
+
+| Extent | Area | Tiles | Edges | Package | Build | Builder RSS | Client peak RSS |
+|---|---|---|---|---|---|---|---|
+| Liechtenstein pilot | 160 km² | – | – | 30 MB | – | – | 0.68 GB |
+| Core: Freiburg – Schauinsland – Feldberg – Titisee (47.84–48.08 N, 7.70–8.20 E) | 1,000 km² | 1,344 | 66,340 | 124 MB | 53 s | 2.9 GB | 0.99 GB |
+| **South (chosen)** | 2,260 km² | 2,800 | 141,245 | 260 MB | 101–131 s | 3.2 GB | 1.76 GB |
+| Large: Rhine to Baar, Waldshut to Elz (47.58–48.30 N, 7.55–8.45 E) | 5,370 km² | 6,192 | 300,190 | 564 MB | 251 s | 3.9 GB | 3.31 GB |
+
+- **Why this extent:** building is cheap at every size (minutes, under 4 GB), so the client decides. It decodes the whole package into memory (tiles, graph, land use, buildings; about 5.5 MB of RAM per MB of package on top of 0.65 GB), so the large extent breaks the memory budget of §15 (≤ 2 GB) and is above the 200–500 MB disk target, while the south extent stays within both and holds every iconic climb of the southern Black Forest. More of the Black Forest (north of the Elz, the Karlsruhe part, the Baar) comes as **neighbour packages** (§2.2.2): the same `--poly` extract or the Karlsruhe one, their own `--bbox`, the same `--origin`; only their tiles near the rider are loaded. Loading tiles from a package on demand instead of decoding all of it would allow larger single packages later.
+- **Routes:** `Freiburg - Schauinsland` (19.9 km, 1,055 m climbing: Bertoldsbrunnen 281 m – Günterstal – Schauinslandstraße – road end below the summit at 1,267 m) and `Titisee - Feldberg` (13.5 km, 500 m climbing: Titisee 857 m – B317 via Bärental – Feldberg pass, about 1,280 m), both as package routes (`ROUT`; the first is ridden by `--world` alone) and as route files (`freiburg-schauinsland.route`, `titisee-feldberg.route`). `world-builder route` takes `--bbox` / `--origin` like `package`, so a route file is in the package's metres with its road heights (the context profiles of the part).
+- **Check:** 0.003 % of the road samples lie under the terrain (8,818 of 333 million, worst 4.7 m on a track at the western border of the box), below the 0.1 % of the pilot test; land use 55 % forest, 20 % meadow, 10 % farmland, 5 % residential; 306,476 buildings.
+
 Packages are **signed, versioned and updatable**:
 
 - **Ed25519** signatures. An offline root key signs rotating online signing keys. The client ships the root public key.
@@ -1071,6 +1094,7 @@ Packages are **signed, versioned and updatable**:
 - **Cache:** `$OCW_WORLD_CACHE` or `~/.local/share/ocw/worlds/<id>/<version>/{manifest.json, <files>}`; downloads collect in `.partial/<id>@<version>/` and are moved into place only when every file is verified. Packages are verified again on every load. `--world` takes a path or a cache id (`ID` = newest version, `ID@VERSION`); `--list-worlds` and the console commands `worlds.list` / `worlds.verify` show and check the cache.
 - **Download:** `ocw-desktop --fetch-world URL` fetches the manifest first and checks its signature before any large download, then the files next to it (the layout `world-builder publish` writes: `<base>/<id>/<version>/manifest.json`), resuming interrupted downloads with HTTP range requests (`Range: bytes=N-`; a server answering 200 restarts the file). Local directories and `file://` URLs install the same way. Downloads happen before the ride, never during it (§4.2). Tile-chunk streaming uses the chunk list of the manifest later; TUF remains under evaluation for app updates and key rotation metadata.
 - **Rebuilds:** `world-builder diff OLD NEW` (`ocw_worldgen::diff::GraphDiff`) lists the edges whose stable ID survived (unchanged or moved), was removed or added; routes over surviving edges re-match directly, the others are flagged.
+- **Rewrites (v2.24):** commands that change a built package in place (`route --world`, `gpx`, `routes --from / --remove`) write its manifest again (same id, name and attribution, next version), because the old one lists the old SHA-256 and every client refused the package as damaged. A signed manifest becomes unsigned (the key is not at hand); the command says to sign it again.
 
 ---
 
@@ -1490,7 +1514,7 @@ Build and release pipelines are automated for all three operating systems, intro
 | **Unit tests** | Functions and modules in isolation: physics, route sampling, protocol encoding, session logic, parsers, pipeline steps | `#[cfg(test)]` modules next to the code in every crate | Every commit, all platforms in CI |
 | **Integration tests** | Several crates together: client ↔ local server over the protocol, world-builder on a small OSM extract, device backend ↔ app channel | `tests/` directory of the crate | Every commit (Linux); per platform once ported |
 | **End-to-end smoke test** | The real desktop app under Xvfb with software rendering (Mesa lavapipe): launch, ride on the virtual trainer, run console commands, take a screenshot, exit | `tools/` / run skill driver | Every commit on Linux |
-| **Scene renders** | Reproducible scenes of the real desktop app (`scripts/scenes.toml`: arguments, timed console commands, screenshot / short video) rendered headlessly on Wayland on a Linux build machine (`scripts/render-scenes.sh`, `make test-scenes`); reviewed by eye, the good ones kept in the build history | `scripts/` + run skill driver | After user-visible changes, before releases |
+| **Scene renders** | Reproducible scenes of the real desktop app (`scripts/scenes.toml`: arguments, timed console commands, screenshot / short video; a scene names the world package it needs, `world = true` for Liechtenstein, `world = "blackforest"` for the Black Forest) rendered headlessly on Wayland on a Linux build machine (`scripts/render-scenes.sh`, `make test-scenes`); reviewed by eye, the good ones kept in the build history | `scripts/` + run skill driver | After user-visible changes, before releases |
 | **Multiplayer over the network** | Server + kiosk client on one build machine, headless `ocw-bot` riders on the others (Linux, macOS, Windows); joins, snapshots, visibility, prediction, tick timing; kiosk screenshots and video | `scripts/test-multiplayer.sh` (`make test-multiplayer`, §11.4.1) | On demand, before Phase 5 milestones |
 | **Hardware-in-the-loop** | Real trainers and sensors (FTMS, power meter, heart rate) | Manual test protocol, later a test bench | Before each release |
 | **Performance tests** | Frame time, streaming hitches, memory (§15) | `tools/performance-test` (console `exec` scripts, §2.9) | Nightly / before releases |
@@ -1502,7 +1526,7 @@ Build and release pipelines are automated for all three operating systems, intro
 - **Physics tests check physical plausibility**, not only code paths: steady-state speed for given power and gradient, energy balance, no rolling backwards, stability at the 50 Hz tick.
 - **Protocol compatibility tests:** encoded messages of earlier protocol versions are kept as fixtures and must still decode (§6.2).
 - **World-builder tests** use small, checked-in OSM / DEM fixtures with known expected results (golden files), e.g. a junction, a bridge, a dead end.
-- **Test media carry their time (decided 2026-11-12, v2.24):** every picture and video the app writes has the ISO 8601 timestamp in the image (HUD, §3.2) and in the file: screenshots (console `screenshot`, `--screenshot`, `--at "T=screenshot …"`) are **JPEG, quality 90** by default with EXIF `DateTime`, `DateTimeOriginal`, `DateTimeDigitized` (`CreateDate`) in local time, `OffsetTime` / `OffsetTimeOriginal` / `OffsetTimeDigitized` (`+01:00`) and `Software` = `Open Cycling World <build id>` (`ocw-render::media`, own TIFF writer, the image crate's JPEG encoder); a path ending in `.png` gives a lossless PNG with `tEXt` chunks `Creation Time` (the registered keyword, ISO 8601 with offset) and `Software`. PNG stays where the picture is the input of another step: the `--capture` frames (lossless input of the H.264 encode, each stamped with its stepped time); `--capture` also writes `still.jpg` (last frame) and `metadata.txt` (ffmpeg metadata: `creation_time` of the first frame in UTC with `Z`, `comment` = software), which `drive.sh` maps into the MP4. MP4s the app encodes itself (V) get `creation_time` (start of the recording, UTC) and `comment`. The scripts that re-encode media keep it (`render-scenes.sh --pick` copies the EXIF / text chunks into a shrunk image and the metadata and sound into a re-encoded video). Test pictures and videos are **2560×1440** (`drive.sh` `OCW_SIZE`, default of the scene harness, the multiplayer camera client; the kiosk keeps its screen), videos H.264 CRF 18 with `-preset slow` (`OCW_X264_PRESET`), yuv420p, `+faststart`, 25 fps, AAC sound.
+- **Test media carry their time (decided 2026-11-12, v2.30):** every picture and video the app writes has the ISO 8601 timestamp in the image (HUD, §3.2) and in the file: screenshots (console `screenshot`, `--screenshot`, `--at "T=screenshot …"`) are **JPEG, quality 90** by default with EXIF `DateTime`, `DateTimeOriginal`, `DateTimeDigitized` (`CreateDate`) in local time, `OffsetTime` / `OffsetTimeOriginal` / `OffsetTimeDigitized` (`+01:00`) and `Software` = `Open Cycling World <build id>` (`ocw-render::media`, own TIFF writer, the image crate's JPEG encoder); a path ending in `.png` gives a lossless PNG with `tEXt` chunks `Creation Time` (the registered keyword, ISO 8601 with offset) and `Software`. PNG stays where the picture is the input of another step: the `--capture` frames (lossless input of the H.264 encode, each stamped with its stepped time); `--capture` also writes `still.jpg` (last frame) and `metadata.txt` (ffmpeg metadata: `creation_time` of the first frame in UTC with `Z`, `comment` = software), which `drive.sh` maps into the MP4. MP4s the app encodes itself (V) get `creation_time` (start of the recording, UTC) and `comment`. The scripts that re-encode media keep it (`render-scenes.sh --pick` copies the EXIF / text chunks into a shrunk image and the metadata and sound into a re-encoded video). Test pictures and videos are **2560×1440** (`drive.sh` `OCW_SIZE`, default of the scene harness, the multiplayer camera client; the kiosk keeps its screen), videos H.264 CRF 18 with `-preset slow` (`OCW_X264_PRESET`), yuv420p, `+faststart`, 25 fps, AAC sound.
 - **Build history:** the harness keeps every scene reproducible (fresh config and data folders, virtual trainer, fixed start, world package from `--world` / `$OCW_WORLD` / `data/pilot/` / the kiosk install); `render-scenes.sh --pick` copies the reviewed renders, kept small (images above 600 KB: PNG palette or JPEG quality ~80, metadata kept; videos ≤ 3 MB, sound and metadata kept), into `test-output/build-history/` with an index, for the zip on the GitHub release `build-history` (media are not committed to git).
 - **Regression rule:** every fixed bug gets a test that failed before the fix.
 - Commands: `cargo test --workspace` runs all unit and integration tests; `cargo clippy --workspace --all-targets -- -D warnings` must pass.
@@ -1717,7 +1741,7 @@ Done so far for land use and buildings (§4.6): OSM land-use classes rasterised 
 
 - Performance optimization.
 - Large regions.
-- Weather and times of day.
+- Weather and times of day (planned in detail as Phase 9: sky, time machine, weather machine, real weather).
 - Training history.
 - Events (menu: calendar, §3.2.1).
 - Key and button rebinding, accessibility (§3.2.1, M9).
@@ -1732,6 +1756,243 @@ Done so far for land use and buildings (§4.6): OSM land-use classes rasterised 
 - **Release tests:** performance tests against §15, security tests, installer and update tests per platform, hardware-in-the-loop protocol.
 
 **Result:** A release-ready indoor cycling platform on Linux, Windows and macOS.
+
+### Phase 8 – Textures and Regional Look (planning, 2026-11-12)
+
+**Goal:** the world looks like the real place. Meadows, forests, roads, roofs and façades in Liechtenstein look like Liechtenstein; in the Black Forest like the Black Forest. Riders and bikes get real materials instead of flat paint slots. Everything shipped must have a licence compatible with our MIT / Apache-2.0 code, and nothing may come from proprietary map imagery (§4.6, §13).
+
+#### 8A – Licence rule for textures, imagery and models
+
+Code stays MIT / Apache-2.0. Data and assets keep their own licence and are listed in the package / asset manifest (§8.1, §13). "Compatible" here means permissive, without share-alike, non-commercial or no-derivatives clauses:
+
+| Licence | Shipped in packages / app? | Obligation |
+|---|---|---|
+| CC0 1.0, public domain, own work (MIT / Apache-2.0) | Yes | none (we still credit the source) |
+| CC BY 4.0 (e.g. ESA WorldCover) | Yes | attribution on the credits screen |
+| Datenlizenz Deutschland zero / by 2.0 (German state geodata) | Yes | by-2.0: source note (e.g. "© LGL, www.lgl-bw.de") |
+| Swiss / Liechtenstein OGD "BY" (open use, source must be named) | Yes | source note, also downstream |
+| Copernicus Sentinel data licence | Yes | "Contains modified Copernicus Sentinel data [year]" |
+| ODbL (OSM) | Yes (Produced Work) | "© OpenStreetMap contributors", as today |
+| CC BY-SA 4.0 (e.g. Mapillary, older EOX mosaics) | **No** in packages; reference use only (looking at it, never copying pixels) | – |
+| CC BY-NC(-SA) (EOX Sentinel-2 cloudless 2018–2025) | **No** | – |
+| Google / Bing / Apple / Esri / Mapbox imagery, Street View | **No** pixels in assets, and never traced into geodata (positions, outlines, road widths). Looking at photos to learn what things look like is fine (8D) | – |
+
+#### 8B – Research results: aerial and satellite imagery
+
+Yes, usable imagery exists for both regions, at very high resolution and under open licences (as of 2026-11-12; the exact terms must be re-checked per dataset and year before use, see Q1):
+
+| Region | Source | Resolution | Licence (found) | Notes |
+|---|---|---|---|---|
+| Liechtenstein | **Orthophoto Liechtenstein** (Amt für Tiefbau und Geoinformation, geodaten.llv.li; listed on opendata.swiss for 2003 … 2025, 2025 = SwissImage) | 10–25 cm | varies by year: 2018 "Opendata BY – open use, source must be named"; older years non-commercial | GeoTIFF download and WMS; ATG holds the distribution rights for SWISSIMAGE and swissALTI3D in Liechtenstein |
+| Liechtenstein / Switzerland | **swisstopo SWISSIMAGE 10 cm** | 10 cm (plains, main valleys), 25 cm (Alps) | OGD: open use, source must be named (central attribution accepted) | also **swissALTI3D** (0.5–2 m terrain) for a better DEM than SRTM |
+| Black Forest (Baden-Württemberg) | **LGL DOP20** (digital orthophotos) via opengeodata.lgl-bw.de | 20 cm | **dl-de/by-2.0**, free of charge since 2024-06-09 | also **DGM1** (1 m terrain) as open data since 2024; **LoD2 building models**: open-data status unclear (an LGL price list exists) → Q8 |
+| Europe / world | **Copernicus Sentinel-2** L2A scenes (Copernicus Data Space) | 10 m | Copernicus Sentinel data licence: free, full and open, attribution | we build **our own** cloud-free summer median composite, so no third-party mosaic licence applies |
+| Europe / world | EOX Sentinel-2 cloudless **2016** | 10 m | CC BY 4.0 | usable but old; 2018–2025 layers are CC BY-NC-SA → not usable |
+| Europe / world | **ESA WorldCover** (land cover) | 10 m | CC BY 4.0 | already planned (§4.6) |
+| Europe | **Copernicus HRL Forest Type / Tree Cover Density** (land monitoring) | 10–20 m | Copernicus land data: free and open, attribution | conifer vs. broadleaf and density → which trees grow where |
+
+**How imagery is used (extends §4.6):**
+
+1. **Far and mid distance:** the satellite / orthophoto colour tints the terrain (as planned in §4.6), now from the regional orthophoto where available, else Sentinel-2.
+2. **Calibration (the main use):** the world builder *measures* the region instead of guessing it:
+   - **Regional palettes** per land class: the median colour of meadow, farmland, forest, rock, settlement, asphalt in the orthophoto drives the tint of the tiling CC0 materials.
+   - **Roof colour per building:** sample the orthophoto inside each OSM building footprint (eroded by 1 m), store one colour per building in the package (3 bytes). Red tiles in Vaduz, dark shingles on Black Forest farms come out right automatically. OSM `roof:colour` wins where it is set.
+   - **Tree species and density** from Copernicus Forest Type / Tree Cover Density plus OSM `leaf_type`: spruce/fir in the Black Forest, mixed forest in the Rhine valley.
+   - **Road surface and markings:** asphalt tone from the orthophoto along the road; OSM `surface`, `lanes`, `width` as today.
+3. **Optional orthophoto drape near the road:** a corridor of about ±50 m around ridden roads at 0.4–0.5 m/pixel, blended with the materials at mid distance (never as the close-up texture, see §4.6). Estimate: 1 km of road ≈ 0.4 Mpx ≈ 50–100 KB as KTX2/Basis; Liechtenstein's network (≈ 600–800 km) ≈ 30–80 MB. To be measured (Q4).
+
+#### 8C – Research results: textures and models for close-up surfaces, houses, riders and bikes
+
+| What | Where from | Licence | Regional match |
+|---|---|---|---|
+| Ground (grass, forest floor, rock, gravel, snow, soil) | **ambientCG**, **Poly Haven** (also cgbookcase, ShareTextures – to verify) | CC0 | tinted with the regional palette (8B) |
+| Road surfaces (asphalt types, cobbles, gravel, dirt), markings | ambientCG / Poly Haven + procedural markings | CC0 / own | OSM `surface`, colour from the orthophoto |
+| Houses: roofs and façades | CC0 roof tile / plaster / timber / shingle materials + **procedural façades** (windows and doors from `building:levels`, `building` type, `roof:shape`, `roof:levels`, `building:material`, `building:colour`) | CC0 / own | **regional style presets**: Rhine valley (plaster, red tile, gable), Alpine Liechtenstein (timber upper floors, wide eaves), Black Forest farmhouse (huge hipped roof down to the ground floor, dark shingles, wood); roof colour from the orthophoto |
+| Trees, bushes, grass | Poly Haven models, Quaternius / Kenney packs (CC0), or own procedural trees | CC0 / own | species and density from 8B |
+| Riders (skin, kit fabric, helmets, shoes) | **generated** (Phase 4 rig and meshes), fabric normal maps from CC0 libraries, procedural jersey designs (stripes, panels, numbers) | own / CC0 | – (cosmetics, §2.5) |
+| Bikes (frame paint, carbon weave, metal, rubber, saddle) | **generated** procedural materials (carbon weave, brushed aluminium, rubber) | own | – ; **no real brand names or logos** (trademarks) |
+| Street furniture (signs, barriers, benches, fountains) | own low-poly models; sign faces drawn procedurally from OSM `traffic_sign` | own | country sign styles (CH/LI vs. DE) |
+
+**Can they be generated? Yes – in three ways, in this order of preference:**
+
+1. **Procedural (code):** noise-based materials, façades, jersey patterns, carbon weave and tree generators in the world builder / asset tool. Deterministic, tiny, MIT / Apache-2.0 by construction, testable (golden-image tests at low resolution). First choice for riders, bikes, façades and markings.
+2. **Example-based from our own photos:** photos taken by us in the regions (bark, roof tiles, asphalt, walls) turned into tiling PBR materials (photogrammetry / texture synthesis). Own work, licensed like the code. Best for "looks like the real place".
+3. **AI-generated textures:** possible, but the copyright of the output and the licences of models and training data are unclear and vary by model. Not for shipped assets until decided (Q3).
+
+#### 8D – Reference photos: how things really look
+
+Before a material, house style, tree, sign or bike part is designed, we look at **real photos of the region** to learn what it looks like: roof shapes and colours, façade materials, the asphalt, kerbs and markings, the forest, fences, signs, farm buildings, typical bikes and kit.
+
+- **Sources:** Wikipedia / **Wikimedia Commons** (searchable by place and category, e.g. "Category:Vaduz", "Category:Black Forest houses", every file with its licence), municipal and tourism websites, general image search, and our own photos (Phase 8 Q6).
+- **Looking vs. copying:** looking at any photo to understand shapes, proportions, colours and materials is fine, because facts and styles are not protected. Copying is a different matter: pixels in an asset, tracing outlines, or a recognisable reproduction of a specific photo are allowed only from files whose licence permits it under 8A (CC0, public domain, CC BY with attribution). CC BY-SA and unlicensed web images stay reference-only.
+- **Reference boards:** per region a short Markdown file `art/reference/<region>.md` (in git) with links (not copies) to the photos used, what each shows (e.g. "Black Forest farmhouse: hipped roof down to the ground floor, dark wood shingles, balcony under the eaves") and its licence. Downloads for viewing go to a git-ignored cache; only permitted files may be used for textures, with a manifest entry.
+- **Colour picking from photos** (e.g. the typical roof red of Vaduz) is reference use; the orthophoto sampling of 8B gives the measured values per building.
+- **Agents** doing Phase 8 work start each design task by collecting 5–15 reference photos (Wikimedia Commons first), write them into the board, and compare their render with the references in the scene harness.
+
+#### 8E – Pipeline and milestones (proposal)
+
+- **T1 – Material library:** CC0 PBR set (ground, road, roof, façade, bark, fabric), KTX2/Basis compression, manifest entries with licence / source / author, validator extension (no unknown licence, no NC/SA/ND), credits screen entries.
+- **T2 – Terrain materials:** splat map (§4.6) → tiling materials with triplanar mapping on slopes; regional tint maps from Sentinel-2 (own composite) / orthophoto; far LOD colour.
+- **T3 – Region calibration in the world builder:** orthophoto and Sentinel download per region (`fetch` scripts, licence table per source as for OSM/SRTM), palettes per land class, roof colour per building, forest type and density; package format extension (new sections, only added fields).
+- **T4 – Houses:** procedural façades and roof shapes from OSM tags with regional style presets; roof colour from T3; LOD.
+- **T5 – Roads:** surface materials, markings, kerbs and sidewalks in towns, wear and patches.
+- **T6 – Riders and bikes:** procedural fabric / carbon / metal / rubber materials on the Phase 4 models, jersey designer (patterns, colours, number), helmet and shoe variants.
+- **T7 – Optional orthophoto corridor** near ridden roads (after Q4).
+- **Unit tests:** licence validator (rejects NC/SA/ND/unknown), palette extraction on synthetic orthophoto tiles, roof-colour sampling (footprint erosion, nodata, `roof:colour` precedence), forest-type mapping, façade generator (window counts from levels, deterministic output), package section round-trips, KTX2 encoding of a sample, golden-image tests of the generated materials at low resolution.
+- **Comparison tests:** the scene harness (§11.4) renders the same viewpoints before and after, next to a photo of the real place taken by us where available (never Google / Street View), for the build history and the art project.
+
+**Result:** recognisable regions: the red roofs of Vaduz, the dark farmhouses and spruce forests of the Black Forest, real road surfaces, riders and bikes with real materials, all under open licences with full attribution.
+
+#### 8F – Open questions (for the user)
+
+- **Q1 – Attribution licences: decided (2026-11-12, "use the best data you can find"):** attribution licences (CC BY 4.0, dl-de/by-2.0, Swiss / Liechtenstein OGD BY, Copernicus) are accepted; credits on the credits screen and in each package's LICENSE-DATA.md.
+- **Q2 – Commercial use:** is a commercial release planned? It decides whether anything with grey areas can ever be considered (e.g. EOX commercial licence) and when a legal review is needed (§13).
+- **Q3 – AI-generated textures:** allowed for shipped assets? If yes, with which model and licence, and is "generated by model X" enough provenance in the manifest? Recommendation: no for now; procedural + CC0 + own photos first.
+- **Q4 – Package size:** how much extra per region is acceptable for the orthophoto corridor (estimate 30–80 MB for Liechtenstein, far more for the Black Forest)? Optional download, or part of the package?
+- **Q5 – Season and time of day:** summer only, or seasonal variants (autumn colours, snow in the Black Forest / Malbun)? It changes which imagery dates we pick and doubles the palettes.
+- **Q6 – Own photos:** can someone take reference and texture photos in Liechtenstein and the Black Forest (roof tiles, façades, bark, asphalt, signs)? They would become own-work textures and the "real photo" side of the comparison tests.
+- **Q7 – Mapillary / street-level imagery:** OK as visual reference only, like other web photos (8D; CC BY-SA 4.0, never copied into assets)? Recommendation: yes, reference only.
+- **Q8 – 3D building data:** use official LoD2 building models where they are open (roof shapes far better than OSM), after checking LGL's LoD2 terms? Liechtenstein / Swiss equivalents (swissBUILDINGS3D) too?
+- **Q9 – Better terrain: decided (2026-11-12):** use the **best open data available** for every region: elevation (swissALTI3D / Liechtenstein DTM, LGL DGM1 for Baden-Württemberg, other official open DTMs elsewhere; SRTM / Copernicus DEM only as fallback), the freshest OSM, the best open orthophotos and textures (8A licences). The same rule applies to all other images and data.
+- **Q10 – Priority:** what first: ground and roads (most visible while riding), houses (towns), or riders and bikes?
+- **Q11 – Brands:** confirm: no real bike or kit brands / logos, also not as cosmetics.
+
+---
+
+### Phase 9 – Sky, Time, Seasons and Weather (planning, 2026-11-12)
+
+**Goal:** the world shows the **real sky, season and weather of the place the rider is riding**, at the real moment: the sun, moon and stars in the right position and moving, daylight and night, the season of the date, and today's weather there. On top, two machines let riders choose. The **time machine** sets any date and time; the **weather machine** sets any weather.
+
+#### 9A – Principles
+
+- **Default = real.** "Now" means the real current instant (UTC) shown at the position of the rider **in the world**: the world's local time zone and daylight saving time, the sun's position over that spot, today's weather there. Example: a rider in Tokyo riding Liechtenstein at 14:00 Tokyo time sees 06:00 in Liechtenstein, i.e. sunrise. The time of the virtual place counts, never the time where the person physically is (decided, Q1).
+- **One clock and one weather per session, owned by the game server** (server-authoritative, §6.1): `WorldClock` (instant, time speed, mode real/fixed) and `WeatherState` are server state, sent in `Welcome` and in snapshots (new protobuf fields, only added). Single-player runs the same code in the local server, so solo riders are their own "host".
+- **Visual vs. physical.** Light, sky, season and most weather effects are visual. Wind, road wetness and air density can also change the **physics** (§5). They are server-side and switched per session or event ("weather affects physics": on / off; off by default in races for fairness, Q4).
+- **Deterministic and testable.** All astronomy, time-zone, season and weather logic is pure Rust outside Bevy, builds for wasm (§3.5), and is unit-tested against reference values. The renderer only draws the state.
+- **No network in the client for weather.** The game server or backend fetches real weather (9F). The client never sends the rider's position to a weather provider (privacy, §12).
+
+#### 9B – Day and night: sun, moon, stars (circadian)
+
+| Element | How | Accuracy target |
+|---|---|---|
+| Local time | IANA time-zone database (tzdb, public domain) via a Rust crate (e.g. `jiff` / `chrono-tz`). Each world package stores the time-zone id(s) of its area (package metadata, set by the world builder from the region) | DST changes exactly as in reality |
+| Sun | Solar position (NOAA / Meeus algorithms; SPA for higher precision) from instant + latitude / longitude: azimuth, elevation, sunrise / sunset, civil / nautical / astronomical twilight | < 0.05° (well below what is visible) |
+| Moon | Position and phase (Meeus, truncated ELP series), illuminated fraction and orientation of the terminator, earthshine; rises and sets, moves through the night | < 0.3° |
+| Stars | Bright star catalogue (≈ 9 000 stars to magnitude 6.5, real colours from B–V index) placed on the celestial sphere, rotated by local sidereal time (GMST + longitude) around the celestial pole; twinkling near the horizon | constellations exactly where they are |
+| Planets (optional) | Venus, Mars, Jupiter, Saturn (VSOP87 truncated / Meeus) | < 0.5° |
+| Milky Way | procedural band from galactic coordinates (own work), not a photo (photo maps are CC BY-SA, 9H) | – |
+| Sky colour and light | physically based atmosphere (Bevy's atmosphere rendering if available in the Bevy version used, else own Preetham / Hillaire model): sky colour, sun colour and intensity, aerial perspective, sunrise / sunset glow, blue hour; auto-exposure | believable, not measured |
+| Mountains block the sun | the sun's horizon from the DEM (§4.3): in the Malbun valley the sun sets behind the ridge earlier than the astronomical sunset; long shadows | per tile, computed by the world builder |
+| Night | moonlight (intensity from phase and elevation), starlight, light pollution near towns (fewer stars), **street lamps** from OSM (`highway=street_lamp`, roads with `lit=yes`), lit windows in houses at night, **bike lights**: front and rear lamps on all riders (cosmetic, §2.5), automatic or by setting | – |
+| HUD | world local time (24 h) and an optional sun / moon icon; the ISO timestamp of photos stays separate (art project, top right) | – |
+
+The celestial bodies move continuously with the session clock: at time speed ×1 a sunset takes as long as in reality; with the time machine (9D) it can be a time-lapse.
+
+#### 9C – Seasons
+
+The date drives the look of the landscape (connects to Phase 8, Q5):
+
+- **Vegetation:** deciduous trees (by forest type, Phase 8) leaf out in spring, are green in summer, colour in autumn and are bare in winter; conifers stay green. Meadows and fields follow a crop calendar (green → yellow → harvested / ploughed). Timing shifts with latitude and **altitude** (spring arrives later at 1 600 m in Malbun than at 450 m in Vaduz): a phenology model with simple degree-day rules, tunable per region.
+- **Snow cover:** snow line by date and altitude (climatology) or, with real weather, from the actual snow (9F); snow on roofs, trees, meadows; roads cleared (they stay rideable).
+- **Day length and sun height** follow automatically from 9B.
+- **Imagery:** Phase 8 tints come from summer imagery; seasons modify them by rules. Optional per-season tints from Sentinel-2 composites (Q5 of Phase 8).
+
+#### 9D – Time machine
+
+The rider (in solo) or the host / event organiser (in a shared session) sets **any date and time**:
+
+- **Modes:** *Real* (now, default), *Fixed* (a chosen instant, e.g. 21 June 2026 21:15), *Offset* (now + n hours), plus a **time speed** (paused, ×1, ×10, ×60, ×600: a whole day in a few minutes of riding, the time-lapse sunset).
+- **Presets:** sunrise, golden hour, noon, sunset, blue hour, midnight, next full moon, summer / winter solstice.
+- **Range:** years 1900–2100. The astronomy is valid there; seasons and snow follow the date. "Historic weather" (9F) combines naturally: ride the Malbun climb on a past date with the weather of that day.
+- **UI:** menu page *Time machine* (Navi / Ride), a world clock in the HUD with the mode, console `time` (today a dev command, §3.2.1; it becomes a user command, with permissions in shared sessions).
+
+#### 9E – Weather simulation and weather machine
+
+**Weather state** (server, per session; optionally per area for large worlds): cloud cover and type (cumulus, stratus, cirrus, cumulonimbus), precipitation (none, drizzle, rain, thunderstorm, snow, hail) and intensity, visibility / fog (including valley fog and low cloud on the climb), wind speed, direction and gusts, temperature, humidity, pressure, **road wetness** (builds up in rain, dries afterwards depending on sun, wind and temperature; puddles in hollows), lightning.
+
+**Rendering and sound:**
+
+- **Visual:** procedural / volumetric clouds and their shadows on the terrain, rain and snow particles around the camera, wet roads (darker, glossy, reflections, spray from wheels), fog, lightning, snow accumulation.
+- **Movement:** wind moves trees, grass and flags.
+- **Sound** (game audio, §3.3): rain, wind gusts, thunder, wet tyre hiss.
+
+**Physics (optional per session, 9A):**
+
+- **Wind** enters the aero drag as the air speed relative to the rider (head-, tail- and crosswind along the road's bearing). It also changes drafting: with crosswind the shelter shifts sideways (echelons).
+- **Wetness** raises rolling resistance slightly.
+- **Temperature, pressure and altitude** give the air density in the drag term.
+- **Trainer:** the gradient sent to the trainer in SIM mode stays the road's gradient. The extra wind load is added as resistance where the trainer supports it (FTMS wind speed / Wahoo wind), else only in the simulated speed.
+
+**Extreme weather is included, uncapped** (decided, Q9): storms, hail, heavy snow, thunderstorms, dense fog, gale-force wind, in the simulation, the presets and real weather.
+
+**Weather machine:** the rider / host chooses
+
+- **Mode:** *Real* (9F), *Preset* (clear, fair-weather clouds, overcast, fog, drizzle, rain, thunderstorm, snowfall, windy, storm), or *Custom* (sliders: clouds, precipitation, wind speed / direction, temperature, fog, road wetness).
+- **Transitions:** smooth over a chosen time, or immediate.
+- **Mixed modes:** combinations such as "real weather but no rain".
+
+UI: menu page *Weather machine*, HUD weather icon with temperature and a wind arrow relative to the rider's heading, console `weather` (today a dev command, §3.2.1).
+
+**Without real data**, the weather simulation itself evolves the weather plausibly (a simple stochastic model: fronts passing, showers, diurnal cumulus, valley fog in the morning), seeded per session, so a long ride is not static.
+
+#### 9F – Real weather data
+
+The backend / game server fetches weather for the **area of the world package** (a coarse grid, e.g. one point per 5–10 km and per altitude band, not per rider). It caches it (refresh every 15–60 min, interpolated in time and space) and feeds the session's weather state. Results are cached per region, so many riders cause few requests. Without network, the session falls back to the simulation (9E).
+
+| Provider | Coverage | Licence / terms (as found 2026-11-12) | Use |
+|---|---|---|---|
+| **MeteoSwiss Open Data** (Switzerland and Liechtenstein, gradually since 2025-05-22) | CH / LI, stations and models (ICON-CH) | **CC BY 4.0**, "Source: MeteoSwiss"; fair-use limits on the infrastructure | Liechtenstein world |
+| **DWD Open Data** (opendata.dwd.de) | Germany, ICON-D2 model, stations, radar | open data, "Source: Deutscher Wetterdienst" (exact licence to be verified) | Black Forest world |
+| **MET Norway** api.met.no Locationforecast 2.0 | global point forecasts | free; requires an identifying User-Agent and caching; licence reported as CC BY 4.0 / NLOD (to be verified) | global fallback (server-side only, generic product User-Agent, never personal data) |
+| **Open-Meteo** | global, forecast + historical | data CC BY 4.0, but the **free API is non-commercial only** (< 10 000 calls/day); commercial use needs a subscription; can also be self-hosted (open source) | prototyping; production only self-hosted or with a subscription (Q6) |
+| **Copernicus ERA5 / ERA5-Land** (reanalysis, hourly since 1940) | global, 9–31 km | Copernicus licence: free, attribution | **historic weather** for the time machine |
+| NOAA GFS | global model, GRIB | public domain | heavy raw data; server-side alternative |
+
+Attribution of the provider used appears on the credits screen and in the weather panel ("Weather: MeteoSwiss"), as for map data (§13).
+
+#### 9G – Architecture and milestones (proposal)
+
+- **New crates:**
+  - `ocw-sky`: time zones, ephemeris for sun, moon, stars and planets, twilight, sidereal time, season and phenology. Pure, wasm.
+  - `ocw-weather`: weather state, transitions, stochastic simulation, physics coefficients. Pure, wasm. Provider clients sit behind a `WeatherProvider` trait on the server side only (no network in tests: recorded fixtures).
+- **Server:** session clock and weather in `GameServer`; host / event permissions for the machines; protocol fields added to `Welcome` / `Snapshot`.
+- **Renderer (`ocw-render`):**
+  - sky and atmosphere, sun / moon / star rendering;
+  - light colour and shadows, night lighting (street lamps, windows, bike lights);
+  - clouds, precipitation, wetness and fog;
+  - seasonal vegetation parameters and snow.
+- **World builder:** time-zone id per package, horizon / sun-blocking per tile from the DEM, street-lamp and `lit` data, phenology parameters per region.
+- **Milestones:**
+  - **S1** – time & sun: world clock, real local time with DST, sun position, day / night light, HUD clock;
+  - **S2** – night sky: moon (phases), stars, planets, Milky Way, night lighting;
+  - **S3** – time machine: modes, presets, time speed, menu, console, session permissions;
+  - **S4** – weather simulation and rendering: clouds, rain / snow, fog, wet roads, wind in vegetation, sound;
+  - **S5** – weather machine: presets, custom, transitions, menu, console;
+  - **S6** – physics: wind / wetness / air density (server-side, per-session switch, trainer wind resistance);
+  - **S7** – real weather: providers, caching, region grid, fallback, attribution; historic weather (ERA5);
+  - **S8** – seasons: phenology, snow cover, crop calendar.
+- **Unit tests:**
+  - **Astronomy:** sunrise / sunset / solar noon for Vaduz and Freiburg on fixed dates against NOAA reference values (± 1 min); sun azimuth / elevation against SPA reference points; moon phases against known new / full moon dates (± 1 h); a star's altitude / azimuth against reference at a given instant; sidereal time.
+  - **Time:** DST transitions in Europe/Vaduz and Europe/Berlin (the skipped and the repeated hour); time-machine arithmetic (speed, pause, offset); session clock in snapshots.
+  - **Weather:** state transitions (deterministic with a seed); road wetness build-up and drying; provider parsing from recorded fixtures (no network); caching and fallback; attribution.
+  - **Physics:** a headwind needs more power for the same speed, a tailwind less, a crosswind none; drafting offset in crosswind; air density from temperature / altitude; switch off = identical physics to today.
+  - **Seasons and protocol:** phenology dates shifting with altitude; protocol round-trips.
+- **Visual tests:** the scene harness (§11.4) renders fixed viewpoints at fixed instants (sunrise / noon / sunset / full-moon midnight / winter / storm) for comparison and for the art project's build history.
+
+**Result:** riding Vaduz–Malbun at 20:30 in June shows the real sunset behind the ridge, the first stars and the street lamps of Malbun; the time machine makes it a winter night with full moon and snow; the weather machine adds a thunderstorm or today's real weather.
+
+#### 9H – Open questions (for the user)
+
+- **Q1 – Whose "now"? Decided (2026-11-12):** the time of the place **in the virtual world** where the rider is: its local time zone and DST, its sun, moon and stars. The real location of the person at home plays no role. A "same time as at home" preset is not planned.
+- **Q2 – Shared sessions:** who controls the time and weather machines in group rides and events: host / organiser only (recommended), or a personal visual-only override per rider (my sky differs from yours, physics stays the session's)?
+- **Q3 – Night riding:** is riding in full darkness desired (with bike lights), or should night have a minimum brightness for training comfort?
+- **Q4 – Weather and physics: decided (2026-11-12):** yes, wind, wet roads and air density change the physics **realistically**. On in solo and free ride; in races and events the **organiser** decides (off unless enabled).
+- **Q5 – Trainer wind resistance:** send the wind load to trainers that support it (FTMS / Wahoo wind), or keep the trainer on gradient only?
+- **Q6 – Weather provider:** MeteoSwiss + DWD (regional, open) with MET Norway as a global fallback (recommended), or Open-Meteo (simplest API; non-commercial on the free tier, else self-hosting or a subscription)? Is a commercial release planned (same as Phase 8 Q2)?
+- **Q7 – Star catalogue licence:** the Yale Bright Star Catalogue's licence is not clearly documented (Debian ships it in *non-free*), and the HYG database is CC BY-SA 4.0. Acceptable alternatives: ESA Hipparcos / Gaia-derived lists (terms to check), or a catalogue we derive ourselves from public-domain data. Decide after checking; the code doesn't depend on the choice.
+- **Q8 – Historic weather:** wanted (ride a famous day, e.g. a race day in the past, with its real weather)? It needs ERA5 downloads on our infrastructure.
+- **Q9 – Extreme weather: decided (2026-11-12):** realistic, **no cap**. Storms, hail, heavy snow, thunderstorms with lightning, dense fog and gale-force wind are all part of the simulation, the weather machine and real weather. The only limit is the physics switch (Q4).
+- **Q10 – Priority:** order of S1–S8. Proposal: S1 → S3 → S2 → S4 → S5 → S7 → S8 → S6.
 
 ---
 

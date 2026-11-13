@@ -354,9 +354,94 @@ pub fn diff(old: &Path, new: &Path) {
     }
 }
 
+/// After a command rewrote `package` (routes added or removed, `gpx`,
+/// `route --world`, `routes`): the manifest beside it, if any, lists the old
+/// SHA-256, so every client would refuse the package as damaged (spec §4.7).
+/// Writes it again for the new content (same id, name and attribution, next
+/// version). A signature cannot be renewed without the key: the new
+/// manifest is unsigned and a note says to sign it again. Returns whether
+/// a manifest was rewritten.
+pub fn refresh_manifest(package: &Path) -> bool {
+    let side = sidecar(package);
+    let Some(old) = std::fs::read_to_string(&side)
+        .ok()
+        .and_then(|t| SignedManifest::parse(&t).ok())
+    else {
+        return false;
+    };
+    write_manifest(
+        package,
+        &ManifestArgs {
+            id: None,
+            name: None,
+            version: None,
+            dem_attribution: None,
+        },
+        None,
+    );
+    if old.is_signed() {
+        println!(
+            "note: the manifest was signed; sign it again: world-builder sign --key KEY {}",
+            package.display()
+        );
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression: `world-builder route --world` (and `gpx`, `routes`) wrote
+    /// the package but left the manifest with the old hash, so the client
+    /// refused the package with the new routes as damaged.
+    #[test]
+    fn a_rewritten_package_gets_a_matching_manifest() {
+        let dir = std::env::temp_dir().join(format!("ocw-wb-refresh-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("p.ocwpkg");
+        let mut pkg = ocw_world::WorldPackage {
+            name: "Test".into(),
+            origin: (47.9, 7.9),
+            tile_size_m: 1000.0,
+            samples: 3,
+            tiles: Default::default(),
+            graph: None,
+            landuse: None,
+            buildings: None,
+            routes: vec![],
+            region: None,
+        };
+        std::fs::write(&path, pkg.to_bytes()).unwrap();
+        // No manifest yet: nothing to refresh.
+        assert!(!refresh_manifest(&path));
+        let args = ManifestArgs {
+            id: Some("test/refresh".into()),
+            name: None,
+            version: None,
+            dem_attribution: None,
+        };
+        write_manifest(&path, &args, None);
+        // The package changes (a route is added) after the manifest was written.
+        pkg.put_route(ocw_world::GraphRoute {
+            name: "R".into(),
+            is_loop: false,
+            steps: vec![],
+        });
+        let bytes = pkg.to_bytes();
+        std::fs::write(&path, &bytes).unwrap();
+        let read = |p: &Path| {
+            SignedManifest::parse(&std::fs::read_to_string(sidecar(p)).unwrap())
+                .unwrap()
+                .manifest
+        };
+        assert_ne!(read(&path).file("p.ocwpkg").unwrap().sha256, sha256(&bytes));
+        assert!(refresh_manifest(&path));
+        let m = read(&path);
+        assert_eq!(m.file("p.ocwpkg").unwrap().sha256, sha256(&bytes));
+        assert_eq!((m.id.as_str(), m.version), ("test/refresh", 2));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn helpers() {

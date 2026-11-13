@@ -274,6 +274,24 @@ climb at 1.5–2.1 km) and grass beside the road roll increasingly harder
   free ride. The data comes
   from `scripts/fetch-pilot.sh` and `world-builder` (© OpenStreetMap
   contributors, ODbL).
+- Second world, the southern **Black Forest** (spec §4.7; Freiburg,
+  Schauinsland, Feldberg, Titisee, Belchen, Schluchsee):
+  `scripts/fetch-pilot.sh blackforest` (Geofabrik extract of the
+  Regierungsbezirk Freiburg, SRTM) and `scripts/build-blackforest.sh` (on a
+  build machine, about 2 minutes) write `data/blackforest/blackforest.ocwpkg`
+  (260 MB) with the routes `Freiburg - Schauinsland` and `Titisee - Feldberg`,
+  also as route files:
+
+  ```bash
+  ocw-desktop --world data/blackforest/blackforest.ocwpkg                       # Freiburg - Schauinsland
+  ocw-desktop --world data/blackforest/blackforest.ocwpkg --route "Titisee - Feldberg"
+  ocw-desktop --world data/blackforest/blackforest.ocwpkg --free-ride --start -8018,-8406   # Freiburg
+  ```
+
+  `world-builder route --bbox S,W,N,E --origin LAT,LON` cuts a route file from
+  the same part of an extract as `package --bbox`, in its metres;
+  `world-builder areas --pbf FILE --at LAT,LON` lists the OSM areas and
+  waterways at a point (land-use diagnostics).
 - Packages from `world-builder package` also carry the OSM land use and the
   buildings: the ground is coloured by land use (forest floor, meadows,
   fields, settlements, rock, scree, glaciers), lakes and rivers are flat water
@@ -1215,7 +1233,11 @@ synced by `scripts/remote.sh`): `--world PKG` or `$OCW_WORLD`, else
 `data/pilot/liechtenstein.ocwpkg`, the main checkout's `data/pilot/` (git
 worktrees) or the kiosk install `/var/tmp/ocw/liechtenstein.ocwpkg`; the
 Vaduz-Malbun route file is taken from beside it (`{world}`, `{world_dir}` in
-the arguments). Without a package these scenes are skipped; the test-route
+the arguments). Scenes with `world = "blackforest"` (`bf-*`) need the Black
+Forest package the same way: `--world blackforest=PKG`,
+`$OCW_WORLD_BLACKFOREST`, else `data/blackforest/blackforest.ocwpkg` (with
+its route files beside it); render them with `OCW_PROFILE=release` (260 MB
+package). Without a package these scenes are skipped; the test-route
 scenes always run. `--pick` copies the good renders of a folder into
 `test-output/build-history/YYYY-MM-DD/HHMMSS-NAME.jpg|mp4` (images over 600 KB
 are made smaller – JPEG quality ~80, older PNGs a 256-colour palette – with

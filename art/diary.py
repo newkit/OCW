@@ -5,6 +5,8 @@
                                     GitHub release `build-history`
     art/diary.py gather  [DAY...]   collect every image, video, sound, text and
                                     log of the day into artwork/build-history/DAY/
+    art/diary.py stamp   [DAY...]   write the ISO 8601 capture time into every
+                                    archived PNG/MP4 that has none (gather does it)
     art/diary.py journal [DAY...]   write DAY/journal.md + journal.json (commits,
                                     merges, spec versions, tests, media)
     art/diary.py sheet   DAY        contact sheets of the day's media (for
@@ -170,10 +172,13 @@ def gather(day: str):
     dest = HIST / day
     dest.mkdir(parents=True, exist_ok=True)
     (dest / "logs").mkdir(exist_ok=True)
-    known = {}
+    # Checksums of the gathered originals: the copies here get metadata
+    # (stamp), so their own checksums differ from the sources'.
+    manifest = dest / "logs" / ".sources.json"
+    known = json.loads(manifest.read_text()) if manifest.exists() else {}
     for f in dest.rglob("*"):
-        if f.is_file():
-            known[sha(f)] = f
+        if f.is_file() and f.name != manifest.name:
+            known.setdefault(sha(f), f.name)
     added = 0
     for src in sources():
         for f in sorted(src.rglob("*")):
@@ -201,10 +206,102 @@ def gather(day: str):
                 target = target.with_name(f"{hms}-{slug(stem)[:90]}-{n}{ext}")
                 n += 1
             shutil.copy2(f, target)
-            known[h] = target
+            known[h] = target.name
             added += 1
+    manifest.write_text(json.dumps(known, indent=0))
+    stamp(day)
     media = [f for f in dest.iterdir() if f.suffix.lower() in IMAGE | VIDEO | AUDIO]
     log(f"{day}: {added} new files; {len(media)} images/videos/sounds in {dest}")
+
+
+# ------------------------------------------------------------------- stamp
+#
+# Every photo and video carries its ISO 8601 date and time in the file
+# (ART-PROJECT.md §2): PNG `tEXt` "Creation Time", MP4 `creation_time`.
+# The app writes them itself (spec 2.24+); for older files the archive copy
+# gets them from the capture time (file name / folder / mtime).
+
+
+def capture_time(day: str, name: str) -> dt.datetime:
+    m = TIME_RE.match(name)
+    hms = m.group(1) if m else "000000"
+    t = dt.datetime.strptime(f"{day} {hms}", "%Y-%m-%d %H%M%S")
+    return t.astimezone()  # local time zone of this machine (the build's)
+
+
+def png_text(path: Path) -> dict[str, str]:
+    data = path.read_bytes()
+    out, i = {}, 8
+    while i + 8 <= len(data):
+        n, kind = struct.unpack(">I4s", data[i:i + 8])
+        if kind == b"tEXt":
+            k, _, v = data[i + 8:i + 8 + n].partition(b"\0")
+            out[k.decode("latin-1")] = v.decode("latin-1")
+        if kind == b"IEND":
+            break
+        i += 12 + n
+    return out
+
+
+def png_add_text(path: Path, items: dict[str, str]):
+    """Insert tEXt chunks before the first IDAT."""
+    import zlib
+
+    data = path.read_bytes()
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        return
+    i = 8
+    while i + 8 <= len(data):
+        n, kind = struct.unpack(">I4s", data[i:i + 8])
+        if kind == b"IDAT":
+            break
+        i += 12 + n
+    chunks = b""
+    for k, v in items.items():
+        body = k.encode("latin-1") + b"\0" + v.encode("latin-1")
+        chunks += struct.pack(">I", len(body)) + b"tEXt" + body + struct.pack(
+            ">I", zlib.crc32(b"tEXt" + body) & 0xFFFFFFFF)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_bytes(data[:i] + chunks + data[i:])
+    os.utime(tmp, (path.stat().st_atime, path.stat().st_mtime))
+    tmp.replace(path)
+
+
+def mp4_creation_time(path: Path) -> str:
+    return run(["ffprobe", "-v", "error", "-show_entries", "format_tags=creation_time",
+                "-of", "csv=p=0", path], capture_output=True, text=True,
+               check=False).stdout.strip()
+
+
+def stamp(day: str):
+    """Writes the capture time into every archived PNG and MP4 that has none."""
+    n = 0
+    for f in sorted((HIST / day).iterdir()):
+        ext = f.suffix.lower()
+        if ext not in {".png", ".mp4"}:
+            continue
+        t = capture_time(day, f.name)
+        if ext == ".png":
+            if "Creation Time" in png_text(f):
+                continue
+            png_add_text(f, {"Creation Time": t.isoformat(timespec="seconds"),
+                             "Comment": "OCW build history (time from the capture's file name)"})
+        else:
+            if mp4_creation_time(f):
+                continue
+            tmp = f.with_name(f.stem + ".stamp.mp4")
+            ffmpeg("-i", f, "-map", "0", "-c", "copy", "-metadata",
+                   f"creation_time={t.astimezone(dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000000Z')}",
+                   "-metadata", "comment=OCW build history (time from the capture's file name)", tmp)
+            os.utime(tmp, (f.stat().st_atime, f.stat().st_mtime))
+            tmp.replace(f)
+        n += 1
+    log(f"{day}: stamped {n} files with their ISO 8601 capture time")
+
+
+def now_meta() -> list[str]:
+    t = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000000Z")
+    return ["-metadata", f"creation_time={t}"]
 
 
 # ----------------------------------------------------------------- journal
@@ -1043,7 +1140,8 @@ def render(day: str) -> Path:
     ffmpeg(*inputs, "-filter_complex", ";".join(filt + amix), "-map", "[v]", "-map", "[a]",
            "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p",
            "-r", str(FPS), "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
-           "-t", f"{total:.3f}", "-movflags", "+faststart", out)
+           "-t", f"{total:.3f}", *now_meta(), "-metadata",
+           f"title=OCW Build Diary – day {num} ({day})", "-movflags", "+faststart", out)
     log(f"{day}: {out} ({total:.1f} s)")
     return out
 
@@ -1084,7 +1182,8 @@ def diary() -> Path:
     out = OUT / "ocw-build-diary.mp4"
     lst = work / "diary.txt"
     lst.write_text("".join(f"file '{p}'\n" for p in [opener2, *days]))
-    ffmpeg("-f", "concat", "-safe", "0", "-i", lst, "-c", "copy", "-movflags", "+faststart", out)
+    ffmpeg("-f", "concat", "-safe", "0", "-i", lst, "-c", "copy", *now_meta(),
+           "-metadata", "title=OCW Build Diary", "-movflags", "+faststart", out)
     log(f"diary: {out} ({probe_duration(out):.1f} s, {len(days)} days)")
     return out
 
@@ -1120,7 +1219,7 @@ def main():
         diary()
         return
     if not days:
-        days = all_days() if cmd in {"fetch", "gather", "journal", "publish"} else days_with_scripts()
+        days = all_days() if cmd in {"fetch", "gather", "journal", "publish", "stamp"} else days_with_scripts()
     for d in days:
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", d):
             raise SystemExit(f"not a day: {d}")
@@ -1132,7 +1231,7 @@ def main():
         diary()
         return
     fn = {"fetch": fetch, "gather": gather, "journal": journal, "sheet": sheet,
-          "render": render}.get(cmd)
+          "render": render, "stamp": stamp}.get(cmd)
     if cmd == "publish":
         publish(days)
     elif fn:

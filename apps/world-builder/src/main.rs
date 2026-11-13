@@ -6,6 +6,8 @@
 //! world-builder gpx --world PKG --gpx FILE [--name NAME] [--route-file FILE]   # GPX → package route
 //! world-builder routes --world PKG [--from OLD_PKG] [--remove NAME] [--export-gpx]
 //! world-builder route --world PKG --from LAT,LON --to LAT,LON --name NAME
+//! world-builder route [--pbf ... --poly ... --bbox S,W,N,E --origin LAT,LON] --from ... --to ... --out FILE.route
+//! world-builder areas --pbf FILE --at LAT,LON        # land-use diagnostics
 //! world-builder package [--id europe/liechtenstein] [--sign-key KEY] [--bbox S,W,N,E] [--origin LAT,LON]
 //! world-builder keys init-root --name "OCW root"     (once, then keep root.key offline)
 //! world-builder keys new-signing --name "builds 2026" [--days 365]
@@ -139,6 +141,18 @@ enum Cmd {
     /// Compare the road graphs of two builds by stable edge ID (which
     /// roads and routes re-match after a rebuild, spec §4.4).
     Diff { old: PathBuf, new: PathBuf },
+    /// Diagnostics: the OSM areas (land use, water, buildings) that contain
+    /// a point and the waterways near it, with their land class.
+    Areas {
+        #[arg(long, default_value = "data/pilot/liechtenstein.osm.pbf")]
+        pbf: PathBuf,
+        /// The point as lat,lon.
+        #[arg(long, value_parser = parse_latlon)]
+        at: (f64, f64),
+        /// Waterways within this many metres are listed.
+        #[arg(long, default_value_t = 30.0)]
+        radius: f64,
+    },
     /// Validate a world package: where does the terrain show through roads?
     Check {
         #[arg(long, default_value = "data/pilot/liechtenstein.ocwpkg")]
@@ -166,6 +180,14 @@ enum Cmd {
         margin: f64,
         #[arg(long, default_value = "data/pilot/vaduz-malbun.route")]
         out: PathBuf,
+        /// Only the part of the --poly region inside this box, as for
+        /// `package --bbox`: give the package's --bbox (and --origin), so
+        /// the route file is in the package's metres with its road heights.
+        #[arg(long, value_parser = parse_bbox)]
+        bbox: Option<Region>,
+        /// Projection origin (lat,lon), as for `package --origin`.
+        #[arg(long, value_parser = parse_latlon)]
+        origin: Option<(f64, f64)>,
         /// Instead of an ocw-route file: add the route (by stable edge IDs)
         /// to this world package's routes (spec §2.7), on its road graph.
         #[arg(long, value_name = "PKG")]
@@ -231,6 +253,8 @@ fn write_package(pkg: &ocw_world::WorldPackage, path: &std::path::Path) {
         eprintln!("{}: {e}", path.display());
         std::process::exit(1);
     });
+    // Its manifest must list the new hash, or clients refuse the package.
+    dist::refresh_manifest(path);
 }
 
 fn package_network(
@@ -550,16 +574,80 @@ fn load_dem(hgt: &[PathBuf]) -> Dem {
     dem
 }
 
+/// The region of a package or route: the `--poly` region, narrowed to
+/// `--bbox` (a part of it, spec §2.2.2), with the projection origin
+/// (`--origin`, default the centre of the part). For a part also the wider
+/// context region (CONTEXT_DEG beyond the box) whose roads shape the
+/// profiles and the terrain near its border, so the neighbouring part,
+/// built the same way, meets it without a step.
+fn cut_region(
+    poly: &PathBuf,
+    bbox: Option<Region>,
+    origin: Option<(f64, f64)>,
+) -> (Region, Option<Region>) {
+    let mut region = load_region(poly);
+    let mut context = bbox.as_ref().map(|b| {
+        region.clone().clipped_to(
+            b.min_lat - CONTEXT_DEG,
+            b.min_lon - CONTEXT_DEG,
+            b.max_lat + CONTEXT_DEG,
+            b.max_lon + CONTEXT_DEG,
+        )
+    });
+    if let Some(b) = bbox {
+        region = region.clipped_to(b.min_lat, b.min_lon, b.max_lat, b.max_lon);
+        if region.min_lat >= region.max_lat || region.min_lon >= region.max_lon {
+            eprintln!("--bbox does not overlap the region of {}", poly.display());
+            std::process::exit(1);
+        }
+    }
+    region.origin = origin;
+    if let Some(c) = context.as_mut() {
+        c.origin = Some(region.origin());
+    }
+    (region, context)
+}
+
+/// The road graph of a region with its elevation profiles; for a `--bbox`
+/// part the profiles come from the context roads around it (the context
+/// graph is returned for the terrain), exactly as the package is built, so
+/// a route file cut from the same part has the package's road heights.
+fn profiled_graph(
+    osm: &OsmData,
+    dem: &Dem,
+    region: &Region,
+    context: Option<Region>,
+) -> (
+    ocw_world::graph::RoadGraph,
+    ocw_worldgen::build::BuildStats,
+    Option<ocw_world::graph::RoadGraph>,
+) {
+    let proj = region.projection();
+    let (mut graph, stats) = build_road_graph(osm, region);
+    add_profiles(&mut graph, dem, &proj);
+    let context_graph = context.map(|c| {
+        let (mut g, _) = build_road_graph(osm, &c);
+        add_profiles(&mut g, dem, &proj);
+        let taken = ocw_worldgen::profile::transfer_profiles(&mut graph, &g, 0.5);
+        println!(
+            "context: {} road edges up to {CONTEXT_DEG}° around the box; {taken} of {} profiles taken from them",
+            g.edges.len(),
+            graph.edges.len()
+        );
+        g
+    });
+    (graph, stats, context_graph)
+}
+
 fn route(args: RouteArgs) {
-    let region = load_region(&args.poly);
+    let (region, context) = cut_region(&args.poly, args.bbox, args.origin);
     let proj = region.projection();
     let osm = OsmData::read_pbf(&args.pbf).unwrap_or_else(|e| {
         eprintln!("{}: {e}", args.pbf.display());
         std::process::exit(1);
     });
-    let (mut graph, _) = build_road_graph(&osm, &region);
     let dem = load_dem(&args.hgt);
-    add_profiles(&mut graph, &dem, &proj);
+    let (graph, _, _) = profiled_graph(&osm, &dem, &region, context);
     let (a, b) = (
         proj.project(args.from.0, args.from.1),
         proj.project(args.to.0, args.to.1),
@@ -608,7 +696,7 @@ fn route(args: RouteArgs) {
     };
     let file = ocw_world::RouteFile {
         name: args.name.clone(),
-        origin: proj_origin(&region),
+        origin: region.origin(),
         width_m: 6.5,
         points,
         surfaces: ocw_worldgen::route::path_surfaces(&graph, &path),
@@ -677,10 +765,6 @@ fn route(args: RouteArgs) {
 /// (degrees, about 1 km).
 const CONTEXT_DEG: f64 = 0.01;
 
-fn proj_origin(region: &Region) -> (f64, f64) {
-    region.center()
-}
-
 struct RouteArgs {
     pbf: PathBuf,
     poly: PathBuf,
@@ -690,6 +774,8 @@ struct RouteArgs {
     name: String,
     margin: f64,
     out: PathBuf,
+    bbox: Option<Region>,
+    origin: Option<(f64, f64)>,
 }
 
 fn parse_bbox(s: &str) -> Result<Region, String> {
@@ -734,46 +820,14 @@ fn package(args: PackageArgs) {
         out,
     } = args;
     let t = Instant::now();
-    let mut region = load_region(&poly);
-    // A part of the region (--bbox): the roads up to CONTEXT_DEG beyond it
-    // give the profiles and the terrain near the border, so the
-    // neighbouring part, built the same way, meets it without a step.
-    let mut context = bbox.as_ref().map(|b| {
-        region.clone().clipped_to(
-            b.min_lat - CONTEXT_DEG,
-            b.min_lon - CONTEXT_DEG,
-            b.max_lat + CONTEXT_DEG,
-            b.max_lon + CONTEXT_DEG,
-        )
-    });
-    if let Some(b) = bbox {
-        region = region.clipped_to(b.min_lat, b.min_lon, b.max_lat, b.max_lon);
-        if region.min_lat >= region.max_lat || region.min_lon >= region.max_lon {
-            eprintln!("--bbox does not overlap the region of {}", poly.display());
-            std::process::exit(1);
-        }
-    }
-    region.origin = origin;
+    let (region, context) = cut_region(&poly, bbox, origin);
     let proj = region.projection();
     let osm = OsmData::read_pbf(&pbf).unwrap_or_else(|e| {
         eprintln!("{}: {e}", pbf.display());
         std::process::exit(1);
     });
-    let (mut graph, stats) = build_road_graph(&osm, &region);
     let dem = load_dem(&hgt);
-    add_profiles(&mut graph, &dem, &proj);
-    let context_graph = context.as_mut().map(|c| {
-        c.origin = Some(region.origin());
-        let (mut g, _) = build_road_graph(&osm, c);
-        add_profiles(&mut g, &dem, &proj);
-        let taken = ocw_worldgen::profile::transfer_profiles(&mut graph, &g, 0.5);
-        println!(
-            "context: {} road edges up to {CONTEXT_DEG}° around the box; {taken} of {} profiles taken from them",
-            g.edges.len(),
-            graph.edges.len()
-        );
-        g
-    });
+    let (graph, stats, context_graph) = profiled_graph(&osm, &dem, &region, context);
     let base = |x: f64, z: f64| {
         let (lat, lon) = proj.unproject([x, z]);
         dem.elevation(lat, lon).unwrap_or(0.0)
@@ -895,8 +949,67 @@ fn print_sections(bytes: &[u8]) {
     }
 }
 
+/// Distance from `p` to the segment `a`-`b`.
+fn segment_distance(p: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
+    let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
+    let len2 = dx * dx + dz * dz;
+    let t = if len2 > 0.0 {
+        (((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / len2).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    ((p[0] - a[0] - t * dx).powi(2) + (p[1] - a[1] - t * dz).powi(2)).sqrt()
+}
+
+/// `world-builder areas`: which OSM areas and waterways shape a point.
+fn areas_at(pbf: &std::path::Path, (lat, lon): (f64, f64), radius: f64) {
+    let data = ocw_worldgen::areas::AreaData::read_pbf(pbf).unwrap_or_else(|e| {
+        eprintln!("{}: {e}", pbf.display());
+        std::process::exit(1);
+    });
+    let proj = ocw_world::geo::LocalProjection::new(lat, lon);
+    let local = |ring: &Vec<(f64, f64)>| -> Vec<[f64; 2]> {
+        ring.iter().map(|&(a, b)| proj.project(a, b)).collect()
+    };
+    let tags = |t: &ocw_worldgen::osm::Tags| {
+        let mut v: Vec<String> = t.iter().map(|(k, v)| format!("{k}={v}")).collect();
+        v.sort();
+        v.join(" ")
+    };
+    for a in data.areas() {
+        let rings: Vec<Vec<[f64; 2]>> = a.outer.iter().chain(&a.inner).map(local).collect();
+        if ocw_worldgen::areas::inside_rings([0.0, 0.0], &rings) {
+            let points: usize = rings.iter().map(Vec::len).sum();
+            println!(
+                "{} {} ({} rings, {points} points): {:?}  {}",
+                if a.id < 0 { "relation" } else { "way" },
+                a.id.abs(),
+                rings.len(),
+                ocw_worldgen::landuse::classify(a.tags),
+                tags(a.tags)
+            );
+        }
+    }
+    for (w, pts) in data.waterways() {
+        let p: Vec<[f64; 2]> = local(&pts);
+        let d = p
+            .windows(2)
+            .map(|s| segment_distance([0.0, 0.0], s[0], s[1]))
+            .fold(f64::INFINITY, f64::min);
+        if d <= radius {
+            println!(
+                "waterway way {} {d:.1} m away, width {:?} m: {}",
+                w.id,
+                ocw_worldgen::landuse::waterway_width(&w.tags),
+                tags(&w.tags)
+            );
+        }
+    }
+}
+
 fn main() {
     match Cli::parse().command {
+        Cmd::Areas { pbf, at, radius } => areas_at(&pbf, at, radius),
         Cmd::Check { world } => {
             let bytes = std::fs::read(&world).unwrap_or_else(|e| {
                 eprintln!("{}: {e}", world.display());
@@ -1066,6 +1179,8 @@ fn main() {
             name,
             margin,
             out,
+            bbox,
+            origin,
             world: None,
         } => route(RouteArgs {
             pbf,
@@ -1076,6 +1191,8 @@ fn main() {
             name,
             margin,
             out,
+            bbox,
+            origin,
         }),
         Cmd::Graph {
             pbf,
