@@ -51,10 +51,9 @@ glam = "0.33"
 gltf = { version = "1.4.1", default-features = false, features = ["utils", "names"] }
 # Material library (spec §4.6, Phase 8 T1): KTX2 reading – the version
 # Bevy's own loader uses (Apache-2.0); for the converter in ocw-assets'
-# `tools`: JPEG / PNG decoding (MIT OR Apache-2.0), pure-Rust BCn
+# `tools` (JPEG / PNG decoding: `image` below): pure-Rust BCn
 # compression (texpresso, MIT), zip reading of pinned archives (MIT).
 ktx2 = "0.5"
-image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 texpresso = { version = "2.0", features = ["rayon"] }
 zip = { version = "9.5", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 raw-window-handle = "0.6"
@@ -95,6 +94,11 @@ prost-build = "0.14"
 protox = "0.10"
 clap = { version = "4.6", features = ["derive"] }
 ttf-parser = { version = "0.25", default-features = false, features = ["std"] }
+# Screenshots (spec §11.4): JPEG/PNG encoding with metadata, the same image
+# crate Bevy links (MIT OR Apache-2.0); chrono (MIT OR Apache-2.0, already in
+# the tree) for the local UTC offset of the timestamp.
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

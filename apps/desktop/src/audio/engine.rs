@@ -263,6 +263,8 @@ pub struct AudioEngine {
     ctrl: Sender<EngineCmd>,
     mixer_tx: SyncSender<MixerMsg>,
     status: Arc<Mutex<AudioStatus>>,
+    /// The mixer the device plays (video recordings tap or render it).
+    mixer: SharedMixer,
 }
 
 impl AudioEngine {
@@ -277,13 +279,14 @@ impl AudioEngine {
         let (mixer_tx, mixer_rx) = mpsc::sync_channel(QUEUE);
         let status = Arc::new(Mutex::new(AudioStatus::default()));
         let shared = status.clone();
+        let mixer: SharedMixer = Arc::new(Mutex::new(
+            Mixer::new(48_000, gains).with_receiver(mixer_rx),
+        ));
+        let theirs = mixer.clone();
         let spawned = std::thread::Builder::new()
             .name("ocw-audio".into())
             .spawn(move || {
-                let mixer = Arc::new(Mutex::new(
-                    Mixer::new(48_000, gains).with_receiver(mixer_rx),
-                ));
-                run(Controller::new(make(), mixer, wanted), ctrl_rx, &shared);
+                run(Controller::new(make(), theirs, wanted), ctrl_rx, &shared);
             });
         if let Err(e) = spawned {
             tracing::warn!("audio: no engine thread ({e}), silent");
@@ -292,7 +295,12 @@ impl AudioEngine {
             ctrl,
             mixer_tx,
             status,
+            mixer,
         }
+    }
+
+    pub fn mixer(&self) -> &SharedMixer {
+        &self.mixer
     }
 
     pub fn set_output(&self, output: Output) {

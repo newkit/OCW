@@ -5795,11 +5795,14 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "bevy_egui",
+ "chrono",
  "clap",
+ "image",
  "ocw-assets",
  "ocw-core",
  "ocw-sim",
  "ocw-world",
+ "png",
  "ttf-parser",
 ]
 

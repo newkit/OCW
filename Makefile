@@ -64,13 +64,13 @@ LLVM_PACKAGES := clang-$(LLVM_VERSION) lld-$(LLVM_VERSION) libclang-$(LLVM_VERSI
 # appimagetool for scripts/build-appimage.sh (user-level download, no sudo).
 APPIMAGETOOL ?= $(HOME)/.local/bin/appimagetool
 APPIMAGETOOL_URL ?= https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-$(shell uname -m).AppImage
-SCREENSHOT ?= /tmp/ocw.png
-SCREENSHOT_WAYLAND ?= /tmp/ocw-wayland.png
+SCREENSHOT ?= /tmp/ocw.jpg
+SCREENSHOT_WAYLAND ?= /tmp/ocw-wayland.jpg
 VIDEO ?= /tmp/ocw.mp4
 VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 
 .DEFAULT_GOAL := help
-.PHONY: help art-gather art-sheets art-render art-diary art-publish deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust build release lint fmt fmt-check \
+.PHONY: help dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust build release lint fmt fmt-check \
 	clippy check run server materials deploy-test clean clean-test-output macos-app \
 	test test-unit test-wasm test-kiosk test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
 	test-multiplayer test-multiplayer-local test-scenes test-scenes-list \
@@ -292,3 +292,15 @@ art-diary: ## Art: join all day videos into the diary video
 
 art-publish: ## Art: upload day zips and videos to the GitHub release build-history
 	$(ART_PYTHON) art/diary.py publish $(DAY)
+
+dashboard-install: ## Install and start the build dashboard as a systemd user service (port 8765, starts at login)
+	mkdir -p $(HOME)/.config/systemd/user
+	sed 's|@REPO@|$(CURDIR)|g' tools/build-dashboard/ocw-build-dashboard.service > $(HOME)/.config/systemd/user/ocw-build-dashboard.service
+	systemctl --user daemon-reload
+	systemctl --user enable --now ocw-build-dashboard.service
+	@echo "Dashboard: http://localhost:8765/  (start at boot without login: sudo loginctl enable-linger $$USER)"
+
+dashboard-uninstall: ## Stop and remove the build dashboard user service
+	-systemctl --user disable --now ocw-build-dashboard.service
+	rm -f $(HOME)/.config/systemd/user/ocw-build-dashboard.service
+	systemctl --user daemon-reload

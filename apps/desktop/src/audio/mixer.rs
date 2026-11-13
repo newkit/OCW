@@ -4,7 +4,7 @@
 //! device's callback (or offline, for tests and the demo WAV) and takes
 //! its input as [`MixerMsg`]s from the game.
 
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use super::cues::{Cue, CueVoice};
@@ -48,6 +48,9 @@ pub struct Mixer {
     /// Samples into the current block.
     phase: usize,
     rx: Option<Receiver<MixerMsg>>,
+    /// A video recording listens: every rendered buffer (mono) goes here
+    /// too ([`super::record`]).
+    tap: Option<Sender<Vec<f32>>>,
 }
 
 impl Mixer {
@@ -64,6 +67,7 @@ impl Mixer {
             smooth: smoothing(0.06, sr, BLOCK),
             phase: 0,
             rx: None,
+            tap: None,
         }
     }
 
@@ -73,7 +77,6 @@ impl Mixer {
         self
     }
 
-    #[cfg(test)]
     pub fn sample_rate(&self) -> u32 {
         self.sr as u32
     }
@@ -131,10 +134,28 @@ impl Mixer {
     pub fn render(&mut self, out: &mut [f32], channels: usize) {
         self.drain();
         let channels = channels.max(1);
+        let mut mono = self
+            .tap
+            .as_ref()
+            .map(|_| Vec::with_capacity(out.len() / channels));
         for frame in out.chunks_mut(channels) {
             let s = self.next_sample();
             frame.fill(s);
+            if let Some(m) = mono.as_mut() {
+                m.push(s);
+            }
         }
+        if let (Some(tap), Some(m)) = (&self.tap, mono)
+            && tap.send(m).is_err()
+        {
+            self.tap = None; // the recording ended
+        }
+    }
+
+    /// Sends a copy of everything rendered from now on to `tap` (`None`:
+    /// stop).
+    pub fn set_tap(&mut self, tap: Option<Sender<Vec<f32>>>) {
+        self.tap = tap;
     }
 
     fn next_sample(&mut self) -> f32 {
