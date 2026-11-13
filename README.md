@@ -1389,7 +1389,15 @@ scripts/deploy-test.sh <name>                                  # release build f
   `target/` of merged or gone agent checkouts above 75 % use, of idle
   agent checkouts above 85 %, and alerts above 92 % (`--janitor
   off|dry-run|on`, `make janitor-plan` for a dry run; every deletion is
-  logged in `test-output/build-log/DAY/janitor.jsonl`).
+  logged in `test-output/build-log/DAY/janitor.jsonl`). Each machine card
+  has an **Enabled/Disabled** toggle, a **build slots stepper** (1–8) and a
+  note (same token): stored in the git-ignored `config/build-machines.toml`
+  (`tools/build-dashboard/build_machines.py list|set` from a shell), every
+  change logged in `test-output/build-log/DAY/machines.jsonl`.
+  `scripts/remote.sh` refuses `run` and `sync` on a disabled machine (exit
+  3; ssh, fetch, put and deploys stay allowed) and takes its slot count
+  from there (over `machines.toml`; `OCW_REMOTE_SLOTS` still wins for a
+  call).
 - Branches other than `main` get their own checkout on the machine
   (`<repo_path>-<branch>`), several GB each: after merging or abandoning an
   agent branch, `scripts/remote-gc.sh --branch <branch>` (`make

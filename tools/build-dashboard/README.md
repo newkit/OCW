@@ -109,6 +109,75 @@ answer" stores it. Large touch targets, real buttons (keyboard: Tab, Enter),
   never logged, served or written to the answer files. `--no-answers`
   turns answering off.
 
+## Build machines: enabled/disabled and build slots
+
+Each machine card has an **Enabled/Disabled** toggle, a **slots stepper**
+(− N +, 1–8) and a **Note…** button (a short free-text note shown on the
+card, e.g. "Windows-related builds only"). Disabling asks for an optional
+reason; a disabled card is greyed with a dashed border, names the reason
+and since when, and its chip and the overview count it. Real buttons
+(Tab, Enter, Space), 40 px touch targets, wraps at phone width. The
+controls need the same token as the answers (asked once, kept in the
+browser); without it they ask for it, and a POST without it gets 403.
+
+- **Storage:** `config/build-machines.toml` of the main checkout
+  (git-ignored, next to `machines.toml`, which stays untouched), in the
+  same `[[machine]]` format, so `scripts/remote.sh` reads it with its
+  `field` lookup:
+
+  ```toml
+  [[machine]]
+  name = "leela"
+  enabled = false
+  slots = 2
+  reason = "excluded by the user, 2026-11-13"
+  note = "kiosk only (Tenerife)"
+  changed_by = "dashboard"
+  changed_at = "2026-11-14T00:08:32+01:00"
+  ```
+
+  No file, no entry or no `enabled` key: enabled. `#` in text is written
+  as the TOML escape `\u0023` (remote.sh's lookup takes `#` for a
+  comment). The file is re-read when it changes, so hand edits and the CLI
+  apply at once.
+- **API:** `POST /api/machines {"machine", "enabled"?, "slots"?, "reason"?,
+  "note"?, "by"?}` with the `X-OCW-Token` header. The machine must be a
+  name from `machines.toml` (nothing else reaches a path), `enabled` a
+  JSON boolean, `slots` a JSON integer 1–8 (0 = no limit is only possible
+  by hand in the file or with `OCW_REMOTE_SLOTS=0`, because an unlimited
+  Bevy machine runs out of memory); text loses control characters and is
+  cut at 200 characters, and is HTML-escaped on the page. Enabling clears
+  the reason. A new entry starts with the machine's current slot count.
+- **Log:** every change is a JSON line in
+  `test-output/build-log/DAY/machines.jsonl` (time, machine, source
+  `dashboard`/`cli`, by, the changed fields as `[old, new]`, the new
+  state) for the art project.
+- **Status:** each machine in `/api/status` has `enabled`,
+  `disabled_reason`, `note`, the effective `slots`, `slots_source`
+  (`dashboard`, `machines.toml`, `default`), `slots_config` (what
+  machines.toml or the OS default says), `changed_by`, `changed_at`;
+  `overview.disabled` counts disabled machines, and `slots_total` leaves
+  their slots out. `--once` prints a `build:` line per machine.
+- **remote.sh:** `run` and `sync` on a disabled machine fail at once with
+  "MACHINE is disabled for building (reason) – enable it in the build
+  dashboard", exit code 3, before anything is copied; `ssh`, `field`,
+  `fetch`, `put` stay allowed, and so do deploys (`scripts/deploy-test.sh`
+  sets `OCW_REMOTE_DEPLOY=1`, so kiosks on disabled machines still get new
+  builds). `remote.sh MACHINE enabled` (exit 0 or 3) and `remote.sh
+  MACHINE slots` (the effective count) need no ssh; the multiplayer test
+  skips disabled bot machines. Slot precedence: `OCW_REMOTE_SLOTS` (one
+  call) > `build-machines.toml` > `machines.toml` (machine, then
+  `[defaults]`) > OS default. A changed count applies to runs started
+  afterwards; a running run keeps its slot, also one above a lowered count
+  (it finishes normally; the dashboard shows that slot until it ends).
+- **Probes stay:** the dashboard's poll and the janitor still read
+  disabled machines (read-only probes, and the janitor's cleanup of
+  `target/` when their disk fills up); only builds are refused.
+- **CLI:** `python3 tools/build-dashboard/build_machines.py list`, `set
+  MACHINE [--enable|--disable] [--slots N] [--reason R] [--note N] [--by
+  WHO]` (logged with source `cli`). `--no-machine-settings` turns the page's
+  controls off (read-only).
+
 ## Janitor (disk cleanup)
 
 A thread of the dashboard; one machine per pass, at most one pass every
@@ -134,7 +203,8 @@ each plan once as `would-delete`. `--janitor off|dry-run|on` (default on).
 cleanup write to the same log.
 
 The slot count of a machine is found like `scripts/remote.sh` does: its
-`slots` key in `machines.toml`, else `[defaults] slots`, else the OS default
+`slots` in `build-machines.toml` (set on the page, above), else its `slots` key
+in `machines.toml`, else `[defaults] slots`, else the OS default
 (linux 2, windows 1, macos 1). A run started with another `OCW_REMOTE_SLOTS`
 writes its count into its marker, and the dashboard then shows the larger
 one.
@@ -253,9 +323,10 @@ performance counters are denied to a non-admin build user over SSH:
   identified by their config `name`, and all text from the machines or from
   ssh is masked (addresses, `user@host`, home directories, MAC addresses)
   before it is stored or served.
-- The only write action of the page is answering an open question (needs
-  the token of `config/dashboard-token`, above; question and answer text
-  are always HTML-escaped). The poll snippets change nothing on
+- The only write actions of the page are answering an open question and
+  the machine settings (enabled, slots, note; above). Both need
+  the token of `config/dashboard-token`; question, answer, reason and note text
+  are always HTML-escaped. The poll snippets change nothing on
   the machines (no kills, no files written; stale task markers are cleaned
   up by `remote.sh`, not by the dashboard). The only changes it makes are
   the janitor's deletions of build artefacts (`<checkout>/target` and old
