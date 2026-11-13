@@ -1380,9 +1380,26 @@ scripts/deploy-test.sh <name>                                  # release build f
   (every run leaves a task marker while it runs); on
   Windows, add the build user to "Performance Monitor Users" for the
   processor queue length ([tools/build-dashboard/README.md](tools/build-dashboard/README.md#windows-permissions)).
+  It also lists the **open questions for the user** from `SPECIFICATION.md`
+  (by phase, with the proposals; decided ones behind a toggle; milestones
+  waiting for one) – answerable on the page (also from a phone) with the
+  token of `config/dashboard-token`; answers land in
+  `test-output/answers/answers.jsonl` and `inbox.log` for the coordinator –
+  and watches the disks: its **janitor** deletes the
+  `target/` of merged or gone agent checkouts above 75 % use, of idle
+  agent checkouts above 85 %, and alerts above 92 % (`--janitor
+  off|dry-run|on`, `make janitor-plan` for a dry run; every deletion is
+  logged in `test-output/build-log/DAY/janitor.jsonl`).
 - Branches other than `main` get their own checkout on the machine
-  (`<repo_path>-<branch>`), several GB each; delete the ones of merged branches
-  now and then.
+  (`<repo_path>-<branch>`), several GB each: after merging or abandoning an
+  agent branch, `scripts/remote-gc.sh --branch <branch>` (`make
+  remote-gc-branch BRANCH=…`) deletes its `target/` on every reachable
+  machine.
+- The tree is copied as it is when `remote.sh` is called (a snapshot); a run
+  waiting for a build slot syncs that snapshot when it gets the slot. Files
+  are compared by content and changed ones get the time of the copy (no
+  source mtimes: an older file version replacing a newer one rebuilds), so
+  unchanged files are never touched.
 - Compiler cache: with `sccache` installed on a machine (`make deps-sccache`
   there: a pinned release to `~/.local/bin`, no sudo; Windows: `make
   deps-sccache-windows MACHINE=<name>` from here; done on marge, the Mac and
@@ -1399,6 +1416,11 @@ scripts/deploy-test.sh <name>                                  # release build f
 - `make remote-gc` lists the `target/` of remote checkouts whose agent branch
   is gone or merged (worktree removed) with their sizes; `make remote-gc
   GC=1` deletes them (the checkouts, the main checkout and the cache stay).
+- Windows: `make windows-move-toolchain MACHINE=Win11Builder` shows what
+  moving `CARGO_HOME`, `RUSTUP_HOME` and the sccache cache from C: to
+  `B:\toolchain` would do (sizes on C:); `APPLY=1` moves them
+  (`scripts/windows-move-toolchain.ps1`: copy, user variables, `cargo
+  --version` check, then the old dirs go).
 - Waiting runs take a free slot in order of arrival (Linux, macOS). Each run
   is logged with its slot wait, sync time, cargo's own build time and the
   crates compiled (`test-output/build-log/*/runs.jsonl`).
@@ -1456,7 +1478,8 @@ to *Public* are the usual causes; the server log is in Event Viewer under
 | `world-builder calibrate` / `imagery-cells` | Measure a package's palette, roof colours and seasonal tint maps in that imagery (sections `PALT`, `ROOF`, `SEAS`; manifest credits renewed); list the imagery cells a package covers |
 | `world-builder dem-import` / `dem-tiles` / `dem-diff` | High-resolution DTMs: import XYZ / GeoTIFF tiles as 2 m GeoTIFFs, list the tiles of a box, compare with SRTM |
 | `scripts/remote.sh MACHINE run 'CMD'` | Copy the tree to a build machine (`config/machines.toml`) and run a command there (`sync`, `ssh`, `fetch`, `put LOCAL... DIR`: copy git-ignored files into the checkout, `field KEY`: a machine setting for scripts) |
-| `python3 tools/build-dashboard/dashboard.py` | Web page (port 8765) with the build machines' load and their running/queued tasks; `--once` prints it as text |
+| `python3 tools/build-dashboard/dashboard.py` | Web page (port 8765) with the build machines' load and their running/queued tasks, disks and the janitor, and the open questions of the spec; `--once` prints it as text, `--janitor-plan` a dry run of the janitor |
+| `scripts/remote-gc.sh [--branch B] [--dry-run]` | Delete the `target/` of merged / gone agent checkouts on the build machines, or of branch B's checkout (cleanup on merge) |
 | `scripts/deploy-test.sh MACHINE` | Release build on a test machine, deployed for its kiosk |
 | `scripts/collect-test-output.sh [CHECKOUT...]` | Merge screenshots and videos from agent worktrees (`.claude/worktrees/*`) into `test-output/` and its build history `test-output/index.md` |
 | `scripts/ocw-kiosk.sh install\|run\|status` | Keep the test app running on a machine's screen, restarted on each deploy |

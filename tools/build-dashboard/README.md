@@ -10,6 +10,8 @@ python3 tools/build-dashboard/dashboard.py --host 127.0.0.1   # local only
 python3 tools/build-dashboard/dashboard.py --port 9000
 python3 tools/build-dashboard/dashboard.py --once             # print once as text (e.g. over SSH)
 python3 tools/build-dashboard/dashboard.py --once --json      # the same as JSON
+python3 tools/build-dashboard/dashboard.py --janitor dry-run  # log what the janitor would delete, delete nothing
+python3 tools/build-dashboard/dashboard.py --janitor-plan     # dry run on every machine now, then exit (make janitor-plan)
 curl -s localhost:8765/api/status                             # JSON for scripts
 python3 -m unittest discover tools/build-dashboard            # tests (no network)
 ```
@@ -52,6 +54,84 @@ directory, never in the repository).
 - **Kiosk** (machines with `/var/tmp/ocw`): whether the kiosk app runs and
   since when, the deployed build (`VERSION`), connected Bluetooth devices
   (names only).
+- **Disks:** the home volume and, if it is another file system, the one
+  holding the checkouts (`repo_path`'s directory); Windows: the checkouts'
+  drive and C:. Use is df's (used / (used + free)); the bars turn amber
+  above 75 % and red above 85 %, and a red banner over the page names every
+  disk above 92 %.
+- **Janitor:** its mode, the last pass per machine (what it deleted or, in
+  dry-run mode, would delete, and why) and the recent log entries; the size
+  of `test-output/` on this machine (never deleted).
+- **Open questions:** every question for the user in `SPECIFICATION.md`
+  (below), grouped by phase, with its id, title, text and proposal; the
+  count is in the overview. Decided ones are hidden behind "show decided".
+  Milestones that name an open question are listed as blocked work.
+
+## Open questions
+
+`spec_questions.py` parses the bullets `- **Q<n> – Title:** text` of the
+spec (mostly the "Open questions (for the user)" subsections of §14). The
+phase comes from the nearest `### Phase N – …` heading, the section from
+the nearest heading (`4L`), the status from the bold label (`decided` or
+`postponed` = decided; everything else, also "research", is open), the
+proposal from "Proposal: …", "(proposal: …)" or the option marked
+"(proposal)" / "(recommended)". The dashboard re-reads the main checkout's
+`SPECIFICATION.md` when its mtime changes (`--spec FILE` overrides); the
+spec stays the only place where questions are written and decided.
+
+### Answering on the page
+
+Every open question has an answer box and quick buttons: "Accept proposal"
+when the spec names one, and the options the question lists ("A: …",
+"B: …", from its "…, or …" alternatives); a button fills the box, "Send
+answer" stores it. Large touch targets, real buttons (keyboard: Tab, Enter),
+16 px text fields (no zoom on phones).
+
+- **Storage:** append-only `test-output/answers/answers.jsonl` of the main
+  checkout (git-ignored, collected by the art project): one JSON line per
+  answer with the ISO time, the question id, title and **exact question
+  text from the spec** (taken on the server, not from the browser), the
+  answer, the chosen option, the spec version, and which earlier answer it
+  supersedes. A new answer to the same question supersedes the old one (the
+  page shows the latest; "Send new answer" edits).
+- **The coordinator:** each answer is also one line in
+  `test-output/answers/inbox.log` (`tail -f` it), and `GET
+  /api/answers?since=<unix time>` lists the answers after that time. A
+  question answered here shows "answered – waiting for the coordinator to
+  record it in the spec" until the spec marks it decided; then it is
+  decided (the answer stays visible with the decided ones).
+- **Token:** writing needs the token in `config/dashboard-token` of the
+  main checkout (git-ignored; created on the first start with a random
+  value, mode 0600). The page asks for it once and keeps it in the
+  browser's localStorage; it is sent as the `X-OCW-Token` header. A POST
+  without it, or with a wrong one, gets 403 and nothing is stored. Reading
+  (the page, `/api/status`, `/api/answers`) needs no token. The token is
+  never logged, served or written to the answer files. `--no-answers`
+  turns answering off.
+
+## Janitor (disk cleanup)
+
+A thread of the dashboard; one machine per pass, at most one pass every
+10 minutes, on the machine whose checkouts' disk is fullest above 75 %:
+
+| Disk use | What goes |
+|---|---|
+| > 75 % | `target/` of agent checkouts (`<repo>-worktree-agent-…`) whose branch is merged into main (worktree removed) or gone, unused for 2 h; in the main checkout's `target/`, build units unused for 3 days that a newer unit of the same crate and kind replaced, and incremental session directories unused for 3 days |
+| > 85 % | also `target/` of the least recently used agent checkouts idle > 24 h, oldest first, until the disk is estimated below 85 % |
+| > 92 % | red banner and a log line |
+
+"Unused" is the newest of `.ocw-last-run` (touched by every `remote.sh
+run`), `target/`, `target/*/deps`, `.fingerprint` and `incremental`. Branch
+states come from this checkout's git (like `scripts/remote-gc.sh`). Kept
+always: the sources of every checkout, checkouts with a running or waiting
+task (also checked on the machine right before each deletion; `target/` is
+renamed first), the sccache cache, `data/`, `test-output/`, other
+checkouts (`OCW-bisect-…`). Every deletion is logged as a JSON line in
+`test-output/build-log/DAY/janitor.jsonl` (time, machine, path relative to
+the checkouts' directory, bytes, reason, threshold, mode); dry-run logs
+each plan once as `would-delete`. `--janitor off|dry-run|on` (default on).
+`scripts/remote-gc.sh --branch <branch>` and `remote.sh`'s dev-profile
+cleanup write to the same log.
 
 The slot count of a machine is found like `scripts/remote.sh` does: its
 `slots` key in `machines.toml`, else `[defaults] slots`, else the OS default
@@ -173,9 +253,14 @@ performance counters are denied to a non-admin build user over SSH:
   identified by their config `name`, and all text from the machines or from
   ssh is masked (addresses, `user@host`, home directories, MAC addresses)
   before it is stored or served.
-- It only reads: there are no write actions, and the remote snippets change
-  nothing on the machines (no kills, no files written or deleted; stale task
-  markers are cleaned up by `remote.sh`, not by the dashboard).
+- The only write action of the page is answering an open question (needs
+  the token of `config/dashboard-token`, above; question and answer text
+  are always HTML-escaped). The poll snippets change nothing on
+  the machines (no kills, no files written; stale task markers are cleaned
+  up by `remote.sh`, not by the dashboard). The only changes it makes are
+  the janitor's deletions of build artefacts (`<checkout>/target` and old
+  units in the main checkout's `target/`), off with `--janitor off`, only
+  logged with `--janitor dry-run`.
 - Task markers hold only the checkout directory name, branch, command, start
   time, PID and state, never hosts, users or keys; the dashboard masks them
   like all other text.

@@ -20,6 +20,10 @@
 # On a branch other than main the remote checkout is REPO_PATH-BRANCH.
 #
 # Files are copied with rsync; config/ (machine config, keys) is never sent.
+# The tree is taken as it is when remote.sh is called (a snapshot), and a
+# run copies that snapshot once it has its build slot; files are compared by
+# content, and changed ones get the time of the copy (see snapshot_tree,
+# rsync_sync_opts, with_sync).
 #
 # Each `run` leaves a task marker on the machine while it runs (read by
 # tools/build-dashboard): a JSON file PID-START.json in /tmp/ocw-tasks/
@@ -29,6 +33,8 @@
 # (killed runs) are ignored by the dashboard and swept by the next run.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+snap_dir=""
+trap 'if [ -n "$snap_dir" ]; then rm -rf "$snap_dir"; fi' EXIT
 
 machine=${1:?usage: remote.sh MACHINE sync|run|ssh|fetch|put|field ...}; shift
 action=${1:?usage: remote.sh MACHINE sync|run|ssh|fetch|put|field ...}; shift
@@ -150,6 +156,32 @@ t0=$(date +%s); for d in debug release build-voice; do [ -d $m/target/$d ] && oc
 mv $r/target.seed $r/target && echo "remote.sh: target/ seeded from the main checkout (copy-on-write) in $(($(date +%s) - t0)) s" >&2; };
 EOF
 
+# Snapshot at invocation (v2.63, spec §11.2): `run` and `sync` copy the
+# working tree (tracked and untracked files, git-ignored ones and config/
+# excluded) into a temporary directory the moment they are invoked; a run
+# that then waits for a build slot syncs that snapshot once it has the slot
+# (before, it synced whatever the tree was, and a run invoked during a merge
+# in the main checkout could build a half-merged tree – or a later run's
+# sync overwrote the remote checkout while an earlier one waited). Files:
+# $snap_dir/list (all paths, also deleted ones), present (the existing
+# ones), tree/ (their copies). Removed when remote.sh exits.
+snapshot_tree() {
+  snap_dir=$(mktemp -d "${TMPDIR:-/tmp}/ocw-snap.XXXXXX")
+  { git ls-files -co --exclude-standard | grep -v '^config/' || true; } >"$snap_dir/list"
+  local f
+  while IFS= read -r f; do if [ -e "$f" ]; then printf '%s\n' "$f"; fi; done <"$snap_dir/list" >"$snap_dir/present"
+  mkdir "$snap_dir/tree"
+  tar -cf - -T "$snap_dir/present" | tar -xf - -C "$snap_dir/tree"
+}
+
+# Copying without the source mtimes (v2.63): rsync -a kept them, so a file
+# replaced by an older version (a branch switch, a revert, an older
+# snapshot) arrived with an mtime older than the build that had already
+# compiled the newer one, and cargo kept the stale artefact. Now files are
+# compared by content (--checksum, no -t): unchanged files are not touched,
+# changed ones get the time of the copy, so cargo rebuilds exactly them.
+rsync_sync_opts=(-rlpgoD --checksum)
+
 sync_tree() {
   if [ "$os" = windows ]; then
     sync_tree_windows
@@ -163,34 +195,154 @@ sync_tree() {
   if [ "$os" = macos ]; then
     # macOS ships openrsync, which lacks --delete-missing-args: send only the
     # files that exist and delete tracked files removed here with rm.
-    local files missing=()
-    files=$(git ls-files -co --exclude-standard | grep -v '^config/')
-    while IFS= read -r f; do [ -e "$f" ] || missing+=("'${f//\'/\'\\\'\'}'"); done <<<"$files"
+    local missing=() f
+    while IFS= read -r f; do [ -e "$snap_dir/tree/$f" ] || missing+=("'${f//\'/\'\\\'\'}'"); done <"$snap_dir/list"
     if [ ${#missing[@]} -gt 0 ]; then
       "${SSH[@]}" "$target" "cd $repo && rm -f ${missing[*]}"
     fi
-    while IFS= read -r f; do if [ -e "$f" ]; then printf "%s\n" "$f"; fi; done <<<"$files" |
-      rsync -a --files-from=- -e "${SSH[*]}" ./ "$target:$repo/"
+    (cd "$snap_dir/tree" && rsync "${rsync_sync_opts[@]}" --files-from="$snap_dir/present" -e "${SSH[*]}" ./ "$target:$repo/")
     return
   fi
-  git ls-files -co --exclude-standard | grep -v '^config/' |
-    rsync -a --delete-missing-args --files-from=- \
-      -e "${SSH[*]}" ./ "$target:$repo/"
+  (cd "$snap_dir/tree" && rsync "${rsync_sync_opts[@]}" --delete-missing-args --files-from="$snap_dir/list" \
+    -e "${SSH[*]}" ./ "$target:$repo/")
 }
 
-# Windows has no rsync; its built-in tar.exe unpacks a tar stream. Files
-# deleted here are removed there with Remove-Item.
+# A PowerShell script as an encoded command (no quoting issues).
+ps_encoded() { printf 'powershell -NoProfile -NonInteractive -EncodedCommand %s' "$(printf '%s' "$1" | iconv -f utf-8 -t utf-16le | base64 -w0)"; }
+
+# Windows sync state: $repo\.ocw-sync\manifest.tsv holds, per file sent,
+# its SHA-1, and the size and mtime (ticks) it got there. This prints
+# "sha<TAB>path" for the entries whose file is still unchanged there.
+read -r -d '' win_manifest_ps <<'EOF' || true
+$r = @REPO@; $m = Join-Path $r '.ocw-sync\manifest.tsv'
+if (Test-Path -LiteralPath $m) {
+  foreach ($l in [IO.File]::ReadAllLines($m)) {
+    $p = $l.Split([char]9, 4); if ($p.Count -lt 4) { continue }
+    $fi = New-Object IO.FileInfo (Join-Path $r $p[3])
+    if ($fi.Exists -and $fi.Length -eq [int64]$p[1] -and $fi.LastWriteTimeUtc.Ticks -eq [int64]$p[2]) { [Console]::Out.WriteLine($p[0] + [char]9 + $p[3]) }
+  }
+}
+EOF
+# After extraction: the new manifest from .ocw-sync\incoming.tsv (sha<TAB>path
+# of every file of the snapshot) and the files' size and mtime there now.
+read -r -d '' win_manifest_write_ps <<'EOF' || true
+$r = @REPO@; $d = Join-Path $r '.ocw-sync'; $in = Join-Path $d 'incoming.tsv'
+$sb = New-Object Text.StringBuilder
+foreach ($l in [IO.File]::ReadAllLines($in)) {
+  $p = $l.Split([char]9, 2); if ($p.Count -lt 2) { continue }
+  $fi = New-Object IO.FileInfo (Join-Path $r $p[1])
+  if ($fi.Exists) { [void]$sb.Append($p[0] + [char]9 + $fi.Length + [char]9 + $fi.LastWriteTimeUtc.Ticks + [char]9 + $p[1] + [char]10) }
+}
+[IO.File]::WriteAllText((Join-Path $d 'manifest.tsv'), $sb.ToString()); Remove-Item -LiteralPath $in
+EOF
+
+# The files of the snapshot whose content is not (known to be) on the
+# machine: `win_changed VALID HASHES` prints the paths of the HASHES lines
+# (sha<TAB>path) that are not in VALID (the same format, from the machine).
+win_changed() { awk -F '\t' 'NR == FNR { v[$0] = 1; next } !($0 in v) { print $2 }' "$1" "$2"; }
+
+# Windows has no rsync; its built-in tar.exe unpacks a tar stream. Only
+# files whose content differs from what the manifest says is there are
+# sent, and unpacked with -m (mtime = now) for the same reason as
+# rsync_sync_opts. The first sync into a checkout sends everything (it has
+# no manifest yet). Files deleted here are removed there with Remove-Item.
 sync_tree_windows() {
   "${SSH[@]}" "$target" "New-Item -ItemType Directory -Force -Path $(psq "$repo") | Out-Null"
-  local files gone=() f list
-  files=$(git ls-files -co --exclude-standard | grep -v '^config/')
-  while IFS= read -r f; do [ -e "$f" ] || gone+=("$(psq "$f")"); done <<<"$files"
+  local gone=() f list
+  while IFS= read -r f; do [ -e "$snap_dir/tree/$f" ] || gone+=("$(psq "$f")"); done <"$snap_dir/list"
   if [ ${#gone[@]} -gt 0 ]; then
     list=$(IFS=,; echo "${gone[*]}")
     "${SSH[@]}" "$target" "Set-Location -LiteralPath $(psq "$repo"); Remove-Item -Force -ErrorAction SilentlyContinue -LiteralPath $list"
   fi
-  while IFS= read -r f; do if [ -e "$f" ]; then printf '%s\n' "$f"; fi; done <<<"$files" |
-    tar -cf - -T - | "${SSH[@]}" "$target" "tar -xf - -C $(psq "$repo")"
+  "${SSH[@]}" "$target" "$(ps_encoded "${win_manifest_ps//@REPO@/"$(psq "$repo")"}")" | tr -d '\r' >"$snap_dir/valid" || : >"$snap_dir/valid"
+  (cd "$snap_dir/tree" && tr '\n' '\0' <"$snap_dir/present" | xargs -0 -r sha1sum) |
+    sed 's/^\([0-9a-f]*\) [ *]/\1\t/' >"$snap_dir/hashes"
+  mkdir -p "$snap_dir/tree/.ocw-sync"
+  cp "$snap_dir/hashes" "$snap_dir/tree/.ocw-sync/incoming.tsv"
+  { win_changed "$snap_dir/valid" "$snap_dir/hashes"; echo .ocw-sync/incoming.tsv; } >"$snap_dir/send"
+  echo "remote.sh: sending $(($(wc -l <"$snap_dir/send") - 1)) changed of $(wc -l <"$snap_dir/present") files" >&2
+  (cd "$snap_dir/tree" && tar -cf - -T "$snap_dir/send") |
+    "${SSH[@]}" "$target" "tar -xmf - -C $(psq "$repo"); $(ps_encoded "${win_manifest_write_ps//@REPO@/"$(psq "$repo")"}")"
+}
+
+# Dev profile change (spec §11.2, v2.63): when the [profile.dev] /
+# [profile.test] sections of Cargo.toml change, cargo builds everything anew
+# and keeps the old artefacts next to the new ones; then target/debug is
+# removed once, before the build. The hash of those sections is kept in
+# .ocw-profile-hash next to target/. Not while another run of the same
+# checkout is running; the first run only records the hash. OCW_PROFILE_SWEEP=0
+# turns it off. Logged to the build log's janitor.jsonl.
+profile_hash() {
+  awk '/^\[/ { p = ($0 ~ /^\[profile\.(dev|test)[].]/) } p' "$snap_dir/tree/Cargo.toml" 2>/dev/null | cksum | awk '{ print $1 }'
+}
+profile_check() { # REMOTE_PID (of the run, its own marker is skipped)
+  [ "${OCW_PROFILE_SWEEP:-1}" = 0 ] && return 0
+  [ -f "$snap_dir/tree/Cargo.toml" ] || return 0
+  local h out kb
+  h=$(profile_hash)
+  if [ "$os" = windows ]; then
+    out=$("${SSH[@]}" "$target" "$(ps_encoded "\$ErrorActionPreference = 'SilentlyContinue'; Set-Location -LiteralPath $(psq "$repo"); \$h = '$h'; \$f = '.ocw-profile-hash'; \$old = if (Test-Path -LiteralPath \$f) { ([IO.File]::ReadAllText(\$f)).Trim() } else { '' }; if (\$old -eq \$h) { exit 0 }; if (\$old -and (Test-Path -LiteralPath 'target\\debug')) { \$busy = @(Get-ChildItem -LiteralPath (Join-Path \$env:TEMP 'ocw-tasks') -Filter '*.json' | Where-Object { \$_.BaseName -notlike '$1-*' -and (Get-Process -Id (\$_.BaseName -split '-')[0]) -and ((Get-Content -Raw -LiteralPath \$_.FullName) -match ('\"checkout\":\"' + $(psq "$checkout_dir") + '\"')) -and ((Get-Content -Raw -LiteralPath \$_.FullName) -match '\"state\":\"running\"') }); if (\$busy.Count) { '@@profile busy'; exit 0 }; \$kb = [int64](((Get-ChildItem -LiteralPath 'target\\debug' -Recurse -File -Force | Measure-Object Length -Sum).Sum) / 1KB); Rename-Item -LiteralPath 'target\\debug' -NewName ('debug.ocw-profile.' + \$PID); Remove-Item -Recurse -Force -LiteralPath ('target\\debug.ocw-profile.' + \$PID); '@@profile removed ' + \$kb }; [IO.File]::WriteAllText(\$f, \$h)")" </dev/null 2>/dev/null | tr -d '\r') || return 0
+  else
+    out=$("${SSH[@]}" "$target" "cd $repo 2>/dev/null || exit 0; h=$h; old=\$(cat .ocw-profile-hash 2>/dev/null); [ \"\$old\" = \"\$h\" ] && exit 0; if [ -n \"\$old\" ] && [ -d target/debug ]; then for g in /tmp/ocw-tasks/*.json; do [ -e \$g ] || continue; q=\${g##*/}; q=\${q%%-*}; [ \"\$q\" = '$1' ] && continue; grep -q '\"checkout\":\"$checkout_dir\"' \$g && grep -q '\"state\":\"running\"' \$g && ps -p \$q >/dev/null 2>&1 && { echo '@@profile busy'; exit 0; }; done; kb=\$(du -sk target/debug | cut -f1); mv target/debug target/debug.ocw-profile.\$\$ && rm -rf target/debug.ocw-profile.\$\$ && echo \"@@profile removed \$kb\"; fi; echo \$h >.ocw-profile-hash" </dev/null 2>/dev/null) || return 0
+  fi
+  case "$out" in
+    *"@@profile removed"*)
+      kb=${out##*@@profile removed }; kb=${kb//[!0-9]/}
+      echo "remote.sh: dev profile changed in Cargo.toml: removed target/debug ($((${kb:-0} / 1048576)) GB) before building" >&2
+      janitor_log "$checkout_dir/target/debug" "${kb:-0}" "dev profile changed in Cargo.toml" ;;
+    *"@@profile busy"*) echo "remote.sh: dev profile changed, but another run of this checkout is building: target/debug kept" >&2 ;;
+  esac
+}
+
+# One line in the build log's janitor.jsonl (like the dashboard's janitor).
+janitor_log() { # path kb reason
+  [ "${OCW_BUILD_LOG:-1}" = 0 ] && return 0
+  local d t
+  d="$log_root/$(date +%Y-%m-%d)"
+  mkdir -p "$d" 2>/dev/null || return 0
+  t=$(date --iso-8601=seconds 2>/dev/null || date +%Y-%m-%dT%H:%M:%S%z)
+  printf '{"action":"delete","bytes":%s,"kind":"profile","machine":%s,"mode":"on","path":%s,"reason":%s,"source":"remote.sh","time":%s}\n' \
+    "$(($2 * 1024))" "$(json_str "$machine")" "$(json_str "$1")" "$(json_str "$3")" "$(json_str "$t")" >>"$d/janitor.jsonl"
+}
+
+# The sync handshake: `with_sync CMD...` runs CMD (the run's ssh) with its
+# stdin from a FIFO. The remote side prints "@@ocw-sync PID" once it holds
+# its build slot and waits for a line on stdin; sync_watch (reading CMD's
+# stdout) then syncs the snapshot, checks the dev profile and answers "go"
+# (or "fail"), and passes everything else through. stdin is closed after
+# the answer, so the command itself reads EOF as before.
+with_sync() {
+  local fifo=$snap_dir/go rc
+  rm -f "$fifo"
+  mkfifo "$fifo"
+  set +e
+  "$@" <"$fifo" | sync_watch "$fifo"
+  rc=${PIPESTATUS[0]}
+  set -e
+  rm -f "$fifo"
+  return "$rc"
+}
+sync_watch() {
+  local fifo=$1 line ok t0
+  exec 3>"$fifo"
+  while IFS= read -r line; do
+    case "$line" in
+      "@@ocw-sync"*)
+        t0=$(date +%s.%N)
+        ok=go
+        sync_tree </dev/null >&2 || ok=fail
+        if [ "$ok" = go ]; then profile_check "${line#@@ocw-sync }" </dev/null >&2 || true; fi
+        LC_ALL=C awk -v a="$t0" -v b="$(date +%s.%N)" 'BEGIN { printf "%.1f", b - a }' >"$snap_dir/sync_s"
+        printf '%s\n' "$ok" >&3
+        exec 3>&-
+        cat
+        return 0
+        ;;
+      *) printf '%s\n' "$line" ;;
+    esac
+  done
+  if [ -n "$line" ]; then printf '%s' "$line"; fi
+  exec 3>&-
 }
 
 # Build slots: at most N commands run at once on a machine, because many
@@ -252,7 +404,9 @@ $ocwRc = 0; $ocwLock = $null; $ocwSlot = $null; $ocwWarn = $false;
 try {
 if (@SLOTS@ -gt 0) { while (-not $ocwLock) { foreach ($s in 1..@SLOTS@) { try { $ocwLock = [IO.File]::Open((Join-Path $ocwD ('slot-' + $s + '.lock')), 'OpenOrCreate', 'ReadWrite', 'None'); $ocwSlot = $s; break } catch {} }; if (-not $ocwLock) { if (-not $ocwWarn) { ocwMark 'waiting' $null; [Console]::Error.WriteLine('remote.sh: waiting for a free build slot'); $ocwWarn = $true }; Start-Sleep -Milliseconds 1000 } }; if ($ocwWarn) { [Console]::Error.WriteLine('remote.sh: got build slot ' + $ocwSlot + ' after ' + ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - $ocwT0) + ' s') } };
 ocwMark 'running' $ocwSlot;
-@RUN@; $ocwRc = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } elseif ($ocwOk) { 0 } else { 1 }
+@SYNC@
+if ($ocwGo -ne 'go') { [Console]::Error.WriteLine('remote.sh: tree sync failed'); $ocwRc = 1 } else {
+@RUN@; $ocwRc = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } elseif ($ocwOk) { 0 } else { 1 } }
 } finally { if ($ocwLock) { $ocwLock.Dispose() }; Remove-Item -Force -ErrorAction SilentlyContinue -LiteralPath $ocwF, ($ocwF + '.tmp') };
 exit $ocwRc
 EOF
@@ -306,12 +460,15 @@ run_windows() {
   # The command runs as a script block (dot-sourced): the wrapper is one
   # line, which a `#` comment in the command would otherwise cut off. It
   # records $? of its last statement in $ocwOk (for the exit code).
-  run="Set-Location -LiteralPath $(psq "$repo"); \$env:Path = \"\$env:USERPROFILE\\.cargo\\bin;\" + \$env:Path; \$env:OCW_BUILD_ID='${build_id:-}'; ${jobs_ps}${sccache_ps}. ([scriptblock]::Create($(psq "$*") + [char]10 + '\$ocwOk = \$?'))"
+  # rustup's cargo: in CARGO_HOME when it was moved off C:
+  # (scripts/windows-move-toolchain.ps1), else %USERPROFILE%\.cargo.
+  run="Set-Location -LiteralPath $(psq "$repo"); New-Item -ItemType File -Force -Path '.ocw-last-run' | Out-Null; \$ocwCh = if (\$env:CARGO_HOME) { \$env:CARGO_HOME } else { Join-Path \$env:USERPROFILE '.cargo' }; \$env:Path = (Join-Path \$ocwCh 'bin') + ';' + \$env:Path;\$env:OCW_BUILD_ID='${build_id:-}'; ${jobs_ps}${sccache_ps}. ([scriptblock]::Create($(psq "$*") + [char]10 + '\$ocwOk = \$?'))"
   ps=${marker_ps//$'\n'/ }
   ps=${ps//@CHECKOUT@/"$(psq "$checkout_dir")"}
   ps=${ps//@BRANCH@/"$(psq "$branch")"}
   ps=${ps//@CMD@/"$(psq "$(short_cmd "$@")")"}
   ps=${ps//@SLOTS@/"$slots"}
+  ps=${ps//@SYNC@/"${win_sync_ps:-\$ocwGo = 'go';}"}
   ps=${ps//@RUN@/"$run"}
   "${SSH[@]}" "$target" "$ps"
 }
@@ -365,18 +522,34 @@ logged() {
 }
 
 case "$action" in
-  sync) sync_tree ;;
+  sync) snapshot_tree; sync_tree ;;
   run)
     log_start
-    sync_t0=$(date +%s.%N)
-    sync_tree
-    sync_s=$(LC_ALL=C awk -v a="$sync_t0" -v b="$(date +%s.%N)" 'BEGIN { printf "%.1f", b - a }')
+    # The tree as it is now (see snapshot_tree); synced once the run has its
+    # build slot (with_sync, sync_watch).
+    snapshot_tree
     status=0
     # The remote copy has no .git: pass the commit for the build id
     # (apps/desktop/build.rs, scripts/build-id.sh).
     build_id=$(scripts/build-id.sh)
     if [ "$os" = windows ]; then
-      logged run_windows "$@" || status=$?
+      # The slot-time handshake on Windows is opt-in (OCW_WIN_HANDSHAKE=1):
+      # in its first real runs (2026-11-13) the remote side stayed in
+      # ReadLine after the sync, and Windows runs could not be tested
+      # further. By default the snapshot is synced now, before the run waits
+      # for its slot (the content/mtime fix applies either way).
+      if [ "${OCW_WIN_HANDSHAKE:-0}" = 1 ]; then
+        win_sync_ps="[Console]::Out.WriteLine('@@ocw-sync ' + \$PID); [Console]::Out.Flush(); \$ocwGo = [Console]::In.ReadLine();"
+        logged with_sync run_windows "$@" || status=$?
+        sync_s=$(cat "$snap_dir/sync_s" 2>/dev/null || true)
+      else
+        win_sync_ps="\$ocwGo = 'go';"
+        sync_t0=$(date +%s.%N)
+        logged sync_tree </dev/null || status=$?
+        profile_check none </dev/null || true
+        sync_s=$(LC_ALL=C awk -v a="$sync_t0" -v b="$(date +%s.%N)" 'BEGIN { printf "%.1f", b - a }')
+        if [ "$status" = 0 ]; then logged run_windows "$@" </dev/null || status=$?; fi
+      fi
       "${SSH[@]}" "$target" "tar -cf - -C $(psq "$repo") Cargo.lock" 2>/dev/null | tar -xf - 2>/dev/null || true
       log_end "$status" "$@"
       exit "$status"
@@ -398,7 +571,11 @@ case "$action" in
     fi
     meta="\"slots\":$slots,\"checkout\":$(json_str "$checkout_dir"),\"branch\":$(json_str "$branch"),\"command\":$(json_str "$(short_cmd "$@")"),\"os\":\"$os\""
     marker="ocw_meta=$(shq "$meta"); ${marker_sh//$'\n'/ } "
-    logged "${SSH[@]}" "$target" "${marker}${slot_guard}ocw_mark running \$ocw_n; cd $repo && . ~/.cargo/env && ${sccache_sh}${shim_sh}export ${jobs_env:-OCW_REMOTE=1} OCW_BUILD_ID='$build_id' && $*" || status=$?
+    # After the slot: the handshake (@@ocw-sync, see with_sync), then the
+    # command; .ocw-last-run tells the janitor when the checkout was used.
+    sync_sh="echo \"@@ocw-sync \$\$\"; read -r ocw_go; [ \"\$ocw_go\" = go ] || { echo 'remote.sh: tree sync failed' >&2; exit 1; }; "
+    logged with_sync "${SSH[@]}" "$target" "${marker}${slot_guard}ocw_mark running \$ocw_n; ${sync_sh}cd $repo && : >.ocw-last-run && . ~/.cargo/env && ${sccache_sh}${shim_sh}export ${jobs_env:-OCW_REMOTE=1} OCW_BUILD_ID='$build_id' && $*" || status=$?
+    sync_s=$(cat "$snap_dir/sync_s" 2>/dev/null || true)
     # Builds only happen remotely: bring back a Cargo.lock that cargo
     # updated there (new dependencies), so it can be committed.
     rsync -a -e "${SSH[*]}" "$target:$repo/Cargo.lock" ./Cargo.lock 2>/dev/null || true
