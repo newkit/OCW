@@ -88,7 +88,10 @@ mod tests {
             assert_eq!(days_from_civil(y, m, d), z, "{y}-{m}-{d}");
         }
         assert_eq!(civil_from_days(days_from_civil(2024, 2, 29)), (2024, 2, 29));
-        assert_eq!(civil_from_days(days_from_civil(1900, 3, 1) - 1), (1900, 2, 28));
+        assert_eq!(
+            civil_from_days(days_from_civil(1900, 3, 1) - 1),
+            (1900, 2, 28)
+        );
     }
 
     #[test]

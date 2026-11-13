@@ -51,6 +51,8 @@ pub enum Page {
     VoiceDevices,
     /// Voice → Participants: mute single riders.
     VoiceParticipants,
+    /// Navi → Time machine (spec §14 Phase 9; rows from `timemachine`).
+    TimeMachine,
 }
 
 impl Page {
@@ -85,6 +87,7 @@ impl Page {
             Self::Voice => "Voice",
             Self::VoiceDevices => "Voice devices",
             Self::VoiceParticipants => "Voice participants",
+            Self::TimeMachine => "Time machine",
         }
     }
 
@@ -159,6 +162,9 @@ impl Page {
             Self::VoiceParticipants => {
                 &["Riders in the voice room. Confirm mutes or unmutes one for you."]
             }
+            Self::TimeMachine => &[
+                "Date, time and speed of the world's clock (sun and light). Solo you set it; in a shared ride the host does.",
+            ],
             Self::Workouts => &[
                 "Structured workouts in ERG mode: yours from the workouts folder (.toml, .erg, .mrc), then the examples. % FTP targets use the rider's FTP.",
             ],
@@ -432,6 +438,7 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
             setting_row(settings, "display.units", "Units"),
             setting_row(settings, "display.camera", "Camera"),
             setting_row(settings, "display.fps", "FPS counter"),
+            setting_row(settings, "display.night_brightness", "Night brightness (%)"),
             setting_row(settings, "display.fullscreen", "Fullscreen (next start)"),
         ],
         Page::Riders => {
@@ -509,6 +516,8 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         | Page::Workouts => Vec::new(),
         // From the voice state (`voice::page::rows`).
         Page::Voice | Page::VoiceDevices | Page::VoiceParticipants => Vec::new(),
+        // From the world clock (`timemachine::rows`).
+        Page::TimeMachine => Vec::new(),
         Page::Workshop => {
             let mut out: Vec<Row> = riders
                 .riders

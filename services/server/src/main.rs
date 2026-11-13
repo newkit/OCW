@@ -17,6 +17,15 @@ use ocw_server::stats::{ServerReport, TickStats};
 use ocw_server::{Course, GameServer, ServerConfig};
 use ocw_world::{RoadNetwork, Route};
 
+fn parse_time_control(s: &str) -> Result<ocw_server::ClockAccess, String> {
+    match s {
+        "host" => Ok(ocw_server::ClockAccess::Host),
+        "anyone" => Ok(ocw_server::ClockAccess::Anyone),
+        "nobody" => Ok(ocw_server::ClockAccess::Nobody),
+        _ => Err("host, anyone or nobody".into()),
+    }
+}
+
 #[derive(Parser)]
 #[command(version, about = "Open Cycling World headless game server")]
 struct Args {
@@ -29,6 +38,11 @@ struct Args {
     /// Simulate as fast as possible instead of in real time.
     #[arg(long)]
     fast: bool,
+    /// Who may change the world clock with the time machine (spec §14
+    /// Phase 9, 9D): the host (the rider connected longest), anyone, or
+    /// nobody (the clock stays real time).
+    #[arg(long, default_value = "host", value_parser = parse_time_control)]
+    time_control: ocw_server::ClockAccess,
     /// Free ride on the road graph of this world package (version 2,
     /// from `world-builder package`; a path or a cache id) instead of the
     /// test loop. Verified on load (spec §4.7).
@@ -216,6 +230,8 @@ fn main() {
             start_m: 0.0,
             allow_local_events: false,
             voice,
+            clock_access: args.time_control,
+            real_epoch_ms: None,
         },
     );
     let mut net = args.listen.map(|addr| listen(&args, addr));

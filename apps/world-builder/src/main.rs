@@ -92,6 +92,10 @@ enum Cmd {
         /// origin share their metres and tile grid exactly.
         #[arg(long, value_parser = parse_latlon)]
         origin: Option<(f64, f64)>,
+        /// IANA time zone of the area (spec §14 Phase 9; default: the zone
+        /// of the region at the origin, e.g. Europe/Vaduz, Europe/Berlin).
+        #[arg(long, value_name = "ZONE")]
+        time_zone: Option<String>,
         #[arg(long, default_value = "data/pilot/liechtenstein.ocwpkg")]
         out: PathBuf,
         #[command(flatten)]
@@ -802,7 +806,15 @@ struct PackageArgs {
     no_areas: bool,
     bbox: Option<Region>,
     origin: Option<(f64, f64)>,
+    time_zone: Option<String>,
     out: PathBuf,
+}
+
+/// The time zone a package gets (spec §14 Phase 9): `--time-zone` (checked
+/// against the tzdb), else the zone of the region at the origin.
+fn package_time_zone(given: Option<String>, origin: (f64, f64)) -> Result<String, String> {
+    let zone = given.unwrap_or_else(|| ocw_sky::zone::zone_for(origin.0, origin.1));
+    ocw_sky::Zone::get(&zone).map(|z| z.id().to_owned())
 }
 
 fn package(args: PackageArgs) {
@@ -817,6 +829,7 @@ fn package(args: PackageArgs) {
         no_areas,
         bbox,
         origin,
+        time_zone,
         out,
     } = args;
     let t = Instant::now();
@@ -843,6 +856,12 @@ fn package(args: PackageArgs) {
         margin_tiles,
     );
     pkg.region = Some(region.package_region());
+    let zone = package_time_zone(time_zone, region.origin()).unwrap_or_else(|e| {
+        eprintln!("--time-zone: {e}");
+        std::process::exit(2);
+    });
+    println!("time zone: {zone}");
+    pkg.time_zone = Some(zone);
     let terrain_s = t.elapsed().as_secs_f64();
     let mut area_report = Vec::new();
     if !no_areas {
@@ -1101,6 +1120,7 @@ fn main() {
             no_areas,
             bbox,
             origin,
+            time_zone,
             out,
             manifest,
             sign_key,
@@ -1123,6 +1143,7 @@ fn main() {
                 no_areas,
                 bbox,
                 origin,
+                time_zone,
                 out: out.clone(),
             });
             dist::write_manifest(&out, &manifest.args(Some(name)), key.as_ref());
@@ -1360,6 +1381,24 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Packages get the zone of their region (spec §14 Phase 9).
+    #[test]
+    fn packages_get_their_regions_time_zone() {
+        assert_eq!(
+            package_time_zone(None, (47.15, 9.55)).unwrap(),
+            "Europe/Vaduz"
+        );
+        assert_eq!(
+            package_time_zone(None, (47.92, 7.96)).unwrap(),
+            "Europe/Berlin"
+        );
+        assert_eq!(
+            package_time_zone(Some("Europe/Zurich".into()), (47.15, 9.55)).unwrap(),
+            "Europe/Zurich"
+        );
+        assert!(package_time_zone(Some("Europe/Atlantis".into()), (0.0, 0.0)).is_err());
+    }
 
     #[test]
     fn bbox_parsing() {

@@ -252,6 +252,7 @@ mod tests {
             } else {
                 PackageRegion::bbox(46.99, 9.5, 47.01, 9.52)
             }),
+            time_zone: None,
         }
     }
 

@@ -674,6 +674,8 @@ mod tests {
             crate::audio::GameAudioPlugin {
                 backend: crate::audio::Backend::Null,
             },
+            // `sky.night` / `sky.mode` / `sky.lights` (Display settings).
+            ocw_render::sky::SkyPlugin,
         ))
         .insert_resource(UserSettings {
             settings: Settings::default(),

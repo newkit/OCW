@@ -24,7 +24,10 @@ pub struct SunPosition {
 impl SunPosition {
     /// Unit vector towards the sun in east / up / north components.
     pub fn direction_enu(&self) -> [f64; 3] {
-        let (az, el) = (self.azimuth_deg.to_radians(), self.elevation_deg.to_radians());
+        let (az, el) = (
+            self.azimuth_deg.to_radians(),
+            self.elevation_deg.to_radians(),
+        );
         [el.cos() * az.sin(), el.sin(), el.cos() * az.cos()]
     }
 }
@@ -39,8 +42,8 @@ struct Ephemeris {
 
 fn ephemeris(jd: f64) -> Ephemeris {
     let t = julian_century(jd);
-    let l0 = (280.46646 + t * (36_000.76983 + t * 0.000_303_2)).rem_euclid(360.0);
-    let m = 357.52911 + t * (35_999.05029 - 0.000_153_7 * t);
+    let l0 = (280.46646 + t * (36_000.769_83 + t * 0.000_303_2)).rem_euclid(360.0);
+    let m = 357.52911 + t * (35_999.050_29 - 0.000_153_7 * t);
     let e = 0.016_708_634 - t * (0.000_042_037 + 0.000_000_126_7 * t);
     let mr = m.to_radians();
     let c = mr.sin() * (1.914_602 - t * (0.004_817 + 0.000_014 * t))
@@ -55,7 +58,8 @@ fn ephemeris(jd: f64) -> Ephemeris {
     let declination_rad = (obliq.sin() * app_long.to_radians().sin()).asin();
     let y = (obliq / 2.0).tan().powi(2);
     let l0r = l0.to_radians();
-    let eq = y * (2.0 * l0r).sin() - 2.0 * e * mr.sin() + 4.0 * e * y * mr.sin() * (2.0 * l0r).cos()
+    let eq = y * (2.0 * l0r).sin() - 2.0 * e * mr.sin()
+        + 4.0 * e * y * mr.sin() * (2.0 * l0r).cos()
         - 0.5 * y * y * (4.0 * l0r).sin()
         - 1.25 * e * e * (2.0 * mr).sin();
     Ephemeris {
@@ -91,7 +95,11 @@ pub fn position(ms: UnixMs, lat: f64, lon: f64) -> SunPosition {
     if hour_angle < -180.0 {
         hour_angle += 360.0;
     }
-    let (latr, ha, dec) = (lat.to_radians(), hour_angle.to_radians(), eph.declination_rad);
+    let (latr, ha, dec) = (
+        lat.to_radians(),
+        hour_angle.to_radians(),
+        eph.declination_rad,
+    );
     let cos_zenith = (latr.sin() * dec.sin() + latr.cos() * dec.cos() * ha.cos()).clamp(-1.0, 1.0);
     let zenith = cos_zenith.acos();
     let true_elevation_deg = 90.0 - zenith.to_degrees();
@@ -216,7 +224,11 @@ mod tests {
     fn close(got: Option<UnixMs>, want: UnixMs, tol_s: i64, what: &str) {
         let got = got.unwrap_or_else(|| panic!("{what}: no event"));
         let d = (got - want).abs();
-        assert!(d <= tol_s * 1000, "{what}: off by {:.1} s", d as f64 / 1000.0);
+        assert!(
+            d <= tol_s * 1000,
+            "{what}: off by {:.1} s",
+            d as f64 / 1000.0
+        );
     }
 
     /// Reference values (UTC, to the second): the NOAA-algorithm tables of
@@ -229,36 +241,61 @@ mod tests {
         type Hms = (i64, i64, i64);
         type Case = ((f64, f64), (i32, u32, u32), Hms, [(Hms, Hms); 4]);
         let cases: [Case; 5] = [
-            (VADUZ, (2026, 6, 21), (11, 23, 44), [
-                ((3, 26, 9), (19, 21, 18)),
-                ((2, 46, 9), (20, 1, 18)),
-                ((1, 51, 6), (20, 56, 22)),
-                ((0, 26, 52), (22, 20, 36)),
-            ]),
-            (VADUZ, (2026, 12, 21), (11, 19, 58), [
-                ((7, 5, 12), (15, 34, 43)),
-                ((6, 29, 42), (16, 10, 13)),
-                ((5, 50, 46), (16, 49, 10)),
-                ((5, 13, 32), (17, 26, 23)),
-            ]),
-            (VADUZ, (2026, 10, 25), (11, 5, 59), [
-                ((5, 54, 34), (16, 17, 23)),
-                ((5, 23, 19), (16, 48, 39)),
-                ((4, 47, 39), (17, 24, 19)),
-                ((4, 12, 19), (17, 59, 38)),
-            ]),
-            (FREIBURG, (2026, 6, 21), (11, 30, 25), [
-                ((3, 28, 59), (19, 31, 51)),
-                ((2, 47, 46), (20, 13, 4)),
-                ((1, 50, 5), (21, 10, 45)),
-                ((0, 10, 38), (22, 50, 11)),
-            ]),
-            (FREIBURG, (2026, 3, 29), (11, 33, 21), [
-                ((5, 12, 44), (17, 53, 58)),
-                ((4, 41, 33), (18, 25, 10)),
-                ((4, 4, 17), (19, 2, 25)),
-                ((3, 25, 15), (19, 41, 27)),
-            ]),
+            (
+                VADUZ,
+                (2026, 6, 21),
+                (11, 23, 44),
+                [
+                    ((3, 26, 9), (19, 21, 18)),
+                    ((2, 46, 9), (20, 1, 18)),
+                    ((1, 51, 6), (20, 56, 22)),
+                    ((0, 26, 52), (22, 20, 36)),
+                ],
+            ),
+            (
+                VADUZ,
+                (2026, 12, 21),
+                (11, 19, 58),
+                [
+                    ((7, 5, 12), (15, 34, 43)),
+                    ((6, 29, 42), (16, 10, 13)),
+                    ((5, 50, 46), (16, 49, 10)),
+                    ((5, 13, 32), (17, 26, 23)),
+                ],
+            ),
+            (
+                VADUZ,
+                (2026, 10, 25),
+                (11, 5, 59),
+                [
+                    ((5, 54, 34), (16, 17, 23)),
+                    ((5, 23, 19), (16, 48, 39)),
+                    ((4, 47, 39), (17, 24, 19)),
+                    ((4, 12, 19), (17, 59, 38)),
+                ],
+            ),
+            (
+                FREIBURG,
+                (2026, 6, 21),
+                (11, 30, 25),
+                [
+                    ((3, 28, 59), (19, 31, 51)),
+                    ((2, 47, 46), (20, 13, 4)),
+                    ((1, 50, 5), (21, 10, 45)),
+                    ((0, 10, 38), (22, 50, 11)),
+                ],
+            ),
+            (
+                FREIBURG,
+                (2026, 3, 29),
+                (11, 33, 21),
+                [
+                    ((5, 12, 44), (17, 53, 58)),
+                    ((4, 41, 33), (18, 25, 10)),
+                    ((4, 4, 17), (19, 2, 25)),
+                    ((3, 25, 15), (19, 41, 27)),
+                ],
+            ),
         ];
         let freiburg_dec = ((2026, 12, 21), (11, 26, 39), ((7, 15, 26), (15, 37, 52)));
         for ((lat, lon), date, noon, events) in cases {
@@ -275,9 +312,24 @@ mod tests {
         }
         let (date, noon, (rise, set)) = freiburg_dec;
         let d = day(date, FREIBURG.0, FREIBURG.1);
-        close(Some(d.solar_noon), hms(date, noon.0, noon.1, noon.2), 60, "noon Freiburg Dec");
-        close(d.sun.morning, hms(date, rise.0, rise.1, rise.2), 60, "rise Freiburg Dec");
-        close(d.sun.evening, hms(date, set.0, set.1, set.2), 60, "set Freiburg Dec");
+        close(
+            Some(d.solar_noon),
+            hms(date, noon.0, noon.1, noon.2),
+            60,
+            "noon Freiburg Dec",
+        );
+        close(
+            d.sun.morning,
+            hms(date, rise.0, rise.1, rise.2),
+            60,
+            "rise Freiburg Dec",
+        );
+        close(
+            d.sun.evening,
+            hms(date, set.0, set.1, set.2),
+            60,
+            "set Freiburg Dec",
+        );
     }
 
     /// The NREL SPA paper's reference instant (Reda & Andreas 2004):
@@ -300,9 +352,15 @@ mod tests {
         // and refraction: the upper limb appears on the horizon).
         let rise = position(d.sun.morning.unwrap(), VADUZ.0, VADUZ.1);
         assert!((rise.true_elevation_deg + 0.833).abs() < 0.02, "{rise:?}");
-        assert!((45.0..60.0).contains(&rise.azimuth_deg), "north-east in June: {rise:?}");
+        assert!(
+            (45.0..60.0).contains(&rise.azimuth_deg),
+            "north-east in June: {rise:?}"
+        );
         let set = position(d.sun.evening.unwrap(), VADUZ.0, VADUZ.1);
-        assert!((300.0..315.0).contains(&set.azimuth_deg), "north-west: {set:?}");
+        assert!(
+            (300.0..315.0).contains(&set.azimuth_deg),
+            "north-west: {set:?}"
+        );
         // At noon the sun is due south, at 90 - lat + declination (23.44).
         let noon = position(d.solar_noon, VADUZ.0, VADUZ.1);
         assert!((noon.azimuth_deg - 180.0).abs() < 0.3, "{noon:?}");
@@ -311,7 +369,11 @@ mod tests {
         assert!((civil.true_elevation_deg + 6.0).abs() < 0.02);
         // Midnight: below the horizon, roughly north.
         let night = position(hms(date, 23, 23, 0), VADUZ.0, VADUZ.1);
-        assert!(night.elevation_deg < -15.0 && (night.azimuth_deg - 360.0).abs().min(night.azimuth_deg) < 5.0, "{night:?}");
+        assert!(
+            night.elevation_deg < -15.0
+                && (night.azimuth_deg - 360.0).abs().min(night.azimuth_deg) < 5.0,
+            "{night:?}"
+        );
         let v = noon.direction_enu();
         assert!(v[2] < 0.0 && v[1] > 0.9, "south and high: {v:?}");
     }
@@ -319,7 +381,13 @@ mod tests {
     #[test]
     fn polar_day_and_night_have_no_sunrise() {
         let summer = day((2026, 6, 21), 78.22, 15.65); // Longyearbyen
-        assert_eq!(summer.sun, Pair { morning: None, evening: None });
+        assert_eq!(
+            summer.sun,
+            Pair {
+                morning: None,
+                evening: None
+            }
+        );
         let winter = day((2026, 12, 21), 78.22, 15.65);
         assert_eq!(winter.sun.morning, None);
         // No astronomical night at 52.5° N in June (the sun stays above -18°).

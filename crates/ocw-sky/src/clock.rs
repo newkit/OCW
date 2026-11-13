@@ -333,7 +333,10 @@ mod tests {
         // A step keeps the mode: real becomes an offset, fixed stays fixed.
         let mut r = WorldClock::new(EPOCH);
         r.step(0.0, -MS_PER_HOUR).unwrap();
-        assert_eq!((r.mode(), r.offset_ms(100.0)), (ClockMode::Offset, -MS_PER_HOUR));
+        assert_eq!(
+            (r.mode(), r.offset_ms(100.0)),
+            (ClockMode::Offset, -MS_PER_HOUR)
+        );
         r.step(100.0, MS_PER_HOUR).unwrap();
         assert_eq!(r.mode(), ClockMode::Real, "offset 0 is real time again");
         let mut f = WorldClock::new(EPOCH);
@@ -344,7 +347,10 @@ mod tests {
         assert_eq!(f.speed(), 60.0, "a fixed clock keeps its speed");
         assert_eq!(f.now(1.0), utc_midnight(2026, 6, 22) + 60_000);
         f.set_real(2.0);
-        assert_eq!((f.mode(), f.speed(), f.now(2.0)), (ClockMode::Real, 1.0, EPOCH + 2000));
+        assert_eq!(
+            (f.mode(), f.speed(), f.now(2.0)),
+            (ClockMode::Real, 1.0, EPOCH + 2000)
+        );
     }
 
     #[test]

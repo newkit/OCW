@@ -90,14 +90,24 @@ impl Preset {
     pub fn instant(self, now: UnixMs, zone: &Zone, lat: f64, lon: f64) -> Result<UnixMs, String> {
         let l = zone.local(now);
         let date = (l.year, l.month, l.day);
-        let none = || format!("no {} on {} here (polar day or night)", self.label().to_lowercase(), l.date());
+        let none = || {
+            format!(
+                "no {} on {} here (polar day or night)",
+                self.label().to_lowercase(),
+                l.date()
+            )
+        };
         // Elevation h: zenith 90 - h.
         let evening = |h: f64| sun::crossing(date, lat, lon, 90.0 - h, false).ok_or_else(none);
         match self {
-            Self::Sunrise => sun::crossing(date, lat, lon, sun::zenith::SUNRISE, true).ok_or_else(none),
+            Self::Sunrise => {
+                sun::crossing(date, lat, lon, sun::zenith::SUNRISE, true).ok_or_else(none)
+            }
             Self::GoldenHour => evening(5.0),
             Self::Noon => Ok(sun::solar_noon(date, lon)),
-            Self::Sunset => sun::crossing(date, lat, lon, sun::zenith::SUNRISE, false).ok_or_else(none),
+            Self::Sunset => {
+                sun::crossing(date, lat, lon, sun::zenith::SUNRISE, false).ok_or_else(none)
+            }
             Self::BlueHour => evening(-5.0),
             Self::Midnight => Ok(zone.next_midnight(now)),
             Self::SummerSolstice | Self::WinterSolstice => {
@@ -226,7 +236,8 @@ pub fn resolve(
     lat: f64,
     lon: f64,
 ) -> Result<Option<ClockChange>, String> {
-    let fixed = |r: Result<(UnixMs, crate::zone::LocalKind), String>| r.map(|x| ClockChange::Fixed(x.0));
+    let fixed =
+        |r: Result<(UnixMs, crate::zone::LocalKind), String>| r.map(|x| ClockChange::Fixed(x.0));
     Ok(Some(match *cmd {
         TimeCommand::Show => return Ok(None),
         TimeCommand::Real => ClockChange::Real,
@@ -253,7 +264,10 @@ pub fn speed_step(speed: f64, paused: bool, dir: i32) -> ClockChange {
     let at = if paused {
         -1
     } else {
-        SPEEDS.iter().position(|&s| s >= speed).unwrap_or(SPEEDS.len() - 1) as i32
+        SPEEDS
+            .iter()
+            .position(|&s| s >= speed)
+            .unwrap_or(SPEEDS.len() - 1) as i32
     };
     let to = (at + dir).clamp(-1, SPEEDS.len() as i32 - 1);
     if to < 0 {
@@ -283,8 +297,14 @@ mod tests {
         assert_eq!(parse(&["real"]), Ok(Real));
         assert_eq!(parse(&["18:30"]), Ok(TimeOfDay(18, 30)));
         assert_eq!(parse(&["2026-06-21"]), Ok(Date(2026, 6, 21)));
-        assert_eq!(parse(&["2026-06-21", "21:15"]), Ok(DateTime((2026, 6, 21), (21, 15))));
-        assert_eq!(parse(&["2026-06-21T21:15"]), Ok(DateTime((2026, 6, 21), (21, 15))));
+        assert_eq!(
+            parse(&["2026-06-21", "21:15"]),
+            Ok(DateTime((2026, 6, 21), (21, 15)))
+        );
+        assert_eq!(
+            parse(&["2026-06-21T21:15"]),
+            Ok(DateTime((2026, 6, 21), (21, 15)))
+        );
         assert_eq!(parse(&["+2h"]), Ok(Step(2 * MS_PER_HOUR)));
         assert_eq!(parse(&["-30m"]), Ok(Step(-30 * MS_PER_MINUTE)));
         assert_eq!(parse(&["offset", "+1.5h"]), Ok(Offset(90 * MS_PER_MINUTE)));
@@ -294,8 +314,17 @@ mod tests {
         assert_eq!(parse(&["speed", "paused"]), Ok(Paused(true)));
         assert_eq!(parse(&["play"]), Ok(Paused(false)));
         assert_eq!(parse(&["Sunset"]), Ok(Preset(super::Preset::Sunset)));
-        assert_eq!(parse(&["preset", "golden_hour"]), Ok(Preset(super::Preset::GoldenHour)));
-        for bad in [&["25:00"][..], &["speed", "9000"], &["tomorrow"], &["2026-13-01"], &["a", "b", "c"]] {
+        assert_eq!(
+            parse(&["preset", "golden_hour"]),
+            Ok(Preset(super::Preset::GoldenHour))
+        );
+        for bad in [
+            &["25:00"][..],
+            &["speed", "9000"],
+            &["tomorrow"],
+            &["2026-13-01"],
+            &["a", "b", "c"],
+        ] {
             assert!(parse(bad).is_err(), "{bad:?}");
         }
     }
@@ -307,12 +336,16 @@ mod tests {
         let r = |c| resolve(&c, now, &z, VADUZ.0, VADUZ.1).unwrap();
         assert_eq!(
             r(TimeCommand::TimeOfDay(18, 30)),
-            Some(ClockChange::Fixed(utc_midnight(2026, 6, 21) + 16 * MS_PER_HOUR + 30 * MS_PER_MINUTE))
+            Some(ClockChange::Fixed(
+                utc_midnight(2026, 6, 21) + 16 * MS_PER_HOUR + 30 * MS_PER_MINUTE
+            ))
         );
         // A winter date keeps the wall-clock time (CET instead of CEST).
         assert_eq!(
             r(TimeCommand::Date(2026, 12, 24)),
-            Some(ClockChange::Fixed(utc_midnight(2026, 12, 24) + 9 * MS_PER_HOUR))
+            Some(ClockChange::Fixed(
+                utc_midnight(2026, 12, 24) + 9 * MS_PER_HOUR
+            ))
         );
         assert_eq!(r(TimeCommand::Show), None);
         assert_eq!(r(TimeCommand::Step(5)), Some(ClockChange::Step(5)));
@@ -329,8 +362,12 @@ mod tests {
         assert_eq!(at(Preset::Sunrise), day.sun.morning.unwrap());
         assert_eq!(at(Preset::Sunset), day.sun.evening.unwrap());
         assert_eq!(at(Preset::Noon), day.solar_noon);
-        assert!((sun::position(at(Preset::GoldenHour), lat, lon).true_elevation_deg - 5.0).abs() < 0.05);
-        assert!((sun::position(at(Preset::BlueHour), lat, lon).true_elevation_deg + 5.0).abs() < 0.05);
+        assert!(
+            (sun::position(at(Preset::GoldenHour), lat, lon).true_elevation_deg - 5.0).abs() < 0.05
+        );
+        assert!(
+            (sun::position(at(Preset::BlueHour), lat, lon).true_elevation_deg + 5.0).abs() < 0.05
+        );
         // Order through the evening.
         assert!(at(Preset::Noon) < at(Preset::GoldenHour));
         assert!(at(Preset::GoldenHour) < at(Preset::Sunset));
@@ -343,11 +380,16 @@ mod tests {
         assert_eq!(z.local(at(Preset::Sunset)).hh_mm(), "21:21");
         // Solstices keep the time of day (10:00), in CEST / CET.
         let w = at(Preset::WinterSolstice);
-        assert_eq!((z.local(w).month, z.local(w).day, z.local(w).hh_mm()), (12, 21, "10:00".into()));
+        assert_eq!(
+            (z.local(w).month, z.local(w).day, z.local(w).hh_mm()),
+            (12, 21, "10:00".into())
+        );
         let s = Preset::SummerSolstice.instant(w, &z, lat, lon).unwrap();
         assert_eq!((z.local(s).month, z.local(s).hh_mm()), (6, "10:00".into()));
         // South of the equator summer is in December.
-        let south = Preset::SummerSolstice.instant(now, &z, -33.9, 18.4).unwrap();
+        let south = Preset::SummerSolstice
+            .instant(now, &z, -33.9, 18.4)
+            .unwrap();
         assert_eq!(z.local(south).month, 12);
         // Polar night: no sunrise.
         let arctic = Preset::Sunrise.instant(utc_midnight(2026, 12, 21), &Zone::utc(), 78.2, 15.6);

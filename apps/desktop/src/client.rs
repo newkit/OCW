@@ -139,6 +139,10 @@ pub struct ClientCore {
     voice_offered: bool,
     /// Human riders in the session (from the last snapshot).
     human_riders: u32,
+    /// The session's world clock (spec §14 Phase 9): the server's, advanced
+    /// smoothly between snapshots, and its last message.
+    clock: ocw_sky::ClockPredictor,
+    clock_info: Option<ocw_protocol::ClockInfo>,
 }
 
 /// Steering mode before the menu opened (spec §3.2.1), restored on closing.
@@ -182,6 +186,8 @@ impl ClientCore {
             last_snapshot_at: None,
             voice_offered: false,
             human_riders: 0,
+            clock: ocw_sky::ClockPredictor::default(),
+            clock_info: None,
             route,
         }
     }
@@ -379,6 +385,9 @@ impl ClientCore {
                 let id = RiderId(w.rider_id);
                 self.rider_id = Some(id);
                 self.voice_offered = w.voice;
+                if let Some(c) = &w.clock {
+                    self.on_clock(c, now_s);
+                }
                 if !self.autodrive_at_start {
                     self.set_autodrive(false);
                 }
@@ -414,6 +423,36 @@ impl ClientCore {
                 None
             }
         }
+    }
+
+    fn on_clock(&mut self, c: &v1::WorldClock, now_s: f64) {
+        let info = ocw_protocol::clock_info(c);
+        self.clock
+            .on_server(info.world_ms, info.rate, now_s, self.snapshot_age_s);
+        self.clock_info = Some(info);
+    }
+
+    /// The world instant (Unix ms) at client time `now_s` (spec §14 Phase
+    /// 9): the server's clock, predicted; `None` before the first message
+    /// (or from a server without a clock).
+    pub fn world_ms(&mut self, now_s: f64) -> Option<i64> {
+        self.clock.now(now_s)
+    }
+
+    /// The server's clock as last received (mode, speed, who may change it).
+    pub fn clock_info(&self) -> Option<&ocw_protocol::ClockInfo> {
+        self.clock_info.as_ref()
+    }
+
+    /// Whether this rider may change the world clock (the server checks it
+    /// again): anyone on a local server, the host in a shared ride.
+    pub fn may_change_clock(&self) -> bool {
+        self.clock_info.is_some_and(|c| c.may_change(self.rider_id))
+    }
+
+    /// The encoded time-machine request.
+    pub fn clock_message(change: ocw_sky::ClockChange) -> Vec<u8> {
+        encode(&ocw_protocol::clock_request(change))
     }
 
     /// A rider's path from the server: a new one, an extension, or a
@@ -479,6 +518,9 @@ impl ClientCore {
         self.stats.last_snapshot_tick = s.server_tick;
         self.last_snapshot_at = Some((s.server_tick, now_s));
         self.human_riders = s.human_riders;
+        if let Some(c) = &s.clock {
+            self.on_clock(c, now_s);
+        }
         let mut others = Vec::new();
         for u in &s.riders {
             let (id, state) = dequantize(u);
@@ -1342,6 +1384,7 @@ mod tests {
                     start_m: 0.0,
                     allow_local_events: true,
                     voice: None,
+                    ..Default::default()
                 },
             );
             let client = ClientCore::new(route(), "Tester", RiderProfile::default());
@@ -1370,6 +1413,7 @@ mod tests {
                     start_m: 0.0,
                     allow_local_events: true,
                     voice: None,
+                    ..Default::default()
                 },
             );
             Self::with(
@@ -1494,6 +1538,7 @@ mod tests {
                 start_m: 0.0,
                 allow_local_events: false,
                 voice: None,
+                ..Default::default()
             },
         );
         let client = ClientCore::new(route(), "Light", RiderProfile::for_rider_weight(58.0));
@@ -2367,6 +2412,7 @@ mod tests {
                 start_m: 0.0,
                 allow_local_events: true,
                 voice: None,
+                ..Default::default()
             },
         );
         let mut h = Harness::with(
@@ -2426,6 +2472,7 @@ mod tests {
                     start_m: 0.0,
                     allow_local_events: true,
                     voice: None,
+                    ..Default::default()
                 },
             );
             Self::with(
@@ -2553,6 +2600,7 @@ mod tests {
             }),
             graph_route: String::new(),
             voice: false,
+            clock: None,
         })));
         h.receive(&welcome);
         assert!(matches!(h.notices.last(), Some(Notice::Rejected(_))));
@@ -2595,6 +2643,7 @@ mod tests {
             server_tick: before.last_snapshot_tick - 5,
             riders: Vec::new(),
             human_riders: 1,
+            clock: None,
         })));
         h.receive(&late);
         let after = h.client.stats();

@@ -158,7 +158,8 @@ impl Zone {
             0,
         )
         .map_err(|_| bad())?;
-        let local_ms = (days_from_civil(y, mo, d) * 86_400 + i64::from(h * 3600 + mi * 60 + s)) * 1000;
+        let local_ms =
+            (days_from_civil(y, mo, d) * 86_400 + i64::from(h * 3600 + mi * 60 + s)) * 1000;
         let at = |offset: jiff::tz::Offset| local_ms - i64::from(offset.seconds()) * 1000;
         Ok(match self.tz.to_ambiguous_timestamp(dt).offset() {
             AmbiguousOffset::Unambiguous { offset } => (at(offset), LocalKind::Normal),
@@ -168,9 +169,14 @@ impl Zone {
     }
 
     /// The instant of local `hh:mm:ss` on the local date of `ms`.
-    pub fn at_time_of_day(&self, ms: UnixMs, (h, mi, s): (u32, u32, u32)) -> Result<UnixMs, String> {
+    pub fn at_time_of_day(
+        &self,
+        ms: UnixMs,
+        (h, mi, s): (u32, u32, u32),
+    ) -> Result<UnixMs, String> {
         let l = self.local(ms);
-        self.instant((l.year, l.month, l.day), (h, mi, s)).map(|r| r.0)
+        self.instant((l.year, l.month, l.day), (h, mi, s))
+            .map(|r| r.0)
     }
 
     /// The instant of local midnight starting the day after `ms`'s local date.
@@ -187,7 +193,11 @@ impl Zone {
 /// package --time-zone` overrides it).
 const REGIONS: &[(&str, [f64; 4], &str)] = &[
     // [lat min, lat max, lon min, lon max]
-    ("Liechtenstein", [47.048, 47.271, 9.471, 9.636], "Europe/Vaduz"),
+    (
+        "Liechtenstein",
+        [47.048, 47.271, 9.471, 9.636],
+        "Europe/Vaduz",
+    ),
     // Southern Baden-Württemberg north of the Swiss border (Black Forest).
     ("Black Forest", [47.75, 49.8, 7.5, 10.2], "Europe/Berlin"),
     ("Switzerland", [45.82, 47.81, 5.95, 10.49], "Europe/Zurich"),
@@ -237,9 +247,17 @@ mod tests {
             let z = Zone::get(id).unwrap();
             // Just before and after the spring change.
             let before = z.local(utc(2026, 3, 29, 0, 59));
-            assert_eq!((before.hour, before.minute, before.offset_s, before.dst), (1, 59, 3600, false), "{id}");
+            assert_eq!(
+                (before.hour, before.minute, before.offset_s, before.dst),
+                (1, 59, 3600, false),
+                "{id}"
+            );
             let after = z.local(utc(2026, 3, 29, 1, 0));
-            assert_eq!((after.hour, after.minute, after.offset_s, after.dst), (3, 0, 7200, true), "{id}");
+            assert_eq!(
+                (after.hour, after.minute, after.offset_s, after.dst),
+                (3, 0, 7200, true),
+                "{id}"
+            );
             assert_eq!(z.abbreviation(utc(2026, 3, 29, 1, 0)), "CEST");
             assert_eq!(z.abbreviation(utc(2026, 3, 28, 12, 0)), "CET");
             // The skipped hour: 02:30 does not exist; it lands after the gap
@@ -276,7 +294,10 @@ mod tests {
         // Historic dates work (1900: no DST, LMT is before 1894 in Zurich).
         let old = z.local(utc(1900, 7, 1, 12, 0));
         assert_eq!(old.offset_s, 3600);
-        assert_eq!(z.next_midnight(utc(2026, 6, 21, 10, 0)), utc(2026, 6, 21, 22, 0));
+        assert_eq!(
+            z.next_midnight(utc(2026, 6, 21, 10, 0)),
+            utc(2026, 6, 21, 22, 0)
+        );
         assert!(Zone::get("Mars/Olympus_Mons").is_err());
         assert_eq!(Zone::utc().offset_s(0), 0);
     }
@@ -284,7 +305,11 @@ mod tests {
     #[test]
     fn default_zones_by_region_and_longitude() {
         assert_eq!(zone_for(47.14, 9.52), "Europe/Vaduz");
-        assert_eq!(zone_for(47.92, 7.96), "Europe/Berlin", "Black Forest origin");
+        assert_eq!(
+            zone_for(47.92, 7.96),
+            "Europe/Berlin",
+            "Black Forest origin"
+        );
         assert_eq!(zone_for(47.37, 8.54), "Europe/Zurich");
         assert_eq!(zone_for(48.21, 16.37), "Europe/Vienna");
         assert_eq!(zone_for(52.52, 13.40), "Europe/Berlin");
@@ -295,7 +320,11 @@ mod tests {
         for lon in [-180.0, -97.0, -7.4, 0.0, 7.6, 179.9] {
             let id = longitude_zone(lon);
             let z = Zone::get(&id).unwrap();
-            assert_eq!(z.offset_s(0), (lon / 15.0_f64).round() as i32 * 3600, "{id}");
+            assert_eq!(
+                z.offset_s(0),
+                (lon / 15.0_f64).round() as i32 * 3600,
+                "{id}"
+            );
         }
         for (_, _, id) in REGIONS {
             Zone::get(id).unwrap();

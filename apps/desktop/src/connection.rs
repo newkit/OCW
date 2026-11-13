@@ -345,7 +345,7 @@ pub fn rejoin_route(world: &mut World) -> Result<String, String> {
     Ok("rejoining the route".into())
 }
 
-fn update_view(
+pub(crate) fn update_view(
     time: Res<Time>,
     fixed: Res<Time<Fixed>>,
     client: Res<ClientState>,

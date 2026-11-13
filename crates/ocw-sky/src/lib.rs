@@ -46,7 +46,11 @@ impl Sky {
 
     /// "☼ 18:42" for the HUD.
     pub fn hud_clock(&self) -> String {
-        format!("{} {}", light::glyph(self.sun.elevation_deg), self.local.hh_mm())
+        format!(
+            "{} {}",
+            light::glyph(self.sun.elevation_deg),
+            self.local.hh_mm()
+        )
     }
 }
 

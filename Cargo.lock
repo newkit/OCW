@@ -5778,6 +5778,7 @@ dependencies = [
  "ocw-render",
  "ocw-server",
  "ocw-sim",
+ "ocw-sky",
  "ocw-voice",
  "ocw-world",
  "ocw-worldstore",
@@ -5834,6 +5835,7 @@ dependencies = [
  "ocw-assets",
  "ocw-core",
  "ocw-sim",
+ "ocw-sky",
  "ocw-world",
  "ttf-parser",
 ]
@@ -5847,6 +5849,7 @@ dependencies = [
  "ocw-core",
  "ocw-protocol",
  "ocw-sim",
+ "ocw-sky",
  "ocw-world",
  "ocw-worldstore",
  "quinn",
@@ -9247,6 +9250,7 @@ name = "world-builder"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "ocw-sky",
  "ocw-world",
  "ocw-worldgen",
  "ocw-worldstore",

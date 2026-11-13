@@ -199,11 +199,22 @@ mod tests {
     #[test]
     fn the_sun_dims_and_reddens_towards_the_horizon() {
         let noon = light(65.0, DEFAULT_NIGHT_FLOOR);
-        assert!((noon.sun_lux - DAY_SUN_LUX).abs() / DAY_SUN_LUX < 0.05, "{noon:?}");
-        assert!(noon.sun_rgb[2] > 0.75, "near white at noon: {:?}", noon.sun_rgb);
+        assert!(
+            (noon.sun_lux - DAY_SUN_LUX).abs() / DAY_SUN_LUX < 0.05,
+            "{noon:?}"
+        );
+        assert!(
+            noon.sun_rgb[2] > 0.75,
+            "near white at noon: {:?}",
+            noon.sun_rgb
+        );
         let golden = light(5.0, DEFAULT_NIGHT_FLOOR);
         assert!(golden.sun_lux < 0.5 * noon.sun_lux && golden.sun_lux > 0.05 * noon.sun_lux);
-        assert!(golden.sun_rgb[2] < 0.4 && golden.sun_rgb[1] < 0.75, "orange: {:?}", golden.sun_rgb);
+        assert!(
+            golden.sun_rgb[2] < 0.4 && golden.sun_rgb[1] < 0.75,
+            "orange: {:?}",
+            golden.sun_rgb
+        );
         let horizon = light(0.0, DEFAULT_NIGHT_FLOOR);
         assert!(horizon.sun_rgb[1] < 0.3, "red: {:?}", horizon.sun_rgb);
         assert!(horizon.sun_lux < 0.02 * noon.sun_lux);
@@ -227,7 +238,10 @@ mod tests {
         let night = light(-30.0, DEFAULT_NIGHT_FLOOR);
         // Displayed ambient = scene ambient × 2^(DAY_EV - ev).
         let shown = |l: &Light| l.ambient * 2f32.powf(DAY_EV100 - l.ev100);
-        assert!((shown(&night) / shown(&day) - DEFAULT_NIGHT_FLOOR).abs() < 0.01, "the floor holds");
+        assert!(
+            (shown(&night) / shown(&day) - DEFAULT_NIGHT_FLOOR).abs() < 0.01,
+            "the floor holds"
+        );
         assert!(night.ev100 >= DAY_EV100 - MAX_ADAPTATION_STOPS - 1e-4);
         assert!(night.ev100 < day.ev100 - 7.0, "the eye adapts to the dark");
         // Without a floor it is very dark.
@@ -254,7 +268,11 @@ mod tests {
         assert_eq!(day.ambient_rgb, [1.0, 1.0, 1.0]);
         let blue_hour = light(-5.0, DEFAULT_NIGHT_FLOOR);
         assert!(blue_hour.ambient_rgb[0] < blue_hour.ambient_rgb[2]);
-        assert!(blue_hour.fog_srgb[2] > blue_hour.fog_srgb[0], "{:?}", blue_hour.fog_srgb);
+        assert!(
+            blue_hour.fog_srgb[2] > blue_hour.fog_srgb[0],
+            "{:?}",
+            blue_hour.fog_srgb
+        );
         let sunset = light(0.0, DEFAULT_NIGHT_FLOOR);
         assert!(sunset.fog_srgb[0] > sunset.fog_srgb[2], "warm at sunset");
         for (a, b) in day.fog_srgb.iter().zip([0.62, 0.78, 0.95]) {

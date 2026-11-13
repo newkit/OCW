@@ -63,6 +63,22 @@ pub struct ServerConfig {
     /// LiveKit server and API key pair for voice chat (spec §7); `None`:
     /// no voice on this server (token requests are refused).
     pub voice: Option<voice::VoiceConfig>,
+    /// Who may change the world clock (spec §14 Phase 9, 9D): the local
+    /// servers let their single player (anyone), a shared session only
+    /// its host (the default).
+    pub clock_access: ClockAccess,
+    /// The real UTC instant (Unix ms) at the session's start; `None`: the
+    /// system clock when the server is created (tests fix it).
+    pub real_epoch_ms: Option<i64>,
+}
+
+pub use ocw_protocol::ClockAccess;
+
+/// The system's real UTC instant (Unix ms).
+pub fn unix_now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as i64)
 }
 
 /// Ticks between two event-state broadcasts while a race or time trial
@@ -86,6 +102,8 @@ pub struct GameServer {
     /// the server's statistics, `ocw-server --stats-file`).
     joined: Vec<String>,
     left: Vec<String>,
+    /// The session's world clock (spec §14 Phase 9), on session time.
+    clock: ocw_sky::WorldClock,
 }
 
 /// Base power of the bots, from easy riders to strong ones, so they spread
@@ -160,7 +178,9 @@ impl GameServer {
         for i in 0..config.bots {
             add_numbered_bot(&mut session, i);
         }
+        let clock = ocw_sky::WorldClock::new(config.real_epoch_ms.unwrap_or_else(unix_now_ms));
         Self {
+            clock,
             config,
             session,
             riders: BTreeMap::new(),
@@ -175,6 +195,81 @@ impl GameServer {
 
     pub fn session(&self) -> &Session {
         &self.session
+    }
+
+    /// Session time (s): the simulation ticks so far.
+    pub fn session_time_s(&self) -> f64 {
+        self.session.tick() as f64 / f64::from(SIM_TICK_HZ)
+    }
+
+    /// The world clock (spec §14 Phase 9).
+    pub fn clock(&self) -> &ocw_sky::WorldClock {
+        &self.clock
+    }
+
+    /// The host of a shared session: the rider connected longest (lowest
+    /// connection id); `None` while nobody is connected.
+    pub fn host(&self) -> Option<RiderId> {
+        self.riders.values().next().copied()
+    }
+
+    fn clock_message(&self) -> v1::WorldClock {
+        ocw_protocol::world_clock(
+            &self.clock,
+            self.session_time_s(),
+            self.config.clock_access,
+            self.host(),
+        )
+    }
+
+    /// A time-machine request from `rider` (spec §14 Phase 9, 9D): checked
+    /// here, on the server (§6.1), not only in the client's menu.
+    fn clock_request(&mut self, rider: RiderId, req: &v1::ClockRequest) -> S {
+        let result = |ok: bool, message: String| S::DevResult(v1::DevCommandResult { ok, message });
+        let allowed = match self.config.clock_access {
+            ClockAccess::Anyone => true,
+            ClockAccess::Host => self.host() == Some(rider),
+            ClockAccess::Nobody => false,
+        };
+        if !allowed {
+            return result(
+                false,
+                match self.config.clock_access {
+                    ClockAccess::Nobody => {
+                        "the time of this session is set by the organizer".into()
+                    }
+                    _ => "only the host of this shared ride can change the time".into(),
+                },
+            );
+        }
+        let Some(change) = ocw_protocol::clock_change(req) else {
+            return result(false, "empty time request".into());
+        };
+        let t = self.session_time_s();
+        use ocw_sky::ClockChange as K;
+        let done = match change {
+            K::Real => {
+                self.clock.set_real(t);
+                Ok(())
+            }
+            K::Fixed(ms) => self.clock.set_fixed(t, ms),
+            K::Offset(ms) => self.clock.set_offset(t, ms),
+            K::Step(ms) => self.clock.step(t, ms),
+            K::Speed(s) => self.clock.set_speed(t, s),
+            K::Paused(p) => {
+                self.clock.set_paused(t, p);
+                Ok(())
+            }
+        };
+        match done {
+            Ok(()) => {
+                // Everyone gets the new time with the next snapshot (at
+                // most 100 ms).
+                tracing::info!(%rider, clock = %self.clock.describe(t), "world clock changed");
+                result(true, format!("world clock: {}", self.clock.describe(t)))
+            }
+            Err(e) => result(false, e),
+        }
     }
 
     /// Display names of the clients that joined so far, in order.
@@ -237,6 +332,7 @@ impl GameServer {
             }
             (C::Dev(cmd), Some(rider)) => Some(self.dev_command(rider, cmd)),
             (C::Event(req), Some(_)) => Some(self.event_request(req)),
+            (C::Clock(req), Some(rider)) => Some(self.clock_request(rider, &req)),
             (C::Voice(req), Some(rider)) => Some(S::Voice(self.voice_grant(conn, rider, &req))),
             (C::Turn(turn), Some(rider)) => {
                 if let Some(net) = self.session.network() {
@@ -330,6 +426,7 @@ impl GameServer {
         self.riders.insert(conn, rider);
         self.names.insert(conn, hello.display_name.clone());
         self.joined.push(hello.display_name.clone());
+        let clock = Some(self.clock_message());
         tracing::info!(%rider, name = %hello.display_name, weight_kg = profile.rider_mass_kg, bike = profile.bike.id(), "rider joined");
         S::Welcome(v1::Welcome {
             protocol_version: PROTOCOL_VERSION,
@@ -345,6 +442,7 @@ impl GameServer {
                 .map(|p| p.name.clone())
                 .unwrap_or_default(),
             voice: self.config.voice.is_some(),
+            clock,
         })
     }
 
@@ -545,6 +643,7 @@ impl GameServer {
                 .map(ocw_protocol::quantize)
                 .collect(),
             human_riders: self.riders.len() as u32,
+            clock: Some(self.clock_message()),
         };
         out.push(encode(&server_message(S::Snapshot(snapshot))));
         out
@@ -1051,6 +1150,127 @@ mod tests {
         assert!(state.distance > 10.0, "distance {}", state.distance);
     }
 
+    const EPOCH_MS: i64 = 1_781_000_000_000;
+
+    fn clock_server(access: ClockAccess) -> GameServer {
+        GameServer::new(
+            Route::test_loop(),
+            ServerConfig {
+                clock_access: access,
+                real_epoch_ms: Some(EPOCH_MS),
+                ..Default::default()
+            },
+        )
+    }
+
+    fn join(server: &mut GameServer) -> (ConnectionId, v1::Welcome) {
+        let conn = server.connect();
+        let reply = server.handle(conn, &hello(PROTOCOL_VERSION));
+        match decode_server(&reply[0]).unwrap() {
+            S::Welcome(w) => (conn, w),
+            other => panic!("expected a welcome, got {other:?}"),
+        }
+    }
+
+    fn ask_clock(
+        server: &mut GameServer,
+        conn: ConnectionId,
+        c: ocw_sky::ClockChange,
+    ) -> (bool, String) {
+        let reply = server.handle(conn, &encode(&ocw_protocol::clock_request(c)));
+        match decode_server(&reply[0]).unwrap() {
+            S::DevResult(r) => (r.ok, r.message),
+            other => panic!("expected a result, got {other:?}"),
+        }
+    }
+
+    fn next_snapshot(server: &mut GameServer) -> v1::Snapshot {
+        (0..TICKS_PER_BROADCAST)
+            .flat_map(|_| server.tick())
+            .find_map(|b| match decode_server(&b) {
+                Ok(S::Snapshot(s)) => Some(s),
+                _ => None,
+            })
+            .expect("a snapshot every 5 ticks")
+    }
+
+    /// The world clock is server state (spec §14 Phase 9, §6.1): in the
+    /// welcome and in every snapshot, on session time.
+    #[test]
+    fn the_world_clock_travels_in_welcome_and_snapshots() {
+        let mut server = clock_server(ClockAccess::Anyone);
+        let (conn, w) = join(&mut server);
+        let c = ocw_protocol::clock_info(&w.clock.unwrap());
+        assert_eq!(
+            (c.world_ms, c.rate, c.mode),
+            (EPOCH_MS, 1.0, ocw_sky::ClockMode::Real)
+        );
+        assert_eq!(c.host, Some(RiderId(w.rider_id)));
+        let snap = next_snapshot(&mut server);
+        let c = ocw_protocol::clock_info(&snap.clock.unwrap());
+        assert_eq!(c.world_ms, EPOCH_MS + 100, "5 ticks of 20 ms");
+        // x600 from a fixed instant: a snapshot later the world is a minute on.
+        let fixed = ocw_sky::time::utc_midnight(2026, 6, 21) + 19 * ocw_sky::time::MS_PER_HOUR;
+        assert!(ask_clock(&mut server, conn, ocw_sky::ClockChange::Fixed(fixed)).0);
+        let (ok, msg) = ask_clock(&mut server, conn, ocw_sky::ClockChange::Speed(600.0));
+        assert!(ok, "{msg}");
+        assert_eq!(msg, "world clock: fixed, x600");
+        let snap = next_snapshot(&mut server);
+        let c = ocw_protocol::clock_info(&snap.clock.unwrap());
+        assert_eq!(c.world_ms, fixed + 60_000);
+        assert_eq!((c.rate, c.speed), (600.0, 600.0));
+        // Out of range: refused, the clock unchanged.
+        let (ok, msg) = ask_clock(
+            &mut server,
+            conn,
+            ocw_sky::ClockChange::Fixed(ocw_sky::time::MAX_MS + 1),
+        );
+        assert!(!ok && msg.contains("1900"), "{msg}");
+        assert!(ask_clock(&mut server, conn, ocw_sky::ClockChange::Real).0);
+        assert_eq!(server.clock().mode(), ocw_sky::ClockMode::Real);
+        assert_eq!(server.clock().now(server.session_time_s()), EPOCH_MS + 200);
+    }
+
+    /// Only the host of a shared session changes the time (spec §14 Phase
+    /// 9, 9D, Q2): checked on the server; the host is the rider connected
+    /// longest, and the next one takes over when the host leaves.
+    #[test]
+    fn only_the_host_may_change_the_time() {
+        use ocw_sky::ClockChange as K;
+        let mut server = clock_server(ClockAccess::Host);
+        let (host, hw) = join(&mut server);
+        let (guest, gw) = join(&mut server);
+        let c = ocw_protocol::clock_info(&gw.clock.unwrap());
+        assert_eq!(c.host, Some(RiderId(hw.rider_id)));
+        assert!(!c.may_change(Some(RiderId(gw.rider_id))));
+        let (ok, msg) = ask_clock(&mut server, guest, K::Step(3_600_000));
+        assert!(!ok && msg.contains("only the host"), "{msg}");
+        assert_eq!(server.clock().mode(), ocw_sky::ClockMode::Real, "unchanged");
+        assert!(ask_clock(&mut server, host, K::Step(3_600_000)).0);
+        assert_eq!(server.clock().mode(), ocw_sky::ClockMode::Offset);
+        // The host leaves: the guest is the host now.
+        server.disconnect(host);
+        assert_eq!(server.host(), Some(RiderId(gw.rider_id)));
+        assert!(ask_clock(&mut server, guest, K::Paused(true)).0);
+        let snap = next_snapshot(&mut server);
+        let c = ocw_protocol::clock_info(&snap.clock.unwrap());
+        assert!(c.paused && c.may_change(Some(RiderId(gw.rider_id))));
+        // Before the hello nothing goes.
+        let stranger = server.connect();
+        let reply = server.handle(stranger, &encode(&ocw_protocol::clock_request(K::Real)));
+        assert!(matches!(decode_server(&reply[0]).unwrap(), S::Reject(_)));
+        // An organizer's session: nobody.
+        let mut fixed = clock_server(ClockAccess::Nobody);
+        let (only, _) = join(&mut fixed);
+        let (ok, msg) = ask_clock(&mut fixed, only, K::Real);
+        assert!(!ok && msg.contains("organizer"), "{msg}");
+        // The local server's single player may (solo = own host).
+        let mut solo = clock_server(ClockAccess::Anyone);
+        let (_, _) = join(&mut solo);
+        let (second, _) = join(&mut solo);
+        assert!(ask_clock(&mut solo, second, K::Speed(60.0)).0);
+    }
+
     #[test]
     fn rejects_wrong_version_and_missing_hello() {
         let mut server = GameServer::new(Route::test_loop(), ServerConfig::default());
@@ -1080,6 +1300,7 @@ mod tests {
                     start_m: 0.0,
                     allow_local_events: false,
                     voice: None,
+                    ..Default::default()
                 },
             );
             let conn = server.connect();
@@ -1171,6 +1392,7 @@ mod tests {
                 start_m: 200.0,
                 allow_local_events: false,
                 voice: None,
+                ..Default::default()
             },
         );
         let snap = server.session().snapshot();
@@ -1201,6 +1423,7 @@ mod tests {
                 start_m: 0.0,
                 allow_local_events: false,
                 voice: None,
+                ..Default::default()
             },
         );
         let conn = server.connect();
@@ -1238,6 +1461,7 @@ mod tests {
                 start_m: 500.0,
                 allow_local_events: true,
                 voice: None,
+                ..Default::default()
             },
         )
     }

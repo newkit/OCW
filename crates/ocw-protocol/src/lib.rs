@@ -721,13 +721,26 @@ mod tests {
         assert!(info.may_change(Some(RiderId(3))));
         assert!(!info.may_change(Some(RiderId(4))));
         assert!(!info.may_change(None));
-        let anyone = ClockInfo { access: ClockAccess::Anyone, ..info };
+        let anyone = ClockInfo {
+            access: ClockAccess::Anyone,
+            ..info
+        };
         assert!(anyone.may_change(Some(RiderId(4))));
-        let nobody = ClockInfo { access: ClockAccess::Nobody, ..info };
+        let nobody = ClockInfo {
+            access: ClockAccess::Nobody,
+            ..info
+        };
         assert!(!nobody.may_change(Some(RiderId(3))));
         // Requests.
         use ocw_sky::ClockChange as K;
-        for change in [K::Real, K::Fixed(-5), K::Offset(7), K::Step(-9), K::Speed(60.0), K::Paused(true)] {
+        for change in [
+            K::Real,
+            K::Fixed(-5),
+            K::Offset(7),
+            K::Step(-9),
+            K::Speed(60.0),
+            K::Paused(true),
+        ] {
             let bytes = encode(&clock_request(change));
             let Msg::Clock(r) = decode_client(&bytes).unwrap() else {
                 panic!("a clock request")
