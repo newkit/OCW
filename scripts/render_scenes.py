@@ -35,13 +35,15 @@ DEFAULT_SCENES = ROOT / "scripts/scenes.toml"
 # into the zip of the GitHub release `build-history`.
 HISTORY = ROOT / "test-output/build-history"
 # The world packages scenes can use (`world = true` is Liechtenstein,
-# `world = "blackforest"` the Black Forest), by their path in a checkout
+# `world = "blackforest"` the Black Forest, `world = "tenerife"` Tenerife),
+# by their path in a checkout
 # (scripts/fetch-pilot.sh REGION, then world-builder package).
 WORLDS = {
     "liechtenstein": "data/pilot/liechtenstein.ocwpkg",
     "blackforest": "data/blackforest/blackforest.ocwpkg",
     "blackforest-middle": "data/blackforest/blackforest-middle.ocwpkg",
     "blackforest-north": "data/blackforest/blackforest-north.ocwpkg",
+    "tenerife": "data/tenerife/tenerife.ocwpkg",
 }
 DEFAULT_WORLD = "liechtenstein"
 SCENE_KEYS = {

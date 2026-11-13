@@ -205,6 +205,13 @@ const REGIONS: &[(&str, [f64; 4], &str)] = &[
     ("Germany", [47.27, 55.06, 5.87, 15.04], "Europe/Berlin"),
     ("France", [41.3, 51.1, -5.2, 9.6], "Europe/Paris"),
     ("Italy", [36.6, 47.1, 6.6, 18.5], "Europe/Rome"),
+    // Spain's Canary Islands (Tenerife package): WET / WEST, an hour
+    // behind the mainland's Europe/Madrid.
+    (
+        "Canary Islands",
+        [27.5, 29.5, -18.3, -13.3],
+        "Atlantic/Canary",
+    ),
 ];
 
 /// The time zone of a place (lat °, lon °): a region's IANA zone
@@ -314,6 +321,12 @@ mod tests {
         assert_eq!(zone_for(48.21, 16.37), "Europe/Vienna");
         assert_eq!(zone_for(52.52, 13.40), "Europe/Berlin");
         assert_eq!(zone_for(35.68, 139.69), "Etc/GMT-9", "Tokyo: by longitude");
+        assert_eq!(
+            zone_for(28.27, -16.55),
+            "Atlantic/Canary",
+            "Tenerife origin"
+        );
+        assert_eq!(zone_for(28.13, -15.43), "Atlantic/Canary", "Gran Canaria");
         assert_eq!(zone_for(40.0, -105.0), "Etc/GMT+7");
         assert_eq!(longitude_zone(3.0), "Etc/UTC");
         // Every default is a zone the bundled tzdb knows.
@@ -330,6 +343,18 @@ mod tests {
             Zone::get(id).unwrap();
         }
         Zone::get(DEFAULT_ZONE).unwrap();
+    }
+
+    /// Tenerife: WET in winter (UTC+0), WEST in summer (UTC+1), changing
+    /// with the EU on 29 March and 25 October 2026 at 01:00 UTC.
+    #[test]
+    fn canary_islands_keep_western_european_time() {
+        let z = Zone::get("Atlantic/Canary").unwrap();
+        let before = z.local(utc(2026, 3, 29, 0, 59));
+        assert_eq!((before.hour, before.offset_s, before.dst), (0, 0, false));
+        let after = z.local(utc(2026, 3, 29, 1, 0));
+        assert_eq!((after.hour, after.offset_s, after.dst), (2, 3600, true));
+        assert_eq!(z.local(utc(2026, 11, 13, 7, 30)).hh_mm(), "07:30");
     }
 
     /// Q1 of Phase 9 (spec 9A): the time of the place in the world counts.

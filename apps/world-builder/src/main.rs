@@ -65,6 +65,10 @@ enum Cmd {
         /// Extra ring of terrain-only tiles around the roads.
         #[arg(long, default_value_t = 2)]
         margin_tiles: i32,
+        /// Only the tiles within --margin-tiles of a road, not the whole
+        /// box of the roads (islands: no tiles of open sea, spec §4.7).
+        #[arg(long)]
+        tiles_near_roads: bool,
         /// Land-use cells per tile side (200 = 5 m splat map).
         #[arg(long, default_value_t = ocw_worldgen::landuse::CELLS)]
         landuse_cells: u32,
@@ -86,7 +90,8 @@ enum Cmd {
         #[arg(long, value_parser = parse_latlon)]
         origin: Option<(f64, f64)>,
         /// IANA time zone of the area (spec §14 Phase 9; default: the zone
-        /// of the region at the origin, e.g. Europe/Vaduz, Europe/Berlin).
+        /// of the region at the origin, e.g. Europe/Vaduz, Europe/Berlin,
+        /// Atlantic/Canary).
         #[arg(long, value_name = "ZONE")]
         time_zone: Option<String>,
         #[arg(long, default_value = "data/pilot/liechtenstein.ocwpkg")]
@@ -544,7 +549,7 @@ struct ManifestOpts {
     #[arg(long = "pkg-version", value_name = "N")]
     version: Option<u64>,
     /// Attribution of the elevation data, repeatable: `srtm`, `lgl-dgm1`,
-    /// `swissalti3d` or a free notice (default: SRTM).
+    /// `swissalti3d`, `ign-mdt05` or a free notice (default: SRTM).
     #[arg(long, value_name = "TEXT")]
     dem_attribution: Vec<String>,
 }
@@ -847,10 +852,17 @@ fn cut_region(
 struct AreaInputs {
     data: ocw_worldgen::areas::AreaData,
     areas: Vec<ocw_worldgen::landuse::Area>,
+    /// The sea from the coastline (spec §4.6), kept out of `areas`: the
+    /// bridge water test would bucket it over the whole region.
+    sea: ocw_worldgen::landuse::Sea,
     lines: Vec<ocw_worldgen::landuse::WaterLine>,
     water: ocw_worldgen::water::WaterBodies,
     outlines: Vec<Vec<Vec<[f64; 2]>>>,
 }
+
+/// The sea's frame reaches this far beyond the region's box (the margin
+/// tiles around its roads, spec §4.6).
+const SEA_FRAME_MARGIN_M: f64 = 5000.0;
 
 fn read_area_inputs(
     pbfs: &[PathBuf],
@@ -863,11 +875,30 @@ fn read_area_inputs(
     });
     data.retain_near(load_box(near));
     let (areas, lines) = ocw_worldgen::landuse::extract(&data, proj);
+    // The sea: the coastline's islands cut out of the region's box plus
+    // the margin tiles (spec §4.6).
+    let (s, w, n, e) = load_box(near);
+    let corners = [(s, w), (s, e), (n, w), (n, e)].map(|(la, lo)| proj.project(la, lo));
+    let m = SEA_FRAME_MARGIN_M;
+    let frame = [
+        corners.iter().map(|c| c[0]).fold(f64::MAX, f64::min) - m,
+        corners.iter().map(|c| c[1]).fold(f64::MAX, f64::min) - m,
+        corners.iter().map(|c| c[0]).fold(f64::MIN, f64::max) + m,
+        corners.iter().map(|c| c[1]).fold(f64::MIN, f64::max) + m,
+    ];
+    let sea = ocw_worldgen::landuse::sea(&data, proj, frame);
+    if sea.open > 0 {
+        eprintln!(
+            "warning: {} coastline pieces do not close in the package area: no sea (closing a coast along the frame is not done yet)",
+            sea.open
+        );
+    }
     let water = ocw_worldgen::water::extract_water(&data, proj);
     let outlines = ocw_worldgen::bridges::bridge_outlines(&data, proj);
     AreaInputs {
         data,
         areas,
+        sea,
         lines,
         water,
         outlines,
@@ -1146,6 +1177,7 @@ struct PackageArgs {
     name: String,
     samples: u32,
     margin_tiles: i32,
+    tiles_near_roads: bool,
     landuse_cells: u32,
     no_areas: bool,
     no_clean: bool,
@@ -1168,6 +1200,7 @@ fn package(args: PackageArgs) {
         name,
         samples,
         margin_tiles,
+        tiles_near_roads,
         landuse_cells,
         no_areas,
         no_clean,
@@ -1217,6 +1250,11 @@ fn package(args: PackageArgs) {
         1000.0,
         samples,
         margin_tiles,
+        if tiles_near_roads {
+            ocw_worldgen::package::TileCover::NearRoads
+        } else {
+            ocw_worldgen::package::TileCover::Box
+        },
     );
     pkg.region = Some(region.package_region());
     let zone = package_time_zone(time_zone, region.origin()).unwrap_or_else(|e| {
@@ -1239,13 +1277,29 @@ fn package(args: PackageArgs) {
         .map(|i| ocw_worldgen::buildings::footprints(&i.data, &proj));
     if let (false, Some(i)) = (no_areas, inputs.as_ref()) {
         let tl = Instant::now();
-        let ls = ocw_worldgen::landuse::add_landuse(&mut pkg, &i.areas, &i.lines, landuse_cells);
+        let ls = ocw_worldgen::landuse::add_landuse_with_sea(
+            &mut pkg,
+            &i.areas,
+            i.sea.area.as_ref(),
+            &i.lines,
+            landuse_cells,
+        );
         let landuse_s = tl.elapsed().as_secs_f64();
         area_report.push(format!(
             "areas: read {} areas, {} waterways, {} footprints in {read_s:.1} s",
             ls.areas,
             ls.water_lines,
             footprints.as_ref().map_or(0, Vec::len)
+        ));
+        area_report.push(format!(
+            "sea: {} ({} coastline rings in the area, {} open pieces)",
+            if i.sea.area.is_some() {
+                "yes, level 0 m"
+            } else {
+                "none"
+            },
+            i.sea.islands,
+            i.sea.open
         ));
         area_report.push(format!(
             "land use (LUSE, {landuse_cells} cells/tile): {}; {} vertices under water, {} with a water level; {landuse_s:.1} s",
@@ -1495,7 +1549,10 @@ fn dem_import(
                 tile.cell
             ));
         }
+        // Grids with their cell centres on the lattice (IGN MDT05) are
+        // moved onto it first, so their tiles join a layer.
         let r = tile
+            .on_lattice()
             .padded_to(tile_m)
             .resampled(factor as usize)
             .map_err(err)?;
@@ -1744,6 +1801,7 @@ fn main() {
             name,
             samples,
             margin_tiles,
+            tiles_near_roads,
             landuse_cells,
             no_areas,
             no_clean,
@@ -1766,6 +1824,7 @@ fn main() {
                 name: name.clone(),
                 samples,
                 margin_tiles,
+                tiles_near_roads,
                 landuse_cells,
                 no_areas,
                 no_clean,
@@ -2005,6 +2064,11 @@ mod tests {
         assert_eq!(
             package_time_zone(Some("Europe/Zurich".into()), (47.15, 9.55)).unwrap(),
             "Europe/Zurich"
+        );
+        assert_eq!(
+            package_time_zone(None, (28.27, -16.55)).unwrap(),
+            "Atlantic/Canary",
+            "Tenerife"
         );
         assert!(package_time_zone(Some("Europe/Atlantis".into()), (0.0, 0.0)).is_err());
     }

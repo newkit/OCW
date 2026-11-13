@@ -10,7 +10,8 @@
 #   world        true: needs the Liechtenstein package ({world}, {world_dir} in
 #                args, cmds and at are replaced by its path and folder; the
 #                Vaduz-Malbun route file lies beside it); "blackforest": the
-#                Black Forest package instead; skipped without the package
+#                Black Forest package instead ("blackforest-middle", "-north":
+#                its neighbours), "tenerife": Tenerife; skipped without the package
 #   args         ocw-desktop arguments (README, "Command-line options")
 #   cmds         console commands at startup (--cmd)
 #   at           timed console commands "SECONDS=COMMAND" (--at, game time
@@ -718,6 +719,99 @@ description = "Before/after viewpoint: the B317 at the Feldberg pass (1,230 m) w
 world = "blackforest"
 args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "5600,6540", "--bots", "4", "--power", "240"]
 at = ["0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 140 22 80"]
+shot = 12
+
+# --- Tenerife (spec §4.7, "Tenerife"; reference board art/reference/tenerife.md)
+# Free-ride starts in the package's metres (origin 28.29 N 16.52 W), the clock
+# fixed on 13 November 2026 (Atlantic/Canary, WET: sunrise 07:36, sunset 18:16)
+# so the light is the same on every render.
+
+[[scene]]
+name = "showcase-tf-teide"
+description = "Showcase: a group on the TF-21 in Las Cañadas (2,250 m) at the Minas de San José, pumice and lava fields of the caldera, the Teide (3,715 m) above"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-7500,5260", "--bots", "6", "--power", "230"]
+at = ["0.5=time pause", "0.5=time 2026-11-13 11:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 150 14 45"]
+shot = 12
+
+[[scene]]
+name = "showcase-tf-teide-video"
+description = "Showcase video: riding through Las Cañadas on the TF-21 with 6 riders below the Teide, slowly orbiting camera"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-7500,5260", "--bots", "6", "--power", "240"]
+at = ["0.5=time pause", "0.5=time 2026-11-13 11:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 120 14 40", "5=camera.orbit 150 12 34", "8=camera.orbit 180 10 28"]
+video = 8
+
+[[scene]]
+name = "showcase-tf-cablecar"
+description = "Showcase: the end of Puerto de la Cruz - Teide at the cable car base station (2,356 m), the cone of the Teide right above the road"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-9449,3847", "--bots", "4", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-11-13 11:30", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 160 18 50"]
+shot = 12
+
+[[scene]]
+name = "showcase-tf-teide-sunrise"
+description = "Showcase: sunrise in Las Cañadas (13 November, the sun rising in the east-south-east), long shadows of the riders, the Teide catching the first light"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-7500,5260", "--bots", "4", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-11-13 12:00", "0.6=time sunrise", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 20 12 40"]
+shot = 12
+
+[[scene]]
+name = "showcase-tf-teide-sunset"
+description = "Showcase: sunset over Las Cañadas (13 November, 18:16 WET, the sun going down in the west-south-west behind the caldera rim), red light on the riders"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-7500,5260", "--bots", "4", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-11-13 12:00", "0.6=time sunset", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 160 10 40"]
+shot = 12
+
+[[scene]]
+name = "showcase-tf-masca"
+description = "Showcase: riders on the TF-436 hairpins below the Cherfe pass, the Masca gorge and the Teno massif"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-30353,-1223", "--bots", "5", "--power", "250"]
+at = ["0.5=time pause", "0.5=time 2026-11-13 11:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 150 30 80"]
+shot = 12
+
+[[scene]]
+name = "showcase-tf-masca-video"
+description = "Showcase video: climbing the TF-436 hairpins from Masca with 5 riders, raised orbiting camera"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-31509,-1846", "--bots", "5", "--power", "260"]
+at = ["0.5=time pause", "0.5=time 2026-11-13 11:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 140 28 70", "5=camera.orbit 170 24 60"]
+video = 8
+
+[[scene]]
+name = "showcase-tf-gigantes"
+description = "Showcase: Los Gigantes on the west coast, riders in the town above the marina, the sea at 0 m and the cliffs (Acantilados de Los Gigantes) falling into it"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-31411,4859", "--bots", "5", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-11-13 15:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 120 22 90"]
+shot = 12
+
+[[scene]]
+name = "showcase-tf-santacruz"
+description = "Showcase: Santa Cruz de Tenerife at the Plaza de España, the harbour and the sea, the Anaga hills behind"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "26682,-19815", "--bots", "6", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-11-13 10:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 130 25 90"]
+shot = 12
+
+[[scene]]
+name = "showcase-tf-orotava"
+description = "Showcase: La Orotava, riders in the old town on the slope of the Orotava valley, farmland and banana terraces down to Puerto de la Cruz"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-313,-11175", "--bots", "5", "--power", "220"]
+at = ["0.5=time pause", "0.5=time 2026-11-13 11:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 160 25 80"]
+shot = 12
+
+[[scene]]
+name = "showcase-tf-anaga"
+description = "Showcase: the TF-12 at Cruz del Carmen (920 m) in the laurel forest of the Anaga mountains"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "23460,-26765", "--bots", "5", "--power", "230"]
+at = ["0.5=time pause", "0.5=time 2026-11-13 11:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 150 16 40"]
 shot = 12
 
 # --- World menu (spec 3.2.1, v2.39); OCW_WORLD=DIR/liechtenstein.ocwpkg with

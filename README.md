@@ -304,6 +304,7 @@ climb at 1.5–2.1 km) and grass beside the road roll increasingly harder
   | Black Forest south: Freiburg, Schauinsland, Feldberg, Titisee, Belchen, Schluchsee | `data/blackforest/blackforest.ocwpkg` | OSM, LGL DGM1 (2 m), SRTM | Freiburg - Schauinsland, Titisee - Feldberg |
   | Black Forest middle: Elzach, Triberg, Hornberg, Wolfach | `data/blackforest/blackforest-middle.ocwpkg` | same | Hornberg - Triberg |
   | Black Forest north: Baden-Baden, Schwarzwaldhochstraße, Mummelsee, Hornisgrinde, Sasbachwalden, Allerheiligen, Ruhestein, Bühlerhöhe, Kniebis | `data/blackforest/blackforest-north.ocwpkg` | same | Baden-Baden - Mummelsee, Sasbachwalden - Mummelsee, Bühl - Bühlerhöhe |
+  | Tenerife (Canary Islands, Spain): the whole island – Teide and Las Cañadas, La Orotava, Puerto de la Cruz, Santa Cruz, La Laguna, Anaga, Masca, Los Gigantes, Los Cristianos, Vilaflor; the sea around it (time zone Atlantic/Canary) | `data/tenerife/tenerife.ocwpkg` | OSM (Geofabrik Canary Islands), IGN MDT05 (5 m LiDAR), SRTM | Puerto de la Cruz - Teide, Los Cristianos - Teide, Masca - Santiago del Teide, Buenavista - Masca - Santiago del Teide, La Laguna - Anaga |
 
   Fetch and build on a build machine (the data lands in the git-ignored
   `data/`; the Black Forest DGM1 download is about 1,800 zips of 15 MB,
@@ -315,7 +316,14 @@ climb at 1.5–2.1 km) and grass beside the road roll increasingly harder
   scripts/fetch-pilot.sh blackforest      # both Regierungsbezirke, DGM1, SRTM (OCW_FETCH_FRESH=1: newest OSM)
   scripts/build-blackforest.sh            # south middle north (or a part)
   scripts/prepare-world-release.sh OUT data/blackforest/*.ocwpkg   # release zips, no upload
+  scripts/fetch-pilot.sh tenerife         # Canary Islands extract, IGN MDT05 (2 km COGs, OGC API), SRTM
+  scripts/build-tenerife.sh               # the island and its routes
   ```
+
+  The sea comes from the OSM coastline: its closed rings (islands) are cut
+  out of the package area, which leaves the sea as water at 0 m (`world-builder
+  package` reports `sea: …`). Islands are built with `--tiles-near-roads`
+  (only tiles within 2 km of a road, no open sea far from the coast).
 
   The three Black Forest packages share their border lines (48.12 N,
   48.45 N), the OSM snapshot and the projection origin, so a package started
@@ -329,12 +337,18 @@ climb at 1.5–2.1 km) and grass beside the road roll increasingly harder
   ocw-desktop --world data/blackforest/blackforest.ocwpkg --free-ride --start -8018,-8406   # Freiburg
   ocw-desktop --world data/blackforest/blackforest-north.ocwpkg --route "Baden-Baden - Mummelsee"
   ocw-desktop --world data/blackforest/blackforest-north.ocwpkg --free-ride --start 18019,-75446  # Mummelsee
+  ocw-desktop --world data/tenerife/tenerife.ocwpkg                             # Puerto de la Cruz - Teide
+  ocw-desktop --world data/tenerife/tenerife.ocwpkg --route "Masca - Santiago del Teide"
+  ocw-desktop --world data/tenerife/tenerife.ocwpkg --free-ride --start -7500,5260   # Las Cañadas
   ```
 
   `world-builder dem-import --crs utm32 --cell 2 --out DIR FILES` turns DTM
   tiles (XYZ text, GeoTIFF) into 2 m GeoTIFFs, `--dem DIR` (repeatable, best
   first) uses them in `package` / `route` / `graph`, `dem-tiles` lists the
   tiles of a box for downloads and `dem-diff` compares a DTM with SRTM.
+  CRSs: `utm32` (any `utmNN`), `lv95`, `regcan95` (= UTM 28N, EPSG:4083, the
+  Canary Islands); grids whose cell centres lie on the lattice (the IGN's
+  MDT05) are moved onto it by half a cell.
 
   `world-builder route --bbox S,W,N,E --origin LAT,LON` cuts a route file from
   the same part of an extract as `package --bbox`, in its metres;
@@ -689,7 +703,7 @@ twilight, `●` at night; `x600`, `paused`, `fixed` or `+2 h` when the time
 machine runs). The time zone comes from the world package (section `TZID`,
 set by `world-builder package`, `--time-zone` overrides); older packages and
 route files use the zone of their origin (`Europe/Vaduz` for Liechtenstein,
-`Europe/Berlin` for the Black Forest, else the longitude's zone), the test
+`Europe/Berlin` for the Black Forest, `Atlantic/Canary` for Tenerife, else the longitude's zone), the test
 routes are in Vaduz. The sun lights the scene from its real position, warm at
 sunrise and sunset; the night is dark (`display.night_brightness`, Settings →
 Display) and every rider has front and rear lights.
@@ -1256,8 +1270,8 @@ to *Public* are the usual causes; the server log is in Event Viewer under
 | `world-builder route --world PKG --from LAT,LON --to LAT,LON --name N` | Store the shortest main-road route between two points as a package route |
 | `world-builder routes --world PKG [--from OLD_PKG] [--remove N] [--export-gpx]` | List and check a package's routes; carry the routes of an older build over (by stable edge ID, re-matching broken ones); export them as GPX |
 | `world-builder keys init-root` / `keys new-signing` / `sign` / `verify` / `publish` / `diff` | Package signing and distribution, see below |
-| `scripts/fetch-pilot.sh [liechtenstein\|blackforest]` | Download a region's OSM extracts and elevation data (swissALTI3D, LGL DGM1, SRTM) with a licence table `SOURCES.md` |
-| `scripts/build-liechtenstein.sh`, `scripts/build-blackforest.sh [south middle north]` | Build the world packages and their routes (`OCW_SRTM_ONLY=1`: SRTM terrain, for comparisons) |
+| `scripts/fetch-pilot.sh [liechtenstein\|blackforest\|tenerife]` | Download a region's OSM extracts and elevation data (swissALTI3D, LGL DGM1, IGN MDT05, SRTM) with a licence table `SOURCES.md` |
+| `scripts/build-liechtenstein.sh`, `scripts/build-blackforest.sh [south middle north]`, `scripts/build-tenerife.sh` | Build the world packages and their routes (`OCW_SRTM_ONLY=1`: SRTM terrain, for comparisons) |
 | `scripts/prepare-world-release.sh OUT PKG...` | Release zips of packages (`ocw-world-<name>-v<N>.zip` with `LICENSE-DATA.md`, `README.md`, route files) and the OSM source zip (ODbL offer); no upload |
 | `scripts/measure.py [--label T] [--out F] -- CMD` | Wall time and peak memory of a command (package builds, client runs) |
 | `world-builder dem-import` / `dem-tiles` / `dem-diff` | High-resolution DTMs: import XYZ / GeoTIFF tiles as 2 m GeoTIFFs, list the tiles of a box, compare with SRTM |
@@ -1332,7 +1346,9 @@ the arguments). Scenes with `world = "blackforest"` (`bf-*`) need the Black
 Forest package the same way: `--world blackforest=PKG`,
 `$OCW_WORLD_BLACKFOREST`, else `data/blackforest/blackforest.ocwpkg` (with
 its route files beside it); render them with `OCW_PROFILE=release` (260 MB
-package). Without a package these scenes are skipped; the test-route
+package); `world = "tenerife"` (`showcase-tf-*`) likewise with
+`tenerife=PKG`, `$OCW_WORLD_TENERIFE` or `data/tenerife/tenerife.ocwpkg`.
+Without a package these scenes are skipped; the test-route
 scenes always run. `--pick` copies the good renders of a folder into
 `test-output/build-history/YYYY-MM-DD/HHMMSS-NAME.jpg|mp4` (images over 600 KB
 are made smaller – JPEG quality ~80, older PNGs a 256-colour palette – with
