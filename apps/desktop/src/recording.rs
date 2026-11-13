@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use bevy::prelude::*;
 use clap::Command;
-use ocw_fit::{Activity, Record};
+use ocw_fit::{Activity, Marker, MarkerKind, Record};
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, Permission};
 use serde::{Deserialize, Serialize};
 
@@ -69,6 +69,8 @@ pub struct RideRecorder {
     records: Vec<Record>,
     /// Lap marks (elapsed s) for the FIT laps.
     laps: Vec<f64>,
+    /// God mode's start and end (FIT markers, spec §14 Phase 13E).
+    markers: Vec<Marker>,
 }
 
 impl RideRecorder {
@@ -82,6 +84,7 @@ impl RideRecorder {
             distance_m: 0.0,
             records: Vec::new(),
             laps: Vec::new(),
+            markers: Vec::new(),
         }
     }
 
@@ -124,6 +127,18 @@ impl RideRecorder {
             self.start_unix_s = Some(wall_unix_s);
             self.start_game_s = s.game_s;
         }
+        // God mode began or ended (also a ride that starts flying).
+        let was = self.was_flying && !self.records.is_empty();
+        if s.flying != was && (s.flying || !self.records.is_empty()) {
+            self.markers.push(Marker {
+                elapsed_s: s.game_s - self.start_game_s,
+                kind: if s.flying {
+                    MarkerKind::GodModeStart
+                } else {
+                    MarkerKind::GodModeEnd
+                },
+            });
+        }
         self.last = Some((s.game_s, s.distance));
         self.was_flying = s.flying;
         let p = track.sample(s.distance).offset_position(s.lateral_offset);
@@ -159,6 +174,7 @@ impl RideRecorder {
     pub fn finish(&mut self) -> Option<FinishedRide> {
         let records = std::mem::take(&mut self.records);
         let laps = std::mem::take(&mut self.laps);
+        let markers = std::mem::take(&mut self.markers);
         let start_unix_s = self.start_unix_s.take()?;
         self.last = None;
         self.distance_m = 0.0;
@@ -172,6 +188,7 @@ impl RideRecorder {
                 product_name: "Open Cycling World".into(),
                 software_version: software_version(),
                 laps,
+                markers,
             },
             meta: RideMeta {
                 name: format!("Open Cycling World: {}", self.route_name),
@@ -536,6 +553,28 @@ mod tests {
         r.observe(&route, route.geo_origin(), sample(5.0, 56.0), 0);
         assert_eq!(r.distance_m(), 16.0);
         assert_eq!(r.records().len(), 6, "the ride time goes on");
+        // A FIT marker at both ends of the flight.
+        let ride = r.finish().unwrap();
+        assert_eq!(
+            ride.activity.markers,
+            vec![
+                Marker {
+                    elapsed_s: 2.0,
+                    kind: MarkerKind::GodModeStart
+                },
+                Marker {
+                    elapsed_s: 4.0,
+                    kind: MarkerKind::GodModeEnd
+                },
+            ]
+        );
+        // A ride that starts in the air: marked from its first record.
+        let mut r = RideRecorder::new("Loop");
+        r.observe(&route, None, flying(0.0, 0.0), 0);
+        r.observe(&route, None, flying(1.0, 0.0), 0);
+        let ride = r.finish().unwrap();
+        assert_eq!(ride.activity.markers.len(), 1);
+        assert_eq!(ride.activity.markers[0].kind, MarkerKind::GodModeStart);
     }
 
     #[test]

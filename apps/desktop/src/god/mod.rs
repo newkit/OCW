@@ -9,9 +9,13 @@
 //! server, the pointer capture (Esc releases it first, then opens the
 //! menu), the [`RideView`]'s flight and unicorns, and the console commands
 //! `god`, `god.pose`, `god.cruise`, `god.view`, `god.trail`, `god.invert`.
+//! [`inspect`] is the inspection (G3: the panel and the crosshair on I,
+//! the pins on P, `god.pins`), [`touch`] the touch controls.
 
 pub mod input;
+pub mod inspect;
 pub mod state;
+pub mod touch;
 
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
@@ -31,7 +35,7 @@ use input::{FlightKeys, GodKey, PadFlight};
 pub const MENU_NAME: &str = "God mode";
 
 /// The keys line of the flight HUD.
-pub const KEYS: &str = "arrows: fly, +/-: up/down, mouse: look (Esc frees the pointer), Shift: boost, Ctrl: precise, wheel: speed, G: land, Shift+G: fly back, C: first person | ` or F12: console";
+pub const KEYS: &str = "arrows: fly, +/-: up/down, mouse: look (Esc frees the pointer), Shift: boost, Ctrl: precise, wheel: speed, G: land, Shift+G: fly back, C: first person, I: inspection, P: pin | ` or F12: console";
 
 pub struct GodPlugin;
 
@@ -40,17 +44,22 @@ impl Plugin for GodPlugin {
         app.init_resource::<FlightPointer>()
             .init_resource::<FlightSettings>()
             .init_resource::<Cruise>()
+            .init_resource::<FlightTouch>()
+            .init_resource::<inspect::Inspector>()
             .add_systems(
                 Update,
                 (
                     god_keys,
                     fly,
+                    inspect::inspect,
                     grab_pointer,
                     update_view.after(crate::connection::update_view),
+                    inspect::update_view,
                 )
                     .chain(),
             );
         register_commands(app);
+        inspect::register_commands(app);
     }
 }
 
@@ -66,6 +75,13 @@ pub struct FlightPointer {
 #[derive(Resource, Debug, Default, Clone, Copy, PartialEq)]
 pub struct FlightSettings {
     pub invert_y: bool,
+}
+
+/// When the last touch was (s, game time): the touch controls are shown
+/// for a while after it (spec §3.2.2).
+#[derive(Resource, Debug, Default, Clone, Copy, PartialEq)]
+pub struct FlightTouch {
+    pub last_s: Option<f64>,
 }
 
 /// A steady flight input from the console (`god.cruise`, for scenes and
@@ -220,13 +236,21 @@ fn flight_bounds(
     (min[0] <= max[0]).then(|| Bounds { min, max }.grown(3_000.0))
 }
 
-/// What the flight stays above and within: terrain, buildings, the world
-/// set, the ride view.
+/// What the flight stays above and within: terrain, buildings, trees, the
+/// world set, the ride view.
 type WorldParams<'w> = (
     Option<Res<'w, ocw_render::Ground>>,
     Res<'w, ocw_render::camera::CameraObstacles>,
+    Option<Res<'w, ocw_render::flight_world::FlightObstacles>>,
     Option<Res<'w, ocw_render::package::PackageWorld>>,
     Res<'w, RideView>,
+);
+
+/// The fingers on the screen and the window's size (touch flight).
+type TouchParams<'w, 's> = (
+    Option<Res<'w, bevy::input::touch::Touches>>,
+    Query<'w, 's, &'static Window, With<PrimaryWindow>>,
+    ResMut<'w, FlightTouch>,
 );
 
 /// The resting values of each gamepad's triggers.
@@ -245,7 +269,8 @@ fn fly(
     pads: Query<(Entity, &Gamepad)>,
     context: Option<Res<ocw_render::menu::InputContext>>,
     (pointer, settings, cruise): (Res<FlightPointer>, Res<FlightSettings>, Res<Cruise>),
-    (ground, obstacles, packages, view): WorldParams<'_>,
+    (ground, obstacles, trees, packages, view): WorldParams<'_>,
+    (touches, windows, mut flight_touch): TouchParams,
     link: Res<Link>,
     mut client: ResMut<ClientState>,
     mut console: ResMut<ConsoleState>,
@@ -277,12 +302,41 @@ fn fly(
     } else {
         FlightInput::default()
     };
-    let mouse = if riding_keys && (pointer.captured || buttons.pressed(MouseButton::Left)) {
+    // Touch (spec §3.2.2): one finger looks, two move, the buttons climb.
+    let fingers: Vec<touch::Finger> = match touches.as_deref() {
+        Some(t) if riding_keys => t
+            .iter()
+            .map(|f| touch::Finger {
+                id: f.id(),
+                pos: f.position(),
+                start: f.start_position(),
+                prev: f.previous_position(),
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    if !fingers.is_empty() {
+        flight_touch.last_s = Some(now);
+    }
+    let size = windows.single().map_or(Vec2::new(1280.0, 720.0), |w| {
+        Vec2::new(w.width(), w.height())
+    });
+    let by_touch = touch::touch_flight(&fingers, size, settings.invert_y);
+    flight.forward = (flight.forward + by_touch.input.forward).clamp(-1.0, 1.0);
+    flight.strafe = (flight.strafe + by_touch.input.strafe).clamp(-1.0, 1.0);
+    flight.climb = (flight.climb + by_touch.input.climb).clamp(-1.0, 1.0);
+    // A touch also arrives as an emulated mouse on Windows: not twice.
+    let mouse = if riding_keys
+        && fingers.is_empty()
+        && (pointer.captured || buttons.pressed(MouseButton::Left))
+    {
         (motion.delta.x, motion.delta.y)
     } else {
         (0.0, 0.0)
     };
     let mut look = input::look_delta(mouse, &pad_list, settings.invert_y, dt);
+    look.0 += by_touch.look.0;
+    look.1 += by_touch.look.1;
     if let Some((fw, climb, turn)) = cruise.0
         && flight == FlightInput::default()
     {
@@ -300,9 +354,17 @@ fn fly(
         })
     } else {
         0.0
+    } + by_touch.wheel;
+    // Terrain and buildings (the camera's obstacles) and the tree crowns
+    // (only the flight's: the camera sees through trees).
+    let surface = |x: f64, z: f64| {
+        let solid = ocw_render::camera::solid_height(ground.as_deref(), &obstacles, x, z);
+        let tree = trees.as_deref().and_then(|t| t.0.top_at(x, z));
+        match (solid, tree) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (a, b) => a.or(b),
+        }
     };
-    let surface =
-        |x: f64, z: f64| ocw_render::camera::solid_height(ground.as_deref(), &obstacles, x, z);
     let bounds = flight_bounds(packages.as_deref(), &view);
     if let Some(e) = c
         .god_mut()
@@ -359,7 +421,12 @@ fn grab_pointer(
 }
 
 /// The flight and the unicorns for the renderer.
-fn update_view(time: Res<Time>, client: Res<ClientState>, mut view: ResMut<RideView>) {
+fn update_view(
+    time: Res<Time>,
+    client: Res<ClientState>,
+    touch: Res<FlightTouch>,
+    mut view: ResMut<RideView>,
+) {
     let now = time.elapsed_secs_f64();
     let c = &client.0;
     view.unicorns = c.unicorns(now);
@@ -385,8 +452,41 @@ fn update_view(time: Res<Time>, client: Res<ClientState>, mut view: ResMut<RideV
             landing: g.landing(),
             leaving: u.leaving,
             keys: KEYS.into(),
+            velocity: if u.leaving {
+                [0.0, 0.0]
+            } else {
+                [f.vel[0], f.vel[2]]
+            },
+            touch: touch::overlay_shown(touch.last_s, now),
+            ..Default::default()
         }
     });
+}
+
+/// The rider list of the session (console `ride.riders`): one line per
+/// rider, the own one marked, who flies in god mode marked too (spec §14
+/// Phase 13E: a host sees who is in god mode).
+pub fn rider_list(view: &RideView) -> Vec<String> {
+    if view.riders.is_empty() {
+        return vec!["no riders yet".into()];
+    }
+    let flying = view.unicorns.len();
+    let mut out = vec![format!(
+        "{} riders, {flying} in {}",
+        view.riders.len(),
+        MENU_NAME.to_lowercase()
+    )];
+    for r in &view.riders {
+        let god = view.unicorns.iter().any(|u| u.id == r.id);
+        out.push(format!(
+            "{:>4}  {}{}{}",
+            r.id.0,
+            r.name,
+            if r.is_local { " (you)" } else { "" },
+            if god { "  - flying (god mode)" } else { "" }
+        ));
+    }
+    out
 }
 
 fn on_off(m: &clap::ArgMatches) -> bool {
@@ -450,18 +550,32 @@ fn register_commands(app: &mut App) {
     .console_command(ConsoleCommand::new(
         Permission::Dev,
         Command::new("god.pose")
-            .about("God mode: move the unicorn to x z (local metres), HEIGHT m above the ground, looking along YAW (deg, 0 = north, 90 = east) and PITCH (deg, up)")
-            .arg(Arg::new("x").required(true).allow_negative_numbers(true).value_parser(value_parser!(f64)))
-            .arg(Arg::new("z").required(true).allow_negative_numbers(true).value_parser(value_parser!(f64)))
+            .about("God mode: move the unicorn to x z (local metres; 'here' keeps the current one), HEIGHT m above the ground, looking along YAW (deg, 0 = north, 90 = east; 'here' keeps it) and PITCH (deg, up)")
+            .arg(Arg::new("x").required(true).allow_negative_numbers(true))
+            .arg(Arg::new("z").required(true).allow_negative_numbers(true))
             .arg(Arg::new("height").required(true).value_parser(value_parser!(f64)))
-            .arg(Arg::new("yaw").allow_negative_numbers(true).value_parser(value_parser!(f64)))
+            .arg(Arg::new("yaw").allow_negative_numbers(true))
             .arg(Arg::new("pitch").allow_negative_numbers(true).value_parser(value_parser!(f64))),
         |world, m| {
-            let x = *m.get_one::<f64>("x").expect("required");
-            let z = *m.get_one::<f64>("z").expect("required");
+            let here = world.resource::<ClientState>().0.god().flight().pos;
+            let coord = |name: &str, current: f64| -> Result<f64, String> {
+                match m.get_one::<String>(name).map(String::as_str) {
+                    Some("here") | None => Ok(current),
+                    Some(v) => v.parse().map_err(|_| format!("{name}: a number or 'here', not {v:?}")),
+                }
+            };
+            let x = coord("x", here[0])?;
+            let z = coord("z", here[2])?;
             let h = *m.get_one::<f64>("height").expect("required");
             // Compass heading → the flight's yaw (counter-clockwise from north).
-            let yaw = m.get_one::<f64>("yaw").map(|d| -d.to_radians());
+            let yaw = match m.get_one::<String>("yaw").map(String::as_str) {
+                None | Some("here") => None,
+                Some(v) => Some(
+                    -v.parse::<f64>()
+                        .map_err(|_| format!("yaw: degrees or 'here', not {v:?}"))?
+                        .to_radians(),
+                ),
+            };
             let pitch = m.get_one::<f64>("pitch").map(|d| d.to_radians());
             let ground = world
                 .get_resource::<ocw_render::Ground>()
@@ -520,6 +634,12 @@ fn register_commands(app: &mut App) {
             world.insert_resource(ocw_render::unicorn::UnicornTrail(on));
             Ok(format!("unicorn trail {}", if on { "on" } else { "off" }))
         },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("ride.riders")
+            .about("The riders of this ride, and who of them flies in god mode"),
+        |world, _| Ok(rider_list(world.resource::<RideView>()).join("\n")),
     ))
     .console_command(ConsoleCommand::new(
         Permission::User,
@@ -584,6 +704,43 @@ mod tests {
         false
     }
 
+    #[test]
+    fn the_rider_list_shows_who_flies() {
+        let mut v = RideView::new(Route::test_loop());
+        assert_eq!(rider_list(&v), vec!["no riders yet".to_string()]);
+        let rider = |id: u32, name: &str, local: bool| ocw_render::RiderView {
+            id: ocw_core::RiderId(id),
+            name: name.into(),
+            state: Default::default(),
+            power_w: 0.0,
+            cadence_rpm: None,
+            heart_rate_bpm: None,
+            is_local: local,
+            bike: Default::default(),
+            look: None,
+        };
+        v.riders = vec![rider(1, "Host", true), rider(2, "Ada", false)];
+        v.unicorns.push(ocw_render::UnicornView {
+            id: ocw_core::RiderId(2),
+            name: "Ada".into(),
+            is_local: false,
+            pos: [0.0; 3],
+            yaw: 0.0,
+            pitch: 0.0,
+            speed_mps: 0.0,
+            climb_mps: 0.0,
+            turn_rate: 0.0,
+            accel: 0.0,
+            age_s: 1.0,
+            landing: false,
+            colour: ocw_core::Rgb(0),
+        });
+        let l = rider_list(&v);
+        assert_eq!(l[0], "2 riders, 1 in god mode");
+        assert!(l[1].ends_with("Host (you)"), "{}", l[1]);
+        assert!(l[2].ends_with("Ada  - flying (god mode)"), "{}", l[2]);
+    }
+
     /// G1 end to end on the local server (spec §14 Phase 13F): enter, the
     /// view and the pointer, fly, land on the route, standing.
     #[test]
@@ -620,6 +777,30 @@ mod tests {
             (p[0] - start[0]).hypot(p[2] - start[2]) > 20.0
         }));
         run(&mut app, "god.cruise 0");
+        // G3: the panel and the crosshair are on, a pin goes in and is
+        // listed with a --start, I (god.inspect off) hides the panel.
+        for _ in 0..30 {
+            app.update();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let f = app.world().resource::<RideView>().flight.clone().unwrap();
+        assert!(
+            f.panel.iter().any(|l| l.starts_with("Position x")),
+            "{:?}",
+            f.panel
+        );
+        assert!(f.crosshair.is_some());
+        let out = run(&mut app, "god.pin");
+        assert!(out.iter().any(|l| l.contains("pin 1 put")), "{out:?}");
+        let out = run(&mut app, "god.pins");
+        assert!(out.iter().any(|l| l.contains("--start")), "{out:?}");
+        app.update();
+        assert_eq!(app.world().resource::<RideView>().pins.len(), 1);
+        run(&mut app, "god.inspect off");
+        app.update();
+        let f = app.world().resource::<RideView>().flight.clone().unwrap();
+        assert!(f.panel.is_empty() && f.crosshair.is_none());
+        run(&mut app, "god.inspect on");
         run(&mut app, "god off");
         assert!(
             update_until(&mut app, |c| c.god().phase() == Phase::Riding),
@@ -633,5 +814,7 @@ mod tests {
         assert!(out.iter().any(|l| l.starts_with("riding")), "{out:?}");
         let s = app.world().resource::<ClientState>().0.state();
         assert!(s.speed < 3.0, "landed standing: {s:?}");
+        // The pins stay for the ride.
+        assert_eq!(app.world().resource::<RideView>().pins.len(), 1);
     }
 }

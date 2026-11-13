@@ -42,6 +42,7 @@ impl Plugin for UnicornPlugin {
                 (
                     sync_unicorns,
                     animate,
+                    impostors,
                     sparkles,
                     trails,
                     landing_ring,
@@ -329,9 +330,73 @@ fn at(t: Vec3) -> Transform {
     Transform::from_translation(t)
 }
 
-/// The unicorn's parts.
+/// The unicorn's level of detail (spec §14 Phase 13C: about 3k triangles
+/// near, 600 far, an impostor beyond 500 m – like the riders, §8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Lod {
+    Near,
+    Far,
+    /// A camera-facing card with a drawn unicorn ([`impostor_image`]).
+    Impostor,
+}
+
+/// The near model ends (the far one begins) at this distance (m) …
+pub const NEAR_END_M: f32 = 80.0;
+/// … the far model ends (the impostor begins) here.
+pub const FAR_END_M: f32 = 500.0;
+/// The models cross-fade over this part of each boundary (m, either side).
+const LOD_MARGIN_M: f32 = 10.0;
+
+impl Lod {
+    /// The level drawn at `distance_m` from the camera (the middle of the
+    /// cross-fade).
+    pub fn at(distance_m: f32) -> Self {
+        if distance_m < NEAR_END_M {
+            Lod::Near
+        } else if distance_m < FAR_END_M {
+            Lod::Far
+        } else {
+            Lod::Impostor
+        }
+    }
+
+    /// Bevy's visibility range of this level.
+    pub fn range(self) -> bevy::camera::visibility::VisibilityRange {
+        use bevy::camera::visibility::VisibilityRange;
+        let m = LOD_MARGIN_M;
+        match self {
+            Lod::Near => VisibilityRange {
+                start_margin: 0.0..0.0,
+                end_margin: NEAR_END_M - m..NEAR_END_M + m,
+                use_aabb: false,
+            },
+            Lod::Far => VisibilityRange {
+                start_margin: NEAR_END_M - m..NEAR_END_M + m,
+                end_margin: FAR_END_M - m..FAR_END_M + m,
+                use_aabb: false,
+            },
+            Lod::Impostor => VisibilityRange::abrupt(FAR_END_M, f32::MAX),
+        }
+    }
+}
+
+/// The unicorn's parts (the near model).
 pub fn model() -> Vec<Part> {
+    model_lod(Lod::Near)
+}
+
+/// The unicorn's parts at a level of detail: the far model has the same
+/// parts on the same joints with fewer sides, four feathers per wing and
+/// no eyes; the impostor has none (it is a card).
+pub fn model_lod(lod: Lod) -> Vec<Part> {
     let mut parts = Vec::new();
+    let near = match lod {
+        Lod::Near => true,
+        Lod::Far => false,
+        Lod::Impostor => return parts,
+    };
+    // Sides of a shape: the near count, or the far one.
+    let n = |near_count: u32, far_count: u32| if near { near_count } else { far_count };
     let mut add = |joint, paint, shape: Shape| {
         parts.push(Part {
             joint,
@@ -344,17 +409,19 @@ pub fn model() -> Vec<Part> {
     add(
         Body,
         Paint::Coat,
-        ellipsoid(Vec3::new(0.42, 0.46, 0.9), 12, 8),
+        ellipsoid(Vec3::new(0.42, 0.46, 0.9), n(12, 6), n(8, 4)),
     );
     add(
         Body,
         Paint::Coat,
-        ellipsoid(Vec3::new(0.4, 0.45, 0.45), 10, 7).transformed(at(Vec3::new(0.0, 0.05, -0.62))),
+        ellipsoid(Vec3::new(0.4, 0.45, 0.45), n(10, 5), n(7, 4))
+            .transformed(at(Vec3::new(0.0, 0.05, -0.62))),
     );
     add(
         Body,
         Paint::Coat,
-        ellipsoid(Vec3::new(0.42, 0.44, 0.46), 10, 7).transformed(at(Vec3::new(0.0, 0.04, 0.6))),
+        ellipsoid(Vec3::new(0.42, 0.44, 0.46), n(10, 5), n(7, 4))
+            .transformed(at(Vec3::new(0.0, 0.04, 0.6))),
     );
     // The saddle cloth in the rider's colour, with a golden trim.
     add(
@@ -368,38 +435,47 @@ pub fn model() -> Vec<Part> {
         slab(Vec3::new(0.94, 0.03, 0.68)).transformed(at(Vec3::new(0.0, 0.42, -0.05))),
     );
     // Neck: tilted forward (rest pose in [`pose`]).
-    add(Neck, Paint::Coat, tube(0.23, 0.16, 0.9, 9));
+    add(Neck, Paint::Coat, tube(0.23, 0.16, 0.9, n(9, 5)));
     // Head: skull, muzzle, eyes, ears, the horn.
     add(
         Head,
         Paint::Coat,
-        ellipsoid(Vec3::new(0.17, 0.2, 0.27), 10, 7).transformed(at(Vec3::new(0.0, 0.05, -0.12))),
+        ellipsoid(Vec3::new(0.17, 0.2, 0.27), n(10, 5), n(7, 4))
+            .transformed(at(Vec3::new(0.0, 0.05, -0.12))),
     );
     add(
         Head,
         Paint::Muzzle,
-        ellipsoid(Vec3::new(0.13, 0.14, 0.2), 9, 6).transformed(at(Vec3::new(0.0, -0.03, -0.42))),
+        ellipsoid(Vec3::new(0.13, 0.14, 0.2), n(9, 4), n(6, 3))
+            .transformed(at(Vec3::new(0.0, -0.03, -0.42))),
     );
     for x in [-0.135, 0.135] {
-        add(
-            Head,
-            Paint::Eye,
-            ellipsoid(Vec3::splat(0.035), 6, 4).transformed(at(Vec3::new(x, 0.11, -0.24))),
-        );
+        if near {
+            add(
+                Head,
+                Paint::Eye,
+                ellipsoid(Vec3::splat(0.035), 6, 4).transformed(at(Vec3::new(x, 0.11, -0.24))),
+            );
+        }
         add(
             Head,
             Paint::Coat,
-            tube(0.05, 0.0, 0.17, 5).transformed(Transform {
+            tube(0.05, 0.0, 0.17, n(5, 3)).transformed(Transform {
                 translation: Vec3::new(x * 0.6, 0.21, -0.02),
                 rotation: Quat::from_rotation_z(-x * 2.0),
                 ..default()
             }),
         );
     }
+    let horn_shape = if near {
+        horn(0.48, 0.055, 3.0)
+    } else {
+        tube(0.055, 0.0, 0.48, 4)
+    };
     add(
         Head,
         Paint::Gold,
-        horn(0.48, 0.055, 3.0).transformed(Transform {
+        horn_shape.transformed(Transform {
             translation: Vec3::new(0.0, 0.2, -0.24),
             rotation: Quat::from_rotation_x(-0.85),
             ..default()
@@ -410,17 +486,17 @@ pub fn model() -> Vec<Part> {
         add(
             Hip(leg),
             Paint::Coat,
-            tube(0.11, 0.075, 0.55, 7).transformed(flip()),
+            tube(0.11, 0.075, 0.55, n(7, 4)).transformed(flip()),
         );
         add(
             Knee(leg),
             Paint::Coat,
-            tube(0.07, 0.06, 0.48, 7).transformed(flip()),
+            tube(0.07, 0.06, 0.48, n(7, 4)).transformed(flip()),
         );
         add(
             Knee(leg),
             Paint::Gold,
-            tube(0.085, 0.075, 0.12, 7).transformed(Transform {
+            tube(0.085, 0.075, 0.12, n(7, 4)).transformed(Transform {
                 translation: Vec3::new(0.0, -0.48, 0.0),
                 rotation: Quat::from_rotation_x(PI),
                 ..default()
@@ -428,32 +504,37 @@ pub fn model() -> Vec<Part> {
         );
     }
     // Wings: a covert along the arm and twelve flight feathers fanning
-    // from it (the right wing along +x, the left mirrored).
+    // from it (the right wing along +x, the left mirrored); four broader
+    // ones far away.
+    let feathers: u32 = n(12, 4);
     for side in 0..2u8 {
         let sx = if side == 0 { -1.0 } else { 1.0 };
         add(
             Wing(side),
             Paint::Feather,
-            ellipsoid(Vec3::new(0.78, 0.06, 0.17), 10, 6).transformed(at(Vec3::new(
+            ellipsoid(Vec3::new(0.78, 0.06, 0.17), n(10, 5), n(6, 3)).transformed(at(Vec3::new(
                 sx * 0.78,
                 0.0,
                 0.0,
             ))),
         );
-        for k in 0..12 {
-            let t = k as f32 / 11.0;
+        for k in 0..feathers {
+            let t = k as f32 / (feathers - 1) as f32;
             let a = t.powf(1.5) * 1.15 * sx;
             let len = 0.5 + 0.55 * t.powf(0.8);
+            let width = if near { 0.075 } else { 0.2 };
             let dir = Vec3::new(a.sin(), 0.0, a.cos());
             let base = Vec3::new(sx * (0.12 + 1.42 * t), -0.01 * k as f32 * 0.2, 0.06);
             add(
                 Wing(side),
                 Paint::Feather,
-                ellipsoid(Vec3::new(0.075, 0.016, len / 2.0), 6, 4).transformed(Transform {
-                    translation: base + dir * (len / 2.0),
-                    rotation: Quat::from_rotation_y(a),
-                    ..default()
-                }),
+                ellipsoid(Vec3::new(width, 0.016, len / 2.0), n(6, 4), n(4, 2)).transformed(
+                    Transform {
+                        translation: base + dir * (len / 2.0),
+                        rotation: Quat::from_rotation_y(a),
+                        ..default()
+                    },
+                ),
             );
         }
     }
@@ -464,11 +545,69 @@ pub fn model() -> Vec<Part> {
         add(
             Mane(i),
             paint,
-            ellipsoid(Vec3::new(0.03, 0.11, 0.15), 6, 4).transformed(at(Vec3::new(0.0, 0.0, 0.11))),
+            ellipsoid(Vec3::new(0.03, 0.11, 0.15), n(6, 3), n(4, 2))
+                .transformed(at(Vec3::new(0.0, 0.0, 0.11))),
         );
-        add(Tail(i), Paint::Band(i), tube(0.055, 0.012, 1.1, 5));
+        add(Tail(i), Paint::Band(i), tube(0.055, 0.012, 1.1, n(5, 3)));
     }
     parts
+}
+
+/// Size of the impostor's picture (px).
+pub const IMPOSTOR_PX: (u32, u32) = (64, 48);
+
+/// The impostor's picture (RGBA8, row-major from the top): the unicorn
+/// seen from the side – white body and head, raised wings, a golden horn,
+/// a rainbow tail – on a transparent ground.
+pub fn impostor_image() -> Vec<[u8; 4]> {
+    let (w, h) = IMPOSTOR_PX;
+    let mut px = vec![[0u8; 4]; (w * h) as usize];
+    // Shapes in unit coordinates (x right, y up; 0 … 1).
+    let ellipse = |x: f32, y: f32, cx: f32, cy: f32, rx: f32, ry: f32| {
+        ((x - cx) / rx).powi(2) + ((y - cy) / ry).powi(2) <= 1.0
+    };
+    let segment = |x: f32, y: f32, a: (f32, f32), b: (f32, f32), r: f32| {
+        let (abx, aby) = (b.0 - a.0, b.1 - a.1);
+        let t = (((x - a.0) * abx + (y - a.1) * aby) / (abx * abx + aby * aby)).clamp(0.0, 1.0);
+        (x - a.0 - abx * t).hypot(y - a.1 - aby * t) <= r
+    };
+    for j in 0..h {
+        for i in 0..w {
+            let x = (i as f32 + 0.5) / w as f32;
+            let y = 1.0 - (j as f32 + 0.5) / h as f32;
+            let mut c = None;
+            // The rainbow tail streaming back (left).
+            for (k, v) in RAINBOW.iter().enumerate() {
+                let off = k as f32 * 0.018;
+                if segment(x, y, (0.24, 0.5 - off), (0.04, 0.36 - off), 0.012) {
+                    c = Some([(v >> 16) as u8, (v >> 8) as u8, *v as u8, 255]);
+                }
+            }
+            // The wings, raised.
+            if segment(x, y, (0.42, 0.55), (0.3, 0.95), 0.06)
+                || segment(x, y, (0.5, 0.55), (0.46, 0.92), 0.05)
+            {
+                c = Some([235, 232, 245, 255]);
+            }
+            // Body, neck, head; legs.
+            if ellipse(x, y, 0.45, 0.45, 0.22, 0.12)
+                || segment(x, y, (0.62, 0.5), (0.74, 0.66), 0.05)
+                || ellipse(x, y, 0.8, 0.66, 0.08, 0.05)
+                || segment(x, y, (0.33, 0.38), (0.28, 0.16), 0.022)
+                || segment(x, y, (0.56, 0.38), (0.64, 0.18), 0.022)
+            {
+                c = Some([250, 248, 252, 255]);
+            }
+            // The horn.
+            if segment(x, y, (0.84, 0.7), (0.95, 0.86), 0.012) {
+                c = Some([255, 200, 64, 255]);
+            }
+            if let Some(c) = c {
+                px[(j * w + i) as usize] = c;
+            }
+        }
+    }
+    px
 }
 
 /// Turns a +y shape to point down (legs hang from their joints).
@@ -659,6 +798,80 @@ struct Trail {
 #[derive(Component)]
 struct LandingRing;
 
+/// The camera-facing card of a far unicorn ([`Lod::Impostor`]).
+#[derive(Component)]
+struct Impostor {
+    id: RiderId,
+}
+
+/// The impostor's card (a quad 1 m high, its picture's aspect) and its
+/// unlit, alpha-masked material.
+fn impostor_assets(
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    images: &mut Assets<Image>,
+) -> (Handle<Mesh>, Handle<StandardMaterial>) {
+    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+    let (w, h) = IMPOSTOR_PX;
+    let data: Vec<u8> = impostor_image().into_iter().flatten().collect();
+    let image = Image::new(
+        Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    let mesh = meshes.add(Rectangle::new(w as f32 / h as f32, 1.0));
+    let material = materials.add(StandardMaterial {
+        base_color_texture: Some(images.add(image)),
+        alpha_mode: AlphaMode::Mask(0.5),
+        unlit: true,
+        double_sided: true,
+        cull_mode: None,
+        ..default()
+    });
+    (mesh, material)
+}
+
+/// The impostor's height (m) at `distance_m` from the camera: the
+/// unicorn's size (2.6 m), growing far away so it stays a few pixels
+/// tall (a beacon of the rider in the sky).
+pub fn impostor_height(distance_m: f32) -> f32 {
+    (distance_m * 0.006).max(2.6)
+}
+
+/// Turns the impostor cards to the camera, at their unicorn, flipped so
+/// the head points the way it flies (seen from the camera).
+fn impostors(
+    view: Res<RideView>,
+    cameras: Query<&GlobalTransform, With<FollowCamera>>,
+    mut cards: Query<(&Impostor, &mut Transform)>,
+) {
+    let Some(cam) = cameras.iter().next() else {
+        return;
+    };
+    let eye = cam.translation();
+    for (card, mut t) in &mut cards {
+        let Some(v) = view.unicorns.iter().find(|v| v.id == card.id) else {
+            continue;
+        };
+        let at = to_vec3(v.pos);
+        let to_cam = (eye - at).with_y(0.0).normalize_or(Vec3::Z);
+        let h = impostor_height(eye.distance(at));
+        // The flight direction seen from the camera: left or right.
+        let right = Vec3::Y.cross(to_cam);
+        let heading = crate::camera::view_direction(v.yaw, 0.0);
+        let flip = if heading.dot(right) < 0.0 { -1.0 } else { 1.0 };
+        *t = Transform::from_translation(at)
+            .looking_to(-to_cam, Vec3::Y)
+            .with_scale(Vec3::new(flip * h, h, h));
+    }
+}
+
 #[derive(Component)]
 struct NameTag;
 
@@ -668,7 +881,10 @@ struct Unicorns {
     roots: BTreeMap<RiderId, (Entity, Vec3)>,
     trails: BTreeMap<RiderId, Entity>,
     tags: BTreeMap<RiderId, Entity>,
-    meshes: Vec<(Joint, Paint, Handle<Mesh>)>,
+    meshes: Vec<(Joint, Paint, Lod, Handle<Mesh>)>,
+    /// The impostor card of each unicorn, its mesh and material.
+    impostors: BTreeMap<RiderId, Entity>,
+    impostor: Option<(Handle<Mesh>, Handle<StandardMaterial>)>,
     materials: BTreeMap<(Paint, u32), Handle<StandardMaterial>>,
     sparkle_mesh: Option<Handle<Mesh>>,
     sparkle_materials: Vec<Handle<StandardMaterial>>,
@@ -813,14 +1029,25 @@ fn sync_unicorns(
     mut u: ResMut<Unicorns>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: Option<ResMut<Assets<Image>>>,
     roots: Query<(), With<UnicornRoot>>,
 ) {
     let u = &mut *u;
     if u.meshes.is_empty() {
-        u.meshes = model()
-            .iter()
-            .map(|p| (p.joint, p.paint, meshes.add(to_mesh(&p.shape))))
+        u.meshes = [Lod::Near, Lod::Far]
+            .into_iter()
+            .flat_map(|lod| {
+                model_lod(lod)
+                    .into_iter()
+                    .map(move |p| (p.joint, p.paint, lod, p.shape))
+            })
+            .map(|(j, p, lod, shape)| (j, p, lod, meshes.add(to_mesh(&shape))))
             .collect();
+    }
+    if u.impostor.is_none()
+        && let Some(images) = images.as_deref_mut()
+    {
+        u.impostor = Some(impostor_assets(&mut meshes, &mut materials, images));
     }
     // Gone: back into the rider, with a sparkle burst.
     let present: Vec<RiderId> = view.unicorns.iter().map(|v| v.id).collect();
@@ -834,6 +1061,9 @@ fn sync_unicorns(
         let (e, at) = u.roots.remove(&id).expect("listed");
         if roots.contains(e) {
             commands.entity(e).despawn();
+        }
+        if let Some(i) = u.impostors.remove(&id) {
+            commands.entity(i).despawn();
         }
         burst(&mut commands, u, &mut meshes, &mut materials, at);
     }
@@ -867,7 +1097,7 @@ fn sync_unicorns(
                 .id();
             joints.insert(d.joint, e);
         }
-        for (joint, paint, mesh) in &u.meshes {
+        for (joint, paint, lod, mesh) in &u.meshes {
             let key = (*paint, if *paint == Paint::Rider { rider } else { 0 });
             let material = u
                 .materials
@@ -878,8 +1108,24 @@ fn sync_unicorns(
                 Mesh3d(mesh.clone()),
                 MeshMaterial3d(material),
                 Transform::default(),
+                lod.range(),
                 ChildOf(joints[joint]),
             ));
+        }
+        if let Some((mesh, material)) = &u.impostor {
+            let card = commands
+                .spawn((
+                    Mesh3d(mesh.clone()),
+                    MeshMaterial3d(material.clone()),
+                    Transform::from_translation(to_vec3(v.pos)),
+                    Lod::Impostor.range(),
+                    bevy::light::NotShadowCaster,
+                    Impostor { id: v.id },
+                ))
+                .id();
+            if let Some(old) = u.impostors.insert(v.id, card) {
+                commands.entity(old).despawn();
+            }
         }
         commands.entity(root).insert(UnicornRig {
             joints,
@@ -1307,6 +1553,46 @@ mod tests {
             let c = Vec3::new(0.0, 0.5, 0.0);
             assert!((Vec3::from(*p) - c).dot(Vec3::from(*n)) > -1e-6);
         }
+    }
+
+    /// LOD (spec §14 Phase 13C): about 3k triangles near, ~600 far, an
+    /// impostor card beyond 500 m.
+    #[test]
+    fn the_levels_of_detail_and_the_impostor() {
+        let tris = |lod| -> usize { model_lod(lod).iter().map(|p| p.shape.triangles()).sum() };
+        let (near, far) = (tris(Lod::Near), tris(Lod::Far));
+        assert!((2_500..=3_500).contains(&near), "near {near}");
+        assert!((450..=800).contains(&far), "far {far}");
+        assert_eq!(tris(Lod::Impostor), 0);
+        // The far model keeps every joint moving (wings, mane, tail, legs).
+        let joints = |lod| {
+            let mut j: Vec<Joint> = model_lod(lod).iter().map(|p| p.joint).collect();
+            j.sort();
+            j.dedup();
+            j
+        };
+        assert_eq!(joints(Lod::Near), joints(Lod::Far));
+        assert_eq!(Lod::at(8.0), Lod::Near);
+        assert_eq!(Lod::at(79.0), Lod::Near);
+        assert_eq!(Lod::at(120.0), Lod::Far);
+        assert_eq!(Lod::at(499.0), Lod::Far);
+        assert_eq!(Lod::at(501.0), Lod::Impostor);
+        assert_eq!(Lod::at(5_000.0), Lod::Impostor);
+        // The ranges meet: where one fades out the next fades in.
+        assert_eq!(Lod::Near.range().end_margin, Lod::Far.range().start_margin);
+        assert!(Lod::Far.range().end_margin.contains(&FAR_END_M));
+        // The card: a white unicorn on a transparent ground, rainbow tail.
+        let img = impostor_image();
+        let (w, h) = IMPOSTOR_PX;
+        assert_eq!(img.len(), (w * h) as usize);
+        assert_eq!(img[0][3], 0, "transparent corner");
+        let opaque = img.iter().filter(|p| p[3] == 255).count();
+        assert!(opaque > img.len() / 8 && opaque < img.len() / 2, "{opaque}");
+        assert!(
+            img.iter()
+                .any(|p| p[3] == 255 && p[0] > 240 && p[1] > 240 && p[2] > 240)
+        );
+        assert!(impostor_height(10.0) >= 2.6 && impostor_height(3_000.0) > 10.0);
     }
 
     #[test]

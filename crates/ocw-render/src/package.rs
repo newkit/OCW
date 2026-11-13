@@ -44,6 +44,7 @@ use ocw_world::{Frame, RoadSurface, WorldSet};
 use crate::RideView;
 use crate::building_material::{BuildingMaterial, HouseMaterial};
 use crate::camera::{CameraInteraction, CameraObstacles, ObstacleLayer, SolidFootprints};
+use crate::flight_world::{FlightObstacles, StreamFocus, TileDetail};
 use crate::ground::{TerrainMaterial, terrain_material};
 use crate::materials::MaterialLibrary;
 use crate::road_material::{RoadExtension, RoadMaterial};
@@ -103,6 +104,7 @@ impl Plugin for PackagePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TileStreamer>()
             .init_resource::<NeighbourLoads>()
+            .init_resource::<crate::flight_world::FlightObstacles>()
             .init_resource::<crate::far_terrain::FarTerrain>()
             .add_systems(Startup, setup_materials)
             .add_systems(
@@ -117,7 +119,8 @@ impl Plugin for PackagePlugin {
                     .chain()
                     .run_if(resource_exists::<PackageWorld>),
             )
-            .add_systems(Update, crate::far_terrain::package_view);
+            .add_systems(Update, crate::far_terrain::package_view)
+            .add_systems(Update, crate::flight_world::show_details);
     }
 }
 
@@ -191,6 +194,9 @@ pub struct TileMeshes {
     pub bridges: MeshArrays,
     /// The buildings as camera-solid obstacles.
     pub solid: SolidFootprints,
+    /// The tree crowns as obstacles of god mode's flight (spec §14 Phase
+    /// 13B; not of the camera: trees are see-through).
+    pub crowns: crate::flight_world::TreeCrowns,
     /// Near tint of the ground layers ([`TileLook::near_tint`]).
     pub near_tint: Option<[[f32; 3]; crate::ground::GROUND_LAYERS]>,
 }
@@ -580,7 +586,7 @@ fn hash(x: i64, z: i64, seed: u64) -> f32 {
 }
 
 /// Crown of a package tree (scale 1): bottom, tip and radius in metres.
-const CROWN: (f32, f32, f32) = (1.8, 9.0, 2.2);
+pub(crate) const CROWN: (f32, f32, f32) = (1.8, 9.0, 2.2);
 
 /// Where a tree stands (foot of the trunk) and its scale.
 pub type TreeSite = (Vec3, f32);
@@ -1171,6 +1177,7 @@ pub fn build_tile_meshes_look(
             water_arrays_kept(pkg, tile, lu, keep)
         }),
         trees: tree_arrays(&sites),
+        crowns: crate::flight_world::TreeCrowns::from_sites(&sites),
         houses,
         bridges: crate::bridges::bridge_arrays(&own),
         solid,
@@ -1270,21 +1277,31 @@ pub(crate) fn reset_streaming(world: &mut World) {
     }
 }
 
-/// The local rider's position in home metres.
+/// The local rider's position in home metres (in god mode the unicorn's).
 fn rider_position(view: &RideView) -> Option<[f64; 2]> {
-    // God mode (spec §14 Phase 13D): the tiles stream around the unicorn.
-    if let Some(f) = &view.flight {
-        return Some([f.pos[0], f.pos[2]]);
+    crate::flight_world::stream_focus(view).map(|f| f.centre)
+}
+
+/// Riding: the tiles within [`STREAM_RADIUS`] of `p`.
+fn riding_focus(p: [f64; 2]) -> StreamFocus {
+    StreamFocus {
+        centre: p,
+        radius: STREAM_RADIUS,
+        ahead: None,
     }
-    let local = view.local()?;
-    let p = view.track(local.id).sample(local.state.distance).position;
-    Some([p[0], p[2]])
 }
 
 /// The tiles to show around `p` (home metres), nearest first: of every
 /// package with loaded tiles, those within [`STREAM_RADIUS`].
 pub fn wanted_tiles(set: &WorldSet, p: [f64; 2]) -> Vec<TileId> {
-    wanted_tile_rings(set, p)
+    wanted_tiles_for(set, &riding_focus(p))
+}
+
+/// The tiles to show for `focus` (god mode: wider with the height and
+/// ahead of the flight, [`crate::flight_world::stream_focus`]), nearest to
+/// its centre first.
+pub fn wanted_tiles_for(set: &WorldSet, focus: &StreamFocus) -> Vec<TileId> {
+    wanted_tile_rings(set, focus)
         .into_iter()
         .map(|(_, id)| id)
         .collect()
@@ -1293,7 +1310,7 @@ pub fn wanted_tiles(set: &WorldSet, p: [f64; 2]) -> Vec<TileId> {
 /// The tiles [`urgent_tiles`] builds at once after a jump: of the
 /// [`wanted_tiles`], those up to [`URGENT_RING`], nearest first.
 pub fn urgent_tiles(set: &WorldSet, p: [f64; 2]) -> Vec<TileId> {
-    wanted_tile_rings(set, p)
+    wanted_tile_rings(set, &riding_focus(p))
         .into_iter()
         .filter(|&(ring, _)| ring <= URGENT_RING)
         .map(|(_, id)| id)
@@ -1306,24 +1323,34 @@ pub fn is_jump(last: Option<[f64; 2]>, p: [f64; 2]) -> bool {
     last.is_none_or(|q| (p[0] - q[0]).hypot(p[1] - q[1]) > JUMP_M)
 }
 
-/// [`wanted_tiles`] with their ring around the rider.
-fn wanted_tile_rings(set: &WorldSet, p: [f64; 2]) -> Vec<(i32, TileId)> {
+/// [`wanted_tiles_for`] with their ring around the focus' centre.
+fn wanted_tile_rings(set: &WorldSet, focus: &StreamFocus) -> Vec<(i32, TileId)> {
     let mut out: Vec<(i32, TileId)> = Vec::new();
     for (i, m) in set.members().iter().enumerate() {
         let Some(pkg) = m.package() else {
             continue;
         };
-        let centre = TileKey::containing(m.frame.invert(p), f64::from(pkg.tile_size_m));
-        for dz in -STREAM_RADIUS..=STREAM_RADIUS {
-            for dx in -STREAM_RADIUS..=STREAM_RADIUS {
-                let key = TileKey {
-                    x: centre.x + dx,
-                    z: centre.z + dz,
-                };
-                if pkg.tiles.contains_key(&key) {
-                    out.push((key.ring(centre), (i, key)));
+        let size = f64::from(pkg.tile_size_m);
+        let centre = TileKey::containing(m.frame.invert(focus.centre), size);
+        let ahead = focus
+            .ahead
+            .map(|a| TileKey::containing(m.frame.invert(a), size));
+        let mut add = |around: TileKey, radius: i32| {
+            for dz in -radius..=radius {
+                for dx in -radius..=radius {
+                    let key = TileKey {
+                        x: around.x + dx,
+                        z: around.z + dz,
+                    };
+                    if pkg.tiles.contains_key(&key) && !out.iter().any(|(_, t)| *t == (i, key)) {
+                        out.push((key.ring(centre), (i, key)));
+                    }
                 }
             }
+        };
+        add(centre, focus.radius);
+        if let Some(a) = ahead {
+            add(a, crate::flight_world::AHEAD_RADIUS);
         }
     }
     out.sort_by_key(|&(ring, (i, _))| (ring, i));
@@ -1336,6 +1363,16 @@ pub fn far_tiles<'a>(
     p: [f64; 2],
     loaded: impl IntoIterator<Item = &'a TileId>,
 ) -> Vec<TileId> {
+    far_tiles_for(set, &riding_focus(p), loaded)
+}
+
+/// [`far_tiles`] for a [`StreamFocus`]: beyond one ring more than wanted
+/// around its centre and around the point ahead.
+pub fn far_tiles_for<'a>(
+    set: &WorldSet,
+    focus: &StreamFocus,
+    loaded: impl IntoIterator<Item = &'a TileId>,
+) -> Vec<TileId> {
     loaded
         .into_iter()
         .filter(|(i, key)| {
@@ -1343,8 +1380,13 @@ pub fn far_tiles<'a>(
             match m.package() {
                 None => true,
                 Some(pkg) => {
-                    let centre = TileKey::containing(m.frame.invert(p), f64::from(pkg.tile_size_m));
-                    key.ring(centre) > STREAM_RADIUS + 1
+                    let size = f64::from(pkg.tile_size_m);
+                    let centre = TileKey::containing(m.frame.invert(focus.centre), size);
+                    let near_ahead = focus.ahead.is_some_and(|a| {
+                        let a = TileKey::containing(m.frame.invert(a), size);
+                        key.ring(a) <= crate::flight_world::AHEAD_RADIUS + 1
+                    });
+                    key.ring(centre) > focus.radius + 1 && !near_ahead
                 }
             }
         })
@@ -1397,7 +1439,8 @@ fn load_neighbours(
         }
     }
     let loading: BTreeSet<usize> = loads.tasks.keys().copied().collect();
-    for r in world.set.plan_residency(p, &loading) {
+    let reach = crate::flight_world::neighbour_reach_m(&view);
+    for r in world.set.plan_residency_reach(p, reach, &loading) {
         match r {
             Residency::Load(i) => {
                 let Some(loader) = world.loader.clone() else {
@@ -1431,12 +1474,14 @@ fn stream_tiles(
     view: Res<RideView>,
     mut streamer: ResMut<TileStreamer>,
     mut obstacles: ResMut<CameraObstacles>,
+    mut flight_obstacles: ResMut<crate::flight_world::FlightObstacles>,
     library: Option<Res<MaterialLibrary>>,
 ) {
     let set = &world.set;
-    let Some(p) = rider_position(&view) else {
+    let Some(focus) = crate::flight_world::stream_focus(&view) else {
         return;
     };
+    let p = focus.centre;
     // The world date (the sky's local date at the rider, spec §14 Phase 9),
     // in buckets of a few days: the seasonal look changes with it.
     let season = view.sky.as_ref().map(|s| {
@@ -1489,7 +1534,7 @@ fn stream_tiles(
     }
     let jumped = is_jump(streamer.last_position, p);
     streamer.last_position = Some(p);
-    let wanted = wanted_tiles(set, p);
+    let wanted = wanted_tiles_for(set, &focus);
     if jumped {
         // Work for the old place is dropped (its tiles go below).
         streamer.building.retain(|id, _| wanted.contains(id));
@@ -1539,11 +1584,14 @@ fn stream_tiles(
             }
         }
     }
-    let far = far_tiles(set, p, streamer.loaded.keys());
+    let far = far_tiles_for(set, &focus, streamer.loaded.keys());
     for id in far {
         if let Some(e) = streamer.loaded.remove(&id) {
             commands.entity(e).despawn();
             obstacles.remove_tile(id.0 as u32, (id.1.x, id.1.z));
+            flight_obstacles
+                .0
+                .remove_tile(id.0 as u32, (id.1.x, id.1.z));
         }
         streamer.building.remove(&id);
         streamer.ready.retain(|(r, _)| *r != id);
@@ -1566,7 +1614,7 @@ fn upload_tiles(
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
     mut terrain: ResMut<Assets<TerrainMaterial>>,
-    mut obstacles: ResMut<CameraObstacles>,
+    (mut obstacles, mut flight_obstacles): (ResMut<CameraObstacles>, ResMut<FlightObstacles>),
     tunnels: Option<Res<crate::tunnel::Tunnels>>,
     (library, mut road_materials, mut textured_roads): RoadParams,
     house: Option<Res<HouseMaterial>>,
@@ -1600,7 +1648,7 @@ fn upload_tiles(
             &mut streamer,
             &materials,
             (&mut meshes, &mut images, &mut terrain),
-            &mut obstacles,
+            (&mut obstacles, &mut flight_obstacles),
             cut,
             (
                 library,
@@ -1624,7 +1672,7 @@ fn upload_tile(
         &mut Assets<Image>,
         &mut Assets<TerrainMaterial>,
     ),
-    obstacles: &mut CameraObstacles,
+    (obstacles, flight_obstacles): (&mut CameraObstacles, &mut FlightObstacles),
     cut: &TunnelCut,
     (library, textured_roads, house): (
         Option<&MaterialLibrary>,
@@ -1643,6 +1691,22 @@ fn upload_tile(
     let tile = (t.key.x, t.key.z);
     let package = id.0 as u32;
     obstacles.remove_tile(package, tile);
+    flight_obstacles.0.remove_tile(package, tile);
+    // The tree crowns: only the flight keeps clear of them.
+    let crowns = std::mem::take(&mut t.crowns);
+    if !crowns.is_empty() {
+        flight_obstacles.0.insert(
+            ObstacleLayer {
+                kind: "trees",
+                package,
+                tile,
+            },
+            move |x, z| {
+                let q = frame.invert([x, z]);
+                crowns.top_at(q[0] as f32, q[1] as f32).map(f64::from)
+            },
+        );
+    }
     let solid = std::mem::take(&mut t.solid);
     if !solid.is_empty() {
         obstacles.insert(
@@ -1726,7 +1790,7 @@ fn upload_tile(
                     Some(h) => c.spawn((mesh, MeshMaterial3d(h.clone()))),
                     None => c.spawn((mesh, MeshMaterial3d(mat.clone()))),
                 };
-                e.insert((at, range, CameraInteraction::Solid));
+                e.insert((at, range, CameraInteraction::Solid, TileDetail));
                 if !shadows {
                     e.insert(NotShadowCaster);
                 }
@@ -1762,6 +1826,7 @@ fn upload_tile(
                     Mesh3d(meshes.add(t.trees.mesh())),
                     MeshMaterial3d(materials.trees.clone()),
                     CameraInteraction::SeeThrough,
+                    TileDetail,
                 ));
             }
         })

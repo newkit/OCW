@@ -356,6 +356,25 @@ at = ["1=time 14:00", "4=god on", "5.5=god.cruise 1 0.4 0", "9=god.cruise 1 0 10
 warmup = 3
 video = 14
 
+# God mode's inspection (spec §14 Phase 13D, G3): the panel (position,
+# latitude / longitude, tile, local time), the crosshair naming what it
+# points at, a pin (P) as a magenta beam.
+[[scene]]
+name = "god-inspect-vaduz"
+description = "God mode inspection over Vaduz (G3): the crosshair names the road below it (name, OSM way, class, surface, width, gradient) and the area, the panel shows position, latitude / longitude, tile and local time, a pin stands on the road"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "0"]
+at = ["1=time 14:00", "3=god on", "4=god.pose here here 40 here -55", "5.5=god.pin", "6=god.pose here here 60 here -35", "7.5=god.inspect", "7.6=god.pins"]
+shot = 9
+
+[[scene]]
+name = "god-inspect-tenerife"
+description = "God mode inspection over Las Cañadas on Tenerife (G3): the crosshair on the TF-21 below the Teide, the panel with position, latitude / longitude, tile and the local time (WET)"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-7500,5260", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-11-13 14:00", "3=god on", "4=god.pose here here 40 here -55", "5.5=god.pin", "6=god.pose here here 120 here -35", "7.5=god.inspect", "7.6=god.pins"]
+shot = 10
+
 [[scene]]
 name = "rhine-water"
 description = "The Rhine at Vaduz from above: water surface, the dam track, meadows and land use"
