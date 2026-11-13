@@ -7,23 +7,20 @@
 //! a tunnel the camera saw a dark-green wall of (forest-coloured) terrain
 //! inside the tube instead of the tube's interior. The terrain is therefore
 //! drawn with [`TerrainMaterial`]: a [`StandardMaterial`] whose fragment
-//! shader (`tunnel_cut.wesl`) discards every terrain fragment inside the
-//! tube near the rider. The tube is given as short straight [`CutPiece`]s
+//! shader (`ground.wesl`, which also draws the ground materials,
+//! [`crate::ground`]) discards every terrain fragment inside the tube near
+//! the rider. The tube is given as short straight [`CutPiece`]s
 //! along the track where the terrain can reach into it (the portals);
 //! inside the hill, where the terrain is well above the crown, there is
 //! nothing to cut. [`inside`] is the CPU twin of the shader, for the tests.
 
-use bevy::asset::{AssetPath, embedded_asset, embedded_path};
-use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialPlugin};
+use bevy::asset::embedded_asset;
+use bevy::pbr::MaterialPlugin;
 use bevy::prelude::*;
-use bevy::render::render_resource::AsBindGroup;
-use bevy::shader::ShaderRef;
 use ocw_world::Track;
 
+pub use crate::ground::{TerrainMaterial, terrain_material};
 use crate::tunnel::{TUBE_CROWN_M, TUBE_SIDE_M, TUBE_WALL_M};
-
-/// The terrain's material: standard, with the tunnel tubes cut out.
-pub type TerrainMaterial = ExtendedMaterial<StandardMaterial, TunnelCut>;
 
 /// At most this many pieces are cut at a time (the nearest to the rider).
 pub const MAX_CUT_PIECES: usize = 64;
@@ -51,16 +48,14 @@ pub struct CutPiece {
     pub grade: f32,
 }
 
-/// The cut pieces (one uniform, binding 100 after the standard material's
-/// bindings).
-#[derive(Asset, AsBindGroup, Reflect, Debug, Clone, PartialEq)]
+/// The cut pieces (the uniform at binding 100 of the terrain material,
+/// [`crate::ground::GroundExtension`]).
+#[derive(Reflect, Debug, Clone, PartialEq)]
 pub struct TunnelCut {
     /// x: number of pieces; y: tube wall height; z: crown height (m).
-    #[uniform(100)]
     pub shape: Vec4,
     /// Two per piece: (centre xyz, half length), (direction xz, half
     /// width, grade).
-    #[uniform(100)]
     pub pieces: [Vec4; 2 * MAX_CUT_PIECES],
 }
 
@@ -99,24 +94,8 @@ impl TunnelCut {
     }
 }
 
-impl MaterialExtension for TunnelCut {
-    fn fragment_shader() -> ShaderRef {
-        ShaderRef::Path(
-            AssetPath::from_path_buf(embedded_path!("tunnel_cut.wesl")).with_source("embedded"),
-        )
-    }
-}
-
-/// A terrain material on top of `base`, cut by `cut`.
-pub fn terrain_material(base: StandardMaterial, cut: &TunnelCut) -> TerrainMaterial {
-    ExtendedMaterial {
-        base,
-        extension: cut.clone(),
-    }
-}
-
 /// Whether a terrain fragment at `p` is inside one of the tubes (and is
-/// not drawn); mirrors `tunnel_cut.wesl`. The tube's cross-section: walls
+/// not drawn); mirrors `ground.wesl`. The tube's cross-section: walls
 /// up to the wall height, then a half ellipse up to the crown, from the
 /// road surface up.
 pub fn inside(p: Vec3, cut: &TunnelCut) -> bool {
@@ -191,7 +170,7 @@ pub struct TunnelCutPlugin;
 
 impl Plugin for TunnelCutPlugin {
     fn build(&self, app: &mut App) {
-        embedded_asset!(app, "tunnel_cut.wesl");
+        embedded_asset!(app, "ground.wesl");
         app.add_plugins(MaterialPlugin::<TerrainMaterial>::default())
             .add_systems(
                 PostUpdate,
@@ -209,12 +188,12 @@ fn update_cuts(
     let cut = &tunnels.cut;
     let stale: Vec<_> = materials
         .iter()
-        .filter(|(_, m)| m.extension != *cut)
+        .filter(|(_, m)| m.extension.cut() != *cut)
         .map(|(id, _)| id)
         .collect();
     for id in stale {
         if let Some(mut m) = materials.get_mut(id) {
-            m.extension = cut.clone();
+            m.extension.set_cut(cut);
         }
     }
 }
@@ -338,6 +317,6 @@ mod tests {
         app.world_mut().resource_mut::<crate::tunnel::Tunnels>().cut = TunnelCut::new(&[piece]);
         app.update();
         let mats = app.world().resource::<Assets<TerrainMaterial>>();
-        assert_eq!(mats.get(&a).unwrap().extension.len(), 1);
+        assert_eq!(mats.get(&a).unwrap().extension.cut().len(), 1);
     }
 }

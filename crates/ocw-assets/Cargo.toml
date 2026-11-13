@@ -10,6 +10,14 @@ publish.workspace = true
 [[bin]]
 name = "ocw-assets"
 path = "src/bin/ocw-assets.rs"
+required-features = ["tools"]
+
+[features]
+# The command-line tool: material fetch and conversion (download, zip,
+# JPEG / PNG decoding, BC compression). The app (ocw-render) does not
+# need them; it only reads the converted KTX2 files.
+default = ["tools"]
+tools = ["dep:image", "dep:texpresso", "dep:ureq", "dep:zip"]
 
 [dependencies]
 ocw-core.workspace = true
@@ -22,6 +30,13 @@ serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
 clap.workspace = true
+# Material library (spec §4.6, Phase 8 T1): pins and KTX2 reading.
+sha2.workspace = true
+ktx2.workspace = true
+image = { workspace = true, optional = true }
+texpresso = { workspace = true, optional = true }
+ureq = { workspace = true, optional = true }
+zip = { workspace = true, optional = true }
 
 [lints]
 workspace = true

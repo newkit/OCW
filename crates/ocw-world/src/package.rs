@@ -53,6 +53,7 @@ use crate::look::{
     write_palette, write_roofs, write_seasons,
 };
 use crate::region::{PackageRegion, REGION_TAG, read_region, write_region};
+use crate::road_surface::{ROAD_SURFACE_TAG, RoadSurface, read_road_surfaces, write_road_surfaces};
 
 pub const MAGIC: &[u8; 8] = b"OCWPKG01";
 /// Version 2: version 1 plus tagged sections (the road graph).
@@ -100,6 +101,9 @@ pub struct RoadStrip {
     pub class: RoadClass,
     pub width_m: f32,
     pub points: Vec<[f32; 3]>,
+    /// The look of the road (section `RSRF`; packages without it get the
+    /// category's default, [`RoadSurface::of_class`]).
+    pub surface: RoadSurface,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -353,6 +357,13 @@ impl WorldPackage {
             write_seasons(s, &mut payload);
             sections.push((SEASONS_TAG, payload));
         }
+        let mut payload = Vec::new();
+        if write_road_surfaces(
+            self.tiles.values().map(|t| (t.key, t.roads.as_slice())),
+            &mut payload,
+        ) {
+            sections.push((ROAD_SURFACE_TAG, payload));
+        }
         b.extend_from_slice(if sections.is_empty() { MAGIC } else { MAGIC_V2 });
         b.extend((self.name.len() as u32).to_le_bytes());
         b.extend(self.name.as_bytes());
@@ -482,6 +493,7 @@ impl WorldPackage {
                     class,
                     width_m,
                     points,
+                    surface: RoadSurface::of_class(class),
                 });
             }
             tiles.insert(
@@ -528,6 +540,18 @@ impl WorldPackage {
                     look.roofs = Some(read_roofs(payload)?);
                 } else if &tag == SEASONS_TAG && full {
                     look.seasons = Some(read_seasons(payload)?);
+                } else if &tag == ROAD_SURFACE_TAG && full {
+                    for (key, surfaces) in read_road_surfaces(payload)? {
+                        let tile = tiles
+                            .get_mut(&key)
+                            .ok_or("road surfaces of a tile the package does not have")?;
+                        if surfaces.len() != tile.roads.len() {
+                            return Err("road surfaces do not match the tile's road strips".into());
+                        }
+                        for (strip, s) in tile.roads.iter_mut().zip(surfaces) {
+                            strip.surface = s;
+                        }
+                    }
                 }
                 // Unknown sections (from newer builders) are skipped.
             }
@@ -830,7 +854,8 @@ pub fn read_graph(bytes: &[u8]) -> Result<RoadGraph, String> {
     })
 }
 
-const CLASSES: [RoadClass; 10] = [
+/// Every road class, in the order of their codes in the package.
+pub const ROAD_CLASSES: [RoadClass; 10] = [
     RoadClass::Trunk,
     RoadClass::Primary,
     RoadClass::Secondary,
@@ -844,14 +869,14 @@ const CLASSES: [RoadClass; 10] = [
 ];
 
 fn class_code(c: RoadClass) -> u8 {
-    CLASSES
+    ROAD_CLASSES
         .iter()
         .position(|&x| x == c)
         .expect("all classes listed") as u8
 }
 
 fn class_from(code: u8) -> Result<RoadClass, String> {
-    CLASSES
+    ROAD_CLASSES
         .get(usize::from(code))
         .copied()
         .ok_or_else(|| format!("unknown road class {code}"))
@@ -937,6 +962,7 @@ mod tests {
                         class: RoadClass::Secondary,
                         width_m: 6.5,
                         points: vec![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+                        surface: RoadSurface::Asphalt,
                     }],
                 },
             );
@@ -1122,6 +1148,60 @@ mod tests {
                 .unwrap_err()
                 .contains("please update")
         );
+    }
+
+    /// Road surfaces (section `RSRF`): written only where a strip differs
+    /// from its category's default, read back onto the strips, skipped by
+    /// readers that do not know it (they see the default).
+    #[test]
+    fn road_surfaces_round_trip_and_default_packages_have_no_section() {
+        let plain = package();
+        assert_eq!(&plain.to_bytes()[..8], MAGIC, "no section by default");
+        let mut p = package();
+        p.tiles
+            .get_mut(&TileKey { x: 1, z: 0 })
+            .unwrap()
+            .roads
+            .push(RoadStrip {
+                class: RoadClass::Track,
+                width_m: 3.0,
+                points: vec![[1001.0, 2.0, 3.0], [1004.0, 5.0, 6.0]],
+                surface: RoadSurface::Dirt,
+            });
+        p.tiles.get_mut(&TileKey { x: 0, z: 0 }).unwrap().roads[0].surface = RoadSurface::Paving;
+        let b = p.to_bytes();
+        assert_eq!(&b[..8], MAGIC_V2);
+        let back = WorldPackage::from_bytes(&b).unwrap();
+        assert_eq!(back, p);
+        assert_eq!(
+            section_sizes(&b)
+                .iter()
+                .filter(|(t, _)| t == ROAD_SURFACE_TAG)
+                .count(),
+            1
+        );
+        // Only the two changed tiles are in the section.
+        let sections = section_sizes(&b);
+        let (_, len) = sections
+            .iter()
+            .find(|(t, _)| t == ROAD_SURFACE_TAG)
+            .unwrap();
+        assert_eq!(*len, 4 + (12 + 1) + (12 + 2));
+        // An old reader skips the section: every strip has its default.
+        let mut old = b.clone();
+        let at = old.windows(4).rposition(|w| w == ROAD_SURFACE_TAG).unwrap();
+        old[at..at + 4].copy_from_slice(b"XXXX");
+        let old = WorldPackage::from_bytes(&old).unwrap();
+        for t in old.tiles.values() {
+            for s in &t.roads {
+                assert_eq!(s.surface, RoadSurface::of_class(s.class));
+            }
+        }
+        // A section that does not match the strips is rejected.
+        let mut bad = b.clone();
+        let n = bad.len();
+        bad[n - 1] = 9;
+        assert!(WorldPackage::from_bytes(&bad).is_err());
     }
 
     #[test]

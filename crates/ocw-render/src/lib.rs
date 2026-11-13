@@ -10,12 +10,15 @@ pub mod console;
 pub mod event_hud;
 pub mod font;
 pub mod frame_rate;
+pub mod ground;
 pub mod hud;
 pub mod junction;
+pub mod materials;
 pub mod media;
 pub mod menu;
 pub mod package;
 pub mod riders;
+pub mod road_material;
 pub mod see_through;
 pub mod sky;
 pub mod stamp;
@@ -221,7 +224,11 @@ impl Plugin for OcwRenderPlugins {
             workout::WorkoutPanelPlugin,
             voice::VoiceHudPlugin,
         ))
-        .add_plugins(sky::SkyPlugin);
+        .add_plugins((
+            sky::SkyPlugin,
+            materials::MaterialsPlugin,
+            road_material::RoadMaterialPlugin,
+        ));
     }
 }
 

@@ -10,9 +10,31 @@ multiplayer.
 </p>
 <p align="center"><sub>Free ride with bots on the Vaduz–Malbun road (Liechtenstein, 1390 m), rendered by the app (scenes <code>readme-climb-behind</code> / <code>readme-climb-front</code> in <code>scripts/scenes.toml</code>). Map data © OpenStreetMap contributors (ODbL), elevation SRTM (NASA / USGS).</sub></p>
 
-**Status:** Phase 3 (OpenStreetMap world; pilot region Liechtenstein). Phases 1
-(technical foundation) and 2 (trainers and sensors) are done. The requirements
-and architecture are in [SPECIFICATION.md](SPECIFICATION.md).
+**Status:** worlds, multiplayer, voice, the sky and the time machine work; textures,
+weather and the browser / VR versions are in progress. Phases and decisions are
+in [SPECIFICATION.md](SPECIFICATION.md).
+
+## Worlds
+
+Four regions, built from OpenStreetMap and official open elevation models, ridden
+with real gradients. Download them from the
+[latest release](https://github.com/newkit/OCW/releases) and start the app with
+`ocw-desktop --world path/to/<world>.ocwpkg`, or switch worlds in the app
+(menu → **World**).
+
+| | |
+|---|---|
+| **Liechtenstein** – Vaduz to Malbun (13.3 km, 1,148 m up), the Rhine valley, the Stegertunnel | |
+| <img src="https://github.com/newkit/OCW/releases/download/build-history/world-liechtenstein-malbun.jpg" alt="A group of riders on the Malbun road, mountains ahead" width="100%"> | <img src="https://github.com/newkit/OCW/releases/download/build-history/world-liechtenstein-golden-hour.jpg" alt="Golden hour above Vaduz" width="100%"> |
+| **Black Forest** – three connected packages: Freiburg – Schauinsland, Titisee – Feldberg, Triberg, Baden-Baden – Mummelsee over the Schwarzwaldhochstraße | |
+| <img src="https://github.com/newkit/OCW/releases/download/build-history/world-blackforest-schauinsland.jpg" alt="A group climbing the Schauinsland road" width="100%"> | <img src="https://github.com/newkit/OCW/releases/download/build-history/world-blackforest-hochstrasse.jpg" alt="The Schwarzwaldhochstraße (B500)" width="100%"> |
+| **Tenerife** – the whole island: the Teide from the coast (42 km, 2,350 m up), the Masca hairpins, Anaga, the sea | |
+| <img src="https://github.com/newkit/OCW/releases/download/build-history/world-tenerife-teide-sunset.jpg" alt="Sunset over Las Cañadas below the Teide" width="100%"> | <img src="https://github.com/newkit/OCW/releases/download/build-history/world-tenerife-gigantes.jpg" alt="Los Gigantes on the west coast with the sea" width="100%"> |
+
+<sub>Rendered by the app (scene harness, `scripts/scenes.toml`), with the ISO
+timestamp every capture carries. Map data © OpenStreetMap contributors (ODbL).
+Elevation: swissALTI3D © swisstopo; DGM1 © LGL, www.lgl-bw.de (dl-de/by-2.0);
+MDT05 © Instituto Geográfico Nacional (CC BY 4.0); SRTM (NASA / USGS).</sub>
 
 ## Build and run (Linux)
 
@@ -33,6 +55,20 @@ and kiosk on one build machine, bot riders on the others; see
 loopback, as in CI). The old names `smoke`,
 `screenshot`, `screenshot-wayland`, `video`, `video-wayland` and `wasm` still
 work for now but are deprecated.
+
+**Ground and road textures** (spec §4.6): `make materials`
+(`scripts/fetch-materials.sh`) downloads the material library once – 21 CC0
+materials from ambientCG and Poly Haven, pinned by URL and SHA-256 in
+`assets/materials.toml` – checks every hash, converts it to KTX2 (1024², BC3 /
+BC5, mipmapped) and writes the git-ignored `assets/materials/` (about 57 MB,
+with `CREDITS.md`). The world packages are then drawn with meadow, forest
+floor, rock, gravel, asphalt, paving … instead of flat colours; without the
+library (or with `OCW_MATERIALS=off`) the app draws the flat land-use colours.
+The packaging scripts and `deploy-test.sh` fetch and ship it beside the
+binary; the console command `materials` shows which library is used and its
+credits. On Windows without bash: `cargo run --release -p ocw-assets --
+materials fetch`, then copy `assets\materials` beside `ocw-desktop.exe` as
+`materials`.
 
 The Rust version is pinned in `rust-toolchain.toml`; Debian's system Rust is too
 old for Bevy. `make` finds the rustup toolchain in `~/.cargo/bin` by itself; for
@@ -1287,6 +1323,10 @@ to *Public* are the usual causes; the server log is in Event Viewer under
 | `cargo run -p ocw-assets -- generate [--check]` | Regenerate the bike and rider models in `assets/models/` (glTF, own work); `--check` only compares |
 | `cargo run -p ocw-assets -- validate [DIR]` | Asset validator: licence entry (`license`, `source`, `author`) in `manifest.toml` for every model, no physics values, required nodes and paint slots, triangle budgets |
 | `cargo run -p ocw-assets -- info FILE.glb` | A model's nodes, positions, triangles and materials |
+| `scripts/fetch-materials.sh` (`make materials`) | Material library: download the pinned sources of `assets/materials.toml` (cache `~/.cache/ocw/material-sources`), check their SHA-256, convert to KTX2 into `assets/materials/` |
+| `cargo run -p ocw-assets -- materials validate [DIR]` | Material validator: `license`, `source`, `author` and a SHA-256 pin for every material, no share-alike / non-commercial / no-derivatives / unknown licence; with DIR the converted library too |
+| `cargo run -p ocw-assets -- materials credits` | The material credits (Markdown, as in `assets/materials/CREDITS.md`) |
+| `scripts/install-materials.sh DEST` | Fetch the library and copy it into a package (AppImage, macOS bundle, kiosk install) |
 | `scripts/render-scenes.sh [--list] [--only NAME,GLOB] [--remote MACHINE] [--pick DIR]` | Scene harness: renders the scenes of `scripts/scenes.toml` (screenshots, short videos) headlessly on Wayland (`make test-scenes`), see [Scene harness](#scene-harness) |
 
 **Signing and publishing world packages** (spec §4.7): an offline root key
@@ -1373,7 +1413,7 @@ GitHub release `build-history`. Look at every image before picking it.
 | `crates/ocw-fit` | FIT activity file writer (ride export) |
 | `crates/ocw-voice` | Voice chat (always-on logic, spatial audio, mixer; LiveKit backend with the `livekit` feature) |
 | `crates/ocw-render` | Bevy plugins: world, riders, camera, HUD, console; the bundled UI font (`assets/fonts/`) |
-| `crates/ocw-assets` | Bike and rider models: generator, glTF reader, asset validator, rider-on-bike pose, riding animation states (no Bevy) |
+| `crates/ocw-assets` | Bike and rider models: generator, glTF reader, asset validator, rider-on-bike pose, riding animation states; material library: licence rule, pinned manifest, KTX2, conversion and fetch (no Bevy) |
 | `assets/models/` | The shipped glTF models and their licence manifest (embedded in the app) |
 | `artwork/` | Logos and other original artwork |
 
@@ -1383,6 +1423,12 @@ Code is dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), 
 
 Third-party assets keep their own licences, listed next to them:
 
+- Ground, road and house textures (`assets/materials.toml`, fetched into
+  `assets/materials/`, not in git): CC0 1.0 materials from
+  [ambientCG](https://ambientcg.com) (Lennart Demes) and
+  [Poly Haven](https://polyhaven.com) (Rob Tuytel, Amal Kumar, Dimitrios
+  Savva); every material with its author and page in the manifest and in
+  `CREDITS.md`.
 - UI font Fira Mono (© The Mozilla Foundation and Telefonica S.A.), compiled
   into `ocw-desktop`: SIL Open Font License 1.1, see
   [`crates/ocw-render/assets/fonts/`](crates/ocw-render/assets/fonts/README.md).

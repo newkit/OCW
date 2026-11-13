@@ -932,6 +932,7 @@ mod tests {
                 roads: vec![ocw_world::RoadStrip {
                     class: RoadClass::Residential,
                     width_m: 5.0,
+                    surface: ocw_world::RoadSurface::Asphalt,
                     points: vec![[0.0, 0.0, 20.0], [100.0, 0.0, 20.0]],
                 }],
             },
