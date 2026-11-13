@@ -65,6 +65,7 @@ Version 2.47 – November 2026
 | 2.44 | Phase 8 decisions: no commercial release, 8A stays (Q2); orthophoto corridor size acceptable (Q4); seasonal variants (Q5); own photos postponed (Q6); Mapillary CC BY-SA, reference by eye only (Q7); 3D buildings: swissBUILDINGS3D 3.0 (Opendata BY) to confirm, LGL LoD2 probably not open, ask LGL (Q8); all texture areas in parallel (Q10) |
 | 2.45 | Licensing (§13): no licence change for now – the code stays MIT / Apache-2.0 (a switch to CC BY-SA was considered and declined) |
 | 2.46 | Phase 8 T1 / T2 (§4.6, §8.1, §13, §14 Phase 8): material library of 21 CC0 materials (ambientCG, Poly Haven) – ground, roads, houses, volcanic ground for Tenerife – not in git but pinned by URL + SHA-256 in `assets/materials.toml`, fetched and converted to KTX2 (BC3 / BC5, 1024², mipmapped) by `scripts/fetch-materials.sh` into the git-ignored `assets/materials/` and shipped beside the binary (AppImage, macOS bundle, Windows zip, test deployment); licence rule of Phase 8A shared by the model and material validators; terrain drawn with the materials blended by the splat map (weights at cell corners, noise warp, height blend, rock and triplanar on slopes, macro scale, fade to the colour map in the materials' mean colours), roads by OSM `surface` (new package section `RSRF`) with category fallback; regional material sets by the package's time zone (`[[region]]` in the manifest: the volcanic set of the Canary Islands with lava, ash / cinder, black sand and pine needles); regional tint hook neutral; reference boards `art/reference/` |
+| 2.51 | Phase 13 planned: god mode (§14 Phase 13): hotkey G (console `god`), the rider turns into a flying unicorn; flight controls – mouse look, cursor keys move in the horizontal plane, + / − altitude, speed grows with height (20–400 m/s, Shift boost, Ctrl precise, wheel scale), terrain clearance; return to the road on leaving (Shift + G lands in free ride); inspection HUD and crosshair (road name, OSM id, surface, coordinates), pins; server state `God` (out of physics, standings and recording), client-driven `GodPose`, host access rules, not in running events; milestones G1–G5, open questions Q1–Q6 |
 | 2.50 | Phase 12 planned: collisions, crashes and damage (§14 Phase 12): global switches `ride.collisions` and `ride.damage` (on / off; host or organiser decides in shared sessions and events), rider and object footprints in the path frame, soft bumps (slowed, pushed apart, wobble) and hard hits (crash: fall, down, remount; wheel touches and head-on hits), fallen bikes as obstacles, autodrive and bots avoid collisions (overtake on the region's side or hold back), manual riders must avoid them themselves, rider injury and bike damage meters with effects, damage indicator in the HUD; milestones K1–K7, open questions Q1–Q7 |
 | 2.49 | Release versions (§11.3): every GitHub release now increments the **patch** version (0.2.0 → 0.2.1), not the minor version; `make release-prepare` / `version-bump` default to `PART=patch`, minor / major by hand; tags `vX.Y.Z` |
 | 2.48 | Phase 11 decision (§14 Phase 11, Q1): the development headset is the **Oculus Rift (first generation, CV1)** on Windows through the Meta PC app's OpenXR runtime; the code stays OpenXR-only and vendor-neutral so other headsets work through their OpenXR runtimes; X1 targets the Rift CV1 first; the CV1 is promoted from "legacy" to "primary dev target" in the support table |
@@ -2517,6 +2518,70 @@ Attribution of the provider used appears on the credits screen and in the weathe
 - **Q5 – Falls:** a scripted fall animation first (proposal), or straight to a ragdoll with a physics engine (more realistic, more work, a dependency like Avian or Rapier)?
 - **Q6 – Persistence:** injuries and bike damage reset per ride (proposal), or carry over between rides (a career / repair-shop mode)?
 - **Q7 – Gates and barriers on roads:** OSM often has gates or bollards on through routes (often open in reality). Make them solid (realistic but annoying), solid only in wild mode, or only show them (proposal: shown, not solid on the routed road)?
+
+### Phase 13 – God mode: flying through the world as a unicorn (planning, 2026-11-13)
+
+**Goal:** a **god mode** in which the rider leaves the road and flies freely and fast through the world, e.g. to inspect the map, look at a region before riding it, or check a world package. While in god mode the rider turns into a **unicorn**. Toggled by a hotkey; controlled like a flight mode: **+ / −** for altitude, the **mouse** to look around, the **cursor keys** to move in the horizontal plane.
+
+#### 13A – Entering and leaving (decided by the user, 2026-11-13: hotkey, unicorn, fast flight)
+
+- **Hotkey G** (free today; rebindable later with the other keys, §3.2.1 Controls) toggles god mode; console `god [on|off]`; gamepad: Select / Back + North (a chord, so it is not pressed by accident). The menu gets *Ride → God mode* with the same switch.
+- **Entering:** a short transformation (0.6 s: a sparkle burst, the rider and bike fade out while the unicorn fades in and rises 3 m), the camera switches from the chase camera to the flight camera behind the unicorn, the mouse pointer is captured (hidden, relative motion).
+- **Leaving (G again):** the unicorn flies back to where the rider left the road (a quick, eased flight, at most 2 s however far) and turns back into the rider and bike, riding on where they were – the default, so god mode never moves a rider on their course (Q2). **Shift + G** instead *lands here*: in free ride (§2.2.1) the rider is put on the nearest road below the unicorn (`--start`-like placement, standing still); on a fixed route it is not offered. Esc in god mode first releases the pointer (a second Esc opens the menu, §3.2.1).
+- **Who may use it:** single player on the local server: always. Shared sessions: the host decides (`ServerConfig.god_access`: anyone / host / nobody, like the world switch and the time machine, sent in `Welcome`); in a running **event** (race, group ride, time trial: from countdown to the rider's finish) god mode is **not available** – before and after it is. The kiosk / show mode never enters it by itself.
+
+#### 13B – Flight controls
+
+- **Look:** moving the mouse turns the view (yaw unlimited, pitch −89° … +89°; sensitivity from Settings → Controls, the existing mouse orbit speed; invert Y option). The direction of flight follows the view's yaw.
+- **Move in the plane:** ↑ forward, ↓ back, ← / → sideways (strafe), relative to the view's yaw and **horizontal** (looking down does not dive). Also W / A / S / D? No: those letters are taken (A autodrive, W wild mode) – the cursor keys only, as asked (Q3).
+- **Altitude:** **+** climbs, **−** descends (main keyboard `=`/`+` and `-`, and the numeric keypad + / −; held = continuous). The altitude stays at least **2 m above the terrain, water, buildings and trees** below (the unicorn glides up over a hill instead of going into it) and at most **8,000 m above sea level**.
+- **Speed – much faster than riding:** the base speed grows with the height above ground, so low flight is controllable and high flight covers the map: `v = clamp(20 m/s + 0.5 × height above ground, 20, 400 m/s)` (72 km/h close to the ground, ~250 km/h at 400 m, 1,440 km/h at 760 m and higher). **Shift** = ×4 (boost), **Ctrl** = ×0.25 (precise); the **mouse wheel** scales the base speed (×0.25 … ×8, shown in the HUD). Climb rate = half the horizontal speed. Movements are smoothed (0.15 s acceleration, 0.25 s stop), so the flight is fluid at any speed.
+- **Gamepad:** left stick = move in the plane, right stick = look, right / left trigger = climb / descend, A (South) = boost.
+- **Map limits:** the unicorn can fly over the whole world set (§4.7: the home package and its neighbours), softly stopped 200 m outside the outermost package's bounds.
+
+#### 13C – The unicorn
+
+- **Model:** our own low-poly unicorn (made for OCW, licensed like the code – no third-party asset, §13; no brand characters): white body, a spiral golden horn, a rainbow mane and tail (the eight colours of the categorical palette, animated by the wind of the flight), small feathered wings folded along the body that open in fast flight (Q5). It **gallops in the air**: a gallop cycle whose rate follows the speed, legs tucked in at high speed, a gentle bob while hovering. A faint **rainbow trail** behind it (fading after 2 s; off with Settings → Display → Effects).
+- **Rider on it?** The rider is not shown; the unicorn *is* the rider (the rider's colours tint the saddle cloth and the mane's first band, so in multiplayer each unicorn is recognisable). Name tag above it as for riders.
+- **Sound** (procedural, §3.3): a chime on transformation, wind rising with the speed (the existing wind voice), soft wing beats when the wings are open, a gallop of hooves on air (muffled) while slow.
+- **LOD:** a 3k-triangle model near, 600 far, an impostor beyond 500 m – like the riders (§8).
+
+#### 13D – Camera and inspection aids
+
+- **Camera:** behind and slightly above the unicorn (8 m, looking along the view); **C** toggles a first-person view from the unicorn's head (the horn in view) – the pure "fly-through" for inspecting. Field of view widens with speed (+10° at 400 m/s). The camera never goes under the terrain.
+- **Inspection HUD** (the bike computer is hidden; a compact flight panel instead): altitude above sea level and above ground, speed, base-speed factor, heading (compass), position (package metres x / z, latitude / longitude, tile id), the local time of the place (Phase 9). A crosshair in the middle: what it points at is named below it – the road (name, OSM way id, class, surface, width, bridge / tunnel, gradient), the area (land use, `LUSE`), building or water, and the elevation there. **I** toggles the panel; **P** puts a pin (a marker kept for the ride, `god.pins` lists them with coordinates, `--start X,Z` ready to copy).
+- **World streaming:** the tile loader looks ahead along the flight direction with a radius that grows with altitude and speed (§4.7: neighbours load within 3 km of their region, extended to 3 km + 10 s of flight); at high altitude only the far terrain LOD and the colour map are drawn; trees and buildings appear below 1,500 m above ground. Frame time budget as in riding (§15); the tile loads keep their own thread.
+
+#### 13E – Simulation and multiplayer (server-authoritative, §6.1)
+
+- **Server state:** the rider enters the state `God` (additive field in `RiderUpdate`, §6.2). In this state the rider is **taken out of the physics**: no speed along the path, no drafting, no collisions (Phase 12), not in standings; the rider's road position is frozen where god mode began (and restored on leaving). The unicorn's flight is **client-driven**: the client sends its 3D position and view at 10 Hz (`GodPose`), the server checks plausibility (speed ≤ the limits above, inside the world set) and broadcasts it to the others, who see the unicorn interpolated (§6.5). The server stays the truth for who is in god mode and where the rider re-enters.
+- **Trainer:** SIM mode is set to a flat road (lowest resistance), ERG keeps its target (a workout continues; Q4). Power and cadence keep being shown, but they do not move the unicorn.
+- **Ride recording:** ride time continues (the ride never pauses, §3.2.1); **distance and elevation are not credited** while flying, the FIT file gets a marker "god mode" at both ends (Strava sees a pause in movement, not a 1,000 km/h segment). Achievements and leaderboards (Phase 7) ignore god-mode time.
+- **Others:** riders see a unicorn flying over them with the rider's name and colours; no sound beyond 100 m. A host can see who is in god mode in the rider list.
+
+#### 13F – Tests (spec §11.4)
+
+- Pure flight model (`ocw-sim::god` or `apps/desktop/src/god.rs`, Bevy-free, wasm): speed law, boost / precise factors, wheel scale, acceleration and stopping, terrain clearance (never below 2 m over a test height field, also over a ridge at full speed), ceiling, world-set limits, moving relative to the yaw only (pitch does not dive), +/− climb rate.
+- Input mapping: G, Shift + G, +/− (main and keypad), cursor keys, mouse motion, gamepad mapping; keys of riding (A, W, U, Q / E) do nothing in god mode.
+- Server: `God` state excludes the rider from physics, drafting, collisions and standings; road position frozen and restored; plausibility check rejects too-fast poses; refused in running events and when `god_access` forbids it; distance not credited; FIT markers.
+- Client: transformation and return, camera never under ground, crosshair inspection names the road under it (a test package); headless screenshots on X11 and Wayland of the unicorn in flight (scene in `scripts/scenes.toml`, also a short video of a flight over Liechtenstein for the build history).
+
+#### 13G – Milestones (proposal)
+
+- **G1 – Flight:** `god` command and G hotkey, flight model and controls, flight camera, pointer capture, terrain clearance, return to the road; the rider's model as a placeholder.
+- **G2 – The unicorn:** model, gallop and wing animation, rainbow mane and trail, transformation effect, sounds.
+- **G3 – Inspection:** flight panel, crosshair inspection, pins, first-person view, look-ahead tile streaming.
+- **G4 – Multiplayer:** `God` state and `GodPose` on the server, access rules, others see the unicorn, recording rules.
+- **G5 (later):** god mode in VR (Phase 11: head look instead of the mouse, comfort vignette at speed), a guided camera path for flyover videos (art project), god mode in the browser app (Phase 10).
+
+#### 13H – Open questions (for the user)
+
+- **Q1 – Visible to others:** should other riders see the flying unicorn in shared rides (proposal: yes, with name), or is god mode private (others see the rider parked)?
+- **Q2 – Leaving:** fly back to where the rider left the road (proposal) – or always land where the unicorn is (in free ride)?
+- **Q3 – Keys:** G for god mode, cursor keys + / − and the mouse as asked; also W / A / S / D for flying (would move autodrive and wild mode to other keys while flying), or cursor keys only (proposal)?
+- **Q4 – Trainer while flying:** flat road (proposal), or the trainer follows the slope under the unicorn as a fun "feel the land" effect?
+- **Q5 – Wings:** a classic unicorn without wings (magic flight), or small wings that open at speed (proposal)?
+- **Q6 – Name in the UI:** "God mode", or a friendlier "Unicorn mode" in the menu (the console command stays `god`)?
 
 ---
 
