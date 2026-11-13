@@ -314,6 +314,7 @@ mod tests {
             graph: Some(g),
             landuse: None,
             buildings: None,
+            bridges: None,
             routes: vec![],
             region: Some(if west {
                 PackageRegion::bbox(46.99, 9.48, 47.01, 9.5)
@@ -426,6 +427,7 @@ mod tests {
             graph: Some(g),
             landuse: None,
             buildings: None,
+            bridges: None,
             routes: vec![],
             region: Some(PackageRegion::bbox(46.99, w, 47.01, e)),
             time_zone: None,

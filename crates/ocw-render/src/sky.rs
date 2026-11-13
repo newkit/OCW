@@ -156,11 +156,15 @@ fn apply_sky(
     clear: Option<ResMut<ClearColor>>,
     mut suns: Query<(&mut DirectionalLight, &mut Transform), With<Sun>>,
     mut cameras: Query<CameraParts, With<FollowCamera>>,
+    tunnels: Option<Res<crate::tunnel::Tunnels>>,
     mut commands: Commands,
 ) {
     let Some(sky) = view.as_ref().and_then(|v| v.sky.as_ref()) else {
         return;
     };
+    // In a tunnel the hill above shades the rider (the terrain casts no
+    // shadows in the renderer, only the thin tube would).
+    let daylight = daylight_at_rider(view.as_deref(), tunnels.as_deref());
     let light = ocw_sky::light::light(sky.sky.sun.elevation_deg, settings.night_floor);
     let atmosphere = settings.mode == SkyMode::Atmosphere;
     let dir = sun_direction(sky.sky.sun.azimuth_deg, sky.sky.sun.elevation_deg);
@@ -177,9 +181,9 @@ fn apply_sky(
         } else {
             (light.sun_lux, linear(light.sun_rgb))
         };
-        sun.illuminance = lux;
+        sun.illuminance = lux * daylight;
         sun.color = colour;
-        sun.shadow_maps_enabled = light.shadows;
+        sun.shadow_maps_enabled = light.shadows && daylight > 0.0;
     }
     if let Some(mut a) = ambient {
         a.brightness = light.ambient;
@@ -321,16 +325,30 @@ pub fn lamps_on(mode: LightsMode, light: Option<&ocw_sky::Light>) -> bool {
     }
 }
 
+/// Share of direct sunlight at the local rider: 0 deep in a tunnel
+/// ([`crate::tunnel::daylight_share`]), else 1.
+pub fn daylight_at_rider(view: Option<&RideView>, tunnels: Option<&crate::tunnel::Tunnels>) -> f32 {
+    match (view.and_then(RideView::local), tunnels) {
+        (Some(local), Some(t)) => crate::tunnel::daylight_share(&t.stretches, local.state.distance),
+        _ => 1.0,
+    }
+}
+
 fn bike_lamps(
     view: Option<Res<RideView>>,
     settings: Res<SkySettings>,
+    tunnels: Option<Res<crate::tunnel::Tunnels>>,
     mut lamps: Query<&mut Visibility, With<BikeLamp>>,
 ) {
     let light = view
         .as_ref()
         .and_then(|v| v.sky.as_ref())
         .map(|s| s.sky.light);
-    let want = if lamps_on(settings.lights, light.as_ref()) {
+    // In a tunnel the lights go on, as cyclists switch them on there.
+    let in_tunnel = view.as_ref().is_some_and(|v| v.sky.is_some())
+        && settings.lights == LightsMode::Auto
+        && daylight_at_rider(view.as_deref(), tunnels.as_deref()) < 1.0;
+    let want = if in_tunnel || lamps_on(settings.lights, light.as_ref()) {
         Visibility::Inherited
     } else {
         Visibility::Hidden
@@ -470,6 +488,75 @@ mod tests {
             hud: sky.hud_clock(),
             sky,
         }
+    }
+
+    /// Regression (user, 2026-11-13): deep in a tunnel the rider gets no
+    /// direct sun at noon (the terrain above casts no shadows in the
+    /// renderer; light leaked through the tube in squares), and the bike
+    /// lamps are on; back outside the sun is full again.
+    #[test]
+    fn no_direct_sun_on_the_rider_in_a_tunnel() {
+        let mut view = RideView::new(ocw_world::Route::test_loop());
+        view.sky = Some(sky_at("noon"));
+        view.riders.push(crate::RiderView {
+            id: ocw_core::RiderId(1),
+            name: "me".into(),
+            state: ocw_sim::RiderState {
+                distance: 1000.0,
+                ..Default::default()
+            },
+            power_w: 200.0,
+            cadence_rpm: None,
+            heart_rate_bpm: None,
+            is_local: true,
+            bike: Default::default(),
+            look: None,
+        });
+        let mut tunnels = crate::tunnel::Tunnels::default();
+        tunnels.stretches = vec![(800.0, 1200.0)];
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Mesh>()
+            .init_asset::<StandardMaterial>()
+            .insert_resource(view)
+            .insert_resource(tunnels)
+            .insert_resource(GlobalAmbientLight::default())
+            .insert_resource(ClearColor::default())
+            .add_plugins(crate::console::ConsoleCorePlugin)
+            .add_plugins(SkyPlugin);
+        app.world_mut().resource_mut::<SkySettings>().mode = SkyMode::Simple;
+        let sun = app
+            .world_mut()
+            .spawn((Sun, DirectionalLight::default(), Transform::default()))
+            .id();
+        app.world_mut().spawn((
+            Avatar {
+                id: ocw_core::RiderId(1),
+                is_local: true,
+            },
+            Transform::default(),
+            Visibility::default(),
+        ));
+        app.update();
+        app.update();
+        let light = |app: &App| *app.world().get::<DirectionalLight>(sun).unwrap();
+        assert_eq!(light(&app).illuminance, 0.0, "sun in the tunnel");
+        assert!(!light(&app).shadow_maps_enabled);
+        let w = app.world_mut();
+        let mut q = w.query_filtered::<&Visibility, With<BikeLamp>>();
+        let lamps: Vec<_> = q.iter(w).copied().collect();
+        assert_eq!(lamps.len(), 3);
+        assert!(lamps.iter().all(|v| *v == Visibility::Inherited));
+        // Out of the tunnel: full noon sun with shadows, lamps off.
+        app.world_mut().resource_mut::<RideView>().riders[0]
+            .state
+            .distance = 1500.0;
+        app.update();
+        assert!(light(&app).illuminance > 10_000.0);
+        assert!(light(&app).shadow_maps_enabled);
+        let w = app.world_mut();
+        let mut q = w.query_filtered::<&Visibility, With<BikeLamp>>();
+        assert!(q.iter(w).all(|v| *v == Visibility::Hidden));
     }
 
     /// Headless: the sky state drives sun, ambient light, exposure and the

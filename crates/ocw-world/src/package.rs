@@ -41,6 +41,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::bridges::{BRIDGES_TAG, Bridges, read_bridges, write_bridges};
 use crate::buildings::{BUILDINGS_TAG, Buildings, read_buildings, write_buildings};
 use crate::graph::{Edge, EdgeId, Oneway, RoadClass, RoadGraph, VertexId};
 use crate::graph_route::{GraphRoute, RouteStep};
@@ -54,6 +55,9 @@ pub const MAGIC_V2: &[u8; 8] = b"OCWPKG02";
 pub const GRAPH_TAG: &[u8; 4] = b"GRPH";
 /// Section tag of the routes on the road graph (spec §2.7).
 pub const ROUTES_TAG: &[u8; 4] = b"ROUT";
+/// The client draws package road strips this far above their centre line
+/// heights (spec §4.3; the same height as the terrain would z-fight).
+pub const ROAD_LIFT_M: f64 = 0.02;
 /// Section tag of the time zone id (spec §14 Phase 9).
 pub const TIME_ZONE_TAG: &[u8; 4] = b"TZID";
 /// Layout version inside the graph section.
@@ -117,6 +121,9 @@ pub struct WorldPackage {
     pub landuse: Option<LandUse>,
     /// Buildings per tile (section `BLDG`).
     pub buildings: Option<Buildings>,
+    /// Bridge structures per tile (section `BRDG`, spec §4.8.6; `None` in
+    /// older packages: their bridges are plain road strips).
+    pub bridges: Option<Bridges>,
     /// Routes on the road graph (section `ROUT`, spec §2.7).
     pub routes: Vec<GraphRoute>,
     /// The region the roads were cut to (section `REGN`; `None` in older
@@ -130,6 +137,19 @@ pub struct WorldPackage {
 impl WorldPackage {
     pub fn spacing_m(&self) -> f64 {
         f64::from(self.tile_size_m) / f64::from(self.samples - 1)
+    }
+
+    /// The lowest and highest terrain height of all tiles (m); `None`
+    /// without tiles.
+    pub fn height_range(&self) -> Option<(f32, f32)> {
+        self.tiles
+            .values()
+            .flat_map(|t| t.heights.iter().copied())
+            .filter(|h| h.is_finite())
+            .fold(None, |r, h| match r {
+                None => Some((h, h)),
+                Some((lo, hi)) => Some((lo.min(h), hi.max(h))),
+            })
     }
 
     /// Terrain height at local (x, z), bilinear within its tile.
@@ -174,6 +194,55 @@ impl WorldPackage {
         } else {
             h11 + (1.0 - tx) * (h01 - h11) + (1.0 - tz) * (h10 - h11)
         })
+    }
+
+    /// Heights of the road surface centre lines at local (x, z): one per
+    /// road strip segment of the tile whose surface covers the point
+    /// (within half its width of the centre line, height interpolated
+    /// along it); empty off every road. The client draws the strips
+    /// [`ROAD_LIFT_M`] above these heights.
+    pub fn road_heights(&self, x: f64, z: f64) -> Vec<f64> {
+        self.road_heights_along(x, z, None)
+    }
+
+    /// [`Self::road_heights`] of the strips running along `direction`
+    /// (horizontal unit vector x, z; within about 25°, either way), if
+    /// given: a road crossing over or under it, or a side road at a
+    /// junction, is left out.
+    pub fn road_heights_along(&self, x: f64, z: f64, direction: Option<[f64; 2]>) -> Vec<f64> {
+        let size = f64::from(self.tile_size_m);
+        let Some(tile) = self.tiles.get(&TileKey::containing([x, z], size)) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for r in &tile.roads {
+            let half = f64::from(r.width_m) / 2.0;
+            for w in r.points.windows(2) {
+                let (a, b) = (w[0].map(f64::from), w[1].map(f64::from));
+                let (dx, dz) = (b[0] - a[0], b[2] - a[2]);
+                let len2 = dx * dx + dz * dz;
+                if len2 < 1e-12 {
+                    continue;
+                }
+                if let Some(d) = direction
+                    && (d[0] * dx + d[1] * dz).abs() < 0.9 * len2.sqrt()
+                {
+                    continue;
+                }
+                // Only where the point lies beside the segment: beyond its
+                // ends the neighbouring segment holds it (the end height
+                // would be a second, stale height of the same road).
+                let t = ((x - a[0]) * dx + (z - a[2]) * dz) / len2;
+                if !(0.0..=1.0).contains(&t) {
+                    continue;
+                }
+                let (cx, cz) = (a[0] + dx * t, a[2] + dz * t);
+                if (x - cx).powi(2) + (z - cz).powi(2) <= half * half {
+                    out.push(a[1] + (b[1] - a[1]) * t);
+                }
+            }
+        }
+        out
     }
 
     /// Where the terrain surface rises above a road (it would show through
@@ -250,6 +319,11 @@ impl WorldPackage {
             let mut payload = Vec::new();
             write_region(r, &mut payload);
             sections.push((REGION_TAG, payload));
+        }
+        if let Some(t) = &self.bridges {
+            let mut payload = Vec::new();
+            write_bridges(t, &mut payload);
+            sections.push((BRIDGES_TAG, payload));
         }
         if let Some(z) = &self.time_zone {
             sections.push((TIME_ZONE_TAG, z.as_bytes().to_vec()));
@@ -395,7 +469,7 @@ impl WorldPackage {
             );
         }
         let mut graph = None;
-        let (mut landuse, mut buildings) = (None, None);
+        let (mut landuse, mut buildings, mut bridges) = (None, None, None);
         let mut routes = Vec::new();
         let mut region = None;
         let mut time_zone = None;
@@ -415,6 +489,8 @@ impl WorldPackage {
                     routes = read_routes(payload)?;
                 } else if &tag == REGION_TAG {
                     region = Some(read_region(payload)?);
+                } else if &tag == BRIDGES_TAG && full {
+                    bridges = Some(read_bridges(payload)?);
                 } else if &tag == TIME_ZONE_TAG {
                     let z = std::str::from_utf8(payload)
                         .map_err(|_| "time zone id is not UTF-8")?
@@ -436,6 +512,7 @@ impl WorldPackage {
             graph,
             landuse,
             buildings,
+            bridges,
             routes,
             region,
             time_zone,
@@ -802,6 +879,15 @@ impl<'a> Bytes<'a> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn height_range_spans_all_tiles() {
+        // Heights 10·i + k + 100·x over the tiles x = -1, 0, 1.
+        assert_eq!(package().height_range(), Some((-100.0, 122.0)));
+        let mut empty = package();
+        empty.tiles.clear();
+        assert_eq!(empty.height_range(), None);
+    }
+
     fn package() -> WorldPackage {
         let mut tiles = BTreeMap::new();
         for (x, z) in [(0, 0), (1, 0), (-1, 2)] {
@@ -831,10 +917,28 @@ mod tests {
             graph: None,
             landuse: None,
             buildings: None,
+            bridges: None,
             routes: Vec::new(),
             region: None,
             time_zone: None,
         }
+    }
+
+    /// Road heights under a point: on the strip (interpolated), not beside
+    /// it; along a direction only strips running that way.
+    #[test]
+    fn road_heights_under_a_point_and_along_a_direction() {
+        let p = package();
+        // The strip runs from (1, 2, 3) to (4, 5, 6): diagonal in x/z.
+        let h = p.road_heights(2.5, 4.5);
+        assert_eq!(h.len(), 1, "{h:?}");
+        assert!((h[0] - 3.5).abs() < 1e-6, "{h:?}");
+        assert!(p.road_heights(20.0, 40.0).is_empty());
+        let s = std::f64::consts::FRAC_1_SQRT_2;
+        assert_eq!(p.road_heights_along(2.5, 4.5, Some([s, s])).len(), 1);
+        assert_eq!(p.road_heights_along(2.5, 4.5, Some([-s, -s])).len(), 1);
+        // A road crossing at right angles is another road.
+        assert!(p.road_heights_along(2.5, 4.5, Some([s, -s])).is_empty());
     }
 
     /// The time zone section (spec §14 Phase 9): written, read back, and
@@ -1091,6 +1195,34 @@ mod tests {
         let old = WorldPackage::from_bytes(&b).unwrap();
         assert_eq!(old.region, None);
         assert_eq!(old.graph, p.graph);
+    }
+
+    /// Spec §4.8.6: the bridges section is additive – older readers skip it
+    /// and keep everything else.
+    #[test]
+    fn bridges_section_round_trip_and_old_readers_skip_it() {
+        let mut bridges = crate::bridges::Bridges::new();
+        bridges.insert(
+            TileKey { x: 0, z: 0 },
+            vec![crate::bridges::tests::bridge(
+                crate::bridges::BridgeStructure::Beam,
+                crate::bridges::Railing::Parapet,
+            )],
+        );
+        let p = WorldPackage {
+            graph: Some(graph()),
+            bridges: Some(bridges.clone()),
+            ..package()
+        };
+        let mut b = p.to_bytes();
+        let back = WorldPackage::from_bytes(&b).unwrap();
+        assert_eq!(back.bridges, Some(bridges));
+        let at = b.windows(4).rposition(|w| w == BRIDGES_TAG).unwrap();
+        b[at] = b'x';
+        let old = WorldPackage::from_bytes(&b).unwrap();
+        assert_eq!(old.bridges, None);
+        assert_eq!(old.graph, p.graph);
+        assert_eq!(old.tiles, p.tiles);
     }
 
     #[test]

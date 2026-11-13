@@ -7,12 +7,28 @@ use std::path::Path;
 use crate::osm::{OsmError, Tags, Way};
 
 /// Keys whose ways or relations are read as areas or water lines.
-const AREA_KEYS: [&str; 6] = [
-    "landuse", "natural", "leisure", "building", "waterway", "water",
+const AREA_KEYS: [&str; 7] = [
+    "landuse", "natural", "leisure", "building", "waterway", "water", "man_made",
 ];
 
 fn wanted(tags: &Tags) -> bool {
     AREA_KEYS.iter().any(|k| tags.contains_key(*k))
+}
+
+/// Tags kept on the ways read as areas: the area keys, building shape,
+/// widths, and – for the water and bridge passes (spec §4.8) – culverts and
+/// underground waterways (`waterway_width` leaves them out; before v2.32
+/// the tag was dropped here, so culverts under roads were drawn as water),
+/// names (river chains) and layers.
+pub fn kept_key(k: &str) -> bool {
+    AREA_KEYS.contains(&k)
+        || k.starts_with("building")
+        || k.starts_with("roof")
+        || k.starts_with("bridge")
+        || matches!(
+            k,
+            "height" | "width" | "area" | "tunnel" | "location" | "layer" | "name"
+        )
 }
 
 /// Role of a multipolygon member way.
@@ -91,14 +107,7 @@ impl AreaData {
             if let osmpbf::Element::Way(w) = el {
                 let tags: Tags = w
                     .tags()
-                    .filter(|(k, _)| {
-                        AREA_KEYS.contains(k)
-                            || k.starts_with("building")
-                            || k.starts_with("roof")
-                            || *k == "height"
-                            || *k == "width"
-                            || *k == "area"
-                    })
+                    .filter(|(k, _)| kept_key(k))
                     .map(|(k, v)| (k.to_string(), v.to_string()))
                     .collect();
                 if wanted(&tags) || members.contains(&w.id()) {
@@ -312,6 +321,32 @@ pub fn inside_rings(p: [f64; 2], rings: &[Vec<[f64; 2]>]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression (spec §4.8): `tunnel=culvert` was dropped when reading,
+    /// so culverts under roads became water bands and carved holes.
+    #[test]
+    fn culvert_and_bridge_tags_are_kept() {
+        for k in [
+            "tunnel",
+            "location",
+            "name",
+            "layer",
+            "man_made",
+            "bridge:structure",
+            "width",
+        ] {
+            assert!(kept_key(k), "{k}");
+        }
+        for k in ["highway", "surface", "source", "note"] {
+            assert!(!kept_key(k), "{k}");
+        }
+        let tags: Tags = [("waterway", "stream"), ("tunnel", "culvert")]
+            .iter()
+            .filter(|(k, _)| kept_key(k))
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        assert_eq!(crate::landuse::waterway_width(&tags), None);
+    }
 
     #[test]
     fn areas_shrink_to_the_part_being_built() {

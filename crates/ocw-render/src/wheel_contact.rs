@@ -474,3 +474,66 @@ fn tyres_touch_the_road_on_vaduz_malbun() {
         sorted.len()
     );
 }
+
+/// The Vaduz–Malbun route file ridden in the Liechtenstein package, as the
+/// desktop rides it (`--world … --route-file …`: its heights fitted onto
+/// the package's road strips, `route_fit`), against those strips every
+/// 250 m (`OCW_CONTACT_WORLD`, the route file beside the package; skipped
+/// without).
+#[test]
+fn tyres_touch_the_road_on_the_fitted_route_file() {
+    let Some(pkg_path) = std::env::var_os("OCW_CONTACT_WORLD") else {
+        eprintln!("OCW_CONTACT_WORLD not set: skipped");
+        return;
+    };
+    let pkg_path = std::path::PathBuf::from(pkg_path);
+    let Ok(text) = std::fs::read_to_string(pkg_path.with_file_name("vaduz-malbun.route")) else {
+        eprintln!("no vaduz-malbun.route beside the package: skipped");
+        return;
+    };
+    let pkg = ocw_world::WorldPackage::from_bytes(&std::fs::read(&pkg_path).unwrap()).unwrap();
+    let mut file = ocw_world::RouteFile::parse(&text).unwrap();
+    let fit = ocw_world::route_fit::fit_heights(&mut file.points, |x, z, d| {
+        pkg.road_heights_along(x, z, d)
+    });
+    println!("route file vs package roads before the fit: {fit:?}");
+    let route = file.to_route().unwrap();
+    let strips: Vec<RoadStrip> = pkg
+        .tiles
+        .values()
+        .flat_map(|t| t.roads.iter().cloned())
+        .collect();
+    let road = Surface::of_strips(&strips);
+    let mut gaps = Vec::new();
+    let mut d = 100.0;
+    while d < route.length() - 10.0 {
+        let p = route.sample(d).position;
+        let lift = crate::ROAD_SURFACE_LIFT_M;
+        let on_road = road
+            .heights(p[0] as f32, p[2] as f32)
+            .iter()
+            .any(|h| (h - lift - p[1] as f32).abs() < 0.5);
+        if on_road {
+            let straight = cases(&route, d)[0].1;
+            gaps.push((d, gap(&route, &road, ProfileId::Road, Lod::Near, straight)));
+        }
+        d += 250.0;
+    }
+    assert!(gaps.len() >= 30, "{} marks on the road", gaps.len());
+    for (d, g) in gaps.iter().filter(|g| g.1.abs() > TOLERANCE_M) {
+        println!("outlier: km {:.2}: gap {:+.1} mm", d / 1000.0, g * 1000.0);
+    }
+    let mut sorted: Vec<f32> = gaps.iter().map(|g| g.1).collect();
+    sorted.sort_by(f32::total_cmp);
+    let median = sorted[sorted.len() / 2];
+    let within = sorted.iter().filter(|g| g.abs() <= TOLERANCE_M).count();
+    println!(
+        "fitted route file: {} marks, median gap {:+.1} mm, {within} within 2 mm, range {:+.1} … {:+.1} mm",
+        sorted.len(),
+        median * 1000.0,
+        sorted[0] * 1000.0,
+        sorted[sorted.len() - 1] * 1000.0
+    );
+    assert!(median.abs() <= TOLERANCE_M, "median {median}");
+    assert!(within * 10 >= sorted.len() * 9, "{within} of {}", sorted.len());
+}

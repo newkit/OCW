@@ -17,12 +17,21 @@
 //! Devices (BLE trainer, sensors, gamepads), the trainer mode, a running
 //! video, the camera, HUD, menu and console stay. `ride.import-gpx` matches
 //! a GPX file onto the loaded package's roads and saves it as a route of the
-//! user. [`catalog`] and [`pages`] are the Ride / Navi lists.
+//! user. [`catalog`] and [`pages`] are the Ride / Navi lists, [`world`]
+//! the World menu (spec §3.2.1: change world, about, conditions).
+//!
+//! **Shared rides** (`--server`): the server owns the session (§6.1), so
+//! a switch to another world is a request to it (only the host may, the
+//! server checks); when the server has switched, every client gets a
+//! world change, loads the same package here and joins again on the same
+//! connection ([`follow_world_change`]). Test routes and the user's own
+//! route files are not offered to a shared ride.
 
 pub mod catalog;
 pub mod choice;
 pub mod pages;
 pub mod setup;
+pub mod world;
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -37,7 +46,7 @@ use crate::Args;
 use crate::connection::{self, ClientState, FreeRideSetup};
 use crate::recording::{MIN_AUTO_SAVE_S, Recording, RideRecorder};
 use choice::{RideChoice, SwitchArgs, WorldMode};
-use pages::{Catalog, LoadedWorld};
+use pages::Catalog;
 use setup::RideSetup;
 
 /// The ride being loaded, for the HUD ("Loading … ").
@@ -59,18 +68,34 @@ pub struct CurrentWorld {
     pub spec: String,
     /// The package's own name (route files name it).
     pub name: String,
-    pub routes: Vec<(String, f64)>,
+    pub routes: Vec<world::RouteInfo>,
     pub net: Option<std::sync::Arc<ocw_world::RoadNetwork>>,
     pub origin: (f64, f64),
+    /// What World → About this world shows.
+    pub details: world::WorldDetails,
 }
 
 /// The lists of the Ride and Navi pages, read when the menu opens.
 #[derive(Resource, Default)]
 pub struct RideCatalog(pub Catalog);
 
-/// A switch being loaded: the options of the new ride and the result.
+/// A switch being loaded: the options of the new ride and the result;
+/// `follow`: the server switched the world (join again on its link,
+/// check the package's hash).
 #[derive(Resource, Default)]
-struct Pending(Option<Mutex<Receiver<Loaded>>>);
+struct Pending(Option<(Mutex<Receiver<Loaded>>, Option<Follow>)>);
+
+/// A world change of the server being followed.
+#[derive(Debug, Clone, PartialEq)]
+struct Follow {
+    name: String,
+    /// The SHA-256 of the server's package (empty: not known).
+    sha256: Vec<u8>,
+}
+
+/// Package summaries of the world list (read again only for changed files).
+#[derive(Resource, Default)]
+struct WorldMemo(ocw_worldstore::discover::SummaryMemo);
 
 /// The options of a new ride and what loading them gave.
 type Loaded = (Args, Result<RideSetup, String>);
@@ -100,6 +125,7 @@ pub fn insert_setup(world: &mut World, setup: RideSetup) {
                 routes: w.routes,
                 net: w.net,
                 origin: w.origin,
+                details: w.details,
             });
             world.insert_resource(w.info);
             world.insert_resource(w.render);
@@ -151,6 +177,24 @@ fn gpx_dirs() -> Vec<PathBuf> {
     dirs
 }
 
+/// Where and how worlds are looked for: the cache, the package ridden now
+/// (or `--world`) and the files next to it, the data directories.
+fn discovery(args: &Args, current: Option<&CurrentRide>) -> ocw_worldstore::discover::Discovery {
+    let opts = crate::worlds::load_options(args).ok();
+    let given = current
+        .and_then(|c| c.world.as_ref().map(|w| w.spec.clone()))
+        .or_else(|| args.world.clone());
+    ocw_worldstore::discover::Discovery {
+        cache: crate::worlds::cache(args),
+        given,
+        dirs: world_dirs(args),
+        trust: opts.as_ref().map(|o| o.trust.clone()).unwrap_or_default(),
+        now_unix_s: ocw_worldstore::now_unix_s(),
+        allow_unsigned: args.allow_unsigned,
+        require_signed: args.require_signed,
+    }
+}
+
 /// Reads the Ride / Navi lists again (directories, cache, rides).
 pub fn refresh_catalog(world: &mut World) {
     let args = world.resource::<Args>().clone();
@@ -164,8 +208,14 @@ pub fn refresh_catalog(world: &mut World) {
     let rides_dir = world
         .get_resource::<Recording>()
         .and_then(|r| r.dir.clone());
+    let found = {
+        let d = discovery(&args, current.as_ref());
+        world.init_resource::<WorldMemo>();
+        let mut memo = world.resource_mut::<WorldMemo>();
+        ocw_worldstore::discover::discover(&d, &mut memo.0)
+    };
     let mut c = Catalog {
-        worlds: catalog::known_worlds(&crate::worlds::cache(&args), &world_dirs(&args)),
+        worlds: found,
         gpx: catalog::gpx_files(&gpx_dirs()),
         workouts: crate::workout::catalog(crate::workout::workouts_dir().as_deref()),
         workout_now: world
@@ -181,26 +231,10 @@ pub fn refresh_catalog(world: &mut World) {
     }
     if let Some(cur) = current {
         if let Some(w) = &cur.world {
-            // The package ridden now is always listed.
-            if !c.worlds.iter().any(|k| k.spec == w.spec) {
-                c.worlds.insert(
-                    0,
-                    catalog::KnownWorld {
-                        spec: w.spec.clone(),
-                        name: choice::world_name(&w.spec),
-                        detail: "loaded".into(),
-                    },
-                );
-            }
             if let Some(dir) = routes_dir() {
                 c.user_routes = catalog::user_routes(&dir, &w.name);
             }
-            c.world = Some(LoadedWorld {
-                spec: w.spec.clone(),
-                name: w.name.clone(),
-                routes: w.routes.clone(),
-                has_graph: w.net.is_some(),
-            });
+            c.world = Some(world::loaded_world(w));
         }
         c.current = Some(cur.choice);
     }
@@ -223,9 +257,14 @@ impl Plugin for RidePlugin {
         app.init_resource::<Loading>()
             .init_resource::<Pending>()
             .init_resource::<RideCatalog>()
+            .init_resource::<WorldMemo>()
             .add_systems(Startup, refresh_catalog)
-            .add_systems(Update, (finish_switch, refresh_on_menu_open));
+            .add_systems(
+                Update,
+                (follow_world_change, finish_switch, refresh_on_menu_open),
+            );
         register_commands(app);
+        world::register_commands(app);
     }
 }
 
@@ -240,12 +279,137 @@ fn refresh_on_menu_open(world: &mut World, mut was_open: Local<bool>) {
     *was_open = open;
 }
 
-/// Starts loading `choice` on a background thread (the ride goes on).
+/// Starts loading `choice` on a background thread (the ride goes on); on
+/// a remote server asks the server to switch instead (see the module docs).
 pub fn begin_switch(world: &mut World, choice: RideChoice) -> Result<String, String> {
-    let args = world.resource::<Args>();
-    if args.server.is_some() {
-        return Err("riding on a remote server: the server chooses the course".into());
+    if world.resource::<Args>().server.is_some() {
+        return ask_server(world, &choice);
     }
+    start_load(world, choice, None)
+}
+
+/// What the server is asked for: the package (its id, or the file name of
+/// a local build) and the route (`None`: a free ride).
+pub fn server_request(
+    worlds: &[ocw_worldstore::discover::WorldEntry],
+    choice: &RideChoice,
+) -> Result<(String, Option<String>), String> {
+    let RideChoice::World { world, mode } = choice else {
+        return Err(
+            "a shared ride rides world packages; test routes and route files only alone".into(),
+        );
+    };
+    let route = match mode {
+        WorldMode::FreeRide { .. } => None,
+        WorldMode::Route(r) if std::path::Path::new(r).is_file() => {
+            return Err(
+                "your own routes are not on the server; choose a route of the package".into(),
+            );
+        }
+        WorldMode::Route(r) => Some(r.clone()),
+        _ => return Err("a shared ride takes a free ride or a route of the package".into()),
+    };
+    let entry = worlds
+        .iter()
+        .flat_map(ocw_worldstore::discover::WorldEntry::members)
+        .find(|e| e.spec == *world);
+    let name = match entry {
+        Some(e) if !e.id.starts_with("local/") => e.id.clone(),
+        Some(e) => e
+            .path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map_or_else(|| e.name.clone(), |n| n.to_string_lossy().into_owned()),
+        None => std::path::Path::new(world)
+            .file_name()
+            .map_or_else(|| world.clone(), |n| n.to_string_lossy().into_owned()),
+    };
+    Ok((name, route))
+}
+
+/// A shared ride: the host asks the server to switch (it checks again).
+fn ask_server(world: &mut World, choice: &RideChoice) -> Result<String, String> {
+    let client = &world.resource::<ClientState>().0;
+    if !client.may_switch_world() {
+        return Err(format!(
+            "{} sets the world of this shared ride",
+            client.world_control()
+        ));
+    }
+    let worlds = world.resource::<RideCatalog>().0.worlds.clone();
+    let (name, route) = server_request(&worlds, choice)?;
+    world
+        .resource::<connection::Link>()
+        .send_bytes(ocw_protocol::encode(&ocw_protocol::world_request(
+            &name,
+            route.as_deref(),
+        )));
+    info!(world = %name, ?route, "asked the server to switch the world");
+    Ok(format!(
+        "asked the server to ride {name}; everyone joins again when it has loaded it"
+    ))
+}
+
+/// The server switched the world (a shared ride): load the same package
+/// from what is installed here and join again on the same connection.
+fn follow_world_change(world: &mut World) {
+    let Some(change) = world
+        .get_resource_mut::<connection::WorldChangeInbox>()
+        .and_then(|mut i| i.0.take())
+    else {
+        return;
+    };
+    refresh_catalog(world);
+    let worlds = world.resource::<RideCatalog>().0.worlds.clone();
+    let found = worlds
+        .iter()
+        .flat_map(ocw_worldstore::discover::WorldEntry::members)
+        .filter(|e| e.is_rideable())
+        .find(|e| {
+            (e.id == change.package_id && e.version == change.version)
+                || (change.package_id.starts_with("local/")
+                    && e.summary
+                        .as_ref()
+                        .is_some_and(|s| Some(&s.name) == change.world.as_ref().map(|w| &w.name)))
+        });
+    let Some(entry) = found else {
+        let msg = format!(
+            "The host rides {} ({} v{}), which is not installed here",
+            change.name, change.package_id, change.version
+        );
+        warn!("{msg}");
+        world.resource_mut::<ConsoleState>().print(msg.clone());
+        if let Some(mut v) = world.get_resource_mut::<RideView>() {
+            v.app_message = Some(msg);
+        }
+        return;
+    };
+    let choice = RideChoice::World {
+        world: entry.spec.clone(),
+        mode: if change.route.is_empty() {
+            WorldMode::FreeRide { start: None }
+        } else {
+            WorldMode::Route(change.route.clone())
+        },
+    };
+    let follow = Follow {
+        name: change.name.clone(),
+        sha256: change.content_sha256.clone(),
+    };
+    if let Err(e) = start_load(world, choice, Some(follow)) {
+        world
+            .resource_mut::<ConsoleState>()
+            .print(format!("cannot follow the world change: {e}"));
+    }
+}
+
+/// Loads `choice` on a background thread.
+fn start_load(
+    world: &mut World,
+    choice: RideChoice,
+    follow: Option<Follow>,
+) -> Result<String, String> {
+    let args = world.resource::<Args>();
     if world.resource::<Pending>().0.is_some() {
         return Err("another ride is being loaded".into());
     }
@@ -260,7 +424,7 @@ pub fn begin_switch(world: &mut World, choice: RideChoice) -> Result<String, Str
             let _ = tx.send((new, result));
         })
         .map_err(|e| format!("cannot start loading: {e}"))?;
-    world.resource_mut::<Pending>().0 = Some(Mutex::new(rx));
+    world.resource_mut::<Pending>().0 = Some((Mutex::new(rx), follow));
     world.resource_mut::<Loading>().0 = Some(format!("Loading {what} ..."));
     info!("ride switch: loading {what}");
     Ok(format!("loading {what}"))
@@ -268,9 +432,9 @@ pub fn begin_switch(world: &mut World, choice: RideChoice) -> Result<String, Str
 
 /// Applies a loaded switch (or reports why it failed; the ride goes on).
 fn finish_switch(world: &mut World) {
-    let result = {
+    let (result, follow) = {
         let mut pending = world.resource_mut::<Pending>();
-        let Some(rx) = pending.0.as_ref() else {
+        let Some((rx, _)) = pending.0.as_ref() else {
             return;
         };
         let r = match rx.lock().expect("not poisoned").try_recv() {
@@ -281,14 +445,35 @@ fn finish_switch(world: &mut World) {
                 Err("the loading thread ended".into()),
             ),
         };
-        pending.0 = None;
-        r
+        let follow = pending.0.take().and_then(|(_, f)| f);
+        (r, follow)
     };
     world.resource_mut::<Loading>().0 = None;
+    // Following the server: the same package, byte for byte.
+    let result = match (result, &follow) {
+        ((args, Ok(setup)), Some(f)) if !f.sha256.is_empty() => {
+            let ours = setup
+                .world
+                .as_ref()
+                .map(|w| w.info.identity.content_hash.0.to_vec());
+            if ours.as_deref() == Some(f.sha256.as_slice()) {
+                (args, Ok(setup))
+            } else {
+                (
+                    args,
+                    Err(format!(
+                        "your copy of {} differs from the server's (another version or build); install the same package",
+                        f.name
+                    )),
+                )
+            }
+        }
+        (r, _) => r,
+    };
     match result {
         (args, Ok(setup)) => {
             let what = setup.choice.describe();
-            apply_switch(world, args, setup);
+            apply_switch_with(world, args, setup, follow.is_some());
             info!("ride switch: riding {what}");
             world
                 .resource_mut::<ConsoleState>()
@@ -341,8 +526,10 @@ fn save_ride(world: &mut World) {
     }
 }
 
-/// The session rebuild (see the module docs), in one frame.
-pub fn apply_switch(world: &mut World, mut args: Args, setup: RideSetup) {
+/// The session rebuild (see the module docs), in one frame; `keep_link`:
+/// join again on the remote server's connection (the server switched the
+/// world).
+fn apply_switch_with(world: &mut World, mut args: Args, setup: RideSetup, keep_link: bool) {
     // 1. The old ride is over.
     save_ride(world);
     // The rider chosen now (the Workshop's choice applies from the next
@@ -377,7 +564,7 @@ pub fn apply_switch(world: &mut World, mut args: Args, setup: RideSetup) {
         v.event = None;
     }
     // 3. A new session (the old server thread ends with its link).
-    connection::start_session(world, route);
+    connection::start_session_with(world, route, keep_link);
     if world
         .get_resource::<crate::menu::MenuState>()
         .is_some_and(|m| m.menu.is_open())
@@ -505,6 +692,9 @@ mod tests {
             "loop",
             "--record",
             "true",
+            // An empty world cache: the World list is the test routes only.
+            "--world-cache",
+            rides.join("no-cache").to_str().unwrap(),
         ]);
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, ConsoleCorePlugin))
@@ -674,14 +864,12 @@ mod tests {
     #[test]
     fn the_menu_switches_after_asking() {
         let (mut app, _) = app("menu");
-        for line in ["menu open", "menu down", "menu select"] {
+        for line in ["menu open", "menu down", "menu down", "menu select"] {
             run(&mut app, line);
         }
-        // Ride → Change ride → Test route: Hills → "Change the ride?" → Ride now.
+        // World → Change world → (no packages here) → Test route: Hills →
+        // "Change the ride?" → Ride now.
         for line in [
-            "menu up",
-            "menu up",
-            "menu up",
             "menu select",
             "menu down",
             "menu select",
@@ -709,12 +897,85 @@ mod tests {
         );
     }
 
+    /// A shared ride (`--server`): the switch is the server's; test routes
+    /// and own route files are not offered, a world is asked for by id.
     #[test]
-    fn a_remote_ride_cannot_switch() {
+    fn a_remote_ride_asks_the_server() {
         let (mut app, _) = app("remote");
         app.world_mut().resource_mut::<Args>().server = Some("127.0.0.1:1".into());
         let log = run(&mut app, "ride.switch --route hills");
-        assert!(log.contains("remote server"), "{log}");
+        assert!(
+            log.contains("test routes and route files only alone"),
+            "{log}"
+        );
+        let log = run(
+            &mut app,
+            "ride.switch --world \"/nowhere/blackforest.ocwpkg\" --free-ride",
+        );
+        assert!(
+            log.contains("asked the server to ride blackforest.ocwpkg"),
+            "{log}"
+        );
+        assert!(
+            app.world().resource::<Loading>().0.is_none(),
+            "nothing loads locally"
+        );
+        // The request: the package's id when it has a manifest.
+        let mut e = world::tests::catalog().worlds[1].clone();
+        e.spec = "/kiosk/bf.ocwpkg".into();
+        let route = RideChoice::World {
+            world: e.spec.clone(),
+            mode: WorldMode::Route("Freiburg - Schauinsland".into()),
+        };
+        assert_eq!(
+            server_request(std::slice::from_ref(&e), &route).unwrap(),
+            (
+                "europe/blackforest".into(),
+                Some("Freiburg - Schauinsland".into())
+            )
+        );
+        let mine =
+            std::env::temp_dir().join(format!("ocw-own-{}.ocw-graph-route", std::process::id()));
+        std::fs::write(&mine, "x").unwrap();
+        let own = RideChoice::World {
+            world: e.spec.clone(),
+            mode: WorldMode::Route(mine.display().to_string()),
+        };
+        assert!(
+            server_request(&[e], &own)
+                .unwrap_err()
+                .contains("your own routes")
+        );
+    }
+
+    /// The server switched the world: the client loads the same package
+    /// (found by id and version among the installed ones) and joins again;
+    /// a package that is not installed is reported, nothing loads.
+    #[test]
+    fn a_world_change_of_the_server_is_followed() {
+        let (mut app, _) = app("follow");
+        app.world_mut()
+            .resource_mut::<connection::WorldChangeInbox>()
+            .0 = Some(ocw_protocol::v1::WorldChange {
+            package_id: "europe/atlantis".into(),
+            version: 2,
+            name: "Atlantis".into(),
+            ..Default::default()
+        });
+        app.update();
+        let msg = app.world().resource::<RideView>().app_message.clone();
+        assert!(
+            msg.as_deref()
+                .is_some_and(|m| m.contains("Atlantis") && m.contains("not installed")),
+            "{msg:?}"
+        );
+        assert!(app.world().resource::<Loading>().0.is_none());
+        assert!(
+            app.world()
+                .resource::<connection::WorldChangeInbox>()
+                .0
+                .is_none()
+        );
     }
 
     /// A straight road 0 – 1 – 2 along x (400 m), as a package's network.
@@ -759,6 +1020,7 @@ mod tests {
             routes: Vec::new(),
             net: Some(line_network()),
             origin,
+            details: world::WorldDetails::default(),
         });
         // A GPS track along the road, 30 m to 370 m.
         let proj = ocw_world::geo::LocalProjection::new(origin.0, origin.1);

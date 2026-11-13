@@ -4,6 +4,7 @@
 //! renders whatever the app puts into [`RideView`]; it knows nothing about
 //! networking or devices.
 
+pub mod bridges;
 pub mod camera;
 pub mod console;
 pub mod event_hud;
@@ -187,8 +188,9 @@ pub struct Ground(pub std::sync::Arc<dyn Fn(f64, f64) -> Option<f64> + Send + Sy
 /// The drawn road surface lies this far above the road profile (the
 /// track's height, which the conformed terrain meets: the same height would
 /// z-fight). Every road surface (route ribbon, package road strips, tunnel
-/// floor) is drawn at it, and the riders' tyres stand on it.
-pub const ROAD_SURFACE_LIFT_M: f32 = 0.02;
+/// floor) is drawn at it, and the riders' tyres stand on it. The same as
+/// the package's [`ocw_world::package::ROAD_LIFT_M`].
+pub const ROAD_SURFACE_LIFT_M: f32 = ocw_world::package::ROAD_LIFT_M as f32;
 
 /// One rider to draw.
 #[derive(Debug, Clone)]

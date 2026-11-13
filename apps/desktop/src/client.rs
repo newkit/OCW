@@ -62,6 +62,9 @@ pub enum Notice {
     CommandResult(String),
     /// The answer to a voice token request (spec §7).
     Voice(v1::VoiceGrant),
+    /// The session rides another world now (spec §3.2.1, the host's
+    /// World → Change world): load it and join again.
+    WorldChange(v1::WorldChange),
 }
 
 /// Free-ride state of the client.
@@ -143,6 +146,8 @@ pub struct ClientCore {
     /// smoothly between snapshots, and its last message.
     clock: ocw_sky::ClockPredictor,
     clock_info: Option<ocw_protocol::ClockInfo>,
+    /// Who may switch the world (from the welcome).
+    world_access: Option<ocw_protocol::ClockAccess>,
 }
 
 /// Steering mode before the menu opened (spec §3.2.1), restored on closing.
@@ -188,6 +193,7 @@ impl ClientCore {
             human_riders: 0,
             clock: ocw_sky::ClockPredictor::default(),
             clock_info: None,
+            world_access: None,
             route,
         }
     }
@@ -385,6 +391,7 @@ impl ClientCore {
                 let id = RiderId(w.rider_id);
                 self.rider_id = Some(id);
                 self.voice_offered = w.voice;
+                self.world_access = Some(ocw_protocol::access_from_wire(w.world_access));
                 if let Some(c) = &w.clock {
                     self.on_clock(c, now_s);
                 }
@@ -411,6 +418,13 @@ impl ClientCore {
                 None
             }
             S::Voice(g) => Some(Notice::Voice(g)),
+            S::WorldChange(c) => {
+                // The session this client joined has ended: its rider ids
+                // mean other riders now, so nothing is reconciled until
+                // the app has loaded the new world and joined again.
+                self.rider_id = None;
+                Some(Notice::WorldChange(c))
+            }
             S::Event(e) => {
                 let info = ocw_protocol::event_info(&e);
                 if self.event.on_state(info, self.rider_id, now_s) {
@@ -448,6 +462,23 @@ impl ClientCore {
     /// again): anyone on a local server, the host in a shared ride.
     pub fn may_change_clock(&self) -> bool {
         self.clock_info.is_some_and(|c| c.may_change(self.rider_id))
+    }
+
+    /// Whether this rider may switch the world (spec §3.2.1; the server
+    /// checks it again): anyone on a local server, the host of a shared ride.
+    pub fn may_switch_world(&self) -> bool {
+        let host = self.clock_info.and_then(|c| c.host);
+        self.world_access
+            .is_none_or(|a| a.allows(self.rider_id, host))
+    }
+
+    /// Who switches the world, for messages: "you", "the host", "the organizer".
+    pub fn world_control(&self) -> &'static str {
+        match self.world_access {
+            _ if self.may_switch_world() => "you",
+            Some(ocw_protocol::ClockAccess::Nobody) => "the organizer",
+            _ => "the host",
+        }
     }
 
     /// The encoded time-machine request.
@@ -1372,6 +1403,54 @@ mod tests {
         client: ClientCore,
         notices: Vec<Notice>,
         time_s: f64,
+    }
+
+    /// The host's world switch in a shared ride (spec §3.2.1): only the
+    /// host may (a quick check here, the server's is the rule); when the
+    /// server switched, the client leaves the old session and is told.
+    #[test]
+    fn a_world_change_ends_the_joined_session() {
+        let config = || ServerConfig {
+            world_access: ocw_protocol::ClockAccess::Host,
+            ..Default::default()
+        };
+        let mut host = Harness::with(
+            GameServer::new(route(), config()),
+            ClientCore::new(route(), "Host", RiderProfile::default()),
+        );
+        host.ride(100.0, 0.2);
+        assert!(host.client.may_switch_world(), "the only rider is the host");
+        assert_eq!(host.client.world_control(), "you");
+        // A second client on the same server is a guest.
+        let conn = host.server.connect();
+        let mut guest = ClientCore::new(route(), "Guest", RiderProfile::default());
+        for reply in host.server.handle(conn, &guest.hello()) {
+            guest.on_server_message(&reply, 0.0);
+        }
+        for b in (0..5).flat_map(|_| host.server.tick()) {
+            guest.on_server_message(&b, 0.1);
+        }
+        assert!(guest.rider_id().is_some());
+        assert!(!guest.may_switch_world());
+        assert_eq!(guest.world_control(), "the host");
+        let (conns, bytes) = host.server.switch_world(
+            route(),
+            v1::WorldChange {
+                package_id: "europe/blackforest".into(),
+                version: 1,
+                ..Default::default()
+            },
+        );
+        assert_eq!(conns.len(), 2);
+        let n = guest.on_server_message(&bytes, 0.2);
+        assert!(
+            matches!(&n, Some(Notice::WorldChange(c)) if c.package_id == "europe/blackforest"),
+            "{n:?}"
+        );
+        assert_eq!(guest.rider_id(), None, "left the ended session");
+        // Without a welcome yet (a local server before joining): no limit.
+        let fresh = ClientCore::new(route(), "New", RiderProfile::default());
+        assert!(fresh.may_switch_world());
     }
 
     impl Harness {
@@ -2644,6 +2723,7 @@ mod tests {
             graph_route: String::new(),
             voice: false,
             clock: None,
+            world_access: 0,
         })));
         h.receive(&welcome);
         assert!(matches!(h.notices.last(), Some(Notice::Rejected(_))));

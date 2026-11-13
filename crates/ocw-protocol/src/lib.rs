@@ -447,6 +447,43 @@ pub enum ClockAccess {
     Nobody,
 }
 
+impl ClockAccess {
+    /// Whether `rider` may do it, with `host` the session's host.
+    pub fn allows(self, rider: Option<RiderId>, host: Option<RiderId>) -> bool {
+        match self {
+            ClockAccess::Anyone => true,
+            ClockAccess::Host => rider.is_some() && rider == host,
+            ClockAccess::Nobody => false,
+        }
+    }
+}
+
+/// [`ClockAccess`] on the wire (`WorldClock.access`, `Welcome.world_access`).
+pub fn access_to_wire(access: ClockAccess) -> i32 {
+    (match access {
+        ClockAccess::Anyone => v1::ClockAccess::Anyone,
+        ClockAccess::Host => v1::ClockAccess::Host,
+        ClockAccess::Nobody => v1::ClockAccess::Nobody,
+    }) as i32
+}
+
+/// A received access value (unknown values: anyone, as an old server's 0).
+pub fn access_from_wire(v: i32) -> ClockAccess {
+    match v1::ClockAccess::try_from(v) {
+        Ok(v1::ClockAccess::Host) => ClockAccess::Host,
+        Ok(v1::ClockAccess::Nobody) => ClockAccess::Nobody,
+        _ => ClockAccess::Anyone,
+    }
+}
+
+/// A world switch request (spec §3.2.1): package and route (empty: free ride).
+pub fn world_request(world: &str, route: Option<&str>) -> v1::ClientMessage {
+    client_message(v1::client_message::Msg::World(v1::WorldRequest {
+        world: world.to_owned(),
+        route: route.unwrap_or_default().to_owned(),
+    }))
+}
+
 /// The world clock message for session time `t` (s).
 pub fn world_clock(
     c: &ocw_sky::WorldClock,
@@ -465,11 +502,7 @@ pub fn world_clock(
         speed: c.speed() as f32,
         paused: c.paused(),
         offset_ms: c.offset_ms(t),
-        access: match access {
-            ClockAccess::Anyone => v1::ClockAccess::Anyone,
-            ClockAccess::Host => v1::ClockAccess::Host,
-            ClockAccess::Nobody => v1::ClockAccess::Nobody,
-        } as i32,
+        access: access_to_wire(access),
         host_rider_id: host.map_or(0, |h| h.0),
     }
 }
@@ -490,11 +523,7 @@ pub struct ClockInfo {
 impl ClockInfo {
     /// Whether rider `me` may change the clock.
     pub fn may_change(&self, me: Option<RiderId>) -> bool {
-        match self.access {
-            ClockAccess::Anyone => true,
-            ClockAccess::Host => me.is_some() && self.host == me,
-            ClockAccess::Nobody => false,
-        }
+        self.access.allows(me, self.host)
     }
 }
 
@@ -510,11 +539,7 @@ pub fn clock_info(c: &v1::WorldClock) -> ClockInfo {
         speed: f64::from(c.speed),
         paused: c.paused,
         offset_ms: c.offset_ms,
-        access: match v1::ClockAccess::try_from(c.access) {
-            Ok(v1::ClockAccess::Host) => ClockAccess::Host,
-            Ok(v1::ClockAccess::Nobody) => ClockAccess::Nobody,
-            _ => ClockAccess::Anyone,
-        },
+        access: access_from_wire(c.access),
         host: (c.host_rider_id != 0).then_some(RiderId(c.host_rider_id)),
     }
 }
@@ -554,6 +579,34 @@ pub fn clock_change(r: &v1::ClockRequest) -> Option<ocw_sky::ClockChange> {
 mod tests {
     use super::*;
     use v1::client_message::Msg;
+
+    #[test]
+    fn world_requests_and_access_round_trip() {
+        let bytes = encode(&world_request(
+            "europe/liechtenstein@3",
+            Some("Vaduz - Malbun"),
+        ));
+        let Msg::World(w) = decode_client(&bytes).unwrap() else {
+            panic!("not a world request")
+        };
+        assert_eq!(
+            (w.world.as_str(), w.route.as_str()),
+            ("europe/liechtenstein@3", "Vaduz - Malbun")
+        );
+        let Msg::World(w) = decode_client(&encode(&world_request("x", None))).unwrap() else {
+            panic!()
+        };
+        assert!(w.route.is_empty(), "free ride");
+        for a in [ClockAccess::Anyone, ClockAccess::Host, ClockAccess::Nobody] {
+            assert_eq!(access_from_wire(access_to_wire(a)), a);
+        }
+        assert_eq!(access_from_wire(99), ClockAccess::Anyone);
+        let (me, other) = (Some(RiderId(1)), Some(RiderId(2)));
+        assert!(ClockAccess::Anyone.allows(other, me));
+        assert!(ClockAccess::Host.allows(me, me) && !ClockAccess::Host.allows(other, me));
+        assert!(!ClockAccess::Host.allows(None, None));
+        assert!(!ClockAccess::Nobody.allows(me, me));
+    }
 
     #[test]
     fn voice_identity_roundtrip() {
@@ -834,6 +887,7 @@ mod tests {
             graph_route: "Rheintal".into(),
             voice: true,
             clock: None,
+            world_access: 2,
         };
         let bytes = encode(&server_message(S::Welcome(welcome.clone())));
         assert_eq!(decode_server(&bytes).unwrap(), S::Welcome(welcome));
