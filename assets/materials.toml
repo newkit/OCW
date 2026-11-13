@@ -277,6 +277,36 @@ normal = { file = "Ground039_1K-JPG_NormalGL.jpg", sha256 = "d440e5ca7d66bc6ba3f
 roughness = { file = "Ground039_1K-JPG_Roughness.jpg", sha256 = "b31242628a0491a4362469b02d75eff5d36f46df9a8dad238f955531c5a18e88" }
 ao = { file = "Ground039_1K-JPG_AmbientOcclusion.jpg", sha256 = "b48977982ff7976259c124803a7f3e3ea476b0d12d6bac304a5861e7c2cc4b84" }
 
+# Kerbs and sidewalks in towns (Phase 8 T5, road layers 5 and 6): interlocking
+# concrete pavers (the usual German / Swiss / Liechtenstein sidewalk) and a
+# fine-grained concrete for the kerb stones.
+
+[[material]]
+id = "sidewalk"
+name = "Sidewalk pavers"
+group = "road"
+size_m = 1.9
+license = "CC0-1.0"
+author = "Amal Kumar (Poly Haven)"
+title = "Concrete Pavers"
+source = "https://polyhaven.com/a/concrete_pavers"
+albedo = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_pavers/concrete_pavers_diff_1k.jpg", sha256 = "eea1fb8b498154754f4961ce0792092ef56cadc3d210becbb0dc3bf6c96c261d" }
+normal = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_pavers/concrete_pavers_nor_gl_1k.jpg", sha256 = "761c8332b4b53ab06931adf83f5f8f4fa5b7559a1a8267bc7ef865f890b17894" }
+arm = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_pavers/concrete_pavers_arm_1k.jpg", sha256 = "8375d082a81e6e8043af5f6ec1c5c71ada9577e50faf60a3c412b8df5612eb4e" }
+
+[[material]]
+id = "kerb"
+name = "Kerb stone (concrete)"
+group = "road"
+size_m = 1.2
+license = "CC0-1.0"
+author = "Rob Tuytel (Poly Haven), photography Matterfield"
+title = "Concrete Floor 03"
+source = "https://polyhaven.com/a/concrete_floor_03"
+albedo = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_floor_03/concrete_floor_03_diff_1k.jpg", sha256 = "6403524d194100d80e3040435b953ddf44e90069bd404cfb116204dec3c35df7" }
+normal = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_floor_03/concrete_floor_03_nor_gl_1k.jpg", sha256 = "f9f18d02c1e4e655aa321ddeaf2c696a87a9c4782fea7119c65310c510367f5a" }
+arm = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_floor_03/concrete_floor_03_arm_1k.jpg", sha256 = "baaea8404331ead21e12306ab5a890eb74b80cb8a2e508aa209cc9dfa4423fa1" }
+
 # --- Houses (Phase 8 T4) -----------------------------------------------------
 
 [[material]]

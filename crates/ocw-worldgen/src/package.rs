@@ -213,13 +213,24 @@ impl<'a, F: Fn(f64, f64) -> f64> GraphTerrain<'a, F> {
 /// Splits a road polyline into per-tile runs; each run reaches one point
 /// into the next tile, so strips of neighbouring tiles overlap (no gaps).
 pub fn split_into_tiles(points: &[[f64; 3]], size: f64) -> Vec<(TileKey, Vec<[f64; 3]>)> {
-    let mut out: Vec<(TileKey, Vec<[f64; 3]>)> = Vec::new();
+    split_into_tiles_indexed(points, size)
+        .into_iter()
+        .map(|(k, _, run)| (k, run))
+        .collect()
+}
+
+/// [`split_into_tiles`] with the index of each run's first point.
+pub fn split_into_tiles_indexed(
+    points: &[[f64; 3]],
+    size: f64,
+) -> Vec<(TileKey, usize, Vec<[f64; 3]>)> {
+    let mut out: Vec<(TileKey, usize, Vec<[f64; 3]>)> = Vec::new();
     for (i, p) in points.iter().enumerate() {
         let key = TileKey::containing([p[0], p[2]], size);
         match out.last_mut() {
-            Some((k, run)) if *k == key => run.push(*p),
+            Some((k, _, run)) if *k == key => run.push(*p),
             last => {
-                if let Some((_, run)) = last {
+                if let Some((_, _, run)) = last {
                     run.push(*p); // overlap into the next tile
                 }
                 let mut run = Vec::new();
@@ -227,12 +238,41 @@ pub fn split_into_tiles(points: &[[f64; 3]], size: f64) -> Vec<(TileKey, Vec<[f6
                     run.push(points[i - 1]);
                 }
                 run.push(*p);
-                out.push((key, run));
+                out.push((key, i.saturating_sub(1), run));
             }
         }
     }
-    out.retain(|(_, run)| run.len() >= 2);
+    out.retain(|(_, _, run)| run.len() >= 2);
     out
+}
+
+/// The junction zone at each vertex of the graph (spec §14 Phase 8 T5):
+/// at a vertex joining three or more edges, the half width of the widest
+/// edge there plus [`ocw_world::road_dress::CORNER_M`]; 0 elsewhere (a
+/// plain split of a way, a dead end, the region border).
+pub fn junction_zones(graph: &RoadGraph) -> Vec<f32> {
+    let mut degree = vec![0u32; graph.vertices.len()];
+    let mut widest = vec![0.0f64; graph.vertices.len()];
+    for e in &graph.edges {
+        for v in [e.from.0 as usize, e.to.0 as usize] {
+            degree[v] += 1;
+            widest[v] = widest[v].max(e.width_m);
+        }
+    }
+    degree
+        .iter()
+        .zip(&widest)
+        .map(|(&d, &w)| {
+            if d >= 3 {
+                let r = (w as f32 / 2.0 + ocw_world::road_dress::CORNER_M)
+                    .min(ocw_world::road_dress::MAX_JUNCTION_M);
+                // In decimetres, as the package stores it.
+                (r * 10.0).round() / 10.0
+            } else {
+                0.0
+            }
+        })
+        .collect()
 }
 
 /// How far a road strip reaches beyond a cut at the region border (m).
@@ -263,6 +303,7 @@ pub fn road_strips(
     tile_size: f64,
 ) -> BTreeMap<TileKey, Vec<(usize, RoadStrip)>> {
     let mut roads: BTreeMap<TileKey, Vec<(usize, RoadStrip)>> = BTreeMap::new();
+    let zones = junction_zones(graph);
     for (ei, e) in graph.edges.iter().enumerate().filter(|(_, e)| !e.tunnel) {
         let mut with_h: Vec<[f64; 3]> = sample_along(&e.points, PROFILE_STEP_M, true)
             .into_iter()
@@ -278,7 +319,21 @@ pub fn road_strips(
             extend_end(&mut with_h, BORDER_OVERLAP_M);
             with_h.reverse();
         }
-        for (key, run) in split_into_tiles(&with_h, tile_size) {
+        // Arc length along the drawn points (as the client measures it),
+        // so dashes and textures run on across the tiles.
+        let mut cum = vec![0.0f64; with_h.len()];
+        for i in 1..with_h.len() {
+            let (a, b) = (with_h[i - 1], with_h[i]);
+            cum[i] = cum[i - 1]
+                + ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2) + (b[2] - a[2]).powi(2)).sqrt();
+        }
+        let edge_m = cum.last().copied().unwrap_or(0.0) as f32;
+        let junction_m = [zones[e.from.0 as usize], zones[e.to.0 as usize]];
+        for (key, first, run) in split_into_tiles_indexed(&with_h, tile_size) {
+            let mut dress = ocw_world::RoadDress::of_class(e.class, e.width_m as f32);
+            dress.start_m = cum[first] as f32;
+            dress.edge_m = edge_m;
+            dress.junction_m = junction_m;
             roads.entry(key).or_default().push((
                 ei,
                 RoadStrip {
@@ -289,6 +344,7 @@ pub fn road_strips(
                         .map(|p| [p[0] as f32, p[1] as f32, p[2] as f32])
                         .collect(),
                     surface: RoadSurface::of_class(e.class),
+                    dress,
                 },
             ));
         }

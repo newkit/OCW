@@ -46,7 +46,7 @@ use crate::building_material::{BuildingMaterial, HouseMaterial};
 use crate::camera::{CameraInteraction, CameraObstacles, ObstacleLayer, SolidFootprints};
 use crate::ground::{TerrainMaterial, terrain_material};
 use crate::materials::MaterialLibrary;
-use crate::road_material::{RoadExtension, RoadMaterial};
+use crate::road_material::{RoadMaterial, RoadMaterials};
 use crate::see_through::{SeeThroughMaterial, see_through};
 use crate::tunnel_cut::TunnelCut;
 
@@ -59,9 +59,6 @@ pub const JUMP_M: f64 = 200.0;
 /// After a jump, the tiles up to this ring around the rider (1 = 3 × 3)
 /// are there in the next frame.
 pub const URGENT_RING: i32 = 1;
-/// Road edge faces reach this far down (covers the terrain clearance).
-const EDGE_DEPTH_M: f32 = 2.0;
-
 /// Loads the tiles of member `i` of the world set again (verified), for
 /// neighbours that come into range. Runs on a background task.
 pub type PackageLoader = Arc<dyn Fn(usize) -> Result<WorldPackage, String> + Send + Sync>;
@@ -183,6 +180,8 @@ pub struct TileMeshes {
     /// Splat weights at the cell corners (with a material library).
     pub splat: Option<Splat>,
     pub roads: MeshArrays,
+    /// Crossings, stop and give-way lines over the roads (blended).
+    pub overlays: MeshArrays,
     pub water: MeshArrays,
     pub trees: MeshArrays,
     /// Houses in three levels of detail (`houses`, spec §14 Phase 8 T4).
@@ -462,111 +461,46 @@ pub fn road_colour(class: RoadClass, surface: RoadSurface) -> [f32; 4] {
     }
 }
 
-/// Road surface strips with edge faces, in world coordinates.
+/// Road surface strips with kerbs, sidewalks, shoulders and plain skirts
+/// (no terrain), in world coordinates (spec §14 Phase 8 T5,
+/// [`crate::road_mesh`]).
 pub fn road_arrays(strips: &[RoadStrip]) -> MeshArrays {
-    road_arrays_with(strips, None, |_| EDGE_DEPTH_M)
+    let style = ocw_world::road_dress::MarkingStyle::default();
+    crate::road_mesh::road_meshes(
+        strips,
+        &crate::road_mesh::RoadContext {
+            colours: None,
+            ground: &|_, _| None,
+            deck: &|_| false,
+            style: &style,
+        },
+    )
+    .roads
 }
 
-/// How far the edge face of a road strip reaches down at `p` (its top edge,
-/// spec §4.8.3, §4.8.6): nothing on a bridge deck (the deck has its own
-/// sides, a skirt would hang below it); elsewhere at least
-/// [`EDGE_DEPTH_M`] and down to 0.3 m below the terrain at the edge, so a
-/// road the 10 m terrain grid cannot follow (the upper leg of a hairpin, a
-/// road above a lower one) stands on a wall instead of floating.
-pub fn skirt_depth(
+/// The road meshes of a tile of `pkg`: the terrain beside the roads from
+/// the package (the shoulders blend into it), no skirts on bridge decks.
+pub fn tile_road_meshes(
     pkg: &WorldPackage,
+    tile: &Tile,
     bridges: &[&ocw_world::bridges::Bridge],
-    p: [f32; 3],
-) -> f32 {
-    if crate::bridges::on_deck(bridges, [p[0], p[1] - crate::ROAD_SURFACE_LIFT_M, p[2]]) {
-        return 0.0;
-    }
-    // No terrain there (beyond the package's tiles): the plain skirt.
-    let Some(ground) = pkg.surface_height(f64::from(p[0]), f64::from(p[2])) else {
-        return EDGE_DEPTH_M;
-    };
-    EDGE_DEPTH_M.max(p[1] - ground as f32 + 0.3).min(MAX_WALL_M)
-}
-
-/// Deepest retaining wall drawn under a road edge (m).
-pub const MAX_WALL_M: f32 = 40.0;
-
-/// [`road_arrays`] with the road colours of a material library (`colours`
-/// by surface code, linear; the far colour of the road material) and the
-/// depth of the edge faces below each point given by `skirt` (m below the
-/// surface).
-pub fn road_arrays_with(
-    strips: &[RoadStrip],
     colours: Option<&[[f32; 3]]>,
-    skirt: impl Fn([f32; 3]) -> f32,
-) -> MeshArrays {
-    let mut m = MeshArrays::default();
-    let edge = lin(0.45, 0.43, 0.38);
-    for s in strips {
-        let colour = colours
-            .and_then(|c| c.get(s.surface.code() as usize))
-            .map_or_else(
-                || road_colour(s.class, s.surface),
-                |c| [c[0], c[1], c[2], 1.0],
-            );
-        let layer = f32::from(s.surface.code());
-        let half = s.width_m / 2.0;
-        let p: Vec<Vec3> = s.points.iter().map(|q| Vec3::from(*q)).collect();
-        let n = p.len();
-        let base = m.positions.len() as u32;
-        // Surface: two vertices per point; uv = (across, along) in metres.
-        let mut along = 0.0f32;
-        for i in 0..n {
-            if i > 0 {
-                along += p[i].distance(p[i - 1]);
-            }
-            let dir = (p[(i + 1).min(n - 1)] - p[i.saturating_sub(1)])
-                .with_y(0.0)
-                .normalize_or_zero();
-            let right = Vec3::new(-dir.z, 0.0, dir.x);
-            for side in [-half, half] {
-                m.positions
-                    .push((p[i] + right * side + Vec3::Y * crate::ROAD_SURFACE_LIFT_M).to_array());
-                m.normals.push([0.0, 1.0, 0.0]);
-                m.colors.push(colour);
-                m.uvs.push([side, along]);
-                m.uvs_b.push([layer, 0.0]);
-            }
-        }
-        for i in 0..n as u32 - 1 {
-            let (l0, r0, l1, r1) = (
-                base + 2 * i,
-                base + 2 * i + 1,
-                base + 2 * i + 2,
-                base + 2 * i + 3,
-            );
-            m.indices.extend([l0, r0, l1, r0, r1, l1]);
-        }
-        // Edge faces down into the terrain, both sides, both faces.
-        for side in [-1.0f32, 1.0] {
-            let eb = m.positions.len() as u32;
-            for i in 0..n {
-                let dir = (p[(i + 1).min(n - 1)] - p[i.saturating_sub(1)])
-                    .with_y(0.0)
-                    .normalize_or_zero();
-                let out = Vec3::new(-dir.z, 0.0, dir.x) * side;
-                let top = p[i] + out * half + Vec3::Y * crate::ROAD_SURFACE_LIFT_M;
-                let depth = skirt(top.to_array());
-                m.positions.push(top.to_array());
-                m.positions.push((top - Vec3::Y * depth).to_array());
-                m.normals.extend([out.to_array(); 2]);
-                m.colors.extend([edge; 2]);
-                m.uvs.extend([[0.0, 0.0]; 2]);
-                m.uvs_b.extend([[layer, 1.0]; 2]);
-            }
-            for i in 0..n as u32 - 1 {
-                let (t0, b0, t1, b1) = (eb + 2 * i, eb + 2 * i + 1, eb + 2 * i + 2, eb + 2 * i + 3);
-                m.indices
-                    .extend([t0, b0, t1, b0, b1, t1, t0, t1, b0, b0, t1, b1]);
-            }
-        }
-    }
-    m
+) -> crate::road_mesh::RoadMeshes {
+    let style = crate::road_style::style_for(pkg.time_zone.as_deref());
+    let ground = |x: f32, z: f32| {
+        pkg.surface_height(f64::from(x), f64::from(z))
+            .map(|h| h as f32)
+    };
+    let deck = |p: [f32; 3]| crate::bridges::on_deck(bridges, p);
+    crate::road_mesh::road_meshes(
+        &tile.roads,
+        &crate::road_mesh::RoadContext {
+            colours,
+            ground: &ground,
+            deck: &deck,
+            style,
+        },
+    )
 }
 
 fn hash(x: i64, z: i64, seed: u64) -> f32 {
@@ -1143,6 +1077,7 @@ pub fn build_tile_meshes_look(
     let solid = kept
         .as_deref()
         .map_or_else(SolidFootprints::default, |b| building_footprints(b, &specs));
+    let roads = tile_road_meshes(pkg, tile, &near, look.road_colours.as_deref());
     Some(TileMeshes {
         key,
         terrain: terrain_arrays_kept(pkg, tile, keep),
@@ -1164,9 +1099,8 @@ pub fn build_tile_meshes_look(
                 .unwrap_or_else(crate::ground::default_mix);
             tile_splat(pkg, key, cells, &mix)
         }),
-        roads: road_arrays_with(&tile.roads, look.road_colours.as_deref(), |p| {
-            skirt_depth(pkg, &near, p)
-        }),
+        roads: roads.roads,
+        overlays: roads.overlays,
         water: lu.map_or_else(MeshArrays::default, |(lu, _)| {
             water_arrays_kept(pkg, tile, lu, keep)
         }),
@@ -1550,11 +1484,19 @@ fn stream_tiles(
     }
 }
 
-/// The material library and the road material made from it.
+/// The road materials made so far, by marking style, and whether they
+/// were made with the material library.
+#[derive(Default)]
+pub(crate) struct RoadMaterialCache {
+    textured: bool,
+    by_style: HashMap<usize, RoadMaterials>,
+}
+
+/// The material library and the road materials made from it.
 type RoadParams<'w, 's> = (
     Option<Res<'w, MaterialLibrary>>,
     Option<ResMut<'w, Assets<RoadMaterial>>>,
-    Local<'s, Option<Handle<RoadMaterial>>>,
+    Local<'s, RoadMaterialCache>,
 );
 
 #[allow(clippy::too_many_arguments)] // a Bevy system
@@ -1568,24 +1510,18 @@ fn upload_tiles(
     mut terrain: ResMut<Assets<TerrainMaterial>>,
     mut obstacles: ResMut<CameraObstacles>,
     tunnels: Option<Res<crate::tunnel::Tunnels>>,
-    (library, mut road_materials, mut textured_roads): RoadParams,
+    (library, mut road_materials, mut road_cache): RoadParams,
     house: Option<Res<HouseMaterial>>,
 ) {
-    // The shared road material of the library (made once).
-    if textured_roads.is_none()
-        && let Some(lib) = library.as_deref()
-        && let Some(rm) = road_materials.as_deref_mut()
-    {
-        *textured_roads = Some(rm.add(RoadMaterial {
-            base: StandardMaterial {
-                base_color: Color::WHITE,
-                perceptual_roughness: 1.0,
-                ..default()
-            },
-            extension: RoadExtension::of_library(lib),
-        }));
-    }
     let library = library.as_deref();
+    // The road materials, one pair per marking style (made when first
+    // needed, again when the library arrives).
+    if road_cache.textured != library.is_some() {
+        *road_cache = RoadMaterialCache {
+            textured: library.is_some(),
+            ..default()
+        };
+    }
     let no_cut = TunnelCut::default();
     let cut = tunnels.as_deref().map_or(&no_cut, |t| &t.cut);
     // One tile per frame, all urgent ones after a jump.
@@ -1594,6 +1530,23 @@ fn upload_tiles(
         let Some((id, t)) = streamer.ready.pop_front() else {
             return;
         };
+        let style = world
+            .set
+            .members()
+            .get(id.0)
+            .and_then(|m| m.package())
+            .map_or(0, |p| {
+                crate::road_style::style_index(p.time_zone.as_deref())
+            });
+        let roads = road_materials.as_deref_mut().map(|assets| {
+            road_cache
+                .by_style
+                .entry(style)
+                .or_insert_with(|| {
+                    RoadMaterials::new(assets, library, &crate::road_style::styles()[style])
+                })
+                .clone()
+        });
         upload_tile(
             &mut commands,
             &world,
@@ -1602,11 +1555,7 @@ fn upload_tiles(
             (&mut meshes, &mut images, &mut terrain),
             &mut obstacles,
             cut,
-            (
-                library,
-                textured_roads.as_ref(),
-                house.as_deref().map(|h| &h.handle),
-            ),
+            (library, roads.as_ref(), house.as_deref().map(|h| &h.handle)),
             id,
             t,
         );
@@ -1626,9 +1575,9 @@ fn upload_tile(
     ),
     obstacles: &mut CameraObstacles,
     cut: &TunnelCut,
-    (library, textured_roads, house): (
+    (library, roads, house): (
         Option<&MaterialLibrary>,
-        Option<&Handle<RoadMaterial>>,
+        Option<&RoadMaterials>,
         Option<&Handle<BuildingMaterial>>,
     ),
     id: TileId,
@@ -1742,10 +1691,10 @@ fn upload_tile(
                 let mesh = Mesh3d(meshes.add(t.roads.mesh()));
                 // Roads and their markings lie on the terrain: no shadows of
                 // their own (spec §4.5).
-                match textured_roads {
+                match roads {
                     Some(road) => c.spawn((
                         mesh,
-                        MeshMaterial3d(road.clone()),
+                        MeshMaterial3d(road.strips.clone()),
                         crate::world::FlatOverlay,
                         CameraInteraction::Solid,
                     )),
@@ -1756,6 +1705,14 @@ fn upload_tile(
                         CameraInteraction::Solid,
                     )),
                 };
+            }
+            // Crossings, stop and give-way lines: blended over the road.
+            if let (Some(road), false) = (roads, t.overlays.indices.is_empty()) {
+                c.spawn((
+                    Mesh3d(meshes.add(std::mem::take(&mut t.overlays).mesh())),
+                    MeshMaterial3d(road.overlays.clone()),
+                    crate::world::FlatOverlay,
+                ));
             }
             if !t.trees.indices.is_empty() {
                 c.spawn((
@@ -1791,6 +1748,7 @@ mod tests {
                 width_m: 6.0,
                 points: (0..11).map(|i| [i as f32 * 10.0, 5.0, 50.0]).collect(),
                 surface: ocw_world::RoadSurface::Asphalt,
+                dress: ocw_world::RoadDress::of_class(RoadClass::Secondary, 6.0),
             }],
         };
         WorldPackage {
@@ -1829,12 +1787,13 @@ mod tests {
     fn road_strips_have_surface_and_edges() {
         let p = package();
         let m = road_arrays(&p.tiles[&TileKey { x: 0, z: 0 }].roads);
-        // Surface: 11 points × 2; edges: 2 sides × 11 × 2.
-        assert_eq!(m.positions.len(), 22 + 44);
+        // Surface: 11 points × 2; per side the edge top, the lip, the
+        // shoulder (outer and its own inner row) and the skirt bottom.
+        assert_eq!(m.positions.len(), 22 + 2 * 5 * 11);
         // Surface is 6 m wide (z 47 … 53), slightly above the centreline.
         assert!((m.positions[0][2] - 47.0).abs() < 1e-4 || (m.positions[0][2] - 53.0).abs() < 1e-4);
         assert!((m.positions[0][1] - 5.02).abs() < 1e-4);
-        // Edge faces reach down below the terrain clearance.
+        // Without terrain the skirts reach the plain depth down.
         let min_y = m
             .positions
             .iter()
@@ -1844,7 +1803,9 @@ mod tests {
     }
 
     /// Spec §4.8.6: a bridge of the `BRDG` section is drawn with its tile,
-    /// and the road strip on its deck has no 2 m skirt hanging below it.
+    /// and the road strip on its deck has no skirt or shoulder hanging
+    /// below it; off the deck the road stands on a wall where the ground
+    /// falls away, and a cutting gets a narrow verge (Phase 8 T5).
     #[test]
     fn bridges_are_drawn_and_their_strips_have_no_skirt() {
         use ocw_world::bridges::{Bridge, BridgeMaterial, BridgeSource, BridgeStructure, Railing};
@@ -1869,12 +1830,18 @@ mod tests {
         )]));
         let t = build_tile_meshes(&p, key).unwrap();
         assert!(!t.bridges.indices.is_empty());
-        let plain = road_arrays(&p.tiles[&key].roads);
-        let low = |m: &MeshArrays| m.positions.iter().filter(|q| q[1] < 4.0).count();
-        // Points 3 … 7 lie on the deck: their 4 skirt-bottom vertices are gone.
-        assert_eq!(low(&plain) - low(&t.roads), 5 * 2);
-        // At x = 0 the road is 5 m above the terrain: its edge face reaches
-        // down to 0.3 m below the ground there (a wall, not a floating slab).
+        // Points 3 … 7 lie on the deck: nothing of the road hangs below it.
+        let on_deck: Vec<f32> = t
+            .roads
+            .positions
+            .iter()
+            .filter(|q| (29.9..=70.1).contains(&q[0]))
+            .map(|q| q[1])
+            .collect();
+        assert!(!on_deck.is_empty());
+        assert!(on_deck.iter().all(|&y| y >= 5.02 - 1e-3), "{on_deck:?}");
+        // At x = 0 the road is 5 m above the terrain: a wall reaches down
+        // to 0.3 m below the ground there (not a floating slab).
         let lowest = t
             .roads
             .positions
@@ -1892,7 +1859,9 @@ mod tests {
             .map(|q| q[1])
             .collect();
         assert!(
-            at_end.iter().all(|&y| y >= 5.02 - EDGE_DEPTH_M - 1e-3),
+            at_end
+                .iter()
+                .all(|&y| y >= 5.02 - crate::road_mesh::EDGE_DEPTH_M - 1e-3),
             "{at_end:?}"
         );
         // Without the section the package draws as before.
@@ -2350,14 +2319,25 @@ mod tests {
         // the library.
         assert_eq!(m.roads.uvs.len(), m.roads.positions.len());
         assert_eq!(m.roads.uvs_b.len(), m.roads.positions.len());
-        assert!(m.roads.uvs_b.iter().all(|u| u[0] == 0.0), "asphalt layer");
+        // The carriageway (kind 0) in the asphalt layer; the shoulders,
+        // lips and skirts in their own layers.
+        let surface = |u: &[f32; 2]| crate::road_mesh::decode_b(u[0]).1 == 0;
+        let n = m.roads.uvs_b.iter().filter(|u| surface(u)).count();
+        assert_eq!(n, 22);
+        assert!(
+            m.roads
+                .uvs_b
+                .iter()
+                .filter(|u| surface(u))
+                .all(|u| u[0] == 0.0),
+            "asphalt layer"
+        );
         let along = m.roads.uvs.iter().map(|u| u[1]).fold(0.0f32, f32::max);
         assert!((along - 100.0).abs() < 0.5, "{along}");
-        assert_eq!(m.roads.colors[0], [0.1, 0.2, 0.3, 1.0]);
-        assert_eq!(
-            flat.roads.colors[0],
-            road_colour(RoadClass::Secondary, RoadSurface::Asphalt)
-        );
+        // Colour from the library; the alpha is the half width (shader).
+        assert_eq!(m.roads.colors[0], [0.1, 0.2, 0.3, 3.0]);
+        let c = road_colour(RoadClass::Secondary, RoadSurface::Asphalt);
+        assert_eq!(flat.roads.colors[0], [c[0], c[1], c[2], 3.0]);
     }
 
     #[test]
@@ -2375,6 +2355,7 @@ mod tests {
             width_m: 4.0,
             points: vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]],
             surface: RoadSurface::Dirt,
+            dress: ocw_world::RoadDress::of_class(RoadClass::Residential, 4.0),
         };
         let m = road_arrays(&[strip]);
         assert_eq!(m.roads_layer(), Some(4.0));

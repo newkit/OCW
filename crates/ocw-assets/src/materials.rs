@@ -46,13 +46,17 @@ pub const GROUND_IDS: [&str; 9] = [
     "wetland",
 ];
 
-/// Road materials, in layer order (`ocw_world::RoadSurface` codes).
-pub const ROAD_IDS: [&str; 5] = [
+/// Road materials, in layer order: the `ocw_world::RoadSurface` codes,
+/// then the sidewalk pavers and the kerb stones (spec §14 Phase 8 T5,
+/// `ocw_world::road_dress::{SIDEWALK_LAYER, KERB_LAYER}`).
+pub const ROAD_IDS: [&str; 7] = [
     "asphalt",
     "asphalt_worn",
     "gravel_road",
     "paving",
     "dirt_road",
+    "sidewalk",
+    "kerb",
 ];
 
 /// Building materials (Phase 8 T4), in the order of the renderer's

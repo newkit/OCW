@@ -1,0 +1,93 @@
+# Regional road marking styles (spec §4.6 step 6, §14 Phase 8 T5): line
+# widths, dash lengths and colours of the markings drawn in the road shader
+# (ocw-render `road_style`, `road.wesl`). Built into the app.
+#
+# A style applies to the packages whose time zone (section TZID) it lists;
+# the first style is the default for everything else. Every field of a later
+# style is optional and falls back to the first style.
+#
+# Lengths in metres. A line is { width, dash, gap } (gap 0: solid).
+#   centre / centre_town   line between the directions (outside / inside
+#                          towns; a street with a sidewalk is in a town)
+#   double_gap             centre-to-centre distance of a double line
+#   lane / lane_town       lines between lanes of one direction
+#   edge_width, edge_inset edge lines (not in towns, not beside cycle lanes)
+#   cycle_lane             width of a cycle lane on the carriageway
+#   cycle_advisory         its dashed line ("Schutzstreifen")
+#   cycle_exclusive        width of the solid line ("Radfahrstreifen")
+#   cycle_default          an untyped `cycleway=lane`: "advisory" | "exclusive"
+#   zebra_bar, zebra_gap, zebra_length   zebra crossing bars along the road
+#   stop                   width of a stop line
+#   give_way               dashed give-way line
+#   signals, signals_spacing, stop_before
+#                          the two dashed lines of a signalled crossing, their
+#                          distance, and the stop lines before them
+#   line_colour, cycle_colour, crossing_colour   sRGB hex
+#
+# Values follow the national rules where we know them (German RMS 1980/93:
+# narrow line 12 cm, broad 25 cm, guide-line dashes 6 m / 12 m outside and
+# 3 m / 6 m inside towns, zebra bars 50 cm) and reference photos of the
+# regions (art/reference/) elsewhere; Switzerland and Liechtenstein paint
+# zebra crossings and cycle lanes yellow, Spain uses wider edge lines.
+
+[[style]]
+id = "de"
+name = "Germany (default)"
+centre = { width = 0.12, dash = 6.0, gap = 12.0 }
+centre_town = { width = 0.12, dash = 3.0, gap = 6.0 }
+double_gap = 0.3
+lane = { width = 0.12, dash = 6.0, gap = 12.0 }
+lane_town = { width = 0.12, dash = 3.0, gap = 6.0 }
+edge_width = 0.15
+edge_inset = 0.25
+cycle_lane = 1.5
+cycle_advisory = { width = 0.12, dash = 1.0, gap = 1.0 }
+cycle_exclusive = 0.25
+cycle_default = "exclusive"
+zebra_bar = 0.5
+zebra_gap = 0.5
+zebra_length = 4.0
+stop = 0.5
+give_way = { width = 0.5, dash = 0.5, gap = 0.25 }
+signals = { width = 0.25, dash = 0.5, gap = 0.2 }
+signals_spacing = 4.0
+stop_before = 1.0
+line_colour = "#e0e0da"
+cycle_colour = "#e0e0da"
+crossing_colour = "#e0e0da"
+
+[[style]]
+id = "ch"
+name = "Switzerland and Liechtenstein"
+time_zones = ["Europe/Zurich", "Europe/Vaduz"]
+# Guide lines 15 cm; yellow zebra crossings ("Fussgängerstreifen") and
+# yellow, dashed cycle lanes ("Radstreifen").
+centre = { width = 0.15, dash = 6.0, gap = 9.0 }
+centre_town = { width = 0.15, dash = 3.0, gap = 6.0 }
+lane = { width = 0.15, dash = 6.0, gap = 9.0 }
+lane_town = { width = 0.15, dash = 3.0, gap = 6.0 }
+edge_width = 0.15
+cycle_lane = 1.5
+cycle_advisory = { width = 0.15, dash = 1.0, gap = 1.0 }
+cycle_default = "advisory"
+zebra_length = 4.0
+crossing_colour = "#e8c21c"
+cycle_colour = "#e8c21c"
+
+[[style]]
+id = "es"
+name = "Spain (Canary Islands)"
+time_zones = ["Atlantic/Canary", "Europe/Madrid"]
+# Conventional roads: 10 cm centre lines, dashes 3.5 m / gaps 9 m (2 m / 5.5 m
+# in towns), solid edge lines 15 cm close to the edge.
+centre = { width = 0.1, dash = 3.5, gap = 9.0 }
+centre_town = { width = 0.1, dash = 2.0, gap = 5.5 }
+lane = { width = 0.1, dash = 3.5, gap = 9.0 }
+lane_town = { width = 0.1, dash = 2.0, gap = 5.5 }
+edge_width = 0.15
+edge_inset = 0.1
+cycle_default = "exclusive"
+zebra_length = 4.0
+stop = 0.4
+give_way = { width = 0.4, dash = 0.8, gap = 0.4 }
+line_colour = "#e6e6e0"

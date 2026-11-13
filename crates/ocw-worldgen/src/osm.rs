@@ -26,6 +26,37 @@ pub struct OsmData {
     /// Node id → (lat, lon) in degrees.
     pub nodes: HashMap<i64, (f64, f64)>,
     pub ways: Vec<Way>,
+    /// Tags of the way nodes that dress the road (crossings, stop and give
+    /// way signs, traffic signals; spec §14 Phase 8 T5), by node id: only
+    /// the keys [`DRESS_NODE_KEYS`] of nodes [`is_dress_node`] accepts.
+    pub node_tags: HashMap<i64, Tags>,
+}
+
+/// The node keys kept for the road dress (spec §14 Phase 8 T5).
+pub const DRESS_NODE_KEYS: [&str; 7] = [
+    "highway",
+    "crossing",
+    "crossing:markings",
+    "crossing_ref",
+    "crossing:signals",
+    "direction",
+    "traffic_signals:direction",
+];
+
+/// A way node that puts markings on the road: `highway=crossing | stop |
+/// give_way | traffic_signals`, or any `crossing=*`.
+pub fn is_dress_node<'a>(mut tags: impl Iterator<Item = (&'a str, &'a str)>) -> bool {
+    tags.any(|(k, v)| {
+        (k == "highway" && matches!(v, "crossing" | "stop" | "give_way" | "traffic_signals"))
+            || k == "crossing"
+    })
+}
+
+/// The kept keys of a dress node's tags.
+fn dress_tags<'a>(tags: impl Iterator<Item = (&'a str, &'a str)>) -> Tags {
+    tags.filter(|(k, _)| DRESS_NODE_KEYS.contains(k))
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
 }
 
 /// The box of the points overlaps (south, west, north, east).
@@ -138,16 +169,28 @@ impl OsmData {
             ways.iter().flat_map(|w| w.nodes.iter().copied()).collect();
         let found = par_elements(path, |el, out| match el {
             osmpbf::Element::Node(n) if needed.contains(&n.id()) => {
-                out.push((n.id(), (n.lat(), n.lon())));
+                let tags = is_dress_node(n.tags()).then(|| dress_tags(n.tags()));
+                out.push((n.id(), (n.lat(), n.lon()), tags));
             }
             osmpbf::Element::DenseNode(n) if needed.contains(&n.id()) => {
-                out.push((n.id(), (n.lat(), n.lon())));
+                let tags = is_dress_node(n.tags()).then(|| dress_tags(n.tags()));
+                out.push((n.id(), (n.lat(), n.lon()), tags));
             }
             _ => {}
         })?;
         let mut nodes = HashMap::with_capacity(found.len());
-        nodes.extend(found);
-        Ok(Self { nodes, ways })
+        let mut node_tags = HashMap::new();
+        for (id, p, tags) in found {
+            nodes.insert(id, p);
+            if let Some(t) = tags {
+                node_tags.insert(id, t);
+            }
+        }
+        Ok(Self {
+            nodes,
+            ways,
+            node_tags,
+        })
     }
 
     /// Reads several extracts and merges them (ways by id, nodes by id):
@@ -168,6 +211,7 @@ impl OsmData {
         self.ways
             .extend(other.ways.into_iter().filter(|w| !have.contains(&w.id)));
         self.nodes.extend(other.nodes);
+        self.node_tags.extend(other.node_tags);
     }
 
     /// Keeps only the ways whose node box overlaps (south, west, north,
@@ -183,6 +227,7 @@ impl OsmData {
             .flat_map(|w| w.nodes.iter().copied())
             .collect();
         self.nodes.retain(|id, _| used.contains(id));
+        self.node_tags.retain(|id, _| used.contains(id));
     }
 
     /// Reads OSM XML (`.osm`, as written by JOSM or the OSM API): nodes
@@ -192,8 +237,11 @@ impl OsmData {
     /// comments and processing instructions are skipped.
     pub fn parse_osm_xml(text: &str) -> Result<Self, String> {
         let mut nodes = HashMap::new();
+        let mut node_tags: HashMap<i64, Tags> = HashMap::new();
         let mut ways = Vec::new();
         let mut way: Option<Way> = None;
+        // The node whose <tag> children are being read.
+        let mut node: Option<i64> = None;
         let mut rest = text;
         while let Some(start) = rest.find('<') {
             rest = &rest[start + 1..];
@@ -209,6 +257,9 @@ impl OsmData {
                 continue;
             }
             if let Some(name) = tag.strip_prefix('/') {
+                if name.trim() == "node" {
+                    node = None;
+                }
                 if name.trim() == "way" {
                     let w = way.take().ok_or("</way> without <way>")?;
                     if w.tags.contains_key("highway") {
@@ -240,7 +291,9 @@ impl OsmData {
             };
             match name {
                 "node" => {
-                    nodes.insert(int("id")?, (num("lat")?, num("lon")?));
+                    let id = int("id")?;
+                    nodes.insert(id, (num("lat")?, num("lon")?));
+                    node = (!self_closing).then_some(id);
                 }
                 "way" => {
                     if way.is_some() {
@@ -264,6 +317,11 @@ impl OsmData {
                 "tag" => {
                     if let Some(w) = way.as_mut() {
                         w.tags.insert(get("k")?.to_string(), get("v")?.to_string());
+                    } else if let Some(id) = node {
+                        node_tags
+                            .entry(id)
+                            .or_default()
+                            .insert(get("k")?.to_string(), get("v")?.to_string());
                     }
                 }
                 _ => {}
@@ -275,7 +333,17 @@ impl OsmData {
         let needed: std::collections::HashSet<i64> =
             ways.iter().flat_map(|w| w.nodes.iter().copied()).collect();
         nodes.retain(|id, _| needed.contains(id));
-        Ok(Self { nodes, ways })
+        node_tags.retain(|id, t| {
+            needed.contains(id) && is_dress_node(t.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+        });
+        for t in node_tags.values_mut() {
+            *t = dress_tags(t.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+        }
+        Ok(Self {
+            nodes,
+            ways,
+            node_tags,
+        })
     }
 }
 
@@ -508,11 +576,13 @@ mod tests {
         let mut a = OsmData {
             nodes: [(1, (48.0, 8.0)), (2, (48.1, 8.0)), (3, (49.0, 9.0))].into(),
             ways: vec![way(10, &[1, 2]), way(11, &[2, 3])],
+            node_tags: Default::default(),
         };
         // The neighbouring extract repeats way 11 at the border and adds 12.
         let b = OsmData {
             nodes: [(2, (48.1, 8.0)), (3, (49.0, 9.0)), (4, (49.1, 9.1))].into(),
             ways: vec![way(11, &[2, 3]), way(12, &[3, 4])],
+            node_tags: Default::default(),
         };
         a.merge(b);
         assert_eq!(a.ways.len(), 3);
@@ -526,6 +596,7 @@ mod tests {
         let mut c = OsmData {
             nodes: [(1, (47.0, 8.0)), (2, (49.0, 8.0))].into(),
             ways: vec![way(1, &[1, 2])],
+            node_tags: Default::default(),
         };
         c.retain_near((47.9, 7.9, 48.2, 8.2));
         assert_eq!(c.ways.len(), 1);

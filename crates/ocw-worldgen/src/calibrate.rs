@@ -1016,6 +1016,7 @@ mod tests {
                     width_m: 5.0,
                     surface: ocw_world::RoadSurface::Asphalt,
                     points: vec![[0.0, 0.0, 20.0], [100.0, 0.0, 20.0]],
+                    dress: ocw_world::RoadDress::of_class(RoadClass::Residential, 5.0),
                 }],
             },
         );

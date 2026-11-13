@@ -93,16 +93,8 @@ pub(crate) fn spawn_world(
             // No route: every rider rides their own path.
             return;
         }
-        commands.spawn((
-            SceneEntity,
-            FlatOverlay,
-            Mesh3d(meshes.add(center_line_mesh(&view, CENTRE_LINE_LIFT_PACKAGE_M))),
-            MeshMaterial3d(materials.add(StandardMaterial {
-                base_color: Color::srgb(0.95, 0.95, 0.9),
-                perceptual_roughness: 0.6,
-                ..default()
-            })),
-        ));
+        // The markings are the package roads' own (road shader, spec §14
+        // Phase 8 T5): the route draws no centre line of its own over them.
         spawn_start_arch(&mut commands, &view, &mut meshes, &mut materials);
         return;
     }
@@ -323,9 +315,6 @@ fn road_edge_mesh(view: &RideView, width: f32, depth: f32) -> Mesh {
 /// Centre line lift above the profile: 2 cm above the road surface
 /// ([`crate::ROAD_SURFACE_LIFT_M`]; the same height would z-fight).
 const CENTRE_LINE_LIFT_M: f32 = crate::ROAD_SURFACE_LIFT_M + 0.02;
-/// Over package roads: more clearance (the line follows the route's
-/// samples, not the package's road strips).
-const CENTRE_LINE_LIFT_PACKAGE_M: f32 = 0.06;
 
 /// Dashed centre line: 3 m dash, 6 m gap, `lift` above the road.
 fn center_line_mesh(view: &RideView, lift: f32) -> Mesh {

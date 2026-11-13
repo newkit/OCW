@@ -1367,6 +1367,27 @@ fn package(args: PackageArgs) {
     let mut area_report = vec![format!(
         "road surfaces (RSRF): {surfaced} strips differ from their category's default"
     )];
+    // Lanes, markings, kerbs, sidewalks and crossings (section RDRS, Phase
+    // 8 T5), on the strips as built.
+    let dress = stage("road dress", || {
+        let ways = ocw_worldgen::dress::way_dresses(&osm);
+        let sidewalks = ocw_worldgen::dress::sidewalk_ways(&osm, &proj);
+        let (edges, separate) = ocw_worldgen::dress::edge_dresses(graph, &ways, &sidewalks);
+        let crossings = ocw_worldgen::dress::edge_crossings(&osm, graph, &proj);
+        let s = ocw_worldgen::dress::apply_road_dress(&mut pkg, graph, &edges, &crossings);
+        (s, separate, sidewalks.len())
+    });
+    area_report.push(format!(
+        "road dress (RDRS): {} strips, {} marked, {} with sidewalks ({} edge sides from {} separate sidewalk ways), {} with cycle lanes; {} crossings / stop / give-way lines placed, {} not on a strip",
+        dress.0.strips,
+        dress.0.marked,
+        dress.0.with_sidewalks,
+        dress.1,
+        dress.2,
+        dress.0.cycle_lanes,
+        dress.0.crossings,
+        dress.0.crossings_missed
+    ));
     let road_zone = stage("road zone index", || {
         ocw_worldgen::clean::RoadZone::new(terrain_graph, &terrain_spans)
     });
