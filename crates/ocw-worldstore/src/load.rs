@@ -130,9 +130,20 @@ pub fn manifest_path_for(package: &Path) -> Option<PathBuf> {
 
 /// Loads `spec`: an existing path, else a cache id (`id` or `id@version`).
 pub fn load_world(spec: &str, opts: &LoadOptions) -> Result<LoadedWorld, LoadError> {
+    load_world_as(spec, opts, true)
+}
+
+/// Like [`load_world`] (verified the same way), but only the package's
+/// skeleton is decoded ([`WorldPackage::skeleton_from_bytes`]): for
+/// neighbours, whose tiles are read again when the rider comes near.
+pub fn load_world_skeleton(spec: &str, opts: &LoadOptions) -> Result<LoadedWorld, LoadError> {
+    load_world_as(spec, opts, false)
+}
+
+fn load_world_as(spec: &str, opts: &LoadOptions, full: bool) -> Result<LoadedWorld, LoadError> {
     let path = Path::new(spec);
     if path.is_file() {
-        return load_path(path, opts.policy(false), opts);
+        return load_path(path, opts.policy(false), opts, full);
     }
     if parse_spec(spec).is_ok()
         && let Some(entry) = opts.cache.resolve(spec)
@@ -140,7 +151,7 @@ pub fn load_world(spec: &str, opts: &LoadOptions) -> Result<LoadedWorld, LoadErr
         let pkg = entry
             .package_path()
             .map_err(|e| LoadError::Io(entry.dir.clone(), e))?;
-        let world = load_path(&pkg, opts.policy(true), opts)?;
+        let world = load_path(&pkg, opts.policy(true), opts, full)?;
         if (world.identity.id.as_str(), world.identity.version)
             != (entry.id.as_str(), entry.version)
         {
@@ -175,6 +186,7 @@ fn load_path(
     path: &Path,
     policy: UnsignedPolicy,
     opts: &LoadOptions,
+    full: bool,
 ) -> Result<LoadedWorld, LoadError> {
     let bytes = std::fs::read(path).map_err(|e| LoadError::Io(path.into(), e.to_string()))?;
     let manifest_path = manifest_path_for(path);
@@ -207,8 +219,12 @@ fn load_path(
             (None, trust, PackageIdentity::local("", &bytes))
         }
     };
-    let package =
-        WorldPackage::from_bytes(&bytes).map_err(|e| LoadError::Package(path.into(), e))?;
+    let package = if full {
+        WorldPackage::from_bytes(&bytes)
+    } else {
+        WorldPackage::skeleton_from_bytes(&bytes)
+    }
+    .map_err(|e| LoadError::Package(path.into(), e))?;
     let identity = if manifest.is_none() {
         PackageIdentity::local(&package.name, &bytes)
     } else {

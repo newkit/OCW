@@ -1,12 +1,23 @@
-//! Digital elevation model (spec §4.3): SRTM `.hgt` tiles.
+//! Digital elevation models (spec §4.3): SRTM `.hgt` tiles and the grids
+//! of high-resolution official DTMs (GeoTIFF, XYZ), best source first.
 //!
 //! An HGT tile covers 1° × 1° from its south-west corner (`N47E009`):
 //! `n × n` big-endian `i16` heights in metres, rows from north to south,
 //! columns from west to east; neighbouring tiles share their edge rows.
 //! `-32768` marks voids. 1 arc-second tiles have n = 3601, 3 arc-second
 //! tiles n = 1201.
-
+//!
+//! **Grids** ([`GridTile`], [`GridLayer`]) are tiles of a projected DTM in
+//! its national coordinates ([`crate::crs`]): LGL DGM1 (1 m, delivered as
+//! XYZ text, imported to 2 m GeoTIFFs by `world-builder dem-import`),
+//! swissALTI3D (2 m cloud-optimised GeoTIFF). [`Dem::elevation`] samples
+//! the first grid layer that covers a point and **feathers** it into the
+//! next source over [`FEATHER_M`] at the edge of its coverage (a state
+//! border, the end of the downloaded tiles, voids), so a 1 m bare-earth
+//! model and SRTM's 30 m surface model meet without a cliff.
 use std::path::Path;
+
+pub use crate::dtm::{GridLayer, GridTile};
 
 const VOID: i16 = -32768;
 
@@ -26,6 +37,9 @@ pub enum DemError {
     Size(usize),
     #[error("{0}")]
     Io(#[from] std::io::Error),
+    /// A grid file that cannot be used (format, georeference, alignment).
+    #[error("{0}")]
+    Format(String),
 }
 
 /// South-west corner from a tile name such as `N47E009` or `S12W077`.
@@ -121,15 +135,82 @@ impl HgtTile {
     }
 }
 
-/// A set of tiles.
+/// Elevation sources, best first: the grid layers of high-resolution
+/// DTMs in the order they were added, then the SRTM tiles.
 #[derive(Debug, Clone, Default)]
 pub struct Dem {
     pub tiles: Vec<HgtTile>,
+    pub grids: Vec<GridLayer>,
 }
 
+/// Width of the band at the edge of a grid layer's coverage in which it is
+/// blended into the next source (m).
+pub const FEATHER_M: f64 = 300.0;
+
 impl Dem {
+    /// SRTM tiles only.
+    pub fn from_hgt(tiles: Vec<HgtTile>) -> Self {
+        Self {
+            tiles,
+            grids: Vec::new(),
+        }
+    }
+
+    /// Adds a grid tile to the layer of its CRS, cell size and tile size
+    /// (a new layer, after the existing ones, if there is none yet).
+    /// Call [`Dem::finish`] when all tiles are in.
+    pub fn add_grid(&mut self, tile: GridTile) -> Result<(), DemError> {
+        match self.grids.iter_mut().find(|l| l.accepts(&tile)) {
+            Some(layer) => layer.insert(tile),
+            None => {
+                let mut layer = GridLayer::new(&tile);
+                layer.insert(tile)?;
+                self.grids.push(layer);
+                Ok(())
+            }
+        }
+    }
+
+    /// Computes the coverage of every grid layer (for the feathering).
+    pub fn finish(&mut self) {
+        for l in &mut self.grids {
+            l.finish(FEATHER_M);
+        }
+    }
+
+    /// Elevation at (lat, lon): the grid layers in order, each blended
+    /// into the rest by its coverage weight, then SRTM.
     pub fn elevation(&self, lat: f64, lon: f64) -> Option<f64> {
-        self.tiles.iter().find_map(|t| t.sample(lat, lon))
+        self.elevation_from(0, lat, lon)
+    }
+
+    fn elevation_from(&self, layer: usize, lat: f64, lon: f64) -> Option<f64> {
+        let Some(l) = self.grids.get(layer) else {
+            return self.tiles.iter().find_map(|t| t.sample(lat, lon));
+        };
+        let p = l.crs().forward(lat, lon);
+        let w = l.weight(p[0], p[1]);
+        let here = (w > 0.0).then(|| l.sample(p[0], p[1])).flatten();
+        match here {
+            Some(h) if w >= 1.0 => Some(h),
+            Some(h) => match self.elevation_from(layer + 1, lat, lon) {
+                Some(rest) => Some(w * h + (1.0 - w) * rest),
+                None => Some(h),
+            },
+            None => self.elevation_from(layer + 1, lat, lon),
+        }
+    }
+
+    /// Which source answers at (lat, lon): the index of the first grid
+    /// layer with full weight, `grids.len()` for SRTM or a blend.
+    pub fn source_at(&self, lat: f64, lon: f64) -> usize {
+        self.grids
+            .iter()
+            .position(|l| {
+                let p = l.crs().forward(lat, lon);
+                l.weight(p[0], p[1]) >= 1.0 && l.sample(p[0], p[1]).is_some()
+            })
+            .unwrap_or(self.grids.len())
     }
 }
 
@@ -191,6 +272,64 @@ mod tests {
                 .sample(0.5, 0.5),
             None
         );
+    }
+
+    #[test]
+    fn grids_come_first_and_feather_into_srtm() {
+        use crate::crs::Crs;
+        // SRTM: 100 m everywhere on N47E008.
+        let flat: Vec<u8> = (0..9).flat_map(|_| 100i16.to_be_bytes()).collect();
+        let mut dem = Dem::from_hgt(vec![HgtTile::from_bytes(47, 8, &flat).unwrap()]);
+        // A 2 × 2 km DTM at 500 m around 47.5 N 8.5 E (UTM 32, 100 m tiles).
+        let utm = Crs::UtmNorth(32);
+        let c = utm.forward(47.5, 8.5);
+        let (e0, n0) = (
+            (c[0] / 100.0).floor() * 100.0 - 1000.0,
+            (c[1] / 100.0).floor() * 100.0 + 1000.0,
+        );
+        for ti in 0..20 {
+            for tj in 0..20 {
+                dem.add_grid(GridTile {
+                    crs: utm,
+                    cell: 10.0,
+                    x0: e0 + f64::from(ti) * 100.0,
+                    y0: n0 - f64::from(tj) * 100.0,
+                    nx: 10,
+                    ny: 10,
+                    data: vec![500.0; 100],
+                })
+                .unwrap();
+            }
+        }
+        dem.finish();
+        assert_eq!(dem.grids.len(), 1);
+        let at = |x: f64, y: f64| {
+            let (lat, lon) = utm.inverse(x, y);
+            dem.elevation(lat, lon).unwrap()
+        };
+        assert!((at(c[0], c[1]) - 500.0).abs() < 1e-6, "centre: the DTM");
+        assert!(
+            (at(c[0] + 5000.0, c[1]) - 100.0).abs() < 1e-6,
+            "outside: SRTM"
+        );
+        let edge = at(e0 + 100.0, c[1]);
+        assert!(100.0 < edge && edge < 500.0, "feathered: {edge}");
+        let (lat, lon) = utm.inverse(c[0], c[1]);
+        assert_eq!(dem.source_at(lat, lon), 0);
+        let (lat, lon) = utm.inverse(c[0] + 5000.0, c[1]);
+        assert_eq!(dem.source_at(lat, lon), 1);
+        // A tile of another cell size makes a second layer.
+        dem.add_grid(GridTile {
+            crs: utm,
+            cell: 2.0,
+            x0: e0,
+            y0: n0,
+            nx: 50,
+            ny: 50,
+            data: vec![0.0; 2500],
+        })
+        .unwrap();
+        assert_eq!(dem.grids.len(), 2);
     }
 
     #[test]

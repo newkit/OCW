@@ -35,9 +35,7 @@ fn dem() -> Dem {
             bytes.extend((h.round() as i16).to_be_bytes());
         }
     }
-    Dem {
-        tiles: vec![HgtTile::from_bytes(46, 9, &bytes).unwrap()],
-    }
+    Dem::from_hgt(vec![HgtTile::from_bytes(46, 9, &bytes).unwrap()])
 }
 
 /// Builds one half as `world-builder package` does; writes the package

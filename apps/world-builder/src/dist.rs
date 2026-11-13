@@ -54,10 +54,30 @@ pub fn date(unix_s: i64) -> String {
     format!("{y:04}-{m:02}-{d:02}")
 }
 
-/// The DEM attribution: SRTM, or a custom notice.
+/// The DEM attribution: SRTM, a known high-resolution DTM (spec §4.3,
+/// Phase 8A licences) by its short name, or a custom notice.
 pub fn dem_attribution(notice: Option<&str>) -> Attribution {
+    let known = |source: &str, licence: &str, notice: &str, url: &str| Attribution {
+        source: source.into(),
+        licence: licence.into(),
+        notice: notice.into(),
+        url: Some(url.into()),
+    };
     match notice {
-        None => Attribution::srtm(),
+        None | Some("srtm") => Attribution::srtm(),
+        Some("lgl-dgm1") => known(
+            "LGL DGM1 Baden-Württemberg",
+            "dl-de/by-2-0",
+            "Datenquelle: LGL, www.lgl-bw.de, dl-de/by-2-0 (Digitales Geländemodell DGM1, \
+             averaged to 2 m and adapted to the roads)",
+            "https://www.govdata.de/dl-de/by-2-0",
+        ),
+        Some("swissalti3d") => known(
+            "swissALTI3D",
+            "swisstopo OGD (open use, source must be named)",
+            "© swisstopo: swissALTI3D (2 m, adapted to the roads)",
+            "https://www.swisstopo.admin.ch/en/terms-of-use-free-geodata-and-geoservices",
+        ),
         Some(n) => Attribution {
             source: "Elevation model".into(),
             licence: "see notice".into(),
@@ -72,7 +92,8 @@ pub struct ManifestArgs {
     pub id: Option<String>,
     pub name: Option<String>,
     pub version: Option<u64>,
-    pub dem_attribution: Option<String>,
+    /// Elevation sources (empty: keep the old manifest's, else SRTM).
+    pub dem_attribution: Vec<String>,
 }
 
 /// Writes (or rewrites) `<package>.manifest.json` for `package`, signed
@@ -115,14 +136,15 @@ pub fn write_manifest(
         _ => 1,
     });
     let mut attribution = vec![Attribution::openstreetmap()];
-    match (&args.dem_attribution, &old) {
-        (None, Some(m)) => attribution.extend(
+    match (args.dem_attribution.as_slice(), &old) {
+        ([], Some(m)) => attribution.extend(
             m.attribution
                 .iter()
                 .filter(|a| a.source != "OpenStreetMap")
                 .cloned(),
         ),
-        (dem, _) => attribution.push(dem_attribution(dem.as_deref())),
+        ([], None) => attribution.push(dem_attribution(None)),
+        (dems, _) => attribution.extend(dems.iter().map(|d| dem_attribution(Some(d)))),
     }
     let mut m = Manifest::new(&id, &name, version, now_unix_s(), GENERATOR, attribution)
         .unwrap_or_else(|e| fail(e));
@@ -375,7 +397,7 @@ pub fn refresh_manifest(package: &Path) -> bool {
             id: None,
             name: None,
             version: None,
-            dem_attribution: None,
+            dem_attribution: Vec::new(),
         },
         None,
     );
@@ -419,7 +441,7 @@ mod tests {
             id: Some("test/refresh".into()),
             name: None,
             version: None,
-            dem_attribution: None,
+            dem_attribution: Vec::new(),
         };
         write_manifest(&path, &args, None);
         // The package changes (a route is added) after the manifest was written.
@@ -457,5 +479,17 @@ mod tests {
         );
         assert_eq!(dem_attribution(None).source, "SRTM elevation data");
         assert_eq!(dem_attribution(Some("© X")).notice, "© X");
+        assert_eq!(dem_attribution(Some("srtm")).source, "SRTM elevation data");
+        let lgl = dem_attribution(Some("lgl-dgm1"));
+        assert_eq!(lgl.licence, "dl-de/by-2-0");
+        assert!(
+            lgl.notice
+                .starts_with("Datenquelle: LGL, www.lgl-bw.de, dl-de/by-2-0")
+        );
+        assert!(
+            dem_attribution(Some("swissalti3d"))
+                .notice
+                .contains("swisstopo")
+        );
     }
 }
