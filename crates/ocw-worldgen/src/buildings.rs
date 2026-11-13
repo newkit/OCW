@@ -620,6 +620,7 @@ mod tests {
             graph: None,
             landuse: None,
             buildings: None,
+            bridges: None,
             routes: Vec::new(),
             region: None,
         };

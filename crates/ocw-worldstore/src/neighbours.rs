@@ -246,6 +246,7 @@ mod tests {
             graph: Some(g),
             landuse: None,
             buildings: None,
+            bridges: None,
             routes: vec![],
             region: Some(if west {
                 PackageRegion::bbox(46.99, 9.48, 47.01, 9.5)

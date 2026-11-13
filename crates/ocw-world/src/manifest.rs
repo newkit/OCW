@@ -1067,6 +1067,7 @@ mod tests {
             region: None,
             landuse: None,
             buildings: None,
+            bridges: None,
         }
         .to_bytes()
     }

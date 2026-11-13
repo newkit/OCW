@@ -409,6 +409,7 @@ mod tests {
             graph: None,
             landuse: None,
             buildings: None,
+            bridges: None,
             routes: vec![],
             region: None,
         };

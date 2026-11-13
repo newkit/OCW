@@ -38,6 +38,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::bridges::{BRIDGES_TAG, Bridges, read_bridges, write_bridges};
 use crate::buildings::{BUILDINGS_TAG, Buildings, read_buildings, write_buildings};
 use crate::graph::{Edge, EdgeId, Oneway, RoadClass, RoadGraph, VertexId};
 use crate::graph_route::{GraphRoute, RouteStep};
@@ -112,6 +113,9 @@ pub struct WorldPackage {
     pub landuse: Option<LandUse>,
     /// Buildings per tile (section `BLDG`).
     pub buildings: Option<Buildings>,
+    /// Bridge structures per tile (section `BRDG`, spec §4.8.6; `None` in
+    /// older packages: their bridges are plain road strips).
+    pub bridges: Option<Bridges>,
     /// Routes on the road graph (section `ROUT`, spec §2.7).
     pub routes: Vec<GraphRoute>,
     /// The region the roads were cut to (section `REGN`; `None` in older
@@ -243,6 +247,11 @@ impl WorldPackage {
             write_region(r, &mut payload);
             sections.push((REGION_TAG, payload));
         }
+        if let Some(t) = &self.bridges {
+            let mut payload = Vec::new();
+            write_bridges(t, &mut payload);
+            sections.push((BRIDGES_TAG, payload));
+        }
         b.extend_from_slice(if sections.is_empty() { MAGIC } else { MAGIC_V2 });
         b.extend((self.name.len() as u32).to_le_bytes());
         b.extend(self.name.as_bytes());
@@ -349,7 +358,7 @@ impl WorldPackage {
             );
         }
         let mut graph = None;
-        let (mut landuse, mut buildings) = (None, None);
+        let (mut landuse, mut buildings, mut bridges) = (None, None, None);
         let mut routes = Vec::new();
         let mut region = None;
         if version >= 2 {
@@ -368,6 +377,8 @@ impl WorldPackage {
                     routes = read_routes(payload)?;
                 } else if &tag == REGION_TAG {
                     region = Some(read_region(payload)?);
+                } else if &tag == BRIDGES_TAG {
+                    bridges = Some(read_bridges(payload)?);
                 }
                 // Unknown sections (from newer builders) are skipped.
             }
@@ -384,6 +395,7 @@ impl WorldPackage {
             graph,
             landuse,
             buildings,
+            bridges,
             routes,
             region,
         })
@@ -778,6 +790,7 @@ mod tests {
             graph: None,
             landuse: None,
             buildings: None,
+            bridges: None,
             routes: Vec::new(),
             region: None,
         }
@@ -1015,6 +1028,34 @@ mod tests {
         let old = WorldPackage::from_bytes(&b).unwrap();
         assert_eq!(old.region, None);
         assert_eq!(old.graph, p.graph);
+    }
+
+    /// Spec §4.8.6: the bridges section is additive – older readers skip it
+    /// and keep everything else.
+    #[test]
+    fn bridges_section_round_trip_and_old_readers_skip_it() {
+        let mut bridges = crate::bridges::Bridges::new();
+        bridges.insert(
+            TileKey { x: 0, z: 0 },
+            vec![crate::bridges::tests::bridge(
+                crate::bridges::BridgeStructure::Beam,
+                crate::bridges::Railing::Parapet,
+            )],
+        );
+        let p = WorldPackage {
+            graph: Some(graph()),
+            bridges: Some(bridges.clone()),
+            ..package()
+        };
+        let mut b = p.to_bytes();
+        let back = WorldPackage::from_bytes(&b).unwrap();
+        assert_eq!(back.bridges, Some(bridges));
+        let at = b.windows(4).rposition(|w| w == BRIDGES_TAG).unwrap();
+        b[at] = b'x';
+        let old = WorldPackage::from_bytes(&b).unwrap();
+        assert_eq!(old.bridges, None);
+        assert_eq!(old.graph, p.graph);
+        assert_eq!(old.tiles, p.tiles);
     }
 
     #[test]

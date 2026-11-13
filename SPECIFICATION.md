@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.31 – November 2026
+Version 2.32 – November 2026
 
 | Version | Change |
 |---|---|
@@ -50,6 +50,7 @@ Version 2.31 – November 2026
 | 2.29 | Decisions: weather changes the physics realistically, races per organiser (Phase 9 Q4); best open data for every region – high-resolution official DTMs, freshest OSM, best open imagery (Phase 8 Q9); attribution licences accepted (Phase 8 Q1) |
 | 2.30 | Phase 10 planned: browser app for riding (§14 Phase 10): Bevy on WebGPU (WebGL2 fallback), local server in the browser, WebTransport endpoint, tile streaming with OPFS cache, Web Bluetooth (Chromium only) with a sensor bridge for Safari / iOS / Firefox, Web Audio + LiveKit, captures with timestamps; milestones B1–B8, open questions Q1–Q6 |
 | 2.31 | Timestamped captures (§3.2, §11.4): every screenshot and video frame shows an ISO 8601 local timestamp with UTC offset at the top right (always, also with `hud off`), and every file carries it as metadata – screenshots as JPEG (quality 90) with EXIF `DateTimeOriginal` / `CreateDate` / `OffsetTimeOriginal` / `Software` (PNG with `tEXt` `Creation Time` / `Software` for a `.png` path and the lossless `--capture` frames), MP4s with `creation_time` and the build in `comment`; frame capture stamps the capture start plus game time. Test media at 2560×1440, H.264 CRF 18. Videos with game sound (§3.3): live recordings tap the device's mixer output (or render it with game time without a device), frame capture renders exactly one frame's worth of samples per frame; AAC 192k, 48 kHz stereo |
+| 2.32 | World cleaning (§4.8, §4.3, §4.6): `world-builder lint` measures steps, kinks, floating / buried roads, junction steps, near-miss ends, rivers flowing uphill, tilted lakes, floating buildings and land-use slivers; the builder cleans while building – nearest-point terrain conforming plus a least-lowering settle pass (the old 15 m cut zone cut the terrain under climbing roads to the height of the node behind: a third of the road length floated 0.8 m or more), duplicate nodes and spikes removed, near-miss ends snapped (≤ 3 m, no topology change), junction mouths eased, vertical curvature limited, rivers fitted monotonically downhill, lakes level, no carving under roads, culverts read, building sites levelled (≤ 1.5 m), slivers merged; bridges (section `BRDG`): tagged, `man_made=bridge` outlines and detected crossings of water or gaps, with deck, parapets or rails, piers, abutments, arches, truss / suspension / covered superstructures, rendered with plain material colours; `--no-clean` builds as before |
 
 ---
 
@@ -932,7 +933,7 @@ From the elevation data the following are generated: elevation profiles, terrain
 - **Gradient limit across junctions:** the through-road filter fixes junction heights road by road, so a short connector between two roads filtered on their own (or a bridge between junctions of two roads) could stay far steeper than its class allows (on the pilot region 42 edges, up to 203 %). A last pass relaxes the junction heights again over all edges (bridges and tunnels included), re-limits every road whose end moved locally between its new ends (the correction fades out over 200 m), and flattens what is left sample by sample across the junctions. Every edge of the pilot region holds its class limit (tested).
 - **Distances along the road** are the true arc length of the centreline (also for road strips and route files), not the chords between 5 m samples, which cut every bend.
 - **Tunnels and bridges in the terrain:** tunnel edges (`tunnel=*` other than `no`; the `tunnel` flag in the road graph) are left out of terrain conformance and get no road strip, so the terrain stays the natural hill above them and the client draws its tunnel tube there (§3.2). Bridge edges cut the terrain under them to below the deck (the cutting rule below) but never pull it up to the deck. `layer` is not used yet.
-- **Terrain under the road:** within the road width plus 1.5 grid cells the terrain is cut down to just below the road surface (0.3 m), so the 10 m grid cannot interpolate it through the road on side slopes; further out it blends into the DEM over 60 m.
+- **Terrain under the road:** within the road width plus 1.5 grid cells the terrain is cut down to just below the road surface (0.3 m), so the 10 m grid cannot interpolate it through the road on side slopes; further out it blends into the DEM over 60 m. (v2.32: with the world cleaning each road acts through its nearest point only, the cut is the road's half width plus 0.5 m, and the grid is settled under the strips afterwards, §4.8.3.)
 - **Checks:** `world-builder check` measures where the terrain rises above a road strip (sampled every metre along and 0.25 m across, with the same triangle split as the mesh); `world-builder graph --probe X,Z` lists the roads near a point with lengths, end heights and gradients. The pilot package's test requires < 0.1 % of road samples under terrain.
 
 Smoothing of the gradient sent to the trainer is covered in §5.3.
@@ -1096,6 +1097,81 @@ Packages are **signed, versioned and updatable**:
 - **Download:** `ocw-desktop --fetch-world URL` fetches the manifest first and checks its signature before any large download, then the files next to it (the layout `world-builder publish` writes: `<base>/<id>/<version>/manifest.json`), resuming interrupted downloads with HTTP range requests (`Range: bytes=N-`; a server answering 200 restarts the file). Local directories and `file://` URLs install the same way. Downloads happen before the ride, never during it (§4.2). Tile-chunk streaming uses the chunk list of the manifest later; TUF remains under evaluation for app updates and key rotation metadata.
 - **Rebuilds:** `world-builder diff OLD NEW` (`ocw_worldgen::diff::GraphDiff`) lists the edges whose stable ID survived (unchanged or moved), was removed or added; routes over surviving edges re-match directly, the others are flagged.
 - **Rewrites (v2.24):** commands that change a built package in place (`route --world`, `gpx`, `routes --from / --remove`) write its manifest again (same id, name and attribution, next version), because the old one lists the old SHA-256 and every client refused the package as damaged. A signed manifest becomes unsigned (the key is not at hand); the command says to sign it again.
+
+### 4.8 World Cleaning (decided 2026-11-13, v2.32)
+
+OSM and the DEM are not physically consistent: roads step and kink, ends stop a metre short of the road they join, rivers on SRTM step up and down, culverts were drawn as open water, and the terrain grid cannot follow two roads at different heights a few metres apart. The world builder therefore **cleans the world while building it**. It may deviate a little from the source data to get a physically believable world, within the limits below; what riders ride stays the same road network.
+
+**Never changed:** the topology of the road graph (vertices, edges, junctions, one-ways), the stable edge IDs and therefore the routes (§2.7, §4.4); the road classes, names and widths; the OSM land classes (only slivers are merged). `world-builder package --no-clean` (and `route --no-clean`) builds without the cleaning, for comparisons.
+
+#### 4.8.1 Lint: measuring what looks wrong
+
+`world-builder lint --world PKG [--pbf EXTRACT]` (`ocw_worldgen::lint`, pure) counts every finding with its extent and the worst cases (local metres, latitude / longitude, OSM way):
+
+| Check | Finding |
+|---|---|
+| `road.vertical.grade_over_limit` / `.step` / `.kink` | a 5 m interval steeper than its class limit + 1 %; a step (> 1 m and > limit + 5 %); a gradient change > 8 points between two intervals |
+| `road.horizontal.duplicate_node` / `.spike` / `.self_crossing` | points < 0.25 m apart; an out-and-back point (turn > 150°, a leg < 15 m); a centreline crossing itself |
+| `road.near_miss_end` | a dead end within 3 m of another road it does not join |
+| `junction.height_mismatch` / `junction.surface_step` | profile ends at a junction differing by > 5 cm; a road strip lying on another road's strip near their junction with > 0.25 m height difference |
+| `road.crossing_step_untagged` | strips of two roads without a shared junction overlapping at different heights, neither tagged as bridge or tunnel |
+| `road.float.{untagged,bridge}.BAND`, `road.buried.*` | sampled every 2 m at the centre and both edges: terrain more than 0.8 m below the road surface (bands 0.8–1.5, 1.5–3, 3–6, > 6 m), or above it; floating untagged roads get a cause: `water` (a water vertex under the road), `lower_road_nearby` (the cut zone of a lower road within 15 m), `other` |
+| `road.over_water_untagged` | road length over water cells without a bridge (a missing bridge) |
+| `water.river_uphill` / `.river_step` / `.lake_not_level` / `.level_step` | along each river with a water surface (in OSM flow direction, every 10 m) the level rising > 0.3 m above the lowest so far, or jumping > 0.5 m; a lake whose levels span > 0.25 m; neighbouring water vertices > 0.5 m apart |
+| `building.floating` / `.half_buried` / `.on_steep_slope` | wall foot above the ground; ground above half the wall height; > 3 m of slope under the footprint |
+| `landuse.sliver` / `.gap` | patches of ≤ 2 cells (≤ 50 m²) of one class; unclassified holes of ≤ 6 cells enclosed by one class |
+| `bridge.SOURCE.STRUCTURE` | the bridges built (§4.8.6), by source and structure |
+
+#### 4.8.2 Roads: horizontal
+
+- **Duplicate nodes** (< 0.25 m) are removed; **spikes** (turn > 150° with a leg < 15 m, the point at most 15 m off its neighbours' chord) are removed, repeatedly. Graph vertices never move here.
+- **Near-miss joins:** a dead end (one road, not at the region border, not a bridge or tunnel) within **3 m** of another road is moved onto that road's centreline (the largest horizontal deviation the builder allows), and after the profiles its end takes that road's height there; its road is re-limited to its class gradient. No junction is added (that would change topology and stable IDs).
+
+#### 4.8.3 Roads: vertical
+
+On top of §4.3 (sampling, median and Gaussian filters, class gradient limits along through-roads and across junctions):
+
+- **Gradient limits per class** stay those of §4.3: 15 % trunk / primary / secondary, 20 % tertiary / unclassified / residential / cycleway, 25 % service / track / path; bridges and tunnels are straight between their ends.
+- **Vertical curvature:** inside each road (not at its junction ends) the gradient may change by at most **0.5 % per metre** on trunk / primary / secondary and **1 % per metre** on all others; kinks are rounded into vertical curves (a sample moves towards its neighbours' chord, so no interval gets steeper).
+- **Junction mouths:** a wider road is drawn flat across, so a side road leaving it must not climb or fall within the wider road's half width: its first 5 m interval is limited to a **0.15 m** step at the wider road's edge (never so far that its far end leaves the class gradient), the rest re-limited from there.
+- **Terrain under roads:** after the road-conformed terrain (§4.3) and the water (§4.8.4) the terrain grid is **settled**: every road strip and bridge deck is sampled every metre along and 0.5 m across, and wherever a terrain triangle (split as in the client mesh) rises closer than **5 cm** to the surface, its three vertices are lowered by the least amount (a Gauss–Seidel projection over the violated samples; lowering never breaks a satisfied one). Vertices shared by neighbouring tiles change in every copy. The result: no terrain shows through any road.
+
+#### 4.8.4 Water
+
+- **Rivers** (OSM `waterway` lines with a drawn surface, ≥ 8 m wide; their direction is the flow direction) are joined across way splits into chains (same name or width, one way continuing at the shared node). The natural DEM along each chain every 10 m is fitted by the best **non-increasing** profile (least squares, pool adjacent violators): rivers never flow uphill and never step up. Main rivers are levelled first; a tributary ends at least at the main river's level, a branch starts at most at it.
+- **Lakes** (water areas that are not river surfaces: not `water=river|stream|canal|…`, not `waterway=riverbank`) get one level: the median of the DEM under them.
+- Every water vertex takes its lake's level, else the nearest river chain's within its half width plus three grid cells; the terrain under water is carved 1 m below the new level.
+- **No water under roads:** vertices within a road's half width plus one grid cell (roads on the ground; bridges excepted) are never carved and get their road-conformed height back – before, carving lowered the terrain under roads beside rivers and lakes by a metre and more, and left them floating.
+- **Culverts:** `tunnel=*` and `location=underground` on waterways are now read (they were dropped when reading the areas), so culverts under roads are no longer water bands.
+
+#### 4.8.5 Buildings and land use
+
+- **Building sites:** the terrain vertices inside a footprint (and within 1 m of it) move to the footprint's mean ground, by at most **1.5 m** (steeper sites keep their slope: a house set into the hillside), never under roads or water; the building is then placed as in §4.6 (walls from 0.5 m below the lowest ground).
+- **Land use:** patches of at most 2 cells of one class (not water) take the most common class around them; unclassified holes of at most 6 cells enclosed by one class take that class. Patches at a tile edge are kept.
+
+#### 4.8.6 Bridges
+
+**Which stretches are bridges:**
+
+1. OSM `bridge=*` (not `no`) ways – the whole edge (as before).
+2. Untagged roads inside a `man_made=bridge` outline.
+3. **Detected:** an untagged road crossing water – a water area or a waterway line ≥ **3 m** wide (narrower streams pass in a culvert) – with water on both sides of the road (a road along a shore is not a bridge; water stretches > 250 m along a road are mapping overlaps); or a road more than **5 m** above the natural ground (at least 7 m somewhere) for **8–150 m** (a gap the elevation filter bridged; longer is an embankment). Each detected span reaches 3 m beyond the obstacle (the abutments), merges with spans less than 8 m apart, and is left out where a tagged bridge already starts at that end. The build log counts them; their deck is planned **straight between the abutments**, and the terrain is cut under them but not pulled up to the deck, as under tagged bridges.
+
+**The structure** (`ocw_world::bridges`, section `BRDG`, additive; older clients skip it and draw plain road strips):
+
+- **Structure type:** `bridge=covered` → covered; `bridge:structure` arch / humpback → arch, truss → truss, suspension / simple-suspension / cable-stayed → suspension, anything else → beam; untagged → beam, except **stone** (`bridge:material` stone / masonry / brick) bridges up to 40 m, which are **arches**.
+- **Material:** `bridge:material`, else by structure (covered → wood, truss / suspension → steel, arch → stone), paths up to 25 m → wood, other paths and cycleways → steel, roads → concrete. **Railing:** stone and concrete road bridges have solid **parapets** (0.9 m high, 0.35 m thick), steel, wood and path bridges **rails** (posts every 2 m, rails at 0.55 and 1.1 m).
+- **Deck:** the road strip on top (the deck surface 1 cm under it), 0.6 m kerbs beyond the carriageway on each side; thickness by structure and span between supports: beam span / 18 (0.45–2.5 m; wood span / 25, 0.3–0.8 m), arch 0.45 m, truss 0.6 m, suspension 0.8 m, covered 0.5 m. Road strip points on a deck get no edge faces into the terrain (the deck has its own sides).
+- **Supports:** abutments at both real ends (a block from the deck bottom to 0.6 m below the ground just outside the end; none where the bridge continues on the next bridge edge); **piers** where the bridge is longer than the structure's maximum span – concrete 35 m, steel 45 m, wood 12 m, stone beam 15 m, stone arch 18 m, other arches 50 m, truss 60 m, covered 30 m, suspension none – evenly spaced, each a wall pier from the deck bottom to 0.6 m into the ground (or river bed), only where the deck is more than 1 m above it.
+- **Arches:** between consecutive supports, springing from the lower ground at the two supports (at most half the span below the crown), crown 0.35 m under the deck bottom; spandrel walls on both faces and the arch underside. Too low for 0.8 m of rise → a slab.
+- **Above the deck:** truss sides (height length / 8, 2.5–7 m; chords, verticals, alternating diagonals), suspension towers and main cables with hangers, covered bridges with posts every 3 m, board walls to 1.2 m and a gable roof.
+- **Rendering:** `ocw-render::bridges` builds the meshes per tile (a bridge belongs to the tile of its middle) with plain colours per material and part (`bridge_colour`, the hook for the material library of Phase 8). The terrain and water continue under the deck.
+
+Reference photos (Commons links only): `art/reference/bridges.md`.
+
+#### 4.8.7 Results
+
+MEASUREMENTS
 
 ---
 
