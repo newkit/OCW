@@ -5,6 +5,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use ocw_world::graph::{PROFILE_STEP_M, RoadGraph};
+use ocw_world::RoadSurface;
 use ocw_world::package::{RoadStrip, Tile, TileKey, WorldPackage};
 
 use crate::profile::sample_along;
@@ -184,6 +185,73 @@ fn extend_end(points: &mut [[f64; 3]], m: f64) {
     }
 }
 
+/// The road strips of `graph` per tile, each with the index of the edge it
+/// comes from (tunnels left out: they run inside the terrain). Deterministic,
+/// so [`apply_road_surfaces`] finds the same strips again.
+pub fn road_strips(graph: &RoadGraph, tile_size: f64) -> BTreeMap<TileKey, Vec<(usize, RoadStrip)>> {
+    let mut roads: BTreeMap<TileKey, Vec<(usize, RoadStrip)>> = BTreeMap::new();
+    for (ei, e) in graph.edges.iter().enumerate().filter(|(_, e)| !e.tunnel) {
+        let mut with_h: Vec<[f64; 3]> = sample_along(&e.points, PROFILE_STEP_M, true)
+            .into_iter()
+            .map(|(p, s)| [p[0], e.height_at(s).unwrap_or(0.0), p[1]])
+            .collect();
+        // At the region border the strip reaches a little beyond the cut,
+        // under the neighbouring package's strip (no hairline gap).
+        if graph.boundary_vertices.contains(&e.to) {
+            extend_end(&mut with_h, BORDER_OVERLAP_M);
+        }
+        if graph.boundary_vertices.contains(&e.from) {
+            with_h.reverse();
+            extend_end(&mut with_h, BORDER_OVERLAP_M);
+            with_h.reverse();
+        }
+        for (key, run) in split_into_tiles(&with_h, tile_size) {
+            roads.entry(key).or_default().push((
+                ei,
+                RoadStrip {
+                    class: e.class,
+                    width_m: e.width_m as f32,
+                    points: run
+                        .iter()
+                        .map(|p| [p[0] as f32, p[1] as f32, p[2] as f32])
+                        .collect(),
+                    surface: RoadSurface::of_class(e.class),
+                },
+            ));
+        }
+    }
+    roads
+}
+
+/// Gives the road strips of `pkg` (built from `graph` with
+/// [`build_package`]) the look of their edge, `surface(edge)` (spec §4.4,
+/// Phase 8 T2: from the OSM `surface` tag). Returns the number of strips
+/// that differ from their category's default.
+pub fn apply_road_surfaces(
+    pkg: &mut WorldPackage,
+    graph: &RoadGraph,
+    surface: impl Fn(&ocw_world::graph::Edge) -> RoadSurface,
+) -> usize {
+    let mut changed = 0;
+    for (key, strips) in road_strips(graph, f64::from(pkg.tile_size_m)) {
+        let Some(tile) = pkg.tiles.get_mut(&key) else {
+            continue;
+        };
+        assert_eq!(
+            tile.roads.len(),
+            strips.len(),
+            "the package was not built from this graph"
+        );
+        for (road, (ei, _)) in tile.roads.iter_mut().zip(strips) {
+            road.surface = surface(&graph.edges[ei]);
+            if road.surface != RoadSurface::of_class(road.class) {
+                changed += 1;
+            }
+        }
+    }
+    changed
+}
+
 /// Builds the package: tiles covering all roads plus `margin_tiles`, terrain
 /// with `samples` per tile side, road strips (tunnels left out: they run
 /// inside the terrain).
@@ -236,33 +304,10 @@ pub fn build_package_with_terrain<F: Fn(f64, f64) -> f64 + Sync>(
         min = [min[0].min(k.x), min[1].min(k.z)];
         max = [max[0].max(k.x), max[1].max(k.z)];
     }
-    let mut roads: BTreeMap<TileKey, Vec<RoadStrip>> = BTreeMap::new();
-    for e in graph.edges.iter().filter(|e| !e.tunnel) {
-        let mut with_h: Vec<[f64; 3]> = sample_along(&e.points, PROFILE_STEP_M, true)
-            .into_iter()
-            .map(|(p, s)| [p[0], e.height_at(s).unwrap_or(0.0), p[1]])
-            .collect();
-        // At the region border the strip reaches a little beyond the cut,
-        // under the neighbouring package's strip (no hairline gap).
-        if graph.boundary_vertices.contains(&e.to) {
-            extend_end(&mut with_h, BORDER_OVERLAP_M);
-        }
-        if graph.boundary_vertices.contains(&e.from) {
-            with_h.reverse();
-            extend_end(&mut with_h, BORDER_OVERLAP_M);
-            with_h.reverse();
-        }
-        for (key, run) in split_into_tiles(&with_h, tile_size) {
-            roads.entry(key).or_default().push(RoadStrip {
-                class: e.class,
-                width_m: e.width_m as f32,
-                points: run
-                    .iter()
-                    .map(|p| [p[0] as f32, p[1] as f32, p[2] as f32])
-                    .collect(),
-            });
-        }
-    }
+    let mut roads: BTreeMap<TileKey, Vec<RoadStrip>> = road_strips(graph, tile_size)
+        .into_iter()
+        .map(|(k, v)| (k, v.into_iter().map(|(_, s)| s).collect()))
+        .collect();
     let keys: Vec<TileKey> = (min[1] - margin_tiles..=max[1] + margin_tiles)
         .flat_map(|z| {
             (min[0] - margin_tiles..=max[0] + margin_tiles).map(move |x| TileKey { x, z })
@@ -385,6 +430,40 @@ mod tests {
             ],
             boundary_vertices: Default::default(),
         }
+    }
+
+    /// Road surfaces (Phase 8 T2) land on the strips of their edge, in
+    /// every tile the edge crosses, and survive the package bytes.
+    #[test]
+    fn road_surfaces_follow_their_edges_into_every_tile() {
+        let mut g = graph();
+        g.edges[1].bridge = false;
+        let mut pkg = build_package("t", (47.0, 9.5), &g, |_, _| 100.0, 500.0, 11, 0);
+        let all = |p: &WorldPackage| -> Vec<RoadSurface> {
+            p.tiles
+                .values()
+                .flat_map(|t| t.roads.iter().map(|r| r.surface))
+                .collect()
+        };
+        assert!(all(&pkg).iter().all(|s| *s == RoadSurface::Asphalt));
+        let changed = apply_road_surfaces(&mut pkg, &g, |e| {
+            if e.osm_way == 2 {
+                RoadSurface::Paving
+            } else {
+                RoadSurface::of_class(e.class)
+            }
+        });
+        // Edge 2 runs x = 500 from z 200 to 800 across tile rows 0 and 1.
+        assert_eq!(changed, 2);
+        let tiles_with_paving: Vec<TileKey> = pkg
+            .tiles
+            .values()
+            .filter(|t| t.roads.iter().any(|r| r.surface == RoadSurface::Paving))
+            .map(|t| t.key)
+            .collect();
+        assert_eq!(tiles_with_paving.len(), 2, "{tiles_with_paving:?}");
+        let back = WorldPackage::from_bytes(&pkg.to_bytes()).unwrap();
+        assert_eq!(all(&back), all(&pkg));
     }
 
     #[test]

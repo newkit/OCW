@@ -36,7 +36,8 @@ ocw-worldgen = { path = "crates/ocw-worldgen" }
 ocw-fit = { path = "crates/ocw-fit" }
 ocw-worldstore = { path = "crates/ocw-worldstore" }
 ocw-render = { path = "crates/ocw-render" }
-ocw-assets = { path = "crates/ocw-assets" }
+# ocw-assets without its command-line tools (`tools` feature) for the app.
+ocw-assets = { path = "crates/ocw-assets", default-features = false }
 ocw-server = { path = "services/server" }
 ocw-voice = { path = "crates/ocw-voice" }
 
@@ -48,6 +49,14 @@ bevy_egui = "=0.43.1"
 # decoding, no file access).
 glam = "0.33"
 gltf = { version = "1.4.1", default-features = false, features = ["utils", "names"] }
+# Material library (spec §4.6, Phase 8 T1): KTX2 reading – the version
+# Bevy's own loader uses (Apache-2.0); for the converter in ocw-assets'
+# `tools`: JPEG / PNG decoding (MIT OR Apache-2.0), pure-Rust BCn
+# compression (texpresso, MIT), zip reading of pinned archives (MIT).
+ktx2 = "0.5"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+texpresso = { version = "2.0", features = ["rayon"] }
+zip = { version = "9.5", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 raw-window-handle = "0.6"
 # Same major version as Bevy's winit backend (window icon).
 winit = "0.30"

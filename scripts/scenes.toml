@@ -418,3 +418,72 @@ description = "Black Forest: --world without a route option rides the package's 
 world = "blackforest"
 args = ["--world", "{world}", "--no-neighbours", "--bots", "3"]
 shot = 10
+
+# --- Ground and road materials (spec §4.6, Phase 8 T2) ------------------------
+# Close views for before / after comparisons of the material library
+# (scripts/fetch-materials.sh; OCW_MATERIALS=off renders the flat colours).
+
+[[scene]]
+name = "mat-meadow-road"
+description = "Materials: the Vaduz-Malbun road above Vaduz (km 1.6), low camera across the asphalt to the meadows"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "200"]
+at = ["2.5=teleport 1.6", "2.5=camera.orbit 100 6 7"]
+shot = 9
+
+[[scene]]
+name = "mat-forest"
+description = "Materials: the Malbun road in the forest (km 7), forest floor beside the road"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "200"]
+at = ["2.5=teleport 7.0", "2.5=camera.orbit 60 8 7"]
+shot = 9
+
+[[scene]]
+name = "mat-cliff"
+description = "Materials: steep slopes above the Malbun road (km 11.5), rock on the steep ground (triplanar)"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "200"]
+at = ["2.5=teleport 11.5", "2.5=camera.orbit 270 15 25"]
+shot = 9
+
+[[scene]]
+name = "mat-malbun"
+description = "Materials: Malbun (km 13.85, 1600 m), alpine meadows, scree and rock around the valley head"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "200"]
+at = ["2.5=teleport 13.85", "2.5=camera.orbit 200 12 14"]
+shot = 9
+
+[[scene]]
+name = "mat-rhine-gravel"
+description = "Materials: the Rhine dam at Vaduz in free ride, the dam track, the river banks and the water"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-3679,2171", "--bots", "0"]
+at = ["2.5=camera.orbit 70 10 9"]
+shot = 8
+
+[[scene]]
+name = "mat-video"
+description = "Video: riding up from Vaduz (km 1.6) in a low chase camera, ground and road materials passing by"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "2", "--power", "350"]
+at = ["2.5=teleport 1.6", "2.5=camera.orbit 20 10 7"]
+warmup = 3
+video = 6
+
+[[scene]]
+name = "bf-mat-forest"
+description = "Materials, Black Forest: the Schauinsland road in the spruce forest (km 15), forest floor and asphalt"
+world = "blackforest"
+args = ["--world", "{world}", "--route-file", "{world_dir}/freiburg-schauinsland.route", "--no-neighbours", "--bots", "0", "--power", "200"]
+at = ["2.5=teleport 15.0", "2.5=camera.orbit 90 8 7"]
+shot = 10
+
+[[scene]]
+name = "bf-mat-meadow"
+description = "Materials, Black Forest: meadows along the Titisee - Feldberg road (km 4)"
+world = "blackforest"
+args = ["--world", "{world}", "--route-file", "{world_dir}/titisee-feldberg.route", "--no-neighbours", "--bots", "0", "--power", "200"]
+at = ["2.5=teleport 4.0", "2.5=camera.orbit 100 8 9"]
+shot = 10

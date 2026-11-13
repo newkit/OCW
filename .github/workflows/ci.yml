@@ -48,6 +48,13 @@ jobs:
         run: make test-multiplayer-local
       - name: Headless server smoke run
         run: cargo run -p ocw-server -- --bots 3 --seconds 10 --fast
+      - name: Cache the material sources (assets/materials.toml pins)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ocw/material-sources
+          key: material-sources-${{ hashFiles('assets/materials.toml') }}
+      - name: Material library – fetch, check the pins, convert, validate (make materials)
+        run: scripts/fetch-materials.sh && cargo run -q --release -p ocw-assets -- materials validate assets/materials
       - name: Desktop smoke run on X11 (Xvfb, software Vulkan; make test-screenshot)
         run: .claude/skills/run-ocw/drive.sh shot smoke-x11.png 8 -- --cmd "net.stats"
       - name: Desktop smoke run on Wayland (headless weston, software Vulkan; make test-screenshot-wayland)
@@ -84,6 +91,11 @@ jobs:
       - name: Install toolchain from rust-toolchain.toml
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
+      - name: Cache the material sources (assets/materials.toml pins)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ocw/material-sources
+          key: material-sources-${{ hashFiles('assets/materials.toml') }}
       - name: Build and package the app
         run: scripts/build-macos-app.sh target/macos
       - uses: actions/upload-artifact@v4

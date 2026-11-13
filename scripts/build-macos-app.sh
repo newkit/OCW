@@ -48,6 +48,8 @@ rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 install -m 755 "$bin" "$app/Contents/MacOS/$exe"
 strip -x "$app/Contents/MacOS/$exe"
+# Material library (spec §4.6): Contents/Resources/materials.
+scripts/install-materials.sh "$app/Contents/Resources/materials"
 
 # Icon: iconset from the PNG renders (the 1024 px 512@2x is missing: no
 # render of that size yet, and upscaling would only blur it).

@@ -4,6 +4,9 @@
 #
 #   scripts/deploy-test.sh MACHINE      (machine from config/machines.toml)
 #
+# The material library (scripts/fetch-materials.sh, spec §4.6) goes to
+# /var/tmp/ocw/materials beside the binary.
+#
 # If the pilot data is there (scripts/fetch-pilot.sh), the pilot world
 # package (terrain, roads, land use, buildings) is rebuilt from this
 # checkout's world-builder and installed too, and ocw-desktop.args beside
@@ -58,6 +61,9 @@ scripts/remote.sh "$machine" run "
     chmod 644 \"\$D/.args.tmp\" && mv -f \"\$D/.args.tmp\" \"\$D/ocw-desktop.args\"
     echo \"default arguments (\$D/ocw-desktop.args):\"; grep -v '^#' \"\$D/ocw-desktop.args\" | sed 's/^/  /'
   fi
+  # Material library (spec §4.6) beside the binary, before it (the kiosk
+  # restarts on the binary).
+  OCW_MATERIALS_OPTIONAL=1 scripts/install-materials.sh \"\$D/materials\"
   put 755 target/release/ocw-desktop ocw-desktop
   echo \"deployed \$(cat \"\$D/VERSION\") to \$D\"
 "

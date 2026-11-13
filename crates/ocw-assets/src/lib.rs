@@ -7,12 +7,24 @@
 //!   no physics in cosmetic assets, required nodes, triangle budgets);
 //! - [`pose`]: rider on bike – anchors, inverse kinematics;
 //! - [`anim`]: riding state selection from cadence / speed / power / grade;
-//! - [`shipped`]: the models in `assets/models/`, embedded.
+//! - [`shipped`]: the models in `assets/models/`, embedded;
+//! - [`licence`]: the licence rule for every shipped asset (spec Phase 8A);
+//! - [`materials`]: the material library – pinned sources, validator,
+//!   credits, loading (spec §4.6, Phase 8 T1); [`ktx2`] its texture files;
+//!   with the `tools` feature [`convert`] (source maps → KTX2) and
+//!   [`fetch`] (download, check, convert).
 
 pub mod anim;
 pub mod bikes;
+#[cfg(feature = "tools")]
+pub mod convert;
+#[cfg(feature = "tools")]
+pub mod fetch;
 pub mod glb;
+pub mod ktx2;
+pub mod licence;
 pub mod manifest;
+pub mod materials;
 pub mod mesh;
 pub mod model;
 pub mod pose;

@@ -29,3 +29,6 @@ known_hosts
 .claude/worktrees/
 # The build history lives on the GitHub release "build-history", not in git.
 /artwork/build-history/
+
+# Material library (scripts/fetch-materials.sh; spec §4.6): converted textures, not in git.
+/assets/materials/

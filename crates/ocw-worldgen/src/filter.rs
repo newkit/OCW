@@ -2,7 +2,7 @@
 
 use ocw_world::graph::{Oneway, RoadClass};
 
-use crate::osm::Way;
+use crate::osm::{OsmData, Way};
 
 /// Road class of a rideable way, or `None` if bikes cannot or should not
 /// use it (motorways, private roads, driveways, footpaths without bicycle
@@ -69,6 +69,26 @@ pub fn width_m(way: &Way, class: RoadClass) -> f64 {
         .and_then(|w| w.trim_end_matches(" m").trim().parse::<f64>().ok())
         .filter(|w| (1.0..=30.0).contains(w))
         .unwrap_or_else(|| class.default_width_m())
+}
+
+/// The look of a rideable way (spec §4.4, Phase 8 T2): OSM `surface`,
+/// `smoothness`, `tracktype`, else the category.
+pub fn surface(way: &Way, class: RoadClass) -> ocw_world::RoadSurface {
+    ocw_world::RoadSurface::from_osm(class, |k| way.tag(k))
+}
+
+/// The look of every rideable way of `osm` whose surface differs from its
+/// category's default, by OSM way id (for
+/// [`crate::package::apply_road_surfaces`]).
+pub fn way_surfaces(osm: &OsmData) -> std::collections::HashMap<i64, ocw_world::RoadSurface> {
+    osm.ways
+        .iter()
+        .filter_map(|w| {
+            let class = rideable(w)?;
+            let s = surface(w, class);
+            (s != ocw_world::RoadSurface::of_class(class)).then_some((w.id, s))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -219,5 +239,30 @@ mod tests {
         let w = way(&[("highway", "residential"), ("width", "narrow")]);
         assert_eq!(width_m(&w, RoadClass::Residential), 5.0);
         assert_eq!(width_m(&way(&[]), RoadClass::Primary), 7.5);
+    }
+
+    #[test]
+    fn road_surfaces_of_ways() {
+        use ocw_world::RoadSurface;
+        let w = way(&[("highway", "residential"), ("surface", "sett")]);
+        assert_eq!(surface(&w, RoadClass::Residential), RoadSurface::Paving);
+        let w = way(&[("highway", "track"), ("tracktype", "grade1")]);
+        assert_eq!(surface(&w, RoadClass::Track), RoadSurface::WornAsphalt);
+        let mut osm = OsmData::default();
+        let mut add = |id: i64, tags: &[(&str, &str)]| {
+            let mut w = way(tags);
+            w.id = id;
+            osm.ways.push(w);
+        };
+        add(1, &[("highway", "residential"), ("surface", "paving_stones")]);
+        add(2, &[("highway", "residential"), ("surface", "asphalt")]);
+        add(3, &[("highway", "track"), ("surface", "dirt")]);
+        add(4, &[("highway", "motorway"), ("surface", "dirt")]);
+        add(5, &[("highway", "track")]);
+        let m = way_surfaces(&osm);
+        // Only rideable ways that differ from their category's default.
+        assert_eq!(m.len(), 2, "{m:?}");
+        assert_eq!(m[&1], RoadSurface::Paving);
+        assert_eq!(m[&3], RoadSurface::Dirt);
     }
 }

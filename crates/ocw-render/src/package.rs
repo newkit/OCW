@@ -39,12 +39,15 @@ use ocw_world::graph::RoadClass;
 use ocw_world::landuse::{LandClass, LandUseTile};
 use ocw_world::package::{RoadStrip, Tile, TileKey, WorldPackage};
 use ocw_world::world_set::Residency;
-use ocw_world::{Frame, WorldSet};
+use ocw_world::{Frame, RoadSurface, WorldSet};
 
 use crate::RideView;
 use crate::camera::{CameraInteraction, CameraObstacles, ObstacleLayer, SolidFootprints};
+use crate::ground::{TerrainMaterial, terrain_material};
+use crate::materials::MaterialLibrary;
+use crate::road_material::{RoadExtension, RoadMaterial};
 use crate::see_through::{SeeThroughMaterial, see_through};
-use crate::tunnel_cut::{TerrainMaterial, TunnelCut, terrain_material};
+use crate::tunnel_cut::TunnelCut;
 
 /// Tiles kept around the rider (radius in tiles; 2 = 5 × 5).
 pub const STREAM_RADIUS: i32 = 2;
@@ -129,12 +132,21 @@ pub struct MeshArrays {
     pub positions: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
     pub colors: Vec<[f32; 4]>,
-    /// Texture coordinates (terrain only; empty otherwise).
+    /// Texture coordinates (terrain: across the tile; roads: across and
+    /// along in metres; empty otherwise).
     pub uvs: Vec<[f32; 2]>,
+    /// Second texture coordinates (roads: material layer, 1 on the edge
+    /// faces; empty otherwise).
+    pub uvs_b: Vec<[f32; 2]>,
     pub indices: Vec<u32>,
 }
 
 impl MeshArrays {
+    /// The material layer of the first vertex (roads; tests).
+    pub fn roads_layer(&self) -> Option<f32> {
+        self.uvs_b.first().map(|u| u[0])
+    }
+
     fn mesh(self) -> Mesh {
         let mut m = Mesh::new(
             PrimitiveTopology::TriangleList,
@@ -146,6 +158,9 @@ impl MeshArrays {
         if !self.uvs.is_empty() {
             m.insert_attribute(Mesh::ATTRIBUTE_UV_0, self.uvs);
         }
+        if !self.uvs_b.is_empty() {
+            m.insert_attribute(Mesh::ATTRIBUTE_UV_1, self.uvs_b);
+        }
         m.insert_indices(Indices::U32(self.indices));
         m
     }
@@ -156,12 +171,104 @@ pub struct TileMeshes {
     pub terrain: MeshArrays,
     /// Terrain colours from the land use (`None`: vertex colours only).
     pub colour_map: Option<ColourMap>,
+    /// Splat weights at the cell corners (with a material library).
+    pub splat: Option<Splat>,
     pub roads: MeshArrays,
     pub water: MeshArrays,
     pub trees: MeshArrays,
     pub buildings: MeshArrays,
     /// The buildings as camera-solid obstacles.
     pub solid: SolidFootprints,
+}
+
+/// What the tile meshes are built for: with a material library, the far
+/// colours are the materials' means and the terrain gets splat weights
+/// (spec §4.6, Phase 8 T2); without, the flat land-use colours.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TileLook {
+    /// Colour map colour per land class (sRGB), by `LandClass` code.
+    pub palette: Option<Vec<[f32; 3]>>,
+    /// Road colour per surface (linear), by `RoadSurface` code.
+    pub road_colours: Option<Vec<[f32; 3]>>,
+}
+
+impl TileLook {
+    pub fn textured(&self) -> bool {
+        self.palette.is_some()
+    }
+
+    /// The look for a loaded material library (class tint neutral).
+    pub fn of_library(lib: &MaterialLibrary) -> Self {
+        let palette = crate::ground::class_palette(&lib.ground_means, |_| [1.0; 3]);
+        Self {
+            palette: Some(palette.into_iter().map(|(_, c)| c).collect()),
+            road_colours: Some(lib.road_means.to_vec()),
+        }
+    }
+}
+
+/// Splat weights of a tile: two RGBA8 planes of `(cells + 1)²` corners.
+pub struct Splat {
+    pub cells: u32,
+    pub a: Vec<[u8; 4]>,
+    pub b: Vec<[u8; 4]>,
+}
+
+impl Splat {
+    fn image(data: Vec<[u8; 4]>, size: u32, label: &'static str) -> Image {
+        Image {
+            data: Some(data.into_iter().flatten().collect()),
+            texture_descriptor: TextureDescriptor {
+                label: Some(label),
+                size: Extent3d {
+                    width: size,
+                    height: size,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: TextureDimension::D2,
+                format: TextureFormat::Rgba8Unorm,
+                usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+            sampler: ImageSampler::Descriptor(ImageSamplerDescriptor {
+                address_mode_u: ImageAddressMode::ClampToEdge,
+                address_mode_v: ImageAddressMode::ClampToEdge,
+                mag_filter: ImageFilterMode::Linear,
+                min_filter: ImageFilterMode::Linear,
+                ..default()
+            }),
+            asset_usage: RenderAssetUsages::RENDER_WORLD,
+            ..default()
+        }
+    }
+
+    /// The two weight images.
+    pub fn images(self) -> (Image, Image) {
+        let n = self.cells + 1;
+        (
+            Self::image(self.a, n, "splat weights 0-3"),
+            Self::image(self.b, n, "splat weights 4-7"),
+        )
+    }
+}
+
+/// The splat weights of a tile (cell corners, neighbour tiles' cells
+/// included so tiles agree on their edges).
+pub fn tile_splat(pkg: &WorldPackage, key: TileKey, cells: u32) -> Splat {
+    let n = i64::from(cells);
+    let class = |c: i64, r: i64| {
+        let (dx, dz) = (c.div_euclid(n), r.div_euclid(n));
+        let k = TileKey {
+            x: key.x + dx as i32,
+            z: key.z + dz as i32,
+        };
+        let (lu, kc) = tile_landuse(pkg, k)?;
+        (kc == cells).then(|| lu.classes[(r.rem_euclid(n) * n + c.rem_euclid(n)) as usize])
+    };
+    let (a, b) = crate::ground::splat_corners(cells as usize, class);
+    Splat { cells, a, b }
 }
 
 /// An sRGB RGBA colour map with its mip chain (level 0 first).
@@ -268,27 +375,54 @@ fn cell_kept(keep: Keep, o: [f64; 2], s: f64, i: usize, k: usize) -> bool {
     keep.is_none_or(|f| f([o[0] + (i as f64 + 0.5) * s, o[1] + (k as f64 + 0.5) * s]))
 }
 
-fn road_colour(class: RoadClass) -> [f32; 4] {
-    match class {
-        RoadClass::Track => lin(0.55, 0.47, 0.36),
-        RoadClass::Path => lin(0.62, 0.56, 0.45),
-        RoadClass::Cycleway => lin(0.3, 0.3, 0.33),
-        _ => lin(0.22, 0.22, 0.24),
+/// Flat colour of a road (linear): by category where the surface is the
+/// category's default (as before the material library), else by surface.
+pub fn road_colour(class: RoadClass, surface: RoadSurface) -> [f32; 4] {
+    if surface == RoadSurface::of_class(class) {
+        return match class {
+            RoadClass::Track => lin(0.55, 0.47, 0.36),
+            RoadClass::Path => lin(0.62, 0.56, 0.45),
+            RoadClass::Cycleway => lin(0.3, 0.3, 0.33),
+            _ => lin(0.22, 0.22, 0.24),
+        };
+    }
+    match surface {
+        RoadSurface::Asphalt => lin(0.22, 0.22, 0.24),
+        RoadSurface::WornAsphalt => lin(0.3, 0.29, 0.28),
+        RoadSurface::Gravel => lin(0.58, 0.53, 0.45),
+        RoadSurface::Paving => lin(0.45, 0.42, 0.38),
+        RoadSurface::Dirt => lin(0.5, 0.41, 0.31),
     }
 }
 
 /// Road surface strips with edge faces, in world coordinates.
 pub fn road_arrays(strips: &[RoadStrip]) -> MeshArrays {
+    road_arrays_with(strips, None)
+}
+
+/// [`road_arrays`] with the road colours of a material library (`colours`
+/// by surface code, linear; the far colour of the road material).
+pub fn road_arrays_with(strips: &[RoadStrip], colours: Option<&[[f32; 3]]>) -> MeshArrays {
     let mut m = MeshArrays::default();
     let edge = lin(0.45, 0.43, 0.38);
     for s in strips {
-        let colour = road_colour(s.class);
+        let colour = colours
+            .and_then(|c| c.get(s.surface.code() as usize))
+            .map_or_else(
+                || road_colour(s.class, s.surface),
+                |c| [c[0], c[1], c[2], 1.0],
+            );
+        let layer = f32::from(s.surface.code());
         let half = s.width_m / 2.0;
         let p: Vec<Vec3> = s.points.iter().map(|q| Vec3::from(*q)).collect();
         let n = p.len();
         let base = m.positions.len() as u32;
-        // Surface: two vertices per point.
+        // Surface: two vertices per point; uv = (across, along) in metres.
+        let mut along = 0.0f32;
         for i in 0..n {
+            if i > 0 {
+                along += p[i].distance(p[i - 1]);
+            }
             let dir = (p[(i + 1).min(n - 1)] - p[i.saturating_sub(1)])
                 .with_y(0.0)
                 .normalize_or_zero();
@@ -298,6 +432,8 @@ pub fn road_arrays(strips: &[RoadStrip]) -> MeshArrays {
                     .push((p[i] + right * side + Vec3::Y * 0.02).to_array());
                 m.normals.push([0.0, 1.0, 0.0]);
                 m.colors.push(colour);
+                m.uvs.push([side, along]);
+                m.uvs_b.push([layer, 0.0]);
             }
         }
         for i in 0..n as u32 - 1 {
@@ -322,6 +458,8 @@ pub fn road_arrays(strips: &[RoadStrip]) -> MeshArrays {
                 m.positions.push((top - Vec3::Y * EDGE_DEPTH_M).to_array());
                 m.normals.extend([out.to_array(); 2]);
                 m.colors.extend([edge; 2]);
+                m.uvs.extend([[0.0, 0.0]; 2]);
+                m.uvs_b.extend([[layer, 1.0]; 2]);
             }
             for i in 0..n as u32 - 1 {
                 let (t0, b0, t1, b1) = (eb + 2 * i, eb + 2 * i + 1, eb + 2 * i + 2, eb + 2 * i + 3);
@@ -617,6 +755,18 @@ const ROCK: [f32; 3] = [0.5, 0.48, 0.44];
 /// turning to rock on steep slopes, with a little per-texel and per-patch
 /// noise; plus its mip chain (box filtered).
 pub fn colour_map(pkg: &WorldPackage, tile: &Tile, lu: &LandUseTile, cells: u32) -> ColourMap {
+    colour_map_with(pkg, tile, lu, cells, None)
+}
+
+/// [`colour_map`] with the class colours of `palette` (sRGB by class code;
+/// the materials' mean colours, so the far ground matches the near).
+pub fn colour_map_with(
+    pkg: &WorldPackage,
+    tile: &Tile,
+    lu: &LandUseTile,
+    cells: u32,
+    palette: Option<&[[f32; 3]]>,
+) -> ColourMap {
     let n = cells as usize;
     let size = f64::from(pkg.tile_size_m);
     let o = tile.key.origin(size);
@@ -637,10 +787,20 @@ pub fn colour_map(pkg: &WorldPackage, tile: &Tile, lu: &LandUseTile, cells: u32)
                 }
                 _ => 0.0,
             };
-            let mut colour = land_colour(class);
+            let flat = |c: LandClass| {
+                palette
+                    .and_then(|p| p.get(c as usize).copied())
+                    .unwrap_or_else(|| land_colour(c))
+            };
+            let mut colour = flat(class);
             if !matches!(class, LandClass::Water | LandClass::Glacier) {
-                let t = ((slope - 0.6) / 0.4).clamp(0.0, 1.0);
-                colour = std::array::from_fn(|j| colour[j] + (ROCK[j] - colour[j]) * t);
+                let rock = palette.map_or(ROCK, |_| flat(LandClass::Rock));
+                let t = match palette {
+                    // As the shader turns steep ground into rock.
+                    Some(_) => crate::ground::rock_weight(slope),
+                    None => ((slope - 0.6) / 0.4).clamp(0.0, 1.0),
+                };
+                colour = std::array::from_fn(|j| colour[j] + (rock[j] - colour[j]) * t);
             }
             let (gc, gr) = (
                 i64::from(tile.key.x) * n as i64 + c as i64,
@@ -895,6 +1055,16 @@ pub fn build_tile_meshes(pkg: &WorldPackage, key: TileKey) -> Option<TileMeshes>
 /// buildings by the centroid of their outline. Road strips are always
 /// drawn (the builder cuts them at the package's border).
 pub fn build_tile_meshes_kept(pkg: &WorldPackage, key: TileKey, keep: Keep) -> Option<TileMeshes> {
+    build_tile_meshes_look(pkg, key, keep, &TileLook::default())
+}
+
+/// [`build_tile_meshes_kept`] for a [`TileLook`].
+pub fn build_tile_meshes_look(
+    pkg: &WorldPackage,
+    key: TileKey,
+    keep: Keep,
+    look: &TileLook,
+) -> Option<TileMeshes> {
     let tile = pkg.tiles.get(&key)?;
     let mut sites = tree_sites(pkg, tile);
     if let Some(f) = keep {
@@ -916,8 +1086,13 @@ pub fn build_tile_meshes_kept(pkg: &WorldPackage, key: TileKey, keep: Keep) -> O
     Some(TileMeshes {
         key,
         terrain: terrain_arrays_kept(pkg, tile, keep),
-        colour_map: lu.map(|(lu, cells)| colour_map(pkg, tile, lu, cells)),
-        roads: road_arrays(&tile.roads),
+        colour_map: lu.map(|(lu, cells)| {
+            colour_map_with(pkg, tile, lu, cells, look.palette.as_deref())
+        }),
+        splat: lu
+            .filter(|_| look.textured())
+            .map(|(_, cells)| tile_splat(pkg, key, cells)),
+        roads: road_arrays_with(&tile.roads, look.road_colours.as_deref()),
         water: lu.map_or_else(MeshArrays::default, |(lu, _)| {
             water_arrays_kept(pkg, tile, lu, keep)
         }),
@@ -982,6 +1157,8 @@ struct TileStreamer {
     last_position: Option<[f64; 2]>,
     /// Tiles at the front of `ready` to upload in this frame (after a jump).
     urgent: usize,
+    /// The look the loaded tiles were built for.
+    look: TileLook,
 }
 
 /// Neighbour tiles being loaded.
@@ -1088,15 +1265,20 @@ pub fn far_tiles<'a>(
         .collect()
 }
 
-fn build_task(set: &Arc<WorldSet>, (i, key): TileId) -> Task<Option<TileMeshes>> {
+fn build_task(
+    set: &Arc<WorldSet>,
+    (i, key): TileId,
+    look: &TileLook,
+) -> Task<Option<TileMeshes>> {
     let set = set.clone();
+    let look = look.clone();
     AsyncComputeTaskPool::get().spawn(async move {
         let pkg = set.members()[i].package()?.clone();
         if set.has_seams() {
             let keep = |q: [f64; 2]| set.draws(i, q);
-            build_tile_meshes_kept(&pkg, key, Some(&keep))
+            build_tile_meshes_look(&pkg, key, Some(&keep), &look)
         } else {
-            build_tile_meshes(&pkg, key)
+            build_tile_meshes_look(&pkg, key, None, &look)
         }
     })
 }
@@ -1166,21 +1348,26 @@ fn stream_tiles(
     view: Res<RideView>,
     mut streamer: ResMut<TileStreamer>,
     mut obstacles: ResMut<CameraObstacles>,
+    library: Option<Res<MaterialLibrary>>,
 ) {
     let set = &world.set;
     let Some(p) = rider_position(&view) else {
         return;
     };
-    // Packages came or went: the tiles on the seams are clipped anew (the
-    // old meshes stay until the new ones are uploaded). Tasks for the old
-    // set are discarded.
-    if streamer.generation != set.generation() {
+    let look = library
+        .as_deref()
+        .map_or_else(TileLook::default, TileLook::of_library);
+    // Packages came or went, or the material library arrived: the tiles
+    // are built anew (the old meshes stay until the new ones are uploaded).
+    // Tasks for the old set are discarded.
+    if streamer.generation != set.generation() || streamer.look != look {
         streamer.generation = set.generation();
+        streamer.look = look.clone();
         streamer.building.clear();
         let loaded: Vec<TileId> = streamer.loaded.keys().copied().collect();
         for id in loaded {
             if set.members()[id.0].is_resident() {
-                streamer.building.insert(id, build_task(set, id));
+                streamer.building.insert(id, build_task(set, id, &look));
             }
         }
     }
@@ -1196,7 +1383,7 @@ fn stream_tiles(
         if streamer.loaded.contains_key(&id) || streamer.building.contains_key(&id) {
             continue;
         }
-        streamer.building.insert(id, build_task(set, id));
+        streamer.building.insert(id, build_task(set, id, &look));
     }
     if jumped {
         // A teleport (or the start): the 3 × 3 tiles around the rider are
@@ -1245,6 +1432,13 @@ fn stream_tiles(
     }
 }
 
+/// The material library and the road material made from it.
+type RoadParams<'w, 's> = (
+    Option<Res<'w, MaterialLibrary>>,
+    Option<ResMut<'w, Assets<RoadMaterial>>>,
+    Local<'s, Option<Handle<RoadMaterial>>>,
+);
+
 #[allow(clippy::too_many_arguments)] // a Bevy system
 fn upload_tiles(
     mut commands: Commands,
@@ -1256,7 +1450,22 @@ fn upload_tiles(
     mut terrain: ResMut<Assets<TerrainMaterial>>,
     mut obstacles: ResMut<CameraObstacles>,
     tunnels: Option<Res<crate::tunnel::Tunnels>>,
+    (library, mut road_materials, mut textured_roads): RoadParams,
 ) {
+    // The shared road material of the library (made once).
+    if textured_roads.is_none()
+        && let (Some(lib), Some(rm)) = (library.as_deref(), road_materials.as_deref_mut())
+    {
+        *textured_roads = Some(rm.add(RoadMaterial {
+            base: StandardMaterial {
+                base_color: Color::WHITE,
+                perceptual_roughness: 1.0,
+                ..default()
+            },
+            extension: RoadExtension::of_library(lib),
+        }));
+    }
+    let library = library.as_deref();
     let no_cut = TunnelCut::default();
     let cut = tunnels.as_deref().map_or(&no_cut, |t| &t.cut);
     // One tile per frame, all urgent ones after a jump.
@@ -1273,6 +1482,7 @@ fn upload_tiles(
             (&mut meshes, &mut images, &mut terrain),
             &mut obstacles,
             cut,
+            (library, textured_roads.as_ref()),
             id,
             t,
         );
@@ -1292,6 +1502,7 @@ fn upload_tile(
     ),
     obstacles: &mut CameraObstacles,
     cut: &TunnelCut,
+    (library, textured_roads): (Option<&MaterialLibrary>, Option<&Handle<RoadMaterial>>),
     id: TileId,
     mut t: TileMeshes,
 ) {
@@ -1322,7 +1533,7 @@ fn upload_tile(
     // The tile's own terrain material with its land-use colour map (freed
     // with the tile's entities), with the tunnel tubes cut out
     // (`tunnel_cut`).
-    let terrain_mat = terrain.add(terrain_material(
+    let mut terrain_mat = terrain_material(
         StandardMaterial {
             base_color: Color::WHITE,
             base_color_texture: t.colour_map.take().map(|map| images.add(map.image())),
@@ -1330,7 +1541,20 @@ fn upload_tile(
             ..default()
         },
         cut,
-    ));
+    );
+    // The ground materials, blended by the tile's splat weights (spec §4.6).
+    if let (Some(lib), Some(splat)) = (library, t.splat.take()) {
+        let e = &mut terrain_mat.extension;
+        e.look = lib.ground_look;
+        e.look.mode.y = splat.cells as f32;
+        e.look.tile.x = member.package().map_or(1000.0, |p| p.tile_size_m);
+        let (a, b) = splat.images();
+        e.splat_a = Some(images.add(a));
+        e.splat_b = Some(images.add(b));
+        e.albedo = Some(lib.ground_albedo.clone());
+        e.normal = Some(lib.ground_normal.clone());
+    }
+    let terrain_mat = terrain.add(terrain_mat);
     let parent = commands
         .spawn((
             frame_transform(&frame),
@@ -1359,12 +1583,21 @@ fn upload_tile(
                 ));
             }
             if !t.roads.indices.is_empty() {
-                c.spawn((
-                    Mesh3d(meshes.add(t.roads.mesh())),
-                    MeshMaterial3d(mat),
-                    NotShadowCaster,
-                    CameraInteraction::Solid,
-                ));
+                let mesh = Mesh3d(meshes.add(t.roads.mesh()));
+                match textured_roads {
+                    Some(road) => c.spawn((
+                        mesh,
+                        MeshMaterial3d(road.clone()),
+                        NotShadowCaster,
+                        CameraInteraction::Solid,
+                    )),
+                    None => c.spawn((
+                        mesh,
+                        MeshMaterial3d(mat),
+                        NotShadowCaster,
+                        CameraInteraction::Solid,
+                    )),
+                };
             }
             if !t.trees.indices.is_empty() {
                 c.spawn((
@@ -1398,6 +1631,7 @@ mod tests {
                 class: RoadClass::Secondary,
                 width_m: 6.0,
                 points: (0..11).map(|i| [i as f32 * 10.0, 5.0, 50.0]).collect(),
+                surface: ocw_world::RoadSurface::Asphalt,
             }],
         };
         WorldPackage {
@@ -1853,6 +2087,63 @@ mod tests {
             assert!((b - a).cross(c - a).y > 0.0);
         }
         assert!(!m.buildings.indices.is_empty());
+    }
+
+    /// With a material library (spec §4.6, Phase 8 T2): splat weights at
+    /// the cell corners, the colour map in the materials' mean colours,
+    /// roads with their material layer; without, as before.
+    #[test]
+    fn a_textured_look_adds_splat_weights_and_material_colours() {
+        let p = landuse_package();
+        let key = TileKey { x: 0, z: 0 };
+        let flat = build_tile_meshes(&p, key).unwrap();
+        assert!(flat.splat.is_none());
+        let mut means = [[0.5, 0.0, 0.0]; crate::ground::GROUND_LAYERS];
+        means[crate::ground::FOREST_FLOOR] = [0.0, 0.0, 0.5];
+        let palette = crate::ground::class_palette(&means, |_| [1.0; 3]);
+        let look = TileLook {
+            palette: Some(palette.into_iter().map(|(_, c)| c).collect()),
+            road_colours: Some(vec![[0.1, 0.2, 0.3]; 5]),
+        };
+        let m = build_tile_meshes_look(&p, key, None, &look).unwrap();
+        let splat = m.splat.expect("splat weights");
+        assert_eq!(splat.cells, 20);
+        assert_eq!(splat.a.len(), 21 * 21);
+        // Corner (2, 15) lies in the forest: all forest floor (layer 2).
+        assert_eq!(splat.a[15 * 21 + 2][crate::ground::FOREST_FLOOR], 255);
+        // The colour map takes the material means: the forest is blue now.
+        let map = m.colour_map.unwrap();
+        let texel = |c: usize, r: usize| map.data[(r * 20 + c) * 4 + 2];
+        assert!(texel(2, 15) > 150, "{}", texel(2, 15));
+        // Roads: layer and metres in the texture coordinates, colour from
+        // the library.
+        assert_eq!(m.roads.uvs.len(), m.roads.positions.len());
+        assert_eq!(m.roads.uvs_b.len(), m.roads.positions.len());
+        assert!(m.roads.uvs_b.iter().all(|u| u[0] == 0.0), "asphalt layer");
+        let along = m.roads.uvs.iter().map(|u| u[1]).fold(0.0f32, f32::max);
+        assert!((along - 100.0).abs() < 0.5, "{along}");
+        assert_eq!(m.roads.colors[0], [0.1, 0.2, 0.3, 1.0]);
+        assert_eq!(flat.roads.colors[0], road_colour(RoadClass::Secondary, RoadSurface::Asphalt));
+    }
+
+    #[test]
+    fn roads_keep_their_category_colour_unless_osm_says_otherwise() {
+        assert_eq!(
+            road_colour(RoadClass::Track, RoadSurface::Gravel),
+            lin(0.55, 0.47, 0.36)
+        );
+        assert_ne!(
+            road_colour(RoadClass::Residential, RoadSurface::Paving),
+            road_colour(RoadClass::Residential, RoadSurface::Asphalt)
+        );
+        let strip = RoadStrip {
+            class: RoadClass::Residential,
+            width_m: 4.0,
+            points: vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]],
+            surface: RoadSurface::Dirt,
+        };
+        let m = road_arrays(&[strip]);
+        assert_eq!(m.roads_layer(), Some(4.0));
     }
 
     /// Every triangle winds towards its normal, and that normal points

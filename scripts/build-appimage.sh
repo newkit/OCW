@@ -29,6 +29,8 @@ done
 mkdir -p "$app/usr/share/icons/hicolor/scalable/apps"
 install -m 644 artwork/logos/ocw.svg "$app/usr/share/icons/hicolor/scalable/apps/ocw-desktop.svg"
 install -m 644 artwork/logos/ocw-256.png "$app/ocw-desktop.png"
+# Material library (spec §4.6): usr/share/ocw/materials, found from usr/bin.
+scripts/install-materials.sh "$app/usr/share/ocw/materials"
 ln -s ocw-desktop.png "$app/.DirIcon"
 cat >"$app/AppRun" <<'RUN'
 #!/bin/sh

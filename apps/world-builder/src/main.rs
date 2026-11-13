@@ -843,8 +843,18 @@ fn package(args: PackageArgs) {
         margin_tiles,
     );
     pkg.region = Some(region.package_region());
+    // Road surfaces from OSM `surface` (section RSRF, Phase 8 T2).
+    let way_surfaces = ocw_worldgen::filter::way_surfaces(&osm);
+    let surfaced = ocw_worldgen::package::apply_road_surfaces(&mut pkg, &graph, |e| {
+        way_surfaces
+            .get(&e.osm_way)
+            .copied()
+            .unwrap_or_else(|| ocw_world::RoadSurface::of_class(e.class))
+    });
     let terrain_s = t.elapsed().as_secs_f64();
-    let mut area_report = Vec::new();
+    let mut area_report = vec![format!(
+        "road surfaces (RSRF): {surfaced} strips differ from their category's default"
+    )];
     if !no_areas {
         let ta = Instant::now();
         let data = ocw_worldgen::areas::AreaData::read_pbf(&pbf).unwrap_or_else(|e| {

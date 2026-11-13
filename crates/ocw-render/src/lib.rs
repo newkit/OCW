@@ -9,11 +9,14 @@ pub mod console;
 pub mod event_hud;
 pub mod font;
 pub mod frame_rate;
+pub mod ground;
 pub mod hud;
 pub mod junction;
+pub mod materials;
 pub mod menu;
 pub mod package;
 pub mod riders;
+pub mod road_material;
 pub mod see_through;
 pub mod terrain;
 pub mod tunnel;
@@ -212,6 +215,10 @@ impl Plugin for OcwRenderPlugins {
             console::ConsolePlugin,
             workout::WorkoutPanelPlugin,
             voice::VoiceHudPlugin,
+        ))
+        .add_plugins((
+            materials::MaterialsPlugin,
+            road_material::RoadMaterialPlugin,
         ));
     }
 }

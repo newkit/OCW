@@ -71,7 +71,7 @@ VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 
 .DEFAULT_GOAL := help
 .PHONY: help art-gather art-sheets art-render art-diary art-publish deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust build release lint fmt fmt-check \
-	clippy check run server deploy-test clean clean-test-output macos-app \
+	clippy check run server materials deploy-test clean clean-test-output macos-app \
 	test test-unit test-wasm test-kiosk test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
 	test-multiplayer test-multiplayer-local test-scenes test-scenes-list \
 	wasm screenshot screenshot-wayland smoke video video-wayland
@@ -256,6 +256,9 @@ test-multiplayer-local: ## ocw-server + 3 ocw-bot riders on this machine (loopba
 wasm screenshot screenshot-wayland smoke video video-wayland:
 	@echo "make $@ is deprecated: use make test-$@" >&2
 	@$(MAKE) --no-print-directory test-$@
+
+materials: ## Fetch the material library (pinned CC0 textures → KTX2) into assets/materials/ (spec §4.6)
+	scripts/fetch-materials.sh
 
 deploy-test: ## Build on MACHINE (default marge) and deploy for its kiosk (scripts/ocw-kiosk.sh)
 	scripts/deploy-test.sh $(or $(MACHINE),marge)
