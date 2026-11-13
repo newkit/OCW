@@ -7,6 +7,8 @@
                                     log of the day into artwork/build-history/DAY/
     art/diary.py stamp   [DAY...]   write the ISO 8601 capture time into every
                                     archived PNG/MP4 that has none (gather does it)
+    art/diary.py prompts [DAY...]   the user's prompts of the day (from the Claude
+                                    Code transcripts, masked) – journal runs it
     art/diary.py journal [DAY...]   write DAY/journal.md + journal.json (commits,
                                     merges, spec versions, tests, media)
     art/diary.py sheet   DAY        contact sheets of the day's media (for
@@ -313,6 +315,108 @@ def now_meta() -> list[str]:
     return ["-metadata", f"creation_time={t}"]
 
 
+# ----------------------------------------------------------------- prompts
+#
+# The user's prompts to Claude Code are part of the story (ART-PROJECT §2.3):
+# taken from the session transcripts (~/.claude/projects/*OCW*/*.jsonl, the
+# main sessions only, not the agents'), with host names, user names, e-mail
+# addresses and keys masked, into DAY/prompts.jsonl and DAY/prompts.md.
+
+TRANSCRIPTS = os.environ.get("OCW_TRANSCRIPTS", str(Path.home() / ".claude" / "projects"))
+REMINDER_RE = re.compile(r"<system-reminder>.*?</system-reminder>", re.S)
+EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+
+
+def _secrets() -> list[tuple[str, str]]:
+    """(text, replacement) pairs: every build machine's host and user (asked
+    from scripts/remote.sh, which reads config/machines.toml) and the home
+    directory. Never printed."""
+    out = []
+    conf = ROOT / "config" / "machines.toml"
+    names = re.findall(r'^\s*name\s*=\s*"([^"]+)"', conf.read_text(), re.M) if conf.exists() else []
+    for name in names:
+        for k in ("host", "user"):
+            v = run([ROOT / "scripts" / "remote.sh", name, "field", k], capture_output=True,
+                    text=True, check=False).stdout.strip()
+            if len(v) >= 3:
+                out.append((v, name if k == "host" else "user"))
+    out.append((str(Path.home()), "~"))
+    return sorted(out, key=lambda kv: -len(kv[0]))
+
+
+def mask(text: str, secrets=None) -> str:
+    for v, r in (secrets if secrets is not None else _secrets()):
+        text = text.replace(v, r)
+    return EMAIL_RE.sub("<e-mail>", text)
+
+
+def prompt_text(raw: str) -> str | None:
+    """The user's words from a transcript message, or None for anything that
+    is not a human prompt (tool output, notifications, agent messages)."""
+    t = REMINDER_RE.sub("", raw).strip()
+    if not t:
+        return None
+    m = re.match(r"<command-name>(/?[^<]+)</command-name>.*?(?:<command-args>(.*?)</command-args>)?", t, re.S)
+    if m:
+        return (("/" + m.group(1).lstrip("/")) + (" " + m.group(2).strip() if m.group(2) else "")).strip()
+    bad = ("<task-notification", "<agent-message", "[SYSTEM NOTIFICATION", "Another Claude session",
+           "<local-command", "[Request interrupted", "Caveat:", "<command-message", "This session is being continued")
+    if any(t.startswith(b) or b in t[:200] for b in bad):
+        return None
+    return t
+
+
+def prompts_of(day: str) -> list[dict]:
+    seen, out = set(), []
+    files = [f for f in Path(TRANSCRIPTS).glob("*OCW*/*.jsonl")]
+    for f in files:
+        for line in f.open(errors="replace"):
+            if '"user"' not in line and "queued_command" not in line:
+                continue
+            try:
+                d = json.loads(line)
+            except ValueError:
+                continue
+            text, ts = None, d.get("timestamp", "")
+            if d.get("type") == "user" and not d.get("isMeta") and d.get("userType", "external") == "external":
+                c = (d.get("message") or {}).get("content")
+                if isinstance(c, str):
+                    text = prompt_text(c)
+            elif d.get("type") == "attachment":
+                a = d.get("attachment") or {}
+                if a.get("type") == "queued_command" and (a.get("origin") or {}).get("kind") == "human":
+                    text = prompt_text(str(a.get("prompt", "")))
+            if not text or not ts:
+                continue
+            local = dt.datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone()
+            if local.strftime("%Y-%m-%d") != day:
+                continue
+            key = (text, local.strftime("%H:%M"))
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({"time": local.strftime("%H:%M:%S"), "iso": local.isoformat(timespec="seconds"),
+                        "text": text})
+    secrets = _secrets()
+    for p_ in out:
+        p_["text"] = mask(p_["text"], secrets)
+    out.sort(key=lambda p_: p_["time"])
+    return out
+
+
+def prompts(day: str) -> list[dict]:
+    ps = prompts_of(day)
+    d = HIST / day
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "prompts.jsonl").write_text("".join(json.dumps(p_, ensure_ascii=False) + "\n" for p_ in ps))
+    md = [f"# Prompts – {day}", "", f"{len(ps)} prompts to Claude Code (main session; masked).", ""]
+    for p_ in ps:
+        md += [f"**{p_['time']}**", "", "> " + p_["text"].replace("\n", "\n> "), ""]
+    (d / "prompts.md").write_text("\n".join(md))
+    log(f"{day}: {len(ps)} prompts")
+    return ps
+
+
 # ----------------------------------------------------------------- journal
 
 
@@ -418,6 +522,7 @@ def builds_of(day: str) -> dict:
 def journal(day: str) -> dict:
     commits = commits_of(day)
     builds = builds_of(day)
+    ps = prompts(day)
     media = media_of(day)
     spec = [
         m.group(1)
@@ -439,6 +544,7 @@ def journal(day: str) -> dict:
         "videos": sum(m["kind"] == "video" for m in media),
         "sounds": sum(m["kind"] == "audio" for m in media),
         "builds": {k: v for k, v in builds.items() if k not in ("longest",)},
+        "prompts": ps,
     }
     d = HIST / day
     d.mkdir(parents=True, exist_ok=True)
@@ -479,6 +585,10 @@ def journal(day: str) -> dict:
             md += ["", "Longest runs:", ""]
             md += [f"- {float(r.get('seconds') or 0) / 60:.0f} min on {r.get('machine')}: "
                    f"`{r.get('command', '')[:80]}`" for r in builds["longest"]]
+    if ps:
+        md += ["", "## Prompts", "", f"{len(ps)} prompts (full text: [prompts.md](prompts.md)).", "",
+               "| Time | Prompt |", "|---|---|"]
+        md += [f"| {p_['time'][:5]} | {p_['text'][:140].replace('|', '/').replace(chr(10), ' ')} |" for p_ in ps]
     md += ["", "## Media", "", "| Time | File |", "|---|---|"]
     md += [f"| {m['time']} | [{m['file']}]({m['file']}) |" for m in media]
     (d / "journal.md").write_text("\n".join(md) + "\n")
@@ -702,6 +812,23 @@ def esc(text: str) -> str:
     return text.replace("\\", "\\\\").replace("{", "(").replace("}", ")").replace("\n", "\\N")
 
 
+def prompt_lines(text: str, width: int = 52, lines: int = 3) -> str:
+    """A prompt wrapped for a chat bubble (≤ `lines` lines, ellipsis)."""
+    words, out, cur = " ".join(text.split()).split(" "), [], ""
+    for w in words:
+        if len(cur) + len(w) + 1 > width:
+            out.append(cur)
+            cur = w
+            if len(out) == lines:
+                break
+        else:
+            cur = (cur + " " + w).strip()
+    else:
+        out.append(cur)
+    body = "\\N".join(esc(x) for x in out[:lines])
+    return body + ("…" if len(out) >= lines and len(" ".join(out)) < len(" ".join(words)) else "")
+
+
 def ass_header() -> str:
     def style(name, font, size, fg, bold=0, italic=0, border=1, outline=0.0, shadow=0.0,
               back="000000", back_a=255, outline_c="000000", align=7, spacing=0.0, ml=0, mr=0, mv=0):
@@ -738,6 +865,10 @@ def ass_header() -> str:
         style("StatLabel", "Fira Mono", 30, "FFFFFF", spacing=3, align=5),
         style("Outro", "Lato Heavy", 64, "FFFFFF", shadow=4, back="000000", back_a=80, align=5),
         style("Teaser", "Fira Mono", 38, "FFE45C", spacing=2, align=5),
+        style("Prompt", "Lato Semibold", 38, "1A1A2E", border=3, outline=16, back="FFFFFF",
+              back_a=10, outline_c="FFFFFF", align=7),
+        style("PromptWho", "Fira Mono", 28, "FFFFFF", bold=1, border=3, outline=8, back=PINK,
+              back_a=0, outline_c=PINK, align=7),
     ]
     return "\n".join([
         "[Script Info]", "ScriptType: v4.00+", f"PlayResX: {W}", f"PlayResY: {H}",
@@ -1080,6 +1211,22 @@ def render(day: str) -> Path:
             sub.add(t0 + a, t0 + b, style, f"{{\\pos(1880,{y})\\alpha&H{alpha:02X}&}}{txt}")
             y -= 46
 
+    # Prompts in the time-lapse: each one as a chat bubble when its time comes.
+    ps = j.get("prompts") or []
+    shown, bubbles = set(), []
+    for k, (a, b, m) in enumerate(tl_rows):
+        due = [p_ for p_ in ps if p_["time"] <= m["time"] and p_["time"] not in shown]
+        if not due or (bubbles and a - bubbles[-1] < 1.2):
+            continue  # at most one new bubble per 1.2 s; the newest prompt wins
+        p_ = due[-1]
+        shown.update(x["time"] for x in due)
+        bubbles.append(a)
+        nxt = next((r[0] for r in tl_rows[k + 1:] if r[0] - a >= 1.2), tl_s)
+        end = min(t0 + tl_s - 0.2, t0 + a + 2.2, t0 + nxt)
+        txt = prompt_lines(p_["text"])
+        sub.add(t0 + a, end, "PromptWho", f"{{\\pos(60,330)\\fad(80,150)}}YOU · {p_['time'][:5]}")
+        sub.add(t0 + a, end, "Prompt", f"{{\\pos(60,380)\\fad(80,150)}}{txt}")
+
     # Chapters.
     sfx_events = [(0.25, "bell")]
     duck = []
@@ -1090,6 +1237,10 @@ def render(day: str) -> Path:
                 f"{{\\move(-300,700,80,700,0,260)\\fad(0,250)}}{esc(ch.get('time', ''))}")
         sub.add(cs + 0.35, cs + min(cd, 3.6), "ChTitle",
                 f"{{\\move(-1400,830,80,830,40,330)\\fad(0,250)}}{esc(ch['title'])}")
+        if ch.get("prompt"):
+            ptxt = prompt_lines(mask(ch["prompt"]))
+            sub.add(cs + 0.4, cs + min(cd, 4.5), "PromptWho", "{\\pos(60,300)\\fad(150,200)}YOU ASKED")
+            sub.add(cs + 0.4, cs + min(cd, 4.5), "Prompt", f"{{\\pos(60,350)\\fad(150,200)}}{ptxt}")
         if ch.get("caption"):
             sub.typed(cs + min(cd - 1.0, 2.4), cs + cd - 0.25, "Caption", esc(ch["caption"]),
                       pre="{\\fad(0,200)}")
@@ -1122,6 +1273,8 @@ def render(day: str) -> Path:
     ]
     if sc.get("tests") or j["tests"]:
         stats.append((int(sc.get("tests") or j["tests"]), "TESTS PASSING"))
+    if j.get("prompts"):
+        stats.append((len(j["prompts"]), "PROMPTS"))
     b = j.get("builds") or {}
     if b.get("runs"):
         stats.append((b["runs"], "BUILD RUNS"))
@@ -1289,7 +1442,7 @@ def main():
         diary()
         return
     if not days:
-        days = all_days() if cmd in {"fetch", "gather", "journal", "publish", "stamp"} else days_with_scripts()
+        days = all_days() if cmd in {"fetch", "gather", "journal", "publish", "stamp", "prompts"} else days_with_scripts()
     for d in days:
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", d):
             raise SystemExit(f"not a day: {d}")
@@ -1301,7 +1454,7 @@ def main():
         diary()
         return
     fn = {"fetch": fetch, "gather": gather, "journal": journal, "sheet": sheet,
-          "render": render, "stamp": stamp}.get(cmd)
+          "render": render, "stamp": stamp, "prompts": prompts}.get(cmd)
     if cmd == "publish":
         publish(days)
     elif fn:
