@@ -62,6 +62,38 @@ impl GridTile {
         n as f64 / self.data.len().max(1) as f64
     }
 
+    /// Grown with voids to the enclosing box of whole `size` m tiles (a
+    /// partial tile at the edge of a survey, e.g. LGL DGM1 at the Rhine,
+    /// becomes a full one; the cell must divide `size`).
+    pub fn padded_to(&self, size: f64) -> Self {
+        let snap_lo = |v: f64| (v / size + 1e-9).floor() * size;
+        let snap_hi = |v: f64| (v / size - 1e-9).ceil() * size;
+        let [w, s, e, n] = self.bounds();
+        let (x0, y0) = (snap_lo(w), snap_hi(n));
+        let nx = ((snap_hi(e) - x0) / self.cell).round() as usize;
+        let ny = ((y0 - snap_lo(s)) / self.cell).round() as usize;
+        if (nx, ny) == (self.nx, self.ny) {
+            return self.clone();
+        }
+        let (di, dj) = (
+            ((self.x0 - x0) / self.cell).round() as usize,
+            ((y0 - self.y0) / self.cell).round() as usize,
+        );
+        let mut data = vec![f32::NAN; nx * ny];
+        for j in 0..self.ny {
+            let row = &self.data[j * self.nx..(j + 1) * self.nx];
+            data[(j + dj) * nx + di..(j + dj) * nx + di + self.nx].copy_from_slice(row);
+        }
+        Self {
+            x0,
+            y0,
+            nx,
+            ny,
+            data,
+            ..*self
+        }
+    }
+
     /// Averaged over `factor × factor` blocks (cell × factor); a block's
     /// voids are left out, a block without data is a void. The tile must
     /// divide evenly.
@@ -700,6 +732,29 @@ mod tests {
         let t = GridTile::from_xyz(&gap, UTM).unwrap();
         assert_eq!(t.get(0, 0), None);
         assert!((t.valid_fraction() - 5.0 / 6.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn partial_tiles_are_padded_to_whole_tiles() {
+        // Regression: DGM1 tiles at the Rhine hold 645 × 1000 points and
+        // could not be averaged to 2 m (odd width) or joined to a layer.
+        let mut text = String::new();
+        for y in [5_347_999.5, 5_347_998.5] {
+            for x in [402_355.5, 402_356.5, 402_357.5] {
+                text += &format!("{x} {y} 140.0\n");
+            }
+        }
+        let t = GridTile::from_xyz(&text, UTM).unwrap().padded_to(10.0);
+        assert_eq!((t.x0, t.y0, t.nx, t.ny), (402_350.0, 5_348_000.0, 10, 10));
+        assert_eq!(t.get(5, 0), Some(140.0));
+        assert_eq!(t.get(0, 0), None);
+        assert!(t.resampled(2).is_ok());
+        let again = t.padded_to(10.0);
+        assert_eq!(
+            (again.x0, again.nx, again.ny),
+            (t.x0, t.nx, t.ny),
+            "already whole"
+        );
     }
 
     #[test]

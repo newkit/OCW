@@ -138,11 +138,14 @@ PY
       name=$(basename "$1")
       tmp=$(mktemp -d)
       unzip -q -o "$1" '*.xyz' '*.csv' -d "$tmp"
-      "$WB" dem-import --crs utm32 --cell 2 --out "$out/dgm1" "$tmp"/*/*.xyz > /dev/null
-      cat "$tmp"/*/*.csv | grep -v '^Kachelname' > "$out/dgm1/meta/$name.csv" || true
+      if "$WB" dem-import --crs utm32 --cell 2 --out "$out/dgm1" "$tmp"/*/*.xyz > /dev/null; then
+        cat "$tmp"/*/*.csv | grep -v '^Kachelname' > "$out/dgm1/meta/$name.csv" || true
+        touch "$out/dgm1/.$name.done"
+        [ -n "${OCW_KEEP_RAW:-}" ] || rm -f "$1"
+      else
+        echo "import failed: $1 (kept)" >&2
+      fi
       rm -rf "$tmp"
-      touch "$out/dgm1/.$name.done"
-      [ -n "${OCW_KEEP_RAW:-}" ] || rm -f "$1"
     }
     export -f import_zip
     export WB out

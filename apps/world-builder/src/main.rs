@@ -141,6 +141,9 @@ enum Cmd {
         /// Output cell size in metres (a multiple of the input's).
         #[arg(long, default_value_t = 2.0)]
         cell: f64,
+        /// Tile size in metres: partial tiles are padded with voids to it.
+        #[arg(long, default_value_t = 1000.0)]
+        tile: f64,
         #[arg(long)]
         out: PathBuf,
         /// Input files (.xyz, .tif).
@@ -1209,7 +1212,13 @@ fn areas_at(pbf: &std::path::Path, (lat, lon): (f64, f64), radius: f64) {
 }
 
 /// `world-builder dem-import`: XYZ / GeoTIFF tiles → averaged GeoTIFFs.
-fn dem_import(crs: ocw_worldgen::crs::Crs, cell: f64, out: &std::path::Path, files: &[PathBuf]) {
+fn dem_import(
+    crs: ocw_worldgen::crs::Crs,
+    cell: f64,
+    tile_m: f64,
+    out: &std::path::Path,
+    files: &[PathBuf],
+) {
     let t = Instant::now();
     if let Err(e) = std::fs::create_dir_all(out) {
         eprintln!("{}: {e}", out.display());
@@ -1239,7 +1248,10 @@ fn dem_import(crs: ocw_worldgen::crs::Crs, cell: f64, out: &std::path::Path, fil
                 tile.cell
             ));
         }
-        let r = tile.resampled(factor as usize).map_err(err)?;
+        let r = tile
+            .padded_to(tile_m)
+            .resampled(factor as usize)
+            .map_err(err)?;
         r.write_geotiff(&target).map_err(err)?;
         let (lo, hi) = r
             .data
@@ -1362,9 +1374,10 @@ fn main() {
         Cmd::DemImport {
             crs,
             cell,
+            tile,
             out,
             files,
-        } => dem_import(crs, cell, &out, &files),
+        } => dem_import(crs, cell, tile, &out, &files),
         Cmd::DemTiles {
             crs,
             bbox,
