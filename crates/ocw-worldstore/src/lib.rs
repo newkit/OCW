@@ -24,7 +24,9 @@ pub mod trust;
 
 pub use cache::{CacheEntry, WorldCache};
 pub use fetch::{FileTransport, Transport, UreqTransport, fetch};
-pub use load::{LoadError, LoadOptions, LoadedWorld, load_world, manifest_path_for};
+pub use load::{
+    LoadError, LoadOptions, LoadedWorld, load_world, load_world_skeleton, manifest_path_for,
+};
 pub use neighbours::{Neighbourhood, neighbourhood};
 
 /// Seconds since the Unix epoch (0 if the clock is before it).

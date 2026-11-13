@@ -461,9 +461,15 @@ fn neighbours(a: &WorldEntry, b: &WorldEntry) -> bool {
     let (Some(ra), Some(rb)) = (region(a), region(b)) else {
         return false;
     };
-    a.id != b.id
-        && ra.boxes_touch(&rb, TOUCH_TOLERANCE_DEG)
-        && ra.shared_fraction(&rb) < PART_SHARED_MAX
+    if a.id == b.id || !ra.boxes_touch(&rb, TOUCH_TOLERANCE_DEG) {
+        return false;
+    }
+    // Boxes that hardly overlap (cuts along a line, like the Black Forest's
+    // three packages on 48.12 N and 48.45 N) need no sampling of polygons.
+    let bx = |r: &ocw_world::region::PackageRegion| {
+        ocw_world::region::PackageRegion::bbox(r.south, r.west, r.north, r.east)
+    };
+    bx(&ra).shared_fraction(&bx(&rb)) < PART_SHARED_MAX || ra.shared_fraction(&rb) < PART_SHARED_MAX
 }
 
 /// Folds neighbouring packages into one world with parts; the given
@@ -882,6 +888,58 @@ mod tests {
         assert_eq!(parts, ["europe/graubuenden"]);
         assert_eq!(w[0].members().count(), 2);
         assert!(w[1].parts.is_empty());
+    }
+
+    /// The Black Forest in three packages cut on 48.12 N and 48.45 N (spec
+    /// v2.36): one world, the south leading by name, middle and north its
+    /// parts (the north touches only the middle: a chain).
+    #[test]
+    fn the_three_black_forest_packages_are_one_world() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("kiosk");
+        let li = write(
+            &dir,
+            "liechtenstein.ocwpkg",
+            &package("Liechtenstein", Some(LI), &["Vaduz - Malbun"]),
+            Some(("europe/liechtenstein", 8, true)),
+        );
+        for (file, id, box_) in [
+            (
+                "blackforest.ocwpkg",
+                "europe/blackforest",
+                [47.55, 7.5, 48.12, 8.4],
+            ),
+            (
+                "blackforest-middle.ocwpkg",
+                "europe/blackforest-middle",
+                [48.12, 7.7, 48.45, 8.5],
+            ),
+            (
+                "blackforest-north.ocwpkg",
+                "europe/blackforest-north",
+                [48.45, 7.9, 48.8, 8.5],
+            ),
+        ] {
+            write(
+                &dir,
+                file,
+                &package(id, Some(box_), &["r"]),
+                Some((id, 1, true)),
+            );
+        }
+        let d = discovery(tmp.path(), Some(&li), &[]);
+        let w = discover(&d, &mut SummaryMemo::default());
+        let ids: Vec<&str> = w.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            ["europe/liechtenstein", "europe/blackforest"],
+            "{w:#?}"
+        );
+        let parts: Vec<&str> = w[1].parts.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(
+            parts,
+            ["europe/blackforest-middle", "europe/blackforest-north"]
+        );
     }
 
     #[test]

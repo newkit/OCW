@@ -65,9 +65,7 @@ fn pilot_region_elevation_profiles() {
     let region =
         Region::from_polygon(Polygon::parse_poly(&std::fs::read_to_string(poly).unwrap()).unwrap());
     let (mut g, _) = build_road_graph(&osm, &region);
-    let dem = Dem {
-        tiles: vec![HgtTile::read(&hgt).unwrap()],
-    };
+    let dem = Dem::from_hgt(vec![HgtTile::read(&hgt).unwrap()]);
     let stats = add_profiles(&mut g, &dem, &region.projection());
     eprintln!(
         "elevation {:.0}-{:.0} m, steepest {:.1} %, {} suspicious, {} bridges/tunnels",
@@ -123,9 +121,7 @@ fn pilot_package_has_no_terrain_through_roads() {
         Region::from_polygon(Polygon::parse_poly(&std::fs::read_to_string(poly).unwrap()).unwrap());
     let proj = region.projection();
     let (mut g, _) = build_road_graph(&osm, &region);
-    let dem = Dem {
-        tiles: vec![HgtTile::read(&hgt).unwrap()],
-    };
+    let dem = Dem::from_hgt(vec![HgtTile::read(&hgt).unwrap()]);
     add_profiles(&mut g, &dem, &proj);
     let base = |x: f64, z: f64| {
         let (lat, lon) = proj.unproject([x, z]);

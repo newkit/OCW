@@ -52,18 +52,27 @@ impl Placed<'_> {
         LocalProjection::new(other.0, other.1).project(lat, lon)
     }
 
-    /// The boundary edge ending at boundary vertex `v` (the cut road).
-    fn boundary_edge(&self, v: VertexId) -> Option<usize> {
-        self.graph
-            .edges
-            .iter()
-            .position(|e| (e.from == v || e.to == v) && e.boundary)
-            .or_else(|| {
-                self.graph
-                    .edges
-                    .iter()
-                    .position(|e| e.from == v || e.to == v)
-            })
+    /// The edge ending at each boundary vertex (the cut road): the first
+    /// boundary edge there, else the first edge. One pass over the edges
+    /// (a scan per vertex pair made joining two 100,000-edge packages take
+    /// a minute).
+    fn boundary_edges(&self) -> BTreeMap<VertexId, usize> {
+        let mut out: BTreeMap<VertexId, (usize, bool)> = BTreeMap::new();
+        for (i, e) in self.graph.edges.iter().enumerate() {
+            for v in [e.from, e.to] {
+                if !self.graph.boundary_vertices.contains(&v) {
+                    continue;
+                }
+                match out.get(&v) {
+                    Some(&(_, true)) => {}
+                    Some(&(_, false)) if !e.boundary => {}
+                    _ => {
+                        out.insert(v, (i, e.boundary));
+                    }
+                }
+            }
+        }
+        out.into_iter().map(|(v, (i, _))| (v, i)).collect()
     }
 }
 
@@ -71,14 +80,15 @@ impl Placed<'_> {
 /// same point. Each vertex is linked at most once (the nearest match).
 pub fn match_border(a: Placed, b: Placed) -> Vec<BorderLink> {
     let mut candidates: Vec<BorderLink> = Vec::new();
+    let (edges_a, edges_b) = (a.boundary_edges(), b.boundary_edges());
     for &va in &a.graph.boundary_vertices {
-        let Some(ea) = a.boundary_edge(va) else {
+        let Some(&ea) = edges_a.get(&va) else {
             continue;
         };
         let pa = a.graph.vertices[va.0 as usize];
         let way_a = &a.graph.edges[ea];
         for &vb in &b.graph.boundary_vertices {
-            let Some(eb) = b.boundary_edge(vb) else {
+            let Some(&eb) = edges_b.get(&vb) else {
                 continue;
             };
             let way_b = &b.graph.edges[eb];
@@ -221,6 +231,46 @@ mod tests {
         // Its east end is B's own border (to a third package).
         b.boundary_vertices.insert(VertexId(2));
         (a, oa, b, ob)
+    }
+
+    #[test]
+    fn the_edge_at_a_boundary_vertex_prefers_the_cut_road() {
+        // Regression (spec v2.34): the edge was found by a scan per vertex
+        // pair; the one-pass index must give the same answer: the first
+        // boundary edge at the vertex, else the first edge.
+        let (a, oa, b, _) = split();
+        let pa = Placed {
+            graph: &a,
+            origin: oa,
+        };
+        let idx = pa.boundary_edges();
+        assert_eq!(idx.len(), 1);
+        assert_eq!(idx[&VertexId(2)], 1, "edge 1 is the cut road");
+        let mut c = a.clone();
+        c.edges[1].boundary = false;
+        // A copy of the road (index 3) that is the cut one.
+        c.edges.push(c.edges[1].clone());
+        c.edges[3].boundary = true;
+        let pc = Placed {
+            graph: &c,
+            origin: oa,
+        };
+        assert_eq!(
+            pc.boundary_edges()[&VertexId(2)],
+            3,
+            "the boundary edge wins"
+        );
+        c.edges[3].boundary = false;
+        assert_eq!(pc_first(&c, oa), 1, "else the first edge");
+        let pb = Placed {
+            graph: &b,
+            origin: oa,
+        };
+        assert_eq!(pb.boundary_edges().len(), 2);
+    }
+
+    fn pc_first(g: &RoadGraph, origin: (f64, f64)) -> usize {
+        Placed { graph: g, origin }.boundary_edges()[&VertexId(2)]
     }
 
     #[test]

@@ -138,11 +138,7 @@ mod tests {
             source: Source::Folder,
             size_bytes: 1,
             created_unix_s: None,
-            status: if blocked.is_some() {
-                Status::Broken(blocked.unwrap().into())
-            } else {
-                Status::Unsigned
-            },
+            status: blocked.map_or(Status::Unsigned, |b| Status::Broken(b.into())),
             blocked: blocked.map(Into::into),
             summary: None,
             attributions: Vec::new(),

@@ -497,6 +497,160 @@ at = ["1.5=time 2026-06-21 20:35", "2=time speed 600", "2=teleport 1.6", "2=came
 warmup = 3
 video = 9
 
+# --- Black Forest showcase (spec §4.7, v2.32): well-known places -----------
+# Render with OCW_PROFILE=release; `--only 'showcase-*'`. North package
+# (world = "blackforest-north", scripts/build-blackforest.sh north), same
+# origin 47.92 N 7.96 E as the south package: B500 at the Mummelsee 17913,-75221,
+# Hornisgrinde summit 17929,-76814, Unterstmatt 17914,-77981, Hundseck
+# 19189,-80450, Ruhestein 20165,-71687, Bühlerhöhe 19673,-82818, Baden-Baden
+# Kurhaus 20910,-93671, Sasbachwalden 12445,-77503. South package: Freiburg
+# Münster -8033,-8406, Schluchsee 16171,11064, Belchen -9427,10842.
+# Reference photos to compare with: art/reference/black-forest.md.
+
+[[scene]]
+name = "showcase-mummelsee"
+description = "Showcase: a group of riders on the Schwarzwaldhochstraße (B500) at the Mummelsee (1,036 m), the lake and the Mummelsee hotel beside the road, the Hornisgrinde above"
+world = "blackforest-north"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "17913,-75221", "--bots", "6", "--power", "220"]
+at = ["0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 120 16 40"]
+shot = 12
+
+[[scene]]
+name = "showcase-mummelsee-video"
+description = "Showcase video: riding past the Mummelsee on the B500 with 6 riders, slowly orbiting camera"
+world = "blackforest-north"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "17913,-75221", "--bots", "6", "--power", "230"]
+at = ["0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 120 16 40", "5=camera.orbit 150 14 34", "8=camera.orbit 180 12 28"]
+video = 8
+
+[[scene]]
+name = "showcase-hornisgrinde"
+description = "Showcase: Baden-Baden - Mummelsee at km 24.9 (910 m), the Schwarzwaldhochstraße below the Hornisgrinde (1,164 m), riders seen from the side"
+world = "blackforest-north"
+args = ["--world", "{world}", "--route-file", "{world_dir}/badenbaden-mummelsee.route", "--no-neighbours", "--bots", "4", "--power", "250"]
+at = ["0.5=hud off", "0.5=hud.profile off", "2.5=teleport 24.9", "2.5=camera.orbit 90 8 30"]
+shot = 12
+
+[[scene]]
+name = "showcase-hochstrasse"
+description = "Showcase: a group on the Schwarzwaldhochstraße at Hundseck (Baden-Baden - Mummelsee km 19.8, 900 m), forest and far views, seen from the front"
+world = "blackforest-north"
+args = ["--world", "{world}", "--route-file", "{world_dir}/badenbaden-mummelsee.route", "--no-neighbours", "--bots", "8", "--power", "260"]
+at = ["0.5=hud off", "0.5=hud.profile off", "2.5=teleport 19.8", "2.5=camera.orbit 165 10 16"]
+shot = 12
+
+[[scene]]
+name = "showcase-hochstrasse-video"
+description = "Showcase video: Baden-Baden - Mummelsee, a group on the Schwarzwaldhochstraße between Hundseck and Unterstmatt (km 21), chase camera with the HUD"
+world = "blackforest-north"
+args = ["--world", "{world}", "--route-file", "{world_dir}/badenbaden-mummelsee.route", "--no-neighbours", "--bots", "6", "--power", "280"]
+at = ["2.5=teleport 21.0", "2.5=camera.orbit 20 14 18"]
+video = 8
+
+[[scene]]
+name = "showcase-badenbaden"
+description = "Showcase: Baden-Baden, the Kurhaus area on the Kaiserallee, spa town buildings and the Oos valley, raised camera"
+world = "blackforest-north"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "20910,-93671", "--bots", "3", "--power", "180"]
+at = ["0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 150 30 90"]
+shot = 12
+
+[[scene]]
+name = "showcase-badenbaden-video"
+description = "Showcase video: riding through Baden-Baden past the Kurhaus with 3 riders"
+world = "blackforest-north"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "20910,-93671", "--bots", "3", "--power", "200"]
+at = ["0.5=hud off", "1=camera.orbit 150 26 60", "5=camera.orbit 120 22 45"]
+video = 8
+
+[[scene]]
+name = "showcase-sasbachwalden"
+description = "Showcase: Sasbachwalden - Mummelsee at km 0.6, vineyards on the slopes around the village below the Hornisgrinde, riders starting the climb"
+world = "blackforest-north"
+args = ["--world", "{world}", "--route-file", "{world_dir}/sasbachwalden-mummelsee.route", "--no-neighbours", "--bots", "4", "--power", "240"]
+at = ["0.5=hud off", "0.5=hud.profile off", "2.5=teleport 0.6", "2.5=camera.orbit 100 24 70"]
+shot = 12
+
+[[scene]]
+name = "showcase-feldberg"
+description = "Showcase: Titisee - Feldberg, a group below the Feldberg pass (km 12, 1,230 m), the Feldberg massif above"
+world = "blackforest"
+args = ["--world", "{world}", "--route-file", "{world_dir}/titisee-feldberg.route", "--no-neighbours", "--bots", "6", "--power", "260"]
+at = ["0.5=hud off", "0.5=hud.profile off", "2.5=teleport 12.0", "2.5=camera.orbit 160 10 18"]
+shot = 12
+
+[[scene]]
+name = "showcase-feldberg-video"
+description = "Showcase video: climbing to the Feldberg pass with 6 riders, side camera"
+world = "blackforest"
+args = ["--world", "{world}", "--route-file", "{world_dir}/titisee-feldberg.route", "--no-neighbours", "--bots", "6", "--power", "280"]
+at = ["2.5=teleport 11.5", "2.5=camera.orbit 70 12 22"]
+video = 8
+
+[[scene]]
+name = "showcase-titisee"
+description = "Showcase: riders on the Bruderhalde road along the Titisee, the lake and the forested hills, raised camera"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "13560,2700", "--bots", "6", "--power", "220"]
+at = ["0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 120 22 55"]
+shot = 12
+
+[[scene]]
+name = "showcase-titisee-video"
+description = "Showcase video: along the Titisee with 6 riders"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "13560,2700", "--bots", "6", "--power", "230"]
+at = ["0.5=hud off", "1=camera.orbit 120 20 45", "5=camera.orbit 90 16 35"]
+video = 8
+
+[[scene]]
+name = "showcase-schauinsland"
+description = "Showcase: a group climbing the Schauinsland road (km 14.5, 940 m) through the forest, seen from the front"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-5942,568", "--bots", "8", "--power", "260"]
+at = ["0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 165 10 14"]
+shot = 12
+
+[[scene]]
+name = "showcase-freiburg"
+description = "Showcase: Freiburg old town around the Münster, gable roofs, riders on the street, high camera"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-8033,-8406", "--bots", "4", "--power", "180"]
+at = ["0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 160 40 110"]
+shot = 12
+
+[[scene]]
+name = "showcase-schluchsee"
+description = "Showcase: the Schluchsee, riders on the lakeside road at the village, the long lake between the forested hills"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "16171,11064", "--bots", "5", "--power", "220"]
+at = ["0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 100 20 70"]
+shot = 12
+
+[[scene]]
+name = "showcase-belchen"
+description = "Showcase: the road up to the Belchen (1,414 m), open summit meadows and the view over the southern Black Forest"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-9427,10842", "--bots", "3", "--power", "240"]
+at = ["0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 180 14 60"]
+shot = 12
+
+[[scene]]
+name = "showcase-malbun-hairpins"
+description = "Before/after viewpoint: the Malbun road above Steg (Liechtenstein, km 11), riders climbing, the valley and the mountains around, raised camera (free ride, so the SRTM build renders the same view)"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "2433,5295", "--bots", "4", "--power", "260"]
+at = ["0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 150 30 90"]
+shot = 12
+
+[[scene]]
+name = "showcase-feldberg-pass"
+description = "Before/after viewpoint: the B317 at the Feldberg pass (1,230 m) with the Feldberg summit above, raised camera (free ride, so the SRTM build renders the same view)"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "5600,6540", "--bots", "4", "--power", "240"]
+at = ["0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 140 22 80"]
+shot = 12
+
 # --- World menu (spec 3.2.1, v2.34); OCW_WORLD=DIR/liechtenstein.ocwpkg with
 # the Black Forest package in the same DIR lists both ------------------------
 

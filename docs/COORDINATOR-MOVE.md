@@ -1,6 +1,6 @@
 # Moving the build coordinator from the Debian dev machine to marge
 
-Status: **prepared, waiting for the user's okay** (2026-11-13). The coordinator is
+Status: **prepared; postponed by the user until further notice** (2026-11-13). Logins for Claude Code and gh on marge are done (user `claude`). The coordinator is
 the machine where the Claude Code session runs: it holds the git checkout that is
 pushed to GitHub, `config/machines.toml` + `config/ssh/`, the agent worktrees, the
 build history and the GitHub CLI login. Today that is the Debian dev machine.

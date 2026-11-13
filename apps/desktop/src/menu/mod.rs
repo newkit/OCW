@@ -86,6 +86,13 @@ pub struct MenuState {
     queued: Vec<Action>,
 }
 
+/// The voice, time-machine and weather state the menu pages show.
+type MenuInfos<'w> = (
+    Option<Res<'w, crate::voice::VoiceMenuInfo>>,
+    Option<Res<'w, crate::timemachine::TimeMachineInfo>>,
+    Option<Res<'w, crate::weather::WeatherState>>,
+);
+
 #[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
 fn menu_input(
     keys: Option<Res<ButtonInput<KeyCode>>>,
@@ -101,11 +108,7 @@ fn menu_input(
     riders: Option<Res<RiderProfiles>>,
     catalog: Option<Res<RideCatalog>>,
     audio: Option<Res<AudioDeviceList>>,
-    (voice, time_machine, weather): (
-        Option<Res<crate::voice::VoiceMenuInfo>>,
-        Option<Res<crate::timemachine::TimeMachineInfo>>,
-        Option<Res<crate::weather::WeatherState>>,
-    ),
+    (voice, time_machine, weather): MenuInfos<'_>,
 ) {
     let pressed = pads.iter().fold(
         keys.map(|k| controls::keyboard(&k)).unwrap_or_default(),

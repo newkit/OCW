@@ -409,10 +409,11 @@ fn short(name: &str, max: usize) -> String {
     }
 }
 
-/// The Audio page (spec §3.2.1 M5): the four volumes (Enter plays a test
-/// sound on that bus), mute, and the output device (← / → step through
-/// "default" and the devices; a saved device that is missing stays in the
-/// list, marked).
+/// The Audio page (spec §3.2.1 M5): the volumes (Enter plays a test sound
+/// on that bus) – master, effects, the other riders, voice; music joins
+/// when there is music (seven items per page) –, mute, and the output
+/// device (← / → step through "default" and the devices; a saved device
+/// that is missing stays in the list, marked).
 pub fn audio_rows(settings: &Settings, devices: &AudioDevices) -> Vec<Row> {
     let volume = |key: &str, label: &str, test: &str| Row {
         confirm: Some(Activate::Command(format!("audio.play {test}"))),
@@ -451,7 +452,7 @@ pub fn audio_rows(settings: &Settings, devices: &AudioDevices) -> Vec<Row> {
     vec![
         volume("audio.master", "Master volume", "test"),
         volume("audio.effects", "Effects (bike, wind)", "test-effects"),
-        volume("audio.music", "Music", "test-music"),
+        volume("audio.others", "Other riders", "test-others"),
         volume("audio.voice", "Voice", "test-voice"),
         setting_row(settings, "audio.mute", "Mute"),
         Row {
@@ -849,6 +850,10 @@ mod tests {
         assert_eq!(master.right.as_deref(), Some("set audio.master 85"));
         assert_eq!(master.confirm, cmd("audio.play test"));
         assert_eq!(row(&a, "Voice").confirm, cmd("audio.play test-voice"));
+        let others = row(&a, "Other riders");
+        assert_eq!(others.value.as_deref(), Some("80"));
+        assert_eq!(others.left.as_deref(), Some("set audio.others 75"));
+        assert_eq!(others.confirm, cmd("audio.play test-others"));
         assert_eq!(row(&a, "Mute").confirm, cmd("set audio.mute on"));
         let out = row(&a, "Output");
         assert_eq!(out.value.as_deref(), Some("default"));
