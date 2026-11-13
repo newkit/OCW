@@ -69,14 +69,16 @@ fn the_rider_stands_on_the_road_before_the_steg_tunnel() {
             distance: d,
             ..Default::default()
         };
-        let y = f64::from(avatar_transform(
-            &route,
-            &state,
-            None,
-            &ocw_assets::shipped::bike_rig(ocw_core::ProfileId::Road),
-        )
-        .translation
-        .y);
+        let y = f64::from(
+            avatar_transform(
+                &route,
+                &state,
+                None,
+                &ocw_assets::shipped::bike_rig(ocw_core::ProfileId::Road),
+            )
+            .translation
+            .y,
+        );
         let p = route.sample(d).position;
         if let Some(road) = road_surface(&pkg, p) {
             samples += 1;
