@@ -349,6 +349,12 @@ pub fn avatar_colours(id: RiderId, is_local: bool, look: Option<&RiderLook>) -> 
     }
 }
 
+/// Whether rider `id` is a unicorn now (god mode, spec §14 Phase 13C):
+/// the avatar is hidden once the transformation has turned the rider.
+pub fn flying(view: &RideView, id: RiderId) -> bool {
+    view.unicorns.iter().any(|u| u.id == id && u.turned())
+}
+
 /// What an avatar was built from: rebuilt when it changes.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 struct AvatarLook {
@@ -361,7 +367,7 @@ fn sync_riders(
     mut commands: Commands,
     view: Res<RideView>,
     mut entities: ResMut<RiderEntities>,
-    mut avatars: Query<(&mut Transform, &AvatarLook), With<Avatar>>,
+    mut avatars: Query<(&mut Transform, &AvatarLook, &mut Visibility), With<Avatar>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     ground: Option<Res<Ground>>,
@@ -402,8 +408,15 @@ fn sync_riders(
         let wanted = AvatarLook { bike, look };
         if let Some(e) = entities.0.get(&id).copied() {
             match avatars.get_mut(e) {
-                Ok((mut tr, built)) if *built == wanted => {
+                Ok((mut tr, built, mut vis)) if *built == wanted => {
                     *tr = t;
+                    // God mode (spec §14 Phase 13C): the unicorn is the rider.
+                    let shown = if flying(&view, id) {
+                        Visibility::Hidden
+                    } else {
+                        Visibility::Inherited
+                    };
+                    vis.set_if_neq(shown);
                     continue;
                 }
                 // Another bike or look: build the avatar again.

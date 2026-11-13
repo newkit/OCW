@@ -73,6 +73,10 @@ pub struct ServerConfig {
     /// the local servers' single player, the host of a shared session (the
     /// default), nobody when the organizer fixed the world.
     pub world_access: ClockAccess,
+    /// Who may enter god mode (spec §14 Phase 13A, [`v1::GodRequest`]):
+    /// anyone on the local servers (the single player), the host of a
+    /// shared session (the default), nobody in an organizer's session.
+    pub god_access: ClockAccess,
     /// The real UTC instant (Unix ms) at the session's start; `None`: the
     /// system clock when the server is created (tests fix it).
     pub real_epoch_ms: Option<i64>,
@@ -427,6 +431,19 @@ impl GameServer {
             (C::Event(req), Some(_)) => Some(self.event_request(req)),
             (C::Clock(req), Some(rider)) => Some(self.clock_request(rider, &req)),
             (C::World(req), Some(rider)) => Some(self.world_request(conn, rider, req)),
+            (C::God(req), Some(rider)) => Some(S::God(self.god_request(rider, req))),
+            (C::GodPose(pose), Some(rider)) => {
+                // Implausible poses are dropped: the others keep seeing the
+                // last good one (spec §14 Phase 13E).
+                let teleport = pose.teleport && self.config.allow_dev_commands;
+                let p = ocw_protocol::god_pose_from_wire(&pose);
+                if let Err(e) = self.session.set_god_pose(rider, p, teleport)
+                    && self.session.is_god(rider)
+                {
+                    tracing::debug!(%rider, error = e.describe(), "god pose refused");
+                }
+                None
+            }
             (C::Voice(req), Some(rider)) => Some(S::Voice(self.voice_grant(conn, rider, &req))),
             (C::Turn(turn), Some(rider)) => {
                 if let Some(net) = self.session.network() {
@@ -538,7 +555,77 @@ impl GameServer {
             voice: self.config.voice.is_some(),
             clock,
             world_access: ocw_protocol::access_to_wire(self.config.world_access),
+            god_access: ocw_protocol::access_to_wire(self.config.god_access),
         })
+    }
+
+    /// A god-mode request from `rider` (spec §14 Phase 13): who may is
+    /// checked here (`god_access`, not in a running event); the session
+    /// freezes the road position, and on leaving places the rider on the
+    /// road (§6.1: the server stays the truth for where they re-enter).
+    fn god_request(&mut self, rider: RiderId, req: v1::GodRequest) -> v1::GodResult {
+        let refused = |message: String, active: bool| v1::GodResult {
+            ok: false,
+            message,
+            active,
+            ..Default::default()
+        };
+        match req.req {
+            Some(v1::god_request::Req::Enter(_)) => {
+                if !self.config.god_access.allows(Some(rider), self.host()) {
+                    return refused(
+                        match self.config.god_access {
+                            ClockAccess::Nobody => "god mode is off in this session".into(),
+                            _ => "only the host of this shared ride may use god mode".into(),
+                        },
+                        false,
+                    );
+                }
+                match self.session.enter_god(rider) {
+                    Ok(pose) => {
+                        tracing::info!(%rider, "god mode on");
+                        v1::GodResult {
+                            ok: true,
+                            message: "god mode: you fly as a unicorn".into(),
+                            active: true,
+                            start: Some(ocw_protocol::god_pose_to_wire(&pose, 0, false)),
+                            ..Default::default()
+                        }
+                    }
+                    Err(e) => refused(e, false),
+                }
+            }
+            Some(v1::god_request::Req::Leave(l)) => {
+                let how = if l.fly_back {
+                    ocw_sim::GodLeave::FlyBack
+                } else {
+                    ocw_sim::GodLeave::Land { x: l.x_m, z: l.z_m }
+                };
+                match self.session.leave_god(rider, how) {
+                    Ok(at) => {
+                        tracing::info!(%rider, fly_back = l.fly_back, "god mode off");
+                        let d = self.session.rider_state(rider).map_or(0.0, |s| s.distance);
+                        let road = ocw_world::Track::name_at(self.session.track(rider), d);
+                        v1::GodResult {
+                            ok: true,
+                            message: if l.fly_back {
+                                format!("back on {road}")
+                            } else {
+                                format!("landed on {road}")
+                            },
+                            active: false,
+                            start: None,
+                            x_m: at[0],
+                            y_m: at[1],
+                            z_m: at[2],
+                            fly_back: l.fly_back,
+                        }
+                    }
+                    Err(e) => refused(e, self.session.is_god(rider)),
+                }
+            }
+            None => refused("empty god request".into(), self.session.is_god(rider)),
+        }
     }
 
     fn dev_command(&mut self, rider: RiderId, cmd: v1::DevCommand) -> S {
@@ -1861,5 +1948,161 @@ mod tests {
         assert!(!r.ok && r.message.contains("route"), "{}", r.message);
         // The bots were not touched.
         assert_eq!(server.session().rider_count(), 3);
+    }
+
+    fn god_result(
+        server: &mut GameServer,
+        conn: ConnectionId,
+        msg: v1::ClientMessage,
+    ) -> v1::GodResult {
+        match decode_server(&server.handle(conn, &encode(&msg))[0]).unwrap() {
+            S::God(r) => r,
+            other => panic!("expected a god result, got {other:?}"),
+        }
+    }
+
+    fn joined(server: &mut GameServer) -> (ConnectionId, RiderId) {
+        let conn = server.connect();
+        let reply = server.handle(conn, &hello(PROTOCOL_VERSION));
+        match decode_server(&reply[0]).unwrap() {
+            S::Welcome(w) => (conn, RiderId(w.rider_id)),
+            other => panic!("expected a welcome, got {other:?}"),
+        }
+    }
+
+    /// God mode on the server (spec §14 Phase 13E, 13F): the host may (by
+    /// default), others not; the pose reaches the snapshots, too fast poses
+    /// are dropped; leaving lands on the route.
+    #[test]
+    fn god_mode_access_poses_and_landing() {
+        let mut server = GameServer::new(Route::test_loop(), ServerConfig::default());
+        let (host, host_id) = joined(&mut server);
+        let (guest, _) = joined(&mut server);
+        let r = god_result(&mut server, guest, ocw_protocol::god_enter());
+        assert!(!r.ok && !r.active && r.message.contains("host"), "{r:?}");
+        let r = god_result(&mut server, host, ocw_protocol::god_enter());
+        assert!(r.ok && r.active, "{r:?}");
+        let start = ocw_protocol::god_pose_from_wire(r.start.as_ref().unwrap());
+        // The welcome says who may.
+        let mut s2 = GameServer::new(Route::test_loop(), ServerConfig::default());
+        let c = s2.connect();
+        let S::Welcome(w) = decode_server(&s2.handle(c, &hello(PROTOCOL_VERSION))[0]).unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(
+            ocw_protocol::access_from_wire(w.god_access),
+            ClockAccess::Host
+        );
+        // A plausible pose is passed on, one 50 km away is not.
+        let pose = |x: f64, teleport: bool| {
+            encode(&client_message(C::GodPose(ocw_protocol::god_pose_to_wire(
+                &ocw_sim::god::GodPose {
+                    pos: [x, start.pos[1] + 50.0, start.pos[2]],
+                    ..start
+                },
+                1,
+                teleport,
+            ))))
+        };
+        next_snapshot(&mut server);
+        assert!(
+            server
+                .handle(host, &pose(start.pos[0] + 30.0, false))
+                .is_empty()
+        );
+        let snap = next_snapshot(&mut server);
+        let me = snap
+            .riders
+            .iter()
+            .find(|u| u.rider_id == host_id.0)
+            .unwrap();
+        let god = ocw_protocol::rider_god(me).expect("in god mode");
+        assert!((god.pos[0] - start.pos[0] - 30.0).abs() < 1e-6);
+        server.handle(host, &pose(start.pos[0] + 50_000.0, false));
+        // Not a dev server: a "teleport" is checked like any pose.
+        server.handle(host, &pose(start.pos[0] + 50_000.0, true));
+        let snap = next_snapshot(&mut server);
+        let me = snap
+            .riders
+            .iter()
+            .find(|u| u.rider_id == host_id.0)
+            .unwrap();
+        assert!((ocw_protocol::rider_god(me).unwrap().pos[0] - start.pos[0] - 30.0).abs() < 1e-6);
+        assert_eq!(server.session().god(host_id).unwrap().refused, 2);
+        // Out of the physics: the road position does not move.
+        let d = server.session().rider_state(host_id).unwrap().distance;
+        for _ in 0..100 {
+            server.tick();
+        }
+        assert_eq!(server.session().rider_state(host_id).unwrap().distance, d);
+        // Land 300 m along the loop.
+        let p = server.session().route().sample(300.0);
+        let r = god_result(
+            &mut server,
+            host,
+            ocw_protocol::god_leave(false, p.position[0], p.position[2]),
+        );
+        assert!(r.ok && !r.active, "{r:?}");
+        assert!((r.x_m - p.position[0]).abs() < 1.0 && (r.z_m - p.position[2]).abs() < 1.0);
+        let st = server.session().rider_state(host_id).unwrap();
+        assert!(
+            (st.distance - 300.0).abs() < 1.0 && st.speed == 0.0,
+            "{st:?}"
+        );
+        let snap = next_snapshot(&mut server);
+        let me = snap
+            .riders
+            .iter()
+            .find(|u| u.rider_id == host_id.0)
+            .unwrap();
+        assert_eq!(ocw_protocol::rider_god(me), None);
+        // Leaving again: refused.
+        let r = god_result(&mut server, host, ocw_protocol::god_leave(true, 0.0, 0.0));
+        assert!(!r.ok);
+    }
+
+    #[test]
+    fn god_mode_is_refused_when_off_and_in_running_events() {
+        let mut server = GameServer::new(
+            Route::test_loop(),
+            ServerConfig {
+                god_access: ClockAccess::Nobody,
+                ..Default::default()
+            },
+        );
+        let (conn, _) = joined(&mut server);
+        let r = god_result(&mut server, conn, ocw_protocol::god_enter());
+        assert!(!r.ok && r.message.contains("off"), "{r:?}");
+        // The local server: anyone, but not during an event.
+        let mut server = local(0);
+        let (conn, rider) = joined(&mut server);
+        let race = EventSpec::Race {
+            laps: None,
+            length_m: Some(400.0),
+        };
+        server.handle(conn, &start(race, Some(0)));
+        server.tick();
+        let r = god_result(&mut server, conn, ocw_protocol::god_enter());
+        assert!(!r.ok && r.message.contains("event"), "{r:?}");
+        assert!(!server.session().is_god(rider));
+        server.handle(conn, &event_msg(v1::event_request::Req::Cancel(true)));
+        let r = god_result(&mut server, conn, ocw_protocol::god_enter());
+        assert!(r.ok, "{r:?}");
+        // A dev server's teleport skips the speed check.
+        let start_pose = ocw_protocol::god_pose_from_wire(r.start.as_ref().unwrap());
+        let far = ocw_sim::god::GodPose {
+            pos: [start_pose.pos[0] + 3_000.0, 300.0, start_pose.pos[2]],
+            ..start_pose
+        };
+        server.handle(
+            conn,
+            &encode(&client_message(C::GodPose(ocw_protocol::god_pose_to_wire(
+                &far, 1, true,
+            )))),
+        );
+        assert_eq!(server.session().god(rider).unwrap().pose.pos, far.pos);
+        let r = god_result(&mut server, conn, ocw_protocol::god_leave(true, 0.0, 0.0));
+        assert!(r.ok && r.fly_back, "{r:?}");
     }
 }

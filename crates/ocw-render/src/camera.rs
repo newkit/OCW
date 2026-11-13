@@ -479,9 +479,15 @@ fn orbit_input(
     motion: Res<AccumulatedMouseMotion>,
     scroll: Res<AccumulatedMouseScroll>,
     context: Option<Res<InputContext>>,
+    view: Option<Res<RideView>>,
     mut orbit: ResMut<CameraOrbit>,
 ) {
     if !crate::menu::ride_input(context) {
+        return;
+    }
+    // In god mode the mouse looks, the wheel sets the speed and C is the
+    // first-person view (the app's god module).
+    if view.is_some_and(|v| v.flight.is_some()) {
         return;
     }
     if keys.just_pressed(KeyCode::KeyC) {
@@ -564,6 +570,45 @@ pub fn place_eye(eye: Vec3, rider_head: Vec3, solid: &dyn Fn(f64, f64) -> Option
     clear_line_of_sight(eye, rider_head, solid)
 }
 
+/// Bevy's default vertical field of view (rad).
+pub const DEFAULT_FOV: f32 = std::f32::consts::FRAC_PI_4;
+/// The flight camera's distance behind the unicorn (m) and height above
+/// its line of view.
+pub const FLIGHT_BACK_M: f32 = 8.0;
+pub const FLIGHT_UP_M: f32 = 2.0;
+/// The flight camera keeps at least this much above the ground (m).
+pub const FLIGHT_CLEARANCE_M: f32 = 1.0;
+
+/// The field of view in flight: widened by up to 10° at 400 m/s.
+pub fn flight_fov(speed_mps: f64) -> f32 {
+    DEFAULT_FOV + 10f32.to_radians() * (speed_mps as f32 / 400.0).clamp(0.0, 1.0)
+}
+
+/// The direction the flight view looks along (yaw counter-clockwise from
+/// −z, pitch up).
+pub fn view_direction(yaw: f64, pitch: f64) -> Vec3 {
+    let (y, p) = (yaw as f32, pitch as f32);
+    Vec3::new(-y.sin() * p.cos(), p.sin(), -y.cos() * p.cos())
+}
+
+/// Eye and look-at point of the flight camera: behind and a little above
+/// the unicorn, looking along the view; with C from the unicorn's head
+/// (the horn in view). Never under the ground (`solid`).
+pub fn flight_eye(f: &crate::FlightView, solid: &dyn Fn(f64, f64) -> Option<f64>) -> (Vec3, Vec3) {
+    let body = crate::to_vec3(f.pos);
+    let dir = view_direction(f.yaw, f.pitch);
+    let eye = if f.first_person {
+        body + Quat::from_rotation_y(f.yaw as f32) * Vec3::new(0.0, 1.05, -1.5)
+    } else {
+        body - dir * FLIGHT_BACK_M + Vec3::Y * FLIGHT_UP_M
+    };
+    let eye = match solid(f64::from(eye.x), f64::from(eye.z)) {
+        Some(h) => eye.with_y(eye.y.max(h as f32 + FLIGHT_CLEARANCE_M)),
+        None => eye,
+    };
+    (eye, eye + dir * 50.0)
+}
+
 #[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
 pub(crate) fn follow(
     view: Res<RideView>,
@@ -575,10 +620,37 @@ pub(crate) fn follow(
     tunnels: Option<Res<crate::tunnel::Tunnels>>,
     time: Res<Time>,
     mut camera: Query<&mut Transform, With<FollowCamera>>,
+    mut projections: Query<&mut Projection, With<FollowCamera>>,
     mut focus: ResMut<CameraFocus>,
     mut smoothed_target: Local<Option<Vec3>>,
     mut tilt: Local<TiltState>,
 ) {
+    // God mode (spec §14 Phase 13D): the flight camera.
+    let fov = view
+        .flight
+        .as_ref()
+        .map_or(DEFAULT_FOV, |f| flight_fov(f.speed_mps));
+    for mut p in &mut projections {
+        if let Projection::Perspective(pp) = &mut *p
+            && (pp.fov - fov).abs() > 1e-4
+        {
+            pp.fov = fov;
+        }
+    }
+    if let Some(f) = &view.flight {
+        let Ok(mut cam) = camera.single_mut() else {
+            return;
+        };
+        let solid = |x: f64, z: f64| solid_height(ground.as_deref(), &obstacles, x, z);
+        let (eye, target) = flight_eye(f, &solid);
+        cam.translation = eye;
+        cam.look_at(target, Vec3::Y);
+        focus.set_if_neq(CameraFocus(Some(crate::to_vec3(f.pos))));
+        // Back on the road the chase camera starts afresh.
+        tilt.rider = None;
+        *smoothed_target = None;
+        return;
+    }
     let Some(local) = view.local() else {
         focus.set_if_neq(CameraFocus(None));
         return;
@@ -1217,6 +1289,47 @@ mod tests {
             *app.world().resource::<CameraOrbit>(),
             CameraOrbit::default()
         );
+    }
+
+    /// God mode (spec §14 Phase 13D): behind and above the unicorn,
+    /// looking along the view; C: from the head; never under the ground;
+    /// a wider field of view at speed.
+    #[test]
+    fn the_flight_camera_follows_the_unicorn_and_stays_above_the_ground() {
+        let f = crate::FlightView {
+            pos: [100.0, 50.0, 200.0],
+            yaw: 0.0,
+            pitch: 0.0,
+            ..Default::default()
+        };
+        let none = |_: f64, _: f64| None;
+        let (eye, target) = flight_eye(&f, &none);
+        assert!(close(eye, Vec3::new(100.0, 52.0, 208.0)), "{eye}");
+        assert!((target - eye).normalize().dot(Vec3::NEG_Z) > 0.999);
+        // First person: at the head, in front of the body.
+        let fp = crate::FlightView {
+            first_person: true,
+            ..f.clone()
+        };
+        let (eye, _) = flight_eye(&fp, &none);
+        assert!(eye.z < 200.0 && eye.y > 50.0);
+        // Looking steeply up from low over a hill (the eye behind and
+        // below): lifted above the hill.
+        let low = crate::FlightView {
+            pos: [0.0, 12.0, 0.0],
+            pitch: 1.2,
+            ..f.clone()
+        };
+        let hill = |_: f64, _: f64| Some(10.0);
+        let (eye, _) = flight_eye(&low, &hill);
+        assert!(eye.y >= 10.0 + FLIGHT_CLEARANCE_M - 1e-4, "{eye}");
+        assert_eq!(flight_fov(0.0), DEFAULT_FOV);
+        assert!((flight_fov(800.0) - DEFAULT_FOV - 10f32.to_radians()).abs() < 1e-6);
+        // The direction: yaw turns left (counter-clockwise from above).
+        assert!(close(
+            view_direction(std::f64::consts::FRAC_PI_2, 0.0),
+            Vec3::NEG_X
+        ));
     }
 
     #[test]

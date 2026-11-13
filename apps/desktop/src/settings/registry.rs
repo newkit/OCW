@@ -134,6 +134,14 @@ pub const SETTINGS: &[SettingDef] = &[
         apply: Apply::App,
     },
     SettingDef {
+        key: "controls.invert_y",
+        kind: Kind::Bool,
+        default: "off",
+        description: "God mode: moving the mouse up looks down (spec §14 Phase 13B)",
+        scope: Scope::Live,
+        apply: Apply::Command("god.invert {}"),
+    },
+    SettingDef {
         key: "trainer.difficulty",
         kind: Kind::Int {
             min: 0,
@@ -216,6 +224,14 @@ pub const SETTINGS: &[SettingDef] = &[
         description: "Bike lights of all riders: from dusk to dawn (auto), always or never",
         scope: Scope::Live,
         apply: Apply::Command("sky.lights {}"),
+    },
+    SettingDef {
+        key: "display.unicorn_trail",
+        kind: Kind::Bool,
+        default: "on",
+        description: "Effects: the rainbow trail behind the unicorns of god mode",
+        scope: Scope::Live,
+        apply: Apply::Command("god.trail {}"),
     },
     SettingDef {
         key: "display.fullscreen",

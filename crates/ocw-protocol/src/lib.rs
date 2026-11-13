@@ -125,7 +125,62 @@ pub fn quantize(s: &ocw_sim::RiderSnapshot) -> v1::RiderUpdate {
         look: Some(s.look.into()),
         heading_mrad: (s.state.heading * 1000.0).round() as i32,
         turn_curvature_e4: (s.state.turn_curvature * 1e4).round() as i32,
+        mode: if s.god.is_some() {
+            v1::RiderMode::God
+        } else {
+            v1::RiderMode::Riding
+        } as i32,
+        god: s.god.as_ref().map(|g| god_pose_to_wire(g, 0, false)),
     }
+}
+
+/// A unicorn pose for the wire (spec §14 Phase 13E).
+pub fn god_pose_to_wire(p: &ocw_sim::god::GodPose, seq: u32, teleport: bool) -> v1::GodPose {
+    v1::GodPose {
+        seq,
+        x_m: p.pos[0],
+        y_m: p.pos[1],
+        z_m: p.pos[2],
+        yaw_rad: p.yaw as f32,
+        pitch_rad: p.pitch as f32,
+        speed_mps: p.speed as f32,
+        teleport,
+    }
+}
+
+/// A received unicorn pose.
+pub fn god_pose_from_wire(p: &v1::GodPose) -> ocw_sim::god::GodPose {
+    ocw_sim::god::GodPose {
+        pos: [p.x_m, p.y_m, p.z_m],
+        yaw: f64::from(p.yaw_rad),
+        pitch: f64::from(p.pitch_rad),
+        speed: f64::from(p.speed_mps),
+    }
+}
+
+/// The unicorn's pose of a received rider update, if the rider is in god
+/// mode.
+pub fn rider_god(u: &v1::RiderUpdate) -> Option<ocw_sim::god::GodPose> {
+    (u.mode == v1::RiderMode::God as i32)
+        .then(|| u.god.as_ref().map(god_pose_from_wire).unwrap_or_default())
+}
+
+/// God mode requests (spec §14 Phase 13): enter, or leave (land at the
+/// road nearest (x, z), or fly back).
+pub fn god_enter() -> v1::ClientMessage {
+    client_message(v1::client_message::Msg::God(v1::GodRequest {
+        req: Some(v1::god_request::Req::Enter(true)),
+    }))
+}
+
+pub fn god_leave(fly_back: bool, x_m: f64, z_m: f64) -> v1::ClientMessage {
+    client_message(v1::client_message::Msg::God(v1::GodRequest {
+        req: Some(v1::god_request::Req::Leave(v1::GodLeave {
+            fly_back,
+            x_m,
+            z_m,
+        })),
+    }))
 }
 
 /// A free-ride path change for the wire (edges by stable ID).
@@ -821,6 +876,7 @@ mod tests {
                     },
                     power_w: 310.0,
                     last_input_seq: 77,
+                    god: None,
                     bike: ocw_core::ProfileId::Gravel,
                     look: ocw_core::RiderLook {
                         frame: ocw_core::Rgb(0x123456),
@@ -839,6 +895,7 @@ mod tests {
                     },
                     power_w: 0.0,
                     last_input_seq: 0,
+                    god: None,
                     bike: Default::default(),
                     look: Default::default(),
                 }),
@@ -888,6 +945,7 @@ mod tests {
             voice: true,
             clock: None,
             world_access: 2,
+            god_access: 1,
         };
         let bytes = encode(&server_message(S::Welcome(welcome.clone())));
         assert_eq!(decode_server(&bytes).unwrap(), S::Welcome(welcome));
@@ -906,11 +964,61 @@ mod tests {
             },
             power_w: -5.0,
             last_input_seq: 0,
+            god: None,
             bike: Default::default(),
             look: Default::default(),
         });
         assert_eq!((u.distance_cm, u.speed_mm_s, u.power_w), (0, 0, 0));
         assert_eq!(u.lateral_offset_cm, 0);
+    }
+
+    /// God mode (spec §14 Phase 13E): the mode and the unicorn's pose
+    /// travel with the rider update; riders without it are riding.
+    #[test]
+    fn god_mode_roundtrips_in_rider_updates_and_requests() {
+        let pose = ocw_sim::god::GodPose {
+            pos: [1234.5, 812.25, -77.0],
+            yaw: 1.25,
+            pitch: -0.5,
+            speed: 220.0,
+        };
+        let snap = |god| ocw_sim::RiderSnapshot {
+            id: RiderId(3),
+            name: "Uni".into(),
+            state: RiderState::default(),
+            power_w: 180.0,
+            last_input_seq: 0,
+            god,
+            bike: Default::default(),
+            look: Default::default(),
+        };
+        let u = quantize(&snap(Some(pose)));
+        let bytes = encode(&u);
+        let back = <v1::RiderUpdate as prost::Message>::decode(bytes.as_slice()).unwrap();
+        assert_eq!(rider_god(&back), Some(pose));
+        assert_eq!(rider_god(&quantize(&snap(None))), None);
+        // An old server's update (no mode): riding.
+        assert_eq!(rider_god(&v1::RiderUpdate::default()), None);
+        let Msg::God(r) = decode_client(&encode(&god_leave(true, 1.0, 2.0))).unwrap() else {
+            panic!("a god request")
+        };
+        assert_eq!(
+            r.req,
+            Some(v1::god_request::Req::Leave(v1::GodLeave {
+                fly_back: true,
+                x_m: 1.0,
+                z_m: 2.0
+            }))
+        );
+        assert!(matches!(
+            decode_client(&encode(&god_enter())).unwrap(),
+            Msg::God(v1::GodRequest {
+                req: Some(v1::god_request::Req::Enter(true))
+            })
+        ));
+        let w = god_pose_to_wire(&pose, 7, true);
+        assert_eq!((w.seq, w.teleport), (7, true));
+        assert_eq!(god_pose_from_wire(&w), pose);
     }
 
     #[test]
@@ -1013,6 +1121,7 @@ mod tests {
             },
             power_w: 201.6,
             last_input_seq: 9,
+            god: None,
             bike: Default::default(),
             look: Default::default(),
         };

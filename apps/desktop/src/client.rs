@@ -65,6 +65,11 @@ pub enum Notice {
     /// The session rides another world now (spec §3.2.1, the host's
     /// World → Change world): load it and join again.
     WorldChange(v1::WorldChange),
+    /// God mode (spec §14 Phase 13): the server's answer, and what changed.
+    God {
+        event: Option<crate::god::state::GodEvent>,
+        message: String,
+    },
 }
 
 /// Free-ride state of the client.
@@ -148,6 +153,13 @@ pub struct ClientCore {
     clock_info: Option<ocw_protocol::ClockInfo>,
     /// Who may switch the world (from the welcome).
     world_access: Option<ocw_protocol::ClockAccess>,
+    /// Who may enter god mode (spec §14 Phase 13A; `None`: not yet told).
+    god_access: Option<ocw_protocol::ClockAccess>,
+    /// God mode: the own flight and the other riders' unicorns.
+    god: crate::god::state::GodCore,
+    god_others: crate::god::state::OtherGods,
+    /// A god-mode change found in a snapshot (the server ended it).
+    god_notice: Option<crate::god::state::GodEvent>,
 }
 
 /// Steering mode before the menu opened (spec §3.2.1), restored on closing.
@@ -194,6 +206,10 @@ impl ClientCore {
             clock: ocw_sky::ClockPredictor::default(),
             clock_info: None,
             world_access: None,
+            god_access: None,
+            god: Default::default(),
+            god_others: Default::default(),
+            god_notice: None,
             route,
         }
     }
@@ -392,6 +408,7 @@ impl ClientCore {
                 self.rider_id = Some(id);
                 self.voice_offered = w.voice;
                 self.world_access = Some(ocw_protocol::access_from_wire(w.world_access));
+                self.god_access = Some(ocw_protocol::access_from_wire(w.god_access));
                 if let Some(c) = &w.clock {
                     self.on_clock(c, now_s);
                 }
@@ -418,6 +435,14 @@ impl ClientCore {
                 None
             }
             S::Voice(g) => Some(Notice::Voice(g)),
+            S::God(r) => Some(Notice::God {
+                event: self.god.on_result(&r, now_s),
+                message: if r.ok {
+                    r.message
+                } else {
+                    format!("god mode: {}", r.message)
+                },
+            }),
             S::WorldChange(c) => {
                 // The session this client joined has ended: its rider ids
                 // mean other riders now, so nothing is reconciled until
@@ -553,8 +578,17 @@ impl ClientCore {
             self.on_clock(c, now_s);
         }
         let mut others = Vec::new();
+        let mut gods = Vec::new();
         for u in &s.riders {
             let (id, state) = dequantize(u);
+            let god = ocw_protocol::rider_god(u);
+            if Some(id) == self.rider_id {
+                if let Some(e) = self.god.on_own_snapshot(god.is_some(), now_s) {
+                    self.god_notice = Some(e);
+                }
+            } else if let Some(g) = god {
+                gods.push((id, g));
+            }
             self.names
                 .insert(id, (u.display_name.clone(), f64::from(u.power_w)));
             self.looks.insert(id, ocw_protocol::rider_look(u));
@@ -570,8 +604,10 @@ impl ClientCore {
                     Some(p) => p,
                     None => &self.route,
                 };
-                if self.event.holds(self.rider_id) {
-                    // Held at an event's start line: exactly the server's.
+                if self.event.holds(self.rider_id) || god.is_some() || self.god.active() {
+                    // Held at an event's start line, or flying in god mode
+                    // (the road position frozen, then placed by the
+                    // server): exactly the server's.
                     self.predictor.set_state(state);
                     self.prev_state = state;
                 } else {
@@ -600,6 +636,7 @@ impl ClientCore {
         }
         self.others_now = others.clone();
         self.others.push(now_s, others);
+        self.god_others.on_snapshot(&gods, now_s);
     }
 
     /// What the local rider rides along: the own free-ride path (once
@@ -1058,8 +1095,9 @@ impl ClientCore {
         if self.rider_id.is_none() {
             return;
         }
-        if self.event.holds(self.rider_id) {
-            // The countdown: the server holds the field at the start line.
+        if self.event.holds(self.rider_id) || self.god.active() {
+            // The countdown: the server holds the field at the start line;
+            // god mode: the rider is out of the physics (spec §14 Phase 13E).
             self.prev_state = self.predictor.state();
             return;
         }
@@ -1326,6 +1364,88 @@ impl ClientCore {
     }
     pub fn stats(&self) -> &NetStats {
         &self.stats
+    }
+
+    /// God mode (spec §14 Phase 13): the own flight.
+    pub fn god(&self) -> &crate::god::state::GodCore {
+        &self.god
+    }
+
+    pub fn god_mut(&mut self) -> &mut crate::god::state::GodCore {
+        &mut self.god
+    }
+
+    /// A god-mode change the snapshots brought (taken once).
+    pub fn take_god_notice(&mut self) -> Option<crate::god::state::GodEvent> {
+        self.god_notice.take()
+    }
+
+    /// Whether this rider may enter god mode (the server checks it
+    /// again): anyone on a local server, the host of a shared ride by
+    /// default, nobody in an organizer's session.
+    pub fn may_use_god(&self) -> bool {
+        let host = self.clock_info.and_then(|c| c.host);
+        self.god_access
+            .is_none_or(|a| a.allows(self.rider_id, host))
+    }
+
+    /// Where leaving god mode over (x, z) lands (spec §14 Phase 13A): the
+    /// nearest road of the graph in free ride, the nearest point of the
+    /// route on a route (the road surface, local metres).
+    pub fn landing_spot(&self, x: f64, z: f64) -> Option<[f64; 3]> {
+        let lift = f64::from(ocw_render::ROAD_SURFACE_LIFT_M);
+        let p = match &self.free {
+            Some(fr) => match &fr.plan {
+                Some(plan) => ocw_sim::god::nearest_on_plan(&fr.net, plan, [x, z])?.1,
+                None => {
+                    let (edge, offset) = fr.net.nearest([x, z])?;
+                    fr.net.geometry(edge).point_at(offset)
+                }
+            },
+            None => ocw_sim::god::nearest_on_polyline(self.route.points(), [x, z])?.1,
+        };
+        Some([p[0], p[1] + lift, p[2]])
+    }
+
+    /// The unicorns to draw at `now_s` (spec §14 Phase 13C): the own
+    /// (flying or gliding) and the other riders' in god mode.
+    pub fn unicorns(&self, now_s: f64) -> Vec<ocw_render::UnicornView> {
+        let colour = |id: RiderId, local: bool| {
+            if local {
+                self.look.jersey
+            } else {
+                self.looks.get(&id).and_then(|l| l.1).map_or(
+                    ocw_core::bike::PALETTE[id.0 as usize % ocw_core::bike::PALETTE.len()],
+                    |l| l.jersey,
+                )
+            }
+        };
+        let name = |id: RiderId| self.names.get(&id).map(|n| n.0.clone()).unwrap_or_default();
+        let view = |id: RiderId, u: crate::god::state::LocalUnicorn, local: bool| {
+            ocw_render::UnicornView {
+                id,
+                name: name(id),
+                is_local: local,
+                pos: u.pose.pos,
+                yaw: u.pose.yaw,
+                pitch: u.pose.pitch,
+                speed_mps: u.pose.speed,
+                climb_mps: u.climb_mps,
+                turn_rate: u.turn_rate,
+                accel: u.accel,
+                age_s: u.age_s,
+                landing: u.leaving,
+                colour: colour(id, local),
+            }
+        };
+        let mut out = Vec::new();
+        if let (Some(me), Some(u)) = (self.rider_id, self.god.unicorn(now_s)) {
+            out.push(view(me, u, true));
+        }
+        for (id, u) in self.god_others.sample(now_s, INTERPOLATION_DELAY_S) {
+            out.push(view(id, u, false));
+        }
+        out
     }
 }
 
@@ -2724,6 +2844,7 @@ mod tests {
             voice: false,
             clock: None,
             world_access: 0,
+            god_access: 0,
         })));
         h.receive(&welcome);
         assert!(matches!(h.notices.last(), Some(Notice::Rejected(_))));
@@ -2925,6 +3046,118 @@ mod tests {
         assert!(
             h.client.ghost_state(h.time_s).is_none(),
             "gone at the finish"
+        );
+    }
+
+    /// God mode end to end (spec §14 Phase 13F): enter, the poses reach the
+    /// server and another client sees the unicorn; the road position stays
+    /// frozen; leaving in free ride lands on the nearest road, standing,
+    /// and the prediction stands there with the server.
+    #[test]
+    fn god_mode_flies_others_see_the_unicorn_and_it_lands_on_the_nearest_road() {
+        use crate::god::state::{GodEvent, Phase};
+        use ocw_sim::god::FlightInput;
+        let mut h = Harness::free(0);
+        h.ride(150.0, 1.0);
+        let net = Arc::new(RoadNetwork::new(grid()));
+        let conn = h.server.connect();
+        let mut guest = ClientCore::free_ride(net, "Guest", RiderProfile::default());
+        for reply in h.server.handle(conn, &guest.hello()) {
+            guest.on_server_message(&reply, h.time_s);
+        }
+        let me = h.client.rider_id().unwrap();
+        assert!(h.client.may_use_god(), "the host may");
+        assert!(!guest.may_use_god(), "a guest may not (the default)");
+        let msg = h.client.god_mut().request_enter(h.time_s).unwrap();
+        h.send(&msg);
+        assert!(
+            matches!(
+                h.notices.last(),
+                Some(Notice::God {
+                    event: Some(GodEvent::Entered),
+                    ..
+                })
+            ),
+            "{:?}",
+            h.notices.last()
+        );
+        let frozen = h.server.session().rider_state(me).unwrap().distance;
+        let took_off = h.client.god().flight().pos;
+        // Fly 3 s along the riding direction at the speed law.
+        let ahead = FlightInput {
+            forward: 1.0,
+            ..Default::default()
+        };
+        let flat = |_: f64, _: f64| Some(0.0);
+        for _ in 0..150 {
+            let t = h.time_s;
+            h.client
+                .god_mut()
+                .step(&ahead, (0.0, 0.0), 0.0, ocw_core::SIM_DT, t, &flat, None);
+            if let Some(m) = h.client.god_mut().pose_message(t) {
+                h.send(&m);
+            }
+            for msg in h.server.tick() {
+                h.receive(&msg);
+                guest.on_server_message(&msg, t);
+            }
+            h.client.predict_step();
+            h.time_s += ocw_core::SIM_DT;
+        }
+        let pos = h.client.god().flight().pos;
+        let flown = (pos[0] - took_off[0]).hypot(pos[2] - took_off[2]);
+        assert!(flown > 40.0, "flew: {pos:?} from {took_off:?}");
+        assert_eq!(h.server.session().rider_state(me).unwrap().distance, frozen);
+        assert!(
+            (h.client.state().distance - frozen).abs() < 0.01,
+            "no prediction"
+        );
+        // The guest sees the unicorn near the flight, with the name.
+        let seen = guest.unicorns(h.time_s);
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].name, "Free");
+        assert!(!seen[0].is_local);
+        let d = (seen[0].pos[0] - pos[0]).hypot(seen[0].pos[2] - pos[2]);
+        assert!(d < 15.0, "{d}");
+        assert_eq!(h.client.unicorns(h.time_s).len(), 1, "the own unicorn");
+        // G over (610, 450) of the grid: lands on x = 600 (nearest road).
+        h.client
+            .god_mut()
+            .teleport([610.0, 60.0, 450.0], None, None);
+        let spot = h.client.landing_spot(610.0, 450.0).unwrap();
+        assert!((spot[0] - 600.0).abs() < 1e-6 && (spot[2] - 450.0).abs() < 1e-6);
+        h.client.god_mut().set_landing(Some(spot));
+        let msg = h.client.god_mut().request_leave(false, h.time_s).unwrap();
+        h.send(&msg);
+        let mut landed = false;
+        for _ in 0..200 {
+            let t = h.time_s;
+            if h.client
+                .god_mut()
+                .step(&ahead, (0.0, 0.0), 0.0, ocw_core::SIM_DT, t, &flat, None)
+                == Some(GodEvent::Landed)
+            {
+                landed = true;
+            }
+            for msg in h.server.tick() {
+                h.receive(&msg);
+            }
+            h.client.predict_step();
+            h.time_s += ocw_core::SIM_DT;
+        }
+        assert!(landed && h.client.god().phase() == Phase::Riding);
+        let at = h
+            .server
+            .session()
+            .track(me)
+            .sample(h.server.session().rider_state(me).unwrap().distance);
+        assert!((at.position[0] - 600.0).abs() < 5.0, "{:?}", at.position);
+        let mine = h.client.track().sample(h.client.state().distance);
+        assert!(
+            close(mine.position, at.position, 5.0),
+            "{:?} vs {:?}",
+            mine.position,
+            at.position
         );
     }
 }

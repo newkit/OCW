@@ -16,6 +16,7 @@ mod connection;
 mod devices;
 mod event;
 mod ghost;
+mod god;
 mod gps;
 mod icon;
 mod input;
@@ -414,6 +415,7 @@ fn main() -> AppExit {
         connection::ConnectionPlugin { route },
         devices::DevicesPlugin,
         input::InputPlugin,
+        god::GodPlugin,
         automation::AutomationPlugin,
         platform::PlatformPlugin,
         monitor::MonitorPlugin,

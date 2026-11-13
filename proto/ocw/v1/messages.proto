@@ -20,7 +20,48 @@ message ClientMessage {
     VoiceTokenRequest voice = 9;
     ClockRequest clock = 10;
     WorldRequest world = 11;
+    GodRequest god = 12;
+    GodPose god_pose = 13;
   }
+}
+
+// God mode (spec §14 Phase 13): the rider leaves the road and flies as a
+// unicorn. The server decides who may (Welcome.god_access; never in a
+// running event) and where the rider re-enters the road; it answers with
+// a GodResult. Reliable.
+message GodRequest {
+  oneof req {
+    // Turn into the unicorn (the road position is frozen).
+    bool enter = 1;
+    GodLeave leave = 2;
+  }
+}
+
+message GodLeave {
+  // Back to where the flight began (Shift + G); otherwise land on the road
+  // nearest the point below the unicorn (x_m, z_m, local metres): in free
+  // ride the nearest road of the graph, on a route its nearest point.
+  bool fly_back = 1;
+  double x_m = 2;
+  double z_m = 3;
+}
+
+// The unicorn's pose (local metres; the flight is client-driven), sent at
+// 10 Hz while flying; the server checks it (speed, ceiling, inside the
+// world set) and passes it on in RiderUpdate.god. Also in GodResult (the
+// pose a flight starts with).
+message GodPose {
+  uint32 seq = 1;
+  double x_m = 2;
+  double y_m = 3;
+  double z_m = 4;
+  // View: yaw (rad, counter-clockwise from north seen from above) and
+  // pitch (rad, positive = up).
+  float yaw_rad = 5;
+  float pitch_rad = 6;
+  float speed_mps = 7;
+  // A jump (dev command `god pose`, local server only): no speed check.
+  bool teleport = 8;
 }
 
 // World menu (spec §3.2.1, World -> Change world): asks the server to ride
@@ -247,7 +288,25 @@ message ServerMessage {
     EventState event = 6;
     VoiceGrant voice = 7;
     WorldChange world_change = 8;
+    GodResult god = 9;
   }
+}
+
+// Answer to a GodRequest (spec §14 Phase 13). Reliable.
+message GodResult {
+  bool ok = 1;
+  // Why not, or what happened.
+  string message = 2;
+  // The rider is in god mode after the request.
+  bool active = 3;
+  // Entering: where the unicorn starts (above the rider).
+  GodPose start = 4;
+  // Leaving: the road point the rider stands on (local metres).
+  double x_m = 5;
+  double y_m = 6;
+  double z_m = 7;
+  // Leaving: whether it was the flight back to the take-off point.
+  bool fly_back = 8;
 }
 
 // The session rides another world now (after the host's WorldRequest,
@@ -383,6 +442,10 @@ message Welcome {
   // Who may switch the world (WorldRequest, spec §3.2.1): the same rule as
   // the clock's access (anyone on a local server, the host by default).
   ClockAccess world_access = 11;
+  // Who may enter god mode (GodRequest, spec §14 Phase 13A): anyone on a
+  // local server, the host by default on a shared server, nobody in an
+  // organizer's session. Absent from older servers (anyone).
+  ClockAccess god_access = 12;
 }
 
 enum ClockMode {
@@ -458,4 +521,14 @@ message RiderUpdate {
   // riders of servers without cosmetics.
   string bike_profile = 11;
   RiderLook look = 12;
+  // God mode (spec §14 Phase 13E): the rider flies as a unicorn; the road
+  // position above is frozen. Absent: riding.
+  RiderMode mode = 13;
+  // The unicorn's pose while in god mode.
+  GodPose god = 14;
+}
+
+enum RiderMode {
+  RIDER_MODE_RIDING = 0;
+  RIDER_MODE_GOD = 1;
 }

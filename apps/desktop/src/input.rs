@@ -70,7 +70,14 @@ pub struct InputPlugin;
 impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<KeyPower>()
-            .add_systems(Update, (steer, throttle_and_brake).run_if(ride_input));
+            // God mode (spec §14 Phase 13B): the riding keys (A, W, U, J,
+            // Q / E, the arrows' steering and power) do nothing in flight.
+            .add_systems(
+                Update,
+                (steer, throttle_and_brake)
+                    .run_if(ride_input)
+                    .run_if(crate::god::not_flying),
+            );
     }
 }
 
@@ -178,8 +185,10 @@ fn steer(
             info!("U-turn");
             link.send_bytes(msg);
         }
-        // Route ride: back to the route after leaving it.
-        if keys.just_pressed(KeyCode::KeyJ) || pad_pressed(GamepadButton::North) {
+        // Route ride: back to the route after leaving it (Select + North
+        // is god mode's chord, not this).
+        let select = pads.iter().any(|p| p.pressed(GamepadButton::Select));
+        if keys.just_pressed(KeyCode::KeyJ) || (pad_pressed(GamepadButton::North) && !select) {
             match client.0.rejoin_route() {
                 Ok(msg) => {
                     info!("rejoining the route");
@@ -212,7 +221,8 @@ fn steer(
         client.0.set_autodrive(on);
         info!("autodrive {}", if on { "on" } else { "off" });
     }
-    if keys.just_pressed(KeyCode::KeyW) || pad_pressed(GamepadButton::West) {
+    let select = pads.iter().any(|p| p.pressed(GamepadButton::Select));
+    if keys.just_pressed(KeyCode::KeyW) || (pad_pressed(GamepadButton::West) && !select) {
         let wild = !client.0.wild();
         client.0.set_wild(wild);
         info!("wild mode {}", if wild { "on" } else { "off" });

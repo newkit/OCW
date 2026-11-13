@@ -36,6 +36,9 @@ pub struct Sample {
     pub power_w: f64,
     pub cadence_rpm: Option<f64>,
     pub heart_rate_bpm: Option<f64>,
+    /// In god mode (spec §14 Phase 13E): no distance credited (also not
+    /// the step to the landing spot).
+    pub flying: bool,
 }
 
 /// A finished ride, ready to be saved.
@@ -59,6 +62,8 @@ pub struct RideRecorder {
     start_game_s: f64,
     /// Game time and raw distance of the last record.
     last: Option<(f64, f64)>,
+    /// The last record was in god mode.
+    was_flying: bool,
     /// Distance ridden (teleports excluded).
     distance_m: f64,
     records: Vec<Record>,
@@ -73,6 +78,7 @@ impl RideRecorder {
             start_unix_s: None,
             start_game_s: 0.0,
             last: None,
+            was_flying: false,
             distance_m: 0.0,
             records: Vec::new(),
             laps: Vec::new(),
@@ -110,7 +116,8 @@ impl RideRecorder {
                 return false;
             }
             let delta = s.distance - raw;
-            if (0.0..=MAX_PLAUSIBLE_SPEED_MPS * dt + 5.0).contains(&delta) {
+            let flew = s.flying || self.was_flying;
+            if !flew && (0.0..=MAX_PLAUSIBLE_SPEED_MPS * dt + 5.0).contains(&delta) {
                 self.distance_m += delta;
             }
         } else {
@@ -118,6 +125,7 @@ impl RideRecorder {
             self.start_game_s = s.game_s;
         }
         self.last = Some((s.game_s, s.distance));
+        self.was_flying = s.flying;
         let p = track.sample(s.distance).offset_position(s.lateral_offset);
         self.records.push(Record {
             elapsed_s: s.game_s - self.start_game_s,
@@ -301,6 +309,7 @@ fn record(time: Res<Time>, client: Res<ClientState>, mut rec: ResMut<Recording>)
         power_w: c.power_w(),
         cadence_rpm: c.cadence_rpm(),
         heart_rate_bpm: c.heart_rate_bpm(),
+        flying: c.god().active(),
     };
     rec.recorder
         .observe(c.track(), c.geo_origin(), sample, unix_now());
@@ -505,6 +514,28 @@ mod tests {
         r.observe(&route, route.geo_origin(), sample(3.0, 1516.0), 0);
         r.observe(&route, route.geo_origin(), sample(4.0, 200.0), 0); // teleport back
         assert_eq!(r.distance_m(), 16.0);
+    }
+
+    /// God mode (spec §14 Phase 13E): ride time goes on, no distance is
+    /// credited while flying, nor the step to the landing spot.
+    #[test]
+    fn flying_in_god_mode_credits_no_distance() {
+        let route = Route::test_loop();
+        let mut r = RideRecorder::new("Loop");
+        let flying = |t, d| Sample {
+            flying: true,
+            speed: 0.0,
+            ..sample(t, d)
+        };
+        r.observe(&route, route.geo_origin(), sample(0.0, 0.0), 0);
+        r.observe(&route, route.geo_origin(), sample(1.0, 8.0), 0);
+        r.observe(&route, route.geo_origin(), flying(2.0, 8.0), 0);
+        r.observe(&route, route.geo_origin(), flying(3.0, 8.0), 0);
+        // Landed 40 m further along the route.
+        r.observe(&route, route.geo_origin(), sample(4.0, 48.0), 0);
+        r.observe(&route, route.geo_origin(), sample(5.0, 56.0), 0);
+        assert_eq!(r.distance_m(), 16.0);
+        assert_eq!(r.records().len(), 6, "the ride time goes on");
     }
 
     #[test]

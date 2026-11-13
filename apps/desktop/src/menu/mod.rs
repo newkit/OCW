@@ -109,11 +109,23 @@ fn menu_input(
     catalog: Option<Res<RideCatalog>>,
     audio: Option<Res<AudioDeviceList>>,
     (voice, time_machine, weather): MenuInfos<'_>,
+    flight: Option<ResMut<crate::god::FlightPointer>>,
 ) {
-    let pressed = pads.iter().fold(
+    let mut pressed = pads.iter().fold(
         keys.map(|k| controls::keyboard(&k)).unwrap_or_default(),
         |p, pad| p.merge(controls::gamepad(PadState::of(pad))),
     );
+    // God mode (spec §14 Phase 13A): Esc first frees the captured pointer;
+    // the next Esc opens the menu.
+    if let Some(mut f) = flight
+        && f.captured
+        && pressed.escape
+        && !state.menu.is_open()
+        && !console.is_open()
+    {
+        f.captured = false;
+        pressed.escape = false;
+    }
     let mut actions = std::mem::take(&mut state.queued);
     let pointer_events = std::mem::take(&mut pointer.0);
     let open = state.menu.is_open();

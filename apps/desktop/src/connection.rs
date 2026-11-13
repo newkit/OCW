@@ -299,6 +299,10 @@ fn poll_server(
                 console.print(format!("server rejected connection: {reason}"));
             }
             Some(Notice::CommandResult(text)) => console.print(text),
+            Some(Notice::God { event, message }) => {
+                info!(?event, "{message}");
+                console.print(message);
+            }
             Some(Notice::Voice(grant)) => {
                 if let Some(v) = voice.as_mut() {
                     v.0.push(grant);

@@ -66,6 +66,8 @@ impl LocalServer {
                 clock_access: crate::ClockAccess::Anyone,
                 // The app switches its local world itself (spec §3.2.1).
                 world_access: crate::ClockAccess::Anyone,
+                // God mode for the single player (spec §14 Phase 13A).
+                god_access: crate::ClockAccess::Anyone,
                 real_epoch_ms: None,
             },
         );
@@ -139,6 +141,8 @@ impl SteppedServer {
                 clock_access: crate::ClockAccess::Anyone,
                 // The app switches its local world itself (spec §3.2.1).
                 world_access: crate::ClockAccess::Anyone,
+                // God mode for the single player (spec §14 Phase 13A).
+                god_access: crate::ClockAccess::Anyone,
                 real_epoch_ms: None,
             },
         );
