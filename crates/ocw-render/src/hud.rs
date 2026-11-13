@@ -23,6 +23,9 @@ impl Plugin for HudPlugin {
         if !app.is_plugin_added::<crate::frame_rate::FrameRatePlugin>() {
             app.add_plugins(crate::frame_rate::FrameRatePlugin);
         }
+        if !app.is_plugin_added::<crate::stamp::StampPlugin>() {
+            app.add_plugins(crate::stamp::StampPlugin);
+        }
         app.init_resource::<ShowFps>()
             .init_resource::<ShowHud>()
             .init_resource::<Units>()
@@ -582,8 +585,9 @@ pub fn recording_label(seconds: f64) -> String {
     }
 }
 
-/// Top right: a small red dot + "REC m:ss" while a video is recorded, and
-/// the app message (e.g. "Video saved: ...") below it.
+/// Top right, from the top: the timestamp (always, [`crate::stamp`]), a
+/// small red dot + "REC m:ss" while a video is recorded, the app message
+/// (e.g. "Video saved: ...") and the FPS counter.
 fn spawn_recording(mut commands: Commands) {
     commands
         .spawn(Node {
@@ -596,6 +600,7 @@ fn spawn_recording(mut commands: Commands) {
             ..default()
         })
         .with_children(|top| {
+            top.spawn(crate::stamp::stamp_bundle());
             top.spawn((
                 Node {
                     display: Display::None,

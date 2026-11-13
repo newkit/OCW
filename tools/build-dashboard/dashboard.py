@@ -1445,6 +1445,38 @@ def make_handler(dash: Dashboard):
     return Handler
 
 
+RECORD_INTERVAL_S = 60.0
+
+
+def record_line(status: dict, now: float | None = None) -> str:
+    """One JSON line of the build servers' state for the art project's build
+    log (art/ART-PROJECT.md §2): the dashboard's status (already masked: no
+    host names, addresses or user names) with the time it was taken."""
+    t = time.localtime(now if now is not None else time.time())
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%S", t)
+    off = time.strftime("%z", t)
+    stamp += off[:3] + ":" + off[3:] if off else ""
+    return json.dumps({"time": stamp, "status": status}, separators=(",", ":"), sort_keys=True)
+
+
+def record_path(root: Path, now: float | None = None) -> Path:
+    """root/YYYY-MM-DD/servers.jsonl for the local day of `now`."""
+    day = time.strftime("%Y-%m-%d", time.localtime(now if now is not None else time.time()))
+    return root / day / "servers.jsonl"
+
+
+def record_loop(dash, root: Path, interval: float = RECORD_INTERVAL_S):
+    """Appends a status line every `interval` seconds until dash.stop is set."""
+    while not dash.stop.wait(interval):
+        try:
+            p = record_path(root)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            with open(p, "a", encoding="utf-8") as f:
+                f.write(record_line(dash.snapshot()) + "\n")
+        except Exception as e:  # recording must never stop the dashboard
+            print("build log: %s" % e, file=sys.stderr)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="OCW build server dashboard (read-only)")
     ap.add_argument("--host", default="0.0.0.0", help="address to listen on (default: all; 127.0.0.1 = local only)")
@@ -1454,6 +1486,10 @@ def main(argv=None) -> int:
     ap.add_argument("--interval", type=float, default=POLL_INTERVAL_S, help="seconds between polls")
     ap.add_argument("--config", type=Path, help="config directory (default: config/ of the checkout)")
     ap.add_argument("--no-control-master", action="store_true", help="new SSH connection per poll")
+    ap.add_argument("--record", type=Path, default=None,
+                    help="build log directory for the art project (default: test-output/build-log of the checkout)")
+    ap.add_argument("--no-record", action="store_true", help="don't write the build log")
+    ap.add_argument("--record-interval", type=float, default=RECORD_INTERVAL_S, help="seconds between build-log lines")
     a = ap.parse_args(argv)
 
     repo = HERE.parent.parent
@@ -1470,6 +1506,9 @@ def main(argv=None) -> int:
         print(json.dumps(status, indent=2) if a.json else format_text(status))
         return 0
     dash.start()
+    if not a.no_record:
+        root = a.record or (repo / "test-output" / "build-log")
+        threading.Thread(target=record_loop, args=(dash, root, a.record_interval), daemon=True).start()
     srv = ThreadingHTTPServer((a.host, a.port), make_handler(dash))
     print("OCW build dashboard on http://%s:%d/ (%d machines, Ctrl+C to stop)" % (a.host, a.port, len(machines)))
     try:

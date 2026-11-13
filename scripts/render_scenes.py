@@ -178,7 +178,7 @@ def run_scene(scene: dict, world: Path | None, out: Path, mode: str) -> bool:
         for kind in scene["kinds"]:
             suffix = "" if mode == "x11" else "-wayland"
             if kind == "shot":
-                target = out / f"{scene['name']}.png"
+                target = out / f"{scene['name']}.jpg"
                 cmd = [str(DRIVE), f"shot{suffix}", str(target), f"{scene['shot']:g}", "--", *args]
             else:
                 target = out / f"{scene['name']}.mp4"
@@ -228,17 +228,58 @@ def remote(args: argparse.Namespace, passthrough: list[str]) -> int:
 
 # --- picking renders for the build history (test-output/build-history/) ---
 
-def shrink_png(src: Path, dst: Path, max_kb: int) -> None:
-    """Copies a PNG; one larger than max_kb is reduced to a 256-colour palette."""
+def png_text_chunks(data: bytes) -> list[bytes]:
+    """The tEXt chunks (whole, with length and CRC) of a PNG file."""
+    out, at = [], 8
+    while at + 8 <= len(data):
+        n = int.from_bytes(data[at:at + 4], "big")
+        if data[at + 4:at + 8] == b"tEXt":
+            out.append(data[at:at + 12 + n])
+        at += 12 + n
+    return out
+
+
+def jpeg_app1(data: bytes) -> list[bytes]:
+    """The APP1 segments (EXIF, XMP) of a JPEG file, before its image data."""
+    out, at = [], 2
+    while at + 4 <= len(data) and data[at] == 0xFF and data[at + 1] not in (0xDA, 0xD9):
+        n = int.from_bytes(data[at + 2:at + 4], "big")
+        if data[at + 1] == 0xE1:
+            out.append(data[at:at + 2 + n])
+        at += 2 + n
+    return out
+
+
+def keep_metadata(src: Path, dst: Path) -> None:
+    """Copies the time/software metadata of src into dst, which ffmpeg
+    re-encoded without it (PNG tEXt chunks after IHDR, JPEG APP1 after SOI)."""
+    a, b = src.read_bytes(), dst.read_bytes()
+    if a.startswith(b"\x89PNG") and b.startswith(b"\x89PNG"):
+        end = 8 + 12 + int.from_bytes(b[8:12], "big")
+        dst.write_bytes(b[:end] + b"".join(png_text_chunks(a)) + b[end:])
+    elif a.startswith(b"\xff\xd8") and b.startswith(b"\xff\xd8"):
+        # After the JFIF header (APP0), if there is one.
+        at = 2 + 2 + int.from_bytes(b[4:6], "big") if b[2:4] == b"\xff\xe0" else 2
+        dst.write_bytes(b[:at] + b"".join(jpeg_app1(a)) + b[at:])
+
+
+def shrink_image(src: Path, dst: Path, max_kb: int) -> None:
+    """Copies a screenshot; a larger one than max_kb is made smaller (PNG: a
+    256-colour palette; JPEG: quality ~80), keeping its metadata."""
     if src.stat().st_size <= max_kb * 1024 or not shutil.which("ffmpeg"):
         shutil.copy2(src, dst)
         return
-    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", str(src), "-vf",
-                    "split[a][b];[a]palettegen=max_colors=256:stats_mode=full[p];"
-                    "[b][p]paletteuse=dither=sierra2_4a", "-pix_fmt", "pal8", str(dst)],
+    if src.suffix == ".png":
+        enc = ["-vf", "split[a][b];[a]palettegen=max_colors=256:stats_mode=full[p];"
+               "[b][p]paletteuse=dither=sierra2_4a", "-pix_fmt", "pal8"]
+    else:
+        enc = ["-q:v", "5"]
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", str(src), *enc, str(dst)],
                    check=True)
     if dst.stat().st_size >= src.stat().st_size:
         shutil.copy2(src, dst)
+    else:
+        keep_metadata(src, dst)
 
 
 def shrink_mp4(src: Path, dst: Path, max_mb: float) -> None:
@@ -247,10 +288,11 @@ def shrink_mp4(src: Path, dst: Path, max_mb: float) -> None:
     for crf, width in ((28, 1280), (30, 960), (33, 854)):
         if dst.stat().st_size <= max_mb * 1e6:
             return
+        # The sound and the metadata (creation_time, comment) stay.
         subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", str(src), "-vf",
                         f"scale='min({width},iw)':-2", "-c:v", "libx264", "-preset", "slow",
-                        "-crf", str(crf), "-pix_fmt", "yuv420p", "-movflags", "+faststart",
-                        "-an", str(dst)], check=True)
+                        "-crf", str(crf), "-pix_fmt", "yuv420p", "-c:a", "copy",
+                        "-map_metadata", "0", "-movflags", "+faststart", str(dst)], check=True)
 
 
 def update_count_line(index: Path) -> None:
@@ -291,19 +333,20 @@ def pick(src_dir: Path, scenes: list[dict], max_png_kb: int) -> int:
     by_name = {s["name"]: s for s in scenes}
     for f in sorted(src_dir.iterdir()):
         scene = by_name.get(f.stem)
-        if scene is None or f.suffix not in (".png", ".mp4") or not scene.get("pick", True):
+        # .png: runs from before JPEG screenshots (spec §11.4).
+        if scene is None or f.suffix not in (".jpg", ".png", ".mp4") or not scene.get("pick", True):
             continue
-        # A video's last frame (NAME.png beside NAME.mp4) is not picked
+        # A video's last frame (NAME.jpg beside NAME.mp4) is not picked
         # unless the scene also has its own screenshot (a separate run).
-        if f.suffix == ".png" and "shot" not in scene["kinds"]:
+        if f.suffix in (".jpg", ".png") and "shot" not in scene["kinds"]:
             continue
         stamp = dt.datetime.fromtimestamp(f.stat().st_mtime)
         day = stamp.strftime("%Y-%m-%d")
         name = f"{stamp:%H%M%S}-{scene['name']}{f.suffix}"
         (HISTORY / day).mkdir(parents=True, exist_ok=True)
         dst = HISTORY / day / name
-        if f.suffix == ".png":
-            shrink_png(f, dst, max_png_kb)
+        if f.suffix in (".jpg", ".png"):
+            shrink_image(f, dst, max_png_kb)
         else:
             shrink_mp4(f, dst, float(scene.get("max_video_mb", 3.0)))
         what = " ".join(scene["description"].split())

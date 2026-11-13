@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.29 – November 2026
+Version 2.32 – November 2026
 
 | Version | Change |
 |---|---|
@@ -48,6 +48,9 @@ Version 2.29 – November 2026
 | 2.27 | Second world: the southern Black Forest (§4.7): Geofabrik Regierungsbezirk Freiburg + SRTM (`fetch-pilot.sh blackforest`), one 260 MB package of 2,260 km² (47.72–48.12 N, 7.62–8.30 E, origin 47.92 N 7.96 E) chosen by measured build and client memory (core 1,000 km² / 124 MB, large 5,370 km² / 564 MB over the §15 memory budget), more of it as neighbour packages later; routes Freiburg – Schauinsland and Titisee – Feldberg (`build-blackforest.sh`); `world-builder route --bbox / --origin`, `world-builder areas`; fixes: gutters (`ditch` / `drain` under 2 m) no longer water (§4.6), bike-open pedestrian streets paved (§4.4), a package rewritten in place gets a new manifest (§4.7); scene harness with named worlds (§11.4) |
 | 2.28 | Phase 9 decisions: time = local time of the rider's place in the virtual world, never the person's physical location (Q1); weather realistic including extreme weather, no cap (Q9) |
 | 2.29 | Decisions: weather changes the physics realistically, races per organiser (Phase 9 Q4); best open data for every region – high-resolution official DTMs, freshest OSM, best open imagery (Phase 8 Q9); attribution licences accepted (Phase 8 Q1) |
+| 2.30 | Phase 10 planned: browser app for riding (§14 Phase 10): Bevy on WebGPU (WebGL2 fallback), local server in the browser, WebTransport endpoint, tile streaming with OPFS cache, Web Bluetooth (Chromium only) with a sensor bridge for Safari / iOS / Firefox, Web Audio + LiveKit, captures with timestamps; milestones B1–B8, open questions Q1–Q6 |
+| 2.31 | Timestamped captures (§3.2, §11.4): every screenshot and video frame shows an ISO 8601 local timestamp with UTC offset at the top right (always, also with `hud off`), and every file carries it as metadata – screenshots as JPEG (quality 90) with EXIF `DateTimeOriginal` / `CreateDate` / `OffsetTimeOriginal` / `Software` (PNG with `tEXt` `Creation Time` / `Software` for a `.png` path and the lossless `--capture` frames), MP4s with `creation_time` and the build in `comment`; frame capture stamps the capture start plus game time. Test media at 2560×1440, H.264 CRF 18. Videos with game sound (§3.3): live recordings tap the device's mixer output (or render it with game time without a device), frame capture renders exactly one frame's worth of samples per frame; AAC 192k, 48 kHz stereo |
+| 2.32 | Phase 11 planned: VR mode (§14 Phase 11): OpenXR only (Meta Rift / Quest via Link, SteamVR headsets, Pico, Varjo; Linux via SteamVR / Monado / WiVRn; no macOS; WMR not supported after Windows 11 24H2), first-person riding with own body, mirror view for captures, world-space HUD on the stem, comfort options, spatial voice, performance preset; milestones X1–X8, open questions Q1–Q6 |
 
 ---
 
@@ -83,7 +86,7 @@ Functionally, the simulation is modeled on Zwift and MyWhoosh, but it shall have
 |---|---|---|
 | **Desktop app** (`apps/desktop`) | The simulation client: riding, rendering, sensors, editors | Core product |
 | **Web companion** (`apps/web-companion`) | Account, history, Strava, routes, events in any browser – no riding | From Phase 5 (§2.10) |
-| Full web client (riding in the browser via Web Bluetooth) | – | Future development, not scheduled |
+| Full web client (riding in the browser via Web Bluetooth) | – | Planned as Phase 10 (§14) |
 | Native mobile apps (iPad / iOS, Android) | – | Future development, not scheduled |
 
 ### 1.3 Deferred and Future Items
@@ -623,9 +626,11 @@ Tile builds take up to 23 ms on worker threads; uploads cost at most 4.6 ms on t
 
 **Input devices (v1.9):** keyboard and gamepads (Bevy's gamepad support, gilrs: Xbox, PlayStation, Switch Pro and generic pads, hot-plugged). Keyboard: ↑ adds power (25 W per press, more while held, on top of any device), ↓ stops (power 0 and brake), ← / → steer (§5.2.1) or choose exits (§2.2.1), A autodrive, W wild mode, U U-turn, Q / E exits, PgUp / PgDn ±10 W, F11 next screen, C camera reset, R restart (v2.0), V video (v2.0). Gamepad: left stick left / right steers (sets the lean directly, centred = upright); ↑ = D-pad up, left stick up or right trigger, ↓ = D-pad down, left stick down or left trigger (triggers and stick read as analog values, v2.0); South = autodrive, West = wild, D-pad left / right = exits, East = U-turn (v2.0). Several pads: the largest stick deflection steers.
 
-**Restart and video (v2.0):** R (console `reset`) starts the whole app again as at program start, with the same command line: the app exits normally (ride saved, devices shut down) and replaces its process with a fresh one (Unix `exec`, same process id for the kiosk). V (console `video`) records the window: a screenshot is requested on every 1/25 s tick (several in flight, since the GPU readback takes a few frames), each image is placed at the video frame of its request time, and the frames are streamed as raw pixels into `ffmpeg` (H.264 MP4, `ultrafast`, at most 1920 px wide, in the user's video directory); a tick without an image repeats the previous one to keep real time, the game never waits for the encoder (an image it cannot take is dropped and counted), a screenshot requested by the user or a script in the same frame takes precedence, and a running recording is finished on exit. V again stops it (the key is ignored while the console is open). While recording, the HUD shows a small blinking red dot with "REC m:ss" (recording length) at the top right; after stopping, "Video saved: <file>" (or the error) for 4 s.
+**Restart and video (v2.0):** R (console `reset`) starts the whole app again as at program start, with the same command line: the app exits normally (ride saved, devices shut down) and replaces its process with a fresh one (Unix `exec`, same process id for the kiosk). V (console `video`) records the window: a screenshot is requested on every 1/25 s tick (several in flight, since the GPU readback takes a few frames), each image is placed at the video frame of its request time, and the frames are streamed as raw pixels into `ffmpeg` (H.264 MP4, CRF 18 with the `veryfast` preset since v2.30 – before `ultrafast` CRF 20 –, at most 2560 px wide, in the user's video directory, with the game sound since v2.30, §3.3); a tick without an image repeats the previous one to keep real time, the game never waits for the encoder (an image it cannot take is dropped and counted), a screenshot requested by the user or a script in the same frame takes precedence, and a running recording is finished on exit. V again stops it (the key is ignored while the console is open). While recording, the HUD shows a small blinking red dot with "REC m:ss" (recording length) at the top right; after stopping, "Video saved: <file>" (or the error) for 4 s.
 
 **FPS counter (decided 2026-11-12):** console `fps on|off`, setting `display.fps` (*Settings → Display*): a small green badge at the top right, below the REC indicator, e.g. `58 fps  max 21 ms` – the frames drawn in the last second and the longest of them, renewed twice a second. It measures the **real render rate on the wall clock** (`ocw-render::frame_rate`, one `Instant::now()` per frame), not Bevy's `Time<Real>`, which frame capture (`--capture`) steps by a fixed 1/25 s per frame and would always show 25. `--log-fps S` logs the same rate every S seconds (`render rate fps=… worst_ms=…`, mean and longest frame over the period). Options considered: on by default for everyone (a number riders do not need, and the HUD is busy enough), only in debug builds (the release kiosk and the test videos need it too), **off by default for riders and on in every test picture and video (chosen):** `drive.sh` (screenshots, `--capture` videos, scene harness) passes `--cmd "fps on" --log-fps 5` unless `OCW_FPS=0`, and the multiplayer test turns it on for the kiosk and the camera client (§11.4.1). Before, the counter was one more line at the end of the small HUD text, off by default and never on in tests – the user could not find it in the multiplayer video. For benchmarks `--no-vsync` draws without waiting for the display's refresh and `--max-fps N` caps the rate by sleeping at the end of a frame.
+
+**Timestamp on every capture (decided 2026-11-12, v2.30):** the top-right column starts with a small ISO 8601 local time with UTC offset and seconds, e.g. `2026-11-12T22:14:05+01:00` (Fira Mono 14 px on a dark pill, above REC, the app message and the FPS counter; the event panel starts at 21 % of the height, below them), so every screenshot and every video frame shows when it was taken (the build diary, `art/ART-PROJECT.md`). It is **part of the capture, not of the optional HUD**: `hud off` and `display.hud` do not hide it, and it is drawn above every other UI (menus). Options considered: only while a screenshot or video is being taken (cleaner screen, but a screenshot captures the frame it is requested in, so the stamp would have to appear one frame early, and pictures the app does not take itself – OS screenshots, screen recorders, the kiosk photographed – would carry none), a setting (one more thing a test could leave off), **always visible (chosen):** a clock in the corner is common in games and costs a line of pixels. Clock: the wall clock in normal play, for screenshots and for live recordings (V); during frame capture (`--capture`) the wall clock at the start of the run plus the stepped game time (`Time<Real>`, advanced exactly 1/fps per frame), so the seconds advance once per 25 frames however slowly the frames render (`ocw-core::timestamp::MediaClock`). Formatting, the clock and the UTC offset (chrono's local zone, looked up once a second, daylight saving included) are pure functions with unit tests; the file metadata is described in §11.4.
 
 **GPS position:** bottom-left, the HUD shows the local rider's position as latitude / longitude (5 decimals, N/S, E/W) and altitude in metres, unprojected from the predicted position with the route's or world package's geographic origin (the same as the FIT track); hidden on routes without one (built-in test routes). Console: `rider.gps`. The HUD panel never extends past the window: long lines break at their " | " separators (then at commas) to fit the window width.
 
@@ -777,7 +782,8 @@ Two separate audio systems:
 
 - *Options evaluated:* (a) `bevy_audio` (rodio) – plays only on the default device, no device list, no bus mixer: rejected (it is now disabled in the app). (b) `kira` 0.12 – a good game mixer (tracks, tweens, spatial), but it links **cpal 0.18** while Bevy 0.20 links cpal 0.17, so the app would carry two cpal copies (two ALSA bindings), and it is built around sample files we do not have; its device choice is no better than cpal's. (c) **cpal directly with an own small mixer** (chosen): cpal 0.17 is already in the lock file through Bevy (Apache-2.0, no new system library: `libasound` is linked anyway), it lists and opens devices by name on ALSA / WASAPI / CoreAudio, and since every sound is synthesised in code a sample-playing layer (rodio) is not needed – the mixer renders straight into the device buffer at the device's rate, channel count and sample format (f32, i16, u16, i32). If music files come later, rodio's decoders (or symphonia) can feed the music bus.
 - *Engine:* an `OutputBackend` trait (list devices, default device, open by name, close, stream failed) with the cpal backend, a `NullBackend` (no sound) and a mock for tests. The engine runs on its own thread (cpal streams are not `Send` on every platform) and talks to the game through channels: commands (output, refresh) one way, a status (device list, default, playing device, fell back, message) the other; the mixer gets its input (ride parameters, cues, bus gains) through a bounded queue, read at the start of each device buffer (cues older than 0.4 s are dropped, so nothing stale plays after a device came back).
-- *Device choice:* `audio.output` is a device name (cpal's device description, e.g. "USB Audio Device, USB Audio" on ALSA) or `default`; matching ignores case and surrounding spaces; several devices with one name (ALSA lists a card as `hw:`, `plughw:`, `sysdefault:`) are tried in order until one opens. A missing device falls back to the default device (shown as "NAME (gone)" on the Audio page). **Hot-plugging:** the device list is re-read every 3 s (cheap: cpal's ALSA listing does not open devices); a device that comes back is opened again, a stream that fails (unplugged: cpal's `DeviceNotAvailable`, `StreamInvalidated`, backend errors; underruns are ignored) is closed and the default opened. A failed open is retried after 15 s. Without any device (headless Xvfb / weston runs, CI) the app runs silently with one log line ("audio: no audio output: …"); `--no-audio` and frame capture (`--capture`, game time not real time) use the null backend.
+- *Device choice:* `audio.output` is a device name (cpal's device description, e.g. "USB Audio Device, USB Audio" on ALSA) or `default`; matching ignores case and surrounding spaces; several devices with one name (ALSA lists a card as `hw:`, `plughw:`, `sysdefault:`) are tried in order until one opens. A missing device falls back to the default device (shown as "NAME (gone)" on the Audio page). **Hot-plugging:** the device list is re-read every 3 s (cheap: cpal's ALSA listing does not open devices); a device that comes back is opened again, a stream that fails (unplugged: cpal's `DeviceNotAvailable`, `StreamInvalidated`, backend errors; underruns are ignored) is closed and the default opened. A failed open is retried after 15 s. Without any device (headless Xvfb / weston runs, CI) the app runs silently with one log line ("audio: no audio output: …"); `--no-audio` and frame capture (`--capture`, game time not real time) use the null backend (the mixer still runs for recordings, below).
+- *Sound in videos (decided 2026-11-12, v2.30):* recorded videos carry the game mix (`audio::record`), muxed as AAC 192 kbit/s, 48 kHz stereo. **Live recording** (V, console `video`): while a device plays, the mixer copies every buffer it renders for the device to the recorder (a tap: exactly what the rider hears, in step with the real-time video); without a device (`--no-audio`, headless) the game thread renders the mixer itself, as many samples as game time has passed. The samples go to a hidden WAV beside the hidden H.264 file; after the stop ffmpeg muxes both into the final MP4 (`-c:v copy -c:a aac`), else the picture alone is kept. **Frame capture** (`--capture`): a capture source pulls exactly `frame × rate / fps` samples (integer accounting, no drift; 1920 per frame at 48 kHz and 25 fps) from the mixer per rendered frame – also during the warm-up, so the sound is settled, but only the captured frames are written to `DIR/audio.wav` – so picture and sound match whatever the render speed, with no audio device; the scripts mux it (`drive.sh`). Options considered: recording the system's output (PulseAudio monitor, WASAPI loopback: platform-specific, records other apps too, impossible headless), an offline backend behind the `OutputBackend` trait that opens like a device (the engine thread would drive it on its own clock, not the frame's), **pulling from the shared mixer in the game thread (chosen)** for capture and the tap for live. Voice (LiveKit) plays through its own path and is not in the recordings yet.
 - *Buses:* master × music / effects / voice; each volume is 0–100 % on a squared curve (gain = (v/100)², 50 % ≈ -12 dB), the bus gain is master gain × bus gain, mute sets all to 0; gains are smoothed (60 ms) so changes do not click; a soft limiter (linear to 0.8, tanh knee) keeps the sum within ±1. Pure and unit-tested (`mix.rs`, `mixer.rs`).
 - *Sounds (all procedurally synthesised, our own work – no sample files, nothing to license, §13):* **wind** – pink noise, low-pass (250 Hz + 120 Hz per m/s) plus a resonant band, level ∝ (v / 54 km/h)^1.6 with slow gusts; **tyres** – rolling rumble on every surface, louder on gravel; gravel adds random grit bursts (6 per metre ridden), grass a high swish (surface from the track and the rider's lateral position, §4.4 / §5.2.1, as for the physics); **freehub (freewheel)** – the clicking is heard **only while the wheel turns and the rider does not drive it** (coasting): a short metallic click per pawl engagement, 24 engagement points per wheel revolution (a typical road hub; common hubs have 18–54), so ticks/s = 24 × speed / 2.1 m wheel (about 95/s at 30 km/h), jittered, level kept even as the ticks become a buzz. The rider drives the wheel – and the freehub is **silent (gain exactly 0)** – when the power is above 10 W (whatever the cadence reads: no sensor, a dropout, a power-only trainer), or when the cadence is at least 15 rpm and the top gear (50 × 11) at that cadence reaches the speed; turning the legs slower than that (spinning out downhill without power) lets the wheel overrun and tick. Stopped (< 0.3 m/s): no ticks. Transitions: the ticks fade in over about 0.25 s when pedalling stops (time constant 80 ms, no burst) and are gone within about 30 ms when it starts again (8 ms); other parameters glide with 60 ms. **drivetrain** – while pedalling, a soft continuous whir (broad band noise around 350 Hz + 5 × the chain's tooth rate, low-passed), a faint hum at the chainring tooth rate (cadence × 50 teeth / 60) and a gentle swell per pedal stroke, a little louder under load – no clicks (unit-tested: its 10 ms loudness varies little, the freehub's a lot); without a cadence sensor, or with a sensor reading 0 under power, the cadence is estimated from the power (75–100 rpm); **cues** – menu move / value / page open / back, countdown beeps (3, 2, 1) and a higher GO, a rising finish chime (results panel of a race or time trial), a two-tone workout step cue (each start, step change, end, stop), a gear-shift double click (`audio.play shift`; not triggered automatically yet: the protocol has no gear) and a test tone per bus. The mapping ride state → sound parameters (`ride.rs`) and the cue triggers (`cues.rs`: from the `MenuView`, the event countdown text, the results panel, the workout's change counter) are pure and unit-tested; a scripted 20 s demo ride renders offline through the whole mixer (`audio::demo`, `OCW_AUDIO_DEMO=FILE.wav` writes it) in separated sections: 0–6 s pedalling, 6–10 s coasting (freehub), 10–14 s pedalling again without a cadence sensor, 14–17 s pedalling on gravel, 17–20 s coasting on grass.
 - *Settings and commands:* `audio.master` (80), `audio.effects` (80), `audio.music` (60), `audio.voice` (100), `audio.mute` (off), `audio.output` (`default`; a new setting type *text*) in `[audio]` of `settings.toml`, live; console `audio.volume BUS PERCENT`, `audio.mute [on|off|toggle]`, `audio.output NAME|default`, `audio.devices`, `audio.status`, `audio.play SOUND`.
@@ -1522,7 +1528,8 @@ Build and release pipelines are automated for all three operating systems, intro
 - **Physics tests check physical plausibility**, not only code paths: steady-state speed for given power and gradient, energy balance, no rolling backwards, stability at the 50 Hz tick.
 - **Protocol compatibility tests:** encoded messages of earlier protocol versions are kept as fixtures and must still decode (§6.2).
 - **World-builder tests** use small, checked-in OSM / DEM fixtures with known expected results (golden files), e.g. a junction, a bridge, a dead end.
-- **Build history:** the harness keeps every scene reproducible (fresh config and data folders, virtual trainer, fixed start, world package from `--world` / `$OCW_WORLD` / `data/pilot/` / the kiosk install); `render-scenes.sh --pick` copies the reviewed renders, kept small (PNG palette above 600 KB, videos ≤ 3 MB), into `test-output/build-history/` with an index, for the zip on the GitHub release `build-history` (media are not committed to git).
+- **Test media carry their time (decided 2026-11-12, v2.30):** every picture and video the app writes has the ISO 8601 timestamp in the image (HUD, §3.2) and in the file: screenshots (console `screenshot`, `--screenshot`, `--at "T=screenshot …"`) are **JPEG, quality 90** by default with EXIF `DateTime`, `DateTimeOriginal`, `DateTimeDigitized` (`CreateDate`) in local time, `OffsetTime` / `OffsetTimeOriginal` / `OffsetTimeDigitized` (`+01:00`) and `Software` = `Open Cycling World <build id>` (`ocw-render::media`, own TIFF writer, the image crate's JPEG encoder); a path ending in `.png` gives a lossless PNG with `tEXt` chunks `Creation Time` (the registered keyword, ISO 8601 with offset) and `Software`. PNG stays where the picture is the input of another step: the `--capture` frames (lossless input of the H.264 encode, each stamped with its stepped time); `--capture` also writes `still.jpg` (last frame) and `metadata.txt` (ffmpeg metadata: `creation_time` of the first frame in UTC with `Z`, `comment` = software), which `drive.sh` maps into the MP4. MP4s the app encodes itself (V) get `creation_time` (start of the recording, UTC) and `comment`. The scripts that re-encode media keep it (`render-scenes.sh --pick` copies the EXIF / text chunks into a shrunk image and the metadata and sound into a re-encoded video). Test pictures and videos are **2560×1440** (`drive.sh` `OCW_SIZE`, default of the scene harness, the multiplayer camera client; the kiosk keeps its screen), videos H.264 CRF 18 with `-preset slow` (`OCW_X264_PRESET`), yuv420p, `+faststart`, 25 fps, AAC sound.
+- **Build history:** the harness keeps every scene reproducible (fresh config and data folders, virtual trainer, fixed start, world package from `--world` / `$OCW_WORLD` / `data/pilot/` / the kiosk install); `render-scenes.sh --pick` copies the reviewed renders, kept small (images above 600 KB: PNG palette or JPEG quality ~80, metadata kept; videos ≤ 3 MB, sound and metadata kept), into `test-output/build-history/` with an index, for the zip on the GitHub release `build-history` (media are not committed to git).
 - **Regression rule:** every fixed bug gets a test that failed before the fix.
 - Commands: `cargo test --workspace` runs all unit and integration tests; `cargo clippy --workspace --all-targets -- -D warnings` must pass.
 - **Make targets (decided 2026-11-12):** every test is a `test-*` target: `test-unit` (`cargo test --workspace`; `make test` runs the same), `test-wasm` (the §3.5 build check), `test-kiosk` (`scripts/test-kiosk.sh` with a fake app), `test-screenshot` / `test-screenshot-wayland` / `test-smoke` (both) and `test-video` / `test-video-wayland` (headless desktop runs, run-ocw skill), `test-multiplayer` (§11.4.1) and `test-multiplayer-local` (the same pieces on one machine over loopback: `ocw-server` with a bot, three `ocw-bot` riders, the verdict; in CI). `check` (= `lint test-unit test-wasm`), `lint`, `fmt`, `clippy` keep their names – they are checks, not tests – and so does `deploy-test` (a deployment). Options for the old names (`smoke`, `screenshot`, `screenshot-wayland`, `video`, `video-wayland`, `wasm`): remove them at once (clean, but breaks habits and notes), keep silent aliases forever (no reason to move), or **deprecated aliases** that print "use make test-…" and run the new target (chosen); they are left out of `make help` and can go once nobody uses them.
@@ -1988,6 +1995,180 @@ Attribution of the provider used appears on the credits screen and in the weathe
 - **Q8 – Historic weather:** wanted (ride a famous day, e.g. a race day in the past, with its real weather)? It needs ERA5 downloads on our infrastructure.
 - **Q9 – Extreme weather: decided (2026-11-12):** realistic, **no cap**. Storms, hail, heavy snow, thunderstorms with lightning, dense fog and gale-force wind are all part of the simulation, the weather machine and real weather. The only limit is the physics switch (Q4).
 - **Q10 – Priority:** order of S1–S8. Proposal: S1 → S3 → S2 → S4 → S5 → S7 → S8 → S6.
+
+---
+
+### Phase 10 – Browser App: riding in the browser (planning, 2026-11-13)
+
+**Goal:** ride Open Cycling World in a web browser, with no installation: the same worlds, physics, multiplayer, voice and riders as the desktop app. It complements the **web companion** (Phase 5, account / history / routes, no riding); it does not replace the desktop app. §3.5 has kept this possible from Phase 1: the core crates build for wasm, devices sit behind `DeviceBackend`, the protocol is transport-independent and packages can be streamed.
+
+#### 10A – Browser platform facts (as found 2026-11-13; re-check before starting)
+
+| Capability | Needed for | Support |
+|---|---|---|
+| **WebGPU** | 3D rendering (Bevy / wgpu) | Chrome / Edge since 113 (desktop), Chrome Android since 121 (Android 12+); **Safari 26** (macOS, iOS, iPadOS 26; on iOS all browsers use WebKit); Firefox 141 on Windows, 145 on Apple-silicon macOS, Linux / Android in progress. Fallback: WebGL2 (wgpu supports it, fewer features: no compute, weaker shadows) |
+| **WebTransport** (HTTP/3, QUIC datagrams + streams) | the game connection (§6.2) | Baseline in 2026: Chrome / Edge since 2022, Firefox since 2023, Safari 26.4 |
+| **Web Bluetooth** | trainer, power meter, heart rate (FTMS etc.) | **Chromium only** (Chrome / Edge / Opera on Windows, macOS, Linux, ChromeOS, Android). **Not** Safari / iOS, not Firefox (only experimental extensions) |
+| WebRTC | voice (LiveKit `livekit-client`, §7 platform plan) | all browsers |
+| Web Audio, AudioWorklet | game audio (§3.3) | all browsers |
+| Gamepad API | gamepads (§3.2.1) | all browsers |
+| OPFS / IndexedDB, Storage API | world package cache (hundreds of MB) | all browsers; quota per origin, ask for persistent storage |
+| Canvas capture, MediaRecorder, WebCodecs | screenshots and videos (art project rules: ISO timestamp, JPEG q90, audio) | all current browsers (WebCodecs: Safari 26 for video) |
+| Wasm threads (SharedArrayBuffer) | parallel systems, decoding | needs cross-origin isolation (COOP / COEP headers) |
+| Wasm memory | the loaded world | 4 GB address space (wasm32); practical limit lower, so streaming is required |
+
+**Consequence:** full riding with a trainer works in Chromium browsers on Windows, macOS, Linux, ChromeOS and Android. In Safari / iOS / Firefox the 3D world, multiplayer and voice work, but **no direct Bluetooth**: riding there needs one of the bridges in 10D or virtual power.
+
+#### 10B – Architecture
+
+- **New app `apps/web`:** the same Bevy client as the desktop, built for `wasm32-unknown-unknown` with the WebGPU backend (WebGL2 fallback), via `wasm-bindgen` / `trunk` (or `wasm-pack`) and served as static files. Platform differences sit behind the existing traits. There is **one renderer**: `ocw-render` stays shared. Desktop-only parts (btleplug, cpal native, ffmpeg, file dialogs, the kiosk) are cfg-gated and replaced by web backends.
+- **Client core:** `ClientCore`, prediction, `SnapshotBuffer`, workouts and the console are already Bevy-free and wasm-safe. The local server (single player) runs **in the browser too**, as the same `GameServer` driven by the frame loop or a Web Worker instead of a thread.
+- **Game connection:** a **WebTransport endpoint** on the game server next to native QUIC. The protobuf messages are identical: snapshots go as datagrams, reliable messages as streams. On the server: `wtransport` or `h3` + `h3-webtransport` on quinn (to evaluate). TLS needs a real certificate (no self-signed pinning in browsers), or `serverCertificateHashes` for development.
+- **World data:** packages are **streamed by tile over HTTP** (range requests on the package file, or per-tile chunks: §3.5 / §4.7) from our CDN. They are verified (signatures, chunk hashes, §4.7) and cached in OPFS. Only nearby tiles are in memory, which the desktop needs anyway for larger worlds (Black Forest measurements, spec 2.27).
+- **Audio:** game audio via cpal's Web Audio backend or our mixer in an AudioWorklet. Voice via `livekit-client` (JS) behind the `VoiceBackend` trait (§7).
+- **Devices:** `WebBluetoothBackend` implements `DeviceBackend` on top of the pure `ocw-devices` protocol state machine (`gatt`, `ble::protocol`). Only the `GattLink` is new (navigator.bluetooth via `web-sys`). The user grants device access per page (browser chooser).
+- **Captures:** screenshots from the canvas as JPEG q90 with EXIF date and time written by our own encoder step. Videos via MediaRecorder / WebCodecs with game audio mixed in. The ISO timestamp is in the HUD top right (art project §2.1).
+- **Settings and rides:** settings in browser storage, with account sync via the backend (Phase 5). FIT export as a download; Strava upload through the backend (§2.8).
+- **Hosting:** static app + package CDN + game server endpoints, behind the same domain as the web companion. Single sign-on with the account (OIDC, §9). COOP / COEP headers for wasm threads. A strict CSP.
+
+#### 10C – Performance budget
+
+- **Download:** initial app (wasm + assets) ≤ 30 MB compressed, cached; world tiles on demand. First ride within 30 s on a 50 Mbit/s line.
+- **Frame rate:** 60 fps at 1080p on a mid-range laptop GPU in Chrome; 30 fps minimum on WebGL2 / phones (lower quality preset).
+- **Memory:** ≤ 1.5 GB tab memory with a streamed world.
+
+#### 10D – Riding without Web Bluetooth (Safari / iOS / Firefox)
+
+1. **Virtual power:** keyboard / gamepad / on-screen power (as in the desktop's virtual trainer). Always available, also for spectators and tours.
+2. **Phone or desktop as a sensor bridge:** the native app (desktop, or a future mobile app) connects to the trainer over BLE and relays the sensor samples through the backend to the browser session (both logged in to the same account). The server already takes timestamped `SensorSample`s (§6.1), so the bridge is a thin relay. Trainer control (ERG / SIM) goes back the same way.
+3. **Third-party iOS browsers with Bluetooth** (e.g. Bluefy): possible, but not supported officially.
+
+#### 10E – Milestones (proposal)
+
+- **B1 – Wasm build:** `apps/web` compiles. Bevy runs on WebGPU with a test route and the local server in the browser; virtual power. CI builds it.
+- **B2 – Worlds over HTTP:** tile streaming, verification, OPFS cache, loading screen, memory budget.
+- **B3 – Multiplayer:** WebTransport endpoint on the server, browser client joins the same sessions as desktop riders.
+- **B4 – Devices:** `WebBluetoothBackend` (FTMS, Cycling Power, CSC, Heart Rate, Wahoo), ERG / SIM control.
+- **B5 – Audio and voice:** Web Audio game audio, LiveKit voice, mute hotkeys.
+- **B6 – UI parity:** menus, settings, HUD, console permissions, gamepad, captures with timestamps, FIT download.
+- **B7 – Sensor bridge** (10D.2) and WebGL2 fallback quality presets.
+- **B8 – Hosting and release:** domain, CDN, certificates, CSP / COOP / COEP, account sign-on, browser test matrix.
+
+**Unit tests:**
+
+- WebTransport framing and server endpoint loopback tests (native, like the QUIC tests);
+- tile range-request planner and cache eviction;
+- package verification on streamed chunks;
+- the Web Bluetooth `GattLink` against the existing protocol mocks;
+- bridge relay ordering and timestamps;
+- EXIF / JPEG writer;
+- MediaRecorder / audio mix glue kept thin, with pure logic tested natively.
+
+**Browser tests:** headless Chromium (`wasm-bindgen-test`, Playwright) for start-up, a ride on the test route and a screenshot. A smoke matrix of Chrome / Edge / Firefox / Safari on the build machines (the Mac for Safari, Windows for Edge).
+
+#### 10F – Open questions (for the user)
+
+- **Q1 – Target browsers:** Chromium only for riding with a trainer (desktop + Android), and Safari / iOS / Firefox with virtual power and the bridge, OK?
+- **Q2 – Sensor bridge:** worth building (10D.2)? It is the only way to ride with a trainer on iPad / iPhone in a browser before a native iOS app exists.
+- **Q3 – Priority vs. other phases:** after Phases 8 / 9, or earlier (e.g. B1–B3 as a "try it in the browser" demo)?
+- **Q4 – Hosting:** where (own servers, a CDN provider)? World packages are large (Black Forest 260 MB), so CDN traffic costs money.
+- **Q5 – Anonymous access:** may people ride without an account (single-player demo), or is login required?
+- **Q6 – Same app or a lighter "web edition"?** Full parity, or a reduced feature set (smaller worlds, lower quality) for faster loading?
+
+---
+
+### Phase 11 – VR mode (planning, 2026-11-13)
+
+**Goal:** ride Open Cycling World in a VR headset: Oculus / Meta Rift and Quest, Valve Index, HTC Vive, Pico, Varjo and other vendors. The rider sits on the trainer, sees the world in stereo with head tracking and the own bike and hands in front of them, and keeps every feature: multiplayer, voice (spatial), workouts, the time and weather machines.
+
+#### 11A – Platform facts (as found 2026-11-13; re-check before starting)
+
+- **OpenXR** (Khronos) is the one cross-vendor API. Every current PC-VR runtime implements it: Meta's Quest Link / Oculus PC app (Rift, Rift S, Quest via Link / Air Link), SteamVR (Index, Vive, Pico, Quest via Steam Link, many others), Varjo, Pimax. On Linux: **Monado** (open source), SteamVR, and **WiVRn / ALVR** for streaming to Quest / Pico. Coding against OpenXR alone covers all vendors. No vendor SDK (the old Oculus / LibOVR SDK is deprecated).
+- **Oculus Rift / Rift S:** discontinued hardware, still usable on Windows through the Meta PC app's OpenXR runtime. Never on Linux or macOS natively, though some of these headsets run through community drivers on Linux with limited support.
+- **Windows Mixed Reality** (HP Reverb, Samsung Odyssey…) was **removed in Windows 11 24H2** ([Road to VR](https://roadtovr.com/windows-11-drops-wmr-support-24h2/), [heise](https://heise.de/-9979921)). Only older Windows versions or community drivers on Linux / SteamVR can still use them; not a target.
+- **macOS:** no mainstream OpenXR runtime for PC VR, so **no VR on macOS**. Apple Vision Pro uses visionOS (no OpenXR); a native visionOS app is out of scope (like iOS, §1.3).
+- **Standalone headsets** (Quest, Pico): option 1 is **PC VR streaming** (Link / Air Link, Steam Link, Virtual Desktop, WiVRn, ALVR), so no extra build. Option 2 is a native **Android OpenXR** build (Quest / Pico store): future, like the mobile apps.
+- **Browser:** **WebXR** (Quest Browser, Chrome with a PC headset) fits the browser app (Phase 10) later.
+- **Bevy integration:** the community crates `bevy_mod_xr` / `bevy_mod_openxr` (successor of the unmaintained `bevy_oxr`). The latest found is 0.4 for **Bevy 0.17** ([docs.rs](https://docs.rs/crate/bevy_mod_openxr/latest)), while OCW is on Bevy 0.20, so we need to port / fork it or write our own thin integration (the `openxr` crate + wgpu Vulkan / D3D12 interop, a stereo camera pair rendering into the OpenXR swapchain). To be decided by a spike (11D, X1).
+
+#### 11B – Design
+
+- **One app, a VR mode:** `ocw-desktop --vr` (and a menu switch) starts an OpenXR session. Without a runtime or headset the app runs as today, with a clear message. The **monitor** keeps a **spectator / mirror view**: chase camera or the headset view, for streaming, for the kiosk, and for the art project's captures (with the ISO timestamp). Captures come from the mirror, never from inside the headset.
+- **Engine independence:** XR lives behind a `ocw-render` plugin; the sim, server, protocol and devices don't change. Head pose and controllers are only view inputs. The server stays authoritative (§6.1).
+- **Camera:** first-person from the rider's head on the bike (rider height from the profile, §2.6). Head tracking is added on top of the seated riding pose: the head can look around and lean, but the bike's path stays physics-driven. Recentre with a button or after a long head offset.
+- **Own body:** the own bike, handlebar, arms, hands on the bars and legs pedalling at the real cadence, seen from the first-person view (the Phase 4 rig with IK). Optional: hands from controller or hand tracking if they leave the bars.
+- **HUD in VR:** world-space panels instead of a flat HUD:
+  - a **bike computer** on the stem (power, speed, cadence, HR, gradient, distance);
+  - a **head-locked minimum** (critical warnings only);
+  - **panels** for menus, workouts, the event leaderboard and junction arrows at road level ahead;
+  - the ISO timestamp on the mirror view.
+- **Input in VR:** hands are on the handlebar, so the main inputs are the **trainer / sensors** (power, cadence) and **steering by leaning the head** (optional, mapped to the existing lean steering, §5.2.1), handlebar buttons (BLE remotes, later), gamepad, voice commands (later), and controller pointer for menus (gaze + click as a fallback).
+- **Comfort** (motion sickness is the main risk; on a trainer pedalling helps, since the vection matches effort):
+  - stable horizon (no camera roll with the bike's lean by default);
+  - no head bob;
+  - smooth, rate-limited acceleration of the view;
+  - a **comfort vignette** in sharp turns, hard braking and steep descents (strength setting);
+  - always-visible cockpit (bike and bars) as a static reference;
+  - snap or smooth turning only in menus;
+  - a "seated / standing" calibration;
+  - fade to black on teleports, ride switches and U-turns.
+- **Performance:** stereo at the headset's native rate (72–120 Hz) costs roughly 2–3× the monitor budget.
+  - **Rendering:** single-pass stereo / multiview where wgpu supports it, fixed foveated rendering (and eye-tracked where the runtime offers it), MSAA instead of TAA (less smear in VR), and a **VR quality preset** (shorter view distance, fewer trees and shadows, lower LOD bias).
+  - **Frame budget:** stay under budget; runtime reprojection (ASW / motion smoothing) is a safety net, not the plan.
+  - **Targets:** 90 Hz on a GTX 1070 / RX 5700-class GPU with the VR preset, 72 Hz minimum.
+- **Audio:** game audio and **voice spatialised** with the head pose (the spatial audio of §7 already works with positions); the headset's audio device as the default output in VR.
+- **Multiplayer:** other riders see a VR rider normally; optionally their head turns follow the real head (cosmetic, sent as a small orientation in the protocol, only added fields).
+
+#### 11C – Supported devices (target matrix)
+
+| Headset | Runtime | OS | Status |
+|---|---|---|---|
+| Meta Quest 2 / 3 / 3S / Pro (Link / Air Link) | Meta PC app (OpenXR) | Windows | target |
+| Meta Quest (Steam Link / Virtual Desktop) | SteamVR / VD | Windows | target |
+| Meta Quest (WiVRn / ALVR) | WiVRn / ALVR (OpenXR) | Linux | target |
+| Oculus Rift / Rift S | Meta PC app (OpenXR) | Windows | supported (legacy hardware) |
+| Valve Index, HTC Vive / Vive Pro, Bigscreen Beyond, Pimax | SteamVR | Windows, Linux | target |
+| Pico 4 (streaming) | Pico Connect / SteamVR / ALVR | Windows, Linux | target |
+| Varjo | Varjo Base (OpenXR) | Windows | best effort |
+| WMR headsets | – | – | not supported (removed in Windows 11 24H2) |
+| Apple Vision Pro | visionOS | – | out of scope |
+| Standalone Quest / Pico (native Android build) | OpenXR on Android | Android | future |
+| WebXR | browser | – | with Phase 10 (future) |
+
+#### 11D – Milestones (proposal)
+
+- **X1 – Spike:** an OpenXR session from Bevy 0.20, comparing a port of `bevy_mod_openxr` with our own thin integration. A stereo view of the test route with head tracking on SteamVR (Linux, Monado / WiVRn) and the Meta runtime (Windows). Measure the frame time. Decide on the integration (spec entry).
+- **X2 – Riding in VR:** `--vr`, first-person camera on the bike, own body with IK, recentre, mirror view, VR quality preset, captures from the mirror.
+- **X3 – VR HUD and menus:** bike computer on the stem, world-space menus with controller / gaze input, junction arrows in the world.
+- **X4 – Comfort:** vignette, horizon lock, fades, calibration, settings page *VR comfort*.
+- **X5 – Audio and voice in VR:** head-relative spatial audio, the headset's audio device, voice positions.
+- **X6 – Head-lean steering** (optional) and handlebar remotes.
+- **X7 – Device matrix tests** (11C) and the performance tuning to the targets.
+- **X8 (future) – Native standalone build** (Android OpenXR for Quest / Pico) and **WebXR** in the browser app.
+
+**Unit tests** (no headset needed):
+
+- head-pose composition (bike pose + seated head + tracking offset, recentre);
+- the comfort vignette curve from turn rate / acceleration;
+- horizon lock;
+- world-space panel layout and hit testing;
+- IK hand / handlebar placement;
+- the head-lean → steering mapping;
+- quality-preset selection.
+
+**Integration tests:**
+
+- the OpenXR loader against **Monado's headless / simulated device** on Linux in CI (session start, frame loop, swapchain), so VR code is exercised without hardware;
+- screenshots of the mirror view with the scene harness.
+
+#### 11E – Open questions (for the user)
+
+- **Q1 – Which headsets do you have** (or can borrow) for testing? The spike needs at least one real headset; Monado covers CI only.
+- **Q2 – Linux VR:** target it (SteamVR / Monado / WiVRn, works with Index and with Quest via WiVRn), or Windows first?
+- **Q3 – Integration:** fork / port `bevy_mod_openxr` to Bevy 0.20 (faster, external dependency that lags Bevy), or our own thin OpenXR layer (more work, fully under our control)? Decided after X1.
+- **Q4 – Head-lean steering:** wanted, or keep steering on keys / gamepad / autodrive?
+- **Q5 – Native standalone (Quest / Pico store) and WebXR:** later, or not at all?
+- **Q6 – Priority:** where does VR go relative to Phases 8–10?
 
 ---
 
