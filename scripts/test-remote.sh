@@ -174,7 +174,7 @@ s=$(mktemp -d)
 ) || fail=1
 rm -rf "$s"
 
-# The Windows sync end to end (v2.84) against a simulated machine: `ssh`
+# The Windows sync end to end (v2.94) against a simulated machine: `ssh`
 # is a bash function that plays the PowerShell side – the manifest check
 # (header naming the checkout, file exists with the manifest's size and
 # mtime) and, after GNU tar -xm, the manifest write (only when tar
@@ -252,7 +252,7 @@ rm -rf "$s"
   sync
   check "$(sent)/$(cat "$root/crates/a/lib.rs")/$([ -e "$root/Cargo.toml" ] && echo there)" "sending 2 changed of 4 files/code/there" "windows: files deleted there are re-sent"
   # Stale state: a manifest of another checkout (a copied directory) or of
-  # the format before v2.84 is not trusted, even with the files there.
+  # the format before v2.94 is not trusted, even with the files there.
   for stale in other headerless empty; do
     case $stale in
       other) sed -i '1s/.*/# ocw-sync v2\tB:\\src\\OCW-other/' "$root/.ocw-sync/manifest.tsv" ;;

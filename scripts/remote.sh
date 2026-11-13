@@ -252,7 +252,7 @@ ps_encoded() { printf 'powershell -NoProfile -NonInteractive -EncodedCommand %s'
 # checkout ("# ocw-sync v2<TAB>REPO") and, per file sent, its SHA-1 and the
 # size and mtime (ticks) it got there. This prints "sha<TAB>path" for the
 # entries whose file still exists there, unchanged; a manifest without that
-# header (another checkout's, or the format before v2.84) counts as none.
+# header (another checkout's, or the format before v2.94) counts as none.
 read -r -d '' win_manifest_ps <<'EOF' || true
 $r = @REPO@; $m = Join-Path $r '.ocw-sync\manifest.tsv'
 if (Test-Path -LiteralPath $m) {
@@ -289,7 +289,7 @@ EOF
 # machine: `win_changed VALID HASHES` prints the paths of the HASHES lines
 # (sha<TAB>path) that are not in VALID (the same format, from the machine).
 # VALID is read with getline: the `NR == FNR` idiom took HASHES for VALID
-# when VALID was empty (a new checkout), so nothing was sent (v2.84).
+# when VALID was empty (a new checkout), so nothing was sent (v2.94).
 win_changed() { awk -F '\t' -v vf="$1" 'BEGIN { while ((getline l < vf) > 0) v[l] = 1; close(vf) } !($0 in v) { print $2 }' "$2"; }
 
 # `win_send LIST`: sends the snapshot's files in LIST as a tar stream and
@@ -311,7 +311,7 @@ win_send() {
 # size and mtime, the file still existing) are sent, and unpacked with -m
 # (mtime = now) for the same reason as rsync_sync_opts. The first sync into
 # a checkout sends everything (it has no manifest yet). Files deleted here
-# are removed there with Remove-Item. Safety net (v2.84): when files of the
+# are removed there with Remove-Item. Safety net (v2.94): when files of the
 # snapshot (e.g. Cargo.toml, rust-toolchain.toml) are missing there after
 # the sync, the whole tree is sent once more; still missing = failed sync.
 sync_tree_windows() {
