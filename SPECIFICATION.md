@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.84 – November 2026
+Version 2.85 – November 2026
 
 | Version | Change |
 |---|---|
@@ -65,6 +65,7 @@ Version 2.84 – November 2026
 | 2.44 | Phase 8 decisions: no commercial release, 8A stays (Q2); orthophoto corridor size acceptable (Q4); seasonal variants (Q5); own photos postponed (Q6); Mapillary CC BY-SA, reference by eye only (Q7); 3D buildings: swissBUILDINGS3D 3.0 (Opendata BY) to confirm, LGL LoD2 probably not open, ask LGL (Q8); all texture areas in parallel (Q10) |
 | 2.45 | Licensing (§13): no licence change for now – the code stays MIT / Apache-2.0 (a switch to CC BY-SA was considered and declined) |
 | 2.46 | Phase 8 T1 / T2 (§4.6, §8.1, §13, §14 Phase 8): material library of 21 CC0 materials (ambientCG, Poly Haven) – ground, roads, houses, volcanic ground for Tenerife – not in git but pinned by URL + SHA-256 in `assets/materials.toml`, fetched and converted to KTX2 (BC3 / BC5, 1024², mipmapped) by `scripts/fetch-materials.sh` into the git-ignored `assets/materials/` and shipped beside the binary (AppImage, macOS bundle, Windows zip, test deployment); licence rule of Phase 8A shared by the model and material validators; terrain drawn with the materials blended by the splat map (weights at cell corners, noise warp, height blend, rock and triplanar on slopes, macro scale, fade to the colour map in the materials' mean colours), roads by OSM `surface` (new package section `RSRF`) with category fallback; regional material sets by the package's time zone (`[[region]]` in the manifest: the volcanic set of the Canary Islands with lava, ash / cinder, black sand and pine needles); regional tint hook neutral; reference boards `art/reference/` |
+| 2.85 | Decision from the build dashboard (2026-11-14): Phase 11 Q6 – VR comes at the end, after the other phases |
 | 2.84 | Decision from the build dashboard (2026-11-14): Phase 11 Q5 – a native standalone VR version (Quest / Pico) and WebXR are wanted; planned as a new phase (Phase 14) |
 | 2.83 | Decision from the build dashboard (2026-11-14): Phase 11 Q4 – no head-lean steering in VR; steering stays on keys / gamepad / autodrive |
 | 2.82 | God mode as built to 2.67 (§14 Phase 13, 13I): the plane model (`ocw_sim::god::FlightModel::Plane`, the hover model kept as `controls.god_flight = hover`), the coordinated turn `40 m/s² × tan(bank) / v` (bank ≤ 55°, ≤ 1.2 rad/s), the throttle 15 … 100 % of the speed law's cap (≥ 3 m/s), the nose ≤ 20°, the look-around easing back after 1.5 s (L or the middle mouse button at once), the camera rolling with half the bank; + / − by the typed character, learnt per key; touch: the left half steers, the right half looks; no saddle cloth; the bird-like wingbeat (shoulder, wrist and three groups of primaries per wing; 1.2 … 2.1 Hz; flap-gliding: 3 … 5 beats, then 0.6 … 1.4 s gliding; a 40 % downstroke; the hand 10 % of a beat behind; 0.9 s of braking flaps when landing); `camera.orbit` also orbits the flight camera (videos) |
@@ -2902,7 +2903,7 @@ Attribution of the provider used appears on the credits screen and in the weathe
 - **Q3 – Integration: decided (2026-11-14, dashboard): both, compared** – the X1 spike builds **both** variants, a port / fork of `bevy_mod_openxr` to Bevy 0.20 and our own thin OpenXR layer (the `openxr` crate + wgpu Vulkan / D3D12 interop), and tests them side by side (and different versions of the crates) on the Rift CV1 (Windows) and Monado / SteamVR (Linux): frame time, latency, stability, code size, maintenance. The comparison goes into the spec; the winner is the integration from X2 on.
 - **Q4 – Head-lean steering: decided (2026-11-14, dashboard):** **no head-lean steering** – steering in VR stays on the keys, the gamepad and autodrive, as on the desktop (a first answer "wanted" was replaced a few seconds later by this one).
 - **Q5 – Native standalone (Quest / Pico store) and WebXR: decided (2026-11-14, dashboard):** **yes** – planned as its own phase (§14 Phase 14 – Standalone VR), not only as the future item X8.
-- **Q6 – Priority:** where does VR go relative to Phases 8–10?
+- **Q6 – Priority: decided (2026-11-14, dashboard):** **at the end** – VR (Phase 11, and the standalone Phase 14) comes after the other phases.
 
 ### Phase 12 – Collisions, crashes and damage (planning, 2026-11-13)
 
