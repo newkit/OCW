@@ -49,6 +49,15 @@ pub const SEA_PLANE_Y: f32 = -0.05;
 const SEA_MARGIN_M: f32 = 100_000.0;
 
 const ROCK: [f32; 3] = [0.5, 0.48, 0.44];
+/// The tree crowns seen from afar (sRGB): the mean crown colour of
+/// `package::tree_arrays`, shaded (their sides and shadows).
+pub const CANOPY: [f32; 3] = [0.11, 0.25, 0.11];
+
+/// How much of the ground the trees of a land class hide from afar
+/// (their chance per cell, `package::tree_density`, seen at a slant).
+pub fn tree_cover(class: LandClass) -> f32 {
+    (crate::package::tree_density(class).0 * 1.1).min(0.95)
+}
 
 /// Samples of the package grid per far grid step: the largest divisor of
 /// the cells per side not above [`FAR_SPACING_M`] (so the far vertices are
@@ -127,6 +136,10 @@ pub fn far_tile_arrays(pkg: &WorldPackage, tile: &Tile, look: &TileLook, keep: K
                             if !matches!(class, LandClass::Water | LandClass::Glacier) {
                                 let t = rock_t(class);
                                 col = std::array::from_fn(|j| col[j] + (rock[j] - col[j]) * t);
+                                // The far tiles have no trees: their crowns
+                                // tint the ground (not on rock faces).
+                                let w = tree_cover(class) * (1.0 - t);
+                                col = std::array::from_fn(|j| col[j] + (CANOPY[j] - col[j]) * w);
                             }
                             for (acc, c) in sum.iter_mut().zip(col) {
                                 *acc += c / 16.0;
@@ -660,11 +673,16 @@ mod tests {
         });
         assert!(has_sea(&p));
         let m = far_tile_arrays(&p, &p.tiles[&key], &TileLook::default(), None);
-        let forest = linear(land_colour(LandClass::Forest));
         let water = linear(land_colour(LandClass::Water));
         let close = |a: [f32; 4], b: [f32; 4]| (0..3).all(|j| (a[j] - b[j]).abs() < 1e-3);
         // Vertex (2, 0) is in the forest, (8, 0) in the water, (5, 0) on the
         // border between them: half and half.
+        // The forest far away: ground under the crowns.
+        let w = tree_cover(LandClass::Forest);
+        let forest = linear(std::array::from_fn(|j| {
+            land_colour(LandClass::Forest)[j] * (1.0 - w) + CANOPY[j] * w
+        }));
+        assert!(w > 0.9);
         assert!(close(m.colors[2], forest));
         assert!(close(m.colors[8], water));
         assert!((0..3).all(|j| (m.colors[5][j] - (forest[j] + water[j]) / 2.0).abs() < 0.02));
