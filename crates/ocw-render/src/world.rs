@@ -189,7 +189,7 @@ pub(crate) fn spawn_world(
     commands.spawn((
         SceneEntity,
         FlatOverlay,
-        Mesh3d(meshes.add(center_line_mesh(&view, 0.02))),
+        Mesh3d(meshes.add(center_line_mesh(&view, CENTRE_LINE_LIFT_M))),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: Color::srgb(0.95, 0.95, 0.9),
             perceptual_roughness: 0.6,
@@ -212,24 +212,43 @@ pub fn surface_color(surface: ocw_world::Surface) -> Color {
     }
 }
 
-fn ribbon_mesh(view: &RideView, width: f32) -> Mesh {
+/// Where the road ribbon has its cross-sections: every `step` metres and
+/// at every point of the route, so the surface follows the route's
+/// profile exactly (riders stand on that profile; a chord across a crest
+/// or a dip would float or bury their tyres).
+fn ribbon_distances(route: &Route, step: f64) -> Vec<f64> {
+    let len = route.length();
+    let mut d: Vec<f64> = (0..=(len / step).ceil() as usize)
+        .map(|i| (i as f64 * step).min(len))
+        .collect();
+    let mut along = 0.0;
+    for w in route.points().windows(2) {
+        along += (w[1][0] - w[0][0]).hypot(w[1][2] - w[0][2]);
+        d.push(along.min(len));
+    }
+    d.sort_by(f64::total_cmp);
+    d.dedup_by(|a, b| (*a - *b).abs() < 1e-3);
+    d
+}
+
+pub(crate) fn ribbon_mesh(view: &RideView, width: f32) -> Mesh {
     let route = &view.route;
-    let step = 2.0;
-    let n = (route.length() / step).ceil() as usize;
+    let distances = ribbon_distances(route, 2.0);
+    let n = distances.len() - 1;
     let mut positions = Vec::with_capacity((n + 1) * 2);
     let mut normals = Vec::with_capacity((n + 1) * 2);
     let mut uvs = Vec::with_capacity((n + 1) * 2);
     let mut colors = Vec::with_capacity((n + 1) * 2);
-    for i in 0..=n {
-        let d = (i as f64 * step).min(route.length());
+    for &d in &distances {
         let p = route.sample(d);
         let c = surface_color(route.surface_at(d))
             .to_linear()
             .to_f32_array();
         colors.extend([c, c]);
         let half = f64::from(width / 2.0);
-        let left = to_vec3(p.offset_position(-half));
-        let right = to_vec3(p.offset_position(half));
+        let lift = Vec3::Y * crate::ROAD_SURFACE_LIFT_M;
+        let left = to_vec3(p.offset_position(-half)) + lift;
+        let right = to_vec3(p.offset_position(half)) + lift;
         positions.push(left.to_array());
         positions.push(right.to_array());
         normals.extend([[0.0, 1.0, 0.0]; 2]);
@@ -273,7 +292,8 @@ fn road_edge_mesh(view: &RideView, width: f32, depth: f32) -> Mesh {
         let first = positions.len() as u32;
         for i in 0..=n {
             let p = route.sample((i as f64 * step).min(route.length()));
-            let top = to_vec3(p.offset_position(side * f64::from(width / 2.0)));
+            let top = to_vec3(p.offset_position(side * f64::from(width / 2.0)))
+                + Vec3::Y * crate::ROAD_SURFACE_LIFT_M;
             positions.push(top.to_array());
             positions.push((top - Vec3::Y * depth).to_array());
             let r = p.right();
@@ -300,8 +320,11 @@ fn road_edge_mesh(view: &RideView, width: f32, depth: f32) -> Mesh {
     mesh
 }
 
-/// Centre line lift over package roads, whose surface is drawn 2 cm above
-/// the profile (the same height would z-fight and hide parts of the line).
+/// Centre line lift above the profile: 2 cm above the road surface
+/// ([`crate::ROAD_SURFACE_LIFT_M`]; the same height would z-fight).
+const CENTRE_LINE_LIFT_M: f32 = crate::ROAD_SURFACE_LIFT_M + 0.02;
+/// Over package roads: more clearance (the line follows the route's
+/// samples, not the package's road strips).
 const CENTRE_LINE_LIFT_PACKAGE_M: f32 = 0.06;
 
 /// Dashed centre line: 3 m dash, 6 m gap, `lift` above the road.

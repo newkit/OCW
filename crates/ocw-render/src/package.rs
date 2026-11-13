@@ -463,7 +463,7 @@ pub fn skirt_depth(
     bridges: &[&ocw_world::bridges::Bridge],
     p: [f32; 3],
 ) -> f32 {
-    if crate::bridges::on_deck(bridges, [p[0], p[1] - 0.02, p[2]]) {
+    if crate::bridges::on_deck(bridges, [p[0], p[1] - crate::ROAD_SURFACE_LIFT_M, p[2]]) {
         return 0.0;
     }
     // No terrain there (beyond the package's tiles): the plain skirt.
@@ -511,7 +511,7 @@ pub fn road_arrays_with(
             let right = Vec3::new(-dir.z, 0.0, dir.x);
             for side in [-half, half] {
                 m.positions
-                    .push((p[i] + right * side + Vec3::Y * 0.02).to_array());
+                    .push((p[i] + right * side + Vec3::Y * crate::ROAD_SURFACE_LIFT_M).to_array());
                 m.normals.push([0.0, 1.0, 0.0]);
                 m.colors.push(colour);
                 m.uvs.push([side, along]);
@@ -535,7 +535,7 @@ pub fn road_arrays_with(
                     .with_y(0.0)
                     .normalize_or_zero();
                 let out = Vec3::new(-dir.z, 0.0, dir.x) * side;
-                let top = p[i] + out * half + Vec3::Y * 0.02;
+                let top = p[i] + out * half + Vec3::Y * crate::ROAD_SURFACE_LIFT_M;
                 let depth = skirt(top.to_array());
                 m.positions.push(top.to_array());
                 m.positions.push((top - Vec3::Y * depth).to_array());

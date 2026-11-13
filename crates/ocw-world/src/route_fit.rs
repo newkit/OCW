@@ -16,6 +16,12 @@
 /// that differs more somewhere is fitted.
 pub const FIT_TOLERANCE_M: f64 = 0.25;
 
+/// A route closer than this to the road strips everywhere stands on them
+/// (m). Any larger difference is moved onto the strips, also below
+/// [`FIT_TOLERANCE_M`] (without a warning): the riders' tyres stand on the
+/// drawn strips, to the millimetre (spec §2.5, wheel/road contact).
+pub const ON_ROAD_M: f64 = 0.001;
+
 /// Largest change of the height offset from one route point to the next
 /// with a strip under it (m); a strip further off is another road.
 pub const MAX_STEP_M: f64 = 3.0;
@@ -35,7 +41,9 @@ pub struct HeightFit {
     pub worst_m: f64,
     /// Mean route − road before fitting (m).
     pub mean_m: f64,
-    /// Whether the heights were changed (worst above [`FIT_TOLERANCE_M`]).
+    /// Whether the route was off the roads (worst above
+    /// [`FIT_TOLERANCE_M`]; worth a warning). The heights are moved onto
+    /// the strips whenever the worst is above [`ON_ROAD_M`].
     pub fitted: bool,
 }
 
@@ -54,7 +62,7 @@ pub fn fit_heights(
     roads: impl Fn(f64, f64, Option<[f64; 2]>) -> Vec<f64>,
 ) -> HeightFit {
     let fit = fit_slice(points, &roads, false);
-    if fit.fitted {
+    if fit.worst_m > ON_ROAD_M {
         *points = densify(points, DENSE_M);
         fit_slice(points, &roads, true);
     }
@@ -135,7 +143,7 @@ fn fit_slice(
         -known.iter().map(|(_, o)| o).sum::<f64>() / on_roads as f64
     };
     let fitted = worst_m > FIT_TOLERANCE_M;
-    if fitted && apply {
+    if worst_m > ON_ROAD_M && apply {
         let mut k = 0; // known[k] is the next known point at or after i
         for i in 0..n {
             while k < known.len() && known[k].0 < i {
@@ -254,6 +262,24 @@ mod tests {
         assert_eq!(pts.len(), 11);
         for p in &pts {
             assert!((p[1] - crest(p[0], 0.0, None)[0]).abs() < 1e-9, "{p:?}");
+        }
+    }
+
+    /// Regression (wheels in the road, 2026-11-13): a route a few
+    /// centimetres off the strips is not worth a warning, but its riders
+    /// would stand that far in or above the drawn road.
+    #[test]
+    fn a_route_slightly_off_the_roads_is_moved_onto_them_quietly() {
+        let strip = |x: f64, _z: f64, _d: Option<[f64; 2]>| vec![100.0 + 0.05 * x];
+        let mut pts = route();
+        for p in &mut pts {
+            p[1] -= 0.03;
+        }
+        let fit = fit_heights(&mut pts, strip);
+        assert!(!fit.fitted, "{fit:?}");
+        assert!((fit.worst_m - 0.03).abs() < 1e-9, "{fit:?}");
+        for p in &pts {
+            assert!((p[1] - strip(p[0], p[2], None)[0]).abs() < 1e-9, "{p:?}");
         }
     }
 
