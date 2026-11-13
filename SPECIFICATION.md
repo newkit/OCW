@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.92 – November 2026
+Version 2.93 – November 2026
 
 | Version | Change |
 |---|---|
@@ -65,6 +65,7 @@ Version 2.92 – November 2026
 | 2.44 | Phase 8 decisions: no commercial release, 8A stays (Q2); orthophoto corridor size acceptable (Q4); seasonal variants (Q5); own photos postponed (Q6); Mapillary CC BY-SA, reference by eye only (Q7); 3D buildings: swissBUILDINGS3D 3.0 (Opendata BY) to confirm, LGL LoD2 probably not open, ask LGL (Q8); all texture areas in parallel (Q10) |
 | 2.45 | Licensing (§13): no licence change for now – the code stays MIT / Apache-2.0 (a switch to CC BY-SA was considered and declined) |
 | 2.46 | Phase 8 T1 / T2 (§4.6, §8.1, §13, §14 Phase 8): material library of 21 CC0 materials (ambientCG, Poly Haven) – ground, roads, houses, volcanic ground for Tenerife – not in git but pinned by URL + SHA-256 in `assets/materials.toml`, fetched and converted to KTX2 (BC3 / BC5, 1024², mipmapped) by `scripts/fetch-materials.sh` into the git-ignored `assets/materials/` and shipped beside the binary (AppImage, macOS bundle, Windows zip, test deployment); licence rule of Phase 8A shared by the model and material validators; terrain drawn with the materials blended by the splat map (weights at cell corners, noise warp, height blend, rock and triplanar on slopes, macro scale, fade to the colour map in the materials' mean colours), roads by OSM `surface` (new package section `RSRF`) with category fallback; regional material sets by the package's time zone (`[[region]]` in the manifest: the volcanic set of the Canary Islands with lava, ash / cinder, black sand and pine needles); regional tint hook neutral; reference boards `art/reference/` |
+| 2.93 | Decision from the build dashboard (2026-11-14): Phase 12 Q7 – gates and barriers on roads hidden by default, a setting shows them (never solid on the routed road) |
 | 2.92 | Decision from the build dashboard (2026-11-14): Phase 12 Q6 – damage and injuries carry over between rides; bike repairs are paid in hearts in the workshop, injuries heal over time |
 | 2.91 | Phase 14 planned: standalone VR (§14 Phase 14, answer to Phase 11 Q5): a native Android OpenXR app for Meta Quest 2 / 3 / 3S / Pro and Pico 4 / 4 Ultra (Khronos loader, one APK, `apps/android` with `cargo-ndk`, the Phase 11 X1 integration), WebXR in the browser app (WebGL2 + multiview until the WebXR/WebGPU binding ships); platform facts as of 2026-11-14 (direct BLE to FTMS trainers works on Quest – store permission review –, no Web Bluetooth in the Quest Browser, so WebXR rides through the sensor bridge); standalone quality tier for XR2 (72 Hz Quest 2, 90 Hz Quest 3), mobile LOD set, world download on the device, QUIC / WebTransport, LiveKit, Android BLE backend, passthrough modes, sideload → Meta Horizon Store → Pico Store; milestones V1–V9, open questions Q1–Q5 |
 | 2.90 | Decision from the build dashboard (2026-11-14): Phase 12 Q5 – falls go straight to a ragdoll with a physics engine (Avian or Rapier, chosen in K2), client-side visuals only |
@@ -3039,7 +3040,7 @@ Attribution of the provider used appears on the credits screen and in the weathe
 - **Q4 – Workouts:** keep the ERG step running while the rider is down (proposal), or pause the step until the rider rides again?
 - **Q5 – Falls: decided (2026-11-14, dashboard):** **straight to a ragdoll with a physics engine** (no scripted fall first). The engine (Avian or Rapier – both MIT / Apache-2.0) is chosen by a short spike in K2; it runs only on the client for the visual fall of the rider and the bike (the crash itself, its timing and the time down stay server-authoritative, 12B / 12C), so riders see plausible but not identical falls.
 - **Q6 – Persistence: decided (2026-11-14, dashboard):** injuries and bike damage **carry over between rides** – a career / repair-shop mode: bike damage stays until it is repaired in the workshop, paid in hearts (§14 Phase 4, 4E: `ceil(price × (1 − condition) × 0.3)` ♥), and injuries heal over real time and easy riding (12E recovery). With `ride.damage` off nothing accumulates; anonymous riders (Phase 10 Q5) never keep damage. This also unblocks Phase 4 W6.
-- **Q7 – Gates and barriers on roads:** OSM often has gates or bollards on through routes (often open in reality). Make them solid (realistic but annoying), solid only in wild mode, or only show them (proposal: shown, not solid on the routed road)?
+- **Q7 – Gates and barriers on roads: decided (2026-11-14, dashboard):** gates, bollards and barriers on roads are **not shown by default** (and never block the routed road); a setting (`display.road_barriers`, Settings → Display) turns them on. When shown they are drawn but not solid on the routed road; off the road (wild mode) they are solid like other obstacles (12B).
 
 ### Phase 13 – God mode: flying through the world as a unicorn (planned 2026-11-13; G1 – G4 done, v2.61 – see 13I)
 
