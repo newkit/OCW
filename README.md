@@ -518,7 +518,8 @@ console (saved at once), or by editing the file; `get` lists them all:
 | `ride.record` | on / off (on): save rides as FIT (`--record`) | next start |
 | `audio.master` | 0 to 100 (80): master volume in %, scales every bus | at once |
 | `audio.effects` | 0 to 100 (80): game sounds (bike, wind, tyres, menu, event and workout cues) | at once |
-| `audio.music` | 0 to 100 (60): music (none yet) | at once |
+| `audio.others` | 0 to 100 (80): the other riders' bikes (bots, remote riders), a part of the effects (master × effects × others) | at once |
+| `audio.music` | 0 to 100 (60): music (none yet; not on the Audio page until there is) | at once |
 | `audio.voice` | 0 to 100 (100): voice chat (Phase 6) | at once |
 | `audio.mute` | on / off (off): mute all sound | at once |
 | `audio.output` | a device name from `audio.devices`, or `default` (default) | at once |
@@ -547,8 +548,11 @@ as soon as it is back (the device list is re-read every 3 s). Without any
 output device (headless runs, CI) the app runs silently and logs
 `audio: no audio output: …`; `--no-audio` (and frame capture with `--capture`)
 opens none. Videos still get the sound: frame capture renders it exactly in
-step with the frames into `DIR/audio.wav`. *Settings → Audio* has the volumes (Enter plays a test sound on
-that bus), Mute and the Output (← / → step through `default` and the
+step with the frames into `DIR/audio.wav`. The other riders' bikes are heard
+around the own rider's head (stereo by direction, fading with distance, gone
+beyond about 70 m; the nearest 8 each with their own sound, the rest as one
+group layer). *Settings → Audio* has the volumes (master, effects, other riders,
+voice; Enter plays a test sound on that bus), Mute and the Output (← / → step through `default` and the
 devices).
 
 Precedence: defaults < `settings.toml` < `autoexec.cfg` < command-line options.
@@ -650,12 +654,12 @@ for now).
 | `menu [open\|close\|toggle\|up\|down\|left\|right\|select\|back\|tab-next\|tab-prev]` | Open, close or drive the in-game menu (Esc / Start) |
 | `quit` | Exit the app |
 | **Audio** (spec §3.3) | |
-| `audio.volume master\|effects\|music\|voice PERCENT` | Set a volume for this session (`set audio.effects 60` also saves it) |
+| `audio.volume master\|effects\|others\|music\|voice PERCENT` | Set a volume for this session (`set audio.effects 60` also saves it) |
 | `audio.mute [on\|off\|toggle]` | Mute or unmute all sound (`set audio.mute on` saves it) |
 | `audio.output NAME\|default` | Play on this output device (`set audio.output "NAME"` saves it); a missing device falls back to the default until it appears |
 | `audio.devices` | List the output devices (`*` = playing now) and read the list again |
 | `audio.status` | The output playing now and the mix |
-| `audio.play SOUND` | Play a sound: `move`, `value`, `confirm`, `back`, `beep`, `go`, `finish`, `step`, `shift`, `test`, `test-music`, `test-effects`, `test-voice` |
+| `audio.play SOUND` | Play a sound: `move`, `value`, `confirm`, `back`, `beep`, `go`, `finish`, `step`, `shift`, `test`, `test-music`, `test-effects`, `test-voice`, `test-others` |
 | **Rider** | |
 | `rider.autodrive on\|off` | Autodrive (key A) |
 | `rider.wild on\|off` | Wild mode (key W; on also switches autodrive off) |
