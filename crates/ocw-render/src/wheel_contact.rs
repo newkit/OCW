@@ -215,6 +215,7 @@ fn strips_of(route: &Route, width: f32) -> Vec<RoadStrip> {
             .iter()
             .map(|p| [p[0] as f32, p[1] as f32, p[2] as f32])
             .collect(),
+        surface: ocw_world::RoadSurface::Asphalt,
     }]
 }
 
