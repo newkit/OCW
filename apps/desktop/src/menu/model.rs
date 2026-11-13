@@ -62,8 +62,6 @@ pub enum Effect {
 pub enum Page {
     Top,
     Ride,
-    /// Ride → Change ride: world packages and test routes (M3).
-    RideChange,
     Navi,
     Settings,
     /// A Settings sub page, the Workshop or a list of the Ride / Navi
@@ -88,8 +86,6 @@ pub enum ItemKind {
     Back,
     /// Run a console command line; `close` = close the menu afterwards.
     Command { line: &'static str, close: bool },
-    /// Ask first ([`Page::ConfirmSwitch`]), then run the line and close.
-    Ask(&'static str),
     /// Ask first ([`Page::ConfirmEvent`]), then start the event and close.
     AskEvent(&'static str),
     /// Run the asked line ([`Menu::pending`]) and close the menu.
@@ -108,17 +104,21 @@ const fn item(label: &'static str, kind: ItemKind) -> Item {
 
 const BACK: Item = item("Back", ItemKind::Back);
 
+/// The top page (spec §3.2.1): seven items, the ten-foot maximum, so
+/// World took Restart's place (Restart is on the Ride page now).
 const TOP_ITEMS: &[Item] = &[
     item("Resume", ItemKind::Resume),
     item("Ride", ItemKind::Open(Page::Ride)),
+    // The world, its data and its conditions (time, weather).
+    item("World", ItemKind::Open(Page::Sub(sub::Page::WorldHome))),
     item("Workshop", ItemKind::Open(Page::Sub(sub::Page::Workshop))),
     item("Navi", ItemKind::Open(Page::Navi)),
     item("Settings", ItemKind::Open(Page::Settings)),
-    item("Restart", ItemKind::Open(Page::ConfirmRestart)),
     item("Quit", ItemKind::Open(Page::ConfirmQuit)),
 ];
 /// Ride page: local events (spec §2.3), started as console commands after
-/// a confirmation; the menu closes so the countdown is visible.
+/// a confirmation (the menu closes so the countdown is visible), workouts
+/// and Restart. Another ride: World → Change world.
 const RIDE_ITEMS: &[Item] = &[
     item(
         "Race: 1 lap / 5 km, 5 bots",
@@ -136,24 +136,8 @@ const RIDE_ITEMS: &[Item] = &[
             close: true,
         },
     ),
-    item("Change ride", ItemKind::Open(Page::RideChange)),
     item("Workouts", ItemKind::Open(Page::Sub(sub::Page::Workouts))),
-    BACK,
-];
-/// Ride → Change ride (M3): another world, route or test route.
-const CHANGE_ITEMS: &[Item] = &[
-    item(
-        "World packages",
-        ItemKind::Open(Page::Sub(sub::Page::Worlds)),
-    ),
-    item(
-        "Test route: Hills",
-        ItemKind::Ask("ride.switch --route hills"),
-    ),
-    item(
-        "Test route: Loop",
-        ItemKind::Ask("ride.switch --route loop"),
-    ),
+    item("Restart", ItemKind::Open(Page::ConfirmRestart)),
     BACK,
 ];
 const NAVI_ITEMS: &[Item] = &[
@@ -165,11 +149,7 @@ const NAVI_ITEMS: &[Item] = &[
     ),
     // The Strava account page lives here (Settings is full, ten-foot rule).
     item("Strava", ItemKind::Open(Page::Sub(sub::Page::Strava))),
-    // Spec §14 Phase 9, 9D: date, time and time speed of the world.
-    item(
-        "Time machine",
-        ItemKind::Open(Page::Sub(sub::Page::TimeMachine)),
-    ),
+    // The time machine moved to World → Time (a condition of the world).
     BACK,
 ];
 const SETTINGS_ITEMS: &[Item] = &[
@@ -231,23 +211,15 @@ impl Page {
                 title: "Ride",
                 text: &[
                     "Local events start on the line with 3-2-1-GO and end with results; a time trial races your ghost.",
-                    "Change ride: another world package or a test route, without restarting. Workouts: ERG mode.",
+                    "Workouts: ERG mode. Another world or route: World -> Change world, Navi -> Routes.",
                 ],
                 items: RIDE_ITEMS,
-                initial_focus: 0,
-            },
-            Page::RideChange => PageDef {
-                title: "Change ride",
-                text: &[
-                    "Ride something else without restarting: a world package (free ride or one of its routes, Navi -> Routes) or a test route. The ride so far is saved; devices stay connected.",
-                ],
-                items: CHANGE_ITEMS,
                 initial_focus: 0,
             },
             Page::Navi => PageDef {
                 title: "Navi",
                 text: &[
-                    "Routes of this world, your saved rides, GPX import onto the roads of the loaded world package.",
+                    "Routes of this world, your saved rides, GPX import onto the roads of the loaded world package. The time machine: World -> Time.",
                 ],
                 items: NAVI_ITEMS,
                 initial_focus: 0,
@@ -537,7 +509,6 @@ impl Menu {
                 }
                 Effect::Command(line.to_owned())
             }
-            ItemKind::Ask(line) => self.ask(line.to_owned()),
             ItemKind::AskEvent(line) => self.ask_on(Page::ConfirmEvent, line.to_owned()),
             ItemKind::RunPending => match self.pending.take() {
                 Some(line) => self.run_and_close(line),
@@ -611,7 +582,12 @@ impl Menu {
                 self.rows = rows(p);
                 if matches!(
                     p,
-                    sub::Page::Rider(_) | sub::Page::Bike(_) | sub::Page::World(_)
+                    sub::Page::Rider(_)
+                        | sub::Page::Bike(_)
+                        | sub::Page::World(_)
+                        | sub::Page::WorldRoutes(_)
+                        | sub::Page::WorldParts(_)
+                        | sub::Page::WorldSource(_)
                 ) && self.rows.is_empty()
                 {
                     self.stack.pop();
@@ -722,7 +698,7 @@ mod tests {
         assert_eq!(
             labels(&m),
             [
-                "Resume", "Ride", "Workshop", "Navi", "Settings", "Restart", "Quit"
+                "Resume", "Ride", "World", "Workshop", "Navi", "Settings", "Quit"
             ]
         );
         assert_eq!(m.focus(), 0);
@@ -760,39 +736,34 @@ mod tests {
     fn page_stack_back_and_back_at_the_top_closes() {
         let mut m = Menu::default();
         m.apply(Action::Open);
-        m.apply(Action::Hover(4));
+        m.apply(Action::Hover(5));
         assert_eq!(m.apply(Action::Confirm), Effect::None);
         assert_eq!(m.page(), Some(Page::Settings));
         assert_eq!(m.depth(), 2);
         // Back returns to the top page with the focus where it was.
         assert_eq!(m.apply(Action::Back), Effect::None);
-        assert_eq!((m.page(), m.focus()), (Some(Page::Top), 4));
+        assert_eq!((m.page(), m.focus()), (Some(Page::Top), 5));
         // The Back item of a page goes up too.
         m.apply(Action::Click(1));
         assert_eq!(m.page(), Some(Page::Ride));
-        assert_eq!(labels(&m)[4..], ["Change ride", "Workouts", "Back"]);
-        m.apply(Action::Click(4));
-        assert_eq!(m.page(), Some(Page::RideChange));
-        assert_eq!(
-            labels(&m),
-            [
-                "World packages",
-                "Test route: Hills",
-                "Test route: Loop",
-                "Back"
-            ]
-        );
-        m.apply(Action::Click(3));
-        assert_eq!((m.page(), m.focus()), (Some(Page::Ride), 4));
+        assert_eq!(labels(&m)[4..], ["Workouts", "Restart", "Back"]);
         m.apply(Action::Click(6));
         assert_eq!((m.page(), m.focus()), (Some(Page::Top), 1));
+        // World: its own page (rows from the ride catalog).
+        m.apply(Action::Click(2));
+        assert_eq!(m.page(), Some(Page::Sub(sub::Page::WorldHome)));
+        m.apply(Action::Back);
         // Back at the top closes.
         assert_eq!(m.apply(Action::Back), Effect::Closed);
         assert!(!m.is_open());
         // Close from a sub page closes everything; reopening starts at the top.
         m.apply(Action::Open);
-        m.apply(Action::Click(3));
+        m.apply(Action::Click(4));
         assert_eq!(m.page(), Some(Page::Navi));
+        assert_eq!(
+            labels(&m),
+            ["Routes", "Rides", "GPX import", "Strava", "Back"]
+        );
         assert_eq!(m.apply(Action::Close), Effect::Closed);
         m.apply(Action::Open);
         assert_eq!((m.page(), m.focus(), m.depth()), (Some(Page::Top), 0, 1));
@@ -800,14 +771,16 @@ mod tests {
 
     #[test]
     fn restart_and_quit_ask_first_with_cancel_focused() {
+        // Restart: on the Ride page.
         let mut m = Menu::default();
         m.apply(Action::Open);
+        m.apply(Action::Click(1));
         m.apply(Action::Click(5));
         assert_eq!(m.page(), Some(Page::ConfirmRestart));
         assert_eq!(labels(&m)[m.focus()], "Cancel");
         // Confirming Cancel goes back, nothing is run.
         assert_eq!(m.apply(Action::Confirm), Effect::None);
-        assert_eq!(m.page(), Some(Page::Top));
+        assert_eq!(m.page(), Some(Page::Ride));
         m.apply(Action::Click(5));
         m.apply(Action::Up);
         assert_eq!(m.apply(Action::Confirm), Effect::Command("reset".into()));
@@ -855,8 +828,8 @@ mod tests {
                 "Group ride at 150 W",
                 "Time trial vs your ghost",
                 "End the event",
-                "Change ride",
                 "Workouts",
+                "Restart",
                 "Back"
             ]
         );
@@ -907,7 +880,7 @@ mod tests {
         let (s, r) = (Settings::default(), riders());
         let mut m = Menu::default();
         act(&mut m, Action::Open, &s, &r);
-        act(&mut m, Action::Click(4), &s, &r);
+        act(&mut m, Action::Click(5), &s, &r);
         assert_eq!(m.page(), Some(Page::Settings));
         // Display: value rows.
         act(&mut m, Action::Click(4), &s, &r);
@@ -957,7 +930,7 @@ mod tests {
         let (s, r) = (Settings::default(), riders());
         let mut m = Menu::default();
         act(&mut m, Action::Open, &s, &r);
-        act(&mut m, Action::Click(2), &s, &r);
+        act(&mut m, Action::Click(3), &s, &r);
         assert_eq!(m.page(), Some(Page::Sub(sub::Page::Workshop)));
         assert_eq!(m.depth(), 2);
         act(&mut m, Action::TabNext, &s, &r);
@@ -979,7 +952,7 @@ mod tests {
         let mut r = riders();
         let mut m = Menu::default();
         act(&mut m, Action::Open, &s, &r);
-        act(&mut m, Action::Click(2), &s, &r);
+        act(&mut m, Action::Click(3), &s, &r);
         assert_eq!(m.labels()[0], "Alex:  78 kg - riding");
         assert_eq!(
             act(&mut m, Action::Click(1), &s, &r),
@@ -1052,7 +1025,6 @@ mod tests {
         for page in [
             Page::Top,
             Page::Ride,
-            Page::RideChange,
             Page::Navi,
             Page::Settings,
             Page::ConfirmRestart,
@@ -1088,7 +1060,7 @@ mod tests {
         }
         let mut m = Menu::default();
         act(&mut m, Action::Open, &s, &r);
-        act(&mut m, Action::Click(2), &s, &r);
+        act(&mut m, Action::Click(3), &s, &r);
         assert_eq!(m.page(), Some(Page::Sub(sub::Page::Workshop)));
         // 8 riders, Bike and Edit riders: three pages of four rows.
         let l = m.labels();

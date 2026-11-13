@@ -483,9 +483,9 @@ shot = 10
 
 [[scene]]
 name = "menu-time-machine"
-description = "In-game menu: Navi -> Time machine (world time, day, speed, preset, mode, who sets the time)"
+description = "In-game menu: World -> Time, the time machine (world time, day, speed, preset, mode, who sets the time)"
 args = ["--route", "hills", "--bots", "4"]
-at = ["2=menu open", "2.4=menu down", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4=menu down", "4.4=menu down", "4.8=menu down", "5.2=menu down", "5.6=menu select"]
+at = ["2=menu open", "2.4=menu down", "2.8=menu down", "3.2=menu select", "3.6=menu down", "4=menu down", "4.4=menu down", "4.8=menu select"]
 shot = 7
 
 [[scene]]
@@ -650,3 +650,63 @@ world = "blackforest"
 args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "5600,6540", "--bots", "4", "--power", "240"]
 at = ["0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 140 22 80"]
 shot = 12
+
+# --- World menu (spec 3.2.1, v2.39); OCW_WORLD=DIR/liechtenstein.ocwpkg with
+# the Black Forest package in the same DIR lists both ------------------------
+
+[[scene]]
+name = "menu-world"
+description = "In-game menu: World (change world, about this world, routes, time, weather)"
+world = true
+args = ["--world", "{world}", "--bots", "3"]
+at = ["3=menu open", "3.4=menu down", "3.8=menu down", "4.2=menu select"]
+shot = 6
+
+[[scene]]
+name = "menu-world-change"
+description = "In-game menu: World -> Change world: the packages found (Liechtenstein, the Black Forest next to it) and the test routes"
+world = true
+args = ["--world", "{world}", "--bots", "3"]
+at = ["3=menu open", "3.4=menu down", "3.8=menu down", "4.2=menu select", "4.6=menu select"]
+shot = 7
+
+[[scene]]
+name = "menu-world-info"
+description = "In-game menu: World -> About this world (package, area and elevation, sun and time, data sources, routes)"
+world = true
+args = ["--world", "{world}", "--bots", "3"]
+at = ["3=menu open", "3.4=menu down", "3.8=menu down", "4.2=menu select", "4.6=menu down", "5=menu select"]
+shot = 7
+
+[[scene]]
+name = "menu-world-sun"
+description = "In-game menu: World -> About -> Sun and time (time zone, world time, sunrise / sunset, twilight at the rider)"
+world = true
+args = ["--world", "{world}", "--bots", "3"]
+at = ["3=menu open", "3.4=menu down", "3.8=menu down", "4.2=menu select", "4.6=menu down", "5=menu select", "5.4=menu down", "5.8=menu down", "6.2=menu down", "6.6=menu select"]
+shot = 8.5
+
+[[scene]]
+name = "menu-world-source"
+description = "In-game menu: World -> About -> Data sources -> OpenStreetMap: licence and the full credit notice"
+world = true
+args = ["--world", "{world}", "--bots", "3"]
+at = ["3=menu open", "3.4=menu down", "3.8=menu down", "4.2=menu select", "4.6=menu down", "5=menu select", "5.4=menu down", "5.8=menu down", "6.2=menu down", "6.6=menu down", "7=menu select", "7.4=menu select"]
+shot = 9
+
+[[scene]]
+name = "menu-world-weather"
+description = "In-game menu: World -> Weather (clear until the weather simulation, Phase 9 S4; weather machine disabled)"
+world = true
+args = ["--world", "{world}", "--bots", "3"]
+at = ["3=menu open", "3.4=menu down", "3.8=menu down", "4.2=menu select", "4.6=menu down", "5=menu down", "5.4=menu down", "5.8=menu down", "6.2=menu select"]
+shot = 8
+
+[[scene]]
+name = "world-switch-blackforest"
+description = "Video: World -> Change world -> Black Forest -> Ride in the running app: the Liechtenstein ride is saved, the Black Forest loads and the new ride starts (no restart)"
+world = true
+args = ["--world", "{world}", "--bots", "3"]
+at = ["3.5=menu open", "4=menu down", "4.4=menu down", "4.8=menu select", "5.4=menu select", "6.2=menu down", "6.8=menu select", "7.6=menu select", "8.2=menu up", "8.8=menu select"]
+warmup = 3
+video = 16

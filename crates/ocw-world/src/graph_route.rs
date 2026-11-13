@@ -281,6 +281,33 @@ impl RoutePlan {
         self.length_m
     }
 
+    /// Total climbing of one lap (m): the sum of the rises of the road
+    /// profile along the steps, sampled every [`crate::graph::PROFILE_STEP_M`];
+    /// 0 for edges without a profile.
+    pub fn elevation_gain_m(&self, net: &RoadNetwork) -> f64 {
+        let mut gain = 0.0;
+        for s in &self.steps {
+            let Segment::Edge { edge, from_m, to_m } = *s else {
+                continue;
+            };
+            let e = net.edge(edge);
+            let len = (to_m - from_m).abs();
+            let n = (len / crate::graph::PROFILE_STEP_M).ceil().max(1.0) as usize;
+            let mut last: Option<f64> = None;
+            for k in 0..=n {
+                let d = from_m + (to_m - from_m) * k as f64 / n as f64;
+                let Some(h) = e.height_at(d) else { break };
+                if let Some(l) = last
+                    && h > l
+                {
+                    gain += h - l;
+                }
+                last = Some(h);
+            }
+        }
+        gain
+    }
+
     /// Route distance where step `i` starts.
     pub fn start_of(&self, i: usize) -> f64 {
         self.starts_m.get(i).copied().unwrap_or(self.length_m)
@@ -424,6 +451,46 @@ mod tests {
             ],
             is_loop: false,
         }
+    }
+
+    #[test]
+    fn climbing_sums_the_rises_of_the_profile() {
+        let mut g = crossroads();
+        // The west arm rises 10 m outwards from the centre, so riding it
+        // inwards (150 m to 0) descends; the east arm (200 m) rises 6 m,
+        // then falls 2 m.
+        for e in &mut g.edges {
+            let n = (e.length_m() / crate::graph::PROFILE_STEP_M).ceil() as usize + 1;
+            e.profile = match e.id.0 {
+                1000 => (0..n)
+                    .map(|i| 100.0 + 10.0 * i as f64 / (n - 1) as f64)
+                    .collect(),
+                1001 => (0..n)
+                    .map(|i| {
+                        let t = i as f64 / (n - 1) as f64;
+                        100.0
+                            + if t < 0.75 {
+                                8.0 * t
+                            } else {
+                                6.0 - 8.0 * (t - 0.75)
+                            }
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            };
+        }
+        let n = RoadNetwork::new(g);
+        let plan = west_to_east().resolve(&n).unwrap();
+        let gain = plan.elevation_gain_m(&n);
+        assert!((gain - 6.0).abs() < 0.2, "{gain}");
+        // Without profiles: no climbing known.
+        assert_eq!(
+            west_to_east()
+                .resolve(&net())
+                .unwrap()
+                .elevation_gain_m(&net()),
+            0.0
+        );
     }
 
     #[test]

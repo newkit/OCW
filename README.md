@@ -60,7 +60,7 @@ ffmpeg` (`make deps-macos` prints both commands); the app also finds it in
 
 | Action | Keyboard | Gamepad |
 |---|---|---|
-| Menu (Resume, Ride, Workshop, Navi, Settings, Restart, Quit) | Esc | Start / Menu (☰, Options) |
+| Menu (Resume, Ride, World, Workshop, Navi, Settings, Quit) | Esc | Start / Menu (☰, Options) |
 | Faster: +25 W per press, more while held | ↑ | D-pad up, left stick up or right trigger (RT / R2) |
 | Stop: no power, brake | ↓ | D-pad down, left stick down or left trigger (LT / L2) |
 | Steer (autodrive: move the line; manual: lean into a curve) | ← / → | left stick (left/right) |
@@ -94,25 +94,50 @@ chooses the rider profile and their bike (*Workshop → Bike*), *Settings* has R
 and Strava: ← / → (D-pad left / right) change the focused value, Q / E,
 PgUp / PgDn or LB / RB switch between these pages (see
 [Settings](#settings-and-rider-profiles)); *Ride* starts local events (race,
-group ride, time trial; see *Events* below) and changes the ride (see
-[Changing the ride](#changing-the-ride-without-restarting)), *Navi* lists
-the routes, saved rides and GPX files to import. Long lists are paged
-(*Previous* / *Next*, or ← / → on a list row).
+group ride, time trial; see *Events* below), workouts and *Restart*; *World*
+changes the world and shows its data and conditions (see
+[The World menu](#the-world-menu-changing-the-world-without-restarting)),
+*Navi* lists the routes, saved rides and GPX files to import. Long lists are
+paged (*Previous* / *Next*, or ← / → on a list row).
 
-### Changing the ride without restarting
+### The World menu: changing the world without restarting
 
-*Ride → Change ride* (spec §3.2.1, M3) switches to another world package
-(*World packages*: the cache and `.ocwpkg` files next to the app, in
-`data/` and `data/pilot/`; then *Free ride* from a random road or *from
-here*, or one of its routes under *Navi → Routes*) or a test route (Hills,
-Loop) while the app keeps running: the ride so far is saved (FIT, Strava
-sync), the new one is loaded in the background (the HUD shows "Loading …"),
-then a new session starts. Bluetooth trainers, sensors and gamepads stay
-connected, the trainer mode stays, a video recording goes on; a running
-event ends. Every switch asks first (*Change the ride?*). After a switch, R
-restarts the current ride in the app. The same from the console:
+*World* (spec §3.2.1, *World menu*) has *Change world*, *About this world*,
+*Routes*, *Time* (the time machine) and *Weather*.
+
+*Change world* lists the world packages found – the cache, the package given
+with `--world` and the packages next to it (the kiosk installs several in
+`/var/tmp/ocw/`), the `.ocwpkg` files next to the app, in `data/` and
+`data/pilot/` – with their size and, when not verified, "unsigned" or
+"untrusted"; neighbouring packages show as one world with parts, broken files
+are listed with the reason (`world list` shows it). Then the test routes
+(Hills, Loop). A world's page rides its default (its first route, else a free
+ride – as `--world` alone), a free ride (random, or *from here*), one of its
+routes or a free ride in one of its parts. The switch runs while the app keeps
+running: the ride so far is saved (FIT, Strava sync), the new one is loaded in
+the background (the HUD shows "Loading …"), then a new session starts.
+Bluetooth trainers, sensors and gamepads stay connected, the trainer mode
+stays, a video recording goes on; a running event ends. Every switch asks
+first (*Change the ride?*). After a switch, R restarts the current ride in the
+app.
+
+*About this world* shows the package (id, version, build date, signature),
+the area and the elevation range, the time zone with today's sunrise, sunset
+and twilight times at your position, the data sources with their full credit
+notices, and the routes with their length and climbing. *Weather* says
+"clear" until the weather simulation exists (spec §14 Phase 9 S4).
+
+In a shared ride (`--server`) only the host changes the world: the menu asks
+the server, which checks it, loads the package from its own installed
+packages (`ocw-server --world-control host|anyone|nobody`) and moves everyone
+to it; every client loads the same package (it must be installed there too)
+and joins again. The same from the console:
 
 ```text
+world list                                        # numbered
+world info
+world switch 2                                    # or an id, name or path
+world switch europe/blackforest
 ride.switch --route loop
 ride.switch --world europe/example@3              # free ride, random start
 ride.switch --world /var/tmp/ocw/example.ocwpkg --free-ride --start 1200,-300
@@ -126,7 +151,7 @@ same matcher as `--route-gpx`), prints the report and saves the route in
 `~/.local/share/ocw/routes/`, where *Navi → Routes* lists it for that
 package. *Navi → GPX import* offers the `.gpx` files from
 `~/.local/share/ocw/gpx/` and the downloads folder. Not with `--server`
-(the server chooses the course).
+(the server chooses the course; its host can switch the world).
 
 In manual steering, the keys ramp the lean and it stays when released (press
 the other way to straighten up); the stick sets the lean directly, centred is
@@ -669,7 +694,7 @@ routes are in Vaduz. The sun lights the scene from its real position, warm at
 sunrise and sunset; the night is dark (`display.night_brightness`, Settings →
 Display) and every rider has front and rear lights.
 
-*Navi → Time machine* (and the console command `time`) sets the date and time
+*World → Time* (the time machine; and the console command `time`) sets the date and time
 (1900–2100), the time speed (paused, x1, x10, x60, x600) and presets (sunrise,
 golden hour, noon, sunset, blue hour, midnight, the solstices). The game server
 owns the clock: solo you set it, in a shared ride only the host (the rider
@@ -740,6 +765,9 @@ for now).
 | `worlds.info` | The loaded world package: id, version, content hash, trust, credits |
 | `worlds.list` | World packages in the local cache, with their trust state |
 | `worlds.verify [PATH\|ID]` | Verify a world package's hashes and signature (default: the loaded one) |
+| `world list` | The worlds you can ride (cache, `--world` and the packages next to it, data folders), numbered, with id, version, size, signature state, routes, parts; broken ones with the reason |
+| `world info` | The world ridden now: package, area, elevation, data sources with their notices, routes, time zone, sun and twilight times |
+| `world switch N\|ID\|NAME\|PATH` | Ride another world without restarting (its first route, else a free ride; a test route: `hills`, `loop`); in a shared ride the host asks the server |
 | **Events** (spec §2.3) | |
 | `event race [--laps N\|--km X] [--bots N]` | Race from the start formation to the finish (default 1 lap / 5 km) |
 | `event group [--watts W] [--bots N]` | Group ride: bots hold the pace and regroup |

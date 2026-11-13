@@ -2,7 +2,7 @@
 //! S3): the session clock from the server (predicted by [`ClientCore`]),
 //! the time zone of the rider's place in the world (decision Q1), the sky
 //! for the renderer ([`ocw_render::RideView::sky`]), the HUD clock, the
-//! console command `time` and the Navi → Time machine page.
+//! console command `time` and the World → Time page (the time machine).
 //!
 //! The zone of the place: the world package's `TZID` section; for older
 //! packages and route files the zone of their origin
@@ -96,6 +96,67 @@ pub struct TimeMachineInfo {
     pub may_change: bool,
     /// The last preset chosen (the page's ← / → step from it).
     pub preset: Option<Preset>,
+    /// Today's sun at the rider (World → About → Sun and time).
+    pub sun: Option<SunToday>,
+}
+
+/// The sun's day at the rider's place on the world's local date (spec
+/// §3.2.1 World → About this world), as text in the place's zone.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SunToday {
+    /// "Europe/Vaduz, UTC+01:00".
+    pub zone: String,
+    /// "Fri 13 Nov 2026".
+    pub date: String,
+    /// Sunrise, sunset ("-" where the sun does not rise or set).
+    pub sun: (String, String),
+    pub noon: String,
+    pub civil: (String, String),
+    pub nautical: (String, String),
+    pub astronomical: (String, String),
+    /// Where (lat, lon), rounded for the cache.
+    key: (i64, i64, String),
+}
+
+/// "UTC+01:00" / "UTC-03:30".
+pub fn utc_offset(offset_s: i32) -> String {
+    let sign = if offset_s < 0 { '-' } else { '+' };
+    let m = offset_s.unsigned_abs() / 60;
+    format!("UTC{sign}{:02}:{:02}", m / 60, m % 60)
+}
+
+impl SunToday {
+    /// The sun events of the local date of `ms` at `(lat, lon)` in `zone`.
+    pub fn at(ms: i64, zone: &Zone, (lat, lon): (f64, f64)) -> Self {
+        let l = zone.local(ms);
+        let day = ocw_sky::sun::day((l.year, l.month, l.day), lat, lon);
+        let hm = |t: Option<i64>| t.map_or_else(|| "-".to_owned(), |t| zone.local(t).hh_mm());
+        let pair = |p: ocw_sky::sun::Pair| (hm(p.morning), hm(p.evening));
+        Self {
+            zone: format!("{}, {}", zone.id(), utc_offset(zone.offset_s(ms))),
+            date: long_date(zone, ms),
+            sun: pair(day.sun),
+            noon: hm(Some(day.solar_noon)),
+            civil: pair(day.civil),
+            nautical: pair(day.nautical),
+            astronomical: pair(day.astronomical),
+            key: Self::key(ms, zone, (lat, lon)),
+        }
+    }
+
+    /// Recomputed when the local date, the zone or the place (to about
+    /// 1 km) changes.
+    fn key(ms: i64, zone: &Zone, (lat, lon): (f64, f64)) -> (i64, i64, String) {
+        (
+            (lat * 100.0).round() as i64 * 100_000 + (lon * 100.0).round() as i64,
+            0,
+            format!("{} {}", zone.id(), zone.local(ms).date()),
+        )
+    }
+
+    fn is_for(&self, ms: i64, zone: &Zone, place: (f64, f64)) -> bool {
+        self.key == Self::key(ms, zone, place)
+    }
 }
 
 const WEEKDAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -197,6 +258,10 @@ fn update_sky(
     let clock = client.0.clock_info().copied();
     let hud = hud_label(&sky, clock.as_ref());
     view.sky = Some(SkyView { sky, hud });
+    let sun = match &info.sun {
+        Some(s) if s.is_for(ms, &place.zone, latlon) => s.clone(),
+        _ => SunToday::at(ms, &place.zone, latlon),
+    };
     let new = TimeMachineInfo {
         time: Some(short_time(&place.zone, ms)),
         date: Some(long_date(&place.zone, ms)),
@@ -210,6 +275,7 @@ fn update_sky(
         control: control_label(clock.as_ref(), client.0.may_change_clock()).into(),
         may_change: client.0.may_change_clock(),
         preset: info.preset,
+        sun: Some(sun),
     };
     info.set_if_neq(new);
 }
@@ -223,7 +289,7 @@ pub fn control_label(clock: Option<&ocw_protocol::ClockInfo>, mine: bool) -> &'s
     }
 }
 
-/// The rows of Navi → Time machine (six rows and Back, ten-foot rule).
+/// The rows of World → Time, the time machine (six rows and Back, ten-foot rule).
 pub fn rows(info: &TimeMachineInfo) -> Vec<Row> {
     let line = |l: &str| Some(l.to_owned());
     let speed_line = |dir| match machine::speed_step(info.speed, info.paused, dir) {
@@ -492,6 +558,31 @@ mod tests {
                 machine::parse(&args).unwrap_or_else(|e| panic!("{l}: {e}"));
             }
         }
+    }
+
+    /// World → About this world → Sun and time: the NOAA events of the
+    /// local date in the place's zone (the times of `ocw_sky::sun` tests).
+    #[test]
+    fn sun_today_in_the_local_zone() {
+        let zone = Zone::get("Europe/Vaduz").unwrap();
+        let (ms, _) = zone.instant((2026, 6, 21), (14, 0, 0)).unwrap();
+        let s = SunToday::at(ms, &zone, (47.141, 9.521));
+        assert_eq!(s.zone, "Europe/Vaduz, UTC+02:00");
+        assert_eq!(s.date, "Sun 21 Jun 2026");
+        // 03:26 / 19:21 UTC: 05:26 / 21:21 CEST.
+        assert_eq!(s.sun, ("05:26".into(), "21:21".into()));
+        assert_eq!(s.noon, "13:23");
+        assert_eq!(s.civil, ("04:46".into(), "22:01".into()));
+        assert_eq!(s.astronomical.0, "02:26");
+        assert!(s.is_for(ms + 3_600_000, &zone, (47.141, 9.521)), "same day");
+        let (next, _) = zone.instant((2026, 6, 22), (0, 30, 0)).unwrap();
+        assert!(!s.is_for(next, &zone, (47.141, 9.521)), "the next day");
+        assert!(!s.is_for(ms, &zone, (47.995, 7.85)), "another place");
+        // Far north in June: no astronomical night.
+        let n = SunToday::at(ms, &zone, (64.0, 9.5));
+        assert_eq!(n.astronomical, ("-".into(), "-".into()));
+        assert_eq!(utc_offset(-12_600), "UTC-03:30");
+        assert_eq!(utc_offset(0), "UTC+00:00");
     }
 
     #[test]
