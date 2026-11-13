@@ -270,6 +270,7 @@ pub(crate) mod tests {
             time_zone: None,
             landuse: None,
             buildings: None,
+            bridges: None,
         }
         .to_bytes()
     }

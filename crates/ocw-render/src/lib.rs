@@ -4,6 +4,7 @@
 //! renders whatever the app puts into [`RideView`]; it knows nothing about
 //! networking or devices.
 
+pub mod bridges;
 pub mod camera;
 pub mod console;
 pub mod event_hud;

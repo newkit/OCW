@@ -36,6 +36,12 @@ pub struct GraphTerrain<'a, F: Fn(f64, f64) -> f64> {
     along: Vec<Vec<f64>>,
     buckets: HashMap<(i64, i64), Vec<(u32, u32)>>,
     bucket_m: f64,
+    /// Stretches (from, to metres) of untagged edges that are bridges
+    /// (spec §4.8.6): treated like bridge edges.
+    spans: HashMap<u32, Vec<(f64, f64)>>,
+    /// World cleaning (spec §4.8.3): each road acts through its nearest
+    /// point only (see [`GraphTerrain::nearest_point_only`]).
+    nearest_only: bool,
 }
 
 impl<'a, F: Fn(f64, f64) -> f64> GraphTerrain<'a, F> {
@@ -79,7 +85,38 @@ impl<'a, F: Fn(f64, f64) -> f64> GraphTerrain<'a, F> {
             along,
             buckets,
             bucket_m,
+            spans: HashMap::new(),
+            nearest_only: false,
         }
+    }
+
+    /// Each road shapes the terrain through its nearest point only (spec
+    /// §4.8.3). Without it every segment within the cut zone counts, and the
+    /// nearest point of the segment before (or after) the one under a point
+    /// is the node between them – up to the cut zone back along the same
+    /// road, lower on a climb: the terrain under a 10 % road was cut down to
+    /// the road's height 15 m back, 1.5 m below it, and the blend could take
+    /// that height too. With it, use a small cut margin and settle the
+    /// terrain under the strips afterwards
+    /// ([`crate::clean::settle_terrain_under_roads`]).
+    pub fn nearest_point_only(mut self) -> Self {
+        self.nearest_only = true;
+        self
+    }
+
+    /// Adds bridge stretches of untagged edges (edge index, from, to m):
+    /// the terrain is cut under them but not pulled up, as under bridges.
+    pub fn with_bridge_spans(mut self, spans: impl IntoIterator<Item = (usize, f64, f64)>) -> Self {
+        for (e, a, b) in spans {
+            self.spans.entry(e as u32).or_default().push((a, b));
+        }
+        self
+    }
+
+    fn on_span(&self, edge: u32, s: f64) -> bool {
+        self.spans
+            .get(&edge)
+            .is_some_and(|v| v.iter().any(|&(a, b)| s >= a && s <= b))
     }
 
     /// Terrain height at local (x, z).
@@ -93,6 +130,8 @@ impl<'a, F: Fn(f64, f64) -> f64> GraphTerrain<'a, F> {
         let mut best: Option<(f64, f64)> = None;
         // Lowest road surface whose cutting zone covers this point.
         let mut ceiling = f64::INFINITY;
+        // Nearest point per edge (cleaned mode): (edge, distance, along).
+        let mut nearest: Vec<(u32, f64, f64)> = Vec::new();
         for dx in -1..=1 {
             for dz in -1..=1 {
                 let Some(segs) = self.buckets.get(&(kx + dx, kz + dz)) else {
@@ -116,12 +155,20 @@ impl<'a, F: Fn(f64, f64) -> f64> GraphTerrain<'a, F> {
                         continue;
                     }
                     let s = self.along[ei as usize][si as usize] + len2.sqrt() * t;
+                    if self.nearest_only {
+                        match nearest.iter_mut().find(|n| n.0 == ei) {
+                            Some(n) if n.1 > d => *n = (ei, d, s),
+                            Some(_) => {}
+                            None => nearest.push((ei, d, s)),
+                        }
+                        continue;
+                    }
                     let road = e.height_at(s).unwrap_or(base) - ROAD_CLEARANCE_M;
                     if d <= cut {
                         ceiling = ceiling.min(road);
                     }
                     // Bridges cut the terrain under them but do not pull it up.
-                    if e.bridge || d > corridor + BLEND_M {
+                    if e.bridge || d > corridor + BLEND_M || self.on_span(ei, s) {
                         continue;
                     }
                     let w = 1.0 - smoothstep(((d - corridor) / BLEND_M).clamp(0.0, 1.0));
@@ -129,6 +176,24 @@ impl<'a, F: Fn(f64, f64) -> f64> GraphTerrain<'a, F> {
                         best = Some((w, road));
                     }
                 }
+            }
+        }
+        // Cleaned mode: the strongest (then nearest) road wins the blend.
+        let mut best_d = f64::INFINITY;
+        for &(ei, d, s) in &nearest {
+            let e = &self.graph.edges[ei as usize];
+            let corridor = e.width_m / 2.0 + SHOULDER_M;
+            let road = e.height_at(s).unwrap_or(base) - ROAD_CLEARANCE_M;
+            if d <= e.width_m / 2.0 + self.cut_m {
+                ceiling = ceiling.min(road);
+            }
+            if e.bridge || d > corridor + BLEND_M || self.on_span(ei, s) {
+                continue;
+            }
+            let w = 1.0 - smoothstep(((d - corridor) / BLEND_M).clamp(0.0, 1.0));
+            if best.is_none_or(|(bw, _)| w > bw + 1e-12 || (w > bw - 1e-12 && d < best_d)) {
+                best = Some((w, road));
+                best_d = d;
             }
         }
         let h = match best {
@@ -224,12 +289,34 @@ pub fn build_package_with_terrain<F: Fn(f64, f64) -> f64 + Sync>(
     samples: u32,
     margin_tiles: i32,
 ) -> WorldPackage {
-    // Cutting margin: 1.5 grid cells (more than a cell diagonal).
-    let terrain = GraphTerrain::new(
-        terrain_graph,
-        base,
-        1.5 * tile_size / f64::from(samples - 1),
-    );
+    let terrain = GraphTerrain::new(terrain_graph, base, cut_margin_m(tile_size, samples));
+    build_package_on(
+        name,
+        origin,
+        graph,
+        &terrain,
+        tile_size,
+        samples,
+        margin_tiles,
+    )
+}
+
+/// Cutting margin beside roads: 1.5 grid cells (more than a cell diagonal).
+pub fn cut_margin_m(tile_size: f64, samples: u32) -> f64 {
+    1.5 * tile_size / f64::from(samples - 1)
+}
+
+/// [`build_package_with_terrain`] on a terrain built by the caller (e.g.
+/// with the detected bridge spans, spec §4.8.6).
+pub fn build_package_on<F: Fn(f64, f64) -> f64 + Sync>(
+    name: &str,
+    origin: (f64, f64),
+    graph: &RoadGraph,
+    terrain: &GraphTerrain<'_, F>,
+    tile_size: f64,
+    samples: u32,
+    margin_tiles: i32,
+) -> WorldPackage {
     let (mut min, mut max) = ([i32::MAX; 2], [i32::MIN; 2]);
     for v in &graph.vertices {
         let k = TileKey::containing(*v, tile_size);
@@ -328,6 +415,7 @@ pub fn build_package_with_terrain<F: Fn(f64, f64) -> f64 + Sync>(
         // `buildings::add_buildings`.
         landuse: None,
         buildings: None,
+        bridges: None,
         routes: Vec::new(),
         region: None,
         time_zone: None,
@@ -404,6 +492,34 @@ mod tests {
         // Halfway through the blend: between road and base.
         let mid = t.height(300.0, 500.0 + 3.0 + SHOULDER_M + BLEND_M / 2.0);
         assert!(mid > 15.0 && mid < 100.0, "{mid}");
+    }
+
+    /// Regression (spec §4.8.3, lint 2026-11-13: a third of Liechtenstein's
+    /// roads floated > 0.8 m): a 10 % road with a node every 10 m. The
+    /// segment behind the one under a point reaches it at their shared node,
+    /// 10 m back and 1 m lower, and its cut zone cut the terrain there.
+    #[test]
+    fn a_climbing_road_is_not_cut_by_its_own_nodes_behind() {
+        let mut g = graph();
+        g.edges.truncate(1);
+        let e = &mut g.edges[0];
+        e.points = (0..=60)
+            .map(|i| [200.0 + f64::from(i) * 10.0, 500.0])
+            .collect();
+        e.profile = (0..121).map(|i| f64::from(i) * 0.5).collect(); // 10 %
+        let road_at = |x: f64| (x - 200.0) * 0.1;
+        let old = GraphTerrain::new(&g, |_, _| 100.0, 15.0);
+        let under = old.height(505.0, 500.0);
+        assert!(under < road_at(505.0) - 0.8, "the old cut: {under}");
+        let new = GraphTerrain::new(&g, |_, _| 100.0, 0.5).nearest_point_only();
+        for x in [305.0, 505.0, 707.0] {
+            let h = new.height(x, 500.0);
+            assert!(
+                (h - (road_at(x) - ROAD_CLEARANCE_M)).abs() < 1e-6,
+                "{x}: {h}"
+            );
+            assert!((new.height(x, 503.0) - h).abs() < 1e-6, "across the road");
+        }
     }
 
     /// A tunnel (spec §4.3): the terrain is neither pulled down to the
