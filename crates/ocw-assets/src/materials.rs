@@ -167,12 +167,81 @@ pub const META_ID: &str = "OCWmaterial";
 struct Raw {
     #[serde(default)]
     material: Vec<Material>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    region: Vec<Region>,
+}
+
+/// The land classes (`ocw_world::landuse::LandClass`), lowercase, in the
+/// order of their codes: the keys of [`Region::classes`].
+pub const LAND_CLASS_NAMES: [&str; 17] = [
+    "default",
+    "meadow",
+    "farmland",
+    "forest",
+    "orchard",
+    "vineyard",
+    "residential",
+    "commercial",
+    "industrial",
+    "park",
+    "water",
+    "wetland",
+    "rock",
+    "scree",
+    "glacier",
+    "bare",
+    "scrub",
+];
+
+/// A regional material set (spec §4.6, Phase 8 T2 / T3): where a package's
+/// time zone is one of `time_zones`, ground layer slots are drawn with
+/// other materials of the library (`layers`: slot id → material id, e.g.
+/// the rock slot with lava on the Canary Islands), and land classes with
+/// another mix of the slots (`classes`: class name → slot id → weight).
+/// Everything else stays as in the default set. Data-driven, so the
+/// regional calibration (T3) can add regions and mixes without code.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Region {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub time_zones: Vec<String>,
+    #[serde(default)]
+    pub layers: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    pub classes: std::collections::BTreeMap<String, std::collections::BTreeMap<String, f32>>,
+}
+
+impl Region {
+    /// The material id drawn in ground slot `slot` (`GROUND_IDS[i]`).
+    pub fn layer(&self, slot: &str) -> String {
+        self.layers
+            .get(slot)
+            .cloned()
+            .unwrap_or_else(|| slot.to_owned())
+    }
+
+    /// The slot mix of land class `class` (by name), if the region sets
+    /// one: weights by slot index, normalised.
+    pub fn class_mix(&self, class: &str) -> Option<[f32; 9]> {
+        let m = self.classes.get(class)?;
+        let mut w = [0.0f32; 9];
+        for (slot, v) in m {
+            let i = GROUND_IDS.iter().position(|g| g == slot)?;
+            w[i] += v.max(0.0);
+        }
+        let sum: f32 = w.iter().sum();
+        (sum > 0.0).then(|| w.map(|x| x / sum))
+    }
 }
 
 /// The parsed manifest.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MaterialManifest {
     pub materials: Vec<Material>,
+    /// Regional material sets.
+    pub regions: Vec<Region>,
 }
 
 fn is_sha256(s: &str) -> bool {
@@ -187,6 +256,7 @@ impl MaterialManifest {
         let raw: Raw = toml::from_str(text).map_err(|e| vec![format!("materials: {e}")])?;
         let m = Self {
             materials: raw.material,
+            regions: raw.region,
         };
         let errors = m.check();
         if errors.is_empty() {
@@ -200,8 +270,17 @@ impl MaterialManifest {
     pub fn to_toml(&self) -> String {
         toml::to_string(&Raw {
             material: self.materials.clone(),
+            region: self.regions.clone(),
         })
         .expect("serialisable")
+    }
+
+    /// The regional set for a package's time zone (`None`: the default).
+    pub fn region_for(&self, time_zone: Option<&str>) -> Option<&Region> {
+        let tz = time_zone?;
+        self.regions
+            .iter()
+            .find(|r| r.time_zones.iter().any(|z| z == tz))
     }
 
     pub fn get(&self, id: &str) -> Option<&Material> {
@@ -273,6 +352,48 @@ impl MaterialManifest {
                 }
                 if f.file.trim().is_empty() {
                     errors.push(format!("{id}: {role} has no file"));
+                }
+            }
+        }
+        errors.extend(self.check_regions());
+        errors
+    }
+
+    fn check_regions(&self) -> Vec<String> {
+        let mut errors = Vec::new();
+        let mut ids = BTreeSet::new();
+        for r in &self.regions {
+            let id = &r.id;
+            if !ids.insert(id.as_str()) {
+                errors.push(format!("region {id}: listed twice"));
+            }
+            if r.time_zones.is_empty() {
+                errors.push(format!("region {id}: no time_zones"));
+            }
+            for (slot, mat) in &r.layers {
+                if !GROUND_IDS.contains(&slot.as_str()) {
+                    errors.push(format!("region {id}: `{slot}` is no ground layer"));
+                }
+                match self.get(mat) {
+                    Some(m) if m.group == Group::Ground => {}
+                    Some(_) => errors.push(format!("region {id}: `{mat}` is no ground material")),
+                    None => errors.push(format!("region {id}: no material `{mat}`")),
+                }
+            }
+            for (class, mix) in &r.classes {
+                if !LAND_CLASS_NAMES.contains(&class.as_str()) {
+                    errors.push(format!("region {id}: no land class `{class}`"));
+                }
+                for (slot, w) in mix {
+                    if !GROUND_IDS.contains(&slot.as_str()) {
+                        errors.push(format!("region {id}, {class}: `{slot}` is no ground layer"));
+                    }
+                    if w.is_nan() || *w < 0.0 {
+                        errors.push(format!("region {id}, {class}: negative weight"));
+                    }
+                }
+                if r.class_mix(class).is_none() && LAND_CLASS_NAMES.contains(&class.as_str()) {
+                    errors.push(format!("region {id}, {class}: weights sum to 0"));
                 }
             }
         }
@@ -595,6 +716,40 @@ mod tests {
         assert_ne!(m.materials[0].stamp(), other.stamp());
     }
 
+    /// Regional sets: slots remapped to other ground materials, class
+    /// mixes by slot; bad references are rejected.
+    #[test]
+    fn regional_sets_are_checked_and_resolved() {
+        let ground = |id: &str| entry(OK).replace("id = \"meadow\"", &format!("id = \"{id}\""));
+        let base = format!("{}{}", ground("meadow"), ground("lava"));
+        let region = "[[region]]\nid = \"v\"\nname = \"Volcanic\"\ntime_zones = [\"Atlantic/Canary\"]\n\
+                      layers = { rock = \"lava\" }\n[region.classes]\ndefault = { meadow = 1.0, gravel = 3.0 }\n";
+        let m = MaterialManifest::parse(&format!("{base}{region}")).unwrap();
+        let r = m.region_for(Some("Atlantic/Canary")).unwrap();
+        assert_eq!(r.layer("rock"), "lava");
+        assert_eq!(r.layer("snow"), "snow");
+        let mix = r.class_mix("default").unwrap();
+        assert!((mix[0] - 0.25).abs() < 1e-6 && (mix[5] - 0.75).abs() < 1e-6);
+        assert!(r.class_mix("forest").is_none());
+        assert_eq!(MaterialManifest::parse(&m.to_toml()).unwrap(), m);
+        for (bad, why) in [
+            (
+                "layers = { rock = \"lava\" }",
+                "layers = { rock = \"nope\" }",
+            ),
+            (
+                "layers = { rock = \"lava\" }",
+                "layers = { lava = \"lava\" }",
+            ),
+            ("default = {", "jungle = {"),
+            ("meadow = 1.0, gravel = 3.0", "meadow = 0.0"),
+        ] {
+            let text = format!("{base}{}", region.replace(bad, why));
+            assert!(MaterialManifest::parse(&text).is_err(), "{why}");
+        }
+        assert_eq!(LAND_CLASS_NAMES.len(), 17);
+    }
+
     #[test]
     fn the_library_is_found_beside_the_binary_first() {
         let exe = Path::new("/opt/ocw/usr/bin/ocw-desktop");
@@ -619,16 +774,23 @@ mod tests {
             assert!(m.get(id).is_some(), "{id}");
         }
         for x in &m.materials {
-            let want = if GROUND_IDS.contains(&x.id.as_str()) {
-                Group::Ground
-            } else if ROAD_IDS.contains(&x.id.as_str()) {
+            let want = if ROAD_IDS.contains(&x.id.as_str()) {
                 Group::Road
-            } else {
+            } else if BUILDING_IDS.contains(&x.id.as_str()) {
                 Group::Building
+            } else {
+                Group::Ground
             };
             assert_eq!(x.group, want, "{}", x.id);
             assert_eq!(x.license, "CC0-1.0", "{}", x.id);
         }
+        // The volcanic set for Tenerife: lava, ash, black sand.
+        let canary = m.region_for(Some("Atlantic/Canary")).expect("Canary set");
+        assert_eq!(canary.layer("rock"), "lava_rock");
+        assert_eq!(canary.layer("sand"), "black_sand");
+        assert_eq!(canary.layer("meadow"), "meadow");
+        assert!(m.region_for(Some("Europe/Vaduz")).is_none());
+        assert!(m.region_for(None).is_none());
         let md = credits_markdown(&m);
         assert_eq!(md.matches("| CC0-1.0 |").count(), m.materials.len());
         assert!(md.contains("ambientCG") && md.contains("Poly Haven"));

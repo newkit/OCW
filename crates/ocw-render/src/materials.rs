@@ -24,25 +24,50 @@ use ocw_assets::ktx2::TexFormat;
 use ocw_assets::materials::{GROUND_IDS, Library, Loaded, ROAD_IDS};
 
 use crate::console::{ConsoleAppExt, ConsoleCommand, Permission};
-use crate::ground::{GROUND_LAYERS, TerrainLook};
+use crate::ground::{ClassMix, GROUND_LAYERS, TerrainLook};
+
+/// The ground of one region: the nine layer slots filled with the
+/// region's materials (`[[region]]` in `assets/materials.toml`; the first
+/// set is the default) and its class mix.
+#[derive(Clone)]
+pub struct GroundSet {
+    pub id: String,
+    pub time_zones: Vec<String>,
+    pub albedo: Handle<Image>,
+    pub normal: Handle<Image>,
+    /// Look with the layer sizes (textured).
+    pub look: TerrainLook,
+    /// Mean albedo of the layers (linear RGB).
+    pub means: [[f32; 3]; GROUND_LAYERS],
+    pub mix: ClassMix,
+}
 
 /// The loaded library (absent until loaded; [`MaterialState`] says why not).
 #[derive(Resource, Clone)]
 pub struct MaterialLibrary {
-    pub ground_albedo: Handle<Image>,
-    pub ground_normal: Handle<Image>,
+    /// The default ground set first, then one per region.
+    pub sets: Vec<GroundSet>,
     pub road_albedo: Handle<Image>,
     pub road_normal: Handle<Image>,
-    /// Ground look with the layer sizes (textured).
-    pub ground_look: TerrainLook,
     /// Repeat sizes of the road layers (m).
     pub road_sizes: [f32; ROAD_IDS.len()],
-    /// Mean albedo of the ground layers (linear RGB).
-    pub ground_means: [[f32; 3]; GROUND_LAYERS],
     /// Mean albedo of the road layers (linear RGB).
     pub road_means: [[f32; 3]; ROAD_IDS.len()],
     pub credits: Vec<String>,
     pub dir: String,
+}
+
+impl MaterialLibrary {
+    /// The ground set of a package with this time zone.
+    pub fn set_for(&self, time_zone: Option<&str>) -> &GroundSet {
+        time_zone
+            .and_then(|tz| {
+                self.sets
+                    .iter()
+                    .find(|s| s.time_zones.iter().any(|z| z == tz))
+            })
+            .unwrap_or(&self.sets[0])
+    }
 }
 
 /// Whether the library is in use, and why not.
@@ -227,7 +252,6 @@ pub fn library_resource(
     lib: &Library,
     images: &mut Assets<Image>,
 ) -> Result<MaterialLibrary, String> {
-    let ground = layers(lib, &GROUND_IDS)?;
     let road = layers(lib, &ROAD_IDS)?;
     fn albedo<'a>(l: &[&'a Loaded]) -> Vec<&'a ocw_assets::ktx2::Texture> {
         l.iter().map(|m| &m.albedo).collect()
@@ -235,19 +259,48 @@ pub fn library_resource(
     fn normal<'a>(l: &[&'a Loaded]) -> Vec<&'a ocw_assets::ktx2::Texture> {
         l.iter().map(|m| &m.normal).collect()
     }
-    let mut look = TerrainLook::default();
-    look.mode.x = 1.0;
-    for (i, m) in ground.iter().enumerate() {
-        look.set_size(i, m.material.size_m);
+    let mut sets = Vec::new();
+    let mut ground_set = |id: &str,
+                          time_zones: Vec<String>,
+                          ids: Vec<String>,
+                          mix: ClassMix|
+     -> Result<GroundSet, String> {
+        let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+        let ground = layers(lib, &refs)?;
+        let mut look = TerrainLook::default();
+        look.mode.x = 1.0;
+        for (i, m) in ground.iter().enumerate() {
+            look.set_size(i, m.material.size_m);
+        }
+        Ok(GroundSet {
+            id: id.to_owned(),
+            time_zones,
+            albedo: images.add(array_image(&albedo(&ground), "ground albedo")?),
+            normal: images.add(array_image(&normal(&ground), "ground normal")?),
+            look,
+            means: std::array::from_fn(|i| ground[i].mean),
+            mix,
+        })
+    };
+    sets.push(ground_set(
+        "default",
+        Vec::new(),
+        GROUND_IDS.iter().map(|s| (*s).to_owned()).collect(),
+        crate::ground::default_mix(),
+    )?);
+    for r in &lib.manifest.regions {
+        sets.push(ground_set(
+            &r.id,
+            r.time_zones.clone(),
+            GROUND_IDS.iter().map(|s| r.layer(s)).collect(),
+            crate::ground::region_mix(r),
+        )?);
     }
     Ok(MaterialLibrary {
-        ground_albedo: images.add(array_image(&albedo(&ground), "ground albedo")?),
-        ground_normal: images.add(array_image(&normal(&ground), "ground normal")?),
+        sets,
         road_albedo: images.add(array_image(&albedo(&road), "road albedo")?),
         road_normal: images.add(array_image(&normal(&road), "road normal")?),
-        ground_look: look,
         road_sizes: std::array::from_fn(|i| road[i].material.size_m),
-        ground_means: std::array::from_fn(|i| ground[i].mean),
         road_means: std::array::from_fn(|i| road[i].mean),
         credits: ocw_assets::materials::credits(&lib.manifest)
             .iter()

@@ -35,10 +35,10 @@ loopback, as in CI). The old names `smoke`,
 work for now but are deprecated.
 
 **Ground and road textures** (spec §4.6): `make materials`
-(`scripts/fetch-materials.sh`) downloads the material library once – 17 CC0
+(`scripts/fetch-materials.sh`) downloads the material library once – 21 CC0
 materials from ambientCG and Poly Haven, pinned by URL and SHA-256 in
 `assets/materials.toml` – checks every hash, converts it to KTX2 (1024², BC3 /
-BC5, mipmapped) and writes the git-ignored `assets/materials/` (about 46 MB,
+BC5, mipmapped) and writes the git-ignored `assets/materials/` (about 57 MB,
 with `CREDITS.md`). The world packages are then drawn with meadow, forest
 floor, rock, gravel, asphalt, paving … instead of flat colours; without the
 library (or with `OCW_MATERIALS=off`) the app draws the flat land-use colours.

@@ -105,6 +105,28 @@ pub fn class_weights(class: LandClass) -> [f32; GROUND_LAYERS] {
     w
 }
 
+/// The ground-layer mix of every land class, by class code: the default
+/// ([`default_mix`]) or a regional set's (`assets/materials.toml`,
+/// `[[region]]` `classes`).
+pub type ClassMix = [[f32; GROUND_LAYERS]; 17];
+
+/// [`class_weights`] of every class.
+pub fn default_mix() -> ClassMix {
+    std::array::from_fn(|i| class_weights(LandClass::ALL[i]))
+}
+
+/// The mix of a regional set: its class overrides (by name, see
+/// `ocw_assets::materials::LAND_CLASS_NAMES`), the default elsewhere.
+pub fn region_mix(region: &ocw_assets::materials::Region) -> ClassMix {
+    let mut m = default_mix();
+    for (i, name) in ocw_assets::materials::LAND_CLASS_NAMES.iter().enumerate() {
+        if let Some(w) = region.class_mix(name) {
+            m[i] = w;
+        }
+    }
+    m
+}
+
 /// Slope (rise over run) where rock starts to show, and where it is all
 /// rock: 75 % … 120 % (37° … 50°). The flat colour map used 60 … 100 %,
 /// but with the limestone texture the steep alpine meadows of the 10 m
@@ -184,6 +206,7 @@ pub fn blend_weights(
 #[allow(clippy::needless_range_loop)] // parallel weight arrays
 pub fn splat_corners(
     cells: usize,
+    mix: &ClassMix,
     class: impl Fn(i64, i64) -> Option<LandClass>,
 ) -> (Vec<[u8; 4]>, Vec<[u8; 4]>) {
     let n = cells as i64;
@@ -197,7 +220,7 @@ pub fn splat_corners(
         for c in 0..=n {
             let mut w = [0.0f32; GROUND_LAYERS];
             for (dc, dr) in [(-1, -1), (0, -1), (-1, 0), (0, 0)] {
-                let cw = class_weights(at(c + dc, r + dr));
+                let cw = mix[at(c + dc, r + dr) as usize];
                 for i in 0..GROUND_LAYERS {
                     w[i] += cw[i] / 4.0;
                 }
@@ -215,12 +238,13 @@ pub fn splat_corners(
 /// class tint (`tint`, the T3 hook, 1 = neutral).
 pub fn class_palette(
     means: &[[f32; 3]; GROUND_LAYERS],
+    mix: &ClassMix,
     tint: impl Fn(LandClass) -> [f32; 3],
 ) -> Vec<(LandClass, [f32; 3])> {
     LandClass::ALL
         .iter()
         .map(|&c| {
-            let w = class_weights(c);
+            let w = mix[c as usize];
             let t = tint(c);
             let shade = canopy_shade(w[FOREST_FLOOR]);
             let lin: [f32; 3] = std::array::from_fn(|ch| {
@@ -369,6 +393,34 @@ mod tests {
         assert!(class_weights(LandClass::Farmland)[FARMLAND] > 0.5);
     }
 
+    /// A regional set changes the mix of its classes only (data-driven:
+    /// `[[region]]` `classes` in the manifest).
+    #[test]
+    fn regional_class_mixes_override_the_default() {
+        let m =
+            ocw_assets::materials::MaterialManifest::parse(ocw_assets::materials::SHIPPED).unwrap();
+        let canary = m.region_for(Some("Atlantic/Canary")).unwrap();
+        let mix = region_mix(canary);
+        let def = default_mix();
+        let bare = LandClass::Bare as usize;
+        assert!((mix[bare][SAND] - 0.5).abs() < 1e-6);
+        assert!(mix[LandClass::Default as usize][GRAVEL] > 0.5);
+        assert_eq!(
+            mix[LandClass::Glacier as usize],
+            def[LandClass::Glacier as usize]
+        );
+        // The names match the land classes.
+        for c in LandClass::ALL {
+            assert_eq!(
+                ocw_assets::materials::LAND_CLASS_NAMES[c as usize],
+                format!("{c:?}").to_lowercase()
+            );
+        }
+        // The slot ids are the renderer's layers.
+        assert_eq!(ocw_assets::materials::GROUND_IDS[ROCK], "rock");
+        assert_eq!(ocw_assets::materials::GROUND_IDS[GRAVEL], "gravel");
+    }
+
     #[test]
     fn steep_slopes_turn_to_rock() {
         assert_eq!(rock_weight(0.0), 0.0);
@@ -447,8 +499,9 @@ mod tests {
         let tile = |x0: i64| {
             move |c: i64, r: i64| (r >= -1 && r <= cells as i64).then(|| global(x0 + c, r))
         };
-        let (a0, b0) = splat_corners(cells, tile(0));
-        let (a1, b1) = splat_corners(cells, tile(cells as i64));
+        let mix = default_mix();
+        let (a0, b0) = splat_corners(cells, &mix, tile(0));
+        let (a1, b1) = splat_corners(cells, &mix, tile(cells as i64));
         let n = cells + 1;
         let w =
             |a: &[[u8; 4]], b: &[[u8; 4]], c: usize, r: usize| decode(&a[r * n + c], &b[r * n + c]);
@@ -469,7 +522,7 @@ mod tests {
             assert!((s - 1.0).abs() < 0.02);
         }
         // Without neighbours the edge repeats the tile's own cells.
-        let (lone, _) = splat_corners(cells, |c, r| {
+        let (lone, _) = splat_corners(cells, &mix, |c, r| {
             (c >= 0 && r >= 0 && c < cells as i64 && r < cells as i64).then_some(LandClass::Rock)
         });
         assert_eq!(lone[0][ROCK], 255);
@@ -480,12 +533,12 @@ mod tests {
         let mut means = [[0.1, 0.1, 0.1]; GROUND_LAYERS];
         means[MEADOW] = [0.1, 0.3, 0.05];
         means[FARMLAND] = [0.3, 0.2, 0.1];
-        let p = class_palette(&means, |_| [1.0; 3]);
+        let p = class_palette(&means, &default_mix(), |_| [1.0; 3]);
         assert_eq!(p.len(), 17);
         let meadow = p.iter().find(|(c, _)| *c == LandClass::Meadow).unwrap().1;
         let want = Color::linear_rgb(0.1, 0.3, 0.05).to_srgba();
         assert!((meadow[1] - want.green).abs() < 1e-5);
-        let tinted = class_palette(&means, |c| {
+        let tinted = class_palette(&means, &default_mix(), |c| {
             if c == LandClass::Meadow {
                 [0.5, 1.0, 1.0]
             } else {

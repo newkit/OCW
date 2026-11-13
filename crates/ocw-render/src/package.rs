@@ -192,6 +192,8 @@ pub struct TileLook {
     pub palette: Option<Vec<[f32; 3]>>,
     /// Road colour per surface (linear), by `RoadSurface` code.
     pub road_colours: Option<Vec<[f32; 3]>>,
+    /// The ground-layer mix of each land class (its regional set).
+    pub mix: Option<Arc<crate::ground::ClassMix>>,
 }
 
 impl TileLook {
@@ -199,12 +201,14 @@ impl TileLook {
         self.palette.is_some()
     }
 
-    /// The look for a loaded material library (class tint neutral).
-    pub fn of_library(lib: &MaterialLibrary) -> Self {
-        let palette = crate::ground::class_palette(&lib.ground_means, |_| [1.0; 3]);
+    /// The look for a loaded material library and the ground set of a
+    /// package's region (class tint neutral).
+    pub fn of_library(lib: &MaterialLibrary, set: &crate::materials::GroundSet) -> Self {
+        let palette = crate::ground::class_palette(&set.means, &set.mix, |_| [1.0; 3]);
         Self {
             palette: Some(palette.into_iter().map(|(_, c)| c).collect()),
             road_colours: Some(lib.road_means.to_vec()),
+            mix: Some(Arc::new(set.mix)),
         }
     }
 }
@@ -258,7 +262,12 @@ impl Splat {
 
 /// The splat weights of a tile (cell corners, neighbour tiles' cells
 /// included so tiles agree on their edges).
-pub fn tile_splat(pkg: &WorldPackage, key: TileKey, cells: u32) -> Splat {
+pub fn tile_splat(
+    pkg: &WorldPackage,
+    key: TileKey,
+    cells: u32,
+    mix: &crate::ground::ClassMix,
+) -> Splat {
     let n = i64::from(cells);
     let class = |c: i64, r: i64| {
         let (dx, dz) = (c.div_euclid(n), r.div_euclid(n));
@@ -269,7 +278,7 @@ pub fn tile_splat(pkg: &WorldPackage, key: TileKey, cells: u32) -> Splat {
         let (lu, kc) = tile_landuse(pkg, k)?;
         (kc == cells).then(|| lu.classes[(r.rem_euclid(n) * n + c.rem_euclid(n)) as usize])
     };
-    let (a, b) = crate::ground::splat_corners(cells as usize, class);
+    let (a, b) = crate::ground::splat_corners(cells as usize, mix, class);
     Splat { cells, a, b }
 }
 
@@ -1140,9 +1149,14 @@ pub fn build_tile_meshes_look(
         terrain: terrain_arrays_kept(pkg, tile, keep),
         colour_map: lu
             .map(|(lu, cells)| colour_map_with(pkg, tile, lu, cells, look.palette.as_deref())),
-        splat: lu
-            .filter(|_| look.textured())
-            .map(|(_, cells)| tile_splat(pkg, key, cells)),
+        splat: lu.filter(|_| look.textured()).map(|(_, cells)| {
+            let mix = look
+                .mix
+                .as_deref()
+                .copied()
+                .unwrap_or_else(crate::ground::default_mix);
+            tile_splat(pkg, key, cells, &mix)
+        }),
         roads: road_arrays_with(&tile.roads, look.road_colours.as_deref(), |p| {
             skirt_depth(pkg, &near, p)
         }),
@@ -1211,8 +1225,8 @@ struct TileStreamer {
     last_position: Option<[f64; 2]>,
     /// Tiles at the front of `ready` to upload in this frame (after a jump).
     urgent: usize,
-    /// The look the loaded tiles were built for.
-    look: TileLook,
+    /// Whether the loaded tiles were built with the material library.
+    textured: bool,
 }
 
 /// Neighbour tiles being loaded.
@@ -1404,20 +1418,32 @@ fn stream_tiles(
     let Some(p) = rider_position(&view) else {
         return;
     };
-    let look = library
-        .as_deref()
-        .map_or_else(TileLook::default, TileLook::of_library);
+    // The look of each member package: the ground set of its region.
+    let looks: Vec<TileLook> = set
+        .members()
+        .iter()
+        .map(|m| {
+            library.as_deref().map_or_else(TileLook::default, |lib| {
+                let tz = m.package().and_then(|p| p.time_zone.as_deref());
+                TileLook::of_library(lib, lib.set_for(tz))
+            })
+        })
+        .collect();
+    let look = move |i: usize| looks.get(i).cloned().unwrap_or_default();
+    let textured = library.is_some();
     // Packages came or went, or the material library arrived: the tiles
     // are built anew (the old meshes stay until the new ones are uploaded).
     // Tasks for the old set are discarded.
-    if streamer.generation != set.generation() || streamer.look != look {
+    if streamer.generation != set.generation() || streamer.textured != textured {
         streamer.generation = set.generation();
-        streamer.look = look.clone();
+        streamer.textured = textured;
         streamer.building.clear();
         let loaded: Vec<TileId> = streamer.loaded.keys().copied().collect();
         for id in loaded {
             if set.members()[id.0].is_resident() {
-                streamer.building.insert(id, build_task(set, id, &look));
+                streamer
+                    .building
+                    .insert(id, build_task(set, id, &look(id.0)));
             }
         }
     }
@@ -1433,7 +1459,9 @@ fn stream_tiles(
         if streamer.loaded.contains_key(&id) || streamer.building.contains_key(&id) {
             continue;
         }
-        streamer.building.insert(id, build_task(set, id, &look));
+        streamer
+            .building
+            .insert(id, build_task(set, id, &look(id.0)));
     }
     if jumped {
         // A teleport (or the start): the 3 × 3 tiles around the rider are
@@ -1596,14 +1624,15 @@ fn upload_tile(
     // The ground materials, blended by the tile's splat weights (spec §4.6).
     if let (Some(lib), Some(splat)) = (library, t.splat.take()) {
         let e = &mut terrain_mat.extension;
-        e.look = lib.ground_look;
+        let ground = lib.set_for(member.package().and_then(|p| p.time_zone.as_deref()));
+        e.look = ground.look;
         e.look.mode.y = splat.cells as f32;
         e.look.tile.x = member.package().map_or(1000.0, |p| p.tile_size_m);
         let (a, b) = splat.images();
         e.splat_a = Some(images.add(a));
         e.splat_b = Some(images.add(b));
-        e.albedo = Some(lib.ground_albedo.clone());
-        e.normal = Some(lib.ground_normal.clone());
+        e.albedo = Some(ground.albedo.clone());
+        e.normal = Some(ground.normal.clone());
     }
     let terrain_mat = terrain.add(terrain_mat);
     let parent = commands
@@ -2225,10 +2254,12 @@ mod tests {
         let mut means = [[0.5, 0.0, 0.0]; crate::ground::GROUND_LAYERS];
         means[crate::ground::FOREST_FLOOR] = [0.0, 0.0, 0.5];
         means[crate::ground::WETLAND] = [0.0, 0.0, 0.5];
-        let palette = crate::ground::class_palette(&means, |_| [1.0; 3]);
+        let mix = crate::ground::default_mix();
+        let palette = crate::ground::class_palette(&means, &mix, |_| [1.0; 3]);
         let look = TileLook {
             palette: Some(palette.into_iter().map(|(_, c)| c).collect()),
             road_colours: Some(vec![[0.1, 0.2, 0.3]; 5]),
+            mix: Some(std::sync::Arc::new(mix)),
         };
         let m = build_tile_meshes_look(&p, key, None, &look).unwrap();
         let splat = m.splat.expect("splat weights");

@@ -147,6 +147,64 @@ normal = { file = "Ground037_1K-JPG_NormalGL.jpg", sha256 = "ea59dbdcfa5bf2f28bd
 roughness = { file = "Ground037_1K-JPG_Roughness.jpg", sha256 = "3786b088e981aae562f06b6477972d379cffd09a5cc542ab42f9ffd94f9bcb0e" }
 ao = { file = "Ground037_1K-JPG_AmbientOcclusion.jpg", sha256 = "8afe189ae915888551076cb279f6282c84255e4b2bdb2c4ce8c1c891074245ef" }
 
+# --- Volcanic ground (Tenerife, region set "volcanic" below) -----------------
+
+[[material]]
+id = "lava_rock"
+name = "Lava rock (dark basalt)"
+group = "ground"
+size_m = 2.4
+license = "CC0-1.0"
+author = "Amal Kumar (Poly Haven)"
+title = "Dark Rock"
+source = "https://polyhaven.com/a/dark_rock"
+albedo = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/dark_rock/dark_rock_diff_1k.jpg", sha256 = "7e1148b1749b2200de463b943d4c8994bb24467c96418aa3c283bf65c30e7300" }
+normal = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/dark_rock/dark_rock_nor_gl_1k.jpg", sha256 = "0693d68d1a01b07389c7db22f56f9519ef572135bc2c1e59afbcdb6f52130fcc" }
+arm = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/dark_rock/dark_rock_arm_1k.jpg", sha256 = "face3801e899586af4868008705fcd5fe7a587aae88a13f18aadc3b2568300ca" }
+
+[[material]]
+id = "volcanic_ash"
+name = "Volcanic ash and cinder (Las Cañadas)"
+group = "ground"
+size_m = 1.5
+license = "CC0-1.0"
+author = "Lennart Demes (ambientCG)"
+title = "Gravel 024"
+source = "https://ambientcg.com/view?id=Gravel024"
+archive = "https://ambientcg.com/get?file=Gravel024_1K-JPG.zip"
+albedo = { file = "Gravel024_1K-JPG_Color.jpg", sha256 = "80da1deb63c8166aa5ab7572665d6928bc054289ff4aec578da7003481a189d7" }
+normal = { file = "Gravel024_1K-JPG_NormalGL.jpg", sha256 = "339bc735a9f9c49210ed1836358ce6a40c7051740dac5280962e2f6b0a5caaf5" }
+roughness = { file = "Gravel024_1K-JPG_Roughness.jpg", sha256 = "a09e0ec754f11d5bd502e80aa90ea31245c7d73e4d577b15c34887fb3fbd0394" }
+ao = { file = "Gravel024_1K-JPG_AmbientOcclusion.jpg", sha256 = "a478a0980caef8769cdff4c545637908a06bfddcef34df03cd31eb3fcfbceba0" }
+
+[[material]]
+id = "black_sand"
+name = "Black volcanic sand"
+group = "ground"
+size_m = 4.0
+license = "CC0-1.0"
+author = "Rob Tuytel and Dario Barresi (Poly Haven)"
+title = "Coast Sand 05"
+source = "https://polyhaven.com/a/coast_sand_05"
+albedo = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/coast_sand_05/coast_sand_05_diff_1k.jpg", sha256 = "3af6ab9fc565ece74fca08f4daf4ac903dd64e9370f1239176ec68f2f3dcdf6b" }
+normal = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/coast_sand_05/coast_sand_05_nor_gl_1k.jpg", sha256 = "e5dcfe12c8dcdb36ff3b2b87d90d3ac11fbafb42fd1f873c7faf3f3e512a3bbf" }
+arm = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/coast_sand_05/coast_sand_05_arm_1k.jpg", sha256 = "3e8b9f330ffa54cdf4c9409ccfa13c281a7ab58cc2724f42b57ddd07113eb2e5" }
+
+[[material]]
+id = "pine_floor"
+name = "Pine needle floor (Canary pine)"
+group = "ground"
+size_m = 1.5
+license = "CC0-1.0"
+author = "Lennart Demes (ambientCG)"
+title = "Ground 077"
+source = "https://ambientcg.com/view?id=Ground077"
+archive = "https://ambientcg.com/get?file=Ground077_1K-JPG.zip"
+albedo = { file = "Ground077_1K-JPG_Color.jpg", sha256 = "d51ff92f3b5a4f68f87ebd8fcbc527c9870b422330e73666bab3f434dd81c77c" }
+normal = { file = "Ground077_1K-JPG_NormalGL.jpg", sha256 = "fc82a3e17591da1d61cc6be632ea323f5d6e1028314805abb1a519dab38bcd7e" }
+roughness = { file = "Ground077_1K-JPG_Roughness.jpg", sha256 = "1920e7eb7ad1ac8af04ae8e9749fcaa901cc28e96eec9d002bf02c06e0f5366c" }
+ao = { file = "Ground077_1K-JPG_AmbientOcclusion.jpg", sha256 = "b1291d199074b2c54001a53af957d3703adb17ef7c1e687fea79a421c80c47be" }
+
 # --- Roads (OSM `surface`, ocw_world::RoadSurface) ---------------------------
 
 [[material]]
@@ -259,3 +317,27 @@ source = "https://polyhaven.com/a/weathered_plank_siding"
 albedo = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/weathered_plank_siding/weathered_plank_siding_diff_1k.jpg", sha256 = "dad0442114f1efd9a25195f2e2ac480693c2a6199f3987f4cfac4002b2820fbd" }
 normal = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/weathered_plank_siding/weathered_plank_siding_nor_gl_1k.jpg", sha256 = "229440bb21992d7f97bbbe03f6488e21cc061119ab3774ad0c30e352c9690a74" }
 arm = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/weathered_plank_siding/weathered_plank_siding_arm_1k.jpg", sha256 = "214fc7a4526d1dc5b2627a6433f26f28ce6f85d1ecad872cb14f3e75aa9af7ad" }
+
+# --- Regional material sets (spec §4.6; Phase 8 T3 extends them) -------------
+# A set applies to packages whose time zone (section TZID) is listed: ground
+# layer slots (meadow, farmland, forest_floor, rock, scree, gravel, sand,
+# snow, wetland) are drawn with other materials, and land classes (default,
+# meadow, …, bare, scrub) with another mix of the slots.
+
+[[region]]
+id = "volcanic"
+name = "Volcanic islands (Canary Islands)"
+time_zones = ["Atlantic/Canary"]
+# Rock and scree are lava; gravel and loose ground volcanic ash and cinder
+# (the Cañadas); sand and beaches (natural=beach → class bare) black sand;
+# the forests Canary pine.
+layers = { rock = "lava_rock", scree = "volcanic_ash", gravel = "volcanic_ash", sand = "black_sand", forest_floor = "pine_floor" }
+
+[region.classes]
+# Ground without land use: dry, half ash – the green north gets its meadows
+# from OSM land use; T3 calibrates this from imagery.
+default = { meadow = 0.45, gravel = 0.55 }
+bare = { gravel = 0.5, sand = 0.5 }
+scrub = { meadow = 0.4, gravel = 0.6 }
+forest = { forest_floor = 0.85, gravel = 0.15 }
+water = { sand = 0.7, rock = 0.3 }
