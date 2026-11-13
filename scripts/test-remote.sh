@@ -174,6 +174,120 @@ s=$(mktemp -d)
 ) || fail=1
 rm -rf "$s"
 
+# The Windows sync end to end (v2.84) against a simulated machine: `ssh`
+# is a bash function that plays the PowerShell side – the manifest check
+# (header naming the checkout, file exists with the manifest's size and
+# mtime) and, after GNU tar -xm, the manifest write (only when tar
+# succeeded, missing files reported) – in a scratch directory. It checks
+# that the encoded scripts it stands in for are remote.sh's. Regression
+# (Win11Builder, 2026-11-14): a new agent checkout got "sending 0 changed
+# of 397 files" and stayed empty (only .ocw-sync, .ocw-last-run), because
+# win_changed's `NR == FNR` read the hashes as the valid list when the
+# machine's list was empty. Manual live test: see the end of this block.
+(
+  set -e
+  wf=""
+  for f in psq ps_encoded snapshot_tree win_changed win_send sync_tree_windows; do
+    wf+=$(awk -v f="$f" '$0 ~ "^" f "\\(\\) \\{" { p = 1; print; if ($0 ~ /\}[ \t]*$/) exit; next } p { print } p && /^}/ { exit }' scripts/remote.sh)$'\n'
+  done
+  for v in win_manifest_ps win_manifest_write_ps; do
+    wf+=$(awk -v v="$v" '$0 ~ "^read -r -d .. " v " " { p = 1 } p { print } p && /^EOF/ { exit }' scripts/remote.sh)$'\n'
+  done
+  eval "$wf"
+  x=$(mktemp -d)
+  trap 'rm -rf "$x"' EXIT
+  repo='B:\src\OCW-test' root=$x/machine target=win SSH=(fake_ssh) machine=testwin
+  decode() { printf '%s' "${1##*-EncodedCommand }" | sed 's/[^A-Za-z0-9+/=].*//' | base64 -d | iconv -f utf-16le -t utf-8; }
+  fstat() { stat -c '%s	%Y' "$1"; }
+  fake_ssh() {
+    shift
+    local c=$1 l sha size mt p
+    case "$c" in
+      New-Item*) mkdir -p "$root" ;;
+      Set-Location*) ;;
+      tar\ -xmf*)
+        [ "$(decode "$c")" = "${win_manifest_write_ps//@REPO@/"$(psq "$repo")"}" ] || { echo "fake: not the write script" >&2; return 9; }
+        if [ -e "$x/tar-fail" ]; then cat >/dev/null; rm -f "$root/.ocw-sync/incoming.tsv"; echo '@@ocw-sync tar failed: exit 1'; return 1; fi
+        tar -xmf - -C "$root"
+        if [ -e "$x/drop" ]; then rm -f "$root/$(cat "$x/drop")"; [ -e "$x/drop-always" ] || rm -f "$x/drop"; fi
+        local miss=0 hdr
+        hdr=$(printf '# ocw-sync v2\t%s' "$repo")
+        { printf '%s\n' "$hdr"
+          while IFS=$'\t' read -r sha p; do
+            if [ -e "$root/$p" ]; then printf '%s\t%s\t%s\t%s\n' "$sha" "$(fstat "$root/$p" | cut -f1)" "$(fstat "$root/$p" | cut -f2)" "$p"; else miss=$((miss + 1)); fi
+          done <"$root/.ocw-sync/incoming.tsv"
+          [ $miss = 0 ] || echo "@@missing $miss" >"$x/missing"
+        } >"$root/.ocw-sync/manifest.tsv.new"
+        mv "$root/.ocw-sync/manifest.tsv.new" "$root/.ocw-sync/manifest.tsv"; rm "$root/.ocw-sync/incoming.tsv"
+        if [ -e "$x/missing" ]; then printf '@@ocw-sync missing %s: ...\r\n' "$(cut -d' ' -f2 "$x/missing")"; rm "$x/missing"; fi
+        ;;
+      powershell*)
+        [ "$(decode "$c")" = "${win_manifest_ps//@REPO@/"$(psq "$repo")"}" ] || { echo "fake: not the manifest script" >&2; return 9; }
+        local m=$root/.ocw-sync/manifest.tsv
+        [ -f "$m" ] || return 0
+        [ "$(head -n 1 "$m")" = "$(printf '# ocw-sync v2\t%s' "$repo")" ] || return 0
+        tail -n +2 "$m" | while IFS=$'\t' read -r sha size mt p; do
+          if [ -e "$root/$p" ] && [ "$(fstat "$root/$p")" = "$size	$mt" ]; then printf '%s\t%s\r\n' "$sha" "$p"; fi
+        done
+        ;;
+      *) echo "fake: unexpected command $c" >&2; return 9 ;;
+    esac
+  }
+  cd "$x"
+  git -c user.name=t -c user.email=t@t init -q -b main src && cd src
+  mkdir -p crates/a
+  echo '[workspace]' >Cargo.toml; echo '[toolchain]' >rust-toolchain.toml; echo code >crates/a/lib.rs; echo z >zz.txt
+  git add -A
+  snapshot_tree
+  sync() { rm -rf "$snap_dir/tree/.ocw-sync"; sync_tree_windows 2>"$x/log"; }
+  sent() { grep -o 'sending [0-9]* changed of [0-9]* files' "$x/log"; }
+  check "$(win_changed /dev/null <(printf 'a\tx\nb\ty\n') | tr '\n' ' ')" "x y " "windows regression: an empty valid list sends every file"
+  sync
+  check "$(sent)/$(cd "$root" && ls Cargo.toml rust-toolchain.toml crates/a/lib.rs zz.txt 2>/dev/null | wc -l)" "sending 4 changed of 4 files/4" "windows: a new checkout gets the whole tree"
+  check "$(head -n 1 "$root/.ocw-sync/manifest.tsv" | cut -f2)/$(($(wc -l <"$root/.ocw-sync/manifest.tsv") - 1))/$([ -e "$root/.ocw-sync/incoming.tsv" ] && echo left || echo gone)" \
+    'B:\src\OCW-test/4/gone' "windows: the manifest names its checkout and lists every file"
+  sync
+  check "$(sent)" "sending 0 changed of 4 files" "windows: a second sync sends nothing"
+  rm "$root/crates/a/lib.rs" "$root/Cargo.toml"
+  sync
+  check "$(sent)/$(cat "$root/crates/a/lib.rs")/$([ -e "$root/Cargo.toml" ] && echo there)" "sending 2 changed of 4 files/code/there" "windows: files deleted there are re-sent"
+  # Stale state: a manifest of another checkout (a copied directory) or of
+  # the format before v2.84 is not trusted, even with the files there.
+  for stale in other headerless empty; do
+    case $stale in
+      other) sed -i '1s/.*/# ocw-sync v2\tB:\\src\\OCW-other/' "$root/.ocw-sync/manifest.tsv" ;;
+      headerless) sed -i '1d' "$root/.ocw-sync/manifest.tsv" ;;
+      empty) rm -rf "$root"; mkdir -p "$root/.ocw-sync"; : >"$root/.ocw-sync/manifest.tsv"; : >"$root/.ocw-last-run" ;;
+    esac
+    sync
+    check "$(sent)/$(cd "$root" && ls Cargo.toml rust-toolchain.toml 2>/dev/null | wc -l)" "sending 4 changed of 4 files/2" "windows: a stale .ocw-sync ($stale manifest) means a full send"
+  done
+  cp "$root/.ocw-sync/manifest.tsv" "$x/manifest.before"
+  echo changed >"$snap_dir/tree/zz.txt"
+  : >"$x/tar-fail"
+  sync && rc=0 || rc=$?
+  rm "$x/tar-fail"
+  check "$rc/$(cmp -s "$x/manifest.before" "$root/.ocw-sync/manifest.tsv" && echo kept)/$([ -e "$root/.ocw-sync/incoming.tsv" ] && echo left || echo none)/$(grep -c 'manifest not updated' "$x/log")" \
+    "1/kept/none/1" "windows: a failed extraction fails the sync and leaves the manifest as it was"
+  echo Cargo.toml >"$x/drop"
+  rm "$root/rust-toolchain.toml"
+  sync && rc=0 || rc=$?
+  check "$rc/$(grep -c 'sending the whole tree' "$x/log")/$(cd "$root" && ls Cargo.toml rust-toolchain.toml 2>/dev/null | wc -l)/$(cat "$root/zz.txt")" "0/1/2/changed" \
+    "windows safety net: Cargo.toml missing after the sync sends the whole tree once"
+  echo Cargo.toml >"$x/drop"; : >"$x/drop-always"
+  sync && rc=0 || rc=$?
+  check "$rc/$(grep -c 'still missing 1' "$x/log")" "1/1" "windows safety net: still missing after the full send fails the sync"
+  rm -f "$x/drop" "$x/drop-always"
+  rm -rf "$snap_dir"
+  [ "$fail" = 0 ]
+) || fail=1
+# Manual live test (Win11Builder): from a branch with a fresh checkout name,
+#   OCW_REMOTE_DIR='B:\src\OCW-synctest' scripts/remote.sh Win11Builder run 'Get-ChildItem -Recurse -File | Measure-Object | % Count'
+# (first run: "sending N changed of N files", the count matches), again
+# ("sending 0 changed"), then delete Cargo.toml and a source file there with
+# `scripts/remote.sh Win11Builder ssh` and run once more (both re-sent);
+# finally `cargo check -p ocw-core` there and remove the directory.
+
 # The Windows run wrapper as remote.sh assembles it (no Windows needed):
 # placeholders filled, braces balanced, the sync step chosen.
 (

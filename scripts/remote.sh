@@ -248,45 +248,75 @@ sync_tree() {
 # A PowerShell script as an encoded command (no quoting issues).
 ps_encoded() { printf 'powershell -NoProfile -NonInteractive -EncodedCommand %s' "$(printf '%s' "$1" | iconv -f utf-8 -t utf-16le | base64 -w0)"; }
 
-# Windows sync state: $repo\.ocw-sync\manifest.tsv holds, per file sent,
-# its SHA-1, and the size and mtime (ticks) it got there. This prints
-# "sha<TAB>path" for the entries whose file is still unchanged there.
+# Windows sync state: $repo\.ocw-sync\manifest.tsv holds a header naming the
+# checkout ("# ocw-sync v2<TAB>REPO") and, per file sent, its SHA-1 and the
+# size and mtime (ticks) it got there. This prints "sha<TAB>path" for the
+# entries whose file still exists there, unchanged; a manifest without that
+# header (another checkout's, or the format before v2.84) counts as none.
 read -r -d '' win_manifest_ps <<'EOF' || true
 $r = @REPO@; $m = Join-Path $r '.ocw-sync\manifest.tsv'
 if (Test-Path -LiteralPath $m) {
-  foreach ($l in [IO.File]::ReadAllLines($m)) {
-    $p = $l.Split([char]9, 4); if ($p.Count -lt 4) { continue }
-    $fi = New-Object IO.FileInfo (Join-Path $r $p[3])
-    if ($fi.Exists -and $fi.Length -eq [int64]$p[1] -and $fi.LastWriteTimeUtc.Ticks -eq [int64]$p[2]) { [Console]::Out.WriteLine($p[0] + [char]9 + $p[3]) }
+  $ls = [IO.File]::ReadAllLines($m)
+  if ($ls.Count -gt 0 -and $ls[0] -eq ('# ocw-sync v2' + [char]9 + $r)) {
+    for ($i = 1; $i -lt $ls.Count; $i++) {
+      $p = $ls[$i].Split([char]9, 4); if ($p.Count -lt 4) { continue }
+      $fi = New-Object IO.FileInfo (Join-Path $r $p[3])
+      if ($fi.Exists -and $fi.Length -eq [int64]$p[1] -and $fi.LastWriteTimeUtc.Ticks -eq [int64]$p[2]) { [Console]::Out.WriteLine($p[0] + [char]9 + $p[3]) }
+    }
   }
 }
 EOF
-# After extraction: the new manifest from .ocw-sync\incoming.tsv (sha<TAB>path
-# of every file of the snapshot) and the files' size and mtime there now.
+# After a successful extraction: the new manifest from .ocw-sync\incoming.tsv
+# (sha<TAB>path of every file of the snapshot) and the files' size and mtime
+# there now. Files of the snapshot that are not there are left out and
+# reported ("@@ocw-sync missing N: ..."); sync_tree_windows then sends the
+# whole tree once.
 read -r -d '' win_manifest_write_ps <<'EOF' || true
 $r = @REPO@; $d = Join-Path $r '.ocw-sync'; $in = Join-Path $d 'incoming.tsv'
-$sb = New-Object Text.StringBuilder
+if (-not (Test-Path -LiteralPath $in)) { [Console]::Out.WriteLine('@@ocw-sync tar failed: no incoming.tsv'); exit 1 }
+$sb = New-Object Text.StringBuilder; [void]$sb.Append('# ocw-sync v2' + [char]9 + $r + [char]10)
+$miss = New-Object Collections.Generic.List[string]
 foreach ($l in [IO.File]::ReadAllLines($in)) {
   $p = $l.Split([char]9, 2); if ($p.Count -lt 2) { continue }
   $fi = New-Object IO.FileInfo (Join-Path $r $p[1])
-  if ($fi.Exists) { [void]$sb.Append($p[0] + [char]9 + $fi.Length + [char]9 + $fi.LastWriteTimeUtc.Ticks + [char]9 + $p[1] + [char]10) }
+  if ($fi.Exists) { [void]$sb.Append($p[0] + [char]9 + $fi.Length + [char]9 + $fi.LastWriteTimeUtc.Ticks + [char]9 + $p[1] + [char]10) } else { $miss.Add($p[1]) }
 }
 [IO.File]::WriteAllText((Join-Path $d 'manifest.tsv'), $sb.ToString()); Remove-Item -LiteralPath $in
+if ($miss.Count -gt 0) { [Console]::Out.WriteLine('@@ocw-sync missing ' + $miss.Count + ': ' + (@($miss | Select-Object -First 5) -join ' ')) }
 EOF
 
 # The files of the snapshot whose content is not (known to be) on the
 # machine: `win_changed VALID HASHES` prints the paths of the HASHES lines
 # (sha<TAB>path) that are not in VALID (the same format, from the machine).
-win_changed() { awk -F '\t' 'NR == FNR { v[$0] = 1; next } !($0 in v) { print $2 }' "$1" "$2"; }
+# VALID is read with getline: the `NR == FNR` idiom took HASHES for VALID
+# when VALID was empty (a new checkout), so nothing was sent (v2.84).
+win_changed() { awk -F '\t' -v vf="$1" 'BEGIN { while ((getline l < vf) > 0) v[l] = 1; close(vf) } !($0 in v) { print $2 }' "$2"; }
+
+# `win_send LIST`: sends the snapshot's files in LIST as a tar stream and
+# writes the manifest there – only if tar.exe succeeded (else incoming.tsv
+# is removed and the manifest stays as it was). Prints the machine's
+# "@@ocw-sync ..." report lines; fails when the extraction failed.
+win_send() {
+  local out rc=0
+  out=$( (cd "$snap_dir/tree" && tar -cf - -T "$1") |
+    "${SSH[@]}" "$target" "tar -xmf - -C $(psq "$repo"); if (\$LASTEXITCODE -ne 0) { '@@ocw-sync tar failed: exit ' + \$LASTEXITCODE; Remove-Item -Force -ErrorAction SilentlyContinue -LiteralPath (Join-Path $(psq "$repo") '.ocw-sync\\incoming.tsv'); exit 1 }; $(ps_encoded "${win_manifest_write_ps//@REPO@/"$(psq "$repo")"}")" |
+    tr -d '\r') || rc=$?
+  printf '%s\n' "$out" | grep '^@@ocw-sync' || true
+  case "$out" in *"@@ocw-sync tar failed"*) return 1 ;; esac
+  return "$rc"
+}
 
 # Windows has no rsync; its built-in tar.exe unpacks a tar stream. Only
-# files whose content differs from what the manifest says is there are
-# sent, and unpacked with -m (mtime = now) for the same reason as
-# rsync_sync_opts. The first sync into a checkout sends everything (it has
-# no manifest yet). Files deleted here are removed there with Remove-Item.
+# files whose content differs from what the manifest says is there (same
+# size and mtime, the file still existing) are sent, and unpacked with -m
+# (mtime = now) for the same reason as rsync_sync_opts. The first sync into
+# a checkout sends everything (it has no manifest yet). Files deleted here
+# are removed there with Remove-Item. Safety net (v2.84): when files of the
+# snapshot (e.g. Cargo.toml, rust-toolchain.toml) are missing there after
+# the sync, the whole tree is sent once more; still missing = failed sync.
 sync_tree_windows() {
-  "${SSH[@]}" "$target" "New-Item -ItemType Directory -Force -Path $(psq "$repo") | Out-Null"
-  local gone=() f list
+  "${SSH[@]}" "$target" "New-Item -ItemType Directory -Force -Path $(psq "$repo") | Out-Null" || return 1
+  local gone=() f list out
   while IFS= read -r f; do [ -e "$snap_dir/tree/$f" ] || gone+=("$(psq "$f")"); done <"$snap_dir/list"
   if [ ${#gone[@]} -gt 0 ]; then
     list=$(IFS=,; echo "${gone[*]}")
@@ -299,8 +329,15 @@ sync_tree_windows() {
   cp "$snap_dir/hashes" "$snap_dir/tree/.ocw-sync/incoming.tsv"
   { win_changed "$snap_dir/valid" "$snap_dir/hashes"; echo .ocw-sync/incoming.tsv; } >"$snap_dir/send"
   echo "remote.sh: sending $(($(wc -l <"$snap_dir/send") - 1)) changed of $(wc -l <"$snap_dir/present") files" >&2
-  (cd "$snap_dir/tree" && tar -cf - -T "$snap_dir/send") |
-    "${SSH[@]}" "$target" "tar -xmf - -C $(psq "$repo"); $(ps_encoded "${win_manifest_write_ps//@REPO@/"$(psq "$repo")"}")"
+  out=$(win_send "$snap_dir/send") || { echo "remote.sh: unpacking the tree there failed${out:+ ($out)}; manifest not updated" >&2; return 1; }
+  case "$out" in
+    *"@@ocw-sync missing"*)
+      echo "remote.sh: ${out#*@@ocw-sync } after the sync: sending the whole tree" >&2
+      { cat "$snap_dir/present"; echo .ocw-sync/incoming.tsv; } >"$snap_dir/send"
+      out=$(win_send "$snap_dir/send") || { echo "remote.sh: unpacking the tree there failed${out:+ ($out)}" >&2; return 1; }
+      case "$out" in *"@@ocw-sync missing"*) echo "remote.sh: still ${out#*@@ocw-sync } after a full send" >&2; return 1 ;; esac
+      ;;
+  esac
 }
 
 # Dev profile change (spec §11.2, v2.63): when the [profile.dev] /
