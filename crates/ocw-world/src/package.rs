@@ -132,6 +132,19 @@ impl WorldPackage {
         f64::from(self.tile_size_m) / f64::from(self.samples - 1)
     }
 
+    /// The lowest and highest terrain height of all tiles (m); `None`
+    /// without tiles.
+    pub fn height_range(&self) -> Option<(f32, f32)> {
+        self.tiles
+            .values()
+            .flat_map(|t| t.heights.iter().copied())
+            .filter(|h| h.is_finite())
+            .fold(None, |r, h| match r {
+                None => Some((h, h)),
+                Some((lo, hi)) => Some((lo.min(h), hi.max(h))),
+            })
+    }
+
     /// Terrain height at local (x, z), bilinear within its tile.
     pub fn height(&self, x: f64, z: f64) -> Option<f64> {
         let size = f64::from(self.tile_size_m);
@@ -801,6 +814,15 @@ impl<'a> Bytes<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn height_range_spans_all_tiles() {
+        // Heights 10·i + k + 100·x over the tiles x = -1, 0, 1.
+        assert_eq!(package().height_range(), Some((-100.0, 122.0)));
+        let mut empty = package();
+        empty.tiles.clear();
+        assert_eq!(empty.height_range(), None);
+    }
 
     fn package() -> WorldPackage {
         let mut tiles = BTreeMap::new();

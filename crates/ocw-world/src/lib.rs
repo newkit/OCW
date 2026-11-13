@@ -22,6 +22,7 @@ pub mod path;
 pub mod region;
 mod route;
 pub mod route_file;
+pub mod summary;
 pub mod surface;
 mod terrain;
 pub mod track;

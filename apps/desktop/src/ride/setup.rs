@@ -34,8 +34,10 @@ pub struct WorldSetup {
     /// The road network of the package and its neighbours (packages with a
     /// road graph only): free ride, routes, GPX import.
     pub net: Option<Arc<RoadNetwork>>,
-    /// The package's routes (section `ROUT`): name and length (m).
-    pub routes: Vec<(String, f64)>,
+    /// The package's routes (section `ROUT`): name, length and climbing.
+    pub routes: Vec<super::world::RouteInfo>,
+    /// What World → About this world shows.
+    pub details: super::world::WorldDetails,
     /// (lat, lon) of the package's local metres.
     pub origin: (f64, f64),
 }
@@ -78,6 +80,7 @@ pub fn build(args: &Args) -> Result<RideSetup, String> {
     let loaded = worlds::try_load(args, spec)?;
     let hood = worlds::try_neighbourhood(args, spec, &loaded)?;
     let info = WorldInfo::of(spec, &loaded, &hood);
+    let details = super::world::WorldDetails::of(&loaded, &hood.worlds);
     let pkg = &loaded.package;
     let net = hood
         .set
@@ -125,7 +128,16 @@ pub fn build(args: &Args) -> Result<RideSetup, String> {
     let routes = pkg
         .routes
         .iter()
-        .map(|r| (r.name.clone(), graph_route_length_m(r)))
+        .map(|r| {
+            let plan = net.as_ref().and_then(|n| r.resolve(n).ok().map(|p| (p, n)));
+            super::world::RouteInfo {
+                name: r.name.clone(),
+                length_m: plan
+                    .as_ref()
+                    .map_or_else(|| graph_route_length_m(r), |(p, _)| p.length_m()),
+                climb_m: plan.map(|(p, n)| p.elevation_gain_m(n)),
+            }
+        })
         .collect();
     let origin = pkg.origin;
     setup.world = Some(WorldSetup {
@@ -133,6 +145,7 @@ pub fn build(args: &Args) -> Result<RideSetup, String> {
         render: worlds::package_world(args, hood),
         net,
         routes,
+        details,
         origin,
     });
     Ok(setup)

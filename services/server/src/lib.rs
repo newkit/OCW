@@ -10,6 +10,7 @@ pub mod local;
 pub mod net;
 pub mod stats;
 pub mod voice;
+pub mod worlds;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -67,6 +68,11 @@ pub struct ServerConfig {
     /// servers let their single player (anyone), a shared session only
     /// its host (the default).
     pub clock_access: ClockAccess,
+    /// Who may switch the session's world package (spec §3.2.1, World →
+    /// Change world; [`v1::WorldRequest`]): the same rule as the clock –
+    /// the local servers' single player, the host of a shared session (the
+    /// default), nobody when the organizer fixed the world.
+    pub world_access: ClockAccess,
     /// The real UTC instant (Unix ms) at the session's start; `None`: the
     /// system clock when the server is created (tests fix it).
     pub real_epoch_ms: Option<i64>,
@@ -104,6 +110,36 @@ pub struct GameServer {
     left: Vec<String>,
     /// The session's world clock (spec §14 Phase 9), on session time.
     clock: ocw_sky::WorldClock,
+    /// Session time (s) before the current session: a world switch starts
+    /// a new [`Session`] at tick 0, the clock goes on.
+    time_base_s: f64,
+    /// An allowed world switch, waiting for the embedding to load it.
+    pending_world: Option<WorldSwitch>,
+}
+
+/// A world switch the host asked for (spec §3.2.1), checked and waiting
+/// for the embedding (`ocw-server`) to load the package
+/// ([`GameServer::take_world_switch`], then [`GameServer::switch_world`] or
+/// [`result_message`] to the asker on failure).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorldSwitch {
+    pub conn: ConnectionId,
+    pub rider: RiderId,
+    /// The asker's display name.
+    pub by: String,
+    /// What the request names: an id, `id@version`, a name or a file name
+    /// of the server's catalog.
+    pub world: String,
+    /// A route of the package (`None`: a free ride).
+    pub route: Option<String>,
+}
+
+/// An encoded `DevCommandResult` (the answer to a request).
+pub fn result_message(ok: bool, message: impl Into<String>) -> Vec<u8> {
+    encode(&server_message(S::DevResult(v1::DevCommandResult {
+        ok,
+        message: message.into(),
+    })))
 }
 
 /// Base power of the bots, from easy riders to strong ones, so they spread
@@ -170,14 +206,7 @@ fn add_numbered_bot(session: &mut Session, i: u32) -> RiderId {
 impl GameServer {
     /// A session on `course` (a [`Route`] converts into one).
     pub fn new(course: impl Into<Course>, config: ServerConfig) -> Self {
-        let mut session = match course.into() {
-            Course::Route(route) => Session::new(route).with_start(config.start_m),
-            Course::FreeRide { net, start } => Session::free_ride(net, start),
-            Course::RouteRide { net, plan } => Session::route_ride(net, plan),
-        };
-        for i in 0..config.bots {
-            add_numbered_bot(&mut session, i);
-        }
+        let session = new_session(course.into(), &config);
         let clock = ocw_sky::WorldClock::new(config.real_epoch_ms.unwrap_or_else(unix_now_ms));
         Self {
             clock,
@@ -190,7 +219,76 @@ impl GameServer {
             voice_issued: BTreeMap::new(),
             joined: Vec::new(),
             left: Vec::new(),
+            time_base_s: 0.0,
+            pending_world: None,
         }
+    }
+
+    /// The world switch waiting to be loaded, if any (taken once).
+    pub fn take_world_switch(&mut self) -> Option<WorldSwitch> {
+        self.pending_world.take()
+    }
+
+    /// Whether a world switch was allowed and not yet taken.
+    pub fn world_switch_pending(&self) -> bool {
+        self.pending_world.is_some()
+    }
+
+    /// Ends the session and starts a new one on `course` (another world,
+    /// spec §3.2.1): the bots ride again, the world clock goes on, every
+    /// rider leaves the session (connections stay) and joins again with a
+    /// new Hello. Returns the connections that rode and the encoded
+    /// [`v1::WorldChange`] to send them.
+    pub fn switch_world(
+        &mut self,
+        course: impl Into<Course>,
+        change: v1::WorldChange,
+    ) -> (Vec<ConnectionId>, Vec<u8>) {
+        self.time_base_s = self.session_time_s();
+        self.session = new_session(course.into(), &self.config);
+        let conns: Vec<ConnectionId> = std::mem::take(&mut self.riders).into_keys().collect();
+        self.event_dirty = false;
+        self.pending_world = None;
+        tracing::info!(world = %change.package_id, route = %change.route, riders = conns.len(), "world switched");
+        (conns, encode(&server_message(S::WorldChange(change))))
+    }
+
+    /// A world switch request from `rider` (spec §3.2.1): checked here, on
+    /// the server (§6.1), as the clock's; the package is loaded by the
+    /// embedding.
+    fn world_request(&mut self, conn: ConnectionId, rider: RiderId, req: v1::WorldRequest) -> S {
+        let result = |ok: bool, message: String| S::DevResult(v1::DevCommandResult { ok, message });
+        if !self.config.world_access.allows(Some(rider), self.host()) {
+            return result(
+                false,
+                match self.config.world_access {
+                    ClockAccess::Nobody => {
+                        "the world of this session is set by the organizer".into()
+                    }
+                    _ => "only the host of this shared ride can change the world".into(),
+                },
+            );
+        }
+        let world = req.world.trim().to_owned();
+        if world.is_empty() {
+            return result(
+                false,
+                "which world? (an id or name the server lists)".into(),
+            );
+        }
+        if self.pending_world.is_some() {
+            return result(false, "another world is being loaded".into());
+        }
+        let route = (!req.route.trim().is_empty()).then(|| req.route.trim().to_owned());
+        tracing::info!(%rider, %world, ?route, "world switch asked");
+        self.pending_world = Some(WorldSwitch {
+            conn,
+            rider,
+            by: self.names.get(&conn).cloned().unwrap_or_default(),
+            world: world.clone(),
+            route,
+        });
+        result(true, format!("the server loads {world} ..."))
     }
 
     pub fn session(&self) -> &Session {
@@ -199,7 +297,7 @@ impl GameServer {
 
     /// Session time (s): the simulation ticks so far.
     pub fn session_time_s(&self) -> f64 {
-        self.session.tick() as f64 / f64::from(SIM_TICK_HZ)
+        self.time_base_s + self.session.tick() as f64 / f64::from(SIM_TICK_HZ)
     }
 
     /// The world clock (spec §14 Phase 9).
@@ -226,12 +324,7 @@ impl GameServer {
     /// here, on the server (§6.1), not only in the client's menu.
     fn clock_request(&mut self, rider: RiderId, req: &v1::ClockRequest) -> S {
         let result = |ok: bool, message: String| S::DevResult(v1::DevCommandResult { ok, message });
-        let allowed = match self.config.clock_access {
-            ClockAccess::Anyone => true,
-            ClockAccess::Host => self.host() == Some(rider),
-            ClockAccess::Nobody => false,
-        };
-        if !allowed {
+        if !self.config.clock_access.allows(Some(rider), self.host()) {
             return result(
                 false,
                 match self.config.clock_access {
@@ -333,6 +426,7 @@ impl GameServer {
             (C::Dev(cmd), Some(rider)) => Some(self.dev_command(rider, cmd)),
             (C::Event(req), Some(_)) => Some(self.event_request(req)),
             (C::Clock(req), Some(rider)) => Some(self.clock_request(rider, &req)),
+            (C::World(req), Some(rider)) => Some(self.world_request(conn, rider, req)),
             (C::Voice(req), Some(rider)) => Some(S::Voice(self.voice_grant(conn, rider, &req))),
             (C::Turn(turn), Some(rider)) => {
                 if let Some(net) = self.session.network() {
@@ -443,6 +537,7 @@ impl GameServer {
                 .unwrap_or_default(),
             voice: self.config.voice.is_some(),
             clock,
+            world_access: ocw_protocol::access_to_wire(self.config.world_access),
         })
     }
 
@@ -652,6 +747,19 @@ impl GameServer {
     pub fn connections(&self) -> impl Iterator<Item = ConnectionId> + '_ {
         self.riders.keys().copied()
     }
+}
+
+/// A new session on `course` with the configured bots.
+fn new_session(course: Course, config: &ServerConfig) -> Session {
+    let mut session = match course {
+        Course::Route(route) => Session::new(route).with_start(config.start_m),
+        Course::FreeRide { net, start } => Session::free_ride(net, start),
+        Course::RouteRide { net, plan } => Session::route_ride(net, plan),
+    };
+    for i in 0..config.bots {
+        add_numbered_bot(&mut session, i);
+    }
+    session
 }
 
 /// The physics profile of a joining rider (spec §2.5, §3.2.1): the
@@ -1269,6 +1377,139 @@ mod tests {
         let (_, _) = join(&mut solo);
         let (second, _) = join(&mut solo);
         assert!(ask_clock(&mut solo, second, K::Speed(60.0)).0);
+    }
+
+    fn world_server(access: ClockAccess) -> GameServer {
+        GameServer::new(
+            Route::test_loop(),
+            ServerConfig {
+                world_access: access,
+                bots: 2,
+                real_epoch_ms: Some(EPOCH_MS),
+                ..Default::default()
+            },
+        )
+    }
+
+    fn ask_world(server: &mut GameServer, conn: ConnectionId, world: &str) -> (bool, String) {
+        let reply = server.handle(conn, &encode(&ocw_protocol::world_request(world, None)));
+        match decode_server(&reply[0]).unwrap() {
+            S::DevResult(r) => (r.ok, r.message),
+            other => panic!("expected a result, got {other:?}"),
+        }
+    }
+
+    /// World → Change world in a shared session (spec §3.2.1): only the
+    /// host may, checked on the server like the clock; the server keeps
+    /// one request at a time for the embedding to load.
+    #[test]
+    fn only_the_host_may_switch_the_world() {
+        let mut server = world_server(ClockAccess::Host);
+        let (host, hw) = join(&mut server);
+        let (guest, _) = join(&mut server);
+        assert_eq!(
+            ocw_protocol::access_from_wire(hw.world_access),
+            ClockAccess::Host
+        );
+        let (ok, msg) = ask_world(&mut server, guest, "europe/blackforest");
+        assert!(!ok && msg.contains("only the host"), "{msg}");
+        assert!(!server.world_switch_pending());
+        let (ok, msg) = ask_world(&mut server, host, "  ");
+        assert!(!ok && msg.contains("which world"), "{msg}");
+        let (ok, msg) = ask_world(&mut server, host, "europe/blackforest");
+        assert!(ok && msg.contains("loads europe/blackforest"), "{msg}");
+        // One at a time.
+        let (ok, msg) = ask_world(&mut server, host, "europe/liechtenstein");
+        assert!(!ok && msg.contains("being loaded"), "{msg}");
+        let req = server.take_world_switch().unwrap();
+        assert_eq!(
+            (req.conn, req.world.as_str(), req.route.as_deref()),
+            (host, "europe/blackforest", None)
+        );
+        assert_eq!(req.by, "Tester");
+        assert!(server.take_world_switch().is_none());
+        // With a route.
+        let reply = server.handle(
+            host,
+            &encode(&ocw_protocol::world_request("li", Some("Vaduz - Malbun"))),
+        );
+        assert!(matches!(decode_server(&reply[0]).unwrap(), S::DevResult(r) if r.ok));
+        assert_eq!(
+            server.take_world_switch().unwrap().route.as_deref(),
+            Some("Vaduz - Malbun")
+        );
+        // Nobody / anyone.
+        let mut fixed = world_server(ClockAccess::Nobody);
+        let (only, _) = join(&mut fixed);
+        let (ok, msg) = ask_world(&mut fixed, only, "x");
+        assert!(!ok && msg.contains("organizer"), "{msg}");
+        let mut open = world_server(ClockAccess::Anyone);
+        join(&mut open);
+        let (second, _) = join(&mut open);
+        assert!(ask_world(&mut open, second, "x").0);
+        // Before the hello: rejected.
+        let stranger = server.connect();
+        let reply = server.handle(stranger, &encode(&ocw_protocol::world_request("x", None)));
+        assert!(matches!(decode_server(&reply[0]).unwrap(), S::Reject(_)));
+    }
+
+    /// The switch itself: a new session (bots again, nobody joined), the
+    /// clock goes on, every client is told and joins again on its
+    /// connection.
+    #[test]
+    fn a_world_switch_restarts_the_session_and_everyone_joins_again() {
+        let mut server = world_server(ClockAccess::Host);
+        let (host, hw) = join(&mut server);
+        let (guest, _) = join(&mut server);
+        for _ in 0..50 {
+            server.tick();
+        }
+        let t = server.session_time_s();
+        assert_eq!(server.session().rider_count(), 4);
+        assert!(ask_world(&mut server, host, "hills").0);
+        let req = server.take_world_switch().unwrap();
+        let (conns, bytes) = server.switch_world(
+            Route::test_hills(),
+            v1::WorldChange {
+                package_id: req.world.clone(),
+                name: "Hills".into(),
+                by: req.by.clone(),
+                ..Default::default()
+            },
+        );
+        assert_eq!(conns, [host, guest]);
+        let S::WorldChange(c) = decode_server(&bytes).unwrap() else {
+            panic!("a world change")
+        };
+        assert_eq!((c.package_id.as_str(), c.by.as_str()), ("hills", "Tester"));
+        // The new session: only the bots, at its start; the clock went on.
+        assert_eq!(server.session().rider_count(), 2);
+        assert_eq!(server.session().route().name(), Route::test_hills().name());
+        assert_eq!(server.session_time_s(), t, "no jump back");
+        assert_eq!(server.clock().now(server.session_time_s()), EPOCH_MS + 1000);
+        assert_eq!(server.connections().count(), 0);
+        assert!(
+            server
+                .tick()
+                .iter()
+                .all(|m| !matches!(decode_server(m), Ok(S::WorldChange(_))))
+        );
+        // A sample before the new hello is refused; the hello joins again.
+        let reply = server.handle(guest, &sample(1, 100.0));
+        assert!(matches!(decode_server(&reply[0]).unwrap(), S::Reject(_)));
+        let reply = server.handle(host, &hello(PROTOCOL_VERSION));
+        let S::Welcome(w) = decode_server(&reply[0]).unwrap() else {
+            panic!("welcome")
+        };
+        // A rider of the new session (ids count again from the bots on).
+        let _ = hw;
+        assert_eq!(server.session().rider_count(), 3);
+        assert_eq!(w.route_id, Route::test_hills().id());
+        assert_eq!(server.host(), Some(RiderId(w.rider_id)), "still the host");
+        assert!(matches!(
+            decode_server(&result_message(false, "nope")).unwrap(),
+            S::DevResult(r) if !r.ok && r.message == "nope"
+        ));
     }
 
     #[test]

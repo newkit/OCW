@@ -19,7 +19,24 @@ message ClientMessage {
     EventRequest event = 8;
     VoiceTokenRequest voice = 9;
     ClockRequest clock = 10;
+    WorldRequest world = 11;
   }
+}
+
+// World menu (spec §3.2.1, World -> Change world): asks the server to ride
+// another world package. The server owns the session (spec §6.1) and
+// decides who may (Welcome.world_access): the host of a shared session by
+// default, nobody when the organizer fixed the world. It rides only
+// packages of its own catalog (never a path a client names). Answered with
+// a DevCommandResult; when the switch is done every client gets a
+// WorldChange and joins again with a Hello on the same connection.
+// Reliable.
+message WorldRequest {
+  // The package: its id ("europe/liechtenstein"), "id@version", its name
+  // or its file name as the server lists it.
+  string world = 1;
+  // A route of the package by name; empty: a free ride.
+  string route = 2;
 }
 
 // Time machine (spec §14 Phase 9, 9D): changes the session's world clock.
@@ -229,7 +246,30 @@ message ServerMessage {
     PathUpdate path = 5;
     EventState event = 6;
     VoiceGrant voice = 7;
+    WorldChange world_change = 8;
   }
+}
+
+// The session rides another world now (after the host's WorldRequest,
+// spec §3.2.1). The old session has ended (the world clock goes on);
+// every client loads the same package (installed locally: the same id,
+// version and content hash) and joins again with a Hello on the same
+// connection. Reliable.
+message WorldChange {
+  // The package's manifest id and version ("local/<name>", 0 without a
+  // manifest).
+  string package_id = 1;
+  uint64 version = 2;
+  // The region's name, for people.
+  string name = 3;
+  // The road graph (name and fingerprint), as in Welcome.world.
+  WorldPackageId world = 4;
+  // The route ridden (empty: a free ride).
+  string route = 5;
+  // SHA-256 of the package file.
+  bytes content_sha256 = 6;
+  // Who asked for it (display name).
+  string by = 7;
 }
 
 // Answer to a VoiceTokenRequest (spec §7): the LiveKit server URL and an
@@ -340,6 +380,9 @@ message Welcome {
   // The session's world clock (spec §14 Phase 9); absent from older
   // servers (the client then shows the real time).
   WorldClock clock = 10;
+  // Who may switch the world (WorldRequest, spec §3.2.1): the same rule as
+  // the clock's access (anyone on a local server, the host by default).
+  ClockAccess world_access = 11;
 }
 
 enum ClockMode {
