@@ -1,0 +1,343 @@
+# The material library (spec §4.6, §13, Phase 8 T1): tiling PBR materials
+# for the ground, the roads and (Phase 8 T4) the houses.
+#
+# The textures are not in git. Every source file is pinned here by URL (or as
+# a member of a pinned archive) and SHA-256; `scripts/fetch-materials.sh`
+# (`cargo run -p ocw-assets -- materials fetch`) downloads them once into a
+# cache, checks the hashes, converts them to KTX2 (1024², mipmapped; albedo +
+# roughness BC3 sRGB, normal BC5) and writes the git-ignored library folder
+# `assets/materials/` with a copy of this manifest and CREDITS.md.
+#
+# Every entry needs `license`, `source` (the asset's page, where the licence
+# was checked) and `author`; the validator (`ocw-assets materials validate`)
+# rejects share-alike, non-commercial, no-derivatives and unknown licences
+# (spec Phase 8A). `size_m` is the real-world size of one texture repeat.
+#
+# Licences checked on 2026-11-13 on each asset's page: ambientCG ("All assets
+# are released under the Creative Commons CC0 license") and Poly Haven
+# ("CC0 1.0 Universal - public domain dedication").
+#
+# Ids are fixed: the renderer's ground layers (meadow … wetland) and road
+# layers (asphalt … dirt_road, ocw_world::RoadSurface) are found by id.
+
+# --- Ground (land classes, spec §4.6) ---------------------------------------
+
+[[material]]
+id = "meadow"
+name = "Meadow grass"
+group = "ground"
+size_m = 1.4
+license = "CC0-1.0"
+author = "Lennart Demes (ambientCG)"
+title = "Grass 004"
+source = "https://ambientcg.com/view?id=Grass004"
+archive = "https://ambientcg.com/get?file=Grass004_1K-JPG.zip"
+albedo = { file = "Grass004_1K-JPG_Color.jpg", sha256 = "9e1c60da44b34a9738b1256ba827541f097dc583521b1d281e61b5f4b4217bc5" }
+normal = { file = "Grass004_1K-JPG_NormalGL.jpg", sha256 = "8014a81d896a5c589b60612a769bc39eb1213e48d96f6146f485ea36e9e9610f" }
+roughness = { file = "Grass004_1K-JPG_Roughness.jpg", sha256 = "706580983860f942e141acdd68c4128dd683be50fcc5d85b7c67a9a3a8c7bac0" }
+ao = { file = "Grass004_1K-JPG_AmbientOcclusion.jpg", sha256 = "04dde15209751196f5d0fc84507e6e2fbd7876a766ba3ab158e061dd9b756b95" }
+
+[[material]]
+id = "farmland"
+name = "Farmland soil"
+group = "ground"
+size_m = 2.0
+license = "CC0-1.0"
+author = "Amal Kumar (Poly Haven)"
+title = "Farm Soil"
+source = "https://polyhaven.com/a/farm_soil"
+albedo = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/farm_soil/farm_soil_diff_1k.jpg", sha256 = "bfa2850109d1018ecb25342d9f17a5a81e826f7c67edfcaa7c878b60e62cc010" }
+normal = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/farm_soil/farm_soil_nor_gl_1k.jpg", sha256 = "d67b68bf19c1176af28b19cbc55e13365ef4653faa7a00650fe9ffed5e03b35a" }
+arm = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/farm_soil/farm_soil_arm_1k.jpg", sha256 = "77612d6d3ebd9229843d1e277c87a5f63583d5cbfa9e92a79f39730b8ac468a5" }
+
+[[material]]
+id = "forest_floor"
+name = "Forest floor (spruce needles)"
+group = "ground"
+size_m = 1.5
+license = "CC0-1.0"
+author = "Rob Tuytel (Poly Haven)"
+title = "Forest Leaves 04"
+source = "https://polyhaven.com/a/forest_leaves_04"
+albedo = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/forest_leaves_04/forest_leaves_04_diff_1k.jpg", sha256 = "a898e6ef0668a40faaf1bcbc6b024f6ef437ec424a10fa47aa6d35d013c9dade" }
+normal = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/forest_leaves_04/forest_leaves_04_nor_gl_1k.jpg", sha256 = "6b7c4086fc28b7b1f11f4d04aedcc27772ce3bb894cfc00835b4637092c1bb0c" }
+arm = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/forest_leaves_04/forest_leaves_04_arm_1k.jpg", sha256 = "e253ba0615d1da2376a18d8edf26dd02a0be92e5729efd3402be02f7f2ae53be" }
+
+[[material]]
+id = "rock"
+name = "Rock (grey limestone)"
+group = "ground"
+size_m = 4.0
+license = "CC0-1.0"
+author = "Lennart Demes (ambientCG)"
+title = "Rock 023"
+source = "https://ambientcg.com/view?id=Rock023"
+archive = "https://ambientcg.com/get?file=Rock023_1K-JPG.zip"
+albedo = { file = "Rock023_1K-JPG_Color.jpg", sha256 = "4406a3a28fa0edd2734cf08c0720ef84d5edd1a4cf035f4c9e56de6c905151ff" }
+normal = { file = "Rock023_1K-JPG_NormalGL.jpg", sha256 = "6fc74f6c642a7b67a90c00f80fbd3f92040018155101c192c5050d606bb4d65e" }
+roughness = { file = "Rock023_1K-JPG_Roughness.jpg", sha256 = "0f8c31020e2fe794ded7e31ab753475c824c03a461f132376ffa604e85ea3db5" }
+ao = { file = "Rock023_1K-JPG_AmbientOcclusion.jpg", sha256 = "7c005af86029ffc9cdc91ea2ecf0d79d476b89769e72ab64f4b5361487720471" }
+
+[[material]]
+id = "scree"
+name = "Scree"
+group = "ground"
+size_m = 1.8
+license = "CC0-1.0"
+author = "Dimitrios Savva (Poly Haven)"
+title = "Gray Rocks"
+source = "https://polyhaven.com/a/gray_rocks"
+albedo = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/gray_rocks/gray_rocks_diff_1k.jpg", sha256 = "4c3b6fada26a9b564ca110ad47bca5921eceefc611d970159ce559c3c50728a0" }
+normal = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/gray_rocks/gray_rocks_nor_gl_1k.jpg", sha256 = "1922b18e09a95bb782794163117ea47d62771dd59501085cc95ab10081107a9d" }
+arm = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/gray_rocks/gray_rocks_arm_1k.jpg", sha256 = "ceaef1b0ee229a4c2ed3905b084d3015a39a59e5175ea936bb761417ed059c76" }
+
+[[material]]
+id = "gravel"
+name = "Gravel (river pebbles)"
+group = "ground"
+size_m = 1.5
+license = "CC0-1.0"
+author = "Lennart Demes (ambientCG)"
+title = "Rocks 006"
+source = "https://ambientcg.com/view?id=Rocks006"
+archive = "https://ambientcg.com/get?file=Rocks006_1K-JPG.zip"
+albedo = { file = "Rocks006_1K-JPG_Color.jpg", sha256 = "b84709a347606bf806da819ab1b29e4aae7502289b3056efa3d5c3c30dd44ace" }
+normal = { file = "Rocks006_1K-JPG_NormalGL.jpg", sha256 = "faf80427b32620aeba89d65811223ae53876526efaab7662039234e8c6fd42b2" }
+roughness = { file = "Rocks006_1K-JPG_Roughness.jpg", sha256 = "30cc93980440244846993c3ef8bb549733a71540093ce0191f547c24f7266903" }
+ao = { file = "Rocks006_1K-JPG_AmbientOcclusion.jpg", sha256 = "58ab8629280eaff693952c93b51c35e9baa19a3c6059833886be0b40fc679f28" }
+
+[[material]]
+id = "sand"
+name = "Sand"
+group = "ground"
+size_m = 3.0
+license = "CC0-1.0"
+author = "Rob Tuytel (Poly Haven)"
+title = "Coast Sand 01"
+source = "https://polyhaven.com/a/coast_sand_01"
+albedo = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/coast_sand_01/coast_sand_01_diff_1k.jpg", sha256 = "58af2e40100f7f405703a86d593af64379f822c4786850def23ecfc921450d54" }
+normal = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/coast_sand_01/coast_sand_01_nor_gl_1k.jpg", sha256 = "fe4d045aec99e71e80f682fcf0ad958d2dff1fe614b73178b304d1bac047b54a" }
+arm = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/coast_sand_01/coast_sand_01_arm_1k.jpg", sha256 = "eeb552fb26de45ae5c52d3db6f96f8f0414fdbfa335c1d27ef5f59b6ef01a5c8" }
+
+[[material]]
+id = "snow"
+name = "Snow"
+group = "ground"
+size_m = 2.0
+license = "CC0-1.0"
+author = "Rob Tuytel (Poly Haven)"
+title = "Snow 02"
+source = "https://polyhaven.com/a/snow_02"
+albedo = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/snow_02/snow_02_diff_1k.jpg", sha256 = "523a4e69c90b96d787dd69b897f29a2b3761a017024405c60aa630d1e8e9009a" }
+normal = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/snow_02/snow_02_nor_gl_1k.jpg", sha256 = "9495ec680616b8340e2cbecbd151bff84c690cfad4209e90cc98d2d0ba81f810" }
+arm = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/snow_02/snow_02_arm_1k.jpg", sha256 = "1bf5380767702c1ea758f60585c1db1d655d99a2468d359b55d654e6272cc633" }
+
+[[material]]
+id = "wetland"
+name = "Wetland (damp moss and grass)"
+group = "ground"
+size_m = 2.1
+license = "CC0-1.0"
+author = "Lennart Demes (ambientCG)"
+title = "Ground 037"
+source = "https://ambientcg.com/view?id=Ground037"
+archive = "https://ambientcg.com/get?file=Ground037_1K-JPG.zip"
+albedo = { file = "Ground037_1K-JPG_Color.jpg", sha256 = "d92bec8a35b9cb16ec79b421ca0f572a7400286eae109beafa266629ef49a6cf" }
+normal = { file = "Ground037_1K-JPG_NormalGL.jpg", sha256 = "ea59dbdcfa5bf2f28bdd4aa896d4e5f96c4cce5939100dcc6db4bbbcdebfe38d" }
+roughness = { file = "Ground037_1K-JPG_Roughness.jpg", sha256 = "3786b088e981aae562f06b6477972d379cffd09a5cc542ab42f9ffd94f9bcb0e" }
+ao = { file = "Ground037_1K-JPG_AmbientOcclusion.jpg", sha256 = "8afe189ae915888551076cb279f6282c84255e4b2bdb2c4ce8c1c891074245ef" }
+
+# --- Volcanic ground (Tenerife, region set "volcanic" below) -----------------
+
+[[material]]
+id = "lava_rock"
+name = "Lava rock (dark basalt)"
+group = "ground"
+size_m = 2.4
+license = "CC0-1.0"
+author = "Amal Kumar (Poly Haven)"
+title = "Dark Rock"
+source = "https://polyhaven.com/a/dark_rock"
+albedo = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/dark_rock/dark_rock_diff_1k.jpg", sha256 = "7e1148b1749b2200de463b943d4c8994bb24467c96418aa3c283bf65c30e7300" }
+normal = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/dark_rock/dark_rock_nor_gl_1k.jpg", sha256 = "0693d68d1a01b07389c7db22f56f9519ef572135bc2c1e59afbcdb6f52130fcc" }
+arm = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/dark_rock/dark_rock_arm_1k.jpg", sha256 = "face3801e899586af4868008705fcd5fe7a587aae88a13f18aadc3b2568300ca" }
+
+[[material]]
+id = "volcanic_ash"
+name = "Volcanic ash and cinder (Las Cañadas)"
+group = "ground"
+size_m = 1.5
+license = "CC0-1.0"
+author = "Lennart Demes (ambientCG)"
+title = "Gravel 024"
+source = "https://ambientcg.com/view?id=Gravel024"
+archive = "https://ambientcg.com/get?file=Gravel024_1K-JPG.zip"
+albedo = { file = "Gravel024_1K-JPG_Color.jpg", sha256 = "80da1deb63c8166aa5ab7572665d6928bc054289ff4aec578da7003481a189d7" }
+normal = { file = "Gravel024_1K-JPG_NormalGL.jpg", sha256 = "339bc735a9f9c49210ed1836358ce6a40c7051740dac5280962e2f6b0a5caaf5" }
+roughness = { file = "Gravel024_1K-JPG_Roughness.jpg", sha256 = "a09e0ec754f11d5bd502e80aa90ea31245c7d73e4d577b15c34887fb3fbd0394" }
+ao = { file = "Gravel024_1K-JPG_AmbientOcclusion.jpg", sha256 = "a478a0980caef8769cdff4c545637908a06bfddcef34df03cd31eb3fcfbceba0" }
+
+[[material]]
+id = "black_sand"
+name = "Black volcanic sand"
+group = "ground"
+size_m = 4.0
+license = "CC0-1.0"
+author = "Rob Tuytel and Dario Barresi (Poly Haven)"
+title = "Coast Sand 05"
+source = "https://polyhaven.com/a/coast_sand_05"
+albedo = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/coast_sand_05/coast_sand_05_diff_1k.jpg", sha256 = "3af6ab9fc565ece74fca08f4daf4ac903dd64e9370f1239176ec68f2f3dcdf6b" }
+normal = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/coast_sand_05/coast_sand_05_nor_gl_1k.jpg", sha256 = "e5dcfe12c8dcdb36ff3b2b87d90d3ac11fbafb42fd1f873c7faf3f3e512a3bbf" }
+arm = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/coast_sand_05/coast_sand_05_arm_1k.jpg", sha256 = "3e8b9f330ffa54cdf4c9409ccfa13c281a7ab58cc2724f42b57ddd07113eb2e5" }
+
+[[material]]
+id = "pine_floor"
+name = "Pine needle floor (Canary pine)"
+group = "ground"
+size_m = 1.5
+license = "CC0-1.0"
+author = "Lennart Demes (ambientCG)"
+title = "Ground 077"
+source = "https://ambientcg.com/view?id=Ground077"
+archive = "https://ambientcg.com/get?file=Ground077_1K-JPG.zip"
+albedo = { file = "Ground077_1K-JPG_Color.jpg", sha256 = "d51ff92f3b5a4f68f87ebd8fcbc527c9870b422330e73666bab3f434dd81c77c" }
+normal = { file = "Ground077_1K-JPG_NormalGL.jpg", sha256 = "fc82a3e17591da1d61cc6be632ea323f5d6e1028314805abb1a519dab38bcd7e" }
+roughness = { file = "Ground077_1K-JPG_Roughness.jpg", sha256 = "1920e7eb7ad1ac8af04ae8e9749fcaa901cc28e96eec9d002bf02c06e0f5366c" }
+ao = { file = "Ground077_1K-JPG_AmbientOcclusion.jpg", sha256 = "b1291d199074b2c54001a53af957d3703adb17ef7c1e687fea79a421c80c47be" }
+
+# --- Roads (OSM `surface`, ocw_world::RoadSurface) ---------------------------
+
+[[material]]
+id = "asphalt"
+name = "Asphalt"
+group = "road"
+size_m = 2.0
+license = "CC0-1.0"
+author = "Lennart Demes (ambientCG)"
+title = "Asphalt 015"
+source = "https://ambientcg.com/view?id=Asphalt015"
+archive = "https://ambientcg.com/get?file=Asphalt015_1K-JPG.zip"
+albedo = { file = "Asphalt015_1K-JPG_Color.jpg", sha256 = "c794cf96fb2f80457a8c875e2ebbe9cee707f2c79c83806ca1ec8739419b4f77" }
+normal = { file = "Asphalt015_1K-JPG_NormalGL.jpg", sha256 = "7eb01eac5c5c11ae93f07ff9424dca6023a87fbf6d43d0a1e5c4582a7702af34" }
+roughness = { file = "Asphalt015_1K-JPG_Roughness.jpg", sha256 = "181b4f22619b1ed93b0bb4478b92fb095f8e1372395751845071c0fa8280872a" }
+
+[[material]]
+id = "asphalt_worn"
+name = "Worn asphalt"
+group = "road"
+size_m = 3.0
+license = "CC0-1.0"
+author = "Rob Tuytel (Poly Haven)"
+title = "Asphalt 02"
+source = "https://polyhaven.com/a/asphalt_02"
+albedo = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/asphalt_02/asphalt_02_diff_1k.jpg", sha256 = "1aa5ce99f58a625c71d48cfc3e68b65ca85ccb00f39e045c0a928608a0ea25ed" }
+normal = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/asphalt_02/asphalt_02_nor_gl_1k.jpg", sha256 = "42a1c381b53204e83a982db2864479a30bc127bbdeebb1006f8ee51bff099df3" }
+arm = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/asphalt_02/asphalt_02_arm_1k.jpg", sha256 = "56bd8e591a3db579846fcb5185f60b0651e0bd4ea85c3529c339e6746243c9cf" }
+
+[[material]]
+id = "gravel_road"
+name = "Gravel road"
+group = "road"
+size_m = 1.5
+license = "CC0-1.0"
+author = "Lennart Demes (ambientCG), from a photo scan by rubberduck (BlendSwap, CC0)"
+title = "Gravel 022"
+source = "https://ambientcg.com/view?id=Gravel022"
+archive = "https://ambientcg.com/get?file=Gravel022_1K-JPG.zip"
+albedo = { file = "Gravel022_1K-JPG_Color.jpg", sha256 = "5906254cb658d14ea9cd4531d04b296d86db7ec8d55acfa000c27f029fb82ee7" }
+normal = { file = "Gravel022_1K-JPG_NormalGL.jpg", sha256 = "46dc87e9a36b93dea4967b37ba5aaf23abf31c0327ff9e36b0cb8b36c9da5059" }
+roughness = { file = "Gravel022_1K-JPG_Roughness.jpg", sha256 = "582fc37a8c90839eea0aea1ad027f32527126845c916d5288d36f049f18ca93e" }
+ao = { file = "Gravel022_1K-JPG_AmbientOcclusion.jpg", sha256 = "cbb2fe04884cd7f4203696192f5cbe3a538b113d849a47f89ef270f09645da60" }
+
+[[material]]
+id = "paving"
+name = "Paving stones / cobbles"
+group = "road"
+size_m = 2.0
+license = "CC0-1.0"
+author = "Rob Tuytel (Poly Haven)"
+title = "Cobblestone Floor 08"
+source = "https://polyhaven.com/a/cobblestone_floor_08"
+albedo = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/cobblestone_floor_08/cobblestone_floor_08_diff_1k.jpg", sha256 = "ec131f7a99a1e7f9df25d4725609c55a6dad1df487630685e9a66ecbf41ec33a" }
+normal = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/cobblestone_floor_08/cobblestone_floor_08_nor_gl_1k.jpg", sha256 = "26bfff70b266a4e86983814c7e56a9b48daf93cd34dcdc16a5db13e4fabcfbb6" }
+arm = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/cobblestone_floor_08/cobblestone_floor_08_arm_1k.jpg", sha256 = "4b2548135784852f07befc3bb0abb7c83738a3c022997c30527a15d5caa7a389" }
+
+[[material]]
+id = "dirt_road"
+name = "Dirt track"
+group = "road"
+size_m = 2.0
+license = "CC0-1.0"
+author = "Lennart Demes (ambientCG)"
+title = "Ground 039"
+source = "https://ambientcg.com/view?id=Ground039"
+archive = "https://ambientcg.com/get?file=Ground039_1K-JPG.zip"
+albedo = { file = "Ground039_1K-JPG_Color.jpg", sha256 = "d1e94dfb3fe5da727ce7bb85878c9771e53bd8d3d489c1a806bd72ea9196e0a7" }
+normal = { file = "Ground039_1K-JPG_NormalGL.jpg", sha256 = "d440e5ca7d66bc6ba3f45cbf27353f154c33a3cdacca9dd749dc7528d5e9cef9" }
+roughness = { file = "Ground039_1K-JPG_Roughness.jpg", sha256 = "b31242628a0491a4362469b02d75eff5d36f46df9a8dad238f955531c5a18e88" }
+ao = { file = "Ground039_1K-JPG_AmbientOcclusion.jpg", sha256 = "b48977982ff7976259c124803a7f3e3ea476b0d12d6bac304a5861e7c2cc4b84" }
+
+# --- Houses (Phase 8 T4; fetched and converted, not drawn yet) ---------------
+
+[[material]]
+id = "roof_tiles"
+name = "Clay roof tiles"
+group = "building"
+size_m = 2.5
+license = "CC0-1.0"
+author = "Amal Kumar (Poly Haven)"
+title = "Clay Roof Tiles 02"
+source = "https://polyhaven.com/a/clay_roof_tiles_02"
+albedo = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/clay_roof_tiles_02/clay_roof_tiles_02_diff_1k.jpg", sha256 = "227a062b38b170e02c27eaa513dae45dc8bc893a62cbd8d0c08e2c32b381fc25" }
+normal = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/clay_roof_tiles_02/clay_roof_tiles_02_nor_gl_1k.jpg", sha256 = "1548d3ebce335a4590d9e421556c4189a7b63852c793a568c71b9e533f8b62d5" }
+arm = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/clay_roof_tiles_02/clay_roof_tiles_02_arm_1k.jpg", sha256 = "da94d4ce78607c4cb0450c669e8ca5d18852eb284def75445663f959cc1af63b" }
+
+[[material]]
+id = "plaster"
+name = "Plaster"
+group = "building"
+size_m = 2.0
+license = "CC0-1.0"
+author = "Amal Kumar (Poly Haven)"
+title = "Painted Plaster Wall"
+source = "https://polyhaven.com/a/painted_plaster_wall"
+albedo = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/painted_plaster_wall/painted_plaster_wall_diff_1k.jpg", sha256 = "440310f05af089f2c93353167573403cbc3f805948203237b5d26431eeb9e19c" }
+normal = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/painted_plaster_wall/painted_plaster_wall_nor_gl_1k.jpg", sha256 = "8eb01647d126eb5341e2c325821ad48c8ca11349dbef53447c95422c5d91cc9d" }
+arm = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/painted_plaster_wall/painted_plaster_wall_arm_1k.jpg", sha256 = "2f13ed444e3e8f13087bca0890969d30795ed074bcfb11737d1ad6f5f0b53992" }
+
+[[material]]
+id = "timber"
+name = "Timber siding"
+group = "building"
+size_m = 1.57
+license = "CC0-1.0"
+author = "Dimitrios Savva (Poly Haven)"
+title = "Weathered Plank Siding"
+source = "https://polyhaven.com/a/weathered_plank_siding"
+albedo = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/weathered_plank_siding/weathered_plank_siding_diff_1k.jpg", sha256 = "dad0442114f1efd9a25195f2e2ac480693c2a6199f3987f4cfac4002b2820fbd" }
+normal = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/weathered_plank_siding/weathered_plank_siding_nor_gl_1k.jpg", sha256 = "229440bb21992d7f97bbbe03f6488e21cc061119ab3774ad0c30e352c9690a74" }
+arm = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/weathered_plank_siding/weathered_plank_siding_arm_1k.jpg", sha256 = "214fc7a4526d1dc5b2627a6433f26f28ce6f85d1ecad872cb14f3e75aa9af7ad" }
+
+# --- Regional material sets (spec §4.6; Phase 8 T3 extends them) -------------
+# A set applies to packages whose time zone (section TZID) is listed: ground
+# layer slots (meadow, farmland, forest_floor, rock, scree, gravel, sand,
+# snow, wetland) are drawn with other materials, and land classes (default,
+# meadow, …, bare, scrub) with another mix of the slots.
+
+[[region]]
+id = "volcanic"
+name = "Volcanic islands (Canary Islands)"
+time_zones = ["Atlantic/Canary"]
+# Rock and scree are lava; gravel and loose ground volcanic ash and cinder
+# (the Cañadas); sand and beaches (natural=beach → class bare) black sand;
+# the forests Canary pine.
+layers = { rock = "lava_rock", scree = "volcanic_ash", gravel = "volcanic_ash", sand = "black_sand", forest_floor = "pine_floor" }
+
+[region.classes]
+# Ground without land use: dry, half ash – the green north gets its meadows
+# from OSM land use; T3 calibrates this from imagery.
+default = { meadow = 0.45, gravel = 0.55 }
+bare = { gravel = 0.5, sand = 0.5 }
+scrub = { meadow = 0.4, gravel = 0.6 }
+forest = { forest_floor = 0.85, gravel = 0.15 }
+water = { sand = 0.7, rock = 0.3 }

@@ -1257,6 +1257,15 @@ fn package(args: PackageArgs) {
         },
     );
     pkg.region = Some(region.package_region());
+    // Road surfaces from OSM `surface` (section RSRF, Phase 8 T2), on the
+    // strips as built (before any cleaning).
+    let way_surfaces = ocw_worldgen::filter::way_surfaces(&osm);
+    let surfaced = ocw_worldgen::package::apply_road_surfaces(&mut pkg, graph, |e| {
+        way_surfaces
+            .get(&e.osm_way)
+            .copied()
+            .unwrap_or_else(|| ocw_world::RoadSurface::of_class(e.class))
+    });
     let zone = package_time_zone(time_zone, region.origin()).unwrap_or_else(|e| {
         eprintln!("--time-zone: {e}");
         std::process::exit(2);
@@ -1264,7 +1273,9 @@ fn package(args: PackageArgs) {
     println!("time zone: {zone}");
     pkg.time_zone = Some(zone);
     let terrain_s = t.elapsed().as_secs_f64();
-    let mut area_report = Vec::new();
+    let mut area_report = vec![format!(
+        "road surfaces (RSRF): {surfaced} strips differ from their category's default"
+    )];
     let road_zone = ocw_worldgen::clean::RoadZone::new(terrain_graph, &terrain_spans);
     let spacing = pkg.spacing_m();
     let ground = |p: [f64; 2]| {

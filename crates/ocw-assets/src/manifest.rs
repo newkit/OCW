@@ -1,6 +1,8 @@
 //! The asset manifest and validator (spec §2.5, §8.1 step 5, §13): every
 //! 3D asset has an entry with `license`, `source` and `author`; the
-//! validator rejects assets without one, unknown licences, physics values
+//! validator rejects assets without one, licences outside the rule of
+//! [`crate::licence`] (share-alike, non-commercial, no-derivatives,
+//! unknown), physics values
 //! in cosmetic assets, and models that miss the nodes the app animates.
 
 use std::collections::BTreeSet;
@@ -11,17 +13,6 @@ use crate::glb;
 use crate::model::Model;
 use crate::pose::{BikeRig, RiderRig, bike_nodes, nodes};
 use crate::slots;
-
-/// Licences an asset may have: the code's (own work, like `artwork/`),
-/// public domain, or attribution only (spec §13). Share-alike and
-/// non-commercial licences are not accepted.
-pub const LICENSES: [&str; 5] = [
-    "MIT OR Apache-2.0",
-    "MIT",
-    "Apache-2.0",
-    "CC0-1.0",
-    "CC-BY-4.0",
-];
 
 /// Keys that would make a cosmetic asset change physics (spec §2.5: only
 /// a reference to a curated profile is allowed).
@@ -136,11 +127,10 @@ fn check_entry(e: &Entry) -> Vec<String> {
             ));
         }
     }
-    if !e.license.trim().is_empty() && !LICENSES.contains(&e.license.trim()) {
-        errors.push(format!(
-            "{f}: licence `{}` is not one of {LICENSES:?}",
-            e.license
-        ));
+    if !e.license.trim().is_empty()
+        && let Err(why) = crate::licence::check(&e.license)
+    {
+        errors.push(format!("{f}: licence `{}`: {why}", e.license));
     }
     match (e.kind, &e.profile) {
         (Kind::Bike, None) => errors.push(format!("{f}: a bike needs its `profile`")),
@@ -319,7 +309,7 @@ mod tests {
         // Unknown or share-alike licences.
         let gpl = OK.replace("MIT OR Apache-2.0", "CC-BY-NC-4.0");
         let errs = validate(&entry("b.glb", &gpl), &files()).unwrap_err();
-        assert!(errs[0].contains("is not one of"), "{errs:?}");
+        assert!(errs[0].contains("non-commercial"), "{errs:?}");
         // A listed file that is not there.
         let errs = validate(&entry("gone.glb", OK), &files()).unwrap_err();
         assert!(
