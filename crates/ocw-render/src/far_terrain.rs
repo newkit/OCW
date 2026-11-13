@@ -255,9 +255,11 @@ pub(crate) struct FarTerrain {
     /// Tile entities by tile, and their parents (one per package).
     tiles: HashMap<TileId, Entity>,
     parents: Vec<Entity>,
-    /// World set generation and look they were built for.
-    built: Option<(u64, bool)>,
-    task: Option<(u64, bool, Task<Vec<FarPackage>>)>,
+    /// What they were built for: world set generation, material library,
+    /// season bucket of the world date (the region look, spec §14 Phase 8
+    /// T3).
+    built: Option<FarKey>,
+    task: Option<(FarKey, Task<Vec<FarPackage>>)>,
     /// The box of all tiles of the built set (home metres) and whether a
     /// package of it has sea ([`edge_distance`]).
     extent: Option<[f64; 4]>,
@@ -275,6 +277,9 @@ impl FarTerrain {
         *self = Self::default();
     }
 }
+
+/// What the far terrain is built for (see [`FarTerrain::built`]).
+type FarKey = (u64, bool, Option<u32>);
 
 /// The far meshes of one package.
 struct FarPackage {
@@ -320,39 +325,56 @@ pub(crate) fn update_far_terrain(
     mut far: ResMut<FarTerrain>,
     materials: Option<Res<PackageMaterials>>,
     library: Option<Res<MaterialLibrary>>,
+    view: Option<Res<crate::RideView>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut standard: ResMut<Assets<StandardMaterial>>,
     mut material: Local<Option<Handle<StandardMaterial>>>,
 ) {
     let set = world.set.clone();
-    let want = (set.generation(), library.is_some());
-    let pending = far.task.as_ref().map(|t| (t.0, t.1));
+    // The world date in buckets, as the streamed tiles take it.
+    let season = view.as_deref().and_then(|v| v.sky.as_ref()).map(|s| {
+        crate::region_look::season_bucket(ocw_world::look::day_of_year(
+            s.sky.local.year,
+            s.sky.local.month,
+            s.sky.local.day,
+        ))
+    });
+    let want: FarKey = (set.generation(), library.is_some(), season);
+    let pending = far.task.as_ref().map(|t| t.0);
     if far.built != Some(want) && pending != Some(want) {
+        // The class colours of the streamed tiles (the region look tinted
+        // by the season), so near and far agree.
+        let day = season.map(crate::region_look::bucket_day);
         let looks: Vec<TileLook> = set
             .members()
             .iter()
             .map(|m| {
-                library.as_deref().map_or_else(TileLook::default, |lib| {
-                    let tz = m.package().and_then(|p| p.time_zone.as_deref());
-                    TileLook::of_library(lib, lib.set_for(tz))
-                })
+                let tz = m.package().and_then(|p| p.time_zone.as_deref());
+                let ground = library.as_deref().map(|lib| lib.set_for(tz));
+                let base = match (library.as_deref(), ground) {
+                    (Some(lib), Some(g)) => TileLook::of_library(lib, g),
+                    _ => TileLook::default(),
+                };
+                match m.package() {
+                    Some(p) => base.with_region(&p.look, ground, day),
+                    None => base,
+                }
             })
             .collect();
         let s = set.clone();
         far.task = Some((
-            want.0,
-            want.1,
+            want,
             AsyncComputeTaskPool::get().spawn(async move { build_far(&s, &looks) }),
         ));
     }
     let Some(materials) = materials else { return };
-    let Some((generation, textured, task)) = far.task.as_mut() else {
+    let Some((key, task)) = far.task.as_mut() else {
         return;
     };
     let Some(built) = check_ready(task) else {
         return;
     };
-    let done = (*generation, *textured);
+    let done = *key;
     far.task = None;
     for e in std::mem::take(&mut far.parents) {
         commands.entity(e).despawn();
