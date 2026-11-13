@@ -417,6 +417,135 @@ def prompts(day: str) -> list[dict]:
     return ps
 
 
+# ------------------------------------------------------------------ tokens
+#
+# Token usage of the build (ART-PROJECT §2.4): every assistant message of the
+# Claude Code sessions of this project – the main session and every agent
+# (subagents/agent-*.jsonl with their meta.json) – counted once per message
+# (de-duplicated by message id), by the local day of its timestamp.
+#   task:    an agent's task description; for the main session the user
+#            prompt the message answered ("coordination: <prompt>")
+#   feature: a coarse group from keywords in the task (FEATURES below)
+# Totals: input (uncached), cache writes, cache reads, output.
+
+FEATURES = [  # first match wins: specific features before broad ones
+    ("Art project", r"art project|diary|build.?history|readme|logo|prompts? (in|of)|token"),
+    ("Materials & look", r"material|texture|shadow|tunnel|marking|wheel|graphic"),
+    ("UI & menus", r"menu|hud|timestamp|screenshot|capture|kiosk|dashboard"),
+    ("Sky, time & weather", r"\bsun\b|sky|time machine|weather|season|night|day/night"),
+    ("Audio & voice", r"audio|sound|freehub|voice|noise"),
+    ("Riders & bikes", r"rider|bike|model|animation|\blegs?\b"),
+    ("Multiplayer & server", r"multiplayer|server|quic|\bbots?\b"),
+    ("Worlds & terrain", r"world|terrain|black ?forest|liechtenstein|tenerif|osm|\bdem\b|bridge|clean|package|route|mummelsee"),
+    ("Build, release & infra", r"build|release|deploy|\bci\b|windows|\bmac|clang|version|machine|coordinator"),
+    ("Planning & spec", r"plan|spec|phase|\bvr\b|browser|question"),
+]
+
+
+def feature_of(task: str) -> str:
+    t = (task or "").lower()
+    for name, rx in FEATURES:
+        if re.search(rx, t):
+            return name
+    return "Other"
+
+
+def _usage(u: dict) -> dict:
+    return {"input": int(u.get("input_tokens") or 0),
+            "cache_write": int(u.get("cache_creation_input_tokens") or 0),
+            "cache_read": int(u.get("cache_read_input_tokens") or 0),
+            "output": int(u.get("output_tokens") or 0)}
+
+
+def _add(acc: dict, u: dict):
+    for k, v in u.items():
+        acc[k] = acc.get(k, 0) + v
+    acc["total"] = acc.get("total", 0) + sum(u.values())
+    acc["messages"] = acc.get("messages", 0) + 1
+
+
+def tokens_of(day: str) -> dict:
+    root = Path(TRANSCRIPTS)
+    seen = set()
+    total, per_task, per_feature, per_model = {}, {}, {}, {}
+    sources = []
+    for f in root.glob("*OCW*/*.jsonl"):
+        sources.append((f, None))
+        for a in (f.parent / f.stem / "subagents").glob("agent-*.jsonl"):
+            meta = a.with_suffix(".meta.json")
+            desc = ""
+            if meta.exists():
+                try:
+                    desc = json.loads(meta.read_text()).get("description", "")
+                except ValueError:
+                    pass
+            sources.append((a, desc or a.stem))
+    secrets = _secrets()
+    for f, agent in sources:
+        last_prompt = None
+        for line in f.open(errors="replace"):
+            if agent is None and ('"user"' in line or "queued_command" in line):
+                try:
+                    d = json.loads(line)
+                except ValueError:
+                    continue
+                text = None
+                if d.get("type") == "user" and isinstance((d.get("message") or {}).get("content"), str):
+                    text = prompt_text(d["message"]["content"])
+                elif d.get("type") == "attachment":
+                    a_ = d.get("attachment") or {}
+                    if a_.get("type") == "queued_command" and (a_.get("origin") or {}).get("kind") == "human":
+                        text = prompt_text(str(a_.get("prompt", "")))
+                if text:
+                    last_prompt = text
+                continue
+            if '"usage"' not in line or '"assistant"' not in line:
+                continue
+            try:
+                d = json.loads(line)
+            except ValueError:
+                continue
+            if d.get("type") != "assistant":
+                continue
+            m = d.get("message") or {}
+            key = (m.get("id"), d.get("requestId"))
+            if key in seen or not m.get("usage"):
+                continue
+            seen.add(key)
+            ts = d.get("timestamp", "")
+            try:
+                local = dt.datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone()
+            except ValueError:
+                continue
+            if local.strftime("%Y-%m-%d") != day:
+                continue
+            u = _usage(m["usage"])
+            if agent is not None:
+                task = "agent: " + agent
+            else:
+                p = " ".join((last_prompt or "(session start)").split())
+                task = "coordination: " + mask(p[:80] + ("…" if len(p) > 80 else ""), secrets)
+            feat = feature_of(agent if agent is not None else (last_prompt or ""))
+            _add(total, u)
+            _add(per_task.setdefault(task, {"feature": feat}), u)
+            _add(per_feature.setdefault(feat, {}), u)
+            _add(per_model.setdefault(m.get("model", "?"), {}), u)
+    return {"day": day, "total": total, "tasks": per_task, "features": per_feature, "models": per_model}
+
+
+def tokens(day: str) -> dict:
+    t = tokens_of(day)
+    d = HIST / day
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "tokens.json").write_text(json.dumps(t, indent=1, ensure_ascii=False))
+    log(f"{day}: {t['total'].get('total', 0):,} tokens in {t['total'].get('messages', 0)} messages")
+    return t
+
+
+def fmt_tokens(n: int) -> str:
+    return f"{n / 1e9:.2f} B" if n >= 1e9 else f"{n / 1e6:.1f} M" if n >= 1e6 else f"{n / 1e3:.0f} k"
+
+
 # ----------------------------------------------------------------- journal
 
 
@@ -523,6 +652,7 @@ def journal(day: str) -> dict:
     commits = commits_of(day)
     builds = builds_of(day)
     ps = prompts(day)
+    tk = tokens(day)
     media = media_of(day)
     spec = [
         m.group(1)
@@ -545,6 +675,7 @@ def journal(day: str) -> dict:
         "sounds": sum(m["kind"] == "audio" for m in media),
         "builds": {k: v for k, v in builds.items() if k not in ("longest",)},
         "prompts": ps,
+        "tokens": {"total": tk["total"], "features": tk["features"]},
     }
     d = HIST / day
     d.mkdir(parents=True, exist_ok=True)
@@ -585,6 +716,19 @@ def journal(day: str) -> dict:
             md += ["", "Longest runs:", ""]
             md += [f"- {float(r.get('seconds') or 0) / 60:.0f} min on {r.get('machine')}: "
                    f"`{r.get('command', '')[:80]}`" for r in builds["longest"]]
+    if tk["total"].get("total"):
+        tt = tk["total"]
+        md += ["", "## Token usage", "",
+               f"{fmt_tokens(tt['total'])} tokens in {tt['messages']:,} model messages "
+               f"(output {fmt_tokens(tt['output'])}, cache reads {fmt_tokens(tt['cache_read'])}, "
+               f"cache writes {fmt_tokens(tt['cache_write'])}, uncached input {fmt_tokens(tt['input'])}). "
+               "Full breakdown: [tokens.json](tokens.json).", "",
+               "| Feature | Tokens | Output | Messages |", "|---|---|---|---|"]
+        for name, v in sorted(tk["features"].items(), key=lambda kv: -kv[1]["total"]):
+            md.append(f"| {name} | {fmt_tokens(v['total'])} | {fmt_tokens(v['output'])} | {v['messages']:,} |")
+        md += ["", "| Task | Feature | Tokens | Output |", "|---|---|---|---|"]
+        for name, v in sorted(tk["tasks"].items(), key=lambda kv: -kv[1]["total"])[:40]:
+            md.append(f"| {name.replace('|', '/')} | {v['feature']} | {fmt_tokens(v['total'])} | {fmt_tokens(v['output'])} |")
     if ps:
         md += ["", "## Prompts", "", f"{len(ps)} prompts (full text: [prompts.md](prompts.md)).", "",
                "| Time | Prompt |", "|---|---|"]
@@ -1275,6 +1419,8 @@ def render(day: str) -> Path:
         stats.append((int(sc.get("tests") or j["tests"]), "TESTS PASSING"))
     if j.get("prompts"):
         stats.append((len(j["prompts"]), "PROMPTS"))
+    if (j.get("tokens") or {}).get("total", {}).get("total"):
+        stats.append((round(j["tokens"]["total"]["total"] / 1e6), "MILLION TOKENS"))
     b = j.get("builds") or {}
     if b.get("runs"):
         stats.append((b["runs"], "BUILD RUNS"))
@@ -1442,7 +1588,7 @@ def main():
         diary()
         return
     if not days:
-        days = all_days() if cmd in {"fetch", "gather", "journal", "publish", "stamp", "prompts"} else days_with_scripts()
+        days = all_days() if cmd in {"fetch", "gather", "journal", "publish", "stamp", "prompts", "tokens"} else days_with_scripts()
     for d in days:
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", d):
             raise SystemExit(f"not a day: {d}")
@@ -1454,7 +1600,8 @@ def main():
         diary()
         return
     fn = {"fetch": fetch, "gather": gather, "journal": journal, "sheet": sheet,
-          "render": render, "stamp": stamp, "prompts": prompts}.get(cmd)
+          "render": render, "stamp": stamp, "prompts": prompts,
+          "tokens": tokens}.get(cmd)
     if cmd == "publish":
         publish(days)
     elif fn:

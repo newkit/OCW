@@ -1,6 +1,6 @@
 # OCW Build Diary – Art Project Specification
 
-Version 1.3 – 13 November 2026
+Version 1.4 – 13 November 2026
 
 | Version | Change |
 |---|---|
@@ -8,6 +8,7 @@ Version 1.3 – 13 November 2026
 | 1.1 | Every photo and video carries its ISO 8601 date and time, in the file and in the picture (§2.1) |
 | 1.2 | The build process itself is documented: every build/test run on the build machines and the build servers' state (§2.2) |
 | 1.3 | The user's prompts are part of the archive and the videos (§2.3) |
+| 1.4 | Token usage of the build: in total, per task and per feature (§2.4) |
 
 ## 1. The brief
 
@@ -120,6 +121,28 @@ of the story.
   ("YOU · 08:58") when its time comes (at most one new bubble per 1.2 s; the
   newest wins); a chapter can quote the prompt that started it (`prompt = "…"`
   in the day script, shown as "YOU ASKED"); the end card counts PROMPTS.
+
+### 2.4 Token usage
+
+How much model work went into the build is part of the record too.
+
+- **Source:** every assistant message in the project's Claude Code
+  transcripts: the main session and every agent
+  (`subagents/agent-*.jsonl` with its `meta.json`). Each message is counted
+  once (de-duplicated by message id), on the local day of its timestamp.
+- **Counted:** uncached input, cache writes, cache reads and output tokens,
+  their sum ("tokens"), and the number of model messages; per model too.
+- **Per task:** an agent's task description (e.g. "agent: Fix wheels sinking
+  into road"); the main session's work under the user prompt it answered
+  ("coordination: <prompt>", masked like the prompts, §2.3).
+- **Per feature:** tasks are grouped by keywords (`FEATURES` in `art/diary.py`:
+  art project, materials & look, menus, sky & time, audio, multiplayer,
+  riders, worlds & terrain, build & infra, planning; the first match wins).
+- **Kept as:** `DAY/tokens.json`; the journal has a "Token usage" section
+  (per feature, the 40 biggest tasks); the day video's end card shows
+  MILLION TOKENS. `art/diary.py tokens DAY` (run by `journal`).
+- Most of the total is cache reads (the conversation re-read from the cache
+  on every step); output tokens are about 0.2 % of it.
 
 ## 3. The day video
 
