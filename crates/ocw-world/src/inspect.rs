@@ -607,6 +607,7 @@ pub(crate) mod tests {
                 width_m: 6.0,
                 points: road.clone(),
                 surface: RoadSurface::Paving,
+                dress: crate::RoadDress::of_class(RoadClass::Secondary, 6.0),
             }],
         };
         let graph = RoadGraph {
