@@ -208,8 +208,8 @@ pub fn cast(
     let solid = |x: f64, z: f64| ocw_render::camera::solid_height(*ground, obstacles, x, z);
     let view = ocw_render::FlightView {
         pos: f.pos,
-        yaw: f.yaw,
-        pitch: f.pitch,
+        yaw: f.view_yaw(),
+        pitch: f.view_pitch(),
         first_person: g.first_person(),
         ..Default::default()
     };

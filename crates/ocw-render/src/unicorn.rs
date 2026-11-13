@@ -2,17 +2,24 @@
 //! made here in code (licensed like the code; no third-party asset, no
 //! brand character). A white body, a spiral golden horn, a rainbow mane
 //! and tail, large feathered wings like a pegasus, golden hooves; the
-//! rider's colour on the saddle cloth and the mane's first band.
+//! rider's colour in the mane's first band (no saddle cloth).
 //!
 //! - The **model** ([`model`]) is a list of flat-shaded parts on a small
 //!   skeleton ([`skeleton`]): body, neck, head, four legs (hip and knee),
-//!   two wings, eight mane bands, eight tail strands – about 3k triangles.
+//!   two wings (shoulder, wrist and three groups of primaries), eight mane
+//!   bands, eight tail strands – about 3k triangles.
 //! - The **animation** ([`AnimState::advance`], [`pose`]) is pure: a gallop
 //!   in the air whose rate follows the speed (legs tucked in when fast, a
-//!   gentle paddle and bob while hovering), wing beats with the climb and
-//!   the acceleration (up to ~2 Hz, [`ocw_sim::god::wing_beat_hz`]), wings
-//!   spread in flight and turns and folded while hovering and landing,
-//!   the body banking in turns, mane and tail streaming in the wind.
+//!   gentle paddle and bob while hovering); a bird's wingbeat (spec §14
+//!   Phase 13C, 2026-11-14): beating all the time in flight, 1.2 … 2 Hz
+//!   ([`ocw_sim::god::wing_beat_hz`], deeper when slow or climbing,
+//!   [`ocw_sim::god::wing_beat_depth`]), short glides between bursts while
+//!   cruising, a quick downstroke and a slower upstroke ([`stroke`]), the
+//!   hand trailing the arm, folding and sweeping back on the upstroke with
+//!   the primaries closing ([`wing_angles`]), the body rising on the
+//!   downstroke, neck, head and tail answering, the inner wing tucked in a
+//!   bank, braking flaps when landing, then folded; each rider in its own
+//!   phase; the body banking in turns, mane and tail streaming in the wind.
 //! - The **transformation** (0.6 s): the unicorn grows in with a sparkle
 //!   burst; a burst again where it turns back into the rider.
 //! - The **landing ring**: a glowing ring on the road where leaving (G)
@@ -82,8 +89,13 @@ pub enum Joint {
     /// Legs: 0 front left, 1 front right, 2 hind left, 3 hind right.
     Hip(u8),
     Knee(u8),
-    /// 0 left, 1 right.
+    /// 0 left, 1 right: the shoulder (the arm) …
     Wing(u8),
+    /// … the wrist (the hand, the outer wing) …
+    WingTip(u8),
+    /// … and the primaries on the hand, in [`PRIMARIES`] groups (side,
+    /// group from the wrist out), fanning open and closed.
+    Primary(u8, u8),
     /// From the head down the neck.
     Mane(u8),
     Tail(u8),
@@ -99,6 +111,12 @@ pub struct JointDef {
 
 /// Mane bands and tail strands.
 pub const STRANDS: u8 = 8;
+/// Groups of primaries on each hand.
+pub const PRIMARIES: u8 = 3;
+/// Where the wrist sits along the arm (m from the shoulder) …
+pub const WRIST_M: f32 = 0.78;
+/// … and the primaries' root behind it (m).
+pub const PRIMARY_ROOT_Z: f32 = 0.06;
 
 /// The skeleton, parents before children. The model looks along −z, +y
 /// up, +x to its right (Bevy's forward).
@@ -130,6 +148,19 @@ pub fn skeleton() -> Vec<JointDef> {
             Some(Joint::Body),
             Vec3::new(x, 0.36, -0.42),
         ));
+        let sx = if side == 0 { -1.0 } else { 1.0 };
+        out.push(j(
+            Joint::WingTip(side),
+            Some(Joint::Wing(side)),
+            Vec3::new(sx * WRIST_M, 0.0, 0.0),
+        ));
+        for k in 0..PRIMARIES {
+            out.push(j(
+                Joint::Primary(side, k),
+                Some(Joint::WingTip(side)),
+                Vec3::new(0.0, 0.0, PRIMARY_ROOT_Z),
+            ));
+        }
     }
     for i in 0..STRANDS {
         let y = 0.78 - f32::from(i) * 0.095;
@@ -153,11 +184,11 @@ pub fn skeleton() -> Vec<JointDef> {
 pub enum Paint {
     /// The white coat.
     Coat,
-    /// Horn, hooves and the saddle cloth's trim.
+    /// Horn and hooves.
     Gold,
     Eye,
     Muzzle,
-    /// The rider's colour: the saddle cloth and the mane's first band.
+    /// The rider's colour: the mane's first band.
     Rider,
     /// A rainbow colour ([`RAINBOW`]).
     Band(u8),
@@ -261,29 +292,6 @@ pub fn tube(r0: f32, r1: f32, len: f32, sides: u32) -> Shape {
         indices.extend([bottom, a, b]);
         indices.extend([top, d, c]);
     }
-    Shape { positions, indices }
-}
-
-/// A box of `size` around the origin.
-pub fn slab(size: Vec3) -> Shape {
-    let h = size / 2.0;
-    let positions = (0..8)
-        .map(|i| {
-            Vec3::new(
-                if i & 1 == 0 { -h.x } else { h.x },
-                if i & 2 == 0 { -h.y } else { h.y },
-                if i & 4 == 0 { -h.z } else { h.z },
-            )
-        })
-        .collect();
-    let indices = vec![
-        0, 2, 1, 1, 2, 3, // −z
-        4, 5, 6, 5, 7, 6, // +z
-        0, 1, 4, 1, 5, 4, // −y
-        2, 6, 3, 3, 6, 7, // +y
-        0, 4, 2, 2, 4, 6, // −x
-        1, 3, 5, 3, 7, 5, // +x
-    ];
     Shape { positions, indices }
 }
 
@@ -423,17 +431,8 @@ pub fn model_lod(lod: Lod) -> Vec<Part> {
         ellipsoid(Vec3::new(0.42, 0.44, 0.46), n(10, 5), n(7, 4))
             .transformed(at(Vec3::new(0.0, 0.04, 0.6))),
     );
-    // The saddle cloth in the rider's colour, with a golden trim.
-    add(
-        Body,
-        Paint::Rider,
-        slab(Vec3::new(0.9, 0.05, 0.62)).transformed(at(Vec3::new(0.0, 0.45, -0.05))),
-    );
-    add(
-        Body,
-        Paint::Gold,
-        slab(Vec3::new(0.94, 0.03, 0.68)).transformed(at(Vec3::new(0.0, 0.42, -0.05))),
-    );
+    // No saddle cloth on the back (removed, decided by the user
+    // 2026-11-13): the rider's colour is only the mane's first band.
     // Neck: tilted forward (rest pose in [`pose`]).
     add(Neck, Paint::Coat, tube(0.23, 0.16, 0.9, n(9, 5)));
     // Head: skull, muzzle, eyes, ears, the horn.
@@ -503,30 +502,53 @@ pub fn model_lod(lod: Lod) -> Vec<Part> {
             }),
         );
     }
-    // Wings: a covert along the arm and twelve flight feathers fanning
-    // from it (the right wing along +x, the left mirrored); four broader
+    // Wings: a covert along the arm and one along the hand (the wrist
+    // between them bends), and twelve flight feathers fanning from them
+    // (the right wing along +x, the left mirrored) – the inner ones on the
+    // arm, the primaries on the hand in [`PRIMARIES`] groups; five broader
     // ones far away.
-    let feathers: u32 = n(12, 4);
+    let feathers: u32 = n(12, 5);
     for side in 0..2u8 {
         let sx = if side == 0 { -1.0 } else { 1.0 };
         add(
             Wing(side),
             Paint::Feather,
-            ellipsoid(Vec3::new(0.78, 0.06, 0.17), n(10, 5), n(6, 3)).transformed(at(Vec3::new(
-                sx * 0.78,
+            ellipsoid(Vec3::new(0.42, 0.06, 0.17), n(8, 4), n(6, 3)).transformed(at(Vec3::new(
+                sx * 0.4,
                 0.0,
                 0.0,
             ))),
         );
+        add(
+            WingTip(side),
+            Paint::Feather,
+            ellipsoid(Vec3::new(0.42, 0.05, 0.15), n(8, 4), n(6, 3)).transformed(at(Vec3::new(
+                sx * 0.38,
+                0.0,
+                0.0,
+            ))),
+        );
+        let base_x = |t: f32| 0.12 + 1.42 * t;
+        let outer: Vec<u32> = (0..feathers)
+            .filter(|&k| base_x(k as f32 / (feathers - 1) as f32) >= WRIST_M)
+            .collect();
         for k in 0..feathers {
             let t = k as f32 / (feathers - 1) as f32;
             let a = t.powf(1.5) * 1.15 * sx;
             let len = 0.5 + 0.55 * t.powf(0.8);
             let width = if near { 0.075 } else { 0.2 };
             let dir = Vec3::new(a.sin(), 0.0, a.cos());
-            let base = Vec3::new(sx * (0.12 + 1.42 * t), -0.01 * k as f32 * 0.2, 0.06);
+            let mut base = Vec3::new(sx * base_x(t), -0.01 * k as f32 * 0.2, 0.06);
+            // A primary: on its group's joint at the wrist.
+            let joint = match outer.iter().position(|&o| o == k) {
+                Some(i) => {
+                    base -= Vec3::new(sx * WRIST_M, 0.0, PRIMARY_ROOT_Z);
+                    Primary(side, (i * PRIMARIES as usize / outer.len()) as u8)
+                }
+                None => Wing(side),
+            };
             add(
-                Wing(side),
+                joint,
                 Paint::Feather,
                 ellipsoid(Vec3::new(width, 0.016, len / 2.0), n(6, 4), n(4, 2)).transformed(
                     Transform {
@@ -615,14 +637,63 @@ fn flip() -> Transform {
     Transform::from_rotation(Quat::from_rotation_x(PI))
 }
 
+/// The share of a wing beat that is the downstroke: faster (and
+/// stronger) than the upstroke, as a bird's.
+pub const DOWNSTROKE: f32 = 0.4;
+/// The outer wing (the hand and the primaries) trails the inner one by
+/// this share of a beat.
+pub const WRIST_LAG: f32 = 0.1;
+/// The braking flaps when landing last this long (s); then the wings fold.
+pub const BRAKE_S: f32 = 0.9;
+/// Flap-gliding while cruising level: a burst of 3 … 5 beats, then a glide
+/// of 0.6 … 1.4 s with the wings spread.
+pub const BURST_BEATS: (u8, u8) = (3, 5);
+pub const GLIDE_S: (f32, f32) = (0.6, 1.4);
+
+/// The wing's height in its beat (+1 top … −1 bottom) at `phase` (0 … 1,
+/// 0 = the top): an eased downstroke over [`DOWNSTROKE`] of the beat, the
+/// slower upstroke over the rest.
+pub fn stroke(phase: f32) -> f32 {
+    let p = phase.rem_euclid(1.0);
+    let smooth = |u: f32| u * u * (3.0 - 2.0 * u);
+    if p < DOWNSTROKE {
+        1.0 - 2.0 * smooth(p / DOWNSTROKE)
+    } else {
+        -1.0 + 2.0 * smooth((p - DOWNSTROKE) / (1.0 - DOWNSTROKE))
+    }
+}
+
+/// How far into the upstroke the wing is (0 on the downstroke, rising to 1
+/// in the middle of the upstroke and back): the wing folds and sweeps
+/// back, the primaries close.
+pub fn upstroke(phase: f32) -> f32 {
+    let p = phase.rem_euclid(1.0);
+    if p < DOWNSTROKE {
+        0.0
+    } else {
+        (PI * (p - DOWNSTROKE) / (1.0 - DOWNSTROKE)).sin()
+    }
+}
+
+/// A number from `seed` and `n` (deterministic: the same rider flaps the
+/// same way on every client).
+fn mix(seed: u32, n: u32) -> u32 {
+    let mut x = seed ^ n.wrapping_mul(0x9E37_79B9);
+    x ^= x >> 16;
+    x = x.wrapping_mul(0x7FEB_352D);
+    x ^= x >> 15;
+    x = x.wrapping_mul(0x846C_A68B);
+    x ^ (x >> 16)
+}
+
 /// The animation state of one unicorn (pure; advanced each frame).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct AnimState {
     /// Gallop cycle (0 … 1, wraps).
     pub gallop: f32,
-    /// Wing beat cycle (0 … 1, wraps).
+    /// Wing beat cycle (0 … 1, wraps; 0 = wings up).
     pub wing: f32,
-    /// Wing beat amplitude (smoothed; 0 = gliding).
+    /// Wing beat depth (smoothed; 0 = gliding, ~1 a full beat).
     pub flap: f32,
     /// Wing spread (smoothed; 0 folded … 1 wide).
     pub spread: f32,
@@ -631,6 +702,14 @@ pub struct AnimState {
     pub pitch: f32,
     /// Time (s), for the mane and the tail.
     pub time: f32,
+    /// From the rider id: the beat's phase and the flap-glide rhythm.
+    pub seed: Option<u32>,
+    /// Beats left in this burst, the glide's time left (s), bursts so far.
+    pub beats_left: u8,
+    pub glide_left: f32,
+    pub burst: u32,
+    /// Seconds since landing began (the braking flaps).
+    pub landing_s: f32,
 }
 
 fn approach(current: f32, target: f32, dt: f32, tau: f32) -> f32 {
@@ -638,20 +717,69 @@ fn approach(current: f32, target: f32, dt: f32, tau: f32) -> f32 {
 }
 
 impl AnimState {
+    /// Whether the wings are held still in a glide between bursts.
+    pub fn gliding(&self) -> bool {
+        self.glide_left > 0.0
+    }
+
     /// Advances by `dt` seconds of the flight `v`.
     pub fn advance(&mut self, v: &UnicornView, dt: f32) {
         use ocw_sim::god;
-        let speed = v.speed_mps;
-        let beat = god::wing_beat_hz(v.climb_mps, v.accel, speed) as f32;
-        self.gallop = (self.gallop + god::gallop_hz(speed) as f32 * dt).fract();
-        self.wing = (self.wing + beat.max(0.4) * dt).fract();
-        let flap = if v.landing {
-            0.0
-        } else {
-            (beat / 2.0).clamp(0.0, 1.0)
+        let seed = match self.seed {
+            Some(s) => s,
+            None => {
+                // Each rider its own phase and rhythm.
+                let s = mix(v.id.0, 0x0C0F_FEE5);
+                self.seed = Some(s);
+                self.wing = (s % 997) as f32 / 997.0;
+                self.beats_left = BURST_BEATS.0 + ((s >> 12) % 3) as u8;
+                s
+            }
         };
-        self.flap = approach(self.flap, flap, dt, 0.3);
-        let spread = if v.landing {
+        let speed = v.speed_mps;
+        self.gallop = (self.gallop + god::gallop_hz(speed) as f32 * dt).fract();
+        self.landing_s = if v.landing { self.landing_s + dt } else { 0.0 };
+        let braking = v.landing && self.landing_s < BRAKE_S;
+        let (hz, depth) = if braking {
+            (2.4, 1.3)
+        } else if v.landing {
+            (1.5, 0.0)
+        } else {
+            (
+                god::wing_beat_hz(v.climb_mps, v.accel, speed) as f32,
+                god::wing_beat_depth(v.climb_mps, v.accel, speed) as f32,
+            )
+        };
+        // Flap-gliding only while cruising level (climbing, speeding up
+        // and landing flap on).
+        let may_glide = !v.landing && v.climb_mps < 2.0 && v.accel < 5.0 && speed > 8.0;
+        if !may_glide {
+            self.glide_left = 0.0;
+        } else if self.glide_left > 0.0 {
+            self.glide_left = (self.glide_left - dt).max(0.0);
+        }
+        let beating = hz > 0.0 && !self.gliding();
+        // Eased in and out (no popping), settling a little quicker.
+        let (goal, tau) = if beating { (depth, 0.25) } else { (0.0, 0.18) };
+        self.flap = approach(self.flap, goal, dt, tau);
+        let before = self.wing;
+        self.wing = (self.wing + hz.max(1.2) * dt).fract();
+        if beating && self.wing < before {
+            // A beat done (at the top of the stroke).
+            self.beats_left = self.beats_left.saturating_sub(1);
+            if self.beats_left == 0 {
+                self.burst += 1;
+                let h = mix(seed, self.burst);
+                self.beats_left = BURST_BEATS.0 + (h % 3) as u8;
+                if may_glide {
+                    let u = ((h >> 8) % 1000) as f32 / 1000.0;
+                    self.glide_left = GLIDE_S.0 + (GLIDE_S.1 - GLIDE_S.0) * u;
+                }
+            }
+        }
+        let spread = if braking {
+            1.0
+        } else if v.landing {
             0.0
         } else {
             god::wing_spread(speed, v.turn_rate) as f32
@@ -668,6 +796,56 @@ impl AnimState {
     }
 }
 
+/// One wing's angles (rad) at a moment of the beat.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WingAngles {
+    /// The shoulder's flap (tips up +) and sweep (back +).
+    pub shoulder: f32,
+    pub sweep: f32,
+    /// The wrist's flap and sweep relative to the arm: the hand trails.
+    pub wrist: f32,
+    pub wrist_sweep: f32,
+    /// The primaries' fan (1 spread … 0 closed).
+    pub fan: f32,
+}
+
+/// Limits of the wing joints (rad) that [`wing_angles`] stays within.
+pub const SHOULDER_LIMIT: f32 = 1.25;
+pub const WRIST_LIMIT: f32 = 1.1;
+pub const SWEEP_LIMITS: (f32, f32) = (-0.45, 1.75);
+
+/// The angles of a wing (`side` 0 left, 1 right) for the state `a`: the
+/// shoulder beats with [`stroke`], the hand follows [`WRIST_LAG`] later
+/// and a little deeper, the upstroke folds and sweeps it back and closes
+/// the primaries; folded along the body when the spread is 0; in a bank
+/// the inner (lower) wing folds a little and the outer one stretches; the
+/// braking flaps of landing reach forward.
+pub fn wing_angles(a: &AnimState, side: u8) -> WingAngles {
+    let depth = a.flap;
+    let s_in = stroke(a.wing);
+    let s_out = stroke(a.wing - WRIST_LAG);
+    let up = upstroke(a.wing) * depth.min(1.0);
+    let fold = 1.0 - a.spread;
+    // A right bank (positive) puts the right wing inside the turn.
+    let inner = if side == 1 { a.bank } else { -a.bank };
+    let tuck = inner.max(0.0) * 0.5 - (-inner).max(0.0) * 0.15;
+    let braking = a.landing_s > 0.0 && a.landing_s < BRAKE_S;
+    let shoulder = depth * 0.7 * s_in + 0.1 * a.spread - 0.2 * fold;
+    let outer = depth * 0.9 * s_out;
+    let mut sweep = fold * 1.35 + 0.22 * up + 0.4 * tuck;
+    if braking {
+        // Reaching forward to brake.
+        sweep -= 0.35 * (1.0 - up);
+    }
+    WingAngles {
+        shoulder: shoulder.clamp(-SHOULDER_LIMIT, SHOULDER_LIMIT),
+        sweep: sweep.clamp(SWEEP_LIMITS.0, SWEEP_LIMITS.1),
+        wrist: (outer - depth * 0.7 * s_in).clamp(-WRIST_LIMIT, WRIST_LIMIT),
+        wrist_sweep: (0.55 * up + 0.3 * fold + tuck).clamp(SWEEP_LIMITS.0, SWEEP_LIMITS.1),
+        fan: ((1.0 - 0.85 * upstroke(a.wing) * depth.min(1.0)) * a.spread).clamp(0.0, 1.0),
+    }
+}
+
 /// The pose: each joint's rotation, the body's bob (m) and its tilt.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Pose {
@@ -676,7 +854,8 @@ pub struct Pose {
     /// The body's pitch (nose up, rad) and bank (right wing down, rad).
     pub pitch: f32,
     pub bank: f32,
-    /// Wing flap angle (rad, tips up) and spread (0 … 1), for tests.
+    /// The shoulder's flap angle (rad, tips up) and the spread (0 … 1),
+    /// for tests.
     pub flap: f32,
     pub spread: f32,
 }
@@ -689,11 +868,14 @@ pub fn pose(a: &AnimState, v: &UnicornView) -> Pose {
     let wind = (speed as f32 / 60.0).clamp(0.0, 1.0);
     let mut joints = BTreeMap::new();
     let g = TAU * a.gallop;
+    // The beat moves the body: up on the downstroke (a little after it),
+    // the neck and head counter-moving, the tail answering.
+    let lift = -stroke(a.wing - 0.2) * a.flap;
     joints.insert(
         Joint::Neck,
-        Quat::from_rotation_x(-0.6 + 0.05 * (2.0 * g).sin()),
+        Quat::from_rotation_x(-0.6 + 0.05 * (2.0 * g).sin() - 0.07 * lift),
     );
-    joints.insert(Joint::Head, Quat::from_rotation_x(0.22));
+    joints.insert(Joint::Head, Quat::from_rotation_x(0.22 + 0.05 * lift));
     // A rotary gallop: the legs one after the other; a slow paddle while
     // hovering; folded in at speed.
     let amp = 0.55 - 0.3 * hovering;
@@ -712,17 +894,25 @@ pub fn pose(a: &AnimState, v: &UnicornView) -> Pose {
         joints.insert(Joint::Hip(leg), Quat::from_rotation_x(hip));
         joints.insert(Joint::Knee(leg), Quat::from_rotation_x(knee));
     }
-    // Wings: swept back along the body when folded, out when spread;
-    // beating about the shoulder, a slight dihedral when gliding.
-    let flap = a.flap * 0.6 * (TAU * a.wing).sin() + 0.1 * a.spread;
+    // Wings: shoulder, wrist and the primaries' fan.
+    let mut flap = 0.0;
     for side in 0..2u8 {
         let sx = if side == 0 { -1.0 } else { 1.0 };
-        let sweep = (1.0 - a.spread) * 1.35;
-        let fold_droop = -0.2 * (1.0 - a.spread);
+        let w = wing_angles(a, side);
+        flap = w.shoulder;
         joints.insert(
             Joint::Wing(side),
-            Quat::from_rotation_y(-sx * sweep) * Quat::from_rotation_z(sx * (flap + fold_droop)),
+            Quat::from_rotation_y(-sx * w.sweep) * Quat::from_rotation_z(sx * w.shoulder),
         );
+        joints.insert(
+            Joint::WingTip(side),
+            Quat::from_rotation_y(-sx * w.wrist_sweep) * Quat::from_rotation_z(sx * w.wrist),
+        );
+        for k in 0..PRIMARIES {
+            // Closed: the outer feathers swing back over the inner ones.
+            let close = (1.0 - w.fan) * 0.16 * f32::from(k + 1);
+            joints.insert(Joint::Primary(side, k), Quat::from_rotation_y(-sx * close));
+        }
     }
     for i in 0..STRANDS {
         let k = f32::from(i);
@@ -733,13 +923,15 @@ pub fn pose(a: &AnimState, v: &UnicornView) -> Pose {
         );
         joints.insert(
             Joint::Tail(i),
-            Quat::from_rotation_x(1.9 - 0.35 * wind + 0.12 * wave)
+            Quat::from_rotation_x(1.9 - 0.35 * wind + 0.12 * wave + 0.1 * lift)
                 * Quat::from_rotation_z((k - 3.5) * 0.07 * (1.0 + wind)),
         );
     }
     Pose {
         joints,
-        bob: 0.06 * (2.0 * g).sin() * (1.0 - tucked) + 0.08 * hovering * (a.time * 1.6).sin(),
+        bob: 0.06 * (2.0 * g).sin() * (1.0 - tucked)
+            + 0.08 * hovering * (a.time * 1.6).sin()
+            + 0.07 * lift,
         pitch: a.pitch,
         bank: a.bank,
         flap,
@@ -1527,14 +1719,27 @@ mod tests {
                 assert!(skel[..i].iter().any(|e| e.joint == parent));
             }
         }
-        // A golden horn, the rider's colour twice (saddle cloth, first
-        // mane band), the rainbow in mane and tail, two wings of feathers.
+        // A golden horn, the rider's colour once (the first mane band; no
+        // saddle cloth on the back since 2026-11-13, in no LOD), the
+        // rainbow in mane and tail, two wings of feathers.
         assert!(
             parts
                 .iter()
                 .any(|p| p.joint == Joint::Head && p.paint == Paint::Gold)
         );
-        assert_eq!(parts.iter().filter(|p| p.paint == Paint::Rider).count(), 2);
+        for lod in [Lod::Near, Lod::Far] {
+            let parts = model_lod(lod);
+            let rider: Vec<_> = parts.iter().filter(|p| p.paint == Paint::Rider).collect();
+            assert_eq!(rider.len(), 1, "{lod:?}");
+            assert_eq!(rider[0].joint, Joint::Mane(0), "{lod:?}");
+            // Nothing but the coat on the back (the saddle cloth's slabs).
+            assert!(
+                parts
+                    .iter()
+                    .all(|p| p.joint != Joint::Body || p.paint == Paint::Coat),
+                "{lod:?}"
+            );
+        }
         assert_eq!(
             parts
                 .iter()
@@ -1542,7 +1747,25 @@ mod tests {
                 .count(),
             8
         );
-        assert!(parts.iter().filter(|p| p.joint == Joint::Wing(0)).count() >= 12);
+        // A wing: the arm (covert and inner feathers), the hand's covert,
+        // the primaries in their groups – on both LODs.
+        let left = |p: &&Part| {
+            matches!(
+                p.joint,
+                Joint::Wing(0) | Joint::WingTip(0) | Joint::Primary(0, _)
+            )
+        };
+        assert!(parts.iter().filter(left).count() >= 14);
+        for lod in [Lod::Near, Lod::Far] {
+            let m = model_lod(lod);
+            assert!(m.iter().any(|p| p.joint == Joint::WingTip(1)), "{lod:?}");
+            for k in 0..PRIMARIES {
+                assert!(
+                    m.iter().any(|p| p.joint == Joint::Primary(1, k)),
+                    "{lod:?} {k}"
+                );
+            }
+        }
         // Flat normals point outwards on a closed shape.
         let (pos, nor) = ellipsoid(Vec3::new(1.0, 2.0, 3.0), 8, 6).flat();
         for (p, n) in pos.iter().zip(&nor) {
@@ -1634,6 +1857,229 @@ mod tests {
             3.0,
         );
         assert!(glide.flap < 0.05);
+    }
+
+    /// The flap's samples over `seconds` (60 per second) after `warm` s.
+    fn trace(v: &UnicornView, warm: f32, seconds: f32) -> Vec<AnimState> {
+        let mut a = run(v, warm);
+        (0..(seconds * 60.0) as usize)
+            .map(|_| {
+                a.advance(v, 1.0 / 60.0);
+                a
+            })
+            .collect()
+    }
+
+    /// A bird's wingbeat (spec §14 Phase 13C, 2026-11-14): the downstroke
+    /// is quicker than the upstroke, the hand trails the arm.
+    #[test]
+    fn the_stroke_is_asymmetric_and_the_hand_trails() {
+        assert_eq!(stroke(0.0), 1.0);
+        assert!((stroke(DOWNSTROKE) + 1.0).abs() < 1e-6);
+        assert!((stroke(1.0) - 1.0).abs() < 1e-6);
+        let slope = |p: f32| (stroke(p + 1e-3) - stroke(p - 1e-3)) / 2e-3;
+        let down = slope(DOWNSTROKE / 2.0).abs();
+        let up = slope(DOWNSTROKE + (1.0 - DOWNSTROKE) / 2.0).abs();
+        assert!(down > 1.4 * up, "down {down} up {up}");
+        const { assert!(DOWNSTROKE < 0.5) };
+        // Up only on the upstroke.
+        assert_eq!(upstroke(0.2), 0.0);
+        assert!((upstroke(0.7) - 1.0).abs() < 1e-6);
+        // Over a beat the outer wing's peak comes after the arm's.
+        let a = AnimState {
+            flap: 1.0,
+            spread: 1.0,
+            ..Default::default()
+        };
+        let at = |p: f32| wing_angles(&AnimState { wing: p, ..a }, 1);
+        let samples: Vec<(f32, f32)> = (0..200)
+            .map(|i| {
+                let w = at(i as f32 / 200.0);
+                (w.shoulder, w.shoulder + w.wrist)
+            })
+            .collect();
+        let argmin = |f: &dyn Fn(&(f32, f32)) -> f32| {
+            (0..samples.len())
+                .min_by(|&i, &j| f(&samples[i]).total_cmp(&f(&samples[j])))
+                .unwrap()
+        };
+        let arm_low = argmin(&|s| s.0);
+        let hand_low = argmin(&|s| s.1);
+        assert!(hand_low > arm_low, "the hand trails: {arm_low} {hand_low}");
+        // Spread on the downstroke, folded and swept back on the upstroke.
+        let down = at(0.2);
+        let up = at(0.7);
+        assert!(down.fan > 0.95 && up.fan < 0.3, "{down:?} {up:?}");
+        assert!(up.sweep > down.sweep + 0.15 && up.wrist_sweep > down.wrist_sweep + 0.4);
+    }
+
+    #[test]
+    fn the_wings_beat_all_the_time_deep_when_slow_shallow_when_fast() {
+        let depth = |v: &UnicornView| {
+            let t = trace(v, 2.0, 6.0);
+            let f: Vec<f32> = t.iter().map(|a| pose(a, v).flap).collect();
+            f.iter().cloned().fold(f32::MIN, f32::max) - f.iter().cloned().fold(f32::MAX, f32::min)
+        };
+        let climb = |speed| UnicornView {
+            climb_mps: 8.0,
+            ..view(speed)
+        };
+        // Climbing never glides: clearly visible beats at any speed.
+        let (slow, fast) = (depth(&climb(20.0)), depth(&climb(250.0)));
+        assert!(slow > 1.4, "slow {slow}");
+        assert!(fast > 0.8 && fast < slow, "fast {fast}");
+        // The beat rate: the cycle turns faster when fast.
+        let cycles = |v: &UnicornView| {
+            let t = trace(v, 1.0, 5.0);
+            t.windows(2).filter(|w| w[1].wing < w[0].wing).count()
+        };
+        assert!(cycles(&climb(250.0)) > cycles(&climb(20.0)));
+        let c = cycles(&climb(60.0));
+        assert!((6..=10).contains(&c), "{c} beats in 5 s");
+    }
+
+    #[test]
+    fn cruising_glides_between_bursts_of_flapping() {
+        let v = view(60.0);
+        let t = trace(&v, 1.0, 20.0);
+        let glides = t
+            .windows(2)
+            .filter(|w| !w[0].gliding() && w[1].gliding())
+            .count();
+        assert!(glides >= 3, "{glides} glides in 20 s");
+        // In a glide the wings come to rest spread (eased, no jump) …
+        let still = t
+            .iter()
+            .filter(|a| a.gliding() && a.flap < 0.05 && a.spread > 0.8)
+            .count();
+        assert!(still > 30, "{still}");
+        // … and no frame jumps: the shoulder moves at most a little.
+        let flaps: Vec<f32> = t.iter().map(|a| pose(a, &v).flap).collect();
+        let jump = flaps
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0, f32::max);
+        assert!(jump < 0.25, "{jump} rad in a frame");
+        // Climbing or speeding up flaps on.
+        let climbing = UnicornView {
+            climb_mps: 10.0,
+            ..view(60.0)
+        };
+        assert!(trace(&climbing, 1.0, 10.0).iter().all(|a| !a.gliding()));
+    }
+
+    #[test]
+    fn each_rider_flaps_in_its_own_rhythm_deterministically() {
+        let v1 = view(60.0);
+        let v2 = UnicornView {
+            id: RiderId(2),
+            ..view(60.0)
+        };
+        assert_eq!(trace(&v1, 0.0, 5.0), trace(&v1, 0.0, 5.0));
+        let (a, b) = (trace(&v1, 0.0, 3.0), trace(&v2, 0.0, 3.0));
+        let same = a
+            .iter()
+            .zip(&b)
+            .filter(|(x, y)| (x.wing - y.wing).abs() < 0.02)
+            .count();
+        assert!(same < a.len() / 4, "not in sync: {same}");
+    }
+
+    #[test]
+    fn the_wing_joints_stay_within_their_limits() {
+        let states = [
+            view(0.0),
+            view(15.0),
+            view(400.0),
+            UnicornView {
+                climb_mps: 30.0,
+                accel: 60.0,
+                ..view(30.0)
+            },
+            UnicornView {
+                turn_rate: 1.2,
+                ..view(40.0)
+            },
+            UnicornView {
+                landing: true,
+                ..view(60.0)
+            },
+        ];
+        for v in &states {
+            for a in trace(v, 0.0, 6.0) {
+                for side in 0..2 {
+                    let w = wing_angles(&a, side);
+                    assert!(w.shoulder.abs() <= SHOULDER_LIMIT && w.wrist.abs() <= WRIST_LIMIT);
+                    for s in [w.sweep, w.wrist_sweep] {
+                        assert!((SWEEP_LIMITS.0..=SWEEP_LIMITS.1).contains(&s), "{v:?}");
+                    }
+                    assert!((0.0..=1.0).contains(&w.fan));
+                }
+                let p = pose(&a, v);
+                assert!(
+                    p.joints
+                        .values()
+                        .all(|q| q.is_finite() && q.is_normalized())
+                );
+                assert!(p.joints.contains_key(&Joint::Primary(1, PRIMARIES - 1)));
+            }
+        }
+    }
+
+    #[test]
+    fn the_body_rises_on_the_downstroke_and_banks_tuck_the_inner_wing() {
+        let v = UnicornView {
+            climb_mps: 8.0,
+            ..view(30.0)
+        };
+        let t = trace(&v, 2.0, 3.0);
+        // The bob's peak is just after the bottom of the downstroke.
+        let (peak, _) = t
+            .iter()
+            .map(|a| {
+                (
+                    a.wing,
+                    pose(a, &v).bob - 0.06 * (2.0 * TAU * a.gallop).sin(),
+                )
+            })
+            .fold(
+                (0.0, f32::MIN),
+                |m, (w, b)| if b > m.1 { (w, b) } else { m },
+            );
+        assert!(
+            (DOWNSTROKE..DOWNSTROKE + 0.35).contains(&peak),
+            "rises after the downstroke: {peak}"
+        );
+        // A right turn (negative turn rate): the right wing is inside.
+        let right = UnicornView {
+            turn_rate: -0.8,
+            ..view(40.0)
+        };
+        let a = run(&right, 3.0);
+        assert!(a.bank > 0.3);
+        let (l, r) = (wing_angles(&a, 0), wing_angles(&a, 1));
+        assert!(r.wrist_sweep > l.wrist_sweep + 0.2, "{l:?} {r:?}");
+        assert!(r.sweep > l.sweep);
+    }
+
+    #[test]
+    fn landing_brakes_with_big_flaps_then_folds() {
+        let v = UnicornView {
+            landing: true,
+            ..view(60.0)
+        };
+        let mut a = run(&view(60.0), 2.0);
+        let mut deepest = 0.0f32;
+        for _ in 0..(BRAKE_S * 60.0) as usize {
+            a.advance(&v, 1.0 / 60.0);
+            deepest = deepest.max(a.flap);
+            assert!(a.spread > 0.7, "spread while braking");
+        }
+        assert!(deepest > 1.0, "big braking flaps: {deepest}");
+        for _ in 0..120 {
+            a.advance(&v, 1.0 / 60.0);
+        }
+        assert!(a.flap < 0.05 && a.spread < 0.05, "folded: {a:?}");
     }
 
     #[test]

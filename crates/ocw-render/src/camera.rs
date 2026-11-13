@@ -609,6 +609,37 @@ pub fn flight_eye(f: &crate::FlightView, solid: &dyn Fn(f64, f64) -> Option<f64>
     (eye, eye + dir * 50.0)
 }
 
+/// The flight camera orbited by the console's `camera.orbit` (scenes and
+/// videos: the unicorn from the side, its wings beating): around the
+/// unicorn at the orbit's yaw from behind its view, pitch and distance,
+/// looking at it, never under the ground. `None` while the orbit is the
+/// default (the normal flight camera) or in the first-person view.
+pub fn flight_orbit_eye(
+    f: &crate::FlightView,
+    orbit: &CameraOrbit,
+    solid: &dyn Fn(f64, f64) -> Option<f64>,
+) -> Option<(Vec3, Vec3)> {
+    if f.first_person || *orbit == CameraOrbit::default() {
+        return None;
+    }
+    let body = crate::to_vec3(f.pos);
+    let forward = view_direction(f.yaw, 0.0);
+    let back = Quat::from_rotation_y(orbit.yaw) * -forward;
+    let eye = body + (back * orbit.pitch.cos() + Vec3::Y * orbit.pitch.sin()) * orbit.distance;
+    let eye = match solid(f64::from(eye.x), f64::from(eye.z)) {
+        Some(h) => eye.with_y(eye.y.max(h as f32 + FLIGHT_CLEARANCE_M)),
+        None => eye,
+    };
+    Some((eye, body + Vec3::Y * 0.3))
+}
+
+/// The flight camera's up: the world's up rolled about the view by the
+/// flight's roll (a right bank rolls the camera to the right).
+pub fn flight_up(f: &crate::FlightView) -> Vec3 {
+    let dir = view_direction(f.yaw, f.pitch).normalize();
+    Quat::from_axis_angle(dir, f.roll as f32) * Vec3::Y
+}
+
 #[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
 pub(crate) fn follow(
     view: Res<RideView>,
@@ -642,9 +673,14 @@ pub(crate) fn follow(
             return;
         };
         let solid = |x: f64, z: f64| solid_height(ground.as_deref(), &obstacles, x, z);
-        let (eye, target) = flight_eye(f, &solid);
-        cam.translation = eye;
-        cam.look_at(target, Vec3::Y);
+        if let Some((eye, target)) = flight_orbit_eye(f, &orbit, &solid) {
+            cam.translation = eye;
+            cam.look_at(target, Vec3::Y);
+        } else {
+            let (eye, target) = flight_eye(f, &solid);
+            cam.translation = eye;
+            cam.look_at(target, flight_up(f));
+        }
         focus.set_if_neq(CameraFocus(Some(crate::to_vec3(f.pos))));
         // Back on the road the chase camera starts afresh.
         tilt.rider = None;
@@ -1330,6 +1366,47 @@ mod tests {
             view_direction(std::f64::consts::FRAC_PI_2, 0.0),
             Vec3::NEG_X
         ));
+        // Level: the world's up; a right bank rolls the camera to the
+        // right (looking north, its up leans east), a left one to the left.
+        assert!(close(flight_up(&f), Vec3::Y));
+        let banked = crate::FlightView {
+            roll: 0.4,
+            ..f.clone()
+        };
+        let up = flight_up(&banked);
+        assert!(
+            up.x > 0.3 && up.y > 0.9 && up.dot(Vec3::NEG_Z).abs() < 1e-5,
+            "{up}"
+        );
+        let left = crate::FlightView {
+            roll: -0.4,
+            ..f.clone()
+        };
+        assert!(flight_up(&left).x < -0.3);
+        let mut cam = Transform::from_translation(Vec3::ZERO);
+        cam.look_at(Vec3::NEG_Z, up);
+        assert!(
+            cam.right().y < -0.3,
+            "the horizon tilts: the right side dips"
+        );
+        // camera.orbit in flight (scenes): off by default; 90° looks at the
+        // unicorn from its side, at the orbit's distance.
+        assert_eq!(flight_orbit_eye(&f, &CameraOrbit::default(), &none), None);
+        let side = CameraOrbit {
+            yaw: 90f32.to_radians(),
+            pitch: 0.1,
+            distance: 7.0,
+        };
+        let (eye, target) = flight_orbit_eye(&f, &side, &none).unwrap();
+        let body = crate::to_vec3(f.pos);
+        assert!((eye.distance(body) - 7.0).abs() < 1e-3);
+        assert!((eye.x - body.x).abs() > 6.5, "to the side: {eye}");
+        assert!(target.distance(body) < 0.5);
+        let fp = crate::FlightView {
+            first_person: true,
+            ..f.clone()
+        };
+        assert_eq!(flight_orbit_eye(&fp, &side, &none), None);
     }
 
     #[test]
