@@ -512,6 +512,9 @@ console (saved at once), or by editing the file; `get` lists them all:
 | `display.units` | metric / imperial (metric) | at once |
 | `display.fps` | on / off (off): FPS counter (top right: the real render rate over the last second and its longest frame, e.g. `58 fps  max 21 ms`) | at once |
 | `display.camera` | chase / side / top (chase) | at once |
+| `display.night_brightness` | 0 to 50 (10): least light at night in % of daylight (0 = realistic darkness); Settings → Display | at once |
+| `display.sky` | atmosphere / simple (atmosphere): Bevy's physically based sky, or one plain colour for weak GPUs | at once |
+| `display.bike_lights` | auto / on / off (auto): front and rear lights of all riders from dusk to dawn | at once |
 | `display.fullscreen` | on / off (off): borderless fullscreen (`--fullscreen`) | next start |
 | `ride.bots` | 0 to 50 (10): test riders (`--bots`) | next start |
 | `ride.random_start` | on / off (on): random start point (`--random-start`) | next start |
@@ -624,6 +627,28 @@ these pages. In the console: `riders.add` / `riders.edit` (also `--rename`,
 `--bike`, `--frame-color` …) / `riders.select`, e.g.
 `riders.edit Alex --bike gravel --frame-color #43A047 --kit sash`.
 
+### World time and the time machine
+
+The world shows the local time of the rider's place **in the virtual world**
+(its time zone and daylight saving time, spec §14 Phase 9), with the sun where
+it is there: a rider in Tokyo riding Liechtenstein at 14:00 sees 06:00 in Vaduz
+in winter. The HUD's main line ends with the world clock (`☼ 18:42`, `◐` in the
+twilight, `●` at night; `x600`, `paused`, `fixed` or `+2 h` when the time
+machine runs). The time zone comes from the world package (section `TZID`,
+set by `world-builder package`, `--time-zone` overrides); older packages and
+route files use the zone of their origin (`Europe/Vaduz` for Liechtenstein,
+`Europe/Berlin` for the Black Forest, else the longitude's zone), the test
+routes are in Vaduz. The sun lights the scene from its real position, warm at
+sunrise and sunset; the night is dark (`display.night_brightness`, Settings →
+Display) and every rider has front and rear lights.
+
+*Navi → Time machine* (and the console command `time`) sets the date and time
+(1900–2100), the time speed (paused, x1, x10, x60, x600) and presets (sunrise,
+golden hour, noon, sunset, blue hour, midnight, the solstices). The game server
+owns the clock: solo you set it, in a shared ride only the host (the rider
+connected longest; `ocw-server --time-control host|anyone|nobody`). Each ride
+starts at the real time.
+
 ## Console commands
 
 Open the console with `` ` `` or F12; `help` lists the commands, `help NAME`
@@ -649,6 +674,15 @@ for now).
 | `video [start\|stop\|toggle]` | Record the window as an MP4 (key V; needs `ffmpeg`) |
 | `menu [open\|close\|toggle\|up\|down\|left\|right\|select\|back\|tab-next\|tab-prev]` | Open, close or drive the in-game menu (Esc / Start) |
 | `quit` | Exit the app |
+| **Time and sky** (spec §14 Phase 9) | |
+| `time` | The world time at your place in the world (its zone and DST), the clock's mode and speed, the sun, and who sets the time |
+| `time HH:MM` \| `time YYYY-MM-DD [HH:MM]` | Time machine: this local time today, or that date (keeping the time of day), years 1900–2100 |
+| `time +2h` \| `time -30m` \| `time +1d` | Move the world time (keeps the mode; real time becomes an offset) |
+| `time offset +3h` \| `time real` | Real time plus an offset, or back to real time |
+| `time speed 1\|10\|60\|600` \| `time pause` \| `time play` | Time speed (x600: a day in 2.4 minutes) |
+| `time sunrise\|golden-hour\|noon\|sunset\|blue-hour\|midnight\|summer-solstice\|winter-solstice` | Presets at your place on the current world date (solstices keep the time of day) |
+| `sky` | Sun azimuth / elevation and the light at the rider |
+| `sky.night PERCENT` \| `sky.mode atmosphere\|simple` \| `sky.lights auto\|on\|off` | This session's night brightness, sky and bike lights (the `display.*` settings keep them) |
 | **Audio** (spec §3.3) | |
 | `audio.volume master\|effects\|music\|voice PERCENT` | Set a volume for this session (`set audio.effects 60` also saves it) |
 | `audio.mute [on\|off\|toggle]` | Mute or unmute all sound (`set audio.mute on` saves it) |
@@ -915,7 +949,9 @@ cargo run --release -p ocw-server -- --world data/pilot/liechtenstein.ocwpkg \
 
 It prints the riders' positions and speeds while it runs. Options:
 `--bots N` (test riders, default 10), `--seconds S` (0 = until stopped with
-Ctrl+C), `--fast` (no real-time pacing), `--world PKG|ID` and `--seed N` (free
+Ctrl+C), `--fast` (no real-time pacing), `--time-control host|anyone|nobody`
+(who may change the world clock with the time machine, default the host),
+`--world PKG|ID` and `--seed N` (free
 ride on a world package's road graph, start point seed; verified like in the
 desktop app, `--allow-unsigned` and `--trust-root FILE` as there), `--route NAME`
 (with `--world`: ride one of the package's routes), `--no-neighbours` (ride

@@ -6,7 +6,7 @@
 export PATH := $(HOME)/.cargo/bin:$(PATH)
 
 CARGO ?= cargo
-WASM_CRATES := -p ocw-core -p ocw-sim -p ocw-protocol -p ocw-world -p ocw-voice
+WASM_CRATES := -p ocw-core -p ocw-sim -p ocw-protocol -p ocw-world -p ocw-voice -p ocw-sky
 # Voice chat (spec §7): the LiveKit SDK's bindings need clang >= 21 on Linux
 # (`make deps-llvm-debian`). With clang-21 installed, `build` and `release`
 # include the desktop's `voice` feature; without it they build as before.

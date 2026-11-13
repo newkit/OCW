@@ -419,3 +419,80 @@ description = "Black Forest: --world without a route option rides the package's 
 world = "blackforest"
 args = ["--world", "{world}", "--no-neighbours", "--bots", "3"]
 shot = 10
+
+# --- Sky and time (spec §14 Phase 9, S1 / S3) -------------------------------
+# Fixed instants on 21 June 2026 in Vaduz (sunrise 05:26, sunset 21:21 CEST),
+# the clock paused so the light is exact; `time` resolves local times in the
+# world's zone (Europe/Vaduz).
+
+[[scene]]
+name = "sky-sunrise"
+description = "Sunrise on the Vaduz-Malbun road (21 June, 05:40 CEST): low warm sun from the north-east over the Rhine valley, long shadows, HUD clock"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "3", "--power", "200"]
+at = ["2=time pause", "2=time 2026-06-21 05:40", "2.5=teleport 1.6", "2.5=camera.orbit 200 14 14"]
+shot = 9
+
+[[scene]]
+name = "sky-noon"
+description = "Solar noon on the Vaduz-Malbun road (21 June, 13:24 CEST): the sun 66° high in the south, short shadows"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "3", "--power", "200"]
+at = ["2=time pause", "2=time 2026-06-21 12:00", "2.6=time noon", "2.5=teleport 1.6", "2.5=camera.orbit 30 20 14"]
+shot = 9
+
+[[scene]]
+name = "sky-golden-hour"
+description = "Golden hour (preset: the sun 5° high in the west-north-west) climbing out of Vaduz: orange light, long shadows, the valley behind"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "3", "--power", "200"]
+at = ["2=time pause", "2=time 2026-06-21 12:00", "2.6=time golden-hour", "2.5=teleport 1.6", "2.5=camera.orbit 160 14 14"]
+shot = 9
+
+[[scene]]
+name = "sky-sunset"
+description = "Sunset (preset, 21:21 CEST): the sun at the horizon over the Swiss mountains west of the Rhine, red light and the glow of the atmosphere"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "3", "--power", "200"]
+at = ["2=time pause", "2=time 2026-06-21 12:00", "2.6=time sunset", "2.5=teleport 1.6", "2.5=camera.orbit 160 10 14"]
+shot = 9
+
+[[scene]]
+name = "sky-sunset-ridge"
+description = "Sunset in the Malbun valley (km 12, 20:40 CEST): the sun already behind the ridge, the valley in shadow while the sky is still bright"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "2", "--power", "200"]
+at = ["2=time pause", "2=time 2026-06-21 20:40", "2.5=teleport 12.0", "2.5=camera.orbit 160 16 16"]
+shot = 9
+
+[[scene]]
+name = "sky-blue-hour"
+description = "Blue hour (preset: the sun 5° below the horizon) above Vaduz: deep blue sky, dim blue light, bike lights on"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "3", "--power", "200"]
+at = ["2=time pause", "2=time 2026-06-21 12:00", "2.6=time blue-hour", "2.5=teleport 1.6", "2.5=camera.orbit 160 12 12"]
+shot = 9
+
+[[scene]]
+name = "sky-night-lights"
+description = "Night (23:40 CEST) on the Vaduz-Malbun road: dark scene at the default night brightness, front and rear lights on every rider, the own lamp lighting the road"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "5", "--power", "220"]
+at = ["2=time pause", "2=time 2026-06-21 23:40", "2.5=teleport 1.6", "2.5=camera.orbit 25 12 9"]
+shot = 10
+
+[[scene]]
+name = "menu-time-machine"
+description = "In-game menu: Navi -> Time machine (world time, day, speed, preset, mode, who sets the time)"
+args = ["--route", "hills", "--bots", "4"]
+at = ["2=menu open", "2.4=menu down", "2.8=menu down", "3.2=menu down", "3.6=menu select", "4=menu down", "4.4=menu down", "4.8=menu down", "5.2=menu down", "5.6=menu select"]
+shot = 7
+
+[[scene]]
+name = "sky-sunset-timelapse"
+description = "Video: time-lapse at x600 across the sunset on the Vaduz-Malbun road (21 June, 20:35 to 22:00 CEST): the sun sets in the west, the light reddens, dims and the bike lights come on"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "3", "--power", "220"]
+at = ["1.5=time 2026-06-21 20:35", "2=time speed 600", "2=teleport 1.6", "2=camera.orbit 160 14 14"]
+warmup = 3
+video = 9
