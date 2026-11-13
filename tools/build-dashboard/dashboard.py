@@ -1460,7 +1460,7 @@ def make_handler(dash: Dashboard):
 PROMPT_SHORT = 90
 _REMINDER = re.compile(r"<system-reminder>.*?</system-reminder>", re.S)
 _AGENT_ID = re.compile(r"agentId:\s*([0-9a-f]{12,})")
-_CHECKOUT_AGENT = re.compile(r"agent-([0-9a-f]{12,})")
+_CHECKOUT_AGENT = re.compile(r"agent[- ]([0-9a-f]{6,})")
 _NOT_PROMPT = ("<task-notification", "<agent-message", "[SYSTEM NOTIFICATION", "Another Claude session",
                "<local-command", "[Request interrupted", "Caveat:", "<command-message",
                "This session is being continued")
@@ -1566,8 +1566,9 @@ class PromptIndex:
         """{"prompt": short text, "agent": description} for a job, or {}."""
         with self.lock:
             m = _CHECKOUT_AGENT.search(checkout or "")
-            if m and m.group(1) in self.agents:
-                a = self.agents[m.group(1)]
+            hits = [v for k, v in self.agents.items() if m and k.startswith(m.group(1))]
+            if len(hits) == 1:  # the label may carry a shortened agent id
+                a = hits[0]
                 return {"prompt": short_prompt(a["prompt"] or ""), "agent": a["agent"]}
             if m:
                 return {}

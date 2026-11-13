@@ -612,3 +612,7 @@ class PromptTest(unittest.TestCase):
         t = out["machines"][0]["tasks"][0]
         self.assertEqual(t["prompt"], "fix the <m> shadow")
         self.assertEqual(t["agent"], "Fix shadow")
+
+    def test_short_agent_label_matches(self):
+        info = self._index().for_job("agent aca62f4f", 0)
+        self.assertEqual(info.get("agent"), "Fix shadow")

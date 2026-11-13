@@ -279,6 +279,18 @@ pub const SETTINGS: &[SettingDef] = &[
         apply: Apply::Command("audio.volume effects {}"),
     },
     SettingDef {
+        key: "audio.others",
+        kind: Kind::Int {
+            min: 0,
+            max: 100,
+            step: 5,
+        },
+        default: "80",
+        description: "Volume of the other riders' bikes in percent (a part of the effects: master × effects × others)",
+        scope: Scope::Live,
+        apply: Apply::Command("audio.volume others {}"),
+    },
+    SettingDef {
         key: "audio.music",
         kind: Kind::Int {
             min: 0,
@@ -286,7 +298,7 @@ pub const SETTINGS: &[SettingDef] = &[
             step: 5,
         },
         default: "60",
-        description: "Music volume in percent (no music yet)",
+        description: "Music volume in percent (no music yet: not on the Audio page until there is)",
         scope: Scope::Live,
         apply: Apply::Command("audio.volume music {}"),
     },
@@ -886,6 +898,8 @@ master = 80
         assert_eq!(again.get("audio.master"), Ok(Value::Int(55)));
         assert_eq!(again.get("audio.mute"), Ok(Value::Bool(true)));
         assert_eq!(again.get("audio.effects"), Ok(Value::Int(80)));
+        assert_eq!(again.get("audio.others"), Ok(Value::Int(80)));
+        assert!(s.set("audio.others", "-5").is_err());
         let out = again.get("audio.output").unwrap();
         assert_eq!(out, Value::Text("USB Audio Device, Analog".into()));
         let d = def("audio.output").unwrap();

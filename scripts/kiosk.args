@@ -3,9 +3,3 @@
 # install directory), only if the world package was installed. The kiosk's
 # own command line comes after these and wins. Format: apps/desktop/src/argsfile.rs.
 --world @DIR@/liechtenstein.ocwpkg
-# Kiosk show mode (user, 2026-11-13): always ride on the virtual trainer at
-# 500 W, so the rider moves and pedals (the virtual trainer reports a matching
-# cadence, ~95 rpm) even with nobody on the KICKR. Change it in the menu or
-# with the console (`sim.power`), or drop these lines to ride the trainer.
---virtual
---power 500
