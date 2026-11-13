@@ -36,7 +36,7 @@ pub enum Cue {
 
 impl Cue {
     /// The names `audio.play` takes.
-    pub const NAMES: [(&'static str, Cue); 13] = [
+    pub const NAMES: [(&'static str, Cue); 14] = [
         ("move", Cue::UiMove),
         ("value", Cue::UiValue),
         ("confirm", Cue::UiConfirm),
@@ -49,6 +49,7 @@ impl Cue {
         ("test-music", Cue::Test(Bus::Music)),
         ("test-effects", Cue::Test(Bus::Effects)),
         ("test-voice", Cue::Test(Bus::Voice)),
+        ("test-others", Cue::Test(Bus::Others)),
         ("test", Cue::Test(Bus::Effects)),
     ];
 
@@ -156,6 +157,14 @@ impl CueVoice {
             Cue::Test(Bus::Effects) => tone(t, 0.0, 0.8, 660.0, 0.35),
             Cue::Test(Bus::Voice) => {
                 tone(t, 0.0, 0.8, 330.0, 0.35) + tone(t, 0.0, 0.8, 990.0, 0.08)
+            }
+            Cue::Test(Bus::Others) => {
+                // A freehub ticking 14 times a second (another rider
+                // coasting), with a soft tone under it.
+                let n = self.noise.white();
+                let band = self.filter.process(n).band;
+                let x = (t * 14.0).fract() / 14.0;
+                band * 0.9 * (-x / 0.0015).exp() + tone(t, 0.0, 0.8, 880.0, 0.12)
             }
         }
     }
@@ -291,6 +300,7 @@ mod tests {
         }
         assert_eq!(Cue::parse("nope"), None);
         assert_eq!(Cue::parse("test-voice").unwrap().bus(), Bus::Voice);
+        assert_eq!(Cue::parse("test-others").unwrap().bus(), Bus::Others);
         assert_eq!(Cue::Finish.bus(), Bus::Effects);
     }
 

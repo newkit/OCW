@@ -141,11 +141,16 @@ pub fn ride_params(input: &RideInput) -> RideParams {
     if !drives_wheel(input) && v > 0.3 {
         let rate = v / WHEEL_CIRCUMFERENCE_M * FREEWHEEL_POINTS;
         p.freewheel_rate_hz = rate as f32;
-        // Dense ticks add up: keep the buzz at high speed about as loud as
-        // the ticking at walking pace.
-        p.freewheel_gain = (0.32 / (1.0 + rate / 60.0).sqrt()) as f32;
+        p.freewheel_gain = freewheel_gain(rate);
     }
     p
+}
+
+/// The freehub's level at `rate_hz` ticks per second: dense ticks add up,
+/// so the buzz at high speed stays about as loud as the ticking at walking
+/// pace.
+pub fn freewheel_gain(rate_hz: f64) -> f32 {
+    (0.32 / (1.0 + rate_hz.max(0.0) / 60.0).sqrt()) as f32
 }
 
 /// The fraction a one-pole ramp with time constant `tau_s` moves in `dt_s`.
@@ -192,10 +197,49 @@ impl RideParams {
     }
 }
 
+/// The sound of one bike: noise seeds, the freehub click's ring and
+/// length, the drivetrain's and tyres' filter tuning. The own bike uses
+/// [`Timbre::default`]; every other rider gets their own (spec §3.3, other
+/// riders), so a group does not sound like copies of one bike.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Timbre {
+    pub seed: u32,
+    /// Centre of the click's metallic band (Hz).
+    pub click_hz: f32,
+    /// The pawl's ring (Hz).
+    pub ring_hz: f32,
+    /// Decay of one click (s).
+    pub click_tau_s: f32,
+    /// Scales the drivetrain's and the tyres' filter frequencies.
+    pub chain_scale: f32,
+    pub roll_scale: f32,
+    /// Start phases (turns) of the freehub and the pedal strokes.
+    pub tick_phase: f32,
+    pub stroke_phase: f32,
+}
+
+impl Default for Timbre {
+    fn default() -> Self {
+        Self {
+            seed: 0x5EED_0001,
+            click_hz: 4200.0,
+            ring_hz: 5200.0,
+            click_tau_s: 0.0011,
+            chain_scale: 1.0,
+            roll_scale: 1.0,
+            tick_phase: 0.0,
+            stroke_phase: 0.0,
+        }
+    }
+}
+
 /// Synthesises the ride sounds sample by sample.
 #[derive(Debug, Clone)]
 pub struct RideSynth {
     sr: f32,
+    timbre: Timbre,
+    /// Doppler factor on every frequency and rate (1 = none).
+    pitch: f32,
     pink: Pink,
     noise: Noise,
     wind_lp: Svf,
@@ -221,11 +265,19 @@ pub struct RideSynth {
 
 impl RideSynth {
     pub fn new(sample_rate: f32) -> Self {
+        Self::with_timbre(sample_rate, Timbre::default())
+    }
+
+    /// A bike with its own sound (another rider).
+    pub fn with_timbre(sample_rate: f32, timbre: Timbre) -> Self {
         let sr = sample_rate;
+        let t = timbre;
         Self {
             sr,
-            pink: Pink::new(0x5EED_0001),
-            noise: Noise::new(0x5EED_0002),
+            timbre: t,
+            pitch: 1.0,
+            pink: Pink::new(t.seed),
+            noise: Noise::new(t.seed.wrapping_add(1)),
             wind_lp: Svf::new(800.0, 0.6, sr),
             wind_bp: Svf::new(600.0, 1.2, sr),
             gust: 0.5,
@@ -234,28 +286,41 @@ impl RideSynth {
             grit: Burst::default(),
             grit_bp: Svf::new(2600.0, 1.4, sr),
             swish_hp: Svf::new(2800.0, 0.6, sr),
-            freewheel_phase: 0.0,
+            freewheel_phase: t.tick_phase,
             freewheel_jitter: 1.0,
             click: Burst::default(),
-            click_bp: Svf::new(4200.0, 4.0, sr),
+            click_bp: Svf::new(t.click_hz, 4.0, sr),
             click_ring: 0.0,
             chain_phase: 0.0,
-            stroke_phase: 0.0,
+            stroke_phase: t.stroke_phase,
             chain_bp: Svf::new(700.0, 0.7, sr),
             chain_lp: Svf::new(1800.0, 0.6, sr),
         }
     }
 
+    /// The Doppler factor (1 = none; another rider coming closer sounds a
+    /// little higher). Takes effect with the next [`set_filters`](Self::set_filters).
+    pub fn set_pitch(&mut self, pitch: f32) {
+        self.pitch = pitch.clamp(0.5, 2.0);
+    }
+
     /// Follows the parameters' frequencies (call every few samples).
     pub fn set_filters(&mut self, p: &RideParams) {
         let sr = self.sr;
+        let (t, k) = (self.timbre, self.pitch);
         let gust = 0.85 + 0.3 * self.gust;
         self.wind_lp.set(p.wind_cutoff_hz * gust, 0.6, sr);
         self.wind_bp.set(p.wind_cutoff_hz * 0.7 * gust, 1.6, sr);
-        self.roll_lp.set(p.roll_cutoff_hz, 0.8, sr);
+        self.roll_lp
+            .set(p.roll_cutoff_hz * t.roll_scale * k, 0.8, sr);
         // The whir rises a little with the cadence.
-        self.chain_bp
-            .set((350.0 + 5.0 * p.chain_rate_hz).min(1200.0), 0.7, sr);
+        self.chain_bp.set(
+            (350.0 + 5.0 * p.chain_rate_hz).min(1200.0) * t.chain_scale * k,
+            0.7,
+            sr,
+        );
+        self.chain_lp.set(1800.0 * t.chain_scale * k, 0.6, sr);
+        self.click_bp.set(t.click_hz * k, 4.0, sr);
         // Gusts: a slow random walk, a new target now and then.
         if self.noise.unit() < 0.01 {
             self.gust_target = self.noise.unit();
@@ -297,18 +362,19 @@ impl RideSynth {
         }
         // Freehub: one short metallic click per pawl engagement, only while
         // the wheel overruns (the gain is 0 while pedalling).
+        let k = self.pitch;
         if p.freewheel_gain > SILENT && p.freewheel_rate_hz > 0.0 {
-            self.freewheel_phase += p.freewheel_rate_hz / sr / self.freewheel_jitter;
+            self.freewheel_phase += p.freewheel_rate_hz * k / sr / self.freewheel_jitter;
             if self.freewheel_phase >= 1.0 {
                 self.freewheel_phase -= 1.0;
                 self.freewheel_jitter = 0.92 + 0.16 * self.noise.unit();
                 self.click
-                    .trigger(0.7 + 0.3 * self.noise.unit(), 0.0011, sr);
+                    .trigger(0.7 + 0.3 * self.noise.unit(), self.timbre.click_tau_s, sr);
             }
             let env = self.click.step();
             if env > 0.0 {
                 let n = self.noise.white();
-                let ring = sine(&mut self.click_ring, 5200.0, sr);
+                let ring = sine(&mut self.click_ring, self.timbre.ring_hz * k, sr);
                 out += p.freewheel_gain * env * (self.click_bp.process(n).band * 2.5 + ring * 0.35);
             }
         }
@@ -317,8 +383,8 @@ impl RideSynth {
         // tooth rate. No pulses: the chain over the teeth is too fast and
         // even to be heard as single clicks (ticks are the freehub's).
         if p.chain_gain > SILENT && p.chain_rate_hz > 0.0 {
-            let hum = sine(&mut self.chain_phase, p.chain_rate_hz, sr);
-            let stroke = sine(&mut self.stroke_phase, p.stroke_hz, sr);
+            let hum = sine(&mut self.chain_phase, p.chain_rate_hz * k, sr);
+            let stroke = sine(&mut self.stroke_phase, p.stroke_hz * k, sr);
             let n = self.noise.white();
             let whir = self.chain_lp.process(self.chain_bp.process(n).band).low;
             out += p.chain_gain * (1.0 + 0.15 * stroke) * (whir * 2.2 + hum * 0.12);

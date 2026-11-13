@@ -1,4 +1,5 @@
-//! The mix (spec §3.3): four buses, master × music / effects / voice.
+//! The mix (spec §3.3): master × music / effects / voice, and the other
+//! riders' bikes as a part of the effects (master × effects × others).
 //! Volumes are percent (0–100) as in the settings; the gain of a bus is
 //! the product of the master's and the bus's gain, both on a squared
 //! (perceptual) curve, and 0 when muted. Pure and unit-tested.
@@ -13,16 +14,20 @@ pub enum Bus {
     Effects,
     /// Voice chat (Phase 6, spec §7) and the voice test tone.
     Voice,
+    /// The other riders' bikes (bots, remote riders): a part of the
+    /// effects, so its gain is master × effects × others.
+    Others,
 }
 
 impl Bus {
-    pub const ALL: [Bus; 3] = [Bus::Music, Bus::Effects, Bus::Voice];
+    pub const ALL: [Bus; 4] = [Bus::Music, Bus::Effects, Bus::Voice, Bus::Others];
 
     pub fn name(self) -> &'static str {
         match self {
             Bus::Music => "music",
             Bus::Effects => "effects",
             Bus::Voice => "voice",
+            Bus::Others => "others",
         }
     }
 
@@ -37,19 +42,21 @@ impl Bus {
             Bus::Music => 0,
             Bus::Effects => 1,
             Bus::Voice => 2,
+            Bus::Others => 3,
         }
     }
 }
 
 /// The user's mix: volumes in percent and the mute switch
 /// (`audio.master`, `audio.music`, `audio.effects`, `audio.voice`,
-/// `audio.mute`).
+/// `audio.others`, `audio.mute`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Mix {
     pub master: u8,
     pub music: u8,
     pub effects: u8,
     pub voice: u8,
+    pub others: u8,
     pub mute: bool,
 }
 
@@ -62,6 +69,7 @@ impl Default for Mix {
             music: 60,
             effects: 80,
             voice: 100,
+            others: 80,
             mute: false,
         }
     }
@@ -82,6 +90,7 @@ impl Mix {
             Bus::Music => self.music,
             Bus::Effects => self.effects,
             Bus::Voice => self.voice,
+            Bus::Others => self.others,
         }
     }
 
@@ -91,17 +100,20 @@ impl Mix {
             Bus::Music => self.music = p,
             Bus::Effects => self.effects = p,
             Bus::Voice => self.voice = p,
+            Bus::Others => self.others = p,
         }
     }
 
-    /// The gain of each bus: master × bus, 0 when muted.
+    /// The gain of each bus: master × bus (× effects for the others), 0
+    /// when muted.
     pub fn gains(&self) -> BusGains {
-        let mut g = [0.0; 3];
+        let mut g = [0.0; 4];
         if !self.mute {
             let master = volume_gain(self.master);
             for b in Bus::ALL {
                 g[b.index()] = master * volume_gain(self.volume(b));
             }
+            g[Bus::Others.index()] *= volume_gain(self.effects);
         }
         BusGains(g)
     }
@@ -109,7 +121,7 @@ impl Mix {
 
 /// Linear gain per bus, as the mixer applies it.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct BusGains([f32; 3]);
+pub struct BusGains([f32; 4]);
 
 impl BusGains {
     pub fn get(&self, bus: Bus) -> f32 {
@@ -150,12 +162,20 @@ mod tests {
             music: 100,
             effects: 50,
             voice: 0,
+            others: 50,
             mute: false,
         };
         let g = mix.gains();
         assert_eq!(g.get(Bus::Music), 0.25);
         assert_eq!(g.get(Bus::Effects), 0.25 * 0.25);
         assert_eq!(g.get(Bus::Voice), 0.0);
+        // The other riders are a part of the effects.
+        assert_eq!(g.get(Bus::Others), 0.25 * 0.25 * 0.25);
+        assert_eq!(Mix { effects: 0, ..mix }.gains().get(Bus::Others), 0.0);
+        assert_eq!(
+            Mix { others: 0, ..mix }.gains().get(Bus::Effects),
+            0.25 * 0.25
+        );
         // Commutes: master 100 × bus 50 is bus 100 × master 50.
         let swapped = Mix {
             master: 100,
@@ -169,6 +189,7 @@ mod tests {
             music: 100,
             effects: 100,
             voice: 100,
+            others: 100,
             mute: false,
         };
         assert!(Bus::ALL.iter().all(|&b| full.gains().get(b) == 1.0));
@@ -200,6 +221,9 @@ mod tests {
         assert_eq!(mix.voice, 100);
         mix.set_volume(Bus::Music, 30);
         assert_eq!(mix.volume(Bus::Music), 30);
+        assert_eq!(Bus::parse("Others"), Some(Bus::Others));
+        mix.set_volume(Bus::Others, 45);
+        assert_eq!(mix.others, 45);
     }
 
     #[test]
