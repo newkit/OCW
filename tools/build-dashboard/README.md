@@ -136,3 +136,12 @@ performance counters are denied to a non-admin build user over SSH:
   like all other text.
 - It reads `config/machines.toml` and the keys in `config/ssh/`, which stay
   git-ignored.
+
+## Run as a service
+
+`make dashboard-install` installs `ocw-build-dashboard.service` as a systemd
+**user** service (no root): it starts now and at every login, restarts on
+failure, and serves http://localhost:8765/ (all addresses, read-only).
+Logs: `journalctl --user -u ocw-build-dashboard`. To start it at boot without
+a login, once: `sudo loginctl enable-linger $USER`. Remove it with
+`make dashboard-uninstall`.

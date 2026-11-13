@@ -367,15 +367,28 @@ close behind you inside it.
 use the rider profile's FTP (`--ftp` overrides it, default 200 W). See
 [Workouts](#workouts).
 
-**Videos:** V starts recording the window as an MP4 (H.264, 25 fps) into
+**Videos:** V starts recording the window as an MP4 (H.264 CRF 18, 25 fps,
+with the game sound as AAC) into
 `~/Videos/OCW/` (or `~/.local/share/ocw/videos/`), V again stops it (ignored
 while the console is open; console: `video start|stop`). While recording,
 the HUD shows a small red "REC m:ss" at the top right; after stopping,
-"Video saved: <file>" for a few seconds. Windows wider than 1920 px are
-scaled down; ticks without a new image repeat the last one so the video
+"Video saved: <file>" for a few seconds. The sound is what the output device
+plays (without a device, e.g. `--no-audio`, the mixer is rendered in step
+with game time); it is muxed in when the recording stops. Windows wider than
+2560 px are scaled down; ticks without a new image repeat the last one so the video
 keeps real time (on the kiosk test machine all 25 images per second are
 new; a slow screenshot readback can lower that elsewhere – `make test-video`
 records with a fixed time step instead). Needs `ffmpeg` (`make deps` installs it).
+
+**Timestamp:** the top right corner always shows the local date and time
+with its UTC offset, e.g. `2026-11-12T22:14:05+01:00`, also with `hud off`:
+every screenshot and video frame shows when it was taken (during
+`--capture` the capture start plus the game time, so it runs smoothly in the
+video). The files carry it too: screenshots are JPEG (quality 90) with EXIF
+`DateTimeOriginal` / `CreateDate` / `OffsetTimeOriginal` and `Software` =
+`Open Cycling World <build>` (a path ending in `.png` gives a PNG with the
+`tEXt` chunks `Creation Time` and `Software`); videos have `creation_time`
+(UTC) and the build in `comment` (`ffprobe -show_format`, `exiftool`).
 
 **FPS counter:** `fps on` (console), *Settings → Display* or `set display.fps
 on` shows a small green badge at the top right, e.g. `58 fps  max 21 ms`: the
@@ -474,9 +487,9 @@ event status | event cancel | event dismiss
 | `--cmd COMMAND` | Run a console command at startup (repeatable) |
 | `--exec FILE` | Run the console commands in a file at startup (also `autoexec.cfg` if present) |
 | `--at SECONDS=COMMAND` | Run a console command when the app has run SECONDS (game time; a ride switch does not reset it; scripted rides) |
-| `--screenshot PATH`, `--screenshot-delay S` | Save a screenshot after S seconds (default 5), then exit |
-| `--capture DIR`, `--capture-fps N`, `--capture-seconds S`, `--capture-warmup S` | Save every frame with a fixed game-time step (smooth videos), then exit |
-| `--no-audio` | No sound: open no audio output (frame capture with `--capture` is silent anyway) |
+| `--screenshot PATH`, `--screenshot-delay S` | Save a screenshot after S seconds (default 5), then exit (JPEG with EXIF time; `.png`: PNG) |
+| `--capture DIR`, `--capture-fps N`, `--capture-seconds S`, `--capture-warmup S` | Save every frame with a fixed game-time step (smooth videos) as `frame_NNNNN.png`, plus `audio.wav` (game sound in step with the frames), `metadata.txt` (ffmpeg metadata) and `still.jpg` (last frame), then exit |
+| `--no-audio` | No sound: open no audio output (frame capture opens none anyway; videos still get the mixer's sound) |
 | `--no-vsync` | Draw as fast as possible instead of waiting for the display's refresh (benchmarks) |
 | `--max-fps N` | Draw at most N frames per second (with `--no-vsync`: a steady rate even where the display gives no refresh, e.g. on a locked screen) |
 | `--log-fps S` | Log the real render rate every S seconds (`render rate fps=… worst_ms=…`; wall clock, also during `--capture`) |
@@ -533,7 +546,8 @@ headset unplugged) the default device plays and the saved one is taken again
 as soon as it is back (the device list is re-read every 3 s). Without any
 output device (headless runs, CI) the app runs silently and logs
 `audio: no audio output: …`; `--no-audio` (and frame capture with `--capture`)
-opens none. *Settings → Audio* has the volumes (Enter plays a test sound on
+opens none. Videos still get the sound: frame capture renders it exactly in
+step with the frames into `DIR/audio.wav`. *Settings → Audio* has the volumes (Enter plays a test sound on
 that bus), Mute and the Output (← / → step through `default` and the
 devices).
 
@@ -630,7 +644,7 @@ for now).
 | `set [--temp] KEY VALUE` | Change a setting and save it in `settings.toml` (`--temp`: this session only); see [Settings](#settings-and-rider-profiles) |
 | `get [KEY]` | Show all settings with where their value comes from, or one with its range and description |
 | `hud.profile [on\|off]` | Show or hide the elevation profile of the road ahead (bottom left; on by default) |
-| `screenshot [PATH]` | Save a screenshot of the window (default `screenshot.png`) |
+| `screenshot [PATH]` | Save a screenshot of the window (default `screenshot.jpg`: JPEG quality 90 with its time in EXIF; a `.png` path gives PNG) |
 | `reset` | Start everything again as at program start (key R); the ride is saved first |
 | `video [start\|stop\|toggle]` | Record the window as an MP4 (key V; needs `ffmpeg`) |
 | `menu [open\|close\|toggle\|up\|down\|left\|right\|select\|back\|tab-next\|tab-prev]` | Open, close or drive the in-game menu (Esc / Start) |
@@ -1090,7 +1104,7 @@ profiles: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- 
 
 ```bash
 scripts/remote.sh <name> run 'cargo test --workspace'        # copy the working tree, run there
-scripts/remote.sh <name> run '.claude/skills/run-ocw/drive.sh shot-wayland /tmp/ocw.png 6 -- --virtual'
+scripts/remote.sh <name> run '.claude/skills/run-ocw/drive.sh shot-wayland /tmp/ocw.jpg 6 -- --virtual'
 scripts/remote.sh <name> fetch test-output ./from-machine     # copy results back
 scripts/deploy-test.sh <name>                                  # release build for the kiosk on its screen
 ```
@@ -1200,7 +1214,7 @@ game times (`at = ["4=teleport 8.8", "6=camera.mode side"]`), and the output:
 a screenshot after `shot` seconds and/or a video of `video` seconds (25 fps
 frame capture). `scripts/render-scenes.sh` renders them with
 `.claude/skills/run-ocw/drive.sh` on a headless weston (`--x11`: Xvfb) into
-`test-output/scenes/<date-time>/NAME.png|mp4` (each run is also archived in
+`test-output/scenes/<date-time>/NAME.jpg|mp4` (2560×1440 by default) (each run is also archived in
 `test-output/YYYY-MM-DD/` with an `index.md` row). Every scene starts with
 empty config and data folders (`OCW_CONFIG_DIR`, `OCW_DATA_DIR`; a scene can
 bring its own `riders.toml`) and the virtual trainer, so the machine's
@@ -1225,8 +1239,9 @@ Forest package the same way: `--world blackforest=PKG`,
 its route files beside it); render them with `OCW_PROFILE=release` (260 MB
 package). Without a package these scenes are skipped; the test-route
 scenes always run. `--pick` copies the good renders of a folder into
-`test-output/build-history/YYYY-MM-DD/HHMMSS-NAME.png|mp4` (PNGs over 600 KB
-get a 256-colour palette, videos over 3 MB are re-encoded) with one row per
+`test-output/build-history/YYYY-MM-DD/HHMMSS-NAME.jpg|mp4` (images over 600 KB
+are made smaller – JPEG quality ~80, older PNGs a 256-colour palette – with
+their metadata kept; videos over 3 MB are re-encoded with sound and metadata) with one row per
 file in its `index.md` (the scene's description), ready for the zip of the
 GitHub release `build-history`. Look at every image before picking it.
 

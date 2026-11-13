@@ -18,6 +18,12 @@ bevy.workspace = true
 bevy_egui.workspace = true
 clap.workspace = true
 ttf-parser.workspace = true
+image.workspace = true
+chrono.workspace = true
+
+[dev-dependencies]
+# Reads the PNG text chunks back in the tests (already in the tree via image).
+png = "0.18"
 
 [lints]
 workspace = true

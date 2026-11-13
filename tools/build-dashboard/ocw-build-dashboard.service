@@ -1,0 +1,19 @@
+# systemd user unit for the build dashboard (tools/build-dashboard/README.md).
+# Installed by `make dashboard-install` with @REPO@ replaced by the checkout path:
+#   ~/.config/systemd/user/ocw-build-dashboard.service
+# Starts at login; to start at boot without a login: sudo loginctl enable-linger $USER
+[Unit]
+Description=Open Cycling World build dashboard (port 8765)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO@
+ExecStart=/usr/bin/python3 @REPO@/tools/build-dashboard/dashboard.py --port 8765
+Environment=PYTHONDONTWRITEBYTECODE=1
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

@@ -190,7 +190,7 @@ fi
 pids=()
 cleanup_remote() {
   R "$server_m" ssh "pkill -f -- '--stats-file $remote_mp/stats.json'" >/dev/null 2>&1 || true
-  R "$server_m" ssh "pkill -f -- '/tmp/ocw-mp-camera-$stamp/final.png'" >/dev/null 2>&1 || true
+  R "$server_m" ssh "pkill -f -- '/tmp/ocw-mp-camera-$stamp/final.jpg'" >/dev/null 2>&1 || true
   for m in "${used[@]}"; do
     if [ "$(os_of "$m")" = windows ]; then
       R "$m" ssh "Stop-Process -Name ocw-bot -ErrorAction SilentlyContinue" >/dev/null 2>&1 || true
@@ -259,7 +259,7 @@ if [ "$kiosk" = 1 ]; then
     # The FPS counter (real render rate) in every picture, and a real-time
     # 25 fps video of $video_s s from the app's own recorder (console `video`).
     echo "--cmd \"fps on\""
-    for d in 12 25 40; do at "$((t1 + d))" "screenshot $shots/still-$d.png"; done
+    for d in 12 25 40; do at "$((t1 + d))" "screenshot $shots/still-$d.jpg"; done
     if [ "$kiosk_new" = 1 ]; then
       # No waiting for the display's refresh, 60 fps at most: the app
       # draws (and records) even while the screen is locked and off.
@@ -306,14 +306,14 @@ if [ "$use_camera" = 1 ]; then
     echo "--server 127.0.0.1:$port --server-cert $fp --name $camera_name --virtual --power 200 --record false"
     echo "${cam_course[*]}"
     echo "--video-dir $cam --no-audio"
-    for d in 30 50 65; do echo "--at \"$d=screenshot $cam/still-$d.png\""; done
+    for d in 30 50 65; do echo "--at \"$d=screenshot $cam/still-$d.jpg\""; done
     # A real-time 25 fps video from the app's own recorder (console
     # `video`); drive.sh shows the FPS counter and logs the render rate.
     echo "--at \"32=video start\""
     echo "--at \"$((32 + video_s))=video stop\""
   } >"$out/camera.args"
   R "$server_m" ssh "rm -rf $cam && mkdir -p $cam && cat > $cam/camera.args" <"$out/camera.args" 2>&1 | redact_stream
-  (OCW_REMOTE_SLOTS=0 R "$server_m" run "OCW_PROFILE=release OCW_ARGS_FILE=$cam/camera.args OCW_TEST_OUTPUT=off .claude/skills/run-ocw/drive.sh shot-wayland $cam/final.png $run_s" 2>&1 | redact_stream >"$out/camera.log") &
+  (OCW_REMOTE_SLOTS=0 R "$server_m" run "OCW_PROFILE=release OCW_ARGS_FILE=$cam/camera.args OCW_TEST_OUTPUT=off .claude/skills/run-ocw/drive.sh shot-wayland $cam/final.jpg $run_s" 2>&1 | redact_stream >"$out/camera.log") &
   cam_pid=$!
   say "camera:       headless client \"$camera_name\" on $server_m (weston) rides along and takes the pictures"
 fi
@@ -386,20 +386,20 @@ if [ "$kiosk" = 1 ]; then
   # The recorder names its file by date: the one MP4 there is the video.
   R "$server_m" ssh "cd $shots 2>/dev/null && v=\$(ls -t *.mp4 2>/dev/null | head -n 1) && [ -n \"\$v\" ] && mv -f \"\$v\" kiosk.mp4" >/dev/null 2>&1 || true
   mkdir -p "$out/kiosk"
-  R "$server_m" ssh "cd $shots && tar -cf - still-*.png kiosk.mp4 2>/dev/null" 2>/dev/null | tar -xf - -C "$out/kiosk" 2>/dev/null || true
-  say "kiosk images: $(ls "$out/kiosk" | grep -c png) stills$([ -f "$out/kiosk/kiosk.mp4" ] && echo ", kiosk.mp4 ($(video_info "$out/kiosk/kiosk.mp4"))")"
+  R "$server_m" ssh "cd $shots && tar -cf - still-*.jpg kiosk.mp4 2>/dev/null" 2>/dev/null | tar -xf - -C "$out/kiosk" 2>/dev/null || true
+  say "kiosk images: $(ls "$out/kiosk" | grep -c jpg) stills$([ -f "$out/kiosk/kiosk.mp4" ] && echo ", kiosk.mp4 ($(video_info "$out/kiosk/kiosk.mp4"))")"
   R "$server_m" ssh "rm -rf $shots" >/dev/null 2>&1 || true
 fi
 
 if [ "$use_camera" = 1 ]; then
   R "$server_m" ssh "cd $cam 2>/dev/null && v=\$(ls -t *.mp4 2>/dev/null | head -n 1) && [ -n \"\$v\" ] && mv -f \"\$v\" camera.mp4" >/dev/null 2>&1 || true
   mkdir -p "$out/camera"
-  R "$server_m" ssh "cd $cam && tar -cf - still-*.png final.png final.log camera.mp4 2>/dev/null" 2>/dev/null | tar -xf - -C "$out/camera" 2>/dev/null || true
+  R "$server_m" ssh "cd $cam && tar -cf - still-*.jpg final.jpg final.log camera.mp4 2>/dev/null" 2>/dev/null | tar -xf - -C "$out/camera" 2>/dev/null || true
   if [ -f "$out/camera/final.log" ]; then
     sed 's/\x1b\[[0-9;]*m//g' "$out/camera/final.log" | redact_stream >"$out/camera/app.log"
     rm -f "$out/camera/final.log"
   fi
-  say "camera images: $(ls "$out/camera" 2>/dev/null | grep -c png) stills$([ -f "$out/camera/camera.mp4" ] && echo ", camera.mp4 ($(video_info "$out/camera/camera.mp4"))")"
+  say "camera images: $(ls "$out/camera" 2>/dev/null | grep -c jpg) stills$([ -f "$out/camera/camera.mp4" ] && echo ", camera.mp4 ($(video_info "$out/camera/camera.mp4"))")"
   # The camera's real render rate (wall clock) while it rode in the session.
   if [ -f "$out/camera/app.log" ]; then
     rate=$(grep 'render rate' "$out/camera/app.log" | grep -oE 'fps="?[0-9.]+' | grep -oE '[0-9.]+$' |
@@ -417,7 +417,7 @@ day=$(date +%Y-%m-%d)
 stem="$(date +%H%M%S)-$sha-multiplayer"
 mkdir -p "$root/$day"
 links=""
-for f in "$out"/kiosk/still-*.png "$out"/kiosk/kiosk.mp4 "$out"/camera/still-*.png "$out"/camera/final.png \
+for f in "$out"/kiosk/still-*.jpg "$out"/kiosk/kiosk.mp4 "$out"/camera/still-*.jpg "$out"/camera/final.jpg \
   "$out"/camera/camera.mp4 "$out/verdict.txt" "$out/summary.txt"; do
   [ -f "$f" ] || continue
   name=$(basename "$(dirname "$f")")-$(basename "$f")

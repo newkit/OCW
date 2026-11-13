@@ -91,6 +91,11 @@ prost-build = "0.14"
 protox = "0.10"
 clap = { version = "4.6", features = ["derive"] }
 ttf-parser = { version = "0.25", default-features = false, features = ["std"] }
+# Screenshots (spec §11.4): JPEG/PNG encoding with metadata, the same image
+# crate Bevy links (MIT OR Apache-2.0); chrono (MIT OR Apache-2.0, already in
+# the tree) for the local UTC offset of the timestamp.
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -4261,6 +4261,8 @@ dependencies = [
  "num-traits",
  "png",
  "tiff",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -5831,12 +5833,15 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "bevy_egui",
+ "chrono",
  "clap",
+ "image",
  "ocw-assets",
  "ocw-core",
  "ocw-sim",
  "ocw-sky",
  "ocw-world",
+ "png",
  "ttf-parser",
 ]
 
