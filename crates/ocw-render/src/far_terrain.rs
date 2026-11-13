@@ -585,6 +585,7 @@ mod tests {
             routes: Vec::new(),
             region: None,
             time_zone: None,
+            look: Default::default(),
         }
     }
 
