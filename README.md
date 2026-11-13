@@ -10,9 +10,31 @@ multiplayer.
 </p>
 <p align="center"><sub>Free ride with bots on the Vaduz–Malbun road (Liechtenstein, 1390 m), rendered by the app (scenes <code>readme-climb-behind</code> / <code>readme-climb-front</code> in <code>scripts/scenes.toml</code>). Map data © OpenStreetMap contributors (ODbL), elevation SRTM (NASA / USGS).</sub></p>
 
-**Status:** Phase 3 (OpenStreetMap world; pilot region Liechtenstein). Phases 1
-(technical foundation) and 2 (trainers and sensors) are done. The requirements
-and architecture are in [SPECIFICATION.md](SPECIFICATION.md).
+**Status:** worlds, multiplayer, voice, the sky and the time machine work; textures,
+weather and the browser / VR versions are in progress. Phases and decisions are
+in [SPECIFICATION.md](SPECIFICATION.md).
+
+## Worlds
+
+Four regions, built from OpenStreetMap and official open elevation models, ridden
+with real gradients. Download them from the
+[latest release](https://github.com/newkit/OCW/releases) and start the app with
+`ocw-desktop --world path/to/<world>.ocwpkg`, or switch worlds in the app
+(menu → **World**).
+
+| | |
+|---|---|
+| **Liechtenstein** – Vaduz to Malbun (13.3 km, 1,148 m up), the Rhine valley, the Stegertunnel | |
+| <img src="https://github.com/newkit/OCW/releases/download/build-history/world-liechtenstein-malbun.jpg" alt="A group of riders on the Malbun road, mountains ahead" width="100%"> | <img src="https://github.com/newkit/OCW/releases/download/build-history/world-liechtenstein-golden-hour.jpg" alt="Golden hour above Vaduz" width="100%"> |
+| **Black Forest** – three connected packages: Freiburg – Schauinsland, Titisee – Feldberg, Triberg, Baden-Baden – Mummelsee over the Schwarzwaldhochstraße | |
+| <img src="https://github.com/newkit/OCW/releases/download/build-history/world-blackforest-schauinsland.jpg" alt="A group climbing the Schauinsland road" width="100%"> | <img src="https://github.com/newkit/OCW/releases/download/build-history/world-blackforest-hochstrasse.jpg" alt="The Schwarzwaldhochstraße (B500)" width="100%"> |
+| **Tenerife** – the whole island: the Teide from the coast (42 km, 2,350 m up), the Masca hairpins, Anaga, the sea | |
+| <img src="https://github.com/newkit/OCW/releases/download/build-history/world-tenerife-teide-sunset.jpg" alt="Sunset over Las Cañadas below the Teide" width="100%"> | <img src="https://github.com/newkit/OCW/releases/download/build-history/world-tenerife-gigantes.jpg" alt="Los Gigantes on the west coast with the sea" width="100%"> |
+
+<sub>Rendered by the app (scene harness, `scripts/scenes.toml`), with the ISO
+timestamp every capture carries. Map data © OpenStreetMap contributors (ODbL).
+Elevation: swissALTI3D © swisstopo; DGM1 © LGL, www.lgl-bw.de (dl-de/by-2.0);
+MDT05 © Instituto Geográfico Nacional (CC BY 4.0); SRTM (NASA / USGS).</sub>
 
 ## Build and run (Linux)
 
