@@ -562,7 +562,6 @@ pub fn calibrate(
         let handles: Vec<_> = keys
             .chunks(chunk)
             .map(|ks| {
-                let proj = proj;
                 sc.spawn(move || tile_pass(pkg_ref, ks, imagery, &proj, size, osm_roof, opts))
             })
             .collect();
@@ -663,7 +662,7 @@ pub fn calibrate(
     });
     stats.season_tiles = seasons.as_ref().map_or(0, |s| s.tiles.len());
     pkg.look = RegionLook {
-        palette: (!sources.is_empty()).then(|| Palette { sources, entries }),
+        palette: (!sources.is_empty()).then_some(Palette { sources, entries }),
         roofs: (!imagery.ortho.is_empty() && pkg.buildings.is_some()).then_some(roofs),
         seasons,
     };

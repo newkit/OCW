@@ -325,7 +325,7 @@ impl SeasonalSource {
             [rgb[k], rgb[k + 1], rgb[k + 2]]
         };
         let corners = [px(x0, y0), px(x1, y0), px(x0, y1), px(x1, y1)];
-        if corners.iter().any(|c| *c == [0, 0, 0]) {
+        if corners.contains(&[0, 0, 0]) {
             return None;
         }
         let w = [
@@ -424,6 +424,10 @@ pub trait ColourSampler {
     fn pixel_m(&self) -> f64;
 }
 
+/// A decoded orthophoto cell in the reader's cache: (source, cell) and its
+/// pixels (`None`: it failed to decode).
+type CachedCell = ((usize, (i64, i64)), Option<Arc<Vec<u8>>>);
+
 /// Reads orthophoto pixels at local metres, best source first, with a
 /// small cache of decoded cells (one reader per thread).
 pub struct OrthoReader<'a> {
@@ -431,7 +435,7 @@ pub struct OrthoReader<'a> {
     proj: LocalProjection,
     tile_size: f64,
     affine: Option<(TileKey, Vec<TileAffine>)>,
-    cache: Vec<((usize, (i64, i64)), Option<Arc<Vec<u8>>>)>,
+    cache: Vec<CachedCell>,
     cache_cap: usize,
     /// Cells that failed to decode (reported once).
     pub errors: Vec<String>,
