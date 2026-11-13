@@ -28,6 +28,9 @@ pub const MAX_WINDOW_STYLES: usize = 16;
 /// Walls reach this far below the lowest ground (as the world builder's
 /// `SINK_M`): the ground floor starts this much above the wall foot.
 pub const SINK_M: f32 = 0.5;
+/// Untagged buildings with a larger footprint (m²; farms excepted) get no
+/// timber walls from the presets: apartment blocks and halls are plastered.
+pub const TIMBER_MAX_AREA_M2: f32 = 350.0;
 /// Least wall height left after the eaves come down (m).
 pub const MIN_EAVE_M: f32 = 2.4;
 
@@ -717,9 +720,19 @@ pub fn resolve(
     };
     // Walls.
     let natural = |l: Layer| look.natural(l);
+    let big = crate::houses::outline_area(&b.outline) > TIMBER_MAX_AREA_M2
+        && !matches!(b.kind, BuildingKind::Farm);
     let wall_mat = t
         .wall
         .or_else(|| field(&chain, |p| p.walls.as_ref()).and_then(|m| pick(m, r(2))))
+        .map(|m| {
+            // Timber is for houses, farms and huts, not for blocks.
+            if t.wall.is_none() && m == WallMaterial::Timber && big {
+                WallMaterial::Plaster
+            } else {
+                m
+            }
+        })
         .unwrap_or(WallMaterial::Plaster);
     let wall_layer = Layer::of_wall(wall_mat);
     let plaster_colour = field(&chain, |p| p.wall_colours.as_ref())
@@ -739,7 +752,10 @@ pub fn resolve(
         Some(m) if t.wall.is_none() && t.wall_colour.is_none() => {
             let total: f32 = m.iter().map(|(_, w)| w).sum();
             if r(4) < total.min(1.0) {
-                let up = pick(m, r(5)).map(Layer::of_wall).unwrap_or(wall_layer);
+                let up = pick(m, r(5))
+                    .filter(|m| !(big && *m == WallMaterial::Timber))
+                    .map(Layer::of_wall)
+                    .unwrap_or(wall_layer);
                 if up == wall_layer {
                     wall
                 } else {
@@ -755,10 +771,15 @@ pub fn resolve(
         _ => wall,
     };
     // Roof.
-    let roof_mat = t
-        .roof_material
-        .or_else(|| field(&chain, |p| p.roof_materials.as_ref()).and_then(|m| pick(m, r(6))))
-        .unwrap_or(RoofMaterial::Tiles);
+    // A flat roof is concrete / gravel unless OSM says otherwise (tiles
+    // and slates only on pitched roofs).
+    let roof_mat = match t.roof_material {
+        Some(m) => m,
+        None if !shape.is_pitched() => RoofMaterial::Concrete,
+        None => field(&chain, |p| p.roof_materials.as_ref())
+            .and_then(|m| pick(m, r(6)))
+            .unwrap_or(RoofMaterial::Tiles),
+    };
     let (roof_layer, roof_tint) = Layer::of_roof(roof_mat);
     let default_roof = match (roof_tint, roof_layer) {
         (Some(c), _) => c,
@@ -1008,6 +1029,34 @@ mod tests {
                 .iter()
                 .filter(|h| h.shape == RoofShape::Flat)
                 .all(|h| h.parapet > 0.5)
+        );
+        // Big untagged blocks are not timber.
+        let block = Building {
+            outline: vec![[0.0, 0.0], [40.0, 0.0], [40.0, 20.0], [0.0, 20.0]],
+            ..house(
+                BuildingKind::Apartments,
+                BuildingTags::default(),
+                [0.0, 0.0],
+            )
+        };
+        for i in 0..50 {
+            let b = Building {
+                outline: block
+                    .outline
+                    .iter()
+                    .map(|p| [p[0] + i as f32 * 50.0, p[1]])
+                    .collect(),
+                ..block.clone()
+            };
+            let h = resolve(&b, None, s, style("alpine"), &LOOK);
+            assert!(h.wall.layer != Layer::Timber && h.upper.layer != Layer::Timber);
+        }
+        // Flat roofs are concrete / gravel, not tiles.
+        assert!(
+            canary
+                .iter()
+                .filter(|h| h.shape == RoofShape::Flat)
+                .all(|h| h.roof.layer == Layer::Concrete)
         );
         let alpine = many(BuildingKind::House, style("alpine"));
         assert!(alpine.iter().all(|h| h.shape == RoofShape::Gabled));

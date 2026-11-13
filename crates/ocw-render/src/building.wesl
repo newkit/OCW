@@ -80,13 +80,13 @@ fn fragment(
 
     // The floors above the first storey (timber upper floors).
     var layer = lower;
-    var target = in.color.rgb;
+    var tone = in.color.rgb;
     if upper != lower && storey_h > 0.0 && in.uv.y > storey_h {
         layer = upper;
-        target = look.means[upper].rgb;
+        tone = look.means[upper].rgb;
     }
 
-    var albedo = target;
+    var albedo = tone;
     var rough = pbr_input.material.perceptual_roughness;
     var n = normalize(in.world_normal);
     if layer == 15u {
@@ -103,9 +103,9 @@ fn fragment(
         let nt = textureSampleGrad(normal_array, array_sampler, uv, i32(layer), g1, g2).xy * 2.0 - 1.0;
         // The texture takes the face's colour: divided by its own mean.
         let mean = max(look.means[layer].rgb, vec3<f32>(0.02));
-        let tinted = clamp(a.rgb * target / mean, vec3<f32>(0.0), vec3<f32>(1.0));
+        let tinted = clamp(a.rgb * tone / mean, vec3<f32>(0.0), vec3<f32>(1.0));
         let t = smoothstep(look.mode.y, look.mode.z, dist);
-        albedo = mix(tinted, target, t);
+        albedo = mix(tinted, tone, t);
         rough = mix(clamp(a.a, 0.35, 1.0), rough, t);
         // Cotangent frame: T along +u, B along +v (up the wall or slope).
         let dp2perp = cross(dp2, n);

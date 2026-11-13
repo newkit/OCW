@@ -34,7 +34,7 @@ use bevy::render::render_resource::{
     Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
 };
 use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures::check_ready};
-use ocw_world::buildings::{Building, BuildingKind, Roof};
+use ocw_world::buildings::Building;
 use ocw_world::graph::RoadClass;
 use ocw_world::landuse::{LandClass, LandUseTile};
 use ocw_world::package::{RoadStrip, Tile, TileKey, WorldPackage};
@@ -1759,6 +1759,7 @@ fn upload_tile(
 mod tests {
     use std::collections::BTreeMap;
 
+    use ocw_world::buildings::{BuildingKind, Roof};
     use ocw_world::geo::LocalProjection;
 
     use super::*;

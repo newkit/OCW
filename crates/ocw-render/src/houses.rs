@@ -1086,7 +1086,8 @@ mod tests {
                 (p[2] * 1000.0).round() as i64,
             )
         };
-        let mut edges: HashMap<((i64, i64, i64), (i64, i64, i64)), i32> = HashMap::new();
+        type Point = (i64, i64, i64);
+        let mut edges: HashMap<(Point, Point), i32> = HashMap::new();
         for t in m.indices.chunks(3) {
             for k in 0..3 {
                 let (a, b) = (

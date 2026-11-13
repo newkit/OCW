@@ -70,7 +70,7 @@ width_m = 1.0
 height_m = 1.15
 sill_m = 0.95
 frame = "#f0ece4"
-shutters = "#7a4a2a"
+shutters = "#553621"
 door = "#5a3b25"
 
 [[window]]
