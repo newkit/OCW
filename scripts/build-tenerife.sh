@@ -11,8 +11,9 @@
 #                   Los Gigantes, Los Cristianos, Vilaflor, El Médano
 #   and the route files of its routes.
 #
-# Only the tiles within 2 km of a road (--tiles-near-roads): the box of
-# the roads is 64 % open sea. Cut with --bbox from the Geofabrik extract of the Canary Islands (the
+# The tiles within 2 km of a road and every tile with land (--land-tiles,
+# spec §4.7 "Tile cover"): the box of the roads is 64 % open sea, but the
+# Teide's summit lies 3.3 km from the nearest road. Cut with --bbox from the Geofabrik extract of the Canary Islands (the
 # other islands lie outside the box). Terrain: IGN MDT05 at 5 m
 # (data/tenerife/mdt05), SRTM beyond. The sea comes from the OSM
 # coastline (the island's closed ring, spec §4.6), level 0 m. Time zone
@@ -33,6 +34,8 @@ D=data/tenerife
 ORIGIN=28.29,-16.52
 # Keep in sync with TF_BOX in scripts/fetch-pilot.sh (that adds a margin).
 BBOX=27.98,-16.94,28.61,-16.10
+# The summit of the Teide (lat,lon,m): `check --peak` fails without it.
+TEIDE=28.2724,-16.6424,3715
 for f in canary-islands.osm.pbf canary-islands.poly N28W017.hgt N27W017.hgt; do
   [ -f "$D/$f" ] || { echo "$D/$f missing: run scripts/fetch-pilot.sh tenerife" >&2; exit 1; }
 done
@@ -63,10 +66,10 @@ SRC=(--pbf "$D/canary-islands.osm.pbf" --poly "$D/canary-islands.poly"
      "${DEM[@]:0:2}" --bbox "$BBOX" --origin "$ORIGIN")
 # Build time and builder peak memory go to $OUT/measure.log.
 scripts/measure.py --label "package tenerife" --out "$OUT/measure.log" -- \
-  $WB package "${SRC[@]}" --name "Tenerife" --id europe/spain/tenerife --tiles-near-roads \
+  $WB package "${SRC[@]}" --name "Tenerife" --id europe/spain/tenerife --land-tiles \
   "${DEM[@]:2}" ${OCW_SIGN_KEY:+--sign-key "$OCW_SIGN_KEY"} --out "$out"
 if [ -n "${OCW_SRTM_ONLY:-}" ]; then
-  $WB check --world "$out" | grep -E "terrain above"
+  $WB check --world "$out" --peak "$TEIDE" | grep -E "terrain above|peak|tiles"
   exit 0
 fi
 # Signature routes (spec §2.7): route files for --route-file, and the same
@@ -91,11 +94,20 @@ route "Buenavista - Masca - Santiago del Teide" buenavista-masca.route 28.3699,-
 # La Laguna (550 m) - Las Mercedes - TF-12 through the laurel forest of
 # Anaga - Cruz del Carmen (920 m) - the TF-114 junction to the Pico del Inglés.
 route "La Laguna - Anaga" laguna-anaga.route 28.4876,-16.3157 28.5331,-16.2641
+# The TF-21 through Las Cañadas, Boca de Tauce (2,050 m) - Parador -
+# Roques de García - El Portillo: route file only (the scene
+# showcase-tf-teide-iconic; at 18 and 24 km the road points at the summit).
+$WB route "${SRC[@]}" --name "Las Cañadas (TF-21)" --out "$D/canadas.route" \
+  --from 28.2045,-16.7040 --to 28.3045,-16.5650 --margin 300
+# Its last part from km 24.3 (south of the Roques de García), where the road
+# runs straight at the summit 6 km ahead: the riders start together there.
+$WB route "${SRC[@]}" --name "Las Cañadas - El Portillo" --out "$D/canadas-teide.route" \
+  --from 28.2184,-16.6277 --to 28.3045,-16.5650 --margin 300
 calibrate "$out" "$D/canary-islands.osm.pbf"
 # Adding the routes rewrote the manifest unsigned (next version): sign again.
 if [ -n "${OCW_SIGN_KEY:-}" ]; then
   $WB sign --key "$OCW_SIGN_KEY" "$out"
 fi
 $WB routes --world "$out"
-$WB check --world "$out" | grep -E "terrain above|land use|buildings"
+$WB check --world "$out" --peak "$TEIDE" | grep -E "terrain above|land use|buildings|peak|tiles"
 ls -la "$out"*

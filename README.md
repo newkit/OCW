@@ -377,8 +377,10 @@ climb at 1.5–2.1 km) and grass beside the road roll increasingly harder
 
   The sea comes from the OSM coastline: its closed rings (islands) are cut
   out of the package area, which leaves the sea as water at 0 m (`world-builder
-  package` reports `sea: …`). Islands are built with `--tiles-near-roads`
-  (only tiles within 2 km of a road, no open sea far from the coast).
+  package` reports `sea: …`). Islands are built with `--land-tiles`
+  (tiles within 2 km of a road plus every tile with land, so the Teide's
+  summit is in; no open sea far from the coast; spec §4.7 "Tile cover").
+  `world-builder check --peak LAT,LON,M` checks that a summit is there.
 
   The three Black Forest packages share their border lines (48.12 N,
   48.45 N), the OSM snapshot and the projection origin, so a package started

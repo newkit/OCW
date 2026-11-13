@@ -102,13 +102,21 @@ impl Plugin for PackagePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TileStreamer>()
             .init_resource::<NeighbourLoads>()
+            .init_resource::<crate::far_terrain::FarTerrain>()
             .add_systems(Startup, setup_materials)
             .add_systems(
                 Update,
-                (load_neighbours, stream_tiles, upload_tiles)
+                (
+                    load_neighbours,
+                    stream_tiles,
+                    upload_tiles,
+                    crate::far_terrain::update_far_terrain,
+                    crate::far_terrain::hide_far_under_near,
+                )
                     .chain()
                     .run_if(resource_exists::<PackageWorld>),
-            );
+            )
+            .add_systems(Update, crate::far_terrain::package_view);
     }
 }
 
@@ -147,7 +155,7 @@ impl MeshArrays {
         self.uvs_b.first().map(|u| u[0])
     }
 
-    fn mesh(self) -> Mesh {
+    pub(crate) fn mesh(self) -> Mesh {
         let mut m = Mesh::new(
             PrimitiveTopology::TriangleList,
             RenderAssetUsages::RENDER_WORLD,
@@ -1311,14 +1319,14 @@ fn outline_centroid(outline: &[[f32; 2]]) -> [f64; 2] {
 }
 
 #[derive(Resource)]
-struct PackageMaterials {
+pub(crate) struct PackageMaterials {
     /// Roads and buildings (camera-solid; the terrain has its own
     /// [`TerrainMaterial`] per tile).
     vertex_coloured: Handle<StandardMaterial>,
     /// Trees: the same, but see-through for the camera (they fade out where
     /// they block the view instead of moving it).
     trees: Handle<SeeThroughMaterial>,
-    water: Handle<StandardMaterial>,
+    pub(crate) water: Handle<StandardMaterial>,
 }
 
 fn setup_materials(
@@ -1344,11 +1352,11 @@ fn setup_materials(
 }
 
 /// A tile of member `.0` of the world set.
-type TileId = (usize, TileKey);
+pub(crate) type TileId = (usize, TileKey);
 
 #[derive(Resource, Default)]
-struct TileStreamer {
-    loaded: HashMap<TileId, Entity>,
+pub(crate) struct TileStreamer {
+    pub(crate) loaded: HashMap<TileId, Entity>,
     building: HashMap<TileId, Task<Option<TileMeshes>>>,
     ready: VecDeque<(TileId, TileMeshes)>,
     /// World set generation the loaded tiles were clipped for.
@@ -1387,6 +1395,10 @@ pub(crate) fn reset_streaming(world: &mut World) {
     }
     if let Some(mut l) = world.get_resource_mut::<NeighbourLoads>() {
         l.tasks.clear();
+    }
+    if let Some(mut far) = world.remove_resource::<crate::far_terrain::FarTerrain>() {
+        far.clear(world);
+        world.insert_resource(far);
     }
 }
 

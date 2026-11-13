@@ -809,6 +809,22 @@ at = ["0.5=time pause", "0.5=time 2026-11-13 11:00", "0.5=hud off", "0.5=hud.pro
 shot = 12
 
 [[scene]]
+name = "showcase-tf-teide-iconic"
+description = "Showcase (README hero): riders on the TF-21 through Las Cañadas south of the Roques de García, the road running straight at the cone of the Teide (3,715 m) 6 km ahead, 16:00 light"
+world = "tenerife"
+args = ["--world", "{world}", "--route-file", "{world_dir}/canadas-teide.route", "--bots", "7", "--power", "230"]
+at = ["0.5=time pause", "0.5=time 2026-11-13 16:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 0 6 12"]
+shot = 12
+
+[[scene]]
+name = "showcase-tf-teide-km18"
+description = "The TF-21 from Boca de Tauce at km 18 (2,050 m), in a bend below Pico Viejo: the summit of the Teide 7.7 km away, 12° above the horizon (regression of the missing summit, spec v2.56)"
+world = "tenerife"
+args = ["--world", "{world}", "--route-file", "{world_dir}/canadas.route", "--bots", "7", "--power", "230"]
+at = ["0.5=time pause", "0.5=time 2026-11-13 16:00", "0.5=hud off", "0.5=hud.profile off", "0.8=teleport 18.0", "1=camera.orbit 0 6 12"]
+shot = 12
+
+[[scene]]
 name = "showcase-tf-teide-video"
 description = "Showcase video: riding through Las Cañadas on the TF-21 with 6 riders below the Teide, slowly orbiting camera"
 world = "tenerife"
