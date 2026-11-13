@@ -588,15 +588,48 @@ pub fn limit_grades_across_junctions(graph: &mut RoadGraph, vertex_h: &mut [f64]
             (runs, limits(e.class).0)
         })
         .collect();
+    relax_samples(graph, vertex_h, &runs, true);
+    // Exactly the junction heights at the ends (continuity).
+    for e in &mut graph.edges {
+        let n = e.profile.len();
+        if n >= 2 {
+            e.profile[0] = vertex_h[e.from.0 as usize];
+            e.profile[n - 1] = vertex_h[e.to.0 as usize];
+        }
+    }
+}
+
+/// Gauss-Seidel sweeps over all profile samples of
+/// [`limit_grades_across_junctions`] (`runs`: per edge the sample spacings
+/// and the class limit). With `skip_settled`, an edge whose last sweep
+/// changed nothing and whose end heights have not moved since is skipped
+/// until a neighbour moves one of its ends: it would change nothing, so the
+/// same operations run in the same order as when every edge is swept (the
+/// result is identical, see the test), but most edges settle after a few of
+/// the up to 2000 sweeps (Black Forest: 23 s → 0.5 s).
+fn relax_samples(
+    graph: &mut RoadGraph,
+    vertex_h: &mut [f64],
+    runs: &[(Vec<f64>, f64)],
+    skip_settled: bool,
+) {
+    let edges_at = graph.adjacency();
+    let mut dirty = vec![true; graph.edges.len()];
     for _ in 0..2000 {
         let mut worst = 0.0f64;
-        for (e, (run, max_grade)) in graph.edges.iter_mut().zip(&runs) {
+        for (i, (run, max_grade)) in runs.iter().enumerate() {
+            if skip_settled && !dirty[i] {
+                continue;
+            }
+            let e = &mut graph.edges[i];
             let p = &mut e.profile;
             let n = p.len();
             if n < 2 {
+                dirty[i] = false;
                 continue;
             }
             let (a, b) = (e.from.0 as usize, e.to.0 as usize);
+            let mut changed = p[0] != vertex_h[a] || p[n - 1] != vertex_h[b];
             p[0] = vertex_h[a];
             p[n - 1] = vertex_h[b];
             for (k, &r) in run.iter().enumerate() {
@@ -609,20 +642,21 @@ pub fn limit_grades_across_junctions(graph: &mut RoadGraph, vertex_h: &mut [f64]
                 let s = dh.signum() * excess / 2.0;
                 p[k] += s;
                 p[k + 1] -= s;
+                changed = true;
             }
-            vertex_h[a] = p[0];
-            vertex_h[b] = p[n - 1];
+            let (ha, hb) = (p[0], p[n - 1]);
+            dirty[i] = changed;
+            for (v, h) in [(a, ha), (b, hb)] {
+                if vertex_h[v] != h {
+                    vertex_h[v] = h;
+                    for &o in &edges_at[v] {
+                        dirty[o] = true;
+                    }
+                }
+            }
         }
         if worst < 1e-4 {
             break;
-        }
-    }
-    // Exactly the junction heights at the ends (continuity).
-    for e in &mut graph.edges {
-        let n = e.profile.len();
-        if n >= 2 {
-            e.profile[0] = vertex_h[e.from.0 as usize];
-            e.profile[n - 1] = vertex_h[e.to.0 as usize];
         }
     }
 }
@@ -1257,6 +1291,78 @@ mod tests {
         let before = flat.clone();
         limit_grades_across_junctions(&mut flat, &mut [500.0; 4]);
         assert_eq!(flat, before);
+    }
+
+    /// The sweeps that skip settled edges give exactly (bit for bit) what
+    /// sweeping every edge gives, on a mesh of steep, noisy roads.
+    #[test]
+    fn skipping_settled_edges_changes_nothing() {
+        use ocw_world::graph::{Edge, EdgeId, VertexId};
+        // A 6 × 6 grid of junctions 60 m apart, heights from a hash.
+        let n = 6usize;
+        let noise = |k: u64| ((k.wrapping_mul(2_654_435_761) >> 7) % 1000) as f64 / 10.0;
+        let vertices: Vec<[f64; 2]> = (0..n * n)
+            .map(|i| [(i % n) as f64 * 60.0, (i / n) as f64 * 60.0])
+            .collect();
+        let mut edges = Vec::new();
+        for i in 0..n * n {
+            for j in [i + 1, i + n] {
+                if j >= n * n || (j == i + 1 && j % n == 0) {
+                    continue;
+                }
+                let k = edges.len() as u64;
+                let samples = 13;
+                let profile: Vec<f64> = (0..samples).map(|s| 500.0 + noise(k * 31 + s)).collect();
+                edges.push(Edge {
+                    id: EdgeId(k),
+                    from: VertexId(i as u32),
+                    to: VertexId(j as u32),
+                    points: vec![vertices[i], vertices[j]],
+                    class: if k.is_multiple_of(3) {
+                        RoadClass::Primary
+                    } else {
+                        RoadClass::Residential
+                    },
+                    name: None,
+                    width_m: 5.0,
+                    bridge: false,
+                    tunnel: false,
+                    dead_end_m: None,
+                    oneway: ocw_world::graph::Oneway::No,
+                    boundary: false,
+                    osm_way: k as i64,
+                    profile,
+                });
+            }
+        }
+        let g = RoadGraph {
+            vertices,
+            edges,
+            boundary_vertices: Default::default(),
+        };
+        let h: Vec<f64> = (0..n * n).map(|i| 500.0 + noise(i as u64 + 7)).collect();
+        let runs: Vec<(Vec<f64>, f64)> = g
+            .edges
+            .iter()
+            .map(|e| {
+                let d = distances(e.profile.len(), e.length_m());
+                (
+                    d.windows(2).map(|w| (w[1] - w[0]).max(0.0)).collect(),
+                    limits(e.class).0,
+                )
+            })
+            .collect();
+        let (mut ga, mut ha) = (g.clone(), h.clone());
+        let (mut gb, mut hb) = (g.clone(), h);
+        relax_samples(&mut ga, &mut ha, &runs, false);
+        relax_samples(&mut gb, &mut hb, &runs, true);
+        let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+        assert_eq!(bits(&ha), bits(&hb));
+        for (a, b) in ga.edges.iter().zip(&gb.edges) {
+            assert_eq!(bits(&a.profile), bits(&b.profile));
+        }
+        // It did work: the profiles moved.
+        assert_ne!(ga.edges[0].profile, g.edges[0].profile);
     }
 
     #[test]

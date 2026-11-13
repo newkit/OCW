@@ -101,13 +101,15 @@ fi
 # crates whose arguments or environment name it (OUT_DIR of build scripts,
 # and everything built on them) hit across checkouts too. OCW_SCCACHE=0
 # turns it off.
-# Build directory per feature set (spec §11.2): scripts/cargo-shim/cargo
-# first on PATH gives cargo calls with the voice feature their own
-# build-dir, so plain and voice builds stop rebuilding each other's
-# dependencies (the Makefile keeps it first too, via OCW_CARGO_SHIM).
-# OCW_CARGO_SPLIT=0 turns it off.
+# Build directory per feature set (spec §11.2), opt-in (OCW_CARGO_SPLIT=1):
+# scripts/cargo-shim/cargo first on PATH gives cargo calls with the voice
+# feature their own build-dir (the Makefile keeps it first too, via
+# OCW_CARGO_SHIM). Measured on marge on 2026-11-13: alternating plain and
+# voice clippy runs in one target/ took 0.5-0.7 s each after the first two
+# (cargo 1.99 keeps both feature sets' artefacts side by side), while the
+# split built the shared dependencies twice (+63 s, +2.3 GB), so it is off.
 shim_sh=""
-if [ "${OCW_CARGO_SPLIT:-1}" != 0 ]; then
+if [ "${OCW_CARGO_SPLIT:-0}" = 1 ]; then
   shim_sh="if [ -x scripts/cargo-shim/cargo ]; then export OCW_CARGO_SHIM=\$PWD/scripts/cargo-shim PATH=\$PWD/scripts/cargo-shim:\$PATH; fi; "
 fi
 sccache_sh=""
@@ -134,7 +136,10 @@ psq() { local q="'"; printf "'%s'" "${1//$q/$q$q}"; }
 # would overwrite each other). A probe file tells whether the file system
 # clones; where it does not (marge's ext4) nothing is copied and sccache
 # does the work. Not while a build runs in the main checkout (a half
-# written artefact would be cloned). OCW_SEED=0 turns it off.
+# written artefact would be cloned). Opt-in (OCW_SEED=1): measured on the
+# Mac on 2026-11-13 the clone took 46 s but cargo still rebuilt 358 of 529
+# crates (899 s), so it is off until a seed from the same dependency state
+# proves faster than sccache alone.
 read -r -d '' seed_sh <<'EOF' || true
 ocw_seed() { m=$1; r=$2; [ "$m" = "$r" ] && return 0; [ -e "$r/target" ] && return 0; [ -d "$m/target" ] || return 0;
 for g in $(find /tmp/ocw-tasks/ -name '*.json' 2>/dev/null); do grep -q '"state":"running"' $g && grep -q "\"checkout\":\"${m##*/}\"" $g && { echo "remote.sh: main checkout busy, no target/ seed" >&2; return 0; }; done;
@@ -150,7 +155,7 @@ sync_tree() {
     sync_tree_windows
     return
   fi
-  if [ "${OCW_SEED:-1}" != 0 ]; then
+  if [ "${OCW_SEED:-0}" = 1 ]; then
     "${SSH[@]}" "$target" "${seed_sh//$'\n'/ } mkdir -p $repo && ocw_seed $main_repo $repo"
   else
     "${SSH[@]}" "$target" "mkdir -p $repo"

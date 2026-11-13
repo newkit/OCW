@@ -1269,12 +1269,12 @@ scripts/deploy-test.sh <name>                                  # release build f
   checkouts on the machine share compiled dependencies and a new branch
   checkout does not compile Bevy from scratch. `OCW_SCCACHE=0` turns it off
   for one call; `sccache_size = "30G"` per machine sets the cache size.
-- A new branch checkout on a file system with copy-on-write clones (APFS on
-  the Mac, Btrfs/XFS) starts with a clone of the main checkout's `target/`
-  (`OCW_SEED=0`: off). Cargo calls with the voice feature get their own build
-  directory (`target/build-voice`, via `scripts/cargo-shim/cargo` on the
-  remote `PATH`; `OCW_CARGO_SPLIT=0`: off), so plain and voice clippy runs
-  stop rebuilding each other's dependencies.
+- `OCW_SEED=1`: a new branch checkout on a file system with copy-on-write
+  clones (APFS on the Mac, Btrfs/XFS) starts with a clone of the main
+  checkout's `target/` (off by default: it did not save time when measured). `OCW_CARGO_SPLIT=1` gives cargo calls with the voice feature
+  their own build directory (`target/build-voice`, `scripts/cargo-shim/cargo`
+  on the remote `PATH`); off by default, as cargo already keeps plain and
+  voice artefacts apart (spec §11.2).
 - `make remote-gc` lists the `target/` of remote checkouts whose agent branch
   is gone or merged (worktree removed) with their sizes; `make remote-gc
   GC=1` deletes them (the checkouts, the main checkout and the cache stay).
