@@ -1382,7 +1382,10 @@ scripts/deploy-test.sh <name>                                  # release build f
   processor queue length ([tools/build-dashboard/README.md](tools/build-dashboard/README.md#windows-permissions)).
   It also lists the **open questions for the user** from `SPECIFICATION.md`
   (by phase, with the proposals; decided ones behind a toggle; milestones
-  waiting for one), and watches the disks: its **janitor** deletes the
+  waiting for one) – answerable on the page (also from a phone) with the
+  token of `config/dashboard-token`; answers land in
+  `test-output/answers/answers.jsonl` and `inbox.log` for the coordinator –
+  and watches the disks: its **janitor** deletes the
   `target/` of merged or gone agent checkouts above 75 % use, of idle
   agent checkouts above 85 %, and alerts above 92 % (`--janitor
   off|dry-run|on`, `make janitor-plan` for a dry run; every deletion is

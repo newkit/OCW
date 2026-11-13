@@ -75,6 +75,21 @@ details.qg summary .muted { font-weight: 400; }
 .q .qtext { color: var(--fg); margin-top: 1px; overflow-wrap: anywhere; }
 .q .qprop { color: var(--muted); margin-top: 2px; }
 .q.decided { opacity: .65; }
+.af { margin-top: 6px; }
+.af textarea, .tokenbox input { width: 100%; box-sizing: border-box; font: inherit; font-size: 16px; padding: 8px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--fg); resize: vertical; }
+.tokenbox { margin: 6px 0 8px; font-size: 13px; }
+.tokenbox .arow input { flex: 1; }
+.quick { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.arow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; }
+.panel button { font: inherit; font-size: 13px; min-height: 40px; padding: 6px 12px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--chip); color: var(--fg); text-align: left; max-width: 100%; }
+.panel button.send { background: var(--accent); border-color: var(--accent); color: #fff; }
+.panel button.linkb { min-height: 0; padding: 0 4px; border: none; background: none; color: var(--accent); text-decoration: underline; }
+.panel button:focus-visible, .af textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ans { margin-top: 6px; padding: 6px 8px; border-left: 3px solid var(--warn); background: var(--chip); border-radius: 4px; }
+.anstext { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 3px; }
+.amsg { font-size: 12px; color: var(--muted); }
 .badge.bad { color: var(--bad); }
 footer { padding: 0 16px 24px; font-size: 12px; color: var(--muted); }
 @media (max-width: 480px) { .meters { grid-template-columns: 1fr; } }
@@ -211,30 +226,74 @@ function card(m, now) {
   return html + `</div>`;
 }
 
-// Open questions for the user (parsed from SPECIFICATION.md by the dashboard).
-let showDecided = false, questionsKey = "";
+// Open questions for the user (parsed from SPECIFICATION.md by the dashboard),
+// answerable here: an answer goes to test-output/answers/ of the main
+// checkout (POST /api/answers with the token of config/dashboard-token).
+let showDecided = false, questionsKey = "", lastQuestions = null, openGroups = null, answerMsg = {};
+const drafts = {};
 try { showDecided = localStorage.getItem("ocw-show-decided") === "1"; } catch (e) {}
-function renderQuestions(q) {
+function getToken() { try { return localStorage.getItem("ocw-answer-token") || ""; } catch (e) { return ""; } }
+function setToken(t) { try { if (t) localStorage.setItem("ocw-answer-token", t); else localStorage.removeItem("ocw-answer-token"); } catch (e) {} }
+// The question ids are sent back as they came (data attributes, escaped).
+function qKey(id) { return "q-" + String(id).replace(/[^A-Za-z0-9]/g, "_"); }
+
+function answerForm(it) {
+  const k = qKey(it.id), a = it.answer;
+  let html = "";
+  if (it.answer_state === "answered") {
+    html += `<div class="ans"><span class="badge warn">answered – waiting for the coordinator to record it in the spec</span>` +
+      `<div class="anstext">${esc(a.answer)}</div><div class="muted">${esc(a.time)}</div></div>`;
+  }
+  const quick = [];
+  if (it.proposal) quick.push(["Accept proposal", "Accept proposal: " + it.proposal]);
+  (it.options || []).forEach((o, i) => quick.push([String.fromCharCode(65 + i) + ": " + o, o]));
+  html += `<div class="af" data-q="${esc(it.id)}">`;
+  if (quick.length) html += `<div class="quick">${quick.map(([label, text]) =>
+    `<button type="button" class="qb" data-act="fill" data-text="${esc(text)}">${esc(label)}</button>`).join("")}</div>`;
+  const draft = drafts[k] != null ? drafts[k] : "";
+  html += `<textarea id="${k}" rows="2" placeholder="${it.answer_state === "answered" ? "Change the answer…" : "Your answer…"}" aria-label="Answer to ${esc(it.id)}">${esc(draft)}</textarea>` +
+    `<div class="arow"><button type="button" class="send" data-act="send">${it.answer_state === "answered" ? "Send new answer" : "Send answer"}</button>` +
+    `<span class="amsg">${esc(answerMsg[it.id] || "")}</span></div></div>`;
+  return html;
+}
+
+function renderQuestions(q, force) {
   const el = $("questions");
   if (!q) { el.style.display = "none"; return; }
   el.style.display = "";
-  const key = `${q.mtime}|${showDecided}|${q.error || ""}`;
-  if (key === questionsKey) return;  // keeps opened / closed groups
+  lastQuestions = q;
+  const answeredKey = (q.groups || []).map((g) => g.items.map((it) => it.answer ? it.answer.epoch : "").join(",")).join(";");
+  const key = `${q.mtime}|${showDecided}|${q.error || ""}|${answeredKey}|${getToken() ? 1 : 0}`;
+  if (key === questionsKey && !force) return;  // keeps opened groups and what is being typed
   questionsKey = key;
+  // Keep drafts and opened groups over a re-render.
+  el.querySelectorAll && el.querySelectorAll("textarea").forEach((t) => { drafts[t.id] = t.value; });
+  if (el.querySelectorAll && el.innerHTML) openGroups = new Set([...el.querySelectorAll("details.qg[open]")].map((d) => d.dataset.g));
+  const canAnswer = !!q.answers_enabled;
   let html = `<h2>Open questions <span class="badge ${q.open ? "warn" : "ok"}">${q.open} open</span>` +
+    (q.answered ? `<span class="badge">${q.answered} answered</span>` : "") +
     `<span class="muted" style="font-size:12px;font-weight:400">${q.decided} decided · ${esc(q.source || "SPECIFICATION.md")}${q.spec_version ? " v" + esc(q.spec_version) : ""}</span>` +
     `<span class="tools"><label><input type="checkbox" id="show-decided"${showDecided ? " checked" : ""}> show decided</label></span></h2>`;
   if (q.error) html += `<div class="err">${esc(q.error)}</div>`;
+  if (canAnswer && !getToken()) {
+    html += `<div class="tokenbox"><label for="answer-token">To answer here, enter the token from <code>config/dashboard-token</code> once (kept in this browser):</label>` +
+      `<div class="arow"><input id="answer-token" type="password" autocomplete="off" spellcheck="false"><button type="button" data-act="token">Save</button></div></div>`;
+  } else if (canAnswer) {
+    html += `<div class="muted" style="font-size:12px">Answers go to test-output/answers/ for the coordinator, who records them in the spec. <button type="button" class="linkb" data-act="forget">Forget token</button></div>`;
+  }
   for (const g of q.groups || []) {
     const items = g.items.filter((it) => showDecided || it.status === "open");
     if (!items.length) continue;
-    html += `<details class="qg"${g.open ? " open" : ""}><summary>${esc(g.group)} – ${esc(g.title)} ` +
+    const isOpen = openGroups ? openGroups.has(g.group) : g.open > 0;
+    html += `<details class="qg" data-g="${esc(g.group)}"${isOpen ? " open" : ""}><summary>${esc(g.group)} – ${esc(g.title)} ` +
       `<span class="muted">· ${g.open} open${g.decided ? `, ${g.decided} decided` : ""}${g.section ? ` · §14 ${esc(g.section)}` : ""}</span></summary>`;
     for (const it of items) {
       const note = it.status_note ? ` <span class="badge ${it.status === "open" ? "warn" : "ok"}">${esc(it.status_note)}</span>` : "";
-      html += `<div class="q ${it.status}"><span class="qid">Q${it.n}</span><span class="qt">${esc(it.title)}</span>${note}` +
+      html += `<div class="q ${it.status}"><span class="qid">Q${esc(it.n)}</span><span class="qt">${esc(it.title)}</span>${note}` +
         `<div class="qtext">${esc(it.text)}</div>` +
-        (it.proposal ? `<div class="qprop">Proposal: ${esc(it.proposal)}</div>` : "") + `</div>`;
+        (it.proposal ? `<div class="qprop">Proposal: ${esc(it.proposal)}</div>` : "") +
+        (it.status === "decided" && it.answer ? `<div class="qprop">Your answer (${esc(it.answer.time)}): ${esc(it.answer.answer)}</div>` : "") +
+        (canAnswer && getToken() && it.status === "open" ? answerForm(it) : "") + `</div>`;
     }
     html += `</details>`;
   }
@@ -244,12 +303,42 @@ function renderQuestions(q) {
       `<div class="q"><span class="qid">Phase ${esc(b.phase)} ${esc(b.milestone)}</span>${esc(b.title)} <span class="badge warn">waits for ${b.waits_for.map(esc).join(", ")}</span></div>`).join("");
   }
   el.innerHTML = html;
-  $("show-decided").addEventListener("change", (e) => {
+  const sd = $("show-decided");
+  if (sd) sd.addEventListener("change", (e) => {
     showDecided = e.target.checked;
     try { localStorage.setItem("ocw-show-decided", showDecided ? "1" : "0"); } catch (err) {}
-    renderQuestions(q);
+    renderQuestions(q, true);
   });
 }
+
+async function sendAnswer(form) {
+  const id = form.dataset.q, ta = form.querySelector("textarea"), text = ta.value.trim();
+  if (!text) { answerMsg[id] = "Write an answer first."; renderQuestions(lastQuestions, true); return; }
+  answerMsg[id] = "sending…";
+  form.querySelector(".amsg").textContent = answerMsg[id];
+  try {
+    const r = await fetch("api/answers", { method: "POST", headers: { "Content-Type": "application/json", "X-OCW-Token": getToken() },
+      body: JSON.stringify({ id, answer: text, choice: form.dataset.choice || null }) });
+    const res = await r.json().catch(() => ({}));
+    if (r.status === 403) { setToken(""); answerMsg[id] = "The token was not accepted – enter it again."; }
+    else if (!r.ok) answerMsg[id] = "Not saved: " + (res.error || r.status);
+    else { answerMsg[id] = "Saved " + res.answer.time + "."; drafts[ta.id] = ""; ta.value = ""; }
+  } catch (e) { answerMsg[id] = "Not saved: " + e.message; }
+  await refresh(true);
+}
+
+// One handler for every button of the panel (keyboard and touch: real buttons).
+$("questions").addEventListener("click", (e) => {
+  const b = e.target.closest ? e.target.closest("button[data-act]") : null;
+  if (!b) return;
+  const act = b.dataset.act, form = b.closest(".af");
+  if (act === "token") { setToken(($("answer-token").value || "").trim()); renderQuestions(lastQuestions, true); }
+  else if (act === "forget") { setToken(""); renderQuestions(lastQuestions, true); }
+  else if (act === "fill" && form) {
+    const ta = form.querySelector("textarea");
+    ta.value = b.dataset.text; form.dataset.choice = b.dataset.text; drafts[ta.id] = ta.value; ta.focus();
+  } else if (act === "send" && form) sendAnswer(form);
+});
 
 function renderJanitor(j, now) {
   const lv = j.levels || {};

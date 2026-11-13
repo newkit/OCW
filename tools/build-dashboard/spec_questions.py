@@ -73,8 +73,14 @@ def proposal_of(text: str):
         return m.group(1).strip().rstrip(".?")
     if not re.search(r"\b(proposal|proposed|recommended)\b", t):
         return None
-    # The alternatives of the question, split at ", or " / " or " outside
-    # parentheses.
+    for p in _alternatives(t):
+        if re.search(r"\b(proposal|proposed|recommended)\b", p):
+            return _clean_option(p)
+    return None
+
+
+def _alternatives(t: str) -> list:
+    """The alternatives of a question, split at ", or " outside parentheses."""
     parts, depth, cur, i = [], 0, "", 0
     while i < len(t):
         c = t[i]
@@ -89,16 +95,35 @@ def proposal_of(text: str):
         cur += c
         i += 1
     parts.append(cur)
-    for p in parts:
-        if re.search(r"\b(proposal|proposed|recommended)\b", p):
-            q = re.sub(r"\s*\((?:proposal|proposed|recommended)\)", "", p)
-            q = re.sub(r"[;,]\s*(?:proposal|proposed|recommended)(?=\))", "", q)
-            q = re.sub(r"\((?:proposal|recommended);\s*", "(", q)
-            q = re.sub(r"\s+[–-]\s+.*$", "", q)
-            if ":" in q:  # "who controls …: host / organiser only"
-                q = q.rsplit(":", 1)[1]
-            return q.strip().rstrip(".?,").strip() or None
-    return None
+    return parts
+
+
+def _clean_option(p: str):
+    q = re.sub(r"\s*\((?:proposal|proposed|recommended)\)", "", p)
+    q = re.sub(r"[;,]\s*(?:proposal|proposed|recommended)(?=\))", "", q)
+    q = re.sub(r"\((?:proposal|recommended);\s*", "(", q)
+    q = re.sub(r"\s*\((?:proposal|recommended):[^)]*\)", "", q)
+    q = re.sub(r"\s+[–-]\s+.*$", "", q)
+    if ":" in q:  # "who controls …: host / organiser only"
+        q = q.rsplit(":", 1)[1]
+    return q.strip().rstrip(".?,").strip() or None
+
+
+def options_of(text: str) -> list:
+    """The named options of a question ("A (proposal), or B?" -> [A, B]),
+    for the dashboard's quick answer buttons: only the question's first
+    sentence, 2–4 options of at most 120 characters, else []."""
+    t = plain(text)
+    m = re.search(r"\?(\s|$)", t)
+    if not m:
+        return []
+    alts = _alternatives(t[:m.start() + 1])
+    if not 2 <= len(alts) <= 4:
+        return []
+    opts = [_clean_option(a) for a in alts]
+    if any(not o or len(o) > 120 for o in opts):
+        return []
+    return opts
 
 
 def parse_questions(text: str) -> list:
@@ -136,6 +161,7 @@ def parse_questions(text: str) -> list:
             "phase": phase, "phase_title": phase_title, "section": section, "heading": heading,
             "id": "%s Q%d" % (where, n), "n": n, "title": title, "text": body,
             "proposal": None if decided else proposal_of(q.group(3)),
+            "options": [] if decided else options_of(q.group(3)),
             "status": "decided" if decided else "open", "status_note": note, "line": no,
         })
     return out

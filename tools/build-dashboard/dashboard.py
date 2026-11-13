@@ -31,7 +31,9 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
+import answers
 import janitor
 import spec_questions
 
@@ -1365,7 +1367,8 @@ class Dashboard:
     def snapshot(self) -> dict:
         with self.lock:
             machines = [dict(self.state[m.name]) for m in self.machines]
-        status = summarize(machines, getattr(self, "questions", None), getattr(self, "janitor", None))
+        status = summarize(machines, getattr(self, "questions", None), getattr(self, "janitor", None),
+                           getattr(self, "answers", None))
         return annotate_jobs(status, getattr(self, "prompts", None), getattr(self, "commits", None),
                              getattr(self, "prompt_mask", None), getattr(self, "show_prompts", False))
 
@@ -1391,15 +1394,19 @@ def janitor_loop(dash, jan, test_output: Path | None, every: float = 30.0):
             print("janitor: %s: %s" % (type(e).__name__, e), file=sys.stderr)
 
 
-def summarize(machines: list, questions=None, jan=None) -> dict:
+def summarize(machines: list, questions=None, jan=None, store=None) -> dict:
     """The status: machines, overview, disk alerts, the janitor, and the open
-    questions of SPECIFICATION.md (a SpecQuestions; re-read when it changed)."""
+    questions of SPECIFICATION.md (a SpecQuestions; re-read when it changed)
+    with the answers given on the dashboard (an AnswerStore)."""
     status = _summarize(machines)
     alerts = janitor.disk_alerts(machines)
     status["alerts"] = alerts
     status["janitor"] = jan.status(machines) if jan is not None else {"mode": "off", "alerts": alerts}
     if questions is not None:
         q = questions.get()
+        if store is not None:
+            q = answers.annotate(q, store.latest())
+            q["answers_enabled"] = True
         status["questions"] = q
         status["overview"]["questions_open"] = q.get("open", 0)
     return status
@@ -1587,6 +1594,9 @@ def questions_text(q) -> list:
             out.append("    Q%d %s%s" % (it["n"], it["title"],
                                          (" [%s]" % it["status_note"]) if it.get("status_note") else ""))
             out.append("        %s" % _shorten(it["text"], 120))
+            if it.get("answer_state") == "answered":
+                out.append("        ANSWERED %s (waiting for the coordinator to record it in the spec): %s" % (
+                    it["answer"]["time"], _shorten(it["answer"]["answer"].replace("\n", " / "), 100)))
             if it.get("proposal"):
                 out.append("        proposal: %s" % _shorten(it["proposal"], 110))
     for b in q.get("blocked") or []:
@@ -1617,8 +1627,49 @@ def make_handler(dash: Dashboard):
                 self._send(200, page, "text/html; charset=utf-8")
             elif path == "/api/status":
                 self._send(200, json.dumps(dash.snapshot()).encode(), "application/json")
+            elif path == "/api/answers":
+                store = getattr(dash, "answers", None)
+                if store is None:
+                    return self._json(404, {"error": "answers are off"})
+                q = parse_qs(urlsplit(self.path).query)
+                try:
+                    since = float((q.get("since") or ["0"])[0])
+                except ValueError:
+                    return self._json(400, {"error": "since: a Unix time in seconds"})
+                self._json(200, {"answers": store.since(since), "now": time.time()})
             else:
                 self._send(404, b"not found\n", "text/plain")
+
+        def _json(self, code, obj):
+            self._send(code, json.dumps(obj).encode(), "application/json")
+
+        def do_POST(self):  # noqa: N802
+            """POST /api/answers {"id", "answer", "choice"?} with the token
+            header: stores an answer to an open question of the spec."""
+            if self.path.split("?", 1)[0] != "/api/answers":
+                return self._send(404, b"not found\n", "text/plain")
+            store, token = getattr(dash, "answers", None), getattr(dash, "token", None)
+            if store is None or not token:
+                return self._json(404, {"error": "answers are off"})
+            if not answers.token_ok(token, self.headers.get(answers.TOKEN_HEADER)):
+                return self._json(403, {"error": "wrong or missing token (config/dashboard-token)"})
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                n = -1
+            if not 0 < n <= 64 * 1024:
+                return self._json(400, {"error": "body missing or too large"})
+            try:
+                body = json.loads(self.rfile.read(n).decode("utf-8"))
+                qid = str(body.get("id") or "")
+                qs = dash.questions.get()
+                question = next((it for g in qs.get("groups") or [] for it in g["items"] if it["id"] == qid), None)
+                if question is None:
+                    return self._json(400, {"error": "no question %s in the spec" % qid[:40]})
+                e = store.add(question, body.get("answer"), body.get("choice"), qs.get("spec_version"))
+            except (ValueError, AttributeError, UnicodeDecodeError) as ex:
+                return self._json(400, {"error": str(ex)[:200]})
+            self._json(200, {"ok": True, "answer": e})
 
         def log_message(self, fmt, *args):  # quiet: no request logs
             pass
@@ -2659,6 +2710,8 @@ def main(argv=None) -> int:
                     help="disk janitor: on (default), dry-run (log what it would delete) or off")
     ap.add_argument("--janitor-plan", action="store_true",
                     help="dry run of the janitor on every reachable machine now (what each threshold would delete), then exit")
+    ap.add_argument("--no-answers", action="store_true",
+                    help="no answering of the open questions on the page (read-only)")
     ap.add_argument("--spec", type=Path, default=None,
                     help="spec with the open questions (default: SPECIFICATION.md of the main checkout)")
     a = ap.parse_args(argv)
@@ -2672,6 +2725,9 @@ def main(argv=None) -> int:
     dash = Dashboard(machines, a.interval, not a.no_control_master)
     main_repo = main_checkout(repo)
     dash.questions = spec_questions.SpecQuestions(a.spec or (main_repo / "SPECIFICATION.md"))
+    # Answers to the open questions: test-output/answers/ of the main
+    # checkout; writing needs the token in config/dashboard-token (0600).
+    dash.answers = None if a.no_answers else answers.AnswerStore(main_repo / "test-output" / "answers")
     log_root = None if a.no_record else (a.record or (repo / "test-output" / "build-log"))
     ssh = lambda m, script, timeout, stdin=None: run_ssh(m, script, timeout, stdin, dash.ctl)  # noqa: E731
     dash.janitor = janitor.Janitor(machines, main_repo, log_root, a.janitor, ssh)
@@ -2681,10 +2737,13 @@ def main(argv=None) -> int:
     if a.once:
         with ThreadPoolExecutor(max_workers=max(1, len(machines))) as ex:
             states = list(ex.map(lambda m: poll_machine(m, dash.ctl), machines))
-        status = annotate_jobs(summarize(states, dash.questions), mask=Masker([s for m in machines for s in m.secrets()], ()))
+        status = annotate_jobs(summarize(states, dash.questions, None, dash.answers), mask=Masker([s for m in machines for s in m.secrets()], ()))
         status["janitor"]["mode"] = a.janitor
         print(json.dumps(status, indent=2) if a.json else format_text(status))
         return 0
+    if dash.answers is not None:
+        dash.token = answers.load_token(cfg / "dashboard-token")
+        print("answers: token in %s (enter it once on the page)" % (cfg / "dashboard-token").name)
     dash.start()
     # Also with --janitor off: the thread then only measures test-output/.
     threading.Thread(target=janitor_loop, args=(dash, dash.janitor, repo / "test-output"), daemon=True,

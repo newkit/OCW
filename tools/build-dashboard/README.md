@@ -79,6 +79,36 @@ proposal from "Proposal: …", "(proposal: …)" or the option marked
 `SPECIFICATION.md` when its mtime changes (`--spec FILE` overrides); the
 spec stays the only place where questions are written and decided.
 
+### Answering on the page
+
+Every open question has an answer box and quick buttons: "Accept proposal"
+when the spec names one, and the options the question lists ("A: …",
+"B: …", from its "…, or …" alternatives); a button fills the box, "Send
+answer" stores it. Large touch targets, real buttons (keyboard: Tab, Enter),
+16 px text fields (no zoom on phones).
+
+- **Storage:** append-only `test-output/answers/answers.jsonl` of the main
+  checkout (git-ignored, collected by the art project): one JSON line per
+  answer with the ISO time, the question id, title and **exact question
+  text from the spec** (taken on the server, not from the browser), the
+  answer, the chosen option, the spec version, and which earlier answer it
+  supersedes. A new answer to the same question supersedes the old one (the
+  page shows the latest; "Send new answer" edits).
+- **The coordinator:** each answer is also one line in
+  `test-output/answers/inbox.log` (`tail -f` it), and `GET
+  /api/answers?since=<unix time>` lists the answers after that time. A
+  question answered here shows "answered – waiting for the coordinator to
+  record it in the spec" until the spec marks it decided; then it is
+  decided (the answer stays visible with the decided ones).
+- **Token:** writing needs the token in `config/dashboard-token` of the
+  main checkout (git-ignored; created on the first start with a random
+  value, mode 0600). The page asks for it once and keeps it in the
+  browser's localStorage; it is sent as the `X-OCW-Token` header. A POST
+  without it, or with a wrong one, gets 403 and nothing is stored. Reading
+  (the page, `/api/status`, `/api/answers`) needs no token. The token is
+  never logged, served or written to the answer files. `--no-answers`
+  turns answering off.
+
 ## Janitor (disk cleanup)
 
 A thread of the dashboard; one machine per pass, at most one pass every
@@ -223,7 +253,9 @@ performance counters are denied to a non-admin build user over SSH:
   identified by their config `name`, and all text from the machines or from
   ssh is masked (addresses, `user@host`, home directories, MAC addresses)
   before it is stored or served.
-- The web page has no write actions. The poll snippets change nothing on
+- The only write action of the page is answering an open question (needs
+  the token of `config/dashboard-token`, above; question and answer text
+  are always HTML-escaped). The poll snippets change nothing on
   the machines (no kills, no files written; stale task markers are cleaned
   up by `remote.sh`, not by the dashboard). The only changes it makes are
   the janitor's deletions of build artefacts (`<checkout>/target` and old

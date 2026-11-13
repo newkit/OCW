@@ -30,8 +30,13 @@ $ProgressPreference = 'SilentlyContinue'
 
 function Size($p) {
     if (-not (Test-Path -LiteralPath $p)) { return @{ files = 0; bytes = [int64]0 } }
-    $m = Get-ChildItem -LiteralPath $p -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum
-    return @{ files = [int64]$m.Count; bytes = [int64]$m.Sum }
+    # .NET enumeration: Get-ChildItem -Recurse took > 15 min for the
+    # toolchain dirs on a busy machine.
+    $n = [int64]0; $b = [int64]0
+    try {
+        foreach ($f in (New-Object IO.DirectoryInfo $p).EnumerateFiles('*', [IO.SearchOption]::AllDirectories)) { $n++; $b += $f.Length }
+    } catch { Write-Host ("  (could not read all of {0}: {1})" -f $p, $_.Exception.Message) }
+    return @{ files = $n; bytes = $b }
 }
 function Gb($b) { '{0:N1} GB' -f ($b / 1GB) }
 function UserEnv($n) { [Environment]::GetEnvironmentVariable($n, 'User') }
