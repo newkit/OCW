@@ -38,6 +38,7 @@ pub mod clean;
 pub mod crs;
 pub mod dem;
 pub mod diff;
+pub mod dress;
 pub mod dtm;
 pub mod filter;
 pub mod imagery;

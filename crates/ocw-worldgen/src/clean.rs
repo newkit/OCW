@@ -958,6 +958,7 @@ mod tests {
             width_m: 5.0,
             points: vec![[300.0, 99.0, 503.0], [700.0, 99.0, 503.0]],
             surface: ocw_world::RoadSurface::Asphalt,
+            dress: ocw_world::RoadDress::of_class(RoadClass::Residential, 5.0),
         };
         let mut pkg = tile_pkg(100.0, vec![road]);
         let before = pkg.road_pokes(1.0).2;

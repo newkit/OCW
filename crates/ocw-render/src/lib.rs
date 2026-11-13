@@ -26,6 +26,8 @@ pub mod package;
 pub mod region_look;
 pub mod riders;
 pub mod road_material;
+pub mod road_mesh;
+pub mod road_style;
 pub mod see_through;
 pub mod sky;
 pub mod stamp;

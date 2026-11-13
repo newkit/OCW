@@ -1053,6 +1053,10 @@ mod tests {
                         width_m: 4.0,
                         points: vec![[0.0; 3], [1.0, 2.0, 3.0]],
                         surface: crate::RoadSurface::Asphalt,
+                        dress: crate::RoadDress::of_class(
+                            crate::graph::RoadClass::Residential,
+                            4.0,
+                        ),
                     }],
                 },
             );

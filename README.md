@@ -477,6 +477,22 @@ climb at 1.5–2.1 km) and grass beside the road roll increasingly harder
   above 750 m, Black Forest farms with their huge roofs, Canarian flat roofs
   with parapets). Package section `BTAG` (optional; older apps draw flat or
   gable roofs).
+  Roads (spec §14 Phase 8 T5) wear their markings, kerbs and sidewalks:
+  centre, lane and edge lines from the road class and OSM `lanes`,
+  `lanes:forward` / `backward`, `overtaking`, `lane_markings`; cycle lanes
+  (`cycleway*=lane`); zebra crossings, signalled crossings, stop and
+  give-way lines at the way nodes (`highway=crossing` with `crossing=*`,
+  `highway=stop`, `highway=give_way`); raised kerbs and paved sidewalks
+  from `sidewalk*`, `kerb` and from sidewalks mapped as separate ways
+  (`footway=sidewalk`) beside a road; no paint on gravel, dirt or cobbles.
+  The line widths, dashes and colours are regional
+  (`assets/road-styles.toml`: German, Swiss / Liechtenstein with yellow
+  zebras and cycle lanes, Spanish), drawn in the road shader (crisp near,
+  no shimmer far away), with tyre tracks, repaired patches and cracks on the
+  asphalt and grass between the ruts of tracks. The road edge slopes into
+  the terrain as a gravel verge (no slab edge on flat ground), with a wall
+  where the ground falls away. Package section `RDRS` (optional; older apps
+  skip it, older packages get the markings of their road class).
   `world-builder check` lists what a package contains; older packages
   without land use still load (plain grass and placeholder tree patches).
 - Default arguments: `ocw-desktop.args` beside the executable (or

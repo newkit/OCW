@@ -411,6 +411,7 @@ mod tests {
                 way(1, &[5000, 5001, 5002, 5003, 5004, 5005, 5006, 5007], &[]),
                 way(2, &[1005, 2005, 3005, 4005, 5005, 6005, 7005], &[]),
             ],
+            node_tags: Default::default(),
         };
         let (g, stats) = raw_graph(&osm, &region());
         assert_eq!(stats.rideable_ways, 2);
@@ -447,6 +448,7 @@ mod tests {
                 // A bridge on the block.
                 way(8, &[4001, 5001], &[("bridge", "yes")]),
             ],
+            node_tags: Default::default(),
         };
         let (g, stats) = build_road_graph(&osm, &region());
         assert_eq!(stats.highway_ways, 8);
@@ -476,6 +478,7 @@ mod tests {
                 &[5000, 5001, 5002, 5003, 5004, 5005, 5006, 5007, 5008, 5009],
                 &[],
             )],
+            node_tags: Default::default(),
         };
         // Region ends between column 4 and 5.
         let r = Region::bbox(47.0, 9.0, 48.0, 9.55 + 4.5 * 0.0013);
@@ -507,6 +510,7 @@ mod tests {
                 ),
                 way(2, &[1002, 2003, 3004, 4005, 5006], &[]),
             ],
+            node_tags: Default::default(),
         };
         let border = 9.55 + 4.5 * 0.0013;
         let origin = Some((47.15, 9.55));
@@ -543,6 +547,7 @@ mod tests {
         let osm = OsmData {
             nodes: grid(),
             ways: vec![way(3, &[7004, 7005], &[])],
+            node_tags: Default::default(),
         };
         let (gw, _) = raw_graph(&osm, &west);
         let (ge, _) = raw_graph(&osm, &east);
@@ -556,6 +561,7 @@ mod tests {
         let osm = OsmData {
             nodes: grid(),
             ways: vec![way(1, &[5000, 5001, 5002, 5003], &[])],
+            node_tags: Default::default(),
         };
         // Exactly through node 5002 (inclusive on both sides).
         let border = 9.55 + 2.0 * 0.0013;
@@ -599,6 +605,7 @@ mod tests {
             let osm = OsmData {
                 nodes: grid(),
                 ways,
+                node_tags: Default::default(),
             };
             let mut ids: Vec<EdgeId> = raw_graph(&osm, &region())
                 .0
@@ -629,6 +636,7 @@ mod tests {
         let osm = OsmData {
             nodes: moved,
             ways: base,
+            node_tags: Default::default(),
         };
         let mut ids_moved: Vec<EdgeId> = raw_graph(&osm, &region())
             .0
@@ -688,6 +696,7 @@ mod tests {
                 &[1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007],
                 &[],
             )],
+            node_tags: Default::default(),
         };
         let (g, _) = build_road_graph(&osm, &Region::from_polygon(tri));
         assert_eq!(g.edges.len(), 1);

@@ -59,6 +59,7 @@ use crate::look::{
     write_palette, write_roofs, write_seasons,
 };
 use crate::region::{PackageRegion, REGION_TAG, read_region, write_region};
+use crate::road_dress::{ROAD_DRESS_TAG, RoadDress, read_road_dress, write_road_dress};
 use crate::road_surface::{ROAD_SURFACE_TAG, RoadSurface, read_road_surfaces, write_road_surfaces};
 
 pub const MAGIC: &[u8; 8] = b"OCWPKG01";
@@ -110,6 +111,10 @@ pub struct RoadStrip {
     /// The look of the road (section `RSRF`; packages without it get the
     /// category's default, [`RoadSurface::of_class`]).
     pub surface: RoadSurface,
+    /// Lanes, markings, kerbs, sidewalks and crossings (section `RDRS`,
+    /// spec §14 Phase 8 T5; packages without it get the class default,
+    /// [`RoadDress::of_class`]).
+    pub dress: RoadDress,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -374,6 +379,13 @@ impl WorldPackage {
         ) {
             sections.push((ROAD_SURFACE_TAG, payload));
         }
+        let mut payload = Vec::new();
+        if write_road_dress(
+            self.tiles.values().map(|t| (t.key, t.roads.as_slice())),
+            &mut payload,
+        ) {
+            sections.push((ROAD_DRESS_TAG, payload));
+        }
         b.extend_from_slice(if sections.is_empty() { MAGIC } else { MAGIC_V2 });
         b.extend((self.name.len() as u32).to_le_bytes());
         b.extend(self.name.as_bytes());
@@ -504,6 +516,7 @@ impl WorldPackage {
                     width_m,
                     points,
                     surface: RoadSurface::of_class(class),
+                    dress: RoadDress::of_class(class, width_m),
                 });
             }
             tiles.insert(
@@ -570,6 +583,26 @@ impl WorldPackage {
                         for (strip, s) in tile.roads.iter_mut().zip(surfaces) {
                             strip.surface = s;
                         }
+                    }
+                } else if &tag == ROAD_DRESS_TAG && full {
+                    match read_road_dress(payload) {
+                        Ok(dress) => {
+                            for (key, d) in dress {
+                                let tile = tiles
+                                    .get_mut(&key)
+                                    .ok_or("road dress of a tile the package does not have")?;
+                                if d.len() != tile.roads.len() {
+                                    return Err(
+                                        "road dress does not match the tile's road strips".into()
+                                    );
+                                }
+                                for (strip, d) in tile.roads.iter_mut().zip(d) {
+                                    strip.dress = d;
+                                }
+                            }
+                        }
+                        Err(e) if e.contains("not supported") => {}
+                        Err(e) => return Err(e),
                     }
                 }
                 // Unknown sections (from newer builders) are skipped.
@@ -985,6 +1018,7 @@ mod tests {
                         width_m: 6.5,
                         points: vec![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
                         surface: RoadSurface::Asphalt,
+                        dress: RoadDress::of_class(RoadClass::Secondary, 6.5),
                     }],
                 },
             );
@@ -1189,6 +1223,7 @@ mod tests {
                 width_m: 3.0,
                 points: vec![[1001.0, 2.0, 3.0], [1004.0, 5.0, 6.0]],
                 surface: RoadSurface::Dirt,
+                dress: RoadDress::of_class(RoadClass::Track, 3.0),
             });
         p.tiles.get_mut(&TileKey { x: 0, z: 0 }).unwrap().roads[0].surface = RoadSurface::Paving;
         let b = p.to_bytes();

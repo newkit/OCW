@@ -1208,3 +1208,47 @@ world = "tenerife"
 args = ["--world", "{world}", "--free-ride", "--start", "-31411,4859", "--bots", "0"]
 at = ["0.5=time pause", "0.5=time 2026-07-15 15:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 120 22 70"]
 shot = 10
+
+# --- Roads (spec §14 Phase 8 T5) ----------------------------------------------
+# Render twice for before/after: with the packages and build before T5, then
+# with the rebuilt packages (section RDRS) and the T5 build.
+
+[[scene]]
+name = "road-vaduz-aeule"
+description = "Roads: the Äulestrasse in Vaduz (primary, 2-3 lanes, sidewalks mapped as separate ways), raised kerbs, paved sidewalks, centre and lane lines (15 July, noon)"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2421,2300", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 150 14 16"]
+shot = 9
+
+[[scene]]
+name = "road-vaduz-zebra"
+description = "Roads: the yellow Swiss/Liechtenstein zebra crossing on the Äulestrasse in Vaduz (crossing:markings=zebra), seen from above the road"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2424,2238", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 170 32 18"]
+shot = 9
+
+[[scene]]
+name = "road-freiburg-centre"
+description = "Roads, Black Forest: the Werthmannstraße at the Rotteckring in Freiburg (exclusive cycle lane, signalled crossings, sidewalks), 15 July, noon"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-8560,-7895", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 160 20 22"]
+shot = 10
+
+[[scene]]
+name = "road-country"
+description = "Roads: the Vaduz - Malbun road at km 6.5 above Triesenberg (country road): centre line, the road edge sloping into the meadow as a verge"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 6.5", "2.5=camera.orbit 20 12 14"]
+shot = 10
+
+[[scene]]
+name = "road-canadas-edge"
+description = "Roads, Tenerife: the edge of the TF-21 on the flat lava plain of Las Cañadas, side view near the ground: the road edge slopes into the ground (before T5 a light slab edge stood above it)"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-7500,5260", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 11:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 75 6 9"]
+shot = 10
