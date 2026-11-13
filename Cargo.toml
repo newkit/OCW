@@ -17,6 +17,7 @@ members = [
     "crates/ocw-worldstore",
     "crates/ocw-assets",
     "crates/ocw-voice",
+    "crates/ocw-sky",
 ]
 
 [workspace.package]
@@ -39,6 +40,7 @@ ocw-render = { path = "crates/ocw-render" }
 ocw-assets = { path = "crates/ocw-assets" }
 ocw-server = { path = "services/server" }
 ocw-voice = { path = "crates/ocw-voice" }
+ocw-sky = { path = "crates/ocw-sky" }
 
 # Bevy is pinned to an exact version (spec §3.1). Only ocw-render and apps/desktop may use it.
 bevy = "=0.20.1"
@@ -81,6 +83,9 @@ bytes = "1"
 # version Bevy's own audio links, so no second copy (and one libasound).
 cpal = "0.17"
 
+# Time zones with the IANA tzdb compiled in (Unlicense OR MIT), only in
+# ocw-sky: no system zoneinfo needed, the same on every OS and on wasm32.
+jiff = { version = "0.2", default-features = false, features = ["std", "tzdb-bundle-always"] }
 prost = "0.14"
 prost-build = "0.14"
 protox = "0.10"
