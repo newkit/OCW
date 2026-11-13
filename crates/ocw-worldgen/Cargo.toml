@@ -10,6 +10,10 @@ publish.workspace = true
 [dependencies]
 ocw-world.workspace = true
 osmpbf = "0.3"
+# GeoTIFF elevation grids (swissALTI3D, imported DGM1); pure Rust, MIT.
+tiff = { version = "0.11", default-features = false, features = ["deflate", "lzw"] }
+# LZW of tiled GeoTIFFs that the tiff crate refuses (no end code); MIT OR Apache-2.0.
+weezl = "0.1"
 thiserror.workspace = true
 
 [dev-dependencies]

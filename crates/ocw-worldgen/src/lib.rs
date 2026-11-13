@@ -10,7 +10,9 @@
 //! - [`filter`]: rideable ways and road classes
 //! - [`projection`]: local metric projection
 //! - [`build`]: ways → road graph with stable edge IDs, cleanup, dead ends
-//! - [`dem`]: SRTM elevation tiles
+//! - [`dem`]: elevation sources (SRTM tiles, DTM grid layers, feathering)
+//! - [`dtm`]: high-resolution DTM grids (GeoTIFF, XYZ, resampling)
+//! - [`crs`]: UTM and Swiss LV95 projections of the DTM grids
 //! - [`chains`]: through-roads across the OSM way splits
 //! - [`profile`]: road elevation profiles (sampling, smoothing, limits)
 //! - [`package`]: road-conformed terrain and 1 km tiles → world package
@@ -28,8 +30,10 @@ pub mod build;
 pub mod buildings;
 pub mod chains;
 pub mod clean;
+pub mod crs;
 pub mod dem;
 pub mod diff;
+pub mod dtm;
 pub mod filter;
 pub mod landuse;
 pub mod lint;

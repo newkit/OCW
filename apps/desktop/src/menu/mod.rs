@@ -101,7 +101,10 @@ fn menu_input(
     riders: Option<Res<RiderProfiles>>,
     catalog: Option<Res<RideCatalog>>,
     audio: Option<Res<AudioDeviceList>>,
-    voice: Option<Res<crate::voice::VoiceMenuInfo>>,
+    (voice, time_machine): (
+        Option<Res<crate::voice::VoiceMenuInfo>>,
+        Option<Res<crate::timemachine::TimeMachineInfo>>,
+    ),
 ) {
     let pressed = pads.iter().fold(
         keys.map(|k| controls::keyboard(&k)).unwrap_or_default(),
@@ -156,6 +159,7 @@ fn menu_input(
             catalog.as_deref(),
             audio.as_deref(),
             voice.as_deref(),
+            time_machine.as_deref(),
         )
     };
     for action in actions {
@@ -217,7 +221,12 @@ fn sub_rows(
     catalog: Option<&RideCatalog>,
     audio: Option<&AudioDeviceList>,
     voice: Option<&crate::voice::VoiceMenuInfo>,
+    time_machine: Option<&crate::timemachine::TimeMachineInfo>,
 ) -> Vec<settings_pages::Row> {
+    if page == settings_pages::Page::TimeMachine {
+        let empty = crate::timemachine::TimeMachineInfo::default();
+        return crate::timemachine::rows(time_machine.unwrap_or(&empty));
+    }
     let default_settings = Settings::default();
     if page.is_voice_page() {
         let empty = crate::voice::VoiceMenuInfo::default();
@@ -247,6 +256,7 @@ fn sub_rows(
     )
 }
 
+#[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
 fn write_view(
     mut state: ResMut<MenuState>,
     ride: Option<Res<RideView>>,
@@ -258,6 +268,7 @@ fn write_view(
         Option<Res<AudioDeviceList>>,
         Option<Res<crate::voice::VoiceMenuInfo>>,
     ),
+    time_machine: Option<Res<crate::timemachine::TimeMachineInfo>>,
     mut view: ResMut<MenuView>,
 ) {
     // Values changed by the menu's commands (or the console) show at once.
@@ -269,6 +280,7 @@ fn write_view(
             catalog.as_deref(),
             audio.as_deref(),
             voice.as_deref(),
+            time_machine.as_deref(),
         )
     };
     state.menu.refresh(&rows);
@@ -326,12 +338,13 @@ mod tests {
             Voice,
             VoiceDevices,
             VoiceParticipants,
+            TimeMachine,
         ];
         for p in &all {
             match p {
                 Controls | Trainer | Strava | Display | Audio | Riders | Rider(_) | Workshop
                 | Bike(_) | Worlds | World(_) | Routes | Rides | GpxImport | Workouts | Voice
-                | VoiceDevices | VoiceParticipants => {}
+                | VoiceDevices | VoiceParticipants | TimeMachine => {}
             }
         }
         all

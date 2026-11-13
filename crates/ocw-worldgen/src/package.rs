@@ -418,6 +418,7 @@ pub fn build_package_on<F: Fn(f64, f64) -> f64 + Sync>(
         bridges: None,
         routes: Vec::new(),
         region: None,
+        time_zone: None,
     }
 }
 

@@ -28,7 +28,10 @@
 //! per tile and water levels (§4.6), see [`crate::landuse`]; `BLDG` –
 //! building footprints with heights and roofs, see [`crate::buildings`];
 //! `REGN` – the region the package was cut to (box and polygon in
-//! latitude / longitude), for neighbouring packages, see [`crate::region`]. A
+//! latitude / longitude), for neighbouring packages, see [`crate::region`];
+//! `TZID` – the IANA time zone of the package's area ("Europe/Vaduz", UTF-8,
+//! spec §14 Phase 9; packages without it fall back to a zone from their
+//! origin, see `ocw_sky::zone::zone_for`). A
 //! package without sections is written as version 1, byte for byte as before.
 //!
 //! Tile `(x, z)` covers local metres `[x·size, (x+1)·size] × [z·size, (z+1)·size]`;
@@ -52,6 +55,8 @@ pub const MAGIC_V2: &[u8; 8] = b"OCWPKG02";
 pub const GRAPH_TAG: &[u8; 4] = b"GRPH";
 /// Section tag of the routes on the road graph (spec §2.7).
 pub const ROUTES_TAG: &[u8; 4] = b"ROUT";
+/// Section tag of the time zone id (spec §14 Phase 9).
+pub const TIME_ZONE_TAG: &[u8; 4] = b"TZID";
 /// Layout version inside the graph section.
 const GRAPH_VERSION: u32 = 1;
 
@@ -121,6 +126,9 @@ pub struct WorldPackage {
     /// The region the roads were cut to (section `REGN`; `None` in older
     /// packages, which then cannot have neighbours, spec §2.2.2).
     pub region: Option<PackageRegion>,
+    /// The IANA time zone of the area (section `TZID`, spec §14 Phase 9),
+    /// set by the world builder; `None` in older packages.
+    pub time_zone: Option<String>,
 }
 
 impl WorldPackage {
@@ -252,6 +260,9 @@ impl WorldPackage {
             write_bridges(t, &mut payload);
             sections.push((BRIDGES_TAG, payload));
         }
+        if let Some(z) = &self.time_zone {
+            sections.push((TIME_ZONE_TAG, z.as_bytes().to_vec()));
+        }
         b.extend_from_slice(if sections.is_empty() { MAGIC } else { MAGIC_V2 });
         b.extend((self.name.len() as u32).to_le_bytes());
         b.extend(self.name.as_bytes());
@@ -304,6 +315,24 @@ impl WorldPackage {
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
+        Self::decode(bytes, true)
+    }
+
+    /// The package without its bulk: the tiles are there by key only
+    /// (no heights, no road strips), land use and buildings are left out;
+    /// the road graph, routes and region are complete. What a neighbouring
+    /// package needs until the rider comes near it (spec §2.2.2, §15): a
+    /// fraction of the memory of [`WorldPackage::from_bytes`].
+    pub fn skeleton_from_bytes(bytes: &[u8]) -> Result<Self, String> {
+        Self::decode(bytes, false)
+    }
+
+    /// Whether the tiles hold their terrain (not a skeleton).
+    pub fn has_bulk(&self) -> bool {
+        self.tiles.values().any(|t| !t.heights.is_empty()) || self.tiles.is_empty()
+    }
+
+    fn decode(bytes: &[u8], full: bool) -> Result<Self, String> {
         let mut r = Bytes { b: bytes, pos: 0 };
         let version = match r.take(8)? {
             m if m == MAGIC => 1,
@@ -332,6 +361,23 @@ impl WorldPackage {
                 z: r.i32()?,
             };
             let n = samples as usize * samples as usize;
+            if !full {
+                r.take(n * 4)?;
+                for _ in 0..r.u32()? {
+                    r.take(5)?;
+                    let pts = r.u32()? as usize;
+                    r.take(pts * 12)?;
+                }
+                tiles.insert(
+                    key,
+                    Tile {
+                        key,
+                        heights: Vec::new(),
+                        roads: Vec::new(),
+                    },
+                );
+                continue;
+            }
             let heights = (0..n).map(|_| r.f32()).collect::<Result<_, _>>()?;
             let roads_n = r.u32()?;
             let mut roads = Vec::with_capacity(roads_n as usize);
@@ -361,6 +407,7 @@ impl WorldPackage {
         let (mut landuse, mut buildings, mut bridges) = (None, None, None);
         let mut routes = Vec::new();
         let mut region = None;
+        let mut time_zone = None;
         if version >= 2 {
             let sections = r.u32()?;
             for _ in 0..sections {
@@ -369,16 +416,21 @@ impl WorldPackage {
                 let payload = r.take(len)?;
                 if &tag == GRAPH_TAG {
                     graph = Some(read_graph(payload)?);
-                } else if &tag == LANDUSE_TAG {
+                } else if &tag == LANDUSE_TAG && full {
                     landuse = Some(read_landuse(payload, samples)?);
-                } else if &tag == BUILDINGS_TAG {
+                } else if &tag == BUILDINGS_TAG && full {
                     buildings = Some(read_buildings(payload)?);
                 } else if &tag == ROUTES_TAG {
                     routes = read_routes(payload)?;
                 } else if &tag == REGION_TAG {
                     region = Some(read_region(payload)?);
-                } else if &tag == BRIDGES_TAG {
+                } else if &tag == BRIDGES_TAG && full {
                     bridges = Some(read_bridges(payload)?);
+                } else if &tag == TIME_ZONE_TAG {
+                    let z = std::str::from_utf8(payload)
+                        .map_err(|_| "time zone id is not UTF-8")?
+                        .to_owned();
+                    time_zone = Some(z);
                 }
                 // Unknown sections (from newer builders) are skipped.
             }
@@ -398,6 +450,7 @@ impl WorldPackage {
             bridges,
             routes,
             region,
+            time_zone,
         })
     }
 }
@@ -793,7 +846,30 @@ mod tests {
             bridges: None,
             routes: Vec::new(),
             region: None,
+            time_zone: None,
         }
+    }
+
+    /// The time zone section (spec §14 Phase 9): written, read back, and
+    /// absent in older packages (which still read).
+    #[test]
+    fn time_zone_round_trips_and_is_optional() {
+        let p = WorldPackage {
+            time_zone: Some("Europe/Vaduz".into()),
+            ..package()
+        };
+        let b = p.to_bytes();
+        assert_eq!(&b[..8], MAGIC_V2);
+        let back = WorldPackage::from_bytes(&b).unwrap();
+        assert_eq!(back.time_zone.as_deref(), Some("Europe/Vaduz"));
+        assert_eq!(back, p);
+        assert!(
+            section_sizes(&b)
+                .iter()
+                .any(|(t, n)| t == TIME_ZONE_TAG && *n == 12)
+        );
+        let old = WorldPackage::from_bytes(&package().to_bytes()).unwrap();
+        assert_eq!(old.time_zone, None);
     }
 
     #[test]

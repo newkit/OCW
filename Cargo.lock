@@ -4349,6 +4349,48 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3bd1574e617a9a6c1f8f8181bd7e841e1f20e4277607ef28945765188d6284d4"
 
 [[package]]
+name = "jiff"
+version = "0.2.43"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "26699905cc795a23e3949585cc7ba3ee8ade090872a27e4316304a777297894a"
+dependencies = [
+ "jiff-core",
+ "jiff-static",
+ "jiff-tzdb",
+ "log",
+ "portable-atomic",
+ "portable-atomic-util",
+ "serde_core",
+]
+
+[[package]]
+name = "jiff-core"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ffe6854081f5ac0a3046a9b223729ccd7a20b1e0e8277e44dc0660eedf67dfe2"
+dependencies = [
+ "log",
+]
+
+[[package]]
+name = "jiff-static"
+version = "0.2.43"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b4ff49b2887190c760b86207b55cdcaabbdecaf7a0660d68aa2ed6f652abf0a"
+dependencies = [
+ "jiff-core",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "jiff-tzdb"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa8377070c6bae868759445e5a77f66d84f0b72f3a054bfb00e6d038b8282da7"
+
+[[package]]
 name = "jni"
 version = "0.21.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5738,6 +5780,7 @@ dependencies = [
  "ocw-render",
  "ocw-server",
  "ocw-sim",
+ "ocw-sky",
  "ocw-voice",
  "ocw-world",
  "ocw-worldstore",
@@ -5776,6 +5819,7 @@ version = "0.1.0"
 dependencies = [
  "ocw-core",
  "ocw-sim",
+ "ocw-sky",
  "ocw-world",
  "prost",
  "prost-build",
@@ -5795,6 +5839,7 @@ dependencies = [
  "ocw-assets",
  "ocw-core",
  "ocw-sim",
+ "ocw-sky",
  "ocw-world",
  "png",
  "ttf-parser",
@@ -5809,6 +5854,7 @@ dependencies = [
  "ocw-core",
  "ocw-protocol",
  "ocw-sim",
+ "ocw-sky",
  "ocw-world",
  "ocw-worldstore",
  "quinn",
@@ -5831,6 +5877,13 @@ dependencies = [
  "ocw-world",
  "serde",
  "toml",
+]
+
+[[package]]
+name = "ocw-sky"
+version = "0.1.0"
+dependencies = [
+ "jiff",
 ]
 
 [[package]]
@@ -5880,6 +5933,8 @@ dependencies = [
  "osmpbf",
  "tempfile",
  "thiserror 2.0.21",
+ "tiff",
+ "weezl",
 ]
 
 [[package]]
@@ -9202,9 +9257,11 @@ name = "world-builder"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "ocw-sky",
  "ocw-world",
  "ocw-worldgen",
  "ocw-worldstore",
+ "tempfile",
 ]
 
 [[package]]

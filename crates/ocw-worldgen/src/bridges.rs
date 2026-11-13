@@ -817,6 +817,7 @@ mod tests {
             landuse: None,
             buildings: None,
             bridges: None,
+            time_zone: None,
             routes: vec![],
             region: None,
         };

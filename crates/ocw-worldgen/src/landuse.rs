@@ -731,6 +731,7 @@ mod tests {
             bridges: None,
             routes: Vec::new(),
             region: None,
+            time_zone: None,
         }
     }
 

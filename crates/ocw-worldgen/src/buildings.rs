@@ -623,6 +623,7 @@ mod tests {
             bridges: None,
             routes: Vec::new(),
             region: None,
+            time_zone: None,
         };
         let stats = add_buildings(
             &mut p,

@@ -836,6 +836,12 @@ fn update_hud(
         local.heart_rate_bpm,
         *units,
     );
+    // The world clock of the rider's place (spec §14 Phase 9; the ISO
+    // timestamp of captures is separate, top right).
+    let line = match &view.sky {
+        Some(s) => format!("{line}   {}", s.hud),
+        None => line,
+    };
     if big.0 != line {
         big.0 = line;
     }

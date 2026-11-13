@@ -698,6 +698,7 @@ mod tests {
             }),
             buildings: None,
             bridges: None,
+            time_zone: None,
             routes: vec![],
             region: None,
         }

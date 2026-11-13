@@ -1,12 +1,13 @@
 # OCW Build Diary – Art Project Specification
 
-Version 1.2 – 13 November 2026
+Version 1.3 – 13 November 2026
 
 | Version | Change |
 |---|---|
 | 1.0 | The brief, the diary format, the media archive, the tool (`art/diary.py`), day scripts for 11 and 12 November 2026 |
 | 1.1 | Every photo and video carries its ISO 8601 date and time, in the file and in the picture (§2.1) |
 | 1.2 | The build process itself is documented: every build/test run on the build machines and the build servers' state (§2.2) |
+| 1.3 | The user's prompts are part of the archive and the videos (§2.3) |
 
 ## 1. The brief
 
@@ -102,6 +103,24 @@ gathered into the day folder's `logs/build-log/`):
   BUILD RUNS and BUILD HOURS.
 - `OCW_BUILD_LOG=0` turns the run log off for a single command.
 
+### 2.3 The prompts
+
+The user's prompts to Claude Code (the conversation that builds OCW) are part
+of the story.
+
+- **Source:** the Claude Code session transcripts of the project
+  (`~/.claude/projects/*OCW*/*.jsonl`, `OCW_TRANSCRIPTS` overrides the root): the
+  user's own messages, including those sent while Claude was working; not the
+  agents' messages, tool output or notifications; slash commands as `/name args`.
+- **Kept as:** `DAY/prompts.jsonl` (time, ISO 8601, text) and `DAY/prompts.md`;
+  the journal lists them. `art/diary.py prompts DAY` (run by `journal`).
+- **Masked** before they are written: every build machine's host and user name,
+  e-mail addresses and the home directory. The day zips are public.
+- **In the video:** during the time-lapse each prompt pops up as a chat bubble
+  ("YOU · 08:58") when its time comes (at most one new bubble per 1.2 s; the
+  newest wins); a chapter can quote the prompt that started it (`prompt = "…"`
+  in the day script, shown as "YOU ASKED"); the end card counts PROMPTS.
+
 ## 3. The day video
 
 About 1.5–3 minutes, 1920×1080, 30 fps, H.264 + AAC, built from these parts,
@@ -172,6 +191,7 @@ end_seconds = 9                    # optional
 time = "15:02"                     # when it happened (shown in gold)
 title = "Hello, Liechtenstein"
 caption = "The funny caption, typed out."
+prompt = "the user's prompt that started it"   # optional, shown as a chat bubble
 sound = "HHMMSS-audio.wav"         # optional: the day's sound file, music ducks
 sound_gain = 1.0                   # optional
 shots = [

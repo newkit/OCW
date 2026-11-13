@@ -1120,6 +1120,7 @@ mod tests {
                 .into(),
             ),
             bridges: None,
+            time_zone: None,
             routes: vec![],
             region: None,
         }

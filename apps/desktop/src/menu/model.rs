@@ -165,6 +165,11 @@ const NAVI_ITEMS: &[Item] = &[
     ),
     // The Strava account page lives here (Settings is full, ten-foot rule).
     item("Strava", ItemKind::Open(Page::Sub(sub::Page::Strava))),
+    // Spec §14 Phase 9, 9D: date, time and time speed of the world.
+    item(
+        "Time machine",
+        ItemKind::Open(Page::Sub(sub::Page::TimeMachine)),
+    ),
     BACK,
 ];
 const SETTINGS_ITEMS: &[Item] = &[

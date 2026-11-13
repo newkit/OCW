@@ -4,6 +4,10 @@
 //!   maths, pure;
 //! - [`ride`]: speed / cadence / power / surface → ride sound parameters
 //!   (pure) and their synthesis (wind, tyres, freewheel, chain);
+//! - [`spatial`]: where a sound is heard (distance, direction, air,
+//!   Doppler), pure;
+//! - [`others`]: the other riders' bikes – character per rider, nearest
+//!   voices and the group layer (pure), and their synthesis;
 //! - [`cues`]: one-shot sounds (UI, countdown, finish, workout steps, gear
 //!   shift, test tones) and when they play (pure);
 //! - [`mixer`]: renders all of it into a device buffer;
@@ -27,8 +31,10 @@ pub mod dsp;
 pub mod engine;
 pub mod mix;
 pub mod mixer;
+pub mod others;
 pub mod record;
 pub mod ride;
+pub mod spatial;
 
 use std::time::Instant;
 
@@ -67,7 +73,8 @@ impl Plugin for GameAudioPlugin {
             .add_systems(Startup, start_engine)
             .add_systems(
                 Update,
-                (sync_status, feed_ride, play_cues).run_if(resource_exists::<GameAudio>),
+                (sync_status, feed_ride, feed_others, play_cues)
+                    .run_if(resource_exists::<GameAudio>),
             );
         register_commands(app);
     }
@@ -121,6 +128,7 @@ pub fn settings_mix(settings: &crate::settings::registry::Settings) -> (Mix, Out
         music: int("audio.music"),
         effects: int("audio.effects"),
         voice: int("audio.voice"),
+        others: int("audio.others"),
         mute: settings
             .get("audio.mute")
             .ok()
@@ -195,6 +203,52 @@ fn feed_ride(client: Option<Res<ClientState>>, audio: Res<GameAudio>, mut last: 
     }
 }
 
+/// The other riders' sounds (spec §3.3): every rider in the view but the
+/// own (bots, remote riders; the ghost is not in `riders` and stays
+/// silent), heard at the own rider's head. Sent every frame while anyone
+/// is around, once more (empty, to fade them out) when nobody is.
+fn feed_others(
+    view: Option<Res<RideView>>,
+    audio: Res<GameAudio>,
+    mut playing: Local<Vec<ocw_core::RiderId>>,
+    mut sent_empty: Local<bool>,
+) {
+    let frame = view
+        .as_deref()
+        .and_then(|v| {
+            let me = v.local()?;
+            let listener = others::listener(v.track(me.id), &me.state);
+            let riders: Vec<others::OtherRider> = v
+                .riders
+                .iter()
+                .filter(|r| !r.is_local)
+                .map(|r| {
+                    let track = v.track(r.id);
+                    let (pos, velocity) =
+                        others::on_track(track, &r.state, others::SOURCE_HEIGHT_M);
+                    others::OtherRider {
+                        id: r.id,
+                        pos,
+                        velocity,
+                        speed_mps: r.state.speed,
+                        power_w: r.power_w,
+                        cadence_rpm: r.cadence_rpm,
+                        surface: ocw_sim::ride::surface(track, &r.state),
+                    }
+                })
+                .collect();
+            (!riders.is_empty()).then(|| others::frame(&listener, &riders, &playing))
+        })
+        .unwrap_or_default();
+    let empty = frame.voices.is_empty() && frame.group.riders == 0;
+    if empty && *sent_empty {
+        return;
+    }
+    *sent_empty = empty;
+    *playing = frame.voices.iter().map(|v| v.id).collect();
+    audio.engine.send(MixerMsg::Others(frame));
+}
+
 /// What the cue detection saw last frame.
 #[derive(Default)]
 struct CueWatch {
@@ -263,9 +317,10 @@ fn on_off(s: &str) -> Result<Option<bool>, String> {
 
 fn mix_line(m: &Mix) -> String {
     format!(
-        "master {} %, effects {} %, music {} %, voice {} %{}",
+        "master {} %, effects {} %, others {} %, music {} %, voice {} %{}",
         m.master,
         m.effects,
+        m.others,
         m.music,
         m.voice,
         if m.mute { ", muted" } else { "" }
@@ -286,7 +341,7 @@ fn register_commands(app: &mut App) {
             .arg(
                 Arg::new("bus")
                     .required(true)
-                    .value_parser(["master", "music", "effects", "voice"]),
+                    .value_parser(["master", "music", "effects", "voice", "others"]),
             )
             .arg(
                 Arg::new("percent")
@@ -389,7 +444,7 @@ fn register_commands(app: &mut App) {
     .console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("audio.play")
-            .about("Play a sound: move, value, confirm, back, beep, go, finish, step, shift, test, test-music, test-effects, test-voice")
+            .about("Play a sound: move, value, confirm, back, beep, go, finish, step, shift, test, test-music, test-effects, test-voice, test-others")
             .arg(Arg::new("sound").required(true)),
         |world, m| {
             let name = m.get_one::<String>("sound").expect("required");
@@ -436,7 +491,7 @@ mod tests {
         assert_eq!(mix, Mix::default());
         assert_eq!(output, Output::Default);
         let (s, _) = Settings::parse(
-            "[audio]\nmaster = 40\nmusic = 0\neffects = 100\nvoice = 55\nmute = true\noutput = \"USB Headset\"\n",
+            "[audio]\nmaster = 40\nmusic = 0\neffects = 100\nvoice = 55\nothers = 35\nmute = true\noutput = \"USB Headset\"\n",
         )
         .unwrap();
         let (mix, output) = settings_mix(&s);
@@ -447,6 +502,7 @@ mod tests {
                 music: 0,
                 effects: 100,
                 voice: 55,
+                others: 35,
                 mute: true
             }
         );
@@ -458,11 +514,14 @@ mod tests {
         let mut app = app();
         assert_eq!(
             run(&mut app, "audio.volume effects 50")[0],
-            "audio: master 80 %, effects 50 %, music 60 %, voice 100 %"
+            "audio: master 80 %, effects 50 %, others 80 %, music 60 %, voice 100 %"
         );
         assert_eq!(app.world().resource::<GameAudio>().mix.effects, 50);
         assert!(run(&mut app, "audio.volume effects 101")[0].starts_with("error"));
         assert!(run(&mut app, "audio.volume drums 10")[0].starts_with("error"));
+        run(&mut app, "audio.volume others 25");
+        assert_eq!(app.world().resource::<GameAudio>().mix.others, 25);
+        assert!(run(&mut app, "audio.play test-others").is_empty());
         run(&mut app, "audio.volume master 30");
         assert_eq!(app.world().resource::<GameAudio>().mix.master, 30);
         assert_eq!(run(&mut app, "audio.mute")[0], "audio: muted");

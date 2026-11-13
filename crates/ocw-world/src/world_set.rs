@@ -497,6 +497,7 @@ mod tests {
             bridges: None,
             routes: vec![],
             region: Some(region),
+            time_zone: None,
         })
     }
 

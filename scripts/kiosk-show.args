@@ -1,0 +1,7 @@
+# Kiosk show mode (user, 2026-11-13), appended by scripts/deploy-test.sh to the
+# kiosk's default arguments for every world: always ride on the virtual trainer
+# at 500 W, so the rider moves and pedals (the virtual trainer reports a
+# matching cadence, ~95 rpm) even with nobody on the KICKR. OCW_KIOSK_ARGS
+# replaces everything, this file included.
+--virtual
+--power 500

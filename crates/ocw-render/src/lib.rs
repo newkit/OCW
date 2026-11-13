@@ -17,6 +17,7 @@ pub mod menu;
 pub mod package;
 pub mod riders;
 pub mod see_through;
+pub mod sky;
 pub mod stamp;
 pub mod terrain;
 pub mod tunnel;
@@ -73,6 +74,9 @@ pub struct RideView {
     pub ghost: Option<RiderState>,
     /// The running workout's panel (spec §2.8), if any.
     pub workout: Option<ocw_sim::workout::WorkoutPanel>,
+    /// The sky at the local rider (spec §14 Phase 9): local time, sun and
+    /// light; `None` until the server's clock is known (fixed daylight).
+    pub sky: Option<sky::SkyView>,
 }
 
 impl RideView {
@@ -94,6 +98,7 @@ impl RideView {
             event: None,
             ghost: None,
             workout: None,
+            sky: None,
         }
     }
 
@@ -215,7 +220,8 @@ impl Plugin for OcwRenderPlugins {
             console::ConsolePlugin,
             workout::WorkoutPanelPlugin,
             voice::VoiceHudPlugin,
-        ));
+        ))
+        .add_plugins(sky::SkyPlugin);
     }
 }
 
