@@ -1217,9 +1217,26 @@ On top of §4.3 (sampling, median and Gaussian filters, class gradient limits al
 
 Reference photos (Commons links only): `art/reference/bridges.md`.
 
-#### 4.8.7 Results
+#### 4.8.7 Results (2026-11-13)
 
-MEASUREMENTS
+`scripts/world-clean-compare.sh li|bf` builds each package with `--no-clean` and with the cleaning and lints both; the high-resolution DEMs of v2.35 (swissALTI3D, DGM1) are used. Share of the road length (untagged roads):
+
+| Check | Liechtenstein before | after | Black Forest south before | after |
+|---|---|---|---|---|
+| floating > 0.8 m | 32.2 % | 7.2 % | 26.2 % | 5.3 % |
+| floating > 3 m | 5.2 % | 0.7 % | 3.2 % | 0.6 % |
+| buried | 2 m | 2 m | 326 m | 6 m |
+| vertical kinks (> 8 points) | 774 | 6 | 11,678 | 40 |
+| junction surface steps | 1,045 | 792 | 11,957 | 8,880 |
+| near-miss ends / duplicate nodes / spikes | 3 / 6 / 1 | 0 / 0 / 0 | 30 / 40 / 10 | 6 / 4 / 0 |
+| rivers uphill (length) | 6.5 km | 0 | 31.5 km | 70 m |
+| tilted lakes | 41 | 0 | 286 | 4 |
+| land-use slivers / gaps | 3,301 / 1,588 | 16 / 5 | 177,971 / 24,957 | 1,083 / 264 |
+| bridges built (`BRDG`) | – | 274 (2 over water, 6 over gaps, 15 in outlines detected) | – | 2,826 (47 over water, 82 over gaps, 453 in outlines detected; 9 covered) |
+
+With SRTM (before v2.35) the same passes took Liechtenstein from 33.9 % to 3.9 % and the Black Forest from 28.0 % to 4.1 % floating road length. The rest is mostly where the 10 m grid cannot follow (`lower_road_nearby` 2.9 %, hairpins and steep river banks with the sharp DTM): there the road's edge face now reaches the ground as a retaining wall. Build time of the Black Forest package: 228 s, settling 26 s.
+
+**Open:** no structure of the two packages is an arch yet (OSM rarely tags `bridge:material=stone`); junction steps between a wide road drawn flat across and a steep side road remain (a junction surface would fix them, §3.2); `water.river_step` counts natural drops of steep mountain rivers; the grade limits of §4.3 are exceeded by 76 short stretches already before the cleaning (with the DTM).
 
 ---
 
