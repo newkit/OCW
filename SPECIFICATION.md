@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.76 – November 2026
+Version 2.77 – November 2026
 
 | Version | Change |
 |---|---|
@@ -65,6 +65,7 @@ Version 2.76 – November 2026
 | 2.44 | Phase 8 decisions: no commercial release, 8A stays (Q2); orthophoto corridor size acceptable (Q4); seasonal variants (Q5); own photos postponed (Q6); Mapillary CC BY-SA, reference by eye only (Q7); 3D buildings: swissBUILDINGS3D 3.0 (Opendata BY) to confirm, LGL LoD2 probably not open, ask LGL (Q8); all texture areas in parallel (Q10) |
 | 2.45 | Licensing (§13): no licence change for now – the code stays MIT / Apache-2.0 (a switch to CC BY-SA was considered and declined) |
 | 2.46 | Phase 8 T1 / T2 (§4.6, §8.1, §13, §14 Phase 8): material library of 21 CC0 materials (ambientCG, Poly Haven) – ground, roads, houses, volcanic ground for Tenerife – not in git but pinned by URL + SHA-256 in `assets/materials.toml`, fetched and converted to KTX2 (BC3 / BC5, 1024², mipmapped) by `scripts/fetch-materials.sh` into the git-ignored `assets/materials/` and shipped beside the binary (AppImage, macOS bundle, Windows zip, test deployment); licence rule of Phase 8A shared by the model and material validators; terrain drawn with the materials blended by the splat map (weights at cell corners, noise warp, height blend, rock and triplanar on slopes, macro scale, fade to the colour map in the materials' mean colours), roads by OSM `surface` (new package section `RSRF`) with category fallback; regional material sets by the package's time zone (`[[region]]` in the manifest: the volcanic set of the Canary Islands with lava, ash / cinder, black sand and pine needles); regional tint hook neutral; reference boards `art/reference/` |
+| 2.77 | Decision from the build dashboard (2026-11-14): Phase 10 Q4 – the browser app and its world packages are hosted on our own servers for now |
 | 2.76 | Decision from the build dashboard (2026-11-14): Phase 10 Q3 – the browser app starts now, in parallel with Phases 8 / 9 (B1 first) |
 | 2.75 | Decision from the build dashboard (2026-11-14): Phase 10 Q2 – the sensor bridge (10D.2) will be built |
 | 2.74 | Decision from the build dashboard (2026-11-14): Phase 10 Q1 – Chromium (desktop + Android) for trainer rides in the browser, Safari / iOS / Firefox with virtual power and the bridge |
@@ -2796,7 +2797,7 @@ Attribution of the provider used appears on the credits screen and in the weathe
 - **Q1 – Target browsers: decided (2026-11-14, dashboard: "that's fine"):** Chromium-based browsers (desktop + Android) for riding with a trainer (Web Bluetooth); Safari / iOS / Firefox ride with virtual power and the sensor bridge.
 - **Q2 – Sensor bridge: decided (2026-11-14, dashboard):** **yes, build it** (10D.2) – the way to ride with a trainer on iPad / iPhone (and in browsers without Web Bluetooth) before a native iOS app exists.
 - **Q3 – Priority vs. other phases: decided (2026-11-14, dashboard):** **start now** – the browser app is built in parallel with Phases 8 / 9, beginning with B1 (wasm build on WebGPU with the test route, the local server in the browser and virtual power).
-- **Q4 – Hosting:** where (own servers, a CDN provider)? World packages are large (Black Forest 260 MB), so CDN traffic costs money.
+- **Q4 – Hosting: decided (2026-11-14, dashboard):** **own servers for now** (no CDN provider); world packages are served from our machines with HTTP caching and range requests, a CDN can come later if traffic needs it.
 - **Q5 – Anonymous access:** may people ride without an account (single-player demo), or is login required?
 - **Q6 – Same app or a lighter "web edition"?** Full parity, or a reduced feature set (smaller worlds, lower quality) for faster loading?
 
