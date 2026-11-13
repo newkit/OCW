@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.47 – November 2026
+Version 2.54 – November 2026
 
 | Version | Change |
 |---|---|
@@ -65,6 +65,8 @@ Version 2.47 – November 2026
 | 2.44 | Phase 8 decisions: no commercial release, 8A stays (Q2); orthophoto corridor size acceptable (Q4); seasonal variants (Q5); own photos postponed (Q6); Mapillary CC BY-SA, reference by eye only (Q7); 3D buildings: swissBUILDINGS3D 3.0 (Opendata BY) to confirm, LGL LoD2 probably not open, ask LGL (Q8); all texture areas in parallel (Q10) |
 | 2.45 | Licensing (§13): no licence change for now – the code stays MIT / Apache-2.0 (a switch to CC BY-SA was considered and declined) |
 | 2.46 | Phase 8 T1 / T2 (§4.6, §8.1, §13, §14 Phase 8): material library of 21 CC0 materials (ambientCG, Poly Haven) – ground, roads, houses, volcanic ground for Tenerife – not in git but pinned by URL + SHA-256 in `assets/materials.toml`, fetched and converted to KTX2 (BC3 / BC5, 1024², mipmapped) by `scripts/fetch-materials.sh` into the git-ignored `assets/materials/` and shipped beside the binary (AppImage, macOS bundle, Windows zip, test deployment); licence rule of Phase 8A shared by the model and material validators; terrain drawn with the materials blended by the splat map (weights at cell corners, noise warp, height blend, rock and triplanar on slopes, macro scale, fade to the colour map in the materials' mean colours), roads by OSM `surface` (new package section `RSRF`) with category fallback; regional material sets by the package's time zone (`[[region]]` in the manifest: the volcanic set of the Canary Islands with lava, ash / cinder, black sand and pine needles); regional tint hook neutral; reference boards `art/reference/` |
+| 2.54 | Input model for the whole UI (§3.2.2, decided 2026-11-13: every screen and menu controllable by gamepad, mouse and touch where the device has one, keyboard as before): abstract actions per device, last-used device with matching glyphs in a hint bar, focus frame vs. pointer, touch mode (hit targets ≥ 9 mm / 48 px, gesture recogniser for tap / long press / swipe / pinch / two-finger pan, Windows emulated-mouse filter), orbit / zoom / pan in 3D scenes per device, a touch overlay in a ride (menu, autodrive, U-turn, lean buttons, tappable junction exits and HUD elements); platform facts of Bevy 0.20 / winit 0.30 (no touchscreens on macOS, pinch gestures only from the macOS trackpad); M10 and per-device reachability tests on every page (§3.2.1, §14 Phase 4, 10, 11, 13) |
+| 2.53 | Phase 4 refined (§14 Phase 4, 4A–4L; §2.5, §2.6, §6.4, §8.2, §9): the Workshop opens a 3D **workshop scene** (decided 2026-11-13: selected bike on a repair stand in front, owned bikes on the wall chosen with left / right, parts selected on the bike, hearts, 1 heart = 1 EUR, prices rounded up), part hotspots and picker with live preview, compare, buy / equip / sell, the character editor as the changing corner; **hearts** earned by riding only (proposal: 1 ♥ per 10 kJ, climbing, workouts, events; no real money – no commercial release), server-side ledger and inventory; generic unbranded parts priced from researched real RRPs (median per tier, ceil) in `assets/parts.toml` / `parts-sources.toml`, refreshed by hand; parts within capped bands of the frame's physics profile, new race mode *Profile*; Phase 12 repairs in hearts only with persistent damage; milestones W1–W6, open questions Q1–Q5 |
 | 2.52 | Phase 13 decisions (§14 Phase 13): other riders see the unicorn (Q1); leaving god mode lands the rider on the nearest road / route point below the unicorn, Shift + G flies back (Q2); the unicorn has large feathered wings like a pegasus (Q5) |
 | 2.51 | Phase 13 planned: god mode (§14 Phase 13): hotkey G (console `god`), the rider turns into a flying unicorn; flight controls – mouse look, cursor keys move in the horizontal plane, + / − altitude, speed grows with height (20–400 m/s, Shift boost, Ctrl precise, wheel scale), terrain clearance; return to the road on leaving (Shift + G lands in free ride); inspection HUD and crosshair (road name, OSM id, surface, coordinates), pins; server state `God` (out of physics, standings and recording), client-driven `GodPose`, host access rules, not in running events; milestones G1–G5, open questions Q1–Q6 |
 | 2.50 | Phase 12 planned: collisions, crashes and damage (§14 Phase 12): global switches `ride.collisions` and `ride.damage` (on / off; host or organiser decides in shared sessions and events), rider and object footprints in the path frame, soft bumps (slowed, pushed apart, wobble) and hard hits (crash: fall, down, remount; wheel touches and head-on hits), fallen bikes as obstacles, autodrive and bots avoid collisions (overtake on the region's side or hold back), manual riders must avoid them themselves, rider injury and bike damage meters with effects, damage indicator in the HUD; milestones K1–K7, open questions Q1–Q7 |
@@ -385,8 +387,8 @@ Features:
 - Saddle.
 - Attachments / accessories.
 - Custom paint schemes.
-- Component unlocking.
-- 3D preview.
+- Component unlocking: parts are bought with **hearts** earned by riding (1 heart = 1 EUR of the real price, rounded up; §14 Phase 4, 4E).
+- 3D preview: the **workshop scene** – the selected bike on a repair stand, the owned bikes on the wall, parts chosen on the bike itself (§14 Phase 4, 4A–4D).
 
 The bicycle configuration consists of reusable components. Each component has its own properties, such as weight, aerodynamics, rolling resistance, geometry and visual appearance.
 
@@ -399,6 +401,7 @@ Visual properties are separated from physical properties:
 - Unlocks and paint schemes are **always cosmetic**.
 - The client never sends physics parameters (v2.7): it sends only the rider's weight (`Hello.rider_weight_kg`, §3.2.1) and the id of the bike's physics profile (`Hello.bike_profile`); the server takes drag, rolling resistance, bike mass and drivetrain efficiency from its own copy of the curated table (an unknown or absent id is the default profile).
 - Differences between profiles are capped (e.g. at most ±3 % speed at 250 W on flat road).
+- **Parts (planned v2.53, §14 Phase 4, 4G):** the frameset decides the profile; other parts carry real weights and a few curated *classes* (rolling, aero, efficiency) that move the build only within a capped band of the frame's profile (best build at most +1.5 % on the flat); the client sends part ids, never values. Proposed race mode *Profile*: the frame's profile counts, parts are cosmetic.
 
 **Implemented (Phase 4 groundwork):**
 
@@ -434,7 +437,8 @@ Visual properties are separated from physical properties:
 - *Bike type is the profile's.* The model follows only from `ProfileId`; the manifest names the profile a bike shows and the validator rejects physics values (`mass`, `cda`, `crr`, …) in an asset entry: cosmetic assets never change physics.
 - *Bots* ride the profiles in turn (road, TT, gravel, MTB, aero, climbing) with palette colours and patterns (never the local rider's #FF1472 jersey).
 - **Race modes:**
-  - *Open* – the chosen profile applies.
+  - *Open* – the chosen profile applies (with parts: within the build band, §14 Phase 4, 4G).
+  - *Profile* (proposed, v2.53) – the frame's profile applies, parts are cosmetic; proposed default for races and group rides.
   - *Equal* – standardized physics for everyone; chosen equipment is shown only visually.
 
 ### 2.6 Character Editor
@@ -474,6 +478,8 @@ Planned animations:
 - Victory animation.
 
 Bicycle and character must be correctly attached to each other in the 3D presentation.
+
+The character editor is the **changing corner** of the workshop scene (mirror, bench, locker; §14 Phase 4, 4C). Body, skin, face and hair are always free; kit may cost hearts (proposal, Phase 4 Q4) and is always cosmetic.
 
 **Implemented (Phase 4: rider model and riding animation):**
 
@@ -645,7 +651,7 @@ Tile builds take up to 23 ms on worker threads; uploads cost at most 4.6 ms on t
 - **Bevy UI** for the in-ride HUD (including the junction overlay, §2.2.1) and the main menus. The user interface is connected as directly as possible to the engine state.
 - **egui** (`bevy_egui`) for the editor parameter panels, the in-game console (§2.9) and development/diagnostic interfaces, to keep development fast. The editors are reviewed after Phase 4.
 
-**Input devices (v1.9):** keyboard and gamepads (Bevy's gamepad support, gilrs: Xbox, PlayStation, Switch Pro and generic pads, hot-plugged). Keyboard: ↑ adds power (25 W per press, more while held, on top of any device), ↓ stops (power 0 and brake), ← / → steer (§5.2.1) or choose exits (§2.2.1), A autodrive, W wild mode, U U-turn, Q / E exits, PgUp / PgDn ±10 W, F11 next screen, C camera reset, R restart (v2.0), V video (v2.0). Gamepad: left stick left / right steers (sets the lean directly, centred = upright); ↑ = D-pad up, left stick up or right trigger, ↓ = D-pad down, left stick down or left trigger (triggers and stick read as analog values, v2.0); South = autodrive, West = wild, D-pad left / right = exits, East = U-turn (v2.0). Several pads: the largest stick deflection steers.
+**Input devices (v1.9):** keyboard and gamepads (Bevy's gamepad support, gilrs: Xbox, PlayStation, Switch Pro and generic pads, hot-plugged). Keyboard: ↑ adds power (25 W per press, more while held, on top of any device), ↓ stops (power 0 and brake), ← / → steer (§5.2.1) or choose exits (§2.2.1), A autodrive, W wild mode, U U-turn, Q / E exits, PgUp / PgDn ±10 W, F11 next screen, C camera reset, R restart (v2.0), V video (v2.0). Gamepad: left stick left / right steers (sets the lean directly, centred = upright); ↑ = D-pad up, left stick up or right trigger, ↓ = D-pad down, left stick down or left trigger (triggers and stick read as analog values, v2.0); South = autodrive, West = wild, D-pad left / right = exits, East = U-turn (v2.0). Several pads: the largest stick deflection steers. **Whole UI (decided 2026-11-13, v2.54):** every screen and menu is also controllable with mouse, gamepad and – where the device has one – a touchscreen; the input model, touch in a ride and the platform facts are in §3.2.2.
 
 **Restart and video (v2.0):** R (console `reset`) starts the whole app again as at program start, with the same command line: the app exits normally (ride saved, devices shut down) and replaces its process with a fresh one (Unix `exec`, same process id for the kiosk). V (console `video`) records the window: a screenshot is requested on every 1/25 s tick (several in flight, since the GPU readback takes a few frames), each image is placed at the video frame of its request time, and the frames are streamed as raw pixels into `ffmpeg` (H.264 MP4, CRF 18 with the `veryfast` preset since v2.30 – before `ultrafast` CRF 20 –, at most 2560 px wide, in the user's video directory, with the game sound since v2.30, §3.3); a tick without an image repeats the previous one to keep real time, the game never waits for the encoder (an image it cannot take is dropped and counted), a screenshot requested by the user or a script in the same frame takes precedence, and a running recording is finished on exit. V again stops it (the key is ignored while the console is open). While recording, the HUD shows a small blinking red dot with "REC m:ss" (recording length) at the top right; after stopping, "Video saved: <file>" (or the error) for 4 s.
 
@@ -692,14 +698,14 @@ One menu, reachable during a ride and (later) as the start screen, replaces comm
 
 **Opening and pausing**
 
-| | Keyboard / mouse | Gamepad |
-|---|---|---|
-| Open / close | Esc (closes the console first if it is open) | Start / Menu (☰, Options) |
-| Move focus | ↑ ↓ ← →, Tab / Shift+Tab, mouse hover | D-pad, left stick (with repeat) |
-| Confirm | Enter, Space, click | South (A / ✕) |
-| Back (one page up; closes at the top) | Esc, Backspace, right click | East (B / ○) |
-| Change a value (slider, choice) | ← / → on the focused row, mouse drag / wheel | D-pad / stick left / right, shoulder buttons for big steps |
-| Switch tab | Q / E, PgUp / PgDn | LB / RB (L1 / R1) |
+| | Keyboard / mouse | Gamepad | Touch (v2.54, §3.2.2) |
+|---|---|---|---|
+| Open / close | Esc (closes the console first if it is open) | Start / Menu (☰, Options) | tap ☰ (top left) |
+| Move focus | ↑ ↓ ← →, Tab / Shift+Tab, mouse hover | D-pad, left stick (with repeat) | – (taps act directly) |
+| Confirm | Enter, Space, click | South (A / ✕) | tap |
+| Back (one page up; closes at the top) | Esc, Backspace, right click | East (B / ○) | on-screen Back button, swipe in from the left |
+| Change a value (slider, choice) | ← / → on the focused row, mouse drag / wheel | D-pad / stick left / right, shoulder buttons for big steps | tap ‹ ›, drag the slider |
+| Switch tab | Q / E, PgUp / PgDn | LB / RB (L1 / R1) | tap the tab, swipe on the tab bar |
 
 - While the menu is open, ride inputs (↑ power, ← → steering, A, W, U, R, V, …) are **not** passed to the ride; one input-context resource (`Ride`, `Menu`, `Console`) replaces today's per-system `console.is_open()` checks. The power from the trainer keeps flowing.
 - **The ride never pauses (decided, v2.2):** the menu is an overlay over the running ride, in single-player exactly as in multiplayer (in a shared ride the others keep riding, so one rider's menu cannot stop time). The trainer is left as it is (SIM keeps following the road, ERG keeps its target), the ride time and the FIT recording continue. While the menu is open, steering falls back to autodrive and junctions take the default exit (§2.2.1), so the rider stays on the road; the previous steering mode is restored on closing. Pages that would end the ride (Ride, Restart) ask for confirmation.
@@ -719,8 +725,8 @@ One menu, reachable during a ride and (later) as the start screen, replaces comm
 | | Routes | The routes of the world (as Navi → Routes) | now |
 | | Time | The time machine (moved here from Navi, v2.39; §14 Phase 9, 9I) | now |
 | | Weather | The weather now and the weather machine; until Phase 9 S4 / S5: "clear", the machine disabled | hook now; S4 / S5 |
-| **Workshop** | Bike | Bike type, frame, wheels, tyres, handlebars, saddle, accessories, paint; 3D preview; the physics profile shown separately ("road – aero", caps per §2.5), cosmetic choices never change it | Phase 4 |
-| | Character | Body, skin, face, hair, clothing, shoes, helmet, glasses, gloves (§2.6); 3D preview with pedalling animation | Phase 4 |
+| **Workshop** | Bike | Bike type, frame, wheels, tyres, handlebars, saddle, accessories, paint; 3D preview; the physics profile shown separately ("road – aero", caps per §2.5), cosmetic choices never change it. Planned (v2.53): opens the **workshop scene** instead of a page – bike on the repair stand, owned bikes on the wall (← / → to choose), part hotspots, part picker with hearts prices (§14 Phase 4, 4A–4E) | Phase 4 |
+| | Character | Body, skin, face, hair, clothing, shoes, helmet, glasses, gloves (§2.6); 3D preview with pedalling animation. Planned: the changing corner of the workshop scene (4C) | Phase 4 |
 | **Navi** | Routes | Route library: the package routes and the user's own routes with distance, climbing, elevation profile, region; ride, rename, delete | now (list) |
 | | GPX import | Pick a GPX file, region check, map matching with the problem sections highlighted, accept / cancel (§2.7); offers the missing package's download (after the ride, §4.2) | Phase 3 (with GPX import) |
 | | Rides and export | Saved rides (`rides/*.fit`): date, route, distance, time, Strava state; export as FIT / GPX, edit title and description, delete | now (list, FIT); GPX export with §2.8 |
@@ -737,7 +743,7 @@ One menu, reachable during a ride and (later) as the start screen, replaces comm
 
 - **Ten-foot UI:** the app is used on a trainer, often from 2–3 m away and with a gamepad. Text at least 3 % of the window height (scales with it), high contrast, a clearly visible focus frame, at most about seven rows per page, no hover-only functions, no text input where a choice works (names and titles get an on-screen keyboard on the gamepad).
 - **Every page fits the window (decided):** all menu sizes are in % of the window height, so a page that fits a 16:9 window fits every 16:9 size (1280 × 720 and up). The panel is 110 % of the window height wide (at most 94 % of its width), an empty status or description line takes no room, and the description texts are short enough that every page – sub pages with the full seven items of a paged list too – fits into 94 % of the height with all its text (unit test `every_menu_page_fits_a_16_9_window_with_its_text`; `ocw-render::menu::page_height_vh` adds up the layout, wrapping text as the monospaced UI font does). In a narrower window a page that would still be too tall drops description paragraphs from the end, never items. Before, the Ride page (seven items, two paragraphs) ran off the bottom at 1280 × 720 and cut off *Back*.
-- **Focus navigation** works identically for keyboard and gamepad (spatial navigation between focusable items, a page stack for Back); the mouse is optional. Every item is reachable without a mouse, in the kiosk's borderless fullscreen (§11.2).
+- **Focus navigation** works identically for keyboard and gamepad (spatial navigation between focusable items, a page stack for Back); the mouse is optional. Mouse and touch reach every item too (v2.54, §3.2.2: reachability tested per device on every page; touch-mode hit targets ≥ 9 mm / 48 px). Every item is reachable without a mouse, in the kiosk's borderless fullscreen (§11.2).
 - **Values change in place** (slider, ← / → choice) and apply immediately; there is no "Apply" button. Settings are saved when the menu closes. Device scans and Strava actions show their progress inline.
 - **Rendering: Bevy UI** for the whole menu, as for the HUD (§3.2): it shares the HUD's theme and scaling, renders in the same window and screenshot / capture paths, and Bevy's input-focus and directional-navigation support fits gamepad control; egui's gamepad navigation is weak and it looks like a tool, not a game. egui stays for the console, dev panels and, in Phase 4, the advanced parameter panels of the editors (§3.2); the Workshop's main selection is Bevy UI.
 
@@ -801,10 +807,11 @@ The user asked for a *World* entry where the rider chooses the world they ride i
 | M3 | Ride → World mode picker (installed packages, free ride / package routes / test routes, bots) as an in-app switch (done: see *Implemented (M3)*; bots per ride still open); Navi → Routes list, Rides list with Strava state and FIT export, Strava sync page | 3 (end) | M | package discovery on a fixture directory, `[ride]` choice → command line of the restarted process, ride list from fixture FIT + sidecar + `strava-sync.toml` |
 | M4 | Navi → GPX import with map-matching report; GPX export of rides | 3 (with §2.7) | M | GPX fixtures through import → route; problem sections listed; GPX export round-trip |
 | M5 | Game audio and Settings → Audio (mix, output device) (done: see §3.3 *Implemented (M5)*) | with game audio (see §3.3) | M | bus volume maths (master × bus), device selection fallback to the default device when the saved one is missing, settings round-trip |
-| M6 | Workshop: bike and character pages with 3D preview | 4 | L | configuration model and persistence (§14 Phase 4); cosmetic choices never change the physics profile; menu items → configuration |
+| M6 | Workshop: bike and character pages with 3D preview; planned v2.53: the workshop scene, parts and hearts (§14 Phase 4, 4A–4K, milestones W1–W6) | 4 | L | configuration model and persistence (§14 Phase 4); cosmetic choices never change the physics profile; menu items → configuration; 4J |
 | M7 | Accounts / profile sync, Events (sessions, join), backend Strava, route sharing; start-screen dashboard (§2.1) | 5 (calendar 7) | L | API client against a mocked backend, disabled-page states offline, event list and join flow |
 | M8 | Voice settings (microphone device, microphone mute, speaker mute, voice volume, per-participant mute, spatial voice on / off) | 6 | S | device selection and mute state (§14 Phase 6) |
-| M9 | Rebinding of keys and buttons, accessibility (text size, colour-blind safe HUD) | 7 | M | binding conflicts, persistence, defaults restore |
+| M9 | Rebinding of keys and buttons, accessibility (text size, colour-blind safe HUD, Confirm / Back swap per pad) | 7 | M | binding conflicts, persistence, defaults restore |
+| M10 | Input model for the whole UI (§3.2.2, v2.54): action mapper for keyboard, mouse, gamepad and touch, `ActiveInput` and device glyphs in a hint bar, touch mode (hit targets, gesture recogniser, emulated-mouse filter), ride touch overlay | 4 (with M6) | M | §3.2.2 tests: mapper, gestures, reachability of every page per device, hit-target sizes, overlay |
 
 **M8 implemented (Phase 6, first increment):** Settings → Voice (`Page::Voice`, rows from `apps/desktop/src/voice/page.rs`): *Microphone* and *Speaker (voices)* toggles (`voice.mute-mic`, `voice.mute-speaker`), *Voice volume (%)*, *Participants (n)* (a sub page: each rider with "heard 40 %", "too far away", "microphone off" or "muted by you"; Confirm = `voice.mute IDENTITY`), *Devices and options* (a sub page: microphone and speaker – ← / → step through *default* and the present devices, a saved device that is missing shows "(not found: default)" –, *Spatial voice*, *Voices heard at most*) and *Voice chat* (on / off with the status). Settings: `voice.enabled`, `voice.mic_muted`, `voice.speaker_muted`, `voice.volume` (0–200 %), `voice.spatial`, `voice.max_voices` (1–20), `voice.input`, `voice.output` (device names; a new registry kind *text*). The Settings top page now has seven items (Riders, Controls, Trainer, Display, Strava, Voice, Back): the ten-foot maximum; Settings → Audio (M5) needs a slot (e.g. Strava, which is also under Navi, could leave Settings).
 
@@ -820,6 +827,79 @@ The user asked for a *World* entry where the rider chooses the world they ride i
 **Open questions**
 
 Decided (v2.2): no pause (trainer unchanged, ride time and recording continue); Esc never quits; rider weight affects physics, riders managed in Settings and chosen in the Workshop. Decided: local events before the backend (§2.3.1) - the Ride page starts a race, a group ride or a time trial on the current route (console command lines `event race --bots 5`, `event group --watts 150`, `event tt`, `event cancel`; the starts ask first, then the menu closes for the countdown). Still open: switching rides by restart vs. in-app session switch (M3).
+
+#### 3.2.2 Input Model: Keyboard, Mouse, Gamepad and Touch (planning, 2026-11-13, v2.54)
+
+**Rule (decided by the user, 2026-11-13):** the **entire UI** – every menu page, the workshop scene (§14 Phase 4, 4A), the character corner, dialogs, the console's menu-side functions, the HUD's interactive elements and later the start screen – is controllable with **gamepad and mouse, and touch where the device has a touchscreen**; the keyboard keeps working everywhere (§3.2.1). No function may need one particular device (the console's text entry is the one exception: it needs a keyboard, physical or on-screen). The rest of §3.2.2 is a proposal.
+
+**Platform facts (Bevy 0.20.1 / winit 0.30.13, as read in their sources 2026-11-13):**
+
+| Input | Linux X11 | Linux Wayland | Windows | macOS | Notes |
+|---|---|---|---|---|---|
+| Keyboard, mouse, wheel | yes | yes | yes | yes | trackpad two-finger scroll arrives as `MouseWheel` (pixel deltas) |
+| Gamepad (gilrs 0.11) | yes (evdev) | yes | yes (XInput / WGI) | yes | hot-plug; `Gamepad::vendor_id()` / `product_id()` tell Xbox / PlayStation / Switch / generic apart for the glyphs |
+| Touchscreen (`TouchInput`, `Touches`) | yes (XInput 2.2 touch; winit drops the emulated pointer events) | yes (`wl_touch`) | yes (winit does **not** filter the mouse events Windows synthesises from touch: we must) | **no touchscreens** (winit: touch unsupported) | multi-touch with ids; no built-in pinch on Linux / Windows – our recogniser computes it from the touches |
+| Gestures (`PinchGesture`, `RotationGesture`, `DoubleTapGesture`, `PanGesture`) | – | – | – | pinch, rotation, double tap from the trackpad | `PanGesture` only on iOS; on macOS pan comes as scroll |
+| Picking (`bevy_picking`) | mouse and touch are both *pointers* (`PointerId::Mouse`, `PointerId::Touch(id)`): UI and mesh picking (hotspots) work for both | | | | the menu rows already use `PointerClick` / `PointerOver` (`ocw-render::menu`), so taps reach them today (untested) |
+| Focus (`bevy_input_focus`) | `InputFocus`, tab navigation, directional navigation (`AutoDirectionalNavigation` in `bevy_ui`) | | | | usable for the Bevy UI pages; the menu model keeps its own focus (§3.2.1) and may adopt it |
+
+Devices that have all of them: Windows tablets and touch laptops, Linux touch laptops, the Steam Deck (touchscreen + gamepad, Linux), a kiosk with a touch monitor. Browser (Phase 10): touch, pointer and Gamepad API all available; phones / tablets are touch-first. VR (Phase 11): the controller ray is one more pointer.
+
+**Abstract actions (one layer for all devices):** today's menu actions (`Up`, `Down`, `Left`, `Right`, `Confirm`, `Back`, `TabNext`, `TabPrev`, §3.2.1) are extended by `Secondary` (context: compare, details), `Tertiary` (a page's extra action: buy, sort), `Orbit(Δ)`, `Zoom(Δ)`, `Pan(Δ)`, `Point(position)` and `Activate(position)` (click / tap at a point) and `Scroll(Δ)`. A pure mapper in `apps/desktop/src/input/` (Bevy-free, with the existing hold-repeat of `menu/controls.rs`) turns device events into actions; pages and scenes see only actions, so every page and scene can be tested once with actions and once per device.
+
+| Action | Keyboard | Mouse / trackpad | Gamepad | Touch |
+|---|---|---|---|---|
+| Move focus | arrows, Tab / Shift+Tab | hover (moves focus only while the pointer moves, §3.2.1) | D-pad, left stick (repeat) | – (no focus frame; tap acts directly) |
+| Confirm | Enter, Space | left click | South (A / ✕) | tap |
+| Back | Esc, Backspace | right click, mouse "back" button | East (B / ○) | the on-screen **Back** button (top left, always shown in touch mode), swipe from the left edge inward (not the OS edge: starts 16 px in) |
+| Change a value | ← / → | drag the slider, wheel over it | D-pad / stick ← / →, LB / RB big steps | drag the slider, tap the ‹ › arrows |
+| Switch tab / category | Q / E, PgUp / PgDn | click the tab | LB / RB | tap the tab, swipe horizontally on the tab bar |
+| Secondary (compare, details) | C | middle click, or the card's button | North (Y / △) | long press (500 ms) |
+| Tertiary (buy, sort…) | X | the card's button | West (X / □) | the card's button |
+| Scroll a list | arrows, PgUp / PgDn | wheel, drag the scroll bar | right stick ↕, focus moves | one-finger drag (with inertia) |
+| Orbit (3D scenes) | I / J / K / L, or Shift + arrows | left drag (in empty space), trackpad drag | right stick | one-finger drag |
+| Zoom | + / − | wheel, trackpad pinch (macOS gesture) or two-finger scroll | RT zoom in, LT zoom out (analog) | pinch |
+| Pan | Ctrl + arrows | middle drag, Shift + left drag | right stick click + right stick | two-finger drag |
+| Reset view / focus | Home | double click | right stick click (R3) | double tap |
+| Open / close menu | Esc | the ☰ button (top left in a ride, shown after a mouse move) | Start / Menu | tap ☰ |
+
+**Last-used device and hints:** a resource `ActiveInput { Keyboard, Mouse, Gamepad(kind), Touch }` follows the device of the last meaningful input (a key, a click, a stick beyond the dead zone, a touch; mouse motion of less than 4 px is ignored, so a nudged table does not flip it). The **hint bar** at the bottom of every page and scene ("Ⓐ Select  Ⓑ Back  Ⓨ Compare  LB/RB Category") shows the glyphs of that device: keycaps, mouse icons, Xbox letters (also for generic pads), PlayStation shapes, Switch letters; touch shows short words ("Tap to select · Long press: compare"). The glyphs are our own drawings (Phase 8 Q11: no logos; button letters and shapes are not logos). **Confirm is the bottom face button on every pad** (positional, as today: Bevy's `South`), so on a Switch pad the hint shows "B" for Confirm – one rule for all pads; a per-pad swap is a later accessibility setting (M9).
+
+**Focus frame vs. pointer:** with keyboard or gamepad active the focus frame is shown (ten-foot rule, §3.2.1); with mouse or touch active it is hidden and hover / press states show instead; the focus is kept and returns on the next key or button. Pointer and focus never fight: a click or tap also moves the focus there.
+
+**Touch mode** (when `ActiveInput` is `Touch`, or the setting `controls.touch on|off|auto`, default `auto`):
+
+- **Hit targets:** at least **9 mm** and at least **48 logical px** (whichever is larger; 44 px is the bare minimum) high and wide for every interactive element, 2 mm (≥ 8 px) apart. The ten-foot layout (text ≥ 3 % of the window height, rows of ≥ 6 %) already gives 43 px rows at 1280 × 720; in touch mode rows grow to the minimum where the window is smaller, and pages page earlier (§3.2.1 paging) rather than shrink. Millimetres from the window's scale factor (1 logical px ≈ 0.19 mm at scale 1 on a 96 dpi panel; winit gives no physical screen size, so a setting `display.touch_scale` corrects odd panels).
+- **Gesture recogniser** (`apps/desktop/src/input/gestures.rs`, pure, fed with `TouchInput` events and their times): tap (< 10 px movement, < 300 ms), double tap (< 300 ms apart, < 20 px), long press (500 ms without moving), drag (beyond 10 px), swipe (a drag faster than 0.5 px/ms, released), pinch (distance of two touches: zoom factor), two-finger drag (centroid: pan), two-finger tap (= Back in 3D scenes). A third touch cancels. On macOS the trackpad's `PinchGesture` / `RotationGesture` / `DoubleTapGesture` map onto the same actions.
+- **Emulated mouse events:** Windows sends a synthesised mouse event for the primary touch; winit 0.30 passes it on. The mapper ignores mouse buttons and motion within **500 ms** of a touch event at the same place (X11 already filters them in winit), so one tap is never also a click. (To check on a real Windows touchscreen.)
+- **Text:** text fields (names, titles) open the OS on-screen keyboard where the platform offers one through IME (Windows touch keyboard, GNOME / KDE on Wayland), else our own on-screen keyboard (the one planned for the gamepad, §3.2.1).
+- **System gestures:** the OS edge swipes (Windows, GNOME, KDE) are left to the OS; our gestures start at least 16 px from the window edge.
+
+**Mouse:** everything that has a focus has a pointer equivalent (no hover-only function, §3.2.1); right click = Back; the wheel scrolls lists and zooms 3D scenes; in a ride a mouse move shows the ☰ menu button and the clickable HUD elements for 3 s.
+
+**Gamepad:** the full menu and every scene are reachable (D-pad / left stick focus, South / East / North / West, LB / RB, LT / RT analog, right stick for scenes and long lists, R3 reset, Start menu, Select = the voice mute of §2.4 in a ride); several pads: any pad drives the UI (the ride's steering rule stays: the largest deflection steers).
+
+**During a ride (touch proposal):** riding is driven by the trainer; touch is for the HUD and the camera. A **touch overlay** (shown on the first touch, fades after 8 s without one; `controls.touch_overlay auto|on|off`):
+
+- ☰ menu (top left), **autodrive** toggle, **U-turn** (asks with a second tap, as the key does not), **lean ‹ ›** buttons at the lower left and right edges (held = lean, as the ← / → keys; only shown when autodrive is off), and at a junction the **exit arrows** of the junction overlay (§2.2.1) become tap targets (tap = choose that exit).
+- **Camera:** one-finger drag on the 3D view orbits (as the mouse), pinch changes the chase distance, double tap = camera reset (C), two-finger tap cycles the camera mode.
+- **Tap HUD elements:** the voice indicator (mute the microphone / speaker, §2.4), the mini elevation profile (zoom 1.5 km ↔ 5 km), the bike computer (cycle its fields), the event panel (expand the standings), the damage widget (Phase 12: the part list), the REC dot (stop recording).
+- **Virtual power** (no trainer, §2.9): + / − buttons beside the power field.
+- The overlay is part of the HUD layer (hidden with `hud off`, drawn in captures only when shown).
+
+**Workshop and other 3D scenes** (the workshop, the world preview / map later, Phase 13's view later): orbit, zoom and pan as in the table, with limits per scene (workshop: 0.8–4 m around the stand, pitch −10° … 70°), inertia after a flick (0.3 s), and the same camera state machine whatever the device (§14 Phase 4, 4A).
+
+**Settings → Controls** gains: *Touch mode* (auto / on / off), *Touch overlay* (auto / on / off), *Pointer speed* (orbit speed, existing), *Invert orbit*, *Stick dead zone* (existing), *Gamepad glyphs* (auto / Xbox / PlayStation / Switch). Rebinding stays M9 (Phase 7).
+
+**Tests (spec §11.4: no step without tests):**
+
+- **Mapper** (pure): every row of the table above, per device, → the expected action; hold repeat; dead zones; `ActiveInput` switching (and not switching on 1–3 px mouse jitter); emulated-mouse suppression after touches (a tap is one `Activate`, never two); glyph sets per gamepad vendor id.
+- **Gesture recogniser** (pure, synthetic `TouchInput` sequences with times): tap / double tap / long press / drag / swipe thresholds, pinch factor, two-finger pan, cancellation, three-finger cancel.
+- **Reachability on every page** (headless app with `MinimalPlugins` + `ConsoleCorePlugin` + the menu and workshop models, input injected as Bevy input messages `KeyboardInput`, `MouseButtonInput` / `CursorMoved`, `TouchInput`, gamepad events): for **every page of the menu tree and every workshop / character state**, every focusable item can be reached and activated with the keyboard alone, the gamepad alone, the mouse alone (click at the item's laid-out rectangle) and touch alone (tap at its rectangle); Back works with each; no page needs a second device.
+- **Hit-target sizes:** in touch mode every interactive rectangle on every page is ≥ 48 logical px and ≥ 9 mm at 1280 × 720 and 800 × 600, scale factors 1, 1.5 and 2, with ≥ 8 px gaps (extends `every_menu_page_fits_a_16_9_window_with_its_text`).
+- **3D scenes:** orbit / zoom / pan reach the same camera states with each device; limits hold.
+- **Ride overlay:** taps on lean / autodrive / U-turn / exit arrows produce the same `ClientCore` inputs as the keys; overlay hidden with `hud off`.
+- **Screenshots:** the hint bar for each device and the touch overlay, X11 + Wayland (scene harness).
 
 ### 3.3 Audio
 
@@ -1460,6 +1540,7 @@ Goal: **detection and flagging of implausible data**. Power comes from user hard
 3. **Device trust levels:** smart trainer only < trainer + independent power meter ("dual recording") < verified setup. Organized races can require a minimum trust level.
 4. **Weight:** the biggest real-world manipulation vector. Weight changes are logged; races may lock weight some time before the start.
 5. **Consequences:** flagging, results marked "unverified", and manual review. No automatic bans in v1.
+6. **Hearts (v2.53, §14 Phase 4, 4E):** hearts are credited only by the server – the game server that saw the power stream, or the backend from an uploaded ride after these checks; never for virtual power, god mode, bots or captures; flagged rides hold their hearts until reviewed; a daily cap. Purchases are server-side transactions against the server's catalogue price. Since hearts have no money value (no purchase, no cash-out) and races can ignore parts (*Profile* / *Equal* modes), a cheated balance gains little.
 
 ### 6.5 Steering in Multiplayer
 
@@ -1541,6 +1622,8 @@ Bicycles consist of modular parts: frame, fork, handlebars, wheels, tires, saddl
 
 Each component has a unique ID, a configuration, a visual part and an optional physics profile reference (§2.5).
 
+The catalogue of parts is `assets/parts.toml` (planned v2.53: generic unbranded names, tier, price in hearts from researched real prices in `assets/parts-sources.toml`, real weight, compatible bike types, physics classes, model reference; §14 Phase 4, 4H–4I). Every bike model has a hotspot anchor `hs_<slot>` per part slot for the workshop scene (4B).
+
 ### 8.3 Characters
 
 Characters use a shared rig. Body, clothing and accessories are loaded modularly. Animations are driven by the riding state.
@@ -1571,7 +1654,7 @@ Backend modules:
 
 - Authentication Service.
 - User Service.
-- Profile Service.
+- Profile Service (incl. the workshop: hearts ledger, inventory and bikes, purchases; §14 Phase 4, 4E).
 - Device Service.
 - Multiplayer Session Service (game server).
 - Race Management.
@@ -1915,11 +1998,299 @@ Done so far for land use and buildings (§4.6): OSM land-use classes rasterised 
 - Animations.
 - Configuration and persistence.
 - Workshop pages of the in-game menu (§3.2.1, M6); game audio and audio settings at the latest here (M5, §3.3).
+- **Workshop scene, parts and hearts (planned 2026-11-13, v2.53):** 4A–4L below.
+- **Input model for the whole UI** – keyboard, mouse, gamepad, touch (v2.54, §3.2.2, M10).
 
 - **Unit tests:** component and configuration model (IDs, physics profile references, cosmetic parts never change physics), profile caps, persistence round-trip, animation state selection from cadence / speed / riding state, asset validator rules (including licence metadata).
 - **Integration tests:** load all shipped glTF assets through the validator and into a headless Bevy app.
 
 **Status (2026-11-12):** bike and character models, animations and the asset pipeline are done (§2.5, §2.6, §8.1): `crates/ocw-assets` generates six bikes and the rider as glTF, validates them (`ocw-assets validate`), poses the rider on the bike and selects the riding state; `ocw-render::riders` draws and animates them with a far LOD. Tests: mesh building (outward faces), glTF write / read round trip and the +Z file convention, the validator rules (no licence entry, unknown licence, missing file, physics keys, missing nodes, unknown paint slots), committed assets = generator output, frames from their geometry (wheelbase, saddle height), feet on the pedals and hands on the bars for every bike seated and standing all round the crank, torso lean by bike, state selection with hysteresis and dwell, cadence, crank easing, wheel spin, pose blending; integration (`crates/ocw-render/tests/shipped_assets.rs`): all shipped assets through the validator and through Bevy's own glTF loader in a headless app; the riders plugin spawns every bike with the right head wear and kit and animates standing, wheel spin and freewheeling headless. Still open in Phase 4: components (wheels, tyres, saddle …) as cosmetic choices, the 3D preview on the Workshop page, the Character page (skin, hair, body), *Equal* race mode, the remaining animations (cornering, U-turn, finish, victory, foot down).
+
+#### 4A – Workshop scene (planning, 2026-11-13, v2.53)
+
+The user asked (2026-11-13): selecting *Workshop* changes the screen to a **rendering of a bicycle workshop** showing all the rider's bikes; the selected bike stands on a **repair stand in the foreground**, the other owned bikes **hang on the wall** and are chosen with **left / right**; the bike on the stand can be selected **at its parts**, which are tuned or exchanged; parts are bought with **hearts** (4E); everything works with **gamepad, mouse and touch** (and keyboard, §3.2.2). Decided by the user: the scene, the stand, the wall, left / right, part selection on the bike, hearts, 1 heart = 1 EUR, prices rounded up to whole hearts. The rest of 4A–4L is a proposal.
+
+- **A 3D scene, not a menu page.** *Workshop* in the top menu (§3.2.1) opens the workshop scene full-screen instead of the Workshop sub page. The ride goes on under it exactly as under the menu (decided v2.2: no pause; autodrive and default exits while it is open, trainer unchanged); the status strip of the menu (power, speed, trainer) stays at the top, and a small live **ride window** (picture-in-picture, 20 % of the width, off with `workshop.ride_window off`) shows the ride. Back / Esc / B leaves the workshop to the menu's top page (Esc twice: back to the ride). Later the start screen (Phase 5 dashboard, §2.1) opens the same scene without a ride.
+- **Rendering (`ocw-render::workshop`):** its own small scene on its own `RenderLayers` layer with its own camera, spawned when the workshop opens and despawned on leaving (the world's camera stops rendering meanwhile: the GPU budget goes to the workshop; the ride window renders the world at a quarter resolution and 10 fps). The room is generated in code like the bikes (§2.5 asset decisions; `ocw-assets` generator, own work, MIT OR Apache-2.0, no brands, Q11): concrete floor, a back wall with **bike hooks**, a pegboard with tools, a workbench, a parts shelf, a window, warm interior light (one shadow-casting spot over the stand, ambient fill, no sky); the material library (Phase 8 T1, CC0) for the floor, wood and wall. Triangle budget: room 40 k, plus the bikes at their near LOD.
+- **Layout:** the **repair stand** in the foreground centre (clamp on the seat post, the bike at working height, wheels free so they can spin), the **wall** behind it with one hook per owned bike (wall-mounted by the front wheel at an angle, all at the same height, a name card under each), an **empty hook with a "+"** at the end of the row (buy a bike, 4D), the **changing corner** on the right (mirror, bench, locker: the character editor, 4C) and the **workbench** on the left with the parts shelf (the parts catalogue, 4D). The wall scrolls with the camera when there are more bikes than fit (up to 24 hooks).
+- **Camera states** (a pure state machine in `apps/desktop/src/workshop/camera.rs`, eased moves of 0.6 s, no cuts):
+  - *Overview* (on entering): stand and wall in view, focus on the bike on the stand.
+  - *Wall*: the camera pans along the wall to the focused bike (left / right step one hook; the focused bike gets a rim light and its card grows: name, bike type and profile, weight, value in hearts).
+  - *Stand*: close to the bike on the stand, orbit around it (all devices, §3.2.2), zoom 0.8–4 m, the part hotspots shown.
+  - *Part*: flies to the selected part (framed at a third of the screen, the part picker on the right).
+  - *Mirror*: the changing corner with the rider in front of the mirror (4C).
+- **Choosing a bike:** in Overview and Wall, **left / right** cycle through the owned bikes (on the stand first, then the hooks left to right; wrap-around); **Confirm** on a wall bike plays the swap (1.2 s: the stand's bike is lifted back onto its hook, the chosen one taken down and clamped on the stand) and makes it the active rider's bike (`riders.edit NAME --bike-id ID`); Confirm on the stand bike goes to *Stand*. Up / Down move between the zones *wall*, *stand*, *mirror*, *bench* (spatial: up = wall, right = mirror, left = bench, down = stand), so a gamepad never needs a pointer. Mouse / touch: click / tap a bike on the wall (the same swap), a click on the stand bike goes to *Stand*; swipe left / right anywhere on the wall cycles.
+- **When a change applies:** today a bike or look applies from the next start (v2.7, decided: the server has no message to change a rider's profile mid-session). Proposal: a new reliable **`BikeChange`** client message (bike id, frame and part ids, look; additive, §6.2) sent when the workshop closes; the server validates it (catalogue ids, ownership, 4E, event lock) and applies it at once in free ride and outside events, from the next start of an event otherwise (riders in a running event keep their bike: no pit stops in v1). This replaces the "next start" rule when accepted (Q1).
+
+#### 4B – Parts on the bike: hotspots, picker, compare, buy / equip
+
+- **Part slots** (the components of §2.5 and §8.2, one hotspot each, its anchor a node in every bike model – the generator adds `hs_<slot>` empty nodes, the validator requires them): `frame` (frameset: frame and fork, decides the physics profile, 4G), `wheels` (pair), `tyres` (pair), `groupset` (shifters, derailleurs, brakes; cranks, cassette and chain as their own slots below, so they can be upgraded alone), `crankset` (cranks and chainrings; optional power meter as a variant), `cassette`, `chain`, `cockpit` (handlebar and stem, or the integrated bar; TT: base bar and extensions), `bar_tape` (road / gravel; grips on the MTB), `saddle`, `seatpost`, `pedals`, `bottle_cages` (0–2), `lights` (front and rear set), `computer` (head unit and its out-front mount), `bag` (top-tube or saddle bag), `paint` (the paint slots of the frame, the kit stays on the character, 4C). The slots a bike type has come from its frame (no bar tape on an MTB, no extensions on a gravel bike); events may forbid bags and lights.
+- **Groupset and its parts:** a groupset bought as a whole also equips the crankset, cassette and chain of its tier (its price covers them, as the real groupset prices in 4H do); those three slots can then be changed alone (e.g. a crankset with a power meter).
+- **Hotspots:** small glowing markers (a dot with a slot icon, 4 mm at 1 m, drawn above the model with depth test off and an occlusion fade) at the `hs_*` anchors of the bike on the stand, visible in *Stand*. Selecting one: gamepad / keyboard by **directional navigation in screen space** (the next hotspot in the pressed direction, by the projected positions, recomputed when the camera moves; LB / RB or Q / E step through the slots in list order), mouse hover highlights and click selects (Bevy picking on the hotspot's sphere collider, `bevy_picking` mesh backend), touch tap (the hit circle is at least the touch minimum of §3.2.2, 9 mm, even when the marker is drawn smaller). The hotspot's name is shown next to it on focus ("Rear wheel – entry alloy wheelset"), so a hotspot is never icon-only.
+- **Part picker** (Bevy UI panel on the right, 40 % of the width, ten-foot sizes, §3.2.1): the slot's options in groups *equipped*, *owned* (spare parts in the inventory), *shop* (by tier, cheapest first); each row: name, tier badge, weight, price in hearts (or "owned" / "equipped"), a lock with the missing amount when the balance is too low; compatibility filters the list (4F: only parts that fit the frame's bike type and standards). The **detail card** of the focused row: the main figures (weight, and per kind: tyre width, rim depth, gear range, rolling-resistance class, aero class), the effect on the bike's physics in plain words and numbers against the equipped part ("−240 g · rolling resistance −8 % · ≈ +0.4 % speed at 250 W on the flat · ≈ −6 s on 5 km at 6 %"; computed by the server's physics code, 4G), and in races: "has no effect in Equal / Profile races".
+- **Live preview:** focusing a row puts that part on the bike on the stand at once (preview only, not bought; the camera keeps the part framed); leaving the picker restores the equipped part. Paint previews the colour on the frame.
+- **Compare:** North (Y / △) / C / long press pins the focused part as *A*; moving to another row shows both detail cards side by side with the differences coloured (better / worse, with a word, never colour alone); North again unpins.
+- **Actions** (West = X / □, or the buttons on the card; the confirmations are dialogs with *Cancel* focused, as for Restart):
+  - **Buy** (shop row): "Buy *Performance road tyres 28 mm* for 164 ♥? Balance 1,420 ♥ → 1,256 ♥" → the part is added to the inventory and equipped.
+  - **Equip** (owned row): moves the part from the inventory or from another of the rider's bikes ("now on the stand bike; the gravel bike gets its base part back").
+  - **Unequip:** back to the slot's **base part** (every frame comes with a free base part per slot, the entry tier, so a bike is always complete and rideable; the unequipped part goes to the inventory).
+  - **Sell:** for a share of the price paid (4E).
+  - **Repair** (with persistent damage only, Phase 12 Q6): shows the part's condition and the repair price.
+- **Paint and bar tape colours** stay free (cosmetic, today's palette and `#RRGGBB`; v2.7 look fields), special paint patterns (fades, metallic, team-style designs without brands) are paint "parts" with a price from real respray / paint-option prices (4H).
+
+#### 4C – Character editor: the changing corner
+
+- The **changing corner** to the right of the stand (mirror, bench, locker with kit on hangers) is the character editor of §2.6 in the same scene: the camera turns to it (*Mirror*), the rider stands in front of the mirror, seen from behind over the shoulder and in the mirror from the front (a planar reflection with a second camera at half resolution; on low graphics quality a direct front view instead).
+- **Slots:** body (height from the rider profile, build: slim / medium / strong), skin tone (a 12-step palette), face (a few presets), hair (style and colour), jersey, bib shorts / tights, socks, shoes, gloves, helmet, glasses, cap; the kit patterns of v2.7. Selection as for bike parts: the rider's hotspots (head, torso, legs, feet, hands) or LB / RB through the slot list, the picker panel on the right, live preview, compare.
+- **Kit costs hearts too** (proposal): helmet, shoes, glasses, gloves and clothing are priced from real prices like bike parts (4H, category *apparel*), all **purely cosmetic** (no aero helmet effect: the TT helmet stays a look, the TT profile already contains the position, §2.5). Body, skin, face and hair are **always free** (who someone is never costs anything). Every rider starts with a full base kit (Q4: or all apparel free).
+- **Poses:** the rider stands, turns with the orbit, and Confirm on *Try on the bike* puts the rider on the bike on the stand pedalling slowly (the riding animation of §2.6), to see bike and kit together.
+
+#### 4D – The bench: buying bikes and spare parts
+
+- **Buying a bike:** the "+" hook or the bench opens the catalogue of **framesets** (frame + fork, 4F) by bike type and tier; a bought frameset comes with the base parts (entry tier) and hangs on a new hook; it is then built up on the stand. *Complete builds* ("buy the frameset with the mid-tier groupset and wheels") are a convenience row that buys the frameset and the parts in one confirmation, at the sum of their prices (no discount, so the prices stay comparable).
+- **Spare parts:** the shelf lists the inventory (parts not on a bike): equip on the stand bike, sell, compare.
+- **Selling a whole bike** gives the frameset's and its non-base parts' share back and frees the hook; the last bike of the rider cannot be sold, and the six starter bikes (4E) cannot be sold.
+
+#### 4E – Hearts: economy (unit decided by the user; the rest a proposal)
+
+- **Unit (decided, 2026-11-13):** **1 heart (♥) = 1 EUR** of a part's real-world price; prices are **rounded up to whole hearts** (`hearts = ceil(price_eur)`, no cents anywhere). Shown as "1,239 ♥" with the heart glyph and the word "hearts" in screen-reader / tooltip text.
+- **No real money, ever (flag):** the user decided "no commercial release" (Phase 8 Q2, v2.44). Hearts are therefore **earned only by riding**; they cannot be bought, sold for money, transferred between accounts or cashed out, and there is no shop for them outside the game. "1 heart = 1 EUR" is a **price scale**, not an exchange rate. (A paid currency would bring consumer-protection, tax and loot-box rules and contradict the free / open project; it would need a new user decision.)
+- **Earning (proposal; measured from the server's accepted power, §6.1):**
+  - **Work:** **1 ♥ per 10 kJ** of mechanical work (≈ 72 ♥ for an hour at 200 W, ≈ 100 ♥ at 280 W). Work, not distance: it does not reward drafting, descending, a better bike or a faster profile (the rich would get richer), and it counts the same on a route, in free ride, in workouts and in ERG.
+  - **Climbing:** +1 ♥ per 20 m of elevation gained (a hilly hour ≈ +30 ♥), so the world's mountains pay a little extra.
+  - **Workouts:** +25 % of the workout's work hearts when it is completed (all steps, ≥ 90 % compliance).
+  - **Events:** finishing a race / group ride / time trial +20 ♥ (local events: +10 ♥), podium +30 / +20 / +10 ♥; never more for winning big (no snowballing).
+  - **Achievements** (Phase 7): one-off amounts, e.g. first 100 km 100 ♥, first 1,000 m climb in one ride 50 ♥, a world's every package route ridden 200 ♥, 7-day streak 70 ♥.
+  - **Daily first ride:** +10 ♥ for the first ride of the day of at least 20 min.
+  - **Caps:** at most **400 ♥ per day** from work and climbing (≈ 5 h at 200 W; more riding is fine, it just earns nothing more that day).
+  - **Never earned:** with **virtual power** (keyboard ↑, `sim.power`, the virtual trainer, §2.9 `dev`), in **god mode** (Phase 13: no distance, no hearts), by bots, in the kiosk / show mode, in captures (`--capture`), while the rider is *down* after a crash (Phase 12), and from rides flagged as implausible by §6.4 (held until reviewed).
+- **What things cost then (from 4H):** an hour at 200 W ≈ 70–100 ♥ (with climbing); a performance tyre pair ≈ 2 h, a mid-tier mechanical groupset ≈ 15–20 h, a top carbon wheelset ≈ 45 h, a top-tier frameset ≈ 60 h; a full top-tier race bike (≈ 15,000 ♥) ≈ 175 h – about a year at three to four hours a week. This follows the real market on purpose (decided scale), and the physics gain of a top bike is small and capped (4G), so it is a long-term goal, not a requirement.
+- **Starting state:** every rider starts with the **six starter bikes** (one per physics profile, today's models, entry-tier base parts, §2.5) on the wall, a full base kit, and **500 ♥** to try the shop at once. Riders who rode before hearts existed get hearts for their saved rides once (from the FIT files' work, at most 2,000 ♥, Q3).
+- **Selling:** an unused part (bought, never ridden – no ride of ≥ 1 km with it equipped) is refunded **in full**; afterwards **50 %** of the price paid, rounded down (`floor`), so selling never makes hearts. Base parts and starter bikes cannot be sold (they are free).
+- **Damage and repair (Phase 12):** with damage reset per ride (Phase 12 Q6 proposal), repairs are free and automatic – no hearts. If the user decides for persistent damage (Q6 career mode), a part's condition carries over and its repair costs `ceil(price_paid × (1 − condition) × 0.3)` ♥ (a part at 60 % costs 12 % of its price; frames and wheels may be "beyond repair" below 10 % and need replacing); a broken part is replaced by its base part until repaired, so the bike stays rideable. Damage never destroys hearts in non-persistent mode.
+- **Storage (server-authoritative):**
+  - *With the backend (Phase 5):* the **account** owns a hearts **ledger** (append-only table `hearts_ledger`: account, delta, reason – ride, workout, event, achievement, purchase, sale, repair, grant –, reference id, time; the balance is the sum, cached) and an **inventory** (`items`: item id, catalogue part id, price paid, bought at, condition, ridden flag; `bikes`: bike id, frame item, slot → item, look). Purchases are API calls (Axum, §9: `POST /workshop/purchase` with an idempotency key, a transaction that checks the balance, the catalogue price and the compatibility). Workshop actions are **not** on the QUIC game connection. Hearts for a ride are credited by the **game server** that hosted it (it saw the power stream), or for a ride on the local server from the uploaded ride summary after the §6.4 plausibility checks (power-duration curve, cadence, device trust level).
+  - *Before the backend (now):* a local wallet in the user data directory (`<data dir>/ocw/workshop.toml`: inventory and bikes per rider profile; `hearts-ledger.jsonl` append-only), written by the local server's ride results. It is **trivially editable** – accepted, since it only matters on the local server; on the first sign-in the local balance is imported once, capped (Q3).
+  - The client never sends physics or prices: it sends bike id and part ids; the server takes the physics from its own catalogue copy (4G) and – with accounts – checks ownership. An unknown or not-owned part counts as the base part.
+- **Console** (user level unless noted; the menu runs the same commands, §3.2.1): `hearts` (balance and the last ledger entries), `workshop.parts [SLOT]`, `workshop.buy PART [--bike ID]`, `workshop.equip ITEM [--bike ID]`, `workshop.unequip SLOT`, `workshop.sell ITEM`, `bikes.list`, `bikes.select ID`, `bikes.buy FRAME`; `hearts.grant N` (`dev`, local server only, for tests and screenshots).
+
+#### 4F – Compatibility and bike types
+
+- Each frameset has a **bike type** (road, TT, gravel, MTB) and a **profile family** (road: standard, aero or climbing; TT; gravel; MTB) – the physics profile of §2.5. Parts list the bike types they fit (`fits`) and, where it matters, a standard: drivetrain speeds (11 / 12 / 13), `mech` / `electronic`, road / MTB / gravel drivetrain family, brake type (rim / disc), wheel size (700c / 29"), tyre width range per frame (clearance), crank spindle family. The generated bikes are all disc-brake 12-speed except where §2.5 says otherwise (the `road` profile has rim brakes: it stays the only rim-brake frame). A part that does not fit is not offered for that bike; a groupset change replaces cassette and chain by matching base parts when they no longer fit.
+- Kept simple on purpose (no bottom-bracket or axle standards): the aim is believable choices, not a fitting simulator.
+
+#### 4G – Physics: parts within the curated profiles (fairness)
+
+**Tension (flag):** the user wants real parts with real prices that can be tuned and exchanged; real parts differ in weight, aerodynamics and rolling resistance. §2.5 decided that physics comes from **a small curated set of profiles**, cosmetics never change physics, and the difference between profiles is capped (±3 % speed at 250 W on the flat). Parts that make the bike faster turn hearts into speed: in multiplayer this would be "ride to win" (better-equipped riders win), and real-world part prices are not balanced for a game.
+
+**Proposal – bounded part effects on top of the frame's profile:**
+
+1. The **frameset decides the profile** (as the bike type does today): six profiles stay the only physics families, and the curated profile table stays the base on the server.
+2. Parts have **real weights** (grams) and, where they matter physically, a **class** on a few curated axes: `rolling` (tyres: classes −2 … +2, each ±4 % Crr), `aero` (wheels, cockpit, frame within its family: −2 … +2, each ±0.004 m² CdA), `efficiency` (groupset / chain: −1 … +1, each ±0.3 %). Classes, not free numbers: the server's catalogue copy maps them to values, the client never sends values (as for profiles, v2.7).
+3. The server computes the build: bike mass = the frameset's base mass + Σ (part weight − base part weight), Crr / CdA / efficiency = profile value adjusted by the class steps; then **clamps the whole build** to the frame's profile band: at 250 W, 75 kg on flat asphalt the best possible build of a profile is at most **+1.5 %** faster and the base build is the profile itself (so upgrades are a small, visible but never decisive gain); on a 6 % climb at most +2.5 %; a mass floor of 6.8 kg (road, TT, gravel; the UCI limit, also realistic), 9.0 kg for MTB. The caps are unit-tested like the profile caps (§2.5).
+4. **Race modes** (extends §2.5): *Open* – profile and parts count; ***Profile*** (new, proposed default for races and group rides) – the frame's profile counts, parts are cosmetic (everyone on a "road – aero" frame is equal, whatever their wheels cost); *Equal* – one profile for all. The organiser (or the host) chooses, shown in the event's info. Free ride, workouts and single player use *Open*. Time trials against the own ghost: *Open*.
+5. **Hearts are earned only from work, not speed** (4E), so better parts never earn faster.
+
+Options considered: parts purely cosmetic (fairest, but then weights and prices mean nothing, which loses the point of the user's request); parts changing physics freely (real but pay/ride-to-win, and unbalanced by real prices); **bounded effects + Profile mode for races (proposed)** (Q2).
+
+#### 4H – Part price catalogue: research (2026-11-13)
+
+**Brands (decided, Phase 8 Q11):** no real brands or logos in the game. In-game parts are **generic and unbranded** ("Race 12-speed electronic groupset, top tier"); each part's price is the **median of real reference products** of the same kind and tier (manufacturer RRP / UVP in EUR including VAT; a street price only where no RRP was found, marked), rounded **up** to whole hearts. The brand names below are research data in the spec and in the sources file only; they never appear in the game, the assets or the UI.
+
+Research of 2026-11-13 (web search by agents; most brands publish no EUR prices on their own sites, so most figures are the manufacturer's RRP / UVP **as shown by EU retailers**). Type: **R** = manufacturer list or launch RRP, or a UVP shown by a retailer; **R\*** = list price reported by a third party (magazine, price tracker, retailer "regular price"), not verified on the brand's page; **S** = street price (only where no RRP was found). Sources: *SRAM-25* = SRAM MSRP price list 2025 (EUR incl. VAT, slowtwitch.com, component sums added by us); *BR* = BikeRadar launch / review articles; *bc* = bike-components.de product pages (UVP); *Rose* = rosebikes.de / .com product pages (UVP); *Mantel* = mantel.com RRP; *99s* = 99spokes. The full list with URLs goes into `assets/parts-sources.toml`. Median of all references of a tier (two references: their mean); **♥ = ceil(median)**; pairs (tyres) = ceil(2 × median per tyre).
+
+| Category / tier | References (EUR, type, source) | Median € | ♥ |
+|---|---|---|---|
+| **Road groupset** entry, 11–12 s | Shimano Tiagra R4000 (sum of parts, 2026) 633 R (BR); SRAM Apex XPLR AXS 1x12 1,269 R (Mantel) | 951 | **951** |
+| mid, mechanical | Shimano 105 R7100 1,183 R (BR, parts); Campagnolo Chorus 12 1,699 R (Mantel; launch 1,819) | 1,441 | **1,441** |
+| mid, electronic | Shimano 105 Di2 R7170 1,869 R (BR, Mantel); SRAM Rival AXS E1 1,765 R (SRAM-25) | 1,817 | **1,817** |
+| upper, electronic | Shimano Ultegra Di2 R8170 2,549 R (Mantel); SRAM Force AXS E1 2,423 R (SRAM-25); Campagnolo Record 13 2,699 R (2026) | 2,549 | **2,549** |
+| top, electronic | Shimano Dura-Ace Di2 R9270 3,999 R (Mantel); SRAM Red AXS E1 4,135 R (BR 2024); Campagnolo Super Record 13 4,300 R (2025) | 4,135 | **4,135** |
+| **Gravel groupset** mid | SRAM Apex XPLR AXS 1,269 R (Mantel); SRAM Rival XPLR AXS E1 1,560 R (SRAM-25) (Shimano GRX RX820 only S 819–849, not counted) | 1,415 | **1,415** |
+| top | Shimano GRX Di2 RX825 2,479 R (Mantel); SRAM Force XPLR AXS E1 2,135 R (SRAM-25); Campagnolo Super Record X 3,375 R | 2,479 | **2,479** |
+| **MTB groupset** (with brakes) entry | Shimano Deore Di2 M6250 650 R (Mantel); SRAM Eagle 90 T-Type 730 R (bc) | 690 | **690** |
+| mid | Shimano XT M8100 980 R, XT Di2 M8250 1,240 R (Mantel); SRAM GX Eagle Transmission 1,300 R (BR) | 1,240 | **1,240** |
+| top | Shimano XTR Di2 M9250 2,005 R (Mantel); SRAM XX Transmission 2,450 R; SRAM XX SL Transmission 2,650 R | 2,450 | **2,450** |
+| **Crankset** entry / mid / upper / top | Tiagra 135 R; 105 FC-R7100 175 R (Rose), Rival E1 220 R; Ultegra FC-R8100 295 R (Rose), Force E1 455 R; Dura-Ace FC-R9200 580 R (Rose), Red E1 785 R (BR) | 135 / 197.5 / 375 / 682.5 | **135 / 198 / 375 / 683** |
+| crankset with power meter (dual) | Shimano Ultegra FC-R8100-P 1,099 R, 4iiii Precision 3+ Pro 899 R (Rose); SRAM Force E1 spider 855 R (SRAM-25) | 899 | **899** |
+| **Power-meter pedals** dual | Favero Assioma Pro RS-2 699 R (BR); Garmin Rally 210 1,100 R (2025); Favero Assioma Duo 388 R (VAT basis unclear) | 699 | **699** |
+| **Cassette** 12 s entry / mid / upper / top | Tiagra 11 s 60 R; 105 CS-R7100 80 R, Rival XG-1250 132 R; Ultegra 115 R (unverified), Force XG-1270 215 R; Dura-Ace CS-R9200 340 R (Rose) | 60 / 106 / 165 / 340 | **60 / 106 / 165 / 340** |
+| **Chain** mid / top | 105 CN-M7100 37 R (Rose), Rival E1 50 R; Dura-Ace CN-M9100 73 R (Rose), Red Flattop 100 R | 43.5 / 86.5 | **44 / 87** |
+| **Wheelset** (pair) alloy entry | Fulcrum Racing 5 DB 400 R; Mavic Aksium Elite UST disc 299 R, Mavic Aksium 299 R (Rose) | 299 | **299** |
+| alloy mid | DT Swiss PR 1600 DB 600 R (Rose); Fulcrum Racing 3 DB 620 R\*; Mavic Ksyrium 30 Disc 437 R (Rose) | 600 | **600** |
+| carbon mid | DT Swiss ERC 1400 DB 45 2,050 R (Rose); Fulcrum Wind 42 DB 1,415 R (Mantel); Zipp 303 S 1,100 R (BR) | 1,415 | **1,415** |
+| carbon top, aero | DT Swiss ARC 1100 DB 50 2,500 R (Rose); Mavic Cosmic Ultimate 45 3,900 R (BR 2023); Zipp 454 NSW 4,400 R\* | 3,900 | **3,900** |
+| TT disc rear (single wheel) | Zipp Super-9 Disc 2,750 R (launch) – one reference | 2,750 | **2,750** |
+| gravel alloy / gravel carbon / MTB 29" alloy | DT Swiss GR 1600 600 R; DT Swiss GRC 1400 2,050 R; DT Swiss XM 1700 750 R (Rose) – one reference each | 600 / 2,050 / 750 | **600 / 2,050 / 750** |
+| **Road tyre** (per tyre) training | Continental Ultra Sport III 30.95 R; Schwalbe Lugano II 29.90 R (bc) | 30.43 | **61** pair |
+| performance | Continental GP 5000 S TR 94.95 R\*; Schwalbe Pro One Evo 78.90 R; Pirelli P Zero Race TLR 84.95 R; Vittoria Corsa N.EXT 69.95 R (bc) | 81.93 | **164** pair |
+| race / TT | Continental GP 5000 TT TR 108.95 R\*; Vittoria Corsa Pro Speed 94.95 R; Schwalbe Pro One TT 78.90 R (bc) | 94.95 | **190** pair |
+| **Gravel tyre** | Schwalbe G-One RS Pro 78.90 R; Continental Terra Speed 69.95 R; Pirelli Cinturato Gravel H 70.00 R | 70.00 | **140** pair |
+| **MTB tyre** 29" | Maxxis Rekon Race 59.90 R; Schwalbe Racing Ray 72.90 R; Continental Race King 43.95 R | 59.90 | **120** pair |
+| **Saddle** entry | Selle Italia X-Bow 60 R; Specialized Bridge Sport 40 S; Fizik Vento Argo X5 109 R | 60 | **60** |
+| mid | Fizik Vento Antares R5 109 R; Specialized Power EVO Comp 119 R; Selle Italia SLR Advan 3 150 R; Prologo Scratch M5 Tirox 129 R | 124 | **124** |
+| top, carbon | Fizik Antares R1 Adaptive 299 R; Prologo Scratch M5 CPC Nack 269 R; Selle Italia SLR Carbon 3 320 R; Specialized S-Works Power EVO Mirror 449 R\* | 309.5 | **310** |
+| **Cockpit** alloy bar + alloy stem | bars: Zipp Service Course 70 68 R, Deda Zero2 55 R, Ritchey Comp ErgoMax 56 R; stems: Ritchey Comp 4-Axis 54.40 R, Deda Zero2 54.95 R, PRO Vibe 110 R | 55.99 + 54.95 | **111** |
+| carbon bar + alloy stem | Zipp SL-70 Ergo 339 R; Deda Superzero RS 360 R; PRO Vibe Carbon 350 R (+ stem 54.95) | 349.95 + 54.95 | **405** |
+| integrated carbon | Black Inc bar/stem 679 R; PRO Vibe Evo 800 R; Deda Alanera RS DCR 539 S | 679 | **679** |
+| gravel flared bar + stem / MTB bar + stem | Zipp SC 70 XPLR 68 R, Ritchey VentureMax 59 R, PRO Discover 70 R / Renthal Fatbar Lite 95 R, Race Face Chester 60 R, Ritchey Comp Flat 40 R (+ stem 54.95) | 68 + 54.95 / 59.99 + 54.95 | **123 / 115** |
+| TT extensions | Profile Design Airstryke 2 198 R; Zipp Vuka Clip 173 R; Deda Superzero TT 220 R | 198 | **198** |
+| **Seatpost** alloy / carbon | Deda Zero2 65 R, Ritchey WCS 1-Bolt 104 R / Zipp SC SL 194 R, Roval Alpinist 240 R, PRO Vibe Superlight 300 R | 84.48 / 240 | **85 / 240** |
+| **Pedals** road entry / mid / top | Shimano 105 R7000 155 R, Look Kéo Classic 3 52 R, Time Xpresso 105 R / Ultegra R8000 165 R, Look Kéo 2 Max Carbon 112 R, Speedplay Comp 150 R / Dura-Ace R9100 255 R, Look Keo Blade Carbon 149 R, Speedplay Zero 230 R\* | 105 / 150 / 230 | **105 / 150 / 230** |
+| pedals SPD entry / mid | Shimano PD-M520 57 R, Crankbrothers Candy 1 65 R / Shimano XT M8100 135 R, Candy 3 150 R, Look X-Track Race Carbon Ti 210 R | 61 / 150 | **61 / 150** |
+| **Frameset** road alloy | Cannondale CAAD14 1,799 R\* (BR 2026); Specialized Allez Sprint 1,390 S; Blackheart Road AL 1,290 S (bc) | 1,390 | **1,390** |
+| road carbon mid | Giant TCR Advanced Pro 2,499 R\* (99s); Factor O2 Disc 2,839 R (bc); Cervélo Soloist 3,499 R\* | 2,839 | **2,839** |
+| road carbon top | Specialized S-Works Tarmac SL8 5,499 R\*; Cervélo R5 5,699 R\* (99s); BMC Teammachine SLR 01 4,999 R (BMC store); Trek Madone SLR Gen 8 5,059 R\* | 5,279 | **5,279** |
+| TT | Cervélo P5 5,999 R\*; BMC Speedmachine 01 Module 6,499 R (BMC); Giant Trinity Advanced Pro 3,499 R\* (2022) | 5,999 | **5,999** |
+| gravel carbon | Scott Scale Gravel RC 2,299 R\*; Cervélo Aspero 2,799 R\*; OPEN U.P. 2.0 4,500 S | 2,799 | **2,799** |
+| MTB carbon hardtail | Mondraker Podium 2,699 R\*; Trek Procaliber C Gen 3 3,999 R\*; Canyon Exceed CF SLX 1,799 R\* (2019, stale) | 2,699 | **2,699** |
+| **Bar tape** entry / mid | Fizik Tempo 19.90 R, Ritchey Comp Cork 19.99 R, Selle Italia Smart Tape 13 R / Supacaz Super Sticky Kush 41.90 R, Fizik Vento Tacky 39.90 R, Zipp SC CX 31 R | 19.90 / 39.90 | **20 / 40** |
+| **Bottle cage** (each) plastic / alloy / carbon | Elite Custom Race 15.60, Tacx Deva 14.99, SKS Topcage 9.99 / Elite Ciussi 13.95, Lezyne Power Cage 12.95, Supacaz Fly Cage 24.90 / Elite Vico Carbon 31, Ritchey WCS Carbon 64.40, Tacx Ciro 17.99 (all R) | 14.99 / 13.95 / 31 | **15 / 14 / 31** |
+| **Lights** front + rear (StVZO) | busch+müller Ixon Fyre + IXXI 79.90 R; Lezyne Micro 300 + KTV Drive 74.95 R; Knog Blinder 80 + Plus 99.99 R | 79.90 | **80** |
+| **Computer** entry / top | Garmin Edge 540 399.99 R, Wahoo Elemnt Bolt 3 329.99 R / Garmin Edge 1050 749.99 R, Wahoo Elemnt Roam 3 449.99 R | 364.99 / 599.99 | **365 / 600** |
+| out-front mount | K-Edge Max 65 R; Garmin aero mount 39.99 R; PRO stem mount 59.95 R | 59.95 | **60** |
+| **Top-tube bag** | Topeak Fuel Tank 42.95 R; Ortlieb Fuel-Pack 55 S; Apidura Racing Top Tube Pack ~62 S | 55 | **55** |
+
+**Notes on the research:** most brands' own pages show no EUR price or block automated access, so retailer-shown UVPs dominate; they can lag behind brand price changes or sit a little above the launch price (Ultegra Di2 at 2,549 vs. lower list prices elsewhere). Street prices for groupsets are currently 40–55 % below RRP – the catalogue uses RRP throughout, so in-game prices are "list prices". Gaps: no EUR RRP for Shimano GRX (only GBP and street), DT Swiss P 1800, Vision Metron 5D, Canyon framesets; framesets are the least certain tier (several R\* values) and are the first to re-check. Weights in 4I are typical catalogue values and are researched with the prices in the same file.
+
+**Refreshing prices:** never live scraping and no price API at runtime or build time (prices change rarely; scraping is fragile and against many shops' terms). The references live in `assets/parts-sources.toml` (per tier: product, brand, price, RRP or street, URL, date checked); prices are **re-researched by hand** about twice a year or when a catalogue tier is added (a person or an agent with web search fills in the file), and `cargo run -p ocw-assets -- parts reprice` recomputes the medians, applies `ceil` and rewrites the `hearts` of `assets/parts.toml`, printing the changes; the validator fails when `hearts ≠ ceil(median(sources))` or a source is older than 18 months (warning at 12). A price change never touches owned parts (refunds use the price paid).
+
+#### 4I – Catalogue file `assets/parts.toml` (schema and examples)
+
+Next to `assets/models/manifest.toml`, validated by `ocw-assets parts validate` (with the model and licence rules of §8.1). One `[[part]]` per catalogue entry:
+
+| Key | Type | Meaning |
+|---|---|---|
+| `id` | string | stable id, `<slot>.<kind>.<tier>` (never reused, §6.2 rule for ids) |
+| `slot` | enum | one of the slots of 4B (`frame`, `wheels`, `tyres`, `groupset`, `crankset`, `cassette`, `chain`, `cockpit`, `bar_tape`, `saddle`, `seatpost`, `pedals`, `bottle_cages`, `lights`, `computer`, `bag`, `paint`, apparel slots) |
+| `tier` | enum | `base`, `entry`, `mid`, `upper`, `top` |
+| `name` | string | generic English name, no brand (translations later) |
+| `hearts` | int | `ceil(median EUR)` of the sources; 0 for `base` |
+| `weight_g` | int | real typical weight (pair for wheels, tyres, pedals) |
+| `fits` | list | bike types: `road`, `tt`, `gravel`, `mtb` |
+| `standard` | table | optional: `speeds`, `shifting` (`mech` / `electronic`), `brake`, `wheel` (`700c` / `29`), `width_mm`, `family` |
+| `profile` | string | frames only: the physics profile id (§2.5) |
+| `rolling` / `aero` / `efficiency` | int | optional class steps (4G), default 0 |
+| `model` | string | glTF node set / file in `assets/models/manifest.toml` (generated, §2.5) |
+| `sources` | string | key into `assets/parts-sources.toml` (references, prices, dates) |
+| `priced` | date | date of the research the price comes from |
+
+Example entries (TOML):
+
+```toml
+[[part]]
+id = "groupset.road-electronic.top"
+slot = "groupset"
+tier = "top"
+name = "Race 12-speed electronic groupset"
+hearts = 4135                      # ceil(median 4,135.00)
+weight_g = 2450
+fits = ["road", "tt"]
+standard = { speeds = 12, shifting = "electronic", brake = "disc", family = "road" }
+efficiency = 1
+model = "groupset-electronic-top"
+sources = "groupset.road.top"
+priced = 2026-11-13
+
+[[part]]
+id = "tyres.road.performance"
+slot = "tyres"
+tier = "upper"
+name = "Performance road tyres 28 mm (pair)"
+hearts = 164                       # ceil(2 × median 81.93)
+weight_g = 540
+fits = ["road", "tt"]
+standard = { wheel = "700c", width_mm = 28 }
+rolling = -1
+model = "tyre-road-slick-28"
+sources = "tyres.road.performance"
+priced = 2026-11-13
+
+[[part]]
+id = "frame.road-aero.top"
+slot = "frame"
+tier = "top"
+name = "Aero race frameset, carbon"
+hearts = 5279
+weight_g = 1250
+fits = ["road"]
+profile = "road-aero"
+aero = 1
+model = "bike-road-aero"
+sources = "frame.road.top"
+priced = 2026-11-13
+```
+
+The first catalogue (about 30 entries; base parts at 0 ♥ for every slot and bike type come in addition; weights typical, to be confirmed with the research):
+
+| id | Name (in game) | ♥ | Weight | Fits | Classes |
+|---|---|---|---|---|---|
+| `frame.road.mid` | Alloy road frameset | 1,390 | 1,650 g | road | profile `road` |
+| `frame.road.upper` | Carbon road frameset | 2,839 | 1,250 g | road | `road` |
+| `frame.road-climbing.top` | Lightweight climbing frameset, carbon | 5,279 | 950 g | road | `road-climbing` |
+| `frame.road-aero.top` | Aero race frameset, carbon | 5,279 | 1,250 g | road | `road-aero`, aero +1 |
+| `frame.tt.top` | Time-trial frameset, carbon | 5,999 | 1,800 g | tt | `tt` |
+| `frame.gravel.upper` | Carbon gravel frameset | 2,799 | 1,350 g | gravel | `gravel` |
+| `frame.mtb.upper` | Carbon cross-country hardtail frame | 2,699 | 1,500 g | mtb | `mtb` |
+| `groupset.road-mech.entry` | Endurance 11-speed mechanical groupset | 951 | 2,950 g | road | |
+| `groupset.road-mech.mid` | Endurance 12-speed mechanical groupset | 1,441 | 2,700 g | road, tt | |
+| `groupset.road-electronic.mid` | Endurance 12-speed electronic groupset | 1,817 | 2,850 g | road, tt | |
+| `groupset.road-electronic.upper` | Race 12-speed electronic groupset, upper tier | 2,549 | 2,600 g | road, tt | efficiency +1 |
+| `groupset.road-electronic.top` | Race 12-speed electronic groupset | 4,135 | 2,450 g | road, tt | efficiency +1 |
+| `groupset.gravel.mid` | Gravel 1×12 electronic groupset | 1,415 | 2,800 g | gravel | |
+| `groupset.gravel.top` | Gravel electronic groupset, top tier | 2,479 | 2,550 g | gravel | efficiency +1 |
+| `groupset.mtb.mid` | Trail 1×12 groupset | 1,240 | 2,500 g | mtb | |
+| `groupset.mtb.top` | Cross-country 1×12 electronic groupset | 2,450 | 2,200 g | mtb | efficiency +1 |
+| `crankset.road.power` | Road crankset with dual power meter | 899 | 720 g | road, tt, gravel | (cosmetic) |
+| `wheels.road-alloy.entry` | Alloy training wheelset | 299 | 1,900 g | road, tt | |
+| `wheels.road-alloy.mid` | Alloy performance wheelset | 600 | 1,600 g | road, tt | |
+| `wheels.road-carbon.mid` | Carbon 45 mm wheelset | 1,415 | 1,450 g | road, tt | aero +1 |
+| `wheels.road-carbon.top` | Carbon 50 mm race wheelset | 3,900 | 1,350 g | road, tt | aero +1 |
+| `wheels.tt.disc` | Disc rear wheel (with 80 mm front from the set) | 2,750 | 1,000 g | tt | aero +2 |
+| `wheels.gravel.carbon` | Carbon gravel wheelset | 2,050 | 1,450 g | gravel | |
+| `tyres.road.training` | Training road tyres 28 mm | 61 | 640 g | road, tt | rolling +1 |
+| `tyres.road.performance` | Performance road tyres 28 mm | 164 | 540 g | road, tt | rolling −1 |
+| `tyres.road.race` | Time-trial tyres 25 mm | 190 | 460 g | road, tt | rolling −2 |
+| `tyres.gravel.fast` | Fast gravel tyres 40 mm | 140 | 900 g | gravel | rolling −1 |
+| `tyres.mtb.xc` | Cross-country tyres 29 × 2.25" | 120 | 1,300 g | mtb | rolling −1 |
+| `cockpit.road.carbon` | Carbon handlebar and alloy stem | 405 | 420 g | road | |
+| `cockpit.road.integrated` | Integrated carbon aero cockpit | 679 | 380 g | road | aero +1 |
+| `cockpit.tt.extensions` | Clip-on aero extensions | 198 | 450 g | road | (cosmetic on road; TT position is in the `tt` profile) |
+| `saddle.road.top` | Short-nose carbon saddle | 310 | 160 g | road, tt, gravel | |
+| `seatpost.carbon` | Carbon seatpost | 240 | 190 g | road, gravel, mtb | |
+| `pedals.road.top` | Carbon road pedals | 230 | 230 g | road, tt | |
+| `pedals.spd.mid` | Two-sided off-road pedals | 150 | 340 g | gravel, mtb | |
+| `bottle_cages.carbon` | Carbon bottle cage (each) | 31 | 20 g | all | |
+| `lights.set` | Front and rear light set | 80 | 120 g | road, gravel, mtb | |
+| `computer.top` | Large-screen bike computer with out-front mount | 660 | 210 g | all | (cosmetic: HUD bike-computer skin) |
+| `bar_tape.mid` | Thick tacky bar tape | 40 | 90 g | road, gravel | |
+| `bag.top_tube` | Top-tube bag | 55 | 150 g | road, gravel, mtb | aero −1 |
+
+#### 4J – Tests (spec §11.4: no step without tests)
+
+- **Catalogue:** `assets/parts.toml` parses; ids unique and stable (a fixture of earlier ids must still exist); `hearts == ceil(median(sources))` for every part; base parts cost 0 and exist for every slot and bike type; no brand names (a deny-list of the researched brands and their product names checked against `name`, `id` and the model names); every model reference resolves; sources not older than 18 months.
+- **Physics (`ocw_core::bike`, pure, wasm):** build mass / Crr / CdA / efficiency from parts; class steps; the build caps (best build ≤ +1.5 % on the flat, ≤ +2.5 % on 6 % against the profile; the mass floors); *Profile* and *Equal* modes ignore parts; unknown and not-owned parts count as base parts; the client's values are never used.
+- **Hearts (pure ledger model):** earning from work / climbing / workouts / events / achievements with the daily cap; zero with virtual power, in god mode, while down, for bots, in captures; balance = sum of the ledger; purchase rejects too low a balance, an incompatible part and a stale price (the server's price wins); idempotent purchase (the same key twice = one purchase); refunds (full before the first ride, 50 % floor after); repair prices; the one-time import cap. Server-side tests against an in-memory store; the API tests in Phase 5.
+- **Workshop model (Bevy-free, `apps/desktop/src/workshop/`):** zone and bike navigation (left / right wrap, up / down between zones), the camera state machine, the swap sequence, hotspot screen-space navigation (nearest in direction from fixed projections), picker groups and filters, preview / restore, compare, every action → expected console command line (as the menu, §3.2.1).
+- **Input on every workshop screen** with keyboard, mouse, gamepad and touch (§3.2.2: the same reachability tests as the menu pages); orbit / zoom with each device.
+- **Rendering:** headless screenshots (X11 + Wayland, `scripts/scenes.toml` scenes `workshop-overview`, `workshop-wall`, `workshop-stand-hotspots`, `workshop-picker`, `workshop-mirror`) and a short video of a bike swap and an orbit for the build history; all bikes with every part variant through the validator (triangle budget, nodes, `hs_*` anchors).
+
+#### 4K – Milestones (proposal)
+
+- **W1 – Scene:** generated workshop room, stand, wall hooks, the six starter bikes, camera states, bike choice with left / right and the swap, all four input devices; ride window.
+- **W2 – Parts:** `assets/parts.toml` and sources, `hs_*` anchors and part variants in the generator (wheels, tyres, cockpits, saddles, groupset looks …), hotspots, picker, live preview, compare; the local wallet and ledger, buy / equip / unequip / sell, console commands.
+- **W3 – Physics:** class steps and build caps on the server, `BikeChange` message, *Profile* race mode, the effect lines on the cards.
+- **W4 – Character corner:** mirror, body / skin / hair / kit slots, apparel prices, try on the bike.
+- **W5 – Backend (Phase 5):** account ledger and inventory, purchase API, crediting by game servers and from uploaded rides, the one-time import.
+- **W6 – Later:** persistent damage and repairs (if Phase 12 Q6 says so), achievements' hearts (Phase 7), translations.
+
+#### 4L – Open questions (for the user)
+
+- **Q1 – When changes apply:** at once when leaving the workshop (in free ride and outside events; new `BikeChange` message, proposal), or keep "from the next start" (v2.7)?
+- **Q2 – Physics of parts:** bounded effects (best build ≤ +1.5 % on the flat) with the new *Profile* mode as the default for races and group rides (proposal), or parts purely cosmetic?
+- **Q3 – Earning rate and start:** 1 ♥ per 10 kJ + 1 ♥ per 20 m climbing, 400 ♥ per day cap, 500 ♥ start, saved rides counted once up to 2,000 ♥ (proposal) – faster, slower, or a different measure (distance)?
+- **Q4 – Apparel:** kit (helmet, shoes, clothing, glasses) priced in hearts like parts (proposal; body, skin, hair always free), or all apparel free?
+- **Q5 – Touch on the kiosk:** does marge's screen (or any target screen) have a touchscreen to test on, or is touch tested only with synthetic events and on a Windows tablet / Steam Deck later?
 
 **Result:** Individually customizable riders.
 
@@ -2270,6 +2641,7 @@ Attribution of the provider used appears on the credits screen and in the weathe
 - **Devices:** `WebBluetoothBackend` implements `DeviceBackend` on top of the pure `ocw-devices` protocol state machine (`gatt`, `ble::protocol`). Only the `GattLink` is new (navigator.bluetooth via `web-sys`). The user grants device access per page (browser chooser).
 - **Captures:** screenshots from the canvas as JPEG q90 with EXIF date and time written by our own encoder step. Videos via MediaRecorder / WebCodecs with game audio mixed in. The ISO timestamp is in the HUD top right (art project §2.1).
 - **Settings and rides:** settings in browser storage, with account sync via the backend (Phase 5). FIT export as a download; Strava upload through the backend (§2.8).
+- **Input:** the input model of §3.2.2 as on the desktop; touch is the main input on phones and tablets (the touch overlay in a ride, touch-mode hit targets everywhere), pointer events via `bevy_picking` as on the desktop.
 - **Hosting:** static app + package CDN + game server endpoints, behind the same domain as the web companion. Single sign-on with the account (OIDC, §9). COOP / COEP headers for wasm threads. A strict CSP.
 
 #### 10C – Performance budget
@@ -2343,7 +2715,7 @@ Attribution of the provider used appears on the credits screen and in the weathe
   - a **head-locked minimum** (critical warnings only);
   - **panels** for menus, workouts, the event leaderboard and junction arrows at road level ahead;
   - the ISO timestamp on the mirror view.
-- **Input in VR:** hands are on the handlebar, so the main inputs are the **trainer / sensors** (power, cadence) and **steering by leaning the head** (optional, mapped to the existing lean steering, §5.2.1), handlebar buttons (BLE remotes, later), gamepad, voice commands (later), and controller pointer for menus (gaze + click as a fallback).
+- **Input in VR:** hands are on the handlebar, so the main inputs are the **trainer / sensors** (power, cadence) and **steering by leaning the head** (optional, mapped to the existing lean steering, §5.2.1), handlebar buttons (BLE remotes, later), gamepad, voice commands (later), and controller pointer for menus (gaze + click as a fallback); the controller ray is one more pointer of the input model (§3.2.2), so menus and the workshop scene need no VR-specific pages.
 - **Comfort** (motion sickness is the main risk; on a trainer pedalling helps, since the vection matches effort):
   - stable horizon (no camera roll with the bike's lean by default);
   - no head bob;
@@ -2470,6 +2842,7 @@ Attribution of the provider used appears on the credits screen and in the weathe
   - **handlebar / brakes:** steering a little less precise (manual lean rate −20 %), autodrive unaffected;
   - **frame / fork:** only from very hard hits; below 10 % bike condition the bike is **broken**: the rider waits for a spare bike (60 s, from the team car / neutral service in races) or the ride ends there.
   - Damage shows on the bike model: scratches and scuffs (decals), a bent wheel, a dropped chain, a torn jersey and dust on the rider.
+- **Parts and hearts (v2.53, §14 Phase 4, 4E):** the damaged parts are the rider's own workshop parts (a damaged deep carbon wheel looks like one); with damage reset per ride (Q6 proposal) repairs are free and no hearts are lost; with a persistent mode a repair costs `ceil(price paid × (1 − condition) × 0.3)` hearts, and a broken part is replaced by the slot's free base part until repaired. A part's tier never changes its damage resistance (no paid durability).
 - **Recovery:** riding on does not heal; a **stop** (speed 0 for 30 s, or a "service" point in races) restores bike parts that the organiser allows; the rider recovers 1 % per minute of easy riding (below 50 % FTP). Restart, a new ride or a world switch reset both meters.
 - **Server and protocol:** damage is part of the server's rider state (`RiderUpdate.damage`: rider %, bike %, parts as a bit field, injury level), sent at 2 Hz and on every change; the event results show crashes and the final condition. FIT files get a lap / event marker per crash (developer field for the condition).
 
@@ -2517,7 +2890,7 @@ Attribution of the provider used appears on the credits screen and in the weathe
 - **Q3 – Bots' mistakes:** should bots sometimes cause crashes ("chaotic" bots, a setting), or always ride perfectly?
 - **Q4 – Workouts:** keep the ERG step running while the rider is down (proposal), or pause the step until the rider rides again?
 - **Q5 – Falls:** a scripted fall animation first (proposal), or straight to a ragdoll with a physics engine (more realistic, more work, a dependency like Avian or Rapier)?
-- **Q6 – Persistence:** injuries and bike damage reset per ride (proposal), or carry over between rides (a career / repair-shop mode)?
+- **Q6 – Persistence:** injuries and bike damage reset per ride (proposal), or carry over between rides (a career / repair-shop mode, with repairs paid in hearts in the workshop, §14 Phase 4, 4E)?
 - **Q7 – Gates and barriers on roads:** OSM often has gates or bollards on through routes (often open in reality). Make them solid (realistic but annoying), solid only in wild mode, or only show them (proposal: shown, not solid on the routed road)?
 
 ### Phase 13 – God mode: flying through the world as a unicorn (planning, 2026-11-13)
@@ -2533,6 +2906,7 @@ Attribution of the provider used appears on the credits screen and in the weathe
 
 #### 13B – Flight controls
 
+- **Touch** (where the device has one, §3.2.2): one-finger drag = look, on-screen ‹ › ˄ ˅ pad = move in the plane, + / − buttons = altitude, pinch = speed scale.
 - **Look:** moving the mouse turns the view (yaw unlimited, pitch −89° … +89°; sensitivity from Settings → Controls, the existing mouse orbit speed; invert Y option). The direction of flight follows the view's yaw.
 - **Move in the plane:** ↑ forward, ↓ back, ← / → sideways (strafe), relative to the view's yaw and **horizontal** (looking down does not dive). Only the cursor keys, as asked: W / A / S / D are taken by riding (A autodrive, W wild mode; Q3).
 - **Altitude:** **+** climbs, **−** descends (main keyboard `=`/`+` and `-`, and the numeric keypad + / −; held = continuous). The altitude stays at least **2 m above the terrain, water, buildings and trees** below (the unicorn glides up over a hill instead of going into it) and at most **8,000 m above sea level**.
@@ -2557,7 +2931,7 @@ Attribution of the provider used appears on the credits screen and in the weathe
 
 - **Server state:** the rider enters the state `God` (additive field in `RiderUpdate`, §6.2). In this state the rider is **taken out of the physics**: no speed along the path, no drafting, no collisions (Phase 12), not in standings; the rider's road position is frozen where god mode began; on leaving, the server places the rider at the landing spot (after the plausibility check) or restores the old position (Shift + G). The unicorn's flight is **client-driven**: the client sends its 3D position and view at 10 Hz (`GodPose`), the server checks plausibility (speed ≤ the limits above, inside the world set) and broadcasts it to the others, who see the unicorn interpolated (§6.5). The server stays the truth for who is in god mode and where the rider re-enters.
 - **Trainer:** SIM mode is set to a flat road (lowest resistance), ERG keeps its target (a workout continues; Q4). Power and cadence keep being shown, but they do not move the unicorn.
-- **Ride recording:** ride time continues (the ride never pauses, §3.2.1); **distance and elevation are not credited** while flying, the FIT file gets a marker "god mode" at both ends (Strava sees a pause in movement, not a 1,000 km/h segment). Achievements and leaderboards (Phase 7) ignore god-mode time.
+- **Ride recording:** ride time continues (the ride never pauses, §3.2.1); **distance and elevation are not credited** while flying, the FIT file gets a marker "god mode" at both ends (Strava sees a pause in movement, not a 1,000 km/h segment). Achievements and leaderboards (Phase 7) ignore god-mode time, and **no hearts** are earned while flying (§14 Phase 4, 4E).
 - **Others (decided, Q1: visible):** riders see the unicorn flying over them with the rider's name and colours; no sound beyond 100 m. A host can see who is in god mode in the rider list.
 
 #### 13F – Tests (spec §11.4)
