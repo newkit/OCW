@@ -47,6 +47,9 @@ if [ ! -f "$config_dir/machines.toml" ]; then
 fi
 conf=$config_dir/machines.toml
 [ -f "$conf" ] || { echo "$conf missing (copy config/machines.example.toml)" >&2; exit 1; }
+# Absolute, because the sync runs from inside the snapshot directory.
+config_dir=$(cd "$config_dir" && pwd)
+conf=$config_dir/machines.toml
 
 # Minimal TOML lookup: key of the [[machine]] block with name = MACHINE,
 # falling back to [defaults].
