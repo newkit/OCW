@@ -69,6 +69,11 @@ enum Cmd {
         /// box of the roads (islands: no tiles of open sea, spec §4.7).
         #[arg(long)]
         tiles_near_roads: bool,
+        /// --tiles-near-roads plus every tile of the box with land
+        /// (natural ground above 1 m), so mountains far from roads are in
+        /// the package and only the open sea stays out (spec §4.7).
+        #[arg(long)]
+        land_tiles: bool,
         /// Land-use cells per tile side (200 = 5 m splat map).
         #[arg(long, default_value_t = ocw_worldgen::landuse::CELLS)]
         landuse_cells: u32,
@@ -204,6 +209,11 @@ enum Cmd {
     Check {
         #[arg(long, default_value = "data/pilot/liechtenstein.ocwpkg")]
         world: PathBuf,
+        /// A summit that must be in the package: lat,lon,metres. The
+        /// highest terrain within 150 m must be within 50 m of it, else
+        /// the check exits 1 (repeatable; spec §4.7 "Tile cover").
+        #[arg(long, value_parser = parse_peak)]
+        peak: Vec<(f64, f64, f64)>,
     },
     /// World lint (spec §4.8.1): steps and kinks in roads, floating and
     /// buried roads, junction steps, near-miss ends, rivers flowing uphill,
@@ -622,6 +632,12 @@ fn parse_xz(s: &str) -> Result<(f64, f64), String> {
         a.trim().parse().map_err(|e| format!("{e}"))?,
         b.trim().parse().map_err(|e| format!("{e}"))?,
     ))
+}
+
+fn parse_peak(s: &str) -> Result<(f64, f64, f64), String> {
+    let (ll, h) = s.rsplit_once(',').ok_or("expected lat,lon,metres")?;
+    let (lat, lon) = parse_latlon(ll)?;
+    Ok((lat, lon, h.trim().parse().map_err(|e| format!("{h}: {e}"))?))
 }
 
 fn parse_latlon(s: &str) -> Result<(f64, f64), String> {
@@ -1178,6 +1194,7 @@ struct PackageArgs {
     samples: u32,
     margin_tiles: i32,
     tiles_near_roads: bool,
+    land_tiles: bool,
     landuse_cells: u32,
     no_areas: bool,
     no_clean: bool,
@@ -1201,6 +1218,7 @@ fn package(args: PackageArgs) {
         samples,
         margin_tiles,
         tiles_near_roads,
+        land_tiles,
         landuse_cells,
         no_areas,
         no_clean,
@@ -1250,7 +1268,9 @@ fn package(args: PackageArgs) {
         1000.0,
         samples,
         margin_tiles,
-        if tiles_near_roads {
+        if land_tiles {
+            ocw_worldgen::package::TileCover::NearRoadsAndLand
+        } else if tiles_near_roads {
             ocw_worldgen::package::TileCover::NearRoads
         } else {
             ocw_worldgen::package::TileCover::Box
@@ -1727,7 +1747,7 @@ fn main() {
             }
         }
         Cmd::DemDiff { src, bbox, step } => dem_diff(&src, &bbox, step),
-        Cmd::Check { world } => {
+        Cmd::Check { world, peak } => {
             let bytes = std::fs::read(&world).unwrap_or_else(|e| {
                 eprintln!("{}: {e}", world.display());
                 std::process::exit(1);
@@ -1737,6 +1757,7 @@ fn main() {
                 std::process::exit(1);
             });
             print_sections(&bytes);
+            println!("tiles: {} ({} m grid)", pkg.tiles.len(), pkg.spacing_m());
             if let Some(l) = &pkg.landuse {
                 println!(
                     "land use: {} tiles at {} cells/side: {}; {} water-level vertices",
@@ -1765,6 +1786,26 @@ fn main() {
                 );
             } else {
                 println!("buildings: none");
+            }
+            let proj = ocw_world::geo::LocalProjection::new(pkg.origin.0, pkg.origin.1);
+            let mut missing = 0;
+            for &(lat, lon, want) in &peak {
+                let p = proj.project(lat, lon);
+                match ocw_worldgen::package::highest_near(&pkg, p, 150.0) {
+                    Some((h, q)) if (h - want).abs() <= 50.0 => println!(
+                        "peak {lat},{lon} ({want:.0} m): terrain {h:.0} m at x {:.0} z {:.0}",
+                        q[0], q[1]
+                    ),
+                    found => {
+                        missing += 1;
+                        println!(
+                            "peak {lat},{lon} ({want:.0} m) MISSING at x {:.0} z {:.0}: {}",
+                            p[0],
+                            p[1],
+                            found.map_or("no tile".into(), |(h, _)| format!("terrain {h:.0} m"))
+                        );
+                    }
+                }
             }
             let (worst, at, above, total) = pkg.road_pokes(1.0);
             println!(
@@ -1806,6 +1847,9 @@ fn main() {
                     }
                 }
             }
+            if missing > 0 {
+                std::process::exit(1);
+            }
         }
         Cmd::Package {
             src,
@@ -1813,6 +1857,7 @@ fn main() {
             samples,
             margin_tiles,
             tiles_near_roads,
+            land_tiles,
             landuse_cells,
             no_areas,
             no_clean,
@@ -1836,6 +1881,7 @@ fn main() {
                 samples,
                 margin_tiles,
                 tiles_near_roads,
+                land_tiles,
                 landuse_cells,
                 no_areas,
                 no_clean,

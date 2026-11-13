@@ -8,6 +8,7 @@ pub mod bridges;
 pub mod camera;
 pub mod console;
 pub mod event_hud;
+pub mod far_terrain;
 pub mod font;
 pub mod frame_rate;
 pub mod ground;

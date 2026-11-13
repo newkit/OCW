@@ -120,6 +120,11 @@ impl<'a, F: Fn(f64, f64) -> f64> GraphTerrain<'a, F> {
             .is_some_and(|v| v.iter().any(|&(a, b)| s >= a && s <= b))
     }
 
+    /// The natural ground (the DEM) at local (x, z), before the roads shape it.
+    pub fn base_height(&self, x: f64, z: f64) -> f64 {
+        (self.base)(x, z)
+    }
+
     /// Terrain height at local (x, z).
     pub fn height(&self, x: f64, z: f64) -> f64 {
         let base = (self.base)(x, z);
@@ -373,6 +378,38 @@ pub fn build_package_with_terrain<F: Fn(f64, f64) -> f64 + Sync>(
     )
 }
 
+/// The highest terrain sample of `pkg` within `radius` m of `p` (local
+/// metres) and where it is; `None` without any tile there. For checks
+/// that a landmark is in the package (`world-builder check --peak`).
+pub fn highest_near(pkg: &WorldPackage, p: [f64; 2], radius: f64) -> Option<(f64, [f64; 2])> {
+    let size = f64::from(pkg.tile_size_m);
+    let (n, s) = (pkg.samples as usize, pkg.spacing_m());
+    let lo = TileKey::containing([p[0] - radius, p[1] - radius], size);
+    let hi = TileKey::containing([p[0] + radius, p[1] + radius], size);
+    let mut best: Option<(f64, [f64; 2])> = None;
+    for z in lo.z..=hi.z {
+        for x in lo.x..=hi.x {
+            let Some(tile) = pkg.tiles.get(&TileKey { x, z }) else {
+                continue;
+            };
+            let o = tile.key.origin(size);
+            for k in 0..n {
+                for i in 0..n {
+                    let q = [o[0] + i as f64 * s, o[1] + k as f64 * s];
+                    if (q[0] - p[0]).hypot(q[1] - p[1]) > radius {
+                        continue;
+                    }
+                    let h = f64::from(tile.heights[k * n + i]);
+                    if best.is_none_or(|b| h > b.0) {
+                        best = Some((h, q));
+                    }
+                }
+            }
+        }
+    }
+    best
+}
+
 /// Cutting margin beside roads: 1.5 grid cells (more than a cell diagonal).
 pub fn cut_margin_m(tile_size: f64, samples: u32) -> f64 {
     1.5 * tile_size / f64::from(samples - 1)
@@ -386,6 +423,28 @@ pub enum TileCover {
     /// Only tiles within the margin of a tile with a road (islands: the
     /// open sea between distant coasts stays out, spec §4.7 "Tenerife").
     NearRoads,
+    /// [`TileCover::NearRoads`] plus every tile of the box that has land
+    /// ([`tile_has_land`]): the open sea stays out, but mountains away from
+    /// the roads (the Teide's summit, 3 km from the nearest road) are in
+    /// the package (spec §4.7 "Tile cover").
+    NearRoadsAndLand,
+}
+
+/// A tile has land if its natural ground rises above this anywhere (m;
+/// the DEMs have the sea at 0 m, SRTM's ocean too).
+pub const LAND_MIN_M: f64 = 1.0;
+/// Land test grid: samples per tile side (50 m apart on 1 km tiles).
+const LAND_TEST_SAMPLES: u32 = 21;
+
+/// Whether the tile at `key` has land: any of a 21 × 21 grid over it
+/// (borders included) of the natural ground `base` above [`LAND_MIN_M`].
+pub fn tile_has_land(key: TileKey, tile_size: f64, base: impl Fn(f64, f64) -> f64) -> bool {
+    let o = key.origin(tile_size);
+    let step = tile_size / f64::from(LAND_TEST_SAMPLES - 1);
+    (0..LAND_TEST_SAMPLES).any(|k| {
+        (0..LAND_TEST_SAMPLES)
+            .any(|i| base(o[0] + f64::from(i) * step, o[1] + f64::from(k) * step) > LAND_MIN_M)
+    })
 }
 
 /// [`build_package_with_terrain`] on a terrain built by the caller (e.g.
@@ -418,7 +477,7 @@ pub fn build_package_on<F: Fn(f64, f64) -> f64 + Sync>(
                 (min[0] - margin_tiles..=max[0] + margin_tiles).map(move |x| TileKey { x, z })
             })
             .collect(),
-        TileCover::NearRoads => {
+        TileCover::NearRoads | TileCover::NearRoadsAndLand => {
             let mut near = std::collections::BTreeSet::new();
             let used = roads.keys().copied().chain(
                 graph
@@ -433,6 +492,18 @@ pub fn build_package_on<F: Fn(f64, f64) -> f64 + Sync>(
                             x: k.x + dx,
                             z: k.z + dz,
                         });
+                    }
+                }
+            }
+            if cover == TileCover::NearRoadsAndLand {
+                for z in min[1] - margin_tiles..=max[1] + margin_tiles {
+                    for x in min[0] - margin_tiles..=max[0] + margin_tiles {
+                        let key = TileKey { x, z };
+                        if !near.contains(&key)
+                            && tile_has_land(key, tile_size, |x, z| terrain.base_height(x, z))
+                        {
+                            near.insert(key);
+                        }
                     }
                 }
             }
@@ -866,5 +937,98 @@ mod tests {
                 .keys()
                 .all(|k| with_roads.iter().any(|r| r.ring(*k) <= 1))
         );
+    }
+
+    /// Regression (2026-11-13, Tenerife): the Teide's summit lies 3.3 km
+    /// from the nearest road, so `NearRoads` left its tiles out and the
+    /// mountain was missing. `NearRoadsAndLand` keeps every tile with land
+    /// in the box of the roads, and still no tile of open sea.
+    #[test]
+    fn land_cover_keeps_a_mountain_far_from_roads_and_drops_the_sea() {
+        // Two short coast roads in opposite corners of a 1.2 km box of
+        // 100 m tiles; a cone of 3,700 m in the middle; sea (0 m) elsewhere.
+        let edge = |id: u32, a: [f64; 2], b: [f64; 2]| Edge {
+            id: EdgeId(id.into()),
+            from: VertexId(2 * id),
+            to: VertexId(2 * id + 1),
+            points: vec![a, b],
+            class: RoadClass::Secondary,
+            name: None,
+            width_m: 6.0,
+            bridge: false,
+            tunnel: false,
+            dead_end_m: None,
+            oneway: ocw_world::graph::Oneway::No,
+            boundary: false,
+            osm_way: i64::from(id),
+            profile: vec![2.0; 21],
+        };
+        let (a, b, c, d) = ([0.0, 0.0], [100.0, 0.0], [1000.0, 1000.0], [1100.0, 1000.0]);
+        let g = RoadGraph {
+            vertices: vec![a, b, c, d],
+            edges: vec![edge(0, a, b), edge(1, c, d)],
+            boundary_vertices: Default::default(),
+        };
+        let summit = [550.0, 550.0];
+        let base = move |x: f64, z: f64| {
+            let r = (x - summit[0]).hypot(z - summit[1]);
+            (3700.0 * (1.0 - r / 150.0)).max(0.0)
+        };
+        let terrain = GraphTerrain::new(&g, base, cut_margin_m(100.0, 11));
+        let build = |cover| build_package_on("t", (28.0, -16.6), &g, &terrain, 100.0, 11, 1, cover);
+        let (near, land) = (
+            build(TileCover::NearRoads),
+            build(TileCover::NearRoadsAndLand),
+        );
+        let top = TileKey { x: 5, z: 5 };
+        assert!(!near.tiles.contains_key(&top), "the old cover drops it");
+        let tile = &land.tiles[&top];
+        assert!(tile.roads.is_empty());
+        // Sample (5, 5) of the 10 m grid is the summit.
+        assert!((tile.heights[5 * 11 + 5] - 3700.0).abs() < 1e-3);
+        assert!((land.height(550.0, 550.0).unwrap() - 3700.0).abs() < 1e-3);
+        // Every tile of the cone (x, z 4..=6) is in, none of the open sea.
+        for z in -1..=11 {
+            for x in -1..=11 {
+                let key = TileKey { x, z };
+                let wet = !tile_has_land(key, 100.0, base);
+                let in_near = near.tiles.contains_key(&key);
+                assert_eq!(land.tiles.contains_key(&key), in_near || !wet, "{key:?}");
+                if (4..=6).contains(&x) && (4..=6).contains(&z) {
+                    assert!(!wet, "{key:?}");
+                }
+            }
+        }
+        assert!(!land.tiles.contains_key(&TileKey { x: 5, z: 9 }), "sea");
+        // The tiles near the roads are the same as before.
+        for (k, t) in &near.tiles {
+            assert_eq!(&land.tiles[k], t);
+        }
+        assert_eq!(land.tiles.len(), near.tiles.len() + 9);
+        // The check `world-builder check --peak` uses finds the summit in
+        // the new package only.
+        let (h, at) = highest_near(&land, [540.0, 560.0], 50.0).unwrap();
+        assert!(
+            (h - 3700.0).abs() < 1e-3 && at == [550.0, 550.0],
+            "{h} {at:?}"
+        );
+        assert_eq!(highest_near(&near, [540.0, 560.0], 50.0), None);
+    }
+
+    #[test]
+    fn land_test_sees_a_small_island_and_not_the_sea() {
+        let key = TileKey { x: 2, z: -1 };
+        assert!(!tile_has_land(key, 1000.0, |_, _| 0.0));
+        assert!(!tile_has_land(key, 1000.0, |_, _| LAND_MIN_M));
+        // A 60 m islet in the middle of the tile, 5 m high.
+        let islet = |x: f64, z: f64| {
+            if (x - 2500.0).hypot(z + 500.0) < 30.0 {
+                5.0
+            } else {
+                0.0
+            }
+        };
+        assert!(tile_has_land(key, 1000.0, islet));
+        assert!(!tile_has_land(TileKey { x: 3, z: -1 }, 1000.0, islet));
     }
 }
