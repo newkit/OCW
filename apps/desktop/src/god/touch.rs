@@ -1,13 +1,15 @@
 //! God mode's touch controls (spec §14 Phase 13B, §3.2.2), pure:
 //!
-//! - **one finger** dragged on the 3D view looks around (as the mouse:
+//! - a finger dragged on the **left half** of the view is the stick (as
+//!   the gamepad's left stick): its offset from where it came down – plane
+//!   (spec §14 Phase 13B, v2.67): up / down the throttle (faster /
+//!   slower), sideways the bank (the turn); hover: forward / back and
+//!   strafe – full at [`STICK_PX`];
+//! - a finger dragged on the **right half** looks around (as the mouse:
 //!   moving right looks right, moving up looks up; plane: off the course,
-//!   easing back after a moment);
-//! - **two fingers** are the stick (as the gamepad's left stick): the
-//!   centroid's offset from where they came down – plane: up / down the
-//!   throttle (faster / slower), sideways the bank (the turn); hover:
-//!   forward / back and strafe – full at [`STICK_PX`]; spreading or
-//!   pinching them scales the speed (as the wheel);
+//!   easing back after a moment); one finger on each half does both;
+//! - **two fingers** on the same half are the stick too (their centroid);
+//!   spreading or pinching them scales the speed (as the wheel);
 //! - the on-screen **+ / −** buttons at the right edge climb and descend
 //!   while held ([`ocw_render::inspect_hud::touch_buttons`]: the layout
 //!   that is drawn);
@@ -73,14 +75,29 @@ pub fn touch_flight(fingers: &[Finger], size: Vec2, invert_y: bool) -> TouchFlig
         }
     }
     out.input.climb = f64::clamp(climb, -1.0, 1.0);
+    let y = if invert_y { -1.0 } else { 1.0 };
+    let look = |f: &Finger| {
+        let d = f.pos - f.prev;
+        (
+            -f64::from(d.x) * LOOK_RAD_PER_PX,
+            -f64::from(d.y) * LOOK_RAD_PER_PX * y,
+        )
+    };
+    let left = |f: &Finger| f.start.x < size.x / 2.0;
+    let steer = |out: &mut TouchFlight, f: &Finger| {
+        let off = f.pos - f.start;
+        out.input.forward = stick(-off.y);
+        out.input.side = stick(off.x);
+    };
     match free.as_slice() {
-        [f] => {
-            let d = f.pos - f.prev;
-            let y = if invert_y { -1.0 } else { 1.0 };
-            out.look = (
-                -f64::from(d.x) * LOOK_RAD_PER_PX,
-                -f64::from(d.y) * LOOK_RAD_PER_PX * y,
-            );
+        // The left half steers (bank and throttle, a stick from where the
+        // finger came down), the right half looks.
+        [f] if left(f) => steer(&mut out, f),
+        [f] => out.look = look(f),
+        [a, b] if left(a) != left(b) => {
+            let (s, l) = if left(a) { (a, b) } else { (b, a) };
+            steer(&mut out, s);
+            out.look = look(l);
         }
         [a, b] => {
             let now = (a.pos + b.pos) / 2.0;
@@ -121,7 +138,7 @@ mod tests {
 
     #[test]
     fn one_finger_looks_like_the_mouse() {
-        let f = finger(1, (600.0, 400.0), (600.0, 400.0), (620.0, 390.0));
+        let f = finger(1, (900.0, 400.0), (900.0, 400.0), (920.0, 390.0));
         let t = touch_flight(&[f], SIZE, false);
         let mouse = super::super::input::look_delta((20.0, -10.0), &[], false, 0.016);
         assert_eq!(t.look, mouse);
@@ -134,8 +151,8 @@ mod tests {
     fn two_fingers_move_and_pinch_scales_the_speed() {
         // Both pushed up by a full stick: throttle up (hover: forward); to
         // the right a little: a gentle right bank (hover: strafe).
-        let a = finger(1, (500.0, 400.0), (540.0, 300.0), (540.0, 300.0));
-        let b = finger(2, (700.0, 400.0), (740.0, 300.0), (740.0, 300.0));
+        let a = finger(1, (300.0, 400.0), (340.0, 300.0), (340.0, 300.0));
+        let b = finger(2, (500.0, 400.0), (540.0, 300.0), (540.0, 300.0));
         let t = touch_flight(&[a, b], SIZE, false);
         assert_eq!(t.input.forward, 1.0);
         assert!((t.input.side - 40.0 / f64::from(STICK_PX)).abs() < 1e-6);
@@ -149,8 +166,8 @@ mod tests {
         assert_eq!(t.input.forward, by_pad.forward);
         assert!((t.input.side - by_pad.side).abs() < 1e-6);
         // Pulled down and to the left: slower, banking left.
-        let a = finger(1, (500.0, 300.0), (420.0, 400.0), (420.0, 400.0));
-        let b = finger(2, (700.0, 300.0), (620.0, 400.0), (620.0, 400.0));
+        let a = finger(1, (300.0, 300.0), (220.0, 400.0), (220.0, 400.0));
+        let b = finger(2, (500.0, 300.0), (420.0, 400.0), (420.0, 400.0));
         let t = touch_flight(&[a, b], SIZE, false);
         assert!(
             t.input.forward < -0.9 && t.input.side < -0.8,
@@ -160,8 +177,8 @@ mod tests {
         assert_eq!(t.look, (0.0, 0.0), "two fingers do not look");
         assert_eq!(t.wheel, 0.0);
         // Spread from 200 to 250 px apart: faster by that factor.
-        let a = finger(1, (500.0, 400.0), (500.0, 400.0), (475.0, 400.0));
-        let b = finger(2, (700.0, 400.0), (700.0, 400.0), (725.0, 400.0));
+        let a = finger(1, (300.0, 400.0), (300.0, 400.0), (275.0, 400.0));
+        let b = finger(2, (500.0, 400.0), (500.0, 400.0), (525.0, 400.0));
         let t = touch_flight(&[a, b], SIZE, false);
         let factor = ocw_sim::god::SCALE_STEP.powf(t.wheel);
         assert!((factor - 1.25).abs() < 1e-4, "{factor}");
@@ -191,10 +208,32 @@ mod tests {
         let off = finger(9, at(up.centre), at(up.centre), (400.0, 300.0));
         assert_eq!(touch_flight(&[off], SIZE, false), TouchFlight::default());
         // Climbing with one finger, looking with another.
-        let look = finger(1, (300.0, 300.0), (300.0, 300.0), (310.0, 300.0));
+        let look = finger(1, (900.0, 300.0), (900.0, 300.0), (910.0, 300.0));
         let t = touch_flight(&[press(up.centre), look], SIZE, false);
         assert_eq!(t.input.climb, 1.0);
         assert!(t.look.0 < 0.0);
+    }
+
+    /// Spec §14 Phase 13B (v2.67): bank and throttle by dragging on the
+    /// left half, looking on the right half.
+    #[test]
+    fn the_left_half_steers_and_the_right_half_looks() {
+        // Dragged up and to the right on the left half: faster, banking
+        // right; the view does not move.
+        let s = finger(1, (300.0, 400.0), (330.0, 340.0), (340.0, 310.0));
+        let t = touch_flight(&[s], SIZE, false);
+        assert_eq!(t.input.forward, 1.0);
+        assert!((t.input.side - 40.0 / f64::from(STICK_PX)).abs() < 1e-6);
+        assert_eq!(t.look, (0.0, 0.0));
+        // Down on the left half: slower.
+        let s = finger(1, (300.0, 400.0), (300.0, 480.0), (300.0, 500.0));
+        assert_eq!(touch_flight(&[s], SIZE, false).input.forward, -1.0);
+        // One finger on each half: steering and looking at once.
+        let s = finger(1, (300.0, 400.0), (300.0, 400.0), (230.0, 400.0));
+        let l = finger(2, (900.0, 400.0), (900.0, 400.0), (910.0, 400.0));
+        let t = touch_flight(&[l, s], SIZE, false);
+        assert!(t.input.side < -0.7 && t.look.0 < 0.0, "{t:?}");
+        assert_eq!(t.wheel, 0.0, "no pinch across the halves");
     }
 
     #[test]

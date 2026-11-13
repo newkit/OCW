@@ -138,10 +138,10 @@ flies forward along its heading. While flying:
 | Inspection panel and crosshair on / off | I | |
 | Put a pin where the crosshair points (kept for the ride; `god.pins` lists them) | P | |
 
-Touch (spec §3.2.2): one finger dragged on the view looks around, two
-fingers are the stick (push them up to fly faster, down to fly slower,
-sideways to bank and turn) and spreading / pinching them changes the speed
-scale; the **+** / **−**
+Touch (spec §3.2.2): a finger dragged on the left half of the view is the
+stick (push it up to fly faster, down to fly slower, sideways to bank and
+turn), on the right half it looks around; two fingers on one half steer too
+and spreading / pinching them changes the speed scale; the **+** / **−**
 buttons at the right edge (shown for 8 s after a touch) climb and descend.
 
 **Inspection** (I, on by default): a panel top right with the altitude,

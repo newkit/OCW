@@ -358,12 +358,12 @@ video = 14
 
 [[scene]]
 name = "god-plane-video"
-description = "Video: god mode flies like a plane (spec §14 Phase 13B, v2.64) – over Vaduz the unicorn banks into a right turn (the unicorn and the view roll), levels out, then climbs with the nose up towards the mountains and levels off; no saddle cloth on its back"
+description = "Video: god mode flies like a plane (spec §14 Phase 13B / 13C) – over Vaduz the unicorn banks into a right turn (the unicorn and the view roll), levels out, climbs with the nose up towards the mountains and levels off; then the camera swings to its side (camera.orbit 90): the bird-like wingbeat close up – shoulder and wrist, the primaries fanning, glides between bursts, deeper beats when climbing; no saddle cloth on its back"
 world = true
 args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "0", "--power", "200"]
-at = ["1=time 14:00", "3=god on", "4=god.pose -2700 2300 60 0 -10", "4.2=god.cruise 0.6 0 0", "6.5=god.cruise 0.6 0 -22", "10.5=god.cruise 0.6 0 0", "12.5=god.cruise 0.9 0.9 0", "16.5=god.cruise 0.9 0 0"]
+at = ["1=time 14:00", "3=god on", "4=god.pose -2700 2300 60 0 -10", "4.2=god.cruise 0.6 0 0", "6.5=god.cruise 0.6 0 -22", "10.5=god.cruise 0.6 0 0", "12.5=god.cruise 0.9 0.9 0", "16=god.cruise 0.6 0 0", "16=camera.orbit 90 8 7", "20=god.cruise 0.6 0.7 0", "22.5=god.cruise 0.6 0 0"]
 warmup = 4
-video = 15
+video = 21
 
 # God mode's inspection (spec §14 Phase 13D, G3): the panel (position,
 # latitude / longitude, tile, local time), the crosshair naming what it

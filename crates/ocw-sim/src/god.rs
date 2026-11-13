@@ -846,18 +846,32 @@ pub fn check_pose(
     Ok(())
 }
 
-/// Wing beats per second (the animation and the wing sound): fast when
-/// climbing or speeding up (up to ~2 Hz), slow while cruising, none while
+/// Wing beats per second (the animation and the wing sound; spec §14
+/// Phase 13C, a bird's wingbeat, 2026-11-14): continuous while flying,
+/// 1.3 Hz slow … 2.1 Hz fast (from 10 to 160 m/s), a little slower when
+/// climbing, faster when speeding up, 1.2 … 2.4 Hz; none while hovering or
 /// gliding down.
 pub fn wing_beat_hz(climb_mps: f64, accel_mps2: f64, speed_mps: f64) -> f64 {
-    let climb = (climb_mps / 15.0).clamp(0.0, 1.0);
-    let accel = (accel_mps2 / 40.0).clamp(0.0, 1.0);
-    let cruise = if speed_mps > 2.0 { 0.35 } else { 0.0 };
-    let gliding_down = climb_mps < -3.0;
-    if gliding_down {
+    if speed_mps < 2.0 || climb_mps < -3.0 {
         return 0.0;
     }
-    (cruise + 1.65 * climb.max(accel)).min(2.0)
+    let fast = ((speed_mps - 10.0) / 150.0).clamp(0.0, 1.0);
+    let climb = (climb_mps / 15.0).clamp(0.0, 1.0);
+    let accel = (accel_mps2 / 40.0).clamp(0.0, 1.0);
+    (1.3 + 0.8 * fast - 0.15 * climb + 0.3 * accel).clamp(1.2, 2.4)
+}
+
+/// How deep the wings beat (0 … ~1.3, the animation's amplitude): deep
+/// when slow or climbing, shallower when fast, fading in from a hover.
+pub fn wing_beat_depth(climb_mps: f64, accel_mps2: f64, speed_mps: f64) -> f64 {
+    if wing_beat_hz(climb_mps, accel_mps2, speed_mps) == 0.0 {
+        return 0.0;
+    }
+    let fast = ((speed_mps - 10.0) / 150.0).clamp(0.0, 1.0);
+    let climb = (climb_mps / 15.0).clamp(0.0, 1.0);
+    let accel = (accel_mps2 / 40.0).clamp(0.0, 1.0);
+    let flying = (speed_mps / 12.0).clamp(0.0, 1.0);
+    (1.0 - 0.45 * fast + 0.3 * climb + 0.15 * accel) * flying
 }
 
 /// Gallop strides per second: following the speed (legs tucked in at
@@ -1208,9 +1222,21 @@ mod tests {
 
     #[test]
     fn wings_and_gallop_follow_the_flight() {
-        assert_eq!(wing_beat_hz(0.0, 0.0, 0.0), 0.0);
-        assert!(wing_beat_hz(20.0, 0.0, 30.0) <= 2.0 && wing_beat_hz(20.0, 0.0, 30.0) > 1.5);
-        assert!(wing_beat_hz(0.0, 50.0, 30.0) > 1.5);
+        assert_eq!(wing_beat_hz(0.0, 0.0, 0.0), 0.0, "hovering: folded");
+        assert_eq!(wing_beat_depth(0.0, 0.0, 0.0), 0.0);
+        // A bird's wingbeat (2026-11-14): always beating in flight, 1.2 …
+        // 2 Hz while cruising; slower and deeper when slow or climbing,
+        // faster and shallower when fast.
+        for v in [12.0, 30.0, 80.0, 160.0, 400.0] {
+            let hz = wing_beat_hz(0.0, 0.0, v);
+            assert!((1.2..=2.15).contains(&hz), "{v}: {hz}");
+            assert!(wing_beat_depth(0.0, 0.0, v) > 0.5, "{v}");
+        }
+        assert!(wing_beat_hz(0.0, 0.0, 200.0) > wing_beat_hz(0.0, 0.0, 15.0));
+        assert!(wing_beat_depth(0.0, 0.0, 200.0) < wing_beat_depth(0.0, 0.0, 15.0));
+        assert!(wing_beat_hz(20.0, 0.0, 30.0) < wing_beat_hz(0.0, 0.0, 30.0));
+        assert!(wing_beat_depth(20.0, 0.0, 30.0) > wing_beat_depth(0.0, 0.0, 30.0));
+        assert!(wing_beat_hz(0.0, 50.0, 30.0) > wing_beat_hz(0.0, 0.0, 30.0));
         assert_eq!(wing_beat_hz(-10.0, 0.0, 30.0), 0.0, "glides down");
         assert!(gallop_hz(100.0) > gallop_hz(10.0));
         // North is 0°, never "-0°" (bug 2026-11-13: the HUD said "-00° N").
