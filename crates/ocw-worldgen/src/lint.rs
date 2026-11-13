@@ -435,6 +435,11 @@ fn lint_roads(pkg: &WorldPackage, g: &RoadGraph, r: &mut LintReport) {
             let y = profile_at(p, len, s);
             let on_bridge = e.bridge || decks.on_deck(c, y);
             let kind = if on_bridge { "bridge" } else { "untagged" };
+            if on_bridge && !e.bridge {
+                // A detected bridge: its length counts as bridge.
+                r.bridge_m += ROAD_STEP_M;
+                r.road_m -= ROAD_STEP_M;
+            }
             // Surface against the terrain, across the road.
             let (mut max_gap, mut min_gap) = (f64::NEG_INFINITY, f64::INFINITY);
             for off in [-(half - 0.25).max(0.0), 0.0, (half - 0.25).max(0.0)] {

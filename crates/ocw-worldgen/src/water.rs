@@ -484,7 +484,22 @@ pub fn level_water(
             let old = f64::from(*level);
             let h = f64::from(tile.heights[*idx as usize]);
             let in_water = h <= old - WATER_DEPTH_M + 1e-3;
-            let new = levels.level_at(p);
+            // A rim vertex (next to the water, outside its outline) takes
+            // the level of the water beside it.
+            let new = levels.level_at(p).or_else(|| {
+                [
+                    (-1.0, 0.0),
+                    (1.0, 0.0),
+                    (0.0, -1.0),
+                    (0.0, 1.0),
+                    (-1.0, -1.0),
+                    (1.0, 1.0),
+                    (-1.0, 1.0),
+                    (1.0, -1.0),
+                ]
+                .iter()
+                .find_map(|&(dx, dz)| levels.level_at([p[0] + dx * sp, p[1] + dz * sp]))
+            });
             if let Some(road_h) = road(p) {
                 // Under a road: the road-conformed height, never a hole.
                 if in_water || h < road_h - 1e-3 {
@@ -692,16 +707,16 @@ mod tests {
     fn lakes_are_level_and_roads_are_not_carved() {
         let mut pkg = water_pkg();
         let ring = vec![
-            [395.0, 395.0],
-            [605.0, 395.0],
-            [605.0, 605.0],
-            [395.0, 605.0],
+            [405.0, 405.0],
+            [595.0, 405.0],
+            [595.0, 595.0],
+            [405.0, 595.0],
         ];
         let bodies = WaterBodies {
             rivers: vec![],
             lakes: vec![Lake {
                 osm_id: 7,
-                bbox: [395.0, 395.0, 605.0, 605.0],
+                bbox: [405.0, 405.0, 595.0, 595.0],
                 rings: vec![ring],
             }],
         };

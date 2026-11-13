@@ -419,3 +419,73 @@ description = "Black Forest: --world without a route option rides the package's 
 world = "blackforest"
 args = ["--world", "{world}", "--no-neighbours", "--bots", "3"]
 shot = 10
+
+# --- World cleaning and bridges (spec §4.8) -----------------------------------
+# Render twice for before/after: --world data/clean/liechtenstein-before.ocwpkg
+# --world blackforest=data/clean/blackforest-before.ocwpkg, then the cleaned
+# packages (scripts/world-clean-compare.sh li|bf). Free ride, no route files
+# (their heights come from the build that wrote them).
+
+[[scene]]
+name = "clean-li-climb"
+description = "World cleaning: a climbing street in Triesen (Dorfstrasse), side camera low over the road edge: before v2.32 the terrain under climbing roads was cut to the height of the node behind, the road floated about 1 m"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-1994,5718", "--bots", "0", "--power", "150"]
+at = ["2.5=camera.orbit 80 6 9"]
+shot = 9
+
+[[scene]]
+name = "clean-li-rhine-bridge"
+description = "Bridges: the Rhine road bridge Vaduz - Sevelen (Rheinstrasse) from the side: deck, parapets and piers over the Rhine"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-3163,3230", "--bots", "0", "--power", "150"]
+at = ["2.5=camera.orbit 95 12 55"]
+shot = 10
+
+[[scene]]
+name = "clean-li-samina-bridge"
+description = "Bridges: Sückastrasse over the Samina near Steg, side camera"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "1366,5137", "--bots", "0", "--power", "150"]
+at = ["2.5=camera.orbit 90 10 30"]
+shot = 10
+
+[[scene]]
+name = "clean-li-malbun"
+description = "World cleaning: the Malbun road below Malbun, raised chase camera"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "4218,6473", "--bots", "0", "--power", "220"]
+at = ["2.5=camera.orbit 150 18 25"]
+shot = 10
+
+[[scene]]
+name = "clean-li-malbun-video"
+description = "Video: riding the Malbun road, side camera low over the road edge (road on the terrain, no floating slab)"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "4218,6473", "--bots", "0", "--power", "260"]
+at = ["2.5=camera.orbit 75 8 10"]
+video = 6
+
+[[scene]]
+name = "clean-bf-dreisam"
+description = "Bridges: the Dreisam in Freiburg at the Schwabentorbrücke, side camera: bridge, river level"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-7670,-7950", "--bots", "0", "--power", "150"]
+at = ["2.5=camera.orbit 95 14 45"]
+shot = 10
+
+[[scene]]
+name = "clean-bf-schauinsland"
+description = "World cleaning: the Schauinsland road at km 14.5 (940 m), side camera low over the road edge"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-5942,568", "--bots", "0", "--power", "260"]
+at = ["2.5=camera.orbit 80 6 9"]
+shot = 10
+
+[[scene]]
+name = "clean-bf-schauinsland-video"
+description = "Video: climbing the Schauinsland road, side camera low over the road edge"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-5942,568", "--bots", "0", "--power", "300"]
+at = ["2.5=camera.orbit 75 8 10"]
+video = 6

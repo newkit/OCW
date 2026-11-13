@@ -281,13 +281,36 @@ fn road_colour(class: RoadClass) -> [f32; 4] {
 
 /// Road surface strips with edge faces, in world coordinates.
 pub fn road_arrays(strips: &[RoadStrip]) -> MeshArrays {
-    road_arrays_with(strips, |_| false)
+    road_arrays_with(strips, |_| EDGE_DEPTH_M)
 }
 
-/// [`road_arrays`]; points for which `on_deck` holds (on a bridge deck,
-/// spec §4.8.6) get no edge faces down into the terrain – the deck has its
-/// own sides, and a 2 m skirt would hang below a thin deck.
-pub fn road_arrays_with(strips: &[RoadStrip], on_deck: impl Fn([f32; 3]) -> bool) -> MeshArrays {
+/// How far the edge face of a road strip reaches down at `p` (its top edge,
+/// spec §4.8.3, §4.8.6): nothing on a bridge deck (the deck has its own
+/// sides, a skirt would hang below it); elsewhere at least
+/// [`EDGE_DEPTH_M`] and down to 0.3 m below the terrain at the edge, so a
+/// road the 10 m terrain grid cannot follow (the upper leg of a hairpin, a
+/// road above a lower one) stands on a wall instead of floating.
+pub fn skirt_depth(
+    pkg: &WorldPackage,
+    bridges: &[&ocw_world::bridges::Bridge],
+    p: [f32; 3],
+) -> f32 {
+    if crate::bridges::on_deck(bridges, [p[0], p[1] - 0.02, p[2]]) {
+        return 0.0;
+    }
+    // No terrain there (beyond the package's tiles): the plain skirt.
+    let Some(ground) = pkg.surface_height(f64::from(p[0]), f64::from(p[2])) else {
+        return EDGE_DEPTH_M;
+    };
+    EDGE_DEPTH_M.max(p[1] - ground as f32 + 0.3).min(MAX_WALL_M)
+}
+
+/// Deepest retaining wall drawn under a road edge (m).
+pub const MAX_WALL_M: f32 = 40.0;
+
+/// [`road_arrays`] with the depth of the edge faces below each point
+/// given by `skirt` (m below the surface).
+pub fn road_arrays_with(strips: &[RoadStrip], skirt: impl Fn([f32; 3]) -> f32) -> MeshArrays {
     let mut m = MeshArrays::default();
     let edge = lin(0.45, 0.43, 0.38);
     for s in strips {
@@ -327,11 +350,7 @@ pub fn road_arrays_with(strips: &[RoadStrip], on_deck: impl Fn([f32; 3]) -> bool
                     .normalize_or_zero();
                 let out = Vec3::new(-dir.z, 0.0, dir.x) * side;
                 let top = p[i] + out * half + Vec3::Y * 0.02;
-                let depth = if on_deck(p[i].to_array()) {
-                    0.0
-                } else {
-                    EDGE_DEPTH_M
-                };
+                let depth = skirt(top.to_array());
                 m.positions.push(top.to_array());
                 m.positions.push((top - Vec3::Y * depth).to_array());
                 m.normals.extend([out.to_array(); 2]);
@@ -947,7 +966,7 @@ pub fn build_tile_meshes_kept(pkg: &WorldPackage, key: TileKey, keep: Keep) -> O
         key,
         terrain: terrain_arrays_kept(pkg, tile, keep),
         colour_map: lu.map(|(lu, cells)| colour_map(pkg, tile, lu, cells)),
-        roads: road_arrays_with(&tile.roads, |p| crate::bridges::on_deck(&near, p)),
+        roads: road_arrays_with(&tile.roads, |p| skirt_depth(pkg, &near, p)),
         water: lu.map_or_else(MeshArrays::default, |(lu, _)| {
             water_arrays_kept(pkg, tile, lu, keep)
         }),
@@ -1516,6 +1535,28 @@ mod tests {
         let low = |m: &MeshArrays| m.positions.iter().filter(|q| q[1] < 4.0).count();
         // Points 3 … 7 lie on the deck: their 4 skirt-bottom vertices are gone.
         assert_eq!(low(&plain) - low(&t.roads), 5 * 2);
+        // At x = 0 the road is 5 m above the terrain: its edge face reaches
+        // down to 0.3 m below the ground there (a wall, not a floating slab).
+        let lowest = t
+            .roads
+            .positions
+            .iter()
+            .map(|q| q[1])
+            .fold(f32::INFINITY, f32::min);
+        assert!((lowest - (-0.3)).abs() < 0.05, "{lowest}");
+        // Beyond the last tile (x = 100 is the next tile's edge here) there
+        // is no terrain: the plain 2 m skirt, not a 40 m wall.
+        let at_end: Vec<f32> = t
+            .roads
+            .positions
+            .iter()
+            .filter(|q| q[0] > 99.0)
+            .map(|q| q[1])
+            .collect();
+        assert!(
+            at_end.iter().all(|&y| y >= 5.02 - EDGE_DEPTH_M - 1e-3),
+            "{at_end:?}"
+        );
         // Without the section the package draws as before.
         assert!(
             build_tile_meshes(&package(), key)

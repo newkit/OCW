@@ -40,7 +40,7 @@ pub const ABUTMENT_M: f64 = 3.0;
 /// A road this far above the natural ground is over a gap (m) …
 pub const GAP_M: f64 = 5.0;
 /// … somewhere at least this high (m) …
-pub const GAP_PEAK_M: f64 = 7.0;
+pub const GAP_PEAK_M: f64 = 10.0;
 /// … over a stretch this long (m); longer stretches are embankments.
 pub const GAP_MIN_M: f64 = 8.0;
 pub const GAP_MAX_M: f64 = 150.0;
@@ -385,7 +385,7 @@ pub fn choose_structure(
         Some(_) => Some(BridgeStructure::Beam),
         None => None,
     };
-    if t("bridge") == Some("covered") {
+    if t("bridge") == Some("covered") || t("covered") == Some("yes") {
         structure = Some(BridgeStructure::Covered);
     }
     let material = match t("bridge:material").or(t("material")) {
@@ -715,6 +715,16 @@ mod tests {
                 .collect()
         };
         let c = |t: Tags, class, len| choose_structure(Some(&t), class, len);
+        // The usual tagging of the Alte Rheinbrücke Vaduz – Sevelen.
+        assert_eq!(
+            c(
+                tags(&[("bridge", "yes"), ("covered", "yes")]),
+                RoadClass::Cycleway,
+                135.0
+            )
+            .0,
+            BridgeStructure::Covered
+        );
         assert_eq!(
             c(tags(&[("bridge", "covered")]), RoadClass::Path, 60.0),
             (
