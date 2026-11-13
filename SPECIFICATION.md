@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.88 – November 2026
+Version 2.89 – November 2026
 
 | Version | Change |
 |---|---|
@@ -65,6 +65,7 @@ Version 2.88 – November 2026
 | 2.44 | Phase 8 decisions: no commercial release, 8A stays (Q2); orthophoto corridor size acceptable (Q4); seasonal variants (Q5); own photos postponed (Q6); Mapillary CC BY-SA, reference by eye only (Q7); 3D buildings: swissBUILDINGS3D 3.0 (Opendata BY) to confirm, LGL LoD2 probably not open, ask LGL (Q8); all texture areas in parallel (Q10) |
 | 2.45 | Licensing (§13): no licence change for now – the code stays MIT / Apache-2.0 (a switch to CC BY-SA was considered and declined) |
 | 2.46 | Phase 8 T1 / T2 (§4.6, §8.1, §13, §14 Phase 8): material library of 21 CC0 materials (ambientCG, Poly Haven) – ground, roads, houses, volcanic ground for Tenerife – not in git but pinned by URL + SHA-256 in `assets/materials.toml`, fetched and converted to KTX2 (BC3 / BC5, 1024², mipmapped) by `scripts/fetch-materials.sh` into the git-ignored `assets/materials/` and shipped beside the binary (AppImage, macOS bundle, Windows zip, test deployment); licence rule of Phase 8A shared by the model and material validators; terrain drawn with the materials blended by the splat map (weights at cell corners, noise warp, height blend, rock and triplanar on slopes, macro scale, fade to the colour map in the materials' mean colours), roads by OSM `surface` (new package section `RSRF`) with category fallback; regional material sets by the package's time zone (`[[region]]` in the manifest: the volcanic set of the Canary Islands with lava, ash / cinder, black sand and pine needles); regional tint hook neutral; reference boards `art/reference/` |
+| 2.89 | Decision from the build dashboard (2026-11-14): Phase 12 Q3 – "chaotic" bots that sometimes cause crashes, as a setting (off by default) |
 | 2.88 | Decision from the build dashboard (2026-11-14): Phase 12 Q2 – group rides soft bumps only by default, races the full collision model |
 | 2.87 | Research (2026-11-14) on Phase 9 Q7, star catalogue licences: Hipparcos, Tycho, Tycho-2 and Gaia DR3 are CC BY-NC 3.0 IGO (ESA), HYG / AT-HYG and Stellarium sky cultures CC BY-SA (or ND / GPL), Celestia's star data CC BY-NC 3.0 IGO, BSC5 without a licence; proposal: SKY2000 v5 (NASA GSFC) for stars, IAU WGSN names, d3-celestial lines (BSD-3); question stays open (§14 Phase 9, 9H) |
 | 2.86 | Decision from the build dashboard (2026-11-14): Phase 12 Q1 – collisions on and damage off by default |
@@ -3031,7 +3032,7 @@ Attribution of the provider used appears on the credits screen and in the weathe
 
 - **Q1 – Defaults: decided (2026-11-14, dashboard):** **collisions on, damage off** by default (the proposal).
 - **Q2 – Group rides: decided (2026-11-14, dashboard):** group rides default to **soft bumps only** (no crashes); **races use the full model** (organisers can still change it per event, 12A).
-- **Q3 – Bots' mistakes:** should bots sometimes cause crashes ("chaotic" bots, a setting), or always ride perfectly?
+- **Q3 – Bots' mistakes: decided (2026-11-14, dashboard):** **chaotic bots, as a setting** – bots sometimes make mistakes (late reactions, wheel touches) that can cause crashes; a session / event setting (`ride.chaotic_bots`, off by default; organisers decide in events). With it off, bots ride perfectly with autodrive avoidance (12D).
 - **Q4 – Workouts:** keep the ERG step running while the rider is down (proposal), or pause the step until the rider rides again?
 - **Q5 – Falls:** a scripted fall animation first (proposal), or straight to a ragdoll with a physics engine (more realistic, more work, a dependency like Avian or Rapier)?
 - **Q6 – Persistence:** injuries and bike damage reset per ride (proposal), or carry over between rides (a career / repair-shop mode, with repairs paid in hearts in the workshop, §14 Phase 4, 4E)?
