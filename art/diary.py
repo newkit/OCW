@@ -55,7 +55,7 @@ IMAGE = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 VIDEO = {".mp4", ".webm", ".mkv", ".mov"}
 AUDIO = {".wav", ".ogg", ".mp3", ".flac"}
 TEXT = {".txt", ".md"}
-LOGS = {".log", ".json", ".args", ".route", ".toml", ".csv"}
+LOGS = {".log", ".json", ".jsonl", ".args", ".route", ".toml", ".csv"}
 
 W, H, FPS = 1920, 1080, 30
 RATE = 44100
@@ -189,6 +189,15 @@ def gather(day: str):
                 continue
             d, hms = file_time(f)
             if d != day:
+                continue
+            if "build-log" in f.parts:
+                # The build log (remote.sh runs, dashboard samples) grows
+                # during the day: keep one copy per file, updated in place.
+                target = dest / "logs" / "build-log" / f.name
+                if not target.exists() or target.stat().st_size != f.stat().st_size:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(f, target)
+                    added += 1
                 continue
             h = sha(f)
             if h in known:
@@ -371,8 +380,44 @@ def tests_of(commits: list[dict]) -> int | None:
     return best
 
 
+def builds_of(day: str) -> dict:
+    """Summary of the day's build log: remote.sh runs and build-server samples."""
+    d = HIST / day / "logs" / "build-log"
+    runs, samples = [], []
+    for name, out in (("runs.jsonl", runs), ("servers.jsonl", samples)):
+        p = d / name
+        if p.exists():
+            for line in p.read_text(errors="replace").splitlines():
+                try:
+                    out.append(json.loads(line))
+                except ValueError:
+                    pass
+    machines = {}
+    for r in runs:
+        m = machines.setdefault(r.get("machine", "?"), {"runs": 0, "seconds": 0.0, "failed": 0})
+        m["runs"] += 1
+        m["seconds"] += float(r.get("seconds") or 0)
+        m["failed"] += int(r.get("exit", 0) != 0)
+    online = {}
+    for s_ in samples:
+        for m in (s_.get("status") or {}).get("machines", []) or []:
+            o = online.setdefault(m.get("name", "?"), [0, 0])
+            o[0] += 1 if m.get("online") else 0
+            o[1] += 1
+    return {
+        "runs": len(runs),
+        "seconds": sum(float(r.get("seconds") or 0) for r in runs),
+        "failed": [r for r in runs if r.get("exit", 0) != 0],
+        "longest": sorted(runs, key=lambda r: -float(r.get("seconds") or 0))[:5],
+        "machines": machines,
+        "online": {k: (v[0] / v[1] if v[1] else 0.0) for k, v in online.items()},
+        "samples": len(samples),
+    }
+
+
 def journal(day: str) -> dict:
     commits = commits_of(day)
+    builds = builds_of(day)
     media = media_of(day)
     spec = [
         m.group(1)
@@ -393,6 +438,7 @@ def journal(day: str) -> dict:
         "images": sum(m["kind"] == "image" for m in media),
         "videos": sum(m["kind"] == "video" for m in media),
         "sounds": sum(m["kind"] == "audio" for m in media),
+        "builds": {k: v for k, v in builds.items() if k not in ("longest",)},
     }
     d = HIST / day
     d.mkdir(parents=True, exist_ok=True)
@@ -414,6 +460,25 @@ def journal(day: str) -> dict:
             f"| {c['time'][:5]} | `{c['sha']}`{' (merge)' if c['merge'] else ''} | "
             f"{c['subject'].replace('|', '/')} |"
         )
+    if builds["runs"] or builds["samples"]:
+        md += ["", "## Builds and build servers", "",
+               f"{builds['runs']} build/test runs on the build machines, "
+               f"{builds['seconds'] / 3600:.1f} h in total, {len(builds['failed'])} failed; "
+               f"{builds['samples']} server samples.", "",
+               "| Machine | Runs | Hours | Failed | Online |", "|---|---|---|---|---|"]
+        for name in sorted(set(builds["machines"]) | set(builds["online"])):
+            m = builds["machines"].get(name, {"runs": 0, "seconds": 0, "failed": 0})
+            on = builds["online"].get(name)
+            md.append(f"| {name} | {m['runs']} | {m['seconds'] / 3600:.1f} | {m['failed']} | "
+                      + (f"{on:.0%}" if on is not None else "–") + " |")
+        if builds["failed"]:
+            md += ["", "Failed runs:", ""]
+            md += [f"- {r.get('start', '')[11:16]} {r.get('machine')}: `{r.get('command', '')[:80]}` "
+                   f"(exit {r.get('exit')}, log `build-log/{r.get('log')}`)" for r in builds["failed"]]
+        if builds["longest"]:
+            md += ["", "Longest runs:", ""]
+            md += [f"- {float(r.get('seconds') or 0) / 60:.0f} min on {r.get('machine')}: "
+                   f"`{r.get('command', '')[:80]}`" for r in builds["longest"]]
     md += ["", "## Media", "", "| Time | File |", "|---|---|"]
     md += [f"| {m['time']} | [{m['file']}]({m['file']}) |" for m in media]
     (d / "journal.md").write_text("\n".join(md) + "\n")
@@ -1057,7 +1122,12 @@ def render(day: str) -> Path:
     ]
     if sc.get("tests") or j["tests"]:
         stats.append((int(sc.get("tests") or j["tests"]), "TESTS PASSING"))
-    xs = [960 + (i - (len(stats) - 1) / 2) * 360 for i in range(len(stats))]
+    b = j.get("builds") or {}
+    if b.get("runs"):
+        stats.append((b["runs"], "BUILD RUNS"))
+        stats.append((round(b["seconds"] / 3600), "BUILD HOURS"))
+    step = min(360, 1760 / max(1, len(stats)))
+    xs = [960 + (i - (len(stats) - 1) / 2) * step for i in range(len(stats))]
     for i, (val, label) in enumerate(stats):
         a = es + 0.5 + i * 0.25
         steps = 24

@@ -551,3 +551,17 @@ class CpuTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RecordTest(unittest.TestCase):
+    def test_record_line_is_one_json_line_with_time(self):
+        line = d.record_line({"machines": [{"name": "marge", "online": True}]}, now=0)
+        self.assertNotIn("\n", line)
+        rec = json.loads(line)
+        self.assertRegex(rec["time"], r"^1970-01-0[12]T\d\d:\d\d:\d\d([+-]\d\d:\d\d)?$")
+        self.assertEqual(rec["status"]["machines"][0]["name"], "marge")
+
+    def test_record_path_per_local_day(self):
+        p = d.record_path(Path("/x/build-log"), now=86400 * 3)
+        self.assertEqual(p.name, "servers.jsonl")
+        self.assertRegex(p.parent.name, r"^1970-01-0[34]$")

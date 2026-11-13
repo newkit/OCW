@@ -1,11 +1,12 @@
 # OCW Build Diary – Art Project Specification
 
-Version 1.1 – 12 November 2026
+Version 1.2 – 13 November 2026
 
 | Version | Change |
 |---|---|
 | 1.0 | The brief, the diary format, the media archive, the tool (`art/diary.py`), day scripts for 11 and 12 November 2026 |
 | 1.1 | Every photo and video carries its ISO 8601 date and time, in the file and in the picture (§2.1) |
+| 1.2 | The build process itself is documented: every build/test run on the build machines and the build servers' state (§2.2) |
 
 ## 1. The brief
 
@@ -80,6 +81,26 @@ UTC offset, e.g. `2026-11-12T22:14:05+01:00`) twice:
 - **Older material** (made before this rule): `art/diary.py stamp` (run by
   `gather`) writes the capture time from the file name into the archive copy's
   metadata; the picture itself is left as it was taken.
+
+### 2.2 The build process: runs, build times, errors, build servers
+
+The build infrastructure is part of the story, so it is recorded continuously,
+in `test-output/build-log/YYYY-MM-DD/` of the main checkout (git-ignored;
+gathered into the day folder's `logs/build-log/`):
+
+| File | Written by | Content |
+|---|---|---|
+| `runs.jsonl` | `scripts/remote.sh run` (every build / test run on a build machine, by people and agents) | one JSON line per run: start (ISO 8601), seconds (including any wait for a build slot), machine, OS, checkout, branch, command, exit code, log file |
+| `HHMMSS-MACHINE-PID.log` | `scripts/remote.sh run` | the run's full output (stdout + stderr): build times, warnings, test results, **errors** |
+| `servers.jsonl` | the build dashboard (`make dashboard-install`; every 60 s) | the build servers' state: online / offline, CPU, memory, disk, running and queued tasks, build slots |
+
+- **Privacy:** host names, addresses, user names and key paths are replaced by
+  the machine's name before anything is written (the dashboard masks too).
+- **Journal:** `art/diary.py journal` adds "Builds and build servers" to the day's
+  `journal.md`: runs, build hours, failures with their commands and logs, the
+  longest runs, and each server's online share. The day video's end card shows
+  BUILD RUNS and BUILD HOURS.
+- `OCW_BUILD_LOG=0` turns the run log off for a single command.
 
 ## 3. The day video
 
