@@ -1016,3 +1016,73 @@ world = "blackforest"
 args = ["--world", "{world}", "--route-file", "{world_dir}/titisee-feldberg.route", "--no-neighbours", "--bots", "0", "--power", "200"]
 at = ["2.5=teleport 4.0", "2.5=camera.orbit 100 8 9"]
 shot = 10
+
+# --- Region calibration (spec §14 Phase 8 T3) ---------------------------------
+# Render twice for before/after: once with the packages before calibration
+# (OCW_NO_CALIBRATE builds, or a copy kept before `world-builder calibrate`),
+# once calibrated (measured palette, roof colours, seasonal satellite tints).
+# The clock is paused at noon on a fixed date, so only the look changes.
+
+[[scene]]
+name = "look-vaduz-roofs"
+description = "Region look: Vaduz centre from above (15 July, noon): roof colours sampled in the Orthophoto Liechtenstein 2025, the ground tinted by the measured palette"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 160 45 110"]
+shot = 9
+
+[[scene]]
+name = "look-malbun-meadows"
+description = "Region look: the alpine meadows of Malbun (1,600 m, 15 July, noon) with the measured meadow colour and the summer satellite tint"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "4218,6473", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 150 25 70"]
+shot = 9
+
+[[scene]]
+name = "look-bf-farms"
+description = "Region look, Black Forest: the open summit meadows and farms below the Belchen (15 July, noon), roofs from the LGL DOP20"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-9427,10842", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 180 30 90"]
+shot = 10
+
+[[scene]]
+name = "look-bf-forest"
+description = "Region look, Black Forest: the spruce forest along the Schauinsland road (940 m, 15 July, noon), raised camera over the forest and the clearings"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-5942,568", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 150 30 80"]
+shot = 10
+
+[[scene]]
+name = "look-tf-canadas"
+description = "Region look, Tenerife: Las Cañadas on the TF-21 (2,250 m, 15 July, 11:00): pumice and lava in the measured colours of the PNOA orthophoto, the Teide above"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-7500,5260", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 11:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 150 20 70"]
+shot = 10
+
+[[scene]]
+name = "look-season-summer"
+description = "Seasons (time machine): the Malbun road above Steg on 15 July, noon: the summer composite (Sentinel-2 median, 15 Jun - 31 Aug)"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "2433,5295", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 150 30 90"]
+shot = 10
+
+[[scene]]
+name = "look-season-autumn"
+description = "Seasons (time machine): the same view on 20 October, noon: the autumn composite (25 Sep - 10 Nov), deciduous colours and the first snow on the peaks"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "2433,5295", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-10-20 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 150 30 90"]
+shot = 10
+
+[[scene]]
+name = "look-season-winter"
+description = "Seasons (time machine): the same view on 20 January, noon: the winter composite (1 Dec - 28 Feb), snow on the meadows above the valley"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "2433,5295", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-01-20 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 150 30 90"]
+shot = 10

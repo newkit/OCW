@@ -177,6 +177,47 @@ enum Cmd {
         #[arg(long, default_value = "0,0", value_parser = parse_xz)]
         phase: (f64, f64),
     },
+    /// Print the imagery cells (lower-left corner in km, `E_N`) of a
+    /// projected CRS that cover a package's tiles: what
+    /// `scripts/fetch-imagery.sh` downloads (spec §14 Phase 8 T3).
+    ImageryCells {
+        #[arg(long)]
+        world: PathBuf,
+        #[arg(long, value_parser = ocw_worldgen::crs::Crs::parse)]
+        crs: ocw_worldgen::crs::Crs,
+        /// Cell size in metres.
+        #[arg(long, default_value_t = 1000.0)]
+        cell: f64,
+        /// Extra margin around each tile (m).
+        #[arg(long, default_value_t = 50.0)]
+        margin: f64,
+    },
+    /// Region calibration (spec §14 Phase 8 T3): measure the regional
+    /// palette, the roof colour of every building and the seasonal tint
+    /// maps in the imagery of `scripts/fetch-imagery.sh` and store them in
+    /// the package (sections PALT, ROOF, SEAS); the manifest is renewed
+    /// with the imagery's notices.
+    Calibrate {
+        /// The package (rewritten in place unless --out is given).
+        #[arg(long)]
+        world: PathBuf,
+        /// Imagery folder (e.g. data/pilot/imagery): one sub-folder with an
+        /// index.json per source, orthophotos ranked by folder name.
+        #[arg(long)]
+        imagery: PathBuf,
+        /// OSM extracts for `roof:colour` (it wins over the orthophoto).
+        #[arg(long)]
+        pbf: Vec<PathBuf>,
+        /// Cells per tile side of the seasonal tint maps (50 = 20 m, 100 = 10 m).
+        #[arg(long, default_value_t = 50)]
+        season_cells: u32,
+        /// Write the calibrated package here instead.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Sign the renewed manifest with this signing key.
+        #[arg(long, value_name = "KEY")]
+        sign_key: Option<PathBuf>,
+    },
     /// Compare the DTM grids (--dem) with SRTM (--hgt) on a lattice inside
     /// a box: where the DTM covers, how much they differ.
     DemDiff {
@@ -1426,6 +1467,202 @@ fn package(args: PackageArgs) {
     println!("package: {}", out.display());
 }
 
+/// The OSM `roof:colour` of the footprint containing a point (spec §14
+/// Phase 8 T3: it wins over the orthophoto), from the extracts' buildings.
+struct OsmRoofColours {
+    cell: f64,
+    index: std::collections::HashMap<(i64, i64), Vec<usize>>,
+    rings: Vec<(Vec<[f64; 2]>, [u8; 3])>,
+}
+
+impl OsmRoofColours {
+    fn read(pbfs: &[PathBuf], pkg: &ocw_world::WorldPackage) -> Self {
+        let mut out = Self {
+            cell: 100.0,
+            index: Default::default(),
+            rings: Vec::new(),
+        };
+        if pbfs.is_empty() {
+            return out;
+        }
+        let mut data = ocw_worldgen::areas::AreaData::read_pbfs(pbfs).unwrap_or_else(|e| {
+            eprintln!("{e}");
+            std::process::exit(1);
+        });
+        let proj = ocw_world::geo::LocalProjection::new(pkg.origin.0, pkg.origin.1);
+        let size = f64::from(pkg.tile_size_m);
+        let (mut lo, mut hi) = ([f64::MAX; 2], [f64::MIN; 2]);
+        for k in pkg.tiles.keys() {
+            let o = k.origin(size);
+            lo = [lo[0].min(o[0]), lo[1].min(o[1])];
+            hi = [hi[0].max(o[0] + size), hi[1].max(o[1] + size)];
+        }
+        let (n, w) = proj.unproject(lo);
+        let (s, e) = proj.unproject(hi);
+        data.retain_near((s.min(n), w.min(e), s.max(n), w.max(e)));
+        for fp in ocw_worldgen::buildings::footprints(&data, &proj) {
+            let Some(rgb) = fp
+                .tags
+                .get("roof:colour")
+                .or_else(|| fp.tags.get("roof:color"))
+                .and_then(|v| ocw_worldgen::calibrate::parse_colour(v))
+            else {
+                continue;
+            };
+            let i = out.rings.len();
+            let (mut a, mut b) = ([f64::MAX; 2], [f64::MIN; 2]);
+            for p in &fp.outer {
+                a = [a[0].min(p[0]), a[1].min(p[1])];
+                b = [b[0].max(p[0]), b[1].max(p[1])];
+            }
+            for cx in (a[0] / out.cell).floor() as i64..=(b[0] / out.cell).floor() as i64 {
+                for cz in (a[1] / out.cell).floor() as i64..=(b[1] / out.cell).floor() as i64 {
+                    out.index.entry((cx, cz)).or_default().push(i);
+                }
+            }
+            out.rings.push((fp.outer, rgb));
+        }
+        out
+    }
+
+    fn at(&self, p: [f64; 2]) -> Option<[u8; 3]> {
+        let k = (
+            (p[0] / self.cell).floor() as i64,
+            (p[1] / self.cell).floor() as i64,
+        );
+        self.index.get(&k)?.iter().find_map(|&i| {
+            let (ring, rgb) = &self.rings[i];
+            ocw_worldgen::areas::inside_rings(p, std::slice::from_ref(ring)).then_some(*rgb)
+        })
+    }
+}
+
+/// `world-builder calibrate` (spec §14 Phase 8 T3).
+fn calibrate(
+    world: &std::path::Path,
+    imagery: &std::path::Path,
+    pbf: &[PathBuf],
+    season_cells: u32,
+    out: Option<PathBuf>,
+    key: Option<&ocw_world::manifest::SigningKeyPair>,
+) {
+    let t = Instant::now();
+    let mut pkg = read_package(world);
+    let before = std::fs::metadata(world).map_or(0, |m| m.len());
+    let img = ocw_worldgen::imagery::Imagery::load(imagery).unwrap_or_else(|e| {
+        eprintln!("{e}");
+        std::process::exit(1);
+    });
+    if img.is_empty() {
+        eprintln!(
+            "{}: no imagery (run scripts/fetch-imagery.sh)",
+            imagery.display()
+        );
+        std::process::exit(1);
+    }
+    for o in &img.ortho {
+        println!(
+            "orthophoto: {} ({}, {} m/px, {} cells of {} m)",
+            o.meta.name,
+            o.meta.licence,
+            o.pixel_m,
+            o.cells.len(),
+            o.cell_m
+        );
+    }
+    if let Some(s) = &img.seasonal {
+        let seasons: Vec<String> = s
+            .composites
+            .iter()
+            .map(|c| format!("{} ({} scenes)", c.0.season.name(), c.0.scenes))
+            .collect();
+        println!(
+            "seasonal: {} ({} m/px, {} × {}): {}",
+            s.meta.name,
+            s.pixel_m,
+            s.width,
+            s.height,
+            seasons.join(", ")
+        );
+    }
+    let roofs = OsmRoofColours::read(pbf, &pkg);
+    println!("OSM roof:colour: {} footprints", roofs.rings.len());
+    let osm = |p: [f64; 2]| roofs.at(p);
+    let stats = ocw_worldgen::calibrate::calibrate(
+        &mut pkg,
+        &img,
+        &osm,
+        ocw_worldgen::calibrate::CalibrateOptions {
+            season_cells,
+            threads: 0,
+        },
+    );
+    for e in stats.errors.iter().take(10) {
+        eprintln!("warning: {e}");
+    }
+    if stats.errors.len() > 10 {
+        eprintln!("warning: … {} more imagery errors", stats.errors.len() - 10);
+    }
+    println!("palette (PALT):");
+    for (k, rgb, n) in &stats.palette {
+        println!(
+            "  {k:?}: #{:02x}{:02x}{:02x} ({n} px)",
+            rgb[0], rgb[1], rgb[2]
+        );
+    }
+    println!(
+        "roofs (ROOF): {} buildings, {} from the orthophoto, {} from OSM roof:colour, {} without",
+        stats.buildings, stats.roofs_ortho, stats.roofs_osm, stats.roofs_none
+    );
+    if stats.season_tiles > 0 {
+        println!(
+            "seasons (SEAS): {} tiles × {} maps of {season_cells}², {:.2} MB ({:.1} KB per tile), {} cells filled, {} tiles outside the composites",
+            stats.season_tiles,
+            pkg.look.seasons.as_ref().map_or(0, |s| s.seasons.len()),
+            stats.season_bytes as f64 / 1e6,
+            stats.season_bytes as f64 / 1e3 / stats.season_tiles as f64,
+            stats.season_filled,
+            stats.season_tiles_outside
+        );
+    }
+    let path = out.unwrap_or_else(|| world.to_path_buf());
+    let bytes = pkg.to_bytes();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    std::fs::write(&path, &bytes).unwrap_or_else(|e| {
+        eprintln!("{}: {e}", path.display());
+        std::process::exit(1);
+    });
+    print_sections(&bytes);
+    println!(
+        "{}: {:.1} MB -> {:.1} MB ({:+.1} MB, {:+.1} %), {:.1} s",
+        path.display(),
+        before as f64 / 1e6,
+        bytes.len() as f64 / 1e6,
+        (bytes.len() as f64 - before as f64) / 1e6,
+        100.0 * (bytes.len() as f64 - before as f64) / before.max(1) as f64,
+        t.elapsed().as_secs_f64()
+    );
+    // The manifest gets the new hash and the imagery's notices.
+    if path != world {
+        let _ = std::fs::copy(dist::sidecar(world), dist::sidecar(&path));
+    }
+    let m = dist::write_manifest(
+        &path,
+        &dist::ManifestArgs {
+            id: None,
+            name: None,
+            version: None,
+            dem_attribution: Vec::new(),
+        },
+        key,
+    );
+    for a in &m.manifest.attribution {
+        println!("  credit: {} ({})", a.source, a.licence);
+    }
+}
+
 /// The share of each land class, largest first.
 fn landuse_summary(cells: &[usize]) -> String {
     let total: usize = cells.iter().sum::<usize>().max(1);
@@ -1727,6 +1964,43 @@ fn main() {
             }
         }
         Cmd::DemDiff { src, bbox, step } => dem_diff(&src, &bbox, step),
+        Cmd::ImageryCells {
+            world,
+            crs,
+            cell,
+            margin,
+        } => {
+            let pkg = read_package(&world);
+            let proj = ocw_world::geo::LocalProjection::new(pkg.origin.0, pkg.origin.1);
+            let cells = ocw_worldgen::imagery::package_cells(
+                pkg.tiles.keys().copied(),
+                &proj,
+                crs,
+                f64::from(pkg.tile_size_m),
+                cell,
+                margin,
+            );
+            for (i, j) in cells {
+                let km = |v: i64| v as f64 * cell / 1000.0;
+                println!("{}_{}", km(i), km(j));
+            }
+        }
+        Cmd::Calibrate {
+            world,
+            imagery,
+            pbf,
+            season_cells,
+            out,
+            sign_key,
+        } => {
+            let key = sign_key.map(|k| {
+                ocw_worldstore::keys::read_signing_key(&k).unwrap_or_else(|e| {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                })
+            });
+            calibrate(&world, &imagery, &pbf, season_cells, out, key.as_ref());
+        }
         Cmd::Check { world } => {
             let bytes = std::fs::read(&world).unwrap_or_else(|e| {
                 eprintln!("{}: {e}", world.display());
@@ -1765,6 +2039,32 @@ fn main() {
                 );
             } else {
                 println!("buildings: none");
+            }
+            if let Some(p) = &pkg.look.palette {
+                let sources: Vec<&str> = p.sources.iter().map(|s| s.name.as_str()).collect();
+                println!(
+                    "look: palette of {} colours from {}; {} roof colours; {}",
+                    p.entries.len(),
+                    sources.join(", "),
+                    pkg.look
+                        .roofs
+                        .as_ref()
+                        .map_or(0, |r| r.values().flatten().flatten().count()),
+                    pkg.look
+                        .seasons
+                        .as_ref()
+                        .map_or("no seasonal tints".to_string(), |s| {
+                            let names: Vec<&str> =
+                                s.seasons.iter().map(|i| i.season.name()).collect();
+                            format!(
+                                "seasonal tints ({}) in {} tiles",
+                                names.join(", "),
+                                s.tiles.len()
+                            )
+                        })
+                );
+            } else {
+                println!("look: none (not calibrated)");
             }
             let (worst, at, above, total) = pkg.road_pokes(1.0);
             println!(

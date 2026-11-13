@@ -15,6 +15,8 @@ sha2.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 thiserror.workspace = true
+# Deflate of the seasonal tint maps (look.rs, spec §14 Phase 8 T3); pure Rust.
+miniz_oxide = "0.8"
 
 [lints]
 workspace = true

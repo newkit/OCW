@@ -17,6 +17,7 @@ pub mod materials;
 pub mod media;
 pub mod menu;
 pub mod package;
+pub mod region_look;
 pub mod riders;
 pub mod road_material;
 pub mod see_through;

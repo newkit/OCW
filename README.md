@@ -354,7 +354,26 @@ climb at 1.5–2.1 km) and grass beside the road roll increasingly harder
   scripts/prepare-world-release.sh OUT data/blackforest/*.ocwpkg   # release zips, no upload
   scripts/fetch-pilot.sh tenerife         # Canary Islands extract, IGN MDT05 (2 km COGs, OGC API), SRTM
   scripts/build-tenerife.sh               # the island and its routes
+  scripts/fetch-imagery.sh liechtenstein  # orthophoto + Sentinel-2 seasons for the built package
+  scripts/build-liechtenstein.sh          # again: now calibrated (palette, roofs, seasonal tints)
   ```
+
+  **Region calibration (spec §14 Phase 8 T3):** `scripts/fetch-imagery.sh
+  REGION [PACKAGE...]` downloads only the 1 km cells a built package covers:
+  the official orthophoto over its WMS (Orthophoto Liechtenstein 2025 and
+  swisstopo SWISSIMAGE at 0.5 m, LGL DOP20 at 1 m, IGN PNOA at 1 m) and our
+  own Sentinel-2 L2A seasonal median composites (spring, summer, autumn,
+  winter at 20 m, `scripts/imagery.py`, needs GDAL's Python bindings) into
+  `data/<region>/imagery/`, with the licence rows appended to `SOURCES.md`.
+  The build scripts then run `world-builder calibrate --world PKG --imagery
+  DIR --pbf OSM`: the median colour of every land class and road surface
+  (section `PALT`, with the sources and their notices, which also go into
+  the manifest's credits), one roof colour per building (`ROOF`: the
+  orthophoto inside the footprint eroded by 1 m, OSM `roof:colour` wins) and
+  per tile a colour map per season (`SEAS`). The client tints its ground
+  materials with them and blends the seasonal maps by the world date (try
+  `time 2026-01-20 12:00` in the console). `world-builder imagery-cells
+  --world PKG --crs lv95` lists the cells of a package.
 
   The sea comes from the OSM coastline: its closed rings (islands) are cut
   out of the package area, which leaves the sea as water at 0 m (`world-builder
@@ -1310,6 +1329,8 @@ to *Public* are the usual causes; the server log is in Event Viewer under
 | `scripts/build-liechtenstein.sh`, `scripts/build-blackforest.sh [south middle north]`, `scripts/build-tenerife.sh` | Build the world packages and their routes (`OCW_SRTM_ONLY=1`: SRTM terrain, for comparisons) |
 | `scripts/prepare-world-release.sh OUT PKG...` | Release zips of packages (`ocw-world-<name>-v<N>.zip` with `LICENSE-DATA.md`, `README.md`, route files) and the OSM source zip (ODbL offer); no upload |
 | `scripts/measure.py [--label T] [--out F] -- CMD` | Wall time and peak memory of a command (package builds, client runs) |
+| `scripts/fetch-imagery.sh REGION [PACKAGE...]` | Region calibration imagery (spec §14 Phase 8 T3): orthophoto cells over the official WMS and own Sentinel-2 seasonal median composites (`scripts/imagery.py`) for the cells a built package covers, licence rows in `SOURCES.md` |
+| `world-builder calibrate` / `imagery-cells` | Measure a package's palette, roof colours and seasonal tint maps in that imagery (sections `PALT`, `ROOF`, `SEAS`; manifest credits renewed); list the imagery cells a package covers |
 | `world-builder dem-import` / `dem-tiles` / `dem-diff` | High-resolution DTMs: import XYZ / GeoTIFF tiles as 2 m GeoTIFFs, list the tiles of a box, compare with SRTM |
 | `scripts/remote.sh MACHINE run 'CMD'` | Copy the tree to a build machine (`config/machines.toml`) and run a command there (`sync`, `ssh`, `fetch`, `put LOCAL... DIR`: copy git-ignored files into the checkout, `field KEY`: a machine setting for scripts) |
 | `python3 tools/build-dashboard/dashboard.py` | Web page (port 8765) with the build machines' load and their running/queued tasks; `--once` prints it as text |

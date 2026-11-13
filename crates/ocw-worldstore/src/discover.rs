@@ -579,6 +579,7 @@ mod tests {
             bridges: None,
             landuse: None,
             buildings: None,
+            look: Default::default(),
         }
         .to_bytes()
     }
