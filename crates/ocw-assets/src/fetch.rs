@@ -30,9 +30,7 @@ pub fn default_cache() -> PathBuf {
     }
     let base = std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
-        })
+        .or_else(|| std::env::var_os("LOCALAPPDATA").map(PathBuf::from))
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
         .unwrap_or_else(|| PathBuf::from("target"));
     base.join("ocw").join("material-sources")
@@ -55,7 +53,10 @@ pub fn cache_name(url: &str) -> String {
             }
         })
         .collect();
-    format!("{}-{safe}", &crate::materials::sha256_hex(url.as_bytes())[..8])
+    format!(
+        "{}-{safe}",
+        &crate::materials::sha256_hex(url.as_bytes())[..8]
+    )
 }
 
 fn download(url: &str, cache: &Path, report: &mut Report) -> Result<Vec<u8>, String> {
@@ -67,7 +68,10 @@ fn download(url: &str, cache: &Path, report: &mut Report) -> Result<Vec<u8>, Str
     let agent = ureq::Agent::new_with_defaults();
     let mut resp = agent
         .get(url)
-        .header("User-Agent", "ocw-assets (Open Cycling World material fetch)")
+        .header(
+            "User-Agent",
+            "ocw-assets (Open Cycling World material fetch)",
+        )
         .call()
         .map_err(|e| format!("{url}: {e}"))?;
     let bytes = resp
@@ -178,7 +182,10 @@ pub fn fetch(
         report.converted.push(m.id.clone());
     }
     write_atomic(&out.join(LIBRARY_MANIFEST), manifest.to_toml().as_bytes())?;
-    write_atomic(&out.join(CREDITS_FILE), credits_markdown(manifest).as_bytes())?;
+    write_atomic(
+        &out.join(CREDITS_FILE),
+        credits_markdown(manifest).as_bytes(),
+    )?;
     Ok(report)
 }
 
@@ -216,7 +223,11 @@ mod tests {
         let zip = buf.into_inner();
         let m = zip_member(&zip, "Grass_Color.jpg").unwrap();
         assert_eq!(m, b"colour bytes");
-        assert!(zip_member(&zip, "missing.jpg").unwrap_err().contains("not in the archive"));
+        assert!(
+            zip_member(&zip, "missing.jpg")
+                .unwrap_err()
+                .contains("not in the archive")
+        );
         let pin = crate::materials::sha256_hex(b"colour bytes");
         assert!(verify("meadow albedo", &m, &pin).is_ok());
         assert!(verify("meadow albedo", b"other", &pin).is_err());

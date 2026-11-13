@@ -29,7 +29,7 @@ struct TerrainLook {
     material_tint: array<vec4<f32>, 9>,
     // x: normal strength; y: macro scale; z: blend contrast; w: border warp (m).
     params: vec4<f32>,
-    // x: tile size (m).
+    // x: tile size (m); y: canopy shade (albedo factor under forest).
     tile: vec4<f32>,
 }
 
@@ -184,7 +184,8 @@ fn fragment(
         // Rock on steep slopes (`ground::rock_weight`).
         let ny = max(N.y, 1e-3);
         let slope = sqrt(max(0.0, 1.0 - ny * ny)) / ny;
-        let r = smoothstep(0.6, 1.0, slope);
+        // Forests hold on steep slopes (`ground::rock_weight_under`).
+        let r = smoothstep(0.75, 1.2, slope) * (1.0 - 0.7 * clamp(w[2], 0.0, 1.0));
         for (var i = 0u; i < LAYERS; i = i + 1u) {
             w[i] = w[i] * (1.0 - r);
         }
@@ -215,7 +216,7 @@ fn fragment(
                 continue;
             }
             var s: Sample;
-            if i == ROCK && slope > 0.45 {
+            if i == ROCK && slope > 0.6 {
                 // Triplanar on steep ground: no stretched texture on cliffs.
                 var b = pow(abs(N), vec3<f32>(4.0));
                 b = b / (b.x + b.y + b.z);
@@ -232,6 +233,8 @@ fn fragment(
             rough = rough + wi * s.albedo.a;
             n = n + wi * s.n;
         }
+        // The ground under the canopy gets less light (`ground::canopy_shade`).
+        albedo = albedo * mix(1.0, look.tile.y, clamp(wa.z, 0.0, 1.0));
         // Top-down projection: texture u = +x, image up (GL green) = -z.
         let strength = look.params.x;
         let nw = normalize(N + strength * (vec3<f32>(n.x, 0.0, -n.y) + tri_n));

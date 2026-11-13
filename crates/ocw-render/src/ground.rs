@@ -55,10 +55,9 @@ pub fn class_weights(class: LandClass) -> [f32; GROUND_LAYERS] {
     let mut w = [0.0; GROUND_LAYERS];
     let mut put = |i: usize, v: f32| w[i] = v;
     match class {
-        LandClass::Default
-        | LandClass::Meadow
-        | LandClass::Orchard
-        | LandClass::Park => put(MEADOW, 1.0),
+        LandClass::Default | LandClass::Meadow | LandClass::Orchard | LandClass::Park => {
+            put(MEADOW, 1.0)
+        }
         LandClass::Farmland => {
             put(FARMLAND, 0.55);
             put(MEADOW, 0.45);
@@ -67,10 +66,16 @@ pub fn class_weights(class: LandClass) -> [f32; GROUND_LAYERS] {
             put(FARMLAND, 0.6);
             put(MEADOW, 0.4);
         }
-        LandClass::Forest => put(FOREST_FLOOR, 1.0),
+        // Needles and litter with moss (first renders: needles alone read
+        // as a bright orange desert between the trees).
+        LandClass::Forest => {
+            put(FOREST_FLOOR, 0.6);
+            put(WETLAND, 0.4);
+        }
         LandClass::Scrub => {
             put(MEADOW, 0.5);
-            put(FOREST_FLOOR, 0.5);
+            put(FOREST_FLOOR, 0.3);
+            put(WETLAND, 0.2);
         }
         LandClass::Residential => {
             put(MEADOW, 0.8);
@@ -101,8 +106,11 @@ pub fn class_weights(class: LandClass) -> [f32; GROUND_LAYERS] {
 }
 
 /// Slope (rise over run) where rock starts to show, and where it is all
-/// rock (the colour map used the same 60 % … 100 %).
-pub const ROCK_SLOPE: (f32, f32) = (0.6, 1.0);
+/// rock: 75 % … 120 % (37° … 50°). The flat colour map used 60 … 100 %,
+/// but with the limestone texture the steep alpine meadows of the 10 m
+/// grid read as bare cliffs (first renders above Vaduz); grass holds on
+/// slopes of up to about 40°.
+pub const ROCK_SLOPE: (f32, f32) = (0.75, 1.2);
 
 fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
     let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
@@ -112,6 +120,24 @@ fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
 /// How much of the ground is bare rock at a slope (rise over run).
 pub fn rock_weight(slope: f32) -> f32 {
     smoothstep(ROCK_SLOPE.0, ROCK_SLOPE.1, slope)
+}
+
+/// Forests hold on steep slopes: the rock weight is reduced where the
+/// splat says forest floor (`forest`, its weight 0 … 1).
+pub fn rock_weight_under(slope: f32, forest: f32) -> f32 {
+    rock_weight(slope) * (1.0 - FOREST_KEEPS * forest.clamp(0.0, 1.0))
+}
+
+/// How much of the rock a full forest floor keeps out.
+pub const FOREST_KEEPS: f32 = 0.7;
+
+/// Albedo factor of the ground under a full forest canopy (first renders:
+/// the sunlit needle litter read as a bright desert between the trees).
+pub const CANOPY_SHADE: f32 = 0.55;
+
+/// The canopy-shade factor for a forest-floor weight 0 … 1.
+pub fn canopy_shade(forest: f32) -> f32 {
+    1.0 + (CANOPY_SHADE - 1.0) * forest.clamp(0.0, 1.0)
 }
 
 /// The final weights at a point (CPU twin of `ground.wesl`): the splat
@@ -125,11 +151,17 @@ pub fn blend_weights(
     noise: [f32; GROUND_LAYERS],
     contrast: f32,
 ) -> [f32; GROUND_LAYERS] {
-    let r = rock_weight(slope);
+    let r = rock_weight_under(slope, w[FOREST_FLOOR]);
     let mut v = w.map(|x| x * (1.0 - r));
     v[ROCK] += r;
     let h: Vec<f32> = (0..GROUND_LAYERS)
-        .map(|i| if v[i] > 0.0 { v[i] + noise[i] * 0.5 } else { -1.0 })
+        .map(|i| {
+            if v[i] > 0.0 {
+                v[i] + noise[i] * 0.5
+            } else {
+                -1.0
+            }
+        })
         .collect();
     let top = h.iter().copied().fold(f32::MIN, f32::max);
     let mut out = [0.0; GROUND_LAYERS];
@@ -156,9 +188,8 @@ pub fn splat_corners(
 ) -> (Vec<[u8; 4]>, Vec<[u8; 4]>) {
     let n = cells as i64;
     let at = |c: i64, r: i64| {
-        class(c, r).unwrap_or_else(|| {
-            class(c.clamp(0, n - 1), r.clamp(0, n - 1)).unwrap_or_default()
-        })
+        class(c, r)
+            .unwrap_or_else(|| class(c.clamp(0, n - 1), r.clamp(0, n - 1)).unwrap_or_default())
     };
     let mut a = Vec::with_capacity((cells + 1).pow(2));
     let mut b = Vec::with_capacity((cells + 1).pow(2));
@@ -191,8 +222,9 @@ pub fn class_palette(
         .map(|&c| {
             let w = class_weights(c);
             let t = tint(c);
+            let shade = canopy_shade(w[FOREST_FLOOR]);
             let lin: [f32; 3] = std::array::from_fn(|ch| {
-                (0..GROUND_LAYERS).map(|i| w[i] * means[i][ch]).sum::<f32>() * t[ch]
+                (0..GROUND_LAYERS).map(|i| w[i] * means[i][ch]).sum::<f32>() * t[ch] * shade
             });
             let srgb = Color::linear_rgb(lin[0], lin[1], lin[2]).to_srgba();
             (c, [srgb.red, srgb.green, srgb.blue])
@@ -213,7 +245,9 @@ pub struct TerrainLook {
     /// x: normal-map strength; y: macro scale factor; z: noise contrast of
     /// the height blend; w: border warp (m).
     pub params: Vec4,
-    /// x: tile size (m).
+    /// x: tile size (m); y: canopy shade – the albedo factor where the
+    /// splat says forest floor (the ground under the canopy gets less
+    /// light than our low-poly trees' shadows give it).
     pub tile: Vec4,
 }
 
@@ -224,7 +258,7 @@ impl Default for TerrainLook {
             sizes: [Vec4::splat(2.0); 3],
             material_tint: [Vec4::ONE; GROUND_LAYERS],
             params: Vec4::new(0.8, 7.3, 0.35, 2.0),
-            tile: Vec4::new(1000.0, 0.0, 0.0, 0.0),
+            tile: Vec4::new(1000.0, CANOPY_SHADE, 0.0, 0.0),
         }
     }
 }
@@ -329,7 +363,7 @@ mod tests {
             assert!((sum - 1.0).abs() < 1e-6, "{c:?}");
             assert!(w.iter().all(|x| *x >= 0.0));
         }
-        assert_eq!(class_weights(LandClass::Forest)[FOREST_FLOOR], 1.0);
+        assert!(class_weights(LandClass::Forest)[FOREST_FLOOR] > 0.5);
         assert_eq!(class_weights(LandClass::Glacier)[SNOW], 1.0);
         assert_eq!(class_weights(LandClass::Rock)[ROCK], 1.0);
         assert!(class_weights(LandClass::Farmland)[FARMLAND] > 0.5);
@@ -338,9 +372,9 @@ mod tests {
     #[test]
     fn steep_slopes_turn_to_rock() {
         assert_eq!(rock_weight(0.0), 0.0);
-        assert_eq!(rock_weight(0.5), 0.0);
-        assert_eq!(rock_weight(1.2), 1.0);
-        let mid = rock_weight(0.8);
+        assert_eq!(rock_weight(0.7), 0.0);
+        assert_eq!(rock_weight(1.25), 1.0);
+        let mid = rock_weight(0.975);
         assert!(mid > 0.3 && mid < 0.7, "{mid}");
         // Monotonic.
         let mut last = 0.0;
@@ -354,7 +388,13 @@ mod tests {
         assert!((flat[MEADOW] - 1.0).abs() < 1e-6);
         let cliff = blend_weights(meadow, 1.5, [0.5; GROUND_LAYERS], 0.35);
         assert!((cliff[ROCK] - 1.0).abs() < 1e-6);
-        let half = blend_weights(meadow, 0.8, [0.5; GROUND_LAYERS], 0.35);
+        // A steep forest stays mostly forest.
+        let mut forest = [0.0; GROUND_LAYERS];
+        forest[FOREST_FLOOR] = 1.0;
+        assert!((rock_weight_under(1.5, 1.0) - (1.0 - FOREST_KEEPS)).abs() < 1e-6);
+        let steep_forest = blend_weights(forest, 1.5, [0.5; GROUND_LAYERS], 0.35);
+        assert!(steep_forest[FOREST_FLOOR] > 0.5, "{steep_forest:?}");
+        let half = blend_weights(meadow, 0.95, [0.5; GROUND_LAYERS], 0.35);
         assert!(half[ROCK] > 0.0 && half[MEADOW] > 0.0);
         assert!((half.iter().sum::<f32>() - 1.0).abs() < 1e-5);
     }
@@ -410,12 +450,13 @@ mod tests {
         let (a0, b0) = splat_corners(cells, tile(0));
         let (a1, b1) = splat_corners(cells, tile(cells as i64));
         let n = cells + 1;
-        let w = |a: &[[u8; 4]], b: &[[u8; 4]], c: usize, r: usize| decode(&a[r * n + c], &b[r * n + c]);
+        let w =
+            |a: &[[u8; 4]], b: &[[u8; 4]], c: usize, r: usize| decode(&a[r * n + c], &b[r * n + c]);
         // Pure inside, a 50/50 corner on the border (column 4).
-        assert_eq!(w(&a0, &b0, 1, 3)[FOREST_FLOOR], 1.0);
+        assert!((w(&a0, &b0, 1, 3)[FOREST_FLOOR] - 0.6).abs() < 0.01);
         assert_eq!(w(&a0, &b0, 6, 3)[MEADOW], 1.0);
         let border = w(&a0, &b0, 4, 3);
-        assert!((border[FOREST_FLOOR] - 0.5).abs() < 0.01, "{border:?}");
+        assert!((border[FOREST_FLOOR] - 0.3).abs() < 0.01, "{border:?}");
         assert!((border[MEADOW] - 0.5).abs() < 0.01);
         // Shared edge: column 8 of A = column 0 of B.
         for r in 0..n {
@@ -451,8 +492,25 @@ mod tests {
                 [1.0; 3]
             }
         });
-        let m2 = tinted.iter().find(|(c, _)| *c == LandClass::Meadow).unwrap().1;
+        let m2 = tinted
+            .iter()
+            .find(|(c, _)| *c == LandClass::Meadow)
+            .unwrap()
+            .1;
         assert!(m2[0] < meadow[0] && (m2[1] - meadow[1]).abs() < 1e-6);
+        // Forests are shaded.
+        // Forest: the 0.1 grey of its materials, darkened by the canopy.
+        let forest = p.iter().find(|(c, _)| *c == LandClass::Forest).unwrap().1;
+        let plain = Color::linear_rgb(0.1, 0.1, 0.1).to_srgba().red;
+        let shaded = Color::linear_rgb(
+            0.1 * canopy_shade(class_weights(LandClass::Forest)[FOREST_FLOOR]),
+            0.0,
+            0.0,
+        )
+        .to_srgba()
+        .red;
+        assert!((forest[0] - shaded).abs() < 1e-4 && forest[0] < plain);
+        assert!(canopy_shade(1.0) < 0.7 && canopy_shade(0.0) == 1.0);
         // Defaults: neutral tint, fade after the near tiles, untextured.
         let look = TerrainLook::default();
         assert!(!look.textured());

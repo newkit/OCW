@@ -80,10 +80,7 @@ impl Plane {
             return self.clone();
         }
         let mut out = Plane::new(w, h, self.channels);
-        let (sx, sy) = (
-            self.width as f32 / w as f32,
-            self.height as f32 / h as f32,
-        );
+        let (sx, sy) = (self.width as f32 / w as f32, self.height as f32 / h as f32);
         // Area average when shrinking by an integer factor, else bilinear.
         for y in 0..h {
             for x in 0..w {
@@ -128,7 +125,10 @@ impl Plane {
     /// Mean of channel `c`.
     pub fn mean(&self, c: usize) -> f32 {
         let n = (self.width * self.height) as usize;
-        (0..n).map(|i| self.data[i * self.channels + c]).sum::<f32>() / n as f32
+        (0..n)
+            .map(|i| self.data[i * self.channels + c])
+            .sum::<f32>()
+            / n as f32
     }
 }
 
@@ -318,14 +318,15 @@ mod tests {
             for x in 0..size {
                 let (u, v) = (x as f32 / size as f32, y as f32 / size as f32);
                 let stone = ((u * 8.0).fract() - 0.5).hypot((v * 8.0).fract() - 0.5) < 0.35;
-                let base = if stone { [0.55, 0.52, 0.48] } else { [0.30, 0.42, 0.18] };
+                let base = if stone {
+                    [0.55, 0.52, 0.48]
+                } else {
+                    [0.30, 0.42, 0.18]
+                };
                 for c in 0..3 {
                     albedo.set(x, y, c, base[c] * (0.9 + 0.2 * u));
                 }
-                let (nx, ny) = (
-                    (u * 50.0).sin() * 0.3,
-                    (v * 50.0).cos() * 0.3,
-                );
+                let (nx, ny) = ((u * 50.0).sin() * 0.3, (v * 50.0).cos() * 0.3);
                 let nz = (1.0 - nx * nx - ny * ny).sqrt();
                 for (c, val) in [nx, ny, nz].iter().enumerate() {
                     normal.set(x, y, c, val * 0.5 + 0.5);

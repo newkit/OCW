@@ -968,7 +968,10 @@ mod tests {
         );
         // Only the two changed tiles are in the section.
         let sections = section_sizes(&b);
-        let (_, len) = sections.iter().find(|(t, _)| t == ROAD_SURFACE_TAG).unwrap();
+        let (_, len) = sections
+            .iter()
+            .find(|(t, _)| t == ROAD_SURFACE_TAG)
+            .unwrap();
         assert_eq!(*len, 4 + (12 + 1) + (12 + 2));
         // An old reader skips the section: every strip has its default.
         let mut old = b.clone();

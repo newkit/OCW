@@ -47,7 +47,13 @@ pub const GROUND_IDS: [&str; 9] = [
 ];
 
 /// Road materials, in layer order (`ocw_world::RoadSurface` codes).
-pub const ROAD_IDS: [&str; 5] = ["asphalt", "asphalt_worn", "gravel_road", "paving", "dirt_road"];
+pub const ROAD_IDS: [&str; 5] = [
+    "asphalt",
+    "asphalt_worn",
+    "gravel_road",
+    "paving",
+    "dirt_road",
+];
 
 /// Building materials (Phase 8 T4).
 pub const BUILDING_IDS: [&str; 3] = ["roof_tiles", "plaster", "timber"];
@@ -136,10 +142,7 @@ impl Material {
 
     /// What the conversion depends on: a change re-converts the material.
     pub fn stamp(&self) -> String {
-        let mut s = format!(
-            "converter {} size {}",
-            CONVERTER_VERSION, TEXTURE_SIZE
-        );
+        let mut s = format!("converter {} size {}", CONVERTER_VERSION, TEXTURE_SIZE);
         for (role, f) in self.files() {
             s.push_str(&format!("\n{role} {}", f.sha256));
         }
@@ -431,7 +434,9 @@ pub fn load_library(dir: &Path) -> Result<Library, Vec<String>> {
     let mut errors = Vec::new();
     let mut materials = Vec::new();
     for m in &manifest.materials {
-        let load = |name: String, want: crate::ktx2::TexFormat| -> Result<crate::ktx2::Texture, String> {
+        let load = |name: String,
+                    want: crate::ktx2::TexFormat|
+         -> Result<crate::ktx2::Texture, String> {
             let bytes = std::fs::read(dir.join(&name)).map_err(|e| format!("{name}: {e}"))?;
             let t = crate::ktx2::read(&bytes).map_err(|e| format!("{name}: {e}"))?;
             if t.format != want {
@@ -542,9 +547,10 @@ mod tests {
         // Attribution licences are fine, and marked for the credits.
         let by = MaterialManifest::parse(&entry(&OK.replace("CC0-1.0", "CC-BY-4.0"))).unwrap();
         assert!(credits(&by)[0].attribution_required);
-        let errs =
-            MaterialManifest::parse(&entry(&OK.replace("https://example.org/meadow", "ambientcg")))
-                .unwrap_err();
+        let errs = MaterialManifest::parse(&entry(
+            &OK.replace("https://example.org/meadow", "ambientcg"),
+        ))
+        .unwrap_err();
         assert!(errs[0].contains("https://"), "{errs:?}");
     }
 
@@ -557,7 +563,10 @@ mod tests {
         let no_archive = entry(OK).replace("archive = \"https://example.org/a.zip\"\n", "");
         let errs = MaterialManifest::parse(&no_archive).unwrap_err();
         assert_eq!(errs.len(), 3, "{errs:?}");
-        let no_rough = entry(OK).replace(&format!("roughness = {{ file = \"r.jpg\", sha256 = \"{H}\" }}\n"), "");
+        let no_rough = entry(OK).replace(
+            &format!("roughness = {{ file = \"r.jpg\", sha256 = \"{H}\" }}\n"),
+            "",
+        );
         let errs = MaterialManifest::parse(&no_rough).unwrap_err();
         assert!(errs[0].contains("roughness"), "{errs:?}");
         let twice = format!("{}{}", entry(OK), entry(OK));

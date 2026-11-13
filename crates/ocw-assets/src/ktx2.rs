@@ -310,7 +310,10 @@ mod tests {
         let mut t = texture(TexFormat::Bc5, 8);
         t.levels[1].pop();
         assert!(write(&t).unwrap_err().contains("level 1"));
-        assert!(read(b"not a ktx2 file at all, sorry................................................").is_err());
+        assert!(
+            read(b"not a ktx2 file at all, sorry................................................")
+                .is_err()
+        );
         assert_eq!(full_chain(1024, 1024), 11);
         assert_eq!(full_chain(1, 1), 1);
         assert_eq!(TexFormat::Bc3Srgb.level_bytes(2, 2), 16);

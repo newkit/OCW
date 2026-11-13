@@ -73,7 +73,9 @@ enum MaterialsCmd {
     },
 }
 
-fn read_manifest(path: &std::path::Path) -> Result<ocw_assets::materials::MaterialManifest, ExitCode> {
+fn read_manifest(
+    path: &std::path::Path,
+) -> Result<ocw_assets::materials::MaterialManifest, ExitCode> {
     let text = std::fs::read_to_string(path).map_err(|e| {
         eprintln!("{}: {e}", path.display());
         ExitCode::FAILURE
@@ -129,7 +131,10 @@ fn materials(cmd: MaterialsCmd) -> ExitCode {
                 return ExitCode::FAILURE;
             }
             for x in &m.materials {
-                println!("ok  {:14} {:?} {} ({}, {})", x.id, x.group, x.license, x.author, x.source);
+                println!(
+                    "ok  {:14} {:?} {} ({}, {})",
+                    x.id, x.group, x.license, x.author, x.source
+                );
             }
             if let Some(dir) = dir {
                 match materials::load_library(&dir) {
@@ -141,7 +146,11 @@ fn materials(cmd: MaterialsCmd) -> ExitCode {
                             );
                             return ExitCode::FAILURE;
                         }
-                        println!("library {}: {} materials loaded", dir.display(), lib.materials.len());
+                        println!(
+                            "library {}: {} materials loaded",
+                            dir.display(),
+                            lib.materials.len()
+                        );
                     }
                     Err(errors) => {
                         for e in &errors {

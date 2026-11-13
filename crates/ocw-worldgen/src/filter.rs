@@ -254,7 +254,10 @@ mod tests {
             w.id = id;
             osm.ways.push(w);
         };
-        add(1, &[("highway", "residential"), ("surface", "paving_stones")]);
+        add(
+            1,
+            &[("highway", "residential"), ("surface", "paving_stones")],
+        );
         add(2, &[("highway", "residential"), ("surface", "asphalt")]);
         add(3, &[("highway", "track"), ("surface", "dirt")]);
         add(4, &[("highway", "motorway"), ("surface", "dirt")]);

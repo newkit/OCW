@@ -95,11 +95,8 @@ pub fn library_dir() -> Option<std::path::PathBuf> {
     }
     let exe = std::env::current_exe().ok();
     let checkout = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let candidates = ocw_assets::materials::library_candidates(
-        env.as_deref(),
-        exe.as_deref(),
-        Some(&checkout),
-    );
+    let candidates =
+        ocw_assets::materials::library_candidates(env.as_deref(), exe.as_deref(), Some(&checkout));
     ocw_assets::materials::find_library(&candidates, |p| p.is_file())
 }
 
@@ -154,7 +151,10 @@ fn load_library(
 
 fn layers<'a>(lib: &'a Library, ids: &[&str]) -> Result<Vec<&'a Loaded>, String> {
     ids.iter()
-        .map(|id| lib.get(id).ok_or_else(|| format!("material `{id}` missing")))
+        .map(|id| {
+            lib.get(id)
+                .ok_or_else(|| format!("material `{id}` missing"))
+        })
         .collect()
 }
 
@@ -170,7 +170,10 @@ pub fn gpu_format(f: TexFormat) -> TextureFormat {
 
 /// One texture array of `textures` (all the same size, format and level
 /// count): layer-major data, repeating, trilinear, anisotropic.
-pub fn array_image(textures: &[&ocw_assets::ktx2::Texture], label: &'static str) -> Result<Image, String> {
+pub fn array_image(
+    textures: &[&ocw_assets::ktx2::Texture],
+    label: &'static str,
+) -> Result<Image, String> {
     let first = textures.first().ok_or("no layers")?;
     for t in textures {
         if (t.format, t.width, t.height, t.levels.len())
@@ -220,7 +223,10 @@ pub fn array_image(textures: &[&ocw_assets::ktx2::Texture], label: &'static str)
 }
 
 /// The resource for a loaded library.
-pub fn library_resource(lib: &Library, images: &mut Assets<Image>) -> Result<MaterialLibrary, String> {
+pub fn library_resource(
+    lib: &Library,
+    images: &mut Assets<Image>,
+) -> Result<MaterialLibrary, String> {
     let ground = layers(lib, &GROUND_IDS)?;
     let road = layers(lib, &ROAD_IDS)?;
     fn albedo<'a>(l: &[&'a Loaded]) -> Vec<&'a ocw_assets::ktx2::Texture> {

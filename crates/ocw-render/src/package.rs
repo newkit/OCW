@@ -797,7 +797,10 @@ pub fn colour_map_with(
                 let rock = palette.map_or(ROCK, |_| flat(LandClass::Rock));
                 let t = match palette {
                     // As the shader turns steep ground into rock.
-                    Some(_) => crate::ground::rock_weight(slope),
+                    Some(_) => crate::ground::rock_weight_under(
+                        slope,
+                        crate::ground::class_weights(class)[crate::ground::FOREST_FLOOR],
+                    ),
                     None => ((slope - 0.6) / 0.4).clamp(0.0, 1.0),
                 };
                 colour = std::array::from_fn(|j| colour[j] + (rock[j] - colour[j]) * t);
@@ -1086,9 +1089,8 @@ pub fn build_tile_meshes_look(
     Some(TileMeshes {
         key,
         terrain: terrain_arrays_kept(pkg, tile, keep),
-        colour_map: lu.map(|(lu, cells)| {
-            colour_map_with(pkg, tile, lu, cells, look.palette.as_deref())
-        }),
+        colour_map: lu
+            .map(|(lu, cells)| colour_map_with(pkg, tile, lu, cells, look.palette.as_deref())),
         splat: lu
             .filter(|_| look.textured())
             .map(|(_, cells)| tile_splat(pkg, key, cells)),
@@ -1265,11 +1267,7 @@ pub fn far_tiles<'a>(
         .collect()
 }
 
-fn build_task(
-    set: &Arc<WorldSet>,
-    (i, key): TileId,
-    look: &TileLook,
-) -> Task<Option<TileMeshes>> {
+fn build_task(set: &Arc<WorldSet>, (i, key): TileId, look: &TileLook) -> Task<Option<TileMeshes>> {
     let set = set.clone();
     let look = look.clone();
     AsyncComputeTaskPool::get().spawn(async move {
@@ -1454,7 +1452,8 @@ fn upload_tiles(
 ) {
     // The shared road material of the library (made once).
     if textured_roads.is_none()
-        && let (Some(lib), Some(rm)) = (library.as_deref(), road_materials.as_deref_mut())
+        && let Some(lib) = library.as_deref()
+        && let Some(rm) = road_materials.as_deref_mut()
     {
         *textured_roads = Some(rm.add(RoadMaterial {
             base: StandardMaterial {
@@ -2100,6 +2099,7 @@ mod tests {
         assert!(flat.splat.is_none());
         let mut means = [[0.5, 0.0, 0.0]; crate::ground::GROUND_LAYERS];
         means[crate::ground::FOREST_FLOOR] = [0.0, 0.0, 0.5];
+        means[crate::ground::WETLAND] = [0.0, 0.0, 0.5];
         let palette = crate::ground::class_palette(&means, |_| [1.0; 3]);
         let look = TileLook {
             palette: Some(palette.into_iter().map(|(_, c)| c).collect()),
@@ -2109,8 +2109,8 @@ mod tests {
         let splat = m.splat.expect("splat weights");
         assert_eq!(splat.cells, 20);
         assert_eq!(splat.a.len(), 21 * 21);
-        // Corner (2, 15) lies in the forest: all forest floor (layer 2).
-        assert_eq!(splat.a[15 * 21 + 2][crate::ground::FOREST_FLOOR], 255);
+        // Corner (2, 15) lies in the forest: its mix (forest floor 60 %).
+        assert_eq!(splat.a[15 * 21 + 2][crate::ground::FOREST_FLOOR], 153);
         // The colour map takes the material means: the forest is blue now.
         let map = m.colour_map.unwrap();
         let texel = |c: usize, r: usize| map.data[(r * 20 + c) * 4 + 2];
@@ -2123,7 +2123,10 @@ mod tests {
         let along = m.roads.uvs.iter().map(|u| u[1]).fold(0.0f32, f32::max);
         assert!((along - 100.0).abs() < 0.5, "{along}");
         assert_eq!(m.roads.colors[0], [0.1, 0.2, 0.3, 1.0]);
-        assert_eq!(flat.roads.colors[0], road_colour(RoadClass::Secondary, RoadSurface::Asphalt));
+        assert_eq!(
+            flat.roads.colors[0],
+            road_colour(RoadClass::Secondary, RoadSurface::Asphalt)
+        );
     }
 
     #[test]

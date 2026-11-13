@@ -84,12 +84,19 @@ impl RoadSurface {
     pub fn from_surface_tag(value: &str) -> Option<Self> {
         let v = value.split(';').next().unwrap_or("").trim();
         Some(match v {
-            "asphalt" | "paved" | "concrete" | "concrete:plates" | "concrete:lanes" | "chipseal"
-            | "tartan" | "rubber" | "metal" | "wood" | "metal_grid" => RoadSurface::Asphalt,
-            "paving_stones" | "paving_stones:lanes" | "sett" | "unhewn_cobblestone"
-            | "cobblestone" | "cobblestone:flattened" | "bricks" | "grass_paver" | "stone" => {
-                RoadSurface::Paving
+            "asphalt" | "paved" | "concrete" | "concrete:plates" | "concrete:lanes"
+            | "chipseal" | "tartan" | "rubber" | "metal" | "wood" | "metal_grid" => {
+                RoadSurface::Asphalt
             }
+            "paving_stones"
+            | "paving_stones:lanes"
+            | "sett"
+            | "unhewn_cobblestone"
+            | "cobblestone"
+            | "cobblestone:flattened"
+            | "bricks"
+            | "grass_paver"
+            | "stone" => RoadSurface::Paving,
             "gravel" | "fine_gravel" | "compacted" | "pebblestone" | "unpaved" | "rock"
             | "shells" => RoadSurface::Gravel,
             "dirt" | "earth" | "ground" | "mud" | "sand" | "grass" | "woodchips" | "soil"

@@ -4,8 +4,8 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use ocw_world::graph::{PROFILE_STEP_M, RoadGraph};
 use ocw_world::RoadSurface;
+use ocw_world::graph::{PROFILE_STEP_M, RoadGraph};
 use ocw_world::package::{RoadStrip, Tile, TileKey, WorldPackage};
 
 use crate::profile::sample_along;
@@ -188,7 +188,10 @@ fn extend_end(points: &mut [[f64; 3]], m: f64) {
 /// The road strips of `graph` per tile, each with the index of the edge it
 /// comes from (tunnels left out: they run inside the terrain). Deterministic,
 /// so [`apply_road_surfaces`] finds the same strips again.
-pub fn road_strips(graph: &RoadGraph, tile_size: f64) -> BTreeMap<TileKey, Vec<(usize, RoadStrip)>> {
+pub fn road_strips(
+    graph: &RoadGraph,
+    tile_size: f64,
+) -> BTreeMap<TileKey, Vec<(usize, RoadStrip)>> {
     let mut roads: BTreeMap<TileKey, Vec<(usize, RoadStrip)>> = BTreeMap::new();
     for (ei, e) in graph.edges.iter().enumerate().filter(|(_, e)| !e.tunnel) {
         let mut with_h: Vec<[f64; 3]> = sample_along(&e.points, PROFILE_STEP_M, true)
