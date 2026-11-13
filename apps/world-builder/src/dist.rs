@@ -78,6 +78,13 @@ pub fn dem_attribution(notice: Option<&str>) -> Attribution {
             "© swisstopo: swissALTI3D (2 m, adapted to the roads)",
             "https://www.swisstopo.admin.ch/en/terms-of-use-free-geodata-and-geoservices",
         ),
+        Some("ign-mdt05") => known(
+            "IGN MDT05 (Spain, Canary Islands)",
+            "CC BY 4.0",
+            "MDT05-cob1 2008-2015 CC-BY 4.0 scne.es (Instituto Geográfico Nacional de España; \
+             derived work: moved onto the 5 m lattice and adapted to the roads)",
+            "https://creativecommons.org/licenses/by/4.0/",
+        ),
         Some(n) => Attribution {
             source: "Elevation model".into(),
             licence: "see notice".into(),
@@ -486,6 +493,12 @@ mod tests {
         assert!(
             lgl.notice
                 .starts_with("Datenquelle: LGL, www.lgl-bw.de, dl-de/by-2-0")
+        );
+        let ign = dem_attribution(Some("ign-mdt05"));
+        assert_eq!(ign.licence, "CC BY 4.0");
+        assert!(
+            ign.notice
+                .starts_with("MDT05-cob1 2008-2015 CC-BY 4.0 scne.es")
         );
         assert!(
             dem_attribution(Some("swissalti3d"))

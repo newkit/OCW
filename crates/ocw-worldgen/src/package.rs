@@ -224,6 +224,42 @@ pub fn build_package_with_terrain<F: Fn(f64, f64) -> f64 + Sync>(
     samples: u32,
     margin_tiles: i32,
 ) -> WorldPackage {
+    build_tiles(
+        name,
+        origin,
+        graph,
+        terrain_graph,
+        base,
+        tile_size,
+        samples,
+        margin_tiles,
+        TileCover::Box,
+    )
+}
+
+/// Which tiles a package gets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TileCover {
+    /// The box of all roads plus the margin (inland regions).
+    Box,
+    /// Only tiles within the margin of a tile with a road (islands: the
+    /// open sea between distant coasts stays out, spec §4.7 "Tenerife").
+    NearRoads,
+}
+
+/// [`build_package_with_terrain`] with a choice of the tiles.
+#[allow(clippy::too_many_arguments)]
+pub fn build_tiles<F: Fn(f64, f64) -> f64 + Sync>(
+    name: &str,
+    origin: (f64, f64),
+    graph: &RoadGraph,
+    terrain_graph: &RoadGraph,
+    base: F,
+    tile_size: f64,
+    samples: u32,
+    margin_tiles: i32,
+    cover: TileCover,
+) -> WorldPackage {
     // Cutting margin: 1.5 grid cells (more than a cell diagonal).
     let terrain = GraphTerrain::new(
         terrain_graph,
@@ -263,11 +299,33 @@ pub fn build_package_with_terrain<F: Fn(f64, f64) -> f64 + Sync>(
             });
         }
     }
-    let keys: Vec<TileKey> = (min[1] - margin_tiles..=max[1] + margin_tiles)
-        .flat_map(|z| {
-            (min[0] - margin_tiles..=max[0] + margin_tiles).map(move |x| TileKey { x, z })
-        })
-        .collect();
+    let keys: Vec<TileKey> = match cover {
+        TileCover::Box => (min[1] - margin_tiles..=max[1] + margin_tiles)
+            .flat_map(|z| {
+                (min[0] - margin_tiles..=max[0] + margin_tiles).map(move |x| TileKey { x, z })
+            })
+            .collect(),
+        TileCover::NearRoads => {
+            let mut near = std::collections::BTreeSet::new();
+            let used = roads.keys().copied().chain(
+                graph
+                    .vertices
+                    .iter()
+                    .map(|v| TileKey::containing(*v, tile_size)),
+            );
+            for k in used {
+                for dz in -margin_tiles..=margin_tiles {
+                    for dx in -margin_tiles..=margin_tiles {
+                        near.insert(TileKey {
+                            x: k.x + dx,
+                            z: k.z + dz,
+                        });
+                    }
+                }
+            }
+            near.into_iter().collect()
+        }
+    };
     let n = samples as usize;
     let spacing = tile_size / f64::from(samples - 1);
     // Terrain heights in parallel (the expensive part).
@@ -599,5 +657,38 @@ mod tests {
         assert!((max_x(&p) - (800.0 + BORDER_OVERLAP_M as f32)).abs() < 1e-3);
         let plain = build_package("test", (47.0, 9.0), &graph(), |_, _| 100.0, 500.0, 51, 1);
         assert!((max_x(&plain) - 800.0).abs() < 1e-3);
+    }
+
+    /// Islands (spec §4.7, Tenerife): only the tiles near roads, not the
+    /// whole box of them (which was 64 % open sea there).
+    #[test]
+    fn near_roads_cover_leaves_out_the_tiles_far_from_roads() {
+        let g = graph();
+        let build =
+            |cover| build_tiles("t", (47.0, 9.0), &g, &g, |_, _| 100.0, 100.0, 11, 1, cover);
+        let (boxed, near) = (build(TileCover::Box), build(TileCover::NearRoads));
+        assert!(
+            near.tiles.len() < boxed.tiles.len(),
+            "{} {}",
+            near.tiles.len(),
+            boxed.tiles.len()
+        );
+        assert!(near.tiles.keys().all(|k| boxed.tiles.contains_key(k)));
+        let with_roads: Vec<TileKey> = boxed
+            .tiles
+            .values()
+            .filter(|t| !t.roads.is_empty())
+            .map(|t| t.key)
+            .collect();
+        // Every road tile is there, with the same terrain and strips.
+        for k in &with_roads {
+            assert_eq!(near.tiles[k], boxed.tiles[k]);
+        }
+        // Every tile is within the margin of a road tile.
+        assert!(
+            near.tiles
+                .keys()
+                .all(|k| with_roads.iter().any(|r| r.ring(*k) <= 1))
+        );
     }
 }
