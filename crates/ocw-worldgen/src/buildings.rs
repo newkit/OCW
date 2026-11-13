@@ -2,7 +2,10 @@
 //! and multipolygons) with heights from `height` / `building:levels` or
 //! defaults by building type, placed on the terrain (section `BLDG`).
 
-use ocw_world::buildings::{Building, BuildingKind, Buildings, Roof, signed_area};
+use ocw_world::buildings::{
+    Building, BuildingKind, BuildingTags, BuildingUse, Buildings, Roof, RoofMaterial, RoofShape,
+    WallMaterial, signed_area,
+};
 use ocw_world::package::{TileKey, WorldPackage};
 
 use crate::areas::{AreaData, inside_rings};
@@ -151,82 +154,264 @@ pub fn oriented_rectangle(pts: &[[f64; 2]]) -> Option<([[f64; 2]; 4], f64)> {
     best
 }
 
-/// Wall height and roof of a footprint from its tags and size; the
-/// footprint becomes its oriented rectangle when it gets a gable roof.
-pub fn shape(fp: &Footprint) -> (f64, Roof, Vec<[f64; 2]>) {
+/// Parses an OSM `roof:direction`: degrees clockwise from north (`135`)
+/// or a compass point (`SE`, `NNW`).
+pub fn parse_direction(s: &str) -> Option<f64> {
+    const POINTS: [&str; 16] = [
+        "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW",
+        "NW", "NNW",
+    ];
+    let s = s.trim();
+    if let Some(i) = POINTS.iter().position(|p| p.eq_ignore_ascii_case(s)) {
+        return Some(i as f64 * 22.5);
+    }
+    let v: f64 = s.trim_end_matches('°').trim().parse().ok()?;
+    v.is_finite().then(|| v.rem_euclid(360.0))
+}
+
+/// The horizontal unit vector of a compass direction in local (x east,
+/// z south) metres.
+fn compass(deg: f64) -> [f64; 2] {
+    let r = deg.to_radians();
+    [r.sin(), -r.cos()]
+}
+
+/// Area of the convex hull of the points (monotone chain).
+pub fn hull_area(pts: &[[f64; 2]]) -> f64 {
+    let mut p: Vec<[f64; 2]> = pts.to_vec();
+    p.sort_by(|a, b| a[0].total_cmp(&b[0]).then(a[1].total_cmp(&b[1])));
+    p.dedup();
+    if p.len() < 3 {
+        return 0.0;
+    }
+    let cross = |o: [f64; 2], a: [f64; 2], b: [f64; 2]| {
+        (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+    };
+    let mut hull: Vec<[f64; 2]> = Vec::new();
+    for pass in 0..2 {
+        let start = hull.len();
+        let iter: Box<dyn Iterator<Item = &[f64; 2]>> = if pass == 0 {
+            Box::new(p.iter())
+        } else {
+            Box::new(p.iter().rev())
+        };
+        for &q in iter {
+            while hull.len() >= start + 2
+                && cross(hull[hull.len() - 2], hull[hull.len() - 1], q) <= 0.0
+            {
+                hull.pop();
+            }
+            hull.push(q);
+        }
+        hull.pop();
+    }
+    signed_area(&hull).abs() / 2.0
+}
+
+/// Height of a storey inside the roof (`roof:levels`), metres.
+pub const ROOF_LEVEL_M: f64 = 2.5;
+/// Pyramids on polygons (towers) up to this footprint (m²).
+pub const PYRAMID_MAX_AREA_M2: f64 = 600.0;
+
+/// A footprint shaped from its tags: what [`place`] puts on the terrain.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Shaped {
+    /// Wall height above the ground (to the eaves or the flat roof).
+    pub wall: f64,
+    pub roof: Roof,
+    /// The footprint: its oriented rectangle for pitched roofs, ridge
+    /// along the first edge (a skillion: low eave along the first edge).
+    pub ring: Vec<[f64; 2]>,
+    /// The OSM facts for the style (section `BTAG`).
+    pub tags: BuildingTags,
+}
+
+/// The OSM facts of a footprint that the styles use (spec §14 Phase 8 T4);
+/// the roof shape and height are filled in by [`shape`].
+pub fn osm_facts(tags: &Tags) -> BuildingTags {
+    let tag = |k: &str| tags.get(k).map(String::as_str);
+    let count = |k: &str, max: f64| {
+        tag(k)
+            .and_then(parse_length)
+            .filter(|l| *l <= max)
+            .map(|l| l.round() as u8)
+    };
+    BuildingTags {
+        building_use: tag("building").and_then(BuildingUse::from_osm),
+        levels: count("building:levels", 100.0).filter(|l| *l > 0),
+        roof_levels: count("roof:levels", 20.0),
+        wall: tag("building:material")
+            .or(tag("building:facade:material"))
+            .and_then(WallMaterial::from_osm),
+        wall_colour: tag("building:colour")
+            .or(tag("building:facade:colour"))
+            .and_then(crate::calibrate::parse_colour),
+        roof_material: tag("roof:material").and_then(RoofMaterial::from_osm),
+        roof_colour: tag("roof:colour").and_then(crate::calibrate::parse_colour),
+        ..Default::default()
+    }
+}
+
+/// Wall height, roof and OSM facts of a footprint from its tags and size.
+/// Pitched roofs (tagged `roof:shape`, else by building type and size) sit
+/// on the footprint's oriented rectangle when it is nearly rectangular; the
+/// ridge follows the long side unless `roof:orientation=across` or a
+/// `roof:direction` says otherwise. The roof height comes from
+/// `roof:height`, `roof:angle` or `roof:levels`, else 0.4 × the span (0.3
+/// for small buildings). A tagged pyramid also sits on a convex polygon
+/// (towers). Everything else gets a flat roof on its own outline.
+pub fn shape(fp: &Footprint) -> Shaped {
     let tag = |k: &str| fp.tags.get(k).map(String::as_str);
     let kind = building_kind(&fp.tags);
+    let mut facts = osm_facts(&fp.tags);
     let area = signed_area(&fp.outer).abs() / 2.0;
     let rect = oriented_rectangle(&fp.outer);
     let rectangular = fp.holes.is_empty()
         && rect
             .as_ref()
             .is_some_and(|(_, a)| *a > 0.0 && area / a >= 0.85);
-    let pitched_tag = tag("roof:shape").map(|s| {
-        matches!(
-            s,
-            "gabled"
-                | "hipped"
-                | "half-hipped"
-                | "pyramidal"
-                | "gambrel"
-                | "mansard"
-                | "saltbox"
-                | "side_hipped"
-        )
-    });
-    let pitched_kind = match kind {
-        BuildingKind::House
-        | BuildingKind::Farm
-        | BuildingKind::Small
-        | BuildingKind::Religious => true,
-        BuildingKind::Other | BuildingKind::Apartments => area < 250.0,
-        _ => false,
+    let shape_tag = tag("roof:shape").and_then(RoofShape::from_osm);
+    let canopy = facts.building_use == Some(BuildingUse::Canopy);
+    let pitched_kind = !canopy
+        && match kind {
+            BuildingKind::House
+            | BuildingKind::Farm
+            | BuildingKind::Small
+            | BuildingKind::Religious => true,
+            BuildingKind::Other | BuildingKind::Apartments => area < 250.0,
+            _ => false,
+        };
+    let max_area = match (shape_tag, kind) {
+        (Some(_), _) => 3000.0,
+        (None, BuildingKind::Farm | BuildingKind::Religious) => 1500.0,
+        _ => GABLE_MAX_AREA_M2,
     };
-    let max_area = if kind == BuildingKind::Farm {
-        1500.0
-    } else {
-        GABLE_MAX_AREA_M2
-    };
-    let gabled = rectangular && area <= max_area && pitched_tag.unwrap_or(pitched_kind);
+    let pitched =
+        rectangular && area <= max_area && shape_tag.map_or(pitched_kind, RoofShape::is_pitched);
     let levels = tag("building:levels")
         .and_then(parse_length)
         .filter(|l| *l <= 100.0);
     let height = tag("height")
         .and_then(parse_length)
         .filter(|h| (1.0..=400.0).contains(h));
+    let min_height = tag("min_height")
+        .and_then(parse_length)
+        .or_else(|| {
+            tag("building:min_level")
+                .and_then(parse_length)
+                .map(|l| l * LEVEL_M)
+        })
+        .filter(|h| *h > 0.0 && *h <= 200.0);
+    facts.min_height_m = min_height.map(|h| h as f32);
     let mut wall = match (height, levels) {
         (Some(h), _) => h,
         (None, Some(l)) => (l * LEVEL_M).max(LEVEL_M),
         _ => default_wall_m(kind, area),
     };
-    if gabled {
-        let (corners, _) = rect.expect("rectangular has a rectangle");
-        let short = ((corners[2][0] - corners[1][0]).powi(2)
-            + (corners[2][1] - corners[1][1]).powi(2))
-        .sqrt();
-        let roof_h = tag("roof:height")
+    // A tagged roof height: roof:height, else roof:angle over the span,
+    // else the roof's storeys.
+    let tagged_roof = |span: f64| -> Option<f64> {
+        tag("roof:height")
             .and_then(parse_length)
-            .unwrap_or(
-                (if kind == BuildingKind::Small {
-                    0.3
-                } else {
-                    0.4
-                }) * short,
-            )
-            .clamp(0.5, 8.0);
+            .or_else(|| {
+                let a: f64 = tag("roof:angle")?
+                    .trim()
+                    .trim_end_matches('°')
+                    .parse()
+                    .ok()?;
+                (a.is_finite() && (3.0..=75.0).contains(&a)).then(|| a.to_radians().tan() * span)
+            })
+            .or_else(|| {
+                let l = facts.roof_levels.filter(|l| *l > 0)?;
+                Some(f64::from(l) * ROOF_LEVEL_M + 0.5)
+            })
+            .map(|h| h.clamp(0.3, 25.0))
+    };
+    if pitched {
+        let (mut corners, _) = rect.expect("rectangular has a rectangle");
+        let shape = shape_tag.unwrap_or(RoofShape::Gabled);
+        let edge = |c: &[[f64; 2]; 4], i: usize| {
+            let (a, b) = (c[i], c[(i + 1) % 4]);
+            let len = (b[0] - a[0]).hypot(b[1] - a[1]).max(1e-9);
+            [(b[0] - a[0]) / len, (b[1] - a[1]) / len]
+        };
+        let dir = tag("roof:direction").and_then(parse_direction).map(compass);
+        let turn = match (shape, dir) {
+            // Skillion: the low eave on the side the roof faces (outward
+            // normal of a counter-clockwise edge (dx, dz) is (dz, −dx)).
+            (RoofShape::Skillion, Some(d)) => (0..4)
+                .max_by(|&i, &j| {
+                    let n = |k: usize| {
+                        let e = edge(&corners, k);
+                        e[1] * d[0] - e[0] * d[1]
+                    };
+                    n(i).total_cmp(&n(j))
+                })
+                .unwrap_or(0),
+            // The ridge across the direction the slopes face.
+            (_, Some(d)) => {
+                let along = |k: usize| {
+                    let e = edge(&corners, k);
+                    (e[0] * d[0] + e[1] * d[1]).abs()
+                };
+                usize::from(along(1) < along(0))
+            }
+            (_, None) => usize::from(tag("roof:orientation") == Some("across")),
+        };
+        corners.rotate_left(turn);
+        let span = (corners[2][0] - corners[1][0]).hypot(corners[2][1] - corners[1][1]);
+        let half = if shape == RoofShape::Skillion {
+            span
+        } else {
+            span / 2.0
+        };
+        let tagged = tagged_roof(half);
+        let small = kind == BuildingKind::Small;
+        let roof_h =
+            tagged.unwrap_or_else(|| (if small { 0.3 } else { 0.4 } * span).clamp(0.5, 8.0));
         if height.is_some() {
             wall = (wall - roof_h).max(2.0); // `height` includes the roof
         }
-        return (
-            wall.max(2.0),
-            Roof::Gabled {
+        facts.roof_shape = shape_tag;
+        facts.roof_height_m = tagged.map(|h| h as f32);
+        return Shaped {
+            wall: wall.max(2.0),
+            roof: Roof::Gabled {
                 height_m: roof_h as f32,
             },
-            corners.to_vec(),
-        );
+            ring: corners.to_vec(),
+            tags: facts,
+        };
     }
-    (wall.max(2.0), Roof::Flat, fp.outer.clone())
+    // A pyramid (spire, tower) on a convex polygon.
+    if shape_tag == Some(RoofShape::Pyramidal)
+        && fp.holes.is_empty()
+        && area <= PYRAMID_MAX_AREA_M2
+        && hull_area(&fp.outer) > 0.0
+        && area / hull_area(&fp.outer) >= 0.95
+    {
+        let diameter = 2.0 * (area / std::f64::consts::PI).sqrt();
+        let roof_h = tagged_roof(diameter / 2.0).unwrap_or((0.8 * diameter).clamp(1.0, 25.0));
+        if height.is_some() {
+            wall = (wall - roof_h).max(2.0);
+        }
+        facts.roof_shape = Some(RoofShape::Pyramidal);
+        facts.roof_height_m = Some(roof_h as f32);
+        return Shaped {
+            wall: wall.max(2.0),
+            roof: Roof::Flat,
+            ring: fp.outer.clone(),
+            tags: facts,
+        };
+    }
+    // Explicitly flat stays flat for the style too.
+    facts.roof_shape = shape_tag.filter(|s| *s == RoofShape::Flat);
+    Shaped {
+        wall: wall.max(2.0),
+        roof: Roof::Flat,
+        ring: fp.outer.clone(),
+        tags: facts,
+    }
 }
 
 /// Drops repeated and collinear points (within 5 cm) of a ring.
@@ -277,7 +462,12 @@ pub fn place(fp: &Footprint, ground: impl Fn(f64, f64) -> Option<f64>) -> Option
         .map(|h| simplify(h))
         .filter(|h| h.len() >= 3)
         .collect();
-    let (wall, roof, ring) = shape(&Footprint {
+    let Shaped {
+        wall,
+        roof,
+        ring,
+        tags,
+    } = shape(&Footprint {
         outer: outer.clone(),
         holes: holes.clone(),
         ..fp.clone()
@@ -331,6 +521,7 @@ pub fn place(fp: &Footprint, ground: impl Fn(f64, f64) -> Option<f64>) -> Option
         base_y: (min - SINK_M) as f32,
         eave_y: (mean + wall).max(max + 2.0) as f32,
         roof,
+        tags,
     })
 }
 
@@ -341,6 +532,10 @@ pub struct BuildingStats {
     pub placed: usize,
     pub gabled: usize,
     pub with_holes: usize,
+    /// Buildings with OSM facts for the style (section `BTAG`).
+    pub tagged: usize,
+    /// Of these, with a tagged roof shape (pyramids on polygons included).
+    pub shaped: usize,
     pub outside: usize,
 }
 
@@ -371,6 +566,8 @@ pub fn add_buildings(pkg: &mut WorldPackage, fps: &[Footprint]) -> BuildingStats
         stats.placed += 1;
         stats.gabled += usize::from(matches!(b.roof, Roof::Gabled { .. }));
         stats.with_holes += usize::from(!b.holes.is_empty());
+        stats.tagged += usize::from(!b.tags.is_empty());
+        stats.shaped += usize::from(b.tags.roof_shape.is_some());
         tiles.entry(key).or_default().push(b);
     }
     pkg.buildings = Some(tiles);
@@ -417,7 +614,7 @@ mod tests {
     #[test]
     fn heights_follow_tags_then_levels_then_type() {
         let big = rect(0.0, 0.0, 30.0, 30.0); // 900 m², flat roofs
-        let h = |t: &[(&str, &str)]| shape(&fp(t, big.clone())).0;
+        let h = |t: &[(&str, &str)]| shape(&fp(t, big.clone())).wall;
         assert_eq!(h(&[("building", "yes"), ("height", "17.5")]), 17.5);
         assert_eq!(h(&[("building", "yes"), ("building:levels", "4")]), 12.0);
         assert_eq!(
@@ -433,7 +630,7 @@ mod tests {
         assert_eq!(h(&[("building", "yes"), ("height", "absurd")]), 6.0);
         // Small sheds and unknown tiny buildings are low.
         assert_eq!(
-            shape(&fp(&[("building", "yes")], rect(0.0, 0.0, 5.0, 4.0))).0,
+            shape(&fp(&[("building", "yes")], rect(0.0, 0.0, 5.0, 4.0))).wall,
             3.0
         );
         assert_eq!(
@@ -463,7 +660,9 @@ mod tests {
             .into_iter()
             .map(rot)
             .collect();
-        let (wall, roof, ring) = shape(&fp(&[("building", "house")], pts));
+        let Shaped {
+            wall, roof, ring, ..
+        } = shape(&fp(&[("building", "house")], pts));
         assert_eq!(wall, 6.0);
         let Roof::Gabled { height_m } = roof else {
             panic!("{roof:?}")
@@ -476,7 +675,7 @@ mod tests {
         assert!((len(ring[0], ring[1]) - 12.0).abs() < 0.05);
         assert!((len(ring[1], ring[2]) - 8.2).abs() < 0.05);
         // `height` includes the roof.
-        let (wall, _, _) = shape(&fp(
+        let Shaped { wall, .. } = shape(&fp(
             &[("building", "house"), ("height", "9")],
             rect(0.0, 0.0, 10.0, 10.0),
         ));
@@ -491,11 +690,11 @@ mod tests {
             [0.0, 10.0],
         ];
         assert_eq!(
-            shape(&fp(&[("building", "house")], l.clone())).1,
+            shape(&fp(&[("building", "house")], l.clone())).roof,
             Roof::Flat
         );
         assert_eq!(
-            shape(&fp(&[("building", "house")], rect(0.0, 0.0, 30.0, 30.0))).1,
+            shape(&fp(&[("building", "house")], rect(0.0, 0.0, 30.0, 30.0))).roof,
             Roof::Flat
         );
         assert_eq!(
@@ -503,12 +702,12 @@ mod tests {
                 &[("building", "house"), ("roof:shape", "flat")],
                 rect(0.0, 0.0, 10.0, 8.0)
             ))
-            .1,
+            .roof,
             Roof::Flat
         );
         // An office gets a gable roof only when tagged.
         assert_eq!(
-            shape(&fp(&[("building", "office")], rect(0.0, 0.0, 10.0, 8.0))).1,
+            shape(&fp(&[("building", "office")], rect(0.0, 0.0, 10.0, 8.0))).roof,
             Roof::Flat
         );
         assert!(matches!(
@@ -516,7 +715,7 @@ mod tests {
                 &[("building", "office"), ("roof:shape", "hipped")],
                 rect(0.0, 0.0, 10.0, 8.0)
             ))
-            .1,
+            .roof,
             Roof::Gabled { .. }
         ));
     }
@@ -593,6 +792,195 @@ mod tests {
         assert_eq!(
             simplify(&r),
             vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]]
+        );
+    }
+
+    #[test]
+    fn directions_and_hulls() {
+        assert_eq!(parse_direction("N"), Some(0.0));
+        assert_eq!(parse_direction("sse"), Some(157.5));
+        assert_eq!(parse_direction("270"), Some(270.0));
+        assert_eq!(parse_direction("-90"), Some(270.0));
+        assert_eq!(parse_direction("45°"), Some(45.0));
+        assert_eq!(parse_direction("up"), None);
+        let n = compass(0.0);
+        assert!(
+            n[0].abs() < 1e-12 && (n[1] + 1.0).abs() < 1e-12,
+            "north is −z"
+        );
+        let e = compass(90.0);
+        assert!(
+            (e[0] - 1.0).abs() < 1e-12 && e[1].abs() < 1e-12,
+            "east is +x"
+        );
+        let l = vec![
+            [0.0, 0.0],
+            [10.0, 0.0],
+            [10.0, 5.0],
+            [5.0, 5.0],
+            [5.0, 10.0],
+            [0.0, 10.0],
+        ];
+        assert!((hull_area(&l) - 87.5).abs() < 1e-9, "{}", hull_area(&l));
+        assert!((hull_area(&rect(0.0, 0.0, 4.0, 3.0)) - 12.0).abs() < 1e-9);
+        assert_eq!(hull_area(&[[0.0, 0.0], [1.0, 1.0]]), 0.0);
+    }
+
+    /// Roof shapes, ridge direction and roof height from the tags (spec
+    /// §14 Phase 8 T4).
+    #[test]
+    fn roof_tags_set_shape_direction_and_height() {
+        let len = |a: [f64; 2], b: [f64; 2]| (b[0] - a[0]).hypot(b[1] - a[1]);
+        let house = |extra: &[(&str, &str)]| {
+            let mut t = vec![("building", "house")];
+            t.extend_from_slice(extra);
+            shape(&fp(&t, rect(0.0, 0.0, 12.0, 8.0)))
+        };
+        let gable_h = |s: &Shaped| match s.roof {
+            Roof::Gabled { height_m } => f64::from(height_m),
+            Roof::Flat => panic!("flat"),
+        };
+        // Untagged: a gable along the long side, no shape tag stored.
+        let s = house(&[]);
+        assert_eq!(s.tags.roof_shape, None);
+        assert_eq!(s.tags.roof_height_m, None);
+        assert!((len(s.ring[0], s.ring[1]) - 12.0).abs() < 1e-9);
+        assert!((gable_h(&s) - 3.2).abs() < 1e-6);
+        // A hipped roof keeps the BLDG gable (old readers) and stores the shape.
+        let s = house(&[("roof:shape", "hipped")]);
+        assert_eq!(s.tags.roof_shape, Some(RoofShape::Hipped));
+        assert!(matches!(s.roof, Roof::Gabled { .. }));
+        // Across: the ridge along the short side, the default height over the long span.
+        let s = house(&[("roof:orientation", "across")]);
+        assert!((len(s.ring[0], s.ring[1]) - 8.0).abs() < 1e-9);
+        assert!((gable_h(&s) - 4.8).abs() < 1e-6);
+        // roof:direction: the slopes face north → the ridge runs east-west (along x).
+        let s = house(&[("roof:direction", "N")]);
+        assert!((s.ring[1][1] - s.ring[0][1]).abs() < 1e-9, "{:?}", s.ring);
+        let s = house(&[("roof:direction", "90")]);
+        assert!((s.ring[1][0] - s.ring[0][0]).abs() < 1e-9, "{:?}", s.ring);
+        // Skillion facing south: the low eave (first edge) is the south (+z) side.
+        let s = house(&[("roof:shape", "skillion"), ("roof:direction", "S")]);
+        assert_eq!(s.tags.roof_shape, Some(RoofShape::Skillion));
+        assert!(s.ring[0][1] > 7.9 && s.ring[1][1] > 7.9, "{:?}", s.ring);
+        assert!(signed_area(&s.ring) > 0.0, "still counter-clockwise");
+        // roof:angle over the half span; roof:levels; roof:height.
+        let s = house(&[("roof:angle", "45")]);
+        assert!((gable_h(&s) - 4.0).abs() < 1e-6);
+        assert_eq!(s.tags.roof_height_m, Some(4.0));
+        let s = house(&[("roof:levels", "1")]);
+        assert!((gable_h(&s) - 3.0).abs() < 1e-6);
+        assert_eq!(s.tags.roof_levels, Some(1));
+        let s = house(&[("roof:height", "4"), ("height", "10")]);
+        assert!((s.wall - 6.0).abs() < 1e-9);
+        assert!((gable_h(&s) - 4.0).abs() < 1e-6);
+        // A skillion's angle rises over the whole span.
+        let s = house(&[("roof:shape", "skillion"), ("roof:angle", "10")]);
+        assert!((gable_h(&s) - 8.0 * 10f64.to_radians().tan()).abs() < 1e-5);
+        // A tagged pitched roof on a big rectangle (a church nave, 40 × 20 m).
+        let nave = shape(&fp(
+            &[("building", "church"), ("roof:shape", "gabled")],
+            rect(0.0, 0.0, 40.0, 20.0),
+        ));
+        assert!(matches!(nave.roof, Roof::Gabled { .. }));
+        assert_eq!(nave.tags.building_use, Some(BuildingUse::Church));
+    }
+
+    #[test]
+    fn pyramids_sit_on_convex_towers_only() {
+        let octagon: Vec<[f64; 2]> = (0..8)
+            .map(|i| {
+                let a = f64::from(i) * std::f64::consts::FRAC_PI_4;
+                [50.0 + 3.0 * a.cos(), 50.0 + 3.0 * a.sin()]
+            })
+            .collect();
+        let s = shape(&fp(
+            &[("building", "yes"), ("roof:shape", "pyramidal")],
+            octagon.clone(),
+        ));
+        assert_eq!(s.roof, Roof::Flat, "old readers: flat");
+        assert_eq!(s.tags.roof_shape, Some(RoofShape::Pyramidal));
+        let area = signed_area(&octagon).abs() / 2.0;
+        let d = 2.0 * (area / std::f64::consts::PI).sqrt();
+        assert!((f64::from(s.tags.roof_height_m.unwrap()) - 0.8 * d).abs() < 1e-4);
+        assert_eq!(s.ring.len(), 8);
+        // A spire with its height tagged.
+        let s = shape(&fp(
+            &[
+                ("building", "church"),
+                ("roof:shape", "cone"),
+                ("roof:height", "18"),
+            ],
+            octagon,
+        ));
+        assert_eq!(s.tags.roof_height_m, Some(18.0));
+        // A concave footprint stays flat without a shape.
+        let l = vec![
+            [0.0, 0.0],
+            [10.0, 0.0],
+            [10.0, 5.0],
+            [5.0, 5.0],
+            [5.0, 10.0],
+            [0.0, 10.0],
+        ];
+        let s = shape(&fp(&[("building", "yes"), ("roof:shape", "pyramidal")], l));
+        assert_eq!((s.roof, s.tags.roof_shape), (Roof::Flat, None));
+    }
+
+    #[test]
+    fn osm_facts_are_kept_for_the_style() {
+        let t = tags(&[
+            ("building", "barn"),
+            ("building:levels", "2"),
+            ("roof:levels", "1"),
+            ("building:material", "wood"),
+            ("building:colour", "white"),
+            ("roof:material", "slate"),
+            ("roof:colour", "#a00"),
+            ("min_height", "3"),
+        ]);
+        let f = osm_facts(&t);
+        assert_eq!(f.building_use, Some(BuildingUse::Barn));
+        assert_eq!(f.levels, Some(2));
+        assert_eq!(f.roof_levels, Some(1));
+        assert_eq!(f.wall, Some(WallMaterial::Timber));
+        assert_eq!(f.wall_colour, Some([255, 255, 255]));
+        assert_eq!(f.roof_material, Some(RoofMaterial::Slate));
+        assert_eq!(f.roof_colour, Some([170, 0, 0]));
+        let s = shape(&Footprint {
+            id: 1,
+            tags: t,
+            outer: rect(0.0, 0.0, 20.0, 12.0),
+            holes: vec![],
+        });
+        assert_eq!(s.tags.min_height_m, Some(3.0));
+        assert!(osm_facts(&tags(&[("building", "yes")])).is_empty());
+        assert_eq!(
+            osm_facts(&tags(&[("building", "house"), ("building:levels", "0")])).levels,
+            None
+        );
+        // Canopies (building=roof) are flat slabs unless tagged otherwise.
+        let s = shape(&fp(&[("building", "roof")], rect(0.0, 0.0, 10.0, 6.0)));
+        assert_eq!(s.roof, Roof::Flat);
+        assert_eq!(s.tags.building_use, Some(BuildingUse::Canopy));
+        // The facts travel with the placed building.
+        let b = place(
+            &fp(
+                &[("building", "house"), ("roof:shape", "half-hipped")],
+                rect(0.0, 0.0, 12.0, 9.0),
+            ),
+            |_, _| Some(500.0),
+        )
+        .unwrap();
+        assert_eq!(b.tags.roof_shape, Some(RoofShape::HalfHipped));
+        assert_eq!(
+            BuildingTags::default(),
+            place(
+                &fp(&[("building", "yes")], rect(0.0, 0.0, 12.0, 9.0)),
+                |_, _| Some(500.0),
+            )
+            .unwrap()
+            .tags
         );
     }
 

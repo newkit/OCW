@@ -21,7 +21,7 @@ use bevy::render::render_resource::{
 };
 use clap::Command;
 use ocw_assets::ktx2::TexFormat;
-use ocw_assets::materials::{GROUND_IDS, Library, Loaded, ROAD_IDS};
+use ocw_assets::materials::{BUILDING_IDS, GROUND_IDS, Library, Loaded, ROAD_IDS};
 
 use crate::console::{ConsoleAppExt, ConsoleCommand, Permission};
 use crate::ground::{ClassMix, GROUND_LAYERS, TerrainLook};
@@ -53,6 +53,9 @@ pub struct MaterialLibrary {
     pub road_sizes: [f32; ROAD_IDS.len()],
     /// Mean albedo of the road layers (linear RGB).
     pub road_means: [[f32; 3]; ROAD_IDS.len()],
+    /// The building layers (Phase 8 T4; `None`: a library without them,
+    /// the houses keep flat colours).
+    pub buildings: Option<BuildingLayers>,
     pub credits: Vec<String>,
     pub dir: String,
 }
@@ -68,6 +71,48 @@ impl MaterialLibrary {
             })
             .unwrap_or(&self.sets[0])
     }
+}
+
+/// The building materials as texture arrays, in `house_style::Layer`
+/// order (`ocw_assets::materials::BUILDING_IDS`).
+#[derive(Clone)]
+pub struct BuildingLayers {
+    pub albedo: Handle<Image>,
+    pub normal: Handle<Image>,
+    /// Repeat sizes (m).
+    pub sizes: [f32; crate::house_style::LAYERS],
+    /// Mean albedo (linear RGB).
+    pub means: [[f32; 3]; crate::house_style::LAYERS],
+}
+
+/// The building layers of a library, if it has them all (an older library
+/// folder without the T4 materials: none, with a warning).
+fn building_layers(lib: &Library, images: &mut Assets<Image>) -> Option<BuildingLayers> {
+    let l = match layers(lib, &BUILDING_IDS) {
+        Ok(l) => l,
+        Err(e) => {
+            warn!("houses without textures: {e} (run scripts/fetch-materials.sh)");
+            return None;
+        }
+    };
+    let albedo: Vec<_> = l.iter().map(|m| &m.albedo).collect();
+    let normal: Vec<_> = l.iter().map(|m| &m.normal).collect();
+    let (a, n) = match (
+        array_image(&albedo, "building albedo"),
+        array_image(&normal, "building normal"),
+    ) {
+        (Ok(a), Ok(n)) => (a, n),
+        (Err(e), _) | (_, Err(e)) => {
+            warn!("houses without textures: {e}");
+            return None;
+        }
+    };
+    Some(BuildingLayers {
+        albedo: images.add(a),
+        normal: images.add(n),
+        sizes: std::array::from_fn(|i| l[i].material.size_m),
+        means: std::array::from_fn(|i| l[i].mean),
+    })
 }
 
 /// Whether the library is in use, and why not.
@@ -302,6 +347,7 @@ pub fn library_resource(
         road_normal: images.add(array_image(&normal(&road), "road normal")?),
         road_sizes: std::array::from_fn(|i| road[i].material.size_m),
         road_means: std::array::from_fn(|i| road[i].mean),
+        buildings: building_layers(lib, images),
         credits: ocw_assets::materials::credits(&lib.manifest)
             .iter()
             .map(|c| c.line())

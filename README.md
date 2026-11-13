@@ -441,7 +441,18 @@ climb at 1.5–2.1 km) and grass beside the road roll increasingly harder
   surfaces, trees stand in the forests (a few on meadows, in gardens and
   parks, never on roads, water or in buildings) and every building is
   extruded from its OSM footprint with its height (`height`,
-  `building:levels`, or a default by type) and a flat or gable roof.
+  `building:levels`, or a default by type). Houses (spec §14 Phase 8 T4) get
+  their roof shape from OSM (`roof:shape`: gabled, hipped, half-hipped,
+  pyramidal, skillion, mansard, gambrel; `roof:height` / `roof:angle` /
+  `roof:levels`, `roof:direction` / `roof:orientation`), walls and roof in
+  the library's materials by `building:material`, `building:colour`,
+  `roof:material` and the measured roof colour, procedural windows and a
+  door per storey and bay, eaves, parapets and chimneys close up; what OSM
+  does not say comes from the regional style presets in
+  `assets/building-styles.toml` (Rhine valley and towns, Alpine villages
+  above 750 m, Black Forest farms with their huge roofs, Canarian flat roofs
+  with parapets). Package section `BTAG` (optional; older apps draw flat or
+  gable roofs).
   `world-builder check` lists what a package contains; older packages
   without land use still load (plain grass and placeholder tree patches).
 - Default arguments: `ocw-desktop.args` beside the executable (or
@@ -1510,7 +1521,7 @@ Third-party assets keep their own licences, listed next to them:
   `assets/materials/`, not in git): CC0 1.0 materials from
   [ambientCG](https://ambientcg.com) (Lennart Demes) and
   [Poly Haven](https://polyhaven.com) (Rob Tuytel, Amal Kumar, Dimitrios
-  Savva); every material with its author and page in the manifest and in
+  Savva, Dario Barresi, Charlotte Baglioni); every material with its author and page in the manifest and in
   `CREDITS.md`.
 - UI font Fira Mono (© The Mozilla Foundation and Telefonica S.A.), compiled
   into `ocw-desktop`: SIL Open Font License 1.1, see

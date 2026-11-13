@@ -277,7 +277,7 @@ normal = { file = "Ground039_1K-JPG_NormalGL.jpg", sha256 = "d440e5ca7d66bc6ba3f
 roughness = { file = "Ground039_1K-JPG_Roughness.jpg", sha256 = "b31242628a0491a4362469b02d75eff5d36f46df9a8dad238f955531c5a18e88" }
 ao = { file = "Ground039_1K-JPG_AmbientOcclusion.jpg", sha256 = "b48977982ff7976259c124803a7f3e3ea476b0d12d6bac304a5861e7c2cc4b84" }
 
-# --- Houses (Phase 8 T4; fetched and converted, not drawn yet) ---------------
+# --- Houses (Phase 8 T4) -----------------------------------------------------
 
 [[material]]
 id = "roof_tiles"
@@ -317,6 +317,76 @@ source = "https://polyhaven.com/a/weathered_plank_siding"
 albedo = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/weathered_plank_siding/weathered_plank_siding_diff_1k.jpg", sha256 = "dad0442114f1efd9a25195f2e2ac480693c2a6199f3987f4cfac4002b2820fbd" }
 normal = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/weathered_plank_siding/weathered_plank_siding_nor_gl_1k.jpg", sha256 = "229440bb21992d7f97bbbe03f6488e21cc061119ab3774ad0c30e352c9690a74" }
 arm = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/weathered_plank_siding/weathered_plank_siding_arm_1k.jpg", sha256 = "214fc7a4526d1dc5b2627a6433f26f28ce6f85d1ecad872cb14f3e75aa9af7ad" }
+
+# Added with T4 (v2.57; licences checked on 2026-11-13 on each asset's page,
+# Poly Haven: CC0 1.0): dark roofs (Alpine and Black Forest slate / fibre
+# cement), metal sheet for barns, sheds and halls, brick, rubble stone
+# (churches, Canarian farms) and concrete (flat roofs, apartment blocks).
+
+[[material]]
+id = "roof_slates"
+name = "Roof slates"
+group = "building"
+size_m = 3.0
+license = "CC0-1.0"
+author = "Rob Tuytel (Poly Haven)"
+title = "Roof Slates 02"
+source = "https://polyhaven.com/a/roof_slates_02"
+albedo = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/roof_slates_02/roof_slates_02_diff_1k.jpg", sha256 = "de3d2729ab385c5f7dd7106d3b435c737f6d2c3ea8883cea37de53cec2a34867" }
+normal = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/roof_slates_02/roof_slates_02_nor_gl_1k.jpg", sha256 = "32be0c0ba1565856156a315dc98a773d72f1a03415930657b8a8ad62bf60c1bf" }
+arm = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/roof_slates_02/roof_slates_02_arm_1k.jpg", sha256 = "a43d670bb04a70d32502e8b976b0cb97dd975ccab04b8a612ac6543f2b89ad2a" }
+
+[[material]]
+id = "metal_sheet"
+name = "Metal sheet (box profile)"
+group = "building"
+size_m = 2.0
+license = "CC0-1.0"
+author = "Amal Kumar (Poly Haven)"
+title = "Box Profile Metal Sheet"
+source = "https://polyhaven.com/a/box_profile_metal_sheet"
+albedo = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/box_profile_metal_sheet/box_profile_metal_sheet_diff_1k.jpg", sha256 = "c2c3643bb2e07554f805f56525ec2ffbc23117be95e324af46ac98f56fa7961f" }
+normal = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/box_profile_metal_sheet/box_profile_metal_sheet_nor_gl_1k.jpg", sha256 = "9cc5ca3135164dbc4eef21cf12ea488b02ce7ec252dc2b803be14eb7c3719fcb" }
+arm = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/box_profile_metal_sheet/box_profile_metal_sheet_arm_1k.jpg", sha256 = "f5bd4d7d11f3042d50dfb38bfea7af01ec00142a527a452f37090dd1c7f93bf8" }
+
+[[material]]
+id = "brick"
+name = "Brick"
+group = "building"
+size_m = 1.0
+license = "CC0-1.0"
+author = "Rob Tuytel (Poly Haven)"
+title = "Red Brick 03"
+source = "https://polyhaven.com/a/red_brick_03"
+albedo = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/red_brick_03/red_brick_03_diff_1k.jpg", sha256 = "9c58254c099b2d211478f50a427fcdde622af24249ff2e94da41fb836f8c857f" }
+normal = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/red_brick_03/red_brick_03_nor_gl_1k.jpg", sha256 = "9bfd45e24720d851017c1e1678b70219c72239b2ac6b25e11d57d458bdab8503" }
+arm = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/red_brick_03/red_brick_03_arm_1k.jpg", sha256 = "31d8d33a9c44af49cd082eae8f49016aaca6d55f2fd80be2183e2ba9185bd8cf" }
+
+[[material]]
+id = "stone_wall"
+name = "Rubble stone wall"
+group = "building"
+size_m = 2.0
+license = "CC0-1.0"
+author = "Dario Barresi, Charlotte Baglioni (Poly Haven)"
+title = "Stone Wall"
+source = "https://polyhaven.com/a/stone_wall"
+albedo = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/stone_wall/stone_wall_diff_1k.jpg", sha256 = "390969aead48d9a10ac731a5e0af8761cc4ed89faa02ba775b913930b4398d87" }
+normal = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/stone_wall/stone_wall_nor_gl_1k.jpg", sha256 = "801d7ff8bc472e5ad95872546c19a4c63cc776060b4ced629fece2d08591964e" }
+arm = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/stone_wall/stone_wall_arm_1k.jpg", sha256 = "649dda525fe8d683f17f69bdebe211d30013ee7232919a740bbd534f9c177a48" }
+
+[[material]]
+id = "concrete"
+name = "Concrete"
+group = "building"
+size_m = 2.7
+license = "CC0-1.0"
+author = "Dario Barresi, Charlotte Baglioni (Poly Haven)"
+title = "Concrete Wall 008"
+source = "https://polyhaven.com/a/concrete_wall_008"
+albedo = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_wall_008/concrete_wall_008_diff_1k.jpg", sha256 = "a203166d280d3cfc6a91bbc9ffdae406eb9555b4a4f658cd92619063eb17c147" }
+normal = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_wall_008/concrete_wall_008_nor_gl_1k.jpg", sha256 = "83cd3fa2c7cbf4c81402386065daf8fa6f72e1f1f77e02ccb1eedb28496909ae" }
+arm = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_wall_008/concrete_wall_008_arm_1k.jpg", sha256 = "12b8b88bd0a9b303150f45cf0080371d78b7f04744d4ab14030b8958ec7dc2e3" }
 
 # --- Regional material sets (spec §4.6; Phase 8 T3 extends them) -------------
 # A set applies to packages whose time zone (section TZID) is listed: ground

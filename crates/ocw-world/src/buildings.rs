@@ -2,6 +2,12 @@
 //! stored per tile in the package section `BLDG`, and the triangulation of
 //! their roofs (ear clipping with holes).
 //!
+//! The OSM facts the houses are styled by (spec §14 Phase 8 T4) – roof
+//! shape and height, levels, wall and roof material and colour, the finer
+//! building use – are the optional section `BTAG` ([`BuildingTags`], read
+//! into [`Building::tags`]); readers that do not know it see the plain
+//! `BLDG` buildings (flat or gable roofs).
+//!
 //! Footprints are in local metres (x, z). The outer ring winds
 //! counter-clockwise in the (x, z) plane (positive [`signed_area`]), holes
 //! clockwise; rings are open (the first point is not repeated). With this
@@ -53,7 +59,8 @@ impl BuildingKind {
     }
 }
 
-/// Roof shape.
+/// Roof shape in `BLDG`: what every reader draws. The finer shape
+/// (hipped, pyramidal, …) is [`BuildingTags::roof_shape`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Roof {
     Flat,
@@ -76,11 +83,406 @@ pub struct Building {
     /// Top of the walls (the eaves, or the flat roof).
     pub eave_y: f32,
     pub roof: Roof,
+    /// OSM facts for the style (section `BTAG`; default: none).
+    pub tags: BuildingTags,
 }
 
 /// Buildings of a package by tile (a building belongs to the tile of its
 /// first outline point's centroid, see `world-builder`).
 pub type Buildings = BTreeMap<TileKey, Vec<Building>>;
+
+/// Section tag of the buildings' OSM facts ([`BuildingTags`]).
+pub const BUILDING_TAGS_TAG: &[u8; 4] = b"BTAG";
+/// Layout version inside the `BTAG` section.
+const BUILDING_TAGS_VERSION: u32 = 1;
+
+/// Defines a small enum stored as a byte in `BTAG` (codes are stored in
+/// packages: only add new values at the end) with its style-file names.
+macro_rules! coded_enum {
+    ($(#[$m:meta])* $name:ident { $($(#[$vm:meta])* $v:ident = $code:literal => $label:literal),+ $(,)? }) => {
+        $(#[$m])*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+        #[repr(u8)]
+        pub enum $name {
+            $($(#[$vm])* $v = $code),+
+        }
+
+        impl $name {
+            pub const ALL: &'static [$name] = &[$($name::$v),+];
+
+            pub fn from_code(code: u8) -> Option<Self> {
+                Self::ALL.iter().copied().find(|v| *v as u8 == code)
+            }
+
+            /// The name used in `assets/building-styles.toml`.
+            pub fn name(self) -> &'static str {
+                match self {
+                    $($name::$v => $label),+
+                }
+            }
+
+            pub fn from_name(s: &str) -> Option<Self> {
+                Self::ALL.iter().copied().find(|v| v.name() == s)
+            }
+        }
+    };
+}
+
+coded_enum! {
+    /// Roof shape (OSM `roof:shape`). Everything but `Flat` needs the
+    /// rectangular `BLDG` footprint (`Roof::Gabled`), except a pyramid,
+    /// which also sits on a convex polygon (towers).
+    RoofShape {
+        Flat = 0 => "flat",
+        Gabled = 1 => "gabled",
+        Hipped = 2 => "hipped",
+        HalfHipped = 3 => "half-hipped",
+        Pyramidal = 4 => "pyramidal",
+        Skillion = 5 => "skillion",
+        Mansard = 6 => "mansard",
+        Gambrel = 7 => "gambrel",
+    }
+}
+
+impl RoofShape {
+    /// The shape of an OSM `roof:shape` value; similar shapes map to the
+    /// nearest one drawn (saltbox and round → gabled, side-hipped →
+    /// half-hipped, cone / dome / onion → pyramidal).
+    pub fn from_osm(v: &str) -> Option<Self> {
+        Some(match v.trim() {
+            "flat" => RoofShape::Flat,
+            "gabled" | "saltbox" | "round" | "gabled_height_moved" => RoofShape::Gabled,
+            "hipped" | "hipped-and-gabled" => RoofShape::Hipped,
+            "half-hipped" | "half_hipped" | "side_hipped" | "side_half-hipped" => {
+                RoofShape::HalfHipped
+            }
+            "pyramidal" | "cone" | "dome" | "onion" => RoofShape::Pyramidal,
+            "skillion" | "lean_to" => RoofShape::Skillion,
+            "mansard" => RoofShape::Mansard,
+            "gambrel" => RoofShape::Gambrel,
+            _ => return None,
+        })
+    }
+
+    pub fn is_pitched(self) -> bool {
+        self != RoofShape::Flat
+    }
+}
+
+coded_enum! {
+    /// The finer use of a building (OSM `building=*`) beyond its
+    /// [`BuildingKind`]: what a style preset may treat differently.
+    BuildingUse {
+        Unknown = 0 => "unknown",
+        Chalet = 1 => "chalet",
+        Farmhouse = 2 => "farmhouse",
+        Barn = 3 => "barn",
+        Garage = 4 => "garage",
+        Shed = 5 => "shed",
+        Church = 6 => "church",
+        Chapel = 7 => "chapel",
+        Greenhouse = 8 => "greenhouse",
+        /// `building=roof` and carports: a roof on posts.
+        Canopy = 9 => "canopy",
+        Hut = 10 => "hut",
+        Hotel = 11 => "hotel",
+        Retail = 12 => "retail",
+        Terrace = 13 => "terrace",
+    }
+}
+
+impl BuildingUse {
+    /// The use of an OSM `building=*` value (`None` when the kind says it all).
+    pub fn from_osm(v: &str) -> Option<Self> {
+        Some(match v {
+            "chalet" => BuildingUse::Chalet,
+            "farm" | "farmhouse" => BuildingUse::Farmhouse,
+            "barn" | "farm_auxiliary" | "stable" | "cowshed" | "sty" => BuildingUse::Barn,
+            "garage" | "garages" => BuildingUse::Garage,
+            "shed" | "boathouse" => BuildingUse::Shed,
+            "church" | "cathedral" => BuildingUse::Church,
+            "chapel" | "shrine" => BuildingUse::Chapel,
+            "greenhouse" => BuildingUse::Greenhouse,
+            "roof" | "carport" => BuildingUse::Canopy,
+            "hut" | "cabin" => BuildingUse::Hut,
+            "hotel" => BuildingUse::Hotel,
+            "retail" | "supermarket" | "kiosk" => BuildingUse::Retail,
+            "terrace" => BuildingUse::Terrace,
+            _ => return None,
+        })
+    }
+}
+
+coded_enum! {
+    /// Wall material (OSM `building:material`, `building:facade:material`).
+    WallMaterial {
+        Plaster = 1 => "plaster",
+        Timber = 2 => "timber",
+        Stone = 3 => "stone",
+        Brick = 4 => "brick",
+        Concrete = 5 => "concrete",
+        Glass = 6 => "glass",
+        Metal = 7 => "metal",
+    }
+}
+
+impl WallMaterial {
+    pub fn from_osm(v: &str) -> Option<Self> {
+        Some(match v.trim() {
+            "plaster" | "render" | "stucco" | "plastered" | "cement_block" => WallMaterial::Plaster,
+            "wood" | "timber" | "timber_framing" | "log" | "wooden" => WallMaterial::Timber,
+            "stone" | "sandstone" | "limestone" | "granite" | "marble" | "masonry" | "tuff"
+            | "basalt" | "volcanic_rock" => WallMaterial::Stone,
+            "brick" | "bricks" | "clay" | "adobe" => WallMaterial::Brick,
+            "concrete" | "reinforced_concrete" | "panel" => WallMaterial::Concrete,
+            "glass" | "mirror" => WallMaterial::Glass,
+            "metal" | "steel" | "metal_plates" | "aluminium" | "sheet_metal" | "copper" => {
+                WallMaterial::Metal
+            }
+            _ => return None,
+        })
+    }
+}
+
+coded_enum! {
+    /// Roof material (OSM `roof:material`).
+    RoofMaterial {
+        Tiles = 1 => "tiles",
+        Slate = 2 => "slate",
+        Metal = 3 => "metal",
+        Concrete = 4 => "concrete",
+        Glass = 5 => "glass",
+        Wood = 6 => "wood",
+        Grass = 7 => "grass",
+    }
+}
+
+impl RoofMaterial {
+    pub fn from_osm(v: &str) -> Option<Self> {
+        Some(match v.trim() {
+            "roof_tiles" | "tile" | "tiles" | "clay" | "ceramic" | "clay_tiles" => {
+                RoofMaterial::Tiles
+            }
+            "slate" | "eternit" | "asbestos" | "stone" | "fibre_cement" | "shingle" => {
+                RoofMaterial::Slate
+            }
+            "metal" | "metal_sheet" | "tin" | "copper" | "zinc" | "steel" | "aluminium" => {
+                RoofMaterial::Metal
+            }
+            "concrete" | "tar_paper" | "asphalt" | "bitumen" | "gravel" | "plastic"
+            | "pebblestone" | "cement" => RoofMaterial::Concrete,
+            "glass" | "acrylic_glass" | "solar_panels" | "pv" => RoofMaterial::Glass,
+            "wood" | "wooden" | "wood_shingles" | "thatch" | "reed" => RoofMaterial::Wood,
+            "grass" | "plants" | "green" => RoofMaterial::Grass,
+            _ => return None,
+        })
+    }
+}
+
+/// What OSM says about a building's look (spec §14 Phase 8 T4), stored in
+/// the section `BTAG`. Everything is optional: the client's regional style
+/// preset fills in what OSM does not say.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct BuildingTags {
+    pub building_use: Option<BuildingUse>,
+    /// Tagged `roof:shape`. A pitched shape needs the four-point `BLDG`
+    /// outline (`Roof::Gabled`), a pyramid alternatively a polygon with a
+    /// [`Self::roof_height_m`].
+    pub roof_shape: Option<RoofShape>,
+    /// Roof height from `roof:height`, `roof:angle` or `roof:levels` (the
+    /// `BLDG` gable height is then the same), or the height of a pyramid on
+    /// a polygon. `None`: the style may scale the default.
+    pub roof_height_m: Option<f32>,
+    /// `building:levels` (above ground, without the roof).
+    pub levels: Option<u8>,
+    /// `roof:levels`.
+    pub roof_levels: Option<u8>,
+    /// Bottom of the walls above the ground (`min_height`,
+    /// `building:min_level`): canopies, buildings over a passage.
+    pub min_height_m: Option<f32>,
+    pub wall: Option<WallMaterial>,
+    /// `building:colour` (sRGB).
+    pub wall_colour: Option<[u8; 3]>,
+    pub roof_material: Option<RoofMaterial>,
+    /// `roof:colour` (sRGB); a measured `ROOF` colour wins.
+    pub roof_colour: Option<[u8; 3]>,
+}
+
+impl BuildingTags {
+    pub fn is_empty(&self) -> bool {
+        *self == BuildingTags::default()
+    }
+}
+
+/// Writes the `BTAG` payload; `false` (nothing written): no building has
+/// tags, so no section.
+///
+/// ```text
+/// layout version: u32 (1)
+/// tile count: u32, then per tile:
+///   tile x, z: i32 i32   record count: u32, then per record:
+///     building index in the tile's BLDG list: u32
+///     record length: u8 (the bytes after it), flags: u16, then the fields
+///     whose flag is set, in flag order:
+///       0 use u8, 1 roof shape u8, 2 roof height f32, 3 levels u8,
+///       4 roof levels u8, 5 min height f32, 6 wall material u8,
+///       7 wall colour 3 × u8, 8 roof material u8, 9 roof colour 3 × u8
+/// ```
+///
+/// Readers skip the flags and bytes they do not know (the record length),
+/// so fields can be added without a new layout.
+pub fn write_building_tags(t: &Buildings, b: &mut Vec<u8>) -> bool {
+    let tiles: Vec<(&TileKey, Vec<(usize, &BuildingTags)>)> = t
+        .iter()
+        .map(|(k, list)| {
+            let recs: Vec<(usize, &BuildingTags)> = list
+                .iter()
+                .enumerate()
+                .filter(|(_, b)| !b.tags.is_empty())
+                .map(|(i, b)| (i, &b.tags))
+                .collect();
+            (k, recs)
+        })
+        .filter(|(_, v)| !v.is_empty())
+        .collect();
+    if tiles.is_empty() {
+        return false;
+    }
+    b.extend(BUILDING_TAGS_VERSION.to_le_bytes());
+    b.extend((tiles.len() as u32).to_le_bytes());
+    for (key, recs) in tiles {
+        b.extend(key.x.to_le_bytes());
+        b.extend(key.z.to_le_bytes());
+        b.extend((recs.len() as u32).to_le_bytes());
+        for (i, t) in recs {
+            b.extend((i as u32).to_le_bytes());
+            let mut flags = 0u16;
+            let mut f = Vec::new();
+            let mut field = |bit: u16, bytes: &[u8]| {
+                flags |= 1 << bit;
+                f.extend_from_slice(bytes);
+            };
+            if let Some(u) = t.building_use {
+                field(0, &[u as u8]);
+            }
+            if let Some(s) = t.roof_shape {
+                field(1, &[s as u8]);
+            }
+            if let Some(h) = t.roof_height_m {
+                field(2, &h.to_le_bytes());
+            }
+            if let Some(l) = t.levels {
+                field(3, &[l]);
+            }
+            if let Some(l) = t.roof_levels {
+                field(4, &[l]);
+            }
+            if let Some(h) = t.min_height_m {
+                field(5, &h.to_le_bytes());
+            }
+            if let Some(m) = t.wall {
+                field(6, &[m as u8]);
+            }
+            if let Some(c) = t.wall_colour {
+                field(7, &c);
+            }
+            if let Some(m) = t.roof_material {
+                field(8, &[m as u8]);
+            }
+            if let Some(c) = t.roof_colour {
+                field(9, &c);
+            }
+            b.push((f.len() + 2) as u8);
+            b.extend(flags.to_le_bytes());
+            b.extend(f);
+        }
+    }
+    true
+}
+
+/// Building tags per tile: (index in the tile's `BLDG` list, tags).
+pub type BuildingTagRecords = BTreeMap<TileKey, Vec<(usize, BuildingTags)>>;
+
+/// Reads a `BTAG` payload written by [`write_building_tags`]. Unknown
+/// codes become `None`; unknown fields are skipped.
+pub fn read_building_tags(bytes: &[u8]) -> Result<BuildingTagRecords, String> {
+    let mut r = Bytes::new(bytes);
+    let version = r.u32()?;
+    if version != BUILDING_TAGS_VERSION {
+        return Err(format!("building tags layout {version} is not supported"));
+    }
+    let mut out = BuildingTagRecords::new();
+    for _ in 0..r.u32()? {
+        let key = TileKey {
+            x: r.i32()?,
+            z: r.i32()?,
+        };
+        let n = r.u32()?;
+        let mut list = Vec::with_capacity(n.min(1 << 16) as usize);
+        for _ in 0..n {
+            let index = r.u32()? as usize;
+            let len = usize::from(r.u8()?);
+            let mut f = Bytes::new(r.take(len)?);
+            let flags = u16::from_le_bytes(f.arr()?);
+            let has = |bit: u16| flags & (1 << bit) != 0;
+            let mut t = BuildingTags::default();
+            if has(0) {
+                t.building_use = BuildingUse::from_code(f.u8()?);
+            }
+            if has(1) {
+                t.roof_shape = RoofShape::from_code(f.u8()?);
+            }
+            if has(2) {
+                t.roof_height_m = Some(f.f32()?);
+            }
+            if has(3) {
+                t.levels = Some(f.u8()?);
+            }
+            if has(4) {
+                t.roof_levels = Some(f.u8()?);
+            }
+            if has(5) {
+                t.min_height_m = Some(f.f32()?);
+            }
+            if has(6) {
+                t.wall = WallMaterial::from_code(f.u8()?);
+            }
+            if has(7) {
+                t.wall_colour = Some(f.arr()?);
+            }
+            if has(8) {
+                t.roof_material = RoofMaterial::from_code(f.u8()?);
+            }
+            if has(9) {
+                t.roof_colour = Some(f.arr()?);
+            }
+            // Later fields (higher flags) are skipped with the rest of the record.
+            list.push((index, t));
+        }
+        out.insert(key, list);
+    }
+    r.finish("building tags section")?;
+    Ok(out)
+}
+
+/// Puts the tags read from `BTAG` on their buildings; records of buildings
+/// that do not exist are dropped (returns how many).
+pub fn apply_building_tags(buildings: &mut Buildings, tags: BuildingTagRecords) -> usize {
+    let mut dropped = 0;
+    for (key, recs) in tags {
+        let Some(list) = buildings.get_mut(&key) else {
+            dropped += recs.len();
+            continue;
+        };
+        for (i, t) in recs {
+            match list.get_mut(i) {
+                Some(b) => b.tags = t,
+                None => dropped += 1,
+            }
+        }
+    }
+    dropped
+}
 
 /// Twice the signed area of a ring in the (x, z) plane (positive:
 /// counter-clockwise).
@@ -327,6 +729,7 @@ pub fn read_buildings(bytes: &[u8]) -> Result<Buildings, String> {
                 base_y,
                 eave_y,
                 roof,
+                tags: BuildingTags::default(),
             });
         }
         out.insert(key, list);
@@ -432,6 +835,7 @@ mod tests {
             base_y: 449.5,
             eave_y: 456.0,
             roof: Roof::Gabled { height_m: 3.0 },
+            tags: BuildingTags::default(),
         };
         let block = Building {
             kind: BuildingKind::Apartments,
@@ -440,6 +844,7 @@ mod tests {
             base_y: 450.0,
             eave_y: 465.0,
             roof: Roof::Flat,
+            tags: BuildingTags::default(),
         };
         let t = Buildings::from([
             (TileKey { x: 0, z: 0 }, vec![house.clone(), block]),
@@ -460,5 +865,134 @@ mod tests {
         let mut b = Vec::new();
         write_buildings(&bad, &mut b);
         assert!(read_buildings(&b).unwrap_err().contains("rectangular"));
+    }
+
+    #[test]
+    fn building_tags_round_trip_sparse_and_forward_compatible() {
+        let plain = Building {
+            kind: BuildingKind::House,
+            outline: vec![[0.0, 0.0], [12.0, 0.0], [12.0, 8.0], [0.0, 8.0]],
+            holes: vec![],
+            base_y: 449.5,
+            eave_y: 456.0,
+            roof: Roof::Gabled { height_m: 3.0 },
+            tags: BuildingTags::default(),
+        };
+        let full = BuildingTags {
+            building_use: Some(BuildingUse::Farmhouse),
+            roof_shape: Some(RoofShape::HalfHipped),
+            roof_height_m: Some(6.5),
+            levels: Some(2),
+            roof_levels: Some(1),
+            min_height_m: Some(0.0),
+            wall: Some(WallMaterial::Timber),
+            wall_colour: Some([200, 180, 150]),
+            roof_material: Some(RoofMaterial::Slate),
+            roof_colour: Some([60, 60, 66]),
+        };
+        let tower = BuildingTags {
+            roof_shape: Some(RoofShape::Pyramidal),
+            roof_height_m: Some(9.0),
+            ..Default::default()
+        };
+        let mut t = Buildings::from([
+            (
+                TileKey { x: 0, z: 0 },
+                vec![
+                    plain.clone(),
+                    Building {
+                        tags: full,
+                        ..plain.clone()
+                    },
+                ],
+            ),
+            (TileKey { x: 1, z: 0 }, vec![plain.clone()]),
+            (
+                TileKey { x: 2, z: 0 },
+                vec![Building {
+                    tags: tower,
+                    ..plain.clone()
+                }],
+            ),
+        ]);
+        let mut b = Vec::new();
+        assert!(write_building_tags(&t, &mut b));
+        let recs = read_building_tags(&b).unwrap();
+        // Only buildings with tags, only tiles with such buildings.
+        assert_eq!(recs.len(), 2);
+        assert_eq!(recs[&TileKey { x: 0, z: 0 }], vec![(1, full)]);
+        assert_eq!(recs[&TileKey { x: 2, z: 0 }], vec![(0, tower)]);
+        // Applied onto tag-less buildings they give the original back.
+        let mut bare = t.clone();
+        for l in bare.values_mut() {
+            for b in l {
+                b.tags = BuildingTags::default();
+            }
+        }
+        assert_eq!(apply_building_tags(&mut bare, recs.clone()), 0);
+        assert_eq!(bare, t);
+        // Records of missing buildings are dropped, not fatal.
+        t.remove(&TileKey { x: 2, z: 0 });
+        assert_eq!(apply_building_tags(&mut t, recs), 1);
+        // No tags: no section.
+        let none = Buildings::from([(TileKey { x: 0, z: 0 }, vec![plain.clone()])]);
+        assert!(!write_building_tags(&none, &mut Vec::new()));
+        // A newer writer's extra field (flag 15, two more bytes) is skipped.
+        let mut newer = Vec::new();
+        newer.extend(1u32.to_le_bytes());
+        newer.extend(1u32.to_le_bytes());
+        newer.extend(0i32.to_le_bytes());
+        newer.extend(0i32.to_le_bytes());
+        newer.extend(1u32.to_le_bytes());
+        newer.extend(0u32.to_le_bytes()); // building 0
+        newer.push(2 + 1 + 2); // flags, levels, the unknown field
+        newer.extend((1u16 << 3 | 1 << 15).to_le_bytes());
+        newer.push(4);
+        newer.extend([0xAB, 0xCD]);
+        let r = read_building_tags(&newer).unwrap();
+        assert_eq!(r[&TileKey { x: 0, z: 0 }][0].1.levels, Some(4));
+        assert!(read_building_tags(&newer[..newer.len() - 1]).is_err());
+        // Unknown codes (a newer shape) read as untagged.
+        assert_eq!(RoofShape::from_code(200), None);
+    }
+
+    #[test]
+    fn osm_values_map_to_shapes_uses_and_materials() {
+        assert_eq!(RoofShape::from_osm("hipped"), Some(RoofShape::Hipped));
+        assert_eq!(
+            RoofShape::from_osm("half-hipped"),
+            Some(RoofShape::HalfHipped)
+        );
+        assert_eq!(
+            RoofShape::from_osm("side_hipped"),
+            Some(RoofShape::HalfHipped)
+        );
+        assert_eq!(RoofShape::from_osm("saltbox"), Some(RoofShape::Gabled));
+        assert_eq!(RoofShape::from_osm("onion"), Some(RoofShape::Pyramidal));
+        assert_eq!(RoofShape::from_osm("lean_to"), Some(RoofShape::Skillion));
+        assert_eq!(RoofShape::from_osm("cylinder"), None);
+        assert!(!RoofShape::Flat.is_pitched() && RoofShape::Mansard.is_pitched());
+        for s in RoofShape::ALL {
+            assert_eq!(RoofShape::from_code(*s as u8), Some(*s));
+            assert_eq!(RoofShape::from_name(s.name()), Some(*s));
+        }
+        assert_eq!(BuildingUse::from_osm("barn"), Some(BuildingUse::Barn));
+        assert_eq!(BuildingUse::from_osm("carport"), Some(BuildingUse::Canopy));
+        assert_eq!(BuildingUse::from_osm("house"), None);
+        assert_eq!(WallMaterial::from_osm("wood"), Some(WallMaterial::Timber));
+        assert_eq!(
+            WallMaterial::from_osm("sandstone"),
+            Some(WallMaterial::Stone)
+        );
+        assert_eq!(WallMaterial::from_osm("unobtainium"), None);
+        assert_eq!(
+            RoofMaterial::from_osm("roof_tiles"),
+            Some(RoofMaterial::Tiles)
+        );
+        assert_eq!(RoofMaterial::from_osm("eternit"), Some(RoofMaterial::Slate));
+        assert_eq!(
+            RoofMaterial::from_osm("tar_paper"),
+            Some(RoofMaterial::Concrete)
+        );
     }
 }

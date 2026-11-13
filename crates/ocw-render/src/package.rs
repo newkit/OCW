@@ -34,7 +34,7 @@ use bevy::render::render_resource::{
     Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
 };
 use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures::check_ready};
-use ocw_world::buildings::{Building, BuildingKind, Roof, triangulate};
+use ocw_world::buildings::Building;
 use ocw_world::graph::RoadClass;
 use ocw_world::landuse::{LandClass, LandUseTile};
 use ocw_world::package::{RoadStrip, Tile, TileKey, WorldPackage};
@@ -42,6 +42,7 @@ use ocw_world::world_set::Residency;
 use ocw_world::{Frame, RoadSurface, WorldSet};
 
 use crate::RideView;
+use crate::building_material::{BuildingMaterial, HouseMaterial};
 use crate::camera::{CameraInteraction, CameraObstacles, ObstacleLayer, SolidFootprints};
 use crate::ground::{TerrainMaterial, terrain_material};
 use crate::materials::MaterialLibrary;
@@ -184,7 +185,8 @@ pub struct TileMeshes {
     pub roads: MeshArrays,
     pub water: MeshArrays,
     pub trees: MeshArrays,
-    pub buildings: MeshArrays,
+    /// Houses in three levels of detail (`houses`, spec §14 Phase 8 T4).
+    pub houses: crate::houses::HouseMeshes,
     /// Bridge structures (section `BRDG`, spec §4.8.6).
     pub bridges: MeshArrays,
     /// The buildings as camera-solid obstacles.
@@ -210,6 +212,8 @@ pub struct TileLook {
     /// Blend weights of the package's seasonal tint maps at the world date
     /// (empty: no satellite colour in the far colour map).
     pub season_weights: Vec<(usize, f32)>,
+    /// The colours of the building materials (spec §14 Phase 8 T4).
+    pub house: crate::house_style::HouseLook,
 }
 
 impl TileLook {
@@ -227,6 +231,9 @@ impl TileLook {
             mix: Some(Arc::new(set.mix)),
             near_tint: None,
             season_weights: Vec::new(),
+            house: crate::house_style::HouseLook {
+                means: lib.buildings.as_ref().map(|b| b.means),
+            },
         }
     }
 
@@ -1050,164 +1057,18 @@ pub fn water_arrays_kept(
     m
 }
 
-/// Pushes a triangle wound so that it faces along `normal`.
-fn push_tri(m: &mut MeshArrays, p: [Vec3; 3], normal: Vec3, colour: [f32; 4]) {
-    let b = m.positions.len() as u32;
-    let facing = (p[1] - p[0]).cross(p[2] - p[0]).dot(normal) >= 0.0;
-    for q in p {
-        m.positions.push(q.to_array());
-        m.normals.push(normal.to_array());
-        m.colors.push(colour);
-    }
-    if facing {
-        m.indices.extend([b, b + 1, b + 2]);
-    } else {
-        m.indices.extend([b, b + 2, b + 1]);
-    }
-}
-
-fn push_quad(m: &mut MeshArrays, p: [Vec3; 4], normal: Vec3, colour: [f32; 4]) {
-    push_tri(m, [p[0], p[1], p[2]], normal, colour);
-    push_tri(m, [p[0], p[2], p[3]], normal, colour);
-}
-
-/// Wall and roof colours of a building (sRGB), varied per building.
-pub fn building_colours(b: &Building) -> ([f32; 3], [f32; 3]) {
-    let p = b.outline[0];
-    let pick = |seed: u64, n: usize| {
-        let h = hash(i64::from(p[0].to_bits()), i64::from(p[1].to_bits()), seed);
-        ((h * n as f32) as usize).min(n - 1)
-    };
-    let plaster = [
-        [0.93, 0.91, 0.86],
-        [0.95, 0.93, 0.88],
-        [0.90, 0.85, 0.76],
-        [0.92, 0.89, 0.82],
-        [0.86, 0.84, 0.80],
-    ];
-    let wall = match b.kind {
-        BuildingKind::House | BuildingKind::Other => plaster[pick(31, plaster.len())],
-        BuildingKind::Apartments => [0.86, 0.84, 0.80],
-        BuildingKind::Commercial => [0.78, 0.79, 0.80],
-        BuildingKind::Industrial => [0.66, 0.67, 0.68],
-        BuildingKind::Farm => [0.52, 0.38, 0.26],
-        BuildingKind::Religious => [0.96, 0.95, 0.92],
-        BuildingKind::Public => [0.87, 0.83, 0.74],
-        BuildingKind::Small => [0.58, 0.48, 0.38],
-    };
-    let tiles = [
-        [0.55, 0.24, 0.17],
-        [0.47, 0.22, 0.16],
-        [0.34, 0.32, 0.32],
-        [0.60, 0.30, 0.20],
-    ];
-    let roof = match b.roof {
-        Roof::Gabled { .. } => tiles[pick(32, tiles.len())],
-        Roof::Flat => [0.42, 0.42, 0.41],
-    };
-    (wall, roof)
-}
-
-/// Building meshes of a tile: walls from the base to the eaves around the
-/// outline and the courtyards, a flat roof (triangulated) or a gable roof
-/// with its ridge along the first edge.
-pub fn building_arrays(buildings: &[Building]) -> MeshArrays {
-    building_arrays_roofed(buildings, &[])
-}
-
-/// [`building_arrays`] with measured roof colours (`roofs[i]` of building
-/// `i`, spec §14 Phase 8 T3; missing: the default colours).
-pub fn building_arrays_roofed(
+/// The buildings as camera-solid prisms: the footprint up to the top of
+/// each house (ridge, spire or parapet, `houses`).
+pub fn building_footprints(
     buildings: &[Building],
-    roofs: &[Option<ocw_world::look::RoofColour>],
-) -> MeshArrays {
-    let mut m = MeshArrays::default();
-    for (i, b) in buildings.iter().enumerate() {
-        let (wall, roof) = building_colours(b);
-        let roof = crate::region_look::roof_colour(roofs.get(i).copied().flatten(), roof);
-        let (wall, roof) = (
-            lin(wall[0], wall[1], wall[2]),
-            lin(roof[0], roof[1], roof[2]),
-        );
-        let at = |p: [f32; 2], y: f32| Vec3::new(p[0], y, p[1]);
-        for ring in std::iter::once(&b.outline).chain(&b.holes) {
-            let n = ring.len();
-            for i in 0..n {
-                let (a, c) = (ring[i], ring[(i + 1) % n]);
-                let normal = Vec3::new(c[1] - a[1], 0.0, a[0] - c[0]).normalize_or_zero();
-                if normal == Vec3::ZERO {
-                    continue;
-                }
-                push_quad(
-                    &mut m,
-                    [
-                        at(a, b.base_y),
-                        at(c, b.base_y),
-                        at(c, b.eave_y),
-                        at(a, b.eave_y),
-                    ],
-                    normal,
-                    wall,
-                );
-            }
-        }
-        match b.roof {
-            Roof::Flat => {
-                let pts: Vec<[f32; 2]> = b
-                    .outline
-                    .iter()
-                    .chain(b.holes.iter().flatten())
-                    .copied()
-                    .collect();
-                for t in triangulate(&b.outline, &b.holes) {
-                    push_tri(
-                        &mut m,
-                        t.map(|j| at(pts[j as usize], b.eave_y)),
-                        Vec3::Y,
-                        roof,
-                    );
-                }
-            }
-            Roof::Gabled { height_m } => {
-                let c: Vec<Vec3> = b.outline.iter().map(|&p| at(p, b.eave_y)).collect();
-                let up = Vec3::Y * height_m;
-                let (r0, r1) = ((c[3] + c[0]) / 2.0 + up, (c[1] + c[2]) / 2.0 + up);
-                // Two roof planes (facing up and out over their long side) …
-                for (q, out) in [
-                    ([c[0], c[1], r1, r0], c[0] - c[3]),
-                    ([c[2], c[3], r0, r1], c[3] - c[0]),
-                ] {
-                    let normal = (q[1] - q[0]).cross(q[3] - q[0]).normalize_or_zero();
-                    let normal = if normal.dot(out.with_y(0.0) + Vec3::Y) < 0.0 {
-                        -normal
-                    } else {
-                        normal
-                    };
-                    push_quad(&mut m, q, normal, roof);
-                }
-                // … and the gable triangles above the short walls.
-                for (tri, out) in [
-                    ([c[1], c[2], r1], c[1] - c[0]),
-                    ([c[3], c[0], r0], c[0] - c[1]),
-                ] {
-                    push_tri(&mut m, tri, out.with_y(0.0).normalize_or_zero(), wall);
-                }
-            }
-        }
-    }
-    m
-}
-
-/// The buildings as camera-solid prisms: the footprint up to the ridge
-/// (gable roofs) or the flat roof.
-pub fn building_footprints(buildings: &[Building]) -> SolidFootprints {
-    SolidFootprints::new(buildings.iter().map(|b| {
-        let top = match b.roof {
-            Roof::Flat => b.eave_y,
-            Roof::Gabled { height_m } => b.eave_y + height_m,
-        };
-        (b.outline.clone(), top)
-    }))
+    specs: &[crate::house_style::HouseSpec],
+) -> SolidFootprints {
+    SolidFootprints::new(
+        buildings
+            .iter()
+            .zip(specs)
+            .map(|(b, h)| (b.outline.clone(), h.top())),
+    )
 }
 
 pub fn build_tile_meshes(pkg: &WorldPackage, key: TileKey) -> Option<TileMeshes> {
@@ -1252,9 +1113,16 @@ pub fn build_tile_meshes_look(
         }
         None => (None, Vec::new()),
     };
-    let buildings = kept
+    // Houses (spec §14 Phase 8 T4): the style of each, then its meshes in
+    // three levels of detail.
+    let specs = kept
         .as_deref()
-        .map_or_else(MeshArrays::default, |b| building_arrays_roofed(b, &roofs));
+        .map(|b| crate::houses::house_specs(pkg, b, &roofs, &look.house))
+        .unwrap_or_default();
+    let houses = kept.as_deref().map_or_else(Default::default, |b| {
+        let o = key.origin(f64::from(pkg.tile_size_m));
+        crate::houses::tile_houses(b, &specs, [o[0] as f32, o[1] as f32], pkg.tile_size_m)
+    });
     let satellite = SatelliteMap::of_tile(pkg, key, &look.season_weights);
     let near = crate::bridges::bridges_near(pkg, key);
     let size = f64::from(pkg.tile_size_m);
@@ -1274,7 +1142,7 @@ pub fn build_tile_meshes_look(
         .unwrap_or_default();
     let solid = kept
         .as_deref()
-        .map_or_else(SolidFootprints::default, building_footprints);
+        .map_or_else(SolidFootprints::default, |b| building_footprints(b, &specs));
     Some(TileMeshes {
         key,
         terrain: terrain_arrays_kept(pkg, tile, keep),
@@ -1303,7 +1171,7 @@ pub fn build_tile_meshes_look(
             water_arrays_kept(pkg, tile, lu, keep)
         }),
         trees: tree_arrays(&sites),
-        buildings,
+        houses,
         bridges: crate::bridges::bridge_arrays(&own),
         solid,
         near_tint: look.near_tint,
@@ -1701,6 +1569,7 @@ fn upload_tiles(
     mut obstacles: ResMut<CameraObstacles>,
     tunnels: Option<Res<crate::tunnel::Tunnels>>,
     (library, mut road_materials, mut textured_roads): RoadParams,
+    house: Option<Res<HouseMaterial>>,
 ) {
     // The shared road material of the library (made once).
     if textured_roads.is_none()
@@ -1733,7 +1602,11 @@ fn upload_tiles(
             (&mut meshes, &mut images, &mut terrain),
             &mut obstacles,
             cut,
-            (library, textured_roads.as_ref()),
+            (
+                library,
+                textured_roads.as_ref(),
+                house.as_deref().map(|h| &h.handle),
+            ),
             id,
             t,
         );
@@ -1753,7 +1626,11 @@ fn upload_tile(
     ),
     obstacles: &mut CameraObstacles,
     cut: &TunnelCut,
-    (library, textured_roads): (Option<&MaterialLibrary>, Option<&Handle<RoadMaterial>>),
+    (library, textured_roads, house): (
+        Option<&MaterialLibrary>,
+        Option<&Handle<RoadMaterial>>,
+        Option<&Handle<BuildingMaterial>>,
+    ),
     id: TileId,
     mut t: TileMeshes,
 ) {
@@ -1832,12 +1709,27 @@ fn upload_tile(
                     NotShadowCaster,
                 ));
             }
-            if !t.buildings.indices.is_empty() {
-                c.spawn((
-                    Mesh3d(meshes.add(t.buildings.mesh())),
-                    MeshMaterial3d(mat.clone()),
-                    CameraInteraction::Solid,
-                ));
+            // Houses in three levels of detail (spec §14 Phase 8 T4,
+            // `houses`): near chunks, the tile's mid and far meshes.
+            let houses = std::mem::take(&mut t.houses);
+            let ranges = crate::houses::lod_ranges();
+            let parts = houses
+                .near
+                .into_iter()
+                .map(|p| (p, ranges[0].clone(), true))
+                .chain(houses.mid.map(|p| (p, ranges[1].clone(), true)))
+                .chain(houses.far.map(|p| (p, ranges[2].clone(), false)));
+            for (part, range, shadows) in parts {
+                let mesh = Mesh3d(meshes.add(part.mesh.mesh()));
+                let at = Transform::from_translation(Vec3::from(part.origin));
+                let mut e = match house {
+                    Some(h) => c.spawn((mesh, MeshMaterial3d(h.clone()))),
+                    None => c.spawn((mesh, MeshMaterial3d(mat.clone()))),
+                };
+                e.insert((at, range, CameraInteraction::Solid));
+                if !shadows {
+                    e.insert(NotShadowCaster);
+                }
             }
             if !t.bridges.indices.is_empty() {
                 c.spawn((
@@ -1883,6 +1775,7 @@ fn upload_tile(
 mod tests {
     use std::collections::BTreeMap;
 
+    use ocw_world::buildings::{BuildingKind, Roof};
     use ocw_world::geo::LocalProjection;
 
     use super::*;
@@ -2075,6 +1968,7 @@ mod tests {
                 base_y: 0.5,
                 eave_y: 7.5,
                 roof: Roof::Gabled { height_m: 3.0 },
+                tags: Default::default(),
             }],
         )]));
         p
@@ -2107,11 +2001,11 @@ mod tests {
             full.trees.positions.len() * west_sites
         );
         // The house (centroid x = 16) stays; the roads are always drawn.
-        assert_eq!(half.buildings.indices.len(), full.buildings.indices.len());
+        assert_eq!(half.houses.triangles(), full.houses.triangles());
         assert_eq!(half.roads.indices.len(), full.roads.indices.len());
         let east = |q: [f64; 2]| q[0] >= 50.0;
         let other = build_tile_meshes_kept(&p, key, Some(&east)).unwrap();
-        assert!(other.buildings.indices.is_empty());
+        assert!(other.houses.is_empty());
         assert!(other.solid.is_empty());
         assert_eq!(other.terrain.indices.len(), 50 * 6);
     }
@@ -2417,7 +2311,7 @@ mod tests {
             let [a, b, c] = [0, 1, 2].map(|j| Vec3::from(m.water.positions[tri[j] as usize]));
             assert!((b - a).cross(c - a).y > 0.0);
         }
-        assert!(!m.buildings.indices.is_empty());
+        assert!(!m.houses.is_empty());
     }
 
     /// With a material library (spec §4.6, Phase 8 T2): splat weights at
@@ -2486,71 +2380,56 @@ mod tests {
         assert_eq!(m.roads_layer(), Some(4.0));
     }
 
-    /// Every triangle winds towards its normal, and that normal points
-    /// away from the building's centre (a convex building).
-    fn assert_outward(m: &MeshArrays, centre: Vec3) {
-        for tri in m.indices.chunks(3) {
-            let [a, b, c] = [0, 1, 2].map(|j| Vec3::from(m.positions[tri[j] as usize]));
-            let n = Vec3::from(m.normals[tri[0] as usize]);
-            let geometric = (b - a).cross(c - a);
-            assert!(geometric.dot(n) > 0.0, "winding against the normal at {a}");
-            assert!(
-                n.dot((a + b + c) / 3.0 - centre) > 0.0,
-                "inward face at {a}"
-            );
-        }
-    }
-
+    /// Houses (spec §14 Phase 8 T4): a tile's buildings in three levels
+    /// of detail – near chunks with the overhanging roof, the merged mid
+    /// mesh inside it, the far mesh without small buildings – and as
+    /// camera-solid prisms up to their tops.
     #[test]
-    fn buildings_are_closed_boxes_with_flat_or_gable_roofs() {
-        let flat = Building {
-            kind: BuildingKind::Industrial,
-            outline: vec![[0.0, 0.0], [20.0, 0.0], [20.0, 10.0], [0.0, 10.0]],
-            holes: vec![],
-            base_y: 99.5,
-            eave_y: 108.0,
-            roof: Roof::Flat,
+    fn tile_houses_come_in_three_levels_of_detail() {
+        let key = TileKey { x: 0, z: 0 };
+        let mut p = landuse_package();
+        let house = p.buildings.as_ref().unwrap()[&key][0].clone();
+        // A garden shed (12 m²): near and mid, not far.
+        let shed = Building {
+            kind: BuildingKind::Small,
+            outline: vec![[40.0, 20.0], [44.0, 20.0], [44.0, 23.0], [40.0, 23.0]],
+            roof: Roof::Gabled { height_m: 1.0 },
+            ..house.clone()
         };
-        let m = building_arrays(std::slice::from_ref(&flat));
-        // 4 walls × 2 triangles + 2 roof triangles.
-        assert_eq!(m.indices.len(), (8 + 2) * 3);
-        assert_outward(&m, Vec3::new(10.0, 104.0, 5.0));
-        let top = m.positions.iter().map(|p| p[1]).fold(f32::MIN, f32::max);
-        assert_eq!(top, 108.0);
-        let gabled = Building {
-            roof: Roof::Gabled { height_m: 4.0 },
-            kind: BuildingKind::House,
-            ..flat.clone()
+        p.buildings
+            .as_mut()
+            .unwrap()
+            .get_mut(&key)
+            .unwrap()
+            .push(shed);
+        let m = build_tile_meshes(&p, key).unwrap();
+        let [near, mid, far] = m.houses.triangles();
+        assert!(near > mid && mid > far && far > 0, "{near} {mid} {far}");
+        // Both buildings lie in the first 250 m chunk of the 100 m tile.
+        assert_eq!(m.houses.near.len(), 1);
+        let n = &m.houses.near[0];
+        assert_eq!(n.origin[0], 125.0);
+        let mid_part = m.houses.mid.as_ref().unwrap();
+        assert_eq!([mid_part.origin[0], mid_part.origin[2]], [50.0, 50.0]);
+        // Positions are relative to the origins: the house spans x 10 … 22.
+        let xs = |p: &crate::houses::HousePart| {
+            p.mesh
+                .positions
+                .iter()
+                .map(|q| q[0] + p.origin[0])
+                .fold((f32::MAX, f32::MIN), |(a, b), x| (a.min(x), b.max(x)))
         };
-        let m = building_arrays(std::slice::from_ref(&gabled));
-        // Walls 8, roof planes 4, gables 2.
-        assert_eq!(m.indices.len(), (8 + 4 + 2) * 3);
-        assert_outward(&m, Vec3::new(10.0, 104.0, 5.0));
-        // The ridge runs along x (the first edge) at the eaves + 4 m.
-        let ridge: Vec<[f32; 3]> = m
-            .positions
-            .iter()
-            .filter(|p| p[1] == 112.0)
-            .copied()
-            .collect();
-        assert!(!ridge.is_empty() && ridge.iter().all(|p| p[2] == 5.0));
-        // A courtyard: its walls face into the courtyard, the roof leaves it open.
-        let court = Building {
-            holes: vec![vec![[5.0, 3.0], [5.0, 7.0], [15.0, 7.0], [15.0, 3.0]]],
-            ..flat
-        };
-        let m = building_arrays(&[court]);
-        assert_eq!(m.indices.len(), (8 + 8 + 8) * 3);
-        let roof_area: f32 = m
-            .indices
-            .chunks(3)
-            .filter(|t| m.normals[t[0] as usize] == [0.0, 1.0, 0.0])
-            .map(|t| {
-                let [a, b, c] = [0, 1, 2].map(|j| Vec3::from(m.positions[t[j] as usize]));
-                (b - a).cross(c - a).length() / 2.0
-            })
-            .sum();
-        assert!((roof_area - 160.0).abs() < 1e-3, "{roof_area}");
+        let (lo, _) = xs(n);
+        assert!(lo < 10.0 - 0.2, "the near roof overhangs: {lo}");
+        let (lo, hi) = xs(mid_part);
+        assert!(lo > 10.0 && hi < 44.0, "mid inside the walls: {lo} {hi}");
+        // The ranges: near fades before mid, far starts before mid ends.
+        let r = crate::houses::lod_ranges();
+        assert!(r[0].end_margin.end < r[1].end_margin.start);
+        assert!(r[2].start_margin.start < r[1].end_margin.start);
+        // Camera-solid up to the ridge (or more: a steeper regional roof).
+        let top = m.solid.top_at(16.0, 74.0).expect("solid house");
+        assert!(top >= 7.5 + 3.0 * 0.5, "{top}");
     }
 
     /// Tile meshing time on a real package (not run by default):
@@ -2582,8 +2461,9 @@ mod tests {
             worst = worst.max(s);
             total += s;
             trees += m.trees.positions.len() / 14;
-            verts +=
-                m.trees.positions.len() + m.buildings.positions.len() + m.terrain.positions.len();
+            verts += m.trees.positions.len()
+                + m.houses.mid.as_ref().map_or(0, |p| p.mesh.positions.len())
+                + m.terrain.positions.len();
         }
         println!(
             "25 busiest tiles: {:.1} ms mean, {:.1} ms worst, {trees} trees, {verts} vertices",
@@ -2637,9 +2517,10 @@ mod tests {
         let m = build_tile_meshes(&p, key).unwrap();
         let roof = lin(0.2, 0.4, 0.6);
         let close = |a: &[f32; 4]| (0..3).all(|k| (a[k] - roof[k]).abs() < 1e-3);
-        assert!(m.buildings.colors.iter().any(close));
+        let colours = |m: &TileMeshes| m.houses.mid.as_ref().unwrap().mesh.colors.clone();
+        assert!(colours(&m).iter().any(close));
         let before = build_tile_meshes(&plain, key).unwrap();
-        assert!(!before.buildings.colors.iter().any(close));
+        assert!(!colours(&before).iter().any(close));
         // Without a date the far map is as before; in winter it turns white,
         // in summer green.
         let map_at = |day: Option<f64>| {

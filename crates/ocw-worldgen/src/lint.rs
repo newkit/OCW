@@ -1115,6 +1115,7 @@ mod tests {
                         base_y: 101.0,
                         eave_y: 107.0,
                         roof: Roof::Flat,
+                        tags: Default::default(),
                     }],
                 )]
                 .into(),
