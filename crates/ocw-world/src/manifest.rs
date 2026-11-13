@@ -1052,6 +1052,7 @@ mod tests {
                         class: crate::graph::RoadClass::Residential,
                         width_m: 4.0,
                         points: vec![[0.0; 3], [1.0, 2.0, 3.0]],
+                        surface: crate::RoadSurface::Asphalt,
                     }],
                 },
             );
@@ -1069,6 +1070,7 @@ mod tests {
             landuse: None,
             buildings: None,
             bridges: None,
+            look: Default::default(),
         }
         .to_bytes()
     }

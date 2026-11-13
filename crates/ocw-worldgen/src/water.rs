@@ -710,6 +710,7 @@ mod tests {
             time_zone: None,
             routes: vec![],
             region: None,
+            look: Default::default(),
         }
     }
 

@@ -10,12 +10,16 @@ pub mod console;
 pub mod event_hud;
 pub mod font;
 pub mod frame_rate;
+pub mod ground;
 pub mod hud;
 pub mod junction;
+pub mod materials;
 pub mod media;
 pub mod menu;
 pub mod package;
+pub mod region_look;
 pub mod riders;
+pub mod road_material;
 pub mod see_through;
 pub mod sky;
 pub mod stamp;
@@ -23,6 +27,8 @@ pub mod terrain;
 pub mod tunnel;
 pub mod tunnel_cut;
 pub mod voice;
+#[cfg(test)]
+mod wheel_contact;
 pub mod workout;
 pub mod world;
 
@@ -183,6 +189,13 @@ pub struct ExitView {
 #[derive(Resource, Clone)]
 pub struct Ground(pub std::sync::Arc<dyn Fn(f64, f64) -> Option<f64> + Send + Sync>);
 
+/// The drawn road surface lies this far above the road profile (the
+/// track's height, which the conformed terrain meets: the same height would
+/// z-fight). Every road surface (route ribbon, package road strips, tunnel
+/// floor) is drawn at it, and the riders' tyres stand on it. The same as
+/// the package's [`ocw_world::package::ROAD_LIFT_M`].
+pub const ROAD_SURFACE_LIFT_M: f32 = ocw_world::package::ROAD_LIFT_M as f32;
+
 /// One rider to draw.
 #[derive(Debug, Clone)]
 pub struct RiderView {
@@ -221,7 +234,11 @@ impl Plugin for OcwRenderPlugins {
             workout::WorkoutPanelPlugin,
             voice::VoiceHudPlugin,
         ))
-        .add_plugins(sky::SkyPlugin);
+        .add_plugins((
+            sky::SkyPlugin,
+            materials::MaterialsPlugin,
+            road_material::RoadMaterialPlugin,
+        ));
     }
 }
 

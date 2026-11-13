@@ -215,6 +215,7 @@ mod tests {
                         class: RoadClass::Secondary,
                         width_m: 6.5,
                         points: vec![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]],
+                        surface: crate::RoadSurface::Asphalt,
                     }],
                 },
             );
@@ -265,6 +266,7 @@ mod tests {
             region: sections.then(|| PackageRegion::bbox(47.0, 9.4, 47.3, 9.7)),
             time_zone: sections.then(|| "Europe/Vaduz".into()),
             bridges: None,
+            look: Default::default(),
         }
     }
 

@@ -322,6 +322,7 @@ mod tests {
                 PackageRegion::bbox(46.99, 9.5, 47.01, 9.52)
             }),
             time_zone: None,
+            look: Default::default(),
         }
     }
 
@@ -431,6 +432,7 @@ mod tests {
             routes: vec![],
             region: Some(PackageRegion::bbox(46.99, w, 47.01, e)),
             time_zone: None,
+            look: Default::default(),
         }
     }
 

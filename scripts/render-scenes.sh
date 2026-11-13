@@ -19,6 +19,13 @@
 # skipped. Details: README.md, "Scene harness"; the logic is render_scenes.py.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# The material library (spec §4.6) for the world scenes; OCW_MATERIALS=off
+# renders the flat colours (before / after comparisons). Not for --remote
+# (the remote run fetches it there) or --list / --pick.
+case " $* " in
+  *" --remote "*|*" --list "*|*" --pick "*) ;;
+  *) [ "${OCW_MATERIALS:-}" = off ] || OCW_MATERIALS_OPTIONAL=1 scripts/fetch-materials.sh ;;
+esac
 # tomllib needs Python 3.11+; a pyenv shim may point at an older one.
 for py in python3 /usr/bin/python3 python3.13 python3.12 python3.11; do
   if command -v "$py" >/dev/null && "$py" -c 'import tomllib' 2>/dev/null; then

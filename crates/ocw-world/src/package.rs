@@ -31,7 +31,9 @@
 //! latitude / longitude), for neighbouring packages, see [`crate::region`];
 //! `TZID` – the IANA time zone of the package's area ("Europe/Vaduz", UTF-8,
 //! spec §14 Phase 9; packages without it fall back to a zone from their
-//! origin, see `ocw_sky::zone::zone_for`). A
+//! origin, see `ocw_sky::zone::zone_for`); `PALT`, `ROOF`, `SEAS` – the
+//! imagery sources with the regional palette, the roof colours and the
+//! seasonal tint maps (spec §14 Phase 8 T3), see [`crate::look`]. A
 //! package without sections is written as version 1, byte for byte as before.
 //!
 //! Tile `(x, z)` covers local metres `[x·size, (x+1)·size] × [z·size, (z+1)·size]`;
@@ -46,7 +48,12 @@ use crate::buildings::{BUILDINGS_TAG, Buildings, read_buildings, write_buildings
 use crate::graph::{Edge, EdgeId, Oneway, RoadClass, RoadGraph, VertexId};
 use crate::graph_route::{GraphRoute, RouteStep};
 use crate::landuse::{LANDUSE_TAG, LandUse, read_landuse, write_landuse};
+use crate::look::{
+    PALETTE_TAG, ROOFS_TAG, RegionLook, SEASONS_TAG, read_palette, read_roofs, read_seasons,
+    write_palette, write_roofs, write_seasons,
+};
 use crate::region::{PackageRegion, REGION_TAG, read_region, write_region};
+use crate::road_surface::{ROAD_SURFACE_TAG, RoadSurface, read_road_surfaces, write_road_surfaces};
 
 pub const MAGIC: &[u8; 8] = b"OCWPKG01";
 /// Version 2: version 1 plus tagged sections (the road graph).
@@ -94,6 +101,9 @@ pub struct RoadStrip {
     pub class: RoadClass,
     pub width_m: f32,
     pub points: Vec<[f32; 3]>,
+    /// The look of the road (section `RSRF`; packages without it get the
+    /// category's default, [`RoadSurface::of_class`]).
+    pub surface: RoadSurface,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -132,6 +142,10 @@ pub struct WorldPackage {
     /// The IANA time zone of the area (section `TZID`, spec §14 Phase 9),
     /// set by the world builder; `None` in older packages.
     pub time_zone: Option<String>,
+    /// The region's measured look from open imagery (sections `PALT`,
+    /// `ROOF`, `SEAS`, spec §14 Phase 8 T3); empty in older packages,
+    /// which then keep the renderer's default colours.
+    pub look: RegionLook,
 }
 
 impl WorldPackage {
@@ -328,6 +342,28 @@ impl WorldPackage {
         if let Some(z) = &self.time_zone {
             sections.push((TIME_ZONE_TAG, z.as_bytes().to_vec()));
         }
+        if let Some(p) = &self.look.palette {
+            let mut payload = Vec::new();
+            write_palette(p, &mut payload);
+            sections.push((PALETTE_TAG, payload));
+        }
+        if let Some(r) = &self.look.roofs {
+            let mut payload = Vec::new();
+            write_roofs(r, &mut payload);
+            sections.push((ROOFS_TAG, payload));
+        }
+        if let Some(s) = &self.look.seasons {
+            let mut payload = Vec::new();
+            write_seasons(s, &mut payload);
+            sections.push((SEASONS_TAG, payload));
+        }
+        let mut payload = Vec::new();
+        if write_road_surfaces(
+            self.tiles.values().map(|t| (t.key, t.roads.as_slice())),
+            &mut payload,
+        ) {
+            sections.push((ROAD_SURFACE_TAG, payload));
+        }
         b.extend_from_slice(if sections.is_empty() { MAGIC } else { MAGIC_V2 });
         b.extend((self.name.len() as u32).to_le_bytes());
         b.extend(self.name.as_bytes());
@@ -457,6 +493,7 @@ impl WorldPackage {
                     class,
                     width_m,
                     points,
+                    surface: RoadSurface::of_class(class),
                 });
             }
             tiles.insert(
@@ -473,6 +510,7 @@ impl WorldPackage {
         let mut routes = Vec::new();
         let mut region = None;
         let mut time_zone = None;
+        let mut look = RegionLook::default();
         if version >= 2 {
             let sections = r.u32()?;
             for _ in 0..sections {
@@ -496,6 +534,24 @@ impl WorldPackage {
                         .map_err(|_| "time zone id is not UTF-8")?
                         .to_owned();
                     time_zone = Some(z);
+                } else if &tag == PALETTE_TAG {
+                    look.palette = Some(read_palette(payload)?);
+                } else if &tag == ROOFS_TAG && full {
+                    look.roofs = Some(read_roofs(payload)?);
+                } else if &tag == SEASONS_TAG && full {
+                    look.seasons = Some(read_seasons(payload)?);
+                } else if &tag == ROAD_SURFACE_TAG && full {
+                    for (key, surfaces) in read_road_surfaces(payload)? {
+                        let tile = tiles
+                            .get_mut(&key)
+                            .ok_or("road surfaces of a tile the package does not have")?;
+                        if surfaces.len() != tile.roads.len() {
+                            return Err("road surfaces do not match the tile's road strips".into());
+                        }
+                        for (strip, s) in tile.roads.iter_mut().zip(surfaces) {
+                            strip.surface = s;
+                        }
+                    }
                 }
                 // Unknown sections (from newer builders) are skipped.
             }
@@ -516,6 +572,7 @@ impl WorldPackage {
             routes,
             region,
             time_zone,
+            look,
         })
     }
 }
@@ -797,7 +854,8 @@ pub fn read_graph(bytes: &[u8]) -> Result<RoadGraph, String> {
     })
 }
 
-const CLASSES: [RoadClass; 10] = [
+/// Every road class, in the order of their codes in the package.
+pub const ROAD_CLASSES: [RoadClass; 10] = [
     RoadClass::Trunk,
     RoadClass::Primary,
     RoadClass::Secondary,
@@ -811,14 +869,14 @@ const CLASSES: [RoadClass; 10] = [
 ];
 
 fn class_code(c: RoadClass) -> u8 {
-    CLASSES
+    ROAD_CLASSES
         .iter()
         .position(|&x| x == c)
         .expect("all classes listed") as u8
 }
 
 fn class_from(code: u8) -> Result<RoadClass, String> {
-    CLASSES
+    ROAD_CLASSES
         .get(usize::from(code))
         .copied()
         .ok_or_else(|| format!("unknown road class {code}"))
@@ -904,6 +962,7 @@ mod tests {
                         class: RoadClass::Secondary,
                         width_m: 6.5,
                         points: vec![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+                        surface: RoadSurface::Asphalt,
                     }],
                 },
             );
@@ -921,6 +980,7 @@ mod tests {
             routes: Vec::new(),
             region: None,
             time_zone: None,
+            look: Default::default(),
         }
     }
 
@@ -1090,6 +1150,60 @@ mod tests {
         );
     }
 
+    /// Road surfaces (section `RSRF`): written only where a strip differs
+    /// from its category's default, read back onto the strips, skipped by
+    /// readers that do not know it (they see the default).
+    #[test]
+    fn road_surfaces_round_trip_and_default_packages_have_no_section() {
+        let plain = package();
+        assert_eq!(&plain.to_bytes()[..8], MAGIC, "no section by default");
+        let mut p = package();
+        p.tiles
+            .get_mut(&TileKey { x: 1, z: 0 })
+            .unwrap()
+            .roads
+            .push(RoadStrip {
+                class: RoadClass::Track,
+                width_m: 3.0,
+                points: vec![[1001.0, 2.0, 3.0], [1004.0, 5.0, 6.0]],
+                surface: RoadSurface::Dirt,
+            });
+        p.tiles.get_mut(&TileKey { x: 0, z: 0 }).unwrap().roads[0].surface = RoadSurface::Paving;
+        let b = p.to_bytes();
+        assert_eq!(&b[..8], MAGIC_V2);
+        let back = WorldPackage::from_bytes(&b).unwrap();
+        assert_eq!(back, p);
+        assert_eq!(
+            section_sizes(&b)
+                .iter()
+                .filter(|(t, _)| t == ROAD_SURFACE_TAG)
+                .count(),
+            1
+        );
+        // Only the two changed tiles are in the section.
+        let sections = section_sizes(&b);
+        let (_, len) = sections
+            .iter()
+            .find(|(t, _)| t == ROAD_SURFACE_TAG)
+            .unwrap();
+        assert_eq!(*len, 4 + (12 + 1) + (12 + 2));
+        // An old reader skips the section: every strip has its default.
+        let mut old = b.clone();
+        let at = old.windows(4).rposition(|w| w == ROAD_SURFACE_TAG).unwrap();
+        old[at..at + 4].copy_from_slice(b"XXXX");
+        let old = WorldPackage::from_bytes(&old).unwrap();
+        for t in old.tiles.values() {
+            for s in &t.roads {
+                assert_eq!(s.surface, RoadSurface::of_class(s.class));
+            }
+        }
+        // A section that does not match the strips is rejected.
+        let mut bad = b.clone();
+        let n = bad.len();
+        bad[n - 1] = 9;
+        assert!(WorldPackage::from_bytes(&bad).is_err());
+    }
+
     #[test]
     fn unknown_sections_are_skipped() {
         let p = WorldPackage {
@@ -1172,6 +1286,50 @@ mod tests {
         assert_eq!(old.tiles, full.tiles);
         assert_eq!(old.graph, full.graph);
         assert_eq!((old.landuse, old.buildings), (None, None));
+    }
+
+    #[test]
+    fn look_sections_round_trip_and_old_readers_skip_them() {
+        use crate::look::{PALETTE_TAG, ROOFS_TAG, SEASONS_TAG};
+        let look = crate::look::tests::sample_look();
+        let full = WorldPackage {
+            graph: Some(graph()),
+            look: look.clone(),
+            ..package()
+        };
+        let b = full.to_bytes();
+        assert_eq!(WorldPackage::from_bytes(&b).unwrap(), full);
+        let tags: Vec<[u8; 4]> = section_sizes(&b).iter().map(|s| s.0).collect();
+        assert_eq!(
+            tags,
+            vec![*GRAPH_TAG, *PALETTE_TAG, *ROOFS_TAG, *SEASONS_TAG]
+        );
+        // A skeleton keeps the sources and the palette (credits), not the
+        // per-tile roof colours and tint maps.
+        let skel = WorldPackage::skeleton_from_bytes(&b).unwrap();
+        assert_eq!(skel.look.palette, look.palette);
+        assert!(skel.look.roofs.is_none() && skel.look.seasons.is_none());
+        // A reader from before T3 sees unknown tags: the rest is unchanged.
+        let mut old_b = b.clone();
+        for tag in [PALETTE_TAG, ROOFS_TAG, SEASONS_TAG] {
+            let at = old_b.windows(4).rposition(|w| w == tag).unwrap();
+            old_b[at] = b'x';
+        }
+        let old = WorldPackage::from_bytes(&old_b).unwrap();
+        assert!(old.look.is_empty());
+        assert_eq!(
+            old,
+            WorldPackage {
+                look: Default::default(),
+                ..full.clone()
+            }
+        );
+        // Without a look a package is written exactly as before.
+        let plain = WorldPackage {
+            graph: Some(graph()),
+            ..package()
+        };
+        assert_eq!(section_sizes(&plain.to_bytes()).len(), 1);
     }
 
     #[test]

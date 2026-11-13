@@ -624,6 +624,7 @@ mod tests {
             routes: Vec::new(),
             region: None,
             time_zone: None,
+            look: Default::default(),
         };
         let stats = add_buildings(
             &mut p,

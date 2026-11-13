@@ -6,7 +6,7 @@
 #
 #   -Label     name of the run; results in test-output/build-profile/LABEL/
 #   -Commands  subset of build,test,clippy (default: build)
-#   -FullDebug build with the full debug info of before v2.49 (profile.dev
+#   -FullDebug build with the full debug info of before v2.59 (profile.dev
 #              debug = true for all crates), for before/after comparisons
 #
 # Steps per command: clean (empty target directory), noop, touch and edit

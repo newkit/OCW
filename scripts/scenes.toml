@@ -174,6 +174,80 @@ args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", 
 at = ["2.5=teleport 0.3", "2.5=camera.orbit 140 12 3.2"]
 shot = 7
 
+# Wheel/road contact close-ups (bug 2026-11-13, tyres 2 cm in the road): the
+# camera low beside / in front of the own rider, 2.5 m away, on the Hills test
+# route (flat at km 0.81, 11.5 % at km 3.82).
+
+[[scene]]
+name = "wheel-contact-vaduz-flat"
+description = "Wheel/road contact on a package road: side view at road level on the nearly flat start of Vaduz-Malbun (km 0.5), both tyres on the road strip"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "120"]
+at = ["2.5=teleport 0.5", "2.5=camera.orbit 90 -2 2.5"]
+shot = 7
+
+[[scene]]
+name = "wheel-contact-vaduz-steep"
+description = "Wheel/road contact on a package road: side view at road level on the 15 % ramp at km 3.8 of Vaduz-Malbun"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "300"]
+at = ["2.5=teleport 3.8", "2.5=camera.orbit 90 -2 2.5"]
+shot = 7
+
+[[scene]]
+name = "wheel-contact-vaduz-mtb-steep"
+description = "Wheel/road contact of the mountain bike (knobby tyres) on the 15 % ramp at km 3.8 of Vaduz-Malbun, side view at road level"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "300"]
+at = ["2.5=teleport 3.8", "2.5=camera.orbit 90 -2 2.5"]
+shot = 7
+riders = """
+active = "Demo Rider"
+
+[[rider]]
+name = "Demo Rider"
+weight_kg = 72.0
+ftp_w = 240
+bike = "mtb"
+"""
+
+[[scene]]
+name = "wheel-contact-flat"
+description = "Wheel/road contact, side view at road level on the flat at km 0.81 of the Hills test route: both tyres stand on the road surface"
+args = ["--route", "hills", "--bots", "0", "--power", "120"]
+at = ["2.5=teleport 0.81", "2.5=camera.orbit 90 -2 2.5"]
+shot = 7
+
+[[scene]]
+name = "wheel-contact-steep"
+description = "Wheel/road contact, side view at road level on the 11.5 % ramp at km 3.82 of the Hills test route: the bike pitched with the road, both tyres on it"
+args = ["--route", "hills", "--bots", "0", "--power", "300"]
+at = ["2.5=teleport 3.82", "2.5=camera.orbit 90 -2 2.5"]
+shot = 7
+
+[[scene]]
+name = "wheel-contact-lean"
+description = "Wheel/road contact from the front at road level, the rider leaning 25 degrees (rider.lean) on the flat of the Hills test route: the tyre rolls onto its side, not into the road"
+args = ["--route", "hills", "--bots", "0", "--power", "250"]
+at = ["2.5=teleport 0.81", "2.5=camera.orbit 180 -2 2.5", "5.5=rider.lean 25"]
+shot = 6.3
+
+[[scene]]
+name = "wheel-contact-mtb-steep"
+description = "Wheel/road contact of the mountain bike (knobby tyres) on the 11.5 % ramp of the Hills test route, side view at road level: the knob tips stand on the road"
+args = ["--route", "hills", "--bots", "0", "--power", "300"]
+at = ["2.5=teleport 3.82", "2.5=camera.orbit 90 -2 2.5"]
+shot = 7
+riders = """
+active = "Demo Rider"
+
+[[rider]]
+name = "Demo Rider"
+weight_kg = 72.0
+ftp_w = 240
+bike = "mtb"
+"""
+
 [[scene]]
 name = "orbit-video"
 description = "Video: the chase camera orbits once around the rider climbing out of Vaduz (camera.orbit stepped by --at)"
@@ -873,3 +947,142 @@ args = ["--world", "{world}", "--bots", "3"]
 at = ["3.5=menu open", "4=menu down", "4.4=menu down", "4.8=menu select", "5.4=menu select", "6.2=menu down", "6.8=menu select", "7.6=menu select", "8.2=menu up", "8.8=menu select"]
 warmup = 3
 video = 16
+
+# --- Ground and road materials (spec §4.6, Phase 8 T2) ------------------------
+# Close views for before / after comparisons of the material library
+# (scripts/fetch-materials.sh; OCW_MATERIALS=off renders the flat colours).
+
+[[scene]]
+name = "mat-meadow-road"
+description = "Materials: the Vaduz-Malbun road above Vaduz (km 1.6), low camera across the asphalt to the meadows"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "200"]
+at = ["2.5=teleport 1.6", "2.5=camera.orbit 100 6 7"]
+shot = 9
+
+[[scene]]
+name = "mat-forest"
+description = "Materials: the Malbun road in the forest (km 7), forest floor beside the road"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "200"]
+at = ["2.5=teleport 7.0", "2.5=camera.orbit 60 8 7"]
+shot = 9
+
+[[scene]]
+name = "mat-cliff"
+description = "Materials: steep slopes above the Malbun road (km 11.5), rock on the steep ground (triplanar)"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "200"]
+at = ["2.5=teleport 11.5", "2.5=camera.orbit 270 15 25"]
+shot = 9
+
+[[scene]]
+name = "mat-malbun"
+description = "Materials: Malbun (km 13.85, 1600 m), alpine meadows, scree and rock around the valley head"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "200"]
+at = ["2.5=teleport 13.85", "2.5=camera.orbit 200 12 14"]
+shot = 9
+
+[[scene]]
+name = "mat-rhine-gravel"
+description = "Materials: the Rhine dam at Vaduz in free ride, the dam track, the river banks and the water"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-3679,2171", "--bots", "0"]
+at = ["2.5=camera.orbit 70 10 9"]
+shot = 8
+
+[[scene]]
+name = "mat-video"
+description = "Video: riding up from Vaduz (km 1.6) in a low chase camera, ground and road materials passing by"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "2", "--power", "350"]
+at = ["2.5=teleport 1.6", "2.5=camera.orbit 20 10 7"]
+warmup = 3
+video = 6
+
+[[scene]]
+name = "bf-mat-forest"
+description = "Materials, Black Forest: the Schauinsland road in the spruce forest (km 15), forest floor and asphalt"
+world = "blackforest"
+args = ["--world", "{world}", "--route-file", "{world_dir}/freiburg-schauinsland.route", "--no-neighbours", "--bots", "0", "--power", "200"]
+at = ["2.5=teleport 15.0", "2.5=camera.orbit 90 8 7"]
+shot = 10
+
+[[scene]]
+name = "bf-mat-meadow"
+description = "Materials, Black Forest: meadows along the Titisee - Feldberg road (km 4)"
+world = "blackforest"
+args = ["--world", "{world}", "--route-file", "{world_dir}/titisee-feldberg.route", "--no-neighbours", "--bots", "0", "--power", "200"]
+at = ["2.5=teleport 4.0", "2.5=camera.orbit 100 8 9"]
+shot = 10
+
+# --- Region calibration (spec §14 Phase 8 T3) ---------------------------------
+# Render twice for before/after: once with the packages before calibration
+# (OCW_NO_CALIBRATE builds, or a copy kept before `world-builder calibrate`),
+# once calibrated (measured palette, roof colours, seasonal satellite tints).
+# The clock is paused at noon on a fixed date, so only the look changes.
+
+[[scene]]
+name = "look-vaduz-roofs"
+description = "Region look: Vaduz centre from above (15 July, noon): roof colours sampled in the Orthophoto Liechtenstein 2025, the ground tinted by the measured palette"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 160 45 110"]
+shot = 9
+
+[[scene]]
+name = "look-malbun-meadows"
+description = "Region look: the alpine meadows of Malbun (1,600 m, 15 July, noon) with the measured meadow colour and the summer satellite tint"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "4218,6473", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 150 25 70"]
+shot = 9
+
+[[scene]]
+name = "look-bf-farms"
+description = "Region look, Black Forest: the open summit meadows and farms below the Belchen (15 July, noon), roofs from the LGL DOP20"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-9427,10842", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 180 30 90"]
+shot = 10
+
+[[scene]]
+name = "look-bf-forest"
+description = "Region look, Black Forest: the spruce forest along the Schauinsland road (940 m, 15 July, noon), raised camera over the forest and the clearings"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-5942,568", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 150 30 80"]
+shot = 10
+
+[[scene]]
+name = "look-tf-canadas"
+description = "Region look, Tenerife: Las Cañadas on the TF-21 (2,250 m, 15 July, 11:00): pumice and lava in the measured colours of the PNOA orthophoto, the Teide above"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-7500,5260", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 11:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 150 20 70"]
+shot = 10
+
+[[scene]]
+name = "look-season-summer"
+description = "Seasons (time machine): the Malbun road above Steg on 15 July, noon: the summer composite (Sentinel-2 median, 15 Jun - 31 Aug)"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "2433,5295", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 150 30 90"]
+shot = 10
+
+[[scene]]
+name = "look-season-autumn"
+description = "Seasons (time machine): the same view on 20 October, noon: the autumn composite (25 Sep - 10 Nov), deciduous colours and the first snow on the peaks"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "2433,5295", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-10-20 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 150 30 90"]
+shot = 10
+
+[[scene]]
+name = "look-season-winter"
+description = "Seasons (time machine): the same view on 20 January, noon: the winter composite (1 Dec - 28 Feb), snow on the meadows above the valley"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "2433,5295", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-01-20 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 150 30 90"]
+shot = 10

@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.49 – November 2026
+Version 2.59 – November 2026
 
 | Version | Change |
 |---|---|
@@ -64,7 +64,17 @@ Version 2.49 – November 2026
 | 2.43 | Phase 8 decisions: no AI-generated textures in shipped assets (Q3), no real brands or logos (Q11) |
 | 2.44 | Phase 8 decisions: no commercial release, 8A stays (Q2); orthophoto corridor size acceptable (Q4); seasonal variants (Q5); own photos postponed (Q6); Mapillary CC BY-SA, reference by eye only (Q7); 3D buildings: swissBUILDINGS3D 3.0 (Opendata BY) to confirm, LGL LoD2 probably not open, ask LGL (Q8); all texture areas in parallel (Q10) |
 | 2.45 | Licensing (§13): no licence change for now – the code stays MIT / Apache-2.0 (a switch to CC BY-SA was considered and declined) |
-| 2.49 | Build and world-build profiling (§11.2, §4.7): `scripts/build-profile.sh` / `.ps1` (clean, no-op, touched and edited builds with `--timings`), dev profile with line tables for the workspace and no debug info for dependencies (clean builds −23 to −28 %, `target/` 16–24 GB → 4–5 GB, edits up to −70 %), sccache on marge, the Mac and Windows (pinned, `make deps-sccache` / `deps-sccache-windows`), build slots in order of arrival, cargo times / crates / slot waits in the build log and the art journal, `make remote-gc`; copy-on-write seeding and a per-feature build directory implemented but off (measured without gain); world builder stage profile (`--profile`, `scripts/world-profile.sh`) and parallel / incremental passes with byte-identical packages (Black Forest north 164 s → 57–61 s, Tenerife 81 s → 36 s, Liechtenstein 5.7 s → 3.1 s) |
+| 2.46 | Phase 8 T1 / T2 (§4.6, §8.1, §13, §14 Phase 8): material library of 21 CC0 materials (ambientCG, Poly Haven) – ground, roads, houses, volcanic ground for Tenerife – not in git but pinned by URL + SHA-256 in `assets/materials.toml`, fetched and converted to KTX2 (BC3 / BC5, 1024², mipmapped) by `scripts/fetch-materials.sh` into the git-ignored `assets/materials/` and shipped beside the binary (AppImage, macOS bundle, Windows zip, test deployment); licence rule of Phase 8A shared by the model and material validators; terrain drawn with the materials blended by the splat map (weights at cell corners, noise warp, height blend, rock and triplanar on slopes, macro scale, fade to the colour map in the materials' mean colours), roads by OSM `surface` (new package section `RSRF`) with category fallback; regional material sets by the package's time zone (`[[region]]` in the manifest: the volcanic set of the Canary Islands with lava, ash / cinder, black sand and pine needles); regional tint hook neutral; reference boards `art/reference/` |
+| 2.59 | Build and world-build profiling (§11.2, §4.7): `scripts/build-profile.sh` / `.ps1` (clean, no-op, touched and edited builds with `--timings`), dev profile with line tables for the workspace and no debug info for dependencies (clean builds −23 to −28 %, `target/` 16–24 GB → 4–5 GB, edits up to −70 %), sccache on marge, the Mac and Windows (pinned, `make deps-sccache` / `deps-sccache-windows`), build slots in order of arrival, cargo times / crates / slot waits in the build log and the art journal, `make remote-gc`; copy-on-write seeding and a per-feature build directory implemented but off (measured without gain); world builder stage profile (`--profile`, `scripts/world-profile.sh`) and parallel / incremental passes with byte-identical packages (Black Forest north 164 s → 57–61 s, Tenerife 81 s → 36 s, Liechtenstein 5.7 s → 3.1 s) |
+| 2.55 | Phase 8 T3 – region calibration (§4.6, §4.7, §13, §14 Phase 8 / 9C): imagery per region by `scripts/fetch-imagery.sh` (only the 1 km cells a built package covers; Orthophoto Liechtenstein 2025 + swisstopo SWISSIMAGE at 0.5 m, LGL DOP20 at 1 m, IGN PNOA at 1 m over the official WMS; own Sentinel-2 L2A seasonal median composites at 20 m, `scripts/imagery.py`), `world-builder calibrate`: regional palette per land class and road surface (`PALT`, with the sources and notices), roof colour per building (`ROOF`: orthophoto inside the footprint eroded by 1 m, OSM `roof:colour` wins), seasonal tint maps per tile (`SEAS`: spring / summer / autumn / winter, YCoCg + deflate); imagery notices in the manifest credits; client: near materials tinted towards the palette and the season, far colour map with the date-blended satellite colour, measured roof colours; package cost Liechtenstein +4.9 MB (30.2 → 35.0 MB, +16 %), Black Forest south +26.1 MB (258.5 → 284.5 MB, +10 %), Tenerife +23.1 MB (238.5 → 261.6 MB, +9.7 %) |
+| 2.54 | Input model for the whole UI (§3.2.2, decided 2026-11-13: every screen and menu controllable by gamepad, mouse and touch where the device has one, keyboard as before): abstract actions per device, last-used device with matching glyphs in a hint bar, focus frame vs. pointer, touch mode (hit targets ≥ 9 mm / 48 px, gesture recogniser for tap / long press / swipe / pinch / two-finger pan, Windows emulated-mouse filter), orbit / zoom / pan in 3D scenes per device, a touch overlay in a ride (menu, autodrive, U-turn, lean buttons, tappable junction exits and HUD elements); platform facts of Bevy 0.20 / winit 0.30 (no touchscreens on macOS, pinch gestures only from the macOS trackpad); M10 and per-device reachability tests on every page (§3.2.1, §14 Phase 4, 10, 11, 13) |
+| 2.53 | Phase 4 refined (§14 Phase 4, 4A–4L; §2.5, §2.6, §6.4, §8.2, §9): the Workshop opens a 3D **workshop scene** (decided 2026-11-13: selected bike on a repair stand in front, owned bikes on the wall chosen with left / right, parts selected on the bike, hearts, 1 heart = 1 EUR, prices rounded up), part hotspots and picker with live preview, compare, buy / equip / sell, the character editor as the changing corner; **hearts** earned by riding only (proposal: 1 ♥ per 10 kJ, climbing, workouts, events; no real money – no commercial release), server-side ledger and inventory; generic unbranded parts priced from researched real RRPs (median per tier, ceil) in `assets/parts.toml` / `parts-sources.toml`, refreshed by hand; parts within capped bands of the frame's physics profile, new race mode *Profile*; Phase 12 repairs in hearts only with persistent damage; milestones W1–W6, open questions Q1–Q5 |
+| 2.52 | Phase 13 decisions (§14 Phase 13): other riders see the unicorn (Q1); leaving god mode lands the rider on the nearest road / route point below the unicorn, Shift + G flies back (Q2); the unicorn has large feathered wings like a pegasus (Q5) |
+| 2.51 | Phase 13 planned: god mode (§14 Phase 13): hotkey G (console `god`), the rider turns into a flying unicorn; flight controls – mouse look, cursor keys move in the horizontal plane, + / − altitude, speed grows with height (20–400 m/s, Shift boost, Ctrl precise, wheel scale), terrain clearance; return to the road on leaving (Shift + G lands in free ride); inspection HUD and crosshair (road name, OSM id, surface, coordinates), pins; server state `God` (out of physics, standings and recording), client-driven `GodPose`, host access rules, not in running events; milestones G1–G5, open questions Q1–Q6 |
+| 2.50 | Phase 12 planned: collisions, crashes and damage (§14 Phase 12): global switches `ride.collisions` and `ride.damage` (on / off; host or organiser decides in shared sessions and events), rider and object footprints in the path frame, soft bumps (slowed, pushed apart, wobble) and hard hits (crash: fall, down, remount; wheel touches and head-on hits), fallen bikes as obstacles, autodrive and bots avoid collisions (overtake on the region's side or hold back), manual riders must avoid them themselves, rider injury and bike damage meters with effects, damage indicator in the HUD; milestones K1–K7, open questions Q1–Q7 |
+| 2.49 | Release versions (§11.3): every GitHub release now increments the **patch** version (0.2.0 → 0.2.1), not the minor version; `make release-prepare` / `version-bump` default to `PART=patch`, minor / major by hand; tags `vX.Y.Z` |
+| 2.48 | Phase 11 decision (§14 Phase 11, Q1): the development headset is the **Oculus Rift (first generation, CV1)** on Windows through the Meta PC app's OpenXR runtime; the code stays OpenXR-only and vendor-neutral so other headsets work through their OpenXR runtimes; X1 targets the Rift CV1 first; the CV1 is promoted from "legacy" to "primary dev target" in the support table |
+| 2.47 | Wheel/road contact (§2.5, bug 2026-11-13 "wheels 1 cm inside the road"): the drawn road surface (route ribbon, package road strips, tunnel floor) lies `ROAD_SURFACE_LIFT_M` = 2 cm above the profile and the riders stand on it (they stood on the profile: 2 cm in the road); each wheel rests as a circle on the surface (crests and dips) at the model's real wheelbase; bikes lean and rock about the tyre's crown line (anchor `tyre_crown`); the tyre's outermost tread (knob tips) is the wheel radius; finer tyre meshes; a route file is fitted onto the package's road strips whenever it differs by more than 1 mm (`route_fit::ON_ROAD_M`; the warning stays at 0.25 m). Measured by `wheel_contact` tests: within 2 mm for every bike, LOD, lean and slope on synthetic roads; on the Liechtenstein roads median 0 mm, residuals where strips overlap at junctions (up to 0.2 m) and from the 5 m sampling (≤ 15 mm) |
 
 ---
 
@@ -379,8 +389,8 @@ Features:
 - Saddle.
 - Attachments / accessories.
 - Custom paint schemes.
-- Component unlocking.
-- 3D preview.
+- Component unlocking: parts are bought with **hearts** earned by riding (1 heart = 1 EUR of the real price, rounded up; §14 Phase 4, 4E).
+- 3D preview: the **workshop scene** – the selected bike on a repair stand, the owned bikes on the wall, parts chosen on the bike itself (§14 Phase 4, 4A–4D).
 
 The bicycle configuration consists of reusable components. Each component has its own properties, such as weight, aerodynamics, rolling resistance, geometry and visual appearance.
 
@@ -393,6 +403,7 @@ Visual properties are separated from physical properties:
 - Unlocks and paint schemes are **always cosmetic**.
 - The client never sends physics parameters (v2.7): it sends only the rider's weight (`Hello.rider_weight_kg`, §3.2.1) and the id of the bike's physics profile (`Hello.bike_profile`); the server takes drag, rolling resistance, bike mass and drivetrain efficiency from its own copy of the curated table (an unknown or absent id is the default profile).
 - Differences between profiles are capped (e.g. at most ±3 % speed at 250 W on flat road).
+- **Parts (planned v2.53, §14 Phase 4, 4G):** the frameset decides the profile; other parts carry real weights and a few curated *classes* (rolling, aero, efficiency) that move the build only within a capped band of the frame's profile (best build at most +1.5 % on the flat); the client sends part ids, never values. Proposed race mode *Profile*: the frame's profile counts, parts are cosmetic.
 
 **Implemented (Phase 4 groundwork):**
 
@@ -424,10 +435,12 @@ Visual properties are separated from physical properties:
   - *Licence of the own 3D assets.* §13 suggested CC BY 4.0. **MIT OR Apache-2.0**, like the code and `artwork/`. The validator accepts `MIT OR Apache-2.0`, `MIT`, `Apache-2.0`, `CC0-1.0` and `CC-BY-4.0` (with an author) and rejects anything else (share-alike, non-commercial, no licence). Medium – review by a lawyer before a commercial release (§13).
   - *Loading.* Options: Bevy's glTF loader (asset server, scenes, asynchronous), or reading the files with the `gltf` crate (the one Bevy uses) into our own model and building Bevy meshes directly. **Own reader, files embedded in the binary** (`include_bytes!`): spawning is synchronous (no "scene not loaded yet" frames, one rebuild path), there are no asset paths to package on Linux / Windows / macOS / AppImage, and the validator and the app read the same way. The files are plain glTF facing +Z (glTF convention); the reader turns them to the app's −Z. Medium – textures, skins and morph targets are not supported yet (not needed by the generated models).
   - *Far LOD.* Each bike file has a `lod1` node: frame, wheels, bars and a seated rider (posed by the same code as the near model) in at most 8 meshes (≈ 1/5 of the triangles). Switch at **40 m** from the camera with Bevy's `VisibilityRange` (4 m dither cross-fade); beyond it the near model is hidden and not posed. Shadows do not cross-fade: exactly one model casts (`NotShadowCaster` on the other), switched hard at 40 m, inside both models' ranges (v2.37). Low – the distance is a first tuning.
+  - *Wheel/road contact.* The tyres touch the road surface as drawn, within 2 mm (no sinking, no visible gap), for every bike, both LODs, any wheel angle, slope, crest or dip, lean and rocking (unit tests `ocw-render::wheel_contact` place every shipped model on known roads and on the Liechtenstein package's Vaduz–Malbun route and compare the lowest tyre vertex with the road triangles under it). How: every drawn road surface lies `ROAD_SURFACE_LIFT_M` (2 cm, clear of the conformed terrain) above the profile and the riders stand on it; each wheel rests as a circle (hub height = highest support within ±r) at the hub positions of the model (`BikeRig::wheelbase`); lean and rocking turn about the tyre's crown line (node `tyre_crown`, `BikeRig::tyre_crown`), so the tyre rolls onto its side; the tyre's outermost tread (knob tips) is the wheel radius, and the tyre meshes are fine enough that their polygon sag stays within the 2 mm (near 48 × 12, knobby 96 × 12, far 12 × 10 with a vertex straight down). Low – a tyre does not flatten under load.
 - *Bike type is the profile's.* The model follows only from `ProfileId`; the manifest names the profile a bike shows and the validator rejects physics values (`mass`, `cda`, `crr`, …) in an asset entry: cosmetic assets never change physics.
 - *Bots* ride the profiles in turn (road, TT, gravel, MTB, aero, climbing) with palette colours and patterns (never the local rider's #FF1472 jersey).
 - **Race modes:**
-  - *Open* – the chosen profile applies.
+  - *Open* – the chosen profile applies (with parts: within the build band, §14 Phase 4, 4G).
+  - *Profile* (proposed, v2.53) – the frame's profile applies, parts are cosmetic; proposed default for races and group rides.
   - *Equal* – standardized physics for everyone; chosen equipment is shown only visually.
 
 ### 2.6 Character Editor
@@ -467,6 +480,8 @@ Planned animations:
 - Victory animation.
 
 Bicycle and character must be correctly attached to each other in the 3D presentation.
+
+The character editor is the **changing corner** of the workshop scene (mirror, bench, locker; §14 Phase 4, 4C). Body, skin, face and hair are always free; kit may cost hearts (proposal, Phase 4 Q4) and is always cosmetic.
 
 **Implemented (Phase 4: rider model and riding animation):**
 
@@ -638,7 +653,7 @@ Tile builds take up to 23 ms on worker threads; uploads cost at most 4.6 ms on t
 - **Bevy UI** for the in-ride HUD (including the junction overlay, §2.2.1) and the main menus. The user interface is connected as directly as possible to the engine state.
 - **egui** (`bevy_egui`) for the editor parameter panels, the in-game console (§2.9) and development/diagnostic interfaces, to keep development fast. The editors are reviewed after Phase 4.
 
-**Input devices (v1.9):** keyboard and gamepads (Bevy's gamepad support, gilrs: Xbox, PlayStation, Switch Pro and generic pads, hot-plugged). Keyboard: ↑ adds power (25 W per press, more while held, on top of any device), ↓ stops (power 0 and brake), ← / → steer (§5.2.1) or choose exits (§2.2.1), A autodrive, W wild mode, U U-turn, Q / E exits, PgUp / PgDn ±10 W, F11 next screen, C camera reset, R restart (v2.0), V video (v2.0). Gamepad: left stick left / right steers (sets the lean directly, centred = upright); ↑ = D-pad up, left stick up or right trigger, ↓ = D-pad down, left stick down or left trigger (triggers and stick read as analog values, v2.0); South = autodrive, West = wild, D-pad left / right = exits, East = U-turn (v2.0). Several pads: the largest stick deflection steers.
+**Input devices (v1.9):** keyboard and gamepads (Bevy's gamepad support, gilrs: Xbox, PlayStation, Switch Pro and generic pads, hot-plugged). Keyboard: ↑ adds power (25 W per press, more while held, on top of any device), ↓ stops (power 0 and brake), ← / → steer (§5.2.1) or choose exits (§2.2.1), A autodrive, W wild mode, U U-turn, Q / E exits, PgUp / PgDn ±10 W, F11 next screen, C camera reset, R restart (v2.0), V video (v2.0). Gamepad: left stick left / right steers (sets the lean directly, centred = upright); ↑ = D-pad up, left stick up or right trigger, ↓ = D-pad down, left stick down or left trigger (triggers and stick read as analog values, v2.0); South = autodrive, West = wild, D-pad left / right = exits, East = U-turn (v2.0). Several pads: the largest stick deflection steers. **Whole UI (decided 2026-11-13, v2.54):** every screen and menu is also controllable with mouse, gamepad and – where the device has one – a touchscreen; the input model, touch in a ride and the platform facts are in §3.2.2.
 
 **Restart and video (v2.0):** R (console `reset`) starts the whole app again as at program start, with the same command line: the app exits normally (ride saved, devices shut down) and replaces its process with a fresh one (Unix `exec`, same process id for the kiosk). V (console `video`) records the window: a screenshot is requested on every 1/25 s tick (several in flight, since the GPU readback takes a few frames), each image is placed at the video frame of its request time, and the frames are streamed as raw pixels into `ffmpeg` (H.264 MP4, CRF 18 with the `veryfast` preset since v2.30 – before `ultrafast` CRF 20 –, at most 2560 px wide, in the user's video directory, with the game sound since v2.30, §3.3); a tick without an image repeats the previous one to keep real time, the game never waits for the encoder (an image it cannot take is dropped and counted), a screenshot requested by the user or a script in the same frame takes precedence, and a running recording is finished on exit. V again stops it (the key is ignored while the console is open). While recording, the HUD shows a small blinking red dot with "REC m:ss" (recording length) at the top right; after stopping, "Video saved: <file>" (or the error) for 4 s.
 
@@ -685,14 +700,14 @@ One menu, reachable during a ride and (later) as the start screen, replaces comm
 
 **Opening and pausing**
 
-| | Keyboard / mouse | Gamepad |
-|---|---|---|
-| Open / close | Esc (closes the console first if it is open) | Start / Menu (☰, Options) |
-| Move focus | ↑ ↓ ← →, Tab / Shift+Tab, mouse hover | D-pad, left stick (with repeat) |
-| Confirm | Enter, Space, click | South (A / ✕) |
-| Back (one page up; closes at the top) | Esc, Backspace, right click | East (B / ○) |
-| Change a value (slider, choice) | ← / → on the focused row, mouse drag / wheel | D-pad / stick left / right, shoulder buttons for big steps |
-| Switch tab | Q / E, PgUp / PgDn | LB / RB (L1 / R1) |
+| | Keyboard / mouse | Gamepad | Touch (v2.54, §3.2.2) |
+|---|---|---|---|
+| Open / close | Esc (closes the console first if it is open) | Start / Menu (☰, Options) | tap ☰ (top left) |
+| Move focus | ↑ ↓ ← →, Tab / Shift+Tab, mouse hover | D-pad, left stick (with repeat) | – (taps act directly) |
+| Confirm | Enter, Space, click | South (A / ✕) | tap |
+| Back (one page up; closes at the top) | Esc, Backspace, right click | East (B / ○) | on-screen Back button, swipe in from the left |
+| Change a value (slider, choice) | ← / → on the focused row, mouse drag / wheel | D-pad / stick left / right, shoulder buttons for big steps | tap ‹ ›, drag the slider |
+| Switch tab | Q / E, PgUp / PgDn | LB / RB (L1 / R1) | tap the tab, swipe on the tab bar |
 
 - While the menu is open, ride inputs (↑ power, ← → steering, A, W, U, R, V, …) are **not** passed to the ride; one input-context resource (`Ride`, `Menu`, `Console`) replaces today's per-system `console.is_open()` checks. The power from the trainer keeps flowing.
 - **The ride never pauses (decided, v2.2):** the menu is an overlay over the running ride, in single-player exactly as in multiplayer (in a shared ride the others keep riding, so one rider's menu cannot stop time). The trainer is left as it is (SIM keeps following the road, ERG keeps its target), the ride time and the FIT recording continue. While the menu is open, steering falls back to autodrive and junctions take the default exit (§2.2.1), so the rider stays on the road; the previous steering mode is restored on closing. Pages that would end the ride (Ride, Restart) ask for confirmation.
@@ -712,8 +727,8 @@ One menu, reachable during a ride and (later) as the start screen, replaces comm
 | | Routes | The routes of the world (as Navi → Routes) | now |
 | | Time | The time machine (moved here from Navi, v2.39; §14 Phase 9, 9I) | now |
 | | Weather | The weather now and the weather machine; until Phase 9 S4 / S5: "clear", the machine disabled | hook now; S4 / S5 |
-| **Workshop** | Bike | Bike type, frame, wheels, tyres, handlebars, saddle, accessories, paint; 3D preview; the physics profile shown separately ("road – aero", caps per §2.5), cosmetic choices never change it | Phase 4 |
-| | Character | Body, skin, face, hair, clothing, shoes, helmet, glasses, gloves (§2.6); 3D preview with pedalling animation | Phase 4 |
+| **Workshop** | Bike | Bike type, frame, wheels, tyres, handlebars, saddle, accessories, paint; 3D preview; the physics profile shown separately ("road – aero", caps per §2.5), cosmetic choices never change it. Planned (v2.53): opens the **workshop scene** instead of a page – bike on the repair stand, owned bikes on the wall (← / → to choose), part hotspots, part picker with hearts prices (§14 Phase 4, 4A–4E) | Phase 4 |
+| | Character | Body, skin, face, hair, clothing, shoes, helmet, glasses, gloves (§2.6); 3D preview with pedalling animation. Planned: the changing corner of the workshop scene (4C) | Phase 4 |
 | **Navi** | Routes | Route library: the package routes and the user's own routes with distance, climbing, elevation profile, region; ride, rename, delete | now (list) |
 | | GPX import | Pick a GPX file, region check, map matching with the problem sections highlighted, accept / cancel (§2.7); offers the missing package's download (after the ride, §4.2) | Phase 3 (with GPX import) |
 | | Rides and export | Saved rides (`rides/*.fit`): date, route, distance, time, Strava state; export as FIT / GPX, edit title and description, delete | now (list, FIT); GPX export with §2.8 |
@@ -730,7 +745,7 @@ One menu, reachable during a ride and (later) as the start screen, replaces comm
 
 - **Ten-foot UI:** the app is used on a trainer, often from 2–3 m away and with a gamepad. Text at least 3 % of the window height (scales with it), high contrast, a clearly visible focus frame, at most about seven rows per page, no hover-only functions, no text input where a choice works (names and titles get an on-screen keyboard on the gamepad).
 - **Every page fits the window (decided):** all menu sizes are in % of the window height, so a page that fits a 16:9 window fits every 16:9 size (1280 × 720 and up). The panel is 110 % of the window height wide (at most 94 % of its width), an empty status or description line takes no room, and the description texts are short enough that every page – sub pages with the full seven items of a paged list too – fits into 94 % of the height with all its text (unit test `every_menu_page_fits_a_16_9_window_with_its_text`; `ocw-render::menu::page_height_vh` adds up the layout, wrapping text as the monospaced UI font does). In a narrower window a page that would still be too tall drops description paragraphs from the end, never items. Before, the Ride page (seven items, two paragraphs) ran off the bottom at 1280 × 720 and cut off *Back*.
-- **Focus navigation** works identically for keyboard and gamepad (spatial navigation between focusable items, a page stack for Back); the mouse is optional. Every item is reachable without a mouse, in the kiosk's borderless fullscreen (§11.2).
+- **Focus navigation** works identically for keyboard and gamepad (spatial navigation between focusable items, a page stack for Back); the mouse is optional. Mouse and touch reach every item too (v2.54, §3.2.2: reachability tested per device on every page; touch-mode hit targets ≥ 9 mm / 48 px). Every item is reachable without a mouse, in the kiosk's borderless fullscreen (§11.2).
 - **Values change in place** (slider, ← / → choice) and apply immediately; there is no "Apply" button. Settings are saved when the menu closes. Device scans and Strava actions show their progress inline.
 - **Rendering: Bevy UI** for the whole menu, as for the HUD (§3.2): it shares the HUD's theme and scaling, renders in the same window and screenshot / capture paths, and Bevy's input-focus and directional-navigation support fits gamepad control; egui's gamepad navigation is weak and it looks like a tool, not a game. egui stays for the console, dev panels and, in Phase 4, the advanced parameter panels of the editors (§3.2); the Workshop's main selection is Bevy UI.
 
@@ -794,10 +809,11 @@ The user asked for a *World* entry where the rider chooses the world they ride i
 | M3 | Ride → World mode picker (installed packages, free ride / package routes / test routes, bots) as an in-app switch (done: see *Implemented (M3)*; bots per ride still open); Navi → Routes list, Rides list with Strava state and FIT export, Strava sync page | 3 (end) | M | package discovery on a fixture directory, `[ride]` choice → command line of the restarted process, ride list from fixture FIT + sidecar + `strava-sync.toml` |
 | M4 | Navi → GPX import with map-matching report; GPX export of rides | 3 (with §2.7) | M | GPX fixtures through import → route; problem sections listed; GPX export round-trip |
 | M5 | Game audio and Settings → Audio (mix, output device) (done: see §3.3 *Implemented (M5)*) | with game audio (see §3.3) | M | bus volume maths (master × bus), device selection fallback to the default device when the saved one is missing, settings round-trip |
-| M6 | Workshop: bike and character pages with 3D preview | 4 | L | configuration model and persistence (§14 Phase 4); cosmetic choices never change the physics profile; menu items → configuration |
+| M6 | Workshop: bike and character pages with 3D preview; planned v2.53: the workshop scene, parts and hearts (§14 Phase 4, 4A–4K, milestones W1–W6) | 4 | L | configuration model and persistence (§14 Phase 4); cosmetic choices never change the physics profile; menu items → configuration; 4J |
 | M7 | Accounts / profile sync, Events (sessions, join), backend Strava, route sharing; start-screen dashboard (§2.1) | 5 (calendar 7) | L | API client against a mocked backend, disabled-page states offline, event list and join flow |
 | M8 | Voice settings (microphone device, microphone mute, speaker mute, voice volume, per-participant mute, spatial voice on / off) | 6 | S | device selection and mute state (§14 Phase 6) |
-| M9 | Rebinding of keys and buttons, accessibility (text size, colour-blind safe HUD) | 7 | M | binding conflicts, persistence, defaults restore |
+| M9 | Rebinding of keys and buttons, accessibility (text size, colour-blind safe HUD, Confirm / Back swap per pad) | 7 | M | binding conflicts, persistence, defaults restore |
+| M10 | Input model for the whole UI (§3.2.2, v2.54): action mapper for keyboard, mouse, gamepad and touch, `ActiveInput` and device glyphs in a hint bar, touch mode (hit targets, gesture recogniser, emulated-mouse filter), ride touch overlay | 4 (with M6) | M | §3.2.2 tests: mapper, gestures, reachability of every page per device, hit-target sizes, overlay |
 
 **M8 implemented (Phase 6, first increment):** Settings → Voice (`Page::Voice`, rows from `apps/desktop/src/voice/page.rs`): *Microphone* and *Speaker (voices)* toggles (`voice.mute-mic`, `voice.mute-speaker`), *Voice volume (%)*, *Participants (n)* (a sub page: each rider with "heard 40 %", "too far away", "microphone off" or "muted by you"; Confirm = `voice.mute IDENTITY`), *Devices and options* (a sub page: microphone and speaker – ← / → step through *default* and the present devices, a saved device that is missing shows "(not found: default)" –, *Spatial voice*, *Voices heard at most*) and *Voice chat* (on / off with the status). Settings: `voice.enabled`, `voice.mic_muted`, `voice.speaker_muted`, `voice.volume` (0–200 %), `voice.spatial`, `voice.max_voices` (1–20), `voice.input`, `voice.output` (device names; a new registry kind *text*). The Settings top page now has seven items (Riders, Controls, Trainer, Display, Strava, Voice, Back): the ten-foot maximum; Settings → Audio (M5) needs a slot (e.g. Strava, which is also under Navi, could leave Settings).
 
@@ -813,6 +829,79 @@ The user asked for a *World* entry where the rider chooses the world they ride i
 **Open questions**
 
 Decided (v2.2): no pause (trainer unchanged, ride time and recording continue); Esc never quits; rider weight affects physics, riders managed in Settings and chosen in the Workshop. Decided: local events before the backend (§2.3.1) - the Ride page starts a race, a group ride or a time trial on the current route (console command lines `event race --bots 5`, `event group --watts 150`, `event tt`, `event cancel`; the starts ask first, then the menu closes for the countdown). Still open: switching rides by restart vs. in-app session switch (M3).
+
+#### 3.2.2 Input Model: Keyboard, Mouse, Gamepad and Touch (planning, 2026-11-13, v2.54)
+
+**Rule (decided by the user, 2026-11-13):** the **entire UI** – every menu page, the workshop scene (§14 Phase 4, 4A), the character corner, dialogs, the console's menu-side functions, the HUD's interactive elements and later the start screen – is controllable with **gamepad and mouse, and touch where the device has a touchscreen**; the keyboard keeps working everywhere (§3.2.1). No function may need one particular device (the console's text entry is the one exception: it needs a keyboard, physical or on-screen). The rest of §3.2.2 is a proposal.
+
+**Platform facts (Bevy 0.20.1 / winit 0.30.13, as read in their sources 2026-11-13):**
+
+| Input | Linux X11 | Linux Wayland | Windows | macOS | Notes |
+|---|---|---|---|---|---|
+| Keyboard, mouse, wheel | yes | yes | yes | yes | trackpad two-finger scroll arrives as `MouseWheel` (pixel deltas) |
+| Gamepad (gilrs 0.11) | yes (evdev) | yes | yes (XInput / WGI) | yes | hot-plug; `Gamepad::vendor_id()` / `product_id()` tell Xbox / PlayStation / Switch / generic apart for the glyphs |
+| Touchscreen (`TouchInput`, `Touches`) | yes (XInput 2.2 touch; winit drops the emulated pointer events) | yes (`wl_touch`) | yes (winit does **not** filter the mouse events Windows synthesises from touch: we must) | **no touchscreens** (winit: touch unsupported) | multi-touch with ids; no built-in pinch on Linux / Windows – our recogniser computes it from the touches |
+| Gestures (`PinchGesture`, `RotationGesture`, `DoubleTapGesture`, `PanGesture`) | – | – | – | pinch, rotation, double tap from the trackpad | `PanGesture` only on iOS; on macOS pan comes as scroll |
+| Picking (`bevy_picking`) | mouse and touch are both *pointers* (`PointerId::Mouse`, `PointerId::Touch(id)`): UI and mesh picking (hotspots) work for both | | | | the menu rows already use `PointerClick` / `PointerOver` (`ocw-render::menu`), so taps reach them today (untested) |
+| Focus (`bevy_input_focus`) | `InputFocus`, tab navigation, directional navigation (`AutoDirectionalNavigation` in `bevy_ui`) | | | | usable for the Bevy UI pages; the menu model keeps its own focus (§3.2.1) and may adopt it |
+
+Devices that have all of them: Windows tablets and touch laptops, Linux touch laptops, the Steam Deck (touchscreen + gamepad, Linux), a kiosk with a touch monitor. Browser (Phase 10): touch, pointer and Gamepad API all available; phones / tablets are touch-first. VR (Phase 11): the controller ray is one more pointer.
+
+**Abstract actions (one layer for all devices):** today's menu actions (`Up`, `Down`, `Left`, `Right`, `Confirm`, `Back`, `TabNext`, `TabPrev`, §3.2.1) are extended by `Secondary` (context: compare, details), `Tertiary` (a page's extra action: buy, sort), `Orbit(Δ)`, `Zoom(Δ)`, `Pan(Δ)`, `Point(position)` and `Activate(position)` (click / tap at a point) and `Scroll(Δ)`. A pure mapper in `apps/desktop/src/input/` (Bevy-free, with the existing hold-repeat of `menu/controls.rs`) turns device events into actions; pages and scenes see only actions, so every page and scene can be tested once with actions and once per device.
+
+| Action | Keyboard | Mouse / trackpad | Gamepad | Touch |
+|---|---|---|---|---|
+| Move focus | arrows, Tab / Shift+Tab | hover (moves focus only while the pointer moves, §3.2.1) | D-pad, left stick (repeat) | – (no focus frame; tap acts directly) |
+| Confirm | Enter, Space | left click | South (A / ✕) | tap |
+| Back | Esc, Backspace | right click, mouse "back" button | East (B / ○) | the on-screen **Back** button (top left, always shown in touch mode), swipe from the left edge inward (not the OS edge: starts 16 px in) |
+| Change a value | ← / → | drag the slider, wheel over it | D-pad / stick ← / →, LB / RB big steps | drag the slider, tap the ‹ › arrows |
+| Switch tab / category | Q / E, PgUp / PgDn | click the tab | LB / RB | tap the tab, swipe horizontally on the tab bar |
+| Secondary (compare, details) | C | middle click, or the card's button | North (Y / △) | long press (500 ms) |
+| Tertiary (buy, sort…) | X | the card's button | West (X / □) | the card's button |
+| Scroll a list | arrows, PgUp / PgDn | wheel, drag the scroll bar | right stick ↕, focus moves | one-finger drag (with inertia) |
+| Orbit (3D scenes) | I / J / K / L, or Shift + arrows | left drag (in empty space), trackpad drag | right stick | one-finger drag |
+| Zoom | + / − | wheel, trackpad pinch (macOS gesture) or two-finger scroll | RT zoom in, LT zoom out (analog) | pinch |
+| Pan | Ctrl + arrows | middle drag, Shift + left drag | right stick click + right stick | two-finger drag |
+| Reset view / focus | Home | double click | right stick click (R3) | double tap |
+| Open / close menu | Esc | the ☰ button (top left in a ride, shown after a mouse move) | Start / Menu | tap ☰ |
+
+**Last-used device and hints:** a resource `ActiveInput { Keyboard, Mouse, Gamepad(kind), Touch }` follows the device of the last meaningful input (a key, a click, a stick beyond the dead zone, a touch; mouse motion of less than 4 px is ignored, so a nudged table does not flip it). The **hint bar** at the bottom of every page and scene ("Ⓐ Select  Ⓑ Back  Ⓨ Compare  LB/RB Category") shows the glyphs of that device: keycaps, mouse icons, Xbox letters (also for generic pads), PlayStation shapes, Switch letters; touch shows short words ("Tap to select · Long press: compare"). The glyphs are our own drawings (Phase 8 Q11: no logos; button letters and shapes are not logos). **Confirm is the bottom face button on every pad** (positional, as today: Bevy's `South`), so on a Switch pad the hint shows "B" for Confirm – one rule for all pads; a per-pad swap is a later accessibility setting (M9).
+
+**Focus frame vs. pointer:** with keyboard or gamepad active the focus frame is shown (ten-foot rule, §3.2.1); with mouse or touch active it is hidden and hover / press states show instead; the focus is kept and returns on the next key or button. Pointer and focus never fight: a click or tap also moves the focus there.
+
+**Touch mode** (when `ActiveInput` is `Touch`, or the setting `controls.touch on|off|auto`, default `auto`):
+
+- **Hit targets:** at least **9 mm** and at least **48 logical px** (whichever is larger; 44 px is the bare minimum) high and wide for every interactive element, 2 mm (≥ 8 px) apart. The ten-foot layout (text ≥ 3 % of the window height, rows of ≥ 6 %) already gives 43 px rows at 1280 × 720; in touch mode rows grow to the minimum where the window is smaller, and pages page earlier (§3.2.1 paging) rather than shrink. Millimetres from the window's scale factor (1 logical px ≈ 0.19 mm at scale 1 on a 96 dpi panel; winit gives no physical screen size, so a setting `display.touch_scale` corrects odd panels).
+- **Gesture recogniser** (`apps/desktop/src/input/gestures.rs`, pure, fed with `TouchInput` events and their times): tap (< 10 px movement, < 300 ms), double tap (< 300 ms apart, < 20 px), long press (500 ms without moving), drag (beyond 10 px), swipe (a drag faster than 0.5 px/ms, released), pinch (distance of two touches: zoom factor), two-finger drag (centroid: pan), two-finger tap (= Back in 3D scenes). A third touch cancels. On macOS the trackpad's `PinchGesture` / `RotationGesture` / `DoubleTapGesture` map onto the same actions.
+- **Emulated mouse events:** Windows sends a synthesised mouse event for the primary touch; winit 0.30 passes it on. The mapper ignores mouse buttons and motion within **500 ms** of a touch event at the same place (X11 already filters them in winit), so one tap is never also a click. (To check on a real Windows touchscreen.)
+- **Text:** text fields (names, titles) open the OS on-screen keyboard where the platform offers one through IME (Windows touch keyboard, GNOME / KDE on Wayland), else our own on-screen keyboard (the one planned for the gamepad, §3.2.1).
+- **System gestures:** the OS edge swipes (Windows, GNOME, KDE) are left to the OS; our gestures start at least 16 px from the window edge.
+
+**Mouse:** everything that has a focus has a pointer equivalent (no hover-only function, §3.2.1); right click = Back; the wheel scrolls lists and zooms 3D scenes; in a ride a mouse move shows the ☰ menu button and the clickable HUD elements for 3 s.
+
+**Gamepad:** the full menu and every scene are reachable (D-pad / left stick focus, South / East / North / West, LB / RB, LT / RT analog, right stick for scenes and long lists, R3 reset, Start menu, Select = the voice mute of §2.4 in a ride); several pads: any pad drives the UI (the ride's steering rule stays: the largest deflection steers).
+
+**During a ride (touch proposal):** riding is driven by the trainer; touch is for the HUD and the camera. A **touch overlay** (shown on the first touch, fades after 8 s without one; `controls.touch_overlay auto|on|off`):
+
+- ☰ menu (top left), **autodrive** toggle, **U-turn** (asks with a second tap, as the key does not), **lean ‹ ›** buttons at the lower left and right edges (held = lean, as the ← / → keys; only shown when autodrive is off), and at a junction the **exit arrows** of the junction overlay (§2.2.1) become tap targets (tap = choose that exit).
+- **Camera:** one-finger drag on the 3D view orbits (as the mouse), pinch changes the chase distance, double tap = camera reset (C), two-finger tap cycles the camera mode.
+- **Tap HUD elements:** the voice indicator (mute the microphone / speaker, §2.4), the mini elevation profile (zoom 1.5 km ↔ 5 km), the bike computer (cycle its fields), the event panel (expand the standings), the damage widget (Phase 12: the part list), the REC dot (stop recording).
+- **Virtual power** (no trainer, §2.9): + / − buttons beside the power field.
+- The overlay is part of the HUD layer (hidden with `hud off`, drawn in captures only when shown).
+
+**Workshop and other 3D scenes** (the workshop, the world preview / map later, Phase 13's view later): orbit, zoom and pan as in the table, with limits per scene (workshop: 0.8–4 m around the stand, pitch −10° … 70°), inertia after a flick (0.3 s), and the same camera state machine whatever the device (§14 Phase 4, 4A).
+
+**Settings → Controls** gains: *Touch mode* (auto / on / off), *Touch overlay* (auto / on / off), *Pointer speed* (orbit speed, existing), *Invert orbit*, *Stick dead zone* (existing), *Gamepad glyphs* (auto / Xbox / PlayStation / Switch). Rebinding stays M9 (Phase 7).
+
+**Tests (spec §11.4: no step without tests):**
+
+- **Mapper** (pure): every row of the table above, per device, → the expected action; hold repeat; dead zones; `ActiveInput` switching (and not switching on 1–3 px mouse jitter); emulated-mouse suppression after touches (a tap is one `Activate`, never two); glyph sets per gamepad vendor id.
+- **Gesture recogniser** (pure, synthetic `TouchInput` sequences with times): tap / double tap / long press / drag / swipe thresholds, pinch factor, two-finger pan, cancellation, three-finger cancel.
+- **Reachability on every page** (headless app with `MinimalPlugins` + `ConsoleCorePlugin` + the menu and workshop models, input injected as Bevy input messages `KeyboardInput`, `MouseButtonInput` / `CursorMoved`, `TouchInput`, gamepad events): for **every page of the menu tree and every workshop / character state**, every focusable item can be reached and activated with the keyboard alone, the gamepad alone, the mouse alone (click at the item's laid-out rectangle) and touch alone (tap at its rectangle); Back works with each; no page needs a second device.
+- **Hit-target sizes:** in touch mode every interactive rectangle on every page is ≥ 48 logical px and ≥ 9 mm at 1280 × 720 and 800 × 600, scale factors 1, 1.5 and 2, with ≥ 8 px gaps (extends `every_menu_page_fits_a_16_9_window_with_its_text`).
+- **3D scenes:** orbit / zoom / pan reach the same camera states with each device; limits hold.
+- **Ride overlay:** taps on lean / autodrive / U-turn / exit arrows produce the same `ClientCore` inputs as the keys; overlay hidden with `hud off`.
+- **Screenshots:** the hint bar for each device and the touch overlay, X11 + Wayland (scene harness).
 
 ### 3.3 Audio
 
@@ -1093,8 +1182,23 @@ Every imagery and land-cover source used in a package is listed in its metadata 
 - **Splat map:** each 1 km tile gets a class per **5 m cell** (200 × 200, scanline rasterisation at the cell centres in global coordinates, so neighbouring tiles agree at their edges). Where areas overlap, a fixed **priority** decides, not the drawing order: water > glacier > wetland > rock > scree > bare > park > forest > scrub > orchard / vineyard > meadow > farmland > commercial / industrial > residential > default; specific surfaces beat the large built-up areas they lie in.
 - **Water surfaces:** water polygons and rivers ≥ 8 m wide mark the terrain grid vertices in water. The water level at such a vertex is the mean terrain height of the water vertices within 50 m (flat on lakes, gently falling along rivers); the terrain there is carved 1 m below it. The level is also stored for the vertices next to water, so the client draws a flat water quad over every grid cell touching water and the shoreline is where the terrain rises through it. Narrower streams only colour the ground.
 - **The sea (v2.42, Tenerife):** OSM has no sea polygons, only `natural=coastline` ways with the land on their left. The builder keeps every coastline way when it cuts the data to the region, joins them into closed rings (the coasts of islands and islets) and cuts these rings out of a frame of the package's tiles plus 1 km: the rest is **one water area with a fixed level of 0 m** (the DTMs are in orthometric heights) instead of the mean ground height of lakes. Sea vertices are carved at least **2 m** below the surface, so a DTM that disagrees with the coastline (a cliff vertex at 30 m on the sea side) does not lift the water; land vertices next to the sea are raised to at least **0.3 m**, so flat beaches and quays (the MDT05 sets the sea near the coast to 0 m) do not flicker with the water. Coastline pieces in the area that do not close (a mainland coast cut off by the extract) would need closing along the frame: until that is done such a package gets no sea and the builder warns. The world cleaning's water levelling (§4.8.4) leaves the sea alone: a water vertex at exactly the sea level outside every lake is sea or its shore, so a river mouth (a barranco) never lifts it. Tenerife: 74 rings in the frame (the island, the Roques de Anaga and other islets), 26 % of its land-use cells are sea. Fix found on the way: the last row and column of a tile at the edge of the package took their heights from the missing next tile and got no water; they now take them from the tile itself.
-- **Rendering:** the client turns the splat map into a per-tile **colour map** (one texel per cell, sRGB, mipmapped, class colour turning to rock on slopes above 60 %, a little noise), the terrain vertices stay white. Water is a separate flat, glossy mesh. **Trees** come from a jittered 8 m grid with a chance per class (forest 85 %, orchard 45 % small, scrub 30 % small, park 10 %, residential 6 %, meadow / farmland / default 1.2 %, none on water, rock, scree, glacier, bare or vineyards), never in cells near road strips (3 m beyond the edge) or under buildings (1.5 m around the footprint), not on rock faces; the same trees are the camera's obstacles. Packages without land use keep plain grass and provisional tree patches. Tiling PBR materials, ESA WorldCover and the satellite tint (steps 1–3 above) follow later.
+- **Rendering:** the client turns the splat map into a per-tile **colour map** (one texel per cell, sRGB, mipmapped, class colour turning to rock on slopes above 60 %, a little noise), the terrain vertices stay white. Water is a separate flat, glossy mesh. **Trees** come from a jittered 8 m grid with a chance per class (forest 85 %, orchard 45 % small, scrub 30 % small, park 10 %, residential 6 %, meadow / farmland / default 1.2 %, none on water, rock, scree, glacier, bare or vineyards), never in cells near road strips (3 m beyond the edge) or under buildings (1.5 m around the footprint), not on rock faces; the same trees are the camera's obstacles. Packages without land use keep plain grass and provisional tree patches. ESA WorldCover and the satellite tint (steps 2–3 above) follow later; the tiling materials (step 1) came with Phase 8 T1 / T2 (below).
 - **Buildings:** OSM `building=*` closed ways and multipolygons (not `building:part`). Wall height from `height` (metres, feet), else `building:levels` × 3 m, else by type: houses and farms 6 m, apartments 12 m, commercial and public 9 m, industrial 8 m, churches 12 m, garages / sheds / huts 3 m, unknown 6 m (3 m under 40 m²). Nearly rectangular footprints (≥ 85 % of their oriented bounding rectangle, no courtyard) of houses, farms, small buildings and churches up to 400 m² (barns 1,500 m²), or anything tagged with a pitched `roof:shape`, get a **gable roof** on that rectangle, ridge along the long side, 0.4 × the width high (`roof:height` overrides; `height` includes the roof); all others a flat roof. Placement: the walls start 0.5 m below the lowest terrain under the footprint (its corners and a 4 m grid inside) and end the wall height above the mean terrain, at least 2 m above the highest. Flat roofs are triangulated by ear clipping, courtyards bridged into the outline. Buildings belong to the tile of their centroid and are merged into one mesh per tile.
+
+**Material library and terrain materials (Phase 8 T1 / T2, v2.46):**
+
+- **Library:** 21 curated CC0 PBR materials – ground: meadow grass, farmland soil, forest floor (spruce needles), rock (grey limestone), scree, gravel (river pebbles), sand, snow, wetland; roads: asphalt, worn asphalt, gravel road, paving stones / cobbles, dirt track; houses (for T4): clay roof tiles, plaster, timber; volcanic ground for Tenerife (v2.46): lava rock (dark basalt), volcanic ash / cinder, black sand, Canary pine needles – from ambientCG (9) and Poly Haven (12), chosen after looking at reference photos of both regions (`art/reference/`, Phase 8D). Each is albedo + normal (OpenGL) + roughness, ambient occlusion where the source has it.
+- **Shipping (decided):** the textures are **not in git** (the repository dropped binary media from its history; 57 MB of textures would be most of a clone). `assets/materials.toml` (in git) pins every source file – a URL, or a member of a pinned archive – by **SHA-256**, with `license`, `source` (the asset page where the licence was checked) and `author`. `scripts/fetch-materials.sh` (`make materials`, `ocw-assets materials fetch`) downloads the sources once into a per-machine cache, refuses any file whose hash differs (the source changed: check it again), converts and writes the git-ignored `assets/materials/` (textures, a copy of the manifest, `CREDITS.md`); materials whose stamp (converter version + pins) is unchanged are skipped, so every build path can run it. Packaging copies the folder next to the binary (`scripts/install-materials.sh`): AppImage `usr/share/ocw/materials`, macOS bundle `Contents/Resources/materials`, test deployment `/var/tmp/ocw/materials`, Windows zip `materials\`; the app also finds the library in the checkout it was built from and in `$OCW_MATERIALS` (`off` disables it). CI fetches with a cache keyed on the manifest and validates. Rejected alternative: committing small compressed textures (even 512² BC files are ~20 MB per revision and would grow the history with every change).
+- **Format:** KTX2 (Khronos), written by `ocw-assets` itself: per material `<id>.albedo.ktx2` (BC3 sRGB: albedo with the ambient occlusion baked in at 60 %, roughness in alpha) and `<id>.normal.ktx2` (BC5: normal x, y; z rebuilt in the shader), 1024² with a full mip chain (albedo averaged in linear light, normals renormalised per level), compressed with the pure-Rust `texpresso` (deterministic, no C++ toolchain on any build machine), the mean albedo in the KTX2 metadata. BC formats are supported by every desktop GPU we target (AMD, Apple Silicon, Windows drivers, Mesa lavapipe for the headless tests); Basis Universal (and a transcoder for the browser app, Phase 10) can replace them later without changing the manifest. Without BC support the app falls back to the flat colours.
+- **Validator:** `ocw-assets materials validate [DIR]` and unit tests: every entry needs `license`, `source` (https), `author`, a SHA-256 per file and a roughness source; the licence rule of Phase 8A is shared by models and materials (`ocw_assets::licence`: CC0, public domain, own work, CC BY 4.0, DL-DE-BY/ZERO 2.0, OGD BY, Copernicus accepted; share-alike, non-commercial, no-derivatives and unknown rejected with the reason). Credits come from the manifest (`CREDITS.md`, console command `materials`).
+- **Terrain (T2):** each land class is a fixed mix of the nine ground materials (e.g. farmland 55 % soil / 45 % meadow, forest 60 % needles / 40 % moss, residential meadow + gravel, water banks gravel + sand). Per tile the weights are stored at the **corners of the 5 m cells** (mean of the four cells around each corner, neighbour tiles included) in two RGBA8 textures of 201², sampled bilinearly: class borders blend over one cell, never show the 5 m grid, and neighbouring tiles agree on their shared edge. The fragment shader (`ground.wesl`; Rust twins `ground::blend_weights`, `rock_weight`) warps the lookup by ±2 m of noise (organic borders), sharpens the weights with a per-material noise ("height blend": a mix becomes patches, not a smear), turns slopes of 75–120 % into rock, less under forest (forests hold on steep slopes; the flat colour map used 60–100 %; with the limestone texture the steep alpine meadows of the 10 m grid read as bare cliffs) (**triplanar** on steep ground, no stretched texels on cliffs), samples every material at its real-world repeat size (`size_m`) and at a rotated macro scale ×7.3 that hides the tiling and takes over with distance, and fades between 90 and 350 m to the land-use colour map, whose class colours are now the materials' mean colours (so near and far agree; slopes turn to the rock colour as in the shader). Only the PBR input changes (albedo, roughness, normal); lighting, shadows and fog stay Bevy's, independent of the light setup (Phase 9).
+- **Roads (T2):** the world builder keeps OSM `surface` (refined by `smoothness`, `tracktype` on tracks) as one byte per road strip in the new package section **`RSRF`** (only tiles where a strip differs from its category's default; older readers skip it, older packages get the category default: tracks and paths gravel, the rest asphalt). The road material (`road.wesl`) picks the layer per strip – asphalt, worn asphalt, gravel road, paving, dirt – with (across, along) texture coordinates in metres, fading to the material's mean colour far away; edge faces and the generated centre line (markings) stay as they were. Physics still uses the three rolling-resistance classes (`RoadSurface::physics`).
+- **Bridges (§4.8.6):** the deck surface is the road strip on it, so it already gets the asphalt / paving / gravel material of its OSM `surface`; the structure (parapets, piers, arches) keeps the flat colours of `bridges::bridge_colour` until its meshes get texture coordinates (T4/T5). Road strips, textured or flat, are flat overlays without shadows of their own (§4.5).
+- **Regional material sets (v2.46):** the manifest's `[[region]]` entries apply to packages whose time zone (section `TZID`) they list. A set fills the nine ground layer slots with other library materials (`layers`, e.g. `rock = "lava_rock"`) and gives land classes another slot mix (`classes`, e.g. `default = { meadow = 0.45, gravel = 0.55 }`); the client builds one pair of texture arrays per set and picks it per package, the far palette follows the set's means and mix. The first set, `volcanic` for `Atlantic/Canary` (Tenerife: the island rendered green before), draws rock as lava (Poly Haven Dark Rock), scree and gravel as volcanic ash / cinder (ambientCG Gravel 024), sand and beaches (`natural=beach` and `surface=sand` are the class bare) as black sand (Poly Haven Coast Sand 05) and forest floor as Canary pine needles (ambientCG Ground 077); ground without land use is half ash. Data-driven, so T3 can add regions, slot materials and mixes (and measure the mixes from imagery) without code.
+- **Regional tint hook (T3):** `TerrainLook::material_tint` per ground material (near) and a per-class tint in `ground::class_palette` (far), neutral (1.0) without a measured look.
+- **Region calibration (T3, v2.47):** packages calibrated with `world-builder calibrate` carry their measured look (§4.7 "Look sections"). The client (`ocw-render::region_look`) tints each ground layer towards the measured median colour of the land class it stands for (meadow layer → meadow, farmland → farmland, forest floor → forest, rock / scree → rock / scree, sand → bare, wetland → wetland; snow and gravel stay neutral): 80 % of the way in chroma and 50 % in brightness (the aerial photo is taken in full sun from above), the forest floor only 35 % of that (the orthophoto shows the canopy, not the floor), within a factor 0.4 … 2.5. The season multiplies in: the class's median colour in the Sentinel-2 composites blended for the world date over its summer colour, mostly as brightness (25 % of the chroma, 50 % of the brightness change, within 0.6 … 1.6: a factor cannot turn green grass into snow – the first winter renders went pink), so the real seasonal colour comes from the far map. The far colour map's class colours get the tint that matches the near layers (their mix of tinted layer means), then the tile's seasonal satellite map is laid over them at 70 %; the date comes from the world clock (`ocw-sky`, Phase 9), in 4-day buckets, and the loaded tiles are rebuilt when the bucket changes (time machine). Buildings take their measured roof colour (an OSM `roof:colour` a quarter of the way to the default, so a named "red" reads as tiles).
+- **Forests:** the forest floor is 60 % needle litter and 40 % moss, its albedo darkened under the canopy (`CANOPY_SHADE` 0.55 at full forest floor; the low-poly trees' own shadows leave the ground too bright), and forests keep 70 % of their ground on slopes that would otherwise turn to rock.
+- **Performance:** see Phase 8 T2 status (§14) for the measured frame rates.
 
 ### 4.7 Data Packages
 
@@ -1119,6 +1223,8 @@ Contents:
 - Version information.
 
 **Package format (v1.6):** the binary package (`.ocwpkg`) holds the 1 km tiles (terrain heights, road strips) and, from format version 2 (`OCWPKG02`), tagged sections after the tiles that readers skip when they do not know them. The first section is the **road graph** (`GRPH`: vertices, edges with stable ID, class, name, width, one-way, bridge / tunnel / boundary / dead-end flags, centreline and smoothed elevation profile), so the client and the server can ride free on it (§2.2.1). Packages without a graph are still written as version 1, and clients read both.
+
+**Look sections (Phase 8 T3, v2.47):** `PALT` holds the imagery sources of the package (id, name, licence, notice, URL, date, resolution) and the **regional palette**: the median colour per land class (interior land-use cells only – all four neighbours of the same class, away from roads and buildings), of the paved and of the unpaved roads (every 2 m along the graph's centre lines, no tunnels or bridges) and of all roofs, with the number of pixels and the source; classes the orthophoto does not cover come from the Sentinel-2 summer composite. `ROOF` holds one colour per building (r, g, b and its origin: orthophoto or OSM) in the order of the `BLDG` section: the per-channel median of the orthophoto pixels inside the footprint eroded by 1 m (fewer than 6 pixels: the whole footprint), OSM `roof:colour` / `roof:color` (CSS names, `#rgb`, `#rrggbb`) wins. `SEAS` holds the seasonal tint maps: per season its date window and centre day, the number of scenes and the median colour per land class; per tile one map per season of 50 × 50 cells (20 m; `--season-cells 100` for 10 m), each stored as YCoCg with chroma at half resolution, LOCO-I predicted and deflated (lossless within a few levels), gaps (cloud all season) filled from the summer composite, tiles outside the composites left out. Readers that do not know the sections skip them (tested); a skeleton reads only `PALT` (credits). Package sizes before → after: Liechtenstein 30.2 → 35.0 MB (`SEAS` 4.8 MB for 510 tiles, `ROOF` 0.07 MB for 17,897 buildings), Black Forest south 258.5 → 284.5 MB (`SEAS` 24.8 MB for 2,800 tiles, `ROOF` 1.25 MB for 306,478 buildings), Tenerife 238.5 → 261.6 MB (`SEAS` 22.6 MB for 2,690 tiles, `ROOF` 0.48 MB for 116,479 buildings); `PALT` is a few hundred bytes. The tint maps cost about 9 KB per tile and season set at 20 m (4 × 50²); at 10 m they would be about four times as large, which is why 20 m is the default.
 
 **Land use and buildings sections (Phase 3):** `LUSE` holds the splat map of every tile (layout version, cells per side, then per tile the classes run-length coded row by row and the water levels as (terrain vertex index, level) pairs); `BLDG` holds the buildings per tile (kind, roof shape and height, base and eave height, outline and courtyard rings in tile-local metres). Both are optional: older clients skip them as unknown sections (tested), newer clients without them fall back to plain grass. The pilot package grows from about 26 MB to about 30 MB with them.
 
@@ -1188,7 +1294,7 @@ Packages are **signed, versioned and updatable**:
 - Target size: 200–500 MB for a mid-sized region.
 - The format allows streaming over HTTP in tile-sized chunks (§3.5).
 
-**Build profile (decided 2026-11-13, v2.49).** `world-builder package` prints a stage table at the end of every build: wall time, share, CPU time, the cores in use (CPU / wall) and their share of the machine, peak and final resident set per stage (`ocw_worldgen::stages`; Linux reads `/proc/self`, a sampler thread follows the resident set every 10 ms; elsewhere only times), and writes it as JSON with `--profile FILE`. `scripts/world-profile.sh` builds Liechtenstein, a Black Forest part and Tenerife into a scratch directory with the arguments of the build scripts and compares each package byte for byte with a reference build. The profile showed the build mostly single-threaded (1.3 of 12 cores in the Black Forest): five sequential PBF passes, the road profiles (twice for a part: its own graph and the context graph; most of it the gradient limit across junctions), bridge detection and the settle pass. Accelerated, with byte-identical packages:
+**Build profile (decided 2026-11-13, v2.59).** `world-builder package` prints a stage table at the end of every build: wall time, share, CPU time, the cores in use (CPU / wall) and their share of the machine, peak and final resident set per stage (`ocw_worldgen::stages`; Linux reads `/proc/self`, a sampler thread follows the resident set every 10 ms; elsewhere only times), and writes it as JSON with `--profile FILE`. `scripts/world-profile.sh` builds Liechtenstein, a Black Forest part and Tenerife into a scratch directory with the arguments of the build scripts and compares each package byte for byte with a reference build. The profile showed the build mostly single-threaded (1.3 of 12 cores in the Black Forest): five sequential PBF passes, the road profiles (twice for a part: its own graph and the context graph; most of it the gradient limit across junctions), bridge detection and the settle pass. Accelerated, with byte-identical packages:
 
 - PBF passes decode their blobs on all cores (`osm::par_elements`, results in file order);
 - `ocw_worldgen::par::map`, a parallel map with dynamic scheduling (each thread takes the next item, results in item order), replaces one contiguous chunk per thread for the DTM files (outside files cost only their header), the terrain heights of the tiles, and runs the profile DEM sampling, the bridge detection and the settle pass's constraint collection per edge or tile;
@@ -1460,6 +1566,7 @@ Goal: **detection and flagging of implausible data**. Power comes from user hard
 3. **Device trust levels:** smart trainer only < trainer + independent power meter ("dual recording") < verified setup. Organized races can require a minimum trust level.
 4. **Weight:** the biggest real-world manipulation vector. Weight changes are logged; races may lock weight some time before the start.
 5. **Consequences:** flagging, results marked "unverified", and manual review. No automatic bans in v1.
+6. **Hearts (v2.53, §14 Phase 4, 4E):** hearts are credited only by the server – the game server that saw the power stream, or the backend from an uploaded ride after these checks; never for virtual power, god mode, bots or captures; flagged rides hold their hearts until reviewed; a daily cap. Purchases are server-side transactions against the server's catalogue price. Since hearts have no money value (no purchase, no cash-out) and races can ignore parts (*Profile* / *Equal* modes), a cheated balance gains little.
 
 ### 6.5 Steering in Multiplayer
 
@@ -1531,7 +1638,7 @@ Import process:
 2. Define materials.
 3. Create skeleton and animations.
 4. Export glTF.
-5. Validate assets (`cargo run -p ocw-assets -- validate [DIR]`, including licence metadata, §13): the manifest `manifest.toml` next to the models has an entry with `license`, `source` and `author` for every `.glb` / `.gltf` (files without an entry are rejected), licences from the allowed list (§2.5), no physics keys, bikes name a known physics profile; every model reads as glTF 2.0, uses only paint slots as materials, has the nodes the app animates (bike: wheels, crank, pedals, handlebar, grip and saddle anchors, `lod1`; rider: the rig of §2.6, head wear and kit nodes), plausible rig dimensions and stays within the triangle budget (bike 15 000, rider 8 000, far LOD 4 000). The validator is a subcommand of the asset crate instead of a separate `tools/asset-validator` (one crate shares the reader with the app; low).
+5. Validate assets (`cargo run -p ocw-assets -- validate [DIR]`, including licence metadata, §13): the manifest `manifest.toml` next to the models has an entry with `license`, `source` and `author` for every `.glb` / `.gltf` (files without an entry are rejected), licences from the allowed list (§2.5), no physics keys, bikes name a known physics profile; every model reads as glTF 2.0, uses only paint slots as materials, has the nodes the app animates (bike: wheels, crank, pedals, handlebar, grip and saddle anchors, `lod1`; rider: the rig of §2.6, head wear and kit nodes), plausible rig dimensions and stays within the triangle budget (bike 15 000, rider 8 000, far LOD 4 000). The validator is a subcommand of the asset crate instead of a separate `tools/asset-validator` (one crate shares the reader with the app; low). Textures (the material library, §4.6) have their own manifest `assets/materials.toml` and validator (`ocw-assets materials validate`) with the same licence rule (`ocw_assets::licence`, Phase 8A) plus a SHA-256 pin per source file.
 6. Import into Bevy.
 7. Register components.
 
@@ -1540,6 +1647,8 @@ Import process:
 Bicycles consist of modular parts: frame, fork, handlebars, wheels, tires, saddle, pedals, drivetrain, accessories.
 
 Each component has a unique ID, a configuration, a visual part and an optional physics profile reference (§2.5).
+
+The catalogue of parts is `assets/parts.toml` (planned v2.53: generic unbranded names, tier, price in hearts from researched real prices in `assets/parts-sources.toml`, real weight, compatible bike types, physics classes, model reference; §14 Phase 4, 4H–4I). Every bike model has a hotspot anchor `hs_<slot>` per part slot for the workshop scene (4B).
 
 ### 8.3 Characters
 
@@ -1571,7 +1680,7 @@ Backend modules:
 
 - Authentication Service.
 - User Service.
-- Profile Service.
+- Profile Service (incl. the workshop: hearts ledger, inventory and bikes, purchases; §14 Phase 4, 4E).
 - Device Service.
 - Multiplayer Session Service (game server).
 - Race Management.
@@ -1705,9 +1814,9 @@ Platforms are implemented one after another, not in parallel:
 
 **Build id:** every desktop build carries a build id: the workspace version, the short git commit, `-dirty` for uncommitted changes to tracked files and ` (debug)` for debug builds (e.g. `0.1.0-63910f2-dirty`). It is shown small in the HUD's lower right corner, by `ocw-desktop --version` and in the startup log. Remote builds get no `.git`, so `scripts/remote.sh` passes the commit as `OCW_BUILD_ID` (`scripts/build-id.sh`); otherwise the build script asks `git`.
 
-**Build profile and speed-up (decided 2026-11-13, v2.49).** `scripts/build-profile.sh` (Linux, macOS; `scripts/build-profile.ps1` on Windows; `make build-profile MACHINE=…`) times clean, no-op, touched-file and edited-file builds of `cargo build --workspace`, `cargo test --workspace --no-run`, `cargo clippy --workspace --all-targets`, the voice release build of `ocw-desktop` and the wasm check, with cargo's `--timings` reports, into `test-output/build-profile/LABEL/` (`results.jsonl`, `summary.md` with the slowest crates, `scripts/build_profile.py compare A B` for before/after tables). Measured on 2026-11-13 (marge: 12 cores, shared with other builds; macOS: M1, 8 cores; Windows: 2 jobs):
+**Build profile and speed-up (decided 2026-11-13, v2.59).** `scripts/build-profile.sh` (Linux, macOS; `scripts/build-profile.ps1` on Windows; `make build-profile MACHINE=…`) times clean, no-op, touched-file and edited-file builds of `cargo build --workspace`, `cargo test --workspace --no-run`, `cargo clippy --workspace --all-targets`, the voice release build of `ocw-desktop` and the wasm check, with cargo's `--timings` reports, into `test-output/build-profile/LABEL/` (`results.jsonl`, `summary.md` with the slowest crates, `scripts/build_profile.py compare A B` for before/after tables). Measured on 2026-11-13 (marge: 12 cores, shared with other builds; macOS: M1, 8 cores; Windows: 2 jobs):
 
-| Machine | Command | before: clean / edit one file (full debug info) | after: clean / edit (v2.49 profile) | `target/` after clean | sccache, same checkout path | sccache, a second checkout (other path) |
+| Machine | Command | before: clean / edit one file (full debug info) | after: clean / edit (v2.59 profile) | `target/` after clean | sccache, same checkout path | sccache, a second checkout (other path) |
 |---|---|---|---|---|---|---|
 | marge | `build --workspace` | 646 s / 5.3–7.8 s | 464 s (−28 %) / 3.7–6.7 s | 16.2 → 4.2 GB | – | 380 s cold → 322 s (−15 %, 87 % hits) |
 | marge | `test --workspace --no-run` | 613 s / 4.5–16.8 s | 457 s (−25 %) / 2.3–5.6 s | 24.0 → 5.3 GB | 173 s (−62 %) | 173 s |
@@ -1750,7 +1859,7 @@ Build and release pipelines are automated for all three operating systems, intro
 - **App icon and desktop integration:** the logo (`artwork/logos/`, a unicorn riding a bike over a rainbow) is the window icon (X11, Windows); the window's app id `ocw-desktop` matches the desktop entry (`packaging/linux/ocw-desktop.desktop`), which Wayland compositors, docks and menus use. On Linux the app installs its desktop entry and hicolor icons into the user's data directory at start (only changed files).
 - **AppImage:** `scripts/build-appimage.sh` assembles the AppDir (binary, desktop entry, icons, `.DirIcon`) and packs it with `appimagetool` when installed.
 - **macOS app bundle:** `scripts/build-macos-app.sh` (`make macos-app`, runs on macOS) builds `Open Cycling World.app` (bundle id `org.opencyclingworld.desktop`; stripped binary; `Info.plist` with version + commit, minimum macOS read from the binary, `NSBluetoothAlwaysUsageDescription`, without which macOS ends the app when it uses CoreBluetooth; `ocw.icns` from `artwork/logos/`), signs it ad hoc and packs a DMG (with an Applications link) and a zip. Started from Finder, the app logs to `~/Library/Logs/OCW/ocw-desktop.log` (stderr has no terminal there). CI builds and uploads both on pushes to `main`. Still open: Developer ID signing with the hardened runtime and notarisation (`CODESIGN_IDENTITY` already signs with a given identity), a 1024 px icon render for the 512@2x slot.
-- **Versions (decided 2026-11-13):** every GitHub release increments the **minor** version of the workspace (`[workspace.package] version` in `Cargo.toml`, inherited by every crate; 0.1.0 → 0.2.0 → 0.3.0 …), and the tag is `vX.Y.0`. All of it is in the Makefile: `make release-check` (current, latest released and next version), `make release-prepare` (on a clean, pushed `main`: bump with `make version-bump`, commit "Release X.Y.0", push; the release binaries are built from that commit, so `--version` reads `X.Y.0-<commit>`), `make release-publish DIR=… NOTES=…` (refuses unless the version is above every existing release; tags, pushes the tag, creates the pre-release with `SHA256SUMS`). Patch / major bumps only by hand (`make version-bump PART=patch|major`). Tested by `make test-release-version`. Older releases were tagged `v0.1.0-<commit>`.
+- **Versions (decided 2026-11-13, changed in v2.49):** every GitHub release increments the **patch** (last) version of the workspace (`[workspace.package] version` in `Cargo.toml`, inherited by every crate; 0.2.0 → 0.2.1 → 0.2.2 …), and the tag is `vX.Y.Z`. (Until v2.49 the minor version was incremented: 0.1.0 → 0.2.0.) All of it is in the Makefile: `make release-check` (current, latest released and next version), `make release-prepare` (on a clean, pushed `main`: bump with `make version-bump`, commit "Release X.Y.Z", push; the release binaries are built from that commit, so `--version` reads `X.Y.Z-<commit>`), `make release-publish DIR=… NOTES=…` (refuses unless the version is above every existing release; tags, pushes the tag, creates the pre-release with `SHA256SUMS`). Minor / major bumps only by hand (`make version-bump PART=minor|major`). Tested by `make test-release-version`. Older releases were tagged `v0.1.0-<commit>`.
 - **Releases:** binaries and world packages are published as **GitHub Releases** (pre-releases while in development), never committed to git (decided 2026-11-12; the history was rewritten to remove the former `release/<version>-<commit>/<platform>/` binaries, `release/commit-map.txt` maps old to new commit ids). Release binaries are built with voice (`--features ocw-desktop/voice`, Windows with the static C runtime). Each release carries the AppImage and a tarball of the stripped Linux binaries, a Windows zip, the macOS DMG, the world package with its manifest and data licence (ODbL, §13), the OSM extract it was built from (the ODbL "offer the data" duty) and `SHA256SUMS`. `release/README.md` keeps the build notes. Screenshots and videos made during development are not in the repository (removed from the history on 2026-11-12, `artwork/build-history/` dropped entirely): they are published as one zip per day (`ocw-build-history-YYYY-MM-DD.zip`) with an index (`index.md`) on the GitHub release `build-history`. New test runs land in the git-ignored `test-output/` (with its `index.md`); the ones worth keeping go into that day's zip.
 
 ---
@@ -1870,10 +1979,11 @@ Personal data, voice data and training data are handled separately.
 | Own sounds | Own work | Decided separately; suggestion **CC BY 4.0**, or proprietary if monetized. The game sounds so far are synthesised in code (`apps/desktop/src/audio/`), so they are source code (MIT / Apache-2.0) and there are no sound files to license |
 | Own artwork (logo, icons, `artwork/`) | Own work | Like the code: **MIT / Apache-2.0** |
 | Third-party assets | External | Tracked in each asset's manifest (`license`, `source`, `author`); the asset validator rejects assets without a licence entry |
+| Tiling materials (`assets/materials.toml`, v2.46) | External, CC0 1.0 (ambientCG, Poly Haven) | Not in git: pinned by URL + SHA-256, fetched and converted by `scripts/fetch-materials.sh`, shipped beside the binary with `CREDITS.md`; credited on the credits list (console `materials`) although CC0 needs no attribution; the validator rejects share-alike, non-commercial, no-derivatives and unknown licences (Phase 8A) |
 | Road graph + attributes in world packages | **Derivative Database** (ODbL) | Published under ODbL; extracted data offered for download alongside each package |
 | Meshes, textures, rendered views | **Produced Work** (ODbL) | Attribution "© OpenStreetMap contributors" |
 | DEM-derived terrain | Depends on source | Each source's required attribution notice (Copernicus, regional providers) |
-| Imagery and land cover | Depends on source | Only sources permitted in §4.6; attribution per source |
+| Imagery and land cover | Depends on source | Only sources permitted in §4.6; attribution per source. T3 (v2.47): Orthophoto Liechtenstein 2025 (Opendata BY, ATG / swisstopo), swisstopo SWISSIMAGE (OGD), LGL DOP20 (dl-de/by-2-0), IGN PNOA (CC BY 4.0 scne.es), Copernicus Sentinel-2 ("Contains modified Copernicus Sentinel data 2023-2025"): stored with each package (section `PALT`), copied into its manifest's attribution, hence into `LICENSE-DATA.md` of the release zips, the credits list and *World → About this world → Data sources* |
 
 - **Licence change considered and declined (2026-11-13):** switching to CC BY-SA (for the code, or code and assets) was discussed (CC licences suit assets, not software: no patent grant, no source obligation, narrower compatibility) and the user decided to **keep MIT / Apache-2.0** for now; rule 8A (permissive third-party licences only) stays.
 - **Attribution in the app:** loading screen, about / credits screen, the in-ride minimap and the web companion map.
@@ -1942,11 +2052,299 @@ Done so far for land use and buildings (§4.6): OSM land-use classes rasterised 
 - Animations.
 - Configuration and persistence.
 - Workshop pages of the in-game menu (§3.2.1, M6); game audio and audio settings at the latest here (M5, §3.3).
+- **Workshop scene, parts and hearts (planned 2026-11-13, v2.53):** 4A–4L below.
+- **Input model for the whole UI** – keyboard, mouse, gamepad, touch (v2.54, §3.2.2, M10).
 
 - **Unit tests:** component and configuration model (IDs, physics profile references, cosmetic parts never change physics), profile caps, persistence round-trip, animation state selection from cadence / speed / riding state, asset validator rules (including licence metadata).
 - **Integration tests:** load all shipped glTF assets through the validator and into a headless Bevy app.
 
 **Status (2026-11-12):** bike and character models, animations and the asset pipeline are done (§2.5, §2.6, §8.1): `crates/ocw-assets` generates six bikes and the rider as glTF, validates them (`ocw-assets validate`), poses the rider on the bike and selects the riding state; `ocw-render::riders` draws and animates them with a far LOD. Tests: mesh building (outward faces), glTF write / read round trip and the +Z file convention, the validator rules (no licence entry, unknown licence, missing file, physics keys, missing nodes, unknown paint slots), committed assets = generator output, frames from their geometry (wheelbase, saddle height), feet on the pedals and hands on the bars for every bike seated and standing all round the crank, torso lean by bike, state selection with hysteresis and dwell, cadence, crank easing, wheel spin, pose blending; integration (`crates/ocw-render/tests/shipped_assets.rs`): all shipped assets through the validator and through Bevy's own glTF loader in a headless app; the riders plugin spawns every bike with the right head wear and kit and animates standing, wheel spin and freewheeling headless. Still open in Phase 4: components (wheels, tyres, saddle …) as cosmetic choices, the 3D preview on the Workshop page, the Character page (skin, hair, body), *Equal* race mode, the remaining animations (cornering, U-turn, finish, victory, foot down).
+
+#### 4A – Workshop scene (planning, 2026-11-13, v2.53)
+
+The user asked (2026-11-13): selecting *Workshop* changes the screen to a **rendering of a bicycle workshop** showing all the rider's bikes; the selected bike stands on a **repair stand in the foreground**, the other owned bikes **hang on the wall** and are chosen with **left / right**; the bike on the stand can be selected **at its parts**, which are tuned or exchanged; parts are bought with **hearts** (4E); everything works with **gamepad, mouse and touch** (and keyboard, §3.2.2). Decided by the user: the scene, the stand, the wall, left / right, part selection on the bike, hearts, 1 heart = 1 EUR, prices rounded up to whole hearts. The rest of 4A–4L is a proposal.
+
+- **A 3D scene, not a menu page.** *Workshop* in the top menu (§3.2.1) opens the workshop scene full-screen instead of the Workshop sub page. The ride goes on under it exactly as under the menu (decided v2.2: no pause; autodrive and default exits while it is open, trainer unchanged); the status strip of the menu (power, speed, trainer) stays at the top, and a small live **ride window** (picture-in-picture, 20 % of the width, off with `workshop.ride_window off`) shows the ride. Back / Esc / B leaves the workshop to the menu's top page (Esc twice: back to the ride). Later the start screen (Phase 5 dashboard, §2.1) opens the same scene without a ride.
+- **Rendering (`ocw-render::workshop`):** its own small scene on its own `RenderLayers` layer with its own camera, spawned when the workshop opens and despawned on leaving (the world's camera stops rendering meanwhile: the GPU budget goes to the workshop; the ride window renders the world at a quarter resolution and 10 fps). The room is generated in code like the bikes (§2.5 asset decisions; `ocw-assets` generator, own work, MIT OR Apache-2.0, no brands, Q11): concrete floor, a back wall with **bike hooks**, a pegboard with tools, a workbench, a parts shelf, a window, warm interior light (one shadow-casting spot over the stand, ambient fill, no sky); the material library (Phase 8 T1, CC0) for the floor, wood and wall. Triangle budget: room 40 k, plus the bikes at their near LOD.
+- **Layout:** the **repair stand** in the foreground centre (clamp on the seat post, the bike at working height, wheels free so they can spin), the **wall** behind it with one hook per owned bike (wall-mounted by the front wheel at an angle, all at the same height, a name card under each), an **empty hook with a "+"** at the end of the row (buy a bike, 4D), the **changing corner** on the right (mirror, bench, locker: the character editor, 4C) and the **workbench** on the left with the parts shelf (the parts catalogue, 4D). The wall scrolls with the camera when there are more bikes than fit (up to 24 hooks).
+- **Camera states** (a pure state machine in `apps/desktop/src/workshop/camera.rs`, eased moves of 0.6 s, no cuts):
+  - *Overview* (on entering): stand and wall in view, focus on the bike on the stand.
+  - *Wall*: the camera pans along the wall to the focused bike (left / right step one hook; the focused bike gets a rim light and its card grows: name, bike type and profile, weight, value in hearts).
+  - *Stand*: close to the bike on the stand, orbit around it (all devices, §3.2.2), zoom 0.8–4 m, the part hotspots shown.
+  - *Part*: flies to the selected part (framed at a third of the screen, the part picker on the right).
+  - *Mirror*: the changing corner with the rider in front of the mirror (4C).
+- **Choosing a bike:** in Overview and Wall, **left / right** cycle through the owned bikes (on the stand first, then the hooks left to right; wrap-around); **Confirm** on a wall bike plays the swap (1.2 s: the stand's bike is lifted back onto its hook, the chosen one taken down and clamped on the stand) and makes it the active rider's bike (`riders.edit NAME --bike-id ID`); Confirm on the stand bike goes to *Stand*. Up / Down move between the zones *wall*, *stand*, *mirror*, *bench* (spatial: up = wall, right = mirror, left = bench, down = stand), so a gamepad never needs a pointer. Mouse / touch: click / tap a bike on the wall (the same swap), a click on the stand bike goes to *Stand*; swipe left / right anywhere on the wall cycles.
+- **When a change applies:** today a bike or look applies from the next start (v2.7, decided: the server has no message to change a rider's profile mid-session). Proposal: a new reliable **`BikeChange`** client message (bike id, frame and part ids, look; additive, §6.2) sent when the workshop closes; the server validates it (catalogue ids, ownership, 4E, event lock) and applies it at once in free ride and outside events, from the next start of an event otherwise (riders in a running event keep their bike: no pit stops in v1). This replaces the "next start" rule when accepted (Q1).
+
+#### 4B – Parts on the bike: hotspots, picker, compare, buy / equip
+
+- **Part slots** (the components of §2.5 and §8.2, one hotspot each, its anchor a node in every bike model – the generator adds `hs_<slot>` empty nodes, the validator requires them): `frame` (frameset: frame and fork, decides the physics profile, 4G), `wheels` (pair), `tyres` (pair), `groupset` (shifters, derailleurs, brakes; cranks, cassette and chain as their own slots below, so they can be upgraded alone), `crankset` (cranks and chainrings; optional power meter as a variant), `cassette`, `chain`, `cockpit` (handlebar and stem, or the integrated bar; TT: base bar and extensions), `bar_tape` (road / gravel; grips on the MTB), `saddle`, `seatpost`, `pedals`, `bottle_cages` (0–2), `lights` (front and rear set), `computer` (head unit and its out-front mount), `bag` (top-tube or saddle bag), `paint` (the paint slots of the frame, the kit stays on the character, 4C). The slots a bike type has come from its frame (no bar tape on an MTB, no extensions on a gravel bike); events may forbid bags and lights.
+- **Groupset and its parts:** a groupset bought as a whole also equips the crankset, cassette and chain of its tier (its price covers them, as the real groupset prices in 4H do); those three slots can then be changed alone (e.g. a crankset with a power meter).
+- **Hotspots:** small glowing markers (a dot with a slot icon, 4 mm at 1 m, drawn above the model with depth test off and an occlusion fade) at the `hs_*` anchors of the bike on the stand, visible in *Stand*. Selecting one: gamepad / keyboard by **directional navigation in screen space** (the next hotspot in the pressed direction, by the projected positions, recomputed when the camera moves; LB / RB or Q / E step through the slots in list order), mouse hover highlights and click selects (Bevy picking on the hotspot's sphere collider, `bevy_picking` mesh backend), touch tap (the hit circle is at least the touch minimum of §3.2.2, 9 mm, even when the marker is drawn smaller). The hotspot's name is shown next to it on focus ("Rear wheel – entry alloy wheelset"), so a hotspot is never icon-only.
+- **Part picker** (Bevy UI panel on the right, 40 % of the width, ten-foot sizes, §3.2.1): the slot's options in groups *equipped*, *owned* (spare parts in the inventory), *shop* (by tier, cheapest first); each row: name, tier badge, weight, price in hearts (or "owned" / "equipped"), a lock with the missing amount when the balance is too low; compatibility filters the list (4F: only parts that fit the frame's bike type and standards). The **detail card** of the focused row: the main figures (weight, and per kind: tyre width, rim depth, gear range, rolling-resistance class, aero class), the effect on the bike's physics in plain words and numbers against the equipped part ("−240 g · rolling resistance −8 % · ≈ +0.4 % speed at 250 W on the flat · ≈ −6 s on 5 km at 6 %"; computed by the server's physics code, 4G), and in races: "has no effect in Equal / Profile races".
+- **Live preview:** focusing a row puts that part on the bike on the stand at once (preview only, not bought; the camera keeps the part framed); leaving the picker restores the equipped part. Paint previews the colour on the frame.
+- **Compare:** North (Y / △) / C / long press pins the focused part as *A*; moving to another row shows both detail cards side by side with the differences coloured (better / worse, with a word, never colour alone); North again unpins.
+- **Actions** (West = X / □, or the buttons on the card; the confirmations are dialogs with *Cancel* focused, as for Restart):
+  - **Buy** (shop row): "Buy *Performance road tyres 28 mm* for 164 ♥? Balance 1,420 ♥ → 1,256 ♥" → the part is added to the inventory and equipped.
+  - **Equip** (owned row): moves the part from the inventory or from another of the rider's bikes ("now on the stand bike; the gravel bike gets its base part back").
+  - **Unequip:** back to the slot's **base part** (every frame comes with a free base part per slot, the entry tier, so a bike is always complete and rideable; the unequipped part goes to the inventory).
+  - **Sell:** for a share of the price paid (4E).
+  - **Repair** (with persistent damage only, Phase 12 Q6): shows the part's condition and the repair price.
+- **Paint and bar tape colours** stay free (cosmetic, today's palette and `#RRGGBB`; v2.7 look fields), special paint patterns (fades, metallic, team-style designs without brands) are paint "parts" with a price from real respray / paint-option prices (4H).
+
+#### 4C – Character editor: the changing corner
+
+- The **changing corner** to the right of the stand (mirror, bench, locker with kit on hangers) is the character editor of §2.6 in the same scene: the camera turns to it (*Mirror*), the rider stands in front of the mirror, seen from behind over the shoulder and in the mirror from the front (a planar reflection with a second camera at half resolution; on low graphics quality a direct front view instead).
+- **Slots:** body (height from the rider profile, build: slim / medium / strong), skin tone (a 12-step palette), face (a few presets), hair (style and colour), jersey, bib shorts / tights, socks, shoes, gloves, helmet, glasses, cap; the kit patterns of v2.7. Selection as for bike parts: the rider's hotspots (head, torso, legs, feet, hands) or LB / RB through the slot list, the picker panel on the right, live preview, compare.
+- **Kit costs hearts too** (proposal): helmet, shoes, glasses, gloves and clothing are priced from real prices like bike parts (4H, category *apparel*), all **purely cosmetic** (no aero helmet effect: the TT helmet stays a look, the TT profile already contains the position, §2.5). Body, skin, face and hair are **always free** (who someone is never costs anything). Every rider starts with a full base kit (Q4: or all apparel free).
+- **Poses:** the rider stands, turns with the orbit, and Confirm on *Try on the bike* puts the rider on the bike on the stand pedalling slowly (the riding animation of §2.6), to see bike and kit together.
+
+#### 4D – The bench: buying bikes and spare parts
+
+- **Buying a bike:** the "+" hook or the bench opens the catalogue of **framesets** (frame + fork, 4F) by bike type and tier; a bought frameset comes with the base parts (entry tier) and hangs on a new hook; it is then built up on the stand. *Complete builds* ("buy the frameset with the mid-tier groupset and wheels") are a convenience row that buys the frameset and the parts in one confirmation, at the sum of their prices (no discount, so the prices stay comparable).
+- **Spare parts:** the shelf lists the inventory (parts not on a bike): equip on the stand bike, sell, compare.
+- **Selling a whole bike** gives the frameset's and its non-base parts' share back and frees the hook; the last bike of the rider cannot be sold, and the six starter bikes (4E) cannot be sold.
+
+#### 4E – Hearts: economy (unit decided by the user; the rest a proposal)
+
+- **Unit (decided, 2026-11-13):** **1 heart (♥) = 1 EUR** of a part's real-world price; prices are **rounded up to whole hearts** (`hearts = ceil(price_eur)`, no cents anywhere). Shown as "1,239 ♥" with the heart glyph and the word "hearts" in screen-reader / tooltip text.
+- **No real money, ever (flag):** the user decided "no commercial release" (Phase 8 Q2, v2.44). Hearts are therefore **earned only by riding**; they cannot be bought, sold for money, transferred between accounts or cashed out, and there is no shop for them outside the game. "1 heart = 1 EUR" is a **price scale**, not an exchange rate. (A paid currency would bring consumer-protection, tax and loot-box rules and contradict the free / open project; it would need a new user decision.)
+- **Earning (proposal; measured from the server's accepted power, §6.1):**
+  - **Work:** **1 ♥ per 10 kJ** of mechanical work (≈ 72 ♥ for an hour at 200 W, ≈ 100 ♥ at 280 W). Work, not distance: it does not reward drafting, descending, a better bike or a faster profile (the rich would get richer), and it counts the same on a route, in free ride, in workouts and in ERG.
+  - **Climbing:** +1 ♥ per 20 m of elevation gained (a hilly hour ≈ +30 ♥), so the world's mountains pay a little extra.
+  - **Workouts:** +25 % of the workout's work hearts when it is completed (all steps, ≥ 90 % compliance).
+  - **Events:** finishing a race / group ride / time trial +20 ♥ (local events: +10 ♥), podium +30 / +20 / +10 ♥; never more for winning big (no snowballing).
+  - **Achievements** (Phase 7): one-off amounts, e.g. first 100 km 100 ♥, first 1,000 m climb in one ride 50 ♥, a world's every package route ridden 200 ♥, 7-day streak 70 ♥.
+  - **Daily first ride:** +10 ♥ for the first ride of the day of at least 20 min.
+  - **Caps:** at most **400 ♥ per day** from work and climbing (≈ 5 h at 200 W; more riding is fine, it just earns nothing more that day).
+  - **Never earned:** with **virtual power** (keyboard ↑, `sim.power`, the virtual trainer, §2.9 `dev`), in **god mode** (Phase 13: no distance, no hearts), by bots, in the kiosk / show mode, in captures (`--capture`), while the rider is *down* after a crash (Phase 12), and from rides flagged as implausible by §6.4 (held until reviewed).
+- **What things cost then (from 4H):** an hour at 200 W ≈ 70–100 ♥ (with climbing); a performance tyre pair ≈ 2 h, a mid-tier mechanical groupset ≈ 15–20 h, a top carbon wheelset ≈ 45 h, a top-tier frameset ≈ 60 h; a full top-tier race bike (≈ 15,000 ♥) ≈ 175 h – about a year at three to four hours a week. This follows the real market on purpose (decided scale), and the physics gain of a top bike is small and capped (4G), so it is a long-term goal, not a requirement.
+- **Starting state:** every rider starts with the **six starter bikes** (one per physics profile, today's models, entry-tier base parts, §2.5) on the wall, a full base kit, and **500 ♥** to try the shop at once. Riders who rode before hearts existed get hearts for their saved rides once (from the FIT files' work, at most 2,000 ♥, Q3).
+- **Selling:** an unused part (bought, never ridden – no ride of ≥ 1 km with it equipped) is refunded **in full**; afterwards **50 %** of the price paid, rounded down (`floor`), so selling never makes hearts. Base parts and starter bikes cannot be sold (they are free).
+- **Damage and repair (Phase 12):** with damage reset per ride (Phase 12 Q6 proposal), repairs are free and automatic – no hearts. If the user decides for persistent damage (Q6 career mode), a part's condition carries over and its repair costs `ceil(price_paid × (1 − condition) × 0.3)` ♥ (a part at 60 % costs 12 % of its price; frames and wheels may be "beyond repair" below 10 % and need replacing); a broken part is replaced by its base part until repaired, so the bike stays rideable. Damage never destroys hearts in non-persistent mode.
+- **Storage (server-authoritative):**
+  - *With the backend (Phase 5):* the **account** owns a hearts **ledger** (append-only table `hearts_ledger`: account, delta, reason – ride, workout, event, achievement, purchase, sale, repair, grant –, reference id, time; the balance is the sum, cached) and an **inventory** (`items`: item id, catalogue part id, price paid, bought at, condition, ridden flag; `bikes`: bike id, frame item, slot → item, look). Purchases are API calls (Axum, §9: `POST /workshop/purchase` with an idempotency key, a transaction that checks the balance, the catalogue price and the compatibility). Workshop actions are **not** on the QUIC game connection. Hearts for a ride are credited by the **game server** that hosted it (it saw the power stream), or for a ride on the local server from the uploaded ride summary after the §6.4 plausibility checks (power-duration curve, cadence, device trust level).
+  - *Before the backend (now):* a local wallet in the user data directory (`<data dir>/ocw/workshop.toml`: inventory and bikes per rider profile; `hearts-ledger.jsonl` append-only), written by the local server's ride results. It is **trivially editable** – accepted, since it only matters on the local server; on the first sign-in the local balance is imported once, capped (Q3).
+  - The client never sends physics or prices: it sends bike id and part ids; the server takes the physics from its own catalogue copy (4G) and – with accounts – checks ownership. An unknown or not-owned part counts as the base part.
+- **Console** (user level unless noted; the menu runs the same commands, §3.2.1): `hearts` (balance and the last ledger entries), `workshop.parts [SLOT]`, `workshop.buy PART [--bike ID]`, `workshop.equip ITEM [--bike ID]`, `workshop.unequip SLOT`, `workshop.sell ITEM`, `bikes.list`, `bikes.select ID`, `bikes.buy FRAME`; `hearts.grant N` (`dev`, local server only, for tests and screenshots).
+
+#### 4F – Compatibility and bike types
+
+- Each frameset has a **bike type** (road, TT, gravel, MTB) and a **profile family** (road: standard, aero or climbing; TT; gravel; MTB) – the physics profile of §2.5. Parts list the bike types they fit (`fits`) and, where it matters, a standard: drivetrain speeds (11 / 12 / 13), `mech` / `electronic`, road / MTB / gravel drivetrain family, brake type (rim / disc), wheel size (700c / 29"), tyre width range per frame (clearance), crank spindle family. The generated bikes are all disc-brake 12-speed except where §2.5 says otherwise (the `road` profile has rim brakes: it stays the only rim-brake frame). A part that does not fit is not offered for that bike; a groupset change replaces cassette and chain by matching base parts when they no longer fit.
+- Kept simple on purpose (no bottom-bracket or axle standards): the aim is believable choices, not a fitting simulator.
+
+#### 4G – Physics: parts within the curated profiles (fairness)
+
+**Tension (flag):** the user wants real parts with real prices that can be tuned and exchanged; real parts differ in weight, aerodynamics and rolling resistance. §2.5 decided that physics comes from **a small curated set of profiles**, cosmetics never change physics, and the difference between profiles is capped (±3 % speed at 250 W on the flat). Parts that make the bike faster turn hearts into speed: in multiplayer this would be "ride to win" (better-equipped riders win), and real-world part prices are not balanced for a game.
+
+**Proposal – bounded part effects on top of the frame's profile:**
+
+1. The **frameset decides the profile** (as the bike type does today): six profiles stay the only physics families, and the curated profile table stays the base on the server.
+2. Parts have **real weights** (grams) and, where they matter physically, a **class** on a few curated axes: `rolling` (tyres: classes −2 … +2, each ±4 % Crr), `aero` (wheels, cockpit, frame within its family: −2 … +2, each ±0.004 m² CdA), `efficiency` (groupset / chain: −1 … +1, each ±0.3 %). Classes, not free numbers: the server's catalogue copy maps them to values, the client never sends values (as for profiles, v2.7).
+3. The server computes the build: bike mass = the frameset's base mass + Σ (part weight − base part weight), Crr / CdA / efficiency = profile value adjusted by the class steps; then **clamps the whole build** to the frame's profile band: at 250 W, 75 kg on flat asphalt the best possible build of a profile is at most **+1.5 %** faster and the base build is the profile itself (so upgrades are a small, visible but never decisive gain); on a 6 % climb at most +2.5 %; a mass floor of 6.8 kg (road, TT, gravel; the UCI limit, also realistic), 9.0 kg for MTB. The caps are unit-tested like the profile caps (§2.5).
+4. **Race modes** (extends §2.5): *Open* – profile and parts count; ***Profile*** (new, proposed default for races and group rides) – the frame's profile counts, parts are cosmetic (everyone on a "road – aero" frame is equal, whatever their wheels cost); *Equal* – one profile for all. The organiser (or the host) chooses, shown in the event's info. Free ride, workouts and single player use *Open*. Time trials against the own ghost: *Open*.
+5. **Hearts are earned only from work, not speed** (4E), so better parts never earn faster.
+
+Options considered: parts purely cosmetic (fairest, but then weights and prices mean nothing, which loses the point of the user's request); parts changing physics freely (real but pay/ride-to-win, and unbalanced by real prices); **bounded effects + Profile mode for races (proposed)** (Q2).
+
+#### 4H – Part price catalogue: research (2026-11-13)
+
+**Brands (decided, Phase 8 Q11):** no real brands or logos in the game. In-game parts are **generic and unbranded** ("Race 12-speed electronic groupset, top tier"); each part's price is the **median of real reference products** of the same kind and tier (manufacturer RRP / UVP in EUR including VAT; a street price only where no RRP was found, marked), rounded **up** to whole hearts. The brand names below are research data in the spec and in the sources file only; they never appear in the game, the assets or the UI.
+
+Research of 2026-11-13 (web search by agents; most brands publish no EUR prices on their own sites, so most figures are the manufacturer's RRP / UVP **as shown by EU retailers**). Type: **R** = manufacturer list or launch RRP, or a UVP shown by a retailer; **R\*** = list price reported by a third party (magazine, price tracker, retailer "regular price"), not verified on the brand's page; **S** = street price (only where no RRP was found). Sources: *SRAM-25* = SRAM MSRP price list 2025 (EUR incl. VAT, slowtwitch.com, component sums added by us); *BR* = BikeRadar launch / review articles; *bc* = bike-components.de product pages (UVP); *Rose* = rosebikes.de / .com product pages (UVP); *Mantel* = mantel.com RRP; *99s* = 99spokes. The full list with URLs goes into `assets/parts-sources.toml`. Median of all references of a tier (two references: their mean); **♥ = ceil(median)**; pairs (tyres) = ceil(2 × median per tyre).
+
+| Category / tier | References (EUR, type, source) | Median € | ♥ |
+|---|---|---|---|
+| **Road groupset** entry, 11–12 s | Shimano Tiagra R4000 (sum of parts, 2026) 633 R (BR); SRAM Apex XPLR AXS 1x12 1,269 R (Mantel) | 951 | **951** |
+| mid, mechanical | Shimano 105 R7100 1,183 R (BR, parts); Campagnolo Chorus 12 1,699 R (Mantel; launch 1,819) | 1,441 | **1,441** |
+| mid, electronic | Shimano 105 Di2 R7170 1,869 R (BR, Mantel); SRAM Rival AXS E1 1,765 R (SRAM-25) | 1,817 | **1,817** |
+| upper, electronic | Shimano Ultegra Di2 R8170 2,549 R (Mantel); SRAM Force AXS E1 2,423 R (SRAM-25); Campagnolo Record 13 2,699 R (2026) | 2,549 | **2,549** |
+| top, electronic | Shimano Dura-Ace Di2 R9270 3,999 R (Mantel); SRAM Red AXS E1 4,135 R (BR 2024); Campagnolo Super Record 13 4,300 R (2025) | 4,135 | **4,135** |
+| **Gravel groupset** mid | SRAM Apex XPLR AXS 1,269 R (Mantel); SRAM Rival XPLR AXS E1 1,560 R (SRAM-25) (Shimano GRX RX820 only S 819–849, not counted) | 1,415 | **1,415** |
+| top | Shimano GRX Di2 RX825 2,479 R (Mantel); SRAM Force XPLR AXS E1 2,135 R (SRAM-25); Campagnolo Super Record X 3,375 R | 2,479 | **2,479** |
+| **MTB groupset** (with brakes) entry | Shimano Deore Di2 M6250 650 R (Mantel); SRAM Eagle 90 T-Type 730 R (bc) | 690 | **690** |
+| mid | Shimano XT M8100 980 R, XT Di2 M8250 1,240 R (Mantel); SRAM GX Eagle Transmission 1,300 R (BR) | 1,240 | **1,240** |
+| top | Shimano XTR Di2 M9250 2,005 R (Mantel); SRAM XX Transmission 2,450 R; SRAM XX SL Transmission 2,650 R | 2,450 | **2,450** |
+| **Crankset** entry / mid / upper / top | Tiagra 135 R; 105 FC-R7100 175 R (Rose), Rival E1 220 R; Ultegra FC-R8100 295 R (Rose), Force E1 455 R; Dura-Ace FC-R9200 580 R (Rose), Red E1 785 R (BR) | 135 / 197.5 / 375 / 682.5 | **135 / 198 / 375 / 683** |
+| crankset with power meter (dual) | Shimano Ultegra FC-R8100-P 1,099 R, 4iiii Precision 3+ Pro 899 R (Rose); SRAM Force E1 spider 855 R (SRAM-25) | 899 | **899** |
+| **Power-meter pedals** dual | Favero Assioma Pro RS-2 699 R (BR); Garmin Rally 210 1,100 R (2025); Favero Assioma Duo 388 R (VAT basis unclear) | 699 | **699** |
+| **Cassette** 12 s entry / mid / upper / top | Tiagra 11 s 60 R; 105 CS-R7100 80 R, Rival XG-1250 132 R; Ultegra 115 R (unverified), Force XG-1270 215 R; Dura-Ace CS-R9200 340 R (Rose) | 60 / 106 / 165 / 340 | **60 / 106 / 165 / 340** |
+| **Chain** mid / top | 105 CN-M7100 37 R (Rose), Rival E1 50 R; Dura-Ace CN-M9100 73 R (Rose), Red Flattop 100 R | 43.5 / 86.5 | **44 / 87** |
+| **Wheelset** (pair) alloy entry | Fulcrum Racing 5 DB 400 R; Mavic Aksium Elite UST disc 299 R, Mavic Aksium 299 R (Rose) | 299 | **299** |
+| alloy mid | DT Swiss PR 1600 DB 600 R (Rose); Fulcrum Racing 3 DB 620 R\*; Mavic Ksyrium 30 Disc 437 R (Rose) | 600 | **600** |
+| carbon mid | DT Swiss ERC 1400 DB 45 2,050 R (Rose); Fulcrum Wind 42 DB 1,415 R (Mantel); Zipp 303 S 1,100 R (BR) | 1,415 | **1,415** |
+| carbon top, aero | DT Swiss ARC 1100 DB 50 2,500 R (Rose); Mavic Cosmic Ultimate 45 3,900 R (BR 2023); Zipp 454 NSW 4,400 R\* | 3,900 | **3,900** |
+| TT disc rear (single wheel) | Zipp Super-9 Disc 2,750 R (launch) – one reference | 2,750 | **2,750** |
+| gravel alloy / gravel carbon / MTB 29" alloy | DT Swiss GR 1600 600 R; DT Swiss GRC 1400 2,050 R; DT Swiss XM 1700 750 R (Rose) – one reference each | 600 / 2,050 / 750 | **600 / 2,050 / 750** |
+| **Road tyre** (per tyre) training | Continental Ultra Sport III 30.95 R; Schwalbe Lugano II 29.90 R (bc) | 30.43 | **61** pair |
+| performance | Continental GP 5000 S TR 94.95 R\*; Schwalbe Pro One Evo 78.90 R; Pirelli P Zero Race TLR 84.95 R; Vittoria Corsa N.EXT 69.95 R (bc) | 81.93 | **164** pair |
+| race / TT | Continental GP 5000 TT TR 108.95 R\*; Vittoria Corsa Pro Speed 94.95 R; Schwalbe Pro One TT 78.90 R (bc) | 94.95 | **190** pair |
+| **Gravel tyre** | Schwalbe G-One RS Pro 78.90 R; Continental Terra Speed 69.95 R; Pirelli Cinturato Gravel H 70.00 R | 70.00 | **140** pair |
+| **MTB tyre** 29" | Maxxis Rekon Race 59.90 R; Schwalbe Racing Ray 72.90 R; Continental Race King 43.95 R | 59.90 | **120** pair |
+| **Saddle** entry | Selle Italia X-Bow 60 R; Specialized Bridge Sport 40 S; Fizik Vento Argo X5 109 R | 60 | **60** |
+| mid | Fizik Vento Antares R5 109 R; Specialized Power EVO Comp 119 R; Selle Italia SLR Advan 3 150 R; Prologo Scratch M5 Tirox 129 R | 124 | **124** |
+| top, carbon | Fizik Antares R1 Adaptive 299 R; Prologo Scratch M5 CPC Nack 269 R; Selle Italia SLR Carbon 3 320 R; Specialized S-Works Power EVO Mirror 449 R\* | 309.5 | **310** |
+| **Cockpit** alloy bar + alloy stem | bars: Zipp Service Course 70 68 R, Deda Zero2 55 R, Ritchey Comp ErgoMax 56 R; stems: Ritchey Comp 4-Axis 54.40 R, Deda Zero2 54.95 R, PRO Vibe 110 R | 55.99 + 54.95 | **111** |
+| carbon bar + alloy stem | Zipp SL-70 Ergo 339 R; Deda Superzero RS 360 R; PRO Vibe Carbon 350 R (+ stem 54.95) | 349.95 + 54.95 | **405** |
+| integrated carbon | Black Inc bar/stem 679 R; PRO Vibe Evo 800 R; Deda Alanera RS DCR 539 S | 679 | **679** |
+| gravel flared bar + stem / MTB bar + stem | Zipp SC 70 XPLR 68 R, Ritchey VentureMax 59 R, PRO Discover 70 R / Renthal Fatbar Lite 95 R, Race Face Chester 60 R, Ritchey Comp Flat 40 R (+ stem 54.95) | 68 + 54.95 / 59.99 + 54.95 | **123 / 115** |
+| TT extensions | Profile Design Airstryke 2 198 R; Zipp Vuka Clip 173 R; Deda Superzero TT 220 R | 198 | **198** |
+| **Seatpost** alloy / carbon | Deda Zero2 65 R, Ritchey WCS 1-Bolt 104 R / Zipp SC SL 194 R, Roval Alpinist 240 R, PRO Vibe Superlight 300 R | 84.48 / 240 | **85 / 240** |
+| **Pedals** road entry / mid / top | Shimano 105 R7000 155 R, Look Kéo Classic 3 52 R, Time Xpresso 105 R / Ultegra R8000 165 R, Look Kéo 2 Max Carbon 112 R, Speedplay Comp 150 R / Dura-Ace R9100 255 R, Look Keo Blade Carbon 149 R, Speedplay Zero 230 R\* | 105 / 150 / 230 | **105 / 150 / 230** |
+| pedals SPD entry / mid | Shimano PD-M520 57 R, Crankbrothers Candy 1 65 R / Shimano XT M8100 135 R, Candy 3 150 R, Look X-Track Race Carbon Ti 210 R | 61 / 150 | **61 / 150** |
+| **Frameset** road alloy | Cannondale CAAD14 1,799 R\* (BR 2026); Specialized Allez Sprint 1,390 S; Blackheart Road AL 1,290 S (bc) | 1,390 | **1,390** |
+| road carbon mid | Giant TCR Advanced Pro 2,499 R\* (99s); Factor O2 Disc 2,839 R (bc); Cervélo Soloist 3,499 R\* | 2,839 | **2,839** |
+| road carbon top | Specialized S-Works Tarmac SL8 5,499 R\*; Cervélo R5 5,699 R\* (99s); BMC Teammachine SLR 01 4,999 R (BMC store); Trek Madone SLR Gen 8 5,059 R\* | 5,279 | **5,279** |
+| TT | Cervélo P5 5,999 R\*; BMC Speedmachine 01 Module 6,499 R (BMC); Giant Trinity Advanced Pro 3,499 R\* (2022) | 5,999 | **5,999** |
+| gravel carbon | Scott Scale Gravel RC 2,299 R\*; Cervélo Aspero 2,799 R\*; OPEN U.P. 2.0 4,500 S | 2,799 | **2,799** |
+| MTB carbon hardtail | Mondraker Podium 2,699 R\*; Trek Procaliber C Gen 3 3,999 R\*; Canyon Exceed CF SLX 1,799 R\* (2019, stale) | 2,699 | **2,699** |
+| **Bar tape** entry / mid | Fizik Tempo 19.90 R, Ritchey Comp Cork 19.99 R, Selle Italia Smart Tape 13 R / Supacaz Super Sticky Kush 41.90 R, Fizik Vento Tacky 39.90 R, Zipp SC CX 31 R | 19.90 / 39.90 | **20 / 40** |
+| **Bottle cage** (each) plastic / alloy / carbon | Elite Custom Race 15.60, Tacx Deva 14.99, SKS Topcage 9.99 / Elite Ciussi 13.95, Lezyne Power Cage 12.95, Supacaz Fly Cage 24.90 / Elite Vico Carbon 31, Ritchey WCS Carbon 64.40, Tacx Ciro 17.99 (all R) | 14.99 / 13.95 / 31 | **15 / 14 / 31** |
+| **Lights** front + rear (StVZO) | busch+müller Ixon Fyre + IXXI 79.90 R; Lezyne Micro 300 + KTV Drive 74.95 R; Knog Blinder 80 + Plus 99.99 R | 79.90 | **80** |
+| **Computer** entry / top | Garmin Edge 540 399.99 R, Wahoo Elemnt Bolt 3 329.99 R / Garmin Edge 1050 749.99 R, Wahoo Elemnt Roam 3 449.99 R | 364.99 / 599.99 | **365 / 600** |
+| out-front mount | K-Edge Max 65 R; Garmin aero mount 39.99 R; PRO stem mount 59.95 R | 59.95 | **60** |
+| **Top-tube bag** | Topeak Fuel Tank 42.95 R; Ortlieb Fuel-Pack 55 S; Apidura Racing Top Tube Pack ~62 S | 55 | **55** |
+
+**Notes on the research:** most brands' own pages show no EUR price or block automated access, so retailer-shown UVPs dominate; they can lag behind brand price changes or sit a little above the launch price (Ultegra Di2 at 2,549 vs. lower list prices elsewhere). Street prices for groupsets are currently 40–55 % below RRP – the catalogue uses RRP throughout, so in-game prices are "list prices". Gaps: no EUR RRP for Shimano GRX (only GBP and street), DT Swiss P 1800, Vision Metron 5D, Canyon framesets; framesets are the least certain tier (several R\* values) and are the first to re-check. Weights in 4I are typical catalogue values and are researched with the prices in the same file.
+
+**Refreshing prices:** never live scraping and no price API at runtime or build time (prices change rarely; scraping is fragile and against many shops' terms). The references live in `assets/parts-sources.toml` (per tier: product, brand, price, RRP or street, URL, date checked); prices are **re-researched by hand** about twice a year or when a catalogue tier is added (a person or an agent with web search fills in the file), and `cargo run -p ocw-assets -- parts reprice` recomputes the medians, applies `ceil` and rewrites the `hearts` of `assets/parts.toml`, printing the changes; the validator fails when `hearts ≠ ceil(median(sources))` or a source is older than 18 months (warning at 12). A price change never touches owned parts (refunds use the price paid).
+
+#### 4I – Catalogue file `assets/parts.toml` (schema and examples)
+
+Next to `assets/models/manifest.toml`, validated by `ocw-assets parts validate` (with the model and licence rules of §8.1). One `[[part]]` per catalogue entry:
+
+| Key | Type | Meaning |
+|---|---|---|
+| `id` | string | stable id, `<slot>.<kind>.<tier>` (never reused, §6.2 rule for ids) |
+| `slot` | enum | one of the slots of 4B (`frame`, `wheels`, `tyres`, `groupset`, `crankset`, `cassette`, `chain`, `cockpit`, `bar_tape`, `saddle`, `seatpost`, `pedals`, `bottle_cages`, `lights`, `computer`, `bag`, `paint`, apparel slots) |
+| `tier` | enum | `base`, `entry`, `mid`, `upper`, `top` |
+| `name` | string | generic English name, no brand (translations later) |
+| `hearts` | int | `ceil(median EUR)` of the sources; 0 for `base` |
+| `weight_g` | int | real typical weight (pair for wheels, tyres, pedals) |
+| `fits` | list | bike types: `road`, `tt`, `gravel`, `mtb` |
+| `standard` | table | optional: `speeds`, `shifting` (`mech` / `electronic`), `brake`, `wheel` (`700c` / `29`), `width_mm`, `family` |
+| `profile` | string | frames only: the physics profile id (§2.5) |
+| `rolling` / `aero` / `efficiency` | int | optional class steps (4G), default 0 |
+| `model` | string | glTF node set / file in `assets/models/manifest.toml` (generated, §2.5) |
+| `sources` | string | key into `assets/parts-sources.toml` (references, prices, dates) |
+| `priced` | date | date of the research the price comes from |
+
+Example entries (TOML):
+
+```toml
+[[part]]
+id = "groupset.road-electronic.top"
+slot = "groupset"
+tier = "top"
+name = "Race 12-speed electronic groupset"
+hearts = 4135                      # ceil(median 4,135.00)
+weight_g = 2450
+fits = ["road", "tt"]
+standard = { speeds = 12, shifting = "electronic", brake = "disc", family = "road" }
+efficiency = 1
+model = "groupset-electronic-top"
+sources = "groupset.road.top"
+priced = 2026-11-13
+
+[[part]]
+id = "tyres.road.performance"
+slot = "tyres"
+tier = "upper"
+name = "Performance road tyres 28 mm (pair)"
+hearts = 164                       # ceil(2 × median 81.93)
+weight_g = 540
+fits = ["road", "tt"]
+standard = { wheel = "700c", width_mm = 28 }
+rolling = -1
+model = "tyre-road-slick-28"
+sources = "tyres.road.performance"
+priced = 2026-11-13
+
+[[part]]
+id = "frame.road-aero.top"
+slot = "frame"
+tier = "top"
+name = "Aero race frameset, carbon"
+hearts = 5279
+weight_g = 1250
+fits = ["road"]
+profile = "road-aero"
+aero = 1
+model = "bike-road-aero"
+sources = "frame.road.top"
+priced = 2026-11-13
+```
+
+The first catalogue (about 30 entries; base parts at 0 ♥ for every slot and bike type come in addition; weights typical, to be confirmed with the research):
+
+| id | Name (in game) | ♥ | Weight | Fits | Classes |
+|---|---|---|---|---|---|
+| `frame.road.mid` | Alloy road frameset | 1,390 | 1,650 g | road | profile `road` |
+| `frame.road.upper` | Carbon road frameset | 2,839 | 1,250 g | road | `road` |
+| `frame.road-climbing.top` | Lightweight climbing frameset, carbon | 5,279 | 950 g | road | `road-climbing` |
+| `frame.road-aero.top` | Aero race frameset, carbon | 5,279 | 1,250 g | road | `road-aero`, aero +1 |
+| `frame.tt.top` | Time-trial frameset, carbon | 5,999 | 1,800 g | tt | `tt` |
+| `frame.gravel.upper` | Carbon gravel frameset | 2,799 | 1,350 g | gravel | `gravel` |
+| `frame.mtb.upper` | Carbon cross-country hardtail frame | 2,699 | 1,500 g | mtb | `mtb` |
+| `groupset.road-mech.entry` | Endurance 11-speed mechanical groupset | 951 | 2,950 g | road | |
+| `groupset.road-mech.mid` | Endurance 12-speed mechanical groupset | 1,441 | 2,700 g | road, tt | |
+| `groupset.road-electronic.mid` | Endurance 12-speed electronic groupset | 1,817 | 2,850 g | road, tt | |
+| `groupset.road-electronic.upper` | Race 12-speed electronic groupset, upper tier | 2,549 | 2,600 g | road, tt | efficiency +1 |
+| `groupset.road-electronic.top` | Race 12-speed electronic groupset | 4,135 | 2,450 g | road, tt | efficiency +1 |
+| `groupset.gravel.mid` | Gravel 1×12 electronic groupset | 1,415 | 2,800 g | gravel | |
+| `groupset.gravel.top` | Gravel electronic groupset, top tier | 2,479 | 2,550 g | gravel | efficiency +1 |
+| `groupset.mtb.mid` | Trail 1×12 groupset | 1,240 | 2,500 g | mtb | |
+| `groupset.mtb.top` | Cross-country 1×12 electronic groupset | 2,450 | 2,200 g | mtb | efficiency +1 |
+| `crankset.road.power` | Road crankset with dual power meter | 899 | 720 g | road, tt, gravel | (cosmetic) |
+| `wheels.road-alloy.entry` | Alloy training wheelset | 299 | 1,900 g | road, tt | |
+| `wheels.road-alloy.mid` | Alloy performance wheelset | 600 | 1,600 g | road, tt | |
+| `wheels.road-carbon.mid` | Carbon 45 mm wheelset | 1,415 | 1,450 g | road, tt | aero +1 |
+| `wheels.road-carbon.top` | Carbon 50 mm race wheelset | 3,900 | 1,350 g | road, tt | aero +1 |
+| `wheels.tt.disc` | Disc rear wheel (with 80 mm front from the set) | 2,750 | 1,000 g | tt | aero +2 |
+| `wheels.gravel.carbon` | Carbon gravel wheelset | 2,050 | 1,450 g | gravel | |
+| `tyres.road.training` | Training road tyres 28 mm | 61 | 640 g | road, tt | rolling +1 |
+| `tyres.road.performance` | Performance road tyres 28 mm | 164 | 540 g | road, tt | rolling −1 |
+| `tyres.road.race` | Time-trial tyres 25 mm | 190 | 460 g | road, tt | rolling −2 |
+| `tyres.gravel.fast` | Fast gravel tyres 40 mm | 140 | 900 g | gravel | rolling −1 |
+| `tyres.mtb.xc` | Cross-country tyres 29 × 2.25" | 120 | 1,300 g | mtb | rolling −1 |
+| `cockpit.road.carbon` | Carbon handlebar and alloy stem | 405 | 420 g | road | |
+| `cockpit.road.integrated` | Integrated carbon aero cockpit | 679 | 380 g | road | aero +1 |
+| `cockpit.tt.extensions` | Clip-on aero extensions | 198 | 450 g | road | (cosmetic on road; TT position is in the `tt` profile) |
+| `saddle.road.top` | Short-nose carbon saddle | 310 | 160 g | road, tt, gravel | |
+| `seatpost.carbon` | Carbon seatpost | 240 | 190 g | road, gravel, mtb | |
+| `pedals.road.top` | Carbon road pedals | 230 | 230 g | road, tt | |
+| `pedals.spd.mid` | Two-sided off-road pedals | 150 | 340 g | gravel, mtb | |
+| `bottle_cages.carbon` | Carbon bottle cage (each) | 31 | 20 g | all | |
+| `lights.set` | Front and rear light set | 80 | 120 g | road, gravel, mtb | |
+| `computer.top` | Large-screen bike computer with out-front mount | 660 | 210 g | all | (cosmetic: HUD bike-computer skin) |
+| `bar_tape.mid` | Thick tacky bar tape | 40 | 90 g | road, gravel | |
+| `bag.top_tube` | Top-tube bag | 55 | 150 g | road, gravel, mtb | aero −1 |
+
+#### 4J – Tests (spec §11.4: no step without tests)
+
+- **Catalogue:** `assets/parts.toml` parses; ids unique and stable (a fixture of earlier ids must still exist); `hearts == ceil(median(sources))` for every part; base parts cost 0 and exist for every slot and bike type; no brand names (a deny-list of the researched brands and their product names checked against `name`, `id` and the model names); every model reference resolves; sources not older than 18 months.
+- **Physics (`ocw_core::bike`, pure, wasm):** build mass / Crr / CdA / efficiency from parts; class steps; the build caps (best build ≤ +1.5 % on the flat, ≤ +2.5 % on 6 % against the profile; the mass floors); *Profile* and *Equal* modes ignore parts; unknown and not-owned parts count as base parts; the client's values are never used.
+- **Hearts (pure ledger model):** earning from work / climbing / workouts / events / achievements with the daily cap; zero with virtual power, in god mode, while down, for bots, in captures; balance = sum of the ledger; purchase rejects too low a balance, an incompatible part and a stale price (the server's price wins); idempotent purchase (the same key twice = one purchase); refunds (full before the first ride, 50 % floor after); repair prices; the one-time import cap. Server-side tests against an in-memory store; the API tests in Phase 5.
+- **Workshop model (Bevy-free, `apps/desktop/src/workshop/`):** zone and bike navigation (left / right wrap, up / down between zones), the camera state machine, the swap sequence, hotspot screen-space navigation (nearest in direction from fixed projections), picker groups and filters, preview / restore, compare, every action → expected console command line (as the menu, §3.2.1).
+- **Input on every workshop screen** with keyboard, mouse, gamepad and touch (§3.2.2: the same reachability tests as the menu pages); orbit / zoom with each device.
+- **Rendering:** headless screenshots (X11 + Wayland, `scripts/scenes.toml` scenes `workshop-overview`, `workshop-wall`, `workshop-stand-hotspots`, `workshop-picker`, `workshop-mirror`) and a short video of a bike swap and an orbit for the build history; all bikes with every part variant through the validator (triangle budget, nodes, `hs_*` anchors).
+
+#### 4K – Milestones (proposal)
+
+- **W1 – Scene:** generated workshop room, stand, wall hooks, the six starter bikes, camera states, bike choice with left / right and the swap, all four input devices; ride window.
+- **W2 – Parts:** `assets/parts.toml` and sources, `hs_*` anchors and part variants in the generator (wheels, tyres, cockpits, saddles, groupset looks …), hotspots, picker, live preview, compare; the local wallet and ledger, buy / equip / unequip / sell, console commands.
+- **W3 – Physics:** class steps and build caps on the server, `BikeChange` message, *Profile* race mode, the effect lines on the cards.
+- **W4 – Character corner:** mirror, body / skin / hair / kit slots, apparel prices, try on the bike.
+- **W5 – Backend (Phase 5):** account ledger and inventory, purchase API, crediting by game servers and from uploaded rides, the one-time import.
+- **W6 – Later:** persistent damage and repairs (if Phase 12 Q6 says so), achievements' hearts (Phase 7), translations.
+
+#### 4L – Open questions (for the user)
+
+- **Q1 – When changes apply:** at once when leaving the workshop (in free ride and outside events; new `BikeChange` message, proposal), or keep "from the next start" (v2.7)?
+- **Q2 – Physics of parts:** bounded effects (best build ≤ +1.5 % on the flat) with the new *Profile* mode as the default for races and group rides (proposal), or parts purely cosmetic?
+- **Q3 – Earning rate and start:** 1 ♥ per 10 kJ + 1 ♥ per 20 m climbing, 400 ♥ per day cap, 500 ♥ start, saved rides counted once up to 2,000 ♥ (proposal) – faster, slower, or a different measure (distance)?
+- **Q4 – Apparel:** kit (helmet, shoes, clothing, glasses) priced in hearts like parts (proposal; body, skin, hair always free), or all apparel free?
+- **Q5 – Touch on the kiosk:** does marge's screen (or any target screen) have a touchscreen to test on, or is touch tested only with synthetic events and on a Windows tablet / Steam Deck later?
 
 **Result:** Individually customizable riders.
 
@@ -2034,7 +2432,7 @@ Yes, usable imagery exists for both regions, at very high resolution and under o
 
 | Region | Source | Resolution | Licence (found) | Notes |
 |---|---|---|---|---|
-| Liechtenstein | **Orthophoto Liechtenstein** (Amt für Tiefbau und Geoinformation, geodaten.llv.li; listed on opendata.swiss for 2003 … 2025, 2025 = SwissImage) | 10–25 cm | varies by year: 2018 "Opendata BY – open use, source must be named"; older years non-commercial | GeoTIFF download and WMS; ATG holds the distribution rights for SWISSIMAGE and swissALTI3D in Liechtenstein |
+| Liechtenstein | **Orthophoto Liechtenstein** (Amt für Tiefbau und Geoinformation, geodaten.llv.li; listed on opendata.swiss for 2003 … 2025, 2025 = SwissImage) | 10–25 cm | varies by year: 2018 "Opendata BY – open use, source must be named"; older years non-commercial. **Checked 2026-11-13:** 2025 (10 cm, summer flight, published 2026-02-12) is "Opendata BY" on opendata.swiss – used (T3). The WMS (service.geo.llv.li, layer `li.atg.orthophoto2025`) says "service free for non-commercial use, datasets tagged OpenData under CC BY": we only fetch the open dataset through it | GeoTIFF download and WMS; ATG holds the distribution rights for SWISSIMAGE and swissALTI3D in Liechtenstein |
 | Liechtenstein / Switzerland | **swisstopo SWISSIMAGE 10 cm** | 10 cm (plains, main valleys), 25 cm (Alps) | OGD: open use, source must be named (central attribution accepted) | also **swissALTI3D** (0.5–2 m terrain) for a better DEM than SRTM |
 | Black Forest (Baden-Württemberg) | **LGL DOP20** (digital orthophotos) via opengeodata.lgl-bw.de | 20 cm | **dl-de/by-2.0**, free of charge since 2024-06-09 | also **DGM1** (1 m terrain) as open data since 2024; **LoD2 building models**: open-data status unclear (an LGL price list exists) → Q8 |
 | Europe / world | **Copernicus Sentinel-2** L2A scenes (Copernicus Data Space) | 10 m | Copernicus Sentinel data licence: free, full and open, attribution | we build **our own** cloud-free summer median composite, so no third-party mosaic licence applies |
@@ -2052,7 +2450,7 @@ Yes, usable imagery exists for both regions, at very high resolution and under o
    - **Road surface and markings:** asphalt tone from the orthophoto along the road; OSM `surface`, `lanes`, `width` as today.
 3. **Optional orthophoto drape near the road:** a corridor of about ±50 m around ridden roads at 0.4–0.5 m/pixel, blended with the materials at mid distance (never as the close-up texture, see §4.6). Estimate: 1 km of road ≈ 0.4 Mpx ≈ 50–100 KB as KTX2/Basis; Liechtenstein's network (≈ 600–800 km) ≈ 30–80 MB. To be measured (Q4).
 
-**Tenerife (v2.42):** the Spanish **PNOA** orthophotos (25 cm, IGN / GRAFCAN, CC BY 4.0 "PNOA cedido por © Instituto Geográfico Nacional", WMS / download centre) cover the Canary Islands, to be checked before use; GRAFCAN's own OrtoExpress services need an express authorisation and are not used. The island needs regional materials the other worlds do not: lava rock, volcanic ash / pumice, black sand, Canary pines, laurel forest, banana terraces (§4.7 "Tenerife").
+**Tenerife (v2.42):** the Spanish **PNOA** orthophotos (25 cm, IGN / GRAFCAN, CC BY 4.0 "PNOA cedido por © Instituto Geográfico Nacional", WMS / download centre) cover the Canary Islands (**checked 2026-11-13:** the IGN's WMS `pnoa-ma`, layer `OI.OrthoimageCoverage`, states "CC BY 4.0 scne.es", no fees; mosaics of different flights at 25–50 cm, Sentinel-2 only at small scales – used for T3 at 1 m); GRAFCAN's own OrtoExpress services need an express authorisation and are not used. The island needs regional materials the other worlds do not: lava rock, volcanic ash / pumice, black sand, Canary pines, laurel forest, banana terraces (§4.7 "Tenerife").
 
 #### 8C – Research results: textures and models for close-up surfaces, houses, riders and bikes
 
@@ -2084,9 +2482,15 @@ Before a material, house style, tree, sign or bike part is designed, we look at 
 
 #### 8E – Pipeline and milestones (proposal)
 
-- **T1 – Material library:** CC0 PBR set (ground, road, roof, façade, bark, fabric), KTX2/Basis compression, manifest entries with licence / source / author, validator extension (no unknown licence, no NC/SA/ND), credits screen entries.
-- **T2 – Terrain materials:** splat map (§4.6) → tiling materials with triplanar mapping on slopes; regional tint maps from Sentinel-2 (own composite) / orthophoto; far LOD colour.
-- **T3 – Region calibration in the world builder:** orthophoto and Sentinel download per region (`fetch` scripts, licence table per source as for OSM/SRTM), palettes per land class, roof colour per building, forest type and density; package format extension (new sections, only added fields).
+- **T1 – Material library:** CC0 PBR set (ground, road, roof, façade, bark, fabric), KTX2/Basis compression, manifest entries with licence / source / author, validator extension (no unknown licence, no NC/SA/ND), credits screen entries. **Done (v2.46)** for ground, roads and houses (17 materials, §4.6 "Material library"); bark and fabric come with T4 / T6. Credits: `CREDITS.md` and the console command `materials` (a credits page in the menu is still open).
+- **T2 – Terrain materials:** splat map (§4.6) → tiling materials with triplanar mapping on slopes; regional tint maps from Sentinel-2 (own composite) / orthophoto; far LOD colour. **Done (v2.46)** except the tint maps (T3; the hook is there): §4.6 "Terrain (T2)" and "Roads (T2)". Measured on marge (same build, Vaduz–Malbun km 1.6, 1280×720, `--no-vsync`, two interleaved 40 s runs each, machine shared with other builds): AMD Radeon RX Vega 250–360 fps with the library vs. 67–92 fps with `OCW_MATERIALS=off` (the flat path is not slower by its shaders: a per-frame mutable access to the road material assets was found and removed; the remaining difference is not understood yet), software Vulkan (lavapipe, the headless tests) 2.7–3.7 fps either way (no measurable cost). Within the budget.
+- **T3 – Region calibration in the world builder:** orthophoto and Sentinel download per region (`fetch` scripts, licence table per source as for OSM/SRTM), palettes per land class, roof colour per building, forest type and density; package format extension (new sections, only added fields). **Done (v2.47) except forest type and density** (Copernicus HRL, open) and the orthophoto corridor (T7):
+  - **Sources** (`scripts/fetch-imagery.sh REGION [PACKAGE...]`, after the package is built: `world-builder imagery-cells` lists the 1 km cells of its tiles in the source's CRS; rows appended to `data/<region>/SOURCES.md`): Liechtenstein – Orthophoto Liechtenstein 2025 (SWISSIMAGE, Opendata BY) at 0.5 m, LV95, then swisstopo SWISSIMAGE 10 cm (OGD) where the first has no data; Black Forest – LGL DOP20 (dl-de/by-2-0, "LGL-BW (2026) Datenlizenz Deutschland – Namensnennung – Version 2.0, www.lgl-bw.de") at 1 m, UTM 32; Tenerife – IGN PNOA máxima actualidad (CC BY 4.0 scne.es) at 1 m, REGCAN95 / UTM 28N. All over the providers' official WMS (one GetMap per 1 km cell, JPEG, four at a time), so only what a package needs is downloaded: Liechtenstein 563 cells (Orthophoto Liechtenstein 471 MB, SWISSIMAGE 656 MB at 0.5 m), Black Forest south 2,932 cells (DOP20 735 MB at 1 m), Tenerife 2,866 cells (PNOA 473 MB at 1 m; 21 cells answered 5xx and came on a second run). Sentinel-2: Liechtenstein 22 MB (12 scenes per season, winter 84.5 % clear, gaps filled from summer), Black Forest 98 MB (48 scenes per season over 4 MGRS tiles; winter 89.6 %), Tenerife 174 MB (48 per season; 99.5 – 99.8 %).
+  - **Seasons** (`scripts/imagery.py seasonal`, GDAL): our own median composites of Copernicus Sentinel-2 L2A (Collection 1) true-colour COGs, clouds, cloud shadows, cirrus and no-data masked with the scene classification (kept: vegetation, bare, water, snow), the 12 clearest scenes per MGRS tile and season over 2023–2025: spring 1 Apr – 31 May (centre day 121), summer 15 Jun – 31 Aug (204), autumn 25 Sep – 10 Nov (291), winter 1 Dec – 28 Feb (14), at 20 m. Read from the AWS Open Data copy (Earth Search STAC, no account); the Copernicus Data Space Ecosystem has the same products but needs an account (open question for the user). Notice: "Contains modified Copernicus Sentinel data 2023-2025". No EOX mosaics (NC-SA).
+  - **Builder** (`world-builder calibrate --world PKG --imagery DIR --pbf OSM`, run by the build scripts when `imagery/packages.txt` lists the package; `ocw-worldgen::imagery`, `::calibrate`): local metres → CRS by an affine map fitted per tile (exact to well under a centimetre over 1 km), orthophoto cells decoded with a small cache per thread, all cores. Measured palettes: Liechtenstein meadow #5f744d, forest #374335, scree #97958e, paved roads #969899, roofs #706c67; Black Forest meadow #5f634f, farmland #6f7856, forest #3a4138, paved roads #958e88, roofs #766c6b; Tenerife meadow #615d5a (the pumice of Las Cañadas, which OSM tags as meadow, no longer olive), rock #524b47, forest #393c3a, paved roads #606061, roofs #a38f85. Calibration time and peak memory on marge: Liechtenstein 35 s / 2.1 GB, Black Forest south 238 s / 3.9 GB, Tenerife 72 s / 2.2 GB.
+  - **Package cost:** Liechtenstein +4.9 MB (+16 %), Black Forest south +26.1 MB (+10 %), Tenerife +23.1 MB (+9.7 %), almost all of it the seasonal maps; the raw imagery stays in the git-ignored `data/<region>/imagery/` (1.1 GB, 0.8 GB, 0.6 GB). The orthophoto corridor (T7, accepted in Q4) is not built yet: plan – sample the same orthophoto cells along the ridden roads (±50 m at 0.5 m, every route edge), store per tile a JPEG/KTX2 strip atlas in a new section `ORTC` and blend it in the ground shader between the near textures and the colour map (estimated 30–80 MB for Liechtenstein).
+  - **Renderer:** §4.6 "Region calibration (T3)". Comparison renders (scene harness, `look-*` scenes): Vaduz roofs, Malbun meadows, Black Forest farms and forest, Las Cañadas, and the Malbun road in summer / autumn / winter by the time machine.
+  - **Tests:** palette extraction on synthetic images (interior cells, roads and houses masked, Sentinel fallback), roof sampling (erosion, courtyards, no data, small sheds, `roof:colour` precedence and parsing), seasonal weights by day of year (cyclic, sums to 1), tint-map codec, gap filling, section round trips with old readers skipping them, the imagery readers on fixtures (no network), manifest credits of the imagery, the renderer's tints, roof colours and the date-blended far map.
 - **T4 – Houses:** procedural façades and roof shapes from OSM tags with regional style presets; roof colour from T3; LOD.
 - **T5 – Roads:** surface materials, markings, kerbs and sidewalks in towns, wear and patches.
 - **T6 – Riders and bikes:** procedural fabric / carbon / metal / rubber materials on the Phase 4 models, jersey designer (patterns, colours, number), helmet and shoe variants.
@@ -2148,7 +2552,7 @@ The date drives the look of the landscape (connects to Phase 8, Q5):
 - **Vegetation:** deciduous trees (by forest type, Phase 8) leaf out in spring, are green in summer, colour in autumn and are bare in winter; conifers stay green. Meadows and fields follow a crop calendar (green → yellow → harvested / ploughed). Timing shifts with latitude and **altitude** (spring arrives later at 1 600 m in Malbun than at 450 m in Vaduz): a phenology model with simple degree-day rules, tunable per region.
 - **Snow cover:** snow line by date and altitude (climatology) or, with real weather, from the actual snow (9F); snow on roofs, trees, meadows; roads cleared (they stay rideable).
 - **Day length and sun height** follow automatically from 9B.
-- **Imagery:** Phase 8 tints come from summer imagery; seasons modify them by rules. Optional per-season tints from Sentinel-2 composites (Q5 of Phase 8).
+- **Imagery:** Phase 8 tints come from summer imagery; seasons modify them by rules. Optional per-season tints from Sentinel-2 composites (Q5 of Phase 8). **Basis done (v2.47, T3):** every calibrated package has spring / summer / autumn / winter tint maps from our own Sentinel-2 medians, blended by the world date (`ocw_world::look::season_weights`: linear between the composites' centre days, cyclic over the year); the near materials follow the classes' seasonal colours. Still open: snow by altitude and date near the rider (the winter composite whitens the far ground where it was snowy most of the winter), deciduous trees, crop calendar.
 
 #### 9D – Time machine
 
@@ -2297,6 +2701,7 @@ Attribution of the provider used appears on the credits screen and in the weathe
 - **Devices:** `WebBluetoothBackend` implements `DeviceBackend` on top of the pure `ocw-devices` protocol state machine (`gatt`, `ble::protocol`). Only the `GattLink` is new (navigator.bluetooth via `web-sys`). The user grants device access per page (browser chooser).
 - **Captures:** screenshots from the canvas as JPEG q90 with EXIF date and time written by our own encoder step. Videos via MediaRecorder / WebCodecs with game audio mixed in. The ISO timestamp is in the HUD top right (art project §2.1).
 - **Settings and rides:** settings in browser storage, with account sync via the backend (Phase 5). FIT export as a download; Strava upload through the backend (§2.8).
+- **Input:** the input model of §3.2.2 as on the desktop; touch is the main input on phones and tablets (the touch overlay in a ride, touch-mode hit targets everywhere), pointer events via `bevy_picking` as on the desktop.
 - **Hosting:** static app + package CDN + game server endpoints, behind the same domain as the web companion. Single sign-on with the account (OIDC, §9). COOP / COEP headers for wasm threads. A strict CSP.
 
 #### 10C – Performance budget
@@ -2370,7 +2775,7 @@ Attribution of the provider used appears on the credits screen and in the weathe
   - a **head-locked minimum** (critical warnings only);
   - **panels** for menus, workouts, the event leaderboard and junction arrows at road level ahead;
   - the ISO timestamp on the mirror view.
-- **Input in VR:** hands are on the handlebar, so the main inputs are the **trainer / sensors** (power, cadence) and **steering by leaning the head** (optional, mapped to the existing lean steering, §5.2.1), handlebar buttons (BLE remotes, later), gamepad, voice commands (later), and controller pointer for menus (gaze + click as a fallback).
+- **Input in VR:** hands are on the handlebar, so the main inputs are the **trainer / sensors** (power, cadence) and **steering by leaning the head** (optional, mapped to the existing lean steering, §5.2.1), handlebar buttons (BLE remotes, later), gamepad, voice commands (later), and controller pointer for menus (gaze + click as a fallback); the controller ray is one more pointer of the input model (§3.2.2), so menus and the workshop scene need no VR-specific pages.
 - **Comfort** (motion sickness is the main risk; on a trainer pedalling helps, since the vection matches effort):
   - stable horizon (no camera roll with the bike's lean by default);
   - no head bob;
@@ -2394,7 +2799,8 @@ Attribution of the provider used appears on the credits screen and in the weathe
 | Meta Quest 2 / 3 / 3S / Pro (Link / Air Link) | Meta PC app (OpenXR) | Windows | target |
 | Meta Quest (Steam Link / Virtual Desktop) | SteamVR / VD | Windows | target |
 | Meta Quest (WiVRn / ALVR) | WiVRn / ALVR (OpenXR) | Linux | target |
-| Oculus Rift / Rift S | Meta PC app (OpenXR) | Windows | supported (legacy hardware) |
+| Oculus Rift (CV1, first generation) | Meta PC app (OpenXR) | Windows | **primary development headset** (v2.48) |
+| Oculus Rift S | Meta PC app (OpenXR) | Windows | supported (legacy hardware) |
 | Valve Index, HTC Vive / Vive Pro, Bigscreen Beyond, Pimax | SteamVR | Windows, Linux | target |
 | Pico 4 (streaming) | Pico Connect / SteamVR / ALVR | Windows, Linux | target |
 | Varjo | Varjo Base (OpenXR) | Windows | best effort |
@@ -2405,7 +2811,7 @@ Attribution of the provider used appears on the credits screen and in the weathe
 
 #### 11D – Milestones (proposal)
 
-- **X1 – Spike:** an OpenXR session from Bevy 0.20, comparing a port of `bevy_mod_openxr` with our own thin integration. A stereo view of the test route with head tracking on SteamVR (Linux, Monado / WiVRn) and the Meta runtime (Windows). Measure the frame time. Decide on the integration (spec entry).
+- **X1 – Spike:** an OpenXR session from Bevy 0.20, comparing a port of `bevy_mod_openxr` with our own thin integration. A stereo view of the test route with head tracking on the **Oculus Rift CV1** via the Meta runtime (Windows) first, then SteamVR / Monado (Linux) as a second runtime check. Measure the frame time. Decide on the integration (spec entry).
 - **X2 – Riding in VR:** `--vr`, first-person camera on the bike, own body with IK, recentre, mirror view, VR quality preset, captures from the mirror.
 - **X3 – VR HUD and menus:** bike computer on the stem, world-space menus with controller / gaze input, junction arrows in the world.
 - **X4 – Comfort:** vignette, horizon lock, fades, calibration, settings page *VR comfort*.
@@ -2431,12 +2837,186 @@ Attribution of the provider used appears on the credits screen and in the weathe
 
 #### 11E – Open questions (for the user)
 
-- **Q1 – Which headsets do you have** (or can borrow) for testing? The spike needs at least one real headset; Monado covers CI only.
+- **Q1 – decided (v2.48):** an **Oculus Rift CV1** (first generation) is the development and test headset, on Windows through the Meta PC app's OpenXR runtime (the CV1 has no usable Linux runtime, so VR testing runs on Win11Builder or another Windows PC with the Rift; Monado covers CI). Development stays OpenXR-only, so other headsets need no vendor code. CV1 specifics to design for: 2160×1200 total (1080×1200 per eye), 90 Hz, 3-DoF+ constellation tracking with external sensors (USB 3.0), Oculus Touch controllers; frame budget 11.1 ms, asynchronous spacewarp as fallback at 45 Hz.
 - **Q2 – Linux VR:** target it (SteamVR / Monado / WiVRn, works with Index and with Quest via WiVRn), or Windows first?
 - **Q3 – Integration:** fork / port `bevy_mod_openxr` to Bevy 0.20 (faster, external dependency that lags Bevy), or our own thin OpenXR layer (more work, fully under our control)? Decided after X1.
 - **Q4 – Head-lean steering:** wanted, or keep steering on keys / gamepad / autodrive?
 - **Q5 – Native standalone (Quest / Pico store) and WebXR:** later, or not at all?
 - **Q6 – Priority:** where does VR go relative to Phases 8–10?
+
+### Phase 12 – Collisions, crashes and damage (planning, 2026-11-13)
+
+**Goal:** riders and world objects become solid. Riders who touch each other or an object are slowed down (soft bump) or crash and fall (hard hit). Autodrive avoids collisions by itself; with manual steering the rider has to avoid them. An optional damage model adds injuries to the rider and damage to the bike, shown by a damage indicator. Both are **switchable globally** (on / off).
+
+#### 12A – Switches (decided by the user, 2026-11-13)
+
+- **`ride.collisions` (on | off):** off = today's behaviour: riders pass through each other and objects (only the road edge of §5.2.1 holds them). On = the collision model below. Proposal for the default: **on** (Q1).
+- **`ride.damage` (on | off):** only has an effect with collisions on. Off = bumps and crashes slow riders down and make them fall, but nothing accumulates. On = every hit adds to the rider's injury and the bike's damage (12E). Proposal for the default: **off** (Q1).
+- Both are settings in the registry (§3.2.1: section `[ride]`, scope *live*, console `set ride.collisions on`, Settings → Ride) and server session parameters. **The server decides** (server-authoritative, §6.1): on the local server they follow the rider's settings; in a shared session the host sets them (like the world switch, `ServerConfig.collision_access`: host / anyone / nobody); in **organiser-set events** (races, group rides on a remote server) the organiser sets them per event, like the weather (Phase 9 Q4), and riders cannot change them. Sent in `Welcome` and `EventState` (additive fields, §6.2), shown in the event's info ("collisions on, damage off").
+- **Exempt from collisions in every mode:** the time-trial ghost (a replay, §2.2), riders in the countdown formation (they stand still; collisions start with GO), spectators / camera, and riders whose client is reconnecting (they ride as ghosts until the next snapshot is acknowledged, so a lag spike cannot cause a crash).
+
+#### 12B – Collision model (server, `ocw-sim::collide`, pure, deterministic, wasm)
+
+- **Bodies.** A rider + bike is a footprint in the road's frame (§5.2: distance along the path `s`, lateral offset `d`): a rounded box **1.75 m long** (wheelbase + wheels, from the bike's physics profile, §2.5) and **0.5 m wide** (handlebar width), oriented by the rider's heading relative to the road. Inside the footprint the two **wheels** are marked: the front wheel (front 0.35 m) and the rear wheel (rear 0.35 m), because touching wheels is the classic way bunches crash.
+- **Riders against riders.** Riders on the same path segment are checked in the path frame (exact and cheap: a sort by `s`, only neighbours within 3 m are tested; O(n log n) for a bunch of 100). At junctions and on different edges of the free-ride graph (§2.2.1) the check uses world positions (x, z) projected onto the road plane, in a 4 m spatial hash. Contacts are resolved at the 50 Hz tick, after the physics step and before the broadcast.
+- **Riders against the world.** Static obstacles come from the world package: buildings (`BLDG` footprints), trees (trunk circles, 0.3–0.6 m), walls, fences, bollards, posts and barriers (OSM `barrier=*` nodes / ways, new additive section `OBST` in the package, written by the world builder with a 2 m corridor rule), tunnel walls and bridge railings (from the tunnel / bridge geometry, §4.8). On the road only a few of these are reachable (posts, barriers, bollards on paths); in **wild mode** (§5.2.1) every object is solid. The road edge keeps its scrape (§5.2.1); hitting it hard (steering into it at more than 30° to the road) counts as a hit on a wall.
+- **Impact strength.** For each contact the server computes the **closing speed** `v_c` along the contact normal (the relative velocity of the two bodies; for a static object the rider's own velocity), the **contact type** (side by side, wheel to wheel, front wheel into a rear wheel, head-on, object) and the impact energy `E = ½ · m_red · v_c²` (`m_red` = reduced mass of rider + bike; for a static object the rider's mass).
+- **Soft bump** (closing speed below the crash threshold): the two riders are pushed apart (lateral offsets separated to touching, no overlap), both lose speed by a share of the closing speed (an inelastic exchange of momentum: the faster rider slows down, the slower one is pushed a little), and the bikes **wobble** (a short lean oscillation of ±3–6°, 0.6 s). A touch from the side while riding parallel is the gentlest case (shoulder rub). The trainer feels it in SIM mode as a short resistance pulse (the speed loss as a brief grade increase; ERG unchanged).
+- **Hard hit = crash** when one of these holds (tunable, measured by tests):
+  - `v_c` ≥ **2.5 m/s** (9 km/h) rider against rider, or ≥ **3.5 m/s** (12.6 km/h) against a solid object;
+  - **front wheel into another rider's rear wheel** with a lateral overlap (wheel touch) at `v_c` ≥ 1.0 m/s, or at any speed while the rider leans more than 10° into the other rider (hooking a wheel);
+  - head-on (opposite directions, e.g. after a U-turn) at any speed above 1.5 m/s;
+  - a rider ridden into from behind at speed (the rider behind crashes, the one in front gets a soft bump unless the energy passes the threshold for them too).
+  Both riders in a hard rider-rider contact can crash; which one falls is decided by the contact type (the rider whose front wheel was hit falls; the rider hit in the rear wheel usually stays up), **deterministically** (no random numbers on the server, or a seed from the tick and the rider ids), so replays and the client's prediction agree.
+- **Chain crashes:** a fallen rider and bike lie on the road as an obstacle (footprint of the fallen bike, 1.8 m × 1 m, for the time they are down), so riders behind must steer around it or crash too – a pile-up in a bunch is possible, as on the road.
+
+#### 12C – Crash sequence
+
+- **States** (part of the rider state in snapshots, additive field `RiderUpdate.crash`): `Riding → Falling (0.8 s) → Down (2–8 s, by impact energy) → Remount (1.5 s) → Riding` from standstill (0 km/h; the rider accelerates again with the own power). Ride time continues (the ride never pauses, §3.2.1); in races the clock runs, no neutralisation unless the organiser sets one.
+- **Physics while down:** the rider's speed goes to 0 within the fall (sliding friction), power has no effect, autodrive's line is reset to the current lateral position. **Trainer:** SIM mode gets a flat road and the lowest resistance while the rider is down (so the legs keep spinning easily), ERG mode is held (the workout continues: crash or not, the plan is the plan; a workout may also pause its step, Q4).
+- **Rendering** (`ocw-render`): a scripted fall animation first (rider and bike tip over to the side of the impact, the bike slides and spins a little, the rider rolls and sits up), no physics engine; a **ragdoll** later (Q5). The bike lies apart from the rider. Remount: the rider picks up the bike and clips in. The chase camera shakes briefly and holds a wider orbit; in **VR** (Phase 11) the view never rolls or tumbles – a short fade to dark and back (comfort rule).
+- **Sound** (procedural, §3.3): a bump (body thud + tyre squeak), a crash (impact, metal scrape of the bike sliding, a fading spin of the free wheel), the remount clicks. Other riders' crashes are placed in space like their bike sounds.
+- **HUD:** "Crash!" with the time down counting; for others a crash marker over the fallen rider and a line in the event's feed (races: "R. Rider crashed at km 12.4").
+
+#### 12D – Avoidance: autodrive avoids, manual riders must avoid
+
+- **Autodrive (and every bot) avoids collisions by itself** (`ocw-sim::avoid`, the same code on server and client): every tick it looks ahead `max(4 s × speed, 15 m)` along the path for riders and obstacles in its lane. For each it computes the time to collision from the speed difference. When it falls below 3 s, autodrive **moves its line** to the free side (overtaking: the left side in right-hand traffic countries, the right side in left-hand traffic ones – from the package's region, §4.7; on narrow roads either side, keeping 0.6 m clear of the edge) with a smooth lane change (lateral speed ≤ 1 m/s, so it never cuts across another rider), and moves back once past. When both sides are blocked, autodrive **holds back**: it settles behind the rider in front at a 0.5 m wheel gap (drafting, §5.2), braking virtually (the speed above the one in front is shed, like coasting with brakes – the rider's power still counts, so a strong rider sits on the wheel until there is a gap). Junction exits and U-turns respect the same look-ahead. Autodrive never causes a collision by its own move; it can still be hit by a manually steered rider.
+- **Manual steering (autodrive off) and wild mode:** **no help** – the rider steers, and collisions happen as the model says. Two optional aids (settings, off in organiser races unless allowed): a **proximity cue** (a soft bell / tyre-hum sound and a HUD arrow when someone is within 1 m beside or 2 m in front) and a **"last moment" warning** (an amber flash 1 s before a predicted hit). Neither steers for the rider.
+- **Prediction (§6.1):** the client predicts its own rider's collisions with the last known positions of the others (interpolated, §6.5) and with static objects exactly; contacts with other riders are confirmed by the server, so a predicted bump the server did not see is reconciled away (small correction), and a crash is only shown when the server says so (no false falls from lag). Crash state, damage and the "who hit whom" record come only from the server.
+
+#### 12E – Damage model (with `ride.damage on`)
+
+- **Two meters, 0–100 %:** **rider condition** (injury) and **bike condition** (damage), both start at 100 % for each ride (no injuries carried over between rides; a persistent, "career" mode is Q6). Every hit takes off points by its impact energy and type:
+  - soft bump: 0–2 % rider, 0–2 % bike (a shoulder rub costs nothing, a wheel touch a little);
+  - crash: 5–25 % rider and 5–30 % bike, by energy and type (head-on and objects hit hardest);
+  - riding through a fallen bike, a kerb (hard edge hit) or a pothole later (Phase 8 surfaces): bike only.
+- **Injury levels** (rider condition) and their effects – the real rider's power is never touched; the effect is on the virtual rider:
+  - 100–70 % *bruised*: no effect;
+  - 70–40 % *hurt*: the virtual drivetrain loses 3–8 % of the power (the avatar rides stiffly), longer time down after a crash;
+  - 40–15 % *injured*: 10–20 % loss, the avatar rides with a visible limp / bandage, every further crash takes longer;
+  - below 15 % *badly injured*: the rider must stop – a **medical stop** of 60 s, then rides on at most 50 % effective power, or abandons (DNF in races; organiser option "DNF when badly injured").
+- **Bike damage** is per part, each with its own visible and physical effect, chosen by the impact (front / rear / side):
+  - **wheels** (true): a buckled wheel adds rolling resistance (+10–40 %), a visible wobble and a rubbing tick in the sound;
+  - **tyres:** a crash can cause a **puncture** (by energy, deterministic): the rider must stop for a 30 s repair, or ride on slowly (flat: rolling resistance ×4, speed capped at 15 km/h);
+  - **drivetrain** (derailleur, chain): efficiency loss 2–10 %, chain noise; a broken chain = stop for 45 s;
+  - **handlebar / brakes:** steering a little less precise (manual lean rate −20 %), autodrive unaffected;
+  - **frame / fork:** only from very hard hits; below 10 % bike condition the bike is **broken**: the rider waits for a spare bike (60 s, from the team car / neutral service in races) or the ride ends there.
+  - Damage shows on the bike model: scratches and scuffs (decals), a bent wheel, a dropped chain, a torn jersey and dust on the rider.
+- **Parts and hearts (v2.53, §14 Phase 4, 4E):** the damaged parts are the rider's own workshop parts (a damaged deep carbon wheel looks like one); with damage reset per ride (Q6 proposal) repairs are free and no hearts are lost; with a persistent mode a repair costs `ceil(price paid × (1 − condition) × 0.3)` hearts, and a broken part is replaced by the slot's free base part until repaired. A part's tier never changes its damage resistance (no paid durability).
+- **Recovery:** riding on does not heal; a **stop** (speed 0 for 30 s, or a "service" point in races) restores bike parts that the organiser allows; the rider recovers 1 % per minute of easy riding (below 50 % FTP). Restart, a new ride or a world switch reset both meters.
+- **Server and protocol:** damage is part of the server's rider state (`RiderUpdate.damage`: rider %, bike %, parts as a bit field, injury level), sent at 2 Hz and on every change; the event results show crashes and the final condition. FIT files get a lap / event marker per crash (developer field for the condition).
+
+#### 12F – Damage indicator (HUD)
+
+- A compact widget beside the bike computer: **two icons with bars** – a rider silhouette (condition %) and a bike silhouette (condition %) – each with its level word ("bruised", "hurt", "injured"; "scratched", "damaged", "broken"). Colours from the status palette (good / warning / serious / critical: green, amber, orange, red) and always an icon + word, never colour alone (accessibility). Parts with damage light up on the bike icon (wheel, tyre, chain, bars, frame), with a short label ("rear wheel buckled", "puncture: stop to repair").
+- **On a hit:** the affected icon flashes and the bar drops with an animation, the loss is shown for 2 s ("−12 % bike").
+- **Others:** in group rides and races a small damage dot next to riders in the standings / the rider list (amber / red), so the field sees who is hurt.
+- Hidden when `ride.damage` is off; with collisions off nothing collision-related is shown. Settings → HUD can hide the widget (the effects stay).
+- In VR (Phase 11) the indicator is part of the stem-mounted bike computer.
+
+#### 12G – Bots, events and other modes
+
+- **Bots** always use autodrive avoidance, so a field of bots never crashes by itself; they can be crashed by a human rider (and take damage). An option for **"chaotic" bots** that sometimes make mistakes (late reactions, wheel touches) for realism is Q3.
+- **Group rides:** collisions are a session setting (12A); proposal: group rides default to **soft bumps only** (crash threshold raised, no chain crashes), so a social ride is not ruined (Q2).
+- **Races:** organiser decides collisions, damage, neutral service (spare wheels / bikes and their delay), DNF rules and whether the proximity aids are allowed.
+- **Time trial:** no other riders, so only world objects (and the road edge) count.
+- **Workouts (ERG):** the workout continues; Q4 whether to pause the step while down.
+- **Kiosk / show mode:** collisions off (the show rider rides through the bots, as now).
+- **Strava / FIT uploads:** crashes are only markers; no injury data leaves the device unless the rider wants it.
+
+#### 12H – Tests (spec §11.4: no step without tests)
+
+- `ocw-sim::collide` unit tests: footprint overlap in the path frame and in world space; closing speed and contact types (side, wheel to wheel, front-to-rear, head-on, object); soft bump below the threshold (separation without overlap, speed exchange conserving momentum within a tolerance), crash at and above it; the deterministic choice of who falls; a fallen bike as an obstacle; collisions off = no contact ever; ghosts, formation and reconnecting riders exempt.
+- `ocw-sim::avoid`: a field of 50 autodrive bots at mixed powers on a loop for 30 simulated minutes has **zero contacts**; an autodrive rider overtakes a slower one on the correct side by the region's traffic side; a blocked autodrive rider settles at the wheel gap; a manual rider steered into another crashes as the model says.
+- Server: the crash state machine (durations by energy), trainer commands while down (SIM flat, ERG held), snapshot fields, event feed lines and results; 100-rider bunch performance: collisions within 0.3 ms per tick (§15).
+- Damage: points per hit type, injury levels and their effects on the virtual power, punctures and repairs, recovery, reset on restart; damage off = meters never change.
+- Client: prediction of bumps against interpolated riders reconciles without visible snaps; a crash appears only from the server; HUD widget levels, colours + words, and the hit animation (headless screenshots, X11 + Wayland); a scene in `scripts/scenes.toml` with a staged crash (console `dev.crash` / `dev.bump` on the local server, `Dev` permission) for the build history.
+- World builder: `OBST` section written from OSM barriers, posts and bollards near roads; package round trip; lint finds obstacles on the road centreline (a data error: a gate across a through road is noted, not made solid, Q7).
+
+#### 12I – Milestones (proposal)
+
+- **K1 – Rider collisions, soft bumps:** footprints, path-frame and world-space checks, separation and speed exchange, wobble, `ride.collisions` setting and session parameter, sounds; autodrive avoidance (overtake / hold back) for riders and bots.
+- **K2 – Crashes:** thresholds, contact types, crash states and fall animation, fallen bikes as obstacles, trainer behaviour while down, HUD crash display, event feed.
+- **K3 – World objects:** `OBST` section in the world builder, buildings / trees / walls / barriers in wild mode, tunnel walls, bridge railings, hard road-edge hits.
+- **K4 – Damage:** `ride.damage`, rider and bike meters, injury levels, part damage, punctures and repairs, recovery, protocol fields, FIT markers.
+- **K5 – Damage indicator and visible damage:** HUD widget, standings dots, bike damage on the model, rider dust / bandage.
+- **K6 – Events and options:** organiser settings, neutral service, DNF rules, proximity aids, group-ride soft mode, VR comfort fade.
+- **K7 (later):** ragdoll physics for falls, chaotic bots, persistent career injuries.
+
+#### 12J – Open questions (for the user)
+
+- **Q1 – Defaults:** collisions **on** and damage **off** by default (proposal), or both off until a rider switches them on?
+- **Q2 – Group rides:** soft bumps only by default (no crashes), or the full model as in races?
+- **Q3 – Bots' mistakes:** should bots sometimes cause crashes ("chaotic" bots, a setting), or always ride perfectly?
+- **Q4 – Workouts:** keep the ERG step running while the rider is down (proposal), or pause the step until the rider rides again?
+- **Q5 – Falls:** a scripted fall animation first (proposal), or straight to a ragdoll with a physics engine (more realistic, more work, a dependency like Avian or Rapier)?
+- **Q6 – Persistence:** injuries and bike damage reset per ride (proposal), or carry over between rides (a career / repair-shop mode, with repairs paid in hearts in the workshop, §14 Phase 4, 4E)?
+- **Q7 – Gates and barriers on roads:** OSM often has gates or bollards on through routes (often open in reality). Make them solid (realistic but annoying), solid only in wild mode, or only show them (proposal: shown, not solid on the routed road)?
+
+### Phase 13 – God mode: flying through the world as a unicorn (planning, 2026-11-13)
+
+**Goal:** a **god mode** in which the rider leaves the road and flies freely and fast through the world, e.g. to inspect the map, look at a region before riding it, or check a world package. While in god mode the rider turns into a **unicorn**. Toggled by a hotkey; controlled like a flight mode: **+ / −** for altitude, the **mouse** to look around, the **cursor keys** to move in the horizontal plane.
+
+#### 13A – Entering and leaving (decided by the user, 2026-11-13: hotkey, unicorn, fast flight)
+
+- **Hotkey G** (free today; rebindable later with the other keys, §3.2.1 Controls) toggles god mode; console `god [on|off]`; gamepad: Select / Back + North (a chord, so it is not pressed by accident). The menu gets *Ride → God mode* with the same switch.
+- **Entering:** a short transformation (0.6 s: a sparkle burst, the rider and bike fade out while the unicorn fades in and rises 3 m), the camera switches from the chase camera to the flight camera behind the unicorn, the mouse pointer is captured (hidden, relative motion).
+- **Leaving (G again) – lands where the unicorn is (decided, Q2):** the unicorn glides down (at most 2 s) and turns back into the rider and bike **on the nearest road below it**, standing still: in free ride (§2.2.1) the nearest road of the graph (`--start`-like placement, the path starts there); on a fixed route the nearest point of the route (the rider continues along the route from there). The landing spot is marked under the unicorn while flying (a glowing ring on the road), so the rider sees where they will land. **Shift + G** instead flies back to where the rider left the road (a quick, eased flight, at most 2 s however far) and rides on from there. Esc in god mode first releases the pointer (a second Esc opens the menu, §3.2.1).
+- **Who may use it:** single player on the local server: always. Shared sessions: the host decides (`ServerConfig.god_access`: anyone / host / nobody, like the world switch and the time machine, sent in `Welcome`); in a running **event** (race, group ride, time trial: from countdown to the rider's finish) god mode is **not available** – before and after it is. The kiosk / show mode never enters it by itself.
+
+#### 13B – Flight controls
+
+- **Touch** (where the device has one, §3.2.2): one-finger drag = look, on-screen ‹ › ˄ ˅ pad = move in the plane, + / − buttons = altitude, pinch = speed scale.
+- **Look:** moving the mouse turns the view (yaw unlimited, pitch −89° … +89°; sensitivity from Settings → Controls, the existing mouse orbit speed; invert Y option). The direction of flight follows the view's yaw.
+- **Move in the plane:** ↑ forward, ↓ back, ← / → sideways (strafe), relative to the view's yaw and **horizontal** (looking down does not dive). Only the cursor keys, as asked: W / A / S / D are taken by riding (A autodrive, W wild mode; Q3).
+- **Altitude:** **+** climbs, **−** descends (main keyboard `=`/`+` and `-`, and the numeric keypad + / −; held = continuous). The altitude stays at least **2 m above the terrain, water, buildings and trees** below (the unicorn glides up over a hill instead of going into it) and at most **8,000 m above sea level**.
+- **Speed – much faster than riding:** the base speed grows with the height above ground, so low flight is controllable and high flight covers the map: `v = clamp(20 m/s + 0.5 × height above ground, 20, 400 m/s)` (72 km/h close to the ground, ~250 km/h at 400 m, 1,440 km/h at 760 m and higher). **Shift** = ×4 (boost), **Ctrl** = ×0.25 (precise); the **mouse wheel** scales the base speed (×0.25 … ×8, shown in the HUD). Climb rate = half the horizontal speed. Movements are smoothed (0.15 s acceleration, 0.25 s stop), so the flight is fluid at any speed.
+- **Gamepad:** left stick = move in the plane, right stick = look, right / left trigger = climb / descend, A (South) = boost.
+- **Map limits:** the unicorn can fly over the whole world set (§4.7: the home package and its neighbours), softly stopped 200 m outside the outermost package's bounds.
+
+#### 13C – The unicorn
+
+- **Model:** our own low-poly unicorn (made for OCW, licensed like the code – no third-party asset, §13; no brand characters): white body, a spiral golden horn, a rainbow mane and tail (the eight colours of the categorical palette, animated by the wind of the flight) and **large feathered wings like a pegasus** (decided, Q5): they flap with the climb and the acceleration (beat rate up to ~2 Hz), spread wide in gliding and turns (banking with the turn rate), and fold along the body while hovering and when landing. It **gallops in the air**: a gallop cycle whose rate follows the speed, legs tucked in at high speed, a gentle bob while hovering. A faint **rainbow trail** behind it (fading after 2 s; off with Settings → Display → Effects).
+- **Rider on it?** The rider is not shown; the unicorn *is* the rider (the rider's colours tint the saddle cloth and the mane's first band, so in multiplayer each unicorn is recognisable). Name tag above it as for riders.
+- **Sound** (procedural, §3.3): a chime on transformation, wind rising with the speed (the existing wind voice), soft wing beats when the wings are open, a gallop of hooves on air (muffled) while slow.
+- **LOD:** a 3k-triangle model near, 600 far, an impostor beyond 500 m – like the riders (§8).
+
+#### 13D – Camera and inspection aids
+
+- **Camera:** behind and slightly above the unicorn (8 m, looking along the view); **C** toggles a first-person view from the unicorn's head (the horn in view) – the pure "fly-through" for inspecting. Field of view widens with speed (+10° at 400 m/s). The camera never goes under the terrain.
+- **Inspection HUD** (the bike computer is hidden; a compact flight panel instead): altitude above sea level and above ground, speed, base-speed factor, heading (compass), position (package metres x / z, latitude / longitude, tile id), the local time of the place (Phase 9). A crosshair in the middle: what it points at is named below it – the road (name, OSM way id, class, surface, width, bridge / tunnel, gradient), the area (land use, `LUSE`), building or water, and the elevation there. **I** toggles the panel; **P** puts a pin (a marker kept for the ride, `god.pins` lists them with coordinates, `--start X,Z` ready to copy).
+- **World streaming:** the tile loader looks ahead along the flight direction with a radius that grows with altitude and speed (§4.7: neighbours load within 3 km of their region, extended to 3 km + 10 s of flight); at high altitude only the far terrain LOD and the colour map are drawn; trees and buildings appear below 1,500 m above ground. Frame time budget as in riding (§15); the tile loads keep their own thread.
+
+#### 13E – Simulation and multiplayer (server-authoritative, §6.1)
+
+- **Server state:** the rider enters the state `God` (additive field in `RiderUpdate`, §6.2). In this state the rider is **taken out of the physics**: no speed along the path, no drafting, no collisions (Phase 12), not in standings; the rider's road position is frozen where god mode began; on leaving, the server places the rider at the landing spot (after the plausibility check) or restores the old position (Shift + G). The unicorn's flight is **client-driven**: the client sends its 3D position and view at 10 Hz (`GodPose`), the server checks plausibility (speed ≤ the limits above, inside the world set) and broadcasts it to the others, who see the unicorn interpolated (§6.5). The server stays the truth for who is in god mode and where the rider re-enters.
+- **Trainer:** SIM mode is set to a flat road (lowest resistance), ERG keeps its target (a workout continues; Q4). Power and cadence keep being shown, but they do not move the unicorn.
+- **Ride recording:** ride time continues (the ride never pauses, §3.2.1); **distance and elevation are not credited** while flying, the FIT file gets a marker "god mode" at both ends (Strava sees a pause in movement, not a 1,000 km/h segment). Achievements and leaderboards (Phase 7) ignore god-mode time, and **no hearts** are earned while flying (§14 Phase 4, 4E).
+- **Others (decided, Q1: visible):** riders see the unicorn flying over them with the rider's name and colours; no sound beyond 100 m. A host can see who is in god mode in the rider list.
+
+#### 13F – Tests (spec §11.4)
+
+- Pure flight model (`ocw-sim::god` or `apps/desktop/src/god.rs`, Bevy-free, wasm): speed law, boost / precise factors, wheel scale, acceleration and stopping, terrain clearance (never below 2 m over a test height field, also over a ridge at full speed), ceiling, world-set limits, moving relative to the yaw only (pitch does not dive), +/− climb rate.
+- Input mapping: G, Shift + G, +/− (main and keypad), cursor keys, mouse motion, gamepad mapping; keys of riding (A, W, U, Q / E) do nothing in god mode.
+- Server: `God` state excludes the rider from physics, drafting, collisions and standings; road position frozen and restored; plausibility check rejects too-fast poses; refused in running events and when `god_access` forbids it; distance not credited; FIT markers.
+- Client: transformation and return, camera never under ground, crosshair inspection names the road under it (a test package); headless screenshots on X11 and Wayland of the unicorn in flight (scene in `scripts/scenes.toml`, also a short video of a flight over Liechtenstein for the build history).
+
+#### 13G – Milestones (proposal)
+
+- **G1 – Flight:** `god` command and G hotkey, flight model and controls, flight camera, pointer capture, terrain clearance, return to the road; the rider's model as a placeholder.
+- **G2 – The unicorn:** model, gallop and wing animation, rainbow mane and trail, transformation effect, sounds.
+- **G3 – Inspection:** flight panel, crosshair inspection, pins, first-person view, look-ahead tile streaming.
+- **G4 – Multiplayer:** `God` state and `GodPose` on the server, access rules, others see the unicorn, recording rules.
+- **G5 (later):** god mode in VR (Phase 11: head look instead of the mouse, comfort vignette at speed), a guided camera path for flyover videos (art project), god mode in the browser app (Phase 10).
+
+#### 13H – Open questions (for the user)
+
+- **Q1 – Visible to others: decided (2026-11-13):** yes, other riders see the unicorn with name and colours.
+- **Q2 – Leaving: decided (2026-11-13):** land where the unicorn is (nearest road or route point below it); Shift + G flies back to where the rider left.
+- **Q3 – Keys:** G for god mode, cursor keys + / − and the mouse as asked; also W / A / S / D for flying (would move autodrive and wild mode to other keys while flying), or cursor keys only (proposal)?
+- **Q4 – Trainer while flying:** flat road (proposal), or the trainer follows the slope under the unicorn as a fun "feel the land" effect?
+- **Q5 – Wings: decided (2026-11-13):** a classic unicorn with large feathered wings like a pegasus.
+- **Q6 – Name in the UI:** "God mode", or a friendlier "Unicorn mode" in the menu (the console command stays `god`)?
 
 ---
 

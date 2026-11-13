@@ -14,7 +14,7 @@
 #   --out    output directory (default: test-output/world-profile/LABEL)
 #   --label  name of the run (default: the date and time)
 #   --wb     world-builder binary (default: build target/release/world-builder)
-#   --no-profile  leave out --profile (a world-builder from before v2.49,
+#   --no-profile  leave out --profile (a world-builder from before v2.59,
 #            to build a reference package with the old code)
 #   --ref    directory with reference packages WORLD.ocwpkg (e.g. the --out
 #            of an earlier run): each new package is compared byte for byte

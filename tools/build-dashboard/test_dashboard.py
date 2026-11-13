@@ -605,10 +605,15 @@ class PromptTest(unittest.TestCase):
         self.assertEqual(len(s), 20)
         self.assertTrue(s.endswith("…"))
 
-    def test_annotate_adds_prompt_and_masks(self):
-        st = {"machines": [{"tasks": [{"checkout": "OCW-worktree-agent-aca62f4f05d964134", "command": "c",
-                                       "state": "running", "started": 0}]}]}
-        out = d.annotate_prompts(st, self._index(), mask=lambda s: s.replace("double", "<m>"))
+    def test_prompts_only_with_show_prompts_and_masked(self):
+        st = {"machines": [{"name": "marge", "os": "linux", "tasks": [{
+            "checkout": "OCW-worktree-agent-aca62f4f05d964134", "command": "cargo test -p ocw-render",
+            "state": "running", "started": 0}]}]}
+        out = d.annotate_jobs(st, self._index(), mask=lambda s: s.replace("double", "<m>"))
+        t = out["machines"][0]["tasks"][0]
+        self.assertNotIn("prompt", t)
+        self.assertEqual(t["description"], "Fix shadow – checking the ocw-render tests on marge")
+        out = d.annotate_jobs(st, self._index(), mask=lambda s: s.replace("double", "<m>"), show_prompts=True)
         t = out["machines"][0]["tasks"][0]
         self.assertEqual(t["prompt"], "fix the <m> shadow")
         self.assertEqual(t["agent"], "Fix shadow")
@@ -616,3 +621,216 @@ class PromptTest(unittest.TestCase):
     def test_short_agent_label_matches(self):
         info = self._index().for_job("agent aca62f4f", 0)
         self.assertEqual(info.get("agent"), "Fix shadow")
+        self.assertEqual(self._index().agent_for("agent aca62f4f"), "Fix shadow")
+
+    def test_agent_description_from_meta_json(self):
+        idx = d.PromptIndex(Path("/nonexistent"))
+        idx.feed_meta("agent-acafa3212c0c9925a.meta.json", {
+            "description": "Profile and speed up builds",
+            "worktreePath": "/x/.claude/worktrees/agent-acafa3212c0c9925a"})
+        # A nested agent inherits its parent's worktree: it never replaces the parent's task.
+        idx.feed_meta("agent-a0738e2134321d605.meta.json", {
+            "description": "Tenerife photos", "inheritedWorktreePath": "/x/.claude/worktrees/agent-acafa3212c0c9925a"})
+        idx.feed_meta("agent-ab12cd34ef56ab78c.meta.json", {"description": "No worktree"})
+        self.assertEqual(idx.agent_for("agent acafa321"), "Profile and speed up builds")
+        self.assertEqual(idx.agent_for("OCW-worktree-agent-ab12cd34ef56ab78c"), "No worktree")
+        self.assertIsNone(idx.agent_for("agent a0738e21"))
+        self.assertIsNone(idx.agent_for("main"))
+
+
+class DescribeTest(unittest.TestCase):
+    """What a job is trying to achieve, from its command (one rule per test)."""
+
+    def what(self, cmd):
+        return d.describe_activities(d.classify_command(cmd), cmd)[0]
+
+    def test_fmt_clippy_tests_workspace(self):
+        self.assertEqual(self.what('cargo fmt --all --check && echo FMT_OK; cargo clippy --workspace --all-targets '
+                                   '-- -D warnings 2>&1 | grep -E "^(error|warning)" -A12 | head -80; '
+                                   'echo CLIPPY_DONE; cargo test --workspace 2>&1 | grep "test result"'),
+                         "Checking formatting, clippy and all tests")
+
+    def test_crates_filters_and_named_tests(self):
+        self.assertEqual(self.what("cargo test -p ocw-render 2>&1 | tail -3"), "Checking the ocw-render tests")
+        self.assertEqual(self.what("cargo test -p ocw-desktop audio 2>&1 | tail -60"),
+                         "Checking the audio tests of ocw-desktop")
+        self.assertEqual(self.what("cargo test -q -p ocw-render --test pilot_tunnel -- --nocapture"),
+                         "Checking the pilot_tunnel test of ocw-render")
+        self.assertEqual(self.what("cargo clippy -q -p ocw-render -p ocw-assets --all-targets -- -D warnings; "
+                                   "cargo test -q -p ocw-render -p ocw-assets"),
+                         "Checking clippy on ocw-render and ocw-assets and the tests of ocw-render and ocw-assets")
+        self.assertEqual(self.what("cargo test -p a -p b -p c -p d"), "Checking the tests of a, b, c +1 more")
+        self.assertEqual(self.what("cargo test --workspace --no-run 2>&1 | grep -E '^error'"),
+                         "Checking the test build of the workspace")
+        self.assertEqual(self.what("cargo check -q -p ocw-world --all-targets"), "Checking the build of ocw-world")
+
+    def test_voice_features(self):
+        self.assertEqual(self.what("CC=clang-21 CXX=clang++-21 cargo clippy --workspace --all-targets "
+                                   "--features ocw-desktop/voice -- -D warnings"), "Checking clippy with voice")
+
+    def test_wasm(self):
+        cmd = "cargo check -p ocw-core -p ocw-sim --target wasm32-unknown-unknown 2>&1 | tail -5"
+        self.assertEqual(self.what(cmd), "Browser (wasm) build check")
+        self.assertEqual(self.what("make test-wasm"), "Browser (wasm) build check")
+        self.assertEqual(self.what("make check"), "Checking formatting, clippy, all tests and the browser (wasm) build")
+
+    def test_release_build_and_deploy(self):
+        self.assertEqual(self.what("cargo build --release -p ocw-desktop 2>&1 | tail -3; ls -la target/release"),
+                         "Release build of ocw-desktop")
+        prelude = ' set -e D=/var/tmp/ocw put() { install -m $1 "$2" "$D/.$3.new" && mv -f "$D/.$3.new" "$D/$3"; }'
+        self.assertEqual(self.what(prelude), "Release build for the kiosk deployment")
+        self.assertEqual(self.what(prelude.replace("/var/tmp/ocw", "/tmp/ocw-deploy-test")),
+                         "Release build for a test deployment")
+        self.assertEqual(self.what("scripts/deploy-test.sh marge"), "Release build for the kiosk deployment")
+        self.assertEqual(self.what("make deploy-test"), "Release build for the kiosk deployment")
+
+    def test_world_builds_and_downloads(self):
+        self.assertEqual(self.what("scripts/build-tenerife.sh 2>&1 | tail -4"), "Building the Tenerife world package")
+        self.assertEqual(self.what("set -e; cargo build -q --release -p world-builder; scripts/build-liechtenstein.sh"
+                                   " 2>&1 | tail -2; scripts/build-blackforest.sh 2>&1 | tail -3; "
+                                   "scripts/build-tenerife.sh 2>&1 | tail -3"),
+                         "Building the Liechtenstein, Black Forest and Tenerife world packages")
+        self.assertEqual(self.what("scripts/fetch-pilot.sh tenerife 2>&1 | tail -3 && scripts/build-tenerife.sh"),
+                         "Downloading the Tenerife source data (OSM, elevation); building the Tenerife world package")
+        self.assertEqual(self.what("scripts/fetch-pilot.sh"), "Downloading the Liechtenstein source data (OSM, elevation)")
+        self.assertEqual(self.what("scripts/fetch-imagery.sh liechtenstein > data/pilot/f.log 2>&1; tail -30 x"),
+                         "Downloading Liechtenstein aerial imagery")
+        self.assertEqual(self.what("target/release/world-builder package --pbf data/tenerife/x.osm.pbf --out t"),
+                         "Building a world package for Tenerife")
+        self.assertEqual(self.what("D=data/tenerife; for p in 1 2; do target/release/world-builder graph "
+                                   "--pbf $D/c.osm.pbf; done"), "Inspecting the road graph for Tenerife")
+
+    def test_scene_renders(self):
+        self.assertEqual(self.what("scripts/render-scenes.sh --out o --only 'look-bf-*' "
+                                   "--world blackforest=data/blackforest/blackforest.ocwpkg"),
+                         "Rendering the look-bf-* scenes in Black Forest")
+        self.assertEqual(self.what("scripts/render-scenes.sh --out o --only a,b,c,d"), "Rendering 4 scenes (a, b, …)")
+        self.assertEqual(self.what("scripts/render-scenes.sh --out o --world tenerife=data/tenerife/tenerife.ocwpkg "
+                                   "--scenes scripts/scenes-teide-tmp.toml"), "Rendering the teide scenes in Tenerife")
+        self.assertEqual(self.what("export OCW_PROFILE=release; cargo build -q --release -p ocw-desktop; "
+                                   "scripts/render-scenes.sh --out x"), "Rendering all scenes")
+
+    def test_build_profile_and_sccache(self):
+        self.assertEqual(self.what("~/.local/bin/sccache --zero-stats >/dev/null; scripts/build-profile.sh "
+                                   "--label macos-sccache-warm --commands build,test --steps clean; "
+                                   "~/.local/bin/sccache --show-stats | head -12"),
+                         "Measuring a clean build with a warm sccache (build profiling: macos-sccache-warm, build, test)")
+        self.assertEqual(self.what("scripts/build-profile.sh --label marge-baseline"),
+                         "Measuring build times (build profiling: marge-baseline)")
+        self.assertEqual(self.what("~/.local/bin/sccache --show-stats"), "sccache statistics")
+        self.assertEqual(self.what("scripts/world-profile.sh --data ~/src/OCW/data --label before liechtenstein "
+                                   "bf-north tenerife"),
+                         "Measuring world build times of Liechtenstein, Black Forest north and Tenerife")
+
+    def test_multiplayer_art_collect_runs(self):
+        self.assertEqual(self.what("make test-multiplayer"), "Multiplayer test: server, kiosk and bot riders over QUIC")
+        self.assertEqual(self.what("scripts/test-multiplayer.sh"),
+                         "Multiplayer test: server, kiosk and bot riders over QUIC")
+        self.assertEqual(self.what("make art-render DAY=2026-11-13"), "Art project: rendering the day videos")
+        self.assertEqual(self.what("scripts/collect-test-output.sh"),
+                         "Collecting the test output into the build history")
+        self.assertEqual(self.what(".claude/skills/run-ocw/drive.sh shot-wayland /tmp/x.jpg 10 -- --bots 2"),
+                         "Screenshot run on Wayland")
+        self.assertEqual(self.what(".claude/skills/run-ocw/drive.sh video /tmp/x.mp4 6"),
+                         "Recording a test ride video on X11")
+        self.assertEqual(self.what("make test-screenshot-wayland"), "Screenshot smoke test on Wayland")
+        self.assertEqual(self.what('scripts/measure.py --label "client tenerife 4 bots" -- x'),
+                         "Measuring performance: client tenerife 4 bots")
+
+    def test_cleanup_of_checkouts(self):
+        self.assertEqual(self.what("rm -rf ~/src/OCW-worktree-agent-a1 ~/src/OCW-worktree-agent-b2"),
+                         "Cleaning up 2 old checkouts")
+        self.assertEqual(self.what("rm -rf ~/src/OCW-worktree-agent-a1"), "Cleaning up an old checkout")
+        self.assertEqual(self.what("rm -rf /tmp/x; cargo test -p ocw-sim"), "Checking the ocw-sim tests")
+
+    def test_windows_commands(self):
+        self.assertEqual(self.what('cmd /c "cargo test -p ocw-core -p ocw-sim > quick.log 2>&1"; '
+                                   'Write-Output "rc=$LASTEXITCODE"; $p=0'),
+                         "Checking the tests of ocw-core and ocw-sim")
+        self.assertEqual(self.what('cargo clippy -q -p ocw-assets --all-targets -- -D warnings 2>&1 | '
+                                   'Select-Object -Last 5; "clippy exit $LASTEXITCODE"'),
+                         "Checking clippy on ocw-assets")
+
+    def test_python_dashboard_and_release_version(self):
+        self.assertEqual(self.what('python3 -m unittest discover -s tools/build-dashboard -p "test_*.py" 2>&1 | tail -1'),
+                         "Build dashboard tests")
+        self.assertEqual(self.what("python3 tools/build-dashboard/test_dashboard.py"), "Build dashboard tests")
+        self.assertEqual(self.what("make test-release-version && make -s version-next"),
+                         "Testing the release version bump")
+        self.assertEqual(self.what("OCW_FEATURES=ocw-desktop/voice scripts/build-macos-app.sh 2>&1 | tail -3"),
+                         "Building the macOS app with voice")
+
+    def test_unknown_and_trivial(self):
+        self.assertEqual(self.what("echo hello-from-build; uname -s"), "Connection test")
+        self.assertEqual(self.what("bash target/agent/checks3.sh"), "Running checks3.sh")
+        self.assertEqual(self.what("frobnicate --x"), "Running frobnicate")
+
+    def test_cut_marker_commands(self):
+        # remote.sh cuts marker commands at 200 characters ("..."), the process view at 90 ("…").
+        self.assertEqual(self.what("cargo clippy --workspace --all-targets -- -D warnings; cargo test -p ocw-world "
+                                   "-p ocw-worl..."), "Checking clippy and the ocw-world tests")
+        self.assertEqual(self.what("set -e; grep x log; OCW_NO_CALIBRATE=1 scripts/build-blackforest.s..."),
+                         "Building the Black Forest world package")
+        self.assertEqual(self.what("cargo fmt --all --check; (scripts/fe..."), "Checking formatting")
+        self.assertEqual(self.what("scripts/render-scenes.sh --out o --only \"a-1,b-2,c-..."),
+                         "Rendering the a-1 and b-2 scenes")
+
+    def test_quotes_and_subshells_do_not_split(self):
+        self.assertEqual(d._shell_steps('grep -E "a|b;c" x | tail; d=$(mktemp -d && echo) && cargo fmt'),
+                         ['grep -E "a|b;c" x', "d=$(mktemp -d && echo)", "cargo fmt"])
+        self.assertEqual(d._shell_steps("(a > l 2>&1; b) & (c)"), ["a > l 2>&1", "b", "c"])
+
+
+class DescribeJobTest(unittest.TestCase):
+    """The sentence: purpose (agent task or commit) – what – machine."""
+
+    def test_agent_task_is_the_purpose(self):
+        out = d.describe_job("scripts/build-profile.sh --label macos-baseline", "macos", "macos",
+                             agent="Profile and speed up builds")
+        self.assertEqual(out["description"],
+                         "Profile and speed up builds – measuring build times (build profiling: macos-baseline) on macOS")
+        self.assertIn("Agent task: Profile and speed up builds", out["description_detail"])
+        self.assertIn("Command: scripts/build-profile.sh --label macos-baseline", out["description_detail"])
+        self.assertIn("Machine: macos (macOS)", out["description_detail"])
+
+    def test_commit_is_the_purpose_of_checks_only(self):
+        out = d.describe_job("cargo clippy --workspace -- -D warnings; cargo test --workspace", "macos", "macos",
+                             commit="Merge wheels on the road")
+        self.assertEqual(out["description"], "Merge wheels on the road – checking clippy and all tests on macOS")
+        self.assertIn("Checking the commit: Merge wheels on the road", out["description_detail"])
+        out = d.describe_job("scripts/build-tenerife.sh", "marge", "linux", commit="Merge wheels on the road")
+        self.assertEqual(out["description"], "Building the Tenerife world package on marge")
+
+    def test_names_stay_capitalised_and_length_is_capped(self):
+        out = d.describe_job("scripts/build-tenerife.sh", "marge", "linux", agent="Tenerife road surfaces")
+        self.assertEqual(out["description"], "Tenerife road surfaces – building the Tenerife world package on marge")
+        out = d.describe_job("make test-wasm", "Win11Builder", "windows", agent="x" * 300)
+        self.assertLessEqual(len(out["description"]), d.DESC_MAX)
+        self.assertTrue(out["description"].endswith(" – browser (wasm) build check on Win11Builder"))
+        out = d.describe_job("cargo test " + " ".join("-p crate%d" % i for i in range(40)), "m", "linux",
+                             agent="y" * 200)
+        self.assertLessEqual(len(out["description"]), d.DESC_MAX)
+
+    def test_commit_log_picks_the_commit_before_the_job(self):
+        log = d.CommitLog(None)
+        log.commits = [(2000, "Merge wheels on the road"), (1000, "Spec 2.45")]
+        self.assertEqual(log.at(2500), "Merge wheels on the road")
+        self.assertEqual(log.at(1500), "Spec 2.45")
+        self.assertEqual(log.at(None), "Merge wheels on the road")
+        self.assertIsNone(log.at(10))
+
+    def test_annotate_jobs_main_checkout_queue_and_masking(self):
+        log = d.CommitLog(None)
+        log.commits = [(100, "Merge fix from 10.1.2.3")]
+        st = {"machines": [{"name": "macos", "os": "macos",
+                            "tasks": [{"checkout": "main", "command": "cargo test --workspace", "state": "running",
+                                       "started": 200},
+                                      {"checkout": "other", "command": None, "state": "running"}],
+                            "queue": {"queued": [{"checkout": "agent ffffffff", "command": "make test-wasm",
+                                                  "since": 300}]}}]}
+        out = d.annotate_jobs(st, d.PromptIndex(Path("/nonexistent")), log, mask=d.Masker())
+        t, nocmd = out["machines"][0]["tasks"]
+        self.assertEqual(t["description"], "Merge fix from <address> – checking all tests on macOS")
+        self.assertNotIn("description", nocmd)
+        q = out["machines"][0]["queue"]["queued"][0]
+        self.assertEqual(q["description"], "Browser (wasm) build check on macOS")

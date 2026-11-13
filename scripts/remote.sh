@@ -200,7 +200,7 @@ sync_tree_windows() {
 # A run that finds all slots taken marks itself "waiting" and polls every
 # second, taking whichever slot frees first – in order of arrival: while an
 # older run (by its task marker's start, then PID) is still waiting, a
-# waiting run leaves the free slot to it (Linux/macOS; before v2.49 the
+# waiting run leaves the free slot to it (Linux/macOS; before v2.59 the
 # first poll won, and a run could wait 20 min while later ones went
 # ahead). Linux: flock on
 # /tmp/ocw-build-slot-N.lock; macOS (no flock): atomic mkdir of

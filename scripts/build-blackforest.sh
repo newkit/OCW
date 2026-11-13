@@ -26,6 +26,11 @@
 # Environment: OCW_SIGN_KEY  signing key for the manifests (default: unsigned).
 #              OCW_SRTM_ONLY=1  build without the DGM1 into data/blackforest/srtm/
 #                         (no routes), to compare with the SRTM terrain.
+#
+# Region calibration (spec §14 Phase 8 T3): when data/blackforest/imagery holds the
+# imagery of `scripts/fetch-imagery.sh blackforest` for this package, the package is
+# calibrated after its routes (palette, roof colours, seasonal tints;
+# OCW_NO_CALIBRATE=1 skips it, OCW_SEASON_CELLS sets the tint cells per tile).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 D=data/blackforest
@@ -53,6 +58,15 @@ else
 fi
 cargo build -q --release -p world-builder
 WB=target/release/world-builder
+# Region calibration (spec §14 Phase 8 T3) if the imagery covers the package.
+calibrate() { # package pbf...
+  local pkg=$1; shift
+  if [ -z "${OCW_NO_CALIBRATE:-}" ] && grep -qx "$(basename "$pkg")" "$D/imagery/packages.txt" 2>/dev/null; then
+    local pbf=()
+    for p in "$@"; do pbf+=(--pbf "$p"); done
+    $WB calibrate --world "$pkg" --imagery "$D/imagery" "${pbf[@]}" --season-cells "${OCW_SEASON_CELLS:-50}"
+  fi
+}
 for part in "${parts[@]}"; do
   [ -n "${BBOX[$part]:-}" ] || { echo "unknown part $part (south, middle, north)" >&2; exit 1; }
   out=$OUT/${FILE[$part]}.ocwpkg
@@ -92,6 +106,7 @@ for part in "${parts[@]}"; do
       route "Bühl - Bühlerhöhe" buehl-buehlerhoehe.route 48.6953,8.1350 48.6648,8.2240
       ;;
   esac
+  calibrate "$out" "$D/freiburg-regbez.osm.pbf" "$D/karlsruhe-regbez.osm.pbf"
   # Adding the routes rewrote the manifest unsigned (next version): sign again.
   if [ -n "${OCW_SIGN_KEY:-}" ]; then
     $WB sign --key "$OCW_SIGN_KEY" "$out"

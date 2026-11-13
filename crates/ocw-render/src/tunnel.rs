@@ -171,7 +171,9 @@ pub fn smooth_blend(blend: f32, wanted: bool, dt: f32) -> f32 {
 /// `width` wide.
 pub fn tube_profile(width: f64) -> Vec<[f64; 2]> {
     let half = width / 2.0 + TUBE_SIDE_M;
-    let floor = -0.05;
+    // The floor is the road surface riders stand on, 1 mm under a road
+    // strip reaching into the portal (no z-fighting).
+    let floor = f64::from(crate::ROAD_SURFACE_LIFT_M) - 0.001;
     let mut p = vec![[-half, floor], [-half, TUBE_WALL_M]];
     const ARCH: usize = 8;
     for k in 1..ARCH {
@@ -542,7 +544,7 @@ mod tests {
             if p[1] > 100.0 + TUBE_CROWN_M as f32 - 0.2 {
                 assert!(n[1] < 0.0, "{p:?} {n:?}");
             }
-            if p[1] < 100.0 && n[1].abs() > 0.5 {
+            if p[1] < 100.1 && n[1].abs() > 0.5 {
                 assert!(n[1] > 0.0, "{p:?} {n:?}");
             }
         }
