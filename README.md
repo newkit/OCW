@@ -1,8 +1,4 @@
-<p align="center">
-  <img src="artwork/logos/ocw.svg" alt="Open Cycling World logo" width="160">
-</p>
-
-# Open Cycling World
+# <img src="artwork/logos/ocw.svg" alt="OCW logo" height="40" align="top"> Open Cycling World
 
 A cross-platform indoor cycling simulation in Rust: real bicycle hardware, real
 routes from OpenStreetMap, rendered locally with Bevy, with server-authoritative
