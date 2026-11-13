@@ -72,8 +72,9 @@ impl AreaData {
     /// Reads the areas from a PBF in three passes: relations (to know
     /// their member ways), ways, nodes.
     pub fn read_pbf(path: &Path) -> Result<Self, OsmError> {
-        let mut relations = Vec::new();
-        osmpbf::ElementReader::from_path(path)?.for_each(|el| {
+        // Blobs decoded on all cores, results in file order (par_elements).
+        use crate::osm::par_elements;
+        let relations = par_elements(path, |el, relations| {
             if let osmpbf::Element::Relation(r) = el {
                 let tags: Tags = r
                     .tags()
@@ -105,8 +106,7 @@ impl AreaData {
             .iter()
             .flat_map(|r| r.members.iter().map(|m| m.0))
             .collect();
-        let mut ways = HashMap::new();
-        osmpbf::ElementReader::from_path(path)?.for_each(|el| {
+        let found = par_elements(path, |el, out| {
             if let osmpbf::Element::Way(w) = el {
                 let tags: Tags = w
                     .tags()
@@ -114,31 +114,31 @@ impl AreaData {
                     .map(|(k, v)| (k.to_string(), v.to_string()))
                     .collect();
                 if wanted(&tags) || members.contains(&w.id()) {
-                    ways.insert(
-                        w.id(),
-                        Way {
-                            id: w.id(),
-                            nodes: w.refs().collect(),
-                            tags,
-                        },
-                    );
+                    out.push(Way {
+                        id: w.id(),
+                        nodes: w.refs().collect(),
+                        tags,
+                    });
                 }
             }
         })?;
+        let mut ways = HashMap::with_capacity(found.len());
+        ways.extend(found.into_iter().map(|w| (w.id, w)));
         let needed: HashSet<i64> = ways
             .values()
             .flat_map(|w| w.nodes.iter().copied())
             .collect();
-        let mut nodes = HashMap::with_capacity(needed.len());
-        osmpbf::ElementReader::from_path(path)?.for_each(|el| match el {
+        let found = par_elements(path, |el, out| match el {
             osmpbf::Element::Node(n) if needed.contains(&n.id()) => {
-                nodes.insert(n.id(), (n.lat(), n.lon()));
+                out.push((n.id(), (n.lat(), n.lon())));
             }
             osmpbf::Element::DenseNode(n) if needed.contains(&n.id()) => {
-                nodes.insert(n.id(), (n.lat(), n.lon()));
+                out.push((n.id(), (n.lat(), n.lon())));
             }
             _ => {}
         })?;
+        let mut nodes = HashMap::with_capacity(found.len());
+        nodes.extend(found);
         Ok(Self {
             nodes,
             ways,

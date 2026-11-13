@@ -115,8 +115,13 @@ unsafe_code = "forbid"
 all = { level = "warn", priority = -1 }
 
 # Bevy recommendation: some optimisation for our code, full optimisation for dependencies.
+# Debug info (spec §11.2, build profile of 2026-11-13): line tables only for
+# our crates (backtraces keep file and line), none for the dependencies.
+# Full debug info made each checkout's target/ 30–80 GB and the links slow.
 [profile.dev]
 opt-level = 1
+debug = "line-tables-only"
 
 [profile.dev.package."*"]
 opt-level = 3
+debug = false

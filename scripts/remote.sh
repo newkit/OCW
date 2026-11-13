@@ -64,6 +64,7 @@ field() {
 
 host=$(field host); user=$(field user); port=$(field port)
 key=$(field identity_file); ssh_dir=$(field ssh_dir); repo=$(field repo_path)
+main_repo=$repo
 timeout_s=$(field connect_timeout_s); os=$(field os)
 [ -n "$host" ] || { echo "machine '$machine' not found in $conf" >&2; exit 1; }
 case "$key" in /*) ;; *) key="$config_dir/${ssh_dir:-ssh}/$key" ;; esac
@@ -89,6 +90,34 @@ else
 fi
 [ -n "$jobs" ] && jobs_env="CARGO_BUILD_JOBS=$jobs "
 
+# Compiler cache (spec §11.2): with sccache in ~/.local/bin on the machine
+# (`make deps-sccache`; Windows: %USERPROFILE%\.local\bin\sccache.exe,
+# `make deps-sccache-windows`), every checkout there shares one cache, so a new
+# agent checkout takes Bevy and the other dependencies from it instead of
+# compiling them (workspace crates of debug builds are incremental and
+# compiled as before). Cache size: the machine's `sccache_size` in
+# machines.toml (default 30G). The checkout's own path is a base directory
+# (SCCACHE_BASEDIRS, hashed in the client: SCCACHE_CLIENT_SIDE=1), so
+# crates whose arguments or environment name it (OUT_DIR of build scripts,
+# and everything built on them) hit across checkouts too. OCW_SCCACHE=0
+# turns it off.
+# Build directory per feature set (spec §11.2), opt-in (OCW_CARGO_SPLIT=1):
+# scripts/cargo-shim/cargo first on PATH gives cargo calls with the voice
+# feature their own build-dir (the Makefile keeps it first too, via
+# OCW_CARGO_SHIM). Measured on marge on 2026-11-13: alternating plain and
+# voice clippy runs in one target/ took 0.5-0.7 s each after the first two
+# (cargo 1.99 keeps both feature sets' artefacts side by side), while the
+# split built the shared dependencies twice (+63 s, +2.3 GB), so it is off.
+shim_sh=""
+if [ "${OCW_CARGO_SPLIT:-0}" = 1 ]; then
+  shim_sh="if [ -x scripts/cargo-shim/cargo ]; then export OCW_CARGO_SHIM=\$PWD/scripts/cargo-shim PATH=\$PWD/scripts/cargo-shim:\$PATH; fi; "
+fi
+sccache_sh=""
+sccache_size=$(field sccache_size)
+if [ "${OCW_SCCACHE:-1}" != 0 ]; then
+  sccache_sh="if [ -x \$HOME/.local/bin/sccache ]; then export RUSTC_WRAPPER=\$HOME/.local/bin/sccache SCCACHE_CACHE_SIZE=${sccache_size:-30G} SCCACHE_CLIENT_SIDE=1 SCCACHE_BASEDIRS=\$PWD; fi; "
+fi
+
 SSH=(ssh -i "$key" -p "${port:-22}" -o IdentitiesOnly=yes -o BatchMode=yes
      -o UserKnownHostsFile="$config_dir/${ssh_dir:-ssh}/known_hosts" -o StrictHostKeyChecking=yes
      -o ConnectTimeout="${timeout_s:-10}")
@@ -98,12 +127,39 @@ if [ "$os" = windows ]; then repo=${repo//\\\\/\\}; fi
 # A PowerShell single-quoted string literal.
 psq() { local q="'"; printf "'%s'" "${1//$q/$q$q}"; }
 
+# Seeding (spec §11.2): a new checkout (no target/ yet) on Linux or macOS
+# starts with a copy-on-write clone of the main checkout's target/debug and
+# target/release – `cp --reflink=always` (Btrfs, XFS) or `cp -c` (APFS
+# clonefile) – so cargo finds the dependencies built; the clone shares the
+# disk blocks until either side rewrites a file, and each checkout keeps its
+# own target/ (never shared: cargo locks it for a build, and feature sets
+# would overwrite each other). A probe file tells whether the file system
+# clones; where it does not (marge's ext4) nothing is copied and sccache
+# does the work. Not while a build runs in the main checkout (a half
+# written artefact would be cloned). Opt-in (OCW_SEED=1): measured on the
+# Mac on 2026-11-13 the clone took 46 s but cargo still rebuilt 358 of 529
+# crates (899 s), so it is off until a seed from the same dependency state
+# proves faster than sccache alone.
+read -r -d '' seed_sh <<'EOF' || true
+ocw_seed() { m=$1; r=$2; [ "$m" = "$r" ] && return 0; [ -e "$r/target" ] && return 0; [ -d "$m/target" ] || return 0;
+for g in $(find /tmp/ocw-tasks/ -name '*.json' 2>/dev/null); do grep -q '"state":"running"' $g && grep -q "\"checkout\":\"${m##*/}\"" $g && { echo "remote.sh: main checkout busy, no target/ seed" >&2; return 0; }; done;
+[ -d $m/target/debug/.fingerprint ] || return 0; probe=$(find $m/target $m/target/debug -maxdepth 1 -type f 2>/dev/null | head -n 1); [ -n "$probe" ] || return 0;
+ocw_cpc() { if [ "$(uname -s)" = Darwin ]; then cp -c -Rp "$@"; else cp -a --reflink=always "$@"; fi; };
+mkdir -p $r/target.seed; ocw_cpc $probe $r/target.seed/ 2>/dev/null || { rm -rf $r/target.seed; echo "remote.sh: no copy-on-write clones here, no target/ seed (sccache only)" >&2; return 0; };
+t0=$(date +%s); for d in debug release build-voice; do [ -d $m/target/$d ] && ocw_cpc $m/target/$d $r/target.seed/ 2>/dev/null; done;
+mv $r/target.seed $r/target && echo "remote.sh: target/ seeded from the main checkout (copy-on-write) in $(($(date +%s) - t0)) s" >&2; };
+EOF
+
 sync_tree() {
   if [ "$os" = windows ]; then
     sync_tree_windows
     return
   fi
-  "${SSH[@]}" "$target" "mkdir -p $repo"
+  if [ "${OCW_SEED:-0}" = 1 ]; then
+    "${SSH[@]}" "$target" "${seed_sh//$'\n'/ } mkdir -p $repo && ocw_seed $main_repo $repo"
+  else
+    "${SSH[@]}" "$target" "mkdir -p $repo"
+  fi
   if [ "$os" = macos ]; then
     # macOS ships openrsync, which lacks --delete-missing-args: send only the
     # files that exist and delete tracked files removed here with rm.
@@ -142,7 +198,11 @@ sync_tree_windows() {
 # N = OCW_REMOTE_SLOTS, else the machine's `slots` in machines.toml (or
 # [defaults] slots), else per OS: linux 2, windows 1, macos 1. 0 = no limit.
 # A run that finds all slots taken marks itself "waiting" and polls every
-# second, taking whichever slot frees first. Linux: flock on
+# second, taking whichever slot frees first – in order of arrival: while an
+# older run (by its task marker's start, then PID) is still waiting, a
+# waiting run leaves the free slot to it (Linux/macOS; before v2.59 the
+# first poll won, and a run could wait 20 min while later ones went
+# ahead). Linux: flock on
 # /tmp/ocw-build-slot-N.lock; macOS (no flock): atomic mkdir of
 # /tmp/ocw-build-slot-N.d holding the owner's PID (taken over when that PID
 # is gone); Windows: %TEMP%\ocw-tasks\slot-N.lock opened exclusively.
@@ -190,7 +250,7 @@ Get-ChildItem -LiteralPath $ocwD -Filter '*.json' | ForEach-Object { if (-not (G
 function ocwMark($st, $sl) { $m = [ordered]@{ v = 1; pid = $PID; state = $st; slot = $sl; start = $ocwT0; since = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds(); slots = @SLOTS@; checkout = @CHECKOUT@; branch = @BRANCH@; command = @CMD@; os = 'windows' }; [IO.File]::WriteAllText($ocwF + '.tmp', ($m | ConvertTo-Json -Compress)); Move-Item -Force -LiteralPath ($ocwF + '.tmp') -Destination $ocwF };
 $ocwRc = 0; $ocwLock = $null; $ocwSlot = $null; $ocwWarn = $false;
 try {
-if (@SLOTS@ -gt 0) { while (-not $ocwLock) { foreach ($s in 1..@SLOTS@) { try { $ocwLock = [IO.File]::Open((Join-Path $ocwD ('slot-' + $s + '.lock')), 'OpenOrCreate', 'ReadWrite', 'None'); $ocwSlot = $s; break } catch {} }; if (-not $ocwLock) { if (-not $ocwWarn) { ocwMark 'waiting' $null; [Console]::Error.WriteLine('remote.sh: waiting for a free build slot'); $ocwWarn = $true }; Start-Sleep -Milliseconds 1000 } } };
+if (@SLOTS@ -gt 0) { while (-not $ocwLock) { foreach ($s in 1..@SLOTS@) { try { $ocwLock = [IO.File]::Open((Join-Path $ocwD ('slot-' + $s + '.lock')), 'OpenOrCreate', 'ReadWrite', 'None'); $ocwSlot = $s; break } catch {} }; if (-not $ocwLock) { if (-not $ocwWarn) { ocwMark 'waiting' $null; [Console]::Error.WriteLine('remote.sh: waiting for a free build slot'); $ocwWarn = $true }; Start-Sleep -Milliseconds 1000 } }; if ($ocwWarn) { [Console]::Error.WriteLine('remote.sh: got build slot ' + $ocwSlot + ' after ' + ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - $ocwT0) + ' s') } };
 ocwMark 'running' $ocwSlot;
 @RUN@; $ocwRc = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } elseif ($ocwOk) { 0 } else { 1 }
 } finally { if ($ocwLock) { $ocwLock.Dispose() }; Remove-Item -Force -ErrorAction SilentlyContinue -LiteralPath $ocwF, ($ocwF + '.tmp') };
@@ -202,6 +262,16 @@ EOF
 read -r -d '' slot_take_flock <<'EOF' || true
 ocw_take() { exec 9>/tmp/ocw-build-slot-$1.lock && flock -n 9; };
 ocw_free() { exec 9>&-; };
+EOF
+
+# First come, first served: `ocw_older` is true while a live run that
+# started earlier (or in the same second with a lower PID) is waiting.
+read -r -d '' slot_fifo <<'EOF' || true
+ocw_older() { for g in $(find $ocw_d/ -name '*.json' 2>/dev/null); do [ "$g" = "$ocw_f" ] && continue;
+grep -q '"state":"waiting"' $g 2>/dev/null || continue;
+ocw_gs=$(sed -n 's/.*"start":\([0-9]*\).*/\1/p' $g); ocw_gp=${g##*/}; ocw_gp=${ocw_gp%%-*}; [ -n "$ocw_gs" ] || continue;
+if [ $ocw_gs -lt $ocw_t0 ] || { [ $ocw_gs -eq $ocw_t0 ] && [ $ocw_gp -lt $$ ]; }; then ps -p $ocw_gp >/dev/null 2>&1 && return 0; fi;
+done; return 1; };
 EOF
 
 # macOS has no flock(1): a slot is the directory /tmp/ocw-build-slot-N.d
@@ -228,10 +298,15 @@ run_windows() {
   local jobs_num jobs_ps="" ps run
   jobs_num=$(printf '%s' "$jobs_env" | grep -o '[0-9]*' || true)
   [ -n "$jobs_num" ] && jobs_ps="\$env:CARGO_BUILD_JOBS='$jobs_num'; "
+  # sccache from %USERPROFILE%\.local\bin (make deps-sccache-windows).
+  local sccache_ps=""
+  if [ "${OCW_SCCACHE:-1}" != 0 ]; then
+    sccache_ps="\$ocwSc = Join-Path \$env:USERPROFILE '.local\\bin\\sccache.exe'; if (Test-Path -LiteralPath \$ocwSc) { \$env:RUSTC_WRAPPER = \$ocwSc; \$env:SCCACHE_CACHE_SIZE = '${sccache_size:-30G}'; \$env:SCCACHE_CLIENT_SIDE = '1'; \$env:SCCACHE_BASEDIRS = (Get-Location).Path }; "
+  fi
   # The command runs as a script block (dot-sourced): the wrapper is one
   # line, which a `#` comment in the command would otherwise cut off. It
   # records $? of its last statement in $ocwOk (for the exit code).
-  run="Set-Location -LiteralPath $(psq "$repo"); \$env:Path = \"\$env:USERPROFILE\\.cargo\\bin;\" + \$env:Path; \$env:OCW_BUILD_ID='${build_id:-}'; ${jobs_ps}. ([scriptblock]::Create($(psq "$*") + [char]10 + '\$ocwOk = \$?'))"
+  run="Set-Location -LiteralPath $(psq "$repo"); \$env:Path = \"\$env:USERPROFILE\\.cargo\\bin;\" + \$env:Path; \$env:OCW_BUILD_ID='${build_id:-}'; ${jobs_ps}${sccache_ps}. ([scriptblock]::Create($(psq "$*") + [char]10 + '\$ocwOk = \$?'))"
   ps=${marker_ps//$'\n'/ }
   ps=${ps//@CHECKOUT@/"$(psq "$checkout_dir")"}
   ps=${ps//@BRANCH@/"$(psq "$branch")"}
@@ -244,7 +319,11 @@ run_windows() {
 # Build log for the art project (art/ART-PROJECT.md §2): every `run` is
 # recorded in the main checkout's test-output/build-log/YYYY-MM-DD/ – one
 # JSON line per run in runs.jsonl (machine, command, start, seconds, exit
-# code) and the run's output in HHMMSS-MACHINE.log. Host, user and key
+# code; sync_s = the copy of the tree; from the output, by
+# scripts/build_profile.py cargo-log: cargo_s = cargo's summed "Finished …
+# in" times, cargo_builds, compiled = crates compiled or checked, wait_s =
+# the build-slot wait; null where cargo ran with -q or its output was
+# filtered) and the run's output in HHMMSS-MACHINE.log. Host, user and key
 # paths are replaced by the machine name before the files are kept.
 # OCW_BUILD_LOG=0 turns it off.
 log_root="$(dirname "$config_dir")/test-output/build-log"
@@ -261,17 +340,19 @@ log_end() {
   local rc=$1; shift
   [ "${OCW_BUILD_LOG:-1}" = 0 ] && return 0
   [ -n "${log_file:-}" ] || return 0
-  local t1 secs
+  local t1 secs extra=""
   t1=$(date +%s.%N)
   secs=$(awk -v a="$log_t0" -v b="$t1" 'BEGIN { printf "%.1f", b - a }')
   # Mask host, user@host and the key path (they never leave config/).
   if [ -s "$log_file" ]; then
     sed -i -e "s|$user@$host|$machine|g" -e "s|$host|$machine|g" -e "s|$key|<key>|g" "$log_file" 2>/dev/null || true
   fi
-  printf '{"start":%s,"seconds":%s,"machine":%s,"os":%s,"checkout":%s,"branch":%s,"command":%s,"exit":%s,"log":%s}\n' \
+  # Cargo's own numbers from the output: {"cargo_s":…,…} without braces.
+  extra=$(python3 scripts/build_profile.py cargo-log "$log_file" 2>/dev/null | sed -n 's/^{\(.*\)}$/,\1/p' || true)
+  printf '{"start":%s,"seconds":%s,"machine":%s,"os":%s,"checkout":%s,"branch":%s,"command":%s,"exit":%s,"log":%s,"sync_s":%s%s}\n' \
     "$(json_str "$log_iso")" "$secs" "$(json_str "$machine")" "$(json_str "$os")" \
     "$(json_str "$(basename "$PWD")")" "$(json_str "$branch")" "$(json_str "$(short_cmd "$@")")" \
-    "$rc" "$(json_str "$(basename "$log_file")")" >>"$log_dir/runs.jsonl"
+    "$rc" "$(json_str "$(basename "$log_file")")" "${sync_s:-null}" "$extra" >>"$log_dir/runs.jsonl"
 }
 
 # Runs "$@" with its stdout and stderr also appended to the run's log file.
@@ -287,7 +368,9 @@ case "$action" in
   sync) sync_tree ;;
   run)
     log_start
+    sync_t0=$(date +%s.%N)
     sync_tree
+    sync_s=$(LC_ALL=C awk -v a="$sync_t0" -v b="$(date +%s.%N)" 'BEGIN { printf "%.1f", b - a }')
     status=0
     # The remote copy has no .git: pass the commit for the build id
     # (apps/desktop/build.rs, scripts/build-id.sh).
@@ -308,12 +391,14 @@ case "$action" in
         take=${slot_take_flock//$'\n'/ }
       fi
       # A waiting run whose ssh session is gone (remote.sh interrupted; the
-      # shell's parent sshd ended) gives up instead of running later.
-      slot_guard="$take ocw_slot() { ocw_w=; ocw_pp=\$PPID; while :; do for s in $slot_list; do ocw_take \$s && { ocw_n=\$s; return 0; }; done; ocw_free; if [ -z \"\$ocw_w\" ]; then ocw_w=1; ocw_mark waiting; echo 'remote.sh: waiting for a free build slot' >&2; fi; sleep 1; ps -p \$ocw_pp >/dev/null 2>&1 || exit 129; done; }; ocw_slot; "
+      # shell's parent sshd ended) gives up instead of running later. A run
+      # that waited prints "remote.sh: got build slot N after S s" (the
+      # build log's wait_s).
+      slot_guard="$take ${slot_fifo//$'\n'/ } ocw_slot() { ocw_w=; ocw_pp=\$PPID; while :; do if [ -z \"\$ocw_w\" ] || ! ocw_older; then for s in $slot_list; do ocw_take \$s && { ocw_n=\$s; [ -n \"\$ocw_w\" ] && echo \"remote.sh: got build slot \$s after \$((\$(date +%s) - ocw_t0)) s\" >&2; return 0; }; done; fi; ocw_free; if [ -z \"\$ocw_w\" ]; then ocw_w=1; ocw_mark waiting; echo 'remote.sh: waiting for a free build slot' >&2; fi; sleep 1; ps -p \$ocw_pp >/dev/null 2>&1 || exit 129; done; }; ocw_slot; "
     fi
     meta="\"slots\":$slots,\"checkout\":$(json_str "$checkout_dir"),\"branch\":$(json_str "$branch"),\"command\":$(json_str "$(short_cmd "$@")"),\"os\":\"$os\""
     marker="ocw_meta=$(shq "$meta"); ${marker_sh//$'\n'/ } "
-    logged "${SSH[@]}" "$target" "${marker}${slot_guard}ocw_mark running \$ocw_n; cd $repo && . ~/.cargo/env && export ${jobs_env:-OCW_REMOTE=1} OCW_BUILD_ID='$build_id' && $*" || status=$?
+    logged "${SSH[@]}" "$target" "${marker}${slot_guard}ocw_mark running \$ocw_n; cd $repo && . ~/.cargo/env && ${sccache_sh}${shim_sh}export ${jobs_env:-OCW_REMOTE=1} OCW_BUILD_ID='$build_id' && $*" || status=$?
     # Builds only happen remotely: bring back a Cargo.lock that cargo
     # updated there (new dependencies), so it can be committed.
     rsync -a -e "${SSH[*]}" "$target:$repo/Cargo.lock" ./Cargo.lock 2>/dev/null || true

@@ -427,8 +427,12 @@ pub fn settle_terrain_under_roads(pkg: &mut WorldPackage, clearance: f64) -> Set
         w: [f64; 3],
         max: f64,
     }
-    let mut cons: Vec<C> = Vec::new();
-    for tile in pkg.tiles.values() {
+    // Collected per tile on all cores (crate::par), in tile order.
+    let tiles: Vec<&ocw_world::package::Tile> = pkg.tiles.values().collect();
+    let shared: &WorldPackage = pkg;
+    let per_tile = crate::par::map(&tiles, crate::par::threads(), |tile| {
+        let pkg = shared;
+        let mut cons: Vec<C> = Vec::new();
         for r in &tile.roads {
             let half = f64::from(r.width_m) / 2.0;
             for w in r.points.windows(2) {
@@ -477,7 +481,9 @@ pub fn settle_terrain_under_roads(pkg: &mut WorldPackage, clearance: f64) -> Set
                 }
             }
         }
-    }
+        cons
+    });
+    let cons: Vec<C> = per_tile.into_iter().flatten().collect();
     let mut stats = SettleStats {
         violations: cons.len(),
         ..Default::default()
@@ -485,34 +491,42 @@ pub fn settle_terrain_under_roads(pkg: &mut WorldPackage, clearance: f64) -> Set
     if cons.is_empty() {
         return stats;
     }
-    let mut h: HashMap<(i64, i64), f64> = HashMap::new();
-    for c in &cons {
-        for &v in &c.v {
-            h.entry(v)
-                .or_insert_with(|| height(pkg, v.0, v.1).expect("checked"));
-        }
-    }
+    // The vertices by index (the same arithmetic in the same order as with
+    // a map lookup per use, which made this loop most of the pass).
+    let mut index: HashMap<(i64, i64), usize> = HashMap::new();
+    let mut h: Vec<f64> = Vec::new();
+    let vs: Vec<[usize; 3]> = cons
+        .iter()
+        .map(|c| {
+            c.v.map(|v| {
+                *index.entry(v).or_insert_with(|| {
+                    h.push(height(pkg, v.0, v.1).expect("checked"));
+                    h.len() - 1
+                })
+            })
+        })
+        .collect();
     let start = h.clone();
     for _ in 0..200 {
         let mut worst = 0.0f64;
-        for c in &cons {
-            let surf: f64 = c.v.iter().zip(&c.w).map(|(v, w)| h[v] * w).sum();
+        for (c, v) in cons.iter().zip(&vs) {
+            let surf: f64 = v.iter().zip(&c.w).map(|(&v, w)| h[v] * w).sum();
             let excess = surf - c.max;
             if excess <= 1e-4 {
                 continue;
             }
             worst = worst.max(excess);
             let w2: f64 = c.w.iter().map(|w| w * w).sum::<f64>().max(1e-9);
-            for (v, w) in c.v.iter().zip(&c.w) {
-                *h.get_mut(v).expect("vertex") -= excess * w / w2;
+            for (&v, w) in v.iter().zip(&c.w) {
+                h[v] -= excess * w / w2;
             }
         }
         if worst < 1e-3 {
             break;
         }
     }
-    for (&(gi, gk), &new) in &h {
-        let old = start[&(gi, gk)];
+    for (&(gi, gk), &i) in &index {
+        let (old, new) = (start[i], h[i]);
         if new >= old - 1e-6 {
             continue;
         }

@@ -408,6 +408,7 @@ pub fn build_package_on<F: Fn(f64, f64) -> f64 + Sync>(
         min = [min[0].min(k.x), min[1].min(k.z)];
         max = [max[0].max(k.x), max[1].max(k.z)];
     }
+    crate::stages::start("road strips");
     let mut roads: BTreeMap<TileKey, Vec<RoadStrip>> = road_strips(graph, tile_size)
         .into_iter()
         .map(|(k, v)| (k, v.into_iter().map(|(_, s)| s).collect()))
@@ -439,40 +440,23 @@ pub fn build_package_on<F: Fn(f64, f64) -> f64 + Sync>(
             near.into_iter().collect()
         }
     };
+    crate::stages::end();
+    crate::stages::start("terrain heights");
     let n = samples as usize;
     let spacing = tile_size / f64::from(samples - 1);
-    // Terrain heights in parallel (the expensive part).
-    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
-    let chunk = keys.len().div_ceil(threads).max(1);
-    let heights: Vec<(TileKey, Vec<f32>)> = std::thread::scope(|s| {
-        let handles: Vec<_> = keys
-            .chunks(chunk)
-            .map(|part| {
-                let terrain = &terrain;
-                s.spawn(move || {
-                    part.iter()
-                        .map(|&key| {
-                            let o = key.origin(tile_size);
-                            let mut h = Vec::with_capacity(n * n);
-                            for k in 0..n {
-                                for i in 0..n {
-                                    h.push(terrain.height(
-                                        o[0] + i as f64 * spacing,
-                                        o[1] + k as f64 * spacing,
-                                    ) as f32);
-                                }
-                            }
-                            (key, h)
-                        })
-                        .collect::<Vec<_>>()
-                })
-            })
-            .collect();
-        handles
-            .into_iter()
-            .flat_map(|h| h.join().expect("tile thread"))
-            .collect()
+    // Terrain heights in parallel (the expensive part); tiles near many
+    // roads cost more, so each thread takes the next tile (crate::par).
+    let heights: Vec<(TileKey, Vec<f32>)> = crate::par::map(&keys, crate::par::threads(), |&key| {
+        let o = key.origin(tile_size);
+        let mut h = Vec::with_capacity(n * n);
+        for k in 0..n {
+            for i in 0..n {
+                h.push(terrain.height(o[0] + i as f64 * spacing, o[1] + k as f64 * spacing) as f32);
+            }
+        }
+        (key, h)
     });
+    crate::stages::end();
     let tiles = heights
         .into_iter()
         .map(|(key, heights)| {

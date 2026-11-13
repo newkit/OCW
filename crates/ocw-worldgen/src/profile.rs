@@ -588,15 +588,48 @@ pub fn limit_grades_across_junctions(graph: &mut RoadGraph, vertex_h: &mut [f64]
             (runs, limits(e.class).0)
         })
         .collect();
+    relax_samples(graph, vertex_h, &runs, true);
+    // Exactly the junction heights at the ends (continuity).
+    for e in &mut graph.edges {
+        let n = e.profile.len();
+        if n >= 2 {
+            e.profile[0] = vertex_h[e.from.0 as usize];
+            e.profile[n - 1] = vertex_h[e.to.0 as usize];
+        }
+    }
+}
+
+/// Gauss-Seidel sweeps over all profile samples of
+/// [`limit_grades_across_junctions`] (`runs`: per edge the sample spacings
+/// and the class limit). With `skip_settled`, an edge whose last sweep
+/// changed nothing and whose end heights have not moved since is skipped
+/// until a neighbour moves one of its ends: it would change nothing, so the
+/// same operations run in the same order as when every edge is swept (the
+/// result is identical, see the test), but most edges settle after a few of
+/// the up to 2000 sweeps (Black Forest: 23 s → 0.5 s).
+fn relax_samples(
+    graph: &mut RoadGraph,
+    vertex_h: &mut [f64],
+    runs: &[(Vec<f64>, f64)],
+    skip_settled: bool,
+) {
+    let edges_at = graph.adjacency();
+    let mut dirty = vec![true; graph.edges.len()];
     for _ in 0..2000 {
         let mut worst = 0.0f64;
-        for (e, (run, max_grade)) in graph.edges.iter_mut().zip(&runs) {
+        for (i, (run, max_grade)) in runs.iter().enumerate() {
+            if skip_settled && !dirty[i] {
+                continue;
+            }
+            let e = &mut graph.edges[i];
             let p = &mut e.profile;
             let n = p.len();
             if n < 2 {
+                dirty[i] = false;
                 continue;
             }
             let (a, b) = (e.from.0 as usize, e.to.0 as usize);
+            let mut changed = p[0] != vertex_h[a] || p[n - 1] != vertex_h[b];
             p[0] = vertex_h[a];
             p[n - 1] = vertex_h[b];
             for (k, &r) in run.iter().enumerate() {
@@ -609,20 +642,21 @@ pub fn limit_grades_across_junctions(graph: &mut RoadGraph, vertex_h: &mut [f64]
                 let s = dh.signum() * excess / 2.0;
                 p[k] += s;
                 p[k + 1] -= s;
+                changed = true;
             }
-            vertex_h[a] = p[0];
-            vertex_h[b] = p[n - 1];
+            let (ha, hb) = (p[0], p[n - 1]);
+            dirty[i] = changed;
+            for (v, h) in [(a, ha), (b, hb)] {
+                if vertex_h[v] != h {
+                    vertex_h[v] = h;
+                    for &o in &edges_at[v] {
+                        dirty[o] = true;
+                    }
+                }
+            }
         }
         if worst < 1e-4 {
             break;
-        }
-    }
-    // Exactly the junction heights at the ends (continuity).
-    for e in &mut graph.edges {
-        let n = e.profile.len();
-        if n >= 2 {
-            e.profile[0] = vertex_h[e.from.0 as usize];
-            e.profile[n - 1] = vertex_h[e.to.0 as usize];
         }
     }
 }
@@ -648,19 +682,25 @@ pub fn add_profiles(graph: &mut RoadGraph, dem: &Dem, proj: &LocalProjection) ->
         max_m: f64::NEG_INFINITY,
         ..Default::default()
     };
-    // Pass 1: raw and smoothed profiles.
-    let mut raws = Vec::with_capacity(graph.edges.len());
-    let mut smooths = Vec::with_capacity(graph.edges.len());
-    for e in &graph.edges {
+    // Pass 1: raw and smoothed profiles; the DEM sampling of each edge is
+    // independent, so on all cores (results in edge order, crate::par).
+    crate::stages::start("DEM samples");
+    let per_edge = crate::par::map(&graph.edges, crate::par::threads(), |e| {
         let pts = resample(&e.points, PROFILE_STEP_M);
         let raw: Vec<Option<f64>> = pts.iter().map(|&p| height(p)).collect();
-        if raw.iter().any(Option::is_none) {
-            stats.missing_dem += 1;
-        }
+        let missing = raw.iter().any(Option::is_none);
         let fallback = raw.iter().flatten().next().copied().unwrap_or(0.0);
         let raw: Vec<f64> = raw.iter().map(|v| v.unwrap_or(fallback)).collect();
         let sigma = smoothing_sigma_m(e.class) / PROFILE_STEP_M;
-        smooths.push(gaussian(&median_filter(&raw, 2), sigma));
+        let smooth = gaussian(&median_filter(&raw, 2), sigma);
+        (raw, smooth, missing)
+    });
+    crate::stages::end();
+    let mut raws = Vec::with_capacity(graph.edges.len());
+    let mut smooths = Vec::with_capacity(graph.edges.len());
+    for (raw, smooth, missing) in per_edge {
+        stats.missing_dem += usize::from(missing);
+        smooths.push(smooth);
         raws.push(raw);
     }
     // Pass 2: junction heights by consensus.
@@ -686,11 +726,15 @@ pub fn add_profiles(graph: &mut RoadGraph, dem: &Dem, proj: &LocalProjection) ->
         })
         .collect();
     let anchored: Vec<bool> = sum.iter().map(|&(_, n)| n > 0).collect();
-    interpolate_along_structures(graph, &anchored, &mut vertex_h);
-    relax_junction_heights(graph, &mut vertex_h);
+    crate::stages::time("junction heights", || {
+        interpolate_along_structures(graph, &anchored, &mut vertex_h);
+        relax_junction_heights(graph, &mut vertex_h);
+    });
     // Pass 3: filtered along whole roads (through the OSM splits), then
     // bridges and tunnels linear between their ends.
-    let mut along_roads = filter_through_roads(&*graph, &height, &mut vertex_h);
+    let mut along_roads = crate::stages::time("through roads", || {
+        filter_through_roads(&*graph, &height, &mut vertex_h)
+    });
     for (i, e) in graph.edges.iter_mut().enumerate() {
         let len = e.length_m();
         let smooth = &smooths[i];
@@ -717,7 +761,9 @@ pub fn add_profiles(graph: &mut RoadGraph, dem: &Dem, proj: &LocalProjection) ->
     // Pass 4: the class limit across junctions (short connectors between
     // roads filtered on their own, bridges between junctions of different
     // roads).
-    limit_grades_across_junctions(graph, &mut vertex_h);
+    crate::stages::time("grades across junctions", || {
+        limit_grades_across_junctions(graph, &mut vertex_h);
+    });
     for (i, e) in graph.edges.iter().enumerate() {
         let len = e.length_m();
         let raw = &raws[i];
@@ -1245,6 +1291,78 @@ mod tests {
         let before = flat.clone();
         limit_grades_across_junctions(&mut flat, &mut [500.0; 4]);
         assert_eq!(flat, before);
+    }
+
+    /// The sweeps that skip settled edges give exactly (bit for bit) what
+    /// sweeping every edge gives, on a mesh of steep, noisy roads.
+    #[test]
+    fn skipping_settled_edges_changes_nothing() {
+        use ocw_world::graph::{Edge, EdgeId, VertexId};
+        // A 6 × 6 grid of junctions 60 m apart, heights from a hash.
+        let n = 6usize;
+        let noise = |k: u64| ((k.wrapping_mul(2_654_435_761) >> 7) % 1000) as f64 / 10.0;
+        let vertices: Vec<[f64; 2]> = (0..n * n)
+            .map(|i| [(i % n) as f64 * 60.0, (i / n) as f64 * 60.0])
+            .collect();
+        let mut edges = Vec::new();
+        for i in 0..n * n {
+            for j in [i + 1, i + n] {
+                if j >= n * n || (j == i + 1 && j % n == 0) {
+                    continue;
+                }
+                let k = edges.len() as u64;
+                let samples = 13;
+                let profile: Vec<f64> = (0..samples).map(|s| 500.0 + noise(k * 31 + s)).collect();
+                edges.push(Edge {
+                    id: EdgeId(k),
+                    from: VertexId(i as u32),
+                    to: VertexId(j as u32),
+                    points: vec![vertices[i], vertices[j]],
+                    class: if k.is_multiple_of(3) {
+                        RoadClass::Primary
+                    } else {
+                        RoadClass::Residential
+                    },
+                    name: None,
+                    width_m: 5.0,
+                    bridge: false,
+                    tunnel: false,
+                    dead_end_m: None,
+                    oneway: ocw_world::graph::Oneway::No,
+                    boundary: false,
+                    osm_way: k as i64,
+                    profile,
+                });
+            }
+        }
+        let g = RoadGraph {
+            vertices,
+            edges,
+            boundary_vertices: Default::default(),
+        };
+        let h: Vec<f64> = (0..n * n).map(|i| 500.0 + noise(i as u64 + 7)).collect();
+        let runs: Vec<(Vec<f64>, f64)> = g
+            .edges
+            .iter()
+            .map(|e| {
+                let d = distances(e.profile.len(), e.length_m());
+                (
+                    d.windows(2).map(|w| (w[1] - w[0]).max(0.0)).collect(),
+                    limits(e.class).0,
+                )
+            })
+            .collect();
+        let (mut ga, mut ha) = (g.clone(), h.clone());
+        let (mut gb, mut hb) = (g.clone(), h);
+        relax_samples(&mut ga, &mut ha, &runs, false);
+        relax_samples(&mut gb, &mut hb, &runs, true);
+        let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+        assert_eq!(bits(&ha), bits(&hb));
+        for (a, b) in ga.edges.iter().zip(&gb.edges) {
+            assert_eq!(bits(&a.profile), bits(&b.profile));
+        }
+        // It did work: the profiles moved.
+        assert_ne!(ga.edges[0].profile, g.edges[0].profile);
     }
 
     #[test]

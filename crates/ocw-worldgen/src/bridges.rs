@@ -225,13 +225,15 @@ fn runs(flags: &[bool], step: f64) -> Vec<(f64, f64)> {
 pub fn detect_spans(
     graph: &RoadGraph,
     water: &WaterTest,
-    ground: &impl Fn([f64; 2]) -> Option<f64>,
+    ground: &(impl Fn([f64; 2]) -> Option<f64> + Sync),
 ) -> Vec<Span> {
     let adj = graph.adjacency();
-    let mut out = Vec::new();
-    for (ei, e) in graph.edges.iter().enumerate() {
+    // Each edge on its own, on all cores; spans in edge order (crate::par).
+    let edges: Vec<usize> = (0..graph.edges.len()).collect();
+    let per_edge = crate::par::map(&edges, crate::par::threads(), |&ei| {
+        let e = &graph.edges[ei];
         if e.bridge || e.tunnel || e.profile.is_empty() {
-            continue;
+            return Vec::new();
         }
         let len = e.length_m();
         let half = e.width_m / 2.0;
@@ -322,9 +324,9 @@ pub fn detect_spans(
                 }),
             }
         }
-        out.extend(spans);
-    }
-    out
+        spans
+    });
+    per_edge.into_iter().flatten().collect()
 }
 
 /// Makes the deck of each detected span straight between its abutments

@@ -627,10 +627,16 @@ def builds_of(day: str) -> dict:
                     pass
     machines = {}
     for r in runs:
-        m = machines.setdefault(r.get("machine", "?"), {"runs": 0, "seconds": 0.0, "failed": 0})
+        m = machines.setdefault(r.get("machine", "?"), {"runs": 0, "seconds": 0.0, "failed": 0,
+                                                         "cargo_s": 0.0, "compiled": 0, "wait_s": 0.0})
         m["runs"] += 1
         m["seconds"] += float(r.get("seconds") or 0)
         m["failed"] += int(r.get("exit", 0) != 0)
+        # Cargo's own times, crates compiled and build-slot waits (spec
+        # §11.2; runs logged since 2026-11-13, null where cargo was quiet).
+        m["cargo_s"] += float(r.get("cargo_s") or 0)
+        m["compiled"] += int(r.get("compiled") or 0)
+        m["wait_s"] += float(r.get("wait_s") or 0)
     online = {}
     for s_ in samples:
         for m in (s_.get("status") or {}).get("machines", []) or []:
@@ -640,6 +646,9 @@ def builds_of(day: str) -> dict:
     return {
         "runs": len(runs),
         "seconds": sum(float(r.get("seconds") or 0) for r in runs),
+        "cargo_s": sum(float(r.get("cargo_s") or 0) for r in runs),
+        "compiled": sum(int(r.get("compiled") or 0) for r in runs),
+        "wait_s": sum(float(r.get("wait_s") or 0) for r in runs),
         "failed": [r for r in runs if r.get("exit", 0) != 0],
         "longest": sorted(runs, key=lambda r: -float(r.get("seconds") or 0))[:5],
         "machines": machines,
@@ -701,12 +710,16 @@ def journal(day: str) -> dict:
         md += ["", "## Builds and build servers", "",
                f"{builds['runs']} build/test runs on the build machines, "
                f"{builds['seconds'] / 3600:.1f} h in total, {len(builds['failed'])} failed; "
-               f"{builds['samples']} server samples.", "",
-               "| Machine | Runs | Hours | Failed | Online |", "|---|---|---|---|---|"]
+               f"{builds['samples']} server samples; cargo compiled {builds['compiled']} crates "
+               f"in {builds['cargo_s'] / 3600:.1f} h, {builds['wait_s'] / 3600:.1f} h waiting for build slots.", "",
+               "| Machine | Runs | Hours | Cargo h | Crates | Waited h | Failed | Online |",
+               "|---|---|---|---|---|---|---|---|"]
         for name in sorted(set(builds["machines"]) | set(builds["online"])):
             m = builds["machines"].get(name, {"runs": 0, "seconds": 0, "failed": 0})
             on = builds["online"].get(name)
-            md.append(f"| {name} | {m['runs']} | {m['seconds'] / 3600:.1f} | {m['failed']} | "
+            md.append(f"| {name} | {m['runs']} | {m['seconds'] / 3600:.1f} | "
+                      f"{m.get('cargo_s', 0) / 3600:.1f} | {m.get('compiled', 0)} | "
+                      f"{m.get('wait_s', 0) / 3600:.1f} | {m['failed']} | "
                       + (f"{on:.0%}" if on is not None else "–") + " |")
         if builds["failed"]:
             md += ["", "Failed runs:", ""]

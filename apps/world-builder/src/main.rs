@@ -24,6 +24,7 @@ use ocw_worldgen::build::{Polygon, Region, build_road_graph};
 use ocw_worldgen::dem::{Dem, GridTile, HgtTile};
 use ocw_worldgen::osm::OsmData;
 use ocw_worldgen::profile::add_profiles;
+use ocw_worldgen::stages::{end as stage_end, start as stage_start, time as stage};
 use ocw_worldgen::svg::{Colouring, graph_svg_with};
 
 #[derive(Parser)]
@@ -102,6 +103,10 @@ enum Cmd {
         /// without it the manifest is written unsigned.
         #[arg(long, value_name = "KEY")]
         sign_key: Option<PathBuf>,
+        /// Also write the build's stage profile (time, CPU, peak memory per
+        /// stage; always printed at the end) as JSON to this file.
+        #[arg(long, value_name = "FILE")]
+        profile: Option<PathBuf>,
     },
     /// Key management (spec §4.7): an offline root key signs online
     /// signing keys; signing keys sign package manifests.
@@ -711,12 +716,14 @@ fn load_box(r: &Region) -> (f64, f64, f64, f64) {
 /// The highway ways of the extracts (merged) that come near `near`.
 fn read_osm(pbfs: &[PathBuf], near: &Region) -> OsmData {
     let t = Instant::now();
-    let mut osm = OsmData::read_pbfs(pbfs).unwrap_or_else(|e| {
-        eprintln!("{e}");
-        std::process::exit(1);
+    let mut osm = stage("read PBF highways", || {
+        OsmData::read_pbfs(pbfs).unwrap_or_else(|e| {
+            eprintln!("{e}");
+            std::process::exit(1);
+        })
     });
     let all = osm.ways.len();
-    osm.retain_near(load_box(near));
+    stage("retain near", || osm.retain_near(load_box(near)));
     println!(
         "osm: {} of {all} highway ways near the region from {} extract(s), {:.1} s",
         osm.ways.len(),
@@ -785,39 +792,28 @@ fn dem_files(paths: &[PathBuf]) -> Vec<PathBuf> {
 fn load_dem(src: &SourceArgs, near: &Region) -> Dem {
     let t = Instant::now();
     let mut dem = Dem::default();
-    for path in &src.hgt {
-        match HgtTile::read(path) {
-            Ok(tile) => dem.tiles.push(tile),
-            Err(e) => eprintln!("{}: {e} (no elevation)", path.display()),
+    stage("SRTM tiles", || {
+        for path in &src.hgt {
+            match HgtTile::read(path) {
+                Ok(tile) => dem.tiles.push(tile),
+                Err(e) => eprintln!("{}: {e} (no elevation)", path.display()),
+            }
         }
-    }
+    });
     let files = dem_files(&src.dem);
     if files.is_empty() {
         return dem;
     }
     let bounds = load_box(near);
-    let threads = std::thread::available_parallelism()
-        .map_or(4, std::num::NonZero::get)
-        .min(12);
-    let per = files.len().div_ceil(threads).max(1);
+    let threads = ocw_worldgen::par::threads().min(12);
     let cell = src.dem_cell;
-    let results: Vec<Result<Option<GridTile>, String>> = std::thread::scope(|scope| {
-        let handles: Vec<_> = files
-            .chunks(per)
-            .map(|chunk| {
-                scope.spawn(move || {
-                    chunk
-                        .iter()
-                        .map(|f| read_dem_tile(f, bounds, cell))
-                        .collect::<Vec<_>>()
-                })
-            })
-            .collect();
-        handles
-            .into_iter()
-            .flat_map(|h| h.join().expect("DEM reader thread"))
-            .collect()
-    });
+    // Files outside the region cost only their header: each thread takes
+    // the next file (one sorted chunk per thread left most threads idle).
+    stage_start("DTM GeoTIFF read + resample");
+    let results: Vec<Result<Option<GridTile>, String>> =
+        ocw_worldgen::par::map(&files, threads, |f| read_dem_tile(f, bounds, cell));
+    stage_end();
+    stage_start("DTM layers");
     let (mut outside, mut bad) = (0, 0);
     for r in results {
         match r {
@@ -835,6 +831,7 @@ fn load_dem(src: &SourceArgs, near: &Region) -> Dem {
         }
     }
     dem.finish();
+    stage_end();
     for (i, l) in dem.grids.iter().enumerate() {
         println!(
             "dem layer {i}: {} tiles of {} x {} samples at {} m ({:?}), {:.0} MB",
@@ -910,12 +907,16 @@ fn read_area_inputs(
     near: &Region,
     proj: &ocw_world::geo::LocalProjection,
 ) -> AreaInputs {
-    let mut data = ocw_worldgen::areas::AreaData::read_pbfs(pbfs).unwrap_or_else(|e| {
-        eprintln!("{e}");
-        std::process::exit(1);
+    let mut data = stage("read PBF areas", || {
+        ocw_worldgen::areas::AreaData::read_pbfs(pbfs).unwrap_or_else(|e| {
+            eprintln!("{e}");
+            std::process::exit(1);
+        })
     });
-    data.retain_near(load_box(near));
-    let (areas, lines) = ocw_worldgen::landuse::extract(&data, proj);
+    stage("retain near", || data.retain_near(load_box(near)));
+    let (areas, lines) = stage("land-use areas", || {
+        ocw_worldgen::landuse::extract(&data, proj)
+    });
     // The sea: the coastline's islands cut out of the region's box plus
     // the margin tiles (spec §4.6).
     let (s, w, n, e) = load_box(near);
@@ -927,15 +928,19 @@ fn read_area_inputs(
         corners.iter().map(|c| c[0]).fold(f64::MIN, f64::max) + m,
         corners.iter().map(|c| c[1]).fold(f64::MIN, f64::max) + m,
     ];
-    let sea = ocw_worldgen::landuse::sea(&data, proj, frame);
+    let sea = stage("sea", || ocw_worldgen::landuse::sea(&data, proj, frame));
     if sea.open > 0 {
         eprintln!(
             "warning: {} coastline pieces do not close in the package area: no sea (closing a coast along the frame is not done yet)",
             sea.open
         );
     }
-    let water = ocw_worldgen::water::extract_water(&data, proj);
-    let outlines = ocw_worldgen::bridges::bridge_outlines(&data, proj);
+    let water = stage("water bodies", || {
+        ocw_worldgen::water::extract_water(&data, proj)
+    });
+    let outlines = stage("bridge outlines", || {
+        ocw_worldgen::bridges::bridge_outlines(&data, proj)
+    });
     AreaInputs {
         data,
         areas,
@@ -962,11 +967,11 @@ fn prepared_graph(
     Vec<ocw_worldgen::bridges::Span>,
 ) {
     use ocw_worldgen::clean;
-    let (mut graph, stats) = build_road_graph(osm, region);
+    let (mut graph, stats) = stage("build graph", || build_road_graph(osm, region));
     let mut snaps = Vec::new();
     if clean.is_some() {
-        let h = clean::clean_polylines(&mut graph);
-        let (s, hs) = clean::snap_near_misses(&mut graph);
+        let h = stage("clean polylines", || clean::clean_polylines(&mut graph));
+        let (s, hs) = stage("snap near misses", || clean::snap_near_misses(&mut graph));
         snaps = s;
         if log {
             println!(
@@ -975,18 +980,26 @@ fn prepared_graph(
             );
         }
     }
-    add_profiles(&mut graph, dem, proj);
+    stage("profiles", || add_profiles(&mut graph, dem, proj));
     let mut spans = Vec::new();
     if let Some(water) = clean {
-        let tied = clean::tie_snapped_heights(&mut graph, &snaps);
-        let mouths = clean::ease_junction_mouths(&mut graph);
-        let curves = clean::limit_vertical_curvature(&mut graph);
+        let (tied, mouths, curves) = stage("tie ends, junction mouths, vertical curves", || {
+            (
+                clean::tie_snapped_heights(&mut graph, &snaps),
+                clean::ease_junction_mouths(&mut graph),
+                clean::limit_vertical_curvature(&mut graph),
+            )
+        });
         let ground = |p: [f64; 2]| {
             let (lat, lon) = proj.unproject(p);
             dem.elevation(lat, lon)
         };
-        spans = ocw_worldgen::bridges::detect_spans(&graph, water, &ground);
-        let planned = ocw_worldgen::bridges::plan_span_profiles(&mut graph, &spans);
+        spans = stage("bridge detection", || {
+            ocw_worldgen::bridges::detect_spans(&graph, water, &ground)
+        });
+        let planned = stage("bridge decks", || {
+            ocw_worldgen::bridges::plan_span_profiles(&mut graph, &spans)
+        });
         if log {
             use ocw_world::bridges::BridgeSource;
             let count = |src| spans.iter().filter(|s| s.source == src).count();
@@ -1040,10 +1053,16 @@ fn profiled_graph(
     clean: Option<&ocw_worldgen::bridges::WaterTest>,
 ) -> Profiled {
     let proj = region.projection();
-    let (mut graph, stats, spans) = prepared_graph(osm, dem, region, &proj, clean, true);
+    let (mut graph, stats, spans) = stage("region graph", || {
+        prepared_graph(osm, dem, region, &proj, clean, true)
+    });
     let context = context.map(|c| {
-        let (g, _, cspans) = prepared_graph(osm, dem, &c, &proj, clean, false);
-        let taken = ocw_worldgen::profile::transfer_profiles(&mut graph, &g, 0.5);
+        let (g, _, cspans) = stage("context graph", || {
+            prepared_graph(osm, dem, &c, &proj, clean, false)
+        });
+        let taken = stage("transfer profiles", || {
+            ocw_worldgen::profile::transfer_profiles(&mut graph, &g, 0.5)
+        });
         println!(
             "context: {} road edges up to {CONTEXT_DEG}° around the box; {taken} of {} profiles taken from them",
             g.edges.len(),
@@ -1254,17 +1273,24 @@ fn package(args: PackageArgs) {
     let (region, context) = cut_region(&src.poly, bbox, origin);
     let proj = region.projection();
     let near = context.clone().unwrap_or_else(|| region.clone());
-    let osm = read_osm(&src.pbf, &near);
-    let dem = load_dem(&src, &near);
+    let osm = stage("read OSM roads", || read_osm(&src.pbf, &near));
+    let dem = stage("elevation (DEM)", || load_dem(&src, &near));
     let clean = !no_clean;
     let ta = Instant::now();
-    let inputs = (!no_areas || clean).then(|| read_area_inputs(&src.pbf, &near, &proj));
+    let inputs = (!no_areas || clean).then(|| {
+        stage("read OSM areas", || {
+            read_area_inputs(&src.pbf, &near, &proj)
+        })
+    });
     let read_s = ta.elapsed().as_secs_f64();
-    let water_test = inputs
-        .as_ref()
-        .filter(|_| clean)
-        .map(|i| ocw_worldgen::bridges::WaterTest::new(&i.areas, &i.lines, &i.outlines));
-    let profiled = profiled_graph(&osm, &dem, &region, context, water_test.as_ref());
+    let water_test = inputs.as_ref().filter(|_| clean).map(|i| {
+        stage("water test index", || {
+            ocw_worldgen::bridges::WaterTest::new(&i.areas, &i.lines, &i.outlines)
+        })
+    });
+    let profiled = stage("road graph", || {
+        profiled_graph(&osm, &dem, &region, context, water_test.as_ref())
+    });
     let (graph, stats) = (&profiled.graph, &profiled.stats);
     let base = |x: f64, z: f64| {
         let (lat, lon) = proj.unproject([x, z]);
@@ -1278,8 +1304,11 @@ fn package(args: PackageArgs) {
     } else {
         ocw_worldgen::package::cut_margin_m(1000.0, samples)
     };
-    let mut terrain = ocw_worldgen::package::GraphTerrain::new(terrain_graph, base, cut)
-        .with_bridge_spans(terrain_spans.iter().copied());
+    stage_start("terrain conforming + tiles");
+    let mut terrain = stage("terrain model", || {
+        ocw_worldgen::package::GraphTerrain::new(terrain_graph, base, cut)
+            .with_bridge_spans(terrain_spans.iter().copied())
+    });
     if clean {
         terrain = terrain.nearest_point_only();
     }
@@ -1297,6 +1326,7 @@ fn package(args: PackageArgs) {
             ocw_worldgen::package::TileCover::Box
         },
     );
+    stage_end();
     pkg.region = Some(region.package_region());
     // Road surfaces from OSM `surface` (section RSRF, Phase 8 T2), on the
     // strips as built (before any cleaning).
@@ -1317,25 +1347,30 @@ fn package(args: PackageArgs) {
     let mut area_report = vec![format!(
         "road surfaces (RSRF): {surfaced} strips differ from their category's default"
     )];
-    let road_zone = ocw_worldgen::clean::RoadZone::new(terrain_graph, &terrain_spans);
+    let road_zone = stage("road zone index", || {
+        ocw_worldgen::clean::RoadZone::new(terrain_graph, &terrain_spans)
+    });
     let spacing = pkg.spacing_m();
     let ground = |p: [f64; 2]| {
         let (lat, lon) = proj.unproject(p);
         dem.elevation(lat, lon)
     };
-    let footprints = inputs
-        .as_ref()
-        .filter(|_| !no_areas)
-        .map(|i| ocw_worldgen::buildings::footprints(&i.data, &proj));
+    let footprints = inputs.as_ref().filter(|_| !no_areas).map(|i| {
+        stage("building footprints", || {
+            ocw_worldgen::buildings::footprints(&i.data, &proj)
+        })
+    });
     if let (false, Some(i)) = (no_areas, inputs.as_ref()) {
         let tl = Instant::now();
-        let ls = ocw_worldgen::landuse::add_landuse_with_sea(
-            &mut pkg,
-            &i.areas,
-            i.sea.area.as_ref(),
-            &i.lines,
-            landuse_cells,
-        );
+        let ls = stage("land use", || {
+            ocw_worldgen::landuse::add_landuse_with_sea(
+                &mut pkg,
+                &i.areas,
+                i.sea.area.as_ref(),
+                &i.lines,
+                landuse_cells,
+            )
+        });
         let landuse_s = tl.elapsed().as_secs_f64();
         area_report.push(format!(
             "areas: read {} areas, {} waterways, {} footprints in {read_s:.1} s",
@@ -1360,14 +1395,18 @@ fn package(args: PackageArgs) {
             ls.level_vertices
         ));
         if clean {
-            let lc = ocw_worldgen::clean::clean_landuse(pkg.landuse.as_mut().expect("land use"));
+            let lc = stage("clean land use", || {
+                ocw_worldgen::clean::clean_landuse(pkg.landuse.as_mut().expect("land use"))
+            });
             // Under a road the terrain keeps its road-conformed height.
             let road = |p: [f64; 2]| {
                 road_zone
                     .covers(p, spacing)
                     .then(|| terrain.height(p[0], p[1]))
             };
-            let ws = ocw_worldgen::water::level_water(&mut pkg, &i.water, &ground, &road);
+            let ws = stage("water levels", || {
+                ocw_worldgen::water::level_water(&mut pkg, &i.water, &ground, &road)
+            });
             area_report.push(format!(
                 "clean: land use {} slivers and {} gaps filled ({} cells); water {} river chains and {} lakes levelled ({} vertices, largest change {:.1} m), {} vertices under roads kept at road level",
                 lc.slivers,
@@ -1385,14 +1424,18 @@ fn package(args: PackageArgs) {
         if let (Some(fps), Some(wt)) = (footprints.as_ref(), water_test.as_ref()) {
             let outlines: Vec<Vec<[f64; 2]>> = fps.iter().map(|f| f.outer.clone()).collect();
             let keep = |p: [f64; 2]| road_zone.covers(p, spacing) || wt.is_water(p);
-            let st = ocw_worldgen::clean::level_building_sites(&mut pkg, &outlines, &keep);
+            let st = stage("building sites", || {
+                ocw_worldgen::clean::level_building_sites(&mut pkg, &outlines, &keep)
+            });
             area_report.push(format!(
                 "clean: {} building sites levelled ({} vertices, up to {:.1} m)",
                 st.sites, st.vertices, st.max_change_m
             ));
         }
         let ts = Instant::now();
-        let ss = ocw_worldgen::clean::settle_terrain_under_roads(&mut pkg, 0.05);
+        let ss = stage("settle terrain under roads", || {
+            ocw_worldgen::clean::settle_terrain_under_roads(&mut pkg, 0.05)
+        });
         area_report.push(format!(
             "clean: terrain settled under roads: {} samples poked through, {} vertices lowered (up to {:.2} m); {:.1} s",
             ss.violations,
@@ -1403,7 +1446,9 @@ fn package(args: PackageArgs) {
     }
     if let Some(fps) = footprints.as_ref() {
         let tb = Instant::now();
-        let bs = ocw_worldgen::buildings::add_buildings(&mut pkg, fps);
+        let bs = stage("buildings", || {
+            ocw_worldgen::buildings::add_buildings(&mut pkg, fps)
+        });
         let buildings_s = tb.elapsed().as_secs_f64();
         area_report.push(format!(
             "buildings (BLDG): {} placed ({} gable roofs, {} with courtyards), {} outside the tiles; {buildings_s:.1} s",
@@ -1415,7 +1460,9 @@ fn package(args: PackageArgs) {
             osm.ways.iter().map(|w| (w.id, &w.tags)).collect();
         let tags = |id: i64| ways.get(&id).map(|t| (*t).clone());
         let spans = ocw_worldgen::bridges::all_spans(graph, &profiled.spans);
-        let bs = ocw_worldgen::bridges::make_bridges(&mut pkg, &spans, &tags);
+        let bs = stage("bridges", || {
+            ocw_worldgen::bridges::make_bridges(&mut pkg, &spans, &tags)
+        });
         area_report.push(format!(
             "bridges (BRDG): {} tagged, {} in outlines, {} over water and {} over gaps detected; {} beam, {} arch, {} truss, {} suspension, {} covered; {} piers, {} arches, {:.1} km",
             bs.by_source[0],
@@ -1432,11 +1479,13 @@ fn package(args: PackageArgs) {
             bs.length_m / 1000.0
         ));
     }
-    let bytes = pkg.to_bytes();
+    let bytes = stage("serialise", || pkg.to_bytes());
     if let Some(dir) = out.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    std::fs::write(&out, &bytes).expect("write package");
+    stage("write", || {
+        std::fs::write(&out, &bytes).expect("write package")
+    });
     let strips: usize = pkg.tiles.values().map(|t| t.roads.len()).sum();
     println!(
         "{name}: {} tiles ({} m grid), {} road strips from {} edges ({:.0} km), {:.1} MB, {:.1} s (terrain {terrain_s:.1} s)",
@@ -1465,6 +1514,22 @@ fn package(args: PackageArgs) {
         stats.dead_end_edges
     );
     println!("package: {}", out.display());
+}
+
+/// The stage profile of the build (spec §4.7): the table on stdout and,
+/// with `--profile FILE`, the JSON.
+fn print_stage_profile(json: Option<&std::path::Path>) {
+    let stages = ocw_worldgen::stages::stages();
+    let threads = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+    println!(
+        "build profile ({threads} threads):\n{}",
+        ocw_worldgen::stages::report(&stages, threads)
+    );
+    if let Some(path) = json
+        && let Err(e) = std::fs::write(path, ocw_worldgen::stages::json(&stages, threads))
+    {
+        eprintln!("{}: {e}", path.display());
+    }
 }
 
 /// The OSM `roof:colour` of the footprint containing a point (spec §14
@@ -1547,11 +1612,13 @@ fn calibrate(
     key: Option<&ocw_world::manifest::SigningKeyPair>,
 ) {
     let t = Instant::now();
-    let mut pkg = read_package(world);
+    let mut pkg = stage("read package", || read_package(world));
     let before = std::fs::metadata(world).map_or(0, |m| m.len());
-    let img = ocw_worldgen::imagery::Imagery::load(imagery).unwrap_or_else(|e| {
-        eprintln!("{e}");
-        std::process::exit(1);
+    let img = stage("load imagery", || {
+        ocw_worldgen::imagery::Imagery::load(imagery).unwrap_or_else(|e| {
+            eprintln!("{e}");
+            std::process::exit(1);
+        })
     });
     if img.is_empty() {
         eprintln!(
@@ -1585,18 +1652,20 @@ fn calibrate(
             seasons.join(", ")
         );
     }
-    let roofs = OsmRoofColours::read(pbf, &pkg);
+    let roofs = stage("OSM roof colours", || OsmRoofColours::read(pbf, &pkg));
     println!("OSM roof:colour: {} footprints", roofs.rings.len());
     let osm = |p: [f64; 2]| roofs.at(p);
-    let stats = ocw_worldgen::calibrate::calibrate(
-        &mut pkg,
-        &img,
-        &osm,
-        ocw_worldgen::calibrate::CalibrateOptions {
-            season_cells,
-            threads: 0,
-        },
-    );
+    let stats = stage("calibrate (PALT, ROOF, SEAS)", || {
+        ocw_worldgen::calibrate::calibrate(
+            &mut pkg,
+            &img,
+            &osm,
+            ocw_worldgen::calibrate::CalibrateOptions {
+                season_cells,
+                threads: 0,
+            },
+        )
+    });
     for e in stats.errors.iter().take(10) {
         eprintln!("warning: {e}");
     }
@@ -1626,13 +1695,15 @@ fn calibrate(
         );
     }
     let path = out.unwrap_or_else(|| world.to_path_buf());
-    let bytes = pkg.to_bytes();
+    let bytes = stage("serialise", || pkg.to_bytes());
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    std::fs::write(&path, &bytes).unwrap_or_else(|e| {
-        eprintln!("{}: {e}", path.display());
-        std::process::exit(1);
+    stage("write", || {
+        std::fs::write(&path, &bytes).unwrap_or_else(|e| {
+            eprintln!("{}: {e}", path.display());
+            std::process::exit(1);
+        })
     });
     print_sections(&bytes);
     println!(
@@ -1648,16 +1719,18 @@ fn calibrate(
     if path != world {
         let _ = std::fs::copy(dist::sidecar(world), dist::sidecar(&path));
     }
-    let m = dist::write_manifest(
-        &path,
-        &dist::ManifestArgs {
-            id: None,
-            name: None,
-            version: None,
-            dem_attribution: Vec::new(),
-        },
-        key,
-    );
+    let m = stage("manifest + hash", || {
+        dist::write_manifest(
+            &path,
+            &dist::ManifestArgs {
+                id: None,
+                name: None,
+                version: None,
+                dem_attribution: Vec::new(),
+            },
+            key,
+        )
+    });
     for a in &m.manifest.attribution {
         println!("  credit: {} ({})", a.source, a.licence);
     }
@@ -2000,6 +2073,7 @@ fn main() {
                 })
             });
             calibrate(&world, &imagery, &pbf, season_cells, out, key.as_ref());
+            print_stage_profile(None);
         }
         Cmd::Check { world } => {
             let bytes = std::fs::read(&world).unwrap_or_else(|e| {
@@ -2122,6 +2196,7 @@ fn main() {
             out,
             manifest,
             sign_key,
+            profile,
         } => {
             // Read the key first: a bad key should not cost a whole build.
             let key = sign_key.map(|k| {
@@ -2144,7 +2219,10 @@ fn main() {
                 time_zone,
                 out: out.clone(),
             });
-            dist::write_manifest(&out, &manifest.args(Some(name)), key.as_ref());
+            stage("manifest + hash", || {
+                dist::write_manifest(&out, &manifest.args(Some(name)), key.as_ref());
+            });
+            print_stage_profile(profile.as_deref());
         }
         Cmd::Keys { command } => match command {
             KeysCmd::InitRoot { name, dir } => dist::keys_init_root(&name, dir),
