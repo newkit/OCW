@@ -22,6 +22,10 @@ with real gradients. Download them from the
 `ocw-desktop --world path/to/<world>.ocwpkg`, or switch worlds in the app
 (menu → **World**).
 
+<img src="https://github.com/newkit/OCW/releases/download/build-history/world-tenerife-teide-iconic.jpg?v=2" alt="Riders on the TF-21 through Las Cañadas, the Teide (3,715 m) straight ahead" width="100%">
+
+<sub>Tenerife: riders on the TF-21 through the caldera of Las Cañadas, the Teide (3,715 m) straight ahead, 6 km away.</sub>
+
 | | |
 |---|---|
 | **Liechtenstein** – Vaduz to Malbun (13.3 km, 1,148 m up), the Rhine valley, the Stegertunnel | |
