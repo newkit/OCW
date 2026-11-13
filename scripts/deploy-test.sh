@@ -22,9 +22,10 @@
 #                    is built)
 #   OCW_WORLD_DATA   folder with pilot/ and blackforest/ on the machine
 #                    (default: data/ of the deploying checkout)
-#   OCW_KIOSK_WORLD  the kiosk's world: liechtenstein (default) or
-#                    blackforest (the north package if it is installed, else
-#                    the south one)
+#   OCW_KIOSK_WORLD  the kiosk's world: liechtenstein or blackforest (the
+#                    north package if it is installed, else the south one).
+#                    Default: keep the world the kiosk has now (from its
+#                    ocw-desktop.args), else liechtenstein.
 #   OCW_KIOSK_ROUTE  its route (default: Liechtenstein: the package's first
 #                    route; Black Forest north: "Baden-Baden - Mummelsee",
 #                    south: "Freiburg - Schauinsland")
@@ -42,8 +43,8 @@ version="$(scripts/build-id.sh) $(date '+%F %T')"
 dir=${OCW_DEPLOY_DIR:-/var/tmp/ocw}
 world=${OCW_DEPLOY_WORLD:-1}
 data=${OCW_WORLD_DATA:-data}
-kiosk_world=${OCW_KIOSK_WORLD:-liechtenstein}
-case "$kiosk_world" in liechtenstein|blackforest) ;; *) echo "OCW_KIOSK_WORLD: liechtenstein or blackforest" >&2; exit 2 ;; esac
+kiosk_world=${OCW_KIOSK_WORLD:-keep}
+case "$kiosk_world" in liechtenstein|blackforest|keep) ;; *) echo "OCW_KIOSK_WORLD: liechtenstein or blackforest" >&2; exit 2 ;; esac
 route_b64=$(printf '%s' "${OCW_KIOSK_ROUTE-}" | base64 -w0)
 args_set=${OCW_KIOSK_ARGS+set}
 args_b64=$(printf '%s' "${OCW_KIOSK_ARGS-}" | base64 -w0)
@@ -73,11 +74,15 @@ scripts/remote.sh "$machine" run "
     done
   fi
   route=\$(echo '$route_b64' | base64 -d)
+  kw='$kiosk_world'
+  if [ \"\$kw\" = keep ]; then
+    if grep -q '^--world .*blackforest' \"\$D/ocw-desktop.args\" 2>/dev/null; then kw=blackforest; else kw=liechtenstein; fi
+  fi
   if [ '$args_set' = set ]; then
     echo '$args_b64' | base64 -d > \"\$D/.args.tmp\"
-  elif [ '$kiosk_world' = blackforest ] && [ -f \"\$D/blackforest-north.ocwpkg\" ]; then
+  elif [ \"\$kw\" = blackforest ] && [ -f \"\$D/blackforest-north.ocwpkg\" ]; then
     printf '%s\\n' '# Black Forest north (OCW_KIOSK_WORLD=blackforest)' \"--world \$D/blackforest-north.ocwpkg\" \"--route \\\"\${route:-Baden-Baden - Mummelsee}\\\"\" > \"\$D/.args.tmp\"
-  elif [ '$kiosk_world' = blackforest ] && [ -f \"\$D/blackforest.ocwpkg\" ]; then
+  elif [ \"\$kw\" = blackforest ] && [ -f \"\$D/blackforest.ocwpkg\" ]; then
     printf '%s\\n' '# Black Forest south (OCW_KIOSK_WORLD=blackforest)' \"--world \$D/blackforest.ocwpkg\" \"--route \\\"\${route:-Freiburg - Schauinsland}\\\"\" > \"\$D/.args.tmp\"
   elif [ -f \"\$D/liechtenstein.ocwpkg\" ]; then
     sed \"s|@DIR@|\$D|g\" scripts/kiosk.args > \"\$D/.args.tmp\"
