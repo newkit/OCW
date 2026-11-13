@@ -834,3 +834,52 @@ class DescribeJobTest(unittest.TestCase):
         self.assertNotIn("description", nocmd)
         q = out["machines"][0]["queue"]["queued"][0]
         self.assertEqual(q["description"], "Browser (wasm) build check on macOS")
+
+
+class DiskWatchAndQuestionsTest(unittest.TestCase):
+    """Disk watcher, janitor and open-questions parts of the status (v2.63)."""
+
+    def test_posix_disks_home_and_checkouts(self):
+        same = d.parse_disks_posix(["/dev/a 1000 760 240 76% /"], ["/dev/a 1000 760 240 76% /"])
+        self.assertEqual([(x["name"], x["role"], x["pct"]) for x in same["disks"]], [("home", "home, checkouts", 76.0)])
+        two = d.parse_disks_posix(["/dev/a 1000 100 900 10% /"], ["/dev/b 2000 1800 200 90% /src"])
+        self.assertEqual([(x["name"], x["role"]) for x in two["disks"]], [("home", "home"), ("src", "checkouts")])
+        self.assertEqual(two["disk_pct"], 90.0)  # the janitor looks at the checkouts' disk
+        self.assertEqual(d.parse_disks_posix([], [])["disks"], [])
+
+    def test_poll_script_names_the_checkouts_directory(self):
+        s = d.posix_script(d.LINUX_SCRIPT, "~/src/OCW")
+        self.assertIn('df -Pk "$HOME"\'/src\'', s)
+        self.assertNotIn("@SRC@", d.posix_script(d.MACOS_SCRIPT, "/data/OCW"))
+
+    def test_windows_watches_the_checkout_drive_and_c(self):
+        data = {"disks": [{"name": "B", "used": 80, "free": 20}, {"name": "C", "used": 95, "free": 5},
+                          {"name": "D", "used": 1, "free": 1}]}
+        out = d.parse_windows(json.dumps(data), "B:\\src\\OCW")
+        self.assertEqual([(x["name"], x["role"], x["pct"]) for x in out["disks"]],
+                         [("B:", "checkouts", 80.0), ("C:", "system", 95.0)])
+        self.assertEqual(out["disk_pct"], 80.0)
+
+    def test_status_alerts_janitor_questions_and_text(self):
+        import spec_questions
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            spec = Path(tmp) / "SPECIFICATION.md"
+            spec.write_text("### Phase 12 – Collisions\n\n#### 12J – Open questions (for the user)\n\n"
+                            "- **Q1 – Defaults:** collisions on by default (proposal), or off?\n"
+                            "- **Q2 – Bots: decided (2026-11-13):** perfect.\n", encoding="utf-8")
+            qs = spec_questions.SpecQuestions(spec)
+            m = {"name": "Win11Builder", "os": "windows", "online": True, "polled_at": 0,
+                 "disks": [{"name": "C:", "role": "system", "pct": 93.5, "free": 5 << 30}]}
+            st = d.summarize([m], qs)
+        self.assertEqual(st["overview"]["questions_open"], 1)
+        self.assertEqual(st["questions"]["groups"][0]["items"][0]["proposal"], "collisions on by default")
+        self.assertEqual(st["alerts"][0]["machine"], "Win11Builder")
+        self.assertEqual(st["janitor"]["mode"], "off")
+        text = d.format_text(st)
+        self.assertIn("ALERT Win11Builder: disk C: 94 % full", text)
+        self.assertIn("disk C: 94% (5.0 GiB free)", text)
+        self.assertIn("Open questions (SPECIFICATION.md): 1 open, 1 decided", text)
+        self.assertIn("Q1 Defaults", text)
+        self.assertIn("proposal: collisions on by default", text)
+        self.assertNotIn("Q2 Bots", text)  # decided ones only counted

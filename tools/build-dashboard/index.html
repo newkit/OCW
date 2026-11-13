@@ -60,6 +60,22 @@ h3 { font-size: 13px; font-weight: 600; margin: 12px 0 0; }
 .pip { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 2px; vertical-align: -1px; background: var(--track); border: 1px solid var(--line); }
 .pip.on { background: var(--accent); border-color: var(--accent); }
 .warnt { color: var(--warn); }
+.alert { margin: 0 16px 12px; padding: 10px 14px; border-radius: 10px; background: var(--bad); color: #fff; font-weight: 600; }
+.alert div + div { margin-top: 4px; }
+.panel { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin: 0 16px 16px; min-width: 0; }
+.panel h2 { font-size: 16px; margin: 0 0 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.panel .tools { margin-left: auto; font-size: 12px; font-weight: 400; color: var(--muted); }
+.panel .tools label { cursor: pointer; }
+details.qg { border-top: 1px solid var(--line); padding: 6px 0; }
+details.qg summary { cursor: pointer; font-weight: 600; font-size: 13.5px; }
+details.qg summary .muted { font-weight: 400; }
+.q { margin: 8px 0 8px 14px; font-size: 13px; }
+.q .qid { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; color: var(--muted); margin-right: 6px; }
+.q .qt { font-weight: 600; }
+.q .qtext { color: var(--fg); margin-top: 1px; overflow-wrap: anywhere; }
+.q .qprop { color: var(--muted); margin-top: 2px; }
+.q.decided { opacity: .65; }
+.badge.bad { color: var(--bad); }
 footer { padding: 0 16px 24px; font-size: 12px; color: var(--muted); }
 @media (max-width: 480px) { .meters { grid-template-columns: 1fr; } }
 </style>
@@ -69,10 +85,13 @@ footer { padding: 0 16px 24px; font-size: 12px; color: var(--muted); }
   <h1>OCW build servers</h1>
   <span class="muted" id="updated">loading…</span>
 </header>
+<section id="alerts"></section>
 <section class="overview" id="overview"></section>
 <section class="chips" id="chips"></section>
 <main id="cards"></main>
-<footer>Read-only view of the machines in config/machines.toml, polled over SSH every 5 s. JSON: <a href="api/status">/api/status</a></footer>
+<section class="panel" id="questions"></section>
+<section class="panel" id="janitor"></section>
+<footer>View of the machines in config/machines.toml, polled over SSH every 5 s; the only thing it changes is the janitor's cleanup of build artefacts (target/) when a disk fills up. Open questions: from SPECIFICATION.md of the main checkout. JSON: <a href="api/status">/api/status</a></footer>
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
@@ -101,11 +120,26 @@ function descHtml(t) {
   if (!t.description) return "";
   return `<div class="desc" title="${esc(t.description_detail || t.description)}">${esc(t.description)}</div>`;
 }
-function meter(label, pct, text) {
+function meter(label, pct, text, warnAt = 70, badAt = 90) {
   const p = Math.max(0, Math.min(100, pct ?? 0));
-  const cls = p >= 90 ? "bad" : p >= 70 ? "warn" : "";
+  const cls = p >= badAt ? "bad" : p >= warnAt ? "warn" : "";
   return `<div class="meter"><div class="lbl"><span>${esc(label)}</span><b>${esc(text)}</b></div>` +
          `<div class="bar"><i class="${cls}" style="width:${pct == null ? 0 : p}%"></i></div></div>`;
+}
+
+let janitorState = {};
+function janitorLine(r, now) {
+  if (!r) return "";
+  const ago = r.at ? ` ${dur(now - r.at)} ago` : "";
+  let txt;
+  if (r.error) txt = `<span class="warnt">last pass${ago} failed</span> <span class="muted">(${esc(r.error)})</span>`;
+  else {
+    const acts = r.actions || [], size = acts.reduce((a, x) => a + (x.bytes || 0), 0);
+    const verb = r.mode === "dry-run" ? "would delete" : "deleted";
+    txt = `last pass${ago}: disk ${esc(r.pct)} %, ` + (acts.length ? `${verb} ${acts.length} × target/ (${bytes(size)})` : "nothing to do");
+    if (acts.length) txt += `<div class="cmd">${acts.map((a) => esc(`${a.path} – ${a.reason}`)).join("<br>")}</div>`;
+  }
+  return `<div class="line"><span class="k">Janitor</span>${txt}</div>`;
 }
 
 function card(m, now) {
@@ -124,7 +158,10 @@ function card(m, now) {
   else meters.push(meter("Cores", null, String(m.ncpu ?? "?")));
   if (m.mem_total) meters.push(meter("Memory", 100 * m.mem_used / m.mem_total, `${bytes(m.mem_used)} / ${bytes(m.mem_total)}`));
   if (m.swap_total) meters.push(meter("Swap", 100 * m.swap_used / m.swap_total, `${bytes(m.swap_used)} / ${bytes(m.swap_total)}`));
-  if (m.disk_total) meters.push(meter(`Disk ${m.disk_name || "home"}`, 100 * (m.disk_total - m.disk_free) / m.disk_total, `${bytes(m.disk_free)} free`));
+  // Disk watcher: the janitor cleans up above 75 % and 85 %, alerts above 92 %.
+  if ((m.disks || []).length) for (const d of m.disks) meters.push(meter(`Disk ${d.name} (${d.role})`, d.pct,
+      `${d.pct == null ? "?" : d.pct.toFixed(0) + " %"} · ${bytes(d.free)} free`, 75, 85));
+  else if (m.disk_total) meters.push(meter(`Disk ${m.disk_name || "home"}`, 100 * (m.disk_total - m.disk_free) / m.disk_total, `${bytes(m.disk_free)} free`));
 
   let html = `<div class="card">${head}<div class="sub">online · up ${dur(m.uptime)} · polled ${dur(now - m.polled_at)} ago (${m.poll_ms} ms)</div>`;
   html += `<div class="meters">${meters.join("")}</div>`;
@@ -169,18 +206,86 @@ function card(m, now) {
     });
     html += `</tbody></table>`;
   }
+  html += janitorLine((janitorState.machines || {})[m.name], now);
   if (m.stale_markers) html += `<div class="empty">${m.stale_markers} stale task marker${m.stale_markers === 1 ? "" : "s"} of ended runs ignored.</div>`;
   return html + `</div>`;
 }
 
+// Open questions for the user (parsed from SPECIFICATION.md by the dashboard).
+let showDecided = false, questionsKey = "";
+try { showDecided = localStorage.getItem("ocw-show-decided") === "1"; } catch (e) {}
+function renderQuestions(q) {
+  const el = $("questions");
+  if (!q) { el.style.display = "none"; return; }
+  el.style.display = "";
+  const key = `${q.mtime}|${showDecided}|${q.error || ""}`;
+  if (key === questionsKey) return;  // keeps opened / closed groups
+  questionsKey = key;
+  let html = `<h2>Open questions <span class="badge ${q.open ? "warn" : "ok"}">${q.open} open</span>` +
+    `<span class="muted" style="font-size:12px;font-weight:400">${q.decided} decided · ${esc(q.source || "SPECIFICATION.md")}${q.spec_version ? " v" + esc(q.spec_version) : ""}</span>` +
+    `<span class="tools"><label><input type="checkbox" id="show-decided"${showDecided ? " checked" : ""}> show decided</label></span></h2>`;
+  if (q.error) html += `<div class="err">${esc(q.error)}</div>`;
+  for (const g of q.groups || []) {
+    const items = g.items.filter((it) => showDecided || it.status === "open");
+    if (!items.length) continue;
+    html += `<details class="qg"${g.open ? " open" : ""}><summary>${esc(g.group)} – ${esc(g.title)} ` +
+      `<span class="muted">· ${g.open} open${g.decided ? `, ${g.decided} decided` : ""}${g.section ? ` · §14 ${esc(g.section)}` : ""}</span></summary>`;
+    for (const it of items) {
+      const note = it.status_note ? ` <span class="badge ${it.status === "open" ? "warn" : "ok"}">${esc(it.status_note)}</span>` : "";
+      html += `<div class="q ${it.status}"><span class="qid">Q${it.n}</span><span class="qt">${esc(it.title)}</span>${note}` +
+        `<div class="qtext">${esc(it.text)}</div>` +
+        (it.proposal ? `<div class="qprop">Proposal: ${esc(it.proposal)}</div>` : "") + `</div>`;
+    }
+    html += `</details>`;
+  }
+  const blocked = q.blocked || [];
+  if (blocked.length) {
+    html += `<h3>Blocked work</h3>` + blocked.map((b) =>
+      `<div class="q"><span class="qid">Phase ${esc(b.phase)} ${esc(b.milestone)}</span>${esc(b.title)} <span class="badge warn">waits for ${b.waits_for.map(esc).join(", ")}</span></div>`).join("");
+  }
+  el.innerHTML = html;
+  $("show-decided").addEventListener("change", (e) => {
+    showDecided = e.target.checked;
+    try { localStorage.setItem("ocw-show-decided", showDecided ? "1" : "0"); } catch (err) {}
+    renderQuestions(q);
+  });
+}
+
+function renderJanitor(j, now) {
+  const lv = j.levels || {};
+  let html = `<h2>Janitor <span class="badge ${j.mode === "on" ? "ok" : "warn"}">${esc(j.mode || "off")}</span>` +
+    `<span class="muted" style="font-size:12px;font-weight:400">target/ of merged or gone agent branches above ${esc(lv.merged ?? 75)} %, ` +
+    `idle agent checkouts above ${esc(lv.lru ?? 85)} %, alert above ${esc(lv.alert ?? 92)} %</span></h2>`;
+  const bits = [];
+  if (j.last_pass) bits.push(`last pass ${dur(now - j.last_pass)} ago`);
+  if (j.next_pass && j.mode !== "off") bits.push(`next pass at the earliest in ${dur(Math.max(0, j.next_pass - now))}`);
+  if (j.test_output_bytes != null) bits.push(`test-output on the coordinator: ${bytes(j.test_output_bytes)} (kept)`);
+  if (bits.length) html += `<div class="line">${bits.map(esc).join(" · ")}</div>`;
+  const rec = (j.recent || []).slice().reverse();
+  if (rec.length) {
+    html += `<table><thead><tr><th>Time</th><th>Machine</th><th>What</th><th class="n">Size</th></tr></thead><tbody>` +
+      rec.map((e) => `<tr><td class="n">${esc((e.time || "").slice(11, 16))}</td><td>${esc(e.machine)}</td>` +
+        `<td>${esc(e.action)} ${esc(e.path || "")}<div class="cmd">${esc(e.reason || "")}</div></td>` +
+        `<td class="n">${e.bytes ? bytes(e.bytes) : ""}</td></tr>`).join("") + `</tbody></table>`;
+  } else html += `<div class="empty">No deletions yet.</div>`;
+  $("janitor").innerHTML = html;
+}
+
 function render(st) {
   const now = st.generated_at, o = st.overview;
-  $("overview").innerHTML = [
+  janitorState = st.janitor || {};
+  $("alerts").innerHTML = (st.alerts || []).length ?
+    `<div class="alert">${st.alerts.map((a) => `<div>${esc(a.text)}</div>`).join("")}</div>` : "";
+  const stats = [
     [`${o.online}/${o.machines}`, "machines online"],
     [o.tasks, "running"],
     [o.waiting, "waiting for a slot"],
     [`${o.slots_used} of ${o.slots_total}`, "build slots used"],
-  ].map(([v, l]) => `<div class="stat"><b>${esc(v)}</b><span>${esc(l)}</span></div>`).join("");
+  ];
+  if (o.questions_open != null) stats.push([o.questions_open, "open questions"]);
+  $("overview").innerHTML = stats.map(([v, l]) => l === "open questions"
+    ? `<a class="stat" href="#questions" style="color:inherit;text-decoration:none"><b>${esc(v)}</b><span>${esc(l)}</span></a>`
+    : `<div class="stat"><b>${esc(v)}</b><span>${esc(l)}</span></div>`).join("");
   $("chips").innerHTML = st.machines.map((m) => {
     const n = (m.tasks || []).filter((t) => t.state !== "waiting").length, w = (m.queue || {}).waiting || 0;
     const cls = m.online ? (w ? "warn" : "ok") : m.online === false ? "bad" : "";
@@ -188,6 +293,8 @@ function render(st) {
     return `<span class="chip"><span class="dot ${cls}"></span>${esc(m.name)} · ${info}</span>`;
   }).join("");
   $("cards").innerHTML = st.machines.map((m) => card(m, now)).join("");
+  renderQuestions(st.questions);
+  renderJanitor(janitorState, now);
   $("updated").textContent = "updated " + new Date(now * 1000).toLocaleTimeString();
 }
 
