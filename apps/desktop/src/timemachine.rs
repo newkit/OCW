@@ -83,8 +83,9 @@ pub fn place_zone(package: Option<&str>, origin: Option<(f64, f64)>) -> (Zone, &
 /// What the Time machine page shows (updated every frame).
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
 pub struct TimeMachineInfo {
-    /// "Sun 21 Jun 2026 21:15 CEST".
-    pub local: Option<String>,
+    /// "21:15 CEST" and "Sun 21 Jun 2026" (two rows: one line each at 16:9).
+    pub time: Option<String>,
+    pub date: Option<String>,
     pub mode: Option<ClockMode>,
     /// "offset +2.0 h".
     pub mode_label: String,
@@ -102,18 +103,26 @@ const MONTHS: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
-/// "Sun 21 Jun 2026 21:15 CEST".
-pub fn long_time(zone: &Zone, ms: i64) -> String {
+/// "Sun 21 Jun 2026".
+pub fn long_date(zone: &Zone, ms: i64) -> String {
     let l = zone.local(ms);
     format!(
-        "{} {} {} {} {} {}",
+        "{} {} {} {}",
         WEEKDAYS[l.weekday() as usize],
         l.day,
         MONTHS[(l.month - 1) as usize],
-        l.year,
-        l.hh_mm(),
-        zone.abbreviation(ms)
+        l.year
     )
+}
+
+/// "21:15 CEST".
+pub fn short_time(zone: &Zone, ms: i64) -> String {
+    format!("{} {}", zone.local(ms).hh_mm(), zone.abbreviation(ms))
+}
+
+/// "Sun 21 Jun 2026 21:15 CEST".
+pub fn long_time(zone: &Zone, ms: i64) -> String {
+    format!("{} {}", long_date(zone, ms), short_time(zone, ms))
 }
 
 /// The HUD clock: the glyph and the local time, then the mode when the
@@ -189,7 +198,8 @@ fn update_sky(
     let hud = hud_label(&sky, clock.as_ref());
     view.sky = Some(SkyView { sky, hud });
     let new = TimeMachineInfo {
-        local: Some(long_time(&place.zone, ms)),
+        time: Some(short_time(&place.zone, ms)),
+        date: Some(long_date(&place.zone, ms)),
         mode: clock.map(|c| c.mode),
         mode_label: clock.map_or("real".into(), |c| match c.mode {
             ClockMode::Offset => format!("offset {:+.1} h", c.offset_ms as f64 / 3_600_000.0),
@@ -233,15 +243,15 @@ pub fn rows(info: &TimeMachineInfo) -> Vec<Row> {
     };
     vec![
         Row {
-            label: "World time (hour)".into(),
-            value: Some(info.local.clone().unwrap_or_else(|| "-".into())),
+            label: "World time".into(),
+            value: Some(info.time.clone().unwrap_or_else(|| "-".into())),
             left: line("time -1h"),
             right: line("time +1h"),
             confirm: None,
         },
         Row {
             label: "Day".into(),
-            value: None,
+            value: Some(info.date.clone().unwrap_or_else(|| "-".into())),
             left: line("time -1d"),
             right: line("time +1d"),
             confirm: None,
@@ -269,7 +279,7 @@ pub fn rows(info: &TimeMachineInfo) -> Vec<Row> {
             }))),
         },
         Row {
-            label: "Mode (Enter: real time)".into(),
+            label: "Mode (Enter: real)".into(),
             value: Some(info.mode_label.clone()),
             left: None,
             right: None,
@@ -448,7 +458,8 @@ mod tests {
     #[test]
     fn page_rows_are_time_commands() {
         let mut i = TimeMachineInfo {
-            local: Some("Sun 21 Jun 2026 21:15 CEST".into()),
+            time: Some("21:15 CEST".into()),
+            date: Some("Sun 21 Jun 2026".into()),
             mode: Some(ClockMode::Real),
             mode_label: "real".into(),
             speed: 1.0,

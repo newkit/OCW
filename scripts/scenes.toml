@@ -459,7 +459,7 @@ shot = 9
 
 [[scene]]
 name = "sky-sunset-ridge"
-description = "Sunset in the Malbun valley (km 12, 20:40 CEST): the sun already behind the ridge, the valley in shadow while the sky is still bright"
+description = "Evening in the Malbun valley (km 12, 20:40 CEST, the sun 6° high in the west-north-west): long shadows of trees, houses and riders across the road (the ridge does not hide the sun yet: no horizon blocking in S1)"
 world = true
 args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "2", "--power", "200"]
 at = ["2=time pause", "2=time 2026-06-21 20:40", "2.5=teleport 12.0", "2.5=camera.orbit 160 16 16"]

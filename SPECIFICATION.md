@@ -1998,7 +1998,7 @@ Attribution of the provider used appears on the credits screen and in the weathe
 - **Menu:** *Navi → Time machine* (six rows and Back, fits 16:9): world time (← / → one hour), day (← / → one day), speed (paused … x600), preset (sunrise, golden hour = sun 5° high in the evening, noon = solar noon, sunset, blue hour = sun 5° below the horizon, midnight = the coming local midnight, summer / winter solstice = 21 June / 21 December at the current time of day, swapped south of the equator), mode (Enter: real time), who sets the time. Console: `time [real | HH:MM | YYYY-MM-DD [HH:MM] | ±Nh/m/d | offset ±Nh | speed N | pause | play | PRESET]`.
 - **Persistence:** the night brightness, sky mode and bike-light mode are settings (`settings.toml`); the time machine itself is not saved: every ride starts at the real time (9A: default = real).
 - **Visual tests:** scenes `sky-sunrise`, `sky-noon`, `sky-golden-hour`, `sky-sunset`, `sky-sunset-ridge`, `sky-blue-hour`, `sky-night-lights`, `menu-time-machine` and the video `sky-sunset-timelapse` (x600 across the sunset) in `scripts/scenes.toml`.
-- **Not yet:** the sun's horizon from the DEM (the sun is not hidden behind ridges; terrain shadows do follow the sun), moon, stars and street lamps (S2).
+- **Not yet:** the sun's horizon from the DEM: the sun is not hidden behind ridges, and the terrain casts no shadows (it is not a shadow caster, for cost), so a ridge does not darken the valley at sunset; trees, buildings and riders cast long shadows that follow the sun. Moon, stars and street lamps: S2.
 
 #### 9H – Open questions (for the user)
 
