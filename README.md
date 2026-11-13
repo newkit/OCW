@@ -1367,7 +1367,14 @@ scripts/deploy-test.sh <name>                                  # release build f
   scripts/build_profile.py compare A B` prints a before/after table.
 - Screenshots and videos on machines with a real GPU: use the Wayland modes
   (`shot-wayland`, `video-wayland`; headless weston). Xvfb (X11) cannot
-  present a real GPU's Vulkan output.
+  present a real GPU's Vulkan output (no DRI3), so `drive.sh` runs X11 modes
+  on Mesa's lavapipe (`WGPU_ADAPTER_NAME=llvmpipe`; `OCW_X11_ADAPTER=NAME`
+  picks another, `OCW_X11_ADAPTER=` leaves the choice to wgpu). Since
+  2026-11-11 the build user on marge is in the `render` group (for weston's
+  GPU renderer), so wgpu sees RADV there; without that setting every X11 run
+  panicked with "Fallback system failed to choose present mode … Options:
+  []". The app itself also no longer panics on such an adapter: it restarts
+  once on one that can present to the window (`apps/desktop/src/surface.rs`).
 - The kiosk (the app permanently on a machine's screen, restarted on every
   deployment) is set up once on that machine's desktop: see
   [config/README.md](config/README.md#test-app-on-a-machines-screen-kiosk).

@@ -43,6 +43,14 @@ set -euo pipefail
 [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
 
 APP_ENV=(WGPU_BACKEND=vulkan "RUST_LOG=${RUST_LOG:-info,wgpu=warn,naga=warn}")
+# Xvfb has no DRI3, so a hardware Vulkan driver (RADV on marge) cannot present
+# to it ("No DRI3 support detected", then no present modes): X11 runs use
+# Mesa's lavapipe. Bevy picks the adapter before the window exists, so it
+# would otherwise take the GPU whenever the user may open /dev/dri/renderD*.
+# WGPU_ADAPTER_NAME=... overrides; OCW_X11_ADAPTER= (empty) leaves the choice to wgpu.
+X11_ENV=()
+x11_adapter=${WGPU_ADAPTER_NAME:-${OCW_X11_ADAPTER-llvmpipe}}
+[ -n "$x11_adapter" ] && X11_ENV=("WGPU_ADAPTER_NAME=$x11_adapter")
 # Debug (default) or release build of ocw-desktop.
 case "${OCW_PROFILE:-debug}" in
   release) BUILD_FLAGS=(--release); APP=./target/release/ocw-desktop ;;
@@ -223,7 +231,7 @@ case "$cmd" in
     cargo build -q "${BUILD_FLAGS[@]}" -p ocw-desktop ${OCW_FEATURES:+--features "$OCW_FEATURES"}
     status=0
     timeout 300 xvfb-run -a -s "-screen 0 ${width}x${height}x24" \
-      env -u WAYLAND_DISPLAY "${APP_ENV[@]}" "$APP" "${APP_ARGS[@]}" \
+      env -u WAYLAND_DISPLAY "${APP_ENV[@]}" "${X11_ENV[@]}" "$APP" "${APP_ARGS[@]}" \
       >"$log" 2>&1 || status=$?
     report x11 "$status"
     ;;
@@ -241,7 +249,7 @@ case "$cmd" in
     cargo build -q "${BUILD_FLAGS[@]}" -p ocw-desktop ${OCW_FEATURES:+--features "$OCW_FEATURES"}
     status=0
     timeout 1500 xvfb-run -a -s "-screen 0 ${width}x${height}x24" \
-      env -u WAYLAND_DISPLAY "${APP_ENV[@]}" "$APP" "${VIDEO_APP_ARGS[@]}" \
+      env -u WAYLAND_DISPLAY "${APP_ENV[@]}" "${X11_ENV[@]}" "$APP" "${VIDEO_APP_ARGS[@]}" \
       >"$log" 2>&1 || status=$?
     encode_video x11 "$status"
     ;;

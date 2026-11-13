@@ -149,3 +149,4 @@ the kiosk's screenshots and video in `test-output/`.
 | `requires rustc 1.97.1` building Bevy | Use the rustup toolchain (`source ~/.cargo/env`), not `/usr/bin/cargo` |
 | `Library libxkbcommon-x11.so could not be loaded` | `sudo apt-get install libxkbcommon-x11-0` |
 | `app failed, see …log` from `drive.sh` | Read the log tail it prints; look for `panicked` |
+| X11: `Fallback system failed to choose present mode … Options: []`, `vulkan: No DRI3 support detected` | A real GPU (RADV) was picked; Xvfb has no DRI3, so only lavapipe can present. `drive.sh` sets `WGPU_ADAPTER_NAME=llvmpipe` for X11 runs (`OCW_X11_ADAPTER=NAME` overrides, empty = wgpu's choice); the app restarts on a presenting adapter itself and logs `cannot present to the window` |
