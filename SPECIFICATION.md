@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.31 – November 2026
+Version 2.32 – November 2026
 
 | Version | Change |
 |---|---|
@@ -50,6 +50,7 @@ Version 2.31 – November 2026
 | 2.29 | Decisions: weather changes the physics realistically, races per organiser (Phase 9 Q4); best open data for every region – high-resolution official DTMs, freshest OSM, best open imagery (Phase 8 Q9); attribution licences accepted (Phase 8 Q1) |
 | 2.30 | Phase 10 planned: browser app for riding (§14 Phase 10): Bevy on WebGPU (WebGL2 fallback), local server in the browser, WebTransport endpoint, tile streaming with OPFS cache, Web Bluetooth (Chromium only) with a sensor bridge for Safari / iOS / Firefox, Web Audio + LiveKit, captures with timestamps; milestones B1–B8, open questions Q1–Q6 |
 | 2.31 | Timestamped captures (§3.2, §11.4): every screenshot and video frame shows an ISO 8601 local timestamp with UTC offset at the top right (always, also with `hud off`), and every file carries it as metadata – screenshots as JPEG (quality 90) with EXIF `DateTimeOriginal` / `CreateDate` / `OffsetTimeOriginal` / `Software` (PNG with `tEXt` `Creation Time` / `Software` for a `.png` path and the lossless `--capture` frames), MP4s with `creation_time` and the build in `comment`; frame capture stamps the capture start plus game time. Test media at 2560×1440, H.264 CRF 18. Videos with game sound (§3.3): live recordings tap the device's mixer output (or render it with game time without a device), frame capture renders exactly one frame's worth of samples per frame; AAC 192k, 48 kHz stereo |
+| 2.32 | Phase 11 planned: VR mode (§14 Phase 11): OpenXR only (Meta Rift / Quest via Link, SteamVR headsets, Pico, Varjo; Linux via SteamVR / Monado / WiVRn; no macOS; WMR not supported after Windows 11 24H2), first-person riding with own body, mirror view for captures, world-space HUD on the stem, comfort options, spatial voice, performance preset; milestones X1–X8, open questions Q1–Q6 |
 
 ---
 
@@ -2073,6 +2074,101 @@ Attribution of the provider used appears on the credits screen and in the weathe
 - **Q4 – Hosting:** where (own servers, a CDN provider)? World packages are large (Black Forest 260 MB), so CDN traffic costs money.
 - **Q5 – Anonymous access:** may people ride without an account (single-player demo), or is login required?
 - **Q6 – Same app or a lighter "web edition"?** Full parity, or a reduced feature set (smaller worlds, lower quality) for faster loading?
+
+---
+
+### Phase 11 – VR mode (planning, 2026-11-13)
+
+**Goal:** ride Open Cycling World in a VR headset: Oculus / Meta Rift and Quest, Valve Index, HTC Vive, Pico, Varjo and other vendors. The rider sits on the trainer, sees the world in stereo with head tracking and the own bike and hands in front of them, and keeps every feature: multiplayer, voice (spatial), workouts, the time and weather machines.
+
+#### 11A – Platform facts (as found 2026-11-13; re-check before starting)
+
+- **OpenXR** (Khronos) is the one cross-vendor API. Every current PC-VR runtime implements it: Meta's Quest Link / Oculus PC app (Rift, Rift S, Quest via Link / Air Link), SteamVR (Index, Vive, Pico, Quest via Steam Link, many others), Varjo, Pimax. On Linux: **Monado** (open source), SteamVR, and **WiVRn / ALVR** for streaming to Quest / Pico. Coding against OpenXR alone covers all vendors. No vendor SDK (the old Oculus / LibOVR SDK is deprecated).
+- **Oculus Rift / Rift S:** discontinued hardware, still usable on Windows through the Meta PC app's OpenXR runtime. Never on Linux or macOS natively, though some of these headsets run through community drivers on Linux with limited support.
+- **Windows Mixed Reality** (HP Reverb, Samsung Odyssey…) was **removed in Windows 11 24H2** ([Road to VR](https://roadtovr.com/windows-11-drops-wmr-support-24h2/), [heise](https://heise.de/-9979921)). Only older Windows versions or community drivers on Linux / SteamVR can still use them; not a target.
+- **macOS:** no mainstream OpenXR runtime for PC VR, so **no VR on macOS**. Apple Vision Pro uses visionOS (no OpenXR); a native visionOS app is out of scope (like iOS, §1.3).
+- **Standalone headsets** (Quest, Pico): option 1 is **PC VR streaming** (Link / Air Link, Steam Link, Virtual Desktop, WiVRn, ALVR), so no extra build. Option 2 is a native **Android OpenXR** build (Quest / Pico store): future, like the mobile apps.
+- **Browser:** **WebXR** (Quest Browser, Chrome with a PC headset) fits the browser app (Phase 10) later.
+- **Bevy integration:** the community crates `bevy_mod_xr` / `bevy_mod_openxr` (successor of the unmaintained `bevy_oxr`). The latest found is 0.4 for **Bevy 0.17** ([docs.rs](https://docs.rs/crate/bevy_mod_openxr/latest)), while OCW is on Bevy 0.20, so we need to port / fork it or write our own thin integration (the `openxr` crate + wgpu Vulkan / D3D12 interop, a stereo camera pair rendering into the OpenXR swapchain). To be decided by a spike (11D, X1).
+
+#### 11B – Design
+
+- **One app, a VR mode:** `ocw-desktop --vr` (and a menu switch) starts an OpenXR session. Without a runtime or headset the app runs as today, with a clear message. The **monitor** keeps a **spectator / mirror view**: chase camera or the headset view, for streaming, for the kiosk, and for the art project's captures (with the ISO timestamp). Captures come from the mirror, never from inside the headset.
+- **Engine independence:** XR lives behind a `ocw-render` plugin; the sim, server, protocol and devices don't change. Head pose and controllers are only view inputs. The server stays authoritative (§6.1).
+- **Camera:** first-person from the rider's head on the bike (rider height from the profile, §2.6). Head tracking is added on top of the seated riding pose: the head can look around and lean, but the bike's path stays physics-driven. Recentre with a button or after a long head offset.
+- **Own body:** the own bike, handlebar, arms, hands on the bars and legs pedalling at the real cadence, seen from the first-person view (the Phase 4 rig with IK). Optional: hands from controller or hand tracking if they leave the bars.
+- **HUD in VR:** world-space panels instead of a flat HUD:
+  - a **bike computer** on the stem (power, speed, cadence, HR, gradient, distance);
+  - a **head-locked minimum** (critical warnings only);
+  - **panels** for menus, workouts, the event leaderboard and junction arrows at road level ahead;
+  - the ISO timestamp on the mirror view.
+- **Input in VR:** hands are on the handlebar, so the main inputs are the **trainer / sensors** (power, cadence) and **steering by leaning the head** (optional, mapped to the existing lean steering, §5.2.1), handlebar buttons (BLE remotes, later), gamepad, voice commands (later), and controller pointer for menus (gaze + click as a fallback).
+- **Comfort** (motion sickness is the main risk; on a trainer pedalling helps, since the vection matches effort):
+  - stable horizon (no camera roll with the bike's lean by default);
+  - no head bob;
+  - smooth, rate-limited acceleration of the view;
+  - a **comfort vignette** in sharp turns, hard braking and steep descents (strength setting);
+  - always-visible cockpit (bike and bars) as a static reference;
+  - snap or smooth turning only in menus;
+  - a "seated / standing" calibration;
+  - fade to black on teleports, ride switches and U-turns.
+- **Performance:** stereo at the headset's native rate (72–120 Hz) costs roughly 2–3× the monitor budget.
+  - **Rendering:** single-pass stereo / multiview where wgpu supports it, fixed foveated rendering (and eye-tracked where the runtime offers it), MSAA instead of TAA (less smear in VR), and a **VR quality preset** (shorter view distance, fewer trees and shadows, lower LOD bias).
+  - **Frame budget:** stay under budget; runtime reprojection (ASW / motion smoothing) is a safety net, not the plan.
+  - **Targets:** 90 Hz on a GTX 1070 / RX 5700-class GPU with the VR preset, 72 Hz minimum.
+- **Audio:** game audio and **voice spatialised** with the head pose (the spatial audio of §7 already works with positions); the headset's audio device as the default output in VR.
+- **Multiplayer:** other riders see a VR rider normally; optionally their head turns follow the real head (cosmetic, sent as a small orientation in the protocol, only added fields).
+
+#### 11C – Supported devices (target matrix)
+
+| Headset | Runtime | OS | Status |
+|---|---|---|---|
+| Meta Quest 2 / 3 / 3S / Pro (Link / Air Link) | Meta PC app (OpenXR) | Windows | target |
+| Meta Quest (Steam Link / Virtual Desktop) | SteamVR / VD | Windows | target |
+| Meta Quest (WiVRn / ALVR) | WiVRn / ALVR (OpenXR) | Linux | target |
+| Oculus Rift / Rift S | Meta PC app (OpenXR) | Windows | supported (legacy hardware) |
+| Valve Index, HTC Vive / Vive Pro, Bigscreen Beyond, Pimax | SteamVR | Windows, Linux | target |
+| Pico 4 (streaming) | Pico Connect / SteamVR / ALVR | Windows, Linux | target |
+| Varjo | Varjo Base (OpenXR) | Windows | best effort |
+| WMR headsets | – | – | not supported (removed in Windows 11 24H2) |
+| Apple Vision Pro | visionOS | – | out of scope |
+| Standalone Quest / Pico (native Android build) | OpenXR on Android | Android | future |
+| WebXR | browser | – | with Phase 10 (future) |
+
+#### 11D – Milestones (proposal)
+
+- **X1 – Spike:** an OpenXR session from Bevy 0.20, comparing a port of `bevy_mod_openxr` with our own thin integration. A stereo view of the test route with head tracking on SteamVR (Linux, Monado / WiVRn) and the Meta runtime (Windows). Measure the frame time. Decide on the integration (spec entry).
+- **X2 – Riding in VR:** `--vr`, first-person camera on the bike, own body with IK, recentre, mirror view, VR quality preset, captures from the mirror.
+- **X3 – VR HUD and menus:** bike computer on the stem, world-space menus with controller / gaze input, junction arrows in the world.
+- **X4 – Comfort:** vignette, horizon lock, fades, calibration, settings page *VR comfort*.
+- **X5 – Audio and voice in VR:** head-relative spatial audio, the headset's audio device, voice positions.
+- **X6 – Head-lean steering** (optional) and handlebar remotes.
+- **X7 – Device matrix tests** (11C) and the performance tuning to the targets.
+- **X8 (future) – Native standalone build** (Android OpenXR for Quest / Pico) and **WebXR** in the browser app.
+
+**Unit tests** (no headset needed):
+
+- head-pose composition (bike pose + seated head + tracking offset, recentre);
+- the comfort vignette curve from turn rate / acceleration;
+- horizon lock;
+- world-space panel layout and hit testing;
+- IK hand / handlebar placement;
+- the head-lean → steering mapping;
+- quality-preset selection.
+
+**Integration tests:**
+
+- the OpenXR loader against **Monado's headless / simulated device** on Linux in CI (session start, frame loop, swapchain), so VR code is exercised without hardware;
+- screenshots of the mirror view with the scene harness.
+
+#### 11E – Open questions (for the user)
+
+- **Q1 – Which headsets do you have** (or can borrow) for testing? The spike needs at least one real headset; Monado covers CI only.
+- **Q2 – Linux VR:** target it (SteamVR / Monado / WiVRn, works with Index and with Quest via WiVRn), or Windows first?
+- **Q3 – Integration:** fork / port `bevy_mod_openxr` to Bevy 0.20 (faster, external dependency that lags Bevy), or our own thin OpenXR layer (more work, fully under our control)? Decided after X1.
+- **Q4 – Head-lean steering:** wanted, or keep steering on keys / gamepad / autodrive?
+- **Q5 – Native standalone (Quest / Pico store) and WebXR:** later, or not at all?
+- **Q6 – Priority:** where does VR go relative to Phases 8–10?
 
 ---
 
