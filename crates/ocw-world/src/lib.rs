@@ -23,6 +23,7 @@ pub mod path;
 pub mod region;
 mod route;
 pub mod route_file;
+pub mod route_fit;
 pub mod summary;
 pub mod surface;
 mod terrain;

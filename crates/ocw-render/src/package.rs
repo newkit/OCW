@@ -1419,7 +1419,9 @@ fn upload_tile(
                 c.spawn((
                     Mesh3d(meshes.add(t.roads.mesh())),
                     MeshMaterial3d(mat),
-                    NotShadowCaster,
+                    // Roads and their markings lie on the terrain: no
+                    // shadows of their own (spec §4.5).
+                    crate::world::FlatOverlay,
                     CameraInteraction::Solid,
                 ));
             }
