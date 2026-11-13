@@ -651,7 +651,7 @@ args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "5600
 at = ["0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 140 22 80"]
 shot = 12
 
-# --- World menu (spec 3.2.1, v2.34); OCW_WORLD=DIR/liechtenstein.ocwpkg with
+# --- World menu (spec 3.2.1, v2.39); OCW_WORLD=DIR/liechtenstein.ocwpkg with
 # the Black Forest package in the same DIR lists both ------------------------
 
 [[scene]]
