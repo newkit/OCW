@@ -471,11 +471,10 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         // Without the engine's device list (the menu passes it, see
         // `audio_rows`).
         Page::Audio => audio_rows(settings, &AudioDevices::default()),
-        Page::Controls => vec![setting_row(
-            settings,
-            "controls.autodrive",
-            "Autodrive at the start",
-        )],
+        Page::Controls => vec![
+            setting_row(settings, "controls.autodrive", "Autodrive at the start"),
+            setting_row(settings, "controls.invert_y", "God mode: invert mouse Y"),
+        ],
         Page::Trainer => vec![
             setting_row(settings, "trainer.difficulty", "Difficulty (%)"),
             setting_row(

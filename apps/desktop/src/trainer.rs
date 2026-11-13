@@ -40,7 +40,15 @@ pub struct TrainerControl {
     erg: ErgController,
     /// Last gradient sent in SIM mode (for the HUD).
     last_grade: Option<f64>,
+    /// God mode (spec §14 Phase 13E): SIM simulates a flat asphalt road.
+    flat: bool,
 }
+
+/// Open question Q4 (spec §14 Phase 13H): while flying in god mode the
+/// trainer simulates a flat road (lowest resistance; the proposal). ERG
+/// keeps its target either way. `false` would keep the frozen road's
+/// gradient instead.
+pub const FLAT_WHILE_FLYING: bool = true;
 
 impl TrainerControl {
     pub fn new(profile: RiderProfile) -> Self {
@@ -50,7 +58,13 @@ impl TrainerControl {
             sim: SimController::new(SimSettings::default(), &profile),
             erg: ErgController::new(ErgSettings::default()),
             last_grade: None,
+            flat: false,
         }
+    }
+
+    /// God mode: flying (SIM: a flat road while [`FLAT_WHILE_FLYING`]).
+    pub fn set_flying(&mut self, flying: bool) {
+        self.flat = flying && FLAT_WHILE_FLYING;
     }
 
     pub fn mode(&self) -> TrainerMode {
@@ -93,13 +107,18 @@ impl TrainerControl {
         match self.mode {
             TrainerMode::Off => None,
             TrainerMode::Sim => {
-                let here = route.sample(rider.distance).grade;
                 let ahead_m = (rider.speed * LOOK_AHEAD_S).max(MIN_LOOK_AHEAD_M);
-                let ahead = route.sample(rider.distance + ahead_m).grade;
+                let (here, ahead, surface) = if self.flat {
+                    (0.0, 0.0, ocw_world::Surface::Asphalt)
+                } else {
+                    (
+                        route.sample(rider.distance).grade,
+                        route.sample(rider.distance + ahead_m).grade,
+                        ocw_sim::ride::surface(route, &rider),
+                    )
+                };
                 // This bike's share of the surface's rolling resistance (§2.5).
-                let rolling = self
-                    .profile
-                    .surface_factor(ocw_sim::ride::surface(route, &rider).rolling_factor());
+                let rolling = self.profile.surface_factor(surface.rolling_factor());
                 let target = self.sim.update_on(now_s, here, ahead, rolling)?;
                 self.last_grade = Some(target.grade);
                 Some(DeviceCommand::SetSimulation(SimulationParameters {
@@ -218,6 +237,31 @@ mod tests {
             panic!("expected a SIM command");
         };
         assert!(p.grade > 0.0);
+    }
+
+    /// God mode (spec §14 Phase 13E): SIM rides a flat road while flying,
+    /// whatever the road below; ERG keeps its target.
+    #[test]
+    fn flying_simulates_a_flat_road_and_erg_stays() {
+        let mut t = TrainerControl::new(RiderProfile::default());
+        t.set_flying(true);
+        let Some(DeviceCommand::SetSimulation(p)) = t.update(0.0, &route(), at(500.0, 8.0), None)
+        else {
+            panic!("a SIM command")
+        };
+        assert_eq!(p.grade, 0.0);
+        t.set_flying(false);
+        let Some(DeviceCommand::SetSimulation(p)) = t.update(10.0, &route(), at(500.0, 8.0), None)
+        else {
+            panic!("a SIM command")
+        };
+        assert!(p.grade > 0.0, "the climb again: {}", p.grade);
+        t.set_mode(TrainerMode::Erg { target_w: 180.0 });
+        t.set_flying(true);
+        assert_eq!(
+            t.update(20.0, &route(), at(500.0, 8.0), Some(90.0)),
+            Some(DeviceCommand::SetTargetPower(180.0))
+        );
     }
 
     #[test]

@@ -848,9 +848,13 @@ mod tests {
                 }
             }
         }
-        let elsewhere = ["devices.", "strava.", "hud"];
+        let elsewhere = ["devices.", "strava.", "hud", "god."];
         for line in lines {
-            if elsewhere.iter().any(|p| line.starts_with(p)) || line.contains("riders.remove") {
+            // God mode's settings apply through its own plugin (`god.invert`).
+            if elsewhere.iter().any(|p| line.starts_with(p))
+                || line.contains("riders.remove")
+                || line.contains("controls.invert_y")
+            {
                 continue;
             }
             let out = run(&mut app, &line);

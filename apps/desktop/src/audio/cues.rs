@@ -30,13 +30,18 @@ pub enum Cue {
     WorkoutStep,
     /// A gear change: a mechanical double click.
     GearShift,
+    /// God mode (spec §14 Phase 13C): the transformation's chime, into the
+    /// unicorn and back.
+    GodChime,
+    /// A soft wing beat (a downstroke of the unicorn's wings).
+    WingBeat,
     /// A test tone on a bus (`audio.play test-music` …).
     Test(Bus),
 }
 
 impl Cue {
     /// The names `audio.play` takes.
-    pub const NAMES: [(&'static str, Cue); 14] = [
+    pub const NAMES: [(&'static str, Cue); 16] = [
         ("move", Cue::UiMove),
         ("value", Cue::UiValue),
         ("confirm", Cue::UiConfirm),
@@ -46,6 +51,8 @@ impl Cue {
         ("finish", Cue::Finish),
         ("step", Cue::WorkoutStep),
         ("shift", Cue::GearShift),
+        ("chime", Cue::GodChime),
+        ("wing", Cue::WingBeat),
         ("test-music", Cue::Test(Bus::Music)),
         ("test-effects", Cue::Test(Bus::Effects)),
         ("test-voice", Cue::Test(Bus::Voice)),
@@ -77,6 +84,8 @@ impl Cue {
             Cue::Finish => 1.4,
             Cue::WorkoutStep => 0.32,
             Cue::GearShift => 0.09,
+            Cue::GodChime => 1.3,
+            Cue::WingBeat => 0.38,
             Cue::Test(_) => 0.8,
         }
     }
@@ -116,7 +125,10 @@ impl CueVoice {
             cue,
             pos: 0,
             noise: Noise::new(0xC0E5 + cue.duration_s().to_bits()),
-            filter: Svf::new(2600.0, 2.0, sample_rate),
+            filter: match cue {
+                Cue::WingBeat => Svf::new(380.0, 0.8, sample_rate),
+                _ => Svf::new(2600.0, 2.0, sample_rate),
+            },
         }
     }
 
@@ -152,6 +164,22 @@ impl CueVoice {
                     if x >= 0.0 { (-x / 0.003).exp() } else { 0.0 }
                 };
                 band * 1.2 * (click(0.0) + 0.8 * click(0.035)) + tone(t, 0.035, 0.05, 180.0, 0.25)
+            }
+            // A sparkling run up (G6 C7 E7 G7 C8) over a soft C6.
+            Cue::GodChime => {
+                bell(t, 0.0, 1.2, 1046.5, 0.12)
+                    + bell(t, 0.0, 0.5, 1568.0, 0.16)
+                    + bell(t, 0.08, 0.5, 2093.0, 0.16)
+                    + bell(t, 0.16, 0.6, 2637.0, 0.15)
+                    + bell(t, 0.24, 0.7, 3136.0, 0.14)
+                    + bell(t, 0.32, 0.9, 4186.0, 0.13)
+            }
+            // Air pushed down: low-passed noise swelling and fading.
+            Cue::WingBeat => {
+                let n = self.noise.white();
+                let low = self.filter.process(n).low;
+                let env = (t / 0.12).min(1.0) * (-(t - 0.12).max(0.0) / 0.08).exp();
+                low * 0.5 * env
             }
             Cue::Test(Bus::Music) => tone(t, 0.0, 0.8, 440.0, 0.3) + tone(t, 0.0, 0.8, 554.4, 0.2),
             Cue::Test(Bus::Effects) => tone(t, 0.0, 0.8, 660.0, 0.35),

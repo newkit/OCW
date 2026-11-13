@@ -48,6 +48,11 @@ struct Args {
     /// --world); everyone joins again on the new world.
     #[arg(long, default_value = "host", value_parser = parse_time_control)]
     world_control: ocw_server::ClockAccess,
+    /// Who may enter god mode and fly over the world as a unicorn (spec
+    /// §14 Phase 13A): the host, anyone, or nobody (an organizer's
+    /// session). Never during a running event.
+    #[arg(long, default_value = "host", value_parser = parse_time_control)]
+    god_control: ocw_server::ClockAccess,
     /// Free ride on the road graph of this world package (version 2,
     /// from `world-builder package`; a path or a cache id) instead of the
     /// test loop. Verified on load (spec §4.7).
@@ -307,6 +312,7 @@ fn main() {
             voice,
             clock_access: args.time_control,
             world_access: args.world_control,
+            god_access: args.god_control,
             real_epoch_ms: None,
         },
     );

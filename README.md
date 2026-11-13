@@ -114,6 +114,30 @@ ffmpeg` (`make deps-macos` prints both commands); the app also finds it in
 | Voice: mute / unmute the speaker (all voices; game sounds stay) | Shift+M | right-stick click (R3) |
 | Next screen | F11 | |
 | Console (`help` lists the commands) | `` ` `` or F12 | |
+| God mode: fly as a unicorn / land on the road below | G | Select + North (Y / △) |
+| God mode: fly back to where you took off | Shift+G | Select + West (X / □) |
+
+**God mode** (spec §14 Phase 13; *World → God mode*, console `god`): the rider
+turns into a unicorn and flies freely over the world. While flying:
+
+| Action | Keyboard / mouse | Gamepad |
+|---|---|---|
+| Look around (the pointer is captured; Esc frees it, a click captures it again) | mouse | right stick |
+| Move in the horizontal plane, relative to the view | ↑ ↓ ← → | left stick |
+| Climb / descend | + / − (main keyboard `=` `-`, or the keypad) | right / left trigger |
+| Boost ×4 / precise ×0.25 | Shift / Ctrl | South (A / ✕): boost |
+| Base speed ×0.25 … ×8 (in the HUD) | mouse wheel | |
+| First-person view from the unicorn's head | C | |
+
+The speed grows with the height above the ground (20 m/s close to it, 400 m/s
+from 760 m up; at most 1,600 m/s with the boost). The unicorn keeps 2 m
+above terrain, water and buildings and stays below 8,000 m; it is stopped
+softly 200 m outside the world. A glowing ring marks where G will land: the
+nearest road (free ride) or the nearest point of the route. The riding keys
+(A, W, U, J, Q / E) do nothing while flying; the trainer simulates a flat
+road in SIM mode (ERG keeps its target), and no distance is counted.
+On a shared server only the host may fly (`ocw-server --god-control
+anyone|host|nobody`), never during a running event.
 
 **Menu** (spec §3.2.1): ↑ / ↓ (or Tab / Shift+Tab, the D-pad, the left
 stick; held: repeats) move the focus, Enter / Space / South (A / ✕) or a click
@@ -604,6 +628,7 @@ console (saved at once), or by editing the file; `get` lists them all:
 | Key | Values (default) | Applies |
 |---|---|---|
 | `controls.autodrive` | on / off (on): autodrive at the start of a ride | next start |
+| `controls.invert_y` | on / off (off): god mode – moving the mouse up looks down | at once |
 | `trainer.difficulty` | 0 to 100 (50): % of the road gradient in SIM mode | at once |
 | `trainer.virtual_power` | 0 to 2000 W (200): the virtual trainer at the start (`--power`) | next start |
 | `display.hud` | on / off (on) | at once |
@@ -613,6 +638,7 @@ console (saved at once), or by editing the file; `get` lists them all:
 | `display.night_brightness` | 0 to 50 (10): least light at night in % of daylight (0 = realistic darkness); Settings → Display | at once |
 | `display.sky` | atmosphere / simple (atmosphere): Bevy's physically based sky, or one plain colour for weak GPUs | at once |
 | `display.bike_lights` | auto / on / off (auto): front and rear lights of all riders from dusk to dawn | at once |
+| `display.unicorn_trail` | on / off (on): the rainbow trail behind the unicorns of god mode (console `god.trail`; not on the full Display page) | at once |
 | `display.fullscreen` | on / off (off): borderless fullscreen (`--fullscreen`) | next start |
 | `ride.bots` | 0 to 50 (10): test riders (`--bots`) | next start |
 | `ride.random_start` | on / off (on): random start point (`--random-start`) | next start |
@@ -825,6 +851,12 @@ for now).
 | `event status` | The event, your HUD lines and the standings |
 | `event cancel` | End the event (everyone rides on) |
 | `event dismiss` | Close the results panel (Esc / A) |
+| **God mode** (spec §14 Phase 13) | |
+| `god [on\|off\|toggle\|back\|status]` | Fly as a unicorn (G), land on the road below (G again), fly back (`back`, Shift+G), or show the flight |
+| `god.view flight\|first` | The flight camera behind the unicorn, or first-person from its head (C) |
+| `god.pose X Z HEIGHT [YAW] [PITCH]` | Dev: move the unicorn to local X,Z metres, HEIGHT above the ground, heading YAW degrees (0 = north, 90 = east), PITCH up |
+| `god.cruise FORWARD [CLIMB] [TURN]` | Dev: fly by itself (−1 … 1, turn in deg/s, positive = left; `god.cruise 0` stops) – scenes and videos |
+| `god.trail on\|off`, `god.invert on\|off` | The rainbow trail; invert the mouse's Y (settings `display.unicorn_trail`, `controls.invert_y`) |
 | **Camera** | |
 | `camera.mode chase\|side\|top` | Camera perspective |
 | `camera.orbit YAW PITCH [DISTANCE]` | Orbit the chase camera (degrees; 0 = behind, 180 = in front; metres) |

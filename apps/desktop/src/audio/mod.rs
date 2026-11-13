@@ -189,6 +189,10 @@ fn feed_ride(client: Option<Res<ClientState>>, audio: Res<GameAudio>, mut last: 
         .filter(|c| c.0.rider_id().is_some())
         .map_or_else(RideParams::default, |c| {
             let core = &c.0;
+            // God mode: the wind of the flight (spec §14 Phase 13C).
+            if let Some(u) = core.god().unicorn(0.0) {
+                return ride::flight_params(u.pose.speed);
+            }
             let state = core.state();
             ride_params(&RideInput {
                 speed_mps: state.speed,
@@ -256,11 +260,15 @@ struct CueWatch {
     countdown: Option<String>,
     results: bool,
     workout: Option<u64>,
+    /// God mode: flying, and the wing beat's phase.
+    flying: bool,
+    wing: f64,
 }
 
 /// UI sounds from the menu's changes, the countdown beeps and the finish
 /// chime from the event view, the step cue from the workout.
 fn play_cues(
+    time: Res<Time>,
     menu: Option<Res<MenuView>>,
     ride: Option<Res<RideView>>,
     workouts: Option<Res<crate::workout::Workouts>>,
@@ -293,6 +301,24 @@ fn play_cues(
         cues.extend(finish_cue(watch.results, results));
         watch.countdown = countdown;
         watch.results = results;
+        // God mode: the chime of the transformation (in and out), soft
+        // wing beats while the wings beat (spec §14 Phase 13C).
+        let flying = r.flight.is_some();
+        if flying != watch.flying {
+            cues.push(Cue::GodChime);
+            watch.flying = flying;
+        }
+        let local = r.unicorns.iter().find(|u| u.is_local && !u.landing);
+        let beat = local.map_or(0.0, |u| {
+            ocw_sim::god::wing_beat_hz(u.climb_mps, u.accel, u.speed_mps)
+        });
+        if beat > 0.0 {
+            let before = watch.wing;
+            watch.wing += beat * time.delta_secs_f64();
+            if watch.wing.floor() > before.floor() {
+                cues.push(Cue::WingBeat);
+            }
+        }
     }
     if let Some(w) = workouts {
         let n = w.0.lap_count();

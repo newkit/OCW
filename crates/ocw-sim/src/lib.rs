@@ -10,6 +10,7 @@
 pub mod drafting;
 pub mod event;
 pub mod freeride;
+pub mod god;
 pub mod interpolation;
 pub mod physics;
 pub mod prediction;
@@ -23,5 +24,7 @@ pub use freeride::TurnChoice;
 pub use interpolation::SnapshotBuffer;
 pub use physics::{Environment, RiderState, Steering};
 pub use prediction::Predictor;
-pub use session::{FreeRideStart, PathChange, RiderInput, RiderSnapshot, Session};
+pub use session::{
+    FreeRideStart, GodLeave, GodRider, PathChange, RiderInput, RiderSnapshot, Session,
+};
 pub use trainer::{ErgController, ErgSettings, SimController, SimSettings, SimTarget};

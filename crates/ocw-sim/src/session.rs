@@ -18,6 +18,9 @@ use crate::freeride::{self, TurnChoice, UTURN_INTERVAL_S};
 use crate::physics::{self, Environment, RiderState, Steering};
 use crate::ride::{self, Controls};
 
+mod god_mode;
+pub use god_mode::{GodLeave, GodRider};
+
 /// Latest sensor input of a rider.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct RiderInput {
@@ -66,6 +69,9 @@ struct Rider {
     path_reset: bool,
     /// Place in the start formation ([`formation_slot`]).
     slot: usize,
+    /// God mode (spec §14 Phase 13): out of the physics, the road
+    /// position frozen, flying as a unicorn.
+    god: Option<GodRider>,
 }
 
 /// State of one rider as broadcast to clients.
@@ -81,6 +87,8 @@ pub struct RiderSnapshot {
     pub power_w: f64,
     /// Sequence number of the last input from this rider's client the server applied.
     pub last_input_seq: u32,
+    /// In god mode: the unicorn's pose (spec §14 Phase 13E).
+    pub god: Option<crate::god::GodPose>,
 }
 
 /// Where free-ride riders start: `offset_m` along graph edge `edge` (from
@@ -179,12 +187,14 @@ pub struct Session {
     next_event_id: u32,
     /// Event changes since the last [`Session::take_event_changes`].
     event_changes: Vec<EventChange>,
+    /// The area god mode may fly over (the road graph's or the route's
+    /// box, grown), for the server's plausibility check.
+    god_area: Option<crate::god::Bounds>,
 }
 
 impl Session {
     pub fn new(route: Route) -> Self {
         Self {
-            route,
             free: None,
             plan: None,
             riders: BTreeMap::new(),
@@ -195,6 +205,8 @@ impl Session {
             event: None,
             next_event_id: 1,
             event_changes: Vec::new(),
+            god_area: god_mode::route_area(&route),
+            route,
         }
     }
 
@@ -211,6 +223,7 @@ impl Session {
         );
         Self {
             route: first.route().clone(),
+            god_area: god_mode::network_area(&net),
             free: Some((net, start)),
             ..Self::new(first.route().clone())
         }
@@ -397,6 +410,7 @@ impl Session {
                 last_u_turn_s: None,
                 path_changed: None,
                 slot,
+                god: None,
             },
         );
         id
@@ -724,9 +738,11 @@ impl Session {
             .collect();
         // Drafting uses everyone's position at the start of the tick (in
         // free ride also where on the road graph they are).
+        // Riders in god mode fly: they draft nobody and nobody drafts them.
         let positions: Vec<(RiderId, f64, f64, Option<EdgePoint>)> = self
             .riders
             .iter()
+            .filter(|(_, r)| r.god.is_none())
             .map(|(id, r)| {
                 let at = r.path.as_ref().and_then(|p| p.locate(r.state.distance));
                 (*id, r.state.distance, r.state.lateral_offset, at)
@@ -734,6 +750,11 @@ impl Session {
             .collect();
         for (id, rider) in &mut self.riders {
             let d = rider.state.distance;
+            if rider.god.is_some() {
+                // God mode: out of the physics, the road position frozen.
+                rider.state.speed = 0.0;
+                continue;
+            }
             if held {
                 // Countdown: the field waits at the start line.
                 rider.state.speed = 0.0;
@@ -840,6 +861,7 @@ impl Session {
                 state: r.state,
                 power_w: r.input.power_w,
                 last_input_seq: r.last_input_seq,
+                god: r.god.map(|g| g.pose),
             })
             .collect()
     }
@@ -969,6 +991,8 @@ impl Session {
         r.wild = false;
         r.scraping = false;
         r.slot = slot;
+        // An event's start formation ends god mode.
+        r.god = None;
     }
 
     /// The event's ranking now (empty without an event).

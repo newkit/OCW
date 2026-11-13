@@ -163,6 +163,7 @@ pub fn control_trainer(
     if c.rider_id().is_none() {
         return;
     }
+    trainer.0.set_flying(c.god().active());
     if let Some(cmd) = trainer.0.update(
         time.elapsed_secs_f64(),
         c.track(),

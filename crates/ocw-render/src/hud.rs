@@ -799,6 +799,28 @@ fn small_chars_for(width: f32) -> usize {
     ((width * 0.94 - 2.0 * 10.0 - 4.0) / SMALL_CHAR_W).max(10.0) as usize
 }
 
+/// The compass point of a heading (degrees, 0 = north).
+pub fn compass(deg: f64) -> &'static str {
+    const POINTS: [&str; 8] = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+    POINTS[((deg.rem_euclid(360.0) + 22.5) / 45.0) as usize % 8]
+}
+
+/// The flight panel's line (god mode, spec §14 Phase 13D): altitude above
+/// sea level and above the ground, speed, the wheel's speed factor and
+/// the heading.
+pub fn flight_line(f: &crate::FlightView, units: Units) -> String {
+    let (speed, unit) = units.speed(mps_to_kmh(f.speed_mps));
+    let heading = ocw_sim::god::heading_deg(f.yaw);
+    format!(
+        "{}  {:.0} m  ({:.0} m above ground)   {speed:.0} {unit}   x{:.2}   {heading:03.0}° {}",
+        if f.leaving { "Landing" } else { "Flying" },
+        f.pos[1],
+        f.height_m.max(0.0),
+        f.scale,
+        compass(heading)
+    )
+}
+
 fn format_time(seconds: f64) -> String {
     let s = seconds.max(0.0) as u64;
     format!("{}:{:02}:{:02}", s / 3600, (s / 60) % 60, s % 60)
@@ -816,6 +838,29 @@ fn update_hud(
     let (Ok(mut big), Ok(mut small)) = (big.single_mut(), small.single_mut()) else {
         return;
     };
+    // God mode (spec §14 Phase 13D): a compact flight panel instead of the
+    // bike computer.
+    if let Some(f) = &view.flight {
+        let line = flight_line(f, *units);
+        let line = match &view.sky {
+            Some(s) => format!("{line}   {}", s.hud),
+            None => line,
+        };
+        if big.0 != line {
+            big.0 = line;
+        }
+        let mut lines = format!("{} | {}", format_time(view.elapsed_s), f.keys);
+        if !view.status.is_empty() {
+            lines.push('\n');
+            lines.push_str(&view.status);
+        }
+        let width = windows.single().map_or(1280.0, |w| w.width());
+        let lines = wrap_hud_lines(&lines, small_chars_for(width));
+        if small.0 != lines {
+            small.0 = lines;
+        }
+        return;
+    }
     let Some(local) = view.local() else {
         big.0 = "Connecting...".into();
         return;
@@ -943,6 +988,31 @@ mod tests {
         assert_eq!(row, Display::None);
         assert_eq!(msg_display, Display::Flex);
         assert_eq!(msg, "Video saved: a.mp4");
+    }
+
+    #[test]
+    fn the_flight_panel_shows_altitude_speed_factor_and_heading() {
+        let f = crate::FlightView {
+            pos: [0.0, 1234.4, 0.0],
+            yaw: -std::f64::consts::FRAC_PI_2,
+            speed_mps: 100.0,
+            height_m: 380.0,
+            scale: 2.0,
+            ..Default::default()
+        };
+        let line = flight_line(&f, Units::Metric);
+        assert!(
+            line.starts_with("Flying  1234 m  (380 m above ground)"),
+            "{line}"
+        );
+        assert!(
+            line.contains("360 km/h") && line.contains("x2.00"),
+            "{line}"
+        );
+        // Yaw −90°: turned right from north, flying east.
+        assert!(line.ends_with("090° E"), "{line}");
+        assert_eq!(compass(359.0), "N");
+        assert_eq!(compass(225.0), "SW");
     }
 
     #[test]

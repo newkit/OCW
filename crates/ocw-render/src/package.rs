@@ -1257,6 +1257,10 @@ pub(crate) fn reset_streaming(world: &mut World) {
 
 /// The local rider's position in home metres.
 fn rider_position(view: &RideView) -> Option<[f64; 2]> {
+    // God mode (spec §14 Phase 13D): the tiles stream around the unicorn.
+    if let Some(f) = &view.flight {
+        return Some([f.pos[0], f.pos[2]]);
+    }
     let local = view.local()?;
     let p = view.track(local.id).sample(local.state.distance).position;
     Some([p[0], p[2]])

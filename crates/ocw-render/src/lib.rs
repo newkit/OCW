@@ -25,6 +25,7 @@ pub mod stamp;
 pub mod terrain;
 pub mod tunnel;
 pub mod tunnel_cut;
+pub mod unicorn;
 pub mod voice;
 #[cfg(test)]
 mod wheel_contact;
@@ -82,6 +83,69 @@ pub struct RideView {
     /// The sky at the local rider (spec §14 Phase 9): local time, sun and
     /// light; `None` until the server's clock is known (fixed daylight).
     pub sky: Option<sky::SkyView>,
+    /// God mode (spec §14 Phase 13): the local rider's flight (the flight
+    /// camera and the flight HUD follow it); `None` while riding.
+    pub flight: Option<FlightView>,
+    /// Riders in god mode, drawn as unicorns (the local one too); their
+    /// avatars are hidden once the transformation has turned them.
+    pub unicorns: Vec<UnicornView>,
+}
+
+/// The local rider's flight in god mode (spec §14 Phase 13B, 13D).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct FlightView {
+    /// The unicorn (local metres; x, y up, z).
+    pub pos: [f64; 3],
+    /// View yaw (rad, counter-clockwise from north) and pitch (rad, up).
+    pub yaw: f64,
+    pub pitch: f64,
+    pub speed_mps: f64,
+    /// Height above the ground below (m).
+    pub height_m: f64,
+    /// The wheel's base-speed scale (×0.25 … ×8).
+    pub scale: f64,
+    /// C: the view from the unicorn's head.
+    pub first_person: bool,
+    /// Where leaving (G) lands: the glowing ring on the road.
+    pub landing: Option<[f64; 3]>,
+    /// Gliding down / back (G, Shift + G).
+    pub leaving: bool,
+    /// The keys line of the flight HUD.
+    pub keys: String,
+}
+
+/// A unicorn to draw (spec §14 Phase 13C): a rider in god mode.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnicornView {
+    pub id: RiderId,
+    pub name: String,
+    pub is_local: bool,
+    /// The unicorn's body (local metres).
+    pub pos: [f64; 3],
+    /// Where it looks (rad): the body turns with the yaw.
+    pub yaw: f64,
+    pub pitch: f64,
+    pub speed_mps: f64,
+    /// Climb rate (m/s), turn rate (rad/s) and acceleration (m/s²): the
+    /// wings flap and bank with them.
+    pub climb_mps: f64,
+    pub turn_rate: f64,
+    pub accel: f64,
+    /// Seconds since the rider turned into the unicorn (the 0.6 s
+    /// transformation, the sparkle burst).
+    pub age_s: f64,
+    /// Landing / flying back: the wings fold.
+    pub landing: bool,
+    /// The rider's colours: the saddle cloth and the mane's first band.
+    pub colour: ocw_core::Rgb,
+}
+
+impl UnicornView {
+    /// Whether the transformation has turned the rider into the unicorn
+    /// (the rider's avatar is hidden from then on).
+    pub fn turned(&self) -> bool {
+        self.age_s >= ocw_sim::god::TRANSFORM_S * 0.5
+    }
 }
 
 impl RideView {
@@ -104,6 +168,8 @@ impl RideView {
             ghost: None,
             workout: None,
             sky: None,
+            flight: None,
+            unicorns: Vec::new(),
         }
     }
 
@@ -237,6 +303,7 @@ impl Plugin for OcwRenderPlugins {
             sky::SkyPlugin,
             materials::MaterialsPlugin,
             road_material::RoadMaterialPlugin,
+            unicorn::UnicornPlugin,
         ));
     }
 }

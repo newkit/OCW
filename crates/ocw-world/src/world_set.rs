@@ -182,6 +182,11 @@ impl Member {
         self.region.as_ref().is_some_and(|r| r.contains(p))
     }
 
+    /// Box of the package's tiles in home metres (min, max of x, z).
+    pub fn tile_bounds(&self) -> ([f64; 2], [f64; 2]) {
+        (self.tiles_min, self.tiles_max)
+    }
+
     /// Distance from `p` (home metres) to the package's area.
     pub fn distance(&self, p: [f64; 2]) -> f64 {
         match &self.region {
@@ -322,6 +327,20 @@ impl WorldSet {
 
     pub fn members(&self) -> &[Member] {
         &self.members
+    }
+
+    /// Box of all members' tiles in home metres (min, max of x, z): the
+    /// area god mode flies over (spec §14 Phase 13B).
+    pub fn bounds(&self) -> ([f64; 2], [f64; 2]) {
+        self.members.iter().map(Member::tile_bounds).fold(
+            ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]),
+            |(lo, hi), (a, b)| {
+                (
+                    [lo[0].min(a[0]), lo[1].min(a[1])],
+                    [hi[0].max(b[0]), hi[1].max(b[1])],
+                )
+            },
+        )
     }
 
     pub fn len(&self) -> usize {

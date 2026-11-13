@@ -108,6 +108,21 @@ pub struct RideParams {
     pub stroke_hz: f32,
 }
 
+/// God mode's sound (spec §14 Phase 13C, §3.3): only the wind, rising
+/// with the flight speed (no tyres, no drivetrain), within the wind's range.
+pub fn flight_params(speed_mps: f64) -> RideParams {
+    let v = speed_mps.max(0.0);
+    RideParams {
+        wind_gain: if v > 0.5 {
+            (0.12 + 0.16 * (1.0 + v / 8.0).ln()).min(0.85) as f32
+        } else {
+            0.0
+        },
+        wind_cutoff_hz: (300.0 + 6.0 * v).min(4000.0) as f32,
+        ..RideParams::default()
+    }
+}
+
 /// The ride sounds for `input`.
 pub fn ride_params(input: &RideInput) -> RideParams {
     let v = input.speed_mps.max(0.0);
@@ -425,6 +440,34 @@ mod tests {
         );
         let mut s = RideSynth::new(48_000.0);
         assert!((0..4800).all(|_| s.sample(&p) == 0.0));
+    }
+
+    #[test]
+    fn flight_is_wind_only_rising_with_the_speed() {
+        assert_eq!(flight_params(0.0), RideParams::default().with_cutoff(300.0));
+        let mut last = 0.0;
+        for v in [5.0, 20.0, 80.0, 400.0, 1600.0] {
+            let p = flight_params(v);
+            assert!(
+                p.wind_gain > last && p.wind_gain <= 0.85,
+                "{v}: {}",
+                p.wind_gain
+            );
+            assert_eq!(
+                (p.roll_gain, p.chain_gain, p.freewheel_gain),
+                (0.0, 0.0, 0.0)
+            );
+            last = p.wind_gain;
+        }
+    }
+
+    impl RideParams {
+        fn with_cutoff(self, hz: f32) -> Self {
+            Self {
+                wind_cutoff_hz: hz,
+                ..self
+            }
+        }
     }
 
     #[test]

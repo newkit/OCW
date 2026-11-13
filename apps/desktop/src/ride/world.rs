@@ -285,6 +285,15 @@ pub fn rows(page: Page, c: &Catalog, tm: &TimeMachineInfo, weather: &WeatherStat
                 open("Routes", Some(routes.to_string()), Page::Routes),
                 open("Time", Some(time), Page::TimeMachine),
                 open("Weather", Some(weather.summary()), Page::Weather),
+                // God mode (spec §14 Phase 13A; the Ride page is full, the
+                // ten-foot rule): fly over this world as a unicorn.
+                Row {
+                    label: crate::god::MENU_NAME.into(),
+                    value: Some("fly over it (G)".into()),
+                    left: None,
+                    right: None,
+                    confirm: Some(Activate::Run("god toggle".into())),
+                },
             ]
         }
         Page::Worlds => {
@@ -912,6 +921,7 @@ pub(crate) mod tests {
                 "Routes:  1",
                 "Time:  14:05 CET",
                 "Weather:  clear",
+                "God mode:  fly over it (G)",
                 "Back"
             ]
         );
