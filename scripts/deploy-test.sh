@@ -85,6 +85,8 @@ scripts/remote.sh "$machine" run "
   else
     rm -f \"\$D/ocw-desktop.args\"
   fi
+  # Show mode (scripts/kiosk-show.args: virtual trainer at 500 W) for every world.
+  [ '$args_set' = set ] || { [ -f \"\$D/.args.tmp\" ] && grep -v '^#' scripts/kiosk-show.args >> \"\$D/.args.tmp\"; } || true
   if [ -f \"\$D/.args.tmp\" ]; then
     chmod 644 \"\$D/.args.tmp\" && mv -f \"\$D/.args.tmp\" \"\$D/ocw-desktop.args\"
     echo \"default arguments (\$D/ocw-desktop.args):\"; grep -v '^#' \"\$D/ocw-desktop.args\" | sed 's/^/  /'
