@@ -117,10 +117,33 @@ s=$(mktemp -d)
   check "$([ -d "$repo/target/debug" ] && echo kept || echo removed)/$([ -d "$repo/target/release" ] && echo release-kept)" \
     "removed/release-kept" "profile: changed dev profile removes target/debug only"
   check "$(grep -c '"kind":"profile"' "$s"/log/*/janitor.jsonl)" 1 "profile: the deletion is logged to janitor.jsonl"
+  # Regression (Win11Builder, 2026-11-13): the remote files were touched
+  # into the future to force a rebuild, a build ran, then newer content came
+  # with an OLDER local mtime (merge time). The changed file must end up
+  # newer than that build, whatever the remote mtime was before.
+  echo "content before the merge" >"$dst/crates/a/lib.rs"
+  touch -d '+1 day' "$dst/crates/a/lib.rs" "$dst/same.txt"
+  echo dep-info >"$dst/build.d"; touch -d '-5 seconds' "$dst/build.d"   # the build after the touch
+  same_before=$(stat -c %Y "$dst/same.txt")
+  echo "merged content: the new field" >"$snap_dir/tree/crates/a/lib.rs"
+  touch -d '2022-03-01 00:00' "$snap_dir/tree/crates/a/lib.rs"
+  (cd "$snap_dir/tree" && rsync "${rsync_sync_opts[@]}" --delete-missing-args --files-from="$snap_dir/list" ./ "$dst/")
+  check "$(cat "$dst/crates/a/lib.rs")" "merged content: the new field" "regression: future-touched remote file gets the new content"
+  check "$([ "$dst/crates/a/lib.rs" -nt "$dst/build.d" ] && echo rebuild || echo stale)" rebuild \
+    "regression: changed file newer than the last build despite an older local mtime (cargo rebuilds)"
+  check "$([ "$(stat -c %Y "$dst/crates/a/lib.rs")" -le "$(date +%s)" ] && echo now || echo future)" now \
+    "regression: changed file gets the time of the copy, not the future one"
+  check "$(stat -c %Y "$dst/same.txt")" "$same_before" "regression: unchanged files keep their mtime (no rebuild)"
   # Windows: the manifest diff.
   printf 'aaa\tcrates/a/lib.rs\nbbb\tsame.txt\n' >"$s/valid"
   printf 'ccc\tcrates/a/lib.rs\nbbb\tsame.txt\nddd\textra.txt\n' >"$s/hashes"
   check "$(win_changed "$s/valid" "$s/hashes" | tr '\n' ' ')" "crates/a/lib.rs extra.txt " "windows: only changed and new files are sent"
+  # A file touched on the machine no longer matches its manifest entry
+  # (size and mtime), so the machine leaves it out of VALID: it is sent
+  # again and unpacked with tar -m (mtime = now), never trusted by mtime.
+  printf 'aaa\tcrates/a/lib.rs\n' >"$s/valid"
+  check "$(win_changed "$s/valid" "$s/hashes" | tr '\n' ' ')" "crates/a/lib.rs same.txt extra.txt " \
+    "windows: a file touched there is re-sent with the time of the copy"
   # The handshake: the "remote" prints @@ocw-sync once it has its slot,
   # the sync runs then (not before), the remote gets "go" and runs on.
   sync_tree() { echo "sync at $(cat "$s/clock")" >>"$s/synced"; }
