@@ -15,6 +15,7 @@ pub mod gradient;
 pub mod graph;
 pub mod graph_route;
 pub mod landuse;
+pub mod look;
 pub mod manifest;
 pub mod matching;
 pub mod network;

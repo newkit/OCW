@@ -22,6 +22,11 @@
 # Environment: OCW_SIGN_KEY  signing key for the manifest (default: unsigned).
 #              OCW_SRTM_ONLY=1  build without the MDT05 into
 #                         data/tenerife/srtm/ (no routes), to compare.
+#
+# Region calibration (spec §14 Phase 8 T3): when data/tenerife/imagery holds the
+# imagery of `scripts/fetch-imagery.sh tenerife` for this package, the package is
+# calibrated after its routes (palette, roof colours, seasonal tints;
+# OCW_NO_CALIBRATE=1 skips it, OCW_SEASON_CELLS sets the tint cells per tile).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 D=data/tenerife
@@ -46,6 +51,15 @@ else
 fi
 cargo build -q --release -p world-builder
 WB=target/release/world-builder
+# Region calibration (spec §14 Phase 8 T3) if the imagery covers the package.
+calibrate() { # package pbf...
+  local pkg=$1; shift
+  if [ -z "${OCW_NO_CALIBRATE:-}" ] && grep -qx "$(basename "$pkg")" "$D/imagery/packages.txt" 2>/dev/null; then
+    local pbf=()
+    for p in "$@"; do pbf+=(--pbf "$p"); done
+    $WB calibrate --world "$pkg" --imagery "$D/imagery" "${pbf[@]}" --season-cells "${OCW_SEASON_CELLS:-50}"
+  fi
+}
 out=$OUT/tenerife.ocwpkg
 SRC=(--pbf "$D/canary-islands.osm.pbf" --poly "$D/canary-islands.poly"
      --hgt "$D/N28W017.hgt" --hgt "$D/N27W017.hgt"
@@ -89,6 +103,7 @@ $WB route "${SRC[@]}" --name "Las Cañadas (TF-21)" --out "$D/canadas.route" \
 # runs straight at the summit 6 km ahead: the riders start together there.
 $WB route "${SRC[@]}" --name "Las Cañadas - El Portillo" --out "$D/canadas-teide.route" \
   --from 28.2184,-16.6277 --to 28.3045,-16.5650 --margin 300
+calibrate "$out" "$D/canary-islands.osm.pbf"
 # Adding the routes rewrote the manifest unsigned (next version): sign again.
 if [ -n "${OCW_SIGN_KEY:-}" ]; then
   $WB sign --key "$OCW_SIGN_KEY" "$out"
