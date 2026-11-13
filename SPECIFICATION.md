@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.70 – November 2026
+Version 2.71 – November 2026
 
 | Version | Change |
 |---|---|
@@ -65,6 +65,7 @@ Version 2.70 – November 2026
 | 2.44 | Phase 8 decisions: no commercial release, 8A stays (Q2); orthophoto corridor size acceptable (Q4); seasonal variants (Q5); own photos postponed (Q6); Mapillary CC BY-SA, reference by eye only (Q7); 3D buildings: swissBUILDINGS3D 3.0 (Opendata BY) to confirm, LGL LoD2 probably not open, ask LGL (Q8); all texture areas in parallel (Q10) |
 | 2.45 | Licensing (§13): no licence change for now – the code stays MIT / Apache-2.0 (a switch to CC BY-SA was considered and declined) |
 | 2.46 | Phase 8 T1 / T2 (§4.6, §8.1, §13, §14 Phase 8): material library of 21 CC0 materials (ambientCG, Poly Haven) – ground, roads, houses, volcanic ground for Tenerife – not in git but pinned by URL + SHA-256 in `assets/materials.toml`, fetched and converted to KTX2 (BC3 / BC5, 1024², mipmapped) by `scripts/fetch-materials.sh` into the git-ignored `assets/materials/` and shipped beside the binary (AppImage, macOS bundle, Windows zip, test deployment); licence rule of Phase 8A shared by the model and material validators; terrain drawn with the materials blended by the splat map (weights at cell corners, noise warp, height blend, rock and triplanar on slopes, macro scale, fade to the colour map in the materials' mean colours), roads by OSM `surface` (new package section `RSRF`) with category fallback; regional material sets by the package's time zone (`[[region]]` in the manifest: the volcanic set of the Canary Islands with lava, ash / cinder, black sand and pine needles); regional tint hook neutral; reference boards `art/reference/` |
+| 2.71 | Decision from the build dashboard (2026-11-14): Phase 9 Q5 – the wind load goes to trainers that support it (FTMS / Wahoo wind) |
 | 2.70 | Decision from the build dashboard (2026-11-14): Phase 9 Q3 – night has a minimum brightness; bike lights are a part bought with hearts and fitted in the workshop (slot `lights`), not automatic |
 | 2.69 | Decisions from the build dashboard (2026-11-14): Phase 9 Q2 – in shared sessions only the host / organiser controls the time and weather machines (no personal override); Phase 8 Q8 – 3D building data postponed |
 | 2.68 | Phase 4 decisions (§14 Phase 4, 4L; answered by the user in the build dashboard, 2026-11-13): bike changes apply when leaving the workshop (`BikeChange`); parts have bounded effects with the *Profile* mode as the default for races and group rides; hearts: 1 ♥ per 10 kJ + 1 ♥ per 20 m climbing, no daily cap, 500 ♥ start, no back-credit of saved rides; kit (helmet, shoes, clothing) costs hearts, body, skin, hair and glasses are free; touch-screen testing postponed |
@@ -2707,7 +2708,7 @@ Attribution of the provider used appears on the credits screen and in the weathe
 - **Q2 – Shared sessions: decided (2026-11-14, dashboard):** in group rides and events **only the host / organiser** controls the time and weather machines (the recommendation); no personal visual-only override per rider.
 - **Q3 – Night riding: decided (2026-11-14, dashboard):** night keeps a **minimum brightness** (no full darkness – training comfort comes first). **Bike lights are not automatic:** they are a part the rider buys with hearts and fits in the workshop (§14 Phase 4, 4B slot `lights`, catalogue entry `lights.set`, 80 ♥); without lights fitted the bike has none, and the minimum brightness still lets the rider see the road. Until the workshop exists, the lights the renderer draws today (§3.3 / Phase 9 S1) stay on as a placeholder.
 - **Q4 – Weather and physics: decided (2026-11-12):** yes, wind, wet roads and air density change the physics **realistically**. On in solo and free ride; in races and events the **organiser** decides (off unless enabled).
-- **Q5 – Trainer wind resistance:** send the wind load to trainers that support it (FTMS / Wahoo wind), or keep the trainer on gradient only?
+- **Q5 – Trainer wind resistance: decided (2026-11-14, dashboard):** the wind load is **sent to trainers that support it** (FTMS indoor bike simulation wind speed, Wahoo wind); trainers without wind support keep gradient-only resistance with the wind folded into the simulated grade.
 - **Q6 – Weather provider:** MeteoSwiss + DWD (regional, open) with MET Norway as a global fallback (recommended), or Open-Meteo (simplest API; non-commercial on the free tier, else self-hosting or a subscription)? Is a commercial release planned (same as Phase 8 Q2)?
 - **Q7 – Star catalogue licence:** the Yale Bright Star Catalogue's licence is not clearly documented (Debian ships it in *non-free*), and the HYG database is CC BY-SA 4.0. Acceptable alternatives: ESA Hipparcos / Gaia-derived lists (terms to check), or a catalogue we derive ourselves from public-domain data. Decide after checking; the code doesn't depend on the choice.
 - **Q8 – Historic weather:** wanted (ride a famous day, e.g. a race day in the past, with its real weather)? It needs ERA5 downloads on our infrastructure.
