@@ -498,6 +498,7 @@ mod tests {
             routes: vec![],
             region: Some(region),
             time_zone: None,
+            look: Default::default(),
         })
     }
 

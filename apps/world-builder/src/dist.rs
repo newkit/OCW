@@ -94,6 +94,22 @@ pub fn dem_attribution(notice: Option<&str>) -> Attribution {
     }
 }
 
+/// The attributions of the imagery sources in a package's palette section
+/// (spec §13, Phase 8A): one per source, its notice as given by the fetch
+/// script (licence, holder, year).
+pub fn imagery_attribution(pkg: &ocw_world::WorldPackage) -> Vec<Attribution> {
+    pkg.look
+        .sources()
+        .iter()
+        .map(|s| Attribution {
+            source: s.name.clone(),
+            licence: s.licence.clone(),
+            notice: s.notice.clone(),
+            url: (!s.url.is_empty()).then(|| s.url.clone()),
+        })
+        .collect()
+}
+
 /// What to put into a new manifest.
 pub struct ManifestArgs {
     pub id: Option<String>,
@@ -152,6 +168,13 @@ pub fn write_manifest(
         ),
         ([], None) => attribution.push(dem_attribution(None)),
         (dems, _) => attribution.extend(dems.iter().map(|d| dem_attribution(Some(d)))),
+    }
+    // The imagery the package's look was measured in (section PALT, spec
+    // §14 Phase 8 T3): its notices go into the credits and LICENSE-DATA.md.
+    for a in imagery_attribution(&pkg) {
+        if !attribution.iter().any(|b| b.source == a.source) {
+            attribution.push(a);
+        }
     }
     let mut m = Manifest::new(&id, &name, version, now_unix_s(), GENERATOR, attribution)
         .unwrap_or_else(|e| fail(e));
@@ -442,6 +465,7 @@ mod tests {
             routes: vec![],
             region: None,
             time_zone: None,
+            look: Default::default(),
         };
         std::fs::write(&path, pkg.to_bytes()).unwrap();
         // No manifest yet: nothing to refresh.
@@ -472,6 +496,85 @@ mod tests {
         assert_eq!(m.file("p.ocwpkg").unwrap().sha256, sha256(&bytes));
         assert_eq!((m.id.as_str(), m.version), ("test/refresh", 2));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Spec §13, Phase 8A: every imagery source of a calibrated package is
+    /// credited in its manifest (and so in LICENSE-DATA.md and on the
+    /// credits screen), once, next to OSM and the elevation model.
+    #[test]
+    fn imagery_sources_are_credited_in_the_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("p.ocwpkg");
+        let source = |id: &str, name: &str, licence: &str, notice: &str| {
+            ocw_world::look::ImagerySource {
+                id: id.into(),
+                name: name.into(),
+                licence: licence.into(),
+                notice: notice.into(),
+                url: String::new(),
+                date: "2025".into(),
+                resolution_m: 0.5,
+            }
+        };
+        let pkg = ocw_world::WorldPackage {
+            name: "Test".into(),
+            origin: (47.9, 7.9),
+            tile_size_m: 1000.0,
+            samples: 3,
+            tiles: Default::default(),
+            graph: None,
+            landuse: None,
+            buildings: None,
+            bridges: None,
+            routes: vec![],
+            region: None,
+            time_zone: None,
+            look: ocw_world::look::RegionLook {
+                palette: Some(ocw_world::look::Palette {
+                    sources: vec![
+                        source(
+                            "lgl-dop20",
+                            "LGL DOP20",
+                            "dl-de/by-2-0",
+                            "Datenquelle: LGL, www.lgl-bw.de, dl-de/by-2-0",
+                        ),
+                        source(
+                            "sentinel-2",
+                            "Copernicus Sentinel-2",
+                            "Copernicus Sentinel data licence",
+                            "Contains modified Copernicus Sentinel data 2023-2025",
+                        ),
+                    ],
+                    entries: vec![],
+                }),
+                ..Default::default()
+            },
+        };
+        std::fs::write(&path, pkg.to_bytes()).unwrap();
+        let args = ManifestArgs {
+            id: Some("test/imagery".into()),
+            name: None,
+            version: None,
+            dem_attribution: vec!["lgl-dgm1".into()],
+        };
+        let m = write_manifest(&path, &args, None).manifest;
+        let sources: Vec<&str> = m.attribution.iter().map(|a| a.source.as_str()).collect();
+        assert_eq!(
+            sources,
+            [
+                "OpenStreetMap",
+                "LGL DGM1 Baden-Württemberg",
+                "LGL DOP20",
+                "Copernicus Sentinel-2"
+            ]
+        );
+        assert_eq!(m.attribution[3].licence, "Copernicus Sentinel data licence");
+        // A rewrite keeps them once.
+        assert!(refresh_manifest(&path));
+        let again = SignedManifest::parse(&std::fs::read_to_string(sidecar(&path)).unwrap())
+            .unwrap()
+            .manifest;
+        assert_eq!(again.attribution, m.attribution);
     }
 
     #[test]

@@ -5,6 +5,8 @@
 //! - [`areas`]: OSM areas (closed ways, multipolygons) and waterways
 //! - [`landuse`]: land-use classification, splat-map rasterisation, water surfaces
 //! - [`buildings`]: building footprints, heights, roofs and placement
+//! - [`imagery`]: orthophotos and seasonal Sentinel-2 composites at local metres (spec §14 Phase 8 T3)
+//! - [`calibrate`]: region calibration – palettes, roof colours, seasonal tints (Phase 8 T3)
 //! - [`osm`]: OSM data in memory, PBF reading, OSM XML for fixtures
 //! - [`diff`]: which stable edge IDs survive a rebuild (route re-matching)
 //! - [`filter`]: rideable ways and road classes
@@ -28,6 +30,7 @@ pub mod areas;
 pub mod bridges;
 pub mod build;
 pub mod buildings;
+pub mod calibrate;
 pub mod chains;
 pub mod clean;
 pub mod crs;
@@ -35,6 +38,7 @@ pub mod dem;
 pub mod diff;
 pub mod dtm;
 pub mod filter;
+pub mod imagery;
 pub mod landuse;
 pub mod lint;
 pub mod osm;

@@ -265,6 +265,7 @@ mod tests {
             region: sections.then(|| PackageRegion::bbox(47.0, 9.4, 47.3, 9.7)),
             time_zone: sections.then(|| "Europe/Vaduz".into()),
             bridges: None,
+            look: Default::default(),
         }
     }
 

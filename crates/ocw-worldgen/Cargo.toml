@@ -15,6 +15,11 @@ tiff = { version = "0.11", default-features = false, features = ["deflate", "lzw
 # LZW of tiled GeoTIFFs that the tiff crate refuses (no end code); MIT OR Apache-2.0.
 weezl = "0.1"
 thiserror.workspace = true
+# Imagery index files (imagery.rs, spec §14 Phase 8 T3).
+serde.workspace = true
+serde_json.workspace = true
+# Orthophoto cells from the WMS downloads (JPEG); pure Rust, MIT OR Apache-2.0 OR Zlib.
+zune-jpeg = "0.5"
 
 [dev-dependencies]
 # End-to-end test (tests/e2e.rs): package, cache, load, ride on the server.

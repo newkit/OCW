@@ -455,6 +455,7 @@ pub fn build_package_on<F: Fn(f64, f64) -> f64 + Sync>(
         routes: Vec::new(),
         region: None,
         time_zone: None,
+        look: Default::default(),
     }
 }
 

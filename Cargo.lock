@@ -5915,6 +5915,7 @@ name = "ocw-world"
 version = "0.2.0"
 dependencies = [
  "ed25519-dalek",
+ "miniz_oxide 0.8.9",
  "serde",
  "serde_json",
  "sha2",
@@ -5931,10 +5932,13 @@ dependencies = [
  "ocw-world",
  "ocw-worldstore",
  "osmpbf",
+ "serde",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.21",
  "tiff",
  "weezl",
+ "zune-jpeg",
 ]
 
 [[package]]
