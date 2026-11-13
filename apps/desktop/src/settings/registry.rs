@@ -142,6 +142,14 @@ pub const SETTINGS: &[SettingDef] = &[
         apply: Apply::Command("god.invert {}"),
     },
     SettingDef {
+        key: "controls.god_flight",
+        kind: Kind::Choice(&["plane", "hover"]),
+        default: "plane",
+        description: "God mode: fly like a plane (always forward; arrows: throttle and bank) or hover (arrows: move, mouse: turn) (spec §14 Phase 13B)",
+        scope: Scope::Live,
+        apply: Apply::Command("god.flight {}"),
+    },
+    SettingDef {
         key: "trainer.difficulty",
         kind: Kind::Int {
             min: 0,

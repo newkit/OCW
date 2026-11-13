@@ -7,8 +7,14 @@
 //!   `v = clamp(20 m/s + 0.5 × height above ground, 20, 400 m/s)`, Shift
 //!   ×4, Ctrl ×0.25, the wheel scale ×0.25 … ×8, climbing at half the
 //!   horizontal speed, smoothed movements (0.15 s to speed up, 0.25 s to
-//!   stop), moving relative to the view's yaw in the horizontal plane (the
-//!   pitch never dives), at least [`CLEARANCE_M`] above the ground (terrain,
+//!   stop). Two models ([`FlightModel`]): **plane** (the default, v2.64) –
+//!   always forward along the heading at a cruise speed (the throttle, a
+//!   share of the speed law's cap, never below a slow glide), ← / → bank
+//!   into a coordinated turn ([`coordinated_turn_rate`]), the nose pitching
+//!   with the climb, the mouse looking around off the course and easing
+//!   back; **hover** (v2.58) – moving relative to the view's yaw in the
+//!   horizontal plane, hovering without input. The view's pitch never
+//!   dives. At least [`CLEARANCE_M`] above the ground (terrain,
 //!   water, buildings – the caller's surface), at most [`CEILING_M`] above
 //!   sea level, softly stopped [`LIMIT_MARGIN_M`] outside the world;
 //! - the **glides** of leaving ([`Glide`]): down to the landing spot, or
@@ -116,20 +122,107 @@ pub fn heading_deg(yaw: f64) -> f64 {
     if h >= 359.999_999 { 0.0 } else { h }
 }
 
+/// How the unicorn flies (spec §14 Phase 13B; setting `controls.god_flight`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FlightModel {
+    /// Like a plane (the default, decided by the user 2026-11-13): it always
+    /// flies forward along its heading at a cruise speed; ← / → bank and
+    /// turn, ↑ / ↓ are the throttle, + / − climb and descend, the mouse
+    /// looks around without changing the course.
+    #[default]
+    Plane,
+    /// The first model (v2.58): moving in the horizontal plane relative to
+    /// the view (↑ / ↓ forward and back, ← / → strafe), hovering on the
+    /// spot without input, the mouse turns the flight.
+    Hover,
+}
+
+impl FlightModel {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Plane => "plane",
+            Self::Hover => "hover",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "plane" => Some(Self::Plane),
+            "hover" => Some(Self::Hover),
+            _ => None,
+        }
+    }
+}
+
+/// Plane: the steepest bank (rad, 55°) at full ← / →.
+pub const MAX_BANK: f64 = 55.0 * std::f64::consts::PI / 180.0;
+/// Plane: the time constant of rolling into a bank and levelling out (s).
+pub const BANK_TAU_S: f64 = 0.35;
+/// Plane: the "gravity" of the coordinated turn (m/s²): the yaw rate is
+/// `TURN_G × tan(bank) / speed` – a unicorn pulls about 4 g, so a turn at
+/// 400 m/s still comes round in about 45 s.
+pub const TURN_G: f64 = 40.0;
+/// Plane: the turn law uses at least this speed (m/s), so a slow unicorn
+/// does not spin on the spot …
+pub const TURN_MIN_SPEED_MPS: f64 = 10.0;
+/// … and turns at most this fast (rad/s, ~69°/s).
+pub const MAX_TURN_RATE: f64 = 1.2;
+/// Plane: the throttle (a fraction of the speed law's cap) moves this much
+/// per second while ↑ / ↓ is held; it stays where it was let go.
+pub const THROTTLE_RATE: f64 = 0.6;
+/// Plane: the least throttle – a slow glide, never a hover …
+pub const MIN_THROTTLE: f64 = 0.15;
+/// … the throttle at take-off …
+pub const START_THROTTLE: f64 = 0.5;
+/// … and the least cruise speed whatever the cap says (m/s; Ctrl close to
+/// the ground caps at 5 m/s).
+pub const MIN_CRUISE_MPS: f64 = 3.0;
+/// Plane: the nose pitches up / down with the climb, at most this much (rad).
+pub const MAX_NOSE_PITCH: f64 = 0.35;
+/// Plane: the time constant of the nose following the climb (s).
+pub const NOSE_TAU_S: f64 = 0.3;
+/// Plane: the view follows this part of the nose's pitch …
+pub const VIEW_NOSE_FRACTION: f64 = 0.5;
+/// … and rolls with this part of the bank.
+pub const CAMERA_ROLL_FRACTION: f64 = 0.5;
+/// Plane: the look-around eases back to straight ahead after this long
+/// without mouse or stick movement (s) …
+pub const LOOK_RECENTRE_S: f64 = 1.5;
+/// … with this time constant (s).
+pub const LOOK_RECENTRE_TAU_S: f64 = 0.4;
+
+/// The yaw rate of a coordinated turn (rad/s, positive = left, as the yaw)
+/// at `bank` (rad, positive = right wing down) and `speed_mps`:
+/// `TURN_G × tan(bank) / speed`, at most [`MAX_TURN_RATE`].
+pub fn coordinated_turn_rate(bank: f64, speed_mps: f64) -> f64 {
+    let b = bank.clamp(-MAX_BANK, MAX_BANK);
+    -(TURN_G * b.tan() / speed_mps.max(TURN_MIN_SPEED_MPS)).clamp(-MAX_TURN_RATE, MAX_TURN_RATE)
+}
+
+/// The bank (rad, positive = right wing down) that turns at `turn_rate`
+/// (rad/s, positive = left) at `speed_mps`: the inverse of
+/// [`coordinated_turn_rate`], at most [`MAX_BANK`].
+pub fn bank_for_turn(turn_rate: f64, speed_mps: f64) -> f64 {
+    (-(turn_rate * speed_mps.max(TURN_MIN_SPEED_MPS) / TURN_G).atan()).clamp(-MAX_BANK, MAX_BANK)
+}
+
 /// What the rider asks of the flight this frame. The movement values are
 /// −1 … 1 (keys give ±1, sticks and triggers in between).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct FlightInput {
-    /// Forward (+) / back (−), along the view's yaw.
+    /// ↑ (+) / ↓ (−). Plane: the throttle up / down; hover: forward / back
+    /// along the view's yaw.
     pub forward: f64,
-    /// Right (+) / left (−).
-    pub strafe: f64,
+    /// → (+) / ← (−). Plane: bank and turn; hover: strafe.
+    pub side: f64,
     /// Climb (+) / descend (−).
     pub climb: f64,
     /// Shift (×4).
     pub boost: bool,
     /// Ctrl (×0.25).
     pub precise: bool,
+    /// Plane: set the throttle to this (0 … 1; `god.cruise`, scenes).
+    pub set_throttle: Option<f64>,
 }
 
 /// The horizontal area the unicorn may fly over (home metres): the world
@@ -170,12 +263,15 @@ impl Bounds {
     }
 }
 
-/// The unicorn's pose: where it is and where the rider looks.
+/// The unicorn's pose: where it is, where it heads and where the rider
+/// looks.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct GodPose {
     /// Local metres (x, y up, z).
     pub pos: [f64; 3],
+    /// The body's heading (plane: the course; hover: the view's yaw).
     pub yaw: f64,
+    /// The view's pitch.
     pub pitch: f64,
     /// Flight speed (m/s, 3D).
     pub speed: f64,
@@ -198,8 +294,13 @@ pub struct StepInfo {
 /// the client, spec §14 Phase 13E).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Flight {
+    pub model: FlightModel,
     pub pos: [f64; 3],
+    /// Plane: the heading of the flight (the view looks [`Self::look`]
+    /// off it); hover: the view's yaw, which the flight follows.
     pub yaw: f64,
+    /// The view's pitch (plane: its resting pitch, before the nose and the
+    /// look-around).
     pub pitch: f64,
     /// Smoothed velocity (m/s; x, y, z).
     pub vel: [f64; 3],
@@ -209,12 +310,23 @@ pub struct Flight {
     pub turn_rate: f64,
     /// Rate of change of the speed (m/s², smoothed): the wings beat with it.
     pub accel: f64,
+    /// Plane: the bank (rad, positive = right wing down).
+    pub bank: f64,
+    /// Plane: the throttle ([`MIN_THROTTLE`] … 1 of the speed law's cap).
+    pub throttle: f64,
+    /// Plane: the nose's pitch (rad, up; smoothed, follows the climb).
+    pub nose: f64,
+    /// Plane: the look-around off the heading (yaw, pitch; rad).
+    pub look: [f64; 2],
+    /// Plane: seconds since the last look-around movement.
+    pub look_idle_s: f64,
 }
 
 impl Flight {
-    /// A flight starting at `pos`, looking along `yaw` (level).
+    /// A flight starting at `pos`, heading along `yaw` (level), as a plane.
     pub fn new(pos: [f64; 3], yaw: f64) -> Self {
         Self {
+            model: FlightModel::Plane,
             pos,
             yaw,
             pitch: -0.12,
@@ -222,6 +334,19 @@ impl Flight {
             scale: 1.0,
             turn_rate: 0.0,
             accel: 0.0,
+            bank: 0.0,
+            throttle: START_THROTTLE,
+            nose: 0.0,
+            look: [0.0; 2],
+            look_idle_s: 0.0,
+        }
+    }
+
+    /// A flight of the hover model (v2.58).
+    pub fn hover(pos: [f64; 3], yaw: f64) -> Self {
+        Self {
+            model: FlightModel::Hover,
+            ..Self::new(pos, yaw)
         }
     }
 
@@ -229,9 +354,51 @@ impl Flight {
         GodPose {
             pos: self.pos,
             yaw: self.yaw,
-            pitch: self.pitch,
+            pitch: self.view_pitch(),
             speed: self.speed(),
         }
+    }
+
+    /// The yaw the view (the camera) looks along.
+    pub fn view_yaw(&self) -> f64 {
+        match self.model {
+            FlightModel::Plane => (self.yaw + self.look[0]).rem_euclid(std::f64::consts::TAU),
+            FlightModel::Hover => self.yaw,
+        }
+    }
+
+    /// The pitch the view (the camera) looks along.
+    pub fn view_pitch(&self) -> f64 {
+        match self.model {
+            FlightModel::Plane => (self.pitch + VIEW_NOSE_FRACTION * self.nose + self.look[1])
+                .clamp(-MAX_PITCH, MAX_PITCH),
+            FlightModel::Hover => self.pitch,
+        }
+    }
+
+    /// The camera's roll (rad, positive = rolled to the right, with a
+    /// right bank).
+    pub fn camera_roll(&self) -> f64 {
+        match self.model {
+            FlightModel::Plane => self.bank * CAMERA_ROLL_FRACTION,
+            FlightModel::Hover => 0.0,
+        }
+    }
+
+    /// Plane: the look-around back to straight ahead (L, the middle mouse
+    /// button): it eases back at once.
+    pub fn recentre_look(&mut self) {
+        self.look_idle_s = self.look_idle_s.max(LOOK_RECENTRE_S);
+    }
+
+    /// Stops every movement (a teleport): no speed, level, looking ahead.
+    pub fn stop(&mut self) {
+        self.vel = [0.0; 3];
+        self.bank = 0.0;
+        self.nose = 0.0;
+        self.look = [0.0; 2];
+        self.turn_rate = 0.0;
+        self.accel = 0.0;
     }
 
     /// Speed (m/s, 3D).
@@ -244,11 +411,26 @@ impl Flight {
         self.vel[0].hypot(self.vel[2])
     }
 
-    /// Turns the view by `d_yaw` (unlimited) and `d_pitch` (rad; the pitch
-    /// stays within ±[`MAX_PITCH`]).
+    /// Turns the view by `d_yaw` and `d_pitch` (rad). Hover: the flight's
+    /// yaw (unlimited) and pitch (within ±[`MAX_PITCH`]). Plane: the
+    /// look-around off the heading (yaw within ±180°, the view's pitch
+    /// within ±[`MAX_PITCH`]); the course does not change.
     pub fn look(&mut self, d_yaw: f64, d_pitch: f64) {
-        self.yaw = (self.yaw + d_yaw).rem_euclid(std::f64::consts::TAU);
-        self.pitch = (self.pitch + d_pitch).clamp(-MAX_PITCH, MAX_PITCH);
+        match self.model {
+            FlightModel::Hover => {
+                self.yaw = (self.yaw + d_yaw).rem_euclid(std::f64::consts::TAU);
+                self.pitch = (self.pitch + d_pitch).clamp(-MAX_PITCH, MAX_PITCH);
+            }
+            FlightModel::Plane => {
+                if d_yaw == 0.0 && d_pitch == 0.0 {
+                    return;
+                }
+                self.look_idle_s = 0.0;
+                self.look[0] = wrap_angle(self.look[0] + d_yaw);
+                let base = self.pitch + VIEW_NOSE_FRACTION * self.nose;
+                self.look[1] = (base + self.look[1] + d_pitch).clamp(-MAX_PITCH, MAX_PITCH) - base;
+            }
+        }
     }
 
     /// Mouse wheel steps (positive = faster): the base-speed scale.
@@ -257,23 +439,31 @@ impl Flight {
     }
 
     /// The velocity the input asks for at `height_m` above the ground,
-    /// inside `bounds` (the soft stop): horizontal relative to the yaw only,
-    /// the pitch never dives.
+    /// inside `bounds` (the soft stop). Plane: along the heading at the
+    /// throttle's share of the speed law (at least [`MIN_CRUISE_MPS`]);
+    /// hover: horizontal relative to the yaw. The view's pitch never dives.
     pub fn target_velocity(
         &self,
         input: &FlightInput,
         height_m: f64,
         bounds: Option<Bounds>,
     ) -> [f64; 3] {
-        let v = flight_speed(height_m, input.boost, input.precise, self.scale);
-        let (f, r) = (forward(self.yaw), right(self.yaw));
-        let fw = input.forward.clamp(-1.0, 1.0);
-        let st = input.strafe.clamp(-1.0, 1.0);
-        let mut h = [f[0] * fw + r[0] * st, f[1] * fw + r[1] * st];
-        let n = h[0].hypot(h[1]);
-        if n > 1.0 {
-            h = [h[0] / n, h[1] / n];
-        }
+        let cap = flight_speed(height_m, input.boost, input.precise, self.scale);
+        let f = forward(self.yaw);
+        let (h, v) = match self.model {
+            FlightModel::Plane => (f, (self.throttle * cap).max(MIN_CRUISE_MPS.min(cap))),
+            FlightModel::Hover => {
+                let r = right(self.yaw);
+                let fw = input.forward.clamp(-1.0, 1.0);
+                let st = input.side.clamp(-1.0, 1.0);
+                let mut h = [f[0] * fw + r[0] * st, f[1] * fw + r[1] * st];
+                let n = h[0].hypot(h[1]);
+                if n > 1.0 {
+                    h = [h[0] / n, h[1] / n];
+                }
+                (h, cap)
+            }
+        };
         let mut t = [
             h[0] * v,
             input.climb.clamp(-1.0, 1.0) * v * CLIMB_FRACTION,
@@ -297,6 +487,25 @@ impl Flight {
         t
     }
 
+    /// Plane: the throttle, the bank and the coordinated turn, the
+    /// look-around easing back.
+    fn steer(&mut self, input: &FlightInput, dt: f64) {
+        if let Some(t) = input.set_throttle {
+            self.throttle = t;
+        }
+        self.throttle = (self.throttle + input.forward.clamp(-1.0, 1.0) * THROTTLE_RATE * dt)
+            .clamp(MIN_THROTTLE, 1.0);
+        let goal = input.side.clamp(-1.0, 1.0) * MAX_BANK;
+        self.bank += (goal - self.bank) * (1.0 - (-dt / BANK_TAU_S).exp());
+        let rate = coordinated_turn_rate(self.bank, self.horizontal_speed());
+        self.yaw = (self.yaw + rate * dt).rem_euclid(std::f64::consts::TAU);
+        self.look_idle_s += dt;
+        if self.look_idle_s > LOOK_RECENTRE_S {
+            let k = (-dt / LOOK_RECENTRE_TAU_S).exp();
+            self.look = [self.look[0] * k, self.look[1] * k];
+        }
+    }
+
     /// Advances the flight by `dt` seconds. `surface` is the height of
     /// what the unicorn must stay above (terrain, water, buildings) at
     /// (x, z); `bounds` the world set's area (`None`: unlimited).
@@ -308,12 +517,16 @@ impl Flight {
         bounds: Option<Bounds>,
     ) -> StepInfo {
         let dt = dt.clamp(0.0, 0.25);
+        // Before the plane's turn: the turn rate measures it.
+        let yaw_before = self.yaw;
+        if self.model == FlightModel::Plane {
+            self.steer(input, dt);
+        }
         let ground = surface(self.pos[0], self.pos[2]);
         let height = self.pos[1] - ground.unwrap_or(0.0);
         let target = self.target_velocity(input, height, bounds);
         let target_speed = norm(target);
         let before = self.speed();
-        let yaw_before = self.yaw;
         let tau = if target_speed >= before {
             ACCEL_TAU_S
         } else {
@@ -381,6 +594,13 @@ impl Flight {
             let turn = wrap_angle(self.yaw - yaw_before) / dt;
             self.turn_rate += (turn - self.turn_rate) * k;
             self.accel += ((self.speed() - before) / dt - self.accel) * k;
+            if self.model == FlightModel::Plane {
+                // The nose follows the climb (releasing + / − levels off).
+                let goal = self.vel[1]
+                    .atan2(self.horizontal_speed().max(1.0))
+                    .clamp(-MAX_NOSE_PITCH, MAX_NOSE_PITCH);
+                self.nose += (goal - self.nose) * (1.0 - (-dt / NOSE_TAU_S).exp());
+            }
         }
         let ground = surface(self.pos[0], self.pos[2]);
         StepInfo {
@@ -672,10 +892,12 @@ pub fn wing_spread(speed_mps: f64, turn_rate: f64) -> f64 {
 }
 
 /// The bank of the body in a turn (rad, positive = right wing down):
-/// turning left (positive turn rate) banks to the left.
+/// turning left (positive turn rate) banks to the left – the bank of the
+/// coordinated turn ([`bank_for_turn`]), so a plane flight's bank shows on
+/// every client from the turn rate alone; none while hovering.
 pub fn bank(turn_rate: f64, speed_mps: f64) -> f64 {
-    let k = (speed_mps / 30.0).clamp(0.0, 1.0);
-    (-turn_rate * 0.45 * k).clamp(-0.6, 0.6)
+    let k = (speed_mps / 12.0).clamp(0.0, 1.0);
+    bank_for_turn(turn_rate, speed_mps) * k
 }
 
 #[cfg(test)]
@@ -702,10 +924,11 @@ mod tests {
 
     const AHEAD: FlightInput = FlightInput {
         forward: 1.0,
-        strafe: 0.0,
+        side: 0.0,
         climb: 0.0,
         boost: false,
         precise: false,
+        set_throttle: None,
     };
 
     #[test]
@@ -741,7 +964,7 @@ mod tests {
     #[test]
     fn accelerates_in_015_s_and_stops_in_025_s() {
         let ground = flat(0.0);
-        let mut f = Flight::new([0.0, 2.0, 0.0], 0.0);
+        let mut f = Flight::hover([0.0, 2.0, 0.0], 0.0);
         let full = base_speed(2.0);
         // One time constant: 63 % of the speed.
         fly(&mut f, AHEAD, ACCEL_TAU_S, &ground, None);
@@ -761,7 +984,7 @@ mod tests {
         let ground = flat(0.0);
         for yaw in [0.0, 0.7, -2.0, 3.0] {
             for pitch in [-1.5, 0.0, 1.2] {
-                let mut f = Flight::new([0.0, 100.0, 0.0], yaw);
+                let mut f = Flight::hover([0.0, 100.0, 0.0], yaw);
                 f.pitch = pitch;
                 fly(&mut f, AHEAD, 2.0, &ground, None);
                 let d = [f.pos[0], f.pos[2]];
@@ -777,9 +1000,9 @@ mod tests {
             }
         }
         // Strafing right is to the right of the view; yaw 0 looks north (−z).
-        let mut f = Flight::new([0.0, 100.0, 0.0], 0.0);
+        let mut f = Flight::hover([0.0, 100.0, 0.0], 0.0);
         let input = FlightInput {
-            strafe: 1.0,
+            side: 1.0,
             ..Default::default()
         };
         fly(&mut f, input, 1.0, &ground, None);
@@ -791,10 +1014,10 @@ mod tests {
             "east"
         );
         // Diagonal is not faster than straight.
-        let mut f = Flight::new([0.0, 100.0, 0.0], 0.0);
+        let mut f = Flight::hover([0.0, 100.0, 0.0], 0.0);
         let both = FlightInput {
             forward: 1.0,
-            strafe: 1.0,
+            side: 1.0,
             ..Default::default()
         };
         fly(&mut f, both, 3.0, &ground, None);
@@ -805,7 +1028,7 @@ mod tests {
     #[test]
     fn climbs_at_half_the_horizontal_speed() {
         let ground = flat(0.0);
-        let mut f = Flight::new([0.0, 2.0, 0.0], 0.0);
+        let mut f = Flight::hover([0.0, 2.0, 0.0], 0.0);
         let up = FlightInput {
             climb: 1.0,
             ..Default::default()
@@ -902,7 +1125,7 @@ mod tests {
 
     #[test]
     fn look_limits_pitch_and_wraps_yaw() {
-        let mut f = Flight::new([0.0; 3], 0.0);
+        let mut f = Flight::hover([0.0; 3], 0.0);
         f.look(10.0, 5.0);
         assert_eq!(f.pitch, MAX_PITCH);
         assert!((0.0..std::f64::consts::TAU).contains(&f.yaw));
@@ -1003,5 +1226,256 @@ mod tests {
         assert_eq!(wing_spread(0.0, 0.0), 0.0, "folded while hovering");
         assert!(wing_spread(50.0, 1.0) > 0.95);
         assert!(bank(0.5, 50.0) < 0.0, "turning left banks left");
+        // The body shows the bank of the coordinated turn.
+        let b = bank(coordinated_turn_rate(0.4, 80.0), 80.0);
+        assert!((b - 0.4).abs() < 1e-9, "{b}");
+    }
+
+    // ------------------------------------------------ the plane (v2.64)
+
+    fn input(f: impl FnOnce(&mut FlightInput)) -> FlightInput {
+        let mut i = FlightInput::default();
+        f(&mut i);
+        i
+    }
+
+    #[test]
+    fn the_plane_is_the_default_and_the_models_have_names() {
+        assert_eq!(Flight::new([0.0; 3], 0.0).model, FlightModel::Plane);
+        assert_eq!(FlightModel::default(), FlightModel::Plane);
+        for m in [FlightModel::Plane, FlightModel::Hover] {
+            assert_eq!(FlightModel::parse(m.name()), Some(m));
+        }
+        assert_eq!(FlightModel::parse("drone"), None);
+    }
+
+    #[test]
+    fn the_coordinated_turn_follows_bank_and_speed() {
+        let b = 30f64.to_radians();
+        let r = coordinated_turn_rate(b, 50.0);
+        assert!((r + TURN_G * b.tan() / 50.0).abs() < 1e-12, "{r}");
+        assert!(r < 0.0, "a right bank turns right (the yaw turns left)");
+        assert_eq!(coordinated_turn_rate(-b, 50.0), -r);
+        // Twice as fast: half the yaw rate (twice ... four times the radius).
+        assert!((coordinated_turn_rate(b, 100.0) - r / 2.0).abs() < 1e-12);
+        // Steeper banks turn faster; level does not turn.
+        assert!(coordinated_turn_rate(0.9, 50.0) < r);
+        assert_eq!(coordinated_turn_rate(0.0, 50.0), 0.0);
+        // Slow: no spin on the spot.
+        assert_eq!(coordinated_turn_rate(MAX_BANK, 0.0), -MAX_TURN_RATE);
+        // 400 m/s at the steepest bank: round in about 45 s.
+        let full = std::f64::consts::TAU / coordinated_turn_rate(MAX_BANK, 400.0).abs();
+        assert!((35.0..55.0).contains(&full), "{full} s");
+        // The bank for a turn is its inverse.
+        for (bank, v) in [(0.3, 40.0), (-0.7, 150.0), (0.05, 400.0)] {
+            let back = bank_for_turn(coordinated_turn_rate(bank, v), v);
+            assert!((back - bank).abs() < 1e-9, "{bank} at {v}: {back}");
+        }
+
+        // In flight: → rolls into a right bank and turns at the rate of the
+        // bank; the camera rolls with it, the view stays on the course.
+        let ground = flat(0.0);
+        let mut f = Flight::new([0.0, 200.0, 0.0], 0.0);
+        let right = input(|i| i.side = 1.0);
+        fly(&mut f, FlightInput::default(), 3.0, &ground, None);
+        let h0 = heading_deg(f.yaw);
+        fly(&mut f, right, 2.0, &ground, None);
+        assert!((f.bank - MAX_BANK).abs() < 0.02, "{}", f.bank);
+        let yaw = f.yaw;
+        let dt = 1.0 / 60.0;
+        f.step(&right, dt, &ground, None);
+        let measured = wrap_angle(f.yaw - yaw) / dt;
+        let law = coordinated_turn_rate(f.bank, f.horizontal_speed());
+        assert!(
+            (measured - law).abs() < 0.02 * law.abs(),
+            "{measured} vs {law}"
+        );
+        assert!(heading_deg(f.yaw) > h0 + 10.0, "turned right (east)");
+        assert!(f.camera_roll() > 0.4 && f.camera_roll() < f.bank);
+        assert!((wrap_angle(f.view_yaw() - f.yaw)).abs() < 1e-9);
+        // The velocity follows the heading through the turn.
+        let v = forward(f.yaw);
+        let hs = f.horizontal_speed();
+        assert!((f.vel[0] / hs * v[0] + f.vel[2] / hs * v[1]) > 0.97);
+        // Released: levels out smoothly and flies straight on.
+        let mut banks = Vec::new();
+        for _ in 0..120 {
+            f.step(&FlightInput::default(), dt, &ground, None);
+            banks.push(f.bank);
+        }
+        assert!(banks.windows(2).all(|w| w[1] <= w[0]), "no jerk back");
+        assert!(f.bank.abs() < 0.01, "{}", f.bank);
+        let yaw = f.yaw;
+        fly(&mut f, FlightInput::default(), 1.0, &ground, None);
+        assert!(wrap_angle(f.yaw - yaw).abs() < 0.01);
+        // ← banks left and turns left.
+        fly(&mut f, input(|i| i.side = -1.0), 2.0, &ground, None);
+        assert!(
+            f.bank < -0.9 && f.turn_rate > 0.0,
+            "{} {}",
+            f.bank,
+            f.turn_rate
+        );
+    }
+
+    #[test]
+    fn the_throttle_holds_and_never_stops_the_unicorn() {
+        let ground = flat(0.0);
+        let mut f = Flight::new([0.0, 100.0, 0.0], 0.0);
+        let cap = base_speed(100.0);
+        // Take-off: half the speed law's cap, flying without input.
+        fly(&mut f, FlightInput::default(), 3.0, &ground, None);
+        assert_eq!(f.throttle, START_THROTTLE);
+        assert!((f.horizontal_speed() - START_THROTTLE * cap).abs() < 0.2);
+        // ↑: accelerates up to the cap …
+        fly(&mut f, AHEAD, 1.0, &ground, None);
+        assert_eq!(f.throttle, 1.0);
+        fly(&mut f, FlightInput::default(), 2.0, &ground, None);
+        assert!((f.horizontal_speed() - cap).abs() < 0.2, "held at the cap");
+        // … the cap's limits stay: Shift ×4, Ctrl ×0.25, the wheel.
+        fly(&mut f, input(|i| i.boost = true), 2.0, &ground, None);
+        assert!((f.horizontal_speed() - 4.0 * cap).abs() < 1.0);
+        // ↓: slows down to a slow glide, never a hover.
+        let back = input(|i| i.forward = -1.0);
+        fly(&mut f, back, 5.0, &ground, None);
+        assert_eq!(f.throttle, MIN_THROTTLE);
+        let v = f.horizontal_speed();
+        assert!((v - MIN_THROTTLE * cap).abs() < 0.2, "{v}");
+        let x = f.pos[2];
+        fly(&mut f, back, 1.0, &ground, None);
+        assert!(x - f.pos[2] > 0.9 * v, "still flying north");
+        // Precise close to the ground: the least cruise speed.
+        let mut f = Flight::new([0.0, 2.0, 0.0], 0.0);
+        let slow = input(|i| {
+            i.forward = -1.0;
+            i.precise = true;
+        });
+        fly(&mut f, slow, 5.0, &ground, None);
+        assert!((f.horizontal_speed() - MIN_CRUISE_MPS).abs() < 0.05);
+        // A scene sets the throttle directly (god.cruise).
+        fly(
+            &mut f,
+            input(|i| i.set_throttle = Some(0.8)),
+            0.1,
+            &ground,
+            None,
+        );
+        assert!((f.throttle - 0.8).abs() < 1e-9);
+    }
+
+    #[test]
+    fn plus_climbs_minus_descends_with_the_nose_and_releasing_levels_off() {
+        let ground = flat(0.0);
+        let mut f = Flight::new([0.0, 300.0, 0.0], 0.0);
+        fly(&mut f, FlightInput::default(), 2.0, &ground, None);
+        let rest = f.view_pitch();
+        let up = input(|i| i.climb = 1.0);
+        let y = f.pos[1];
+        fly(&mut f, up, 2.0, &ground, None);
+        assert!(f.pos[1] > y + 50.0, "climbed: {}", f.pos[1]);
+        // The climb rate: half the speed (the plane's speed at its height).
+        let infos = fly(&mut f, up, 1.0 / 60.0, &ground, None);
+        let v = START_THROTTLE * base_speed(infos[0].height_m);
+        assert!(
+            (f.vel[1] - CLIMB_FRACTION * v).abs() < 0.05 * v,
+            "{}",
+            f.vel[1]
+        );
+        assert!(
+            f.nose > 0.2 && f.nose <= MAX_NOSE_PITCH,
+            "nose up {}",
+            f.nose
+        );
+        assert!(f.view_pitch() > rest + 0.1, "the view pitches up a bit");
+        // Released: levels off (no climb, the nose level, the view back).
+        fly(&mut f, FlightInput::default(), 2.0, &ground, None);
+        let y = f.pos[1];
+        fly(&mut f, FlightInput::default(), 1.0, &ground, None);
+        assert!((f.pos[1] - y).abs() < 0.5, "level: {} → {}", y, f.pos[1]);
+        assert!(f.nose.abs() < 0.01 && (f.view_pitch() - rest).abs() < 0.01);
+        // −: descends, nose down, and stops at the clearance.
+        let down = input(|i| i.climb = -1.0);
+        fly(&mut f, down, 1.0, &ground, None);
+        assert!(f.vel[1] < -10.0 && f.nose < -0.2);
+        fly(&mut f, down, 60.0, &ground, None);
+        assert!((f.pos[1] - CLEARANCE_M).abs() < 1e-6, "{}", f.pos[1]);
+        assert!(f.horizontal_speed() > MIN_CRUISE_MPS, "still flying on");
+    }
+
+    #[test]
+    fn keeps_clear_of_a_ridge_in_a_banked_descending_turn() {
+        // The ridge of the test above (300 m high at x = 3 km); the unicorn
+        // heads east 5 m above the plain with boost and full throttle,
+        // banking right and asking to descend all the way.
+        let ridge = |x: f64, _z: f64| Some(300.0 * (1.0 - ((x - 3_000.0).abs() / 150.0)).max(0.0));
+        let mut f = Flight::new([2_700.0, 5.0, 0.0], yaw_of([1.0, 0.0]));
+        f.throttle = 1.0;
+        let turn = FlightInput {
+            forward: 1.0,
+            side: 0.5,
+            climb: -1.0,
+            boost: true,
+            ..Default::default()
+        };
+        let dt = 1.0 / 60.0;
+        let (yaw0, mut highest, mut banked_over) = (f.yaw, 0.0f64, false);
+        for _ in 0..600 {
+            let from = f.pos;
+            f.step(&turn, dt, &ridge, None);
+            for k in 0..=8 {
+                let t = f64::from(k) / 8.0;
+                let x = from[0] + (f.pos[0] - from[0]) * t;
+                let y = from[1] + (f.pos[1] - from[1]) * t;
+                let h = ridge(x, 0.0).unwrap();
+                assert!(y >= h + CLEARANCE_M - 2.0, "x {x:.0}: {y:.1} over {h:.1}");
+            }
+            let h = ridge(f.pos[0], 0.0).unwrap();
+            assert!(f.pos[1] >= h + CLEARANCE_M - 1e-9);
+            highest = highest.max(h);
+            banked_over |= h > 100.0 && f.bank > 0.3;
+        }
+        assert!(highest > 150.0 && banked_over, "over the ridge in the turn");
+        assert!(wrap_angle(f.yaw - yaw0).abs() > 0.3, "it turned");
+    }
+
+    #[test]
+    fn the_mouse_looks_around_without_changing_the_course() {
+        let ground = flat(0.0);
+        let mut f = Flight::new([0.0, 100.0, 0.0], 0.0);
+        fly(&mut f, FlightInput::default(), 1.0, &ground, None);
+        f.look(0.8, 0.3);
+        let pitch = f.view_pitch();
+        assert!((f.view_yaw() - 0.8).abs() < 1e-9 && f.yaw == 0.0);
+        fly(&mut f, FlightInput::default(), 1.0, &ground, None);
+        // Still north, the view still to the left.
+        assert!(f.vel[0].abs() < 1e-6 && f.vel[2] < 0.0);
+        assert!((f.view_yaw() - 0.8).abs() < 1e-9 && (f.view_pitch() - pitch).abs() < 1e-9);
+        // A moment without moving the mouse: back to straight ahead.
+        fly(
+            &mut f,
+            FlightInput::default(),
+            LOOK_RECENTRE_S + 2.0,
+            &ground,
+            None,
+        );
+        assert!(
+            f.look[0].abs() < 0.01 && f.look[1].abs() < 0.01,
+            "{:?}",
+            f.look
+        );
+        // The look stays within the view's limits; L recentres at once.
+        f.look(-2.0, 5.0);
+        assert!((f.view_pitch() - MAX_PITCH).abs() < 1e-9);
+        f.recentre_look();
+        fly(&mut f, FlightInput::default(), 3.0, &ground, None);
+        assert!(
+            f.look[0].abs() < 0.01 && f.look[1].abs() < 0.01,
+            "{:?}",
+            f.look
+        );
+        // The hover model turns the flight with the mouse instead.
+        let mut h = Flight::hover([0.0, 100.0, 0.0], 0.0);
+        h.look(0.8, 0.0);
+        assert_eq!((h.yaw, h.view_yaw(), h.camera_roll()), (0.8, 0.8, 0.0));
     }
 }

@@ -609,6 +609,13 @@ pub fn flight_eye(f: &crate::FlightView, solid: &dyn Fn(f64, f64) -> Option<f64>
     (eye, eye + dir * 50.0)
 }
 
+/// The flight camera's up: the world's up rolled about the view by the
+/// flight's roll (a right bank rolls the camera to the right).
+pub fn flight_up(f: &crate::FlightView) -> Vec3 {
+    let dir = view_direction(f.yaw, f.pitch).normalize();
+    Quat::from_axis_angle(dir, f.roll as f32) * Vec3::Y
+}
+
 #[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
 pub(crate) fn follow(
     view: Res<RideView>,
@@ -644,7 +651,7 @@ pub(crate) fn follow(
         let solid = |x: f64, z: f64| solid_height(ground.as_deref(), &obstacles, x, z);
         let (eye, target) = flight_eye(f, &solid);
         cam.translation = eye;
-        cam.look_at(target, Vec3::Y);
+        cam.look_at(target, flight_up(f));
         focus.set_if_neq(CameraFocus(Some(crate::to_vec3(f.pos))));
         // Back on the road the chase camera starts afresh.
         tilt.rider = None;
@@ -1330,6 +1337,29 @@ mod tests {
             view_direction(std::f64::consts::FRAC_PI_2, 0.0),
             Vec3::NEG_X
         ));
+        // Level: the world's up; a right bank rolls the camera to the
+        // right (looking north, its up leans east), a left one to the left.
+        assert!(close(flight_up(&f), Vec3::Y));
+        let banked = crate::FlightView {
+            roll: 0.4,
+            ..f.clone()
+        };
+        let up = flight_up(&banked);
+        assert!(
+            up.x > 0.3 && up.y > 0.9 && up.dot(Vec3::NEG_Z).abs() < 1e-5,
+            "{up}"
+        );
+        let left = crate::FlightView {
+            roll: -0.4,
+            ..f.clone()
+        };
+        assert!(flight_up(&left).x < -0.3);
+        let mut cam = Transform::from_translation(Vec3::ZERO);
+        cam.look_at(Vec3::NEG_Z, up);
+        assert!(
+            cam.right().y < -0.3,
+            "the horizon tilts: the right side dips"
+        );
     }
 
     #[test]

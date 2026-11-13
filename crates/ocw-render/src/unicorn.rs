@@ -2,7 +2,7 @@
 //! made here in code (licensed like the code; no third-party asset, no
 //! brand character). A white body, a spiral golden horn, a rainbow mane
 //! and tail, large feathered wings like a pegasus, golden hooves; the
-//! rider's colour on the saddle cloth and the mane's first band.
+//! rider's colour in the mane's first band (no saddle cloth).
 //!
 //! - The **model** ([`model`]) is a list of flat-shaded parts on a small
 //!   skeleton ([`skeleton`]): body, neck, head, four legs (hip and knee),
@@ -153,11 +153,11 @@ pub fn skeleton() -> Vec<JointDef> {
 pub enum Paint {
     /// The white coat.
     Coat,
-    /// Horn, hooves and the saddle cloth's trim.
+    /// Horn and hooves.
     Gold,
     Eye,
     Muzzle,
-    /// The rider's colour: the saddle cloth and the mane's first band.
+    /// The rider's colour: the mane's first band.
     Rider,
     /// A rainbow colour ([`RAINBOW`]).
     Band(u8),
@@ -261,29 +261,6 @@ pub fn tube(r0: f32, r1: f32, len: f32, sides: u32) -> Shape {
         indices.extend([bottom, a, b]);
         indices.extend([top, d, c]);
     }
-    Shape { positions, indices }
-}
-
-/// A box of `size` around the origin.
-pub fn slab(size: Vec3) -> Shape {
-    let h = size / 2.0;
-    let positions = (0..8)
-        .map(|i| {
-            Vec3::new(
-                if i & 1 == 0 { -h.x } else { h.x },
-                if i & 2 == 0 { -h.y } else { h.y },
-                if i & 4 == 0 { -h.z } else { h.z },
-            )
-        })
-        .collect();
-    let indices = vec![
-        0, 2, 1, 1, 2, 3, // −z
-        4, 5, 6, 5, 7, 6, // +z
-        0, 1, 4, 1, 5, 4, // −y
-        2, 6, 3, 3, 6, 7, // +y
-        0, 4, 2, 2, 4, 6, // −x
-        1, 3, 5, 3, 7, 5, // +x
-    ];
     Shape { positions, indices }
 }
 
@@ -423,17 +400,8 @@ pub fn model_lod(lod: Lod) -> Vec<Part> {
         ellipsoid(Vec3::new(0.42, 0.44, 0.46), n(10, 5), n(7, 4))
             .transformed(at(Vec3::new(0.0, 0.04, 0.6))),
     );
-    // The saddle cloth in the rider's colour, with a golden trim.
-    add(
-        Body,
-        Paint::Rider,
-        slab(Vec3::new(0.9, 0.05, 0.62)).transformed(at(Vec3::new(0.0, 0.45, -0.05))),
-    );
-    add(
-        Body,
-        Paint::Gold,
-        slab(Vec3::new(0.94, 0.03, 0.68)).transformed(at(Vec3::new(0.0, 0.42, -0.05))),
-    );
+    // No saddle cloth on the back (removed, decided by the user
+    // 2026-11-13): the rider's colour is only the mane's first band.
     // Neck: tilted forward (rest pose in [`pose`]).
     add(Neck, Paint::Coat, tube(0.23, 0.16, 0.9, n(9, 5)));
     // Head: skull, muzzle, eyes, ears, the horn.
@@ -1527,14 +1495,27 @@ mod tests {
                 assert!(skel[..i].iter().any(|e| e.joint == parent));
             }
         }
-        // A golden horn, the rider's colour twice (saddle cloth, first
-        // mane band), the rainbow in mane and tail, two wings of feathers.
+        // A golden horn, the rider's colour once (the first mane band; no
+        // saddle cloth on the back since 2026-11-13, in no LOD), the
+        // rainbow in mane and tail, two wings of feathers.
         assert!(
             parts
                 .iter()
                 .any(|p| p.joint == Joint::Head && p.paint == Paint::Gold)
         );
-        assert_eq!(parts.iter().filter(|p| p.paint == Paint::Rider).count(), 2);
+        for lod in [Lod::Near, Lod::Far] {
+            let parts = model_lod(lod);
+            let rider: Vec<_> = parts.iter().filter(|p| p.paint == Paint::Rider).collect();
+            assert_eq!(rider.len(), 1, "{lod:?}");
+            assert_eq!(rider[0].joint, Joint::Mane(0), "{lod:?}");
+            // Nothing but the coat on the back (the saddle cloth's slabs).
+            assert!(
+                parts
+                    .iter()
+                    .all(|p| p.joint != Joint::Body || p.paint == Paint::Coat),
+                "{lod:?}"
+            );
+        }
         assert_eq!(
             parts
                 .iter()

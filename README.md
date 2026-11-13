@@ -122,13 +122,16 @@ ffmpeg` (`make deps-macos` prints both commands); the app also finds it in
 | God mode: fly back to where you took off | Shift+G | Select + West (X / □) |
 
 **God mode** (spec §14 Phase 13; *World → God mode*, console `god`): the rider
-turns into a unicorn and flies freely over the world. While flying:
+turns into a unicorn and flies freely over the world – like a plane: it always
+flies forward along its heading. While flying:
 
 | Action | Keyboard / mouse | Gamepad |
 |---|---|---|
-| Look around (the pointer is captured; Esc frees it, a click captures it again) | mouse | right stick |
-| Move in the horizontal plane, relative to the view | ↑ ↓ ← → | left stick |
-| Climb / descend | + / − (main keyboard `=` `-`, or the keypad) | right / left trigger |
+| Faster / slower (the throttle; it holds when let go, ↓ slows to a slow glide, never to a stop) | ↑ / ↓ | left stick up / down |
+| Bank and turn left / right (the unicorn and the view roll into the turn; let go to level out) | ← / → | left stick left / right |
+| Climb / descend (the nose pitches up / down; let go to level off) | + / − (the keys that type `+` and `-` on your layout, e.g. `+` and `-` on a German keyboard, `=` and `-` on a US one; or the keypad) | right / left trigger |
+| Look around without changing the course (eases back to straight ahead after 1.5 s; the pointer is captured, Esc frees it, a click captures it again) | mouse | right stick |
+| Look straight ahead again | L or the middle mouse button | |
 | Boost ×4 / precise ×0.25 | Shift / Ctrl | South (A / ✕): boost |
 | Base speed ×0.25 … ×8 (in the HUD) | mouse wheel | |
 | First-person view from the unicorn's head | C | |
@@ -136,8 +139,9 @@ turns into a unicorn and flies freely over the world. While flying:
 | Put a pin where the crosshair points (kept for the ride; `god.pins` lists them) | P | |
 
 Touch (spec §3.2.2): one finger dragged on the view looks around, two
-fingers move like a stick (push them up to fly forward, sideways to strafe)
-and spreading / pinching them changes the speed scale; the **+** / **−**
+fingers are the stick (push them up to fly faster, down to fly slower,
+sideways to bank and turn) and spreading / pinching them changes the speed
+scale; the **+** / **−**
 buttons at the right edge (shown for 8 s after a touch) climb and descend.
 
 **Inspection** (I, on by default): a panel top right with the altitude,
@@ -150,7 +154,13 @@ elevation. P puts a magenta pin there; `god.pins` lists the pins with their
 coordinates and a `--start X,Z` to copy for a free ride from that spot.
 
 The speed grows with the height above the ground (20 m/s close to it, 400 m/s
-from 760 m up; at most 1,600 m/s with the boost). The unicorn keeps 2 m
+from 760 m up; at most 1,600 m/s with the boost); the throttle is a share of
+it (15 … 100 %, 50 % at take-off). The turn is a coordinated one: tight when
+slow, wide when fast (slow down first for a tight turn). The first model –
+moving with the arrows relative to the view and hovering when no key is
+held, the mouse turning the flight – is still there: Settings → Controls →
+*God mode: flight* = hover (`controls.god_flight`, console `god.flight
+hover`). The unicorn keeps 2 m
 above terrain, water, buildings and tree crowns and stays below 8,000 m; it is stopped
 softly 200 m outside the world. A glowing ring marks where G will land: the
 nearest road (free ride) or the nearest point of the route. The riding keys
@@ -701,6 +711,7 @@ console (saved at once), or by editing the file; `get` lists them all:
 |---|---|---|
 | `controls.autodrive` | on / off (on): autodrive at the start of a ride | next start |
 | `controls.invert_y` | on / off (off): god mode – moving the mouse up looks down | at once |
+| `controls.god_flight` | plane / hover (plane): god mode flies like a plane (always forward; ↑ ↓ throttle, ← → bank) or hovers (arrows move relative to the view, the mouse turns) | at once |
 | `trainer.difficulty` | 0 to 100 (50): % of the road gradient in SIM mode | at once |
 | `trainer.virtual_power` | 0 to 2000 W (200): the virtual trainer at the start (`--power`) | next start |
 | `display.hud` | on / off (on) | at once |

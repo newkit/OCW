@@ -1,11 +1,13 @@
 //! God mode's touch controls (spec §14 Phase 13B, §3.2.2), pure:
 //!
 //! - **one finger** dragged on the 3D view looks around (as the mouse:
-//!   moving right turns right, moving up looks up);
-//! - **two fingers** move in the plane like a stick: the centroid's offset
-//!   from where they came down (up = forward, sideways = strafe, full at
-//!   [`STICK_PX`]); spreading or pinching them scales the speed (as the
-//!   wheel);
+//!   moving right looks right, moving up looks up; plane: off the course,
+//!   easing back after a moment);
+//! - **two fingers** are the stick (as the gamepad's left stick): the
+//!   centroid's offset from where they came down – plane: up / down the
+//!   throttle (faster / slower), sideways the bank (the turn); hover:
+//!   forward / back and strafe – full at [`STICK_PX`]; spreading or
+//!   pinching them scales the speed (as the wheel);
 //! - the on-screen **+ / −** buttons at the right edge climb and descend
 //!   while held ([`ocw_render::inspect_hud::touch_buttons`]: the layout
 //!   that is drawn);
@@ -85,7 +87,7 @@ pub fn touch_flight(fingers: &[Finger], size: Vec2, invert_y: bool) -> TouchFlig
             let start = (a.start + b.start) / 2.0;
             let off = now - start;
             out.input.forward = stick(-off.y);
-            out.input.strafe = stick(off.x);
+            out.input.side = stick(off.x);
             let (d, d_prev) = (a.pos.distance(b.pos), a.prev.distance(b.prev));
             if d > 1.0 && d_prev > 1.0 {
                 out.wheel = f64::from(d / d_prev).ln() / ocw_sim::god::SCALE_STEP.ln();
@@ -130,12 +132,31 @@ mod tests {
 
     #[test]
     fn two_fingers_move_and_pinch_scales_the_speed() {
-        // Both pushed up by a full stick: forward; to the right a little.
+        // Both pushed up by a full stick: throttle up (hover: forward); to
+        // the right a little: a gentle right bank (hover: strafe).
         let a = finger(1, (500.0, 400.0), (540.0, 300.0), (540.0, 300.0));
         let b = finger(2, (700.0, 400.0), (740.0, 300.0), (740.0, 300.0));
         let t = touch_flight(&[a, b], SIZE, false);
         assert_eq!(t.input.forward, 1.0);
-        assert!((t.input.strafe - 40.0 / f64::from(STICK_PX)).abs() < 1e-6);
+        assert!((t.input.side - 40.0 / f64::from(STICK_PX)).abs() < 1e-6);
+        // As the gamepad's left stick would (up, a bit right).
+        let pad = super::super::input::PadFlight {
+            left_y: 1.0,
+            left_x: 40.0 / STICK_PX,
+            ..Default::default()
+        };
+        let by_pad = super::super::input::flight_input(&Default::default(), &[pad]);
+        assert_eq!(t.input.forward, by_pad.forward);
+        assert!((t.input.side - by_pad.side).abs() < 1e-6);
+        // Pulled down and to the left: slower, banking left.
+        let a = finger(1, (500.0, 300.0), (420.0, 400.0), (420.0, 400.0));
+        let b = finger(2, (700.0, 300.0), (620.0, 400.0), (620.0, 400.0));
+        let t = touch_flight(&[a, b], SIZE, false);
+        assert!(
+            t.input.forward < -0.9 && t.input.side < -0.8,
+            "{:?}",
+            t.input
+        );
         assert_eq!(t.look, (0.0, 0.0), "two fingers do not look");
         assert_eq!(t.wheel, 0.0);
         // Spread from 200 to 250 px apart: faster by that factor.
