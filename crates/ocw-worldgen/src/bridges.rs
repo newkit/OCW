@@ -385,7 +385,10 @@ pub fn choose_structure(
         Some(_) => Some(BridgeStructure::Beam),
         None => None,
     };
-    if t("bridge") == Some("covered") || t("covered") == Some("yes") {
+    // `covered=yes` only on bridge ways: on others it means a passage
+    // under a building (a road inside a bridge outline, e.g.).
+    let on_bridge_way = t("bridge").is_some_and(|b| b != "no");
+    if t("bridge") == Some("covered") || (on_bridge_way && t("covered") == Some("yes")) {
         structure = Some(BridgeStructure::Covered);
     }
     let material = match t("bridge:material").or(t("material")) {
@@ -724,6 +727,11 @@ mod tests {
             )
             .0,
             BridgeStructure::Covered
+        );
+        assert_eq!(
+            c(tags(&[("covered", "yes")]), RoadClass::Path, 20.0).0,
+            BridgeStructure::Beam,
+            "a passage under a building, not a covered bridge"
         );
         assert_eq!(
             c(tags(&[("bridge", "covered")]), RoadClass::Path, 60.0),

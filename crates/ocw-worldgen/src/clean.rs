@@ -321,6 +321,13 @@ pub fn ease_junction_mouths(graph: &mut RoadGraph) -> usize {
                 limits(e.class).0,
             );
             p[1..].copy_from_slice(&rest);
+            // Both ends eased on a short steep road: no room left for the
+            // class gradient – keep the road as it was.
+            let limit = limits(e.class).0 + 1e-3 / PROFILE_STEP_M;
+            if crate::profile::steepest(&p, 1) > limit.max(crate::profile::steepest(&e.profile, 1))
+            {
+                continue;
+            }
             if !at_start {
                 p.reverse();
             }
@@ -856,6 +863,22 @@ mod tests {
         let mut steep = g.clone();
         steep.edges[1].profile = (0..21).map(|i| 400.0 + i as f64).collect();
         assert_eq!(ease_junction_mouths(&mut steep), 0);
+        // A short track at 22 % between two primaries: easing both ends
+        // would break its limit, so it stays within it.
+        let mut two = g.clone();
+        two.vertices.push([0.0, 40.0]);
+        let mut top = two.edges[0].clone();
+        top.from = VertexId(3);
+        top.to = VertexId(4);
+        top.points = vec![[-100.0, 40.0], [100.0, 40.0]];
+        top.profile = vec![410.0; 41];
+        two.vertices.push([100.0, 40.0]);
+        two.edges.push(top);
+        let mut track = edge(vec![[0.0, 0.0], [0.0, 40.0]], 1, 3, RoadClass::Track);
+        track.profile = (0..9).map(|i| 400.0 + i as f64 * 1.1).collect();
+        two.edges[1] = track;
+        ease_junction_mouths(&mut two);
+        assert!(crate::profile::steepest(&two.edges[1].profile, 1) <= 0.25 + 1e-3 / PROFILE_STEP_M);
         // The main road is not touched.
         assert!(g.edges[0].profile.iter().all(|&h| h == 400.0));
     }
