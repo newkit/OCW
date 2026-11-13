@@ -9,7 +9,10 @@ running on them and the queue of runs waiting for a build slot.
     python3 tools/build-dashboard/dashboard.py --once          # text, once
 
 Standard library only. The server listens on all addresses by default
-(--host 127.0.0.1 for local only) and only reads; it has no write actions.
+(--host 127.0.0.1 for local only). Its only write actions need the token of
+config/dashboard-token: answering the spec's open questions, and enabling or
+disabling build machines and setting their build slots
+(config/build-machines.toml, see build_machines.py).
 Host names, addresses and user names never leave this
 process: machines are identified by their config `name`, and every string
 taken from a machine or from ssh is masked before it is stored.
@@ -34,6 +37,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import answers
+import build_machines
 import janitor
 import spec_questions
 
@@ -89,7 +93,12 @@ def _strip_comment(value: str) -> str:
 
 def _unescape_basic(s: str) -> str:
     table = {"\\": "\\", '"': '"', "n": "\n", "t": "\t", "r": "\r"}
-    return re.sub(r"\\(.)", lambda m: table.get(m.group(1), m.group(0)), s)
+
+    def one(m):
+        if m.group(1):
+            return chr(int(m.group(1), 16))
+        return table.get(m.group(2), m.group(0))
+    return re.sub(r"\\(?:u([0-9A-Fa-f]{4})|(.))", one, s)
 
 
 def _parse_value(raw: str):
@@ -181,6 +190,8 @@ class Machine:
         self.repo_path = str(g("repo_path", "~/src/OCW"))
         self.roles = g("roles", []) or []
         self.slots = slots_setting(g("slots"), self.os)
+        n = g("slots")
+        self.slots_configured = isinstance(n, int) and not isinstance(n, bool) and n >= 0
 
     def secrets(self) -> list:
         return [s for s in (self.host, self.user) if isinstance(s, str) and s]
@@ -1278,9 +1289,12 @@ def ssh_argv(m: Machine, ctl: str | None) -> list:
     return argv
 
 
-def poll_machine(m: Machine, ctl: str | None = None) -> dict:
+def poll_machine(m: Machine, ctl: str | None = None, slots: int | None = None) -> dict:
+    """One poll of m (read-only; also of machines disabled for building).
+    `slots`: the effective slot count (build-machines.toml), else m.slots."""
     t0 = time.time()
-    base = {"name": m.name, "os": m.os, "roles": m.roles, "slots": m.slots, "polled_at": t0}
+    slots = m.slots if slots is None else slots
+    base = {"name": m.name, "os": m.os, "roles": m.roles, "slots": slots, "polled_at": t0}
     if not m.host:
         return dict(base, online=False, error="no host configured")
     masker = Masker(m.secrets())
@@ -1302,7 +1316,7 @@ def poll_machine(m: Machine, ctl: str | None = None) -> dict:
         return dict(base, online=False, error=classify_ssh_error(r.stderr, r.returncode),
                     detail=masker(err[-1] if err else ""))
     try:
-        data = parser(r.stdout, m.repo_path, m.slots)
+        data = parser(r.stdout, m.repo_path, slots)
     except Exception as e:  # a parser bug must not kill the poller
         return dict(base, online=False, error="unexpected output", detail=masker("%s: %s" % (type(e).__name__, e)))
     home = data.pop("home", None)
@@ -1347,11 +1361,17 @@ class Dashboard:
                                "error": "connecting"} for m in machines}
         self.last_ok: dict = {}
         self.stop = threading.Event()
+        self.build_machines = None  # a build_machines.BuildMachines
+
+    def settings(self, m: Machine) -> dict | None:
+        bm = getattr(self, "build_machines", None)
+        return bm.effective(m) if bm is not None else None
 
     def _loop(self, m: Machine):
         while not self.stop.is_set():
             t0 = time.time()
-            st = poll_machine(m, self.ctl)
+            s = self.settings(m)
+            st = poll_machine(m, self.ctl, s["slots"] if s else None)
             if st.get("online"):
                 self.last_ok[m.name] = st["polled_at"]
             elif m.name in self.last_ok:
@@ -1367,14 +1387,37 @@ class Dashboard:
     def snapshot(self) -> dict:
         with self.lock:
             machines = [dict(self.state[m.name]) for m in self.machines]
+        apply_settings(machines, self.machines, getattr(self, "build_machines", None))
         status = summarize(machines, getattr(self, "questions", None), getattr(self, "janitor", None),
                            getattr(self, "answers", None))
+        bm = getattr(self, "build_machines", None)
+        # The page shows the enable/disable and slot controls only then.
+        status["machine_settings"] = bool(bm is not None and not bm.read_only and getattr(self, "token", None))
         return annotate_jobs(status, getattr(self, "prompts", None), getattr(self, "commits", None),
                              getattr(self, "prompt_mask", None), getattr(self, "show_prompts", False))
 
     def states(self) -> list:
         with self.lock:
             return [dict(self.state[m.name]) for m in self.machines]
+
+
+def apply_settings(states: list, machines: list, bm) -> list:
+    """Adds to each machine state what build-machines.toml says: `enabled`,
+    `disabled_reason`, the effective `slots` (and `slots_source`,
+    `slots_config` = machines.toml / OS default), `changed_by`/`changed_at`."""
+    by_name = {m.name: m for m in machines}
+    for st in states:
+        m = by_name.get(st.get("name"))
+        if m is None:
+            continue
+        e = bm.effective(m) if bm is not None else {
+            "enabled": True, "reason": "", "note": "", "slots": m.slots, "slots_source": "machines.toml"
+            if getattr(m, "slots_configured", False) else "default", "slots_config": m.slots,
+            "changed_by": "", "changed_at": ""}
+        st.update(enabled=e["enabled"], disabled_reason=e["reason"] if not e["enabled"] else "",
+                  slots=e["slots"], slots_source=e["slots_source"], slots_config=e["slots_config"],
+                  note=e["note"], changed_by=e["changed_by"], changed_at=e["changed_at"])
+    return states
 
 
 def janitor_loop(dash, jan, test_output: Path | None, every: float = 30.0):
@@ -1417,11 +1460,13 @@ def _summarize(machines: list) -> dict:
     tasks = sum(1 for m in online for t in (m.get("tasks") or []) if t.get("state") != "waiting")
     waiting = sum((m.get("queue") or {}).get("waiting", 0) for m in online)
     used = sum((m.get("queue") or {}).get("used", 0) for m in online)
+    # Slots of machines disabled for building are not counted (no new runs).
     total = sum((m.get("queue") or {}).get("total", 0) if m.get("online") else (m.get("slots") or 0)
-                for m in machines)
+                for m in machines if m.get("enabled", True))
+    disabled = sum(1 for m in machines if not m.get("enabled", True))
     return {"generated_at": time.time(), "machines": machines,
             "overview": {"machines": len(machines), "online": len(online), "tasks": tasks,
-                         "waiting": waiting, "slots_used": used, "slots_total": total}}
+                         "waiting": waiting, "slots_used": used, "slots_total": total, "disabled": disabled}}
 
 
 # --------------------------------------------------------------------------
@@ -1485,9 +1530,12 @@ def format_text(status: dict) -> str:
     for a in status.get("alerts") or []:
         lines.insert(0, "ALERT " + a["text"])
     for m in status["machines"]:
+        setting = machine_setting_text(m)
         if not m.get("online"):
             det = (" - " + m["detail"]) if m.get("detail") else ""
             lines.append("%-14s %-7s UNREACHABLE (%s)%s" % (m["name"], m["os"], m.get("error"), det))
+            if setting:
+                lines.append("  " + setting)
             lines.append("")
             continue
         parts = []
@@ -1516,6 +1564,8 @@ def format_text(status: dict) -> str:
             parts.append("processor queue %s" % (
                 ("%.0f" % m["proc_queue"]) if c.get("ok") and m.get("proc_queue") is not None else c.get("hint")))
         lines.append("%-14s %-7s online  %s" % (m["name"], m["os"], ", ".join(parts)))
+        if setting:
+            lines.append("  " + setting)
         q = m.get("queue")
         if q:
             held = ", ".join("slot %d: %s" % (s["slot"], s["holder"] or "held") for s in q["slots"] if s["held"])
@@ -1552,6 +1602,23 @@ def format_text(status: dict) -> str:
     lines += janitor_text(status.get("janitor") or {})
     lines += questions_text(status.get("questions"))
     return "\n".join(lines)
+
+
+def machine_setting_text(m: dict) -> str:
+    """"build: enabled, 2 slots (machines.toml)" or "build: DISABLED (reason) ..."."""
+    if "enabled" not in m:
+        return ""
+    n = m.get("slots")
+    slots = "no slot limit" if n == 0 else "%s slot%s" % (n, "" if n == 1 else "s")
+    src = {"dashboard": "set in the dashboard", "machines.toml": "machines.toml", "default": "OS default"}.get(
+        m.get("slots_source"), m.get("slots_source") or "")
+    when = (", changed %s by %s" % (m["changed_at"], m.get("changed_by") or "?")) if m.get("changed_at") else ""
+    if m.get("note"):
+        when = " - note: %s%s" % (m["note"], when)
+    if m["enabled"]:
+        return "build: enabled, %s (%s)%s" % (slots, src, when)
+    reason = (" (%s)" % m["disabled_reason"]) if m.get("disabled_reason") else ""
+    return "build: DISABLED%s - remote.sh refuses runs; %s (%s)%s" % (reason, slots, src, when)
 
 
 def janitor_line(r: dict, now=None) -> str:
@@ -1643,11 +1710,60 @@ def make_handler(dash: Dashboard):
         def _json(self, code, obj):
             self._send(code, json.dumps(obj).encode(), "application/json")
 
+        def _body(self):
+            """The JSON object of the request (None: the error was sent)."""
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                n = -1
+            if not 0 < n <= 64 * 1024:
+                self._json(400, {"error": "body missing or too large"})
+                return None
+            try:
+                body = json.loads(self.rfile.read(n).decode("utf-8"))
+            except (ValueError, UnicodeDecodeError):
+                self._json(400, {"error": "body is not JSON"})
+                return None
+            if not isinstance(body, dict):
+                self._json(400, {"error": "body must be a JSON object"})
+                return None
+            return body
+
         def do_POST(self):  # noqa: N802
+            path = self.path.split("?", 1)[0]
+            if path == "/api/machines":
+                return self._post_machine()
+            if path != "/api/answers":
+                return self._send(404, b"not found\n", "text/plain")
+            self._post_answer()
+
+        def _post_machine(self):
+            """POST /api/machines {"machine", "enabled"?, "slots"?, "reason"?, "note"?,
+            "by"?} with the token header: enables or disables a build machine
+            and sets its build slots (config/build-machines.toml)."""
+            bm, token = getattr(dash, "build_machines", None), getattr(dash, "token", None)
+            if bm is None or bm.read_only or not token:
+                return self._json(404, {"error": "machine settings are off"})
+            if not answers.token_ok(token, self.headers.get(answers.TOKEN_HEADER)):
+                return self._json(403, {"error": "wrong or missing token (config/dashboard-token)"})
+            body = self._body()
+            if body is None:
+                return
+            name = body.get("machine")
+            # Only the names of machines.toml: never a path or anything else.
+            m = next((x for x in dash.machines if isinstance(name, str) and x.name == name), None)
+            if m is None:
+                return self._json(400, {"error": "no such machine in machines.toml"})
+            try:
+                e = bm.update(m, body.get("enabled"), body.get("slots"), body.get("reason"), body.get("note"),
+                              body.get("by") or "dashboard", "dashboard", [x.name for x in dash.machines])
+            except ValueError as ex:
+                return self._json(400, {"error": str(ex)[:200]})
+            self._json(200, {"ok": True, "machine": m.name, "settings": e})
+
+        def _post_answer(self):
             """POST /api/answers {"id", "answer", "choice"?} with the token
             header: stores an answer to an open question of the spec."""
-            if self.path.split("?", 1)[0] != "/api/answers":
-                return self._send(404, b"not found\n", "text/plain")
             store, token = getattr(dash, "answers", None), getattr(dash, "token", None)
             if store is None or not token:
                 return self._json(404, {"error": "answers are off"})
@@ -2712,6 +2828,8 @@ def main(argv=None) -> int:
                     help="dry run of the janitor on every reachable machine now (what each threshold would delete), then exit")
     ap.add_argument("--no-answers", action="store_true",
                     help="no answering of the open questions on the page (read-only)")
+    ap.add_argument("--no-machine-settings", action="store_true",
+                    help="no enabling/disabling of build machines and slot changes on the page")
     ap.add_argument("--spec", type=Path, default=None,
                     help="spec with the open questions (default: SPECIFICATION.md of the main checkout)")
     a = ap.parse_args(argv)
@@ -2729,6 +2847,10 @@ def main(argv=None) -> int:
     # checkout; writing needs the token in config/dashboard-token (0600).
     dash.answers = None if a.no_answers else answers.AnswerStore(main_repo / "test-output" / "answers")
     log_root = None if a.no_record else (a.record or (repo / "test-output" / "build-log"))
+    # Build machines enabled/disabled and their slots: config/build-machines.toml
+    # (read by scripts/remote.sh); changes logged to build-log/DAY/machines.jsonl.
+    dash.build_machines = build_machines.BuildMachines(
+        cfg / build_machines.FILE_NAME, a.record or (main_repo / "test-output" / "build-log"))
     ssh = lambda m, script, timeout, stdin=None: run_ssh(m, script, timeout, stdin, dash.ctl)  # noqa: E731
     dash.janitor = janitor.Janitor(machines, main_repo, log_root, a.janitor, ssh)
     if a.janitor_plan:
@@ -2736,14 +2858,18 @@ def main(argv=None) -> int:
         return 0
     if a.once:
         with ThreadPoolExecutor(max_workers=max(1, len(machines))) as ex:
-            states = list(ex.map(lambda m: poll_machine(m, dash.ctl), machines))
+            states = list(ex.map(lambda m: poll_machine(m, dash.ctl, dash.settings(m)["slots"]), machines))
+        apply_settings(states, machines, dash.build_machines)
         status = annotate_jobs(summarize(states, dash.questions, None, dash.answers), mask=Masker([s for m in machines for s in m.secrets()], ()))
         status["janitor"]["mode"] = a.janitor
         print(json.dumps(status, indent=2) if a.json else format_text(status))
         return 0
-    if dash.answers is not None:
+    if a.no_machine_settings:
+        dash.build_machines.read_only = True
+    if dash.answers is not None or not a.no_machine_settings:
         dash.token = answers.load_token(cfg / "dashboard-token")
-        print("answers: token in %s (enter it once on the page)" % (cfg / "dashboard-token").name)
+        print("writing (answers, machine settings): token in %s (enter it once on the page)"
+              % (cfg / "dashboard-token").name)
     dash.start()
     # Also with --janitor off: the thread then only measures test-output/.
     threading.Thread(target=janitor_loop, args=(dash, dash.janitor, repo / "test-output"), daemon=True,

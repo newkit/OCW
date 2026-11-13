@@ -88,15 +88,18 @@ prefix_of() { case "$1" in linux) echo lin ;; macos) echo mac ;; windows) echo w
 
 say "OCW multiplayer test $stamp (commit $sha)"
 up "$server_m" || { say "FAIL: server machine $server_m is not reachable"; exit 1; }
-used=() skipped=()
+R "$server_m" enabled >/dev/null 2>&1 || { say "FAIL: server machine $server_m is disabled for building (build dashboard)"; exit 1; }
+used=() skipped=() disabled=()
 for m in $bot_ms; do
+  # Machines disabled for building in the build dashboard get no bot build.
+  if [ "$m" != "$server_m" ] && ! R "$m" enabled >/dev/null 2>&1; then disabled+=("$m"); continue; fi
   if [ "$m" = "$server_m" ] || up "$m"; then used+=("$m"); else skipped+=("$m"); fi
 done
 for m in $bot_ms; do
   h=$(R "$m" field host 2>/dev/null) && [ -n "$h" ] && redact_hosts+=$'\n'"$h"
 done
 say "server:       $server_m (UDP $port)"
-say "bot machines: ${used[*]:-none}${skipped:+ (skipped, unreachable: ${skipped[*]})}"
+say "bot machines: ${used[*]:-none}${skipped:+ (skipped, unreachable: ${skipped[*]})}${disabled:+ (skipped, disabled for building: ${disabled[*]})}"
 [ ${#used[@]} -gt 0 ] || { say "FAIL: no bot machine reachable"; exit 1; }
 
 # --- 2. Builds (parallel; remote.sh waits for free build slots) ----------

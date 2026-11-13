@@ -16,6 +16,19 @@
 #   scripts/remote.sh MACHINE field KEY      print the machine's KEY from
 #                                            machines.toml (os, slots, …; for
 #                                            scripts: never log `host`)
+#   scripts/remote.sh MACHINE enabled        exit 0 if the machine is enabled
+#                                            for building, else print why not
+#                                            and exit 3 (no ssh)
+#   scripts/remote.sh MACHINE slots          print its effective build slots
+#
+# Machines are enabled/disabled for building and their build slots set in
+# the build dashboard (v2.66, spec §11.2): config/build-machines.toml
+# (git-ignored, written by tools/build-dashboard/build_machines.py; same
+# [[machine]] format as machines.toml, which stays untouched). `run` and
+# `sync` refuse a machine with `enabled = false` (exit 3) before anything is
+# copied; ssh, field, fetch and put stay allowed, and so do deploys:
+# scripts/deploy-test.sh sets OCW_REMOTE_DEPLOY=1 (kiosks on disabled
+# machines still get new builds). Its `slots` wins over machines.toml.
 #
 # On a branch other than main the remote checkout is REPO_PATH-BRANCH.
 #
@@ -36,12 +49,13 @@ cd "$(dirname "$0")/.."
 snap_dir=""
 trap 'if [ -n "$snap_dir" ]; then rm -rf "$snap_dir"; fi' EXIT
 
-machine=${1:?usage: remote.sh MACHINE sync|run|ssh|fetch|put|field ...}; shift
-action=${1:?usage: remote.sh MACHINE sync|run|ssh|fetch|put|field ...}; shift
+machine=${1:?usage: remote.sh MACHINE sync|run|ssh|fetch|put|field|enabled|slots ...}; shift
+action=${1:?usage: remote.sh MACHINE sync|run|ssh|fetch|put|field|enabled|slots ...}; shift
 
 # config/ is git-ignored, so another worktree uses the main checkout's copy.
-config_dir=config
-if [ ! -f "$config_dir/machines.toml" ]; then
+# OCW_REMOTE_CONFIG names another config directory (scripts/test-remote.sh).
+config_dir=${OCW_REMOTE_CONFIG:-config}
+if [ ! -f "$config_dir/machines.toml" ] && [ -z "${OCW_REMOTE_CONFIG:-}" ]; then
   common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
   [ -n "$common" ] && config_dir="$(dirname "$common")/config"
 fi
@@ -52,7 +66,7 @@ config_dir=$(cd "$config_dir" && pwd)
 conf=$config_dir/machines.toml
 
 # Minimal TOML lookup: key of the [[machine]] block with name = MACHINE,
-# falling back to [defaults].
+# falling back to [defaults]. `field KEY [FILE]` (default machines.toml).
 field() {
   awk -v want="$machine" -v key="$1" '
     /^\[\[machine\]\]/ { inm=1; ind=0; cur=""; next }
@@ -68,7 +82,28 @@ field() {
         if (ind && k==key) def=v
       }
     }
-    END { if (want in vals) print vals[want]; else print def }' "$conf"
+    END { if (want in vals) print vals[want]; else print def }' "${2:-$conf}"
+}
+
+# The dashboard's settings (see the top): `ofield KEY` from
+# build-machines.toml, empty when it or the key is missing; `ounesc`
+# undoes its string escapes (\u0023 for #, \" and \\).
+over=$config_dir/build-machines.toml
+ofield() { if [ -f "$over" ]; then field "$1" "$over"; fi; }
+ounesc() { local s=$1 b='\' q='"' h='#'; s=${s//"${b}u0023"/"$h"}; s=${s//"$b$q"/"$q"}; s=${s//"$b$b"/"$b"}; printf '%s' "$s"; }
+build_enabled=$(ofield enabled)
+build_reason=$(ounesc "$(ofield reason)")
+# `run` and `sync` on a disabled machine: refused (exit 3), unless a deploy.
+refuse_disabled() {
+  [ "$build_enabled" = false ] || return 0
+  local why=""
+  [ -n "$build_reason" ] && why=" ($build_reason)"
+  if [ "${OCW_REMOTE_DEPLOY:-0}" = 1 ]; then
+    echo "remote.sh: $machine is disabled for building$why; allowed for a deploy (OCW_REMOTE_DEPLOY=1)" >&2
+    return 0
+  fi
+  echo "remote.sh: $machine is disabled for building$why – enable it in the build dashboard" >&2
+  exit 3
 }
 
 host=$(field host); user=$(field user); port=$(field port)
@@ -350,8 +385,12 @@ sync_watch() {
 
 # Build slots: at most N commands run at once on a machine, because many
 # parallel builds of the Bevy app (~4-5 GB each) run it out of memory.
-# N = OCW_REMOTE_SLOTS, else the machine's `slots` in machines.toml (or
+# N = OCW_REMOTE_SLOTS, else the machine's `slots` in build-machines.toml
+# (set in the build dashboard), else its `slots` in machines.toml (or
 # [defaults] slots), else per OS: linux 2, windows 1, macos 1. 0 = no limit.
+# A changed N applies to runs started afterwards: they try slots 1..N, while
+# a running one keeps the slot it holds (also one above a lowered N; its
+# lock file or directory just stays unused once it ends).
 # A run that finds all slots taken marks itself "waiting" and polls every
 # second, taking whichever slot frees first – in order of arrival: while an
 # older run (by its task marker's start, then PID) is still waiting, a
@@ -362,9 +401,11 @@ sync_watch() {
 # /tmp/ocw-build-slot-N.d holding the owner's PID (taken over when that PID
 # is gone); Windows: %TEMP%\ocw-tasks\slot-N.lock opened exclusively.
 case "$os" in windows | macos) default_slots=1 ;; *) default_slots=2 ;; esac
-slots=${OCW_REMOTE_SLOTS:-$(field slots)}
-slots=${slots:-$default_slots}
-[ "$slots" -ge 0 ] 2>/dev/null || slots=$default_slots
+uint_or_empty() { case "$1" in '' | *[!0-9]*) ;; *) printf '%s' "$1" ;; esac; }
+over_slots=$(uint_or_empty "$(ofield slots)")
+conf_slots=$(uint_or_empty "$(field slots)")
+slots=$(uint_or_empty "${OCW_REMOTE_SLOTS:-}")
+slots=${slots:-${over_slots:-${conf_slots:-$default_slots}}}
 slot_list=""
 for ((i = 1; i <= slots; i++)); do slot_list+="$i "; done
 checkout_dir=${repo##*[\\/]}
@@ -525,8 +566,16 @@ logged() {
 }
 
 case "$action" in
-  sync) snapshot_tree; sync_tree ;;
+  sync) refuse_disabled; snapshot_tree; sync_tree ;;
+  enabled)
+    if [ "$build_enabled" = false ]; then
+      echo "$machine is disabled for building${build_reason:+ ($build_reason)}"
+      exit 3
+    fi
+    echo "$machine is enabled for building" ;;
+  slots) echo "$slots" ;;
   run)
+    refuse_disabled
     log_start
     # The tree as it is now (see snapshot_tree); synced once the run has its
     # build slot (with_sync, sync_watch).

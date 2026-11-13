@@ -193,6 +193,105 @@ rm -rf "$s"
   [ "$fail" = 0 ]
 ) || fail=1
 
+# Machines enabled/disabled and build slots from the dashboard (v2.66):
+# config/build-machines.toml against a scratch config (OCW_REMOTE_CONFIG;
+# the hosts are .invalid, so nothing reaches a machine).
+(
+  c=$(mktemp -d)
+  trap 'rm -rf "$c"' EXIT
+  cat >"$c/machines.toml" <<'EOF'
+[defaults]
+connect_timeout_s = 2
+
+[[machine]]
+name = "testbox"
+os = "linux"
+host = "testbox.invalid"
+slots = 3
+
+[[machine]]
+name = "offbox"
+os = "linux"
+host = "offbox.invalid"
+
+[[machine]]
+name = "macbox"
+os = "macos"
+host = "macbox.invalid"
+
+[[machine]]
+name = "plainbox"
+os = "linux"
+host = "plainbox.invalid"
+slots = 3
+EOF
+  R() { OCW_BUILD_LOG=0 OCW_REMOTE_CONFIG=$c scripts/remote.sh "$@"; }
+  check "$(R testbox slots)" 3 "slots: machines.toml without an override file"
+  cat >"$c/build-machines.toml" <<'EOF'
+# written by the dashboard
+[[machine]]
+name = "testbox"
+enabled = true
+slots = 5
+
+[[machine]]
+name = "offbox"
+enabled = false
+slots = 2
+reason = "kiosk only \u0023 \"user\""
+
+[[machine]]
+name = "macbox"
+enabled = true
+EOF
+  check "$(R testbox slots)" 5 "slots: the dashboard's count wins over machines.toml"
+  check "$(OCW_REMOTE_SLOTS=1 R testbox slots)" 1 "slots: OCW_REMOTE_SLOTS wins over the dashboard"
+  check "$(OCW_REMOTE_SLOTS=0 R testbox slots)" 0 "slots: OCW_REMOTE_SLOTS=0 (no limit) still works"
+  check "$(R macbox slots)" 1 "slots: an entry without slots keeps the OS default (macos 1)"
+  check "$(R plainbox slots)" 3 "slots: a machine without an entry keeps machines.toml"
+  check "$(R testbox enabled >/dev/null 2>&1; echo $?)" 0 "enabled: exit 0"
+  out=$(R offbox enabled 2>&1) && rc=0 || rc=$?
+  check "$rc/$out" '3/offbox is disabled for building (kiosk only # "user")' "enabled: a disabled machine exits 3 with its reason"
+  t0=$(date +%s)
+  out=$(R offbox run 'echo should-not-run' 2>&1) && rc=0 || rc=$?
+  check "$rc" 3 "run: refused on a disabled machine (exit 3)"
+  check "$(printf '%s' "$out" | grep -c 'offbox is disabled for building (kiosk only # "user") – enable it in the build dashboard')" 1 \
+    "run: the message names the machine, the reason and the dashboard"
+  check "$(printf '%s' "$out" | grep -c should-not-run)/$(( $(date +%s) - t0 < 5 ))" 0/1 "run: refused at once, nothing run"
+  out=$(R offbox sync 2>&1) && rc=0 || rc=$?
+  check "$rc" 3 "sync: refused on a disabled machine (exit 3)"
+  out=$(OCW_REMOTE_DEPLOY=1 R offbox sync 2>&1) && rc=0 || rc=$?
+  check "$([ "$rc" != 3 ] && echo passed)/$(printf '%s' "$out" | grep -c 'allowed for a deploy')" passed/1 \
+    "deploy (OCW_REMOTE_DEPLOY=1): a disabled machine is let through (then ssh fails on the .invalid host)"
+  check "$(R offbox field os)" linux "field: allowed on a disabled machine"
+  check "$(grep -c 'OCW_REMOTE_DEPLOY=1 scripts/remote.sh' scripts/deploy-test.sh)" 1 "deploy-test.sh sets OCW_REMOTE_DEPLOY=1"
+  [ "$fail" = 0 ]
+) || fail=1
+
+# A lowered slot count: a run that still holds slot 3 after N went from 3
+# to 2 keeps it; new runs only try slots 1..2 (the flock functions of
+# remote.sh, their lock files moved into a scratch directory).
+if command -v flock >/dev/null; then
+  (
+    sl=$(mktemp -d)
+    hold() { (exec 9>"$sl/ocw-build-slot-$1.lock"; flock -n 9 && : >"$sl/held-$1"; exec sleep 30) & }
+    hold 3; h3=$!; hold 1; h1=$!
+    trap 'kill $h1 $h3 ${h2:-} 2>/dev/null; rm -rf "$sl"' EXIT
+    for _ in $(seq 50); do [ -e "$sl/held-1" ] && [ -e "$sl/held-3" ] && break; sleep 0.1; done
+    eval "$(awk '/^read -r -d .. slot_take_flock/ { f = 1; next } f && /^EOF/ { exit } f' scripts/remote.sh | sed "s|/tmp/ocw-build-slot-|$sl/ocw-build-slot-|g")"
+    first() { (for s in $1; do ocw_take "$s" && { echo "$s"; exit 0; }; done; echo none); }
+    check "$(first "1 2")" 2 "lowered slots: a new run takes the free slot 2 of 1..2"
+    hold 2; h2=$!
+    for _ in $(seq 50); do [ -e "$sl/held-2" ] && break; sleep 0.1; done
+    check "$(first "1 2")" none "lowered slots: all of 1..2 taken, the run waits (slot 3 is not used)"
+    kill $h3 2>/dev/null; wait $h3 2>/dev/null || true
+    check "$(first "1 2")" none "lowered slots: the old slot-3 run ends normally, nothing changes for 1..2"
+    kill $h1 2>/dev/null; wait $h1 2>/dev/null || true
+    check "$(first "1 2")" 1 "lowered slots: a freed slot 1 is taken"
+    [ "$fail" = 0 ]
+  ) || fail=1
+fi
+
 python3 scripts/test_build_profile.py >/dev/null 2>&1 && echo "ok   build_profile.py unit tests" ||
   { echo "FAIL build_profile.py unit tests (python3 scripts/test_build_profile.py)"; fail=1; }
 exit $fail
