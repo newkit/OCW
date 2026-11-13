@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.69 – November 2026
+Version 2.70 – November 2026
 
 | Version | Change |
 |---|---|
@@ -65,6 +65,7 @@ Version 2.69 – November 2026
 | 2.44 | Phase 8 decisions: no commercial release, 8A stays (Q2); orthophoto corridor size acceptable (Q4); seasonal variants (Q5); own photos postponed (Q6); Mapillary CC BY-SA, reference by eye only (Q7); 3D buildings: swissBUILDINGS3D 3.0 (Opendata BY) to confirm, LGL LoD2 probably not open, ask LGL (Q8); all texture areas in parallel (Q10) |
 | 2.45 | Licensing (§13): no licence change for now – the code stays MIT / Apache-2.0 (a switch to CC BY-SA was considered and declined) |
 | 2.46 | Phase 8 T1 / T2 (§4.6, §8.1, §13, §14 Phase 8): material library of 21 CC0 materials (ambientCG, Poly Haven) – ground, roads, houses, volcanic ground for Tenerife – not in git but pinned by URL + SHA-256 in `assets/materials.toml`, fetched and converted to KTX2 (BC3 / BC5, 1024², mipmapped) by `scripts/fetch-materials.sh` into the git-ignored `assets/materials/` and shipped beside the binary (AppImage, macOS bundle, Windows zip, test deployment); licence rule of Phase 8A shared by the model and material validators; terrain drawn with the materials blended by the splat map (weights at cell corners, noise warp, height blend, rock and triplanar on slopes, macro scale, fade to the colour map in the materials' mean colours), roads by OSM `surface` (new package section `RSRF`) with category fallback; regional material sets by the package's time zone (`[[region]]` in the manifest: the volcanic set of the Canary Islands with lava, ash / cinder, black sand and pine needles); regional tint hook neutral; reference boards `art/reference/` |
+| 2.70 | Decision from the build dashboard (2026-11-14): Phase 9 Q3 – night has a minimum brightness; bike lights are a part bought with hearts and fitted in the workshop (slot `lights`), not automatic |
 | 2.69 | Decisions from the build dashboard (2026-11-14): Phase 9 Q2 – in shared sessions only the host / organiser controls the time and weather machines (no personal override); Phase 8 Q8 – 3D building data postponed |
 | 2.68 | Phase 4 decisions (§14 Phase 4, 4L; answered by the user in the build dashboard, 2026-11-13): bike changes apply when leaving the workshop (`BikeChange`); parts have bounded effects with the *Profile* mode as the default for races and group rides; hearts: 1 ♥ per 10 kJ + 1 ♥ per 20 m climbing, no daily cap, 500 ♥ start, no back-credit of saved rides; kit (helmet, shoes, clothing) costs hearts, body, skin, hair and glasses are free; touch-screen testing postponed |
 | 2.67 | God mode refined (§14 Phase 13, 13B / 13C; decided by the user 2026-11-13/14): plane-like flight – always forward at a cruise speed, ← / → bank and turn (coordinated turn), ↑ / ↓ throttle, + up / − down with the keys matched by the character they type (dead main-keyboard + / − on non-US layouts fixed), the mouse looks around without changing course and recentres; no saddle cloth on the unicorn (the rider's colour only in the mane band and the name tag); bird-like wingbeat – continuous flapping with glides, shoulder and wrist joints, asymmetric strokes, fanned primaries, body bob, own phase per rider |
@@ -2704,7 +2705,7 @@ Attribution of the provider used appears on the credits screen and in the weathe
 
 - **Q1 – Whose "now"? Decided (2026-11-12):** the time of the place **in the virtual world** where the rider is: its local time zone and DST, its sun, moon and stars. The real location of the person at home plays no role. A "same time as at home" preset is not planned.
 - **Q2 – Shared sessions: decided (2026-11-14, dashboard):** in group rides and events **only the host / organiser** controls the time and weather machines (the recommendation); no personal visual-only override per rider.
-- **Q3 – Night riding:** is riding in full darkness desired (with bike lights), or should night have a minimum brightness for training comfort?
+- **Q3 – Night riding: decided (2026-11-14, dashboard):** night keeps a **minimum brightness** (no full darkness – training comfort comes first). **Bike lights are not automatic:** they are a part the rider buys with hearts and fits in the workshop (§14 Phase 4, 4B slot `lights`, catalogue entry `lights.set`, 80 ♥); without lights fitted the bike has none, and the minimum brightness still lets the rider see the road. Until the workshop exists, the lights the renderer draws today (§3.3 / Phase 9 S1) stay on as a placeholder.
 - **Q4 – Weather and physics: decided (2026-11-12):** yes, wind, wet roads and air density change the physics **realistically**. On in solo and free ride; in races and events the **organiser** decides (off unless enabled).
 - **Q5 – Trainer wind resistance:** send the wind load to trainers that support it (FTMS / Wahoo wind), or keep the trainer on gradient only?
 - **Q6 – Weather provider:** MeteoSwiss + DWD (regional, open) with MET Norway as a global fallback (recommended), or Open-Meteo (simplest API; non-commercial on the free tier, else self-hosting or a subscription)? Is a commercial release planned (same as Phase 8 Q2)?
