@@ -64,6 +64,9 @@ selection happens only in the video.
 - **Published:** one zip per day, `ocw-build-history-YYYY-MM-DD.zip`, on the GitHub
   release [`build-history`](https://github.com/newkit/OCW/releases/tag/build-history),
   next to the videos. `art/diary.py fetch` restores a day on another machine.
+  The zip's text files (logs, build log, journal, prompts) are masked like the
+  prompts (§2.3: build machines' hosts and users, the home directory, e-mail
+  addresses); the local archive keeps the originals.
 - **Time** of a file: the `HHMMSS-` prefix (local time of the run), else the time
   in its folder name, else its modification time. Commits use local time as well.
 - Identical files (same SHA-256) are kept once.

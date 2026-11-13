@@ -594,8 +594,8 @@ def media_of(day: str) -> list[dict]:
     out = []
     for f in sorted(d.iterdir()) if d.exists() else []:
         ext = f.suffix.lower()
-        if ext not in IMAGE | VIDEO | AUDIO:
-            continue
+        if ext not in IMAGE | VIDEO | AUDIO or f.stat().st_size == 0:
+            continue  # empty files (an aborted capture) are kept but not shown
         m = TIME_RE.match(f.name)
         hms = m.group(1) if m else "000000"
         kind = "image" if ext in IMAGE else "video" if ext in VIDEO else "audio"
@@ -895,7 +895,7 @@ def stills_of(day: str) -> list[dict]:
         if m["kind"] == "audio" or re.search(r"sheet|before|after|crop|cmp|-first", f):
             continue
         stem = f.rsplit(".", 1)[0]
-        if m["kind"] == "video" and f"{stem}.png" in names:
+        if m["kind"] == "video" and ({f"{stem}.png", f"{stem}.jpg"} & names):
             continue
         out.append(m)
     return out
@@ -1570,6 +1570,33 @@ def diary() -> Path:
     return out
 
 
+def masked_copy(day: str) -> Path:
+    """A copy of the day folder for the public zip: text files (logs, build
+    log, journal, prompts) masked like the prompts (§2.3: build machines'
+    hosts and users, the home directory, e-mail addresses); media are
+    hard-linked. The archive itself is left as it was."""
+    secrets = _secrets()
+    src = HIST / day
+    stage = WORK / "publish"
+    dest = stage / day
+    if dest.exists():
+        shutil.rmtree(dest)
+    for f in sorted(src.rglob("*")):
+        if not f.is_file():
+            continue
+        t = dest / f.relative_to(src)
+        t.parent.mkdir(parents=True, exist_ok=True)
+        if f.suffix.lower() in TEXT | LOGS:
+            t.write_text(mask(f.read_text(errors="replace"), secrets))
+            shutil.copystat(f, t)
+        else:
+            try:
+                os.link(f, t)
+            except OSError:
+                shutil.copy2(f, t)
+    return stage
+
+
 def publish(days: list[str]):
     files = []
     for d in days:
@@ -1579,7 +1606,9 @@ def publish(days: list[str]):
         z = HIST / f"ocw-build-history-{d}.zip"
         if z.exists():
             z.unlink()
-        run(["zip", "-q", "-r", z, d], cwd=HIST)
+        stage = masked_copy(d)
+        run(["zip", "-q", "-r", z, d], cwd=stage)
+        shutil.rmtree(stage / d)
         files.append(z)
     files += sorted(OUT.glob("*.mp4"))
     # Checksums of every zip and video known locally (all days, not only these).
