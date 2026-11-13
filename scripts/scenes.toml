@@ -336,7 +336,7 @@ name = "god-unicorn-flight"
 description = "God mode (spec §14 Phase 13): the rider as the unicorn – white body, spiral golden horn, rainbow mane and tail, feathered pegasus wings – flying low over Vaduz towards the mountains, rainbow trail, flight HUD"
 world = true
 args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "3"]
-at = ["3=god on", "4=god.pose -2650 2330 70 80 -10", "4.3=god.cruise 0.5 0.1 4"]
+at = ["1=time 14:00", "3=god on", "4=god.pose -2650 2330 70 80 -10", "4.3=god.cruise 0.5 0.1 4"]
 shot = 9
 
 [[scene]]
@@ -344,7 +344,7 @@ name = "god-unicorn-side"
 description = "God mode over the Rhine valley: the unicorn banking in a turn, wings spread, the landing ring on the road below"
 world = true
 args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "0"]
-at = ["3=god on", "4=god.pose -2500 2250 25 120 -25", "4.3=god.cruise 1 0 25"]
+at = ["1=time 14:00", "3=god on", "4=god.pose -2500 2250 25 120 -25", "4.3=god.cruise 1 0 25"]
 shot = 8
 
 [[scene]]
@@ -352,7 +352,7 @@ name = "god-flight-video"
 description = "Video: G turns the rider into the unicorn (sparkle burst), a flight over Vaduz climbing towards the Alps, then G glides it down onto the road below the glowing ring"
 world = true
 args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "3", "--power", "200"]
-at = ["4=god on", "5.5=god.cruise 1 0.4 0", "9=god.cruise 1 0 10", "12.5=god.cruise 0.3 -0.5 0", "14=god off"]
+at = ["1=time 14:00", "4=god on", "5.5=god.cruise 1 0.4 0", "9=god.cruise 1 0 10", "12.5=god.cruise 0.3 -0.5 0", "14=god off"]
 warmup = 3
 video = 14
 

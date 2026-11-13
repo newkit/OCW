@@ -946,7 +946,7 @@ fn sparkles(
 /// Trail length (s).
 pub const TRAIL_S: f32 = 2.0;
 /// Width of one rainbow band of the trail (m).
-const TRAIL_BAND_M: f32 = 0.16;
+const TRAIL_BAND_M: f32 = 0.09;
 
 /// The trail ribbon from `points` (time, position; oldest first) at time
 /// `now`: eight bands, fading out over [`TRAIL_S`]. Pure (positions,
@@ -977,7 +977,7 @@ pub fn trail_mesh(
             let off = (-half + TRAIL_BAND_M * b as f32) * w;
             pos.push((p + side * off).to_array());
             let c = srgb(RAINBOW[b.min(bands - 1)]).to_linear();
-            col.push([c.red, c.green, c.blue, 0.55 * fade * fade]);
+            col.push([c.red, c.green, c.blue, 0.32 * fade * fade]);
         }
     }
     let row = (bands + 1) as u32;
@@ -1397,7 +1397,7 @@ mod tests {
         assert_eq!(idx.len(), 9 * 8 * 6);
         // The oldest point (2 s old at 1.8 + …): fully faded; the newest not.
         assert!(col[0][3] < 0.05);
-        assert!(col[pos.len() - 1][3] > 0.4);
+        assert!(col[pos.len() - 1][3] > 0.25);
         assert!(trail_mesh(&VecDeque::new(), 0.0).0.is_empty());
     }
 

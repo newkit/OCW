@@ -363,6 +363,10 @@ fn update_view(time: Res<Time>, client: Res<ClientState>, mut view: ResMut<RideV
     let now = time.elapsed_secs_f64();
     let c = &client.0;
     view.unicorns = c.unicorns(now);
+    if c.god().active() {
+        // No junction overlay over the flight (the road below is frozen).
+        view.junction = None;
+    }
     let g = c.god();
     view.flight = g.unicorn(now).map(|u| {
         let f = g.flight();
