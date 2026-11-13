@@ -306,14 +306,15 @@ dashboard-uninstall: ## Stop and remove the build dashboard user service
 	systemctl --user daemon-reload
 
 # --- Versions and GitHub releases (spec §11.3) ------------------------------
-# Every GitHub release increments the minor version: `make release-prepare`
+# Every GitHub release increments the patch version (0.2.0 -> 0.2.1,
+# spec §11.3 v2.49): `make release-prepare`
 # bumps [workspace.package] version in Cargo.toml (inherited by every crate)
-# and the workspace crates in Cargo.lock, commits "Release X.Y.0" and pushes;
+# and the workspace crates in Cargo.lock, commits "Release X.Y.Z" and pushes;
 # build the release binaries from that commit; `make release-publish` tags
-# vX.Y.0 and creates the GitHub release. VERSION_ROOT points the version
+# vX.Y.Z and creates the GitHub release. VERSION_ROOT points the version
 # targets at another checkout (tests). Release tags: vX.Y.Z.
 VERSION_ROOT ?= $(CURDIR)
-PART ?= minor
+PART ?= patch
 GH_REPO ?= newkit/OCW
 version_of = sed -n '/^\[workspace\.package\]/,/^\[/s/^version *= *"\([0-9.]*\)".*/\1/p' $(1)/Cargo.toml | head -1
 # Highest X.Y.Z of the GitHub release tags (v0.1.0-abc counts as 0.1.0).
@@ -324,11 +325,11 @@ newer = n() { [ "$$1" != "$$2" ] && [ "$$(printf '%s\n%s\n' "$$1" "$$2" | sort -
 version: ## Print the workspace version
 	@$(call version_of,$(VERSION_ROOT))
 
-version-next: ## Print the version after a bump (PART=minor|patch|major)
+version-next: ## Print the version after a bump (PART=patch|minor|major, default patch)
 	@cur=$$($(call version_of,$(VERSION_ROOT))); a=$${cur%%.*}; r=$${cur#*.}; b=$${r%%.*}; c=$${r#*.}; \
 	case "$(PART)" in major) echo "$$((a+1)).0.0";; minor) echo "$$a.$$((b+1)).0";; patch) echo "$$a.$$b.$$((c+1))";; *) echo "PART: major|minor|patch" >&2; exit 2;; esac
 
-version-bump: ## Bump the workspace version in Cargo.toml and Cargo.lock (PART=minor|patch|major)
+version-bump: ## Bump the workspace version in Cargo.toml and Cargo.lock (PART=patch|minor|major, default patch)
 	@set -e; root='$(VERSION_ROOT)'; cur=$$($(call version_of,$$root)); \
 	nv=$$($(MAKE) -s --no-print-directory version-next VERSION_ROOT="$$root" PART=$(PART)); \
 	members=$$(for m in $$(find "$$root/apps" "$$root/crates" "$$root/services" "$$root/tools" -name Cargo.toml -not -path '*/target/*' 2>/dev/null); do \
@@ -352,14 +353,14 @@ release-check: ## Show the version, the latest GitHub release and the next relea
 	if [ -n "$$last" ] && ! n "$$cur" "$$last"; then echo "next release:       $$($(MAKE) -s --no-print-directory version-next) (make release-prepare)"; \
 	else echo "next release:       $$cur (prepared: build it, then make release-publish DIR=... NOTES=...)"; fi
 
-release-prepare: ## Bump the minor version for the next GitHub release, commit "Release X.Y.0" and push (then build from that commit)
+release-prepare: ## Bump the patch version for the next GitHub release, commit "Release X.Y.Z" and push (then build from that commit)
 	@set -e; [ "$$(git rev-parse --abbrev-ref HEAD)" = main ] || { echo "not on main" >&2; exit 1; }; \
 	[ -z "$$(git status --porcelain --untracked-files=no)" ] || { echo "uncommitted changes" >&2; exit 1; }; \
 	git fetch -q origin main; [ "$$(git rev-parse HEAD)" = "$$(git rev-parse origin/main)" ] || { echo "main is not origin/main" >&2; exit 1; }; \
 	cur=$$($(call version_of,.)); last=$$($(latest_release)); $(newer); \
 	if [ -n "$$last" ] && n "$$cur" "$$last"; then echo "version $$cur is already above the latest release $$last"; \
-	else nv=$$($(MAKE) -s --no-print-directory version-bump PART=minor); git add Cargo.toml Cargo.lock; \
-	  git commit -q -m "Release $$nv" -m "Bumps the workspace version for the GitHub release v$$nv (every release increments the minor version, spec §11.3)."; \
+	else nv=$$($(MAKE) -s --no-print-directory version-bump PART=patch); git add Cargo.toml Cargo.lock; \
+	  git commit -q -m "Release $$nv" -m "Bumps the workspace version for the GitHub release v$$nv (every release increments the patch version, spec §11.3)."; \
 	  git push -q origin main; cur=$$nv; fi; \
 	echo "version: $$cur"; echo "commit:  $$(git rev-parse --short HEAD)  (build the release binaries from this commit)"
 
