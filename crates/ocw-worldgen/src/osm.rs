@@ -28,6 +28,21 @@ pub struct OsmData {
     pub ways: Vec<Way>,
 }
 
+/// The box of the points overlaps (south, west, north, east).
+pub fn way_box_overlaps<'a>(
+    pts: impl Iterator<Item = &'a (f64, f64)>,
+    (s, w, n, e): (f64, f64, f64, f64),
+) -> bool {
+    let (mut lo, mut hi) = ((f64::MAX, f64::MAX), (f64::MIN, f64::MIN));
+    let mut any = false;
+    for &(lat, lon) in pts {
+        any = true;
+        lo = (lo.0.min(lat), lo.1.min(lon));
+        hi = (hi.0.max(lat), hi.1.max(lon));
+    }
+    any && lo.0 <= n && hi.0 >= s && lo.1 <= e && hi.1 >= w
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum OsmError {
     #[error("{0}")]
@@ -66,6 +81,41 @@ impl OsmData {
             _ => {}
         })?;
         Ok(Self { nodes, ways })
+    }
+
+    /// Reads several extracts and merges them (ways by id, nodes by id):
+    /// neighbouring Geofabrik extracts of one day overlap at their border
+    /// and hold the same objects there.
+    pub fn read_pbfs(paths: &[std::path::PathBuf]) -> Result<Self, String> {
+        let mut out = Self::default();
+        for p in paths {
+            let d = Self::read_pbf(p).map_err(|e| format!("{}: {e}", p.display()))?;
+            out.merge(d);
+        }
+        Ok(out)
+    }
+
+    /// Adds another extract's ways and nodes (ways already here are kept).
+    pub fn merge(&mut self, other: Self) {
+        let have: std::collections::HashSet<i64> = self.ways.iter().map(|w| w.id).collect();
+        self.ways
+            .extend(other.ways.into_iter().filter(|w| !have.contains(&w.id)));
+        self.nodes.extend(other.nodes);
+    }
+
+    /// Keeps only the ways whose node box overlaps (south, west, north,
+    /// east) and the nodes they use: a big extract cut down to the part
+    /// being built (memory, spec §15).
+    pub fn retain_near(&mut self, bounds: (f64, f64, f64, f64)) {
+        let nodes = &self.nodes;
+        self.ways
+            .retain(|w| way_box_overlaps(w.nodes.iter().filter_map(|n| nodes.get(n)), bounds));
+        let used: std::collections::HashSet<i64> = self
+            .ways
+            .iter()
+            .flat_map(|w| w.nodes.iter().copied())
+            .collect();
+        self.nodes.retain(|id, _| used.contains(id));
     }
 
     /// Reads OSM XML (`.osm`, as written by JOSM or the OSM API): nodes
@@ -222,6 +272,43 @@ fn xml_unescape(s: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn way(id: i64, nodes: &[i64]) -> Way {
+        Way {
+            id,
+            nodes: nodes.to_vec(),
+            tags: [("highway".to_string(), "track".to_string())].into(),
+        }
+    }
+
+    #[test]
+    fn extracts_merge_and_shrink_to_the_part_being_built() {
+        let mut a = OsmData {
+            nodes: [(1, (48.0, 8.0)), (2, (48.1, 8.0)), (3, (49.0, 9.0))].into(),
+            ways: vec![way(10, &[1, 2]), way(11, &[2, 3])],
+        };
+        // The neighbouring extract repeats way 11 at the border and adds 12.
+        let b = OsmData {
+            nodes: [(2, (48.1, 8.0)), (3, (49.0, 9.0)), (4, (49.1, 9.1))].into(),
+            ways: vec![way(11, &[2, 3]), way(12, &[3, 4])],
+        };
+        a.merge(b);
+        assert_eq!(a.ways.len(), 3);
+        assert_eq!(a.nodes.len(), 4);
+        // Box around 48 N 8 E: way 12 goes, way 11 (reaching in) stays.
+        a.retain_near((47.9, 7.9, 48.2, 8.2));
+        let ids: Vec<i64> = a.ways.iter().map(|w| w.id).collect();
+        assert_eq!(ids, vec![10, 11]);
+        assert!(!a.nodes.contains_key(&4) && a.nodes.contains_key(&3));
+        // A way crossing the box without a node inside it is kept too.
+        let mut c = OsmData {
+            nodes: [(1, (47.0, 8.0)), (2, (49.0, 8.0))].into(),
+            ways: vec![way(1, &[1, 2])],
+        };
+        c.retain_near((47.9, 7.9, 48.2, 8.2));
+        assert_eq!(c.ways.len(), 1);
+        assert!(OsmData::read_pbfs(&["no/such.pbf".into()]).is_err());
+    }
 
     #[test]
     fn osm_xml_fixture_reading() {

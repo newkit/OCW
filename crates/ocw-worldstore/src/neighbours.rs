@@ -10,6 +10,13 @@
 //! package** (same trust policy for cache ids and paths) and added to the
 //! [`WorldSet`] only if a road crosses the border to it
 //! ([`WorldSet::add_neighbour`]). Nothing is downloaded (spec §4.2).
+//!
+//! **Chains of packages** (v2.30): the search goes on from every joined
+//! neighbour, so a region cut into a row of packages (the Black Forest:
+//! south – middle – north) rides as one world from any of them, up to
+//! [`MAX_MEMBERS`]. Neighbours are loaded as skeletons (graph, routes,
+//! region; [`load_world_skeleton`]) and joined without their tiles, which
+//! the renderer reads when the rider comes near (spec §15 memory budget).
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -19,11 +26,14 @@ use ocw_world::manifest::{PackageIdentity, SignedManifest};
 use ocw_world::region::PackageRegion;
 use ocw_world::{WorldPackage, WorldSet};
 
-use crate::{LoadOptions, LoadedWorld, load_world, manifest_path_for};
+use crate::{LoadOptions, LoadedWorld, load_world, load_world_skeleton, manifest_path_for};
 
 /// Boxes this close (degrees, about 1 km) count as touching; the road
 /// links decide.
 pub const TOUCH_TOLERANCE_DEG: f64 = 0.01;
+
+/// At most this many packages in one world (the home package included).
+pub const MAX_MEMBERS: usize = 8;
 
 /// A package that may be a neighbour.
 #[derive(Debug, Clone, PartialEq)]
@@ -45,10 +55,22 @@ pub fn candidates(home: &LoadedWorld, opts: &LoadOptions) -> Vec<Candidate> {
     let Some(region) = home_region(home) else {
         return Vec::new();
     };
+    candidates_near(home, &[region], opts)
+}
+
+/// Installed packages (other than the home package) whose region box
+/// touches one of `regions`; the folder of the home package is searched.
+fn candidates_near(
+    home: &LoadedWorld,
+    regions: &[PackageRegion],
+    opts: &LoadOptions,
+) -> Vec<Candidate> {
     let touches = |m: &SignedManifest| {
-        m.manifest
-            .bounds
-            .is_some_and(|b| b.region().boxes_touch(&region, TOUCH_TOLERANCE_DEG))
+        m.manifest.bounds.is_some_and(|b| {
+            regions
+                .iter()
+                .any(|r| b.region().boxes_touch(r, TOUCH_TOLERANCE_DEG))
+        })
     };
     let mut out: Vec<Candidate> = Vec::new();
     let mut seen: BTreeSet<String> = [home.identity.id.clone()].into();
@@ -142,19 +164,62 @@ pub fn neighbourhood(
     if !enabled {
         return n;
     }
-    for c in candidates(home, opts) {
-        let w = match load_world(&c.spec, opts) {
-            Ok(w) => w,
-            Err(e) => {
-                n.log.push(format!("neighbour {}: not loaded: {e}", c.spec));
-                continue;
+    let Some(home_box) = home_region(home) else {
+        return n;
+    };
+    // Breadth first: the packages touching the members joined so far.
+    let mut regions = vec![home_box];
+    let mut tried: BTreeSet<String> = BTreeSet::new();
+    loop {
+        let fresh: Vec<Candidate> = candidates_near(home, &regions, opts)
+            .into_iter()
+            .filter(|c| !tried.contains(&c.id))
+            .collect();
+        if fresh.is_empty() || n.set.len() >= MAX_MEMBERS {
+            break;
+        }
+        let before = n.set.len();
+        for c in fresh {
+            if n.set.len() >= MAX_MEMBERS {
+                n.log.push(format!(
+                    "neighbour {}: not joined: more than {MAX_MEMBERS} packages",
+                    c.spec
+                ));
+                break;
             }
-        };
+            tried.insert(c.id.clone());
+            if let Some(r) = join(&mut n, c, opts) {
+                regions.push(r);
+            }
+        }
+        if n.set.len() == before {
+            break;
+        }
+    }
+    n
+}
+
+/// Loads a candidate's skeleton and joins it if a road crosses; returns
+/// its region box.
+fn join(n: &mut Neighbourhood, c: Candidate, opts: &LoadOptions) -> Option<PackageRegion> {
+    let mut w = match load_world_skeleton(&c.spec, opts) {
+        Ok(w) => w,
+        Err(e) => {
+            n.log.push(format!("neighbour {}: not loaded: {e}", c.spec));
+            return None;
+        }
+    };
+    let region = w.package.region.clone();
+    {
         match n
             .set
             .add_neighbour(&w.identity.id, Arc::new(w.package.clone()))
         {
             Ok(links) => {
+                // Its tiles come when the rider comes near (renderer).
+                let i = n.set.len() - 1;
+                n.set.set_resident(i, None);
+                w.package.graph = None;
                 let at = n.set.members().last().map_or(String::new(), |m| {
                     let pts: Vec<String> = m
                         .crossings
@@ -171,11 +236,14 @@ pub fn neighbourhood(
                 n.specs.push(c.spec);
                 n.identities.push(w.identity.clone());
                 n.worlds.push(w);
+                region
             }
-            Err(e) => n.log.push(format!("neighbour {}: not joined: {e}", c.spec)),
+            Err(e) => {
+                n.log.push(format!("neighbour {}: not joined: {e}", c.spec));
+                None
+            }
         }
     }
-    n
 }
 
 #[cfg(test)]
@@ -323,6 +391,87 @@ mod tests {
         // Disabled: the home package alone.
         let alone = neighbourhood(&home, home_path.to_str().unwrap(), &opts, false);
         assert_eq!(alone.set.len(), 1);
+    }
+
+    /// Package `k` of a row along lat 47: lon 9.48 + 0.02·k … + 0.02, with
+    /// the road along z = 0 from border to border (cut at both).
+    fn strip(k: u32) -> WorldPackage {
+        let proj = ocw_world::geo::LocalProjection::new(ORIGIN.0, ORIGIN.1);
+        let (w, e) = (9.48 + 0.02 * f64::from(k), 9.50 + 0.02 * f64::from(k));
+        let (a, b) = (proj.project(47.0, w), proj.project(47.0, e));
+        let mut g = RoadGraph {
+            vertices: vec![a, b],
+            edges: vec![edge(100 + u64::from(k), 0, 1, [a, b], true)],
+            boundary_vertices: [VertexId(0), VertexId(1)].into(),
+        };
+        g.edges[0].points = vec![a, [(a[0] + b[0]) / 2.0, 0.0], b];
+        let mut tiles = std::collections::BTreeMap::new();
+        for x in (a[0] / 1000.0).floor() as i32..=(b[0] / 1000.0).floor() as i32 {
+            let key = TileKey { x, z: -1 };
+            tiles.insert(
+                key,
+                Tile {
+                    key,
+                    heights: vec![1.0; 4],
+                    roads: vec![],
+                },
+            );
+        }
+        WorldPackage {
+            name: format!("P{k}"),
+            origin: ORIGIN,
+            tile_size_m: 1000.0,
+            samples: 2,
+            tiles,
+            graph: Some(g),
+            landuse: None,
+            buildings: None,
+            routes: vec![],
+            region: Some(PackageRegion::bbox(46.99, w, 47.01, e)),
+        }
+    }
+
+    #[test]
+    fn a_row_of_packages_rides_as_one_world_with_skeleton_neighbours() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("row");
+        let home_path = write(&dir, "p0.ocwpkg", "test/p0", &strip(0));
+        write(&dir, "p1.ocwpkg", "test/p1", &strip(1));
+        write(&dir, "p2.ocwpkg", "test/p2", &strip(2));
+        let opts = opts(&tmp.path().join("cache"));
+        let home = load_world(home_path.to_str().unwrap(), &opts).unwrap();
+        // Only the middle package touches the home package …
+        assert_eq!(candidates(&home, &opts).len(), 1);
+        // … but the far one is joined through it.
+        let n = neighbourhood(&home, home_path.to_str().unwrap(), &opts, true);
+        assert_eq!(n.set.name(), "P0 + P1 + P2", "{:?}", n.log);
+        let g = n.set.graph().unwrap();
+        assert_eq!(g.edges.len(), 3);
+        // The two inner borders are linked, the two outer ends stay borders.
+        assert_eq!(g.boundary_vertices.len(), 2, "{:?}", n.log);
+        // Neighbours are joined without their tiles; the home package keeps them.
+        assert!(n.set.members()[0].is_resident());
+        assert!(!n.set.members()[1].is_resident() && !n.set.members()[2].is_resident());
+        assert!(n.worlds.iter().all(|w| !w.package.has_bulk()));
+        // Their tiles load in full when the rider comes near.
+        let full = n.reload(2, &opts).unwrap();
+        assert!(full.has_bulk());
+        let mut set = n.set.clone();
+        set.set_resident(2, Some(Arc::new(full)));
+        assert!(set.members()[2].is_resident());
+    }
+
+    #[test]
+    fn skeletons_keep_graph_routes_region_and_tile_keys() {
+        let pkg = strip(1);
+        let s = WorldPackage::skeleton_from_bytes(&pkg.to_bytes()).unwrap();
+        assert_eq!(s.graph, pkg.graph);
+        assert_eq!(s.region, pkg.region);
+        assert_eq!(
+            s.tiles.keys().collect::<Vec<_>>(),
+            pkg.tiles.keys().collect::<Vec<_>>()
+        );
+        assert!(!s.has_bulk() && pkg.has_bulk());
     }
 
     #[test]

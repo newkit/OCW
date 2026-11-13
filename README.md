@@ -270,19 +270,46 @@ climb at 1.5–2.1 km) and grass beside the road roll increasingly harder
   free ride. The data comes
   from `scripts/fetch-pilot.sh` and `world-builder` (© OpenStreetMap
   contributors, ODbL).
-- Second world, the southern **Black Forest** (spec §4.7; Freiburg,
-  Schauinsland, Feldberg, Titisee, Belchen, Schluchsee):
-  `scripts/fetch-pilot.sh blackforest` (Geofabrik extract of the
-  Regierungsbezirk Freiburg, SRTM) and `scripts/build-blackforest.sh` (on a
-  build machine, about 2 minutes) write `data/blackforest/blackforest.ocwpkg`
-  (260 MB) with the routes `Freiburg - Schauinsland` and `Titisee - Feldberg`,
-  also as route files:
+- **Worlds** (spec §4.7), each built from the best open data of its region
+  (spec §4.3: official 1–2 m terrain models, SRTM only as the fallback):
+
+  | World | Package | Data | Routes |
+  |---|---|---|---|
+  | Liechtenstein (pilot) | `data/pilot/liechtenstein.ocwpkg` | OSM, swissALTI3D 2 m, SRTM (Austria) | Vaduz - Malbun |
+  | Black Forest south: Freiburg, Schauinsland, Feldberg, Titisee, Belchen, Schluchsee | `data/blackforest/blackforest.ocwpkg` | OSM, LGL DGM1 (2 m), SRTM | Freiburg - Schauinsland, Titisee - Feldberg |
+  | Black Forest middle: Elzach, Triberg, Hornberg, Wolfach | `data/blackforest/blackforest-middle.ocwpkg` | same | Hornberg - Triberg |
+  | Black Forest north: Baden-Baden, Schwarzwaldhochstraße, Mummelsee, Hornisgrinde, Sasbachwalden, Allerheiligen, Ruhestein, Bühlerhöhe, Kniebis | `data/blackforest/blackforest-north.ocwpkg` | same | Baden-Baden - Mummelsee, Sasbachwalden - Mummelsee, Bühl - Bühlerhöhe |
+
+  Fetch and build on a build machine (the data lands in the git-ignored
+  `data/`; the Black Forest DGM1 download is about 1,800 zips of 15 MB,
+  imported to 2 m GeoTIFFs):
+
+  ```bash
+  scripts/fetch-pilot.sh                  # Liechtenstein: OSM, swissALTI3D, SRTM
+  scripts/build-liechtenstein.sh
+  scripts/fetch-pilot.sh blackforest      # both Regierungsbezirke, DGM1, SRTM (OCW_FETCH_FRESH=1: newest OSM)
+  scripts/build-blackforest.sh            # south middle north (or a part)
+  scripts/prepare-world-release.sh OUT data/blackforest/*.ocwpkg   # release zips, no upload
+  ```
+
+  The three Black Forest packages share their border lines (48.12 N,
+  48.45 N), the OSM snapshot and the projection origin, so a package started
+  from rides on into the others (free ride from Freiburg to Baden-Baden):
+  `--world` loads the packages in the same folder as neighbours, without
+  their tiles until the rider comes near; `--no-neighbours` rides one alone.
 
   ```bash
   ocw-desktop --world data/blackforest/blackforest.ocwpkg                       # Freiburg - Schauinsland
   ocw-desktop --world data/blackforest/blackforest.ocwpkg --route "Titisee - Feldberg"
   ocw-desktop --world data/blackforest/blackforest.ocwpkg --free-ride --start -8018,-8406   # Freiburg
+  ocw-desktop --world data/blackforest/blackforest-north.ocwpkg --route "Baden-Baden - Mummelsee"
+  ocw-desktop --world data/blackforest/blackforest-north.ocwpkg --free-ride --start 18019,-75446  # Mummelsee
   ```
+
+  `world-builder dem-import --crs utm32 --cell 2 --out DIR FILES` turns DTM
+  tiles (XYZ text, GeoTIFF) into 2 m GeoTIFFs, `--dem DIR` (repeatable, best
+  first) uses them in `package` / `route` / `graph`, `dem-tiles` lists the
+  tiles of a box for downloads and `dem-diff` compares a DTM with SRTM.
 
   `world-builder route --bbox S,W,N,E --origin LAT,LON` cuts a route file from
   the same part of an extract as `package --bbox`, in its metres;
@@ -1201,7 +1228,11 @@ to *Public* are the usual causes; the server log is in Event Viewer under
 | `world-builder route --world PKG --from LAT,LON --to LAT,LON --name N` | Store the shortest main-road route between two points as a package route |
 | `world-builder routes --world PKG [--from OLD_PKG] [--remove N] [--export-gpx]` | List and check a package's routes; carry the routes of an older build over (by stable edge ID, re-matching broken ones); export them as GPX |
 | `world-builder keys init-root` / `keys new-signing` / `sign` / `verify` / `publish` / `diff` | Package signing and distribution, see below |
-| `scripts/fetch-pilot.sh` | Download the pilot region's OSM extract and elevation data |
+| `scripts/fetch-pilot.sh [liechtenstein\|blackforest]` | Download a region's OSM extracts and elevation data (swissALTI3D, LGL DGM1, SRTM) with a licence table `SOURCES.md` |
+| `scripts/build-liechtenstein.sh`, `scripts/build-blackforest.sh [south middle north]` | Build the world packages and their routes (`OCW_SRTM_ONLY=1`: SRTM terrain, for comparisons) |
+| `scripts/prepare-world-release.sh OUT PKG...` | Release zips of packages (`ocw-world-<name>-v<N>.zip` with `LICENSE-DATA.md`, `README.md`, route files) and the OSM source zip (ODbL offer); no upload |
+| `scripts/measure.py [--label T] [--out F] -- CMD` | Wall time and peak memory of a command (package builds, client runs) |
+| `world-builder dem-import` / `dem-tiles` / `dem-diff` | High-resolution DTMs: import XYZ / GeoTIFF tiles as 2 m GeoTIFFs, list the tiles of a box, compare with SRTM |
 | `scripts/remote.sh MACHINE run 'CMD'` | Copy the tree to a build machine (`config/machines.toml`) and run a command there (`sync`, `ssh`, `fetch`, `put LOCAL... DIR`: copy git-ignored files into the checkout, `field KEY`: a machine setting for scripts) |
 | `python3 tools/build-dashboard/dashboard.py` | Web page (port 8765) with the build machines' load and their running/queued tasks; `--once` prints it as text |
 | `scripts/deploy-test.sh MACHINE` | Release build on a test machine, deployed for its kiosk |

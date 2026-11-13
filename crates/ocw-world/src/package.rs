@@ -306,6 +306,24 @@ impl WorldPackage {
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
+        Self::decode(bytes, true)
+    }
+
+    /// The package without its bulk: the tiles are there by key only
+    /// (no heights, no road strips), land use and buildings are left out;
+    /// the road graph, routes and region are complete. What a neighbouring
+    /// package needs until the rider comes near it (spec §2.2.2, §15): a
+    /// fraction of the memory of [`WorldPackage::from_bytes`].
+    pub fn skeleton_from_bytes(bytes: &[u8]) -> Result<Self, String> {
+        Self::decode(bytes, false)
+    }
+
+    /// Whether the tiles hold their terrain (not a skeleton).
+    pub fn has_bulk(&self) -> bool {
+        self.tiles.values().any(|t| !t.heights.is_empty()) || self.tiles.is_empty()
+    }
+
+    fn decode(bytes: &[u8], full: bool) -> Result<Self, String> {
         let mut r = Bytes { b: bytes, pos: 0 };
         let version = match r.take(8)? {
             m if m == MAGIC => 1,
@@ -334,6 +352,23 @@ impl WorldPackage {
                 z: r.i32()?,
             };
             let n = samples as usize * samples as usize;
+            if !full {
+                r.take(n * 4)?;
+                for _ in 0..r.u32()? {
+                    r.take(5)?;
+                    let pts = r.u32()? as usize;
+                    r.take(pts * 12)?;
+                }
+                tiles.insert(
+                    key,
+                    Tile {
+                        key,
+                        heights: Vec::new(),
+                        roads: Vec::new(),
+                    },
+                );
+                continue;
+            }
             let heights = (0..n).map(|_| r.f32()).collect::<Result<_, _>>()?;
             let roads_n = r.u32()?;
             let mut roads = Vec::with_capacity(roads_n as usize);
@@ -372,9 +407,9 @@ impl WorldPackage {
                 let payload = r.take(len)?;
                 if &tag == GRAPH_TAG {
                     graph = Some(read_graph(payload)?);
-                } else if &tag == LANDUSE_TAG {
+                } else if &tag == LANDUSE_TAG && full {
                     landuse = Some(read_landuse(payload, samples)?);
-                } else if &tag == BUILDINGS_TAG {
+                } else if &tag == BUILDINGS_TAG && full {
                     buildings = Some(read_buildings(payload)?);
                 } else if &tag == ROUTES_TAG {
                     routes = read_routes(payload)?;
