@@ -251,7 +251,11 @@ def seasonal(a):
         span = (last - first) % 365
         centre = (first + span // 2 - 1) % 365 + 1
         entry = {"season": season, "centre_doy": centre, "first_doy": first, "last_doy": last, "file": out_file}
-        if os.path.exists(os.path.join(a.out, out_file)) and os.path.exists(info_file) and not a.force:
+        # Reuse a composite only when it was made for this grid (a run with more
+        # packages widens the grid: then the old, smaller composite is stale).
+        out_path = os.path.join(a.out, out_file)
+        fits = os.path.exists(out_path) and os.path.getsize(out_path) == width * height * 3
+        if fits and os.path.exists(info_file) and not a.force:
             entry = json.load(open(info_file))
             print(f"{season}: have ({entry['scenes']} scenes)")
             meta["seasons"].append(entry)
