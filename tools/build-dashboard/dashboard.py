@@ -1283,7 +1283,10 @@ class Dashboard:
     def snapshot(self) -> dict:
         with self.lock:
             machines = [dict(self.state[m.name]) for m in self.machines]
-        return summarize(machines)
+        status = summarize(machines)
+        if getattr(self, "prompts", None) is not None:
+            status = annotate_prompts(status, self.prompts, getattr(self, "prompt_mask", None))
+        return status
 
 
 def summarize(machines: list) -> dict:
@@ -1445,6 +1448,159 @@ def make_handler(dash: Dashboard):
     return Handler
 
 
+# ---------------------------------------------------------------- prompts
+#
+# Which prompt a job belongs to: read from the Claude Code session
+# transcripts of this project (~/.claude/projects/*OCW*/*.jsonl, main sessions
+# only). A job in an agent worktree (checkout ".../worktree-agent-<id>" or
+# "OCW-worktree-agent-<id>") gets the user prompt that preceded the Agent call
+# that started agent <id> (plus the agent's short description); any other job
+# gets the latest user prompt before the job started.
+
+PROMPT_SHORT = 90
+_REMINDER = re.compile(r"<system-reminder>.*?</system-reminder>", re.S)
+_AGENT_ID = re.compile(r"agentId:\s*([0-9a-f]{12,})")
+_CHECKOUT_AGENT = re.compile(r"agent-([0-9a-f]{12,})")
+_NOT_PROMPT = ("<task-notification", "<agent-message", "[SYSTEM NOTIFICATION", "Another Claude session",
+               "<local-command", "[Request interrupted", "Caveat:", "<command-message",
+               "This session is being continued")
+
+
+def prompt_from_text(raw: str):
+    """The user's words in a transcript message, or None if it is not a human
+    prompt (notifications, agent messages, tool output)."""
+    t = _REMINDER.sub("", raw or "").strip()
+    if not t:
+        return None
+    m = re.match(r"<command-name>(/?[^<]+)</command-name>", t)
+    if m:
+        return "/" + m.group(1).lstrip("/")
+    if any(t.startswith(b) or b in t[:200] for b in _NOT_PROMPT):
+        return None
+    return t
+
+
+def short_prompt(text: str, n: int = PROMPT_SHORT) -> str:
+    """First line, whitespace collapsed, at most n characters."""
+    t = " ".join((text or "").strip().splitlines()[0].split()) if text and text.strip() else ""
+    return t if len(t) <= n else t[: n - 1].rstrip() + "…"
+
+
+def _epoch(ts: str):
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+    except (ValueError, AttributeError):
+        return None
+
+
+class PromptIndex:
+    """Incremental reader of the transcripts: user prompts with their time and
+    the prompt + description that started each agent."""
+
+    def __init__(self, root: Path | None = None):
+        self.root = root or Path(os.environ.get("OCW_TRANSCRIPTS", str(Path.home() / ".claude" / "projects")))
+        self.offsets = {}
+        self.prompts = []          # (epoch, text), in file order
+        self.pending = {}          # Agent tool_use id -> (description, prompt)
+        self.agents = {}           # agent id -> {"prompt": ..., "agent": description}
+        self.last = None           # last prompt text seen
+        self.lock = threading.Lock()
+
+    def feed(self, d: dict):
+        t = d.get("type")
+        if t == "user" and not d.get("isMeta"):
+            c = (d.get("message") or {}).get("content")
+            if isinstance(c, str):
+                text = prompt_from_text(c)
+                if text:
+                    self.last = text
+                    self.prompts.append((_epoch(d.get("timestamp", "")), text))
+            elif isinstance(c, list):
+                for b in c:
+                    if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id") in self.pending:
+                        body = b.get("content")
+                        body = body if isinstance(body, str) else json.dumps(body)
+                        m = _AGENT_ID.search(body or "")
+                        desc, prompt = self.pending.pop(b["tool_use_id"])
+                        if m:
+                            self.agents[m.group(1)] = {"prompt": prompt, "agent": desc}
+        elif t == "attachment":
+            a = d.get("attachment") or {}
+            if a.get("type") == "queued_command" and (a.get("origin") or {}).get("kind") == "human":
+                text = prompt_from_text(str(a.get("prompt", "")))
+                if text:
+                    self.last = text
+                    self.prompts.append((_epoch(d.get("timestamp", "")), text))
+        elif t == "assistant":
+            for b in (d.get("message") or {}).get("content") or []:
+                if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") == "Agent":
+                    desc = str((b.get("input") or {}).get("description", ""))
+                    self.pending[b.get("id")] = (desc, self.last)
+
+    def refresh(self):
+        files = sorted(self.root.glob("*OCW*/*.jsonl")) if self.root.is_dir() else []
+        with self.lock:
+            for f in files:
+                try:
+                    size = f.stat().st_size
+                    off = self.offsets.get(f, 0)
+                    if size <= off:
+                        continue
+                    with open(f, "rb") as fh:
+                        fh.seek(off)
+                        data = fh.read()
+                    end = data.rfind(b"\n") + 1   # only whole lines
+                    for line in data[:end].splitlines():
+                        if b'"user"' in line or b'"attachment"' in line or b'"Agent"' in line:
+                            try:
+                                self.feed(json.loads(line))
+                            except ValueError:
+                                pass
+                    self.offsets[f] = off + end
+                except OSError:
+                    continue
+            self.prompts.sort(key=lambda p: p[0] or 0)
+
+    def for_job(self, checkout: str, started=None) -> dict:
+        """{"prompt": short text, "agent": description} for a job, or {}."""
+        with self.lock:
+            m = _CHECKOUT_AGENT.search(checkout or "")
+            if m and m.group(1) in self.agents:
+                a = self.agents[m.group(1)]
+                return {"prompt": short_prompt(a["prompt"] or ""), "agent": a["agent"]}
+            if m:
+                return {}
+            best = None
+            for ts, text in self.prompts:
+                if ts is not None and (started is None or ts <= float(started)):
+                    best = text
+            return {"prompt": short_prompt(best)} if best else {}
+
+
+def annotate_prompts(status: dict, index, mask=None) -> dict:
+    """Adds "prompt" (and "agent") to every task and queued run of the status."""
+    def walk(o):
+        if isinstance(o, dict):
+            if "checkout" in o and ("command" in o or "state" in o):
+                info = index.for_job(o.get("checkout"), o.get("started"))
+                for k, v in info.items():
+                    o[k] = mask(v) if mask else v
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+    walk(status)
+    return status
+
+
+def prompt_loop(dash, index, interval: float = 15.0):
+    index.refresh()
+    while not dash.stop.wait(interval):
+        index.refresh()
+
+
 RECORD_INTERVAL_S = 60.0
 
 
@@ -1489,6 +1645,7 @@ def main(argv=None) -> int:
     ap.add_argument("--record", type=Path, default=None,
                     help="build log directory for the art project (default: test-output/build-log of the checkout)")
     ap.add_argument("--no-record", action="store_true", help="don't write the build log")
+    ap.add_argument("--no-prompts", action="store_true", help="don't show the prompt each job belongs to")
     ap.add_argument("--record-interval", type=float, default=RECORD_INTERVAL_S, help="seconds between build-log lines")
     a = ap.parse_args(argv)
 
@@ -1506,6 +1663,11 @@ def main(argv=None) -> int:
         print(json.dumps(status, indent=2) if a.json else format_text(status))
         return 0
     dash.start()
+    if not a.no_prompts:
+        dash.prompts = PromptIndex()
+        secrets = [s for m in machines for s in m.secrets()]
+        dash.prompt_mask = Masker(secrets, ()).__call__ if secrets else None
+        threading.Thread(target=prompt_loop, args=(dash, dash.prompts), daemon=True).start()
     if not a.no_record:
         root = a.record or (repo / "test-output" / "build-log")
         threading.Thread(target=record_loop, args=(dash, root, a.record_interval), daemon=True).start()
