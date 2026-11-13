@@ -5734,7 +5734,7 @@ dependencies = [
 
 [[package]]
 name = "ocw-assets"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "glam",
@@ -5747,7 +5747,7 @@ dependencies = [
 
 [[package]]
 name = "ocw-bot"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "ocw-core",
@@ -5763,11 +5763,11 @@ dependencies = [
 
 [[package]]
 name = "ocw-core"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "ocw-desktop"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bevy",
  "clap",
@@ -5795,7 +5795,7 @@ dependencies = [
 
 [[package]]
 name = "ocw-devices"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "btleplug",
  "futures",
@@ -5808,14 +5808,14 @@ dependencies = [
 
 [[package]]
 name = "ocw-fit"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "fitparser",
 ]
 
 [[package]]
 name = "ocw-protocol"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ocw-core",
  "ocw-sim",
@@ -5829,7 +5829,7 @@ dependencies = [
 
 [[package]]
 name = "ocw-render"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bevy",
  "bevy_egui",
@@ -5847,7 +5847,7 @@ dependencies = [
 
 [[package]]
 name = "ocw-server"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bytes",
  "clap",
@@ -5871,7 +5871,7 @@ dependencies = [
 
 [[package]]
 name = "ocw-sim"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ocw-core",
  "ocw-world",
@@ -5881,14 +5881,14 @@ dependencies = [
 
 [[package]]
 name = "ocw-sky"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "jiff",
 ]
 
 [[package]]
 name = "ocw-spike"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bevy",
  "clap",
@@ -5898,7 +5898,7 @@ dependencies = [
 
 [[package]]
 name = "ocw-voice"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cpal",
  "futures",
@@ -5912,7 +5912,7 @@ dependencies = [
 
 [[package]]
 name = "ocw-world"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ed25519-dalek",
  "serde",
@@ -5923,7 +5923,7 @@ dependencies = [
 
 [[package]]
 name = "ocw-worldgen"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ocw-core",
  "ocw-server",
@@ -5939,7 +5939,7 @@ dependencies = [
 
 [[package]]
 name = "ocw-worldstore"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dirs",
  "getrandom 0.3.4",
@@ -9254,7 +9254,7 @@ dependencies = [
 
 [[package]]
 name = "world-builder"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "ocw-sky",
