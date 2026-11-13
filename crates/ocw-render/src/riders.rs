@@ -29,7 +29,7 @@ impl Plugin for RidersPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RiderEntities>().add_systems(
             PostUpdate,
-            (sync_riders, ghost_casts_no_shadow, animate)
+            (sync_riders, ghost_casts_no_shadow, animate, lod_shadows)
                 .chain()
                 .before(TransformSystems::Propagate),
         );
@@ -68,6 +68,63 @@ fn ghost_casts_no_shadow(
             }
         }
         commands.entity(e).insert(ShadowsOff);
+    }
+}
+
+/// A mesh of an avatar's model: of the near model (posed, close by) or
+/// of the far model (`lod1`).
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LodPart {
+    pub far: bool,
+}
+
+/// Which of an avatar's two models currently casts its shadow.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShadowLod {
+    pub far: bool,
+}
+
+/// Whether an avatar at `distance` m from the camera casts its shadow
+/// with the far model (else with the near one).
+///
+/// The two models cross-fade between `LOD_DISTANCE_M ∓ LOD_FADE_M`; Bevy
+/// dithers that fade only in the camera's passes. The shadow pass of an
+/// opaque mesh has no fragment shader, so there both models would cast a
+/// full shadow: two shadows of one rider (differently posed, the far one
+/// seated and still). So exactly one model casts, switched at the middle
+/// of the fade, where both are in range.
+pub fn shadow_from_far_model(distance: f32) -> bool {
+    distance >= LOD_DISTANCE_M
+}
+
+/// Lets exactly one of each avatar's two models cast a shadow
+/// ([`shadow_from_far_model`]). The ghost casts none at all
+/// ([`ghost_casts_no_shadow`]).
+fn lod_shadows(
+    mut commands: Commands,
+    cameras: Query<&GlobalTransform, With<Camera3d>>,
+    avatars: Query<(Entity, &Avatar, &GlobalTransform, Option<&ShadowLod>)>,
+    children: Query<&Children>,
+    parts: Query<&LodPart>,
+) {
+    let eye = cameras.iter().next().map(GlobalTransform::translation);
+    for (e, avatar, at, current) in &avatars {
+        if avatar.id == GHOST_ID {
+            continue;
+        }
+        let far = eye.is_some_and(|eye| shadow_from_far_model(eye.distance(at.translation())));
+        if current.is_some_and(|c| c.far == far) {
+            continue;
+        }
+        for d in children.iter_descendants(e) {
+            let Ok(part) = parts.get(d) else { continue };
+            if part.far == far {
+                commands.entity(d).remove::<bevy::light::NotShadowCaster>();
+            } else {
+                commands.entity(d).insert(bevy::light::NotShadowCaster);
+            }
+        }
+        commands.entity(e).insert(ShadowLod { far });
     }
 }
 
@@ -508,17 +565,15 @@ fn spawn_model(
             ))
             .id();
         out[i] = e;
-        let range = if far.is_some_and(|f| model.is_below(i, f)) {
-            far_range()
-        } else {
-            near_range()
-        };
+        let is_far = far.is_some_and(|f| model.is_below(i, f));
+        let range = if is_far { far_range() } else { near_range() };
         for (mesh, mat) in &meshes.0[i] {
             let m = &model.materials[*mat];
             commands.spawn((
                 Mesh3d(mesh.clone()),
                 MeshMaterial3d(material(&m.name, m.color)),
                 range.clone(),
+                LodPart { far: is_far },
                 ChildOf(e),
             ));
         }
@@ -768,11 +823,13 @@ mod tests {
             .collect();
         assert_eq!(ghost.len(), 1);
         assert!(close(ghost[0], Vec3::new(42.0, 0.0, 1.0)), "{ghost:?}");
-        // No ghost part casts or receives a shadow; the local rider's do.
+        // No ghost part casts or receives a shadow; the local rider's
+        // receive one, and its near model (no camera: close by) casts it.
         let mut parts = app.world_mut().query_filtered::<(
             &ChildOf,
             Has<bevy::light::NotShadowCaster>,
             Has<bevy::light::NotShadowReceiver>,
+            &LodPart,
         ), With<Mesh3d>>();
         let mut avatars = app.world_mut().query::<&Avatar>();
         let root = |w: &World, mut e: Entity| {
@@ -784,15 +841,16 @@ mod tests {
         let (mut ghost_parts, mut own_parts) = (0, 0);
         let rows: Vec<_> = parts
             .iter(app.world())
-            .map(|(c, caster, receiver)| (c.parent(), caster, receiver))
+            .map(|(c, caster, receiver, lod)| (c.parent(), caster, receiver, lod.far))
             .collect();
-        for (parent, caster, receiver) in rows {
+        for (parent, caster, receiver, far) in rows {
             let a = avatars.get(app.world(), root(app.world(), parent)).unwrap();
             if a.id == GHOST_ID {
                 assert!(caster && receiver);
                 ghost_parts += 1;
             } else {
-                assert!(!caster && !receiver);
+                assert_eq!(caster, far, "only one model casts");
+                assert!(!receiver);
                 own_parts += 1;
             }
         }
@@ -978,6 +1036,67 @@ mod tests {
             }
         }
         out
+    }
+
+    /// Regression (user report 2026-11-13, "two shadows of the rider"):
+    /// at every camera distance exactly one of an avatar's two models
+    /// (near or far LOD) casts a shadow, all of its parts, and the switch
+    /// lies where both models are in range.
+    #[test]
+    fn one_model_casts_the_shadow_at_every_distance() {
+        assert!(near_range().end_margin.end > LOD_DISTANCE_M);
+        assert!(far_range().start_margin.start < LOD_DISTANCE_M);
+        assert!(!shadow_from_far_model(near_range().end_margin.start - 0.01));
+        assert!(shadow_from_far_model(far_range().start_margin.end));
+        let mut view = RideView::new(Route::test_loop());
+        view.riders.push(rider(1, ProfileId::Road, true));
+        view.riders.push(rider(2, ProfileId::TimeTrial, false));
+        let mut app = app(view);
+        app.add_plugins(TransformPlugin);
+        let cam = app
+            .world_mut()
+            .spawn((Camera3d::default(), Transform::default()))
+            .id();
+        app.update();
+        let entities = app.world().resource::<RiderEntities>().0.clone();
+        for d in [3.0, 20.0, 36.5, 39.9, 40.1, 43.5, 60.0, 400.0, 10.0] {
+            // One avatar at a time at distance d (the others elsewhere).
+            for (i, e) in entities.values().enumerate() {
+                let at = app
+                    .world()
+                    .get::<GlobalTransform>(*e)
+                    .unwrap()
+                    .translation();
+                app.world_mut()
+                    .get_mut::<Transform>(cam)
+                    .unwrap()
+                    .translation = at + Vec3::new(0.0, 0.0, d);
+                app.update();
+                app.update();
+                let mut parts =
+                    app.world_mut()
+                        .query::<(Entity, &LodPart, Has<bevy::light::NotShadowCaster>)>();
+                let w = app.world();
+                let rows: Vec<(LodPart, bool)> = parts
+                    .iter(w)
+                    .filter(|(p, _, _)| {
+                        let mut r = *p;
+                        while let Some(c) = w.get::<ChildOf>(r) {
+                            r = c.parent();
+                        }
+                        r == *e
+                    })
+                    .map(|(_, l, off)| (*l, !off))
+                    .collect();
+                let casting = |far: bool| rows.iter().filter(|(l, c)| l.far == far && *c).count();
+                let all = |far: bool| rows.iter().filter(|(l, _)| l.far == far).count();
+                let far = shadow_from_far_model(d);
+                assert!(all(true) > 0 && all(false) > 0, "avatar {i}");
+                assert_eq!(casting(far), all(far), "d {d}: the whole model casts");
+                assert_eq!(casting(!far), 0, "d {d}: the other model casts none");
+                assert_eq!(w.get::<ShadowLod>(*e), Some(&ShadowLod { far }));
+            }
+        }
     }
 
     /// Every bike type is its shipped model with the rider on it; head

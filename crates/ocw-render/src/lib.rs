@@ -299,6 +299,111 @@ mod tests {
         w.query::<&riders::Avatar>().iter(w).count()
     }
 
+    /// The shadow-casting lights: (directional lights, those of them
+    /// casting shadows, spot and point lights casting shadows).
+    fn shadow_lights(app: &mut App) -> (usize, usize, usize) {
+        let w = app.world_mut();
+        let dirs: Vec<bool> = w
+            .query::<&DirectionalLight>()
+            .iter(w)
+            .map(|d| d.shadow_maps_enabled)
+            .collect();
+        let spots = w
+            .query::<&SpotLight>()
+            .iter(w)
+            .filter(|s| s.shadow_maps_enabled)
+            .count();
+        let points = w
+            .query::<&PointLight>()
+            .iter(w)
+            .filter(|p| p.shadow_maps_enabled)
+            .count();
+        (
+            dirs.len(),
+            dirs.iter().filter(|s| **s).count(),
+            spots + points,
+        )
+    }
+
+    /// Regression (user report 2026-11-13, "two shadows of the rider"):
+    /// one sun, the only light that casts shadows, at every time of day
+    /// (with the bike lights on at dusk and night) and after ride
+    /// switches; the bike lamps cast none.
+    #[test]
+    fn one_shadow_casting_light_at_every_time_and_after_switches() {
+        let zone = ocw_sky::Zone::get("Europe/Vaduz").unwrap();
+        let sky = |hour: u32, minute: u32| {
+            let (ms, _) = zone.instant((2026, 11, 13), (hour, minute, 0)).unwrap();
+            let sky = ocw_sky::Sky::at(ms, &zone, ocw_sky::zone::DEFAULT_PLACE, 0.1);
+            sky::SkyView {
+                hud: sky.hud_clock(),
+                sky,
+            }
+        };
+        let mut view = RideView::new(Route::test_loop());
+        view.riders.push(RiderView {
+            id: RiderId(1),
+            name: "a".into(),
+            state: RiderState::default(),
+            power_w: 0.0,
+            cadence_rpm: None,
+            heart_rate_bpm: None,
+            is_local: true,
+            bike: ocw_core::ProfileId::Road,
+            look: None,
+        });
+        view.sky = Some(sky(12, 0));
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Mesh>()
+            .init_asset::<StandardMaterial>()
+            .init_asset::<see_through::SeeThroughMaterial>()
+            .insert_resource(view)
+            .add_plugins(console::ConsoleCorePlugin)
+            .add_plugins((world::WorldPlugin, riders::RidersPlugin, sky::SkyPlugin));
+        app.world_mut().resource_mut::<sky::SkySettings>().mode = sky::SkyMode::Simple;
+        app.update();
+        app.update();
+        assert_eq!(shadow_lights(&mut app), (1, 1, 0), "noon");
+        for round in 0..3 {
+            for (h, m) in [
+                (7, 40),
+                (8, 0),
+                (10, 0),
+                (16, 30),
+                (16, 55),
+                (17, 15),
+                (22, 0),
+                (12, 0),
+            ] {
+                app.world_mut().resource_mut::<RideView>().sky = Some(sky(h, m));
+                app.update();
+                app.update();
+                let (dirs, casting, others) = shadow_lights(&mut app);
+                assert_eq!(dirs, 1, "{h}:{m:02} round {round}: one sun");
+                assert!(casting <= 1, "{h}:{m:02} round {round}");
+                assert_eq!(others, 0, "{h}:{m:02}: no lamp casts shadows");
+                let w = app.world_mut();
+                let lamp_meshes = w
+                    .query_filtered::<Has<bevy::light::NotShadowCaster>, (With<sky::BikeLamp>, With<Mesh3d>)>()
+                    .iter(w)
+                    .collect::<Vec<_>>();
+                assert_eq!(lamp_meshes.len(), 2, "front and rear lamp");
+                assert!(lamp_meshes.iter().all(|off| *off), "lamps cast no shadow");
+            }
+            // A ride switch: the old sun goes with the old world.
+            app.world_mut().resource_mut::<RideView>().route = if round % 2 == 0 {
+                Route::test_hills()
+            } else {
+                Route::test_loop()
+            };
+            rebuild_scene(app.world_mut());
+            app.update();
+            app.update();
+            assert_eq!(shadow_lights(&mut app).0, 1, "after switch {round}");
+        }
+    }
+
     #[test]
     fn a_ride_switch_rebuilds_the_world_and_the_riders() {
         let mut view = RideView::new(Route::test_loop());
