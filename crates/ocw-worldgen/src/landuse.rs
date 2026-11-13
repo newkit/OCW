@@ -405,6 +405,18 @@ pub fn add_landuse(
     lines: &[WaterLine],
     cells: u32,
 ) -> LandUseStats {
+    add_landuse_with_sea(pkg, areas, None, lines, cells)
+}
+
+/// [`add_landuse`] with the sea (from [`sea`]) as one more area, kept
+/// apart from `areas` by the caller.
+pub fn add_landuse_with_sea(
+    pkg: &mut WorldPackage,
+    areas: &[Area],
+    sea: Option<&Area>,
+    lines: &[WaterLine],
+    cells: u32,
+) -> LandUseStats {
     let size = f64::from(pkg.tile_size_m);
     let n = pkg.samples as usize;
     let sp = pkg.spacing_m();
@@ -456,7 +468,11 @@ pub fn add_landuse(
         let o = key.origin(size);
         let tb = [o[0], o[1], o[0] + size, o[1] + size];
         let m = margin as f64 * sp;
-        let here: Vec<&Area> = areas.iter().filter(|a| overlaps(a.bbox, tb, m)).collect();
+        let here: Vec<&Area> = areas
+            .iter()
+            .chain(sea)
+            .filter(|a| overlaps(a.bbox, tb, m))
+            .collect();
         let lines_here: Vec<&WaterLine> = lines
             .iter()
             .zip(&line_bbox)
@@ -880,6 +896,7 @@ mod tests {
             graph: None,
             landuse: None,
             buildings: None,
+            bridges: None,
             routes: Vec::new(),
             region: None,
             time_zone: None,
@@ -1065,6 +1082,7 @@ mod tests {
             graph: None,
             landuse: None,
             buildings: None,
+            bridges: None,
             routes: Vec::new(),
             region: None,
             time_zone: None,
@@ -1072,7 +1090,7 @@ mod tests {
         let island = square(60.0, -40.0, 230.0, 140.0);
         let sea = Area::sea(vec![square(-50.0, -50.0, 250.0, 150.0), island]);
         let lake = Area::new(LandClass::Water, vec![square(122.0, 22.0, 178.0, 78.0)]);
-        add_landuse(&mut p, &[sea, lake], &[], 20);
+        add_landuse_with_sea(&mut p, &[lake], Some(&sea), &[], 20);
         let l = p.landuse.as_ref().unwrap();
         let (a, b) = (
             &l.tiles[&TileKey { x: 0, z: 0 }],

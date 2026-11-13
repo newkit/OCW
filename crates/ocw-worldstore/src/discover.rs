@@ -576,6 +576,7 @@ mod tests {
                 .collect(),
             region: region.map(|[s, w, n, e]| PackageRegion::bbox(s, w, n, e)),
             time_zone: Some("Europe/Vaduz".into()),
+            bridges: None,
             landuse: None,
             buildings: None,
         }

@@ -75,6 +75,10 @@ enum Cmd {
         /// Leave out land use and buildings (roads and terrain only).
         #[arg(long)]
         no_areas: bool,
+        /// Skip the world cleaning passes (spec §4.8): the package as
+        /// before v2.39, e.g. for before/after comparisons.
+        #[arg(long)]
+        no_clean: bool,
         /// Only the part of the --poly region inside this box
         /// (south,west,north,east): splits a region into neighbouring
         /// packages that share the border line (spec §2.2.2).
@@ -201,6 +205,17 @@ enum Cmd {
         #[arg(long, default_value = "data/pilot/liechtenstein.ocwpkg")]
         world: PathBuf,
     },
+    /// World lint (spec §4.8.1): steps and kinks in roads, floating and
+    /// buried roads, junction steps, near-miss ends, rivers flowing uphill,
+    /// tilted lakes, floating buildings, land-use slivers.
+    Lint {
+        #[arg(long, default_value = "data/pilot/liechtenstein.ocwpkg")]
+        world: PathBuf,
+        /// The OSM extract(s) the package was built from: adds the river
+        /// and lake checks.
+        #[arg(long)]
+        pbf: Vec<PathBuf>,
+    },
     /// Build a route along the road graph (preferring main roads) and write
     /// it with its elevation and the surrounding terrain (ocw-route file).
     Route {
@@ -227,6 +242,9 @@ enum Cmd {
         /// Projection origin (lat,lon), as for `package --origin`.
         #[arg(long, value_parser = parse_latlon)]
         origin: Option<(f64, f64)>,
+        /// Skip the world cleaning passes, as for `package --no-clean`.
+        #[arg(long)]
+        no_clean: bool,
         /// Instead of an ocw-route file: add the route (by stable edge IDs)
         /// to this world package's routes (spec §2.7), on its road graph.
         #[arg(long, value_name = "PKG")]
@@ -830,35 +848,174 @@ fn cut_region(
     (region, context)
 }
 
+/// What the cleaning passes take from the OSM areas (spec §4.8).
+struct AreaInputs {
+    data: ocw_worldgen::areas::AreaData,
+    areas: Vec<ocw_worldgen::landuse::Area>,
+    /// The sea from the coastline (spec §4.6), kept out of `areas`: the
+    /// bridge water test would bucket it over the whole region.
+    sea: ocw_worldgen::landuse::Sea,
+    lines: Vec<ocw_worldgen::landuse::WaterLine>,
+    water: ocw_worldgen::water::WaterBodies,
+    outlines: Vec<Vec<Vec<[f64; 2]>>>,
+}
+
+/// The sea's frame reaches this far beyond the region's box (the margin
+/// tiles around its roads, spec §4.6).
+const SEA_FRAME_MARGIN_M: f64 = 5000.0;
+
+fn read_area_inputs(
+    pbfs: &[PathBuf],
+    near: &Region,
+    proj: &ocw_world::geo::LocalProjection,
+) -> AreaInputs {
+    let mut data = ocw_worldgen::areas::AreaData::read_pbfs(pbfs).unwrap_or_else(|e| {
+        eprintln!("{e}");
+        std::process::exit(1);
+    });
+    data.retain_near(load_box(near));
+    let (areas, lines) = ocw_worldgen::landuse::extract(&data, proj);
+    // The sea: the coastline's islands cut out of the region's box plus
+    // the margin tiles (spec §4.6).
+    let (s, w, n, e) = load_box(near);
+    let corners = [(s, w), (s, e), (n, w), (n, e)].map(|(la, lo)| proj.project(la, lo));
+    let m = SEA_FRAME_MARGIN_M;
+    let frame = [
+        corners.iter().map(|c| c[0]).fold(f64::MAX, f64::min) - m,
+        corners.iter().map(|c| c[1]).fold(f64::MAX, f64::min) - m,
+        corners.iter().map(|c| c[0]).fold(f64::MIN, f64::max) + m,
+        corners.iter().map(|c| c[1]).fold(f64::MIN, f64::max) + m,
+    ];
+    let sea = ocw_worldgen::landuse::sea(&data, proj, frame);
+    if sea.open > 0 {
+        eprintln!(
+            "warning: {} coastline pieces do not close in the package area: no sea (closing a coast along the frame is not done yet)",
+            sea.open
+        );
+    }
+    let water = ocw_worldgen::water::extract_water(&data, proj);
+    let outlines = ocw_worldgen::bridges::bridge_outlines(&data, proj);
+    AreaInputs {
+        data,
+        areas,
+        sea,
+        lines,
+        water,
+        outlines,
+    }
+}
+
+/// A road graph with its profiles and, when cleaning (spec §4.8), its
+/// cleaned centrelines, snapped ends, eased junction mouths, vertical
+/// curves and detected bridge spans (with straight decks).
+fn prepared_graph(
+    osm: &OsmData,
+    dem: &Dem,
+    region: &Region,
+    proj: &ocw_world::geo::LocalProjection,
+    clean: Option<&ocw_worldgen::bridges::WaterTest>,
+    log: bool,
+) -> (
+    ocw_world::graph::RoadGraph,
+    ocw_worldgen::build::BuildStats,
+    Vec<ocw_worldgen::bridges::Span>,
+) {
+    use ocw_worldgen::clean;
+    let (mut graph, stats) = build_road_graph(osm, region);
+    let mut snaps = Vec::new();
+    if clean.is_some() {
+        let h = clean::clean_polylines(&mut graph);
+        let (s, hs) = clean::snap_near_misses(&mut graph);
+        snaps = s;
+        if log {
+            println!(
+                "clean: {} duplicate nodes and {} spikes removed, {} road ends snapped (up to {:.1} m)",
+                h.duplicates_removed, h.spikes_removed, hs.ends_snapped, hs.max_snap_m
+            );
+        }
+    }
+    add_profiles(&mut graph, dem, proj);
+    let mut spans = Vec::new();
+    if let Some(water) = clean {
+        let tied = clean::tie_snapped_heights(&mut graph, &snaps);
+        let mouths = clean::ease_junction_mouths(&mut graph);
+        let curves = clean::limit_vertical_curvature(&mut graph);
+        let ground = |p: [f64; 2]| {
+            let (lat, lon) = proj.unproject(p);
+            dem.elevation(lat, lon)
+        };
+        spans = ocw_worldgen::bridges::detect_spans(&graph, water, &ground);
+        let planned = ocw_worldgen::bridges::plan_span_profiles(&mut graph, &spans);
+        if log {
+            use ocw_world::bridges::BridgeSource;
+            let count = |src| spans.iter().filter(|s| s.source == src).count();
+            println!(
+                "clean: {tied} snapped ends tied in height, {mouths} junction mouths eased, {curves} profile samples rounded; detected bridges: {} over water, {} over gaps, {} in bridge outlines ({planned} deck samples planned)",
+                count(BridgeSource::Water),
+                count(BridgeSource::Gap),
+                count(BridgeSource::Outline)
+            );
+        }
+    }
+    (graph, stats, spans)
+}
+
+/// A road graph and its cleaning results ([`profiled_graph`]).
+struct Profiled {
+    graph: ocw_world::graph::RoadGraph,
+    stats: ocw_worldgen::build::BuildStats,
+    spans: Vec<ocw_worldgen::bridges::Span>,
+    /// For a `--bbox` part: the context graph and its spans.
+    context: Option<(
+        ocw_world::graph::RoadGraph,
+        Vec<ocw_worldgen::bridges::Span>,
+    )>,
+}
+
+impl Profiled {
+    /// The graph the terrain is conformed to and its bridge spans.
+    fn terrain(&self) -> (&ocw_world::graph::RoadGraph, Vec<(usize, f64, f64)>) {
+        let (g, spans) = match &self.context {
+            Some((g, s)) => (g, s),
+            None => (&self.graph, &self.spans),
+        };
+        (
+            g,
+            spans.iter().map(|s| (s.edge, s.from_m, s.to_m)).collect(),
+        )
+    }
+}
+
 /// The road graph of a region with its elevation profiles; for a `--bbox`
 /// part the profiles come from the context roads around it (the context
 /// graph is returned for the terrain), exactly as the package is built, so
 /// a route file cut from the same part has the package's road heights.
+/// `clean`: the world cleaning (spec §4.8) with its water test.
 fn profiled_graph(
     osm: &OsmData,
     dem: &Dem,
     region: &Region,
     context: Option<Region>,
-) -> (
-    ocw_world::graph::RoadGraph,
-    ocw_worldgen::build::BuildStats,
-    Option<ocw_world::graph::RoadGraph>,
-) {
+    clean: Option<&ocw_worldgen::bridges::WaterTest>,
+) -> Profiled {
     let proj = region.projection();
-    let (mut graph, stats) = build_road_graph(osm, region);
-    add_profiles(&mut graph, dem, &proj);
-    let context_graph = context.map(|c| {
-        let (mut g, _) = build_road_graph(osm, &c);
-        add_profiles(&mut g, dem, &proj);
+    let (mut graph, stats, spans) = prepared_graph(osm, dem, region, &proj, clean, true);
+    let context = context.map(|c| {
+        let (g, _, cspans) = prepared_graph(osm, dem, &c, &proj, clean, false);
         let taken = ocw_worldgen::profile::transfer_profiles(&mut graph, &g, 0.5);
         println!(
             "context: {} road edges up to {CONTEXT_DEG}° around the box; {taken} of {} profiles taken from them",
             g.edges.len(),
             graph.edges.len()
         );
-        g
+        (g, cspans)
     });
-    (graph, stats, context_graph)
+    Profiled {
+        graph,
+        stats,
+        spans,
+        context,
+    }
 }
 
 fn route(args: RouteArgs) {
@@ -867,7 +1024,12 @@ fn route(args: RouteArgs) {
     let near = context.clone().unwrap_or_else(|| region.clone());
     let osm = read_osm(&args.src.pbf, &near);
     let dem = load_dem(&args.src, &near);
-    let (graph, _, _) = profiled_graph(&osm, &dem, &region, context);
+    // The same cleaning as the package, so the route has its road heights.
+    let inputs = (!args.no_clean).then(|| read_area_inputs(&args.src.pbf, &near, &proj));
+    let water = inputs
+        .as_ref()
+        .map(|i| ocw_worldgen::bridges::WaterTest::new(&i.areas, &i.lines, &i.outlines));
+    let graph = profiled_graph(&osm, &dem, &region, context, water.as_ref()).graph;
     let (a, b) = (
         proj.project(args.from.0, args.from.1),
         proj.project(args.to.0, args.to.1),
@@ -994,6 +1156,7 @@ struct RouteArgs {
     out: PathBuf,
     bbox: Option<Region>,
     origin: Option<(f64, f64)>,
+    no_clean: bool,
 }
 
 fn parse_bbox(s: &str) -> Result<Region, String> {
@@ -1017,6 +1180,7 @@ struct PackageArgs {
     tiles_near_roads: bool,
     landuse_cells: u32,
     no_areas: bool,
+    no_clean: bool,
     bbox: Option<Region>,
     origin: Option<(f64, f64)>,
     time_zone: Option<String>,
@@ -1039,6 +1203,7 @@ fn package(args: PackageArgs) {
         tiles_near_roads,
         landuse_cells,
         no_areas,
+        no_clean,
         bbox,
         origin,
         time_zone,
@@ -1050,17 +1215,38 @@ fn package(args: PackageArgs) {
     let near = context.clone().unwrap_or_else(|| region.clone());
     let osm = read_osm(&src.pbf, &near);
     let dem = load_dem(&src, &near);
-    let (graph, stats, context_graph) = profiled_graph(&osm, &dem, &region, context);
+    let clean = !no_clean;
+    let ta = Instant::now();
+    let inputs = (!no_areas || clean).then(|| read_area_inputs(&src.pbf, &near, &proj));
+    let read_s = ta.elapsed().as_secs_f64();
+    let water_test = inputs
+        .as_ref()
+        .filter(|_| clean)
+        .map(|i| ocw_worldgen::bridges::WaterTest::new(&i.areas, &i.lines, &i.outlines));
+    let profiled = profiled_graph(&osm, &dem, &region, context, water_test.as_ref());
+    let (graph, stats) = (&profiled.graph, &profiled.stats);
     let base = |x: f64, z: f64| {
         let (lat, lon) = proj.unproject([x, z]);
         dem.elevation(lat, lon).unwrap_or(0.0)
     };
-    let mut pkg = ocw_worldgen::package::build_tiles(
+    let (terrain_graph, terrain_spans) = profiled.terrain();
+    // Cleaning: each road cuts through its nearest point only, with a small
+    // margin; the terrain is settled under the strips afterwards (§4.8.3).
+    let cut = if clean {
+        0.5
+    } else {
+        ocw_worldgen::package::cut_margin_m(1000.0, samples)
+    };
+    let mut terrain = ocw_worldgen::package::GraphTerrain::new(terrain_graph, base, cut)
+        .with_bridge_spans(terrain_spans.iter().copied());
+    if clean {
+        terrain = terrain.nearest_point_only();
+    }
+    let mut pkg = ocw_worldgen::package::build_package_on(
         &name,
         region.origin(),
-        &graph,
-        context_graph.as_ref().unwrap_or(&graph),
-        base,
+        graph,
+        &terrain,
         1000.0,
         samples,
         margin_tiles,
@@ -1079,69 +1265,119 @@ fn package(args: PackageArgs) {
     pkg.time_zone = Some(zone);
     let terrain_s = t.elapsed().as_secs_f64();
     let mut area_report = Vec::new();
-    if !no_areas {
-        let ta = Instant::now();
-        let mut data = ocw_worldgen::areas::AreaData::read_pbfs(&src.pbf).unwrap_or_else(|e| {
-            eprintln!("{e}");
-            std::process::exit(1);
-        });
-        data.retain_near(load_box(&near));
-        let (mut areas, lines) = ocw_worldgen::landuse::extract(&data, &proj);
-        // The sea (spec §4.6): the coastline's islands cut out of the
-        // package's tiles plus a kilometre.
-        let size = f64::from(pkg.tile_size_m);
-        let frame = pkg
-            .tiles
-            .keys()
-            .fold([f64::MAX, f64::MAX, f64::MIN, f64::MIN], |b, k| {
-                let o = k.origin(size);
-                [
-                    b[0].min(o[0] - size),
-                    b[1].min(o[1] - size),
-                    b[2].max(o[0] + 2.0 * size),
-                    b[3].max(o[1] + 2.0 * size),
-                ]
-            });
-        let sea = ocw_worldgen::landuse::sea(&data, &proj, frame);
-        if sea.open > 0 {
-            eprintln!(
-                "warning: {} coastline pieces do not close in the package area: no sea (closing a coast along the frame is not done yet)",
-                sea.open
-            );
-        }
-        let sea_note = format!(
+    let road_zone = ocw_worldgen::clean::RoadZone::new(terrain_graph, &terrain_spans);
+    let spacing = pkg.spacing_m();
+    let ground = |p: [f64; 2]| {
+        let (lat, lon) = proj.unproject(p);
+        dem.elevation(lat, lon)
+    };
+    let footprints = inputs
+        .as_ref()
+        .filter(|_| !no_areas)
+        .map(|i| ocw_worldgen::buildings::footprints(&i.data, &proj));
+    if let (false, Some(i)) = (no_areas, inputs.as_ref()) {
+        let tl = Instant::now();
+        let ls = ocw_worldgen::landuse::add_landuse_with_sea(
+            &mut pkg,
+            &i.areas,
+            i.sea.area.as_ref(),
+            &i.lines,
+            landuse_cells,
+        );
+        let landuse_s = tl.elapsed().as_secs_f64();
+        area_report.push(format!(
+            "areas: read {} areas, {} waterways, {} footprints in {read_s:.1} s",
+            ls.areas,
+            ls.water_lines,
+            footprints.as_ref().map_or(0, Vec::len)
+        ));
+        area_report.push(format!(
             "sea: {} ({} coastline rings in the area, {} open pieces)",
-            if sea.area.is_some() {
+            if i.sea.area.is_some() {
                 "yes, level 0 m"
             } else {
                 "none"
             },
-            sea.islands,
-            sea.open
-        );
-        areas.extend(sea.area);
-        let footprints = ocw_worldgen::buildings::footprints(&data, &proj);
-        let read_s = ta.elapsed().as_secs_f64();
-        let tl = Instant::now();
-        let ls = ocw_worldgen::landuse::add_landuse(&mut pkg, &areas, &lines, landuse_cells);
-        let landuse_s = tl.elapsed().as_secs_f64();
-        let tb = Instant::now();
-        let bs = ocw_worldgen::buildings::add_buildings(&mut pkg, &footprints);
-        let buildings_s = tb.elapsed().as_secs_f64();
-        area_report.push(format!(
-            "areas: read {} areas, {} waterways, {} footprints in {read_s:.1} s",
-            ls.areas, ls.water_lines, bs.footprints
+            i.sea.islands,
+            i.sea.open
         ));
-        area_report.push(sea_note);
         area_report.push(format!(
             "land use (LUSE, {landuse_cells} cells/tile): {}; {} vertices under water, {} with a water level; {landuse_s:.1} s",
             landuse_summary(&ls.cells),
             ls.water_vertices,
             ls.level_vertices
         ));
+        if clean {
+            let lc = ocw_worldgen::clean::clean_landuse(pkg.landuse.as_mut().expect("land use"));
+            // Under a road the terrain keeps its road-conformed height.
+            let road = |p: [f64; 2]| {
+                road_zone
+                    .covers(p, spacing)
+                    .then(|| terrain.height(p[0], p[1]))
+            };
+            let ws = ocw_worldgen::water::level_water(&mut pkg, &i.water, &ground, &road);
+            area_report.push(format!(
+                "clean: land use {} slivers and {} gaps filled ({} cells); water {} river chains and {} lakes levelled ({} vertices, largest change {:.1} m), {} vertices under roads kept at road level",
+                lc.slivers,
+                lc.gaps,
+                lc.cells,
+                ws.river_chains,
+                ws.lakes,
+                ws.relevelled,
+                ws.max_change_m,
+                ws.restored_under_roads
+            ));
+        }
+    }
+    if clean {
+        if let (Some(fps), Some(wt)) = (footprints.as_ref(), water_test.as_ref()) {
+            let outlines: Vec<Vec<[f64; 2]>> = fps.iter().map(|f| f.outer.clone()).collect();
+            let keep = |p: [f64; 2]| road_zone.covers(p, spacing) || wt.is_water(p);
+            let st = ocw_worldgen::clean::level_building_sites(&mut pkg, &outlines, &keep);
+            area_report.push(format!(
+                "clean: {} building sites levelled ({} vertices, up to {:.1} m)",
+                st.sites, st.vertices, st.max_change_m
+            ));
+        }
+        let ts = Instant::now();
+        let ss = ocw_worldgen::clean::settle_terrain_under_roads(&mut pkg, 0.05);
+        area_report.push(format!(
+            "clean: terrain settled under roads: {} samples poked through, {} vertices lowered (up to {:.2} m); {:.1} s",
+            ss.violations,
+            ss.vertices_lowered,
+            ss.max_lowered_m,
+            ts.elapsed().as_secs_f64()
+        ));
+    }
+    if let Some(fps) = footprints.as_ref() {
+        let tb = Instant::now();
+        let bs = ocw_worldgen::buildings::add_buildings(&mut pkg, fps);
+        let buildings_s = tb.elapsed().as_secs_f64();
         area_report.push(format!(
             "buildings (BLDG): {} placed ({} gable roofs, {} with courtyards), {} outside the tiles; {buildings_s:.1} s",
             bs.placed, bs.gabled, bs.with_holes, bs.outside
+        ));
+    }
+    if clean {
+        let ways: std::collections::HashMap<i64, &ocw_worldgen::osm::Tags> =
+            osm.ways.iter().map(|w| (w.id, &w.tags)).collect();
+        let tags = |id: i64| ways.get(&id).map(|t| (*t).clone());
+        let spans = ocw_worldgen::bridges::all_spans(graph, &profiled.spans);
+        let bs = ocw_worldgen::bridges::make_bridges(&mut pkg, &spans, &tags);
+        area_report.push(format!(
+            "bridges (BRDG): {} tagged, {} in outlines, {} over water and {} over gaps detected; {} beam, {} arch, {} truss, {} suspension, {} covered; {} piers, {} arches, {:.1} km",
+            bs.by_source[0],
+            bs.by_source[1],
+            bs.by_source[2],
+            bs.by_source[3],
+            bs.by_structure[0],
+            bs.by_structure[1],
+            bs.by_structure[2],
+            bs.by_structure[3],
+            bs.by_structure[4],
+            bs.piers,
+            bs.arches,
+            bs.length_m / 1000.0
         ));
     }
     let bytes = pkg.to_bytes();
@@ -1436,9 +1672,32 @@ fn dem_diff(src: &SourceArgs, bbox: &Region, step: f64) {
     );
 }
 
+/// `world-builder lint`: the world lint report of a package (spec §4.8.1).
+fn lint(world: &std::path::Path, pbf: &[PathBuf]) {
+    let t = Instant::now();
+    let pkg = read_package(world);
+    let water = (!pbf.is_empty()).then(|| {
+        let mut data = ocw_worldgen::areas::AreaData::read_pbfs(pbf).unwrap_or_else(|e| {
+            eprintln!("{e}");
+            std::process::exit(1);
+        });
+        if let Some(r) = &pkg.region {
+            let [s, w, n, e] = r.bounds();
+            let m = LOAD_MARGIN_DEG;
+            data.retain_near((s - m, w - m, n + m, e + m));
+        }
+        let proj = ocw_world::geo::LocalProjection::new(pkg.origin.0, pkg.origin.1);
+        ocw_worldgen::water::extract_water(&data, &proj)
+    });
+    let report = ocw_worldgen::lint::lint(&pkg, water.as_ref());
+    print!("{}", ocw_worldgen::lint::format_report(&report, pkg.origin));
+    println!("lint: {:.1} s", t.elapsed().as_secs_f64());
+}
+
 fn main() {
     match Cli::parse().command {
         Cmd::Areas { pbf, at, radius } => areas_at(&pbf, at, radius),
+        Cmd::Lint { world, pbf } => lint(&world, &pbf),
         Cmd::DemImport {
             crs,
             cell,
@@ -1545,6 +1804,7 @@ fn main() {
             tiles_near_roads,
             landuse_cells,
             no_areas,
+            no_clean,
             bbox,
             origin,
             time_zone,
@@ -1567,6 +1827,7 @@ fn main() {
                 tiles_near_roads,
                 landuse_cells,
                 no_areas,
+                no_clean,
                 bbox,
                 origin,
                 time_zone,
@@ -1626,6 +1887,7 @@ fn main() {
             out,
             bbox,
             origin,
+            no_clean,
             world: None,
         } => route(RouteArgs {
             src,
@@ -1636,6 +1898,7 @@ fn main() {
             out,
             bbox,
             origin,
+            no_clean,
         }),
         Cmd::Graph {
             src,
