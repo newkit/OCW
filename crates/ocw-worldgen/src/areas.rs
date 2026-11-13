@@ -7,12 +7,28 @@ use std::path::Path;
 use crate::osm::{OsmError, Tags, Way};
 
 /// Keys whose ways or relations are read as areas or water lines.
-const AREA_KEYS: [&str; 6] = [
-    "landuse", "natural", "leisure", "building", "waterway", "water",
+const AREA_KEYS: [&str; 7] = [
+    "landuse", "natural", "leisure", "building", "waterway", "water", "man_made",
 ];
 
 fn wanted(tags: &Tags) -> bool {
     AREA_KEYS.iter().any(|k| tags.contains_key(*k))
+}
+
+/// Tags kept on the ways read as areas: the area keys, building shape,
+/// widths, and – for the water and bridge passes (spec §4.8) – culverts and
+/// underground waterways (`waterway_width` leaves them out; before v2.32
+/// the tag was dropped here, so culverts under roads were drawn as water),
+/// names (river chains) and layers.
+pub fn kept_key(k: &str) -> bool {
+    AREA_KEYS.contains(&k)
+        || k.starts_with("building")
+        || k.starts_with("roof")
+        || k.starts_with("bridge")
+        || matches!(
+            k,
+            "height" | "width" | "area" | "tunnel" | "location" | "layer" | "name"
+        )
 }
 
 /// Role of a multipolygon member way.
@@ -91,14 +107,7 @@ impl AreaData {
             if let osmpbf::Element::Way(w) = el {
                 let tags: Tags = w
                     .tags()
-                    .filter(|(k, _)| {
-                        AREA_KEYS.contains(k)
-                            || k.starts_with("building")
-                            || k.starts_with("roof")
-                            || *k == "height"
-                            || *k == "width"
-                            || *k == "area"
-                    })
+                    .filter(|(k, _)| kept_key(k))
                     .map(|(k, v)| (k.to_string(), v.to_string()))
                     .collect();
                 if wanted(&tags) || members.contains(&w.id()) {
@@ -132,6 +141,56 @@ impl AreaData {
             ways,
             relations,
         })
+    }
+
+    /// Reads several extracts and merges them (by id, see
+    /// [`crate::osm::OsmData::read_pbfs`]).
+    pub fn read_pbfs(paths: &[std::path::PathBuf]) -> Result<Self, String> {
+        let mut out = Self::default();
+        for p in paths {
+            let d = Self::read_pbf(p).map_err(|e| format!("{}: {e}", p.display()))?;
+            let have: HashSet<i64> = out.relations.iter().map(|r| r.id).collect();
+            out.relations
+                .extend(d.relations.into_iter().filter(|r| !have.contains(&r.id)));
+            for (id, w) in d.ways {
+                out.ways.entry(id).or_insert(w);
+            }
+            out.nodes.extend(d.nodes);
+        }
+        Ok(out)
+    }
+
+    /// Keeps only what overlaps (south, west, north, east): ways whose
+    /// box overlaps, relations whose member ways together overlap (with
+    /// all their members), and the nodes they use.
+    pub fn retain_near(&mut self, bounds: (f64, f64, f64, f64)) {
+        use crate::osm::way_box_overlaps;
+        let nodes = &self.nodes;
+        let ways = &self.ways;
+        self.relations.retain(|r| {
+            way_box_overlaps(
+                r.members
+                    .iter()
+                    .filter_map(|m| ways.get(&m.0))
+                    .flat_map(|w| w.nodes.iter().filter_map(|n| nodes.get(n))),
+                bounds,
+            )
+        });
+        let members: HashSet<i64> = self
+            .relations
+            .iter()
+            .flat_map(|r| r.members.iter().map(|m| m.0))
+            .collect();
+        self.ways.retain(|id, w| {
+            members.contains(id)
+                || way_box_overlaps(w.nodes.iter().filter_map(|n| nodes.get(n)), bounds)
+        });
+        let used: HashSet<i64> = self
+            .ways
+            .values()
+            .flat_map(|w| w.nodes.iter().copied())
+            .collect();
+        self.nodes.retain(|id, _| used.contains(id));
     }
 
     fn coords(&self, ring: &[i64]) -> Option<Vec<(f64, f64)>> {
@@ -262,6 +321,77 @@ pub fn inside_rings(p: [f64; 2], rings: &[Vec<[f64; 2]>]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression (spec §4.8): `tunnel=culvert` was dropped when reading,
+    /// so culverts under roads became water bands and carved holes.
+    #[test]
+    fn culvert_and_bridge_tags_are_kept() {
+        for k in [
+            "tunnel",
+            "location",
+            "name",
+            "layer",
+            "man_made",
+            "bridge:structure",
+            "width",
+        ] {
+            assert!(kept_key(k), "{k}");
+        }
+        for k in ["highway", "surface", "source", "note"] {
+            assert!(!kept_key(k), "{k}");
+        }
+        let tags: Tags = [("waterway", "stream"), ("tunnel", "culvert")]
+            .iter()
+            .filter(|(k, _)| kept_key(k))
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        assert_eq!(crate::landuse::waterway_width(&tags), None);
+    }
+
+    #[test]
+    fn areas_shrink_to_the_part_being_built() {
+        let w = |id: i64, nodes: &[i64], tag: &str| Way {
+            id,
+            nodes: nodes.to_vec(),
+            tags: [(tag.to_string(), "forest".to_string())].into(),
+        };
+        let mut d = AreaData {
+            nodes: [
+                (1, (48.0, 8.0)),
+                (2, (48.0, 8.1)),
+                (3, (48.1, 8.1)),
+                (4, (50.0, 10.0)),
+                (5, (50.0, 10.1)),
+                (6, (50.1, 10.1)),
+            ]
+            .into(),
+            ways: [
+                (10, w(10, &[1, 2, 3, 1], "landuse")),
+                (11, w(11, &[4, 5, 6, 4], "landuse")),
+                // Member of a relation near the box, far away itself.
+                (12, w(12, &[4, 5], "x")),
+            ]
+            .into(),
+            relations: vec![
+                Relation {
+                    id: 1,
+                    tags: Tags::new(),
+                    members: vec![(10, Role::Outer), (12, Role::Inner)],
+                },
+                Relation {
+                    id: 2,
+                    tags: Tags::new(),
+                    members: vec![(11, Role::Outer)],
+                },
+            ],
+        };
+        d.retain_near((47.9, 7.9, 48.2, 8.2));
+        assert_eq!(d.relations.len(), 1);
+        let mut ids: Vec<i64> = d.ways.keys().copied().collect();
+        ids.sort();
+        assert_eq!(ids, vec![10, 12]);
+        assert!(!d.nodes.contains_key(&6) && d.nodes.contains_key(&4));
+    }
 
     #[test]
     fn rings_are_assembled_from_split_ways_in_any_direction() {

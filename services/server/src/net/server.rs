@@ -169,6 +169,14 @@ impl NetServer {
         }
     }
 
+    /// Sends one message to the given connections (a world change goes to
+    /// the riders of the ended session, a late answer to its asker).
+    pub fn send_to(&mut self, conns: &[ConnectionId], bytes: &[u8]) {
+        for peer in self.peers.values().filter(|p| conns.contains(&p.id)) {
+            deliver(peer, bytes.to_vec());
+        }
+    }
+
     /// Closes all connections ("server shutting down") and waits briefly
     /// for the clients to acknowledge.
     pub fn shutdown(mut self) {

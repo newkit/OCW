@@ -123,6 +123,27 @@ pub fn tunnel_camera_wanted(stretches: &[(f64, f64)], distance: f64) -> bool {
         .any(|&(a, b)| distance >= a - ENTER_AHEAD_M && distance <= b + LEAVE_AFTER_M)
 }
 
+/// How far into a tunnel direct sunlight still reaches (m), past the
+/// portal; deeper inside, the hill above shades everything.
+pub const SUN_REACH_M: f64 = 25.0;
+
+/// Share of direct sunlight at `distance` along the track (1 outside a
+/// tunnel, 0 deeper than [`SUN_REACH_M`] inside, linear between). In the
+/// renderer only the tube casts shadows (terrain does not, for speed), so
+/// a low sun would otherwise shine through the hillside into the tube onto
+/// the rider and the markings, in shadow-map squares at the tube's thin
+/// shell (user, 2026-11-13, with the moving sun of spec 2.33).
+pub fn daylight_share(stretches: &[(f64, f64)], distance: f64) -> f32 {
+    stretches
+        .iter()
+        .map(|&(a, b)| {
+            // The covered stretch starts PORTAL_M inside the tube's ends.
+            let depth = (distance - (a + PORTAL_M)).min((b - PORTAL_M) - distance);
+            (1.0 - depth / SUN_REACH_M).clamp(0.0, 1.0) as f32
+        })
+        .fold(1.0, f32::min)
+}
+
 /// Eye and look-at point of the camera in a tunnel: on the road (half the
 /// rider's lateral offset) behind the rider, inside the tube even in a
 /// curve. At the portals the terrain inside the tube is cut away
@@ -439,6 +460,32 @@ mod tests {
             b = smooth_blend(b, true, 1.0 / 60.0);
         }
         assert_eq!(b, 1.0);
+    }
+
+    /// No direct sun deep in a tunnel; full sun outside; a short fade
+    /// behind each portal.
+    #[test]
+    fn no_direct_sun_inside_a_tunnel() {
+        let r = road();
+        let s = covered_stretches(&r, &hill, 0.0, 2000.0);
+        assert_eq!(daylight_share(&s, 500.0), 1.0);
+        assert_eq!(daylight_share(&s, 1500.0), 1.0);
+        assert_eq!(daylight_share(&[], 1000.0), 1.0);
+        for d in [850.0, 1000.0, 1150.0] {
+            assert_eq!(daylight_share(&s, d), 0.0, "{d}");
+        }
+        let (a, b) = s[0];
+        assert_eq!(daylight_share(&s, a), 1.0);
+        assert_eq!(daylight_share(&s, b), 1.0);
+        let half = daylight_share(&s, a + PORTAL_M + SUN_REACH_M / 2.0);
+        assert!((half - 0.5).abs() < 1e-3, "{half}");
+        // Darker the deeper in.
+        let mut last = 1.0;
+        for i in 0..60 {
+            let v = daylight_share(&s, a + f64::from(i));
+            assert!(v <= last);
+            last = v;
+        }
     }
 
     #[test]

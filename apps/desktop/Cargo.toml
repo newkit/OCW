@@ -17,6 +17,8 @@ ocw-sim.workspace = true
 ocw-protocol.workspace = true
 ocw-devices.workspace = true
 ocw-world.workspace = true
+# World clock, time zones, sun and light (spec §14 Phase 9).
+ocw-sky.workspace = true
 ocw-worldstore.workspace = true
 ocw-render.workspace = true
 ocw-server.workspace = true

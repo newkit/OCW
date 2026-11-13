@@ -10,24 +10,38 @@
 //! - [`filter`]: rideable ways and road classes
 //! - [`projection`]: local metric projection
 //! - [`build`]: ways → road graph with stable edge IDs, cleanup, dead ends
-//! - [`dem`]: SRTM elevation tiles
+//! - [`dem`]: elevation sources (SRTM tiles, DTM grid layers, feathering)
+//! - [`dtm`]: high-resolution DTM grids (GeoTIFF, XYZ, resampling)
+//! - [`crs`]: UTM and Swiss LV95 projections of the DTM grids
 //! - [`chains`]: through-roads across the OSM way splits
 //! - [`profile`]: road elevation profiles (sampling, smoothing, limits)
 //! - [`package`]: road-conformed terrain and 1 km tiles → world package
 //! - [`route`]: routes through the graph with their elevation
 //! - [`svg`]: map of a road graph for visual checks
+//! - [`bridges`]: bridge detection, planned decks and structures (spec §4.8.6)
+//! - [`clean`]: world cleaning passes – polylines, near misses, junction mouths, vertical curves, terrain settling (spec §4.8)
+//! - [`lint`]: world lint – what looks physically wrong in a package (spec §4.8)
+//! - [`spatial`]: bucket index over road segments
+//! - [`water`]: river and lake levels (spec §4.8)
 
 pub mod areas;
+pub mod bridges;
 pub mod build;
 pub mod buildings;
 pub mod chains;
+pub mod clean;
+pub mod crs;
 pub mod dem;
 pub mod diff;
+pub mod dtm;
 pub mod filter;
 pub mod landuse;
+pub mod lint;
 pub mod osm;
 pub mod package;
 pub mod profile;
 pub mod projection;
 pub mod route;
+pub mod spatial;
 pub mod svg;
+pub mod water;

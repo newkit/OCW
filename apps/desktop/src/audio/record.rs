@@ -49,7 +49,8 @@ pub fn samples_due_s(elapsed_s: f64, rate: u32) -> u64 {
 }
 
 /// A 16-bit PCM WAV file written as it goes; the sizes are filled in by
-/// [`finish`](Self::finish). Mono input goes to every channel.
+/// [`finish`](Self::finish). Mono input goes to every channel, stereo
+/// input to the first two.
 pub struct WavWriter<W: Write + Seek> {
     out: W,
     channels: u16,
@@ -81,6 +82,7 @@ impl<W: Write + Seek> WavWriter<W> {
     }
 
     /// Appends mono samples (clipped to ±1).
+    #[cfg(test)]
     pub fn write_mono(&mut self, samples: &[f32]) -> std::io::Result<()> {
         let mut buf = Vec::with_capacity(samples.len() * usize::from(self.channels) * 2);
         for &s in samples {
@@ -90,6 +92,29 @@ impl<W: Write + Seek> WavWriter<W> {
             }
         }
         self.frames += samples.len() as u64;
+        self.out.write_all(&buf)
+    }
+
+    /// Appends interleaved stereo samples (clipped to ±1); a file with
+    /// more channels gets the average on the others, a mono file only the
+    /// average.
+    pub fn write_stereo(&mut self, samples: &[f32]) -> std::io::Result<()> {
+        let ch = usize::from(self.channels);
+        let pcm = |s: f32| (s.clamp(-1.0, 1.0) * 32767.0).round() as i16;
+        let mut buf = Vec::with_capacity(samples.len() / 2 * ch * 2);
+        for f in samples.as_chunks::<2>().0 {
+            let mid = pcm(0.5 * (f[0] + f[1]));
+            if ch == 1 {
+                buf.extend_from_slice(&mid.to_le_bytes());
+                continue;
+            }
+            buf.extend_from_slice(&pcm(f[0]).to_le_bytes());
+            buf.extend_from_slice(&pcm(f[1]).to_le_bytes());
+            for _ in 2..ch {
+                buf.extend_from_slice(&mid.to_le_bytes());
+            }
+        }
+        self.frames += (samples.len() / 2) as u64;
         self.out.write_all(&buf)
     }
 
@@ -193,7 +218,7 @@ fn spawn_writer(path: &Path, rate: u32) -> std::io::Result<(Sender<Vec<f32>>, Wr
 
 fn write_all(mut wav: WavWriter<BufWriter<File>>, rx: Receiver<Vec<f32>>) -> std::io::Result<u64> {
     for chunk in rx {
-        wav.write_mono(&chunk)?;
+        wav.write_stereo(&chunk)?;
     }
     Ok(wav.finish()?.0)
 }
@@ -241,10 +266,11 @@ impl AudioCapture {
         })
     }
 
+    /// `n` stereo frames from the mixer (interleaved).
     fn render(&self, n: u64) -> Vec<f32> {
-        let mut buf = vec![0.0; n as usize];
+        let mut buf = vec![0.0; 2 * n as usize];
         if let Ok(mut m) = self.mixer.lock() {
-            m.render(&mut buf, 1);
+            m.render(&mut buf, 2);
         }
         buf
     }
@@ -344,6 +370,20 @@ mod tests {
         assert_eq!((s(4), s(5)), (-32767, -32767));
         assert_eq!(s(6), 32767);
         assert_eq!(s(8), 16384);
+        // Stereo input keeps its sides.
+        let mut w = WavWriter::new(Cursor::new(Vec::new()), 48_000, 2).unwrap();
+        w.write_stereo(&[0.5, -0.5, 1.0, 0.0]).unwrap();
+        let (frames, out) = w.finish().unwrap();
+        let b = out.into_inner();
+        assert_eq!((frames, b.len()), (2, 44 + 8));
+        let s = |i: usize| i16::from_le_bytes([b[44 + 2 * i], b[45 + 2 * i]]);
+        assert_eq!((s(0), s(1), s(2), s(3)), (16384, -16384, 32767, 0));
+        // Into a mono file: the average.
+        let mut w = WavWriter::new(Cursor::new(Vec::new()), 48_000, 1).unwrap();
+        w.write_stereo(&[0.5, -0.5, 1.0, 0.0]).unwrap();
+        let b = w.finish().unwrap().1.into_inner();
+        assert_eq!(b.len(), 44 + 4);
+        assert_eq!(i16::from_le_bytes([b[46], b[47]]), 16384);
     }
 
     #[test]

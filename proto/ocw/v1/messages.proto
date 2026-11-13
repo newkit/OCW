@@ -18,6 +18,45 @@ message ClientMessage {
     RouteRejoin route_rejoin = 7;
     EventRequest event = 8;
     VoiceTokenRequest voice = 9;
+    ClockRequest clock = 10;
+    WorldRequest world = 11;
+  }
+}
+
+// World menu (spec §3.2.1, World -> Change world): asks the server to ride
+// another world package. The server owns the session (spec §6.1) and
+// decides who may (Welcome.world_access): the host of a shared session by
+// default, nobody when the organizer fixed the world. It rides only
+// packages of its own catalog (never a path a client names). Answered with
+// a DevCommandResult; when the switch is done every client gets a
+// WorldChange and joins again with a Hello on the same connection.
+// Reliable.
+message WorldRequest {
+  // The package: its id ("europe/liechtenstein"), "id@version", its name
+  // or its file name as the server lists it.
+  string world = 1;
+  // A route of the package by name; empty: a free ride.
+  string route = 2;
+}
+
+// Time machine (spec §14 Phase 9, 9D): changes the session's world clock.
+// The server owns the clock (spec §6.1) and decides who may change it:
+// anyone on a local server (the single player), only the host in a
+// shared session (see WorldClock.access). Answered with a
+// DevCommandResult (ok + message). Reliable.
+message ClockRequest {
+  oneof change {
+    // Back to the real instant (speed x1, running).
+    bool real = 1;
+    // A chosen instant (Unix ms, UTC); speed and pause stay.
+    sint64 fixed_unix_ms = 2;
+    // The real instant plus this offset (ms; speed x1, running).
+    sint64 offset_ms = 3;
+    // Move the world instant by this much (ms), keeping the mode.
+    sint64 step_ms = 4;
+    // World seconds per second (1, 10, 60, 600; at most 3600).
+    float speed = 5;
+    bool paused = 6;
   }
 }
 
@@ -207,7 +246,30 @@ message ServerMessage {
     PathUpdate path = 5;
     EventState event = 6;
     VoiceGrant voice = 7;
+    WorldChange world_change = 8;
   }
+}
+
+// The session rides another world now (after the host's WorldRequest,
+// spec §3.2.1). The old session has ended (the world clock goes on);
+// every client loads the same package (installed locally: the same id,
+// version and content hash) and joins again with a Hello on the same
+// connection. Reliable.
+message WorldChange {
+  // The package's manifest id and version ("local/<name>", 0 without a
+  // manifest).
+  string package_id = 1;
+  uint64 version = 2;
+  // The region's name, for people.
+  string name = 3;
+  // The road graph (name and fingerprint), as in Welcome.world.
+  WorldPackageId world = 4;
+  // The route ridden (empty: a free ride).
+  string route = 5;
+  // SHA-256 of the package file.
+  bytes content_sha256 = 6;
+  // Who asked for it (display name).
+  string by = 7;
 }
 
 // Answer to a VoiceTokenRequest (spec §7): the LiveKit server URL and an
@@ -315,6 +377,46 @@ message Welcome {
   // The server issues voice tokens (VoiceTokenRequest, spec §7): clients
   // join the voice room automatically once the ride is shared (§2.4).
   bool voice = 9;
+  // The session's world clock (spec §14 Phase 9); absent from older
+  // servers (the client then shows the real time).
+  WorldClock clock = 10;
+  // Who may switch the world (WorldRequest, spec §3.2.1): the same rule as
+  // the clock's access (anyone on a local server, the host by default).
+  ClockAccess world_access = 11;
+}
+
+enum ClockMode {
+  CLOCK_MODE_REAL = 0;
+  CLOCK_MODE_FIXED = 1;
+  CLOCK_MODE_OFFSET = 2;
+}
+
+// Who may change the world clock (ClockRequest).
+enum ClockAccess {
+  // Every rider (a local server: the single player is the host).
+  CLOCK_ACCESS_ANYONE = 0;
+  // Only the host (host_rider_id): the rider who has been connected longest.
+  CLOCK_ACCESS_HOST = 1;
+  // Nobody (an organizer's event, set on the server).
+  CLOCK_ACCESS_NOBODY = 2;
+}
+
+// The session's world clock (spec §14 Phase 9, 9A / 9D): the world instant
+// at the server tick of the message it travels in, and how fast it runs.
+// Clients advance it smoothly between messages.
+message WorldClock {
+  // World instant (Unix ms, UTC).
+  sint64 world_unix_ms = 1;
+  // World seconds per session second (0 = paused).
+  float rate = 2;
+  ClockMode mode = 3;
+  // The chosen speed (also while paused).
+  float speed = 4;
+  bool paused = 5;
+  // World minus real instant (ms).
+  sint64 offset_ms = 6;
+  ClockAccess access = 7;
+  uint32 host_rider_id = 8;
 }
 
 message Reject {
@@ -333,6 +435,8 @@ message Snapshot {
   // Riders of connected clients (humans, the receiver included; bots are
   // not counted): voice joins automatically only on a shared ride (§2.4).
   uint32 human_riders = 3;
+  // The world clock at server_tick (spec §14 Phase 9).
+  WorldClock clock = 4;
 }
 
 // Quantized rider state (spec §6.2).

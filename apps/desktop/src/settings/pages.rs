@@ -31,11 +31,29 @@ pub enum Page {
     Workshop,
     /// A rider's bike and look (index into the profiles; Workshop → Bike).
     Bike(usize),
-    /// Ride → World packages: the known packages (M3; rows from
-    /// `ride::pages`, like the following).
+    /// World (top level, spec §3.2.1): change world, about this world,
+    /// routes, time, weather (rows from `ride::world`, like the World
+    /// pages below).
+    WorldHome,
+    /// World → Change world: the worlds found and the test routes.
     Worlds,
-    /// One of them (index into the list): free ride, its routes.
+    /// One of them (index into the list): its default ride, free ride,
+    /// routes, parts.
     World(usize),
+    /// The routes of a world not ridden now (from its package summary).
+    WorldRoutes(usize),
+    /// The neighbouring packages of a world (spec §2.2.2).
+    WorldParts(usize),
+    /// World → About this world.
+    WorldInfo,
+    /// World → About → Sun and time at the rider.
+    WorldSun,
+    /// World → About → Data sources (the credits, spec §13).
+    WorldSources,
+    /// One source with its full notice (index into the credits).
+    WorldSource(usize),
+    /// World → Weather (clear until Phase 9 S4).
+    Weather,
     /// Navi → Routes: the routes of the loaded package and the user's.
     Routes,
     /// Navi → Rides: the saved rides with their Strava state.
@@ -51,6 +69,8 @@ pub enum Page {
     VoiceDevices,
     /// Voice → Participants: mute single riders.
     VoiceParticipants,
+    /// World → Time machine (spec §14 Phase 9; rows from `timemachine`).
+    TimeMachine,
 }
 
 impl Page {
@@ -76,8 +96,16 @@ impl Page {
             Self::Rider(_) => "Rider",
             Self::Workshop => "Workshop",
             Self::Bike(_) => "Bike",
-            Self::Worlds => "World packages",
-            Self::World(_) => "World package",
+            Self::WorldHome => "World",
+            Self::Worlds => "Change world",
+            Self::World(_) => "World",
+            Self::WorldRoutes(_) => "Routes of the world",
+            Self::WorldParts(_) => "Parts of the world",
+            Self::WorldInfo => "About this world",
+            Self::WorldSun => "Sun and time",
+            Self::WorldSources => "Data sources",
+            Self::WorldSource(_) => "Data source",
+            Self::Weather => "Weather",
             Self::Routes => "Routes",
             Self::Rides => "Rides",
             Self::GpxImport => "GPX import",
@@ -85,19 +113,33 @@ impl Page {
             Self::Voice => "Voice",
             Self::VoiceDevices => "Voice devices",
             Self::VoiceParticipants => "Voice participants",
+            Self::TimeMachine => "Time machine",
         }
     }
 
-    /// The Ride and Navi lists (rows from `ride::pages`).
+    /// The Ride and Navi lists (rows from `ride::pages`) and the World
+    /// pages: lists without values to change.
     pub fn is_ride_page(self) -> bool {
         matches!(
             self,
-            Self::Worlds
+            Self::Routes | Self::Rides | Self::GpxImport | Self::Workouts
+        ) || self.is_world_page()
+    }
+
+    /// The World pages (rows from `ride::world`).
+    pub fn is_world_page(self) -> bool {
+        matches!(
+            self,
+            Self::WorldHome
+                | Self::Worlds
                 | Self::World(_)
-                | Self::Routes
-                | Self::Rides
-                | Self::GpxImport
-                | Self::Workouts
+                | Self::WorldRoutes(_)
+                | Self::WorldParts(_)
+                | Self::WorldInfo
+                | Self::WorldSun
+                | Self::WorldSources
+                | Self::WorldSource(_)
+                | Self::Weather
         )
     }
 
@@ -115,6 +157,8 @@ impl Page {
             Self::Rider(_) => Some(Self::Riders),
             Self::Bike(_) => Some(Self::Workshop),
             Self::World(_) => Some(Self::Worlds),
+            Self::WorldRoutes(i) | Self::WorldParts(i) => Some(Self::World(i)),
+            Self::WorldSource(_) => Some(Self::WorldSources),
             Self::VoiceDevices | Self::VoiceParticipants => Some(Self::Voice),
             _ => None,
         }
@@ -139,10 +183,28 @@ impl Page {
                 "Sounds are made by OCW itself; Enter on a volume plays a test sound. Output: the device (default = the system's).",
             ],
             Self::Controls | Self::Display => &[],
-            Self::Worlds => &[
-                "Installed world packages (cache, and package files next to the app). Choose one for a free ride or its routes.",
+            Self::WorldHome => &[
+                "The world you ride in: change it without restarting, its data and credits, the time of day and the weather.",
             ],
-            Self::World(_) => &["Free ride from a random road, or from where you are now."],
+            Self::Worlds => &[
+                "Installed world packages and the files next to the one ridden now; then the test routes. The ride so far is saved.",
+            ],
+            Self::World(_) => &[
+                "Ride: its first route, else a free ride. In a shared ride only the host changes the world.",
+            ],
+            Self::WorldRoutes(_) => &["Routes of this world package. Choose one to ride it."],
+            Self::WorldParts(_) => &[
+                "Neighbouring packages: the roads continue into them. Start a free ride in one of them.",
+            ],
+            Self::WorldInfo => &["The world package ridden now and where its data comes from."],
+            Self::WorldSun => &[
+                "Today at your place in the world, in its local time (the date of the time machine).",
+            ],
+            Self::WorldSources => {
+                &["The credits of the world's data. Enter shows the full notice."]
+            }
+            Self::WorldSource(_) => &[],
+            Self::Weather => &[crate::weather::PENDING_NOTE],
             Self::Routes => &[
                 "Routes of the loaded world package and your imported ones (GPX import). Choose one to ride it.",
             ],
@@ -159,6 +221,9 @@ impl Page {
             Self::VoiceParticipants => {
                 &["Riders in the voice room. Confirm mutes or unmutes one for you."]
             }
+            Self::TimeMachine => &[
+                "Date, time and speed of the world's clock (sun and light). Solo you set it; in a shared ride the host does.",
+            ],
             Self::Workouts => &[
                 "Structured workouts in ERG mode: yours from the workouts folder (.toml, .erg, .mrc), then the examples. % FTP targets use the rider's FTP.",
             ],
@@ -344,10 +409,11 @@ fn short(name: &str, max: usize) -> String {
     }
 }
 
-/// The Audio page (spec §3.2.1 M5): the four volumes (Enter plays a test
-/// sound on that bus), mute, and the output device (← / → step through
-/// "default" and the devices; a saved device that is missing stays in the
-/// list, marked).
+/// The Audio page (spec §3.2.1 M5): the volumes (Enter plays a test sound
+/// on that bus) – master, effects, the other riders, voice; music joins
+/// when there is music (seven items per page) –, mute, and the output
+/// device (← / → step through "default" and the devices; a saved device
+/// that is missing stays in the list, marked).
 pub fn audio_rows(settings: &Settings, devices: &AudioDevices) -> Vec<Row> {
     let volume = |key: &str, label: &str, test: &str| Row {
         confirm: Some(Activate::Command(format!("audio.play {test}"))),
@@ -386,7 +452,7 @@ pub fn audio_rows(settings: &Settings, devices: &AudioDevices) -> Vec<Row> {
     vec![
         volume("audio.master", "Master volume", "test"),
         volume("audio.effects", "Effects (bike, wind)", "test-effects"),
-        volume("audio.music", "Music", "test-music"),
+        volume("audio.others", "Other riders", "test-others"),
         volume("audio.voice", "Voice", "test-voice"),
         setting_row(settings, "audio.mute", "Mute"),
         Row {
@@ -432,6 +498,7 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
             setting_row(settings, "display.units", "Units"),
             setting_row(settings, "display.camera", "Camera"),
             setting_row(settings, "display.fps", "FPS counter"),
+            setting_row(settings, "display.night_brightness", "Night brightness (%)"),
             setting_row(settings, "display.fullscreen", "Fullscreen (next start)"),
         ],
         Page::Riders => {
@@ -500,15 +567,25 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
             };
             bike_rows(r)
         }
-        // From the ride catalog (`ride::pages::rows`).
-        Page::Worlds
+        // From the ride catalog (`ride::pages::rows`, `ride::world::rows`).
+        Page::WorldHome
+        | Page::Worlds
         | Page::World(_)
+        | Page::WorldRoutes(_)
+        | Page::WorldParts(_)
+        | Page::WorldInfo
+        | Page::WorldSun
+        | Page::WorldSources
+        | Page::WorldSource(_)
+        | Page::Weather
         | Page::Routes
         | Page::Rides
         | Page::GpxImport
         | Page::Workouts => Vec::new(),
         // From the voice state (`voice::page::rows`).
         Page::Voice | Page::VoiceDevices | Page::VoiceParticipants => Vec::new(),
+        // From the world clock (`timemachine::rows`).
+        Page::TimeMachine => Vec::new(),
         Page::Workshop => {
             let mut out: Vec<Row> = riders
                 .riders
@@ -773,6 +850,10 @@ mod tests {
         assert_eq!(master.right.as_deref(), Some("set audio.master 85"));
         assert_eq!(master.confirm, cmd("audio.play test"));
         assert_eq!(row(&a, "Voice").confirm, cmd("audio.play test-voice"));
+        let others = row(&a, "Other riders");
+        assert_eq!(others.value.as_deref(), Some("80"));
+        assert_eq!(others.left.as_deref(), Some("set audio.others 75"));
+        assert_eq!(others.confirm, cmd("audio.play test-others"));
         assert_eq!(row(&a, "Mute").confirm, cmd("set audio.mute on"));
         let out = row(&a, "Output");
         assert_eq!(out.value.as_deref(), Some("default"));

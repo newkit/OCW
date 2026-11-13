@@ -62,6 +62,11 @@ impl LocalServer {
                 start_m,
                 allow_local_events: true,
                 voice: None,
+                // The single player is the host (spec §14 Phase 9, 9D).
+                clock_access: crate::ClockAccess::Anyone,
+                // The app switches its local world itself (spec §3.2.1).
+                world_access: crate::ClockAccess::Anyone,
+                real_epoch_ms: None,
             },
         );
         let thread = thread::Builder::new()
@@ -130,6 +135,11 @@ impl SteppedServer {
                 start_m,
                 allow_local_events: true,
                 voice: None,
+                // The single player is the host (spec §14 Phase 9, 9D).
+                clock_access: crate::ClockAccess::Anyone,
+                // The app switches its local world itself (spec §3.2.1).
+                world_access: crate::ClockAccess::Anyone,
+                real_epoch_ms: None,
             },
         );
         let conn = server.connect();

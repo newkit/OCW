@@ -21,7 +21,7 @@ use std::time::Instant;
 
 use clap::{Parser, Subcommand};
 use ocw_worldgen::build::{Polygon, Region, build_road_graph};
-use ocw_worldgen::dem::{Dem, HgtTile};
+use ocw_worldgen::dem::{Dem, GridTile, HgtTile};
 use ocw_worldgen::osm::OsmData;
 use ocw_worldgen::profile::add_profiles;
 use ocw_worldgen::svg::{Colouring, graph_svg_with};
@@ -37,18 +37,11 @@ struct Cli {
 enum Cmd {
     /// Build the road graph of a region and print its statistics.
     Graph {
-        /// OSM PBF extract.
-        #[arg(long, default_value = "data/pilot/liechtenstein.osm.pbf")]
-        pbf: PathBuf,
-        /// Region boundary as an Osmosis/Geofabrik .poly file.
-        #[arg(long, default_value = "data/pilot/liechtenstein.poly")]
-        poly: PathBuf,
+        #[command(flatten)]
+        src: SourceArgs,
         /// Region as south,west,north,east in degrees instead of --poly.
         #[arg(long, value_parser = parse_bbox)]
         bbox: Option<Region>,
-        /// SRTM elevation tiles (.hgt); adds road elevation profiles.
-        #[arg(long = "hgt", default_values = ["data/pilot/N47E009.hgt"])]
-        hgt: Vec<PathBuf>,
         /// Write an SVG map of the graph, coloured by road class.
         #[arg(long)]
         svg: Option<PathBuf>,
@@ -62,12 +55,8 @@ enum Cmd {
     /// Build the world package of a region: road-conformed terrain and road
     /// strips in 1 km tiles (spec §4.5, §4.7).
     Package {
-        #[arg(long, default_value = "data/pilot/liechtenstein.osm.pbf")]
-        pbf: PathBuf,
-        #[arg(long, default_value = "data/pilot/liechtenstein.poly")]
-        poly: PathBuf,
-        #[arg(long = "hgt", default_values = ["data/pilot/N47E009.hgt"])]
-        hgt: Vec<PathBuf>,
+        #[command(flatten)]
+        src: SourceArgs,
         #[arg(long, default_value = "Liechtenstein")]
         name: String,
         /// Terrain samples per 1 km tile side (101 = 10 m grid).
@@ -82,6 +71,10 @@ enum Cmd {
         /// Leave out land use and buildings (roads and terrain only).
         #[arg(long)]
         no_areas: bool,
+        /// Skip the world cleaning passes (spec §4.8): the package as
+        /// before v2.39, e.g. for before/after comparisons.
+        #[arg(long)]
+        no_clean: bool,
         /// Only the part of the --poly region inside this box
         /// (south,west,north,east): splits a region into neighbouring
         /// packages that share the border line (spec §2.2.2).
@@ -92,6 +85,10 @@ enum Cmd {
         /// origin share their metres and tile grid exactly.
         #[arg(long, value_parser = parse_latlon)]
         origin: Option<(f64, f64)>,
+        /// IANA time zone of the area (spec §14 Phase 9; default: the zone
+        /// of the region at the origin, e.g. Europe/Vaduz, Europe/Berlin).
+        #[arg(long, value_name = "ZONE")]
+        time_zone: Option<String>,
         #[arg(long, default_value = "data/pilot/liechtenstein.ocwpkg")]
         out: PathBuf,
         #[command(flatten)]
@@ -141,6 +138,51 @@ enum Cmd {
     /// Compare the road graphs of two builds by stable edge ID (which
     /// roads and routes re-match after a rebuild, spec §4.4).
     Diff { old: PathBuf, new: PathBuf },
+    /// Import high-resolution DTM tiles (spec §4.3): XYZ text (LGL DGM1)
+    /// or GeoTIFF, block-averaged to --cell and written as one GeoTIFF per
+    /// input into --out (existing outputs are kept), for `--dem`.
+    DemImport {
+        /// CRS of the inputs: utm32, lv95, epsg:CODE (GeoTIFFs: only when
+        /// they do not name one).
+        #[arg(long, value_parser = ocw_worldgen::crs::Crs::parse)]
+        crs: ocw_worldgen::crs::Crs,
+        /// Output cell size in metres (a multiple of the input's).
+        #[arg(long, default_value_t = 2.0)]
+        cell: f64,
+        /// Tile size in metres: partial tiles are padded with voids to it.
+        #[arg(long, default_value_t = 1000.0)]
+        tile: f64,
+        #[arg(long)]
+        out: PathBuf,
+        /// Input files (.xyz, .tif).
+        files: Vec<PathBuf>,
+    },
+    /// Print the grid tiles (lower-left corner in km, `E_N`) that cover a
+    /// latitude / longitude box, for scripted DTM downloads.
+    DemTiles {
+        #[arg(long, value_parser = ocw_worldgen::crs::Crs::parse)]
+        crs: ocw_worldgen::crs::Crs,
+        #[arg(long, value_parser = parse_bbox)]
+        bbox: Region,
+        /// Tile size in metres.
+        #[arg(long, default_value_t = 1000.0)]
+        size: f64,
+        /// Lattice offset of the tile corners (east,north in metres; LGL's
+        /// 2 km tiles start at odd kilometres east: 1000,0).
+        #[arg(long, default_value = "0,0", value_parser = parse_xz)]
+        phase: (f64, f64),
+    },
+    /// Compare the DTM grids (--dem) with SRTM (--hgt) on a lattice inside
+    /// a box: where the DTM covers, how much they differ.
+    DemDiff {
+        #[command(flatten)]
+        src: SourceArgs,
+        #[arg(long, value_parser = parse_bbox)]
+        bbox: Region,
+        /// Lattice spacing in metres.
+        #[arg(long, default_value_t = 100.0)]
+        step: f64,
+    },
     /// Diagnostics: the OSM areas (land use, water, buildings) that contain
     /// a point and the waterways near it, with their land class.
     Areas {
@@ -158,15 +200,22 @@ enum Cmd {
         #[arg(long, default_value = "data/pilot/liechtenstein.ocwpkg")]
         world: PathBuf,
     },
+    /// World lint (spec §4.8.1): steps and kinks in roads, floating and
+    /// buried roads, junction steps, near-miss ends, rivers flowing uphill,
+    /// tilted lakes, floating buildings, land-use slivers.
+    Lint {
+        #[arg(long, default_value = "data/pilot/liechtenstein.ocwpkg")]
+        world: PathBuf,
+        /// The OSM extract(s) the package was built from: adds the river
+        /// and lake checks.
+        #[arg(long)]
+        pbf: Vec<PathBuf>,
+    },
     /// Build a route along the road graph (preferring main roads) and write
     /// it with its elevation and the surrounding terrain (ocw-route file).
     Route {
-        #[arg(long, default_value = "data/pilot/liechtenstein.osm.pbf")]
-        pbf: PathBuf,
-        #[arg(long, default_value = "data/pilot/liechtenstein.poly")]
-        poly: PathBuf,
-        #[arg(long = "hgt", default_values = ["data/pilot/N47E009.hgt"])]
-        hgt: Vec<PathBuf>,
+        #[command(flatten)]
+        src: SourceArgs,
         /// Start as lat,lon (default: Vaduz).
         #[arg(long, default_value = "47.1395,9.5220", value_parser = parse_latlon)]
         from: (f64, f64),
@@ -188,6 +237,9 @@ enum Cmd {
         /// Projection origin (lat,lon), as for `package --origin`.
         #[arg(long, value_parser = parse_latlon)]
         origin: Option<(f64, f64)>,
+        /// Skip the world cleaning passes, as for `package --no-clean`.
+        #[arg(long)]
+        no_clean: bool,
         /// Instead of an ocw-route file: add the route (by stable edge IDs)
         /// to this world package's routes (spec §2.7), on its road graph.
         #[arg(long, value_name = "PKG")]
@@ -491,9 +543,35 @@ struct ManifestOpts {
     /// Build number (default: the existing manifest's, +1 if the package changed).
     #[arg(long = "pkg-version", value_name = "N")]
     version: Option<u64>,
-    /// Attribution notice of the elevation data (default: SRTM).
+    /// Attribution of the elevation data, repeatable: `srtm`, `lgl-dgm1`,
+    /// `swissalti3d` or a free notice (default: SRTM).
     #[arg(long, value_name = "TEXT")]
-    dem_attribution: Option<String>,
+    dem_attribution: Vec<String>,
+}
+
+/// The source data of a build: OSM extracts, region boundary, elevation.
+#[derive(clap::Args, Clone, Debug)]
+struct SourceArgs {
+    /// OSM PBF extract; repeat to merge neighbouring extracts of the same
+    /// day (e.g. two Geofabrik Regierungsbezirke).
+    #[arg(long, default_values = ["data/pilot/liechtenstein.osm.pbf"])]
+    pbf: Vec<PathBuf>,
+    /// Region boundary as an Osmosis/Geofabrik .poly file; repeat to join
+    /// several.
+    #[arg(long, default_values = ["data/pilot/liechtenstein.poly"])]
+    poly: Vec<PathBuf>,
+    /// SRTM elevation tiles (.hgt): the fallback outside the --dem grids.
+    #[arg(long = "hgt", default_values = ["data/pilot/N47E009.hgt"])]
+    hgt: Vec<PathBuf>,
+    /// High-resolution DTM (spec §4.3): GeoTIFF tiles or folders of them
+    /// (e.g. from `dem-import`); repeat, best first. Only tiles near the
+    /// region are read.
+    #[arg(long = "dem")]
+    dem: Vec<PathBuf>,
+    /// Average the --dem grids to this cell size (m) when loading, to save
+    /// memory (default: as stored).
+    #[arg(long, value_name = "M")]
+    dem_cell: Option<f64>,
 }
 
 #[derive(Subcommand)]
@@ -552,25 +630,182 @@ fn parse_latlon(s: &str) -> Result<(f64, f64), String> {
     }
 }
 
-fn load_region(poly: &PathBuf) -> Region {
-    let text = std::fs::read_to_string(poly).unwrap_or_else(|e| {
-        eprintln!("{}: {e} (or use --bbox)", poly.display());
-        std::process::exit(1);
-    });
-    Region::from_polygon(Polygon::parse_poly(&text).unwrap_or_else(|e| {
-        eprintln!("{}: {e}", poly.display());
-        std::process::exit(1);
-    }))
+fn load_region(polys: &[PathBuf]) -> Region {
+    let mut all = Polygon::default();
+    for poly in polys {
+        let text = std::fs::read_to_string(poly).unwrap_or_else(|e| {
+            eprintln!("{}: {e} (or use --bbox)", poly.display());
+            std::process::exit(1);
+        });
+        let p = Polygon::parse_poly(&text).unwrap_or_else(|e| {
+            eprintln!("{}: {e}", poly.display());
+            std::process::exit(1);
+        });
+        all.outer.extend(p.outer);
+        all.holes.extend(p.holes);
+    }
+    Region::from_polygon(all)
 }
 
-fn load_dem(hgt: &[PathBuf]) -> Dem {
+/// How far around a region (degrees, about 5 km) OSM ways and DTM tiles
+/// are kept when reading: the context roads, the margin tiles and the
+/// feathering all lie within it.
+const LOAD_MARGIN_DEG: f64 = 0.05;
+
+/// The box around `r` that is read.
+fn load_box(r: &Region) -> (f64, f64, f64, f64) {
+    (
+        r.min_lat - LOAD_MARGIN_DEG,
+        r.min_lon - LOAD_MARGIN_DEG,
+        r.max_lat + LOAD_MARGIN_DEG,
+        r.max_lon + LOAD_MARGIN_DEG,
+    )
+}
+
+/// The highway ways of the extracts (merged) that come near `near`.
+fn read_osm(pbfs: &[PathBuf], near: &Region) -> OsmData {
+    let t = Instant::now();
+    let mut osm = OsmData::read_pbfs(pbfs).unwrap_or_else(|e| {
+        eprintln!("{e}");
+        std::process::exit(1);
+    });
+    let all = osm.ways.len();
+    osm.retain_near(load_box(near));
+    println!(
+        "osm: {} of {all} highway ways near the region from {} extract(s), {:.1} s",
+        osm.ways.len(),
+        pbfs.len(),
+        t.elapsed().as_secs_f64()
+    );
+    osm
+}
+
+/// Reads one DTM GeoTIFF if it overlaps the box (lat/lon), averaged to
+/// `cell` if given.
+fn read_dem_tile(
+    path: &std::path::Path,
+    (s, w, n, e): (f64, f64, f64, f64),
+    cell: Option<f64>,
+) -> Result<Option<GridTile>, String> {
+    let err = |e: ocw_worldgen::dem::DemError| format!("{}: {e}", path.display());
+    let head = GridTile::peek_geotiff(path, None).map_err(err)?;
+    let b = head.crs.bounds_of(s, w, n, e);
+    let tb = head.bounds();
+    if tb[2] < b[0] || tb[0] > b[2] || tb[3] < b[1] || tb[1] > b[3] {
+        return Ok(None);
+    }
+    let mut tile = GridTile::read_geotiff(path, None).map_err(err)?;
+    if let Some(c) = cell {
+        let f = (c / tile.cell).round();
+        if (f * tile.cell - c).abs() > 1e-6 || f < 1.0 {
+            return Err(format!(
+                "{}: --dem-cell {c} is not a multiple of its {} m",
+                path.display(),
+                tile.cell
+            ));
+        }
+        tile = tile.resampled(f as usize).map_err(err)?;
+    }
+    Ok(Some(tile))
+}
+
+/// The GeoTIFF files of `--dem` (folders: their `.tif` files, sorted).
+fn dem_files(paths: &[PathBuf]) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    for p in paths {
+        if p.is_dir() {
+            let mut v: Vec<PathBuf> = std::fs::read_dir(p)
+                .map(|d| d.flatten().map(|e| e.path()).collect())
+                .unwrap_or_default();
+            v.retain(|f| {
+                f.extension().and_then(|x| x.to_str()).is_some_and(|x| {
+                    x.eq_ignore_ascii_case("tif") || x.eq_ignore_ascii_case("tiff")
+                })
+            });
+            v.sort();
+            if v.is_empty() {
+                eprintln!("{}: no GeoTIFF files", p.display());
+            }
+            files.extend(v);
+        } else {
+            files.push(p.clone());
+        }
+    }
+    files
+}
+
+/// The elevation sources (spec §4.3): the `--dem` grids near the region
+/// (read in parallel), SRTM as the fallback.
+fn load_dem(src: &SourceArgs, near: &Region) -> Dem {
+    let t = Instant::now();
     let mut dem = Dem::default();
-    for path in hgt {
+    for path in &src.hgt {
         match HgtTile::read(path) {
             Ok(tile) => dem.tiles.push(tile),
             Err(e) => eprintln!("{}: {e} (no elevation)", path.display()),
         }
     }
+    let files = dem_files(&src.dem);
+    if files.is_empty() {
+        return dem;
+    }
+    let bounds = load_box(near);
+    let threads = std::thread::available_parallelism()
+        .map_or(4, std::num::NonZero::get)
+        .min(12);
+    let per = files.len().div_ceil(threads).max(1);
+    let cell = src.dem_cell;
+    let results: Vec<Result<Option<GridTile>, String>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = files
+            .chunks(per)
+            .map(|chunk| {
+                scope.spawn(move || {
+                    chunk
+                        .iter()
+                        .map(|f| read_dem_tile(f, bounds, cell))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|h| h.join().expect("DEM reader thread"))
+            .collect()
+    });
+    let (mut outside, mut bad) = (0, 0);
+    for r in results {
+        match r {
+            Ok(Some(tile)) => {
+                if let Err(e) = dem.add_grid(tile) {
+                    eprintln!("dem: {e}");
+                    bad += 1;
+                }
+            }
+            Ok(None) => outside += 1,
+            Err(e) => {
+                eprintln!("{e}");
+                bad += 1;
+            }
+        }
+    }
+    dem.finish();
+    for (i, l) in dem.grids.iter().enumerate() {
+        println!(
+            "dem layer {i}: {} tiles of {} x {} samples at {} m ({:?}), {:.0} MB",
+            l.len(),
+            l.nx,
+            l.ny,
+            l.cell,
+            l.crs(),
+            (l.len() * l.nx * l.ny * 4) as f64 / 1e6
+        );
+    }
+    println!(
+        "dem: {} GeoTIFF files, {outside} outside the region, {bad} unusable; SRTM fallback {} tiles; {:.1} s",
+        files.len(),
+        dem.tiles.len(),
+        t.elapsed().as_secs_f64()
+    );
     dem
 }
 
@@ -581,11 +816,11 @@ fn load_dem(hgt: &[PathBuf]) -> Dem {
 /// profiles and the terrain near its border, so the neighbouring part,
 /// built the same way, meets it without a step.
 fn cut_region(
-    poly: &PathBuf,
+    polys: &[PathBuf],
     bbox: Option<Region>,
     origin: Option<(f64, f64)>,
 ) -> (Region, Option<Region>) {
-    let mut region = load_region(poly);
+    let mut region = load_region(polys);
     let mut context = bbox.as_ref().map(|b| {
         region.clone().clipped_to(
             b.min_lat - CONTEXT_DEG,
@@ -597,7 +832,7 @@ fn cut_region(
     if let Some(b) = bbox {
         region = region.clipped_to(b.min_lat, b.min_lon, b.max_lat, b.max_lon);
         if region.min_lat >= region.max_lat || region.min_lon >= region.max_lon {
-            eprintln!("--bbox does not overlap the region of {}", poly.display());
+            eprintln!("--bbox does not overlap the --poly region");
             std::process::exit(1);
         }
     }
@@ -608,46 +843,162 @@ fn cut_region(
     (region, context)
 }
 
+/// What the cleaning passes take from the OSM areas (spec §4.8).
+struct AreaInputs {
+    data: ocw_worldgen::areas::AreaData,
+    areas: Vec<ocw_worldgen::landuse::Area>,
+    lines: Vec<ocw_worldgen::landuse::WaterLine>,
+    water: ocw_worldgen::water::WaterBodies,
+    outlines: Vec<Vec<Vec<[f64; 2]>>>,
+}
+
+fn read_area_inputs(
+    pbfs: &[PathBuf],
+    near: &Region,
+    proj: &ocw_world::geo::LocalProjection,
+) -> AreaInputs {
+    let mut data = ocw_worldgen::areas::AreaData::read_pbfs(pbfs).unwrap_or_else(|e| {
+        eprintln!("{e}");
+        std::process::exit(1);
+    });
+    data.retain_near(load_box(near));
+    let (areas, lines) = ocw_worldgen::landuse::extract(&data, proj);
+    let water = ocw_worldgen::water::extract_water(&data, proj);
+    let outlines = ocw_worldgen::bridges::bridge_outlines(&data, proj);
+    AreaInputs {
+        data,
+        areas,
+        lines,
+        water,
+        outlines,
+    }
+}
+
+/// A road graph with its profiles and, when cleaning (spec §4.8), its
+/// cleaned centrelines, snapped ends, eased junction mouths, vertical
+/// curves and detected bridge spans (with straight decks).
+fn prepared_graph(
+    osm: &OsmData,
+    dem: &Dem,
+    region: &Region,
+    proj: &ocw_world::geo::LocalProjection,
+    clean: Option<&ocw_worldgen::bridges::WaterTest>,
+    log: bool,
+) -> (
+    ocw_world::graph::RoadGraph,
+    ocw_worldgen::build::BuildStats,
+    Vec<ocw_worldgen::bridges::Span>,
+) {
+    use ocw_worldgen::clean;
+    let (mut graph, stats) = build_road_graph(osm, region);
+    let mut snaps = Vec::new();
+    if clean.is_some() {
+        let h = clean::clean_polylines(&mut graph);
+        let (s, hs) = clean::snap_near_misses(&mut graph);
+        snaps = s;
+        if log {
+            println!(
+                "clean: {} duplicate nodes and {} spikes removed, {} road ends snapped (up to {:.1} m)",
+                h.duplicates_removed, h.spikes_removed, hs.ends_snapped, hs.max_snap_m
+            );
+        }
+    }
+    add_profiles(&mut graph, dem, proj);
+    let mut spans = Vec::new();
+    if let Some(water) = clean {
+        let tied = clean::tie_snapped_heights(&mut graph, &snaps);
+        let mouths = clean::ease_junction_mouths(&mut graph);
+        let curves = clean::limit_vertical_curvature(&mut graph);
+        let ground = |p: [f64; 2]| {
+            let (lat, lon) = proj.unproject(p);
+            dem.elevation(lat, lon)
+        };
+        spans = ocw_worldgen::bridges::detect_spans(&graph, water, &ground);
+        let planned = ocw_worldgen::bridges::plan_span_profiles(&mut graph, &spans);
+        if log {
+            use ocw_world::bridges::BridgeSource;
+            let count = |src| spans.iter().filter(|s| s.source == src).count();
+            println!(
+                "clean: {tied} snapped ends tied in height, {mouths} junction mouths eased, {curves} profile samples rounded; detected bridges: {} over water, {} over gaps, {} in bridge outlines ({planned} deck samples planned)",
+                count(BridgeSource::Water),
+                count(BridgeSource::Gap),
+                count(BridgeSource::Outline)
+            );
+        }
+    }
+    (graph, stats, spans)
+}
+
+/// A road graph and its cleaning results ([`profiled_graph`]).
+struct Profiled {
+    graph: ocw_world::graph::RoadGraph,
+    stats: ocw_worldgen::build::BuildStats,
+    spans: Vec<ocw_worldgen::bridges::Span>,
+    /// For a `--bbox` part: the context graph and its spans.
+    context: Option<(
+        ocw_world::graph::RoadGraph,
+        Vec<ocw_worldgen::bridges::Span>,
+    )>,
+}
+
+impl Profiled {
+    /// The graph the terrain is conformed to and its bridge spans.
+    fn terrain(&self) -> (&ocw_world::graph::RoadGraph, Vec<(usize, f64, f64)>) {
+        let (g, spans) = match &self.context {
+            Some((g, s)) => (g, s),
+            None => (&self.graph, &self.spans),
+        };
+        (
+            g,
+            spans.iter().map(|s| (s.edge, s.from_m, s.to_m)).collect(),
+        )
+    }
+}
+
 /// The road graph of a region with its elevation profiles; for a `--bbox`
 /// part the profiles come from the context roads around it (the context
 /// graph is returned for the terrain), exactly as the package is built, so
 /// a route file cut from the same part has the package's road heights.
+/// `clean`: the world cleaning (spec §4.8) with its water test.
 fn profiled_graph(
     osm: &OsmData,
     dem: &Dem,
     region: &Region,
     context: Option<Region>,
-) -> (
-    ocw_world::graph::RoadGraph,
-    ocw_worldgen::build::BuildStats,
-    Option<ocw_world::graph::RoadGraph>,
-) {
+    clean: Option<&ocw_worldgen::bridges::WaterTest>,
+) -> Profiled {
     let proj = region.projection();
-    let (mut graph, stats) = build_road_graph(osm, region);
-    add_profiles(&mut graph, dem, &proj);
-    let context_graph = context.map(|c| {
-        let (mut g, _) = build_road_graph(osm, &c);
-        add_profiles(&mut g, dem, &proj);
+    let (mut graph, stats, spans) = prepared_graph(osm, dem, region, &proj, clean, true);
+    let context = context.map(|c| {
+        let (g, _, cspans) = prepared_graph(osm, dem, &c, &proj, clean, false);
         let taken = ocw_worldgen::profile::transfer_profiles(&mut graph, &g, 0.5);
         println!(
             "context: {} road edges up to {CONTEXT_DEG}° around the box; {taken} of {} profiles taken from them",
             g.edges.len(),
             graph.edges.len()
         );
-        g
+        (g, cspans)
     });
-    (graph, stats, context_graph)
+    Profiled {
+        graph,
+        stats,
+        spans,
+        context,
+    }
 }
 
 fn route(args: RouteArgs) {
-    let (region, context) = cut_region(&args.poly, args.bbox, args.origin);
+    let (region, context) = cut_region(&args.src.poly, args.bbox, args.origin);
     let proj = region.projection();
-    let osm = OsmData::read_pbf(&args.pbf).unwrap_or_else(|e| {
-        eprintln!("{}: {e}", args.pbf.display());
-        std::process::exit(1);
-    });
-    let dem = load_dem(&args.hgt);
-    let (graph, _, _) = profiled_graph(&osm, &dem, &region, context);
+    let near = context.clone().unwrap_or_else(|| region.clone());
+    let osm = read_osm(&args.src.pbf, &near);
+    let dem = load_dem(&args.src, &near);
+    // The same cleaning as the package, so the route has its road heights.
+    let inputs = (!args.no_clean).then(|| read_area_inputs(&args.src.pbf, &near, &proj));
+    let water = inputs
+        .as_ref()
+        .map(|i| ocw_worldgen::bridges::WaterTest::new(&i.areas, &i.lines, &i.outlines));
+    let graph = profiled_graph(&osm, &dem, &region, context, water.as_ref()).graph;
     let (a, b) = (
         proj.project(args.from.0, args.from.1),
         proj.project(args.to.0, args.to.1),
@@ -766,9 +1117,7 @@ fn route(args: RouteArgs) {
 const CONTEXT_DEG: f64 = 0.01;
 
 struct RouteArgs {
-    pbf: PathBuf,
-    poly: PathBuf,
-    hgt: Vec<PathBuf>,
+    src: SourceArgs,
     from: (f64, f64),
     to: (f64, f64),
     name: String,
@@ -776,6 +1125,7 @@ struct RouteArgs {
     out: PathBuf,
     bbox: Option<Region>,
     origin: Option<(f64, f64)>,
+    no_clean: bool,
 }
 
 fn parse_bbox(s: &str) -> Result<Region, String> {
@@ -792,87 +1142,121 @@ fn parse_bbox(s: &str) -> Result<Region, String> {
 }
 
 struct PackageArgs {
-    pbf: PathBuf,
-    poly: PathBuf,
-    hgt: Vec<PathBuf>,
+    src: SourceArgs,
     name: String,
     samples: u32,
     margin_tiles: i32,
     landuse_cells: u32,
     no_areas: bool,
+    no_clean: bool,
     bbox: Option<Region>,
     origin: Option<(f64, f64)>,
+    time_zone: Option<String>,
     out: PathBuf,
+}
+
+/// The time zone a package gets (spec §14 Phase 9): `--time-zone` (checked
+/// against the tzdb), else the zone of the region at the origin.
+fn package_time_zone(given: Option<String>, origin: (f64, f64)) -> Result<String, String> {
+    let zone = given.unwrap_or_else(|| ocw_sky::zone::zone_for(origin.0, origin.1));
+    ocw_sky::Zone::get(&zone).map(|z| z.id().to_owned())
 }
 
 fn package(args: PackageArgs) {
     let PackageArgs {
-        pbf,
-        poly,
-        hgt,
+        src,
         name,
         samples,
         margin_tiles,
         landuse_cells,
         no_areas,
+        no_clean,
         bbox,
         origin,
+        time_zone,
         out,
     } = args;
     let t = Instant::now();
-    let (region, context) = cut_region(&poly, bbox, origin);
+    let (region, context) = cut_region(&src.poly, bbox, origin);
     let proj = region.projection();
-    let osm = OsmData::read_pbf(&pbf).unwrap_or_else(|e| {
-        eprintln!("{}: {e}", pbf.display());
-        std::process::exit(1);
-    });
-    let dem = load_dem(&hgt);
-    let (graph, stats, context_graph) = profiled_graph(&osm, &dem, &region, context);
+    let near = context.clone().unwrap_or_else(|| region.clone());
+    let osm = read_osm(&src.pbf, &near);
+    let dem = load_dem(&src, &near);
+    let clean = !no_clean;
+    let ta = Instant::now();
+    let inputs = (!no_areas || clean).then(|| read_area_inputs(&src.pbf, &near, &proj));
+    let read_s = ta.elapsed().as_secs_f64();
+    let water_test = inputs
+        .as_ref()
+        .filter(|_| clean)
+        .map(|i| ocw_worldgen::bridges::WaterTest::new(&i.areas, &i.lines, &i.outlines));
+    let profiled = profiled_graph(&osm, &dem, &region, context, water_test.as_ref());
+    let (graph, stats) = (&profiled.graph, &profiled.stats);
     let base = |x: f64, z: f64| {
         let (lat, lon) = proj.unproject([x, z]);
         dem.elevation(lat, lon).unwrap_or(0.0)
     };
-    let mut pkg = ocw_worldgen::package::build_package_with_terrain(
+    let (terrain_graph, terrain_spans) = profiled.terrain();
+    // Cleaning: each road cuts through its nearest point only, with a small
+    // margin; the terrain is settled under the strips afterwards (§4.8.3).
+    let cut = if clean {
+        0.5
+    } else {
+        ocw_worldgen::package::cut_margin_m(1000.0, samples)
+    };
+    let mut terrain = ocw_worldgen::package::GraphTerrain::new(terrain_graph, base, cut)
+        .with_bridge_spans(terrain_spans.iter().copied());
+    if clean {
+        terrain = terrain.nearest_point_only();
+    }
+    let mut pkg = ocw_worldgen::package::build_package_on(
         &name,
         region.origin(),
-        &graph,
-        context_graph.as_ref().unwrap_or(&graph),
-        base,
+        graph,
+        &terrain,
         1000.0,
         samples,
         margin_tiles,
     );
     pkg.region = Some(region.package_region());
-    // Road surfaces from OSM `surface` (section RSRF, Phase 8 T2).
+    // Road surfaces from OSM `surface` (section RSRF, Phase 8 T2), on the
+    // strips as built (before any cleaning).
     let way_surfaces = ocw_worldgen::filter::way_surfaces(&osm);
-    let surfaced = ocw_worldgen::package::apply_road_surfaces(&mut pkg, &graph, |e| {
+    let surfaced = ocw_worldgen::package::apply_road_surfaces(&mut pkg, graph, |e| {
         way_surfaces
             .get(&e.osm_way)
             .copied()
             .unwrap_or_else(|| ocw_world::RoadSurface::of_class(e.class))
     });
+    let zone = package_time_zone(time_zone, region.origin()).unwrap_or_else(|e| {
+        eprintln!("--time-zone: {e}");
+        std::process::exit(2);
+    });
+    println!("time zone: {zone}");
+    pkg.time_zone = Some(zone);
     let terrain_s = t.elapsed().as_secs_f64();
     let mut area_report = vec![format!(
         "road surfaces (RSRF): {surfaced} strips differ from their category's default"
     )];
-    if !no_areas {
-        let ta = Instant::now();
-        let data = ocw_worldgen::areas::AreaData::read_pbf(&pbf).unwrap_or_else(|e| {
-            eprintln!("{}: {e}", pbf.display());
-            std::process::exit(1);
-        });
-        let (areas, lines) = ocw_worldgen::landuse::extract(&data, &proj);
-        let footprints = ocw_worldgen::buildings::footprints(&data, &proj);
-        let read_s = ta.elapsed().as_secs_f64();
+    let road_zone = ocw_worldgen::clean::RoadZone::new(terrain_graph, &terrain_spans);
+    let spacing = pkg.spacing_m();
+    let ground = |p: [f64; 2]| {
+        let (lat, lon) = proj.unproject(p);
+        dem.elevation(lat, lon)
+    };
+    let footprints = inputs
+        .as_ref()
+        .filter(|_| !no_areas)
+        .map(|i| ocw_worldgen::buildings::footprints(&i.data, &proj));
+    if let (false, Some(i)) = (no_areas, inputs.as_ref()) {
         let tl = Instant::now();
-        let ls = ocw_worldgen::landuse::add_landuse(&mut pkg, &areas, &lines, landuse_cells);
+        let ls = ocw_worldgen::landuse::add_landuse(&mut pkg, &i.areas, &i.lines, landuse_cells);
         let landuse_s = tl.elapsed().as_secs_f64();
-        let tb = Instant::now();
-        let bs = ocw_worldgen::buildings::add_buildings(&mut pkg, &footprints);
-        let buildings_s = tb.elapsed().as_secs_f64();
         area_report.push(format!(
             "areas: read {} areas, {} waterways, {} footprints in {read_s:.1} s",
-            ls.areas, ls.water_lines, bs.footprints
+            ls.areas,
+            ls.water_lines,
+            footprints.as_ref().map_or(0, Vec::len)
         ));
         area_report.push(format!(
             "land use (LUSE, {landuse_cells} cells/tile): {}; {} vertices under water, {} with a water level; {landuse_s:.1} s",
@@ -880,9 +1264,77 @@ fn package(args: PackageArgs) {
             ls.water_vertices,
             ls.level_vertices
         ));
+        if clean {
+            let lc = ocw_worldgen::clean::clean_landuse(pkg.landuse.as_mut().expect("land use"));
+            // Under a road the terrain keeps its road-conformed height.
+            let road = |p: [f64; 2]| {
+                road_zone
+                    .covers(p, spacing)
+                    .then(|| terrain.height(p[0], p[1]))
+            };
+            let ws = ocw_worldgen::water::level_water(&mut pkg, &i.water, &ground, &road);
+            area_report.push(format!(
+                "clean: land use {} slivers and {} gaps filled ({} cells); water {} river chains and {} lakes levelled ({} vertices, largest change {:.1} m), {} vertices under roads kept at road level",
+                lc.slivers,
+                lc.gaps,
+                lc.cells,
+                ws.river_chains,
+                ws.lakes,
+                ws.relevelled,
+                ws.max_change_m,
+                ws.restored_under_roads
+            ));
+        }
+    }
+    if clean {
+        if let (Some(fps), Some(wt)) = (footprints.as_ref(), water_test.as_ref()) {
+            let outlines: Vec<Vec<[f64; 2]>> = fps.iter().map(|f| f.outer.clone()).collect();
+            let keep = |p: [f64; 2]| road_zone.covers(p, spacing) || wt.is_water(p);
+            let st = ocw_worldgen::clean::level_building_sites(&mut pkg, &outlines, &keep);
+            area_report.push(format!(
+                "clean: {} building sites levelled ({} vertices, up to {:.1} m)",
+                st.sites, st.vertices, st.max_change_m
+            ));
+        }
+        let ts = Instant::now();
+        let ss = ocw_worldgen::clean::settle_terrain_under_roads(&mut pkg, 0.05);
+        area_report.push(format!(
+            "clean: terrain settled under roads: {} samples poked through, {} vertices lowered (up to {:.2} m); {:.1} s",
+            ss.violations,
+            ss.vertices_lowered,
+            ss.max_lowered_m,
+            ts.elapsed().as_secs_f64()
+        ));
+    }
+    if let Some(fps) = footprints.as_ref() {
+        let tb = Instant::now();
+        let bs = ocw_worldgen::buildings::add_buildings(&mut pkg, fps);
+        let buildings_s = tb.elapsed().as_secs_f64();
         area_report.push(format!(
             "buildings (BLDG): {} placed ({} gable roofs, {} with courtyards), {} outside the tiles; {buildings_s:.1} s",
             bs.placed, bs.gabled, bs.with_holes, bs.outside
+        ));
+    }
+    if clean {
+        let ways: std::collections::HashMap<i64, &ocw_worldgen::osm::Tags> =
+            osm.ways.iter().map(|w| (w.id, &w.tags)).collect();
+        let tags = |id: i64| ways.get(&id).map(|t| (*t).clone());
+        let spans = ocw_worldgen::bridges::all_spans(graph, &profiled.spans);
+        let bs = ocw_worldgen::bridges::make_bridges(&mut pkg, &spans, &tags);
+        area_report.push(format!(
+            "bridges (BRDG): {} tagged, {} in outlines, {} over water and {} over gaps detected; {} beam, {} arch, {} truss, {} suspension, {} covered; {} piers, {} arches, {:.1} km",
+            bs.by_source[0],
+            bs.by_source[1],
+            bs.by_source[2],
+            bs.by_source[3],
+            bs.by_structure[0],
+            bs.by_structure[1],
+            bs.by_structure[2],
+            bs.by_structure[3],
+            bs.by_structure[4],
+            bs.piers,
+            bs.arches,
+            bs.length_m / 1000.0
         ));
     }
     let bytes = pkg.to_bytes();
@@ -1017,9 +1469,207 @@ fn areas_at(pbf: &std::path::Path, (lat, lon): (f64, f64), radius: f64) {
     }
 }
 
+/// `world-builder dem-import`: XYZ / GeoTIFF tiles → averaged GeoTIFFs.
+fn dem_import(
+    crs: ocw_worldgen::crs::Crs,
+    cell: f64,
+    tile_m: f64,
+    out: &std::path::Path,
+    files: &[PathBuf],
+) {
+    let t = Instant::now();
+    if let Err(e) = std::fs::create_dir_all(out) {
+        eprintln!("{}: {e}", out.display());
+        std::process::exit(1);
+    }
+    let import = |f: &PathBuf| -> Result<String, String> {
+        let stem = f.file_stem().and_then(|s| s.to_str()).unwrap_or("tile");
+        let target = out.join(format!("{stem}.tif"));
+        if target.exists() {
+            return Ok(format!("{}: have it", target.display()));
+        }
+        let err = |e: ocw_worldgen::dem::DemError| format!("{}: {e}", f.display());
+        let ext = f
+            .extension()
+            .and_then(|x| x.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let tile = match ext.as_str() {
+            "tif" | "tiff" => GridTile::read_geotiff(f, Some(crs)).map_err(err)?,
+            _ => GridTile::read_xyz(f, crs).map_err(err)?,
+        };
+        let factor = (cell / tile.cell).round();
+        if factor < 1.0 || (factor * tile.cell - cell).abs() > 1e-6 {
+            return Err(format!(
+                "{}: --cell {cell} is not a multiple of its {} m",
+                f.display(),
+                tile.cell
+            ));
+        }
+        let r = tile
+            .padded_to(tile_m)
+            .resampled(factor as usize)
+            .map_err(err)?;
+        r.write_geotiff(&target).map_err(err)?;
+        let (lo, hi) = r
+            .data
+            .iter()
+            .filter(|v| !v.is_nan())
+            .fold((f32::MAX, f32::MIN), |(a, b), v| (a.min(*v), b.max(*v)));
+        Ok(format!(
+            "{}: {} x {} at {} m, {:.1} % data, {lo:.1}-{hi:.1} m",
+            target.display(),
+            r.nx,
+            r.ny,
+            r.cell,
+            100.0 * r.valid_fraction()
+        ))
+    };
+    let threads = std::thread::available_parallelism()
+        .map_or(4, std::num::NonZero::get)
+        .min(8);
+    let per = files.len().div_ceil(threads).max(1);
+    let lines: Vec<Result<String, String>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = files
+            .chunks(per)
+            .map(|c| scope.spawn(move || c.iter().map(import).collect::<Vec<_>>()))
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|h| h.join().expect("import thread"))
+            .collect()
+    });
+    let mut failed = 0;
+    for l in lines {
+        match l {
+            Ok(l) => println!("{l}"),
+            Err(e) => {
+                failed += 1;
+                eprintln!("{e}");
+            }
+        }
+    }
+    println!(
+        "dem-import: {} files, {failed} failed, {:.1} s",
+        files.len(),
+        t.elapsed().as_secs_f64()
+    );
+    if failed > 0 {
+        std::process::exit(1);
+    }
+}
+
+/// Lower-left corners (km) of the `size` m tiles on the lattice shifted
+/// by `phase` that overlap the lat/lon box.
+fn dem_tiles(
+    crs: ocw_worldgen::crs::Crs,
+    bbox: &Region,
+    size: f64,
+    phase: (f64, f64),
+) -> Vec<(i64, i64)> {
+    let b = crs.bounds_of(bbox.min_lat, bbox.min_lon, bbox.max_lat, bbox.max_lon);
+    let first = |lo: f64, ph: f64| ((lo - ph) / size).floor() as i64;
+    let last = |hi: f64, ph: f64| ((hi - ph) / size).ceil() as i64 - 1;
+    let mut out = Vec::new();
+    for i in first(b[0], phase.0)..=last(b[2], phase.0) {
+        for j in first(b[1], phase.1)..=last(b[3], phase.1) {
+            let e = phase.0 + i as f64 * size;
+            let n = phase.1 + j as f64 * size;
+            out.push(((e / 1000.0).round() as i64, (n / 1000.0).round() as i64));
+        }
+    }
+    out
+}
+
+/// `world-builder dem-diff`: DTM minus SRTM where the DTM covers.
+fn dem_diff(src: &SourceArgs, bbox: &Region, step: f64) {
+    let dem = load_dem(src, bbox);
+    let srtm = Dem::from_hgt(dem.tiles.clone());
+    let proj = bbox.projection();
+    let a = proj.project(bbox.max_lat, bbox.min_lon);
+    let b = proj.project(bbox.min_lat, bbox.max_lon);
+    let mut d: Vec<f64> = Vec::new();
+    let (mut total, mut covered) = (0usize, 0usize);
+    let mut z = a[1];
+    while z <= b[1] {
+        let mut x = a[0];
+        while x <= b[0] {
+            let (lat, lon) = proj.unproject([x, z]);
+            total += 1;
+            if dem.source_at(lat, lon) < dem.grids.len()
+                && let (Some(h), Some(s)) = (dem.elevation(lat, lon), srtm.elevation(lat, lon))
+            {
+                covered += 1;
+                d.push(h - s);
+            }
+            x += step;
+        }
+        z += step;
+    }
+    if d.is_empty() {
+        println!("dem-diff: the DTM covers none of the {total} points");
+        return;
+    }
+    d.sort_by(f64::total_cmp);
+    let n = d.len() as f64;
+    let mean = d.iter().sum::<f64>() / n;
+    let rms = (d.iter().map(|v| v * v).sum::<f64>() / n).sqrt();
+    let q = |p: f64| d[((n - 1.0) * p).round() as usize];
+    println!(
+        "dem-diff: {covered} of {total} points ({:.1} %) in the DTM; DTM - SRTM: mean {mean:+.2} m, RMS {rms:.2} m, p5 {:+.1} p50 {:+.1} p95 {:+.1} m, min {:+.1} max {:+.1} m",
+        100.0 * covered as f64 / total.max(1) as f64,
+        q(0.05),
+        q(0.5),
+        q(0.95),
+        d[0],
+        d[d.len() - 1]
+    );
+}
+
+/// `world-builder lint`: the world lint report of a package (spec §4.8.1).
+fn lint(world: &std::path::Path, pbf: &[PathBuf]) {
+    let t = Instant::now();
+    let pkg = read_package(world);
+    let water = (!pbf.is_empty()).then(|| {
+        let mut data = ocw_worldgen::areas::AreaData::read_pbfs(pbf).unwrap_or_else(|e| {
+            eprintln!("{e}");
+            std::process::exit(1);
+        });
+        if let Some(r) = &pkg.region {
+            let [s, w, n, e] = r.bounds();
+            let m = LOAD_MARGIN_DEG;
+            data.retain_near((s - m, w - m, n + m, e + m));
+        }
+        let proj = ocw_world::geo::LocalProjection::new(pkg.origin.0, pkg.origin.1);
+        ocw_worldgen::water::extract_water(&data, &proj)
+    });
+    let report = ocw_worldgen::lint::lint(&pkg, water.as_ref());
+    print!("{}", ocw_worldgen::lint::format_report(&report, pkg.origin));
+    println!("lint: {:.1} s", t.elapsed().as_secs_f64());
+}
+
 fn main() {
     match Cli::parse().command {
         Cmd::Areas { pbf, at, radius } => areas_at(&pbf, at, radius),
+        Cmd::Lint { world, pbf } => lint(&world, &pbf),
+        Cmd::DemImport {
+            crs,
+            cell,
+            tile,
+            out,
+            files,
+        } => dem_import(crs, cell, tile, &out, &files),
+        Cmd::DemTiles {
+            crs,
+            bbox,
+            size,
+            phase,
+        } => {
+            for (e, n) in dem_tiles(crs, &bbox, size, phase) {
+                println!("{e}_{n}");
+            }
+        }
+        Cmd::DemDiff { src, bbox, step } => dem_diff(&src, &bbox, step),
         Cmd::Check { world } => {
             let bytes = std::fs::read(&world).unwrap_or_else(|e| {
                 eprintln!("{}: {e}", world.display());
@@ -1101,16 +1751,16 @@ fn main() {
             }
         }
         Cmd::Package {
-            pbf,
-            poly,
-            hgt,
+            src,
             name,
             samples,
             margin_tiles,
             landuse_cells,
             no_areas,
+            no_clean,
             bbox,
             origin,
+            time_zone,
             out,
             manifest,
             sign_key,
@@ -1123,16 +1773,16 @@ fn main() {
                 })
             });
             package(PackageArgs {
-                pbf,
-                poly,
-                hgt,
+                src,
                 name: name.clone(),
                 samples,
                 margin_tiles,
                 landuse_cells,
                 no_areas,
+                no_clean,
                 bbox,
                 origin,
+                time_zone,
                 out: out.clone(),
             });
             dist::write_manifest(&out, &manifest.args(Some(name)), key.as_ref());
@@ -1181,9 +1831,7 @@ fn main() {
             ..
         } => package_route(world, from, to, name),
         Cmd::Route {
-            pbf,
-            poly,
-            hgt,
+            src,
             from,
             to,
             name,
@@ -1191,11 +1839,10 @@ fn main() {
             out,
             bbox,
             origin,
+            no_clean,
             world: None,
         } => route(RouteArgs {
-            pbf,
-            poly,
-            hgt,
+            src,
             from,
             to,
             name,
@@ -1203,51 +1850,32 @@ fn main() {
             out,
             bbox,
             origin,
+            no_clean,
         }),
         Cmd::Graph {
-            pbf,
-            poly,
+            src,
             bbox,
-            hgt,
             svg,
             svg_grade,
             probe,
         } => {
             let region = match bbox {
                 Some(r) => r,
-                None => {
-                    let text = std::fs::read_to_string(&poly).unwrap_or_else(|e| {
-                        eprintln!("{}: {e} (or use --bbox)", poly.display());
-                        std::process::exit(1);
-                    });
-                    Region::from_polygon(Polygon::parse_poly(&text).unwrap_or_else(|e| {
-                        eprintln!("{}: {e}", poly.display());
-                        std::process::exit(1);
-                    }))
-                }
+                None => load_region(&src.poly),
             };
             let t = Instant::now();
-            let osm = OsmData::read_pbf(&pbf).unwrap_or_else(|e| {
-                eprintln!("{}: {e}", pbf.display());
-                std::process::exit(1);
-            });
+            let osm = read_osm(&src.pbf, &region);
             let read_s = t.elapsed().as_secs_f64();
             let (mut graph, stats) = build_road_graph(&osm, &region);
             println!(
-                "read {} ({} nodes, {} highway ways) in {read_s:.2} s",
-                pbf.display(),
+                "read {} extract(s) ({} nodes, {} highway ways) in {read_s:.2} s",
+                src.pbf.len(),
                 osm.nodes.len(),
                 osm.ways.len()
             );
             println!("{stats:#?}");
-            let mut dem = Dem::default();
-            for path in &hgt {
-                match HgtTile::read(path) {
-                    Ok(tile) => dem.tiles.push(tile),
-                    Err(e) => eprintln!("{}: {e} (no elevation)", path.display()),
-                }
-            }
-            if !dem.tiles.is_empty() {
+            let dem = load_dem(&src, &region);
+            if !dem.tiles.is_empty() || !dem.grids.is_empty() {
                 let p = add_profiles(&mut graph, &dem, &region.projection());
                 println!(
                     "elevation: {:.0}-{:.0} m, steepest 25 m {:.1} %, {} bridges/tunnels, {} edges partly outside the DEM",
@@ -1340,7 +1968,10 @@ fn main() {
             if let Some(path) = svg {
                 let title = format!(
                     "{}: {} edges, {:.0} km, {} dead ends, {} boundary  (© OpenStreetMap contributors)",
-                    pbf.file_stem().and_then(|s| s.to_str()).unwrap_or("region"),
+                    src.pbf[0]
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("region"),
                     stats.edges,
                     stats.length_km,
                     stats.dead_end_edges,
@@ -1370,6 +2001,95 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Packages get the zone of their region (spec §14 Phase 9).
+    #[test]
+    fn packages_get_their_regions_time_zone() {
+        assert_eq!(
+            package_time_zone(None, (47.15, 9.55)).unwrap(),
+            "Europe/Vaduz"
+        );
+        assert_eq!(
+            package_time_zone(None, (47.92, 7.96)).unwrap(),
+            "Europe/Berlin"
+        );
+        assert_eq!(
+            package_time_zone(Some("Europe/Zurich".into()), (47.15, 9.55)).unwrap(),
+            "Europe/Zurich"
+        );
+        assert!(package_time_zone(Some("Europe/Atlantis".into()), (0.0, 0.0)).is_err());
+    }
+
+    #[test]
+    fn dem_tiles_cover_the_box_on_the_lgl_lattice() {
+        let utm = ocw_worldgen::crs::Crs::UtmNorth(32);
+        // Around the Feldberg: the LGL tile 425_5302 (2 km, odd east).
+        let (lat, lon) = utm.inverse(426_000.0, 5_303_000.0);
+        let b = Region::bbox(lat - 0.001, lon - 0.001, lat + 0.001, lon + 0.001);
+        assert_eq!(dem_tiles(utm, &b, 2000.0, (1000.0, 0.0)), vec![(425, 5302)]);
+        let tiles = dem_tiles(utm, &b, 1000.0, (0.0, 0.0));
+        assert!(tiles.contains(&(426, 5303)) && tiles.contains(&(425, 5302)));
+        assert_eq!(tiles.len(), 4);
+    }
+
+    #[test]
+    fn source_args_merge_extracts_and_dems() {
+        let cli = Cli::try_parse_from([
+            "world-builder",
+            "package",
+            "--pbf",
+            "a.pbf",
+            "--pbf",
+            "b.pbf",
+            "--poly",
+            "a.poly",
+            "--dem",
+            "data/dgm1",
+            "--dem-cell",
+            "4",
+            "--dem-attribution",
+            "lgl-dgm1",
+            "--dem-attribution",
+            "srtm",
+        ])
+        .unwrap();
+        let Cmd::Package { src, manifest, .. } = cli.command else {
+            panic!("package");
+        };
+        assert_eq!(src.pbf.len(), 2);
+        assert_eq!(src.poly.len(), 1);
+        assert_eq!(src.hgt, vec![PathBuf::from("data/pilot/N47E009.hgt")]);
+        assert_eq!(src.dem_cell, Some(4.0));
+        assert_eq!(manifest.dem_attribution, vec!["lgl-dgm1", "srtm"]);
+    }
+
+    #[test]
+    fn dem_tiles_outside_the_box_are_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("t.tif");
+        GridTile {
+            crs: ocw_worldgen::crs::Crs::UtmNorth(32),
+            cell: 1.0,
+            x0: 425_000.0,
+            y0: 5_303_000.0,
+            nx: 4,
+            ny: 4,
+            data: vec![1.0; 16],
+        }
+        .write_geotiff(&f)
+        .unwrap();
+        assert!(
+            read_dem_tile(&f, (10.0, 10.0, 10.1, 10.1), None)
+                .unwrap()
+                .is_none()
+        );
+        let t = read_dem_tile(&f, (47.8, 7.9, 47.9, 8.1), Some(2.0))
+            .unwrap()
+            .unwrap();
+        assert_eq!((t.nx, t.cell), (2, 2.0));
+        assert!(read_dem_tile(&f, (47.8, 7.9, 47.9, 8.1), Some(1.5)).is_err());
+        assert_eq!(dem_files(&[dir.path().to_path_buf()]), vec![f]);
+    }
 
     #[test]
     fn bbox_parsing() {

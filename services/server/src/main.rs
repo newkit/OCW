@@ -8,14 +8,22 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use clap::Parser;
 use ocw_core::{SIM_DT, SIM_TICK_HZ, mps_to_kmh};
 use ocw_server::net::{DEFAULT_PORT, NetServer, ServerIdentity};
 use ocw_server::stats::{ServerReport, TickStats};
 use ocw_server::{Course, GameServer, ServerConfig};
-use ocw_world::{RoadNetwork, Route};
+use ocw_world::Route;
+
+fn parse_time_control(s: &str) -> Result<ocw_server::ClockAccess, String> {
+    match s {
+        "host" => Ok(ocw_server::ClockAccess::Host),
+        "anyone" => Ok(ocw_server::ClockAccess::Anyone),
+        "nobody" => Ok(ocw_server::ClockAccess::Nobody),
+        _ => Err("host, anyone or nobody".into()),
+    }
+}
 
 #[derive(Parser)]
 #[command(version, about = "Open Cycling World headless game server")]
@@ -29,6 +37,17 @@ struct Args {
     /// Simulate as fast as possible instead of in real time.
     #[arg(long)]
     fast: bool,
+    /// Who may change the world clock with the time machine (spec §14
+    /// Phase 9, 9D): the host (the rider connected longest), anyone, or
+    /// nobody (the clock stays real time).
+    #[arg(long, default_value = "host", value_parser = parse_time_control)]
+    time_control: ocw_server::ClockAccess,
+    /// Who may switch the session to another world package from the World
+    /// menu (spec §3.2.1): the host, anyone, or nobody. The server rides
+    /// only packages it finds itself (its cache and the files next to
+    /// --world); everyone joins again on the new world.
+    #[arg(long, default_value = "host", value_parser = parse_time_control)]
+    world_control: ocw_server::ClockAccess,
     /// Free ride on the road graph of this world package (version 2,
     /// from `world-builder package`; a path or a cache id) instead of the
     /// test loop. Verified on load (spec §4.7).
@@ -87,6 +106,22 @@ struct Args {
 
 const DEFAULT_LISTEN: &str = "0.0.0.0:47800";
 
+/// How world packages are loaded and verified (spec §4.7).
+fn load_options(args: &Args) -> Result<ocw_worldstore::LoadOptions, String> {
+    let trust = ocw_worldstore::trust::TrustConfig {
+        root_files: args.trust_root.clone(),
+        ..ocw_worldstore::trust::TrustConfig::for_build()
+    }
+    .trust_store()?;
+    Ok(ocw_worldstore::LoadOptions {
+        allow_unsigned: args.allow_unsigned,
+        ..ocw_worldstore::LoadOptions::new(
+            trust,
+            ocw_worldstore::WorldCache::new(ocw_worldstore::WorldCache::default_root()),
+        )
+    })
+}
+
 /// Free ride on a world package's road graph (a path or a cached id, its
 /// signature checked), from a seeded random start, or along one of its routes.
 fn free_ride(args: &Args, spec: &str) -> Course {
@@ -94,59 +129,113 @@ fn free_ride(args: &Args, spec: &str) -> Course {
         eprintln!("{spec}: {e}");
         std::process::exit(1);
     };
-    let trust = ocw_worldstore::trust::TrustConfig {
-        root_files: args.trust_root.clone(),
-        ..ocw_worldstore::trust::TrustConfig::for_build()
-    }
-    .trust_store()
-    .unwrap_or_else(|e| fail(e));
-    let opts = ocw_worldstore::LoadOptions {
-        allow_unsigned: args.allow_unsigned,
-        ..ocw_worldstore::LoadOptions::new(
-            trust,
-            ocw_worldstore::WorldCache::new(ocw_worldstore::WorldCache::default_root()),
-        )
+    let opts = load_options(args).unwrap_or_else(|e| fail(e));
+    ocw_server::worlds::load_course(
+        spec,
+        args.route.as_deref(),
+        &opts,
+        !args.no_neighbours,
+        args.seed,
+    )
+    .unwrap_or_else(|e| fail(e))
+    .0
+}
+
+/// The worlds this server may switch to: the cache and the packages next
+/// to --world (spec §3.2.1).
+fn catalog(
+    args: &Args,
+    opts: &ocw_worldstore::LoadOptions,
+) -> Vec<ocw_worldstore::discover::WorldEntry> {
+    let d = ocw_worldstore::discover::Discovery {
+        cache: opts.cache.clone(),
+        given: args.world.clone(),
+        dirs: Vec::new(),
+        trust: opts.trust.clone(),
+        now_unix_s: opts.now_unix_s,
+        allow_unsigned: opts.allow_unsigned,
+        require_signed: opts.require_signed,
     };
-    let world = ocw_worldstore::load_world(spec, &opts).unwrap_or_else(|e| fail(e.to_string()));
-    tracing::info!(world = %world.describe(), "world package");
-    // The installed neighbours the roads continue into: one joined graph.
-    let hood = ocw_worldstore::neighbourhood(&world, spec, &opts, !args.no_neighbours);
-    for line in &hood.log {
-        tracing::info!("{line}");
-    }
-    let pkg = world.package;
-    let graph =
-        hood.set.graph().cloned().unwrap_or_else(|| {
-            fail("no road graph (rebuild it with world-builder package)".into())
+    ocw_worldstore::discover::discover(&d, &mut Default::default())
+}
+
+/// The result of loading a world for a switch.
+type Loaded = Result<(Course, ocw_protocol::v1::WorldChange), String>;
+
+/// A world switch being loaded on its own thread (the session goes on).
+type WorldLoad = (ocw_server::WorldSwitch, std::sync::mpsc::Receiver<Loaded>);
+
+/// Takes the host's world switch (checked by the game server) and starts
+/// loading it; applies a finished load. Failures go to the asker.
+fn pump_world_switch(
+    args: &Args,
+    server: &mut GameServer,
+    mut net: Option<&mut NetServer>,
+    loading: &mut Option<WorldLoad>,
+) {
+    let mut tell = |conns: &[ocw_server::ConnectionId], bytes: &[u8]| {
+        if let Some(n) = net.as_deref_mut() {
+            n.send_to(conns, bytes);
+        }
+    };
+    if loading.is_none()
+        && let Some(req) = server.take_world_switch()
+    {
+        let started = load_options(args).and_then(|opts| {
+            let entries = catalog(args, &opts);
+            let spec = ocw_server::worlds::resolve(&entries, &req.world)?
+                .spec
+                .clone();
+            let (tx, rx) = std::sync::mpsc::channel();
+            let route = req.route.clone();
+            let (neighbours, seed) = (!args.no_neighbours, args.seed);
+            tracing::info!(%spec, ?route, by = %req.by, "loading world for the switch");
+            thread::Builder::new()
+                .name("ocw-world-load".into())
+                .spawn(move || {
+                    let r = ocw_server::worlds::load_course(
+                        &spec,
+                        route.as_deref(),
+                        &opts,
+                        neighbours,
+                        seed,
+                    );
+                    let _ = tx.send(r);
+                })
+                .map_err(|e| e.to_string())?;
+            Ok(rx)
         });
-    let net = Arc::new(RoadNetwork::new(graph).with_package_name(hood.set.name()));
-    if let Some(name) = args.route.as_deref() {
-        let stored = pkg.route(name).unwrap_or_else(|| {
-            let names: Vec<&str> = pkg.routes.iter().map(|r| r.name.as_str()).collect();
-            fail(format!(
-                "no route {name:?} (the package has: {})",
-                names.join(", ")
-            ))
-        });
-        let plan = stored
-            .resolve(&net)
-            .unwrap_or_else(|e| fail(format!("route {name:?} does not fit the road graph: {e}")));
-        return Course::RouteRide {
-            net,
-            plan: Arc::new(plan),
-        };
+        match started {
+            Ok(rx) => *loading = Some((req, rx)),
+            Err(e) => {
+                tracing::warn!(world = %req.world, %e, "world switch refused");
+                tell(&[req.conn], &ocw_server::result_message(false, e));
+            }
+        }
     }
-    let (edge, offset_m, forward) = net
-        .random_start(args.seed)
-        .unwrap_or_else(|| fail("empty road graph".into()));
-    Course::FreeRide {
-        net,
-        start: ocw_sim::FreeRideStart {
-            edge,
-            offset_m,
-            forward,
-        },
+    let Some((req, rx)) = loading.as_ref() else {
+        return;
+    };
+    let result = match rx.try_recv() {
+        Ok(r) => r,
+        Err(std::sync::mpsc::TryRecvError::Empty) => return,
+        Err(std::sync::mpsc::TryRecvError::Disconnected) => Err("the loading thread ended".into()),
+    };
+    match result {
+        Ok((course, mut change)) => {
+            change.by.clone_from(&req.by);
+            let (conns, bytes) = server.switch_world(course, change);
+            tell(&conns, &bytes);
+        }
+        Err(e) => {
+            tracing::warn!(world = %req.world, %e, "world switch failed");
+            tell(
+                &[req.conn],
+                &ocw_server::result_message(false, format!("{}: {e}", req.world)),
+            );
+        }
     }
+    *loading = None;
 }
 
 fn main() {
@@ -216,6 +305,9 @@ fn main() {
             start_m: 0.0,
             allow_local_events: false,
             voice,
+            clock_access: args.time_control,
+            world_access: args.world_control,
+            real_epoch_ms: None,
         },
     );
     let mut net = args.listen.map(|addr| listen(&args, addr));
@@ -225,6 +317,7 @@ fn main() {
     // Time spent in the server tick (physics, bots, snapshot encoding) and
     // how late each tick starts against the fixed schedule.
     let mut stats = TickStats::default();
+    let mut world_load: Option<WorldLoad> = None;
     loop {
         let started = Instant::now();
         let late = if args.fast {
@@ -235,6 +328,7 @@ fn main() {
         if let Some(net) = &mut net {
             net.pump(&mut server);
         }
+        pump_world_switch(&args, &mut server, net.as_mut(), &mut world_load);
         let broadcast = server.tick();
         if let Some(net) = &mut net {
             net.broadcast(&server, &broadcast);

@@ -34,8 +34,10 @@ pub struct WorldSetup {
     /// The road network of the package and its neighbours (packages with a
     /// road graph only): free ride, routes, GPX import.
     pub net: Option<Arc<RoadNetwork>>,
-    /// The package's routes (section `ROUT`): name and length (m).
-    pub routes: Vec<(String, f64)>,
+    /// The package's routes (section `ROUT`): name, length and climbing.
+    pub routes: Vec<super::world::RouteInfo>,
+    /// What World → About this world shows.
+    pub details: super::world::WorldDetails,
     /// (lat, lon) of the package's local metres.
     pub origin: (f64, f64),
 }
@@ -78,7 +80,13 @@ pub fn build(args: &Args) -> Result<RideSetup, String> {
     let loaded = worlds::try_load(args, spec)?;
     let hood = worlds::try_neighbourhood(args, spec, &loaded)?;
     let info = WorldInfo::of(spec, &loaded, &hood);
+    let details = super::world::WorldDetails::of(&loaded, &hood.worlds);
     let pkg = &loaded.package;
+    // A remote server rides the route file as it is (it has no package
+    // for a route file): only the local server's route is fitted.
+    if let (Some(path), None) = (&args.route_file, &args.server) {
+        setup.route = route_file_on_package(path, pkg)?;
+    }
     let net = hood
         .set
         .graph()
@@ -125,7 +133,16 @@ pub fn build(args: &Args) -> Result<RideSetup, String> {
     let routes = pkg
         .routes
         .iter()
-        .map(|r| (r.name.clone(), graph_route_length_m(r)))
+        .map(|r| {
+            let plan = net.as_ref().and_then(|n| r.resolve(n).ok().map(|p| (p, n)));
+            super::world::RouteInfo {
+                name: r.name.clone(),
+                length_m: plan
+                    .as_ref()
+                    .map_or_else(|| graph_route_length_m(r), |(p, _)| p.length_m()),
+                climb_m: plan.map(|(p, n)| p.elevation_gain_m(n)),
+            }
+        })
         .collect();
     let origin = pkg.origin;
     setup.world = Some(WorldSetup {
@@ -133,6 +150,7 @@ pub fn build(args: &Args) -> Result<RideSetup, String> {
         render: worlds::package_world(args, hood),
         net,
         routes,
+        details,
         origin,
     });
     Ok(setup)
@@ -323,15 +341,43 @@ pub fn read_graph_route(
     })
 }
 
+fn read_route_file(path: &std::path::Path) -> Result<ocw_world::RouteFile, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    ocw_world::RouteFile::parse(&text).map_err(|e| format!("{}: {e}", path.display()))
+}
+
 /// Loads an ocw-route file: the route and the terrain around it.
 pub fn load_route_file(path: &std::path::Path) -> Result<(Route, Option<ElevationGrid>), String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let file =
-        ocw_world::RouteFile::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+    let file = read_route_file(path)?;
     let route = file
         .to_route()
         .map_err(|e| format!("{}: {e}", path.display()))?;
     Ok((route, file.grid))
+}
+
+/// A route file ridden in a world package: its heights fitted onto the
+/// package's road surface where they differ (a route file and a package
+/// built from different terrain models, `ocw_world::route_fit`), so the
+/// rider rides on the drawn road and tunnels are found where they are.
+pub fn route_file_on_package(
+    path: &std::path::Path,
+    pkg: &ocw_world::WorldPackage,
+) -> Result<Route, String> {
+    let mut file = read_route_file(path)?;
+    let fit = ocw_world::route_fit::fit_heights(&mut file.points, |x, z, d| {
+        pkg.road_heights_along(x, z, d)
+    });
+    if fit.fitted {
+        eprintln!(
+            "warning: {}: the route is up to {:.1} m off the roads of the world package (mean {:+.1} m over {} points; built from different terrain?): its heights follow the package's roads",
+            path.display(),
+            fit.worst_m,
+            fit.mean_m,
+            fit.on_roads
+        );
+    }
+    file.to_route()
+        .map_err(|e| format!("{}: {e}", path.display()))
 }
 
 #[cfg(test)]

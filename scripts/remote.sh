@@ -241,17 +241,61 @@ run_windows() {
   "${SSH[@]}" "$target" "$ps"
 }
 
+# Build log for the art project (art/ART-PROJECT.md §2): every `run` is
+# recorded in the main checkout's test-output/build-log/YYYY-MM-DD/ – one
+# JSON line per run in runs.jsonl (machine, command, start, seconds, exit
+# code) and the run's output in HHMMSS-MACHINE.log. Host, user and key
+# paths are replaced by the machine name before the files are kept.
+# OCW_BUILD_LOG=0 turns it off.
+log_root="$(dirname "$config_dir")/test-output/build-log"
+log_start() {
+  [ "${OCW_BUILD_LOG:-1}" = 0 ] && return 0
+  log_t0=$(date +%s.%N)
+  log_iso=$(date --iso-8601=seconds 2>/dev/null || date +%Y-%m-%dT%H:%M:%S%z)
+  log_dir="$log_root/$(date +%Y-%m-%d)"
+  mkdir -p "$log_dir" 2>/dev/null || return 0
+  log_file="$log_dir/$(date +%H%M%S)-$machine-$$.log"
+  : >"$log_file"
+}
+log_end() {
+  local rc=$1; shift
+  [ "${OCW_BUILD_LOG:-1}" = 0 ] && return 0
+  [ -n "${log_file:-}" ] || return 0
+  local t1 secs
+  t1=$(date +%s.%N)
+  secs=$(awk -v a="$log_t0" -v b="$t1" 'BEGIN { printf "%.1f", b - a }')
+  # Mask host, user@host and the key path (they never leave config/).
+  if [ -s "$log_file" ]; then
+    sed -i -e "s|$user@$host|$machine|g" -e "s|$host|$machine|g" -e "s|$key|<key>|g" "$log_file" 2>/dev/null || true
+  fi
+  printf '{"start":%s,"seconds":%s,"machine":%s,"os":%s,"checkout":%s,"branch":%s,"command":%s,"exit":%s,"log":%s}\n' \
+    "$(json_str "$log_iso")" "$secs" "$(json_str "$machine")" "$(json_str "$os")" \
+    "$(json_str "$(basename "$PWD")")" "$(json_str "$branch")" "$(json_str "$(short_cmd "$@")")" \
+    "$rc" "$(json_str "$(basename "$log_file")")" >>"$log_dir/runs.jsonl"
+}
+
+# Runs "$@" with its stdout and stderr also appended to the run's log file.
+logged() {
+  if [ -n "${log_file:-}" ] && [ "${OCW_BUILD_LOG:-1}" != 0 ]; then
+    "$@" > >(tee -a "$log_file") 2> >(tee -a "$log_file" >&2)
+  else
+    "$@"
+  fi
+}
+
 case "$action" in
   sync) sync_tree ;;
   run)
+    log_start
     sync_tree
     status=0
     # The remote copy has no .git: pass the commit for the build id
     # (apps/desktop/build.rs, scripts/build-id.sh).
     build_id=$(scripts/build-id.sh)
     if [ "$os" = windows ]; then
-      run_windows "$@" || status=$?
+      logged run_windows "$@" || status=$?
       "${SSH[@]}" "$target" "tar -cf - -C $(psq "$repo") Cargo.lock" 2>/dev/null | tar -xf - 2>/dev/null || true
+      log_end "$status" "$@"
       exit "$status"
     fi
     slot_guard=""
@@ -269,10 +313,11 @@ case "$action" in
     fi
     meta="\"slots\":$slots,\"checkout\":$(json_str "$checkout_dir"),\"branch\":$(json_str "$branch"),\"command\":$(json_str "$(short_cmd "$@")"),\"os\":\"$os\""
     marker="ocw_meta=$(shq "$meta"); ${marker_sh//$'\n'/ } "
-    "${SSH[@]}" "$target" "${marker}${slot_guard}ocw_mark running \$ocw_n; cd $repo && . ~/.cargo/env && export ${jobs_env:-OCW_REMOTE=1} OCW_BUILD_ID='$build_id' && $*" || status=$?
+    logged "${SSH[@]}" "$target" "${marker}${slot_guard}ocw_mark running \$ocw_n; cd $repo && . ~/.cargo/env && export ${jobs_env:-OCW_REMOTE=1} OCW_BUILD_ID='$build_id' && $*" || status=$?
     # Builds only happen remotely: bring back a Cargo.lock that cargo
     # updated there (new dependencies), so it can be committed.
     rsync -a -e "${SSH[*]}" "$target:$repo/Cargo.lock" ./Cargo.lock 2>/dev/null || true
+    log_end "$status" "$@"
     exit "$status"
     ;;
   ssh) "${SSH[@]}" "$target" "$@" ;;

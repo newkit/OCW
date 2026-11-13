@@ -45,9 +45,7 @@ fn dem() -> Dem {
             bytes.extend((terrain(lat, lon).round() as i16).to_be_bytes());
         }
     }
-    Dem {
-        tiles: vec![HgtTile::from_bytes(46, 9, &bytes).unwrap()],
-    }
+    Dem::from_hgt(vec![HgtTile::from_bytes(46, 9, &bytes).unwrap()])
 }
 
 fn terrain(lat: f64, lon: f64) -> f64 {
@@ -284,6 +282,7 @@ fn small_region_end_to_end() {
             start_m: 0.0,
             allow_local_events: false,
             voice: None,
+            ..Default::default()
         },
     );
     let bot = server.session().snapshot()[0].id;

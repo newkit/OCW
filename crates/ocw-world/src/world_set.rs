@@ -494,8 +494,10 @@ mod tests {
             graph: Some(graph),
             landuse: None,
             buildings: None,
+            bridges: None,
             routes: vec![],
             region: Some(region),
+            time_zone: None,
         })
     }
 

@@ -7,6 +7,7 @@
 //! This crate must build for `wasm32-unknown-unknown` (spec §3.5).
 
 pub mod border;
+pub mod bridges;
 pub mod buildings;
 pub mod geo;
 pub mod gpx;
@@ -23,6 +24,8 @@ pub mod region;
 pub mod road_surface;
 mod route;
 pub mod route_file;
+pub mod route_fit;
+pub mod summary;
 pub mod surface;
 mod terrain;
 pub mod track;

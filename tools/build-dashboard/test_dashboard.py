@@ -551,3 +551,68 @@ class CpuTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RecordTest(unittest.TestCase):
+    def test_record_line_is_one_json_line_with_time(self):
+        line = d.record_line({"machines": [{"name": "marge", "online": True}]}, now=0)
+        self.assertNotIn("\n", line)
+        rec = json.loads(line)
+        self.assertRegex(rec["time"], r"^1970-01-0[12]T\d\d:\d\d:\d\d([+-]\d\d:\d\d)?$")
+        self.assertEqual(rec["status"]["machines"][0]["name"], "marge")
+
+    def test_record_path_per_local_day(self):
+        p = d.record_path(Path("/x/build-log"), now=86400 * 3)
+        self.assertEqual(p.name, "servers.jsonl")
+        self.assertRegex(p.parent.name, r"^1970-01-0[34]$")
+
+
+class PromptTest(unittest.TestCase):
+    def _index(self):
+        idx = d.PromptIndex(Path("/nonexistent"))
+        idx.feed({"type": "user", "timestamp": "2026-11-13T05:00:00Z",
+                  "message": {"content": "fix the double shadow\nsecond line"}})
+        idx.feed({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "tu1", "name": "Agent", "input": {"description": "Fix shadow"}}]}})
+        idx.feed({"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "tu1", "content": "launched. agentId: aca62f4f05d964134 (x)"}]}})
+        idx.feed({"type": "attachment", "timestamp": "2026-11-13T06:00:00Z", "attachment": {
+            "type": "queued_command", "prompt": "add prompts to the dashboard", "origin": {"kind": "human"}}})
+        idx.feed({"type": "user", "timestamp": "2026-11-13T06:30:00Z",
+                  "message": {"content": "<task-notification>agent finished</task-notification>"}})
+        return idx
+
+    def test_not_prompts_are_ignored(self):
+        self.assertIsNone(d.prompt_from_text("<task-notification>x</task-notification>"))
+        self.assertIsNone(d.prompt_from_text("<system-reminder>only</system-reminder>"))
+        self.assertEqual(d.prompt_from_text("<command-name>/auto-mode-setup</command-name>"), "/auto-mode-setup")
+
+    def test_agent_job_gets_the_prompt_that_started_it(self):
+        info = self._index().for_job("OCW-worktree-agent-aca62f4f05d964134", 0)
+        self.assertEqual(info, {"prompt": "fix the double shadow", "agent": "Fix shadow"})
+
+    def test_unknown_agent_gets_nothing_other_jobs_the_latest_prompt(self):
+        idx = self._index()
+        self.assertEqual(idx.for_job("OCW-worktree-agent-ffffffffffffffff", 0), {})
+        started = d._epoch("2026-11-13T06:10:00Z")
+        self.assertEqual(idx.for_job("main", started), {"prompt": "add prompts to the dashboard"})
+        early = d._epoch("2026-11-13T05:30:00Z")
+        self.assertEqual(idx.for_job("main", early), {"prompt": "fix the double shadow"})
+
+    def test_short_prompt(self):
+        self.assertEqual(d.short_prompt("a\nb"), "a")
+        s = d.short_prompt("x" * 200, 20)
+        self.assertEqual(len(s), 20)
+        self.assertTrue(s.endswith("…"))
+
+    def test_annotate_adds_prompt_and_masks(self):
+        st = {"machines": [{"tasks": [{"checkout": "OCW-worktree-agent-aca62f4f05d964134", "command": "c",
+                                       "state": "running", "started": 0}]}]}
+        out = d.annotate_prompts(st, self._index(), mask=lambda s: s.replace("double", "<m>"))
+        t = out["machines"][0]["tasks"][0]
+        self.assertEqual(t["prompt"], "fix the <m> shadow")
+        self.assertEqual(t["agent"], "Fix shadow")
+
+    def test_short_agent_label_matches(self):
+        info = self._index().for_job("agent aca62f4f", 0)
+        self.assertEqual(info.get("agent"), "Fix shadow")

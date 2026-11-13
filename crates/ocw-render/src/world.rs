@@ -34,6 +34,15 @@ impl Plugin for WorldPlugin {
 #[derive(Component)]
 pub struct SceneEntity;
 
+/// A flat overlay on a surface: road markings, decals, the road ribbon of
+/// a test route. It never casts a shadow (spec §4.5): a few centimetres
+/// above the road it would draw a dark copy of itself beside it as soon as
+/// the sun is low (spec §14 Phase 9: the sun follows the time of day). It
+/// still receives shadows, so a marking in a tree's shadow stays shaded.
+#[derive(Component, Default)]
+#[require(NotShadowCaster)]
+pub struct FlatOverlay;
+
 /// Sky color, also used for the distance fog.
 pub const SKY: Color = Color::srgb(0.62, 0.78, 0.95);
 
@@ -47,9 +56,10 @@ pub(crate) fn spawn_world(
 ) {
     let route = &view.route;
 
-    // Sun.
+    // Sun: placed and coloured by the sky state (`sky.rs`, spec §14 Phase 9).
     commands.spawn((
         SceneEntity,
+        crate::sky::Sun,
         DirectionalLight {
             illuminance: 12_000.0,
             shadow_maps_enabled: true,
@@ -85,6 +95,7 @@ pub(crate) fn spawn_world(
         }
         commands.spawn((
             SceneEntity,
+            FlatOverlay,
             Mesh3d(meshes.add(center_line_mesh(&view, CENTRE_LINE_LIFT_PACKAGE_M))),
             MeshMaterial3d(materials.add(StandardMaterial {
                 base_color: Color::srgb(0.95, 0.95, 0.9),
@@ -153,6 +164,7 @@ pub(crate) fn spawn_world(
     let width = route.road_width_m() as f32;
     commands.spawn((
         SceneEntity,
+        FlatOverlay,
         Mesh3d(meshes.add(ribbon_mesh(&view, width))),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: Color::WHITE, // vertex colours: the surface
@@ -176,6 +188,7 @@ pub(crate) fn spawn_world(
     ));
     commands.spawn((
         SceneEntity,
+        FlatOverlay,
         Mesh3d(meshes.add(center_line_mesh(&view, 0.02))),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: Color::srgb(0.95, 0.95, 0.9),
@@ -466,6 +479,51 @@ pub fn fog() -> DistanceFog {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression (user, 2026-11-13): with the sun following the time of
+    /// day (spec 2.33) the white centre markings cast a shadow beside
+    /// themselves at low sun. Flat overlays (markings, the road ribbon)
+    /// never cast shadows; the scene has some, and every one is marked.
+    #[test]
+    fn markings_and_flat_overlays_cast_no_shadows() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<SeeThroughMaterial>>()
+            .insert_resource(RideView::new(Route::test_hills()))
+            .add_systems(Startup, spawn_world);
+        app.update();
+        let world = app.world_mut();
+        let overlays: Vec<bool> = world
+            .query_filtered::<Has<NotShadowCaster>, With<FlatOverlay>>()
+            .iter(world)
+            .collect();
+        // The road ribbon and the centre line.
+        assert_eq!(overlays.len(), 2, "{overlays:?}");
+        assert!(overlays.iter().all(|&n| n), "{overlays:?}");
+        // The marking is white: find it by its colour, it is an overlay.
+        let white = Color::srgb(0.95, 0.95, 0.9);
+        let mats = world.resource::<Assets<StandardMaterial>>();
+        let marking_mats: Vec<_> = mats
+            .iter()
+            .filter(|(_, m)| m.base_color == white)
+            .map(|(id, _)| id)
+            .collect();
+        assert!(!marking_mats.is_empty());
+        let mut q = world.query::<(
+            &MeshMaterial3d<StandardMaterial>,
+            Has<FlatOverlay>,
+            Has<NotShadowCaster>,
+        )>();
+        let markings: Vec<_> = q
+            .iter(world)
+            .filter(|(m, ..)| marking_mats.contains(&m.0.id()))
+            .map(|(_, o, n)| (o, n))
+            .collect();
+        assert!(!markings.is_empty());
+        assert!(markings.iter().all(|&(o, n)| o && n), "{markings:?}");
+    }
 
     #[test]
     fn start_arch_bar_spans_the_road_between_the_posts() {

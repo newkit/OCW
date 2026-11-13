@@ -17,7 +17,7 @@ cargo test --workspace                                   # all unit tests
 cargo test -p ocw-sim prediction                         # one crate / test name filter
 cargo clippy --workspace --all-targets -- -D warnings    # CI treats warnings as errors
 cargo fmt --all
-cargo check -p ocw-core -p ocw-sim -p ocw-protocol -p ocw-world -p ocw-voice --target wasm32-unknown-unknown
+cargo check -p ocw-core -p ocw-sim -p ocw-protocol -p ocw-world -p ocw-voice -p ocw-sky --target wasm32-unknown-unknown
 cargo run -p ocw-server -- --bots 3 --seconds 10 --fast  # headless server
 ```
 
@@ -40,6 +40,8 @@ Test build on marge's screen: `scripts/deploy-test.sh marge` (or `make deploy-te
 - `ocw-world::Terrain`: road-conformed height field (spec §4.3 step 4), pure and unit-tested; Phase 1 uses a smoothed road-elevation base, Phase 3 swaps in the DEM. `ocw-render::terrain` turns it into near/middle/far meshes; anything placed in the world (trees, later buildings) takes its height from `Terrain::height`, never from the road.
 - Free ride (spec §2.2.1, §5.2): `ocw-world::Track` is what riders ride (a `Route`, or a `RidePath` through the `RoadNetwork` built from the package's road graph – format `OCWPKG02`); `network.rs` has the junction/exit/default rules, `path.rs` the path (lock point, rounded corners, U-turn loop); `ocw-sim::freeride` the shared exit decisions. `ocw-desktop --world data/pilot/<pkg> --free-ride [--start X,Z]`.
 - `ocw-devices`: `gatt` parses/encodes the BLE profiles (FTMS, Cycling Power, CSC, Heart Rate, Wahoo control); `ble::protocol` is the pure trainer state machine (data sources, FTMS/Wahoo control, one control write at a time); `ble::runner` drives it over a `GattLink` (btleplug or test mock). Real hardware: `cargo run -p ocw-devices --example ble -- scan | services <id> | monitor <id> | ride <id>` on marge (Wahoo KICKR in range).
+- `ocw-sky` (Phase 9, pure, wasm): time zones (jiff, bundled tzdb), NOAA sun position and events, `WorldClock` (owned by `GameServer`, in `Welcome`/snapshots, `ClockPredictor` on the client), time-machine commands/presets, the light model. `ocw-render::sky` draws it (sun, atmosphere, exposure, bike lights); `apps/desktop/src/timemachine.rs` has the zone of the place, the `time` command and World → Time (the time machine).
+- World menu (spec §3.2.1 *World menu*): `ocw_worldstore::discover` finds the worlds (cache, `--world` and its siblings, data dirs; `ocw_world::summary` reads a package without loading it), `apps/desktop/src/ride/world.rs` has the World pages and `world list|info|switch`; in shared sessions the switch is a `WorldRequest` the server checks (host only) and answers with `WorldChange` (`GameServer::switch_world`, `ocw_server::worlds`).
 - Protocol schema: `proto/ocw/v1/messages.proto`, compiled by `ocw-protocol/build.rs` with protox (no `protoc` needed). Only add fields; never reuse numbers.
 
 ## Documents
@@ -56,7 +58,7 @@ These cut across many sections and shape all future code:
 
 - **Server-authoritative simulation (§6.1, §5.2).** The desktop client sends only timestamped sensor inputs (power, cadence, heart rate) and steering intents. The game server runs physics for all riders and is the truth. The client predicts only its own rider and reconciles. Single-player/offline runs the same server logic in-process ("local server"), so there is one code path.
 - **Riders move in 1D along their path** (distance along route + lateral offset); in free ride the path is extended at each junction. 3D positions are derived from road geometry only for rendering. Fixed 50 Hz physics, 10 Hz state broadcast.
-- **Engine independence (§10).** Only `ocw-render` and `apps/desktop` depend on Bevy. `ocw-core`, `ocw-sim`, `ocw-protocol`, `ocw-world` and `ocw-voice` (without its `livekit` feature) must also build for `wasm32-unknown-unknown` (§3.5) – no direct threads, file system or sockets there.
+- **Engine independence (§10).** Only `ocw-render` and `apps/desktop` depend on Bevy. `ocw-core`, `ocw-sim`, `ocw-protocol`, `ocw-world`, `ocw-sky` and `ocw-voice` (without its `livekit` feature) must also build for `wasm32-unknown-unknown` (§3.5) – no direct threads, file system or sockets there.
 - **Hardware talks only to the client.** BLE (btleplug, FTMS) runs on its own runtime behind a `DeviceBackend` trait. ANT+ is **deferred**.
 - **World data (§4).** OSM PBF vector data + DEM are converted by `world-builder` on our build infrastructure into signed world packages. The client downloads them once and renders locally; no map images, no downloads during a ride. The road is the elevation reference and the terrain adapts to it. 1 km tiles with tile-local `f32` coordinates and a floating origin.
 - **Voice is separate** from game state: LiveKit/WebRTC, never over the QUIC game connection.

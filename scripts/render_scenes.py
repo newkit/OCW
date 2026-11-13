@@ -40,6 +40,8 @@ HISTORY = ROOT / "test-output/build-history"
 WORLDS = {
     "liechtenstein": "data/pilot/liechtenstein.ocwpkg",
     "blackforest": "data/blackforest/blackforest.ocwpkg",
+    "blackforest-middle": "data/blackforest/blackforest-middle.ocwpkg",
+    "blackforest-north": "data/blackforest/blackforest-north.ocwpkg",
 }
 DEFAULT_WORLD = "liechtenstein"
 SCENE_KEYS = {
@@ -62,7 +64,7 @@ def world_name(scene: dict) -> str | None:
 def world_env(name: str) -> str:
     """The environment variable naming a world package: $OCW_WORLD for
     Liechtenstein (as before), $OCW_WORLD_<NAME> for the others."""
-    return "OCW_WORLD" if name == DEFAULT_WORLD else f"OCW_WORLD_{name.upper()}"
+    return "OCW_WORLD" if name == DEFAULT_WORLD else f"OCW_WORLD_{name.upper().replace('-', '_')}"
 
 
 def parse_world_args(values: list[str]) -> dict[str, str]:

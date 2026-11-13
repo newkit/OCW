@@ -1,8 +1,11 @@
-//! The mixer: renders the ride sounds and the playing cues onto their
-//! buses, applies the bus gains (smoothed) and a soft limiter, and writes
-//! interleaved samples for any channel count. It runs inside the output
-//! device's callback (or offline, for tests and the demo WAV) and takes
-//! its input as [`MixerMsg`]s from the game.
+//! The mixer: renders the ride sounds, the other riders and the playing
+//! cues onto their buses, applies the bus gains (smoothed) and a soft
+//! limiter, and writes interleaved samples for any channel count. The mix
+//! is stereo: the own bike and the cues in the centre, the other riders
+//! placed left and right ([`super::others`]); a mono device gets the
+//! average, channels beyond the first two the centre. It runs inside the
+//! output device's callback (or offline, for tests and the demo WAV) and
+//! takes its input as [`MixerMsg`]s from the game.
 
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
@@ -10,6 +13,7 @@ use std::time::{Duration, Instant};
 use super::cues::{Cue, CueVoice};
 use super::dsp::smoothing;
 use super::mix::{Bus, BusGains};
+use super::others::{OthersFrame, OthersSynth};
 use super::ride::{RideParams, RideSynth};
 
 /// Samples between parameter and filter updates.
@@ -28,6 +32,8 @@ const RIDE_LEVEL: f32 = 1.6;
 pub enum MixerMsg {
     /// The ride sounds' targets (sent every frame).
     Ride(RideParams),
+    /// The other riders' sounds and places (every frame).
+    Others(OthersFrame),
     /// Play a cue (with the time it was asked for).
     Cue(Cue, Instant),
     /// New bus gains (volume or mute changed).
@@ -40,6 +46,7 @@ pub struct Mixer {
     ride: RideSynth,
     ride_target: RideParams,
     ride_now: RideParams,
+    others: OthersSynth,
     gains_target: BusGains,
     gains_now: BusGains,
     voices: Vec<CueVoice>,
@@ -48,8 +55,8 @@ pub struct Mixer {
     /// Samples into the current block.
     phase: usize,
     rx: Option<Receiver<MixerMsg>>,
-    /// A video recording listens: every rendered buffer (mono) goes here
-    /// too ([`super::record`]).
+    /// A video recording listens: every rendered buffer (stereo,
+    /// interleaved) goes here too ([`super::record`]).
     tap: Option<Sender<Vec<f32>>>,
 }
 
@@ -61,6 +68,7 @@ impl Mixer {
             ride: RideSynth::new(sr),
             ride_target: RideParams::default(),
             ride_now: RideParams::default(),
+            others: OthersSynth::new(sr),
             gains_target: gains,
             gains_now: gains,
             voices: Vec::new(),
@@ -88,6 +96,7 @@ impl Mixer {
         if sr != self.sr {
             self.sr = sr;
             self.ride = RideSynth::new(sr);
+            self.others = OthersSynth::new(sr);
             self.smooth = smoothing(0.06, sr, BLOCK);
             self.voices.clear();
         }
@@ -96,6 +105,7 @@ impl Mixer {
     pub fn apply(&mut self, msg: MixerMsg) {
         match msg {
             MixerMsg::Ride(p) => self.ride_target = p,
+            MixerMsg::Others(f) => self.others.apply(f),
             MixerMsg::Gains(g) => self.gains_target = g,
             MixerMsg::Cue(cue, at) => {
                 if at.elapsed() <= CUE_MAX_AGE {
@@ -129,24 +139,40 @@ impl Mixer {
         }
     }
 
-    /// Fills `out` (interleaved, `channels` per frame) with the mix: the
-    /// same mono signal on every channel.
+    /// The other riders' voices playing now.
+    #[cfg(test)]
+    pub fn other_voices(&self) -> usize {
+        self.others.voices()
+    }
+
+    /// Fills `out` (interleaved, `channels` per frame) with the mix: left
+    /// and right on the first two channels, their average on a mono
+    /// device and on any further channels.
     pub fn render(&mut self, out: &mut [f32], channels: usize) {
         self.drain();
         let channels = channels.max(1);
-        let mut mono = self
+        let mut stereo = self
             .tap
             .as_ref()
-            .map(|_| Vec::with_capacity(out.len() / channels));
+            .map(|_| Vec::with_capacity(out.len() / channels * 2));
         for frame in out.chunks_mut(channels) {
-            let s = self.next_sample();
-            frame.fill(s);
-            if let Some(m) = mono.as_mut() {
-                m.push(s);
+            let (l, r) = self.next_sample();
+            let mid = 0.5 * (l + r);
+            match frame {
+                [m] => *m = mid,
+                [a, b, rest @ ..] => {
+                    *a = l;
+                    *b = r;
+                    rest.fill(mid);
+                }
+                [] => {}
+            }
+            if let Some(s) = stereo.as_mut() {
+                s.extend([l, r]);
             }
         }
-        if let (Some(tap), Some(m)) = (&self.tap, mono)
-            && tap.send(m).is_err()
+        if let (Some(tap), Some(s)) = (&self.tap, stereo)
+            && tap.send(s).is_err()
         {
             self.tap = None; // the recording ended
         }
@@ -158,15 +184,18 @@ impl Mixer {
         self.tap = tap;
     }
 
-    fn next_sample(&mut self) -> f32 {
+    /// The next stereo sample (left, right).
+    fn next_sample(&mut self) -> (f32, f32) {
         if self.phase == 0 {
             self.ride_now
                 .approach(&self.ride_target, BLOCK as f32 / self.sr);
             self.gains_now.approach(&self.gains_target, self.smooth);
             self.ride.set_filters(&self.ride_now);
+            self.others.block(BLOCK);
         }
         self.phase = (self.phase + 1) % BLOCK;
-        let mut bus = [0.0f32; 3];
+        // Centre buses: music, effects, voice, others (cues only).
+        let mut bus = [0.0f32; 4];
         bus[1] = RIDE_LEVEL * self.ride.sample(&self.ride_now);
         let sr = self.sr;
         for v in &mut self.voices {
@@ -175,13 +204,21 @@ impl Mixer {
                 Bus::Music => bus[0] += s,
                 Bus::Effects => bus[1] += s,
                 Bus::Voice => bus[2] += s,
+                Bus::Others => bus[3] += s,
             }
         }
         self.voices.retain(|v| !v.done(sr));
-        let mixed = bus[0] * self.gains_now.get(Bus::Music)
-            + bus[1] * self.gains_now.get(Bus::Effects)
-            + bus[2] * self.gains_now.get(Bus::Voice);
-        soft_limit(mixed)
+        let g = &self.gains_now;
+        let others = g.get(Bus::Others);
+        let centre = bus[0] * g.get(Bus::Music)
+            + bus[1] * g.get(Bus::Effects)
+            + bus[2] * g.get(Bus::Voice)
+            + bus[3] * others;
+        let (ol, or) = self.others.sample();
+        (
+            soft_limit(centre + RIDE_LEVEL * others * ol),
+            soft_limit(centre + RIDE_LEVEL * others * or),
+        )
     }
 }
 
@@ -213,6 +250,7 @@ mod tests {
             music: 100,
             effects: 100,
             voice: 100,
+            others: 100,
             mute: false,
         }
         .gains()
@@ -252,6 +290,7 @@ mod tests {
         m.apply(riding(35.0));
         let out = render(&mut m, 0.3, 6);
         assert!(rms(&out) > 0.01);
+        // Without other riders the mix is centred: alike everywhere.
         for f in out.chunks(6) {
             assert!(f.iter().all(|&s| s == f[0]));
         }
@@ -339,6 +378,64 @@ mod tests {
         assert!(out.iter().all(|s| s.is_finite() && s.abs() <= 1.0));
         assert!(soft_limit(5.0) <= 1.0 && soft_limit(-5.0) >= -1.0);
         assert_eq!(soft_limit(0.5), 0.5);
+    }
+
+    fn others_on_the_right(power: f64) -> MixerMsg {
+        use super::super::others::{OtherRider, SOURCE_HEIGHT_M, frame};
+        use super::super::spatial::Listener;
+        let l = Listener {
+            pos: [0.0, 1.5, 0.0],
+            forward: [1.0, 0.0],
+            velocity: [8.0, 0.0, 0.0],
+        };
+        let r = OtherRider {
+            id: ocw_core::RiderId(4),
+            pos: [0.5, SOURCE_HEIGHT_M, 2.0],
+            velocity: [9.0, 0.0, 0.0],
+            speed_mps: 9.0,
+            power_w: power,
+            cadence_rpm: None,
+            surface: Surface::Asphalt,
+        };
+        MixerMsg::Others(frame(&l, &[r], &[]))
+    }
+
+    fn channel_rms(x: &[f32], ch: usize) -> f32 {
+        rms(&x.iter().skip(ch).step_by(2).copied().collect::<Vec<_>>())
+    }
+
+    /// Another rider on the right is heard on the right channel; a mono
+    /// device gets the average; the own bike stays in the centre.
+    #[test]
+    fn other_riders_are_placed_in_stereo() {
+        let mut m = Mixer::new(SR, full());
+        m.apply(others_on_the_right(0.0));
+        let out = render(&mut m, 0.5, 2);
+        let tail = &out[SR as usize / 2..];
+        let (l, r) = (channel_rms(tail, 0), channel_rms(tail, 1));
+        assert!(r > 0.003 && r > 3.0 * l, "{l} {r}");
+        assert_eq!(m.other_voices(), 1);
+        let mut mono = Mixer::new(SR, full());
+        mono.apply(others_on_the_right(0.0));
+        let one = render(&mut mono, 0.5, 1);
+        for (i, s) in one.iter().enumerate().take(4800) {
+            assert!((s - 0.5 * (out[2 * i] + out[2 * i + 1])).abs() < 1e-6);
+        }
+        // Their volume: 0 silences them, the own bike plays on.
+        let quiet = Mix {
+            master: 100,
+            effects: 100,
+            others: 0,
+            ..Mix::default()
+        }
+        .gains();
+        let mut m = Mixer::new(SR, quiet);
+        m.apply(others_on_the_right(250.0));
+        assert_eq!(rms(&render(&mut m, 0.3, 2)), 0.0);
+        m.apply(riding(30.0));
+        let out = render(&mut m, 0.3, 2);
+        assert!(rms(&out) > 0.01);
+        assert!(out.chunks(2).all(|f| f[0] == f[1]), "own bike centred");
     }
 
     #[test]

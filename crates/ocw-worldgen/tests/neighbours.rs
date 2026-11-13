@@ -35,9 +35,7 @@ fn dem() -> Dem {
             bytes.extend((h.round() as i16).to_be_bytes());
         }
     }
-    Dem {
-        tiles: vec![HgtTile::from_bytes(46, 9, &bytes).unwrap()],
-    }
+    Dem::from_hgt(vec![HgtTile::from_bytes(46, 9, &bytes).unwrap()])
 }
 
 /// Builds one half as `world-builder package` does; writes the package
@@ -236,6 +234,7 @@ fn ride_across(origin_east: Option<(f64, f64)>) {
             start_m: 0.0,
             allow_local_events: false,
             voice: None,
+            ..Default::default()
         },
     );
     let bot = server.session().snapshot()[0].id;

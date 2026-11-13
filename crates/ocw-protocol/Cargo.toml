@@ -11,6 +11,7 @@ publish.workspace = true
 ocw-core.workspace = true
 ocw-sim.workspace = true
 ocw-world.workspace = true
+ocw-sky.workspace = true
 prost.workspace = true
 thiserror.workspace = true
 
