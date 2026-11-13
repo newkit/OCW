@@ -101,9 +101,10 @@ fn menu_input(
     riders: Option<Res<RiderProfiles>>,
     catalog: Option<Res<RideCatalog>>,
     audio: Option<Res<AudioDeviceList>>,
-    (voice, time_machine): (
+    (voice, time_machine, weather): (
         Option<Res<crate::voice::VoiceMenuInfo>>,
         Option<Res<crate::timemachine::TimeMachineInfo>>,
+        Option<Res<crate::weather::WeatherState>>,
     ),
 ) {
     let pressed = pads.iter().fold(
@@ -159,7 +160,7 @@ fn menu_input(
             catalog.as_deref(),
             audio.as_deref(),
             voice.as_deref(),
-            time_machine.as_deref(),
+            (time_machine.as_deref(), weather.as_deref()),
         )
     };
     for action in actions {
@@ -221,11 +222,25 @@ fn sub_rows(
     catalog: Option<&RideCatalog>,
     audio: Option<&AudioDeviceList>,
     voice: Option<&crate::voice::VoiceMenuInfo>,
-    time_machine: Option<&crate::timemachine::TimeMachineInfo>,
+    (time_machine, weather): (
+        Option<&crate::timemachine::TimeMachineInfo>,
+        Option<&crate::weather::WeatherState>,
+    ),
 ) -> Vec<settings_pages::Row> {
+    let no_time = crate::timemachine::TimeMachineInfo::default();
+    let time_machine = time_machine.unwrap_or(&no_time);
     if page == settings_pages::Page::TimeMachine {
-        let empty = crate::timemachine::TimeMachineInfo::default();
-        return crate::timemachine::rows(time_machine.unwrap_or(&empty));
+        return crate::timemachine::rows(time_machine);
+    }
+    if page.is_world_page() {
+        let empty = crate::ride::pages::Catalog::default();
+        let clear = crate::weather::WeatherState::default();
+        return crate::ride::world::rows(
+            page,
+            catalog.map_or(&empty, |c| &c.0),
+            time_machine,
+            weather.unwrap_or(&clear),
+        );
     }
     let default_settings = Settings::default();
     if page.is_voice_page() {
@@ -256,6 +271,14 @@ fn sub_rows(
     )
 }
 
+/// Text of a page beyond its fixed description (a data source's notice).
+fn page_text(page: Page, catalog: Option<&RideCatalog>) -> Vec<String> {
+    match (page, catalog) {
+        (Page::Sub(p), Some(c)) if p.is_world_page() => crate::ride::world::text(p, &c.0),
+        _ => Vec::new(),
+    }
+}
+
 #[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
 fn write_view(
     mut state: ResMut<MenuState>,
@@ -268,7 +291,10 @@ fn write_view(
         Option<Res<AudioDeviceList>>,
         Option<Res<crate::voice::VoiceMenuInfo>>,
     ),
-    time_machine: Option<Res<crate::timemachine::TimeMachineInfo>>,
+    (time_machine, weather): (
+        Option<Res<crate::timemachine::TimeMachineInfo>>,
+        Option<Res<crate::weather::WeatherState>>,
+    ),
     mut view: ResMut<MenuView>,
 ) {
     // Values changed by the menu's commands (or the console) show at once.
@@ -280,7 +306,7 @@ fn write_view(
             catalog.as_deref(),
             audio.as_deref(),
             voice.as_deref(),
-            time_machine.as_deref(),
+            (time_machine.as_deref(), weather.as_deref()),
         )
     };
     state.menu.refresh(&rows);
@@ -296,7 +322,12 @@ fn write_view(
                     (Page::Top, Some(r)) => status_line(r),
                     _ => String::new(),
                 },
-                text: def.text.iter().map(|&s| s.into()).collect(),
+                text: def
+                    .text
+                    .iter()
+                    .map(|&s| s.to_owned())
+                    .chain(page_text(page, catalog.as_deref()))
+                    .collect(),
                 items: menu.labels(),
                 focused: menu.focus(),
                 hint: hint(page, menu.list_pages(), menu.depth()),
@@ -329,8 +360,16 @@ mod tests {
             Rider(0),
             Workshop,
             Bike(0),
+            WorldHome,
             Worlds,
             World(0),
+            WorldRoutes(0),
+            WorldParts(0),
+            WorldInfo,
+            WorldSun,
+            WorldSources,
+            WorldSource(0),
+            Weather,
             Routes,
             Rides,
             GpxImport,
@@ -343,8 +382,10 @@ mod tests {
         for p in &all {
             match p {
                 Controls | Trainer | Strava | Display | Audio | Riders | Rider(_) | Workshop
-                | Bike(_) | Worlds | World(_) | Routes | Rides | GpxImport | Workouts | Voice
-                | VoiceDevices | VoiceParticipants | TimeMachine => {}
+                | Bike(_) | WorldHome | Worlds | World(_) | WorldRoutes(_) | WorldParts(_)
+                | WorldInfo | WorldSun | WorldSources | WorldSource(_) | Weather | Routes
+                | Rides | GpxImport | Workouts | Voice | VoiceDevices | VoiceParticipants
+                | TimeMachine => {}
             }
         }
         all
@@ -367,7 +408,6 @@ mod tests {
         let pages = [
             Page::Top,
             Page::Ride,
-            Page::RideChange,
             Page::Navi,
             Page::Settings,
             Page::ConfirmRestart,
@@ -385,6 +425,8 @@ mod tests {
                     .collect(),
                 _ => def.items.iter().map(|i| i.label.to_string()).collect(),
             };
+            // The longest dynamic text a page gets: the OSM notice.
+            let catalog = RideCatalog(crate::ride::world::tests::catalog());
             check(MenuView {
                 open: true,
                 title: def.title.into(),
@@ -392,7 +434,12 @@ mod tests {
                     Page::Top => "250 W   32.4 km/h   Trainer: virtual (SIM)".into(),
                     _ => String::new(),
                 },
-                text: def.text.iter().map(|&s| s.into()).collect(),
+                text: def
+                    .text
+                    .iter()
+                    .map(|&s| s.to_owned())
+                    .chain(page_text(page, Some(&catalog)))
+                    .collect(),
                 items,
                 focused: 0,
                 hint: hint(page, 2, 3),
@@ -682,7 +729,7 @@ mod tests {
         push(&mut app, MenuPointerEvent::Hover(3));
         app.update();
         assert_eq!(view(&app).focused, 3);
-        push(&mut app, MenuPointerEvent::Click(4));
+        push(&mut app, MenuPointerEvent::Click(5));
         app.update();
         assert_eq!(view(&app).title, "Settings");
         push(&mut app, MenuPointerEvent::Back);

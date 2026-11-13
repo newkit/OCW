@@ -108,6 +108,12 @@ and the file gets `scripts/kiosk.args`: `--world
 the package's terrain, land use, forests and buildings. Overrides:
 `OCW_KIOSK_ARGS='…'` (the file's content), `OCW_DEPLOY_WORLD=0` (no package
 rebuild), `OCW_DEPLOY_DIR` (install directory, for testing the script).
+Further world packages for the menu's *World → Change world* are installed
+beside the binary too: `OCW_DEPLOY_WORLDS='PATH …'` (paths or globs on the
+machine, each with its `.manifest.json`; default: the Black Forest packages
+`data/blackforest*/*.ocwpkg` of the checkout and of `~/src/OCW*`, `''` for
+none). The newest file of each name is installed, unchanged ones are not
+copied again; the kiosk's default world stays.
 
 ## Per-OS prerequisites on the machines
 

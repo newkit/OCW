@@ -87,6 +87,70 @@ impl PackageRegion {
             && other.west <= self.east + tolerance_deg
     }
 
+    /// The area of the region (the polygons, else the box), km², on a
+    /// sphere of the earth's mean radius (equirectangular per ring, fine
+    /// for regions of a few hundred km).
+    pub fn area_km2(&self) -> f64 {
+        const R_KM: f64 = 6371.0;
+        let ring_km2 = |ring: &[(f64, f64)]| {
+            if ring.len() < 3 {
+                return 0.0;
+            }
+            let lat0 = (ring.iter().map(|p| p.0).sum::<f64>() / ring.len() as f64).to_radians();
+            let xy = |(lat, lon): (f64, f64)| {
+                (
+                    lon.to_radians() * lat0.cos() * R_KM,
+                    lat.to_radians() * R_KM,
+                )
+            };
+            let n = ring.len();
+            let twice: f64 = (0..n)
+                .map(|i| {
+                    let (a, b) = (xy(ring[i]), xy(ring[(i + 1) % n]));
+                    a.0 * b.1 - b.0 * a.1
+                })
+                .sum();
+            twice.abs() / 2.0
+        };
+        if self.outer.is_empty() {
+            let (s, w, n, e) = (self.south, self.west, self.north, self.east);
+            return ring_km2(&[(s, w), (s, e), (n, e), (n, w)]);
+        }
+        let outer: f64 = self.outer.iter().map(|r| ring_km2(r)).sum();
+        let holes: f64 = self.holes.iter().map(|r| ring_km2(r)).sum();
+        (outer - holes).max(0.0)
+    }
+
+    /// How much of the smaller of the two regions lies inside both (0 – 1),
+    /// sampled on a 48 × 48 grid over the boxes' intersection. Neighbours
+    /// that share a border give about 0, two cuts of the same area about 1.
+    pub fn shared_fraction(&self, other: &PackageRegion) -> f64 {
+        let (s, n) = (self.south.max(other.south), self.north.min(other.north));
+        let (w, e) = (self.west.max(other.west), self.east.min(other.east));
+        if s >= n || w >= e {
+            return 0.0;
+        }
+        const N: usize = 48;
+        let cell_km2 = PackageRegion::bbox(s, w, n, e).area_km2() / (N * N) as f64;
+        let mut both = 0usize;
+        for i in 0..N {
+            for j in 0..N {
+                let p = (
+                    s + (n - s) * (i as f64 + 0.5) / N as f64,
+                    w + (e - w) * (j as f64 + 0.5) / N as f64,
+                );
+                if self.contains(p) && other.contains(p) {
+                    both += 1;
+                }
+            }
+        }
+        let smaller = self.area_km2().min(other.area_km2());
+        if smaller <= 0.0 {
+            return 0.0;
+        }
+        (both as f64 * cell_km2 / smaller).clamp(0.0, 1.0)
+    }
+
     /// The box as [south, west, north, east].
     pub fn bounds(&self) -> [f64; 4] {
         [self.south, self.west, self.north, self.east]
@@ -141,6 +205,34 @@ pub fn read_region(bytes: &[u8]) -> Result<PackageRegion, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn areas_and_shared_parts_of_regions() {
+        // About 0.3° x 0.3° at 47° N: 33.4 km x 22.8 km.
+        let a = PackageRegion::bbox(47.0, 9.4, 47.3, 9.7);
+        let km2 = a.area_km2();
+        assert!((km2 - 33.36 * 22.75).abs() < 15.0, "{km2}");
+        // A neighbour sharing the eastern border: nothing shared.
+        let east = PackageRegion::bbox(47.0, 9.7, 47.3, 10.0);
+        assert!(a.shared_fraction(&east) < 0.01);
+        assert!(a.boxes_touch(&east, 0.01));
+        // Another cut of the same area: all of it.
+        let same = PackageRegion::bbox(47.05, 9.45, 47.25, 9.65);
+        assert!(
+            a.shared_fraction(&same) > 0.95,
+            "{}",
+            a.shared_fraction(&same)
+        );
+        // Polygons: a triangle is half its box; holes are taken out.
+        let mut t = a.clone();
+        t.outer = vec![vec![(47.0, 9.4), (47.0, 9.7), (47.3, 9.7)]];
+        assert!((t.area_km2() / km2 - 0.5).abs() < 0.01);
+        t.holes = vec![vec![(47.0, 9.65), (47.0, 9.7), (47.05, 9.7)]];
+        assert!(t.area_km2() < km2 / 2.0);
+        // Far apart: nothing.
+        let far = PackageRegion::bbox(48.0, 7.8, 48.2, 8.2);
+        assert_eq!(a.shared_fraction(&far), 0.0);
+    }
 
     fn diamond() -> PackageRegion {
         let mut r = PackageRegion::bbox(47.0, 9.0, 48.0, 10.0);

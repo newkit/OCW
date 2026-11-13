@@ -44,6 +44,7 @@ impl Plugin for ConnectionPlugin {
             app.insert_resource(Ghosts(crate::ghost::default_dir().map(GhostStore::new)));
         }
         app.init_resource::<LinkNotice>()
+            .init_resource::<WorldChangeInbox>()
             .add_systems(PreUpdate, (poll_server, link_status).chain())
             .add_systems(FixedUpdate, (step_server, predict).chain())
             .add_systems(Update, (send_steer, ghost_io, update_view));
@@ -62,6 +63,17 @@ pub struct SessionStart(pub f64);
 /// replacing the old session's (dropping the old local server's link ends
 /// its thread). Used at the start and by the ride switch (`ride` module).
 pub fn start_session(world: &mut World, route: Route) {
+    start_session_with(world, route, false);
+}
+
+/// A server's world change (spec §3.2.1), until the ride module loads it.
+#[derive(Resource, Default)]
+pub struct WorldChangeInbox(pub Option<v1::WorldChange>);
+
+/// [`start_session`]; with `keep_link` a remote server's connection stays
+/// and the new client joins on it (after the host switched the world: the
+/// server restarted its session, the connection order – the host – stays).
+pub fn start_session_with(world: &mut World, route: Route, keep_link: bool) {
     let args = world.resource::<Args>().clone();
     let free = world.get_resource::<FreeRideSetup>().cloned();
     // The rider profile's weight and bike (physics profile id) go to
@@ -105,8 +117,19 @@ pub fn start_session(world: &mut World, route: Route) {
         Course::FreeRide { .. } | Course::RouteRide { .. } => 0.0,
     };
     // The old session's link goes first: its local server thread ends.
-    world.remove_resource::<Link>();
-    let mut server = if let Some(spec) = &args.server {
+    let old = world.remove_resource::<Link>();
+    let kept = match old {
+        Some(link) if keep_link && args.server.is_some() => {
+            match link.server.into_inner().expect("not poisoned") {
+                remote @ ServerLink::Remote(_) => Some(remote),
+                _ => None,
+            }
+        }
+        _ => None,
+    };
+    let mut server = if let Some(link) = kept {
+        link
+    } else if let Some(spec) = &args.server {
         ServerLink::Remote(Box::new(connect_remote(&args, spec)))
     } else if args.capture.is_some() {
         // Frame capture: the server shares the client's fixed-step game time.
@@ -260,8 +283,10 @@ fn poll_server(
     mut client: ResMut<ClientState>,
     mut console: ResMut<ConsoleState>,
     voice: Option<ResMut<crate::voice::PendingVoiceGrants>>,
+    inbox: Option<ResMut<WorldChangeInbox>>,
 ) {
     let mut voice = voice;
+    let mut inbox = inbox;
     let messages = link.server.lock().expect("not poisoned").receive();
     let now = time.elapsed_secs_f64();
     for bytes in messages {
@@ -277,6 +302,23 @@ fn poll_server(
             Some(Notice::Voice(grant)) => {
                 if let Some(v) = voice.as_mut() {
                     v.0.push(grant);
+                }
+            }
+            Some(Notice::WorldChange(change)) => {
+                info!(world = %change.package_id, version = change.version, by = %change.by, "the server switched the world");
+                console.print(format!(
+                    "{} switched the world to {} ({} v{})",
+                    if change.by.is_empty() {
+                        "the host"
+                    } else {
+                        change.by.as_str()
+                    },
+                    change.name,
+                    change.package_id,
+                    change.version
+                ));
+                if let Some(i) = inbox.as_mut() {
+                    i.0 = Some(change);
                 }
             }
             None => {}

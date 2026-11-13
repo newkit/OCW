@@ -33,6 +33,7 @@ mod timemachine;
 mod trainer;
 mod video;
 mod voice;
+mod weather;
 mod workout;
 mod worlds;
 
@@ -429,6 +430,7 @@ fn main() -> AppExit {
         ride::RidePlugin,
         voice::VoicePlugin,
         timemachine::TimeMachinePlugin,
+        weather::WeatherPlugin,
     ))
     .add_systems(Startup, startup_commands)
     .add_systems(Update, timed_commands);

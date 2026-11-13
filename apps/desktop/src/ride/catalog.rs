@@ -1,89 +1,14 @@
 //! What the Ride and Navi pages list (spec §3.2.1, M3), Bevy-free and read
 //! from directories given by the caller (fixture directories in tests):
-//! the known world packages (the cache and package files in data
-//! directories), the user's routes (`<data>/ocw/routes/*.ocw-graph-route`,
+//! the user's routes (`<data>/ocw/routes/*.ocw-graph-route`,
 //! e.g. imported GPX files), GPX files to import (`<data>/ocw/gpx/`, the
 //! downloads folder) and the saved rides (`rides/*.fit` with their
-//! sidecar and Strava sync state).
+//! sidecar and Strava sync state). The worlds of World → Change world come
+//! from `ocw_worldstore::discover`.
 
 use std::path::{Path, PathBuf};
 
-use ocw_worldstore::WorldCache;
-
 use crate::strava::sync::{RideSync, SyncState};
-
-/// A world package the app can ride.
-#[derive(Debug, Clone, PartialEq)]
-pub struct KnownWorld {
-    /// What `--world` takes: a file path or `id@version`.
-    pub spec: String,
-    pub name: String,
-    /// Version / size, for the row's value.
-    pub detail: String,
-}
-
-/// The newest version of each package in the cache, then the `.ocwpkg`
-/// files in `dirs` (and one level of sub directories), without duplicates.
-pub fn known_worlds(cache: &WorldCache, dirs: &[PathBuf]) -> Vec<KnownWorld> {
-    let mut out: Vec<KnownWorld> = Vec::new();
-    let entries = cache.list();
-    for (i, e) in entries.iter().enumerate() {
-        // Sorted by id, then version: keep the last of each id.
-        if entries.get(i + 1).is_some_and(|n| n.id == e.id) {
-            continue;
-        }
-        let (name, size) = match e.manifest() {
-            Ok(m) => (
-                m.manifest.name.clone(),
-                m.manifest.files.iter().map(|f| f.size).sum::<u64>(),
-            ),
-            Err(_) => (e.id.clone(), 0),
-        };
-        out.push(KnownWorld {
-            spec: format!("{}@{}", e.id, e.version),
-            name,
-            detail: format!("v{}, {}", e.version, megabytes(size)),
-        });
-    }
-    let mut files = Vec::new();
-    for d in dirs {
-        package_files(d, 1, &mut files);
-    }
-    files.sort();
-    for f in files {
-        let spec = f.display().to_string();
-        if out.iter().any(|w| w.spec == spec) {
-            continue;
-        }
-        let size = std::fs::metadata(&f).map_or(0, |m| m.len());
-        out.push(KnownWorld {
-            name: super::choice::world_name(&spec),
-            spec,
-            detail: format!("file, {}", megabytes(size)),
-        });
-    }
-    out
-}
-
-fn megabytes(bytes: u64) -> String {
-    format!("{:.0} MB", bytes as f64 / 1e6)
-}
-
-fn package_files(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for e in entries.flatten() {
-        let p = e.path();
-        if p.is_dir() {
-            if depth > 0 {
-                package_files(&p, depth - 1, out);
-            }
-        } else if p.extension().is_some_and(|x| x == "ocwpkg") {
-            out.push(p);
-        }
-    }
-}
 
 /// A route of the user (an `ocw-graph-route` file).
 #[derive(Debug, Clone, PartialEq)]
@@ -219,22 +144,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
-    }
-
-    #[test]
-    fn package_files_in_data_dirs_are_known_worlds() {
-        let d = temp_dir("worlds");
-        std::fs::create_dir_all(d.join("pilot")).unwrap();
-        std::fs::write(d.join("example.ocwpkg"), vec![0u8; 2_000_000]).unwrap();
-        std::fs::write(d.join("pilot/other.ocwpkg"), b"x").unwrap();
-        std::fs::write(d.join("notes.txt"), b"x").unwrap();
-        let cache = WorldCache::new(d.join("empty-cache"));
-        // The same directory twice: listed once.
-        let w = known_worlds(&cache, &[d.clone(), d.clone()]);
-        let names: Vec<&str> = w.iter().map(|w| w.name.as_str()).collect();
-        assert_eq!(names, ["example", "other"]);
-        assert_eq!(w[0].spec, d.join("example.ocwpkg").display().to_string());
-        assert_eq!(w[0].detail, "file, 2 MB");
     }
 
     #[test]
