@@ -181,6 +181,8 @@ pub struct TileMeshes {
     pub bridges: MeshArrays,
     /// The buildings as camera-solid obstacles.
     pub solid: SolidFootprints,
+    /// Near tint of the ground layers ([`TileLook::near_tint`]).
+    pub near_tint: Option<[[f32; 3]; crate::ground::GROUND_LAYERS]>,
 }
 
 /// What the tile meshes are built for: with a material library, the far
@@ -194,6 +196,12 @@ pub struct TileLook {
     pub road_colours: Option<Vec<[f32; 3]>>,
     /// The ground-layer mix of each land class (its regional set).
     pub mix: Option<Arc<crate::ground::ClassMix>>,
+    /// Near tint per ground layer from the package's measured look and the
+    /// world date (spec §14 Phase 8 T3; `None`: neutral).
+    pub near_tint: Option<[[f32; 3]; crate::ground::GROUND_LAYERS]>,
+    /// Blend weights of the package's seasonal tint maps at the world date
+    /// (empty: no satellite colour in the far colour map).
+    pub season_weights: Vec<(usize, f32)>,
 }
 
 impl TileLook {
@@ -209,7 +217,40 @@ impl TileLook {
             palette: Some(palette.into_iter().map(|(_, c)| c).collect()),
             road_colours: Some(lib.road_means.to_vec()),
             mix: Some(Arc::new(set.mix)),
+            near_tint: None,
+            season_weights: Vec::new(),
         }
+    }
+
+    /// The look of a package with its measured region look (spec §14
+    /// Phase 8 T3) at `day_of_year`: the near layers and the far class
+    /// colours tinted towards the measured palette and the season, the
+    /// seasonal satellite maps blended by the date. `set` is the package's
+    /// ground set (`None` without the material library: only the satellite
+    /// colour applies).
+    pub fn with_region(
+        mut self,
+        region: &ocw_world::look::RegionLook,
+        set: Option<&crate::materials::GroundSet>,
+        day_of_year: Option<f64>,
+    ) -> Self {
+        use crate::region_look as rl;
+        if region.is_empty() {
+            return self;
+        }
+        let weights = match (region.seasons.as_ref(), day_of_year) {
+            (Some(s), Some(d)) => s.weights(d),
+            _ => Vec::new(),
+        };
+        if let Some(set) = set {
+            let tints = rl::near_tints(region, &set.means, &weights);
+            let class = rl::class_tints(&set.mix, &set.means, &tints);
+            let palette = crate::ground::class_palette(&set.means, &set.mix, |c| class[c as usize]);
+            self.palette = Some(palette.into_iter().map(|(_, c)| c).collect());
+            self.near_tint = Some(tints);
+        }
+        self.season_weights = weights;
+        self
     }
 }
 
@@ -809,6 +850,60 @@ pub fn colour_map_with(
     cells: u32,
     palette: Option<&[[f32; 3]]>,
 ) -> ColourMap {
+    colour_map_seasonal(pkg, tile, lu, cells, palette, None)
+}
+
+/// A tile's seasonal satellite map (spec §14 Phase 8 T3): the decoded
+/// maps of the package's `SEAS` section blended by `weights`.
+pub struct SatelliteMap {
+    /// Cells per side.
+    pub cells: u32,
+    /// `cells²` sRGB, row-major along +z.
+    pub rgb: Vec<[u8; 3]>,
+}
+
+impl SatelliteMap {
+    /// The tile's map at the season `weights`, if the package has one.
+    pub fn of_tile(pkg: &WorldPackage, key: TileKey, weights: &[(usize, f32)]) -> Option<Self> {
+        let s = pkg.look.seasons.as_ref()?;
+        let maps: Vec<(Vec<[u8; 3]>, f32)> = weights
+            .iter()
+            .map(|&(i, w)| s.map(key, i).map(|m| (m, w)))
+            .collect::<Option<_>>()?;
+        Some(Self {
+            cells: s.cells,
+            rgb: crate::region_look::blend_maps(&maps)?,
+        })
+    }
+
+    /// Bilinear colour at a fraction (u, v) of the tile (0 … 1).
+    pub fn at(&self, u: f64, v: f64) -> [u8; 3] {
+        let n = self.cells as usize;
+        let fx = (u * n as f64 - 0.5).clamp(0.0, (n - 1) as f64);
+        let fy = (v * n as f64 - 0.5).clamp(0.0, (n - 1) as f64);
+        let (x0, y0) = (fx.floor() as usize, fy.floor() as usize);
+        let (x1, y1) = ((x0 + 1).min(n - 1), (y0 + 1).min(n - 1));
+        let (tx, ty) = (fx - x0 as f64, fy - y0 as f64);
+        let p = |x: usize, y: usize| self.rgb[y * n + x].map(f64::from);
+        let (a, b, c, d) = (p(x0, y0), p(x1, y0), p(x0, y1), p(x1, y1));
+        std::array::from_fn(|k| {
+            let top = a[k] + (b[k] - a[k]) * tx;
+            let bot = c[k] + (d[k] - c[k]) * tx;
+            (top + (bot - top) * ty).round() as u8
+        })
+    }
+}
+
+/// [`colour_map_with`] with the tile's seasonal satellite colour laid over
+/// the class colours ([`crate::region_look::far_colour`]).
+pub fn colour_map_seasonal(
+    pkg: &WorldPackage,
+    tile: &Tile,
+    lu: &LandUseTile,
+    cells: u32,
+    palette: Option<&[[f32; 3]]>,
+    satellite: Option<&SatelliteMap>,
+) -> ColourMap {
     let n = cells as usize;
     let size = f64::from(pkg.tile_size_m);
     let o = tile.key.origin(size);
@@ -846,6 +941,12 @@ pub fn colour_map_with(
                     None => ((slope - 0.6) / 0.4).clamp(0.0, 1.0),
                 };
                 colour = std::array::from_fn(|j| colour[j] + (rock[j] - colour[j]) * t);
+            }
+            if let Some(sat) = satellite
+                && class != LandClass::Water
+            {
+                let (u, v) = ((c as f64 + 0.5) / n as f64, (r as f64 + 0.5) / n as f64);
+                colour = crate::region_look::far_colour(colour, Some(sat.at(u, v)));
             }
             let (gc, gr) = (
                 i64::from(tile.key.x) * n as i64 + c as i64,
@@ -1003,9 +1104,19 @@ pub fn building_colours(b: &Building) -> ([f32; 3], [f32; 3]) {
 /// outline and the courtyards, a flat roof (triangulated) or a gable roof
 /// with its ridge along the first edge.
 pub fn building_arrays(buildings: &[Building]) -> MeshArrays {
+    building_arrays_roofed(buildings, &[])
+}
+
+/// [`building_arrays`] with measured roof colours (`roofs[i]` of building
+/// `i`, spec §14 Phase 8 T3; missing: the default colours).
+pub fn building_arrays_roofed(
+    buildings: &[Building],
+    roofs: &[Option<ocw_world::look::RoofColour>],
+) -> MeshArrays {
     let mut m = MeshArrays::default();
-    for b in buildings {
+    for (i, b) in buildings.iter().enumerate() {
         let (wall, roof) = building_colours(b);
+        let roof = crate::region_look::roof_colour(roofs.get(i).copied().flatten(), roof);
         let (wall, roof) = (
             lin(wall[0], wall[1], wall[2]),
             lin(roof[0], roof[1], roof[2]),
@@ -1116,15 +1227,25 @@ pub fn build_tile_meshes_look(
         sites.retain(|(p, _)| f([f64::from(p.x), f64::from(p.z)]));
     }
     let lu = tile_landuse(pkg, key);
-    let kept: Option<Vec<Building>> = pkg.buildings.as_ref().and_then(|b| b.get(&key)).map(|b| {
-        b.iter()
-            .filter(|b| keep.is_none_or(|f| f(outline_centroid(&b.outline))))
-            .cloned()
-            .collect()
-    });
+    // The kept buildings with their measured roof colours (section ROOF,
+    // in the order of the tile's buildings).
+    let (kept, roofs): (Option<Vec<Building>>, Vec<Option<ocw_world::look::RoofColour>>) =
+        match pkg.buildings.as_ref().and_then(|b| b.get(&key)) {
+            Some(b) => {
+                let (bs, rs) = b
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, b)| keep.is_none_or(|f| f(outline_centroid(&b.outline))))
+                    .map(|(i, b)| (b.clone(), pkg.look.roof(key, i)))
+                    .unzip();
+                (Some(bs), rs)
+            }
+            None => (None, Vec::new()),
+        };
     let buildings = kept
         .as_deref()
-        .map_or_else(MeshArrays::default, building_arrays);
+        .map_or_else(MeshArrays::default, |b| building_arrays_roofed(b, &roofs));
+    let satellite = SatelliteMap::of_tile(pkg, key, &look.season_weights);
     let near = crate::bridges::bridges_near(pkg, key);
     let size = f64::from(pkg.tile_size_m);
     let own: Vec<&ocw_world::bridges::Bridge> = pkg
@@ -1147,8 +1268,16 @@ pub fn build_tile_meshes_look(
     Some(TileMeshes {
         key,
         terrain: terrain_arrays_kept(pkg, tile, keep),
-        colour_map: lu
-            .map(|(lu, cells)| colour_map_with(pkg, tile, lu, cells, look.palette.as_deref())),
+        colour_map: lu.map(|(lu, cells)| {
+            colour_map_seasonal(
+                pkg,
+                tile,
+                lu,
+                cells,
+                look.palette.as_deref(),
+                satellite.as_ref(),
+            )
+        }),
         splat: lu.filter(|_| look.textured()).map(|(_, cells)| {
             let mix = look
                 .mix
@@ -1167,6 +1296,7 @@ pub fn build_tile_meshes_look(
         buildings,
         bridges: crate::bridges::bridge_arrays(&own),
         solid,
+        near_tint: look.near_tint,
     })
 }
 
@@ -1227,6 +1357,9 @@ struct TileStreamer {
     urgent: usize,
     /// Whether the loaded tiles were built with the material library.
     textured: bool,
+    /// The season bucket the loaded tiles were built for
+    /// ([`crate::region_look::season_bucket`]).
+    season: Option<u32>,
 }
 
 /// Neighbour tiles being loaded.
@@ -1418,25 +1551,46 @@ fn stream_tiles(
     let Some(p) = rider_position(&view) else {
         return;
     };
-    // The look of each member package: the ground set of its region.
+    // The world date (the sky's local date at the rider, spec §14 Phase 9),
+    // in buckets of a few days: the seasonal look changes with it.
+    let season = view.sky.as_ref().map(|s| {
+        crate::region_look::season_bucket(ocw_world::look::day_of_year(
+            s.sky.local.year,
+            s.sky.local.month,
+            s.sky.local.day,
+        ))
+    });
+    let day = season.map(crate::region_look::bucket_day);
+    // The look of each member package: the ground set of its region, tinted
+    // by its measured look (spec §14 Phase 8 T3).
     let looks: Vec<TileLook> = set
         .members()
         .iter()
         .map(|m| {
-            library.as_deref().map_or_else(TileLook::default, |lib| {
-                let tz = m.package().and_then(|p| p.time_zone.as_deref());
-                TileLook::of_library(lib, lib.set_for(tz))
-            })
+            let tz = m.package().and_then(|p| p.time_zone.as_deref());
+            let ground = library.as_deref().map(|lib| lib.set_for(tz));
+            let base = match (library.as_deref(), ground) {
+                (Some(lib), Some(g)) => TileLook::of_library(lib, g),
+                _ => TileLook::default(),
+            };
+            match m.package() {
+                Some(p) => base.with_region(&p.look, ground, day),
+                None => base,
+            }
         })
         .collect();
     let look = move |i: usize| looks.get(i).cloned().unwrap_or_default();
     let textured = library.is_some();
-    // Packages came or went, or the material library arrived: the tiles
-    // are built anew (the old meshes stay until the new ones are uploaded).
-    // Tasks for the old set are discarded.
-    if streamer.generation != set.generation() || streamer.textured != textured {
+    // Packages came or went, the material library arrived or the season
+    // moved on: the tiles are built anew (the old meshes stay until the new
+    // ones are uploaded). Tasks for the old set are discarded.
+    if streamer.generation != set.generation()
+        || streamer.textured != textured
+        || streamer.season != season
+    {
         streamer.generation = set.generation();
         streamer.textured = textured;
+        streamer.season = season;
         streamer.building.clear();
         let loaded: Vec<TileId> = streamer.loaded.keys().copied().collect();
         for id in loaded {
@@ -1626,6 +1780,11 @@ fn upload_tile(
         let e = &mut terrain_mat.extension;
         let ground = lib.set_for(member.package().and_then(|p| p.time_zone.as_deref()));
         e.look = ground.look;
+        if let Some(tint) = t.near_tint {
+            for (slot, c) in e.look.material_tint.iter_mut().zip(tint) {
+                *slot = Vec4::new(c[0], c[1], c[2], 1.0);
+            }
+        }
         e.look.mode.y = splat.cells as f32;
         e.look.tile.x = member.package().map_or(1000.0, |p| p.tile_size_m);
         let (a, b) = splat.images();
@@ -2261,6 +2420,7 @@ mod tests {
             palette: Some(palette.into_iter().map(|(_, c)| c).collect()),
             road_colours: Some(vec![[0.1, 0.2, 0.3]; 5]),
             mix: Some(std::sync::Arc::new(mix)),
+            ..Default::default()
         };
         let m = build_tile_meshes_look(&p, key, None, &look).unwrap();
         let splat = m.splat.expect("splat weights");
@@ -2412,5 +2572,76 @@ mod tests {
             total / 25.0 * 1e3,
             worst * 1e3
         );
+    }
+
+    /// Spec §14 Phase 8 T3: the measured roof colour reaches the building
+    /// mesh, the seasonal satellite map the far colour map (by the date),
+    /// and a package without a look is drawn as before.
+    #[test]
+    fn the_measured_look_colours_roofs_and_the_far_ground() {
+        use ocw_world::look::{
+            RegionLook, RoofColour, RoofOrigin, Season, SeasonInfo, SeasonalTints, encode_tint,
+        };
+        let key = TileKey { x: 0, z: 0 };
+        let plain = landuse_package();
+        let mut p = landuse_package();
+        let info = |season, centre_doy| SeasonInfo {
+            season,
+            centre_doy,
+            first_doy: 1,
+            last_doy: 2,
+            scenes: 3,
+        };
+        p.look = RegionLook {
+            roofs: Some(BTreeMap::from([(
+                key,
+                vec![Some(RoofColour {
+                    rgb: [51, 102, 153],
+                    origin: RoofOrigin::Orthophoto,
+                })],
+            )])),
+            seasons: Some(SeasonalTints {
+                cells: 2,
+                source: 0,
+                seasons: vec![info(Season::Summer, 200), info(Season::Winter, 15)],
+                class_means: vec![vec![], vec![]],
+                tiles: BTreeMap::from([(
+                    key,
+                    vec![
+                        encode_tint(&[[40, 120, 40]; 4], 2),
+                        encode_tint(&[[240, 240, 245]; 4], 2),
+                    ],
+                )]),
+            }),
+            ..Default::default()
+        };
+        // Roofs: the sampled colour on the roof faces.
+        let m = build_tile_meshes(&p, key).unwrap();
+        let roof = lin(0.2, 0.4, 0.6);
+        let close = |a: &[f32; 4]| (0..3).all(|k| (a[k] - roof[k]).abs() < 1e-3);
+        assert!(m.buildings.colors.iter().any(close));
+        let before = build_tile_meshes(&plain, key).unwrap();
+        assert!(!before.buildings.colors.iter().any(close));
+        // Without a date the far map is as before; in winter it turns white,
+        // in summer green.
+        let map_at = |day: Option<f64>| {
+            let look = TileLook::default().with_region(&p.look, None, day);
+            let m = build_tile_meshes_look(&p, key, None, &look).unwrap();
+            let map = m.colour_map.unwrap();
+            // A meadow texel (east, away from the pond).
+            let i = (2 * 20 + 18) * 4;
+            [map.data[i], map.data[i + 1], map.data[i + 2]]
+        };
+        let none = map_at(None);
+        let old = before.colour_map.unwrap();
+        let i = (2 * 20 + 18) * 4;
+        assert_eq!(none, [old.data[i], old.data[i + 1], old.data[i + 2]]);
+        let winter = map_at(Some(15.0));
+        let summer = map_at(Some(200.0));
+        assert!(winter[2] > 160 && winter[0] > 160, "{winter:?}");
+        assert!(summer[1] > summer[0] && summer[0] < 120, "{summer:?}");
+        // Blended half-way in between (autumn has no composite here).
+        let between = map_at(Some(290.0));
+        assert!(between[0] > summer[0] && between[0] < winter[0], "{between:?}");
     }
 }

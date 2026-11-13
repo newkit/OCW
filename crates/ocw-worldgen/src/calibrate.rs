@@ -523,6 +523,8 @@ struct Part {
     fallback_h: BTreeMap<PaletteKey, Histogram>,
     roofs: Vec<(TileKey, Vec<Option<RoofColour>>)>,
     seasons: Vec<(TileKey, Vec<Vec<u8>>, usize)>,
+    /// Per season the histograms of the tint cells by land class.
+    season_classes: Vec<BTreeMap<LandClass, Histogram>>,
     /// Tiles the seasonal composites do not reach at all.
     seasons_outside: usize,
     errors: Vec<String>,
@@ -571,6 +573,7 @@ pub fn calibrate(
     let mut fallback_h: BTreeMap<PaletteKey, Histogram> = BTreeMap::new();
     let mut roofs = RoofColours::new();
     let mut season_tiles = BTreeMap::new();
+    let mut season_classes: Vec<BTreeMap<LandClass, Histogram>> = Vec::new();
     let mut stats = CalibrationStats::default();
     for p in parts {
         for (k, (h, by)) in p.ortho_h {
@@ -590,6 +593,14 @@ pub fn calibrate(
             roofs.insert(k, v);
         }
         stats.season_tiles_outside += p.seasons_outside;
+        if season_classes.len() < p.season_classes.len() {
+            season_classes.resize_with(p.season_classes.len(), BTreeMap::new);
+        }
+        for (i, m) in p.season_classes.iter().enumerate() {
+            for (c, h) in m {
+                season_classes[i].entry(*c).or_default().merge(h);
+            }
+        }
         for (k, maps, filled) in p.seasons {
             stats.season_filled += filled;
             stats.season_bytes += maps.iter().map(Vec::len).sum::<usize>();
@@ -635,6 +646,17 @@ pub fn calibrate(
         cells: opts.season_cells,
         source: s2_src.expect("seasonal source listed"),
         seasons: s.composites.iter().map(|c| c.0).collect(),
+        class_means: (0..s.composites.len())
+            .map(|i| {
+                season_classes
+                    .get(i)
+                    .into_iter()
+                    .flatten()
+                    .filter(|(_, h)| h.count >= MIN_PALETTE_SAMPLES)
+                    .filter_map(|(c, h)| h.median().map(|m| (*c, m)))
+                    .collect()
+            })
+            .collect(),
         tiles: season_tiles,
     });
     stats.season_tiles = seasons.as_ref().map_or(0, |s| s.tiles.len());
@@ -699,7 +721,12 @@ fn tile_pass(
         }
         if let Some(s) = imagery.seasonal.as_ref() {
             match tile_tints(s, proj, key, size, opts.season_cells) {
-                Some((maps, filled)) => part.seasons.push((key, maps, filled)),
+                Some((maps, filled, raw)) => {
+                    if let Some(lu) = pkg.landuse.as_ref() {
+                        class_histograms(lu, key, &raw, opts.season_cells, &mut part.season_classes);
+                    }
+                    part.seasons.push((key, maps, filled));
+                }
                 None => part.seasons_outside += 1,
             }
         }
@@ -708,15 +735,19 @@ fn tile_pass(
     part
 }
 
-/// The encoded tint maps of one tile (one per composite) and how many cells
-/// had to be filled; `None` when no composite has any data on the tile.
+/// Raw (unfilled) tint cells of one tile, per composite.
+pub type RawTints = Vec<Vec<Option<[u8; 3]>>>;
+
+/// The encoded tint maps of one tile (one per composite), how many cells
+/// had to be filled and the raw cells; `None` when no composite has any
+/// data on the tile.
 pub fn tile_tints(
     s: &SeasonalSource,
     proj: &LocalProjection,
     key: TileKey,
     size: f64,
     cells: u32,
-) -> Option<(Vec<Vec<u8>>, usize)> {
+) -> Option<(Vec<Vec<u8>>, usize, RawTints)> {
     let aff = TileAffine::new(proj, s.crs, key, size);
     let n = cells as usize;
     let step = size / f64::from(cells);
@@ -739,7 +770,37 @@ pub fn tile_tints(
         return None;
     }
     let (maps, filled) = fill_tints(&raw, s.index_of(ocw_world::look::Season::Summer));
-    Some((maps.iter().map(|m| encode_tint(m, cells)).collect(), filled))
+    Some((maps.iter().map(|m| encode_tint(m, cells)).collect(), filled, raw))
+}
+
+/// Adds the tint cells with data to per-season histograms by the land class
+/// at each cell's centre (water left out).
+pub fn class_histograms(
+    lu: &LandUse,
+    key: TileKey,
+    raw: &RawTints,
+    cells: u32,
+    out: &mut Vec<BTreeMap<LandClass, Histogram>>,
+) {
+    let Some(tile) = lu.tiles.get(&key) else {
+        return;
+    };
+    if out.len() < raw.len() {
+        out.resize_with(raw.len(), BTreeMap::new);
+    }
+    let (n, m) = (cells as usize, lu.cells as usize);
+    for (si, season) in raw.iter().enumerate() {
+        for (j, c) in season.iter().enumerate() {
+            let Some(rgb) = c else { continue };
+            // The land-use cell under the tint cell's centre.
+            let (tc, tr) = ((j % n) * 2 + 1, (j / n) * 2 + 1);
+            let (lc, lr) = (tc * m / (2 * n), tr * m / (2 * n));
+            let class = tile.classes[lr.min(m - 1) * m + lc.min(m - 1)];
+            if class != LandClass::Water {
+                out[si].entry(class).or_default().add(*rgb);
+            }
+        }
+    }
 }
 
 /// Fills the gaps of per-season cell colours: from the same cell in the
@@ -1165,6 +1226,11 @@ mod tests {
         assert!(near(s.map(key, 1).unwrap()[55], [80, 130, 60]));
         assert!(near(decode_tint(&s.tiles[&key][2], 10).unwrap()[99], [235, 235, 240]));
         assert_eq!(stats.season_filled, 100);
+        // Class means per season: summer meadow and forest green, winter white;
+        // autumn had no data.
+        assert_eq!(s.class_mean(0, LandClass::Meadow), Some([80, 130, 60]));
+        assert_eq!(s.class_mean(2, LandClass::Forest), Some([235, 235, 240]));
+        assert_eq!(s.class_mean(1, LandClass::Meadow), None);
         // A tile the composites do not reach gets no maps (class colours).
         let far = TileKey { x: 50, z: 50 };
         assert!(tile_tints(imagery.seasonal.as_ref().unwrap(), &proj, far, 100.0, 10).is_none());

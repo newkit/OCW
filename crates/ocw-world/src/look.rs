@@ -42,7 +42,8 @@
 //!   layout version: u32 (1)
 //!   cells per tile side: u32   source index: u8   season count: u8
 //!   per season: season u8 (0 spring, 1 summer, 2 autumn, 3 winter),
-//!     centre day of year u16, first u16, last u16 (1-based), scenes u16
+//!     centre day of year u16, first u16, last u16 (1-based), scenes u16,
+//!     class count u8, then per land class: code u8, median colour [u8; 3]
 //!   tile count: u32, then per tile: x, z: i32, per season: length u32 + bytes
 //!   ```
 //!
@@ -238,6 +239,10 @@ pub struct SeasonalTints {
     /// Index into the palette's sources.
     pub source: u8,
     pub seasons: Vec<SeasonInfo>,
+    /// Per season (in the order of `seasons`) the median colour of each
+    /// land class over the whole package: how a class changes through the
+    /// year, for the near materials' seasonal tint.
+    pub class_means: Vec<Vec<(LandClass, [u8; 3])>>,
     /// Per tile, per season (in the order of `seasons`) the encoded map
     /// ([`encode_tint`]).
     pub tiles: BTreeMap<TileKey, Vec<Vec<u8>>>,
@@ -260,6 +265,20 @@ impl SeasonalTints {
     /// winter). The weights sum to 1; one composite alone gets weight 1.
     pub fn weights(&self, day_of_year: f64) -> Vec<(usize, f32)> {
         season_weights(&self.seasons, day_of_year)
+    }
+
+    /// The median colour of `class` in season `index`, if measured.
+    pub fn class_mean(&self, index: usize, class: LandClass) -> Option<[u8; 3]> {
+        self.class_means
+            .get(index)?
+            .iter()
+            .find(|c| c.0 == class)
+            .map(|c| c.1)
+    }
+
+    /// The index of `season`'s composite.
+    pub fn index_of(&self, season: Season) -> Option<usize> {
+        self.seasons.iter().position(|s| s.season == season)
     }
 
     /// The tint at local `(x, z)` for `day_of_year`, blended between the
@@ -554,10 +573,16 @@ pub fn write_seasons(s: &SeasonalTints, b: &mut Vec<u8>) {
     b.extend(s.cells.to_le_bytes());
     b.push(s.source);
     b.push(s.seasons.len() as u8);
-    for i in &s.seasons {
+    for (k, i) in s.seasons.iter().enumerate() {
         b.push(i.season as u8);
         for d in [i.centre_doy, i.first_doy, i.last_doy, i.scenes] {
             b.extend(d.to_le_bytes());
+        }
+        let means = s.class_means.get(k).map_or(&[][..], Vec::as_slice);
+        b.push(means.len() as u8);
+        for (c, rgb) in means {
+            b.push(c.code());
+            b.extend(rgb);
         }
     }
     b.extend((s.tiles.len() as u32).to_le_bytes());
@@ -583,6 +608,7 @@ pub fn read_seasons(bytes: &[u8]) -> Result<SeasonalTints, String> {
     let count = r.u8()?;
     let u16 = |r: &mut Bytes<'_>| -> Result<u16, String> { Ok(u16::from_le_bytes(r.arr()?)) };
     let mut seasons = Vec::new();
+    let mut class_means = Vec::new();
     for _ in 0..count {
         let season = Season::from_code(r.u8()?).ok_or("unknown season")?;
         seasons.push(SeasonInfo {
@@ -592,6 +618,15 @@ pub fn read_seasons(bytes: &[u8]) -> Result<SeasonalTints, String> {
             last_doy: u16(&mut r)?,
             scenes: u16(&mut r)?,
         });
+        let mut means = Vec::new();
+        for _ in 0..r.u8()? {
+            let code = r.u8()?;
+            let rgb = r.arr()?;
+            if let Some(c) = LandClass::from_code(code) {
+                means.push((c, rgb));
+            }
+        }
+        class_means.push(means);
     }
     let mut tiles = BTreeMap::new();
     for _ in 0..r.u32()? {
@@ -611,6 +646,7 @@ pub fn read_seasons(bytes: &[u8]) -> Result<SeasonalTints, String> {
         cells,
         source,
         seasons,
+        class_means,
         tiles,
     })
 }
@@ -765,6 +801,10 @@ pub(crate) mod tests {
             cells: n as u32,
             source: 0,
             seasons: four(),
+            class_means: Season::ALL
+                .iter()
+                .map(|&s| vec![(LandClass::Meadow, [s as u8 * 40, 100, 50])])
+                .collect(),
             tiles: BTreeMap::from([(TileKey { x: 0, z: 0 }, maps)]),
         };
         RegionLook {
@@ -789,6 +829,9 @@ pub(crate) mod tests {
         assert_eq!(&s, look.seasons.as_ref().unwrap());
         // Autumn's map decodes to its colour; summer → autumn blends.
         let k = TileKey { x: 0, z: 0 };
+        assert_eq!(s.class_mean(2, LandClass::Meadow), Some([80, 100, 50]));
+        assert_eq!(s.class_mean(2, LandClass::Forest), None);
+        assert_eq!(s.index_of(Season::Winter), Some(3));
         let px = s.map(k, 2).unwrap()[5];
         for (a, b) in px.iter().zip([80, 100, 50]) {
             assert!((i32::from(*a) - b).abs() <= 1, "{px:?}");
