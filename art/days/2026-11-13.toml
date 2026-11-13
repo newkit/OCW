@@ -1,0 +1,135 @@
+# OCW Build Diary – day 3 (art/ART-PROJECT.md describes every field).
+# Shots are files in artwork/build-history/2026-11-13/ (or repo paths).
+
+title = "The day of the missing volcano"
+tagline = "In which, on Friday the 13th, a sun rises, a unicorn flies, and the Teide plays hide and seek for seven hours."
+hero = "213521-shot-wayland-showcase-tf-teide-iconic.jpg"
+bpm = 116
+key = "E"
+tests = 1254
+outro = "Almost two billion tokens. One unicorn. And yes – that is the real Teide."
+teaser = "TO BE CONTINUED – leela wakes up and wants a kiosk too."
+
+[[chapter]]
+time = "06:42"
+title = "Let there be sun"
+caption = "Phase 9: a world clock, a real sun, golden hours and bike lights. Night falls on Malbun for the first time."
+shots = [
+  { file = "064224-shot-wayland-sky-golden-hour.jpg", seconds = 3.0, note = "golden hour. no filter." },
+  { file = "064348-video-wayland-sky-sunset-timelapse.mp4", seconds = 4.0, start = 0.5, speed = 2, note = "sunset, ×600 game time" },
+]
+
+[[chapter]]
+time = "07:47"
+title = "Two new worlds before lunch"
+caption = "The Black Forest arrives in three packages with metre-grade terrain. Then: “create a world for tenariffa.”"
+prompt = "create a world for tenariffa"
+shots = [
+  { file = "074756-video-wayland-showcase-mummelsee-video.mp4", seconds = 3.5, start = 1.0 },
+  { file = "115508-agent-scenes-tenerife-1-showcase-tf-gigantes.jpg", seconds = 3.0, note = "Tenerife: island, sea, sun" },
+  { file = "115310-agent-scenes-tenerife-1-showcase-tf-teide.jpg", seconds = 3.0, note = "“the Teide”. remember this." },
+]
+
+[[chapter]]
+time = "13:26"
+title = "One centimetre"
+caption = "The user spots wheels sinking 1 cm into the road. Now riders stand on the drawn surface, fitted to the millimetre."
+prompt = "the wheels of the bike always seen to be like 1cm inside of the road. fix that."
+shots = [
+  { file = "104533-agent-scenes-wheel-contact-hills-before-wheel-contact-steep-contact.jpg", seconds = 2.5, note = "before: 1 cm under" },
+  { file = "115741-agent-scenes-wheel-contact-hills-after-wheel-contact-steep-contact.jpg", seconds = 2.5, note = "after: on top. it matters." },
+  { file = "124713-shot-wayland-wheel-contact-vaduz-steep.jpg", seconds = 3.0, note = "cost: 94.6 M tokens. per cm." },
+]
+
+[[chapter]]
+time = "14:04"
+title = "Calibrated by satellite"
+caption = "Phase 8 T3: colours measured from orthophotos, seasons from Sentinel-2. Winter meadows briefly went pink."
+shots = [
+  { file = "143152-shot-wayland-look-season-summer.jpg", seconds = 2.2, note = "summer" },
+  { file = "143253-shot-wayland-look-season-autumn.jpg", seconds = 2.2, note = "autumn" },
+  { file = "143305-shot-wayland-look-season-winter.jpg", seconds = 2.2, note = "winter (no longer pink)" },
+]
+
+[[chapter]]
+time = "14:09"
+title = "Plans, plans, plans"
+caption = "VR on the user's own Oculus Rift CV1. Releases bump the patch. Crashes and damage. A bike workshop paid in hearts."
+shots = [
+  { card = true, seconds = 2.0, note = "Phase 11: VR, Rift CV1 + OpenXR" },
+  { card = true, seconds = 2.0, note = "0.2.0 → 0.2.1, not 0.3.0" },
+  { card = true, seconds = 2.0, note = "Phase 12: crashes (switchable)" },
+  { file = "../2026-11-12/080805-models-bikes.png", seconds = 2.5, note = "Phase 4: workshop + ♥ economy" },
+]
+
+[[chapter]]
+time = "14:32"
+title = "Where is the Teide? (part 1)"
+caption = "“An iconic rendering of the Teide.” Round after round of renders. Roads, riders, sky. No volcano."
+prompt = "create an iconic rendering for the readme world section of the volcan teide on tenerife."
+shots = [
+  { file = "145821-shot-wayland-teide-roques-y0.jpg", seconds = 2.2, note = "take 1: no Teide" },
+  { file = "151437-shot-wayland-teide2-a.jpg", seconds = 2.2, note = "take 2: dramatic. no Teide." },
+  { file = "152113-shot-wayland-teide3-p1.jpg", seconds = 2.2, note = "take 3: a hill with trees" },
+  { file = "152743-shot-wayland-teide4-a.jpg", seconds = 2.8, note = "a cone! (not the Teide)" },
+]
+
+[[chapter]]
+time = "15:42"
+title = "Where is the Teide? (part 2)"
+caption = "Careful planning along the TF-21. The truth: the summit tiles were never built and the view ended at 1.8 km."
+prompt = "i still do not see the teide in the images. do a carefull planning of where the riders have to be"
+shots = [
+  { file = "160006-shot-wayland-teide5-a.jpg", seconds = 3.0, note = "the world ends at 1.8 km" },
+  { file = "170322-shot-wayland-showcase-tf-teide-iconic.jpg", seconds = 3.0, note = "17:04: land tiles. hello!" },
+  { split = ["152743-shot-wayland-teide4-a.jpg", "213521-shot-wayland-showcase-tf-teide-iconic.jpg"], seconds = 4.0, note = "impostor | 3,715 m of the real thing" },
+]
+
+[[chapter]]
+time = "18:41"
+title = "Faster, leaner, cleaner"
+caption = "Build profiling and sccache everywhere: world builds 2–3× faster, packages byte-identical. marge's disk: 98 % → 49 %."
+shots = [
+  { file = "075159-shot-wayland-showcase-belchen.jpg", seconds = 3.0, note = "same bytes, less waiting" },
+  { card = true, seconds = 2.2, note = "Windows build: 3,673 s → 2,564 s" },
+  { card = true, seconds = 2.2, note = "dashboard: says what each job is for" },
+]
+
+[[chapter]]
+time = "19:09"
+title = "Houses get roofs"
+caption = "Phase 8 T4: OSM roof shapes, regional styles, façades with windows. Triesenberg stops looking like a shoebox shop."
+shots = [
+  { split = ["184000-agent-scenes-before-t4-2026-11-13T1830-look-houses-triesenberg.jpg", "202612-agent-scenes-after-t4-final-look-houses-triesenberg.jpg"], seconds = 4.0, note = "boxes | houses" },
+  { file = "202702-agent-scenes-after-t4-final-look-houses-tf-orotava.jpg", seconds = 3.0, note = "La Orotava, flat roofs" },
+]
+
+[[chapter]]
+time = "19:39"
+title = "God mode"
+caption = "Phase 13: one key turns the rider into a pegasus-winged rainbow unicorn. Later: crosshair, pins, inspection."
+prompt = "implement a god mode, that allows flying through the world (e.g. to inspect the map). the rider should convert into a unicorn"
+shots = [
+  { file = "194920-video-wayland-god-flight-video.mp4", seconds = 4.5, start = 2.0, speed = 2 },
+  { file = "212251-shot-wayland-god-unicorn-flight.jpg", seconds = 2.8, note = "other riders can see this" },
+  { file = "213237-shot-wayland-god-inspect-vaduz.jpg", seconds = 2.8, note = "G3: inspect anything" },
+]
+
+[[chapter]]
+time = "20:49"
+title = "The boring heroes"
+caption = "X11 smoke runs green again (RADV can't present to Xvfb). Stale builds gave Tenerife the wrong time zone."
+shots = [
+  { file = "205650-shot-ocw.jpg", seconds = 3.0, note = "X11 is back. it's night." },
+  { file = "204804-shot-wayland-ocw-a3e1-wl.jpg", seconds = 2.5, note = "Wayland: still fine, thanks" },
+  { card = true, seconds = 2.2, note = "leela: back online at 22:48" },
+]
+
+[[chapter]]
+time = "22:09"
+title = "No more floating roads"
+caption = "Phase 8 T5: markings, kerbs, sidewalks, zebra crossings, wear – and the road slab finally sits in the ground."
+shots = [
+  { split = ["212327-agent-scenes-t5-before-road-vaduz-zebra.jpg", "215856-agent-scenes-t5-after-road-vaduz-zebra.jpg"], seconds = 4.0, note = "please cross here" },
+  { file = "215920-agent-scenes-t5-after-road-country.jpg", seconds = 3.0, note = "a proper country road" },
+]

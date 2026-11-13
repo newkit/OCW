@@ -325,6 +325,10 @@ def now_meta() -> list[str]:
 TRANSCRIPTS = os.environ.get("OCW_TRANSCRIPTS", str(Path.home() / ".claude" / "projects"))
 REMINDER_RE = re.compile(r"<system-reminder>.*?</system-reminder>", re.S)
 EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+# Private network addresses (10/8, 172.16/12, 192.168/16, 100.64/10).
+PRIVATE_IP_RE = re.compile(
+    r"\b(?:10\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])|192\.168|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7]))"
+    r"\.\d{1,3}\.\d{1,3}\b")
 
 
 def _secrets() -> list[tuple[str, str]]:
@@ -347,7 +351,7 @@ def _secrets() -> list[tuple[str, str]]:
 def mask(text: str, secrets=None) -> str:
     for v, r in (secrets if secrets is not None else _secrets()):
         text = text.replace(v, r)
-    return EMAIL_RE.sub("<e-mail>", text)
+    return PRIVATE_IP_RE.sub("<ip>", EMAIL_RE.sub("<e-mail>", text))
 
 
 def prompt_text(raw: str) -> str | None:
@@ -1438,24 +1442,35 @@ def render(day: str) -> Path:
     if b.get("runs"):
         stats.append((b["runs"], "BUILD RUNS"))
         stats.append((round(b["seconds"] / 3600), "BUILD HOURS"))
-    step = min(360, 1760 / max(1, len(stats)))
-    xs = [960 + (i - (len(stats) - 1) / 2) * step for i in range(len(stats))]
+    # One row for up to five numbers, else two rows with smaller numbers.
+    rows = [stats] if len(stats) <= 5 else [stats[: (len(stats) + 1) // 2],
+                                            stats[(len(stats) + 1) // 2 :]]
+    pos = []  # (x, y of the number, y of the label, scale %)
+    for r, row in enumerate(rows):
+        step = min(360, 1760 / max(1, len(row)))
+        y, sc_ = (380, 100) if len(rows) == 1 else (300 + r * 190, 78)
+        pos += [(960 + (i - (len(row) - 1) / 2) * step, y, y + 72 * sc_ / 100 + 18, sc_)
+                for i in range(len(row))]
+    outro_y = 650 if len(rows) == 1 else 700
     for i, (val, label) in enumerate(stats):
+        x, y, ly, scl = pos[i]
+        fs = f"\\fscx{scl}\\fscy{scl}"
         a = es + 0.5 + i * 0.25
         steps = 24
         for k in range(steps):
             v = round(val * ((k + 1) / steps) ** 0.6)
             sub.add(a + k / FPS * 1.4, a + (k + 1) / FPS * 1.4, "StatNum",
-                    f"{{\\pos({xs[i]:.0f},380)}}{num_fmt(v)}")
+                    f"{{\\pos({x:.0f},{y}){fs}}}{num_fmt(v)}")
             if k % 3 == 0:
                 sfx_events.append((a + k / FPS * 1.4, "tick"))
         sub.add(a + steps / FPS * 1.4, es + end_s - 0.2, "StatNum",
-                f"{{\\pos({xs[i]:.0f},380)\\t(0,120,\\fscx115\\fscy115)\\t(120,260,\\fscx100\\fscy100)\\fad(0,300)}}"
+                f"{{\\pos({x:.0f},{y}){fs}\\t(0,120,\\fscx{scl * 1.15:.0f}\\fscy{scl * 1.15:.0f})"
+                f"\\t(120,260,\\fscx{scl}\\fscy{scl})\\fad(0,300)}}"
                 f"{num_fmt(val)}")
         sub.add(a, es + end_s - 0.2, "StatLabel",
-                f"{{\\pos({xs[i]:.0f},470)\\fad(200,300)}}{label}")
+                f"{{\\pos({x:.0f},{ly:.0f})\\fad(200,300)}}{label}")
     sfx_events.append((es + 0.5 + len(stats) * 0.25 + 1.4, "ding"))
-    sub.typed(es + 3.2, es + end_s - 0.2, "Outro", esc(sc["outro"]), pre="{\\pos(960,650)\\fad(0,300)}")
+    sub.typed(es + 3.2, es + end_s - 0.2, "Outro", esc(sc["outro"]), pre=f"{{\\pos(960,{outro_y})\\fad(0,300)}}")
     if sc.get("teaser"):
         sub.add(es + 5.2, es + end_s - 0.1, "Teaser",
                 f"{{\\pos(960,800)\\fad(400,300)}}{esc(sc['teaser'])}")

@@ -32,3 +32,6 @@ known_hosts
 
 # Material library (scripts/fetch-materials.sh; spec §4.6): converted textures, not in git.
 /assets/materials/
+
+# Python bytecode (art/diary.py)
+__pycache__/

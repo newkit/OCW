@@ -66,7 +66,7 @@ selection happens only in the video.
   next to the videos. `art/diary.py fetch` restores a day on another machine.
   The zip's text files (logs, build log, journal, prompts) are masked like the
   prompts (§2.3: build machines' hosts and users, the home directory, e-mail
-  addresses); the local archive keeps the originals.
+  addresses, private IP addresses); the local archive keeps the originals.
 - **Time** of a file: the `HHMMSS-` prefix (local time of the run), else the time
   in its folder name, else its modification time. Commits use local time as well.
 - Identical files (same SHA-256) are kept once.
@@ -119,7 +119,7 @@ of the story.
 - **Kept as:** `DAY/prompts.jsonl` (time, ISO 8601, text) and `DAY/prompts.md`;
   the journal lists them. `art/diary.py prompts DAY` (run by `journal`).
 - **Masked** before they are written: every build machine's host and user name,
-  e-mail addresses and the home directory. The day zips are public.
+  e-mail addresses, private IP addresses and the home directory. The day zips are public.
 - **In the video:** during the time-lapse each prompt pops up as a chat bubble
   ("YOU · 08:58") when its time comes (at most one new bubble per 1.2 s; the
   newest wins); a chapter can quote the prompt that started it (`prompt = "…"`
