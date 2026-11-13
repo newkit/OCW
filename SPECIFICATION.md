@@ -65,6 +65,7 @@ Version 2.47 – November 2026
 | 2.44 | Phase 8 decisions: no commercial release, 8A stays (Q2); orthophoto corridor size acceptable (Q4); seasonal variants (Q5); own photos postponed (Q6); Mapillary CC BY-SA, reference by eye only (Q7); 3D buildings: swissBUILDINGS3D 3.0 (Opendata BY) to confirm, LGL LoD2 probably not open, ask LGL (Q8); all texture areas in parallel (Q10) |
 | 2.45 | Licensing (§13): no licence change for now – the code stays MIT / Apache-2.0 (a switch to CC BY-SA was considered and declined) |
 | 2.46 | Phase 8 T1 / T2 (§4.6, §8.1, §13, §14 Phase 8): material library of 21 CC0 materials (ambientCG, Poly Haven) – ground, roads, houses, volcanic ground for Tenerife – not in git but pinned by URL + SHA-256 in `assets/materials.toml`, fetched and converted to KTX2 (BC3 / BC5, 1024², mipmapped) by `scripts/fetch-materials.sh` into the git-ignored `assets/materials/` and shipped beside the binary (AppImage, macOS bundle, Windows zip, test deployment); licence rule of Phase 8A shared by the model and material validators; terrain drawn with the materials blended by the splat map (weights at cell corners, noise warp, height blend, rock and triplanar on slopes, macro scale, fade to the colour map in the materials' mean colours), roads by OSM `surface` (new package section `RSRF`) with category fallback; regional material sets by the package's time zone (`[[region]]` in the manifest: the volcanic set of the Canary Islands with lava, ash / cinder, black sand and pine needles); regional tint hook neutral; reference boards `art/reference/` |
+| 2.48 | Phase 11 decision (§14 Phase 11, Q1): the development headset is the **Oculus Rift (first generation, CV1)** on Windows through the Meta PC app's OpenXR runtime; the code stays OpenXR-only and vendor-neutral so other headsets work through their OpenXR runtimes; X1 targets the Rift CV1 first; the CV1 is promoted from "legacy" to "primary dev target" in the support table |
 | 2.47 | Wheel/road contact (§2.5, bug 2026-11-13 "wheels 1 cm inside the road"): the drawn road surface (route ribbon, package road strips, tunnel floor) lies `ROAD_SURFACE_LIFT_M` = 2 cm above the profile and the riders stand on it (they stood on the profile: 2 cm in the road); each wheel rests as a circle on the surface (crests and dips) at the model's real wheelbase; bikes lean and rock about the tyre's crown line (anchor `tyre_crown`); the tyre's outermost tread (knob tips) is the wheel radius; finer tyre meshes; a route file is fitted onto the package's road strips whenever it differs by more than 1 mm (`route_fit::ON_ROAD_M`; the warning stays at 0.25 m). Measured by `wheel_contact` tests: within 2 mm for every bike, LOD, lean and slope on synthetic roads; on the Liechtenstein roads median 0 mm, residuals where strips overlap at junctions (up to 0.2 m) and from the 5 m sampling (≤ 15 mm) |
 
 ---
@@ -2362,7 +2363,8 @@ Attribution of the provider used appears on the credits screen and in the weathe
 | Meta Quest 2 / 3 / 3S / Pro (Link / Air Link) | Meta PC app (OpenXR) | Windows | target |
 | Meta Quest (Steam Link / Virtual Desktop) | SteamVR / VD | Windows | target |
 | Meta Quest (WiVRn / ALVR) | WiVRn / ALVR (OpenXR) | Linux | target |
-| Oculus Rift / Rift S | Meta PC app (OpenXR) | Windows | supported (legacy hardware) |
+| Oculus Rift (CV1, first generation) | Meta PC app (OpenXR) | Windows | **primary development headset** (v2.48) |
+| Oculus Rift S | Meta PC app (OpenXR) | Windows | supported (legacy hardware) |
 | Valve Index, HTC Vive / Vive Pro, Bigscreen Beyond, Pimax | SteamVR | Windows, Linux | target |
 | Pico 4 (streaming) | Pico Connect / SteamVR / ALVR | Windows, Linux | target |
 | Varjo | Varjo Base (OpenXR) | Windows | best effort |
@@ -2373,7 +2375,7 @@ Attribution of the provider used appears on the credits screen and in the weathe
 
 #### 11D – Milestones (proposal)
 
-- **X1 – Spike:** an OpenXR session from Bevy 0.20, comparing a port of `bevy_mod_openxr` with our own thin integration. A stereo view of the test route with head tracking on SteamVR (Linux, Monado / WiVRn) and the Meta runtime (Windows). Measure the frame time. Decide on the integration (spec entry).
+- **X1 – Spike:** an OpenXR session from Bevy 0.20, comparing a port of `bevy_mod_openxr` with our own thin integration. A stereo view of the test route with head tracking on the **Oculus Rift CV1** via the Meta runtime (Windows) first, then SteamVR / Monado (Linux) as a second runtime check. Measure the frame time. Decide on the integration (spec entry).
 - **X2 – Riding in VR:** `--vr`, first-person camera on the bike, own body with IK, recentre, mirror view, VR quality preset, captures from the mirror.
 - **X3 – VR HUD and menus:** bike computer on the stem, world-space menus with controller / gaze input, junction arrows in the world.
 - **X4 – Comfort:** vignette, horizon lock, fades, calibration, settings page *VR comfort*.
@@ -2399,7 +2401,7 @@ Attribution of the provider used appears on the credits screen and in the weathe
 
 #### 11E – Open questions (for the user)
 
-- **Q1 – Which headsets do you have** (or can borrow) for testing? The spike needs at least one real headset; Monado covers CI only.
+- **Q1 – decided (v2.48):** an **Oculus Rift CV1** (first generation) is the development and test headset, on Windows through the Meta PC app's OpenXR runtime (the CV1 has no usable Linux runtime, so VR testing runs on Win11Builder or another Windows PC with the Rift; Monado covers CI). Development stays OpenXR-only, so other headsets need no vendor code. CV1 specifics to design for: 2160×1200 total (1080×1200 per eye), 90 Hz, 3-DoF+ constellation tracking with external sensors (USB 3.0), Oculus Touch controllers; frame budget 11.1 ms, asynchronous spacewarp as fallback at 45 Hz.
 - **Q2 – Linux VR:** target it (SteamVR / Monado / WiVRn, works with Index and with Quest via WiVRn), or Windows first?
 - **Q3 – Integration:** fork / port `bevy_mod_openxr` to Bevy 0.20 (faster, external dependency that lags Bevy), or our own thin OpenXR layer (more work, fully under our control)? Decided after X1.
 - **Q4 – Head-lean steering:** wanted, or keep steering on keys / gamepad / autodrive?
