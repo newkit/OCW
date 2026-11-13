@@ -36,6 +36,11 @@ pub const LUMA_STRENGTH: f32 = 0.5;
 pub const FOREST_STRENGTH: f32 = 0.35;
 /// Tints stay within this factor range.
 pub const TINT_RANGE: (f32, f32) = (0.4, 2.5);
+/// The seasonal near factor follows the class colour this much in chroma
+/// and in brightness, within [`SEASON_RANGE`].
+pub const SEASON_CHROMA: f32 = 0.25;
+pub const SEASON_LUMA: f32 = 0.5;
+pub const SEASON_RANGE: (f32, f32) = (0.6, 1.6);
 /// Share of the satellite colour in the far colour map.
 pub const SATELLITE_WEIGHT: f32 = 0.7;
 /// Days per season bucket: the tiles are rebuilt when the date moves on
@@ -156,7 +161,11 @@ pub fn season_factors(look: &RegionLook, weights: &[(usize, f32)]) -> [[f32; 3];
             return [1.0; 3];
         }
         let now = now.map(|v| v / total);
-        tint_towards(base, now, 0.9, 0.8)
+        // Mostly brightness: a factor cannot turn green grass into snow (the
+        // first winter renders went pink), the far satellite map carries the
+        // real colour.
+        tint_towards(base, now, SEASON_CHROMA, SEASON_LUMA)
+            .map(|v| v.clamp(SEASON_RANGE.0, SEASON_RANGE.1))
     })
 }
 
@@ -344,7 +353,16 @@ mod tests {
         let summer = season_factors(&look, &s.weights(200.0));
         assert!(summer[MEADOW].iter().all(|v| (v - 1.0).abs() < 1e-4), "{summer:?}");
         let winter = season_factors(&look, &s.weights(15.0));
-        assert!(winter[MEADOW][0] > 1.2 && winter[MEADOW][2] > winter[MEADOW][1], "{winter:?}");
+        assert!(winter[MEADOW][0] > 1.15 && winter[MEADOW][2] > winter[MEADOW][1], "{winter:?}");
+        // Regression (first renders, 2026-11-13): a snowy winter median over
+        // green summer grass turned the near meadow pink (red × 2.5). Now the
+        // factor stays nearly grey: brighter, channels within 25 %.
+        let mut snowy = look.clone();
+        snowy.seasons.as_mut().unwrap().class_means[1] =
+            vec![(LandClass::Meadow, [235, 235, 240])];
+        let snow = season_factors(&snowy, &s.weights(15.0))[MEADOW];
+        let (lo, hi) = (snow.iter().copied().fold(9.0, f32::min), snow.iter().copied().fold(0.0, f32::max));
+        assert!(lo > 1.2 && hi <= SEASON_RANGE.1 && hi / lo < 1.25, "{snow:?}");
         // A layer without a measured class stays neutral.
         assert_eq!(winter[FOREST_FLOOR], [1.0; 3]);
         // Half-way between: in between.
