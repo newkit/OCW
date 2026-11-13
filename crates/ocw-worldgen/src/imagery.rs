@@ -249,9 +249,9 @@ impl OrthoSource {
 
     fn is_nodata(&self, px: [u8; 3]) -> bool {
         let t = i16::from(self.nodata_tolerance);
-        self.nodata.iter().any(|nd| {
-            (0..3).all(|k| (i16::from(px[k]) - i16::from(nd[k])).abs() <= t)
-        })
+        self.nodata
+            .iter()
+            .any(|nd| (0..3).all(|k| (i16::from(px[k]) - i16::from(nd[k])).abs() <= t))
     }
 }
 
@@ -259,14 +259,14 @@ impl SeasonalSource {
     pub fn load(dir: &Path) -> Result<Self, String> {
         let ix = read_index(dir)?;
         let crs = Crs::parse(&ix.crs)?;
-        let need = |v: Option<f64>, what: &str| v.ok_or(format!("seasonal index.json: {what} missing"));
+        let need =
+            |v: Option<f64>, what: &str| v.ok_or(format!("seasonal index.json: {what} missing"));
         let (west, north) = (need(ix.west, "west")?, need(ix.north, "north")?);
         let width = ix.width.ok_or("seasonal index.json: width missing")?;
         let height = ix.height.ok_or("seasonal index.json: height missing")?;
         let mut composites = Vec::new();
         for s in &ix.seasons {
-            let season =
-                Season::parse(&s.season).ok_or(format!("unknown season {}", s.season))?;
+            let season = Season::parse(&s.season).ok_or(format!("unknown season {}", s.season))?;
             let path = dir.join(&s.file);
             let rgb = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
             if rgb.len() != width * height * 3 {
@@ -328,10 +328,19 @@ impl SeasonalSource {
         if corners.iter().any(|c| *c == [0, 0, 0]) {
             return None;
         }
-        let w = [(1.0 - tx) * (1.0 - ty), tx * (1.0 - ty), (1.0 - tx) * ty, tx * ty];
+        let w = [
+            (1.0 - tx) * (1.0 - ty),
+            tx * (1.0 - ty),
+            (1.0 - tx) * ty,
+            tx * ty,
+        ];
         let mut out = [0u8; 3];
         for k in 0..3 {
-            let v: f64 = corners.iter().zip(w).map(|(c, w)| f64::from(c[k]) * w).sum();
+            let v: f64 = corners
+                .iter()
+                .zip(w)
+                .map(|(c, w)| f64::from(c[k]) * w)
+                .sum();
             out[k] = v.round().clamp(0.0, 255.0) as u8;
         }
         Some(out)
@@ -537,8 +546,14 @@ pub fn package_cells(
                 }
             }
         }
-        let (i0, i1) = ((lo[0] / cell_m).floor() as i64, (hi[0] / cell_m).floor() as i64);
-        let (j0, j1) = ((lo[1] / cell_m).floor() as i64, (hi[1] / cell_m).floor() as i64);
+        let (i0, i1) = (
+            (lo[0] / cell_m).floor() as i64,
+            (hi[0] / cell_m).floor() as i64,
+        );
+        let (j0, j1) = (
+            (lo[1] / cell_m).floor() as i64,
+            (hi[1] / cell_m).floor() as i64,
+        );
         for i in i0..=i1 {
             for j in j0..=j1 {
                 out.insert((i, j));
@@ -593,7 +608,10 @@ pub(crate) mod tests {
         let proj = LocalProjection::new(47.14, 9.52);
         let at0 = Crs::Lv95.forward(47.14, 9.52);
         let cell_m = 100.0;
-        let ci = ((at0[0] / cell_m).floor() as i64, (at0[1] / cell_m).floor() as i64);
+        let ci = (
+            (at0[0] / cell_m).floor() as i64,
+            (at0[1] / cell_m).floor() as i64,
+        );
         // Red east of the cell's middle, green west of it; white (no data)
         // in the northern quarter.
         let mid = (ci.0 as f64 + 0.5) * cell_m;
@@ -618,8 +636,14 @@ pub(crate) mod tests {
             proj.project(lat, lon)
         };
         let base_n = ci.1 as f64 * cell_m;
-        assert_eq!(r.sample(local(mid + 10.0, base_n + 30.0)).unwrap().0, [200, 30, 30]);
-        assert_eq!(r.sample(local(mid - 10.0, base_n + 30.0)).unwrap().0, [30, 200, 30]);
+        assert_eq!(
+            r.sample(local(mid + 10.0, base_n + 30.0)).unwrap().0,
+            [200, 30, 30]
+        );
+        assert_eq!(
+            r.sample(local(mid - 10.0, base_n + 30.0)).unwrap().0,
+            [30, 200, 30]
+        );
         // No data, and outside every cell.
         assert!(r.sample(local(mid + 10.0, base_n + 90.0)).is_none());
         assert!(r.sample(local(mid + 10.0, base_n - 30.0)).is_none());
@@ -637,7 +661,10 @@ pub(crate) mod tests {
             for p in [o, [o[0] + 999.0, o[1] + 999.0], [o[0], o[1] + 999.0]] {
                 let (lat, lon) = proj.unproject(p);
                 let q = Crs::Lv95.forward(lat, lon);
-                let c = ((q[0] / 1000.0).floor() as i64, (q[1] / 1000.0).floor() as i64);
+                let c = (
+                    (q[0] / 1000.0).floor() as i64,
+                    (q[1] / 1000.0).floor() as i64,
+                );
                 assert!(cells.contains(&c), "{c:?} for {p:?}");
             }
         }

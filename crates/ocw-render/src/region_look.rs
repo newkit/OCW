@@ -81,8 +81,8 @@ pub fn tint_towards(from: [f32; 3], to: [f32; 3], chroma: f32, luma_k: f32) -> [
 /// and how strongly; `None`: the layer stays neutral (snow, the
 /// gravel of yards and car parks).
 fn layer_keys(layer: usize) -> (&'static [PaletteKey], f32) {
-    use LandClass::*;
     use crate::ground::*;
+    use LandClass::*;
     match layer {
         MEADOW => (&[PaletteKey::Land(Meadow), PaletteKey::Land(Default)], 1.0),
         FARMLAND => (&[PaletteKey::Land(Farmland)], 1.0),
@@ -97,8 +97,8 @@ fn layer_keys(layer: usize) -> (&'static [PaletteKey], f32) {
 
 /// The land class whose season a layer follows.
 fn layer_class(layer: usize) -> Option<LandClass> {
-    use LandClass::*;
     use crate::ground::*;
+    use LandClass::*;
     match layer {
         MEADOW => Some(Meadow),
         FARMLAND => Some(Farmland),
@@ -113,7 +113,10 @@ fn layer_class(layer: usize) -> Option<LandClass> {
 
 /// Near tint per ground layer from the measured palette; `means` are the
 /// layers' mean albedos (linear). Neutral (1) without a measurement.
-pub fn layer_tints(palette: &Palette, means: &[[f32; 3]; GROUND_LAYERS]) -> [[f32; 3]; GROUND_LAYERS] {
+pub fn layer_tints(
+    palette: &Palette,
+    means: &[[f32; 3]; GROUND_LAYERS],
+) -> [[f32; 3]; GROUND_LAYERS] {
     std::array::from_fn(|layer| {
         let (keys, strength) = layer_keys(layer);
         keys.iter()
@@ -296,10 +299,16 @@ mod tests {
         // Damped: part of the way, and the same colour is neutral.
         let half = tint_towards(grey, green, 0.5, 0.5);
         assert!(half[1] > 1.0 && half[1] < full[1]);
-        assert_eq!(tint_towards(green, green, 0.8, 0.5).map(|v| (v * 1e4).round()), [1e4; 3]);
+        assert_eq!(
+            tint_towards(green, green, 0.8, 0.5).map(|v| (v * 1e4).round()),
+            [1e4; 3]
+        );
         // Never beyond the range, even for black.
         let wild = tint_towards([0.5; 3], [0.0, 1.0, 0.0], 1.0, 1.0);
-        assert!(wild.iter().all(|v| *v >= TINT_RANGE.0 && *v <= TINT_RANGE.1));
+        assert!(
+            wild.iter()
+                .all(|v| *v >= TINT_RANGE.0 && *v <= TINT_RANGE.1)
+        );
     }
 
     #[test]
@@ -313,7 +322,15 @@ mod tests {
         // Meadow greener, the forest floor pulled less than the meadow.
         assert!(t[MEADOW][1] > t[MEADOW][0]);
         let pull = |v: [f32; 3]| v.iter().map(|x| (x - 1.0).abs()).sum::<f32>();
-        assert!(pull(t[FOREST_FLOOR]) < pull(tint_towards(means[FOREST_FLOOR], lin3([30, 60, 30]), CHROMA_STRENGTH, LUMA_STRENGTH)));
+        assert!(
+            pull(t[FOREST_FLOOR])
+                < pull(tint_towards(
+                    means[FOREST_FLOOR],
+                    lin3([30, 60, 30]),
+                    CHROMA_STRENGTH,
+                    LUMA_STRENGTH
+                ))
+        );
         // Snow and unmeasured layers neutral.
         assert_eq!(t[SNOW], [1.0; 3]);
         assert_eq!(t[crate::ground::ROCK], [1.0; 3]);
@@ -351,25 +368,39 @@ mod tests {
         let s = look.seasons.as_ref().unwrap();
         // Summer: neutral; winter: brighter, browner, less green.
         let summer = season_factors(&look, &s.weights(200.0));
-        assert!(summer[MEADOW].iter().all(|v| (v - 1.0).abs() < 1e-4), "{summer:?}");
+        assert!(
+            summer[MEADOW].iter().all(|v| (v - 1.0).abs() < 1e-4),
+            "{summer:?}"
+        );
         let winter = season_factors(&look, &s.weights(15.0));
-        assert!(winter[MEADOW][0] > 1.15 && winter[MEADOW][2] > winter[MEADOW][1], "{winter:?}");
+        assert!(
+            winter[MEADOW][0] > 1.15 && winter[MEADOW][2] > winter[MEADOW][1],
+            "{winter:?}"
+        );
         // Regression (first renders, 2026-11-13): a snowy winter median over
         // green summer grass turned the near meadow pink (red × 2.5). Now the
         // factor stays nearly grey: brighter, channels within 25 %.
         let mut snowy = look.clone();
-        snowy.seasons.as_mut().unwrap().class_means[1] =
-            vec![(LandClass::Meadow, [235, 235, 240])];
+        snowy.seasons.as_mut().unwrap().class_means[1] = vec![(LandClass::Meadow, [235, 235, 240])];
         let snow = season_factors(&snowy, &s.weights(15.0))[MEADOW];
-        let (lo, hi) = (snow.iter().copied().fold(9.0, f32::min), snow.iter().copied().fold(0.0, f32::max));
-        assert!(lo > 1.2 && hi <= SEASON_RANGE.1 && hi / lo < 1.25, "{snow:?}");
+        let (lo, hi) = (
+            snow.iter().copied().fold(9.0, f32::min),
+            snow.iter().copied().fold(0.0, f32::max),
+        );
+        assert!(
+            lo > 1.2 && hi <= SEASON_RANGE.1 && hi / lo < 1.25,
+            "{snow:?}"
+        );
         // A layer without a measured class stays neutral.
         assert_eq!(winter[FOREST_FLOOR], [1.0; 3]);
         // Half-way between: in between.
         let mid = season_factors(&look, &s.weights(290.0));
         assert!(mid[MEADOW][0] > 1.0 && mid[MEADOW][0] < winter[MEADOW][0]);
         // Without seasons all neutral.
-        assert_eq!(season_factors(&RegionLook::default(), &[]), [[1.0; 3]; GROUND_LAYERS]);
+        assert_eq!(
+            season_factors(&RegionLook::default(), &[]),
+            [[1.0; 3]; GROUND_LAYERS]
+        );
     }
 
     #[test]

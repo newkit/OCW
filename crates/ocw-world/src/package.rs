@@ -1300,7 +1300,10 @@ mod tests {
         let b = full.to_bytes();
         assert_eq!(WorldPackage::from_bytes(&b).unwrap(), full);
         let tags: Vec<[u8; 4]> = section_sizes(&b).iter().map(|s| s.0).collect();
-        assert_eq!(tags, vec![*GRAPH_TAG, *PALETTE_TAG, *ROOFS_TAG, *SEASONS_TAG]);
+        assert_eq!(
+            tags,
+            vec![*GRAPH_TAG, *PALETTE_TAG, *ROOFS_TAG, *SEASONS_TAG]
+        );
         // A skeleton keeps the sources and the palette (credits), not the
         // per-tile roof colours and tint maps.
         let skel = WorldPackage::skeleton_from_bytes(&b).unwrap();

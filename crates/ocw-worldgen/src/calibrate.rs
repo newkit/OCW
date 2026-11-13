@@ -319,9 +319,11 @@ fn tile_mask(pkg: &WorldPackage, key: TileKey, cells: u32) -> Vec<bool> {
                 hi = [hi[0].max(p[0]), hi[1].max(p[1])];
             }
             let pad = s;
-            mark([lo[0] - pad, lo[1] - pad], [hi[0] + pad, hi[1] + pad], &|p| {
-                inside(p, &outer) || ring_dist(p, &outer) < s
-            });
+            mark(
+                [lo[0] - pad, lo[1] - pad],
+                [hi[0] + pad, hi[1] + pad],
+                &|p| inside(p, &outer) || ring_dist(p, &outer) < s,
+            );
         }
     }
     if let Some(t) = pkg.tiles.get(&key) {
@@ -701,7 +703,9 @@ fn tile_pass(
                 lu,
                 key,
                 &mut reader,
-                summer.is_some().then_some(&mut fallback as &mut dyn FnMut(_) -> _),
+                summer
+                    .is_some()
+                    .then_some(&mut fallback as &mut dyn FnMut(_) -> _),
                 &mut part.ortho_h,
                 &mut part.fallback_h,
             );
@@ -723,7 +727,13 @@ fn tile_pass(
             match tile_tints(s, proj, key, size, opts.season_cells) {
                 Some((maps, filled, raw)) => {
                     if let Some(lu) = pkg.landuse.as_ref() {
-                        class_histograms(lu, key, &raw, opts.season_cells, &mut part.season_classes);
+                        class_histograms(
+                            lu,
+                            key,
+                            &raw,
+                            opts.season_cells,
+                            &mut part.season_classes,
+                        );
                     }
                     part.seasons.push((key, maps, filled));
                 }
@@ -770,7 +780,11 @@ pub fn tile_tints(
         return None;
     }
     let (maps, filled) = fill_tints(&raw, s.index_of(ocw_world::look::Season::Summer));
-    Some((maps.iter().map(|m| encode_tint(m, cells)).collect(), filled, raw))
+    Some((
+        maps.iter().map(|m| encode_tint(m, cells)).collect(),
+        filled,
+        raw,
+    ))
 }
 
 /// Adds the tint cells with data to per-season histograms by the land class
@@ -833,10 +847,7 @@ pub fn fill_tints(
                 .map(|(j, c)| {
                     c.unwrap_or_else(|| {
                         filled += 1;
-                        let order = prefer
-                            .into_iter()
-                            .chain(0..raw.len())
-                            .filter(|&o| o != si);
+                        let order = prefer.into_iter().chain(0..raw.len()).filter(|&o| o != si);
                         order
                             .filter_map(|o| raw[o][j])
                             .next()
@@ -905,11 +916,19 @@ mod tests {
         // 10 × 10 m at 0.5 m: eroded by 1 m → 8 × 8 m = 256 points.
         let pts = footprint_points(&square(0.0, 0.0, 10.0), &[], 0.5, 1.0);
         assert_eq!(pts.len(), 256);
-        assert!(pts.iter().all(|p| p[0] > 1.0 && p[0] < 9.0 && p[1] > 1.0 && p[1] < 9.0));
+        assert!(
+            pts.iter()
+                .all(|p| p[0] > 1.0 && p[0] < 9.0 && p[1] > 1.0 && p[1] < 9.0)
+        );
         // A courtyard (4 × 4 m in the middle) and 1 m around it are left out.
         let hole = square(3.0, 3.0, 4.0);
         let with_hole = footprint_points(&square(0.0, 0.0, 10.0), &[hole], 0.5, 1.0);
-        assert!(with_hole.iter().all(|p| ring_dist(*p, &square(3.0, 3.0, 4.0)) >= 1.0 && !inside(*p, &square(3.0, 3.0, 4.0))));
+        assert!(
+            with_hole
+                .iter()
+                .all(|p| ring_dist(*p, &square(3.0, 3.0, 4.0)) >= 1.0
+                    && !inside(*p, &square(3.0, 3.0, 4.0)))
+        );
         // The 6 × 6 m buffer around the courtyard, but its corners are round:
         // the four lattice points diagonally off its corners stay.
         assert_eq!(with_hole.len(), 256 - 144 + 4);
@@ -958,7 +977,10 @@ mod tests {
             f: |_: [f64; 2]| None,
             px: 0.5,
         };
-        assert_eq!(roof_colour(&square(0.0, 0.0, 10.0), &[], None, &mut none), None);
+        assert_eq!(
+            roof_colour(&square(0.0, 0.0, 10.0), &[], None, &mut none),
+            None
+        );
         // OSM roof:colour wins over the orthophoto.
         let c = roof_colour(&square(0.0, 0.0, 10.0), &[], Some([139, 0, 0]), &mut img).unwrap();
         assert_eq!((c.rgb, c.origin), ([139, 0, 0], RoofOrigin::Osm));
@@ -1070,7 +1092,10 @@ mod tests {
     fn palettes_come_from_interior_cells_away_from_roads_and_houses() {
         let pkg = test_pkg();
         let key = TileKey { x: 0, z: 0 };
-        let mut img = Synthetic { f: colour_at, px: 0.5 };
+        let mut img = Synthetic {
+            f: colour_at,
+            px: 0.5,
+        };
         let (mut ortho_h, mut fb) = (BTreeMap::new(), BTreeMap::new());
         land_histograms(
             &pkg,
@@ -1091,7 +1116,10 @@ mod tests {
         let entries = choose(&ortho_h, &fb, None);
         let get = |k| entries.iter().find(|e| e.key == k).map(|e| e.rgb);
         assert_eq!(get(PaletteKey::Land(LandClass::Forest)), Some([40, 70, 35]));
-        assert_eq!(get(PaletteKey::Land(LandClass::Meadow)), Some([110, 150, 70]));
+        assert_eq!(
+            get(PaletteKey::Land(LandClass::Meadow)),
+            Some([110, 150, 70])
+        );
         // 50 road samples (every 2 m): enough for the asphalt colour.
         assert_eq!(get(PaletteKey::PavedRoad), Some([95, 95, 100]));
         assert_eq!(get(PaletteKey::UnpavedRoad), None);
@@ -1154,15 +1182,22 @@ mod tests {
             let (lat, lon) = Crs::Lv95.inverse(e, n);
             proj.project(lat, lon)
         };
-        crate::imagery::tests::write_ortho(&dir.path().join("1-ortho"), &cells, 100.0, 0.5, |e, n| {
-            colour_at(local(e, n)).unwrap()
-        });
+        crate::imagery::tests::write_ortho(
+            &dir.path().join("1-ortho"),
+            &cells,
+            100.0,
+            0.5,
+            |e, n| colour_at(local(e, n)).unwrap(),
+        );
         // Seasonal composites in UTM 32: summer green, winter white, and
         // autumn with a hole of no data.
         let s2 = dir.path().join("s2");
         std::fs::create_dir_all(&s2).unwrap();
         let o = Crs::UtmNorth(32).forward(47.14, 9.52);
-        let (west, north) = ((o[0] / 10.0).floor() * 10.0 - 200.0, (o[1] / 10.0).floor() * 10.0 + 200.0);
+        let (west, north) = (
+            (o[0] / 10.0).floor() * 10.0 - 200.0,
+            (o[1] / 10.0).floor() * 10.0 + 200.0,
+        );
         let (w, h) = (40usize, 40usize);
         let mut seasons = Vec::new();
         for (name, rgb, doy) in [
@@ -1208,23 +1243,32 @@ mod tests {
         let look = &pkg.look;
         let pal = look.palette.as_ref().unwrap();
         assert_eq!(pal.sources.len(), 2);
-        assert_eq!(pal.sources[1].notice, "Contains modified Copernicus Sentinel data 2025");
-        assert_eq!(pal.colour(PaletteKey::Land(LandClass::Forest)), Some([40, 70, 35]));
+        assert_eq!(
+            pal.sources[1].notice,
+            "Contains modified Copernicus Sentinel data 2025"
+        );
+        assert_eq!(
+            pal.colour(PaletteKey::Land(LandClass::Forest)),
+            Some([40, 70, 35])
+        );
         assert_eq!(pal.colour(PaletteKey::PavedRoad), Some([95, 95, 100]));
         let roof = look.roof(TileKey { x: 0, z: 0 }, 0).unwrap();
         assert_eq!(roof.rgb, [160, 65, 45]);
         // Seasons: summer and winter as given, autumn filled from summer.
         let s = look.seasons.as_ref().unwrap();
-        assert_eq!(s.seasons.iter().map(|i| i.season).collect::<Vec<_>>(), [
-            Season::Summer,
-            Season::Autumn,
-            Season::Winter
-        ]);
+        assert_eq!(
+            s.seasons.iter().map(|i| i.season).collect::<Vec<_>>(),
+            [Season::Summer, Season::Autumn, Season::Winter]
+        );
         let key = TileKey { x: 0, z: 0 };
-        let near = |a: [u8; 3], b: [u8; 3]| (0..3).all(|k| (i32::from(a[k]) - i32::from(b[k])).abs() <= 2);
+        let near =
+            |a: [u8; 3], b: [u8; 3]| (0..3).all(|k| (i32::from(a[k]) - i32::from(b[k])).abs() <= 2);
         assert!(near(s.map(key, 0).unwrap()[0], [80, 130, 60]));
         assert!(near(s.map(key, 1).unwrap()[55], [80, 130, 60]));
-        assert!(near(decode_tint(&s.tiles[&key][2], 10).unwrap()[99], [235, 235, 240]));
+        assert!(near(
+            decode_tint(&s.tiles[&key][2], 10).unwrap()[99],
+            [235, 235, 240]
+        ));
         assert_eq!(stats.season_filled, 100);
         // Class means per season: summer meadow and forest green, winter white;
         // autumn had no data.
@@ -1244,7 +1288,7 @@ mod tests {
     #[test]
     fn tint_gaps_fill_from_other_seasons_then_the_mean() {
         let raw = vec![
-            vec![Some([10, 10, 10]), None, None],         // spring
+            vec![Some([10, 10, 10]), None, None],               // spring
             vec![Some([50, 60, 70]), Some([52, 62, 72]), None], // summer
         ];
         let (maps, filled) = fill_tints(&raw, Some(1));

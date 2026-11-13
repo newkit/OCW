@@ -89,7 +89,12 @@ impl RegionLook {
 
     /// The roof colour of building `index` of tile `key`.
     pub fn roof(&self, key: TileKey, index: usize) -> Option<RoofColour> {
-        self.roofs.as_ref()?.get(&key)?.get(index).copied().flatten()
+        self.roofs
+            .as_ref()?
+            .get(&key)?
+            .get(index)
+            .copied()
+            .flatten()
     }
 }
 
@@ -198,7 +203,12 @@ pub enum Season {
 }
 
 impl Season {
-    pub const ALL: [Season; 4] = [Season::Spring, Season::Summer, Season::Autumn, Season::Winter];
+    pub const ALL: [Season; 4] = [
+        Season::Spring,
+        Season::Summer,
+        Season::Autumn,
+        Season::Winter,
+    ];
 
     pub fn from_code(c: u8) -> Option<Self> {
         Self::ALL.get(usize::from(c)).copied()
@@ -321,7 +331,11 @@ pub fn season_weights(seasons: &[SeasonInfo], day_of_year: f64) -> Vec<(usize, f
     let (a, b) = (order[k], order[(k + 1) % order.len()]);
     let span = (centre(b) - centre(a)).rem_euclid(YEAR_DAYS);
     let into = (d - centre(a)).rem_euclid(YEAR_DAYS);
-    let t = if span > 0.0 { (into / span).clamp(0.0, 1.0) } else { 0.0 } as f32;
+    let t = if span > 0.0 {
+        (into / span).clamp(0.0, 1.0)
+    } else {
+        0.0
+    } as f32;
     if t <= 0.0 {
         vec![(a, 1.0)]
     } else if t >= 1.0 {
@@ -351,7 +365,8 @@ pub fn encode_tint(rgb: &[[u8; 3]], cells: u32) -> Vec<u8> {
     assert_eq!(rgb.len(), n * n, "tint map size");
     let h = n.div_ceil(2);
     let mut y = vec![0u8; n * n];
-    let (mut co_acc, mut cg_acc, mut cnt) = (vec![0i32; h * h], vec![0i32; h * h], vec![0i32; h * h]);
+    let (mut co_acc, mut cg_acc, mut cnt) =
+        (vec![0i32; h * h], vec![0i32; h * h], vec![0i32; h * h]);
     for r in 0..n {
         for c in 0..n {
             let [rr, gg, bb] = rgb[r * n + c].map(i32::from);
@@ -407,8 +422,16 @@ pub fn decode_tint(bytes: &[u8], cells: u32) -> Result<Vec<[u8; 3]>, String> {
 
 /// LOCO-I median edge detector prediction of a square plane.
 fn med(p: &[u8], n: usize, r: usize, c: usize) -> u8 {
-    let a = if c > 0 { i32::from(p[r * n + c - 1]) } else { 0 };
-    let b = if r > 0 { i32::from(p[(r - 1) * n + c]) } else { a };
+    let a = if c > 0 {
+        i32::from(p[r * n + c - 1])
+    } else {
+        0
+    };
+    let b = if r > 0 {
+        i32::from(p[(r - 1) * n + c])
+    } else {
+        a
+    };
     let a = if c > 0 { a } else { b };
     let cc = if r > 0 && c > 0 {
         i32::from(p[(r - 1) * n + c - 1])
@@ -454,7 +477,9 @@ fn get_str(r: &mut Bytes<'_>) -> Result<String, String> {
 fn check_version(r: &mut Bytes<'_>, want: u32, what: &str) -> Result<(), String> {
     match r.u32()? {
         v if v == want => Ok(()),
-        v => Err(format!("{what} layout {v} not supported (this build reads {want})")),
+        v => Err(format!(
+            "{what} layout {v} not supported (this build reads {want})"
+        )),
     }
 }
 
@@ -838,10 +863,7 @@ pub(crate) mod tests {
         }
         let mid = s.tint_at(1000.0, 10.0, 10.0, 245.0).unwrap();
         assert!((mid[0] as i32 - 60).abs() <= 2, "{mid:?}");
-        assert_eq!(
-            look.roof(k, 0).unwrap().origin,
-            RoofOrigin::Orthophoto
-        );
+        assert_eq!(look.roof(k, 0).unwrap().origin, RoofOrigin::Orthophoto);
         assert_eq!(look.roof(k, 1), None);
         assert_eq!(
             look.palette.as_ref().unwrap().colour(PaletteKey::PavedRoad),

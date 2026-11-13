@@ -505,8 +505,8 @@ mod tests {
     fn imagery_sources_are_credited_in_the_manifest() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("p.ocwpkg");
-        let source = |id: &str, name: &str, licence: &str, notice: &str| {
-            ocw_world::look::ImagerySource {
+        let source =
+            |id: &str, name: &str, licence: &str, notice: &str| ocw_world::look::ImagerySource {
                 id: id.into(),
                 name: name.into(),
                 licence: licence.into(),
@@ -514,8 +514,7 @@ mod tests {
                 url: String::new(),
                 date: "2025".into(),
                 resolution_m: 0.5,
-            }
-        };
+            };
         let pkg = ocw_world::WorldPackage {
             name: "Test".into(),
             origin: (47.9, 7.9),

@@ -1229,19 +1229,21 @@ pub fn build_tile_meshes_look(
     let lu = tile_landuse(pkg, key);
     // The kept buildings with their measured roof colours (section ROOF,
     // in the order of the tile's buildings).
-    let (kept, roofs): (Option<Vec<Building>>, Vec<Option<ocw_world::look::RoofColour>>) =
-        match pkg.buildings.as_ref().and_then(|b| b.get(&key)) {
-            Some(b) => {
-                let (bs, rs) = b
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, b)| keep.is_none_or(|f| f(outline_centroid(&b.outline))))
-                    .map(|(i, b)| (b.clone(), pkg.look.roof(key, i)))
-                    .unzip();
-                (Some(bs), rs)
-            }
-            None => (None, Vec::new()),
-        };
+    let (kept, roofs): (
+        Option<Vec<Building>>,
+        Vec<Option<ocw_world::look::RoofColour>>,
+    ) = match pkg.buildings.as_ref().and_then(|b| b.get(&key)) {
+        Some(b) => {
+            let (bs, rs) = b
+                .iter()
+                .enumerate()
+                .filter(|(_, b)| keep.is_none_or(|f| f(outline_centroid(&b.outline))))
+                .map(|(i, b)| (b.clone(), pkg.look.roof(key, i)))
+                .unzip();
+            (Some(bs), rs)
+        }
+        None => (None, Vec::new()),
+    };
     let buildings = kept
         .as_deref()
         .map_or_else(MeshArrays::default, |b| building_arrays_roofed(b, &roofs));
@@ -2642,6 +2644,9 @@ mod tests {
         assert!(summer[1] > summer[0] && summer[0] < 120, "{summer:?}");
         // Blended half-way in between (autumn has no composite here).
         let between = map_at(Some(290.0));
-        assert!(between[0] > summer[0] && between[0] < winter[0], "{between:?}");
+        assert!(
+            between[0] > summer[0] && between[0] < winter[0],
+            "{between:?}"
+        );
     }
 }

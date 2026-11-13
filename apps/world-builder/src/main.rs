@@ -2050,10 +2050,18 @@ fn main() {
                         .roofs
                         .as_ref()
                         .map_or(0, |r| r.values().flatten().flatten().count()),
-                    pkg.look.seasons.as_ref().map_or("no seasonal tints".to_string(), |s| {
-                        let names: Vec<&str> = s.seasons.iter().map(|i| i.season.name()).collect();
-                        format!("seasonal tints ({}) in {} tiles", names.join(", "), s.tiles.len())
-                    })
+                    pkg.look
+                        .seasons
+                        .as_ref()
+                        .map_or("no seasonal tints".to_string(), |s| {
+                            let names: Vec<&str> =
+                                s.seasons.iter().map(|i| i.season.name()).collect();
+                            format!(
+                                "seasonal tints ({}) in {} tiles",
+                                names.join(", "),
+                                s.tiles.len()
+                            )
+                        })
                 );
             } else {
                 println!("look: none (not calibrated)");
