@@ -65,6 +65,7 @@ Version 2.47 – November 2026
 | 2.44 | Phase 8 decisions: no commercial release, 8A stays (Q2); orthophoto corridor size acceptable (Q4); seasonal variants (Q5); own photos postponed (Q6); Mapillary CC BY-SA, reference by eye only (Q7); 3D buildings: swissBUILDINGS3D 3.0 (Opendata BY) to confirm, LGL LoD2 probably not open, ask LGL (Q8); all texture areas in parallel (Q10) |
 | 2.45 | Licensing (§13): no licence change for now – the code stays MIT / Apache-2.0 (a switch to CC BY-SA was considered and declined) |
 | 2.46 | Phase 8 T1 / T2 (§4.6, §8.1, §13, §14 Phase 8): material library of 21 CC0 materials (ambientCG, Poly Haven) – ground, roads, houses, volcanic ground for Tenerife – not in git but pinned by URL + SHA-256 in `assets/materials.toml`, fetched and converted to KTX2 (BC3 / BC5, 1024², mipmapped) by `scripts/fetch-materials.sh` into the git-ignored `assets/materials/` and shipped beside the binary (AppImage, macOS bundle, Windows zip, test deployment); licence rule of Phase 8A shared by the model and material validators; terrain drawn with the materials blended by the splat map (weights at cell corners, noise warp, height blend, rock and triplanar on slopes, macro scale, fade to the colour map in the materials' mean colours), roads by OSM `surface` (new package section `RSRF`) with category fallback; regional material sets by the package's time zone (`[[region]]` in the manifest: the volcanic set of the Canary Islands with lava, ash / cinder, black sand and pine needles); regional tint hook neutral; reference boards `art/reference/` |
+| 2.50 | Phase 12 planned: collisions, crashes and damage (§14 Phase 12): global switches `ride.collisions` and `ride.damage` (on / off; host or organiser decides in shared sessions and events), rider and object footprints in the path frame, soft bumps (slowed, pushed apart, wobble) and hard hits (crash: fall, down, remount; wheel touches and head-on hits), fallen bikes as obstacles, autodrive and bots avoid collisions (overtake on the region's side or hold back), manual riders must avoid them themselves, rider injury and bike damage meters with effects, damage indicator in the HUD; milestones K1–K7, open questions Q1–Q7 |
 | 2.49 | Release versions (§11.3): every GitHub release now increments the **patch** version (0.2.0 → 0.2.1), not the minor version; `make release-prepare` / `version-bump` default to `PART=patch`, minor / major by hand; tags `vX.Y.Z` |
 | 2.48 | Phase 11 decision (§14 Phase 11, Q1): the development headset is the **Oculus Rift (first generation, CV1)** on Windows through the Meta PC app's OpenXR runtime; the code stays OpenXR-only and vendor-neutral so other headsets work through their OpenXR runtimes; X1 targets the Rift CV1 first; the CV1 is promoted from "legacy" to "primary dev target" in the support table |
 | 2.47 | Wheel/road contact (§2.5, bug 2026-11-13 "wheels 1 cm inside the road"): the drawn road surface (route ribbon, package road strips, tunnel floor) lies `ROAD_SURFACE_LIFT_M` = 2 cm above the profile and the riders stand on it (they stood on the profile: 2 cm in the road); each wheel rests as a circle on the surface (crests and dips) at the model's real wheelbase; bikes lean and rock about the tyre's crown line (anchor `tyre_crown`); the tyre's outermost tread (knob tips) is the wheel radius; finer tyre meshes; a route file is fitted onto the package's road strips whenever it differs by more than 1 mm (`route_fit::ON_ROAD_M`; the warning stays at 0.25 m). Measured by `wheel_contact` tests: within 2 mm for every bike, LOD, lean and slope on synthetic roads; on the Liechtenstein roads median 0 mm, residuals where strips overlap at junctions (up to 0.2 m) and from the 5 m sampling (≤ 15 mm) |
@@ -2408,6 +2409,114 @@ Attribution of the provider used appears on the credits screen and in the weathe
 - **Q4 – Head-lean steering:** wanted, or keep steering on keys / gamepad / autodrive?
 - **Q5 – Native standalone (Quest / Pico store) and WebXR:** later, or not at all?
 - **Q6 – Priority:** where does VR go relative to Phases 8–10?
+
+### Phase 12 – Collisions, crashes and damage (planning, 2026-11-13)
+
+**Goal:** riders and world objects become solid. Riders who touch each other or an object are slowed down (soft bump) or crash and fall (hard hit). Autodrive avoids collisions by itself; with manual steering the rider has to avoid them. An optional damage model adds injuries to the rider and damage to the bike, shown by a damage indicator. Both are **switchable globally** (on / off).
+
+#### 12A – Switches (decided by the user, 2026-11-13)
+
+- **`ride.collisions` (on | off):** off = today's behaviour: riders pass through each other and objects (only the road edge of §5.2.1 holds them). On = the collision model below. Proposal for the default: **on** (Q1).
+- **`ride.damage` (on | off):** only has an effect with collisions on. Off = bumps and crashes slow riders down and make them fall, but nothing accumulates. On = every hit adds to the rider's injury and the bike's damage (12E). Proposal for the default: **off** (Q1).
+- Both are settings in the registry (§3.2.1: section `[ride]`, scope *live*, console `set ride.collisions on`, Settings → Ride) and server session parameters. **The server decides** (server-authoritative, §6.1): on the local server they follow the rider's settings; in a shared session the host sets them (like the world switch, `ServerConfig.collision_access`: host / anyone / nobody); in **organiser-set events** (races, group rides on a remote server) the organiser sets them per event, like the weather (Phase 9 Q4), and riders cannot change them. Sent in `Welcome` and `EventState` (additive fields, §6.2), shown in the event's info ("collisions on, damage off").
+- **Exempt from collisions in every mode:** the time-trial ghost (a replay, §2.2), riders in the countdown formation (they stand still; collisions start with GO), spectators / camera, and riders whose client is reconnecting (they ride as ghosts until the next snapshot is acknowledged, so a lag spike cannot cause a crash).
+
+#### 12B – Collision model (server, `ocw-sim::collide`, pure, deterministic, wasm)
+
+- **Bodies.** A rider + bike is a footprint in the road's frame (§5.2: distance along the path `s`, lateral offset `d`): a rounded box **1.75 m long** (wheelbase + wheels, from the bike's physics profile, §2.5) and **0.5 m wide** (handlebar width), oriented by the rider's heading relative to the road. Inside the footprint the two **wheels** are marked: the front wheel (front 0.35 m) and the rear wheel (rear 0.35 m), because touching wheels is the classic way bunches crash.
+- **Riders against riders.** Riders on the same path segment are checked in the path frame (exact and cheap: a sort by `s`, only neighbours within 3 m are tested; O(n log n) for a bunch of 100). At junctions and on different edges of the free-ride graph (§2.2.1) the check uses world positions (x, z) projected onto the road plane, in a 4 m spatial hash. Contacts are resolved at the 50 Hz tick, after the physics step and before the broadcast.
+- **Riders against the world.** Static obstacles come from the world package: buildings (`BLDG` footprints), trees (trunk circles, 0.3–0.6 m), walls, fences, bollards, posts and barriers (OSM `barrier=*` nodes / ways, new additive section `OBST` in the package, written by the world builder with a 2 m corridor rule), tunnel walls and bridge railings (from the tunnel / bridge geometry, §4.8). On the road only a few of these are reachable (posts, barriers, bollards on paths); in **wild mode** (§5.2.1) every object is solid. The road edge keeps its scrape (§5.2.1); hitting it hard (steering into it at more than 30° to the road) counts as a hit on a wall.
+- **Impact strength.** For each contact the server computes the **closing speed** `v_c` along the contact normal (the relative velocity of the two bodies; for a static object the rider's own velocity), the **contact type** (side by side, wheel to wheel, front wheel into a rear wheel, head-on, object) and the impact energy `E = ½ · m_red · v_c²` (`m_red` = reduced mass of rider + bike; for a static object the rider's mass).
+- **Soft bump** (closing speed below the crash threshold): the two riders are pushed apart (lateral offsets separated to touching, no overlap), both lose speed by a share of the closing speed (an inelastic exchange of momentum: the faster rider slows down, the slower one is pushed a little), and the bikes **wobble** (a short lean oscillation of ±3–6°, 0.6 s). A touch from the side while riding parallel is the gentlest case (shoulder rub). The trainer feels it in SIM mode as a short resistance pulse (the speed loss as a brief grade increase; ERG unchanged).
+- **Hard hit = crash** when one of these holds (tunable, measured by tests):
+  - `v_c` ≥ **2.5 m/s** (9 km/h) rider against rider, or ≥ **3.5 m/s** (12.6 km/h) against a solid object;
+  - **front wheel into another rider's rear wheel** with a lateral overlap (wheel touch) at `v_c` ≥ 1.0 m/s, or at any speed while the rider leans more than 10° into the other rider (hooking a wheel);
+  - head-on (opposite directions, e.g. after a U-turn) at any speed above 1.5 m/s;
+  - a rider ridden into from behind at speed (the rider behind crashes, the one in front gets a soft bump unless the energy passes the threshold for them too).
+  Both riders in a hard rider-rider contact can crash; which one falls is decided by the contact type (the rider whose front wheel was hit falls; the rider hit in the rear wheel usually stays up), **deterministically** (no random numbers on the server, or a seed from the tick and the rider ids), so replays and the client's prediction agree.
+- **Chain crashes:** a fallen rider and bike lie on the road as an obstacle (footprint of the fallen bike, 1.8 m × 1 m, for the time they are down), so riders behind must steer around it or crash too – a pile-up in a bunch is possible, as on the road.
+
+#### 12C – Crash sequence
+
+- **States** (part of the rider state in snapshots, additive field `RiderUpdate.crash`): `Riding → Falling (0.8 s) → Down (2–8 s, by impact energy) → Remount (1.5 s) → Riding` from standstill (0 km/h; the rider accelerates again with the own power). Ride time continues (the ride never pauses, §3.2.1); in races the clock runs, no neutralisation unless the organiser sets one.
+- **Physics while down:** the rider's speed goes to 0 within the fall (sliding friction), power has no effect, autodrive's line is reset to the current lateral position. **Trainer:** SIM mode gets a flat road and the lowest resistance while the rider is down (so the legs keep spinning easily), ERG mode is held (the workout continues: crash or not, the plan is the plan; a workout may also pause its step, Q4).
+- **Rendering** (`ocw-render`): a scripted fall animation first (rider and bike tip over to the side of the impact, the bike slides and spins a little, the rider rolls and sits up), no physics engine; a **ragdoll** later (Q5). The bike lies apart from the rider. Remount: the rider picks up the bike and clips in. The chase camera shakes briefly and holds a wider orbit; in **VR** (Phase 11) the view never rolls or tumbles – a short fade to dark and back (comfort rule).
+- **Sound** (procedural, §3.3): a bump (body thud + tyre squeak), a crash (impact, metal scrape of the bike sliding, a fading spin of the free wheel), the remount clicks. Other riders' crashes are placed in space like their bike sounds.
+- **HUD:** "Crash!" with the time down counting; for others a crash marker over the fallen rider and a line in the event's feed (races: "R. Rider crashed at km 12.4").
+
+#### 12D – Avoidance: autodrive avoids, manual riders must avoid
+
+- **Autodrive (and every bot) avoids collisions by itself** (`ocw-sim::avoid`, the same code on server and client): every tick it looks ahead `max(4 s × speed, 15 m)` along the path for riders and obstacles in its lane. For each it computes the time to collision from the speed difference. When it falls below 3 s, autodrive **moves its line** to the free side (overtaking: the left side in right-hand traffic countries, the right side in left-hand traffic ones – from the package's region, §4.7; on narrow roads either side, keeping 0.6 m clear of the edge) with a smooth lane change (lateral speed ≤ 1 m/s, so it never cuts across another rider), and moves back once past. When both sides are blocked, autodrive **holds back**: it settles behind the rider in front at a 0.5 m wheel gap (drafting, §5.2), braking virtually (the speed above the one in front is shed, like coasting with brakes – the rider's power still counts, so a strong rider sits on the wheel until there is a gap). Junction exits and U-turns respect the same look-ahead. Autodrive never causes a collision by its own move; it can still be hit by a manually steered rider.
+- **Manual steering (autodrive off) and wild mode:** **no help** – the rider steers, and collisions happen as the model says. Two optional aids (settings, off in organiser races unless allowed): a **proximity cue** (a soft bell / tyre-hum sound and a HUD arrow when someone is within 1 m beside or 2 m in front) and a **"last moment" warning** (an amber flash 1 s before a predicted hit). Neither steers for the rider.
+- **Prediction (§6.1):** the client predicts its own rider's collisions with the last known positions of the others (interpolated, §6.5) and with static objects exactly; contacts with other riders are confirmed by the server, so a predicted bump the server did not see is reconciled away (small correction), and a crash is only shown when the server says so (no false falls from lag). Crash state, damage and the "who hit whom" record come only from the server.
+
+#### 12E – Damage model (with `ride.damage on`)
+
+- **Two meters, 0–100 %:** **rider condition** (injury) and **bike condition** (damage), both start at 100 % for each ride (no injuries carried over between rides; a persistent, "career" mode is Q6). Every hit takes off points by its impact energy and type:
+  - soft bump: 0–2 % rider, 0–2 % bike (a shoulder rub costs nothing, a wheel touch a little);
+  - crash: 5–25 % rider and 5–30 % bike, by energy and type (head-on and objects hit hardest);
+  - riding through a fallen bike, a kerb (hard edge hit) or a pothole later (Phase 8 surfaces): bike only.
+- **Injury levels** (rider condition) and their effects – the real rider's power is never touched; the effect is on the virtual rider:
+  - 100–70 % *bruised*: no effect;
+  - 70–40 % *hurt*: the virtual drivetrain loses 3–8 % of the power (the avatar rides stiffly), longer time down after a crash;
+  - 40–15 % *injured*: 10–20 % loss, the avatar rides with a visible limp / bandage, every further crash takes longer;
+  - below 15 % *badly injured*: the rider must stop – a **medical stop** of 60 s, then rides on at most 50 % effective power, or abandons (DNF in races; organiser option "DNF when badly injured").
+- **Bike damage** is per part, each with its own visible and physical effect, chosen by the impact (front / rear / side):
+  - **wheels** (true): a buckled wheel adds rolling resistance (+10–40 %), a visible wobble and a rubbing tick in the sound;
+  - **tyres:** a crash can cause a **puncture** (by energy, deterministic): the rider must stop for a 30 s repair, or ride on slowly (flat: rolling resistance ×4, speed capped at 15 km/h);
+  - **drivetrain** (derailleur, chain): efficiency loss 2–10 %, chain noise; a broken chain = stop for 45 s;
+  - **handlebar / brakes:** steering a little less precise (manual lean rate −20 %), autodrive unaffected;
+  - **frame / fork:** only from very hard hits; below 10 % bike condition the bike is **broken**: the rider waits for a spare bike (60 s, from the team car / neutral service in races) or the ride ends there.
+  - Damage shows on the bike model: scratches and scuffs (decals), a bent wheel, a dropped chain, a torn jersey and dust on the rider.
+- **Recovery:** riding on does not heal; a **stop** (speed 0 for 30 s, or a "service" point in races) restores bike parts that the organiser allows; the rider recovers 1 % per minute of easy riding (below 50 % FTP). Restart, a new ride or a world switch reset both meters.
+- **Server and protocol:** damage is part of the server's rider state (`RiderUpdate.damage`: rider %, bike %, parts as a bit field, injury level), sent at 2 Hz and on every change; the event results show crashes and the final condition. FIT files get a lap / event marker per crash (developer field for the condition).
+
+#### 12F – Damage indicator (HUD)
+
+- A compact widget beside the bike computer: **two icons with bars** – a rider silhouette (condition %) and a bike silhouette (condition %) – each with its level word ("bruised", "hurt", "injured"; "scratched", "damaged", "broken"). Colours from the status palette (good / warning / serious / critical: green, amber, orange, red) and always an icon + word, never colour alone (accessibility). Parts with damage light up on the bike icon (wheel, tyre, chain, bars, frame), with a short label ("rear wheel buckled", "puncture: stop to repair").
+- **On a hit:** the affected icon flashes and the bar drops with an animation, the loss is shown for 2 s ("−12 % bike").
+- **Others:** in group rides and races a small damage dot next to riders in the standings / the rider list (amber / red), so the field sees who is hurt.
+- Hidden when `ride.damage` is off; with collisions off nothing collision-related is shown. Settings → HUD can hide the widget (the effects stay).
+- In VR (Phase 11) the indicator is part of the stem-mounted bike computer.
+
+#### 12G – Bots, events and other modes
+
+- **Bots** always use autodrive avoidance, so a field of bots never crashes by itself; they can be crashed by a human rider (and take damage). An option for **"chaotic" bots** that sometimes make mistakes (late reactions, wheel touches) for realism is Q3.
+- **Group rides:** collisions are a session setting (12A); proposal: group rides default to **soft bumps only** (crash threshold raised, no chain crashes), so a social ride is not ruined (Q2).
+- **Races:** organiser decides collisions, damage, neutral service (spare wheels / bikes and their delay), DNF rules and whether the proximity aids are allowed.
+- **Time trial:** no other riders, so only world objects (and the road edge) count.
+- **Workouts (ERG):** the workout continues; Q4 whether to pause the step while down.
+- **Kiosk / show mode:** collisions off (the show rider rides through the bots, as now).
+- **Strava / FIT uploads:** crashes are only markers; no injury data leaves the device unless the rider wants it.
+
+#### 12H – Tests (spec §11.4: no step without tests)
+
+- `ocw-sim::collide` unit tests: footprint overlap in the path frame and in world space; closing speed and contact types (side, wheel to wheel, front-to-rear, head-on, object); soft bump below the threshold (separation without overlap, speed exchange conserving momentum within a tolerance), crash at and above it; the deterministic choice of who falls; a fallen bike as an obstacle; collisions off = no contact ever; ghosts, formation and reconnecting riders exempt.
+- `ocw-sim::avoid`: a field of 50 autodrive bots at mixed powers on a loop for 30 simulated minutes has **zero contacts**; an autodrive rider overtakes a slower one on the correct side by the region's traffic side; a blocked autodrive rider settles at the wheel gap; a manual rider steered into another crashes as the model says.
+- Server: the crash state machine (durations by energy), trainer commands while down (SIM flat, ERG held), snapshot fields, event feed lines and results; 100-rider bunch performance: collisions within 0.3 ms per tick (§15).
+- Damage: points per hit type, injury levels and their effects on the virtual power, punctures and repairs, recovery, reset on restart; damage off = meters never change.
+- Client: prediction of bumps against interpolated riders reconciles without visible snaps; a crash appears only from the server; HUD widget levels, colours + words, and the hit animation (headless screenshots, X11 + Wayland); a scene in `scripts/scenes.toml` with a staged crash (console `dev.crash` / `dev.bump` on the local server, `Dev` permission) for the build history.
+- World builder: `OBST` section written from OSM barriers, posts and bollards near roads; package round trip; lint finds obstacles on the road centreline (a data error: a gate across a through road is noted, not made solid, Q7).
+
+#### 12I – Milestones (proposal)
+
+- **K1 – Rider collisions, soft bumps:** footprints, path-frame and world-space checks, separation and speed exchange, wobble, `ride.collisions` setting and session parameter, sounds; autodrive avoidance (overtake / hold back) for riders and bots.
+- **K2 – Crashes:** thresholds, contact types, crash states and fall animation, fallen bikes as obstacles, trainer behaviour while down, HUD crash display, event feed.
+- **K3 – World objects:** `OBST` section in the world builder, buildings / trees / walls / barriers in wild mode, tunnel walls, bridge railings, hard road-edge hits.
+- **K4 – Damage:** `ride.damage`, rider and bike meters, injury levels, part damage, punctures and repairs, recovery, protocol fields, FIT markers.
+- **K5 – Damage indicator and visible damage:** HUD widget, standings dots, bike damage on the model, rider dust / bandage.
+- **K6 – Events and options:** organiser settings, neutral service, DNF rules, proximity aids, group-ride soft mode, VR comfort fade.
+- **K7 (later):** ragdoll physics for falls, chaotic bots, persistent career injuries.
+
+#### 12J – Open questions (for the user)
+
+- **Q1 – Defaults:** collisions **on** and damage **off** by default (proposal), or both off until a rider switches them on?
+- **Q2 – Group rides:** soft bumps only by default (no crashes), or the full model as in races?
+- **Q3 – Bots' mistakes:** should bots sometimes cause crashes ("chaotic" bots, a setting), or always ride perfectly?
+- **Q4 – Workouts:** keep the ERG step running while the rider is down (proposal), or pause the step until the rider rides again?
+- **Q5 – Falls:** a scripted fall animation first (proposal), or straight to a ragdoll with a physics engine (more realistic, more work, a dependency like Avian or Rapier)?
+- **Q6 – Persistence:** injuries and bike damage reset per ride (proposal), or carry over between rides (a career / repair-shop mode)?
+- **Q7 – Gates and barriers on roads:** OSM often has gates or bollards on through routes (often open in reality). Make them solid (realistic but annoying), solid only in wild mode, or only show them (proposal: shown, not solid on the routed road)?
 
 ---
 
