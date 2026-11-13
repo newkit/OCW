@@ -4,7 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-Open Cycling World (OCW) is a cross-platform (Linux/Windows/macOS) indoor cycling simulation in Rust. Development is in **Phase 1** (spec §14): Cargo workspace, local client/server architecture, test route, console.
+Open Cycling World (OCW) is a cross-platform (Linux/Windows/macOS) indoor cycling simulation in Rust. Phases 1–3 of spec §14 are done, Phases 4–7 partly, Phases 8 (textures) and 9 (sky, time, weather) are in progress, and Phases 10–13 (browser, VR, collisions, god mode) are planned. The spec's version table and the phase sections say what is done and what is open.
+
+## Working mode: keep building (decided by the user, 2026-11-13)
+
+- **When all build jobs are done** (no agent, remote build, render or deploy still running), do not wait idle. **Start implementing the next features from SPECIFICATION.md that are not implemented yet and for which all information is there**: decisions made, no open question blocking them. Prefer the order of the phases in progress (currently Phase 8, then 9), then the planned phases whose questions are answered. Spread the work over agents in worktrees and over all build machines, as usual.
+- **Questions:** when a feature needs an answer from the user before it can go on, **ping the user with a message** (a push notification if available, else a short message in the session) with the concrete questions. Meanwhile continue with other features that are not blocked, never guess a decision the user has to make, and record the answers in the spec when they come.
+- Each feature still follows the usual rules: tests (spec §11.4), full checks on the remote machines, merge into `main`, push, deploy for visible changes, test output and art-project documentation.
 
 ## Commands
 
