@@ -31,6 +31,11 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
+
+import answers
+import janitor
+import spec_questions
 
 HERE = Path(__file__).resolve().parent
 POLL_INTERVAL_S = 5.0
@@ -281,6 +286,7 @@ echo @@loadavg; cat /proc/loadavg
 echo @@uptime; cat /proc/uptime
 echo @@meminfo; grep -E '^(MemTotal|MemAvailable|SwapTotal|SwapFree):' /proc/meminfo
 echo @@df; df -Pk "$HOME" | tail -n 1
+echo @@dfsrc; df -Pk @SRC@ 2>/dev/null | tail -n 1
 echo @@now; date +%s
 echo @@clk; getconf CLK_TCK
 ticks() { cat /proc/uptime; cat /proc/[0-9]*/stat 2>/dev/null | awk '{ n = split(substr($0, index($0, ") ") + 2), a, " "); print $1, a[12] + a[13] }'; }
@@ -313,6 +319,7 @@ echo @@sysctl; sysctl -n hw.ncpu hw.memsize vm.loadavg kern.boottime vm.swapusag
 echo @@now; date +%s
 echo @@vmstat; vm_stat
 echo @@df; df -Pk "$HOME" | tail -n 1
+echo @@dfsrc; df -Pk @SRC@ 2>/dev/null | tail -n 1
 echo @@cpu; top -l 2 -n 0 -s 1 | grep 'CPU usage' | tail -n 1
 echo @@ps; ps -axo pid=,ppid=,uid=,etime=,rss=,args= | cut -c1-2000
 echo @@pcpu; ps -axo pid=,%cpu=
@@ -473,6 +480,39 @@ def parse_df(lines: list) -> dict:
             return {"disk_total": int(f[1]) * 1024, "disk_used": int(f[2]) * 1024,
                     "disk_free": int(f[3]) * 1024}
     return {}
+
+
+def _disk(name: str, role: str, total, used, free) -> dict:
+    d = {"name": name, "role": role, "total": total, "used": used, "free": free}
+    d["pct"] = janitor.disk_pct(d)  # like df's Use%: used / (used + free)
+    return d
+
+
+def parse_disks_posix(df: list, dfsrc: list) -> dict:
+    """The disk watcher's disks (spec §11.2): the home volume and, when it
+    is another file system, the one holding the checkouts (repo_path's
+    directory). disk_pct = use of the checkouts' disk (the janitor's)."""
+    disks, devs = [], []
+    for name, role, lines in (("home", "home", df), ("src", "checkouts", dfsrc)):
+        for l in lines:
+            f = l.split()
+            if len(f) >= 6 and f[1].isdigit():
+                if f[0] in devs:  # same file system as home: one disk
+                    disks[devs.index(f[0])]["role"] = "home, checkouts"
+                else:
+                    devs.append(f[0])
+                    disks.append(_disk(name, role, int(f[1]) * 1024, int(f[2]) * 1024, int(f[3]) * 1024))
+                break
+    if len(disks) == 1:
+        disks[0]["role"] = "home, checkouts"
+    build = next((d for d in disks if "checkouts" in d["role"]), disks[0] if disks else None)
+    return {"disks": disks, "disk_pct": build["pct"] if build else None}
+
+
+def posix_script(script: str, repo_path: str) -> str:
+    """A poll script with @SRC@ = the directory holding the checkouts."""
+    parent = repo_path.rstrip("/").rsplit("/", 1)[0] if "/" in repo_path.rstrip("/") else "~"
+    return script.replace("@SRC@", janitor._sh_path(parent))
 
 
 def parse_etime(s: str):
@@ -1040,6 +1080,7 @@ def parse_linux(text: str, machine_repo: str = "~/src/OCW", slots: int = OS_DEFA
     out["uptime"] = float(up[0]) if up else None
     out.update(parse_meminfo(s.get("meminfo", [])))
     out.update(parse_df(s.get("df", [])))
+    out.update(parse_disks_posix(s.get("df", []), s.get("dfsrc", [])))
     out["cpu_busy"] = parse_cpu_busy(s.get("stat", []) + s.get("stat2", []))
     procs = parse_ps(s.get("ps", []))
     cwd = parse_cwd_linux(s.get("cwd", []))
@@ -1113,6 +1154,7 @@ def parse_macos(text: str, machine_repo: str = "~/src/OCW", slots: int = OS_DEFA
                  + pages.get("Pages speculative", 0)) * page
         out["mem_used"] = max(0, out["mem_total"] - avail)
     out.update(parse_df(s.get("df", [])))
+    out.update(parse_disks_posix(s.get("df", []), s.get("dfsrc", [])))
     cpu = " ".join(s.get("cpu", []))
     m = re.search(r"([\d.]+)% idle", cpu)
     out["cpu_busy"] = round(100.0 - float(m.group(1)), 1) if m else None
@@ -1157,6 +1199,21 @@ def parse_windows(text: str, machine_repo: str = "B:\\src\\OCW", slots: int = OS
         out["disk_free"] = disk.get("free")
         out["disk_total"] = (disk.get("used") or 0) + (disk.get("free") or 0)
         out["disk_name"] = str(disk.get("name")) + ":"
+    # Disk watcher: the drive of the checkouts and C: (user profile: cargo,
+    # rustup, sccache until moved, scripts/windows-move-toolchain.ps1).
+    watched = []
+    for d in disks:
+        letter = str(d.get("name", "")).upper()[:1]
+        if letter == want or letter == "C":
+            used, free = d.get("used"), d.get("free")
+            total = (used or 0) + (free or 0)
+            role = "checkouts" if letter == want else "system"
+            if letter == want and want == "C":
+                role = "checkouts, system"
+            watched.append(_disk(letter + ":", role, total, used, free))
+    watched.sort(key=lambda d: "checkouts" not in d["role"])
+    out["disks"] = watched
+    out["disk_pct"] = watched[0]["pct"] if watched else None
     raw = data.get("procs") or []
     if isinstance(raw, dict):
         raw = [raw]
@@ -1230,9 +1287,9 @@ def poll_machine(m: Machine, ctl: str | None = None) -> dict:
     if m.os == "windows":
         cmd, parser = windows_command(), parse_windows
     elif m.os == "macos":
-        cmd, parser = MACOS_SCRIPT, parse_macos
+        cmd, parser = posix_script(MACOS_SCRIPT, m.repo_path), parse_macos
     else:
-        cmd, parser = LINUX_SCRIPT, parse_linux
+        cmd, parser = posix_script(LINUX_SCRIPT, m.repo_path), parse_linux
     try:
         r = subprocess.run(ssh_argv(m, ctl) + [cmd], capture_output=True, text=True, encoding="utf-8", errors="replace",
                            timeout=m.timeout + 20, stdin=subprocess.DEVNULL)
@@ -1252,6 +1309,32 @@ def poll_machine(m: Machine, ctl: str | None = None) -> dict:
     masker = Masker(m.secrets(), [home] if home else [])
     data = masker.deep(data)
     return dict(base, online=True, poll_ms=int((time.time() - t0) * 1000), **data)
+
+
+def run_ssh(m: Machine, script: str, timeout: float, stdin: str | None = None, ctl: str | None = None) -> str:
+    """Runs a janitor snippet on a machine (Windows: PowerShell, encoded) and
+    returns its stdout; raises RuntimeError with a masked reason."""
+    cmd = windows_command(script) if m.os == "windows" else script
+    try:
+        r = subprocess.run(ssh_argv(m, ctl) + [cmd], capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=timeout, input=stdin if stdin is not None else "")
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("timeout after %d s" % timeout)
+    if r.returncode != 0 and "@@" not in r.stdout and "{" not in r.stdout:
+        raise RuntimeError(classify_ssh_error(r.stderr, r.returncode))
+    return r.stdout
+
+
+def main_checkout(repo: Path) -> Path:
+    """The main checkout of a git worktree (or repo itself)."""
+    try:
+        common = subprocess.run(["git", "-C", str(repo), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                                capture_output=True, text=True, timeout=10).stdout.strip()
+        if common:
+            return Path(common).parent
+    except Exception:
+        pass
+    return repo
 
 
 class Dashboard:
@@ -1284,12 +1367,52 @@ class Dashboard:
     def snapshot(self) -> dict:
         with self.lock:
             machines = [dict(self.state[m.name]) for m in self.machines]
-        status = summarize(machines)
+        status = summarize(machines, getattr(self, "questions", None), getattr(self, "janitor", None),
+                           getattr(self, "answers", None))
         return annotate_jobs(status, getattr(self, "prompts", None), getattr(self, "commits", None),
                              getattr(self, "prompt_mask", None), getattr(self, "show_prompts", False))
 
+    def states(self) -> list:
+        with self.lock:
+            return [dict(self.state[m.name]) for m in self.machines]
 
-def summarize(machines: list) -> dict:
+
+def janitor_loop(dash, jan, test_output: Path | None, every: float = 30.0):
+    """The janitor's thread: a pass when due (one machine, at most every
+    10 min), and the size of test-output/ (reported only) every 10 min."""
+    sized = 0.0
+    while not dash.stop.wait(every):
+        try:
+            if test_output is not None and time.time() - sized >= janitor.PASS_INTERVAL_S:
+                sized = time.time()
+                jan.test_output_bytes = janitor.dir_bytes(test_output) if test_output.is_dir() else None
+            res = jan.tick(dash.states())
+            if res:
+                print("janitor: pass %s" % json.dumps({k: res.get(k) for k in ("mode", "pct", "level", "freed", "error")}),
+                      file=sys.stderr)
+        except Exception as e:  # the janitor must never stop the dashboard
+            print("janitor: %s: %s" % (type(e).__name__, e), file=sys.stderr)
+
+
+def summarize(machines: list, questions=None, jan=None, store=None) -> dict:
+    """The status: machines, overview, disk alerts, the janitor, and the open
+    questions of SPECIFICATION.md (a SpecQuestions; re-read when it changed)
+    with the answers given on the dashboard (an AnswerStore)."""
+    status = _summarize(machines)
+    alerts = janitor.disk_alerts(machines)
+    status["alerts"] = alerts
+    status["janitor"] = jan.status(machines) if jan is not None else {"mode": "off", "alerts": alerts}
+    if questions is not None:
+        q = questions.get()
+        if store is not None:
+            q = answers.annotate(q, store.latest())
+            q["answers_enabled"] = True
+        status["questions"] = q
+        status["overview"]["questions_open"] = q.get("open", 0)
+    return status
+
+
+def _summarize(machines: list) -> dict:
     online = [m for m in machines if m.get("online")]
     tasks = sum(1 for m in online for t in (m.get("tasks") or []) if t.get("state") != "waiting")
     waiting = sum((m.get("queue") or {}).get("waiting", 0) for m in online)
@@ -1359,6 +1482,8 @@ def format_text(status: dict) -> str:
     o = status["overview"]
     lines = ["%d/%d machines online: %d running, %d waiting, build slots %d used of %d"
              % (o["online"], o["machines"], o["tasks"], o["waiting"], o["slots_used"], o["slots_total"]), ""]
+    for a in status.get("alerts") or []:
+        lines.insert(0, "ALERT " + a["text"])
     for m in status["machines"]:
         if not m.get("online"):
             det = (" - " + m["detail"]) if m.get("detail") else ""
@@ -1378,7 +1503,11 @@ def format_text(status: dict) -> str:
             parts.append("mem %s/%s" % (fmt_bytes(m.get("mem_used")), fmt_bytes(m["mem_total"])))
         if m.get("swap_total"):
             parts.append("swap %s" % fmt_bytes(m.get("swap_used")))
-        if m.get("disk_free") is not None:
+        if m.get("disks"):
+            for d in m["disks"]:
+                parts.append("disk %s %s%% (%s free)" % (d["name"], "?" if d.get("pct") is None else "%.0f" % d["pct"],
+                                                        fmt_bytes(d.get("free"))))
+        elif m.get("disk_free") is not None:
             parts.append("disk %s free" % fmt_bytes(m["disk_free"]))
         if m.get("uptime"):
             parts.append("up %s" % fmt_dur(m["uptime"]))
@@ -1416,8 +1545,63 @@ def format_text(status: dict) -> str:
                     fmt_cpu(kd.get("cpu")) if kd.get("cpu") is not None else "", fmt_bytes(kd["rss"])))
         if m.get("stale_markers"):
             lines.append("  (%d stale task marker(s) of ended runs ignored)" % m["stale_markers"])
+        jr = ((status.get("janitor") or {}).get("machines") or {}).get(m["name"])
+        if jr:
+            lines.append("  janitor: %s" % janitor_line(jr, status.get("generated_at")))
         lines.append("")
+    lines += janitor_text(status.get("janitor") or {})
+    lines += questions_text(status.get("questions"))
     return "\n".join(lines)
+
+
+def janitor_line(r: dict, now=None) -> str:
+    ago = (" %s ago" % fmt_dur(now - r["at"])) if now and r.get("at") else ""
+    if r.get("error"):
+        return "last pass%s failed (%s)" % (ago, r["error"])
+    acts = r.get("actions") or []
+    verb = "would delete" if r.get("mode") == "dry-run" else "deleted"
+    if not acts:
+        return "last pass%s: disk %s%%, nothing to do" % (ago, r.get("pct"))
+    size = sum(a.get("bytes") or 0 for a in acts)
+    return "last pass%s: disk %s%%, %s %d item(s), %s" % (ago, r.get("pct"), verb, len(acts), fmt_bytes(size))
+
+
+def janitor_text(j: dict) -> list:
+    out = ["Janitor: %s (target/ of merged or gone agent branches > %.0f %%, idle agent checkouts > %.0f %%, "
+           "alert > %.0f %%)" % (j.get("mode", "off"), janitor.LEVEL_MERGED, janitor.LEVEL_LRU, janitor.LEVEL_ALERT)]
+    if j.get("test_output_bytes") is not None:
+        out.append("  test-output on this machine: %s (kept: the art project)" % fmt_bytes(j["test_output_bytes"]))
+    for e in (j.get("recent") or [])[-5:]:
+        out.append("  %s %s %s %s %s" % (e.get("time", "")[:16], e.get("machine"), e.get("action"),
+                                         e.get("path", ""), fmt_bytes(e.get("bytes")) if e.get("bytes") else ""))
+    return out + [""]
+
+
+def questions_text(q) -> list:
+    if not q:
+        return []
+    out = ["Open questions (%s): %d open, %d decided" % (q.get("source", "SPECIFICATION.md"), q.get("open", 0),
+                                                         q.get("decided", 0))]
+    if q.get("error"):
+        out.append("  (%s)" % q["error"])
+    for g in q.get("groups") or []:
+        if not g["open"]:
+            continue
+        out.append("  %s – %s (%d open, %d decided)" % (g["group"], g["title"], g["open"], g["decided"]))
+        for it in g["items"]:
+            if it["status"] != "open":
+                continue
+            out.append("    Q%d %s%s" % (it["n"], it["title"],
+                                         (" [%s]" % it["status_note"]) if it.get("status_note") else ""))
+            out.append("        %s" % _shorten(it["text"], 120))
+            if it.get("answer_state") == "answered":
+                out.append("        ANSWERED %s (waiting for the coordinator to record it in the spec): %s" % (
+                    it["answer"]["time"], _shorten(it["answer"]["answer"].replace("\n", " / "), 100)))
+            if it.get("proposal"):
+                out.append("        proposal: %s" % _shorten(it["proposal"], 110))
+    for b in q.get("blocked") or []:
+        out.append("  blocked: Phase %s %s waits for %s" % (b["phase"], b["milestone"], ", ".join(b["waits_for"])))
+    return out + [""]
 
 
 # --------------------------------------------------------------------------
@@ -1443,8 +1627,49 @@ def make_handler(dash: Dashboard):
                 self._send(200, page, "text/html; charset=utf-8")
             elif path == "/api/status":
                 self._send(200, json.dumps(dash.snapshot()).encode(), "application/json")
+            elif path == "/api/answers":
+                store = getattr(dash, "answers", None)
+                if store is None:
+                    return self._json(404, {"error": "answers are off"})
+                q = parse_qs(urlsplit(self.path).query)
+                try:
+                    since = float((q.get("since") or ["0"])[0])
+                except ValueError:
+                    return self._json(400, {"error": "since: a Unix time in seconds"})
+                self._json(200, {"answers": store.since(since), "now": time.time()})
             else:
                 self._send(404, b"not found\n", "text/plain")
+
+        def _json(self, code, obj):
+            self._send(code, json.dumps(obj).encode(), "application/json")
+
+        def do_POST(self):  # noqa: N802
+            """POST /api/answers {"id", "answer", "choice"?} with the token
+            header: stores an answer to an open question of the spec."""
+            if self.path.split("?", 1)[0] != "/api/answers":
+                return self._send(404, b"not found\n", "text/plain")
+            store, token = getattr(dash, "answers", None), getattr(dash, "token", None)
+            if store is None or not token:
+                return self._json(404, {"error": "answers are off"})
+            if not answers.token_ok(token, self.headers.get(answers.TOKEN_HEADER)):
+                return self._json(403, {"error": "wrong or missing token (config/dashboard-token)"})
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                n = -1
+            if not 0 < n <= 64 * 1024:
+                return self._json(400, {"error": "body missing or too large"})
+            try:
+                body = json.loads(self.rfile.read(n).decode("utf-8"))
+                qid = str(body.get("id") or "")
+                qs = dash.questions.get()
+                question = next((it for g in qs.get("groups") or [] for it in g["items"] if it["id"] == qid), None)
+                if question is None:
+                    return self._json(400, {"error": "no question %s in the spec" % qid[:40]})
+                e = store.add(question, body.get("answer"), body.get("choice"), qs.get("spec_version"))
+            except (ValueError, AttributeError, UnicodeDecodeError) as ex:
+                return self._json(400, {"error": str(ex)[:200]})
+            self._json(200, {"ok": True, "answer": e})
 
         def log_message(self, fmt, *args):  # quiet: no request logs
             pass
@@ -2403,10 +2628,64 @@ def record_loop(dash, root: Path, interval: float = RECORD_INTERVAL_S):
         try:
             p = record_path(root)
             p.parent.mkdir(parents=True, exist_ok=True)
+            st = dash.snapshot()
+            q = st.get("questions")
+            if q:  # counts only: the questions themselves are in the spec
+                st["questions"] = {k: q.get(k) for k in ("open", "decided", "spec_version")}
             with open(p, "a", encoding="utf-8") as f:
-                f.write(record_line(dash.snapshot()) + "\n")
+                f.write(record_line(st) + "\n")
         except Exception as e:  # recording must never stop the dashboard
             print("build log: %s" % e, file=sys.stderr)
+
+
+def janitor_plan_text(jan, machines: list) -> str:
+    """--janitor-plan: for every reachable machine the disks, every checkout
+    with a target/ and what each threshold would delete (nothing is
+    deleted; the main checkout's sweep runs as a dry run)."""
+    now = time.time()
+
+    def one(m):
+        try:
+            inv = jan.inventory(m)
+            verdicts = janitor.git_verdicts(jan.repo, [c["branch"] for c in inv["checkouts"] if c["kind"] == "agent"])
+            main = next((c for c in inv["checkouts"] if c["kind"] == "main"), None)
+            sweep = jan.sweep(m, False) if main else None
+            return m, inv, verdicts, sweep, None
+        except Exception as e:
+            return m, None, None, None, "%s: %s" % (type(e).__name__, e)
+
+    with ThreadPoolExecutor(max_workers=max(1, len(machines))) as ex:
+        results = list(ex.map(one, machines))
+    out = ["Janitor dry run (%s; nothing deleted)" % time.strftime("%Y-%m-%d %H:%M"), ""]
+    gb = lambda n: "%.1f GB" % ((n or 0) / 1e9)  # noqa: E731
+    for m, inv, verdicts, sweep, err in results:
+        if err:
+            out += ["== %s: unreachable, skipped (%s)" % (m.name, err), ""]
+            continue
+        p = janitor.plan_machine(inv["checkouts"], inv["disk"], now, verdicts, sweep)
+        disks = ", ".join("%s %s%% used, %s free" % (d["name"], janitor.disk_pct(d), gb(d.get("free")))
+                          for d in inv["disks"])
+        out.append("== %s: %s; level now: %s" % (m.name, disks, ("> %d %%" % p["level"]) if p["level"] else "below 75 %"))
+        c = p["candidates"]
+        tot = lambda xs: sum(x.get("target_bytes") or 0 for x in xs)  # noqa: E731
+        out.append("  at > 75 %%: target/ of %d merged or gone agent checkouts, %s" % (len(c["merged"]), gb(tot(c["merged"]))))
+        for x in c["merged"]:
+            out.append("    %9s  %s/target  (%s)" % (gb(x.get("target_bytes")), x["name"], x["reason"]))
+        if sweep:
+            out.append("  at > 75 %%: main checkout sweep: %d old build units + %d incremental dirs, %s" % (
+                sweep.get("units") or 0, sweep.get("incremental") or 0, gb(sweep.get("bytes"))))
+        out.append("  at > 85 %%: also least recently used agent checkouts idle > 24 h, oldest first, until < 85 %%: "
+                   "%d candidates, %s" % (len(c["lru"]), gb(tot(c["lru"]))))
+        for x in c["lru"]:
+            out.append("    %9s  %s/target  (%s)" % (gb(x.get("target_bytes")), x["name"], x["reason"]))
+        out.append("  kept: %d checkouts, %s" % (len(c["kept"]), gb(tot(c["kept"]))))
+        for x in c["kept"]:
+            out.append("    %9s  %s/target  (%s)" % (gb(x.get("target_bytes")), x["name"], x["reason"]))
+        if p["actions"]:
+            out.append("  NOW (disk at %s%%) the janitor would delete: %s" % (
+                p["pct"], ", ".join("%s (%s)" % (a["path"], gb(a["bytes"])) for a in p["actions"])))
+        out.append("")
+    return "\n".join(out)
 
 
 def main(argv=None) -> int:
@@ -2427,6 +2706,14 @@ def main(argv=None) -> int:
                     help="also put the user prompt each job belongs to into the JSON (off by default)")
     ap.add_argument("--no-prompts", action="store_true", help=argparse.SUPPRESS)  # old flag; now the default
     ap.add_argument("--record-interval", type=float, default=RECORD_INTERVAL_S, help="seconds between build-log lines")
+    ap.add_argument("--janitor", choices=janitor.MODES, default="on",
+                    help="disk janitor: on (default), dry-run (log what it would delete) or off")
+    ap.add_argument("--janitor-plan", action="store_true",
+                    help="dry run of the janitor on every reachable machine now (what each threshold would delete), then exit")
+    ap.add_argument("--no-answers", action="store_true",
+                    help="no answering of the open questions on the page (read-only)")
+    ap.add_argument("--spec", type=Path, default=None,
+                    help="spec with the open questions (default: SPECIFICATION.md of the main checkout)")
     a = ap.parse_args(argv)
 
     repo = HERE.parent.parent
@@ -2436,13 +2723,31 @@ def main(argv=None) -> int:
         return 1
     machines = load_machines(cfg)
     dash = Dashboard(machines, a.interval, not a.no_control_master)
+    main_repo = main_checkout(repo)
+    dash.questions = spec_questions.SpecQuestions(a.spec or (main_repo / "SPECIFICATION.md"))
+    # Answers to the open questions: test-output/answers/ of the main
+    # checkout; writing needs the token in config/dashboard-token (0600).
+    dash.answers = None if a.no_answers else answers.AnswerStore(main_repo / "test-output" / "answers")
+    log_root = None if a.no_record else (a.record or (repo / "test-output" / "build-log"))
+    ssh = lambda m, script, timeout, stdin=None: run_ssh(m, script, timeout, stdin, dash.ctl)  # noqa: E731
+    dash.janitor = janitor.Janitor(machines, main_repo, log_root, a.janitor, ssh)
+    if a.janitor_plan:
+        print(janitor_plan_text(dash.janitor, machines))
+        return 0
     if a.once:
         with ThreadPoolExecutor(max_workers=max(1, len(machines))) as ex:
             states = list(ex.map(lambda m: poll_machine(m, dash.ctl), machines))
-        status = annotate_jobs(summarize(states), mask=Masker([s for m in machines for s in m.secrets()], ()))
+        status = annotate_jobs(summarize(states, dash.questions, None, dash.answers), mask=Masker([s for m in machines for s in m.secrets()], ()))
+        status["janitor"]["mode"] = a.janitor
         print(json.dumps(status, indent=2) if a.json else format_text(status))
         return 0
+    if dash.answers is not None:
+        dash.token = answers.load_token(cfg / "dashboard-token")
+        print("answers: token in %s (enter it once on the page)" % (cfg / "dashboard-token").name)
     dash.start()
+    # Also with --janitor off: the thread then only measures test-output/.
+    threading.Thread(target=janitor_loop, args=(dash, dash.janitor, repo / "test-output"), daemon=True,
+                     name="janitor").start()
     dash.prompt_mask = Masker([s for m in machines for s in m.secrets()], ())
     dash.show_prompts = a.show_prompts and not a.no_prompts
     if not a.no_context:

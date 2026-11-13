@@ -77,7 +77,7 @@ VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 .DEFAULT_GOAL := help
 .PHONY: help version version-next version-bump test-release-version release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
 	clippy check run server materials deploy-test clean clean-test-output macos-app \
-	test test-unit test-wasm test-kiosk test-remote build-profile remote-gc test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
+	test test-unit test-wasm test-kiosk test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
 	test-multiplayer test-multiplayer-local test-scenes test-scenes-list \
 	wasm screenshot screenshot-wayland smoke video video-wayland
 
@@ -249,7 +249,18 @@ test-kiosk: ## Test the kiosk script with a fake app (no display or build needed
 remote-gc: ## Build machines: list the target/ of merged or gone agent checkouts and their size (GC=1 deletes them; MACHINES="a b" limits)
 	GC=$(GC) scripts/remote-gc.sh $(MACHINES)
 
-test-remote: ## Test remote.sh's build-slot order and the build-log parser (no machine needed)
+remote-gc-branch: ## Cleanup on merge: delete the target/ of BRANCH's checkout on every reachable build machine (DRY=1: only list)
+	@[ -n "$(BRANCH)" ] || { echo "usage: make remote-gc-branch BRANCH=<branch> [DRY=1]" >&2; exit 2; }
+	scripts/remote-gc.sh --branch $(BRANCH) $(if $(DRY),--dry-run) $(MACHINES)
+
+janitor-plan: ## Dry run of the dashboard's disk janitor on every reachable machine: what each threshold would delete
+	python3 tools/build-dashboard/dashboard.py --janitor-plan --no-record
+
+windows-move-toolchain: ## Windows MACHINE: dry run of moving CARGO_HOME, RUSTUP_HOME, sccache from C: to B:\toolchain (APPLY=1 moves)
+	@[ -n "$(MACHINE)" ] || { echo "usage: make windows-move-toolchain MACHINE=<windows machine> [APPLY=1]" >&2; exit 2; }
+	scripts/remote.sh $(MACHINE) run 'powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows-move-toolchain.ps1 $(if $(APPLY),-Apply)'
+
+test-remote: ## Test remote.sh's build-slot order, tree snapshot and sync, and the build-log parser (no machine needed)
 	scripts/test-remote.sh
 
 # Build profile (spec §11.2): clean, no-op and incremental builds of the main
