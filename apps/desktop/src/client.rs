@@ -155,7 +155,7 @@ pub struct ClientCore {
     world_access: Option<ocw_protocol::ClockAccess>,
     /// Who may enter god mode (spec §14 Phase 13A; `None`: not yet told).
     god_access: Option<ocw_protocol::ClockAccess>,
-    /// God mode: the own flight and the other riders' unicorns.
+    /// Unicorn mode: the own flight and the other riders' unicorns.
     god: crate::god::state::GodCore,
     god_others: crate::god::state::OtherGods,
     /// A god-mode change found in a snapshot (the server ended it).
@@ -440,7 +440,7 @@ impl ClientCore {
                 message: if r.ok {
                     r.message
                 } else {
-                    format!("god mode: {}", r.message)
+                    format!("unicorn mode: {}", r.message)
                 },
             }),
             S::WorldChange(c) => {

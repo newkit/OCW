@@ -118,10 +118,10 @@ ffmpeg` (`make deps-macos` prints both commands); the app also finds it in
 | Voice: mute / unmute the speaker (all voices; game sounds stay) | Shift+M | right-stick click (R3) |
 | Next screen | F11 | |
 | Console (`help` lists the commands) | `` ` `` or F12 | |
-| God mode: fly as a unicorn / land on the road below | G | Select + North (Y / △) |
-| God mode: fly back to where you took off | Shift+G | Select + West (X / □) |
+| Unicorn mode: fly as a unicorn / land on the road below | G | Select + North (Y / △) |
+| Unicorn mode: fly back to where you took off | Shift+G | Select + West (X / □) |
 
-**God mode** (spec §14 Phase 13; *World → God mode*, console `god`): the rider
+**Unicorn mode** (spec §14 Phase 13; *World → Unicorn mode*, console `god`): the rider
 turns into a unicorn and flies freely over the world – like a plane: it always
 flies forward along its heading. While flying:
 
@@ -159,7 +159,7 @@ it (15 … 100 %, 50 % at take-off). The turn is a coordinated one: tight when
 slow, wide when fast (slow down first for a tight turn). The first model –
 moving with the arrows relative to the view and hovering when no key is
 held, the mouse turning the flight – is still there: Settings → Controls →
-*God mode: flight* = hover (`controls.god_flight`, console `god.flight
+*Unicorn mode: flight* = hover (`controls.god_flight`, console `god.flight
 hover`). The unicorn keeps 2 m
 above terrain, water, buildings and tree crowns and stays below 8,000 m; it is stopped
 softly 200 m outside the world. A glowing ring marks where G will land: the

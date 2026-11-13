@@ -33,8 +33,8 @@ use crate::connection::{ClientState, Link};
 use input::{FlightKeys, GodKey, KeyRole, LayoutKeys, PadFlight};
 
 /// Open question Q6 (spec §14 Phase 13H): the name in the menu and the
-/// HUD. The proposal: "God mode" (the console command stays `god`).
-pub const MENU_NAME: &str = "God mode";
+/// HUD. The proposal: "Unicorn mode" (the console command stays `god`).
+pub const MENU_NAME: &str = "Unicorn mode";
 
 /// The keys line of the flight HUD.
 pub const KEYS: &str = "Up/Down: faster/slower, Left/Right: bank, +/-: climb/descend, mouse: look around (L: ahead; Esc frees the pointer), Shift: boost, Ctrl: precise, wheel: speed, G: land, Shift+G: fly back, C: first person, I: inspection, P: pin | ` or F12: console";
@@ -137,7 +137,7 @@ pub fn ask(c: &mut ClientCore, what: Ask, now: f64) -> Result<Option<Vec<u8>>, S
                 return Err("not joined yet".into());
             }
             if !c.may_use_god() {
-                return Err("god mode: only the host of this shared ride may use it".into());
+                return Err("unicorn mode: only the host of this shared ride may use it".into());
             }
             Ok(c.god_mut().request_enter(now))
         }
@@ -147,9 +147,9 @@ pub fn ask(c: &mut ClientCore, what: Ask, now: f64) -> Result<Option<Vec<u8>>, S
             c.god_mut().set_landing(spot);
             Ok(c.god_mut().request_leave(what == Ask::Back, now))
         }
-        Ask::On => Err("already in god mode".into()),
+        Ask::On => Err("already in unicorn mode".into()),
         _ if matches!(phase, Phase::Asking(_) | Phase::Leaving { .. }) => Ok(None),
-        _ => Err("not in god mode".into()),
+        _ => Err("not in unicorn mode".into()),
     }
 }
 
@@ -202,7 +202,7 @@ fn god_keys(
     if keys.just_pressed(KeyCode::KeyC) && client.0.god().active() {
         let fp = client.0.god_mut().toggle_first_person();
         info!(
-            "god mode: {} view",
+            "unicorn mode: {} view",
             if fp { "first-person" } else { "flight" }
         );
     }
@@ -310,7 +310,7 @@ fn fly(
     c.god_mut().set_model(settings.model);
     if let Some(e) = c.take_god_notice() {
         console.print(match e {
-            self::state::GodEvent::Landed => "god mode ended by the server".into(),
+            self::state::GodEvent::Landed => "unicorn mode ended by the server".into(),
             other => format!("{other:?}"),
         });
     }
@@ -406,7 +406,7 @@ fn fly(
         .step(&flight, look, wheel, dt, now, &surface, bounds)
         && let self::state::GodEvent::Refused(why) = e
     {
-        console.print(format!("god mode: {why}"));
+        console.print(format!("unicorn mode: {why}"));
     }
     if c.god().flying() && now - *last_spot >= 0.25 {
         *last_spot = now;
@@ -544,7 +544,7 @@ pub fn rider_list(view: &RideView) -> Vec<String> {
             r.id.0,
             r.name,
             if r.is_local { " (you)" } else { "" },
-            if god { "  - flying (god mode)" } else { "" }
+            if god { "  - flying (unicorn mode)" } else { "" }
         ));
     }
     out
@@ -563,7 +563,7 @@ fn register_commands(app: &mut App) {
     app.console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("god")
-            .about("God mode: fly over the world as a unicorn (G; Shift+G flies back)")
+            .about("Unicorn mode: fly over the world as a unicorn (G; Shift+G flies back)")
             .arg(
                 Arg::new("action")
                     .value_parser(["on", "off", "toggle", "back", "status"])
@@ -582,9 +582,9 @@ fn register_commands(app: &mut App) {
                         Phase::Riding => format!(
                             "riding ({})",
                             if c.may_use_god() {
-                                "G enters god mode"
+                                "G enters unicorn mode"
                             } else {
-                                "god mode is not allowed here"
+                                "unicorn mode is not allowed here"
                             }
                         ),
                         Phase::Asking(_) => "asking the server ...".into(),
@@ -612,7 +612,7 @@ fn register_commands(app: &mut App) {
     .console_command(ConsoleCommand::new(
         Permission::Dev,
         Command::new("god.pose")
-            .about("God mode: move the unicorn to x z (local metres; 'here' keeps the current one), HEIGHT m above the ground, looking along YAW (deg, 0 = north, 90 = east; 'here' keeps it) and PITCH (deg, up)")
+            .about("Unicorn mode: move the unicorn to x z (local metres; 'here' keeps the current one), HEIGHT m above the ground, looking along YAW (deg, 0 = north, 90 = east; 'here' keeps it) and PITCH (deg, up)")
             .arg(Arg::new("x").required(true).allow_negative_numbers(true))
             .arg(Arg::new("z").required(true).allow_negative_numbers(true))
             .arg(Arg::new("height").required(true).value_parser(value_parser!(f64)))
@@ -659,7 +659,7 @@ fn register_commands(app: &mut App) {
     .console_command(ConsoleCommand::new(
         Permission::Dev,
         Command::new("god.cruise")
-            .about("God mode: fly by itself (scenes, videos) – FORWARD (plane: the throttle 0 … 1; hover: -1 … 1) and CLIMB (-1 … 1), TURN (deg/s, positive = left; the plane banks into it); 'god.cruise 0' stops")
+            .about("Unicorn mode: fly by itself (scenes, videos) – FORWARD (plane: the throttle 0 … 1; hover: -1 … 1) and CLIMB (-1 … 1), TURN (deg/s, positive = left; the plane banks into it); 'god.cruise 0' stops")
             .arg(Arg::new("forward").required(true).allow_negative_numbers(true).value_parser(value_parser!(f64)))
             .arg(Arg::new("climb").allow_negative_numbers(true).value_parser(value_parser!(f64)))
             .arg(Arg::new("turn").allow_negative_numbers(true).value_parser(value_parser!(f64))),
@@ -675,7 +675,7 @@ fn register_commands(app: &mut App) {
     .console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("god.view")
-            .about("God mode: the flight camera behind the unicorn, or first-person from its head (C)")
+            .about("Unicorn mode: the flight camera behind the unicorn, or first-person from its head (C)")
             .arg(Arg::new("view").value_parser(["flight", "first"]).required(true)),
         |world, m| {
             let first = m.get_one::<String>("view").is_some_and(|v| v == "first");
@@ -683,13 +683,13 @@ fn register_commands(app: &mut App) {
             if c.0.god().first_person() != first {
                 c.0.god_mut().toggle_first_person();
             }
-            Ok(format!("god mode view: {}", if first { "first-person" } else { "flight" }))
+            Ok(format!("unicorn mode view: {}", if first { "first-person" } else { "flight" }))
         },
     ))
     .console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("god.trail")
-            .about("God mode: the rainbow trail behind the unicorns (Settings → Display → Effects)")
+            .about("Unicorn mode: the rainbow trail behind the unicorns (Settings → Display → Effects)")
             .arg(state()),
         |world, m| {
             let on = on_off(m);
@@ -700,13 +700,13 @@ fn register_commands(app: &mut App) {
     .console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("ride.riders")
-            .about("The riders of this ride, and who of them flies in god mode"),
+            .about("The riders of this ride, and who of them flies in unicorn mode"),
         |world, _| Ok(rider_list(world.resource::<RideView>()).join("\n")),
     ))
     .console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("god.flight")
-            .about("God mode: fly like a plane (always forward; arrows: throttle and bank) or hover (arrows: move, mouse: turn) – Settings → Controls")
+            .about("Unicorn mode: fly like a plane (always forward; arrows: throttle and bank) or hover (arrows: move, mouse: turn) – Settings → Controls")
             .arg(Arg::new("model").value_parser(["plane", "hover"])),
         |world, m| {
             let mut s = world.resource_mut::<FlightSettings>();
@@ -716,13 +716,13 @@ fn register_commands(app: &mut App) {
             {
                 s.model = model;
             }
-            Ok(format!("god mode flight: {}", s.model.name()))
+            Ok(format!("unicorn mode flight: {}", s.model.name()))
         },
     ))
     .console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("god.invert")
-            .about("God mode: invert the mouse's up / down look (Settings → Controls)")
+            .about("Unicorn mode: invert the mouse's up / down look (Settings → Controls)")
             .arg(state()),
         |world, m| {
             let on = on_off(m);
@@ -814,9 +814,9 @@ mod tests {
             colour: ocw_core::Rgb(0),
         });
         let l = rider_list(&v);
-        assert_eq!(l[0], "2 riders, 1 in god mode");
+        assert_eq!(l[0], "2 riders, 1 in unicorn mode");
         assert!(l[1].ends_with("Host (you)"), "{}", l[1]);
-        assert!(l[2].ends_with("Ada  - flying (god mode)"), "{}", l[2]);
+        assert!(l[2].ends_with("Ada  - flying (unicorn mode)"), "{}", l[2]);
     }
 
     /// G1 end to end on the local server (spec §14 Phase 13F): enter, the

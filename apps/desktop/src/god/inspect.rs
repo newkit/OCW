@@ -61,7 +61,9 @@ impl Pins {
     /// from it (free ride).
     pub fn lines(&self, geo_origin: Option<(f64, f64)>) -> Vec<String> {
         if self.pins.is_empty() {
-            return vec!["no pins yet (P in god mode puts one where the crosshair points)".into()];
+            return vec![
+                "no pins yet (P in unicorn mode puts one where the crosshair points)".into(),
+            ];
         }
         self.pins
             .iter()
@@ -330,7 +332,7 @@ fn put_pin(
         .lines(c.geo_origin())
         .pop()
         .unwrap_or_default();
-    info!("god mode: {line}");
+    info!("unicorn mode: {line}");
     format!("pin {n} put: {line}")
 }
 
@@ -361,7 +363,7 @@ pub(crate) fn register_commands(app: &mut App) {
     app.console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("god.pins")
-            .about("God mode: list the pins (P) with coordinates and a ready-to-copy --start X,Z; 'god.pins clear' removes them")
+            .about("Unicorn mode: list the pins (P) with coordinates and a ready-to-copy --start X,Z; 'god.pins clear' removes them")
             .arg(Arg::new("action").value_parser(["list", "clear"]).default_value("list")),
         |world, m| {
             if m.get_one::<String>("action").is_some_and(|a| a == "clear") {
@@ -374,7 +376,7 @@ pub(crate) fn register_commands(app: &mut App) {
     ))
     .console_command(ConsoleCommand::new(
         Permission::User,
-        Command::new("god.pin").about("God mode: put a pin where the crosshair points (P)"),
+        Command::new("god.pin").about("Unicorn mode: put a pin where the crosshair points (P)"),
         |world, _| {
             if !world.resource::<ClientState>().0.god().flying() {
                 return Err("not flying (god on first)".into());
@@ -392,7 +394,7 @@ pub(crate) fn register_commands(app: &mut App) {
     .console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("god.inspect")
-            .about("God mode: the inspection panel and the crosshair (I); without an argument: what the crosshair points at")
+            .about("Unicorn mode: the inspection panel and the crosshair (I); without an argument: what the crosshair points at")
             .arg(Arg::new("state").value_parser(["on", "off"])),
         |world, m| {
             if let Some(s) = m.get_one::<String>("state") {

@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.93 – November 2026
+Version 2.94 – November 2026
 
 | Version | Change |
 |---|---|
@@ -65,6 +65,7 @@ Version 2.93 – November 2026
 | 2.44 | Phase 8 decisions: no commercial release, 8A stays (Q2); orthophoto corridor size acceptable (Q4); seasonal variants (Q5); own photos postponed (Q6); Mapillary CC BY-SA, reference by eye only (Q7); 3D buildings: swissBUILDINGS3D 3.0 (Opendata BY) to confirm, LGL LoD2 probably not open, ask LGL (Q8); all texture areas in parallel (Q10) |
 | 2.45 | Licensing (§13): no licence change for now – the code stays MIT / Apache-2.0 (a switch to CC BY-SA was considered and declined) |
 | 2.46 | Phase 8 T1 / T2 (§4.6, §8.1, §13, §14 Phase 8): material library of 21 CC0 materials (ambientCG, Poly Haven) – ground, roads, houses, volcanic ground for Tenerife – not in git but pinned by URL + SHA-256 in `assets/materials.toml`, fetched and converted to KTX2 (BC3 / BC5, 1024², mipmapped) by `scripts/fetch-materials.sh` into the git-ignored `assets/materials/` and shipped beside the binary (AppImage, macOS bundle, Windows zip, test deployment); licence rule of Phase 8A shared by the model and material validators; terrain drawn with the materials blended by the splat map (weights at cell corners, noise warp, height blend, rock and triplanar on slopes, macro scale, fade to the colour map in the materials' mean colours), roads by OSM `surface` (new package section `RSRF`) with category fallback; regional material sets by the package's time zone (`[[region]]` in the manifest: the volcanic set of the Canary Islands with lava, ash / cinder, black sand and pine needles); regional tint hook neutral; reference boards `art/reference/` |
+| 2.94 | Decisions from the build dashboard (2026-11-14): Phase 13 Q6 – the UI name is "Unicorn mode" (console commands stay `god`); Q4 – the trainer simulates a flat road while flying |
 | 2.93 | Decision from the build dashboard (2026-11-14): Phase 12 Q7 – gates and barriers on roads hidden by default, a setting shows them (never solid on the routed road) |
 | 2.92 | Decision from the build dashboard (2026-11-14): Phase 12 Q6 – damage and injuries carry over between rides; bike repairs are paid in hearts in the workshop, injuries heal over time |
 | 2.91 | Phase 14 planned: standalone VR (§14 Phase 14, answer to Phase 11 Q5): a native Android OpenXR app for Meta Quest 2 / 3 / 3S / Pro and Pico 4 / 4 Ultra (Khronos loader, one APK, `apps/android` with `cargo-ndk`, the Phase 11 X1 integration), WebXR in the browser app (WebGL2 + multiview until the WebXR/WebGPU binding ships); platform facts as of 2026-11-14 (direct BLE to FTMS trainers works on Quest – store permission review –, no Web Bluetooth in the Quest Browser, so WebXR rides through the sensor bridge); standalone quality tier for XR2 (72 Hz Quest 2, 90 Hz Quest 3), mobile LOD set, world download on the device, QUIC / WebTransport, LiveKit, Android BLE backend, passthrough modes, sideload → Meta Horizon Store → Pico Store; milestones V1–V9, open questions Q1–Q5 |
@@ -3105,9 +3106,9 @@ Attribution of the provider used appears on the credits screen and in the weathe
 - **Q1 – Visible to others: decided (2026-11-13):** yes, other riders see the unicorn with name and colours.
 - **Q2 – Leaving: decided (2026-11-13):** land where the unicorn is (nearest road or route point below it); Shift + G flies back to where the rider left.
 - **Q3 – Keys:** G for god mode, cursor keys + / − and the mouse as asked; also W / A / S / D for flying (would move autodrive and wild mode to other keys while flying), or cursor keys only (proposal)?
-- **Q4 – Trainer while flying:** flat road (proposal), or the trainer follows the slope under the unicorn as a fun "feel the land" effect?
+- **Q4 – Trainer while flying: decided (2026-11-14, dashboard):** **flat road** (lowest resistance; ERG keeps its target) – as built.
 - **Q5 – Wings: decided (2026-11-13):** a classic unicorn with large feathered wings like a pegasus.
-- **Q6 – Name in the UI:** "God mode", or a friendlier "Unicorn mode" in the menu (the console command stays `god`)?
+- **Q6 – Name in the UI: decided (2026-11-14, dashboard):** **"Unicorn mode"** in the menu, HUD, settings and messages (World → Unicorn mode); the console commands stay `god`, `god.*`.
 
 #### 13I – Status (v2.58: G1 and G2 done, G4 in part; v2.61: G3 done, the gaps closed)
 

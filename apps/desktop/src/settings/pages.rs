@@ -473,8 +473,12 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         Page::Audio => audio_rows(settings, &AudioDevices::default()),
         Page::Controls => vec![
             setting_row(settings, "controls.autodrive", "Autodrive at the start"),
-            setting_row(settings, "controls.invert_y", "God mode: invert mouse Y"),
-            setting_row(settings, "controls.god_flight", "God mode: flight"),
+            setting_row(
+                settings,
+                "controls.invert_y",
+                "Unicorn mode: invert mouse Y",
+            ),
+            setting_row(settings, "controls.god_flight", "Unicorn mode: flight"),
         ],
         Page::Trainer => vec![
             setting_row(settings, "trainer.difficulty", "Difficulty (%)"),

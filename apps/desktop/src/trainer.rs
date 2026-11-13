@@ -62,7 +62,7 @@ impl TrainerControl {
         }
     }
 
-    /// God mode: flying (SIM: a flat road while [`FLAT_WHILE_FLYING`]).
+    /// Unicorn mode: flying (SIM: a flat road while [`FLAT_WHILE_FLYING`]).
     pub fn set_flying(&mut self, flying: bool) {
         self.flat = flying && FLAT_WHILE_FLYING;
     }
