@@ -189,66 +189,124 @@ pub fn lean_angle(curvature: f64, speed_mps: f64) -> f64 {
         .clamp(-MAX_LEAN, MAX_LEAN)
 }
 
-/// Rotation (about the travel direction, through the tyre contact) that
-/// leans the avatar; Bevy models face -Z, so a lean to the right is a
-/// negative rotation about Z.
+/// Rotation (about the travel direction) that leans the avatar; Bevy
+/// models face -Z, so a lean to the right is a negative rotation about Z.
 pub fn lean_rotation(lean: f64) -> Quat {
     Quat::from_rotation_z(-lean as f32)
 }
 
-/// Half the wheelbase of the avatar (wheel contacts at ±this along the bike).
-pub const HALF_WHEELBASE_M: f64 = 0.55;
-
 /// Height of the surface under a point `along` metres ahead of the rider
-/// (along its heading): the road there, blended onto the ground beside
-/// the road over [`OFF_ROAD_BLEND_M`] (no jump at the edge, no wheels in
-/// an embankment).
+/// (along its heading): the road surface as drawn there (the profile plus
+/// [`crate::ROAD_SURFACE_LIFT_M`]), blended onto the ground beside the
+/// road over [`OFF_ROAD_BLEND_M`] (no jump at the edge, no wheels in an
+/// embankment).
 fn contact_height(
     track: &dyn Track,
     state: &ocw_sim::RiderState,
     ground: Option<&Ground>,
     along: f64,
-) -> (Vec3, f32) {
+) -> f32 {
     let d = state.distance + along * state.heading.cos();
     let lateral = state.lateral_offset + along * state.heading.sin();
     let p = to_vec3(track.sample(d).offset_position(lateral));
     let beyond = lateral.abs() - track.road_width_at(d) / 2.0;
-    let mut y = p.y;
+    let mut y = p.y + crate::ROAD_SURFACE_LIFT_M;
     if beyond > 0.0
         && let Some(h) = ground.and_then(|g| (g.0)(f64::from(p.x), f64::from(p.z)))
     {
         let w = (beyond / OFF_ROAD_BLEND_M).min(1.0) as f32;
         y += (h as f32 - y) * w;
     }
-    (p, y)
+    y
+}
+
+/// Height of a wheel's hub `along` metres ahead of the rider when the
+/// wheel (radius `r`) rests on the surface: the highest support of the
+/// circle by the surface within ±r (over a crest the tyre touches the
+/// crest, in a dip one side of it), not the surface straight under the hub.
+fn hub_height(
+    track: &dyn Track,
+    state: &ocw_sim::RiderState,
+    ground: Option<&Ground>,
+    along: f64,
+    r: f64,
+) -> f32 {
+    let lift = |t: f64| {
+        let dx = t - along;
+        f64::from(contact_height(track, state, ground, t)) + (r * r - dx * dx).max(0.0).sqrt()
+    };
+    // Coarse, then fine around the best coarse sample.
+    let best = |from: f64, step: f64, n: i32| {
+        (0..=n)
+            .map(|k| from + f64::from(k) * step)
+            .map(|t| (t, lift(t)))
+            .fold(
+                (along, f64::NEG_INFINITY),
+                |a, b| if b.1 > a.1 { b } else { a },
+            )
+    };
+    let coarse = r / 16.0;
+    let (t, _) = best(along - r, coarse, 32);
+    let fine = coarse / 16.0;
+    let (_, h) = best((t - coarse).max(along - r), fine, 32);
+    h as f32
 }
 
 /// The avatar: turned by the rider's heading relative to the road, leaning
-/// for the curve it rides, and standing on the surface under both wheels
-/// (road, or the ground beside it): over a bump the front wheel rises
-/// first, then the rear.
+/// for the curve it rides, and with both wheels of `bike` resting on the
+/// surface (road, or the ground beside it; [`hub_height`]): over a bump
+/// the front wheel rises first, then the rear. The bike leans about its
+/// tyres' crown line ([`BikeRig::tyre_crown`] above the contact), so a
+/// leaning tyre rolls onto its side instead of cutting into the road.
 pub fn avatar_transform(
     track: &dyn Track,
     state: &ocw_sim::RiderState,
     ground: Option<&Ground>,
+    bike: &BikeRig,
 ) -> Transform {
     let mut t = rider_transform(track, state.distance, state.lateral_offset);
-    let (front_p, front) = contact_height(track, state, ground, HALF_WHEELBASE_M);
-    let (rear_p, rear) = contact_height(track, state, ground, -HALF_WHEELBASE_M);
-    t.translation.y = 0.5 * (front + rear);
-    let run = Vec2::new(front_p.x - rear_p.x, front_p.z - rear_p.z)
-        .length()
-        .max(1e-3);
-    let pitch = (front - rear).atan2(run);
+    let r = f64::from(bike.wheel_radius);
+    let wheelbase = f64::from(bike.wheelbase);
+    // The hubs are a wheelbase apart along the pitched bike: horizontally
+    // a little less on a slope (a few rounds settle it).
+    let mut pitch = 0.0f64;
+    let (mut front, mut rear) = (0.0, 0.0);
+    for _ in 0..3 {
+        let half = 0.5 * wheelbase * pitch.cos();
+        front = hub_height(track, state, ground, half, r);
+        rear = hub_height(track, state, ground, -half, r);
+        pitch = (f64::from(front - rear) / wheelbase)
+            .clamp(-1.0, 1.0)
+            .asin();
+    }
     let p = track.sample(state.distance);
     let road = Vec3::new(p.direction[0] as f32, 0.0, p.direction[1] as f32);
     let yaw = Transform::default().looking_to(road, Vec3::Y).rotation;
     // Positive heading = right; Bevy turns left for a positive Y rotation.
-    t.rotation = Quat::from_rotation_y(-state.heading as f32)
-        * yaw
-        * Quat::from_rotation_x(pitch)
-        * lean_rotation(lean_angle(state.turn_curvature, state.speed));
+    let upright =
+        Quat::from_rotation_y(-state.heading as f32) * yaw * Quat::from_rotation_x(pitch as f32);
+    // The origin (the contacts' midpoint) lies a wheel radius below the
+    // hubs' midpoint along the pitched bike's up direction.
+    let mid = Vec3::new(t.translation.x, 0.5 * (front + rear), t.translation.z);
+    t.translation = mid - upright * (Vec3::Y * bike.wheel_radius);
+    let lean = lean_rotation(lean_angle(state.turn_curvature, state.speed));
+    t.rotation = upright * lean;
+    t.translation += upright * crown_shift(lean, bike.tyre_crown);
     t
+}
+
+/// Shift that turns a rotation about the contact line into one about the
+/// tyre crown's centre line `crown` above it.
+fn crown_shift(roll: Quat, crown: f32) -> Vec3 {
+    let c = Vec3::Y * crown;
+    c - roll * c
+}
+
+/// The sway node's transform: the bike rocking by `roll` (rad) about its
+/// tyres' crown line, like the lean ([`avatar_transform`]).
+pub fn sway_transform(roll: f32, bike: &BikeRig) -> Transform {
+    let rotation = Quat::from_rotation_z(roll);
+    Transform::from_translation(crown_shift(rotation, bike.tyre_crown)).with_rotation(rotation)
 }
 
 /// The colours an avatar is drawn with.
@@ -339,7 +397,8 @@ fn sync_riders(
             Some((id, state, on, false, local.bike, None))
         }));
     for (id, state, track_of, is_local, bike, look) in all {
-        let t = avatar_transform(view.track(track_of), &state, ground.as_deref());
+        let rig = &lib.bike_rigs[profile_index(bike)];
+        let t = avatar_transform(view.track(track_of), &state, ground.as_deref(), rig);
         let wanted = AvatarLook { bike, look };
         if let Some(e) = entities.0.get(&id).copied() {
             match avatars.get_mut(e) {
@@ -751,7 +810,7 @@ fn animate(
         }
         let p = pose::pose(&rider_rig, &rig.bike, &rig.fit, &rig.params);
         if let Ok(mut t) = transforms.get_mut(rig.sway) {
-            t.rotation = Quat::from_rotation_z(p.bike_roll);
+            *t = sway_transform(p.bike_roll, &rig.bike);
         }
         if let Ok(mut t) = transforms.get_mut(rig.pelvis) {
             t.translation = p.pelvis.0;
@@ -770,6 +829,10 @@ mod tests {
     use ocw_world::Route;
 
     use super::*;
+
+    fn road_rig() -> BikeRig {
+        ocw_assets::shipped::bike_rig(ProfileId::Road)
+    }
 
     fn view(points: Vec<[f64; 3]>) -> RideView {
         RideView::new(Route::from_points("t", "T", points, false, 6.0).unwrap())
@@ -822,7 +885,10 @@ mod tests {
             .map(|(_, t)| t.translation)
             .collect();
         assert_eq!(ghost.len(), 1);
-        assert!(close(ghost[0], Vec3::new(42.0, 0.0, 1.0)), "{ghost:?}");
+        assert!(
+            close(ghost[0], Vec3::new(42.0, crate::ROAD_SURFACE_LIFT_M, 1.0)),
+            "{ghost:?}"
+        );
         // No ghost part casts or receives a shadow; the local rider's
         // receive one, and its near model (no camera: close by) casts it.
         let mut parts = app.world_mut().query_filtered::<(
@@ -1236,7 +1302,7 @@ mod tests {
             turn_curvature: 0.02,
             ..Default::default()
         };
-        let t = avatar_transform(&v.route, &state, None);
+        let t = avatar_transform(&v.route, &state, None, &road_rig());
         // Heading east, turned 0.2 rad to the right (towards +z, south).
         let f = t.forward().as_vec3();
         assert!((f.z - 0.2f32.sin()).abs() < 1e-3, "forward {f:?}");
@@ -1248,6 +1314,7 @@ mod tests {
                 ..state
             },
             None,
+            &road_rig(),
         );
         let shift = (t.up().as_vec3() - upright.up().as_vec3()).dot(upright.right().as_vec3());
         assert!(shift > 0.15, "shift {shift}");
@@ -1257,27 +1324,28 @@ mod tests {
             lateral_offset: 20.0,
             ..state
         };
-        assert_eq!(
-            avatar_transform(&v.route, &off, Some(&ground))
+        // (Leaning about the tyre's crown lifts the origin by a fraction of
+        // a millimetre.)
+        let y_at = |s: &ocw_sim::RiderState| {
+            avatar_transform(&v.route, s, Some(&ground), &road_rig())
                 .translation
-                .y,
-            12.0
-        );
-        assert_eq!(
-            avatar_transform(&v.route, &state, Some(&ground))
-                .translation
-                .y,
-            0.0
-        );
+                .y
+        };
+        assert!((y_at(&off) - 12.0).abs() < 1e-3, "{}", y_at(&off));
+        let on = y_at(&state);
+        assert!((on - crate::ROAD_SURFACE_LIFT_M).abs() < 1e-3, "{on}");
         // Just beside the road (1 m of the 2 m blend): halfway onto the ground.
         let edge = ocw_sim::RiderState {
             lateral_offset: v.route.road_width_m() / 2.0 + 1.0,
             ..state
         };
-        let y = avatar_transform(&v.route, &edge, Some(&ground))
+        let y = avatar_transform(&v.route, &edge, Some(&ground), &road_rig())
             .translation
             .y;
-        assert!((y - 6.0).abs() < 1e-4, "{y}");
+        // (The wheels rest on the steep blend: a little higher than the
+        // surface under the hubs.)
+        let part = (y - crate::ROAD_SURFACE_LIFT_M) / (12.0 - crate::ROAD_SURFACE_LIFT_M);
+        assert!((0.45..0.6).contains(&part), "{y}");
     }
 
     #[test]
@@ -1296,8 +1364,11 @@ mod tests {
                 speed: 5.0,
                 ..Default::default()
             };
-            let t = avatar_transform(&v.route, &s, None);
-            (t.translation.y, t.forward().as_vec3().y)
+            let t = avatar_transform(&v.route, &s, None, &road_rig());
+            (
+                t.translation.y - crate::ROAD_SURFACE_LIFT_M,
+                t.forward().as_vec3().y,
+            )
         };
         // Before the step: level. Front wheel on it: nose up, half lifted.
         let (y0, f0) = at(48.0);

@@ -174,6 +174,80 @@ args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", 
 at = ["2.5=teleport 0.3", "2.5=camera.orbit 140 12 3.2"]
 shot = 7
 
+# Wheel/road contact close-ups (bug 2026-11-13, tyres 2 cm in the road): the
+# camera low beside / in front of the own rider, 2.5 m away, on the Hills test
+# route (flat at km 0.81, 11.5 % at km 3.82).
+
+[[scene]]
+name = "wheel-contact-vaduz-flat"
+description = "Wheel/road contact on a package road: side view at road level on the nearly flat start of Vaduz-Malbun (km 0.5), both tyres on the road strip"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "120"]
+at = ["2.5=teleport 0.5", "2.5=camera.orbit 90 -2 2.5"]
+shot = 7
+
+[[scene]]
+name = "wheel-contact-vaduz-steep"
+description = "Wheel/road contact on a package road: side view at road level on the 15 % ramp at km 3.8 of Vaduz-Malbun"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "300"]
+at = ["2.5=teleport 3.8", "2.5=camera.orbit 90 -2 2.5"]
+shot = 7
+
+[[scene]]
+name = "wheel-contact-vaduz-mtb-steep"
+description = "Wheel/road contact of the mountain bike (knobby tyres) on the 15 % ramp at km 3.8 of Vaduz-Malbun, side view at road level"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "300"]
+at = ["2.5=teleport 3.8", "2.5=camera.orbit 90 -2 2.5"]
+shot = 7
+riders = """
+active = "Demo Rider"
+
+[[rider]]
+name = "Demo Rider"
+weight_kg = 72.0
+ftp_w = 240
+bike = "mtb"
+"""
+
+[[scene]]
+name = "wheel-contact-flat"
+description = "Wheel/road contact, side view at road level on the flat at km 0.81 of the Hills test route: both tyres stand on the road surface"
+args = ["--route", "hills", "--bots", "0", "--power", "120"]
+at = ["2.5=teleport 0.81", "2.5=camera.orbit 90 -2 2.5"]
+shot = 7
+
+[[scene]]
+name = "wheel-contact-steep"
+description = "Wheel/road contact, side view at road level on the 11.5 % ramp at km 3.82 of the Hills test route: the bike pitched with the road, both tyres on it"
+args = ["--route", "hills", "--bots", "0", "--power", "300"]
+at = ["2.5=teleport 3.82", "2.5=camera.orbit 90 -2 2.5"]
+shot = 7
+
+[[scene]]
+name = "wheel-contact-lean"
+description = "Wheel/road contact from the front at road level, the rider leaning 25 degrees (rider.lean) on the flat of the Hills test route: the tyre rolls onto its side, not into the road"
+args = ["--route", "hills", "--bots", "0", "--power", "250"]
+at = ["2.5=teleport 0.81", "2.5=camera.orbit 180 -2 2.5", "5.5=rider.lean 25"]
+shot = 6.3
+
+[[scene]]
+name = "wheel-contact-mtb-steep"
+description = "Wheel/road contact of the mountain bike (knobby tyres) on the 11.5 % ramp of the Hills test route, side view at road level: the knob tips stand on the road"
+args = ["--route", "hills", "--bots", "0", "--power", "300"]
+at = ["2.5=teleport 3.82", "2.5=camera.orbit 90 -2 2.5"]
+shot = 7
+riders = """
+active = "Demo Rider"
+
+[[rider]]
+name = "Demo Rider"
+weight_kg = 72.0
+ftp_w = 240
+bike = "mtb"
+"""
+
 [[scene]]
 name = "orbit-video"
 description = "Video: the chase camera orbits once around the rider climbing out of Vaduz (camera.orbit stepped by --at)"

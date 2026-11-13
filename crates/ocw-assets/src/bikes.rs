@@ -352,6 +352,8 @@ fn rig_of(d: &Design, f: &Frame) -> BikeRig {
         crank_length: d.crank,
         pedal_x: [-PEDAL_X, PEDAL_X],
         wheel_radius: d.wheel_radius,
+        tyre_crown: tyre_crown(d),
+        wheelbase: f.rear_hub.z - f.front_hub.z,
         aero_bars: d.bars == Bars::Aero,
     }
 }
@@ -371,18 +373,43 @@ fn frame_tube(s: &mut Shape, a: Vec3, b: Vec3, r: f32, aero: f32, sides: u32) {
     }
 }
 
+/// Tyre torus resolution (segments around the wheel, sides of the cross
+/// section). The polygon lies inside the round tyre, so its sag is a gap
+/// under the tyre: fine enough to stay within 2 mm of the road at any
+/// wheel angle (the near wheels turn, knobs on every other ring) and lean.
+/// The far LOD's wheels do not turn: a vertex points straight down, at the
+/// contact also on slopes (the bike pitches with the road).
+fn tyre_resolution(hi: bool, knobs: f32) -> (u32, u32) {
+    match (hi, knobs > 0.0) {
+        (true, true) => (96, 12),
+        (true, false) => (48, 12),
+        (false, _) => (12, 10),
+    }
+}
+
+/// Height above the ground contact of the line a leaning tyre rolls
+/// about: the centre of curvature of the tread's cross section (half the
+/// tyre width; knobs stretch the section radially, an ellipse of radius
+/// b²/a at its crown).
+fn tyre_crown(d: &Design) -> f32 {
+    d.tyre * 0.5 / (1.0 + d.knobs)
+}
+
 fn wheel(p: &mut Parts, d: &Design, kind: Wheel, hub: Vec3, rear: bool, lod: rider::Detail) {
     let hi = lod == rider::Detail::High;
     let r = d.wheel_radius;
     let segs = if hi { 40 } else { 12 };
     let knobs = if hi { d.knobs } else { 0.0 };
+    let (tyre_segs, tyre_sides) = tyre_resolution(hi, knobs);
+    // The outermost tread (the knob tips) is the wheel radius: the hub
+    // stands that high above the ground contact.
     p.slot("tyre").torus(
         hub,
         Vec3::X,
-        r - d.tyre * 0.5,
+        r - d.tyre * 0.5 * (1.0 + knobs),
         d.tyre * 0.5,
-        if knobs > 0.0 { 48 } else { segs },
-        if hi { 6 } else { 3 },
+        tyre_segs,
+        tyre_sides,
         knobs,
     );
     let rim_out = r - d.tyre + 0.004;
@@ -973,6 +1000,13 @@ pub fn build(profile: ProfileId, rider_model: &Model, rider_low: &Model) -> Mode
         wheel(&mut p, &d, kind, hub, rear, rider::Detail::High);
         p.attach(&mut m, n);
     }
+    // The centre of curvature of the tread's cross section at the contact:
+    // the knobs stretch it radially (an ellipse, radius b²/a there).
+    m.add(Node::new(
+        TYRE_CROWN,
+        Some(root),
+        Vec3::new(0.0, tyre_crown(&d), f.front_hub.z),
+    ));
     // Cranks (rest: the right arm up) and pedals.
     let crank = m.add(Node::new(CRANK, Some(root), f.bb));
     let mut p = Parts::new();
@@ -1153,6 +1187,9 @@ mod tests {
             assert!(rig.hoods[1].distance(fresh.hoods[1]) < 1e-5);
             assert!((rig.crank_length - fresh.crank_length).abs() < 1e-5);
             assert!((rig.wheel_radius - fresh.wheel_radius).abs() < 1e-5);
+            assert!((rig.tyre_crown - fresh.tyre_crown).abs() < 1e-5);
+            assert!((rig.wheelbase - fresh.wheelbase).abs() < 1e-5);
+            assert!(rig.tyre_crown > 0.01, "{p:?}");
             let lod1 = m.node(LOD1).unwrap();
             let far = m.triangles_below(Some(lod1));
             let near = m.triangles() - far;

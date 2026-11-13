@@ -47,6 +47,13 @@ pub struct BikeRig {
     pub pedal_x: [f32; 2],
     /// Hub height = outer wheel radius.
     pub wheel_radius: f32,
+    /// Height above the ground contact of the tread's centre of curvature
+    /// (about half the tyre width): a leaning bike rolls about the line
+    /// through it, so the tyre stays on the road (0 for models without the
+    /// [`bike_nodes::TYRE_CROWN`] anchor: about the contact line).
+    pub tyre_crown: f32,
+    /// Distance between the hubs; the model's origin lies halfway.
+    pub wheelbase: f32,
     /// TT bike: the elbows rest on pads, they bend down instead of out.
     pub aero_bars: bool,
 }
@@ -115,6 +122,10 @@ pub mod bike_nodes {
     pub const DROPS: [&str; 2] = ["grip_drops_l", "grip_drops_r"];
     /// The far level of detail: bike and a seated rider in a few meshes.
     pub const LOD1: &str = "lod1";
+    /// Anchor above the front tyre's ground contact: the centre of
+    /// curvature of the tread's cross section, the line a leaning bike
+    /// rolls about (optional; see [`super::BikeRig::tyre_crown`]).
+    pub const TYRE_CROWN: &str = "tyre_crown";
 
     pub const REQUIRED: [&str; 15] = [
         ROOT,
@@ -201,6 +212,8 @@ impl BikeRig {
             crank_length: Vec3::new(0.0, pedal[1].y, pedal[1].z).length(),
             pedal_x: [pedal[0].x, pedal[1].x],
             wheel_radius: world(m, WHEEL_FRONT)?.y,
+            tyre_crown: m.position(TYRE_CROWN).map_or(0.0, |p| p.y),
+            wheelbase: world(m, WHEEL_REAR)?.z - world(m, WHEEL_FRONT)?.z,
             aero_bars: m.node("aero_pads").is_some(),
         };
         if rig.pedal_x[0] >= 0.0 || rig.pedal_x[1] <= 0.0 {
