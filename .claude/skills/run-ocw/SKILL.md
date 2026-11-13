@@ -40,22 +40,22 @@ run `source ~/.cargo/env` first (`drive.sh` does this itself).
 
 ```bash
 # Desktop: ride 8 s, screenshot, exit. Log goes to /tmp/ocw.log.
-.claude/skills/run-ocw/drive.sh shot /tmp/ocw.png
+.claude/skills/run-ocw/drive.sh shot /tmp/ocw.jpg
 
 # With console commands (run once at startup, in order) and a custom delay:
-.claude/skills/run-ocw/drive.sh shot /tmp/ocw.png 10 -- --cmd "teleport 1.2" --cmd "sim.power 350"
+.claude/skills/run-ocw/drive.sh shot /tmp/ocw.jpg 10 -- --cmd "teleport 1.2" --cmd "sim.power 350"
 
 # The same on Wayland (headless weston) instead of X11:
-.claude/skills/run-ocw/drive.sh shot-wayland /tmp/ocw-wl.png 8 -- --cmd "teleport 2.5" --cmd "camera.mode side"
+.claude/skills/run-ocw/drive.sh shot-wayland /tmp/ocw-wl.jpg 8 -- --cmd "teleport 2.5" --cmd "camera.mode side"
 
 # Record a smooth 25 fps video of 6 s game time (after 3 s riding; also writes
-# ride.png and ride.log). Takes ~25 s with software rendering:
+# ride.jpg and ride.log). Takes ~25 s with software rendering:
 .claude/skills/run-ocw/drive.sh video /tmp/ride.mp4 6 -- --power 300 --cmd "teleport 0.9"
 # The same on Wayland (headless weston):
 .claude/skills/run-ocw/drive.sh video-wayland /tmp/ride-wl.mp4 4 -- --cmd "camera.mode side" --cmd "teleport 2.2"
 
 # Show the console overlay in the screenshot:
-.claude/skills/run-ocw/drive.sh shot /tmp/ocw.png 6 -- --cmd "help" --cmd "console open"
+.claude/skills/run-ocw/drive.sh shot /tmp/ocw.jpg 6 -- --cmd "help" --cmd "console open"
 
 # Headless game server with test riders, simulated as fast as possible:
 .claude/skills/run-ocw/drive.sh server --bots 3 --seconds 10 --fast

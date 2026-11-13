@@ -7,6 +7,8 @@
 //! - [`cues`]: one-shot sounds (UI, countdown, finish, workout steps, gear
 //!   shift, test tones) and when they play (pure);
 //! - [`mixer`]: renders all of it into a device buffer;
+//! - [`record`]: the game sound of video recordings (device tap, or
+//!   rendered in step with game time for frame capture), WAV and mux;
 //! - [`engine`]: the output backend trait and the engine thread (device
 //!   choice by name, fallback to the default, hot-plugging); [`cpal_backend`]
 //!   is the real output, [`engine::NullBackend`] none;
@@ -25,6 +27,7 @@ pub mod dsp;
 pub mod engine;
 pub mod mix;
 pub mod mixer;
+pub mod record;
 pub mod ride;
 
 use std::time::Instant;
@@ -98,6 +101,12 @@ impl GameAudio {
     #[cfg(test)]
     pub fn status(&self) -> &AudioStatus {
         &self.status
+    }
+
+    /// The mixer, and whether an output device plays it now (a video
+    /// recording then taps the device's buffers, else renders it itself).
+    pub fn recording_source(&self) -> (engine::SharedMixer, bool) {
+        (self.engine.mixer().clone(), self.status.current.is_some())
     }
 }
 

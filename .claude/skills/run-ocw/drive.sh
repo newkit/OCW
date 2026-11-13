@@ -1,18 +1,24 @@
 #!/usr/bin/env bash
 # Drive the Open Cycling World apps headlessly. Run from the repository root.
 #
-#   drive.sh shot OUT.png [DELAY_S] [-- desktop args...]
+#   drive.sh shot OUT.jpg [DELAY_S] [-- desktop args...]
 #       Launch the desktop app on a virtual X11 display (Xvfb, software Vulkan),
-#       ride for DELAY_S seconds (default 8), save a screenshot to OUT.png, exit.
+#       ride for DELAY_S seconds (default 8), save a screenshot to OUT.jpg, exit.
+#       JPEG (quality 90, time and build in EXIF); an OUT.png is lossless PNG
+#       (time and build in text chunks).
 #       Extra args go to ocw-desktop, e.g. --cmd "teleport 1.2" --cmd "console open".
 #       The app log is written next to the screenshot as OUT.log.
-#   drive.sh shot-wayland OUT.png [DELAY_S] [-- desktop args...]
+#   drive.sh shot-wayland OUT.jpg [DELAY_S] [-- desktop args...]
 #       Same, but on a headless Wayland compositor (weston) instead of X11.
 #   drive.sh video OUT.mp4 [SECONDS] [-- desktop args...]
 #       Record SECONDS (default 6) of riding on X11 as a smooth 25 fps video:
 #       the app saves every frame itself with game time advancing exactly
-#       1/25 s per frame (--capture), however slowly it renders; ffmpeg encodes.
-#       Rides 3 s of game time first. Also writes OUT.png (last frame), OUT.log.
+#       1/25 s per frame (--capture), however slowly it renders, and the game
+#       sound rendered in step with the frames; ffmpeg encodes (H.264 CRF 18,
+#       AAC 192k, creation time and build from the app's metadata.txt).
+#       Rides 3 s of game time first. Also writes OUT.jpg (last frame), OUT.log.
+#   Size: OCW_SIZE=WIDTHxHEIGHT (default 2560x1440) sets the virtual screen
+#   and the window, unless the desktop args give --window (then that size).
 #   drive.sh video-wayland OUT.mp4 [SECONDS] [-- desktop args...]
 #       Same on Wayland (headless weston).
 #   Every successful shot/video is also archived (see archive() below) under
@@ -47,13 +53,27 @@ esac
 FPS_ARGS=(--cmd "fps on" --log-fps 5)
 [ "${OCW_FPS:-1}" = 0 ] && FPS_ARGS=()
 
+# The picture size: --window in the args, else $OCW_SIZE (default 1440p).
+# Sets $width, $height and SIZE_ARGS (--window, unless the args have one).
+pick_size() {
+  local size=${OCW_SIZE:-2560x1440} prev=""
+  SIZE_ARGS=()
+  for a in "$@"; do
+    [ "$prev" = "--window" ] && size=$a
+    prev=$a
+  done
+  case " $* " in *" --window "*) ;; *) SIZE_ARGS=(--window "$size") ;; esac
+  width=${size%x*}; height=${size#*x}
+}
+
 # Parses OUT [DELAY] [-- args...] into $out, $delay, $log and APP_ARGS.
 parse_shot_args() {
-  out=${1:?usage: drive.sh shot|shot-wayland OUT.png [DELAY_S] [-- args...]}; shift
+  out=${1:?usage: drive.sh shot|shot-wayland OUT.jpg [DELAY_S] [-- args...]}; shift
   delay=8
   if [ $# -gt 0 ] && [ "$1" != "--" ]; then delay=$1; shift; fi
   [ "${1:-}" = "--" ] && shift
-  APP_ARGS=(--screenshot "$out" --screenshot-delay "$delay" "${FPS_ARGS[@]}" "$@")
+  pick_size "$@"
+  APP_ARGS=(--screenshot "$out" --screenshot-delay "$delay" "${FPS_ARGS[@]}" "${SIZE_ARGS[@]}" "$@")
   ARCHIVE_APP_ARGS=("$@")
   log="${out%.*}.log"
   rm -f "$out"
@@ -82,23 +102,46 @@ parse_video_args() {
   seconds=6
   if [ $# -gt 0 ] && [ "$1" != "--" ]; then seconds=$1; shift; fi
   [ "${1:-}" = "--" ] && shift
-  log="${out%.*}.log"; shot="${out%.*}.png"
+  log="${out%.*}.log"; shot="${out%.*}.jpg"
   frames=$(mktemp -d)
-  VIDEO_APP_ARGS=(--capture "$frames" --capture-fps 25 --capture-seconds "$seconds" "${FPS_ARGS[@]}" "$@")
+  pick_size "$@"
+  VIDEO_APP_ARGS=(--capture "$frames" --capture-fps 25 --capture-seconds "$seconds" "${FPS_ARGS[@]}" "${SIZE_ARGS[@]}" "$@")
   ARCHIVE_APP_ARGS=(--capture-seconds "$seconds" "$@")
   rm -f "$out" "$shot"
   command -v ffmpeg >/dev/null || { echo "ffmpeg not installed (apt-get install ffmpeg)" >&2; exit 1; }
 }
 
+# H.264 settings of the encoded videos ("90 %": CRF 18; spec §11.4).
+X264=(-c:v libx264 -preset "${OCW_X264_PRESET:-slow}" -crf 18 -pix_fmt yuv420p)
+AAC=(-c:a aac -b:a 192k -ar 48000 -ac 2)
+
+# Encodes the PNG frames of $1 (a --capture directory) into $2 at 25 fps,
+# with the app's game sound (audio.wav) and metadata (metadata.txt) when
+# there; else stamps the encoding time and $3 (software) as metadata.
+encode_frames() {
+  local dir=$1 dst=$2 software=$3 inputs=() maps=(-map 0:v:0) n=1 meta=()
+  if [ -s "$dir/audio.wav" ]; then
+    inputs+=(-i "$dir/audio.wav"); maps+=(-map 1:a:0 "${AAC[@]}"); n=2
+  fi
+  if [ -s "$dir/metadata.txt" ]; then
+    inputs+=(-f ffmetadata -i "$dir/metadata.txt"); meta=(-map_metadata "$n")
+  else
+    meta=(-metadata "creation_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -metadata "comment=$software")
+  fi
+  ffmpeg -loglevel error -y -framerate 25 -i "$dir/frame_%05d.png" "${inputs[@]}" "${maps[@]}" \
+    "${X264[@]}" "${meta[@]}" -movflags +faststart "$dst"
+}
+
 # Encodes the captured frames and reports. $1: expected window system, $2: app exit status.
 encode_video() {
-  local expected=$1 status=$2 actual last
+  local expected=$1 status=$2 actual last t0
   [ "$status" -eq 0 ] || { echo "app failed, see $log" >&2; tail -20 "$log" >&2; exit 1; }
   last=$(find "$frames" -name 'frame_*.png' | sort | tail -1)
   [ -n "$last" ] || { echo "no frames captured, see $log" >&2; exit 1; }
-  cp "$last" "$shot"
-  ffmpeg -loglevel error -y -framerate 25 -i "$frames/frame_%05d.png" -c:v libx264 \
-    -preset veryfast -crf 24 -pix_fmt yuv420p -movflags +faststart "$out"
+  if [ -s "$frames/still.jpg" ]; then cp "$frames/still.jpg" "$shot"; else shot="${out%.*}.png"; cp "$last" "$shot"; fi
+  t0=$(date +%s)
+  encode_frames "$frames" "$out" "Open Cycling World"
+  echo "encoded in:    $(( $(date +%s) - t0 )) s"
   rm -rf "$frames"
   actual=$(sed 's/\x1b\[[0-9;]*m//g' "$log" | grep -oE 'window_system="?[a-z0-9]+' | head -1 | cut -d= -f2 | tr -d '"' || true)
   [ "$actual" = "$expected" ] || {
@@ -125,7 +168,7 @@ start_weston() {
   fi
   socket="ocw-wayland-$$"
   XDG_RUNTIME_DIR=$runtime weston --backend=headless --renderer="$renderer" \
-    --socket="$socket" --width="${WESTON_WIDTH:-1280}" --height="${WESTON_HEIGHT:-720}" \
+    --socket="$socket" --width="${WESTON_WIDTH:-${width:-1280}}" --height="${WESTON_HEIGHT:-${height:-720}}" \
     --idle-time=0 >"$logfile" 2>&1 &
   weston_pid=$!
   trap 'kill $weston_pid 2>/dev/null || true' EXIT
@@ -179,7 +222,7 @@ case "$cmd" in
     parse_shot_args "$@"
     cargo build -q "${BUILD_FLAGS[@]}" -p ocw-desktop ${OCW_FEATURES:+--features "$OCW_FEATURES"}
     status=0
-    timeout 180 xvfb-run -a -s "-screen 0 1280x720x24" \
+    timeout 300 xvfb-run -a -s "-screen 0 ${width}x${height}x24" \
       env -u WAYLAND_DISPLAY "${APP_ENV[@]}" "$APP" "${APP_ARGS[@]}" \
       >"$log" 2>&1 || status=$?
     report x11 "$status"
@@ -189,7 +232,7 @@ case "$cmd" in
     cargo build -q "${BUILD_FLAGS[@]}" -p ocw-desktop ${OCW_FEATURES:+--features "$OCW_FEATURES"}
     start_weston "${out%.*}.weston.log"
     status=0
-    timeout 180 env -u DISPLAY XDG_RUNTIME_DIR="$runtime" WAYLAND_DISPLAY="$socket" \
+    timeout 300 env -u DISPLAY XDG_RUNTIME_DIR="$runtime" WAYLAND_DISPLAY="$socket" \
       "${APP_ENV[@]}" "$APP" "${APP_ARGS[@]}" >"$log" 2>&1 || status=$?
     report wayland "$status"
     ;;
@@ -197,7 +240,7 @@ case "$cmd" in
     parse_video_args "$@"
     cargo build -q "${BUILD_FLAGS[@]}" -p ocw-desktop ${OCW_FEATURES:+--features "$OCW_FEATURES"}
     status=0
-    timeout 600 xvfb-run -a -s "-screen 0 1280x720x24" \
+    timeout 1500 xvfb-run -a -s "-screen 0 ${width}x${height}x24" \
       env -u WAYLAND_DISPLAY "${APP_ENV[@]}" "$APP" "${VIDEO_APP_ARGS[@]}" \
       >"$log" 2>&1 || status=$?
     encode_video x11 "$status"
@@ -207,7 +250,7 @@ case "$cmd" in
     cargo build -q "${BUILD_FLAGS[@]}" -p ocw-desktop ${OCW_FEATURES:+--features "$OCW_FEATURES"}
     start_weston "${out%.*}.weston.log"
     status=0
-    timeout 600 env -u DISPLAY XDG_RUNTIME_DIR="$runtime" WAYLAND_DISPLAY="$socket" \
+    timeout 1500 env -u DISPLAY XDG_RUNTIME_DIR="$runtime" WAYLAND_DISPLAY="$socket" \
       "${APP_ENV[@]}" "$APP" "${VIDEO_APP_ARGS[@]}" >"$log" 2>&1 || status=$?
     encode_video wayland "$status"
     ;;
@@ -249,8 +292,8 @@ case "$cmd" in
     last=$(find "$frames" -name 'frame_*.png' | sort | tail -1)
     [ -n "$last" ] || { echo "no frames captured, see $log" >&2; exit 1; }
     cp "$last" "$shot"
-    ffmpeg -loglevel error -y -framerate 25 -i "$frames/frame_%05d.png" -c:v libx264 \
-      -preset veryfast -crf 24 -pix_fmt yuv420p -movflags +faststart "$out"
+    # The spike has no sound and writes no metadata: the encoding time.
+    encode_frames "$frames" "$out" "Open Cycling World spike"
     rm -rf "$frames"
     echo "video:         $out ($(du -h "$out" | cut -f1))"
     archive spike-video wayland "$out" "$shot" "$log"

@@ -195,24 +195,8 @@ pub fn default_rides_dir() -> Option<PathBuf> {
 
 /// File stem of a ride started at `unix_s` (UTC): `2026-11-11_12-00-00`.
 pub fn file_stem(unix_s: i64) -> String {
-    let days = unix_s.div_euclid(86_400);
-    let secs = unix_s.rem_euclid(86_400);
-    // Civil date from days since 1970-01-01 (H. Hinnant's algorithm).
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    format!(
-        "{year:04}-{month:02}-{day:02}_{:02}-{:02}-{:02}",
-        secs / 3600,
-        secs % 3600 / 60,
-        secs % 60
-    )
+    let (year, month, day, h, m, sec) = ocw_core::timestamp::civil(unix_s);
+    format!("{year:04}-{month:02}-{day:02}_{h:02}-{m:02}-{sec:02}")
 }
 
 /// Writes `<dir>/<stem>.fit` and its `.toml` sidecar; returns the FIT path.

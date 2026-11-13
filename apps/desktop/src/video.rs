@@ -13,6 +13,12 @@
 //! A recording still running when the app exits is finished first.
 //! While recording, the HUD shows a small red "REC m:ss" (top right); after
 //! stopping, "Video saved: <file>" for a few seconds.
+//!
+//! The game sound goes into the video too ([`crate::audio::record`]): it
+//! is written to a hidden WAV beside the hidden video while recording, and
+//! after the stop ffmpeg muxes both (AAC) into the final MP4. The MP4
+//! carries `creation_time` (the start, UTC) and the build id in `comment`
+//! (spec §11.4).
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -25,6 +31,11 @@ use bevy::render::render_resource::TextureFormat;
 use bevy::render::view::screenshot::{Capturing, Screenshot, ScreenshotCaptured};
 use clap::{Arg, Command};
 use ocw_render::RideView;
+use ocw_render::media;
+use ocw_render::stamp::ShotMeta;
+
+use crate::audio::engine::SharedMixer;
+use crate::audio::record::{AudioCapture, AudioPending, mux_args};
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, Permission};
 
 /// Frames per second of the videos.
@@ -38,8 +49,12 @@ const MAX_IN_FLIGHT: usize = 4;
 const IN_FLIGHT_TIMEOUT_S: f64 = 1.0;
 /// Frames buffered for the encoder thread (raw: up to 16 MB each).
 const ENCODER_QUEUE: usize = 4;
-/// Wider windows are scaled down to this width in the video.
-const MAX_VIDEO_WIDTH: u32 = 1920;
+/// Wider windows are scaled down to this width in the video (1440p).
+const MAX_VIDEO_WIDTH: u32 = 2560;
+/// H.264 quality of the live recording ("90 %", spec §11.4) and the x264
+/// preset, as slow as still keeps up with a 1440p window in real time.
+pub const VIDEO_CRF: u32 = 18;
+pub const LIVE_PRESET: &str = "veryfast";
 /// How long a start/stop message stays in the HUD (s).
 pub const MESSAGE_S: f64 = 4.0;
 
@@ -54,7 +69,12 @@ impl Plugin for VideoPlugin {
         app.insert_resource(VideoRecorder { dir, ..default() })
             .add_systems(
                 Update,
-                (video_key.run_if(ocw_render::menu::ride_input), show_in_hud).chain(),
+                (
+                    video_key.run_if(ocw_render::menu::ride_input),
+                    pull_audio,
+                    show_in_hud,
+                )
+                    .chain(),
             )
             // After Update, so screenshots asked for there (console
             // `screenshot`, `--screenshot`) are seen and get the frame.
@@ -72,6 +92,10 @@ impl Plugin for VideoPlugin {
                 |world, m| {
                     let action = m.get_one::<String>("action").expect("default").clone();
                     let now = world.resource::<Time>().elapsed_secs_f64();
+                    let meta = ShotMeta::of(world);
+                    let audio = world
+                        .get_resource::<crate::audio::GameAudio>()
+                        .map(|a| a.recording_source());
                     let mut rec = world.resource_mut::<VideoRecorder>();
                     let start = match action.as_str() {
                         "start" => true,
@@ -82,7 +106,7 @@ impl Plugin for VideoPlugin {
                         return Ok(rec.status());
                     }
                     if start {
-                        rec.start(now)
+                        rec.start(now, &meta, audio)
                             .map(|p| format!("recording to {}", p.display()))
                     } else {
                         Ok(match rec.stop(now) {
@@ -106,7 +130,14 @@ pub struct VideoRecorder {
 }
 
 struct Active {
+    /// The final MP4.
     path: PathBuf,
+    /// The video while it is recorded (hidden, beside `path`).
+    video_tmp: PathBuf,
+    /// The MP4 metadata (spec §11.4).
+    meta: Vec<(String, String)>,
+    /// The game sound, if the mixer runs.
+    audio: Option<AudioCapture>,
     /// The ffmpeg executable found by [`start`](VideoRecorder::start).
     ffmpeg: PathBuf,
     started_s: f64,
@@ -187,9 +218,16 @@ impl VideoRecorder {
         }
     }
 
-    /// Starts a recording at game time `now_s`; returns the file it goes to.
-    pub fn start(&mut self, now_s: f64) -> Result<PathBuf, String> {
-        let r = self.start_inner(now_s);
+    /// Starts a recording at game time `now_s` (`meta`: its time and the
+    /// build; `audio`: the mixer and whether a device plays it); returns
+    /// the file it goes to.
+    pub fn start(
+        &mut self,
+        now_s: f64,
+        meta: &ShotMeta,
+        audio: Option<(SharedMixer, bool)>,
+    ) -> Result<PathBuf, String> {
+        let r = self.start_inner(now_s, meta, audio);
         match &r {
             Ok(_) => self.message = None,
             Err(e) => self.set_message(format!("Video: {e}"), now_s),
@@ -197,7 +235,12 @@ impl VideoRecorder {
         r
     }
 
-    fn start_inner(&mut self, now_s: f64) -> Result<PathBuf, String> {
+    fn start_inner(
+        &mut self,
+        now_s: f64,
+        meta: &ShotMeta,
+        audio: Option<(SharedMixer, bool)>,
+    ) -> Result<PathBuf, String> {
         let Some(ffmpeg) = find_ffmpeg() else {
             return Err(
                 "ffmpeg not found: install ffmpeg (e.g. `make deps`) to record videos".into(),
@@ -213,8 +256,17 @@ impl VideoRecorder {
             &dir,
             &crate::recording::file_stem(crate::recording::unix_now()),
         );
+        let video_tmp = hidden_beside(&path, "video.mp4");
+        let audio = audio.and_then(|(mixer, device)| {
+            AudioCapture::live(mixer, device, hidden_beside(&path, "wav"), now_s)
+                .map_err(|e| warn!("video: no sound ({e})"))
+                .ok()
+        });
         self.active = Some(Active {
             path: path.clone(),
+            video_tmp,
+            meta: media::video_metadata(&meta.time, &meta.software),
+            audio,
             ffmpeg,
             started_s: now_s,
             next_request: 0,
@@ -251,14 +303,26 @@ impl VideoRecorder {
             || path.display().to_string(),
             |n| n.to_string_lossy().into(),
         );
+        let audio = a.audio.map(AudioCapture::stop);
         match a.encoder {
             Some(enc) => {
                 drop(enc.tx);
-                let p = path.clone();
-                std::thread::spawn(move || finish(enc.writer, &p));
+                let files = Finish {
+                    ffmpeg: a.ffmpeg,
+                    video_tmp: a.video_tmp,
+                    path: path.clone(),
+                    meta: a.meta,
+                    audio,
+                };
+                std::thread::spawn(move || files.run(enc.writer));
                 self.set_message(format!("Video saved: {name}"), now_s);
             }
             None => {
+                if let Some(p) = audio {
+                    let wav = p.path.clone();
+                    let _ = p.wait();
+                    let _ = std::fs::remove_file(wav);
+                }
                 warn!("video stopped before the first frame; nothing saved");
                 self.set_message("Video stopped before the first frame: nothing saved", now_s);
             }
@@ -268,11 +332,49 @@ impl VideoRecorder {
 
     /// Stops and waits until the file is complete (app exit).
     fn stop_and_wait(&mut self) {
+        if let Some(a) = self.active.take() {
+            let audio = a.audio.map(AudioCapture::stop);
+            match a.encoder {
+                Some(enc) => {
+                    drop(enc.tx);
+                    Finish {
+                        ffmpeg: a.ffmpeg,
+                        video_tmp: a.video_tmp,
+                        path: a.path,
+                        meta: a.meta,
+                        audio,
+                    }
+                    .run(enc.writer);
+                }
+                None => {
+                    if let Some(p) = audio {
+                        let wav = p.path.clone();
+                        let _ = p.wait();
+                        let _ = std::fs::remove_file(wav);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Ends a failed recording (no file).
+    fn discard(&mut self) {
         if let Some(a) = self.active.take()
-            && let Some(enc) = a.encoder
+            && let Some(audio) = a.audio
         {
-            drop(enc.tx);
-            finish(enc.writer, &a.path);
+            let p = audio.stop();
+            std::thread::spawn(move || {
+                let wav = p.path.clone();
+                let _ = p.wait();
+                let _ = std::fs::remove_file(wav);
+            });
+        }
+    }
+
+    /// Live recording without a device: renders the sound up to `now_s`.
+    fn pull_audio(&mut self, now_s: f64) {
+        if let Some(audio) = self.active.as_mut().and_then(|a| a.audio.as_mut()) {
+            audio.pull(now_s);
         }
     }
 
@@ -312,18 +414,18 @@ impl VideoRecorder {
         if a.encoder.is_none() {
             let Some(pix) = pixel_format(image.texture_descriptor.format) else {
                 warn!(format = ?image.texture_descriptor.format, "video: unsupported pixel format");
-                self.active = None;
+                self.discard();
                 self.set_message("Video failed: unsupported pixel format", now_s);
                 return;
             };
-            match spawn_encoder(&a.ffmpeg, &a.path, pix, w, h) {
+            match spawn_encoder(&a.ffmpeg, &a.video_tmp, pix, w, h, &a.meta) {
                 Ok(enc) => {
                     a.encoder = Some(enc);
                     a.size = Some((w, h));
                 }
                 Err(e) => {
                     error!("video: cannot start ffmpeg: {e}");
-                    self.active = None;
+                    self.discard();
                     self.set_message(format!("Video failed: cannot start ffmpeg: {e}"), now_s);
                     return;
                 }
@@ -349,7 +451,7 @@ impl VideoRecorder {
             Err(TrySendError::Full(_)) => a.stats.dropped += 1,
             Err(TrySendError::Disconnected(_)) => {
                 error!("video: ffmpeg stopped; recording ended");
-                self.active = None;
+                self.discard();
                 self.set_message("Video failed: ffmpeg stopped", now_s);
             }
         }
@@ -383,10 +485,18 @@ pub fn pixel_format(format: TextureFormat) -> Option<&'static str> {
 }
 
 /// ffmpeg arguments: raw frames on stdin → H.264 MP4 (at most
-/// [`MAX_VIDEO_WIDTH`] wide, even size, yuv420p for players; a fast preset
-/// so the encoder keeps up with large windows).
-pub fn ffmpeg_args(pix: &str, w: u32, h: u32, out: &Path) -> Vec<String> {
-    [
+/// [`MAX_VIDEO_WIDTH`] wide, even size, yuv420p for players, CRF
+/// [`VIDEO_CRF`]; [`LIVE_PRESET`] so the encoder keeps up with large
+/// windows), with the metadata `meta` (spec §11.4).
+pub fn ffmpeg_args(
+    pix: &str,
+    w: u32,
+    h: u32,
+    meta: &[(String, String)],
+    out: &Path,
+) -> Vec<String> {
+    let crf = VIDEO_CRF.to_string();
+    let head: Vec<String> = [
         "-loglevel",
         "error",
         "-y",
@@ -405,18 +515,29 @@ pub fn ffmpeg_args(pix: &str, w: u32, h: u32, out: &Path) -> Vec<String> {
         "-c:v",
         "libx264",
         "-preset",
-        "ultrafast",
+        LIVE_PRESET,
         "-crf",
-        "20",
+        &crf,
         "-pix_fmt",
         "yuv420p",
-        "-movflags",
-        "+faststart",
     ]
     .iter()
     .map(|s| s.to_string())
-    .chain(std::iter::once(out.display().to_string()))
-    .collect()
+    .collect();
+    head.into_iter()
+        .chain(media::metadata_args(meta))
+        .chain(["-movflags".into(), "+faststart".into()])
+        .chain(std::iter::once(out.display().to_string()))
+        .collect()
+}
+
+/// `dir/.stem.ext` for `dir/stem.mp4`: a working file `*.mp4` globs and
+/// file managers do not show.
+pub fn hidden_beside(path: &Path, ext: &str) -> PathBuf {
+    let stem = path
+        .file_stem()
+        .map_or_else(|| "video".into(), |s| s.to_string_lossy().into_owned());
+    path.with_file_name(format!(".{stem}.{ext}"))
 }
 
 pub fn default_video_dir() -> Option<PathBuf> {
@@ -497,9 +618,10 @@ fn spawn_encoder(
     pix: &str,
     w: u32,
     h: u32,
+    meta: &[(String, String)],
 ) -> std::io::Result<Encoder> {
     let mut child = Process::new(ffmpeg)
-        .args(ffmpeg_args(pix, w, h, path))
+        .args(ffmpeg_args(pix, w, h, meta, path))
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .spawn()?;
@@ -534,25 +656,88 @@ fn write_frames(
     }
 }
 
-fn finish(writer: JoinHandle<std::io::Result<()>>, path: &Path) {
-    match writer.join() {
-        Ok(Ok(())) => info!(path = %path.display(), "video saved"),
-        Ok(Err(e)) => error!(path = %path.display(), "video failed: {e}"),
-        Err(_) => error!("video writer panicked"),
+/// The files of a stopped recording, put together after the encoder ends.
+struct Finish {
+    ffmpeg: PathBuf,
+    video_tmp: PathBuf,
+    path: PathBuf,
+    meta: Vec<(String, String)>,
+    audio: Option<AudioPending>,
+}
+
+impl Finish {
+    /// Waits for the encoder and the sound, muxes them into the final MP4
+    /// (only the picture if there is no sound or muxing fails).
+    fn run(self, writer: JoinHandle<std::io::Result<()>>) {
+        let video = writer
+            .join()
+            .unwrap_or_else(|_| Err(std::io::Error::other("video writer panicked")));
+        let wav = self.audio.map(|p| {
+            let path = p.path.clone();
+            (path, p.wait())
+        });
+        if let Err(e) = video {
+            error!(path = %self.path.display(), "video failed: {e}");
+            if let Some((w, _)) = wav {
+                let _ = std::fs::remove_file(w);
+            }
+            return;
+        }
+        let mut with_sound = false;
+        match &wav {
+            Some((w, Ok(n))) if *n > 0 => {
+                let ok = Process::new(&self.ffmpeg)
+                    .args(mux_args(&self.video_tmp, w, &self.meta, &self.path))
+                    .stdout(Stdio::null())
+                    .status()
+                    .is_ok_and(|s| s.success());
+                if ok {
+                    with_sound = true;
+                    let _ = std::fs::remove_file(&self.video_tmp);
+                } else {
+                    error!("video: muxing the sound failed; saved without it");
+                }
+            }
+            Some((_, Err(e))) => error!("video: sound not recorded ({e})"),
+            _ => {}
+        }
+        if !with_sound && let Err(e) = std::fs::rename(&self.video_tmp, &self.path) {
+            error!(path = %self.path.display(), "video failed: {e}");
+            return;
+        }
+        if let Some((w, _)) = wav {
+            let _ = std::fs::remove_file(w);
+        }
+        info!(path = %self.path.display(), sound = with_sound, "video saved");
     }
 }
 
-fn video_key(keys: Res<ButtonInput<KeyCode>>, time: Res<Time>, mut rec: ResMut<VideoRecorder>) {
+fn video_key(
+    keys: Res<ButtonInput<KeyCode>>,
+    time: Res<Time>,
+    now: Res<ocw_render::stamp::MediaNow>,
+    label: Option<Res<ocw_render::hud::VersionLabel>>,
+    audio: Option<Res<crate::audio::GameAudio>>,
+    mut rec: ResMut<VideoRecorder>,
+) {
     if !keys.just_pressed(KeyCode::KeyV) {
         return;
     }
+    let meta = ShotMeta::new(&now, label.as_deref());
+    let audio = audio.map(|a| a.recording_source());
     if rec.is_recording() {
         if let Some(p) = rec.stop(time.elapsed_secs_f64()) {
             info!(path = %p.display(), "video recording stopped");
         }
-    } else if let Err(e) = rec.start(time.elapsed_secs_f64()) {
+    } else if let Err(e) = rec.start(time.elapsed_secs_f64(), &meta, audio) {
         warn!("{e}");
     }
+}
+
+/// Renders the sound of a recording without a device, in step with game
+/// time.
+fn pull_audio(time: Res<Time>, mut rec: ResMut<VideoRecorder>) {
+    rec.pull_audio(time.elapsed_secs_f64());
 }
 
 /// The REC indicator and the message in the HUD.
@@ -676,8 +861,26 @@ mod tests {
         assert_eq!(pixel_format(TextureFormat::Bgra8UnormSrgb), Some("bgra"));
         assert_eq!(pixel_format(TextureFormat::Rgba8UnormSrgb), Some("rgba"));
         assert_eq!(pixel_format(TextureFormat::Rgba16Float), None);
-        let args = ffmpeg_args("bgra", 1280, 720, Path::new("/tmp/x.mp4"));
+        let meta = media::video_metadata(
+            &media::MediaTime {
+                unix_s: 1_794_518_045,
+                offset_s: 3600,
+            },
+            "Open Cycling World 0.1.0-abc",
+        );
+        let args = ffmpeg_args("bgra", 1280, 720, &meta, Path::new("/tmp/x.mp4"));
         let s = args.join(" ");
+        assert!(s.contains("-crf 18 -pix_fmt yuv420p"), "{s}");
+        assert!(s.contains("scale=trunc(min(2560\\,iw)/2)*2:-2"), "{s}");
+        // The start in UTC and the build (spec §11.4).
+        assert!(
+            s.contains("-metadata creation_time=2026-11-12T21:14:05Z -metadata comment=Open Cycling World 0.1.0-abc -movflags +faststart"),
+            "{s}"
+        );
+        assert_eq!(
+            hidden_beside(Path::new("/v/2026-11-12_21-14-05.mp4"), "wav"),
+            Path::new("/v/.2026-11-12_21-14-05.wav")
+        );
         assert!(
             s.contains("-f rawvideo -pix_fmt bgra -s 1280x720 -r 25 -i -"),
             "{s}"
@@ -763,6 +966,9 @@ mod tests {
     fn fake_active(rec: &mut VideoRecorder, path: &str, started_s: f64) {
         rec.active = Some(Active {
             path: PathBuf::from(path),
+            video_tmp: hidden_beside(Path::new(path), "video.mp4"),
+            meta: Vec::new(),
+            audio: None,
             ffmpeg: PathBuf::from("ffmpeg"),
             started_s,
             next_request: 0,
