@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.43 – November 2026
+Version 2.44 – November 2026
 
 | Version | Change |
 |---|---|
@@ -62,6 +62,7 @@ Version 2.43 – November 2026
 | 2.41 | Fixes from the kiosk (user, 2026-11-13; §3.2, §4.3): flat overlays (centre markings, road strips, the test-route ribbon) never cast shadows (`FlatOverlay` requires `NotShadowCaster`; they still receive shadows); no direct sun deeper than 25 m in a tunnel (the terrain casts no shadows in the renderer) and the bike lights on there; a route file ridden in a world package has its heights fitted onto the package's road strips when they differ by more than 0.25 m (a route file and a package from different terrain models put the rider up to 15 m under the road and made a 1.7 km tunnel of the Steg tunnel) |
 | 2.42 | Fourth world: Tenerife (§4.7), the whole island in one package (`europe/spain/tenerife`, 238 MB, 2,690 tiles, built with the world cleaning, time zone `Atlantic/Canary`) from the Geofabrik Canary Islands extract and the IGN MDT05 (5 m LiDAR, CC BY 4.0, via the IGN's OGC API Coverages; REGCAN95 / UTM 28N, grids moved onto the 5 m lattice); the sea from the OSM coastline (closed rings cut out of the package area, water at 0 m, sea floor 2 m down, shore 0.3 m up, kept at 0 m by the water cleaning, §4.6); `--tiles-near-roads` (no open-sea tiles); edge vertices of border tiles get water; routes Puerto de la Cruz - Teide, Los Cristianos - Teide, Masca - Santiago del Teide, Buenavista - Masca - Santiago del Teide, La Laguna - Anaga; showcase scenes and reference board `art/reference/tenerife.md`; missing materials noted (Phase 8) |
 | 2.43 | Phase 8 decisions: no AI-generated textures in shipped assets (Q3), no real brands or logos (Q11) |
+| 2.44 | Phase 8 decisions: no commercial release, 8A stays (Q2); orthophoto corridor size acceptable (Q4); seasonal variants (Q5); own photos postponed (Q6); Mapillary CC BY-SA, reference by eye only (Q7); 3D buildings: swissBUILDINGS3D 3.0 (Opendata BY) to confirm, LGL LoD2 probably not open, ask LGL (Q8); all texture areas in parallel (Q10) |
 
 ---
 
@@ -2046,15 +2047,15 @@ Before a material, house style, tree, sign or bike part is designed, we look at 
 #### 8F – Open questions (for the user)
 
 - **Q1 – Attribution licences: decided (2026-11-12, "use the best data you can find"):** attribution licences (CC BY 4.0, dl-de/by-2.0, Swiss / Liechtenstein OGD BY, Copernicus) are accepted; credits on the credits screen and in each package's LICENSE-DATA.md.
-- **Q2 – Commercial use:** is a commercial release planned? It decides whether anything with grey areas can ever be considered (e.g. EOX commercial licence) and when a legal review is needed (§13).
+- **Q2 – Commercial use: decided (2026-11-13):** **no commercial release** is planned. The licence rule 8A stays as it is (permissive licences only, no NC / SA / ND), so the code and the packages stay freely reusable; a legal review is not needed for now.
 - **Q3 – AI-generated textures: decided (2026-11-13):** **no** AI-generated textures in shipped assets for now; procedural, CC0 and own photos (8C). To be revisited only by an explicit user decision.
-- **Q4 – Package size:** how much extra per region is acceptable for the orthophoto corridor (estimate 30–80 MB for Liechtenstein, far more for the Black Forest)? Optional download, or part of the package?
-- **Q5 – Season and time of day:** summer only, or seasonal variants (autumn colours, snow in the Black Forest / Malbun)? It changes which imagery dates we pick and doubles the palettes.
-- **Q6 – Own photos:** can someone take reference and texture photos in Liechtenstein and the Black Forest (roof tiles, façades, bark, asphalt, signs)? They would become own-work textures and the "real photo" side of the comparison tests.
-- **Q7 – Mapillary / street-level imagery:** OK as visual reference only, like other web photos (8D; CC BY-SA 4.0, never copied into assets)? Recommendation: yes, reference only.
-- **Q8 – 3D building data:** use official LoD2 building models where they are open (roof shapes far better than OSM), after checking LGL's LoD2 terms? Liechtenstein / Swiss equivalents (swissBUILDINGS3D) too?
+- **Q4 – Package size: decided (2026-11-13):** the orthophoto corridor along the roads (8B.3, about 30–80 MB for Liechtenstein, more for larger regions) is acceptable; it may be part of the package or an optional download, whichever the implementation finds better.
+- **Q5 – Season and time of day: decided (2026-11-13):** **seasonal variants**: summer, autumn colours, winter with snow, and spring, driven by the date (Phase 9 9C), with season-specific imagery and tints where open imagery of that season exists.
+- **Q6 – Own photos: postponed (2026-11-13):** not possible for now; textures come from CC0 libraries and code, reference from openly licensed web photos (8D).
+- **Q7 – Mapillary / street-level imagery: decided (2026-11-13):** Mapillary images are **CC BY-SA 4.0** by default (Mapillary terms of use; some content under other terms, commercial use under extra terms). Looking at them to learn what a place looks like is fine. Copying pixels into assets would make the asset CC BY-SA, which rule 8A excludes, and automated extraction of data from them is not done (Mapillary grants derived-data permission for OSM / Wikimedia contributions, not for us). So: **reference only, by eye**, like other web photos (8D).
+- **Q8 – 3D building data (2026-11-13: research):** **Liechtenstein / Switzerland:** *swissBUILDINGS3D 3.0 (Beta)* by swisstopo has roof shapes and overhangs (CityGML), licence **Opendata BY** (open use, source must be named, allowed by 8A), coverage listed as Switzerland and Liechtenstein; to confirm with swisstopo (geodata@swisstopo.ch) and the Liechtenstein office ATG (info.atg@llv.li, geodaten.llv.li), which holds the distribution rights in Liechtenstein. **Baden-Württemberg:** the LGL LoD2 models (from ALKIS footprints and laser heights, no roof superstructures, no textures) do **not** appear in the LGL Open GeoData list of 2024; an LGL price list exists, so they are probably not free. To ask the LGL customer service (contact via lgl-bw.de / the Open GeoData portal) whether LoD2 is or will be open data, and under which licence. **Tenerife:** to check the Spanish cadastre (INSPIRE buildings) and GRAFCAN. Until confirmed, buildings stay OSM-based with regional style presets (T4).
 - **Q9 – Better terrain: decided (2026-11-12):** use the **best open data available** for every region: elevation (swissALTI3D / Liechtenstein DTM, LGL DGM1 for Baden-Württemberg, other official open DTMs elsewhere; SRTM / Copernicus DEM only as fallback), the freshest OSM, the best open orthophotos and textures (8A licences). The same rule applies to all other images and data. **Elevation and OSM implemented (v2.33, §4.3 "High-resolution terrain models"):** LGL DGM1 and swissALTI3D in every package, the Geofabrik extracts of the day; Austria (Vorarlberg, on the pilot's eastern edge) and France still fall back to SRTM – open Austrian DTMs (e.g. the 10 m "DGM Österreich", CC BY 4.0) are the next candidates. Orthophotos and textures remain open (8B / 8E).
-- **Q10 – Priority:** what first: ground and roads (most visible while riding), houses (towns), or riders and bikes?
+- **Q10 – Priority: decided (2026-11-13):** **all** of them: ground and roads, houses, riders and bikes, worked on in parallel.
 - **Q11 – Brands: decided (2026-11-13):** **no** real bike or kit brands or logos, also not as cosmetics.
 
 ---
