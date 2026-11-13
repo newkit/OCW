@@ -809,6 +809,14 @@ at = ["0.5=time pause", "0.5=time 2026-11-13 11:00", "0.5=hud off", "0.5=hud.pro
 shot = 12
 
 [[scene]]
+name = "showcase-tf-teide-iconic"
+description = "Showcase (README hero): riders coming down the TF-21 through Las Cañadas at the Roques de García, the cone of the Teide (3,715 m) behind them, 16:00 light"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-10968,7609", "--bots", "7", "--power", "230"]
+at = ["0.5=time pause", "0.5=time 2026-11-13 16:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 135 7 15"]
+shot = 12
+
+[[scene]]
 name = "showcase-tf-teide-video"
 description = "Showcase video: riding through Las Cañadas on the TF-21 with 6 riders below the Teide, slowly orbiting camera"
 world = "tenerife"
