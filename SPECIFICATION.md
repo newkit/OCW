@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.79 – November 2026
+Version 2.80 – November 2026
 
 | Version | Change |
 |---|---|
@@ -65,6 +65,7 @@ Version 2.79 – November 2026
 | 2.44 | Phase 8 decisions: no commercial release, 8A stays (Q2); orthophoto corridor size acceptable (Q4); seasonal variants (Q5); own photos postponed (Q6); Mapillary CC BY-SA, reference by eye only (Q7); 3D buildings: swissBUILDINGS3D 3.0 (Opendata BY) to confirm, LGL LoD2 probably not open, ask LGL (Q8); all texture areas in parallel (Q10) |
 | 2.45 | Licensing (§13): no licence change for now – the code stays MIT / Apache-2.0 (a switch to CC BY-SA was considered and declined) |
 | 2.46 | Phase 8 T1 / T2 (§4.6, §8.1, §13, §14 Phase 8): material library of 21 CC0 materials (ambientCG, Poly Haven) – ground, roads, houses, volcanic ground for Tenerife – not in git but pinned by URL + SHA-256 in `assets/materials.toml`, fetched and converted to KTX2 (BC3 / BC5, 1024², mipmapped) by `scripts/fetch-materials.sh` into the git-ignored `assets/materials/` and shipped beside the binary (AppImage, macOS bundle, Windows zip, test deployment); licence rule of Phase 8A shared by the model and material validators; terrain drawn with the materials blended by the splat map (weights at cell corners, noise warp, height blend, rock and triplanar on slopes, macro scale, fade to the colour map in the materials' mean colours), roads by OSM `surface` (new package section `RSRF`) with category fallback; regional material sets by the package's time zone (`[[region]]` in the manifest: the volcanic set of the Canary Islands with lava, ash / cinder, black sand and pine needles); regional tint hook neutral; reference boards `art/reference/` |
+| 2.80 | Decision from the build dashboard (2026-11-14): Phase 11 Q2 – VR on Linux is a target (SteamVR / Monado / WiVRn; Index, Quest via WiVRn) |
 | 2.79 | Decision from the build dashboard (2026-11-14): Phase 10 Q6 – the browser app has full parity with the desktop app |
 | 2.78 | Decision from the build dashboard (2026-11-14): Phase 10 Q5 – anonymous riding in the browser is allowed with a plain default bike and character; customization (workshop, character editor, hearts) only for logged-in users |
 | 2.77 | Decision from the build dashboard (2026-11-14): Phase 10 Q4 – the browser app and its world packages are hosted on our own servers for now |
@@ -2893,7 +2894,7 @@ Attribution of the provider used appears on the credits screen and in the weathe
 #### 11E – Open questions (for the user)
 
 - **Q1 – decided (v2.48):** an **Oculus Rift CV1** (first generation) is the development and test headset, on Windows through the Meta PC app's OpenXR runtime (the CV1 has no usable Linux runtime, so VR testing runs on Win11Builder or another Windows PC with the Rift; Monado covers CI). Development stays OpenXR-only, so other headsets need no vendor code. CV1 specifics to design for: 2160×1200 total (1080×1200 per eye), 90 Hz, 3-DoF+ constellation tracking with external sensors (USB 3.0), Oculus Touch controllers; frame budget 11.1 ms, asynchronous spacewarp as fallback at 45 Hz.
-- **Q2 – Linux VR:** target it (SteamVR / Monado / WiVRn, works with Index and with Quest via WiVRn), or Windows first?
+- **Q2 – Linux VR: decided (2026-11-14, dashboard):** **target it** – SteamVR, Monado and WiVRn on Linux (Valve Index natively, Quest via WiVRn), alongside the Rift CV1 on Windows (Q1). The Rift CV1 itself has no usable Linux runtime, so Linux VR is tested with Monado's simulated device in CI and on a supported headset when one is available.
 - **Q3 – Integration:** fork / port `bevy_mod_openxr` to Bevy 0.20 (faster, external dependency that lags Bevy), or our own thin OpenXR layer (more work, fully under our control)? Decided after X1.
 - **Q4 – Head-lean steering:** wanted, or keep steering on keys / gamepad / autodrive?
 - **Q5 – Native standalone (Quest / Pico store) and WebXR:** later, or not at all?
