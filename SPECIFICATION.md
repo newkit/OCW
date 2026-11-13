@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.78 – November 2026
+Version 2.79 – November 2026
 
 | Version | Change |
 |---|---|
@@ -65,6 +65,7 @@ Version 2.78 – November 2026
 | 2.44 | Phase 8 decisions: no commercial release, 8A stays (Q2); orthophoto corridor size acceptable (Q4); seasonal variants (Q5); own photos postponed (Q6); Mapillary CC BY-SA, reference by eye only (Q7); 3D buildings: swissBUILDINGS3D 3.0 (Opendata BY) to confirm, LGL LoD2 probably not open, ask LGL (Q8); all texture areas in parallel (Q10) |
 | 2.45 | Licensing (§13): no licence change for now – the code stays MIT / Apache-2.0 (a switch to CC BY-SA was considered and declined) |
 | 2.46 | Phase 8 T1 / T2 (§4.6, §8.1, §13, §14 Phase 8): material library of 21 CC0 materials (ambientCG, Poly Haven) – ground, roads, houses, volcanic ground for Tenerife – not in git but pinned by URL + SHA-256 in `assets/materials.toml`, fetched and converted to KTX2 (BC3 / BC5, 1024², mipmapped) by `scripts/fetch-materials.sh` into the git-ignored `assets/materials/` and shipped beside the binary (AppImage, macOS bundle, Windows zip, test deployment); licence rule of Phase 8A shared by the model and material validators; terrain drawn with the materials blended by the splat map (weights at cell corners, noise warp, height blend, rock and triplanar on slopes, macro scale, fade to the colour map in the materials' mean colours), roads by OSM `surface` (new package section `RSRF`) with category fallback; regional material sets by the package's time zone (`[[region]]` in the manifest: the volcanic set of the Canary Islands with lava, ash / cinder, black sand and pine needles); regional tint hook neutral; reference boards `art/reference/` |
+| 2.79 | Decision from the build dashboard (2026-11-14): Phase 10 Q6 – the browser app has full parity with the desktop app |
 | 2.78 | Decision from the build dashboard (2026-11-14): Phase 10 Q5 – anonymous riding in the browser is allowed with a plain default bike and character; customization (workshop, character editor, hearts) only for logged-in users |
 | 2.77 | Decision from the build dashboard (2026-11-14): Phase 10 Q4 – the browser app and its world packages are hosted on our own servers for now |
 | 2.76 | Decision from the build dashboard (2026-11-14): Phase 10 Q3 – the browser app starts now, in parallel with Phases 8 / 9 (B1 first) |
@@ -2800,7 +2801,7 @@ Attribution of the provider used appears on the credits screen and in the weathe
 - **Q3 – Priority vs. other phases: decided (2026-11-14, dashboard):** **start now** – the browser app is built in parallel with Phases 8 / 9, beginning with B1 (wasm build on WebGPU with the test route, the local server in the browser and virtual power).
 - **Q4 – Hosting: decided (2026-11-14, dashboard):** **own servers for now** (no CDN provider); world packages are served from our machines with HTTP caching and range requests, a CDN can come later if traffic needs it.
 - **Q5 – Anonymous access: decided (2026-11-14, dashboard):** **anonymous riding is allowed**, but with a plain default ("boring") bike and character and **no customization**: the workshop and the character editor are locked (shown with a "log in to customize" hint), no hearts are earned or spent, nothing is saved across visits. Only logged-in users customize their bike and character (and keep hearts, parts and kit, §14 Phase 4).
-- **Q6 – Same app or a lighter "web edition"?** Full parity, or a reduced feature set (smaller worlds, lower quality) for faster loading?
+- **Q6 – Same app or a lighter "web edition"? Decided (2026-11-14, dashboard): full parity** – the browser app is the same app with the same worlds and features as the desktop (quality presets and streaming adapt to the device, not a reduced edition).
 
 ---
 
