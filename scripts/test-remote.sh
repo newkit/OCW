@@ -144,6 +144,16 @@ s=$(mktemp -d)
   printf 'aaa\tcrates/a/lib.rs\n' >"$s/valid"
   check "$(win_changed "$s/valid" "$s/hashes" | tr '\n' ' ')" "crates/a/lib.rs same.txt extra.txt " \
     "windows: a file touched there is re-sent with the time of the copy"
+  # Windows extraction, simulated with GNU tar (same -m): the changed file
+  # (older local mtime) unpacks with the time of the copy, newer than the
+  # build; files not sent keep their time.
+  w=$s/win; mkdir -p "$w/crates/a"; echo old >"$w/crates/a/lib.rs"; echo same >"$w/same.txt"
+  touch -d '+1 day' "$w/crates/a/lib.rs"; touch -d '2024-01-02 00:00' "$w/same.txt"
+  echo d >"$w/build.d"; touch -d '-5 seconds' "$w/build.d"
+  (cd "$snap_dir/tree" && tar -cf - crates/a/lib.rs) | tar -xmf - -C "$w"
+  check "$(cat "$w/crates/a/lib.rs")/$([ "$w/crates/a/lib.rs" -nt "$w/build.d" ] && echo rebuild)/$([ "$(stat -c %Y "$w/crates/a/lib.rs")" -le "$(date +%s)" ] && echo now)" \
+    "merged content: the new field/rebuild/now" "windows (simulated tar -m): changed file newer than the build, not in the future"
+  check "$(stat -c %Y "$w/same.txt")" "$(date -d '2024-01-02 00:00' +%s)" "windows (simulated): unsent files untouched"
   # The handshake: the "remote" prints @@ocw-sync once it has its slot,
   # the sync runs then (not before), the remote gets "go" and runs on.
   sync_tree() { echo "sync at $(cat "$s/clock")" >>"$s/synced"; }
@@ -163,6 +173,25 @@ s=$(mktemp -d)
   [ "$fail" = 0 ]
 ) || fail=1
 rm -rf "$s"
+
+# The Windows run wrapper as remote.sh assembles it (no Windows needed):
+# placeholders filled, braces balanced, the sync step chosen.
+(
+  eval "$(awk '/^psq\(\) \{/' scripts/remote.sh)"
+  for f in short_cmd run_windows; do
+    eval "$(awk -v f="$f" '$0 ~ "^" f "\\(\\) \\{" { p = 1 } p { print } p && /^}/ { exit }' scripts/remote.sh)"
+  done
+  eval "$(awk '/^read -r -d .. marker_ps/ { p = 1 } p { print } p && /^EOF/ { exit }' scripts/remote.sh)"
+  SSH=(printf '%s\n') target="" repo='B:\src\OCW-x' checkout_dir=OCW-x branch=b slots=1 jobs_env="" build_id=id
+  for mode in default handshake; do
+    if [ $mode = handshake ]; then win_sync_ps="[Console]::Out.WriteLine('@@ocw-sync ' + \$PID); \$ocwGo = [Console]::In.ReadLine();"; else win_sync_ps="\$ocwGo = 'go';"; fi
+    ps=$(run_windows cargo test)
+    opens=$(printf '%s' "$ps" | tr -cd '{' | wc -c); closes=$(printf '%s' "$ps" | tr -cd '}' | wc -c)
+    check "$(printf '%s' "$ps" | grep -c '@[A-Z][A-Z]*@')/$opens" "0/$closes" "windows wrapper ($mode): placeholders filled, braces balanced"
+  done
+  check "$(printf '%s' "$ps" | grep -c "ReadLine")" 1 "windows wrapper: the handshake only when asked for"
+  [ "$fail" = 0 ]
+) || fail=1
 
 python3 scripts/test_build_profile.py >/dev/null 2>&1 && echo "ok   build_profile.py unit tests" ||
   { echo "FAIL build_profile.py unit tests (python3 scripts/test_build_profile.py)"; fail=1; }

@@ -404,7 +404,7 @@ $ocwRc = 0; $ocwLock = $null; $ocwSlot = $null; $ocwWarn = $false;
 try {
 if (@SLOTS@ -gt 0) { while (-not $ocwLock) { foreach ($s in 1..@SLOTS@) { try { $ocwLock = [IO.File]::Open((Join-Path $ocwD ('slot-' + $s + '.lock')), 'OpenOrCreate', 'ReadWrite', 'None'); $ocwSlot = $s; break } catch {} }; if (-not $ocwLock) { if (-not $ocwWarn) { ocwMark 'waiting' $null; [Console]::Error.WriteLine('remote.sh: waiting for a free build slot'); $ocwWarn = $true }; Start-Sleep -Milliseconds 1000 } }; if ($ocwWarn) { [Console]::Error.WriteLine('remote.sh: got build slot ' + $ocwSlot + ' after ' + ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - $ocwT0) + ' s') } };
 ocwMark 'running' $ocwSlot;
-[Console]::Out.WriteLine('@@ocw-sync ' + $PID); [Console]::Out.Flush(); $ocwGo = [Console]::In.ReadLine();
+@SYNC@
 if ($ocwGo -ne 'go') { [Console]::Error.WriteLine('remote.sh: tree sync failed'); $ocwRc = 1 } else {
 @RUN@; $ocwRc = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } elseif ($ocwOk) { 0 } else { 1 } }
 } finally { if ($ocwLock) { $ocwLock.Dispose() }; Remove-Item -Force -ErrorAction SilentlyContinue -LiteralPath $ocwF, ($ocwF + '.tmp') };
@@ -468,6 +468,7 @@ run_windows() {
   ps=${ps//@BRANCH@/"$(psq "$branch")"}
   ps=${ps//@CMD@/"$(psq "$(short_cmd "$@")")"}
   ps=${ps//@SLOTS@/"$slots"}
+  ps=${ps//@SYNC@/"${win_sync_ps:-\$ocwGo = 'go';}"}
   ps=${ps//@RUN@/"$run"}
   "${SSH[@]}" "$target" "$ps"
 }
@@ -532,8 +533,23 @@ case "$action" in
     # (apps/desktop/build.rs, scripts/build-id.sh).
     build_id=$(scripts/build-id.sh)
     if [ "$os" = windows ]; then
-      logged with_sync run_windows "$@" || status=$?
-      sync_s=$(cat "$snap_dir/sync_s" 2>/dev/null || true)
+      # The slot-time handshake on Windows is opt-in (OCW_WIN_HANDSHAKE=1):
+      # in its first real runs (2026-11-13) the remote side stayed in
+      # ReadLine after the sync, and Windows runs could not be tested
+      # further. By default the snapshot is synced now, before the run waits
+      # for its slot (the content/mtime fix applies either way).
+      if [ "${OCW_WIN_HANDSHAKE:-0}" = 1 ]; then
+        win_sync_ps="[Console]::Out.WriteLine('@@ocw-sync ' + \$PID); [Console]::Out.Flush(); \$ocwGo = [Console]::In.ReadLine();"
+        logged with_sync run_windows "$@" || status=$?
+        sync_s=$(cat "$snap_dir/sync_s" 2>/dev/null || true)
+      else
+        win_sync_ps="\$ocwGo = 'go';"
+        sync_t0=$(date +%s.%N)
+        logged sync_tree </dev/null || status=$?
+        profile_check none </dev/null || true
+        sync_s=$(LC_ALL=C awk -v a="$sync_t0" -v b="$(date +%s.%N)" 'BEGIN { printf "%.1f", b - a }')
+        if [ "$status" = 0 ]; then logged run_windows "$@" </dev/null || status=$?; fi
+      fi
       "${SSH[@]}" "$target" "tar -cf - -C $(psq "$repo") Cargo.lock" 2>/dev/null | tar -xf - 2>/dev/null || true
       log_end "$status" "$@"
       exit "$status"
