@@ -1406,8 +1406,8 @@ fn package(args: PackageArgs) {
         let bs = ocw_worldgen::buildings::add_buildings(&mut pkg, fps);
         let buildings_s = tb.elapsed().as_secs_f64();
         area_report.push(format!(
-            "buildings (BLDG): {} placed ({} gable roofs, {} with courtyards), {} outside the tiles; {buildings_s:.1} s",
-            bs.placed, bs.gabled, bs.with_holes, bs.outside
+            "buildings (BLDG): {} placed ({} gable roofs, {} with courtyards, BTAG: {} with OSM style facts, {} with a roof shape), {} outside the tiles; {buildings_s:.1} s",
+            bs.placed, bs.gabled, bs.with_holes, bs.tagged, bs.shaped, bs.outside
         ));
     }
     if clean {

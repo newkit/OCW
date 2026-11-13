@@ -1,0 +1,452 @@
+# Regional house styles (spec §4.6, §14 Phase 8 T4): how the houses of a
+# region look where OSM does not say. Built into the app (ocw-render
+# `house_style`); every tagged fact wins over these presets: roof:shape,
+# roof:height / roof:angle / roof:levels, building:levels, building:material,
+# building:colour, roof:material, roof:colour, and the roof colour measured
+# in the orthophoto (package section ROOF, T3).
+#
+# A style applies to the packages whose time zone (section TZID) it lists,
+# optionally only inside a latitude / longitude box (`bbox = [south, west,
+# north, east]`) and only to buildings at or above `min_elevation_m`; of the
+# matching styles the one with the highest `min_elevation_m` wins. The first
+# style is the default for everything else.
+#
+# Presets are per building kind (other, house, apartments, commercial,
+# industrial, farm, religious, public, small) or finer use (chalet,
+# farmhouse, barn, garage, shed, church, chapel, greenhouse, canopy, hut,
+# hotel, retail, terrace). Every field is optional and is looked up in order:
+# the style's use, the style's kind, the default style's use (a garage stays a
+# garage everywhere), the style's `other`, the default style's kind, the
+# default style's `other`.
+#
+#   roofs          mix of roof shapes for untagged pitched roofs (gabled,
+#                  hipped, half-hipped, pyramidal, skillion, mansard, gambrel;
+#                  flat turns them flat), weights
+#   pitch          factor on the builder's roof height (0.4 × the span)
+#   eave_drop_m    the eaves come down this far (the ridge stays): big roofs
+#   overhang_m     eaves and verges beyond the walls (near LOD)
+#   parapet_m      low wall around flat roofs (near LOD)
+#   walls          wall material mix (plaster, timber, stone, brick,
+#                  concrete, metal, glass)
+#   upper          material of the floors above the ground floor and of the
+#                  gables, with its probability (e.g. { timber = 0.5 })
+#   wall_colours   plaster colours (sRGB hex), one picked per building; other
+#                  materials keep their own colour
+#   roof_materials roof material mix (tiles, slate, metal, concrete, glass,
+#                  wood, grass)
+#   roof_colours   clay tile colours, one picked per building
+#   window         window style (below; "none": no windows)
+#   chimney        probability of a chimney on a pitched roof
+#
+# Colours were picked from reference photos (art/reference/<region>.md).
+
+# --- Window styles (procedural façades in building.wesl; at most 16) -------
+# One window per bay along a wall and storey; a door on the ground floor of
+# one wall. Widths and heights in metres; `sill_m` above the storey's floor.
+
+[[window]]
+id = "house"
+bay_m = 3.4
+width_m = 1.15
+height_m = 1.35
+sill_m = 0.9
+frame = "#eeeae2"
+door = "#6b4a33"
+
+[[window]]
+id = "house_shutters"
+bay_m = 3.2
+width_m = 1.05
+height_m = 1.3
+sill_m = 0.9
+frame = "#efebe3"
+shutters = "#3d5a3b"
+door = "#5f4330"
+
+[[window]]
+id = "alpine"
+bay_m = 2.8
+width_m = 1.0
+height_m = 1.15
+sill_m = 0.95
+frame = "#f0ece4"
+shutters = "#7a4a2a"
+door = "#5a3b25"
+
+[[window]]
+id = "apartments"
+bay_m = 2.9
+width_m = 1.4
+height_m = 1.5
+sill_m = 0.85
+frame = "#d9d8d4"
+door = "#4a4d50"
+door_width_m = 1.6
+
+[[window]]
+id = "shop"
+bay_m = 3.6
+width_m = 2.2
+height_m = 1.6
+sill_m = 0.9
+frame = "#3c3f42"
+door = "#2f3336"
+door_width_m = 1.8
+shopfront = true
+
+[[window]]
+id = "industrial"
+bay_m = 6.0
+width_m = 3.6
+height_m = 1.1
+sill_m = 2.7
+frame = "#7d8287"
+door = "#6c7378"
+door_width_m = 4.0
+door_height_m = 4.0
+
+[[window]]
+id = "farm"
+bay_m = 3.6
+width_m = 0.9
+height_m = 1.0
+sill_m = 1.0
+frame = "#e8e2d4"
+shutters = "#4b3424"
+door = "#5b4630"
+door_width_m = 2.6
+door_height_m = 3.0
+
+[[window]]
+id = "barn"
+bay_m = 7.0
+width_m = 0.7
+height_m = 0.7
+sill_m = 2.2
+frame = "#5a4a3a"
+door = "#4e3d2b"
+door_width_m = 3.2
+door_height_m = 3.6
+
+[[window]]
+id = "church"
+bay_m = 4.5
+width_m = 1.3
+height_m = 3.4
+sill_m = 2.2
+frame = "#c9c3b5"
+door = "#5c4127"
+door_width_m = 1.6
+door_height_m = 3.0
+
+[[window]]
+id = "canary"
+bay_m = 3.2
+width_m = 1.0
+height_m = 1.35
+sill_m = 0.95
+frame = "#4a3524"
+door = "#3f5b3a"
+door_height_m = 2.3
+
+[[window]]
+id = "garage"
+bay_m = 3.4
+width_m = 0.0
+height_m = 0.0
+sill_m = 0.0
+frame = "#9ea3a6"
+door = "#9ea3a6"
+door_width_m = 2.5
+door_height_m = 2.2
+
+# --- Default: Central European towns and valleys (Rhine valley, Vaduz,
+# Freiburg): light plaster, red-brown clay tiles, gable and hipped roofs ----
+
+[[style]]
+id = "central"
+name = "Central European towns and valleys"
+
+[style.kind.other]
+roofs = { gabled = 0.7, hipped = 0.3 }
+pitch = 1.0
+overhang_m = 0.45
+parapet_m = 0.3
+walls = { plaster = 1.0 }
+wall_colours = ["#f1ece0", "#ece3cf", "#e9dcc0", "#f3efe6", "#e4e0d8", "#efe2c4", "#e8d6c0"]
+roof_materials = { tiles = 1.0 }
+roof_colours = ["#8e3b26", "#7a3324", "#9a4a2c", "#6e3a2c", "#5b4a43"]
+window = "house"
+chimney = 0.0
+
+[style.kind.house]
+roofs = { gabled = 0.65, hipped = 0.25, half-hipped = 0.1 }
+overhang_m = 0.55
+chimney = 0.6
+
+[style.kind.terrace]
+roofs = { gabled = 1.0 }
+
+[style.kind.apartments]
+roofs = { hipped = 0.5, gabled = 0.5 }
+wall_colours = ["#f3efe8", "#ebe5d8", "#e6dfd0", "#efe6d2", "#dcd9d2"]
+window = "apartments"
+overhang_m = 0.4
+
+[style.kind.hotel]
+window = "apartments"
+
+[style.kind.commercial]
+roofs = { hipped = 0.5, gabled = 0.5 }
+walls = { plaster = 0.6, concrete = 0.4 }
+roof_materials = { tiles = 0.6, metal = 0.4 }
+window = "shop"
+
+[style.kind.retail]
+window = "shop"
+
+[style.kind.industrial]
+roofs = { gabled = 1.0 }
+pitch = 0.45
+walls = { metal = 0.6, concrete = 0.4 }
+roof_materials = { metal = 0.8, concrete = 0.2 }
+window = "industrial"
+overhang_m = 0.3
+
+[style.kind.farm]
+roofs = { gabled = 0.8, half-hipped = 0.2 }
+walls = { plaster = 0.5, timber = 0.5 }
+upper = { timber = 0.6 }
+window = "farm"
+overhang_m = 0.6
+chimney = 0.3
+
+[style.kind.barn]
+walls = { timber = 1.0 }
+roof_materials = { tiles = 0.6, metal = 0.4 }
+window = "barn"
+overhang_m = 0.7
+chimney = 0.0
+
+[style.kind.religious]
+roofs = { gabled = 1.0 }
+wall_colours = ["#f4f1ea", "#efe8d8", "#f2ede2"]
+roof_materials = { tiles = 0.5, slate = 0.5 }
+window = "church"
+overhang_m = 0.3
+
+[style.kind.public]
+roofs = { hipped = 0.6, gabled = 0.4 }
+wall_colours = ["#efe6d2", "#f1ece0", "#e8dcc4"]
+window = "apartments"
+
+[style.kind.small]
+roofs = { gabled = 0.8, skillion = 0.2 }
+pitch = 0.8
+walls = { plaster = 0.5, timber = 0.5 }
+window = "none"
+overhang_m = 0.3
+
+[style.kind.garage]
+roofs = { flat = 0.5, gabled = 0.3, skillion = 0.2 }
+walls = { plaster = 0.6, concrete = 0.4 }
+window = "garage"
+
+[style.kind.shed]
+roofs = { gabled = 0.6, skillion = 0.4 }
+walls = { timber = 1.0 }
+window = "none"
+
+[style.kind.hut]
+walls = { timber = 1.0 }
+
+[style.kind.greenhouse]
+walls = { glass = 1.0 }
+roof_materials = { glass = 1.0 }
+window = "none"
+overhang_m = 0.0
+
+[style.kind.canopy]
+roof_materials = { metal = 1.0 }
+window = "none"
+
+# --- Alpine Liechtenstein and Switzerland above the valley (Triesenberg,
+# Malbun): low-pitch gable roofs with wide eaves, timber upper floors,
+# shutters, slate / dark tiles / metal roofs ----------------------------------
+
+[[style]]
+id = "alpine"
+name = "Alpine villages (Liechtenstein, Switzerland, Vorarlberg)"
+time_zones = ["Europe/Vaduz", "Europe/Zurich", "Europe/Vienna"]
+min_elevation_m = 750
+
+[style.kind.other]
+roofs = { gabled = 1.0 }
+pitch = 0.6
+overhang_m = 1.2
+walls = { plaster = 0.6, timber = 0.4 }
+upper = { timber = 0.6 }
+wall_colours = ["#f2efe8", "#ebe6da", "#e7e1d3"]
+roof_materials = { slate = 0.45, tiles = 0.35, metal = 0.2 }
+roof_colours = ["#6b3e2e", "#5a3a30", "#7a4a35"]
+window = "alpine"
+chimney = 0.5
+
+[style.kind.apartments]
+upper = { timber = 0.3 }
+overhang_m = 1.0
+
+[style.kind.hotel]
+upper = { timber = 0.5 }
+overhang_m = 1.0
+
+[style.kind.farm]
+walls = { timber = 0.7, plaster = 0.3 }
+upper = { timber = 0.9 }
+overhang_m = 1.0
+window = "farm"
+
+[style.kind.barn]
+walls = { timber = 1.0 }
+overhang_m = 0.9
+window = "barn"
+chimney = 0.0
+
+[style.kind.religious]
+walls = { plaster = 1.0 }
+upper = { plaster = 1.0 }
+pitch = 1.0
+overhang_m = 0.4
+window = "church"
+chimney = 0.0
+
+[style.kind.industrial]
+walls = { metal = 0.5, timber = 0.5 }
+upper = { timber = 0.0 }
+window = "industrial"
+chimney = 0.0
+
+# --- Black Forest uplands: the farmhouse with the huge hipped or half-hipped
+# roof coming down to the ground floor, dark shingle / tile roofs, timber
+# walls; houses with steep gables and green shutters ---------------------------
+
+[[style]]
+id = "blackforest"
+name = "Black Forest uplands"
+time_zones = ["Europe/Berlin"]
+bbox = [47.55, 7.55, 48.95, 8.95]
+min_elevation_m = 450
+
+[style.kind.other]
+roofs = { gabled = 0.5, half-hipped = 0.3, hipped = 0.2 }
+pitch = 1.1
+overhang_m = 0.7
+walls = { plaster = 0.75, timber = 0.25 }
+upper = { timber = 0.3 }
+wall_colours = ["#f2eee6", "#ece5d6", "#efe7d3"]
+roof_materials = { tiles = 0.6, slate = 0.4 }
+roof_colours = ["#5b3328", "#6e3b2b", "#4f3a33", "#7c4330"]
+window = "house_shutters"
+
+[style.kind.farm]
+roofs = { hipped = 0.45, half-hipped = 0.55 }
+pitch = 1.25
+eave_drop_m = 2.5
+overhang_m = 1.0
+walls = { timber = 0.6, plaster = 0.4 }
+upper = { timber = 0.7 }
+roof_materials = { slate = 0.5, tiles = 0.5 }
+roof_colours = ["#4a3229", "#5b3328", "#3f3633"]
+window = "farm"
+chimney = 0.2
+
+[style.kind.farmhouse]
+roofs = { hipped = 0.45, half-hipped = 0.55 }
+
+[style.kind.barn]
+roofs = { hipped = 0.4, half-hipped = 0.4, gabled = 0.2 }
+pitch = 1.2
+eave_drop_m = 1.5
+walls = { timber = 1.0 }
+window = "barn"
+
+[style.kind.religious]
+roofs = { gabled = 1.0 }
+walls = { plaster = 1.0 }
+upper = { plaster = 1.0 }
+window = "church"
+
+[style.kind.industrial]
+roofs = { gabled = 1.0 }
+pitch = 0.5
+walls = { metal = 0.5, timber = 0.5 }
+upper = { timber = 0.0 }
+window = "industrial"
+
+# --- Canary Islands (Tenerife): whitewashed and ochre houses with flat roofs
+# and parapets (terraces), some tiled roofs in the old towns, stone walls on
+# farms -----------------------------------------------------------------------
+
+[[style]]
+id = "canary"
+name = "Canary Islands"
+time_zones = ["Atlantic/Canary"]
+
+[style.kind.other]
+roofs = { flat = 0.8, gabled = 0.12, hipped = 0.08 }
+pitch = 0.7
+overhang_m = 0.25
+parapet_m = 0.6
+walls = { plaster = 0.9, stone = 0.1 }
+upper = { plaster = 1.0 }
+wall_colours = ["#f6f4ee", "#f4f1e8", "#f7f5f0", "#efe3c4", "#e9d3a6", "#e3c48f", "#d9a27a", "#f0e6b8"]
+roof_materials = { tiles = 1.0 }
+roof_colours = ["#a14d2e", "#b05a36", "#93452c"]
+window = "canary"
+chimney = 0.0
+
+[style.kind.apartments]
+roofs = { flat = 1.0 }
+parapet_m = 0.9
+wall_colours = ["#f6f4ee", "#f2efe6", "#efe3c4", "#e9d3a6"]
+window = "apartments"
+
+[style.kind.hotel]
+roofs = { flat = 1.0 }
+parapet_m = 0.9
+window = "apartments"
+
+[style.kind.commercial]
+roofs = { flat = 1.0 }
+parapet_m = 0.7
+window = "shop"
+
+[style.kind.industrial]
+roofs = { flat = 0.7, gabled = 0.3 }
+walls = { concrete = 0.6, metal = 0.4 }
+parapet_m = 0.5
+window = "industrial"
+
+[style.kind.farm]
+roofs = { flat = 0.6, gabled = 0.4 }
+walls = { stone = 0.6, plaster = 0.4 }
+parapet_m = 0.3
+window = "farm"
+
+[style.kind.barn]
+walls = { stone = 0.7, plaster = 0.3 }
+
+[style.kind.religious]
+roofs = { gabled = 0.8, hipped = 0.2 }
+walls = { plaster = 0.8, stone = 0.2 }
+wall_colours = ["#f6f4ee", "#f2efe6"]
+window = "church"
+
+[style.kind.small]
+roofs = { flat = 1.0 }
+walls = { plaster = 0.6, stone = 0.4 }
+parapet_m = 0.2
+window = "none"
+
+[style.kind.garage]
+roofs = { flat = 1.0 }

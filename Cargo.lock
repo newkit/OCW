@@ -5848,6 +5848,8 @@ dependencies = [
  "ocw-sky",
  "ocw-world",
  "png",
+ "serde",
+ "toml",
  "ttf-parser",
 ]
 

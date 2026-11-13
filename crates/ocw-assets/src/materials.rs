@@ -55,8 +55,18 @@ pub const ROAD_IDS: [&str; 5] = [
     "dirt_road",
 ];
 
-/// Building materials (Phase 8 T4).
-pub const BUILDING_IDS: [&str; 3] = ["roof_tiles", "plaster", "timber"];
+/// Building materials (Phase 8 T4), in the order of the renderer's
+/// building layers (`ocw_render::house_style::Layer`).
+pub const BUILDING_IDS: [&str; 8] = [
+    "roof_tiles",
+    "plaster",
+    "timber",
+    "roof_slates",
+    "metal_sheet",
+    "brick",
+    "stone_wall",
+    "concrete",
+];
 
 /// What a material is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]

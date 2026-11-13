@@ -27,6 +27,9 @@
 //! graph by stable edge ID (§2.7), see [`write_routes`]; `LUSE` – land use
 //! per tile and water levels (§4.6), see [`crate::landuse`]; `BLDG` –
 //! building footprints with heights and roofs, see [`crate::buildings`];
+//! `BTAG` – the OSM facts the houses are styled by (roof shape, levels,
+//! materials, colours; spec §14 Phase 8 T4, optional), see
+//! [`crate::buildings::write_building_tags`];
 //! `REGN` – the region the package was cut to (box and polygon in
 //! latitude / longitude), for neighbouring packages, see [`crate::region`];
 //! `TZID` – the IANA time zone of the package's area ("Europe/Vaduz", UTF-8,
@@ -44,7 +47,10 @@
 use std::collections::BTreeMap;
 
 use crate::bridges::{BRIDGES_TAG, Bridges, read_bridges, write_bridges};
-use crate::buildings::{BUILDINGS_TAG, Buildings, read_buildings, write_buildings};
+use crate::buildings::{
+    BUILDING_TAGS_TAG, BUILDINGS_TAG, Buildings, apply_building_tags, read_building_tags,
+    read_buildings, write_building_tags, write_buildings,
+};
 use crate::graph::{Edge, EdgeId, Oneway, RoadClass, RoadGraph, VertexId};
 use crate::graph_route::{GraphRoute, RouteStep};
 use crate::landuse::{LANDUSE_TAG, LandUse, read_landuse, write_landuse};
@@ -328,6 +334,10 @@ impl WorldPackage {
             let mut payload = Vec::new();
             write_buildings(t, &mut payload);
             sections.push((BUILDINGS_TAG, payload));
+            let mut payload = Vec::new();
+            if write_building_tags(t, &mut payload) {
+                sections.push((BUILDING_TAGS_TAG, payload));
+            }
         }
         if let Some(r) = &self.region {
             let mut payload = Vec::new();
@@ -507,6 +517,7 @@ impl WorldPackage {
         }
         let mut graph = None;
         let (mut landuse, mut buildings, mut bridges) = (None, None, None);
+        let mut building_tags = None;
         let mut routes = Vec::new();
         let mut region = None;
         let mut time_zone = None;
@@ -523,6 +534,14 @@ impl WorldPackage {
                     landuse = Some(read_landuse(payload, samples)?);
                 } else if &tag == BUILDINGS_TAG && full {
                     buildings = Some(read_buildings(payload)?);
+                } else if &tag == BUILDING_TAGS_TAG && full {
+                    // Optional styling: a layout this reader does not know
+                    // is skipped (the houses get their regional defaults).
+                    match read_building_tags(payload) {
+                        Ok(t) => building_tags = Some(t),
+                        Err(e) if e.contains("not supported") => {}
+                        Err(e) => return Err(e),
+                    }
                 } else if &tag == ROUTES_TAG {
                     routes = read_routes(payload)?;
                 } else if &tag == REGION_TAG {
@@ -558,6 +577,9 @@ impl WorldPackage {
         }
         if r.pos != bytes.len() {
             return Err("trailing bytes after the last tile or section".into());
+        }
+        if let (Some(b), Some(t)) = (buildings.as_mut(), building_tags) {
+            apply_building_tags(b, t);
         }
         Ok(Self {
             name,
@@ -1249,6 +1271,7 @@ mod tests {
                 base_y: 99.5,
                 eave_y: 106.0,
                 roof: Roof::Gabled { height_m: 3.0 },
+                tags: Default::default(),
             }],
         )]);
         // Land use alone already makes a version 2 package.
@@ -1286,6 +1309,68 @@ mod tests {
         assert_eq!(old.tiles, full.tiles);
         assert_eq!(old.graph, full.graph);
         assert_eq!((old.landuse, old.buildings), (None, None));
+    }
+
+    /// Building tags (section `BTAG`, spec §14 Phase 8 T4) come back on
+    /// their buildings; a reader that does not know the section sees the
+    /// plain `BLDG` buildings; an unknown layout is skipped, not fatal.
+    #[test]
+    fn building_tags_section_round_trips_and_is_optional() {
+        use crate::buildings::{Building, BuildingKind, BuildingTags, Roof, RoofShape};
+        let house = |tags| Building {
+            kind: BuildingKind::House,
+            outline: vec![[10.0, 10.0], [20.0, 10.0], [20.0, 18.0], [10.0, 18.0]],
+            holes: vec![],
+            base_y: 99.5,
+            eave_y: 106.0,
+            roof: Roof::Gabled { height_m: 3.0 },
+            tags,
+        };
+        let hipped = BuildingTags {
+            roof_shape: Some(RoofShape::Hipped),
+            levels: Some(2),
+            ..Default::default()
+        };
+        let p = WorldPackage {
+            buildings: Some(Buildings::from([(
+                TileKey { x: 0, z: 0 },
+                vec![house(BuildingTags::default()), house(hipped)],
+            )])),
+            ..package()
+        };
+        let b = p.to_bytes();
+        assert_eq!(WorldPackage::from_bytes(&b).unwrap(), p);
+        let tags: Vec<[u8; 4]> = section_sizes(&b).iter().map(|s| s.0).collect();
+        assert_eq!(tags, vec![*BUILDINGS_TAG, *BUILDING_TAGS_TAG]);
+        let plain = |p: &WorldPackage| {
+            let mut q = p.clone();
+            for l in q.buildings.as_mut().unwrap().values_mut() {
+                for b in l {
+                    b.tags = BuildingTags::default();
+                }
+            }
+            q
+        };
+        // An old reader: the section is unknown.
+        let mut old = b.clone();
+        let at = old
+            .windows(4)
+            .rposition(|w| w == BUILDING_TAGS_TAG)
+            .unwrap();
+        old[at] = b'x';
+        assert_eq!(WorldPackage::from_bytes(&old).unwrap(), plain(&p));
+        // A newer layout: skipped.
+        let mut newer = b.clone();
+        let at = newer
+            .windows(4)
+            .rposition(|w| w == BUILDING_TAGS_TAG)
+            .unwrap();
+        newer[at + 12..at + 16].copy_from_slice(&7u32.to_le_bytes());
+        assert_eq!(WorldPackage::from_bytes(&newer).unwrap(), plain(&p));
+        // Without tags there is no section.
+        let q = plain(&p);
+        let tags: Vec<[u8; 4]> = section_sizes(&q.to_bytes()).iter().map(|s| s.0).collect();
+        assert_eq!(tags, vec![*BUILDINGS_TAG]);
     }
 
     #[test]

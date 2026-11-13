@@ -5,12 +5,15 @@
 //! networking or devices.
 
 pub mod bridges;
+pub mod building_material;
 pub mod camera;
 pub mod console;
 pub mod event_hud;
 pub mod font;
 pub mod frame_rate;
 pub mod ground;
+pub mod house_style;
+pub mod houses;
 pub mod hud;
 pub mod junction;
 pub mod materials;
@@ -238,6 +241,7 @@ impl Plugin for OcwRenderPlugins {
             sky::SkyPlugin,
             materials::MaterialsPlugin,
             road_material::RoadMaterialPlugin,
+            building_material::BuildingMaterialPlugin,
         ));
     }
 }
