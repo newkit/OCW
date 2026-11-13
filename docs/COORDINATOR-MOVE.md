@@ -23,14 +23,14 @@ build history and the GitHub CLI login. Today that is the Debian dev machine.
 1. **Log in Claude Code on marge** as user `claude`: ssh in, run `claude`, then `/login`. Update first: `claude update`.
 2. **GitHub on marge:** `gh auth login` (HTTPS, `repo` scope), then `gh auth setup-git` so `git push` and `gh release upload` work.
 3. **Windows firewall:** allow SSH (port 22) from marge's address on the Windows build machine.
-4. **Okay to copy secrets:** `config/machines.toml` and `config/ssh/` (keys for macOS and Windows) go to marge's coordinator checkout (git-ignored, mode 600).
+4. **Secrets are copied, never committed** (user, 2026-11-13): `config/machines.toml` and `config/ssh/` (keys for macOS and Windows, `known_hosts`) are copied with `scp`/`rsync` over SSH straight into marge's `~/coord/OCW/config/` (directory 700, files 600). They are git-ignored there as here: verified that `git check-ignore` covers both and that no commit has ever contained them. After copying, check with `git status --ignored` that they show only as ignored.
 
 ## Steps for Claude (after the okay)
 
 1. Let the running agents finish and merge everything to `main`. Their worktrees live on the dev machine.
 2. **Fresh clone** on marge to `~/coord/OCW`, separate from `~/src/OCW`, which `remote.sh` keeps overwriting.
 3. **Copy** to marge:
-   - `config/machines.toml` and `config/ssh/` (after step 4 above);
+   - `config/machines.toml` and `config/ssh/` by `scp`/`rsync`, never through git (step 4 above);
    - Claude memory: `~/.claude/projects/-home-nils-data-git-OCW/memory/` → `~/.claude/projects/-home-claude-coord-OCW/memory/`;
    - `artwork/build-history/` (1.3 GB);
    - `test-output/` (0.6 GB);
