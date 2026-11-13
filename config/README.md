@@ -101,13 +101,23 @@ ignores it) and puts **before** its command line, so the command line wins
 for single-value options while repeatable ones (`--cmd`, `--at`, `--exec`)
 accumulate, the file's first. Format: words as in a shell (whitespace or
 newlines, `'…'` / `"…"` quotes, `#` comments); the file used is logged in
-`app.log`. If the pilot data is on the machine (`scripts/fetch-pilot.sh`),
-`deploy-test.sh` also rebuilds the pilot world package (land use, buildings)
-and the file gets `scripts/kiosk.args`: `--world
-/var/tmp/ocw/liechtenstein.ocwpkg`, so the kiosk's `--route-file` ride shows
-the package's terrain, land use, forests and buildings. Overrides:
-`OCW_KIOSK_ARGS='…'` (the file's content), `OCW_DEPLOY_WORLD=0` (no package
-rebuild), `OCW_DEPLOY_DIR` (install directory, for testing the script).
+`app.log`. `deploy-test.sh` also installs the world packages built on the
+machine, side by side with their manifests and route files in the install
+directory (the app joins neighbouring packages of one folder, the world menu
+lists them): `data/pilot/liechtenstein.ocwpkg` (built with
+`scripts/build-liechtenstein.sh` if missing) and the Black Forest packages
+`data/blackforest/blackforest*.ocwpkg` (`scripts/build-blackforest.sh`, not
+run by a deploy). The file gets the kiosk's world: by default
+`scripts/kiosk.args` (`--world /var/tmp/ocw/liechtenstein.ocwpkg`, so the
+kiosk's `--route-file` ride shows the package's terrain, land use, forests
+and buildings); `OCW_KIOSK_WORLD=blackforest` rides the Black Forest
+(`blackforest-north.ocwpkg` with `--route "Baden-Baden - Mummelsee"`, or the
+south with `"Freiburg - Schauinsland"` if the north is not built),
+`OCW_KIOSK_ROUTE` picks another package route. Overrides:
+`OCW_KIOSK_ARGS='…'` (the file's content), `OCW_DEPLOY_WORLD=0` (no
+packages) or `rebuild` (build the Liechtenstein package again),
+`OCW_WORLD_DATA` (another `data/` folder on the machine), `OCW_DEPLOY_DIR`
+(install directory, for testing the script).
 
 ## Per-OS prerequisites on the machines
 
