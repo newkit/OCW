@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.44 – November 2026
+Version 2.45 – November 2026
 
 | Version | Change |
 |---|---|
@@ -63,6 +63,7 @@ Version 2.44 – November 2026
 | 2.42 | Fourth world: Tenerife (§4.7), the whole island in one package (`europe/spain/tenerife`, 238 MB, 2,690 tiles, built with the world cleaning, time zone `Atlantic/Canary`) from the Geofabrik Canary Islands extract and the IGN MDT05 (5 m LiDAR, CC BY 4.0, via the IGN's OGC API Coverages; REGCAN95 / UTM 28N, grids moved onto the 5 m lattice); the sea from the OSM coastline (closed rings cut out of the package area, water at 0 m, sea floor 2 m down, shore 0.3 m up, kept at 0 m by the water cleaning, §4.6); `--tiles-near-roads` (no open-sea tiles); edge vertices of border tiles get water; routes Puerto de la Cruz - Teide, Los Cristianos - Teide, Masca - Santiago del Teide, Buenavista - Masca - Santiago del Teide, La Laguna - Anaga; showcase scenes and reference board `art/reference/tenerife.md`; missing materials noted (Phase 8) |
 | 2.43 | Phase 8 decisions: no AI-generated textures in shipped assets (Q3), no real brands or logos (Q11) |
 | 2.44 | Phase 8 decisions: no commercial release, 8A stays (Q2); orthophoto corridor size acceptable (Q4); seasonal variants (Q5); own photos postponed (Q6); Mapillary CC BY-SA, reference by eye only (Q7); 3D buildings: swissBUILDINGS3D 3.0 (Opendata BY) to confirm, LGL LoD2 probably not open, ask LGL (Q8); all texture areas in parallel (Q10) |
+| 2.45 | Licensing (§13): no licence change for now – the code stays MIT / Apache-2.0 (a switch to CC BY-SA was considered and declined) |
 
 ---
 
@@ -1824,6 +1825,7 @@ Personal data, voice data and training data are handled separately.
 | DEM-derived terrain | Depends on source | Each source's required attribution notice (Copernicus, regional providers) |
 | Imagery and land cover | Depends on source | Only sources permitted in §4.6; attribution per source |
 
+- **Licence change considered and declined (2026-11-13):** switching to CC BY-SA (for the code, or code and assets) was discussed (CC licences suit assets, not software: no patent grant, no source obligation, narrower compatibility) and the user decided to **keep MIT / Apache-2.0** for now; rule 8A (permissive third-party licences only) stays.
 - **Attribution in the app:** loading screen, about / credits screen, the in-ride minimap and the web companion map.
 - **No use of `tile.openstreetmap.org`** or other public OSM services at runtime. The use of public OSM tile servers must not be confused with the free use of the raw data. Data comes from Geofabrik extracts at build time; packages and vector tiles are served from our own infrastructure.
 - Geographic data and rendering software are considered separately from a licensing perspective.
