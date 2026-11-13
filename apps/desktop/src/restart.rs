@@ -87,10 +87,17 @@ pub fn restart_command() -> std::io::Result<std::process::Command> {
 /// Replaces this process with a fresh start of the app (Unix: `exec`, same
 /// process id; elsewhere: start it and exit). Returns only on failure.
 pub fn exec_restart() -> std::io::Error {
+    exec_restart_with(&[])
+}
+
+/// [`exec_restart`] with extra environment variables (e.g. the graphics
+/// adapter chosen by `surface`'s check).
+pub fn exec_restart_with(envs: &[(&str, &str)]) -> std::io::Error {
     let mut c = match restart_command() {
         Ok(c) => c,
         Err(e) => return e,
     };
+    c.envs(envs.iter().copied());
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;

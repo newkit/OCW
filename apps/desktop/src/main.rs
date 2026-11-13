@@ -30,6 +30,7 @@ mod restart;
 mod ride;
 mod settings;
 mod strava;
+mod surface;
 mod timemachine;
 mod trainer;
 mod video;
@@ -425,6 +426,7 @@ fn main() -> AppExit {
         recording::RecordingPlugin::default(),
         strava::StravaPlugin::default(),
         restart::RestartPlugin,
+        surface::SurfaceGuardPlugin,
         video::VideoPlugin,
         worlds::WorldsPlugin,
         menu::MenuPlugin,
@@ -437,10 +439,19 @@ fn main() -> AppExit {
     .add_systems(Startup, startup_commands)
     .add_systems(Update, timed_commands);
     let exit = app.run();
-    if restart::requested() {
+    let surface_adapter = surface::restart_adapter();
+    if surface_adapter.is_some() || restart::requested() {
         // Everything is shut down (ride saved, devices stopped): start afresh.
         drop(app);
-        let e = restart::exec_restart();
+        let e = match &surface_adapter {
+            // The adapter could not present to the window: once more on one
+            // that can (see `surface`).
+            Some(adapter) => restart::exec_restart_with(&[
+                ("WGPU_ADAPTER_NAME", adapter.as_str()),
+                (surface::RETRY_ENV, "1"),
+            ]),
+            None => restart::exec_restart(),
+        };
         eprintln!("restart failed: {e}");
     }
     exit
