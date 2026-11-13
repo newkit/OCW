@@ -47,6 +47,8 @@ connect_timeout_s = 10
 # slots          build slots (optional, see [defaults]; e.g. 4 on a 32 GB box)
 # jobs           cargo build jobs (optional; default: all cores on the main
 #                checkout, 4 on branch checkouts); e.g. 2 on an 8 GB Windows box
+# sccache_size   size of the shared compiler cache when sccache is installed
+#                there (`make deps-sccache`; optional, default "30G")
 # notes          free text
 
 [[machine]]

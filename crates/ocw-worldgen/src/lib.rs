@@ -16,12 +16,14 @@
 //! - [`chains`]: through-roads across the OSM way splits
 //! - [`profile`]: road elevation profiles (sampling, smoothing, limits)
 //! - [`package`]: road-conformed terrain and 1 km tiles → world package
+//! - [`par`]: parallel map with dynamic scheduling, results in order
 //! - [`route`]: routes through the graph with their elevation
 //! - [`svg`]: map of a road graph for visual checks
 //! - [`bridges`]: bridge detection, planned decks and structures (spec §4.8.6)
 //! - [`clean`]: world cleaning passes – polylines, near misses, junction mouths, vertical curves, terrain settling (spec §4.8)
 //! - [`lint`]: world lint – what looks physically wrong in a package (spec §4.8)
 //! - [`spatial`]: bucket index over road segments
+//! - [`stages`]: stage profile of a world build (time, CPU, peak memory)
 //! - [`water`]: river and lake levels (spec §4.8)
 
 pub mod areas;
@@ -39,9 +41,11 @@ pub mod landuse;
 pub mod lint;
 pub mod osm;
 pub mod package;
+pub mod par;
 pub mod profile;
 pub mod projection;
 pub mod route;
 pub mod spatial;
+pub mod stages;
 pub mod svg;
 pub mod water;

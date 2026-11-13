@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# cargo with a separate build directory per feature set (spec §11.2):
+# scripts/remote.sh puts this directory first on PATH on Linux and macOS.
+#
+# The voice feature (ocw-desktop/voice) changes the features of shared
+# dependencies, so a plain clippy run after a voice one (or the other way
+# round) rebuilt much of the tree in the same target/. Here a cargo call
+# whose arguments name the voice feature gets its own build directory
+# (CARGO_BUILD_BUILD_DIR={workspace-root}/target/build-voice, cargo's
+# `build.build-dir`):
+# the intermediate artefacts of the two feature sets live side by side,
+# while the final binaries still land in target/debug and target/release,
+# where scripts expect them (deploy-test.sh, build-appimage.sh). Release
+# and debug already have their own directories. A CARGO_BUILD_BUILD_DIR or
+# CARGO_TARGET_DIR set by the caller is respected; OCW_CARGO_SPLIT=0 turns
+# the split off.
+set -euo pipefail
+self_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# The real cargo: the next one on PATH after this directory.
+real=""
+IFS=: read -r -a dirs <<<"$PATH"
+for d in "${dirs[@]}"; do
+  [ -n "$d" ] || continue
+  [ "$(cd "$d" 2>/dev/null && pwd)" = "$self_dir" ] && continue
+  if [ -x "$d/cargo" ]; then real=$d/cargo; break; fi
+done
+[ -n "$real" ] || { echo "cargo-shim: no cargo on PATH" >&2; exit 127; }
+if [ "${OCW_CARGO_SPLIT:-1}" != 0 ] && [ -z "${CARGO_BUILD_BUILD_DIR:-}" ] && [ -z "${CARGO_TARGET_DIR:-}" ]; then
+  # --features ocw-desktop/voice | --features=voice,… | -F voice | ocw-voice/livekit
+  prev=""
+  for a in "$@"; do
+    case "$a" in
+      *desktop/voice* | *livekit* | --features=*voice*) voice=1 ;;
+      *voice*) case "$prev" in --features | -F) voice=1 ;; esac ;;
+    esac
+    prev=$a
+  done
+  if [ -n "${voice:-}" ]; then
+    export CARGO_BUILD_BUILD_DIR='{workspace-root}/target/build-voice'
+  fi
+fi
+exec "$real" "$@"

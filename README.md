@@ -1262,6 +1262,31 @@ scripts/deploy-test.sh <name>                                  # release build f
 - Branches other than `main` get their own checkout on the machine
   (`<repo_path>-<branch>`), several GB each; delete the ones of merged branches
   now and then.
+- Compiler cache: with `sccache` installed on a machine (`make deps-sccache`
+  there: a pinned release to `~/.local/bin`, no sudo; Windows: `make
+  deps-sccache-windows MACHINE=<name>` from here; done on marge, the Mac and
+  Win11Builder), `remote.sh` sets `RUSTC_WRAPPER` for every run, so all
+  checkouts on the machine share compiled dependencies and a new branch
+  checkout does not compile Bevy from scratch. `OCW_SCCACHE=0` turns it off
+  for one call; `sccache_size = "30G"` per machine sets the cache size.
+- A new branch checkout on a file system with copy-on-write clones (APFS on
+  the Mac, Btrfs/XFS) starts with a clone of the main checkout's `target/`
+  (`OCW_SEED=0`: off). Cargo calls with the voice feature get their own build
+  directory (`target/build-voice`, via `scripts/cargo-shim/cargo` on the
+  remote `PATH`; `OCW_CARGO_SPLIT=0`: off), so plain and voice clippy runs
+  stop rebuilding each other's dependencies.
+- `make remote-gc` lists the `target/` of remote checkouts whose agent branch
+  is gone or merged (worktree removed) with their sizes; `make remote-gc
+  GC=1` deletes them (the checkouts, the main checkout and the cache stay).
+- Waiting runs take a free slot in order of arrival (Linux, macOS). Each run
+  is logged with its slot wait, sync time, cargo's own build time and the
+  crates compiled (`test-output/build-log/*/runs.jsonl`).
+- Build profile: `make build-profile MACHINE=marge` (or
+  `scripts/remote.sh M run 'scripts/build-profile.sh --label L'`; Windows:
+  `powershell -ExecutionPolicy Bypass -File scripts/build-profile.ps1 -Label
+  L`) times clean, no-op and incremental builds with cargo's `--timings`
+  reports into `test-output/build-profile/L/`; `python3
+  scripts/build_profile.py compare A B` prints a before/after table.
 - Screenshots and videos on machines with a real GPU: use the Wayland modes
   (`shot-wayland`, `video-wayland`; headless weston). Xvfb (X11) cannot
   present a real GPU's Vulkan output.
@@ -1296,6 +1321,9 @@ to *Public* are the usual causes; the server log is in Event Viewer under
 | `scripts/build-liechtenstein.sh`, `scripts/build-blackforest.sh [south middle north]`, `scripts/build-tenerife.sh` | Build the world packages and their routes (`OCW_SRTM_ONLY=1`: SRTM terrain, for comparisons) |
 | `scripts/prepare-world-release.sh OUT PKG...` | Release zips of packages (`ocw-world-<name>-v<N>.zip` with `LICENSE-DATA.md`, `README.md`, route files) and the OSM source zip (ODbL offer); no upload |
 | `scripts/measure.py [--label T] [--out F] -- CMD` | Wall time and peak memory of a command (package builds, client runs) |
+| `world-builder package … --profile FILE` | Every package build ends with a stage table (time, CPU, cores in use, peak memory per stage); `--profile` also writes it as JSON |
+| `scripts/world-profile.sh [--data DIR] [--ref DIR] [WORLD...]` | Build Liechtenstein / Black Forest parts / Tenerife into `test-output/world-profile/` with the stage profiles and compare them byte for byte with a reference build (`--data ~/src/OCW/data` on marge) |
+| `scripts/build-profile.sh`, `scripts/build-profile.ps1` | Rust build profile: clean / no-op / incremental builds with `--timings` (`make build-profile`) |
 | `world-builder dem-import` / `dem-tiles` / `dem-diff` | High-resolution DTMs: import XYZ / GeoTIFF tiles as 2 m GeoTIFFs, list the tiles of a box, compare with SRTM |
 | `scripts/remote.sh MACHINE run 'CMD'` | Copy the tree to a build machine (`config/machines.toml`) and run a command there (`sync`, `ssh`, `fetch`, `put LOCAL... DIR`: copy git-ignored files into the checkout, `field KEY`: a machine setting for scripts) |
 | `python3 tools/build-dashboard/dashboard.py` | Web page (port 8765) with the build machines' load and their running/queued tasks; `--once` prints it as text |

@@ -49,16 +49,82 @@ pub enum OsmError {
     Pbf(#[from] osmpbf::Error),
 }
 
+/// Blobs decoded at once by [`par_elements`] (bounds the memory of the
+/// decoded blocks: a blob holds up to 8,000 elements).
+const BLOB_BATCH: usize = 256;
+
+/// Calls `f` on every element of a PBF file, as
+/// `osmpbf::ElementReader::for_each` does, but decodes the blobs on all
+/// cores (decompression and decoding are most of a pass's time). What `f`
+/// pushes comes back in file order, exactly as a sequential pass gives it.
+pub fn par_elements<T: Send>(
+    path: &Path,
+    f: impl Fn(osmpbf::Element<'_>, &mut Vec<T>) + Sync,
+) -> Result<Vec<T>, OsmError> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let threads = std::thread::available_parallelism().map_or(4, std::num::NonZero::get);
+    let mut blobs = osmpbf::BlobReader::from_path(path)?;
+    let mut out = Vec::new();
+    loop {
+        // In a Mutex each: a blob is Send but not necessarily Sync.
+        let batch: Vec<std::sync::Mutex<Option<osmpbf::Blob>>> = blobs
+            .by_ref()
+            .take(BLOB_BATCH)
+            .map(|b| b.map(|b| std::sync::Mutex::new(Some(b))))
+            .collect::<Result<_, _>>()?;
+        if batch.is_empty() {
+            return Ok(out);
+        }
+        // Each thread takes the next blob (dynamic: blobs differ in size).
+        let next = AtomicUsize::new(0);
+        let mut parts: Vec<(usize, Result<Vec<T>, osmpbf::Error>)> = std::thread::scope(|s| {
+            let handles: Vec<_> = (0..threads.min(batch.len()))
+                .map(|_| {
+                    s.spawn(|| {
+                        let mut done = Vec::new();
+                        loop {
+                            let i = next.fetch_add(1, Ordering::Relaxed);
+                            let Some(slot) = batch.get(i) else {
+                                return done;
+                            };
+                            let blob = slot
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                .take()
+                                .expect("each blob is taken once");
+                            let r = blob.decode().map(|d| {
+                                let mut v = Vec::new();
+                                if let osmpbf::BlobDecode::OsmData(block) = d {
+                                    block.for_each_element(|el| f(el, &mut v));
+                                }
+                                v
+                            });
+                            done.push((i, r));
+                        }
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .flat_map(|h| h.join().expect("PBF decoder thread"))
+                .collect()
+        });
+        parts.sort_unstable_by_key(|p| p.0);
+        for (_, r) in parts {
+            out.extend(r?);
+        }
+    }
+}
+
 impl OsmData {
     /// Reads all ways with a `highway` tag and the nodes they reference.
     pub fn read_pbf(path: &Path) -> Result<Self, OsmError> {
         // Two passes: ways first (to know which nodes are needed), then nodes.
-        let mut ways = Vec::new();
-        osmpbf::ElementReader::from_path(path)?.for_each(|el| {
+        let ways = par_elements(path, |el, out| {
             if let osmpbf::Element::Way(w) = el
                 && w.tags().any(|(k, _)| k == "highway")
             {
-                ways.push(Way {
+                out.push(Way {
                     id: w.id(),
                     nodes: w.refs().collect(),
                     tags: w
@@ -70,16 +136,17 @@ impl OsmData {
         })?;
         let needed: std::collections::HashSet<i64> =
             ways.iter().flat_map(|w| w.nodes.iter().copied()).collect();
-        let mut nodes = HashMap::with_capacity(needed.len());
-        osmpbf::ElementReader::from_path(path)?.for_each(|el| match el {
+        let found = par_elements(path, |el, out| match el {
             osmpbf::Element::Node(n) if needed.contains(&n.id()) => {
-                nodes.insert(n.id(), (n.lat(), n.lon()));
+                out.push((n.id(), (n.lat(), n.lon())));
             }
             osmpbf::Element::DenseNode(n) if needed.contains(&n.id()) => {
-                nodes.insert(n.id(), (n.lat(), n.lon()));
+                out.push((n.id(), (n.lat(), n.lon())));
             }
             _ => {}
         })?;
+        let mut nodes = HashMap::with_capacity(found.len());
+        nodes.extend(found);
         Ok(Self { nodes, ways })
     }
 
@@ -279,6 +346,161 @@ mod tests {
             nodes: nodes.to_vec(),
             tags: [("highway".to_string(), "track".to_string())].into(),
         }
+    }
+
+    /// A minimal protobuf encoder for a test PBF (spec of the format:
+    /// wiki.openstreetmap.org/wiki/PBF_Format): uncompressed blobs of plain
+    /// nodes and ways.
+    mod pbf {
+        fn varint(out: &mut Vec<u8>, mut v: u64) {
+            while v >= 0x80 {
+                out.push((v as u8) | 0x80);
+                v >>= 7;
+            }
+            out.push(v as u8);
+        }
+        fn zigzag(v: i64) -> u64 {
+            ((v << 1) ^ (v >> 63)) as u64
+        }
+        fn key(out: &mut Vec<u8>, field: u64, wire: u64) {
+            varint(out, field << 3 | wire);
+        }
+        fn bytes(out: &mut Vec<u8>, field: u64, b: &[u8]) {
+            key(out, field, 2);
+            varint(out, b.len() as u64);
+            out.extend_from_slice(b);
+        }
+        fn packed(out: &mut Vec<u8>, field: u64, vs: impl IntoIterator<Item = u64>) {
+            let mut b = Vec::new();
+            for v in vs {
+                varint(&mut b, v);
+            }
+            bytes(out, field, &b);
+        }
+
+        /// One OSMData blob: nodes (id, lat, lon) and ways (id, refs,
+        /// building) tagged highway=track, or building=yes.
+        pub fn block(nodes: &[(i64, f64, f64)], ways: &[(i64, Vec<i64>, bool)]) -> Vec<u8> {
+            // String table: "", "highway", "track", "building", "yes".
+            let mut st = Vec::new();
+            for s in ["", "highway", "track", "building", "yes"] {
+                bytes(&mut st, 1, s.as_bytes());
+            }
+            let mut group = Vec::new();
+            for &(id, lat, lon) in nodes {
+                let mut n = Vec::new();
+                key(&mut n, 1, 0);
+                varint(&mut n, zigzag(id));
+                // Granularity 100 nanodegrees.
+                key(&mut n, 8, 0);
+                varint(&mut n, zigzag((lat * 1e7).round() as i64));
+                key(&mut n, 9, 0);
+                varint(&mut n, zigzag((lon * 1e7).round() as i64));
+                bytes(&mut group, 1, &n);
+            }
+            for (id, refs, building) in ways {
+                let mut w = Vec::new();
+                key(&mut w, 1, 0);
+                varint(&mut w, *id as u64);
+                let (k, v) = if *building { (3, 4) } else { (1, 2) };
+                packed(&mut w, 2, [k]);
+                packed(&mut w, 3, [v]);
+                let mut prev = 0;
+                packed(
+                    &mut w,
+                    8,
+                    refs.iter().map(|&r| {
+                        let d = r - prev;
+                        prev = r;
+                        zigzag(d)
+                    }),
+                );
+                bytes(&mut group, 3, &w);
+            }
+            let mut block = Vec::new();
+            bytes(&mut block, 1, &st);
+            bytes(&mut block, 2, &group);
+            block
+        }
+
+        /// The file: per block a BlobHeader (length-prefixed) and a raw Blob.
+        pub fn file(blocks: &[Vec<u8>]) -> Vec<u8> {
+            let mut out = Vec::new();
+            for b in blocks {
+                let mut blob = Vec::new();
+                bytes(&mut blob, 1, b);
+                key(&mut blob, 2, 0);
+                varint(&mut blob, b.len() as u64);
+                let mut header = Vec::new();
+                bytes(&mut header, 1, b"OSMData");
+                key(&mut header, 3, 0);
+                varint(&mut header, blob.len() as u64);
+                out.extend_from_slice(&(header.len() as u32).to_be_bytes());
+                out.extend_from_slice(&header);
+                out.extend_from_slice(&blob);
+            }
+            out
+        }
+    }
+
+    fn element_id(el: &osmpbf::Element<'_>) -> i64 {
+        match el {
+            osmpbf::Element::Node(n) => n.id(),
+            osmpbf::Element::DenseNode(n) => n.id(),
+            osmpbf::Element::Way(w) => w.id(),
+            osmpbf::Element::Relation(r) => r.id(),
+        }
+    }
+
+    #[test]
+    fn parallel_pbf_passes_keep_the_file_order() {
+        use pbf::block;
+        // More blobs than one batch, of different sizes: the decoder threads
+        // finish out of order. Every fifth way is a building.
+        let blocks: Vec<Vec<u8>> = (0..600i64)
+            .map(|b| {
+                let nodes: Vec<(i64, f64, f64)> = (0..1 + b % 7)
+                    .map(|k| {
+                        let id = b * 10 + k + 1;
+                        (id, 47.0 + id as f64 * 1e-5, 9.5 - id as f64 * 1e-5)
+                    })
+                    .collect();
+                let refs: Vec<i64> = nodes.iter().map(|n| n.0).collect();
+                block(&nodes, &[(b + 1, refs, b % 5 == 4)])
+            })
+            .collect();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.osm.pbf");
+        std::fs::write(&path, pbf::file(&blocks)).unwrap();
+
+        // The same elements in the same order as a sequential pass.
+        let mut seq = Vec::new();
+        osmpbf::ElementReader::from_path(&path)
+            .unwrap()
+            .for_each(|el| seq.push(element_id(&el)))
+            .unwrap();
+        let par = par_elements(&path, |el, out| out.push(element_id(&el))).unwrap();
+        assert_eq!(seq.len(), 600 + (0..600).map(|b| 1 + b % 7).sum::<usize>());
+        assert_eq!(par, seq);
+
+        // The reader: the highway ways in file order and only their nodes.
+        let osm = OsmData::read_pbf(&path).unwrap();
+        let ids: Vec<i64> = osm.ways.iter().map(|w| w.id).collect();
+        let want: Vec<i64> = (0..600i64).filter(|b| b % 5 != 4).map(|b| b + 1).collect();
+        assert_eq!(ids, want);
+        assert_eq!(osm.ways[1].nodes, [11, 12]);
+        assert_eq!(osm.ways[0].tag("highway"), Some("track"));
+        let used: usize = (0..600).filter(|b| b % 5 != 4).map(|b| 1 + b % 7).sum();
+        assert_eq!(osm.nodes.len(), used);
+        let (lat, lon) = osm.nodes[&12];
+        assert!((lat - 47.00012).abs() < 1e-9 && (lon - 9.49988).abs() < 1e-9);
+        assert!(!osm.nodes.contains_key(&41), "a building's node");
+
+        // The areas: the building ways (tagged building=yes) and their nodes.
+        let areas = crate::areas::AreaData::read_pbf(&path).unwrap();
+        assert_eq!(areas.ways.len(), 120);
+        assert!(areas.ways.contains_key(&5) && areas.nodes.contains_key(&41));
+        assert!(!areas.nodes.contains_key(&1));
     }
 
     #[test]

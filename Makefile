@@ -4,6 +4,11 @@
 # Use the rustup toolchain even if ~/.cargo/bin is not on PATH (Debian's
 # system Rust is too old for Bevy 0.20).
 export PATH := $(HOME)/.cargo/bin:$(PATH)
+# On the build machines scripts/remote.sh sets OCW_CARGO_SHIM: its cargo
+# (one build directory per feature set, spec §11.2) stays first.
+ifneq ($(OCW_CARGO_SHIM),)
+export PATH := $(OCW_CARGO_SHIM):$(PATH)
+endif
 
 CARGO ?= cargo
 WASM_CRATES := -p ocw-core -p ocw-sim -p ocw-protocol -p ocw-world -p ocw-voice -p ocw-sky
@@ -70,9 +75,9 @@ VIDEO ?= /tmp/ocw.mp4
 VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 
 .DEFAULT_GOAL := help
-.PHONY: help version version-next version-bump test-release-version release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust build release lint fmt fmt-check \
+.PHONY: help version version-next version-bump test-release-version release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
 	clippy check run server deploy-test clean clean-test-output macos-app \
-	test test-unit test-wasm test-kiosk test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
+	test test-unit test-wasm test-kiosk test-remote build-profile remote-gc test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
 	test-multiplayer test-multiplayer-local test-scenes test-scenes-list \
 	wasm screenshot screenshot-wayland smoke video video-wayland
 
@@ -177,6 +182,38 @@ deps-rust: ## Linux/macOS: rustup (if missing) + the pinned toolchain incl. wasm
 	rustup show active-toolchain || rustup toolchain install
 	@echo "Toolchain ready. Add ~/.cargo/bin to PATH (e.g. '. \"\$$HOME/.cargo/env\"' in ~/.profile) to use cargo outside make."
 
+# sccache (spec §11.2): a compiler cache on each build machine, shared by
+# all its checkouts (every agent worktree has its own checkout and target/),
+# so a new checkout takes the dependencies (Bevy, …) from the cache instead
+# of compiling them. scripts/remote.sh uses it when ~/.local/bin/sccache
+# exists (OCW_SCCACHE=0 turns it off). The release binary is pinned by
+# version and SHA-256 (mozilla/sccache GitHub release, Apache-2.0).
+SCCACHE_VERSION := 0.18.0
+SCCACHE_BIN ?= $(HOME)/.local/bin/sccache
+SCCACHE_SHA256_x86_64-unknown-linux-musl := 45f1447fbe231e3037bde351ef70677dd212216c8d62ae7ca409fecc4d6acc89
+SCCACHE_SHA256_aarch64-apple-darwin := 308184519b646f5125289e8515b36f6ca65a13a041923994aebe702348674e8e
+SCCACHE_SHA256_x86_64-pc-windows-msvc := 8965c74d5e8a225244f741e18ad2f3f504f48228dc1bac948fc22761a348363d
+
+deps-sccache-windows: ## Windows build machine MACHINE (run from here): sccache $(SCCACHE_VERSION), MSVC build (pinned, SHA-256 checked) to %USERPROFILE%\.local\bin
+	@[ -n "$(MACHINE)" ] || { echo "usage: make deps-sccache-windows MACHINE=<windows machine>" >&2; exit 2; }
+	scripts/remote.sh $(MACHINE) run 'powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-sccache.ps1 -Version $(SCCACHE_VERSION) -Sha256 $(SCCACHE_SHA256_x86_64-pc-windows-msvc)'
+
+deps-sccache: ## Linux x86_64 / macOS arm64: sccache $(SCCACHE_VERSION) (pinned, SHA-256 checked) to ~/.local/bin (no sudo; used by scripts/remote.sh)
+	@set -e; case "$$(uname -s)-$$(uname -m)" in \
+		Linux-x86_64) t=x86_64-unknown-linux-musl; sum=$(SCCACHE_SHA256_x86_64-unknown-linux-musl) ;; \
+		Darwin-arm64) t=aarch64-apple-darwin; sum=$(SCCACHE_SHA256_aarch64-apple-darwin) ;; \
+		*) echo "no pinned sccache build for $$(uname -sm)" >&2; exit 1 ;; esac; \
+	if "$(SCCACHE_BIN)" --version 2>/dev/null | grep -qx "sccache $(SCCACHE_VERSION)"; then \
+		echo "sccache $(SCCACHE_VERSION) already installed: $(SCCACHE_BIN)"; exit 0; fi; \
+	tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; name=sccache-v$(SCCACHE_VERSION)-$$t; \
+	curl --proto '=https' --tlsv1.2 -fsSL -o "$$tmp/$$name.tar.gz" \
+		"https://github.com/mozilla/sccache/releases/download/v$(SCCACHE_VERSION)/$$name.tar.gz"; \
+	got=$$( (sha256sum "$$tmp/$$name.tar.gz" 2>/dev/null || shasum -a 256 "$$tmp/$$name.tar.gz") | cut -d' ' -f1); \
+	[ "$$got" = "$$sum" ] || { echo "sccache download: SHA-256 $$got, expected $$sum" >&2; exit 1; }; \
+	tar -xzf "$$tmp/$$name.tar.gz" -C "$$tmp"; \
+	mkdir -p "$(dir $(SCCACHE_BIN))"; install -m 755 "$$tmp/$$name/sccache" "$(SCCACHE_BIN)"; \
+	"$(SCCACHE_BIN)" --version
+
 build: ## Debug build of all crates and apps (with voice if clang-21 is installed)
 	$(VOICE_ENV) $(CARGO) build --workspace $(VOICE_FEATURES)
 
@@ -208,6 +245,20 @@ test-wasm: ## Check that the core crates build for wasm32-unknown-unknown (spec 
 
 test-kiosk: ## Test the kiosk script with a fake app (no display or build needed)
 	scripts/test-kiosk.sh
+
+remote-gc: ## Build machines: list the target/ of merged or gone agent checkouts and their size (GC=1 deletes them; MACHINES="a b" limits)
+	GC=$(GC) scripts/remote-gc.sh $(MACHINES)
+
+test-remote: ## Test remote.sh's build-slot order and the build-log parser (no machine needed)
+	scripts/test-remote.sh
+
+# Build profile (spec §11.2): clean, no-op and incremental builds of the main
+# cargo commands on MACHINE, with cargo's --timings reports, fetched into
+# test-output/build-profile/. Takes about 45 min on marge (one build slot).
+BUILD_PROFILE_LABEL ?= $(or $(MACHINE),marge)-$(shell date +%Y%m%d-%H%M)
+build-profile: ## Profile clean/no-op/incremental builds on MACHINE (default marge) into test-output/build-profile/
+	scripts/remote.sh $(or $(MACHINE),marge) run 'scripts/build-profile.sh --label $(BUILD_PROFILE_LABEL)'
+	scripts/remote.sh $(or $(MACHINE),marge) fetch test-output/build-profile test-output
 
 check: lint test-unit test-wasm ## fmt, clippy, tests, wasm (CI also runs the smoke tests)
 

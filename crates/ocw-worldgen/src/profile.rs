@@ -648,19 +648,25 @@ pub fn add_profiles(graph: &mut RoadGraph, dem: &Dem, proj: &LocalProjection) ->
         max_m: f64::NEG_INFINITY,
         ..Default::default()
     };
-    // Pass 1: raw and smoothed profiles.
-    let mut raws = Vec::with_capacity(graph.edges.len());
-    let mut smooths = Vec::with_capacity(graph.edges.len());
-    for e in &graph.edges {
+    // Pass 1: raw and smoothed profiles; the DEM sampling of each edge is
+    // independent, so on all cores (results in edge order, crate::par).
+    crate::stages::start("DEM samples");
+    let per_edge = crate::par::map(&graph.edges, crate::par::threads(), |e| {
         let pts = resample(&e.points, PROFILE_STEP_M);
         let raw: Vec<Option<f64>> = pts.iter().map(|&p| height(p)).collect();
-        if raw.iter().any(Option::is_none) {
-            stats.missing_dem += 1;
-        }
+        let missing = raw.iter().any(Option::is_none);
         let fallback = raw.iter().flatten().next().copied().unwrap_or(0.0);
         let raw: Vec<f64> = raw.iter().map(|v| v.unwrap_or(fallback)).collect();
         let sigma = smoothing_sigma_m(e.class) / PROFILE_STEP_M;
-        smooths.push(gaussian(&median_filter(&raw, 2), sigma));
+        let smooth = gaussian(&median_filter(&raw, 2), sigma);
+        (raw, smooth, missing)
+    });
+    crate::stages::end();
+    let mut raws = Vec::with_capacity(graph.edges.len());
+    let mut smooths = Vec::with_capacity(graph.edges.len());
+    for (raw, smooth, missing) in per_edge {
+        stats.missing_dem += usize::from(missing);
+        smooths.push(smooth);
         raws.push(raw);
     }
     // Pass 2: junction heights by consensus.
@@ -686,11 +692,15 @@ pub fn add_profiles(graph: &mut RoadGraph, dem: &Dem, proj: &LocalProjection) ->
         })
         .collect();
     let anchored: Vec<bool> = sum.iter().map(|&(_, n)| n > 0).collect();
-    interpolate_along_structures(graph, &anchored, &mut vertex_h);
-    relax_junction_heights(graph, &mut vertex_h);
+    crate::stages::time("junction heights", || {
+        interpolate_along_structures(graph, &anchored, &mut vertex_h);
+        relax_junction_heights(graph, &mut vertex_h);
+    });
     // Pass 3: filtered along whole roads (through the OSM splits), then
     // bridges and tunnels linear between their ends.
-    let mut along_roads = filter_through_roads(&*graph, &height, &mut vertex_h);
+    let mut along_roads = crate::stages::time("through roads", || {
+        filter_through_roads(&*graph, &height, &mut vertex_h)
+    });
     for (i, e) in graph.edges.iter_mut().enumerate() {
         let len = e.length_m();
         let smooth = &smooths[i];
@@ -717,7 +727,9 @@ pub fn add_profiles(graph: &mut RoadGraph, dem: &Dem, proj: &LocalProjection) ->
     // Pass 4: the class limit across junctions (short connectors between
     // roads filtered on their own, bridges between junctions of different
     // roads).
-    limit_grades_across_junctions(graph, &mut vertex_h);
+    crate::stages::time("grades across junctions", || {
+        limit_grades_across_junctions(graph, &mut vertex_h);
+    });
     for (i, e) in graph.edges.iter().enumerate() {
         let len = e.length_m();
         let raw = &raws[i];
