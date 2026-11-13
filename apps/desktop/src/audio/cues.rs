@@ -35,13 +35,15 @@ pub enum Cue {
     GodChime,
     /// A soft wing beat (a downstroke of the unicorn's wings).
     WingBeat,
+    /// A muffled hoof beat on air (the unicorn's gallop while slow).
+    Hoof,
     /// A test tone on a bus (`audio.play test-music` …).
     Test(Bus),
 }
 
 impl Cue {
     /// The names `audio.play` takes.
-    pub const NAMES: [(&'static str, Cue); 16] = [
+    pub const NAMES: [(&'static str, Cue); 17] = [
         ("move", Cue::UiMove),
         ("value", Cue::UiValue),
         ("confirm", Cue::UiConfirm),
@@ -53,6 +55,7 @@ impl Cue {
         ("shift", Cue::GearShift),
         ("chime", Cue::GodChime),
         ("wing", Cue::WingBeat),
+        ("hoof", Cue::Hoof),
         ("test-music", Cue::Test(Bus::Music)),
         ("test-effects", Cue::Test(Bus::Effects)),
         ("test-voice", Cue::Test(Bus::Voice)),
@@ -86,6 +89,7 @@ impl Cue {
             Cue::GearShift => 0.09,
             Cue::GodChime => 1.3,
             Cue::WingBeat => 0.38,
+            Cue::Hoof => 0.14,
             Cue::Test(_) => 0.8,
         }
     }
@@ -127,6 +131,7 @@ impl CueVoice {
             noise: Noise::new(0xC0E5 + cue.duration_s().to_bits()),
             filter: match cue {
                 Cue::WingBeat => Svf::new(380.0, 0.8, sample_rate),
+                Cue::Hoof => Svf::new(240.0, 0.9, sample_rate),
                 _ => Svf::new(2600.0, 2.0, sample_rate),
             },
         }
@@ -180,6 +185,14 @@ impl CueVoice {
                 let low = self.filter.process(n).low;
                 let env = (t / 0.12).min(1.0) * (-(t - 0.12).max(0.0) / 0.08).exp();
                 low * 0.5 * env
+            }
+            // A soft, low thud through cloth: a 75 Hz knock dying away and
+            // a little low-passed noise (muffled: nothing above ~250 Hz).
+            Cue::Hoof => {
+                let n = self.noise.white();
+                let low = self.filter.process(n).low;
+                let env = (t / 0.004).min(1.0) * (-t / 0.03).exp();
+                tone(t, 0.0, 0.14, 75.0, 0.32) + low * 0.6 * env
             }
             Cue::Test(Bus::Music) => tone(t, 0.0, 0.8, 440.0, 0.3) + tone(t, 0.0, 0.8, 554.4, 0.2),
             Cue::Test(Bus::Effects) => tone(t, 0.0, 0.8, 660.0, 0.35),

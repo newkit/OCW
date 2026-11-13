@@ -132,16 +132,36 @@ turns into a unicorn and flies freely over the world. While flying:
 | Boost ×4 / precise ×0.25 | Shift / Ctrl | South (A / ✕): boost |
 | Base speed ×0.25 … ×8 (in the HUD) | mouse wheel | |
 | First-person view from the unicorn's head | C | |
+| Inspection panel and crosshair on / off | I | |
+| Put a pin where the crosshair points (kept for the ride; `god.pins` lists them) | P | |
+
+Touch (spec §3.2.2): one finger dragged on the view looks around, two
+fingers move like a stick (push them up to fly forward, sideways to strafe)
+and spreading / pinching them changes the speed scale; the **+** / **−**
+buttons at the right edge (shown for 8 s after a touch) climb and descend.
+
+**Inspection** (I, on by default): a panel top right with the altitude,
+speed, speed factor, heading, the position in package metres, latitude /
+longitude, the tile and the local time of the place; a crosshair in the
+middle names what it points at – the road (name, OSM way, class, surface,
+width, bridge / tunnel, gradient in the looking direction), a building (its
+use, levels, roof shape and height), water, the land-use area and the
+elevation. P puts a magenta pin there; `god.pins` lists the pins with their
+coordinates and a `--start X,Z` to copy for a free ride from that spot.
 
 The speed grows with the height above the ground (20 m/s close to it, 400 m/s
 from 760 m up; at most 1,600 m/s with the boost). The unicorn keeps 2 m
-above terrain, water and buildings and stays below 8,000 m; it is stopped
+above terrain, water, buildings and tree crowns and stays below 8,000 m; it is stopped
 softly 200 m outside the world. A glowing ring marks where G will land: the
 nearest road (free ride) or the nearest point of the route. The riding keys
 (A, W, U, J, Q / E) do nothing while flying; the trainer simulates a flat
 road in SIM mode (ERG keeps its target), and no distance is counted.
 On a shared server only the host may fly (`ocw-server --god-control
-anyone|host|nobody`), never during a running event.
+anyone|host|nobody`), never during a running event. The HUD's rider count
+says how many fly ("riders: 4 (1 flying)"), `ride.riders` lists who. The
+tiles stream ahead of the flight and wider with the height; above 1,500 m
+over the ground only the terrain is drawn (no trees and houses). The FIT
+file gets a marker at both ends of a flight.
 
 **Menu** (spec §3.2.1): ↑ / ↓ (or Tab / Shift+Tab, the D-pad, the left
 stick; held: repeats) move the focus, Enter / Space / South (A / ✕) or a click
@@ -892,6 +912,9 @@ for now).
 | `god.view flight\|first` | The flight camera behind the unicorn, or first-person from its head (C) |
 | `god.pose X Z HEIGHT [YAW] [PITCH]` | Dev: move the unicorn to local X,Z metres, HEIGHT above the ground, heading YAW degrees (0 = north, 90 = east), PITCH up |
 | `god.cruise FORWARD [CLIMB] [TURN]` | Dev: fly by itself (−1 … 1, turn in deg/s, positive = left; `god.cruise 0` stops) – scenes and videos |
+| `god.inspect [on\|off]` | The inspection panel and the crosshair (I); without an argument: what the crosshair points at |
+| `god.pin`, `god.pins [list\|clear]` | Put a pin where the crosshair points (P); list the pins with coordinates and `--start X,Z`, or remove them |
+| `ride.riders` | The riders of the ride and who of them flies in god mode |
 | `god.trail on\|off`, `god.invert on\|off` | The rainbow trail; invert the mouse's Y (settings `display.unicorn_trail`, `controls.invert_y`) |
 | **Camera** | |
 | `camera.mode chase\|side\|top` | Camera perspective |

@@ -111,7 +111,9 @@ pub fn yaw_of(d: [f64; 2]) -> f64 {
 pub fn heading_deg(yaw: f64) -> f64 {
     let f = forward(yaw);
     // North is −z, east +x.
-    f[0].atan2(-f[1]).to_degrees().rem_euclid(360.0)
+    // + 0.0 turns −0 into 0 ("-00°" in the HUD); 360 rounds back to 0.
+    let h = f[0].atan2(-f[1]).to_degrees().rem_euclid(360.0) + 0.0;
+    if h >= 359.999_999 { 0.0 } else { h }
 }
 
 /// What the rider asks of the flight this frame. The movement values are
@@ -644,6 +646,19 @@ pub fn gallop_hz(speed_mps: f64) -> f64 {
     (0.6 + speed_mps / 25.0).min(2.4)
 }
 
+/// The hooves are heard (muffled, on air) below this speed (m/s, spec
+/// §14 Phase 13C: "a gallop of hooves on air while slow").
+pub const HOOVES_BELOW_MPS: f64 = 12.0;
+
+/// Hoof beats per second: four per gallop stride while slow, none faster.
+pub fn hoof_beat_hz(speed_mps: f64) -> f64 {
+    if speed_mps < HOOVES_BELOW_MPS {
+        4.0 * gallop_hz(speed_mps)
+    } else {
+        0.0
+    }
+}
+
 /// How far the legs are tucked in (0 … 1) at `speed_mps`.
 pub fn legs_tucked(speed_mps: f64) -> f64 {
     ((speed_mps - 60.0) / 140.0).clamp(0.0, 1.0)
@@ -975,6 +990,14 @@ mod tests {
         assert!(wing_beat_hz(0.0, 50.0, 30.0) > 1.5);
         assert_eq!(wing_beat_hz(-10.0, 0.0, 30.0), 0.0, "glides down");
         assert!(gallop_hz(100.0) > gallop_hz(10.0));
+        // North is 0°, never "-0°" (bug 2026-11-13: the HUD said "-00° N").
+        assert!(heading_deg(0.0).is_sign_positive() && heading_deg(0.0) == 0.0);
+        assert_eq!(format!("{:03.0}", heading_deg(1e-12)), "000");
+        // Hooves while slow: four beats a stride; none at speed.
+        assert!((hoof_beat_hz(0.0) - 2.4).abs() < 1e-9);
+        assert!(hoof_beat_hz(11.0) > hoof_beat_hz(0.0));
+        assert_eq!(hoof_beat_hz(HOOVES_BELOW_MPS), 0.0);
+        assert_eq!(hoof_beat_hz(200.0), 0.0);
         assert_eq!(legs_tucked(20.0), 0.0);
         assert_eq!(legs_tucked(400.0), 1.0);
         assert_eq!(wing_spread(0.0, 0.0), 0.0, "folded while hovering");

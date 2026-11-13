@@ -263,6 +263,8 @@ struct CueWatch {
     /// God mode: flying, and the wing beat's phase.
     flying: bool,
     wing: f64,
+    /// The hoof beats' phase.
+    hoof: f64,
 }
 
 /// UI sounds from the menu's changes, the countdown beeps and the finish
@@ -317,6 +319,15 @@ fn play_cues(
             watch.wing += beat * time.delta_secs_f64();
             if watch.wing.floor() > before.floor() {
                 cues.push(Cue::WingBeat);
+            }
+        }
+        // Muffled hooves on air while slow (spec §14 Phase 13C).
+        let hooves = local.map_or(0.0, |u| ocw_sim::god::hoof_beat_hz(u.speed_mps));
+        if hooves > 0.0 {
+            let before = watch.hoof;
+            watch.hoof += hooves * time.delta_secs_f64();
+            if watch.hoof.floor() > before.floor() {
+                cues.push(Cue::Hoof);
             }
         }
     }

@@ -414,6 +414,19 @@ impl WorldSet {
     /// [`UNLOAD_DISTANCE_M`]), at most [`MAX_RESIDENT_NEIGHBOURS`], nearest
     /// first. `loading` are the loads already under way.
     pub fn plan_residency(&self, p: [f64; 2], loading: &BTreeSet<usize>) -> Vec<Residency> {
+        self.plan_residency_reach(p, 0.0, loading)
+    }
+
+    /// [`Self::plan_residency`] with both distances grown by `extra_m`: god
+    /// mode's look-ahead (spec §14 Phase 13D: neighbours load within 3 km
+    /// plus 10 s of flight).
+    pub fn plan_residency_reach(
+        &self,
+        p: [f64; 2],
+        extra_m: f64,
+        loading: &BTreeSet<usize>,
+    ) -> Vec<Residency> {
+        let extra = extra_m.max(0.0);
         let mut near: Vec<(f64, usize)> = self
             .members
             .iter()
@@ -422,7 +435,8 @@ impl WorldSet {
             .filter_map(|(i, m)| {
                 let d = m.distance(p);
                 let keep = m.is_resident() || loading.contains(&i);
-                (d < LOAD_DISTANCE_M || (keep && d < UNLOAD_DISTANCE_M)).then_some((d, i))
+                (d < LOAD_DISTANCE_M + extra || (keep && d < UNLOAD_DISTANCE_M + extra))
+                    .then_some((d, i))
             })
             .collect();
         near.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -707,6 +721,12 @@ mod tests {
         set.set_resident(1, None);
         // 4 km from the border: not yet (load at 3 km).
         assert!(set.plan_residency([-4000.0, 0.0], &none).is_empty());
+        // God mode's look-ahead (spec §14 Phase 13D): 3 km + 10 s of a
+        // 200 m/s flight reach it.
+        assert_eq!(
+            set.plan_residency_reach([-4000.0, 0.0], 2000.0, &none),
+            vec![Residency::Load(1)]
+        );
         assert_eq!(
             set.plan_residency([-2500.0, 0.0], &none),
             vec![Residency::Load(1)]

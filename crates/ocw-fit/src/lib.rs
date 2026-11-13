@@ -36,9 +36,30 @@ const EVENT_TIMER: u8 = 0;
 const EVENT_SESSION: u8 = 8;
 const EVENT_LAP: u8 = 9;
 const EVENT_ACTIVITY: u8 = 26;
+const EVENT_USER_MARKER: u8 = 32;
 const EVENT_TYPE_START: u8 = 0;
 const EVENT_TYPE_STOP: u8 = 1;
 const EVENT_TYPE_STOP_ALL: u8 = 4;
+const EVENT_TYPE_MARKER: u8 = 3;
+
+/// A marker in the activity (an `event` message `user_marker` / `marker`
+/// whose `data` says what it marks).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Marker {
+    /// Seconds since the start of the activity.
+    pub elapsed_s: f64,
+    pub kind: MarkerKind,
+}
+
+/// What a [`Marker`] marks; the value is the event's `data`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum MarkerKind {
+    /// God mode began (spec §14 Phase 13E): the rider flies, no distance.
+    GodModeStart = 1,
+    /// God mode ended: back on the road.
+    GodModeEnd = 2,
+}
 
 /// One sample of the ride (typically 1 Hz).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -73,6 +94,9 @@ pub struct Activity {
     /// records or closer than a second to another are ignored; empty: the
     /// whole activity is one lap.
     pub laps: Vec<f64>,
+    /// Markers (god mode's start and end), written as `event` messages at
+    /// their time among the records.
+    pub markers: Vec<Marker>,
 }
 
 impl Activity {
@@ -360,7 +384,25 @@ pub fn encode(activity: &Activity) -> Vec<u8> {
         );
     };
     event(&mut w, start, EVENT_TIMER, EVENT_TYPE_START);
+    let mut markers: Vec<Marker> = activity.markers.clone();
+    markers.sort_by(|a, b| a.elapsed_s.total_cmp(&b.elapsed_s));
+    let mut markers = markers.into_iter().peekable();
+    let marker = |w: &mut Writer, m: Marker| {
+        let ts = start.saturating_add(m.elapsed_s.max(0.0).round().min(f64::from(u32::MAX)) as u32);
+        w.message(
+            MESG_EVENT,
+            &[
+                (253, Value::U32(Some(ts))),
+                (0, Value::Enum(Some(EVENT_USER_MARKER))),
+                (1, Value::Enum(Some(EVENT_TYPE_MARKER))),
+                (3, Value::U32(Some(m.kind as u32))),
+            ],
+        );
+    };
     for r in &activity.records {
+        while let Some(m) = markers.next_if(|m| m.elapsed_s <= r.elapsed_s) {
+            marker(&mut w, m);
+        }
         let (lat, lon) = match r.position {
             Some((lat, lon)) => (Some(semicircles(lat)), Some(semicircles(lon))),
             None => (None, None),
@@ -379,6 +421,9 @@ pub fn encode(activity: &Activity) -> Vec<u8> {
                 (7, u16_of(r.power_w, 1.0, 0.0)),
             ],
         );
+    }
+    for m in markers {
+        marker(&mut w, m);
     }
     event(&mut w, end, EVENT_TIMER, EVENT_TYPE_STOP_ALL);
 
@@ -512,6 +557,7 @@ mod tests {
             product_name: "Open Cycling World".into(),
             software_version: 10,
             laps: Vec::new(),
+            markers: Vec::new(),
         }
     }
 
@@ -657,6 +703,45 @@ mod tests {
         };
         assert_eq!(ts(laps[1], "start_time"), ts(laps[0], "timestamp"));
         assert_eq!(ts(laps[2], "start_time"), a.start_unix_s + 400);
+    }
+
+    /// God mode's markers (spec §14 Phase 13E): `user_marker` events at
+    /// their time among the records, `data` 1 (start) and 2 (end).
+    #[test]
+    fn markers_are_user_marker_events_in_time() {
+        let mut a = ride(20, true);
+        a.markers = vec![
+            Marker {
+                elapsed_s: 12.0,
+                kind: MarkerKind::GodModeEnd,
+            },
+            Marker {
+                elapsed_s: 5.0,
+                kind: MarkerKind::GodModeStart,
+            },
+        ];
+        let msgs = fitparser::from_bytes(&encode(&a)).expect("valid FIT file");
+        let events = of_kind(&msgs, MesgNum::Event);
+        let text = |m: &FitDataRecord, name: &str| field(m, name).map(|v| v.to_string());
+        let markers: Vec<&FitDataRecord> = events
+            .iter()
+            .copied()
+            .filter(|m| text(m, "event").as_deref() == Some("user_marker"))
+            .collect();
+        assert_eq!(markers.len(), 2, "{events:?}");
+        for (m, data, at) in [(markers[0], 1.0, 5), (markers[1], 2.0, 12)] {
+            assert_eq!(text(m, "event_type").as_deref(), Some("marker"));
+            assert_eq!(field(m, "data").and_then(num), Some(data));
+            match field(m, "timestamp") {
+                Some(V::Timestamp(t)) => assert_eq!(t.timestamp(), a.start_unix_s + at),
+                other => panic!("{other:?}"),
+            }
+        }
+        // In time order among the records: the first marker comes after
+        // the record of second 4 and before the one of second 5.
+        let pos = |p: &FitDataRecord| msgs.iter().position(|m| std::ptr::eq(m, p)).unwrap();
+        let records = of_kind(&msgs, MesgNum::Record);
+        assert!(pos(records[4]) < pos(markers[0]) && pos(markers[0]) < pos(records[5]));
     }
 
     #[test]

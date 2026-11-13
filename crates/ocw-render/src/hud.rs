@@ -148,7 +148,7 @@ impl Units {
 
 /// The HUD's panels (hidden with `hud off`).
 #[derive(Component)]
-struct HudPanel;
+pub(crate) struct HudPanel;
 
 /// Shows or hides the HUD panels.
 fn show_hud(show: Res<ShowHud>, mut panels: Query<&mut Visibility, With<HudPanel>>) {
@@ -805,6 +805,17 @@ pub fn compass(deg: f64) -> &'static str {
     POINTS[((deg.rem_euclid(360.0) + 22.5) / 45.0) as usize % 8]
 }
 
+/// "riders: 4", with how many of them fly in god mode (spec §14 Phase
+/// 13E: who flies is seen at a glance): "riders: 4 (1 flying)".
+pub fn riders_count(view: &RideView) -> String {
+    let flying = view.unicorns.len();
+    if flying == 0 {
+        format!("riders: {}", view.riders.len())
+    } else {
+        format!("riders: {} ({flying} flying)", view.riders.len())
+    }
+}
+
 /// The flight panel's line (god mode, spec §14 Phase 13D): altitude above
 /// sea level and above the ground, speed, the wheel's speed factor and
 /// the heading.
@@ -908,9 +919,9 @@ fn update_hud(
     };
     let (distance, distance_unit) = units.distance(local.state.distance);
     let mut lines = format!(
-        "{place} | {distance:.2} {distance_unit} | {} | riders: {}\n{keys} | mouse: camera, C: camera reset, R: restart, V: video | F11: screen | ` or F12: console",
+        "{place} | {distance:.2} {distance_unit} | {} | {}\n{keys} | mouse: camera, C: camera reset, R: restart, V: video | F11: screen | ` or F12: console",
         format_time(view.elapsed_s),
-        view.riders.len()
+        riders_count(&view)
     );
     if !view.status.is_empty() {
         lines.push('\n');
@@ -988,6 +999,28 @@ mod tests {
         assert_eq!(row, Display::None);
         assert_eq!(msg_display, Display::Flex);
         assert_eq!(msg, "Video saved: a.mp4");
+    }
+
+    #[test]
+    fn the_riders_count_says_who_flies() {
+        let mut v = RideView::new(ocw_world::Route::test_loop());
+        assert_eq!(riders_count(&v), "riders: 0");
+        v.unicorns.push(crate::UnicornView {
+            id: ocw_core::RiderId(2),
+            name: "Ada".into(),
+            is_local: false,
+            pos: [0.0; 3],
+            yaw: 0.0,
+            pitch: 0.0,
+            speed_mps: 0.0,
+            climb_mps: 0.0,
+            turn_rate: 0.0,
+            accel: 0.0,
+            age_s: 1.0,
+            landing: false,
+            colour: ocw_core::Rgb(0),
+        });
+        assert_eq!(riders_count(&v), "riders: 0 (1 flying)");
     }
 
     #[test]

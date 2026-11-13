@@ -10,12 +10,14 @@ pub mod camera;
 pub mod console;
 pub mod event_hud;
 pub mod far_terrain;
+pub mod flight_world;
 pub mod font;
 pub mod frame_rate;
 pub mod ground;
 pub mod house_style;
 pub mod houses;
 pub mod hud;
+pub mod inspect_hud;
 pub mod junction;
 pub mod materials;
 pub mod media;
@@ -94,6 +96,18 @@ pub struct RideView {
     /// Riders in god mode, drawn as unicorns (the local one too); their
     /// avatars are hidden once the transformation has turned them.
     pub unicorns: Vec<UnicornView>,
+    /// God mode's pins (P, spec §14 Phase 13D): kept for the ride, drawn
+    /// as glowing beams with their number.
+    pub pins: Vec<PinView>,
+}
+
+/// A pin put in god mode (spec §14 Phase 13D).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PinView {
+    /// Its number (1, 2, …), shown over the beam.
+    pub number: u32,
+    /// Where it stands (local metres; the foot, on the ground).
+    pub pos: [f64; 3],
 }
 
 /// The local rider's flight in god mode (spec §14 Phase 13B, 13D).
@@ -117,6 +131,18 @@ pub struct FlightView {
     pub leaving: bool,
     /// The keys line of the flight HUD.
     pub keys: String,
+    /// Horizontal velocity (m/s; x, z): the tiles stream ahead of it
+    /// (spec §14 Phase 13D).
+    pub velocity: [f64; 2],
+    /// The inspection panel (I): position, latitude / longitude, tile,
+    /// local time; empty = hidden.
+    pub panel: Vec<String>,
+    /// The crosshair (shown with the panel) and what it points at, one
+    /// line per thing; `None` = hidden.
+    pub crosshair: Option<Vec<String>>,
+    /// The touch controls of the flight are shown (the last input was a
+    /// touch, spec §3.2.2).
+    pub touch: bool,
 }
 
 /// A unicorn to draw (spec §14 Phase 13C): a rider in god mode.
@@ -175,6 +201,7 @@ impl RideView {
             sky: None,
             flight: None,
             unicorns: Vec::new(),
+            pins: Vec::new(),
         }
     }
 
@@ -310,6 +337,7 @@ impl Plugin for OcwRenderPlugins {
             road_material::RoadMaterialPlugin,
             unicorn::UnicornPlugin,
             building_material::BuildingMaterialPlugin,
+            inspect_hud::InspectHudPlugin,
         ));
     }
 }
@@ -334,6 +362,9 @@ pub fn rebuild_scene(world: &mut World) {
     riders::reset_avatars(world);
     if let Some(mut o) = world.get_resource_mut::<camera::CameraObstacles>() {
         o.clear();
+    }
+    if let Some(mut o) = world.get_resource_mut::<flight_world::FlightObstacles>() {
+        o.0.clear();
     }
     if let Some(mut t) = world.get_resource_mut::<tunnel::Tunnels>() {
         t.reset();
