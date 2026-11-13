@@ -45,6 +45,9 @@ pub struct Relation {
     pub members: Vec<(i64, Role)>,
 }
 
+/// A ring or line of (lat, lon) points.
+pub type LatLonRing = Vec<(f64, f64)>;
+
 /// An area in lat/lon: rings closed implicitly (first point not repeated).
 #[derive(Debug, Clone, PartialEq)]
 pub struct OsmArea<'a> {
@@ -181,8 +184,11 @@ impl AreaData {
             .iter()
             .flat_map(|r| r.members.iter().map(|m| m.0))
             .collect();
+        // Coastlines are kept whole: an island's coast is many ways, and
+        // only the closed ring tells land from sea (see [`Self::coastlines`]).
         self.ways.retain(|id, w| {
             members.contains(id)
+                || is_coastline(&w.tags)
                 || way_box_overlaps(w.nodes.iter().filter_map(|n| nodes.get(n)), bounds)
         });
         let used: HashSet<i64> = self
@@ -245,6 +251,29 @@ impl AreaData {
         out
     }
 
+    /// The coastline (`natural=coastline` ways, land on their left, spec
+    /// §4.6) joined into closed rings – the coasts of islands – and the
+    /// pieces that do not close (a mainland coast cut off by the extract),
+    /// both in lat/lon without the repeated closing point.
+    pub fn coastlines(&self) -> (Vec<LatLonRing>, Vec<LatLonRing>) {
+        let mut ids: Vec<&i64> = self
+            .ways
+            .iter()
+            .filter(|(_, w)| is_coastline(&w.tags))
+            .map(|(id, _)| id)
+            .collect();
+        ids.sort();
+        let parts: Vec<&[i64]> = ids
+            .iter()
+            .map(|id| self.ways[id].nodes.as_slice())
+            .collect();
+        let (rings, open) = assemble(&parts);
+        (
+            rings.iter().filter_map(|r| self.coords(r)).collect(),
+            open.iter().filter_map(|r| self.coords(r)).collect(),
+        )
+    }
+
     /// Open ways with a `waterway` tag (rivers, streams, canals).
     pub fn waterways(&self) -> Vec<(&Way, Vec<(f64, f64)>)> {
         let mut out: Vec<_> = self
@@ -263,8 +292,19 @@ impl AreaData {
 /// Returns rings without the repeated closing node; pieces that do not
 /// close are dropped.
 pub fn assemble_rings(parts: &[&[i64]]) -> Vec<Vec<i64>> {
+    assemble(parts).0
+}
+
+/// `natural=coastline`.
+pub fn is_coastline(tags: &Tags) -> bool {
+    tags.get("natural").is_some_and(|v| v == "coastline")
+}
+
+/// [`assemble_rings`], also returning the chains that do not close.
+pub fn assemble(parts: &[&[i64]]) -> (Vec<Vec<i64>>, Vec<Vec<i64>>) {
     let mut open: Vec<Vec<i64>> = Vec::new();
     let mut rings = Vec::new();
+    let mut unclosed = Vec::new();
     for p in parts.iter().filter(|p| p.len() >= 2) {
         if p.first() == p.last() {
             if p.len() >= 4 {
@@ -288,7 +328,8 @@ pub fn assemble_rings(parts: &[&[i64]]) -> Vec<Vec<i64>> {
                 .iter()
                 .position(|p| p.first() == Some(&end) || p.last() == Some(&end))
             else {
-                break; // does not close
+                unclosed.push(cur); // does not close
+                break;
             };
             let mut next = open.swap_remove(j);
             if next.first() != Some(&end) {
@@ -297,7 +338,7 @@ pub fn assemble_rings(parts: &[&[i64]]) -> Vec<Vec<i64>> {
             cur.extend_from_slice(&next[1..]);
         }
     }
-    rings
+    (rings, unclosed)
 }
 
 /// Even-odd point-in-polygon over any number of rings (holes included).

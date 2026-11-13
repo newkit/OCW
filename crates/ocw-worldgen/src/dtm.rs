@@ -94,6 +94,68 @@ impl GridTile {
         }
     }
 
+    /// Moved onto the lattice of its cell size (corners at whole multiples
+    /// of the cell) by bilinear interpolation, if it is off it. Grids
+    /// whose cell *centres* lie on whole multiples (the IGN coverage API
+    /// for MDT05: corners at x.5 cells) come out with the cells between
+    /// their outer centres, one fewer in each direction. Voids are left
+    /// out of the weights; a cell with only voids around it stays a void.
+    pub fn on_lattice(&self) -> Self {
+        let c = self.cell;
+        let off = |v: f64| {
+            let f = v / c;
+            (f - f.round()).abs() > 1e-6
+        };
+        if !off(self.x0) && !off(self.y0) {
+            return self.clone();
+        }
+        // The first sample centre (west, north) and the last.
+        let (cx0, cy0) = (self.x0 + c / 2.0, self.y0 - c / 2.0);
+        let (cx1, cy1) = (
+            cx0 + (self.nx - 1) as f64 * c,
+            cy0 - (self.ny - 1) as f64 * c,
+        );
+        let x0 = ((cx0 - c / 2.0) / c - 1e-9).ceil() * c;
+        let y0 = ((cy0 + c / 2.0) / c + 1e-9).floor() * c;
+        let nx = ((cx1 + c / 2.0 - x0) / c + 1e-9).floor().max(0.0) as usize;
+        let ny = ((y0 - (cy1 - c / 2.0)) / c + 1e-9).floor().max(0.0) as usize;
+        let mut data = Vec::with_capacity(nx * ny);
+        for j in 0..ny {
+            let fy = (cy0 - (y0 - (j as f64 + 0.5) * c)) / c;
+            let r = (fy.floor().max(0.0) as usize).min(self.ny.saturating_sub(2));
+            let ty = (fy - r as f64).clamp(0.0, 1.0);
+            for i in 0..nx {
+                let fx = (x0 + (i as f64 + 0.5) * c - cx0) / c;
+                let q = (fx.floor().max(0.0) as usize).min(self.nx.saturating_sub(2));
+                let tx = (fx - q as f64).clamp(0.0, 1.0);
+                let (mut sum, mut w) = (0.0f64, 0.0f64);
+                for (di, dj, wt) in [
+                    (0, 0, (1.0 - tx) * (1.0 - ty)),
+                    (1, 0, tx * (1.0 - ty)),
+                    (0, 1, (1.0 - tx) * ty),
+                    (1, 1, tx * ty),
+                ] {
+                    let (ii, jj) = ((q + di).min(self.nx - 1), (r + dj).min(self.ny - 1));
+                    if let Some(v) = self.get(ii, jj)
+                        && wt > 0.0
+                    {
+                        sum += f64::from(v) * wt;
+                        w += wt;
+                    }
+                }
+                data.push(if w > 1e-9 { (sum / w) as f32 } else { f32::NAN });
+            }
+        }
+        Self {
+            x0,
+            y0,
+            nx,
+            ny,
+            data,
+            ..*self
+        }
+    }
+
     /// Averaged over `factor × factor` blocks (cell × factor); a block's
     /// voids are left out, a block without data is a void. The tile must
     /// divide evenly.
@@ -312,7 +374,12 @@ impl<R: std::io::Read + std::io::Seek> GeoHeader<R> {
                 .find(|k| k[0] == id && k[1] == 0)
                 .map(|k| k[3])
         };
-        let crs = match key(3072).and_then(|c| Crs::from_epsg(u32::from(c))) {
+        // A named projected CRS (3072), else a user-defined one (32767)
+        // with a known projection (3074, e.g. UTM 28N from the IGN API).
+        let named = key(3072)
+            .and_then(|c| Crs::from_epsg(u32::from(c)))
+            .or_else(|| key(3074).and_then(|c| Crs::from_projection_code(u32::from(c))));
+        let crs = match named {
             Some(c) => crs.unwrap_or(c),
             None => crs.ok_or_else(|| {
                 format(format!(
@@ -708,6 +775,50 @@ mod tests {
             ny: n,
             data,
         }
+    }
+
+    /// The IGN coverage API (MDT05, Canary Islands) delivers cell centres
+    /// on whole multiples of 5 m, corners half a cell off: moved onto the
+    /// lattice by bilinear interpolation (exact on a plane), one cell
+    /// fewer each way; tiles on the lattice stay as they are.
+    #[test]
+    fn grids_off_the_lattice_are_moved_onto_it() {
+        let t = plane(1000.0 - 2.5, 2000.0 + 2.5, 5.0, 5, 0.0);
+        let l = t.on_lattice();
+        assert_eq!(
+            (l.x0, l.y0, l.nx, l.ny, l.cell),
+            (1000.0, 2000.0, 4, 4, 5.0)
+        );
+        let want = plane(1000.0, 2000.0, 5.0, 4, 0.0);
+        for (a, b) in l.data.iter().zip(&want.data) {
+            assert!((a - b).abs() < 1e-4, "{a} vs {b}");
+        }
+        let on = plane(1000.0, 2000.0, 5.0, 4, 0.0);
+        assert_eq!(on.on_lattice(), on);
+        // Voids: their weight goes to the valid neighbours; a cell with
+        // only voids around it stays a void.
+        let mut v = t.clone();
+        v.data[0] = f32::NAN;
+        let lv = v.on_lattice();
+        assert!(lv.data[0].is_finite() && lv.data[1..] == l.data[1..]);
+        let mut all = t.clone();
+        for k in [0, 1, 5, 6] {
+            all.data[k] = f32::NAN;
+        }
+        assert!(all.on_lattice().data[0].is_nan());
+        // 2 km of 401 centres (350000 … 352000) become 400 cells.
+        let big = GridTile {
+            crs: Crs::UtmNorth(28),
+            cell: 5.0,
+            x0: 349_997.5,
+            y0: 3_132_002.5,
+            nx: 401,
+            ny: 401,
+            data: vec![10.0; 401 * 401],
+        };
+        let b = big.on_lattice();
+        assert_eq!((b.x0, b.y0, b.nx, b.ny), (350_000.0, 3_132_000.0, 400, 400));
+        assert_eq!(b.bounds(), [350_000.0, 3_130_000.0, 352_000.0, 3_132_000.0]);
     }
 
     #[test]

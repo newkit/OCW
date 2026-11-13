@@ -7,6 +7,9 @@
 //!   and most German state DTMs): transverse Mercator with Krüger's series
 //!   to the fourth order in n (Karney 2011), millimetre accuracy within a
 //!   zone.
+//! - The same projection on other datums that agree with ETRS89 / WGS 84
+//!   within a metre: **REGCAN95** / UTM zone 28N (EPSG:4083, the Canary
+//!   Islands: IGN MDT05 / MDT02).
 //! - **Swiss LV95** (CH1903+ / LV95 = EPSG:2056: swissALTI3D, Switzerland
 //!   and Liechtenstein): swisstopo's approximate formulas including the
 //!   datum shift, accurate to about 1 m (well within the accuracy of OSM
@@ -125,10 +128,12 @@ fn lv95_inverse(e: f64, n: f64) -> (f64, f64) {
 
 impl Crs {
     /// From an EPSG code (GeoTIFF `ProjectedCSTypeGeoKey`): 258zz (ETRS89
-    /// UTM), 326zz (WGS 84 UTM north), 2056 (LV95).
+    /// UTM), 326zz (WGS 84 UTM north), 4083 (REGCAN95 / UTM 28N), 2056
+    /// (LV95).
     pub fn from_epsg(code: u32) -> Option<Self> {
         match code {
             2056 => Some(Self::Lv95),
+            4083 => Some(Self::UtmNorth(28)),
             25801..=25860 => Some(Self::UtmNorth((code - 25800) as u8)),
             32601..=32660 => Some(Self::UtmNorth((code - 32600) as u8)),
             _ => None,
@@ -143,11 +148,24 @@ impl Crs {
         }
     }
 
-    /// Parses `utm32`, `epsg:25832`, `lv95`, `epsg:2056`.
+    /// From a GeoTIFF `ProjectionGeoKey` (user-defined projected CRS,
+    /// `ProjectedCSTypeGeoKey` 32767): 160zz is UTM zone zz north (as
+    /// written by the IGN's coverage API for REGCAN95 / UTM 28N).
+    pub fn from_projection_code(code: u32) -> Option<Self> {
+        match code {
+            16001..=16060 => Some(Self::UtmNorth((code - 16000) as u8)),
+            _ => None,
+        }
+    }
+
+    /// Parses `utm32`, `epsg:25832`, `lv95`, `epsg:2056`, `regcan95`.
     pub fn parse(s: &str) -> Result<Self, String> {
         let s = s.trim().to_ascii_lowercase();
         if s == "lv95" {
             return Ok(Self::Lv95);
+        }
+        if s == "regcan95" {
+            return Ok(Self::UtmNorth(28));
         }
         if let Some(z) = s.strip_prefix("utm") {
             let z: u8 = z.parse().map_err(|_| format!("bad UTM zone in {s}"))?;
@@ -161,7 +179,7 @@ impl Crs {
             return Ok(crs);
         }
         Err(format!(
-            "unknown CRS {s} (utm32, lv95, epsg:25832, epsg:2056)"
+            "unknown CRS {s} (utm32, lv95, regcan95, epsg:25832, epsg:2056, epsg:4083)"
         ))
     }
 
@@ -234,6 +252,26 @@ mod tests {
         }
     }
 
+    // REGCAN95 / UTM 28N (EPSG:4083, the Canary Islands) from PROJ's cs2cs.
+    #[test]
+    fn utm28_matches_proj_on_tenerife() {
+        let utm = Crs::from_epsg(4083).unwrap();
+        assert_eq!(utm, Crs::UtmNorth(28));
+        for (xy, ll) in [
+            ([338_900.782_5, 3_128_460.971_4], (28.2723, -16.6425)),
+            ([352_506.725_3, 3_098_108.905_1], (28.0, -16.5)),
+            ([382_557.347_0, 3_153_178.846_9], (28.5, -16.2)),
+            ([350_000.0, 3_130_000.0], (28.287_501_198, -16.529_569_736)),
+        ] {
+            close_m(utm.inverse(xy[0], xy[1]), ll, 0.01);
+            let p = utm.forward(ll.0, ll.1);
+            assert!(
+                (p[0] - xy[0]).abs() < 0.01 && (p[1] - xy[1]).abs() < 0.01,
+                "{p:?}"
+            );
+        }
+    }
+
     #[test]
     fn lv95_matches_proj_within_a_metre() {
         for (xy, ll) in [
@@ -278,6 +316,10 @@ mod tests {
         assert_eq!(Crs::parse("UTM32"), Ok(Crs::UtmNorth(32)));
         assert_eq!(Crs::parse("epsg:2056"), Ok(Crs::Lv95));
         assert!(Crs::parse("utm99").is_err());
+        assert_eq!(Crs::parse("REGCAN95"), Ok(Crs::UtmNorth(28)));
+        assert_eq!(Crs::parse("epsg:4083"), Ok(Crs::UtmNorth(28)));
+        assert_eq!(Crs::from_projection_code(16028), Some(Crs::UtmNorth(28)));
+        assert_eq!(Crs::from_projection_code(16128), None);
         let b = Crs::UtmNorth(32).bounds_of(47.8, 7.9, 48.0, 8.1);
         assert!(b[0] < b[2] && b[1] < b[3]);
         let sw = Crs::UtmNorth(32).forward(47.8, 7.9);

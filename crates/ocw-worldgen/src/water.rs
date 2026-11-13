@@ -18,6 +18,9 @@
 //! - Every water vertex takes the level of the lake it lies in, else of the
 //!   nearest river chain; the terrain below is carved to
 //!   [`crate::landuse::WATER_DEPTH_M`] under the new level.
+//! - **The sea** ([`crate::landuse::sea`], level [`SEA_LEVEL_M`]) keeps its
+//!   level: a water vertex at exactly the sea level outside every lake is
+//!   sea or its shore, and a river mouth must not lift it.
 //! - Tiles share their border vertices; both copies are computed from the
 //!   same position and heights, so they stay equal.
 //! - Vertices under a road (the road's half width plus a grid-cell
@@ -31,7 +34,7 @@ use ocw_world::landuse::LandClass;
 use ocw_world::package::WorldPackage;
 
 use crate::areas::{AreaData, inside_rings};
-use crate::landuse::{SURFACE_MIN_WIDTH_M, WATER_DEPTH_M, classify, waterway_width};
+use crate::landuse::{SEA_LEVEL_M, SURFACE_MIN_WIDTH_M, WATER_DEPTH_M, classify, waterway_width};
 use crate::osm::Tags;
 use crate::projection::LocalProjection;
 
@@ -484,9 +487,15 @@ pub fn level_water(
             let old = f64::from(*level);
             let h = f64::from(tile.heights[*idx as usize]);
             let in_water = h <= old - WATER_DEPTH_M + 1e-3;
+            // The sea and its shore keep their fixed level (a lake at 0 m,
+            // e.g. a salt pond, is still levelled as a lake).
+            let sea = *level == SEA_LEVEL_M as f32 && levels.lake_at(p).is_none();
             // A rim vertex (next to the water, outside its outline) takes
             // the level of the water beside it.
-            let new = levels.level_at(p).or_else(|| {
+            let new = (!sea).then(|| levels.level_at(p)).flatten().or_else(|| {
+                if sea {
+                    return None;
+                }
                 [
                     (-1.0, 0.0),
                     (1.0, 0.0),
@@ -742,6 +751,51 @@ mod tests {
         assert_eq!(r.count("water.lake_not_level"), 0);
         let before = crate::lint::lint(&water_pkg(), Some(&bodies));
         assert_eq!(before.count("water.lake_not_level"), 1);
+    }
+
+    /// Tenerife (spec §4.6, the sea): a river (barranco) running into the
+    /// sea re-levels its own vertices but never the sea's, which stay at
+    /// 0 m with the floor 2 m down.
+    #[test]
+    fn a_river_mouth_does_not_lift_the_sea() {
+        let mut pkg = water_pkg();
+        let n = 101;
+        let key = TileKey { x: 0, z: 0 };
+        // Sea in the rows z <= 100 m (k 0..=10), carved 2 m below 0 m.
+        {
+            let lu = pkg.landuse.as_mut().unwrap().tiles.get_mut(&key).unwrap();
+            let t = pkg.tiles.get_mut(&key).unwrap();
+            for k in 0..=10 {
+                for i in 0..n {
+                    let idx = (k * n + i) as u32;
+                    lu.water.push((idx, 0.0));
+                    t.heights[idx as usize] = -(crate::landuse::SEA_DEPTH_M as f32);
+                }
+            }
+            lu.water.sort_by_key(|w| w.0);
+        }
+        // A river from z 600 m down to the coast at x = 500 m.
+        let bodies = WaterBodies {
+            rivers: vec![river(
+                1,
+                vec![1, 2],
+                vec![[500.0, 600.0], [500.0, 50.0]],
+                12.0,
+                "Barranco",
+            )],
+            lakes: vec![],
+        };
+        level_water(&mut pkg, &bodies, &|p| Some(p[1] / 100.0 + 3.0), &|_| None);
+        let lu = &pkg.landuse.as_ref().unwrap().tiles[&key];
+        let t = &pkg.tiles[&key];
+        for (i, k) in [(50, 5), (50, 0), (0, 10)] {
+            let idx = (k * n + i) as u32;
+            assert_eq!(lu.water_level(idx), Some(0.0), "{i} {k}");
+            assert_eq!(
+                t.heights[idx as usize],
+                -(crate::landuse::SEA_DEPTH_M as f32)
+            );
+        }
     }
 
     #[test]

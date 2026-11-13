@@ -2,6 +2,12 @@
 //! into [`LandClass`]es, rasterised per tile into the splat map (a class per
 //! cell, highest priority wins), and water surfaces: a level at the terrain
 //! vertices in water, with the terrain carved below it.
+//!
+//! **The sea** ([`sea`]): OSM has no sea polygons, only `natural=coastline`
+//! ways with the land on their left. Closed coastline rings (islands) are
+//! cut out of a frame around the package, which leaves the sea as one
+//! water area with a fixed level ([`SEA_LEVEL_M`]) instead of the mean of
+//! the ground around it.
 
 use std::collections::BTreeMap;
 
@@ -22,6 +28,15 @@ pub const SURFACE_MIN_WIDTH_M: f64 = 8.0;
 pub const LEVEL_RADIUS: i64 = 5;
 /// The terrain under water lies this far below the water surface.
 pub const WATER_DEPTH_M: f64 = 1.0;
+/// Level of the sea surface: 0 m of the elevation model's height datum
+/// (the official DTMs are in orthometric heights above mean sea level).
+pub const SEA_LEVEL_M: f64 = 0.0;
+/// The sea floor lies at least this far below the sea surface.
+pub const SEA_DEPTH_M: f64 = 2.0;
+/// Land vertices next to the sea stand at least this far above it, so the
+/// shore does not flicker where the DTM is flat at 0 m (beaches, harbour
+/// quays; the IGN MDT05 sets the sea next to the coast to 0 m).
+pub const SHORE_CLEARANCE_M: f64 = 0.3;
 
 /// An area in local metres with its class; even-odd fill over all rings
 /// (holes are inner rings).
@@ -31,6 +46,9 @@ pub struct Area {
     pub rings: Vec<Vec<[f64; 2]>>,
     /// min x, min z, max x, max z.
     pub bbox: [f64; 4],
+    /// A fixed water level (the sea); `None`: water areas take the mean
+    /// ground height around each vertex (lakes).
+    pub level: Option<f64>,
 }
 
 impl Area {
@@ -49,7 +67,64 @@ impl Area {
                 bbox[3].max(p[1]),
             ];
         }
-        Self { class, rings, bbox }
+        Self {
+            class,
+            rings,
+            bbox,
+            level: None,
+        }
+    }
+
+    /// Sea: water with the fixed level [`SEA_LEVEL_M`].
+    pub fn sea(rings: Vec<Vec<[f64; 2]>>) -> Self {
+        Self {
+            level: Some(SEA_LEVEL_M),
+            ..Self::new(LandClass::Water, rings)
+        }
+    }
+}
+
+/// What [`sea`] found.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Sea {
+    /// The sea area (frame minus islands), if the coast is known.
+    pub area: Option<Area>,
+    /// Closed coastline rings in the frame (islands, islets).
+    pub islands: usize,
+    /// Coastline pieces in the frame that do not close.
+    pub open: usize,
+}
+
+/// The sea within `frame` (min x, min z, max x, max z in local metres)
+/// from the coastline of `data`: the frame minus every closed coastline
+/// ring that reaches into it (even-odd fill, so islands are holes; lakes
+/// on them stay land use). Without coastline in the frame there is no
+/// sea. Coastline pieces that do not close (a mainland coast cut by the
+/// extract) would need closing along the frame: until that is done, such
+/// a frame gets no sea at all rather than a wrong one.
+pub fn sea(data: &AreaData, proj: &LocalProjection, frame: [f64; 4]) -> Sea {
+    let (rings, open) = data.coastlines();
+    let project = |ring: &Vec<(f64, f64)>| -> Vec<[f64; 2]> {
+        ring.iter()
+            .map(|&(lat, lon)| proj.project(lat, lon))
+            .collect()
+    };
+    let in_frame = |pts: &[[f64; 2]]| {
+        let a = Area::new(LandClass::Water, vec![pts.to_vec()]);
+        overlaps(a.bbox, frame, 0.0)
+    };
+    let islands: Vec<Vec<[f64; 2]>> = rings.iter().map(project).filter(|r| in_frame(r)).collect();
+    let open = open.iter().map(project).filter(|r| in_frame(r)).count();
+    let area = (open == 0 && !islands.is_empty()).then(|| {
+        let [x0, z0, x1, z1] = frame;
+        let mut all = vec![vec![[x0, z0], [x1, z0], [x1, z1], [x0, z1]]];
+        all.extend(islands.iter().cloned());
+        Area::sea(all)
+    });
+    Sea {
+        area,
+        islands: islands.len(),
+        open,
     }
 }
 
@@ -75,7 +150,7 @@ pub fn classify(tags: &Tags) -> Option<LandClass> {
         let c = match n {
             "wood" => Some(LandClass::Forest),
             "grassland" | "heath" | "fell" => Some(LandClass::Meadow),
-            "scrub" => Some(LandClass::Scrub),
+            "scrub" | "shrubbery" => Some(LandClass::Scrub),
             "wetland" => Some(LandClass::Wetland),
             "bare_rock" | "rock" => Some(LandClass::Rock),
             "scree" | "shingle" => Some(LandClass::Scree),
@@ -96,7 +171,9 @@ pub fn classify(tags: &Tags) -> Option<LandClass> {
             "vineyard" => Some(LandClass::Vineyard),
             "residential" | "farmyard" => Some(LandClass::Residential),
             "commercial" | "retail" => Some(LandClass::Commercial),
-            "industrial" | "railway" | "garages" | "military" => Some(LandClass::Industrial),
+            "industrial" | "railway" | "garages" | "military" | "port" | "harbour" => {
+                Some(LandClass::Industrial)
+            }
             "cemetery" | "allotments" => Some(LandClass::Park),
             "quarry" | "landfill" | "construction" | "brownfield" => Some(LandClass::Bare),
             _ => None,
@@ -292,7 +369,20 @@ pub fn rasterise(g: &Grid, areas: &[&Area], lines: &[&WaterLine]) -> Vec<LandCla
     out
 }
 
-/// One tile's land use and its carved heights (vertex index, height).
+/// The 8 neighbours of a grid vertex.
+const NEIGHBOURS: [(i64, i64); 8] = [
+    (-1, -1),
+    (0, -1),
+    (1, -1),
+    (-1, 0),
+    (1, 0),
+    (-1, 1),
+    (0, 1),
+    (1, 1),
+];
+
+/// One tile's land use and its changed heights (vertex index, height):
+/// carved under water, raised on the sea shore.
 type TileResult = (TileKey, LandUseTile, Vec<(u32, f32)>);
 
 /// What [`add_landuse`] did.
@@ -312,6 +402,18 @@ pub struct LandUseStats {
 pub fn add_landuse(
     pkg: &mut WorldPackage,
     areas: &[Area],
+    lines: &[WaterLine],
+    cells: u32,
+) -> LandUseStats {
+    add_landuse_with_sea(pkg, areas, None, lines, cells)
+}
+
+/// [`add_landuse`] with the sea (from [`sea`]) as one more area, kept
+/// apart from `areas` by the caller.
+pub fn add_landuse_with_sea(
+    pkg: &mut WorldPackage,
+    areas: &[Area],
+    sea: Option<&Area>,
     lines: &[WaterLine],
     cells: u32,
 ) -> LandUseStats {
@@ -336,15 +438,41 @@ pub fn add_landuse(
             x: gi.div_euclid(step) as i32,
             z: gk.div_euclid(step) as i32,
         };
-        let t = pkg.tiles.get(&key)?;
         let (i, k) = (gi.rem_euclid(step) as usize, gk.rem_euclid(step) as usize);
-        Some(f64::from(t.heights[k * n + i]))
+        if let Some(t) = pkg.tiles.get(&key) {
+            return Some(f64::from(t.heights[k * n + i]));
+        }
+        // The last row / column of a tile at the edge of the package (no
+        // tile beyond it) is the first of the missing one: take it from the
+        // tile that has it, so edge vertices get water too.
+        let (left, up) = (i == 0, k == 0);
+        let from = |dx: i32, dz: i32, ii: usize, kk: usize| {
+            pkg.tiles
+                .get(&TileKey {
+                    x: key.x - dx,
+                    z: key.z - dz,
+                })
+                .map(|t| f64::from(t.heights[kk * n + ii]))
+        };
+        let last = n - 1;
+        match (left, up) {
+            (true, true) => from(1, 1, last, last)
+                .or_else(|| from(1, 0, last, 0))
+                .or_else(|| from(0, 1, 0, last)),
+            (true, false) => from(1, 0, last, k),
+            (false, true) => from(0, 1, i, last),
+            (false, false) => None,
+        }
     };
     let tile_work = |key: TileKey| {
         let o = key.origin(size);
         let tb = [o[0], o[1], o[0] + size, o[1] + size];
         let m = margin as f64 * sp;
-        let here: Vec<&Area> = areas.iter().filter(|a| overlaps(a.bbox, tb, m)).collect();
+        let here: Vec<&Area> = areas
+            .iter()
+            .chain(sea)
+            .filter(|a| overlaps(a.bbox, tb, m))
+            .collect();
         let lines_here: Vec<&WaterLine> = lines
             .iter()
             .zip(&line_bbox)
@@ -362,10 +490,16 @@ pub fn add_landuse(
             &lines_here,
         );
         // Water surfaces: water polygons and wide rivers on the vertex grid
-        // with a margin (levels are means over a neighbourhood).
+        // with a margin (levels are means over a neighbourhood); the sea
+        // has its fixed level.
         let water_areas: Vec<&Area> = here
             .iter()
-            .filter(|a| a.class == LandClass::Water)
+            .filter(|a| a.class == LandClass::Water && a.level.is_none())
+            .copied()
+            .collect();
+        let seas: Vec<&Area> = here
+            .iter()
+            .filter(|a| a.class == LandClass::Water && a.level.is_some())
             .copied()
             .collect();
         let wide: Vec<&WaterLine> = lines_here
@@ -375,7 +509,7 @@ pub fn add_landuse(
             .collect();
         let mut water = Vec::new();
         let mut carved = Vec::new();
-        if !water_areas.is_empty() || !wide.is_empty() {
+        if !water_areas.is_empty() || !wide.is_empty() || !seas.is_empty() {
             let g = Grid {
                 origin: [o[0] - m, o[1] - m],
                 spacing: sp,
@@ -389,6 +523,16 @@ pub fn add_landuse(
             for l in &wide {
                 fill_line(&mut mask, &g, l, 0.0);
             }
+            let mut sea_level: Vec<Option<f64>> = vec![None; ext * ext];
+            for a in &seas {
+                let mut m = vec![LandClass::Default; ext * ext];
+                fill_area(&mut m, &g, a);
+                for (j, c) in m.iter().enumerate() {
+                    if *c == LandClass::Water {
+                        sea_level[j] = a.level;
+                    }
+                }
+            }
             let (gi0, gk0) = (
                 i64::from(key.x) * (n as i64 - 1) - margin as i64,
                 i64::from(key.z) * (n as i64 - 1) - margin as i64,
@@ -396,11 +540,20 @@ pub fn add_landuse(
             let h: Vec<Option<f64>> = (0..ext * ext)
                 .map(|j| heights(gi0 + (j % ext) as i64, gk0 + (j / ext) as i64))
                 .collect();
+            // Lakes and rivers (the sea is not part of their mean level).
             let is_water = |i: usize, k: usize| {
-                mask[k * ext + i] == LandClass::Water && h[k * ext + i].is_some()
+                mask[k * ext + i] == LandClass::Water
+                    && sea_level[k * ext + i].is_none()
+                    && h[k * ext + i].is_some()
+            };
+            let sea_at = |i: usize, k: usize| -> Option<f64> {
+                sea_level[k * ext + i].filter(|_| h[k * ext + i].is_some())
             };
             let r = LEVEL_RADIUS;
             let level = |i: usize, k: usize| -> Option<f64> {
+                if let Some(l) = sea_at(i, k) {
+                    return Some(l);
+                }
                 if !is_water(i, k) {
                     return None;
                 }
@@ -430,26 +583,32 @@ pub fn add_landuse(
                     if let Some(l) = level(ei, ek) {
                         water.push((idx, l as f32));
                         let hv = h[ek * ext + ei].expect("water has a height");
-                        carved.push((idx, hv.min(l - WATER_DEPTH_M) as f32));
+                        let depth = if sea_at(ei, ek).is_some() {
+                            SEA_DEPTH_M
+                        } else {
+                            WATER_DEPTH_M
+                        };
+                        carved.push((idx, hv.min(l - depth) as f32));
                         continue;
                     }
-                    let near: Vec<f64> = [
-                        (-1, -1),
-                        (0, -1),
-                        (1, -1),
-                        (-1, 0),
-                        (1, 0),
-                        (-1, 1),
-                        (0, 1),
-                        (1, 1),
-                    ]
-                    .iter()
-                    .filter_map(|&(di, dk): &(i64, i64)| {
-                        level((ei as i64 + di) as usize, (ek as i64 + dk) as usize)
-                    })
-                    .collect();
+                    let near: Vec<f64> = NEIGHBOURS
+                        .iter()
+                        .filter_map(|&(di, dk): &(i64, i64)| {
+                            level((ei as i64 + di) as usize, (ek as i64 + dk) as usize)
+                        })
+                        .collect();
                     if !near.is_empty() {
-                        water.push((idx, (near.iter().sum::<f64>() / near.len() as f64) as f32));
+                        let l = near.iter().sum::<f64>() / near.len() as f64;
+                        water.push((idx, l as f32));
+                        // The shore of the sea rises out of it.
+                        let shore = NEIGHBOURS.iter().find_map(|&(di, dk)| {
+                            sea_at((ei as i64 + di) as usize, (ek as i64 + dk) as usize)
+                        });
+                        if let (Some(sl), Some(hv)) = (shore, h[ek * ext + ei])
+                            && hv < sl + SHORE_CLEARANCE_M
+                        {
+                            carved.push((idx, (sl + SHORE_CLEARANCE_M) as f32));
+                        }
                     }
                 }
             }
@@ -539,6 +698,15 @@ mod tests {
             (vec![("leisure", "park")], Some(LandClass::Park)),
             (vec![("leisure", "pitch")], Some(LandClass::Park)),
             (vec![("natural", "scrub")], Some(LandClass::Scrub)),
+            // Tenerife: shrub land and the ports of Santa Cruz and Los Cristianos.
+            (vec![("natural", "shrubbery")], Some(LandClass::Scrub)),
+            (vec![("landuse", "port")], Some(LandClass::Industrial)),
+            (vec![("landuse", "harbour")], Some(LandClass::Industrial)),
+            (
+                vec![("landuse", "greenhouse_horticulture")],
+                Some(LandClass::Farmland),
+            ),
+            (vec![("natural", "bare_rock")], Some(LandClass::Rock)),
             (vec![("leisure", "nature_reserve")], None),
             (vec![("building", "yes")], None),
             (vec![("natural", "tree_row")], None),
@@ -804,5 +972,152 @@ mod tests {
         }
         // Survives the package round trip.
         assert_eq!(WorldPackage::from_bytes(&p.to_bytes()).unwrap(), p);
+    }
+
+    /// An island whose coast is two `natural=coastline` ways (land on
+    /// their left), plus a coastline piece far away that does not close.
+    fn island_data(proj: &LocalProjection, open_piece_at: [f64; 2]) -> AreaData {
+        use crate::osm::Way;
+        let mut d = AreaData::default();
+        let pts = [[60.0, -40.0], [230.0, -40.0], [230.0, 140.0], [60.0, 140.0]];
+        for (i, p) in pts.iter().enumerate() {
+            d.nodes.insert(i as i64 + 1, proj.unproject(*p));
+        }
+        let o = open_piece_at;
+        d.nodes.insert(10, proj.unproject(o));
+        d.nodes.insert(11, proj.unproject([o[0] + 100.0, o[1]]));
+        let coast = || Tags::from([("natural".to_string(), "coastline".to_string())]);
+        for (id, nodes) in [
+            (100, vec![1, 2, 3]),
+            (101, vec![3, 4, 1]),
+            (102, vec![10, 11]),
+        ] {
+            d.ways.insert(
+                id,
+                Way {
+                    id,
+                    nodes,
+                    tags: coast(),
+                },
+            );
+        }
+        d
+    }
+
+    #[test]
+    fn closed_coastlines_make_the_sea_open_ones_none() {
+        let proj = LocalProjection::new(28.27, -16.55);
+        let frame = [-50.0, -50.0, 250.0, 150.0];
+        // The open piece lies 10 km away: the island alone counts.
+        let s = sea(&island_data(&proj, [10_000.0, 0.0]), &proj, frame);
+        assert_eq!((s.islands, s.open), (1, 0));
+        let a = s.area.expect("sea");
+        assert_eq!((a.class, a.level), (LandClass::Water, Some(SEA_LEVEL_M)));
+        assert_eq!(a.rings.len(), 2, "frame and island");
+        let g = Grid {
+            origin: [-45.0, -45.0],
+            spacing: 10.0,
+            nx: 30,
+            nz: 20,
+        };
+        let c = rasterise(&g, &[&a], &[]);
+        let at =
+            |x: f64, z: f64| c[((z + 45.0) / 10.0) as usize * 30 + ((x + 45.0) / 10.0) as usize];
+        assert_eq!(at(25.0, 55.0), LandClass::Water, "sea");
+        assert_eq!(at(145.0, 55.0), LandClass::Default, "island");
+        assert_eq!(at(245.0, 55.0), LandClass::Water, "sea east of it");
+        // An open piece in the frame (a mainland coast): no sea at all.
+        let s = sea(&island_data(&proj, [0.0, 0.0]), &proj, frame);
+        assert_eq!((s.islands, s.open, s.area), (1, 1, None));
+        // No coastline: no sea.
+        let s = sea(&AreaData::default(), &proj, frame);
+        assert_eq!((s.islands, s.open, s.area), (0, 0, None));
+        // Coastline ways survive cutting the data to a box that holds
+        // only a part of them (the ring needs all its ways).
+        let mut d = island_data(&proj, [10_000.0, 0.0]);
+        let (lat, lon) = proj.unproject([-100.0, 0.0]);
+        d.retain_near((lat - 0.0001, lon - 0.0001, lat + 0.0001, lon + 0.0001));
+        assert_eq!(d.coastlines().0.len(), 1);
+    }
+
+    /// Two 100 m tiles: sea west of x = 60 (DTM 0 m, one vertex at 30 m
+    /// where the coastline and the DTM disagree), a flat beach at 0 m from
+    /// x = 60, rising from x = 70; a lake on the island at x 120 … 180.
+    #[test]
+    fn the_sea_has_level_zero_and_its_shore_rises_out_of_it() {
+        let n = 11;
+        let height = |x: f64, z: f64| -> f32 {
+            if x < 60.0 {
+                if (x, z) == (30.0, 50.0) { 30.0 } else { 0.0 }
+            } else {
+                ((x - 70.0).max(0.0) * 0.5) as f32
+            }
+        };
+        let mut tiles = BTreeMap::new();
+        for tx in 0..2 {
+            let key = TileKey { x: tx, z: 0 };
+            let heights = (0..n * n)
+                .map(|j| {
+                    height(
+                        f64::from(tx * 100) + (j % n) as f64 * 10.0,
+                        (j / n) as f64 * 10.0,
+                    )
+                })
+                .collect();
+            tiles.insert(
+                key,
+                Tile {
+                    key,
+                    heights,
+                    roads: vec![],
+                },
+            );
+        }
+        let mut p = WorldPackage {
+            name: "coast".into(),
+            origin: (28.27, -16.55),
+            tile_size_m: 100.0,
+            samples: n as u32,
+            tiles,
+            graph: None,
+            landuse: None,
+            buildings: None,
+            bridges: None,
+            routes: Vec::new(),
+            region: None,
+            time_zone: None,
+        };
+        let island = square(60.0, -40.0, 230.0, 140.0);
+        let sea = Area::sea(vec![square(-50.0, -50.0, 250.0, 150.0), island]);
+        let lake = Area::new(LandClass::Water, vec![square(122.0, 22.0, 178.0, 78.0)]);
+        add_landuse_with_sea(&mut p, &[lake], Some(&sea), &[], 20);
+        let l = p.landuse.as_ref().unwrap();
+        let (a, b) = (
+            &l.tiles[&TileKey { x: 0, z: 0 }],
+            &l.tiles[&TileKey { x: 1, z: 0 }],
+        );
+        let (ta, tb) = (
+            &p.tiles[&TileKey { x: 0, z: 0 }],
+            &p.tiles[&TileKey { x: 1, z: 0 }],
+        );
+        let v = |i: u32, k: u32| k * 11 + i;
+        // Sea: level exactly 0, also where the DTM says 30 m (not the mean
+        // of the ground around it), and the floor 2 m below.
+        for (i, k) in [(0, 0), (3, 5), (5, 10)] {
+            assert_eq!(a.water_level(v(i, k)), Some(0.0), "{i} {k}");
+            assert!(ta.heights[v(i, k) as usize] <= -SEA_DEPTH_M as f32);
+        }
+        assert_eq!(l.class_at(100.0, 25.0, 55.0), Some(LandClass::Water));
+        assert_eq!(l.class_at(100.0, 95.0, 55.0), Some(LandClass::Default));
+        // The shore vertex (x 60, DTM 0 m) gets the sea's level and is
+        // raised out of it; the beach behind it keeps its 0 m.
+        assert_eq!(a.water_level(v(6, 5)), Some(0.0));
+        assert_eq!(ta.heights[v(6, 5) as usize], SHORE_CLEARANCE_M as f32);
+        assert_eq!(a.water_level(v(7, 5)), None);
+        assert_eq!(ta.heights[v(7, 5) as usize], 0.0);
+        // The lake keeps its own level from the ground around it.
+        let lv = b.water_level(v(5, 5)).unwrap();
+        assert!((30.0..=50.0).contains(&lv), "{lv}");
+        assert!(tb.heights[v(5, 5) as usize] <= lv - WATER_DEPTH_M as f32);
     }
 }
