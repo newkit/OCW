@@ -6,7 +6,7 @@
 //! high sun is [`DAY_SUN_LUX`], the daylight ambient [`DAY_AMBIENT`], at
 //! exposure [`DAY_EV100`] – the values the scene was tuned with):
 //! - **Sun:** clear-sky transmittance `exp(-τ·m)` per colour channel
-//!   (optical depth τ of Rayleigh scattering plus aerosols, air mass m
+//!   (optical depth τ of Rayleigh scattering, aerosols and ozone, air mass m
 //!   after Kasten & Young 1989): white-yellow at noon, orange and dim at
 //!   5°, red at the horizon, gone once the upper limb has set.
 //! - **Sky (ambient):** the diffuse skylight relative to a high sun, about
@@ -33,9 +33,11 @@ pub const ADAPTATION: f32 = 0.75;
 /// Default night brightness (share of the daylight ambient).
 pub const DEFAULT_NIGHT_FLOOR: f32 = 0.10;
 
-/// Optical depth of the clear atmosphere for red, green and blue light
-/// (Rayleigh ~0.04 / 0.10 / 0.24 plus aerosols ~0.10).
-const TAU: [f64; 3] = [0.14, 0.20, 0.34];
+/// Optical depth of the clear atmosphere at sea level for red, green and
+/// blue light: Rayleigh (0.046 / 0.108 / 0.265), aerosols (~0.01) and ozone
+/// – the medium of Bevy's earth atmosphere, so the exposure this model
+/// computes matches the light the atmosphere renders.
+const TAU: [f64; 3] = [0.075, 0.15, 0.28];
 
 /// Relative air mass towards elevation `el_deg` (Kasten & Young 1989; the
 /// horizon value below it).

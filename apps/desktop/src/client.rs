@@ -1469,6 +1469,49 @@ mod tests {
         }
     }
 
+    /// The world clock end to end (spec §14 Phase 9): the server's clock
+    /// reaches the client with the welcome and the snapshots, the client
+    /// predicts it between them, and a time-machine request changes it for
+    /// the client within a snapshot.
+    #[test]
+    fn world_clock_reaches_the_client_and_the_time_machine_changes_it() {
+        let server = GameServer::new(
+            route(),
+            ServerConfig {
+                real_epoch_ms: Some(1_781_000_000_000),
+                ..Default::default()
+            },
+        );
+        let mut h = Harness::with(
+            server,
+            ClientCore::new(route(), "Tester", RiderProfile::default()),
+        );
+        assert_eq!(h.client.world_ms(0.0), Some(1_781_000_000_000));
+        assert!(h.client.may_change_clock(), "the only rider is the host");
+        h.ride(0.0, 2.0);
+        let now = h.client.world_ms(h.time_s).unwrap();
+        assert!((now - (1_781_000_000_000 + 2000)).abs() <= 20, "{now}");
+        // x600 from a fixed instant.
+        let fixed = 1_781_000_000_000 + 86_400_000;
+        h.send(&ClientCore::clock_message(ocw_sky::ClockChange::Fixed(
+            fixed,
+        )));
+        h.send(&ClientCore::clock_message(ocw_sky::ClockChange::Speed(
+            600.0,
+        )));
+        assert!(
+            matches!(h.notices.last(), Some(Notice::CommandResult(m)) if m == "world clock: fixed, x600"),
+            "{:?}",
+            h.notices.last()
+        );
+        h.ride(0.0, 1.0);
+        let info = *h.client.clock_info().unwrap();
+        assert_eq!((info.speed, info.mode), (600.0, ocw_sky::ClockMode::Fixed));
+        let now = h.client.world_ms(h.time_s).unwrap();
+        // One second at x600 = 10 minutes (within a snapshot interval).
+        assert!((now - (fixed + 600_000)).abs() <= 600 * 110, "{now}");
+    }
+
     /// Voice (spec §7): the welcome says whether the server offers voice,
     /// snapshots count the human riders, and a token request is answered
     /// with a grant for the client's rider.
