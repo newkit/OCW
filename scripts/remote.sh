@@ -20,6 +20,10 @@
 # On a branch other than main the remote checkout is REPO_PATH-BRANCH.
 #
 # Files are copied with rsync; config/ (machine config, keys) is never sent.
+# The tree is taken as it is when remote.sh is called (a snapshot), and a
+# run copies that snapshot once it has its build slot; files are compared by
+# content, and changed ones get the time of the copy (see snapshot_tree,
+# rsync_sync_opts, with_sync).
 #
 # Each `run` leaves a task marker on the machine while it runs (read by
 # tools/build-dashboard): a JSON file PID-START.json in /tmp/ocw-tasks/

@@ -115,7 +115,10 @@ for m in "${machines[@]}"; do
       list_cmd="d=\$(dirname $repo)/$dir; if [ -d \$d/target ]; then echo \"\$(du -sk \$d/target 2>/dev/null | cut -f1) $dir\"; fi; true"
     fi
   fi
-  if ! listing=$(timeout 600 scripts/remote.sh "$m" ssh "$list_cmd" 2>/dev/null | tr -d '\r'); then
+  # A quick probe first: an unreachable machine (or one whose sshd hangs in
+  # the banner exchange) is skipped in under a minute.
+  if ! timeout 45 scripts/remote.sh "$m" ssh "echo ok" >/dev/null 2>&1 ||
+    ! listing=$(timeout 600 scripts/remote.sh "$m" ssh "$list_cmd" 2>/dev/null | tr -d '\r'); then
     echo "== $m: unreachable, skipped"
     continue
   fi
