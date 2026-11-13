@@ -2113,8 +2113,10 @@ mod tests {
         assert_eq!(splat.a[15 * 21 + 2][crate::ground::FOREST_FLOOR], 153);
         // The colour map takes the material means: the forest is blue now.
         let map = m.colour_map.unwrap();
-        let texel = |c: usize, r: usize| map.data[(r * 20 + c) * 4 + 2];
-        assert!(texel(2, 15) > 150, "{}", texel(2, 15));
+        let texel = |c: usize, r: usize, ch: usize| map.data[(r * 20 + c) * 4 + ch];
+        // (Blue, darkened by the canopy shade: 0.5 · 0.73 linear ≈ 160 sRGB.)
+        assert!(texel(2, 15, 2) > 120, "{}", texel(2, 15, 2));
+        assert_eq!(texel(2, 15, 0), 0);
         // Roads: layer and metres in the texture coordinates, colour from
         // the library.
         assert_eq!(m.roads.uvs.len(), m.roads.positions.len());
