@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.73 – November 2026
+Version 2.74 – November 2026
 
 | Version | Change |
 |---|---|
@@ -65,6 +65,7 @@ Version 2.73 – November 2026
 | 2.44 | Phase 8 decisions: no commercial release, 8A stays (Q2); orthophoto corridor size acceptable (Q4); seasonal variants (Q5); own photos postponed (Q6); Mapillary CC BY-SA, reference by eye only (Q7); 3D buildings: swissBUILDINGS3D 3.0 (Opendata BY) to confirm, LGL LoD2 probably not open, ask LGL (Q8); all texture areas in parallel (Q10) |
 | 2.45 | Licensing (§13): no licence change for now – the code stays MIT / Apache-2.0 (a switch to CC BY-SA was considered and declined) |
 | 2.46 | Phase 8 T1 / T2 (§4.6, §8.1, §13, §14 Phase 8): material library of 21 CC0 materials (ambientCG, Poly Haven) – ground, roads, houses, volcanic ground for Tenerife – not in git but pinned by URL + SHA-256 in `assets/materials.toml`, fetched and converted to KTX2 (BC3 / BC5, 1024², mipmapped) by `scripts/fetch-materials.sh` into the git-ignored `assets/materials/` and shipped beside the binary (AppImage, macOS bundle, Windows zip, test deployment); licence rule of Phase 8A shared by the model and material validators; terrain drawn with the materials blended by the splat map (weights at cell corners, noise warp, height blend, rock and triplanar on slopes, macro scale, fade to the colour map in the materials' mean colours), roads by OSM `surface` (new package section `RSRF`) with category fallback; regional material sets by the package's time zone (`[[region]]` in the manifest: the volcanic set of the Canary Islands with lava, ash / cinder, black sand and pine needles); regional tint hook neutral; reference boards `art/reference/` |
+| 2.74 | Decision from the build dashboard (2026-11-14): Phase 10 Q1 – Chromium (desktop + Android) for trainer rides in the browser, Safari / iOS / Firefox with virtual power and the bridge |
 | 2.73 | Decision from the build dashboard (2026-11-14): Phase 9 Q8 – historic weather is kept: ERA5 is CC BY 4.0 (most datasets) or under the Copernicus licence, both allowed by rule 8A; sources CDS, Open-Meteo historical API, MeteoSwiss / DWD station history |
 | 2.72 | Decision from the build dashboard (2026-11-14): Phase 9 Q6 – weather data from MeteoSwiss + DWD with MET Norway as the global fallback, plus Open-Meteo; the provider is selectable in the menu (Automatic or a fixed provider) |
 | 2.71 | Decision from the build dashboard (2026-11-14): Phase 9 Q5 – the wind load goes to trainers that support it (FTMS / Wahoo wind) |
@@ -2790,7 +2791,7 @@ Attribution of the provider used appears on the credits screen and in the weathe
 
 #### 10F – Open questions (for the user)
 
-- **Q1 – Target browsers:** Chromium only for riding with a trainer (desktop + Android), and Safari / iOS / Firefox with virtual power and the bridge, OK?
+- **Q1 – Target browsers: decided (2026-11-14, dashboard: "that's fine"):** Chromium-based browsers (desktop + Android) for riding with a trainer (Web Bluetooth); Safari / iOS / Firefox ride with virtual power and the sensor bridge.
 - **Q2 – Sensor bridge:** worth building (10D.2)? It is the only way to ride with a trainer on iPad / iPhone in a browser before a native iOS app exists.
 - **Q3 – Priority vs. other phases:** after Phases 8 / 9, or earlier (e.g. B1–B3 as a "try it in the browser" demo)?
 - **Q4 – Hosting:** where (own servers, a CDN provider)? World packages are large (Black Forest 260 MB), so CDN traffic costs money.
