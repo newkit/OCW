@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.85 – November 2026
+Version 2.86 – November 2026
 
 | Version | Change |
 |---|---|
@@ -65,6 +65,7 @@ Version 2.85 – November 2026
 | 2.44 | Phase 8 decisions: no commercial release, 8A stays (Q2); orthophoto corridor size acceptable (Q4); seasonal variants (Q5); own photos postponed (Q6); Mapillary CC BY-SA, reference by eye only (Q7); 3D buildings: swissBUILDINGS3D 3.0 (Opendata BY) to confirm, LGL LoD2 probably not open, ask LGL (Q8); all texture areas in parallel (Q10) |
 | 2.45 | Licensing (§13): no licence change for now – the code stays MIT / Apache-2.0 (a switch to CC BY-SA was considered and declined) |
 | 2.46 | Phase 8 T1 / T2 (§4.6, §8.1, §13, §14 Phase 8): material library of 21 CC0 materials (ambientCG, Poly Haven) – ground, roads, houses, volcanic ground for Tenerife – not in git but pinned by URL + SHA-256 in `assets/materials.toml`, fetched and converted to KTX2 (BC3 / BC5, 1024², mipmapped) by `scripts/fetch-materials.sh` into the git-ignored `assets/materials/` and shipped beside the binary (AppImage, macOS bundle, Windows zip, test deployment); licence rule of Phase 8A shared by the model and material validators; terrain drawn with the materials blended by the splat map (weights at cell corners, noise warp, height blend, rock and triplanar on slopes, macro scale, fade to the colour map in the materials' mean colours), roads by OSM `surface` (new package section `RSRF`) with category fallback; regional material sets by the package's time zone (`[[region]]` in the manifest: the volcanic set of the Canary Islands with lava, ash / cinder, black sand and pine needles); regional tint hook neutral; reference boards `art/reference/` |
+| 2.86 | Decision from the build dashboard (2026-11-14): Phase 12 Q1 – collisions on and damage off by default |
 | 2.85 | Decision from the build dashboard (2026-11-14): Phase 11 Q6 – VR comes at the end, after the other phases |
 | 2.84 | Decision from the build dashboard (2026-11-14): Phase 11 Q5 – a native standalone VR version (Quest / Pico) and WebXR are wanted; planned as a new phase (Phase 14) |
 | 2.83 | Decision from the build dashboard (2026-11-14): Phase 11 Q4 – no head-lean steering in VR; steering stays on keys / gamepad / autodrive |
@@ -3006,7 +3007,7 @@ Attribution of the provider used appears on the credits screen and in the weathe
 
 #### 12J – Open questions (for the user)
 
-- **Q1 – Defaults:** collisions **on** and damage **off** by default (proposal), or both off until a rider switches them on?
+- **Q1 – Defaults: decided (2026-11-14, dashboard):** **collisions on, damage off** by default (the proposal).
 - **Q2 – Group rides:** soft bumps only by default (no crashes), or the full model as in races?
 - **Q3 – Bots' mistakes:** should bots sometimes cause crashes ("chaotic" bots, a setting), or always ride perfectly?
 - **Q4 – Workouts:** keep the ERG step running while the rider is down (proposal), or pause the step until the rider rides again?
