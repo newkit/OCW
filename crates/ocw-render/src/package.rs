@@ -295,7 +295,7 @@ pub fn road_arrays(strips: &[RoadStrip]) -> MeshArrays {
             let right = Vec3::new(-dir.z, 0.0, dir.x);
             for side in [-half, half] {
                 m.positions
-                    .push((p[i] + right * side + Vec3::Y * 0.02).to_array());
+                    .push((p[i] + right * side + Vec3::Y * crate::ROAD_SURFACE_LIFT_M).to_array());
                 m.normals.push([0.0, 1.0, 0.0]);
                 m.colors.push(colour);
             }
@@ -317,7 +317,7 @@ pub fn road_arrays(strips: &[RoadStrip]) -> MeshArrays {
                     .with_y(0.0)
                     .normalize_or_zero();
                 let out = Vec3::new(-dir.z, 0.0, dir.x) * side;
-                let top = p[i] + out * half + Vec3::Y * 0.02;
+                let top = p[i] + out * half + Vec3::Y * crate::ROAD_SURFACE_LIFT_M;
                 m.positions.push(top.to_array());
                 m.positions.push((top - Vec3::Y * EDGE_DEPTH_M).to_array());
                 m.normals.extend([out.to_array(); 2]);

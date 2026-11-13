@@ -121,8 +121,20 @@ pub mod shipped {
         RiderRig::from_model(rider_model()).expect("shipped rider rig")
     }
 
+    /// The rig of `p`'s bike model (read once).
     pub fn bike_rig(p: ProfileId) -> BikeRig {
-        BikeRig::from_model(bike_model(p)).expect("shipped bike rig")
+        static R: OnceLock<Vec<BikeRig>> = OnceLock::new();
+        let all = R.get_or_init(|| {
+            ProfileId::ALL
+                .iter()
+                .map(|p| BikeRig::from_model(bike_model(*p)).expect("shipped bike rig"))
+                .collect()
+        });
+        let i = ProfileId::ALL
+            .iter()
+            .position(|q| *q == p)
+            .expect("profile");
+        all[i]
     }
 }
 

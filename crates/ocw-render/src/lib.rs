@@ -22,6 +22,8 @@ pub mod terrain;
 pub mod tunnel;
 pub mod tunnel_cut;
 pub mod voice;
+#[cfg(test)]
+mod wheel_contact;
 pub mod workout;
 pub mod world;
 
@@ -181,6 +183,12 @@ pub struct ExitView {
 /// [`camera::CameraInteraction`]).
 #[derive(Resource, Clone)]
 pub struct Ground(pub std::sync::Arc<dyn Fn(f64, f64) -> Option<f64> + Send + Sync>);
+
+/// The drawn road surface lies this far above the road profile (the
+/// track's height, which the conformed terrain meets: the same height would
+/// z-fight). Every road surface (route ribbon, package road strips, tunnel
+/// floor) is drawn at it, and the riders' tyres stand on it.
+pub const ROAD_SURFACE_LIFT_M: f32 = 0.02;
 
 /// One rider to draw.
 #[derive(Debug, Clone)]
