@@ -79,6 +79,11 @@ pub fn build(args: &Args) -> Result<RideSetup, String> {
     let hood = worlds::try_neighbourhood(args, spec, &loaded)?;
     let info = WorldInfo::of(spec, &loaded, &hood);
     let pkg = &loaded.package;
+    // A remote server rides the route file as it is (it has no package
+    // for a route file): only the local server's route is fitted.
+    if let (Some(path), None) = (&args.route_file, &args.server) {
+        setup.route = route_file_on_package(path, pkg)?;
+    }
     let net = hood
         .set
         .graph()
@@ -323,15 +328,43 @@ pub fn read_graph_route(
     })
 }
 
+fn read_route_file(path: &std::path::Path) -> Result<ocw_world::RouteFile, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    ocw_world::RouteFile::parse(&text).map_err(|e| format!("{}: {e}", path.display()))
+}
+
 /// Loads an ocw-route file: the route and the terrain around it.
 pub fn load_route_file(path: &std::path::Path) -> Result<(Route, Option<ElevationGrid>), String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let file =
-        ocw_world::RouteFile::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+    let file = read_route_file(path)?;
     let route = file
         .to_route()
         .map_err(|e| format!("{}: {e}", path.display()))?;
     Ok((route, file.grid))
+}
+
+/// A route file ridden in a world package: its heights fitted onto the
+/// package's road surface where they differ (a route file and a package
+/// built from different terrain models, `ocw_world::route_fit`), so the
+/// rider rides on the drawn road and tunnels are found where they are.
+pub fn route_file_on_package(
+    path: &std::path::Path,
+    pkg: &ocw_world::WorldPackage,
+) -> Result<Route, String> {
+    let mut file = read_route_file(path)?;
+    let fit = ocw_world::route_fit::fit_heights(&mut file.points, |x, z, d| {
+        pkg.road_heights_along(x, z, d)
+    });
+    if fit.fitted {
+        eprintln!(
+            "warning: {}: the route is up to {:.1} m off the roads of the world package (mean {:+.1} m over {} points; built from different terrain?): its heights follow the package's roads",
+            path.display(),
+            fit.worst_m,
+            fit.mean_m,
+            fit.on_roads
+        );
+    }
+    file.to_route()
+        .map_err(|e| format!("{}: {e}", path.display()))
 }
 
 #[cfg(test)]
