@@ -47,9 +47,10 @@ pub(crate) fn spawn_world(
 ) {
     let route = &view.route;
 
-    // Sun.
+    // Sun: placed and coloured by the sky state (`sky.rs`, spec §14 Phase 9).
     commands.spawn((
         SceneEntity,
+        crate::sky::Sun,
         DirectionalLight {
             illuminance: 12_000.0,
             shadow_maps_enabled: true,

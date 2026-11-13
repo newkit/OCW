@@ -284,6 +284,7 @@ fn small_region_end_to_end() {
             start_m: 0.0,
             allow_local_events: false,
             voice: None,
+            ..Default::default()
         },
     );
     let bot = server.session().snapshot()[0].id;

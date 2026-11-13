@@ -1,0 +1,18 @@
+[package]
+name = "ocw-sky"
+description = "Time zones, world clock, solar position and day / night light for Open Cycling World (spec §14 Phase 9)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# IANA time zones with the tzdb compiled in (spec §14 Phase 9, 9B): jiff
+# (Unlicense OR MIT), its bundled tzdb (public-domain data, crate
+# jiff-tzdb) on every target, wasm32 included; no system zoneinfo and no
+# clock reads here (callers pass the instants).
+jiff.workspace = true
+
+[lints]
+workspace = true

@@ -330,6 +330,7 @@ pub fn build_package_with_terrain<F: Fn(f64, f64) -> f64 + Sync>(
         buildings: None,
         routes: Vec::new(),
         region: None,
+        time_zone: None,
     }
 }
 

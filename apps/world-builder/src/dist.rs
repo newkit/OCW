@@ -411,6 +411,7 @@ mod tests {
             buildings: None,
             routes: vec![],
             region: None,
+            time_zone: None,
         };
         std::fs::write(&path, pkg.to_bytes()).unwrap();
         // No manifest yet: nothing to refresh.

@@ -1065,6 +1065,7 @@ mod tests {
             graph: graph.then(crate::graph::RoadGraph::default),
             routes: Vec::new(),
             region: None,
+            time_zone: None,
             landuse: None,
             buildings: None,
         }

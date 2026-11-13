@@ -435,6 +435,121 @@ pub fn voice_request(channel: v1::VoiceChannel, group: &str) -> v1::ClientMessag
     }))
 }
 
+/// Who may change the world clock (spec §14 Phase 9, 9D).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ClockAccess {
+    /// Every rider: a local server, where the single player is the host.
+    Anyone,
+    /// Only the host (the rider connected longest) in a shared session.
+    #[default]
+    Host,
+    /// Nobody (set by the organizer on the server).
+    Nobody,
+}
+
+/// The world clock message for session time `t` (s).
+pub fn world_clock(
+    c: &ocw_sky::WorldClock,
+    t: f64,
+    access: ClockAccess,
+    host: Option<RiderId>,
+) -> v1::WorldClock {
+    v1::WorldClock {
+        world_unix_ms: c.now(t),
+        rate: c.rate() as f32,
+        mode: match c.mode() {
+            ocw_sky::ClockMode::Real => v1::ClockMode::Real,
+            ocw_sky::ClockMode::Fixed => v1::ClockMode::Fixed,
+            ocw_sky::ClockMode::Offset => v1::ClockMode::Offset,
+        } as i32,
+        speed: c.speed() as f32,
+        paused: c.paused(),
+        offset_ms: c.offset_ms(t),
+        access: match access {
+            ClockAccess::Anyone => v1::ClockAccess::Anyone,
+            ClockAccess::Host => v1::ClockAccess::Host,
+            ClockAccess::Nobody => v1::ClockAccess::Nobody,
+        } as i32,
+        host_rider_id: host.map_or(0, |h| h.0),
+    }
+}
+
+/// The clock as a client sees it (from a [`v1::WorldClock`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ClockInfo {
+    pub world_ms: i64,
+    pub rate: f64,
+    pub mode: ocw_sky::ClockMode,
+    pub speed: f64,
+    pub paused: bool,
+    pub offset_ms: i64,
+    pub access: ClockAccess,
+    pub host: Option<RiderId>,
+}
+
+impl ClockInfo {
+    /// Whether rider `me` may change the clock.
+    pub fn may_change(&self, me: Option<RiderId>) -> bool {
+        match self.access {
+            ClockAccess::Anyone => true,
+            ClockAccess::Host => me.is_some() && self.host == me,
+            ClockAccess::Nobody => false,
+        }
+    }
+}
+
+pub fn clock_info(c: &v1::WorldClock) -> ClockInfo {
+    ClockInfo {
+        world_ms: c.world_unix_ms,
+        rate: f64::from(c.rate),
+        mode: match v1::ClockMode::try_from(c.mode) {
+            Ok(v1::ClockMode::Fixed) => ocw_sky::ClockMode::Fixed,
+            Ok(v1::ClockMode::Offset) => ocw_sky::ClockMode::Offset,
+            _ => ocw_sky::ClockMode::Real,
+        },
+        speed: f64::from(c.speed),
+        paused: c.paused,
+        offset_ms: c.offset_ms,
+        access: match v1::ClockAccess::try_from(c.access) {
+            Ok(v1::ClockAccess::Host) => ClockAccess::Host,
+            Ok(v1::ClockAccess::Nobody) => ClockAccess::Nobody,
+            _ => ClockAccess::Anyone,
+        },
+        host: (c.host_rider_id != 0).then_some(RiderId(c.host_rider_id)),
+    }
+}
+
+/// A time-machine request (spec §14 Phase 9, 9D).
+pub fn clock_request(change: ocw_sky::ClockChange) -> v1::ClientMessage {
+    use ocw_sky::ClockChange as K;
+    use v1::clock_request::Change;
+    let change = match change {
+        K::Real => Change::Real(true),
+        K::Fixed(ms) => Change::FixedUnixMs(ms),
+        K::Offset(ms) => Change::OffsetMs(ms),
+        K::Step(ms) => Change::StepMs(ms),
+        K::Speed(s) => Change::Speed(s as f32),
+        K::Paused(p) => Change::Paused(p),
+    };
+    client_message(v1::client_message::Msg::Clock(v1::ClockRequest {
+        change: Some(change),
+    }))
+}
+
+/// The change a [`v1::ClockRequest`] asks for.
+pub fn clock_change(r: &v1::ClockRequest) -> Option<ocw_sky::ClockChange> {
+    use ocw_sky::ClockChange as K;
+    use v1::clock_request::Change;
+    Some(match r.change.as_ref()? {
+        Change::Real(_) => K::Real,
+        Change::FixedUnixMs(ms) => K::Fixed(*ms),
+        Change::OffsetMs(ms) => K::Offset(*ms),
+        Change::StepMs(ms) => K::Step(*ms),
+        Change::Speed(s) => K::Speed(f64::from(*s)),
+        Change::Paused(p) => K::Paused(*p),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -580,6 +695,61 @@ mod tests {
         }
     }
 
+    /// The world clock through the wire and back (spec §14 Phase 9).
+    #[test]
+    fn world_clock_round_trip() {
+        use v1::server_message::Msg as S;
+        let mut c = ocw_sky::WorldClock::new(1_781_000_000_000);
+        c.set_speed(10.0, 600.0).unwrap();
+        let msg = world_clock(&c, 20.0, ClockAccess::Host, Some(RiderId(3)));
+        let snap = v1::Snapshot {
+            server_tick: 1000,
+            riders: Vec::new(),
+            human_riders: 1,
+            clock: Some(msg),
+        };
+        let bytes = encode(&server_message(S::Snapshot(snap)));
+        let S::Snapshot(s) = decode_server(&bytes).unwrap() else {
+            panic!("a snapshot")
+        };
+        let info = clock_info(&s.clock.unwrap());
+        assert_eq!(info.world_ms, c.now(20.0));
+        assert_eq!(info.world_ms, 1_781_000_000_000 + 10_000 + 6_000_000);
+        assert_eq!((info.rate, info.speed, info.paused), (600.0, 600.0, false));
+        assert_eq!(info.mode, ocw_sky::ClockMode::Fixed);
+        assert_eq!(info.offset_ms, 6_000_000 - 10_000);
+        assert!(info.may_change(Some(RiderId(3))));
+        assert!(!info.may_change(Some(RiderId(4))));
+        assert!(!info.may_change(None));
+        let anyone = ClockInfo {
+            access: ClockAccess::Anyone,
+            ..info
+        };
+        assert!(anyone.may_change(Some(RiderId(4))));
+        let nobody = ClockInfo {
+            access: ClockAccess::Nobody,
+            ..info
+        };
+        assert!(!nobody.may_change(Some(RiderId(3))));
+        // Requests.
+        use ocw_sky::ClockChange as K;
+        for change in [
+            K::Real,
+            K::Fixed(-5),
+            K::Offset(7),
+            K::Step(-9),
+            K::Speed(60.0),
+            K::Paused(true),
+        ] {
+            let bytes = encode(&clock_request(change));
+            let Msg::Clock(r) = decode_client(&bytes).unwrap() else {
+                panic!("a clock request")
+            };
+            assert_eq!(clock_change(&r), Some(change));
+        }
+        assert_eq!(clock_change(&v1::ClockRequest { change: None }), None);
+    }
+
     #[test]
     fn roundtrip_server_snapshot() {
         use v1::server_message::Msg as S;
@@ -621,6 +791,16 @@ mod tests {
                 }),
             ],
             human_riders: 2,
+            clock: Some(v1::WorldClock {
+                world_unix_ms: 1_781_000_000_000,
+                rate: 600.0,
+                mode: v1::ClockMode::Fixed as i32,
+                speed: 600.0,
+                paused: false,
+                offset_ms: -3_600_000,
+                access: v1::ClockAccess::Host as i32,
+                host_rider_id: 1,
+            }),
         };
         let bytes = encode(&server_message(S::Snapshot(snapshot.clone())));
         match decode_server(&bytes).unwrap() {
@@ -653,6 +833,7 @@ mod tests {
             }),
             graph_route: "Rheintal".into(),
             voice: true,
+            clock: None,
         };
         let bytes = encode(&server_message(S::Welcome(welcome.clone())));
         assert_eq!(decode_server(&bytes).unwrap(), S::Welcome(welcome));
