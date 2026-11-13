@@ -1086,3 +1086,64 @@ world = true
 args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "2433,5295", "--bots", "0", "--power", "200"]
 at = ["0.5=time pause", "0.5=time 2026-01-20 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 150 30 90"]
 shot = 10
+
+# --- Houses (spec §14 Phase 8 T4): villages per region, close and raised -----
+# Roof shapes and façades from OSM tags with the regional style presets
+# (assets/building-styles.toml), the measured roof colours of T3. Noon on
+# 15 July, clock paused: only the houses change between before and after.
+
+[[scene]]
+name = "look-houses-vaduz"
+description = "Houses: Vaduz centre (Rhine valley style: plaster, red tiles, gable and hipped roofs, apartments and the town hall), raised camera"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 200 22 60"]
+shot = 9
+
+[[scene]]
+name = "look-houses-triesenberg"
+description = "Houses: Triesenberg (Alpine style: low-pitch gable roofs with wide eaves, timber upper floors), close camera at the village street"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-840,4615", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 150 12 32"]
+shot = 9
+
+[[scene]]
+name = "look-houses-malbun"
+description = "Houses: the chalets of Malbun (1,600 m), timber and plaster, low gable roofs with overhang"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "4218,6473", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 200 16 45"]
+shot = 9
+
+[[scene]]
+name = "look-houses-bf-stmaergen"
+description = "Houses, Black Forest: farms around St. Märgen (Black Forest farmhouse style: huge hipped and half-hipped roofs down low, timber walls)"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "9920,-9674", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 160 18 60"]
+shot = 10
+
+[[scene]]
+name = "look-houses-bf-hofsgrund"
+description = "Houses, Black Forest: Hofsgrund below the Schauinsland, farms on the open slopes, close camera"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-4102,5004", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 140 12 35"]
+shot = 10
+
+[[scene]]
+name = "look-houses-tf-orotava"
+description = "Houses, Tenerife: La Orotava (Canarian style: white and ochre walls, flat roofs with parapets and terraces, some tiled roofs in the old town)"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-313,-11175", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 160 16 45"]
+shot = 10
+
+[[scene]]
+name = "look-houses-tf-gigantes"
+description = "Houses, Tenerife: Los Gigantes, white apartment blocks with flat roofs above the marina, raised camera"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-31411,4859", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 15:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 120 22 70"]
+shot = 10
