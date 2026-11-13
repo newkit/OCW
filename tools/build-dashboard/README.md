@@ -41,6 +41,8 @@ directory, never in the repository).
   without a marker (older remote.sh, manual runs) are listed as "no marker".
   The checkout of a process comes from its working directory, its arguments
   or its parent.
+- **What each job is for:** above its command, every running and queued
+  job gets one sentence on what the build is trying to achieve (below).
 - **Build slots:** used of total and which checkout holds each one (markers;
   for runs without one, Linux: the `/tmp/ocw-build-slot-N.lock` flocks,
   macOS: the `/tmp/ocw-build-slot-N.d` lock directories).
@@ -56,6 +58,49 @@ The slot count of a machine is found like `scripts/remote.sh` does: its
 (linux 2, windows 1, macos 1). A run started with another `OCW_REMOTE_SLOTS`
 writes its count into its marker, and the dashboard then shows the larger
 one.
+
+## Job descriptions
+
+Each job's description (`description` in the JSON, at most 140 characters;
+`description_detail` is the tooltip) is built by rules, without any model
+calls, as "<purpose> – <what> on <machine>":
+
+- **What** comes from the command: it is split into its shell steps
+  (pipes into grep/tail, echo, redirections, `cd`, env variables and the
+  like are left out; PowerShell's `cmd /c "…"` is unwrapped; a command cut at
+  200 characters drops its cut word). cargo fmt / clippy / test / check
+  become one "Checking formatting, clippy and the tests of ocw-render" (crates
+  from `-p`, `--workspace` = "all tests", test name filters, `--test`,
+  `--no-run`, the voice feature), `--target wasm32…` and `make test-wasm`
+  "Browser (wasm) build check"; release builds; `scripts/deploy-test.sh`
+  (also its remote script) "Release build for the kiosk deployment"; world
+  builds (`scripts/build-<region>.sh`, `world-builder package|graph|…`,
+  `fetch-pilot.sh` / `fetch-imagery.sh <region>`) with the region name; scene
+  renders (`render-scenes.sh --only`, `--scenes`, `--world`);
+  `build-profile.sh` (label, `--commands`, `--steps clean`, sccache) and
+  `world-profile.sh`; `measure.py --label`; run-ocw `drive.sh shot|video`
+  (X11/Wayland); `make test-*`, `make art-*`, `collect-test-output.sh`, the
+  dashboard's tests, `rm -rf` of old checkouts. A plain build before the
+  real step (e.g. `cargo build -p world-builder; scripts/build-tenerife.sh`)
+  and sccache statistics only count when nothing else is there.
+- **Purpose:** in an agent checkout the agent's task description (from the
+  Claude Code transcripts: the Agent call or the agent's
+  `subagents/agent-<id>.meta.json`); in the main checkout, for checks,
+  deployments and app builds, the subject of the newest commit (or merge) of
+  the main checkout made before the job started (remote.sh copies that
+  working tree). Other jobs have no purpose part.
+- **Machine:** its config name (the OS name when the machine is named after
+  it, e.g. "macOS").
+
+Examples: "Merge wheels on the road – checking clippy and all tests on
+macOS", "Profile and speed up builds – measuring a clean build with a cold
+sccache (build profiling: macos-sccache-cold, build, test) on macOS",
+"Building the Tenerife world package on marge".
+
+The user's prompts are no longer shown. `--show-prompts` still adds the
+prompt a job belongs to (`prompt`, `agent`) to the JSON (and so to the build
+log), off by default; `--no-context` describes jobs from their commands only
+(no transcripts, no git). Descriptions are masked like everything else.
 
 ## Task markers
 

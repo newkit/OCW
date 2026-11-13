@@ -22,6 +22,7 @@ import base64
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -1284,9 +1285,8 @@ class Dashboard:
         with self.lock:
             machines = [dict(self.state[m.name]) for m in self.machines]
         status = summarize(machines)
-        if getattr(self, "prompts", None) is not None:
-            status = annotate_prompts(status, self.prompts, getattr(self, "prompt_mask", None))
-        return status
+        return annotate_jobs(status, getattr(self, "prompts", None), getattr(self, "commits", None),
+                             getattr(self, "prompt_mask", None), getattr(self, "show_prompts", False))
 
 
 def summarize(machines: list) -> dict:
@@ -1395,6 +1395,8 @@ def format_text(status: dict) -> str:
             for w in q.get("queued") or []:
                 lines.append("  queue: [%s] %s  (waiting %s)" % (
                     w["checkout"], w.get("command") or "(command unknown)", fmt_dur(w.get("elapsed"))))
+                if w.get("description"):
+                    lines.append("         %s" % w["description"])
         k = m.get("kiosk")
         if k:
             st = ("running %s" % fmt_dur(k["elapsed"])) if k["running"] else "NOT running"
@@ -1406,6 +1408,8 @@ def format_text(status: dict) -> str:
         for g in tasks:
             lines.append("  [%s] %s: %s  (%s)" % (g["checkout"], task_state(g), g["command"] or "(command unknown)",
                                                  ", ".join(task_usage(g))))
+            if g.get("description"):
+                lines.append("      %s" % g["description"])
             for kd in g["kinds"]:
                 lines.append("      %-16s x%-3d %8s %7s %10s" % (
                     kd["kind"], kd["count"], fmt_dur(kd["elapsed"]),
@@ -1450,12 +1454,14 @@ def make_handler(dash: Dashboard):
 
 # ---------------------------------------------------------------- prompts
 #
-# Which prompt a job belongs to: read from the Claude Code session
-# transcripts of this project (~/.claude/projects/*OCW*/*.jsonl, main sessions
-# only). A job in an agent worktree (checkout ".../worktree-agent-<id>" or
-# "OCW-worktree-agent-<id>") gets the user prompt that preceded the Agent call
-# that started agent <id> (plus the agent's short description); any other job
-# gets the latest user prompt before the job started.
+# Which task a job belongs to: read from the Claude Code session transcripts
+# of this project (~/.claude/projects/*OCW*/*.jsonl, main sessions, and the
+# agents' subagents/agent-<id>.meta.json). A job in an agent worktree
+# (checkout ".../worktree-agent-<id>", "OCW-worktree-agent-<id>" or
+# "agent <id8>") gets the agent's task description, which goes into the job
+# description (below). Only with --show-prompts the user prompt is added too:
+# the one that preceded the Agent call that started agent <id>, or for any
+# other job the latest user prompt before the job started.
 
 PROMPT_SHORT = 90
 _REMINDER = re.compile(r"<system-reminder>.*?</system-reminder>", re.S)
@@ -1538,9 +1544,48 @@ class PromptIndex:
                     desc = str((b.get("input") or {}).get("description", ""))
                     self.pending[b.get("id")] = (desc, self.last)
 
+    def feed_meta(self, name: str, meta: dict):
+        """An agent's meta.json (subagents/agent-<id>.meta.json): its task
+        description, for the worktree it runs in. An agent that only
+        inherited its parent's worktree leaves the parent's description."""
+        desc = str(meta.get("description") or "").strip()
+        if not desc:
+            return
+        wt = meta.get("worktreePath")
+        if wt:
+            m = re.search(r"agent-([0-9a-f]{6,})$", str(wt).rstrip("/\\"))
+            aid = m.group(1) if m else None
+        elif meta.get("inheritedWorktreePath"):
+            return
+        else:
+            m = re.match(r"agent-([0-9a-f]{6,})\.meta\.json$", name)
+            aid = m.group(1) if m else None
+        if aid:
+            a = self.agents.setdefault(aid, {"prompt": None, "agent": desc})
+            if not a.get("agent"):
+                a["agent"] = desc
+
+    def agent_for(self, checkout: str):
+        """The task description of the agent whose checkout this is, or None."""
+        m = _CHECKOUT_AGENT.search(checkout or "")
+        if not m:
+            return None
+        with self.lock:
+            hits = [v for k, v in self.agents.items() if k.startswith(m.group(1))]
+        return (hits[0].get("agent") or None) if len(hits) == 1 else None
+
     def refresh(self):
         files = sorted(self.root.glob("*OCW*/*.jsonl")) if self.root.is_dir() else []
+        metas = sorted(self.root.glob("*OCW*/*/subagents/agent-*.meta.json")) if self.root.is_dir() else []
         with self.lock:
+            for f in metas:
+                if f in self.offsets:
+                    continue
+                try:
+                    self.feed_meta(f.name, json.loads(f.read_text(encoding="utf-8")))
+                    self.offsets[f] = -1   # read once: the description does not change
+                except (OSError, ValueError):
+                    continue
             for f in files:
                 try:
                     size = f.stat().st_size
@@ -1579,27 +1624,757 @@ class PromptIndex:
             return {"prompt": short_prompt(best)} if best else {}
 
 
-def annotate_prompts(status: dict, index, mask=None) -> dict:
-    """Adds "prompt" (and "agent") to every task and queued run of the status."""
-    def walk(o):
-        if isinstance(o, dict):
-            if "checkout" in o and ("command" in o or "state" in o):
-                info = index.for_job(o.get("checkout"), o.get("started"))
-                for k, v in info.items():
-                    o[k] = mask(v) if mask else v
-            for v in o.values():
-                walk(v)
-        elif isinstance(o, list):
-            for v in o:
-                walk(v)
-    walk(status)
+def prompt_loop(dash, index, commits=None, interval: float = 15.0):
+    while True:
+        for src in (index, commits):
+            if src is not None:
+                try:
+                    src.refresh()
+                except Exception as e:  # context must never stop the dashboard
+                    print("job context: %s" % e, file=sys.stderr)
+        if dash.stop.wait(interval):
+            return
+
+
+# ---------------------------------------------------------------- job descriptions
+#
+# What a job is trying to achieve, in plain words, built deterministically
+# from its command (rules below, no model calls) and its context: the task
+# description of the agent whose checkout it runs in, or, for a check of the
+# coordinator's own checkout, the commit (or merge) being checked. One short
+# sentence ("<purpose> – <what> on <machine>", at most DESC_MAX characters)
+# plus a longer breakdown for the tooltip.
+
+DESC_MAX = 140
+OS_NAMES = {"linux": "Linux", "macos": "macOS", "windows": "Windows"}
+REGIONS = {"liechtenstein": "Liechtenstein", "pilot": "Liechtenstein", "li": "Liechtenstein",
+           "blackforest": "Black Forest", "bf": "Black Forest", "schwarzwald": "Black Forest",
+           "tenerife": "Tenerife", "tf": "Tenerife"}
+_REGION_PARTS = {"north": "north", "middle": "middle", "south": "south"}
+# Words that only shape output or prepare a step: never a job's purpose.
+_IGNORED = {"echo", "printf", "uname", "ls", "cat", "grep", "egrep", "tail", "head", "sed", "awk", "sort",
+            "uniq", "wc", "cut", "tr", "tee", "mkdir", "touch", "find", "cp", "mv", "install", "ln", "chmod",
+            "sleep", "wait", "true", "false", "exit", "cd", "pwd", "date", "test", "[", "[[", "which",
+            "command", "type", "du", "df", "stat", "file", "xargs", "diff", "cmp", "jq", "basename", "dirname",
+            "realpath", "readlink", "mktemp", "rustup", "rustc", "nproc", "free", "ps", "kill", "pkill", "trap",
+            "read", "local", "return", "source", ".", "unset", "shift", "git", "sha256sum", "md5sum", "zcat",
+            "gzip", "tar", "unzip", "zip", "ffprobe", "identify", "convert", "{", "}", "then", "else",
+            "elif", "fi", "do", "done", "for", "while", "if", "in", "case", "esac", "function"}
+_PS_IGNORED = ("write-output", "write-host", "select-string", "select-object", "get-", "set-", "foreach",
+               "measure-object", "out-", "where-object", "remove-item", "new-item", "test-path", "copy-item")
+_CARGO_VALUE_FLAGS = {"-p", "--package", "--features", "-F", "--target", "--test", "--bin", "--example",
+                      "-j", "--jobs", "--profile", "--message-format", "--manifest-path", "--color",
+                      "--exclude", "--bench", "-Z", "--config", "--target-dir"}
+
+
+def region_name(word):
+    """Plain region name of a package / data / script word, or None."""
+    w = (word or "").lower().strip("'\"")
+    w = re.sub(r"\.(ocwpkg|route|sh?)$", "", w)
+    w = re.sub(r"-(before|after|old|new|tmp)\d*$", "", w)
+    if w in REGIONS:
+        return REGIONS[w]
+    head, _, tail = w.partition("-")
+    if head in REGIONS and tail in _REGION_PARTS:
+        return REGIONS[head] + " " + _REGION_PARTS[tail]
+    return None
+
+
+def command_regions(cmd: str) -> list:
+    """Regions a command works on, in order of appearance (world builds,
+    downloads, data directories, packages, `--world name=`)."""
+    found = []
+    pats = [r"\bbuild-([a-z][\w-]*)\.sh", r"\bfetch-(?:pilot|imagery)\.sh\s+([a-z][\w-]*)",
+            r"\bdata/([a-z][\w-]*)", r"([a-z][\w-]*)\.ocwpkg", r"--world\s+([a-z][\w-]*)=",
+            r"world-(?:clean-compare|profile)\.sh(?:\s+--\S+(?:\s+\S+)?)*\s+([a-z][\w-]*)"]
+    hits = []
+    for p in pats:
+        hits += [(m.start(1), m.group(1)) for m in re.finditer(p, cmd or "")]
+    if re.search(r"\bfetch-pilot\.sh(?!\s+[a-z])", cmd or ""):
+        hits.append((cmd.find("fetch-pilot.sh"), "liechtenstein"))
+    for _, w in sorted(hits):
+        r = region_name(w)
+        if r and r not in found:
+            found.append(r)
+    return found
+
+
+def _and(items) -> str:
+    items = [i for i in items if i]
+    if len(items) <= 1:
+        return "".join(items)
+    return ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def _crates(names, n: int = 3) -> str:
+    names = list(dict.fromkeys(names))
+    return _and(names) if len(names) <= n else ", ".join(names[:n]) + " +%d more" % (len(names) - n)
+
+
+def _shell_steps(cmd: str) -> list:
+    """Top-level simple commands of a shell (or PowerShell) line: split at
+    ; && || & newlines and subshell parentheses, outside quotes and $( );
+    a pipeline keeps only its first command (the rest filters output)."""
+    steps, cur, i, quote, depth, piped = [], [], 0, None, 0, False
+    s = cmd or ""
+
+    def flush():
+        nonlocal cur, piped
+        t = "".join(cur).strip()
+        if t:
+            steps.append(t)
+        cur, piped = [], False
+
+    while i < len(s):
+        c = s[i]
+        nxt = s[i + 1] if i + 1 < len(s) else ""
+        if quote:
+            if c == "\\" and quote == '"' and nxt:
+                if not piped:
+                    cur.append(c + nxt)
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+        elif depth:
+            if c == "(":
+                depth += 1
+            elif c == ")":
+                depth -= 1
+        elif c in "'\"":
+            quote = c
+        elif c == "$" and nxt == "(":
+            depth = 1
+            if not piped:
+                cur.append("$(")
+            i += 2
+            continue
+        elif c in ";\n" or c in "()" or (c == "&" and nxt == "&") or (c == "|" and nxt == "|"):
+            flush()
+            i += 2 if (c in "&|" and nxt == c) else 1
+            continue
+        elif c == "&" and (not cur or cur[-1][-1:] not in "<>") and nxt != ">":
+            flush()
+            i += 1
+            continue
+        elif c == "|":
+            piped = True
+            i += 1
+            continue
+        if not piped:
+            cur.append(c)
+        i += 1
+    flush()
+    return steps
+
+
+def _words(step: str) -> list:
+    try:
+        toks = shlex.split(step, posix=True)
+    except ValueError:  # cut-off marker command: unbalanced quotes
+        toks = [t.strip("'\"") for t in step.split()]
+    out, skip = [], False
+    for t in toks:
+        if skip:
+            skip = False
+            continue
+        if re.match(r"^(\d*|&)[<>]{1,2}$", t):        # `>` `2>` `>>`: the target follows
+            skip = True
+            continue
+        if re.match(r"^(\d*|&)[<>]{1,2}&?\S+$", t):   # `2>&1` `>/dev/null`
+            continue
+        out.append(t)
+    return out
+
+
+def _cargo(words: list) -> dict:
+    """cargo invocation → {"sub", "crates", "workspace", "features", "target",
+    "release", "flags", "filters", "after"}."""
+    i, sub = 0, None
+    info = {"sub": None, "crates": [], "workspace": False, "features": [], "target": None, "release": False,
+            "flags": set(), "filters": [], "after": [], "tests": []}
+    rest = words[1:]
+    while i < len(rest):
+        t = rest[i]
+        if t == "--":
+            info["after"] = rest[i + 1:]
+            break
+        if t.startswith("+") and sub is None:
+            i += 1
+            continue
+        flag, eq, val = t.partition("=")
+        if t.startswith("-"):
+            if flag in _CARGO_VALUE_FLAGS and not eq:
+                val = rest[i + 1] if i + 1 < len(rest) else ""
+                i += 1
+            if flag in ("-p", "--package"):
+                if val:
+                    info["crates"].append(val)
+            elif flag in ("--features", "-F"):
+                info["features"] += [f for f in re.split(r"[ ,]", val) if f]
+            elif flag == "--target":
+                info["target"] = val
+            elif flag == "--test":
+                info["tests"].append(val)
+            elif flag in ("--workspace", "--all"):
+                info["workspace"] = True
+            elif flag == "--release" or (flag == "--profile" and val == "release"):
+                info["release"] = True
+            info["flags"].add(flag)
+        elif sub is None:
+            sub = t
+        else:
+            info["filters"].append(t)
+        i += 1
+    info["sub"] = sub
+    return info
+
+
+def _voice(info: dict, env: dict) -> bool:
+    return any("voice" in f for f in info.get("features", [])) or "voice" in env.get("OCW_FEATURES", "")
+
+
+def _scope_tests(info: dict) -> str:
+    if info["sub"] == "test" and "--no-run" in info["flags"]:
+        return "the test build of " + ("the workspace" if info["workspace"] or not info["crates"]
+                                       else _crates(info["crates"]))
+    name = None
+    if info["tests"]:
+        name = _and(info["tests"]) + (" tests" if len(info["tests"]) > 1 else " test")
+    elif info["filters"]:
+        name = _and(info["filters"][:2]) + " tests"
+    if info["workspace"] or not info["crates"]:
+        return ("the " + name) if name else "all tests"
+    crates = _crates(info["crates"])
+    if name:
+        return "the %s of %s" % (name, crates)
+    return ("the %s tests" % crates) if len(info["crates"]) == 1 else "the tests of " + crates
+
+
+def _act(kind, text, detail, check=False, prep=False, region=None) -> dict:
+    return {"kind": kind, "text": text, "detail": detail, "check": check, "prep": prep, "region": region}
+
+
+def _classify_cargo(words, env, regions) -> dict | None:
+    info = _cargo(words)
+    sub = info["sub"] or ""
+    crates = info["crates"]
+    scope = "workspace" if info["workspace"] or not crates else ", ".join(crates)
+    voice = " with voice" if _voice(info, env) else ""
+    feats = (" (features " + ", ".join(info["features"]) + ")") if info["features"] else ""
+    if sub == "fmt":
+        chk = "--check" in info["flags"] or "--check" in info["after"]
+        return _act("fmt", "formatting", "cargo fmt" + (" --check: is the code formatted?" if chk else
+                                                          ": format the code"), check=True)
+    if sub == "clippy":
+        text = "clippy" + ("" if scope == "workspace" else " on " + _crates(crates)) + voice
+        return _act("clippy", text, "clippy (warnings are errors) on the %s%s" % (scope, feats), check=True)
+    if sub in ("test", "nextest") or (sub == "build" and "--tests" in info["flags"]):
+        if sub == "build":
+            info = dict(info, sub="test", flags=info["flags"] | {"--no-run"})
+        text = _scope_tests(info) + voice
+        det = "cargo test on the %s%s%s%s" % (scope, feats, " (release)" if info["release"] else "",
+                                             (", filter " + " ".join(info["filters"])) if info["filters"] else "")
+        return _act("test", text, det, check=True)
+    if sub == "check":
+        if info["target"] and "wasm32" in info["target"]:
+            return _act("wasm", "the browser (wasm) build", "cargo check for %s of %s" % (info["target"], scope),
+                        check=True)
+        text = "the build of " + ("the workspace" if scope == "workspace" else _crates(crates)) + voice
+        return _act("check", text, "cargo check of the %s%s" % (scope, feats), check=True)
+    if sub == "build":
+        if info["target"] and "wasm32" in info["target"]:
+            return _act("wasm", "the browser (wasm) build", "cargo build for " + info["target"], check=True)
+        kind = "Release build" if info["release"] else "Debug build"
+        what = "the workspace" if scope == "workspace" else _crates(crates)
+        return _act("build", "%s of %s%s" % (kind, what, voice), "cargo build%s of the %s%s" % (
+            " --release" if info["release"] else "", scope, feats), prep=True)
+    if sub == "clean":
+        return _act("clean", "Removing build artefacts", "cargo clean " + scope, prep=True)
+    if sub == "run":
+        pkg = crates[0] if crates else (info["filters"][0] if info["filters"] else "")
+        args = info["after"]
+        if pkg == "ocw-assets":
+            if args[:2] == ["materials", "fetch"]:
+                return _act("materials", "Fetching the material library", "ocw-assets materials fetch " +
+                            " ".join(args[2:]))
+            return _act("assets", "Generating the assets" if args[:1] == ["generate"] else
+                        "Running the asset tool", "ocw-assets " + " ".join(args))
+        if pkg == "world-builder":
+            return _classify_world_builder(["world-builder"] + args, regions)
+        if pkg == "ocw-server":
+            return _act("server", "Headless server run", "ocw-server " + " ".join(args))
+        if pkg == "ocw-desktop":
+            return _act("desktop", "Desktop app run", "ocw-desktop " + " ".join(args))
+        if pkg == "ocw-bot":
+            return _act("bot", "Bot riders run", "ocw-bot " + " ".join(args))
+        if pkg == "ocw-devices":
+            return _act("ble", "Bluetooth trainer run", "ocw-devices " + " ".join(info["filters"] + args))
+        return _act("run", "Running " + (pkg or "a binary"), "cargo run " + " ".join(words[2:]))
+    if sub:
+        return _act("cargo", "cargo " + sub, "cargo " + " ".join(words[1:]))
+    return None
+
+
+def _classify_world_builder(words, regions) -> dict:
+    sub = next((w for w in words[1:] if not w.startswith("-")), "")
+    where = (" for " + _and(regions)) if regions else ""
+    texts = {"package": "Building a world package", "graph": "Inspecting the road graph",
+             "dem-import": "Importing elevation data", "lint": "Checking a world package"}
+    text = texts.get(sub, "world-builder " + sub if sub else "world-builder")
+    return _act("world-builder", text + where, "world-builder " + " ".join(words[1:])[:160], region=regions)
+
+
+def _flag(words, name):
+    for i, w in enumerate(words):
+        if w == name and i + 1 < len(words):
+            return words[i + 1]
+        if w.startswith(name + "="):
+            return w.split("=", 1)[1]
+    return None
+
+
+def _scene_names(only: str) -> str:
+    names = [n for n in re.split(r"[ ,]+", only or "") if n]
+    if not names:
+        return "all scenes"
+    if len(names) <= 2:
+        return "the %s scene%s" % (_and(names), "s" if len(names) > 1 or "*" in names[0] else "")
+    return "%d scenes (%s, …)" % (len(names), ", ".join(names[:2]))
+
+
+_MAKE_TARGETS = {
+    "check": [("fmt", "formatting"), ("clippy", "clippy"), ("test", "all tests"), ("wasm", "the browser (wasm) build")],
+    "lint": [("fmt", "formatting"), ("clippy", "clippy")],
+    "clippy": [("clippy", "clippy")], "fmt-check": [("fmt", "formatting")], "fmt": [("fmt", "formatting")],
+    "test": [("test", "all tests")], "test-unit": [("test", "all tests")],
+    "test-wasm": [("wasm", "the browser (wasm) build")],
+}
+_MAKE_OTHER = {
+    "build": ("build", "Debug build of the workspace", True),
+    "release": ("build", "Release build of ocw-desktop and ocw-server", False),
+    "deploy-test": ("deploy", "Release build for the kiosk deployment", False),
+    "test-kiosk": ("kiosk", "Testing the kiosk script", False),
+    "test-screenshot": ("shot", "Screenshot smoke test on X11", False),
+    "test-screenshot-wayland": ("shot", "Screenshot smoke test on Wayland", False),
+    "test-smoke": ("shot", "Screenshot smoke tests on X11 and Wayland", False),
+    "test-video": ("video", "Recording a test ride video on X11", False),
+    "test-video-wayland": ("video", "Recording a test ride video on Wayland", False),
+    "test-scenes": ("render", "Rendering all scenes", False),
+    "test-multiplayer": ("multiplayer", "Multiplayer test: server, kiosk and bot riders over QUIC", False),
+    "test-multiplayer-local": ("multiplayer", "Local multiplayer test: server and 3 bot riders", False),
+    "materials": ("materials", "Fetching the material library", False),
+    "macos-app": ("app", "Building the macOS app", False),
+    "test-release-version": ("version", "Testing the release version bump", False),
+    "version-next": ("version", "Next release version", True),
+    "version": ("version", "Workspace version", True),
+    "clean": ("clean", "Removing build artefacts", True),
+    "art-gather": ("art", "Art project: gathering the day's media", False),
+    "art-sheets": ("art", "Art project: contact sheets of the day", False),
+    "art-render": ("art", "Art project: rendering the day videos", False),
+    "art-diary": ("art", "Art project: joining the diary video", False),
+    "art-publish": ("art", "Art project: publishing the videos", False),
+    "server": ("server", "Headless server run", False),
+}
+
+
+def _classify_make(words) -> list:
+    targets, i = [], 1
+    while i < len(words):
+        w = words[i]
+        if w in ("-C", "-j", "-f") and i + 1 < len(words):
+            i += 2
+            continue
+        if not w.startswith("-") and "=" not in w:
+            targets.append(w)
+        i += 1
+    out = []
+    for t in targets or ["all"]:
+        if t in _MAKE_TARGETS:
+            out += [_act(k, txt, "make " + t, check=True) for k, txt in _MAKE_TARGETS[t]]
+        elif t in _MAKE_OTHER:
+            k, txt, prep = _MAKE_OTHER[t]
+            out.append(_act(k, txt, "make " + t, prep=prep))
+        elif t.startswith("art-"):
+            out.append(_act("art", "Art project: " + t[4:], "make " + t))
+        else:
+            out.append(_act("make", "make " + t, "make " + t))
+    return out
+
+
+def _classify_script(name, words, env, regions, cmd) -> list:
+    """Repository scripts (scripts/*.sh, the run-ocw skill, art/diary.py)."""
+    args = words[1:]
+    base = re.sub(r"\.(sh?|py?)$", "", name)
+    if base.startswith("build-") and base not in ("build-appimage", "build-macos-app", "build-id", "build-profile"):
+        r = region_name(base[6:]) or base[6:].replace("-", " ").title()
+        return [_act("world", "Building the %s world package" % r, name + " " + " ".join(args), region=[r])]
+    if base == "build-profile":
+        label = _flag(args, "--label") or ""
+        steps = _flag(args, "--steps") or ""
+        cmds = _flag(args, "--commands") or ""
+        what = "a clean build" if "clean" in steps.split(",") else "build times"
+        if "sccache" in label or "sccache" in cmd:
+            what += " with a %s sccache" % ("cold" if "cold" in label else "warm" if "warm" in label else "shared")
+        extra = ", ".join(x for x in (label, cmds.replace(",", ", ")) if x)
+        return [_act("profile", "Measuring %s (build profiling%s)" % (what, (": " + extra) if extra else ""),
+                     "build-profile.sh " + " ".join(args))]
+    if base == "world-profile":
+        named = [region_name(a) for i, a in enumerate(args)
+                 if not a.startswith("-") and not (i and args[i - 1].startswith("--"))]
+        named = [r for r in dict.fromkeys(named) if r] or regions
+        where = (" of " + _and(named)) if named else ""
+        return [_act("profile", "Measuring world build times" + where, name + " " + " ".join(args))]
+    if base == "world-clean-compare":
+        where = (" (" + _and(regions) + ")") if regions else ""
+        return [_act("compare", "Comparing world packages before and after the cleanup" + where,
+                     name + " " + " ".join(args), region=regions)]
+    if base == "fetch-pilot":
+        r = region_name(args[0]) if args and not args[0].startswith("-") else "Liechtenstein"
+        r = r or args[0]
+        return [_act("fetch", "Downloading the %s source data (OSM, elevation)" % r, name + " " + " ".join(args),
+                     region=[r])]
+    if base == "fetch-imagery":
+        r = (region_name(args[0]) if args else None) or (args[0] if args else "")
+        return [_act("fetch", ("Downloading %s aerial imagery" % r).replace("  ", " "), name + " " + " ".join(args),
+                     region=[r] if r else None)]
+    if base in ("fetch-materials", "install-materials"):
+        return [_act("materials", "Fetching the material library", name)]
+    if base in ("render-scenes", "render_scenes"):
+        if "--list" in args:
+            return [_act("render", "Listing the scenes", name + " --list", prep=True)]
+        only = _flag(args, "--only")
+        scenes = _flag(args, "--scenes")
+        if scenes and not only:
+            stem = re.sub(r"^scenes-|-tmp$|\.toml$", "", Path(scenes).name.replace(".toml", ""))
+            what = "the %s scenes" % stem.replace("-", " ") if stem and stem != "scenes" else "all scenes"
+        else:
+            what = _scene_names(only)
+        worlds = [region_name(re.sub(r"=.*", "", w)) or region_name(Path(w.split("=")[-1]).name)
+                  for i, w in enumerate(args) if i and args[i - 1] == "--world"]
+        worlds = [w for w in dict.fromkeys(worlds) if w]
+        where = (" in " + _and(worlds)) if worlds else ""
+        return [_act("render", "Rendering %s%s" % (what, where), name + " " + " ".join(args),
+                     region=worlds or None)]
+    if base == "drive":
+        mode = args[0] if args else ""
+        ws = "Wayland" if "wayland" in mode else "X11"
+        if mode.startswith("video"):
+            return [_act("video", "Recording a test ride video on " + ws, "run-ocw drive.sh " + " ".join(args))]
+        if mode.startswith("shot"):
+            return [_act("shot", "Screenshot run on " + ws, "run-ocw drive.sh " + " ".join(args))]
+        return [_act("drive", "Running the desktop app headlessly", "run-ocw drive.sh " + " ".join(args))]
+    if base == "measure":
+        label = _flag(args, "--label")
+        return [_act("measure", "Measuring performance" + (": " + label if label else ""),
+                     name + " " + " ".join(args))]
+    if base == "deploy-test":
+        return [_act("deploy", "Release build for the kiosk deployment", name + " " + " ".join(args))]
+    if base == "test-multiplayer":
+        return [_act("multiplayer", "Multiplayer test: server, kiosk and bot riders over QUIC", name)]
+    if base == "test-kiosk":
+        return [_act("kiosk", "Testing the kiosk script", name)]
+    if base == "test-release-version":
+        return [_act("version", "Testing the release version bump", name)]
+    if base == "collect-test-output":
+        return [_act("collect", "Collecting the test output into the build history", name)]
+    if base == "build-appimage":
+        return [_act("app", "Building the Linux AppImage" + (" with voice" if "voice" in cmd else ""), name)]
+    if base == "build-macos-app":
+        return [_act("app", "Building the macOS app" + (" with voice" if "voice" in cmd else ""), name)]
+    if base == "prepare-world-release":
+        return [_act("world", "Preparing a world release" + ((" of " + _and(regions)) if regions else ""), name)]
+    if base == "demo-gpx-route":
+        return [_act("route", "Building the demo GPX route", name)]
+    if base == "diary":
+        sub = args[0] if args else ""
+        return [_act("art", "Art project: " + (sub or "diary"), "art/diary.py " + " ".join(args))]
+    if base == "repro":
+        return [_act("repro", "Reproduction run" + ((" (" + args[0] + ")") if args else ""),
+                     name + " " + " ".join(args))]
+    return [_act("script", "Running " + name, name + " " + " ".join(args))]
+
+
+def _classify_python(words) -> list:
+    args = [w for w in words[1:] if w not in ("-I", "-u", "-B")]
+    joined = " ".join(args)
+    if "build-dashboard" in joined:
+        return [_act("dashboard", "Build dashboard tests" if ("unittest" in joined or "test_" in joined)
+                     else "Build dashboard", "python3 " + joined)]
+    if args[:2] == ["-m", "unittest"]:
+        d = _flag(args, "-s")
+        return [_act("pytest", "Python tests" + ((" of " + d) if d else ""), "python3 " + joined)]
+    if args and args[0].endswith(".py"):
+        return _classify_script(Path(args[0]).name, args, {}, command_regions(joined), joined)
+    return [_act("script", "Python", "python3 " + joined)]
+
+
+def _rm_checkouts(words) -> dict | None:
+    paths = [w for w in words[1:] if not w.startswith("-")]
+    checkouts = [p for p in paths if re.search(r"OCW-(?:worktree-)?[\w.-]+/?$", p)]
+    if checkouts:
+        n = len(checkouts)
+        return _act("cleanup", "Cleaning up %s old checkout%s" % (n if n > 1 else "an", "s" if n > 1 else ""),
+                    "rm -rf " + " ".join(checkouts))
+    if any(re.search(r"(^|/)target/?$", p) for p in paths):
+        return _act("clean", "Removing build artefacts", "rm -rf " + " ".join(paths), prep=True)
+    return None
+
+
+def classify_step(step: str, env: dict, regions: list, cmd: str, cut: bool = False) -> list:
+    """Activities of one simple command; cut: its last word is partial."""
+    words = _words(step)
+    if cut and words and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[-1]):
+        words = words[:-1]
+    while words:
+        w = words[0]
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", w):    # VAR=value prefix
+            k, _, v = w.partition("=")
+            env[k] = v
+            words = words[1:]
+        elif w in ("export", "env", "time", "nice", "nohup", "exec", "builtin", "set", "do", "then", "else",
+                   "{", "!", "sudo"):
+            words = words[1:]
+            if w == "set":
+                words = [x for x in words if not x.startswith(("-", "+"))]
+        elif w.lower() in ("cmd", "cmd.exe") and len(words) > 2 and words[1].lower() == "/c":
+            inner = " ".join(words[2:])
+            out = []
+            for s in _shell_steps(inner):
+                out += classify_step(s, env, regions, cmd, cut)
+            return out
+        else:
+            break
+    if cut and len(words) > 1:
+        last = words[-1].rsplit(",", 1)[0] if "," in words[-1] else None  # a cut list keeps its whole items
+        words = words[:-1] + ([last] if last else [])
+        cut = False
+    if not words:
+        return []
+    w0 = words[0]
+    base = re.split(r"[/\\]", w0)[-1]
+    low = base.lower()
+    if low.endswith(".exe"):
+        low = low[:-4]
+    if low == "cargo":
+        a = _classify_cargo(words, env, regions)
+        return [a] if a else []
+    if low == "make":
+        return _classify_make(words)
+    if low == "world-builder":
+        return [_classify_world_builder(words, regions)]
+    if low in ("ocw-server", "ocw-desktop", "ocw-bot"):
+        return [_classify_cargo(["cargo", "run", "-p", low, "--"] + words[1:], env, regions)]
+    if low == "sccache":
+        return [_act("sccache", "sccache statistics", "sccache " + " ".join(words[1:]), prep=True)]
+    if low in ("python", "python3"):
+        return _classify_python(words)
+    if low in ("bash", "sh", "zsh") and len(words) > 1:
+        return classify_step(" ".join(shlex.quote(x) for x in words[1:]), env, regions, cmd, cut)
+    if low == "rm":
+        a = _rm_checkouts(words)
+        return [a] if a else []
+    if low.endswith((".sh", ".py")) or (cut and "scripts/" in w0) or "/run-ocw/" in w0:
+        return _classify_script(base, words, env, regions, cmd)
+    if (low in _IGNORED or low.startswith(_PS_IGNORED) or w0.startswith(("$", "-", "+", "#")) or " " in w0
+            or ")" in w0):
+        return []
+    if re.match(r"^[A-Za-z_]\w*\(\)$", w0):  # shell function definition
+        return []
+    return [_act("other", "Running " + base, " ".join(words)[:120])]
+
+
+def _deploy_prelude(cmd: str):
+    """scripts/deploy-test.sh sends a script, not a command: recognise it."""
+    m = re.search(r"\bD=(\S+)", cmd or "")
+    if m and "put()" in cmd:
+        if m.group(1).startswith("/var/tmp/ocw"):
+            return _act("deploy", "Release build for the kiosk deployment", "deploy-test.sh: build, then install "
+                        "to the kiosk directory (the kiosk restarts the app)")
+        return _act("deploy", "Release build for a test deployment", "deploy-test.sh into a scratch directory")
+    return None
+
+
+def classify_command(cmd: str) -> list:
+    """The activities of a command line, in order (see _act)."""
+    cmd = cmd or ""
+    cut = cmd.rstrip().endswith(("...", "…"))
+    if cut:
+        # remote.sh cuts marker commands at 200 characters (the process view
+        # at 90): the last word is partial. A cut argument is dropped, a cut
+        # command name kept (scripts/build-blackforest.s still says enough).
+        cmd = re.sub(r"(?:\.\.\.|…)\s*$", "", cmd.rstrip())
+    regions = command_regions(cmd)
+    pre = _deploy_prelude(cmd)
+    if pre:
+        return [pre]
+    env, acts = {}, []
+    steps = _shell_steps(cmd)
+    for i, step in enumerate(steps):
+        last = cut and i == len(steps) - 1
+        got = classify_step(step, env, regions, cmd, cut=last)
+        if last and len(_words(step)) == 1:
+            # Only a cut command name: keep it when it still names something known.
+            got = [a for a in got if a["kind"] not in ("script", "other")]
+        acts += got
+    for a in acts:
+        if a["kind"] == "world-builder" and not a.get("region") and regions:
+            a["region"] = regions
+    return acts
+
+
+def _cap(s: str) -> str:
+    return s[:1].upper() + s[1:] if s else s
+
+
+def _low(s: str) -> str:
+    # lower-case a leading verb/noun, never a name ("Black Forest", "Tenerife").
+    if not s or (len(s) > 1 and s[1].isupper()):
+        return s
+    first = s.split(" ", 1)[0]
+    if region_name(first) or first in ("Linux", "Windows", "macOS", "Bluetooth"):
+        return s
+    return s[:1].lower() + s[1:]
+
+
+def describe_activities(acts: list, cmd: str = "") -> tuple:
+    """(what, check?) for a list of activities: one phrase, sentence case."""
+    if not acts:
+        if re.match(r"^\s*echo\b", cmd or ""):
+            return "Connection test", False
+        return "", False
+    real = [a for a in acts if not a["prep"]] or acts
+    checks = [a for a in real if a["check"]]
+    others = [a for a in real if not a["check"]]
+    parts = []
+    if checks:
+        texts = list(dict.fromkeys(a["text"] for a in checks))
+        if texts == ["the browser (wasm) build"]:
+            parts.append("Browser (wasm) build check")
+        else:
+            parts.append("Checking " + _and(texts))
+    seen = set()
+    for a in others:
+        if a["text"] not in seen:
+            seen.add(a["text"])
+            parts.append(a["text"])
+    # Several world builds: one phrase.
+    worlds = [p for p in parts if re.match(r"^Building the (.+) world package$", p)]
+    if len(worlds) > 1:
+        names = [re.match(r"^Building the (.+) world package$", p).group(1) for p in worlds]
+        i = parts.index(worlds[0])
+        parts = [p for p in parts if p not in worlds]
+        parts.insert(i, "Building the %s world packages" % _and(names))
+    what = parts[0] + "".join("; " + _low(p) for p in parts[1:])
+    return what, bool(checks) and not others
+
+
+def machine_name(name: str, os_name: str = "") -> str:
+    """The machine's config name; the OS name when the config names it after its OS."""
+    if name and os_name and name.lower() == os_name.lower():
+        return OS_NAMES.get(os_name.lower(), name)
+    return name or OS_NAMES.get((os_name or "").lower(), os_name or "")
+
+
+def _clip(s: str, n: int) -> str:
+    s = " ".join((s or "").split())
+    return s if len(s) <= n else s[: n - 1].rstrip() + "…"
+
+
+def describe_job(command, machine: str = "", os_name: str = "", agent=None, commit=None) -> dict:
+    """{"description": short sentence, "description_detail": tooltip} for a
+    job. agent: the agent's task description (its checkout); commit: the
+    subject of the commit or merge being checked (coordinator's checkout,
+    used for checks, builds for deployment and release apps only)."""
+    cmd = command or ""
+    acts = classify_command(cmd) if cmd else []
+    what, _ = describe_activities(acts, cmd)
+    code_job = any(a["check"] or a["kind"] in ("deploy", "app") for a in acts if not a["prep"])
+    purpose = agent or (commit if code_job else None)
+    where = machine_name(machine, os_name)
+    tail = (" on " + where) if where else ""
+    if not what:
+        what = "Running a command"
+    if purpose:
+        body = _low(what) + tail
+        room = DESC_MAX - len(body) - 3
+        desc = (_clip(purpose, max(room, 30)) + " – " + body) if room >= 20 else what + tail
+    else:
+        desc = _cap(what) + tail
+    detail = []
+    if agent:
+        detail.append("Agent task: " + agent)
+    elif purpose:
+        detail.append("Checking the commit: " + commit)
+    detail += ["• " + a["detail"] for a in acts]
+    if where:
+        detail.append("Machine: %s (%s)" % (machine, OS_NAMES.get((os_name or "").lower(), os_name or "?")))
+    if cmd:
+        detail.append("Command: " + cmd)
+    return {"description": _clip(desc, DESC_MAX), "description_detail": "\n".join(detail)}
+
+
+class CommitLog:
+    """Subjects of the recent commits of the coordinator's checkout (the main
+    checkout this dashboard belongs to; remote.sh copies its working tree to
+    the machines' main checkout)."""
+
+    def __init__(self, repo: Path | None = None, n: int = 100):
+        self.repo, self.n = repo, n
+        self.commits = []   # (epoch, subject), newest first
+        self.lock = threading.Lock()
+
+    def refresh(self):
+        if self.repo is None:
+            return
+        try:
+            common = subprocess.run(["git", "-C", str(self.repo), "rev-parse", "--path-format=absolute",
+                                     "--git-common-dir"], capture_output=True, text=True, timeout=10).stdout.strip()
+            main = str(Path(common).parent) if common else str(self.repo)
+            out = subprocess.run(["git", "-C", main, "log", "-n", str(self.n), "--format=%ct%x1f%s"],
+                                 capture_output=True, text=True, timeout=10).stdout
+        except Exception:
+            return
+        commits = []
+        for line in out.splitlines():
+            ts, _, subj = line.partition("\x1f")
+            if ts.isdigit():
+                commits.append((int(ts), subj))
+        with self.lock:
+            self.commits = commits
+
+    def at(self, started=None, slack: float = 120):
+        """Subject of the newest commit made before the job started."""
+        with self.lock:
+            for ts, subj in self.commits:
+                if started is None or ts <= float(started) + slack:
+                    return subj
+        return None
+
+
+def annotate_jobs(status: dict, index=None, commits=None, mask=None, show_prompts: bool = False) -> dict:
+    """Adds "description" and "description_detail" (what the job is trying
+    to achieve) to every task and queued run of the status, and with
+    show_prompts the prompt it belongs to ("prompt", "agent")."""
+    for m in status.get("machines") or []:
+        jobs = list(m.get("tasks") or []) + list((m.get("queue") or {}).get("queued") or [])
+        for t in jobs:
+            if not isinstance(t, dict) or "checkout" not in t:
+                continue
+            started = t.get("started") or t.get("since")
+            checkout = t.get("checkout") or ""
+            agent = index.agent_for(checkout) if index is not None else None
+            commit = None
+            if commits is not None and not _CHECKOUT_AGENT.search(checkout) and checkout == "main":
+                commit = commits.at(started)
+            # A process group without a command (no marker) has nothing to describe.
+            info = describe_job(t.get("command"), m.get("name", ""), m.get("os", ""), agent, commit) \
+                if t.get("command") else {}
+            if show_prompts and index is not None:
+                info.update(index.for_job(checkout, started))
+            for k, v in info.items():
+                t[k] = mask(v) if mask else v
     return status
-
-
-def prompt_loop(dash, index, interval: float = 15.0):
-    index.refresh()
-    while not dash.stop.wait(interval):
-        index.refresh()
 
 
 RECORD_INTERVAL_S = 60.0
@@ -1646,7 +2421,11 @@ def main(argv=None) -> int:
     ap.add_argument("--record", type=Path, default=None,
                     help="build log directory for the art project (default: test-output/build-log of the checkout)")
     ap.add_argument("--no-record", action="store_true", help="don't write the build log")
-    ap.add_argument("--no-prompts", action="store_true", help="don't show the prompt each job belongs to")
+    ap.add_argument("--no-context", action="store_true",
+                    help="describe jobs from their command only (no agent tasks, no commits)")
+    ap.add_argument("--show-prompts", action="store_true",
+                    help="also put the user prompt each job belongs to into the JSON (off by default)")
+    ap.add_argument("--no-prompts", action="store_true", help=argparse.SUPPRESS)  # old flag; now the default
     ap.add_argument("--record-interval", type=float, default=RECORD_INTERVAL_S, help="seconds between build-log lines")
     a = ap.parse_args(argv)
 
@@ -1660,15 +2439,16 @@ def main(argv=None) -> int:
     if a.once:
         with ThreadPoolExecutor(max_workers=max(1, len(machines))) as ex:
             states = list(ex.map(lambda m: poll_machine(m, dash.ctl), machines))
-        status = summarize(states)
+        status = annotate_jobs(summarize(states), mask=Masker([s for m in machines for s in m.secrets()], ()))
         print(json.dumps(status, indent=2) if a.json else format_text(status))
         return 0
     dash.start()
-    if not a.no_prompts:
+    dash.prompt_mask = Masker([s for m in machines for s in m.secrets()], ())
+    dash.show_prompts = a.show_prompts and not a.no_prompts
+    if not a.no_context:
         dash.prompts = PromptIndex()
-        secrets = [s for m in machines for s in m.secrets()]
-        dash.prompt_mask = Masker(secrets, ()).__call__ if secrets else None
-        threading.Thread(target=prompt_loop, args=(dash, dash.prompts), daemon=True).start()
+        dash.commits = CommitLog(repo)
+        threading.Thread(target=prompt_loop, args=(dash, dash.prompts, dash.commits), daemon=True).start()
     if not a.no_record:
         root = a.record or (repo / "test-output" / "build-log")
         threading.Thread(target=record_loop, args=(dash, root, a.record_interval), daemon=True).start()
