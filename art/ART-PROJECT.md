@@ -52,13 +52,19 @@ selection happens only in the video.
 
 | Kind | Source | Kept as |
 |---|---|---|
-| Screenshots, contact sheets | test runs (`test-output/`, agent worktrees), scene harness | `YYYY-MM-DD/HHMMSS-label.png` |
+| Screenshots (single pictures; comparisons only as `-compare-` images) | test runs (`test-output/`, agent worktrees), scene harness | `YYYY-MM-DD/HHMMSS-label.png` |
 | Videos | `--capture` recordings, scenes, multiplayer kiosk/camera | `YYYY-MM-DD/HHMMSS-label.mp4` |
 | Audio | game-audio demos (`.wav`) | `YYYY-MM-DD/HHMMSS-label.wav` |
 | Text | test verdicts and summaries (`.txt`) | `YYYY-MM-DD/HHMMSS-label.txt` |
 | Logs | app/server/bot logs, run args, route files | `YYYY-MM-DD/logs/…` |
 | Commits, merges, spec versions, tests | git history | `YYYY-MM-DD/journal.md` + `journal.json` |
 
+- **Pictures stand alone (decided by the user 2026-11-14, spec §11.4 v3.25):** every
+  screenshot and frame is kept (and sent to the user) as its own file, exactly as
+  rendered with its timestamp – no grids or contact sheets made of several shots.
+  A joined image is made only to show a comparison (before / after, two settings,
+  two dates or places side by side); it is kept as well, next to the single pictures,
+  labelled `…-compare-….jpg`.
 - **Where:** `artwork/build-history/YYYY-MM-DD/`, which is git-ignored. Media never
   go into git (spec §11.3; the history was rewritten on 2026-11-12 to remove them).
 - **Published:** one zip per day, `ocw-build-history-YYYY-MM-DD.zip`, on the GitHub
