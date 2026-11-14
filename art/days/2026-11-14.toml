@@ -1,0 +1,210 @@
+# OCW Build Diary – day 4 (art/ART-PROJECT.md describes every field).
+# Shots are files in artwork/build-history/2026-11-14/ (or repo paths).
+# Pictures stand alone (spec §11.4 v3.25): a split only where a chapter compares two pictures.
+
+title = "The weather, the seasons and the 404"
+tagline = "In which Storm Lothar returns, the leaves turn, the browser learns to sing – and one URL leads nowhere."
+hero = "150250-shot-wayland-season-vaduz-autumn.jpg"
+bpm = 120
+key = "G"
+tests = 2038
+outro = "Almost three billion tokens. Four seasons. One storm from 1999. And a web server serving an empty folder."
+teaser = "TO BE CONTINUED – a Quest 1 waits for its Link cable."
+
+[[chapter]]
+time = "00:12"
+title = "Flap like a bird"
+caption = "The unicorn flies like a plane now: + climbs, − dives, and the wings beat like a bird's, not a helicopter's."
+prompt = "god mode: have the unicorn move more its wings when flying. make the movement more organic, like a bird."
+shots = [
+  { file = "001241-video-wayland-god-plane-video.mp4", seconds = 4.5, start = 1.0, speed = 1.5, note = "flap. flap. glide." },
+]
+
+[[chapter]]
+time = "02:27"
+title = "Photos along the road"
+caption = "Phase 8 T7: open orthophotos cut along every package road – the ground beside the asphalt is the real ground now."
+shots = [
+  { split = ["022731-agent-scenes-2026-11-14-t7-orthophoto-ortho-malbun-before-wayland.jpg", "022731-agent-scenes-2026-11-14-t7-orthophoto-ortho-malbun-after-wayland.jpg"], seconds = 4.0, note = "painted | photographed" },
+  { file = "022731-agent-scenes-2026-11-14-t7-orthophoto-ortho-tf21-after-wayland.jpg", seconds = 2.8, note = "Tenerife, TF-21" },
+]
+
+[[chapter]]
+time = "08:35"
+title = "A night without stars"
+caption = "Phase 9 S2: the moon with its phases, the planets, a procedural Milky Way and street lamps. Stars? Postponed by the user."
+shots = [
+  { file = "083551-shot-wayland-sky-milky-way-teide.jpg", seconds = 3.0, note = "the Milky Way over the Teide" },
+  { file = "083514-shot-wayland-sky-full-moon-canadas.jpg", seconds = 2.8, note = "full moon, Las Cañadas" },
+  { file = "083501-shot-wayland-sky-night-lights.jpg", seconds = 2.5, note = "the lamps are on" },
+]
+
+[[chapter]]
+time = "09:21"
+title = "Bluetooth in the browser"
+caption = "Phase 10 B4: the browser app talks to trainers over Web Bluetooth – ERG and SIM, through the same state machine as the desktop."
+shots = [
+  { file = "092815-agent-web-web-ble-real-real-sim.jpg", seconds = 3.0, note = "a trainer, in a tab" },
+]
+
+[[chapter]]
+time = "10:24"
+title = "Then the weather came"
+caption = "Phase 9 S4 and S5: clouds, rain, hail, fog, snow, lightning and thunder – and a weather machine to order them."
+shots = [
+  { file = "121358-video-wayland-weather-clear-to-thunderstorm-video.mp4", seconds = 5.0, start = 0.5, speed = 3, note = "clear → thunderstorm in one minute" },
+  { file = "104730-agent-scenes-s4-wl-3-weather-thunderstorm-video.mp4", seconds = 3.5, start = 1.0, note = "Tenerife, thunder" },
+]
+
+[[chapter]]
+time = "10:49"
+title = "Carbon and jerseys"
+caption = "Phase 8 T6: real materials on riders and bikes – carbon weave, spun metal, tyres, knit – and a jersey designer."
+shots = [
+  { file = "125010-shot-wayland-fix-carbon-stand.jpg", seconds = 2.8, note = "near-black carbon" },
+  { file = "104722-shot-wayland-t6-jersey-designer.jpg", seconds = 2.8, note = "design your own jersey" },
+]
+
+[[chapter]]
+time = "13:47"
+title = "Storm Lothar, 26 December 1999"
+caption = "Phase 9 S7: real weather from MeteoSwiss, DWD, MET Norway and Open-Meteo – and any day back to 1940, from ERA5."
+shots = [
+  { file = "134201-shot-wayland-menu-weather-real.jpg", seconds = 2.8, note = "Vaduz, right now: clear, 8 °C" },
+  { file = "134732-shot-wayland-weather-real-lothar-blackforest.jpg", seconds = 3.5, note = "the Feldberg, Lothar, rain at 5 °C" },
+]
+
+[[chapter]]
+time = "14:16"
+title = "Crashes cost something now"
+caption = "Phase 12 K4/K5: rider and bike condition, punctures, broken chains, a damage panel – and repairs, paid in hearts."
+shots = [
+  { file = "141710-video-wayland-k4-damage-crash-video.mp4", seconds = 4.0, start = 0.5, note = "wheel touch" },
+  { file = "143646-shot-wayland-k4-damage-crash.jpg", seconds = 2.8, note = "bruised. scratched." },
+  { file = "142135-shot-wayland-k4-workshop-repair.jpg", seconds = 2.8, note = "27 ♥ for a rear wheel" },
+]
+
+[[chapter]]
+time = "15:02"
+title = "Four seasons on one climb"
+caption = "Phase 9 S8: leaves by degree days and altitude, a crop calendar, a snow line – spring reaches Malbun six weeks after Vaduz."
+shots = [
+  { file = "150215-shot-wayland-season-vaduz-winter.jpg", seconds = 2.0, note = "15 January" },
+  { file = "150227-shot-wayland-season-vaduz-spring.jpg", seconds = 2.0, note = "1 May" },
+  { file = "150238-shot-wayland-season-vaduz-summer.jpg", seconds = 2.0, note = "1 July" },
+  { file = "150250-shot-wayland-season-vaduz-autumn.jpg", seconds = 2.4, note = "15 October" },
+  { split = ["150227-shot-wayland-season-vaduz-spring.jpg", "150348-shot-wayland-season-malbun-spring.jpg"], seconds = 4.0, note = "1 May: Vaduz 570 m | Malbun 1,600 m" },
+]
+
+[[chapter]]
+time = "15:42"
+title = "Headwind"
+caption = "Phase 9 S6: the wind pushes back – and the trainer feels it. Same 250 W, same 10 % climb."
+shots = [
+  { split = ["154202-shot-wayland-weather-physics-headwind-vaduz.jpg", "154228-shot-wayland-weather-physics-tailwind-vaduz.jpg"], seconds = 4.5, note = "7.7 km/h | 12.2 km/h" },
+]
+
+[[chapter]]
+time = "16:23"
+title = "Trees from space"
+caption = "Phase 8 T3: the EU's Copernicus forest maps decide which tree is a beech and which a spruce – and how dense the wood is."
+shots = [
+  { file = "162351-shot-wayland-forest-vaduz-winter.jpg", seconds = 2.8, note = "bare beeches, green spruces" },
+  { file = "162333-shot-wayland-forest-vaduz-autumn.jpg", seconds = 2.8, note = "the same slope in October" },
+  { file = "162410-shot-wayland-forest-bf-autumn.jpg", seconds = 2.8, note = "Schauinsland" },
+]
+
+[[chapter]]
+time = "17:43"
+title = "The Mac was full"
+caption = "“Why is the macOS disk full?” A zsh glob that matched nothing had kept every cleanup from running. 136.5 GB freed."
+prompt = "why is macos disk full and with what?"
+shots = [
+  { card = true, seconds = 2.4, note = "zsh: no matches found" },
+  { card = true, seconds = 2.2, note = "460 GB → 149 GB free" },
+]
+
+[[chapter]]
+time = "17:51"
+title = "Slippery when wet"
+caption = "Phase 12/13 leftovers: wet roads slide, the camera shakes, warnings become graphics – and flyovers follow a camera path."
+shots = [
+  { file = "175102-video-wayland-k12-wet-slide-video.mp4", seconds = 4.5, start = 0.5, note = "sliding – lean less" },
+  { file = "175258-video-wayland-g5-flyover-vaduz-video.mp4", seconds = 5.0, start = 1.0, speed = 2, note = "a guided flyover over Vaduz" },
+  { file = "175135-shot-wayland-k13-rider-list.jpg", seconds = 2.4, note = "who flies, who is hurt" },
+]
+
+[[chapter]]
+time = "18:07"
+title = "A new bike on the wall"
+caption = "Phase 4: buy framesets at the bench, a new bike on the + hook, lights you fit yourself, an idle pose at the mirror."
+shots = [
+  { file = "180146-shot-wayland-workshop-bench-catalogue.jpg", seconds = 2.6, note = "the bench" },
+  { file = "180708-shot-wayland-workshop-bench-plus-bought.jpg", seconds = 2.6, note = "Road – aero 2, on its hook" },
+  { split = ["180722-shot-wayland-lights-night-fitted.jpg", "180736-shot-wayland-lights-night-none.jpg"], seconds = 4.0, note = "with lights | without" },
+  { file = "180801-shot-wayland-workshop-mirror-idle-kit-colours.jpg", seconds = 2.6, note = "red gloves, yellow socks" },
+]
+
+[[chapter]]
+time = "18:42"
+title = "Two riders, one real room"
+caption = "Phase 10 B5: sound and LiveKit voice in the browser. The real test failed until a hidden tab got its own window."
+shots = [
+  { split = ["184203-agent-web-web-audio-livekit-livekit-ada.jpg", "184203-agent-web-web-audio-livekit-livekit-bea.jpg"], seconds = 4.0, note = "Ada hears Bea | Bea hears Ada" },
+]
+
+[[chapter]]
+time = "20:03"
+title = "The browser grows up"
+caption = "Phase 10 B6: the same menus, settings, HUD and gamepad as the desktop – one code base – and screenshots as downloads."
+shots = [
+  { file = "202223-agent-web-web-menu.jpg", seconds = 2.6, note = "the menu, in Chromium" },
+  { file = "202223-agent-web-web-hud.jpg", seconds = 2.8, note = "heavy rain, 64 km/h crosswind" },
+]
+
+[[chapter]]
+time = "20:18"
+title = "One picture at a time"
+caption = "A rule from the user: no more grids. Every picture stands alone – side by side only to compare."
+prompt = "spec change: do not join two or more images, rather than that, send me all picture stand alone"
+shots = [
+  { card = true, seconds = 2.6, note = "spec §11.4, v3.25" },
+]
+
+[[chapter]]
+time = "21:23"
+title = "Roofs for every shape"
+caption = "Phase 8 T4: straight-skeleton roofs on L-, T- and U-shaped houses, dormers, balconies, and the cathedral's spire from its parts."
+shots = [
+  { file = "212309-agent-scenes-t4b-wayland-look-houses-vaduz-polygons.jpg", seconds = 2.8, note = "hipped L, roof windows" },
+  { file = "212320-agent-scenes-t4b-wayland-look-houses-vaduz-cathedral.jpg", seconds = 2.8, note = "St. Florin's spire" },
+  { file = "212343-agent-scenes-t4b-wayland-look-houses-triesenberg-balconies.jpg", seconds = 2.8, note = "Triesenberg, balconies" },
+]
+
+[[chapter]]
+time = "22:05"
+title = "Plan B for old graphics cards"
+caption = "Phase 10 B7: a second browser build on WebGL 2, quality presets Low to High – and leela, back online, catches up."
+shots = [
+  { file = "205239-agent-web-web-webgl2.jpg", seconds = 2.8, note = "WebGL 2, Low preset" },
+]
+
+[[chapter]]
+time = "22:24"
+title = "Not a Rift – a Quest"
+caption = "A correction from the user: the headset is an Oculus Quest 1. VR starts with Oculus Link; the standalone app is sideloaded."
+prompt = "VR: correction, I have an Oculus Quest version 1. focus on this model for VR development."
+shots = [
+  { card = true, seconds = 2.4, note = "Snapdragon 835, 72 Hz, Link" },
+  { card = true, seconds = 2.2, note = "Keycloak? Zitadel? Kanidm? Authentik?" },
+]
+
+[[chapter]]
+time = "22:57"
+title = "404"
+caption = "“No matter what URL I use, I always get 404.” The browser build only existed on marge – the web server served an empty folder."
+prompt = "for me the web mode does not work. no matter what URL I use, I always get Error code: 404"
+shots = [
+  { card = true, seconds = 2.6, note = "Error code: 404 – File not found." },
+  { card = true, seconds = 2.4, note = "next: a browser we download ourselves" },
+]
