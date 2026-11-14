@@ -313,6 +313,23 @@ message RiderLook {
   fixed32 helmet_rgb = 3;
   // 0 plain, 1 band, 2 sash; unknown values are plain.
   uint32 kit_pattern = 4;
+  // The character (spec §2.6, §14 Phase 4, 4C; W4): free looks, never
+  // physics. Sent in Hello, BikeChange and RiderBuild (once per change),
+  // not in the snapshots' looks. Absent: the default character; indices
+  // past the palettes are the default's.
+  // Body height in cm (drawn between 150 and 205 cm).
+  optional uint32 height_cm = 5;
+  // 0 slim, 1 medium, 2 strong.
+  optional uint32 body_build = 6;
+  // Index into the 12-step skin-tone palette.
+  optional uint32 skin = 7;
+  // Face preset: 0 classic, 1 beard, 2 moustache, 3 stubble.
+  optional uint32 face = 8;
+  // Hair style: 0 short, 1 buzz cut, 2 long, 3 ponytail, 4 bun, 5 bald.
+  optional uint32 hair = 9;
+  optional fixed32 hair_rgb = 10;
+  // Glasses: 0 none, 1 sport wrap, 2 round.
+  optional uint32 glasses = 11;
 }
 
 // Identifies a world package's road graph: its name and a fingerprint of
@@ -401,7 +418,8 @@ message ServerMessage {
 
 // A rider's bike build (spec §14 Phase 4, 4G): reliable, sent to everyone
 // when it changes (BikeChange, Hello, the end of an event for a waiting
-// change) and to a joining client for every rider with parts. The
+// change) and to a joining client for every rider with parts or a
+// non-default character (W4). The
 // snapshots carry only RiderUpdate.build_hash; a rider whose hash is not
 // the last RiderBuild's is drawn on the stock bike until it arrives.
 message RiderBuild {
@@ -420,6 +438,10 @@ message RiderBuild {
   sint32 climb_gain_e4 = 6;
   uint32 bike_mass_g = 7;
   bool capped = 8;
+  // The rider's full look with the character (spec §14 Phase 4, 4C, W4):
+  // once per change, like the parts (the snapshots carry only the
+  // colours). The kit items are catalogue ids in `parts`.
+  RiderLook look = 9;
 }
 
 // Answer to a GodRequest (spec §14 Phase 13). Reliable.

@@ -17,6 +17,10 @@ pub enum Tint {
     Helmet,
     /// The kit pattern's colour (white on dark jerseys, black on light).
     Accent,
+    /// The character's skin tone (spec §14 Phase 4, 4C).
+    Skin,
+    /// The character's hair colour (hair, beards).
+    Hair,
 }
 
 /// A paint slot.
@@ -41,7 +45,7 @@ const fn slot(name: &'static str, tint: Tint, color: u32, metallic: f32, roughne
 }
 
 /// All slots.
-pub const ALL: [Slot; 22] = [
+pub const ALL: [Slot; 27] = [
     slot("frame", Tint::Frame, 0x1E1E22, 0.1, 0.32),
     slot("tyre", Tint::Fixed, 0x1A1A1A, 0.0, 0.85),
     slot("tyre_wall", Tint::Fixed, 0x8A6A45, 0.0, 0.8),
@@ -54,13 +58,20 @@ pub const ALL: [Slot; 22] = [
     slot("jersey", Tint::Jersey, 0xFF1472, 0.0, 0.75),
     slot("accent", Tint::Accent, 0xF5F5F0, 0.0, 0.75),
     slot("shorts", Tint::Fixed, 0x141416, 0.0, 0.7),
-    slot("skin", Tint::Fixed, 0xD9A98C, 0.0, 0.65),
+    slot("skin", Tint::Skin, 0xD9A98C, 0.0, 0.65),
     slot("helmet", Tint::Helmet, 0xF2F2EE, 0.1, 0.4),
     slot("helmet_detail", Tint::Fixed, 0x1C1C20, 0.0, 0.6),
     slot("shoe", Tint::Fixed, 0xEDEDE8, 0.0, 0.5),
     slot("sock", Tint::Fixed, 0xF4F4F0, 0.0, 0.8),
     slot("lens", Tint::Fixed, 0x101418, 0.6, 0.15),
-    slot("hair", Tint::Fixed, 0x3B2A20, 0.0, 0.9),
+    slot("hair", Tint::Hair, 0x3B2A20, 0.0, 0.9),
+    // The kit's variants (spec 4C): aero socks, race shoes, overshoes,
+    // gloves and the padded back of gel gloves.
+    slot("sock_aero", Tint::Fixed, 0x1E1F22, 0.0, 0.75),
+    slot("shoe_race", Tint::Fixed, 0x141416, 0.25, 0.3),
+    slot("overshoe", Tint::Fixed, 0x0F0F11, 0.05, 0.45),
+    slot("glove", Tint::Fixed, 0x18181A, 0.0, 0.7),
+    slot("glove_pad", Tint::Fixed, 0x6A6E76, 0.0, 0.8),
     // Part variants (spec §14 Phase 4, 4B): bare carbon, and the lenses
     // of the light set (the renderer makes them glow).
     slot("carbon", Tint::Fixed, 0x0C0C0E, 0.15, 0.22),
@@ -93,7 +104,14 @@ mod tests {
         for (i, a) in ALL.iter().enumerate() {
             assert!(ALL[i + 1..].iter().all(|b| b.name != a.name), "{}", a.name);
         }
-        for t in [Tint::Frame, Tint::Jersey, Tint::Helmet, Tint::Accent] {
+        for t in [
+            Tint::Frame,
+            Tint::Jersey,
+            Tint::Helmet,
+            Tint::Accent,
+            Tint::Skin,
+            Tint::Hair,
+        ] {
             assert!(ALL.iter().any(|s| s.tint == t), "{t:?}");
         }
         assert_eq!(get("frame").unwrap().tint, Tint::Frame);

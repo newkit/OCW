@@ -1375,6 +1375,45 @@ at = ["2=workshop open", "3.5=workshop right", "4.5=workshop right", "5.5=worksh
 warmup = 2
 video = 14
 
+# --- Phase 4 W4: the character corner ---------------------------------------
+
+[[scene]]
+name = "workshop-mirror"
+description = "Character corner (spec §14 Phase 4, W4): the rider stands in front of the changing corner's mirror, seen over the shoulder and in the mirror from the front (planar reflection, a second camera at half resolution) – a strong build with a ponytail, the aero jersey, aero bib shorts and the time-trial helmet bought with hearts; the rider's five hotspots (head, torso, hands, legs, feet)"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2=hearts.grant 2000", "2.1=workshop.buy helmet.tt.top", "2.2=workshop.buy jersey.aero.upper", "2.3=workshop.buy shorts.aero.upper", "2.4=character --build strong --hair 4 --hair-colour #B3482A --skin 6", "2.6=workshop open", "3.2=workshop mirror"]
+shot = 22
+
+[[scene]]
+name = "workshop-helmet-picker"
+description = "Character corner: the helmet picker (equipped base helmet, the shop's helmets by price with their benefit by speed – watts at 25 / 35 / 45 km/h and the speed gain on the flat and at 6 %), the time-trial helmet previewed live on the rider in the mirror"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2=hearts.grant 1000", "2.2=workshop open", "2.8=workshop mirror", "4.5=workshop select", "5=workshop down", "5.4=workshop down", "5.8=workshop down"]
+shot = 45
+
+[[scene]]
+name = "workshop-try-on"
+description = "Character corner: Try on the bike – the rider (1.92 m, raised saddle) on the road bike on the repair stand, pedalling slowly in the riding animation, in a skinsuit and the aero road helmet"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2=hearts.grant 2000", "2.1=workshop.buy jersey.skinsuit.top", "2.2=workshop.buy helmet.aero-road.top", "2.3=workshop.buy socks.aero.upper", "2.4=character --face 2 --hair 2", "2.6=workshop open", "3.2=workshop mirror", "4.6=workshop slot-prev", "5=workshop select"]
+riders = """
+active = "Tall"
+
+[[rider]]
+name = "Tall"
+weight_kg = 82.0
+height_cm = 192.0
+"""
+shot = 45
+
+[[scene]]
+name = "workshop-kit-video"
+description = "Video (spec §14 Phase 4, W4): the character corner – to the mirror, the helmet picker with the live preview (aero road, light, time-trial helmet), buying the time-trial helmet, a skinsuit and a new hairstyle, then Try on the bike: pedalling slowly on the repair stand, and back to standing"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2=hearts.grant 3000", "2.4=workshop open", "3.4=workshop mirror", "5.6=workshop select", "6.6=workshop down", "7.6=workshop down", "8.6=workshop down", "9.6=workshop.buy helmet.tt.top", "10.6=workshop back", "11.2=workshop.buy jersey.skinsuit.top", "12.2=character --hair 5", "13.2=character --hair 4 --hair-colour #D8B27A", "14.2=workshop slot-prev", "14.8=workshop select", "20.5=workshop back"]
+warmup = 2
+video = 22
+
 # --- Phase 4 W3: build physics, race modes ------------------------------------
 
 [[scene]]

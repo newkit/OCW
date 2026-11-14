@@ -223,6 +223,7 @@ pub fn bot_bike(i: u32) -> (ocw_core::ProfileId, ocw_core::RiderLook) {
         frame: PALETTE[(i * 7 + 3) % n],
         helmet: PALETTE[(i * 3 + 9) % n],
         pattern: ocw_core::KitPattern::ALL[i % ocw_core::KitPattern::ALL.len()],
+        ..Default::default()
     };
     (BIKES[i % BIKES.len()], look)
 }
@@ -540,7 +541,7 @@ impl GameServer {
                 .session
                 .snapshot()
                 .iter()
-                .filter(|r| r.build_hash != 0)
+                .filter(|r| r.build_hash != 0 || r.look.character != Default::default())
                 .map(|r| r.id)
                 .collect();
             out.extend(builds.into_iter().map(|id| self.build_message(id)));
@@ -1090,10 +1091,12 @@ impl GameServer {
             .session
             .base_profile(id)
             .map_or_else(Default::default, |p| p.bike);
+        let look = self.session.look(id);
         encode(&server_message(S::RiderBuild(ocw_protocol::rider_build(
             id,
             profile,
             self.session.rider_build(id),
+            look.as_ref(),
         ))))
     }
 }
@@ -1430,6 +1433,7 @@ mod tests {
                     jersey_rgb: 0x00FF00,
                     helmet_rgb: 0x0000FF,
                     kit_pattern: 2,
+                    ..Default::default()
                 }),
                 ..Default::default()
             }))),

@@ -12,12 +12,21 @@
 //! server caps it; the compare card shows the speed difference of the two
 //! parts on this bike. Parts count in free ride and *Open* races, not in
 //! *Profile* or *Equal* races (the default for races and group rides).
+//!
+//! The character corner (W4, spec 4C) uses the same picker: the kit slots
+//! (jersey … cap) list the worn item, owned and shop items like parts, and
+//! the free character slots (body, skin, face, hair, hair colour,
+//! glasses) list their choices ([`Kind::Free`], a `character` line, no
+//! dialog). The cards show the [`Benefit`] of an item – by speed for aero
+//! items (watts at 25 / 35 / 45 km/h), by the climb for light ones.
 
 use ocw_assets::parts::{Catalogue, Part, Slot};
 use ocw_core::Rgb;
 use ocw_core::bike::PALETTE;
+use ocw_core::character::{FACES, GLASSES, HAIR_COLOURS, HAIR_STYLES, SKIN_TONES};
 use ocw_core::hearts::format as hearts;
-use ocw_sim::build::{self as bike_build, Build, PartTable};
+use ocw_core::{BodyBuild, Character};
+use ocw_sim::build::{self as bike_build, Benefit, Build, PartTable};
 
 use super::wallet::{Bike, Garage, fits};
 
@@ -32,6 +41,253 @@ pub enum Kind {
     Shop,
     /// A free paint colour (`None`: the rider's look's frame colour).
     Paint(Option<Rgb>),
+    /// A free character choice (spec 4C: body, skin, face, hair, glasses).
+    Free(Free),
+}
+
+/// A free choice of the character.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Free {
+    Build(BodyBuild),
+    Skin(u8),
+    Face(u8),
+    Hair(u8),
+    HairColour(Rgb),
+    Glasses(u8),
+}
+
+impl Free {
+    /// The console line that makes the choice.
+    pub fn line(self) -> String {
+        match self {
+            Self::Build(b) => format!("character --build {}", b.id()),
+            Self::Skin(i) => format!("character --skin {}", i + 1),
+            Self::Face(i) => format!("character --face {}", i + 1),
+            Self::Hair(i) => format!("character --hair {}", i + 1),
+            Self::HairColour(c) => format!("character --hair-colour {c}"),
+            Self::Glasses(i) => format!("character --glasses {}", i + 1),
+        }
+    }
+
+    /// `c` with this choice.
+    pub fn apply(self, c: Character) -> Character {
+        match self {
+            Self::Build(b) => Character { build: b, ..c },
+            Self::Skin(i) => Character { skin: i, ..c },
+            Self::Face(i) => Character { face: i, ..c },
+            Self::Hair(i) => Character { hair: i, ..c },
+            Self::HairColour(h) => Character {
+                hair_colour: h,
+                ..c
+            },
+            Self::Glasses(i) => Character { glasses: i, ..c },
+        }
+    }
+
+    /// The row's name.
+    pub fn name(self) -> String {
+        match self {
+            Self::Build(b) => format!("{} build", b.name()),
+            Self::Skin(i) => format!("Skin tone {} of {}", i + 1, SKIN_TONES.len()),
+            Self::Face(i) => FACES[i as usize].to_string(),
+            Self::Hair(i) => HAIR_STYLES[i as usize].to_string(),
+            Self::HairColour(c) => format!("Hair {c}"),
+            Self::Glasses(i) => GLASSES[i as usize].to_string(),
+        }
+    }
+}
+
+/// The free slots of the character (spec 4C).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CharSlot {
+    Body,
+    Skin,
+    Face,
+    Hair,
+    HairColour,
+    Glasses,
+}
+
+impl CharSlot {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Body => "Body",
+            Self::Skin => "Skin tone",
+            Self::Face => "Face",
+            Self::Hair => "Hair",
+            Self::HairColour => "Hair colour",
+            Self::Glasses => "Glasses",
+        }
+    }
+
+    /// The choices, in palette order.
+    pub fn choices(self) -> Vec<Free> {
+        let n = |len: usize| 0..len as u8;
+        match self {
+            Self::Body => BodyBuild::ALL.into_iter().map(Free::Build).collect(),
+            Self::Skin => n(SKIN_TONES.len()).map(Free::Skin).collect(),
+            Self::Face => n(FACES.len()).map(Free::Face).collect(),
+            Self::Hair => n(HAIR_STYLES.len()).map(Free::Hair).collect(),
+            Self::HairColour => HAIR_COLOURS.into_iter().map(Free::HairColour).collect(),
+            Self::Glasses => n(GLASSES.len()).map(Free::Glasses).collect(),
+        }
+    }
+
+    /// This slot's value in `c` (the row that is "current").
+    pub fn current(self, c: &Character) -> Free {
+        let c = c.validated();
+        match self {
+            Self::Body => Free::Build(c.build),
+            Self::Skin => Free::Skin(c.skin),
+            Self::Face => Free::Face(c.face),
+            Self::Hair => Free::Hair(c.hair),
+            Self::HairColour => Free::HairColour(c.hair_colour),
+            Self::Glasses => Free::Glasses(c.glasses),
+        }
+    }
+}
+
+/// The slots of the character corner, in list order (LB / RB step
+/// through them): the free character, the kit, *Try on the bike*.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MirrorSlot {
+    Char(CharSlot),
+    Kit(Slot),
+    TryOn,
+}
+
+impl MirrorSlot {
+    pub const ALL: [MirrorSlot; 14] = [
+        MirrorSlot::Kit(Slot::Helmet),
+        MirrorSlot::Kit(Slot::Cap),
+        MirrorSlot::Char(CharSlot::Glasses),
+        MirrorSlot::Char(CharSlot::Hair),
+        MirrorSlot::Char(CharSlot::HairColour),
+        MirrorSlot::Char(CharSlot::Face),
+        MirrorSlot::Kit(Slot::Jersey),
+        MirrorSlot::Char(CharSlot::Body),
+        MirrorSlot::Char(CharSlot::Skin),
+        MirrorSlot::Kit(Slot::Gloves),
+        MirrorSlot::Kit(Slot::Shorts),
+        MirrorSlot::Kit(Slot::Socks),
+        MirrorSlot::Kit(Slot::Shoes),
+        MirrorSlot::TryOn,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Char(c) => c.name(),
+            Self::Kit(s) => s.name(),
+            Self::TryOn => "Try on the bike",
+        }
+    }
+
+    /// The rider's hotspot it belongs to (spec 4C: head, torso, hands,
+    /// legs, feet; *Try on the bike*: none).
+    pub fn region(self) -> Option<Region> {
+        Some(match self {
+            Self::Kit(Slot::Helmet | Slot::Cap)
+            | Self::Char(
+                CharSlot::Glasses | CharSlot::Hair | CharSlot::HairColour | CharSlot::Face,
+            ) => Region::Head,
+            Self::Kit(Slot::Jersey) | Self::Char(CharSlot::Body | CharSlot::Skin) => Region::Torso,
+            Self::Kit(Slot::Gloves) => Region::Hands,
+            Self::Kit(Slot::Shorts | Slot::Socks) => Region::Legs,
+            Self::Kit(Slot::Shoes) => Region::Feet,
+            _ => return None,
+        })
+    }
+}
+
+/// The rider's hotspots in the character corner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Region {
+    Head,
+    Torso,
+    Hands,
+    Legs,
+    Feet,
+}
+
+impl Region {
+    pub const ALL: [Region; 5] = [
+        Region::Head,
+        Region::Torso,
+        Region::Hands,
+        Region::Legs,
+        Region::Feet,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Head => "Head",
+            Self::Torso => "Torso",
+            Self::Hands => "Hands",
+            Self::Legs => "Legs",
+            Self::Feet => "Feet",
+        }
+    }
+
+    /// The first slot of the region in the list.
+    pub fn first_slot(self) -> usize {
+        MirrorSlot::ALL
+            .iter()
+            .position(|s| s.region() == Some(self))
+            .unwrap_or(0)
+    }
+}
+
+/// The rows of a free character slot; the current choice first is not
+/// moved – the picker focuses it ([`Picker::focus_current`]).
+pub fn free_rows(slot: CharSlot) -> Vec<Row> {
+    slot.choices()
+        .into_iter()
+        .map(|f| Row {
+            part: None,
+            kind: Kind::Free(f),
+        })
+        .collect()
+}
+
+/// The rows of kit `slot` (spec 4C): the worn item, owned items, the base
+/// item to go back to, the shop (by tier, cheapest first).
+pub fn kit_rows(cat: &Catalogue, garage: &Garage, slot: Slot) -> Vec<Row> {
+    let mut out = Vec::new();
+    let worn = garage.kit.get(slot.id()).copied();
+    if let Some(p) = garage.kit_on(cat, slot) {
+        out.push(Row {
+            part: Some(p.id.clone()),
+            kind: Kind::Equipped { item: worn },
+        });
+    }
+    for it in &garage.items {
+        let Some(p) = cat.get(&it.part) else { continue };
+        if p.slot != slot || Some(it.id) == worn {
+            continue;
+        }
+        out.push(Row {
+            part: Some(p.id.clone()),
+            kind: Kind::Owned {
+                item: it.id,
+                on: None,
+            },
+        });
+    }
+    if worn.is_some()
+        && let Some(base) = cat.base_kit(slot)
+    {
+        out.push(Row {
+            part: Some(base.id.clone()),
+            kind: Kind::Owned { item: 0, on: None },
+        });
+    }
+    let mut shop: Vec<&Part> = cat.kit(slot).into_iter().filter(|p| p.hearts > 0).collect();
+    shop.sort_by_key(|p| (p.tier, p.hearts));
+    out.extend(shop.into_iter().map(|p| Row {
+        part: Some(p.id.clone()),
+        kind: Kind::Shop,
+    }));
+    out
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -43,6 +299,9 @@ pub struct Row {
 
 /// The rows for `bike`'s `slot`.
 pub fn rows(cat: &Catalogue, garage: &Garage, bike: &Bike, slot: Slot) -> Vec<Row> {
+    if slot.is_kit() {
+        return kit_rows(cat, garage, slot);
+    }
     if slot == Slot::Paint {
         let now = bike.paint();
         let mut out = vec![Row {
@@ -114,6 +373,7 @@ pub fn group(kind: &Kind) -> &'static str {
         Kind::Owned { .. } => "Owned",
         Kind::Shop => "Shop",
         Kind::Paint(_) => "Paint (free)",
+        Kind::Free(_) => "Free choice",
     }
 }
 
@@ -129,6 +389,9 @@ pub fn colour_name(c: Option<Rgb>) -> String {
 pub fn row_text(cat: &Catalogue, row: &Row, balance: i64) -> (String, String, bool) {
     if let Kind::Paint(c) = row.kind {
         return (colour_name(c), "free".into(), false);
+    }
+    if let Kind::Free(f) = row.kind {
+        return (f.name(), "free".into(), false);
     }
     let Some(p) = row.part.as_deref().and_then(|id| cat.get(id)) else {
         return ("?".into(), String::new(), false);
@@ -155,7 +418,7 @@ pub fn row_text(cat: &Catalogue, row: &Row, balance: i64) -> (String, String, bo
                 (left, hearts(price), false)
             }
         }
-        Kind::Paint(_) => unreachable!("handled above"),
+        Kind::Paint(_) | Kind::Free(_) => unreachable!("handled above"),
     }
 }
 
@@ -176,19 +439,32 @@ fn signed_grams(d: i64) -> String {
 }
 
 /// The class line of a part (4G): rolling ±4 % Crr, aero ±0.004 m² CdA,
-/// efficiency ±0.3 % per step.
+/// efficiency ±0.3 % per step; kit (spec 4C) in its finer steps: aero
+/// ∓0.0008 m², efficiency +0.1 %.
 fn classes(p: &Part) -> Vec<String> {
     let mut out = Vec::new();
     if p.rolling != 0 {
         out.push(format!("rolling resistance {:+} %", p.rolling * 4));
     }
     if p.aero != 0 {
-        out.push(format!("drag {:+.3} m² CdA", -f64::from(p.aero) * 0.004));
+        if p.slot.is_kit() {
+            out.push(format!(
+                "drag {:+.4} m² CdA",
+                -f64::from(p.aero) * bike_build::KIT_AERO_STEP_M2
+            ));
+        } else {
+            out.push(format!("drag {:+.3} m² CdA", -f64::from(p.aero) * 0.004));
+        }
     }
     if p.efficiency != 0 {
+        let step = if p.slot.is_kit() {
+            bike_build::KIT_EFFICIENCY_STEP
+        } else {
+            bike_build::EFFICIENCY_STEP
+        };
         out.push(format!(
             "drivetrain {:+.1} %",
-            f64::from(p.efficiency) * 0.3
+            f64::from(p.efficiency) * step * 100.0
         ));
     }
     out
@@ -198,7 +474,7 @@ fn classes(p: &Part) -> Vec<String> {
 /// it is).
 pub fn ids_with(cat: &Catalogue, garage: &Garage, bike: &Bike, part: Option<&Part>) -> Vec<String> {
     let mut ids: Vec<String> = garage
-        .part_ids(bike)
+        .riding_ids(bike)
         .into_iter()
         .filter(|id| part.is_none_or(|p| cat.get(id).is_none_or(|q| q.slot != p.slot)))
         .collect();
@@ -248,9 +524,15 @@ impl CardPhysics {
     }
 }
 
-/// Where parts count (the last line of a card).
+/// Where parts and kit count (the last line of a card).
 pub const WHERE_PARTS_COUNT: &str =
     "Counts in free ride and Open races; cosmetic in Profile / Equal races (the default)";
+
+/// "Benefit: …" of going from `from` to `to` (spec 4G, v3.05: aero items
+/// by speed, light ones by the climb).
+pub fn benefit_line(from: &Build, to: &Build) -> String {
+    format!("Benefit: {}", Benefit::between(from, to).line())
+}
 
 /// "Bike: 7.42 kg · +1.2 % flat, +1.9 % at 6 % vs stock, capped".
 pub fn bike_line(b: &Build) -> String {
@@ -292,13 +574,26 @@ pub fn detail(part: &Part, equipped: Option<&Part>, physics: Option<&CardPhysics
         out.push(format!("Effect: {}", effect.join(" · ")));
     }
     if let Some(ph) = physics {
-        if ph.with.parts == ph.now.parts {
+        let stock = Build::stock(ph.with.profile);
+        let shown = if ph.with.parts == ph.now.parts {
             out.push(format!(
-                "Speed: on the bike now ({})",
-                ph.with.effect_from(&Build::stock(ph.with.profile)).line()
+                "On the bike now – {}",
+                benefit_line(&stock, &ph.with).to_lowercase()
             ));
+            Benefit::between(&stock, &ph.with)
         } else {
-            out.push(format!("Speed: {}", ph.with.effect_from(&ph.now).line()));
+            out.push(benefit_line(&ph.now, &ph.with));
+            Benefit::between(&ph.now, &ph.with)
+        };
+        // A kit item's score against the standard item of its slot – only
+        // when the rest of the bike and kit make it differ from the line
+        // above.
+        if part.slot.is_kit()
+            && !part.is_base()
+            && let Some(b) = bike_build::score(PartTable::shipped(), ph.with.profile, &part.id)
+            && b.line() != shown.line()
+        {
+            out.push(format!("Score over the standard item: {}", b.line()));
         }
         out.push(bike_line(&ph.with));
     }
@@ -347,11 +642,11 @@ pub fn compare(a: &Part, b: &Part, physics: Option<(&Build, &Build)>) -> Vec<Str
         ),
     ];
     if let Some((with_a, with_b)) = physics {
-        let e = with_b.effect_from(with_a);
+        let e = Benefit::between(with_a, with_b);
         // Better by the speed on the flat and the climb together (0.01 %).
         let score = ((e.flat + e.climb) * 1e4).round() as i64;
         out.push(format!(
-            "Speed: B {} – B {}",
+            "B against A: {} – B {}",
             e.line(),
             better(false, score, 0)
         ));
@@ -493,7 +788,7 @@ pub fn dialog(
             ))
         }
         Kind::Equipped { item: None } => None,
-        Kind::Paint(_) => None,
+        Kind::Paint(_) | Kind::Free(_) => None,
     }
 }
 
@@ -502,6 +797,8 @@ pub fn dialog(
 #[derive(Debug, Clone, PartialEq)]
 pub struct Picker {
     pub slot: Slot,
+    /// A free character slot (the rows are [`Kind::Free`]; `slot` unused).
+    pub character: Option<CharSlot>,
     pub rows: Vec<Row>,
     pub focus: usize,
     /// The row pinned as *A* for comparing.
@@ -513,10 +810,34 @@ impl Picker {
     pub fn new(slot: Slot, rows: Vec<Row>) -> Self {
         Self {
             slot,
+            character: None,
             rows,
             focus: 0,
             pinned: None,
             dialog: None,
+        }
+    }
+
+    /// The picker of a free character slot, the current choice focused.
+    pub fn character(slot: CharSlot, now: &Character) -> Self {
+        let rows = free_rows(slot);
+        let cur = slot.current(now);
+        let focus = rows
+            .iter()
+            .position(|r| r.kind == Kind::Free(cur))
+            .unwrap_or(0);
+        Self {
+            character: Some(slot),
+            focus,
+            ..Self::new(Slot::Paint, rows)
+        }
+    }
+
+    /// The free choice focused (character pickers).
+    pub fn preview_free(&self) -> Option<Free> {
+        match self.focused()?.kind {
+            Kind::Free(f) => Some(f),
+            _ => None,
         }
     }
 
@@ -747,11 +1068,12 @@ mod tests {
                 .any(|l| l.starts_with("Effect:") && l.contains("rolling resistance -")),
             "{d:?}"
         );
-        // The speed from the build physics (W3): race tyres are faster.
+        // The benefit from the build physics (W3, v3.05): race tyres are
+        // lighter and roll better – shown by the climb first.
         let speed = d
             .iter()
-            .find(|l| l.starts_with("Speed: +"))
-            .expect("a speed line");
+            .find(|l| l.starts_with("Benefit: −"))
+            .expect("a benefit line");
         assert!(
             speed.contains("% flat") && speed.contains("at 6 %"),
             "{speed}"
@@ -768,18 +1090,18 @@ mod tests {
         assert!(
             detail(base, Some(base), Some(&now))
                 .iter()
-                .any(|l| l.starts_with("Speed: on the bike now"))
+                .any(|l| l.starts_with("On the bike now – benefit:"))
         );
         let c = compare(base, fast, Some((&now.with, &ph.with)));
         assert!(
             c.iter()
-                .any(|l| l.starts_with("Speed: B +") && l.ends_with("B better")),
+                .any(|l| l.starts_with("B against A: ") && l.ends_with("B better")),
             "{c:?}"
         );
         let back = compare(fast, base, Some((&ph.with, &now.with)));
         assert!(
             back.iter()
-                .any(|l| l.starts_with("Speed: B −") && l.ends_with("B worse")),
+                .any(|l| l.starts_with("B against A: ") && l.ends_with("B worse")),
             "{back:?}"
         );
         assert!(
@@ -807,5 +1129,73 @@ mod tests {
         let at = p.focused().cloned();
         p.refresh(r.clone());
         assert_eq!(p.focused().cloned(), at);
+    }
+
+    /// The kit's cards (spec 4C): kit rows (equipped base, shop with
+    /// locks), the kit's own class steps on the effect line, the benefit by
+    /// speed, the score line only when it differs; free rows apply as a
+    /// `character` line.
+    #[test]
+    fn kit_cards_and_free_rows() {
+        let mut w = wallet();
+        let g = w.get("Ann").unwrap();
+        let r = kit_rows(cat(), g, Slot::Helmet);
+        assert!(matches!(r[0].kind, Kind::Equipped { item: None }));
+        assert_eq!(r[0].part.as_deref(), Some("helmet.road.base"));
+        let tt = r
+            .iter()
+            .find(|r| r.part.as_deref() == Some("helmet.tt.top"))
+            .unwrap();
+        let (_, right, locked) = row_text(cat(), tt, 400);
+        assert!(locked && right.contains("needs 100 ♥ more"), "{right}");
+        let b = g.bike("road").unwrap();
+        let part = cat().get("helmet.tt.top").unwrap();
+        let base = cat().get("helmet.road.base").unwrap();
+        let ph = CardPhysics::of(cat(), g, b, part);
+        let d = detail(part, Some(base), Some(&ph));
+        assert!(
+            d.iter()
+                .any(|l| l.starts_with("Effect:") && l.contains("drag -0.0032 m² CdA")),
+            "{d:?}"
+        );
+        assert!(
+            d.iter()
+                .any(|l| l.starts_with("Benefit: +") && l.contains("W @45 km/h")),
+            "{d:?}"
+        );
+        assert!(
+            !d.iter().any(|l| l.starts_with("Score over")),
+            "the same as the benefit on a stock bike: {d:?}"
+        );
+        // With the skinsuit on, the TT helmet's benefit on this rider is
+        // capped differently from its score alone: still at most one line each.
+        w.grant("Ann", 5000);
+        w.buy(cat(), "Ann", "road", "jersey.skinsuit.top").unwrap();
+        let g = w.get("Ann").unwrap();
+        let shoes = cat().get("shoes.race.top").unwrap();
+        let d = detail(
+            shoes,
+            g.kit_on(cat(), Slot::Shoes),
+            Some(&CardPhysics::of(cat(), g, g.bike("road").unwrap(), shoes)),
+        );
+        assert!(d.iter().any(|l| l.contains("drivetrain +0.1 %")), "{d:?}");
+        assert_eq!(d.iter().filter(|l| l.starts_with("Benefit:")).count(), 1);
+        // Free rows: the current choice focused, a character line.
+        let p = Picker::character(CharSlot::Skin, &Character::default());
+        assert_eq!(p.preview_free(), Some(Free::Skin(3)));
+        assert_eq!(Free::Skin(3).line(), "character --skin 4");
+        assert_eq!(Free::Glasses(2).apply(Character::default()).glasses, 2);
+        let (left, right, _) = row_text(cat(), &p.rows[0], 0);
+        assert_eq!(
+            (left.as_str(), right.as_str()),
+            ("Skin tone 1 of 12", "free")
+        );
+        // Every slot of the corner has a region but Try on the bike.
+        for s in MirrorSlot::ALL {
+            assert_eq!(s.region().is_none(), s == MirrorSlot::TryOn, "{s:?}");
+        }
+        for r in Region::ALL {
+            assert_eq!(MirrorSlot::ALL[r.first_slot()].region(), Some(r));
+        }
     }
 }

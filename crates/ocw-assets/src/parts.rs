@@ -5,6 +5,12 @@
 //! the catalogue from its sources. Bevy-free and without file access (the
 //! command-line tool reads the files).
 //!
+//! The rider's kit (spec 4C, W4: jersey, bib shorts / tights, socks,
+//! shoes, gloves, helmet, cap – category *apparel*) is in the same
+//! catalogue: [`Slot::KIT`], one free base item per slot (the base kit
+//! every rider starts with), models are the rider generator's variants
+//! (`crate::rider::VARIANTS`), small effect classes (spec 4C, v3.04).
+//!
 //! Prices: **1 heart = 1 EUR**, a part's hearts are `ceil(median)` of its
 //! references (two references: their mean), computed exactly in half
 //! cents; groups of references (a bar and a stem) add their medians, pairs
@@ -35,9 +41,28 @@ pub enum Slot {
     Computer,
     Bag,
     Paint,
+    // The rider's kit (category apparel, spec 4C).
+    Jersey,
+    Shorts,
+    Socks,
+    Shoes,
+    Gloves,
+    Helmet,
+    Cap,
 }
 
 impl Slot {
+    /// The kit slots (the character corner's paid slots), in list order.
+    pub const KIT: [Slot; 7] = [
+        Slot::Jersey,
+        Slot::Shorts,
+        Slot::Socks,
+        Slot::Shoes,
+        Slot::Gloves,
+        Slot::Helmet,
+        Slot::Cap,
+    ];
+
     /// Every slot, in list order (LB / RB step through them in this order).
     pub const ALL: [Slot; 17] = [
         Slot::Frame,
@@ -79,6 +104,13 @@ impl Slot {
             Self::Computer => "computer",
             Self::Bag => "bag",
             Self::Paint => "paint",
+            Self::Jersey => "jersey",
+            Self::Shorts => "shorts",
+            Self::Socks => "socks",
+            Self::Shoes => "shoes",
+            Self::Gloves => "gloves",
+            Self::Helmet => "helmet",
+            Self::Cap => "cap",
         }
     }
 
@@ -102,14 +134,28 @@ impl Slot {
             Self::Computer => "Bike computer",
             Self::Bag => "Bag",
             Self::Paint => "Paint",
+            Self::Jersey => "Jersey",
+            Self::Shorts => "Bib shorts / tights",
+            Self::Socks => "Socks",
+            Self::Shoes => "Shoes",
+            Self::Gloves => "Gloves",
+            Self::Helmet => "Helmet",
+            Self::Cap => "Cap",
         }
     }
 
+    /// A slot of the bike ([`Slot::ALL`]) or of the kit ([`Slot::KIT`]).
     pub fn parse(s: &str) -> Option<Self> {
         let s = s.trim();
         Self::ALL
             .into_iter()
+            .chain(Self::KIT)
             .find(|x| x.id().eq_ignore_ascii_case(s))
+    }
+
+    /// An apparel slot of the rider's kit (not a bike part).
+    pub fn is_kit(self) -> bool {
+        Self::KIT.contains(&self)
     }
 
     /// Whether the slot holds catalogue parts with a base part per bike
@@ -199,7 +245,10 @@ pub struct Part {
     pub rolling: i32,
     pub aero: i32,
     pub efficiency: i32,
-    /// Frames: `bike-<profile>`; base parts: `stock`; else a part variant.
+    /// Kit: the kit slots this item covers (a skinsuit: the bib shorts).
+    pub covers: Vec<Slot>,
+    /// Frames: `bike-<profile>`; base parts: `stock`; else a part variant
+    /// (kit: a rider variant).
     pub model: String,
     /// Key into the sources file.
     pub sources: Option<String>,
@@ -236,6 +285,8 @@ struct RawPart {
     aero: i32,
     #[serde(default)]
     efficiency: i32,
+    #[serde(default)]
+    covers: Vec<String>,
     model: String,
     sources: Option<String>,
     priced: Option<toml::value::Datetime>,
@@ -311,6 +362,13 @@ impl Catalogue {
                     }
                 },
             };
+            let mut covers = Vec::new();
+            for c in &r.covers {
+                match Slot::parse(c) {
+                    Some(c) if c.is_kit() => covers.push(c),
+                    _ => errors.push(format!("{at}: covers {c:?}, not a kit slot")),
+                }
+            }
             let (Some(slot), Some(tier)) = (slot, tier) else {
                 continue;
             };
@@ -327,6 +385,7 @@ impl Catalogue {
                 rolling: r.rolling,
                 aero: r.aero,
                 efficiency: r.efficiency,
+                covers,
                 model: r.model,
                 sources: r.sources,
                 priced: r.priced.as_ref().and_then(date_string),
@@ -376,6 +435,19 @@ impl Catalogue {
         self.parts
             .iter()
             .find(|p| p.slot == slot && p.is_base() && p.fits(bike))
+    }
+
+    /// The kit items of `slot` (spec 4C): base first, then by tier and
+    /// price.
+    pub fn kit(&self, slot: Slot) -> Vec<&Part> {
+        let mut v: Vec<&Part> = self.parts.iter().filter(|p| p.slot == slot).collect();
+        v.sort_by_key(|p| (p.tier, p.hearts, p.id.clone()));
+        v
+    }
+
+    /// The free base item of kit `slot` (the base kit).
+    pub fn base_kit(&self, slot: Slot) -> Option<&Part> {
+        self.parts.iter().find(|p| p.slot == slot && p.is_base())
     }
 
     /// The base frameset of a profile (a starter bike's frame).
@@ -635,13 +707,91 @@ pub const BRANDS: &[&str] = &[
     "Apidura",
     "Wahoo",
     "Elemnt",
+    // Apparel (spec 4C, W4: helmets, shoes, clothing, gloves, caps).
+    "Castelli",
+    "Perfetto",
+    "Sorpasso",
+    "Quindici",
+    "Sanremo",
+    "Entrata",
+    "Arenberg",
+    "Rapha",
+    "Assos",
+    "Equipe",
+    "RSR",
+    "Ultraz",
+    "Schtradivari",
+    "Le Houdini",
+    "Gore",
+    "Gorewear",
+    "Gore Wear",
+    "Gore-Tex",
+    "Infinium",
+    "Windstopper",
+    "Sportful",
+    "Bodyfit",
+    "Fiandre",
+    "Hyperepic",
+    "MAAP",
+    "S-Phyre",
+    "RC903",
+    "Vento",
+    "Infinito",
+    "DMT",
+    "KR0",
+    "KRSL",
+    "Sidi",
+    "GripGrab",
+    "RaceAero",
+    "Endura",
+    "Xtract",
+    "Roeckl",
+    "Belluno",
+    "Bioxcell",
+    "Giro",
+    "Aries",
+    "Aerohead",
+    "Supernatural",
+    "Trenta",
+    "Manta",
+    "Prevail",
+    "Evade",
+    "POC",
+    "Ventral",
+    "Tempor",
+    "Procen",
+    "Kask",
+    "Valegro",
+    "Utopia",
+    "Bambino",
+    "Rudy Project",
+    "Café du Cycliste",
+    "Cafe du Cycliste",
+    "Gapette",
+    "Pas Normal",
+    "Pedal Ed",
+    "PEdALED",
+    "Isadore",
+    "Le Col",
+    "Gobik",
+    "Santini",
+    "EKOI",
+    "Velotoze",
+    "Uyn",
+    "Ryzon",
+    "MIPS",
+    "Lycra",
+    "Technogel",
+    "Poron",
+    "Chiba",
+    "MET",
 ];
 
 /// Researched brands that are plain words and so not on [`BRANDS`]
 /// (they appear in generic names).
 pub const GENERIC_BRAND_WORDS: &[&str] = &[
     "Time", "Look", "Force", "Red", "Record", "Open", "Elite", "Race", "PRO", "Factor", "Giant",
-    "Apex", "Rival", "Rally", "Edge", "Comp", "Zero",
+    "Apex", "Rival", "Rally", "Edge", "Comp", "Zero", "Rose",
 ];
 
 fn is_word_char(c: char) -> bool {
@@ -686,6 +836,9 @@ impl std::fmt::Display for Problem {
     }
 }
 
+/// Kit `aero` class range (the server's `ocw_sim::build::KIT_AERO_RANGE`).
+pub const KIT_AERO_RANGE: i32 = 4;
+
 /// Sources older than this are an error (re-research the prices, 4H).
 pub const STALE_MONTHS: i32 = 18;
 /// … and older than this a warning.
@@ -726,6 +879,37 @@ pub fn validate(cat: &Catalogue, sources: &Sources, today: (i32, u32, u32)) -> V
         }
         if p.fits.is_empty() {
             err(format!("{at}: fits no bike type"));
+        }
+        if p.slot.is_kit() {
+            // Kit is worn by the rider, on any bike (spec 4C).
+            if BikeType::ALL.iter().any(|b| !p.fits.contains(b)) {
+                err(format!(
+                    "{at}: kit fits every bike type (road, tt, gravel, mtb)"
+                ));
+            }
+            if p.rolling != 0 {
+                err(format!("{at}: kit has no rolling class"));
+            }
+            if !(-KIT_AERO_RANGE..=KIT_AERO_RANGE).contains(&p.aero)
+                || !(-1..=1).contains(&p.efficiency)
+            {
+                err(format!(
+                    "{at}: kit classes are aero −{KIT_AERO_RANGE} … +{KIT_AERO_RANGE}, efficiency −1 … +1"
+                ));
+            }
+            // Comfort items have no effect (spec 4C).
+            if matches!(p.slot, Slot::Gloves | Slot::Cap) && (p.aero != 0 || p.efficiency != 0) {
+                err(format!(
+                    "{at}: gloves and caps are comfort items without effect classes"
+                ));
+            }
+            for c in &p.covers {
+                if *c == p.slot {
+                    err(format!("{at}: an item cannot cover its own slot"));
+                }
+            }
+        } else if !p.covers.is_empty() {
+            err(format!("{at}: only kit items cover other slots"));
         }
         if p.name.trim().is_empty() {
             err(format!("{at}: no name"));
@@ -768,7 +952,27 @@ pub fn validate(cat: &Catalogue, sources: &Sources, today: (i32, u32, u32)) -> V
             }
         }
         // Frames and models.
-        if p.slot == Slot::Frame {
+        if p.slot.is_kit() {
+            if p.is_base() {
+                if p.model != STOCK_MODEL {
+                    err(format!("{at}: a base kit item's model is {STOCK_MODEL:?}"));
+                }
+            } else {
+                match crate::rider::variant(&p.model) {
+                    None => err(format!("{at}: unknown rider variant {:?}", p.model)),
+                    Some(v) if v.slot != p.slot.id() => err(format!(
+                        "{at}: model {:?} is a {} variant, not {}",
+                        p.model,
+                        v.slot,
+                        p.slot.id()
+                    )),
+                    Some(_) => {}
+                }
+            }
+            if p.profile.is_some() {
+                err(format!("{at}: only framesets have a profile"));
+            }
+        } else if p.slot == Slot::Frame {
             match p.profile {
                 None => err(format!("{at}: a frameset names its physics profile")),
                 Some(prof) => {
@@ -838,6 +1042,20 @@ pub fn validate(cat: &Catalogue, sources: &Sources, today: (i32, u32, u32)) -> V
                     b.id()
                 ));
             }
+        }
+    }
+    // The free base kit: one base item per kit slot.
+    for slot in Slot::KIT {
+        let n = cat
+            .parts
+            .iter()
+            .filter(|p| p.slot == slot && p.is_base())
+            .count();
+        if n != 1 {
+            err(format!(
+                "{n} base items of kit slot {} (need exactly 1: the free base kit)",
+                slot.id()
+            ));
         }
     }
     for prof in ProfileId::ALL {
@@ -1403,5 +1621,97 @@ mod tests {
         assert_eq!(Tier::parse("upper"), Some(Tier::Upper));
         assert_eq!(parse_date("2026-11-13"), Some((2026, 11, 13)));
         assert_eq!(parse_date("2026-13-01"), None);
+    }
+
+    /// The kit (spec 4C, W4): every apparel price is ceil(median) of its
+    /// researched references; the base kit is free and complete; kit fits
+    /// every bike; no brand in names, ids or models; the researched price
+    /// table of the spec.
+    #[test]
+    fn the_kit_is_priced_from_its_research_and_the_base_kit_is_free() {
+        let (c, s) = shipped();
+        for slot in Slot::KIT {
+            let base = c.base_kit(slot).expect("a free base item");
+            assert_eq!(base.hearts, 0, "{}", base.id);
+            assert_eq!(base.model, STOCK_MODEL);
+            let items = c.kit(slot);
+            assert_eq!(items[0].id, base.id, "base first");
+            assert!(items.len() >= 2, "{slot:?} has something to buy");
+            for p in items {
+                assert!(BikeType::ALL.iter().all(|b| p.fits(*b)), "{}", p.id);
+                assert!(brand_in(&p.name).is_none() && brand_in(&p.id).is_none());
+                if !p.is_base() {
+                    let key = p.sources.as_deref().unwrap();
+                    let src = s.get(key).unwrap();
+                    assert!(src.groups[0].refs.len() >= 2, "{key}: a few references");
+                    assert_eq!(Some(p.hearts), s.hearts_of(key), "{}", p.id);
+                    assert!(crate::rider::variant(&p.model).is_some(), "{}", p.model);
+                }
+            }
+        }
+        let price = |id: &str| c.get(id).map(|p| p.hearts);
+        for (id, h) in [
+            ("jersey.thermal.mid", 130),
+            ("jersey.aero.upper", 210),
+            ("jersey.skinsuit.top", 430),
+            ("shorts.tights.mid", 180),
+            ("shorts.aero.upper", 250),
+            ("socks.tall.entry", 20),
+            ("socks.aero.upper", 34),
+            ("shoes.race.top", 400),
+            ("shoes.overshoes.mid", 70),
+            ("gloves.gel.entry", 30),
+            ("gloves.full.mid", 60),
+            ("gloves.winter.upper", 108),
+            ("helmet.light.top", 320),
+            ("helmet.aero-road.top", 268),
+            ("helmet.tt.top", 500),
+            ("cap.cotton.entry", 30),
+        ] {
+            assert_eq!(price(id), Some(h), "{id}");
+        }
+        // The skinsuit covers the bib shorts.
+        assert_eq!(
+            c.get("jersey.skinsuit.top").unwrap().covers,
+            vec![Slot::Shorts]
+        );
+        // Kit slots parse, and are not bike slots.
+        for slot in Slot::KIT {
+            assert_eq!(Slot::parse(slot.id()), Some(slot));
+            assert!(slot.is_kit() && !Slot::ALL.contains(&slot));
+        }
+        assert!(brand_in("Kask Bambino Pro").is_some());
+        assert!(brand_in("Time-trial helmet").is_none());
+    }
+
+    #[test]
+    fn the_validator_catches_broken_kit() {
+        let edit = |id: &'static str, f: fn(&mut Part)| {
+            broken(move |c| f(c.parts.iter_mut().find(|p| p.id == id).unwrap()))
+        };
+        let e = edit("helmet.tt.top", |p| {
+            p.fits.retain(|b| *b != BikeType::Mountain)
+        });
+        assert!(has(&e, "kit fits every bike type"), "{e:?}");
+        let e = edit("gloves.full.mid", |p| p.aero = 1);
+        assert!(has(&e, "comfort items"), "{e:?}");
+        let e = edit("helmet.tt.top", |p| p.aero = 5);
+        assert!(has(&e, "kit classes"), "{e:?}");
+        let e = edit("socks.aero.upper", |p| p.rolling = -1);
+        assert!(has(&e, "no rolling class"), "{e:?}");
+        let e = edit("helmet.tt.top", |p| p.model = "tyre-road-28".into());
+        assert!(has(&e, "unknown rider variant"), "{e:?}");
+        let e = edit("helmet.tt.top", |p| p.model = "shoes-race".into());
+        assert!(has(&e, "is a shoes variant"), "{e:?}");
+        let e = edit("cap.none.base", |p| p.hearts = 5);
+        assert!(has(&e, "a base part costs 0 hearts"), "{e:?}");
+        let e = edit("jersey.skinsuit.top", |p| p.covers = vec![Slot::Jersey]);
+        assert!(has(&e, "cannot cover its own slot"), "{e:?}");
+        let e = broken(|c| c.parts.retain(|p| p.id != "helmet.road.base"));
+        assert!(has(&e, "base items of kit slot helmet"), "{e:?}");
+        let e = edit("helmet.tt.top", |p| {
+            p.name = "Kask time-trial helmet".into()
+        });
+        assert!(has(&e, "brand name \"Kask\""), "{e:?}");
     }
 }

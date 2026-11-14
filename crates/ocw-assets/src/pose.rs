@@ -212,6 +212,23 @@ impl RiderRig {
         self.thigh + self.shin
     }
 
+    /// The rig of the same model drawn `s` times as large (the body
+    /// height, spec §14 Phase 4, 4C: the rigid parts scale together, so
+    /// the rig's lengths and joints scale by `s`).
+    pub fn scaled(&self, s: f32) -> Self {
+        Self {
+            hips: self.hips.map(|h| h * s),
+            thigh: self.thigh * s,
+            shin: self.shin * s,
+            cleat: self.cleat * s,
+            torso: self.torso * s,
+            shoulders: self.shoulders.map(|h| h * s),
+            neck: self.neck * s,
+            upper_arm: self.upper_arm * s,
+            forearm: self.forearm * s,
+        }
+    }
+
     pub fn arm(&self) -> f32 {
         self.upper_arm + self.forearm
     }
@@ -246,6 +263,21 @@ impl BikeRig {
             return Err(format!("crank length {} m", rig.crank_length));
         }
         Ok(rig)
+    }
+
+    /// The seat tube's direction (bottom bracket → saddle): the saddle
+    /// moves along it.
+    pub fn seat_dir(&self) -> Vec3 {
+        (self.saddle - self.crank).normalize_or(Vec3::Y)
+    }
+
+    /// The bike with its saddle (and seat post) moved `d` m along the
+    /// seat tube.
+    pub fn with_saddle_offset(&self, d: f32) -> Self {
+        Self {
+            saddle: self.saddle + self.seat_dir() * d,
+            ..*self
+        }
     }
 
     /// Right pedal position at crank angle `theta` (0 = up, increasing
@@ -434,7 +466,12 @@ pub const EXTENSION_STANDING: f32 = 0.985;
 
 impl Fit {
     pub fn new(rider: &RiderRig, bike: &BikeRig) -> Self {
-        let hip_seated = bike.saddle + HIP_ABOVE_SADDLE;
+        Self::with_hip(rider, bike, HIP_ABOVE_SADDLE)
+    }
+
+    /// The fit with the hip joints `hip_above` the saddle anchor.
+    pub fn with_hip(rider: &RiderRig, bike: &BikeRig, hip_above: Vec3) -> Self {
+        let hip_seated = bike.saddle + hip_above;
         // Standing: hips forward over the cranks and up until the legs are
         // almost straight at the bottom of the stroke.
         let forward = (hip_seated.z - bike.crank.z).max(0.0) * 0.55 + 0.05;
@@ -445,6 +482,62 @@ impl Fit {
         Self {
             hip_seated,
             hip_standing: Vec3::new(base.x, y, base.z),
+        }
+    }
+}
+
+/// The largest saddle move along the seat tube (m) for the body heights
+/// of `ocw_core::character::HEIGHT_RANGE_CM` (the seat post is long
+/// enough for it).
+pub const MAX_SADDLE_OFFSET_M: f32 = 0.16;
+
+/// A rider of body scale `scale` (height / 1.78 m) fitted to a bike (spec
+/// §14 Phase 4, 4C): the scaled rig, the bike with the saddle at the
+/// height that fits the legs (the bikes are generated for the default
+/// rider; a taller rider raises the seat post, a smaller one lowers it,
+/// so the legs reach [`EXTENSION_SEATED`] again) and the fit.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BodyFit {
+    pub scale: f32,
+    pub rider: RiderRig,
+    pub bike: BikeRig,
+    pub fit: Fit,
+    /// The saddle's move along the seat tube (m, + = up).
+    pub saddle_offset: f32,
+}
+
+impl BodyFit {
+    /// `rider`: the model's own rig (scale 1); `bike`: as generated.
+    pub fn new(rider: &RiderRig, bike: &BikeRig, scale: f32) -> Self {
+        let scale = if scale.is_finite() {
+            scale.clamp(0.7, 1.3)
+        } else {
+            1.0
+        };
+        if (scale - 1.0).abs() < 1e-4 {
+            return Self {
+                scale: 1.0,
+                rider: *rider,
+                bike: *bike,
+                fit: Fit::new(rider, bike),
+                saddle_offset: 0.0,
+            };
+        }
+        let r = rider.scaled(scale);
+        let hip = HIP_ABOVE_SADDLE * scale;
+        let lim = MAX_SADDLE_OFFSET_M;
+        let saddle_offset = bisect(-lim, lim, EXTENSION_SEATED, |d| {
+            // A higher saddle stretches the legs more.
+            let b = bike.with_saddle_offset(d);
+            leg_extension(&r, &b, b.saddle + hip)
+        });
+        let b = bike.with_saddle_offset(saddle_offset);
+        Self {
+            scale,
+            rider: r,
+            bike: b,
+            fit: Fit::with_hip(&r, &b, hip),
+            saddle_offset,
         }
     }
 }
@@ -660,6 +753,64 @@ mod tests {
                         let ankle = rider.position(nodes::FOOT[s]).unwrap();
                         let mid = 0.5 * (hip + ankle);
                         assert!(knee.z < mid.z + 0.005, "{profile:?} knee {knee} mid {mid}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// Body heights from 1.50 to 2.05 m (spec §14 Phase 4, 4C): the rig
+    /// scales, the saddle moves along the seat tube until the legs fit
+    /// again, and feet stay on the pedals and hands on the bars on every
+    /// bike, seated and standing.
+    #[test]
+    fn every_body_height_fits_every_bike() {
+        let model = crate::rider::build(crate::rider::Detail::High);
+        let rig = RiderRig::from_model(&model).unwrap();
+        for profile in ocw_core::ProfileId::ALL {
+            let bike = crate::bikes::rig(profile);
+            assert_eq!(BodyFit::new(&rig, &bike, 1.0).saddle_offset, 0.0);
+            let mut last = f32::MIN;
+            for cm in [150u16, 160, 170, 178, 190, 205] {
+                let s = f32::from(cm) / 178.0;
+                let b = BodyFit::new(&rig, &bike, s);
+                assert!(b.saddle_offset > last, "{profile:?} {cm}: taller, higher");
+                last = b.saddle_offset;
+                assert!(
+                    b.saddle_offset.abs() < MAX_SADDLE_OFFSET_M - 0.005,
+                    "{profile:?} {cm}: {b:?}"
+                );
+                let e = leg_extension(&b.rider, &b.bike, b.fit.hip_seated);
+                assert!((e - EXTENSION_SEATED).abs() < 0.01, "{profile:?} {cm}: {e}");
+                for stand in [0.0, 1.0] {
+                    for i in 0..8 {
+                        let params = PoseParams {
+                            crank: i as f32 / 8.0 * std::f32::consts::TAU,
+                            stand,
+                            ..Default::default()
+                        };
+                        let p = pose(&b.rider, &b.bike, &b.fit, &params);
+                        // The model drawn s times as large: positions of the
+                        // posed (unscaled) model times s, the pelvis in the
+                        // bike frame divided by s (as the renderer writes it).
+                        let mut posed = model.clone();
+                        p.apply(&mut posed);
+                        let pi = posed.node(nodes::PELVIS).unwrap();
+                        posed.nodes[pi].translation = p.pelvis.0 / s;
+                        for side in 0..2 {
+                            let cleat = posed.position(nodes::CLEAT[side]).unwrap() * s;
+                            let pedal = b.bike.pedal(side, params.crank);
+                            assert!(
+                                cleat.distance(pedal) < 0.03,
+                                "{profile:?} {cm} stand {stand}: cleat {cleat} pedal {pedal}"
+                            );
+                            let grip = posed.position(nodes::GRIP[side]).unwrap() * s;
+                            assert!(
+                                grip.distance(b.bike.hoods[side]) < 0.04,
+                                "{profile:?} {cm} stand {stand}: grip {grip} hoods {}",
+                                b.bike.hoods[side]
+                            );
+                        }
                     }
                 }
             }

@@ -514,6 +514,8 @@ pub fn hint(device: ActiveInput, ctx: HintCtx) -> String {
         HintCtx::Picker => vec![sel, cmp, act, slot, back],
         HintCtx::Dialog => vec![sel, back],
         HintCtx::Corner => vec![sel, back],
+        HintCtx::Dress => vec![slot, sel, orbit, back],
+        HintCtx::TryOn => vec![orbit, back],
     };
     let parts: Vec<&str> = parts
         .into_iter()
@@ -541,6 +543,10 @@ pub enum HintCtx {
     Picker,
     Dialog,
     Corner,
+    /// The character editor (rider hotspots, slots, turning the rider).
+    Dress,
+    /// *Try on the bike*.
+    TryOn,
 }
 
 #[cfg(test)]

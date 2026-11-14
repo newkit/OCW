@@ -951,3 +951,284 @@ aero = -1
 model = "bag-top-tube"
 sources = "bag.top_tube"
 priced = 2026-11-13
+
+# --- Apparel: the rider's kit (spec §14 Phase 4, 4C, W4) ---------------------
+#
+# Worn by the rider on any bike (fits every bike type). The base items
+# (0 hearts) are the free base kit every rider starts with; models are the
+# rider generator's variants (crates/ocw-assets/src/rider.rs). Effect classes
+# (spec 4C, v3.04): aero in finer kit steps (ocw_sim::build::KIT_AERO_STEP_M2),
+# efficiency for stiff race shoes; weights count for helmets and shoes only;
+# comfort items (gloves, caps, warm kit) have none. A skinsuit covers the bib
+# shorts. Glasses, body, skin, face and hair are free choices of the look.
+
+[[part]]
+id = "jersey.club.base"
+slot = "jersey"
+tier = "base"
+name = "Short-sleeve club jersey"
+hearts = 0
+weight_g = 140
+fits = ["road", "tt", "gravel", "mtb"]
+model = "stock"
+
+[[part]]
+id = "shorts.bib.base"
+slot = "shorts"
+tier = "base"
+name = "Bib shorts"
+hearts = 0
+weight_g = 200
+fits = ["road", "tt", "gravel", "mtb"]
+model = "stock"
+
+[[part]]
+id = "socks.cycling.base"
+slot = "socks"
+tier = "base"
+name = "Cycling socks"
+hearts = 0
+weight_g = 35
+fits = ["road", "tt", "gravel", "mtb"]
+model = "stock"
+
+[[part]]
+id = "shoes.road.base"
+slot = "shoes"
+tier = "base"
+name = "Road shoes"
+hearts = 0
+weight_g = 560
+fits = ["road", "tt", "gravel", "mtb"]
+model = "stock"
+
+[[part]]
+id = "gloves.mitts.base"
+slot = "gloves"
+tier = "base"
+name = "Fingerless mitts"
+hearts = 0
+weight_g = 50
+fits = ["road", "tt", "gravel", "mtb"]
+model = "stock"
+
+[[part]]
+id = "helmet.road.base"
+slot = "helmet"
+tier = "base"
+name = "Vented road helmet"
+hearts = 0
+weight_g = 300
+fits = ["road", "tt", "gravel", "mtb"]
+model = "stock"
+
+[[part]]
+id = "cap.none.base"
+slot = "cap"
+tier = "base"
+name = "No cap"
+hearts = 0
+weight_g = 0
+fits = ["road", "tt", "gravel", "mtb"]
+model = "stock"
+
+[[part]]
+id = "jersey.thermal.mid"
+slot = "jersey"
+tier = "mid"
+name = "Long-sleeve thermal jersey"
+hearts = 130
+weight_g = 300
+fits = ["road", "tt", "gravel", "mtb"]
+model = "jersey-long-sleeve"
+sources = "apparel.jersey.thermal"
+priced = 2026-11-14
+
+[[part]]
+id = "jersey.aero.upper"
+slot = "jersey"
+tier = "upper"
+name = "Aero race jersey"
+hearts = 210
+weight_g = 120
+fits = ["road", "tt", "gravel", "mtb"]
+aero = 1
+model = "jersey-aero"
+sources = "apparel.jersey.aero"
+priced = 2026-11-14
+
+[[part]]
+id = "jersey.skinsuit.top"
+slot = "jersey"
+tier = "top"
+name = "Road skinsuit"
+hearts = 430
+weight_g = 210
+fits = ["road", "tt", "gravel", "mtb"]
+aero = 2
+covers = ["shorts"]
+model = "skinsuit"
+sources = "apparel.jersey.skinsuit"
+priced = 2026-11-14
+
+[[part]]
+id = "shorts.tights.mid"
+slot = "shorts"
+tier = "mid"
+name = "Winter bib tights"
+hearts = 180
+weight_g = 330
+fits = ["road", "tt", "gravel", "mtb"]
+model = "shorts-tights"
+sources = "apparel.shorts.tights"
+priced = 2026-11-14
+
+[[part]]
+id = "shorts.aero.upper"
+slot = "shorts"
+tier = "upper"
+name = "Aero race bib shorts"
+hearts = 250
+weight_g = 180
+fits = ["road", "tt", "gravel", "mtb"]
+aero = 1
+model = "shorts-aero"
+sources = "apparel.shorts.aero"
+priced = 2026-11-14
+
+[[part]]
+id = "socks.tall.entry"
+slot = "socks"
+tier = "entry"
+name = "Tall merino socks"
+hearts = 20
+weight_g = 50
+fits = ["road", "tt", "gravel", "mtb"]
+model = "socks-tall"
+sources = "apparel.socks.tall"
+priced = 2026-11-14
+
+[[part]]
+id = "socks.aero.upper"
+slot = "socks"
+tier = "upper"
+name = "Aero race socks"
+hearts = 34
+weight_g = 30
+fits = ["road", "tt", "gravel", "mtb"]
+aero = 1
+model = "socks-aero"
+sources = "apparel.socks.aero"
+priced = 2026-11-14
+
+[[part]]
+id = "shoes.race.top"
+slot = "shoes"
+tier = "top"
+name = "Carbon race shoes"
+hearts = 400
+weight_g = 460
+fits = ["road", "tt", "gravel", "mtb"]
+efficiency = 1
+model = "shoes-race"
+sources = "apparel.shoes.race"
+priced = 2026-11-14
+
+[[part]]
+id = "shoes.overshoes.mid"
+slot = "shoes"
+tier = "mid"
+name = "Road shoes with aero overshoes"
+hearts = 70
+weight_g = 620
+fits = ["road", "tt", "gravel", "mtb"]
+aero = 1
+model = "shoes-overshoes"
+sources = "apparel.shoes.overshoes"
+priced = 2026-11-14
+
+[[part]]
+id = "gloves.gel.entry"
+slot = "gloves"
+tier = "entry"
+name = "Gel mitts"
+hearts = 30
+weight_g = 50
+fits = ["road", "tt", "gravel", "mtb"]
+model = "gloves-gel"
+sources = "apparel.gloves.gel"
+priced = 2026-11-14
+
+[[part]]
+id = "gloves.full.mid"
+slot = "gloves"
+tier = "mid"
+name = "Full-finger gloves"
+hearts = 60
+weight_g = 60
+fits = ["road", "tt", "gravel", "mtb"]
+model = "gloves-full"
+sources = "apparel.gloves.full"
+priced = 2026-11-14
+
+[[part]]
+id = "gloves.winter.upper"
+slot = "gloves"
+tier = "upper"
+name = "Insulated winter gloves"
+hearts = 108
+weight_g = 150
+fits = ["road", "tt", "gravel", "mtb"]
+model = "gloves-winter"
+sources = "apparel.gloves.winter"
+priced = 2026-11-14
+
+[[part]]
+id = "helmet.light.top"
+slot = "helmet"
+tier = "top"
+name = "Lightweight vented road helmet"
+hearts = 320
+weight_g = 235
+fits = ["road", "tt", "gravel", "mtb"]
+model = "helmet-light"
+sources = "apparel.helmet.light"
+priced = 2026-11-14
+
+[[part]]
+id = "helmet.aero-road.top"
+slot = "helmet"
+tier = "top"
+name = "Aero road helmet"
+hearts = 268
+weight_g = 280
+fits = ["road", "tt", "gravel", "mtb"]
+aero = 2
+model = "helmet-aero-road"
+sources = "apparel.helmet.aero-road"
+priced = 2026-11-14
+
+[[part]]
+id = "helmet.tt.top"
+slot = "helmet"
+tier = "top"
+name = "Time-trial helmet"
+hearts = 500
+weight_g = 400
+fits = ["road", "tt", "gravel", "mtb"]
+aero = 4
+model = "helmet-tt"
+sources = "apparel.helmet.tt"
+priced = 2026-11-14
+
+[[part]]
+id = "cap.cotton.entry"
+slot = "cap"
+tier = "entry"
+name = "Cotton cycling cap"
+hearts = 30
+weight_g = 45
+fits = ["road", "tt", "gravel", "mtb"]
+model = "cap-cotton"
+sources = "apparel.cap.cotton"
+priced = 2026-11-14

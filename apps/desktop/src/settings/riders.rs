@@ -16,6 +16,12 @@
 //! jersey_color = "#FF1472"
 //! helmet_color = "#F2F2EE"
 //! kit = "band"
+//! body_build = "slim"
+//! skin = 6
+//! face = 1
+//! hair = 3
+//! hair_color = "#6B4426"
+//! glasses = 2
 //! ```
 //!
 //! The bike and look keys are optional (files from before Phase 4 have
@@ -23,12 +29,16 @@
 //! the rider mass of the physics (sent to the server in the hello, §6.1)
 //! and, with the bike, the trainer's SIM mass; `bike` names one of the
 //! curated physics profiles (`ocw_core::ProfileId`), which also picks the
-//! bike model; the colours and kit are cosmetic only. Bevy-free.
+//! bike model; the colours and kit are cosmetic only. The character keys
+//! (`body_build`, `skin`, `face`, `hair`, `hair_color`, `glasses`; with
+//! `height_cm` the body height, spec §14 Phase 4, 4C) are free looks and
+//! never physics. Bevy-free.
 
 use std::path::Path;
 
 use ocw_core::{
-    KitPattern, MAX_RIDER_WEIGHT_KG, MIN_RIDER_WEIGHT_KG, ProfileId, Rgb, RiderLook, RiderProfile,
+    BodyBuild, Character, KitPattern, MAX_RIDER_WEIGHT_KG, MIN_RIDER_WEIGHT_KG, ProfileId, Rgb,
+    RiderLook, RiderProfile,
 };
 use serde::{Deserialize, Serialize};
 
@@ -61,6 +71,19 @@ pub struct Rider {
     pub helmet_color: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kit: Option<String>,
+    /// The character (spec 4C; `None` = the default's).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_build: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skin: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub face: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hair: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hair_color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glasses: Option<u8>,
 }
 
 impl Default for Rider {
@@ -76,6 +99,12 @@ impl Default for Rider {
             jersey_color: None,
             helmet_color: None,
             kit: None,
+            body_build: None,
+            skin: None,
+            face: None,
+            hair: None,
+            hair_color: None,
+            glasses: None,
         }
     }
 }
@@ -108,7 +137,43 @@ impl Rider {
                 .as_deref()
                 .and_then(KitPattern::parse)
                 .unwrap_or(d.pattern),
+            character: self.character(),
         }
+    }
+
+    /// The character (spec 4C): the height from the profile, the rest
+    /// from the character keys (unset: the default's).
+    pub fn character(&self) -> Character {
+        let d = Character::default();
+        Character {
+            height_cm: d.height_cm,
+            build: self
+                .body_build
+                .as_deref()
+                .and_then(BodyBuild::parse)
+                .unwrap_or(d.build),
+            skin: self.skin.unwrap_or(d.skin),
+            face: self.face.unwrap_or(d.face),
+            hair: self.hair.unwrap_or(d.hair),
+            hair_colour: self
+                .hair_color
+                .as_deref()
+                .and_then(Rgb::parse)
+                .unwrap_or(d.hair_colour),
+            glasses: self.glasses.unwrap_or(d.glasses),
+        }
+        .with_height(self.height_cm)
+    }
+
+    /// Sets the character's free choices (the height stays the profile's).
+    pub fn set_character(&mut self, c: Character) {
+        let c = c.validated();
+        self.body_build = Some(c.build.id().into());
+        self.skin = Some(c.skin);
+        self.face = Some(c.face);
+        self.hair = Some(c.hair);
+        self.hair_color = Some(c.hair_colour.to_string());
+        self.glasses = Some(c.glasses);
     }
 
     /// Sets the bike's physics profile.
@@ -205,6 +270,25 @@ impl Rider {
         check(&mut self.kit, "kit", &|v| {
             KitPattern::parse(v).map(|k| k.id().into())
         });
+        check(&mut self.body_build, "body build", &|v| {
+            BodyBuild::parse(v).map(|b| b.id().into())
+        });
+        check(&mut self.hair_color, "hair colour", &colour);
+        let c = self.character();
+        let v = c.validated();
+        for (what, field, ok) in [
+            ("skin", &mut self.skin, v.skin),
+            ("face", &mut self.face, v.face),
+            ("hair", &mut self.hair, v.hair),
+            ("glasses", &mut self.glasses, v.glasses),
+        ] {
+            if let Some(x) = *field
+                && x != ok
+            {
+                warnings.push(format!("rider {name:?}: {what} {x} ignored (unknown)"));
+                *field = None;
+            }
+        }
         warnings
     }
 }
@@ -418,6 +502,7 @@ impl Riders {
                 jersey: edit.jersey.unwrap_or(l.jersey),
                 helmet: edit.helmet.unwrap_or(l.helmet),
                 pattern: edit.pattern.unwrap_or(l.pattern),
+                character: l.character,
             });
         }
         r.validate()?;
