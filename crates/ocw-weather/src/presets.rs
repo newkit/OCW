@@ -205,6 +205,14 @@ pub fn preset(name: &str) -> Option<WeatherState> {
     })
 }
 
+/// The preset's name for a menu: "Heavy rain" for `heavy-rain`.
+pub fn title(name: &str) -> String {
+    let s = name.replace('-', " ");
+    let mut c = s.chars();
+    c.next()
+        .map_or_else(String::new, |f| f.to_uppercase().chain(c).collect())
+}
+
 /// The preset closest to `w` (for the menu's "preset" row; by condition
 /// and intensity).
 pub fn nearest(w: &WeatherState) -> &'static str {
@@ -244,6 +252,8 @@ mod tests {
             assert_eq!(nearest(&w), name, "{name} is its own nearest");
         }
         assert!(preset("tornado").is_none());
+        assert_eq!(title("heavy-rain"), "Heavy rain");
+        assert_eq!(title("clear"), "Clear");
     }
 
     /// Decision Q9: the extremes are there, uncapped.

@@ -10,8 +10,8 @@ multiplayer.
 </p>
 <p align="center"><sub>Free ride with bots on the Vaduz–Malbun road (Liechtenstein, 1390 m), rendered by the app (scenes <code>readme-climb-behind</code> / <code>readme-climb-front</code> in <code>scripts/scenes.toml</code>). Map data © OpenStreetMap contributors (ODbL), elevation SRTM (NASA / USGS).</sub></p>
 
-**Status:** worlds, multiplayer, voice, the sky, the time machine and the weather work;
-textures, the weather machine, real weather and the browser / VR versions are in progress. Phases and decisions are
+**Status:** worlds, multiplayer, voice, the sky, the time machine, the weather and the
+weather machine work; textures, real weather and the browser / VR versions are in progress. Phases and decisions are
 in [SPECIFICATION.md](SPECIFICATION.md).
 
 ## Worlds
@@ -378,9 +378,8 @@ app.
 *About this world* shows the package (id, version, build date, signature),
 the area and the elevation range, the time zone with today's sunrise, sunset
 and twilight times at your position, the data sources with their full credit
-notices, and the routes with their length and climbing. *Weather* shows the
-session's weather (condition, wind, the road, the mode, who sets it; the
-weather machine's menu follows with spec §14 Phase 9 S5).
+notices, and the routes with their length and climbing. *Weather* is the
+weather machine (see [Weather](#weather) below).
 
 In a shared ride (`--server`) only the host changes the world: the menu asks
 the server, which checks it, loads the package from its own installed
@@ -807,6 +806,7 @@ event race [--laps N | --km X] [--bots N]   # default: 1 lap of a loop, 5 km of 
 event group [--watts W] [--bots N]          # bots hold W (default 150) and regroup; no ranking
 event tt [--laps N | --km X]                # alone, no drafting, against your best effort
 event race --physics open                   # race mode: open | profile (default) | equal
+event race --weather thunderstorm           # the organiser's weather, fixed for the event
 event status | event cancel | event dismiss
 ```
 
@@ -1103,16 +1103,48 @@ someone changes it (real weather comes later). What you see and hear:
   knocking, gusts, tyres hissing on a wet road, thunder cracking and rumbling.
 
 Solo you set the weather, in a shared ride only the host (`ocw-server
---weather-control host|anyone|nobody`). From the console:
+--weather-control host|anyone|nobody`), in an event its organiser.
+
+**The weather machine** (menu *World → Weather*, spec §14 Phase 9 S5; with
+keyboard, mouse, gamepad or touch – the value rows' ‹ › arrows can be clicked
+or tapped):
+
+- *Mode*: fixed or simulated (fronts and showers from the seed); *real
+  weather* from the weather services is shown dimmed until it comes (S7).
+- *Presets*: the 17 presets as a grid with icons (the arrows move in two
+  directions, the weather now is framed); Enter applies one.
+- *Custom*: cloud cover and type, precipitation and its intensity, fog, and
+  on a second page wind, gusts, direction and temperature. Every step stays
+  within the editor's ranges (and the server clamps again).
+- *Transition*: instant, 1, 5 or 15 minutes – presets, custom changes and the
+  random weather take that long to arrive.
+- *Random weather*: a weather from the seed (← / → change it; the same seed,
+  the same weather).
+
+What you may not change (a guest in a shared ride, an event's weather) is
+shown dimmed, with who sets it under the title. Organisers give an event its
+weather: `event race --weather thunderstorm`, `--weather rain temp=5`,
+`--weather custom snow=2 temp=-3`, `--weather random 7` or `--weather auto 3`
+(the simulation); it is shown in the event's info and nobody can change it
+until the event is over.
+
+From the console:
 
 ```text
 weather                       the weather now, the road, who sets it
-weather thunderstorm          a preset at once (weather list: all presets)
+weather.status                everything: where it is going, mode and seed, ground
+weather.list                  the presets, the custom fields, the transitions
+weather thunderstorm          a preset at once
 weather heavy-rain in 2m      a transition over two minutes
+weather rain temp=5 in 5m     a preset with some fields changed
 weather rain=6 wind=12 dir=SW clouds=90%   change fields
+weather random 42 in 1m       a random weather from a seed
 weather wet=1 snowcover=0.5   the road's wetness, the snow on the ground
-weather auto                  the weather simulation: fronts and showers
+weather auto 7                the weather simulation: fronts and showers
+weather fixed                 stop the simulation, keep the weather it heads to
 weather strike 1500           a lightning strike 1.5 km away (test)
+weather.transition 5m         the weather machine's transition (instant, 1m, 5m, 15m)
+weather.seed 42               the seed of its random weather and simulation
 weather.fx particles 10000    fewer particles (weak GPUs; 0 = none)
 ```
 
@@ -1154,7 +1186,10 @@ for now).
 | `weather` \| `weather list` | The weather now (condition, intensity, visibility, temperature, wind, the road's wetness, puddles, snow cover, the mode, who sets it), or the presets |
 | `weather PRESET [in T]` | A preset (`clear`, `fair`, `cloudy`, `overcast`, `fog`, `mist`, `drizzle`, `light-rain`, `rain`, `heavy-rain`, `thunderstorm`, `hail`, `snow`, `heavy-snow`, `sleet`, `windy`, `storm`) at once, or as a transition over T (`90`, `30s`, `5m`) |
 | `weather FIELD=VALUE... [in T]` | Change fields: `clouds=0-1`, `type=cumulus\|stratus\|cirrus\|cb`, `base=M`, `rain\|drizzle\|snow\|sleet\|hail=MM_H`, `precip=none`, `fog=M`, `wind=M_S`, `gust=M_S`, `dir=DEG\|SW`, `temp=C`, `humidity=0-1`, `pressure=HPA`, `lightning=PER_MIN`; the ground: `wet=0-1`, `puddles=0-1`, `snowcover=0-1` |
-| `weather auto [SEED]` \| `weather strike [DIST [BEARING]]` | The weather simulation (fronts, showers) from now; a test lightning strike |
+| `weather PRESET FIELD=VALUE... [in T]` \| `weather random [SEED] [in T]` | A preset with fields changed; a random weather from a seed (spec §14 Phase 9 S5) |
+| `weather auto [SEED]` \| `weather fixed` \| `weather strike [DIST [BEARING]]` | The weather simulation (fronts, showers) from now; stop it (the weather it heads to stays); a test lightning strike |
+| `weather.status` \| `weather.list` | Everything about the weather (where it is going, mode and seed, visibility, lightning, ground, who sets it, an event's lock); the presets, custom fields and transitions |
+| `weather.transition [T]` \| `weather.seed [N]` | The weather machine's transition (instant, 1m, 5m, 15m, any time) and the seed of its random weather / simulation |
 | `weather.fx clouds\|particles\|spray\|bolts on\|off\|N` | What of the weather is drawn (particles: the budget, default 40000) |
 | **Audio** (spec §3.3) | |
 | `audio.volume master\|effects\|others\|music\|voice PERCENT` | Set a volume for this session (`set audio.effects 60` also saves it) |
@@ -1209,7 +1244,7 @@ for now).
 | `world info` | The world ridden now: package, area, elevation, data sources with their notices, routes, time zone, sun and twilight times |
 | `world switch N\|ID\|NAME\|PATH` | Ride another world without restarting (its first route, else a free ride; a test route: `hills`, `loop`); in a shared ride the host asks the server |
 | **Events** (spec §2.3) | |
-| `event race [--laps N\|--km X] [--bots N] [--physics MODE]` | Race from the start formation to the finish (default 1 lap / 5 km; MODE: `profile` – the default, only the frame's profile counts –, `open` – parts count, capped –, `equal`) |
+| `event race [--laps N\|--km X] [--bots N] [--physics MODE] [--weather W...]` | Race from the start formation to the finish (default 1 lap / 5 km; MODE: `profile` – the default, only the frame's profile counts –, `open` – parts count, capped –, `equal`; W: the organiser's weather – `PRESET [FIELD=VALUE...]`, `custom FIELD=VALUE...`, `random SEED`, `auto SEED` –, fixed for the event; also for `group` and `tt`) |
 | `event group [--watts W] [--bots N] [--physics MODE]` | Group ride: bots hold the pace and regroup (default mode `profile`) |
 | `event tt [--laps N\|--km X] [--physics MODE]` | Time trial alone against your ghost (default mode `open`) |
 | `event status` | The event, your HUD lines and the standings |

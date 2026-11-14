@@ -4,7 +4,10 @@
 //! only draws the [`MenuView`] resource, as the HUD draws `RideView`, and
 //! reports mouse hover / clicks as [`MenuPointer`] events. Ten-foot theme:
 //! text sizes are a share of the window height, high contrast, a clearly
-//! visible focus frame.
+//! visible focus frame. Value rows ("Label:  < value >") have tappable
+//! ‹ › arrows (mouse and touch reach every value, spec §3.2.2); a page
+//! with a [`MenuGrid`] (the weather presets, spec §14 Phase 9, S5) is
+//! drawn as a grid of icon cells instead of a list.
 //!
 //! [`InputContext`] says who gets the keyboard, mouse and gamepad this
 //! frame: the ride, the menu or the console. Ride input systems run only in
@@ -71,6 +74,34 @@ pub struct MenuView {
     pub focused: usize,
     /// Control hint at the bottom.
     pub hint: String,
+    /// Items drawn dimmed (they do nothing: not available, not yours);
+    /// missing entries are not dimmed.
+    pub dimmed: Vec<bool>,
+    /// Draw the items as a grid of these cells (one per item).
+    pub grid: Option<MenuGrid>,
+}
+
+/// A page drawn as a grid (spec §14 Phase 9, S5: the weather presets).
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct MenuGrid {
+    pub columns: usize,
+    /// One per item, in the items' order.
+    pub cells: Vec<GridCell>,
+}
+
+/// One cell of a [`MenuGrid`]: an icon over a label.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct GridCell {
+    pub label: String,
+    pub icon: Option<ocw_weather::icon::Icon>,
+    /// The current choice (a thin frame).
+    pub marked: bool,
+}
+
+impl MenuView {
+    fn is_dimmed(&self, i: usize) -> bool {
+        self.dimmed.get(i).copied().unwrap_or(false)
+    }
 }
 
 /// Mouse events on the menu since the app last read them.
@@ -82,6 +113,8 @@ pub enum MenuPointerEvent {
     Click(usize),
     /// Right click anywhere on the menu: back.
     Back,
+    /// The ‹ (−1) or › (+1) arrow of value row `i` was clicked or tapped.
+    Step(usize, i8),
 }
 
 #[derive(Resource, Debug, Default)]
@@ -137,6 +170,17 @@ const HINT_VH: f32 = 3.0;
 /// Panel layout in % of the window height (vh). [`page_height_vh`] adds
 /// these up; `spawn_menu` / `spawn_rows` use the same numbers.
 const PANEL_WIDTH_VH: f32 = 110.0;
+/// A grid page's panel is wider (five cells with one-line labels).
+const GRID_PANEL_WIDTH_VH: f32 = 150.0;
+/// Grid cells: icon size, label size, padding, gaps (vh).
+const GRID_ICON_VH: f32 = 8.0;
+const GRID_LABEL_VH: f32 = 3.0;
+const GRID_PAD_VH: f32 = 0.8;
+const GRID_GAP_VH: f32 = 1.0;
+/// The gap between the cells of a grid row (% of the grid's width).
+const GRID_GAP_PCT: f32 = 1.0;
+/// Pixels of a cell's icon image.
+const GRID_ICON_PX: u32 = 128;
 /// … but at most this share of the window width (narrow windows).
 const PANEL_MAX_VW: f32 = 94.0;
 /// The panel's height budget: the page must fit into it.
@@ -188,13 +232,59 @@ pub fn wrapped_lines(text: &str, width_vh: f32, font_vh: f32) -> usize {
 /// Width of the menu panel's content (vh) in a window of `aspect`
 /// (width / height).
 pub fn content_width_vh(aspect: f32) -> f32 {
-    PANEL_WIDTH_VH.min(PANEL_MAX_VW * aspect) - 2.0 * (PANEL_PAD_X_VH + PANEL_BORDER_VH)
+    panel_content_vh(PANEL_WIDTH_VH, aspect)
+}
+
+fn panel_content_vh(panel_vh: f32, aspect: f32) -> f32 {
+    panel_vh.min(PANEL_MAX_VW * aspect) - 2.0 * (PANEL_PAD_X_VH + PANEL_BORDER_VH)
+}
+
+/// The content width of `view`'s panel (a grid's is wider).
+fn view_content_vh(view: &MenuView, aspect: f32) -> f32 {
+    panel_content_vh(
+        if view.grid.is_some() {
+            GRID_PANEL_WIDTH_VH
+        } else {
+            PANEL_WIDTH_VH
+        },
+        aspect,
+    )
+}
+
+/// Width of a grid cell (% of the grid's width, its border included).
+fn grid_cell_pct(columns: usize) -> f32 {
+    let c = columns.max(1) as f32;
+    (100.0 - GRID_GAP_PCT * (c - 1.0)) / c
+}
+
+/// Width of a grid cell (vh, its border included) in content `w` wide.
+fn grid_cell_vh(columns: usize, w: f32) -> f32 {
+    w * grid_cell_pct(columns) / 100.0
+}
+
+/// Height of a grid (vh) in content `w` wide.
+fn grid_height_vh(grid: &MenuGrid, w: f32) -> f32 {
+    let cols = grid.columns.max(1);
+    let cell = grid_cell_vh(cols, w);
+    let label_w = cell - 2.0 * (GRID_PAD_VH + ROW_BORDER_VH);
+    grid.cells
+        .chunks(cols)
+        .map(|row| {
+            let lines = row
+                .iter()
+                .map(|c| wrapped_lines(&c.label, label_w, GRID_LABEL_VH))
+                .max()
+                .unwrap_or(1) as f32;
+            GRID_ICON_VH + lines * GRID_LABEL_VH * LINE_HEIGHT + 2.0 * (GRID_PAD_VH + ROW_BORDER_VH)
+        })
+        .sum::<f32>()
+        + GRID_GAP_VH * (grid.cells.len().div_ceil(cols).saturating_sub(1)) as f32
 }
 
 /// Height of the menu panel for `view` (vh) in a window of `aspect`,
 /// showing the first `paragraphs` paragraphs of its text.
 pub fn page_height_vh(view: &MenuView, aspect: f32, paragraphs: usize) -> f32 {
-    let w = content_width_vh(aspect);
+    let w = view_content_vh(view, aspect);
     // Empty status and text lines are hidden (no room, no gap).
     let lines = |s: &str, font: f32| {
         if s.is_empty() {
@@ -213,8 +303,12 @@ pub fn page_height_vh(view: &MenuView, aspect: f32, paragraphs: usize) -> f32 {
                 + 2.0 * (ROW_PAD_Y_VH + ROW_BORDER_VH)
         })
         .sum();
-    let list =
-        rows + LIST_GAP_VH * view.items.len().saturating_sub(1) as f32 + 2.0 * LIST_MARGIN_VH;
+    let list = match &view.grid {
+        Some(g) => grid_height_vh(g, w) + 2.0 * LIST_MARGIN_VH,
+        None => {
+            rows + LIST_GAP_VH * view.items.len().saturating_sub(1) as f32 + 2.0 * LIST_MARGIN_VH
+        }
+    };
     2.0 * (PANEL_PAD_Y_VH + PANEL_BORDER_VH)
         + 4.0 * PANEL_GAP_VH
         + lines(&view.title, TITLE_VH)
@@ -240,6 +334,10 @@ const ROW_FOCUSED: Color = Color::srgba(1.0, 0.78, 0.24, 0.22);
 const FOCUS: Color = Color::srgb(1.0, 0.78, 0.24);
 const TEXT: Color = Color::WHITE;
 const DIM: Color = Color::srgb(0.78, 0.8, 0.84);
+/// The text of a dimmed row (it does nothing).
+const DISABLED: Color = Color::srgba(1.0, 1.0, 1.0, 0.42);
+/// The frame of a grid's current choice.
+const MARKED: Color = Color::srgba(1.0, 1.0, 1.0, 0.55);
 
 #[derive(Component)]
 struct MenuRoot;
@@ -255,6 +353,11 @@ struct MenuList;
 struct MenuHint;
 #[derive(Component)]
 struct MenuRow(usize);
+/// A grid cell's current-choice frame.
+#[derive(Component)]
+struct Marked(bool);
+#[derive(Component)]
+struct MenuPanel;
 
 fn font(vh: f32) -> TextFont {
     TextFont {
@@ -302,6 +405,7 @@ fn spawn_menu(mut commands: Commands) {
                 },
                 BackgroundColor(PANEL),
                 BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.25)),
+                MenuPanel,
             ))
             .with_children(|panel| {
                 panel.spawn((Text::new(""), font(TITLE_VH), TextColor(TEXT), MenuTitle));
@@ -339,13 +443,135 @@ fn spawn_menu(mut commands: Commands) {
         });
 }
 
-fn spawn_rows(commands: &mut Commands, list: Entity, items: &[String]) {
+/// "Clouds:  < 60 % >" → ("Clouds:  ", "60 %"): a value row's parts.
+pub fn split_value(label: &str) -> Option<(&str, &str)> {
+    let at = label.find(":  < ")?;
+    let value = label[at + 5..].strip_suffix(" >")?;
+    Some((&label[..at + 3], value))
+}
+
+fn hover_and_click(row: &mut EntityCommands, i: usize) {
+    row.observe(
+        move |_: On<PointerOver>, mut pointer: ResMut<MenuPointer>| {
+            pointer.0.push(MenuPointerEvent::Hover(i));
+        },
+    )
+    .observe(
+        move |click: On<PointerClick>, mut pointer: ResMut<MenuPointer>| {
+            if click.button == PointerButton::Primary {
+                pointer.0.push(MenuPointerEvent::Click(i));
+            }
+        },
+    );
+}
+
+/// A value row's ‹ or › arrow: its own pointer target (the row's click
+/// does not also fire).
+fn spawn_arrow(r: &mut ChildSpawnerCommands, i: usize, dir: i8) {
+    r.spawn((
+        Node {
+            padding: UiRect::horizontal(vh(0.4)),
+            ..default()
+        },
+        children![(
+            Text::new(if dir < 0 { "<" } else { ">" }),
+            font(ITEM_VH),
+            TextColor(FOCUS)
+        )],
+    ))
+    .observe(
+        move |mut click: On<PointerClick>, mut pointer: ResMut<MenuPointer>| {
+            if click.button == PointerButton::Primary {
+                click.propagate(false);
+                pointer.0.push(MenuPointerEvent::Step(i, dir));
+            }
+        },
+    );
+}
+
+fn spawn_rows(commands: &mut Commands, list: Entity, view: &MenuView) {
     commands.entity(list).despawn_children();
     commands.entity(list).with_children(|l| {
-        for (i, label) in items.iter().enumerate() {
-            l.spawn((
+        for (i, label) in view.items.iter().enumerate() {
+            let color = TextColor(if view.is_dimmed(i) { DISABLED } else { TEXT });
+            let mut row = l.spawn((
                 Node {
                     padding: UiRect::axes(vh(ROW_PAD_X_VH), vh(ROW_PAD_Y_VH)),
+                    border: UiRect::all(vh(ROW_BORDER_VH)),
+                    border_radius: BorderRadius::all(vh(1.0)),
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                BackgroundColor(ROW),
+                BorderColor::all(Color::NONE),
+                MenuRow(i),
+            ));
+            row.with_children(|r| match split_value(label) {
+                // A value row: the arrows are their own targets.
+                Some((name, value)) => {
+                    r.spawn((Text::new(name), font(ITEM_VH), color));
+                    spawn_arrow(r, i, -1);
+                    r.spawn((Text::new(format!(" {value} ")), font(ITEM_VH), color));
+                    spawn_arrow(r, i, 1);
+                }
+                None => {
+                    r.spawn((Text::new(label.clone()), font(ITEM_VH), color));
+                }
+            });
+            hover_and_click(&mut row, i);
+        }
+    });
+}
+
+type IconCache = std::collections::HashMap<ocw_weather::icon::Icon, Handle<Image>>;
+
+/// The icon of a grid cell as an image (drawn once per icon).
+fn icon_image(
+    icon: ocw_weather::icon::Icon,
+    cache: &mut IconCache,
+    images: &mut Assets<Image>,
+) -> Handle<Image> {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+    cache
+        .entry(icon)
+        .or_insert_with(|| {
+            images.add(Image::new(
+                Extent3d {
+                    width: GRID_ICON_PX,
+                    height: GRID_ICON_PX,
+                    depth_or_array_layers: 1,
+                },
+                TextureDimension::D2,
+                ocw_weather::icon::rgba(icon, GRID_ICON_PX),
+                TextureFormat::Rgba8UnormSrgb,
+                RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD,
+            ))
+        })
+        .clone()
+}
+
+fn spawn_grid(
+    commands: &mut Commands,
+    list: Entity,
+    view: &MenuView,
+    grid: &MenuGrid,
+    icons: &mut IconCache,
+    images: &mut Assets<Image>,
+) {
+    let cell_pct = grid_cell_pct(grid.columns);
+    commands.entity(list).despawn_children();
+    commands.entity(list).with_children(|l| {
+        for (i, cell) in grid.cells.iter().enumerate() {
+            let dimmed = view.is_dimmed(i);
+            let color = TextColor(if dimmed { DISABLED } else { TEXT });
+            let mut node = l.spawn((
+                Node {
+                    width: Val::Percent(cell_pct),
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    padding: UiRect::all(vh(GRID_PAD_VH)),
                     border: UiRect::all(vh(ROW_BORDER_VH)),
                     border_radius: BorderRadius::all(vh(1.0)),
                     ..default()
@@ -353,27 +579,52 @@ fn spawn_rows(commands: &mut Commands, list: Entity, items: &[String]) {
                 BackgroundColor(ROW),
                 BorderColor::all(Color::NONE),
                 MenuRow(i),
-                children![(Text::new(label.clone()), font(ITEM_VH), TextColor(TEXT))],
-            ))
-            .observe(
-                move |_: On<PointerOver>, mut pointer: ResMut<MenuPointer>| {
-                    pointer.0.push(MenuPointerEvent::Hover(i));
-                },
-            )
-            .observe(
-                move |click: On<PointerClick>, mut pointer: ResMut<MenuPointer>| {
-                    if click.button == PointerButton::Primary {
-                        pointer.0.push(MenuPointerEvent::Click(i));
+                Marked(cell.marked),
+            ));
+            node.with_children(|c| {
+                let mut icon = c.spawn(Node {
+                    width: vh(GRID_ICON_VH),
+                    height: vh(GRID_ICON_VH),
+                    ..default()
+                });
+                if let Some(ic) = cell.icon {
+                    let mut img = ImageNode::new(icon_image(ic, icons, images));
+                    if dimmed {
+                        img.color = Color::srgba(1.0, 1.0, 1.0, 0.45);
                     }
-                },
-            );
+                    icon.insert(img);
+                }
+                c.spawn((
+                    Text::new(cell.label.clone()),
+                    font(GRID_LABEL_VH),
+                    color,
+                    TextLayout::justify(Justify::Center),
+                ));
+            });
+            hover_and_click(&mut node, i);
         }
     });
 }
 
 /// The page's layout key: rows are respawned only when it changes, not on
 /// every focus move or status update.
-type PageKey = (String, Vec<String>);
+type PageKey = (String, Vec<String>, Vec<bool>, Option<MenuGrid>);
+
+/// The list's and the panel's nodes, disjoint from the root's and the
+/// texts' (`Node` is borrowed mutably by several queries).
+type ListFilter = (
+    With<MenuList>,
+    Without<MenuRoot>,
+    Without<MenuStatus>,
+    Without<MenuText>,
+);
+type PanelFilter = (
+    With<MenuPanel>,
+    Without<MenuRoot>,
+    Without<MenuList>,
+    Without<MenuStatus>,
+    Without<MenuText>,
+);
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)] // a Bevy system
 fn draw_menu(
@@ -381,8 +632,18 @@ fn draw_menu(
     view: Res<MenuView>,
     mut page: Local<Option<PageKey>>,
     mut root: Query<&mut Node, With<MenuRoot>>,
-    list: Query<Entity, With<MenuList>>,
-    mut rows: Query<(Ref<MenuRow>, &mut BackgroundColor, &mut BorderColor)>,
+    mut list: Query<(Entity, &mut Node), ListFilter>,
+    mut panel: Query<&mut Node, PanelFilter>,
+    mut rows: Query<(
+        Ref<MenuRow>,
+        &mut BackgroundColor,
+        &mut BorderColor,
+        Option<&Marked>,
+    )>,
+    (mut images, mut icons): (
+        ResMut<Assets<Image>>,
+        Local<std::collections::HashMap<ocw_weather::icon::Icon, Handle<Image>>>,
+    ),
     mut texts: ParamSet<(
         Query<&mut Text, With<MenuTitle>>,
         Query<(&mut Text, &mut Node), (With<MenuStatus>, Without<MenuRoot>)>,
@@ -417,17 +678,48 @@ fn draw_menu(
         *page = None;
         return;
     }
-    let key = (view.title.clone(), view.items.clone());
+    let key = (
+        view.title.clone(),
+        view.items.clone(),
+        view.dimmed.clone(),
+        view.grid.clone(),
+    );
     if page.as_ref() != Some(&key) {
-        if let Ok(list) = list.single() {
-            spawn_rows(&mut commands, list, &view.items);
+        if let Ok((list, mut node)) = list.single_mut() {
+            // A grid wraps its cells into rows; a list is a column.
+            let (dir, wrap, gap) = match view.grid {
+                Some(_) => (FlexDirection::Row, FlexWrap::Wrap, vh(GRID_GAP_VH)),
+                None => (FlexDirection::Column, FlexWrap::NoWrap, vh(LIST_GAP_VH)),
+            };
+            node.flex_direction = dir;
+            node.flex_wrap = wrap;
+            node.row_gap = gap;
+            node.column_gap = match view.grid {
+                Some(_) => Val::Percent(GRID_GAP_PCT),
+                None => Val::ZERO,
+            };
+            match &view.grid {
+                Some(g) => spawn_grid(&mut commands, list, &view, g, &mut icons, &mut images),
+                None => spawn_rows(&mut commands, list, &view),
+            }
+        }
+        if let Ok(mut p) = panel.single_mut() {
+            p.width = vh(if view.grid.is_some() {
+                GRID_PANEL_WIDTH_VH
+            } else {
+                PANEL_WIDTH_VH
+            });
         }
         *page = Some(key);
     }
-    for (row, mut bg, mut border) in &mut rows {
+    for (row, mut bg, mut border, marked) in &mut rows {
         let focused = row.0 == view.focused;
         bg.0 = if focused { ROW_FOCUSED } else { ROW };
-        *border = BorderColor::all(if focused { FOCUS } else { Color::NONE });
+        *border = BorderColor::all(match (focused, marked.is_some_and(|m| m.0)) {
+            (true, _) => FOCUS,
+            (false, true) => MARKED,
+            _ => Color::NONE,
+        });
     }
     set_text(&mut texts.p0(), &view.title);
     set_text_or_hide(&mut texts.p1(), &view.status);
@@ -490,6 +782,56 @@ mod tests {
             items: (0..items).map(|i| format!("Item {i}")).collect(),
             focused: 0,
             hint: "Up/Down move   Enter/A select   Esc/B back".into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn value_rows_split_into_name_and_value() {
+        assert_eq!(
+            split_value("Clouds:  < 60 % >"),
+            Some(("Clouds:  ", "60 %"))
+        );
+        assert_eq!(split_value("Mode:  fixed"), None);
+        assert_eq!(split_value("Back"), None);
+    }
+
+    /// A grid page (the weather presets): its height counts the rows of
+    /// cells, and 17 presets and Back fit a 16:9 and a 4:3 window.
+    #[test]
+    fn a_grid_of_eighteen_cells_fits() {
+        let cells: Vec<GridCell> = ocw_weather::presets::PRESETS
+            .iter()
+            .map(|p| GridCell {
+                label: ocw_weather::presets::title(p.0),
+                icon: ocw_weather::presets::preset(p.0).map(|w| ocw_weather::icon::Icon::of(&w)),
+                marked: false,
+            })
+            .chain([GridCell {
+                label: "Back".into(),
+                ..Default::default()
+            }])
+            .collect();
+        let mut v = page(&["Choose a weather."], cells.len());
+        v.status = "Thunderstorm: cloudburst, gusts, lightning - Enter: in 1 min".into();
+        v.grid = Some(MenuGrid { columns: 5, cells });
+        // All of it at 16:9; at 4:3 the description may give way.
+        assert!(page_height_vh(&v, 16.0 / 9.0, 1) <= PANEL_MAX_VH);
+        for aspect in [16.0 / 9.0, 4.0 / 3.0] {
+            let h = page_height_vh(&v, aspect, fitted_paragraphs(&v, aspect));
+            assert!(h <= PANEL_MAX_VH, "{aspect}: {h}");
+            assert!(h > 4.0 * GRID_ICON_VH, "{h}");
+        }
+        // At 16:9 every label fits on one line of its cell.
+        let w = view_content_vh(&v, 16.0 / 9.0);
+        let cell = grid_cell_vh(5, w) - 2.0 * (GRID_PAD_VH + ROW_BORDER_VH);
+        for c in &v.grid.as_ref().unwrap().cells {
+            assert_eq!(
+                wrapped_lines(&c.label, cell, GRID_LABEL_VH),
+                1,
+                "{}",
+                c.label
+            );
         }
     }
 
@@ -535,6 +877,81 @@ mod tests {
         assert_eq!(InputContext::of(false, true), InputContext::Menu);
         assert_eq!(InputContext::of(true, false), InputContext::Console);
         assert_eq!(InputContext::of(true, true), InputContext::Console);
+    }
+
+    /// The drawing systems run headless (regression guard: their `Node`
+    /// queries must not conflict): a list page with a value row and its
+    /// arrows, then the grid with its icons.
+    #[test]
+    fn the_menu_draws_a_list_and_a_grid_headless() {
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            bevy::asset::AssetPlugin::default(),
+            MenuPlugin,
+        ));
+        app.init_asset::<Image>();
+        app.update();
+        let count = |app: &mut App| {
+            let rows = app
+                .world_mut()
+                .query::<&MenuRow>()
+                .iter(app.world())
+                .count();
+            let icons = app
+                .world_mut()
+                .query::<&ImageNode>()
+                .iter(app.world())
+                .count();
+            (rows, icons)
+        };
+        *app.world_mut().resource_mut::<MenuView>() = MenuView {
+            open: true,
+            title: "Custom weather: sky".into(),
+            items: vec!["Cloud cover:  < 60 % >".into(), "Back".into()],
+            dimmed: vec![false, false],
+            ..Default::default()
+        };
+        app.update();
+        app.update();
+        assert_eq!(count(&mut app), (2, 0));
+        let texts = app
+            .world_mut()
+            .query::<&Text>()
+            .iter(app.world())
+            .map(|t| t.0.clone())
+            .collect::<Vec<_>>();
+        assert!(texts.iter().any(|t| t == "<") && texts.iter().any(|t| t == ">"));
+        let cells: Vec<GridCell> = ocw_weather::presets::PRESETS
+            .iter()
+            .map(|p| GridCell {
+                label: ocw_weather::presets::title(p.0),
+                icon: ocw_weather::presets::preset(p.0).map(|w| ocw_weather::icon::Icon::of(&w)),
+                marked: p.0 == "rain",
+            })
+            .chain([GridCell {
+                label: "Back".into(),
+                ..Default::default()
+            }])
+            .collect();
+        {
+            let mut v = app.world_mut().resource_mut::<MenuView>();
+            v.title = "Weather presets".into();
+            v.items = cells.iter().map(|c| c.label.clone()).collect();
+            v.dimmed = Vec::new();
+            v.grid = Some(MenuGrid { columns: 5, cells });
+        }
+        app.update();
+        app.update();
+        assert_eq!(count(&mut app), (18, 17));
+        assert_eq!(
+            app.world_mut()
+                .query::<&Marked>()
+                .iter(app.world())
+                .filter(|m| m.0)
+                .count(),
+            1
+        );
     }
 
     #[test]

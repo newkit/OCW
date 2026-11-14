@@ -481,6 +481,14 @@ fn event_command() -> Command {
         .long("physics")
         .value_parser(["open", "profile", "equal"])
         .help("Race mode: open (parts count, capped), profile (only the frame's profile; default for races and group rides), equal (one bike for all)");
+    // The organiser's weather (spec §14 Phase 9, S5): riders cannot change
+    // it until the event is over.
+    let weather = Arg::new("weather")
+        .long("weather")
+        .num_args(1..)
+        .allow_hyphen_values(true)
+        .value_name("WEATHER")
+        .help("The event's weather: PRESET [FIELD=VALUE...], custom FIELD=VALUE..., random SEED or auto SEED (the simulation); fixed for the event");
     Command::new("event")
         .about("Local events: a race, group ride or time trial against your ghost (spec 2.3)")
         .subcommand_required(true)
@@ -489,7 +497,8 @@ fn event_command() -> Command {
                 "Race from the start formation to the finish (default: one lap of a loop, 5 km of a route that ends)",
             ))
             .arg(bots.clone())
-            .arg(physics.clone()),
+            .arg(physics.clone())
+            .arg(weather.clone()),
         )
         .subcommand(
             Command::new("group")
@@ -501,13 +510,15 @@ fn event_command() -> Command {
                         .help("The group's pace (W; default 150)"),
                 )
                 .arg(bots)
-                .arg(physics.clone()),
+                .arg(physics.clone())
+                .arg(weather.clone()),
         )
         .subcommand(
             finish(
                 Command::new("tt").about("Time trial alone against your best effort (the ghost)"),
             )
-            .arg(physics),
+            .arg(physics)
+            .arg(weather),
         )
         .subcommand(Command::new("cancel").about("End the current event"))
         .subcommand(Command::new("status").about("The current event and its standings"))
@@ -528,29 +539,36 @@ fn run_event(world: &mut World, m: &clap::ArgMatches) -> Result<String, String> 
             .flatten()
             .and_then(|s| ocw_sim::PhysicsMode::parse(s))
     };
+    let weather = match args.try_get_many::<String>("weather").ok().flatten() {
+        Some(v) => {
+            let v: Vec<&str> = v.map(String::as_str).collect();
+            Some(ocw_weather::machine::parse_event_weather(&v)?)
+        }
+        None => None,
+    };
+    let start = |spec: ocw_sim::EventSpec, bots| {
+        ClientCore::event_start_message_weather(&spec, bots, physics(), weather.as_ref())
+    };
     let msg = match sub {
-        "race" => ClientCore::event_start_message_with(
-            &ocw_sim::EventSpec::Race {
+        "race" => start(
+            ocw_sim::EventSpec::Race {
                 laps: laps(),
                 length_m: km(),
             },
             bots(),
-            physics(),
         ),
-        "tt" => ClientCore::event_start_message_with(
-            &ocw_sim::EventSpec::TimeTrial {
+        "tt" => start(
+            ocw_sim::EventSpec::TimeTrial {
                 laps: laps(),
                 length_m: km(),
             },
             None,
-            physics(),
         ),
-        "group" => ClientCore::event_start_message_with(
-            &ocw_sim::EventSpec::GroupRide {
+        "group" => start(
+            ocw_sim::EventSpec::GroupRide {
                 target_w: args.get_one::<f64>("watts").copied(),
             },
             bots(),
-            physics(),
         ),
         "cancel" => ClientCore::event_cancel_message(),
         "dismiss" => {

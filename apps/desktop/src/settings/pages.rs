@@ -52,8 +52,15 @@ pub enum Page {
     WorldSources,
     /// One source with its full notice (index into the credits).
     WorldSource(usize),
-    /// World → Weather (clear until Phase 9 S4).
+    /// World → Weather: the weather machine (spec §14 Phase 9, S5; rows
+    /// from `weather`): mode, presets, custom, transition, random weather.
     Weather,
+    /// Weather → Presets: the 17 presets as a grid with icons.
+    WeatherPresets,
+    /// Weather → Custom: the sky (clouds, precipitation, fog).
+    WeatherCustom,
+    /// Custom → Wind and temperature.
+    WeatherAir,
     /// Navi → Routes: the routes of the loaded package and the user's.
     Routes,
     /// Navi → Rides: the saved rides with their Strava state.
@@ -108,7 +115,10 @@ impl Page {
             Self::WorldSun => "Sun and time",
             Self::WorldSources => "Data sources",
             Self::WorldSource(_) => "Data source",
-            Self::Weather => "Weather",
+            Self::Weather => "Weather machine",
+            Self::WeatherPresets => "Weather presets",
+            Self::WeatherCustom => "Custom weather: sky",
+            Self::WeatherAir => "Custom: wind, temperature",
             Self::Routes => "Routes",
             Self::Rides => "Rides",
             Self::GpxImport => "GPX import",
@@ -143,8 +153,25 @@ impl Page {
                 | Self::WorldSun
                 | Self::WorldSources
                 | Self::WorldSource(_)
-                | Self::Weather
         )
+    }
+
+    /// The weather machine's pages (rows from `weather`, spec §14 Phase 9,
+    /// S5).
+    pub fn is_weather_page(self) -> bool {
+        matches!(
+            self,
+            Self::Weather | Self::WeatherPresets | Self::WeatherCustom | Self::WeatherAir
+        )
+    }
+
+    /// Pages laid out as a grid of this many columns (the preset grid);
+    /// the arrows move in two directions, Back is the last cell.
+    pub fn grid_columns(self) -> Option<usize> {
+        match self {
+            Self::WeatherPresets => Some(crate::weather::GRID_COLUMNS),
+            _ => None,
+        }
     }
 
     /// The voice pages (rows from `voice::page`).
@@ -209,7 +236,9 @@ impl Page {
                 &["The credits of the world's data. Enter shows the full notice."]
             }
             Self::WorldSource(_) => &[],
-            Self::Weather => &[crate::weather::PENDING_NOTE],
+            Self::Weather => &[crate::weather::MACHINE_NOTE],
+            Self::WeatherPresets => &[],
+            Self::WeatherCustom | Self::WeatherAir => &[crate::weather::CUSTOM_NOTE],
             Self::Routes => &[
                 "Routes of the loaded world package and your imported ones (GPX import). Choose one to ride it.",
             ],
@@ -248,6 +277,9 @@ pub enum Activate {
     Ask(String),
     /// Open a page.
     Open(Page),
+    /// Nothing: shown dimmed (not available yet, or not yours to change,
+    /// spec §14 Phase 9, S5).
+    Disabled,
     /// Run a console command line and close the menu (starting a workout:
     /// its panel shows at once).
     Run(String),
@@ -615,7 +647,6 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         | Page::WorldSun
         | Page::WorldSources
         | Page::WorldSource(_)
-        | Page::Weather
         | Page::Routes
         | Page::Rides
         | Page::GpxImport
@@ -624,6 +655,8 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         Page::Voice | Page::VoiceDevices | Page::VoiceParticipants | Page::AudioVoice => Vec::new(),
         // From the world clock (`timemachine::rows`).
         Page::TimeMachine => Vec::new(),
+        // From the session weather (`weather::rows`).
+        Page::Weather | Page::WeatherPresets | Page::WeatherCustom | Page::WeatherAir => Vec::new(),
         Page::Workshop => {
             let mut out: Vec<Row> = riders
                 .riders

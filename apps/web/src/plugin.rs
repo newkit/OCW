@@ -303,30 +303,23 @@ fn update_view(
 }
 
 /// `weather …`: the session's weather, as on the desktop (spec §14 Phase
-/// 9, S4; the server decides who may change it).
+/// 9, S4 / S5: presets, fields, random, the simulation; the server decides
+/// who may change it). The weather machine's menu comes with the B6 menus.
 fn weather_command(world: &mut World, args: &[&str]) -> Result<String, String> {
-    use ocw_weather::command::{self, WeatherCommand};
-    let cmd = command::parse(args)?;
-    if cmd == WeatherCommand::List {
-        return Ok(command::list());
-    }
     let now = world.resource::<Time>().elapsed_secs_f64();
     let s = session_mut(world)?;
-    if cmd == WeatherCommand::Show {
-        return ocw_client::weather::describe(&mut s.client, now);
-    }
-    if !s.client.may_change_weather() {
-        return Err(format!(
-            "{} sets the weather of this ride",
-            s.client.weather_control()
-        ));
-    }
-    let base = ocw_client::weather::change_base(&mut s.client, now);
-    if let Some(change) = ocw_client::weather::request_for(&cmd, base) {
-        let msg = ocw_client::client::ClientCore::weather_message(&change);
+    let (said, msg) = ocw_client::weather::run(&mut s.client, args, now)?;
+    if let Some(msg) = msg {
         s.send(&msg);
     }
-    Ok(String::new())
+    Ok(said)
+}
+
+/// `weather.status`: everything about the session's weather.
+fn weather_status(world: &mut World) -> Result<String, String> {
+    let now = world.resource::<Time>().elapsed_secs_f64();
+    let s = session_mut(world)?;
+    ocw_client::weather::status(&mut s.client, now)
 }
 
 /// The devices (B4): the ones the page connected start in the session;
@@ -538,6 +531,18 @@ fn register_commands(app: &mut App) {
                 .unwrap_or_default();
             weather_command(world, &args)
         },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("weather.list")
+            .about("The weather presets, the custom fields and the transitions"),
+        |_, _| Ok(ocw_client::weather::list_long()),
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("weather.status")
+            .about("Everything about the session's weather: now, where it is going, mode, ground, who sets it"),
+        |world, _| weather_status(world),
     ))
     .console_command(ConsoleCommand::new(
         Permission::User,
