@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 3.35 – November 2026
+Version 3.36 – November 2026
 
 | Version | Change |
 |---|---|
+| 3.36 | Public preview of the browser app on GitHub Pages (decided by the user 2026-11-15; §14 Phase 10 B8a): stage 1 – solo preview with the test routes and Liechtenstein, size-optimised wasm, a preview signing root, page config, attribution page, README link under the headline; stage 2 later – an own EU server for multiplayer, voice and sign-in. |
 | 3.35 | Art project (decided by the user 2026-11-14; `art/ART-PROJECT.md` v1.5 §2.5, §5.1): the build history moved from `artwork/build-history/` to **`art/build-history/`**. Its text files (`index.md`, `SHA256SUMS`, per day `journal.md`, `journal.json`, `tokens.json`) are **tracked in git, masked**: build machines' hosts and users, home directories, e-mail and private IP addresses (`art/diary.py check-masked`, `make art-check`). Media, day zips, logs and prompts stay git-ignored (GitHub release `build-history`). An **hourly collector** runs on the dev machine (`scripts/art-collect.sh`, systemd user timer `ocw-art-collect.timer`, `make art-install-timer`): gather + journal of yesterday and today, the mask check, contact sheets in the 23:xx run, an flock shared with `art/diary.py`, status in `test-output/build-log/DAY/art.json`, shown on the build dashboard. No render or publish (§11.3) |
 | 3.34 | VR starts now (user 2026-11-14, §14 Phase 11 Q6): the X1 step begins – OpenXR in the desktop app, the headset as a viewing device through the Meta PC runtime (Oculus Link / Rift software, Windows), tested with Monado's simulated headset in CI until a headset is on a Windows PC. |
 | 3.33 | Sign-in decided by the user (2026-11-14; §9, §9.1): **Google (OIDC) and Strava (OAuth2), brokered by our own backend** – no separate identity server for now; the backend issues OIDC-shaped tokens to the apps (desktop loopback + PKCE, browser redirect, kiosk / VR device flow); Keycloak or Authentik can replace the broker later. Registrations, secrets and a public domain come from the user; development against fake providers. |
@@ -3157,6 +3158,7 @@ Decisions Q4 (realistic, on in solo and free ride, the organiser decides in even
 - **B6 – UI parity:** menus, settings, HUD, console permissions, gamepad, captures with timestamps, FIT download. **Done (v3.24, 10G).**
 - **B7 – Sensor bridge** (10D.2) and WebGL2 fallback quality presets. **WebGL 2 fallback and quality presets done (v3.27, 10G); the sensor bridge is open until Phase 5 (accounts and the backend).**
 - **B8 – Hosting and release:** domain, CDN, certificates, CSP / COOP / COEP, account sign-on, browser test matrix.
+- **B8a – Public preview on GitHub Pages (decided by the user 2026-11-15, v3.36; stage 1 of B8):** a solo preview of the browser app – the built-in test routes and the Liechtenstein world, virtual power or a trainer over Web Bluetooth in Chromium – served by **GitHub Pages** (HTTPS, static, deployed by a GitHub Actions workflow; site ≤ 1 GB, soft 100 GB / month). Needs: a size-optimised release wasm (no debug info, `wasm-opt`), a **preview signing root** built into the preview build (the worlds signed with it when publishing; its private key never in the repository or CI logs – no dev keys, no unsigned worlds on a public page), the page configuration (worlds / server / voice URLs) instead of localhost assumptions, an attribution and licence page (OSM ODbL, elevation sources, Copernicus, materials) and a short privacy note; the README links the preview right after its headline. **Stage 2 (later):** an own small server in the EU (Caddy: HTTPS, precompressed wasm, range requests for all worlds) for multiplayer (WebTransport), voice (LiveKit) and sign-in (§9.1) – it needs a domain.
 
 **Unit tests:**
 
