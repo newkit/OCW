@@ -51,7 +51,7 @@ Spread parallel work across marge and the Mac (leela is excluded for now; Win11B
 
 **Kiosks:** `scripts/deploy-test.sh marge` (or `make deploy-test`) and `scripts/deploy-test.sh leela` install a release build to `/var/tmp/ocw`; the kiosk (`scripts/ocw-kiosk.sh`, running in the desktop user's session) restarts the app on each deployment, in show mode (virtual trainer at 500 W, `scripts/kiosk-show.args`). Each kiosk keeps its world across deploys (marge: Black Forest north, leela: Tenerife, Puerto de la Cruz – Teide; `OCW_KIOSK_WORLD` changes it). Deploy after user-visible changes so the user can try them; world packages built on marge are copied to leela (identical checksums).
 
-After merging or abandoning an agent branch, run `scripts/remote-gc.sh --branch <branch>` (`make remote-gc-branch BRANCH=…`): it deletes that checkout's `target/` on every reachable build machine (the dashboard's janitor cleans up the rest when a disk fills up). Commit only the files you changed (`git commit FILES`, never `-a`) while agents work in the main checkout.
+After merging or abandoning an agent branch, run `scripts/remote-gc.sh --branch <branch>` (`make remote-gc-branch BRANCH=…`): it deletes that checkout's `target/` on every reachable build machine (the dashboard's janitor cleans up the rest when a disk fills up). Commit only the files you changed (`git commit FILES`, never `-a`) while agents work in the main checkout. Before committing a merge, check that no conflict markers are left (`git grep -nE '^(<<<<<<<|=======|>>>>>>>)' -- SPECIFICATION.md CLAUDE.md README.md` and the code) – a spec with leftover markers was pushed once (2026-11-14).
 
 ## Code map
 
