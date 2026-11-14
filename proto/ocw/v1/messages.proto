@@ -26,7 +26,15 @@ message ClientMessage {
     RulesRequest rules = 15;
     BikeChange bike_change = 16;
     WeatherRequest weather = 17;
+    DamageRequest damage = 18;
   }
+}
+
+// The rider asks the server about their damage (spec §14 Phase 12E, K4):
+// mend a puncture now (stop for the 30 s repair instead of riding on
+// slowly). The server answers with a DevCommandResult. Reliable.
+message DamageRequest {
+  bool repair = 1;
 }
 
 // The workshop's bike when the rider leaves it (spec §14 Phase 4, 4A,
@@ -46,6 +54,10 @@ message BikeChange {
   RiderLook look = 3;
   // The catalogue ids of the parts on the bike (assets/parts.toml).
   repeated string parts = 4;
+  // The bike's condition from the garage (spec §14 Phase 12 Q6, Phase 4
+  // W6): repairs in the workshop and a bike swap reach the ride (parts_pm
+  // only); absent: the ride's damage stays.
+  DamageState damage = 5;
 }
 
 // The session's collision rules (spec §14 Phase 12A): the settings
@@ -57,6 +69,8 @@ message BikeChange {
 message RulesRequest {
   optional bool collisions = 1;
   optional bool chaotic_bots = 2;
+  // `ride.damage` (spec §14 Phase 12A, 12E; off by default, Q1).
+  optional bool damage = 3;
 }
 
 // Whose physics count in an event (spec §2.5 *Race modes*, §14 Phase 4,
@@ -259,6 +273,9 @@ message EventStart {
   // the session's weather stays and its usual rule applies). Riders cannot
   // change it until the event is over.
   EventWeather weather = 8;
+  // The organiser's damage rules (spec §14 Phase 12E, 12G; absent:
+  // the session's switch, no DNF rule, no neutral service).
+  DamageRules damage = 9;
 }
 
 // An event's weather (spec §14 Phase 9, S5, Q4: the organizer decides).
@@ -343,6 +360,11 @@ message Hello {
   // The catalogue ids of the parts on the bike (spec §14 Phase 4, 4G; as
   // in BikeChange.parts): the build the rider starts with.
   repeated string parts = 8;
+  // The condition the rider brings from earlier rides (spec §14 Phase 12
+  // Q6: damage and injuries carry over; healed over real time by the
+  // client): rider_pm and parts_pm only. Absent: fresh. Anonymous riders
+  // never send it.
+  DamageState damage = 9;
 }
 
 // Cosmetic look of a rider and bike (spec §2.5). Colours are sRGB
@@ -433,6 +455,9 @@ message DevCommand {
     // A bot's bike, power and lane (`dev.bot_bike`, spec §14 Phase 4, W3):
     // compare a stock and an upgraded bike side by side.
     BotBike bot_bike = 4;
+    // Stage damage for the asker (`dev.damage`, spec §14 Phase 12E):
+    // screenshots and tests.
+    StageDamage damage = 5;
   }
 }
 
@@ -600,6 +625,8 @@ message EventState {
   // The organizer's weather of the event (spec §14 Phase 9, S5; absent:
   // the session's), shown in the event's info.
   EventWeather weather = 15;
+  // The organiser's damage rules of the event (spec §14 Phase 12E).
+  DamageRules damage = 16;
 }
 
 message EventStanding {
@@ -614,6 +641,11 @@ message EventStanding {
   bool dnf = 6;
   // Time to the rider one place ahead (ms; absent for the leader, DNFs).
   optional uint32 gap_ahead_ms = 7;
+  // Crashes in the event and the final condition (spec §14 Phase 12E;
+  // per mille, absent without damage).
+  uint32 crashes = 8;
+  optional uint32 rider_pm = 9;
+  optional uint32 bike_pm = 10;
 }
 
 // A rider's free-ride path (spec §5.2, §6.5): the server broadcasts the
@@ -678,6 +710,9 @@ message Welcome {
   // The session's weather (spec §14 Phase 9, S4); absent from older
   // servers (the client then shows clear weather).
   SessionWeather weather = 17;
+  // Damage in force (spec §14 Phase 12E: `ride.damage`, only with
+  // collisions on).
+  bool damage = 18;
 }
 
 enum ClockMode {
@@ -738,6 +773,8 @@ message Snapshot {
   bool chaotic_bots = 6;
   // The session's weather at server_tick (spec §14 Phase 9, S4).
   SessionWeather weather = 7;
+  // Damage in force (spec §14 Phase 12E).
+  bool damage = 8;
 }
 
 // The weather at one moment (spec §14 Phase 9, 9E; ocw_weather::WeatherState).
@@ -865,6 +902,9 @@ message RiderUpdate {
   // The rider's bike build (RiderBuild.build_hash; absent/0: the
   // profile's stock bike). The parts come once per change in RiderBuild.
   fixed32 build_hash = 19;
+  // Damage (spec §14 Phase 12E, K4): 2 Hz and on every change; absent:
+  // unchanged (or a server without damage).
+  DamageState damage = 20;
 }
 
 enum CrashPhase {
@@ -912,6 +952,79 @@ message CrashState {
   // With CONTACT_KIND_WORLD: what was hit, the code of
   // ocw_world::obstacles::ObstacleKind (Phase 12 K3; 0: unknown).
   uint32 obstacle = 9;
+}
+
+// `dev.damage`: TARGET is "rider", a part (front_wheel, rear_wheel,
+// front_tyre, rear_tyre, drivetrain, cockpit, frame) with its condition,
+// "puncture_front", "puncture_rear", "chain" or "reset".
+message StageDamage {
+  string target = 1;
+  uint32 condition_pm = 2;
+}
+
+// A rider's damage (spec §14 Phase 12E, K4), server-authoritative: sent
+// in RiderUpdate at 2 Hz and on every change (absent in a snapshot: as
+// before).
+message DamageState {
+  // Rider condition (injury) and bike condition, per mille (1000 = 100 %).
+  uint32 rider_pm = 1;
+  uint32 bike_pm = 2;
+  // Every part's condition per mille in the order of
+  // ocw_sim::damage::Part: front wheel, rear wheel, front tyre, rear
+  // tyre, drivetrain, handlebar, frame (missing ones: 1000).
+  repeated uint32 parts_pm = 3;
+  // The parts whose damage has an effect, a bit per part (same order).
+  uint32 affected = 4;
+  InjuryLevel injury = 5;
+  // Flat tyres (bit 0 front, bit 1 rear) and a broken chain.
+  uint32 flat = 6;
+  bool chain_broken = 7;
+  // The stop by the road under way and how long it still takes (ms; its
+  // time runs once the rider stands still).
+  DamageStop stop = 8;
+  uint32 stop_left_ms = 9;
+  // After a medical stop: at most 50 % effective power.
+  bool limited = 10;
+  // Riding a spare bike (the own one broke).
+  bool spare = 11;
+  // Crashes in this ride.
+  uint32 crashes = 12;
+  // Out of the event (DNF).
+  bool abandoned = 13;
+  // The last hit: its server tick and what it took off (per mille), the
+  // parts it damaged (bits) and whether it was a crash.
+  uint64 hit_tick = 14;
+  uint32 hit_rider_pm = 15;
+  uint32 hit_bike_pm = 16;
+  uint32 hit_parts = 17;
+  bool hit_crash = 18;
+}
+
+enum InjuryLevel {
+  INJURY_LEVEL_FINE = 0;
+  INJURY_LEVEL_BRUISED = 1;
+  INJURY_LEVEL_HURT = 2;
+  INJURY_LEVEL_INJURED = 3;
+  INJURY_LEVEL_BADLY_INJURED = 4;
+}
+
+enum DamageStop {
+  DAMAGE_STOP_NONE = 0;
+  DAMAGE_STOP_MEDICAL = 1;
+  DAMAGE_STOP_PUNCTURE = 2;
+  DAMAGE_STOP_CHAIN = 3;
+  DAMAGE_STOP_SPARE_BIKE = 4;
+}
+
+// The organiser's damage rules for an event (spec §14 Phase 12E, 12G).
+message DamageRules {
+  // `ride.damage` for the event (absent: the session's).
+  optional bool damage = 1;
+  // A badly injured entrant is DNF.
+  bool dnf_badly_injured = 2;
+  // Neutral service: a spare bike for a broken one (else DNF), a 30 s
+  // stop restores the bike.
+  bool neutral_service = 3;
 }
 
 message Bump {

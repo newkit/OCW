@@ -18,13 +18,27 @@
 //! item); kit items are bought, worn, taken off and sold by the same rules
 //! (they count as ridden after 1 km in the saddle), on any bike. The files are trivially editable – accepted, they only
 //! matter on the local server until the Phase 5 backend.
+//!
+//! Damage (spec §14 Phase 12 Q6, Phase 4 W6): a bike's parts keep their
+//! condition between rides (`condition`: damage part → per mille; a
+//! missing part is as new) and the rider's injury with the time it was
+//! saved (`injury`; it heals over real time, `ocw_sim::damage::heal`).
+//! Repairs are paid in hearts: `ceil(price × (1 − condition) × 0.3)` ♥
+//! ([`ocw_sim::damage::repair_price`]); the price is the part's on the
+//! slot (the price paid), a base part's that of the cheapest paid part of
+//! the slot that fits the bike (a new entry part, [`slot_price`]), or
+//! [`BASE_REPAIR_HEARTS`] if the catalogue has none; wheels and tyres are
+//! pairs (half each); a frame or wheel below 10 % is replaced at the full
+//! price.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use ocw_assets::parts::{Catalogue, Part, Slot};
+use ocw_client::damage::Carried;
 use ocw_core::hearts::START_HEARTS;
 use ocw_core::{ProfileId, Rgb};
+use ocw_sim::damage::{self, PARTS, Part as DamagePart};
 use serde::{Deserialize, Serialize};
 
 /// A ride of this length with a part on the bike makes it "ridden" (m).
@@ -77,6 +91,11 @@ pub struct Bike {
     /// A starter bike (cannot be sold).
     #[serde(default)]
     pub starter: bool,
+    /// Damage carried over (spec §14 Phase 12 Q6): damage part id
+    /// (`ocw_sim::damage::Part::id`) → condition in per mille; missing:
+    /// as new.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub condition: BTreeMap<String, u32>,
 }
 
 impl Bike {
@@ -92,6 +111,95 @@ impl Bike {
     pub fn name(&self) -> &'static str {
         self.profile().name()
     }
+
+    /// A damage part's condition (0–1).
+    pub fn condition(&self, p: DamagePart) -> f64 {
+        self.condition
+            .get(p.id())
+            .map_or(1.0, |pm| f64::from((*pm).min(1000)) / 1000.0)
+    }
+
+    /// Every damage part's condition.
+    pub fn conditions(&self) -> [f64; PARTS] {
+        DamagePart::ALL.map(|p| self.condition(p))
+    }
+
+    /// The parts with damage, worst first.
+    pub fn damaged(&self) -> Vec<(DamagePart, f64)> {
+        let mut v: Vec<(DamagePart, f64)> = DamagePart::ALL
+            .into_iter()
+            .map(|p| (p, self.condition(p)))
+            .filter(|(_, c)| *c < 1.0)
+            .collect();
+        v.sort_by(|a, b| a.1.total_cmp(&b.1));
+        v
+    }
+
+    fn set_conditions(&mut self, parts: &[f64; PARTS]) {
+        self.condition = DamagePart::ALL
+            .into_iter()
+            .zip(parts)
+            .map(|(p, c)| (p.id().to_string(), damage::per_mille(*c)))
+            .filter(|(_, pm)| *pm < 1000)
+            .collect();
+    }
+}
+
+/// The rider's injury carried over (spec §14 Phase 12 Q6): the condition
+/// (per mille) when it was saved, and when (UTC unix s).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Injury {
+    pub condition_pm: u32,
+    pub at_unix: i64,
+}
+
+impl Injury {
+    /// The condition at `now_unix`: healed over the real time since.
+    pub fn at(&self, now_unix: i64) -> f64 {
+        let c = f64::from(self.condition_pm.min(1000)) / 1000.0;
+        damage::heal(c, (now_unix - self.at_unix) as f64 / 3600.0)
+    }
+}
+
+/// A base part's repair price when the catalogue has no paid part of the
+/// slot for the bike (hearts, W6).
+pub const BASE_REPAIR_HEARTS: u32 = 20;
+
+/// The price a damage part's repair is priced from (W6): the price paid
+/// for the item on its slot; a base part: the cheapest paid part of the
+/// slot that fits the bike (frames: of its profile), or
+/// [`BASE_REPAIR_HEARTS`]; wheels and tyres: half the pair's (rounded up).
+pub fn slot_price(cat: &Catalogue, g: &Garage, bike: &Bike, p: DamagePart) -> u32 {
+    let slot = Slot::parse(p.slot()).expect("damage parts map to slots");
+    let paid = bike
+        .parts
+        .get(slot.id())
+        .and_then(|i| g.item(*i))
+        .map(|i| i.paid)
+        .filter(|h| *h > 0);
+    let price = paid.unwrap_or_else(|| {
+        let options = if slot == Slot::Frame {
+            cat.frames(bike.profile())
+        } else {
+            cat.for_slot(slot, bike.profile().bike())
+        };
+        options
+            .iter()
+            .filter(|q| q.hearts > 0)
+            .map(|q| q.hearts)
+            .min()
+            .unwrap_or(BASE_REPAIR_HEARTS)
+    });
+    (f64::from(price) * p.price_share()).ceil() as u32
+}
+
+/// The repair price of damage part `p` on `bike` (0: as new).
+pub fn repair_quote(cat: &Catalogue, g: &Garage, bike: &Bike, p: DamagePart) -> u32 {
+    let c = bike.condition(p);
+    if c >= 1.0 {
+        return 0;
+    }
+    damage::repair_price(slot_price(cat, g, bike, p), c, p)
 }
 
 /// One rider's garage.
@@ -110,6 +218,10 @@ pub struct Garage {
     /// entry wears its free base item.
     #[serde(default)]
     pub kit: BTreeMap<String, u32>,
+    /// The rider's injury carried over (spec §14 Phase 12 Q6; `None`:
+    /// fine).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub injury: Option<Injury>,
 }
 
 fn first_item() -> u32 {
@@ -130,12 +242,32 @@ impl Garage {
                     paint: None,
                     parts: BTreeMap::new(),
                     starter: true,
+                    condition: BTreeMap::new(),
                 })
                 .collect(),
             items: Vec::new(),
             next_item: 1,
             kit: BTreeMap::new(),
+            injury: None,
         }
+    }
+
+    /// The rider's condition at `now_unix` (healed over real time).
+    pub fn rider_condition(&self, now_unix: i64) -> f64 {
+        self.injury.map_or(1.0, |i| i.at(now_unix))
+    }
+
+    /// What the next ride on `bike` carries over (spec §14 Phase 12 Q6).
+    pub fn carried(&self, bike: &Bike) -> Option<Carried> {
+        let rider = self
+            .injury
+            .map_or(1.0, |i| f64::from(i.condition_pm.min(1000)) / 1000.0);
+        let parts = bike.conditions();
+        (rider < 1.0 || parts.iter().any(|c| *c < 1.0)).then(|| Carried {
+            rider,
+            parts,
+            at_unix: self.injury.map_or(0, |i| i.at_unix),
+        })
     }
 
     pub fn bike(&self, id: &str) -> Option<&Bike> {
@@ -343,6 +475,12 @@ impl Wallet {
             }
         }
         (w, warnings)
+    }
+
+    /// The wallet's clock (UTC unix s): the system's, or the fixed one of
+    /// tests and scenes.
+    pub fn clock(&self) -> i64 {
+        self.now()
     }
 
     fn now(&self) -> i64 {
@@ -599,6 +737,111 @@ impl Wallet {
             changed |= !was && it.ridden();
         }
         changed
+    }
+
+    /// Keeps the server's damage of a ride on `bike` (spec §14 Phase 12
+    /// Q6): the bike's parts and the rider's injury (stamped as `kept`
+    /// says). True when something changed (worth saving).
+    pub fn keep_damage(&mut self, rider: &str, bike: &str, kept: &Carried) -> bool {
+        let Some(g) = self.garages.get_mut(rider) else {
+            return false;
+        };
+        let mut changed = false;
+        if let Ok(b) = g.bike_mut(bike) {
+            let before = b.condition.clone();
+            b.set_conditions(&kept.parts);
+            changed |= b.condition != before;
+        }
+        let pm = damage::per_mille(kept.rider);
+        let injury = (pm < 1000).then_some(Injury {
+            condition_pm: pm,
+            at_unix: kept.at_unix,
+        });
+        if injury.map(|i| i.condition_pm) != g.injury.map(|i| i.condition_pm) {
+            g.injury = injury;
+            changed = true;
+        }
+        changed
+    }
+
+    /// Repairs damage part `part` of `bike` (spec §14 Phase 4, W6): pays
+    /// its [`repair_quote`] in hearts (ledger reason "repair"); the part is
+    /// as new. Returns the hearts paid.
+    pub fn repair(
+        &mut self,
+        cat: &Catalogue,
+        rider: &str,
+        bike: &str,
+        part: DamagePart,
+    ) -> Result<u32, String> {
+        let g = self
+            .garages
+            .get(rider)
+            .ok_or_else(|| format!("{rider} has no garage"))?;
+        let b = g
+            .bike(bike)
+            .ok_or_else(|| format!("no bike {bike} in the garage"))?;
+        if b.condition(part) >= 1.0 {
+            return Err(format!("the {} needs no repair", part.label()));
+        }
+        let price = repair_quote(cat, g, b, part);
+        let balance = self.balance(rider);
+        if balance < i64::from(price) {
+            return Err(format!(
+                "repairing the {} costs {}; the balance is {} ({} more needed)",
+                part.label(),
+                ocw_core::hearts::format(i64::from(price)),
+                ocw_core::hearts::format(balance),
+                ocw_core::hearts::format(i64::from(price) - balance)
+            ));
+        }
+        let g = self.garages.get_mut(rider).expect("checked");
+        g.bike_mut(bike)?.condition.remove(part.id());
+        self.book(
+            rider,
+            -i64::from(price),
+            "repair",
+            format!("{bike}:{}", part.id()),
+        );
+        Ok(price)
+    }
+
+    /// Repairs every damaged part of `bike` at once, if the balance covers
+    /// all of them (W6 *Repair all*). Returns (hearts paid, parts).
+    pub fn repair_all(
+        &mut self,
+        cat: &Catalogue,
+        rider: &str,
+        bike: &str,
+    ) -> Result<(u32, usize), String> {
+        let g = self
+            .garages
+            .get(rider)
+            .ok_or_else(|| format!("{rider} has no garage"))?;
+        let b = g
+            .bike(bike)
+            .ok_or_else(|| format!("no bike {bike} in the garage"))?;
+        let damaged = b.damaged();
+        if damaged.is_empty() {
+            return Err(format!("the {} needs no repair", b.name()));
+        }
+        let total: u32 = damaged
+            .iter()
+            .map(|(p, _)| repair_quote(cat, g, b, *p))
+            .sum();
+        let balance = self.balance(rider);
+        if balance < i64::from(total) {
+            return Err(format!(
+                "repairing everything costs {}; the balance is {} ({} more needed)",
+                ocw_core::hearts::format(i64::from(total)),
+                ocw_core::hearts::format(balance),
+                ocw_core::hearts::format(i64::from(total) - balance)
+            ));
+        }
+        for (p, _) in &damaged {
+            self.repair(cat, rider, bike, *p)?;
+        }
+        Ok((total, damaged.len()))
     }
 
     /// Writes `workshop.toml` (replaced whole) and appends the new ledger
@@ -864,6 +1107,133 @@ mod tests {
         assert!(fresh.get("Ann").is_none());
         assert!(dir.join("workshop.toml.broken").exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn hurt_ride() -> Carried {
+        let mut parts = [1.0; PARTS];
+        parts[DamagePart::RearWheel.index()] = 0.6;
+        parts[DamagePart::Cockpit.index()] = 0.5;
+        Carried {
+            rider: 0.45,
+            parts,
+            at_unix: 1_794_000_000,
+        }
+    }
+
+    /// Phase 12 Q6: the bike's parts and the rider's injury survive a
+    /// restart of the app (the file round trip); the injury heals over
+    /// real time.
+    #[test]
+    fn damage_persists_across_a_restart_and_heals_over_real_time() {
+        let dir = std::env::temp_dir().join(format!("ocw-wallet-damage-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (mut w, _) = Wallet::load(&dir);
+        w.now_unix = Some(1_794_000_000);
+        w.garage("Ann", ProfileId::Road);
+        assert!(
+            w.get("Ann")
+                .unwrap()
+                .carried(w.get("Ann").unwrap().active_bike())
+                .is_none()
+        );
+        assert!(w.keep_damage("Ann", "road", &hurt_ride()));
+        assert!(!w.keep_damage("Ann", "road", &hurt_ride()), "nothing new");
+        w.save().unwrap();
+        let (back, warn) = Wallet::load(&dir);
+        assert!(warn.is_empty(), "{warn:?}");
+        let g = back.get("Ann").unwrap();
+        assert_eq!(g, w.get("Ann").unwrap());
+        let bike = g.bike("road").unwrap();
+        assert_eq!(bike.condition(DamagePart::RearWheel), 0.6);
+        assert_eq!(bike.condition(DamagePart::Frame), 1.0);
+        let c = g.carried(bike).unwrap();
+        assert_eq!(c.rider, 0.45);
+        // 3 h later the injury is 30 % better; the bike is not.
+        let (rider, parts) = c.at(1_794_000_000 + 3 * 3600);
+        assert!((rider - 0.75).abs() < 1e-9);
+        assert_eq!(parts[DamagePart::Cockpit.index()], 0.5);
+        assert!((g.rider_condition(1_794_000_000 + 3 * 3600) - 0.75).abs() < 1e-9);
+        // The other bikes keep no damage.
+        assert!(g.bike("tt").unwrap().damaged().is_empty());
+        let text = std::fs::read_to_string(dir.join(WORKSHOP_FILE)).unwrap();
+        assert!(text.contains("rear_wheel = 600"), "{text}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// W6: a repair costs `ceil(price × (1 − condition) × 0.3)` hearts; base
+    /// parts are priced at the cheapest paid part of the slot; Repair all
+    /// needs the whole price.
+    #[test]
+    fn repairs_are_paid_in_hearts() {
+        let mut w = wallet();
+        w.keep_damage("Ann", "road", &hurt_ride());
+        let g = w.get("Ann").unwrap();
+        let bike = g.bike("road").unwrap();
+        // The cockpit is a base part: priced at the cheapest paid cockpit.
+        let cheapest = road_part(Slot::Cockpit).hearts;
+        assert_eq!(slot_price(cat(), g, bike, DamagePart::Cockpit), cheapest);
+        let want = damage::repair_price(cheapest, 0.5, DamagePart::Cockpit);
+        assert_eq!(repair_quote(cat(), g, bike, DamagePart::Cockpit), want);
+        assert_eq!(want, (u64::from(cheapest) * 15).div_ceil(100) as u32);
+        // Wheels are a pair: half the wheelset's price.
+        let wheels = road_part(Slot::Wheels).hearts;
+        assert_eq!(
+            slot_price(cat(), g, bike, DamagePart::RearWheel),
+            wheels.div_ceil(2)
+        );
+        assert_eq!(repair_quote(cat(), g, bike, DamagePart::Frame), 0);
+        let before = w.balance("Ann");
+        let paid = w.repair(cat(), "Ann", "road", DamagePart::Cockpit).unwrap();
+        assert_eq!(paid, want);
+        assert_eq!(w.balance("Ann"), before - i64::from(paid));
+        assert_eq!(w.history("Ann", 1)[0].reason, "repair");
+        assert!(
+            w.repair(cat(), "Ann", "road", DamagePart::Cockpit).is_err(),
+            "as new"
+        );
+        // A bought part is priced at what was paid for it.
+        w.grant("Ann", 5000);
+        let item = w
+            .buy(cat(), "Ann", "road", &road_part(Slot::Groupset).id)
+            .unwrap();
+        let mut ride = hurt_ride();
+        ride.parts[DamagePart::Drivetrain.index()] = 0.4;
+        w.keep_damage("Ann", "road", &ride);
+        let g = w.get("Ann").unwrap();
+        let bike = g.bike("road").unwrap();
+        assert_eq!(
+            slot_price(cat(), g, bike, DamagePart::Drivetrain),
+            item.paid
+        );
+        // Repair all: everything or nothing.
+        w.grant("Ann", -(w.balance("Ann") - 1));
+        assert!(w.repair_all(cat(), "Ann", "road").is_err());
+        assert_eq!(
+            w.get("Ann").unwrap().bike("road").unwrap().damaged().len(),
+            3
+        );
+        w.grant("Ann", 5000);
+        let (total, n) = w.repair_all(cat(), "Ann", "road").unwrap();
+        assert_eq!(n, 3);
+        assert!(total > 0);
+        assert!(
+            w.get("Ann")
+                .unwrap()
+                .bike("road")
+                .unwrap()
+                .damaged()
+                .is_empty()
+        );
+        // Beyond repair: a frame below 10 % is replaced at the full price.
+        let mut wreck = hurt_ride();
+        wreck.parts[DamagePart::Frame.index()] = 0.05;
+        w.keep_damage("Ann", "road", &wreck);
+        let g = w.get("Ann").unwrap();
+        let bike = g.bike("road").unwrap();
+        assert_eq!(
+            repair_quote(cat(), g, bike, DamagePart::Frame),
+            slot_price(cat(), g, bike, DamagePart::Frame)
+        );
     }
 
     #[test]

@@ -33,7 +33,84 @@ use ocw_core::{BodyBuild, Character};
 use ocw_sim::build::{self as bike_build, Benefit, Build, PartTable};
 
 use super::designer::{DesignPage, Field};
-use super::wallet::{Bike, Garage, fits};
+use super::wallet::{Bike, Garage, fits, repair_quote};
+use ocw_sim::damage::Part as DamagePart;
+
+/// The damage parts a slot's repair covers (spec §14 Phase 4 W6; the
+/// drivetrain is priced as the groupset).
+pub fn damage_parts(slot: Slot) -> &'static [DamagePart] {
+    match slot {
+        Slot::Wheels => &[DamagePart::FrontWheel, DamagePart::RearWheel],
+        Slot::Tyres => &[DamagePart::FrontTyre, DamagePart::RearTyre],
+        Slot::Groupset => &[DamagePart::Drivetrain],
+        Slot::Cockpit => &[DamagePart::Cockpit],
+        Slot::Frame => &[DamagePart::Frame],
+        _ => &[],
+    }
+}
+
+/// The worst damage of `slot` on `bike`: (part, condition).
+pub fn slot_damage(bike: &Bike, slot: Slot) -> Option<(DamagePart, f64)> {
+    damage_parts(slot)
+        .iter()
+        .map(|p| (*p, bike.condition(*p)))
+        .filter(|(_, c)| *c < 1.0)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+}
+
+/// "rear wheel 60 % – repair 51 ♥" (a frame or wheel below 10 %:
+/// "replace").
+pub fn repair_line(cat: &Catalogue, garage: &Garage, bike: &Bike, p: DamagePart) -> String {
+    let c = bike.condition(p);
+    let what = if p.can_be_beyond_repair() && c < ocw_sim::damage::BEYOND_REPAIR {
+        "beyond repair: replace"
+    } else {
+        "repair"
+    };
+    format!(
+        "{} {} {:.0} % – {what} {}",
+        ocw_sim::damage::part_status(c).icon(),
+        p.label(),
+        c * 100.0,
+        hearts(i64::from(repair_quote(cat, garage, bike, p)))
+    )
+}
+
+/// The repair buttons of `slot` on `bike` (W6): one per damaged part of
+/// the slot the balance covers, and *Repair all* when the bike has more
+/// damage than this slot's.
+fn repair_buttons(
+    cat: &Catalogue,
+    garage: &Garage,
+    bike: &Bike,
+    slot: Slot,
+    balance: i64,
+) -> Vec<Button> {
+    let b = &bike.id;
+    let mut out: Vec<Button> = damage_parts(slot)
+        .iter()
+        .filter(|p| bike.condition(**p) < 1.0)
+        .filter_map(|p| {
+            let price = repair_quote(cat, garage, bike, *p);
+            (i64::from(price) <= balance).then(|| Button {
+                label: format!("Repair the {} for {}", p.label(), hearts(i64::from(price))),
+                line: Some(format!("workshop.repair {} --bike {b}", p.id())),
+            })
+        })
+        .collect();
+    let damaged = bike.damaged();
+    let total: u32 = damaged
+        .iter()
+        .map(|(p, _)| repair_quote(cat, garage, bike, *p))
+        .sum();
+    if damaged.len() > out.len() && damaged.len() > 1 && i64::from(total) <= balance {
+        out.push(Button {
+            label: format!("Repair all for {}", hearts(i64::from(total))),
+            line: Some(format!("workshop.repair all --bike {b}")),
+        });
+    }
+    out
+}
 
 /// What a picker row offers.
 #[derive(Debug, Clone, PartialEq)]
@@ -788,30 +865,58 @@ pub fn dialog(
         }
         Kind::Equipped { item: Some(item) } => {
             let it = garage.item(*item)?;
+            let mut text = format!(
+                "On the bike{}. Selling gives {}.",
+                if it.ridden() {
+                    ", ridden"
+                } else {
+                    ", not ridden yet"
+                },
+                hearts(i64::from(it.refund()))
+            );
+            // Damage (W6): the condition and the repair first.
+            let mut buttons = repair_buttons(cat, garage, bike, slot, balance);
+            for d in damage_parts(slot) {
+                if bike.condition(*d) < 1.0 {
+                    text.push_str(&format!("\n{}", repair_line(cat, garage, bike, *d)));
+                }
+            }
+            buttons.extend([
+                Button {
+                    label: "Unequip".into(),
+                    line: Some(format!("workshop.unequip {} --bike {b}", slot.id())),
+                },
+                Button {
+                    label: format!("Sell for {}", hearts(i64::from(it.refund()))),
+                    line: Some(format!("workshop.sell {item}")),
+                },
+            ]);
+            Some(Dialog::new(p.name.clone(), text, buttons))
+        }
+        // The base part: only its repair (W6).
+        Kind::Equipped { item: None } => {
+            let buttons = repair_buttons(cat, garage, bike, slot, balance);
+            let lines: Vec<String> = damage_parts(slot)
+                .iter()
+                .filter(|d| bike.condition(**d) < 1.0)
+                .map(|d| repair_line(cat, garage, bike, *d))
+                .collect();
+            if lines.is_empty() {
+                return None;
+            }
+            let mut text = lines.join("\n");
+            if buttons.is_empty() {
+                text.push_str(&format!(
+                    "\nThe balance ({}) does not cover the repair.",
+                    hearts(balance)
+                ));
+            }
             Some(Dialog::new(
-                p.name.clone(),
-                format!(
-                    "On the bike{}. Selling gives {}.",
-                    if it.ridden() {
-                        ", ridden"
-                    } else {
-                        ", not ridden yet"
-                    },
-                    hearts(i64::from(it.refund()))
-                ),
-                vec![
-                    Button {
-                        label: "Unequip".into(),
-                        line: Some(format!("workshop.unequip {} --bike {b}", slot.id())),
-                    },
-                    Button {
-                        label: format!("Sell for {}", hearts(i64::from(it.refund()))),
-                        line: Some(format!("workshop.sell {item}")),
-                    },
-                ],
+                format!("Repair the {}?", p.name),
+                text,
+                buttons,
             ))
         }
-        Kind::Equipped { item: None } => None,
         Kind::Paint(_) | Kind::Free(_) | Kind::Design(_) => None,
     }
 }

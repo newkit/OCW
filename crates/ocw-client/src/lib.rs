@@ -4,6 +4,7 @@
 //! - [`client::ClientCore`]: the client loop (device samples → server,
 //!   server messages → prediction and interpolation → render view),
 //! - [`collisions`]: crashes, bumps and the collision rules (spec §14 Phase 12),
+//! - [`damage`]: the riders' damage, the HUD widget and the carried condition (12E, 12F),
 //! - [`event`]: events, standings and ghosts on the client,
 //! - [`god_state`]: god mode's flight state (spec §14 Phase 13),
 //! - [`input`]: the pure key and gamepad logic of the ride controls,
@@ -17,6 +18,7 @@
 
 pub mod client;
 pub mod collisions;
+pub mod damage;
 pub mod event;
 pub mod god_state;
 pub mod gps;

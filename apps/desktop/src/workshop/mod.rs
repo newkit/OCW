@@ -81,6 +81,14 @@ pub struct WorkshopState {
     /// Booked hearts are saved at most this often (s).
     dirty: bool,
     save_in: f64,
+    /// The session whose damage is kept, and the bike it started on (the
+    /// server's damage is that bike's, also after a swap in the workshop).
+    damage_session: f64,
+    ride_bike: Option<String>,
+    /// The server's damage last kept (per mille: rider, parts, spare):
+    /// only a change of it is written, so a repair in the workshop is not
+    /// overwritten before the server has it.
+    last_damage: Option<Vec<u32>>,
 }
 
 impl WorkshopState {
@@ -101,6 +109,9 @@ impl WorkshopState {
             mirror: true,
             dirty: false,
             save_in: 0.0,
+            damage_session: f64::NAN,
+            ride_bike: None,
+            last_damage: None,
         }
     }
 
@@ -137,6 +148,23 @@ pub fn riding_parts(world: &World, rider: &str, profile: ProfileId) -> Vec<Strin
     }
 }
 
+/// The condition the next ride carries over (spec §14 Phase 12 Q6): the
+/// rider's injury healed over the real time since, and the parts of the
+/// garage's active bike; `None`: fresh.
+pub fn riding_damage(world: &World, rider: &str) -> Option<ocw_protocol::v1::DamageState> {
+    let s = world.get_resource::<WorkshopState>()?;
+    let g = s.wallet.get(rider)?;
+    let carried = g.carried(g.active_bike());
+    ocw_client::damage::Carried::hello(carried.as_ref(), false, s.wallet.clock())
+}
+
+/// Whether the server's damage goes into the garage (spec §14 Phase 12
+/// Q6): never in captures (scripted runs) or with `--no-hearts` (the
+/// kiosk / show mode); from local and remote servers alike.
+pub fn keeps_damage(capture: bool, no_hearts: bool) -> bool {
+    !capture && !no_hearts
+}
+
 impl Plugin for WorkshopPlugin {
     fn build(&self, app: &mut App) {
         if !app.is_plugin_added::<WorkshopCorePlugin>() {
@@ -152,8 +180,10 @@ impl Plugin for WorkshopPlugin {
         let mut state = WorkshopState::new(wallet);
         let (name, bike) = rider(app.world());
         state.wallet.garage(&name, bike);
-        app.insert_resource(state)
-            .add_systems(Update, (earn_hearts, workshop_input, write_view).chain());
+        app.insert_resource(state).add_systems(
+            Update,
+            (earn_hearts, keep_damage, workshop_input, write_view).chain(),
+        );
         register_commands(app);
         register_apply(app);
     }
@@ -486,6 +516,83 @@ fn register_commands(app: &mut App) {
                     hearts(i64::from(refund)),
                     hearts(w.balance(name))
                 ))
+            })
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("workshop.repair")
+            .about("Repair a damaged part (or all) for hearts: ceil(price x (1 - condition) x 0.3)")
+            .arg(
+                Arg::new("part").required(true).value_parser(
+                    ocw_sim::damage::Part::ALL
+                        .map(|p| p.id())
+                        .into_iter()
+                        .chain(["all"])
+                        .collect::<Vec<_>>(),
+                ),
+            )
+            .arg(Arg::new("bike").long("bike")),
+        |world, m| {
+            let part = m.get_one::<String>("part").expect("required").clone();
+            garage_op(world, m, |w, name, bike| {
+                if part == "all" {
+                    let (paid, n) = w.repair_all(cat(), name, bike)?;
+                    return Ok(format!(
+                        "repaired {n} part{} for {}; balance {}",
+                        if n == 1 { "" } else { "s" },
+                        hearts(i64::from(paid)),
+                        hearts(w.balance(name))
+                    ));
+                }
+                let p = ocw_sim::damage::Part::from_id(&part).expect("parsed");
+                let paid = w.repair(cat(), name, bike, p)?;
+                Ok(format!(
+                    "repaired the {} for {}; balance {}",
+                    p.label(),
+                    hearts(i64::from(paid)),
+                    hearts(w.balance(name))
+                ))
+            })
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::Dev,
+        Command::new("workshop.damage")
+            .about("Set a part's condition in the garage (rider: the injury; tests and screenshots)")
+            .arg(
+                Arg::new("part").required(true).value_parser(
+                    ocw_sim::damage::Part::ALL
+                        .map(|p| p.id())
+                        .into_iter()
+                        .chain(["rider"])
+                        .collect::<Vec<_>>(),
+                ),
+            )
+            .arg(
+                Arg::new("percent")
+                    .required(true)
+                    .value_parser(clap::value_parser!(f64)),
+            )
+            .arg(Arg::new("bike").long("bike")),
+        |world, m| {
+            let part = m.get_one::<String>("part").expect("required").clone();
+            let c = (m.get_one::<f64>("percent").expect("required") / 100.0).clamp(0.0, 1.0);
+            garage_op(world, m, |w, name, bike| {
+                let now = w.clock();
+                let g = w.get(name).ok_or("no garage")?;
+                let b = g.bike(bike).ok_or("no such bike")?;
+                let mut kept = ocw_client::damage::Carried {
+                    rider: g.rider_condition(now),
+                    parts: b.conditions(),
+                    at_unix: now,
+                };
+                match ocw_sim::damage::Part::from_id(&part) {
+                    Some(p) => kept.parts[p.index()] = c,
+                    None => kept.rider = c,
+                }
+                w.keep_damage(name, bike, &kept);
+                Ok(format!("{part} {:.0} %", c * 100.0))
             })
         },
     ))
@@ -869,11 +976,21 @@ fn open(world: &mut World) -> Result<String, String> {
 /// riding profile's bike (a ride switch keeps it).
 fn apply_bike(world: &mut World) {
     let (name, _) = rider(world);
-    let (bike_id, profile, paint, parts) = {
+    let (bike_id, profile, paint, parts, damage) = {
         let s = world.resource::<WorkshopState>();
         let Some(g) = s.wallet.get(&name) else { return };
         let b = g.active_bike();
-        (b.id.clone(), b.profile(), b.paint(), g.riding_ids(b))
+        // The bike's condition (Phase 12 Q6, W6): repairs and a swap reach
+        // the ride with the bike.
+        let damage =
+            ocw_protocol::carried_damage(g.rider_condition(s.wallet.clock()), &b.conditions());
+        (
+            b.id.clone(),
+            b.profile(),
+            b.paint(),
+            g.riding_ids(b),
+            damage,
+        )
     };
     let mut look: RiderLook = crate::settings::local_rider(world).look();
     if let Some(p) = paint {
@@ -884,9 +1001,17 @@ fn apply_bike(world: &mut World) {
     }
     // The server answers with the build's effect (printed when it
     // arrives); in an event that is not over it applies after the event.
-    let msg = world
+    let now = world
         .get_resource_mut::<ClientState>()
-        .map(|mut c| c.0.change_bike(&bike_id, profile, look, &parts));
+        .is_some_and(|c| !c.0.bike_change_waits());
+    let msg = world.get_resource_mut::<ClientState>().map(|mut c| {
+        c.0.change_bike_with_damage(&bike_id, profile, look, &parts, Some(damage))
+    });
+    // The ride's damage is this bike's from now on (spec §14 Phase 12 Q6).
+    if now && let Some(mut s) = world.get_resource_mut::<WorkshopState>() {
+        s.ride_bike = Some(bike_id.clone());
+        s.last_damage = None;
+    }
     if let (Some(m), Some(link)) = (msg, world.get_resource::<Link>()) {
         link.send_bytes(m);
         info!(bike = %bike_id, profile = profile.id(), parts = parts.len(), "bike change sent");
@@ -944,6 +1069,64 @@ fn earn_hearts(
         if let Err(e) = state.save() {
             warn!("workshop: saving the wallet: {e}");
         }
+    }
+}
+
+/// Keeps the server's damage of the own rider in the garage (spec §14
+/// Phase 12 Q6): the active bike's parts (not a spare bike's) and the
+/// rider's injury; saved with the wallet (at most every 10 s).
+fn keep_damage(
+    args: Res<Args>,
+    client: Option<Res<ClientState>>,
+    session: Option<Res<crate::connection::SessionStart>>,
+    riders: Option<Res<RiderProfiles>>,
+    mut state: ResMut<WorkshopState>,
+) {
+    let Some(client) = client else { return };
+    // Not while the workshop is open (its repairs reach the ride when it
+    // closes).
+    if !keeps_damage(args.capture.is_some(), args.no_hearts) || state.scene.is_some() {
+        return;
+    }
+    let Some(d) = client.0.own_damage() else {
+        return;
+    };
+    let name = riders.map_or_else(
+        || crate::settings::riders::Rider::default().name,
+        |r| r.riding.name.clone(),
+    );
+    let now = state.wallet.clock();
+    let start = session.map_or(0.0, |s| s.0);
+    let Some(active) = state.wallet.get(&name).map(|g| g.active.clone()) else {
+        return;
+    };
+    if state.damage_session != start {
+        state.damage_session = start;
+        state.ride_bike = Some(active.clone());
+        state.last_damage = None;
+    }
+    // Only a change of the server's damage is kept.
+    let sig: Vec<u32> = std::iter::once(ocw_sim::damage::per_mille(d.rider))
+        .chain(d.parts.iter().map(|c| ocw_sim::damage::per_mille(*c)))
+        .chain([u32::from(d.spare)])
+        .collect();
+    if state.last_damage.as_ref() == Some(&sig) {
+        return;
+    }
+    state.last_damage = Some(sig);
+    let bike = state.ride_bike.clone().unwrap_or(active);
+    let Some(g) = state.wallet.get(&name) else {
+        return;
+    };
+    let Some(b) = g.bike(&bike) else {
+        return;
+    };
+    let before = g.carried(b);
+    let Some(kept) = ocw_client::damage::Carried::keep(d, before.as_ref(), false, now) else {
+        return;
+    };
+    if state.wallet.keep_damage(&name, &bike, &kept) {
+        state.dirty = true;
     }
 }
 
@@ -1231,6 +1414,7 @@ fn write_view(
         .collect();
     let dress = matches!(scene.view(), camera::View::Dress { .. }) && !scene.cam.moving();
     let rider_points_label = |i: usize, r: picker::Region| HotspotView {
+        damage: None,
         pos: spots[i],
         label: if i == scene.dress.hotspot {
             let slot = scene.dress.slot();
@@ -1256,9 +1440,11 @@ fn write_view(
         anchors
             .iter()
             .enumerate()
-            .map(|(i, (slot, pos))| HotspotView {
-                pos: *pos,
-                label: format!(
+            .map(|(i, (slot, pos))| {
+                // Damage (W6): the worst part of the slot in its colour and
+                // words.
+                let damage = stand.and_then(|b| picker::slot_damage(b, *slot));
+                let mut label = format!(
                     "{} – {}",
                     slot.name(),
                     stand.and_then(|b| g.part_on(cat(), b, *slot)).map_or_else(
@@ -1269,8 +1455,16 @@ fn write_view(
                         },
                         |p| p.name.clone()
                     )
-                ),
-                focused: i == scene.hotspot,
+                );
+                if let (Some(b), Some((p, _))) = (stand, damage) {
+                    label.push_str(&format!("\n{}", picker::repair_line(cat(), g, b, p)));
+                }
+                HotspotView {
+                    pos: *pos,
+                    label,
+                    focused: i == scene.hotspot,
+                    damage: damage.map(|(_, c)| ocw_sim::damage::part_status(c)),
+                }
             })
             .collect()
     } else {
@@ -1307,7 +1501,22 @@ fn write_view(
             _ => HintCtx::Room,
         }
     };
+    // The condition card (W6): the stand bike's damage and its repairs; at
+    // the mirror the rider's injury and the time to heal.
+    let at_mirror = scene.dressing()
+        || matches!(
+            scene.view(),
+            camera::View::Mirror | camera::View::Dress { .. } | camera::View::TryOn
+        );
+    let condition = if at_mirror {
+        injury_card(g.rider_condition(state.wallet.clock()))
+    } else {
+        g.bike(&scene.bikes[scene.stand])
+            .map(|b| repair_card(g, b, balance))
+            .unwrap_or_default()
+    };
     let new = WorkshopView {
+        condition,
         open: true,
         eye: pose.eye,
         target: pose.target,
@@ -1332,6 +1541,65 @@ fn write_view(
         mirror: state.mirror,
     };
     view.set_if_neq(new);
+}
+
+/// The stand bike's condition card (W6): its damaged parts, worst first,
+/// with the repair prices, and *Repair all*.
+pub fn repair_card(g: &Garage, b: &wallet::Bike, balance: i64) -> Vec<String> {
+    let damaged = b.damaged();
+    if damaged.is_empty() {
+        return Vec::new();
+    }
+    let mut d = ocw_sim::damage::Damage::fresh();
+    d.parts = b.conditions();
+    let mut out = vec![format!(
+        "{}: {} {:.0} % ({})",
+        b.name(),
+        d.bike_level().status().icon(),
+        d.bike() * 100.0,
+        d.bike_level().label()
+    )];
+    for (p, _) in &damaged {
+        out.push(picker::repair_line(cat(), g, b, *p));
+    }
+    let total: u32 = damaged
+        .iter()
+        .map(|(p, _)| wallet::repair_quote(cat(), g, b, *p))
+        .sum();
+    out.push(if i64::from(total) <= balance {
+        format!(
+            "Repair all: {} – at a part's hotspot, or workshop.repair all",
+            hearts(i64::from(total))
+        )
+    } else {
+        format!(
+            "Repair all: {} ({} more needed)",
+            hearts(i64::from(total)),
+            hearts(i64::from(total) - balance)
+        )
+    });
+    out
+}
+
+/// The rider's injury at the mirror (W6, Phase 12 Q6): the level and the
+/// time to heal (real time; easy riding heals 1 % a minute).
+pub fn injury_card(rider: f64) -> Vec<String> {
+    if rider >= 1.0 {
+        return Vec::new();
+    }
+    let level = ocw_sim::damage::Injury::of(rider);
+    vec![
+        format!(
+            "Rider: {} {} ({:.0} %)",
+            level.status().icon(),
+            level.label(),
+            rider * 100.0
+        ),
+        format!(
+            "Heals in {} – or 1 % a minute of easy riding",
+            ocw_sim::damage::heal_text(ocw_sim::damage::hours_to_heal(rider))
+        ),
+    ]
 }
 
 fn picker_view(

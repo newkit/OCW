@@ -66,6 +66,10 @@ pub struct HotspotView {
     pub pos: Vec3,
     pub label: String,
     pub focused: bool,
+    /// The part's damage (spec §14 Phase 4 W6, Phase 12 Q6): the marker
+    /// takes the status colour (the label says the condition in words);
+    /// `None`: as new.
+    pub damage: Option<ocw_sim::damage::Status>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -127,6 +131,11 @@ pub struct WorkshopView {
     pub rider: Option<RiderShow>,
     /// The mirror's reflection (off: low graphics quality).
     pub mirror: bool,
+    /// The condition card (spec §14 Phase 4 W6): the stand bike's damaged
+    /// parts with their repair prices and *Repair all*, or at the mirror
+    /// the rider's injury and the time to heal; the first line is the
+    /// title. Empty: no card.
+    pub condition: Vec<String>,
 }
 
 impl Default for WorkshopView {
@@ -152,6 +161,7 @@ impl Default for WorkshopView {
             frame: ocw_core::RiderLook::default().frame,
             rider: None,
             mirror: true,
+            condition: Vec::new(),
         }
     }
 }
@@ -1107,6 +1117,40 @@ fn draw_ui(
                 });
             });
         }
+        // The condition card (W6): bottom left, while no picker is open.
+        if !view.condition.is_empty() && view.picker.is_none() {
+            commands.entity(cards).with_children(|c| {
+                c.spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: vw(2.5),
+                        bottom: vh(16.0),
+                        max_width: vw(42.0),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: vh(0.4),
+                        padding: UiRect::axes(vh(1.6), vh(1.1)),
+                        border: UiRect::all(px(2.0)),
+                        border_radius: BorderRadius::all(vh(1.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.02, 0.03, 0.05, 0.82)),
+                    BorderColor::all(Color::srgba(0.98, 0.52, 0.12, 0.9)),
+                ))
+                .with_children(|card| {
+                    for (k, l) in view.condition.iter().enumerate() {
+                        card.spawn((
+                            Text::new(l.clone()),
+                            font(if k == 0 { 2.6 } else { 2.1 }),
+                            TextColor(if k == 0 {
+                                Color::srgb(1.0, 0.78, 0.24)
+                            } else {
+                                Color::WHITE
+                            }),
+                        ));
+                    }
+                });
+            });
+        }
         // The "+" hook.
         if let Some(h) = layout.hooks.last()
             && rooms
@@ -1156,10 +1200,11 @@ fn draw_ui(
                         border_radius: BorderRadius::all(px(r)),
                         ..default()
                     },
-                    BackgroundColor(if h.focused {
-                        Color::srgba(1.0, 0.78, 0.24, 0.95)
-                    } else {
-                        Color::srgba(0.35, 0.85, 1.0, 0.75)
+                    BackgroundColor(match (h.focused, h.damage) {
+                        (true, _) => Color::srgba(1.0, 0.78, 0.24, 0.95),
+                        // A damaged part: its status colour (W6).
+                        (false, Some(s)) => crate::damage_hud::status_color(s).with_alpha(0.9),
+                        (false, None) => Color::srgba(0.35, 0.85, 1.0, 0.75),
                     }),
                     BorderColor::all(Color::WHITE),
                 ));

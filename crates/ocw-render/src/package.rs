@@ -2125,6 +2125,7 @@ mod tests {
             parts: Vec::new(),
             crash: None,
             wobble: 0.0,
+            damage: None,
         });
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))

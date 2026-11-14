@@ -99,6 +99,7 @@ fn hello(name: &str) -> Vec<u8> {
         bike_profile: None,
         look: None,
         parts: Vec::new(),
+        damage: None,
     })))
 }
 

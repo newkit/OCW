@@ -10,6 +10,7 @@
 pub mod avoid;
 pub mod build;
 pub mod collide;
+pub mod damage;
 pub mod drafting;
 pub mod event;
 pub mod freeride;

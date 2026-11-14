@@ -8,6 +8,8 @@ pub mod bridges;
 pub mod building_material;
 pub mod camera;
 pub mod console;
+pub mod damage_hud;
+pub mod damage_look;
 pub mod event_hud;
 pub mod far_terrain;
 pub mod flight_world;
@@ -115,6 +117,9 @@ pub struct RideView {
     /// The proximity cue (spec §14 Phase 12D, an optional aid): someone
     /// close on the left (-1), right (+1) or in front (0).
     pub proximity: Option<i32>,
+    /// The damage widget of the local rider (spec §14 Phase 12F); `None`
+    /// with `ride.damage` off (hidden).
+    pub damage: Option<damage_hud::DamageWidgetView>,
 }
 
 /// A pin put in god mode (spec §14 Phase 13D).
@@ -211,6 +216,7 @@ impl RideView {
             junction: None,
             notice: None,
             proximity: None,
+            damage: None,
             recording_s: None,
             app_message: None,
             position: None,
@@ -270,6 +276,12 @@ pub struct ResultRow {
     pub time: String,
     pub gap: String,
     pub is_local: bool,
+    /// The rider's damage dot (spec §14 Phase 12F: amber / red when hurt
+    /// or the bike is damaged; with its icon) and the crashes.
+    pub damage: Option<ocw_sim::damage::Status>,
+    pub crashes: u32,
+    /// The rider's id (0: unknown).
+    pub rider: u32,
 }
 
 /// The junction ahead in free ride, for the overlay (spec §2.2.1).
@@ -336,6 +348,10 @@ pub struct RiderView {
     pub crash: Option<ocw_sim::collide::CrashView>,
     /// The wobble after a soft bump (rad of lean, positive = right, 12B).
     pub wobble: f64,
+    /// What the damage shows on the bike and the rider (spec §14 Phase
+    /// 12E, K5): scuffs, a bent wheel, a dropped chain, dust, a torn kit;
+    /// `None` without damage.
+    pub damage: Option<ocw_sim::damage::Visible>,
 }
 
 /// All rendering plugins of the desktop client.
@@ -381,6 +397,12 @@ impl Plugin for OcwRenderPlugins {
             ragdoll::RagdollPlugin,
             // The workshop scene (spec §14 Phase 4, 4A).
             workshop::WorkshopPlugin,
+        ))
+        .add_plugins((
+            // The damage indicator (spec §14 Phase 12F) and the marks on
+            // the avatars (12E, K5).
+            damage_hud::DamageHudPlugin,
+            damage_look::DamageLookPlugin,
         ));
     }
 }
@@ -518,6 +540,7 @@ mod tests {
             parts: Vec::new(),
             crash: None,
             wobble: 0.0,
+            damage: None,
         });
         view.sky = Some(sky(12, 0));
         let mut app = App::new();
@@ -588,6 +611,7 @@ mod tests {
             parts: Vec::new(),
             crash: None,
             wobble: 0.0,
+            damage: None,
         });
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))

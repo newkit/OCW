@@ -59,6 +59,8 @@ pub enum MarkerKind {
     GodModeStart = 1,
     /// God mode ended: back on the road.
     GodModeEnd = 2,
+    /// A crash (spec §14 Phase 12E): one marker per crash, at its start.
+    Crash = 3,
 }
 
 /// One sample of the ride (typically 1 Hz).

@@ -103,6 +103,10 @@ pub struct ServerConfig {
     pub collisions: bool,
     /// `ride.chaotic_bots` (Phase 12 Q3, off by default).
     pub chaotic_bots: bool,
+    /// `ride.damage` (spec §14 Phase 12A, 12E; Q1: off by default; only
+    /// with collisions on), `ocw-server --damage on|off`. Changed with
+    /// the collision rules (`collision_access`).
+    pub damage: bool,
     /// Who may change them ([`v1::RulesRequest`]): the single player on
     /// the local servers, the host of a shared session (the default),
     /// nobody when the organizer fixed them.
@@ -138,6 +142,10 @@ pub fn unix_now_ms() -> i64 {
 /// Ticks between two event-state broadcasts while a race or time trial
 /// runs (2 Hz: the standings and gaps).
 pub const EVENT_STATE_TICKS: u64 = 25;
+
+/// Ticks between two snapshots that carry every rider's damage (2 Hz,
+/// spec §14 Phase 12E; a change goes out in the next snapshot).
+pub const DAMAGE_TICKS: u64 = 25;
 
 /// Authoritative server for one session.
 pub struct GameServer {
@@ -629,6 +637,18 @@ impl GameServer {
             (C::Voice(req), Some(rider)) => Some(S::Voice(self.voice_grant(conn, rider, &req))),
             (C::Echo(req), Some(rider)) => Some(self.echo_request(rider, req)),
             (C::Rules(req), Some(rider)) => Some(self.rules_request(rider, req)),
+            (C::Damage(req), Some(rider)) => {
+                let r = if req.repair {
+                    self.session.request_repair(rider)
+                } else {
+                    Err("empty damage request".into())
+                };
+                let (ok, message) = match r {
+                    Ok(m) => (true, m),
+                    Err(e) => (false, e),
+                };
+                Some(S::DevResult(v1::DevCommandResult { ok, message }))
+            }
             (C::BikeChange(change), Some(rider)) => Some(self.bike_change(rider, &change)),
             (C::Turn(turn), Some(rider)) => {
                 if let Some(net) = self.session.network() {
@@ -739,6 +759,13 @@ impl GameServer {
         if let Some(look) = &hello.look {
             self.session.set_look(rider, look.into());
         }
+        // The condition from earlier rides (spec §14 Phase 12 Q6): the
+        // client keeps it until the backend does (Phase 5); a rider can
+        // only claim to be fresher than they are, as a new rider is.
+        if let Some(d) = &hello.damage {
+            let (condition, parts) = ocw_protocol::carried_from_wire(d);
+            self.session.carry_damage(rider, condition, parts);
+        }
         self.riders.insert(conn, rider);
         self.names.insert(conn, hello.display_name.clone());
         self.joined.push(hello.display_name.clone());
@@ -766,6 +793,7 @@ impl GameServer {
             collision_access: ocw_protocol::access_to_wire(self.config.collision_access),
             chaotic_bots: self.session.chaotic_bots(),
             weather: Some(self.weather_message()),
+            damage: self.session.damage_on(),
         })
     }
 
@@ -797,6 +825,14 @@ impl GameServer {
             self.session.set_chaotic_bots(on);
             self.config.chaotic_bots = on;
             said.push(format!("chaotic bots {}", if on { "on" } else { "off" }));
+        }
+        if let Some(on) = req.damage {
+            self.session.set_damage(on);
+            self.config.damage = on;
+            said.push(format!("damage {}", if on { "on" } else { "off" }));
+            if on && !self.session.collision_mode().on() {
+                said.push("no effect while collisions are off".into());
+            }
         }
         if said.is_empty() {
             return result(false, "empty rules request".into());
@@ -836,6 +872,14 @@ impl GameServer {
         );
         if let Some(look) = &change.look {
             self.session.set_look(rider, look.into());
+        }
+        // The bike's condition from the garage (spec §14 Phase 12 Q6, Phase
+        // 4 W6): a repair or a swap applies with the bike.
+        if applied == Some(ocw_sim::BikeApplied::Now)
+            && let Some(d) = &change.damage
+        {
+            let (_, parts) = ocw_protocol::carried_from_wire(d);
+            self.session.set_bike_condition(rider, parts);
         }
         tracing::info!(%rider, bike = bike.id(), parts = change.parts.len(), ?applied, "bike changed");
         match applied {
@@ -1011,6 +1055,13 @@ impl GameServer {
                 Ok(m) => result(true, m),
                 Err(e) => result(false, e),
             },
+            Some(v1::dev_command::Cmd::Damage(d)) => match ocw_protocol::damage_stage(&d) {
+                Some(what) => match self.session.stage_damage(rider, what) {
+                    Ok(m) => result(true, m),
+                    Err(e) => result(false, e),
+                },
+                None => result(false, format!("unknown damage target {:?}", d.target)),
+            },
             None => result(false, "empty dev command".into()),
         }
     }
@@ -1125,11 +1176,17 @@ impl GameServer {
                     }
                 }
                 let organiser = start.collisions.map(ocw_protocol::collision_mode_from_wire);
+                let damage = start
+                    .damage
+                    .as_ref()
+                    .map(ocw_protocol::damage_rules_from_wire)
+                    .unwrap_or_default();
                 let physics = ocw_protocol::event_physics(&start);
                 let weather = ocw_protocol::event_weather(&start);
                 let started = self.session.start_event(spec).map(|e| e.id);
                 if let Ok(id) = started {
                     self.session.set_event_collisions(organiser);
+                    self.session.set_event_damage(damage);
                     self.session.set_event_physics(physics);
                     self.set_event_weather(id, weather);
                 }
@@ -1200,6 +1257,18 @@ impl GameServer {
                 .as_ref()
                 .filter(|(id, _)| *id == ev.id)
                 .map(|(_, w)| ocw_protocol::event_weather_to_wire(w));
+            // Crashes and the condition (spec §14 Phase 12E: the results
+            // show them), with damage on.
+            let damage = self.session.damage_on();
+            for st in &mut e.standings {
+                if let Some(d) = self.session.damage(RiderId(st.rider_id)) {
+                    st.crashes = d.crashes;
+                    if damage {
+                        st.rider_pm = Some(ocw_sim::damage::per_mille(d.rider));
+                        st.bike_pm = Some(ocw_sim::damage::per_mille(d.bike()));
+                    }
+                }
+            }
         }
         e
     }
@@ -1242,6 +1311,9 @@ impl GameServer {
             return out;
         }
         let echo = self.session.echo_rider();
+        // Damage (spec §14 Phase 12E): at 2 Hz and on every change.
+        let changed = self.session.take_damage_changes();
+        let all = self.session.tick().is_multiple_of(DAMAGE_TICKS);
         let snapshot = v1::Snapshot {
             server_tick: self.session.tick(),
             riders: self
@@ -1251,6 +1323,9 @@ impl GameServer {
                 .map(|r| v1::RiderUpdate {
                     echo: Some(r.id) == echo,
                     hearts: self.session.hearts(r.id),
+                    damage: (all || changed.contains(&r.id))
+                        .then(|| self.session.damage(r.id).map(ocw_protocol::damage_to_wire))
+                        .flatten(),
                     ..ocw_protocol::quantize(r)
                 })
                 .collect(),
@@ -1259,6 +1334,7 @@ impl GameServer {
             collisions: ocw_protocol::collision_mode_to_wire(self.session.collision_mode()),
             chaotic_bots: self.session.chaotic_bots(),
             weather: Some(self.weather_message()),
+            damage: self.session.damage_on(),
         };
         out.push(encode(&server_message(S::Snapshot(snapshot))));
         out
@@ -1303,6 +1379,7 @@ fn new_session(course: Course, config: &ServerConfig) -> Session {
     }
     session.set_collisions(config.collisions);
     session.set_chaotic_bots(config.chaotic_bots);
+    session.set_damage(config.damage);
     if config.allow_echo_bot && config.echo_bot_at_start {
         session.place_echo(ECHO_NAME, None);
     }
@@ -1346,6 +1423,7 @@ mod tests {
             bike_profile: None,
             look: None,
             parts: Vec::new(),
+            damage: None,
         })))
     }
 
@@ -1362,6 +1440,7 @@ mod tests {
                 bike_profile: None,
                 look: None,
                 parts: Vec::new(),
+                damage: None,
             }))),
         );
         match decode_server(&reply[0]).unwrap() {
@@ -3014,7 +3093,7 @@ mod tests {
         let ask = |server: &mut GameServer, conn, on: bool| {
             let reply = server.handle(
                 conn,
-                &encode(&ocw_protocol::rules_request(Some(on), Some(on))),
+                &encode(&ocw_protocol::rules_request(Some(on), Some(on), None)),
             );
             match decode_server(&reply[0]).unwrap() {
                 S::DevResult(r) => (r.ok, r.message),
@@ -3027,7 +3106,7 @@ mod tests {
         assert!(ok && msg.contains("collisions off"), "{msg}");
         let reply = server.handle(
             host,
-            &encode(&ocw_protocol::rules_request(None, Some(true))),
+            &encode(&ocw_protocol::rules_request(None, Some(true), None)),
         );
         assert!(
             matches!(decode_server(&reply[0]).unwrap(), S::DevResult(r) if r.ok && r.message == "chaotic bots on")
@@ -3046,6 +3125,121 @@ mod tests {
 
     /// A staged crash (`dev.crash`, spec §14 Phase 12H): the crash state
     /// reaches the snapshots, the event info names the model.
+    /// Damage (spec §14 Phase 12E, K4): `ride.damage` from the rules
+    /// request, the carried condition of the hello, each rider's damage in
+    /// the snapshots, the repair request and a workshop repair with the
+    /// bike change.
+    #[test]
+    fn damage_travels_with_the_rules_the_hello_and_the_snapshots() {
+        let mut server = GameServer::new(Route::test_loop(), crate::local::local_config(2, 500.0));
+        // A rider who brings a buckled wheel and an injury.
+        let conn = server.connect();
+        let mut parts = [1.0; ocw_sim::damage::PARTS];
+        parts[ocw_sim::damage::Part::RearWheel.index()] = 0.4;
+        let reply = server.handle(
+            conn,
+            &encode(&client_message(C::Hello(v1::Hello {
+                protocol_version: PROTOCOL_VERSION,
+                display_name: "Hurt".into(),
+                damage: Some(ocw_protocol::carried_damage(0.55, &parts)),
+                ..Default::default()
+            }))),
+        );
+        let S::Welcome(w) = decode_server(&reply[0]).unwrap() else {
+            panic!("a welcome");
+        };
+        assert!(!w.damage, "Q1: off by default");
+        let me = RiderId(w.rider_id);
+        assert_eq!(server.session().damage(me).unwrap().rider, 0.55);
+        // Damage on (the single player may).
+        let reply = server.handle(
+            conn,
+            &encode(&ocw_protocol::rules_request(None, None, Some(true))),
+        );
+        match decode_server(&reply[0]).unwrap() {
+            S::DevResult(r) => assert!(r.ok && r.message.contains("damage on"), "{r:?}"),
+            other => panic!("{other:?}"),
+        }
+        let snap = next_snapshot(&mut server);
+        assert!(snap.damage);
+        let mine = snap.riders.iter().find(|u| u.rider_id == me.0).unwrap();
+        let d = ocw_protocol::rider_damage(mine).expect("damage after a change");
+        assert_eq!(d.part(ocw_sim::damage::Part::RearWheel), 0.4);
+        // A staged puncture and the repair request.
+        let reply = server.handle(
+            conn,
+            &encode(&ocw_protocol::stage_damage("puncture_rear", 1.0)),
+        );
+        match decode_server(&reply[0]).unwrap() {
+            S::DevResult(r) => assert!(r.ok, "{r:?}"),
+            other => panic!("{other:?}"),
+        }
+        let reply = server.handle(conn, &encode(&ocw_protocol::damage_request(true)));
+        match decode_server(&reply[0]).unwrap() {
+            S::DevResult(r) => assert!(r.ok && r.message.contains("puncture"), "{r:?}"),
+            other => panic!("{other:?}"),
+        }
+        let snap = next_snapshot(&mut server);
+        let mine = snap.riders.iter().find(|u| u.rider_id == me.0).unwrap();
+        let d = ocw_protocol::rider_damage(mine).unwrap();
+        assert!(d.flat[1] && d.stop.is_some());
+        // Not every snapshot carries it: 2 Hz and on change.
+        let without = (0..10)
+            .map(|_| next_snapshot(&mut server))
+            .filter(|s| {
+                s.riders
+                    .iter()
+                    .find(|u| u.rider_id == me.0)
+                    .is_some_and(|u| u.damage.is_none())
+            })
+            .count();
+        assert!(without > 0);
+        // A repair in the workshop reaches the ride with the bike.
+        let mut change = match ocw_protocol::bike_change(
+            "road",
+            ocw_core::ProfileId::Road,
+            Default::default(),
+            &[],
+        )
+        .msg
+        {
+            Some(v1::client_message::Msg::BikeChange(b)) => b,
+            _ => unreachable!(),
+        };
+        change.damage = Some(ocw_protocol::carried_damage(
+            0.55,
+            &[1.0; ocw_sim::damage::PARTS],
+        ));
+        server.handle(conn, &encode(&client_message(C::BikeChange(change))));
+        let d = server.session().damage(me).unwrap();
+        assert_eq!(d.bike(), 1.0);
+        assert!(!d.flat[1]);
+        // The organiser's rules travel with the event start and its state.
+        let rules = ocw_sim::damage::Rules {
+            on: Some(true),
+            dnf_badly_injured: true,
+            neutral_service: true,
+        };
+        let start = v1::EventStart {
+            kind: v1::EventKind::Race as i32,
+            damage: Some(ocw_protocol::damage_rules_to_wire(&rules)),
+            ..Default::default()
+        };
+        let reply = server.handle(
+            conn,
+            &encode(&client_message(C::Event(v1::EventRequest {
+                req: Some(v1::event_request::Req::Start(start)),
+            }))),
+        );
+        match decode_server(&reply[0]).unwrap() {
+            S::DevResult(r) => assert!(r.ok, "{r:?}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(server.session().event_damage_rules(), rules);
+        let state = ocw_protocol::event_info(&server.event_state()).unwrap();
+        assert_eq!(state.damage, rules);
+    }
+
     #[test]
     fn a_staged_crash_reaches_the_snapshots() {
         let mut server = GameServer::new(Route::test_loop(), crate::local::local_config(3, 500.0));
@@ -3123,6 +3317,7 @@ mod tests {
                 ..ocw_core::RiderLook::default().into()
             }),
             parts: vec!["wheels.road-carbon.top".into()],
+            damage: None,
         })));
         let reply = server.handle(conn, &msg);
         match decode_server(&reply[0]).unwrap() {
@@ -3261,6 +3456,7 @@ mod tests {
             bike_profile: "road".into(),
             look: None,
             parts: UPGRADES.map(String::from).to_vec(),
+            damage: None,
         })));
         let reply = server.handle(a, &msg);
         let S::DevResult(r) = decode_server(&reply[0]).unwrap() else {

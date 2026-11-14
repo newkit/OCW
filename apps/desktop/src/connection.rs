@@ -116,10 +116,14 @@ pub fn start_session_with(world: &mut World, route: Route, keep_link: bool) {
     // The bike's parts (spec §14 Phase 4, 4G): ids only, the server has
     // the catalogue.
     let parts = crate::workshop::riding_parts(world, &rider.name, profile.bike);
+    // The condition from earlier rides (spec §14 Phase 12 Q6): the
+    // garage's, healed over the real time since.
+    let damage = crate::workshop::riding_damage(world, &rider.name);
     let mut client = client
         .with_autodrive_at_start(autodrive)
         .with_look(rider.look())
-        .with_parts(&parts);
+        .with_parts(&parts)
+        .with_damage(damage);
     client.set_proximity_cue(rules.proximity_cue);
     let start_m = match &course {
         Course::Route(route) => crate::start_point(&args, route),
@@ -152,6 +156,10 @@ pub fn start_session_with(world: &mut World, route: Route, keep_link: bool) {
     server.send(client.hello());
     // The rider's collision rules (spec §14 Phase 12A), if not the defaults.
     if let Some(m) = rules.rules_message() {
+        server.send(m);
+    }
+    // … and damage (12E, Q1: off unless the rider switched it on).
+    if let Some(m) = rules.damage_message() {
         server.send(m);
     }
     let now = world
@@ -440,8 +448,12 @@ pub(crate) fn update_view(
     // Collisions (spec §14 Phase 12): the crash line first, then the
     // proximity cue and the crash feed (in events it is in the event panel).
     view.proximity = client.0.proximity();
+    // Damage (spec §14 Phase 12F): the widget; a stop's line as a notice.
+    view.damage = client.0.damage_widget(now);
     if link.0.is_none() {
         if let Some(line) = client.0.crash_notice(now) {
+            view.notice = Some(line);
+        } else if let Some(line) = client.0.damage_notice() {
             view.notice = Some(line);
         } else if view.notice.is_none() {
             view.notice = match view.proximity {
@@ -489,19 +501,42 @@ fn event_command() -> Command {
         .allow_hyphen_values(true)
         .value_name("WEATHER")
         .help("The event's weather: PRESET [FIELD=VALUE...], custom FIELD=VALUE..., random SEED or auto SEED (the simulation); fixed for the event");
+    // The organiser's damage rules (spec §14 Phase 12E, 12G).
+    let damage_rules = |c: Command| {
+        c.arg(
+            Arg::new("damage")
+                .long("damage")
+                .value_parser(["on", "off"])
+                .help("Damage in the event (default: your ride.damage)"),
+        )
+        .arg(
+            Arg::new("dnf-injured")
+                .long("dnf-injured")
+                .action(clap::ArgAction::SetTrue)
+                .help("A badly injured rider is DNF"),
+        )
+        .arg(
+            Arg::new("neutral-service")
+                .long("neutral-service")
+                .action(clap::ArgAction::SetTrue)
+                .help(
+                    "Neutral service: a spare bike for a broken one, a 30 s stop restores the bike",
+                ),
+        )
+    };
     Command::new("event")
         .about("Local events: a race, group ride or time trial against your ghost (spec 2.3)")
         .subcommand_required(true)
         .subcommand(
-            finish(Command::new("race").about(
+            damage_rules(finish(Command::new("race").about(
                 "Race from the start formation to the finish (default: one lap of a loop, 5 km of a route that ends)",
             ))
             .arg(bots.clone())
             .arg(physics.clone())
-            .arg(weather.clone()),
+            .arg(weather.clone())),
         )
         .subcommand(
-            Command::new("group")
+            damage_rules(Command::new("group")
                 .about("Group ride: the bots hold a pace and regroup; no ranking")
                 .arg(
                     Arg::new("watts")
@@ -511,15 +546,15 @@ fn event_command() -> Command {
                 )
                 .arg(bots)
                 .arg(physics.clone())
-                .arg(weather.clone()),
+                .arg(weather.clone())),
         )
-        .subcommand(
+        .subcommand(damage_rules(
             finish(
                 Command::new("tt").about("Time trial alone against your best effort (the ghost)"),
             )
             .arg(physics)
             .arg(weather),
-        )
+        ))
         .subcommand(Command::new("cancel").about("End the current event"))
         .subcommand(Command::new("status").about("The current event and its standings"))
         .subcommand(Command::new("dismiss").about("Close the results panel"))
@@ -546,8 +581,29 @@ fn run_event(world: &mut World, m: &clap::ArgMatches) -> Result<String, String> 
         }
         None => None,
     };
+    // The organiser's damage rules, if any is given (spec §14 Phase 12E).
+    let flag = |id: &str| {
+        args.try_get_one::<bool>(id)
+            .ok()
+            .flatten()
+            .copied()
+            .unwrap_or(false)
+    };
+    let damage_on = args
+        .try_get_one::<String>("damage")
+        .ok()
+        .flatten()
+        .map(|v| v == "on");
+    let damage =
+        (damage_on.is_some() || flag("dnf-injured") || flag("neutral-service")).then(|| {
+            ocw_sim::damage::Rules {
+                on: damage_on,
+                dnf_badly_injured: flag("dnf-injured"),
+                neutral_service: flag("neutral-service"),
+            }
+        });
     let start = |spec: ocw_sim::EventSpec, bots| {
-        ClientCore::event_start_message_weather(&spec, bots, physics(), weather.as_ref())
+        ClientCore::event_start_message_rules(&spec, bots, physics(), weather.as_ref(), damage)
     };
     let msg = match sub {
         "race" => start(
