@@ -2281,7 +2281,8 @@ you work on (the *coordinator*). The coordinator holds the git checkouts (the
 main checkout and the agents' worktrees), the machine configuration and the
 build dashboard; `scripts/remote.sh` copies a working tree to a build machine
 and runs a command there. Everything is bash, PowerShell and Python 3
-(standard library only); nothing needs root on the coordinator. Spec §11.2
+(standard library only); on the coordinator nothing needs root but the
+optional `loginctl enable-linger` for the dashboard service. Spec §11.2
 has the architecture and the decisions behind it.
 
 **Machines and roles** (the names are the `name`s in `config/machines.toml`):
@@ -2606,7 +2607,9 @@ make dashboard-uninstall                     # stop and remove it
 ```
 
 The service runs `tools/build-dashboard/dashboard.py --port 8765` from the
-checkout you installed it from (the main checkout).
+checkout you installed it from (the main checkout); restart it after merging
+changes to the dashboard. Keep one serving instance only (it holds the port
+and runs the janitor); `--once` and `--janitor-plan` are safe beside it.
 
 **Or run it by hand / once:**
 
