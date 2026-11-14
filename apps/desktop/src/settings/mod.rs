@@ -854,6 +854,7 @@ mod tests {
             if elsewhere.iter().any(|p| line.starts_with(p))
                 || line.contains("riders.remove")
                 || line.contains("controls.invert_y")
+                || line.contains("controls.god_flight")
             {
                 continue;
             }

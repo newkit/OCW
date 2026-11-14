@@ -141,25 +141,29 @@ Down ±10 W, A autodrive, W wild mode, ← / → the line (autodrive) or the lea
 | Voice: mute / unmute the speaker (all voices; game sounds stay) | Shift+M | right-stick click (R3) |
 | Next screen | F11 | |
 | Console (`help` lists the commands) | `` ` `` or F12 | |
-| God mode: fly as a unicorn / land on the road below | G | Select + North (Y / △) |
-| God mode: fly back to where you took off | Shift+G | Select + West (X / □) |
+| Unicorn mode: fly as a unicorn / land on the road below | G | Select + North (Y / △) |
+| Unicorn mode: fly back to where you took off | Shift+G | Select + West (X / □) |
 
-**God mode** (spec §14 Phase 13; *World → God mode*, console `god`): the rider
-turns into a unicorn and flies freely over the world. While flying:
+**Unicorn mode** (spec §14 Phase 13; *World → Unicorn mode*, console `god`): the rider
+turns into a unicorn and flies freely over the world – like a plane: it always
+flies forward along its heading. While flying:
 
 | Action | Keyboard / mouse | Gamepad |
 |---|---|---|
-| Look around (the pointer is captured; Esc frees it, a click captures it again) | mouse | right stick |
-| Move in the horizontal plane, relative to the view | ↑ ↓ ← → | left stick |
-| Climb / descend | + / − (main keyboard `=` `-`, or the keypad) | right / left trigger |
+| Faster / slower (the throttle; it holds when let go, ↓ slows to a slow glide, never to a stop) | ↑ / ↓ | left stick up / down |
+| Bank and turn left / right (the unicorn and the view roll into the turn; let go to level out) | ← / → | left stick left / right |
+| Climb / descend (the nose pitches up / down; let go to level off) | + / − (the keys that type `+` and `-` on your layout, e.g. `+` and `-` on a German keyboard, `=` and `-` on a US one; or the keypad) | right / left trigger |
+| Look around without changing the course (eases back to straight ahead after 1.5 s; the pointer is captured, Esc frees it, a click captures it again) | mouse | right stick |
+| Look straight ahead again | L or the middle mouse button | |
 | Boost ×4 / precise ×0.25 | Shift / Ctrl | South (A / ✕): boost |
 | Base speed ×0.25 … ×8 (in the HUD) | mouse wheel | |
 | First-person view from the unicorn's head | C | |
 | Inspection panel and crosshair on / off | I | |
 | Put a pin where the crosshair points (kept for the ride; `god.pins` lists them) | P | |
 
-Touch (spec §3.2.2): one finger dragged on the view looks around, two
-fingers move like a stick (push them up to fly forward, sideways to strafe)
+Touch (spec §3.2.2): a finger dragged on the left half of the view is the
+stick (push it up to fly faster, down to fly slower, sideways to bank and
+turn), on the right half it looks around; two fingers on one half steer too
 and spreading / pinching them changes the speed scale; the **+** / **−**
 buttons at the right edge (shown for 8 s after a touch) climb and descend.
 
@@ -173,7 +177,13 @@ elevation. P puts a magenta pin there; `god.pins` lists the pins with their
 coordinates and a `--start X,Z` to copy for a free ride from that spot.
 
 The speed grows with the height above the ground (20 m/s close to it, 400 m/s
-from 760 m up; at most 1,600 m/s with the boost). The unicorn keeps 2 m
+from 760 m up; at most 1,600 m/s with the boost); the throttle is a share of
+it (15 … 100 %, 50 % at take-off). The turn is a coordinated one: tight when
+slow, wide when fast (slow down first for a tight turn). The first model –
+moving with the arrows relative to the view and hovering when no key is
+held, the mouse turning the flight – is still there: Settings → Controls →
+*Unicorn mode: flight* = hover (`controls.god_flight`, console `god.flight
+hover`). The unicorn keeps 2 m
 above terrain, water, buildings and tree crowns and stays below 8,000 m; it is stopped
 softly 200 m outside the world. A glowing ring marks where G will land: the
 nearest road (free ride) or the nearest point of the route. The riding keys
@@ -707,6 +717,7 @@ event status | event cancel | event dismiss
 | `--screenshot PATH`, `--screenshot-delay S` | Save a screenshot after S seconds (default 5), then exit (JPEG with EXIF time; `.png`: PNG) |
 | `--capture DIR`, `--capture-fps N`, `--capture-seconds S`, `--capture-warmup S` | Save every frame with a fixed game-time step (smooth videos) as `frame_NNNNN.png`, plus `audio.wav` (game sound in step with the frames), `metadata.txt` (ffmpeg metadata) and `still.jpg` (last frame), then exit |
 | `--no-audio` | No sound: open no audio output (frame capture opens none anyway; videos still get the mixer's sound) |
+| `--echo-bot` | The voice echo test: an Echo rider on the road plays your microphone back, delayed, when you are near it (`voice.echo`, see *Voice chat*) |
 | `--no-vsync` | Draw as fast as possible instead of waiting for the display's refresh (benchmarks) |
 | `--max-fps N` | Draw at most N frames per second (with `--no-vsync`: a steady rate even where the display gives no refresh, e.g. on a locked screen) |
 | `--log-fps S` | Log the real render rate every S seconds (`render rate fps=… worst_ms=…`; wall clock, also during `--capture`) |
@@ -724,6 +735,7 @@ console (saved at once), or by editing the file; `get` lists them all:
 |---|---|---|
 | `controls.autodrive` | on / off (on): autodrive at the start of a ride | next start |
 | `controls.invert_y` | on / off (off): god mode – moving the mouse up looks down | at once |
+| `controls.god_flight` | plane / hover (plane): god mode flies like a plane (always forward; ↑ ↓ throttle, ← → bank) or hovers (arrows move relative to the view, the mouse turns) | at once |
 | `trainer.difficulty` | 0 to 100 (50): % of the road gradient in SIM mode | at once |
 | `trainer.virtual_power` | 0 to 2000 W (200): the virtual trainer at the start (`--power`) | next start |
 | `display.hud` | on / off (on) | at once |
@@ -1117,9 +1129,10 @@ one rider for yourself), the microphone and speaker and spatial voice (riders
 further away on the road sound quieter; only the nearest 10 are heard).
 Console: `voice.status`, `voice.mute-mic [on|off|toggle]`,
 `voice.mute-speaker [on|off|toggle]`, `voice.mute RIDER`, `voice.group NAME`
-(a private room; `--leave` goes back), `voice.devices`; settings
-`voice.enabled`, `voice.volume`, `voice.spatial`, `voice.max_voices`,
-`voice.input`, `voice.output`.
+(a private room; `--leave` goes back), `voice.devices`, `voice.echo` (the
+echo test, below); settings `voice.enabled`, `voice.volume`,
+`voice.spatial`, `voice.max_voices`, `voice.input`, `voice.output`,
+`audio.echo_bot`, `audio.echo_delay_ms`.
 
 Voice needs three things:
 
@@ -1170,6 +1183,39 @@ livekit_two_participants -- --nocapture` connects two simulated
 participants (no sound card needed): one speaks a tone, the other must hear
 it and see the mute. Without the variables the test passes without doing
 anything, so `cargo test --workspace` stays offline.
+
+**Echo test** (spec §7 *Echo bot*). To check your microphone and voice
+alone: `voice.echo on` (or Settings → Audio → Voice → Echo test, or start
+with `--echo-bot`) puts an **Echo** rider on the road 20 m
+ahead of you, standing at the right edge. Ride up to it: within 30 m the HUD
+shows "ECHO TEST - speak now" with a microphone and an echo level meter, and
+everything you say comes back **300 ms later** from the Echo rider's place –
+attenuated by distance and panned like any rider's voice, at the voice
+volume; between 30 and 60 m less and less is recorded, so the echo fades
+out as you ride away. Muting your microphone (M) means nothing is echoed,
+muting the speaker (Shift+M) silences the echo. Console: `voice.echo
+[on|off|here|delay MS|status]` – `here` moves the Echo rider 20 m ahead of
+you again, `delay` sets 20 ms to 3 s (setting `audio.echo_delay_ms`, Echo
+delay on the same page, 100 ms steps; on / off is `audio.echo_bot`); `voice.echo` alone shows its state and levels. The
+Echo rider is in no event or standings and earns nothing.
+
+On a solo ride the app echoes by itself (the microphone through the voice
+processing – with the `voice` feature: WebRTC's noise suppression, gain
+control and echo cancellation – into a delay line and the voice mix; no
+voice server, no Opus). A shared server allows it only with `ocw-server
+--echo-bot` (an Echo rider at the start of every session). With a LiveKit
+server the echo can also go over the real voice path (Opus and the SFU): run
+the echo participant as the Echo rider (the server logs its id and the
+room):
+
+```bash
+OCW_LIVEKIT_URL=… OCW_LIVEKIT_API_KEY=… OCW_LIVEKIT_API_SECRET=… \
+  CC=clang-21 CXX=clang++-21 cargo run -p ocw-voice --features livekit --example echo_participant -- ROOM ECHO_RIDER_ID [DELAY_MS]
+```
+
+The clients then hear it like any rider and switch their own loopback off.
+`OCW_ECHO_DEMO=echo.wav cargo test -p ocw-voice --test echo_loopback`
+writes a demo of a synthetic voice riding past the Echo rider.
 
 ### Headless runs
 

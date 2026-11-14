@@ -27,6 +27,34 @@ struct Voice {
     queue: VecDeque<f32>,
     gain: f32,
     pan: f32,
+    /// What was played of it (after gain; 0 while the speaker is muted).
+    meter: Meter,
+}
+
+/// A level meter for the HUD: the RMS of each block, rising at once and
+/// falling by [`Meter::RELEASE`] per 10 ms.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Meter {
+    level: f32,
+}
+
+impl Meter {
+    /// Kept of the level per 10 ms.
+    pub const RELEASE: f32 = 0.7;
+
+    pub fn update(&mut self, block: &[f32]) {
+        if block.is_empty() {
+            return;
+        }
+        let rms = (block.iter().map(|s| s * s).sum::<f32>() / block.len() as f32).sqrt();
+        let decay = Self::RELEASE.powf(block.len() as f32 / FRAME_SAMPLES as f32);
+        self.level = rms.max(self.level * decay).min(1.0);
+    }
+
+    /// 0 … 1.
+    pub fn level(&self) -> f32 {
+        self.level
+    }
 }
 
 /// Mixes the voices (keyed by participant identity) into stereo.
@@ -75,6 +103,19 @@ impl Mixer {
         self.voices.clear();
     }
 
+    /// Drops what a voice has buffered (it keeps its placement).
+    pub fn flush(&mut self, identity: &str) {
+        if let Some(v) = self.voices.get_mut(identity) {
+            v.queue.clear();
+            v.meter = Meter::default();
+        }
+    }
+
+    /// How loud a voice was played lately (0 … 1; 0 while muted).
+    pub fn level(&self, identity: &str) -> f32 {
+        self.voices.get(identity).map_or(0.0, |v| v.meter.level())
+    }
+
     /// Queues a confirmation sound (played even with the speaker muted:
     /// it confirms the toggle).
     pub fn play_cue(&mut self, cue: Cue) {
@@ -95,20 +136,25 @@ impl Mixer {
             r.clear();
             r.resize(frames, 0.0);
         }
+        let mut played = Vec::with_capacity(frames);
         for v in self.voices.values_mut() {
             let take = frames.min(v.queue.len());
             let (l, r) = pan_gains(v.pan);
+            played.clear();
+            played.resize(frames, 0.0);
             for (i, s) in v.queue.drain(..take).enumerate() {
                 if self.muted {
                     continue;
                 }
                 let s = s * v.gain;
+                played[i] = s;
                 out[2 * i] += s * l;
                 out[2 * i + 1] += s * r;
                 if let Some(m) = reference.as_deref_mut() {
                     m[i] += s;
                 }
             }
+            v.meter.update(&played);
         }
         let take = frames.min(self.cue.len());
         for (i, s) in self.cue.drain(..take).enumerate() {

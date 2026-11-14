@@ -392,6 +392,7 @@ mod tests {
             Voice,
             VoiceDevices,
             VoiceParticipants,
+            AudioVoice,
             TimeMachine,
         ];
         for p in &all {
@@ -400,7 +401,7 @@ mod tests {
                 | Bike(_) | WorldHome | Worlds | World(_) | WorldRoutes(_) | WorldParts(_)
                 | WorldInfo | WorldSun | WorldSources | WorldSource(_) | Weather | Routes
                 | Rides | GpxImport | Workouts | Voice | VoiceDevices | VoiceParticipants
-                | TimeMachine => {}
+                | AudioVoice | TimeMachine => {}
             }
         }
         all

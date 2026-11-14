@@ -23,7 +23,7 @@ pub mod session;
 mod build_id;
 
 use bevy::prelude::*;
-use ocw_render::hud::VersionLabel;
+use ocw_render::hud::{AppKeys, VersionLabel};
 use ocw_render::{OcwRenderPlugins, RideView};
 use ocw_world::Route;
 
@@ -31,6 +31,10 @@ pub use session::SessionConfig;
 
 /// The id of the page's canvas (`web/index.html`).
 pub const CANVAS_ID: &str = "#ocw-canvas";
+
+/// The browser app's own keys in the HUD (no restart, video or screen
+/// keys: the browser has its own fullscreen).
+pub const WEB_KEYS: &str = "mouse: camera, C: camera reset | ` or F12: console";
 
 /// This build's id: version, commit, profile, and "web".
 pub fn build_id() -> String {
@@ -114,6 +118,7 @@ pub fn app(config: SessionConfig) -> App {
     .insert_resource(Time::<Fixed>::from_hz(f64::from(ocw_core::SIM_TICK_HZ)))
     .insert_resource(RideView::new(route))
     .insert_resource(VersionLabel(build_id()))
+    .insert_resource(AppKeys(WEB_KEYS.into()))
     .add_systems(Startup, || {
         info!("Open Cycling World {} starting", build_id())
     })
@@ -157,6 +162,14 @@ mod tests {
         let (c, w) = parse_query("bots=500&power=-3&route=moon&x=1&start=nan");
         assert_eq!(w.len(), 5, "{w:?}");
         assert_eq!((c.bots, c.power_w, c.start_m), (5, 200.0, 0.0));
+    }
+
+    #[test]
+    fn the_hud_lists_no_desktop_only_keys() {
+        for key in ["R: restart", "V: video", "F11"] {
+            assert!(!WEB_KEYS.contains(key), "{key}");
+        }
+        assert!(ocw_render::hud::DESKTOP_KEYS.contains("R: restart"));
     }
 
     #[test]

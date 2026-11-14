@@ -280,6 +280,11 @@ pub struct Args {
     /// whose game time does not run in real time).
     #[arg(long)]
     pub no_audio: bool,
+    /// The voice echo test (spec §7 *Echo bot*): an Echo rider stands on
+    /// the road; near it, your microphone is played back from its place
+    /// after a delay (`voice.echo`, Settings → Audio → Voice).
+    #[arg(long)]
+    pub echo_bot: bool,
 }
 
 impl Args {

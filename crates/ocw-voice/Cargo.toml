@@ -28,6 +28,11 @@ cpal = { version = "0.17", optional = true }
 tokio = { workspace = true, optional = true, features = ["rt-multi-thread"] }
 futures = { workspace = true, optional = true }
 
+# The echo test's participant for a real LiveKit server (spec §7).
+[[example]]
+name = "echo_participant"
+required-features = ["livekit"]
+
 [dev-dependencies]
 # The env-gated LiveKit test mints its tokens like the game server.
 ocw-server.workspace = true

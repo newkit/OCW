@@ -14,6 +14,11 @@
 //!   that is played.
 //! - **Mute:** the microphone track stays published and is muted (others
 //!   see it muted; unmuting is instant); while muted no samples are sent.
+//! - **Echo test** (spec §7 *Echo bot*): with [`BackendCommand::SetEcho`]
+//!   active, the processed microphone frames also go through an
+//!   [`EchoLoop`] into the mixer as the voice [`ECHO_IDENTITY`] – in a call
+//!   or, without one, with the devices opened just for it (the local
+//!   loopback of solo rides).
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -31,7 +36,8 @@ use livekit::webrtc::native::apm::AudioProcessingModule;
 use livekit::webrtc::prelude::{AudioFrame, AudioSourceOptions, RtcAudioSource};
 use tokio::sync::mpsc as tmpsc;
 
-use crate::backend::{BackendCommand, BackendEvent, VoiceBackend};
+use crate::backend::{BackendCommand, BackendEvent, Levels, VoiceBackend};
+use crate::echo::{ECHO_IDENTITY, EchoLoop, EchoParams};
 use crate::mix::{FRAME_SAMPLES, Mixer, Resampler, VOICE_RATE, to_channels, to_i16, to_mono};
 
 /// How long a join may take.
@@ -45,6 +51,10 @@ struct Shared {
     apm: Mutex<AudioProcessingModule>,
     /// Microphone samples are sent (in a call, not muted).
     mic_live: AtomicBool,
+    /// The microphone switch (the echo test echoes silence while muted).
+    mic_muted: AtomicBool,
+    /// The echo test's loopback.
+    echo: Mutex<EchoLoop>,
     /// The microphone path of the current call (48 kHz mono blocks).
     capture: Mutex<Option<tmpsc::Sender<Vec<f32>>>>,
     /// No audio devices: samples come from [`LiveKitBackend::push_microphone`]
@@ -106,6 +116,8 @@ impl LiveKitBackend {
             // Echo canceller, gain control, high-pass filter, noise suppression.
             apm: Mutex::new(AudioProcessingModule::new(true, true, true, true)),
             mic_live: AtomicBool::new(false),
+            mic_muted: AtomicBool::new(false),
+            echo: Mutex::new(EchoLoop::new()),
             capture: Mutex::new(None),
             headless,
         });
@@ -206,6 +218,17 @@ impl VoiceBackend for LiveKitBackend {
 
     fn poll(&mut self) -> Vec<BackendEvent> {
         self.events.try_iter().collect()
+    }
+
+    fn levels(&self) -> Levels {
+        Levels {
+            input: self.shared.echo.lock().map_or(0.0, |e| e.input_level()),
+            echo: self
+                .shared
+                .mixer
+                .lock()
+                .map_or(0.0, |m| m.level(ECHO_IDENTITY)),
+        }
     }
 }
 
@@ -407,6 +430,9 @@ struct Worker {
     /// Running receive tasks per identity.
     streams: BTreeMap<String, tokio::task::JoinHandle<()>>,
     capture_task: Option<tokio::task::JoinHandle<()>>,
+    /// The echo test as last told, and its placement.
+    echo: EchoParams,
+    echo_place: Option<(f32, f32)>,
     /// Joined when the worker ends (after `audio` is dropped).
     audio_thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -433,6 +459,8 @@ impl Worker {
             wanted: BTreeSet::new(),
             streams: BTreeMap::new(),
             capture_task: None,
+            echo: EchoParams::default(),
+            echo_place: None,
             audio_thread,
         }
     }
@@ -453,18 +481,22 @@ impl Worker {
                         if self.room.is_none() {
                             room_events = None;
                         }
+                        self.sync_local();
                     }
                     None => break,
                 },
-                ev = async { room_events.as_mut()?.recv().await }, if room_events.is_some() => match ev {
-                    Some(ev) => self.room_event(ev),
-                    None => {
-                        room_events = None;
-                        if self.room.is_some() {
-                            self.cleanup();
-                            self.emit(BackendEvent::Disconnected { reason: "connection closed".into() });
+                ev = async { room_events.as_mut()?.recv().await }, if room_events.is_some() => {
+                    match ev {
+                        Some(ev) => self.room_event(ev),
+                        None => {
+                            room_events = None;
+                            if self.room.is_some() {
+                                self.cleanup();
+                                self.emit(BackendEvent::Disconnected { reason: "connection closed".into() });
+                            }
                         }
                     }
+                    self.sync_local();
                 },
             }
         }
@@ -492,6 +524,7 @@ impl Worker {
             }
             BackendCommand::SetMicMuted(m) => {
                 self.mic_muted = m;
+                self.shared.mic_muted.store(m, Ordering::SeqCst);
                 if let Some(t) = &self.track {
                     if m { t.mute() } else { t.unmute() }
                 }
@@ -541,6 +574,9 @@ impl Worker {
                 gain,
                 pan,
             } => {
+                if identity == ECHO_IDENTITY {
+                    self.echo_place = Some((gain, pan));
+                }
                 if let Ok(mut mx) = self.shared.mixer.lock() {
                     mx.set_placement(&identity, gain, pan);
                 }
@@ -550,8 +586,39 @@ impl Worker {
                     mx.play_cue(c);
                 }
             }
+            BackendCommand::SetEcho(p) => {
+                if let Ok(mut e) = self.shared.echo.lock() {
+                    e.set(p);
+                }
+                if !p.active
+                    && let Ok(mut mx) = self.shared.mixer.lock()
+                {
+                    mx.flush(ECHO_IDENTITY);
+                }
+                self.echo = p;
+            }
         }
         None
+    }
+
+    /// The echo test's local loopback (spec §7): without a call, the
+    /// devices are open while the echo test is active, and closed after.
+    fn sync_local(&mut self) {
+        if self.room.is_some() {
+            return;
+        }
+        match (self.echo.active, self.capture_task.is_some()) {
+            (true, false) => {
+                self.start_capture(None);
+                if let Some((gain, pan)) = self.echo_place
+                    && let Ok(mut mx) = self.shared.mixer.lock()
+                {
+                    mx.set_placement(ECHO_IDENTITY, gain, pan);
+                }
+            }
+            (false, true) => self.cleanup(),
+            _ => {}
+        }
     }
 
     async fn connect(
@@ -621,13 +688,22 @@ impl Worker {
         self.shared
             .mic_live
             .store(!self.mic_muted, Ordering::SeqCst);
-        self.start_capture(source);
+        self.start_capture(Some(source));
+        if let Some((gain, pan)) = self.echo_place
+            && let Ok(mut mx) = self.shared.mixer.lock()
+        {
+            mx.set_placement(ECHO_IDENTITY, gain, pan);
+        }
         Some(rx)
     }
 
     /// The microphone path: 48 kHz mono blocks from the audio thread →
-    /// 10 ms frames → audio processing → the published source.
-    fn start_capture(&mut self, source: NativeAudioSource) {
+    /// 10 ms frames → audio processing → the published source (in a call)
+    /// and the echo test's loopback (while it is active).
+    fn start_capture(&mut self, source: Option<NativeAudioSource>) {
+        if let Some(t) = self.capture_task.take() {
+            t.abort();
+        }
         let (tx, mut rx) = tmpsc::channel::<Vec<f32>>(64);
         let shared = self.shared.clone();
         self.capture_task = Some(tokio::spawn(async move {
@@ -636,12 +712,30 @@ impl Worker {
                 pending.extend(block.iter().map(|&s| to_i16(s)));
                 while pending.len() >= FRAME_SAMPLES {
                     let mut frame: Vec<i16> = pending.drain(..FRAME_SAMPLES).collect();
-                    if !shared.mic_live.load(Ordering::SeqCst) {
+                    let live = source.is_some() && shared.mic_live.load(Ordering::SeqCst);
+                    let echo = shared.echo.lock().is_ok_and(|e| e.active());
+                    if !live && !echo {
                         continue;
                     }
                     if let Ok(mut apm) = shared.apm.lock() {
                         let _ = apm.process_stream(&mut frame, VOICE_RATE as i32, 1);
                     }
+                    if echo {
+                        let unmuted = !shared.mic_muted.load(Ordering::SeqCst);
+                        let out = shared
+                            .echo
+                            .lock()
+                            .ok()
+                            .and_then(|mut e| e.capture(&frame, unmuted));
+                        if let Some(out) = out
+                            && let Ok(mut mx) = shared.mixer.lock()
+                        {
+                            mx.push(ECHO_IDENTITY, &out);
+                        }
+                    }
+                    let Some(source) = source.as_ref().filter(|_| live) else {
+                        continue;
+                    };
                     let f = AudioFrame {
                         data: Cow::Owned(frame),
                         sample_rate: VOICE_RATE,
@@ -668,11 +762,8 @@ impl Worker {
     }
 
     fn restart_audio(&mut self) {
-        if let Some(source) = self.source.clone() {
-            if let Some(t) = self.capture_task.take() {
-                t.abort();
-            }
-            self.start_capture(source);
+        if self.capture_task.is_some() {
+            self.start_capture(self.source.clone());
         }
     }
 
@@ -792,6 +883,49 @@ impl Worker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The echo test without a call (spec §7 *Echo bot*): the headless
+    /// backend runs the local loopback - microphone in, through the audio
+    /// processing module, delayed into the mix.
+    #[test]
+    fn local_echo_without_a_call() {
+        let mut b = LiveKitBackend::headless();
+        b.send(BackendCommand::SetEcho(EchoParams {
+            active: true,
+            delay_ms: 100,
+            record_gain: 1.0,
+        }));
+        b.send(BackendCommand::SetPlacement {
+            identity: ECHO_IDENTITY.into(),
+            gain: 1.0,
+            pan: 0.0,
+        });
+        let start = Instant::now();
+        let tone: Vec<f32> = (0..FRAME_SAMPLES)
+            .map(|i| 0.4 * (std::f32::consts::TAU * 300.0 * i as f32 / VOICE_RATE as f32).sin())
+            .collect();
+        // Wait for the loopback's capture path.
+        while !b.push_microphone(&tone) {
+            assert!(start.elapsed() < Duration::from_secs(5), "no loopback");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let mut heard = 0.0f32;
+        for _ in 0..200 {
+            b.push_microphone(&tone);
+            std::thread::sleep(Duration::from_millis(5));
+            let out = b.pull_output(FRAME_SAMPLES);
+            heard = heard.max(out.iter().fold(0.0, |m, s| m.max(s.abs())));
+        }
+        assert!(heard > 0.01, "the echo is heard: {heard}");
+        assert!(b.levels().input > 0.0);
+        // Off: the loopback closes.
+        b.send(BackendCommand::SetEcho(EchoParams::default()));
+        let start = Instant::now();
+        while b.push_microphone(&tone) {
+            assert!(start.elapsed() < Duration::from_secs(5), "still open");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
 
     /// Regression (Windows access violation): dropping the backend waits
     /// for its threads, so everything it shared with them is gone at once.

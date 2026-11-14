@@ -120,6 +120,9 @@ pub struct FlightView {
     /// View yaw (rad, counter-clockwise from north) and pitch (rad, up).
     pub yaw: f64,
     pub pitch: f64,
+    /// The camera's roll (rad, positive = rolled to the right): the plane
+    /// flight banks the view with the unicorn (spec §14 Phase 13B).
+    pub roll: f64,
     pub speed_mps: f64,
     /// Height above the ground below (m).
     pub height_m: f64,

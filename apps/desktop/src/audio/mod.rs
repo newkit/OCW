@@ -189,7 +189,7 @@ fn feed_ride(client: Option<Res<ClientState>>, audio: Res<GameAudio>, mut last: 
         .filter(|c| c.0.rider_id().is_some())
         .map_or_else(RideParams::default, |c| {
             let core = &c.0;
-            // God mode: the wind of the flight (spec §14 Phase 13C).
+            // Unicorn mode: the wind of the flight (spec §14 Phase 13C).
             if let Some(u) = core.god().unicorn(0.0) {
                 return ride::flight_params(u.pose.speed);
             }
@@ -260,7 +260,7 @@ struct CueWatch {
     countdown: Option<String>,
     results: bool,
     workout: Option<u64>,
-    /// God mode: flying, and the wing beat's phase.
+    /// Unicorn mode: flying, and the wing beat's phase.
     flying: bool,
     wing: f64,
     /// The hoof beats' phase.
@@ -303,7 +303,7 @@ fn play_cues(
         cues.extend(finish_cue(watch.results, results));
         watch.countdown = countdown;
         watch.results = results;
-        // God mode: the chime of the transformation (in and out), soft
+        // Unicorn mode: the chime of the transformation (in and out), soft
         // wing beats while the wings beat (spec §14 Phase 13C).
         let flying = r.flight.is_some();
         if flying != watch.flying {
