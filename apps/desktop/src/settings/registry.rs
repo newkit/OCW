@@ -420,6 +420,26 @@ pub const SETTINGS: &[SettingDef] = &[
         scope: Scope::Live,
         apply: Apply::Command("voice.apply output {}"),
     },
+    SettingDef {
+        key: "audio.echo_bot",
+        kind: Kind::Bool,
+        default: "off",
+        description: "Echo test: an Echo rider on the road plays your microphone back to you when you are near it",
+        scope: Scope::Live,
+        apply: Apply::Command("voice.apply echo {}"),
+    },
+    SettingDef {
+        key: "audio.echo_delay_ms",
+        kind: Kind::Int {
+            min: 20,
+            max: 3000,
+            step: 100,
+        },
+        default: "300",
+        description: "Echo test: how long the Echo rider waits before playing you back (ms)",
+        scope: Scope::Live,
+        apply: Apply::Command("voice.apply echo_delay_ms {}"),
+    },
 ];
 
 /// The setting registered under `key`.

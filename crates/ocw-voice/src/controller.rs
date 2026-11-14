@@ -15,6 +15,7 @@ use ocw_protocol::v1;
 
 use crate::backend::{BackendCommand, BackendEvent, VoiceBackend};
 use crate::device;
+use crate::echo::{self, ECHO_IDENTITY, EchoConfig, EchoParams};
 use crate::join::{JoinPolicy, REQUEST_TIMEOUT_S, Retry, RideFacts};
 use crate::mix::Cue;
 use crate::mute::{MuteChange, MuteState, Switch};
@@ -93,6 +94,75 @@ impl Status {
     }
 }
 
+/// The echo test as the HUD and the console show it (spec §7 *Echo bot*).
+#[derive(Debug, Clone, PartialEq)]
+pub enum EchoStatus {
+    Off,
+    /// Voice is not built in: nothing to echo.
+    Unavailable(String),
+    /// On, but no Echo rider on the road (yet).
+    NoEchoRider,
+    /// The Echo rider is too far to hear the rider.
+    Far {
+        distance_m: f64,
+    },
+    /// Near: what the rider says is echoed (`recording` 0 … 1 of it).
+    Near {
+        distance_m: f64,
+        recording: f32,
+    },
+    /// In a call with the server's echo participant: it echoes over the
+    /// real voice server (Opus, the SFU) and is heard like any rider.
+    Remote {
+        distance_m: Option<f64>,
+    },
+}
+
+impl EchoStatus {
+    pub fn text(&self) -> String {
+        match self {
+            Self::Off => "off".into(),
+            Self::Unavailable(why) => format!("unavailable: {why}"),
+            Self::NoEchoRider => "on, no Echo rider on the road".into(),
+            Self::Far { distance_m } => format!("Echo rider {distance_m:.0} m away: ride closer"),
+            Self::Near {
+                distance_m,
+                recording,
+            } => format!(
+                "near the Echo rider ({distance_m:.0} m): speak now, {:.0} % echoed",
+                recording * 100.0
+            ),
+            Self::Remote {
+                distance_m: Some(d),
+            } => format!("echo over the voice server, Echo rider {d:.0} m away"),
+            Self::Remote { distance_m: None } => "echo over the voice server".into(),
+        }
+    }
+
+    /// The HUD hint ("echo test – speak now") is shown.
+    pub fn near(&self) -> bool {
+        match self {
+            Self::Near { .. } => true,
+            Self::Remote {
+                distance_m: Some(d),
+            } => EchoConfig::default().record_gain(*d) > 0.0,
+            _ => false,
+        }
+    }
+}
+
+/// The echo test's state in the controller.
+#[derive(Debug, Clone, Default)]
+struct Echo {
+    on: bool,
+    config: EchoConfig,
+    rider: Option<RiderId>,
+    /// What the backend was told last (`None`: nothing yet).
+    sent: Option<EchoParams>,
+    placed: Option<(f32, f32)>,
+    status: Option<EchoStatus>,
+}
+
 /// A participant of the voice room.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Participant {
@@ -138,6 +208,7 @@ pub struct VoiceController {
     placed: BTreeMap<String, (f32, f32)>,
     speaking: BTreeSet<String>,
     spatial: SpatialConfig,
+    echo: Echo,
     /// Messages for the console / log.
     messages: Vec<String>,
 }
@@ -161,6 +232,7 @@ impl VoiceController {
             placed: BTreeMap::new(),
             speaking: BTreeSet::new(),
             spatial: SpatialConfig::default(),
+            echo: Echo::default(),
             messages: Vec::new(),
         };
         c.spatial.max_voices = c.settings.max_voices;
@@ -323,7 +395,126 @@ impl VoiceController {
         if matches!(self.phase, Phase::Connected | Phase::Reconnecting) {
             self.place_voices(peers);
         }
+        self.drive_echo(peers);
         request
+    }
+
+    // ------------------------------------------------------------ echo
+
+    /// Turns the echo test on or off (spec §7 *Echo bot*).
+    pub fn set_echo(&mut self, on: bool) {
+        self.echo.on = on;
+    }
+
+    pub fn echo_on(&self) -> bool {
+        self.echo.on
+    }
+
+    /// Sets the echo's delay (clamped to 20 ms … 3 s); the delay set.
+    pub fn set_echo_delay(&mut self, ms: u32) -> u32 {
+        self.echo.config.delay_ms = echo::clamp_delay(ms);
+        self.echo.config.delay_ms
+    }
+
+    pub fn echo_delay_ms(&self) -> u32 {
+        self.echo.config.delay_ms
+    }
+
+    /// The Echo rider of the session (from the snapshots).
+    pub fn set_echo_rider(&mut self, rider: Option<RiderId>) {
+        self.echo.rider = rider;
+    }
+
+    pub fn echo_rider(&self) -> Option<RiderId> {
+        self.echo.rider
+    }
+
+    pub fn echo_status(&self) -> EchoStatus {
+        self.echo.status.clone().unwrap_or(EchoStatus::Off)
+    }
+
+    /// The microphone and echo levels the backend measured.
+    pub fn levels(&self) -> crate::backend::Levels {
+        self.backend.levels()
+    }
+
+    /// The local loopback: on, near the Echo rider and not done by the
+    /// voice server's echo participant. Sends only changes.
+    fn drive_echo(&mut self, peers: &[Peer]) {
+        let peer = self
+            .echo
+            .rider
+            .and_then(|r| peers.iter().find(|p| p.rider == r));
+        let distance = peer.map(|p| p.gap_m.abs());
+        // The server's echo participant joined the call as the Echo rider:
+        // it echoes, the voice is placed like any other rider's.
+        let remote = self.echo.rider.is_some_and(|r| {
+            self.participants
+                .contains_key(&ocw_protocol::voice_identity(r))
+        });
+        let status = if !self.echo.on {
+            EchoStatus::Off
+        } else if let Err(e) = &self.available {
+            EchoStatus::Unavailable(e.clone())
+        } else if remote {
+            EchoStatus::Remote {
+                distance_m: distance,
+            }
+        } else {
+            match distance {
+                None => EchoStatus::NoEchoRider,
+                Some(d) => {
+                    let recording = self.echo.config.record_gain(d);
+                    if recording > 0.0 {
+                        EchoStatus::Near {
+                            distance_m: d,
+                            recording,
+                        }
+                    } else {
+                        EchoStatus::Far { distance_m: d }
+                    }
+                }
+            }
+        };
+        let local = matches!(status, EchoStatus::Near { .. } | EchoStatus::Far { .. })
+            && distance.is_some_and(|d| d <= self.echo.config.open_m);
+        let params = EchoParams {
+            active: local,
+            delay_ms: self.echo.config.delay_ms,
+            record_gain: match status {
+                EchoStatus::Near { recording, .. } if local => (recording * 100.0).round() / 100.0,
+                _ => 0.0,
+            },
+        };
+        // Nothing to say while it never ran.
+        if self.echo.sent != Some(params) && (self.echo.sent.is_some() || params.active) {
+            self.backend.send(BackendCommand::SetEcho(params));
+            self.echo.sent = Some(params);
+        }
+        if local && let Some(p) = peer {
+            let volume = self.settings.volume.clamp(0.0, 2.0);
+            let (gain, pan) = if self.settings.spatial {
+                let pl = self.spatial.place(p);
+                (pl.gain * volume, pl.pan)
+            } else {
+                (volume, 0.0)
+            };
+            let changed = self
+                .echo
+                .placed
+                .is_none_or(|(g, q)| (g - gain).abs() >= 0.01 || (q - pan).abs() >= 0.02);
+            if changed {
+                self.backend.send(BackendCommand::SetPlacement {
+                    identity: ECHO_IDENTITY.into(),
+                    gain,
+                    pan,
+                });
+                self.echo.placed = Some((gain, pan));
+            }
+        } else {
+            self.echo.placed = None;
+        }
+        self.echo.status = Some(status);
     }
 
     fn request(&mut self, now_s: f64) -> v1::VoiceTokenRequest {

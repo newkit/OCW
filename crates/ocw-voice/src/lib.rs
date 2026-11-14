@@ -16,6 +16,8 @@
 //! - [`device`]: microphone / speaker selection with fallback,
 //! - [`mix`]: the voice mixer (per-voice gain and pan), resampling and the
 //!   confirmation sounds,
+//! - [`echo`]: the echo test (an Echo rider plays the own microphone
+//!   back, delayed, from its place on the road),
 //! - [`controller`]: ties them together and drives a [`backend::VoiceBackend`].
 //!
 //! The real backend ([`livekit`], cargo feature `livekit`) connects with the
@@ -34,6 +36,7 @@
 pub mod backend;
 pub mod controller;
 pub mod device;
+pub mod echo;
 pub mod hotkeys;
 pub mod join;
 #[cfg(feature = "livekit")]
@@ -42,8 +45,8 @@ pub mod mix;
 pub mod mute;
 pub mod spatial;
 
-pub use backend::{BackendCommand, BackendEvent, NullBackend, VoiceBackend};
-pub use controller::{Participant, Status, VoiceController, VoiceSettings};
+pub use backend::{BackendCommand, BackendEvent, Levels, NullBackend, VoiceBackend};
+pub use controller::{EchoStatus, Participant, Status, VoiceController, VoiceSettings};
 pub use mute::{MuteState, Switch};
 
 /// The backend this build has: LiveKit with the `livekit` feature,

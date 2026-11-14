@@ -69,6 +69,9 @@ pub enum Page {
     VoiceDevices,
     /// Voice → Participants: mute single riders.
     VoiceParticipants,
+    /// Audio → Voice: the voice volume and the echo test (spec §7 *Echo
+    /// bot*; rows from `voice::page`, the Audio page is full).
+    AudioVoice,
     /// World → Time machine (spec §14 Phase 9; rows from `timemachine`).
     TimeMachine,
 }
@@ -113,6 +116,7 @@ impl Page {
             Self::Voice => "Voice",
             Self::VoiceDevices => "Voice devices",
             Self::VoiceParticipants => "Voice participants",
+            Self::AudioVoice => "Audio: voice",
             Self::TimeMachine => "Time machine",
         }
     }
@@ -147,7 +151,7 @@ impl Page {
     pub fn is_voice_page(self) -> bool {
         matches!(
             self,
-            Self::Voice | Self::VoiceDevices | Self::VoiceParticipants
+            Self::Voice | Self::VoiceDevices | Self::VoiceParticipants | Self::AudioVoice
         )
     }
 
@@ -160,6 +164,7 @@ impl Page {
             Self::WorldRoutes(i) | Self::WorldParts(i) => Some(Self::World(i)),
             Self::WorldSource(_) => Some(Self::WorldSources),
             Self::VoiceDevices | Self::VoiceParticipants => Some(Self::Voice),
+            Self::AudioVoice => Some(Self::Audio),
             _ => None,
         }
     }
@@ -221,6 +226,9 @@ impl Page {
             Self::VoiceParticipants => {
                 &["Riders in the voice room. Confirm mutes or unmutes one for you."]
             }
+            Self::AudioVoice => &[
+                "Voice volume (Enter plays a test sound). Echo test: an Echo rider on the road plays your microphone back to you, delayed, when you ride near it.",
+            ],
             Self::TimeMachine => &[
                 "Date, time and speed of the world's clock (sun and light). Solo you set it; in a shared ride the host does.",
             ],
@@ -453,7 +461,29 @@ pub fn audio_rows(settings: &Settings, devices: &AudioDevices) -> Vec<Row> {
         volume("audio.master", "Master volume", "test"),
         volume("audio.effects", "Effects (bike, wind)", "test-effects"),
         volume("audio.others", "Other riders", "test-others"),
-        volume("audio.voice", "Voice", "test-voice"),
+        Row {
+            label: "Voice".into(),
+            value: Some(format!(
+                "{} %{}",
+                settings
+                    .get("audio.voice")
+                    .map(|v| v.to_string())
+                    .unwrap_or_default(),
+                if settings
+                    .get("audio.echo_bot")
+                    .ok()
+                    .and_then(|v| v.as_bool())
+                    == Some(true)
+                {
+                    " - echo test"
+                } else {
+                    ""
+                }
+            )),
+            left: None,
+            right: None,
+            confirm: Some(Activate::Open(Page::AudioVoice)),
+        },
         setting_row(settings, "audio.mute", "Mute"),
         Row {
             label: "Output".into(),
@@ -582,7 +612,7 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         | Page::GpxImport
         | Page::Workouts => Vec::new(),
         // From the voice state (`voice::page::rows`).
-        Page::Voice | Page::VoiceDevices | Page::VoiceParticipants => Vec::new(),
+        Page::Voice | Page::VoiceDevices | Page::VoiceParticipants | Page::AudioVoice => Vec::new(),
         // From the world clock (`timemachine::rows`).
         Page::TimeMachine => Vec::new(),
         Page::Workshop => {
@@ -848,7 +878,12 @@ mod tests {
         assert_eq!(master.left.as_deref(), Some("set audio.master 75"));
         assert_eq!(master.right.as_deref(), Some("set audio.master 85"));
         assert_eq!(master.confirm, cmd("audio.play test"));
-        assert_eq!(row(&a, "Voice").confirm, cmd("audio.play test-voice"));
+        // Voice opens Audio → Voice (volume and the echo test).
+        assert_eq!(
+            row(&a, "Voice").confirm,
+            Some(Activate::Open(Page::AudioVoice))
+        );
+        assert_eq!(row(&a, "Voice").value.as_deref(), Some("100 %"));
         let others = row(&a, "Other riders");
         assert_eq!(others.value.as_deref(), Some("80"));
         assert_eq!(others.left.as_deref(), Some("set audio.others 75"));

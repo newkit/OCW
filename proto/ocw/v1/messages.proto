@@ -22,7 +22,20 @@ message ClientMessage {
     WorldRequest world = 11;
     GodRequest god = 12;
     GodPose god_pose = 13;
+    EchoRequest echo = 14;
   }
+}
+
+// The echo test (spec §7 *Echo bot*): puts the session's Echo rider on the
+// road (on = true; here = true: 20 m ahead of the asker, else where it is
+// or ahead of the asker if it was not there) or takes it away (on =
+// false). The Echo rider stands still, is marked RiderUpdate.echo, is in
+// no event or standings and earns nothing. Allowed where Welcome.echo_bot
+// says so (the local servers; `ocw-server --echo-bot`); answered with a
+// DevCommandResult. Reliable.
+message EchoRequest {
+  bool on = 1;
+  bool here = 2;
 }
 
 // God mode (spec §14 Phase 13): the rider leaves the road and flies as a
@@ -446,6 +459,8 @@ message Welcome {
   // local server, the host by default on a shared server, nobody in an
   // organizer's session. Absent from older servers (anyone).
   ClockAccess god_access = 12;
+  // Riders may put an Echo rider on the road (EchoRequest, spec §7).
+  bool echo_bot = 13;
 }
 
 enum ClockMode {
@@ -526,6 +541,9 @@ message RiderUpdate {
   RiderMode mode = 13;
   // The unicorn's pose while in god mode.
   GodPose god = 14;
+  // The session's Echo rider (the echo test, spec §7 *Echo bot*): a test
+  // rider standing still, never in standings, earning nothing.
+  bool echo = 15;
 }
 
 enum RiderMode {

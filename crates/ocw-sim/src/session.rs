@@ -38,7 +38,16 @@ enum Control {
     Client,
     /// Server-side test rider with a gently varying power around `base_power_w`.
     Bot { base_power_w: f64 },
+    /// The echo test's rider (spec §7 *Echo bot*): stands still where it
+    /// was put, out of the physics, drafting, events and standings.
+    Echo,
 }
+
+/// How far ahead of the asker the Echo rider is put (m).
+pub const ECHO_AHEAD_M: f64 = 20.0;
+/// The Echo rider stands this far right of the road's centre (m; less on
+/// narrow roads), so riders pass it on its left.
+pub const ECHO_LATERAL_M: f64 = 1.5;
 
 #[derive(Debug, Clone)]
 struct Rider {
@@ -357,21 +366,31 @@ impl Session {
         // centre is kept for a client rider, who joins after the bots.
         let first = match control {
             Control::Client => 0,
-            Control::Bot { .. } => 1,
+            Control::Bot { .. } | Control::Echo => 1,
         };
+        // The Echo rider stands apart: it takes no slot from the field.
         let slot = (first..)
-            .find(|s| !self.riders.values().any(|r| r.slot == *s))
+            .find(|s| {
+                !self
+                    .riders
+                    .values()
+                    .any(|r| r.slot == *s && r.control != Control::Echo)
+            })
             .expect("a free slot");
         let width = self.start_width();
         let (back, lateral_offset) = formation_slot(slot, width);
         // Before the ride starts, move the whole formation forward if its
         // last row would start before the road begins.
-        if self.tick == 0 {
+        if self.tick == 0 && control != Control::Echo {
             let needed = (back - self.room_behind()).min(self.room_ahead());
             if needed > self.front_shift_m {
                 self.front_shift_m = needed;
-                let spots: Vec<(RiderId, usize)> =
-                    self.riders.iter().map(|(id, r)| (*id, r.slot)).collect();
+                let spots: Vec<(RiderId, usize)> = self
+                    .riders
+                    .iter()
+                    .filter(|(_, r)| r.control != Control::Echo)
+                    .map(|(id, r)| (*id, r.slot))
+                    .collect();
                 for (other, s) in spots {
                     let (path, distance) = self.start_spot(formation_slot(s, width).0);
                     let r = self.riders.get_mut(&other).expect("listed rider");
@@ -490,6 +509,84 @@ impl Session {
 
     pub fn remove_rider(&mut self, id: RiderId) -> bool {
         self.riders.remove(&id).is_some()
+    }
+
+    /// The session's Echo rider (spec §7 *Echo bot*), if one is on the road.
+    pub fn echo_rider(&self) -> Option<RiderId> {
+        self.riders
+            .iter()
+            .find(|(_, r)| r.control == Control::Echo)
+            .map(|(id, _)| *id)
+    }
+
+    /// Puts the Echo rider on the road (there is at most one): standing
+    /// [`ECHO_AHEAD_M`] ahead of `near` on their track (in free ride on
+    /// their path, which it gets a copy of), [`ECHO_LATERAL_M`] right of
+    /// the centre; without `near` (or an unknown rider) at the start, or
+    /// where it already is. Returns its id.
+    pub fn place_echo(&mut self, name: &str, near: Option<RiderId>) -> RiderId {
+        let id = match self.echo_rider() {
+            Some(id) => id,
+            None => {
+                let id = self.insert(name.into(), RiderProfile::default(), Control::Echo);
+                let start = self.riders[&id].state.distance;
+                self.stand_echo(id, None, start);
+                id
+            }
+        };
+        let Some(asker) = near.and_then(|n| self.riders.get(&n)) else {
+            return id;
+        };
+        let distance = asker.state.distance + ECHO_AHEAD_M;
+        let path = asker.path.clone();
+        self.stand_echo(id, path, distance);
+        id
+    }
+
+    /// Stands the Echo rider at `distance` (on `path` in free ride).
+    fn stand_echo(&mut self, id: RiderId, path: Option<RidePath>, distance: f64) {
+        let finish = self.route.finish();
+        let route_width = self.route.road_width_m();
+        let Some(r) = self.riders.get_mut(&id) else {
+            return;
+        };
+        let (distance, width) = match path {
+            Some(mut p) => {
+                p.extend(distance, &mut |j| j.default);
+                let w = p.road_width_at(distance);
+                r.path = Some(p);
+                r.path_reset = true;
+                r.path_changed = None;
+                (distance, w)
+            }
+            None if r.path.is_some() => {
+                let w = r
+                    .path
+                    .as_ref()
+                    .map_or(route_width, |p| p.road_width_at(distance));
+                (distance, w)
+            }
+            None => (
+                finish.map_or(distance, |end| distance.min(end)),
+                route_width,
+            ),
+        };
+        let lateral = ECHO_LATERAL_M.min((physics::lateral_limit(width) - 0.3).max(0.0));
+        r.state = RiderState {
+            distance,
+            lateral_offset: lateral,
+            ..Default::default()
+        };
+        r.steering = Steering::Auto(lateral);
+        r.input = RiderInput::default();
+    }
+
+    /// Takes the Echo rider off the road; whether there was one.
+    pub fn remove_echo(&mut self) -> bool {
+        match self.echo_rider() {
+            Some(id) => self.remove_rider(id),
+            None => false,
+        }
     }
 
     /// Applies a client input. Inputs with a sequence number not newer than the
@@ -725,6 +822,7 @@ impl Session {
                 let (bots, clients): (Vec<_>, Vec<_>) = self
                     .riders
                     .values()
+                    .filter(|r| r.control != Control::Echo)
                     .partition(|r| matches!(r.control, Control::Bot { .. }));
                 let d = |v: Vec<&Rider>| v.iter().map(|r| r.state.distance).collect::<Vec<_>>();
                 event::group_anchor(&d(bots), &d(clients)).map(|a| (target_w, a))
@@ -734,6 +832,7 @@ impl Session {
         let before: Vec<(RiderId, f64)> = self
             .riders
             .iter()
+            .filter(|(_, r)| r.control != Control::Echo)
             .map(|(id, r)| (*id, r.state.distance))
             .collect();
         // Drafting uses everyone's position at the start of the tick (in
@@ -742,7 +841,7 @@ impl Session {
         let positions: Vec<(RiderId, f64, f64, Option<EdgePoint>)> = self
             .riders
             .iter()
-            .filter(|(_, r)| r.god.is_none())
+            .filter(|(_, r)| r.god.is_none() && r.control != Control::Echo)
             .map(|(id, r)| {
                 let at = r.path.as_ref().and_then(|p| p.locate(r.state.distance));
                 (*id, r.state.distance, r.state.lateral_offset, at)
@@ -750,6 +849,11 @@ impl Session {
             .collect();
         for (id, rider) in &mut self.riders {
             let d = rider.state.distance;
+            if rider.control == Control::Echo {
+                // The Echo rider stands where it was put.
+                rider.state.speed = 0.0;
+                continue;
+            }
             if rider.god.is_some() {
                 // God mode: out of the physics, the road position frozen.
                 rider.state.speed = 0.0;
@@ -770,7 +874,7 @@ impl Session {
                         });
                         (changed, false)
                     }
-                    Control::Client => {
+                    Control::Client | Control::Echo => {
                         freeride::advance(path, d, rider.state.speed, rider.turn.as_ref())
                     }
                 };
@@ -913,7 +1017,16 @@ impl Session {
         }
         // Formation slots: client riders first (the front row's centre),
         // then the bots, each in joining order.
-        let mut order: Vec<RiderId> = self.riders.keys().copied().collect();
+        // The Echo rider is in no event (spec §7 *Echo bot*).
+        let mut order: Vec<RiderId> = self
+            .riders
+            .iter()
+            .filter(|(_, r)| r.control != Control::Echo)
+            .map(|(id, _)| *id)
+            .collect();
+        if order.is_empty() {
+            return Err("no riders".into());
+        }
         order.sort_by_key(|id| (matches!(self.riders[id].control, Control::Bot { .. }), *id));
         let width = self.start_width();
         let last_back = formation_slot(order.len() - 1, width).0;
@@ -1003,6 +1116,7 @@ impl Session {
         let riders: Vec<(RiderId, f64, f64)> = self
             .riders
             .iter()
+            .filter(|(_, r)| r.control != Control::Echo)
             .map(|(id, r)| (*id, r.state.distance, r.state.speed))
             .collect();
         ev.standings(&riders)
@@ -1682,6 +1796,82 @@ mod tests {
         for _ in 0..(seconds / SIM_DT).round() as usize {
             s.step();
         }
+    }
+
+    /// The echo test's rider (spec §7 *Echo bot*): stands ahead of the
+    /// asker, takes no start slot, is no bot, in no event or standings.
+    #[test]
+    fn the_echo_rider_stands_apart() {
+        let mut s = Session::new(Route::test_loop()).with_start(100.0);
+        let bot = s.add_bot("bot", 200.0);
+        let me = s.add_rider("me", RiderProfile::default());
+        pedal(&mut s, me, 200.0);
+        steps(&mut s, 5.0);
+        assert_eq!(s.echo_rider(), None);
+        let echo = s.place_echo("Echo", Some(me));
+        assert_eq!(s.echo_rider(), Some(echo));
+        let at = s.rider_state(me).unwrap().distance;
+        let st = s.rider_state(echo).unwrap();
+        assert!((st.distance - (at + ECHO_AHEAD_M)).abs() < 1e-9);
+        assert_eq!(st.lateral_offset, ECHO_LATERAL_M);
+        // It stands; the others ride on.
+        steps(&mut s, 5.0);
+        assert_eq!(s.rider_state(echo).unwrap().distance, st.distance);
+        assert_eq!(s.rider_state(echo).unwrap().speed, 0.0);
+        assert_eq!(s.bots(), vec![bot], "not a bot");
+        // Placed again ("here"): the same rider, moved.
+        let at = s.rider_state(me).unwrap().distance;
+        assert_eq!(s.place_echo("Echo", Some(me)), echo);
+        assert!((s.rider_state(echo).unwrap().distance - (at + ECHO_AHEAD_M)).abs() < 1e-9);
+        // A new bot still gets its own slot in the formation.
+        let ev = s
+            .start_event(EventSpec::Race {
+                laps: None,
+                length_m: Some(400.0),
+            })
+            .unwrap();
+        assert!(ev.entrants.iter().all(|e| e.id != echo), "not an entrant");
+        assert_eq!(ev.entrants.len(), 2);
+        assert!(s.event_standings().iter().all(|r| r.id != echo));
+        assert!(s.remove_echo());
+        assert!(!s.remove_echo());
+        assert_eq!(s.echo_rider(), None);
+    }
+
+    #[test]
+    fn the_echo_rider_takes_no_start_slot() {
+        let mut s = Session::new(Route::test_loop()).with_start(100.0);
+        let echo = s.place_echo("Echo", None);
+        let b = s.add_bot("b", 100.0);
+        // The bot gets the first bot slot, as without the Echo rider.
+        let st = s.rider_state(b).unwrap();
+        assert_eq!((st.distance, st.lateral_offset), (100.0, -1.2));
+        assert_eq!(s.rider_state(echo).unwrap().lateral_offset, ECHO_LATERAL_M);
+    }
+
+    #[test]
+    fn the_echo_rider_follows_a_free_ride_path() {
+        let mut s = free_session();
+        let me = s.add_rider("me", RiderProfile::default());
+        pedal(&mut s, me, 250.0);
+        steps(&mut s, 10.0);
+        s.take_path_changes();
+        let echo = s.place_echo("Echo", Some(me));
+        let d = s.rider_state(echo).unwrap().distance;
+        let p = s.path(echo).expect("its own copy of the path");
+        let mine = s.path(me).unwrap();
+        let a = p.sample(d).position;
+        let b = mine.sample(d).position;
+        assert!(
+            (a[0] - b[0]).hypot(a[2] - b[2]) < 1e-6,
+            "on the asker's road ahead"
+        );
+        // The clients learn its path.
+        assert!(
+            s.take_path_changes()
+                .iter()
+                .any(|c| c.rider == echo && c.reset)
+        );
     }
 
     #[test]
