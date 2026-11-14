@@ -12,7 +12,10 @@ publish.workspace = true
 # Pure, wasm."): no Bevy, threads, files, clock reads or OS randomness –
 # session time and seeds are passed in, so the server, every client and the
 # tests compute the same weather. Builds for wasm32-unknown-unknown.
+# Real weather (S7, `real`): the providers' JSON is parsed with serde_json
+# (pure, wasm-clean); the HTTP requests are the game server's (native only).
 [dependencies]
+serde_json.workspace = true
 
 [lints]
 workspace = true

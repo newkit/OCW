@@ -420,7 +420,7 @@ pub fn rows(page: Page, c: &Catalog, tm: &TimeMachineInfo, weather: &WeatherStat
         Page::WorldInfo => info_rows(c, tm),
         Page::WorldSun => sun_rows(tm),
         Page::WorldSources => {
-            let credits = credits(c);
+            let credits = all_credits(c, weather);
             credits
                 .iter()
                 .enumerate()
@@ -434,7 +434,7 @@ pub fn rows(page: Page, c: &Catalog, tm: &TimeMachineInfo, weather: &WeatherStat
                 .collect()
         }
         Page::WorldSource(i) => {
-            let credits = credits(c);
+            let credits = all_credits(c, weather);
             let Some(a) = credits.get(i) else {
                 return Vec::new();
             };
@@ -464,6 +464,57 @@ fn credits(c: &Catalog) -> Vec<Attribution> {
         .as_ref()
         .map(|w| w.details.attributions.clone())
         .unwrap_or_default()
+}
+
+/// The world's credits and, while the weather is real, its providers'
+/// (spec §13, §14 Phase 9, S7).
+fn all_credits(c: &Catalog, w: &WeatherState) -> Vec<Attribution> {
+    let mut out = credits(c);
+    out.extend(weather_credits(w));
+    out
+}
+
+/// The providers of the real weather now (with ERA5 for history).
+pub fn weather_credits(w: &WeatherState) -> Vec<Attribution> {
+    use ocw_weather::real::Provider;
+    let Some(r) = &w.real else {
+        return Vec::new();
+    };
+    let mut out: Vec<Attribution> = r
+        .providers
+        .iter()
+        .map(|p| Attribution {
+            source: format!("Weather: {}", p.name()),
+            licence: "CC-BY-4.0".into(),
+            notice: format!(
+                "{}. The weather of your place in the world, fetched by the game server{}.",
+                p.credit(),
+                match p {
+                    Provider::MetNorway => " (licence CC BY 4.0 and NLOD 2.0)",
+                    Provider::OpenMeteo => " (free API for non-commercial use)",
+                    _ => "",
+                }
+            ),
+            url: Some(
+                match p {
+                    Provider::MeteoSwiss => "https://opendata.swiss/en/organization/bundesamt-fur-meteorologie-und-klimatologie-meteoschweiz",
+                    Provider::Dwd => "https://opendata.dwd.de",
+                    Provider::MetNorway => "https://api.met.no",
+                    Provider::OpenMeteo => "https://open-meteo.com",
+                }
+                .into(),
+            ),
+        })
+        .collect();
+    if r.historic {
+        out.push(Attribution {
+            source: "ERA5 (Copernicus)".into(),
+            licence: "CC-BY-4.0".into(),
+            notice: "Contains modified Copernicus Climate Change Service information (ERA5 reanalysis, via Open-Meteo's historical API).".into(),
+            url: Some("https://cds.climate.copernicus.eu".into()),
+        });
+    }
+    out
 }
 
 fn info_rows(c: &Catalog, tm: &TimeMachineInfo) -> Vec<Row> {
@@ -542,9 +593,9 @@ fn sun_rows(tm: &TimeMachineInfo) -> Vec<Row> {
 
 /// Text paragraphs of a World page beyond its notes: a data source's full
 /// notice.
-pub fn text(page: Page, c: &Catalog) -> Vec<String> {
+pub fn text(page: Page, c: &Catalog, w: &WeatherState) -> Vec<String> {
     match page {
-        Page::WorldSource(i) => credits(c)
+        Page::WorldSource(i) => all_credits(c, w)
             .get(i)
             .map(|a| vec![a.notice.clone()])
             .unwrap_or_default(),
@@ -1086,7 +1137,7 @@ pub(crate) mod tests {
                 "Web:  openstreetmap.org/copyright"
             ]
         );
-        let t = text(Page::WorldSource(0), &c);
+        let t = text(Page::WorldSource(0), &c, &WeatherState::default());
         assert!(t[0].starts_with("© OpenStreetMap contributors."), "{t:?}");
         assert!(
             r(Page::WorldSource(5)).is_empty(),
@@ -1107,6 +1158,32 @@ pub(crate) mod tests {
         assert_eq!(l[0], "World:  test route hills");
         assert!(l[1].contains("test route"), "{l:?}");
         assert!(rows(Page::WorldSources, &test, &tm, &WeatherState::default()).is_empty());
+        // Real weather: its providers join the credits (spec §13, S7).
+        let real = WeatherState {
+            real: Some(ocw_weather::real::feed::RealInfo {
+                providers: vec![
+                    ocw_weather::real::Provider::MeteoSwiss,
+                    ocw_weather::real::Provider::MetNorway,
+                ],
+                historic: true,
+                ..Default::default()
+            }),
+            ..WeatherState::default()
+        };
+        let l: Vec<String> = rows(Page::WorldSources, &test, &tm, &real)
+            .iter()
+            .map(row_label)
+            .collect();
+        assert_eq!(
+            l,
+            [
+                "Weather: MeteoSwiss:  CC-BY-4.0",
+                "Weather: MET Norway:  CC-BY-4.0",
+                "ERA5 (Copernicus):  CC-BY-4.0"
+            ]
+        );
+        let t = text(Page::WorldSource(1), &test, &real);
+        assert!(t[0].starts_with("Data from MET Norway."), "{t:?}");
     }
 
     #[test]
@@ -1136,7 +1213,12 @@ pub(crate) mod tests {
                 let missing = ocw_render::font::missing(&l);
                 assert!(missing.is_empty(), "{p:?}: {l}: {missing:?}");
             }
-            for t in p.notes().iter().map(|s| s.to_string()).chain(text(p, &c)) {
+            for t in
+                p.notes()
+                    .iter()
+                    .map(|s| s.to_string())
+                    .chain(text(p, &c, &WeatherState::default()))
+            {
                 assert!(ocw_render::font::missing(&t).is_empty(), "{p:?}: {t}");
             }
         }

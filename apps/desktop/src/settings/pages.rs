@@ -61,6 +61,9 @@ pub enum Page {
     WeatherCustom,
     /// Custom → Wind and temperature.
     WeatherAir,
+    /// Weather → Real weather (spec §14 Phase 9, S7): on / off, the data
+    /// source, ride a day; the attribution under the title.
+    WeatherReal,
     /// Navi → Routes: the routes of the loaded package and the user's.
     Routes,
     /// Navi → Rides: the saved rides with their Strava state.
@@ -119,6 +122,7 @@ impl Page {
             Self::WeatherPresets => "Weather presets",
             Self::WeatherCustom => "Custom weather: sky",
             Self::WeatherAir => "Custom: wind, temperature",
+            Self::WeatherReal => "Real weather",
             Self::Routes => "Routes",
             Self::Rides => "Rides",
             Self::GpxImport => "GPX import",
@@ -161,7 +165,11 @@ impl Page {
     pub fn is_weather_page(self) -> bool {
         matches!(
             self,
-            Self::Weather | Self::WeatherPresets | Self::WeatherCustom | Self::WeatherAir
+            Self::Weather
+                | Self::WeatherPresets
+                | Self::WeatherCustom
+                | Self::WeatherAir
+                | Self::WeatherReal
         )
     }
 
@@ -239,6 +247,7 @@ impl Page {
             Self::Weather => &[crate::weather::MACHINE_NOTE],
             Self::WeatherPresets => &[],
             Self::WeatherCustom | Self::WeatherAir => &[crate::weather::CUSTOM_NOTE],
+            Self::WeatherReal => &[crate::weather::REAL_NOTE],
             Self::Routes => &[
                 "Routes of the loaded world package and your imported ones (GPX import). Choose one to ride it.",
             ],
@@ -656,7 +665,11 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         // From the world clock (`timemachine::rows`).
         Page::TimeMachine => Vec::new(),
         // From the session weather (`weather::rows`).
-        Page::Weather | Page::WeatherPresets | Page::WeatherCustom | Page::WeatherAir => Vec::new(),
+        Page::Weather
+        | Page::WeatherPresets
+        | Page::WeatherCustom
+        | Page::WeatherAir
+        | Page::WeatherReal => Vec::new(),
         Page::Workshop => {
             let mut out: Vec<Row> = riders
                 .riders

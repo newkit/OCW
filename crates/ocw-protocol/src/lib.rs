@@ -13,7 +13,8 @@ pub mod v1 {
 
 mod weather;
 pub use weather::{
-    WeatherChange, WeatherInfo, event_weather_from_wire, event_weather_to_wire, session_weather,
+    WeatherChange, WeatherInfo, choice_from_wire, choice_to_wire, event_weather_from_wire,
+    event_weather_to_wire, real_from_wire, real_to_wire, session_weather, session_weather_with,
     weather_change, weather_from_wire, weather_info, weather_request, weather_to_wire,
 };
 

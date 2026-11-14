@@ -315,9 +315,16 @@ fn sub_rows(
 }
 
 /// Text of a page beyond its fixed description (a data source's notice).
-fn page_text(page: Page, catalog: Option<&RideCatalog>) -> Vec<String> {
+fn page_text(
+    page: Page,
+    catalog: Option<&RideCatalog>,
+    weather: Option<&crate::weather::WeatherState>,
+) -> Vec<String> {
+    let clear = crate::weather::WeatherState::default();
     match (page, catalog) {
-        (Page::Sub(p), Some(c)) if p.is_world_page() => crate::ride::world::text(p, &c.0),
+        (Page::Sub(p), Some(c)) if p.is_world_page() => {
+            crate::ride::world::text(p, &c.0, weather.unwrap_or(&clear))
+        }
         _ => Vec::new(),
     }
 }
@@ -373,7 +380,7 @@ fn write_view(
                     .text
                     .iter()
                     .map(|&s| s.to_owned())
-                    .chain(page_text(page, catalog.as_deref()))
+                    .chain(page_text(page, catalog.as_deref(), weather.as_deref()))
                     .collect(),
                 items: menu.labels(),
                 focused: menu.focus(),
@@ -437,6 +444,7 @@ mod tests {
             WeatherPresets,
             WeatherCustom,
             WeatherAir,
+            WeatherReal,
         ];
         for p in &all {
             match p {
@@ -444,7 +452,8 @@ mod tests {
                 | Bike(_) | WorldHome | Worlds | World(_) | WorldRoutes(_) | WorldParts(_)
                 | WorldInfo | WorldSun | WorldSources | WorldSource(_) | Weather | Routes
                 | Rides | GpxImport | Workouts | Voice | VoiceDevices | VoiceParticipants
-                | AudioVoice | TimeMachine | WeatherPresets | WeatherCustom | WeatherAir => {}
+                | AudioVoice | TimeMachine | WeatherPresets | WeatherCustom | WeatherAir
+                | WeatherReal => {}
             }
         }
         all
@@ -524,7 +533,7 @@ mod tests {
                     .text
                     .iter()
                     .map(|&s| s.to_owned())
-                    .chain(page_text(page, Some(&catalog)))
+                    .chain(page_text(page, Some(&catalog), Some(&weather)))
                     .collect(),
                 items,
                 focused: 0,
@@ -892,8 +901,8 @@ mod tests {
         let v = view(&app);
         assert_eq!(v.title, "Weather machine");
         assert!(v.status.ends_with("set by you"), "{}", v.status);
-        assert_eq!(v.items[1], "Real weather:  coming (Phase 9 S7)");
-        assert!(v.dimmed[1] && !v.dimmed[0]);
+        assert_eq!(v.items[1], "Real weather:  off");
+        assert!(!v.dimmed[1] && !v.dimmed[0]);
         // The transition: 1 min → 5 min with →.
         for _ in 0..4 {
             tap(&mut app, KeyCode::ArrowDown);
@@ -951,6 +960,130 @@ mod tests {
         assert_eq!(w.cloud_type, ocw_weather::CloudType::Cumulus, "wraps round");
         assert_eq!(w.lightning_per_min, 0.0);
         assert_eq!(view(&app).items[1], "Cloud type:  < cumulus >");
+        assert_eq!(exits(&app), 0);
+    }
+
+    /// An Open-Meteo answer around now (rain, 3 mm/h, 9 °C), so the test
+    /// does not depend on the day it runs.
+    fn rainy_open_meteo() -> String {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let h0 = now - now % 3600 - 6 * 3600;
+        let n = 13;
+        let times: Vec<String> = (0..n).map(|i| (h0 + i * 3600).to_string()).collect();
+        let col = |v: &str| vec![v; n as usize].join(",");
+        format!(
+            r#"{{"elevation":400.0,"hourly":{{"time":[{}],"temperature_2m":[{}],"relative_humidity_2m":[{}],"surface_pressure":[{}],"cloud_cover":[{}],"precipitation":[{}],"snowfall":[{}],"weather_code":[{}],"wind_speed_10m":[{}],"wind_gusts_10m":[{}],"wind_direction_10m":[{}]}}}}"#,
+            times.join(","),
+            col("9.0"),
+            col("90"),
+            col("960.0"),
+            col("100"),
+            col("3.0"),
+            col("0.0"),
+            col("63"),
+            col("4.0"),
+            col("9.0"),
+            col("230")
+        )
+    }
+
+    /// Real weather with the keyboard (spec §14 Phase 9, S7): World →
+    /// Weather → Real weather; the data source to Open-Meteo, Enter turns
+    /// it on – the stepped local server asks (recorded answers here, no
+    /// network), the rain arrives with the attribution; ride a day queues
+    /// the time machine and real weather.
+    #[test]
+    fn real_weather_with_the_keyboard() {
+        let mut app = weather_app();
+        let answer = rainy_open_meteo();
+        crate::connection::with_stepped_server(app.world(), |s| {
+            s.server_mut()
+                .set_weather_fetcher(Box::new(ocw_server::realweather::FnFetcher::new(
+                    move |f: &ocw_weather::real::feed::Fetch| match f.provider {
+                        ocw_weather::real::Provider::OpenMeteo => Ok(answer.clone()),
+                        p => Err(format!("{}: no sample", p.name())),
+                    },
+                )));
+        })
+        .expect("a stepped server");
+        frames(&mut app, 5);
+        tap(&mut app, KeyCode::Escape);
+        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::Enter);
+        for _ in 0..4 {
+            tap(&mut app, KeyCode::ArrowDown);
+        }
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(view(&app).title, "Weather machine");
+        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::Enter);
+        let v = view(&app);
+        assert_eq!(v.title, "Real weather");
+        assert_eq!(v.items[0], "Real weather:  < off >");
+        // The data source: ← from Automatic is Open-Meteo.
+        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::ArrowLeft);
+        frames(&mut app, 2);
+        assert_eq!(
+            machine(&app).provider,
+            ocw_weather::real::Choice::Only(ocw_weather::real::Provider::OpenMeteo)
+        );
+        assert_eq!(view(&app).items[1], "Data source:  < Open-Meteo >");
+        // Enter on the first row: on.
+        tap(&mut app, KeyCode::ArrowUp);
+        tap(&mut app, KeyCode::Enter);
+        frames(&mut app, 10);
+        let v = view(&app);
+        assert_eq!(v.items[0], "Real weather:  < on >", "{:?}", v.items);
+        assert!(
+            v.status.starts_with("Weather: Open-Meteo, CC BY 4.0"),
+            "{}",
+            v.status
+        );
+        let w = server_weather(&app);
+        assert_eq!(w.precip, ocw_weather::Precip::Rain);
+        assert!((w.precip_mm_h - 3.0).abs() < 0.01);
+        assert_eq!(
+            app.world()
+                .resource::<ClientState>()
+                .0
+                .weather()
+                .info()
+                .unwrap()
+                .mode,
+            ocw_weather::Mode::Real
+        );
+        // The HUD's credit.
+        let rv = app.world().resource::<RideView>();
+        let a = ocw_render::hud::attribution_suffix(rv);
+        assert_eq!(a, " | Weather: Open-Meteo, CC BY 4.0");
+        // Ride a day: Enter on its row queues the lines.
+        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::Enter);
+        frames(&mut app, 2);
+        let log = app.world().resource::<ConsoleState>().log().join("\n");
+        assert!(log.contains("ride a day: Storm Lothar"), "{log}");
+        // Off: the weather stays, fixed.
+        tap(&mut app, KeyCode::ArrowUp);
+        tap(&mut app, KeyCode::ArrowUp);
+        tap(&mut app, KeyCode::Enter);
+        frames(&mut app, 6);
+        assert_eq!(view(&app).items[0], "Real weather:  < off >");
+        assert_eq!(
+            app.world()
+                .resource::<ClientState>()
+                .0
+                .weather()
+                .info()
+                .unwrap()
+                .mode,
+            ocw_weather::Mode::Fixed
+        );
         assert_eq!(exits(&app), 0);
     }
 

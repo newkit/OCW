@@ -68,6 +68,18 @@ pub fn load_course(
     neighbours: bool,
     seed: u64,
 ) -> Result<(Course, v1::WorldChange), String> {
+    load_course_at(spec, route, opts, neighbours, seed).map(|(c, w, _)| (c, w))
+}
+
+/// [`load_course`] with the package's geographic origin (lat, lon) – where
+/// the server fetches real weather (spec §14 Phase 9, S7).
+pub fn load_course_at(
+    spec: &str,
+    route: Option<&str>,
+    opts: &LoadOptions,
+    neighbours: bool,
+    seed: u64,
+) -> Result<(Course, v1::WorldChange, (f64, f64)), String> {
     let world = load_world(spec, opts).map_err(|e| e.to_string())?;
     tracing::info!(world = %world.describe(), "world package");
     let hood = ocw_worldstore::neighbourhood(&world, spec, opts, neighbours);
@@ -108,6 +120,7 @@ pub fn load_course(
         by: String::new(),
     };
     let pkg = &world.package;
+    let origin = pkg.origin;
     if let Some(name) = route {
         let stored = pkg.route(name).ok_or_else(|| {
             let names: Vec<&str> = pkg.routes.iter().map(|r| r.name.as_str()).collect();
@@ -122,6 +135,7 @@ pub fn load_course(
                 plan: Arc::new(plan),
             },
             change,
+            origin,
         ));
     }
     let (edge, offset_m, forward) = net.random_start(seed).ok_or("empty road graph")?;
@@ -135,6 +149,7 @@ pub fn load_course(
             },
         },
         change,
+        origin,
     ))
 }
 

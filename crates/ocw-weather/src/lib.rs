@@ -5,8 +5,10 @@
 //! simulation ([`session`]), the ground's memory – road wetness, puddles,
 //! snow cover ([`ground`]) –, gusts ([`wind`]), lightning and thunder
 //! ([`lightning`]), what falls and how far one sees ([`particles`]), the
-//! light under clouds ([`light`]), the client's follower ([`follow`]) and
-//! the console command ([`command`]).
+//! light under clouds ([`light`]), the client's follower ([`follow`]), the
+//! console command ([`command`]) and real weather from the providers
+//! ([`real`], S7: parsing, mapping, the server's feed with its cache and
+//! fallback).
 //!
 //! Pure Rust without Bevy, threads, files, clock reads or OS randomness
 //! (session time and seeds are passed in), so it builds for
@@ -22,6 +24,7 @@ pub mod lightning;
 pub mod machine;
 pub mod particles;
 pub mod presets;
+pub mod real;
 pub mod session;
 pub mod state;
 pub mod wind;

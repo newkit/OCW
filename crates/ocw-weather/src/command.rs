@@ -6,7 +6,24 @@
 
 use crate::ground::Ground;
 use crate::presets::{PRESETS, preset};
+use crate::real::{Choice, days};
 use crate::state::{CloudType, Precip, WeatherState};
+
+/// The days of `weather day`, one per line.
+pub fn days_list() -> String {
+    days::DAYS
+        .iter()
+        .map(|d| {
+            let when = if d.date.is_empty() {
+                "now".to_owned()
+            } else {
+                format!("{} {}", d.date, d.time)
+            };
+            format!("{:<10} {:<20} {when:<17} {}", d.id, d.title, d.about)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
 /// Usage of `weather`.
 pub const USAGE: &str = "\
@@ -23,7 +40,11 @@ weather FIELD=VALUE... [in T] change fields: clouds=0-1 type=cumulus|stratus|cir
                              humidity=0-1 pressure=HPA lightning=PER_MIN
                              ground: wet=0-1 puddles=0-1 snowcover=0-1
 weather strike [DIST_M [BEARING]] a lightning strike now (test)
-Real weather (weather real) comes with Phase 9 S7.
+weather real [SOURCE] [in T] real weather at your place and the clock's time; SOURCE:
+                             automatic (default), meteoswiss, dwd, metno, open-meteo
+weather day NAME|DATE [TIME] ride a day: the time machine goes there, the weather is real
+                             (history from ERA5), e.g. weather day lothar, weather day 1999-12-26 12:00
+weather.provider [SOURCE]    the real weather's data source; weather.days: the days
 Who may change it: you (solo), the host (shared ride), nobody (an organizer's event).";
 
 /// One field change.
@@ -92,6 +113,18 @@ pub enum WeatherCommand {
     },
     /// Stop the simulation, keeping the weather it is heading to.
     Fixed,
+    /// Real weather from the providers (S7), from the given data source
+    /// (`None`: the session's / the machine's).
+    Real {
+        choice: Option<Choice>,
+        transition_s: f64,
+    },
+    /// Ride a day (S7): these console lines (the time machine, then real
+    /// weather) – the app runs them.
+    Day {
+        title: String,
+        lines: Vec<String>,
+    },
     Strike {
         distance_m: f32,
         bearing_deg: Option<f32>,
@@ -166,10 +199,40 @@ pub fn parse(args: &[&str]) -> Result<WeatherCommand, String> {
             seed: Some(seed.parse().map_err(|_| format!("not a seed: {seed}"))?),
         }),
         ["fixed" | "fix"] => Ok(WeatherCommand::Fixed),
-        ["real"] => Err(
-            "real weather from the providers comes with Phase 9 S7 (now: presets, custom fields, weather auto)"
-                .into(),
-        ),
+        ["real"] => Ok(WeatherCommand::Real {
+            choice: None,
+            transition_s,
+        }),
+        ["real", source] => Ok(WeatherCommand::Real {
+            choice: Some(Choice::parse(source).ok_or_else(|| {
+                format!(
+                    "unknown data source {source:?}; one of: {}",
+                    Choice::ALL.map(|c| c.id()).join(", ")
+                )
+            })?),
+            transition_s,
+        }),
+        ["day"] => Err(format!(
+            "weather day NAME or DATE [TIME]; the days:\n{}",
+            days_list()
+        )),
+        ["day", rest @ ..] => {
+            let (title, lines) = match rest {
+                [id] if days::day(id).is_some() => {
+                    let d = days::day(id).expect("checked");
+                    (d.title.to_owned(), days::lines(d))
+                }
+                [date] | [date, _] => {
+                    let time = rest.get(1).copied().unwrap_or("12:00");
+                    let (date, time) = days::check(date, time)?;
+                    let title = format!("{date} {time}");
+                    let lines = vec![format!("time {date} {time}"), "weather real".into()];
+                    (title, lines)
+                }
+                _ => return Err("weather day NAME or DATE [TIME]".into()),
+            };
+            Ok(WeatherCommand::Day { title, lines })
+        }
         ["random"] => Ok(WeatherCommand::Random {
             seed: None,
             transition_s,
@@ -374,7 +437,41 @@ mod tests {
         );
         assert!(parse(&["random", "x"]).is_err());
         assert_eq!(parse(&["fixed"]).unwrap(), WeatherCommand::Fixed);
-        assert!(parse(&["real"]).unwrap_err().contains("S7"));
+        // Real weather (S7), with a data source; ride a day.
+        assert_eq!(
+            parse(&["real"]).unwrap(),
+            WeatherCommand::Real {
+                choice: None,
+                transition_s: 0.0
+            }
+        );
+        assert_eq!(
+            parse(&["real", "MeteoSwiss", "in", "30"]).unwrap(),
+            WeatherCommand::Real {
+                choice: Some(Choice::Only(crate::real::Provider::MeteoSwiss)),
+                transition_s: 30.0
+            }
+        );
+        assert!(parse(&["real", "bbc"]).unwrap_err().contains("open-meteo"));
+        assert_eq!(
+            parse(&["day", "lothar"]).unwrap(),
+            WeatherCommand::Day {
+                title: "Storm Lothar".into(),
+                lines: vec!["time 1999-12-26 12:00".into(), "weather real".into()]
+            }
+        );
+        let WeatherCommand::Day { lines, .. } = parse(&["day", "2003-8-8", "15:30"]).unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(lines[0], "time 2003-08-08 15:30");
+        let WeatherCommand::Day { lines, .. } = parse(&["day", "2010-02-01"]).unwrap() else {
+            panic!()
+        };
+        assert_eq!(lines[0], "time 2010-02-01 12:00");
+        assert!(parse(&["day"]).unwrap_err().contains("lothar"));
+        assert!(parse(&["day", "someday"]).is_err());
+        assert!(days_list().lines().count() >= 5);
         assert_eq!(parse_duration("90").unwrap(), 90.0);
         assert_eq!(parse_duration("1h").unwrap(), 3600.0);
         assert!(parse_duration("5 parsecs").is_err());
