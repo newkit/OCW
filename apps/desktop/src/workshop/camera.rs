@@ -149,6 +149,11 @@ pub enum View {
     Bench,
     /// The changing corner (4C).
     Mirror,
+    /// The character editor (W4): over the rider's shoulder into the
+    /// mirror; `front`: straight at the rider (no reflection, low quality).
+    Dress { front: bool },
+    /// *Try on the bike*: the rider on the stand bike, from the side.
+    TryOn,
 }
 
 /// The fixed poses of the room's views.
@@ -198,6 +203,8 @@ impl Poses<'_> {
             }
             View::Bench => from(l.bench_view()),
             View::Mirror => from(l.mirror_view()),
+            View::Dress { front } => from(l.dress_view(front)),
+            View::TryOn => from(l.try_on_view()),
         }
     }
 }

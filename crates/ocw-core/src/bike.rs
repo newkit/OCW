@@ -299,13 +299,16 @@ impl std::fmt::Display for Rgb {
     }
 }
 
-/// The cosmetic look of a rider and bike (spec §2.5: never physics).
+/// The cosmetic look of a rider and bike (spec §2.5: never physics):
+/// the kit colours and pattern, and the character (spec §2.6, 4C: body,
+/// skin, face, hair, glasses – free).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RiderLook {
     pub frame: Rgb,
     pub jersey: Rgb,
     pub helmet: Rgb,
     pub pattern: KitPattern,
+    pub character: crate::character::Character,
 }
 
 impl Default for RiderLook {
@@ -317,6 +320,7 @@ impl Default for RiderLook {
             jersey: Rgb(0xFF1472),
             helmet: Rgb(0xF2F2EE),
             pattern: KitPattern::Plain,
+            character: Default::default(),
         }
     }
 }
@@ -333,6 +337,7 @@ impl RiderLook {
             jersey: Rgb(0xC9CDD2),
             helmet: Rgb(0xF2F2EE),
             pattern: KitPattern::Plain,
+            character: Default::default(),
         }
     }
 }

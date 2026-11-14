@@ -6,6 +6,13 @@
 //! models, the pose and the state selection are Bevy-free
 //! (`ocw_assets`); this module only spawns entities and writes
 //! transforms. Far riders switch to the models' one-node `lod1`.
+//!
+//! The character and the kit (spec §14 Phase 4, 4C, W4): the rider model's
+//! optional nodes the look shows (`ocw_assets::rider::visible`: worn kit
+//! variants, hair, face, glasses), the skin and hair colours, the body
+//! height (the whole rider scaled; the saddle moved along the seat tube
+//! so the legs fit, `ocw_assets::pose::BodyFit`) and the build (girth of
+//! the torso and limbs).
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -318,6 +325,9 @@ pub struct AvatarColours {
     pub helmet: Color,
     /// The kit pattern's colour: white on dark jerseys, black on light.
     pub accent: Color,
+    /// The character's skin and hair colours (spec 4C).
+    pub skin: Color,
+    pub hair: Color,
 }
 
 fn rgb(c: ocw_core::Rgb) -> Color {
@@ -342,12 +352,47 @@ pub fn avatar_colours(id: RiderId, is_local: bool, look: Option<&RiderLook>) -> 
     } else {
         Color::srgb(0.96, 0.96, 0.94)
     };
+    let character = look.map(|l| l.character).unwrap_or_default();
     AvatarColours {
         frame,
         jersey,
         helmet,
         accent,
+        skin: rgb(character.skin_colour()),
+        hair: rgb(character.validated().hair_colour),
     }
+}
+
+/// The colour of paint slot `slot` (model colour `model_color`, linear
+/// RGBA) for a rider in `colours`.
+pub fn tint_color(slot: &str, model_color: [f32; 4], colours: &AvatarColours) -> Color {
+    let s = slots::get(slot).unwrap_or(&slots::ALL[0]);
+    match s.tint {
+        Tint::Fixed => Color::linear_rgba(
+            model_color[0],
+            model_color[1],
+            model_color[2],
+            model_color[3],
+        ),
+        Tint::Frame => colours.frame,
+        Tint::Jersey => colours.jersey,
+        Tint::Helmet => colours.helmet,
+        Tint::Accent => colours.accent,
+        Tint::Skin => colours.skin,
+        Tint::Hair => colours.hair,
+    }
+}
+
+/// The rider model's nodes a look leaves out (spec 4C): the optional
+/// nodes ([`ocw_assets::rider::optional`]) it does not show.
+pub fn hidden_rider_nodes(look: Option<&RiderLook>, kit: &[String]) -> Vec<&'static str> {
+    let l = look.copied().unwrap_or_default();
+    let ids: Vec<&str> = kit.iter().map(String::as_str).collect();
+    let shown = ocw_assets::rider::visible(&l.character, l.pattern, &ids);
+    ocw_assets::rider::optional()
+        .into_iter()
+        .filter(|n| !shown.contains(n))
+        .collect()
 }
 
 /// Whether rider `id` is a unicorn now (god mode, spec §14 Phase 13C):
@@ -363,6 +408,8 @@ struct AvatarLook {
     look: Option<RiderLook>,
     /// The model variants of the fitted parts ([`part_variants`]).
     variants: Vec<String>,
+    /// The rider variants of the worn kit ([`kit_variants`]).
+    kit: Vec<String>,
 }
 
 /// The bike model variants (`ocw_assets::bikes::VARIANTS`) of the parts
@@ -373,8 +420,26 @@ pub fn part_variants(parts: &[String]) -> Vec<String> {
     let mut v: Vec<String> = parts
         .iter()
         .filter_map(|id| cat.get(id))
+        .filter(|p| !p.slot.is_kit())
         .map(|p| p.model.clone())
         .filter(|m| m != "stock" && !m.starts_with("bike-"))
+        .collect();
+    v.sort();
+    v.dedup();
+    v
+}
+
+/// The rider model variants (`ocw_assets::rider::VARIANTS`) of the worn
+/// kit among `parts` (catalogue ids; spec 4C): base items and unknown ids
+/// are skipped. Sorted.
+pub fn kit_variants(parts: &[String]) -> Vec<String> {
+    let cat = ocw_assets::shipped::catalogue();
+    let mut v: Vec<String> = parts
+        .iter()
+        .filter_map(|id| cat.get(id))
+        .filter(|p| p.slot.is_kit() && !p.is_base())
+        .map(|p| p.model.clone())
+        .filter(|m| ocw_assets::rider::variant(m).is_some())
         .collect();
     v.sort();
     v.dedup();
@@ -419,15 +484,26 @@ fn sync_riders(
         .iter()
         .map(|r| {
             let variants = part_variants(&r.parts);
+            let kit = kit_variants(&r.parts);
             (
-                r.id, r.state, r.id, r.is_local, r.bike, r.look, variants, r.wobble,
+                r.id, r.state, r.id, r.is_local, r.bike, r.look, variants, kit, r.wobble,
             )
         })
         .chain(ghost.and_then(|(id, state, on)| {
             let local = view.local()?;
-            Some((id, state, on, false, local.bike, None, Vec::new(), 0.0))
+            Some((
+                id,
+                state,
+                on,
+                false,
+                local.bike,
+                None,
+                Vec::new(),
+                Vec::new(),
+                0.0,
+            ))
         }));
-    for (id, state, track_of, is_local, bike, look, variants, wobble) in all {
+    for (id, state, track_of, is_local, bike, look, variants, kit, wobble) in all {
         let rig = &lib.bike_rigs[profile_index(bike)];
         let mut t = avatar_transform(view.track(track_of), &state, ground.as_deref(), rig);
         // The wobble after a soft bump (spec §14 Phase 12B): a lean swing.
@@ -441,6 +517,7 @@ fn sync_riders(
             bike,
             look,
             variants,
+            kit,
         };
         if let Some(e) = entities.0.get(&id).copied() {
             match avatars.get_mut(e) {
@@ -549,7 +626,6 @@ struct Library {
     bikes: Vec<Meshes>,
     rider_rig: RiderRig,
     bike_rigs: Vec<BikeRig>,
-    fits: Vec<Fit>,
     /// Bikes with fitted parts (the others' and the own, spec §14 Phase 4,
     /// 4G), built and uploaded once per profile and variant set.
     fitted: HashMap<(ProfileId, Vec<String>), (std::sync::Arc<Model>, Meshes)>,
@@ -570,7 +646,6 @@ impl Library {
                 .iter()
                 .map(|p| Meshes::new(ocw_assets::shipped::bike_model(*p), meshes))
                 .collect(),
-            fits: bike_rigs.iter().map(|b| Fit::new(&rider_rig, b)).collect(),
             rider_rig,
             bike_rigs,
             fitted: HashMap::new(),
@@ -596,18 +671,7 @@ impl Library {
                 .clone();
         }
         let s = slots::get(slot).unwrap_or(&slots::ALL[0]);
-        let color = match s.tint {
-            Tint::Fixed => Color::linear_rgba(
-                model_color[0],
-                model_color[1],
-                model_color[2],
-                model_color[3],
-            ),
-            Tint::Frame => colours.frame,
-            Tint::Jersey => colours.jersey,
-            Tint::Helmet => colours.helmet,
-            Tint::Accent => colours.accent,
-        };
+        let color = tint_color(slot, model_color, colours);
         self.materials
             .entry((s.name, color.to_srgba().to_u8_array()))
             .or_insert_with(|| {
@@ -669,6 +733,9 @@ pub struct AvatarRig {
     /// In the order of [`ocw_assets::pose::Pose::rotations`].
     posed: Vec<Entity>,
     bike: BikeRig,
+    /// The rider's rig at the body height, and that scale (spec 4C).
+    rider: RiderRig,
+    scale: f32,
     fit: Fit,
     selector: Selector,
     params: PoseParams,
@@ -698,6 +765,7 @@ fn spawn_model(
     skip: &[usize],
     hidden: &[usize],
     far: Option<usize>,
+    build: ocw_core::BodyBuild,
     mut material: impl FnMut(&str, [f32; 4]) -> Handle<StandardMaterial>,
 ) -> Vec<Entity> {
     let mut out = vec![Entity::PLACEHOLDER; model.nodes.len()];
@@ -727,11 +795,14 @@ fn spawn_model(
         out[i] = e;
         let is_far = far.is_some_and(|f| model.is_below(i, f));
         let range = if is_far { far_range() } else { near_range() };
+        // The body build's girth (the rider model; 1 for bikes).
+        let girth = ocw_assets::rider::girth(model, i, build);
         for (mesh, mat) in &meshes.0[i] {
             let m = &model.materials[*mat];
             commands.spawn((
                 Mesh3d(mesh.clone()),
                 MeshMaterial3d(material(&m.name, m.color)),
+                Transform::from_scale(girth),
                 range.clone(),
                 LodPart { far: is_far },
                 ChildOf(e),
@@ -761,7 +832,11 @@ fn spawn_avatar(
         .as_deref()
         .unwrap_or_else(|| ocw_assets::shipped::bike_model(built.bike));
     let rider_model = ocw_assets::shipped::rider_model();
-    let bike = lib.bike_rigs[b];
+    let character = built.look.map(|l| l.character).unwrap_or_default();
+    // The body height (spec 4C): the rider scaled, the saddle moved so the
+    // legs fit (the bikes are made for the 1.78 m rider).
+    let body = pose::BodyFit::new(&lib.rider_rig, &lib.bike_rigs[b], character.scale());
+    let bike = body.bike;
     let root = commands
         .spawn((
             transform,
@@ -790,36 +865,24 @@ fn spawn_avatar(
         &skip,
         &[],
         far,
+        ocw_core::BodyBuild::Medium,
         |slot, c| lib.material(materials, slot, c, &colours, ghost),
     );
-    // Head wear: a cotton cap for the local rider, an aero helmet on the
-    // TT bike, else a road helmet; the kit pattern's band or sash.
-    let wear = if is_local {
-        nodes::CAP
-    } else if bike.aero_bars {
-        nodes::HELMET_AERO
-    } else {
-        nodes::HELMET_ROAD
-    };
-    let pattern = built
-        .look
-        .map_or(ocw_core::KitPattern::Plain, |l| l.pattern);
-    let kit = match pattern {
-        ocw_core::KitPattern::Plain => None,
-        ocw_core::KitPattern::Band => Some(nodes::KIT_BAND),
-        ocw_core::KitPattern::Sash => Some(nodes::KIT_SASH),
-    };
-    let skip_rider: Vec<usize> = [
-        nodes::CAP,
-        nodes::HELMET_AERO,
-        nodes::HELMET_ROAD,
-        nodes::KIT_BAND,
-        nodes::KIT_SASH,
-    ]
-    .into_iter()
-    .filter(|n| *n != wear && Some(*n) != kit)
-    .filter_map(|n| rider_model.node(n))
-    .collect();
+    // The saddle (and its post) at the rider's height.
+    if body.saddle_offset != 0.0
+        && let Some(i) = bike_model.node(bike_nodes::SADDLE)
+    {
+        let to = bike_model.nodes[i].translation + body.bike.seat_dir() * body.saddle_offset;
+        commands
+            .entity(bike_nodes_e[i])
+            .insert(Transform::from_translation(to));
+    }
+    // The look's optional nodes (spec 4C): the worn kit (no item: the base
+    // kit), the kit pattern, hair, face and glasses.
+    let skip_rider: Vec<usize> = hidden_rider_nodes(built.look.as_ref(), &built.kit)
+        .into_iter()
+        .filter_map(|n| rider_model.node(n))
+        .collect();
     let rider_e = spawn_model(
         commands,
         sway,
@@ -828,8 +891,17 @@ fn spawn_avatar(
         &skip_rider,
         &[],
         None,
+        character.validated().build,
         |slot, c| lib.material(materials, slot, c, &colours, ghost),
     );
+    // The body height: the whole rider scaled about the hips.
+    if body.scale != 1.0
+        && let Some(i) = rider_model.node("rider")
+    {
+        commands
+            .entity(rider_e[i])
+            .insert(Transform::from_scale(Vec3::splat(body.scale)));
+    }
     let find = |name: &str| -> Entity {
         if let Some(i) = rider_model.node(name) {
             return rider_e[i];
@@ -838,7 +910,7 @@ fn spawn_avatar(
             .node(name)
             .map_or(Entity::PLACEHOLDER, |i| bike_nodes_e[i])
     };
-    let posed = pose::pose(&lib.rider_rig, &bike, &lib.fits[b], &PoseParams::default())
+    let posed = pose::pose(&body.rider, &bike, &body.fit, &PoseParams::default())
         .rotations()
         .iter()
         .map(|(name, _)| find(name))
@@ -849,7 +921,9 @@ fn spawn_avatar(
         pelvis: find(nodes::PELVIS),
         posed,
         bike,
-        fit: lib.fits[b],
+        rider: body.rider,
+        scale: body.scale,
+        fit: body.fit,
         selector: Selector::default(),
         params: PoseParams::default(),
         wheel_angle: 0.0,
@@ -872,7 +946,6 @@ fn animate(
 ) {
     let dt = time.delta_secs();
     let eye = cameras.iter().next().map(GlobalTransform::translation);
-    let rider_rig = ocw_assets::shipped::rider_rig();
     for (avatar, mut rig, at) in &mut avatars {
         let input = if avatar.id == GHOST_ID {
             let Some(g) = view.ghost else { continue };
@@ -916,12 +989,13 @@ fn animate(
         if eye.is_some_and(|e| e.distance(at.translation()) > LOD_DISTANCE_M + LOD_FADE_M) {
             continue;
         }
-        let p = pose::pose(&rider_rig, &rig.bike, &rig.fit, &rig.params);
+        let p = pose::pose(&rig.rider, &rig.bike, &rig.fit, &rig.params);
         if let Ok(mut t) = transforms.get_mut(rig.sway) {
             *t = sway_transform(p.bike_roll, &rig.bike);
         }
         if let Ok(mut t) = transforms.get_mut(rig.pelvis) {
-            t.translation = p.pelvis.0;
+            // The pelvis in the bike frame, under the scaled rider root.
+            t.translation = p.pelvis.0 / rig.scale;
             t.rotation = p.pelvis.1;
         }
         for ((_, q), e) in p.rotations().iter().zip(&rig.posed) {
@@ -1343,27 +1417,86 @@ mod tests {
         let entities = app.world().resource::<RiderEntities>().0.clone();
         assert_eq!(entities.len(), 6);
         let rider = ocw_assets::shipped::rider_model();
-        let prims = |name: &str| rider.nodes[rider.node(name).unwrap()].primitives.len();
-        let all_wear = prims(nodes::CAP) + prims(nodes::HELMET_ROAD) + prims(nodes::HELMET_AERO);
-        let all_kit = prims(nodes::KIT_BAND) + prims(nodes::KIT_SASH);
+        let prims = |name: &str| {
+            let i = rider.node(name).unwrap();
+            (0..rider.nodes.len())
+                .filter(|j| rider.is_below(*j, i))
+                .map(|j| rider.nodes[j].primitives.len())
+                .sum::<usize>()
+        };
         let full = |m: &Model| m.nodes.iter().map(|n| n.primitives.len()).sum::<usize>();
+        let look = RiderLook {
+            pattern: ocw_core::KitPattern::Band,
+            ..Default::default()
+        };
+        let hidden: usize = hidden_rider_nodes(Some(&look), &[])
+            .iter()
+            .map(|n| prims(n))
+            .sum();
         for (i, p) in ProfileId::ALL.iter().enumerate() {
             let e = entities[&RiderId(i as u32 + 1)];
             let shown = shown_meshes(&mut app, e).len();
             let bike = full(ocw_assets::shipped::bike_model(*p));
-            let wear = if i == 0 {
-                prims(nodes::CAP)
-            } else if *p == ProfileId::TimeTrial {
-                prims(nodes::HELMET_AERO)
-            } else {
-                prims(nodes::HELMET_ROAD)
-            };
-            // The whole bike (with its far LOD), the rider with one head
-            // wear and the band.
-            let expect = bike + full(rider) - all_wear - all_kit + wear + prims(nodes::KIT_BAND);
+            // The whole bike (with its far LOD), the rider in the base kit
+            // (the road helmet on every bike) with the band.
+            let expect = bike + full(rider) - hidden;
             assert_eq!(shown, expect, "{p:?}");
             assert!(app.world().get::<AvatarRig>(e).is_some());
         }
+        assert!(hidden_rider_nodes(Some(&look), &[]).contains(&nodes::HELMET_AERO));
+        assert!(!hidden_rider_nodes(Some(&look), &[]).contains(&nodes::HELMET_ROAD));
+    }
+
+    /// Others see your look (spec 4C): the worn kit's variants, the
+    /// character's skin and hair, the body height (scaled rider, saddle
+    /// moved) and build (girth) on their avatar.
+    #[test]
+    fn avatars_wear_the_kit_and_the_character() {
+        let mut view = RideView::new(Route::test_loop());
+        let mut r = rider(1, ProfileId::Road, false);
+        r.look = Some(RiderLook {
+            character: ocw_core::Character {
+                height_cm: 195,
+                build: ocw_core::BodyBuild::Strong,
+                skin: 10,
+                hair: 3,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        r.parts = vec!["helmet.tt.top".into(), "wheels.road-carbon.top".into()];
+        view.riders.push(r);
+        let mut app = app(view);
+        for _ in 0..3 {
+            app.update();
+        }
+        let e = app.world().resource::<RiderEntities>().0[&RiderId(1)];
+        let look = app.world().get::<AvatarLook>(e).unwrap().clone();
+        assert_eq!(look.kit, vec!["helmet-tt".to_string()]);
+        assert_eq!(
+            look.variants,
+            part_variants(&["wheels.road-carbon.top".into()])
+        );
+        assert!(!look.variants.is_empty());
+        let rig = app.world().get::<AvatarRig>(e).unwrap();
+        assert!((rig.scale - 195.0 / 178.0).abs() < 1e-5);
+        let base = ocw_assets::shipped::bike_rig(ProfileId::Road);
+        assert!(rig.bike.saddle.y > base.saddle.y + 0.03, "a higher saddle");
+        // Named nodes: the TT helmet and the ponytail are there, the road
+        // helmet is not.
+        let mut names = app.world_mut().query::<&Name>();
+        let names: Vec<String> = names.iter(app.world()).map(|n| n.to_string()).collect();
+        assert!(names.iter().any(|n| n == nodes::HELMET_AERO));
+        assert!(names.iter().any(|n| n == ocw_assets::rider::opt::HAIR_TAIL));
+        assert!(!names.iter().any(|n| n == nodes::HELMET_ROAD));
+        let c = avatar_colours(RiderId(1), false, look.look.as_ref());
+        let [r8, g8, b8] = ocw_core::character::SKIN_TONES[10].channels();
+        assert_eq!(c.skin, Color::srgb_u8(r8, g8, b8));
+        assert_eq!(
+            tint_color("skin", [1.0; 4], &c),
+            c.skin,
+            "the skin slot takes the look's tone"
+        );
     }
 
     /// The pose follows the ride: standing on a steep climb, wheels

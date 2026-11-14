@@ -1139,20 +1139,20 @@ pub fn build_with(
                 sides,
                 true,
             );
-        // Seat post.
+        // Seat post (near: in the saddle node, so that it moves with the
+        // saddle when the rider's height sets another saddle height,
+        // spec §14 Phase 4, 4C).
         let post_top = f.saddle - Vec3::Y * 0.035 + Vec3::Z * -0.025;
-        frame_tube(
-            p.slot(if hi && kit.carbon_post {
-                "carbon"
-            } else {
-                "component"
-            }),
-            cluster - f.seat_dir * 0.05,
-            post_top,
-            0.0135,
-            if d.aero > 1.5 { 1.8 } else { 1.0 },
-            sides,
-        );
+        if !hi {
+            frame_tube(
+                p.slot("component"),
+                cluster - f.seat_dir * 0.05,
+                post_top,
+                0.0135,
+                if d.aero > 1.5 { 1.8 } else { 1.0 },
+                sides,
+            );
+        }
         // Drivetrain: chain runs, rear derailleur.
         let ring = d.rings.0;
         let cog = f.rear_hub + Vec3::X * 0.045;
@@ -1359,19 +1359,14 @@ pub fn build_with(
             }
             let mut posed = rider_low.clone();
             pose.apply(&mut posed);
-            let skip: Vec<usize> = [
-                if d.bars == Bars::Aero {
-                    pose::nodes::HELMET_ROAD
-                } else {
-                    pose::nodes::HELMET_AERO
-                },
-                pose::nodes::CAP,
-                pose::nodes::KIT_BAND,
-                pose::nodes::KIT_SASH,
-            ]
-            .iter()
-            .filter_map(|n| posed.node(n))
-            .collect();
+            // The base kit and the default character (spec §14 Phase 4,
+            // 4C): the optional nodes of other looks are left out.
+            let shown = rider::base_visible();
+            let skip: Vec<usize> = rider::optional()
+                .into_iter()
+                .filter(|n| !shown.contains(n))
+                .filter_map(|n| posed.node(n))
+                .collect();
             for (i, node) in posed.nodes.iter().enumerate() {
                 if skip.iter().any(|&s| posed.is_below(i, s)) {
                     continue;
@@ -1613,6 +1608,22 @@ pub fn build_with(
             false,
         );
     }
+    // The seat post, long enough to stay in the seat tube when the saddle
+    // moves ±[`crate::pose::MAX_SADDLE_OFFSET_M`] along it.
+    let post_top = f.saddle - Vec3::Y * 0.035 + Vec3::Z * -0.025;
+    let cluster = f.bb + f.seat_dir * d.top_tube_at;
+    frame_tube(
+        p.slot(if kit.carbon_post {
+            "carbon"
+        } else {
+            "component"
+        }),
+        cluster - f.seat_dir * 0.2,
+        post_top,
+        0.0135,
+        if d.aero > 1.5 { 1.8 } else { 1.0 },
+        rider::Detail::High.sides(),
+    );
     p.attach(&mut m, saddle);
     // Hotspot anchors of the workshop (spec §14 Phase 4, 4B).
     for (slot, at) in hotspots(&d, &f) {

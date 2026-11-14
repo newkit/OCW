@@ -258,6 +258,68 @@ impl Layout {
         }
     }
 
+    /// Where the rider stands in the changing corner (spec §14 Phase 4,
+    /// 4C): the feet on the floor 1.15 m in front of the mirror, facing it
+    /// (the rider model faces −Z; turned to +X).
+    pub fn mirror_rider(&self) -> (Vec3, Quat) {
+        (
+            Vec3::new(self.mirror.x - 1.15, 0.0, self.mirror.z),
+            Quat::from_rotation_y(-FRAC_PI_2),
+        )
+    }
+
+    /// The mirror's glass: the centre of its front face and its half size
+    /// (along the wall, z; up, y). It faces −X.
+    pub fn mirror_glass(&self) -> (Vec3, Vec2) {
+        (
+            Vec3::new(self.mirror.x - 0.049, self.mirror.y, self.mirror.z),
+            Vec2::new(0.43, 0.88),
+        )
+    }
+
+    /// The character editor's view: over the rider's shoulder into the
+    /// mirror, the rider's back left of the picture and the reflection in
+    /// the middle; `front`: straight at the rider from the mirror's side
+    /// (low graphics quality: no reflection).
+    pub fn dress_view(&self, front: bool) -> View {
+        let (feet, _) = self.mirror_rider();
+        if front {
+            View {
+                eye: feet + Vec3::new(1.0, 1.45, 0.35),
+                target: feet + Vec3::new(0.0, 1.05, 0.12),
+            }
+        } else {
+            View {
+                eye: feet + Vec3::new(-2.05, 1.95, 0.78),
+                target: Vec3::new(self.mirror.x - 0.45, 1.05, self.mirror.z - 0.08),
+            }
+        }
+    }
+
+    /// *Try on the bike*: the stand bike with the rider on it, from its
+    /// drive side.
+    pub fn try_on_view(&self) -> View {
+        let c = self.stand_bike.0 + Vec3::Y * 0.85;
+        View {
+            eye: c + Vec3::new(0.55, 0.35, 2.6),
+            target: c,
+        }
+    }
+
+    /// The rider's hotspots standing in the changing corner (head, torso,
+    /// hands, legs, feet), for a rider `scale` times the default height.
+    pub fn rider_hotspots(&self, scale: f32) -> [Vec3; 5] {
+        let (feet, rot) = self.mirror_rider();
+        [
+            Vec3::new(0.0, 1.68, -0.02),
+            Vec3::new(0.0, 1.3, 0.0),
+            Vec3::new(0.23, 0.86, -0.02),
+            Vec3::new(-0.09, 0.6, 0.0),
+            Vec3::new(0.09, 0.06, -0.06),
+        ]
+        .map(|p| feet + rot * (p * scale))
+    }
+
     /// Suggested *Bench* view.
     pub fn bench_view(&self) -> View {
         View {

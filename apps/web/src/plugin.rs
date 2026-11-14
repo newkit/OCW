@@ -338,6 +338,15 @@ fn time_command(world: &mut World, args: &[&str]) -> Result<String, String> {
     })
 }
 
+/// The browser's rider is anonymous (spec §14 Phase 10 Q5): a plain
+/// default rider, no customization – the mirror is locked.
+fn locked() -> Result<String, String> {
+    if ocw_core::character::may_customize(true) {
+        return Ok(String::new());
+    }
+    Err(ocw_core::character::LOCKED_MIRROR.into())
+}
+
 fn register_commands(app: &mut App) {
     app.console_command(ConsoleCommand::new(
         Permission::User,
@@ -410,6 +419,20 @@ fn register_commands(app: &mut App) {
     ))
     .console_command(ConsoleCommand::new(
         Permission::User,
+        Command::new("workshop")
+            .about("The workshop and the changing corner (locked for anonymous riders)")
+            .arg(Arg::new("args").num_args(0..).allow_hyphen_values(true)),
+        |_, _| locked(),
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("character")
+            .about("The rider's character (locked for anonymous riders)")
+            .arg(Arg::new("args").num_args(0..).allow_hyphen_values(true)),
+        |_, _| locked(),
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
         Command::new("net.stats").about("Show connection statistics"),
         |world, _| {
             Ok(world
@@ -456,6 +479,15 @@ mod tests {
         app.update();
         app.update();
         assert_eq!(app.world().resource::<Session>().0.power_w(), 260.0);
+        // The anonymous rider's mirror is locked (spec 4C, Phase 10 Q5).
+        for line in ["character --skin 3", "workshop open"] {
+            app.world_mut().resource_mut::<ConsoleState>().queue(line);
+            app.update();
+            let log = app.world().resource::<ConsoleState>().log().join("\n");
+            assert!(log.contains("log in to customize"), "{line}: {log}");
+        }
+        let me = app.world().resource::<RideView>().riders[0].look;
+        assert_eq!(me, Some(ocw_core::RiderLook::anonymous()));
     }
 
     /// A remote session (B3) through the plugin: the transport comes from

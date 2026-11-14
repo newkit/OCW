@@ -75,15 +75,53 @@ impl From<v1::RiderProfile> for ocw_core::RiderProfile {
     }
 }
 
+/// The full look with the character (Hello, BikeChange, RiderBuild).
 impl From<ocw_core::RiderLook> for v1::RiderLook {
     fn from(l: ocw_core::RiderLook) -> Self {
+        let c = l.character.validated();
         Self {
-            frame_rgb: l.frame.0,
-            jersey_rgb: l.jersey.0,
-            helmet_rgb: l.helmet.0,
-            kit_pattern: l.pattern.wire(),
+            height_cm: Some(u32::from(c.height_cm)),
+            body_build: Some(c.build.wire()),
+            skin: Some(u32::from(c.skin)),
+            face: Some(u32::from(c.face)),
+            hair: Some(u32::from(c.hair)),
+            hair_rgb: Some(c.hair_colour.0),
+            glasses: Some(u32::from(c.glasses)),
+            ..snapshot_look(&l)
         }
     }
+}
+
+/// The look as the snapshots carry it: only the colours and the pattern
+/// (the character comes once per change in `RiderBuild.look`, spec §14
+/// Phase 4, 4C).
+pub fn snapshot_look(l: &ocw_core::RiderLook) -> v1::RiderLook {
+    v1::RiderLook {
+        frame_rgb: l.frame.0,
+        jersey_rgb: l.jersey.0,
+        helmet_rgb: l.helmet.0,
+        kit_pattern: l.pattern.wire(),
+        ..Default::default()
+    }
+}
+
+/// The character of a look from the network, validated (absent fields:
+/// the default's).
+pub fn character(l: &v1::RiderLook) -> ocw_core::Character {
+    let d = ocw_core::Character::default();
+    let small = |v: Option<u32>, d: u8| v.map_or(d, |v| v.min(255) as u8);
+    ocw_core::Character {
+        height_cm: l
+            .height_cm
+            .map_or(d.height_cm, |h| h.min(u32::from(u16::MAX)) as u16),
+        build: l.body_build.map_or(d.build, ocw_core::BodyBuild::from_wire),
+        skin: small(l.skin, d.skin),
+        face: small(l.face, d.face),
+        hair: small(l.hair, d.hair),
+        hair_colour: l.hair_rgb.map_or(d.hair_colour, ocw_core::Rgb::from_wire),
+        glasses: small(l.glasses, d.glasses),
+    }
+    .validated()
 }
 
 /// A look from the network, validated (spec §2.5): colours are cut to
@@ -95,6 +133,7 @@ impl From<&v1::RiderLook> for ocw_core::RiderLook {
             jersey: ocw_core::Rgb::from_wire(l.jersey_rgb),
             helmet: ocw_core::Rgb::from_wire(l.helmet_rgb),
             pattern: ocw_core::KitPattern::from_wire(l.kit_pattern),
+            character: character(l),
         }
     }
 }
@@ -122,7 +161,7 @@ pub fn quantize(s: &ocw_sim::RiderSnapshot) -> v1::RiderUpdate {
         power_w: s.power_w.round().max(0.0) as u32,
         display_name: s.name.clone(),
         bike_profile: s.bike.id().into(),
-        look: Some(s.look.into()),
+        look: Some(snapshot_look(&s.look)),
         heading_mrad: (s.state.heading * 1000.0).round() as i32,
         turn_curvature_e4: (s.state.turn_curvature * 1e4).round() as i32,
         mode: if s.god.is_some() {
@@ -459,6 +498,7 @@ pub fn rider_build(
     rider: RiderId,
     profile: ocw_core::ProfileId,
     build: Option<&ocw_sim::Build>,
+    look: Option<&ocw_core::RiderLook>,
 ) -> v1::RiderBuild {
     let stock = ocw_sim::Build::stock(profile);
     let b = build.unwrap_or(&stock);
@@ -472,6 +512,7 @@ pub fn rider_build(
         climb_gain_e4: e4(b.climb_gain),
         bike_mass_g: (b.params.bike_mass_kg * 1000.0).round().max(0.0) as u32,
         capped: b.capped(),
+        look: look.map(|l| (*l).into()),
     }
 }
 
@@ -484,6 +525,9 @@ pub struct BuildInfo {
     pub parts: Vec<String>,
     /// The server's effect against the profile's stock bike (4G).
     pub effect: ocw_sim::build::Effect,
+    /// The rider's full look with the character (4C; `None`: an older
+    /// server).
+    pub look: Option<ocw_core::RiderLook>,
 }
 
 /// Decodes a bike build.
@@ -499,6 +543,7 @@ pub fn build_info(b: &v1::RiderBuild) -> BuildInfo {
             mass_kg: f64::from(b.bike_mass_g) / 1000.0,
             capped: b.capped,
         },
+        look: b.look.as_ref().map(ocw_core::RiderLook::from),
     }
 }
 
@@ -1413,6 +1458,53 @@ mod tests {
         assert!((s.turn_curvature - 0.0123).abs() < 1e-9);
     }
 
+    /// The character (spec §14 Phase 4, 4C, W4) round-trips in the full
+    /// look (Hello, BikeChange, RiderBuild), is left out of the snapshots'
+    /// looks, and is validated on arrival.
+    #[test]
+    fn the_character_round_trips_once_per_change_not_in_snapshots() {
+        let look = ocw_core::RiderLook {
+            jersey: ocw_core::Rgb(0x43A047),
+            character: ocw_core::Character {
+                height_cm: 191,
+                build: ocw_core::BodyBuild::Strong,
+                skin: 9,
+                face: 1,
+                hair: 3,
+                hair_colour: ocw_core::Rgb(0xB3482A),
+                glasses: 2,
+            },
+            ..Default::default()
+        };
+        let wire: v1::RiderLook = look.into();
+        assert_eq!(ocw_core::RiderLook::from(&wire), look);
+        let snap = snapshot_look(&look);
+        assert_eq!(snap.height_cm, None);
+        assert_eq!(snap.skin, None);
+        let back = ocw_core::RiderLook::from(&snap);
+        assert_eq!(back.jersey, look.jersey);
+        assert_eq!(back.character, ocw_core::Character::default());
+        // A RiderBuild carries it, with or without parts.
+        let msg = rider_build(RiderId(3), ocw_core::ProfileId::Road, None, Some(&look));
+        let bytes = encode(&server_message(v1::server_message::Msg::RiderBuild(msg)));
+        let v1::server_message::Msg::RiderBuild(b) = decode_server(&bytes).unwrap() else {
+            panic!("a rider build")
+        };
+        assert_eq!(build_info(&b).look, Some(look));
+        // Out of range from the wire: the default's values, height clamped.
+        let odd = v1::RiderLook {
+            height_cm: Some(900),
+            skin: Some(40),
+            hair: Some(99),
+            body_build: Some(7),
+            ..Default::default()
+        };
+        let c = character(&odd);
+        let d = ocw_core::Character::default();
+        assert_eq!(c.height_cm, ocw_core::character::HEIGHT_RANGE_CM.1);
+        assert_eq!((c.skin, c.hair, c.build), (d.skin, d.hair, d.build));
+    }
+
     /// Looks from the network are validated: colours to 24 bits, unknown
     /// patterns plain, unknown bikes the default profile.
     #[test]
@@ -1422,6 +1514,7 @@ mod tests {
             jersey_rgb: 0x00AB_CDEF,
             helmet_rgb: 0,
             kit_pattern: 77,
+            ..Default::default()
         };
         let l = ocw_core::RiderLook::from(&wire);
         assert_eq!(l.frame, ocw_core::Rgb(0x0000FF));
@@ -1634,7 +1727,7 @@ mod tests {
             ocw_core::ProfileId::Road,
             &parts,
         );
-        let wire = rider_build(RiderId(4), ocw_core::ProfileId::Road, Some(&b));
+        let wire = rider_build(RiderId(4), ocw_core::ProfileId::Road, Some(&b), None);
         let msg = server_message(v1::server_message::Msg::RiderBuild(wire));
         let v1::server_message::Msg::RiderBuild(back) = decode_server(&encode(&msg)).unwrap()
         else {
@@ -1650,7 +1743,12 @@ mod tests {
         assert!((info.effect.mass_kg - b.params.bike_mass_kg).abs() < 1e-3);
         assert_eq!(info.effect.capped, b.capped());
         // The stock bike: hash 0, no parts.
-        let stock = build_info(&rider_build(RiderId(5), ocw_core::ProfileId::Gravel, None));
+        let stock = build_info(&rider_build(
+            RiderId(5),
+            ocw_core::ProfileId::Gravel,
+            None,
+            None,
+        ));
         assert_eq!((stock.hash, stock.parts.len()), (0, 0));
         assert_eq!(stock.profile, ocw_core::ProfileId::Gravel);
         // The hash rides in every rider update (6 bytes: a 2-byte tag and
