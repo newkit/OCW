@@ -91,7 +91,7 @@ delete_cmd() { # os repo dir
   if [ "$1" = windows ]; then
     printf '%s' "\$p = Join-Path (Split-Path '$2') '$3'; \$t = Join-Path \$p 'target'; \$busy = @(Get-ChildItem -LiteralPath (Join-Path \$env:TEMP 'ocw-tasks') -Filter '*.json' -ErrorAction SilentlyContinue | Where-Object { Get-Process -Id (\$_.BaseName -split '-')[0] -ErrorAction SilentlyContinue } | Where-Object { (Get-Content -Raw -LiteralPath \$_.FullName) -match '\"checkout\":\"$3\"' }); if (-not (Test-Path -LiteralPath \$t)) { 'gone' } elseif (\$busy.Count) { 'busy' } else { \$kb = [int64](((Get-ChildItem -LiteralPath \$t -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum) / 1KB); \$g = 'target.ocw-gc.' + \$PID; Rename-Item -LiteralPath \$t -NewName \$g; Remove-Item -Recurse -Force -LiteralPath (Join-Path \$p \$g) -ErrorAction SilentlyContinue; if (Test-Path -LiteralPath (Join-Path \$p \$g)) { 'failed' } else { 'deleted ' + \$kb } }"
   else
-    printf '%s' "p=\$(dirname $2)/$3; t=\$p/target; [ -d \$t ] || { echo gone; exit 0; }; for g in /tmp/ocw-tasks/*.json; do [ -e \$g ] || continue; q=\${g##*/}; q=\${q%%-*}; grep -q '\"checkout\":\"$3\"' \$g && ps -p \$q >/dev/null 2>&1 && { echo busy; exit 0; }; done; kb=\$(du -sk \$t | cut -f1); mv \$t \$p/target.ocw-gc.\$\$ && rm -rf \$p/target.ocw-gc.\$\$ && echo \"deleted \$kb\" || echo failed"
+    printf '%s' "p=\$(dirname $2)/$3; t=\$p/target; [ -d \$t ] || { echo gone; exit 0; }; for g in \$(find /tmp/ocw-tasks -name '*.json' 2>/dev/null); do q=\${g##*/}; q=\${q%%-*}; grep -q '\"checkout\":\"$3\"' \$g && ps -p \$q >/dev/null 2>&1 && { echo busy; exit 0; }; done; kb=\$(du -sk \$t | cut -f1); mv \$t \$p/target.ocw-gc.\$\$ && rm -rf \$p/target.ocw-gc.\$\$ && echo \"deleted \$kb\" || echo failed"
   fi
 }
 
@@ -122,7 +122,7 @@ for m in "${machines[@]}"; do
     echo "== $m: unreachable, skipped"
     continue
   fi
-  busy=$(timeout 60 scripts/remote.sh "$m" ssh "$([ "$os" = windows ] && echo "Get-Content (Join-Path \$env:TEMP 'ocw-tasks\\*.json') -ErrorAction SilentlyContinue" || echo "cat /tmp/ocw-tasks/*.json 2>/dev/null; true")" 2>/dev/null || true)
+  busy=$(timeout 60 scripts/remote.sh "$m" ssh "$([ "$os" = windows ] && echo "Get-Content (Join-Path \$env:TEMP 'ocw-tasks\\*.json') -ErrorAction SilentlyContinue" || echo "find /tmp/ocw-tasks -name '*.json' -exec cat {} + 2>/dev/null; true")" 2>/dev/null || true)
   freed=0
   echo "== $m"
   [ -n "$listing" ] || echo "  (no target/ to delete)"
