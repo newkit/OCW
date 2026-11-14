@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.94 – November 2026
+Version 2.95 – November 2026
 
 | Version | Change |
 |---|---|
