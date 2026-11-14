@@ -849,6 +849,15 @@ pub fn flight_line(f: &crate::FlightView, units: Units) -> String {
     )
 }
 
+/// The main line with the weather (spec §14 Phase 9, S4): its summary and
+/// the wind relative to the rider (S6, "↓ headwind 18 km/h").
+pub fn weather_hud(line: &str, w: &crate::weather::WeatherView) -> String {
+    match w.wind_hud() {
+        Some(wind) => format!("{line}   {}   {wind}", w.summary),
+        None => format!("{line}   {}", w.summary),
+    }
+}
+
 /// " | Weather: MET Norway, CC BY 4.0" while the weather is real (spec
 /// §14 Phase 9, S7: the provider's credit stays on screen), else "".
 pub fn attribution_suffix(view: &RideView) -> String {
@@ -882,7 +891,7 @@ fn update_hud(
     if let Some(f) = &view.flight {
         let line = flight_line(f, *units);
         let line = match &view.weather {
-            Some(w) => format!("{line}   {}", w.summary),
+            Some(w) => weather_hud(&line, w),
             None => line,
         };
         let line = match &view.sky {
@@ -933,7 +942,7 @@ fn update_hud(
     // rider's place (spec §14 Phase 9; the ISO timestamp of captures is
     // separate, top right).
     let line = match &view.weather {
-        Some(w) => format!("{line}   {}", w.summary),
+        Some(w) => weather_hud(&line, w),
         None => line,
     };
     let line = match &view.sky {
@@ -982,6 +991,36 @@ fn update_hud(
 mod tests {
     use super::*;
     use ocw_world::Route;
+
+    /// Spec §14 Phase 9, S6: the HUD shows the wind relative to the rider
+    /// next to the weather, in glyphs the HUD font has.
+    #[test]
+    fn the_hud_shows_the_wind_relative_to_the_rider() {
+        let mut w = crate::weather::tests::view_of("windy");
+        let line = weather_hud("250 W", &w);
+        assert_eq!(line, format!("250 W   {}", w.summary), "no rider: no arrow");
+        w.rider_wind = Some(ocw_weather::RelativeWind {
+            head_mps: 5.0,
+            cross_mps: 0.0,
+        });
+        let line = weather_hud("250 W", &w);
+        assert!(line.ends_with("↓ headwind 18 km/h"), "{line}");
+        w.rider_wind = Some(ocw_weather::RelativeWind {
+            head_mps: -3.0,
+            cross_mps: 3.0,
+        });
+        // From behind on the left: blowing ahead to the right.
+        let line = weather_hud("", &w);
+        assert!(
+            line.ends_with("↗ crosswind from the left 15 km/h"),
+            "{line}"
+        );
+        w.rider_wind = Some(ocw_weather::RelativeWind::default());
+        assert_eq!(weather_hud("x", &w), format!("x   {}", w.summary));
+        for arrow in "↑↗→↘↓↙←↖·".chars() {
+            assert!(crate::font::covers(&arrow.to_string()), "{arrow}");
+        }
+    }
 
     #[test]
     fn recording_label_format() {

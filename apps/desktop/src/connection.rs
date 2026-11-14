@@ -167,6 +167,13 @@ pub fn start_session_with(world: &mut World, route: Route, keep_link: bool) {
     if let Some(m) = rules.rules_message() {
         server.send(m);
     }
+    // Weather physics (spec §14 Phase 9, S6): local rides follow the
+    // setting `weather.physics` (on by default); a shared ride is the host's.
+    if !matches!(server, ServerLink::Remote(_))
+        && let Some(m) = crate::weather::physics_message(world)
+    {
+        server.send(m);
+    }
     let now = world
         .get_resource::<Time>()
         .map_or(0.0, |t| t.elapsed_secs_f64());
@@ -526,6 +533,11 @@ fn event_command() -> Command {
         .allow_hyphen_values(true)
         .value_name("WEATHER")
         .help("The event's weather: PRESET [FIELD=VALUE...], custom FIELD=VALUE..., random SEED or auto SEED (the simulation); fixed for the event");
+    // The organiser's weather-physics rule (spec §14 Phase 9, S6, Q4).
+    let weather_physics = Arg::new("weather-physics")
+        .long("weather-physics")
+        .value_parser(["on", "off"])
+        .help("Whether the weather affects the physics in the event: wind, air density, wet roads (default off)");
     Command::new("event")
         .about("Local events: a race, group ride or time trial against your ghost (spec 2.3)")
         .subcommand_required(true)
@@ -535,7 +547,8 @@ fn event_command() -> Command {
             ))
             .arg(bots.clone())
             .arg(physics.clone())
-            .arg(weather.clone()),
+            .arg(weather.clone())
+            .arg(weather_physics.clone()),
         )
         .subcommand(
             Command::new("group")
@@ -548,14 +561,16 @@ fn event_command() -> Command {
                 )
                 .arg(bots)
                 .arg(physics.clone())
-                .arg(weather.clone()),
+                .arg(weather.clone())
+                .arg(weather_physics.clone()),
         )
         .subcommand(
             finish(
                 Command::new("tt").about("Time trial alone against your best effort (the ghost)"),
             )
             .arg(physics)
-            .arg(weather),
+            .arg(weather)
+            .arg(weather_physics),
         )
         .subcommand(Command::new("cancel").about("End the current event"))
         .subcommand(Command::new("status").about("The current event and its standings"))
@@ -583,8 +598,19 @@ fn run_event(world: &mut World, m: &clap::ArgMatches) -> Result<String, String> 
         }
         None => None,
     };
+    let weather_physics = args
+        .try_get_one::<String>("weather-physics")
+        .ok()
+        .flatten()
+        .map(|s| s == "on");
     let start = |spec: ocw_sim::EventSpec, bots| {
-        ClientCore::event_start_message_weather(&spec, bots, physics(), weather.as_ref())
+        ClientCore::event_start_message_rules(
+            &spec,
+            bots,
+            physics(),
+            weather.as_ref(),
+            weather_physics,
+        )
     };
     let msg = match sub {
         "race" => start(

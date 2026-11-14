@@ -557,6 +557,9 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         ],
         Page::Trainer => vec![
             setting_row(settings, "trainer.difficulty", "Difficulty (%)"),
+            // Weather physics (spec §14 Phase 9, S6): the wind reaches the
+            // trainer too.
+            setting_row(settings, "weather.physics", "Weather physics"),
             setting_row(
                 settings,
                 "trainer.virtual_power",

@@ -267,6 +267,11 @@ pub struct Session {
     /// The world's static obstacles and their index near riders in wild
     /// mode (spec §14 Phase 12 K3).
     world: crate::collide::WorldCache,
+    /// The session weather's physics for the coming ticks (spec §14 Phase
+    /// 9, S6; set by the game server from its weather every tick) and the
+    /// session's *weather affects physics* switch (Q4).
+    weather: Option<crate::weather::WeatherPhysics>,
+    weather_physics: bool,
 }
 
 impl Session {
@@ -285,6 +290,8 @@ impl Session {
             god_area: god_mode::route_area(&route),
             rules: collisions::Rules::default(),
             world: crate::collide::WorldCache::default(),
+            weather: None,
+            weather_physics: false,
             route,
         }
     }
@@ -1073,6 +1080,56 @@ impl Session {
             .collect()
     }
 
+    /// The session weather's physics for the coming ticks (spec §14 Phase
+    /// 9, S6): the game server sets it every tick from its weather (the
+    /// state, the gust of the moment, the ground). It acts only while
+    /// [`Session::weather_physics_on`].
+    pub fn set_weather(&mut self, weather: Option<crate::weather::WeatherPhysics>) {
+        self.weather = weather;
+    }
+
+    /// The session's *weather affects physics* switch (spec §14 Phase 9,
+    /// Q4: on in solo and free ride; off by default). Off, the physics are
+    /// exactly those without weather.
+    pub fn set_weather_physics(&mut self, on: bool) {
+        self.weather_physics = on;
+    }
+
+    pub fn weather_physics_setting(&self) -> bool {
+        self.weather_physics
+    }
+
+    /// The organiser's weather-physics rule for the current event (Q4: off
+    /// unless enabled); `false` without an event.
+    pub fn set_event_weather_physics(&mut self, on: bool) -> bool {
+        match &mut self.event {
+            Some(e) => {
+                e.weather_physics = on;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Whether the weather affects the physics now: the event's rule while
+    /// an event is on (until it is finished), else the session's switch.
+    pub fn weather_physics_on(&self) -> bool {
+        match self
+            .event
+            .as_ref()
+            .filter(|e| e.phase != event::Phase::Finished)
+        {
+            Some(e) => e.weather_physics,
+            None => self.weather_physics,
+        }
+    }
+
+    /// The weather's physics in force now (`None`: the weather does not
+    /// affect the physics).
+    pub fn active_weather(&self) -> Option<&crate::weather::WeatherPhysics> {
+        self.weather.as_ref().filter(|_| self.weather_physics_on())
+    }
+
     /// Advances the session by one physics tick.
     pub fn step(&mut self) {
         self.tick += 1;
@@ -1106,6 +1163,7 @@ impl Session {
         let overtake_left = self.overtake_left();
         let tick = self.tick;
         let loop_m = (self.free.is_none() && self.route.is_loop()).then(|| self.route.length());
+        let weather = self.active_weather().copied();
         // Drafting and avoidance use everyone's position at the start of
         // the tick (in free ride also where on the road graph they are).
         // Riders in god mode fly: they draft nobody and nobody drafts them.
@@ -1206,14 +1264,22 @@ impl Session {
                 .filter(|(p, _)| !p.fallen)
                 .map(|(p, m)| (*m, p.lateral))
                 .collect();
-            let drag = if drafting {
-                drafting::drag_factor((d, rider.state.lateral_offset), ahead)
-            } else {
-                1.0
-            };
             let track: &dyn Track = match &rider.path {
                 Some(p) => p,
                 None => &self.route,
+            };
+            // Weather physics (spec §14 Phase 9, S6): in a crosswind the
+            // shelter behind the others drifts downwind.
+            let drift = weather.as_ref().map(|w| {
+                let here = crate::weather::at_rider(w, track, &rider.state);
+                crate::weather::wake_drift(here.wind, rider.state.speed)
+            });
+            let drag = match (drafting, drift) {
+                (false, _) => 1.0,
+                (true, None) => drafting::drag_factor((d, rider.state.lateral_offset), ahead),
+                (true, Some(drift)) => {
+                    drafting::drag_factor_in_wind((d, rider.state.lateral_offset), ahead, drift)
+                }
             };
             let grade = track.sample(d).grade;
             if let Control::Bot {
@@ -1297,7 +1363,7 @@ impl Session {
                 braking: rider.input.brake,
             };
             let (speed_before, heading_before) = (rider.state.speed, rider.state.heading);
-            ride::tick(
+            ride::tick_in(
                 &mut rider.state,
                 &rider.effective,
                 rider.input.power_w,
@@ -1305,6 +1371,7 @@ impl Session {
                 &mut rider.scraping,
                 track,
                 drag,
+                weather.as_ref(),
                 SIM_DT,
             );
             // Hearts (spec §14 Phase 4, 4E): the accepted power's work and

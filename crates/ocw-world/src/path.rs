@@ -1184,6 +1184,10 @@ impl Track for RidePath {
         self.net.edge(self.step_at(distance).edge).width_m
     }
 
+    fn sheltered(&self, distance: f64) -> bool {
+        self.net.edge(self.step_at(distance).edge).tunnel
+    }
+
     fn speed_limit(&self, distance: f64) -> Option<f64> {
         let k = self.step_index_at(distance);
         let mut limit: Option<f64> = None;
@@ -1529,6 +1533,28 @@ mod tests {
 
     fn straight(_: &Junction) -> usize {
         usize::MAX
+    }
+
+    /// A tunnel edge shelters riders from the weather (spec §14 Phase 9,
+    /// S6); other edges and fixed routes do not.
+    #[test]
+    fn tunnels_shelter_from_the_weather() {
+        let mut g = crossroads();
+        g.edges[0].tunnel = true;
+        let n = net(g);
+        let p = RidePath::start(n.clone(), 0, 50.0, false, 0.0, 0);
+        assert!(p.sheltered(10.0));
+        let q = RidePath::start(n, 1, 50.0, false, 0.0, 0);
+        assert!(!q.sheltered(10.0));
+        let route = crate::Route::from_points(
+            "r",
+            "R",
+            vec![[0.0, 0.0, 0.0], [100.0, 0.0, 0.0]],
+            false,
+            5.0,
+        )
+        .unwrap();
+        assert!(!route.sheltered(50.0));
     }
 
     #[test]

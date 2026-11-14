@@ -55,6 +55,21 @@ pub fn drag_factor(me: (f64, f64), others: impl IntoIterator<Item = (f64, f64)>)
     1.0 - (best + 0.3 * second).min(MAX_TOTAL_REDUCTION)
 }
 
+/// [`drag_factor`] in a crosswind (spec §14 Phase 9, S6): the wake of each
+/// rider ahead drifts `drift` metres sideways per metre behind it
+/// (positive = to the right, [`crate::weather::wake_drift`]), so the
+/// shelter lies on the lee side – echelons. `drift` 0 is [`drag_factor`].
+pub fn drag_factor_in_wind(
+    me: (f64, f64),
+    others: impl IntoIterator<Item = (f64, f64)>,
+    drift: f64,
+) -> f64 {
+    drag_factor(
+        me,
+        others.into_iter().map(|(d, l)| (d, l + drift * (d - me.0))),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -87,6 +102,30 @@ mod tests {
             assert!(r <= last + 1e-12);
             last = r;
         }
+    }
+
+    /// Spec §14 Phase 9 9G: drafting offset in a crosswind.
+    #[test]
+    fn crosswind_moves_the_shelter_downwind() {
+        let ahead = [(BIKE_LENGTH_M + 0.5, 0.0)];
+        let behind = |l: f64, drift: f64| drag_factor_in_wind((0.0, l), ahead, drift);
+        // Still air: straight behind is best.
+        assert_eq!(behind(0.0, 0.0), drag_factor((0.0, 0.0), ahead));
+        assert!(behind(0.0, 0.0) < behind(0.8, 0.0));
+        // Wind from the left (the wake drifts right by 0.4 m per metre):
+        // the best place is to the right of the wheel ahead, the place
+        // straight behind loses most of the shelter.
+        let drift = 0.4;
+        let best = (-20..=40)
+            .map(|i| f64::from(i) * 0.05)
+            .min_by(|a, b| behind(*a, drift).total_cmp(&behind(*b, drift)))
+            .unwrap();
+        let expect = drift * (BIKE_LENGTH_M + 0.5);
+        assert!((best - expect).abs() < 0.06, "{best} vs {expect}");
+        assert!(behind(0.0, drift) > behind(expect, drift) + 0.08);
+        assert!((behind(expect, drift) - behind(0.0, 0.0)).abs() < 1e-12);
+        // Wind from the right: the shelter is on the left.
+        assert!(behind(-expect, -drift) < behind(expect, -drift));
     }
 
     #[test]

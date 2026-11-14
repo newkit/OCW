@@ -219,6 +219,39 @@ pub fn session_weather_with(
             Mode::Fixed | Mode::Real => 0,
         },
         real: real.map(real_to_wire),
+        physics: None,
+    }
+}
+
+/// The weather's physics rule as a client sees it (spec §14 Phase 9, S6).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct PhysicsRule {
+    /// The weather affects the physics now (the event's rule during an
+    /// event, else the session's switch).
+    pub on: bool,
+    /// The session's switch (the host's).
+    pub session: bool,
+    /// The scene height (m) the weather's pressure holds at.
+    pub pressure_y_m: f64,
+}
+
+pub fn physics_rule_to_wire(r: &PhysicsRule) -> v1::WeatherPhysics {
+    v1::WeatherPhysics {
+        on: r.on,
+        session: r.session,
+        pressure_y_m: r.pressure_y_m as f32,
+    }
+}
+
+pub fn physics_rule_from_wire(w: &v1::WeatherPhysics) -> PhysicsRule {
+    PhysicsRule {
+        on: w.on,
+        session: w.session,
+        pressure_y_m: if w.pressure_y_m.is_finite() {
+            f64::from(w.pressure_y_m).clamp(-20_000.0, 20_000.0)
+        } else {
+            0.0
+        },
     }
 }
 
@@ -241,9 +274,27 @@ pub struct WeatherInfo {
     pub sim_seed: u64,
     /// Real weather (S7; `None`: off).
     pub real: Option<RealInfo>,
+    /// The weather's physics rule (S6; an older server: off).
+    pub physics: PhysicsRule,
 }
 
 impl WeatherInfo {
+    /// The weather's physics at session time `t_s` while it affects the
+    /// physics (spec §14 Phase 9, S6; `None`: it does not): the state of
+    /// the message, the session's gust at `t_s`, the ground – what the
+    /// server's session rides with.
+    pub fn physics_at(&self, t_s: f64) -> Option<ocw_weather::WeatherPhysics> {
+        self.physics.on.then(|| {
+            ocw_weather::WeatherPhysics::at(
+                &self.now,
+                self.seed,
+                t_s,
+                &self.ground,
+                self.physics.pressure_y_m,
+            )
+        })
+    }
+
     /// Whether rider `me` may change the weather (`host`: the session's
     /// host, from the clock).
     pub fn may_change(&self, me: Option<RiderId>, host: Option<RiderId>) -> bool {
@@ -273,6 +324,11 @@ pub fn weather_info(w: &v1::SessionWeather) -> WeatherInfo {
             _ => Mode::Fixed,
         },
         real: w.real.as_ref().map(real_from_wire),
+        physics: w
+            .physics
+            .as_ref()
+            .map(physics_rule_from_wire)
+            .unwrap_or_default(),
         access: access_from_wire(w.access),
         seed: w.seed,
         session_s: w.session_s,
@@ -308,6 +364,8 @@ pub struct WeatherChange {
     pub strike: Option<(f32, f32)>,
     /// Real weather from now on, from this data source (S7).
     pub real: Option<Choice>,
+    /// The session's weather-physics switch (S6, Q4).
+    pub physics: Option<bool>,
 }
 
 /// A weather request (spec §14 Phase 9, S4).
@@ -325,6 +383,7 @@ pub fn weather_request(c: &WeatherChange) -> v1::ClientMessage {
         strike_bearing_deg: c.strike.map(|s| s.1),
         real: c.real.is_some(),
         provider: c.real.map_or(0, choice_to_wire),
+        physics: c.physics,
     }))
 }
 
@@ -386,6 +445,7 @@ pub fn weather_change(r: &v1::WeatherRequest) -> WeatherChange {
             )
         }),
         real: r.real.then(|| choice_from_wire(r.provider)),
+        physics: r.physics,
     }
 }
 
@@ -516,6 +576,86 @@ mod tests {
         );
     }
 
+    /// The weather's physics rule through the wire (spec §14 Phase 9, S6):
+    /// in the session weather, the request's switch, the event's rule.
+    #[test]
+    fn weather_physics_round_trip() {
+        use v1::server_message::Msg as S;
+        let mut w = SessionWeather::new(5);
+        w.set(0.0, preset("storm").unwrap(), 0.0, true);
+        let mut msg = session_weather(&w, 12.0, ClockAccess::Host);
+        let rule = PhysicsRule {
+            on: true,
+            session: true,
+            pressure_y_m: -455.0,
+        };
+        msg.physics = Some(physics_rule_to_wire(&rule));
+        let bytes = encode(&server_message(S::Snapshot(v1::Snapshot {
+            weather: Some(msg),
+            ..Default::default()
+        })));
+        let S::Snapshot(back) = decode_server(&bytes).unwrap() else {
+            panic!("a snapshot")
+        };
+        let info = weather_info(&back.weather.unwrap());
+        assert_eq!(info.physics, rule);
+        // The client's physics is the server's at the same moment.
+        let server = ocw_weather::WeatherPhysics::at(&w.now(12.0), 5, 12.5, &w.ground(), -455.0);
+        assert_eq!(info.physics_at(12.5), Some(server));
+        // Off (and an older server): none.
+        let old = weather_info(&session_weather(&w, 12.0, ClockAccess::Host));
+        assert_eq!(old.physics, PhysicsRule::default());
+        assert_eq!(old.physics_at(12.5), None);
+        assert_eq!(
+            physics_rule_from_wire(&v1::WeatherPhysics {
+                pressure_y_m: f32::NAN,
+                ..Default::default()
+            })
+            .pressure_y_m,
+            0.0
+        );
+        // The request's switch.
+        for physics in [None, Some(true), Some(false)] {
+            let c = WeatherChange {
+                physics,
+                ..Default::default()
+            };
+            let crate::v1::client_message::Msg::Weather(r) =
+                decode_client(&encode(&weather_request(&c))).unwrap()
+            else {
+                panic!("a weather request")
+            };
+            assert_eq!(weather_change(&r).physics, physics);
+        }
+        // The event's rule (Q4: absent = off), in its state and info.
+        assert!(!crate::event_weather_physics(&v1::EventStart::default()));
+        assert!(crate::event_weather_physics(&v1::EventStart {
+            weather_physics: Some(true),
+            ..Default::default()
+        }));
+        let mut ev = ocw_sim::Event::new(
+            1,
+            ocw_sim::EventKind::Race {
+                length_m: 1000.0,
+                laps: None,
+            },
+            0,
+            0.0,
+            Vec::new(),
+        );
+        assert!(
+            !crate::event_info(&crate::event_state(Some(&ev), &[], 0))
+                .unwrap()
+                .weather_physics
+        );
+        ev.weather_physics = true;
+        assert!(
+            crate::event_info(&crate::event_state(Some(&ev), &[], 0))
+                .unwrap()
+                .weather_physics
+        );
+    }
+
     #[test]
     fn weather_requests_round_trip_and_are_clamped() {
         use v1::client_message::Msg;
@@ -531,6 +671,7 @@ mod tests {
             },
             strike: Some((800.0, 270.0)),
             real: None,
+            physics: Some(true),
         };
         let Msg::Weather(r) = decode_client(&encode(&weather_request(&c))).unwrap() else {
             panic!("a weather request")

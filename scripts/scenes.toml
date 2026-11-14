@@ -1799,3 +1799,21 @@ world = true
 args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2421,2300", "--bots", "0", "--power", "0"]
 at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 150 55 30"]
 shot = 9
+
+# --- Weather physics (spec §14 Phase 9, S6) ----------------------------------
+
+[[scene]]
+name = "weather-physics-headwind-vaduz"
+description = "Weather physics (Phase 9 S6): 250 W into a strong headwind on the 10 % climb above Vaduz (km 2.4, heading SSE; wind 18 m/s from 165°, about 41 km/h at the rider): the rider crawls at about 7 km/h; the HUD shows the wind relative to the rider (↓ headwind)"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "250"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=weather windy wind=18 gust=18 dir=165", "2.5=teleport 2.4"]
+shot = 24
+
+[[scene]]
+name = "weather-physics-tailwind-vaduz"
+description = "Weather physics (Phase 9 S6): the same 250 W on the same climb (km 2.4) with the same wind from behind (18 m/s from 345°): the rider climbs at about 12 km/h; the HUD shows ↑ tailwind"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "250"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=weather windy wind=18 gust=18 dir=345", "2.5=teleport 2.4"]
+shot = 24

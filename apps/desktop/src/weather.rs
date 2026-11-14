@@ -502,6 +502,49 @@ pub fn real_at_start(world: &World, args: &crate::Args) -> bool {
         .unwrap_or(setting && args.screenshot.is_none() && args.capture.is_none())
 }
 
+/// The local ride's weather-physics switch at the start (spec §14 Phase 9,
+/// S6, Q4): the local servers start with it on; the setting
+/// `weather.physics` off sends the switch.
+pub fn physics_message(world: &World) -> Option<Vec<u8>> {
+    let on = world
+        .get_resource::<crate::settings::UserSettings>()
+        .is_none_or(|us| {
+            us.value("weather.physics") == crate::settings::registry::Value::Bool(true)
+        });
+    (!on).then(|| {
+        crate::client::ClientCore::weather_message(&ocw_protocol::WeatherChange {
+            physics: Some(false),
+            ..Default::default()
+        })
+    })
+}
+
+/// `weather.physics [on|off]`: whether the weather affects the physics in
+/// this ride (asks the server: the host decides) and the next local rides
+/// (setting `weather.physics`, saved).
+fn run_physics(world: &mut World, arg: Option<&str>) -> Result<String, String> {
+    let now = world.resource::<Time>().elapsed_secs_f64();
+    let on = match arg {
+        None => {
+            return Ok(match world.get_resource::<ClientState>() {
+                Some(c) => ocw_client::weather::physics_line(&c.0, now),
+                None => "weather physics: not riding".into(),
+            });
+        }
+        Some("on" | "true" | "1") => true,
+        Some("off" | "false" | "0") => false,
+        Some(a) => return Err(format!("on or off, not {a}")),
+    };
+    save_setting(world, "weather.physics", if on { "on" } else { "off" });
+    if world.get_resource::<ClientState>().is_none() {
+        return Ok(format!(
+            "weather physics {} for the next ride",
+            if on { "on" } else { "off" }
+        ));
+    }
+    run_weather(world, &["physics", if on { "on" } else { "off" }])
+}
+
 /// The request for real weather from the machine's data source.
 pub fn real_message(world: &World) -> Vec<u8> {
     let provider = world
@@ -808,6 +851,17 @@ fn register_commands(app: &mut App) {
             let a = m.get_one::<String>("on").map(String::as_str);
             let out = run_real(world, a);
             print_err(world, "weather.real", out)
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("weather.physics")
+            .about("Whether the weather affects the physics (wind, air density, wet roads; the trainer gets the wind), saved; the host decides in shared rides, the organizer in events")
+            .arg(opt_arg("on", "on or off (none: show it and what it does at the rider)")),
+        |world, m| {
+            let a = m.get_one::<String>("on").map(String::as_str);
+            let out = run_physics(world, a);
+            print_err(world, "weather.physics", out)
         },
     ))
     .console_command(ConsoleCommand::new(

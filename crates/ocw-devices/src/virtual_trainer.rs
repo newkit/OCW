@@ -118,6 +118,7 @@ mod tests {
             crr: 0.004,
             cw_kg_per_m: 0.4,
             mass_kg: 80.0,
+            wind_grade: 0.0,
         }));
         assert_eq!(p.reported(), 100.0);
         p.command(DeviceCommand::SetTargetPower(-5.0));

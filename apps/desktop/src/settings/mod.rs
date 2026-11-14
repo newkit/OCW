@@ -893,6 +893,8 @@ mod tests {
                 || line.contains("ride.collisions")
                 || line.contains("ride.chaotic_bots")
                 || line.contains("ride.proximity_cue")
+                // Weather physics applies through the weather plugin.
+                || line.contains("weather.physics")
             {
                 continue;
             }

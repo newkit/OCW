@@ -129,6 +129,13 @@ pub struct ServerConfig {
     /// Start in real weather from this data source (`ocw-server --weather
     /// real`; needs a weather fetcher, [`GameServer::set_weather_fetcher`]).
     pub real_weather: Option<ocw_weather::real::Choice>,
+    /// The session's *weather affects physics* switch (spec §14 Phase 9,
+    /// S6, Q4): on in solo and free ride (the local servers follow the
+    /// rider's `weather.physics`, `ocw-server --weather-physics on|off`,
+    /// on by default); in events the organiser's rule applies. Changed with
+    /// a [`v1::WeatherRequest`] under [`ServerConfig::weather_access`].
+    /// `Default` keeps it off (tests: the physics without weather).
+    pub weather_physics: bool,
 }
 
 pub use ocw_protocol::ClockAccess;
@@ -187,6 +194,9 @@ pub struct GameServer {
     fetcher: Option<std::sync::Mutex<Box<dyn realweather::WeatherFetcher>>>,
     /// (lat, lon) of the course's local metres.
     geo_origin: Option<(f64, f64)>,
+    /// The scene height (m) of the place real weather was last applied
+    /// for: its pressure holds there (spec §14 Phase 9, S6).
+    real_pressure_y_m: Option<f64>,
 }
 
 /// A world switch the host asked for (spec §3.2.1), checked and waiting
@@ -328,6 +338,7 @@ impl GameServer {
             real,
             fetcher: None,
             geo_origin,
+            real_pressure_y_m: None,
         }
     }
 
@@ -471,11 +482,51 @@ impl GameServer {
     }
 
     fn weather_message(&self) -> v1::SessionWeather {
-        ocw_protocol::session_weather_with(
+        let mut m = ocw_protocol::session_weather_with(
             &self.weather,
             self.session_time_s(),
             self.weather_access(),
             self.real_weather(),
+        );
+        m.physics = Some(ocw_protocol::physics_rule_to_wire(&self.physics_rule()));
+        m
+    }
+
+    /// The weather's physics rule now (spec §14 Phase 9, S6): in force or
+    /// not, the session's switch, where the pressure holds.
+    pub fn physics_rule(&self) -> ocw_protocol::PhysicsRule {
+        ocw_protocol::PhysicsRule {
+            on: self.session.weather_physics_on(),
+            session: self.session.weather_physics_setting(),
+            pressure_y_m: self.pressure_y_m(),
+        }
+    }
+
+    /// The scene height (m) at which the weather's pressure holds: sea
+    /// level for presets and the simulation (scene height 0 in a world
+    /// package; the test routes stand at Vaduz's 455 m, as for real
+    /// weather), the place of the real weather's last data.
+    pub fn pressure_y_m(&self) -> f64 {
+        let sea = if self.geo_origin.is_some() {
+            0.0
+        } else {
+            -455.0
+        };
+        match (self.weather.mode(), self.real_pressure_y_m) {
+            (ocw_weather::Mode::Real, Some(y)) => y,
+            _ => sea,
+        }
+    }
+
+    /// The session weather's physics at session time `t` (spec §14 Phase
+    /// 9, S6): its state, the gust of the moment, the ground.
+    pub fn weather_physics_at(&self, t: f64) -> ocw_weather::WeatherPhysics {
+        ocw_weather::WeatherPhysics::at(
+            &self.weather.now(t),
+            self.weather.seed(),
+            t,
+            &self.weather.ground(),
+            self.pressure_y_m(),
         )
     }
 
@@ -500,7 +551,16 @@ impl GameServer {
                 state,
                 transition_s,
                 settle,
-            } => self.weather.set_real(t, state, transition_s, settle),
+            } => {
+                self.weather.set_real(t, state, transition_s, settle);
+                // The data holds at the place's height (S6: its pressure).
+                let offset = if self.geo_origin.is_some() {
+                    0.0
+                } else {
+                    455.0
+                };
+                self.real_pressure_y_m = Some(f64::from(place.alt_m) - offset);
+            }
             realweather::Apply::Simulate => {
                 let seed = self.weather.seed().rotate_left(29);
                 self.weather.simulate(t, seed);
@@ -581,6 +641,24 @@ impl GameServer {
         }
         let c = ocw_protocol::weather_change(req);
         let t = self.session_time_s();
+        // The weather-physics switch (S6, Q4), with or without a weather.
+        let physics = c.physics.map(|on| {
+            self.session.set_weather_physics(on);
+            self.config.weather_physics = on;
+            let event = self
+                .session
+                .event()
+                .is_some_and(|e| e.phase != EventPhase::Finished);
+            format!(
+                "weather physics {}{}",
+                if on { "on" } else { "off" },
+                if event {
+                    " (the event's rule applies until it is over)"
+                } else {
+                    ""
+                }
+            )
+        });
         if let Some(choice) = c.real {
             if self.fetcher.is_none() {
                 return result(
@@ -596,7 +674,7 @@ impl GameServer {
         if c.target.is_some() || c.simulate.is_some() {
             self.real = None;
         }
-        let mut said = Vec::new();
+        let mut said: Vec<String> = physics.into_iter().collect();
         if let Some(seed) = c.simulate {
             let seed = if seed == 0 {
                 self.weather.seed().rotate_left(17) ^ t.to_bits()
@@ -1284,10 +1362,12 @@ impl GameServer {
                 let organiser = start.collisions.map(ocw_protocol::collision_mode_from_wire);
                 let physics = ocw_protocol::event_physics(&start);
                 let weather = ocw_protocol::event_weather(&start);
+                let weather_physics = ocw_protocol::event_weather_physics(&start);
                 let started = self.session.start_event(spec).map(|e| e.id);
                 if let Ok(id) = started {
                     self.session.set_event_collisions(organiser);
                     self.session.set_event_physics(physics);
+                    self.session.set_event_weather_physics(weather_physics);
                     self.set_event_weather(id, weather);
                 }
                 match started.map(|_| self.session.event().expect("just started")) {
@@ -1303,10 +1383,13 @@ impl GameServer {
                                 format!("time trial over {}", distance_label(length_m, laps))
                             }
                         };
-                        let weather = self
+                        let mut weather = self
                             .event_weather()
                             .map(|w| format!(", weather: {}", w.label()))
                             .unwrap_or_default();
+                        if ev.weather_physics {
+                            weather.push_str(", weather physics on");
+                        }
                         result(
                             true,
                             format!(
@@ -1371,6 +1454,11 @@ impl GameServer {
     /// to every connection: free-ride path changes (reliable, at once) and
     /// a snapshot when one is due (every 5th tick at 50/10 Hz).
     pub fn tick(&mut self) -> Vec<Vec<u8>> {
+        // The weather's physics for this tick (spec §14 Phase 9, S6): the
+        // session rides it while the switch (or the event's rule) is on.
+        let t0 = self.session_time_s();
+        let physics = self.weather_physics_at(t0);
+        self.session.set_weather(Some(physics));
         self.session.step();
         let t = self.session_time_s();
         self.weather.tick(t);
@@ -1467,6 +1555,7 @@ fn new_session(course: Course, config: &ServerConfig) -> Session {
     }
     session.set_collisions(config.collisions);
     session.set_chaotic_bots(config.chaotic_bots);
+    session.set_weather_physics(config.weather_physics);
     if config.allow_echo_bot && config.echo_bot_at_start {
         session.place_echo(ECHO_NAME, None);
     }
@@ -2308,6 +2397,117 @@ mod tests {
         assert!(left.is_some_and(|l| (25.0..35.0).contains(&l)), "{seen:?}");
         assert_eq!(seen[12], (1.0, None));
         assert_eq!(server.weather().now(server.session_time_s()), ts);
+    }
+
+    /// The weather's physics rule (spec §14 Phase 9, S6, Q4): in the
+    /// welcome and every snapshot; the host switches it, like the weather;
+    /// the local servers start with it on, a server's default config off.
+    #[test]
+    fn weather_physics_travels_and_only_the_host_switches_it() {
+        let mut server = GameServer::new(
+            Route::test_loop(),
+            ServerConfig {
+                weather_physics: true,
+                ..weather_server(ClockAccess::Host).config.clone()
+            },
+        );
+        let (host, hw) = join(&mut server);
+        let (guest, _) = join(&mut server);
+        let w = ocw_protocol::weather_info(&hw.weather.unwrap());
+        assert!(w.physics.on && w.physics.session);
+        // A test route stands at Vaduz: its sea level is 455 m below.
+        assert_eq!(w.physics.pressure_y_m, -455.0);
+        let off = ocw_protocol::WeatherChange {
+            physics: Some(false),
+            ..Default::default()
+        };
+        let (ok, msg) = ask_weather(&mut server, guest, off);
+        assert!(!ok && msg.contains("only the host"), "{msg}");
+        assert!(server.session().weather_physics_on());
+        let (ok, msg) = ask_weather(&mut server, host, off);
+        assert!(ok && msg == "weather physics off", "{msg}");
+        let snap = next_snapshot(&mut server);
+        let w = ocw_protocol::weather_info(&snap.weather.unwrap());
+        assert!(!w.physics.on && !w.physics.session);
+        assert!(!server.session().weather_physics_on());
+        // The defaults: on for the local servers, off in `Default`.
+        let solo = GameServer::new(Route::test_loop(), crate::local::local_config(0, 0.0));
+        assert!(solo.physics_rule().on);
+        assert!(!weather_server(ClockAccess::Host).physics_rule().on);
+    }
+
+    /// Bots riding `seconds` in the storm on a server with the weather's
+    /// physics `on`: their states every second.
+    fn storm_ride(storm: bool, on: bool) -> Vec<Vec<ocw_sim::RiderSnapshot>> {
+        let mut server = GameServer::new(
+            Route::test_hills(),
+            ServerConfig {
+                bots: 4,
+                weather: storm.then(|| ocw_weather::presets::preset("storm").unwrap()),
+                weather_seed: Some(9),
+                real_epoch_ms: Some(EPOCH_MS),
+                weather_physics: on,
+                ..Default::default()
+            },
+        );
+        (0..20 * SIM_TICK_HZ)
+            .filter_map(|i| {
+                server.tick();
+                (i % SIM_TICK_HZ == 0).then(|| server.session().snapshot())
+            })
+            .collect()
+    }
+
+    /// Spec §14 Phase 9 9G: the switch off is the physics of before, bit
+    /// for bit, whatever the weather; on, a storm changes the ride.
+    #[test]
+    fn weather_physics_off_rides_exactly_as_before() {
+        let calm = storm_ride(false, false);
+        assert_eq!(storm_ride(true, false), calm);
+        assert_ne!(storm_ride(true, true), calm);
+        assert_eq!(storm_ride(true, true), storm_ride(true, true));
+    }
+
+    /// Q4: in an event the organiser decides (off unless enabled), shown in
+    /// the event's state; after it the session's switch counts again.
+    #[test]
+    fn an_events_weather_physics_is_the_organisers() {
+        let mut server = GameServer::new(Route::test_loop(), crate::local::local_config(0, 0.0));
+        let (me, _) = join(&mut server);
+        assert!(server.session().weather_physics_on(), "solo: on");
+        let race = |physics: Option<bool>| {
+            event_msg(v1::event_request::Req::Start(v1::EventStart {
+                weather_physics: physics,
+                ..ocw_protocol::event_start(
+                    &EventSpec::Race {
+                        laps: None,
+                        length_m: Some(1000.0),
+                    },
+                    Some(0),
+                )
+            }))
+        };
+        let reply = server.handle(me, &race(None));
+        assert!(!reply.is_empty());
+        assert!(
+            !server.session().weather_physics_on(),
+            "events: off by default"
+        );
+        assert!(!server.physics_rule().on && server.physics_rule().session);
+        server.handle(me, &event_msg(v1::event_request::Req::Cancel(true)));
+        assert!(server.session().weather_physics_on());
+        let reply = server.handle(me, &race(Some(true)));
+        let S::DevResult(r) = decode_server(&reply[0]).unwrap() else {
+            panic!("a result")
+        };
+        assert!(
+            r.ok && r.message.contains("weather physics on"),
+            "{}",
+            r.message
+        );
+        assert!(server.session().weather_physics_on());
+        let state = server.event_state();
+        assert!(ocw_protocol::event_info(&state).unwrap().weather_physics);
     }
 
     fn race_with_weather(w: Option<ocw_weather::machine::EventWeather>) -> Vec<u8> {

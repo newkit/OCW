@@ -7,6 +7,7 @@ use ocw_core::RiderProfile;
 use ocw_world::{Surface, Track};
 
 use crate::physics::{self, Environment, RiderState, Steering};
+use crate::weather::WeatherPhysics;
 
 /// What a rider does besides pedalling.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -44,7 +45,8 @@ pub fn surface(track: &dyn Track, state: &RiderState) -> Surface {
 
 /// Advances `state` by `dt`. `scraping` is whether the rider scraped
 /// along the road edge in the previous tick (it slows them down); it is
-/// updated for the next one.
+/// updated for the next one. Still air at the standard density, a dry
+/// road: [`tick_in`] without weather.
 #[allow(clippy::too_many_arguments)]
 pub fn tick(
     state: &mut RiderState,
@@ -56,10 +58,49 @@ pub fn tick(
     drag_factor: f64,
     dt: f64,
 ) {
+    tick_in(
+        state,
+        profile,
+        power_w,
+        controls,
+        scraping,
+        track,
+        drag_factor,
+        None,
+        dt,
+    );
+}
+
+/// [`tick`] in the session's weather (spec §14 Phase 9, S6; `None`: the
+/// weather does not affect the physics – exactly [`tick`]): the wind
+/// against the rider's direction of travel, the air density at the
+/// rider's height, a wet road's rolling resistance, and its grip on the
+/// cornering limits (the automatic slow-down's speed and the lean).
+/// Tunnels shelter from wind and rain.
+#[allow(clippy::too_many_arguments)]
+pub fn tick_in(
+    state: &mut RiderState,
+    profile: &RiderProfile,
+    power_w: f64,
+    controls: Controls,
+    scraping: &mut bool,
+    track: &dyn Track,
+    drag_factor: f64,
+    weather: Option<&WeatherPhysics>,
+    dt: f64,
+) {
     let d = state.distance;
     let grade = track.sample(d).grade;
+    let here = weather.map(|w| crate::weather::at_rider(w, track, state));
+    // Wet roads lower the cornering speed (v² ∝ the grip).
+    let speed_limit = match &here {
+        None => track.speed_limit(d),
+        Some(h) => track
+            .speed_limit(d)
+            .map(|v| crate::weather::corner_speed(v, h.weather.grip)),
+    };
     // Downhill the slow-down also holds against gravity.
-    let slow_down = match track.speed_limit(d) {
+    let slow_down = match speed_limit {
         Some(v) if state.speed > v => {
             SLOW_DOWN_DECELERATION_MPS2 + (-grade).max(0.0) * ocw_core::GRAVITY
         }
@@ -70,11 +111,14 @@ pub fn tick(
     } else {
         0.0
     };
-    let env = Environment::with_grade(grade)
+    let mut env = Environment::with_grade(grade)
         .with_drag_factor(drag_factor)
         .with_brake(controls.braking)
         .with_surface(surface(track, state))
         .with_extra_deceleration(scrub + slow_down);
+    if let Some(h) = &here {
+        env = env.in_weather(h.wind.head_mps, h.density, h.weather.rolling_factor);
+    }
     physics::step(state, profile, power_w, &env, dt);
     let limit = if controls.wild {
         physics::WILD_LIMIT_M
@@ -87,7 +131,14 @@ pub fn tick(
     let steering = if track.assisted(state.distance) {
         Steering::Auto(0.0)
     } else {
-        controls.steering
+        match (controls.steering, &here) {
+            // Less grip, less lean: tan(lean) is the friction a curve needs.
+            (Steering::Lean(l), Some(h)) => {
+                let cap = crate::weather::lean_limit(h.weather.grip);
+                Steering::Lean(l.clamp(-cap, cap))
+            }
+            (s, _) => s,
+        }
     };
     *scraping = physics::apply_steering(
         state,

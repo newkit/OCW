@@ -8,7 +8,8 @@
 //! light under clouds ([`light`]), the client's follower ([`follow`]), the
 //! console command ([`command`]) and real weather from the providers
 //! ([`real`], S7: parsing, mapping, the server's feed with its cache and
-//! fallback).
+//! fallback) and the weather's physics coefficients ([`physics`], S6: wind
+//! at the rider, air density, wet-road rolling resistance and grip).
 //!
 //! Pure Rust without Bevy, threads, files, clock reads or OS randomness
 //! (session time and seeds are passed in), so it builds for
@@ -23,6 +24,7 @@ pub mod light;
 pub mod lightning;
 pub mod machine;
 pub mod particles;
+pub mod physics;
 pub mod presets;
 pub mod real;
 pub mod session;
@@ -33,5 +35,6 @@ pub use follow::WeatherFollower;
 pub use ground::Ground;
 pub use light::CloudLight;
 pub use lightning::Strike;
+pub use physics::{RelativeWind, WeatherPhysics};
 pub use session::{Mode, SessionWeather};
 pub use state::{CloudType, Condition, Precip, WeatherState};

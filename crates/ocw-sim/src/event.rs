@@ -216,6 +216,9 @@ pub struct Event {
     /// by default *Profile* for races and group rides, *Open* for a time
     /// trial ([`crate::build::PhysicsMode::for_event`]).
     pub physics: crate::build::PhysicsMode,
+    /// The organiser's rule: the weather affects the physics during the
+    /// event (spec §14 Phase 9, Q4: off unless enabled).
+    pub weather_physics: bool,
 }
 
 impl Event {
@@ -237,6 +240,7 @@ impl Event {
             finished_tick: None,
             collisions: None,
             physics: crate::build::PhysicsMode::for_event(&kind),
+            weather_physics: false,
             start_line_m,
             entrants: entrants
                 .into_iter()

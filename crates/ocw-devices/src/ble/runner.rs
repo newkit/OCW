@@ -345,6 +345,7 @@ mod tests {
             crr: 0.004,
             cw_kg_per_m: 0.2,
             mass_kg: 83.0,
+            wind_grade: grade,
         })
     }
 

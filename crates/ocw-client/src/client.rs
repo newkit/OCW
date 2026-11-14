@@ -1381,7 +1381,27 @@ impl ClientCore {
                 .collect(),
         };
         self.avoid_step(&me);
-        let drag = ocw_sim::drafting::drag_factor((me.distance, me.lateral_offset), others);
+        // The weather's physics as the server rides it (spec §14 Phase 9,
+        // S6): the wind, the air, the road; in a crosswind the shelter
+        // behind the others drifts downwind.
+        let weather = self.weather.physics_tick();
+        self.predictor.set_weather(weather);
+        let drift = weather.map(|w| {
+            let track: &dyn Track = match self.free.as_ref().and_then(|f| f.own.as_deref()) {
+                Some(p) => p,
+                None => &self.route,
+            };
+            let here = ocw_sim::weather::at_rider(&w, track, &me);
+            ocw_sim::weather::wake_drift(here.wind, me.speed)
+        });
+        let drag = match drift {
+            None => ocw_sim::drafting::drag_factor((me.distance, me.lateral_offset), others),
+            Some(drift) => ocw_sim::drafting::drag_factor_in_wind(
+                (me.distance, me.lateral_offset),
+                others,
+                drift,
+            ),
+        };
         self.predictor.set_drag_factor(drag);
         self.prev_state = self.predictor.state();
         let power = self.power_w();
@@ -1394,6 +1414,31 @@ impl ClientCore {
         for (_, o) in &mut self.others_now {
             o.distance += o.speed * ocw_core::SIM_DT;
         }
+    }
+
+    /// The wind relative to the own rider at client time `now_s` (spec §14
+    /// Phase 9, S6: the HUD's arrow; whether it affects the physics or
+    /// not; calm in a tunnel). `None` before the welcome.
+    pub fn rider_wind(&self, now_s: f64) -> Option<ocw_sim::weather::RelativeWind> {
+        self.rider_id?;
+        let w = self.weather.physics_now(now_s)?;
+        Some(ocw_sim::weather::at_rider(&w, self.track(), &self.predictor.state()).wind)
+    }
+
+    /// The weather's load for the trainer in SIM mode (spec §14 Phase 9,
+    /// S6, Q5): the headwind along the own rider's travel and the air's
+    /// density, while the weather affects the physics.
+    pub fn trainer_wind(&self, now_s: f64) -> Option<ocw_sim::trainer::TrainerWind> {
+        self.rider_id?;
+        if !self.weather.physics_on() {
+            return None;
+        }
+        let w = self.weather.physics_now(now_s)?;
+        let here = ocw_sim::weather::at_rider(&w, self.track(), &self.predictor.state());
+        Some(ocw_sim::trainer::TrainerWind {
+            head_mps: here.wind.head_mps,
+            air_density: here.density,
+        })
     }
 
     /// Riders to render at client time `now_s`: the local rider first
@@ -1716,9 +1761,23 @@ impl ClientCore {
         physics: Option<ocw_sim::PhysicsMode>,
         weather: Option<&ocw_weather::machine::EventWeather>,
     ) -> Vec<u8> {
+        Self::event_start_message_rules(spec, bots, physics, weather, None)
+    }
+
+    /// An event start with the organiser's weather and weather-physics
+    /// rule (spec §14 Phase 9, S6, Q4: `event … --weather-physics on`;
+    /// `None`: off, the default).
+    pub fn event_start_message_rules(
+        spec: &ocw_sim::EventSpec,
+        bots: Option<u32>,
+        physics: Option<ocw_sim::PhysicsMode>,
+        weather: Option<&ocw_weather::machine::EventWeather>,
+        weather_physics: Option<bool>,
+    ) -> Vec<u8> {
         encode(&client_message(C::Event(v1::EventRequest {
             req: Some(v1::event_request::Req::Start(v1::EventStart {
                 weather: weather.map(ocw_protocol::event_weather_to_wire),
+                weather_physics,
                 ..ocw_protocol::event_start_with(spec, bots, physics)
             })),
         })))

@@ -64,6 +64,10 @@ pub struct BotRider {
     /// Snapshot interval, jitter and age (spec §14 Phase 10 B3: the same
     /// measurement as the browser app's).
     timing: ocw_server::timing::SnapshotTiming,
+    /// The session weather and the session time of the next tick (spec
+    /// §14 Phase 9, S6: the prediction rides the server's weather physics,
+    /// like the desktop client's).
+    weather: Option<(ocw_protocol::WeatherInfo, f64)>,
 }
 
 impl BotRider {
@@ -104,7 +108,15 @@ impl BotRider {
             snapshot_age_s: 0.0,
             report,
             timing: Default::default(),
+            weather: None,
         }
+    }
+
+    /// The session weather of a welcome or snapshot.
+    fn on_weather(&mut self, w: &v1::SessionWeather) {
+        let info = ocw_protocol::weather_info(w);
+        let t = info.session_s + self.snapshot_age_s;
+        self.weather = Some((info, t));
     }
 
     pub fn name(&self) -> &str {
@@ -188,6 +200,9 @@ impl BotRider {
         }
         self.rider_id = Some(RiderId(w.rider_id));
         self.report.joined_at_s = Some(now_s);
+        if let Some(weather) = &w.weather {
+            self.on_weather(weather);
+        }
     }
 
     fn on_snapshot(&mut self, s: &v1::Snapshot, now_s: f64) {
@@ -204,6 +219,9 @@ impl BotRider {
         r.last_snapshot_s = Some(now_s);
         r.first_snapshot_s.get_or_insert(now_s);
         r.max_riders_seen = r.max_riders_seen.max(s.riders.len() as u32);
+        if let Some(weather) = &s.weather {
+            self.on_weather(weather);
+        }
         let Some(own) = self.rider_id else { return };
         let mut others = Vec::new();
         self.leader = None;
@@ -284,12 +302,29 @@ impl BotRider {
         let effort = self.effort;
         self.report.following |= self.leader.is_some();
         self.predictor.set_braking(effort.brake);
-        let drag = ocw_sim::drafting::drag_factor(
-            (me.distance, me.lateral_offset),
-            self.others_now
-                .iter()
-                .map(|(_, o)| (o.distance, o.lateral_offset)),
-        );
+        // The weather's physics (spec §14 Phase 9, S6), as the server's.
+        let weather = self.weather.as_mut().and_then(|(info, t)| {
+            let w = info.physics_at(*t);
+            *t += SIM_DT;
+            w
+        });
+        self.predictor.set_weather(weather);
+        let others = self
+            .others_now
+            .iter()
+            .map(|(_, o)| (o.distance, o.lateral_offset));
+        let drag = match weather {
+            None => ocw_sim::drafting::drag_factor((me.distance, me.lateral_offset), others),
+            Some(w) => {
+                let here = ocw_sim::weather::at_rider(&w, &self.route, &me);
+                let drift = ocw_sim::weather::wake_drift(here.wind, me.speed);
+                ocw_sim::drafting::drag_factor_in_wind(
+                    (me.distance, me.lateral_offset),
+                    others,
+                    drift,
+                )
+            }
+        };
         self.predictor.set_drag_factor(drag);
         self.predictor.step(&self.route, effort.power_w);
         for (_, o) in &mut self.others_now {

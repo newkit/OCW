@@ -59,6 +59,22 @@ pub struct WeatherView {
     pub attribution: Option<String>,
     /// The server's session time now (s).
     pub session_s: f64,
+    /// The wind relative to the own rider's heading (spec §14 Phase 9, S6:
+    /// the HUD's arrow and km/h; at the rider's height, calm in a tunnel;
+    /// `None` without an own rider).
+    pub rider_wind: Option<ocw_weather::RelativeWind>,
+    /// Whether the weather affects the physics now (S6).
+    pub physics: bool,
+}
+
+impl WeatherView {
+    /// The HUD's wind indicator: "↓ headwind 18 km/h" (`None`: no own
+    /// rider, or calm).
+    pub fn wind_hud(&self) -> Option<String> {
+        let w = self.rider_wind?;
+        let label = w.label();
+        (label != "calm").then(|| format!("{} {label}", w.arrow()))
+    }
 }
 
 /// A lightning strike with its flash in the app's time
@@ -330,7 +346,7 @@ fn register_commands(app: &mut App) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use ocw_weather::presets::preset;
 
@@ -344,6 +360,8 @@ mod tests {
             summary: state.hud(),
             attribution: None,
             session_s: 0.0,
+            rider_wind: None,
+            physics: false,
             state,
         }
     }

@@ -13,23 +13,43 @@ use crate::{DeviceCommand, DeviceEvent};
 pub struct VirtualPower {
     set_w: f64,
     erg_w: Option<f64>,
+    /// What SIM mode asks it to simulate: (gradient, wind in m/s).
+    sim: Option<(f64, f64)>,
 }
 
 impl VirtualPower {
+    /// The virtual trainer simulates wind (spec §14 Phase 9, Q5: the same
+    /// rule as a real trainer, [`crate::SimulationParameters::load`]).
+    pub const TAKES_WIND: bool = true;
+
     pub fn new(set_w: f64) -> Self {
         Self {
             set_w: set_w.max(0.0),
             erg_w: None,
+            sim: None,
         }
     }
 
     pub fn command(&mut self, cmd: DeviceCommand) {
         match cmd {
             DeviceCommand::SetVirtualPower(w) => self.set_w = w.max(0.0),
-            DeviceCommand::SetTargetPower(w) => self.erg_w = Some(w.max(0.0)),
-            DeviceCommand::SetSimulation(_) => self.erg_w = None,
+            DeviceCommand::SetTargetPower(w) => {
+                self.erg_w = Some(w.max(0.0));
+                self.sim = None;
+            }
+            DeviceCommand::SetSimulation(p) => {
+                self.erg_w = None;
+                self.sim = Some(p.load(Self::TAKES_WIND));
+            }
             DeviceCommand::Shutdown => {}
         }
+    }
+
+    /// SIM mode's road as the virtual trainer simulates it: (gradient, wind
+    /// in m/s); `None` outside SIM mode. Its power stays the one set (a
+    /// virtual rider holds the power, not the speed).
+    pub fn simulation(&self) -> Option<(f64, f64)> {
+        self.sim
     }
 
     /// The power set by the user (W).
@@ -90,6 +110,11 @@ impl FrameVirtualTrainer {
         self.power.reported()
     }
 
+    /// SIM mode's road as it simulates it ([`VirtualPower::simulation`]).
+    pub fn simulation(&self) -> Option<(f64, f64)> {
+        self.power.simulation()
+    }
+
     /// Advances by `dt_s` seconds: the sample that became due, if any (one
     /// at most: after a long frame the newest value is all that matters).
     pub fn advance(&mut self, dt_s: f64) -> Option<DeviceEvent> {
@@ -148,5 +173,29 @@ mod tests {
         assert_eq!(t.reported_w(), 180.0);
         t.command(DeviceCommand::SetVirtualPower(-5.0));
         assert_eq!((t.set_power_w(), t.reported_w()), (0.0, 0.0));
+    }
+
+    /// Spec §14 Phase 9, Q5: the virtual trainer follows the rule of a
+    /// trainer that simulates wind – the road's gradient and the headwind,
+    /// not the folded gradient; its power stays the one set.
+    #[test]
+    fn virtual_trainer_takes_the_wind() {
+        let mut t = FrameVirtualTrainer::new(200.0);
+        assert_eq!(t.simulation(), None);
+        let p = crate::SimulationParameters {
+            grade: 0.03,
+            wind_speed_mps: 6.0,
+            crr: 0.004,
+            cw_kg_per_m: 0.2,
+            mass_kg: 83.0,
+            wind_grade: 0.05,
+        };
+        t.command(DeviceCommand::SetSimulation(p));
+        assert_eq!(t.simulation(), Some((0.03, 6.0)));
+        assert_eq!(t.simulation(), Some(p.load(VirtualPower::TAKES_WIND)));
+        assert_eq!(p.load(false), (0.05, 0.0));
+        assert_eq!(t.reported_w(), 200.0);
+        t.command(DeviceCommand::SetTargetPower(150.0));
+        assert_eq!(t.simulation(), None);
     }
 }
