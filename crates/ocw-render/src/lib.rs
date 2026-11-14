@@ -23,6 +23,7 @@ pub mod materials;
 pub mod media;
 pub mod menu;
 pub mod night_sky;
+pub mod obstacles;
 pub mod ortho;
 pub mod package;
 pub mod ragdoll;
@@ -357,6 +358,9 @@ impl Plugin for OcwRenderPlugins {
             sky::SkyPlugin,
             night_sky::NightSkyPlugin,
             street_lamps::StreetLampsPlugin,
+            // World objects (spec §14 Phase 12 K3): fences, walls, posts
+            // and the road barriers of `display.road_barriers`.
+            obstacles::ObstaclesPlugin,
             materials::MaterialsPlugin,
             ortho::OrthoPlugin,
             road_material::RoadMaterialPlugin,

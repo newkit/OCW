@@ -21,6 +21,7 @@ pub mod look;
 pub mod manifest;
 pub mod matching;
 pub mod network;
+pub mod obstacles;
 pub mod ortho;
 pub mod package;
 pub mod path;
@@ -34,6 +35,7 @@ pub mod summary;
 pub mod surface;
 mod terrain;
 pub mod track;
+pub mod trees;
 pub mod world_set;
 
 pub use gradient::{AVERAGE_AHEAD_M, ElevationProfile, GradeBand, ProfileSpec, average_grade};

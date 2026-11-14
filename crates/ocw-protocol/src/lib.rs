@@ -213,12 +213,21 @@ fn contact_kind_to_wire(k: ocw_sim::collide::ContactKind) -> v1::ContactKind {
         K::RearEnd => v1::ContactKind::RearEnd,
         K::HeadOn => v1::ContactKind::HeadOn,
         K::Object => v1::ContactKind::Object,
+        K::World(_) => v1::ContactKind::World,
+        K::RoadEdge => v1::ContactKind::RoadEdge,
     }
 }
 
-fn contact_kind_from_wire(v: i32) -> ocw_sim::collide::ContactKind {
-    use ocw_sim::collide::ContactKind as K;
+fn contact_kind_from_wire(v: i32, obstacle: u32) -> ocw_sim::collide::ContactKind {
+    use ocw_sim::collide::{ContactKind as K, ObstacleKind};
     match v1::ContactKind::try_from(v) {
+        Ok(v1::ContactKind::World) => K::World(
+            u8::try_from(obstacle)
+                .ok()
+                .and_then(ObstacleKind::from_code)
+                .unwrap_or(ObstacleKind::Barrier),
+        ),
+        Ok(v1::ContactKind::RoadEdge) => K::RoadEdge,
         Ok(v1::ContactKind::WheelToWheel) => K::WheelToWheel,
         Ok(v1::ContactKind::WheelTouch) => K::WheelTouch,
         Ok(v1::ContactKind::RearEnd) => K::RearEnd,
@@ -246,6 +255,10 @@ pub fn crash_to_wire(c: &ocw_sim::collide::CrashView) -> v1::CrashState {
         impulse_along_mm_s: mm(c.impulse[0]),
         impulse_right_mm_s: mm(c.impulse[1]),
         speed_mm_s: ms(c.speed),
+        obstacle: match c.kind {
+            ocw_sim::collide::ContactKind::World(k) => u32::from(k.code()),
+            _ => 0,
+        },
     }
 }
 
@@ -263,7 +276,7 @@ pub fn rider_crash(u: &v1::RiderUpdate) -> Option<ocw_sim::collide::CrashView> {
         phase,
         elapsed_s: f64::from(c.elapsed_ms) / 1000.0,
         down_s: f64::from(c.down_ms) / 1000.0,
-        kind: contact_kind_from_wire(c.kind),
+        kind: contact_kind_from_wire(c.kind, c.obstacle),
         by: (c.by_rider != 0).then_some(RiderId(c.by_rider)),
         impulse: [
             f64::from(c.impulse_along_mm_s) / 1000.0,
@@ -295,7 +308,20 @@ pub fn rules_request(collisions: Option<bool>, chaotic_bots: Option<bool>) -> v1
 /// A staged contact (`dev.bump` / `dev.crash`, local servers only).
 pub fn stage_contact(crash: bool) -> v1::ClientMessage {
     client_message(v1::client_message::Msg::Dev(v1::DevCommand {
-        cmd: Some(v1::dev_command::Cmd::Stage(v1::StageContact { crash })),
+        cmd: Some(v1::dev_command::Cmd::Stage(v1::StageContact {
+            crash,
+            tree: false,
+        })),
+    }))
+}
+
+/// `dev.tree` (spec §14 Phase 12 K3): ride at the nearest tree.
+pub fn stage_tree() -> v1::ClientMessage {
+    client_message(v1::client_message::Msg::Dev(v1::DevCommand {
+        cmd: Some(v1::dev_command::Cmd::Stage(v1::StageContact {
+            crash: false,
+            tree: true,
+        })),
     }))
 }
 
@@ -1652,6 +1678,24 @@ mod tests {
         let b = rider_bump(&u).unwrap();
         assert_eq!((b.tick, b.side), (99, -1.0));
         assert!((b.strength - 0.08).abs() < 1e-9);
+        // A crash into the world (spec §14 Phase 12 K3): what was hit.
+        for kind in [
+            ContactKind::World(ocw_sim::collide::ObstacleKind::Tree),
+            ContactKind::World(ocw_sim::collide::ObstacleKind::Railing),
+            ContactKind::RoadEdge,
+        ] {
+            let tree = quantize(&ocw_sim::RiderSnapshot {
+                crash: Some(CrashView {
+                    kind,
+                    by: None,
+                    ..crash
+                }),
+                ..snap.clone()
+            });
+            let bytes = encode(&tree);
+            let u = v1::RiderUpdate::decode(bytes.as_slice()).unwrap();
+            assert_eq!(rider_crash(&u).unwrap().kind, kind);
+        }
         // Riding: no crash; an old server's update has none either.
         let riding = quantize(&ocw_sim::RiderSnapshot {
             crash: None,

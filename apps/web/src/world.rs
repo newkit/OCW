@@ -151,7 +151,14 @@ pub fn world_ride(
             pkg.name
         )
     })?;
-    let net = Arc::new(RoadNetwork::new(graph).with_package_name(pkg.name.clone()));
+    // Static obstacles from the base (spec §14 Phase 12 K3: OBST, the
+    // buildings, railings and tunnel walls; no tiles needed).
+    let obstacles = ocw_world::obstacles::WorldObstacles::from_package(pkg).map(Arc::new);
+    let net = Arc::new(
+        RoadNetwork::new(graph)
+            .with_package_name(pkg.name.clone())
+            .with_obstacles(obstacles),
+    );
     let profile = RiderProfile::default();
     let route_name = match (&opts.route, opts.free_ride) {
         (_, true) => None,
@@ -602,6 +609,7 @@ pub(crate) mod tests {
             region: None,
             time_zone: Some("Europe/Vaduz".into()),
             look: Default::default(),
+            obstacles: None,
         }
     }
 

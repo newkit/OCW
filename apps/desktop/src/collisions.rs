@@ -119,6 +119,17 @@ pub fn register_commands(app: &mut App) {
             Command::new("dev.crash")
                 .about("Stage a crash: the nearest other rider cuts in front of you (a wheel touch)"),
             |world, _| stage(world, true),
+        ))
+        .console_command(ConsoleCommand::new(
+            Permission::Dev,
+            Command::new("dev.tree").about(
+                "Stage a crash into a tree (wild mode on first): you are put 8 m before the nearest tree off the road ahead",
+            ),
+            |world, _| {
+                let link = world.get_resource::<Link>().ok_or("not riding")?;
+                link.send_bytes(ClientCore::stage_tree_message());
+                Ok(String::new())
+            },
         ));
 }
 

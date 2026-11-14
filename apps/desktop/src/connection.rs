@@ -808,11 +808,13 @@ fn register_commands(app: &mut App) {
             let c = &world.resource::<ClientState>().0;
             let s = c.state();
             Ok(format!(
-                "distance {:.1} m, speed {:.2} km/h, power {:.0} W, grade {:+.1} %",
+                "distance {:.1} m, speed {:.2} km/h, power {:.0} W, grade {:+.1} %, lateral {:+.2} m, heading {:+.1}°",
                 s.distance,
                 s.speed * 3.6,
                 c.power_w(),
-                c.track().sample(s.distance).grade * 100.0
+                c.track().sample(s.distance).grade * 100.0,
+                s.lateral_offset,
+                s.heading.to_degrees()
             ))
         },
     ))

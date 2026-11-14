@@ -272,6 +272,10 @@ impl ClientCore {
             5.0,
         )
         .expect("two distinct points");
+        let mut core = Self::new(placeholder, name, profile);
+        // The own rider's contacts with the world are predicted (spec §14
+        // Phase 12D, K3).
+        core.predictor.set_world(net.obstacles().cloned());
         Self {
             free: Some(FreeRide {
                 net,
@@ -284,7 +288,7 @@ impl ClientCore {
                 last_u_turn_s: None,
                 locked: None,
             }),
-            ..Self::new(placeholder, name, profile)
+            ..core
         }
     }
 
@@ -1329,6 +1333,7 @@ impl ClientCore {
             Some(p) => p,
             None => &self.route,
         };
+        self.predictor.set_collision_mode(self.collisions.mode());
         self.predictor.step(track, power);
         for (_, o) in &mut self.others_now {
             o.distance += o.speed * ocw_core::SIM_DT;
@@ -1483,6 +1488,11 @@ impl ClientCore {
     /// A staged contact (`dev.bump` / `dev.crash`, local servers only).
     pub fn stage_message(crash: bool) -> Vec<u8> {
         encode(&ocw_protocol::stage_contact(crash))
+    }
+
+    /// `dev.tree` for the local server (spec §14 Phase 12 K3).
+    pub fn stage_tree_message() -> Vec<u8> {
+        encode(&ocw_protocol::stage_tree())
     }
 
     /// The own rider's crash at client time `now_s`, if down.

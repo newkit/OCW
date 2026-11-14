@@ -496,6 +496,23 @@ trial's ghost, the countdown formation, unicorns, the Echo rider and a
 client's first 2 s after joining. `ride.chaotic_bots on` lets bots make
 mistakes. `dev.bump` / `dev.crash` stage one on the local server.
 
+**World objects** (spec §14 Phase 12 K3): in **wild mode** trees,
+buildings, walls, fences, hedges, guard rails, posts, pylons and barriers
+off the road are solid – a hit at 3.5 m/s or more into one is a crash
+("Crash! (tree)"), slower you stop or slide along it; kerbs are ridden
+over. Bridge railings and tunnel walls bound wild riders on their road
+(not riders on a road below a bridge). On the road nothing of the world is
+solid: gates, bollards and barriers on a road never block it (Q7) and are
+hidden unless `display.road_barriers on` (console `road_barriers on`);
+steering into the road edge at more than 30° (wild mode switched off at an
+angle) is a hit on a wall, below that it is the scrape. The objects come
+from the package: the section `OBST` (OSM barriers and posts, the tree
+cells), `BLDG`, `BRDG` and the graph's tunnels; `world-builder obstacles
+--world PKG --pbf PBF... [--out NEW]` adds `OBST` to a built package
+(`package` writes it too). Fences, walls, hedges, guard rails, posts and
+pylons are drawn up to 350 m from the camera. `dev.tree` (wild mode on,
+local server) puts you 8 m before the nearest tree off the road ahead.
+
 **Free ride** (spec §2.2.1, §2.2.2): ride anywhere on the world package's road
 network instead of a fixed route:
 
@@ -917,6 +934,7 @@ console (saved at once), or by editing the file; `get` lists them all:
 | `display.sky` | atmosphere / simple (atmosphere): Bevy's physically based sky, or one plain colour for weak GPUs | at once |
 | `display.bike_lights` | auto / on / off (auto): the front and rear lights of bikes with lights fitted (Workshop, slot lights) from dusk to dawn and in tunnels | at once |
 | `display.orthophoto` | on / off (on): the real place's orthophoto on the ground near the roads, where the package has it (spec §14 Phase 8 T7) | at once |
+| `display.road_barriers` | on / off (off): gates, bollards and barriers on the roads (section `OBST`; never solid on the road, spec §14 Phase 12 Q7) | at once |
 | `display.unicorn_trail` | on / off (on): the rainbow trail behind the unicorns of god mode (console `god.trail`; not on the full Display page) | at once |
 | `display.fullscreen` | on / off (off): borderless fullscreen (`--fullscreen`) | next start |
 | `ride.bots` | 0 to 50 (10): test riders (`--bots`) | next start |
@@ -1121,6 +1139,7 @@ for now).
 | **Rider** | |
 | `rider.autodrive on\|off` | Autodrive (key A) |
 | `rider.wild on\|off` | Wild mode (key W; on also switches autodrive off) |
+| `road_barriers on\|off` | Draw the gates, bollards and barriers on the roads (`display.road_barriers`; they are never solid there) |
 | `rider.lean DEGREES` | Lean into a curve (positive = right, 0 = upright; manual steering) |
 | `rider.steer METRES` | Autodrive line: lateral position on the road (positive = right) |
 | `rider.state` | Print your rider's state |
@@ -1804,6 +1823,7 @@ to *Public* are the usual causes; the server log is in Event Viewer under
 | `scripts/build-profile.sh`, `scripts/build-profile.ps1` | Rust build profile: clean / no-op / incremental builds with `--timings` (`make build-profile`) |
 | `scripts/fetch-imagery.sh REGION [PACKAGE...]` | Region calibration imagery (spec §14 Phase 8 T3): orthophoto cells over the official WMS and own Sentinel-2 seasonal median composites (`scripts/imagery.py`) for the cells a built package covers, licence rows in `SOURCES.md` |
 | `world-builder calibrate` / `imagery-cells` | Measure a package's palette, roof colours and seasonal tint maps in that imagery and cut the orthophoto corridor along its roads (sections `PALT`, `ROOF`, `SEAS`, `ORTC`; manifest credits renewed); list the imagery cells a package covers |
+| `world-builder obstacles --world PKG --pbf PBF... [--out NEW]` | Static obstacles near the roads into a built package (section `OBST`, spec §14 Phase 12 K3): OSM barriers and posts with the 2 m corridor rule, the tree cells; prints rows of road bollards and the longest bridges; manifest renewed |
 | `world-builder dem-import` / `dem-tiles` / `dem-diff` | High-resolution DTMs: import XYZ / GeoTIFF tiles as 2 m GeoTIFFs, list the tiles of a box, compare with SRTM |
 | `scripts/remote.sh MACHINE run 'CMD'` | Copy the tree to a build machine (`config/machines.toml`) and run a command there (`sync`, `ssh`, `fetch`, `put LOCAL... DIR`: copy git-ignored files into the checkout, `field KEY`: a machine setting for scripts) |
 | `python3 tools/build-dashboard/dashboard.py` | Web page (port 8765) with the build machines' load and their running/queued tasks, disks and the janitor, and the open questions of the spec; `--once` prints it as text, `--janitor-plan` a dry run of the janitor |

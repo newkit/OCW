@@ -202,6 +202,9 @@ pub struct TileMeshes {
     pub near_tint: Option<[[f32; 3]; crate::ground::GROUND_LAYERS]>,
     /// Street lamps along lit roads (spec §14 Phase 9 S2).
     pub lamps: crate::street_lamps::TileLamps,
+    /// Fences, walls, posts and road barriers (section `OBST`, spec §14
+    /// Phase 12 K3).
+    pub obstacles: crate::obstacles::TileObstacleMeshes,
 }
 
 /// What the tile meshes are built for: with a material library, the far
@@ -513,15 +516,7 @@ pub fn tile_road_meshes(
     )
 }
 
-fn hash(x: i64, z: i64, seed: u64) -> f32 {
-    let mut h = (x as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
-        ^ (z as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F)
-        ^ seed;
-    h ^= h >> 33;
-    h = h.wrapping_mul(0xFF51_AFD7_ED55_8CCD);
-    h ^= h >> 33;
-    (h >> 40) as f32 / (1u64 << 24) as f32
-}
+use ocw_world::trees::hash;
 
 /// Crown of a package tree (scale 1): bottom, tip and radius in metres.
 pub(crate) const CROWN: (f32, f32, f32) = (1.8, 9.0, 2.2);
@@ -529,11 +524,7 @@ pub(crate) const CROWN: (f32, f32, f32) = (1.8, 9.0, 2.2);
 /// Where a tree stands (foot of the trunk) and its scale.
 pub type TreeSite = (Vec3, f32);
 
-/// The land use of a tile, if the package has it.
-pub fn tile_landuse(pkg: &WorldPackage, key: TileKey) -> Option<(&LandUseTile, u32)> {
-    let l = pkg.landuse.as_ref()?;
-    Some((l.tiles.get(&key)?, l.cells))
-}
+pub use ocw_world::trees::{TRUNK_RADIUS_M, blocked_cells, tile_landuse, tree_density};
 
 /// Tree meshes (trunk and cone crown, crown shades varying per tree).
 pub fn tree_arrays(sites: &[TreeSite]) -> MeshArrays {
@@ -549,7 +540,7 @@ pub fn tree_arrays(sites: &[TreeSite]) -> MeshArrays {
         let pick = hash(i64::from(base.x.to_bits()), i64::from(base.z.to_bits()), 11);
         let crown = crowns[((pick * crowns.len() as f32) as usize).min(crowns.len() - 1)];
         for (y0, y1, r, colour, seg) in [
-            (0.0, 2.2, 0.25, trunk, 5u32),
+            (0.0, 2.2, TRUNK_RADIUS_M as f32, trunk, 5u32),
             (CROWN.0, CROWN.1, CROWN.2, crown, 7),
         ] {
             let b = m.positions.len() as u32;
@@ -576,196 +567,25 @@ pub fn tree_arrays(sites: &[TreeSite]) -> MeshArrays {
 }
 
 /// Where the trees of a tile stand: from the land use if the package has
-/// it, else provisional patches.
+/// it, else provisional patches ([`ocw_world::trees::tree_sites`]).
 pub fn tree_sites(pkg: &WorldPackage, tile: &Tile) -> Vec<TreeSite> {
-    match tile_landuse(pkg, tile.key) {
-        Some((lu, cells)) => landuse_tree_sites(pkg, tile, lu, cells),
-        None => placeholder_tree_sites(pkg, tile),
-    }
+    ocw_world::trees::tree_sites(pkg, tile)
+        .into_iter()
+        .map(|(p, s)| (Vec3::from_array(p), s))
+        .collect()
 }
 
-/// Chance of a tree per 8 m × 8 m cell and the scale range, by land class.
-pub fn tree_density(class: LandClass) -> (f32, f32, f32) {
-    match class {
-        LandClass::Forest => (0.85, 0.8, 1.5),
-        LandClass::Orchard => (0.45, 0.45, 0.65),
-        LandClass::Scrub => (0.3, 0.35, 0.6),
-        LandClass::Park => (0.1, 0.7, 1.2),
-        LandClass::Residential => (0.06, 0.6, 1.0),
-        LandClass::Wetland => (0.05, 0.5, 0.9),
-        LandClass::Default | LandClass::Meadow | LandClass::Farmland => (0.012, 0.7, 1.3),
-        LandClass::Commercial | LandClass::Industrial => (0.01, 0.6, 1.0),
-        LandClass::Vineyard
-        | LandClass::Water
-        | LandClass::Rock
-        | LandClass::Scree
-        | LandClass::Glacier
-        | LandClass::Bare => (0.0, 1.0, 1.0),
-    }
-}
-
-/// Land-use cells of a tile where no tree may stand: near the road strips
-/// (3 m beyond the edge) and under buildings (plus 1.5 m), also buildings
-/// of the neighbouring tiles that reach into this one.
-pub fn blocked_cells(pkg: &WorldPackage, tile: &Tile, cells: u32) -> Vec<bool> {
-    let size = pkg.tile_size_m;
-    let o = tile.key.origin(f64::from(size));
-    let (ox, oz) = (o[0] as f32, o[1] as f32);
-    let n = cells as usize;
-    let cs = size / cells as f32;
-    let mut blocked = vec![false; n * n];
-    let cell_range = |lo: f32, hi: f32, origin: f32| {
-        let a = ((lo - origin) / cs).floor().max(0.0) as usize;
-        let b = (((hi - origin) / cs).floor() + 1.0).clamp(0.0, n as f32) as usize;
-        a..b
-    };
-    for r in &tile.roads {
-        // A cell is blocked if its centre is within the reach (half a cell
-        // diagonal more, so no part of a blocked tree's cell is missed).
-        let reach = r.width_m / 2.0 + 3.0 + cs * 0.71;
-        for w in r.points.windows(2) {
-            let (a, b) = (Vec2::new(w[0][0], w[0][2]), Vec2::new(w[1][0], w[1][2]));
-            let ab = b - a;
-            for k in cell_range(a.y.min(b.y) - reach, a.y.max(b.y) + reach, oz) {
-                for i in cell_range(a.x.min(b.x) - reach, a.x.max(b.x) + reach, ox) {
-                    let p = Vec2::new(ox + (i as f32 + 0.5) * cs, oz + (k as f32 + 0.5) * cs);
-                    let t = if ab.length_squared() > 0.0 {
-                        ((p - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0)
-                    } else {
-                        0.0
-                    };
-                    if p.distance(a + ab * t) <= reach {
-                        blocked[k * n + i] = true;
-                    }
-                }
-            }
-        }
-    }
-    if let Some(all) = &pkg.buildings {
-        for dz in -1..=1 {
-            for dx in -1..=1 {
-                let key = TileKey {
-                    x: tile.key.x + dx,
-                    z: tile.key.z + dz,
-                };
-                for b in all.get(&key).into_iter().flatten() {
-                    let (mut lo, mut hi) =
-                        (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY));
-                    for p in &b.outline {
-                        lo = lo.min(Vec2::from(*p));
-                        hi = hi.max(Vec2::from(*p));
-                    }
-                    for k in cell_range(lo.y - 1.5, hi.y + 1.5, oz) {
-                        for i in cell_range(lo.x - 1.5, hi.x + 1.5, ox) {
-                            blocked[k * n + i] = true;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    blocked
-}
-
-/// Terrain height at (x, z) and whether it is a rock face there.
-fn ground_and_steep(pkg: &WorldPackage, x: f64, z: f64) -> Option<(f64, bool)> {
-    let (y, yx, yz) = (
-        pkg.height(x, z)?,
-        pkg.height(x + 2.0, z)?,
-        pkg.height(x, z + 2.0)?,
-    );
-    Some((y, ((yx - y).powi(2) + (yz - y).powi(2)).sqrt() / 2.0 > 0.8))
-}
-
-/// Trees by land use: a jittered 8 m grid, each candidate kept with the
-/// chance of its class ([`tree_density`]), not in blocked cells
-/// ([`blocked_cells`]) and not on rock faces.
+/// Trees by land use ([`ocw_world::trees::landuse_tree_sites`]).
 pub fn landuse_tree_sites(
     pkg: &WorldPackage,
     tile: &Tile,
     lu: &LandUseTile,
     cells: u32,
 ) -> Vec<TreeSite> {
-    let size = f64::from(pkg.tile_size_m);
-    let o = tile.key.origin(size);
-    let cell = 8.0;
-    let per_side = (size / cell) as i64;
-    let n = cells as usize;
-    let cs = size / f64::from(cells);
-    let blocked = blocked_cells(pkg, tile, cells);
-    let mut sites = Vec::new();
-    for k in 0..per_side {
-        for i in 0..per_side {
-            let (gx, gz) = (
-                i64::from(tile.key.x) * per_side + i,
-                i64::from(tile.key.z) * per_side + k,
-            );
-            let x = o[0] + (i as f64 + f64::from(hash(gx, gz, 2))) * cell;
-            let z = o[1] + (k as f64 + f64::from(hash(gx, gz, 3))) * cell;
-            let (c, r) = (
-                (((x - o[0]) / cs) as usize).min(n - 1),
-                (((z - o[1]) / cs) as usize).min(n - 1),
-            );
-            let (chance, s0, s1) = tree_density(lu.classes[r * n + c]);
-            if hash(gx, gz, 1) >= chance || blocked[r * n + c] {
-                continue;
-            }
-            let Some((y, too_steep)) = ground_and_steep(pkg, x, z) else {
-                continue;
-            };
-            if too_steep {
-                continue;
-            }
-            let s = s0 + (s1 - s0) * hash(gx, gz, 4);
-            sites.push((Vec3::new(x as f32, y as f32 - 0.3, z as f32), s));
-        }
-    }
-    sites
-}
-
-/// Provisional vegetation (packages without land use): trees on a
-/// jittered grid in patches, not on steep rock and never on a road.
-fn placeholder_tree_sites(pkg: &WorldPackage, tile: &Tile) -> Vec<TreeSite> {
-    let size = f64::from(pkg.tile_size_m);
-    let o = tile.key.origin(size);
-    let cell = 18.0;
-    let cells = (size / cell) as i64;
-    let mut sites = Vec::new();
-    let road_pts: Vec<(Vec2, f32)> = tile
-        .roads
-        .iter()
-        .flat_map(|r| {
-            r.points
-                .iter()
-                .map(move |p| (Vec2::new(p[0], p[2]), r.width_m / 2.0 + 5.0))
-        })
-        .collect();
-    for k in 0..cells {
-        for i in 0..cells {
-            let (gx, gz) = (tile.key.x as i64 * cells + i, tile.key.z as i64 * cells + k);
-            // Forest patches: coarse noise from a 6 × 6-cell lattice.
-            let patch = hash(gx.div_euclid(6), gz.div_euclid(6), 7);
-            if hash(gx, gz, 1) > patch * 0.9 {
-                continue;
-            }
-            let x = o[0] + (i as f64 + f64::from(hash(gx, gz, 2))) * cell;
-            let z = o[1] + (k as f64 + f64::from(hash(gx, gz, 3))) * cell;
-            let p2 = Vec2::new(x as f32, z as f32);
-            if road_pts.iter().any(|(q, r)| q.distance_squared(p2) < r * r) {
-                continue;
-            }
-            let Some((y, too_steep)) = ground_and_steep(pkg, x, z) else {
-                continue;
-            };
-            if too_steep {
-                continue; // rock faces
-            }
-            let s = 0.7 + 0.7 * hash(gx, gz, 4);
-            let base = Vec3::new(x as f32, y as f32 - 0.3, z as f32);
-            sites.push((base, s));
-        }
-    }
-    sites
+    ocw_world::trees::landuse_tree_sites(pkg, tile, lu, cells)
+        .into_iter()
+        .map(|(p, s)| (Vec3::from_array(p), s))
+        .collect()
 }
 
 /// Ground colour of a land class (sRGB).
@@ -1121,6 +941,7 @@ pub fn build_tile_meshes_look(
         solid,
         near_tint: look.near_tint,
         lamps: crate::street_lamps::tile_lamps(pkg, key, keep),
+        obstacles: crate::obstacles::tile_obstacle_meshes(pkg, key, keep),
     })
 }
 
@@ -1743,6 +1564,7 @@ fn upload_tile(
     let terrain_mat = terrain.add(terrain_mat);
     streamer.terrain.insert(id, terrain_mat.clone());
     let lamps = std::mem::take(&mut t.lamps);
+    let obstacles = std::mem::take(&mut t.obstacles);
     let parent = commands
         .spawn((
             frame_transform(&frame),
@@ -1845,6 +1667,22 @@ fn upload_tile(
                     TileDetail,
                 ));
             }
+            // World objects (spec §14 Phase 12 K3): per chunk, up to
+            // `obstacles::DRAW_M`; the road barriers only with
+            // `display.road_barriers` (Q7).
+            for chunk in obstacles.chunks {
+                let mut e = c.spawn((
+                    Mesh3d(meshes.add(chunk.mesh.mesh())),
+                    MeshMaterial3d(materials.vertex_coloured.clone()),
+                    Transform::from_translation(Vec3::from(chunk.origin)),
+                    crate::obstacles::draw_range(),
+                ));
+                if chunk.road {
+                    e.insert((Visibility::Hidden, crate::obstacles::RoadBarrierMesh));
+                } else {
+                    e.insert(TileDetail);
+                }
+            }
         })
         .id();
     if let Some(old) = streamer.loaded.insert(id, parent) {
@@ -1890,6 +1728,7 @@ mod tests {
             region: None,
             time_zone: None,
             look: Default::default(),
+            obstacles: None,
         }
     }
 

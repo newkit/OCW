@@ -678,6 +678,8 @@ mod tests {
             ocw_render::sky::SkyPlugin,
             // `ortho` (display.orthophoto).
             ocw_render::ortho::OrthoPlugin,
+            // `road_barriers` (display.road_barriers).
+            ocw_render::obstacles::ObstaclesPlugin,
         ))
         .insert_resource(UserSettings {
             settings: Settings::default(),
@@ -730,6 +732,21 @@ mod tests {
             !app.world()
                 .resource::<ocw_render::ortho::OrthoSettings>()
                 .enabled
+        );
+        // Road barriers (spec §14 Phase 12 Q7): hidden by default.
+        assert!(
+            !app.world()
+                .resource::<ocw_render::obstacles::ObstacleSettings>()
+                .road_barriers
+        );
+        assert_eq!(
+            run(&mut app, "set display.road_barriers on")[0],
+            "display.road_barriers = on"
+        );
+        assert!(
+            app.world()
+                .resource::<ocw_render::obstacles::ObstacleSettings>()
+                .road_barriers
         );
         let saved = std::fs::read_to_string(dir.join("settings.toml")).unwrap();
         assert!(saved.contains("[display]\nfps = true"), "{saved}");

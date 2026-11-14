@@ -39,7 +39,9 @@
 //! seasonal tint maps (spec §14 Phase 8 T3), see [`crate::look`]; `LITR` –
 //! whether each road strip is lit at night (OSM `lit`, spec §14 Phase 9
 //! S2), see [`crate::lamps`]; `ORTC` – the orthophoto corridor along the
-//! roads (spec §14 Phase 8 T7, optional), see [`crate::ortho`]. A package
+//! roads (spec §14 Phase 8 T7, optional), see [`crate::ortho`]; `OBST` –
+//! static obstacles near the roads (barriers, posts, the tree cells; spec
+//! §14 Phase 12 K3, optional), see [`crate::obstacles`]. A package
 //! without sections is written as version 1, byte for byte as before.
 //!
 //! Tile `(x, z)` covers local metres `[x·size, (x+1)·size] × [z·size, (z+1)·size]`;
@@ -62,6 +64,7 @@ use crate::look::{
     PALETTE_TAG, ROOFS_TAG, RegionLook, SEASONS_TAG, read_palette, read_roofs, read_seasons,
     write_palette, write_roofs, write_seasons,
 };
+use crate::obstacles::{OBSTACLES_TAG, Obstacles, read_obstacles, write_obstacles};
 use crate::ortho::{ORTHO_TAG, read_ortho, write_ortho};
 use crate::region::{PackageRegion, REGION_TAG, read_region, write_region};
 use crate::road_dress::{ROAD_DRESS_TAG, RoadDress, read_road_dress, write_road_dress};
@@ -165,6 +168,9 @@ pub struct WorldPackage {
     /// `ROOF`, `SEAS`, spec §14 Phase 8 T3); empty in older packages,
     /// which then keep the renderer's default colours.
     pub look: RegionLook,
+    /// Static obstacles near the roads (section `OBST`, spec §14 Phase 12
+    /// K3: barriers, posts, the tree cells); `None` in older packages.
+    pub obstacles: Option<Obstacles>,
 }
 
 impl WorldPackage {
@@ -384,6 +390,11 @@ impl WorldPackage {
             let mut payload = Vec::new();
             write_ortho(o, &mut payload);
             sections.push((ORTHO_TAG, payload));
+        }
+        if let Some(o) = &self.obstacles {
+            let mut payload = Vec::new();
+            write_obstacles(o, &mut payload);
+            sections.push((OBSTACLES_TAG, payload));
         }
         let mut payload = Vec::new();
         if write_road_surfaces(
@@ -663,6 +674,7 @@ struct Sections {
     region: Option<PackageRegion>,
     time_zone: Option<String>,
     look: RegionLook,
+    obstacles: Option<Obstacles>,
     surfaces: Vec<(TileKey, Vec<RoadSurface>)>,
     dress: Vec<(TileKey, Vec<RoadDress>)>,
     lit: Vec<(TileKey, Vec<RoadLit>)>,
@@ -684,6 +696,7 @@ impl Sections {
             region: self.region,
             time_zone: self.time_zone,
             look: self.look,
+            obstacles: self.obstacles,
         }
     }
 }
@@ -746,6 +759,15 @@ fn read_sections(
             // skipped (the ground keeps its materials and colour map).
             match read_ortho(payload) {
                 Ok(o) => s.look.ortho = Some(o),
+                Err(e) if e.contains("not supported") => {}
+                Err(e) => return Err(e),
+            }
+        } else if &tag == OBSTACLES_TAG {
+            // Optional (spec §14 Phase 12 K3): a newer layout is skipped
+            // (riders in wild mode then only meet buildings, railings and
+            // tunnel walls). Small, so also in skeletons and streamed bases.
+            match read_obstacles(payload) {
+                Ok(o) => s.obstacles = Some(o),
                 Err(e) if e.contains("not supported") => {}
                 Err(e) => return Err(e),
             }
@@ -1258,6 +1280,7 @@ mod tests {
             region: None,
             time_zone: None,
             look: Default::default(),
+            obstacles: None,
         }
     }
 
@@ -1516,6 +1539,58 @@ mod tests {
                 .flat_map(|t| &t.roads)
                 .all(|s| s.lit == crate::RoadLit::Unknown)
         );
+    }
+
+    /// Spec §14 Phase 12 K3: the obstacles (section `OBST`) round-trip,
+    /// also in a skeleton and a streamed base; older readers skip them.
+    #[test]
+    fn obstacles_round_trip_as_an_optional_section() {
+        use crate::obstacles::{
+            LineObstacle, ObstacleKind, Obstacles, PointObstacle, ROAD_BARRIER, TileObstacles,
+        };
+        assert!(
+            section_sizes(&package().to_bytes())
+                .iter()
+                .all(|(t, _)| t != OBSTACLES_TAG)
+        );
+        let mut o = Obstacles::new(1000.0);
+        o.tiles.insert(
+            TileKey { x: 0, z: 0 },
+            TileObstacles {
+                points: vec![PointObstacle {
+                    kind: ObstacleKind::Gate,
+                    flags: ROAD_BARRIER,
+                    pos: [1.5, 2.5],
+                    angle: 0.0,
+                    width_m: 4.0,
+                    height_m: 1.2,
+                }],
+                lines: vec![LineObstacle {
+                    kind: ObstacleKind::Wall,
+                    flags: 0,
+                    height_m: 1.5,
+                    points: vec![[0.0, 0.0], [10.0, 0.0]],
+                }],
+                trees: Vec::new(),
+            },
+        );
+        let p = WorldPackage {
+            obstacles: Some(o),
+            ..package()
+        };
+        let b = p.to_bytes();
+        let back = WorldPackage::from_bytes(&b).unwrap();
+        assert_eq!(back, p);
+        let skeleton = WorldPackage::skeleton_from_bytes(&b).unwrap();
+        assert_eq!(skeleton.obstacles, p.obstacles);
+        let mut old = b.clone();
+        let at = old.windows(4).rposition(|w| w == OBSTACLES_TAG).unwrap();
+        old[at..at + 4].copy_from_slice(b"XXXX");
+        assert_eq!(WorldPackage::from_bytes(&old).unwrap().obstacles, None);
+        // A newer layout is skipped, not fatal.
+        let mut newer = b.clone();
+        newer[at + 12] = 99;
+        assert_eq!(WorldPackage::from_bytes(&newer).unwrap().obstacles, None);
     }
 
     #[test]

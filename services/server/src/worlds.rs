@@ -79,7 +79,22 @@ pub fn load_course(
         .graph()
         .cloned()
         .ok_or("no road graph (rebuild it with world-builder package)")?;
-    let net = Arc::new(RoadNetwork::new(graph).with_package_name(hood.set.name()));
+    // The home package's obstacles (spec §14 Phase 12 K3; neighbours'
+    // are not loaded on the server).
+    let obstacles =
+        ocw_world::obstacles::WorldObstacles::from_package(&world.package).map(Arc::new);
+    if let Some(o) = &obstacles {
+        tracing::info!(
+            tiles = o.tiles().count(),
+            mb = o.approx_bytes() as f64 / 1e6,
+            "world obstacles (spec §14 Phase 12 K3)"
+        );
+    }
+    let net = Arc::new(
+        RoadNetwork::new(graph)
+            .with_package_name(hood.set.name())
+            .with_obstacles(obstacles),
+    );
     let change = v1::WorldChange {
         package_id: world.identity.id.clone(),
         version: world.identity.version,

@@ -901,6 +901,7 @@ mod tests {
             region: None,
             time_zone: None,
             look: Default::default(),
+            obstacles: None,
         }
     }
 
@@ -1088,6 +1089,7 @@ mod tests {
             region: None,
             time_zone: None,
             look: Default::default(),
+            obstacles: None,
         };
         let island = square(60.0, -40.0, 230.0, 140.0);
         let sea = Area::sea(vec![square(-50.0, -50.0, 250.0, 150.0), island]);

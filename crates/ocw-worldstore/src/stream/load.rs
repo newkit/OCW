@@ -365,6 +365,7 @@ pub(crate) mod tests {
             region: None,
             time_zone: Some("Europe/Vaduz".into()),
             look: Default::default(),
+            obstacles: None,
         }
     }
 

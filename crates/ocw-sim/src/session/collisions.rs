@@ -8,7 +8,9 @@
 
 use super::*;
 use crate::avoid::{self, AvoidState};
-use crate::collide::{self, Body, Bump, CrashPhase, CrashView, Frame, Hit, Mode};
+use crate::collide::WorldCache;
+use crate::collide::{self, Body, Bump, CrashPhase, CrashView, Frame, Hit, Mode, Response};
+use ocw_world::obstacles::WorldObstacles;
 
 /// A new (or reconnected) client rider rides as a ghost this long (s),
 /// until its client has the snapshots (12A: a lag spike after joining
@@ -63,12 +65,18 @@ pub struct CollisionStats {
     pub crashes: u64,
 }
 
-/// What `dev.bump` / `dev.crash` stage (12H).
+/// What `dev.bump` / `dev.crash` / `dev.tree` stage (12H, K3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stage {
     Bump,
     Crash,
+    /// A rider in wild mode put 8 m before the nearest tree off the road
+    /// ahead, riding straight at it.
+    Tree,
 }
+
+/// `dev.tree` puts the rider this far before the tree (m).
+pub const STAGE_TREE_M: f64 = 8.0;
 
 /// The collision switches of a session.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -136,6 +144,22 @@ impl Session {
 
     pub fn collision_stats(&self) -> CollisionStats {
         self.rules.stats
+    }
+
+    /// The world's static obstacles (spec §14 Phase 12 K3): set from the
+    /// road network for free rides and route rides; a fixed route (no
+    /// package) has none unless given here.
+    pub fn set_obstacles(&mut self, world: Option<Arc<WorldObstacles>>) {
+        self.world = WorldCache::new(world);
+    }
+
+    pub fn obstacles(&self) -> Option<&Arc<WorldObstacles>> {
+        self.world.world.as_ref()
+    }
+
+    /// Tiles of the obstacle index in memory (tests, statistics).
+    pub fn obstacle_tiles_loaded(&self) -> usize {
+        self.world.loaded()
     }
 
     /// A rider's crash as the clients see it.
@@ -253,49 +277,117 @@ impl Session {
             .filter(|(_, r)| self.collides(r))
             .map(|(id, _)| *id)
             .collect();
-        if ids.len() < 2 {
+        if ids.len() >= 2 {
+            let bodies: Vec<Body> = ids
+                .iter()
+                .map(|id| self.body(*id, &self.riders[id], frame))
+                .collect();
+            let out = collide::resolve(&bodies, frame, mode, self.tick);
+            for (id, resp) in ids.iter().zip(&out) {
+                if resp.touched() {
+                    self.apply_response(*id, resp);
+                }
+            }
+        }
+        self.resolve_world(mode);
+    }
+
+    /// Applies a contact's response to rider `id`: the push (within the
+    /// road edge, or wild mode's reach), speed, heading, a bump or a crash.
+    pub(super) fn apply_response(&mut self, id: RiderId, resp: &Response) {
+        let tick = self.tick;
+        self.rules.stats.contacts += 1;
+        let width = self
+            .track(id)
+            .road_width_at(body_distance(&self.riders[&id]));
+        let r = self.riders.get_mut(&id).expect("listed");
+        let limit = if r.wild {
+            physics::WILD_LIMIT_M
+        } else {
+            physics::lateral_limit(width)
+        };
+        r.state.distance += resp.ds;
+        r.state.lateral_offset = (r.state.lateral_offset + resp.dd).clamp(-limit, limit);
+        if let Some(v) = resp.speed {
+            r.state.speed = v;
+        }
+        if let Some(h) = resp.heading {
+            r.state.heading = h;
+        }
+        if let Some((strength, side)) = resp.bump {
+            r.bump = Some(Bump {
+                tick,
+                strength,
+                side,
+            });
+            self.rules.stats.bumps += 1;
+        }
+        if let Some(hit) = resp.crash {
+            start_crash(r, hit, tick);
+            self.rules.stats.crashes += 1;
+        }
+    }
+
+    /// Riders in wild mode against the world (K3): trees, buildings,
+    /// walls, fences, barriers, bridge railings and tunnel walls. Riders
+    /// on the road are held by its edge and never reach them (the routed
+    /// road is never blocked, Q7).
+    fn resolve_world(&mut self, mode: Mode) {
+        if self.world.world.is_none() {
             return;
         }
-        let bodies: Vec<Body> = ids
-            .iter()
-            .map(|id| self.body(*id, &self.riders[id], frame))
-            .collect();
-        let out = collide::resolve(&bodies, frame, mode, self.tick);
         let tick = self.tick;
-        for (id, resp) in ids.iter().zip(&out) {
-            if !resp.touched() {
-                continue;
-            }
-            self.rules.stats.contacts += 1;
-            let width = self
-                .track(*id)
-                .road_width_at(body_distance(&self.riders[id]));
-            let r = self.riders.get_mut(id).expect("listed");
-            let limit = if r.wild {
-                physics::WILD_LIMIT_M
-            } else {
-                physics::lateral_limit(width)
+        let wild: Vec<RiderId> = self
+            .riders
+            .iter()
+            .filter(|(_, r)| r.wild && r.crash.is_none() && self.collides(r))
+            .map(|(id, _)| *id)
+            .collect();
+        let mut solids = Vec::new();
+        for id in wild {
+            let r = &self.riders[&id];
+            let st = r.state;
+            let mass = r.effective.rider_mass_kg + r.effective.bike_mass_kg;
+            let p = self.track(id).sample(st.distance);
+            let at = p.offset_position(st.lateral_offset);
+            let body = Body {
+                id,
+                pos: [at[0], at[2]],
+                road: p.direction,
+                heading: st.heading,
+                speed: st.speed,
+                lean: collide::lean_of(st.speed, st.turn_curvature),
+                mass,
+                fallen: false,
+                manual: true,
             };
-            r.state.distance += resp.ds;
-            r.state.lateral_offset = (r.state.lateral_offset + resp.dd).clamp(-limit, limit);
-            if let Some(v) = resp.speed {
-                r.state.speed = v;
+            let resp = self.world.resolve(
+                &body,
+                at[1],
+                tick,
+                mode,
+                physics::WILD_MAX_HEADING,
+                &mut solids,
+            );
+            if resp.touched() {
+                self.apply_response(id, &resp);
             }
-            if let Some(h) = resp.heading {
-                r.state.heading = h;
-            }
-            if let Some((strength, side)) = resp.bump {
-                r.bump = Some(Bump {
-                    tick,
-                    strength,
-                    side,
-                });
-                self.rules.stats.bumps += 1;
-            }
-            if let Some(hit) = resp.crash {
-                start_crash(r, hit, tick);
-                self.rules.stats.crashes += 1;
-            }
+        }
+        if tick.is_multiple_of(250) {
+            self.world.sweep(tick);
+        }
+    }
+
+    /// The road edge hit hard (12B): rider `id` was stopped by the edge
+    /// this tick while riding into it at `heading` with `speed` (before
+    /// the tick).
+    pub(super) fn edge_hit(&mut self, id: RiderId, speed: f64, heading: f64, mode: Mode) {
+        let Some(r) = self.riders.get(&id) else {
+            return;
+        };
+        let mass = r.effective.rider_mass_kg + r.effective.bike_mass_kg;
+        if let Some(resp) = collide::edge_hit(speed, heading, mass, mode) {
+            self.apply_response(id, &resp);
         }
     }
 
@@ -306,6 +398,9 @@ impl Session {
     /// other rider counts as making a mistake (it may cause a crash).
     pub fn stage(&mut self, id: RiderId, what: Stage) -> Result<String, String> {
         let mode = self.collision_mode();
+        if what == Stage::Tree {
+            return self.stage_tree(id, mode);
+        }
         match (mode, what) {
             (Mode::Off, _) => return Err("collisions are off (set ride.collisions on)".into()),
             (Mode::Soft, Stage::Crash) => {
@@ -347,7 +442,7 @@ impl Session {
                 st.speed.max(4.0),
                 -side * 0.12,
             ),
-            Stage::Crash => (
+            Stage::Crash | Stage::Tree => (
                 st.distance + 1.55,
                 st.lateral_offset + side * 0.3,
                 (st.speed - 2.5).max(0.0),
@@ -383,8 +478,81 @@ impl Session {
         }
         Ok(match what {
             Stage::Bump => format!("{name} bumps into you from the side"),
-            Stage::Crash => format!("{name} cuts in front of you: wheel touch"),
+            Stage::Crash | Stage::Tree => format!("{name} cuts in front of you: wheel touch"),
         })
+    }
+}
+
+impl Session {
+    /// `dev.tree` (K3, local server only): the rider (in wild mode) is put
+    /// [`STAGE_TREE_M`] before the nearest tree off the road ahead (within
+    /// 120 m along and 55 m beside), riding straight at it at least 7 m/s.
+    fn stage_tree(&mut self, id: RiderId, mode: Mode) -> Result<String, String> {
+        if mode == Mode::Off {
+            return Err("collisions are off (set ride.collisions on)".into());
+        }
+        let me = self.riders.get(&id).ok_or("no such rider")?;
+        if !me.wild {
+            return Err("wild mode first (rider.wild on)".into());
+        }
+        if me.crash.is_some() {
+            return Err("already down".into());
+        }
+        let st = me.state;
+        let track = self.track(id);
+        let p = track.sample(st.distance);
+        let width = track.road_width_at(st.distance);
+        let at = p.offset_position(0.0);
+        let (lo, hi) = (
+            [at[0] - 120.0, at[2] - 120.0],
+            [at[0] + 120.0, at[2] + 120.0],
+        );
+        let mut solids = Vec::new();
+        self.world.solids_near(lo, hi, self.tick, &mut solids);
+        let track = self.track(id);
+        // Each tree in the rider's frame (distance along, offset beside).
+        let frame = |c: [f64; 2]| {
+            let mut s =
+                st.distance + (c[0] - at[0]) * p.direction[0] + (c[1] - at[2]) * p.direction[1];
+            let mut d = 0.0;
+            for _ in 0..3 {
+                let q = track.sample(s);
+                let r = q.right();
+                d = (c[0] - q.position[0]) * r[0] + (c[1] - q.position[2]) * r[1];
+                s += (c[0] - q.position[0]) * q.direction[0]
+                    + (c[1] - q.position[2]) * q.direction[1];
+            }
+            (s, d)
+        };
+        let target = solids
+            .iter()
+            .filter(|s| s.kind == collide::ObstacleKind::Tree)
+            .filter_map(|s| match s.shape {
+                ocw_world::obstacles::Shape::Circle { c, .. } => Some(frame(c)),
+                ocw_world::obstacles::Shape::Segment { .. } => None,
+            })
+            .filter(|(s, d)| {
+                *s > st.distance + STAGE_TREE_M
+                    && *s < st.distance + 120.0
+                    && d.abs() > width / 2.0 + 2.0
+                    && d.abs() < 55.0
+            })
+            .min_by(|a, b| (a.0 + a.1.abs()).total_cmp(&(b.0 + b.1.abs())))
+            .ok_or("no tree off the road ahead")?;
+        let r = self.riders.get_mut(&id).expect("checked");
+        r.state = RiderState {
+            distance: target.0 - STAGE_TREE_M,
+            lateral_offset: target.1,
+            heading: 0.0,
+            speed: st.speed.max(7.0),
+            turn_curvature: 0.0,
+        };
+        r.steering = Steering::Lean(0.0);
+        r.avoid = AvoidState::default();
+        Ok(format!(
+            "riding at a tree {STAGE_TREE_M:.0} m ahead, {:.1} m beside the road",
+            target.1
+        ))
     }
 }
 
@@ -893,5 +1061,464 @@ mod tests {
         assert!(chaos.contacts > 0, "{chaos:?}");
         // The same every time (no random numbers).
         assert_eq!(contacts(true), chaos);
+    }
+}
+
+/// Riders against the world (spec §14 Phase 12 K3).
+#[cfg(test)]
+mod world_tests {
+    use super::*;
+    use crate::collide::{ContactKind, ObstacleKind};
+    use ocw_world::obstacles::{
+        LineObstacle, ON_ROAD, Obstacles, PointObstacle, ROAD_BARRIER, TileObstacles,
+    };
+    use ocw_world::{TileKey, WorldPackage};
+
+    /// A straight 2 km route along +x at z = 0, 6 m wide (lateral = +z).
+    fn straight() -> Route {
+        let pts = (0..=200).map(|i| [f64::from(i) * 10.0, 0.0, 0.0]).collect();
+        Route::from_points("straight", "Straight", pts, false, 6.0).unwrap()
+    }
+
+    fn empty_package() -> WorldPackage {
+        WorldPackage {
+            name: "World".into(),
+            origin: (47.0, 9.0),
+            tile_size_m: 1000.0,
+            samples: 2,
+            tiles: BTreeMap::new(),
+            graph: None,
+            landuse: None,
+            buildings: None,
+            bridges: None,
+            routes: Vec::new(),
+            region: None,
+            time_zone: None,
+            look: Default::default(),
+            obstacles: None,
+        }
+    }
+
+    fn point(kind: ObstacleKind, x: f32, z: f32, flags: u8) -> PointObstacle {
+        PointObstacle {
+            kind,
+            flags,
+            pos: [x, z],
+            angle: 0.0,
+            width_m: 0.0,
+            height_m: 1.0,
+        }
+    }
+
+    /// A session on the straight route with these obstacles in tile (0, 0).
+    fn world(tile: TileObstacles, edit: impl FnOnce(&mut WorldPackage)) -> Session {
+        let mut pkg = empty_package();
+        let mut o = Obstacles::new(1000.0);
+        o.tiles.insert(TileKey { x: 0, z: 0 }, tile);
+        pkg.obstacles = Some(o);
+        edit(&mut pkg);
+        let mut s = Session::new(straight());
+        s.set_collisions(true);
+        s.set_obstacles(WorldObstacles::from_package(&pkg).map(Arc::new));
+        s
+    }
+
+    /// A client rider in wild mode at (distance, lateral), riding at
+    /// `heading` with `speed`, past its joining time.
+    fn wild_rider(
+        s: &mut Session,
+        distance: f64,
+        lateral: f64,
+        heading: f64,
+        speed: f64,
+    ) -> RiderId {
+        let id = s.add_rider("wild", RiderProfile::default());
+        let r = s.riders.get_mut(&id).unwrap();
+        r.solid = true;
+        r.wild = true;
+        r.steering = Steering::Lean(0.0);
+        r.state = RiderState {
+            distance,
+            lateral_offset: lateral,
+            heading,
+            speed,
+            turn_curvature: 0.0,
+        };
+        id
+    }
+
+    fn ride(s: &mut Session, seconds: f64) {
+        for _ in 0..(seconds / SIM_DT) as usize {
+            s.step();
+        }
+    }
+
+    /// Rides into whatever stands 6 m ahead at 8 m/s: the crash's kind.
+    fn crash_into(s: &mut Session, at: [f64; 2]) -> Option<ContactKind> {
+        let id = wild_rider(s, at[0] - 6.0, at[1], 0.0, 8.0);
+        ride(s, 1.5);
+        s.crash(id).map(|c| c.kind)
+    }
+
+    fn wall(kind: ObstacleKind, a: [f32; 2], b: [f32; 2]) -> LineObstacle {
+        LineObstacle {
+            kind,
+            flags: 0,
+            height_m: 1.5,
+            points: vec![a, b],
+        }
+    }
+
+    #[test]
+    fn wild_riders_crash_into_every_kind_of_world_object() {
+        // Points: blocks, posts, bollards and gates off the road, pylons.
+        for kind in [
+            ObstacleKind::Block,
+            ObstacleKind::Post,
+            ObstacleKind::Bollard,
+            ObstacleKind::Gate,
+            ObstacleKind::LiftGate,
+            ObstacleKind::CycleBarrier,
+            ObstacleKind::Barrier,
+            ObstacleKind::Pylon,
+        ] {
+            let mut s = world(
+                TileObstacles {
+                    points: vec![point(kind, 300.0, 20.0, 0)],
+                    ..Default::default()
+                },
+                |_| {},
+            );
+            assert_eq!(
+                crash_into(&mut s, [300.0, 20.0]),
+                Some(ContactKind::World(kind)),
+                "{kind:?}"
+            );
+        }
+        // Lines across the rider's way.
+        for kind in [
+            ObstacleKind::Wall,
+            ObstacleKind::Fence,
+            ObstacleKind::Hedge,
+            ObstacleKind::GuardRail,
+            ObstacleKind::GateLine,
+        ] {
+            let mut s = world(
+                TileObstacles {
+                    lines: vec![wall(kind, [300.0, 10.0], [300.0, 30.0])],
+                    ..Default::default()
+                },
+                |_| {},
+            );
+            assert_eq!(
+                crash_into(&mut s, [300.0, 20.0]),
+                Some(ContactKind::World(kind)),
+                "{kind:?}"
+            );
+        }
+        // Kerbs are ridden over.
+        let mut s = world(
+            TileObstacles {
+                lines: vec![wall(ObstacleKind::Kerb, [300.0, 10.0], [300.0, 30.0])],
+                ..Default::default()
+            },
+            |_| {},
+        );
+        assert_eq!(crash_into(&mut s, [300.0, 20.0]), None);
+        // A tree of the package's tree placement (section OBST).
+        let mut cells = vec![0u8; 125 * 125];
+        let (i, k) = (37usize, 2usize);
+        cells[k * 125 + i] = ocw_world::landuse::LandClass::Forest.code() + 1;
+        let mut tile = TileObstacles::default();
+        tile.set_tree_cells(&cells);
+        let (trunk, r) =
+            ocw_world::trees::trunks_from_cells(TileKey { x: 0, z: 0 }, 1000.0, &cells)[0];
+        assert!(r > 0.15 && trunk[1] > 15.0 && trunk[1] < 25.0, "{trunk:?}");
+        let mut s = world(tile, |_| {});
+        assert_eq!(
+            crash_into(&mut s, trunk),
+            Some(ContactKind::World(ObstacleKind::Tree))
+        );
+        // A building (section BLDG).
+        let mut s = world(TileObstacles::default(), |p| {
+            p.buildings = Some(BTreeMap::from([(
+                TileKey { x: 0, z: 0 },
+                vec![ocw_world::buildings::Building {
+                    kind: ocw_world::buildings::BuildingKind::House,
+                    outline: vec![[300.0, 15.0], [310.0, 15.0], [310.0, 25.0], [300.0, 25.0]],
+                    holes: Vec::new(),
+                    base_y: 0.0,
+                    eave_y: 6.0,
+                    roof: ocw_world::buildings::Roof::Flat,
+                    tags: Default::default(),
+                }],
+            )]))
+        });
+        assert_eq!(
+            crash_into(&mut s, [300.0, 20.0]),
+            Some(ContactKind::World(ObstacleKind::Building))
+        );
+    }
+
+    #[test]
+    fn a_slow_hit_stops_the_rider_without_a_crash_or_overlap() {
+        let mut s = world(
+            TileObstacles {
+                lines: vec![wall(ObstacleKind::Wall, [300.0, 10.0], [300.0, 30.0])],
+                ..Default::default()
+            },
+            |_| {},
+        );
+        let id = wild_rider(&mut s, 297.0, 20.0, 0.0, 2.0);
+        ride(&mut s, 2.0);
+        assert!(s.crash(id).is_none());
+        let st = s.rider_state(id).unwrap();
+        // Stopped at the wall (0.2 m thick), the front of the bike at it.
+        assert!(st.speed < 0.5, "{st:?}");
+        let front = st.distance + collide::BODY_LENGTH_M / 2.0;
+        assert!(front <= 300.0 - 0.2 + 0.01 && front > 299.0, "{front}");
+        assert!(s.riders[&id].bump.is_some());
+    }
+
+    #[test]
+    fn glancing_a_wall_slides_along_it() {
+        // A wall along the road 20 m beside it; the rider steers into it at
+        // 10°: the speed into it (1.4 m/s) is lost, the rider rides on.
+        let mut s = world(
+            TileObstacles {
+                lines: vec![wall(ObstacleKind::Wall, [100.0, 20.0], [900.0, 20.0])],
+                ..Default::default()
+            },
+            |_| {},
+        );
+        let id = wild_rider(&mut s, 300.0, 18.5, 0.17, 8.0);
+        ride(&mut s, 1.0);
+        assert!(s.crash(id).is_none());
+        let st = s.rider_state(id).unwrap();
+        assert!(st.speed > 6.0, "rides on: {st:?}");
+        assert!(st.lateral_offset < 20.0 - 0.2, "{st:?}");
+        // Steeply (35° at 8 m/s, 4.6 m/s into it): a crash.
+        let id = wild_rider(&mut s, 600.0, 18.5, 0.61, 8.0);
+        ride(&mut s, 0.5);
+        assert_eq!(
+            s.crash(id).map(|c| c.kind),
+            Some(ContactKind::World(ObstacleKind::Wall))
+        );
+        // Down where it fell, beside the wall (not back on the road).
+        ride(&mut s, 2.0);
+        assert!(s.rider_state(id).unwrap().lateral_offset > 17.0);
+    }
+
+    #[test]
+    fn road_barriers_never_block_and_riders_on_the_road_meet_nothing() {
+        // A bollard and a gate on the road (road barriers, Q7) and a block
+        // just beyond its edge: a rider on the road rides through, a rider
+        // hugging the edge passes the block, a wild rider on the road rides
+        // through the barriers too.
+        let mut s = world(
+            TileObstacles {
+                points: vec![
+                    point(ObstacleKind::Bollard, 300.0, 0.0, ROAD_BARRIER | ON_ROAD),
+                    point(ObstacleKind::Gate, 400.0, 0.0, ROAD_BARRIER | ON_ROAD),
+                    point(ObstacleKind::Block, 500.0, 3.6, 0),
+                ],
+                ..Default::default()
+            },
+            |_| {},
+        );
+        let limit = physics::lateral_limit(6.0);
+        let road = wild_rider(&mut s, 290.0, 0.0, 0.0, 10.0);
+        let edge = wild_rider(&mut s, 480.0, limit, 0.0, 10.0);
+        for id in [road, edge] {
+            let r = s.riders.get_mut(&id).unwrap();
+            r.wild = false;
+            r.steering = Steering::Auto(r.state.lateral_offset);
+        }
+        let through = wild_rider(&mut s, 280.0, 0.0, 0.0, 10.0);
+        ride(&mut s, 3.0);
+        for id in [road, edge, through] {
+            assert!(s.crash(id).is_none(), "{id:?}");
+            assert!(s.rider_state(id).unwrap().speed > 5.0, "{id:?}");
+        }
+        assert_eq!(s.collision_stats().contacts, 0);
+    }
+
+    #[test]
+    fn dev_tree_stages_a_wild_crash_into_a_tree() {
+        let mut cells = vec![0u8; 125 * 125];
+        cells[3 * 125 + 40] = ocw_world::landuse::LandClass::Forest.code() + 1;
+        let mut tile = TileObstacles::default();
+        tile.set_tree_cells(&cells);
+        let mut s = world(tile, |_| {});
+        let id = wild_rider(&mut s, 250.0, 0.0, 0.0, 5.0);
+        let road = s.add_rider("road", RiderProfile::default());
+        assert!(s.stage(road, Stage::Tree).is_err(), "wild mode first");
+        let msg = s.stage(id, Stage::Tree).unwrap();
+        assert!(msg.contains("tree"), "{msg}");
+        ride(&mut s, 2.0);
+        assert_eq!(
+            s.crash(id).map(|c| c.kind),
+            Some(ContactKind::World(ObstacleKind::Tree))
+        );
+    }
+
+    #[test]
+    fn collisions_off_rides_through_the_world() {
+        let mut s = world(
+            TileObstacles {
+                points: vec![point(ObstacleKind::Block, 300.0, 20.0, 0)],
+                ..Default::default()
+            },
+            |_| {},
+        );
+        s.set_collisions(false);
+        assert_eq!(crash_into(&mut s, [300.0, 20.0]), None);
+        assert_eq!(s.collision_stats().contacts, 0);
+    }
+
+    #[test]
+    fn railings_and_tunnel_walls_bound_riders_on_their_road_only() {
+        use ocw_world::bridges::{Bridge, BridgeMaterial, BridgeSource, BridgeStructure, Railing};
+        use ocw_world::graph::{Edge, EdgeId, Oneway, RoadClass, RoadGraph, VertexId};
+        let deck = |y: f32| Bridge {
+            edge: EdgeId(1),
+            osm_way: 1,
+            structure: BridgeStructure::Beam,
+            material: BridgeMaterial::Concrete,
+            source: BridgeSource::Tagged,
+            railing: Railing::Parapet,
+            width_m: 6.0,
+            deck_m: 1.0,
+            points: vec![[200.0, y, 0.0], [400.0, y, 0.0]],
+            abutment_foot_y: [y - 8.0; 2],
+            piers: Vec::new(),
+            arches: Vec::new(),
+        };
+        let tunnel = |y: f64| RoadGraph {
+            vertices: vec![[600.0, 0.0], [800.0, 0.0]],
+            edges: vec![Edge {
+                id: EdgeId(7),
+                from: VertexId(0),
+                to: VertexId(1),
+                points: vec![[600.0, 0.0], [800.0, 0.0]],
+                class: RoadClass::Tertiary,
+                name: None,
+                width_m: 6.0,
+                bridge: false,
+                tunnel: true,
+                dead_end_m: None,
+                boundary: false,
+                oneway: Oneway::No,
+                osm_way: 7,
+                profile: vec![y; 41],
+            }],
+            boundary_vertices: Default::default(),
+        };
+        let at = |y: f32, ty: f64| {
+            world(TileObstacles::default(), |p| {
+                p.bridges = Some(BTreeMap::from([(TileKey { x: 0, z: 0 }, vec![deck(y)])]));
+                p.graph = Some(tunnel(ty));
+            })
+        };
+        // On the bridge (its deck at the road's height): wild mode cannot
+        // leave it sideways; steeply into the parapet is a crash.
+        let mut s = at(0.0, 0.0);
+        let id = wild_rider(&mut s, 300.0, 0.0, 0.9, 8.0);
+        ride(&mut s, 1.0);
+        assert_eq!(
+            s.crash(id).map(|c| c.kind),
+            Some(ContactKind::World(ObstacleKind::Railing))
+        );
+        assert!(s.rider_state(id).unwrap().lateral_offset < 3.6 - 0.175);
+        // Gently: bounded, riding on along it.
+        let id = wild_rider(&mut s, 250.0, 2.0, 0.15, 6.0);
+        ride(&mut s, 2.0);
+        let st = s.rider_state(id).unwrap();
+        assert!(
+            s.crash(id).is_none() && st.lateral_offset < 3.5 && st.speed > 4.0,
+            "{st:?}"
+        );
+        // In the tunnel: the walls 1 m beside the road edge.
+        let id = wild_rider(&mut s, 700.0, 0.0, -0.9, 8.0);
+        ride(&mut s, 1.0);
+        assert_eq!(
+            s.crash(id).map(|c| c.kind),
+            Some(ContactKind::World(ObstacleKind::TunnelWall))
+        );
+        assert!(s.rider_state(id).unwrap().lateral_offset > -4.0);
+        // A road 8 m under the bridge and 20 m under the tunnel's road
+        // (another level): neither bounds its riders.
+        let mut s = at(8.0, 20.0);
+        for d in [300.0, 700.0] {
+            let id = wild_rider(&mut s, d, 0.0, 0.9, 8.0);
+            ride(&mut s, 1.0);
+            assert!(s.crash(id).is_none());
+            assert!(s.rider_state(id).unwrap().lateral_offset > 5.0);
+        }
+    }
+
+    #[test]
+    fn hitting_the_road_edge_hard_is_a_wall_hit() {
+        // No world objects needed: the road edge of §5.2.1.
+        let mut s = Session::new(straight());
+        s.set_collisions(true);
+        // Wild mode just switched off while riding across the road at 50°:
+        // stopped by the edge at 10 m/s × sin 50° = 7.7 m/s into it.
+        let id = wild_rider(&mut s, 300.0, 2.39, 0.87, 10.0);
+        s.riders.get_mut(&id).unwrap().wild = false;
+        s.step();
+        let c = s.crash(id).expect("a crash into the road edge");
+        assert_eq!(c.kind, ContactKind::RoadEdge);
+        // At 40° but slowly (4 m/s: 2.6 m/s into it): a bump, no crash.
+        let slow = wild_rider(&mut s, 600.0, 2.39, 0.7, 4.0);
+        s.riders.get_mut(&slow).unwrap().wild = false;
+        s.step();
+        assert!(s.crash(slow).is_none());
+        assert!(s.riders[&slow].bump.is_some());
+        assert!(s.rider_state(slow).unwrap().speed < 4.0 * 0.7f64.cos() + 0.01);
+        // Shallow (17°, the road's largest angle): the scrape only.
+        let scrape = wild_rider(&mut s, 900.0, 2.3, 0.3, 10.0);
+        s.riders.get_mut(&scrape).unwrap().wild = false;
+        ride(&mut s, 0.5);
+        assert!(s.crash(scrape).is_none() && s.riders[&scrape].bump.is_none());
+    }
+
+    #[test]
+    fn a_hundred_wild_riders_in_a_forest_are_checked_quickly() {
+        // A forest tile (a tree in every 8 m cell) with fences; 100 riders
+        // in wild mode spread over it (spec §15: the collisions of 100
+        // riders within 0.3 ms per tick).
+        let cells = vec![ocw_world::landuse::LandClass::Forest.code() + 1; 125 * 125];
+        let mut tile = TileObstacles {
+            lines: (0..20)
+                .map(|i| {
+                    let z = 3.0 + i as f32 * 2.9;
+                    wall(ObstacleKind::Fence, [0.0, z], [1000.0, z])
+                })
+                .collect(),
+            ..Default::default()
+        };
+        tile.set_tree_cells(&cells);
+        let mut s = world(tile, |_| {});
+        for i in 0..100 {
+            wild_rider(
+                &mut s,
+                100.0 + f64::from(i) * 7.3,
+                -50.0 + f64::from(i % 20) * 5.1,
+                0.3,
+                8.0,
+            );
+        }
+        s.resolve_collisions(Mode::Full);
+        assert!(s.obstacle_tiles_loaded() >= 1);
+        let budget = if cfg!(debug_assertions) { 6.0 } else { 0.3 };
+        let n = 100;
+        let t = std::time::Instant::now();
+        for _ in 0..n {
+            s.resolve_collisions(Mode::Full);
+        }
+        let per_tick_ms = t.elapsed().as_secs_f64() * 1000.0 / f64::from(n);
+        println!("world collisions for 100 wild riders in a forest: {per_tick_ms:.4} ms per tick");
+        assert!(per_tick_ms < budget, "{per_tick_ms} ms");
     }
 }

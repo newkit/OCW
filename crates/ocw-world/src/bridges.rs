@@ -480,7 +480,7 @@ impl BridgeMesh {
 }
 
 /// Cross-section frame at a deck point: centre, right (horizontal, unit).
-fn frame(points: &[[f32; 3]], i: usize) -> (V3, V3) {
+pub(crate) fn frame(points: &[[f32; 3]], i: usize) -> (V3, V3) {
     let n = points.len();
     let (a, b) = (points[i.saturating_sub(1)], points[(i + 1).min(n - 1)]);
     let d = norm([b[0] - a[0], 0.0, b[2] - a[2]]);

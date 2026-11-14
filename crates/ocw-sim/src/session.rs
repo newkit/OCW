@@ -264,6 +264,9 @@ pub struct Session {
     god_area: Option<crate::god::Bounds>,
     /// Collision switches and counters (spec §14 Phase 12).
     rules: collisions::Rules,
+    /// The world's static obstacles and their index near riders in wild
+    /// mode (spec §14 Phase 12 K3).
+    world: crate::collide::WorldCache,
 }
 
 impl Session {
@@ -281,6 +284,7 @@ impl Session {
             event_changes: Vec::new(),
             god_area: god_mode::route_area(&route),
             rules: collisions::Rules::default(),
+            world: crate::collide::WorldCache::default(),
             route,
         }
     }
@@ -299,6 +303,7 @@ impl Session {
         Self {
             route: first.route().clone(),
             god_area: god_mode::network_area(&net),
+            world: crate::collide::WorldCache::new(net.obstacles().cloned()),
             free: Some((net, start)),
             ..Self::new(first.route().clone())
         }
@@ -1124,6 +1129,7 @@ impl Session {
                 }
             })
             .collect();
+        let mut edge_hits: Vec<(RiderId, f64, f64)> = Vec::new();
         for (id, rider) in &mut self.riders {
             let d = rider.state.distance;
             if rider.control == Control::Echo {
@@ -1170,7 +1176,13 @@ impl Session {
                     Some(p) => p.road_width_at(d),
                     None => self.route.road_width_at(d),
                 };
-                collisions::crash_tick(rider, tick, physics::lateral_limit(width));
+                // Down where they fell: off the road in wild mode.
+                let limit = if rider.wild {
+                    physics::WILD_LIMIT_M
+                } else {
+                    physics::lateral_limit(width)
+                };
+                collisions::crash_tick(rider, tick, limit);
                 continue;
             }
             // The others where this rider rides: distance along its path.
@@ -1283,6 +1295,7 @@ impl Session {
                 wild: rider.wild,
                 braking: rider.input.brake,
             };
+            let (speed_before, heading_before) = (rider.state.speed, rider.state.heading);
             ride::tick(
                 &mut rider.state,
                 &rider.effective,
@@ -1309,6 +1322,23 @@ impl Session {
                 && rider.state.speed > c
             {
                 rider.state.speed = c;
+            }
+            // Stopped by the road edge while riding into it at a steep
+            // angle (wild mode just switched off): a hit on a wall (12B).
+            if mode.on()
+                && !rider.wild
+                && rider.scraping
+                && heading_before.abs() > crate::collide::EDGE_HIT_RAD
+                && rider.crash.is_none()
+                && rider.god.is_none()
+            {
+                edge_hits.push((*id, speed_before, heading_before));
+            }
+        }
+        for (id, speed, heading) in edge_hits {
+            let collides = self.riders.get(&id).is_some_and(|r| self.collides(r));
+            if collides {
+                self.edge_hit(id, speed, heading, mode);
             }
         }
         // Contacts after the physics step, before the broadcast (12B).

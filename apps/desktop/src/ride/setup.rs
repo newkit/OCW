@@ -87,11 +87,15 @@ pub fn build(args: &Args) -> Result<RideSetup, String> {
     if let (Some(path), None) = (&args.route_file, &args.server) {
         setup.route = route_file_on_package(path, pkg)?;
     }
-    let net = hood
-        .set
-        .graph()
-        .cloned()
-        .map(|graph| Arc::new(RoadNetwork::new(graph).with_package_name(hood.set.name())));
+    // The home package's static obstacles (spec §14 Phase 12 K3).
+    let obstacles = ocw_world::obstacles::WorldObstacles::from_package(pkg).map(Arc::new);
+    let net = hood.set.graph().cloned().map(|graph| {
+        Arc::new(
+            RoadNetwork::new(graph)
+                .with_package_name(hood.set.name())
+                .with_obstacles(obstacles),
+        )
+    });
     // `--world` alone: the package's first route, else a free ride.
     let world_alone = args.world_alone();
     let alone;
