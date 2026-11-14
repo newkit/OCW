@@ -93,6 +93,9 @@ pub enum Page {
     /// Navi → Riders in this ride (spec §14 Phase 13E, 12F; rows from
     /// `rider_list`): who rides, where, who flies, who is hurt.
     RiderList,
+    /// "Start the event?" → Organiser rules (spec §14 Phase 12 K6): the
+    /// rules of the events this rider starts (the `event.*` settings).
+    EventRules,
 }
 
 impl Page {
@@ -144,6 +147,7 @@ impl Page {
             Self::RidingAids => "Riding aids",
             Self::Graphics => "Graphics",
             Self::RiderList => "Riders in this ride",
+            Self::EventRules => "Organiser rules",
         }
     }
 
@@ -293,6 +297,9 @@ impl Page {
             Self::RiderList => {
                 &["The unicorn: flying in unicorn mode. The dot: hurt, or the bike damaged."]
             }
+            Self::EventRules => &[
+                "The rules of the events you start; riders cannot change them until the event is over. Auto: by the kind of event (races: no riding aids).",
+            ],
             Self::Workouts => &[
                 "Structured workouts in ERG mode: yours from the workouts folder (.toml, .erg, .mrc), then the examples. % FTP targets use the rider's FTP.",
             ],
@@ -785,6 +792,15 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
                 confirm: Some(Activate::Open(Page::RidingAids)),
             },
         ],
+        // The organiser's rules (spec §14 Phase 12 K6): six rows.
+        Page::EventRules => vec![
+            setting_row(settings, "event.collisions", "Collisions"),
+            setting_row(settings, "event.damage", "Damage"),
+            setting_row(settings, "event.aids", "Riding aids allowed"),
+            setting_row(settings, "event.chaotic_bots", "Chaotic bots"),
+            setting_row(settings, "event.neutral_service", "Neutral service"),
+            setting_row(settings, "event.dnf_injured", "DNF when badly injured"),
+        ],
         Page::RidingAids => vec![
             setting_row(settings, "ride.proximity_cue", "Proximity arrow and bell"),
             setting_row(settings, "ride.hit_warning", "Last-moment warning"),
@@ -1043,6 +1059,28 @@ mod tests {
             row(&strava, "Retry failed uploads").confirm,
             cmd("strava.sync --retry")
         );
+    }
+
+    /// K6 (spec §14 Phase 12): the Organiser rules page, six rows of
+    /// `event.*` settings (`auto` by the event's kind).
+    #[test]
+    fn the_organiser_rules_page_sets_the_event_settings() {
+        let (s, _) = Settings::parse("[event]\naids = \"on\"\n").unwrap();
+        let r = rows(Page::EventRules, &s, &Riders::default());
+        assert!(r.len() <= 6, "the ten-foot rule");
+        let c = row(&r, "Collisions");
+        assert_eq!(c.value.as_deref(), Some("auto"));
+        assert_eq!(c.right.as_deref(), Some("set event.collisions off"));
+        assert_eq!(row(&r, "Riding aids allowed").value.as_deref(), Some("on"));
+        assert_eq!(
+            row(&r, "Neutral service").confirm,
+            cmd("set event.neutral_service on")
+        );
+        assert_eq!(
+            row(&r, "DNF when badly injured").confirm,
+            cmd("set event.dnf_injured on")
+        );
+        assert_eq!(Page::EventRules.title(), "Organiser rules");
     }
 
     #[test]

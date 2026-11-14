@@ -1276,8 +1276,35 @@ event group [--watts W] [--bots N]          # bots hold W (default 150) and regr
 event tt [--laps N | --km X]                # alone, no drafting, against your best effort
 event race --physics open                   # race mode: open | profile (default) | equal
 event race --weather thunderstorm           # the organiser's weather, fixed for the event
+event race --aids on --chaotic-bots on      # the organiser's rules (below)
 event status | event cancel | event dismiss
 ```
+
+- **The organiser's rules** (spec §14 Phase 12 K6): you start the event, so
+  you set its rules; nobody can change them until it is over. All of them
+  work for `race`, `group` and `tt`:
+
+  | Option | Rule (default) |
+  |---|---|
+  | `--collisions off\|soft\|full` | collisions (group rides soft bumps only, races the full model) |
+  | `--damage on\|off` | damage (your `ride.damage`) |
+  | `--aids on\|off` | the riding aids – the last-moment warning, the proximity arrow and bell – allowed (not in races, else yes) |
+  | `--chaotic-bots on\|off` | bots that make mistakes (your `ride.chaotic_bots`) |
+  | `--neutral-service [--service-s S]` | a spare bike for a broken one (else DNF), a 30 s stop restores the bike; S: the wait for a spare wheel or bike (a puncture 30 s, a spare bike 60 s) |
+  | `--dnf-injured` | a badly injured rider is DNF |
+  | `--time-limit MIN` | time limit after the winner, 0.5–120 min (2 min or a quarter of the winner's time) |
+
+  The menu's *Ride* items use the page **"Start the event?" → Organiser
+  rules** (collisions, damage, riding aids, chaotic bots, neutral service,
+  DNF when badly injured; `auto` = the default); the console options win
+  over it. The rules show on the start line and under the results
+  ("Rules: collisions on, damage off, riding aids not allowed"), and a DNF
+  row says why (badly injured, bike broken, over the time limit, left).
+- **Animations** (spec §2.6): riders put a foot down when they stop (the
+  start formation shows it) and clip back in when they ride off, corner
+  with the head and the inside knee, look over the shoulder before a free
+  ride U-turn and hold the inside foot out in the loop, throw the bike at
+  the line, sit up after the finish – and the winner raises both arms.
 
 - Everyone (you and the bots) lines up in the start formation behind the
   start line - at the start / finish arch on a loop, at the beginning of a
@@ -1817,7 +1844,7 @@ for now).
 | `world info` | The world ridden now: package, area, elevation, data sources with their notices, routes, time zone, sun and twilight times |
 | `world switch N\|ID\|NAME\|PATH` | Ride another world without restarting (its first route, else a free ride; a test route: `hills`, `loop`); in a shared ride the host asks the server |
 | **Events** (spec §2.3) | |
-| `event race [--laps N\|--km X] [--bots N] [--physics MODE] [--weather W...] [--weather-physics on\|off] [--damage on\|off] [--dnf-injured] [--neutral-service]` | Race from the start formation to the finish (default 1 lap / 5 km; the organiser's damage rules – damage on or off, DNF when badly injured, neutral service: a spare bike and a 30 s service stop (spec §14 Phase 12E), also for `group` and `tt`; MODE: `profile` – the default, only the frame's profile counts –, `open` – parts count, capped –, `equal`; W: the organiser's weather – `PRESET [FIELD=VALUE...]`, `custom FIELD=VALUE...`, `random SEED`, `auto SEED` –, fixed for the event; also for `group` and `tt`) |
+| `event race [--laps N\|--km X] [--bots N] [--physics MODE] [--weather W...] [--weather-physics on\|off] [--damage on\|off] [--dnf-injured] [--neutral-service] [--service-s S] [--collisions off\|soft\|full] [--aids on\|off] [--chaotic-bots on\|off] [--time-limit MIN]` | Race from the start formation to the finish (default 1 lap / 5 km; the organiser's rules (spec §14 Phase 12 K6, see *Events*): collisions, riding aids, chaotic bots, the time limit, the neutral service's wait S; the organiser's damage rules – damage on or off, DNF when badly injured, neutral service: a spare bike and a 30 s service stop (spec §14 Phase 12E), also for `group` and `tt`; MODE: `profile` – the default, only the frame's profile counts –, `open` – parts count, capped –, `equal`; W: the organiser's weather – `PRESET [FIELD=VALUE...]`, `custom FIELD=VALUE...`, `random SEED`, `auto SEED` –, fixed for the event; also for `group` and `tt`) |
 | `event group [--watts W] [--bots N] [--physics MODE]` | Group ride: bots hold the pace and regroup (default mode `profile`) |
 | `event tt [--laps N\|--km X] [--physics MODE]` | Time trial alone against your ghost (default mode `open`) |
 | `event status` | The event, your HUD lines and the standings |

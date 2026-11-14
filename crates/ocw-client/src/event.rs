@@ -10,7 +10,7 @@
 
 use ocw_core::{RiderId, SIM_DT};
 use ocw_protocol::EventInfo;
-use ocw_render::{EventView, ResultRow, ResultsView};
+use ocw_render::{AnimCue, EventView, FINISH_CUE_S, FinishCue, ResultRow, ResultsView};
 use ocw_sim::event::GHOST_SAMPLE_S;
 use ocw_sim::{EventKind, EventPhase, GhostTrace, Standing};
 
@@ -143,6 +143,70 @@ pub fn weather_line(label: &str) -> String {
 /// Q4), shown only when it is on (off is the events' default).
 pub const WEATHER_PHYSICS_LINE: &str = "Weather physics on: wind, air density and wet roads count";
 
+/// The organiser's rules in the event's info and under the results (spec
+/// §14 Phase 12 K6): "Rules: collisions on, damage on, riding aids not
+/// allowed, chaotic bots" and, when set, "Neutral service (spares in
+/// 20 s), DNF when badly injured, time limit 5:00 after the winner".
+pub fn rules_lines(info: &EventInfo) -> Vec<String> {
+    use ocw_sim::collide::Mode;
+    let mut first = vec![
+        match info.collisions {
+            Mode::Off => "collisions off",
+            Mode::Soft => "soft bumps only",
+            Mode::Full => "collisions on",
+        }
+        .to_string(),
+    ];
+    if info.collisions.on() {
+        first.push(
+            if info.damage.on == Some(true) {
+                "damage on"
+            } else {
+                "damage off"
+            }
+            .into(),
+        );
+    }
+    first.push(
+        if info.aids {
+            "riding aids allowed"
+        } else {
+            "riding aids not allowed"
+        }
+        .into(),
+    );
+    if info.chaotic_bots {
+        first.push("chaotic bots".into());
+    }
+    let mut lines = vec![format!("Rules: {}", first.join(", "))];
+    let mut second = Vec::new();
+    if info.damage.neutral_service {
+        second.push(match info.damage.service_s {
+            Some(s) => format!("Neutral service (spares in {s} s)"),
+            None => "Neutral service".into(),
+        });
+    }
+    if info.damage.dnf_badly_injured {
+        second.push("DNF when badly injured".into());
+    }
+    if let Some(t) = info.time_limit_s {
+        let s = t.round().max(0.0) as u64;
+        second.push(format!(
+            "time limit {}:{:02} after the winner",
+            s / 60,
+            s % 60
+        ));
+    }
+    if !second.is_empty() {
+        let mut l = second.join(", ");
+        if let Some(c) = l.get_mut(0..1) {
+            c.make_ascii_uppercase();
+        }
+        lines.push(l);
+    }
+    lines
+}
+
 /// The event's title: "Race - 2 laps (8.1 km)", "Group ride - 150 W".
 pub fn title(kind: &EventKind) -> String {
     match *kind {
@@ -234,7 +298,14 @@ pub fn result_rows(
                     _ => String::new(),
                 },
             ),
-            (None, true) => ("DNF".into(), "-".into(), String::new()),
+            // Why (spec §14 Phase 12 K6): "badly injured", "bike broken".
+            (None, true) => (
+                "DNF".into(),
+                "-".into(),
+                s.dnf_reason
+                    .map(|r| r.label().to_string())
+                    .unwrap_or_default(),
+            ),
             (None, false) => (
                 s.position.to_string(),
                 "riding".into(),
@@ -454,6 +525,44 @@ impl EventClient {
         Some(info.start_line_m + ghost.distance_at(t))
     }
 
+    /// A rider's finish for the animation (spec §2.6, v3.32) at server
+    /// tick `tick` (for others: the tick they are drawn at): crossed the
+    /// line (the server's finish time) within [`FINISH_CUE_S`] – the
+    /// winner of a race, or the own rider's new best in a time trial,
+    /// raises the arms – and, still racing, the metres to the line (the
+    /// bike throw). `own`: whether `id` is the local rider.
+    pub fn anim_cue(&self, id: RiderId, own: bool, distance: f64, tick: f64) -> AnimCue {
+        let mut cue = AnimCue::default();
+        let Some(info) = &self.info else { return cue };
+        let Some(length) = info.kind.length_m() else {
+            return cue;
+        };
+        let Some(me) = info.standings.iter().find(|s| s.id == id) else {
+            return cue;
+        };
+        let t = info.race_time_s(tick);
+        match me.finish_s {
+            Some(f) if (0.0..FINISH_CUE_S).contains(&(t - f)) => {
+                let winner = match info.kind {
+                    EventKind::Race { .. } => me.position == 1,
+                    EventKind::TimeTrial { .. } => {
+                        own && matches!(self.outcome, Some(GhostOutcome::NewBest { .. }))
+                    }
+                    EventKind::GroupRide { .. } => false,
+                };
+                cue.finish = Some(FinishCue {
+                    since_s: t - f,
+                    winner,
+                });
+            }
+            None if info.phase == EventPhase::Running && !me.dnf => {
+                cue.to_line_m = Some(info.start_line_m + length - distance);
+            }
+            _ => {}
+        }
+        cue
+    }
+
     fn own_finished(&self, own: Option<RiderId>) -> bool {
         let Some(info) = &self.info else { return false };
         own.and_then(|id| info.standings.iter().find(|s| s.id == id))
@@ -523,6 +632,8 @@ impl EventClient {
             if info.weather_physics {
                 view.lines.push(WEATHER_PHYSICS_LINE.into());
             }
+            // ... and the organiser's rules (spec §14 Phase 12 K6).
+            view.lines.extend(rules_lines(info));
         }
         match info.kind {
             EventKind::GroupRide { .. } => {
@@ -545,8 +656,9 @@ impl EventClient {
                             race_time(time)
                         )
                     });
-                } else if mine.is_some_and(|m| m.dnf) {
-                    view.lines.push("DNF (over the time limit)".into());
+                } else if let Some(m) = mine.filter(|m| m.dnf) {
+                    let why = m.dnf_reason.unwrap_or(ocw_sim::event::DnfReason::TimeLimit);
+                    view.lines.push(format!("DNF ({})", why.label()));
                 } else if info.phase < EventPhase::Running {
                     // On the start line: the field, no times yet.
                     let n = info.standings.len();
@@ -597,6 +709,7 @@ impl EventClient {
                     if info.weather_physics {
                         footer.push(WEATHER_PHYSICS_LINE.into());
                     }
+                    footer.extend(rules_lines(info));
                     footer.push("Esc / A: close".into());
                     view.results = Some(ResultsView {
                         title: format!(
@@ -643,6 +756,7 @@ mod tests {
             progress_m: progress,
             finish_s: finish,
             dnf: false,
+            dnf_reason: None,
             gap_ahead_s: gap,
         }
     }
@@ -663,6 +777,9 @@ mod tests {
             weather: None,
             weather_physics: false,
             damage: Default::default(),
+            aids: true,
+            chaotic_bots: false,
+            time_limit_s: None,
             conditions: Vec::new(),
         }
     }
@@ -820,11 +937,13 @@ mod tests {
         assert!(!c.holds(Some(RiderId(2))), "joined later: not in it");
         let v = c.view(0.0, 10.0, Some(RiderId(1)), 100.0, &[]).unwrap();
         assert_eq!(v.countdown.as_deref(), Some("Get ready"));
-        // The race mode is in the event's info on the start line (4G).
+        // The race mode and the organiser's rules (K6) are in the event's
+        // info on the start line (4G).
         assert_eq!(
             v.lines,
             [
                 "Profile mode: only the frame's profile counts, parts are cosmetic",
+                "Rules: collisions off, riding aids allowed",
                 "1 riders on the start line"
             ]
         );
@@ -1102,5 +1221,138 @@ mod tests {
         c.on_state(Some(i), Some(RiderId(1)), 0.0);
         let v = c.view(0.0, 10.0, Some(RiderId(1)), 100.0, &[]).unwrap();
         assert!(v.lines.contains(&WEATHER_PHYSICS_LINE.to_owned()));
+    }
+
+    /// The organiser's rules in the event's info and the results (spec
+    /// §14 Phase 12 K6), and why a DNF did not finish.
+    #[test]
+    fn the_organisers_rules_and_dnf_reasons_show() {
+        let mut i = info(
+            RACE,
+            EventPhase::Countdown,
+            vec![standing(1, 1, 0.0, None, None)],
+        );
+        i.collisions = ocw_sim::collide::Mode::Full;
+        i.aids = false;
+        assert_eq!(
+            rules_lines(&i),
+            ["Rules: collisions on, damage off, riding aids not allowed"]
+        );
+        i.damage = ocw_sim::damage::Rules {
+            on: Some(true),
+            dnf_badly_injured: true,
+            neutral_service: true,
+            service_s: Some(20),
+        };
+        i.aids = true;
+        i.chaotic_bots = true;
+        i.time_limit_s = Some(300.0);
+        assert_eq!(
+            rules_lines(&i),
+            [
+                "Rules: collisions on, damage on, riding aids allowed, chaotic bots",
+                "Neutral service (spares in 20 s), DNF when badly injured, time limit 5:00 after the winner"
+            ]
+        );
+        i.collisions = ocw_sim::collide::Mode::Soft;
+        assert!(rules_lines(&i)[0].starts_with("Rules: soft bumps only, damage on"));
+        // On the start line.
+        let mut c = EventClient::new("loop");
+        c.on_state(Some(i.clone()), Some(RiderId(1)), 0.0);
+        let v = c.view(0.0, 10.0, Some(RiderId(1)), 100.0, &[]).unwrap();
+        assert!(
+            v.lines.iter().any(|l| l.starts_with("Rules: ")),
+            "{:?}",
+            v.lines
+        );
+        assert!(v.lines.iter().any(|l| l.starts_with("Neutral service")));
+        // A DNF with its reason: in the HUD line, the results row and the
+        // results' footer with the rules.
+        let mut me = standing(1, 2, 300.0, None, None);
+        me.dnf = true;
+        me.dnf_reason = Some(ocw_sim::event::DnfReason::Injured);
+        let mut won = standing(2, 1, 1000.0, Some(100.0), None);
+        won.name = "Ana".into();
+        i.standings = vec![won, me];
+        i.phase = EventPhase::Finished;
+        let mut c = EventClient::new("loop");
+        c.on_state(Some(i.clone()), Some(RiderId(1)), 0.0);
+        let v = c.view(1.0, 1e6, Some(RiderId(1)), 400.0, &[]).unwrap();
+        assert!(
+            v.lines.contains(&"DNF (badly injured)".to_owned()),
+            "{:?}",
+            v.lines
+        );
+        let r = v.results.unwrap();
+        assert_eq!(
+            (r.rows[1].position.as_str(), r.rows[1].gap.as_str()),
+            ("DNF", "badly injured")
+        );
+        assert!(
+            r.footer.iter().any(|l| l.starts_with("Rules: ")),
+            "{:?}",
+            r.footer
+        );
+    }
+
+    /// The finish and victory animations' cue (spec §2.6, v3.32): from the
+    /// server's finish times, in game time; the race's winner raises the
+    /// arms, the others sit up; still racing, the metres to the line.
+    #[test]
+    fn the_finish_cue_comes_from_the_results() {
+        let mut c = EventClient::new("loop");
+        let i = info(
+            RACE,
+            EventPhase::Running,
+            vec![
+                standing(1, 1, 8000.0, Some(600.0), None),
+                standing(2, 2, 7990.0, Some(601.0), Some(1.0)),
+                standing(3, 3, 7000.0, None, None),
+            ],
+        );
+        c.on_state(Some(i), Some(RiderId(3)), 0.0);
+        let tick = |race_s: f64| COUNTDOWN_TICKS as f64 + race_s / SIM_DT;
+        let w = c.anim_cue(RiderId(1), false, 8100.0, tick(602.0));
+        let f = w.finish.unwrap();
+        assert!(f.winner && (f.since_s - 2.0).abs() < 1e-6, "{f:?}");
+        assert_eq!(w.to_line_m, None);
+        let second = c.anim_cue(RiderId(2), false, 8100.0, tick(602.0)).finish;
+        assert!(!second.unwrap().winner);
+        // Still racing: the metres to the line (start line 100 m + 8 km).
+        let r = c.anim_cue(RiderId(3), true, 8000.0, tick(602.0));
+        assert_eq!((r.finish, r.to_line_m), (None, Some(100.0)));
+        // Before the line was crossed and long after: nothing.
+        assert_eq!(
+            c.anim_cue(RiderId(1), false, 8000.0, tick(599.0)).finish,
+            None
+        );
+        assert_eq!(
+            c.anim_cue(RiderId(1), false, 8000.0, tick(600.0 + FINISH_CUE_S))
+                .finish,
+            None
+        );
+        // A time trial: the own new best is a victory, a slower effort not.
+        let mut c = EventClient::new("loop");
+        let i = info(
+            TT,
+            EventPhase::Finished,
+            vec![standing(1, 1, 1000.0, Some(90.0), None)],
+        );
+        c.on_state(Some(i), Some(RiderId(1)), 0.0);
+        c.set_outcome(GhostOutcome::Slower { best_s: 80.0 });
+        let cue = c.anim_cue(RiderId(1), true, 1100.0, tick(91.0));
+        assert!(!cue.finish.unwrap().winner);
+        c.set_outcome(GhostOutcome::NewBest { previous_s: 95.0 });
+        assert!(
+            c.anim_cue(RiderId(1), true, 1100.0, tick(91.0))
+                .finish
+                .unwrap()
+                .winner
+        );
+        // No event, a group ride: no cue.
+        assert_eq!(
+            EventClient::new("x").anim_cue(RiderId(1), true, 0.0, 0.0),
+            AnimCue::default()
+        );
     }
 }

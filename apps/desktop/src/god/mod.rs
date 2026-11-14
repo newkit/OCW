@@ -800,6 +800,7 @@ mod tests {
             crash: None,
             wobble: 0.0,
             damage: None,
+            cue: Default::default(),
         };
         v.riders = vec![rider(1, "Host", true), rider(2, "Ada", false)];
         v.unicorns.push(ocw_render::UnicornView {

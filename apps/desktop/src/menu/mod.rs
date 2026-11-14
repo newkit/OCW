@@ -152,6 +152,7 @@ mod tests {
             RidingAids,
             Graphics,
             RiderList,
+            EventRules,
         ];
         for p in &all {
             match p {
@@ -160,7 +161,7 @@ mod tests {
                 | WorldInfo | WorldSun | WorldSources | WorldSource(_) | Weather | Routes
                 | Rides | GpxImport | Workouts | Voice | VoiceDevices | VoiceParticipants
                 | AudioVoice | TimeMachine | WeatherPresets | WeatherCustom | WeatherAir
-                | WeatherReal | RidingAids | Graphics | RiderList => {}
+                | WeatherReal | RidingAids | Graphics | RiderList | EventRules => {}
             }
         }
         all

@@ -364,6 +364,57 @@ pub const SETTINGS: &[SettingDef] = &[
         scope: Scope::Live,
         apply: Apply::Command("camera.shake {}"),
     },
+    // The organiser's rules for the events this rider starts (spec §14
+    // Phase 12 K6; the Organiser rules page, read by `event …` when its
+    // option is not given): `auto` = the default by the event's kind.
+    SettingDef {
+        key: "event.collisions",
+        kind: Kind::Choice(&["auto", "off", "soft", "full"]),
+        default: "auto",
+        description: "Collisions in the events you start: auto (group rides soft bumps, races the full model), off, soft (bumps only), full",
+        scope: Scope::Live,
+        apply: Apply::App,
+    },
+    SettingDef {
+        key: "event.damage",
+        kind: Kind::Choice(&["auto", "on", "off"]),
+        default: "auto",
+        description: "Damage in the events you start: auto (your ride.damage), on, off",
+        scope: Scope::Live,
+        apply: Apply::App,
+    },
+    SettingDef {
+        key: "event.aids",
+        kind: Kind::Choice(&["auto", "on", "off"]),
+        default: "auto",
+        description: "Riding aids (the last-moment warning, the proximity arrow and bell) allowed in the events you start: auto (not in races), on, off",
+        scope: Scope::Live,
+        apply: Apply::App,
+    },
+    SettingDef {
+        key: "event.chaotic_bots",
+        kind: Kind::Choice(&["auto", "on", "off"]),
+        default: "auto",
+        description: "Chaotic bots in the events you start: auto (your ride.chaotic_bots), on, off",
+        scope: Scope::Live,
+        apply: Apply::App,
+    },
+    SettingDef {
+        key: "event.neutral_service",
+        kind: Kind::Bool,
+        default: "off",
+        description: "Neutral service in the events you start: a spare bike for a broken one (else DNF), a 30 s stop restores the bike",
+        scope: Scope::Live,
+        apply: Apply::App,
+    },
+    SettingDef {
+        key: "event.dnf_injured",
+        kind: Kind::Bool,
+        default: "off",
+        description: "In the events you start a badly injured rider is DNF",
+        scope: Scope::Live,
+        apply: Apply::App,
+    },
     // Real weather (spec §14 Phase 9, S7): the weather machine's Real
     // weather page saves them (`weather.real`, `weather.provider`).
     SettingDef {

@@ -393,7 +393,12 @@ pub struct RiderView {
     /// 12E, K5): scuffs, a bent wheel, a dropped chain, dust, a torn kit;
     /// `None` without damage.
     pub damage: Option<ocw_sim::damage::Visible>,
+    /// What the client knows for the animation beyond speed and power
+    /// (spec §2.6): a U-turn loop, the finish, the winner.
+    pub cue: AnimCue,
 }
+
+pub use ocw_assets::anim::{Cue as AnimCue, FINISH_CUE_S, FinishCue, UTurnCue};
 
 /// All rendering plugins of the desktop client.
 pub struct OcwRenderPlugins;
@@ -591,6 +596,7 @@ mod tests {
             crash: None,
             wobble: 0.0,
             damage: None,
+            cue: Default::default(),
         });
         view.sky = Some(sky(12, 0));
         let mut app = App::new();
@@ -662,6 +668,7 @@ mod tests {
             crash: None,
             wobble: 0.0,
             damage: None,
+            cue: Default::default(),
         });
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))
