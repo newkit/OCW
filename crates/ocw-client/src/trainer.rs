@@ -1,6 +1,9 @@
 //! Trainer control loop of the client (spec §5.3): turns the road under the
-//! rider (SIM) or a target power (ERG) into device commands. Pure; the Bevy
-//! system in `connection.rs` calls [`TrainerControl::update`] every frame.
+//! rider (SIM) or a target power (ERG) into device commands. Pure and shared
+//! by the desktop and the browser app (spec §14 Phase 10 B4); their Bevy
+//! systems call [`TrainerControl::update`] every frame and
+//! [`TrainerControl::set_profile`] with the physics the server rides
+//! (the build's effect).
 
 use ocw_core::RiderProfile;
 use ocw_devices::{DeviceCommand, SimulationParameters};
@@ -46,6 +49,8 @@ pub struct TrainerControl {
     down: bool,
     /// A soft bump's resistance pulse (Phase 12B): extra gradient until then.
     pulse: Option<(f64, f64)>,
+    /// The tick of the last bump turned into a pulse ([`Self::follow`]).
+    last_bump: Option<u64>,
 }
 
 /// Phase 12 Q4 (open): while the rider is down after a crash, ERG keeps
@@ -75,7 +80,29 @@ impl TrainerControl {
             flat: false,
             down: false,
             pulse: None,
+            last_bump: None,
         }
+    }
+
+    /// One frame of trainer control from the client at `now_s` (the
+    /// desktop and the browser app alike): flying in god mode, the build
+    /// in force, down after a crash, a soft bump's pulse, then
+    /// [`update`](Self::update). Returns the command for the trainer(s).
+    pub fn follow(&mut self, now_s: f64, c: &crate::client::ClientCore) -> Option<DeviceCommand> {
+        let id = c.rider_id()?;
+        self.set_flying(c.god().active());
+        // SIM rides the build the server rides (its RiderBuild effect, §2.5).
+        self.set_profile(c.effective_profile());
+        // Collisions (spec §14 Phase 12): SIM flat while down after a
+        // crash, a resistance pulse on a soft bump.
+        self.set_down(c.own_crash(now_s).is_some());
+        if let Some(b) = c.collision_state().bump(id)
+            && self.last_bump != Some(b.tick)
+        {
+            self.bump(now_s, b.strength);
+            self.last_bump = Some(b.tick);
+        }
+        self.update(now_s, c.track(), c.state(), c.cadence_rpm())
     }
 
     /// Down after a crash (spec §14 Phase 12C): SIM gets a flat road and
@@ -97,6 +124,20 @@ impl TrainerControl {
 
     pub fn mode(&self) -> TrainerMode {
         self.mode
+    }
+
+    /// The physics the rider rides with now (`ClientCore::effective_profile`:
+    /// the profile with the build in force, as the server's `RiderBuild`
+    /// says, spec §2.5): SIM sends its rolling and wind resistance and mass.
+    pub fn set_profile(&mut self, profile: RiderProfile) {
+        if profile != self.profile {
+            self.profile = profile;
+            self.sim.set_profile(&profile);
+        }
+    }
+
+    pub fn profile(&self) -> RiderProfile {
+        self.profile
     }
 
     /// Switches the mode; the new mode's first update is sent immediately.
@@ -243,6 +284,34 @@ mod tests {
             panic!("expected a SIM command");
         };
         assert_eq!(p.mass_kg, 72.0);
+    }
+
+    /// The build in force (the server's `RiderBuild` effect, spec §2.5)
+    /// reaches the trainer: its Crr, wind resistance and mass.
+    #[test]
+    fn sim_follows_the_build_in_force() {
+        let stock = RiderProfile::default();
+        let mut t = TrainerControl::new(stock);
+        let Some(DeviceCommand::SetSimulation(first)) =
+            t.update(0.0, &route(), at(10.0, 8.0), None)
+        else {
+            panic!("expected a SIM command");
+        };
+        let built = RiderProfile {
+            cda_m2: stock.cda_m2 * 0.92,
+            crr: stock.crr * 0.85,
+            bike_mass_kg: stock.bike_mass_kg - 0.6,
+            ..stock
+        };
+        t.set_profile(built);
+        assert_eq!(t.profile(), built);
+        let Some(DeviceCommand::SetSimulation(p)) = t.update(1.0, &route(), at(18.0, 8.0), None)
+        else {
+            panic!("the new coefficients are sent");
+        };
+        assert!((p.crr - built.crr).abs() < 1e-12);
+        assert!((p.cw_kg_per_m / first.cw_kg_per_m - 0.92).abs() < 1e-9);
+        assert!((p.mass_kg - (first.mass_kg - 0.6)).abs() < 1e-9);
     }
 
     /// The trainer gets the bike's own rolling resistance on gravel (§2.5):

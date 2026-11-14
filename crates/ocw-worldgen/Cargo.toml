@@ -20,6 +20,8 @@ serde.workspace = true
 serde_json.workspace = true
 # Orthophoto cells from the WMS downloads (JPEG); pure Rust, MIT OR Apache-2.0 OR Zlib.
 zune-jpeg = "0.5"
+# JPEG encoding of the orthophoto corridor (spec §14 Phase 8 T7).
+image.workspace = true
 
 [dev-dependencies]
 # End-to-end test (tests/e2e.rs): package, cache, load, ride on the server.

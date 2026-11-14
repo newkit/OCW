@@ -110,7 +110,8 @@ visit loads from there), with the tiles kept in memory only around the
 rider. Bots and the **virtual trainer** as on the desktop. **Multiplayer**
 (B3): the page joins an `ocw-server` session over **WebTransport** together
 with desktop and bot riders (see [Browser riders](#browser-riders-webtransport)).
-No Bluetooth or sound yet (B4, B5).
+**Trainers and sensors** (B4) over **Web Bluetooth** in Chrome / Edge (see
+[Devices in the browser](#devices-in-the-browser)). No sound yet (B5).
 
 ```bash
 make deps-web       # once: wasm-bindgen-cli matching Cargo.lock (cargo install)
@@ -120,6 +121,9 @@ make web-serve      # serve it on http://127.0.0.1:8080/ (range requests; prints
 make test-web       # headless Chromium on WebGPU: load, ride, screenshot into test-output/web/
 make test-web-world # the same with Liechtenstein streamed from the dev server, then again from the cache
 make test-web-multiplayer # ocw-server + ocw-bot riders + the browser over WebTransport: ride 30 s, screenshot, timing
+make test-web-ble   # a fake Web Bluetooth FTMS trainer + HR strap: connect, power, SIM / ERG writes, drop, reload, no-Bluetooth
+make test-web-ble-emulation # Chromium's own Web Bluetooth stack with a simulated KICKR (DevTools BluetoothEmulation)
+make test-web-ble-real      # the real trainer in range (BLE_DEVICE=KICKR) from headless Chromium over BlueZ
 ```
 
 A world: `http://127.0.0.1:8080/?world=liechtenstein&route=vaduz-malbun&trust-root=…`
@@ -135,7 +139,31 @@ too; a browser without WebGPU gets a message). The desktop's keys: ↑ adds
 power on top of the virtual trainer's 200 W, ↓ stops (brake), Page Up /
 Down ±10 W, A autodrive, W wild mode, ← / → the line (autodrive) or the lean, `` ` `` (or F12) the console (`sim.power 250`, `teleport 2.5`,
 `net.stats`, `hud off`, `camera …`). Page options in the query string:
-`?route=loop&bots=3&power=250&start=1.5&name=Ada`.
+`?route=loop&bots=3&power=250&start=1.5&name=Ada&ftp=250`.
+
+#### Devices in the browser
+
+The **Devices** panel (bottom right) has **+ Trainer**, **+ Power meter** and
+**+ Heart rate**: each opens the browser's Bluetooth chooser (Web
+Bluetooth needs the click). The device runs the same protocol code as on
+the desktop (`ocw-devices`: FTMS, Cycling Power, CSC, Heart Rate, Wahoo
+KICKRs) – power, cadence and heart rate go to the server, and the trainer
+gets **SIM** (the road's gradient with the rider's build: rolling and wind
+resistance, mass) or **ERG** (`erg.target 200`, workouts:
+`workout start --example sweet-spot`, `workout list|stop|skip|status`),
+`trainer.mode sim|erg|off`, `trainer.difficulty 50`. Once a trainer or
+power meter is connected the virtual power stops; a dropped device
+reconnects by itself (the HUD and the panel say "reconnecting"), with the
+last SIM / ERG target sent again. The site remembers its devices
+(`localStorage`); where Chromium keeps the permission
+(`navigator.bluetooth.getDevices()`) they reconnect after a reload without
+the chooser. Console: `devices.list`, `devices.connect trainer|power|hr`,
+`devices.forget <name|all>`.
+
+**Browsers without Web Bluetooth** (Firefox, Safari, every browser on iOS):
+the panel says so and the ride uses **virtual power** (↑ / ↓); the sensor
+bridge for them comes later (spec §14 Phase 10, B7). On Linux, Chromium
+may need `--enable-experimental-web-platform-features` for Web Bluetooth.
 
 ## Controls
 
@@ -588,6 +616,16 @@ climb at 1.5–2.1 km) and grass beside the road roll increasingly harder
   `time 2026-01-20 12:00` in the console). `world-builder imagery-cells
   --world PKG --crs lv95` lists the cells of a package.
 
+  **Orthophoto corridor (spec §14 Phase 8 T7):** `calibrate` also cuts the
+  orthophoto along the package's roads, ±50 m beside the road edges at
+  0.5 m per pixel (the source's own size if coarser: 1 m in the Black
+  Forest and on Tenerife), shadows and cars toned down, as JPEG chunks of
+  125 m into the optional section `ORTC` (`--corridor 0` leaves it out,
+  `--corridor-pixel`, `--corridor-quality`; `world-builder check` reports
+  it). The client blends it into the ground near the road (the photo's colour
+  with the materials' detail: blurred up close, sharp from about 15–120 m,
+  gone by 950 m); `display.orthophoto off` (console `ortho off`) switches it off.
+
   The sea comes from the OSM coastline: its closed rings (islands) are cut
   out of the package area, which leaves the sea as water at 0 m (`world-builder
   package` reports `sea: …`). Islands are built with `--land-tiles`
@@ -879,6 +917,7 @@ console (saved at once), or by editing the file; `get` lists them all:
 | `display.night_brightness` | 0 to 50 (10): least light at night in % of daylight (0 = realistic darkness); Settings → Display | at once |
 | `display.sky` | atmosphere / simple (atmosphere): Bevy's physically based sky, or one plain colour for weak GPUs | at once |
 | `display.bike_lights` | auto / on / off (auto): the front and rear lights of bikes with lights fitted (Workshop, slot lights) from dusk to dawn and in tunnels | at once |
+| `display.orthophoto` | on / off (on): the real place's orthophoto on the ground near the roads, where the package has it (spec §14 Phase 8 T7) | at once |
 | `display.unicorn_trail` | on / off (on): the rainbow trail behind the unicorns of god mode (console `god.trail`; not on the full Display page) | at once |
 | `display.fullscreen` | on / off (off): borderless fullscreen (`--fullscreen`) | next start |
 | `ride.bots` | 0 to 50 (10): test riders (`--bots`) | next start |
@@ -1811,7 +1850,7 @@ to *Public* are the usual causes; the server log is in Event Viewer under
 | `scripts/world-profile.sh [--data DIR] [--ref DIR] [WORLD...]` | Build Liechtenstein / Black Forest parts / Tenerife into `test-output/world-profile/` with the stage profiles and compare them byte for byte with a reference build (`--data ~/src/OCW/data` on marge) |
 | `scripts/build-profile.sh`, `scripts/build-profile.ps1` | Rust build profile: clean / no-op / incremental builds with `--timings` (`make build-profile`) |
 | `scripts/fetch-imagery.sh REGION [PACKAGE...]` | Region calibration imagery (spec §14 Phase 8 T3): orthophoto cells over the official WMS and own Sentinel-2 seasonal median composites (`scripts/imagery.py`) for the cells a built package covers, licence rows in `SOURCES.md` |
-| `world-builder calibrate` / `imagery-cells` | Measure a package's palette, roof colours and seasonal tint maps in that imagery (sections `PALT`, `ROOF`, `SEAS`; manifest credits renewed); list the imagery cells a package covers |
+| `world-builder calibrate` / `imagery-cells` | Measure a package's palette, roof colours and seasonal tint maps in that imagery and cut the orthophoto corridor along its roads (sections `PALT`, `ROOF`, `SEAS`, `ORTC`; manifest credits renewed); list the imagery cells a package covers |
 | `world-builder dem-import` / `dem-tiles` / `dem-diff` | High-resolution DTMs: import XYZ / GeoTIFF tiles as 2 m GeoTIFFs, list the tiles of a box, compare with SRTM |
 | `scripts/remote.sh MACHINE run 'CMD'` | Copy the tree to a build machine (`config/machines.toml`) and run a command there (`sync`, `ssh`, `fetch`, `put LOCAL... DIR`: copy git-ignored files into the checkout, `field KEY`: a machine setting for scripts) |
 | `python3 tools/build-dashboard/dashboard.py` | Web page (port 8765) with the build machines' load and their running/queued tasks, disks and the janitor, and the open questions of the spec; `--once` prints it as text, `--janitor-plan` a dry run of the janitor |
@@ -1904,14 +1943,14 @@ GitHub release `build-history`. Look at every image before picking it.
 | Path | Contents |
 |---|---|
 | `apps/desktop` | Desktop client: wires devices, local server, prediction and rendering |
-| `apps/web` | Browser app (`ocw-web`, wasm32 + WebGPU): the shared client with the local server in the frame loop and the virtual trainer, worlds streamed over HTTP (`world.rs`, `browser.rs`: fetch, OPFS); `web/index.html` |
-| `crates/ocw-client` | Client logic shared by the desktop and browser apps: `ClientCore` (prediction, interpolation, view), events, god-mode state, key logic, GPS position, sky |
+| `apps/web` | Browser app (`ocw-web`, wasm32 + WebGPU): the shared client with the local server in the frame loop and the virtual trainer, worlds streamed over HTTP (`world.rs`, `browser.rs`: fetch, OPFS), WebTransport (`webtransport.rs`), Web Bluetooth devices (`devices.rs`, `browser_devices.rs`); `web/index.html` |
+| `crates/ocw-client` | Client logic shared by the desktop and browser apps: `ClientCore` (prediction, interpolation, view), events, god-mode state, key logic, GPS position, sky, SIM / ERG trainer control (`trainer`), workouts (`workout`) |
 | `apps/bot` | `ocw-bot`: headless bot clients for remote servers, multiplayer test verdict |
 | `services/server` | Game server logic, in-process local server, headless server binary |
 | `crates/ocw-core` | Shared types, units, constants |
 | `crates/ocw-sim` | Physics, session logic, client prediction, interpolation, trainer control, workouts (format, `.erg` / `.mrc` import, runner) |
 | `crates/ocw-protocol` | Protobuf protocol (`proto/`) and conversions |
-| `crates/ocw-devices` | Device backends: virtual trainer, Bluetooth trainers and sensors (FTMS, Cycling Power, CSC, Heart Rate, Wahoo) |
+| `crates/ocw-devices` | Device backends: virtual trainer, Bluetooth trainers and sensors (FTMS, Cycling Power, CSC, Heart Rate, Wahoo) – one protocol and runner over btleplug (desktop) and Web Bluetooth (`ble::web`, browser) |
 | `crates/ocw-world` | Routes, road graph, terrain, world packages, surfaces |
 | `crates/ocw-worldgen`, `apps/world-builder` | OSM + elevation import: road graph, profiles, world packages |
 | `crates/ocw-worldstore` | World package files, keys, trusted roots, local cache, download; `stream`: packages streamed by chunk (range planning, verification, the chunk cache behind a trait, tile residency; also wasm) |

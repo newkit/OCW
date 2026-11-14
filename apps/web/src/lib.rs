@@ -6,7 +6,8 @@
 //! console, sky), the shared client loop ([`ocw_client`]), and the same
 //! `GameServer` as the local server – driven by the frame loop
 //! ([`ocw_server::local::FrameServer`]) because wasm has no threads. Power
-//! comes from the virtual trainer (↑ / ↓; Web Bluetooth follows in B4).
+//! comes from the virtual trainer (↑ / ↓) until a Bluetooth trainer or
+//! power meter is connected (B4, below).
 //!
 //! Desktop-only parts stay in `apps/desktop` (BLE, cpal audio, QUIC,
 //! files, voice, captures, the menus' settings files); they move into the
@@ -23,6 +24,12 @@
 //! reconciliation; the rider is the anonymous one (plain bike and look,
 //! no customization: Q5) until accounts exist (Phase 5).
 //!
+//! **Devices (B4):** the page's buttons (or `devices.connect trainer|power|hr`)
+//! open the browser's Web Bluetooth chooser; the device runs the same
+//! `ocw-devices` protocol as on the desktop (FTMS, Cycling Power, CSC,
+//! Heart Rate, Wahoo) with SIM / ERG control and workouts ([`devices`]);
+//! browsers without Web Bluetooth ride with virtual power and say so.
+//!
 //! **Worlds over HTTP (B2):** `?world=liechtenstein&route=vaduz-malbun`
 //! streams a world package from the server ([`world`]): manifest and
 //! signature chain, then the base and the tiles around the rider with
@@ -31,6 +38,9 @@
 
 #[cfg(target_arch = "wasm32")]
 mod browser;
+#[cfg(target_arch = "wasm32")]
+mod browser_devices;
+pub mod devices;
 pub mod plugin;
 pub mod session;
 #[cfg(target_arch = "wasm32")]
@@ -137,7 +147,8 @@ fn unescape(value: &str) -> String {
 
 /// The ride options from the page's query string (`?a=1&b=2`, the `?`
 /// optional): `route` (hills, loop; with `world` a route of the package),
-/// `bots` (0–50), `power` (W), `start` (km), `name`, and the world
+/// `bots` (0–50), `power` (W), `start` (km), `name`, `ftp` (W, for
+/// workouts), and the world
 /// package (spec §14 Phase 10 B2): `world` (a manifest URL, `ID@VERSION`
 /// or `ID`), `free=1` (a free ride), `tiles` (fetch radius in tiles),
 /// `keep` (keep radius), `memory-mb` (budget of the resident tiles),
@@ -215,6 +226,10 @@ pub fn parse_query(query: &str, dev_page: bool) -> (SessionConfig, Vec<String>) 
             },
             ("start", _) => match value.parse::<f64>() {
                 Ok(km) if km >= 0.0 && km.is_finite() => config.start_m = km * 1000.0,
+                _ => bad(),
+            },
+            ("ftp", _) => match value.parse::<f64>() {
+                Ok(w) if (50.0..=600.0).contains(&w) => config.ftp_w = w,
                 _ => bad(),
             },
             ("name", _) if !value.trim().is_empty() => {
@@ -395,8 +410,12 @@ mod tests {
 
     #[test]
     fn query_options() {
-        let (c, w) = parse_query("?route=loop&bots=3&power=250&start=1.5&name=Ada+L", false);
+        let (c, w) = parse_query(
+            "?route=loop&bots=3&power=250&start=1.5&name=Ada+L&ftp=260",
+            false,
+        );
         assert!(w.is_empty(), "{w:?}");
+        assert_eq!(c.ftp_w, 260.0);
         assert_eq!(c.route.length(), Route::test_loop().length());
         assert_eq!((c.bots, c.power_w, c.start_m), (3, 250.0, 1500.0));
         assert_eq!(c.name, "Ada L");
@@ -407,8 +426,8 @@ mod tests {
         assert_eq!(c.route.length(), Route::test_hills().length());
         assert_eq!((c.bots, c.power_w), (5, 200.0));
         // Bad values are reported and ignored.
-        let (c, w) = parse_query("bots=500&power=-3&route=moon&x=1&start=nan", false);
-        assert_eq!(w.len(), 5, "{w:?}");
+        let (c, w) = parse_query("bots=500&power=-3&route=moon&x=1&start=nan&ftp=9", false);
+        assert_eq!(w.len(), 6, "{w:?}");
         assert_eq!((c.bots, c.power_w, c.start_m), (5, 200.0, 0.0));
     }
 

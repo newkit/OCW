@@ -38,8 +38,9 @@
 //! imagery sources with the regional palette, the roof colours and the
 //! seasonal tint maps (spec §14 Phase 8 T3), see [`crate::look`]; `LITR` –
 //! whether each road strip is lit at night (OSM `lit`, spec §14 Phase 9
-//! S2), see [`crate::lamps`]. A package without sections is written as
-//! version 1, byte for byte as before.
+//! S2), see [`crate::lamps`]; `ORTC` – the orthophoto corridor along the
+//! roads (spec §14 Phase 8 T7, optional), see [`crate::ortho`]. A package
+//! without sections is written as version 1, byte for byte as before.
 //!
 //! Tile `(x, z)` covers local metres `[x·size, (x+1)·size] × [z·size, (z+1)·size]`;
 //! the grid includes both borders, so neighbouring tiles share their edge
@@ -61,6 +62,7 @@ use crate::look::{
     PALETTE_TAG, ROOFS_TAG, RegionLook, SEASONS_TAG, read_palette, read_roofs, read_seasons,
     write_palette, write_roofs, write_seasons,
 };
+use crate::ortho::{ORTHO_TAG, read_ortho, write_ortho};
 use crate::region::{PackageRegion, REGION_TAG, read_region, write_region};
 use crate::road_dress::{ROAD_DRESS_TAG, RoadDress, read_road_dress, write_road_dress};
 use crate::road_surface::{ROAD_SURFACE_TAG, RoadSurface, read_road_surfaces, write_road_surfaces};
@@ -378,6 +380,11 @@ impl WorldPackage {
             write_seasons(s, &mut payload);
             sections.push((SEASONS_TAG, payload));
         }
+        if let Some(o) = &self.look.ortho {
+            let mut payload = Vec::new();
+            write_ortho(o, &mut payload);
+            sections.push((ORTHO_TAG, payload));
+        }
         let mut payload = Vec::new();
         if write_road_surfaces(
             self.tiles.values().map(|t| (t.key, t.roads.as_slice())),
@@ -477,7 +484,7 @@ impl WorldPackage {
             tiles.insert(tile.key, tile);
         }
         let sections = if head.version >= 2 {
-            read_sections(&mut r, head.samples, full)?
+            read_sections(&mut r, head.samples, full, false)?
         } else {
             Sections::default()
         };
@@ -682,13 +689,24 @@ impl Sections {
 }
 
 /// The section count and the sections (version 2); without `full` the
-/// bulk (land use, buildings, bridges, roofs, seasons, road looks) is
-/// skipped.
-fn read_sections(r: &mut Bytes, samples: u32, full: bool) -> Result<Sections, String> {
+/// bulk (land use, buildings, bridges, roofs, seasons, road looks, the
+/// orthophoto corridor) is skipped. `streamed`: the sections come as
+/// chunks of which a client may leave optional ones out (the orthophoto
+/// corridor, [`STREAM_SKIPPED_SECTIONS`]), so fewer than the count may
+/// follow.
+fn read_sections(
+    r: &mut Bytes,
+    samples: u32,
+    full: bool,
+    streamed: bool,
+) -> Result<Sections, String> {
     let mut s = Sections::default();
     let mut building_tags = None;
     let count = r.u32()?;
     for _ in 0..count {
+        if streamed && r.pos == r.b.len() {
+            break;
+        }
         let tag: [u8; 4] = r.arr()?;
         let len = usize::try_from(r.u64()?).map_err(|_| "section too large")?;
         let payload = r.take(len)?;
@@ -723,6 +741,14 @@ fn read_sections(r: &mut Bytes, samples: u32, full: bool) -> Result<Sections, St
             s.look.roofs = Some(read_roofs(payload)?);
         } else if &tag == SEASONS_TAG && full {
             s.look.seasons = Some(read_seasons(payload)?);
+        } else if &tag == ORTHO_TAG && full {
+            // Optional imagery (spec §14 Phase 8 T7): a newer layout is
+            // skipped (the ground keeps its materials and colour map).
+            match read_ortho(payload) {
+                Ok(o) => s.look.ortho = Some(o),
+                Err(e) if e.contains("not supported") => {}
+                Err(e) => return Err(e),
+            }
         } else if &tag == ROAD_SURFACE_TAG && full {
             s.surfaces.extend(read_road_surfaces(payload)?);
         } else if &tag == ROAD_LIT_TAG && full {
@@ -742,6 +768,12 @@ fn read_sections(r: &mut Bytes, samples: u32, full: bool) -> Result<Sections, St
     Ok(s)
 }
 
+/// Sections a streaming client does not fetch with the base (spec §14
+/// Phase 8 T7, Phase 10 B2): the orthophoto corridor (`ORTC`) is tens to
+/// hundreds of MB in one chunk, more than the browser should load before
+/// the first tile; streamed packages are drawn without it.
+pub const STREAM_SKIPPED_SECTIONS: &[&[u8; 4]] = &[ORTHO_TAG];
+
 /// A package streamed in chunks (spec §4.5, §4.7; the browser app, spec
 /// §14 Phase 10 B2): the `header` chunk and the sections are decoded once,
 /// the tiles one by one as they arrive (each chunk verified by the caller
@@ -760,14 +792,16 @@ pub struct StreamedPackage {
 
 impl StreamedPackage {
     /// From the `header` chunk and, for version 2, the bytes from the
-    /// `sections` chunk to the end of the file (all `section …` chunks).
+    /// `sections` chunk to the end of the file (the `section …` chunks in
+    /// file order; optional ones such as [`STREAM_SKIPPED_SECTIONS`] may be
+    /// left out).
     pub fn from_parts(header: &[u8], sections: &[u8]) -> Result<Self, String> {
         let mut r = Bytes::new(header);
         let head = read_head(&mut r)?;
         r.finish("package header")?;
         let s = if head.version >= 2 {
             let mut r = Bytes::new(sections);
-            let s = read_sections(&mut r, head.samples, true)?;
+            let s = read_sections(&mut r, head.samples, true, true)?;
             r.finish("package sections")?;
             s
         } else {
@@ -1675,6 +1709,42 @@ mod tests {
         assert_eq!(section_sizes(&plain.to_bytes()).len(), 1);
     }
 
+    /// The orthophoto corridor (spec §14 Phase 8 T7): round trip, left out
+    /// of a skeleton, skipped by readers from before T7 and when its layout
+    /// is newer than this reader.
+    #[test]
+    fn ortho_section_round_trips_and_old_readers_skip_it() {
+        use crate::ortho::ORTHO_TAG;
+        let mut look = crate::look::tests::sample_look();
+        look.ortho = Some(crate::ortho::tests::sample_corridor());
+        let full = WorldPackage {
+            graph: Some(graph()),
+            look,
+            ..package()
+        };
+        let b = full.to_bytes();
+        assert_eq!(WorldPackage::from_bytes(&b).unwrap(), full);
+        assert!(section_sizes(&b).iter().any(|s| &s.0 == ORTHO_TAG));
+        let skel = WorldPackage::skeleton_from_bytes(&b).unwrap();
+        assert!(skel.look.ortho.is_none());
+        let without = |p: &WorldPackage| WorldPackage {
+            look: crate::look::RegionLook {
+                ortho: None,
+                ..p.look.clone()
+            },
+            ..p.clone()
+        };
+        // An old reader: an unknown tag.
+        let mut old_b = b.clone();
+        let at = old_b.windows(4).rposition(|w| w == ORTHO_TAG).unwrap();
+        old_b[at] = b'x';
+        assert_eq!(WorldPackage::from_bytes(&old_b).unwrap(), without(&full));
+        // A newer layout of the section: skipped, the rest is read.
+        let mut newer = b.clone();
+        newer[at + 12] = 9;
+        assert_eq!(WorldPackage::from_bytes(&newer).unwrap(), without(&full));
+    }
+
     #[test]
     fn region_section_round_trip_and_old_readers_skip_it() {
         let mut region = PackageRegion::bbox(47.0, 9.4, 47.2, 9.6);
@@ -1812,5 +1882,69 @@ mod tests {
         assert!(StreamedPackage::from_parts(&part("header")[..10], &[]).is_err());
         let cut = &bytes[sections_start..bytes.len() - 1];
         assert!(StreamedPackage::from_parts(part("header"), cut).is_err());
+    }
+
+    /// A streaming client leaves the orthophoto corridor out of the base
+    /// (spec §14 Phase 8 T7): the sections without the `ORTC` chunk give
+    /// the package without the corridor.
+    #[test]
+    fn a_streamed_package_without_the_ortho_section() {
+        let mut p = WorldPackage {
+            time_zone: Some("Europe/Vaduz".into()),
+            ..package()
+        };
+        p.look.ortho = Some(crate::ortho::tests::sample_corridor());
+        p.tiles.get_mut(&TileKey { x: 1, z: 0 }).unwrap().roads[0].surface = RoadSurface::Gravel;
+        // A lit road (section LITR, spec §14 Phase 9 S2): kept by streaming.
+        p.tiles.get_mut(&TileKey { x: 1, z: 0 }).unwrap().roads[0].lit = crate::RoadLit::Yes;
+        let bytes = p.to_bytes();
+        let chunks = crate::manifest::package_chunks(&bytes).unwrap();
+        let header = chunks
+            .iter()
+            .find(|(n, _)| n == "header")
+            .unwrap()
+            .1
+            .clone();
+        let mut sections = Vec::new();
+        for (name, r) in &chunks {
+            if name == "sections"
+                || (name.starts_with("section ")
+                    && !STREAM_SKIPPED_SECTIONS
+                        .iter()
+                        .any(|t| name == &format!("section {}", String::from_utf8_lossy(*t))))
+            {
+                sections.extend_from_slice(&bytes[r.clone()]);
+            }
+        }
+        assert!(chunks.iter().any(|(n, _)| n == "section ORTC"));
+        let s = StreamedPackage::from_parts(&bytes[header], &sections).unwrap();
+        assert!(s.base().look.ortho.is_none());
+        assert_eq!(s.base().time_zone.as_deref(), Some("Europe/Vaduz"));
+        // The road surfaces (a section after ORTC) are still there.
+        let tile_r = chunks
+            .iter()
+            .find(|(n, _)| n == "tile 1,0")
+            .unwrap()
+            .1
+            .clone();
+        let tile = s.read_tile(&bytes[tile_r]).unwrap();
+        assert_eq!(tile.roads[0].surface, RoadSurface::Gravel);
+        assert_eq!(tile.roads[0].lit, crate::RoadLit::Yes);
+        assert!(chunks.iter().any(|(n, _)| n == "section LITR"));
+        // With every chunk the corridor is there.
+        let start = chunks
+            .iter()
+            .find(|(n, _)| n == "sections")
+            .unwrap()
+            .1
+            .start;
+        let header = chunks
+            .iter()
+            .find(|(n, _)| n == "header")
+            .unwrap()
+            .1
+            .clone();
+        let all = StreamedPackage::from_parts(&bytes[header], &bytes[start..]).unwrap();
+        assert_eq!(all.base().look.ortho, p.look.ortho);
     }
 }

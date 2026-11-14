@@ -62,13 +62,26 @@ pub fn tile_key(chunk_name: &str) -> Option<TileKey> {
     })
 }
 
+/// Whether chunk `name` is a section a streaming client leaves out
+/// (`ocw_world::package::STREAM_SKIPPED_SECTIONS`: the orthophoto corridor,
+/// spec §14 Phase 8 T7).
+pub fn skipped_section(name: &str) -> bool {
+    name.strip_prefix("section ").is_some_and(|tag| {
+        let tag = tag.split('#').next().unwrap_or(tag);
+        ocw_world::package::STREAM_SKIPPED_SECTIONS
+            .iter()
+            .any(|t| t.as_slice() == tag.as_bytes())
+    })
+}
+
 /// The chunks every client needs first: `header`, `sections` and every
-/// `section …` (graph, routes, land use, buildings, …), by offset.
+/// `section …` (graph, routes, land use, buildings, …) except the skipped
+/// ones ([`skipped_section`]), by offset.
 pub fn base_chunks(file: &FileEntry) -> Vec<usize> {
     let mut v: Vec<usize> = (0..file.chunks.len())
         .filter(|&i| {
             let n = &file.chunks[i].name;
-            n == "header" || n == "sections" || n.starts_with("section ")
+            (n == "header" || n == "sections" || n.starts_with("section ")) && !skipped_section(n)
         })
         .collect();
     v.sort_by_key(|&i| file.chunks[i].offset);
@@ -203,6 +216,28 @@ mod tests {
             ["header", "sections", "section GRPH", "section LUSE"]
         );
         assert_eq!(tile_chunks(&f).len(), 16);
+        // The orthophoto corridor is not part of the base (spec §14 Phase
+        // 8 T7): too large for the first load.
+        let mut g = f.clone();
+        let end = g.size;
+        g.chunks.push(chunk("section ORTC", end, 50_000_000));
+        g.chunks.push(chunk("section RDRS", end + 50_000_000, 100));
+        let names: Vec<&str> = base_chunks(&g)
+            .iter()
+            .map(|&i| g.chunks[i].name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "header",
+                "sections",
+                "section GRPH",
+                "section LUSE",
+                "section RDRS"
+            ]
+        );
+        assert!(skipped_section("section ORTC") && skipped_section("section ORTC#2"));
+        assert!(!skipped_section("section SEAS") && !skipped_section("tile 0,0"));
     }
 
     /// Which chunks for a position: the 3 × 3 tiles around it (fewer at

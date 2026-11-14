@@ -75,11 +75,17 @@ pub struct RegionLook {
     pub roofs: Option<RoofColours>,
     /// Seasonal tint maps (section `SEAS`).
     pub seasons: Option<SeasonalTints>,
+    /// The orthophoto corridor along the roads (section `ORTC`, spec §14
+    /// Phase 8 T7; optional).
+    pub ortho: Option<crate::ortho::OrthoCorridor>,
 }
 
 impl RegionLook {
     pub fn is_empty(&self) -> bool {
-        self.palette.is_none() && self.roofs.is_none() && self.seasons.is_none()
+        self.palette.is_none()
+            && self.roofs.is_none()
+            && self.seasons.is_none()
+            && self.ortho.is_none()
     }
 
     /// The imagery sources (empty without a palette section).
@@ -448,13 +454,13 @@ fn med(p: &[u8], n: usize, r: usize, c: usize) -> u8 {
     v as u8
 }
 
-fn predict(p: &[u8], n: usize) -> Vec<u8> {
+pub(crate) fn predict(p: &[u8], n: usize) -> Vec<u8> {
     (0..n * n)
         .map(|i| p[i].wrapping_sub(med(p, n, i / n, i % n)))
         .collect()
 }
 
-fn unpredict(res: &[u8], n: usize) -> Vec<u8> {
+pub(crate) fn unpredict(res: &[u8], n: usize) -> Vec<u8> {
     let mut p = vec![0u8; n * n];
     for i in 0..n * n {
         p[i] = res[i].wrapping_add(med(&p, n, i / n, i % n));
@@ -836,6 +842,7 @@ pub(crate) mod tests {
             palette: Some(palette),
             roofs: Some(roofs),
             seasons: Some(seasons),
+            ortho: None,
         }
     }
 

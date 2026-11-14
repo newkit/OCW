@@ -221,6 +221,16 @@ enum Cmd {
         /// Cells per tile side of the seasonal tint maps (50 = 20 m, 100 = 10 m).
         #[arg(long, default_value_t = 50)]
         season_cells: u32,
+        /// Orthophoto corridor (section ORTC, spec §14 Phase 8 T7): half
+        /// width beside the road edges in metres; 0 leaves it out.
+        #[arg(long, default_value_t = ocw_world::ortho::HALF_WIDTH_M)]
+        corridor: f32,
+        /// Pixel size of the corridor (m; the orthophoto's own if coarser).
+        #[arg(long, default_value_t = ocw_world::ortho::PIXEL_M)]
+        corridor_pixel: f32,
+        /// JPEG quality of the corridor chunks.
+        #[arg(long, default_value_t = 80)]
+        corridor_quality: u8,
         /// Write the calibrated package here instead.
         #[arg(long)]
         out: Option<PathBuf>,
@@ -1658,7 +1668,7 @@ fn calibrate(
     world: &std::path::Path,
     imagery: &std::path::Path,
     pbf: &[PathBuf],
-    season_cells: u32,
+    (season_cells, corridor): (u32, ocw_worldgen::corridor::CorridorOptions),
     out: Option<PathBuf>,
     key: Option<&ocw_world::manifest::SigningKeyPair>,
 ) {
@@ -1744,6 +1754,28 @@ fn calibrate(
             stats.season_filled,
             stats.season_tiles_outside
         );
+    }
+    if corridor.half_width_m > 0.0 && !img.ortho.is_empty() {
+        let c = stage("orthophoto corridor (ORTC)", || {
+            ocw_worldgen::corridor::cut_corridor(&mut pkg, &img, corridor)
+        });
+        for e in c.errors.iter().take(10) {
+            eprintln!("warning: {e}");
+        }
+        println!(
+            "corridor (ORTC): ±{} m at {} m/px, JPEG q{}: {} tiles, {} chunks, {:.1} Mpx, images {:.2} MB ({:.2} bits per px), weights {:.2} MB",
+            corridor.half_width_m,
+            c.pixel_m,
+            corridor.quality,
+            c.tiles,
+            c.chunks,
+            c.pixels as f64 / 1e6,
+            c.image_bytes as f64 / 1e6,
+            8.0 * c.image_bytes as f64 / c.pixels.max(1) as f64,
+            c.weight_bytes as f64 / 1e6
+        );
+    } else {
+        pkg.look.ortho = None;
     }
     let path = out.unwrap_or_else(|| world.to_path_buf());
     let bytes = stage("serialise", || pkg.to_bytes());
@@ -2114,6 +2146,9 @@ fn main() {
             imagery,
             pbf,
             season_cells,
+            corridor,
+            corridor_pixel,
+            corridor_quality,
             out,
             sign_key,
         } => {
@@ -2123,7 +2158,20 @@ fn main() {
                     std::process::exit(1);
                 })
             });
-            calibrate(&world, &imagery, &pbf, season_cells, out, key.as_ref());
+            let corridor = ocw_worldgen::corridor::CorridorOptions {
+                half_width_m: corridor,
+                pixel_m: corridor_pixel,
+                quality: corridor_quality,
+                threads: 0,
+            };
+            calibrate(
+                &world,
+                &imagery,
+                &pbf,
+                (season_cells, corridor),
+                out,
+                key.as_ref(),
+            );
             print_stage_profile(None);
         }
         Cmd::Check { world, peak } => {
@@ -2211,6 +2259,16 @@ fn main() {
                 );
             } else {
                 println!("look: none (not calibrated)");
+            }
+            if let Some(c) = &pkg.look.ortho {
+                println!(
+                    "orthophoto corridor: ±{} m at {} m/px in {} tiles, {} chunks, {:.1} MB",
+                    c.half_width_m,
+                    c.pixel_m,
+                    c.tiles.len(),
+                    c.chunk_count(),
+                    c.image_bytes() as f64 / 1e6
+                );
             }
             let (worst, at, above, total) = pkg.road_pokes(1.0);
             println!(

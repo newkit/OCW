@@ -1177,6 +1177,9 @@ pub(crate) type TileId = (usize, TileKey);
 #[derive(Resource, Default)]
 pub(crate) struct TileStreamer {
     pub(crate) loaded: HashMap<TileId, Entity>,
+    /// The terrain material of each loaded tile (the orthophoto corridor
+    /// is put on it, [`crate::ortho`]).
+    pub(crate) terrain: HashMap<TileId, Handle<TerrainMaterial>>,
     building: HashMap<TileId, Task<Option<TileMeshes>>>,
     ready: VecDeque<(TileId, TileMeshes)>,
     /// World set generation the loaded tiles were clipped for.
@@ -1556,6 +1559,7 @@ fn stream_tiles(
     }
     let far = far_tiles_for(set, &focus, streamer.loaded.keys());
     for id in far {
+        streamer.terrain.remove(&id);
         if let Some(e) = streamer.loaded.remove(&id) {
             commands.entity(e).despawn();
             obstacles.remove_tile(id.0 as u32, (id.1.x, id.1.z));
@@ -1584,7 +1588,7 @@ type RoadParams<'w, 's> = (
 );
 
 #[allow(clippy::too_many_arguments)] // a Bevy system
-fn upload_tiles(
+pub(crate) fn upload_tiles(
     mut commands: Commands,
     world: Res<PackageWorld>,
     mut streamer: ResMut<TileStreamer>,
@@ -1743,6 +1747,7 @@ fn upload_tile(
         e.normal = Some(ground.normal.clone());
     }
     let terrain_mat = terrain.add(terrain_mat);
+    streamer.terrain.insert(id, terrain_mat.clone());
     let lamps = std::mem::take(&mut t.lamps);
     let parent = commands
         .spawn((
