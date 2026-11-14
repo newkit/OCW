@@ -144,6 +144,11 @@ s=$(mktemp -d)
   printf 'aaa\tcrates/a/lib.rs\n' >"$s/valid"
   check "$(win_changed "$s/valid" "$s/hashes" | tr '\n' ' ')" "crates/a/lib.rs same.txt extra.txt " \
     "windows: a file touched there is re-sent with the time of the copy"
+  # Regression (2026-11-14): a new checkout has no manifest, so VALID is
+  # empty; every file must be sent (NR == FNR sent none).
+  : >"$s/valid"
+  check "$(win_changed "$s/valid" "$s/hashes" | tr '\n' ' ')" "crates/a/lib.rs same.txt extra.txt " \
+    "regression: windows: a new checkout (empty manifest) gets every file"
   # Windows extraction, simulated with GNU tar (same -m): the changed file
   # (older local mtime) unpacks with the time of the copy, newer than the
   # build; files not sent keep their time.

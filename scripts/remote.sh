@@ -277,7 +277,9 @@ EOF
 # The files of the snapshot whose content is not (known to be) on the
 # machine: `win_changed VALID HASHES` prints the paths of the HASHES lines
 # (sha<TAB>path) that are not in VALID (the same format, from the machine).
-win_changed() { awk -F '\t' 'NR == FNR { v[$0] = 1; next } !($0 in v) { print $2 }' "$1" "$2"; }
+# (FILENAME, not NR == FNR: with an empty VALID – a new checkout – NR == FNR
+# also held for HASHES, which then sent nothing.)
+win_changed() { awk -F '\t' 'FILENAME == ARGV[1] { v[$0] = 1; next } !($0 in v) { print $2 }' "$1" "$2"; }
 
 # Windows has no rsync; its built-in tar.exe unpacks a tar stream. Only
 # files whose content differs from what the manifest says is there are
