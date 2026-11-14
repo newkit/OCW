@@ -681,6 +681,7 @@ mod tests {
             points: vec![[-20.0, 0.0, 312.0], [1020.0, 0.0, 312.0]],
             surface: RoadSurface::of_class(RoadClass::Residential),
             dress: RoadDress::of_class(RoadClass::Residential, 6.0),
+            lit: Default::default(),
         };
         let mut t = BTreeMap::new();
         t.insert(

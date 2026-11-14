@@ -541,6 +541,7 @@ pub(crate) mod tests {
             points: points.iter().map(|p| [p[0], 0.0, p[1]]).collect(),
             surface: RoadSurface::of_class(RoadClass::Residential),
             dress: RoadDress::of_class(RoadClass::Residential, width),
+            lit: Default::default(),
         }
     }
 
