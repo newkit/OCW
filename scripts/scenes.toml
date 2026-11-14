@@ -1308,21 +1308,21 @@ name = "workshop-wall"
 description = "Workshop scene: the camera panned along the bike wall to the third starter bike, its card grown (name, type and profile, weight, parts value)"
 args = ["--route", "hills", "--bots", "3", "--power", "250"]
 at = ["2=workshop open", "2.6=workshop right", "3.4=workshop right"]
-shot = 6.5
+shot = 20
 
 [[scene]]
 name = "workshop-stand-hotspots"
 description = "Workshop scene: the stand view orbiting the road bike, the part hotspots (frame, wheels, tyres, groupset … lights, computer, bag, paint) with the focused one's label"
 args = ["--route", "hills", "--bots", "3", "--power", "250"]
 at = ["2=workshop open", "2.6=workshop select", "3.6=workshop orbit 25", "4=workshop slot-next"]
-shot = 7
+shot = 20
 
 [[scene]]
 name = "workshop-picker"
 description = "Workshop part close-up (spec §14 Phase 4, W2): the wheels of the road bike with the part picker (equipped / shop, prices in hearts, locks) and the detail card; a carbon wheelset previewed live on the bike"
 args = ["--route", "hills", "--bots", "3", "--power", "250"]
 at = ["2=hearts.grant 3000", "2.2=workshop open", "2.8=workshop select", "3.8=workshop slot-next", "4.2=workshop select", "5=workshop down", "5.4=workshop down", "5.8=workshop down"]
-shot = 8
+shot = 22
 
 [[scene]]
 name = "workshop-swap-video"
