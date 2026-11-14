@@ -270,8 +270,10 @@ reused), is stale: the dashboard ignores it (and only counts it), the next
 
 `scripts/remote.sh run` takes a build slot before it runs the command; when
 all are taken it writes a `waiting` marker, prints "remote.sh: waiting for a
-free build slot" and tries all slots again every second, so it gets whichever
-slot frees first (no strict first-come order). A waiting run whose ssh
+free build slot" and tries all slots again every second, taking whichever
+slot frees first in order of arrival: while an older run (by its marker's
+start, then PID) still waits, a waiting run leaves the free slot to it
+(Linux and macOS, since v2.59; Windows takes the first free slot). A waiting run whose ssh
 session ended (remote.sh interrupted) gives up on Linux and macOS.
 
 - Linux: `flock -n` on `/tmp/ocw-build-slot-N.lock`, held on fd 9 by the run's

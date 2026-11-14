@@ -16,7 +16,7 @@ title = "The night shift"
 caption = "While the humans sleep, the agents build: workouts, menus, settings and the feel of a gradient."
 shots = [
   { file = "002148-video-wayland-ocw-workout-agent.mp4", seconds = 3.5, note = "ERG mode. resistance is futile." },
-  { file = "003501-shot-wayland-ocw-m2-display.png", seconds = 3.0, note = "units: imperial?!" },
+  { file = "003501-shot-wayland-ocw-m2-display.png", seconds = 4.2, note = "units: imperial?!" },
 ]
 
 [[chapter]]
@@ -33,8 +33,8 @@ time = "02:55"
 title = "Into the mountain"
 caption = "The Stegertunnel arrives. The camera learns not to film the inside of a mountain."
 shots = [
+  { file = "025432-shot-wayland-af2d-tunnel-km9.2.png", seconds = 3.9, note = "the grey is intentional." },
   { file = "025457-video-wayland-af2d-tunnel-entry.mp4", seconds = 3.5 },
-  { file = "025432-shot-wayland-af2d-tunnel-km9.2.png", seconds = 2.8, note = "the grey is intentional." },
 ]
 
 [[chapter]]
@@ -42,7 +42,7 @@ time = "04:31"
 title = "Clocking out"
 caption = "Final runs on Linux, macOS and Windows: 726 tests each. The night shift goes home. There is no home."
 shots = [
-  { file = "031801-shot-wayland-climb.png", seconds = 3.5, note = "sunrise (not rendered yet)" },
+  { file = "031801-shot-wayland-climb.png", seconds = 4.9, note = "sunrise (not rendered yet)" },
 ]
 
 [[chapter]]
@@ -52,9 +52,9 @@ caption = "Phase 4: generated bikes and riders. The capsules have evolved. Darwi
 sound = "075420-audio-ride-sounds.wav"
 sound_gain = 0.9
 shots = [
-  { split = ["013515-shot-wayland-ocw-bikes-side.png", "080642-models-side.png"], seconds = 3.5, note = "01:35 | 07:53" },
+  { split = ["013515-shot-wayland-ocw-bikes-side.png", "080642-models-side.png"], seconds = 4.9, note = "01:35 | 07:53" },
   { file = "080811-models-ride.mp4", seconds = 4.0 },
-  { file = "083649-models-tt.png", seconds = 3.0, note = "TT bike: aero is everything" },
+  { file = "083649-models-tt.png", seconds = 4.2, note = "TT bike: aero is everything" },
 ]
 
 [[chapter]]
@@ -62,7 +62,7 @@ time = "08:52"
 title = "Can you hear me now?"
 caption = "Voice chat, always on like a call. M mutes you. Like a real group ride, minus the heavy breathing."
 shots = [
-  { file = "084411-voice-hud.png", seconds = 3.5, note = "M = mute. Shift+M = mute everyone." },
+  { file = "084411-voice-hud.png", seconds = 4.9, note = "M = mute. Shift+M = mute everyone." },
 ]
 
 [[chapter]]
@@ -70,9 +70,9 @@ time = "09:06"
 title = "Lights, camera, Liechtenstein"
 caption = "A scene harness renders the world on demand: close-ups, orbits, Malbun from above."
 shots = [
-  { file = "102118-camera-close.png", seconds = 2.8, note = "close-up. hello!" },
   { file = "091150-malbun-climb-video.mp4", seconds = 3.5 },
-  { file = "091325-far-view.png", seconds = 3.0, note = "hairpins, as far as the eye can see" },
+  { file = "091325-far-view.png", seconds = 4.2, note = "hairpins, as far as the eye can see" },
+  { file = "102118-camera-close.png", seconds = 3.9, note = "close-up. hello!" },
 ]
 
 [[chapter]]
@@ -90,8 +90,8 @@ caption = "Game audio, synthesised from scratch: wind, drivetrain – and the fr
 sound = "104859-audio-demo-freehub.wav"
 sound_gain = 1.4
 shots = [
-  { file = "080752-models-freewheel.png", seconds = 3.5, note = "tick tick tick (coasting)" },
-  { file = "080739-models-sprint.png", seconds = 3.0, note = "silence (pedalling)" },
+  { file = "080739-models-sprint.png", seconds = 4.2, note = "silence (pedalling)" },
+  { file = "080752-models-freewheel.png", seconds = 4.9, note = "tick tick tick (coasting)" },
 ]
 
 [[chapter]]
@@ -99,8 +99,8 @@ time = "12:23"
 title = "Postcards"
 caption = "The README gets postcards from the Malbun road. The Liechtenstein tourism board has not called. Yet."
 shots = [
-  { file = "122149-scenes-readme1-readme-climb-behind.png", seconds = 3.5 },
-  { file = "122202-scenes-readme1-readme-climb-front.png", seconds = 3.5 },
+  { file = "122149-scenes-readme1-readme-climb-behind.png", seconds = 4.9 },
+  { file = "122202-scenes-readme1-readme-climb-front.png", seconds = 4.9 },
 ]
 
 [[chapter]]
@@ -108,5 +108,5 @@ time = "19:36"
 title = "Ship it (with voice)"
 caption = "Release for every platform. Windows wanted a static runtime, the Mac misplaced its C++ headers, a test crashed. All fixed."
 shots = [
-  { file = "194052-multiplayer-kiosk-still-25.png", seconds = 4.0, note = "v0.1.0-72238db" },
+  { file = "194052-multiplayer-kiosk-still-25.png", seconds = 5.6, note = "v0.1.0-72238db" },
 ]
