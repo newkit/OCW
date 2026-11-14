@@ -75,10 +75,12 @@ impl From<v1::RiderProfile> for ocw_core::RiderProfile {
     }
 }
 
-/// The full look with the character (Hello, BikeChange, RiderBuild).
+/// The full look with the character and the kit design (Hello,
+/// BikeChange, RiderBuild).
 impl From<ocw_core::RiderLook> for v1::RiderLook {
     fn from(l: ocw_core::RiderLook) -> Self {
         let c = l.character.validated();
+        let d = l.design.validated();
         Self {
             height_cm: Some(u32::from(c.height_cm)),
             body_build: Some(c.build.wire()),
@@ -87,6 +89,16 @@ impl From<ocw_core::RiderLook> for v1::RiderLook {
             hair: Some(u32::from(c.hair)),
             hair_rgb: Some(c.hair_colour.0),
             glasses: Some(u32::from(c.glasses)),
+            kit_second_rgb: d.second.map(|c| c.0),
+            kit_third_rgb: d.third.map(|c| c.0),
+            race_number: (d.number > 0).then_some(u32::from(d.number)),
+            helmet_pattern: d.helmet_pattern.then_some(true),
+            shorts_rgb: d.shorts.map(|c| c.0),
+            socks_rgb: d.socks.map(|c| c.0),
+            shoes_rgb: d.shoes.map(|c| c.0),
+            gloves_rgb: d.gloves.map(|c| c.0),
+            helmet_finish: Some(d.helmet_finish.wire()),
+            shoe_finish: Some(d.shoe_finish.wire()),
             ..snapshot_look(&l)
         }
     }
@@ -124,6 +136,31 @@ pub fn character(l: &v1::RiderLook) -> ocw_core::Character {
     .validated()
 }
 
+/// The kit design of a look from the network, validated (absent fields:
+/// the default's; spec §14 Phase 8 T6).
+pub fn kit_design(l: &v1::RiderLook) -> ocw_core::KitDesign {
+    let rgb = |v: Option<u32>| v.map(ocw_core::Rgb::from_wire);
+    ocw_core::KitDesign {
+        second: rgb(l.kit_second_rgb),
+        third: rgb(l.kit_third_rgb),
+        number: l
+            .race_number
+            .map_or(0, |n| n.min(u32::from(u16::MAX)) as u16),
+        helmet_pattern: l.helmet_pattern.unwrap_or(false),
+        shorts: rgb(l.shorts_rgb),
+        socks: rgb(l.socks_rgb),
+        shoes: rgb(l.shoes_rgb),
+        gloves: rgb(l.gloves_rgb),
+        helmet_finish: l
+            .helmet_finish
+            .map_or_else(Default::default, ocw_core::Finish::from_wire),
+        shoe_finish: l
+            .shoe_finish
+            .map_or_else(Default::default, ocw_core::Finish::from_wire),
+    }
+    .validated()
+}
+
 /// A look from the network, validated (spec §2.5): colours are cut to
 /// 24-bit sRGB, unknown patterns are plain.
 impl From<&v1::RiderLook> for ocw_core::RiderLook {
@@ -134,6 +171,7 @@ impl From<&v1::RiderLook> for ocw_core::RiderLook {
             helmet: ocw_core::Rgb::from_wire(l.helmet_rgb),
             pattern: ocw_core::KitPattern::from_wire(l.kit_pattern),
             character: character(l),
+            design: kit_design(l),
         }
     }
 }
@@ -1491,14 +1529,63 @@ mod tests {
             panic!("a rider build")
         };
         assert_eq!(build_info(&b).look, Some(look));
+        // The kit design travels the same way (spec §14 Phase 8 T6).
+        let designed = ocw_core::RiderLook {
+            pattern: ocw_core::KitPattern::Chevrons,
+            design: ocw_core::KitDesign {
+                second: Some(ocw_core::Rgb(0x1E88E5)),
+                third: Some(ocw_core::Rgb(0xF2F2EE)),
+                number: 137,
+                helmet_pattern: true,
+                shorts: Some(ocw_core::Rgb(0x3949AB)),
+                socks: None,
+                shoes: Some(ocw_core::Rgb(0x1E1E22)),
+                gloves: Some(ocw_core::Rgb(0xE53935)),
+                helmet_finish: ocw_core::Finish::Matte,
+                shoe_finish: ocw_core::Finish::Gloss,
+            },
+            ..look
+        };
+        let wire: v1::RiderLook = designed.into();
+        assert_eq!(ocw_core::RiderLook::from(&wire), designed);
+        let snap = snapshot_look(&designed);
+        assert_eq!((snap.race_number, snap.shorts_rgb), (None, None));
+        assert_eq!(snap.kit_pattern, 4, "the pattern is in the snapshots");
+        assert_eq!(
+            ocw_core::RiderLook::from(&snap).design,
+            ocw_core::KitDesign::default()
+        );
+        let msg = rider_build(RiderId(4), ocw_core::ProfileId::Road, None, Some(&designed));
+        let bytes = encode(&server_message(v1::server_message::Msg::RiderBuild(msg)));
+        let v1::server_message::Msg::RiderBuild(b) = decode_server(&bytes).unwrap() else {
+            panic!("a rider build")
+        };
+        assert_eq!(build_info(&b).look, Some(designed));
+        // A plain look adds only the two finishes to the wire.
+        let plain: v1::RiderLook = ocw_core::RiderLook::default().into();
+        assert_eq!(
+            (
+                plain.kit_second_rgb,
+                plain.race_number,
+                plain.helmet_pattern
+            ),
+            (None, None, None)
+        );
         // Out of range from the wire: the default's values, height clamped.
         let odd = v1::RiderLook {
             height_cm: Some(900),
             skin: Some(40),
             hair: Some(99),
             body_build: Some(7),
+            race_number: Some(70_000),
+            kit_second_rgb: Some(0xFF00_0001),
+            helmet_finish: Some(9),
             ..Default::default()
         };
+        let k = kit_design(&odd);
+        assert_eq!(k.number, 0, "no number past 999");
+        assert_eq!(k.second, Some(ocw_core::Rgb(0x000001)));
+        assert_eq!(k.helmet_finish, ocw_core::Finish::Gloss);
         let c = character(&odd);
         let d = ocw_core::Character::default();
         assert_eq!(c.height_cm, ocw_core::character::HEIGHT_RANGE_CM.1);

@@ -72,6 +72,12 @@ pub const BUILDING_IDS: [&str; 8] = [
     "concrete",
 ];
 
+/// Rider and bike materials (Phase 8 T6), in the order of the gear
+/// shader's texture layers (`ocw_render::gear`): the jersey knit, the
+/// carbon weave, the saddle leather. Everything else on riders and bikes
+/// (metals, rubber, lycra, plastics, the patterns) is procedural.
+pub const GEAR_IDS: [&str; 3] = ["jersey_knit", "carbon_weave", "saddle_leather"];
+
 /// What a material is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -79,6 +85,8 @@ pub enum Group {
     Ground,
     Road,
     Building,
+    /// Riders and bikes (Phase 8 T6).
+    Gear,
 }
 
 /// One pinned source file.
@@ -784,7 +792,7 @@ mod tests {
     fn the_shipped_manifest_is_complete() {
         let m = MaterialManifest::parse(SHIPPED).unwrap_or_else(|e| panic!("{e:#?}"));
         assert!(m.missing_layers().is_empty(), "{:?}", m.missing_layers());
-        for id in BUILDING_IDS {
+        for id in BUILDING_IDS.iter().chain(GEAR_IDS.iter()) {
             assert!(m.get(id).is_some(), "{id}");
         }
         for x in &m.materials {
@@ -792,6 +800,8 @@ mod tests {
                 Group::Road
             } else if BUILDING_IDS.contains(&x.id.as_str()) {
                 Group::Building
+            } else if GEAR_IDS.contains(&x.id.as_str()) {
+                Group::Gear
             } else {
                 Group::Ground
             };
@@ -808,5 +818,48 @@ mod tests {
         let md = credits_markdown(&m);
         assert_eq!(md.matches("| CC0-1.0 |").count(), m.materials.len());
         assert!(md.contains("ambientCG") && md.contains("Poly Haven"));
+    }
+
+    /// The rider and bike textures (Phase 8 T6) are pinned CC0 sources
+    /// from ambientCG with their pages, credited like the others, and the
+    /// licence check still rejects what rule 8A excludes.
+    #[test]
+    fn the_gear_textures_are_pinned_and_licensed() {
+        let m = MaterialManifest::parse(SHIPPED).unwrap_or_else(|e| panic!("{e:#?}"));
+        let credits = credits(&m);
+        for id in GEAR_IDS {
+            let x = m.get(id).expect(id);
+            assert_eq!(x.group, Group::Gear);
+            assert_eq!(x.license, "CC0-1.0", "{id}");
+            assert!(
+                x.source.starts_with("https://ambientcg.com/view?id="),
+                "{id}"
+            );
+            assert!(
+                x.archive
+                    .as_deref()
+                    .is_some_and(|a| a.starts_with("https://ambientcg.com/get?file=")),
+                "{id}"
+            );
+            for (role, f) in x.files() {
+                assert!(is_sha256(&f.sha256), "{id} {role}");
+            }
+            // A few centimetres per repeat: knit, weave, grain.
+            assert!((0.02..=0.3).contains(&x.size_m), "{id} {}", x.size_m);
+            assert!(credits.iter().any(|c| c.line().contains(&x.title)), "{id}");
+        }
+        for bad in ["CC-BY-SA-4.0", "CC-BY-NC-4.0", "proprietary"] {
+            let text = SHIPPED.replacen(
+                "license = \"CC0-1.0\"\nauthor = \"Lennart Demes (ambientCG)\"\ntitle = \"Fabric 070\"",
+                &format!("license = \"{bad}\"\nauthor = \"Lennart Demes (ambientCG)\"\ntitle = \"Fabric 070\""),
+                1,
+            );
+            assert_ne!(text, SHIPPED);
+            let errors = MaterialManifest::parse(&text).err().unwrap_or_default();
+            assert!(
+                errors.iter().any(|e| e.contains("jersey_knit")),
+                "{bad}: {errors:?}"
+            );
+        }
     }
 }

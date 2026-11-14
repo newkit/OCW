@@ -13,6 +13,7 @@ pub mod far_terrain;
 pub mod flight_world;
 pub mod font;
 pub mod frame_rate;
+pub mod gear;
 pub mod ground;
 pub mod house_style;
 pub mod houses;
@@ -360,6 +361,8 @@ impl Plugin for OcwRenderPlugins {
             road_material::RoadMaterialPlugin,
             unicorn::UnicornPlugin,
             building_material::BuildingMaterialPlugin,
+            // Rider and bike materials (spec §14 Phase 8 T6).
+            gear::GearMaterialPlugin,
             inspect_hud::InspectHudPlugin,
             // Ragdoll falls with Avian (spec §14 Phase 12C, Q5).
             ragdoll::RagdollPlugin,
@@ -508,6 +511,7 @@ mod tests {
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))
             .init_asset::<Mesh>()
             .init_asset::<StandardMaterial>()
+            .init_asset::<crate::gear::GearMaterial>()
             .init_asset::<see_through::SeeThroughMaterial>()
             .insert_resource(view)
             .add_plugins(console::ConsoleCorePlugin)
@@ -576,6 +580,7 @@ mod tests {
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))
             .init_asset::<Mesh>()
             .init_asset::<StandardMaterial>()
+            .init_asset::<crate::gear::GearMaterial>()
             .init_asset::<see_through::SeeThroughMaterial>()
             .insert_resource(view)
             .add_plugins((world::WorldPlugin, riders::RidersPlugin));

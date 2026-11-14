@@ -1445,3 +1445,51 @@ description = "The same race in Profile mode, the default for races (spec §14 P
 args = ["--route", "loop", "--bots", "2", "--power", "300"]
 at = ["1=dev.bot_bike 1 --bike road --power 300 --lane -2.4 --name Stock", "1=dev.bot_bike 2 --bike road --best --power 300 --lane 2.4 --name Upgraded", "1.5=event race --km 0.6"]
 shot = 85
+
+# --- Phase 8 T6: riders and bikes (materials, jersey designer) ---------------
+
+[[scene]]
+name = "t6-carbon-stand"
+description = "Phase 8 T6: close-up of a carbon road bike on the workshop's repair stand – the frame painted bare carbon (twill weave under a clear coat), carbon wheels, cockpit, crank spider and bottle cages, the spun cassette and chainrings with anisotropic highlights, the race tyres' file tread, bar tape and the saddle leather"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+at = ["2=hearts.grant 9000", "2.1=workshop.buy wheels.road-carbon.top", "2.2=workshop.buy cockpit.road.carbon", "2.3=workshop.buy crankset.road.power", "2.4=workshop.buy tyres.road.race", "2.5=workshop.buy bottle_cages.carbon", "2.6=workshop.paint carbon", "3=workshop open", "3.6=workshop select", "5.2=workshop orbit -30", "5.6=workshop zoom 4"]
+shot = 30
+
+[[scene]]
+name = "t6-group-front"
+description = "Phase 8 T6: a group of riders in different jersey designs at a race start in Vaduz, seen from the front – chest bands, sashes, stripes, chevrons and gradients in two and three colours, patterned and plain helmets, gloss and matte, kit colours"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "12", "--power", "250"]
+at = ["1.5=kit.design --pattern sash --jersey #1E88E5 --second #FDD835 --third #F2F2EE --number 7 --helmet-pattern on --shorts #1E1E22", "2.5=event race --km 3", "2.5=camera.orbit 165 14 9"]
+shot = 7
+
+[[scene]]
+name = "t6-group-back"
+description = "Phase 8 T6: the same start from behind – the race numbers on the riders' backs (paper bibs) and hips, the patterns on the backs of the jerseys"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "12", "--power", "250"]
+at = ["1.5=kit.design --pattern sash --jersey #1E88E5 --second #FDD835 --third #F2F2EE --number 7 --helmet-pattern on --shorts #1E1E22", "2.5=event race --km 3", "2.5=camera.orbit 15 18 7"]
+shot = 7
+
+[[scene]]
+name = "t6-rider-close"
+description = "Phase 8 T6: the own rider close up on the road (orbit camera behind-left, 2.8 m): stripes in three colours, race number 42 on the back and the hip, lycra shorts, knit jersey with mesh side panels, matte helmet in the jersey colours, carbon wheels"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "220"]
+at = ["1.5=kit.design --pattern stripes --jersey #E53935 --second #F2F2EE --third #1E1E22 --number 42 --helmet-pattern on --helmet-finish matte --shorts #1E1E22 --socks #E53935 --shoes #F2F2EE", "2.5=teleport 0.3", "2.5=camera.orbit 35 12 2.8"]
+shot = 8
+
+[[scene]]
+name = "t6-jersey-designer"
+description = "Phase 8 T6: the jersey designer in the character corner – the page's fields (pattern, three colours, race number, pattern on the helmet) with the focused field's card; the draft live on the rider: over the shoulder the back with the race number, in the mirror the front with the chevrons"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2=kit.design --pattern chevrons --jersey #1E88E5 --second #F2F2EE --third #E53935 --number 27 --helmet-pattern on --shorts #1E1E22 --gloves #F2F2EE", "2.6=workshop open", "3.2=workshop mirror", "5=workshop slot-next", "5.1=workshop slot-next", "5.2=workshop slot-next", "5.3=workshop slot-next", "5.4=workshop slot-next", "5.5=workshop slot-next", "5.6=workshop slot-next", "6.4=workshop select", "7.4=workshop down", "7.8=workshop down", "8.2=workshop down", "8.6=workshop down"]
+shot = 40
+
+[[scene]]
+name = "t6-designer-video"
+description = "Video (Phase 8 T6): the jersey designer – stepping through the patterns live on the rider in the mirror (chest band, sash, stripes, chevrons), the colours, a race number, the pattern onto the helmet, applying it; then the kit colours page (shorts, socks, shoes, gloves, a matte helmet)"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2.4=workshop open", "3.4=workshop mirror", "5.2=workshop slot-next", "5.3=workshop slot-next", "5.4=workshop slot-next", "5.5=workshop slot-next", "5.6=workshop slot-next", "5.7=workshop slot-next", "5.8=workshop slot-next", "6.4=workshop select", "7.2=workshop right", "8.2=workshop right", "9.2=workshop right", "10.2=workshop right", "11=workshop down", "11.5=workshop right", "12=workshop right", "12.6=workshop down", "13.1=workshop right", "13.6=workshop down", "14.1=workshop right", "14.5=workshop right", "15.2=workshop down", "15.6=workshop right", "16=workshop right", "16.4=workshop right", "17=workshop down", "17.5=workshop right", "18.4=workshop select", "19.4=workshop slot-next", "19.6=workshop slot-next", "19.8=workshop slot-next", "20=workshop slot-next", "20.2=workshop slot-next", "20.4=workshop slot-next", "21.2=workshop right", "21.8=workshop down", "22.3=workshop right", "22.8=workshop down", "23.3=workshop right", "23.8=workshop down", "24.3=workshop right", "24.8=workshop down", "25.1=workshop down", "25.5=workshop right", "26.2=workshop select"]
+warmup = 2
+video = 26

@@ -13,6 +13,11 @@
 //! height (the whole rider scaled; the saddle moved along the seat tube
 //! so the legs fit, `ocw_assets::pose::BodyFit`) and the build (girth of
 //! the torso and limbs).
+//!
+//! Materials (spec §14 Phase 8 T6, [`crate::gear`]): the near models are
+//! drawn with the gear shader – carbon, metal, rubber, fabrics, plastics,
+//! the jersey designer's pattern and race number; the far model keeps plain
+//! materials in the kit's colours.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -28,6 +33,7 @@ use ocw_core::{ProfileId, RiderId, RiderLook};
 
 use ocw_world::Track;
 
+use crate::gear::{self, GearMaterial};
 use crate::{Ground, RideView, to_vec3};
 
 pub struct RidersPlugin;
@@ -328,6 +334,30 @@ pub struct AvatarColours {
     /// The character's skin and hair colours (spec 4C).
     pub skin: Color,
     pub hair: Color,
+    /// The kit design (spec §14 Phase 8 T6).
+    pub kit: KitColours,
+    /// The jersey of the far model: the pattern's dominant colour.
+    pub far_jersey: Color,
+}
+
+/// The jersey designer's choices as drawn (spec §14 Phase 8 T6).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct KitColours {
+    pub pattern: ocw_core::KitPattern,
+    /// The pattern's second and third colour (the third is the second in
+    /// a two-colour design).
+    pub second: Color,
+    pub third: Color,
+    pub three: bool,
+    pub number: u16,
+    pub helmet_pattern: bool,
+    /// Free kit colours (`None`: the model's).
+    pub shorts: Option<Color>,
+    pub socks: Option<Color>,
+    pub shoes: Option<Color>,
+    pub gloves: Option<Color>,
+    pub helmet_finish: ocw_core::Finish,
+    pub shoe_finish: ocw_core::Finish,
 }
 
 fn rgb(c: ocw_core::Rgb) -> Color {
@@ -353,13 +383,56 @@ pub fn avatar_colours(id: RiderId, is_local: bool, look: Option<&RiderLook>) -> 
         Color::srgb(0.96, 0.96, 0.94)
     };
     let character = look.map(|l| l.character).unwrap_or_default();
+    let (kit, far_jersey) = match look {
+        Some(l) => {
+            let d = l.design.validated();
+            let [_, second, third] = l.kit_colours();
+            (
+                KitColours {
+                    pattern: l.pattern,
+                    second: rgb(second),
+                    third: rgb(third),
+                    three: d.third.is_some(),
+                    number: d.number,
+                    helmet_pattern: d.helmet_pattern,
+                    shorts: d.shorts.map(rgb),
+                    socks: d.socks.map(rgb),
+                    shoes: d.shoes.map(rgb),
+                    gloves: d.gloves.map(rgb),
+                    helmet_finish: d.helmet_finish,
+                    shoe_finish: d.shoe_finish,
+                },
+                rgb(ocw_core::kit::dominant_jersey_colour(l)),
+            )
+        }
+        None => (
+            KitColours {
+                pattern: ocw_core::KitPattern::Plain,
+                second: accent,
+                third: accent,
+                three: false,
+                number: 0,
+                helmet_pattern: false,
+                shorts: None,
+                socks: None,
+                shoes: None,
+                gloves: None,
+                helmet_finish: Default::default(),
+                shoe_finish: Default::default(),
+            },
+            jersey,
+        ),
+    };
     AvatarColours {
         frame,
         jersey,
         helmet,
-        accent,
+        // The zip and trims: the design's second colour.
+        accent: if look.is_some() { kit.second } else { accent },
         skin: rgb(character.skin_colour()),
         hair: rgb(character.validated().hair_colour),
+        kit,
+        far_jersey,
     }
 }
 
@@ -367,13 +440,18 @@ pub fn avatar_colours(id: RiderId, is_local: bool, look: Option<&RiderLook>) -> 
 /// RGBA) for a rider in `colours`.
 pub fn tint_color(slot: &str, model_color: [f32; 4], colours: &AvatarColours) -> Color {
     let s = slots::get(slot).unwrap_or(&slots::ALL[0]);
+    let model = Color::linear_rgba(
+        model_color[0],
+        model_color[1],
+        model_color[2],
+        model_color[3],
+    );
     match s.tint {
-        Tint::Fixed => Color::linear_rgba(
-            model_color[0],
-            model_color[1],
-            model_color[2],
-            model_color[3],
-        ),
+        Tint::Fixed => model,
+        Tint::Shorts => colours.kit.shorts.unwrap_or(model),
+        Tint::Socks => colours.kit.socks.unwrap_or(model),
+        Tint::Shoes => colours.kit.shoes.unwrap_or(model),
+        Tint::Gloves => colours.kit.gloves.unwrap_or(model),
         Tint::Frame => colours.frame,
         Tint::Jersey => colours.jersey,
         Tint::Helmet => colours.helmet,
@@ -388,7 +466,7 @@ pub fn tint_color(slot: &str, model_color: [f32; 4], colours: &AvatarColours) ->
 pub fn hidden_rider_nodes(look: Option<&RiderLook>, kit: &[String]) -> Vec<&'static str> {
     let l = look.copied().unwrap_or_default();
     let ids: Vec<&str> = kit.iter().map(String::as_str).collect();
-    let shown = ocw_assets::rider::visible(&l.character, l.pattern, &ids);
+    let shown = ocw_assets::rider::visible(&l.character, &ids);
     ocw_assets::rider::optional()
         .into_iter()
         .filter(|n| !shown.contains(n))
@@ -454,6 +532,7 @@ fn sync_riders(
     mut avatars: Query<(&mut Transform, &AvatarLook, &mut Visibility), With<Avatar>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut gear_materials: ResMut<Assets<GearMaterial>>,
     ground: Option<Res<Ground>>,
     ragdolls: Option<Res<crate::ragdoll::Ragdolls>>,
     mut library: Local<Option<Library>>,
@@ -540,7 +619,10 @@ fn sync_riders(
             &mut commands,
             lib,
             &mut meshes,
-            &mut materials,
+            &mut Mats {
+                standard: &mut materials,
+                gear: &mut gear_materials,
+            },
             id,
             is_local,
             wanted,
@@ -590,26 +672,30 @@ fn far_range() -> VisibilityRange {
 }
 
 /// A model's meshes, uploaded once: `(mesh, material index)` per primitive,
-/// per node.
+/// per node. Near parts carry their rest coordinates for the gear shader
+/// (spec §14 Phase 8 T6; `rider`: the rider model's rest pose and body
+/// regions), the far LOD only positions and normals.
 struct Meshes(Vec<Vec<(Handle<Mesh>, usize)>>);
 
 impl Meshes {
-    fn new(model: &Model, meshes: &mut Assets<Mesh>) -> Self {
+    fn new(model: &Model, meshes: &mut Assets<Mesh>, rider: bool) -> Self {
+        let far = model.node(bike_nodes::LOD1);
         Self(
             model
                 .nodes
                 .iter()
-                .map(|n| {
+                .enumerate()
+                .map(|(i, n)| {
+                    let is_far = far.is_some_and(|f| model.is_below(i, f));
+                    let (rest, region) = gear::rest_frame(model, i, rider);
                     n.primitives
                         .iter()
                         .map(|p| {
-                            let mut m = Mesh::new(
-                                PrimitiveTopology::TriangleList,
-                                RenderAssetUsages::default(),
-                            );
-                            m.insert_attribute(Mesh::ATTRIBUTE_POSITION, p.positions.clone());
-                            m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, p.normals.clone());
-                            m.insert_indices(Indices::U32(p.indices.clone()));
+                            let m = if is_far {
+                                plain_mesh(p)
+                            } else {
+                                gear::gear_mesh(p, rest, region)
+                            };
                             (meshes.add(m), p.material)
                         })
                         .collect()
@@ -617,6 +703,32 @@ impl Meshes {
                 .collect(),
         )
     }
+}
+
+/// A mesh with positions and normals only (the far LOD).
+fn plain_mesh(p: &ocw_assets::model::Primitive) -> Mesh {
+    let mut m = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
+    m.insert_attribute(Mesh::ATTRIBUTE_POSITION, p.positions.clone());
+    m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, p.normals.clone());
+    m.insert_indices(Indices::U32(p.indices.clone()));
+    m
+}
+
+/// The material assets an avatar is made with.
+struct Mats<'a> {
+    standard: &'a mut Assets<StandardMaterial>,
+    gear: &'a mut Assets<GearMaterial>,
+}
+
+/// A part's material: the gear shader up close, a plain one far away and
+/// for the ghost.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PartMaterial {
+    Gear(Handle<GearMaterial>),
+    Plain(Handle<StandardMaterial>),
 }
 
 /// The shipped models on the GPU, their rigs, and the materials by slot
@@ -629,7 +741,11 @@ struct Library {
     /// Bikes with fitted parts (the others' and the own, spec §14 Phase 4,
     /// 4G), built and uploaded once per profile and variant set.
     fitted: HashMap<(ProfileId, Vec<String>), (std::sync::Arc<Model>, Meshes)>,
+    /// Far materials by slot and colour; gear materials by surface.
     materials: HashMap<(&'static str, [u8; 4]), Handle<StandardMaterial>>,
+    gear: HashMap<Vec<u32>, Handle<GearMaterial>>,
+    /// Near parts without a shader of their own, by surface.
+    plain_near: HashMap<Vec<u32>, Handle<StandardMaterial>>,
     ghost: Option<Handle<StandardMaterial>>,
 }
 
@@ -641,48 +757,69 @@ impl Library {
             .map(|p| ocw_assets::shipped::bike_rig(*p))
             .collect();
         Self {
-            rider: Meshes::new(ocw_assets::shipped::rider_model(), meshes),
+            rider: Meshes::new(ocw_assets::shipped::rider_model(), meshes, true),
             bikes: ProfileId::ALL
                 .iter()
-                .map(|p| Meshes::new(ocw_assets::shipped::bike_model(*p), meshes))
+                .map(|p| Meshes::new(ocw_assets::shipped::bike_model(*p), meshes, false))
                 .collect(),
             rider_rig,
             bike_rigs,
             fitted: HashMap::new(),
             materials: HashMap::new(),
+            gear: HashMap::new(),
+            plain_near: HashMap::new(),
             ghost: None,
         }
     }
 
-    /// The material of paint slot `slot` (model colour `model_color`,
-    /// linear RGBA) for a rider in `colours`.
+    /// The material of a part in paint slot `slot` on node `node` (model
+    /// colour `model_color`, linear RGBA) for a rider in `colours`: the
+    /// gear shader near, a plain material on the far LOD and the ghost.
+    #[allow(clippy::too_many_arguments)]
     fn material(
         &mut self,
-        materials: &mut Assets<StandardMaterial>,
+        mats: &mut Mats,
         slot: &str,
+        node: &str,
         model_color: [f32; 4],
         colours: &AvatarColours,
         ghost: bool,
-    ) -> Handle<StandardMaterial> {
+        far: bool,
+    ) -> PartMaterial {
         if ghost {
-            return self
-                .ghost
-                .get_or_insert_with(|| materials.add(ghost_material()))
-                .clone();
+            return PartMaterial::Plain(
+                self.ghost
+                    .get_or_insert_with(|| mats.standard.add(ghost_material()))
+                    .clone(),
+            );
         }
-        let s = slots::get(slot).unwrap_or(&slots::ALL[0]);
-        let color = tint_color(slot, model_color, colours);
-        self.materials
-            .entry((s.name, color.to_srgba().to_u8_array()))
-            .or_insert_with(|| {
-                materials.add(StandardMaterial {
-                    base_color: color,
-                    metallic: s.metallic,
-                    perceptual_roughness: s.roughness,
-                    ..default()
-                })
-            })
-            .clone()
+        let surface = gear::surface(slot, node, model_color, colours);
+        if far || gear::off() {
+            let s = slots::get(slot).unwrap_or(&slots::ALL[0]);
+            let m = surface.far_material(colours, slot);
+            return PartMaterial::Plain(
+                self.materials
+                    .entry((s.name, m.base_color.to_srgba().to_u8_array()))
+                    .or_insert_with(|| mats.standard.add(m))
+                    .clone(),
+            );
+        }
+        // Painted, plain and plastic parts need no shader of their own:
+        // the standard material (clear coat, finish) batches across riders.
+        if !surface.needs_shader() {
+            return PartMaterial::Plain(
+                self.plain_near
+                    .entry(surface.key(false))
+                    .or_insert_with(|| mats.standard.add(surface.plain_material()))
+                    .clone(),
+            );
+        }
+        PartMaterial::Gear(
+            self.gear
+                .entry(surface.key(false))
+                .or_insert_with(|| mats.gear.add(surface.material(false)))
+                .clone(),
+        )
     }
 }
 
@@ -712,7 +849,7 @@ impl Library {
                     low,
                     &ids,
                 );
-                let list = Meshes::new(&m, meshes);
+                let list = Meshes::new(&m, meshes, false);
                 (std::sync::Arc::new(m), list)
             });
         (Some(m.clone()), Meshes(list.0.clone()))
@@ -766,7 +903,7 @@ fn spawn_model(
     hidden: &[usize],
     far: Option<usize>,
     build: ocw_core::BodyBuild,
-    mut material: impl FnMut(&str, [f32; 4]) -> Handle<StandardMaterial>,
+    mut material: impl FnMut(&str, &str, [f32; 4], bool) -> PartMaterial,
 ) -> Vec<Entity> {
     let mut out = vec![Entity::PLACEHOLDER; model.nodes.len()];
     for (i, node) in model.nodes.iter().enumerate() {
@@ -799,14 +936,17 @@ fn spawn_model(
         let girth = ocw_assets::rider::girth(model, i, build);
         for (mesh, mat) in &meshes.0[i] {
             let m = &model.materials[*mat];
-            commands.spawn((
+            let mut part = commands.spawn((
                 Mesh3d(mesh.clone()),
-                MeshMaterial3d(material(&m.name, m.color)),
                 Transform::from_scale(girth),
                 range.clone(),
                 LodPart { far: is_far },
                 ChildOf(e),
             ));
+            match material(&m.name, &node.name, m.color, is_far) {
+                PartMaterial::Gear(h) => part.insert(MeshMaterial3d(h)),
+                PartMaterial::Plain(h) => part.insert(MeshMaterial3d(h)),
+            };
         }
     }
     out
@@ -817,7 +957,7 @@ fn spawn_avatar(
     commands: &mut Commands,
     lib: &mut Library,
     meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
+    materials: &mut Mats,
     id: RiderId,
     is_local: bool,
     built: AvatarLook,
@@ -866,7 +1006,7 @@ fn spawn_avatar(
         &[],
         far,
         ocw_core::BodyBuild::Medium,
-        |slot, c| lib.material(materials, slot, c, &colours, ghost),
+        |slot, node, c, is_far| lib.material(materials, slot, node, c, &colours, ghost, is_far),
     );
     // The saddle (and its post) at the rider's height.
     if body.saddle_offset != 0.0
@@ -892,7 +1032,7 @@ fn spawn_avatar(
         &[],
         None,
         character.validated().build,
-        |slot, c| lib.material(materials, slot, c, &colours, ghost),
+        |slot, node, c, is_far| lib.material(materials, slot, node, c, &colours, ghost, is_far),
     );
     // The body height: the whole rider scaled about the hips.
     if body.scale != 1.0
@@ -1033,6 +1173,7 @@ mod tests {
         app.add_plugins(MinimalPlugins)
             .init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<GearMaterial>>()
             .insert_resource(view(vec![[0.0, 0.0, 0.0], [500.0, 0.0, 0.0]]))
             .add_plugins(RidersPlugin);
         let local = crate::RiderView {
@@ -1142,15 +1283,39 @@ mod tests {
         let c = avatar_colours(RiderId(3), false, Some(&look));
         assert_eq!(c.jersey, Color::srgb_u8(0x1E, 0x88, 0xE5));
         assert_eq!(c.frame, Color::srgb_u8(0xFD, 0xD8, 0x35));
-        // White pattern on the dark blue jersey, black on a light one.
-        assert_eq!(c.accent, Color::srgb(0.96, 0.96, 0.94));
+        // White pattern on the dark blue jersey, black on a light one
+        // (the design's automatic second colour, ocw_core::kit::contrast).
+        assert_eq!(c.accent.to_srgba().to_u8_array(), [0xF5, 0xF5, 0xF0, 0xFF]);
         let light = RiderLook {
             jersey: ocw_core::Rgb(0xF2F2EE),
             ..look
         };
         assert_eq!(
-            avatar_colours(RiderId(3), false, Some(&light)).accent,
-            Color::srgb(0.06, 0.06, 0.07)
+            avatar_colours(RiderId(3), false, Some(&light))
+                .accent
+                .to_srgba()
+                .to_u8_array(),
+            [0x0F, 0x0F, 0x12, 0xFF]
+        );
+        // A chosen second colour is the accent; the kit colours apply to
+        // their slots, the others keep the model's.
+        let designed = RiderLook {
+            design: ocw_core::KitDesign {
+                second: Some(ocw_core::Rgb(0xE53935)),
+                socks: Some(ocw_core::Rgb(0x43A047)),
+                ..Default::default()
+            },
+            ..look
+        };
+        let d = avatar_colours(RiderId(3), false, Some(&designed));
+        assert_eq!(d.accent, Color::srgb_u8(0xE5, 0x39, 0x35));
+        assert_eq!(
+            tint_color("sock", [1.0; 4], &d),
+            Color::srgb_u8(0x43, 0xA0, 0x47)
+        );
+        assert_eq!(
+            tint_color("shorts", [0.1, 0.1, 0.1, 1.0], &d),
+            Color::linear_rgba(0.1, 0.1, 0.1, 1.0)
         );
         // No look (old server): the colour by id, as before.
         assert_eq!(
@@ -1190,6 +1355,7 @@ mod tests {
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))
             .init_asset::<Mesh>()
             .init_asset::<StandardMaterial>()
+            .init_asset::<GearMaterial>()
             .insert_resource(view)
             .add_plugins(RidersPlugin);
         app.update();
@@ -1312,6 +1478,7 @@ mod tests {
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))
             .init_asset::<Mesh>()
             .init_asset::<StandardMaterial>()
+            .init_asset::<GearMaterial>()
             .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
                 std::time::Duration::from_millis(20),
             ))
@@ -1445,6 +1612,122 @@ mod tests {
         }
         assert!(hidden_rider_nodes(Some(&look), &[]).contains(&nodes::HELMET_AERO));
         assert!(!hidden_rider_nodes(Some(&look), &[]).contains(&nodes::HELMET_ROAD));
+    }
+
+    /// Materials per node and LOD (spec §14 Phase 8 T6): every near part
+    /// is drawn with the gear shader – its kind from slot and node, the
+    /// jersey with the design's pattern and number –, every far part and
+    /// the ghost with a plain material, the far jersey in the pattern's
+    /// dominant colour; near meshes carry their rest coordinates.
+    #[test]
+    fn materials_follow_the_node_and_the_lod() {
+        let mut view = RideView::new(Route::test_loop());
+        let mut r = rider(1, ProfileId::Road, false);
+        let look = RiderLook {
+            jersey: ocw_core::Rgb(0x1E88E5),
+            pattern: ocw_core::KitPattern::Stripes,
+            design: ocw_core::KitDesign {
+                second: Some(ocw_core::Rgb(0xF2F2EE)),
+                number: 21,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        r.look = Some(look);
+        view.riders.push(r);
+        let mut app = app(view);
+        app.update();
+        let w = app.world_mut();
+        let mut q = w.query::<(
+            &ChildOf,
+            &LodPart,
+            &Mesh3d,
+            Option<&MeshMaterial3d<GearMaterial>>,
+            Option<&MeshMaterial3d<StandardMaterial>>,
+        )>();
+        let rows: Vec<_> = q
+            .iter(w)
+            .map(|(c, l, m, g, s)| (c.parent(), l.far, m.0.clone(), g.cloned(), s.cloned()))
+            .collect();
+        let (mut near, mut far, mut jerseys, mut far_jerseys) = (0, 0, 0, 0);
+        let (mut plain_near, mut clear_coated) = (0, 0);
+        let mut kinds = std::collections::BTreeSet::new();
+        let mut saddle = std::collections::BTreeSet::new();
+        for (parent, is_far, mesh, g, s) in rows {
+            let node = w
+                .get::<Name>(parent)
+                .map(|n| n.to_string())
+                .unwrap_or_default();
+            let has_uv = w
+                .resource::<Assets<Mesh>>()
+                .get(&mesh)
+                .unwrap()
+                .attribute(Mesh::ATTRIBUTE_UV_1)
+                .is_some();
+            if is_far {
+                far += 1;
+                assert!(g.is_none() && !has_uv, "{node}: far parts are plain");
+                let m = w
+                    .resource::<Assets<StandardMaterial>>()
+                    .get(&s.expect("a plain material").0)
+                    .unwrap();
+                if m.base_color == Color::srgb_u8(0x1E, 0x88, 0xE5) {
+                    far_jerseys += 1;
+                }
+            } else {
+                near += 1;
+                assert!(has_uv, "{node}: near meshes carry their rest coordinates");
+                let Some(g) = g else {
+                    // Painted, plain and plastic parts: the standard material.
+                    let m = w
+                        .resource::<Assets<StandardMaterial>>()
+                        .get(&s.expect("a material").0)
+                        .unwrap();
+                    plain_near += 1;
+                    if m.clearcoat > 0.0 {
+                        clear_coated += 1;
+                    }
+                    continue;
+                };
+                let m = w.resource::<Assets<GearMaterial>>().get(&g.0).unwrap();
+                let l = m.extension.look;
+                kinds.insert(l.kind());
+                if l.mode.y == 1.0 {
+                    jerseys += 1;
+                    assert_eq!(l.mode.z, ocw_core::KitPattern::Stripes.wire() as f32);
+                    assert_eq!(l.params.x, 21.0, "the race number");
+                }
+                if node == ocw_assets::pose::bike_nodes::SADDLE {
+                    saddle.insert(l.kind());
+                }
+            }
+        }
+        assert!(near > 20 && far > 3, "{near} {far}");
+        // The saddle: leather (its rails: metal).
+        assert!(
+            saddle.contains(&gear::GearKind::Leather.code()),
+            "{saddle:?}"
+        );
+        assert!(jerseys > 0 && far_jerseys > 0);
+        // Skin, hair, the painted frame (clear coat), the helmet without
+        // the pattern: standard materials.
+        assert!(
+            plain_near > 5 && clear_coated > 0,
+            "{plain_near} {clear_coated}"
+        );
+        for k in [
+            gear::GearKind::Metal,
+            gear::GearKind::Tyre,
+            gear::GearKind::Knit,
+            gear::GearKind::Lycra,
+            gear::GearKind::Leather,
+            gear::GearKind::Grip,
+        ] {
+            assert!(
+                kinds.contains(&k.code()),
+                "{k:?} on the road bike and rider"
+            );
+        }
     }
 
     /// Others see your look (spec 4C): the worn kit's variants, the

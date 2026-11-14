@@ -590,6 +590,7 @@ mod tests {
         app.add_plugins((MinimalPlugins, TransformPlugin, AssetPlugin::default()))
             .init_asset::<Mesh>()
             .init_asset::<StandardMaterial>()
+            .init_asset::<crate::gear::GearMaterial>()
             .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
                 std::time::Duration::from_millis(20),
             ))

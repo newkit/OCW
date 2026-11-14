@@ -223,6 +223,22 @@ pub fn bot_bike(i: u32) -> (ocw_core::ProfileId, ocw_core::RiderLook) {
         frame: PALETTE[(i * 7 + 3) % n],
         helmet: PALETTE[(i * 3 + 9) % n],
         pattern: ocw_core::KitPattern::ALL[i % ocw_core::KitPattern::ALL.len()],
+        // The jersey designer's choices (spec §14 Phase 8 T6): a second
+        // colour from the palette, every other bot a third, a race number.
+        design: ocw_core::KitDesign {
+            second: Some(PALETTE[(i * 5 + 7) % n]),
+            third: (i % 2 == 1).then(|| PALETTE[(i * 11 + 9) % n]),
+            number: (i + 1).min(999) as u16,
+            helmet_pattern: i.is_multiple_of(3),
+            shorts: (i % 4 == 2).then(|| PALETTE[(i * 3 + 6) % n]),
+            shoes: (i % 3 == 1).then(|| PALETTE[11]),
+            helmet_finish: if i.is_multiple_of(2) {
+                ocw_core::Finish::Gloss
+            } else {
+                ocw_core::Finish::Matte
+            },
+            ..Default::default()
+        },
         ..Default::default()
     };
     (BIKES[i % BIKES.len()], look)
@@ -541,7 +557,11 @@ impl GameServer {
                 .session
                 .snapshot()
                 .iter()
-                .filter(|r| r.build_hash != 0 || r.look.character != Default::default())
+                .filter(|r| {
+                    r.build_hash != 0
+                        || r.look.character != Default::default()
+                        || r.look.design != Default::default()
+                })
                 .map(|r| r.id)
                 .collect();
             out.extend(builds.into_iter().map(|id| self.build_message(id)));

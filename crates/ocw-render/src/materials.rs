@@ -21,7 +21,7 @@ use bevy::render::render_resource::{
 };
 use clap::Command;
 use ocw_assets::ktx2::TexFormat;
-use ocw_assets::materials::{BUILDING_IDS, GROUND_IDS, Library, Loaded, ROAD_IDS};
+use ocw_assets::materials::{BUILDING_IDS, GEAR_IDS, GROUND_IDS, Library, Loaded, ROAD_IDS};
 
 use crate::console::{ConsoleAppExt, ConsoleCommand, Permission};
 use crate::ground::{ClassMix, GROUND_LAYERS, TerrainLook};
@@ -56,6 +56,9 @@ pub struct MaterialLibrary {
     /// The building layers (Phase 8 T4; `None`: a library without them,
     /// the houses keep flat colours).
     pub buildings: Option<BuildingLayers>,
+    /// The rider and bike layers (Phase 8 T6; `None`: an older library,
+    /// riders and bikes keep their procedural detail only).
+    pub gear: Option<GearLayers>,
     pub credits: Vec<String>,
     pub dir: String,
 }
@@ -83,6 +86,46 @@ pub struct BuildingLayers {
     pub sizes: [f32; crate::house_style::LAYERS],
     /// Mean albedo (linear RGB).
     pub means: [[f32; 3]; crate::house_style::LAYERS],
+}
+
+/// The rider and bike materials as texture arrays, in
+/// `ocw_assets::materials::GEAR_IDS` order (Phase 8 T6: jersey knit,
+/// carbon twill, saddle leather).
+#[derive(Clone)]
+pub struct GearLayers {
+    pub albedo: Handle<Image>,
+    pub normal: Handle<Image>,
+    pub sizes: [f32; GEAR_IDS.len()],
+    pub means: [[f32; 3]; GEAR_IDS.len()],
+}
+
+/// The gear layers of a library, if it has them all (an older library
+/// folder: none, with a warning).
+fn gear_layers(lib: &Library, images: &mut Assets<Image>) -> Option<GearLayers> {
+    let l = match layers(lib, &GEAR_IDS) {
+        Ok(l) => l,
+        Err(e) => {
+            warn!("riders and bikes without textures: {e} (run scripts/fetch-materials.sh)");
+            return None;
+        }
+    };
+    let albedo: Vec<_> = l.iter().map(|m| &m.albedo).collect();
+    let normal: Vec<_> = l.iter().map(|m| &m.normal).collect();
+    match (
+        array_image(&albedo, "gear albedo"),
+        array_image(&normal, "gear normal"),
+    ) {
+        (Ok(a), Ok(n)) => Some(GearLayers {
+            albedo: images.add(a),
+            normal: images.add(n),
+            sizes: std::array::from_fn(|i| l[i].material.size_m),
+            means: std::array::from_fn(|i| l[i].mean),
+        }),
+        (Err(e), _) | (_, Err(e)) => {
+            warn!("riders and bikes without textures: {e}");
+            None
+        }
+    }
 }
 
 /// The building layers of a library, if it has them all (an older library
@@ -348,6 +391,7 @@ pub fn library_resource(
         road_sizes: std::array::from_fn(|i| road[i].material.size_m),
         road_means: std::array::from_fn(|i| road[i].mean),
         buildings: building_layers(lib, images),
+        gear: gear_layers(lib, images),
         credits: ocw_assets::materials::credits(&lib.manifest)
             .iter()
             .map(|c| c.line())

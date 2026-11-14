@@ -21,6 +21,13 @@ pub enum Tint {
     Skin,
     /// The character's hair colour (hair, beards).
     Hair,
+    /// The kit colours of the jersey designer (spec §14 Phase 8 T6; free):
+    /// `KitDesign::{shorts, socks, shoes, gloves}`, the asset's colour
+    /// when not chosen.
+    Shorts,
+    Socks,
+    Shoes,
+    Gloves,
 }
 
 /// A paint slot.
@@ -57,20 +64,20 @@ pub const ALL: [Slot; 27] = [
     slot("bottle", Tint::Fixed, 0xE8E8E2, 0.0, 0.45),
     slot("jersey", Tint::Jersey, 0xFF1472, 0.0, 0.75),
     slot("accent", Tint::Accent, 0xF5F5F0, 0.0, 0.75),
-    slot("shorts", Tint::Fixed, 0x141416, 0.0, 0.7),
+    slot("shorts", Tint::Shorts, 0x141416, 0.0, 0.7),
     slot("skin", Tint::Skin, 0xD9A98C, 0.0, 0.65),
     slot("helmet", Tint::Helmet, 0xF2F2EE, 0.1, 0.4),
     slot("helmet_detail", Tint::Fixed, 0x1C1C20, 0.0, 0.6),
-    slot("shoe", Tint::Fixed, 0xEDEDE8, 0.0, 0.5),
-    slot("sock", Tint::Fixed, 0xF4F4F0, 0.0, 0.8),
+    slot("shoe", Tint::Shoes, 0xEDEDE8, 0.0, 0.5),
+    slot("sock", Tint::Socks, 0xF4F4F0, 0.0, 0.8),
     slot("lens", Tint::Fixed, 0x101418, 0.6, 0.15),
     slot("hair", Tint::Hair, 0x3B2A20, 0.0, 0.9),
     // The kit's variants (spec 4C): aero socks, race shoes, overshoes,
     // gloves and the padded back of gel gloves.
-    slot("sock_aero", Tint::Fixed, 0x1E1F22, 0.0, 0.75),
-    slot("shoe_race", Tint::Fixed, 0x141416, 0.25, 0.3),
-    slot("overshoe", Tint::Fixed, 0x0F0F11, 0.05, 0.45),
-    slot("glove", Tint::Fixed, 0x18181A, 0.0, 0.7),
+    slot("sock_aero", Tint::Socks, 0x1E1F22, 0.0, 0.75),
+    slot("shoe_race", Tint::Shoes, 0x141416, 0.25, 0.3),
+    slot("overshoe", Tint::Shoes, 0x0F0F11, 0.05, 0.45),
+    slot("glove", Tint::Gloves, 0x18181A, 0.0, 0.7),
     slot("glove_pad", Tint::Fixed, 0x6A6E76, 0.0, 0.8),
     // Part variants (spec §14 Phase 4, 4B): bare carbon, and the lenses
     // of the light set (the renderer makes them glow).
@@ -111,6 +118,10 @@ mod tests {
             Tint::Accent,
             Tint::Skin,
             Tint::Hair,
+            Tint::Shorts,
+            Tint::Socks,
+            Tint::Shoes,
+            Tint::Gloves,
         ] {
             assert!(ALL.iter().any(|s| s.tint == t), "{t:?}");
         }
