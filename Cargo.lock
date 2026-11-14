@@ -6181,6 +6181,7 @@ dependencies = [
  "ocw-world",
  "png",
  "serde",
+ "texpresso",
  "toml",
  "ttf-parser",
  "web-time",
@@ -6294,6 +6295,7 @@ dependencies = [
 name = "ocw-worldgen"
 version = "0.2.1"
 dependencies = [
+ "image",
  "ocw-core",
  "ocw-server",
  "ocw-sim",

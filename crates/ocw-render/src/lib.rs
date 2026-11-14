@@ -23,6 +23,7 @@ pub mod materials;
 pub mod media;
 pub mod menu;
 pub mod night_sky;
+pub mod ortho;
 pub mod package;
 pub mod ragdoll;
 pub mod region_look;
@@ -357,6 +358,7 @@ impl Plugin for OcwRenderPlugins {
             night_sky::NightSkyPlugin,
             street_lamps::StreetLampsPlugin,
             materials::MaterialsPlugin,
+            ortho::OrthoPlugin,
             road_material::RoadMaterialPlugin,
             unicorn::UnicornPlugin,
             building_material::BuildingMaterialPlugin,

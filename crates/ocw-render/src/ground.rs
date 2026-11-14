@@ -273,16 +273,27 @@ pub struct TerrainLook {
     /// splat says forest floor (the ground under the canopy gets less
     /// light than our low-poly trees' shadows give it).
     pub tile: Vec4,
+    /// The orthophoto corridor (spec §14 Phase 8 T7, [`crate::ortho`]):
+    /// x: 1 = a corridor texture is bound; y: its pixel size (m); z, w: it
+    /// fades out with the view distance between these (m).
+    pub ortho: Vec4,
+    /// x, y: the sharp photo replaces the blurred one in the materials'
+    /// tint between these distances (m); z: its share there; w: the tint
+    /// strength.
+    pub ortho_blend: Vec4,
 }
 
 impl Default for TerrainLook {
     fn default() -> Self {
+        let ortho = crate::ortho::OrthoLook::default().uniforms(false, 0.5);
         Self {
             mode: Vec4::new(0.0, 200.0, 90.0, 350.0),
             sizes: [Vec4::splat(2.0); 3],
             material_tint: [Vec4::ONE; GROUND_LAYERS],
             params: Vec4::new(0.8, 7.3, 0.35, 2.0),
             tile: Vec4::new(1000.0, CANOPY_SHADE, 0.0, 0.0),
+            ortho: ortho.0,
+            ortho_blend: ortho.1,
         }
     }
 }
@@ -307,8 +318,9 @@ impl TerrainLook {
 }
 
 /// The terrain's material extension: the tunnel cut (binding 100), the
-/// look (101), the tile's splat weights (102 – 104) and the ground
-/// material arrays (105 – 107).
+/// look (101), the tile's splat weights (102 – 104), the ground
+/// material arrays (105 – 107) and the tile's orthophoto corridor (108 –
+/// 109, spec §14 Phase 8 T7).
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
 pub struct GroundExtension {
     /// x: number of cut pieces; y: tube wall height; z: crown height (m).
@@ -329,6 +341,11 @@ pub struct GroundExtension {
     pub albedo: Option<Handle<Image>>,
     #[texture(107, dimension = "2d_array")]
     pub normal: Option<Handle<Image>>,
+    /// The orthophoto corridor of the tile (sRGB, corridor weight in alpha;
+    /// [`crate::ortho::tile_texture`]); only near the rider.
+    #[texture(108)]
+    #[sampler(109)]
+    pub ortho: Option<Handle<Image>>,
 }
 
 impl GroundExtension {
@@ -342,6 +359,7 @@ impl GroundExtension {
             splat_b: None,
             albedo: None,
             normal: None,
+            ortho: None,
         }
     }
 

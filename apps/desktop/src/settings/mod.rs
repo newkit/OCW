@@ -676,6 +676,8 @@ mod tests {
             },
             // `sky.night` / `sky.mode` / `sky.lights` (Display settings).
             ocw_render::sky::SkyPlugin,
+            // `ortho` (display.orthophoto).
+            ocw_render::ortho::OrthoPlugin,
         ))
         .insert_resource(UserSettings {
             settings: Settings::default(),
@@ -714,6 +716,21 @@ mod tests {
         assert_eq!(run(&mut app, "set display.fps on")[0], "display.fps = on");
         // A live setting is applied at once with its command.
         assert!(app.world().resource::<ocw_render::hud::ShowFps>().0);
+        // The orthophoto corridor (spec §14 Phase 8 T7): on by default.
+        assert!(
+            app.world()
+                .resource::<ocw_render::ortho::OrthoSettings>()
+                .enabled
+        );
+        assert_eq!(
+            run(&mut app, "set display.orthophoto off")[0],
+            "display.orthophoto = off"
+        );
+        assert!(
+            !app.world()
+                .resource::<ocw_render::ortho::OrthoSettings>()
+                .enabled
+        );
         let saved = std::fs::read_to_string(dir.join("settings.toml")).unwrap();
         assert!(saved.contains("[display]\nfps = true"), "{saved}");
         assert_eq!(

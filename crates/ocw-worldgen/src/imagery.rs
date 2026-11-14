@@ -247,7 +247,7 @@ impl OrthoSource {
         Ok(rgb)
     }
 
-    fn is_nodata(&self, px: [u8; 3]) -> bool {
+    pub(crate) fn is_nodata(&self, px: [u8; 3]) -> bool {
         let t = i16::from(self.nodata_tolerance);
         self.nodata
             .iter()

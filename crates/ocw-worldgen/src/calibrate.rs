@@ -665,6 +665,8 @@ pub fn calibrate(
         palette: (!sources.is_empty()).then_some(Palette { sources, entries }),
         roofs: (!imagery.ortho.is_empty() && pkg.buildings.is_some()).then_some(roofs),
         seasons,
+        // The orthophoto corridor (T7) is cut by its own pass after this.
+        ortho: pkg.look.ortho.take(),
     };
     stats
 }

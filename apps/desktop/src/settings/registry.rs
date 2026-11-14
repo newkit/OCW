@@ -234,6 +234,14 @@ pub const SETTINGS: &[SettingDef] = &[
         apply: Apply::Command("sky.lights {}"),
     },
     SettingDef {
+        key: "display.orthophoto",
+        kind: Kind::Bool,
+        default: "on",
+        description: "Ground: the real place's orthophoto near the roads, where the world package has it (spec §14 Phase 8 T7)",
+        scope: Scope::Live,
+        apply: Apply::Command("ortho {}"),
+    },
+    SettingDef {
         key: "display.unicorn_trail",
         kind: Kind::Bool,
         default: "on",
