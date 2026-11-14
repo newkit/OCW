@@ -524,7 +524,7 @@ Planned animations:
 
 Bicycle and character must be correctly attached to each other in the 3D presentation.
 
-The character editor is the **changing corner** of the workshop scene (mirror, bench, locker; §14 Phase 4, 4C). Body, skin, face and hair are always free; kit may cost hearts (proposal, Phase 4 Q4) and is always cosmetic.
+The character editor is the **changing corner** of the workshop scene (mirror, bench, locker; §14 Phase 4, 4C). Body, skin, face, hair and glasses are always free; the rest of the kit (helmet, shoes, gloves, clothing) costs hearts (decided 2026-11-13, Phase 4 Q4) and is always cosmetic. Anonymous riders of the browser app get a plain default rider and cannot customize (Phase 10 Q5).
 
 **Implemented (Phase 4: rider model and riding animation):**
 
@@ -2192,7 +2192,7 @@ The user asked (2026-11-13): selecting *Workshop* changes the screen to a **rend
 
 - The **changing corner** to the right of the stand (mirror, bench, locker with kit on hangers) is the character editor of §2.6 in the same scene: the camera turns to it (*Mirror*), the rider stands in front of the mirror, seen from behind over the shoulder and in the mirror from the front (a planar reflection with a second camera at half resolution; on low graphics quality a direct front view instead).
 - **Slots:** body (height from the rider profile, build: slim / medium / strong), skin tone (a 12-step palette), face (a few presets), hair (style and colour), jersey, bib shorts / tights, socks, shoes, gloves, helmet, glasses, cap; the kit patterns of v2.7. Selection as for bike parts: the rider's hotspots (head, torso, legs, feet, hands) or LB / RB through the slot list, the picker panel on the right, live preview, compare.
-- **Kit costs hearts too** (decided 2026-11-13, Q4): helmet, shoes, gloves and clothing; **glasses are free** like body, skin and hair – are priced from real prices like bike parts (4H, category *apparel*), all **purely cosmetic** (no aero helmet effect: the TT helmet stays a look, the TT profile already contains the position, §2.5). Body, skin, face and hair are **always free** (who someone is never costs anything). Every rider starts with a full base kit (Q4: or all apparel free).
+- **Kit costs hearts too** (decided 2026-11-13, Q4): helmet, shoes, gloves and clothing; **glasses are free** like body, skin and hair – are priced from real prices like bike parts (4H, category *apparel*), all **purely cosmetic** (no aero helmet effect: the TT helmet stays a look, the TT profile already contains the position, §2.5). Body, skin, face and hair are **always free** (who someone is never costs anything). Every rider starts with a full free base kit.
 - **Poses:** the rider stands, turns with the orbit, and Confirm on *Try on the bike* puts the rider on the bike on the stand pedalling slowly (the riding animation of §2.6), to see bike and kit together.
 
 #### 4D – The bench: buying bikes and spare parts
