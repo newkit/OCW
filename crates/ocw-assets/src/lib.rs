@@ -30,6 +30,7 @@ pub mod model;
 pub mod pose;
 pub mod rider;
 pub mod slots;
+pub mod workshop;
 
 use ocw_core::ProfileId;
 
