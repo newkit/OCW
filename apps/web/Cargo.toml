@@ -26,6 +26,9 @@ ocw-render.workspace = true
 ocw-client.workspace = true
 # The GameServer as the in-browser local server (`local::FrameServer`).
 ocw-server.workspace = true
+# Worlds over HTTP (B2): range planning, verification, the chunk cache and
+# the tile residency (its `stream` module; the rest is native only).
+ocw-worldstore.workspace = true
 bevy.workspace = true
 clap.workspace = true
 
@@ -35,7 +38,33 @@ clap.workspace = true
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 bevy = { workspace = true, features = ["webgpu", "web"] }
 wasm-bindgen = "=0.2.130"
-web-sys = { version = "0.3", features = ["Window", "Location"] }
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+# fetch() with ranges, the Origin Private File System, the storage
+# estimate, the loading screen's element.
+web-sys = { version = "0.3", features = [
+    "Window",
+    "Location",
+    "Document",
+    "Element",
+    "Navigator",
+    "Performance",
+    "Headers",
+    "Request",
+    "RequestInit",
+    "Response",
+    "DomException",
+    "StorageManager",
+    "Blob",
+    "File",
+    "FileSystemHandle",
+    "FileSystemDirectoryHandle",
+    "FileSystemFileHandle",
+    "FileSystemGetDirectoryOptions",
+    "FileSystemGetFileOptions",
+    "FileSystemWritableFileStream",
+    "WritableStream",
+] }
 
 [lints]
 workspace = true

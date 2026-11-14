@@ -34,18 +34,38 @@ pub struct WebSessionPlugin {
 
 impl Plugin for WebSessionPlugin {
     fn build(&self, app: &mut App) {
-        let (zone, _) = ocw_client::sky::place_zone(None, None);
-        app.insert_resource(Session(WebSession::new(self.config.clone())))
-            .insert_resource(Place(zone))
-            .add_systems(Startup, enable_dev_commands)
-            .add_systems(PreUpdate, frame)
-            .add_systems(FixedUpdate, predict)
+        match &self.config.world {
+            // A world package (B2): the session starts when its first
+            // tiles are there (`crate::world`).
+            Some(options) => {
+                app.add_plugins(crate::world::WebWorldPlugin {
+                    options: options.clone(),
+                    session: self.config.clone(),
+                });
+            }
+            None => {
+                let (zone, _) = ocw_client::sky::place_zone(None, None);
+                app.insert_resource(Session(WebSession::new(self.config.clone())))
+                    .insert_resource(Place(zone));
+            }
+        }
+        app.add_systems(Startup, enable_dev_commands)
+            .add_systems(PreUpdate, frame.run_if(riding))
+            .add_systems(FixedUpdate, predict.run_if(resource_exists::<Session>))
             .add_systems(
                 Update,
-                (keys.run_if(ride_input), send_steer, update_view).chain(),
-            );
+                (keys.run_if(ride_input), send_steer, update_view)
+                    .chain()
+                    .run_if(riding),
+            )
+            .add_systems(Update, crate::console_from_page);
         register_commands(app);
     }
+}
+
+/// A ride is running (with a world package only once it is loaded).
+fn riding(session: Option<Res<Session>>, place: Option<Res<Place>>) -> bool {
+    session.is_some() && place.is_some()
 }
 
 /// The local server allows dev commands (teleport …), as on the desktop.
@@ -170,10 +190,20 @@ fn update_view(
         .and_then(|l| ocw_client::gps::position(s.client.track(), s.client.geo_origin(), &l.state));
     view.event = s.client.event_view(now);
     view.ghost = s.client.ghost_state(now);
+    // A ride on a world package's road graph (B2): every rider's path,
+    // the junction ahead, the route's progress (as on the desktop).
+    let mut notice = None;
+    if s.client.is_free_ride() {
+        view.paths = s.client.paths();
+        view.junction = s.client.junction_view();
+        view.route_status = s.client.route_status();
+        notice = s.client.notice();
+    }
     // Collisions (spec §14 Phase 12C): the crash line, else the crash feed.
     view.notice = s
         .client
         .crash_notice(now)
+        .or(notice)
         .or_else(|| s.client.crash_feed(now).pop());
     view.status = s.status_line();
     let position = view.position;
@@ -186,8 +216,85 @@ fn update_view(
     );
 }
 
+/// Before a streamed world is loaded there is no ride yet.
+const NO_RIDE: &str = "no ride yet (the world is still loading)";
+
+fn session_mut(world: &mut World) -> Result<&mut WebSession, String> {
+    world
+        .get_resource_mut::<Session>()
+        .map(|s| &mut s.into_inner().0)
+        .ok_or_else(|| NO_RIDE.to_string())
+}
+
+/// `time …`: the time machine, as on the desktop (spec §14 Phase 9; the
+/// browser test sets noon for its screenshots).
+fn time_command(world: &mut World, args: &[&str]) -> Result<String, String> {
+    use ocw_sky::machine::{self, ClockChange, TimeCommand};
+    let cmd = machine::parse(args)?;
+    let now = world.resource::<Time>().elapsed_secs_f64();
+    let zone = world.get_resource::<Place>().ok_or(NO_RIDE)?.0.clone();
+    let position = world.resource::<RideView>().position;
+    let s = session_mut(world)?;
+    let latlon = position
+        .map(|p| (p.0, p.1))
+        .or(s.client.geo_origin())
+        .unwrap_or(ocw_sky::zone::DEFAULT_PLACE);
+    let ms = s
+        .client
+        .world_ms(now)
+        .ok_or("no world clock yet (the server sends it when you join)")?;
+    if cmd == TimeCommand::Show {
+        return Ok(format!(
+            "world clock {ms} ms since 1970 (zone {})",
+            zone.id()
+        ));
+    }
+    let change =
+        machine::resolve(&cmd, ms, &zone, latlon.0, latlon.1)?.ok_or("nothing to change")?;
+    let msg = ocw_client::client::ClientCore::clock_message(change);
+    s.send(&msg);
+    Ok(match change {
+        ClockChange::Fixed(_) => format!("time: {}", args.join(" ")),
+        _ => String::new(),
+    })
+}
+
 fn register_commands(app: &mut App) {
     app.console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("time")
+            .about("World time at your place in the world, and the time machine")
+            .long_about(ocw_sky::machine::USAGE)
+            .arg(
+                Arg::new("args")
+                    .num_args(0..)
+                    .allow_hyphen_values(true)
+                    .action(clap::ArgAction::Append),
+            ),
+        |world, m| {
+            let args: Vec<&str> = m
+                .get_many::<String>("args")
+                .map(|v| v.map(String::as_str).collect())
+                .unwrap_or_default();
+            time_command(world, &args)
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("world.info").about("Show the streamed world: loading, tiles, memory, storage"),
+        |world, _| {
+            let s = world
+                .get_resource::<crate::world::WorldStream>()
+                .ok_or("no world package (the page has no ?world=)")?;
+            let mut lines = s.screen.clone();
+            if let Some(id) = &s.identity {
+                lines.insert(0, format!("package {id}"));
+            }
+            lines.push(s.status_line(crate::wasm_memory_bytes()));
+            Ok(lines.join("\n"))
+        },
+    ))
+    .console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("sim.power")
             .about("Set the virtual trainer's power (W)")
@@ -198,7 +305,7 @@ fn register_commands(app: &mut App) {
             ),
         |world, m| {
             let w = *m.get_one::<f64>("watts").expect("required");
-            let set = world.resource_mut::<Session>().0.set_power(w);
+            let set = session_mut(world)?.set_power(w);
             Ok(format!("virtual power {set:.0} W"))
         },
     ))
@@ -212,7 +319,7 @@ fn register_commands(app: &mut App) {
             let msg = encode(&client_message(C::Dev(v1::DevCommand {
                 cmd: Some(v1::dev_command::Cmd::TeleportDistanceM(km * 1000.0)),
             })));
-            world.resource_mut::<Session>().0.send(&msg);
+            session_mut(world)?.send(&msg);
             // The server confirms; the prediction snaps on the next snapshot.
             Ok(String::new())
         },
@@ -221,7 +328,7 @@ fn register_commands(app: &mut App) {
         Permission::User,
         Command::new("net.stats").about("Show connection statistics"),
         |world, _| {
-            let s = &world.resource::<Session>().0;
+            let s = &world.get_resource::<Session>().ok_or(NO_RIDE)?.0;
             let st = s.client.stats();
             Ok(format!(
                 "local (in the browser's frame loop): {} ticks, {} messages in, {} snapshots, {} samples out",
@@ -266,5 +373,102 @@ mod tests {
         app.update();
         app.update();
         assert_eq!(app.world().resource::<Session>().0.power_w(), 260.0);
+    }
+
+    /// A world app (B2) over an in-memory server and OPFS stand-in.
+    fn world_app(store: std::sync::Arc<ocw_worldstore::stream::MemoryStore>) -> App {
+        use crate::world::tests::{driver, options, server};
+        let opts = options();
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::input::InputPlugin, ConsoleCorePlugin))
+            .insert_resource(Time::<Fixed>::from_hz(f64::from(ocw_core::SIM_TICK_HZ)))
+            .insert_resource(RideView::new(ocw_world::Route::test_hills()))
+            .insert_resource(driver(server(), store, &opts))
+            .add_plugins(WebSessionPlugin {
+                config: SessionConfig {
+                    world: Some(opts),
+                    bots: 1,
+                    power_w: 400.0,
+                    ..SessionConfig::default()
+                },
+            });
+        app
+    }
+
+    fn run_for(app: &mut App, ms: u64) {
+        let start = std::time::Instant::now();
+        while start.elapsed() < std::time::Duration::from_millis(ms) {
+            app.update();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    /// Worlds over HTTP, headless: the package streams in, the ride
+    /// starts on its route once the first tiles are there, a teleport
+    /// brings new tiles and drops the far ones (memory budget), and the
+    /// second load comes from the cache.
+    #[test]
+    fn a_streamed_world_loads_rides_and_streams_tiles() {
+        use crate::world::WorldStream;
+        use ocw_render::package::PackageWorld;
+        let store = std::sync::Arc::new(ocw_worldstore::stream::MemoryStore::default());
+        let mut app = world_app(store.clone());
+        app.update();
+        // Before the world is there the commands say so.
+        app.world_mut()
+            .resource_mut::<ConsoleState>()
+            .queue("sim.power 300");
+        run_for(&mut app, 300);
+        assert!(
+            app.world().contains_resource::<Session>(),
+            "the ride started"
+        );
+        let pw = app.world().resource::<PackageWorld>();
+        // Fetch radius 1 at tile 0,0 of the 5 × 2 package: 4 tiles.
+        assert_eq!(pw.home().tiles.len(), 4);
+        assert!(pw.home().graph.is_some());
+        assert!(app.world().resource::<RideView>().free_ride);
+        {
+            let s = app.world().resource::<WorldStream>();
+            assert!(s.started);
+            assert_eq!(s.identity.as_deref(), Some("test/strip@2"));
+            let p = &s.shared.lock().unwrap().progress;
+            assert_eq!(p.stats.cache_bytes, 0);
+            assert!(p.stats.network_bytes > 0);
+            assert!(p.first_tiles_ms.is_some());
+        }
+        run_for(&mut app, 500);
+        let session = &app.world().resource::<Session>().0;
+        assert!(session.client.state().distance > 0.5, "it rides");
+        assert!(app.world().resource::<RideView>().route_status.is_some());
+        // Teleport 3.5 km along the route (x ≈ 3600, tile 3): tiles 2..4
+        // come, tile 0 (ring 3 > keep 2) is dropped.
+        app.world_mut()
+            .resource_mut::<ConsoleState>()
+            .queue("teleport 3.5");
+        run_for(&mut app, 1500);
+        {
+            let s = app.world().resource::<WorldStream>();
+            let r = s.resident.as_ref().unwrap();
+            assert!(r.dropped_total >= 2, "{}", s.status_line(None));
+            assert!(r.is_resident(ocw_world::TileKey { x: 4, z: 0 }));
+            assert!(!r.is_resident(ocw_world::TileKey { x: 0, z: 0 }));
+            assert!(r.peak_bytes() >= r.resident_bytes());
+        }
+        let home = app.world().resource::<PackageWorld>().home().clone();
+        assert!(home.tiles.contains_key(&ocw_world::TileKey { x: 4, z: 0 }));
+        assert!(!home.tiles.contains_key(&ocw_world::TileKey { x: 0, z: 0 }));
+        app.world_mut()
+            .resource_mut::<ConsoleState>()
+            .queue("world.info");
+        app.update();
+        // The second visit: base and tiles from the cache.
+        let mut again = world_app(store);
+        run_for(&mut again, 300);
+        assert!(again.world().contains_resource::<Session>());
+        let s = again.world().resource::<WorldStream>();
+        let p = &s.shared.lock().unwrap().progress;
+        assert_eq!(p.stats.network_bytes, 0, "{p:?}");
+        assert!(p.stats.cache_chunks > 0);
     }
 }

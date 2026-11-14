@@ -11,7 +11,7 @@ export PATH := $(OCW_CARGO_SHIM):$(PATH)
 endif
 
 CARGO ?= cargo
-WASM_CRATES := -p ocw-core -p ocw-sim -p ocw-protocol -p ocw-world -p ocw-voice -p ocw-sky -p ocw-devices
+WASM_CRATES := -p ocw-core -p ocw-sim -p ocw-protocol -p ocw-world -p ocw-voice -p ocw-sky -p ocw-devices -p ocw-worldstore
 # The browser app (spec §14 Phase 10): wasm-bindgen-cli must be the version
 # of the wasm-bindgen crate in Cargo.lock.
 WASM_BINDGEN_VERSION := $(shell awk '/^name = "wasm-bindgen"$$/ { getline; gsub(/version = |"/, ""); print; exit }' Cargo.lock)
@@ -81,7 +81,7 @@ VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 .DEFAULT_GOAL := help
 .PHONY: help version version-next version-bump test-release-version release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
 	clippy check run server materials deploy-test clean clean-test-output macos-app \
-	test test-unit test-wasm test-web-build test-web test-kiosk web web-serve deps-web test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
+	test test-unit test-wasm test-web-build test-web test-web-world test-kiosk web web-serve web-worlds deps-web test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
 	test-multiplayer test-multiplayer-local test-scenes test-scenes-list \
 	wasm screenshot screenshot-wayland smoke video video-wayland
 
@@ -259,11 +259,22 @@ deps-web: ## The browser app's tools: wasm-bindgen-cli matching Cargo.lock (carg
 web: ## Build the browser app into target/web/ (the `web` profile; WEB_PROFILE=dev for a debug build)
 	scripts/build-web.sh
 
-web-serve: ## Serve target/web/ on http://127.0.0.1:$(WEB_PORT)/ (COOP/COEP headers; WEB_PORT)
+web-serve: ## Serve target/web/ (and its worlds/, with range requests) on http://127.0.0.1:$(WEB_PORT)/ (COOP/COEP headers; WEB_PORT)
 	scripts/web-serve.py --port $(WEB_PORT)
+
+# The pilot package (git-ignored data/): a branch checkout of scripts/remote.sh
+# (REPO_PATH-BRANCH) finds it in the main checkout next to it.
+WEB_WORLD_PKGS ?= $(firstword $(wildcard data/pilot/liechtenstein.ocwpkg ../OCW/data/pilot/liechtenstein.ocwpkg) data/pilot/liechtenstein.ocwpkg)
+web-worlds: ## Publish world packages for the web dev server into target/web/worlds/, signed by a dev root in target/web-keys/ (WEB_WORLD_PKGS)
+	scripts/publish-web-worlds.sh $(WEB_WORLD_PKGS)
 
 test-web: web ## Headless Chromium on WebGPU: load the web app, ride, screenshot into test-output/web/
 	scripts/test-web.py --out test-output/web
+
+WEB_WORLD ?= liechtenstein
+WEB_WORLD_ROUTE ?= vaduz-malbun
+test-web-world: web web-worlds ## Headless Chromium: stream $(WEB_WORLD) from the dev server, ride $(WEB_WORLD_ROUTE), teleport, reload from the OPFS cache; screenshots into test-output/web/
+	scripts/test-web.py --out test-output/web --world $(WEB_WORLD) --route $(WEB_WORLD_ROUTE) --seconds 15 --teleport 6 --time noon
 
 test-kiosk: ## Test the kiosk script with a fake app (no display or build needed)
 	scripts/test-kiosk.sh

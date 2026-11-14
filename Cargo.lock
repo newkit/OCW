@@ -6204,6 +6204,7 @@ version = "0.2.1"
 dependencies = [
  "bevy",
  "clap",
+ "js-sys",
  "ocw-client",
  "ocw-core",
  "ocw-devices",
@@ -6213,7 +6214,9 @@ dependencies = [
  "ocw-sim",
  "ocw-sky",
  "ocw-world",
+ "ocw-worldstore",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "web-sys",
 ]
 
@@ -6255,6 +6258,7 @@ dependencies = [
  "dirs",
  "getrandom 0.3.4",
  "ocw-world",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",

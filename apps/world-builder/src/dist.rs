@@ -358,6 +358,17 @@ pub fn publish(package: &Path, out: &Path) {
     }
     std::fs::write(dest.join(ocw_worldstore::cache::MANIFEST_FILE), &text)
         .unwrap_or_else(|e| fail(e));
+    // `<id>/latest`: the newest version, for clients that name the world by
+    // id only (the browser app's `?world=ID`, spec §14 Phase 10 B2). An
+    // older version published later leaves it alone.
+    let latest = out.join(&m.id).join(ocw_worldstore::stream::LATEST_FILE);
+    let newer = std::fs::read_to_string(&latest)
+        .ok()
+        .and_then(|t| t.trim().parse::<u64>().ok())
+        .is_none_or(|v| m.version >= v);
+    if newer {
+        std::fs::write(&latest, format!("{}\n", m.version)).unwrap_or_else(|e| fail(e));
+    }
     println!(
         "published {}@{} to {}\n  clients: ocw-desktop --fetch-world <base URL>/{}/{}/manifest.json",
         m.id,
@@ -496,6 +507,49 @@ mod tests {
         assert_eq!(m.file("p.ocwpkg").unwrap().sha256, sha256(&bytes));
         assert_eq!((m.id.as_str(), m.version), ("test/refresh", 2));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// `publish` writes `<id>/<version>/` and `<id>/latest` (the browser
+    /// app's `?world=ID`, spec §14 Phase 10 B2); an older version
+    /// published later does not lower `latest`.
+    #[test]
+    fn publish_writes_the_version_and_latest() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("p.ocwpkg");
+        let pkg = ocw_world::WorldPackage {
+            name: "Test".into(),
+            origin: (47.9, 7.9),
+            tile_size_m: 1000.0,
+            samples: 3,
+            tiles: Default::default(),
+            graph: None,
+            landuse: None,
+            buildings: None,
+            bridges: None,
+            routes: vec![],
+            region: None,
+            time_zone: Some("Europe/Vaduz".into()),
+            look: Default::default(),
+        };
+        std::fs::write(&path, pkg.to_bytes()).unwrap();
+        let out = dir.path().join("worlds");
+        for version in [4, 3] {
+            let args = ManifestArgs {
+                id: Some("test/pub".into()),
+                name: None,
+                version: Some(version),
+                dem_attribution: Vec::new(),
+            };
+            write_manifest(&path, &args, None);
+            publish(&path, &out);
+            let d = out.join("test/pub").join(version.to_string());
+            assert!(d.join("manifest.json").is_file());
+            assert!(d.join("p.ocwpkg").is_file());
+        }
+        assert_eq!(
+            std::fs::read_to_string(out.join("test/pub/latest")).unwrap(),
+            "4\n"
+        );
     }
 
     /// Spec §13, Phase 8A: every imagery source of a calibrated package is
