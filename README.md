@@ -302,7 +302,10 @@ helmet: "Benefit: +0.6 W @25, +1.8 W @35, +3.9 W @45 km/h; +0.3 % flat,
 ±0.0 % at 6 % – pays off above ~30 km/h"), light parts by the climb (race
 shoes: "−100 g: +0.2 % at 6 %, ±0.0 % flat"), "capped" at the band's edge; the bike's mass and its speed against
 the stock bike – and the compare card (C / Y / long press pins a part) the
-difference of the two parts on this bike. Buying fits the part;
+difference of the two parts on this bike. Buying fits the part – a
+groupset also fits its crankset, cassette and chain (in its price and
+weight; the parts they replace go to your spare parts, and they go along
+with the groupset to another bike, back to the spares and when it is sold);
 selling refunds the full price until the part has been ridden 1 km, half
 after. Paint is free. **Leaving the workshop applies the bike** at once in
 free ride and outside events (in an event: when it is over, from the next
@@ -362,7 +365,8 @@ change it on a draft shown live on the rider and in the mirror, Enter applies
 it, Back discards it – **all free**. The jersey: the pattern (our own: plain,
 chest band, sash, stripes, chevrons, gradient), the first, second (*auto*:
 white on dark jerseys, black on light ones) and an optional third colour, a
-race number 1–999 (a paper bib on the back, digits on both hips of the shorts)
+race number 1–999 (a paper bib on the back, paper plates on both hips that
+stay readable while pedalling)
 and the pattern on the helmet (the shell in the jersey colours with a centre
 stripe); the shorts get side panels in the jersey colours. The kit: the
 colours of shorts, socks, shoes and gloves (*standard*: the kit's own), the
@@ -375,9 +379,10 @@ Anonymous riders of the browser app keep the plain default kit.
 
 **Materials on riders and bikes (Phase 8 T6).** The near models are drawn
 with real materials (`ocw-render::gear`, `gear.wesl`): painted frames and
-bare carbon under a clear coat (`workshop.paint carbon`: the twill weave),
-carbon rims, cockpits and cranks, spun cassettes and chainrings with
-anisotropic highlights, rubber tyres with a file tread, bar tape, the saddle
+bare carbon under a clear coat (`workshop.paint carbon`: near-black, the
+twill weave in the highlights), carbon rims, cockpits and cranks, spun
+cassettes, chainrings, hubs and rotors with anisotropic highlights, brushed
+fork stanchions, posts, rails and spokes (along the tube), rubber tyres with a file tread, bar tape, the saddle
 leather, jersey knit with mesh side panels, lycra shorts and skinsuits,
 padded gloves, gloss or matte plastics. Knit, carbon and leather use the
 library's CC0 textures (triplanar), everything else is procedural (own
@@ -772,7 +777,9 @@ climb at 1.5–2.1 km) and grass beside the road roll increasingly harder
   give-way lines at the way nodes (`highway=crossing` with `crossing=*`,
   `highway=stop`, `highway=give_way`); raised kerbs and paved sidewalks
   from `sidewalk*`, `kerb` and from sidewalks mapped as separate ways
-  (`footway=sidewalk`) beside a road; no paint on gravel, dirt or cobbles.
+  (`footway=sidewalk`) beside a road, their corners rounded where two meet
+  at a junction (riders beside the road in wild mode roll up the kerb onto
+  the sidewalk); no paint on gravel, dirt or cobbles.
   The line widths, dashes and colours are regional
   (`assets/road-styles.toml`: German, Swiss / Liechtenstein with yellow
   zebras and cycle lanes, Spanish), drawn in the road shader (crisp near,
@@ -1154,7 +1161,7 @@ the galactic plane (own work, no photo), visible only in a dark, moonless sky
 away from towns. **Street lamps** stand along lit roads (OSM `lit`, section
 `LITR` of the world package; roads without the tag are lit in towns by land
 use), their heads glow at night and the nearest light the road in warm pools;
-windows light up, towns spill an orange **sky glow** above the horizon.
+some windows light up (warm, each room its own light, some houses dark), towns spill an orange **sky glow** above the horizon.
 **Bike lights** are a part (*Workshop*, slot *lights*): riders with lights
 fitted switch them on from dusk to dawn and in tunnels (`display.bike_lights`).
 
@@ -1198,8 +1205,28 @@ Solo you set the weather, in a shared ride only the host (`ocw-server
 keyboard, mouse, gamepad or touch – the value rows' ‹ › arrows can be clicked
 or tapped):
 
-- *Mode*: fixed or simulated (fronts and showers from the seed); *real
-  weather* from the weather services is shown dimmed until it comes (S7).
+- *Mode*: fixed, simulated (fronts and showers from the seed) or real.
+- *Real weather* (S7): today's weather at your place in the world, fetched by
+  the game server (never by your app: your position stays private; the
+  server asks for a 0.1° grid cell and a 200 m height band) from open data –
+  **MeteoSwiss** (stations in Switzerland and Liechtenstein), **DWD**
+  (stations in Germany), **MET Norway** (forecast, worldwide) and
+  **Open-Meteo** (forecast worldwide; history since 1940 from ERA5). The page
+  has *Real weather* on / off, the *Data source* (Automatic – the regional
+  network, then MET Norway, then Open-Meteo – or one provider; one that
+  does not cover the place falls back to Automatic with a note) and *Ride a
+  day*: famous days (Storm Lothar 1999, Kyrill 2007, Vivian 1990, the 2003
+  heatwave, the January 2019 snow) – Enter sends the time machine to that
+  day and the weather is that day's at the place (ERA5). The credit
+  (*Weather: MeteoSwiss, MET Norway, CC BY 4.0*) is shown under the title
+  and in the HUD. Answers are cached on the server (stations 10 min,
+  forecasts 30 min, history a week), a failing provider is replaced by the
+  next one, and without network the last weather stays – or, with none yet,
+  the simulation runs with a note. Real weather follows the world clock: set
+  the time machine to a past date and the weather is history. Local rides
+  start in real weather (setting `weather.real`, on; `--real-weather
+  false` or the page turns it off; screenshot and capture runs start
+  without it); `weather.provider` keeps the data source.
 - *Presets*: the 17 presets as a grid with icons (the arrows move in two
   directions, the weather now is framed); Enter applies one.
 - *Custom*: cloud cover and type, precipitation and its intensity, fog, and
@@ -1234,8 +1261,22 @@ weather fixed                 stop the simulation, keep the weather it heads to
 weather strike 1500           a lightning strike 1.5 km away (test)
 weather.transition 5m         the weather machine's transition (instant, 1m, 5m, 15m)
 weather.seed 42               the seed of its random weather and simulation
+weather real                  real weather at your place (the data source of weather.provider)
+weather real metno            ... from MET Norway (automatic, meteoswiss, dwd, metno, open-meteo)
+weather.real off              real weather off, also for the next rides (saved)
+weather.provider dwd          the data source of real weather (saved)
+weather day lothar            ride a day: the time machine to Storm Lothar, ERA5's weather
+weather day 2003-08-08 15:00  any day 1940-2100 (history from ERA5; future: the forecast's end)
+weather.days                  the days of "Ride a day"
 weather.fx particles 10000    fewer particles (weak GPUs; 0 = none)
 ```
+
+Historic weather could also come straight from the Copernicus Climate Data
+Store (ERA5 and ERA5-Land, CC BY 4.0 – "Contains modified Copernicus Climate
+Change Service information"): a free CDS account, the `cdsapi` client on our
+build infrastructure downloading GRIB/NetCDF per region and day into the
+server's cache. OCW uses Open-Meteo's historical API (ERA5-based, CC BY 4.0,
+free for non-commercial use) instead, which needs no account.
 
 ## Console commands
 
@@ -1279,6 +1320,9 @@ for now).
 | `weather auto [SEED]` \| `weather fixed` \| `weather strike [DIST [BEARING]]` | The weather simulation (fronts, showers) from now; stop it (the weather it heads to stays); a test lightning strike |
 | `weather.status` \| `weather.list` | Everything about the weather (where it is going, mode and seed, visibility, lightning, ground, who sets it, an event's lock); the presets, custom fields and transitions |
 | `weather.transition [T]` \| `weather.seed [N]` | The weather machine's transition (instant, 1m, 5m, 15m, any time) and the seed of its random weather / simulation |
+| `weather real [SOURCE] [in T]` | Real weather from the providers at your place and the world clock's moment, fetched by the game server (spec §14 Phase 9 S7); SOURCE: `automatic` (MeteoSwiss / DWD stations, MET Norway, Open-Meteo), `meteoswiss`, `dwd`, `metno`, `open-meteo` |
+| `weather.real [on\|off]` \| `weather.provider [SOURCE\|next\|prev]` | Real weather in this ride and the next ones, and its data source (both saved: settings `weather.real`, `weather.provider`) |
+| `weather day NAME\|DATE [TIME]` \| `weather.days` \| `weather.day [N]` | Ride a day: the time machine to that day (`lothar`, `kyrill`, `vivian`, `heat-2003`, `snow-2019`, `today`, or `YYYY-MM-DD HH:MM`) and real weather (history from ERA5); the list; the day of the menu's row |
 | `weather.fx clouds\|particles\|spray\|bolts on\|off\|N` | What of the weather is drawn (particles: the budget, default 40000) |
 | **Audio** (spec §3.3) | |
 | `audio.volume master\|effects\|others\|music\|voice PERCENT` | Set a volume for this session (`set audio.effects 60` also saves it) |
@@ -1662,7 +1706,11 @@ It prints the riders' positions and speeds while it runs. Options:
 Ctrl+C), `--fast` (no real-time pacing), `--time-control host|anyone|nobody`
 (who may change the world clock with the time machine, default the host),
 `--weather-control host|anyone|nobody` (who may change the weather, default
-the host), `--weather PRESET` (the weather the session starts with),
+the host), `--weather PRESET|real` (the weather the session starts with;
+`real`: from the providers for the session's place and clock, spec §14 Phase
+9 S7), `--weather-provider automatic|meteoswiss|dwd|metno|open-meteo` (its
+data source; `OCW_WEATHER_USER_AGENT` sets the requests' User-Agent – the
+default names only the product –, `OCW_WEATHER_OFFLINE=1` makes none),
 `--world PKG|ID` and `--seed N` (free
 ride on a world package's road graph, start point seed; verified like in the
 desktop app, `--allow-unsigned` and `--trust-root FILE` as there), `--route NAME`

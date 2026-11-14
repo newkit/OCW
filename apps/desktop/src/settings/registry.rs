@@ -329,6 +329,24 @@ pub const SETTINGS: &[SettingDef] = &[
         scope: Scope::Live,
         apply: Apply::Command("ride.proximity_cue {}"),
     },
+    // Real weather (spec §14 Phase 9, S7): the weather machine's Real
+    // weather page saves them (`weather.real`, `weather.provider`).
+    SettingDef {
+        key: "weather.real",
+        kind: Kind::Bool,
+        default: "on",
+        description: "Rides start in real weather from the providers (local rides; not in screenshot or capture runs unless --real-weather true)",
+        scope: Scope::NextStart,
+        apply: Apply::App,
+    },
+    SettingDef {
+        key: "weather.provider",
+        kind: Kind::Choice(&["automatic", "meteoswiss", "dwd", "metno", "open-meteo"]),
+        default: "automatic",
+        description: "Data source of real weather: automatic (MeteoSwiss, DWD, then MET Norway), or one provider",
+        scope: Scope::Live,
+        apply: Apply::Command("weather.provider {}"),
+    },
     SettingDef {
         key: "ride.record",
         kind: Kind::Bool,

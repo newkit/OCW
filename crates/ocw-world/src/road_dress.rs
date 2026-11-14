@@ -40,6 +40,9 @@ pub const LOWERED_KERB_M: f32 = 0.04;
 pub const DEFAULT_SIDEWALK_M: f32 = 2.0;
 /// Sidewalk widths accepted from OSM (m).
 pub const SIDEWALK_RANGE_M: (f32, f32) = (0.8, 6.0);
+/// Sidewalks fall towards the road by this gradient (the renderer's
+/// `road_mesh` draws them so; [`crate::package::PavementIndex::height`]).
+pub const SIDEWALK_FALL: f32 = 0.02;
 /// Kerbs and sidewalks taper to nothing over this length into a junction
 /// zone (a lowered, rounded corner; m).
 pub const KERB_RAMP_M: f32 = 2.0;

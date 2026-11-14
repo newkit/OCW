@@ -90,6 +90,18 @@ const KIND_LYCRA: u32 = 8u;
 const KIND_PLASTIC: u32 = 9u;
 const KIND_PAD: u32 = 10u;
 
+// Bare carbon's share of the ambient light (Rust: gear::CARBON_AMBIENT):
+// the warm ambient's specular on the dark base made it read grey-brown.
+const CARBON_AMBIENT: f32 = 0.3;
+// Brushing (Rust twin: gear::brush): spun rings about the node's x axle,
+// linear along a tube, or plain (flat faces).
+const BRUSH_SPUN: u32 = 0u;
+const BRUSH_LINEAR: u32 = 1u;
+const BRUSH_PLAIN: u32 = 2u;
+// Within this distance (m) of the node's x axis a tube along it is an
+// axle part (hub barrel, bottom bracket): spun.
+const AXLE_R: f32 = 0.03;
+
 // ocw_core::kit::layout.
 const BAND_MID: f32 = 0.29;
 const BAND_HALF: f32 = 0.05;
@@ -106,9 +118,9 @@ const BIB_CENTRE: vec2<f32> = vec2<f32>(0.0, 0.29);
 const BIB_HALF: vec2<f32> = vec2<f32>(0.1, 0.075);
 const BIB_DIGIT: f32 = 0.075;
 const BIB_BACK_Z: f32 = 0.07;
-const HIP_X: f32 = 0.12;
-const HIP_CENTRE: vec2<f32> = vec2<f32>(0.0, -0.13);
-const HIP_DIGIT: f32 = 0.05;
+const HIP_X: f32 = 0.174;
+const HIP_CENTRE: vec2<f32> = vec2<f32>(0.0, -0.035);
+const HIP_DIGIT: f32 = 0.036;
 
 fn hash1(p: vec3<f32>) -> f32 {
     return fract(sin(dot(p, vec3<f32>(12.9898, 78.233, 37.719))) * 43758.5453);
@@ -415,6 +427,30 @@ fn h_metal(q: vec3<f32>, size: f32, strength: f32) -> f32 {
     return (noise3(vec3<f32>(r / max(size, 1e-4), q.x * 3.0, 0.5)) - 0.5) * size * 0.2 * strength;
 }
 
+// Linear brushing: fine grooves along the rest direction `a` (unit), with
+// `b1`, `b2` across it.
+fn h_brushed(q: vec3<f32>, a: vec3<f32>, b1: vec3<f32>, b2: vec3<f32>, size: f32, strength: f32) -> f32 {
+    let s = max(size, 1e-4);
+    return (noise3(vec3<f32>(dot(q, a) * 3.0, dot(q, b1) / s, dot(q, b2) / s)) - 0.5) * s * 0.2 * strength;
+}
+
+// How a metal surface is brushed (Rust twin: gear::brush): `nl` the rest
+// normal, `al` the tube's axis in rest coordinates (zero on flat faces),
+// `q` the rest point.
+fn brush(nl: vec3<f32>, al: vec3<f32>, q: vec3<f32>) -> u32 {
+    if abs(nl.x) > 0.7 {
+        // A face across the axle: discs, flanges, rings, rotors.
+        return BRUSH_SPUN;
+    }
+    if dot(al, al) < 0.25 {
+        return BRUSH_PLAIN;
+    }
+    if abs(al.x) > 0.9 && length(q.yz) < AXLE_R {
+        return BRUSH_SPUN;
+    }
+    return BRUSH_LINEAR;
+}
+
 fn h_tyre(q: vec3<f32>, size: f32, strength: f32) -> f32 {
     // About the hub: a slick centre strip, a file tread on the shoulders
     // (diamonds of `size`, a whole number round the wheel: no seam).
@@ -473,6 +509,10 @@ fn fragment(
     f.l2 = dpdy(p);
     f.w1 = dpdx(in.world_position.xyz);
     f.w2 = dpdy(in.world_position.xyz);
+    // How the normal turns across the pixel (brushed metal: round a tube,
+    // not along it).
+    let dn1 = dpdx(in.world_normal);
+    let dn2 = dpdy(in.world_normal);
     let px = max(max(length(f.l1), length(f.l2)), 1e-6);
     let aa = 0.75 * px;
 
@@ -529,6 +569,62 @@ fn fragment(
         dhx = (h_twill(p + f.l1, plane, strength).x - h0.x) * fade;
         dhy = (h_twill(p + f.l2, plane, strength).x - h0.x) * fade;
         albedo = albedo * mix(1.0, h0.y, fade);
+        // The tows along u a little glossier: the weave shows in the
+        // highlights of the dark base, too.
+        rough = rough * mix(1.0, select(1.15, 0.8, h0.y > 1.0), fade);
+    } else if kind == KIND_METAL {
+        // Spun about an axle, or brushed along a tube (spec §14 Phase 8 T6:
+        // fork stanchions, posts, rails, spokes), plain on flat faces.
+        let nl = to_rest(f, n);
+        var c = dn1 - n * dot(dn1, n);
+        let c2 = dn2 - n * dot(dn2, n);
+        if dot(c2, c2) > dot(c, c) {
+            c = c2;
+        }
+        var axis_w = vec3<f32>(0.0);
+        var al = vec3<f32>(0.0);
+        // Curved: the normal turns by more than ~0.1° per pixel.
+        if dot(c, c) > 3e-6 {
+            axis_w = normalize(cross(n, normalize(c)));
+            al = to_rest(f, axis_w);
+        }
+        let mode = brush(nl, al, p);
+        if mode == BRUSH_LINEAR {
+            var ref_dir = vec3<f32>(0.0, 1.0, 0.0);
+            if abs(al.y) > 0.9 {
+                ref_dir = vec3<f32>(1.0, 0.0, 0.0);
+            }
+            let b1 = normalize(cross(al, ref_dir));
+            let b2 = cross(al, b1);
+            let h0 = h_brushed(p, al, b1, b2, size, strength);
+            dhx = (h_brushed(p + f.l1, al, b1, b2, size, strength) - h0) * fade;
+            dhy = (h_brushed(p + f.l2, al, b1, b2, size, strength) - h0) * fade;
+            var t = axis_w - n * dot(axis_w, n);
+            if look.params.w > 0.0 && dot(t, t) > 1e-8 {
+                t = normalize(t);
+                pbr_input.anisotropy_strength = look.params.w;
+                pbr_input.anisotropy_T = t;
+                pbr_input.anisotropy_B = normalize(cross(n, t));
+            }
+        } else if mode == BRUSH_SPUN {
+            let h0 = h_metal(p, size, strength);
+            dhx = (h_metal(p + f.l1, size, strength) - h0) * fade;
+            dhy = (h_metal(p + f.l2, size, strength) - h0) * fade;
+            // Highlights stretched along the rings (anisotropic).
+            let tl = vec3<f32>(0.0, -p.z, p.y);
+            if look.params.w > 0.0 && dot(tl, tl) > 1e-10 {
+                var t = to_world(f, normalize(tl));
+                t = t - n * dot(t, n);
+                if dot(t, t) > 1e-8 {
+                    t = normalize(t);
+                    pbr_input.anisotropy_strength = look.params.w;
+                    pbr_input.anisotropy_T = t;
+                    pbr_input.anisotropy_B = normalize(cross(n, t));
+                }
+            }
+        } else {
+            pbr_input.anisotropy_strength = 0.0;
+        }
     } else if kind != KIND_PLAIN && kind != KIND_PAINT && kind != KIND_PLASTIC && fade > 0.0 {
         let h0 = detail_height(kind, p, size, strength);
         dhx = (detail_height(kind, p + f.l1, size, strength) - h0) * fade;
@@ -537,19 +633,11 @@ fn fragment(
             rough = rough - 0.1 * (1.0 - smoothstep(0.003, 0.006, abs(p.x)));
         }
     }
-    if kind == KIND_METAL {
-        // Highlights stretched along the rings (anisotropic).
-        let tl = vec3<f32>(0.0, -p.z, p.y);
-        if look.params.w > 0.0 && dot(tl, tl) > 1e-10 {
-            var t = to_world(f, normalize(tl));
-            t = t - n * dot(t, n);
-            if dot(t, t) > 1e-8 {
-                t = normalize(t);
-                pbr_input.anisotropy_strength = look.params.w;
-                pbr_input.anisotropy_T = t;
-                pbr_input.anisotropy_B = normalize(cross(n, t));
-            }
-        }
+    if kind == KIND_CARBON {
+        // Near-black under the clear coat: little of the ambient light (its
+        // specular on the base read grey-brown in the bright workshop); the
+        // lamps' highlights on the coat and the weave stay.
+        pbr_input.diffuse_occlusion = pbr_input.diffuse_occlusion * CARBON_AMBIENT;
     }
 
     // Mesh side panels of the jersey: a perforated knit under the arms.
@@ -562,8 +650,9 @@ fn fragment(
         albedo = albedo * (1.0 - 0.35 * hole * panel * pfade);
     }
 
-    // The race number: the paper bib on the jersey's back, the digits on
-    // the shorts' hips.
+    // The race number: the paper bib on the jersey's back, the paper
+    // plates on the hips (on the pelvis: on the thighs the digits turned
+    // with the pedals).
     let number = u32(look.params.x + 0.5);
     if number > 0u && garment == 1u && region == 0u && p.z > BIB_BACK_Z {
         let uv = p.xy - BIB_CENTRE;
@@ -573,12 +662,13 @@ fn fragment(
         albedo = mix(albedo, vec3<f32>(0.012, 0.012, 0.014), ink);
         rough = mix(rough, 0.85, paper);
     }
-    if number > 0u && garment == 2u && (region == 0u || region == 2u) && abs(p.x) > HIP_X {
+    if number > 0u && garment == 2u && region == 0u && abs(p.x) > HIP_X {
         let u = select(-p.z, p.z, p.x < 0.0) - HIP_CENTRE.x;
         let ink = digits_cover(number, u, p.y - HIP_CENTRE.y, HIP_DIGIT, aa);
-        let lum = dot(look.base.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
-        let colour = select(vec3<f32>(0.9, 0.9, 0.88), vec3<f32>(0.012), lum > 0.2);
-        albedo = mix(albedo, colour, ink);
+        albedo = mix(vec3<f32>(0.82, 0.82, 0.79), vec3<f32>(0.012, 0.012, 0.014), ink);
+        rough = 0.85;
+        dhx = 0.0;
+        dhy = 0.0;
     }
 
     if dhx != 0.0 || dhy != 0.0 {

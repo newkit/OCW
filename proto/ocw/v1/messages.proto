@@ -209,6 +209,21 @@ message WeatherRequest {
   // A test strike now at this distance (m) and bearing (degrees).
   optional float strike_distance_m = 9;
   optional float strike_bearing_deg = 10;
+  // Real weather from the providers from now on (spec §14 Phase 9, S7):
+  // the server fetches it for the session's place and the world clock's
+  // moment (a past date: the history, ERA5), from this data source (Q6).
+  bool real = 11;
+  WeatherProvider provider = 12;
+}
+
+// The real weather's data source (spec §14 Phase 9, S7, Q6): automatic
+// (the regional network, then MET Norway, then Open-Meteo) or one of them.
+enum WeatherProvider {
+  WEATHER_PROVIDER_AUTOMATIC = 0;
+  WEATHER_PROVIDER_METEOSWISS = 1;
+  WEATHER_PROVIDER_DWD = 2;
+  WEATHER_PROVIDER_MET_NORWAY = 3;
+  WEATHER_PROVIDER_OPEN_METEO = 4;
 }
 
 // Voice chat (spec §7, §2.4): asks the game server for a short-lived
@@ -819,6 +834,36 @@ enum Precipitation {
 enum WeatherMode {
   WEATHER_MODE_FIXED = 0;
   WEATHER_MODE_SIMULATED = 1;
+  // From the providers (spec §14 Phase 9, S7; SessionWeather.real).
+  WEATHER_MODE_REAL = 2;
+}
+
+// The real weather of a session (spec §14 Phase 9, S7): present while it
+// is on (also while the server waits for the data or, offline, simulates).
+message RealWeather {
+  // The session's data source.
+  WeatherProvider choice = 1;
+  // Whose data shows (never AUTOMATIC), in the attribution's order.
+  repeated WeatherProvider providers = 2;
+  // "Weather: MeteoSwiss, MET Norway, CC BY 4.0" (shown in the menu and
+  // the HUD; empty without data).
+  string attribution = 3;
+  // A fallback, a source that does not cover the place, stale data.
+  string note = 4;
+  RealWeatherStatus status = 5;
+  // The instant of the data (a station's measurement, else the moment).
+  sint64 data_unix_ms = 6;
+  // From the history (ERA5).
+  bool historic = 7;
+  // The station measured at ("Vaduz (VAD)").
+  string station = 8;
+}
+
+enum RealWeatherStatus {
+  REAL_WEATHER_STATUS_WAITING = 0;
+  REAL_WEATHER_STATUS_LIVE = 1;
+  REAL_WEATHER_STATUS_STALE = 2;
+  REAL_WEATHER_STATUS_OFFLINE = 3;
 }
 
 // A lightning strike (spec §14 Phase 9, S4): at a distance and bearing from
@@ -861,6 +906,8 @@ message SessionWeather {
   Weather target = 13;
   // The simulation's seed (WEATHER_MODE_SIMULATED; spec §14 Phase 9, S5).
   uint64 sim_seed = 14;
+  // Real weather (spec §14 Phase 9, S7; absent: off).
+  RealWeather real = 15;
 }
 
 // Quantized rider state (spec §6.2).

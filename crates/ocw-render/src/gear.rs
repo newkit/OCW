@@ -94,6 +94,61 @@ pub fn kind_of(slot: &str, node: &str) -> GearKind {
     }
 }
 
+/// Bare carbon's share of the ambient light (`gear.wesl`'s
+/// `CARBON_AMBIENT`): with all of the warm ambient light its specular on
+/// the dark base read grey-brown in the bright workshop; the lamps'
+/// highlights on the clear coat and the weave stay.
+pub const CARBON_AMBIENT: f32 = 0.3;
+
+/// The base layer's reflectance under bare carbon's clear coat (0.5 is
+/// the 4 % of most dielectrics; 0.2 gives 0.6 %).
+pub const CARBON_REFLECTANCE: f32 = 0.2;
+
+/// The brightest bare carbon base (linear, per channel): near-black.
+pub const CARBON_MAX_LINEAR: f32 = 0.006;
+
+/// The base colour of bare carbon: the part's colour darkened to
+/// near-black ([`CARBON_MAX_LINEAR`]) with a cool tint, as the resin over
+/// the black fibres looks.
+pub fn carbon_base(c: Color) -> Color {
+    let l = c.to_linear();
+    let max = l.red.max(l.green).max(l.blue).max(1e-6);
+    let k = (CARBON_MAX_LINEAR / max).min(1.0);
+    let lum = (l.red + l.green + l.blue) / 3.0 * k;
+    Color::linear_rgb(lum * 0.92, lum * 0.96, lum * 1.08)
+}
+
+/// How a metal surface is brushed (the twin of `gear.wesl`'s `brush`):
+/// round parts about an axle are spun (rings), tubes elsewhere brushed
+/// along their length, flat faces plain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Brush {
+    Spun,
+    Linear,
+    Plain,
+}
+
+/// Within this distance (m) of the node's x axis a tube along it is an
+/// axle part (hub barrel, bottom bracket): spun.
+pub const AXLE_R: f32 = 0.03;
+
+/// The brushing at rest point `q` with rest normal `normal` on a surface
+/// curved round `axis` (rest coordinates; `None`: a flat face).
+pub fn brush(normal: Vec3, axis: Option<Vec3>, q: Vec3) -> Brush {
+    if normal.x.abs() > 0.7 {
+        // A face across the axle: discs, flanges, rings, rotors.
+        return Brush::Spun;
+    }
+    let Some(a) = axis else {
+        return Brush::Plain;
+    };
+    if a.x.abs() > 0.9 && Vec2::new(q.y, q.z).length() < AXLE_R {
+        Brush::Spun
+    } else {
+        Brush::Linear
+    }
+}
+
 /// The garment whose pattern a slot carries.
 pub fn garment_of(slot: &str) -> Option<Garment> {
     match slot {
@@ -194,6 +249,8 @@ pub struct GearSurface {
     pub roughness: f32,
     pub clearcoat: f32,
     pub clearcoat_roughness: f32,
+    /// The base layer's specular (StandardMaterial `reflectance`, 0.5 = 4 %).
+    pub reflectance: f32,
     pub look: GearLook,
 }
 
@@ -222,6 +279,7 @@ pub fn surface(
     let mut metallic = s.metallic;
     let mut roughness = s.roughness;
     let (mut clearcoat, mut clearcoat_roughness) = (0.0, 0.5);
+    let mut reflectance = 0.5;
     let finish = |f: Finish| match f {
         Finish::Gloss => (0.28, 0.85, 0.08),
         Finish::Matte => (0.7, 0.0, 0.5),
@@ -240,6 +298,16 @@ pub fn surface(
             clearcoat = 1.0;
             clearcoat_roughness = 0.05;
             (strength, size) = (1.0, 0.003);
+            // The resin under the coat reflects little: the workshop's warm
+            // lamps made a broad grey-brown sheen of the base layer; the
+            // coat's sharp highlights stay.
+            reflectance = CARBON_REFLECTANCE;
+            // Black carbon near-black; a part that has its own lighter
+            // colour (an alloy rim) keeps it.
+            let l = base.to_linear();
+            if slot == "frame" || l.red.max(l.green).max(l.blue) <= 0.04 {
+                base = carbon_base(base);
+            }
         }
         GearKind::Metal => {
             let anodised = slot == "component";
@@ -334,6 +402,7 @@ pub fn surface(
         roughness,
         clearcoat,
         clearcoat_roughness,
+        reflectance,
         look: GearLook {
             mode: Vec4::new(
                 kind.code() as f32,
@@ -367,6 +436,7 @@ impl GearSurface {
                 perceptual_roughness: self.roughness,
                 clearcoat: self.clearcoat,
                 clearcoat_perceptual_roughness: self.clearcoat_roughness,
+                reflectance: self.reflectance,
                 // Turns on the anisotropic lighting; the shader sets the
                 // direction and strength.
                 anisotropy_strength: self.look.params.w,
@@ -399,6 +469,7 @@ impl GearSurface {
                 self.roughness,
                 self.clearcoat,
                 self.clearcoat_roughness,
+                self.reflectance,
             ]
             .map(f32::to_bits),
         );
@@ -428,6 +499,7 @@ impl GearSurface {
             perceptual_roughness: self.roughness,
             clearcoat: self.clearcoat,
             clearcoat_perceptual_roughness: self.clearcoat_roughness,
+            reflectance: self.reflectance,
             ..default()
         }
     }
@@ -684,6 +756,38 @@ mod tests {
         };
         let frame = surface("frame", "bike", [0.0, 0.0, 0.0, 1.0], &colours(&bare));
         assert_eq!(frame.kind, GearKind::Carbon);
+        // Regression (spec §14 Phase 8 T6): near-black with a cool tint,
+        // not grey-brown – the base darkened, little ambient light in the
+        // shader (the same constant there), the clear coat and the weave
+        // kept.
+        let l = frame.base.to_linear();
+        assert!(
+            l.red.max(l.green).max(l.blue) <= CARBON_MAX_LINEAR + 1e-6,
+            "{l:?}"
+        );
+        assert!(l.blue > l.red && l.blue > l.green, "cool, not brown: {l:?}");
+        assert!(frame.clearcoat == 1.0 && frame.look.params.y > 0.0);
+        assert!(frame.reflectance < 0.3 && frame.material(false).base.reflectance < 0.3);
+        assert_eq!(
+            surface("frame", "bike", [0.0, 0.0, 0.0, 1.0], &c).reflectance,
+            0.5
+        );
+        assert!(
+            include_str!("gear.wesl")
+                .contains(&format!("const CARBON_AMBIENT: f32 = {CARBON_AMBIENT};"))
+        );
+        let grey = surface("carbon", "bike", [0.02, 0.018, 0.015, 1.0], &c)
+            .base
+            .to_linear();
+        assert!(
+            grey.blue > grey.red && grey.red <= CARBON_MAX_LINEAR,
+            "{grey:?}"
+        );
+        // An alloy rim keeps its colour.
+        let alloy = surface("rim", "wheel_front", [0.5, 0.5, 0.5, 1.0], &c)
+            .base
+            .to_linear();
+        assert!(alloy.red > 0.4, "{alloy:?}");
         assert_eq!(
             surface("decal", "bike", [1.0; 4], &colours(&bare)).kind,
             GearKind::Paint
@@ -728,6 +832,43 @@ mod tests {
 
     /// The default (and anonymous) look: plain kit, no number, model
     /// colours; the far jersey is the dominant colour of the pattern.
+    /// Regression (spec §14 Phase 8 T6): spun rings were used on every
+    /// metal part, fork stanchions included; now only round parts about an
+    /// axle are spun, tubes are brushed along their length, flat faces
+    /// plain (the shader's twin: the same rules and constant).
+    #[test]
+    fn metal_is_spun_about_axles_and_brushed_along_tubes() {
+        use Brush::*;
+        let steer = Vec3::new(0.0, -0.95, 0.31).normalize();
+        // A fork stanchion: the normal across, the tube along the steerer.
+        let n = steer.cross(Vec3::X).normalize();
+        assert_eq!(brush(n, Some(steer), Vec3::new(0.06, 0.5, -0.3)), Linear);
+        // A spoke: radial in the wheel's node.
+        let radial = Vec3::new(0.0, 0.6, 0.8);
+        assert_eq!(
+            brush(Vec3::X.cross(radial), Some(radial), radial * 0.2),
+            Linear
+        );
+        // The cassette's and the chainrings' faces, a brake rotor.
+        assert_eq!(brush(Vec3::X, None, Vec3::new(0.04, 0.03, 0.0)), Spun);
+        assert_eq!(brush(-Vec3::X, None, Vec3::new(-0.05, 0.0, 0.07)), Spun);
+        // The hub barrel and the bottom-bracket axle: about the x axle.
+        assert_eq!(
+            brush(Vec3::Y, Some(Vec3::X), Vec3::new(0.02, 0.016, 0.0)),
+            Spun
+        );
+        // A tube along x away from the axle (a pedal's body): brushed.
+        assert_eq!(
+            brush(Vec3::Y, Some(Vec3::X), Vec3::new(0.0, 0.15, 0.1)),
+            Linear
+        );
+        // A flat side face: plain.
+        assert_eq!(brush(Vec3::Z, None, Vec3::ZERO), Plain);
+        let src = include_str!("gear.wesl");
+        assert!(src.contains(&format!("const AXLE_R: f32 = {AXLE_R};")));
+        assert!(src.contains("fn h_brushed(") && src.contains("mode == BRUSH_LINEAR"));
+    }
+
     #[test]
     fn plain_looks_stay_plain() {
         for look in [RiderLook::default(), RiderLook::anonymous()] {

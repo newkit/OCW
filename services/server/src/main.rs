@@ -27,12 +27,25 @@ fn parse_time_control(s: &str) -> Result<ocw_server::ClockAccess, String> {
 }
 
 fn parse_weather(s: &str) -> Result<String, String> {
+    if s == "real" {
+        return Ok(s.to_owned());
+    }
     ocw_weather::presets::preset(s)
         .map(|_| s.to_owned())
         .ok_or_else(|| {
             let names: Vec<&str> = ocw_weather::presets::PRESETS.iter().map(|p| p.0).collect();
-            format!("one of {}", names.join(", "))
+            format!("real or one of {}", names.join(", "))
         })
+}
+
+fn parse_provider(s: &str) -> Result<ocw_weather::real::Choice, String> {
+    ocw_weather::real::Choice::parse(s).ok_or_else(|| {
+        let ids: Vec<&str> = ocw_weather::real::Choice::ALL
+            .iter()
+            .map(|c| c.id())
+            .collect();
+        format!("one of {}", ids.join(", "))
+    })
 }
 
 #[derive(Parser)]
@@ -86,9 +99,18 @@ struct Args {
     #[arg(long, default_value = "host", value_parser = parse_time_control)]
     weather_control: ocw_server::ClockAccess,
     /// The weather the session starts with: a preset (`clear`, `rain`,
-    /// `thunderstorm`, `heavy-snow`, `fog` …; ocw_weather::presets).
-    #[arg(long, value_name = "PRESET", value_parser = parse_weather)]
+    /// `thunderstorm`, `heavy-snow`, `fog` …; ocw_weather::presets) or
+    /// `real` (spec §14 Phase 9, S7: from the providers for the place of
+    /// the session and the world clock's moment).
+    #[arg(long, value_name = "PRESET|real", value_parser = parse_weather)]
     weather: Option<String>,
+    /// The real weather's data source: automatic (the regional network –
+    /// MeteoSwiss in Switzerland and Liechtenstein, DWD in Germany –, then
+    /// MET Norway, then Open-Meteo), meteoswiss, dwd, metno or open-meteo.
+    /// OCW_WEATHER_USER_AGENT names the requests' User-Agent (default: the
+    /// product, no personal data); OCW_WEATHER_OFFLINE=1 makes none.
+    #[arg(long, value_name = "SOURCE", default_value = "automatic", value_parser = parse_provider)]
+    weather_provider: ocw_weather::real::Choice,
     /// Free ride on the road graph of this world package (version 2,
     /// from `world-builder package`; a path or a cache id) instead of the
     /// test loop. Verified on load (spec §4.7).
@@ -178,21 +200,21 @@ fn load_options(args: &Args) -> Result<ocw_worldstore::LoadOptions, String> {
 
 /// Free ride on a world package's road graph (a path or a cached id, its
 /// signature checked), from a seeded random start, or along one of its routes.
-fn free_ride(args: &Args, spec: &str) -> Course {
+fn free_ride(args: &Args, spec: &str) -> (Course, (f64, f64)) {
     let fail = |e: String| -> ! {
         eprintln!("{spec}: {e}");
         std::process::exit(1);
     };
     let opts = load_options(args).unwrap_or_else(|e| fail(e));
-    ocw_server::worlds::load_course(
+    let (course, _, origin) = ocw_server::worlds::load_course_at(
         spec,
         args.route.as_deref(),
         &opts,
         !args.no_neighbours,
         args.seed,
     )
-    .unwrap_or_else(|e| fail(e))
-    .0
+    .unwrap_or_else(|e| fail(e));
+    (course, origin)
 }
 
 /// The worlds this server may switch to: the cache and the packages next
@@ -214,7 +236,7 @@ fn catalog(
 }
 
 /// The result of loading a world for a switch.
-type Loaded = Result<(Course, ocw_protocol::v1::WorldChange), String>;
+type Loaded = Result<(Course, ocw_protocol::v1::WorldChange, (f64, f64)), String>;
 
 /// A world switch being loaded on its own thread (the session goes on).
 type WorldLoad = (ocw_server::WorldSwitch, std::sync::mpsc::Receiver<Loaded>);
@@ -247,7 +269,7 @@ fn pump_world_switch(
             thread::Builder::new()
                 .name("ocw-world-load".into())
                 .spawn(move || {
-                    let r = ocw_server::worlds::load_course(
+                    let r = ocw_server::worlds::load_course_at(
                         &spec,
                         route.as_deref(),
                         &opts,
@@ -276,9 +298,10 @@ fn pump_world_switch(
         Err(std::sync::mpsc::TryRecvError::Disconnected) => Err("the loading thread ended".into()),
     };
     match result {
-        Ok((course, mut change)) => {
+        Ok((course, mut change, origin)) => {
             change.by.clone_from(&req.by);
             let (conns, bytes) = server.switch_world(course, change);
+            server.set_geo_origin(Some(origin));
             tell(&conns, &bytes);
         }
         Err(e) => {
@@ -300,8 +323,13 @@ fn main() {
         .init();
     let args = Args::parse();
     let mut route_sha256 = String::new();
+    let mut geo_origin = None;
     let course = match (&args.world, &args.route_file) {
-        (Some(spec), _) => free_ride(&args, spec),
+        (Some(spec), _) => {
+            let (course, origin) = free_ride(&args, spec);
+            geo_origin = Some(origin);
+            course
+        }
         (None, Some(path)) => {
             let (route, sha) = load_route_file(path).unwrap_or_else(|e| {
                 eprintln!("{}: {e}", path.display());
@@ -373,10 +401,19 @@ fn main() {
             weather: args
                 .weather
                 .as_deref()
+                .filter(|w| *w != "real")
                 .map(|w| ocw_weather::presets::preset(w).expect("checked by the parser")),
             weather_seed: None,
+            geo_origin,
+            real_weather: (args.weather.as_deref() == Some("real"))
+                .then_some(args.weather_provider),
         },
     );
+    // Real weather (spec §14 Phase 9, S7): the server asks the providers,
+    // never the clients.
+    server.set_weather_fetcher(Box::new(
+        ocw_server::realweather::http::HttpFetcher::default(),
+    ));
     if let Some(echo) = server.session().echo_rider() {
         tracing::info!(
             echo = %echo,

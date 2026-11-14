@@ -89,6 +89,7 @@ pub(crate) fn spawn_world(
         // slopes they differ by metres within a cell. Across all packages
         // of the world set (updated when neighbours load).
         commands.insert_resource(pkg.ground());
+        commands.insert_resource(pkg.pavement());
         if view.free_ride {
             // No route: every rider rides their own path.
             return;
@@ -124,6 +125,8 @@ pub(crate) fn spawn_world(
         commands.insert_resource(crate::Ground(std::sync::Arc::new(move |x, z| {
             Some(t.height(x, z))
         })));
+        // The test routes have no sidewalks.
+        commands.remove_resource::<crate::Pavement>();
     }
     let edge_depth = if coarse {
         COARSE_ROAD_EDGE_DEPTH_M

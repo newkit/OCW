@@ -852,6 +852,16 @@ pub fn flight_line(f: &crate::FlightView, units: Units) -> String {
     )
 }
 
+/// " | Weather: MET Norway, CC BY 4.0" while the weather is real (spec
+/// §14 Phase 9, S7: the provider's credit stays on screen), else "".
+pub fn attribution_suffix(view: &RideView) -> String {
+    view.weather
+        .as_ref()
+        .and_then(|w| w.attribution.as_deref())
+        .map(|a| format!(" | {a}"))
+        .unwrap_or_default()
+}
+
 fn format_time(seconds: f64) -> String {
     let s = seconds.max(0.0) as u64;
     format!("{}:{:02}:{:02}", s / 3600, (s / 60) % 60, s % 60)
@@ -885,7 +895,12 @@ fn update_hud(
         if big.0 != line {
             big.0 = line;
         }
-        let mut lines = format!("{} | {}", format_time(view.elapsed_s), f.keys);
+        let mut lines = format!(
+            "{}{} | {}",
+            format_time(view.elapsed_s),
+            attribution_suffix(&view),
+            f.keys
+        );
         if !view.status.is_empty() {
             lines.push('\n');
             lines.push_str(&view.status);
@@ -949,9 +964,10 @@ fn update_hud(
     };
     let (distance, distance_unit) = units.distance(local.state.distance);
     let mut lines = format!(
-        "{place} | {distance:.2} {distance_unit} | {} | {}\n{keys} | {}",
+        "{place} | {distance:.2} {distance_unit} | {} | {}{}\n{keys} | {}",
         format_time(view.elapsed_s),
         riders_count(&view),
+        attribution_suffix(&view),
         app_keys.0
     );
     if !view.status.is_empty() {

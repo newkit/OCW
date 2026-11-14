@@ -54,8 +54,7 @@ pub const OVERLAY_LIFT_M: f32 = 0.012;
 /// Overlays reach this far beyond their painted length (the filtered
 /// edges of the paint).
 pub const OVERLAY_MARGIN_M: f32 = 0.25;
-/// Sidewalks fall towards the road by this gradient.
-const SIDEWALK_FALL: f32 = 0.02;
+use ocw_world::road_dress::SIDEWALK_FALL;
 
 /// What a vertex belongs to (`uv_b.x / 8 % 8` in the shader).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -167,7 +166,7 @@ pub struct RoadContext<'a> {
 }
 
 impl RoadContext<'_> {
-    fn colour(&self, layer: u8, fallback: [f32; 3]) -> [f32; 3] {
+    pub(crate) fn colour(&self, layer: u8, fallback: [f32; 3]) -> [f32; 3] {
         self.colours
             .and_then(|c| c.get(usize::from(layer)))
             .copied()
@@ -232,16 +231,33 @@ fn shoulder_layer(surface: RoadSurface) -> u8 {
 }
 
 /// The road meshes of `strips` (a tile's, in its local metres).
+/// Where two sidewalks meet at a junction the corner is rounded
+/// (`road_corners`): the strips' sidewalks end square at the arc.
 pub fn road_meshes(strips: &[RoadStrip], ctx: &RoadContext<'_>) -> RoadMeshes {
     let mut out = RoadMeshes::default();
-    for s in strips {
-        strip_mesh(&mut out.roads, s, ctx);
+    let corners = crate::road_corners::corners(strips);
+    let trims = crate::road_corners::trims(&corners, strips.len());
+    for (s, trim) in strips.iter().zip(&trims) {
+        if trim.iter().flatten().any(Option::is_some) {
+            let cut = crate::road_corners::with_cuts(s, trim);
+            strip_mesh(&mut out.roads, &cut, ctx, trim);
+        } else {
+            strip_mesh(&mut out.roads, s, ctx, trim);
+        }
         crossing_overlays(&mut out.overlays, s, ctx);
+    }
+    for c in &corners {
+        crate::road_corners::corner_mesh(&mut out.roads, c, strips, ctx);
     }
     out
 }
 
-fn strip_mesh(m: &mut MeshArrays, s: &RoadStrip, ctx: &RoadContext<'_>) {
+fn strip_mesh(
+    m: &mut MeshArrays,
+    s: &RoadStrip,
+    ctx: &RoadContext<'_>,
+    trim: &[[Option<f32>; 2]; 2],
+) {
     let p: Vec<Vec3> = s
         .points
         .iter()
@@ -324,7 +340,7 @@ fn strip_mesh(m: &mut MeshArrays, s: &RoadStrip, ctx: &RoadContext<'_>) {
             let out = rights[i] * side;
             let edge = p[i] + out * half;
             let (w, k) = if sidewalk && !decks[i][si] {
-                s.dress.kerb_at(si, local[i])
+                crate::road_corners::kerb_trimmed(&s.dress, si, local[i], local[n - 1], &trim[si])
             } else {
                 (0.0, 0.0)
             };

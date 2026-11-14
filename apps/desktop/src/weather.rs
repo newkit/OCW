@@ -3,11 +3,13 @@
 //! `GameServer` like the world clock, eased by
 //! [`ocw_client::weather::WeatherClient`]) into the renderer's view
 //! ([`ocw_render::RideView::weather`]) and the menu ([`WeatherState`]), the
-//! **weather machine** – World → Weather: mode (fixed / simulated; real
-//! weather is S7), the 17 presets as a grid with icons, the custom editor
-//! (sky; wind and temperature), the transition time, a random weather from
-//! a seed – and the console commands `weather`, `weather.list`,
-//! `weather.status`, `weather.transition`, `weather.seed`.
+//! **weather machine** – World → Weather: mode (fixed / simulated / real),
+//! real weather (S7: on / off, the data source, ride a day; the
+//! provider's attribution), the 17 presets as a grid with icons, the
+//! custom editor (sky; wind and temperature), the transition time, a
+//! random weather from a seed – and the console commands `weather`,
+//! `weather.list`, `weather.status`, `weather.transition`, `weather.seed`,
+//! `weather.real`, `weather.provider`, `weather.day`, `weather.days`.
 //!
 //! Every menu function is a console line (spec §3.2.1). The server
 //! decides who may change the weather (Q2: solo the rider, in a shared ride
@@ -24,6 +26,9 @@ use ocw_weather::machine::{
     self, DEFAULT_TRANSITION_S, Field, transition_label, transition_step, transition_suffix,
 };
 use ocw_weather::presets::{PRESETS, preset, title};
+use ocw_weather::real::Choice;
+use ocw_weather::real::days::DAYS;
+use ocw_weather::real::feed::RealInfo;
 
 use crate::connection::{ClientState, Link};
 use crate::settings::pages::{Activate, Page, Row};
@@ -37,12 +42,19 @@ pub const MACHINE_NOTE: &str = "A preset, your own weather or the simulation.";
 /// The text of the custom editor's pages.
 pub const CUSTOM_NOTE: &str = "Each change takes the transition time.";
 
+/// The text of the real weather's page.
+pub const REAL_NOTE: &str = "The weather of your place in the world now, or of a day in the past.";
+
 /// The weather machine's own settings (not the server's): the transition
-/// of the menu's changes and the seed of the random weather.
+/// of the menu's changes, the seed of the random weather, the real
+/// weather's data source (setting `weather.provider`) and the day the
+/// "Ride a day" row shows.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Machine {
     pub transition_s: f64,
     pub seed: u64,
+    pub provider: Choice,
+    pub day: usize,
 }
 
 impl Default for Machine {
@@ -50,6 +62,9 @@ impl Default for Machine {
         Self {
             transition_s: DEFAULT_TRANSITION_S,
             seed: 1,
+            provider: Choice::Automatic,
+            // The first day of the past (index 0 is today).
+            day: 1,
         }
     }
 }
@@ -73,6 +88,8 @@ pub struct WeatherState {
     pub event: Option<String>,
     /// The simulation's seed (while simulated).
     pub sim_seed: u64,
+    /// Real weather (S7; `None`: off).
+    pub real: Option<RealInfo>,
     pub machine: Machine,
 }
 
@@ -133,9 +150,13 @@ fn wet_label(g: &ocw_weather::Ground) -> String {
     }
 }
 
-/// The mode row's value: "fixed", "simulated (seed 7)", "-> rain in 40 s".
+/// The mode row's value: "fixed", "simulated (seed 7)", "-> rain in 40 s",
+/// "real (Automatic)".
 fn mode_value(w: &WeatherState) -> String {
     let simulated = w.mode == Some(ocw_weather::Mode::Simulated);
+    if let Some(r) = &w.real {
+        return format!("real ({})", r.choice.name());
+    }
     match (w.target, simulated) {
         (Some((t, left)), sim) => format!(
             "-> {} in {left:.0} s{}",
@@ -156,7 +177,7 @@ pub fn rows(page: Page, w: &WeatherState) -> Vec<Row> {
     match page {
         Page::Weather => {
             let simulated = w.mode == Some(ocw_weather::Mode::Simulated);
-            let toggle = if simulated {
+            let toggle = if simulated || w.real.is_some() {
                 "weather fixed".to_owned()
             } else {
                 format!("weather auto {}", w.machine.seed)
@@ -193,8 +214,8 @@ pub fn rows(page: Page, w: &WeatherState) -> Vec<Row> {
             let t = w.machine.transition_s;
             vec![
                 mode,
-                // Real weather from the providers: Phase 9 S7.
-                disabled("Real weather", "coming (Phase 9 S7)".into()),
+                // Real weather from the providers (S7).
+                open("Real weather", real_value(w), Page::WeatherReal),
                 open(
                     "Presets",
                     w.current_preset().map_or_else(|| "custom".into(), title),
@@ -228,6 +249,7 @@ pub fn rows(page: Page, w: &WeatherState) -> Vec<Row> {
                 }),
             })
             .collect(),
+        Page::WeatherReal => real_rows(w, may),
         Page::WeatherCustom | Page::WeatherAir => {
             let fields: &[Field] = if page == Page::WeatherCustom {
                 &Field::SKY
@@ -269,12 +291,107 @@ pub fn rows(page: Page, w: &WeatherState) -> Vec<Row> {
     }
 }
 
+/// The Real weather row's value: "off", "on: MeteoSwiss, MET Norway",
+/// "on: waiting for the data".
+fn real_value(w: &WeatherState) -> String {
+    match &w.real {
+        Some(r) => format!("on: {}", r.source_label()),
+        None => "off".into(),
+    }
+}
+
+/// "Storm Lothar, 1999" / "Today".
+fn day_label(i: usize) -> String {
+    match DAYS.get(i) {
+        Some(d) if d.date.is_empty() => d.title.into(),
+        Some(d) => format!("{}, {}", d.title, &d.date[..4]),
+        None => "-".into(),
+    }
+}
+
+/// World → Weather → Real weather (S7): on / off (`weather.real`, saved),
+/// the data source (`weather.provider`, saved; in a shared ride the
+/// host's applies), ride a day (← / → the day, Enter rides it: the time
+/// machine and real weather), the data's station and time.
+fn real_rows(w: &WeatherState, may: bool) -> Vec<Row> {
+    let on = w.real.is_some();
+    let choice = w.real.as_ref().map_or(w.machine.provider, |r| r.choice);
+    let toggle = format!("weather.real {}", if on { "off" } else { "on" });
+    let n = DAYS.len() as i64;
+    let day = |d: i64| format!("weather.day {}", (w.machine.day as i64 + d).rem_euclid(n));
+    let mut rows = if may {
+        vec![
+            Row {
+                label: "Real weather".into(),
+                value: Some(if on { "on" } else { "off" }.into()),
+                left: Some(toggle.clone()),
+                right: Some(toggle.clone()),
+                confirm: Some(Activate::Command(toggle)),
+            },
+            Row {
+                label: "Data source".into(),
+                value: Some(choice.name().into()),
+                left: Some(format!("weather.provider {}", choice.step(-1).id())),
+                right: Some(format!("weather.provider {}", choice.step(1).id())),
+                confirm: Some(Activate::Command(format!(
+                    "weather.provider {}",
+                    choice.step(1).id()
+                ))),
+            },
+            Row {
+                label: "Ride a day".into(),
+                value: Some(day_label(w.machine.day)),
+                left: Some(day(-1)),
+                right: Some(day(1)),
+                confirm: DAYS
+                    .get(w.machine.day)
+                    .map(|d| Activate::Command(format!("weather day {}", d.id))),
+            },
+        ]
+    } else {
+        vec![
+            disabled("Real weather", if on { "on" } else { "off" }.into()),
+            disabled("Data source", choice.name().into()),
+            disabled("Ride a day", day_label(w.machine.day)),
+        ]
+    };
+    if let Some(r) = &w.real {
+        let mut data = Vec::new();
+        if let Some(s) = &r.station {
+            data.push(s.clone());
+        }
+        if r.data_ms != 0 {
+            data.push(if r.historic {
+                ocw_weather::real::time::utc_label(r.data_ms)
+            } else {
+                format!("{} UTC", ocw_weather::real::time::hh_mm_utc(r.data_ms))
+            });
+        }
+        if data.is_empty() {
+            data.push(r.status.name().into());
+        }
+        let text = data.join(", ");
+        let text: String = text.chars().take(36).collect();
+        rows.push(Row {
+            label: "Data".into(),
+            value: Some(text),
+            left: None,
+            right: None,
+            confirm: None,
+        });
+    }
+    rows
+}
+
 /// The status line under the title of a weather page (`focus`: the
 /// focused item of the preset grid).
 pub fn status(page: Page, w: &WeatherState, focus: usize) -> String {
     let Some(now) = w.now else {
         return "No weather from the server yet".into();
     };
+    if page == Page::WeatherReal {
+        return real_status(w, focus);
+    }
     let by = match &w.event {
         Some(_) => "set by the event's organizer".to_owned(),
         None => format!("set by {}", w.control),
@@ -298,7 +415,7 @@ pub fn status(page: Page, w: &WeatherState, focus: usize) -> String {
             format!("Now: {} - each change: {t}", now.hud())
         }
         _ => format!(
-            "Now: {}, wind {:.0} m/s {}, road {} - {by}",
+            "Now: {}, wind {:.0} m/s {}, road {} - {by}{}",
             now.hud(),
             now.wind_mps,
             ocw_weather::state::compass(now.wind_from_deg),
@@ -306,8 +423,46 @@ pub fn status(page: Page, w: &WeatherState, focus: usize) -> String {
                 format!("snowy ({:.0} %)", w.ground.snow_cover() * 100.0)
             } else {
                 wet_label(&w.ground)
-            }
+            },
+            w.real
+                .as_ref()
+                .filter(|r| !r.attribution.is_empty())
+                .map(|r| format!(" - {}", r.attribution))
+                .unwrap_or_default()
         ),
+    }
+}
+
+/// The real weather page's status: the attribution (or why there is no
+/// data), a note, who sets it; on the day row the day's story.
+fn real_status(w: &WeatherState, focus: usize) -> String {
+    let by = match &w.event {
+        Some(_) => "set by the event's organizer".to_owned(),
+        None => format!("set by {}", w.control),
+    };
+    if focus == 2
+        && let Some(d) = DAYS.get(w.machine.day)
+    {
+        let when = if d.date.is_empty() {
+            "now".to_owned()
+        } else {
+            format!("{} {}", d.date, d.time)
+        };
+        return format!("{} ({when}): {} - Enter rides it", d.title, d.about);
+    }
+    match &w.real {
+        None => format!("Off. Data source: {} - {by}", w.machine.provider.name()),
+        Some(r) => {
+            let mut s = if r.attribution.is_empty() {
+                format!("Real weather: {}", r.source_label())
+            } else {
+                r.attribution.clone()
+            };
+            if let Some(n) = &r.note {
+                s += &format!(" - {n}");
+            }
+            s + &format!(" - {by}")
+        }
     }
 }
 
@@ -330,6 +485,32 @@ pub fn grid(w: &WeatherState) -> MenuGrid {
             }])
             .collect(),
     }
+}
+
+/// Whether a new ride starts in real weather (spec §14 Phase 9, 9A, S7):
+/// `--real-weather BOOL`, else the setting `weather.real` (on by
+/// default) – except screenshot and capture runs (reproducible) and unit
+/// tests (no network).
+pub fn real_at_start(world: &World, args: &crate::Args) -> bool {
+    if cfg!(test) {
+        return false;
+    }
+    let setting = world
+        .get_resource::<crate::settings::UserSettings>()
+        .is_none_or(|us| us.value("weather.real") == crate::settings::registry::Value::Bool(true));
+    args.real_weather
+        .unwrap_or(setting && args.screenshot.is_none() && args.capture.is_none())
+}
+
+/// The request for real weather from the machine's data source.
+pub fn real_message(world: &World) -> Vec<u8> {
+    let provider = world
+        .get_resource::<WeatherState>()
+        .map_or(Choice::Automatic, |w| w.machine.provider);
+    crate::client::ClientCore::weather_message(&ocw_protocol::WeatherChange {
+        real: Some(provider),
+        ..Default::default()
+    })
 }
 
 pub struct WeatherPlugin;
@@ -370,6 +551,7 @@ fn update_weather(
             .as_ref()
             .map_or_else(Default::default, |w| w.ground),
         mode: info.map(|i| i.mode),
+        real: info.and_then(|i| i.real.clone()),
         // Whole seconds: the menu's rows change once a second, not every frame.
         target: info.and_then(|i| i.target.map(|(t, left)| (t, left.ceil()))),
         sim_seed: info.map_or(0, |i| i.sim_seed),
@@ -382,11 +564,38 @@ fn update_weather(
 }
 
 /// Runs `weather ARGS`: shows the weather or asks the server for a change.
+/// `weather day …` runs its lines (the time machine, then real weather);
+/// `weather real` without a source takes the machine's (`weather.provider`).
 fn run_weather(world: &mut World, args: &[&str]) -> Result<String, String> {
     let now = world.resource::<Time>().elapsed_secs_f64();
+    if let Ok(ocw_weather::command::WeatherCommand::Day { title, lines }) =
+        ocw_weather::command::parse(args)
+    {
+        let may = world.resource::<ClientState>().0.may_change_weather();
+        if !may {
+            let who = world.resource::<ClientState>().0.weather_control();
+            return Err(format!("{who} sets the weather of this ride"));
+        }
+        let mut console = world.resource_mut::<ConsoleState>();
+        for l in &lines {
+            console.queue(l.clone());
+        }
+        return Ok(format!("ride a day: {title} ({})", lines.join(", ")));
+    }
+    let provider = world.resource::<WeatherState>().machine.provider;
+    let source;
+    let args: Vec<&str> = match args {
+        ["real"] | ["real", "in", _] => {
+            source = provider.id().to_owned();
+            let mut a = vec!["real", source.as_str()];
+            a.extend_from_slice(&args[1..]);
+            a
+        }
+        a => a.to_vec(),
+    };
     let (said, bytes) = {
         let mut c = world.resource_mut::<ClientState>();
-        ocw_client::weather::run(&mut c.0, args, now)?
+        ocw_client::weather::run(&mut c.0, &args, now)?
     };
     if let Some(bytes) = bytes {
         world.resource::<Link>().send_bytes(bytes);
@@ -426,6 +635,94 @@ fn run_seed(world: &mut World, arg: Option<&str>) -> Result<String, String> {
         "random weather seed {seed}: {}",
         machine::random(seed).0
     ))
+}
+
+/// Saves a setting (the machine's real weather choices persist; spec §14
+/// Phase 9, S7); without a configuration directory (tests) only for now.
+fn save_setting(world: &mut World, key: &str, value: &str) {
+    if let Some(mut us) = world.get_resource_mut::<crate::settings::UserSettings>()
+        && us.settings.set(key, value).is_ok()
+        && let Err(e) = us.save()
+    {
+        debug!("{key} not saved: {e}");
+    }
+}
+
+/// `weather.real on|off`: real weather in this ride (asks the server) and
+/// for the next rides (setting `weather.real`, saved).
+fn run_real(world: &mut World, arg: Option<&str>) -> Result<String, String> {
+    let on = match arg {
+        None => {
+            let st = world.resource::<WeatherState>();
+            return Ok(match &st.real {
+                Some(r) => ocw_client::weather::real_line(r),
+                None => format!(
+                    "real weather off (data source {})",
+                    st.machine.provider.name()
+                ),
+            });
+        }
+        Some("on" | "true" | "1") => true,
+        Some("off" | "false" | "0") => false,
+        Some(a) => return Err(format!("on or off, not {a}")),
+    };
+    save_setting(world, "weather.real", if on { "on" } else { "off" });
+    if world.get_resource::<ClientState>().is_none() {
+        return Ok(format!(
+            "real weather {} for the next ride",
+            if on { "on" } else { "off" }
+        ));
+    }
+    let real_now = world.resource::<WeatherState>().real.is_some();
+    match (on, real_now) {
+        (true, _) => run_weather(world, &["real"]),
+        (false, true) => run_weather(world, &["fixed"]),
+        (false, false) => Ok("real weather off".into()),
+    }
+}
+
+/// `weather.provider [SOURCE|next|prev]`: the real weather's data source
+/// (setting `weather.provider`, saved); while the weather is real the
+/// server switches to it.
+fn run_provider(world: &mut World, arg: Option<&str>) -> Result<String, String> {
+    let current = world.resource::<WeatherState>().machine.provider;
+    let Some(a) = arg else {
+        return Ok(format!(
+            "data source of real weather: {} (automatic, meteoswiss, dwd, metno, open-meteo)",
+            current.name()
+        ));
+    };
+    let choice = match a {
+        "next" => current.step(1),
+        "prev" | "previous" => current.step(-1),
+        a => Choice::parse(a).ok_or_else(|| {
+            format!("one of automatic, meteoswiss, dwd, metno, open-meteo; not {a}")
+        })?,
+    };
+    world.resource_mut::<WeatherState>().machine.provider = choice;
+    save_setting(world, "weather.provider", choice.id());
+    let real_now = world.resource::<WeatherState>().real.is_some();
+    if real_now && world.get_resource::<ClientState>().is_some() {
+        run_weather(world, &["real", choice.id()])
+    } else {
+        Ok(format!("data source of real weather: {}", choice.name()))
+    }
+}
+
+/// `weather.day [N|ID]`: the day of the "Ride a day" row.
+fn run_day(world: &mut World, arg: Option<&str>) -> Result<String, String> {
+    let mut st = world.resource_mut::<WeatherState>();
+    if let Some(a) = arg {
+        st.machine.day = match a.parse::<usize>() {
+            Ok(i) if i < DAYS.len() => i,
+            _ => DAYS
+                .iter()
+                .position(|d| d.id == a)
+                .ok_or_else(|| format!("a day 0-{} or its name (weather.days)", DAYS.len() - 1))?,
+        };
+    }
+    let d = &DAYS[st.machine.day];
+    Ok(format!("ride a day: {} ({})", d.title, d.about))
 }
 
 fn print_err(world: &mut World, cmd: &str, out: Result<String, String>) -> Result<String, String> {
@@ -504,6 +801,45 @@ fn register_commands(app: &mut App) {
     ))
     .console_command(ConsoleCommand::new(
         Permission::User,
+        Command::new("weather.real")
+            .about("Real weather from the providers in this ride and the next ones (saved): on or off")
+            .arg(opt_arg("on", "on or off (none: show it)")),
+        |world, m| {
+            let a = m.get_one::<String>("on").map(String::as_str);
+            let out = run_real(world, a);
+            print_err(world, "weather.real", out)
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("weather.provider")
+            .about("The data source of real weather (saved): automatic, meteoswiss, dwd, metno, open-meteo")
+            .arg(opt_arg("source", "a source, next or prev (none: show it)")),
+        |world, m| {
+            let a = m.get_one::<String>("source").map(String::as_str);
+            let out = run_provider(world, a);
+            print_err(world, "weather.provider", out)
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("weather.day")
+            .about("The day of the weather machine's Ride a day row (weather day NAME rides it)")
+            .arg(opt_arg("day", "its number or name (none: show it)")),
+        |world, m| {
+            let a = m.get_one::<String>("day").map(String::as_str);
+            let out = run_day(world, a);
+            print_err(world, "weather.day", out)
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("weather.days")
+            .about("The days to ride (weather day NAME): famous storms, heat and snow"),
+        |_, _| Ok(ocw_weather::command::days_list()),
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
         Command::new("weather.seed")
             .about("The seed of the weather machine's random weather and simulation")
             .arg(opt_arg("seed", "1-99999 (none: show it)")),
@@ -531,7 +867,123 @@ mod tests {
             may_change: may,
             event: None,
             sim_seed: 0,
+            real: None,
             machine: Machine::default(),
+        }
+    }
+
+    fn real_info(providers: &[ocw_weather::real::Provider]) -> RealInfo {
+        RealInfo {
+            choice: Choice::Automatic,
+            providers: providers.to_vec(),
+            attribution: ocw_weather::real::attribution(providers, false),
+            note: None,
+            status: ocw_weather::real::feed::Status::Live,
+            data_ms: 1_794_656_400_000,
+            historic: false,
+            station: Some("Vaduz (VAD)".into()),
+        }
+    }
+
+    /// World → Weather → Real weather (S7): on / off, the data source and
+    /// ride a day as console lines; the attribution under the title.
+    #[test]
+    fn the_real_weather_page() {
+        use ocw_weather::real::Provider;
+        let mut w = state("clear", true);
+        let r = rows(Page::Weather, &w);
+        assert_eq!(row_label(&r[1]), "Real weather:  off");
+        assert_eq!(r[1].confirm, Some(Activate::Open(Page::WeatherReal)));
+        let real = rows(Page::WeatherReal, &w);
+        assert_eq!(
+            real.iter().map(row_label).collect::<Vec<_>>(),
+            [
+                "Real weather:  < off >",
+                "Data source:  < Automatic >",
+                "Ride a day:  < Storm Lothar, 1999 >",
+            ]
+        );
+        assert_eq!(
+            real[0].confirm,
+            Some(Activate::Command("weather.real on".into()))
+        );
+        assert_eq!(
+            real[1].right.as_deref(),
+            Some("weather.provider meteoswiss")
+        );
+        assert_eq!(real[1].left.as_deref(), Some("weather.provider open-meteo"));
+        assert_eq!(real[2].right.as_deref(), Some("weather.day 2"));
+        assert_eq!(
+            real[2].confirm,
+            Some(Activate::Command("weather day lothar".into()))
+        );
+        assert!(status(Page::WeatherReal, &w, 0).starts_with("Off. Data source: Automatic"));
+        assert!(status(Page::WeatherReal, &w, 2).starts_with("Storm Lothar (1999-12-26 12:00)"));
+        // On: the providers on the machine's page, the data row, the
+        // attribution under the title.
+        w.real = Some(real_info(&[Provider::MeteoSwiss, Provider::MetNorway]));
+        w.mode = Some(ocw_weather::Mode::Real);
+        let r = rows(Page::Weather, &w);
+        assert_eq!(row_label(&r[0]), "Mode:  < real (Automatic) >");
+        assert_eq!(r[0].right.as_deref(), Some("weather fixed"));
+        assert_eq!(
+            row_label(&r[1]),
+            "Real weather:  on: MeteoSwiss, MET Norway"
+        );
+        let real = rows(Page::WeatherReal, &w);
+        assert_eq!(row_label(&real[0]), "Real weather:  < on >");
+        assert_eq!(
+            real[0].confirm,
+            Some(Activate::Command("weather.real off".into()))
+        );
+        assert_eq!(row_label(&real[3]), "Data:  Vaduz (VAD), 11:40 UTC");
+        assert!(real[3].confirm.is_none());
+        let s = status(Page::WeatherReal, &w, 0);
+        assert_eq!(s, "Weather: MeteoSwiss, MET Norway, CC BY 4.0 - set by you");
+        assert!(
+            status(Page::Weather, &w, 0).ends_with("Weather: MeteoSwiss, MET Norway, CC BY 4.0")
+        );
+        // A note and waiting for the data.
+        let mut waiting = real_info(&[]);
+        waiting.attribution.clear();
+        waiting.station = None;
+        waiting.data_ms = 0;
+        waiting.status = ocw_weather::real::feed::Status::Waiting;
+        waiting.note = Some("fetching the weather ...".into());
+        w.real = Some(waiting);
+        assert_eq!(
+            row_label(&rows(Page::Weather, &w)[1]),
+            "Real weather:  on: waiting for the data"
+        );
+        assert_eq!(
+            status(Page::WeatherReal, &w, 0),
+            "Real weather: waiting for the data - fetching the weather ... - set by you"
+        );
+        assert_eq!(row_label(&rows(Page::WeatherReal, &w)[3]), "Data:  waiting");
+        // Not the rider's: dimmed.
+        let mut host = state("clear", false);
+        host.real = Some(real_info(&[Provider::MetNorway]));
+        let r = rows(Page::WeatherReal, &host);
+        assert!(r[..3].iter().all(|r| r.confirm == Some(Activate::Disabled)));
+        assert!(status(Page::WeatherReal, &host, 0).ends_with("set by the host"));
+        // Every label fits and every line parses.
+        for d in 0..ocw_weather::real::days::DAYS.len() {
+            let mut w = state("clear", true);
+            w.machine.day = d;
+            w.machine.provider = Choice::Only(Provider::OpenMeteo);
+            for r in rows(Page::WeatherReal, &w) {
+                let l = row_label(&r);
+                assert!(
+                    l.chars().count() <= crate::ride::pages::MAX_ROW_CHARS,
+                    "{l}"
+                );
+                assert!(ocw_render::font::covers(&l), "{l}");
+            }
+            assert!(ocw_render::font::covers(&status(Page::WeatherReal, &w, 2)));
+            if let Some(Activate::Command(c)) = &rows(Page::WeatherReal, &w)[2].confirm {
+                let args: Vec<&str> = c.split_whitespace().skip(1).collect();
+                ocw_weather::command::parse(&args).unwrap();
+            }
         }
     }
 
@@ -548,15 +1000,15 @@ mod tests {
             labels(Page::Weather, &w),
             [
                 "Mode:  < fixed >",
-                "Real weather:  coming (Phase 9 S7)",
+                "Real weather:  off",
                 "Presets:  Heavy rain",
                 "Custom:  heavy rain 11 °C",
                 "Transition:  < 1 min >",
                 "Random weather:  < seed 1 >",
             ]
         );
-        // Real weather is dimmed (S7); the mode switches to the simulation.
-        assert_eq!(r[1].confirm, Some(Activate::Disabled));
+        // Real weather opens its page (S7); the mode switches to the simulation.
+        assert_eq!(r[1].confirm, Some(Activate::Open(Page::WeatherReal)));
         assert_eq!(r[0].right.as_deref(), Some("weather auto 1"));
         assert_eq!(r[4].right.as_deref(), Some("weather.transition 300"));
         assert_eq!(r[4].left.as_deref(), Some("weather.transition 0"));
@@ -775,9 +1227,23 @@ mod tests {
             m.apply_with(Action::Confirm, world_rows),
             Effect::Command("weather random 1 in 60".into())
         );
-        // A dimmed row does nothing.
-        m.apply_with(Action::Hover(1), world_rows);
-        assert_eq!(m.apply_with(Action::Confirm, world_rows), Effect::None);
-        assert!(m.dimmed()[1]);
+        // Real weather: its page (S7), Enter turns it on.
+        m.apply_with(Action::Click(1), world_rows);
+        assert_eq!(m.page(), Some(MenuPage::Sub(Page::WeatherReal)));
+        assert_eq!(
+            m.apply_with(Action::Confirm, world_rows),
+            Effect::Command("weather.real on".into())
+        );
+        assert_eq!(
+            m.apply_with(Action::Step(1, 1), world_rows),
+            Effect::Command("weather.provider meteoswiss".into())
+        );
+        m.apply_with(Action::Back, world_rows);
+        // A dimmed row does nothing (the guest's).
+        let guest = state("clear", false);
+        let guest_rows = |p: Page| rows(p, &guest);
+        m.apply_with(Action::Hover(0), guest_rows);
+        assert_eq!(m.apply_with(Action::Confirm, guest_rows), Effect::None);
+        assert!(m.dimmed()[0]);
     }
 }

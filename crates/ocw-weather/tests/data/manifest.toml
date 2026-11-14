@@ -1,0 +1,38 @@
+# Recorded provider answers for the real-weather tests (spec §14 Phase 9,
+# S7; crates/ocw-weather/tests/real_weather.rs). Small samples, recorded on
+# 2026-11-14 around 11:57 UTC by the developers with a generic User-Agent;
+# kept unchanged except where `changes` says so. All four providers publish
+# their data under CC BY 4.0, which allows copying and redistribution with
+# attribution (MET Norway also under NLOD 2.0; Open-Meteo's ERA5 history
+# contains modified Copernicus Climate Change Service information).
+
+[[file]]
+path = "openmeteo-forecast-vaduz.json"
+source = "https://api.open-meteo.com/v1/forecast?latitude=47.15&longitude=9.55&elevation=400&hourly=...&wind_speed_unit=ms&timeformat=unixtime&past_days=7&forecast_days=4"
+licence = "CC BY 4.0"
+attribution = "Weather data by Open-Meteo.com"
+
+[[file]]
+path = "openmeteo-archive-lothar-feldberg.json"
+source = "https://archive-api.open-meteo.com/v1/archive?latitude=47.85&longitude=8.05&elevation=1400&start_date=1999-12-26&end_date=1999-12-27&hourly=...&wind_speed_unit=ms&timeformat=unixtime"
+licence = "CC BY 4.0"
+attribution = "Weather data by Open-Meteo.com; contains modified Copernicus Climate Change Service information 1999 (ERA5)"
+
+[[file]]
+path = "metno-complete-vaduz.json"
+source = "https://api.met.no/weatherapi/locationforecast/2.0/complete?lat=47.15&lon=9.55&altitude=400"
+licence = "CC BY 4.0 / NLOD 2.0"
+attribution = "Data from MET Norway"
+changes = "timeseries shortened to its first 30 and last 3 entries (90 in the answer); whitespace removed"
+
+[[file]]
+path = "meteoswiss-vad-t-now.csv"
+source = "https://data.geo.admin.ch/ch.meteoschweiz.ogd-smn/vad/ogd-smn_vad_t_now.csv"
+licence = "CC BY 4.0"
+attribution = "Source: MeteoSwiss"
+
+[[file]]
+path = "dwd-10908-beob.csv"
+source = "https://opendata.dwd.de/weather/weather_reports/poi/10908-BEOB.csv"
+licence = "CC BY 4.0"
+attribution = "Source: Deutscher Wetterdienst"

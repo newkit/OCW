@@ -25,6 +25,9 @@ pub enum Mode {
     Fixed,
     /// The simulation evolves it (seeded).
     Simulated,
+    /// Real weather from the providers (S7): the server sets it from the
+    /// data for the session's place and moment ([`SessionWeather::set_real`]).
+    Real,
 }
 
 impl Mode {
@@ -32,6 +35,7 @@ impl Mode {
         match self {
             Self::Fixed => "fixed",
             Self::Simulated => "simulated",
+            Self::Real => "real",
         }
     }
 }
@@ -161,6 +165,27 @@ impl SessionWeather {
     pub fn set(&mut self, t: f64, target: WeatherState, transition_s: f64, settle_ground: bool) {
         self.change(t, target.clamped(), transition_s);
         self.mode = Mode::Fixed;
+        if self.immediate && settle_ground {
+            self.ground = Ground::settled(&self.to);
+        }
+    }
+
+    /// The real weather's next state (spec §14 Phase 9, S7): like
+    /// [`SessionWeather::set`], but the mode is [`Mode::Real`]; a target
+    /// equal to the current one changes nothing (no new revision).
+    pub fn set_real(
+        &mut self,
+        t: f64,
+        target: WeatherState,
+        transition_s: f64,
+        settle_ground: bool,
+    ) {
+        let target = target.clamped();
+        if self.mode == Mode::Real && self.to == target && !settle_ground {
+            return;
+        }
+        self.change(t, target, transition_s);
+        self.mode = Mode::Real;
         if self.immediate && settle_ground {
             self.ground = Ground::settled(&self.to);
         }
@@ -509,6 +534,32 @@ mod tests {
         let mut w = cold.clone();
         w.set(t, preset("clear").unwrap(), 0.0, true);
         assert_eq!(w.mode(), Mode::Fixed, "a set stops the simulation");
+    }
+
+    /// Real weather (S7): its own mode, eased like a set, the same target
+    /// again is no change; a set or the simulation ends it.
+    #[test]
+    fn real_weather_has_its_own_mode() {
+        let mut w = SessionWeather::new(1);
+        let rain = preset("rain").unwrap();
+        w.set_real(0.0, rain, 0.0, true);
+        assert_eq!(w.mode(), Mode::Real);
+        assert!(w.ground().wetness() > 0.5, "settled at once");
+        let r = w.revision();
+        w.set_real(10.0, rain, 20.0, false);
+        assert_eq!(w.revision(), r, "nothing new");
+        let drier = WeatherState {
+            precip_mm_h: 1.0,
+            ..rain
+        };
+        w.set_real(10.0, drier, 20.0, false);
+        assert_eq!(w.revision(), r + 1);
+        assert_eq!(w.transition_left_s(20.0), 10.0);
+        assert!(w.describe(20.0).ends_with("(real)"));
+        w.tick(20.0);
+        assert_eq!(w.mode(), Mode::Real, "the tick does not simulate");
+        w.set(30.0, preset("clear").unwrap(), 0.0, true);
+        assert_eq!(w.mode(), Mode::Fixed);
     }
 
     #[test]

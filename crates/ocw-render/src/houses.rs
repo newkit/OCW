@@ -6,7 +6,9 @@
 //! with the building material (`building.wesl`): every face carries its
 //! material layer(s) and façade code in the second texture coordinate,
 //! (along, up) in metres in the first, its colour (linear) in the vertex
-//! colour and the door's bay in the colour's alpha:
+//! colour and the door's bay in the colour's alpha (on walls with windows
+//! plus 64 × the building's light seed, [`Paint::light_seed`]: which
+//! windows are lit at night, deterministic per building):
 //!
 //! - `uv_b.x = lower layer + 16 × upper layer` (the upper layer above the
 //!   first storey: timber upper floors);
@@ -79,6 +81,21 @@ pub struct Paint {
     pub levels: u32,
     /// Door bay + 1 on this wall (0: none).
     pub door: u32,
+    /// The building's light seed (0 … [`LIGHT_SEEDS`] − 1; walls with
+    /// windows): its lit windows at night (`building.wesl`,
+    /// `building_material::window_light`).
+    pub light_seed: u32,
+}
+
+/// The number of light seeds (packed into the colour's alpha above the
+/// door's bay: exact in an f32).
+pub const LIGHT_SEEDS: u32 = 4096;
+
+/// Decodes the colour's alpha (the shader's twin): (door bay + 1, light
+/// seed).
+pub fn decode_alpha(a: f32) -> (u32, u32) {
+    let a = a.round() as u32;
+    (a % 64, a / 64)
 }
 
 impl Paint {
@@ -91,6 +108,7 @@ impl Paint {
             storey_dm: 0,
             levels: 0,
             door: 0,
+            light_seed: 0,
         }
     }
 
@@ -107,7 +125,11 @@ impl Paint {
             self.colour[0],
             self.colour[1],
             self.colour[2],
-            self.door as f32,
+            if self.window > 0 {
+                (self.door.min(63) + 64 * (self.light_seed % LIGHT_SEEDS)) as f32
+            } else {
+                self.door as f32
+            },
         ]
     }
 }
@@ -315,6 +337,8 @@ pub fn house_arrays(
         .filter(|w| usize::from(*w) < MAX_WINDOW_STYLES)
         .and_then(|w| windows.get(usize::from(w)).map(|s| (w, s)));
     let storey_dm = (h.storey_h * 10.0).round() as u32;
+    let seed = crate::house_style::seed_of(b);
+    let light_seed = (seed ^ (seed >> 29) ^ (seed >> 47)) as u32 % LIGHT_SEEDS;
     let wall_paint = |door: u32, has_windows: bool| Paint {
         lower: h.wall.layer,
         upper: h.upper.layer,
@@ -327,9 +351,9 @@ pub fn house_arrays(
         storey_dm,
         levels: u32::from(h.levels),
         door,
+        light_seed,
     };
     let door_at = if h.canopy { None } else { door_wall(&outline) };
-    let seed = crate::house_style::seed_of(b);
     // Walls (a canopy: the slab's edge; parapets above flat roofs, near).
     let parapet = if near && !h.shape.is_pitched() {
         h.parapet
@@ -1281,8 +1305,9 @@ mod tests {
                 assert!((storey - 3.0).abs() < 1e-4);
                 assert_eq!(levels, 2);
             }
-            if c[3] > 0.0 {
-                doors.insert(c[3] as u32);
+            let (door, _) = decode_alpha(c[3]);
+            if door > 0 {
+                doors.insert(door);
             }
         }
         assert_eq!(doors.len(), 1, "one door: {doors:?}");
@@ -1305,8 +1330,33 @@ mod tests {
             storey_dm: 28,
             levels: 4,
             door: 2,
+            light_seed: 4095,
         };
         assert_eq!(decode_uv_b(p.uv_b()), (1, 2, 3, 2.8, 4));
+        assert_eq!(decode_alpha(p.rgba()[3]), (2, 4095));
+        // Walls without windows carry no seed (the far LOD: alpha 0).
+        let plain = Paint { window: 0, ..p };
+        assert_eq!(decode_alpha(plain.rgba()[3]), (2, 0));
+        // Every wall of one building has the same seed, buildings differ.
+        let seeds: std::collections::BTreeSet<u32> = m
+            .uvs_b
+            .iter()
+            .zip(&m.colors)
+            .filter(|(u, _)| decode_uv_b(**u).2 > 0)
+            .map(|(_, c)| decode_alpha(c[3]).1)
+            .collect();
+        assert_eq!(seeds.len(), 1, "{seeds:?}");
+        let mut other = b.clone();
+        other.outline.iter_mut().for_each(|p| p[0] += 37.0);
+        let m2 = draw(&other, &h, Lod::Near);
+        let seed2 = m2
+            .uvs_b
+            .iter()
+            .zip(&m2.colors)
+            .find(|(u, _)| decode_uv_b(**u).2 > 0)
+            .map(|(_, c)| decode_alpha(c[3]).1)
+            .unwrap();
+        assert_ne!(Some(&seed2), seeds.iter().next());
     }
 
     #[test]

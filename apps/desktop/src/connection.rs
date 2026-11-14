@@ -76,6 +76,9 @@ pub struct WorldChangeInbox(pub Option<v1::WorldChange>);
 pub fn start_session_with(world: &mut World, route: Route, keep_link: bool) {
     let args = world.resource::<Args>().clone();
     let free = world.get_resource::<FreeRideSetup>().cloned();
+    // Where the session is on the globe (the server fetches real weather
+    // there; spec §14 Phase 9, S7): the package's origin, else the route's.
+    let geo_origin = free.as_ref().map(|f| f.origin).or(route.geo_origin());
     // The rider profile's weight and bike (physics profile id) go to
     // the server in the hello and into the prediction (spec §2.5,
     // §3.2.1); the look is cosmetic, for the other clients.
@@ -146,14 +149,24 @@ pub fn start_session_with(world: &mut World, route: Route, keep_link: bool) {
         ServerLink::Remote(Box::new(connect_remote(&args, spec)))
     } else if args.capture.is_some() {
         // Frame capture: the server shares the client's fixed-step game time.
-        ServerLink::Stepped(Box::new(SteppedServer::new(course, args.bots, start_m)))
+        ServerLink::Stepped(Box::new(SteppedServer::with_config(
+            course,
+            local_config_at(&args, start_m, geo_origin),
+        )))
     } else {
         ServerLink::Threaded(
-            LocalServer::spawn(course, args.bots, start_m)
+            LocalServer::spawn_with(course, local_config_at(&args, start_m, geo_origin))
                 .expect("failed to start local server thread"),
         )
     };
     server.send(client.hello());
+    // Real weather at the start of the ride (spec §14 Phase 9, 9A "default
+    // = real", S7): on the local servers, by the setting `weather.real`,
+    // not in screenshot / capture runs unless --real-weather true, never
+    // in unit tests (no network).
+    if !matches!(server, ServerLink::Remote(_)) && crate::weather::real_at_start(world, &args) {
+        server.send(crate::weather::real_message(world));
+    }
     // The rider's collision rules (spec §14 Phase 12A), if not the defaults.
     if let Some(m) = rules.rules_message() {
         server.send(m);
@@ -170,6 +183,30 @@ pub fn start_session_with(world: &mut World, route: Route, keep_link: bool) {
     });
     world.insert_resource(ClientState(client));
     world.insert_resource(SessionStart(now));
+}
+
+/// Runs `f` on this session's stepped local server (frame capture; tests
+/// replace its weather fetcher with recorded answers).
+#[cfg(test)]
+pub fn with_stepped_server<R>(world: &World, f: impl FnOnce(&mut SteppedServer) -> R) -> Option<R> {
+    let link = world.get_resource::<Link>()?;
+    let mut s = link.server.lock().ok()?;
+    match &mut *s {
+        ServerLink::Stepped(st) => Some(f(st)),
+        _ => None,
+    }
+}
+
+/// The local servers' configuration with the place on the globe.
+fn local_config_at(
+    args: &Args,
+    start_m: f64,
+    geo_origin: Option<(f64, f64)>,
+) -> ocw_server::ServerConfig {
+    ocw_server::ServerConfig {
+        geo_origin,
+        ..ocw_server::local::local_config(args.bots, start_m)
+    }
 }
 
 /// Connects to a remote server (`--server ADDR`). Bad options end the

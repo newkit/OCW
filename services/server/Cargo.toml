@@ -49,6 +49,9 @@ web-transport-quinn.workspace = true
 url.workspace = true
 time.workspace = true
 tokio ={ workspace = true, features = ["rt-multi-thread", "net", "io-util", "signal"] }
+# Real weather from the providers (spec §14 Phase 9, S7; `realweather::http`):
+# HTTPS with rustls on the server, never in the clients or the wasm build.
+ureq.workspace = true
 
 # The system clock in the browser (std's panics on wasm32-unknown-unknown).
 [target.'cfg(target_arch = "wasm32")'.dependencies]
