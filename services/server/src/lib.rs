@@ -80,6 +80,12 @@ pub struct ServerConfig {
     /// The real UTC instant (Unix ms) at the session's start; `None`: the
     /// system clock when the server is created (tests fix it).
     pub real_epoch_ms: Option<i64>,
+    /// Riders may put the Echo rider on the road ([`v1::EchoRequest`], the
+    /// echo test of spec §7): the local servers, `ocw-server --echo-bot`.
+    pub allow_echo_bot: bool,
+    /// Every session starts with the Echo rider at the start
+    /// (`ocw-server --echo-bot`).
+    pub echo_bot_at_start: bool,
 }
 
 pub use ocw_protocol::ClockAccess;
@@ -445,6 +451,7 @@ impl GameServer {
                 None
             }
             (C::Voice(req), Some(rider)) => Some(S::Voice(self.voice_grant(conn, rider, &req))),
+            (C::Echo(req), Some(rider)) => Some(self.echo_request(rider, req)),
             (C::Turn(turn), Some(rider)) => {
                 if let Some(net) = self.session.network() {
                     let choice = ocw_protocol::turn_choice(&turn, net);
@@ -556,7 +563,43 @@ impl GameServer {
             clock,
             world_access: ocw_protocol::access_to_wire(self.config.world_access),
             god_access: ocw_protocol::access_to_wire(self.config.god_access),
+            echo_bot: self.config.allow_echo_bot,
         })
+    }
+
+    /// The echo test (spec §7 *Echo bot*): the Echo rider on the road
+    /// (ahead of the asker) or away.
+    fn echo_request(&mut self, rider: RiderId, req: v1::EchoRequest) -> S {
+        let result = |ok: bool, message: String| S::DevResult(v1::DevCommandResult { ok, message });
+        if !self.config.allow_echo_bot {
+            return result(
+                false,
+                "this server has no Echo rider (ocw-server --echo-bot)".into(),
+            );
+        }
+        if !req.on {
+            return if self.session.remove_echo() {
+                tracing::info!(%rider, "echo rider removed");
+                result(true, "Echo rider gone".into())
+            } else {
+                result(true, "no Echo rider on the road".into())
+            };
+        }
+        let existed = self.session.echo_rider().is_some();
+        let near = (req.here || !existed).then_some(rider);
+        let id = self.session.place_echo(ECHO_NAME, near);
+        tracing::info!(%rider, echo = %id, here = req.here, "echo rider placed");
+        result(
+            true,
+            if near.is_some() {
+                format!(
+                    "Echo rider {:.0} m ahead: ride to it and speak",
+                    ocw_sim::session::ECHO_AHEAD_M
+                )
+            } else {
+                "Echo rider on the road".into()
+            },
+        )
     }
 
     /// A god-mode request from `rider` (spec §14 Phase 13): who may is
@@ -816,13 +859,17 @@ impl GameServer {
         {
             return out;
         }
+        let echo = self.session.echo_rider();
         let snapshot = v1::Snapshot {
             server_tick: self.session.tick(),
             riders: self
                 .session
                 .snapshot()
                 .iter()
-                .map(ocw_protocol::quantize)
+                .map(|r| v1::RiderUpdate {
+                    echo: Some(r.id) == echo,
+                    ..ocw_protocol::quantize(r)
+                })
                 .collect(),
             human_riders: self.riders.len() as u32,
             clock: Some(self.clock_message()),
@@ -846,8 +893,14 @@ fn new_session(course: Course, config: &ServerConfig) -> Session {
     for i in 0..config.bots {
         add_numbered_bot(&mut session, i);
     }
+    if config.allow_echo_bot && config.echo_bot_at_start {
+        session.place_echo(ECHO_NAME, None);
+    }
     session
 }
+
+/// The Echo rider's name tag (spec §7 *Echo bot*).
+pub const ECHO_NAME: &str = "Echo";
 
 /// The physics profile of a joining rider (spec §2.5, §3.2.1): the
 /// curated profile the hello names (`bike_profile`; unknown or absent:
@@ -1778,6 +1831,84 @@ mod tests {
         event_msg(v1::event_request::Req::Start(ocw_protocol::event_start(
             &spec, bots,
         )))
+    }
+
+    /// The echo test's rider (spec §7 *Echo bot*): placed on request
+    /// ahead of the asker, marked in the snapshots, not a human rider;
+    /// refused where the server does not allow it.
+    #[test]
+    fn echo_rider_on_request() {
+        let snapshot = |server: &mut GameServer| {
+            (0..TICKS_PER_BROADCAST)
+                .flat_map(|_| server.tick())
+                .find_map(|b| match decode_server(&b) {
+                    Ok(S::Snapshot(s)) => Some(s),
+                    _ => None,
+                })
+                .unwrap()
+        };
+        let ask = |server: &mut GameServer, conn, on, here| {
+            let r = server.handle(conn, &encode(&ocw_protocol::echo_request(on, here)));
+            match decode_server(&r[0]).unwrap() {
+                S::DevResult(d) => d,
+                other => panic!("{other:?}"),
+            }
+        };
+        let mut server = GameServer::new(
+            Route::test_loop(),
+            ServerConfig {
+                bots: 1,
+                allow_echo_bot: true,
+                ..Default::default()
+            },
+        );
+        let conn = server.connect();
+        let welcome = server.handle(conn, &hello(PROTOCOL_VERSION));
+        let S::Welcome(w) = decode_server(&welcome[0]).unwrap() else {
+            panic!("no welcome")
+        };
+        assert!(w.echo_bot);
+        assert_eq!(ocw_protocol::echo_rider(&snapshot(&mut server)), None);
+        let r = ask(&mut server, conn, true, false);
+        assert!(r.ok && r.message.contains("ahead"), "{r:?}");
+        let snap = snapshot(&mut server);
+        let echo = ocw_protocol::echo_rider(&snap).expect("an Echo rider");
+        let me = snap
+            .riders
+            .iter()
+            .find(|u| u.rider_id == w.rider_id)
+            .unwrap();
+        let e = snap.riders.iter().find(|u| u.rider_id == echo.0).unwrap();
+        assert_eq!(e.display_name, ECHO_NAME);
+        assert!(e.distance_cm > me.distance_cm, "ahead of the asker");
+        assert_eq!(snap.riders.iter().filter(|u| u.echo).count(), 1);
+        assert_eq!(snap.human_riders, 1, "not a human rider");
+        // Asked again (not "here"): it stays; "here" moves it.
+        let at = e.distance_cm;
+        ask(&mut server, conn, true, false);
+        let snap = snapshot(&mut server);
+        let e = snap.riders.iter().find(|u| u.echo).unwrap();
+        assert_eq!(e.distance_cm, at);
+        assert_eq!(e.rider_id, echo.0, "one Echo rider");
+        assert!(ask(&mut server, conn, false, false).ok);
+        assert_eq!(ocw_protocol::echo_rider(&snapshot(&mut server)), None);
+        // Not allowed: refused.
+        let mut server = local(0);
+        server.config.allow_echo_bot = false;
+        let conn = server.connect();
+        server.handle(conn, &hello(PROTOCOL_VERSION));
+        let r = ask(&mut server, conn, true, false);
+        assert!(!r.ok && r.message.contains("--echo-bot"));
+        // `ocw-server --echo-bot`: one at the start of the session.
+        let mut server = GameServer::new(
+            Route::test_loop(),
+            ServerConfig {
+                allow_echo_bot: true,
+                echo_bot_at_start: true,
+                ..Default::default()
+            },
+        );
+        assert!(ocw_protocol::echo_rider(&snapshot(&mut server)).is_some());
     }
 
     fn local(bots: u32) -> GameServer {

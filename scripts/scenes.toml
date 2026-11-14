@@ -87,6 +87,13 @@ at = ["2=menu open", "2.4=menu down", "2.8=menu down", "3.2=menu down", "3.6=men
 shot = 7
 
 [[scene]]
+name = "menu-audio-voice"
+description = "In-game menu: Settings -> Audio -> Voice with the voice echo test (spec 7, Echo bot: on, 300 ms delay) and the Echo rider standing ahead"
+args = ["--route", "hills", "--bots", "0", "--echo-bot"]
+at = ["2=menu open", "2.4=menu down", "2.8=menu down", "3.2=menu down", "3.6=menu down", "4=menu down", "4.4=menu select", "4.8=menu down", "5.2=menu down", "5.6=menu down", "6=menu select", "6.4=menu down", "6.8=menu down", "7.2=menu down", "7.6=menu select"]
+shot = 9.5
+
+[[scene]]
 name = "menu-workshop-bike"
 description = "In-game menu: Workshop -> Bike page of a rider profile (gravel bike, colours, kit) with the rider behind it"
 args = ["--route", "hills", "--bots", "0"]

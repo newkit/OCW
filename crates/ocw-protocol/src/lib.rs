@@ -131,6 +131,8 @@ pub fn quantize(s: &ocw_sim::RiderSnapshot) -> v1::RiderUpdate {
             v1::RiderMode::Riding
         } as i32,
         god: s.god.as_ref().map(|g| god_pose_to_wire(g, 0, false)),
+        // The server marks its Echo rider (spec §7 *Echo bot*).
+        echo: false,
     }
 }
 
@@ -488,6 +490,20 @@ pub fn voice_request(channel: v1::VoiceChannel, group: &str) -> v1::ClientMessag
         channel: channel as i32,
         group: group.to_owned(),
     }))
+}
+
+/// The echo test's request (spec §7 *Echo bot*): the Echo rider on the
+/// road (`here`: 20 m ahead of the asker) or away.
+pub fn echo_request(on: bool, here: bool) -> v1::ClientMessage {
+    client_message(v1::client_message::Msg::Echo(v1::EchoRequest { on, here }))
+}
+
+/// The session's Echo rider in a snapshot, if there is one.
+pub fn echo_rider(s: &v1::Snapshot) -> Option<RiderId> {
+    s.riders
+        .iter()
+        .find(|u| u.echo)
+        .map(|u| RiderId(u.rider_id))
 }
 
 /// Who may change the world clock (spec §14 Phase 9, 9D).
@@ -946,6 +962,7 @@ mod tests {
             clock: None,
             world_access: 2,
             god_access: 1,
+            echo_bot: true,
         };
         let bytes = encode(&server_message(S::Welcome(welcome.clone())));
         assert_eq!(decode_server(&bytes).unwrap(), S::Welcome(welcome));
@@ -1160,5 +1177,51 @@ mod tests {
             ocw_core::RiderLook::from(&back),
             ocw_core::RiderLook::default()
         );
+    }
+
+    /// The echo test's messages survive the wire (spec §7 *Echo bot*).
+    #[test]
+    fn echo_bot_round_trip() {
+        let m = echo_request(true, true);
+        let back = decode_client(&encode(&m)).unwrap();
+        assert_eq!(
+            back,
+            v1::client_message::Msg::Echo(v1::EchoRequest {
+                on: true,
+                here: true
+            })
+        );
+        let snap = v1::Snapshot {
+            riders: vec![
+                v1::RiderUpdate {
+                    rider_id: 3,
+                    ..Default::default()
+                },
+                v1::RiderUpdate {
+                    rider_id: 7,
+                    display_name: "Echo".into(),
+                    echo: true,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let msg = server_message(v1::server_message::Msg::Snapshot(snap));
+        let Ok(v1::server_message::Msg::Snapshot(back)) = decode_server(&encode(&msg)) else {
+            panic!("no snapshot")
+        };
+        assert_eq!(echo_rider(&back), Some(RiderId(7)));
+        assert!(!back.riders[0].echo, "others are not");
+        let w = v1::Welcome {
+            echo_bot: true,
+            ..Default::default()
+        };
+        let msg = server_message(v1::server_message::Msg::Welcome(w));
+        let Ok(v1::server_message::Msg::Welcome(back)) = decode_server(&encode(&msg)) else {
+            panic!("no welcome")
+        };
+        assert!(back.echo_bot);
+        // Older peers: absent means no Echo rider, no echo bot.
+        assert_eq!(echo_rider(&v1::Snapshot::default()), None);
     }
 }

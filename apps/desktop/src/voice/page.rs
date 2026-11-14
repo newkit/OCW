@@ -121,6 +121,24 @@ pub fn rows(page: Page, settings: &Settings, info: &VoiceMenuInfo) -> Vec<Row> {
             setting_row(settings, "voice.spatial", "Spatial voice"),
             setting_row(settings, "voice.max_voices", "Voices heard at most"),
         ],
+        // Settings → Audio → Voice: the voice bus and the echo test (spec
+        // §7 *Echo bot*).
+        Page::AudioVoice => vec![
+            Row {
+                confirm: Some(Activate::Command("audio.play test-voice".into())),
+                ..setting_row(settings, "audio.voice", "Voice volume")
+            },
+            Row {
+                // The echo test as it runs (also on by `--echo-bot`).
+                value: Some(match (on("audio.echo_bot"), info.echo.is_empty()) {
+                    (_, false) => format!("on - {}", info.echo),
+                    (true, true) => "on".into(),
+                    (false, true) => "off".into(),
+                }),
+                ..setting_row(settings, "audio.echo_bot", "Echo test")
+            },
+            setting_row(settings, "audio.echo_delay_ms", "Echo delay (ms)"),
+        ],
         Page::VoiceParticipants => {
             if info.participants.is_empty() {
                 return vec![Row {
@@ -174,6 +192,7 @@ mod tests {
             outputs: vec!["Speakers".into()],
             input_missing: false,
             output_missing: true,
+            echo: "speak now".into(),
             participants: vec![
                 MenuParticipant {
                     identity: "rider-2".into(),
@@ -235,6 +254,38 @@ mod tests {
             cmd("set voice.spatial off")
         );
         assert_eq!(row(&r, "Voices heard at most").value.as_deref(), Some("10"));
+    }
+
+    /// Settings → Audio → Voice (spec §7 *Echo bot*, §3.2.1).
+    #[test]
+    fn audio_voice_page_has_the_echo_test() {
+        // The echo test off: no state from the controller.
+        let off = VoiceMenuInfo {
+            echo: String::new(),
+            ..info()
+        };
+        let r = rows(Page::AudioVoice, &Settings::default(), &off);
+        assert!(r.len() < crate::menu::model::MAX_ITEMS, "fits one page");
+        let vol = row(&r, "Voice volume");
+        assert_eq!(vol.confirm, cmd("audio.play test-voice"));
+        let echo = row(&r, "Echo test");
+        assert_eq!(echo.value.as_deref(), Some("off"));
+        assert_eq!(echo.confirm, cmd("set audio.echo_bot on"));
+        let delay = row(&r, "Echo delay (ms)");
+        assert_eq!(delay.value.as_deref(), Some("300"));
+        assert_eq!(delay.right.as_deref(), Some("set audio.echo_delay_ms 400"));
+        assert_eq!(delay.left.as_deref(), Some("set audio.echo_delay_ms 200"));
+        let (s, _) = Settings::parse("[audio]\necho_bot = true\n").unwrap();
+        let r = rows(Page::AudioVoice, &s, &info());
+        let echo = row(&r, "Echo test");
+        assert_eq!(echo.value.as_deref(), Some("on - speak now"));
+        assert_eq!(echo.confirm, cmd("set audio.echo_bot off"));
+        // On by `--echo-bot` (the setting off): shown as it runs.
+        let r = rows(Page::AudioVoice, &Settings::default(), &info());
+        assert_eq!(
+            row(&r, "Echo test").value.as_deref(),
+            Some("on - speak now")
+        );
     }
 
     #[test]

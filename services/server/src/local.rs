@@ -69,6 +69,9 @@ impl LocalServer {
                 // God mode for the single player (spec §14 Phase 13A).
                 god_access: crate::ClockAccess::Anyone,
                 real_epoch_ms: None,
+                // The echo test for the single player (spec §7).
+                allow_echo_bot: true,
+                echo_bot_at_start: false,
             },
         );
         let thread = thread::Builder::new()
@@ -144,6 +147,9 @@ impl SteppedServer {
                 // God mode for the single player (spec §14 Phase 13A).
                 god_access: crate::ClockAccess::Anyone,
                 real_epoch_ms: None,
+                // The echo test for the single player (spec §7).
+                allow_echo_bot: true,
+                echo_bot_at_start: false,
             },
         );
         let conn = server.connect();

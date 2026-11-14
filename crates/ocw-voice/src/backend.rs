@@ -3,6 +3,7 @@
 //! backend is [`crate::livekit::LiveKitBackend`]; [`NullBackend`] stands in
 //! when voice is not built in, [`MockBackend`] in tests.
 
+use crate::echo::EchoParams;
 use crate::mix::Cue;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -33,6 +34,20 @@ pub enum BackendCommand {
     },
     /// A confirmation sound.
     PlayCue(Cue),
+    /// The echo test's local loopback (spec §7 *Echo bot*): the processed
+    /// microphone, delayed, played as the voice [`crate::echo::ECHO_IDENTITY`]
+    /// (placed with `SetPlacement` like any voice). Active, it opens the
+    /// audio devices even without a call.
+    SetEcho(EchoParams),
+}
+
+/// Audio levels for the HUD (0 … 1).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Levels {
+    /// The microphone, while the echo test listens.
+    pub input: f32,
+    /// The echo as played.
+    pub echo: f32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -74,6 +89,10 @@ pub trait VoiceBackend: Send {
     fn output_devices(&mut self) -> Vec<String>;
     fn send(&mut self, cmd: BackendCommand);
     fn poll(&mut self) -> Vec<BackendEvent>;
+    /// The levels the backend last measured.
+    fn levels(&self) -> Levels {
+        Levels::default()
+    }
 }
 
 /// Voice is not built into this app (cargo feature `voice` off).

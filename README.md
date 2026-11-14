@@ -694,6 +694,7 @@ event status | event cancel | event dismiss
 | `--screenshot PATH`, `--screenshot-delay S` | Save a screenshot after S seconds (default 5), then exit (JPEG with EXIF time; `.png`: PNG) |
 | `--capture DIR`, `--capture-fps N`, `--capture-seconds S`, `--capture-warmup S` | Save every frame with a fixed game-time step (smooth videos) as `frame_NNNNN.png`, plus `audio.wav` (game sound in step with the frames), `metadata.txt` (ffmpeg metadata) and `still.jpg` (last frame), then exit |
 | `--no-audio` | No sound: open no audio output (frame capture opens none anyway; videos still get the mixer's sound) |
+| `--echo-bot` | The voice echo test: an Echo rider on the road plays your microphone back, delayed, when you are near it (`voice.echo`, see *Voice chat*) |
 | `--no-vsync` | Draw as fast as possible instead of waiting for the display's refresh (benchmarks) |
 | `--max-fps N` | Draw at most N frames per second (with `--no-vsync`: a steady rate even where the display gives no refresh, e.g. on a locked screen) |
 | `--log-fps S` | Log the real render rate every S seconds (`render rate fps=… worst_ms=…`; wall clock, also during `--capture`) |
@@ -1105,9 +1106,10 @@ one rider for yourself), the microphone and speaker and spatial voice (riders
 further away on the road sound quieter; only the nearest 10 are heard).
 Console: `voice.status`, `voice.mute-mic [on|off|toggle]`,
 `voice.mute-speaker [on|off|toggle]`, `voice.mute RIDER`, `voice.group NAME`
-(a private room; `--leave` goes back), `voice.devices`; settings
-`voice.enabled`, `voice.volume`, `voice.spatial`, `voice.max_voices`,
-`voice.input`, `voice.output`.
+(a private room; `--leave` goes back), `voice.devices`, `voice.echo` (the
+echo test, below); settings `voice.enabled`, `voice.volume`,
+`voice.spatial`, `voice.max_voices`, `voice.input`, `voice.output`,
+`audio.echo_bot`, `audio.echo_delay_ms`.
 
 Voice needs three things:
 
@@ -1158,6 +1160,39 @@ livekit_two_participants -- --nocapture` connects two simulated
 participants (no sound card needed): one speaks a tone, the other must hear
 it and see the mute. Without the variables the test passes without doing
 anything, so `cargo test --workspace` stays offline.
+
+**Echo test** (spec §7 *Echo bot*). To check your microphone and voice
+alone: `voice.echo on` (or Settings → Audio → Voice → Echo test, or start
+with `--echo-bot`) puts an **Echo** rider on the road 20 m
+ahead of you, standing at the right edge. Ride up to it: within 30 m the HUD
+shows "ECHO TEST - speak now" with a microphone and an echo level meter, and
+everything you say comes back **300 ms later** from the Echo rider's place –
+attenuated by distance and panned like any rider's voice, at the voice
+volume; between 30 and 60 m less and less is recorded, so the echo fades
+out as you ride away. Muting your microphone (M) means nothing is echoed,
+muting the speaker (Shift+M) silences the echo. Console: `voice.echo
+[on|off|here|delay MS|status]` – `here` moves the Echo rider 20 m ahead of
+you again, `delay` sets 20 ms to 3 s (setting `audio.echo_delay_ms`, Echo
+delay on the same page, 100 ms steps; on / off is `audio.echo_bot`); `voice.echo` alone shows its state and levels. The
+Echo rider is in no event or standings and earns nothing.
+
+On a solo ride the app echoes by itself (the microphone through the voice
+processing – with the `voice` feature: WebRTC's noise suppression, gain
+control and echo cancellation – into a delay line and the voice mix; no
+voice server, no Opus). A shared server allows it only with `ocw-server
+--echo-bot` (an Echo rider at the start of every session). With a LiveKit
+server the echo can also go over the real voice path (Opus and the SFU): run
+the echo participant as the Echo rider (the server logs its id and the
+room):
+
+```bash
+OCW_LIVEKIT_URL=… OCW_LIVEKIT_API_KEY=… OCW_LIVEKIT_API_SECRET=… \
+  CC=clang-21 CXX=clang++-21 cargo run -p ocw-voice --features livekit --example echo_participant -- ROOM ECHO_RIDER_ID [DELAY_MS]
+```
+
+The clients then hear it like any rider and switch their own loopback off.
+`OCW_ECHO_DEMO=echo.wav cargo test -p ocw-voice --test echo_loopback`
+writes a demo of a synthetic voice riding past the Echo rider.
 
 ### Headless runs
 

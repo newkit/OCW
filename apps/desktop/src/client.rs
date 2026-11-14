@@ -147,6 +147,10 @@ pub struct ClientCore {
     voice_offered: bool,
     /// Human riders in the session (from the last snapshot).
     human_riders: u32,
+    /// The server lets riders put an Echo rider on the road
+    /// (`Welcome.echo_bot`) and the one on the road (spec §7 *Echo bot*).
+    echo_bot: bool,
+    echo_rider: Option<RiderId>,
     /// The session's world clock (spec §14 Phase 9): the server's, advanced
     /// smoothly between snapshots, and its last message.
     clock: ocw_sky::ClockPredictor,
@@ -203,6 +207,8 @@ impl ClientCore {
             last_snapshot_at: None,
             voice_offered: false,
             human_riders: 0,
+            echo_bot: false,
+            echo_rider: None,
             clock: ocw_sky::ClockPredictor::default(),
             clock_info: None,
             world_access: None,
@@ -407,6 +413,7 @@ impl ClientCore {
                 let id = RiderId(w.rider_id);
                 self.rider_id = Some(id);
                 self.voice_offered = w.voice;
+                self.echo_bot = w.echo_bot;
                 self.world_access = Some(ocw_protocol::access_from_wire(w.world_access));
                 self.god_access = Some(ocw_protocol::access_from_wire(w.god_access));
                 if let Some(c) = &w.clock {
@@ -574,6 +581,7 @@ impl ClientCore {
         self.stats.last_snapshot_tick = s.server_tick;
         self.last_snapshot_at = Some((s.server_tick, now_s));
         self.human_riders = s.human_riders;
+        self.echo_rider = ocw_protocol::echo_rider(s);
         if let Some(c) = &s.clock {
             self.on_clock(c, now_s);
         }
@@ -1327,6 +1335,21 @@ impl ClientCore {
         encode(&client_message(C::Voice(req)))
     }
 
+    /// The echo test's request (spec §7 *Echo bot*).
+    pub fn echo_request_message(on: bool, here: bool) -> Vec<u8> {
+        encode(&ocw_protocol::echo_request(on, here))
+    }
+
+    /// The server lets riders put an Echo rider on the road.
+    pub fn echo_bot_allowed(&self) -> bool {
+        self.echo_bot
+    }
+
+    /// The session's Echo rider (from the last snapshot).
+    pub fn echo_rider(&self) -> Option<RiderId> {
+        self.echo_rider
+    }
+
     pub fn rider_id(&self) -> Option<RiderId> {
         self.rider_id
     }
@@ -1755,6 +1778,42 @@ mod tests {
             ocw_protocol::voice_identity(h.client.rider_id().unwrap())
         );
         assert!(!g.token.is_empty() && g.error.is_empty());
+    }
+
+    /// The echo test (spec §7 *Echo bot*): the client asks, the Echo rider
+    /// appears in the view with its name tag and is known as the echo.
+    #[test]
+    fn echo_rider_appears_on_request() {
+        let server = GameServer::new(
+            route(),
+            ServerConfig {
+                bots: 1,
+                allow_echo_bot: true,
+                ..Default::default()
+            },
+        );
+        let mut h = Harness::with(
+            server,
+            ClientCore::new(route(), "Tester", RiderProfile::default()),
+        );
+        assert!(h.client.echo_bot_allowed());
+        h.ride(100.0, 0.3);
+        assert_eq!(h.client.echo_rider(), None);
+        h.send(&ClientCore::echo_request_message(true, false));
+        assert!(
+            matches!(h.notices.last(), Some(Notice::CommandResult(m)) if m.contains("Echo rider")),
+            "{:?}",
+            h.notices.last()
+        );
+        h.ride(100.0, 0.3);
+        let echo = h.client.echo_rider().expect("the Echo rider");
+        let view = h.client.view(h.time_s, 1.0);
+        let e = view.iter().find(|r| r.id == echo).expect("in the view");
+        assert_eq!(e.name, "Echo");
+        assert_eq!(h.client.human_riders(), 1, "not counted as a human rider");
+        h.send(&ClientCore::echo_request_message(false, false));
+        h.ride(100.0, 0.3);
+        assert_eq!(h.client.echo_rider(), None);
     }
 
     #[test]
@@ -2845,6 +2904,7 @@ mod tests {
             clock: None,
             world_access: 0,
             god_access: 0,
+            echo_bot: false,
         })));
         h.receive(&welcome);
         assert!(matches!(h.notices.last(), Some(Notice::Rejected(_))));

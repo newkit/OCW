@@ -37,6 +37,10 @@ struct Args {
     /// Simulate as fast as possible instead of in real time.
     #[arg(long)]
     fast: bool,
+    /// Put an Echo rider (the voice echo test, spec §7) at the start of
+    /// every session and let riders move it (`voice.echo here`).
+    #[arg(long)]
+    echo_bot: bool,
     /// Who may change the world clock with the time machine (spec §14
     /// Phase 9, 9D): the host (the rider connected longest), anyone, or
     /// nobody (the clock stays real time).
@@ -314,8 +318,17 @@ fn main() {
             world_access: args.world_control,
             god_access: args.god_control,
             real_epoch_ms: None,
+            allow_echo_bot: args.echo_bot,
+            echo_bot_at_start: args.echo_bot,
         },
     );
+    if let Some(echo) = server.session().echo_rider() {
+        tracing::info!(
+            echo = %echo,
+            identity = %ocw_protocol::voice_identity(echo),
+            "echo rider at the start (voice echo test; the echo_participant example joins as it)"
+        );
+    }
     let mut net = args.listen.map(|addr| listen(&args, addr));
     let stop = net.as_ref().map(NetServer::shutdown_on_signal);
     let tick = Duration::from_secs_f64(SIM_DT);
