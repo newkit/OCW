@@ -1,0 +1,953 @@
+# The parts catalogue of the workshop (spec §14 Phase 4, 4B, 4H, 4I).
+#
+# One [[part]] per catalogue entry. Names are generic and unbranded (spec
+# Phase 8 Q11: no real brands in the game); `hearts` is ceil(median EUR) of
+# the real reference products in assets/parts-sources.toml (key `sources`;
+# 1 heart = 1 EUR, rounded up). Never edit it by hand: run
+# `cargo run -p ocw-assets -- parts reprice` after changing the sources;
+# `cargo run -p ocw-assets -- parts validate` checks the file (ids, prices,
+# base parts, the brand deny-list, model references, source age).
+#
+# Keys: id (`<slot>.<kind>[.<tier>]`, stable, never reused), slot, tier
+# (base, entry, mid, upper, top), name, hearts, weight_g (typical; pairs for
+# wheels, tyres, pedals), fits (bike types: road, tt, gravel, mtb), standard
+# (optional: speeds, shifting, brake, wheel, width_mm, family), profile
+# (frames: the physics profile, spec §2.5), rolling / aero / efficiency
+# (class steps, 4G; physics from W3), model (frames: the bike model
+# bike-<profile>; base parts: "stock", the frame's own part; others: a part
+# variant of the generator, crates/ocw-assets/src/bikes.rs), sources, priced.
+#
+# Base parts (tier base, 0 hearts) are the stock parts every frame comes
+# with: one per slot and bike type, so a bike is always complete. Weights
+# are typical catalogue values, to be confirmed with the price research.
+
+# --- Base parts --------------------------------------------------------------
+
+[[part]]
+id = "frame.road.base"
+slot = "frame"
+tier = "base"
+name = "Standard road frameset, alloy"
+hearts = 0
+weight_g = 1350
+fits = ["road"]
+profile = "road"
+model = "bike-road"
+
+[[part]]
+id = "frame.road-aero.base"
+slot = "frame"
+tier = "base"
+name = "Aero road frameset, alloy"
+hearts = 0
+weight_g = 1450
+fits = ["road"]
+profile = "road-aero"
+model = "bike-road-aero"
+
+[[part]]
+id = "frame.road-climbing.base"
+slot = "frame"
+tier = "base"
+name = "Light road frameset, alloy"
+hearts = 0
+weight_g = 1200
+fits = ["road"]
+profile = "road-climbing"
+model = "bike-road-climbing"
+
+[[part]]
+id = "frame.tt.base"
+slot = "frame"
+tier = "base"
+name = "Time-trial frameset, alloy"
+hearts = 0
+weight_g = 2000
+fits = ["tt"]
+profile = "tt"
+model = "bike-tt"
+
+[[part]]
+id = "frame.gravel.base"
+slot = "frame"
+tier = "base"
+name = "Gravel frameset, alloy"
+hearts = 0
+weight_g = 1550
+fits = ["gravel"]
+profile = "gravel"
+model = "bike-gravel"
+
+[[part]]
+id = "frame.mtb.base"
+slot = "frame"
+tier = "base"
+name = "Cross-country hardtail frame, alloy"
+hearts = 0
+weight_g = 1750
+fits = ["mtb"]
+profile = "mtb"
+model = "bike-mtb"
+
+[[part]]
+id = "wheels.road.base"
+slot = "wheels"
+tier = "base"
+name = "Stock road wheelset"
+hearts = 0
+weight_g = 2000
+fits = ["road"]
+standard = { wheel = "700c" }
+model = "stock"
+
+[[part]]
+id = "wheels.tt.base"
+slot = "wheels"
+tier = "base"
+name = "Stock time-trial wheelset"
+hearts = 0
+weight_g = 1900
+fits = ["tt"]
+standard = { wheel = "700c" }
+model = "stock"
+
+[[part]]
+id = "wheels.gravel.base"
+slot = "wheels"
+tier = "base"
+name = "Stock gravel wheelset"
+hearts = 0
+weight_g = 1950
+fits = ["gravel"]
+standard = { wheel = "700c" }
+model = "stock"
+
+[[part]]
+id = "wheels.mtb.base"
+slot = "wheels"
+tier = "base"
+name = "Stock 29-inch wheelset"
+hearts = 0
+weight_g = 2000
+fits = ["mtb"]
+standard = { wheel = "29" }
+model = "stock"
+
+[[part]]
+id = "tyres.road.base"
+slot = "tyres"
+tier = "base"
+name = "Stock road tyres 26 mm (pair)"
+hearts = 0
+weight_g = 660
+fits = ["road", "tt"]
+standard = { wheel = "700c", width_mm = 26 }
+model = "stock"
+
+[[part]]
+id = "tyres.gravel.base"
+slot = "tyres"
+tier = "base"
+name = "Stock gravel tyres 40 mm (pair)"
+hearts = 0
+weight_g = 1000
+fits = ["gravel"]
+standard = { wheel = "700c", width_mm = 40 }
+model = "stock"
+
+[[part]]
+id = "tyres.mtb.base"
+slot = "tyres"
+tier = "base"
+name = "Stock trail tyres 29 x 2.3 in (pair)"
+hearts = 0
+weight_g = 1500
+fits = ["mtb"]
+standard = { wheel = "29", width_mm = 58 }
+model = "stock"
+
+[[part]]
+id = "groupset.road.base"
+slot = "groupset"
+tier = "base"
+name = "Stock road groupset"
+hearts = 0
+weight_g = 3100
+fits = ["road", "tt"]
+standard = { speeds = 11, shifting = "mech", family = "road" }
+model = "stock"
+
+[[part]]
+id = "groupset.gravel.base"
+slot = "groupset"
+tier = "base"
+name = "Stock gravel 1x11 groupset"
+hearts = 0
+weight_g = 3000
+fits = ["gravel"]
+standard = { speeds = 11, shifting = "mech", family = "gravel" }
+model = "stock"
+
+[[part]]
+id = "groupset.mtb.base"
+slot = "groupset"
+tier = "base"
+name = "Stock trail 1x12 groupset"
+hearts = 0
+weight_g = 2800
+fits = ["mtb"]
+standard = { speeds = 12, shifting = "mech", family = "mtb" }
+model = "stock"
+
+[[part]]
+id = "crankset.road.base"
+slot = "crankset"
+tier = "base"
+name = "Stock road crankset"
+hearts = 0
+weight_g = 850
+fits = ["road", "tt", "gravel"]
+model = "stock"
+
+[[part]]
+id = "crankset.mtb.base"
+slot = "crankset"
+tier = "base"
+name = "Stock trail crankset"
+hearts = 0
+weight_g = 700
+fits = ["mtb"]
+model = "stock"
+
+[[part]]
+id = "cassette.road.base"
+slot = "cassette"
+tier = "base"
+name = "Stock road cassette"
+hearts = 0
+weight_g = 300
+fits = ["road", "tt", "gravel"]
+model = "stock"
+
+[[part]]
+id = "cassette.mtb.base"
+slot = "cassette"
+tier = "base"
+name = "Stock wide-range cassette"
+hearts = 0
+weight_g = 450
+fits = ["mtb"]
+model = "stock"
+
+[[part]]
+id = "chain.standard.base"
+slot = "chain"
+tier = "base"
+name = "Stock chain"
+hearts = 0
+weight_g = 270
+fits = ["road", "tt", "gravel", "mtb"]
+model = "stock"
+
+[[part]]
+id = "cockpit.road.base"
+slot = "cockpit"
+tier = "base"
+name = "Stock alloy bar and stem"
+hearts = 0
+weight_g = 550
+fits = ["road"]
+model = "stock"
+
+[[part]]
+id = "cockpit.tt.base"
+slot = "cockpit"
+tier = "base"
+name = "Stock base bar with extensions"
+hearts = 0
+weight_g = 900
+fits = ["tt"]
+model = "stock"
+
+[[part]]
+id = "cockpit.gravel.base"
+slot = "cockpit"
+tier = "base"
+name = "Stock flared bar and stem"
+hearts = 0
+weight_g = 560
+fits = ["gravel"]
+model = "stock"
+
+[[part]]
+id = "cockpit.mtb.base"
+slot = "cockpit"
+tier = "base"
+name = "Stock flat bar and stem"
+hearts = 0
+weight_g = 480
+fits = ["mtb"]
+model = "stock"
+
+[[part]]
+id = "bar_tape.standard.base"
+slot = "bar_tape"
+tier = "base"
+name = "Stock bar tape"
+hearts = 0
+weight_g = 70
+fits = ["road", "tt", "gravel"]
+model = "stock"
+
+[[part]]
+id = "bar_tape.grips.base"
+slot = "bar_tape"
+tier = "base"
+name = "Stock grips"
+hearts = 0
+weight_g = 120
+fits = ["mtb"]
+model = "stock"
+
+[[part]]
+id = "saddle.standard.base"
+slot = "saddle"
+tier = "base"
+name = "Stock saddle"
+hearts = 0
+weight_g = 250
+fits = ["road", "tt", "gravel", "mtb"]
+model = "stock"
+
+[[part]]
+id = "seatpost.alloy.base"
+slot = "seatpost"
+tier = "base"
+name = "Stock alloy seatpost"
+hearts = 0
+weight_g = 250
+fits = ["road", "gravel", "mtb"]
+model = "stock"
+
+[[part]]
+id = "seatpost.tt.base"
+slot = "seatpost"
+tier = "base"
+name = "Stock aero seatpost"
+hearts = 0
+weight_g = 300
+fits = ["tt"]
+model = "stock"
+
+[[part]]
+id = "pedals.road.base"
+slot = "pedals"
+tier = "base"
+name = "Stock road pedals (pair)"
+hearts = 0
+weight_g = 300
+fits = ["road", "tt"]
+model = "stock"
+
+[[part]]
+id = "pedals.spd.base"
+slot = "pedals"
+tier = "base"
+name = "Stock two-sided pedals (pair)"
+hearts = 0
+weight_g = 380
+fits = ["gravel", "mtb"]
+model = "stock"
+
+[[part]]
+id = "bottle_cages.plastic.base"
+slot = "bottle_cages"
+tier = "base"
+name = "Stock plastic bottle cage (each)"
+hearts = 0
+weight_g = 40
+fits = ["road", "tt", "gravel", "mtb"]
+model = "stock"
+
+[[part]]
+id = "lights.none.base"
+slot = "lights"
+tier = "base"
+name = "No lights"
+hearts = 0
+weight_g = 0
+fits = ["road", "tt", "gravel", "mtb"]
+model = "stock"
+
+[[part]]
+id = "computer.none.base"
+slot = "computer"
+tier = "base"
+name = "No bike computer"
+hearts = 0
+weight_g = 0
+fits = ["road", "tt", "gravel", "mtb"]
+model = "stock"
+
+[[part]]
+id = "bag.none.base"
+slot = "bag"
+tier = "base"
+name = "No bag"
+hearts = 0
+weight_g = 0
+fits = ["road", "tt", "gravel", "mtb"]
+model = "stock"
+
+# --- frame -------------------------------------------------------------------
+
+[[part]]
+id = "frame.road.mid"
+slot = "frame"
+tier = "mid"
+name = "Alloy road frameset"
+hearts = 1390
+weight_g = 1650
+fits = ["road"]
+profile = "road"
+model = "bike-road"
+sources = "frame.road.alloy"
+priced = 2026-11-13
+
+[[part]]
+id = "frame.road.upper"
+slot = "frame"
+tier = "upper"
+name = "Carbon road frameset"
+hearts = 2839
+weight_g = 1250
+fits = ["road"]
+profile = "road"
+model = "bike-road"
+sources = "frame.road.carbon-mid"
+priced = 2026-11-13
+
+[[part]]
+id = "frame.road-climbing.top"
+slot = "frame"
+tier = "top"
+name = "Lightweight climbing frameset, carbon"
+hearts = 5279
+weight_g = 950
+fits = ["road"]
+profile = "road-climbing"
+model = "bike-road-climbing"
+sources = "frame.road.top"
+priced = 2026-11-13
+
+[[part]]
+id = "frame.road-aero.top"
+slot = "frame"
+tier = "top"
+name = "Aero race frameset, carbon"
+hearts = 5279
+weight_g = 1250
+fits = ["road"]
+profile = "road-aero"
+aero = 1
+model = "bike-road-aero"
+sources = "frame.road.top"
+priced = 2026-11-13
+
+[[part]]
+id = "frame.tt.top"
+slot = "frame"
+tier = "top"
+name = "Time-trial frameset, carbon"
+hearts = 5999
+weight_g = 1800
+fits = ["tt"]
+profile = "tt"
+model = "bike-tt"
+sources = "frame.tt"
+priced = 2026-11-13
+
+[[part]]
+id = "frame.gravel.upper"
+slot = "frame"
+tier = "upper"
+name = "Carbon gravel frameset"
+hearts = 2799
+weight_g = 1350
+fits = ["gravel"]
+profile = "gravel"
+model = "bike-gravel"
+sources = "frame.gravel.carbon"
+priced = 2026-11-13
+
+[[part]]
+id = "frame.mtb.upper"
+slot = "frame"
+tier = "upper"
+name = "Carbon cross-country hardtail frame"
+hearts = 2699
+weight_g = 1500
+fits = ["mtb"]
+profile = "mtb"
+model = "bike-mtb"
+sources = "frame.mtb.carbon"
+priced = 2026-11-13
+
+# --- groupset ----------------------------------------------------------------
+
+[[part]]
+id = "groupset.road-mech.entry"
+slot = "groupset"
+tier = "entry"
+name = "Endurance 11-speed mechanical groupset"
+hearts = 951
+weight_g = 2950
+fits = ["road"]
+standard = { speeds = 11, shifting = "mech", brake = "disc", family = "road" }
+model = "groupset-mech"
+sources = "groupset.road.entry"
+priced = 2026-11-13
+
+[[part]]
+id = "groupset.road-mech.mid"
+slot = "groupset"
+tier = "mid"
+name = "Endurance 12-speed mechanical groupset"
+hearts = 1441
+weight_g = 2700
+fits = ["road", "tt"]
+standard = { speeds = 12, shifting = "mech", brake = "disc", family = "road" }
+model = "groupset-mech"
+sources = "groupset.road.mid-mech"
+priced = 2026-11-13
+
+[[part]]
+id = "groupset.road-electronic.mid"
+slot = "groupset"
+tier = "mid"
+name = "Endurance 12-speed electronic groupset"
+hearts = 1817
+weight_g = 2850
+fits = ["road", "tt"]
+standard = { speeds = 12, shifting = "electronic", brake = "disc", family = "road" }
+model = "groupset-electronic"
+sources = "groupset.road.mid-electronic"
+priced = 2026-11-13
+
+[[part]]
+id = "groupset.road-electronic.upper"
+slot = "groupset"
+tier = "upper"
+name = "Race 12-speed electronic groupset, upper tier"
+hearts = 2549
+weight_g = 2600
+fits = ["road", "tt"]
+standard = { speeds = 12, shifting = "electronic", brake = "disc", family = "road" }
+efficiency = 1
+model = "groupset-electronic"
+sources = "groupset.road.upper"
+priced = 2026-11-13
+
+[[part]]
+id = "groupset.road-electronic.top"
+slot = "groupset"
+tier = "top"
+name = "Race 12-speed electronic groupset"
+hearts = 4135
+weight_g = 2450
+fits = ["road", "tt"]
+standard = { speeds = 12, shifting = "electronic", brake = "disc", family = "road" }
+efficiency = 1
+model = "groupset-electronic-top"
+sources = "groupset.road.top"
+priced = 2026-11-13
+
+[[part]]
+id = "groupset.gravel.mid"
+slot = "groupset"
+tier = "mid"
+name = "Gravel 1x12 electronic groupset"
+hearts = 1415
+weight_g = 2800
+fits = ["gravel"]
+standard = { speeds = 12, shifting = "electronic", brake = "disc", family = "gravel" }
+model = "groupset-gravel-electronic"
+sources = "groupset.gravel.mid"
+priced = 2026-11-13
+
+[[part]]
+id = "groupset.gravel.top"
+slot = "groupset"
+tier = "top"
+name = "Gravel electronic groupset, top tier"
+hearts = 2479
+weight_g = 2550
+fits = ["gravel"]
+standard = { speeds = 12, shifting = "electronic", brake = "disc", family = "gravel" }
+efficiency = 1
+model = "groupset-gravel-electronic"
+sources = "groupset.gravel.top"
+priced = 2026-11-13
+
+[[part]]
+id = "groupset.mtb.mid"
+slot = "groupset"
+tier = "mid"
+name = "Trail 1x12 groupset"
+hearts = 1240
+weight_g = 2500
+fits = ["mtb"]
+standard = { speeds = 12, shifting = "mech", brake = "disc", family = "mtb" }
+model = "groupset-mtb"
+sources = "groupset.mtb.mid"
+priced = 2026-11-13
+
+[[part]]
+id = "groupset.mtb.top"
+slot = "groupset"
+tier = "top"
+name = "Cross-country 1x12 electronic groupset"
+hearts = 2450
+weight_g = 2200
+fits = ["mtb"]
+standard = { speeds = 12, shifting = "electronic", brake = "disc", family = "mtb" }
+efficiency = 1
+model = "groupset-mtb-electronic"
+sources = "groupset.mtb.top"
+priced = 2026-11-13
+
+# --- crankset ----------------------------------------------------------------
+
+[[part]]
+# cosmetic: no physics class
+id = "crankset.road.power"
+slot = "crankset"
+tier = "upper"
+name = "Road crankset with dual power meter"
+hearts = 899
+weight_g = 720
+fits = ["road", "tt", "gravel"]
+model = "crank-power"
+sources = "crankset.power"
+priced = 2026-11-13
+
+# --- wheels ------------------------------------------------------------------
+
+[[part]]
+id = "wheels.road-alloy.entry"
+slot = "wheels"
+tier = "entry"
+name = "Alloy training wheelset"
+hearts = 299
+weight_g = 1900
+fits = ["road", "tt"]
+standard = { wheel = "700c" }
+model = "wheel-alloy-training"
+sources = "wheels.road.alloy-entry"
+priced = 2026-11-13
+
+[[part]]
+id = "wheels.road-alloy.mid"
+slot = "wheels"
+tier = "mid"
+name = "Alloy performance wheelset"
+hearts = 600
+weight_g = 1600
+fits = ["road", "tt"]
+standard = { wheel = "700c" }
+model = "wheel-alloy-performance"
+sources = "wheels.road.alloy-mid"
+priced = 2026-11-13
+
+[[part]]
+id = "wheels.road-carbon.mid"
+slot = "wheels"
+tier = "mid"
+name = "Carbon 45 mm wheelset"
+hearts = 1415
+weight_g = 1450
+fits = ["road", "tt"]
+standard = { wheel = "700c" }
+aero = 1
+model = "wheel-carbon-45"
+sources = "wheels.road.carbon-mid"
+priced = 2026-11-13
+
+[[part]]
+id = "wheels.road-carbon.top"
+slot = "wheels"
+tier = "top"
+name = "Carbon 50 mm race wheelset"
+hearts = 3900
+weight_g = 1350
+fits = ["road", "tt"]
+standard = { wheel = "700c" }
+aero = 1
+model = "wheel-carbon-50"
+sources = "wheels.road.carbon-top"
+priced = 2026-11-13
+
+[[part]]
+id = "wheels.tt.disc"
+slot = "wheels"
+tier = "top"
+name = "Disc rear wheel (with 80 mm front from the set)"
+hearts = 2750
+weight_g = 1000
+fits = ["tt"]
+standard = { wheel = "700c" }
+aero = 2
+model = "wheel-disc-tt"
+sources = "wheels.tt.disc"
+priced = 2026-11-13
+
+[[part]]
+id = "wheels.gravel.carbon"
+slot = "wheels"
+tier = "upper"
+name = "Carbon gravel wheelset"
+hearts = 2050
+weight_g = 1450
+fits = ["gravel"]
+standard = { wheel = "700c" }
+model = "wheel-gravel-carbon"
+sources = "wheels.gravel.carbon"
+priced = 2026-11-13
+
+# --- tyres -------------------------------------------------------------------
+
+[[part]]
+id = "tyres.road.training"
+slot = "tyres"
+tier = "entry"
+name = "Training road tyres 28 mm (pair)"
+hearts = 61
+weight_g = 640
+fits = ["road", "tt"]
+standard = { wheel = "700c", width_mm = 28 }
+rolling = 1
+model = "tyre-road-28-training"
+sources = "tyres.road.training"
+priced = 2026-11-13
+
+[[part]]
+id = "tyres.road.performance"
+slot = "tyres"
+tier = "upper"
+name = "Performance road tyres 28 mm (pair)"
+hearts = 164
+weight_g = 540
+fits = ["road", "tt"]
+standard = { wheel = "700c", width_mm = 28 }
+rolling = -1
+model = "tyre-road-28"
+sources = "tyres.road.performance"
+priced = 2026-11-13
+
+[[part]]
+id = "tyres.road.race"
+slot = "tyres"
+tier = "top"
+name = "Time-trial tyres 25 mm (pair)"
+hearts = 190
+weight_g = 460
+fits = ["road", "tt"]
+standard = { wheel = "700c", width_mm = 25 }
+rolling = -2
+model = "tyre-road-25-tt"
+sources = "tyres.road.race"
+priced = 2026-11-13
+
+[[part]]
+id = "tyres.gravel.fast"
+slot = "tyres"
+tier = "upper"
+name = "Fast gravel tyres 40 mm (pair)"
+hearts = 140
+weight_g = 900
+fits = ["gravel"]
+standard = { wheel = "700c", width_mm = 40 }
+rolling = -1
+model = "tyre-gravel-40"
+sources = "tyres.gravel"
+priced = 2026-11-13
+
+[[part]]
+id = "tyres.mtb.xc"
+slot = "tyres"
+tier = "upper"
+name = "Cross-country tyres 29 x 2.25 in (pair)"
+hearts = 120
+weight_g = 1300
+fits = ["mtb"]
+standard = { wheel = "29", width_mm = 57 }
+rolling = -1
+model = "tyre-mtb-xc"
+sources = "tyres.mtb"
+priced = 2026-11-13
+
+# --- cockpit -----------------------------------------------------------------
+
+[[part]]
+id = "cockpit.road.carbon"
+slot = "cockpit"
+tier = "upper"
+name = "Carbon handlebar and alloy stem"
+hearts = 405
+weight_g = 420
+fits = ["road"]
+model = "cockpit-carbon"
+sources = "cockpit.road.carbon"
+priced = 2026-11-13
+
+[[part]]
+id = "cockpit.road.integrated"
+slot = "cockpit"
+tier = "top"
+name = "Integrated carbon aero cockpit"
+hearts = 679
+weight_g = 380
+fits = ["road"]
+aero = 1
+model = "cockpit-integrated"
+sources = "cockpit.road.integrated"
+priced = 2026-11-13
+
+[[part]]
+# cosmetic on a road bike: the time-trial position is in the tt profile
+id = "cockpit.tt.extensions"
+slot = "cockpit"
+tier = "mid"
+name = "Clip-on aero extensions"
+hearts = 198
+weight_g = 450
+fits = ["road"]
+model = "cockpit-extensions"
+sources = "cockpit.tt.extensions"
+priced = 2026-11-13
+
+# --- saddle ------------------------------------------------------------------
+
+[[part]]
+id = "saddle.road.top"
+slot = "saddle"
+tier = "top"
+name = "Short-nose carbon saddle"
+hearts = 310
+weight_g = 160
+fits = ["road", "tt", "gravel"]
+model = "saddle-short-nose"
+sources = "saddle.top"
+priced = 2026-11-13
+
+# --- seatpost ----------------------------------------------------------------
+
+[[part]]
+id = "seatpost.carbon"
+slot = "seatpost"
+tier = "upper"
+name = "Carbon seatpost"
+hearts = 240
+weight_g = 190
+fits = ["road", "gravel", "mtb"]
+model = "seatpost-carbon"
+sources = "seatpost.carbon"
+priced = 2026-11-13
+
+# --- pedals ------------------------------------------------------------------
+
+[[part]]
+id = "pedals.road.top"
+slot = "pedals"
+tier = "top"
+name = "Carbon road pedals (pair)"
+hearts = 230
+weight_g = 230
+fits = ["road", "tt"]
+model = "pedals-road-carbon"
+sources = "pedals.road.top"
+priced = 2026-11-13
+
+[[part]]
+id = "pedals.spd.mid"
+slot = "pedals"
+tier = "mid"
+name = "Two-sided off-road pedals (pair)"
+hearts = 150
+weight_g = 340
+fits = ["gravel", "mtb"]
+model = "pedals-spd"
+sources = "pedals.spd.mid"
+priced = 2026-11-13
+
+# --- bottle_cages ------------------------------------------------------------
+
+[[part]]
+id = "bottle_cages.carbon"
+slot = "bottle_cages"
+tier = "upper"
+name = "Carbon bottle cage (each)"
+hearts = 31
+weight_g = 20
+fits = ["road", "tt", "gravel", "mtb"]
+model = "cage-carbon"
+sources = "bottle_cages.carbon"
+priced = 2026-11-13
+
+# --- lights ------------------------------------------------------------------
+
+[[part]]
+id = "lights.set"
+slot = "lights"
+tier = "mid"
+name = "Front and rear light set"
+hearts = 80
+weight_g = 120
+fits = ["road", "gravel", "mtb"]
+model = "lights-set"
+sources = "lights.set"
+priced = 2026-11-13
+
+# --- computer ----------------------------------------------------------------
+
+[[part]]
+# cosmetic: the HUD's bike-computer skin
+id = "computer.top"
+slot = "computer"
+tier = "top"
+name = "Large-screen bike computer with out-front mount"
+hearts = 660
+weight_g = 210
+fits = ["road", "tt", "gravel", "mtb"]
+model = "computer-large"
+sources = "computer.top"
+priced = 2026-11-13
+
+# --- bar_tape ----------------------------------------------------------------
+
+[[part]]
+id = "bar_tape.mid"
+slot = "bar_tape"
+tier = "mid"
+name = "Thick tacky bar tape"
+hearts = 40
+weight_g = 90
+fits = ["road", "gravel"]
+model = "bar-tape-tacky"
+sources = "bar_tape.mid"
+priced = 2026-11-13
+
+# --- bag ---------------------------------------------------------------------
+
+[[part]]
+id = "bag.top_tube"
+slot = "bag"
+tier = "mid"
+name = "Top-tube bag"
+hearts = 55
+weight_g = 150
+fits = ["road", "gravel", "mtb"]
+aero = -1
+model = "bag-top-tube"
+sources = "bag.top_tube"
+priced = 2026-11-13
