@@ -2873,9 +2873,21 @@ All test runs execute on the build machines (`scripts/remote.sh MACHINE run
   videos of agent worktrees (default: every `.claude/worktrees/*`) into the
   main checkout's `test-output/` and its `index.md`; run it after each agent
   or merge. It never overwrites, so running it again is harmless.
-- **The art project** (`make art-gather`, `art-sheets`, `art-render`,
+- **The art project** (`make art-collect`, `art-gather`, `art-sheets`, `art-render`,
   `art-diary`, `art-publish`): a video per build day from all of this; see
   [art/ART-PROJECT.md](art/ART-PROJECT.md).
+
+Release builds are published as GitHub Releases (`release/README.md` has the
+build notes); screenshots and videos from development
+are not in the repository: they are stored as one zip per day on the GitHub
+release `build-history`; new test runs land in the git-ignored `test-output/`.
+The art project's local archive is `art/build-history/`: its media are
+git-ignored, and its masked text files are tracked in git (`index.md`,
+`SHA256SUMS`, per day `journal.md`, `journal.json`, `tokens.json`; `make
+art-check`). An hourly systemd user timer collects yesterday and today into
+it. Install it with `make art-install-timer` from the main checkout, check it
+with `make art-timer-status`, and run `sudo loginctl enable-linger $USER` once.
+It is described in `art/ART-PROJECT.md` §5.1.
 
 ### Scene harness
 

@@ -126,6 +126,7 @@ footer { padding: 0 16px 24px; font-size: 12px; color: var(--muted); }
 <main id="cards"></main>
 <section class="panel" id="questions"></section>
 <section class="panel" id="janitor"></section>
+<section class="panel" id="art"></section>
 <footer>View of the machines in config/machines.toml, polled over SSH every 5 s (also machines disabled for building: read-only probes); on the machines it only changes the janitor's cleanup of build artefacts (target/) when a disk fills up. Enabled/Disabled and the build slots (with the token) go to config/build-machines.toml, which scripts/remote.sh reads. Open questions: from SPECIFICATION.md of the main checkout. JSON: <a href="api/status">/api/status</a></footer>
 <script>
 "use strict";
@@ -455,6 +456,31 @@ function renderJanitor(j, now) {
   $("janitor").innerHTML = html;
 }
 
+// Art project: the hourly collector's last run (test-output/build-log/DAY/art.json,
+// art/ART-PROJECT.md §5.1). `undefined`: the dashboard does not look (hidden).
+function renderArt(a) {
+  const el = $("art");
+  if (a === undefined) { el.style.display = "none"; return; }
+  el.style.display = "";
+  if (!a) {
+    el.innerHTML = `<h2>Art project <span class="badge warn">no run yet</span></h2>` +
+      `<div class="empty">The hourly collector has not run yet (make art-install-timer).</div>`;
+    return;
+  }
+  const ok = a.status === "ok" && !a.late;
+  const bits = [`last collector run ${esc((a.end || a.start || "").slice(11, 16))}` +
+    (a.age_s != null ? ` (${dur(a.age_s)} ago)` : "")];
+  if (a.new_files != null) bits.push(`${esc(a.new_files)} new file${a.new_files === 1 ? "" : "s"}`);
+  if (a.media != null) bits.push(`${esc(a.media)} media today`);
+  if (a.mask_check) bits.push(`mask check ${esc(a.mask_check)}`);
+  if (a.sheets) bits.push("contact sheets");
+  let html = `<h2>Art project <span class="badge ${ok ? "ok" : "warn"}">${esc(a.status || "?")}${a.late ? " · late" : ""}</span></h2>` +
+    `<div class="line">${bits.join(" · ")}</div>`;
+  if (a.late) html += `<div class="line warnt">No collector run for over 2.5 h: check the timer (make art-timer-status).</div>`;
+  for (const e of a.errors || []) html += `<div class="cmd">${esc(e)}</div>`;
+  el.innerHTML = html;
+}
+
 let lastStatus = null;
 function render(st) {
   if (!st) return;
@@ -485,6 +511,7 @@ function render(st) {
   $("cards").innerHTML = st.machines.map((m) => card(m, now)).join("");
   renderQuestions(st.questions);
   renderJanitor(janitorState, now);
+  renderArt(st.art);
   $("updated").textContent = "updated " + new Date(now * 1000).toLocaleTimeString();
 }
 

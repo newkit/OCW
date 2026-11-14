@@ -4,13 +4,13 @@
     art/diary.py fetch   [DAY...]   download and unpack the day zips from the
                                     GitHub release `build-history`
     art/diary.py gather  [DAY...]   collect every image, video, sound, text and
-                                    log of the day into artwork/build-history/DAY/
+                                    log of the day into art/build-history/DAY/
     art/diary.py stamp   [DAY...]   write the ISO 8601 capture time into every
                                     archived PNG/MP4 that has none (gather does it)
     art/diary.py prompts [DAY...]   the user's prompts of the day (from the Claude
                                     Code transcripts, masked) – journal runs it
     art/diary.py journal [DAY...]   write DAY/journal.md + journal.json (commits,
-                                    merges, spec versions, tests, media)
+                                    merges, spec versions, tests, media; masked)
     art/diary.py sheet   DAY        contact sheets of the day's media (for
                                     writing the day's script)
     art/diary.py render  [DAY...]   render the day video(s) from art/days/DAY.toml
@@ -18,16 +18,30 @@
     art/diary.py publish [DAY...]   zip the day folders and upload zips and
                                     videos to the release `build-history`
     art/diary.py all     [DAY...]   gather + journal + render + diary
+    art/diary.py collect [--sheets|--no-sheets] [DAY...]
+                                    the hourly collector (scripts/art-collect.sh):
+                                    gather + journal of yesterday and today, the
+                                    mask check, contact sheets in the 23:xx run;
+                                    status in test-output/build-log/DAY/art.json
+    art/diary.py check-masked [--fix]
+                                    fail if a tracked text file of the archive
+                                    (index.md, SHA256SUMS, DAY/journal.*,
+                                    DAY/tokens.json) holds a private pattern;
+                                    --fix masks them in place
 
 DAY is YYYY-MM-DD; without DAY: every day that has a script in art/days/.
 Needs Python 3.11+ (tomllib), ffmpeg/ffprobe with libass, and `gh` for
-fetch/publish. Media stay out of git (spec §11.3): everything lands in the
-git-ignored artwork/build-history/.
+fetch/publish. Media stay out of git (spec §11.3): they land in the
+git-ignored art/build-history/; only its masked text files are tracked.
+Runs never overlap: every command but check-masked takes the lock
+art/build-history/.lock (scripts/art-collect.sh takes the same one).
 """
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
+import fcntl
 import hashlib
 import json
 import math
@@ -38,6 +52,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import time
 import tomllib
 import wave
 from array import array
@@ -46,10 +61,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 ART = ROOT / "art"
 DAYS = ART / "days"
-HIST = ROOT / "artwork" / "build-history"
+# The archive (ART-PROJECT §2): media git-ignored, masked text tracked.
+# OCW_ART_HISTORY moves it (tests); its old place was artwork/build-history/.
+HIST = Path(os.environ.get("OCW_ART_HISTORY") or ROOT / "art" / "build-history")
+OLD_HIST = ROOT / "artwork" / "build-history"
 OUT = HIST / "diary"
 WORK = HIST / ".work"
-TEST_OUTPUT = ROOT / "test-output"
+TEST_OUTPUT = Path(os.environ.get("OCW_TEST_OUTPUT") or ROOT / "test-output")
 FONTS = ROOT / "crates" / "ocw-render" / "assets" / "fonts"
 RELEASE = "build-history"
 
@@ -68,6 +86,86 @@ PINK, VIOLET, GOLD, INK = "FF1472", "3A2F55", "C98A00", "2B2B3A"
 
 def log(*a):
     print(*a, file=sys.stderr, flush=True)
+
+
+def set_history(path: Path):
+    """Points the tool at another archive (tests, OCW_ART_HISTORY)."""
+    global HIST, OUT, WORK
+    HIST = Path(path)
+    OUT = HIST / "diary"
+    WORK = HIST / ".work"
+
+
+def check_old_place():
+    """The archive moved from artwork/build-history/ to art/build-history/
+    (2026-11-14): refuse to work on an empty new place while the old one
+    still holds it."""
+    if os.environ.get("OCW_ART_HISTORY") or not OLD_HIST.is_dir():
+        return
+    if not any(OLD_HIST.iterdir()):
+        return
+    rel_old, rel_new = "artwork/build-history", "art/build-history"
+    if HIST.is_dir() and any(p.name != ".lock" for p in HIST.iterdir()):
+        raise SystemExit(
+            f"The build history is in both {rel_old}/ and {rel_new}/. It lives in {rel_new}/ now "
+            f"(art/ART-PROJECT.md §2): move what is left in {rel_old}/ over by hand, then remove it.")
+    raise SystemExit(
+        f"The build history is still at its old place, {rel_old}/. It lives in {rel_new}/ now "
+        f"(art/ART-PROJECT.md §2). Move it once (same file system, instant):\n"
+        f"    rmdir {rel_new} 2>/dev/null; mv {rel_old} {rel_new}\n"
+        f"then mask and commit its text files: art/diary.py check-masked --fix")
+
+
+# ------------------------------------------------------------------- lock
+#
+# Runs never overlap (ART-PROJECT §5.1): every writing command takes an
+# exclusive flock on art/build-history/.lock. scripts/art-collect.sh takes
+# the same lock itself and sets OCW_ART_LOCK_HELD=1 for the diary.py it runs.
+
+LOCK_NAME = ".lock"
+
+
+def lock_path() -> Path:
+    return HIST / LOCK_NAME
+
+
+@contextlib.contextmanager
+def art_lock(what: str = "", wait: float | None = None):
+    """Holds the archive's lock. `wait`: seconds to wait for it (None:
+    OCW_ART_LOCK_WAIT, else forever); raises TimeoutError when it runs out."""
+    if os.environ.get("OCW_ART_LOCK_HELD") == "1":
+        yield
+        return
+    if wait is None and os.environ.get("OCW_ART_LOCK_WAIT"):
+        wait = float(os.environ["OCW_ART_LOCK_WAIT"])
+    path = lock_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a+") as f:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            f.seek(0)
+            holder = f.read().strip() or "another run"
+            log(f"waiting for the build-history lock ({holder})")
+            t0 = time.monotonic()
+            while True:
+                try:
+                    fcntl.flock(f, fcntl.LOCK_EX | (fcntl.LOCK_NB if wait is not None else 0))
+                    break
+                except BlockingIOError:
+                    if time.monotonic() - t0 >= wait:
+                        raise TimeoutError(f"build-history lock held by {holder}") from None
+                    time.sleep(0.2)
+        f.seek(0)
+        f.truncate()
+        f.write(f"pid {os.getpid()}: diary.py {what}".strip() + "\n")
+        f.flush()
+        try:
+            yield
+        finally:
+            f.seek(0)
+            f.truncate()
+            fcntl.flock(f, fcntl.LOCK_UN)
 
 
 def run(cmd, **kw):
@@ -114,7 +212,47 @@ def all_days() -> list[str]:
 
 
 def day_number(day: str) -> int:
-    return all_days().index(day) + 1
+    """The day's number in the build (1 = the first day with commits); a day
+    without commits yet (just after midnight) counts as the next one."""
+    return sum(1 for d in all_days() if d < day) + 1
+
+
+# Text files of the archive that are tracked in git (ART-PROJECT §2): always
+# written masked; everything else in the archive is git-ignored.
+TRACKED_TOP = ("index.md", "SHA256SUMS")
+TRACKED_DAY = ("journal.md", "journal.json", "tokens.json")
+
+
+def tracked_files() -> list[Path]:
+    out = [HIST / n for n in TRACKED_TOP]
+    for d in sorted(HIST.glob("????-??-??")):
+        if d.is_dir() and re.fullmatch(r"\d{4}-\d{2}-\d{2}", d.name):
+            out += [d / n for n in TRACKED_DAY]
+    return [f for f in out if f.is_file()]
+
+
+def write_tracked(path: Path, text: str, secrets=None):
+    """Writes a tracked text file of the archive, masked (§2.3)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(mask(text, secrets))
+
+
+def check_masked(fix: bool = False, secrets=None) -> list[str]:
+    """Findings ("path:line: kind") in the tracked text files; with `fix`
+    the files are masked in place first. Never prints a private value."""
+    secrets = secrets if secrets is not None else _secrets()
+    out = []
+    for f in tracked_files():
+        text = f.read_text(errors="replace")
+        if fix:
+            masked = mask(text, secrets)
+            if masked != text:
+                f.write_text(masked)
+                log(f"masked {f.relative_to(HIST)}")
+                text = masked
+        for n, kind in private_findings(text, secrets):
+            out.append(f"{f.relative_to(HIST)}:{n}: {kind}")
+    return out
 
 
 # ------------------------------------------------------------------ gather
@@ -199,7 +337,8 @@ def gather(day: str):
                 if not target.exists() or target.stat().st_size != f.stat().st_size:
                     target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(f, target)
-                    added += 1
+                    # The collector's own status and log change every run.
+                    added += f.name not in COLLECTOR_FILES
                 continue
             h = sha(f)
             if h in known:
@@ -223,6 +362,7 @@ def gather(day: str):
     stamp(day)
     media = [f for f in dest.iterdir() if f.suffix.lower() in IMAGE | VIDEO | AUDIO]
     log(f"{day}: {added} new files; {len(media)} images/videos/sounds in {dest}")
+    return added
 
 
 # ------------------------------------------------------------------- stamp
@@ -324,17 +464,25 @@ def now_meta() -> list[str]:
 
 TRANSCRIPTS = os.environ.get("OCW_TRANSCRIPTS", str(Path.home() / ".claude" / "projects"))
 REMINDER_RE = re.compile(r"<system-reminder>.*?</system-reminder>", re.S)
-EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+# user@domain.tld (not `icon@2x.png`, not `react@18.3.1`).
+EMAIL_RE = re.compile(r"[\w.+-]+@(?!\d+x\.)[\w-]+(?:\.[\w-]+)*\.[A-Za-z]{2,}\b")
 # Private network addresses (10/8, 172.16/12, 192.168/16, 100.64/10).
 PRIVATE_IP_RE = re.compile(
     r"\b(?:10\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])|192\.168|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7]))"
     r"\.\d{1,3}\.\d{1,3}\b")
 
 
+_SECRETS: list[tuple[str, str]] | None = None
+
+
 def _secrets() -> list[tuple[str, str]]:
-    """(text, replacement) pairs: every build machine's host and user (asked
-    from scripts/remote.sh, which reads config/machines.toml) and the home
-    directory. Never printed."""
+    """(text, replacement) pairs: every build machine's host (replaced by the
+    machine's name) and user ("user"; asked from scripts/remote.sh, which
+    reads config/machines.toml) and the home directory ("~"). Asked once per
+    run. Never printed."""
+    global _SECRETS
+    if _SECRETS is not None:
+        return _SECRETS
     out = []
     conf = ROOT / "config" / "machines.toml"
     names = re.findall(r'^\s*name\s*=\s*"([^"]+)"', conf.read_text(), re.M) if conf.exists() else []
@@ -345,13 +493,57 @@ def _secrets() -> list[tuple[str, str]]:
             if len(v) >= 3:
                 out.append((v, name if k == "host" else "user"))
     out.append((str(Path.home()), "~"))
-    return sorted(out, key=lambda kv: -len(kv[0]))
+    # A value that is part of a replacement (a host named like its machine)
+    # is public and would never mask away.
+    reps = {r for _, r in out}
+    out = [(v, r) for v, r in out if not any(v in r_ for r_ in reps)]
+    _SECRETS = sorted(set(out), key=lambda kv: -len(kv[0]))
+    return _SECRETS
+
+
+# Any home directory (Linux, macOS, Windows; also JSON-escaped backslashes).
+HOME_RE = re.compile(r"(?<![\w.-])(?:/home|/Users)/[A-Za-z0-9._-]+"
+                     r"|\b[A-Za-z]:(?:\\\\|\\|/)Users(?:\\\\|\\|/)[A-Za-z0-9._-]+")
+
+
+def _user_re(user: str) -> re.Pattern:
+    """A build machine's user name as a word of its own (`claude@host`,
+    `"claude"`, `user claude`), not inside a path or name such as
+    `~/.claude/` or `claude.ai`."""
+    return re.compile(r"(?<![\w./\\])" + re.escape(user) + r"(?![\w/]|\.\w)")
+
+
+def _mask_steps(secrets):
+    """(kind, function) of every masking step, in order: hosts and home
+    directories first (a user name is part of both), then the users, then
+    the generic patterns."""
+    hosts = [("build-machine host", lambda t, v=v, r=r: t.replace(v, r))
+             for v, r in secrets if r not in ("user", "~")]
+    homes = [("home directory", lambda t, v=v: t.replace(v, "~")) for v, r in secrets if r == "~"]
+    homes.append(("home directory", lambda t: HOME_RE.sub("~", t)))
+    users = [("build-machine user", lambda t, rx=_user_re(v): rx.sub("user", t))
+             for v, r in secrets if r == "user"]
+    return [*hosts, *homes, *users,
+            ("e-mail address", lambda t: EMAIL_RE.sub("<e-mail>", t)),
+            ("private IP address", lambda t: PRIVATE_IP_RE.sub("<ip>", t))]
 
 
 def mask(text: str, secrets=None) -> str:
-    for v, r in (secrets if secrets is not None else _secrets()):
-        text = text.replace(v, r)
-    return PRIVATE_IP_RE.sub("<ip>", EMAIL_RE.sub("<e-mail>", text))
+    for _, f in _mask_steps(secrets if secrets is not None else _secrets()):
+        text = f(text)
+    return text
+
+
+def private_findings(text: str, secrets=None) -> list[tuple[int, str]]:
+    """(line number, kind) of every private pattern in the text: what mask()
+    would change. The values themselves are never reported."""
+    steps = _mask_steps(secrets if secrets is not None else _secrets())
+    out = []
+    for n, line in enumerate(text.splitlines(), 1):
+        for kind, f in steps:
+            if f(line) != line and (n, kind) not in out:
+                out.append((n, kind))
+    return out
 
 
 def prompt_text(raw: str) -> str | None:
@@ -374,7 +566,7 @@ def prompts_of(day: str) -> list[dict]:
     seen, out = set(), []
     files = [f for f in Path(TRANSCRIPTS).glob("*OCW*/*.jsonl")]
     for f in files:
-        for line in f.open(errors="replace"):
+        for line in f.read_text(errors="replace").splitlines():
             if '"user"' not in line and "queued_command" not in line:
                 continue
             try:
@@ -487,7 +679,7 @@ def tokens_of(day: str) -> dict:
     secrets = _secrets()
     for f, agent in sources:
         last_prompt = None
-        for line in f.open(errors="replace"):
+        for line in f.read_text(errors="replace").splitlines():
             if agent is None and ('"user"' in line or "queued_command" in line):
                 try:
                     d = json.loads(line)
@@ -541,7 +733,7 @@ def tokens(day: str) -> dict:
     t = tokens_of(day)
     d = HIST / day
     d.mkdir(parents=True, exist_ok=True)
-    (d / "tokens.json").write_text(json.dumps(t, indent=1, ensure_ascii=False))
+    write_tracked(d / "tokens.json", json.dumps(t, indent=1, ensure_ascii=False))
     log(f"{day}: {t['total'].get('total', 0):,} tokens in {t['total'].get('messages', 0)} messages")
     return t
 
@@ -692,7 +884,7 @@ def journal(day: str) -> dict:
     }
     d = HIST / day
     d.mkdir(parents=True, exist_ok=True)
-    (d / "journal.json").write_text(json.dumps(j, indent=1, ensure_ascii=False))
+    write_tracked(d / "journal.json", json.dumps(j, indent=1, ensure_ascii=False))
     md = [
         f"# OCW build diary – day {j['number']}, {day}",
         "",
@@ -752,7 +944,7 @@ def journal(day: str) -> dict:
         md += [f"| {p_['time'][:5]} | {p_['text'][:140].replace('|', '/').replace(chr(10), ' ')} |" for p_ in ps]
     md += ["", "## Media", "", "| Time | File |", "|---|---|"]
     md += [f"| {m['time']} | [{m['file']}]({m['file']}) |" for m in media]
-    (d / "journal.md").write_text("\n".join(md) + "\n")
+    write_tracked(d / "journal.md", "\n".join(md) + "\n")
     log(f"{day}: journal – {len(commits)} commits, {len(media)} media")
     return j
 
@@ -1628,27 +1820,144 @@ def publish(days: list[str]):
     files += sorted(OUT.glob("*.mp4"))
     # Checksums of every zip and video known locally (all days, not only these).
     sums = HIST / "SHA256SUMS"
-    sums.write_text("".join(f"{sha(f)}  {f.name}\n" for f in
-                            [*sorted(HIST.glob("ocw-build-history-*.zip")), *sorted(OUT.glob("*.mp4"))]))
+    write_tracked(sums, "".join(f"{sha(f)}  {f.name}\n" for f in
+                                [*sorted(HIST.glob("ocw-build-history-*.zip")), *sorted(OUT.glob("*.mp4"))]))
     files.append(sums)
     for f in files:
         log(f"upload {f.name} ({f.stat().st_size / 1e6:.1f} MB)")
     run(["gh", "release", "upload", RELEASE, "-R", "newkit/OCW", "--clobber", *files])
 
 
+# ----------------------------------------------------------------- collect
+#
+# The hourly collector (ART-PROJECT §5.1; scripts/art-collect.sh, the
+# systemd user timer ocw-art-collect.timer on the dev machine): gather +
+# journal of yesterday and today (the last hour before midnight is not
+# lost; gather is idempotent), the mask check of the tracked text files,
+# and in the 23:xx run the contact sheets of today. No render, no publish.
+# Status: test-output/build-log/DAY/art.json (the latest run of DAY) and
+# art-runs.jsonl (every run); the output goes to art.log next to them.
+
+STATUS_NAME = "art.json"
+COLLECTOR_FILES = {STATUS_NAME, "art-runs.jsonl", "art.log", STATUS_NAME + ".tmp"}
+
+
+def default_collect_days(now: dt.datetime | None = None) -> list[str]:
+    now = now or dt.datetime.now()
+    return [(now - dt.timedelta(days=1)).strftime("%Y-%m-%d"), now.strftime("%Y-%m-%d")]
+
+
+def status_dir(day: str) -> Path:
+    return TEST_OUTPUT / "build-log" / day
+
+
+def iso_now() -> str:
+    return dt.datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def write_status(st: dict, final: bool = False):
+    d = status_dir(st["run_day"])
+    d.mkdir(parents=True, exist_ok=True)
+    tmp = d / (STATUS_NAME + ".tmp")
+    tmp.write_text(json.dumps(st, indent=1, ensure_ascii=False) + "\n")
+    tmp.replace(d / STATUS_NAME)
+    if final:
+        with open(d / "art-runs.jsonl", "a") as f:
+            f.write(json.dumps(st, ensure_ascii=False) + "\n")
+
+
+def collect(days: list[str] | None = None, sheets: bool | None = None,
+            now: dt.datetime | None = None) -> dict:
+    """One collector run; returns its status (status "ok" or "failed")."""
+    now = now or dt.datetime.now()
+    days = days or default_collect_days(now)
+    if sheets is None:
+        sheets = now.hour == 23
+    st = {"start": iso_now(), "end": None, "status": "running", "run_day": now.strftime("%Y-%m-%d"),
+          "days": {}, "new_files": 0, "media": 0, "mask_check": None, "sheets": bool(sheets),
+          "errors": [], "log": os.environ.get("OCW_ART_LOG", "")}
+    write_status(st)
+    for day in days:
+        r = st["days"][day] = {"new_files": 0, "media": 0}
+        try:
+            r["new_files"] = gather(day) or 0
+            journal(day)
+        except Exception as e:  # one day failing must not hide the other
+            st["errors"].append(f"{day}: {type(e).__name__}: {mask(str(e))[:300]}")
+        r["media"] = len(media_of(day))
+        st["new_files"] += r["new_files"]
+    st["media"] = st["days"][days[-1]]["media"]
+    try:
+        found = check_masked()
+        st["mask_check"] = "ok" if not found else f"failed: {len(found)} finding(s)"
+        for f in found:
+            log("private pattern: " + f)
+        if found:
+            st["errors"].append(f"mask check: {len(found)} finding(s) (art/diary.py check-masked)")
+    except Exception as e:
+        st["mask_check"] = "error"
+        st["errors"].append(f"mask check: {type(e).__name__}: {mask(str(e))[:300]}")
+    if sheets:
+        try:
+            sheet(days[-1])
+        except Exception as e:
+            st["errors"].append(f"sheets {days[-1]}: {type(e).__name__}: {mask(str(e))[:300]}")
+    st["end"] = iso_now()
+    st["status"] = "failed" if st["errors"] else "ok"
+    write_status(st, final=True)
+    log(f"collect: {st['status']}, {st['new_files']} new files, {st['media']} media today, "
+        f"mask check {st['mask_check']}")
+    return st
+
+
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in {"-h", "--help", "help"}:
         print(__doc__)
         return
-    cmd, days = sys.argv[1], sys.argv[2:]
-    if cmd == "diary":
-        diary()
+    cmd, args = sys.argv[1], sys.argv[2:]
+    try:
+        check_old_place()
+    except SystemExit as e:
+        if cmd == "collect":  # the dashboard shows why the collector stopped
+            now = iso_now()
+            write_status({"start": now, "end": now, "status": "failed", "run_day": now[:10], "days": {},
+                          "new_files": 0, "media": None, "mask_check": None, "sheets": False,
+                          "errors": [str(e).splitlines()[0]], "log": os.environ.get("OCW_ART_LOG", "")},
+                         final=True)
+        raise
+    flags = {a for a in args if a.startswith("--")}
+    days = [a for a in args if not a.startswith("--")]
+    if cmd == "check-masked":
+        fix = "--fix" in flags
+        with art_lock(cmd) if fix else contextlib.nullcontext():
+            found = check_masked(fix=fix)
+        for f in found:
+            print(f)
+        n = len(tracked_files())
+        if found:
+            raise SystemExit(f"check-masked: {len(found)} private pattern(s) in the tracked text files "
+                             f"(values not shown); `art/diary.py check-masked --fix` masks them")
+        log(f"check-masked: {n} tracked text files, no private patterns")
         return
-    if not days:
-        days = all_days() if cmd in {"fetch", "gather", "journal", "publish", "stamp", "prompts", "tokens"} else days_with_scripts()
     for d in days:
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", d):
             raise SystemExit(f"not a day: {d}")
+    with art_lock(" ".join(sys.argv[1:])):
+        run_command(cmd, days, flags)
+
+
+def run_command(cmd: str, days: list[str], flags: set[str] = frozenset()):
+    if cmd == "diary":
+        diary()
+        return
+    if cmd == "collect":
+        sheets = True if "--sheets" in flags else False if "--no-sheets" in flags else None
+        st = collect(days or None, sheets)
+        if st["status"] != "ok":
+            raise SystemExit("collect failed: " + "; ".join(st["errors"]))
+        return
+    if not days:
+        days = all_days() if cmd in {"fetch", "gather", "journal", "publish", "stamp", "prompts", "tokens"} else days_with_scripts()
     if cmd == "all":
         for d in days:
             gather(d)

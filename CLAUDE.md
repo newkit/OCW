@@ -77,7 +77,7 @@ After merging or abandoning an agent branch, run `scripts/remote-gc.sh --branch 
 
 - `SPECIFICATION.md` (v1.3) – the single source of requirements and architecture decisions. The review proposals P-1 … P-20 were merged into it; Appendix A maps each former P-number to its section.
 
-- `art/ART-PROJECT.md` – the art project: the **OCW Build Diary**, a video per build day plus a growing diary video, made from *every* screenshot, video, sound, log, commit, merge and test of the day (`art/diary.py`, `make art-*`; day scripts in `art/days/`). Keep all media of test runs in `test-output/`; never delete build-history material. At the end of a build day: gather, write the day script, render, publish.
+- `art/ART-PROJECT.md` – the art project: the **OCW Build Diary**, a video per build day plus a growing diary video, made from *every* screenshot, video, sound, log, commit, merge and test of the day (`art/diary.py`, `make art-*`; day scripts in `art/days/`). The archive is `art/build-history/` (media git-ignored; its masked text files `index.md`, `SHA256SUMS`, per day `journal.md`/`journal.json`/`tokens.json` are tracked; `make art-check`). An hourly systemd user timer on deb (`scripts/art-collect.sh`, `make art-install-timer` / `art-timer-status`, ART-PROJECT §5.1) gathers yesterday and today and writes their journals; its last run is on the build dashboard. Keep all media of test runs in `test-output/`; never delete build-history material. At the end of a build day: write the day script, render, publish, commit the day's tracked text files.
 
 Reference the spec by section (e.g. "spec §6.1") in discussions and commits. New decisions go directly into the spec (bump the version table at the top) rather than into a separate document.
 
