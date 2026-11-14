@@ -349,6 +349,13 @@ renders and publishes in a session.
   which then does not lock again.
 - **Python:** `/usr/bin/python3` (3.11+; `OCW_ART_PYTHON` overrides), never the
   pyenv default 3.8. The script finds the repository from its own path.
+- **Overrides (tests):** `OCW_ART_HISTORY` replaces the archive. `OCW_TEST_OUTPUT`
+  replaces `test-output/`: it is then the only source of `gather`, without
+  the agent worktrees' `test-output/` (`OCW_ART_WORKTREES` names a worktrees
+  folder, `""` none). `OCW_TRANSCRIPTS` replaces the Claude Code transcripts.
+  `make test-art` checks that a real archive at the default place stays
+  untouched (it holds that archive's lock and compares every file's size and
+  mtime).
 - **Status file:** `test-output/build-log/DAY/art.json` holds the latest run
   of DAY: start, end, status (`running`, `ok`, `failed`, `locked`), new
   files, media of today, the mask check, contact sheets yes/no, errors

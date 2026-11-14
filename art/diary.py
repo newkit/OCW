@@ -68,6 +68,12 @@ OLD_HIST = ROOT / "artwork" / "build-history"
 OUT = HIST / "diary"
 WORK = HIST / ".work"
 TEST_OUTPUT = Path(os.environ.get("OCW_TEST_OUTPUT") or ROOT / "test-output")
+# The agent worktrees, whose test-output/ gather collects too. With
+# OCW_TEST_OUTPUT (tests) only that folder is a source, unless
+# OCW_ART_WORKTREES names a worktrees folder ("" = none).
+_wt = os.environ.get("OCW_ART_WORKTREES")
+WORKTREES = (Path(_wt) if _wt else None) if _wt is not None else (
+    None if os.environ.get("OCW_TEST_OUTPUT") else ROOT / ".claude" / "worktrees")
 FONTS = ROOT / "crates" / "ocw-render" / "assets" / "fonts"
 RELEASE = "build-history"
 
@@ -304,7 +310,8 @@ def slug(s: str) -> str:
 def sources() -> list[Path]:
     """Every checkout's test-output (main + agent worktrees)."""
     out = [TEST_OUTPUT]
-    out += sorted((ROOT / ".claude" / "worktrees").glob("*/test-output"))
+    if WORKTREES is not None:
+        out += sorted(WORKTREES.glob("*/test-output"))
     return [p for p in out if p.is_dir()]
 
 

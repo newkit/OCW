@@ -32,6 +32,53 @@ PRIVATE = ["buildhost.example.lan", "10.20.30.40", "builder@", "/home/devuser", 
 DAY = "2026-11-14"
 
 
+def tree_state(root: Path) -> dict:
+    """{relative path: (size, mtime_ns)} of every file and folder below root."""
+    if not root.exists():
+        return {}
+    out = {}
+    for p in [root, *root.rglob("*")]:
+        st = p.lstat()
+        out[p.relative_to(root).as_posix()] = (st.st_size if p.is_file() else None, st.st_mtime_ns)
+    return out
+
+
+# The real archive at the default place (the main checkout has one): the tests
+# must never touch it. They hold its lock meanwhile (the hourly collector
+# waits), and compare every file's size and mtime before and after.
+REAL_HIST = diary.ROOT / "art" / "build-history"
+_real = {"lock": None, "state": None}
+
+
+def setUpModule():
+    if not REAL_HIST.is_dir():
+        return
+    import fcntl
+    lock = REAL_HIST / ".lock"
+    if lock.exists():  # (no lock file: creating one would touch the archive)
+        f = open(lock, "r")
+        try:
+            fcntl.flock(f, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            f.close()
+            return  # a collector or diary run is busy: no stable state to compare
+        _real["lock"] = f
+    _real["state"] = tree_state(REAL_HIST)
+
+
+def tearDownModule():
+    if _real["state"] is None:
+        return
+    try:
+        after = tree_state(REAL_HIST)
+        changed = sorted(k for k in set(after) | set(_real["state"]) if after.get(k) != _real["state"].get(k))
+        if changed:
+            raise AssertionError(f"the tests changed the real archive {REAL_HIST}: {changed[:10]}")
+    finally:
+        if _real["lock"] is not None:
+            _real["lock"].close()
+
+
 class Fixture(unittest.TestCase):
     """A temporary archive and test-output, the fake secrets."""
 
@@ -41,10 +88,11 @@ class Fixture(unittest.TestCase):
         self.out = self.tmp / "test-output"
         self.hist.mkdir()
         self.out.mkdir()
-        self._saved = (diary.HIST, diary.TEST_OUTPUT, diary._SECRETS, diary.TRANSCRIPTS)
+        self._saved = (diary.HIST, diary.TEST_OUTPUT, diary._SECRETS, diary.TRANSCRIPTS, diary.WORKTREES)
         diary.set_history(self.hist)
         diary.TEST_OUTPUT = self.out
         diary.TRANSCRIPTS = str(self.tmp / "no-transcripts")
+        diary.WORKTREES = None  # never the real agent worktrees' test-output
         diary._SECRETS = sorted(SECRETS, key=lambda kv: -len(kv[0]))
         self.env = mock.patch.dict(os.environ, {"OCW_TRANSCRIPTS": str(self.tmp / "no-transcripts")})
         self.env.start()
@@ -53,7 +101,7 @@ class Fixture(unittest.TestCase):
     def tearDown(self):
         self.env.stop()
         diary.set_history(self._saved[0])
-        diary.TEST_OUTPUT, diary._SECRETS, diary.TRANSCRIPTS = self._saved[1:]
+        diary.TEST_OUTPUT, diary._SECRETS, diary.TRANSCRIPTS, diary.WORKTREES = self._saved[1:]
         subprocess.run(["rm", "-rf", "--", str(self.tmp)], check=False)
 
     def assert_clean(self, text: str):
@@ -308,6 +356,69 @@ class CollectScriptTest(Fixture):
         st = json.loads((self.out / "build-log" / today / "art.json").read_text())
         self.assertEqual(st["days"][day]["new_files"], 0)
         self.assertEqual(st["days"][day]["media"], 1)
+
+
+class DefaultArchiveUntouchedTest(Fixture):
+    """The collector run with OCW_ART_HISTORY / OCW_TEST_OUTPUT, in a copy of
+    the repository that has a real-looking archive at the default place
+    (art/build-history/), its own test-output/ and an agent worktree with
+    media of the day: none of these may be read into or written by the run."""
+
+    def make_repo(self) -> Path:
+        repo = self.tmp / "repo"
+        (repo / "art").mkdir(parents=True)
+        (repo / "scripts").mkdir()
+        for rel in ("art/diary.py", "scripts/art-collect.sh"):
+            (repo / rel).write_bytes((HERE.parent / rel).read_bytes())
+            (repo / rel).chmod(0o755)
+        env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.org",
+               "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.org",
+               "GIT_AUTHOR_DATE": f"{DAY}T10:00:00", "GIT_COMMITTER_DATE": f"{DAY}T10:00:00"}
+        for cmd in (["init", "-q"], ["add", "art/diary.py", "scripts/art-collect.sh"],
+                    ["commit", "-q", "-m", "fixture"]):
+            subprocess.run(["git", "-C", str(repo), *cmd], env=env, check=True, capture_output=True)
+        # The real-looking archive at the default place, with its lock file.
+        real = repo / "art" / "build-history"
+        (real / DAY / "logs" / "build-log").mkdir(parents=True)
+        for name, data in (("index.md", "# Build history\n"), (".lock", ""), ("SENTINEL", "do not touch\n"),
+                           (f"{DAY}/090000-real-shot.jpg", "jpeg"), (f"{DAY}/journal.json", "{}\n"),
+                           (f"{DAY}/logs/build-log/runs.jsonl", "{}\n")):
+            (real / name).write_text(data)
+        # Media of the day in the repository's own test-output and in a worktree.
+        for leak in (repo / "test-output" / DAY, repo / ".claude" / "worktrees" / "agent-x" / "test-output" / DAY):
+            leak.mkdir(parents=True)
+            (leak / "110000-leak.jpg").write_bytes(b"\xff\xd8 must not be gathered")
+        return repo
+
+    def test_overrides_keep_the_default_archive_untouched(self):
+        repo = self.make_repo()
+        watched = {p: tree_state(p) for p in (repo / "art" / "build-history", repo / "test-output",
+                                              repo / ".claude")}
+        (self.out / DAY).mkdir(parents=True)
+        (self.out / DAY / "101500-shot.jpg").write_bytes(b"\xff\xd8 fixture")
+        env = {**os.environ, "OCW_ART_HISTORY": str(self.hist), "OCW_TEST_OUTPUT": str(self.out),
+               "OCW_TRANSCRIPTS": str(self.tmp / "no-transcripts"), "OCW_ART_PYTHON": sys.executable}
+        env.pop("OCW_ART_WORKTREES", None)
+        time.sleep(0.05)  # an mtime change would be visible
+        r = subprocess.run([str(repo / "scripts" / "art-collect.sh"), "--no-sheets", DAY], env=env,
+                           capture_output=True, text=True, timeout=300)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        for p, before in watched.items():
+            self.assertEqual(tree_state(p), before, f"{p} was changed")
+        self.assertEqual((repo / "art" / "build-history" / "SENTINEL").read_text(), "do not touch\n")
+        # Only the fixture's own media were gathered (no leak, no real files).
+        self.assertEqual(sorted(f.name for f in (self.hist / DAY).iterdir() if f.suffix == ".jpg"),
+                         ["101500-shot.jpg"])
+        st = json.loads((self.out / "build-log" / dt.date.today().isoformat() / "art.json").read_text())
+        self.assertEqual(st["days"][DAY]["media"], 1)
+
+    def test_sources_honour_the_overrides(self):
+        """In-process: with WORKTREES off only TEST_OUTPUT is a source."""
+        self.assertEqual(diary.sources(), [self.out])
+        wt = self.tmp / "wt" / "agent-y" / "test-output"
+        wt.mkdir(parents=True)
+        diary.WORKTREES = self.tmp / "wt"
+        self.assertEqual(diary.sources(), [self.out, wt])
 
 
 if __name__ == "__main__":
