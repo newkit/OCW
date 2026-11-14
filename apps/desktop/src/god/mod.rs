@@ -15,7 +15,7 @@
 
 pub mod input;
 pub mod inspect;
-pub mod state;
+pub use ocw_client::god_state as state;
 pub mod touch;
 
 use bevy::input::keyboard::KeyboardInput;

@@ -21,23 +21,33 @@ ocw-protocol.workspace = true
 ocw-world.workspace = true
 # The session world clock (spec §14 Phase 9).
 ocw-sky.workspace = true
-# World packages for the binary's --world (load + verify).
-ocw-worldstore.workspace = true
-clap.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
-# QUIC transport (`net`, spec §6.2). Never in the wasm crates (spec §3.5).
-quinn.workspace = true
-rustls.workspace = true
-rcgen.workspace = true
-bytes.workspace = true
 sha2.workspace = true
 # Voice access tokens (JWT claims, spec §7) and session statistics
 # (`--stats-file`, `stats::ServerReport`).
 serde_json.workspace = true
 thiserror.workspace = true
 serde.workspace = true
+
+# The lib also builds for wasm32-unknown-unknown: the browser app runs the
+# GameServer in its frame loop (spec §14 Phase 10, B1; `local::FrameServer`).
+# The QUIC transport (`net`), world packages from disk (`worlds`), the
+# threaded local server and the binary's tools are native only.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# World packages for the binary's --world (load + verify).
+ocw-worldstore.workspace = true
+clap.workspace = true
+tracing-subscriber.workspace = true
+# QUIC transport (`net`, spec §6.2). Never in the wasm crates (spec §3.5).
+quinn.workspace = true
+rustls.workspace = true
+rcgen.workspace = true
+bytes.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "io-util", "signal"] }
+
+# The system clock in the browser (std's panics on wasm32-unknown-unknown).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-time.workspace = true
 
 [lints]
 workspace = true

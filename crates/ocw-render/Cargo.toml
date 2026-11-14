@@ -24,6 +24,12 @@ chrono.workspace = true
 serde.workspace = true
 toml.workspace = true
 
+# The browser app (spec §14 Phase 10): the wall clock and the local UTC
+# offset of the HUD timestamp from the browser (std's clock panics there).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-time.workspace = true
+chrono = { workspace = true, features = ["wasmbind"] }
+
 [dev-dependencies]
 # Reads the PNG text chunks back in the tests (already in the tree via image).
 png = "0.18"

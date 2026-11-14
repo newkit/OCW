@@ -22,6 +22,9 @@ use ocw_render::sky::{SkySettings, SkyView};
 use ocw_sky::machine::{self, ClockChange, Preset, TimeCommand};
 use ocw_sky::{ClockMode, Sky, Zone};
 
+// The zone of the place and the HUD clock are shared with the browser app.
+pub use ocw_client::sky::{hud_label, place_zone};
+
 use crate::client::ClientCore;
 use crate::connection::{ClientState, Link};
 use crate::settings::pages::{Activate, Row};
@@ -61,23 +64,6 @@ impl Default for WorldPlace {
             key: (None, None),
         }
     }
-}
-
-/// The zone of a ride: the package's zone if it has a valid one, else the
-/// zone of its geographic origin, else the default (Vaduz).
-pub fn place_zone(package: Option<&str>, origin: Option<(f64, f64)>) -> (Zone, &'static str) {
-    if let Some(z) = package.and_then(|id| Zone::get(id).ok()) {
-        return (z, "package");
-    }
-    if let Some((lat, lon)) = origin
-        && let Ok(z) = Zone::get(&ocw_sky::zone::zone_for(lat, lon))
-    {
-        return (z, "origin");
-    }
-    (
-        Zone::get(ocw_sky::zone::DEFAULT_ZONE).unwrap_or_else(|_| Zone::utc()),
-        "default",
-    )
 }
 
 /// What the Time machine page shows (updated every frame).
@@ -184,32 +170,6 @@ pub fn short_time(zone: &Zone, ms: i64) -> String {
 /// "Sun 21 Jun 2026 21:15 CEST".
 pub fn long_time(zone: &Zone, ms: i64) -> String {
     format!("{} {}", long_date(zone, ms), short_time(zone, ms))
-}
-
-/// The HUD clock: the glyph and the local time, then the mode when the
-/// time is not running normally ("x600", "paused", "fixed", "+2 h").
-pub fn hud_label(sky: &Sky, clock: Option<&ocw_protocol::ClockInfo>) -> String {
-    let base = sky.hud_clock();
-    let Some(c) = clock else { return base };
-    let extra = if c.paused {
-        "paused".to_owned()
-    } else if c.speed != 1.0 {
-        ocw_sky::clock::speed_label(c.speed, false)
-    } else {
-        match c.mode {
-            ClockMode::Real => return base,
-            ClockMode::Fixed => "fixed".into(),
-            ClockMode::Offset => {
-                let h = c.offset_ms as f64 / 3_600_000.0;
-                if h.fract().abs() < 1e-6 {
-                    format!("{h:+.0} h")
-                } else {
-                    format!("{h:+.1} h")
-                }
-            }
-        }
-    };
-    format!("{base} {extra}")
 }
 
 /// Where the sun is computed: the rider's GPS position, the ride's origin,

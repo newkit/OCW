@@ -5768,6 +5768,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ocw-client"
+version = "0.2.1"
+dependencies = [
+ "ocw-core",
+ "ocw-devices",
+ "ocw-protocol",
+ "ocw-render",
+ "ocw-server",
+ "ocw-sim",
+ "ocw-sky",
+ "ocw-world",
+]
+
+[[package]]
 name = "ocw-core"
 version = "0.2.1"
 
@@ -5779,6 +5793,7 @@ dependencies = [
  "clap",
  "cpal",
  "dirs",
+ "ocw-client",
  "ocw-core",
  "ocw-devices",
  "ocw-fit",
@@ -5852,6 +5867,7 @@ dependencies = [
  "serde",
  "toml",
  "ttf-parser",
+ "web-time",
 ]
 
 [[package]]
@@ -5876,6 +5892,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "web-time",
 ]
 
 [[package]]
@@ -5917,6 +5934,25 @@ dependencies = [
  "ocw-server",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "ocw-web"
+version = "0.2.1"
+dependencies = [
+ "bevy",
+ "clap",
+ "ocw-client",
+ "ocw-core",
+ "ocw-devices",
+ "ocw-protocol",
+ "ocw-render",
+ "ocw-server",
+ "ocw-sim",
+ "ocw-sky",
+ "ocw-world",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
@@ -8697,12 +8733,14 @@ dependencies = [
  "hashbrown 0.17.1",
  "js-sys",
  "log",
+ "naga",
  "portable-atomic",
  "profiling",
  "raw-window-handle",
  "smallvec",
  "static_assertions",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "web-sys",
  "wgpu-core",
  "wgpu-hal",

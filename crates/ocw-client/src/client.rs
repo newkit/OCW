@@ -67,7 +67,7 @@ pub enum Notice {
     WorldChange(v1::WorldChange),
     /// God mode (spec §14 Phase 13): the server's answer, and what changed.
     God {
-        event: Option<crate::god::state::GodEvent>,
+        event: Option<crate::god_state::GodEvent>,
         message: String,
     },
 }
@@ -160,10 +160,10 @@ pub struct ClientCore {
     /// Who may enter god mode (spec §14 Phase 13A; `None`: not yet told).
     god_access: Option<ocw_protocol::ClockAccess>,
     /// Unicorn mode: the own flight and the other riders' unicorns.
-    god: crate::god::state::GodCore,
-    god_others: crate::god::state::OtherGods,
+    god: crate::god_state::GodCore,
+    god_others: crate::god_state::OtherGods,
     /// A god-mode change found in a snapshot (the server ended it).
-    god_notice: Option<crate::god::state::GodEvent>,
+    god_notice: Option<crate::god_state::GodEvent>,
 }
 
 /// Steering mode before the menu opened (spec §3.2.1), restored on closing.
@@ -801,7 +801,6 @@ impl ClientCore {
     }
 
     /// Whether the menu holds the steering in autodrive.
-    #[cfg(test)]
     pub fn steering_held(&self) -> bool {
         self.menu_hold.is_some()
     }
@@ -1315,7 +1314,6 @@ impl ClientCore {
         })))
     }
 
-    #[cfg(test)]
     pub fn route(&self) -> &Route {
         &self.route
     }
@@ -1390,16 +1388,16 @@ impl ClientCore {
     }
 
     /// God mode (spec §14 Phase 13): the own flight.
-    pub fn god(&self) -> &crate::god::state::GodCore {
+    pub fn god(&self) -> &crate::god_state::GodCore {
         &self.god
     }
 
-    pub fn god_mut(&mut self) -> &mut crate::god::state::GodCore {
+    pub fn god_mut(&mut self) -> &mut crate::god_state::GodCore {
         &mut self.god
     }
 
     /// A god-mode change the snapshots brought (taken once).
-    pub fn take_god_notice(&mut self) -> Option<crate::god::state::GodEvent> {
+    pub fn take_god_notice(&mut self) -> Option<crate::god_state::GodEvent> {
         self.god_notice.take()
     }
 
@@ -1444,8 +1442,8 @@ impl ClientCore {
             }
         };
         let name = |id: RiderId| self.names.get(&id).map(|n| n.0.clone()).unwrap_or_default();
-        let view = |id: RiderId, u: crate::god::state::LocalUnicorn, local: bool| {
-            ocw_render::UnicornView {
+        let view =
+            |id: RiderId, u: crate::god_state::LocalUnicorn, local: bool| ocw_render::UnicornView {
                 id,
                 name: name(id),
                 is_local: local,
@@ -1459,8 +1457,7 @@ impl ClientCore {
                 age_s: u.age_s,
                 landing: u.leaving,
                 colour: colour(id, local),
-            }
-        };
+            };
         let mut out = Vec::new();
         if let (Some(me), Some(u)) = (self.rider_id, self.god.unicorn(now_s)) {
             out.push(view(me, u, true));
@@ -3115,7 +3112,7 @@ mod tests {
     /// and the prediction stands there with the server.
     #[test]
     fn god_mode_flies_others_see_the_unicorn_and_it_lands_on_the_nearest_road() {
-        use crate::god::state::{GodEvent, Phase};
+        use crate::god_state::{GodEvent, Phase};
         use ocw_sim::god::FlightInput;
         let mut h = Harness::free(0);
         h.ride(150.0, 1.0);

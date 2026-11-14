@@ -31,6 +31,7 @@ impl Plugin for HudPlugin {
             .init_resource::<Units>()
             .init_resource::<ShowProfile>()
             .init_resource::<LookAhead>()
+            .init_resource::<AppKeys>()
             .add_systems(Startup, (spawn_hud, spawn_recording))
             .add_systems(
                 Update,
@@ -44,6 +45,22 @@ impl Plugin for HudPlugin {
                     .chain(),
             );
         add_version_label(app);
+    }
+}
+
+/// The app's own keys at the end of the HUD's key line (after the ride
+/// keys): the desktop's by default; the browser app has no restart,
+/// video or screen keys (spec §14 Phase 10).
+#[derive(Resource, Clone, Debug, PartialEq, Eq)]
+pub struct AppKeys(pub String);
+
+/// The desktop app's keys in the HUD.
+pub const DESKTOP_KEYS: &str =
+    "mouse: camera, C: camera reset, R: restart, V: video | F11: screen | ` or F12: console";
+
+impl Default for AppKeys {
+    fn default() -> Self {
+        Self(DESKTOP_KEYS.into())
     }
 }
 
@@ -842,6 +859,7 @@ fn update_hud(
     view: Res<RideView>,
     ahead: Res<LookAhead>,
     units: Res<Units>,
+    app_keys: Res<AppKeys>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     mut big: Query<&mut Text, (With<HudText>, Without<HudSmallText>)>,
     mut small: Query<&mut Text, (With<HudSmallText>, Without<HudText>)>,
@@ -919,9 +937,10 @@ fn update_hud(
     };
     let (distance, distance_unit) = units.distance(local.state.distance);
     let mut lines = format!(
-        "{place} | {distance:.2} {distance_unit} | {} | {}\n{keys} | mouse: camera, C: camera reset, R: restart, V: video | F11: screen | ` or F12: console",
+        "{place} | {distance:.2} {distance_unit} | {} | {}\n{keys} | {}",
         format_time(view.elapsed_s),
-        riders_count(&view)
+        riders_count(&view),
+        app_keys.0
     );
     if !view.status.is_empty() {
         lines.push('\n');

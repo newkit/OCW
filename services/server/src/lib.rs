@@ -7,9 +7,13 @@
 //!   QUIC with [`net`] (`--listen`, spec §6.2).
 
 pub mod local;
+// QUIC (spec §6.2) and world packages from disk: native only; the browser
+// app (spec §14 Phase 10) runs the server in its frame loop.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod net;
 pub mod stats;
 pub mod voice;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod worlds;
 
 use std::collections::BTreeMap;
@@ -92,8 +96,14 @@ pub use ocw_protocol::ClockAccess;
 
 /// The system's real UTC instant (Unix ms).
 pub fn unix_now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    // std's clock panics on wasm32-unknown-unknown; web-time asks the
+    // browser (`Date.now()`).
+    #[cfg(not(target_arch = "wasm32"))]
+    use std::time::{SystemTime, UNIX_EPOCH};
+    #[cfg(target_arch = "wasm32")]
+    use web_time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as i64)
 }
 

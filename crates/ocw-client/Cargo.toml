@@ -1,0 +1,27 @@
+[package]
+name = "ocw-client"
+description = "Open Cycling World client logic shared by the desktop and browser apps"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Shared by apps/desktop and apps/web (spec §14 Phase 10, 10B: one app,
+# shared crates). Engine-free logic: it uses only ocw-render's view types
+# (RideView parts), no Bevy systems. Builds for wasm32-unknown-unknown.
+[dependencies]
+ocw-core.workspace = true
+ocw-sim.workspace = true
+ocw-protocol.workspace = true
+ocw-world.workspace = true
+ocw-sky.workspace = true
+# Only the device events (no BLE stack on wasm32).
+ocw-devices.workspace = true
+ocw-render.workspace = true
+# The server's shared labels (event distances); also the in-memory
+# GameServer of the tests. Its lib builds for wasm32 (no QUIC there).
+ocw-server.workspace = true
+
+[lints]
+workspace = true
