@@ -674,3 +674,193 @@ refs = [
   { product = "Fuel-Pack", brand = "Ortlieb", eur = 55.00, kind = "S", via = "bc" },
   { product = "Racing Top Tube Pack", brand = "Apidura", eur = 62.00, kind = "S", via = "brand" },
 ]
+
+# --- Apparel: the rider's kit (spec §14 Phase 4, 4C, W4) ---------------------
+#
+# Researched 2026-11-14 (web search by an agent). Glasses, body, skin, face
+# and hair are free choices and have no sources. More via abbreviations:
+#   Maats     = maats.cc (EU retailer, "regular price")
+#   Cicli     = ciclidrigani.it (IT retailer, "regular price")
+#   MV        = materiel-velo.com (FR retailer, reference "Price")
+#   PBS       = probikeshop-irl.com (IE retailer, "regular price" / supplier SRP)
+#   BD        = bike-discount.de (DE retailer, UVP shown)
+#   Alltricks = alltricks (FR retailer, RRP shown)
+#   Tour      = tour-magazin.de (magazine, launch price)
+#   CN        = cyclingnews.com (magazine, spec list price)
+#   BRumor    = bikerumor.com (magazine, launch price)
+#   Velomotion = velomotion.net (magazine, launch price)
+#   Canyon    = canyon.com (retailer, "original price")
+#   Velodrom  = velodrom.cc (EU retailer, "regular price")
+#   Ciclicorsa = ciclicorsa.com (IT retailer, list price)
+#   Evo       = evolutionbikes.de (DE retailer, list price)
+#   Cyclewear = cyclewear.eu (BE retailer, "regular price")
+#   Sportokay = sportokay.com (AT/DE retailer, MSRP shown)
+#   Varuste   = varuste.net (FI retailer, "normal price")
+#   Virsotne  = virsotne.lv (LV retailer, shelf price)
+#   Bergfreunde = bergfreunde.eu (DE retailer, shelf price)
+
+
+[[source]]
+key = "apparel.jersey.thermal"
+checked = 2026-11-14
+refs = [
+  { product = "C5 Thermo Jersey", brand = "Gorewear", eur = 129.95, kind = "R", via = "Rose", url = "https://www.rosebikes.com/gore-wear-c5-thermo-long-sleeve-cycling-jersey-2698096" },
+  { product = "Bodyfit Pro Thermal Jersey", brand = "Sportful", eur = 119.90, kind = "R", via = "brand", url = "https://sportful.com/NL/en/Mens/Cycling/Jerseys/BODYFIT-PRO-THERMAL-JERSEY/p/1124506_415" },
+  { product = "Espresso Thermal Jersey", brand = "Castelli", eur = 139.95, kind = "R*", via = "MV", url = "https://www.materiel-velo.com/gb/1881902-castelli-espresso-thermal-jersey-2025-long-sleeved-cycling-jersey.html", note = "2025 model; newer Espresso Thermal 2 lists ~159" },
+]
+
+[[source]]
+key = "apparel.jersey.aero"
+checked = 2026-11-14
+refs = [
+  { product = "Aero Race 8S Jersey", brand = "Castelli", eur = 170.00, kind = "R*", via = "Cicli", url = "https://ciclidrigani.it/en/products/castelli-aero-race-8s-jersey" },
+  { product = "Equipe RS Jersey S11", brand = "Assos", eur = 210.00, kind = "R", via = "brand", url = "https://www.assos.com/eu/equipe-rs-jersey-something-to-say-11-20-448-6x.html", note = "special colourway page; standard colours assumed same price" },
+  { product = "Pro Team Aero Jersey", brand = "Rapha", eur = 210.00, kind = "R*", via = "Maats", url = "https://maats.cc/products/rapha-pro-team-mens-aero-jersey-white" },
+]
+
+[[source]]
+key = "apparel.jersey.skinsuit"
+checked = 2026-11-14
+refs = [
+  { product = "Equipe RS Roadsuit S11 EF", brand = "Assos", eur = 430.00, kind = "R", via = "brand", url = "https://www.assos.com/eu/equipe-rs-roadsuit-s11-ef-11-11-337-99.html", note = "team-graphics edition" },
+  { product = "Pro Team Summer Roadsuit", brand = "Rapha", eur = 420.00, kind = "R*", via = "Maats", url = "https://maats.cc/products/rapha-pro-team-mens-summer-roadsuit-white-black" },
+  { product = "Beta Pro Aero Speedsuit", brand = "MAAP", eur = 470.00, kind = "R*", via = "Maats", url = "https://maats.cc/collections/women/products/maap-beta-mens-pro-aero-speedsuit-astra-black" },
+]
+
+[[source]]
+key = "apparel.shorts.tights"
+checked = 2026-11-14
+refs = [
+  { product = "Sorpasso RoS Bibtight", brand = "Castelli", eur = 199.95, kind = "R", via = "brand", url = "https://www.castelli-cycling.com/NL/en/Men/Off-The-Back/30-Off/SORPASSO-RoS-BIBTIGHT/p/4520522_010" },
+  { product = "C5 Thermo Bib Tights+", brand = "Gorewear", eur = 139.95, kind = "R", via = "Rose", url = "https://www.rosebikes.com/gorewear-c5-thermo-bib-tights-for-men-2669457" },
+  { product = "Total Comfort Bibtight", brand = "Sportful", eur = 179.90, kind = "R", via = "brand", url = "https://www.sportful.com/CZ/en/Mens/Cycling/Bibtights/TOTAL-COMFORT-BIBTIGHT/p/1120516_002" },
+]
+
+[[source]]
+key = "apparel.shorts.aero"
+checked = 2026-11-14
+refs = [
+  { product = "Free Aero RC Bibshort", brand = "Castelli", eur = 179.95, kind = "R", via = "brand", url = "https://www.castelli-cycling.com/EE/en/Men-Spring-Summer-Collection/FREE-AERO-RC-BIBSHORT/p/4522000_424" },
+  { product = "Equipe RS Bib Shorts S11", brand = "Assos", eur = 249.95, kind = "R", via = "Mantel", url = "https://www.mantel.com/en/assos-equipe-rs-s11-bib-short&spec[]=23335" },
+  { product = "Pro Team Bib Shorts III", brand = "Rapha", eur = 290.00, kind = "R", via = "brand", url = "https://www.rapha.cc/eu/en/shop/mens-pro-team-bib-shorts-iii-regular/product/BEP02XX" },
+]
+
+[[source]]
+key = "apparel.socks.tall"
+checked = 2026-11-14
+refs = [
+  { product = "Quindici Soft Merino Sock", brand = "Castelli", eur = 18.95, kind = "R", via = "Rose", url = "https://www.rosebikes.com/p/castelli-quindici-soft-merino-socks-cycling-socks-2708849", note = "15 cm cuff" },
+  { product = "Merino Winter Socks", brand = "GripGrab", eur = 20.00, kind = "R", via = "brand", url = "https://www.gripgrab.com/products/merino-winter-sock" },
+  { product = "Merino Socks", brand = "Rapha", eur = 20.95, kind = "S", via = "Bergfreunde", url = "https://www.bergfreunde.eu/cycling-socks/for--women/material--wool/", note = "category listing; cuff height not stated" },
+]
+
+[[source]]
+key = "apparel.socks.aero"
+checked = 2026-11-14
+refs = [
+  { product = "Aero Race Pro 20 Sock", brand = "Castelli", eur = 24.99, kind = "R*", via = "PBS", url = "https://probikeshop-irl.com/products/castelli-aero-race-pro-20-socks-blue", note = "supplier SRP 07/2025" },
+  { product = "Racing Circle Aero Socks", brand = "Rose", eur = 33.33, kind = "R", via = "Rose", url = "https://www.rosebikes.com/p/rose-racing-circle-aero-socks-aero-socks-2025-2725776", note = "house brand, own list price" },
+  { product = "Pro Aero Socks", brand = "MAAP", eur = 58.00, kind = "R*", via = "Maats", url = "https://maats.cc/products/maap-pro-aero-socks-white" },
+]
+
+[[source]]
+key = "apparel.shoes.race"
+checked = 2026-11-14
+refs = [
+  { product = "S-Works Ares 2", brand = "Specialized", eur = 549.00, kind = "R*", via = "Tour", url = "https://www.tour-magazin.de/en/buying-advice/clothing/shoes/specialised-s-works-ares-2-new-high-end-racing-shoe-presented/", note = "launch price 2025; also 549 at EU retailers" },
+  { product = "S-Phyre RC903", brand = "Shimano", eur = 369.95, kind = "R", via = "BD", url = "https://www.bike-discount.de/en/index.php/detail/018d168d3c8771deab505a9f68d91b9d", note = "UVP of the women's variant; men's assumed same" },
+  { product = "Vento Infinito Knit Carbon 2", brand = "Fizik", eur = 380.00, kind = "R", via = "brand", url = "https://fizik.com/vento-infinito-knit-carbon-2.html" },
+  { product = "KR0 Evo Superlight", brand = "DMT", eur = 419.00, kind = "R*", via = "Alltricks", url = "https://www.alltricks.co.uk/F-10006-chaussures-velo/P-3260427-dmt_kr0_evo_superlight_road_shoes___white_bronze" },
+]
+
+[[source]]
+key = "apparel.shoes.overshoes"
+checked = 2026-11-14
+refs = [
+  { product = "Pro Team TT Aero Overshoes", brand = "Rapha", eur = 75.00, kind = "R", via = "brand", url = "https://www.rapha.cc/eu/en/product/BJZ01XX" },
+  { product = "Aero Race Shoecover", brand = "Castelli", eur = 69.99, kind = "R*", via = "PBS", url = "https://probikeshop-irl.com/products/castelli-aero-race-overshoes-black" },
+  { product = "RaceAero TT Raceday Lycra 2", brand = "GripGrab", eur = 49.95, kind = "R*", via = "Cyclewear", url = "https://cyclewear.eu/en/products/gripgrab-overschoen-raceaero-tt-black-white" },
+]
+
+[[source]]
+key = "apparel.gloves.gel"
+checked = 2026-11-14
+refs = [
+  { product = "Xtract Mitt", brand = "Endura", eur = 29.99, kind = "R*", via = "Sportokay", url = "https://sportokay.com/at_en/endura-xtract-mitt-bikehandschuhe.html" },
+  { product = "Belluno", brand = "Roeckl", eur = 29.90, kind = "R*", via = "MV", url = "https://www.materiel-velo.com/gb/1871801-roeckl-belluno-summer-cycling-gloves.html" },
+  { product = "Gel Evolution Short Finger", brand = "Chiba", eur = 40.00, kind = "R", via = "Rose", url = "https://www.rosebikes.com/p/chiba-gel-evolution-short-finger-cycling-gloves-2721617" },
+]
+
+[[source]]
+key = "apparel.gloves.full"
+checked = 2026-11-14
+refs = [
+  { product = "Pro Team Gloves", brand = "Rapha", eur = 90.00, kind = "R", via = "brand", url = "https://www.rapha.cc/eu/en/product/PTG06XX", note = "full finger, mild/cool weather" },
+  { product = "Perfetto Light Glove", brand = "Castelli", eur = 59.80, kind = "S", via = "Virsotne", url = "https://virsotne.lv/en/cycling-clothing/6238-perfetto-light-glove-8055688917180.html", note = "no EUR RRP found (UK RRP GBP 75)" },
+  { product = "Mori 2", brand = "Roeckl", eur = 59.90, kind = "R*", via = "Varuste", url = "https://varuste.net/en/p121862/roeckl-mori-2" },
+]
+
+[[source]]
+key = "apparel.gloves.winter"
+checked = 2026-11-14
+refs = [
+  { product = "Ultraz Winter Gloves", brand = "Assos", eur = 115.00, kind = "R", via = "Rose", url = "https://www.rosebikes.com/assos-assosoires-ultraz-winter-gloves-2679123" },
+  { product = "Deep Winter Gloves", brand = "Rapha", eur = 165.00, kind = "R*", via = "CN", url = "https://www.cyclingnews.com/reviews/rapha-deep-winter-gloves-review" },
+  { product = "Pro Team Winter Gloves", brand = "Rapha", eur = 100.00, kind = "R*", via = "Velodrom", url = "https://www.velodrom.cc/products/rapha-pro-team-winter-gloves-black" },
+  { product = "Perfetto RoS Gloves", brand = "Castelli", eur = 79.95, kind = "R*", via = "Evo", url = "https://evolutionbikes.de/en/products/castelli-perfetto-ros-2026-winter-gloves" },
+]
+
+[[source]]
+key = "apparel.helmet.light"
+checked = 2026-11-14
+refs = [
+  { product = "S-Works Prevail 3", brand = "Specialized", eur = 290.00, kind = "R*", via = "Velomotion", url = "https://velomotion.net/2025/06/the-helmet-from-red-bull-bora-hansgrohe-and-soudal-quick-step-specialized-s-works-prevail-3/" },
+  { product = "Aries Spherical", brand = "Giro", eur = 319.95, kind = "R*", via = "Canyon", url = "https://www.canyon.com/en-fr/giro-aries-spherical-road-cycling-helmet/9101970.html" },
+  { product = "Trenta 3K Carbon MIPS", brand = "MET", eur = 320.00, kind = "R*", via = "BRumor", url = "https://bikerumor.com/met-trenta-3k-carbon-mips-cycling-helmet-prices-weights-sizes" },
+]
+
+[[source]]
+key = "apparel.helmet.aero-road"
+checked = 2026-11-14
+refs = [
+  { product = "S-Works Evade 3", brand = "Specialized", eur = 290.00, kind = "R", via = "brand", url = "https://www.specialized.com/ee/en/s-works-evade-3/p/1000208812" },
+  { product = "Eclipse Spherical", brand = "Giro", eur = 259.95, kind = "R", via = "brand", url = "https://ie.giro.com/product/eclipse-spherical-helmet/35922.html" },
+  { product = "Ventral Air MIPS", brand = "POC", eur = 260.00, kind = "R", via = "brand", url = "https://poc.com/en/product/ventral-air-mips-uranium-black" },
+  { product = "Utopia Y", brand = "Kask", eur = 275.00, kind = "R*", via = "Ciclicorsa", url = "https://ciclicorsa.com/shop/utopia-y-helmet-grey" },
+]
+
+[[source]]
+key = "apparel.helmet.tt"
+checked = 2026-11-14
+refs = [
+  { product = "Bambino Pro Evo", brand = "Kask", eur = 499.96, kind = "R*", via = "MV", url = "https://www.materiel-velo.com/gb/1880457-triathlon-time-trial-helmet-kask-bambino-pro-evo.html" },
+  { product = "Aerohead II MIPS", brand = "Giro", eur = 549.95, kind = "R*", via = "Velodrom", url = "https://www.velodrom.cc/products/giro-aerohead-mips-ii-gbl-cycling-helmet-matte-white" },
+  { product = "Drone Wide Body II", brand = "MET", eur = 500.00, kind = "R*", via = "Tour", url = "https://www.tour-magazin.de/en/buying-advice/clothing/helmets/pogacar-s-new-helmet-for-time-trials-met-presents-drone-wide-body-ii-tt-helmet/", note = "launch price" },
+]
+
+[[source]]
+key = "apparel.cap.cotton"
+checked = 2026-11-14
+refs = [
+  { product = "Cap II", brand = "Rapha", eur = 35.00, kind = "R", via = "brand", url = "https://www.rapha.cc/eu/en/product/RCP10XX", note = "100% organic cotton" },
+  { product = "Cycling Cap", brand = "Café du Cycliste", eur = 30.00, kind = "R", via = "brand", url = "https://www.cafeducycliste.com/en/products/unisex-cycling-cap-navy", note = "fabric not verified" },
+  { product = "Logo Cap", brand = "Pas Normal Studios", eur = 26.00, kind = "R", via = "brand", url = "https://pasnormalstudios.com/de/products/logo-cap-navy", note = "fabric not stated on page" },
+]
+
+# Typical weights (helmets size M, shoes pair EU 42):
+# weight apparel.jersey.thermal = 300 g – road.cc measured 285 g for the Gore C5 Thermo (size M)
+# weight apparel.jersey.aero = 120 g – typical for lightweight race jerseys (100–140 g), estimate
+# weight apparel.jersey.skinsuit = 210 g – Castelli lists 207 g for its Sanremo Ultra speed suit
+# weight apparel.shorts.tights = 330 g – typical winter bib tights with chamois (280–380 g), estimate
+# weight apparel.shorts.aero = 180 g – typical race bib shorts (150–200 g), estimate
+# weight apparel.socks.tall = 50 g – typical merino winter pair, estimate
+# weight apparel.socks.aero = 30 g – typical thin aero pair, estimate
+# weight apparel.shoes.race = 460 g – Fizik claims 225 g per shoe (size 42) for Vento Infinito Knit Carbon 2; S-Works/S-Phyre ~230–250 g per shoe
+# weight apparel.shoes.overshoes = 60 g – lycra TT/aero overshoe pair, estimate
+# weight apparel.gloves.gel = 50 g – typical gel mitt pair, estimate
+# weight apparel.gloves.full = 60 g – Castelli Perfetto Light listed 41 g (likely single glove/size S); typical pair 50–80 g
+# weight apparel.gloves.winter = 150 g – typical insulated winter pair (120–180 g), estimate
+# weight apparel.helmet.light = 235 g – MET claims 225 g (M) for Trenta 3K Carbon MIPS; reviews measure 230–285 g
+# weight apparel.helmet.aero-road = 280 g – typical aero road M (Evade/Eclipse/Ventral Air 260–300 g), estimate
+# weight apparel.helmet.tt = 400 g – Kask Bambino Pro Evo M listed 360 g; Drone/Aerohead heavier (~400–550 g)
+# weight apparel.cap.cotton = 45 g – typical cotton cycling cap, estimate

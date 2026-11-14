@@ -13,6 +13,16 @@
 //! screen space, LB / RB step through the slots, Confirm opens the
 //! picker. Back goes one level up and leaves from the overview; leaving
 //! applies the changes ([`Out::Leave`]) – never before (4L Q1).
+//!
+//! The changing corner (W4, spec 4C): Confirm at the mirror opens the
+//! character editor ([`View::Dress`]): the rider stands in front of the
+//! mirror; the directions move between the rider's hotspots (head,
+//! torso, hands, legs, feet) in screen space, LB / RB step through the
+//! slots ([`MirrorSlot::ALL`]: kit and free character slots), Confirm
+//! opens the slot's picker (free choices apply at once as a `character`
+//! line; kit is bought / worn / sold like parts) or, on *Try on the
+//! bike*, puts the rider on the stand bike ([`View::TryOn`]); Back steps
+//! out again.
 
 use bevy::math::{Vec2, Vec3};
 use ocw_assets::parts::{Catalogue, Slot};
@@ -22,7 +32,7 @@ use ocw_core::Rgb;
 use super::camera::{CameraMachine, Orbit, Pose, Poses, View};
 use super::input::Act;
 use super::nav::{self, Dir, Rect};
-use super::picker::{self, Picker};
+use super::picker::{self, Kind, MirrorSlot, Picker, Region};
 use super::wallet::{Bike, Garage};
 
 /// Length of the bike swap (s): the stand's bike back onto its hook, the
@@ -76,6 +86,52 @@ pub struct Ctx<'a> {
     /// The corners of each bike's box (world), by bike index (on its hook
     /// or on the stand, wherever it is).
     pub boxes: &'a [[Vec3; 8]],
+    /// The rider's character now (spec 4C).
+    pub character: ocw_core::Character,
+    /// The standing rider's hotspots (world; [`Region::ALL`] order).
+    pub rider_spots: &'a [Vec3],
+}
+
+/// The character editor's state (spec 4C, W4).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Dress {
+    /// Index into [`MirrorSlot::ALL`].
+    pub slot: usize,
+    /// The focused hotspot ([`Region::ALL`]).
+    pub hotspot: usize,
+    /// The rider turned about the vertical (orbit, rad).
+    pub yaw: f32,
+}
+
+impl Default for Dress {
+    fn default() -> Self {
+        Self {
+            slot: 0,
+            hotspot: 0,
+            yaw: 0.0,
+        }
+    }
+}
+
+impl Dress {
+    pub fn slot(&self) -> MirrorSlot {
+        MirrorSlot::ALL[self.slot % MirrorSlot::ALL.len()]
+    }
+
+    /// LB / RB: the next slot, the hotspot following its region.
+    fn step(&mut self, d: isize) {
+        let n = MirrorSlot::ALL.len() as isize;
+        self.slot = (self.slot as isize + d).rem_euclid(n) as usize;
+        if let Some(r) = self.slot().region() {
+            self.hotspot = Region::ALL.iter().position(|x| *x == r).unwrap_or(0);
+        }
+    }
+
+    /// A hotspot focused: its region's first slot.
+    fn focus(&mut self, i: usize) {
+        self.hotspot = i.min(Region::ALL.len() - 1);
+        self.slot = Region::ALL[self.hotspot].first_slot();
+    }
 }
 
 /// The workshop scene.
@@ -97,6 +153,11 @@ pub struct Workshop {
     pub orbit: Orbit,
     /// Something changed that leaving applies.
     pub changed: bool,
+    /// The character editor (spec 4C).
+    pub dress: Dress,
+    /// The mirror shows no reflection (low graphics quality,
+    /// `workshop.mirror off`): the editor looks straight at the rider.
+    pub front_view: bool,
 }
 
 impl Workshop {
@@ -120,7 +181,73 @@ impl Workshop {
             cam: CameraMachine::new(View::Overview, at),
             orbit,
             changed: false,
+            dress: Dress::default(),
+            front_view: false,
         }
+    }
+
+    /// The rider is on the stand bike (*Try on the bike*).
+    pub fn trying_on(&self) -> bool {
+        self.view() == View::TryOn
+    }
+
+    /// The character corner is open: editor, picker there, or trying on.
+    pub fn dressing(&self) -> bool {
+        matches!(self.view(), View::Dress { .. } | View::TryOn)
+    }
+
+    fn dress_view(&self) -> View {
+        View::Dress {
+            front: self.front_view,
+        }
+    }
+
+    /// The rider hotspots' screen positions.
+    pub fn rider_points(&self, ctx: &Ctx) -> Vec<Option<Vec2>> {
+        let pose = self.pose(ctx.layout);
+        ctx.rider_spots
+            .iter()
+            .map(|p| pose.to_screen(ctx.size, *p))
+            .collect()
+    }
+
+    /// Opens the picker of the editor's slot (not *Try on the bike*).
+    fn open_mirror_picker(&mut self, ctx: &Ctx) {
+        self.picker = match self.dress.slot() {
+            MirrorSlot::Char(c) => Some(Picker::character(c, &ctx.character)),
+            MirrorSlot::Kit(slot) => Some(Picker::new(
+                slot,
+                picker::kit_rows(ctx.cat, ctx.garage, slot),
+            )),
+            MirrorSlot::TryOn => None,
+        };
+    }
+
+    /// The look the rider shows now (spec 4C): the character with the
+    /// picker's focused free choice, and the worn kit's models with the
+    /// focused kit row in its slot (the live preview).
+    pub fn rider_look(&self, ctx: &Ctx) -> (ocw_core::Character, Vec<String>) {
+        let mut character = ctx.character;
+        let mut kit: Vec<(Slot, String)> = Slot::KIT
+            .into_iter()
+            .filter_map(|s| {
+                let p = ctx.garage.kit_on(ctx.cat, s)?;
+                (!p.is_base()).then(|| (s, p.model.clone()))
+            })
+            .collect();
+        if let Some(p) = &self.picker {
+            if let Some(f) = p.preview_free() {
+                character = f.apply(character);
+            } else if let Some(part) = p.preview().and_then(|id| ctx.cat.get(id))
+                && part.slot.is_kit()
+            {
+                kit.retain(|(s, _)| *s != part.slot);
+                if !part.is_base() {
+                    kit.push((part.slot, part.model.clone()));
+                }
+            }
+        }
+        (character, kit.into_iter().map(|(_, m)| m).collect())
     }
 
     pub fn view(&self) -> View {
@@ -216,7 +343,7 @@ impl Workshop {
             }
             Zone::Mirror => {
                 self.caption = Some(
-                    "The changing corner: the character editor comes with W4. Confirm: rider and kit colours (menu)."
+                    "The changing corner: Confirm to dress your rider – body, skin, face, hair, glasses (free) and kit (hearts) – and to try it on the bike."
                         .into(),
                 );
                 self.go(View::Mirror, layout);
@@ -306,7 +433,9 @@ impl Workshop {
             .bikes
             .get(self.stand)
             .and_then(|id| ctx.garage.bike(id));
-        if let (Some(p), Some(bike)) = (&mut self.picker, bike) {
+        if let (Some(p), Some(bike)) = (&mut self.picker, bike)
+            && p.character.is_none()
+        {
             p.refresh(picker::rows(ctx.cat, ctx.garage, bike, p.slot));
         }
         self.hotspot = self.hotspot.min(ctx.anchors.len().saturating_sub(1));
@@ -356,27 +485,91 @@ impl Workshop {
                     p.focus = i;
                     self.open_dialog(ctx);
                 }
-                Act::Confirm | Act::Action => self.open_dialog(ctx),
+                Act::Confirm | Act::Action => {
+                    // A free choice applies at once (no dialog, nothing to pay).
+                    if let Some(f) = p.preview_free() {
+                        return self.line(f.line());
+                    }
+                    self.open_dialog(ctx)
+                }
                 Act::Compare => p.toggle_pin(),
+                Act::SlotPrev | Act::SlotNext if self.dressing() => {
+                    let d = if a == Act::SlotNext { 1 } else { -1 };
+                    self.dress.step(d);
+                    if self.dress.slot() == MirrorSlot::TryOn {
+                        self.dress.step(d);
+                    }
+                    self.open_mirror_picker(ctx);
+                }
                 Act::SlotPrev | Act::SlotNext => {
                     let n = ctx.anchors.len().max(1);
                     let d = if a == Act::SlotNext { 1 } else { n - 1 };
                     self.hotspot = (self.hotspot + d) % n;
                     self.open_picker(ctx);
                 }
+                Act::Orbit(d, _) if self.dressing() => self.dress.yaw += d.x,
                 Act::Back | Act::BackButton => {
-                    // Leaving the picker restores the equipped part.
+                    // Leaving the picker restores the equipped part (the
+                    // look: what the rider wears).
                     self.picker = None;
-                    self.go(View::Stand, l);
+                    if self.dressing() {
+                        let v = self.dress_view();
+                        self.go(v, l);
+                    } else {
+                        self.go(View::Stand, l);
+                    }
                 }
                 _ => {}
             }
             return None;
         }
         match (self.view(), a) {
+            // The character editor (spec 4C).
+            (View::Dress { .. }, Act::Back | Act::BackButton) => self.go(View::Mirror, l),
+            (View::TryOn, Act::Back | Act::BackButton) => {
+                let v = self.dress_view();
+                self.go(v, l);
+            }
+            (View::TryOn, Act::Orbit(d, _)) => self.dress.yaw += d.x,
+            (View::TryOn, _) => {}
+            (View::Dress { .. }, Act::Left | Act::Right | Act::Up | Act::Down) => {
+                let dir = match a {
+                    Act::Left => Dir::Left,
+                    Act::Right => Dir::Right,
+                    Act::Up => Dir::Up,
+                    _ => Dir::Down,
+                };
+                if let Some(i) =
+                    nav::next_in_direction(&self.rider_points(ctx), self.dress.hotspot, dir)
+                {
+                    self.dress.focus(i);
+                }
+            }
+            (View::Dress { .. }, Act::SlotPrev) => self.dress.step(-1),
+            (View::Dress { .. }, Act::SlotNext) => self.dress.step(1),
+            (View::Dress { .. }, Act::Confirm) => self.dress_confirm(ctx),
+            (View::Dress { .. }, Act::Point(at)) => {
+                if let Some(i) = nav::hit(&self.rider_points(ctx), at, 0.0) {
+                    self.dress.focus(i);
+                }
+            }
+            (View::Dress { .. }, Act::Activate(at)) => {
+                if let Some(i) = nav::hit(&self.rider_points(ctx), at, 0.0) {
+                    self.dress.focus(i);
+                    self.dress_confirm(ctx);
+                }
+            }
+            (View::Dress { .. }, Act::Orbit(d, _)) => self.dress.yaw += d.x,
+            (View::Dress { .. }, _) => {}
             (_, Act::BackButton) | (_, Act::Back) => match self.view() {
                 View::Overview => return self.leave(None),
-                View::Stand | View::Part(_) | View::Wall(_) | View::Bench | View::Mirror => {
+                View::Stand
+                | View::Part(_)
+                | View::Wall(_)
+                | View::Bench
+                | View::Mirror
+                | View::Dress { .. }
+                | View::TryOn => {
                     self.caption = None;
                     self.focus = self.stand;
                     self.zone = Zone::Stand;
@@ -448,7 +641,12 @@ impl Workshop {
                     self.start_swap(self.focus, l);
                 }
             }
-            (View::Mirror, Act::Confirm) => return self.leave(Some("menu workshop-page".into())),
+            (View::Mirror, Act::Confirm) => {
+                self.caption = None;
+                self.zone = Zone::Mirror;
+                let v = self.dress_view();
+                self.go(v, l);
+            }
             (View::Overview | View::Wall(_) | View::Bench | View::Mirror, Act::Point(at)) => {
                 if let Some(i) = nav::hit_rect(&self.bike_rects(ctx), at) {
                     self.focus = i;
@@ -487,6 +685,16 @@ impl Workshop {
         None
     }
 
+    /// Confirm in the editor: the slot's picker, or *Try on the bike*.
+    fn dress_confirm(&mut self, ctx: &Ctx) {
+        if self.dress.slot() == MirrorSlot::TryOn {
+            self.picker = None;
+            self.go(View::TryOn, ctx.layout);
+        } else {
+            self.open_mirror_picker(ctx);
+        }
+    }
+
     fn plus_rect(&self, ctx: &Ctx) -> Option<Rect> {
         let h = ctx.layout.hooks.last()?;
         self.zone_rect(ctx, h.bike.0, Vec3::new(0.4, 0.6, 0.3))
@@ -502,7 +710,7 @@ impl Workshop {
         };
         p.dialog = picker::dialog(ctx.cat, ctx.garage, bike, p.slot, &row, ctx.balance);
         if p.dialog.is_none()
-            && let picker::Kind::Shop = row.kind
+            && let Kind::Shop = row.kind
         {
             self.caption = Some("Not enough hearts yet: they are earned by riding.".into());
         }
@@ -555,6 +763,7 @@ pub(crate) mod tests {
         pub wallet: Wallet,
         pub layout: Layout,
         pub anchors: Vec<(Slot, Vec3)>,
+        pub spots: Vec<Vec3>,
     }
 
     impl World {
@@ -573,10 +782,12 @@ pub(crate) mod tests {
                     (*s, c + Vec3::new(a.cos() * 0.5, a.sin() * 0.3, 0.0))
                 })
                 .collect();
+            let spots = layout.rider_hotspots(1.0).to_vec();
             Self {
                 wallet,
                 layout,
                 anchors,
+                spots,
             }
         }
 
@@ -615,6 +826,8 @@ pub(crate) mod tests {
                 size: Vec2::new(1920.0, 1080.0),
                 anchors: &self.anchors,
                 boxes: &boxes,
+                character: ocw_core::Character::default(),
+                rider_spots: &self.spots,
             };
             let mut out = w.update(acts, &ctx);
             out.extend(w.tick(1.0 / 60.0));
@@ -640,6 +853,8 @@ pub(crate) mod tests {
                 size: Vec2::new(1920.0, 1080.0),
                 anchors: &self.anchors,
                 boxes: &boxes,
+                character: ocw_core::Character::default(),
+                rider_spots: &self.spots,
             };
             (w.hotspot_points(&ctx), w.bike_rects(&ctx))
         }
@@ -708,16 +923,13 @@ pub(crate) mod tests {
         assert!(w.caption.as_deref().unwrap().contains("bench"));
         world.step(&mut w, &[Act::Down]);
         assert_eq!((w.zone, w.view()), (Zone::Mirror, View::Mirror));
-        // Confirm at the mirror: leave to the rider's menu page.
+        // Confirm at the mirror: the character editor (W4).
         let out = world.step(&mut w, &[Act::Confirm]);
-        assert_eq!(
-            out,
-            vec![Out::Leave {
-                apply: false,
-                then: Some("menu workshop-page".into())
-            }]
-        );
-        // Back from a zone: the overview; Back there: leave.
+        assert!(out.is_empty());
+        assert_eq!(w.view(), View::Dress { front: false });
+        // Back: the corner; Back from a zone: the overview; Back there: leave.
+        world.step(&mut w, &[Act::Back]);
+        assert_eq!(w.view(), View::Mirror);
         world.step(&mut w, &[Act::Back]);
         assert_eq!(w.view(), View::Overview);
         let out = world.step(&mut w, &[Act::Back]);
@@ -848,6 +1060,8 @@ pub(crate) mod tests {
                 size: Vec2::new(1920.0, 1080.0),
                 anchors: &world.anchors,
                 boxes: &boxes,
+                character: ocw_core::Character::default(),
+                rider_spots: &world.spots,
             };
             w.stand_look(&ctx)
         };
@@ -864,6 +1078,8 @@ pub(crate) mod tests {
             size: Vec2::new(1920.0, 1080.0),
             anchors: &world.anchors,
             boxes: &boxes,
+            character: ocw_core::Character::default(),
+            rider_spots: &world.spots,
         };
         let model = ocw_assets::shipped::catalogue()
             .get(&part)

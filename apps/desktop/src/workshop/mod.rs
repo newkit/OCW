@@ -12,6 +12,12 @@
 //! model → [`WorkshopView`] (drawn by `ocw_render::workshop`); every
 //! change is a console command line (`workshop.buy`, `bikes.select` …),
 //! and leaving the workshop applies the bike (`BikeChange`, 4L Q1).
+//!
+//! W4 (spec 4C): the mirror is the character editor – the free character
+//! (`character` command: build, skin, face, hair, glasses; the height
+//! comes from the rider profile) and the kit (bought and worn like parts,
+//! `workshop.buy helmet.tt.top`), *Try on the bike*; the look and the kit
+//! ids go to the server with the bike when the workshop closes.
 
 pub mod camera;
 pub mod input;
@@ -32,8 +38,9 @@ use ocw_render::RideView;
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
 use ocw_render::menu::InputContext;
 use ocw_render::workshop::{
-    BikeModels, BikeView, DialogView, HotspotView, PickerRowView, PickerView, WorkshopCorePlugin,
-    WorkshopPointer, WorkshopPointerEvent, WorkshopView, bike_corners, bike_pose,
+    BikeModels, BikeView, DialogView, HotspotView, PickerRowView, PickerView, RiderShow,
+    WorkshopCorePlugin, WorkshopPointer, WorkshopPointerEvent, WorkshopView, bike_corners,
+    bike_pose,
 };
 
 use crate::Args;
@@ -62,6 +69,9 @@ pub struct WorkshopState {
     session: f64,
     last_distance: Option<f64>,
     pub ride_window: bool,
+    /// The mirror's reflection (off: the low-quality direct front view,
+    /// `workshop.mirror off`).
+    pub mirror: bool,
     /// Booked hearts are saved at most this often (s).
     dirty: bool,
     save_in: f64,
@@ -82,6 +92,7 @@ impl WorkshopState {
             session: f64::NAN,
             last_distance: None,
             ride_window: true,
+            mirror: true,
             dirty: false,
             save_in: 0.0,
         }
@@ -104,14 +115,20 @@ fn rider(world: &World) -> (String, ProfileId) {
 }
 
 /// The part ids on the bike `rider` rides (the garage's active bike, if
-/// it is of the riding `profile`), for the hello (spec §14 Phase 4, 4G).
+/// it is of the riding `profile`) and the worn kit, for the hello (spec
+/// §14 Phase 4, 4G, 4C).
 pub fn riding_parts(world: &World, rider: &str, profile: ProfileId) -> Vec<String> {
-    world
+    let Some(g) = world
         .get_resource::<WorkshopState>()
         .and_then(|s| s.wallet.get(rider))
-        .filter(|g| g.active_bike().profile() == profile)
-        .map(|g| g.part_ids(g.active_bike()))
-        .unwrap_or_default()
+    else {
+        return Vec::new();
+    };
+    if g.active_bike().profile() == profile {
+        g.riding_ids(g.active_bike())
+    } else {
+        g.kit_ids()
+    }
 }
 
 impl Plugin for WorkshopPlugin {
@@ -137,7 +154,7 @@ impl Plugin for WorkshopPlugin {
 }
 
 /// Console lines of the scene's actions (scripts, scenes, tests).
-const ACTIONS: [&str; 14] = [
+const ACTIONS: [&str; 15] = [
     "open",
     "close",
     "left",
@@ -152,6 +169,7 @@ const ACTIONS: [&str; 14] = [
     "action",
     "reset",
     "orbit",
+    "mirror",
 ];
 
 fn register_commands(app: &mut App) {
@@ -198,6 +216,15 @@ fn register_commands(app: &mut App) {
                         "compare" => Act::Compare,
                         "action" => Act::Action,
                         "reset" => Act::ResetView,
+                        "mirror" => {
+                            // Straight to the character editor (scripts).
+                            let mut s = world.resource_mut::<WorkshopState>();
+                            if s.scene.is_none() {
+                                return Err("the workshop is not open (workshop open)".into());
+                            }
+                            s.queued.extend([Act::Down, Act::Down, Act::Confirm]);
+                            return Ok(String::new());
+                        }
                         _ => {
                             let deg = m.get_one::<f32>("amount").copied().unwrap_or(30.0);
                             Act::Orbit(Vec2::new(deg.to_radians(), 0.0), 0.0)
@@ -222,6 +249,72 @@ fn register_commands(app: &mut App) {
             let on = m.get_one::<String>("on").is_some_and(|v| v == "on");
             world.resource_mut::<WorkshopState>().ride_window = on;
             Ok(format!("ride window {}", if on { "on" } else { "off" }))
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("workshop.mirror")
+            .about("The mirror's reflection in the changing corner (off: a direct front view, for slow graphics)")
+            .arg(Arg::new("on").value_parser(["on", "off"]).required(true)),
+        |world, m| {
+            let on = m.get_one::<String>("on").is_some_and(|v| v == "on");
+            let mut s = world.resource_mut::<WorkshopState>();
+            s.mirror = on;
+            Ok(format!(
+                "mirror {}",
+                if on { "reflection on" } else { "off: front view" }
+            ))
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("character")
+            .about("The rider's character: free choices, never physics (no options: the current one)")
+            .arg(
+                Arg::new("build")
+                    .long("build")
+                    .value_parser(ocw_core::BodyBuild::ALL.map(|b| b.id())),
+            )
+            .arg(index_arg("skin", ocw_core::character::SKIN_TONES.len()))
+            .arg(index_arg("face", ocw_core::character::FACES.len()))
+            .arg(index_arg("hair", ocw_core::character::HAIR_STYLES.len()))
+            .arg(
+                Arg::new("hair_colour")
+                    .long("hair-colour")
+                    .value_name("#RRGGBB")
+                    .value_parser(|s: &str| Rgb::parse(s).ok_or_else(|| format!("{s:?} is not a colour #RRGGBB"))),
+            )
+            .arg(index_arg("glasses", ocw_core::character::GLASSES.len())),
+        |world, m| {
+            let mut c = crate::settings::local_rider(world).character();
+            let before = c;
+            if let Some(b) = m.get_one::<String>("build").and_then(|b| ocw_core::BodyBuild::parse(b)) {
+                c.build = b;
+            }
+            let idx = |k: &str| m.get_one::<u8>(k).map(|v| v - 1);
+            if let Some(v) = idx("skin") {
+                c.skin = v;
+            }
+            if let Some(v) = idx("face") {
+                c.face = v;
+            }
+            if let Some(v) = idx("hair") {
+                c.hair = v;
+            }
+            if let Some(v) = m.get_one::<Rgb>("hair_colour") {
+                c.hair_colour = *v;
+            }
+            if let Some(v) = idx("glasses") {
+                c.glasses = v;
+            }
+            if c == before {
+                return Ok(c.summary());
+            }
+            set_character(world, c)?;
+            if world.resource::<WorkshopState>().scene.is_none() {
+                apply_bike(world);
+            }
+            Ok(c.summary())
         },
     ))
     .console_command(ConsoleCommand::new(
@@ -457,6 +550,35 @@ fn register_commands(app: &mut App) {
     ));
 }
 
+/// `--NAME N`: a 1-based index into a palette of `n`.
+fn index_arg(name: &'static str, n: usize) -> Arg {
+    Arg::new(name)
+        .long(name)
+        .value_name("N")
+        .value_parser(clap::value_parser!(u8).range(1..=n as i64))
+        .help(format!("1 … {n}"))
+}
+
+/// Sets the riding rider's character (and the saved profile's of the same
+/// name, riders.toml).
+fn set_character(world: &mut World, c: ocw_core::Character) -> Result<(), String> {
+    let mut p = world
+        .get_resource_mut::<RiderProfiles>()
+        .ok_or("no rider profiles")?;
+    p.riding.set_character(c);
+    let name = p.riding.name.clone();
+    let saved = if let Some(i) = p.riders.find(&name) {
+        p.riders.riders[i].set_character(c);
+        true
+    } else {
+        false
+    };
+    if saved && p.path.is_some() {
+        p.save()?;
+    }
+    Ok(())
+}
+
 /// The bike of `--bike` (default: the active one).
 fn bike_arg<'g>(g: &'g Garage, m: &clap::ArgMatches) -> Result<&'g wallet::Bike, String> {
     match m.try_get_one::<String>("bike").ok().flatten() {
@@ -549,7 +671,7 @@ fn apply_bike(world: &mut World) {
         let s = world.resource::<WorkshopState>();
         let Some(g) = s.wallet.get(&name) else { return };
         let b = g.active_bike();
-        (b.id.clone(), b.profile(), b.paint(), g.part_ids(b))
+        (b.id.clone(), b.profile(), b.paint(), g.riding_ids(b))
     };
     let mut look: RiderLook = crate::settings::local_rider(world).look();
     if let Some(p) = paint {
@@ -783,8 +905,15 @@ fn workshop_input(
     let size = windows.single().map_or(Vec2::new(1280.0, 720.0), |w| {
         Vec2::new(w.width(), w.height())
     });
+    let character = riders
+        .as_ref()
+        .map(|r| r.riding.character())
+        .unwrap_or_default();
+    let mirror = st.mirror;
     let scene = st.scene.as_mut().expect("open");
+    scene.front_view = !mirror;
     let layout = ocw_assets::workshop::layout(scene.bikes.len());
+    let spots = layout.rider_hotspots(character.scale()).to_vec();
     let looks0 = looks(scene, &g, None);
     let (anchors, boxes) = geometry(scene, &g, &models, &layout, &looks0);
     let ctx = Ctx {
@@ -795,6 +924,8 @@ fn workshop_input(
         size,
         anchors: &anchors,
         boxes: &boxes,
+        character,
+        rider_spots: &spots,
     };
     let mut out = scene.update(&acts, &ctx);
     out.extend(scene.tick(dt));
@@ -846,6 +977,8 @@ fn write_view(
     let size = windows.single().map_or(Vec2::new(1280.0, 720.0), |w| {
         Vec2::new(w.width(), w.height())
     });
+    let character = rider.character();
+    let spots = layout.rider_hotspots(character.scale()).to_vec();
     // The stand bike's look with the live preview.
     let looks0 = looks(scene, g, None);
     let (anchors, boxes) = geometry(scene, g, &models, &layout, &looks0);
@@ -857,6 +990,8 @@ fn write_view(
         size,
         anchors: &anchors,
         boxes: &boxes,
+        character,
+        rider_spots: &spots,
     };
     let stand_look = scene.stand_look(&ctx);
     let all = looks(scene, g, Some(stand_look));
@@ -888,7 +1023,29 @@ fn write_view(
             })
         })
         .collect();
-    let hotspots = if in_stand {
+    let dress = matches!(scene.view(), camera::View::Dress { .. }) && !scene.cam.moving();
+    let rider_points_label = |i: usize, r: picker::Region| HotspotView {
+        pos: spots[i],
+        label: if i == scene.dress.hotspot {
+            let slot = scene.dress.slot();
+            // *Try on the bike* belongs to no region: its name alone.
+            if slot.region() == Some(r) {
+                format!("{} – {}", r.name(), slot.name())
+            } else {
+                slot.name().to_string()
+            }
+        } else {
+            r.name().to_string()
+        },
+        focused: i == scene.dress.hotspot,
+    };
+    let hotspots = if dress && scene.picker.is_none() {
+        picker::Region::ALL
+            .iter()
+            .enumerate()
+            .map(|(i, r)| rider_points_label(i, *r))
+            .collect()
+    } else if in_stand {
         let stand = g.bike(&scene.bikes[scene.stand]);
         anchors
             .iter()
@@ -915,7 +1072,20 @@ fn write_view(
     };
     let picker = scene.picker.as_ref().map(|p| {
         let server = client.as_ref().and_then(|c| c.0.own_effect());
-        picker_view(p, g, balance, scene, server)
+        picker_view(p, g, balance, scene, server, &character)
+    });
+    // The rider in the changing corner (W4): standing at the mirror, or on
+    // the stand bike; with the live preview of the picker.
+    let rider_show = scene.dressing().then(|| {
+        let (c, kit) = scene.rider_look(&ctx);
+        let mut look = rider.look();
+        look.character = c;
+        RiderShow {
+            look,
+            kit,
+            on_stand: scene.trying_on(),
+            yaw: scene.dress.yaw,
+        }
     });
     let hint_ctx = if scene.picker.as_ref().is_some_and(|p| p.dialog.is_some()) {
         HintCtx::Dialog
@@ -925,6 +1095,8 @@ fn write_view(
         match scene.view() {
             camera::View::Stand => HintCtx::Stand,
             camera::View::Bench | camera::View::Mirror => HintCtx::Corner,
+            camera::View::Dress { .. } => HintCtx::Dress,
+            camera::View::TryOn => HintCtx::TryOn,
             _ => HintCtx::Room,
         }
     };
@@ -949,6 +1121,8 @@ fn write_view(
         ride_window: state.ride_window,
         touch: state.active == ActiveInput::Touch,
         frame: rider.look().frame,
+        rider: rider_show,
+        mirror: state.mirror,
     };
     view.set_if_neq(new);
 }
@@ -959,6 +1133,7 @@ fn picker_view(
     balance: i64,
     scene: &Workshop,
     server: Option<&ocw_protocol::BuildInfo>,
+    character: &ocw_core::Character,
 ) -> PickerView {
     let bike = g.bike(&scene.bikes[scene.stand]);
     let mut last_group = "";
@@ -978,9 +1153,33 @@ fn picker_view(
             }
         })
         .collect();
-    let equipped = bike.and_then(|b| g.part_on(cat(), b, p.slot));
+    let equipped = if p.slot.is_kit() {
+        g.kit_on(cat(), p.slot)
+    } else {
+        bike.and_then(|b| g.part_on(cat(), b, p.slot))
+    };
     let focused = p.preview().and_then(|id| cat().get(id));
     let detail = match (p.slot, focused) {
+        _ if p.character.is_some() => {
+            let f = p.preview_free();
+            let mut d = vec![
+                f.map_or_else(String::new, |f| f.name()),
+                "Free – who you are never costs hearts, and never changes the physics.".into(),
+            ];
+            if p.character == Some(picker::CharSlot::Body) {
+                d.push(format!(
+                    "Height {:.2} m: from the rider profile (Settings → Riders, riders.edit --height)",
+                    f32::from(character.validated().height_cm) / 100.0
+                ));
+            }
+            if f.is_some_and(|f| picker::CharSlot::Glasses.choices().contains(&f))
+                && g.kit_on(cat(), Slot::Helmet)
+                    .is_some_and(|h| h.model == "helmet-tt")
+            {
+                d.push("Under the time-trial helmet the visor replaces the glasses.".into());
+            }
+            d
+        }
         (Slot::Paint, _) => vec![
             picker::colour_name(p.preview_paint().flatten()),
             "Paint is free (special designs come later).".into(),
@@ -1014,8 +1213,13 @@ fn picker_view(
         }),
         _ => None,
     };
+    let title = match p.character {
+        Some(c) => format!("{} – your rider", c.name()),
+        None if p.slot.is_kit() => format!("{} – your kit", p.slot.name()),
+        None => format!("{} – {}", p.slot.name(), bike.map_or("", |b| b.name())),
+    };
     PickerView {
-        title: format!("{} – {}", p.slot.name(), bike.map_or("", |b| b.name())),
+        title,
         rows,
         focus: p.focus,
         detail,

@@ -11,7 +11,12 @@
 //! the price paid in full while the part was never ridden (no ride of
 //! ≥ 1 km with it on the bike), afterwards half of it, rounded down;
 //! base parts and starter bikes cannot be sold. The balance is the sum of
-//! the ledger. The files are trivially editable – accepted, they only
+//! the ledger.
+//!
+//! The rider's kit (spec 4C, W4) lives in the same garage: `kit` maps a
+//! kit slot to the worn item (a slot without one wears its free base
+//! item); kit items are bought, worn, taken off and sold by the same rules
+//! (they count as ridden after 1 km in the saddle), on any bike. The files are trivially editable – accepted, they only
 //! matter on the local server until the Phase 5 backend.
 
 use std::collections::BTreeMap;
@@ -101,6 +106,10 @@ pub struct Garage {
     pub items: Vec<Item>,
     #[serde(default = "first_item")]
     pub next_item: u32,
+    /// The worn kit (spec 4C): kit slot id → item id; a slot without an
+    /// entry wears its free base item.
+    #[serde(default)]
+    pub kit: BTreeMap<String, u32>,
 }
 
 fn first_item() -> u32 {
@@ -125,6 +134,7 @@ impl Garage {
                 .collect(),
             items: Vec::new(),
             next_item: 1,
+            kit: BTreeMap::new(),
         }
     }
 
@@ -187,15 +197,54 @@ impl Garage {
             .collect()
     }
 
+    /// Whether item `item` is worn (kit).
+    #[cfg(test)]
+    pub fn worn(&self, item: u32) -> bool {
+        self.kit.values().any(|i| *i == item)
+    }
+
+    /// The kit item worn in `slot`: the worn item's, else the free base
+    /// item (spec 4C).
+    pub fn kit_on<'c>(&self, cat: &'c Catalogue, slot: Slot) -> Option<&'c Part> {
+        self.kit
+            .get(slot.id())
+            .and_then(|i| self.item(*i))
+            .and_then(|i| cat.get(&i.part))
+            .or_else(|| cat.base_kit(slot))
+    }
+
+    /// The catalogue ids of the worn kit that is not the base kit.
+    pub fn kit_ids(&self) -> Vec<String> {
+        self.kit
+            .values()
+            .filter_map(|i| self.item(*i))
+            .map(|i| i.part.clone())
+            .collect()
+    }
+
+    /// Everything the server counts for riding `bike`: its parts and the
+    /// worn kit (spec 4C: bike and kit share the build caps).
+    pub fn riding_ids(&self, bike: &Bike) -> Vec<String> {
+        let mut v = self.part_ids(bike);
+        v.extend(self.kit_ids());
+        v
+    }
+
     /// The spare parts (owned, on no bike; the bench's shelf, 4D).
     #[cfg(test)]
     pub fn spares(&self) -> impl Iterator<Item = &Item> {
-        self.items.iter().filter(|i| self.bike_of(i.id).is_none())
+        self.items
+            .iter()
+            .filter(|i| self.bike_of(i.id).is_none() && !self.worn(i.id))
     }
 }
 
 /// Whether `part` fits `bike`: the bike type, and a frameset's profile.
 pub fn fits(part: &Part, bike: &Bike) -> bool {
+    if part.slot.is_kit() {
+        // Worn by the rider, on any bike.
+        return true;
+    }
     let profile = bike.profile();
     if part.slot == Slot::Frame {
         return part.profile == Some(profile);
@@ -420,7 +469,11 @@ impl Wallet {
             bought: date,
             ridden_m: 0.0,
         });
-        g.bike_mut(bike)?.parts.insert(part.slot.id().into(), id);
+        if part.slot.is_kit() {
+            g.kit.insert(part.slot.id().into(), id);
+        } else {
+            g.bike_mut(bike)?.parts.insert(part.slot.id().into(), id);
+        }
         self.book(rider, -price, "purchase", part.id.clone());
         Ok(Receipt {
             item: id,
@@ -449,6 +502,10 @@ impl Wallet {
         let part = cat
             .get(&it.part)
             .ok_or_else(|| format!("{} is not in the catalogue", it.part))?;
+        if part.slot.is_kit() {
+            g.kit.insert(part.slot.id().into(), item);
+            return Ok(format!("wearing the {}", part.name));
+        }
         let b = g.bike(bike).ok_or_else(|| format!("no bike {bike}"))?;
         if !fits(part, b) {
             return Err(format!("{} does not fit the {}", part.name, b.name()));
@@ -470,6 +527,9 @@ impl Wallet {
             .garages
             .get_mut(rider)
             .ok_or_else(|| format!("{rider} has no garage"))?;
+        if slot.is_kit() {
+            return Ok(g.kit.remove(slot.id()));
+        }
         Ok(g.bike_mut(bike)?.parts.remove(slot.id()))
     }
 
@@ -488,6 +548,7 @@ impl Wallet {
         for b in &mut g.bikes {
             b.parts.retain(|_, i| *i != item);
         }
+        g.kit.retain(|_, i| *i != item);
         let refund = it.refund();
         self.book(rider, i64::from(refund), "sale", it.part.clone());
         Ok(refund)
@@ -524,7 +585,13 @@ impl Wallet {
         if !(metres.is_finite() && metres > 0.0) {
             return false;
         }
-        let on: Vec<u32> = g.active_bike().parts.values().copied().collect();
+        let on: Vec<u32> = g
+            .active_bike()
+            .parts
+            .values()
+            .chain(g.kit.values())
+            .copied()
+            .collect();
         let mut changed = false;
         for it in g.items.iter_mut().filter(|i| on.contains(&i.id)) {
             let was = it.ridden();
@@ -805,5 +872,72 @@ mod tests {
         assert!(!earns(false, false, false), "a remote server");
         assert!(!earns(true, true, false), "a capture");
         assert!(!earns(true, false, true), "kiosk / show mode (--no-hearts)");
+    }
+
+    /// The kit (spec 4C, W4): bought with hearts and worn at once (on
+    /// every bike), taken off back to the free base item, sold by the same
+    /// refund rules; the worn kit goes to the server with the bike.
+    #[test]
+    fn kit_is_bought_worn_taken_off_and_sold_like_parts() {
+        let mut w = wallet();
+        let g = w.get("Ann").unwrap();
+        for slot in Slot::KIT {
+            assert!(
+                g.kit_on(cat(), slot).unwrap().is_base(),
+                "{slot:?}: the base kit"
+            );
+        }
+        assert!(g.kit_ids().is_empty());
+        // Too dear: the TT helmet costs 500 ♥, the start balance is 500 ♥.
+        w.grant("Ann", -1);
+        let e = w.buy(cat(), "Ann", "road", "helmet.tt.top").unwrap_err();
+        assert!(
+            e.contains("1 more needed") || e.contains("more needed"),
+            "{e}"
+        );
+        w.grant("Ann", 1001);
+        let r = w.buy(cat(), "Ann", "road", "helmet.tt.top").unwrap();
+        assert_eq!(r.paid, 500);
+        assert_eq!(w.balance("Ann"), 1000);
+        let g = w.get("Ann").unwrap();
+        assert_eq!(g.kit_on(cat(), Slot::Helmet).unwrap().id, "helmet.tt.top");
+        assert!(g.worn(r.item) && g.bike_of(r.item).is_none());
+        // Worn on every bike: the gravel bike rides with it too.
+        let gravel = g.bike("gravel").unwrap();
+        assert!(g.riding_ids(gravel).contains(&"helmet.tt.top".to_string()));
+        assert!(g.part_ids(gravel).is_empty(), "not a bike part");
+        // A base item is free and cannot be bought.
+        assert!(w.buy(cat(), "Ann", "road", "helmet.road.base").is_err());
+        // Taken off: the base helmet again, the TT helmet a spare.
+        assert_eq!(
+            w.unequip("Ann", "road", Slot::Helmet).unwrap(),
+            Some(r.item)
+        );
+        let g = w.get("Ann").unwrap();
+        assert!(g.kit_on(cat(), Slot::Helmet).unwrap().is_base());
+        assert!(g.spares().any(|i| i.id == r.item));
+        w.equip(cat(), "Ann", "mtb", r.item).unwrap();
+        assert!(w.get("Ann").unwrap().worn(r.item));
+        // Sold before the first ride: in full; ridden: half (floor).
+        let cap = w.buy(cat(), "Ann", "road", "cap.cotton.entry").unwrap();
+        assert!(w.ride("Ann", 1500.0), "worn kit gets ridden");
+        assert_eq!(w.sell("Ann", cap.item).unwrap(), 15);
+        let shoes = w.buy(cat(), "Ann", "road", "shoes.overshoes.mid").unwrap();
+        assert_eq!(w.sell("Ann", shoes.item).unwrap(), 70);
+        let g = w.get("Ann").unwrap();
+        assert!(g.kit_on(cat(), Slot::Cap).unwrap().is_base());
+        assert!(g.kit_on(cat(), Slot::Shoes).unwrap().is_base());
+        // The kit survives a save and a load.
+        let dir = std::env::temp_dir().join(format!("ocw-kit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (mut w2, _) = Wallet::load(&dir);
+        w2.now_unix = Some(1_794_000_000);
+        w2.garage("Bo", ProfileId::Road);
+        let it = w2.buy(cat(), "Bo", "road", "cap.cotton.entry").unwrap();
+        w2.save().unwrap();
+        let (w3, warnings) = Wallet::load(&dir);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(w3.get("Bo").unwrap().worn(it.item));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

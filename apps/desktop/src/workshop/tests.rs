@@ -37,6 +37,11 @@ fn app() -> App {
         .insert_resource(args)
         .insert_resource(RideView::new(Route::test_loop()))
         .insert_resource(crate::connection::Ghosts(None))
+        .insert_resource(RiderProfiles {
+            riders: Default::default(),
+            path: None,
+            riding: Default::default(),
+        })
         .add_plugins((
             ConnectionPlugin {
                 route: Route::test_loop(),
@@ -298,4 +303,233 @@ fn the_gamepad_reaches_every_screen() {
     press(&mut app, GamepadButton::East);
     frames(&mut app, 3);
     assert!(!view(&app).open);
+}
+
+/// Into the character editor: Down, Down (bench, mirror), Confirm.
+fn to_mirror(app: &mut App) {
+    run(app, "workshop open");
+    tap(app, KeyCode::ArrowDown);
+    tap(app, KeyCode::ArrowDown);
+    assert_eq!(scene(app).view(), camera::View::Mirror);
+    tap(app, KeyCode::Enter);
+    frames(app, 40);
+    assert_eq!(scene(app).view(), camera::View::Dress { front: false });
+}
+
+/// The changing corner with the keyboard (spec 4C, W4): the rider's five
+/// hotspots, E / Q through the slots, the helmet picker (owned / shop /
+/// locked), buying and wearing the TT helmet, a free choice applies at
+/// once, *Try on the bike* and back; leaving sends the look and the kit.
+#[test]
+fn the_character_corner_with_the_keyboard() {
+    let mut app = app();
+    to_mirror(&mut app);
+    let v = view(&app);
+    let rider = v.rider.clone().expect("the rider at the mirror");
+    assert!(!rider.on_stand && rider.kit.is_empty(), "the base kit");
+    assert!(v.mirror, "the reflection");
+    assert_eq!(v.hotspots.len(), 5, "head, torso, hands, legs, feet");
+    assert_eq!(
+        scene(&app).dress.slot(),
+        picker::MirrorSlot::Kit(Slot::Helmet)
+    );
+    // E steps to the cap, Q back to the helmet.
+    tap(&mut app, KeyCode::KeyE);
+    assert_eq!(scene(&app).dress.slot(), picker::MirrorSlot::Kit(Slot::Cap));
+    tap(&mut app, KeyCode::KeyQ);
+    // Down in screen space: from the head to the torso.
+    tap(&mut app, KeyCode::ArrowDown);
+    assert_ne!(scene(&app).dress.hotspot, 0);
+    tap(&mut app, KeyCode::ArrowUp);
+    assert_eq!(scene(&app).dress.hotspot, 0);
+    // The helmet picker: the TT helmet (500 ♥) is locked at 500 − 1 ♥.
+    run(&mut app, "hearts.grant -1");
+    tap(&mut app, KeyCode::Enter);
+    let p = view(&app).picker.expect("the helmet picker");
+    assert!(p.title.starts_with("Helmet"), "{}", p.title);
+    assert_eq!(p.rows[0].group.as_deref(), Some("Equipped"));
+    let tt = p
+        .rows
+        .iter()
+        .position(|r| r.left.starts_with("Time-trial helmet"))
+        .expect("the TT helmet in the shop");
+    assert!(
+        p.rows[tt].locked && p.rows[tt].right.contains("needs 1 ♥ more"),
+        "{:?}",
+        p.rows[tt]
+    );
+    run(&mut app, "hearts.grant 1");
+    // Focus it: the live preview wears it; the card shows its benefit.
+    for _ in 0..tt {
+        tap(&mut app, KeyCode::ArrowDown);
+    }
+    let v = view(&app);
+    assert_eq!(v.rider.as_ref().unwrap().kit, vec!["helmet-tt".to_string()]);
+    let d = v.picker.unwrap().detail;
+    assert!(
+        d.iter()
+            .any(|l| l.contains("W @25") && l.contains("pays off above")),
+        "{d:?}"
+    );
+    // Buy: the dialog with Cancel focused; Up + Enter buys.
+    tap(&mut app, KeyCode::Enter);
+    tap(&mut app, KeyCode::ArrowUp);
+    tap(&mut app, KeyCode::Enter);
+    frames(&mut app, 3);
+    assert_eq!(balance(&app), 0);
+    let st = app.world().resource::<WorkshopState>();
+    let g = st.wallet.get("Rider").unwrap();
+    assert_eq!(g.kit_on(cat(), Slot::Helmet).unwrap().id, "helmet.tt.top");
+    // E in the picker: the next slot's picker (free: glasses after the cap).
+    tap(&mut app, KeyCode::KeyE);
+    tap(&mut app, KeyCode::KeyE);
+    let p = view(&app).picker.unwrap();
+    assert!(p.title.starts_with("Glasses"), "{}", p.title);
+    assert_eq!(p.rows[0].right, "free");
+    // A free choice applies at once: round glasses.
+    tap(&mut app, KeyCode::ArrowDown);
+    tap(&mut app, KeyCode::Enter);
+    frames(&mut app, 3);
+    let riding = &app.world().resource::<RiderProfiles>().riding;
+    assert_eq!(riding.character().glasses, 2);
+    // Back, then *Try on the bike* (the last slot).
+    tap(&mut app, KeyCode::Escape);
+    while scene(&app).dress.slot() != picker::MirrorSlot::TryOn {
+        tap(&mut app, KeyCode::KeyE);
+    }
+    tap(&mut app, KeyCode::Enter);
+    frames(&mut app, 40);
+    assert_eq!(scene(&app).view(), camera::View::TryOn);
+    assert!(view(&app).rider.unwrap().on_stand);
+    tap(&mut app, KeyCode::Escape);
+    frames(&mut app, 40);
+    assert!(!view(&app).rider.unwrap().on_stand, "Back: standing again");
+    // Leaving applies: the server rides with the TT helmet (Open, free
+    // ride) and has the character.
+    for _ in 0..3 {
+        tap(&mut app, KeyCode::Escape);
+    }
+    frames(&mut app, 10);
+    assert!(!view(&app).open);
+    let c = &app.world().resource::<ClientState>().0;
+    let me = c.rider_id().unwrap();
+    assert!(c.rider_parts(me).contains(&"helmet.tt.top".to_string()));
+    let effect = c.effective_profile();
+    assert!(
+        effect.cda_m2 < ProfileId::Road.profile().cda_m2,
+        "the TT helmet counts in Open"
+    );
+}
+
+/// The same corner with the gamepad (LB / RB, A, B), the mouse (hover and
+/// click on the rider's hotspots) and touch (a tap on a hotspot).
+#[test]
+fn the_character_corner_with_gamepad_mouse_and_touch() {
+    use bevy::input::gamepad::{Gamepad, GamepadButton};
+    let mut app = app();
+    to_mirror(&mut app);
+    let pad = app.world_mut().spawn(Gamepad::default()).id();
+    let press = |app: &mut App, b: GamepadButton| {
+        app.world_mut()
+            .get_mut::<Gamepad>(pad)
+            .unwrap()
+            .digital_mut()
+            .press(b);
+        app.update();
+        let mut g = app.world_mut().get_mut::<Gamepad>(pad).unwrap();
+        g.digital_mut().release(b);
+        g.digital_mut().clear();
+        app.update();
+    };
+    press(&mut app, GamepadButton::RightTrigger);
+    assert_eq!(scene(&app).dress.slot(), picker::MirrorSlot::Kit(Slot::Cap));
+    press(&mut app, GamepadButton::LeftTrigger);
+    press(&mut app, GamepadButton::LeftTrigger);
+    assert_eq!(scene(&app).dress.slot(), picker::MirrorSlot::TryOn, "wraps");
+    press(&mut app, GamepadButton::South);
+    frames(&mut app, 40);
+    assert_eq!(scene(&app).view(), camera::View::TryOn);
+    assert!(view(&app).hint.contains("Ⓑ"), "{}", view(&app).hint);
+    press(&mut app, GamepadButton::East);
+    frames(&mut app, 40);
+    assert_eq!(scene(&app).view(), camera::View::Dress { front: false });
+    // The hotspots' screen positions (the 1280 × 720 default window).
+    let points = {
+        let st = app.world().resource::<WorkshopState>();
+        let s = st.scene.as_ref().unwrap();
+        let layout = ocw_assets::workshop::layout(s.bikes.len());
+        let pose = s.pose(&layout);
+        layout
+            .rider_hotspots(1.0)
+            .map(|p| pose.to_screen(Vec2::new(1280.0, 720.0), p))
+    };
+    // Touch: a tap on the feet opens the shoes' picker.
+    let feet = points[4].expect("the feet in view");
+    touch(&mut app, TouchPhase::Started, 7, feet);
+    touch(&mut app, TouchPhase::Ended, 7, feet);
+    frames(&mut app, 2);
+    assert_eq!(
+        scene(&app).dress.slot(),
+        picker::MirrorSlot::Kit(Slot::Shoes)
+    );
+    let p = view(&app).picker.expect("the shoes picker");
+    assert!(p.title.starts_with("Shoes"), "{}", p.title);
+    // Back with the on-screen button; then a mouse click on the torso.
+    app.world_mut()
+        .resource_mut::<WorkshopPointer>()
+        .0
+        .push(WorkshopPointerEvent::Back);
+    frames(&mut app, 2);
+    assert!(scene(&app).picker.is_none());
+    let torso = points[1].unwrap();
+    let mut s = app.world_mut().resource_mut::<WorkshopState>();
+    s.queued.push(Act::Activate(torso));
+    frames(&mut app, 2);
+    assert_eq!(
+        scene(&app).dress.slot(),
+        picker::MirrorSlot::Kit(Slot::Jersey)
+    );
+    assert!(view(&app).picker.is_some());
+}
+
+/// `character` sets the free choices; `workshop.mirror off` gives the
+/// direct front view (low graphics quality).
+#[test]
+fn the_character_command_and_the_front_view() {
+    let mut app = app();
+    run(
+        &mut app,
+        "character --build strong --skin 9 --hair 4 --hair-colour #B3482A --face 2",
+    );
+    let c = app.world().resource::<RiderProfiles>().riding.character();
+    assert_eq!(c.build, ocw_core::BodyBuild::Strong);
+    assert_eq!((c.skin, c.hair, c.face), (8, 3, 1));
+    assert_eq!(c.hair_colour, Rgb(0xB3482A));
+    // Outside the workshop it applies at once: the hello's look.
+    let look = app.world().resource::<ClientState>().0.view(0.0, 1.0)[0]
+        .look
+        .unwrap();
+    assert_eq!(look.character.skin, 8);
+    run(&mut app, "character --skin 13");
+    assert_eq!(
+        app.world()
+            .resource::<RiderProfiles>()
+            .riding
+            .character()
+            .skin,
+        8,
+        "out of the palette: refused"
+    );
+    run(&mut app, "workshop.mirror off");
+    to_mirror_front(&mut app);
+    assert!(!view(&app).mirror);
+}
+
+fn to_mirror_front(app: &mut App) {
+    run(app, "workshop open");
+    tap(app, KeyCode::ArrowDown);
+    tap(app, KeyCode::ArrowDown);
+    tap(app, KeyCode::Enter);
+    frames(app, 40);
+    assert_eq!(scene(app).view(), camera::View::Dress { front: true });
 }

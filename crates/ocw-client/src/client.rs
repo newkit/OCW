@@ -368,6 +368,28 @@ impl ClientCore {
         self.effective
     }
 
+    /// Another rider's character, from their last `RiderBuild` (`None`:
+    /// not told yet, or an older server).
+    pub fn rider_character(&self, id: RiderId) -> Option<ocw_core::Character> {
+        self.builds
+            .get(&id)
+            .and_then(|b| b.look)
+            .map(|l| l.character)
+    }
+
+    /// A rider's look from the snapshots (colours) with the character of
+    /// their last `RiderBuild` (spec §14 Phase 4, 4C: once per change).
+    fn with_character(&self, id: RiderId, look: Option<RiderLook>) -> Option<RiderLook> {
+        let character = self.rider_character(id);
+        match (look, character) {
+            (Some(mut l), Some(c)) => {
+                l.character = c;
+                Some(l)
+            }
+            (l, _) => l,
+        }
+    }
+
     /// The fitted parts of a rider's bike as last told by the server
     /// (empty: the stock bike, or the build not known yet).
     pub fn rider_parts(&self, id: RiderId) -> Vec<String> {
@@ -1350,6 +1372,7 @@ impl ClientCore {
             }
             let (name, power_w) = self.names.get(&id).cloned().unwrap_or_default();
             let (bike, look) = self.looks.get(&id).copied().unwrap_or_default();
+            let look = self.with_character(id, look);
             riders.push(RiderView {
                 id,
                 name,
@@ -3838,5 +3861,85 @@ mod tests {
         h.ride(200.0, 1.0);
         let view = h.client.view(h.time_s, 1.0);
         assert!(view.iter().find(|r| r.id == oid).unwrap().parts.is_empty());
+    }
+
+    /// Others see your look (spec §14 Phase 4, 4C, W4): the character goes
+    /// out once in a RiderBuild (not in the snapshots), the worn kit as
+    /// catalogue ids with the parts; a change of the character alone sends
+    /// it again; a joining client gets both.
+    #[test]
+    fn other_riders_character_and_kit_reach_the_view() {
+        let mut h = Harness::new(0, true);
+        let conn = h.server.connect();
+        let character = ocw_core::Character {
+            height_cm: 188,
+            build: ocw_core::BodyBuild::Slim,
+            skin: 7,
+            hair: 2,
+            ..Default::default()
+        };
+        let look = RiderLook {
+            jersey: ocw_core::Rgb(0x1E88E5),
+            character,
+            ..Default::default()
+        };
+        let kit = vec![
+            "helmet.tt.top".to_string(),
+            "jersey.skinsuit.top".to_string(),
+        ];
+        let mut other = ClientCore::new(route(), "Other", RiderProfile::default())
+            .with_look(look)
+            .with_parts(&kit);
+        for reply in h.server.handle(conn, &other.hello()) {
+            other.on_server_message(&reply, 0.0);
+        }
+        let oid = other.rider_id().unwrap();
+        h.ride(200.0, 1.0);
+        let view = h.client.view(h.time_s, 1.0);
+        let o = view.iter().find(|r| r.id == oid).expect("the other rider");
+        assert_eq!(o.look.unwrap().character, character);
+        assert_eq!(o.look.unwrap().jersey, look.jersey);
+        assert_eq!(
+            o.parts,
+            vec!["jersey.skinsuit.top".to_string(), "helmet.tt.top".into()]
+        );
+        // The snapshots carry only the colours.
+        let snap = h
+            .server
+            .tick()
+            .into_iter()
+            .chain((0..5).flat_map(|_| h.server.tick()))
+            .find_map(|m| match ocw_protocol::decode_server(&m) {
+                Ok(v1::server_message::Msg::Snapshot(s)) => Some(s),
+                _ => None,
+            })
+            .expect("a snapshot");
+        let u = snap.riders.iter().find(|u| u.rider_id == oid.0).unwrap();
+        assert_eq!(u.look.as_ref().unwrap().height_cm, None);
+        // A new character alone: once more in a RiderBuild.
+        let bald = RiderLook {
+            character: ocw_core::Character {
+                hair: 5,
+                ..character
+            },
+            ..look
+        };
+        let m = other.change_bike("road", ProfileId::Road, bald, &kit);
+        h.server.handle(conn, &m);
+        h.ride(200.0, 1.0);
+        let view = h.client.view(h.time_s, 1.0);
+        let o = view.iter().find(|r| r.id == oid).unwrap();
+        assert_eq!(o.look.unwrap().character.hair, 5);
+        // A newcomer gets the look with its welcome.
+        let conn2 = h.server.connect();
+        let mut late = ClientCore::new(route(), "Late", RiderProfile::default());
+        for reply in h.server.handle(conn2, &late.hello()) {
+            late.on_server_message(&reply, 0.0);
+        }
+        for b in (0..5).flat_map(|_| h.server.tick()) {
+            late.on_server_message(&b, 0.1);
+        }
+        assert_eq!(late.rider_character(oid).map(|c| c.hair), Some(5));
+        assert_eq!(late.rider_parts(oid).len(), 2);
     }
 }

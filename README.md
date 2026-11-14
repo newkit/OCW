@@ -238,7 +238,7 @@ paged (*Previous* / *Next*, or ← / → on a list row).
 ### The workshop: bikes, parts and hearts
 
 *Workshop* in the menu (or `workshop open`) opens a 3D bicycle workshop over
-the running ride (spec §14 Phase 4, W1 – W3): the ride goes on in autodrive
+the running ride (spec §14 Phase 4, W1 – W4): the ride goes on in autodrive
 underneath and shows in a small live ride window (top right; `workshop.ride_window off`
 hides it). Your bike stands on the repair stand in front, your other bikes hang
 on the wall – every rider starts with six starter bikes, one per physics
@@ -266,9 +266,12 @@ opens the **part picker**: what is fitted, what you own (spare parts or on
 another bike) and the shop (only parts that fit, by tier, cheapest first, a
 lock with the missing hearts). The focused part shows on the bike at once
 (live preview); its card shows weight, price, the part's class steps and
-**what it does to the bike's speed** ("Speed: +0.4 % flat, +0.6 % at 6 %",
-"capped" at the band's edge; the bike's mass and its speed against the stock
-bike), and the compare card (C / Y / long press pins a part) the speed
+**its benefit**: aero parts by speed – the watts they save at 25, 35 and
+45 km/h and the speed gain at 250 W on the flat and at 6 % (the time-trial
+helmet: "Benefit: +0.6 W @25, +1.8 W @35, +3.9 W @45 km/h; +0.3 % flat,
+±0.0 % at 6 % – pays off above ~30 km/h"), light parts by the climb (race
+shoes: "−100 g: +0.2 % at 6 %, ±0.0 % flat"), "capped" at the band's edge; the bike's mass and its speed against
+the stock bike – and the compare card (C / Y / long press pins a part) the
 difference of the two parts on this bike. Buying fits the part;
 selling refunds the full price until the part has been ridden 1 km, half
 after. Paint is free. **Leaving the workshop applies the bike** at once in
@@ -284,15 +287,44 @@ tyres ±4 % rolling resistance per step, aero wheels / cockpits / frames
 the values from its own copy of the catalogue (the client sends part ids
 only) and **caps the whole build**: at 250 W and 75 kg the best build of a
 profile is at most **+1.5 %** faster on the flat and **+2.5 %** on a 6 %
-climb than the stock bike. Races and group rides use the ***Profile*** mode
+climb than the stock bike, at 150, 250 and 400 W alike. Races and group rides use the ***Profile*** mode
 by default – only the frame's profile counts, parts are cosmetic; the
 organiser can choose *Open* (parts count, within the caps) or *Equal* (one
 bike for everyone): `event race --physics open|profile|equal`. Free ride,
 single player and time trials count the parts. The other riders see the
 parts on your bike (sent once per change, not in every snapshot). The wallet
 is local until the backend (`<data dir>/ocw/workshop.toml` and
-`hearts-ledger.jsonl`). The rider list and kit colours: the mirror corner, or
-`menu workshop-page`.
+`hearts-ledger.jsonl`). The rider list and kit colours: `menu workshop-page`.
+
+**The changing corner (W4, spec §14 Phase 4, 4C).** ↓ ↓ to the mirror and
+Enter (or `workshop mirror`) opens the character editor: your rider stands in
+front of the mirror, seen over the shoulder and in the mirror from the front
+(a planar reflection; `workshop.mirror off` shows a direct front view instead,
+for slow graphics). The arrows (D-pad, hover, tap) move between the rider's
+hotspots – head, torso, hands, legs, feet – and Q / E (LB / RB) step through
+the slots: helmet, cap, glasses, hair, hair colour, face, jersey, body, skin
+tone, gloves, bib shorts / tights, socks, shoes and *Try on the bike*; Enter
+opens the slot's picker, R-stick / IJKL / drag turn the rider. **Body, skin,
+face, hair and glasses are free** (`character --build slim|medium|strong
+--skin 1…12 --face 1…4 --hair 1…6 --hair-colour #RRGGBB --glasses 1…3`; the
+height comes from the rider profile, `riders.edit NAME --height CM`, and the
+saddle follows it); **the kit costs hearts** like parts, priced from real list
+prices (`assets/parts-sources.toml`): long-sleeve thermal jersey 130 ♥, aero
+jersey 210 ♥, skinsuit 430 ♥, winter tights 180 ♥, aero bib shorts 250 ♥, tall
+socks 20 ♥, aero socks 34 ♥, carbon race shoes 400 ♥, aero overshoes 70 ♥,
+gel mitts 30 ♥, full-finger gloves 60 ♥, winter gloves 108 ♥, light helmet
+320 ♥, aero road helmet 268 ♥, time-trial helmet 500 ♥, cotton cap 30 ♥ – and
+everyone starts with a free base kit. Kit gives a **slight** benefit (spec
+4C): aero items (TT and aero helmets, skinsuit, aero jersey and bibs,
+overshoes, aero socks) a little less drag, light helmets and race shoes their
+weight (race shoes also a tiny efficiency step); comfort items nothing. A TT
+helmet and a skinsuit are about +0.5 % on the flat; bike and kit share the
+same caps and count only in *Open*. Buying, wearing, taking off and selling
+work as for parts (`workshop.buy helmet.tt.top`, `workshop.unequip helmet`,
+`workshop.sell ITEM`). *Try on the bike* puts the rider on the bike on the
+stand, pedalling slowly; Back stands them up again. Others see your look:
+the character and the kit go to the server when the workshop closes and to
+everyone once per change.
 
 ### The World menu: changing the world without restarting
 
@@ -1040,12 +1072,14 @@ for now).
 | `riders.edit NAME [--weight KG] [--height CM] [--ftp W] [--rename NEW] [--no-height] [--no-ftp] [BIKE OPTIONS]` | Change a rider profile; bike options: `--bike road\|road-aero\|road-climbing\|tt\|gravel\|mtb`, `--frame-color`, `--jersey-color`, `--helmet-color` `#RRGGBB`, `--kit plain\|band\|sash` |
 | `riders.remove NAME` | Delete a rider profile |
 | `riders.select NAME` | Choose who rides (Workshop); applies from the next start |
-| `workshop [open\|close\|left\|right\|up\|down\|select\|back\|slot-next\|slot-prev\|compare\|action\|reset\|orbit DEG]` | Open, close or drive the workshop scene (menu: Workshop) |
+| `workshop [open\|close\|left\|right\|up\|down\|select\|back\|slot-next\|slot-prev\|compare\|action\|reset\|orbit DEG\|mirror]` | Open, close or drive the workshop scene (menu: Workshop) |
 | `workshop.ride_window on\|off` | The live ride window in the workshop |
+| `workshop.mirror on\|off` | The mirror's reflection in the changing corner (off: a direct front view) |
+| `character [--build B] [--skin N] [--face N] [--hair N] [--hair-colour #RRGGBB] [--glasses N]` | Your rider's character: free choices, never physics (no options: show it) |
 | `hearts` | Your hearts and the last ledger lines |
 | `hearts.grant N` | *Dev:* grant hearts (tests, screenshots; local server only) |
 | `workshop.parts [SLOT] [--bike ID]` | The parts that fit a bike, with prices |
-| `workshop.buy PART [--bike ID]` | Buy a catalogue part with hearts and fit it |
+| `workshop.buy PART [--bike ID]` | Buy a catalogue part with hearts and fit it (kit: wear it) |
 | `workshop.equip ITEM [--bike ID]` / `workshop.unequip SLOT [--bike ID]` | Fit an owned part / back to the base part |
 | `workshop.sell ITEM` | Sell a part (full price before its first ride, half after) |
 | `workshop.paint #RRGGBB\|default [--bike ID]` | Paint a frame (free) |
@@ -1270,8 +1304,9 @@ days, keeps it in `--tls-dir` (`web-cert.der`, `web-key.der`,
 need the new hash (`--web-info-file F` writes URL and hash as JSON for
 scripts; `cert-hash=A,B` takes two). Certificates from a CA come with
 hosting (B8). Browser riders are anonymous for now: a name, the plain grey
-bike and kit, no workshop (spec §14 Phase 10 Q5; accounts come with Phase
-5). `ocw-bot --server https://HOST:47801 --server-cert HASH` rides over
+bike and kit, no workshop – the mirror is locked ("log in to customize";
+`character` and `workshop` say so; spec §14 Phase 10 Q5; accounts come with
+Phase 5). `ocw-bot --server https://HOST:47801 --server-cert HASH` rides over
 WebTransport too; the console's `net.stats` shows the link, the round trip
 and the snapshot timing.
 

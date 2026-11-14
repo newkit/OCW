@@ -422,14 +422,23 @@ impl Session {
     }
 
     /// Sets a rider's cosmetic look (spec §2.5); false for unknown riders.
+    /// A rider's look (cosmetic, §2.5). A new character (spec §14 Phase
+    /// 4, 4C) goes out once in a `RiderBuild` (the snapshots carry only
+    /// the colours).
     pub fn set_look(&mut self, id: RiderId, look: RiderLook) -> bool {
         match self.riders.get_mut(&id) {
             Some(r) => {
+                r.build_changed |= r.look.character != look.character;
                 r.look = look;
                 true
             }
             None => false,
         }
+    }
+
+    /// A rider's look (`None`: unknown rider).
+    pub fn look(&self, id: RiderId) -> Option<RiderLook> {
+        self.riders.get(&id).map(|r| r.look)
     }
 
     /// Marks a rider's power as virtual (keyboard, `sim.power`, the virtual
