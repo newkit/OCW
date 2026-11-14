@@ -41,6 +41,7 @@ pub fn local_config(bots: u32, start_m: f64) -> ServerConfig {
         // settings change them (RulesRequest), the single player decides.
         collisions: true,
         chaotic_bots: false,
+        damage: false,
         collision_access: crate::ClockAccess::Anyone,
         // The single player sets the weather (spec §14 Phase 9, Q2).
         weather_access: crate::ClockAccess::Anyone,
@@ -298,6 +299,7 @@ mod tests {
                 bike_profile: None,
                 look: None,
                 parts: Vec::new(),
+                damage: None,
             }))))
             .unwrap();
         let mut welcomed = false;
@@ -331,6 +333,7 @@ mod tests {
             bike_profile: None,
             look: None,
             parts: Vec::new(),
+            damage: None,
         }))));
         let welcome = s.drain();
         // The welcome, then the bot's look (its kit design, spec §14
@@ -369,6 +372,7 @@ mod tests {
             bike_profile: None,
             look: None,
             parts: Vec::new(),
+            damage: None,
         })))
     }
 

@@ -733,6 +733,7 @@ mod tests {
             parts: Vec::new(),
             crash: None,
             wobble: 0.0,
+            damage: None,
         }
     }
 

@@ -243,6 +243,8 @@ pub fn result_rows(
             time,
             gap: gap_text,
             is_local: Some(s.id) == own,
+            rider: s.id.0,
+            ..Default::default()
         }
     };
     let mut rows: Vec<ResultRow> = standings.iter().take(RESULT_ROWS).map(row).collect();
@@ -648,6 +650,8 @@ mod tests {
             collisions: ocw_sim::collide::Mode::Off,
             physics: ocw_sim::PhysicsMode::Profile,
             weather: None,
+            damage: Default::default(),
+            conditions: Vec::new(),
         }
     }
 

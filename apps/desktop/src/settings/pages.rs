@@ -564,6 +564,10 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
             ),
             Row::action("Scan for devices", "devices.scan"),
             Row::action("Show devices", "devices.list"),
+            // Damage (spec §14 Phase 12E; the Controls and Display pages
+            // are full).
+            setting_row(settings, "ride.damage", "Damage"),
+            setting_row(settings, "display.damage", "Damage indicator"),
         ],
         Page::Strava => vec![
             Row::action("Status", "strava.status"),

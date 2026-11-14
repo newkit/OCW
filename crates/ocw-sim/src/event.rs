@@ -216,6 +216,9 @@ pub struct Event {
     /// by default *Profile* for races and group rides, *Open* for a time
     /// trial ([`crate::build::PhysicsMode::for_event`]).
     pub physics: crate::build::PhysicsMode,
+    /// The organiser's damage rules (spec §14 Phase 12E, 12G): damage on
+    /// or off for the event, DNF when badly injured, neutral service.
+    pub damage: crate::damage::Rules,
 }
 
 impl Event {
@@ -237,6 +240,7 @@ impl Event {
             finished_tick: None,
             collisions: None,
             physics: crate::build::PhysicsMode::for_event(&kind),
+            damage: crate::damage::Rules::default(),
             start_line_m,
             entrants: entrants
                 .into_iter()
@@ -262,6 +266,19 @@ impl Event {
 
     pub fn entrant(&self, id: RiderId) -> Option<&Entrant> {
         self.entrants.iter().find(|e| e.id == id)
+    }
+
+    /// An entrant abandons (spec §14 Phase 12E: badly injured with the
+    /// organiser's rule, a broken bike without neutral service): DNF.
+    /// False if not riding in it (unknown, finished, already DNF).
+    pub fn abandon(&mut self, id: RiderId) -> bool {
+        match self.entrants.iter_mut().find(|e| e.id == id) {
+            Some(e) if e.finish_s.is_none() && !e.dnf && self.phase != Phase::Finished => {
+                e.dnf = true;
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Advances to `tick` (the session's tick after stepping) with the

@@ -46,13 +46,16 @@ pub enum Cue {
     Remount,
     /// The proximity cue (12D): a soft bell.
     Proximity,
+    /// A buckled wheel's rim rubbing the brake once per turn (spec §14
+    /// Phase 12E).
+    Rub,
     /// A test tone on a bus (`audio.play test-music` …).
     Test(Bus),
 }
 
 impl Cue {
     /// The names `audio.play` takes.
-    pub const NAMES: [(&'static str, Cue); 21] = [
+    pub const NAMES: [(&'static str, Cue); 22] = [
         ("move", Cue::UiMove),
         ("value", Cue::UiValue),
         ("confirm", Cue::UiConfirm),
@@ -69,6 +72,7 @@ impl Cue {
         ("crash", Cue::Crash),
         ("remount", Cue::Remount),
         ("proximity", Cue::Proximity),
+        ("rub", Cue::Rub),
         ("test-music", Cue::Test(Bus::Music)),
         ("test-effects", Cue::Test(Bus::Effects)),
         ("test-voice", Cue::Test(Bus::Voice)),
@@ -107,6 +111,7 @@ impl Cue {
             Cue::Crash => 1.6,
             Cue::Remount => 0.3,
             Cue::Proximity => 0.5,
+            Cue::Rub => 0.06,
             Cue::Test(_) => 0.8,
         }
     }
@@ -261,6 +266,13 @@ impl CueVoice {
                 band * 1.1 * (click(0.0) + click(0.16)) + tone(t, 0.0, 0.04, 1800.0, 0.06)
             }
             Cue::Proximity => bell(t, 0.0, 0.5, 1318.5, 0.12),
+            // A short scratchy tick: the rim brushing the brake pad.
+            Cue::Rub => {
+                let n = self.noise.white();
+                let band = self.filter.process(n).band;
+                band * 0.9 * (t / 0.002).min(1.0) * (-t / 0.012).exp()
+                    + tone(t, 0.0, 0.03, 2400.0, 0.04)
+            }
             Cue::Test(Bus::Music) => tone(t, 0.0, 0.8, 440.0, 0.3) + tone(t, 0.0, 0.8, 554.4, 0.2),
             Cue::Test(Bus::Effects) => tone(t, 0.0, 0.8, 660.0, 0.35),
             Cue::Test(Bus::Voice) => {
@@ -387,6 +399,20 @@ pub fn contact_cues(
         near,
     };
     out
+}
+
+/// The wheel's circumference the rub ticks once per turn of (m).
+pub const RUB_CIRCUMFERENCE_M: f64 = 2.1;
+
+/// Rub ticks per second of a buckled wheel (`bent` 0–1, the worse wheel)
+/// at `speed_mps` (spec §14 Phase 12E): one per turn, none when true or
+/// nearly standing.
+pub fn rub_hz(bent: f32, speed_mps: f64) -> f64 {
+    if bent <= 0.0 || speed_mps < 1.0 {
+        0.0
+    } else {
+        speed_mps / RUB_CIRCUMFERENCE_M
+    }
 }
 
 /// The workout cue: the session's change counter (starts, step changes,
@@ -520,6 +546,14 @@ mod tests {
         assert_eq!(Cue::parse("test-voice").unwrap().bus(), Bus::Voice);
         assert_eq!(Cue::parse("test-others").unwrap().bus(), Bus::Others);
         assert_eq!(Cue::Finish.bus(), Bus::Effects);
+    }
+
+    #[test]
+    fn a_buckled_wheel_rubs_once_per_turn() {
+        assert_eq!(rub_hz(0.0, 9.0), 0.0);
+        assert_eq!(rub_hz(0.5, 0.5), 0.0);
+        assert!((rub_hz(0.5, 8.4) - 4.0).abs() < 1e-9);
+        assert_eq!(Cue::parse("rub"), Some(Cue::Rub));
     }
 
     /// Every cue makes a sound, stays in range and ends.

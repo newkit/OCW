@@ -69,8 +69,11 @@ pub struct RideRecorder {
     records: Vec<Record>,
     /// Lap marks (elapsed s) for the FIT laps.
     laps: Vec<f64>,
-    /// God mode's start and end (FIT markers, spec §14 Phase 13E).
+    /// God mode's start and end (FIT markers, spec §14 Phase 13E) and the
+    /// crashes (spec §14 Phase 12E).
     markers: Vec<Marker>,
+    /// Game time of the last crash marked.
+    last_crash_s: Option<f64>,
 }
 
 impl RideRecorder {
@@ -85,7 +88,24 @@ impl RideRecorder {
             records: Vec::new(),
             laps: Vec::new(),
             markers: Vec::new(),
+            last_crash_s: None,
         }
+    }
+
+    /// A crash that began at game time `game_s` (spec §14 Phase 12E: a
+    /// FIT marker per crash); the same crash seen again is not marked
+    /// twice. Ignored before the first record.
+    pub fn mark_crash(&mut self, game_s: f64) {
+        if self.start_unix_s.is_none()
+            || self.last_crash_s.is_some_and(|t| (t - game_s).abs() < 1.0)
+        {
+            return;
+        }
+        self.last_crash_s = Some(game_s);
+        self.markers.push(Marker {
+            elapsed_s: (game_s - self.start_game_s).max(0.0),
+            kind: MarkerKind::Crash,
+        });
     }
 
     /// Starts a new FIT lap at game time `game_s` (a workout step, an
@@ -330,6 +350,11 @@ fn record(time: Res<Time>, client: Res<ClientState>, mut rec: ResMut<Recording>)
     };
     rec.recorder
         .observe(c.track(), c.geo_origin(), sample, unix_now());
+    // A crash: a FIT marker at its start (spec §14 Phase 12E).
+    let now = time.elapsed_secs_f64();
+    if let Some(crash) = c.own_crash(now) {
+        rec.recorder.mark_crash(now - crash.elapsed_s);
+    }
 }
 
 /// What starts a FIT lap: the workout's lap count, the event segment.
@@ -443,6 +468,37 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("ocw-rec-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
+    }
+
+    #[test]
+    fn a_crash_is_a_fit_marker() {
+        let mut r = RideRecorder::new("Loop");
+        r.mark_crash(1.0);
+        assert!(r.markers.is_empty(), "before the first record");
+        r.observe(
+            &ocw_world::Route::test_loop(),
+            None,
+            sample(10.0, 0.0),
+            1_800_000_000,
+        );
+        r.mark_crash(12.0);
+        r.mark_crash(12.3);
+        r.mark_crash(40.0);
+        r.observe(
+            &ocw_world::Route::test_loop(),
+            None,
+            sample(41.0, 200.0),
+            1_800_000_031,
+        );
+        let ride = r.finish().unwrap();
+        let crashes: Vec<f64> = ride
+            .activity
+            .markers
+            .iter()
+            .filter(|m| m.kind == MarkerKind::Crash)
+            .map(|m| m.elapsed_s)
+            .collect();
+        assert_eq!(crashes, vec![2.0, 30.0], "one marker per crash");
     }
 
     fn sample(t: f64, distance: f64) -> Sample {

@@ -312,6 +312,8 @@ struct CueWatch {
     hoof: f64,
     /// Bumps, crashes, remounts, the proximity cue (spec §14 Phase 12C).
     contacts: ContactWatch,
+    /// A buckled wheel's rub phase (spec §14 Phase 12E).
+    rub: f64,
 }
 
 /// UI sounds from the menu's changes, the countdown beeps and the finish
@@ -381,6 +383,18 @@ fn play_cues(
             watch.wing += beat * time.delta_secs_f64();
             if watch.wing.floor() > before.floor() {
                 cues.push(Cue::WingBeat);
+            }
+        }
+        // A buckled wheel rubs once per turn (spec §14 Phase 12E).
+        let rub = r.local().map_or(0.0, |l| {
+            let bent = l.damage.map_or(0.0, |d| d.bent[0].max(d.bent[1]));
+            cues::rub_hz(bent, l.state.speed)
+        });
+        if rub > 0.0 {
+            let before = watch.rub;
+            watch.rub += rub * time.delta_secs_f64();
+            if watch.rub.floor() > before.floor() {
+                cues.push(Cue::Rub);
             }
         }
         // Muffled hooves on air while slow (spec §14 Phase 13C).

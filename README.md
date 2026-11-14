@@ -551,6 +551,42 @@ cells), `BLDG`, `BRDG` and the graph's tunnels; `world-builder obstacles
 pylons are drawn up to 350 m from the camera. `dev.tree` (wild mode on,
 local server) puts you 8 m before the nearest tree off the road ahead.
 
+**Damage** (spec §14 Phase 12 K4 / K5; `ride.damage`, **off** by default,
+only with collisions on; the host or the organiser decides in shared rides
+and events): every hit takes off the **rider's condition** (injury) and the
+**bike's condition** – a soft bump 0–2 % (a shoulder rub nothing), a crash
+5–25 % rider and 5–30 % bike by its energy and type (head-on and the world
+hardest), a fallen bike or the road edge the bike only. The bike's damage
+lands on its parts by the side of the impact: a **buckled wheel** (more
+rolling resistance, it wobbles), a **puncture** (ride on slowly – ×4 rolling
+resistance, at most 15 km/h – or stop, ↓, or `ride.repair`, for a 30 s
+repair), the **drivetrain** (2–10 % efficiency; a broken chain stops you for
+45 s), a bent **handlebar** (manual lean −20 %), the **frame** (below 10 %
+bike condition the bike is broken: a spare bike after 60 s, in an event
+without neutral service a DNF). Injury levels: *bruised* (no effect), *hurt*
+(3–8 % less virtual power, longer down), *injured* (10–20 %), *badly
+injured* (a 60 s medical stop, then at most 50 % power; DNF with the
+organiser's rule). Only the **virtual** rider is affected – the trainer and
+the hearts see your real power. Easy riding (below half of 2.5 W/kg) heals
+1 % a minute. The HUD's **damage widget** (beside the bike computer;
+`hud.damage off` / Settings → Display hides it) shows a rider and a bike
+silhouette with bars, the level words with an icon (● ▲ ◆ ■, never colour
+alone), the damaged parts lit on the bike, labels ("rear wheel buckled",
+"puncture: stop to repair") and after a hit the loss for 2 s ("−12 %
+bike"); the results show a damage dot and the crashes per rider. The
+avatars show it too: scuffs on the frame, a wobbling bent wheel, the chain
+hanging off, dust and a torn kit. A FIT marker is written per crash.
+**Damage carries over** (Q6): the bike's parts and your injury are kept in
+the garage (`workshop.toml`) between rides; the injury heals over real time
+(10 % an hour), the bike is repaired in the **workshop** for hearts:
+`ceil(price × (1 − condition) × 0.3)` ♥ (the price paid for the part; a base
+part is priced like the slot's cheapest paid part; a frame or wheel below
+10 % is replaced at the full price) – at the part's hotspot (its colour
+shows the damage, the dialog has *Repair* and *Repair all*) or
+`workshop.repair PART|all`; the mirror shows the injury and the time to
+heal. Anonymous browser riders never keep damage. `dev.damage TARGET [PCT]`
+stages damage on the local server, `workshop.damage PART PCT` in the garage.
+
 **Free ride** (spec §2.2.1, §2.2.2): ride anywhere on the world package's road
 network instead of a fixed route:
 
@@ -984,6 +1020,8 @@ console (saved at once), or by editing the file; `get` lists them all:
 | `ride.collisions` | on / off (on): rider collisions – soft bumps and crashes (group rides soft bumps only; in a shared ride the host decides, `ocw-server --collisions`); Settings → Controls | at once |
 | `ride.chaotic_bots` | on / off (off): bots that sometimes make mistakes (late reactions, wheel touches) that can cause crashes | at once |
 | `ride.proximity_cue` | on / off (off): a soft bell and a HUD arrow when someone is within 1 m beside or 2 m in front (an aid for manual steering; it never steers) | at once |
+| `ride.damage` | on / off (off): damage – hits hurt the rider and damage the bike (only with collisions on; carried over to the next ride, repairs in the workshop; in a shared ride the host decides, `ocw-server --damage`); Settings → Controls | at once |
+| `display.damage` | on / off (on): the damage indicator in the HUD (console `hud.damage`; the effects stay when hidden) | at once |
 | `audio.master` | 0 to 100 (80): master volume in %, scales every bus | at once |
 | `audio.effects` | 0 to 100 (80): game sounds (bike, wind, tyres, menu, event and workout cues) | at once |
 | `audio.others` | 0 to 100 (80): the other riders' bikes (bots, remote riders), a part of the effects (master × effects × others) | at once |
@@ -1316,6 +1354,8 @@ for now).
 | `workshop.buy PART [--bike ID]` | Buy a catalogue part with hearts and fit it (kit: wear it) |
 | `workshop.equip ITEM [--bike ID]` / `workshop.unequip SLOT [--bike ID]` | Fit an owned part / back to the base part |
 | `workshop.sell ITEM` | Sell a part (full price before its first ride, half after) |
+| `workshop.repair PART\|all [--bike ID]` | Repair a damaged part (`front_wheel`, `rear_wheel`, `front_tyre`, `rear_tyre`, `drivetrain`, `cockpit`, `frame`) or all of them for hearts: `ceil(price × (1 − condition) × 0.3)` |
+| `workshop.damage PART\|rider PCT [--bike ID]` | *Dev:* set a part's condition (or the injury) in the garage (tests, screenshots) |
 | `workshop.paint #RRGGBB\|carbon\|default [--bike ID]` | Paint a frame (free; `carbon`: bare carbon under a clear coat) |
 | `bikes.list` / `bikes.select ID [--now]` | Your garage / the bike on the stand (applies when the workshop closes) |
 | `rider.gps` | Your rider's GPS position (also bottom-left in the HUD; route files and world packages only), with a copyable `lat, lon` line |
@@ -1330,6 +1370,10 @@ for now).
 | `ride.chaotic_bots on\|off` | Bots that sometimes make mistakes |
 | `ride.proximity_cue on\|off` | The proximity cue (bell and HUD arrow) |
 | `ride.crashes` | The collision rules in force, your crash state and the last crashes |
+| `ride.damage [on\|off]` | Damage on or off (spec §14 Phase 12E; the host decides in shared rides); without an argument: your rider's and bike's condition, the damaged parts |
+| `ride.repair` | Stop and mend a puncture now (30 s) instead of riding on slowly |
+| `hud.damage on\|off` | Show or hide the damage indicator |
+| `dev.damage rider\|PART PCT \| puncture_front \| puncture_rear \| chain \| reset` | *Dev:* stage damage for your rider (local server, `ride.damage on`) |
 | `dev.bump` | *Dev:* the nearest other rider bumps into you from the side (a soft bump) |
 | `dev.crash` | *Dev:* the nearest other rider cuts in front of you: a wheel touch, you fall (ragdoll, remount) |
 | `dev.bot_bike BOT [--bike P] [--parts ID… \| --best] [--power W] [--lane M] [--name N]` | *Dev:* a bot's bike and parts (`--best`: the capped best build), steady power, fixed lane and name – compare a stock and an upgraded bike side by side |
@@ -1341,7 +1385,7 @@ for now).
 | `world info` | The world ridden now: package, area, elevation, data sources with their notices, routes, time zone, sun and twilight times |
 | `world switch N\|ID\|NAME\|PATH` | Ride another world without restarting (its first route, else a free ride; a test route: `hills`, `loop`); in a shared ride the host asks the server |
 | **Events** (spec §2.3) | |
-| `event race [--laps N\|--km X] [--bots N] [--physics MODE] [--weather W...]` | Race from the start formation to the finish (default 1 lap / 5 km; MODE: `profile` – the default, only the frame's profile counts –, `open` – parts count, capped –, `equal`; W: the organiser's weather – `PRESET [FIELD=VALUE...]`, `custom FIELD=VALUE...`, `random SEED`, `auto SEED` –, fixed for the event; also for `group` and `tt`) |
+| `event race [--laps N\|--km X] [--bots N] [--physics MODE] [--weather W...] [--damage on\|off] [--dnf-injured] [--neutral-service]` | Race from the start formation to the finish (default 1 lap / 5 km; the organiser's damage rules – damage on or off, DNF when badly injured, neutral service: a spare bike and a 30 s service stop (spec §14 Phase 12E), also for `group` and `tt`; MODE: `profile` – the default, only the frame's profile counts –, `open` – parts count, capped –, `equal`; W: the organiser's weather – `PRESET [FIELD=VALUE...]`, `custom FIELD=VALUE...`, `random SEED`, `auto SEED` –, fixed for the event; also for `group` and `tt`) |
 | `event group [--watts W] [--bots N] [--physics MODE]` | Group ride: bots hold the pace and regroup (default mode `profile`) |
 | `event tt [--laps N\|--km X] [--physics MODE]` | Time trial alone against your ghost (default mode `open`) |
 | `event status` | The event, your HUD lines and the standings |
@@ -1471,10 +1515,11 @@ program; with `--listen` desktop clients ride on it over the network (QUIC,
 the first step of Phase 5 multiplayer; accounts, sessions and the HTTPS API
 follow).
 
-Collisions on a server: `--collisions on|off` (on), `--chaotic-bots`, and who
-may change them from a client (`ride.collisions`): `--collision-control
-host|anyone|nobody` (host). The rules travel in the welcome, every snapshot
-and the event state.
+Collisions on a server: `--collisions on|off` (on), `--chaotic-bots`,
+`--damage on|off` (off), and who may change them from a client
+(`ride.collisions`, `ride.damage`): `--collision-control host|anyone|nobody`
+(host). The rules travel in the welcome, every snapshot and the event state;
+each rider's damage in the snapshots at 2 Hz and on every change.
 
 ### Hosting a ride over the network
 

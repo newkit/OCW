@@ -372,6 +372,9 @@ fn spawn_hud(mut commands: Commands) {
                 TextColor(Color::srgb(0.8, 0.8, 0.8)),
                 HudSmallText,
             ));
+            // The damage indicator beside the bike computer's lines
+            // (spec §14 Phase 12F), hidden without damage.
+            crate::damage_hud::spawn_widget(hud);
         });
 }
 
@@ -1238,6 +1241,7 @@ mod tests {
                 parts: Vec::new(),
                 crash: None,
                 wobble: 0.0,
+                damage: None,
             });
         app.update();
         assert_eq!(panel_display(&mut app), Display::Flex);

@@ -87,6 +87,10 @@ struct Args {
     /// Chaotic bots that sometimes make mistakes (Phase 12 Q3).
     #[arg(long)]
     chaotic_bots: bool,
+    /// Damage (spec §14 Phase 12E, off by default, Q1): hits take off the
+    /// riders' condition and damage their bikes; only with collisions on.
+    #[arg(long, default_value = "off", value_parser = ["on", "off"])]
+    damage: String,
     /// Who may change the collision rules (host, anyone, nobody).
     #[arg(long, default_value = "host", value_parser = parse_time_control)]
     collision_control: ocw_server::ClockAccess,
@@ -391,6 +395,7 @@ fn main() {
             echo_bot_at_start: args.echo_bot,
             collisions: args.collisions == "on",
             chaotic_bots: args.chaotic_bots,
+            damage: args.damage == "on",
             collision_access: args.collision_control,
             weather_access: args.weather_control,
             weather: args

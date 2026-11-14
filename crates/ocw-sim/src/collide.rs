@@ -297,6 +297,10 @@ pub struct Response {
     pub bump: Option<(f64, f64)>,
     /// A crash: the hardest hit that brought the body down.
     pub crash: Option<Hit>,
+    /// The hardest contact that did not bring the body down (a soft bump,
+    /// a fallen bike ridden into, the road edge hit gently): the bump's
+    /// damage (spec §14 Phase 12E, K4).
+    pub touch: Option<Hit>,
 }
 
 impl Response {
@@ -752,6 +756,16 @@ pub fn resolve(bodies: &[Body], frame: Frame, mode: Mode, tick: u64) -> Vec<Resp
                 if out[i].bump.is_none_or(|(s, _)| s < strength) {
                     out[i].bump = Some((strength, side));
                 }
+                if out[i].touch.is_none_or(|h| h.energy_j < c.energy_j) {
+                    let push = scale(away, c.closing_mps);
+                    out[i].touch = Some(Hit {
+                        kind: c.kind,
+                        other: other.id,
+                        closing_mps: c.closing_mps,
+                        energy_j: c.energy_j,
+                        impulse: [dot(push, f), dot(push, right_of(f))],
+                    });
+                }
             }
         }
     }
@@ -917,6 +931,15 @@ pub fn resolve_static(body: &Body, solids: &[Solid], mode: Mode, max_heading: f6
             wobble_strength(c.closing_mps),
             if s == 0.0 { 1.0 } else { s },
         ));
+        let f = body.forward();
+        let push = scale(away, c.closing_mps);
+        out.touch = Some(Hit {
+            kind: ContactKind::World(c.kind),
+            other: RiderId(0),
+            closing_mps: c.closing_mps,
+            energy_j: 0.5 * body.mass * c.closing_mps * c.closing_mps,
+            impulse: [dot(push, f), dot(push, right_of(f))],
+        });
     }
     out
 }
@@ -958,6 +981,13 @@ pub fn edge_hit(speed: f64, heading: f64, mass: f64, mode: Mode) -> Option<Respo
         });
     } else {
         out.bump = Some((wobble_strength(closing), -side));
+        out.touch = Some(Hit {
+            kind: ContactKind::RoadEdge,
+            other: RiderId(0),
+            closing_mps: closing,
+            energy_j: 0.5 * mass * closing * closing,
+            impulse: [0.0, -side * closing],
+        });
     }
     Some(out)
 }

@@ -14,7 +14,7 @@ pub struct JunctionPlugin;
 impl Plugin for JunctionPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn_overlay)
-            .add_systems(Update, update_overlay);
+            .add_systems(Update, (update_overlay, update_notice));
     }
 }
 
@@ -35,6 +35,17 @@ struct Label;
 
 #[derive(Component)]
 struct NoticeText;
+
+/// The notice's box (hidden while there is no notice).
+#[derive(Component)]
+struct NoticeBox;
+
+/// Where the notice box starts (px from the top): below the bike
+/// computer's panel with the damage widget (about 220 px), never over it.
+pub const NOTICE_TOP_PX: f32 = 240.0;
+/// The notice's shadow offset (px): small, so the text never reads as a
+/// doubled, garbled line (it did at Bevy's default 4 px over a light sky).
+pub const NOTICE_SHADOW_PX: f32 = 1.5;
 
 fn spawn_overlay(mut commands: Commands) {
     commands
@@ -86,27 +97,42 @@ fn spawn_overlay(mut commands: Commands) {
                 )],
             ));
         });
-    // Notices ("Dead end in 800 m", "U-turn") below the HUD panel.
-    commands.spawn((
-        Node {
+    // Notices ("Dead end in 800 m", "U-turn", "Crash! …") below the HUD
+    // panel, on a dark box so they read over any sky.
+    commands
+        .spawn(Node {
             position_type: PositionType::Absolute,
-            top: px(150),
+            top: px(NOTICE_TOP_PX),
             left: px(0),
             right: px(0),
             justify_content: JustifyContent::Center,
             ..default()
-        },
-        children![(
-            Text::new(""),
-            TextFont {
-                font_size: 22.0.into(),
-                ..default()
-            },
-            TextColor(Color::srgb(1.0, 0.85, 0.3)),
-            TextShadow::default(),
-            NoticeText,
-        )],
-    ));
+        })
+        .with_children(|row| {
+            row.spawn((
+                Node {
+                    display: Display::None,
+                    padding: UiRect::axes(px(14), px(6)),
+                    border_radius: BorderRadius::all(px(6)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
+                NoticeBox,
+            ))
+            .with_child((
+                Text::new(""),
+                TextFont {
+                    font_size: 22.0.into(),
+                    ..default()
+                },
+                TextColor(Color::srgb(1.0, 0.85, 0.3)),
+                TextShadow {
+                    offset: Vec2::splat(NOTICE_SHADOW_PX),
+                    ..default()
+                },
+                NoticeText,
+            ));
+        });
 }
 
 /// The line under the arrows: distance, street of the selected exit, icons.
@@ -182,21 +208,38 @@ fn fan_key(j: &JunctionView) -> Vec<FanArrow> {
         .collect()
 }
 
+/// The notice line and its box (hidden without a notice).
+fn update_notice(
+    view: Res<RideView>,
+    mut notice: Query<&mut Text, With<NoticeText>>,
+    mut notice_box: Query<&mut Node, With<NoticeBox>>,
+) {
+    let want = view.notice.clone().unwrap_or_default();
+    if let Ok(mut t) = notice.single_mut()
+        && t.0 != want
+    {
+        t.0 = want.clone();
+    }
+    if let Ok(mut n) = notice_box.single_mut() {
+        let d = if want.is_empty() {
+            Display::None
+        } else {
+            Display::Flex
+        };
+        if n.display != d {
+            n.display = d;
+        }
+    }
+}
+
 fn update_overlay(
     mut commands: Commands,
     view: Res<RideView>,
     mut overlay: Query<&mut Visibility, With<Overlay>>,
     fan: Query<Entity, With<Fan>>,
     mut label_text: Query<&mut Text, (With<Label>, Without<NoticeText>)>,
-    mut notice: Query<&mut Text, (With<NoticeText>, Without<Label>)>,
     mut shown: Local<Option<Vec<FanArrow>>>,
 ) {
-    if let Ok(mut t) = notice.single_mut() {
-        let want = view.notice.clone().unwrap_or_default();
-        if t.0 != want {
-            t.0 = want;
-        }
-    }
     let (Ok(mut vis), Ok(fan)) = (overlay.single_mut(), fan.single()) else {
         return;
     };
@@ -279,6 +322,52 @@ fn update_overlay(
 mod tests {
     use super::*;
     use crate::ExitView;
+
+    /// Regression (K4 / K5 screenshots): the crash line looked doubled –
+    /// Bevy's default 4 px shadow under yellow text on a light sky, partly
+    /// under the HUD panel. Now one line on a dark box below the panel,
+    /// a hair of shadow, and no box without a notice.
+    #[test]
+    fn the_notice_is_one_line_on_a_box_below_the_hud() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(RideView::new(ocw_world::Route::test_loop()))
+            .add_plugins(JunctionPlugin);
+        app.update();
+        let state = |app: &mut App| {
+            let w = app.world_mut();
+            let shown = w
+                .query_filtered::<&Node, With<NoticeBox>>()
+                .single(w)
+                .unwrap()
+                .display;
+            let (text, shadow) = w
+                .query_filtered::<(&Text, &TextShadow), With<NoticeText>>()
+                .single(w)
+                .map(|(t, s)| (t.0.clone(), s.offset))
+                .unwrap();
+            (shown, text, shadow)
+        };
+        assert_eq!(state(&mut app).0, Display::None);
+        app.world_mut().resource_mut::<RideView>().notice =
+            Some("Crash! (wheel touch) - back on the bike in 3.4 s".into());
+        app.update();
+        let (shown, text, shadow) = state(&mut app);
+        assert_eq!(shown, Display::Flex);
+        assert_eq!(text, "Crash! (wheel touch) - back on the bike in 3.4 s");
+        assert!(shadow.x <= 2.0 && shadow.y <= 2.0, "{shadow:?}");
+        let w = app.world_mut();
+        assert_eq!(
+            w.query_filtered::<&Text, With<NoticeText>>()
+                .iter(w)
+                .count(),
+            1,
+            "one notice text"
+        );
+        app.world_mut().resource_mut::<RideView>().notice = None;
+        app.update();
+        assert_eq!(state(&mut app).0, Display::None);
+    }
 
     fn view() -> JunctionView {
         let exit = |angle: f64, name: &str| ExitView {

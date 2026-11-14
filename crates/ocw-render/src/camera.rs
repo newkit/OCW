@@ -1011,6 +1011,7 @@ mod tests {
             parts: Vec::new(),
             crash: None,
             wobble: 0.0,
+            damage: None,
         });
         let road_y = route.sample(100.0).position[1];
         let ground = crate::Ground(Arc::new(move |_, _| Some(road_y - 0.1)));
@@ -1176,6 +1177,7 @@ mod tests {
                 parts: Vec::new(),
                 crash: None,
                 wobble: 0.0,
+                damage: None,
             });
             let mut app = App::new();
             app.add_plugins(MinimalPlugins)
@@ -1250,6 +1252,7 @@ mod tests {
                 parts: Vec::new(),
                 crash: None,
                 wobble: 0.0,
+                damage: None,
             });
             let mut tunnels = Tunnels::default();
             tunnels.stretches = covered_stretches(&route, &hill, 0.0, 2000.0);

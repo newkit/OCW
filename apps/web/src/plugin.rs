@@ -287,8 +287,12 @@ fn update_view(
     view.notice = s
         .link_notice()
         .or_else(|| s.client.crash_notice(now))
+        .or_else(|| s.client.damage_notice())
         .or(notice)
         .or_else(|| s.client.crash_feed(now).pop());
+    // Damage (spec §14 Phase 12F): the widget, when a server has it on
+    // (the anonymous rider never keeps damage between rides).
+    view.damage = s.client.damage_widget(now);
     view.status = s.status_line();
     let position = view.position;
     view.sky = ocw_client::sky::sky_view(
