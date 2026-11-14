@@ -36,10 +36,11 @@
 //! spec §14 Phase 9; packages without it fall back to a zone from their
 //! origin, see `ocw_sky::zone::zone_for`); `PALT`, `ROOF`, `SEAS` – the
 //! imagery sources with the regional palette, the roof colours and the
-//! seasonal tint maps (spec §14 Phase 8 T3), see [`crate::look`]; `ORTC` –
-//! the orthophoto corridor along the roads (spec §14 Phase 8 T7, optional),
-//! see [`crate::ortho`]. A
-//! package without sections is written as version 1, byte for byte as before.
+//! seasonal tint maps (spec §14 Phase 8 T3), see [`crate::look`]; `LITR` –
+//! whether each road strip is lit at night (OSM `lit`, spec §14 Phase 9
+//! S2), see [`crate::lamps`]; `ORTC` – the orthophoto corridor along the
+//! roads (spec §14 Phase 8 T7, optional), see [`crate::ortho`]. A package
+//! without sections is written as version 1, byte for byte as before.
 //!
 //! Tile `(x, z)` covers local metres `[x·size, (x+1)·size] × [z·size, (z+1)·size]`;
 //! the grid includes both borders, so neighbouring tiles share their edge
@@ -55,6 +56,7 @@ use crate::buildings::{
 };
 use crate::graph::{Edge, EdgeId, Oneway, RoadClass, RoadGraph, VertexId};
 use crate::graph_route::{GraphRoute, RouteStep};
+use crate::lamps::{ROAD_LIT_TAG, RoadLit, read_road_lit, write_road_lit};
 use crate::landuse::{LANDUSE_TAG, LandUse, read_landuse, write_landuse};
 use crate::look::{
     PALETTE_TAG, ROOFS_TAG, RegionLook, SEASONS_TAG, read_palette, read_roofs, read_seasons,
@@ -118,6 +120,9 @@ pub struct RoadStrip {
     /// spec §14 Phase 8 T5; packages without it get the class default,
     /// [`RoadDress::of_class`]).
     pub dress: RoadDress,
+    /// Lit at night (section `LITR`, OSM `lit`, spec §14 Phase 9 S2;
+    /// packages without it: [`RoadLit::Unknown`], lit in towns).
+    pub lit: RoadLit,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -394,6 +399,13 @@ impl WorldPackage {
         ) {
             sections.push((ROAD_DRESS_TAG, payload));
         }
+        let mut payload = Vec::new();
+        if write_road_lit(
+            self.tiles.values().map(|t| (t.key, t.roads.as_slice())),
+            &mut payload,
+        ) {
+            sections.push((ROAD_LIT_TAG, payload));
+        }
         b.extend_from_slice(if sections.is_empty() { MAGIC } else { MAGIC_V2 });
         b.extend((self.name.len() as u32).to_le_bytes());
         b.extend(self.name.as_bytes());
@@ -490,6 +502,12 @@ impl WorldPackage {
                 .get_mut(key)
                 .ok_or("road dress of a tile the package does not have")?;
             apply_dress(tile, dress)?;
+        }
+        for (key, lit) in &sections.lit {
+            let tile = tiles
+                .get_mut(key)
+                .ok_or("road lit state of a tile the package does not have")?;
+            apply_lit(tile, lit)?;
         }
         Ok(sections.into_package(head, tiles))
     }
@@ -593,6 +611,7 @@ fn read_tile(r: &mut Bytes, samples: u32, full: bool) -> Result<Tile, String> {
             points,
             surface: RoadSurface::of_class(class),
             dress: RoadDress::of_class(class, width_m),
+            lit: RoadLit::Unknown,
         });
     }
     Ok(Tile {
@@ -608,6 +627,16 @@ fn apply_surfaces(tile: &mut Tile, surfaces: &[RoadSurface]) -> Result<(), Strin
     }
     for (strip, s) in tile.roads.iter_mut().zip(surfaces) {
         strip.surface = *s;
+    }
+    Ok(())
+}
+
+fn apply_lit(tile: &mut Tile, lit: &[RoadLit]) -> Result<(), String> {
+    if lit.len() != tile.roads.len() {
+        return Err("road lit states do not match the tile's road strips".into());
+    }
+    for (strip, l) in tile.roads.iter_mut().zip(lit) {
+        strip.lit = *l;
     }
     Ok(())
 }
@@ -636,6 +665,7 @@ struct Sections {
     look: RegionLook,
     surfaces: Vec<(TileKey, Vec<RoadSurface>)>,
     dress: Vec<(TileKey, Vec<RoadDress>)>,
+    lit: Vec<(TileKey, Vec<RoadLit>)>,
 }
 
 impl Sections {
@@ -721,6 +751,8 @@ fn read_sections(
             }
         } else if &tag == ROAD_SURFACE_TAG && full {
             s.surfaces.extend(read_road_surfaces(payload)?);
+        } else if &tag == ROAD_LIT_TAG && full {
+            s.lit.extend(read_road_lit(payload)?);
         } else if &tag == ROAD_DRESS_TAG && full {
             match read_road_dress(payload) {
                 Ok(dress) => s.dress.extend(dress),
@@ -755,6 +787,7 @@ pub struct StreamedPackage {
     base: WorldPackage,
     surfaces: BTreeMap<TileKey, Vec<RoadSurface>>,
     dress: BTreeMap<TileKey, Vec<RoadDress>>,
+    lit: BTreeMap<TileKey, Vec<RoadLit>>,
 }
 
 impl StreamedPackage {
@@ -779,11 +812,13 @@ impl StreamedPackage {
         };
         let surfaces = s.surfaces.iter().cloned().collect();
         let dress = s.dress.iter().cloned().collect();
+        let lit = s.lit.iter().cloned().collect();
         Ok(Self {
             base: s.into_package(head.clone(), BTreeMap::new()),
             head,
             surfaces,
             dress,
+            lit,
         })
     }
 
@@ -802,6 +837,9 @@ impl StreamedPackage {
         }
         if let Some(d) = self.dress.get(&tile.key) {
             apply_dress(&mut tile, d)?;
+        }
+        if let Some(l) = self.lit.get(&tile.key) {
+            apply_lit(&mut tile, l)?;
         }
         Ok(tile)
     }
@@ -1201,6 +1239,7 @@ mod tests {
                         points: vec![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
                         surface: RoadSurface::Asphalt,
                         dress: RoadDress::of_class(RoadClass::Secondary, 6.5),
+                        lit: crate::RoadLit::Unknown,
                     }],
                 },
             );
@@ -1406,6 +1445,7 @@ mod tests {
                 points: vec![[1001.0, 2.0, 3.0], [1004.0, 5.0, 6.0]],
                 surface: RoadSurface::Dirt,
                 dress: RoadDress::of_class(RoadClass::Track, 3.0),
+                lit: crate::RoadLit::Unknown,
             });
         p.tiles.get_mut(&TileKey { x: 0, z: 0 }).unwrap().roads[0].surface = RoadSurface::Paving;
         let b = p.to_bytes();
@@ -1441,6 +1481,41 @@ mod tests {
         let n = bad.len();
         bad[n - 1] = 9;
         assert!(WorldPackage::from_bytes(&bad).is_err());
+    }
+
+    /// Spec §14 Phase 9 S2: the roads' `lit` state (section `LITR`) is
+    /// added without a new version: it round-trips (also streamed), a
+    /// package without it has no section, older readers skip it.
+    #[test]
+    fn road_lit_states_round_trip_as_an_optional_section() {
+        let plain = package();
+        assert!(
+            section_sizes(&plain.to_bytes())
+                .iter()
+                .all(|(t, _)| t != crate::lamps::ROAD_LIT_TAG)
+        );
+        let mut p = package();
+        p.tiles.get_mut(&TileKey { x: 0, z: 0 }).unwrap().roads[0].lit = crate::RoadLit::Yes;
+        let b = p.to_bytes();
+        let back = WorldPackage::from_bytes(&b).unwrap();
+        assert_eq!(back, p);
+        assert_eq!(
+            back.tiles[&TileKey { x: 0, z: 0 }].roads[0].lit,
+            crate::RoadLit::Yes
+        );
+        let mut old = b.clone();
+        let at = old
+            .windows(4)
+            .rposition(|w| w == crate::lamps::ROAD_LIT_TAG)
+            .unwrap();
+        old[at..at + 4].copy_from_slice(b"XXXX");
+        let old = WorldPackage::from_bytes(&old).unwrap();
+        assert!(
+            old.tiles
+                .values()
+                .flat_map(|t| &t.roads)
+                .all(|s| s.lit == crate::RoadLit::Unknown)
+        );
     }
 
     #[test]
@@ -1820,6 +1895,8 @@ mod tests {
         };
         p.look.ortho = Some(crate::ortho::tests::sample_corridor());
         p.tiles.get_mut(&TileKey { x: 1, z: 0 }).unwrap().roads[0].surface = RoadSurface::Gravel;
+        // A lit road (section LITR, spec §14 Phase 9 S2): kept by streaming.
+        p.tiles.get_mut(&TileKey { x: 1, z: 0 }).unwrap().roads[0].lit = crate::RoadLit::Yes;
         let bytes = p.to_bytes();
         let chunks = crate::manifest::package_chunks(&bytes).unwrap();
         let header = chunks
@@ -1852,6 +1929,8 @@ mod tests {
             .clone();
         let tile = s.read_tile(&bytes[tile_r]).unwrap();
         assert_eq!(tile.roads[0].surface, RoadSurface::Gravel);
+        assert_eq!(tile.roads[0].lit, crate::RoadLit::Yes);
+        assert!(chunks.iter().any(|(n, _)| n == "section LITR"));
         // With every chunk the corridor is there.
         let start = chunks
             .iter()

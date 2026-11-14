@@ -200,6 +200,8 @@ pub struct TileMeshes {
     pub crowns: crate::flight_world::TreeCrowns,
     /// Near tint of the ground layers ([`TileLook::near_tint`]).
     pub near_tint: Option<[[f32; 3]; crate::ground::GROUND_LAYERS]>,
+    /// Street lamps along lit roads (spec §14 Phase 9 S2).
+    pub lamps: crate::street_lamps::TileLamps,
 }
 
 /// What the tile meshes are built for: with a material library, the far
@@ -1118,6 +1120,7 @@ pub fn build_tile_meshes_look(
         bridges: crate::bridges::bridge_arrays(&own),
         solid,
         near_tint: look.near_tint,
+        lamps: crate::street_lamps::tile_lamps(pkg, key, keep),
     })
 }
 
@@ -1217,7 +1220,7 @@ pub(crate) fn reset_streaming(world: &mut World) {
 }
 
 /// The local rider's position in home metres (in god mode the unicorn's).
-fn rider_position(view: &RideView) -> Option<[f64; 2]> {
+pub(crate) fn rider_position(view: &RideView) -> Option<[f64; 2]> {
     crate::flight_world::stream_focus(view).map(|f| f.centre)
 }
 
@@ -1590,7 +1593,10 @@ pub(crate) fn upload_tiles(
     (mut obstacles, mut flight_obstacles): (ResMut<CameraObstacles>, ResMut<FlightObstacles>),
     tunnels: Option<Res<crate::tunnel::Tunnels>>,
     (library, mut road_materials, mut road_cache): RoadParams,
-    house: Option<Res<HouseMaterial>>,
+    (house, lamps): (
+        Option<Res<HouseMaterial>>,
+        Option<Res<crate::street_lamps::LampMaterials>>,
+    ),
 ) {
     let library = library.as_deref();
     // The road materials, one pair per marking style (made when first
@@ -1635,6 +1641,7 @@ pub(crate) fn upload_tiles(
             (&mut obstacles, &mut flight_obstacles),
             cut,
             (library, roads.as_ref(), house.as_deref().map(|h| &h.handle)),
+            lamps.as_deref().map(|l| &l.heads),
             id,
             t,
         );
@@ -1659,6 +1666,7 @@ fn upload_tile(
         Option<&RoadMaterials>,
         Option<&Handle<BuildingMaterial>>,
     ),
+    lamp_heads: Option<&Handle<StandardMaterial>>,
     id: TileId,
     mut t: TileMeshes,
 ) {
@@ -1734,11 +1742,13 @@ fn upload_tile(
     }
     let terrain_mat = terrain.add(terrain_mat);
     streamer.terrain.insert(id, terrain_mat.clone());
+    let lamps = std::mem::take(&mut t.lamps);
     let parent = commands
         .spawn((
             frame_transform(&frame),
             Visibility::default(),
             Name::new(format!("tile {} {} of {}", t.key.x, t.key.z, member.id)),
+            crate::street_lamps::LampSpots(lamps.spots.iter().map(|p| Vec3::from(*p)).collect()),
         ))
         .with_children(|c| {
             c.spawn((
@@ -1818,6 +1828,23 @@ fn upload_tile(
                     TileDetail,
                 ));
             }
+            // Street lamps (spec §14 Phase 9 S2): poles in the vertex
+            // colours, the heads glowing at night.
+            if !lamps.poles.indices.is_empty() {
+                c.spawn((
+                    Mesh3d(meshes.add(lamps.poles.mesh())),
+                    MeshMaterial3d(materials.vertex_coloured.clone()),
+                    TileDetail,
+                ));
+            }
+            if let (Some(heads), false) = (lamp_heads, lamps.heads.indices.is_empty()) {
+                c.spawn((
+                    Mesh3d(meshes.add(lamps.heads.mesh())),
+                    MeshMaterial3d(heads.clone()),
+                    NotShadowCaster,
+                    TileDetail,
+                ));
+            }
         })
         .id();
     if let Some(old) = streamer.loaded.insert(id, parent) {
@@ -1846,6 +1873,7 @@ mod tests {
                 points: (0..11).map(|i| [i as f32 * 10.0, 5.0, 50.0]).collect(),
                 surface: ocw_world::RoadSurface::Asphalt,
                 dress: ocw_world::RoadDress::of_class(RoadClass::Secondary, 6.0),
+                lit: ocw_world::RoadLit::Unknown,
             }],
         };
         WorldPackage {
@@ -2456,6 +2484,7 @@ mod tests {
             points: vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]],
             surface: RoadSurface::Dirt,
             dress: ocw_world::RoadDress::of_class(RoadClass::Residential, 4.0),
+            lit: ocw_world::RoadLit::Unknown,
         };
         let m = road_arrays(&[strip]);
         assert_eq!(m.roads_layer(), Some(4.0));

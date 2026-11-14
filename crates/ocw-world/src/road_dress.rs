@@ -1444,6 +1444,7 @@ mod tests {
             points: vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]],
             surface: RoadSurface::Asphalt,
             dress,
+            lit: crate::RoadLit::Unknown,
         };
         let plain = vec![strip(
             RoadClass::Tertiary,

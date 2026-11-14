@@ -22,6 +22,7 @@ pub mod junction;
 pub mod materials;
 pub mod media;
 pub mod menu;
+pub mod night_sky;
 pub mod ortho;
 pub mod package;
 pub mod ragdoll;
@@ -33,6 +34,7 @@ pub mod road_style;
 pub mod see_through;
 pub mod sky;
 pub mod stamp;
+pub mod street_lamps;
 pub mod terrain;
 pub mod tunnel;
 pub mod tunnel_cut;
@@ -353,6 +355,8 @@ impl Plugin for OcwRenderPlugins {
         ))
         .add_plugins((
             sky::SkyPlugin,
+            night_sky::NightSkyPlugin,
+            street_lamps::StreetLampsPlugin,
             materials::MaterialsPlugin,
             ortho::OrthoPlugin,
             road_material::RoadMaterialPlugin,

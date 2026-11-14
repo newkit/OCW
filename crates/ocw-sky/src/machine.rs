@@ -38,10 +38,16 @@ pub enum Preset {
     /// 21 June (21 December south of the equator) at the current time of day.
     SummerSolstice,
     WinterSolstice,
+    /// The night of the next full moon: the local midnight nearest to it
+    /// (the moon high in the south, spec §14 Phase 9 S2).
+    FullMoon,
+    /// The night of the next new moon: the darkest night of the month
+    /// (the Milky Way, the planets).
+    NewMoon,
 }
 
 impl Preset {
-    pub const ALL: [Preset; 8] = [
+    pub const ALL: [Preset; 10] = [
         Self::Sunrise,
         Self::GoldenHour,
         Self::Noon,
@@ -50,6 +56,8 @@ impl Preset {
         Self::Midnight,
         Self::SummerSolstice,
         Self::WinterSolstice,
+        Self::FullMoon,
+        Self::NewMoon,
     ];
 
     /// The console name ("golden-hour").
@@ -63,6 +71,8 @@ impl Preset {
             Self::Midnight => "midnight",
             Self::SummerSolstice => "summer-solstice",
             Self::WinterSolstice => "winter-solstice",
+            Self::FullMoon => "full-moon",
+            Self::NewMoon => "new-moon",
         }
     }
 
@@ -77,6 +87,8 @@ impl Preset {
             Self::Midnight => "Midnight",
             Self::SummerSolstice => "Summer solstice",
             Self::WinterSolstice => "Winter solstice",
+            Self::FullMoon => "Next full moon",
+            Self::NewMoon => "Next new moon",
         }
     }
 
@@ -116,6 +128,18 @@ impl Preset {
                 zone.instant((l.year, m, d), (l.hour, l.minute, l.second))
                     .map(|r| r.0)
             }
+            Self::FullMoon | Self::NewMoon => {
+                let phase = if self == Self::FullMoon {
+                    crate::moon::Phase::Full
+                } else {
+                    crate::moon::Phase::New
+                };
+                let at = crate::moon::next_phase(now, phase);
+                // The local midnight nearest to the phase (within 12 h).
+                Ok(crate::time::clamp_range(
+                    zone.next_midnight(at - 12 * MS_PER_HOUR),
+                ))
+            }
         }
     }
 }
@@ -142,7 +166,7 @@ pub enum TimeCommand {
 }
 
 /// Help text of the console command.
-pub const USAGE: &str = "time [real | HH:MM | YYYY-MM-DD [HH:MM] | +2h | -30m | offset +3h | speed 1|10|60|600 | pause | play | PRESET]; presets: sunrise, golden-hour, noon, sunset, blue-hour, midnight, summer-solstice, winter-solstice";
+pub const USAGE: &str = "time [real | HH:MM | YYYY-MM-DD [HH:MM] | +2h | -30m | offset +3h | speed 1|10|60|600 | pause | play | PRESET]; presets: sunrise, golden-hour, noon, sunset, blue-hour, midnight, summer-solstice, winter-solstice, full-moon, new-moon";
 
 fn parse_hm(s: &str) -> Option<(u32, u32)> {
     let (h, m) = s.split_once(':')?;
@@ -397,6 +421,32 @@ mod tests {
         for p in Preset::ALL {
             assert_eq!(Preset::parse(p.id()), Some(p));
         }
+    }
+
+    /// "Next full moon" (spec §14 Phase 9, 9D) with the S2 moon: the
+    /// midnight of the full moon of 24 Nov 2026 (14:53 UTC) is 25 Nov 00:00
+    /// CET, the moon nearly full and high; "next new moon" the dark night
+    /// of 9 Dec.
+    #[test]
+    fn moon_presets_pick_the_night_of_the_phase() {
+        let z = zone();
+        let (lat, lon) = VADUZ;
+        let now = utc_midnight(2026, 11, 14) + 10 * MS_PER_HOUR;
+        let full = Preset::FullMoon.instant(now, &z, lat, lon).unwrap();
+        let l = z.local(full);
+        assert_eq!((l.month, l.day, l.hh_mm()), (11, 25, "00:00".into()));
+        let m = crate::moon::position(full, lat, lon);
+        assert!(m.illuminated > 0.97 && m.elevation_deg > 40.0, "{m:?}");
+        assert!(sun::position(full, lat, lon).elevation_deg < -18.0);
+        let new = Preset::NewMoon.instant(now, &z, lat, lon).unwrap();
+        let l = z.local(new);
+        assert_eq!((l.month, l.day), (12, 9));
+        let m = crate::moon::position(new, lat, lon);
+        assert!(m.illuminated < 0.02 && m.elevation_deg < 0.0, "{m:?}");
+        assert_eq!(
+            parse(&["full-moon"]),
+            Ok(TimeCommand::Preset(Preset::FullMoon))
+        );
     }
 
     #[test]
