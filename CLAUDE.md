@@ -85,7 +85,7 @@ These cut across many sections and shape all future code:
 - **Hardware talks only to the client.** BLE (btleplug, FTMS) runs on its own runtime behind a `DeviceBackend` trait. ANT+ is **deferred**.
 - **World data (§4).** OSM PBF vector data + DEM are converted by `world-builder` on our build infrastructure into signed world packages. The client downloads them once and renders locally; no map images, no downloads during a ride. The road is the elevation reference and the terrain adapts to it. 1 km tiles with tile-local `f32` coordinates and a floating origin.
 - **Voice is separate** from game state: LiveKit/WebRTC, never over the QUIC game connection.
-- **Cosmetics are separate from physics (§2.5).** Physics comes from a small curated set of profiles.
+- **Physics comes from curated profiles (§2.5), changed only a little by parts and kit within fixed caps (§14 Phase 4, 4G / 4C).** Looks (paint, colours, body, hair, glasses) never change the physics; in *Profile* and *Equal* race modes parts and kit are cosmetic too.
 - **Backend:** modular monolith (`services/server`): Axum API, Quinn/QUIC game server, Protobuf via `prost`, PostgreSQL, OIDC; the web companion (Leptos SSR) is a route group in it.
 
 ## Testing
