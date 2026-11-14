@@ -26,6 +26,10 @@ ocw-devices.workspace = true
 ocw-render.workspace = true
 # The client loop, shared with the desktop app.
 ocw-client.workspace = true
+# The desktop's menus, settings, time and weather machines, events and
+# collisions (shared UI glue, B6) and the ride's FIT file.
+ocw-ui.workspace = true
+ocw-fit.workspace = true
 # Game audio (the synthesised sounds and the mixer) and voice (the
 # controller and the browser's livekit-client backend), shared with the
 # desktop (B5).

@@ -31,6 +31,28 @@ thread_local! {
     static CONTEXT: RefCell<Option<AudioContext>> = const { RefCell::new(None) };
     /// The outputs as the browser listed them last: (label, device id).
     static OUTPUTS: RefCell<Vec<(String, String)>> = const { RefCell::new(Vec::new()) };
+    /// A stream of the game sound for the page's video recorder (B6:
+    /// `window.ocwAudioStream`, a `MediaStreamAudioDestinationNode`).
+    static VIDEO_TAP: RefCell<Option<web_sys::AudioNode>> = const { RefCell::new(None) };
+}
+
+/// The game sound as a `MediaStream` for videos (`window.ocwAudioStream`).
+fn tap_for_video(ctx: &AudioContext) {
+    let Ok(make) = Reflect::get(ctx, &JsValue::from_str("createMediaStreamDestination"))
+        .and_then(|f| f.dyn_into::<Function>().map_err(JsValue::from))
+    else {
+        return;
+    };
+    let Ok(node) = make.call0(ctx) else { return };
+    if let (Some(w), Ok(stream)) = (
+        web_sys::window(),
+        Reflect::get(&node, &JsValue::from_str("stream")),
+    ) {
+        let _ = Reflect::set(&w, &JsValue::from_str("ocwAudioStream"), &stream);
+    }
+    if let Ok(n) = node.dyn_into::<web_sys::AudioNode>() {
+        VIDEO_TAP.with(|t| *t.borrow_mut() = Some(n));
+    }
 }
 
 fn with_ctx<T>(f: impl FnOnce(&AudioContext) -> T) -> Option<T> {
@@ -67,6 +89,7 @@ pub fn start() -> (Box<dyn AudioOut>, SharedGate) {
     );
     let gate: SharedGate = Arc::new(Mutex::new(AudioGate::new(Ok(state))));
     listen_for_gestures(&gate);
+    tap_for_video(&ctx);
     CONTEXT.with(|c| *c.borrow_mut() = Some(ctx));
     refresh_outputs();
     (Box::new(JsAudioOut), gate)
@@ -170,6 +193,11 @@ impl AudioOut for JsAudioOut {
             let src = c.create_buffer_source()?;
             src.set_buffer(Some(&buf));
             src.connect_with_audio_node(&c.destination())?;
+            VIDEO_TAP.with(|t| {
+                if let Some(n) = t.borrow().as_ref() {
+                    let _ = src.connect_with_audio_node(n);
+                }
+            });
             src.start_with_when(at)?;
             Ok(())
         });

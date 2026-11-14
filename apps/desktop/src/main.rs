@@ -41,7 +41,7 @@ mod worlds;
 
 // Shared with the browser app (spec §14 Phase 10): `crate::client`,
 // `crate::event` keep working for the modules here.
-use ocw_client::{client, event, gps, trainer};
+use ocw_client::{client, event, trainer};
 
 use std::path::PathBuf;
 

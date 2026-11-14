@@ -22,6 +22,7 @@ members = [
     "crates/ocw-weather",
     "crates/ocw-client",
     "crates/ocw-audio",
+    "crates/ocw-ui",
 ]
 
 [workspace.package]
@@ -39,6 +40,7 @@ ocw-devices = { path = "crates/ocw-devices" }
 ocw-world = { path = "crates/ocw-world" }
 ocw-worldgen = { path = "crates/ocw-worldgen" }
 ocw-fit = { path = "crates/ocw-fit" }
+ocw-ui = { path = "crates/ocw-ui" }
 ocw-worldstore = { path = "crates/ocw-worldstore" }
 ocw-render = { path = "crates/ocw-render" }
 # ocw-assets without its command-line tools (`tools` feature) for the app.

@@ -1,0 +1,31 @@
+[package]
+name = "ocw-ui"
+description = "Open Cycling World's shared Bevy UI glue: the in-game menu, settings, time and weather machines, ride commands (desktop and browser)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Shared by apps/desktop and apps/web (spec §14 Phase 10, B6: one app, Q6
+# full parity). The Bevy glue over the Bevy-free logic in ocw-client: input
+# → the menu model → ocw-render's views; menu functions are console lines.
+# Builds for wasm32-unknown-unknown (inside the browser app); no files,
+# threads or sockets except behind `cfg(not(target_arch = "wasm32"))`.
+[dependencies]
+ocw-core.workspace = true
+ocw-sim.workspace = true
+ocw-protocol.workspace = true
+ocw-sky.workspace = true
+ocw-weather.workspace = true
+ocw-render.workspace = true
+ocw-client.workspace = true
+bevy.workspace = true
+clap.workspace = true
+
+[dev-dependencies]
+ocw-world.workspace = true
+ocw-server.workspace = true
+
+[lints]
+workspace = true

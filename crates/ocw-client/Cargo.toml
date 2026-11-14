@@ -31,6 +31,10 @@ ocw-voice.workspace = true
 # browser).
 toml.workspace = true
 web-time.workspace = true
+# The rider profiles (riders.toml) and the rides' sidecars (B6).
+serde.workspace = true
+# The ride's FIT file (pure; a download in the browser, B6).
+ocw-fit.workspace = true
 
 [lints]
 workspace = true

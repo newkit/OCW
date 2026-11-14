@@ -27,6 +27,9 @@ ocw-render.workspace = true
 ocw-assets.workspace = true
 # The client loop, events, god state and key logic (shared with apps/web).
 ocw-client.workspace = true
+# The shared UI glue: menu, settings, time and weather machines, events,
+# collisions (shared with apps/web, spec §14 Phase 10 B6).
+ocw-ui.workspace = true
 # The game sounds and their mixer (shared with apps/web, spec §14 Phase 10 B5).
 ocw-audio.workspace = true
 ocw-server.workspace = true

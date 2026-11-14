@@ -1,0 +1,1225 @@
+//! The Settings and Workshop pages of the in-game menu (spec §3.2.1, M2)
+//! as a Bevy-free model: each page is a list of rows; a row shows a label
+//! and a value and says which console command line ← / → (change the
+//! value) and Confirm run, or which page Confirm opens. Menu, console and
+//! scripts therefore share one code path, and each row's command is
+//! testable without Bevy.
+//!
+//! Integration point for the menu shell (M1): a menu page for Settings →
+//! Controls / Trainer / Strava / Display / Riders and for the Workshop
+//! renders [`rows`] for its [`Page`], maps the abstract actions Left /
+//! Right / Confirm onto [`Row::left`] / [`Row::right`] / [`Row::confirm`]
+//! and queues the command lines with `ConsoleState::queue`; `menu::model`
+//! does this ([`crate::menu::model::Page::Sub`]).
+
+use crate::riders::Riders;
+use crate::settings::{Kind, Settings, def};
+
+/// A page of the Settings or Workshop menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Page {
+    Controls,
+    Trainer,
+    Strava,
+    Display,
+    /// Volumes and the output device (M5; the devices come from the audio
+    /// engine, see [`audio_rows`]).
+    Audio,
+    Riders,
+    /// Editing one rider (index into the profiles).
+    Rider(usize),
+    Workshop,
+    /// A rider's bike and look (index into the profiles; Workshop → Bike).
+    Bike(usize),
+    /// World (top level, spec §3.2.1): change world, about this world,
+    /// routes, time, weather (rows from `ride::world`, like the World
+    /// pages below).
+    WorldHome,
+    /// World → Change world: the worlds found and the test routes.
+    Worlds,
+    /// One of them (index into the list): its default ride, free ride,
+    /// routes, parts.
+    World(usize),
+    /// The routes of a world not ridden now (from its package summary).
+    WorldRoutes(usize),
+    /// The neighbouring packages of a world (spec §2.2.2).
+    WorldParts(usize),
+    /// World → About this world.
+    WorldInfo,
+    /// World → About → Sun and time at the rider.
+    WorldSun,
+    /// World → About → Data sources (the credits, spec §13).
+    WorldSources,
+    /// One source with its full notice (index into the credits).
+    WorldSource(usize),
+    /// World → Weather: the weather machine (spec §14 Phase 9, S5; rows
+    /// from `weather`): mode, presets, custom, transition, random weather.
+    Weather,
+    /// Weather → Presets: the 17 presets as a grid with icons.
+    WeatherPresets,
+    /// Weather → Custom: the sky (clouds, precipitation, fog).
+    WeatherCustom,
+    /// Custom → Wind and temperature.
+    WeatherAir,
+    /// Weather → Real weather (spec §14 Phase 9, S7): on / off, the data
+    /// source, ride a day; the attribution under the title.
+    WeatherReal,
+    /// Navi → Routes: the routes of the loaded package and the user's.
+    Routes,
+    /// Navi → Rides: the saved rides with their Strava state.
+    Rides,
+    /// Navi → GPX import: GPX files to match onto the loaded package.
+    GpxImport,
+    /// Ride → Workouts: start, skip and stop structured workouts.
+    Workouts,
+    /// Settings → Voice (M8; rows from `voice::page`): mute switches,
+    /// volume, participants, devices.
+    Voice,
+    /// Voice → Devices and options.
+    VoiceDevices,
+    /// Voice → Participants: mute single riders.
+    VoiceParticipants,
+    /// Audio → Voice: the voice volume and the echo test (spec §7 *Echo
+    /// bot*; rows from `voice::page`, the Audio page is full).
+    AudioVoice,
+    /// World → Time machine (spec §14 Phase 9; rows from `timemachine`).
+    TimeMachine,
+    /// Controls → Riding aids (spec §14 Phase 12C / 12D): the proximity
+    /// cue and arrow, the "last moment" warning, the camera shake.
+    RidingAids,
+    /// Navi → Riders in this ride (spec §14 Phase 13E, 12F; rows from
+    /// `rider_list`): who rides, where, who flies, who is hurt.
+    RiderList,
+}
+
+impl Page {
+    /// The pages with a tab (Settings sub pages and the Workshop).
+    pub const TABS: [Page; 7] = [
+        Page::Workshop,
+        Page::Riders,
+        Page::Controls,
+        Page::Trainer,
+        Page::Audio,
+        Page::Display,
+        Page::Strava,
+    ];
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Controls => "Controls",
+            Self::Trainer => "Trainer",
+            Self::Strava => "Strava",
+            Self::Display => "Display",
+            Self::Audio => "Audio",
+            Self::Riders => "Riders",
+            Self::Rider(_) => "Rider",
+            Self::Workshop => "Workshop",
+            Self::Bike(_) => "Bike",
+            Self::WorldHome => "World",
+            Self::Worlds => "Change world",
+            Self::World(_) => "World",
+            Self::WorldRoutes(_) => "Routes of the world",
+            Self::WorldParts(_) => "Parts of the world",
+            Self::WorldInfo => "About this world",
+            Self::WorldSun => "Sun and time",
+            Self::WorldSources => "Data sources",
+            Self::WorldSource(_) => "Data source",
+            Self::Weather => "Weather machine",
+            Self::WeatherPresets => "Weather presets",
+            Self::WeatherCustom => "Custom weather: sky",
+            Self::WeatherAir => "Custom: wind, temperature",
+            Self::WeatherReal => "Real weather",
+            Self::Routes => "Routes",
+            Self::Rides => "Rides",
+            Self::GpxImport => "GPX import",
+            Self::Workouts => "Workouts",
+            Self::Voice => "Voice",
+            Self::VoiceDevices => "Voice devices",
+            Self::VoiceParticipants => "Voice participants",
+            Self::AudioVoice => "Audio: voice",
+            Self::TimeMachine => "Time machine",
+            Self::RidingAids => "Riding aids",
+            Self::RiderList => "Riders in this ride",
+        }
+    }
+
+    /// The Ride and Navi lists (rows from `ride::pages`) and the World
+    /// pages: lists without values to change.
+    pub fn is_ride_page(self) -> bool {
+        matches!(
+            self,
+            Self::Routes | Self::Rides | Self::GpxImport | Self::Workouts
+        ) || self.is_world_page()
+    }
+
+    /// The World pages (rows from `ride::world`).
+    pub fn is_world_page(self) -> bool {
+        matches!(
+            self,
+            Self::WorldHome
+                | Self::Worlds
+                | Self::World(_)
+                | Self::WorldRoutes(_)
+                | Self::WorldParts(_)
+                | Self::WorldInfo
+                | Self::WorldSun
+                | Self::WorldSources
+                | Self::WorldSource(_)
+        )
+    }
+
+    /// The weather machine's pages (rows from `weather`, spec §14 Phase 9,
+    /// S5).
+    pub fn is_weather_page(self) -> bool {
+        matches!(
+            self,
+            Self::Weather
+                | Self::WeatherPresets
+                | Self::WeatherCustom
+                | Self::WeatherAir
+                | Self::WeatherReal
+        )
+    }
+
+    /// Pages laid out as a grid of this many columns (the preset grid);
+    /// the arrows move in two directions, Back is the last cell.
+    pub fn grid_columns(self) -> Option<usize> {
+        match self {
+            Self::WeatherPresets => Some(super::weather::GRID_COLUMNS),
+            _ => None,
+        }
+    }
+
+    /// The voice pages (rows from `voice::page`).
+    pub fn is_voice_page(self) -> bool {
+        matches!(
+            self,
+            Self::Voice | Self::VoiceDevices | Self::VoiceParticipants | Self::AudioVoice
+        )
+    }
+
+    /// One page up (the rider editor goes back to the list).
+    pub fn parent(self) -> Option<Self> {
+        match self {
+            Self::Rider(_) => Some(Self::Riders),
+            Self::Bike(_) => Some(Self::Workshop),
+            Self::World(_) => Some(Self::Worlds),
+            Self::WorldRoutes(i) | Self::WorldParts(i) => Some(Self::World(i)),
+            Self::WorldSource(_) => Some(Self::WorldSources),
+            Self::VoiceDevices | Self::VoiceParticipants => Some(Self::Voice),
+            Self::AudioVoice => Some(Self::Audio),
+            Self::RidingAids => Some(Self::Controls),
+            _ => None,
+        }
+    }
+
+    /// Short explanation shown above the rows.
+    pub fn notes(self) -> &'static [&'static str] {
+        match self {
+            Self::Workshop => &[
+                "Choose who rides and their bike: weight and bike go into the physics and the trainer (from the next start).",
+            ],
+            Self::Bike(_) => &[
+                "Bike type and setup choose the physics profile (differences capped); colours are only for the looks. From the next start.",
+            ],
+            Self::Riders => &["Rider profiles: weight, height, FTP. Choose one in the Workshop."],
+            Self::Rider(_) => &["Changes apply from the next start (Restart)."],
+            Self::Trainer => &["Devices, SIM difficulty and the virtual trainer."],
+            Self::Strava => &[
+                "Uploads saved rides to Strava when an account is linked (API credentials: see README); the sync state is in Navi -> Rides.",
+            ],
+            Self::Audio => &[
+                "Sounds are made by OCW itself; Enter on a volume plays a test sound. Output: the device (default = the system's).",
+            ],
+            Self::Controls | Self::Display => &[],
+            Self::WorldHome => &[
+                "The world you ride in: change it without restarting, its data and credits, the time of day and the weather.",
+            ],
+            Self::Worlds => &[
+                "Installed world packages and the files next to the one ridden now; then the test routes. The ride so far is saved.",
+            ],
+            Self::World(_) => &[
+                "Ride: its first route, else a free ride. In a shared ride only the host changes the world.",
+            ],
+            Self::WorldRoutes(_) => &["Routes of this world package. Choose one to ride it."],
+            Self::WorldParts(_) => &[
+                "Neighbouring packages: the roads continue into them. Start a free ride in one of them.",
+            ],
+            Self::WorldInfo => &["The world package ridden now and where its data comes from."],
+            Self::WorldSun => &[
+                "Today at your place in the world, in its local time (the date of the time machine).",
+            ],
+            Self::WorldSources => {
+                &["The credits of the world's data. Enter shows the full notice."]
+            }
+            Self::WorldSource(_) => &[],
+            Self::Weather => &[super::weather::MACHINE_NOTE],
+            Self::WeatherPresets => &[],
+            Self::WeatherCustom | Self::WeatherAir => &[super::weather::CUSTOM_NOTE],
+            Self::WeatherReal => &[super::weather::REAL_NOTE],
+            Self::Routes => &[
+                "Routes of the loaded world package and your imported ones (GPX import). Choose one to ride it.",
+            ],
+            Self::Rides => &["Saved rides (FIT files), newest first, with their Strava state."],
+            Self::GpxImport => &[
+                "GPX files from the gpx folder of the OCW data folder and from Downloads, matched onto the roads of the loaded world package.",
+            ],
+            Self::Voice => &[
+                "Voice chat is always on, like a call: shared rides join you automatically. M mutes your microphone, Shift+M the voices (pad: Select, R3).",
+            ],
+            Self::VoiceDevices => &[
+                "Microphone and speaker for voice chat; a missing device falls back to the default.",
+            ],
+            Self::VoiceParticipants => {
+                &["Riders in the voice room. Confirm mutes or unmutes one for you."]
+            }
+            Self::AudioVoice => &[
+                "Voice volume (Enter plays a test sound). Echo test: an Echo rider on the road plays your microphone back to you, delayed, when you ride near it.",
+            ],
+            Self::TimeMachine => &[
+                "Date, time and speed of the world's clock (sun and light). Solo you set it; in a shared ride the host does.",
+            ],
+            Self::RidingAids => &[
+                "Aids that never steer: an arrow to a rider close by, a warning before a hit or a slide. Shake: off for comfort.",
+            ],
+            Self::RiderList => {
+                &["The unicorn: flying in unicorn mode. The dot: hurt, or the bike damaged."]
+            }
+            Self::Workouts => &[
+                "Structured workouts in ERG mode: yours from the workouts folder (.toml, .erg, .mrc), then the examples. % FTP targets use the rider's FTP.",
+            ],
+        }
+    }
+}
+
+/// A row label of at most this many characters fits in two lines.
+pub const MAX_ROW_CHARS: usize = 48;
+
+/// Shortens `s` to `max` characters (labels must fit the panel).
+pub fn short_label(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let mut t: String = s.chars().take(max - 3).collect();
+        t.push_str("...");
+        t
+    }
+}
+
+/// A row that only shows a value.
+pub fn info_row(label: &str, value: Option<String>) -> Row {
+    Row {
+        label: label.into(),
+        value,
+        left: None,
+        right: None,
+        confirm: None,
+    }
+}
+
+/// A row that opens `page`.
+pub fn open_row(label: &str, value: Option<String>, page: Page) -> Row {
+    Row {
+        label: label.into(),
+        value,
+        left: None,
+        right: None,
+        confirm: Some(Activate::Open(page)),
+    }
+}
+
+/// A workout of the Workouts list.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkoutEntry {
+    pub name: String,
+    /// The duration: "45:00".
+    pub detail: String,
+    pub source: WorkoutSource,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum WorkoutSource {
+    /// A file of `<data dir>/ocw/workouts` (the desktop).
+    File(std::path::PathBuf),
+    /// A bundled example, by name.
+    Example(String),
+}
+
+impl WorkoutSource {
+    /// The console line that loads and starts it.
+    pub fn line(&self) -> String {
+        match self {
+            Self::File(p) => format!("workout start \"{}\"", p.display()),
+            Self::Example(name) => format!("workout start --example {name}"),
+        }
+    }
+}
+
+/// The bundled example workouts as list entries (both apps; the desktop
+/// lists the user's files first).
+pub fn example_workouts() -> Vec<WorkoutEntry> {
+    crate::workout::EXAMPLES
+        .iter()
+        .filter_map(|(file, text)| {
+            let w = ocw_sim::workout::Workout::parse_file(file, text).ok()?;
+            Some(WorkoutEntry {
+                name: w.name.clone(),
+                detail: ocw_sim::workout::format_duration(w.duration_s()),
+                source: WorkoutSource::Example(crate::workout::example_name(file).into()),
+            })
+        })
+        .collect()
+}
+
+/// Ride → Workouts: the running workout (its step, Skip, Stop), then the
+/// list; `now` is (name, "step 2/6").
+pub fn workout_rows(now: Option<&(String, String)>, list: &[WorkoutEntry]) -> Vec<Row> {
+    let mut out = Vec::new();
+    if let Some((name, step)) = now {
+        out.push(info_row(&short_label(name, 24), Some(step.clone())));
+        out.push(Row {
+            label: "Skip step".into(),
+            value: None,
+            left: None,
+            right: None,
+            confirm: Some(Activate::Command("workout skip".into())),
+        });
+        out.push(Row {
+            label: "Stop workout".into(),
+            value: None,
+            left: None,
+            right: None,
+            confirm: Some(Activate::Run("workout stop".into())),
+        });
+    }
+    out.extend(list.iter().map(|w| Row {
+        label: short_label(&w.name, 24),
+        value: Some(match w.source {
+            WorkoutSource::File(_) => w.detail.clone(),
+            WorkoutSource::Example(_) => format!("{}, example", w.detail),
+        }),
+        left: None,
+        right: None,
+        confirm: Some(Activate::Run(w.source.line())),
+    }));
+    if out.is_empty() {
+        out.push(info_row("No workouts found", Some("see README".into())));
+    }
+    out
+}
+
+/// What the top World page shows of the world ridden now.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct WorldHome {
+    /// The world's name ("Liechtenstein", "Test route: Hills").
+    pub name: String,
+    /// Routes of the world (package and user routes).
+    pub routes: usize,
+    /// The app can switch worlds and list routes in the ride (the
+    /// desktop; the browser rides the world of its page).
+    pub switch: bool,
+    /// God mode's row (spec §14 Phase 13A): its label, when the app has it.
+    pub god: Option<&'static str>,
+}
+
+/// The rows of the top World page (spec §3.2.1): change world (or just
+/// its name), about it, routes, Time, Weather, god mode.
+pub fn world_home_rows(
+    home: &WorldHome,
+    tm: &super::time::TimeMachineInfo,
+    weather: &super::weather::WeatherState,
+) -> Vec<Row> {
+    let time = match (&tm.time, tm.mode_label.as_str()) {
+        (Some(t), "real") if tm.speed == 1.0 && !tm.paused => t.clone(),
+        (Some(t), m) => format!(
+            "{t}, {}",
+            if tm.paused || tm.speed != 1.0 {
+                ocw_sky::clock::speed_label(tm.speed, tm.paused)
+            } else {
+                m.to_owned()
+            }
+        ),
+        (None, _) => "-".into(),
+    };
+    let mut out = Vec::new();
+    if home.switch {
+        out.push(open_row(
+            "Change world",
+            Some(short_label(&home.name, 28)),
+            Page::Worlds,
+        ));
+        out.push(open_row("About this world", None, Page::WorldInfo));
+        out.push(open_row(
+            "Routes",
+            Some(home.routes.to_string()),
+            Page::Routes,
+        ));
+    } else {
+        out.push(info_row("World", Some(short_label(&home.name, 28))));
+    }
+    out.push(open_row("Time", Some(time), Page::TimeMachine));
+    out.push(open_row("Weather", Some(weather.summary()), Page::Weather));
+    if let Some(label) = home.god {
+        // God mode (spec §14 Phase 13A; the Ride page is full, the
+        // ten-foot rule): fly over this world as a unicorn.
+        out.push(Row {
+            label: label.into(),
+            value: Some("fly over it (G)".into()),
+            left: None,
+            right: None,
+            confirm: Some(Activate::Run("god toggle".into())),
+        });
+    }
+    out
+}
+
+/// What Confirm does on a row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Activate {
+    /// Run a console command line.
+    Command(String),
+    /// Ask first ("Change the ride?"), then run the line and close the menu.
+    Ask(String),
+    /// Open a page.
+    Open(Page),
+    /// Nothing: shown dimmed (not available yet, or not yours to change,
+    /// spec §14 Phase 9, S5).
+    Disabled,
+    /// Run a console command line and close the menu (starting a workout:
+    /// its panel shows at once).
+    Run(String),
+}
+
+/// One row of a page.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Row {
+    pub label: String,
+    /// The current value, if the row has one.
+    pub value: Option<String>,
+    /// Command line for ← (one step down) and → (one step up).
+    pub left: Option<String>,
+    pub right: Option<String>,
+    pub confirm: Option<Activate>,
+}
+
+impl Row {
+    fn action(label: &str, line: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            value: None,
+            left: None,
+            right: None,
+            confirm: Some(Activate::Command(line.into())),
+        }
+    }
+}
+
+/// A row for a registered setting: ← / → step it (`set KEY VALUE`);
+/// Confirm toggles a switch or moves a choice on.
+pub fn setting_row(settings: &Settings, key: &str, label: &str) -> Row {
+    let d = def(key).expect("a registered setting");
+    let v = settings.get(key).expect("registered");
+    let set = |dir| format!("set {key} {}", d.step(&v, dir));
+    let confirm = match d.kind {
+        Kind::Bool | Kind::Choice(_) => Some(Activate::Command(set(1))),
+        Kind::Int { .. } | Kind::Text => None,
+    };
+    Row {
+        label: label.into(),
+        value: Some(v.to_string()),
+        left: Some(set(-1)),
+        right: Some(set(1)),
+        confirm,
+    }
+}
+
+/// The Riding aids row's value: which aids are on ("warning, shake").
+fn aids_summary(settings: &Settings) -> String {
+    let on = |k: &str| settings.get(k).ok().and_then(|v| v.as_bool()) == Some(true);
+    let names: Vec<&str> = [
+        ("ride.proximity_cue", "arrow"),
+        ("ride.hit_warning", "warning"),
+        ("display.camera_shake", "shake"),
+    ]
+    .into_iter()
+    .filter(|(k, _)| on(k))
+    .map(|(_, n)| n)
+    .collect();
+    if names.is_empty() {
+        "none".into()
+    } else {
+        names.join(", ")
+    }
+}
+
+/// A rider edit command line: `riders.edit "NAME" ARGS`.
+fn edit(name: &str, args: &str) -> String {
+    format!("riders.edit \"{name}\" {args}")
+}
+
+/// A number field of the rider editor: ← / → by `step` within the range;
+/// unset, they start from `start`.
+fn number_row(
+    label: &str,
+    value: Option<f64>,
+    unit: &str,
+    (step, start, min, max): (f64, f64, f64, f64),
+    line: impl Fn(f64) -> String,
+) -> Row {
+    let base = value.unwrap_or(start);
+    let to = |dir: f64| {
+        let v = if value.is_none() {
+            base
+        } else {
+            (base + dir * step).clamp(min, max)
+        };
+        line((v * 10.0).round() / 10.0)
+    };
+    Row {
+        label: label.into(),
+        value: Some(value.map_or("-".into(), |v| {
+            format!("{} {unit}", (v * 10.0).round() / 10.0)
+        })),
+        left: Some(to(-1.0)),
+        right: Some(to(1.0)),
+        confirm: None,
+    }
+}
+
+/// One step through `items` from `current` (wrapping).
+fn cycle<T: Copy + PartialEq>(items: &[T], current: T, dir: isize) -> T {
+    let at = items.iter().position(|x| *x == current).unwrap_or(0) as isize;
+    items[(at + dir).rem_euclid(items.len() as isize) as usize]
+}
+
+/// A row whose ← / → run `line(previous)` / `line(next)`.
+fn choice_row(label: &str, value: String, left: String, right: String) -> Row {
+    Row {
+        label: label.into(),
+        value: Some(value),
+        left: Some(left.clone()),
+        right: Some(right.clone()),
+        confirm: Some(Activate::Command(right)),
+    }
+}
+
+/// The Bike page of a rider (spec §2.5, §3.2.1 Workshop → Bike): the
+/// bike (one of the curated physics profiles, grouped by bike type:
+/// "Road - aero"), the profile's numbers, then the cosmetic colours and
+/// kit; each change is a `riders.edit` line. Six rows (ten-foot limit).
+fn bike_rows(r: &crate::riders::Rider) -> Vec<Row> {
+    use ocw_core::{KitPattern, ProfileId, bike::palette_step};
+    let n = &r.name;
+    let bike = r.bike();
+    let look = r.look();
+    let bike_line = |p: ProfileId| edit(n, &format!("--bike {}", p.id()));
+    let p = bike.profile();
+    let colour = |label: &str, flag: &str, c: ocw_core::Rgb| {
+        let line = |dir| edit(n, &format!("--{flag} {}", palette_step(c, dir)));
+        choice_row(label, c.to_string(), line(-1), line(1))
+    };
+    let kit_line = |k: KitPattern| edit(n, &format!("--kit {}", k.id()));
+    vec![
+        choice_row(
+            "Bike",
+            bike.name().into(),
+            bike_line(cycle(&ProfileId::ALL, bike, -1)),
+            bike_line(cycle(&ProfileId::ALL, bike, 1)),
+        ),
+        // Shown separately: cosmetic choices never change it (§2.5).
+        Row {
+            label: "Physics".into(),
+            value: Some(format!(
+                "{} kg bike, CdA {:.3}, Crr {:.4}",
+                p.bike_mass_kg, p.cda_m2, p.crr
+            )),
+            left: None,
+            right: None,
+            confirm: None,
+        },
+        colour("Frame colour", "frame-color", look.frame),
+        colour("Jersey colour", "jersey-color", look.jersey),
+        colour("Helmet colour", "helmet-color", look.helmet),
+        choice_row(
+            "Kit",
+            look.pattern.id().into(),
+            kit_line(cycle(&KitPattern::ALL, look.pattern, -1)),
+            kit_line(cycle(&KitPattern::ALL, look.pattern, 1)),
+        ),
+    ]
+}
+
+/// The output devices as the audio engine sees them, for the Audio page.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AudioDevices {
+    /// Output device names.
+    pub names: Vec<String>,
+    /// The device playing now.
+    pub current: Option<String>,
+    /// The saved device is missing; the default plays.
+    pub fell_back: bool,
+}
+
+/// Longest device name shown on the Audio page (ten-foot UI); longer
+/// ones are cut with "...".
+const MAX_DEVICE_LABEL: usize = 16;
+
+fn short(name: &str, max: usize) -> String {
+    if name.chars().count() <= max {
+        name.to_string()
+    } else {
+        let cut: String = name.chars().take(max - 3).collect();
+        format!("{}...", cut.trim_end())
+    }
+}
+
+/// The Audio page (spec §3.2.1 M5): the volumes (Enter plays a test sound
+/// on that bus) – master, effects, the other riders, voice; music joins
+/// when there is music (seven items per page) –, mute, and the output
+/// device (← / → step through "default" and the devices; a saved device
+/// that is missing stays in the list, marked).
+pub fn audio_rows(settings: &Settings, devices: &AudioDevices) -> Vec<Row> {
+    let volume = |key: &str, label: &str, test: &str| Row {
+        confirm: Some(Activate::Command(format!("audio.play {test}"))),
+        ..setting_row(settings, key, label)
+    };
+    let saved = settings
+        .get("audio.output")
+        .map(|v| v.to_string())
+        .unwrap_or_else(|_| "default".into());
+    let is_default = saved.eq_ignore_ascii_case("default");
+    let same = |d: &String| d.trim().eq_ignore_ascii_case(saved.trim());
+    let listed = devices.names.iter().any(same);
+    let mut options = vec!["default".to_string()];
+    if !is_default && !listed {
+        options.push(saved.clone());
+    }
+    options.extend(devices.names.iter().cloned());
+    let at = options.iter().position(same).unwrap_or(0);
+    let pick = |dir: isize| {
+        let n = options.len() as isize;
+        let o = &options[(at as isize + dir).rem_euclid(n) as usize];
+        format!("set audio.output \"{o}\"")
+    };
+    // Short values: the row has room for about 16 characters (ten-foot
+    // UI); `audio.status` and `audio.devices` show the full names.
+    let value = if is_default {
+        match &devices.current {
+            Some(_) => "default".into(),
+            None => "default (none)".into(),
+        }
+    } else if !listed || devices.fell_back {
+        format!("{} (gone)", short(&saved, MAX_DEVICE_LABEL - 7))
+    } else {
+        short(&saved, MAX_DEVICE_LABEL)
+    };
+    vec![
+        volume("audio.master", "Master volume", "test"),
+        volume("audio.effects", "Effects (bike, wind)", "test-effects"),
+        volume("audio.others", "Other riders", "test-others"),
+        Row {
+            label: "Voice".into(),
+            value: Some(format!(
+                "{} %{}",
+                settings
+                    .get("audio.voice")
+                    .map(|v| v.to_string())
+                    .unwrap_or_default(),
+                if settings
+                    .get("audio.echo_bot")
+                    .ok()
+                    .and_then(|v| v.as_bool())
+                    == Some(true)
+                {
+                    " - echo test"
+                } else {
+                    ""
+                }
+            )),
+            left: None,
+            right: None,
+            confirm: Some(Activate::Open(Page::AudioVoice)),
+        },
+        setting_row(settings, "audio.mute", "Mute"),
+        Row {
+            label: "Output".into(),
+            value: Some(value),
+            left: Some(pick(-1)),
+            right: Some(pick(1)),
+            confirm: Some(Activate::Command(pick(1))),
+        },
+    ]
+}
+
+/// The rows of `page`.
+pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
+    match page {
+        // Without the engine's device list (the menu passes it, see
+        // `audio_rows`).
+        Page::Audio => audio_rows(settings, &AudioDevices::default()),
+        Page::Controls => vec![
+            setting_row(settings, "controls.autodrive", "Autodrive at the start"),
+            setting_row(
+                settings,
+                "controls.invert_y",
+                "Unicorn mode: invert mouse Y",
+            ),
+            setting_row(settings, "controls.god_flight", "Unicorn mode: flight"),
+            // Collisions (spec §14 Phase 12A, 12D).
+            setting_row(settings, "ride.collisions", "Collisions"),
+            setting_row(settings, "ride.chaotic_bots", "Chaotic bots"),
+            // The aids have their own page (the ten-foot rule: six rows).
+            Row {
+                label: "Riding aids".into(),
+                value: Some(aids_summary(settings)),
+                left: None,
+                right: None,
+                confirm: Some(Activate::Open(Page::RidingAids)),
+            },
+        ],
+        Page::RidingAids => vec![
+            setting_row(settings, "ride.proximity_cue", "Proximity arrow and bell"),
+            setting_row(settings, "ride.hit_warning", "Last-moment warning"),
+            setting_row(settings, "display.camera_shake", "Camera shake"),
+        ],
+        // From the session (`rider_list`).
+        Page::RiderList => Vec::new(),
+        Page::Trainer => vec![
+            setting_row(settings, "trainer.difficulty", "Difficulty (%)"),
+            setting_row(
+                settings,
+                "trainer.virtual_power",
+                "Virtual trainer power (W)",
+            ),
+            Row::action("Scan for devices", "devices.scan"),
+            Row::action("Show devices", "devices.list"),
+            // Damage (spec §14 Phase 12E; the Controls and Display pages
+            // are full).
+            setting_row(settings, "ride.damage", "Damage"),
+            setting_row(settings, "display.damage", "Damage indicator"),
+        ],
+        Page::Strava => vec![
+            Row::action("Status", "strava.status"),
+            Row::action("Link account", "strava.connect"),
+            Row::action("Sync now", "strava.sync"),
+            Row::action("Retry failed uploads", "strava.sync --retry"),
+            Row::action("Unlink", "strava.disconnect"),
+        ],
+        Page::Display => vec![
+            setting_row(settings, "display.hud", "HUD"),
+            setting_row(settings, "display.units", "Units"),
+            setting_row(settings, "display.camera", "Camera"),
+            setting_row(settings, "display.fps", "FPS counter"),
+            setting_row(settings, "display.night_brightness", "Night brightness (%)"),
+            setting_row(settings, "display.fullscreen", "Fullscreen (next start)"),
+        ],
+        Page::Riders => {
+            let mut out: Vec<Row> = riders
+                .riders
+                .iter()
+                .enumerate()
+                .map(|(i, r)| Row {
+                    label: r.name.clone(),
+                    value: Some(r.summary()),
+                    left: None,
+                    right: None,
+                    confirm: Some(Activate::Open(Page::Rider(i))),
+                })
+                .collect();
+            out.push(Row::action(
+                "Add a rider",
+                format!("riders.add \"{}\"", riders.new_name()),
+            ));
+            out
+        }
+        Page::Rider(i) => {
+            let Some(r) = riders.riders.get(i) else {
+                return Vec::new();
+            };
+            let n = &r.name;
+            let (hmin, hmax) = crate::riders::HEIGHT_RANGE_CM;
+            let (fmin, fmax) = crate::riders::FTP_RANGE_W;
+            vec![
+                Row {
+                    label: "Name".into(),
+                    value: Some(n.clone()),
+                    left: None,
+                    right: None,
+                    confirm: None,
+                },
+                number_row(
+                    "Weight",
+                    Some(r.weight_kg),
+                    "kg",
+                    (
+                        1.0,
+                        75.0,
+                        ocw_core::MIN_RIDER_WEIGHT_KG,
+                        ocw_core::MAX_RIDER_WEIGHT_KG,
+                    ),
+                    |v| edit(n, &format!("--weight {v}")),
+                ),
+                number_row("Height", r.height_cm, "cm", (1.0, 175.0, hmin, hmax), |v| {
+                    edit(n, &format!("--height {v}"))
+                }),
+                number_row(
+                    "FTP",
+                    r.ftp_w.map(f64::from),
+                    "W",
+                    (5.0, 200.0, f64::from(fmin), f64::from(fmax)),
+                    |v| edit(n, &format!("--ftp {v}")),
+                ),
+                Row::action("Ride as this rider", format!("riders.select \"{n}\"")),
+                Row::action("Delete this rider", format!("riders.remove \"{n}\"")),
+            ]
+        }
+        Page::Bike(i) => {
+            let Some(r) = riders.riders.get(i) else {
+                return Vec::new();
+            };
+            bike_rows(r)
+        }
+        // From the ride catalog (`ride::pages::rows`, `ride::world::rows`).
+        Page::WorldHome
+        | Page::Worlds
+        | Page::World(_)
+        | Page::WorldRoutes(_)
+        | Page::WorldParts(_)
+        | Page::WorldInfo
+        | Page::WorldSun
+        | Page::WorldSources
+        | Page::WorldSource(_)
+        | Page::Routes
+        | Page::Rides
+        | Page::GpxImport
+        | Page::Workouts => Vec::new(),
+        // From the voice state (`voice::page::rows`).
+        Page::Voice | Page::VoiceDevices | Page::VoiceParticipants | Page::AudioVoice => Vec::new(),
+        // From the world clock (`timemachine::rows`).
+        Page::TimeMachine => Vec::new(),
+        // From the session weather (`weather::rows`).
+        Page::Weather
+        | Page::WeatherPresets
+        | Page::WeatherCustom
+        | Page::WeatherAir
+        | Page::WeatherReal => Vec::new(),
+        Page::Workshop => {
+            let mut out: Vec<Row> = riders
+                .riders
+                .iter()
+                .map(|r| Row {
+                    label: r.name.clone(),
+                    value: Some(if riders.is_active(&r.name) {
+                        format!("{} - riding", r.summary())
+                    } else {
+                        r.summary()
+                    }),
+                    left: None,
+                    right: None,
+                    confirm: Some(Activate::Command(format!("riders.select \"{}\"", r.name))),
+                })
+                .collect();
+            if out.is_empty() {
+                let d = crate::riders::Rider::default();
+                out.push(Row {
+                    label: d.name.clone(),
+                    value: Some(format!("{} - riding (default)", d.summary())),
+                    left: None,
+                    right: None,
+                    confirm: None,
+                });
+            }
+            // The bike of the rider who rides next.
+            let active = riders.active();
+            out.push(Row {
+                label: "Bike".into(),
+                value: Some(if riders.riders.is_empty() {
+                    format!("{} (add a rider to change it)", active.bike().name())
+                } else {
+                    active.bike_summary()
+                }),
+                left: None,
+                right: None,
+                confirm: riders
+                    .find(&active.name)
+                    .filter(|_| !riders.riders.is_empty())
+                    .map(|i| Activate::Open(Page::Bike(i))),
+            });
+            out.push(Row {
+                label: "Edit riders".into(),
+                value: None,
+                left: None,
+                right: None,
+                confirm: Some(Activate::Open(Page::Riders)),
+            });
+            out
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::riders::Rider;
+
+    fn riders() -> Riders {
+        let mut r = Riders::default();
+        r.add(Rider {
+            name: "Alex".into(),
+            weight_kg: 78.0,
+            height_cm: None,
+            ftp_w: Some(250),
+            ..Rider::default()
+        })
+        .unwrap();
+        r.add(Rider {
+            name: "Anna".into(),
+            weight_kg: 61.5,
+            ..Rider::default()
+        })
+        .unwrap();
+        r
+    }
+
+    fn row<'a>(rows: &'a [Row], label: &str) -> &'a Row {
+        rows.iter().find(|r| r.label == label).expect(label)
+    }
+
+    fn cmd(line: &str) -> Option<Activate> {
+        Some(Activate::Command(line.into()))
+    }
+
+    #[test]
+    fn setting_rows_run_set_commands() {
+        let (s, _) = Settings::parse("[display]\ncamera = \"side\"\n").unwrap();
+        let display = rows(Page::Display, &s, &Riders::default());
+        let hud = row(&display, "HUD");
+        assert_eq!(hud.value.as_deref(), Some("on"));
+        assert_eq!(hud.confirm, cmd("set display.hud off"));
+        assert_eq!(hud.left.as_deref(), Some("set display.hud off"));
+        let cam = row(&display, "Camera");
+        assert_eq!(cam.value.as_deref(), Some("side"));
+        assert_eq!(cam.right.as_deref(), Some("set display.camera top"));
+        assert_eq!(cam.left.as_deref(), Some("set display.camera chase"));
+        assert_eq!(
+            row(&display, "Units").confirm,
+            cmd("set display.units imperial")
+        );
+        let trainer = rows(Page::Trainer, &s, &Riders::default());
+        let d = row(&trainer, "Difficulty (%)");
+        assert_eq!(d.value.as_deref(), Some("50"));
+        assert_eq!(d.left.as_deref(), Some("set trainer.difficulty 45"));
+        assert_eq!(d.right.as_deref(), Some("set trainer.difficulty 55"));
+        assert_eq!(d.confirm, None);
+        assert_eq!(
+            row(&trainer, "Scan for devices").confirm,
+            cmd("devices.scan")
+        );
+        let controls = rows(Page::Controls, &s, &Riders::default());
+        assert_eq!(controls[0].confirm, cmd("set controls.autodrive off"));
+        let strava = rows(Page::Strava, &s, &Riders::default());
+        assert_eq!(
+            row(&strava, "Retry failed uploads").confirm,
+            cmd("strava.sync --retry")
+        );
+    }
+
+    #[test]
+    fn workshop_selects_the_rider() {
+        let s = Settings::default();
+        let r = riders();
+        let w = rows(Page::Workshop, &s, &r);
+        assert_eq!(w.len(), 4);
+        assert_eq!(w[0].value.as_deref(), Some("78 kg, FTP 250 W - riding"));
+        assert_eq!(w[1].value.as_deref(), Some("61.5 kg"));
+        assert_eq!(w[1].confirm, cmd("riders.select \"Anna\""));
+        // The bike of the active rider (the first).
+        assert_eq!(w[2].label, "Bike");
+        assert_eq!(
+            w[2].value.as_deref(),
+            Some("Road - standard, frame #1E1E22, jersey #FF1472")
+        );
+        assert_eq!(w[2].confirm, Some(Activate::Open(Page::Bike(0))));
+        assert_eq!(w[3].confirm, Some(Activate::Open(Page::Riders)));
+        // Without profiles: the default rider, and the way to the editor.
+        let w = rows(Page::Workshop, &s, &Riders::default());
+        assert_eq!(w[0].value.as_deref(), Some("75 kg - riding (default)"));
+        assert_eq!(w[0].confirm, None);
+        assert_eq!(w[1].confirm, None, "no profile to give a bike");
+        assert_eq!(w[2].confirm, Some(Activate::Open(Page::Riders)));
+    }
+
+    #[test]
+    fn rider_pages_edit_the_profile() {
+        let s = Settings::default();
+        let r = riders();
+        let list = rows(Page::Riders, &s, &r);
+        assert_eq!(list[1].confirm, Some(Activate::Open(Page::Rider(1))));
+        assert_eq!(list.last().unwrap().confirm, cmd("riders.add \"Rider\""));
+        let alex = rows(Page::Rider(0), &s, &r);
+        let weight = row(&alex, "Weight");
+        assert_eq!(weight.value.as_deref(), Some("78 kg"));
+        assert_eq!(
+            weight.left.as_deref(),
+            Some("riders.edit \"Alex\" --weight 77")
+        );
+        assert_eq!(
+            weight.right.as_deref(),
+            Some("riders.edit \"Alex\" --weight 79")
+        );
+        // No height yet: ← / → start at 175 cm.
+        let height = row(&alex, "Height");
+        assert_eq!(height.value.as_deref(), Some("-"));
+        assert_eq!(
+            height.right.as_deref(),
+            Some("riders.edit \"Alex\" --height 175")
+        );
+        assert_eq!(
+            row(&alex, "FTP").left.as_deref(),
+            Some("riders.edit \"Alex\" --ftp 245")
+        );
+        assert_eq!(
+            row(&alex, "Delete this rider").confirm,
+            cmd("riders.remove \"Alex\"")
+        );
+        // The weight stays in range at the ends.
+        let mut light = Riders::default();
+        light
+            .add(Rider {
+                name: "Kid".into(),
+                weight_kg: 30.0,
+                ..Rider::default()
+            })
+            .unwrap();
+        assert_eq!(
+            row(&rows(Page::Rider(0), &s, &light), "Weight")
+                .left
+                .as_deref(),
+            Some("riders.edit \"Kid\" --weight 30")
+        );
+        assert!(rows(Page::Rider(9), &s, &r).is_empty());
+    }
+
+    #[test]
+    fn bike_page_edits_bike_and_look() {
+        let s = Settings::default();
+        let mut r = riders();
+        let b = rows(Page::Bike(1), &s, &r);
+        let bike = row(&b, "Bike");
+        assert_eq!(bike.value.as_deref(), Some("Road - standard"));
+        assert_eq!(
+            bike.right.as_deref(),
+            Some("riders.edit \"Anna\" --bike road-aero")
+        );
+        assert_eq!(
+            bike.left.as_deref(),
+            Some("riders.edit \"Anna\" --bike mtb")
+        );
+        assert_eq!(
+            row(&b, "Physics").value.as_deref(),
+            Some("8 kg bike, CdA 0.320, Crr 0.0040")
+        );
+        let jersey = row(&b, "Jersey colour");
+        assert_eq!(jersey.value.as_deref(), Some("#FF1472"));
+        assert_eq!(
+            jersey.right.as_deref(),
+            Some("riders.edit \"Anna\" --jersey-color #E53935")
+        );
+        assert_eq!(
+            row(&b, "Kit").right.as_deref(),
+            Some("riders.edit \"Anna\" --kit band")
+        );
+        // Another bike: its own numbers; the colours stay.
+        r.edit(
+            "Anna",
+            crate::riders::RiderEdit {
+                bike: Some(ocw_core::ProfileId::Gravel),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let b = rows(Page::Bike(1), &s, &r);
+        assert_eq!(row(&b, "Bike").value.as_deref(), Some("Gravel"));
+        assert_eq!(
+            row(&b, "Physics").value.as_deref(),
+            Some("9 kg bike, CdA 0.325, Crr 0.0045")
+        );
+        assert_eq!(
+            row(&b, "Bike").right.as_deref(),
+            Some("riders.edit \"Anna\" --bike mtb")
+        );
+        assert!(rows(Page::Bike(9), &s, &r).is_empty());
+    }
+
+    #[test]
+    fn audio_page_sets_volumes_and_the_output() {
+        let s = Settings::default();
+        let devices = AudioDevices {
+            names: vec!["Speakers".into(), "USB Headset".into()],
+            current: Some("Speakers".into()),
+            fell_back: false,
+        };
+        let a = audio_rows(&s, &devices);
+        assert!(a.len() < crate::menu::model::MAX_ITEMS, "fits one page");
+        let master = row(&a, "Master volume");
+        assert_eq!(master.value.as_deref(), Some("80"));
+        assert_eq!(master.left.as_deref(), Some("set audio.master 75"));
+        assert_eq!(master.right.as_deref(), Some("set audio.master 85"));
+        assert_eq!(master.confirm, cmd("audio.play test"));
+        // Voice opens Audio → Voice (volume and the echo test).
+        assert_eq!(
+            row(&a, "Voice").confirm,
+            Some(Activate::Open(Page::AudioVoice))
+        );
+        assert_eq!(row(&a, "Voice").value.as_deref(), Some("100 %"));
+        let others = row(&a, "Other riders");
+        assert_eq!(others.value.as_deref(), Some("80"));
+        assert_eq!(others.left.as_deref(), Some("set audio.others 75"));
+        assert_eq!(others.confirm, cmd("audio.play test-others"));
+        assert_eq!(row(&a, "Mute").confirm, cmd("set audio.mute on"));
+        let out = row(&a, "Output");
+        assert_eq!(out.value.as_deref(), Some("default"));
+        assert_eq!(out.right.as_deref(), Some("set audio.output \"Speakers\""));
+        assert_eq!(
+            out.left.as_deref(),
+            Some("set audio.output \"USB Headset\"")
+        );
+        // A chosen device: steps on from it.
+        let (s, _) = Settings::parse("[audio]\noutput = \"USB Headset\"\n").unwrap();
+        let out = row(&audio_rows(&s, &devices), "Output").clone();
+        assert_eq!(out.value.as_deref(), Some("USB Headset"));
+        assert_eq!(out.right.as_deref(), Some("set audio.output \"default\""));
+        // Unplugged: still in the list, marked; the default plays.
+        let (s, _) = Settings::parse("[audio]\noutput = \"Old DAC\"\n").unwrap();
+        let out = row(&audio_rows(&s, &devices), "Output").clone();
+        assert_eq!(out.value.as_deref(), Some("Old DAC (gone)"));
+        assert_eq!(out.left.as_deref(), Some("set audio.output \"default\""));
+        assert_eq!(out.right.as_deref(), Some("set audio.output \"Speakers\""));
+        // No devices (headless): the default, said plainly.
+        let a = rows(Page::Audio, &Settings::default(), &Riders::default());
+        let out = row(&a, "Output");
+        assert_eq!(out.value.as_deref(), Some("default (none)"));
+        assert_eq!(out.right.as_deref(), Some("set audio.output \"default\""));
+        // Long names are cut for the ten-foot UI.
+        let name = "Default ALSA Output (currently PipeWire Media Server)";
+        let long = AudioDevices {
+            names: vec![name.into()],
+            current: Some(name.into()),
+            fell_back: false,
+        };
+        let (s, _) = Settings::parse(&format!("[audio]\noutput = \"{name}\"\n")).unwrap();
+        let v = row(&audio_rows(&s, &long), "Output").value.clone();
+        assert_eq!(v.as_deref(), Some("Default ALSA..."));
+        let v = row(&audio_rows(&s, &AudioDevices::default()), "Output")
+            .value
+            .clone();
+        assert_eq!(v.as_deref(), Some("Defaul... (gone)"));
+    }
+
+    #[test]
+    fn page_parents() {
+        assert_eq!(Page::Bike(0).parent(), Some(Page::Workshop));
+        assert_eq!(Page::Rider(2).parent(), Some(Page::Riders));
+        assert_eq!(Page::Workshop.parent(), None);
+    }
+}

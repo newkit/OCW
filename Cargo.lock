@@ -6095,6 +6095,7 @@ dependencies = [
  "ocw-audio",
  "ocw-core",
  "ocw-devices",
+ "ocw-fit",
  "ocw-protocol",
  "ocw-render",
  "ocw-server",
@@ -6103,6 +6104,7 @@ dependencies = [
  "ocw-voice",
  "ocw-weather",
  "ocw-world",
+ "serde",
  "toml",
  "web-time",
 ]
@@ -6130,6 +6132,7 @@ dependencies = [
  "ocw-server",
  "ocw-sim",
  "ocw-sky",
+ "ocw-ui",
  "ocw-voice",
  "ocw-weather",
  "ocw-world",
@@ -6266,6 +6269,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "ocw-ui"
+version = "0.2.1"
+dependencies = [
+ "bevy",
+ "clap",
+ "ocw-client",
+ "ocw-core",
+ "ocw-protocol",
+ "ocw-render",
+ "ocw-server",
+ "ocw-sim",
+ "ocw-sky",
+ "ocw-weather",
+ "ocw-world",
+]
+
+[[package]]
 name = "ocw-voice"
 version = "0.2.1"
 dependencies = [
@@ -6298,11 +6318,13 @@ dependencies = [
  "ocw-client",
  "ocw-core",
  "ocw-devices",
+ "ocw-fit",
  "ocw-protocol",
  "ocw-render",
  "ocw-server",
  "ocw-sim",
  "ocw-sky",
+ "ocw-ui",
  "ocw-voice",
  "ocw-weather",
  "ocw-world",

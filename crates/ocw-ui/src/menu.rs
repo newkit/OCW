@@ -1,0 +1,566 @@
+//! The in-game menu's Bevy glue, the same for the desktop and the browser
+//! (spec §3.2.1; §14 Phase 10, B6: one menu). Esc / Start opens it over
+//! the running ride. The ride never pauses: the trainer, the ride time,
+//! the recording and a video keep going; while the menu is open the
+//! steering falls back to autodrive and junctions take their default exit
+//! (`ClientCore::hold_steering`), restored on closing.
+//!
+//! Input (keys, gamepads – on wasm32 the browser's Gamepad API through
+//! Bevy's gilrs –, mouse and touch through `ocw_render::menu::MenuPointer`)
+//! → the Bevy-free model (`ocw_client::menu::model`) → [`MenuView`] (drawn
+//! by `ocw_render::menu`); menu functions run as console command lines.
+//!
+//! The rows of the shared pages (settings, audio, voice, time, weather,
+//! the rider list) come from the shared resources; the app's own pages
+//! (the desktop's world catalog, routes, rides, rider profiles, the
+//! browser's world and workouts) from its [`MenuHooks`].
+
+use bevy::input::mouse::AccumulatedMouseMotion;
+use bevy::prelude::*;
+use clap::{Arg, Command};
+use ocw_client::menu::model::{Action, Effect, Menu, Page};
+use ocw_client::menu::pages::{self as sub, AudioDevices, Row, WorldHome};
+use ocw_client::riders::Riders;
+use ocw_client::settings::{Settings, applies};
+use ocw_client::voice::VoiceMenuInfo;
+use ocw_render::RideView;
+use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
+use ocw_render::menu::{InputContext, MenuCorePlugin, MenuPointer, MenuPointerEvent, MenuView};
+
+use crate::controls::{self, NavRepeat};
+use crate::riders_page::RiderList;
+use crate::settings::UserSettings;
+use crate::timemachine::TimeMachine;
+use crate::weather::WeatherMenu;
+use crate::{Platform, UiPlatform};
+
+/// The voice call's state for the Voice pages (refreshed by the app's
+/// voice glue).
+#[derive(Resource, Debug, Clone, Default, PartialEq, Deref, DerefMut)]
+pub struct VoiceMenu(pub VoiceMenuInfo);
+
+/// The audio outputs for the Audio page (refreshed by the app's audio
+/// glue).
+#[derive(Resource, Debug, Clone, Default, PartialEq, Deref, DerefMut)]
+pub struct AudioDeviceMenu(pub AudioDevices);
+
+/// What an app adds to the shared menu: its own pages.
+#[derive(Resource, Clone, Copy)]
+pub struct MenuHooks {
+    /// The rows of the app's own pages (the desktop's world catalog,
+    /// routes, rides, GPX, workouts; the browser's workouts); `None`: a
+    /// shared page.
+    pub rows: fn(&World, sub::Page) -> Option<Vec<Row>>,
+    /// Text of a page beyond its fixed description (a data source's notice).
+    pub text: fn(&World, Page) -> Vec<String>,
+    /// The rider profiles (the Riders, Rider, Bike and Workshop pages).
+    pub riders: for<'w> fn(&'w World) -> Option<&'w Riders>,
+    /// Esc while the menu is closed: `true` if the app used it (the
+    /// desktop's god mode frees a captured pointer first).
+    pub escape: fn(&mut World) -> bool,
+}
+
+impl Default for MenuHooks {
+    fn default() -> Self {
+        Self {
+            rows: |_, _| None,
+            text: |_, _| Vec::new(),
+            riders: |_| None,
+            escape: |_| false,
+        }
+    }
+}
+
+/// The browser's own pages (and a default for tests): the world of the
+/// page, the bundled workouts.
+pub fn world_home(name: impl Into<String>) -> WorldHome {
+    WorldHome {
+        name: name.into(),
+        ..WorldHome::default()
+    }
+}
+
+pub struct MenuPlugin;
+
+impl Plugin for MenuPlugin {
+    fn build(&self, app: &mut App) {
+        if !app.is_plugin_added::<MenuCorePlugin>() {
+            app.add_plugins(MenuCorePlugin);
+        }
+        crate::configure_sets(app);
+        app.init_resource::<MenuState>()
+            .init_resource::<VoiceMenu>()
+            .init_resource::<AudioDeviceMenu>()
+            .add_systems(
+                Update,
+                (menu_input, write_view).chain().after(crate::ViewExtrasSet),
+            )
+            .console_command(ConsoleCommand::new(
+                Permission::User,
+                Command::new("menu")
+                    .about("Open, close or drive the in-game menu (Esc / gamepad Start)")
+                    .arg(
+                        Arg::new("action")
+                            .value_parser([
+                                "open",
+                                "close",
+                                "toggle",
+                                "up",
+                                "down",
+                                "left",
+                                "right",
+                                "select",
+                                "back",
+                                "tab-next",
+                                "tab-prev",
+                                "workshop-page",
+                            ])
+                            .default_value("toggle"),
+                    ),
+                |world, m| {
+                    let mut state = world.resource_mut::<MenuState>();
+                    let open = state.menu.is_open();
+                    let action = match m.get_one::<String>("action").map(String::as_str) {
+                        Some("open") => Action::Open,
+                        Some("close") => Action::Close,
+                        Some("up") => Action::Up,
+                        Some("down") => Action::Down,
+                        Some("left") => Action::Left,
+                        Some("right") => Action::Right,
+                        Some("tab-next") => Action::TabNext,
+                        Some("tab-prev") => Action::TabPrev,
+                        Some("select") => Action::Confirm,
+                        Some("back") => Action::Back,
+                        Some("workshop-page") => Action::RiderPage,
+                        _ if open => Action::Close,
+                        _ => Action::Open,
+                    };
+                    state.queued.push(action);
+                    Ok(String::new())
+                },
+            ));
+    }
+}
+
+/// The menu model and its input state.
+#[derive(Resource, Default)]
+pub struct MenuState {
+    pub menu: Menu,
+    repeat: NavRepeat,
+    /// Actions from the console command `menu`, applied next frame.
+    queued: Vec<Action>,
+}
+
+/// The settings to show (the defaults without the settings plugin).
+fn settings(world: &World) -> &Settings {
+    static DEFAULT: std::sync::OnceLock<Settings> = std::sync::OnceLock::new();
+    world
+        .get_resource::<UserSettings>()
+        .map_or_else(|| DEFAULT.get_or_init(Settings::default), |s| &s.settings)
+}
+
+fn platform(world: &World) -> Platform {
+    world
+        .get_resource::<UiPlatform>()
+        .map_or(Platform::Desktop, |p| p.0)
+}
+
+/// The setting a row changes (`set KEY …` on ← / → / Confirm).
+pub fn row_setting(row: &Row) -> Option<&str> {
+    let line = row
+        .left
+        .as_deref()
+        .or(row.right.as_deref())
+        .or(match &row.confirm {
+            Some(sub::Activate::Command(l)) => Some(l.as_str()),
+            _ => None,
+        })?;
+    let rest = line.strip_prefix("set ")?;
+    rest.split_whitespace().next()
+}
+
+/// Leaves out the rows of settings this platform does not have.
+pub fn for_platform(rows: Vec<Row>, platform: Platform) -> Vec<Row> {
+    rows.into_iter()
+        .filter(|r| row_setting(r).is_none_or(|k| applies(k, platform)))
+        .collect()
+}
+
+/// The rows of a sub page: the shared pages from the shared resources,
+/// the app's own from its hooks.
+pub fn sub_rows(world: &World, page: sub::Page) -> Vec<Row> {
+    let s = settings(world);
+    let hooks = world
+        .get_resource::<MenuHooks>()
+        .copied()
+        .unwrap_or_default();
+    let rows = if page == sub::Page::RiderList {
+        world
+            .get_resource::<RiderList>()
+            .map(|l| l.menu_rows())
+            .unwrap_or_default()
+    } else if page == sub::Page::TimeMachine {
+        let info = world
+            .get_resource::<TimeMachine>()
+            .map(|t| t.0.clone())
+            .unwrap_or_default();
+        ocw_client::menu::time::rows(&info)
+    } else if page.is_weather_page() {
+        let w = world
+            .get_resource::<WeatherMenu>()
+            .map(|w| w.0.clone())
+            .unwrap_or_default();
+        ocw_client::menu::weather::rows(page, &w)
+    } else if page.is_voice_page() {
+        let empty = VoiceMenuInfo::default();
+        let info = world.get_resource::<VoiceMenu>().map_or(&empty, |v| &v.0);
+        ocw_client::menu::voice::rows(page, s, info)
+    } else if page == sub::Page::Audio {
+        let empty = AudioDevices::default();
+        let devices = world
+            .get_resource::<AudioDeviceMenu>()
+            .map_or(&empty, |d| &d.0);
+        sub::audio_rows(s, devices)
+    } else if let Some(rows) = (hooks.rows)(world, page) {
+        rows
+    } else {
+        let default = Riders::default();
+        let riders = (hooks.riders)(world).unwrap_or(&default);
+        sub::rows(page, s, riders)
+    };
+    for_platform(rows, platform(world))
+}
+
+/// Text of a page beyond its fixed description.
+fn page_text(world: &World, page: Page) -> Vec<String> {
+    world
+        .get_resource::<MenuHooks>()
+        .map_or_else(Vec::new, |h| (h.text)(world, page))
+}
+
+fn menu_input(world: &mut World) {
+    let platform = platform(world);
+    {
+        let mut state = world.resource_mut::<MenuState>();
+        if state.menu.platform() != platform && !state.menu.is_open() {
+            state.menu = Menu::for_platform(platform);
+        }
+    }
+    let mut pressed = {
+        let keys = world.get_resource::<ButtonInput<KeyCode>>().cloned();
+        let mut q = world.query::<&Gamepad>();
+        controls::pressed(keys.as_ref(), q.iter(world))
+    };
+    let console_open = world.resource::<ConsoleState>().is_open();
+    let open = world.resource::<MenuState>().menu.is_open();
+    // God mode (spec §14 Phase 13A): Esc first frees the captured pointer;
+    // the next Esc opens the menu.
+    if pressed.escape && !open && !console_open {
+        let escape = world
+            .get_resource::<MenuHooks>()
+            .map(|h| h.escape)
+            .unwrap_or(|_| false);
+        if escape(world) {
+            pressed.escape = false;
+        }
+    }
+    let now = crate::now(world);
+    let dt = world
+        .get_resource::<Time>()
+        .map_or(0.0, |t| t.delta_secs_f64());
+    let context = *world.resource::<InputContext>();
+    let moved = world
+        .get_resource::<AccumulatedMouseMotion>()
+        .is_some_and(|m| m.delta != Vec2::ZERO);
+    let pointer_events = std::mem::take(&mut world.resource_mut::<MenuPointer>().0);
+    let mut actions = std::mem::take(&mut world.resource_mut::<MenuState>().queued);
+    let results =
+        !open && !console_open && crate::client(world).is_some_and(|c| c.results_showing(now));
+    if results && (pressed.escape || pressed.confirm || pressed.back) {
+        // An event's results panel is up: Esc / Enter / B close it first
+        // (spec §2.3), the menu opens on the next press.
+        if let Some(mut c) = crate::client_mut(world) {
+            c.dismiss_results(now);
+        }
+        world.resource_mut::<MenuState>().repeat.reset();
+    } else if console_open {
+        // The console has the keys; Esc closes it first (never the app).
+        if pressed.escape {
+            world.resource_mut::<ConsoleState>().set_open(false);
+        }
+        world.resource_mut::<MenuState>().repeat.reset();
+    } else if (!open && context != InputContext::Workshop) || context == InputContext::Menu {
+        // Navigation starts once the frame began in the menu's context:
+        // the key that opened the menu does not also move its focus.
+        let step = if open {
+            world
+                .resource_mut::<MenuState>()
+                .repeat
+                .update(pressed.held, pressed.tapped, dt)
+                + pressed.step
+        } else {
+            0
+        };
+        actions.extend(controls::actions(&pressed, step, open));
+        // Hover only when the mouse moved: rows appearing under a resting
+        // pointer (a new page) must not take the focus.
+        actions.extend(pointer_events.into_iter().filter_map(|e| match e {
+            MenuPointerEvent::Hover(i) => moved.then_some(Action::Hover(i)),
+            MenuPointerEvent::Click(i) => Some(Action::Click(i)),
+            MenuPointerEvent::Step(i, dir) => Some(Action::Step(i, dir)),
+            MenuPointerEvent::Back => Some(Action::Back),
+        }));
+    }
+    let mut lines = Vec::new();
+    world.resource_scope(|world, mut state: Mut<MenuState>| {
+        let rows = |p| sub_rows(world, p);
+        for action in actions {
+            if let Effect::Command(line) = state.menu.apply_with(action, rows) {
+                lines.push(line);
+            }
+        }
+    });
+    {
+        let mut console = world.resource_mut::<ConsoleState>();
+        for line in lines {
+            console.queue(line);
+        }
+    }
+    let now_open = world.resource::<MenuState>().menu.is_open();
+    if now_open != open {
+        if !now_open {
+            world.resource_mut::<MenuState>().repeat.reset();
+        }
+        info!("menu {}", if now_open { "opened" } else { "closed" });
+        if let Some(mut c) = crate::client_mut(world) {
+            if now_open {
+                c.hold_steering();
+            } else {
+                c.release_steering();
+            }
+        }
+    }
+}
+
+/// The view of the menu as it is now.
+pub fn view_of(world: &World, menu: &Menu) -> MenuView {
+    let Some(page) = menu.page() else {
+        return MenuView::default();
+    };
+    let def = page.def();
+    let weather = world.get_resource::<WeatherMenu>();
+    let rider_list = world.get_resource::<RiderList>();
+    MenuView {
+        open: true,
+        title: def.title.into(),
+        status: match (page, world.get_resource::<RideView>(), weather) {
+            (Page::Top, Some(r), _) => ocw_client::menu::status_line(r),
+            // The weather now and who sets it (spec §14 Phase 9, S5).
+            (Page::Sub(p), _, Some(w)) if p.is_weather_page() => {
+                ocw_client::menu::weather::status(p, w, menu.focus())
+            }
+            (Page::Sub(sub::Page::RiderList), _, _) => {
+                rider_list.map(|l| l.summary()).unwrap_or_default()
+            }
+            _ => String::new(),
+        },
+        text: def
+            .text
+            .iter()
+            .map(|&s| s.to_owned())
+            .chain(page_text(world, page))
+            .collect(),
+        items: menu.labels(),
+        focused: menu.focus(),
+        hint: ocw_client::menu::hint(page, menu.list_pages(), menu.depth()),
+        dimmed: menu.dimmed(),
+        grid: match page {
+            Page::Sub(p) if p.grid_columns().is_some() => {
+                let clear = WeatherMenu::default();
+                Some(ocw_client::menu::weather::grid(weather.unwrap_or(&clear)))
+            }
+            _ => None,
+        },
+        // The rider list's unicorns and damage dots (13E, 12F).
+        marks: match (page, rider_list) {
+            (Page::Sub(sub::Page::RiderList), Some(l)) => menu
+                .shown_rows()
+                .into_iter()
+                .map(|r| r.and_then(|i| l.mark(i)).unwrap_or_default())
+                .collect(),
+            _ => Vec::new(),
+        },
+    }
+}
+
+fn write_view(world: &mut World) {
+    // Values changed by the menu's commands (or the console) show at once.
+    let new = world.resource_scope(|world, mut state: Mut<MenuState>| {
+        state.menu.refresh(&|p| sub_rows(world, p));
+        view_of(world, &state.menu)
+    });
+    world.resource_mut::<MenuView>().set_if_neq(new);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ocw_render::console::ConsoleCorePlugin;
+
+    /// The menu alone over a stepped local server, as `platform`.
+    fn app(platform: Platform) -> App {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, ConsoleCorePlugin))
+            .init_resource::<ButtonInput<KeyCode>>()
+            .insert_resource(UiPlatform(platform))
+            .insert_resource(RideView::new(ocw_world::Route::test_loop()))
+            .add_plugins((
+                crate::settings::SettingsPlugin,
+                crate::weather::WeatherPlugin,
+                crate::timemachine::TimeMachinePlugin,
+                crate::riders_page::RidersPagePlugin,
+                MenuPlugin,
+            ));
+        app.update();
+        app
+    }
+
+    fn tap(app: &mut App, key: KeyCode) {
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(key);
+        app.update();
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.release(key);
+        keys.clear();
+        app.update();
+    }
+
+    fn view(app: &App) -> MenuView {
+        app.world().resource::<MenuView>().clone()
+    }
+
+    #[test]
+    fn the_browser_menu_has_no_quit_and_its_own_captures() {
+        let mut app = app(Platform::Browser);
+        tap(&mut app, KeyCode::Escape);
+        let v = view(&app);
+        assert!(v.open);
+        assert_eq!(
+            v.items,
+            [
+                "Resume", "Ride", "World", "Workshop", "Navi", "Settings", "Captures"
+            ]
+        );
+        // Captures: screenshot, video, FIT.
+        tap(&mut app, KeyCode::ArrowUp);
+        tap(&mut app, KeyCode::Enter);
+        let v = view(&app);
+        assert_eq!(v.title, "Captures");
+        assert_eq!(v.items.len(), 4);
+        assert!(v.items[2].contains("FIT"));
+        // Back; the workshop is locked (Q5).
+        tap(&mut app, KeyCode::Escape);
+        for _ in 0..3 {
+            tap(&mut app, KeyCode::ArrowUp);
+        }
+        tap(&mut app, KeyCode::Enter);
+        let v = view(&app);
+        assert_eq!(v.title, "Workshop");
+        assert!(v.text[0].contains("log in"), "{:?}", v.text);
+        assert_eq!(v.items, ["Back"]);
+    }
+
+    /// The browser's own pages fit a 16:9 window with their text, like
+    /// the desktop's (`menu::tests` in the desktop app).
+    #[test]
+    fn the_browser_pages_fit_a_16_9_window() {
+        use ocw_render::menu::{PANEL_MAX_VH, fitted_paragraphs, page_height_vh};
+        let app = app(Platform::Browser);
+        for path in [&[][..], &[6], &[3], &[1], &[4], &[5]] {
+            let mut m = Menu::for_platform(Platform::Browser);
+            m.apply(Action::Open);
+            for &i in path {
+                m.apply(Action::Click(i));
+            }
+            let v = view_of(app.world(), &m);
+            let h = page_height_vh(&v, 16.0 / 9.0, v.text.len());
+            assert!(h <= PANEL_MAX_VH, "{}: {h:.1} vh", v.title);
+            assert_eq!(
+                fitted_paragraphs(&v, 16.0 / 9.0),
+                v.text.len(),
+                "{}",
+                v.title
+            );
+        }
+    }
+
+    #[test]
+    fn the_desktop_menu_keeps_quit() {
+        let mut app = app(Platform::Desktop);
+        tap(&mut app, KeyCode::Escape);
+        assert_eq!(view(&app).items.last().unwrap(), "Quit");
+    }
+
+    #[test]
+    fn browser_settings_pages_leave_out_what_it_does_not_have() {
+        let mut app = app(Platform::Browser);
+        tap(&mut app, KeyCode::Escape);
+        // Settings: no Riders (no profiles for the anonymous rider).
+        for _ in 0..5 {
+            tap(&mut app, KeyCode::ArrowDown);
+        }
+        tap(&mut app, KeyCode::Enter);
+        let v = view(&app);
+        assert_eq!(v.title, "Settings");
+        assert_eq!(
+            v.items,
+            ["Controls", "Trainer", "Audio", "Display", "Voice", "Back"]
+        );
+        // Display without fullscreen; Controls without god mode's rows.
+        let rows = |app: &App, p| sub_rows(app.world(), p);
+        let display = rows(&app, sub::Page::Display);
+        assert!(!display.is_empty());
+        assert!(
+            display
+                .iter()
+                .all(|r| row_setting(r) != Some("display.fullscreen"))
+        );
+        let controls = rows(&app, sub::Page::Controls);
+        assert!(
+            controls
+                .iter()
+                .all(|r| !row_setting(r).is_some_and(|k| k.starts_with("controls.god")))
+        );
+        let desktop = for_platform(
+            sub::rows(sub::Page::Display, &Settings::default(), &Riders::default()),
+            Platform::Desktop,
+        );
+        assert!(
+            desktop
+                .iter()
+                .any(|r| row_setting(r) == Some("display.fullscreen"))
+        );
+    }
+
+    #[test]
+    fn a_setting_row_changes_the_setting_through_the_console() {
+        let mut app = app(Platform::Browser);
+        tap(&mut app, KeyCode::Escape);
+        for _ in 0..5 {
+            tap(&mut app, KeyCode::ArrowDown);
+        }
+        tap(&mut app, KeyCode::Enter);
+        // Display: the first row is the HUD switch.
+        for _ in 0..3 {
+            tap(&mut app, KeyCode::ArrowDown);
+        }
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(view(&app).title, "Display");
+        assert_eq!(view(&app).items[0], "HUD:  < on >");
+        tap(&mut app, KeyCode::ArrowRight);
+        app.update();
+        let us = app.world().resource::<UserSettings>();
+        assert_eq!(us.value("display.hud").as_bool(), Some(false));
+    }
+}

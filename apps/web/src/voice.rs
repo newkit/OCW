@@ -52,9 +52,9 @@ impl PendingVoiceGrants {
 #[derive(Resource)]
 pub struct Voice(pub Mutex<VoiceController>);
 
-/// What the voice page shows (the page's panel reads it as JSON).
-#[derive(Resource, Default, Clone, PartialEq)]
-pub struct VoiceInfo(pub VoiceMenuInfo);
+/// What the menu's Voice pages show (shared with the desktop:
+/// `ocw_ui::menu::VoiceMenu`; `window.ocw.voice()` reads it too).
+pub use ocw_ui::menu::VoiceMenu as VoiceInfo;
 
 /// Makes the backend when the app is built (the page's shim on wasm32, a
 /// mock in the tests; without it voice is unavailable).
@@ -122,15 +122,29 @@ fn default_backend() -> Box<dyn VoiceBackend> {
     Box::new(Unavailable)
 }
 
-/// `M` / `Shift+M` (the gamepad's Select / R3 come with the B6 gamepad
-/// parity) → the mute commands.
-fn hotkeys(keys: Option<Res<ButtonInput<KeyCode>>>, mut console: ResMut<ConsoleState>) {
-    let Some(k) = keys else { return };
-    if !k.just_pressed(KeyCode::KeyM) {
-        return;
+/// `M` / `Shift+M` and the gamepad's Select / R3 (the browser's Gamepad
+/// API through Bevy's gilrs, B6) → the mute commands, as on the desktop.
+fn hotkeys(
+    keys: Option<Res<ButtonInput<KeyCode>>>,
+    pads: Query<&Gamepad>,
+    mut console: ResMut<ConsoleState>,
+) {
+    let mut inputs = Vec::new();
+    if let Some(k) = keys
+        && k.just_pressed(KeyCode::KeyM)
+    {
+        let shift = k.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+        inputs.push(Input::KeyM { shift });
     }
-    let shift = k.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
-    for c in shared::hotkey_commands([Input::KeyM { shift }]) {
+    for pad in &pads {
+        if pad.just_pressed(GamepadButton::Select) {
+            inputs.push(Input::PadSelect);
+        }
+        if pad.just_pressed(GamepadButton::RightThumb) {
+            inputs.push(Input::PadRightStick);
+        }
+    }
+    for c in shared::hotkey_commands(inputs) {
         console.queue(c);
     }
 }
@@ -546,7 +560,8 @@ mod tests {
         a.update();
         let voice = a.world().resource::<Voice>();
         assert_eq!(voice.0.lock().unwrap().settings().volume, 0.6);
-        assert!(run(&mut a, "set display.units imperial").contains("B6"));
+        // Since B6 every setting the browser has applies.
+        assert!(run(&mut a, "set display.units imperial").contains("display.units = imperial"));
         assert!(run(&mut a, "get").contains("voice.volume = 60"));
         assert!(run(&mut a, "voice.devices").contains("Built-in microphone"));
         assert!(run(&mut a, "voice.status").contains("voice: no voice on this server"));

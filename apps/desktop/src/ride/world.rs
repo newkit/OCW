@@ -151,15 +151,7 @@ fn ask(label: impl Into<String>, value: impl Into<String>, line: String) -> Row 
 }
 
 /// Shortens `s` to `max` characters (labels must fit the panel).
-pub fn short(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        let mut t: String = s.chars().take(max - 3).collect();
-        t.push_str("...");
-        t
-    }
-}
+pub use ocw_client::menu::pages::short_label as short;
 
 pub fn km(m: f64) -> String {
     format!("{:.1} km", m / 1000.0)
@@ -263,38 +255,13 @@ pub fn rows(page: Page, c: &Catalog, tm: &TimeMachineInfo, weather: &WeatherStat
     match page {
         Page::WorldHome => {
             let routes = c.world.as_ref().map_or(0, |w| w.routes.len()) + c.user_routes.len();
-            let time = match (&tm.time, tm.mode_label.as_str()) {
-                (Some(t), "real") if tm.speed == 1.0 && !tm.paused => t.clone(),
-                (Some(t), m) => format!(
-                    "{t}, {}",
-                    if tm.paused || tm.speed != 1.0 {
-                        ocw_sky::clock::speed_label(tm.speed, tm.paused)
-                    } else {
-                        m.to_owned()
-                    }
-                ),
-                (None, _) => "-".into(),
+            let home = ocw_client::menu::pages::WorldHome {
+                name: current_name(c),
+                routes,
+                switch: true,
+                god: Some(crate::god::MENU_NAME),
             };
-            vec![
-                open(
-                    "Change world",
-                    Some(short(&current_name(c), 28)),
-                    Page::Worlds,
-                ),
-                open("About this world", None, Page::WorldInfo),
-                open("Routes", Some(routes.to_string()), Page::Routes),
-                open("Time", Some(time), Page::TimeMachine),
-                open("Weather", Some(weather.summary()), Page::Weather),
-                // God mode (spec §14 Phase 13A; the Ride page is full, the
-                // ten-foot rule): fly over this world as a unicorn.
-                Row {
-                    label: crate::god::MENU_NAME.into(),
-                    value: Some("fly over it (G)".into()),
-                    left: None,
-                    right: None,
-                    confirm: Some(Activate::Run("god toggle".into())),
-                },
-            ]
+            ocw_client::menu::pages::world_home_rows(&home, tm, weather)
         }
         Page::Worlds => {
             let names = labels(&c.worlds);
@@ -797,8 +764,8 @@ pub fn register_commands(app: &mut App) {
                 Some(("list", _)) => Ok(list_text(&c)),
                 Some(("info", _)) => {
                     let tm = world
-                        .get_resource::<TimeMachineInfo>()
-                        .cloned()
+                        .get_resource::<crate::timemachine::TimeMachine>()
+                        .map(|t| t.0.clone())
                         .unwrap_or_default();
                     Ok(info_text(&c, &tm))
                 }

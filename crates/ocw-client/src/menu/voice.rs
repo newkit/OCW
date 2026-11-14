@@ -2,10 +2,10 @@
 //! the other Settings pages: the mute switches, volume, participants
 //! (mute one for yourself), devices and options. Bevy-free.
 
-use crate::settings::pages::{Activate, Page, Row, setting_row};
-use crate::settings::registry::Settings;
+use super::pages::{Activate, Page, Row, setting_row};
+use crate::settings::Settings;
 
-use ocw_client::voice::VoiceMenuInfo;
+use crate::voice::VoiceMenuInfo;
 
 fn open(label: &str, value: String, page: Page) -> Row {
     Row {
@@ -173,7 +173,7 @@ pub fn rows(page: Page, settings: &Settings, info: &VoiceMenuInfo) -> Vec<Row> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ocw_client::voice::MenuParticipant;
+    use crate::voice::MenuParticipant;
 
     fn row<'a>(rows: &'a [Row], label: &str) -> &'a Row {
         rows.iter()

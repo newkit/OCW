@@ -56,6 +56,43 @@ pub fn memory_bytes() -> u64 {
         .map_or(0, |b| u64::from(b.byte_length()))
 }
 
+/// Calls the page's `window.<object>.<method>(args…)` (`object` empty: a
+/// function on `window`).
+fn call_page(object: &str, method: &str, args: &[JsValue]) -> Result<JsValue, String> {
+    let window: JsValue = web_sys::window().ok_or("no window")?.into();
+    let this = if object.is_empty() {
+        window
+    } else {
+        Reflect::get(&window, &object.into()).map_err(js)?
+    };
+    let f = Reflect::get(&this, &method.into())
+        .map_err(js)?
+        .dyn_into::<js_sys::Function>()
+        .map_err(|_| format!("the page has no {object}.{method}()"))?;
+    f.apply(&this, &args.iter().collect::<js_sys::Array>())
+        .map_err(js)
+}
+
+/// A download (spec §14 Phase 10, B6: captures and the ride's FIT file):
+/// the page's `window.ocwDownload(name, mime, bytes)` saves it as a file
+/// of the browser's downloads.
+pub fn download(name: &str, mime: &str, bytes: &[u8]) {
+    let data: JsValue = Uint8Array::from(bytes).into();
+    if let Err(e) = call_page("", "ocwDownload", &[name.into(), mime.into(), data]) {
+        error!("download {name}: {e}");
+    }
+}
+
+/// Starts the page's video recorder on the canvas (`window.ocwVideo`).
+pub fn video_start(name: &str) -> Result<(), String> {
+    call_page("ocwVideo", "start", &[name.into()]).map(|_| ())
+}
+
+/// Stops it; the page downloads the video.
+pub fn video_stop() -> Result<(), String> {
+    call_page("ocwVideo", "stop", &[]).map(|_| ())
+}
+
 /// Milliseconds since the page started.
 pub(crate) fn now_ms() -> f64 {
     web_sys::window()

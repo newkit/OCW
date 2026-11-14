@@ -1,0 +1,582 @@
+//! The browser app's UI (spec §14 Phase 10, B6: UI parity): the same
+//! menus, settings pages, time and weather machines, events, collisions
+//! and rider list as the desktop (`ocw_ui`, over the session's client
+//! through `ocw_ui::RideAccess`), with the browser's own pages through
+//! [`ocw_ui::menu::MenuHooks`] – the world of the page and the bundled
+//! workouts – and its captures as downloads instead of files:
+//!
+//! - **screenshots** (`screenshot`, Captures → Screenshot): the renderer's
+//!   JPEG with the time in EXIF (`ocw_render::stamp`), named with the
+//!   local time (`ocw-2026-11-14_19-20-05.jpg`),
+//! - **video** (`video start|stop|toggle`, Captures → Video): the page's
+//!   `MediaRecorder` on the canvas (WebM, with the game sound when it
+//!   plays), named the same way; the HUD shows REC as on the desktop,
+//! - **the ride's FIT file** (`ride.save`, Captures → Download this ride):
+//!   the shared recording (`ocw_client::recording`), `ocw-ride-<start>.fit`.
+//!
+//! The downloads go through [`Downloads`]: the page's `window.ocwDownload`
+//! in the browser, a list in the tests.
+
+use std::sync::{Arc, Mutex};
+
+use bevy::prelude::*;
+use clap::{Arg, Command};
+use ocw_client::menu::pages::{self as sub, Row, WorldHome};
+use ocw_client::recording::{LapKey, RideRecorder, download_name, observe_client, starts_lap};
+use ocw_render::RideView;
+use ocw_render::console::{ConsoleAppExt, ConsoleCommand, Permission};
+use ocw_render::stamp::{MediaNow, ShotSink, capture_name};
+use ocw_ui::menu::MenuHooks;
+
+use crate::plugin::Session;
+
+/// Where downloads go: (file name, MIME type, bytes).
+#[derive(Resource, Clone)]
+pub struct Downloads(pub Arc<DownloadFn>);
+
+/// What [`Downloads`] calls: (file name, MIME type, bytes).
+pub type DownloadFn = dyn Fn(&str, &str, Vec<u8>) + Send + Sync;
+
+/// The downloads of a test (name, MIME type, bytes).
+pub type DownloadLog = Arc<Mutex<Vec<(String, String, Vec<u8>)>>>;
+
+impl Downloads {
+    /// Downloads that are kept in `log` (the tests).
+    pub fn logged(log: DownloadLog) -> Self {
+        Self(Arc::new(move |name, mime, bytes| {
+            log.lock()
+                .expect("not poisoned")
+                .push((name.into(), mime.into(), bytes));
+        }))
+    }
+
+    fn page() -> Self {
+        #[cfg(target_arch = "wasm32")]
+        return Self(Arc::new(|name, mime, bytes| {
+            crate::browser::download(name, mime, &bytes)
+        }));
+        #[cfg(not(target_arch = "wasm32"))]
+        Self(Arc::new(|name, _, bytes| {
+            info!("download {name}: {} bytes (no page)", bytes.len());
+        }))
+    }
+}
+
+/// The ride's recording for the FIT download (setting `ride.record`).
+#[derive(Resource)]
+pub struct WebRecording {
+    pub recorder: RideRecorder,
+    pub enabled: bool,
+    last_lap: LapKey,
+}
+
+/// A video being recorded: its name and when it started (game time).
+#[derive(Resource, Default)]
+pub struct Video(pub Option<(String, f64)>);
+
+pub struct WebUiPlugin {
+    /// Record the ride (setting `ride.record`).
+    pub record: bool,
+}
+
+impl Default for WebUiPlugin {
+    fn default() -> Self {
+        Self { record: true }
+    }
+}
+
+impl Plugin for WebUiPlugin {
+    fn build(&self, app: &mut App) {
+        app.insert_resource(MenuHooks {
+            rows: web_rows,
+            ..MenuHooks::default()
+        })
+        .add_plugins((
+            ocw_ui::menu::MenuPlugin,
+            ocw_ui::weather::WeatherPlugin,
+            ocw_ui::timemachine::TimeMachinePlugin,
+            ocw_ui::riders_page::RidersPagePlugin,
+            ocw_ui::collisions::CollisionsPlugin,
+            ocw_ui::events::EventsPlugin,
+        ));
+        if !app.world().contains_resource::<Downloads>() {
+            app.insert_resource(Downloads::page());
+        }
+        let downloads = app.world().resource::<Downloads>().clone();
+        app.insert_resource(ShotSink(Arc::new(move |name, bytes| {
+            let mime = if name.ends_with(".png") {
+                "image/png"
+            } else {
+                "image/jpeg"
+            };
+            (downloads.0)(name, mime, bytes);
+        })))
+        .insert_resource(WebRecording {
+            recorder: RideRecorder::new("Open Cycling World"),
+            enabled: self.record,
+            last_lap: LapKey::default(),
+        })
+        .init_resource::<Video>()
+        .add_systems(
+            Update,
+            (record, show_video, audio_devices).after(ocw_ui::RideViewSet),
+        )
+        .add_systems(Last, publish);
+        register_commands(app);
+    }
+}
+
+/// The menu as JSON for the page (`window.ocw.menu()`).
+static MENU_JSON: Mutex<String> = Mutex::new(String::new());
+
+/// The settings' text values for the page (`window.ocw.setting(key)`).
+static SETTINGS_TEXT: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
+
+/// The menu as it shows now, as JSON.
+pub fn menu_json() -> String {
+    MENU_JSON.lock().expect("not poisoned").clone()
+}
+
+/// A setting's value as text ("" if unknown or not loaded yet).
+pub fn setting_text(key: &str) -> String {
+    SETTINGS_TEXT
+        .lock()
+        .expect("not poisoned")
+        .iter()
+        .find(|(k, _)| k == key)
+        .map(|(_, v)| v.clone())
+        .unwrap_or_default()
+}
+
+/// The menu's view as JSON (open, title, status, text, items, focused,
+/// hint, dimmed).
+pub fn view_json(v: &ocw_render::menu::MenuView) -> String {
+    serde_json::json!({
+        "open": v.open,
+        "title": v.title,
+        "status": v.status,
+        "text": v.text,
+        "items": v.items,
+        "focused": v.focused,
+        "hint": v.hint,
+        "dimmed": v.dimmed,
+        "grid": v.grid.as_ref().map(|g| g.columns),
+    })
+    .to_string()
+}
+
+/// Publishes the menu and the settings for the page when they change.
+fn publish(
+    view: Res<ocw_render::menu::MenuView>,
+    settings: Option<Res<crate::settings::WebSettings>>,
+) {
+    if view.is_changed() || MENU_JSON.lock().expect("not poisoned").is_empty() {
+        *MENU_JSON.lock().expect("not poisoned") = view_json(&view);
+    }
+    if let Some(s) = settings
+        && s.is_changed()
+    {
+        *SETTINGS_TEXT.lock().expect("not poisoned") = ocw_client::settings::SETTINGS
+            .iter()
+            .map(|d| (d.key.to_string(), s.value(d.key).to_string()))
+            .collect();
+    }
+}
+
+/// The outputs for Settings → Audio (the page's `setSinkId` list), once
+/// a second.
+fn audio_devices(
+    time: Res<Time>,
+    audio: Option<ResMut<crate::audio::WebAudio>>,
+    settings: Option<Res<crate::settings::WebSettings>>,
+    mut menu: ResMut<ocw_ui::menu::AudioDeviceMenu>,
+    mut next: Local<f64>,
+) {
+    let now = time.elapsed_secs_f64();
+    let Some(mut audio) = audio else { return };
+    if now < *next {
+        return;
+    }
+    *next = now + 1.0;
+    let names = audio.devices();
+    let saved = settings
+        .map(|s| s.value("audio.output").to_string())
+        .filter(|s| s != "default");
+    let new = ocw_client::menu::pages::AudioDevices {
+        fell_back: saved.as_ref().is_some_and(|s| !names.contains(s)),
+        current: saved,
+        names,
+    };
+    if menu.0 != new {
+        menu.0 = new;
+    }
+}
+
+/// The browser's own pages: the World page of the page's world (no
+/// switching in the ride: another world is another page), the bundled
+/// workouts.
+fn web_rows(world: &World, page: sub::Page) -> Option<Vec<Row>> {
+    match page {
+        sub::Page::WorldHome => {
+            let name = world
+                .get_resource::<crate::world::WorldStream>()
+                .and_then(|s| s.identity.clone())
+                .or_else(|| {
+                    world
+                        .get_resource::<RideView>()
+                        .map(|v| v.route.name().to_string())
+                })
+                .unwrap_or_default();
+            let tm = world
+                .get_resource::<ocw_ui::timemachine::TimeMachine>()
+                .map(|t| t.0.clone())
+                .unwrap_or_default();
+            let weather = world
+                .get_resource::<ocw_ui::weather::WeatherMenu>()
+                .map(|w| w.0.clone())
+                .unwrap_or_default();
+            let home = WorldHome {
+                name,
+                ..WorldHome::default()
+            };
+            Some(sub::world_home_rows(&home, &tm, &weather))
+        }
+        sub::Page::Workouts => {
+            let now = world
+                .get_resource::<Session>()
+                .and_then(|s| s.0.devices.workout.now());
+            Some(sub::workout_rows(now.as_ref(), &sub::example_workouts()))
+        }
+        // The desktop's files, switches and profiles are not in the
+        // browser's menu (`ocw_client::menu::model::Platform`).
+        p if p.is_ride_page() => Some(Vec::new()),
+        _ => None,
+    }
+}
+
+fn unix_now() -> i64 {
+    web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
+}
+
+/// Records the ride once a second; FIT laps at workout steps and event
+/// parts (as on the desktop).
+fn record(time: Res<Time>, session: Option<Res<Session>>, mut rec: ResMut<WebRecording>) {
+    let Some(session) = session else { return };
+    if !rec.enabled {
+        return;
+    }
+    let s = &session.0;
+    let now = time.elapsed_secs_f64();
+    observe_client(&mut rec.recorder, &s.client, now, unix_now());
+    let key = (s.devices.workout.lap_count(), s.client.event_lap_segment());
+    if starts_lap(rec.last_lap, key) {
+        rec.recorder.mark_lap(now);
+    }
+    rec.last_lap = key;
+}
+
+/// REC in the HUD while a video is recorded (as on the desktop).
+fn show_video(time: Res<Time>, video: Res<Video>, mut view: ResMut<RideView>) {
+    let rec = video.0.as_ref().map(|(_, t0)| time.elapsed_secs_f64() - t0);
+    if view.recording_s != rec {
+        view.recording_s = rec;
+    }
+}
+
+/// `ride.save`: the ride so far as a FIT download; a new recording starts.
+fn save_ride(world: &mut World) -> Result<String, String> {
+    let ride = world
+        .resource_mut::<WebRecording>()
+        .recorder
+        .finish()
+        .ok_or("nothing to save yet (a ride needs two records, one a second)")?;
+    let name = download_name(ride.activity.start_unix_s);
+    let bytes = ocw_fit::encode(&ride.activity);
+    let (n, km) = (
+        ride.activity.records.len(),
+        ride.activity.records.last().map_or(0.0, |r| r.distance_m) / 1000.0,
+    );
+    let downloads = world.resource::<Downloads>().clone();
+    (downloads.0)(&name, "application/vnd.ant.fit", bytes);
+    Ok(format!(
+        "ride saved: {name} ({n} records, {km:.2} km); a new recording starts"
+    ))
+}
+
+/// `video …`: the page's recorder on the canvas.
+fn video(world: &mut World, action: &str) -> Result<String, String> {
+    let recording = world.resource::<Video>().0.clone();
+    let start = match action {
+        "start" => true,
+        "stop" => false,
+        "status" => {
+            return Ok(match &recording {
+                Some((name, _)) => format!("recording {name}"),
+                None => "no video is being recorded".into(),
+            });
+        }
+        _ => recording.is_none(),
+    };
+    match (start, recording) {
+        (true, Some((name, _))) => Ok(format!("already recording {name}")),
+        (false, None) => Err("no video is being recorded".into()),
+        (true, None) => {
+            let t = world
+                .get_resource::<MediaNow>()
+                .copied()
+                .unwrap_or_default();
+            let name = capture_name(&t.0, "webm");
+            start_video(&name)?;
+            let now = world.resource::<Time>().elapsed_secs_f64();
+            world.resource_mut::<Video>().0 = Some((name.clone(), now));
+            Ok(format!("recording video {name}"))
+        }
+        (false, Some((name, _))) => {
+            stop_video()?;
+            world.resource_mut::<Video>().0 = None;
+            Ok(format!("video {name}: downloading"))
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn start_video(name: &str) -> Result<(), String> {
+    crate::browser::video_start(name)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn stop_video() -> Result<(), String> {
+    crate::browser::video_stop()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn start_video(_name: &str) -> Result<(), String> {
+    Err("no video recorder outside the browser".into())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn stop_video() -> Result<(), String> {
+    Err("no video recorder outside the browser".into())
+}
+
+fn register_commands(app: &mut App) {
+    app.console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("ride.save").about(
+            "Download the ride so far as a FIT file (named with its start); a new recording starts",
+        ),
+        |world, _| save_ride(world),
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("video")
+            .about(
+                "Record a video of the ride (WebM, with the game sound), downloaded when it stops",
+            )
+            .arg(
+                Arg::new("action")
+                    .value_parser(["start", "stop", "toggle", "status"])
+                    .default_value("toggle"),
+            ),
+        |world, m| {
+            let a = m.get_one::<String>("action").expect("has default").clone();
+            video(world, &a)
+        },
+    ));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session::SessionConfig;
+    use ocw_render::console::{ConsoleCorePlugin, ConsoleState};
+    use ocw_render::menu::MenuView;
+
+    /// The browser's session and UI without a window: the menu by keys,
+    /// the downloads into a list.
+    fn app(log: DownloadLog) -> App {
+        let mut app = App::new();
+        // No InputPlugin: the tests press keys between the frames (its
+        // PreUpdate would clear them first).
+        app.add_plugins((MinimalPlugins, ConsoleCorePlugin))
+            .init_resource::<ButtonInput<KeyCode>>()
+            .insert_resource(Time::<Fixed>::from_hz(f64::from(ocw_core::SIM_TICK_HZ)))
+            .insert_resource(RideView::new(ocw_world::Route::test_hills()))
+            .insert_resource(Downloads::logged(log))
+            .add_plugins(crate::plugin::WebSessionPlugin {
+                config: SessionConfig::default(),
+            })
+            .add_plugins((crate::settings::WebSettingsPlugin, WebUiPlugin::default()));
+        app.update();
+        app
+    }
+
+    fn run_for(app: &mut App, ms: u64) {
+        let start = std::time::Instant::now();
+        while start.elapsed() < std::time::Duration::from_millis(ms) {
+            app.update();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    fn tap(app: &mut App, key: KeyCode) {
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(key);
+        app.update();
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.release(key);
+        keys.clear();
+        app.update();
+    }
+
+    fn view(app: &App) -> MenuView {
+        app.world().resource::<MenuView>().clone()
+    }
+
+    fn console(app: &mut App, line: &str) -> String {
+        app.world_mut().resource_mut::<ConsoleState>().queue(line);
+        app.update();
+        app.update();
+        app.world().resource::<ConsoleState>().log().join("\n")
+    }
+
+    #[test]
+    fn the_browser_rides_with_the_desktops_menu() {
+        let log = DownloadLog::default();
+        let mut app = app(log.clone());
+        run_for(&mut app, 600);
+        // The sky and the weather from the shared machines.
+        let rv = app.world().resource::<RideView>();
+        assert!(rv.sky.is_some(), "the shared time machine");
+        assert!(rv.weather.is_some(), "the shared weather");
+        // Esc: the menu; World → Weather → the weather machine.
+        tap(&mut app, KeyCode::Escape);
+        assert_eq!(view(&app).title, "Open Cycling World");
+        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::Enter);
+        let v = view(&app);
+        assert_eq!(v.title, "World");
+        assert_eq!(v.items[0], "World:  Test Hills");
+        assert!(v.items[1].starts_with("Time:"), "{:?}", v.items);
+        assert!(v.items[2].starts_with("Weather:"), "{:?}", v.items);
+        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::Enter);
+        let v = view(&app);
+        assert_eq!(v.title, "Weather machine");
+        assert!(v.status.ends_with("set by you"), "{}", v.status);
+        // Presets → hail: the server's weather changes.
+        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(view(&app).title, "Weather presets");
+        tap(&mut app, KeyCode::ArrowRight);
+        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::Enter);
+        run_for(&mut app, 300);
+        let w = app.world().resource::<ocw_ui::weather::WeatherMenu>();
+        assert_eq!(
+            w.target.map(|t| t.0),
+            ocw_weather::presets::preset("hail"),
+            "{w:?}"
+        );
+        // Close; the rider list (Navi) knows the bots.
+        for _ in 0..4 {
+            tap(&mut app, KeyCode::Escape);
+        }
+        assert!(!view(&app).open);
+        console(&mut app, "menu open");
+        for _ in 0..4 {
+            tap(&mut app, KeyCode::ArrowDown);
+        }
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(view(&app).title, "Navi");
+        assert_eq!(view(&app).items, ["Riders in this ride", "Back"]);
+        tap(&mut app, KeyCode::Enter);
+        let v = view(&app);
+        assert_eq!(v.title, "Riders in this ride");
+        assert!(v.status.starts_with("6 riders"), "{}", v.status);
+        // Ride → Workouts: the bundled examples.
+        console(&mut app, "menu close");
+        console(&mut app, "menu open");
+        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(view(&app).title, "Ride");
+        assert!(!view(&app).items.iter().any(|i| i == "Restart"));
+        for _ in 0..4 {
+            tap(&mut app, KeyCode::ArrowDown);
+        }
+        tap(&mut app, KeyCode::Enter);
+        let v = view(&app);
+        assert_eq!(v.title, "Workouts");
+        assert!(v.items[0].ends_with("example"), "{:?}", v.items);
+        assert_eq!(log.lock().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn the_rides_fit_file_is_a_download() {
+        let log = DownloadLog::default();
+        let mut app = app(log.clone());
+        let early = console(&mut app, "ride.save");
+        assert!(early.contains("nothing to save yet"), "{early}");
+        run_for(&mut app, 2300);
+        // Captures → Download this ride (FIT), with the keyboard.
+        tap(&mut app, KeyCode::Escape);
+        tap(&mut app, KeyCode::ArrowUp);
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(view(&app).title, "Captures");
+        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::Enter);
+        app.update();
+        let downloads = log.lock().unwrap().clone();
+        assert_eq!(
+            downloads.len(),
+            1,
+            "{:?}",
+            app.world().resource::<ConsoleState>().log()
+        );
+        let (name, mime, bytes) = &downloads[0];
+        assert!(
+            name.starts_with("ocw-ride-") && name.ends_with(".fit"),
+            "{name}"
+        );
+        assert_eq!(mime, "application/vnd.ant.fit");
+        assert_eq!(&bytes[8..12], b".FIT");
+        assert_eq!(ocw_fit::crc16(0, bytes), 0);
+        // Video and the real screenshot need the page.
+        let out = console(&mut app, "video start");
+        assert!(
+            out.contains("no video recorder outside the browser"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn the_settings_pages_and_the_aids_reach_the_ride() {
+        let mut app = app(DownloadLog::default());
+        run_for(&mut app, 400);
+        // The riding aids and damage: the shared commands on the session.
+        let out = console(&mut app, "ride.proximity_cue on");
+        assert!(out.contains("proximity cue on"), "{out}");
+        let out = console(&mut app, "ride.damage on");
+        assert!(!out.contains("error: ride.damage"), "{out}");
+        run_for(&mut app, 300);
+        console(&mut app, "dev.damage rider 60");
+        run_for(&mut app, 300);
+        assert!(
+            app.world().resource::<RideView>().damage.is_some(),
+            "the damage widget"
+        );
+        // An event from the Ride page's command.
+        let out = console(&mut app, "event race --km 1 --bots 0");
+        assert!(!out.contains("error: event"), "{out}");
+        run_for(&mut app, 300);
+        assert!(app.world().resource::<RideView>().event.is_some());
+    }
+}

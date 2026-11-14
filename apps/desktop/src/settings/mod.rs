@@ -5,7 +5,9 @@
 //! - [`pages`]: the Settings / Workshop menu pages as rows of command lines
 //!   (Bevy-free; the menu shell renders them),
 //! - this module: loading at the start (before the other plugins read
-//!   [`Args`]), the console commands `set`, `get` and `riders.*`.
+//!   [`Args`]), the console commands `riders.*`; `set` and `get` and the
+//!   settings resource are shared with the browser app (`ocw_ui::settings`,
+//!   spec §14 Phase 10, B6).
 //!
 //! Both files live in the user config directory (`~/.config/ocw/` on
 //! Linux, `OCW_CONFIG_DIR` overrides it); `--settings-file` names another
@@ -23,27 +25,17 @@ use clap::{Arg, ArgAction, ArgMatches, Command, value_parser};
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
 
 use crate::Args;
-use registry::{Apply, SETTINGS, Scope, Settings, Value, def};
+use registry::{Apply, SETTINGS, Settings, Value};
 use riders::{Rider, RiderEdit, Riders};
 
-/// The settings and where they are saved (`None`: not saved).
-#[derive(Resource, Default)]
-pub struct UserSettings {
-    pub settings: Settings,
-    pub path: Option<PathBuf>,
-}
+/// The settings and where they are saved (shared with the browser app).
+pub use ocw_ui::settings::{FileStore, UserSettings};
 
-impl UserSettings {
-    /// The value of `key`, which must be registered.
-    pub fn value(&self, key: &str) -> Value {
-        self.settings.get(key).expect("a registered setting")
-    }
-
-    pub(crate) fn save(&self) -> Result<(), String> {
-        match &self.path {
-            Some(p) => self.settings.save(p),
-            None => Err("no configuration directory".into()),
-        }
+/// The settings saved in the file at `path`.
+pub fn file_settings(settings: Settings, path: PathBuf) -> UserSettings {
+    UserSettings {
+        settings,
+        store: Some(Box::new(FileStore(path))),
     }
 }
 
@@ -122,10 +114,7 @@ pub fn load(args: &mut Args, matches: &ArgMatches) -> Loaded {
     let settings = match path.as_deref().map(Settings::load) {
         Some(Ok((s, w))) => {
             warnings.extend(w);
-            UserSettings {
-                settings: s,
-                path: path.clone(),
-            }
+            file_settings(s, path.clone().expect("a path"))
         }
         Some(Err(e)) => {
             // Keep the broken file: use the defaults and do not save.
@@ -218,7 +207,7 @@ pub struct SettingsPlugin;
 
 impl Plugin for SettingsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<UserSettings>()
+        app.add_plugins(ocw_ui::settings::SettingsPlugin)
             .init_resource::<RiderProfiles>()
             .init_resource::<LoadWarnings>()
             .add_systems(Startup, print_warnings);
@@ -323,88 +312,6 @@ fn bike_edit(m: &ArgMatches, mut edit: RiderEdit) -> RiderEdit {
 
 fn register_commands(app: &mut App) {
     app.console_command(ConsoleCommand::new(
-        Permission::User,
-        Command::new("set")
-            .about("Change a setting and save it in settings.toml (--temp: this session only)")
-            .arg(
-                Arg::new("temp")
-                    .long("temp")
-                    .action(ArgAction::SetTrue)
-                    .help("Only for this session, not saved"),
-            )
-            .arg(Arg::new("key").required(true))
-            .arg(Arg::new("value").required(true).num_args(1..)),
-        |world, m| {
-            let key = m.get_one::<String>("key").expect("required").clone();
-            let value = m
-                .get_many::<String>("value")
-                .expect("required")
-                .cloned()
-                .collect::<Vec<_>>()
-                .join(" ");
-            let temp = m.get_flag("temp");
-            let mut us = world.resource_mut::<UserSettings>();
-            let v = if temp {
-                us.settings.set_temp(&key, &value)?
-            } else {
-                us.settings.set(&key, &value)?
-            };
-            let mut out = format!("{key} = {v}");
-            if temp {
-                out.push_str(" (this session)");
-            } else if let Err(e) = us.save() {
-                out.push_str(&format!(" (not saved: {e})"));
-            }
-            let d = def(&key).expect("set checked it");
-            match d.scope {
-                Scope::Live => {
-                    if let Some(line) = d.apply_command(&v) {
-                        world.resource_mut::<ConsoleState>().queue(line);
-                    }
-                }
-                Scope::NextStart => out.push_str(", from the next start (R restarts)"),
-            }
-            Ok(out)
-        },
-    ))
-    .console_command(ConsoleCommand::new(
-        Permission::User,
-        Command::new("get")
-            .about("Show a setting (with its range and description), or all settings")
-            .arg(Arg::new("key")),
-        |world, m| {
-            let us = world.resource::<UserSettings>();
-            let s = &us.settings;
-            if let Some(key) = m.get_one::<String>("key") {
-                let d = def(key).ok_or_else(|| format!("unknown setting {key:?}"))?;
-                return Ok(format!(
-                    "{}\n  {} ({}; default {}; {})",
-                    s.line(key)?,
-                    d.description,
-                    d.kind_text(),
-                    d.default,
-                    match d.scope {
-                        Scope::Live => "applies at once",
-                        Scope::NextStart => "applies from the next start",
-                    }
-                ));
-            }
-            let mut out: Vec<String> = SETTINGS
-                .iter()
-                .map(|d| s.line(d.key).expect("registered"))
-                .collect();
-            let unknown = s.unknown_keys();
-            if !unknown.is_empty() {
-                out.push(format!("unknown keys (kept): {}", unknown.join(", ")));
-            }
-            out.push(match &us.path {
-                Some(p) => format!("file: {}", p.display()),
-                None => "file: none (not saved)".into(),
-            });
-            Ok(out.join("\n"))
-        },
-    ))
-    .console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("riders.list")
             .about("Show the rider profiles (* = chosen for the next start)"),
@@ -649,7 +556,10 @@ mod tests {
             (10, 200.0, "Rider")
         );
         assert_eq!(loaded.riders.riding, Rider::default());
-        assert_eq!(loaded.settings.path.as_deref(), Some(file.as_path()));
+        assert_eq!(
+            loaded.settings.location(),
+            Some(format!("file: {}", file.display()))
+        );
         // The registry defaults are the options' defaults.
         for (key, value) in [
             ("ride.bots", args.bots.to_string()),
@@ -660,7 +570,7 @@ mod tests {
         std::fs::write(&file, "[display\n").unwrap();
         let (_, loaded) = startup(&["ocw-desktop", "--settings-file", f]);
         assert_eq!(loaded.warnings.len(), 1);
-        assert_eq!(loaded.settings.path, None);
+        assert_eq!(loaded.settings.location(), None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -681,10 +591,7 @@ mod tests {
             // `road_barriers` (display.road_barriers).
             ocw_render::obstacles::ObstaclesPlugin,
         ))
-        .insert_resource(UserSettings {
-            settings: Settings::default(),
-            path: Some(path.clone()),
-        })
+        .insert_resource(file_settings(Settings::default(), path.clone()))
         .insert_resource(RiderProfiles {
             riders: Riders::default(),
             path: Some(riders_path(&path)),

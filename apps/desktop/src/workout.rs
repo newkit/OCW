@@ -17,7 +17,7 @@ use clap::{Arg, Command};
 use ocw_render::RideView;
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
 // The session itself is shared with the browser app (spec §14 Phase 10 B4).
-pub use ocw_client::workout::{DEFAULT_FTP_W, EXAMPLES, WorkoutSession, example, example_name};
+pub use ocw_client::workout::{DEFAULT_FTP_W, WorkoutSession, example};
 use ocw_sim::workout::{Workout, format_duration};
 
 use crate::Args;
@@ -74,11 +74,7 @@ pub fn catalog(dir: Option<&std::path::Path>) -> Vec<crate::ride::pages::Workout
             Some(entry(&w, WorkoutSource::File(p)))
         })
         .collect();
-    for (file, text) in EXAMPLES {
-        if let Ok(w) = Workout::parse_file(file, text) {
-            out.push(entry(&w, WorkoutSource::Example(example_name(file).into())));
-        }
-    }
+    out.extend(ocw_client::menu::pages::example_workouts());
     out
 }
 
@@ -246,6 +242,7 @@ mod tests {
     use super::*;
     use crate::trainer::{TrainerControl, TrainerMode};
     use ocw_client::workout::DONE_PANEL_S;
+    use ocw_client::workout::{EXAMPLES, example_name};
 
     const DEMO: &str = include_str!("../../../crates/ocw-sim/test-data/workouts/short-demo.toml");
 

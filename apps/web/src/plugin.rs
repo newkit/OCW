@@ -23,7 +23,9 @@ use crate::session::{RemoteOptions, SessionConfig, Transport, WebSession};
 #[derive(Resource)]
 pub struct Session(pub WebSession);
 
-/// The time zone of the ride (the test routes: the default place).
+/// The ride is ready (a world package: once its first tiles are there);
+/// the zone of its place (the shared time machine resolves its own,
+/// `ocw_ui::timemachine::WorldPlace`).
 #[derive(Resource)]
 pub struct Place(pub Zone);
 
@@ -91,6 +93,23 @@ impl Plugin for WebSessionPlugin {
         if self.config.remote.is_none() {
             app.add_systems(Startup, enable_dev_commands);
         }
+        // The shared UI (spec §14 Phase 10, B6: the desktop's menus, time
+        // and weather machines, events, collisions) reaches the session's
+        // client through this.
+        app.insert_resource(ocw_ui::RideAccess {
+            client: |w| w.get_resource::<Session>().map(|s| &s.0.client),
+            client_mut: |w| {
+                w.get_resource_mut::<Session>()
+                    .map(|s| s.map_unchanged(|s| &mut s.0.client))
+            },
+            send: |w, bytes| {
+                if let Some(mut s) = w.get_resource_mut::<Session>() {
+                    s.0.send(&bytes);
+                }
+            },
+        })
+        .insert_resource(ocw_ui::UiPlatform(ocw_ui::Platform::Browser))
+        .configure_sets(Update, ViewUpdated.in_set(ocw_ui::RideViewSet));
         app.add_systems(PreUpdate, frame.run_if(riding))
             .add_systems(Last, (flush, publish_stats).run_if(riding))
             .add_systems(FixedUpdate, predict.run_if(resource_exists::<Session>))
@@ -208,32 +227,47 @@ fn predict(mut session: ResMut<Session>) {
     session.0.client.predict_step();
 }
 
-/// The desktop's ride keys (spec §3.2.2; the gamepad follows in B6): ↑
-/// adds keyboard power, ↓ stops, Page Up / Down ±10 W, A autodrive,
-/// W wild mode, ← / → the line (autodrive) or the lean.
+/// The desktop's ride keys and gamepad (spec §3.2.2; the pads through the
+/// browser's Gamepad API, B6): ↑ / D-pad up / the right trigger add
+/// power, ↓ / D-pad down / the left trigger stop, Page Up / Down ±10 W,
+/// A / South autodrive (South closes an event's results first), W / West
+/// wild mode, ← / → and the left stick the line (autodrive) or the lean.
+#[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
 fn keys(
     keys: Res<ButtonInput<KeyCode>>,
+    pads: Query<(Entity, &Gamepad)>,
     time: Res<Time>,
     mut session: ResMut<Session>,
     mut throttle: Local<KeyThrottle>,
     mut upright_pause: Local<f64>,
+    mut ride_pads: Local<ocw_ui::controls::RidePads>,
+    mut stick_was_used: Local<bool>,
 ) {
+    use ocw_ui::controls::any_just_pressed;
     let s = &mut session.0;
     let dt = time.delta_secs_f64();
+    let now = time.elapsed_secs_f64();
+    let pad = ride_pads.read(pads.iter());
+    let pressed = |b| any_just_pressed(pads.iter().map(|(_, p)| p), b);
     let power_keys = ThrottleKeys {
-        up_pressed: keys.just_pressed(KeyCode::ArrowUp),
-        up_held: keys.pressed(KeyCode::ArrowUp),
-        down_pressed: keys.just_pressed(KeyCode::ArrowDown),
+        up_pressed: keys.just_pressed(KeyCode::ArrowUp) || pad.up_pressed,
+        up_held: keys.pressed(KeyCode::ArrowUp) || pad.up,
+        down_pressed: keys.just_pressed(KeyCode::ArrowDown) || pad.down_pressed,
         page_up: keys.just_pressed(KeyCode::PageUp),
         page_down: keys.just_pressed(KeyCode::PageDown),
     };
-    s.throttle(&mut throttle, power_keys, dt, time.elapsed_secs_f64());
-    if keys.just_pressed(KeyCode::KeyA) {
+    s.throttle(&mut throttle, power_keys, dt, now);
+    // An event's results panel takes A / South first (spec §2.3), as on
+    // the desktop.
+    let autodrive = keys.just_pressed(KeyCode::KeyA) || pressed(GamepadButton::South);
+    if autodrive && s.client.results_input(now) {
+        s.client.dismiss_results(now);
+    } else if autodrive {
         let on = !s.client.autodrive();
         s.client.set_autodrive(on);
         info!("autodrive {}", if on { "on" } else { "off" });
     }
-    if keys.just_pressed(KeyCode::KeyW) {
+    if keys.just_pressed(KeyCode::KeyW) || pressed(GamepadButton::West) {
         let wild = !s.client.wild();
         s.client.set_wild(wild);
         info!("wild mode {}", if wild { "on" } else { "off" });
@@ -242,10 +276,25 @@ fn keys(
         keys.pressed(KeyCode::ArrowLeft),
         keys.pressed(KeyCode::ArrowRight),
     );
+    let stick_active = pad.stick_x.abs() >= ocw_client::input::STICK_DEAD_ZONE;
     if s.client.autodrive() {
-        if dir != 0.0 {
-            s.client.steer_by(dir * LINE_KEY_RATE_MPS * dt);
+        let shift = dir
+            + if stick_active {
+                f64::from(pad.stick_x)
+            } else {
+                0.0
+            };
+        if shift != 0.0 {
+            s.client.steer_by(shift * LINE_KEY_RATE_MPS * dt);
         }
+        *stick_was_used = false;
+        return;
+    }
+    if stick_active || *stick_was_used {
+        // The stick sets the lean directly; back to centre = upright.
+        s.client
+            .set_lean(ocw_client::input::stick_lean(pad.stick_x));
+        *stick_was_used = stick_active;
         return;
     }
     let lean = s.client.lean().unwrap_or(0.0);
@@ -266,76 +315,34 @@ fn send_steer(time: Res<Time>, mut session: ResMut<Session>) {
     }
 }
 
-/// The ride for the renderer: riders (interpolated between the 50 Hz
-/// prediction steps), the event, the sky and the status line.
+/// The ride for the renderer: the same view as the desktop's
+/// (`ocw_client::view::fill`: riders interpolated between the 50 Hz
+/// prediction steps, the event, the notices, the riding aids, the damage
+/// widget) and the status line; the sky and the weather come from the
+/// shared time and weather machines (`ocw_ui`).
 fn update_view(
     time: Res<Time>,
     fixed: Res<Time<Fixed>>,
-    place: Res<Place>,
     mut session: ResMut<Session>,
+    shake: Option<Res<ocw_ui::collisions::CameraShake>>,
     mut view: ResMut<RideView>,
 ) {
     let now = time.elapsed_secs_f64();
     let s = &mut session.0;
-    view.elapsed_s = now;
-    view.riders = s.client.view(now, fixed.overstep_fraction_f64());
-    view.position = view
-        .local()
-        .and_then(|l| ocw_client::gps::position(s.client.track(), s.client.geo_origin(), &l.state));
-    view.event = s.client.event_view(now);
-    view.ghost = s.client.ghost_state(now);
-    // A ride on a world package's road graph (B2): every rider's path,
-    // the junction ahead, the route's progress (as on the desktop).
-    let mut notice = None;
-    if s.client.is_free_ride() {
-        view.paths = s.client.paths();
-        view.junction = s.client.junction_view();
-        view.route_status = s.client.route_status();
-        notice = s.client.notice();
-    }
-    // A remote link that is not up matters most (as on the desktop);
-    // then collisions (spec §14 Phase 12C): the crash line, else the
-    // crash feed.
-    view.notice = s
-        .link_notice()
-        .or_else(|| s.client.crash_notice(now))
-        .or_else(|| s.client.damage_notice())
-        .or(notice)
-        .or_else(|| s.client.crash_feed(now).pop());
-    // Damage (spec §14 Phase 12F): the widget, when a server has it on
-    // (the anonymous rider never keeps damage between rides).
-    view.damage = s.client.damage_widget(now);
-    view.status = s.status_line();
-    let position = view.position;
-    view.sky = ocw_client::sky::sky_view(
-        &mut s.client,
+    let link = s.link_notice();
+    ocw_client::view::fill(
+        &mut view,
+        &s.client,
         now,
-        &place.0,
-        position,
-        ocw_sky::light::DEFAULT_NIGHT_FLOOR,
+        now,
+        fixed.overstep_fraction_f64(),
+        ocw_client::view::Notices {
+            link: link.as_deref(),
+            loading: None,
+        },
+        shake.is_none_or(|s| s.0),
     );
-    // The session's weather (spec §14 Phase 9, S4), as on the desktop.
-    view.weather = ocw_client::weather::weather_view(&mut s.client, now);
-}
-
-/// `weather …`: the session's weather, as on the desktop (spec §14 Phase
-/// 9, S4 / S5: presets, fields, random, the simulation; the server decides
-/// who may change it). The weather machine's menu comes with the B6 menus.
-fn weather_command(world: &mut World, args: &[&str]) -> Result<String, String> {
-    let now = world.resource::<Time>().elapsed_secs_f64();
-    let s = session_mut(world)?;
-    let (said, msg) = ocw_client::weather::run(&mut s.client, args, now)?;
-    if let Some(msg) = msg {
-        s.send(&msg);
-    }
-    Ok(said)
-}
-
-/// `weather.status`: everything about the session's weather.
-fn weather_status(world: &mut World) -> Result<String, String> {
-    let now = world.resource::<Time>().elapsed_secs_f64();
-    let s = session_mut(world)?;
-    ocw_client::weather::status(&mut s.client, now)
+    view.status = s.status_line();
 }
 
 /// The devices (B4): the ones the page connected start in the session;
@@ -437,39 +444,6 @@ fn session_mut(world: &mut World) -> Result<&mut WebSession, String> {
         .ok_or_else(|| NO_RIDE.to_string())
 }
 
-/// `time …`: the time machine, as on the desktop (spec §14 Phase 9; the
-/// browser test sets noon for its screenshots).
-fn time_command(world: &mut World, args: &[&str]) -> Result<String, String> {
-    use ocw_sky::machine::{self, ClockChange, TimeCommand};
-    let cmd = machine::parse(args)?;
-    let now = world.resource::<Time>().elapsed_secs_f64();
-    let zone = world.get_resource::<Place>().ok_or(NO_RIDE)?.0.clone();
-    let position = world.resource::<RideView>().position;
-    let s = session_mut(world)?;
-    let latlon = position
-        .map(|p| (p.0, p.1))
-        .or(s.client.geo_origin())
-        .unwrap_or(ocw_sky::zone::DEFAULT_PLACE);
-    let ms = s
-        .client
-        .world_ms(now)
-        .ok_or("no world clock yet (the server sends it when you join)")?;
-    if cmd == TimeCommand::Show {
-        return Ok(format!(
-            "world clock {ms} ms since 1970 (zone {})",
-            zone.id()
-        ));
-    }
-    let change =
-        machine::resolve(&cmd, ms, &zone, latlon.0, latlon.1)?.ok_or("nothing to change")?;
-    let msg = ocw_client::client::ClientCore::clock_message(change);
-    s.send(&msg);
-    Ok(match change {
-        ClockChange::Fixed(_) => format!("time: {}", args.join(" ")),
-        _ => String::new(),
-    })
-}
-
 /// `devices.connect`: the browser's chooser (Web Bluetooth needs the key
 /// press that ran the command: a user gesture).
 fn connect_device(kind: ocw_devices::ble::web::DeviceKind) -> Result<String, String> {
@@ -511,56 +485,6 @@ fn locked() -> Result<String, String> {
 
 fn register_commands(app: &mut App) {
     app.console_command(ConsoleCommand::new(
-        Permission::User,
-        Command::new("time")
-            .about("World time at your place in the world, and the time machine")
-            .long_about(ocw_sky::machine::USAGE)
-            .arg(
-                Arg::new("args")
-                    .num_args(0..)
-                    .allow_hyphen_values(true)
-                    .action(clap::ArgAction::Append),
-            ),
-        |world, m| {
-            let args: Vec<&str> = m
-                .get_many::<String>("args")
-                .map(|v| v.map(String::as_str).collect())
-                .unwrap_or_default();
-            time_command(world, &args)
-        },
-    ))
-    .console_command(ConsoleCommand::new(
-        Permission::User,
-        Command::new("weather")
-            .about("The weather at your place in the world; presets, fields, transitions, the simulation")
-            .long_about(ocw_weather::command::USAGE)
-            .arg(
-                Arg::new("args")
-                    .num_args(0..)
-                    .allow_hyphen_values(true)
-                    .action(clap::ArgAction::Append),
-            ),
-        |world, m| {
-            let args: Vec<&str> = m
-                .get_many::<String>("args")
-                .map(|v| v.map(String::as_str).collect())
-                .unwrap_or_default();
-            weather_command(world, &args)
-        },
-    ))
-    .console_command(ConsoleCommand::new(
-        Permission::User,
-        Command::new("weather.list")
-            .about("The weather presets, the custom fields and the transitions"),
-        |_, _| Ok(ocw_client::weather::list_long()),
-    ))
-    .console_command(ConsoleCommand::new(
-        Permission::User,
-        Command::new("weather.status")
-            .about("Everything about the session's weather: now, where it is going, mode, ground, who sets it"),
-        |world, _| weather_status(world),
-    ))
-    .console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("world.info")
             .about("Show the streamed world: loading, tiles, memory, storage"),
@@ -790,7 +714,9 @@ mod tests {
             .insert_resource(RideView::new(ocw_world::Route::test_hills()))
             .add_plugins(WebSessionPlugin {
                 config: SessionConfig::default(),
-            });
+            })
+            // The sky from the shared time machine (B6).
+            .add_plugins(crate::ui::WebUiPlugin::default());
         let start = std::time::Instant::now();
         while start.elapsed() < std::time::Duration::from_millis(800) {
             app.update();

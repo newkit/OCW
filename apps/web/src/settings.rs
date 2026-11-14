@@ -1,85 +1,25 @@
-//! The browser app's settings (spec §3.2.1, §14 Phase 10 B5): the
+//! The browser app's settings (spec §3.2.1, §14 Phase 10 B5 / B6): the
 //! desktop's registry (`ocw_client::settings`: the same keys, defaults,
-//! ranges and apply commands), its text kept in the page's `localStorage`
-//! (key [`STORAGE_KEY`], the same TOML as `settings.toml`) instead of a
-//! file. `set KEY VALUE [--temp]` and `get [KEY]` as on the desktop; for
-//! now the audio and voice settings (`audio.*`, `voice.*`) take effect in
-//! the browser – the others are kept and come with the menus (B6).
+//! ranges and apply commands) and the shared resource and commands
+//! (`ocw_ui::settings`: `set KEY VALUE [--temp]`, `get [KEY]`), the text
+//! kept in the page's `localStorage` (key [`STORAGE_KEY`], the same TOML
+//! as `settings.toml`) instead of a file. Every setting the browser has
+//! takes effect (`ocw_client::settings::applies`): the live ones through
+//! their console lines at the start and on every change, the ones read at
+//! the start (`ride.bots`, `trainer.virtual_power`, `ride.record`,
+//! `controls.autodrive`) where the page's query does not give them
+//! ([`apply_to_config`]).
 
 use bevy::prelude::*;
-use clap::{Arg, ArgAction, Command};
-use ocw_client::settings::{SETTINGS, Scope, Settings, def};
-use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
+use ocw_client::settings::Value;
+use ocw_render::console::ConsoleState;
+use ocw_ui::Platform;
+pub use ocw_ui::settings::{TextStore, UserSettings as WebSettings};
+
+use crate::session::SessionConfig;
 
 /// The `localStorage` key of the settings text.
 pub const STORAGE_KEY: &str = "ocw-settings";
-
-/// Whether a setting takes effect in the browser app yet.
-pub fn in_browser(key: &str) -> bool {
-    key.starts_with("audio.") || key.starts_with("voice.")
-}
-
-/// Where the text is kept: `localStorage` in the page, memory in tests.
-pub trait TextStore: Send + Sync {
-    fn load(&self) -> Option<String>;
-    fn save(&mut self, text: &str) -> Result<(), String>;
-}
-
-/// The settings and their store.
-#[derive(Resource, Default)]
-pub struct WebSettings {
-    pub settings: Settings,
-    store: Option<Box<dyn TextStore>>,
-}
-
-impl WebSettings {
-    /// Reads the store; a broken text keeps the defaults and is not
-    /// overwritten (as on the desktop). The warnings for the console.
-    pub fn load(store: Option<Box<dyn TextStore>>) -> (Self, Vec<String>) {
-        let text = store.as_ref().and_then(|s| s.load());
-        match text.as_deref().map(Settings::parse) {
-            None => (
-                Self {
-                    settings: Settings::default(),
-                    store,
-                },
-                Vec::new(),
-            ),
-            Some(Ok((settings, warnings))) => (Self { settings, store }, warnings),
-            Some(Err(e)) => (
-                Self {
-                    settings: Settings::default(),
-                    store: None,
-                },
-                vec![format!(
-                    "the saved settings are broken ({e}); using the defaults, not saving them"
-                )],
-            ),
-        }
-    }
-
-    /// The apply commands of the saved values the browser has (at the
-    /// start).
-    pub fn startup_commands(&self) -> Vec<String> {
-        self.settings
-            .startup_commands()
-            .into_iter()
-            .filter(|c| c.starts_with("audio.") || c.starts_with("voice."))
-            .collect()
-    }
-}
-
-impl ocw_client::voice::SettingsStore for WebSettings {
-    fn settings_mut(&mut self) -> &mut Settings {
-        &mut self.settings
-    }
-    fn save(&mut self) -> Result<(), String> {
-        match &mut self.store {
-            Some(s) => s.save(&self.settings.to_toml()),
-            None => Err("no storage on this page".into()),
-        }
-    }
-}
 
 /// The page's `localStorage`.
 #[cfg(target_arch = "wasm32")]
@@ -87,12 +27,13 @@ pub struct LocalStorage;
 
 #[cfg(target_arch = "wasm32")]
 impl TextStore for LocalStorage {
-    fn load(&self) -> Option<String> {
-        web_sys::window()?
-            .local_storage()
-            .ok()??
+    fn load(&self) -> Result<Option<String>, String> {
+        let storage = web_sys::window()
+            .and_then(|w| w.local_storage().ok().flatten())
+            .ok_or("no localStorage on this page")?;
+        storage
             .get_item(STORAGE_KEY)
-            .ok()?
+            .map_err(|_| "localStorage is blocked".to_string())
     }
     fn save(&mut self, text: &str) -> Result<(), String> {
         let s = web_sys::window()
@@ -101,129 +42,92 @@ impl TextStore for LocalStorage {
         s.set_item(STORAGE_KEY, text)
             .map_err(|_| "localStorage is full or blocked".to_string())
     }
+    fn describe(&self) -> String {
+        format!("saved in this browser (localStorage {STORAGE_KEY:?})")
+    }
 }
 
 /// Makes the store when the app starts (`localStorage` on wasm32).
 #[derive(Resource)]
 pub struct MakeStore(pub Box<dyn Fn() -> Option<Box<dyn TextStore>> + Send + Sync>);
 
+/// The page's store: `localStorage` in the browser, none natively.
+pub fn default_store() -> Option<Box<dyn TextStore>> {
+    #[cfg(target_arch = "wasm32")]
+    return Some(Box::new(LocalStorage));
+    #[cfg(not(target_arch = "wasm32"))]
+    None
+}
+
+/// The settings read at the start, where the page's query does not give
+/// the option (`query_keys`: the keys it has): bots, the virtual power,
+/// recording the ride, autodrive.
+pub fn apply_to_config(settings: &WebSettings, config: &mut SessionConfig, query_keys: &[&str]) {
+    let given = |k: &str| query_keys.contains(&k);
+    if !given("bots")
+        && let Value::Int(n) = settings.value("ride.bots")
+        && settings.settings.file_value("ride.bots").is_some()
+    {
+        config.bots = n.clamp(0, 50) as u32;
+    }
+    if !given("power")
+        && let Value::Int(w) = settings.value("trainer.virtual_power")
+        && settings
+            .settings
+            .file_value("trainer.virtual_power")
+            .is_some()
+    {
+        config.power_w = w as f64;
+    }
+    config.record = settings.on("ride.record");
+    config.autodrive = settings.on("controls.autodrive");
+}
+
+/// The keys of a page query (`?a=1&b` → a, b).
+pub fn query_keys(query: &str) -> Vec<&str> {
+    query
+        .trim_start_matches('?')
+        .split('&')
+        .filter(|p| !p.is_empty())
+        .map(|p| p.split_once('=').map_or(p, |(k, _)| k))
+        .collect()
+}
+
 pub struct WebSettingsPlugin;
 
 impl Plugin for WebSettingsPlugin {
     fn build(&self, app: &mut App) {
-        let store = match app.world().get_resource::<MakeStore>() {
-            Some(m) => (m.0)(),
-            None => default_store(),
-        };
-        let (settings, warnings) = WebSettings::load(store);
-        app.insert_resource(settings)
-            .insert_resource(Warnings(warnings))
+        if !app.world().contains_resource::<WebSettings>() {
+            let store = match app.world().get_resource::<MakeStore>() {
+                Some(m) => (m.0)(),
+                None => default_store(),
+            };
+            let (settings, warnings) = WebSettings::load(store);
+            app.insert_resource(settings)
+                .insert_resource(Warnings(warnings));
+        }
+        app.add_plugins(ocw_ui::settings::SettingsPlugin)
             .add_systems(Startup, startup);
-        register_commands(app);
     }
 }
 
-#[cfg(target_arch = "wasm32")]
-fn default_store() -> Option<Box<dyn TextStore>> {
-    Some(Box::new(LocalStorage))
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn default_store() -> Option<Box<dyn TextStore>> {
-    None
-}
-
-#[derive(Resource)]
-struct Warnings(Vec<String>);
+/// Problems found while loading, printed to the console at the start.
+#[derive(Resource, Default)]
+pub struct Warnings(pub Vec<String>);
 
 /// The saved values' apply commands and the load warnings.
-fn startup(settings: Res<WebSettings>, warnings: Res<Warnings>, mut console: ResMut<ConsoleState>) {
-    for w in &warnings.0 {
+fn startup(
+    settings: Res<WebSettings>,
+    warnings: Option<Res<Warnings>>,
+    mut console: ResMut<ConsoleState>,
+) {
+    for w in warnings.iter().flat_map(|w| w.0.iter()) {
         warn!("settings: {w}");
         console.print(format!("settings: {w}"));
     }
-    for line in settings.startup_commands() {
+    for line in settings.startup_commands(Platform::Browser) {
         console.queue(line);
     }
-}
-
-fn register_commands(app: &mut App) {
-    app.console_command(ConsoleCommand::new(
-        Permission::User,
-        Command::new("set")
-            .about("Change a setting and save it in this browser (--temp: this session only)")
-            .arg(
-                Arg::new("temp")
-                    .long("temp")
-                    .action(ArgAction::SetTrue)
-                    .help("Only for this session, not saved"),
-            )
-            .arg(Arg::new("key").required(true))
-            .arg(Arg::new("value").required(true).num_args(1..)),
-        |world, m| {
-            let key = m.get_one::<String>("key").expect("required").clone();
-            let value = m
-                .get_many::<String>("value")
-                .expect("required")
-                .cloned()
-                .collect::<Vec<_>>()
-                .join(" ");
-            let temp = m.get_flag("temp");
-            let mut ws = world.resource_mut::<WebSettings>();
-            let v = if temp {
-                ws.settings.set_temp(&key, &value)?
-            } else {
-                ws.settings.set(&key, &value)?
-            };
-            let mut out = format!("{key} = {v}");
-            if temp {
-                out.push_str(" (this session)");
-            } else if let Err(e) = ocw_client::voice::SettingsStore::save(&mut *ws) {
-                out.push_str(&format!(" (not saved: {e})"));
-            }
-            let d = def(&key).expect("set checked it");
-            if !in_browser(&key) {
-                out.push_str(" (kept; the browser app uses it with the menus, B6)");
-            } else if d.scope == Scope::Live {
-                if let Some(line) = d.apply_command(&v) {
-                    world.resource_mut::<ConsoleState>().queue(line);
-                }
-            } else {
-                out.push_str(", from the next start (reload the page)");
-            }
-            Ok(out)
-        },
-    ))
-    .console_command(ConsoleCommand::new(
-        Permission::User,
-        Command::new("get")
-            .about(
-                "Show a setting (with its range and description), or the audio and voice settings",
-            )
-            .arg(Arg::new("key")),
-        |world, m| {
-            let s = &world.resource::<WebSettings>().settings;
-            if let Some(key) = m.get_one::<String>("key") {
-                let d = def(key).ok_or_else(|| format!("unknown setting {key:?}"))?;
-                return Ok(format!(
-                    "{}\n  {} ({}; default {})",
-                    s.line(key)?,
-                    d.description,
-                    d.kind_text(),
-                    d.default
-                ));
-            }
-            let mut out: Vec<String> = SETTINGS
-                .iter()
-                .filter(|d| in_browser(d.key))
-                .map(|d| s.line(d.key).expect("registered"))
-                .collect();
-            out.push(format!(
-                "saved in this browser (localStorage {STORAGE_KEY:?})"
-            ));
-            Ok(out.join("\n"))
-        },
-    ));
 }
 
 #[cfg(test)]
@@ -237,12 +141,15 @@ pub mod memory {
     pub struct MemoryStore(pub Arc<Mutex<Option<String>>>);
 
     impl TextStore for MemoryStore {
-        fn load(&self) -> Option<String> {
-            self.0.lock().unwrap().clone()
+        fn load(&self) -> Result<Option<String>, String> {
+            Ok(self.0.lock().unwrap().clone())
         }
         fn save(&mut self, text: &str) -> Result<(), String> {
             *self.0.lock().unwrap() = Some(text.to_string());
             Ok(())
+        }
+        fn describe(&self) -> String {
+            "memory".into()
         }
     }
 }
@@ -258,18 +165,21 @@ mod tests {
         let mem = MemoryStore::default();
         let (mut ws, w) = WebSettings::load(Some(Box::new(mem.clone())));
         assert!(w.is_empty());
-        assert!(ws.startup_commands().is_empty(), "all defaults");
+        assert!(
+            ws.startup_commands(Platform::Browser).is_empty(),
+            "all defaults"
+        );
         ws.settings.set("audio.master", "40").unwrap();
         ws.settings.set("voice.mic_muted", "on").unwrap();
         ws.settings.set("display.units", "imperial").unwrap();
-        ws.save().unwrap();
-        let text = mem.load().unwrap();
+        SettingsStore::save(&mut ws).unwrap();
+        let text = mem.load().unwrap().unwrap();
         assert!(
             text.contains("[audio]") && text.contains("master = 40"),
             "{text}"
         );
         let (again, _) = WebSettings::load(Some(Box::new(mem.clone())));
-        let cmds = again.startup_commands();
+        let cmds = again.startup_commands(Platform::Browser);
         assert!(
             cmds.contains(&"audio.volume master 40".to_string()),
             "{cmds:?}"
@@ -278,10 +188,8 @@ mod tests {
             cmds.iter().any(|c| c.starts_with("voice.apply")),
             "{cmds:?}"
         );
-        assert!(
-            !cmds.iter().any(|c| c.contains("units")),
-            "not in the browser yet"
-        );
+        // Since B6 every setting the browser has applies.
+        assert!(cmds.contains(&"hud.units imperial".to_string()), "{cmds:?}");
     }
 
     #[test]
@@ -290,8 +198,33 @@ mod tests {
         *mem.0.lock().unwrap() = Some("not toml [".into());
         let (mut ws, w) = WebSettings::load(Some(Box::new(mem.clone())));
         assert_eq!(w.len(), 1);
-        assert!(ws.save().is_err());
-        assert_eq!(mem.load().as_deref(), Some("not toml ["));
-        assert!(in_browser("voice.volume") && !in_browser("display.fps"));
+        assert!(SettingsStore::save(&mut ws).is_err());
+        assert_eq!(mem.load().unwrap().as_deref(), Some("not toml ["));
+    }
+
+    #[test]
+    fn settings_read_at_the_start_fill_what_the_query_leaves_out() {
+        let mem = MemoryStore::default();
+        let (mut ws, _) = WebSettings::load(Some(Box::new(mem)));
+        let mut c = SessionConfig::default();
+        apply_to_config(&ws, &mut c, &[]);
+        assert_eq!((c.bots, c.power_w), (5, 200.0), "the page's defaults");
+        assert!(c.record && c.autodrive);
+        ws.settings.set("ride.bots", "2").unwrap();
+        ws.settings.set("trainer.virtual_power", "150").unwrap();
+        ws.settings.set("ride.record", "off").unwrap();
+        ws.settings.set("controls.autodrive", "off").unwrap();
+        let mut c = SessionConfig::default();
+        apply_to_config(&ws, &mut c, &query_keys("?route=loop"));
+        assert_eq!((c.bots, c.power_w), (2, 150.0));
+        assert!(!c.record && !c.autodrive);
+        // The query wins.
+        let mut c = SessionConfig {
+            bots: 7,
+            ..SessionConfig::default()
+        };
+        apply_to_config(&ws, &mut c, &query_keys("bots=7&power"));
+        assert_eq!((c.bots, c.power_w), (7, 200.0));
+        assert_eq!(query_keys("?a=1&b&&c=x=y"), ["a", "b", "c"]);
     }
 }

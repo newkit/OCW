@@ -36,6 +36,14 @@
 //! JS SDK with the same controller, rooms and tokens as the desktop
 //! ([`voice`]), the settings in `localStorage` ([`settings`]).
 //!
+//! **UI parity (B6):** the desktop's in-game menu, settings pages, time
+//! and weather machines, events, collisions and rider list are the shared
+//! `ocw_ui` plugins over this session ([`ui`]); keys, the gamepad (the
+//! browser's Gamepad API through Bevy's gilrs), mouse and touch drive it;
+//! every setting the browser has applies and is kept in `localStorage`;
+//! screenshots, videos and the ride's FIT file are downloads named with
+//! the time.
+//!
 //! **Worlds over HTTP (B2):** `?world=liechtenstein&route=vaduz-malbun`
 //! streams a world package from the server ([`world`]): manifest and
 //! signature chain, then the base and the tiles around the rider with
@@ -55,6 +63,7 @@ pub mod devices;
 pub mod plugin;
 pub mod session;
 pub mod settings;
+pub mod ui;
 pub mod voice;
 #[cfg(target_arch = "wasm32")]
 mod webtransport;
@@ -288,9 +297,23 @@ pub fn parse_query(query: &str, dev_page: bool) -> (SessionConfig, Vec<String>) 
 }
 
 /// The browser app: Bevy with the canvas of the page, the shared renderer
-/// and the in-browser ride session.
+/// and the in-browser ride session; the settings from the page's store.
 pub fn app(config: SessionConfig) -> App {
+    let (settings, warnings) = settings::WebSettings::load(settings::default_store());
+    app_with_settings(config, settings, warnings)
+}
+
+/// [`app`] with the settings already read (the page applies the ones
+/// read at the start to the config first).
+pub fn app_with_settings(
+    config: SessionConfig,
+    settings: settings::WebSettings,
+    warnings: Vec<String>,
+) -> App {
     let mut app = App::new();
+    app.insert_resource(settings)
+        .insert_resource(settings::Warnings(warnings));
+    let record = config.record;
     let route = config.route.clone();
     app.add_plugins(
         DefaultPlugins
@@ -339,6 +362,9 @@ pub fn app(config: SessionConfig) -> App {
         audio::WebAudioPlugin,
         voice::WebVoicePlugin,
     ));
+    // The desktop's menus and machines over this session, the downloads
+    // (B6).
+    app.add_plugins(ui::WebUiPlugin { record });
     app
 }
 
@@ -408,6 +434,22 @@ pub fn page_voice() -> String {
     voice::page_json()
 }
 
+/// `window.ocw.menu()`: the in-game menu as JSON (open, title, items, the
+/// focused item, status, hint; B6 – the browser test drives it by keys).
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(js_name = menu)]
+pub fn page_menu() -> String {
+    ui::menu_json()
+}
+
+/// `window.ocw.setting(key)`: a setting's value as text ("" for an unknown
+/// key; B6).
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(js_name = setting)]
+pub fn page_setting(key: &str) -> String {
+    ui::setting_text(key)
+}
+
 /// `window.ocw.wasmMemory()`: the wasm memory in bytes.
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen(js_name = wasmMemory)]
@@ -428,9 +470,12 @@ pub fn start() {
         .as_ref()
         .and_then(|l| l.hostname().ok())
         .unwrap_or_default();
-    let (config, warnings) = parse_query(&query, is_dev_host(&host));
+    let (mut config, warnings) = parse_query(&query, is_dev_host(&host));
+    // The settings read at the start, where the query leaves them out.
+    let (settings, settings_warnings) = settings::WebSettings::load(settings::default_store());
+    settings::apply_to_config(&settings, &mut config, &settings::query_keys(&query));
     let world = config.world.clone();
-    let mut app = app(config);
+    let mut app = app_with_settings(config, settings, settings_warnings);
     for w in warnings {
         warn!("page options: {w}");
     }

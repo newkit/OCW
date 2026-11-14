@@ -153,6 +153,43 @@ pub fn summary(rows: &[Row]) -> String {
     s
 }
 
+/// The list as the menu shows it (Navi → Riders in this ride), refreshed
+/// every frame by the apps' glue (`ocw_ui::riders_page`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RiderListInfo {
+    pub rows: Vec<Row>,
+}
+
+impl RiderListInfo {
+    /// The menu rows (information only: Confirm does nothing).
+    pub fn menu_rows(&self) -> Vec<crate::menu::pages::Row> {
+        self.rows
+            .iter()
+            .map(|r| crate::menu::pages::Row {
+                label: r.label.clone(),
+                value: Some(r.detail.clone()),
+                left: None,
+                right: None,
+                confirm: None,
+            })
+            .collect()
+    }
+
+    /// The markers of row `i` (`None` past the rows).
+    pub fn mark(&self, i: usize) -> Option<ocw_render::menu::RowMark> {
+        let r = self.rows.get(i)?;
+        Some(ocw_render::menu::RowMark {
+            unicorn: r.flying,
+            dot: r.dot.map(|s| (s.icon().to_owned(), s.rgb())),
+        })
+    }
+
+    /// The page's status line: "5 riders, 1 flying, 1 damaged".
+    pub fn summary(&self) -> String {
+        summary(&self.rows)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,5 +273,37 @@ mod tests {
             (r[0].detail.as_str(), summary(&r).as_str()),
             ("km 2.0", "1 rider")
         );
+    }
+    #[test]
+    fn rows_and_marks_for_the_menu() {
+        use ocw_render::menu::RowMark;
+        let info = RiderListInfo {
+            rows: vec![
+                Row {
+                    id: RiderId(1),
+                    label: "Nils (you)".into(),
+                    detail: "km 1.2".into(),
+                    flying: false,
+                    dot: None,
+                },
+                Row {
+                    id: RiderId(2),
+                    label: "Kim".into(),
+                    detail: "flying, 40 m ahead".into(),
+                    flying: true,
+                    dot: Some(Status::Critical),
+                },
+            ],
+        };
+        let rows = info.menu_rows();
+        assert_eq!(rows[1].label, "Kim");
+        assert_eq!(rows[1].value.as_deref(), Some("flying, 40 m ahead"));
+        assert!(rows.iter().all(|r| r.confirm.is_none()));
+        assert_eq!(info.mark(0), Some(RowMark::default()));
+        let m = info.mark(1).unwrap();
+        assert!(m.unicorn);
+        assert_eq!(m.dot, Some(("■".into(), Status::Critical.rgb())));
+        assert_eq!(info.mark(2), None);
+        assert_eq!(info.summary(), "2 riders, 1 flying, 1 damaged");
     }
 }
