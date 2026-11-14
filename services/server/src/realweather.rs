@@ -205,6 +205,8 @@ impl RealSession {
                     data_ms: r.data_ms,
                     historic: r.historic,
                     station: r.station,
+                    snow_depth_m: r.snow_depth_m,
+                    snow_alt_m: r.snow_alt_m,
                 };
                 Apply::Set {
                     state: r.state,
@@ -236,6 +238,8 @@ impl RealSession {
                     data_ms: 0,
                     historic: false,
                     station: None,
+                    snow_depth_m: None,
+                    snow_alt_m: 0.0,
                 };
                 if status == Status::Offline && !self.applied && !self.simulating {
                     self.simulating = true;

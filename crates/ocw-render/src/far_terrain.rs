@@ -120,6 +120,13 @@ pub fn far_tile_arrays(pkg: &WorldPackage, tile: &Tile, look: &TileLook, keep: K
                 None => ((slope - 0.6) / 0.4).clamp(0.0, 1.0),
             };
             let rock = palette.map_or(ROCK, |_| flat(LandClass::Rock));
+            // The season at this vertex's altitude (spec §14 Phase 9, S8):
+            // the meadows' and fields' colours, the canopy's (deciduous
+            // woods bare or coloured), the climatological snow.
+            let alt = f64::from(h(i, k));
+            let day = look.season.as_deref();
+            let canopy = day.map_or(CANOPY, |d| crate::season::canopy_colour(CANOPY, alt, d));
+            let mut trees = 0.0f32;
             let colour = match landuse {
                 Some((lu, cells)) => {
                     // The mean colour of 4 × 4 points over the far cell.
@@ -133,13 +140,17 @@ pub fn far_tile_arrays(pkg: &WorldPackage, tile: &Tile, look: &TileLook, keep: K
                             let r = ((z / cs).floor().max(0.0) as usize).min(cells - 1);
                             let class = lu.classes[r * cells + c];
                             let mut col = flat(class);
+                            if let Some(d) = day {
+                                col = crate::season::ground_colour(class, col, alt, d);
+                            }
                             if !matches!(class, LandClass::Water | LandClass::Glacier) {
                                 let t = rock_t(class);
                                 col = std::array::from_fn(|j| col[j] + (rock[j] - col[j]) * t);
                                 // The far tiles have no trees: their crowns
                                 // tint the ground (not on rock faces).
                                 let w = tree_cover(class) * (1.0 - t);
-                                col = std::array::from_fn(|j| col[j] + (CANOPY[j] - col[j]) * w);
+                                col = std::array::from_fn(|j| col[j] + (canopy[j] - col[j]) * w);
+                                trees += w / 16.0;
                             }
                             for (acc, c) in sum.iter_mut().zip(col) {
                                 *acc += c / 16.0;
@@ -154,6 +165,7 @@ pub fn far_tile_arrays(pkg: &WorldPackage, tile: &Tile, look: &TileLook, keep: K
                     std::array::from_fn(|j| grass[j] + (ROCK[j] - grass[j]) * t)
                 }
             };
+            let colour = crate::season::far_snow(colour, look.snow.at(alt), slope, trees);
             out.colors.push(linear(colour));
         }
     }
@@ -340,6 +352,7 @@ pub(crate) fn update_far_terrain(
     materials: Option<Res<PackageMaterials>>,
     library: Option<Res<MaterialLibrary>>,
     view: Option<Res<crate::RideView>>,
+    mut seasons: Option<ResMut<crate::season::SeasonCache>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut standard: ResMut<Assets<StandardMaterial>>,
     mut material: Local<Option<Handle<StandardMaterial>>>,
@@ -353,11 +366,17 @@ pub(crate) fn update_far_terrain(
             s.sky.local.day,
         ))
     });
+    // The seasons (spec §14 Phase 9, S8): the canopy, meadows, fields and
+    // the climatological snow of the far terrain.
+    let (season_day, snow) = match (seasons.as_deref_mut(), view.as_deref()) {
+        (Some(c), Some(v)) => (c.day(v), c.snow(v)),
+        _ => (None, ocw_sky::season::Ramp::default()),
+    };
     let want: FarKey = (
         set.generation(),
         set.tiles_version(),
         library.is_some(),
-        season,
+        season.map(|b| b + if season_day.is_some() { 1000 } else { 0 }),
     );
     let pending = far.task.as_ref().map(|t| t.0);
     if far.built != Some(want) && pending != Some(want) {
@@ -378,6 +397,7 @@ pub(crate) fn update_far_terrain(
                     Some(p) => base.with_region(&p.look, ground, day),
                     None => base,
                 }
+                .with_season(season_day.clone(), snow)
             })
             .collect();
         let s = set.clone();

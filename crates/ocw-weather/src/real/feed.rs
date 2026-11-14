@@ -120,6 +120,10 @@ pub struct Resolved {
     pub data_ms: i64,
     pub historic: bool,
     pub status: Status,
+    /// Snow lying at the place's altitude band (m of snow; spec §14 Phase
+    /// 9, S8: the season's snow line follows it), and that altitude (m).
+    pub snow_depth_m: Option<f32>,
+    pub snow_alt_m: f32,
 }
 
 /// Which sources a moment wants.
@@ -475,6 +479,8 @@ impl RealFeed {
             data_ms,
             historic: plan.historic,
             status,
+            snow_depth_m: obs.snow_depth_m,
+            snow_alt_m: place.alt_m,
         })
     }
 }
@@ -495,9 +501,23 @@ pub struct RealInfo {
     pub data_ms: i64,
     pub historic: bool,
     pub station: Option<String>,
+    /// Snow lying at the cell's altitude band (m of snow) and that
+    /// altitude (m): the season's snow line follows it (spec §14 Phase 9,
+    /// S8; `None`: not reported).
+    pub snow_depth_m: Option<f32>,
+    pub snow_alt_m: f32,
 }
 
 impl RealInfo {
+    /// The measured snow for the season's snow line (spec §14 Phase 9,
+    /// S8), while the data is live or stale.
+    pub fn snow(&self) -> Option<(f32, f32)> {
+        match self.status {
+            Status::Live | Status::Stale => self.snow_depth_m.map(|d| (self.snow_alt_m, d)),
+            _ => None,
+        }
+    }
+
     /// "MeteoSwiss, MET Norway" / "waiting for the data" / "offline".
     pub fn source_label(&self) -> String {
         if self.providers.is_empty() {

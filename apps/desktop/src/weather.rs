@@ -882,6 +882,7 @@ mod tests {
             data_ms: 1_794_656_400_000,
             historic: false,
             station: Some("Vaduz (VAD)".into()),
+            ..Default::default()
         }
     }
 

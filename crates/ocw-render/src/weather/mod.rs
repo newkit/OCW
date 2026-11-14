@@ -59,6 +59,9 @@ pub struct WeatherView {
     pub attribution: Option<String>,
     /// The server's session time now (s).
     pub session_s: f64,
+    /// Snow measured by real weather (spec §14 Phase 9, S8): the season's
+    /// snow line follows it (`None`: not real weather or not reported).
+    pub snow: Option<ocw_sky::season::SnowObservation>,
 }
 
 /// A lightning strike with its flash in the app's time
@@ -344,6 +347,7 @@ mod tests {
             summary: state.hud(),
             attribution: None,
             session_s: 0.0,
+            snow: None,
             state,
         }
     }

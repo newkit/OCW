@@ -6,7 +6,8 @@
 //! gives ([`light`]); the night sky without stars (decision Q7): the moon
 //! ([`moon`], its disc [`moon_disc`]), the planets ([`planets`]), the
 //! Milky Way ([`milky_way`]) and night light ([`night`]), on the shared
-//! astronomy of [`astro`].
+//! astronomy of [`astro`]; the seasons by date and altitude – phenology,
+//! the crop calendar and the climatological snow line ([`season`], S8).
 //!
 //! Pure Rust without Bevy, threads, files or clock reads (instants are
 //! passed in), so it builds for `wasm32-unknown-unknown` (spec §3.5).
@@ -20,6 +21,7 @@ pub mod moon;
 pub mod moon_disc;
 pub mod night;
 pub mod planets;
+pub mod season;
 pub mod sun;
 pub mod time;
 pub mod zone;

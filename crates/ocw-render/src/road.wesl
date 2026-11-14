@@ -49,6 +49,9 @@ struct RoadLook {
     wear: vec4<f32>,
     // The weather: x wetness, y puddles, z snow cover, w wind sway.
     weather: vec4<f32>,
+    // The season (spec §14 Phase 9, S8): x, y the climatological snow
+    // ramp over the altitude; z on.
+    season: vec4<f32>,
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100)
@@ -440,8 +443,9 @@ fn fragment(
             N = normalize(mix(N, geo_n, water));
         }
     }
-    if look.weather.z > 0.0 && kind == 2u {
-        let s = look.weather.z * (0.55 + 0.45 * vnoise(wp.xz * 0.8));
+    let snow = max(look.weather.z, clamp(look.season.x + look.season.y * wp.y, 0.0, 1.0));
+    if snow > 0.0 && kind == 2u {
+        let s = snow * (0.55 + 0.45 * vnoise(wp.xz * 0.8));
         albedo = mix(albedo, vec3<f32>(0.86, 0.89, 0.93), s);
         rough = mix(rough, 0.6, s);
     }
