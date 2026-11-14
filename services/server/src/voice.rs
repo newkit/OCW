@@ -24,7 +24,11 @@
 //! the server's command line; they are never part of the repository.
 
 use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::{SystemTime, UNIX_EPOCH};
+// std's clock panics on wasm32-unknown-unknown (the browser app).
+#[cfg(target_arch = "wasm32")]
+use web_time::{SystemTime, UNIX_EPOCH};
 
 use ocw_core::RiderId;
 use ocw_protocol::v1;

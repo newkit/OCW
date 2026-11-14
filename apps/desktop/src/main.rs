@@ -11,13 +11,10 @@ mod argsfile;
 mod audio;
 mod automation;
 mod build_id;
-mod client;
 mod connection;
 mod devices;
-mod event;
 mod ghost;
 mod god;
-mod gps;
 mod icon;
 mod input;
 mod known_devices;
@@ -38,6 +35,10 @@ mod voice;
 mod weather;
 mod workout;
 mod worlds;
+
+// Shared with the browser app (spec §14 Phase 10): `crate::client`,
+// `crate::event` keep working for the modules here.
+use ocw_client::{client, event, gps};
 
 use std::path::PathBuf;
 

@@ -21,6 +21,8 @@ ocw-world.workspace = true
 ocw-sky.workspace = true
 ocw-worldstore.workspace = true
 ocw-render.workspace = true
+# The client loop, events, god state and key logic (shared with apps/web).
+ocw-client.workspace = true
 ocw-server.workspace = true
 bevy.workspace = true
 # The version Bevy uses: probing window surfaces (`surface`).

@@ -4,7 +4,7 @@
 
 Project Description and Technical Architecture
 
-Version 2.76 – November 2026
+Version 2.80 – November 2026
 
 | Version | Change |
 |---|---|
@@ -65,6 +65,7 @@ Version 2.76 – November 2026
 | 2.44 | Phase 8 decisions: no commercial release, 8A stays (Q2); orthophoto corridor size acceptable (Q4); seasonal variants (Q5); own photos postponed (Q6); Mapillary CC BY-SA, reference by eye only (Q7); 3D buildings: swissBUILDINGS3D 3.0 (Opendata BY) to confirm, LGL LoD2 probably not open, ask LGL (Q8); all texture areas in parallel (Q10) |
 | 2.45 | Licensing (§13): no licence change for now – the code stays MIT / Apache-2.0 (a switch to CC BY-SA was considered and declined) |
 | 2.46 | Phase 8 T1 / T2 (§4.6, §8.1, §13, §14 Phase 8): material library of 21 CC0 materials (ambientCG, Poly Haven) – ground, roads, houses, volcanic ground for Tenerife – not in git but pinned by URL + SHA-256 in `assets/materials.toml`, fetched and converted to KTX2 (BC3 / BC5, 1024², mipmapped) by `scripts/fetch-materials.sh` into the git-ignored `assets/materials/` and shipped beside the binary (AppImage, macOS bundle, Windows zip, test deployment); licence rule of Phase 8A shared by the model and material validators; terrain drawn with the materials blended by the splat map (weights at cell corners, noise warp, height blend, rock and triplanar on slopes, macro scale, fade to the colour map in the materials' mean colours), roads by OSM `surface` (new package section `RSRF`) with category fallback; regional material sets by the package's time zone (`[[region]]` in the manifest: the volcanic set of the Canary Islands with lava, ash / cinder, black sand and pine needles); regional tint hook neutral; reference boards `art/reference/` |
+| 2.80 | Phase 10 B1 built (§14 Phase 10, 10G; §3.5, §10): `apps/web` (`ocw-web`, wasm32 + WebGPU) runs the shared renderer and client with the `GameServer` as a frame-driven local server (`local::FrameServer`) and the frame-driven virtual trainer; the client logic moved into the shared crate `ocw-client` (desktop and web: one client, full parity); `ocw-devices` and the `ocw-server` lib build for wasm32; `make web` / `web-serve` / `test-web` (headless Chromium on WebGPU), CI job `web`; .wasm 63.7 MiB raw, 14.3 MiB gzip, 9.1 MiB brotli |
 | 2.76 | Decision from the build dashboard (2026-11-14): Phase 10 Q3 – the browser app starts now, in parallel with Phases 8 / 9 (B1 first) |
 | 2.75 | Decision from the build dashboard (2026-11-14): Phase 10 Q2 – the sensor bridge (10D.2) will be built |
 | 2.74 | Decision from the build dashboard (2026-11-14): Phase 10 Q1 – Chromium (desktop + Android) for trainer rides in the browser, Safari / iOS / Firefox with virtual power and the bridge |
@@ -606,7 +607,7 @@ Bevy handles 3D scenes, rendering, cameras, lighting, shadows, materials, animat
 
 wgpu provides the cross-platform GPU abstraction with the backends Vulkan, Direct3D 12 and Metal.
 
-**Bevy versioning:** Bevy has breaking changes in every release until 1.0. An exact Bevy version is pinned in the workspace and upgraded in dedicated milestones, typically one release behind current, once the ecosystem crates we use have caught up. Only `ocw-render` and `apps/desktop` depend on Bevy (§10), so upgrades stay local.
+**Bevy versioning:** Bevy has breaking changes in every release until 1.0. An exact Bevy version is pinned in the workspace and upgraded in dedicated milestones, typically one release behind current, once the ecosystem crates we use have caught up. Only `ocw-render`, `ocw-client` and the apps depend on Bevy (§10), so upgrades stay local.
 
 #### 3.1.1 Engine Evaluation
 
@@ -974,7 +975,7 @@ Trainer control is described in §5.3.
 
 A full web client and native mobile apps are future development (§1.3). These rules keep them possible without redesign:
 
-- `ocw-sim`, `ocw-protocol`, `ocw-world` and `ocw-core` must **compile to `wasm32-unknown-unknown`**. They may not use threads, the file system or sockets directly; those go through traits. A CI check builds them for wasm from Phase 1.
+- `ocw-sim`, `ocw-protocol`, `ocw-world` and `ocw-core` must **compile to `wasm32-unknown-unknown`** (since Phase 10 B1 also `ocw-sky`, `ocw-voice` without `livekit`, `ocw-devices` – without its BLE stack and threaded virtual trainer there – and the `ocw-server` lib – without QUIC, world files and the server thread – which the browser app uses). They may not use threads, the file system or sockets directly; those go through traits. A CI check builds them for wasm from Phase 1.
 - The device layer stays behind `DeviceBackend` (§3.4), so Web Bluetooth (web) or CoreBluetooth (iOS) can be added as further backends.
 - The game protocol is transport-independent (§6.2). A WebTransport endpoint can later be added next to native QUIC on the server.
 - World packages keep a format that can be streamed over HTTP in tile-sized chunks, not only read as one large archive from disk.
@@ -1725,7 +1726,7 @@ The first version is a **modular backend monolith** (`services/server`). A split
 
 The workspace starts with about 8 crates; crates are split only when they grow.
 
-**Dependency rule:** only `ocw-render` and `apps/desktop` depend on Bevy. `ocw-core`, `ocw-sim`, `ocw-protocol` and `ocw-world` must also build for `wasm32-unknown-unknown` (§3.5).
+**Dependency rule:** only `ocw-render`, the apps `apps/desktop` and `apps/web`, and `ocw-client` (the shared client logic, which uses `ocw-render`'s view types but no Bevy systems) depend on Bevy. `ocw-core`, `ocw-sim`, `ocw-protocol` and `ocw-world` must also build for `wasm32-unknown-unknown` (§3.5).
 
 ```
 open-cycling-world/
@@ -1734,6 +1735,7 @@ open-cycling-world/
 ├── rust-toolchain.toml
 ├── apps/
 │   ├── desktop/          # Bevy app, wires all plugins together
+│   ├── web/              # the same client in the browser: wasm32 + WebGPU, local server in the frame loop (§14 Phase 10)
 │   ├── bot/              # ocw-bot: headless remote riders over QUIC, multiplayer test verdict (no Bevy, §11.4.1)
 │   ├── world-builder/    # CLI: OSM + DEM → world packages, route editor
 │   └── web-companion/    # browser app without riding (Leptos)
@@ -1748,6 +1750,7 @@ open-cycling-world/
 │   ├── ocw-worldgen/     # OSM/DEM import, smoothing, meshing (used by world-builder)
 │   ├── ocw-worldstore/   # package files, keys, trusted roots, cache, download (not wasm)
 │   ├── ocw-render/       # Bevy plugins: terrain, roads, avatars, bikes, HUD, console
+│   ├── ocw-client/       # client logic shared by desktop and web: ClientCore, events, god state, keys, sky (wasm-safe)
 │   ├── ocw-assets/       # bike/rider glTF generator and reader, asset validator, pose, animation states (no Bevy)
 │   ├── ocw-fit/          # FIT activity writer (no dependencies, wasm-safe)
 │   └── ocw-voice/        # LiveKit integration behind a trait (feature "voice")
@@ -2799,6 +2802,30 @@ Attribution of the provider used appears on the credits screen and in the weathe
 - **Q4 – Hosting:** where (own servers, a CDN provider)? World packages are large (Black Forest 260 MB), so CDN traffic costs money.
 - **Q5 – Anonymous access:** may people ride without an account (single-player demo), or is login required?
 - **Q6 – Same app or a lighter "web edition"?** Full parity, or a reduced feature set (smaller worlds, lower quality) for faster loading?
+
+
+#### 10G – Status: B1 built (2026-11-14)
+
+**B1 – Wasm build: done.** `apps/web` (crate `ocw-web`, a `cdylib`) is the same client as the desktop app, built for `wasm32-unknown-unknown` and run by the browser on **WebGPU** (Bevy's `webgpu` + `web` features, only for the wasm target):
+
+- **One client, shared crates (Q6: full parity).** The desktop's Bevy-free client logic moved into the new crate **`ocw-client`**: `ClientCore` (prediction, reconciliation, interpolation, the ride view), events and ghosts, god-mode state, the pure key logic (`input`: power ramps, `KeyThrottle`, lean and line steering, junction keys), the GPS position and the sky (`sky`: the zone of the place, the HUD clock, `sky_view`). `apps/desktop` uses it unchanged in behaviour; the renderer `ocw-render` is shared as before. Desktop-only parts stay in `apps/desktop` for now and move into shared crates behind web backends milestone by milestone (devices B4, audio and voice B5, menus / settings / captures B6), until both apps are thin entry points over the same plugins.
+- **Local server in the browser.** The same `GameServer`, driven by the frame loop: `ocw_server::local::FrameServer::advance(frame time)` runs the 50 Hz ticks that fit (counted in whole µs, no drift) and drops a backlog beyond 0.25 s like the server thread (`MAX_BACKLOG_S`, e.g. a tab in the background). Unit tests: tick counts over uneven frames, tick-for-tick equality with `SteppedServer`, the backlog rule, the same snapshot rate as the threaded `LocalServer` over the same wall time.
+- **Virtual power.** `ocw_devices::FrameVirtualTrainer`: the virtual trainer's logic (`virtual_power`, shared with the threaded `VirtualTrainer`) reporting at 4 Hz from the frame time; 200 W at the start, the desktop's keys (↑ adds power, ↓ stops, Page Up / Down ±10 W, A autodrive, W wild, ← / → line or lean) and the console (`sim.power`, `teleport`, `net.stats`, every `ocw-render` command).
+- **The test route** (Hills, or `?route=loop`), 5 bots, the sky and lights from the server's world clock (`ocw-sky`, Vaduz time), the chase camera, the HUD with the ISO timestamp, the console. Page options in the query string (`route`, `bots`, `power`, `start`, `name`).
+- **wasm-safety fixes:** `std::time::SystemTime` panics on wasm32-unknown-unknown, so the server's clock, the voice clock and the HUD timestamp use `web-time` there, and chrono's `wasmbind` gives the local UTC offset; `ocw-devices` builds without btleplug / tokio on wasm32; the server's `net`, `worlds` and `LocalServer` thread are native only. No getrandom backend was needed.
+- **Tooling:** `make deps-web` (wasm-bindgen-cli of exactly the `wasm-bindgen` version in `Cargo.lock`, 0.2.130, via `cargo install --locked`, no sudo), `make web` (`scripts/build-web.sh`: the `web` profile = release, `opt-level = "s"`, thin LTO; wasm-bindgen `--target web` without the name section; `wasm-opt` when installed; output and `sizes.txt` in `target/web/`), `make web-serve` (`scripts/web-serve.py`: COOP / COEP headers, wasm MIME type), `make test-web` (`scripts/test-web.py`: headless Chromium on WebGPU over the DevTools protocol, console log, timings, a screenshot in `test-output/web/`). `make check` builds `ocw-web` for wasm32 (`test-web-build`); `test-wasm` also checks `ocw-devices` and the `ocw-server` lib; CI has a `web` job that runs `make web` and keeps `target/web/` as an artifact.
+
+**Measured (marge, 2026-11-14):**
+
+| | |
+|---|---|
+| `ocw_web_bg.wasm` | 63.7 MiB raw, 14.3 MiB gzip -9, 9.1 MiB brotli -q 11 (budget 10C: ≤ 30 MB compressed); the name section (another ~87 MB) is stripped; no wasm-opt yet. Code ~53 MB, data ~13 MB (embedded models, fonts, styles) |
+| `ocw_web.js` | 180 KiB (wasm-bindgen glue) |
+| Build | `make web` on marge: 4–9 min (the `web` profile's thin-LTO link of Bevy for wasm32; 2 min when only our crates changed) |
+| Load (local server, headless Chromium 156) | served from localhost (no compression): HTML 6 ms, the .wasm downloaded at 0.2 s, compiled and started at 0.73 s, the rider joined the local server at 1.04 s after navigation; the first headless start of Chromium on marge waited 25 s for the keyring over D-Bus until `--password-store=basic` |
+| Running | WebGPU on the AMD Radeon RX Vega (Dawn on Vulkan, headless `--enable-unsafe-webgpu`); the local server ticks at 50 Hz (100 ticks per 2 s in the log), the rider rides at 200 W; screenshot with HUD and ISO timestamp |
+
+**Not yet / notes for later milestones:** WebGL2 fallback (Bevy selects WebGPU or WebGL2 at compile time: a second build, B7); world packages over HTTP (B2), multiplayer (B3), Web Bluetooth (B4), audio (B5; Bevy's audio plugin is off), menus, settings, gamepad parity and captures with EXIF (B6; the test screenshot comes from the DevTools protocol, without EXIF); the material library (flat land-use colours, as on the desktop without it); `wasm-opt` and a CDN with brotli (B8). The canvas fills the page; the arrows ride instead of scrolling it.
 
 ---
 

@@ -115,4 +115,24 @@ jobs:
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - name: Check core crates for wasm32 (make test-wasm)
-        run: cargo check -p ocw-core -p ocw-sim -p ocw-protocol -p ocw-world -p ocw-voice -p ocw-sky --target wasm32-unknown-unknown
+        run: |
+          cargo check -p ocw-core -p ocw-sim -p ocw-protocol -p ocw-world -p ocw-voice -p ocw-sky -p ocw-devices --target wasm32-unknown-unknown
+          cargo check -p ocw-server --lib --target wasm32-unknown-unknown
+
+  # The browser app (spec §14 Phase 10, B1): the wasm build and its page.
+  web:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: wasm-bindgen-cli (make deps-web)
+        run: make deps-web
+      - name: Build the web app (make web)
+        run: make web
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-app
+          path: target/web/
+          if-no-files-found: error

@@ -96,6 +96,29 @@ Video recording (key V) needs ffmpeg: install Homebrew, then `brew install
 ffmpeg` (`make deps-macos` prints both commands); the app also finds it in
 `/opt/homebrew/bin`, `/usr/local/bin` and `~/.local/bin` when started from Finder.
 
+### Browser app (preview)
+
+`apps/web` (`ocw-web`) is the same client in a web browser (spec §14 Phase
+10, milestone B1): Bevy on **WebGPU**, the shared renderer (`ocw-render`),
+client loop (`ocw-client`) and `GameServer` – the local server runs in the
+page's frame loop (wasm has no threads). B1 rides the built-in Hills test
+route with bots and the **virtual trainer** (no world packages, Bluetooth,
+sound or multiplayer yet: B2–B5).
+
+```bash
+make deps-web     # once: wasm-bindgen-cli matching Cargo.lock (cargo install)
+make web          # build into target/web/ (index.html, ocw_web.js, ocw_web_bg.wasm, sizes.txt)
+make web-serve    # serve it on http://127.0.0.1:8080/ (WEB_PORT=…)
+make test-web     # headless Chromium on WebGPU: load, ride, screenshot into test-output/web/
+```
+
+Open the page in Chrome / Edge 113+ (Safari 26 and Firefox 141+ should work
+too; a browser without WebGPU gets a message). The desktop's keys: ↑ adds
+power on top of the virtual trainer's 200 W, ↓ stops (brake), Page Up /
+Down ±10 W, A autodrive, W wild mode, ← / → the line (autodrive) or the lean, `` ` `` (or F12) the console (`sim.power 250`, `teleport 2.5`,
+`net.stats`, `hud off`, `camera …`). Page options in the query string:
+`?route=loop&bots=3&power=250&start=1.5&name=Ada`.
+
 ## Controls
 
 | Action | Keyboard | Gamepad |
@@ -1576,6 +1599,8 @@ GitHub release `build-history`. Look at every image before picking it.
 | Path | Contents |
 |---|---|
 | `apps/desktop` | Desktop client: wires devices, local server, prediction and rendering |
+| `apps/web` | Browser app (`ocw-web`, wasm32 + WebGPU): the shared client with the local server in the frame loop and the virtual trainer; `web/index.html` |
+| `crates/ocw-client` | Client logic shared by the desktop and browser apps: `ClientCore` (prediction, interpolation, view), events, god-mode state, key logic, GPS position, sky |
 | `apps/bot` | `ocw-bot`: headless bot clients for remote servers, multiplayer test verdict |
 | `services/server` | Game server logic, in-process local server, headless server binary |
 | `crates/ocw-core` | Shared types, units, constants |
