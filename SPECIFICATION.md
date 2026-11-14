@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 3.05 – November 2026
+Version 3.06 – November 2026
 
 | Version | Change |
 |---|---|
+| 3.06 | Decision from the build dashboard (2026-11-14): Phase 13 Q3 – no WASD in Unicorn mode; cursor keys and + / − on the keyboard, or the gamepad |
 | 3.05 | Aero effects depend on speed (§14 Phase 4, 4G; decided by the user 2026-11-14): aero parts and kit change only CdA, the physics makes them speed-dependent (watts saved ∝ v³: ~1 W at 20 km/h, ~4 W at 30, ~8 W at 40 for 0.010 m²; worthless below ~20 km/h, noticeable from 25–30, significant from 35–40 km/h; little on climbs; less in the draft); benefit scores shown by speed; caps checked at 150 / 250 / 400 W |
 | 3.04 | Kit gives a slight benefit (§2.6, §14 Phase 4 4C; decided by the user 2026-11-14, replacing "kit is purely cosmetic"): apparel items have effect classes (aero, weight, a little efficiency) and a benefit score = the speed gain over the slot's standard item at the reference rider (flat and 6 %), shown and compared on the cards; kit counts against the same build caps (proposal) and only in Open mode |
 | 3.03 | Phase 4 **W3 built** (§14 Phase 4, 4G, 4M): build physics in `ocw_sim::build` (pure, wasm; server, prediction and the workshop's cards share it) – the server's copy of `assets/parts.toml` (`PartTable`), bike mass = profile + Σ (part − base part) with the 6.8 kg / 9.0 kg floor, class steps (rolling ±4 % Crr, aero ∓0.004 m² CdA, efficiency ±0.3 %), the build capped to ±1.5 % on the flat and ±2.5 % on a 6 % climb at 250 W / 75 kg (the change scaled back towards the profile until it fits: the aero road and TT best builds sit on the cap); race modes *Open* / ***Profile*** (default for races and group rides) / *Equal* (`Event.physics`, `event … --physics`), free ride, single player and time trials *Open*; `BikeChange` applies the build (in an event: when it is over); protocol: `Hello.parts` (8), `EventStart.physics` (7), `EventState.physics` (14), `RiderUpdate.build_hash` (19), `ServerMessage.rider_build` (10, `RiderBuild`: parts and the server's effect, reliable, once per change and to joiners), `DevCommand.bot_bike` (4, `dev.bot_bike`); the others' parts on their avatars; the picker's speed lines and the compare card's difference |
@@ -3265,7 +3266,7 @@ The ages carry a common offset of about −8 ms (the server's tick instant runs 
 
 - **Q1 – Visible to others: decided (2026-11-13):** yes, other riders see the unicorn with name and colours.
 - **Q2 – Leaving: decided (2026-11-13):** land where the unicorn is (nearest road or route point below it); Shift + G flies back to where the rider left.
-- **Q3 – Keys:** G for god mode, cursor keys + / − and the mouse as asked; also W / A / S / D for flying (would move autodrive and wild mode to other keys while flying), or cursor keys only (proposal)?
+- **Q3 – Keys: decided (2026-11-14, dashboard):** **no WASD for flying** – the keyboard uses the cursor keys and + / − (as built, `WASD_FLIES = false`), and the **gamepad** is the other way to fly (left stick bank / throttle, triggers climb / descend, right stick look, 13B).
 - **Q4 – Trainer while flying: decided (2026-11-14, dashboard):** **flat road** (lowest resistance; ERG keeps its target) – as built.
 - **Q5 – Wings: decided (2026-11-13):** a classic unicorn with large feathered wings like a pegasus.
 - **Q6 – Name in the UI: decided (2026-11-14, dashboard):** **"Unicorn mode"** in the menu, HUD, settings and messages (World → Unicorn mode); the console commands stay `god`, `god.*`.
