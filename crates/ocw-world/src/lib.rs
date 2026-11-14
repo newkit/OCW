@@ -15,6 +15,7 @@ pub mod gradient;
 pub mod graph;
 pub mod graph_route;
 pub mod inspect;
+pub mod lamps;
 pub mod landuse;
 pub mod look;
 pub mod manifest;
@@ -36,6 +37,7 @@ pub mod world_set;
 
 pub use gradient::{AVERAGE_AHEAD_M, ElevationProfile, GradeBand, ProfileSpec, average_grade};
 pub use graph_route::{GraphRoute, RouteBreak, RoutePlan, RouteStep};
+pub use lamps::RoadLit;
 pub use manifest::{Manifest, PackageIdentity, SignedManifest, TrustStore};
 pub use network::{Exit, Junction, RoadNetwork, TurnClass};
 pub use package::{RoadStrip, Tile, TileKey, WorldPackage};

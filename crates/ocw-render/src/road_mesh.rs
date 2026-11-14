@@ -608,6 +608,7 @@ mod tests {
             points: (0..11).map(|i| [i as f32 * 10.0, y, 50.0]).collect(),
             surface: RoadSurface::Asphalt,
             dress,
+            lit: ocw_world::RoadLit::Unknown,
         }
     }
 

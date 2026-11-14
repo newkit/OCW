@@ -1057,6 +1057,7 @@ mod tests {
                             crate::graph::RoadClass::Residential,
                             4.0,
                         ),
+                        lit: crate::RoadLit::Unknown,
                     }],
                 },
             );

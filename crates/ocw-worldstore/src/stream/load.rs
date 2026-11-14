@@ -345,6 +345,7 @@ pub(crate) mod tests {
                             points: vec![[1.0, 2.0, 3.0], [400.0, 2.0, 3.0]],
                             surface: RoadSurface::of_class(class),
                             dress: RoadDress::of_class(class, 6.0),
+                            lit: ocw_world::RoadLit::Unknown,
                         }],
                     },
                 );

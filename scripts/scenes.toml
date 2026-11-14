@@ -680,10 +680,10 @@ shot = 9
 
 [[scene]]
 name = "sky-night-lights"
-description = "Night (23:40 CEST) on the Vaduz-Malbun road: dark scene at the default night brightness, front and rear lights on every rider, the own lamp lighting the road"
+description = "Night (23:40 CEST) on the Vaduz-Malbun road: dark scene at the default night brightness, the setting crescent moon as the key light, front and rear lights on the bots that have lights fitted (Phase 9 Q3: a workshop part; the own stock bike has none)"
 world = true
 args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "5", "--power", "220"]
-at = ["2=time pause", "2=time 2026-06-21 23:40", "2.5=teleport 1.6", "2.5=camera.orbit 25 12 9"]
+at = ["2=time pause", "2=time 2026-06-21 23:40", "2=dev.bot_bike 1 --parts lights.set", "2=dev.bot_bike 2 --parts lights.set", "2=dev.bot_bike 3 --parts lights.set", "2.5=teleport 1.6", "2.5=camera.orbit 25 12 9"]
 shot = 10
 
 [[scene]]
@@ -701,6 +701,50 @@ args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", 
 at = ["1.5=time 2026-06-21 20:35", "2=time speed 600", "2=teleport 1.6", "2=camera.orbit 160 14 14"]
 warmup = 3
 video = 9
+
+# --- Night sky without stars (spec §14 Phase 9 S2; Q7: no star catalogue) ----
+# camera.look AZ EL looks at an exact azimuth / elevation of the sky from
+# just behind the rider.
+
+[[scene]]
+name = "sky-full-moon-canadas"
+description = "Full moon over Las Cañadas (Tenerife, 24 Nov 2026 19:40 WET, 5 h after full): the moon 19° high in the east-north-east with its maria, moonlight as the key light – bluish, soft shadows of the broom bushes – and the caldera under a deep blue moonlit sky"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-7500,5260", "--bots", "3", "--power", "180"]
+at = ["0.5=time pause", "0.5=time 2026-11-24 19:40", "0.5=hud.profile off", "1=dev.bot_bike 1 --parts lights.set", "1=dev.bot_bike 2 --parts lights.set", "1=dev.bot_bike 3 --parts lights.set", "2=camera.look 70 12", "6=sky"]
+shot = 10
+
+[[scene]]
+name = "sky-crescent-venus"
+description = "Crescent and Venus at dusk over the Rhine valley (above Vaduz at km 2.6, 17 Jun 2026 21:55 CEST, sun 6° down): the two-day-old moon (11 %) lit from below by the set sun, earthshine on its dark part, Venus (−4.0) just beside it in the west-north-west"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "120"]
+at = ["0.5=time pause", "0.5=time 2026-06-17 21:55", "0.5=hud.profile off", "2=teleport 2.6", "2.5=camera.look 283 11", "6=sky"]
+shot = 10
+
+[[scene]]
+name = "sky-moonless-vaduz"
+description = "Moonless night in Vaduz (9 Nov 2026 22:00 CET, new moon): street lamps along the town's roads (lit roads, or towns by land use) with warm light pools, lit windows, the town's sky glow, riders with fitted lights; the minimum night brightness keeps the road visible"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "4", "--power", "200"]
+at = ["2=time pause", "2=time 2026-11-09 22:00", "2=dev.bot_bike 1 --parts lights.set", "2=dev.bot_bike 2 --parts lights.set", "2=dev.bot_bike 3 --parts lights.set", "2=dev.bot_bike 4 --parts lights.set", "2.5=teleport 0.25", "2.5=camera.orbit 20 14 12", "6=sky"]
+shot = 10
+
+[[scene]]
+name = "sky-milky-way-teide"
+description = "The Milky Way from the Teide plateau (12 Aug 2026 23:00 WEST, new moon, no light pollution): the procedural band rising from Sagittarius and Scorpius in the south (galactic centre 32° high) towards Aquila and Cygnus, the Great Rift, Saturn rising in the east"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-7500,5260", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-08-12 23:00", "0.5=hud.profile off", "2=camera.look 180 24", "6=sky"]
+shot = 10
+
+[[scene]]
+name = "sky-full-moon-preset"
+description = "Time machine preset Next full moon (from 14 Nov 2026: the midnight of 24/25 Nov in Vaduz): the moonlit Vaduz-Malbun road, the moon 63° high as the key light with soft shadows of riders and trees"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "2"]
+at = ["2=time pause", "2=time 2026-11-14 12:00", "2.5=time preset full-moon", "3=teleport 1.6", "3.5=camera.orbit 160 20 12", "4=sky"]
+shot = 9
 
 # --- Black Forest showcase (spec §4.7, v2.32): well-known places -----------
 # Render with OCW_PROFILE=release; `--only 'showcase-*'`. North package

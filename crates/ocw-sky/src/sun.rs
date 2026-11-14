@@ -68,6 +68,38 @@ fn ephemeris(jd: f64) -> Ephemeris {
     }
 }
 
+/// The sun seen from the earth's centre at Julian day `jd` (the same NOAA
+/// series): apparent ecliptic longitude (°), distance (AU) and its
+/// equatorial direction (for the moon's phase and the planets, spec §14
+/// Phase 9 S2).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Geocentric {
+    pub longitude_deg: f64,
+    pub distance_au: f64,
+    pub equatorial: crate::astro::Equatorial,
+}
+
+pub fn geocentric(jd: f64) -> Geocentric {
+    let t = julian_century(jd);
+    let l0 = (280.46646 + t * (36_000.769_83 + t * 0.000_303_2)).rem_euclid(360.0);
+    let m = 357.52911 + t * (35_999.050_29 - 0.000_153_7 * t);
+    let e = 0.016_708_634 - t * (0.000_042_037 + 0.000_000_126_7 * t);
+    let mr = m.to_radians();
+    let c = mr.sin() * (1.914_602 - t * (0.004_817 + 0.000_014 * t))
+        + (2.0 * mr).sin() * (0.019_993 - 0.000_101 * t)
+        + (3.0 * mr).sin() * 0.000_289;
+    let v = (m + c).to_radians();
+    let distance_au = 1.000_001_018 * (1.0 - e * e) / (1.0 + e * v.cos());
+    let omega = (125.04 - 1934.136 * t).to_radians();
+    let longitude_deg = (l0 + c - 0.005_69 - 0.004_78 * omega.sin()).rem_euclid(360.0);
+    let obliq = crate::astro::mean_obliquity(t) + 0.002_56 * omega.cos();
+    Geocentric {
+        longitude_deg,
+        distance_au,
+        equatorial: crate::astro::ecliptic_to_equatorial(longitude_deg, 0.0, obliq),
+    }
+}
+
 /// Atmospheric refraction (degrees) at a geometric elevation, NOAA's
 /// approximation for standard pressure and temperature.
 pub fn refraction_deg(elevation_deg: f64) -> f64 {

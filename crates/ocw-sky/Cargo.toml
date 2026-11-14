@@ -1,6 +1,6 @@
 [package]
 name = "ocw-sky"
-description = "Time zones, world clock, solar position and day / night light for Open Cycling World (spec §14 Phase 9)"
+description = "Time zones, world clock, sun, moon, planets, Milky Way and day / night light for Open Cycling World (spec §14 Phase 9)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

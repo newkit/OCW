@@ -47,6 +47,7 @@ impl Plugin for ConsoleCorePlugin {
             .init_resource::<Units>()
             .init_resource::<CameraMode>()
             .init_resource::<CameraOrbit>()
+            .init_resource::<crate::camera::SkyLook>()
             .init_resource::<CameraTilt>()
             .add_systems(Update, run_pending_commands);
         register_builtin_commands(app);
@@ -528,6 +529,25 @@ fn register_builtin_commands(app: &mut App) {
                 orbit.pitch.to_degrees(),
                 orbit.distance
             ))
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        User,
+        Command::new("camera.look")
+            .about("Look at the sky from just behind the rider: azimuth (0 = north, 90 = east) and elevation in degrees; 'camera.look off' returns to the chase camera")
+            .arg(Arg::new("azimuth").required(true).allow_negative_numbers(true))
+            .arg(Arg::new("elevation").allow_negative_numbers(true).value_parser(value_parser!(f32))),
+        |world, m| {
+            let az = m.get_one::<String>("azimuth").expect("required");
+            let mut look = world.resource_mut::<crate::camera::SkyLook>();
+            if az == "off" {
+                look.0 = None;
+                return Ok("camera: chase".into());
+            }
+            let az: f32 = az.parse().map_err(|_| format!("azimuth: not a number: {az}"))?;
+            let el = m.get_one::<f32>("elevation").copied().unwrap_or(20.0).clamp(-10.0, 90.0);
+            look.0 = Some((az.rem_euclid(360.0), el));
+            Ok(format!("camera looking at azimuth {:.0}°, elevation {el:.0}°", az.rem_euclid(360.0)))
         },
     ))
     .console_command(ConsoleCommand::new(
