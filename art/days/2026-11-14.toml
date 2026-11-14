@@ -21,12 +21,31 @@ shots = [
 ]
 
 [[chapter]]
+time = "00:57"
+title = "Bump"
+caption = "Phase 12 K1/K2: riders touch, bump and fall – as ragdolls. Collisions on, damage (for now) off."
+shots = [
+  { file = "025410-video-wayland-collision-bump-video.mp4", seconds = 3.5, start = 0.5, note = "elbow to elbow" },
+  { file = "025740-video-wayland-collision-crash-video.mp4", seconds = 4.0, start = 0.5, note = "…and down" },
+]
+
+[[chapter]]
 time = "02:27"
 title = "Photos along the road"
 caption = "Phase 8 T7: open orthophotos cut along every package road – the ground beside the asphalt is the real ground now."
 shots = [
-  { split = ["022731-agent-scenes-2026-11-14-t7-orthophoto-ortho-malbun-before-wayland.jpg", "022731-agent-scenes-2026-11-14-t7-orthophoto-ortho-malbun-after-wayland.jpg"], seconds = 4.0, note = "painted | photographed" },
-  { file = "022731-agent-scenes-2026-11-14-t7-orthophoto-ortho-tf21-after-wayland.jpg", seconds = 2.8, note = "Tenerife, TF-21" },
+  { split = ["022731-agent-scenes-2026-11-14-t7-orthophoto-ortho-malbun-before-wayland.jpg", "022731-agent-scenes-2026-11-14-t7-orthophoto-ortho-malbun-after-wayland.jpg"], seconds = 5.6, note = "painted | photographed" },
+  { file = "022731-agent-scenes-2026-11-14-t7-orthophoto-ortho-tf21-after-wayland.jpg", seconds = 3.9, note = "Tenerife, TF-21" },
+]
+
+[[chapter]]
+time = "04:50"
+title = "The workshop opens"
+caption = "Phase 4 W1–W3: a garage with a repair stand, parts paid in hearts, and builds that change the physics – a little."
+shots = [
+  { file = "045043-video-wayland-workshop-swap-video.mp4", seconds = 4.0, start = 0.5, note = "swap a wheel" },
+  { file = "063436-video-wayland-sprint-open-video.mp4", seconds = 3.5, start = 0.5, note = "Open race: parts count" },
+  { file = "081559-video-wayland-workshop-kit-video.mp4", seconds = 4.0, start = 0.5, note = "W4: try the kit on" },
 ]
 
 [[chapter]]
@@ -34,9 +53,9 @@ time = "08:35"
 title = "A night without stars"
 caption = "Phase 9 S2: the moon with its phases, the planets, a procedural Milky Way and street lamps. Stars? Postponed by the user."
 shots = [
-  { file = "083551-shot-wayland-sky-milky-way-teide.jpg", seconds = 3.0, note = "the Milky Way over the Teide" },
-  { file = "083514-shot-wayland-sky-full-moon-canadas.jpg", seconds = 2.8, note = "full moon, Las Cañadas" },
-  { file = "083501-shot-wayland-sky-night-lights.jpg", seconds = 2.5, note = "the lamps are on" },
+  { file = "083501-shot-wayland-sky-night-lights.jpg", seconds = 3.5, note = "the lamps are on" },
+  { file = "083514-shot-wayland-sky-full-moon-canadas.jpg", seconds = 3.9, note = "full moon, Las Cañadas" },
+  { file = "083551-shot-wayland-sky-milky-way-teide.jpg", seconds = 4.2, note = "the Milky Way over the Teide" },
 ]
 
 [[chapter]]
@@ -44,7 +63,7 @@ time = "09:21"
 title = "Bluetooth in the browser"
 caption = "Phase 10 B4: the browser app talks to trainers over Web Bluetooth – ERG and SIM, through the same state machine as the desktop."
 shots = [
-  { file = "092815-agent-web-web-ble-real-real-sim.jpg", seconds = 3.0, note = "a trainer, in a tab" },
+  { file = "092815-agent-web-web-ble-real-real-sim.jpg", seconds = 4.2, note = "a trainer, in a tab" },
 ]
 
 [[chapter]]
@@ -52,8 +71,11 @@ time = "10:24"
 title = "Then the weather came"
 caption = "Phase 9 S4 and S5: clouds, rain, hail, fog, snow, lightning and thunder – and a weather machine to order them."
 shots = [
-  { file = "121358-video-wayland-weather-clear-to-thunderstorm-video.mp4", seconds = 5.0, start = 0.5, speed = 3, note = "clear → thunderstorm in one minute" },
+  { file = "101822-agent-scenes-s4-wl-1-weather-thunderstorm-tenerife.jpg", seconds = 3.9, note = "Tenerife darkens" },
+  { file = "102627-agent-scenes-s4-wl-2-weather-rain-shower-video.mp4", seconds = 3.5, start = 0.5, note = "a passing shower" },
+  { file = "102714-agent-scenes-s4-wl-2-weather-gale-video.mp4", seconds = 3.0, start = 0.5, note = "a gale in the trees" },
   { file = "104730-agent-scenes-s4-wl-3-weather-thunderstorm-video.mp4", seconds = 3.5, start = 1.0, note = "Tenerife, thunder" },
+  { file = "121358-video-wayland-weather-clear-to-thunderstorm-video.mp4", seconds = 5.0, start = 0.5, speed = 3, note = "clear → thunderstorm in one minute" },
 ]
 
 [[chapter]]
@@ -61,8 +83,17 @@ time = "10:49"
 title = "Carbon and jerseys"
 caption = "Phase 8 T6: real materials on riders and bikes – carbon weave, spun metal, tyres, knit – and a jersey designer."
 shots = [
-  { file = "125010-shot-wayland-fix-carbon-stand.jpg", seconds = 2.8, note = "near-black carbon" },
-  { file = "104722-shot-wayland-t6-jersey-designer.jpg", seconds = 2.8, note = "design your own jersey" },
+  { file = "104722-shot-wayland-t6-jersey-designer.jpg", seconds = 3.9, note = "design your own jersey" },
+  { file = "105011-video-wayland-t6-designer-video.mp4", seconds = 4.0, start = 0.5, note = "the designer, live" },
+  { file = "125010-shot-wayland-fix-carbon-stand.jpg", seconds = 3.9, note = "near-black carbon" },
+]
+
+[[chapter]]
+time = "11:50"
+title = "Trees fight back"
+caption = "Phase 12 K3: world objects – trees, fences, walls, railings, tunnel walls. In wild mode, the tree wins."
+shots = [
+  { file = "115052-video-wayland-k3-tree-crash-video.mp4", seconds = 4.0, start = 0.5, note = "wild mode. tree." },
 ]
 
 [[chapter]]
@@ -70,8 +101,8 @@ time = "13:47"
 title = "Storm Lothar, 26 December 1999"
 caption = "Phase 9 S7: real weather from MeteoSwiss, DWD, MET Norway and Open-Meteo – and any day back to 1940, from ERA5."
 shots = [
-  { file = "134201-shot-wayland-menu-weather-real.jpg", seconds = 2.8, note = "Vaduz, right now: clear, 8 °C" },
-  { file = "134732-shot-wayland-weather-real-lothar-blackforest.jpg", seconds = 3.5, note = "the Feldberg, Lothar, rain at 5 °C" },
+  { file = "134201-shot-wayland-menu-weather-real.jpg", seconds = 3.9, note = "Vaduz, right now: clear, 8 °C" },
+  { file = "134732-shot-wayland-weather-real-lothar-blackforest.jpg", seconds = 4.9, note = "the Feldberg, Lothar, rain at 5 °C" },
 ]
 
 [[chapter]]
@@ -80,8 +111,8 @@ title = "Crashes cost something now"
 caption = "Phase 12 K4/K5: rider and bike condition, punctures, broken chains, a damage panel – and repairs, paid in hearts."
 shots = [
   { file = "141710-video-wayland-k4-damage-crash-video.mp4", seconds = 4.0, start = 0.5, note = "wheel touch" },
-  { file = "143646-shot-wayland-k4-damage-crash.jpg", seconds = 2.8, note = "bruised. scratched." },
-  { file = "142135-shot-wayland-k4-workshop-repair.jpg", seconds = 2.8, note = "27 ♥ for a rear wheel" },
+  { file = "142135-shot-wayland-k4-workshop-repair.jpg", seconds = 3.9, note = "27 ♥ for a rear wheel" },
+  { file = "143646-shot-wayland-k4-damage-crash.jpg", seconds = 3.9, note = "bruised. scratched." },
 ]
 
 [[chapter]]
@@ -89,11 +120,11 @@ time = "15:02"
 title = "Four seasons on one climb"
 caption = "Phase 9 S8: leaves by degree days and altitude, a crop calendar, a snow line – spring reaches Malbun six weeks after Vaduz."
 shots = [
-  { file = "150215-shot-wayland-season-vaduz-winter.jpg", seconds = 2.0, note = "15 January" },
-  { file = "150227-shot-wayland-season-vaduz-spring.jpg", seconds = 2.0, note = "1 May" },
-  { file = "150238-shot-wayland-season-vaduz-summer.jpg", seconds = 2.0, note = "1 July" },
-  { file = "150250-shot-wayland-season-vaduz-autumn.jpg", seconds = 2.4, note = "15 October" },
-  { split = ["150227-shot-wayland-season-vaduz-spring.jpg", "150348-shot-wayland-season-malbun-spring.jpg"], seconds = 4.0, note = "1 May: Vaduz 570 m | Malbun 1,600 m" },
+  { file = "150215-shot-wayland-season-vaduz-winter.jpg", seconds = 2.8, note = "15 January" },
+  { file = "150227-shot-wayland-season-vaduz-spring.jpg", seconds = 2.8, note = "1 May" },
+  { split = ["150227-shot-wayland-season-vaduz-spring.jpg", "150348-shot-wayland-season-malbun-spring.jpg"], seconds = 5.6, note = "1 May: Vaduz 570 m | Malbun 1,600 m" },
+  { file = "150238-shot-wayland-season-vaduz-summer.jpg", seconds = 2.8, note = "1 July" },
+  { file = "150250-shot-wayland-season-vaduz-autumn.jpg", seconds = 3.4, note = "15 October" },
 ]
 
 [[chapter]]
@@ -101,7 +132,7 @@ time = "15:42"
 title = "Headwind"
 caption = "Phase 9 S6: the wind pushes back – and the trainer feels it. Same 250 W, same 10 % climb."
 shots = [
-  { split = ["154202-shot-wayland-weather-physics-headwind-vaduz.jpg", "154228-shot-wayland-weather-physics-tailwind-vaduz.jpg"], seconds = 4.5, note = "7.7 km/h | 12.2 km/h" },
+  { split = ["154202-shot-wayland-weather-physics-headwind-vaduz.jpg", "154228-shot-wayland-weather-physics-tailwind-vaduz.jpg"], seconds = 6.3, note = "7.7 km/h | 12.2 km/h" },
 ]
 
 [[chapter]]
@@ -109,9 +140,9 @@ time = "16:23"
 title = "Trees from space"
 caption = "Phase 8 T3: the EU's Copernicus forest maps decide which tree is a beech and which a spruce – and how dense the wood is."
 shots = [
-  { file = "162351-shot-wayland-forest-vaduz-winter.jpg", seconds = 2.8, note = "bare beeches, green spruces" },
-  { file = "162333-shot-wayland-forest-vaduz-autumn.jpg", seconds = 2.8, note = "the same slope in October" },
-  { file = "162410-shot-wayland-forest-bf-autumn.jpg", seconds = 2.8, note = "Schauinsland" },
+  { file = "162333-shot-wayland-forest-vaduz-autumn.jpg", seconds = 3.9, note = "the same slope in October" },
+  { file = "162351-shot-wayland-forest-vaduz-winter.jpg", seconds = 3.9, note = "bare beeches, green spruces" },
+  { file = "162410-shot-wayland-forest-bf-autumn.jpg", seconds = 3.9, note = "Schauinsland" },
 ]
 
 [[chapter]]
@@ -130,8 +161,8 @@ title = "Slippery when wet"
 caption = "Phase 12/13 leftovers: wet roads slide, the camera shakes, warnings become graphics – and flyovers follow a camera path."
 shots = [
   { file = "175102-video-wayland-k12-wet-slide-video.mp4", seconds = 4.5, start = 0.5, note = "sliding – lean less" },
+  { file = "175135-shot-wayland-k13-rider-list.jpg", seconds = 3.4, note = "who flies, who is hurt" },
   { file = "175258-video-wayland-g5-flyover-vaduz-video.mp4", seconds = 5.0, start = 1.0, speed = 2, note = "a guided flyover over Vaduz" },
-  { file = "175135-shot-wayland-k13-rider-list.jpg", seconds = 2.4, note = "who flies, who is hurt" },
 ]
 
 [[chapter]]
@@ -139,10 +170,11 @@ time = "18:07"
 title = "A new bike on the wall"
 caption = "Phase 4: buy framesets at the bench, a new bike on the + hook, lights you fit yourself, an idle pose at the mirror."
 shots = [
-  { file = "180146-shot-wayland-workshop-bench-catalogue.jpg", seconds = 2.6, note = "the bench" },
-  { file = "180708-shot-wayland-workshop-bench-plus-bought.jpg", seconds = 2.6, note = "Road – aero 2, on its hook" },
-  { split = ["180722-shot-wayland-lights-night-fitted.jpg", "180736-shot-wayland-lights-night-none.jpg"], seconds = 4.0, note = "with lights | without" },
-  { file = "180801-shot-wayland-workshop-mirror-idle-kit-colours.jpg", seconds = 2.6, note = "red gloves, yellow socks" },
+  { file = "180146-shot-wayland-workshop-bench-catalogue.jpg", seconds = 3.6, note = "the bench" },
+  { file = "180708-shot-wayland-workshop-bench-plus-bought.jpg", seconds = 3.6, note = "Road – aero 2, on its hook" },
+  { split = ["180722-shot-wayland-lights-night-fitted.jpg", "180736-shot-wayland-lights-night-none.jpg"], seconds = 5.6, note = "with lights | without" },
+  { file = "180801-shot-wayland-workshop-mirror-idle-kit-colours.jpg", seconds = 3.6, note = "red gloves, yellow socks" },
+  { file = "180959-video-wayland-workshop-bench-video.mp4", seconds = 4.5, start = 0.5, note = "buy, hang, sell" },
 ]
 
 [[chapter]]
@@ -150,7 +182,7 @@ time = "18:42"
 title = "Two riders, one real room"
 caption = "Phase 10 B5: sound and LiveKit voice in the browser. The real test failed until a hidden tab got its own window."
 shots = [
-  { split = ["184203-agent-web-web-audio-livekit-livekit-ada.jpg", "184203-agent-web-web-audio-livekit-livekit-bea.jpg"], seconds = 4.0, note = "Ada hears Bea | Bea hears Ada" },
+  { split = ["184203-agent-web-web-audio-livekit-livekit-ada.jpg", "184203-agent-web-web-audio-livekit-livekit-bea.jpg"], seconds = 5.6, note = "Ada hears Bea | Bea hears Ada" },
 ]
 
 [[chapter]]
@@ -158,8 +190,8 @@ time = "20:03"
 title = "The browser grows up"
 caption = "Phase 10 B6: the same menus, settings, HUD and gamepad as the desktop – one code base – and screenshots as downloads."
 shots = [
-  { file = "202223-agent-web-web-menu.jpg", seconds = 2.6, note = "the menu, in Chromium" },
-  { file = "202223-agent-web-web-hud.jpg", seconds = 2.8, note = "heavy rain, 64 km/h crosswind" },
+  { file = "202223-agent-web-web-menu.jpg", seconds = 3.6, note = "the menu, in Chromium" },
+  { file = "202223-agent-web-web-hud.jpg", seconds = 3.9, note = "heavy rain, 64 km/h crosswind" },
 ]
 
 [[chapter]]
@@ -176,9 +208,9 @@ time = "21:23"
 title = "Roofs for every shape"
 caption = "Phase 8 T4: straight-skeleton roofs on L-, T- and U-shaped houses, dormers, balconies, and the cathedral's spire from its parts."
 shots = [
-  { file = "212309-agent-scenes-t4b-wayland-look-houses-vaduz-polygons.jpg", seconds = 2.8, note = "hipped L, roof windows" },
-  { file = "212320-agent-scenes-t4b-wayland-look-houses-vaduz-cathedral.jpg", seconds = 2.8, note = "St. Florin's spire" },
-  { file = "212343-agent-scenes-t4b-wayland-look-houses-triesenberg-balconies.jpg", seconds = 2.8, note = "Triesenberg, balconies" },
+  { file = "212309-agent-scenes-t4b-wayland-look-houses-vaduz-polygons.jpg", seconds = 3.9, note = "hipped L, roof windows" },
+  { file = "212320-agent-scenes-t4b-wayland-look-houses-vaduz-cathedral.jpg", seconds = 3.9, note = "St. Florin's spire" },
+  { file = "212343-agent-scenes-t4b-wayland-look-houses-triesenberg-balconies.jpg", seconds = 3.9, note = "Triesenberg, balconies" },
 ]
 
 [[chapter]]
@@ -186,7 +218,7 @@ time = "22:05"
 title = "Plan B for old graphics cards"
 caption = "Phase 10 B7: a second browser build on WebGL 2, quality presets Low to High – and leela, back online, catches up."
 shots = [
-  { file = "205239-agent-web-web-webgl2.jpg", seconds = 2.8, note = "WebGL 2, Low preset" },
+  { file = "205239-agent-web-web-webgl2.jpg", seconds = 3.9, note = "WebGL 2, Low preset" },
 ]
 
 [[chapter]]
