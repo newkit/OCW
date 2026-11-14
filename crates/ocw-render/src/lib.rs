@@ -4,6 +4,7 @@
 //! renders whatever the app puts into [`RideView`]; it knows nothing about
 //! networking or devices.
 
+pub mod aids_hud;
 pub mod bridges;
 pub mod building_material;
 pub mod camera;
@@ -55,6 +56,8 @@ pub mod world;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+
+pub use aids_hud::{CameraFx, HitWarningView, WarningKind};
 
 use bevy::prelude::*;
 use ocw_core::RiderId;
@@ -122,6 +125,29 @@ pub struct RideView {
     /// The damage widget of the local rider (spec §14 Phase 12F); `None`
     /// with `ride.damage` off (hidden).
     pub damage: Option<damage_hud::DamageWidgetView>,
+    /// The proximity arrow (spec §14 Phase 12D, with the proximity cue):
+    /// the direction to a rider close beside, in front or behind (rad: 0
+    /// ahead, positive to the right); `None`: nobody close, or the cue off.
+    pub proximity_arrow: Option<f32>,
+    /// The "last moment" warning (spec §14 Phase 12D, an optional aid).
+    pub hit_warning: Option<HitWarningView>,
+    /// The chase camera's shake and wider orbit after the own rider's
+    /// crash or a hard bump (spec §14 Phase 12C).
+    pub camera_fx: CameraFx,
+    /// A guided camera path being played (spec §14 Phase 13 G5, flyover
+    /// videos): the camera is put here instead of following the rider.
+    pub guided_camera: Option<GuidedCamera>,
+}
+
+/// The camera's pose on a guided path (spec §14 Phase 13 G5).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GuidedCamera {
+    /// The eye (local metres, y up).
+    pub eye: [f64; 3],
+    /// The unit direction it looks along.
+    pub look: [f64; 3],
+    /// Its speed (m/s; x, z): the tiles stream ahead of it.
+    pub velocity: [f64; 2],
 }
 
 /// A pin put in god mode (spec §14 Phase 13D).
@@ -231,6 +257,10 @@ impl RideView {
             flight: None,
             unicorns: Vec::new(),
             pins: Vec::new(),
+            proximity_arrow: None,
+            hit_warning: None,
+            camera_fx: CameraFx::default(),
+            guided_camera: None,
         }
     }
 
@@ -414,6 +444,8 @@ impl Plugin for OcwRenderPlugins {
             // the avatars (12E, K5).
             damage_hud::DamageHudPlugin,
             damage_look::DamageLookPlugin,
+            // The warning and the proximity arrow (spec §14 Phase 12D).
+            aids_hud::AidsHudPlugin,
         ));
     }
 }

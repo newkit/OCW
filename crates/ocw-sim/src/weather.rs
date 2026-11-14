@@ -64,6 +64,17 @@ pub fn at_rider(w: &WeatherPhysics, track: &dyn Track, state: &RiderState) -> At
     }
 }
 
+/// The road's grip under the rider in `state` on `track` (S6: 1 = dry,
+/// also in a tunnel and when the weather does not affect the physics,
+/// `None`): the collision and skid rules of spec §14 Phase 12 use it.
+pub fn grip(w: Option<&WeatherPhysics>, track: &dyn Track, state: &RiderState) -> f64 {
+    match w {
+        None => 1.0,
+        Some(_) if track.sheltered(state.distance) => 1.0,
+        Some(w) => w.grip,
+    }
+}
+
 /// The wake's sideways drift at most (m per metre behind, ≈ 56° yaw).
 pub const MAX_WAKE_DRIFT: f64 = 1.5;
 

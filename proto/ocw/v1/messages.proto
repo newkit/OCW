@@ -1011,6 +1011,9 @@ enum ContactKind {
   CONTACT_KIND_WORLD = 7;
   // Into the road edge at more than 30° (a hit on a wall).
   CONTACT_KIND_ROAD_EDGE = 8;
+  // Slid out on a slippery road (Phase 9 S6 grip → Phase 12): leaning
+  // further than the wet road holds.
+  CONTACT_KIND_SLIDE = 9;
 }
 
 message CrashState {

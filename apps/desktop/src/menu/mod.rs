@@ -97,11 +97,13 @@ pub struct MenuState {
     queued: Vec<Action>,
 }
 
-/// The voice, time-machine and weather state the menu pages show.
+/// The voice, time-machine, weather and rider-list state the menu pages
+/// show.
 type MenuInfos<'w> = (
     Option<Res<'w, crate::voice::VoiceMenuInfo>>,
     Option<Res<'w, crate::timemachine::TimeMachineInfo>>,
     Option<Res<'w, crate::weather::WeatherState>>,
+    Option<Res<'w, crate::riders_page::RiderListInfo>>,
 );
 
 #[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
@@ -119,7 +121,7 @@ fn menu_input(
     riders: Option<Res<RiderProfiles>>,
     catalog: Option<Res<RideCatalog>>,
     audio: Option<Res<AudioDeviceList>>,
-    (voice, time_machine, weather): MenuInfos<'_>,
+    (voice, time_machine, weather, rider_list): MenuInfos<'_>,
     flight: Option<ResMut<crate::god::FlightPointer>>,
 ) {
     let mut pressed = pads.iter().fold(
@@ -187,7 +189,11 @@ fn menu_input(
             catalog.as_deref(),
             audio.as_deref(),
             voice.as_deref(),
-            (time_machine.as_deref(), weather.as_deref()),
+            (
+                time_machine.as_deref(),
+                weather.as_deref(),
+                rider_list.as_deref(),
+            ),
         )
     };
     for action in actions {
@@ -237,6 +243,17 @@ pub fn hint(page: Page, list_pages: usize, depth: usize) -> String {
             // One line at 16:9 (the generic hint is longer).
             return format!("↑/↓ move   ←/→ change   Enter/A select   Esc/B {back}");
         }
+        // The rider list: information, paged with Left / Right.
+        Page::Sub(settings_pages::Page::RiderList) => {
+            return format!(
+                "Up/Down move   {}Esc/B {back}",
+                if list_pages > 1 {
+                    "Left/Right page   "
+                } else {
+                    ""
+                }
+            );
+        }
         _ => {}
     }
     format!(
@@ -261,11 +278,15 @@ fn sub_rows(
     catalog: Option<&RideCatalog>,
     audio: Option<&AudioDeviceList>,
     voice: Option<&crate::voice::VoiceMenuInfo>,
-    (time_machine, weather): (
+    (time_machine, weather, rider_list): (
         Option<&crate::timemachine::TimeMachineInfo>,
         Option<&crate::weather::WeatherState>,
+        Option<&crate::riders_page::RiderListInfo>,
     ),
 ) -> Vec<settings_pages::Row> {
+    if page == settings_pages::Page::RiderList {
+        return rider_list.map(|l| l.menu_rows()).unwrap_or_default();
+    }
     let no_time = crate::timemachine::TimeMachineInfo::default();
     let time_machine = time_machine.unwrap_or(&no_time);
     if page == settings_pages::Page::TimeMachine {
@@ -329,6 +350,13 @@ fn page_text(
     }
 }
 
+/// The time-machine, weather and rider-list state the view shows.
+type ViewInfos<'w> = (
+    Option<Res<'w, crate::timemachine::TimeMachineInfo>>,
+    Option<Res<'w, crate::weather::WeatherState>>,
+    Option<Res<'w, crate::riders_page::RiderListInfo>>,
+);
+
 #[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
 fn write_view(
     mut state: ResMut<MenuState>,
@@ -341,10 +369,7 @@ fn write_view(
         Option<Res<AudioDeviceList>>,
         Option<Res<crate::voice::VoiceMenuInfo>>,
     ),
-    (time_machine, weather): (
-        Option<Res<crate::timemachine::TimeMachineInfo>>,
-        Option<Res<crate::weather::WeatherState>>,
-    ),
+    (time_machine, weather, rider_list): ViewInfos<'_>,
     mut view: ResMut<MenuView>,
 ) {
     // Values changed by the menu's commands (or the console) show at once.
@@ -356,7 +381,11 @@ fn write_view(
             catalog.as_deref(),
             audio.as_deref(),
             voice.as_deref(),
-            (time_machine.as_deref(), weather.as_deref()),
+            (
+                time_machine.as_deref(),
+                weather.as_deref(),
+                rider_list.as_deref(),
+            ),
         )
     };
     state.menu.refresh(&rows);
@@ -374,6 +403,10 @@ fn write_view(
                     (Page::Sub(p), _, Some(w)) if p.is_weather_page() => {
                         crate::weather::status(p, w, menu.focus())
                     }
+                    (Page::Sub(settings_pages::Page::RiderList), _, _) => rider_list
+                        .as_deref()
+                        .map(|l| l.summary())
+                        .unwrap_or_default(),
                     _ => String::new(),
                 },
                 text: def
@@ -392,6 +425,15 @@ fn write_view(
                         Some(crate::weather::grid(w.unwrap_or(&clear)))
                     }
                     _ => None,
+                },
+                // The rider list's unicorns and damage dots (13E, 12F).
+                marks: match (page, rider_list.as_deref()) {
+                    (Page::Sub(settings_pages::Page::RiderList), Some(l)) => menu
+                        .shown_rows()
+                        .into_iter()
+                        .map(|r| r.and_then(|i| l.mark(i)).unwrap_or_default())
+                        .collect(),
+                    _ => Vec::new(),
                 },
             }
         }
@@ -445,6 +487,8 @@ mod tests {
             WeatherCustom,
             WeatherAir,
             WeatherReal,
+            RidingAids,
+            RiderList,
         ];
         for p in &all {
             match p {
@@ -453,7 +497,7 @@ mod tests {
                 | WorldInfo | WorldSun | WorldSources | WorldSource(_) | Weather | Routes
                 | Rides | GpxImport | Workouts | Voice | VoiceDevices | VoiceParticipants
                 | AudioVoice | TimeMachine | WeatherPresets | WeatherCustom | WeatherAir
-                | WeatherReal => {}
+                | WeatherReal | RidingAids | RiderList => {}
             }
         }
         all
@@ -540,6 +584,7 @@ mod tests {
                 hint: hint(page, 2, 3),
                 dimmed: Vec::new(),
                 grid,
+                marks: Vec::new(),
             });
         }
     }

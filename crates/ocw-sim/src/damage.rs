@@ -506,7 +506,9 @@ pub fn drivetrain_loss(drivetrain: f64) -> f64 {
     }
 }
 
-/// How hard a contact type hits (head-on and the world hardest, 12E).
+/// How hard a contact type hits (head-on and the world hardest, 12E; a
+/// slide on a wet road – a lowside onto the hip – is the softest fall,
+/// the road surface wet or icy under it).
 pub fn hardness(kind: ContactKind) -> f64 {
     match kind {
         ContactKind::HeadOn | ContactKind::World(_) => 1.0,
@@ -515,6 +517,7 @@ pub fn hardness(kind: ContactKind) -> f64 {
         ContactKind::RearEnd => 0.5,
         ContactKind::WheelTouch | ContactKind::WheelToWheel => 0.3,
         ContactKind::Side => 0.2,
+        ContactKind::Slide => 0.25,
     }
 }
 

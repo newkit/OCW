@@ -84,6 +84,12 @@ pub enum Page {
     AudioVoice,
     /// World → Time machine (spec §14 Phase 9; rows from `timemachine`).
     TimeMachine,
+    /// Controls → Riding aids (spec §14 Phase 12C / 12D): the proximity
+    /// cue and arrow, the "last moment" warning, the camera shake.
+    RidingAids,
+    /// Navi → Riders in this ride (spec §14 Phase 13E, 12F; rows from
+    /// `rider_list`): who rides, where, who flies, who is hurt.
+    RiderList,
 }
 
 impl Page {
@@ -132,6 +138,8 @@ impl Page {
             Self::VoiceParticipants => "Voice participants",
             Self::AudioVoice => "Audio: voice",
             Self::TimeMachine => "Time machine",
+            Self::RidingAids => "Riding aids",
+            Self::RiderList => "Riders in this ride",
         }
     }
 
@@ -200,6 +208,7 @@ impl Page {
             Self::WorldSource(_) => Some(Self::WorldSources),
             Self::VoiceDevices | Self::VoiceParticipants => Some(Self::Voice),
             Self::AudioVoice => Some(Self::Audio),
+            Self::RidingAids => Some(Self::Controls),
             _ => None,
         }
     }
@@ -270,6 +279,12 @@ impl Page {
             Self::TimeMachine => &[
                 "Date, time and speed of the world's clock (sun and light). Solo you set it; in a shared ride the host does.",
             ],
+            Self::RidingAids => &[
+                "Aids that never steer: an arrow to a rider close by, a warning before a hit or a slide. Shake: off for comfort.",
+            ],
+            Self::RiderList => {
+                &["The unicorn: flying in unicorn mode. The dot: hurt, or the bike damaged."]
+            }
             Self::Workouts => &[
                 "Structured workouts in ERG mode: yours from the workouts folder (.toml, .erg, .mrc), then the examples. % FTP targets use the rider's FTP.",
             ],
@@ -334,6 +349,25 @@ pub fn setting_row(settings: &Settings, key: &str, label: &str) -> Row {
         left: Some(set(-1)),
         right: Some(set(1)),
         confirm,
+    }
+}
+
+/// The Riding aids row's value: which aids are on ("warning, shake").
+fn aids_summary(settings: &Settings) -> String {
+    let on = |k: &str| settings.get(k).ok().and_then(|v| v.as_bool()) == Some(true);
+    let names: Vec<&str> = [
+        ("ride.proximity_cue", "arrow"),
+        ("ride.hit_warning", "warning"),
+        ("display.camera_shake", "shake"),
+    ]
+    .into_iter()
+    .filter(|(k, _)| on(k))
+    .map(|(_, n)| n)
+    .collect();
+    if names.is_empty() {
+        "none".into()
+    } else {
+        names.join(", ")
     }
 }
 
@@ -553,8 +587,22 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
             // Collisions (spec §14 Phase 12A, 12D).
             setting_row(settings, "ride.collisions", "Collisions"),
             setting_row(settings, "ride.chaotic_bots", "Chaotic bots"),
-            setting_row(settings, "ride.proximity_cue", "Proximity cue"),
+            // The aids have their own page (the ten-foot rule: six rows).
+            Row {
+                label: "Riding aids".into(),
+                value: Some(aids_summary(settings)),
+                left: None,
+                right: None,
+                confirm: Some(Activate::Open(Page::RidingAids)),
+            },
         ],
+        Page::RidingAids => vec![
+            setting_row(settings, "ride.proximity_cue", "Proximity arrow and bell"),
+            setting_row(settings, "ride.hit_warning", "Last-moment warning"),
+            setting_row(settings, "display.camera_shake", "Camera shake"),
+        ],
+        // From the session (`rider_list`).
+        Page::RiderList => Vec::new(),
         Page::Trainer => vec![
             setting_row(settings, "trainer.difficulty", "Difficulty (%)"),
             setting_row(

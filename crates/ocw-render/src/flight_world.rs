@@ -176,6 +176,24 @@ pub fn flight_radius(height_m: f64) -> i32 {
 /// Where the tiles stream for the view: around the rider while riding,
 /// around the unicorn and ahead of it while flying.
 pub fn stream_focus(view: &RideView) -> Option<StreamFocus> {
+    // A guided camera path (spec §14 Phase 13 G5): around the camera and
+    // ahead of it, wider the higher it is above the rider's road.
+    if let Some(g) = &view.guided_camera {
+        let v = g.velocity;
+        let speed = v[0].hypot(v[1]);
+        let ahead = (speed > 1.0).then(|| {
+            let d = (speed * AHEAD_S).min(AHEAD_MAX_M);
+            [g.eye[0] + v[0] / speed * d, g.eye[2] + v[1] / speed * d]
+        });
+        let ground = view.local().map_or(0.0, |l| {
+            view.track(l.id).sample(l.state.distance).position[1]
+        });
+        return Some(StreamFocus {
+            centre: [g.eye[0], g.eye[2]],
+            radius: flight_radius(g.eye[1] - ground),
+            ahead,
+        });
+    }
     if let Some(f) = &view.flight {
         let v = f.velocity;
         let speed = v[0].hypot(v[1]);
@@ -201,6 +219,9 @@ pub fn stream_focus(view: &RideView) -> Option<StreamFocus> {
 /// How much farther the neighbour packages load in flight (m): 10 s of
 /// the horizontal speed; 0 while riding.
 pub fn neighbour_reach_m(view: &RideView) -> f64 {
+    if let Some(g) = &view.guided_camera {
+        return g.velocity[0].hypot(g.velocity[1]) * NEIGHBOUR_AHEAD_S;
+    }
     view.flight.as_ref().map_or(0.0, |f| {
         f.velocity[0].hypot(f.velocity[1]) * NEIGHBOUR_AHEAD_S
     })
@@ -304,6 +325,18 @@ mod tests {
         let riding = RideView::new(Route::test_loop());
         assert_eq!(neighbour_reach_m(&riding), 0.0);
         assert!(stream_focus(&riding).is_none(), "no rider yet");
+        // A guided camera path (G5): around the camera, ahead of it.
+        let mut guided = RideView::new(Route::test_loop());
+        guided.guided_camera = Some(crate::GuidedCamera {
+            eye: [500.0, 1_000.0, 200.0],
+            look: [1.0, 0.0, 0.0],
+            velocity: [50.0, 0.0],
+        });
+        let f = stream_focus(&guided).unwrap();
+        assert_eq!(f.centre, [500.0, 200.0]);
+        assert_eq!(f.radius, STREAM_RADIUS + 1);
+        assert!((f.ahead.unwrap()[0] - 650.0).abs() < 1e-9);
+        assert_eq!(neighbour_reach_m(&guided), 500.0);
     }
 
     #[test]

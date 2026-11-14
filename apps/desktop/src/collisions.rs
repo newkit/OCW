@@ -1,7 +1,8 @@
 //! Collisions in the desktop app (spec §14 Phase 12): the settings
 //! `ride.collisions`, `ride.chaotic_bots` (rules the server applies; the
-//! host decides in shared rides) and `ride.proximity_cue` (a client-side
-//! aid), their console commands, the staged contacts `dev.bump` /
+//! host decides in shared rides), `ride.proximity_cue` and
+//! `ride.hit_warning` (client-side aids, spec §14 Phase 12D), their console
+//! commands, the staged contacts `dev.bump` /
 //! `dev.crash` (local server only) and `ride.crashes`, the crash state;
 //! damage (spec §14 Phase 12E): `ride.damage` (off by default, Q1),
 //! `ride.repair` (mend a puncture now), `hud.damage` (the widget) and
@@ -21,6 +22,8 @@ pub struct CollisionSettings {
     pub collisions: bool,
     pub chaotic_bots: bool,
     pub proximity_cue: bool,
+    /// The "last moment" warning (12D; on, proposal v3.22).
+    pub hit_warning: bool,
     /// `ride.damage` (12E; Q1: off).
     pub damage: bool,
 }
@@ -32,6 +35,7 @@ impl Default for CollisionSettings {
             collisions: true,
             chaotic_bots: false,
             proximity_cue: false,
+            hit_warning: true,
             damage: false,
         }
     }
@@ -149,7 +153,7 @@ pub fn register_commands(app: &mut App) {
         .console_command(ConsoleCommand::new(
             Permission::User,
             Command::new("ride.proximity_cue")
-                .about("A soft sound and a HUD arrow when someone is close beside or in front (never steers)")
+                .about("A soft sound and a HUD arrow when someone is close beside, in front or behind (never steers)")
                 .arg(on_off_arg()),
             |world, m| {
                 let on = on_off(m);
@@ -158,6 +162,20 @@ pub fn register_commands(app: &mut App) {
                     c.0.set_proximity_cue(on);
                 }
                 Ok(format!("proximity cue {}", if on { "on" } else { "off" }))
+            },
+        ))
+        .console_command(ConsoleCommand::new(
+            Permission::User,
+            Command::new("ride.hit_warning")
+                .about("The \"last moment\" warning: an amber flash about a second before a predicted hit, and when the tyres slide (never steers)")
+                .arg(on_off_arg()),
+            |world, m| {
+                let on = on_off(m);
+                world.resource_mut::<CollisionSettings>().hit_warning = on;
+                if let Some(mut c) = world.get_resource_mut::<ClientState>() {
+                    c.0.set_hit_warning(on);
+                }
+                Ok(format!("last-moment warning {}", if on { "on" } else { "off" }))
             },
         ))
         .console_command(ConsoleCommand::new(

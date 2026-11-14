@@ -8,6 +8,13 @@
 //! front is shed; the rider's power still counts, so a strong rider sits
 //! on the wheel until there is a gap).
 //!
+//! On a slippery road (spec §14 Phase 9 S6: the road's grip below 1)
+//! autodrive looks further ahead and reacts earlier – the look-ahead and
+//! the time to collision grow by 1 / grip – and holds back more gently, so
+//! a bot field stays clear of each other on a wet or icy road as well
+//! (braking and steering need more room there). On a dry road (grip 1) the
+//! plan is exactly the dry one.
+//!
 //! Pure; the same code on the server (every autodrive rider and bot) and
 //! on the client (the own rider's prediction), so they agree. Manual
 //! riders get no help.
@@ -86,6 +93,15 @@ pub struct Me {
     /// Largest offset either side ([`crate::physics::lateral_limit`]).
     pub limit_m: f64,
     pub road_width_m: f64,
+    /// The road's grip under the rider (S6; 1 = dry, also when the weather
+    /// does not affect the physics).
+    pub grip: f64,
+}
+
+/// How much earlier autodrive reacts on a road of `grip`: 1 / grip (at
+/// most 1 / [`crate::collide::MIN_CRASH_SCALE`]); exactly 1 when dry.
+pub fn caution(grip: f64) -> f64 {
+    1.0 / crate::collide::crash_scale(grip)
 }
 
 /// What autodrive keeps between ticks: the line it moved to while passing.
@@ -156,7 +172,8 @@ fn free(lane: f64, me: &Me, others: &[Other], ahead_m: f64) -> bool {
 /// One tick of autodrive avoidance for `me` among `others`.
 pub fn plan(me: &Me, others: &[Other], overtake_left: bool, state: &mut AvoidState) -> Plan {
     let v = me.speed;
-    let ahead_m = (LOOKAHEAD_S * v).max(MIN_LOOKAHEAD_M);
+    let k = caution(me.grip);
+    let ahead_m = (LOOKAHEAD_S * v).max(MIN_LOOKAHEAD_M) * k;
     let line = state.pass_m.unwrap_or(me.lane_m);
     // The nearest rider ahead in the line that needs a reaction.
     let blocker = others
@@ -176,7 +193,7 @@ pub fn plan(me: &Me, others: &[Other], overtake_left: bool, state: &mut AvoidSta
             } else {
                 f64::INFINITY
             };
-            ttc < TTC_S || gap < HOLD_GAP_M + 1.0
+            ttc < TTC_S * k || gap < HOLD_GAP_M + 1.0
         })
         .min_by(|a, b| a.ahead_m.total_cmp(&b.ahead_m));
     let mut holding = false;
@@ -221,7 +238,7 @@ pub fn plan(me: &Me, others: &[Other], overtake_left: bool, state: &mut AvoidSta
         })
         .map(|o| {
             let gap = o.ahead_m - (half_l() + o.half_length);
-            (o.speed + HOLD_GAIN * (gap - HOLD_GAP_M)).max(0.0)
+            (o.speed + HOLD_GAIN / k * (gap - HOLD_GAP_M)).max(0.0)
         })
         .reduce(f64::min);
     Plan {
@@ -242,7 +259,53 @@ mod tests {
             lane_m: lateral,
             limit_m: 2.4,
             road_width_m: 6.0,
+            grip: 1.0,
         }
+    }
+
+    /// On a wet road (S6's grip) autodrive reacts earlier and holds back
+    /// more gently; a dry road plans exactly as before.
+    #[test]
+    fn a_wet_road_reacts_earlier() {
+        // 3 m/s faster, 12 m ahead: 3.4 s – no move when dry (below 3 s
+        // only), a move on a wet road (3 s / 0.75 = 4 s).
+        let slow = Other::rider(12.0, 0.0, 0.0, 7.0);
+        let mut st = AvoidState::default();
+        assert_eq!(plan(&me(0.0, 10.0), &[slow], true, &mut st).target_m, 0.0);
+        let wet = Me {
+            grip: 0.75,
+            ..me(0.0, 10.0)
+        };
+        let mut st = AvoidState::default();
+        let p = plan(&wet, &[slow], true, &mut st);
+        assert!((p.target_m + 0.9).abs() < 1e-9, "{p:?}");
+        // Looking further ahead: a rider 50 m ahead in the line at 10 m/s
+        // (40 m look-ahead dry, 100 m on ice) is braked for only on ice.
+        let far = Other::rider(50.0, 0.0, 0.0, 9.0);
+        let beside = Other::rider(0.0, -0.9, -0.9, 10.0);
+        let mut st = AvoidState::default();
+        let dry = plan(&me(0.0, 10.0), &[far, beside], true, &mut st);
+        assert_eq!(dry.speed_cap, None, "{dry:?}");
+        let ice = Me {
+            grip: 0.4,
+            ..me(0.0, 10.0)
+        };
+        let mut st = AvoidState::default();
+        assert!(
+            plan(&ice, &[far, beside], true, &mut st)
+                .speed_cap
+                .is_some()
+        );
+        // Holding back: a lower cap at the same gap (more room to brake),
+        // the same speed at the wheel gap.
+        let ahead = Other::rider(6.0, 0.0, 0.0, 7.0);
+        let mut st = AvoidState::default();
+        let d = plan(&me(0.0, 10.0), &[ahead, beside], true, &mut st);
+        let mut st = AvoidState::default();
+        let w = plan(&wet, &[ahead, beside], true, &mut st);
+        assert!(w.speed_cap.unwrap() < d.speed_cap.unwrap(), "{d:?} {w:?}");
+        assert_eq!(caution(1.0), 1.0);
+        assert!((caution(0.5) - 2.0).abs() < 1e-12);
     }
 
     #[test]

@@ -11,6 +11,7 @@ mod argsfile;
 mod audio;
 mod automation;
 mod build_id;
+mod camera_path;
 mod collisions;
 mod connection;
 mod devices;
@@ -26,6 +27,7 @@ mod platform;
 mod recording;
 mod restart;
 mod ride;
+mod riders_page;
 mod settings;
 mod strava;
 mod surface;
@@ -453,6 +455,12 @@ fn main() -> AppExit {
         timemachine::TimeMachinePlugin,
         weather::WeatherPlugin,
         workshop::WorkshopPlugin,
+    ))
+    .add_plugins((
+        // The camera's shake setting and guided paths (spec §14 Phase 12C,
+        // Phase 13 G5) and the rider list (13E).
+        camera_path::CameraPathPlugin,
+        riders_page::RidersPagePlugin,
     ))
     .add_systems(Startup, startup_commands)
     .add_systems(Update, timed_commands);

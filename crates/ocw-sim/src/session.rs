@@ -111,6 +111,8 @@ struct Rider {
     avoid: crate::avoid::AvoidState,
     mistake_until: u64,
     mistake_drift: f64,
+    /// A leaning rider's skid on a slippery road (S6 grip → 12B).
+    skid: crate::collide::Skid,
     joined_tick: u64,
     /// Takes part in collisions (bots at once; clients after joining, 12A).
     solid: bool,
@@ -699,6 +701,7 @@ impl Session {
                 crash: None,
                 bump: None,
                 avoid: Default::default(),
+                skid: Default::default(),
                 mistake_until: 0,
                 mistake_drift: 0.0,
                 joined_tick: self.tick,
@@ -1197,6 +1200,9 @@ impl Session {
             })
             .collect();
         let mut edge_hits: Vec<(RiderId, f64, f64)> = Vec::new();
+        // Skids on a slippery road (S6 grip → 12B): the wobble when a
+        // slide begins and the falls, applied after the loop.
+        let mut skids: Vec<(RiderId, crate::collide::Response)> = Vec::new();
         // Damage (spec §14 Phase 12E): its effects on the virtual rider,
         // the stops, the recovery; the entrants of an event that is not over.
         let damage_on = self.damage_on();
@@ -1376,6 +1382,7 @@ impl Session {
                         lane_m: lane,
                         limit_m: physics::lateral_limit(width),
                         road_width_m: width,
+                        grip: crate::weather::grip(weather.as_ref(), track, &rider.state),
                     };
                     let plan = avoid::plan(&me, &others, overtake_left, &mut rider.avoid);
                     steering = Steering::Auto(plan.target_m);
@@ -1408,6 +1415,28 @@ impl Session {
                 weather.as_ref(),
                 SIM_DT,
             );
+            // A lean further than the wet road holds skids (S6 → 12B; only
+            // with collisions on and less grip than dry: else nothing).
+            let skid = crate::collide::skid(
+                &mut rider.skid,
+                crate::collide::skid_lean(steering, track, rider.state.distance),
+                crate::weather::grip(weather.as_ref(), track, &rider.state),
+                rider.state.speed,
+                rider.effective.rider_mass_kg + rider.effective.bike_mass_kg,
+                mode,
+                SIM_DT,
+            );
+            rider.state.speed -= skid.speed_loss;
+            if skid.wobble.is_some() || skid.crash.is_some() {
+                skids.push((
+                    *id,
+                    crate::collide::Response {
+                        bump: skid.wobble.filter(|_| skid.crash.is_none()),
+                        crash: skid.crash,
+                        ..Default::default()
+                    },
+                ));
+            }
             if let Some(c) = fx.speed_cap
                 && rider.state.speed > c
             {
@@ -1458,6 +1487,15 @@ impl Session {
             let collides = self.riders.get(&id).is_some_and(|r| self.collides(r));
             if collides {
                 self.edge_hit(id, speed, heading, mode);
+            }
+        }
+        for (id, resp) in skids {
+            let up = self
+                .riders
+                .get(&id)
+                .is_some_and(|r| r.crash.is_none() && self.collides(r));
+            if up {
+                self.apply_response(id, &resp);
             }
         }
         // Contacts after the physics step, before the broadcast (12B).

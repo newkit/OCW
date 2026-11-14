@@ -422,8 +422,20 @@ mod tests {
 
     #[test]
     fn frame_server_matches_the_stepped_server_tick_for_tick() {
-        let mut f = FrameServer::new(Route::test_loop(), 3, 100.0);
-        let mut s = SteppedServer::new(Route::test_loop(), 3, 100.0);
+        // The same clock and weather for both (regression: each drew its
+        // own weather seed and clock from the wall clock, and with the
+        // weather physics on – the local servers' default since S6 – the
+        // riders' distances differed now and then by a millimetre).
+        let config = || ServerConfig {
+            weather_seed: Some(7),
+            real_epoch_ms: Some(1_780_000_000_000),
+            ..local_config(3, 100.0)
+        };
+        let mut f = FrameServer {
+            stepped: SteppedServer::with_config(Route::test_loop(), config()),
+            backlog_us: 0,
+        };
+        let mut s = SteppedServer::with_config(Route::test_loop(), config());
         f.send(&hello("A"));
         s.send(&hello("A"));
         let power = encode(&client_message(C::Sample(v1::SensorSample {

@@ -94,7 +94,13 @@ impl CollisionClient {
                 self.reported.insert(id, start);
                 let km = f64::from(u.distance_cm) / 100_000.0;
                 let line = match (Some(id) == own, c.kind) {
+                    (true, collide::ContactKind::Slide) => {
+                        "You slid out on the slippery road".to_owned()
+                    }
                     (true, _) => format!("You crashed ({})", c.kind.label()),
+                    (false, collide::ContactKind::Slide) => {
+                        format!("{} slid out at km {km:.1}", u.display_name)
+                    }
                     // Into the world (spec §14 Phase 12 K3): what was hit.
                     (false, collide::ContactKind::World(_) | collide::ContactKind::RoadEdge) => {
                         format!(

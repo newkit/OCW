@@ -325,9 +325,29 @@ pub const SETTINGS: &[SettingDef] = &[
         key: "ride.proximity_cue",
         kind: Kind::Bool,
         default: "off",
-        description: "A soft sound and a HUD arrow when someone is close beside (1 m) or in front (2 m); it never steers",
+        description: "A soft sound and a HUD arrow when someone is close beside (1 m), in front or behind (2 m); it never steers",
         scope: Scope::Live,
         apply: Apply::Command("ride.proximity_cue {}"),
+    },
+    // Spec §14 Phase 12D: the "last moment" warning (an aid that never
+    // steers; on by default, proposal v3.22).
+    SettingDef {
+        key: "ride.hit_warning",
+        kind: Kind::Bool,
+        default: "on",
+        description: "An amber warning about a second before a predicted hit, and when the tyres slide on a wet road; it never steers",
+        scope: Scope::Live,
+        apply: Apply::Command("ride.hit_warning {}"),
+    },
+    // Spec §14 Phase 12C: the chase camera shakes after a crash or a hard
+    // bump (off for motion comfort; the kiosk's show mode turns it off).
+    SettingDef {
+        key: "display.camera_shake",
+        kind: Kind::Bool,
+        default: "on",
+        description: "The camera shakes briefly after a crash or a hard bump (turn off for motion comfort)",
+        scope: Scope::Live,
+        apply: Apply::Command("camera.shake {}"),
     },
     // Real weather (spec §14 Phase 9, S7): the weather machine's Real
     // weather page saves them (`weather.real`, `weather.provider`).

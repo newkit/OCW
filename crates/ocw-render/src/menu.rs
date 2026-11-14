@@ -79,6 +79,19 @@ pub struct MenuView {
     pub dimmed: Vec<bool>,
     /// Draw the items as a grid of these cells (one per item).
     pub grid: Option<MenuGrid>,
+    /// Markers drawn with the items (the rider list: who flies in unicorn
+    /// mode, the damage dot); missing entries have none.
+    pub marks: Vec<RowMark>,
+}
+
+/// Markers of one list item (spec §14 Phase 13E, 12F: the rider list).
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct RowMark {
+    /// A small unicorn before the label: the rider flies in unicorn mode.
+    pub unicorn: bool,
+    /// A dot after the label: its icon (the status shapes of the UI font,
+    /// never colour alone) and colour (sRGB 0–1).
+    pub dot: Option<(String, [f32; 3])>,
 }
 
 /// A page drawn as a grid (spec §14 Phase 9, S5: the weather presets).
@@ -102,7 +115,14 @@ impl MenuView {
     fn is_dimmed(&self, i: usize) -> bool {
         self.dimmed.get(i).copied().unwrap_or(false)
     }
+
+    fn mark(&self, i: usize) -> Option<&RowMark> {
+        self.marks.get(i)
+    }
 }
+
+/// The unicorn marker's size (vh; the impostor picture's 4 : 3).
+const UNICORN_MARK_VH: (f32, f32) = (4.4, 3.3);
 
 /// Mouse events on the menu since the app last read them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -489,11 +509,17 @@ fn spawn_arrow(r: &mut ChildSpawnerCommands, i: usize, dir: i8) {
     );
 }
 
-fn spawn_rows(commands: &mut Commands, list: Entity, view: &MenuView) {
+fn spawn_rows(
+    commands: &mut Commands,
+    list: Entity,
+    view: &MenuView,
+    unicorn: Option<Handle<Image>>,
+) {
     commands.entity(list).despawn_children();
     commands.entity(list).with_children(|l| {
         for (i, label) in view.items.iter().enumerate() {
             let color = TextColor(if view.is_dimmed(i) { DISABLED } else { TEXT });
+            let mark = view.mark(i).cloned().unwrap_or_default();
             let mut row = l.spawn((
                 Node {
                     padding: UiRect::axes(vh(ROW_PAD_X_VH), vh(ROW_PAD_Y_VH)),
@@ -506,16 +532,38 @@ fn spawn_rows(commands: &mut Commands, list: Entity, view: &MenuView) {
                 BorderColor::all(Color::NONE),
                 MenuRow(i),
             ));
-            row.with_children(|r| match split_value(label) {
-                // A value row: the arrows are their own targets.
-                Some((name, value)) => {
-                    r.spawn((Text::new(name), font(ITEM_VH), color));
-                    spawn_arrow(r, i, -1);
-                    r.spawn((Text::new(format!(" {value} ")), font(ITEM_VH), color));
-                    spawn_arrow(r, i, 1);
+            row.with_children(|r| {
+                if mark.unicorn {
+                    r.spawn((
+                        Node {
+                            width: vh(UNICORN_MARK_VH.0),
+                            height: vh(UNICORN_MARK_VH.1),
+                            margin: UiRect::right(vh(0.8)),
+                            ..default()
+                        },
+                        unicorn.clone().map(ImageNode::new).unwrap_or_default(),
+                        MenuUnicornMark,
+                    ));
                 }
-                None => {
-                    r.spawn((Text::new(label.clone()), font(ITEM_VH), color));
+                match split_value(label) {
+                    // A value row: the arrows are their own targets.
+                    Some((name, value)) => {
+                        r.spawn((Text::new(name), font(ITEM_VH), color));
+                        spawn_arrow(r, i, -1);
+                        r.spawn((Text::new(format!(" {value} ")), font(ITEM_VH), color));
+                        spawn_arrow(r, i, 1);
+                    }
+                    None => {
+                        r.spawn((Text::new(label.clone()), font(ITEM_VH), color));
+                    }
+                }
+                if let Some((icon, rgb)) = &mark.dot {
+                    r.spawn((
+                        Text::new(format!("  {icon}")),
+                        font(ITEM_VH),
+                        TextColor(Color::srgb(rgb[0], rgb[1], rgb[2])),
+                        MenuDotMark,
+                    ));
                 }
             });
             hover_and_click(&mut row, i);
@@ -608,7 +656,42 @@ fn spawn_grid(
 
 /// The page's layout key: rows are respawned only when it changes, not on
 /// every focus move or status update.
-type PageKey = (String, Vec<String>, Vec<bool>, Option<MenuGrid>);
+type PageKey = (
+    String,
+    Vec<String>,
+    Vec<bool>,
+    Option<MenuGrid>,
+    Vec<RowMark>,
+);
+
+/// The unicorn before a rider list item (spec §14 Phase 13E).
+#[derive(Component)]
+pub struct MenuUnicornMark;
+
+/// The damage dot after a rider list item (spec §14 Phase 12F).
+#[derive(Component)]
+pub struct MenuDotMark;
+
+/// The unicorn marker's picture (the impostor's, `unicorn::impostor_image`).
+fn unicorn_mark(images: &mut Assets<Image>) -> Handle<Image> {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+    let (w, h) = crate::unicorn::IMPOSTOR_PX;
+    images.add(Image::new(
+        Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        crate::unicorn::impostor_image()
+            .into_iter()
+            .flatten()
+            .collect(),
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD,
+    ))
+}
 
 /// The list's and the panel's nodes, disjoint from the root's and the
 /// texts' (`Node` is borrowed mutably by several queries).
@@ -640,9 +723,10 @@ fn draw_menu(
         &mut BorderColor,
         Option<&Marked>,
     )>,
-    (mut images, mut icons): (
+    (mut images, mut icons, mut unicorn): (
         ResMut<Assets<Image>>,
         Local<std::collections::HashMap<ocw_weather::icon::Icon, Handle<Image>>>,
+        Local<Option<Handle<Image>>>,
     ),
     mut texts: ParamSet<(
         Query<&mut Text, With<MenuTitle>>,
@@ -683,6 +767,7 @@ fn draw_menu(
         view.items.clone(),
         view.dimmed.clone(),
         view.grid.clone(),
+        view.marks.clone(),
     );
     if page.as_ref() != Some(&key) {
         if let Ok((list, mut node)) = list.single_mut() {
@@ -700,7 +785,14 @@ fn draw_menu(
             };
             match &view.grid {
                 Some(g) => spawn_grid(&mut commands, list, &view, g, &mut icons, &mut images),
-                None => spawn_rows(&mut commands, list, &view),
+                None => {
+                    let mark = view.marks.iter().any(|m| m.unicorn).then(|| {
+                        unicorn
+                            .get_or_insert_with(|| unicorn_mark(&mut images))
+                            .clone()
+                    });
+                    spawn_rows(&mut commands, list, &view, mark)
+                }
             }
         }
         if let Ok(mut p) = panel.single_mut() {
@@ -877,6 +969,57 @@ mod tests {
         assert_eq!(InputContext::of(false, true), InputContext::Menu);
         assert_eq!(InputContext::of(true, false), InputContext::Console);
         assert_eq!(InputContext::of(true, true), InputContext::Console);
+    }
+
+    /// The rider list's markers (spec §14 Phase 13E, 12F): a unicorn before
+    /// a flying rider, the damage dot in its colour after a hurt one.
+    #[test]
+    fn the_rider_list_draws_its_unicorn_and_dots() {
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            bevy::asset::AssetPlugin::default(),
+            MenuPlugin,
+        ));
+        app.init_asset::<Image>();
+        app.update();
+        *app.world_mut().resource_mut::<MenuView>() = MenuView {
+            open: true,
+            title: "Riders in this ride".into(),
+            items: vec![
+                "Nils (you):  km 1.2".into(),
+                "Kim:  flying, 20 m ahead".into(),
+                "Bot 3:  down, 40 m behind".into(),
+                "Back".into(),
+            ],
+            marks: vec![
+                RowMark::default(),
+                RowMark {
+                    unicorn: true,
+                    dot: None,
+                },
+                RowMark {
+                    unicorn: false,
+                    dot: Some(("■".into(), [0.92, 0.22, 0.2])),
+                },
+            ],
+            ..Default::default()
+        };
+        app.update();
+        app.update();
+        let w = app.world_mut();
+        let unicorns = w
+            .query_filtered::<&ImageNode, With<MenuUnicornMark>>()
+            .iter(w)
+            .count();
+        assert_eq!(unicorns, 1);
+        let dots: Vec<(String, Color)> = w
+            .query_filtered::<(&Text, &TextColor), With<MenuDotMark>>()
+            .iter(w)
+            .map(|(t, c)| (t.0.clone(), c.0))
+            .collect();
+        assert_eq!(dots, [("  ■".to_string(), Color::srgb(0.92, 0.22, 0.2))]);
+        assert!(crate::font::covers("■▲"));
     }
 
     /// The drawing systems run headless (regression guard: their `Node`

@@ -163,6 +163,11 @@ const NAVI_ITEMS: &[Item] = &[
     ),
     // The Strava account page lives here (Settings is full, ten-foot rule).
     item("Strava", ItemKind::Open(Page::Sub(sub::Page::Strava))),
+    // Who rides here, where, who flies, who is hurt (spec §14 Phase 13E).
+    item(
+        "Riders in this ride",
+        ItemKind::Open(Page::Sub(sub::Page::RiderList)),
+    ),
     // The time machine moved to World → Time (a condition of the world).
     BACK,
 ];
@@ -387,6 +392,23 @@ impl Menu {
         }
         out.push(Slot::Back);
         out
+    }
+
+    /// For each item of the current [`Page::Sub`] page, the row it shows
+    /// (`None`: Previous, Next, Back) – the rider list's markers follow
+    /// their rows over the list's pages.
+    pub fn shown_rows(&self) -> Vec<Option<usize>> {
+        match self.page() {
+            Some(Page::Sub(_)) => self
+                .slots()
+                .into_iter()
+                .map(|s| match s {
+                    Slot::Row(i) => Some(i),
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
     }
 
     /// Number of focusable items on the current page.
@@ -844,7 +866,14 @@ mod tests {
         assert_eq!(m.page(), Some(Page::Navi));
         assert_eq!(
             labels(&m),
-            ["Routes", "Rides", "GPX import", "Strava", "Back"]
+            [
+                "Routes",
+                "Rides",
+                "GPX import",
+                "Strava",
+                "Riders in this ride",
+                "Back"
+            ]
         );
         assert_eq!(m.apply(Action::Close), Effect::Closed);
         m.apply(Action::Open);
