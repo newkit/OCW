@@ -46,6 +46,8 @@ pub fn local_config(bots: u32, start_m: f64) -> ServerConfig {
         weather_access: crate::ClockAccess::Anyone,
         weather: None,
         weather_seed: None,
+        geo_origin: None,
+        real_weather: None,
     }
 }
 
@@ -101,9 +103,21 @@ impl LocalServer {
         bots: u32,
         start_m: f64,
     ) -> std::io::Result<LocalConnection> {
+        Self::spawn_with(course, local_config(bots, start_m))
+    }
+
+    /// [`LocalServer::spawn`] with its configuration (from
+    /// [`local_config`]; the app adds the package's geographic origin for
+    /// real weather). The server fetches real weather itself (spec §14
+    /// Phase 9, S7).
+    pub fn spawn_with(
+        course: impl Into<Course>,
+        config: ServerConfig,
+    ) -> std::io::Result<LocalConnection> {
         let (to_server, server_rx) = mpsc::channel::<Vec<u8>>();
         let (server_tx, from_server) = mpsc::channel::<Vec<u8>>();
-        let mut server = GameServer::new(course, local_config(bots, start_m));
+        let mut server = GameServer::new(course, config)
+            .with_weather_fetcher(Box::new(crate::realweather::http::HttpFetcher::default()));
         let thread = thread::Builder::new()
             .name("ocw-local-server".into())
             .spawn(move || {
@@ -162,7 +176,16 @@ pub struct SteppedServer {
 impl SteppedServer {
     /// A stepped server with dev commands enabled and one connected client.
     pub fn new(course: impl Into<Course>, bots: u32, start_m: f64) -> Self {
-        let mut server = GameServer::new(course, local_config(bots, start_m));
+        Self::with_config(course, local_config(bots, start_m))
+    }
+
+    /// [`SteppedServer::new`] with its configuration. Natively it fetches
+    /// real weather itself (spec §14 Phase 9, S7; tests replace the
+    /// fetcher with recorded answers, [`SteppedServer::server_mut`]).
+    pub fn with_config(course: impl Into<Course>, config: ServerConfig) -> Self {
+        let mut server = GameServer::new(course, config);
+        #[cfg(not(target_arch = "wasm32"))]
+        server.set_weather_fetcher(Box::new(crate::realweather::http::HttpFetcher::default()));
         let conn = server.connect();
         Self {
             server,
@@ -190,6 +213,10 @@ impl SteppedServer {
 
     pub fn server(&self) -> &GameServer {
         &self.server
+    }
+
+    pub fn server_mut(&mut self) -> &mut GameServer {
+        &mut self.server
     }
 }
 

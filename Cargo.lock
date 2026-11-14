@@ -6215,6 +6215,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "ureq",
  "url",
  "web-time",
  "web-transport-quinn",
@@ -6264,6 +6265,9 @@ dependencies = [
 [[package]]
 name = "ocw-weather"
 version = "0.2.1"
+dependencies = [
+ "serde_json",
+]
 
 [[package]]
 name = "ocw-web"

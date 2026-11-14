@@ -233,6 +233,12 @@ pub struct Args {
     /// Default: on, except for --screenshot / --capture runs.
     #[arg(long, value_name = "BOOL", action = clap::ArgAction::Set)]
     pub record: Option<bool>,
+    /// Start the ride in real weather (spec §14 Phase 9, S7: the local
+    /// server fetches it for the place and the clock's moment). Default:
+    /// the setting `weather.real` (on), except for --screenshot / --capture
+    /// runs (reproducible).
+    #[arg(long, value_name = "BOOL", action = clap::ArgAction::Set)]
+    pub real_weather: Option<bool>,
     /// Run a console command once the app has run SECONDS (game time; an
     /// in-app ride switch does not reset it), e.g. `--at "4=rider.lean 15"` (repeatable; for scripted rides).
     #[arg(long = "at", value_name = "SECONDS=COMMAND", value_parser = parse_timed)]

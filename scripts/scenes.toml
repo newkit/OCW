@@ -1154,6 +1154,38 @@ args = ["--world", "{world}", "--bots", "3"]
 at = ["1=time pause", "1=time 2026-06-21 15:00", "1=weather light-rain", "3=menu open", "3.4=menu down", "3.8=menu down", "4.2=menu select", "4.6=menu down", "5=menu down", "5.4=menu down", "5.8=menu down", "6.2=menu select", "6.6=menu down", "7=menu down", "7.4=menu down", "7.8=menu select", "8.2=menu down", "8.6=menu down"]
 shot = 10.5
 
+# --- Real weather (spec §14 Phase 9, S7): from the providers, via the server -
+# `weather real [SOURCE]` asks the local server to fetch the weather of the
+# place (the rider's 0.1° cell) and the clock's moment: live data, so these
+# scenes show the weather of the day they are rendered (the screenshot runs
+# start without real weather; --real-weather true would start with it).
+# `weather day NAME|DATE TIME` rides a day: the time machine goes there and
+# the weather comes from ERA5 (Open-Meteo's historical API).
+
+[[scene]]
+name = "menu-weather-real"
+description = "Weather machine: World -> Weather -> Real weather in Vaduz (Phase 9 S7): real weather on (Automatic: the MeteoSwiss station Vaduz and MET Norway's forecast), the data source, ride a day, the station and time of the data; the attribution (Weather: MeteoSwiss, MET Norway, CC BY 4.0) under the title"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "3"]
+at = ["1=weather real", "3=menu open", "3.4=menu down", "3.8=menu down", "4.2=menu select", "4.6=menu down", "5=menu down", "5.4=menu down", "5.8=menu down", "6.2=menu select", "6.6=menu down", "7=menu select"]
+shot = 10
+
+[[scene]]
+name = "weather-real-vaduz"
+description = "Vaduz with the real weather of the moment it is rendered (Phase 9 S7): the local server fetched it for the place (MeteoSwiss Vaduz + MET Norway), the HUD names the source (Weather: MeteoSwiss, MET Norway, CC BY 4.0) and the weather, the clock is real"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "3", "--power", "200"]
+at = ["1=weather real", "2.5=teleport 0.4", "2.5=camera.orbit 160 12 12"]
+shot = 12
+
+[[scene]]
+name = "weather-real-lothar-blackforest"
+description = "Ride a day: Storm Lothar on 26 Dec 1999 at noon below the Feldberg pass (Black Forest, km 12, 1230 m; weather day lothar): the time machine went to that day, the weather is ERA5's for the place (Open-Meteo's historical API) – a gale with gusts near 40 m/s, rain at about 2 °C, low grey cloud, trees bent in the wind; the HUD credits Open-Meteo (ERA5, Copernicus)"
+world = "blackforest"
+args = ["--world", "{world}", "--route-file", "{world_dir}/titisee-feldberg.route", "--no-neighbours", "--bots", "2", "--power", "230"]
+at = ["1=weather day lothar", "2.5=teleport 12.0", "2.5=camera.orbit 100 10 20", "3=time pause"]
+shot = 12
+
 [[scene]]
 name = "event-weather-start"
 description = "A local race with the organiser's weather (event race --weather heavy-snow): on the start line the event panel names the weather set by the organizer, snow falls on the Loop test route; the weather machine is locked until the race is over"

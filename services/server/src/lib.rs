@@ -8,6 +8,9 @@
 //!   over WebTransport (`--webtransport`, spec §14 Phase 10 B3).
 
 pub mod local;
+// Real weather (spec §14 Phase 9, S7): the session's feed (pure) and the
+// HTTP requests (native only, `realweather::http`).
+pub mod realweather;
 // QUIC (spec §6.2) and world packages from disk: native only; the browser
 // app (spec §14 Phase 10) runs the server in its frame loop.
 #[cfg(not(target_arch = "wasm32"))]
@@ -118,6 +121,14 @@ pub struct ServerConfig {
     /// Seed of the gusts, the lightning and the weather simulation
     /// (`None`: from the session's start instant; tests fix it).
     pub weather_seed: Option<u64>,
+    /// (lat, lon) of the course's local metres (a world package's
+    /// origin; a route file's comes with its route): where real weather is
+    /// fetched (spec §14 Phase 9, S7). `None`: the route's, else the
+    /// default place (Vaduz, like the sun).
+    pub geo_origin: Option<(f64, f64)>,
+    /// Start in real weather from this data source (`ocw-server --weather
+    /// real`; needs a weather fetcher, [`GameServer::set_weather_fetcher`]).
+    pub real_weather: Option<ocw_weather::real::Choice>,
 }
 
 pub use ocw_protocol::ClockAccess;
@@ -168,6 +179,14 @@ pub struct GameServer {
     /// The organiser's weather of the current event (spec §14 Phase 9,
     /// S5): its id and weather; locks the weather until the event is over.
     event_weather: Option<(u32, ocw_weather::machine::EventWeather)>,
+    /// Real weather (spec §14 Phase 9, S7), while it is on.
+    real: Option<realweather::RealSession>,
+    /// Performs real weather's requests (`None`: this server has no
+    /// weather service – the browser's local server, most tests).
+    /// (In a mutex only so the server stays `Sync`; it is never contended.)
+    fetcher: Option<std::sync::Mutex<Box<dyn realweather::WeatherFetcher>>>,
+    /// (lat, lon) of the course's local metres.
+    geo_origin: Option<(f64, f64)>,
 }
 
 /// A world switch the host asked for (spec §3.2.1), checked and waiting
@@ -276,13 +295,21 @@ fn add_numbered_bot(session: &mut Session, i: u32) -> RiderId {
 impl GameServer {
     /// A session on `course` (a [`Route`] converts into one).
     pub fn new(course: impl Into<Course>, config: ServerConfig) -> Self {
-        let session = new_session(course.into(), &config);
+        let course = course.into();
+        let geo_origin = config.geo_origin.or(match &course {
+            Course::Route(r) => r.geo_origin(),
+            _ => None,
+        });
+        let session = new_session(course, &config);
         let epoch = config.real_epoch_ms.unwrap_or_else(unix_now_ms);
         let clock = ocw_sky::WorldClock::new(epoch);
         let seed = config
             .weather_seed
             .unwrap_or_else(|| ocw_weather::lightning::unit(epoch as u64, 1, 2).to_bits());
         let weather = ocw_weather::SessionWeather::with(config.weather.unwrap_or_default(), seed);
+        let real = config
+            .real_weather
+            .map(|c| realweather::RealSession::new(c, 0.0));
         Self {
             clock,
             weather,
@@ -298,6 +325,58 @@ impl GameServer {
             time_base_s: 0.0,
             pending_world: None,
             event_weather: None,
+            real,
+            fetcher: None,
+            geo_origin,
+        }
+    }
+
+    /// Lets this server fetch real weather (spec §14 Phase 9, S7): the
+    /// HTTP fetcher on the native servers, recorded answers in tests.
+    pub fn set_weather_fetcher(&mut self, fetcher: Box<dyn realweather::WeatherFetcher>) {
+        self.fetcher = Some(std::sync::Mutex::new(fetcher));
+    }
+
+    /// [`GameServer::set_weather_fetcher`] as a builder.
+    pub fn with_weather_fetcher(mut self, fetcher: Box<dyn realweather::WeatherFetcher>) -> Self {
+        self.set_weather_fetcher(fetcher);
+        self
+    }
+
+    /// The course's (lat, lon) origin, after a world switch to a package
+    /// (the embedding knows it; spec §14 Phase 9, S7).
+    pub fn set_geo_origin(&mut self, origin: Option<(f64, f64)>) {
+        self.geo_origin = origin;
+    }
+
+    /// The real weather's state, while it is on.
+    pub fn real_weather(&self) -> Option<&ocw_weather::real::feed::RealInfo> {
+        self.real.as_ref().map(|r| &r.info)
+    }
+
+    /// Where the session's real weather is wanted: the host's position on
+    /// the globe and its height (spec §14 Phase 9, S7; else the first
+    /// rider's, else the origin). Rides without a geographic origin (test
+    /// routes) are in Vaduz, as for the sun.
+    pub fn weather_place(&self) -> ocw_weather::real::Place {
+        let known = self.geo_origin.is_some();
+        let origin = self.geo_origin.unwrap_or(ocw_sky::zone::DEFAULT_PLACE);
+        let rider = self
+            .host()
+            .or_else(|| self.session.snapshot().first().map(|r| r.id));
+        let (x, y, z) = rider
+            .and_then(|id| {
+                let s = self.session.rider_state(id)?;
+                let p = self.session.track(id).sample(s.distance).position;
+                Some((p[0], p[1], p[2]))
+            })
+            .unwrap_or((0.0, 0.0, 0.0));
+        let (lat, lon) = ocw_world::geo::LocalProjection::new(origin.0, origin.1).unproject([x, z]);
+        ocw_weather::real::Place {
+            lat,
+            lon,
+            // The test routes' heights are relative: put them at Vaduz.
+            alt_m: if known { y as f32 } else { 455.0 + y as f32 },
         }
     }
 
@@ -322,7 +401,11 @@ impl GameServer {
         change: v1::WorldChange,
     ) -> (Vec<ConnectionId>, Vec<u8>) {
         self.time_base_s = self.session_time_s();
-        self.session = new_session(course.into(), &self.config);
+        let course = course.into();
+        if let Course::Route(r) = &course {
+            self.geo_origin = r.geo_origin().or(self.geo_origin);
+        }
+        self.session = new_session(course, &self.config);
         let conns: Vec<ConnectionId> = std::mem::take(&mut self.riders).into_keys().collect();
         self.event_dirty = false;
         self.pending_world = None;
@@ -388,7 +471,66 @@ impl GameServer {
     }
 
     fn weather_message(&self) -> v1::SessionWeather {
-        ocw_protocol::session_weather(&self.weather, self.session_time_s(), self.weather_access())
+        ocw_protocol::session_weather_with(
+            &self.weather,
+            self.session_time_s(),
+            self.weather_access(),
+            self.real_weather(),
+        )
+    }
+
+    /// Real weather's step (spec §14 Phase 9, S7): answers, requests, and
+    /// the session weather from the data.
+    fn real_weather_tick(&mut self, t: f64) {
+        if self.real.is_none() || self.fetcher.is_none() {
+            return;
+        }
+        let place = self.weather_place();
+        let at_ms = self.clock.now(t);
+        let now_ms = self.clock.real(t);
+        let (Some(real), Some(Ok(fetcher))) = (
+            self.real.as_mut(),
+            self.fetcher.as_mut().map(std::sync::Mutex::get_mut),
+        ) else {
+            return;
+        };
+        match real.step(t, at_ms, now_ms, Some(place), fetcher.as_mut()) {
+            realweather::Apply::Keep => {}
+            realweather::Apply::Set {
+                state,
+                transition_s,
+                settle,
+            } => self.weather.set_real(t, state, transition_s, settle),
+            realweather::Apply::Simulate => {
+                let seed = self.weather.seed().rotate_left(29);
+                self.weather.simulate(t, seed);
+                tracing::warn!("real weather unavailable: simulated weather meanwhile");
+            }
+        }
+    }
+
+    /// Turns real weather on (spec §14 Phase 9, S7) from `choice`.
+    fn start_real_weather(
+        &mut self,
+        choice: ocw_weather::real::Choice,
+        transition_s: f64,
+    ) -> String {
+        match &mut self.real {
+            Some(r) => r.set_choice(choice, transition_s),
+            None => self.real = Some(realweather::RealSession::new(choice, transition_s)),
+        }
+        let p = self.weather_place();
+        let cell = ocw_weather::real::Cell::of(&p);
+        let (lat, lon) = cell.centre();
+        format!(
+            "real weather ({}) for {:.2}° {}, {:.2}° {}, {:.0} m: fetching ...",
+            choice.name(),
+            lat.abs(),
+            if lat >= 0.0 { "N" } else { "S" },
+            lon.abs(),
+            if lon >= 0.0 { "E" } else { "W" },
+            cell.alt_m()
+        )
     }
 
     /// The organiser's weather of the running event, while it locks the
@@ -439,6 +581,21 @@ impl GameServer {
         }
         let c = ocw_protocol::weather_change(req);
         let t = self.session_time_s();
+        if let Some(choice) = c.real {
+            if self.fetcher.is_none() {
+                return result(
+                    false,
+                    "real weather needs a game server with a weather service (internet access); this one has none".into(),
+                );
+            }
+            let said = self.start_real_weather(choice, c.transition_s);
+            tracing::info!(%rider, weather = %said, "real weather on");
+            return result(true, said);
+        }
+        // Any other weather ends real weather.
+        if c.target.is_some() || c.simulate.is_some() {
+            self.real = None;
+        }
         let mut said = Vec::new();
         if let Some(seed) = c.simulate {
             let seed = if seed == 0 {
@@ -1174,8 +1331,14 @@ impl GameServer {
         use ocw_weather::machine::EventWeather;
         let t = self.session_time_s();
         match &w {
-            Some(EventWeather::Fixed { state, .. }) => self.weather.set(t, *state, 0.0, true),
-            Some(EventWeather::Simulated { seed }) => self.weather.simulate(t, *seed),
+            Some(EventWeather::Fixed { state, .. }) => {
+                self.real = None;
+                self.weather.set(t, *state, 0.0, true);
+            }
+            Some(EventWeather::Simulated { seed }) => {
+                self.real = None;
+                self.weather.simulate(t, *seed);
+            }
             None => {}
         }
         if let Some(w) = &w {
@@ -1209,6 +1372,7 @@ impl GameServer {
         self.session.step();
         let t = self.session_time_s();
         self.weather.tick(t);
+        self.real_weather_tick(t);
         let mut out = Vec::new();
         // The event: at once on a change, and at 2 Hz while a race or time
         // trial runs.
@@ -2228,7 +2392,16 @@ mod tests {
     fn a_finished_event_unlocks_the_weather() {
         use ocw_weather::machine::EventWeather;
         use ocw_weather::presets::preset;
-        let mut server = GameServer::new(Route::test_loop(), crate::local::local_config(0, 0.0));
+        // Everything fixed (the session's start instant and the weather's
+        // seed came from the system clock before): the test reads no clock.
+        let mut server = GameServer::new(
+            Route::test_loop(),
+            ServerConfig {
+                real_epoch_ms: Some(EPOCH_MS),
+                weather_seed: Some(5),
+                ..crate::local::local_config(0, 0.0)
+            },
+        );
         let (me, _) = join(&mut server);
         let w = EventWeather::Fixed {
             name: "snow".into(),
@@ -2250,22 +2423,250 @@ mod tests {
             "{:?}",
             decode_server(&reply[0])
         );
-        // Ride the 100 m hard.
+        // Ride the 100 m hard: the countdown (5 s) and about 15 s of
+        // riding; a minute of session time at most.
+        let mut ticks = 0;
         for i in 0..50 * 90 {
             if i % 5 == 0 {
                 server.handle(me, &sample(i / 5, 900.0));
             }
             server.tick();
+            ticks += 1;
             if server.event_weather().is_none() {
                 break;
             }
         }
         assert_eq!(
             server.session.event().map(|e| e.phase),
-            Some(EventPhase::Finished)
+            Some(EventPhase::Finished),
+            "after {ticks} ticks"
         );
+        assert!(ticks < 50 * 60, "{ticks} ticks");
         assert!(server.event_weather().is_none());
         assert_eq!(server.weather_access(), ClockAccess::Anyone);
+        // The same run again: the same tick (deterministic).
+        let again = {
+            let mut s = GameServer::new(
+                Route::test_loop(),
+                ServerConfig {
+                    real_epoch_ms: Some(EPOCH_MS),
+                    weather_seed: Some(5),
+                    ..crate::local::local_config(0, 0.0)
+                },
+            );
+            let (me, _) = join(&mut s);
+            s.handle(me, &r);
+            let mut n = 0;
+            for i in 0..50 * 90 {
+                if i % 5 == 0 {
+                    s.handle(me, &sample(i / 5, 900.0));
+                }
+                s.tick();
+                n += 1;
+                if s.event_weather().is_none() {
+                    break;
+                }
+            }
+            n
+        };
+        assert_eq!(again, ticks);
+    }
+
+    const OM_FORECAST: &str =
+        include_str!("../../../crates/ocw-weather/tests/data/openmeteo-forecast-vaduz.json");
+    const OM_LOTHAR: &str = include_str!(
+        "../../../crates/ocw-weather/tests/data/openmeteo-archive-lothar-feldberg.json"
+    );
+    const METNO: &str =
+        include_str!("../../../crates/ocw-weather/tests/data/metno-complete-vaduz.json");
+    const SMN_VAD: &str =
+        include_str!("../../../crates/ocw-weather/tests/data/meteoswiss-vad-t-now.csv");
+
+    /// When the samples were recorded (14 Nov 2026 11:40 UTC).
+    const RECORDED_MS: i64 = 1_794_656_400_000;
+
+    type Log = std::sync::Arc<std::sync::Mutex<Vec<ocw_weather::real::feed::Fetch>>>;
+
+    /// A server whose real weather comes from the recorded answers (or
+    /// fails: offline), and the log of its requests.
+    fn real_server(online: bool, access: ClockAccess) -> (GameServer, Log) {
+        use ocw_weather::real::Provider;
+        use ocw_weather::real::feed::Kind;
+        let fetcher = realweather::FnFetcher::new(move |f: &ocw_weather::real::feed::Fetch| {
+            if !online {
+                return Err(format!("{}: offline", f.provider.name()));
+            }
+            Ok(match (f.provider, f.kind) {
+                (Provider::OpenMeteo, Kind::Historic) => OM_LOTHAR,
+                (Provider::OpenMeteo, _) => OM_FORECAST,
+                (Provider::MetNorway, _) => METNO,
+                (Provider::MeteoSwiss, _) => SMN_VAD,
+                (Provider::Dwd, _) => return Err("DWD: no sample".into()),
+            }
+            .to_owned())
+        });
+        let log = fetcher.log.clone();
+        let server = GameServer::new(
+            Route::test_loop(),
+            ServerConfig {
+                real_epoch_ms: Some(RECORDED_MS),
+                weather_seed: Some(5),
+                weather_access: access,
+                clock_access: access,
+                ..Default::default()
+            },
+        )
+        .with_weather_fetcher(Box::new(fetcher));
+        (server, log)
+    }
+
+    fn real(choice: ocw_weather::real::Choice, transition_s: f64) -> ocw_protocol::WeatherChange {
+        ocw_protocol::WeatherChange {
+            real: Some(choice),
+            transition_s,
+            ..Default::default()
+        }
+    }
+
+    /// Real weather (spec §14 Phase 9, S7): the host turns it on, the
+    /// server asks MeteoSwiss (Vaduz's station) and MET Norway once for the
+    /// cell, sets the weather at once with its ground, tells everyone the
+    /// providers and the attribution, and asks again only when the answers
+    /// are old.
+    #[test]
+    fn real_weather_comes_from_the_server_for_the_place() {
+        use ocw_weather::real::feed::Status;
+        use ocw_weather::real::{Choice, Provider};
+        let (mut server, log) = real_server(true, ClockAccess::Host);
+        let (host, _) = join(&mut server);
+        let (guest, _) = join(&mut server);
+        let (ok, msg) = ask_weather(&mut server, guest, real(Choice::Automatic, 0.0));
+        assert!(!ok && msg.contains("only the host"), "{msg}");
+        let (ok, msg) = ask_weather(&mut server, host, real(Choice::Automatic, 0.0));
+        assert!(ok, "{msg}");
+        assert!(
+            msg.contains("47.15° N, 9.55° E"),
+            "the cell, not the rider: {msg}"
+        );
+        let snap = next_snapshot(&mut server);
+        let info = ocw_protocol::weather_info(&snap.weather.unwrap());
+        assert_eq!(info.mode, ocw_weather::Mode::Real);
+        let r = info.real.unwrap();
+        assert_eq!(r.status, Status::Live);
+        assert_eq!(r.providers, [Provider::MeteoSwiss, Provider::MetNorway]);
+        assert_eq!(r.attribution, "Weather: MeteoSwiss, MET Norway, CC BY 4.0");
+        assert_eq!(r.station.as_deref(), Some("Vaduz (VAD)"));
+        // The measured 7.3 °C at Vaduz (the test loop lies at Vaduz' height).
+        assert!(
+            (info.now.temperature_c - 7.3).abs() < 0.3,
+            "{}",
+            info.now.temperature_c
+        );
+        assert!(info.immediate, "set at once");
+        let asked = log.lock().unwrap().len();
+        assert_eq!(asked, 2);
+        // A minute later: re-evaluated, nothing asked again.
+        for _ in 0..50 * 60 {
+            server.tick();
+        }
+        assert_eq!(log.lock().unwrap().len(), asked, "cached per cell");
+        assert_eq!(server.weather().mode(), ocw_weather::Mode::Real);
+        // After 10 minutes the station is asked again.
+        for _ in 0..50 * 600 {
+            server.tick();
+        }
+        assert!(log.lock().unwrap().len() > asked);
+        // A preset ends real weather.
+        let (ok, _) = ask_weather(
+            &mut server,
+            host,
+            ocw_protocol::WeatherChange {
+                target: ocw_weather::presets::preset("fog"),
+                ..Default::default()
+            },
+        );
+        assert!(ok);
+        let info = ocw_protocol::weather_info(&next_snapshot(&mut server).weather.unwrap());
+        assert!(info.real.is_none());
+        assert_eq!(info.mode, ocw_weather::Mode::Fixed);
+    }
+
+    #[test]
+    fn real_weather_with_a_fixed_provider_and_without_a_weather_service() {
+        use ocw_weather::real::{Choice, Provider};
+        let (mut server, log) = real_server(true, ClockAccess::Anyone);
+        let (me, _) = join(&mut server);
+        let (ok, _) = ask_weather(
+            &mut server,
+            me,
+            real(Choice::Only(Provider::OpenMeteo), 30.0),
+        );
+        assert!(ok);
+        let info = ocw_protocol::weather_info(&next_snapshot(&mut server).weather.unwrap());
+        let r = info.real.unwrap();
+        assert_eq!(r.attribution, "Weather: Open-Meteo, CC BY 4.0");
+        assert_eq!(r.choice, Choice::Only(Provider::OpenMeteo));
+        assert!(
+            !info.immediate && info.target.is_some(),
+            "a 30 s transition"
+        );
+        assert_eq!(log.lock().unwrap()[0].provider, Provider::OpenMeteo);
+        // DWD does not cover Vaduz: Automatic with a note.
+        let (ok, _) = ask_weather(&mut server, me, real(Choice::Only(Provider::Dwd), 0.0));
+        assert!(ok);
+        let info = ocw_protocol::weather_info(&next_snapshot(&mut server).weather.unwrap());
+        let note = info.real.unwrap().note.unwrap();
+        assert!(note.contains("DWD does not cover this place"), "{note}");
+        // A server without a weather service refuses.
+        let mut plain = GameServer::new(Route::test_loop(), ServerConfig::default());
+        let (me, _) = join(&mut plain);
+        let (ok, msg) = ask_weather(&mut plain, me, real(Choice::Automatic, 0.0));
+        assert!(!ok && msg.contains("weather service"), "{msg}");
+    }
+
+    /// Offline: no data at all – the simulation meanwhile, with a note.
+    #[test]
+    fn real_weather_offline_falls_back_to_the_simulation() {
+        use ocw_weather::real::Choice;
+        use ocw_weather::real::feed::Status;
+        let (mut server, _) = real_server(false, ClockAccess::Anyone);
+        let (me, _) = join(&mut server);
+        assert!(ask_weather(&mut server, me, real(Choice::Automatic, 0.0)).0);
+        // The regional station and MET Norway fail, then Open-Meteo.
+        for _ in 0..50 * 3 {
+            server.tick();
+        }
+        let info = ocw_protocol::weather_info(&next_snapshot(&mut server).weather.unwrap());
+        assert_eq!(info.mode, ocw_weather::Mode::Simulated);
+        let r = info.real.unwrap();
+        assert_eq!(r.status, Status::Offline);
+        assert!(r.note.unwrap().contains("simulated weather meanwhile"));
+        assert!(r.attribution.is_empty());
+    }
+
+    /// Ride a day: the time machine to Storm Lothar (26 Dec 1999), the
+    /// weather real – ERA5 history at once, the gale.
+    #[test]
+    fn real_weather_of_a_past_day_comes_from_era5() {
+        use ocw_weather::real::Choice;
+        use ocw_weather::real::feed::Kind;
+        let (mut server, log) = real_server(true, ClockAccess::Anyone);
+        let (me, _) = join(&mut server);
+        assert!(ask_weather(&mut server, me, real(Choice::Automatic, 0.0)).0);
+        next_snapshot(&mut server);
+        let lothar = ocw_weather::real::time::utc_ms(1999, 12, 26, 11, 0, 0).unwrap();
+        let (ok, msg) = ask_clock(&mut server, me, ocw_sky::ClockChange::Fixed(lothar));
+        assert!(ok, "{msg}");
+        let info = ocw_protocol::weather_info(&next_snapshot(&mut server).weather.unwrap());
+        assert!(log.lock().unwrap().iter().any(|f| f.kind == Kind::Historic));
+        let r = info.real.unwrap();
+        assert!(r.historic);
+        assert_eq!(
+            r.attribution,
+            "Weather: Open-Meteo (ERA5, Copernicus), CC BY 4.0"
+        );
+        assert!(info.now.gust_mps > 30.0, "{}", info.now.gust_mps);
+        assert!(info.immediate, "a clock jump applies at once");
     }
 
     fn world_server(access: ClockAccess) -> GameServer {

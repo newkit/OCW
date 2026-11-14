@@ -84,10 +84,17 @@ impl WeatherClient {
         let seed = self.info.as_ref().map_or(0, |i| i.seed);
         let session_s = self.session_time(now_s).unwrap_or(now_s);
         let gust = ocw_weather::wind::gust(seed, session_s);
+        let attribution = self
+            .info
+            .as_ref()
+            .and_then(|i| i.real.as_ref())
+            .map(|r| r.attribution.clone())
+            .filter(|a| !a.is_empty());
         Some(WeatherView {
             wind_mps: state.wind_mps + (state.gust_mps - state.wind_mps).max(0.0) * gust,
             gust,
             summary: state.hud(),
+            attribution,
             strikes: self.strikes.clone(),
             session_s,
             state,
@@ -112,7 +119,15 @@ pub fn request_for(
     use ocw_protocol::WeatherChange;
     use ocw_weather::command::WeatherCommand as W;
     Some(match cmd {
-        W::Show | W::List => return None,
+        W::Show | W::List | W::Day { .. } => return None,
+        W::Real {
+            choice,
+            transition_s,
+        } => WeatherChange {
+            real: Some(choice.unwrap_or_default()),
+            transition_s: *transition_s,
+            ..Default::default()
+        },
         W::Preset {
             state,
             transition_s,
@@ -183,6 +198,18 @@ pub fn command_request(
             seed: Some(random_seed(now_s)),
             transition_s: *transition_s,
         },
+        // Real weather without a source: the session's (else automatic).
+        W::Real {
+            choice: None,
+            transition_s,
+        } => W::Real {
+            choice: client
+                .weather()
+                .info()
+                .and_then(|i| i.real.as_ref())
+                .map(|r| r.choice),
+            transition_s: *transition_s,
+        },
         c => c.clone(),
     };
     let mut change = request_for(&cmd, base)?;
@@ -211,6 +238,13 @@ pub fn run(
     match &cmd {
         W::List => return Ok((command::list(), None)),
         W::Show => return describe(client, now_s).map(|s| (s, None)),
+        // The app runs the day's lines (the time machine, then real).
+        W::Day { title, lines } => {
+            return Err(format!(
+                "weather day {title}: run {} (the app's console does it)",
+                lines.join(" and ")
+            ));
+        }
         _ => {}
     }
     if client.weather().info().is_none() {
@@ -288,10 +322,17 @@ pub fn status(client: &mut ClientCore, now_s: f64) -> Result<String, String> {
         ));
     }
     let mode = info.as_ref().map_or(ocw_weather::Mode::Fixed, |i| i.mode);
-    lines.push(match (mode, info.as_ref().map_or(0, |i| i.sim_seed)) {
-        (ocw_weather::Mode::Simulated, seed) => format!("mode: simulated (seed {seed})"),
-        _ => "mode: fixed".into(),
-    });
+    let real = info.as_ref().and_then(|i| i.real.clone());
+    lines.push(
+        match (mode, info.as_ref().map_or(0, |i| i.sim_seed), &real) {
+            (_, _, Some(r)) => format!("mode: real ({}), {}", r.choice.name(), r.status.name()),
+            (ocw_weather::Mode::Simulated, seed, None) => format!("mode: simulated (seed {seed})"),
+            _ => "mode: fixed".into(),
+        },
+    );
+    if let Some(r) = &real {
+        lines.push(real_line(r));
+    }
     lines.push(format!(
         "clouds {:.0} % {} (base {:.0} m), visibility {}, humidity {:.0} %, {:.0} hPa, lightning {:.1} / min",
         w.cloud_cover * 100.0,
@@ -332,18 +373,55 @@ pub fn describe(client: &mut ClientCore, now_s: f64) -> Result<String, String> {
         return Err("no weather yet (the server sends it when you join)".into());
     };
     let info = wc.info();
-    let mode = info.map_or("fixed", |i| i.mode.name());
+    let mode = info.map_or("fixed", |i| {
+        if i.real.is_some() {
+            "real"
+        } else {
+            i.mode.name()
+        }
+    });
     let transition = info
         .and_then(|i| i.target)
         .map(|(t, left)| format!(" -> {} in {left:.0} s", t.condition().label()))
         .unwrap_or_default();
+    let real = info
+        .and_then(|i| i.real.as_ref())
+        .map(|r| format!("\n{}", real_line(r)))
+        .unwrap_or_default();
     Ok(format!(
-        "{}{transition} ({mode}); road wet {:.0} %, puddles {:.0} %, snow cover {:.0} %; set by {control}",
+        "{}{transition} ({mode}); road wet {:.0} %, puddles {:.0} %, snow cover {:.0} %; set by {control}{real}",
         w.summary(),
         g.wetness() * 100.0,
         g.puddles() * 100.0,
         g.snow_cover() * 100.0,
     ))
+}
+
+/// Real weather in one line (spec §14 Phase 9, S7): "real weather:
+/// MeteoSwiss, MET Norway (Vaduz (VAD), 14 Nov 11:40 UTC) - Weather: …,
+/// CC BY 4.0 - note".
+pub fn real_line(r: &ocw_weather::real::feed::RealInfo) -> String {
+    let mut s = format!("real weather: {}", r.source_label());
+    let mut about = Vec::new();
+    if let Some(st) = &r.station {
+        about.push(st.clone());
+    }
+    if r.data_ms != 0 {
+        about.push(ocw_weather::real::time::utc_label(r.data_ms));
+    }
+    if r.historic {
+        about.push("history (ERA5)".into());
+    }
+    if !about.is_empty() {
+        s += &format!(" ({})", about.join(", "));
+    }
+    if !r.attribution.is_empty() {
+        s += &format!(" - {}", r.attribution);
+    }
+    if let Some(n) = &r.note {
+        s += &format!(" - {n}");
+    }
+    s
 }
 
 /// A strike in client time (tests).

@@ -5,6 +5,8 @@
 use ocw_core::RiderId;
 use ocw_weather::command::GroundChange;
 use ocw_weather::machine::EventWeather;
+use ocw_weather::real::feed::{RealInfo, Status};
+use ocw_weather::real::{Choice, Provider};
 use ocw_weather::{CloudType, Ground, Mode, Precip, SessionWeather, Strike, WeatherState};
 
 use crate::v1;
@@ -100,8 +102,98 @@ fn strike_to_wire(s: &Strike) -> v1::LightningStrike {
     }
 }
 
+fn provider_to_wire(p: Provider) -> i32 {
+    (match p {
+        Provider::MeteoSwiss => v1::WeatherProvider::Meteoswiss,
+        Provider::Dwd => v1::WeatherProvider::Dwd,
+        Provider::MetNorway => v1::WeatherProvider::MetNorway,
+        Provider::OpenMeteo => v1::WeatherProvider::OpenMeteo,
+    }) as i32
+}
+
+fn provider_from_wire(v: i32) -> Option<Provider> {
+    match v1::WeatherProvider::try_from(v) {
+        Ok(v1::WeatherProvider::Meteoswiss) => Some(Provider::MeteoSwiss),
+        Ok(v1::WeatherProvider::Dwd) => Some(Provider::Dwd),
+        Ok(v1::WeatherProvider::MetNorway) => Some(Provider::MetNorway),
+        Ok(v1::WeatherProvider::OpenMeteo) => Some(Provider::OpenMeteo),
+        _ => None,
+    }
+}
+
+/// A data source on the wire (spec §14 Phase 9, S7).
+pub fn choice_to_wire(c: Choice) -> i32 {
+    match c {
+        Choice::Automatic => v1::WeatherProvider::Automatic as i32,
+        Choice::Only(p) => provider_to_wire(p),
+    }
+}
+
+/// A received data source (unknown: automatic).
+pub fn choice_from_wire(v: i32) -> Choice {
+    provider_from_wire(v).map_or(Choice::Automatic, Choice::Only)
+}
+
+/// The real weather's state on the wire.
+pub fn real_to_wire(r: &RealInfo) -> v1::RealWeather {
+    v1::RealWeather {
+        choice: choice_to_wire(r.choice),
+        providers: r.providers.iter().map(|p| provider_to_wire(*p)).collect(),
+        attribution: r.attribution.clone(),
+        note: r.note.clone().unwrap_or_default(),
+        status: (match r.status {
+            Status::Waiting => v1::RealWeatherStatus::Waiting,
+            Status::Live => v1::RealWeatherStatus::Live,
+            Status::Stale => v1::RealWeatherStatus::Stale,
+            Status::Offline => v1::RealWeatherStatus::Offline,
+        }) as i32,
+        data_unix_ms: r.data_ms,
+        historic: r.historic,
+        station: r.station.clone().unwrap_or_default(),
+    }
+}
+
+/// A received real-weather state (texts cut to 200 characters).
+pub fn real_from_wire(r: &v1::RealWeather) -> RealInfo {
+    let text = |s: &str| -> Option<String> {
+        let s: String = s.chars().take(200).collect();
+        (!s.trim().is_empty()).then_some(s)
+    };
+    RealInfo {
+        choice: choice_from_wire(r.choice),
+        providers: r
+            .providers
+            .iter()
+            .filter_map(|p| provider_from_wire(*p))
+            .take(4)
+            .collect(),
+        attribution: text(&r.attribution).unwrap_or_default(),
+        note: text(&r.note),
+        status: match v1::RealWeatherStatus::try_from(r.status) {
+            Ok(v1::RealWeatherStatus::Live) => Status::Live,
+            Ok(v1::RealWeatherStatus::Stale) => Status::Stale,
+            Ok(v1::RealWeatherStatus::Offline) => Status::Offline,
+            _ => Status::Waiting,
+        },
+        data_ms: r.data_unix_ms,
+        historic: r.historic,
+        station: text(&r.station),
+    }
+}
+
 /// The session weather message at session time `t` (s).
 pub fn session_weather(w: &SessionWeather, t: f64, access: ClockAccess) -> v1::SessionWeather {
+    session_weather_with(w, t, access, None)
+}
+
+/// [`session_weather`] with the real weather's state (spec §14 Phase 9,
+/// S7; `None`: off).
+pub fn session_weather_with(
+    w: &SessionWeather,
+    t: f64,
+    access: ClockAccess,
+    real: Option<&RealInfo>,
+) -> v1::SessionWeather {
     let g = w.ground();
     let left = w.transition_left_s(t);
     v1::SessionWeather {
@@ -115,6 +207,7 @@ pub fn session_weather(w: &SessionWeather, t: f64, access: ClockAccess) -> v1::S
         mode: match w.mode() {
             Mode::Fixed => v1::WeatherMode::Fixed,
             Mode::Simulated => v1::WeatherMode::Simulated,
+            Mode::Real => v1::WeatherMode::Real,
         } as i32,
         access: access_to_wire(access),
         seed: w.seed(),
@@ -123,8 +216,9 @@ pub fn session_weather(w: &SessionWeather, t: f64, access: ClockAccess) -> v1::S
         target: (left > 0.0).then(|| weather_to_wire(w.target())),
         sim_seed: match w.mode() {
             Mode::Simulated => w.sim_seed(),
-            Mode::Fixed => 0,
+            Mode::Fixed | Mode::Real => 0,
         },
+        real: real.map(real_to_wire),
     }
 }
 
@@ -145,6 +239,8 @@ pub struct WeatherInfo {
     pub strikes: Vec<Strike>,
     /// The simulation's seed (0 when fixed; spec §14 Phase 9, S5).
     pub sim_seed: u64,
+    /// Real weather (S7; `None`: off).
+    pub real: Option<RealInfo>,
 }
 
 impl WeatherInfo {
@@ -173,8 +269,10 @@ pub fn weather_info(w: &v1::SessionWeather) -> WeatherInfo {
         immediate: w.immediate,
         mode: match v1::WeatherMode::try_from(w.mode) {
             Ok(v1::WeatherMode::Simulated) => Mode::Simulated,
+            Ok(v1::WeatherMode::Real) => Mode::Real,
             _ => Mode::Fixed,
         },
+        real: w.real.as_ref().map(real_from_wire),
         access: access_from_wire(w.access),
         seed: w.seed,
         session_s: w.session_s,
@@ -208,6 +306,8 @@ pub struct WeatherChange {
     pub ground: GroundChange,
     /// A test strike: distance (m) and bearing (°).
     pub strike: Option<(f32, f32)>,
+    /// Real weather from now on, from this data source (S7).
+    pub real: Option<Choice>,
 }
 
 /// A weather request (spec §14 Phase 9, S4).
@@ -223,6 +323,8 @@ pub fn weather_request(c: &WeatherChange) -> v1::ClientMessage {
         snow_cover: c.ground.snow_cover,
         strike_distance_m: c.strike.map(|s| s.0),
         strike_bearing_deg: c.strike.map(|s| s.1),
+        real: c.real.is_some(),
+        provider: c.real.map_or(0, choice_to_wire),
     }))
 }
 
@@ -283,6 +385,7 @@ pub fn weather_change(r: &v1::WeatherRequest) -> WeatherChange {
                     .unwrap_or(0.0),
             )
         }),
+        real: r.real.then(|| choice_from_wire(r.provider)),
     }
 }
 
@@ -366,6 +469,39 @@ mod tests {
             let p = preset(name).unwrap();
             assert_eq!(weather_from_wire(&weather_to_wire(&p)), p, "{name}");
         }
+        // Real weather (S7): its mode and state through the wire.
+        let mut real = SessionWeather::new(1);
+        real.set_real(0.0, preset("rain").unwrap(), 0.0, true);
+        let ri = RealInfo {
+            choice: Choice::Only(Provider::MeteoSwiss),
+            providers: vec![Provider::MeteoSwiss, Provider::MetNorway],
+            attribution: "Weather: MeteoSwiss, MET Norway, CC BY 4.0".into(),
+            note: Some("a note".into()),
+            status: Status::Stale,
+            data_ms: 1_794_654_000_000,
+            historic: false,
+            station: Some("Vaduz (VAD)".into()),
+        };
+        let back = weather_info(&session_weather_with(
+            &real,
+            0.0,
+            ClockAccess::Anyone,
+            Some(&ri),
+        ));
+        assert_eq!(back.mode, Mode::Real);
+        assert_eq!(back.real, Some(ri));
+        let off = weather_info(&session_weather(&real, 0.0, ClockAccess::Anyone));
+        assert_eq!(off.real, None);
+        let empty = real_from_wire(&v1::RealWeather {
+            providers: vec![0, 99, 3],
+            ..Default::default()
+        });
+        assert_eq!(
+            empty.providers,
+            [Provider::MetNorway],
+            "automatic and unknown dropped"
+        );
+        assert_eq!((empty.note, empty.status), (None, Status::Waiting));
         // Without a transition: no target.
         let calm = SessionWeather::new(1);
         assert!(
@@ -394,11 +530,24 @@ mod tests {
                 snow_cover: Some(1.0),
             },
             strike: Some((800.0, 270.0)),
+            real: None,
         };
         let Msg::Weather(r) = decode_client(&encode(&weather_request(&c))).unwrap() else {
             panic!("a weather request")
         };
         assert_eq!(weather_change(&r), c);
+        // Real weather with a data source (S7).
+        for choice in Choice::ALL {
+            let real = WeatherChange {
+                real: Some(choice),
+                transition_s: 30.0,
+                ..Default::default()
+            };
+            let Msg::Weather(r) = decode_client(&encode(&weather_request(&real))).unwrap() else {
+                panic!()
+            };
+            assert_eq!(weather_change(&r), real);
+        }
         let sim = WeatherChange {
             simulate: Some(9),
             ..Default::default()

@@ -54,6 +54,9 @@ pub struct WeatherView {
     pub strikes: Vec<StrikeView>,
     /// For the HUD: "rain 9 °C".
     pub summary: String,
+    /// Real weather's credit for the HUD ("Weather: MET Norway, CC BY
+    /// 4.0"; spec §14 Phase 9, S7; `None`: not real weather).
+    pub attribution: Option<String>,
     /// The server's session time now (s).
     pub session_s: f64,
 }
@@ -339,6 +342,7 @@ mod tests {
             gust: 0.0,
             strikes: Vec::new(),
             summary: state.hud(),
+            attribution: None,
             session_s: 0.0,
             state,
         }
