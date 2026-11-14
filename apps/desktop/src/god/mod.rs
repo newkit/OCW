@@ -796,6 +796,8 @@ mod tests {
             is_local: local,
             bike: Default::default(),
             look: None,
+            crash: None,
+            wobble: 0.0,
         };
         v.riders = vec![rider(1, "Host", true), rider(2, "Ada", false)];
         v.unicorns.push(ocw_render::UnicornView {

@@ -620,6 +620,7 @@ mod tests {
             start_line_m: 100.0,
             finished_tick: None,
             standings,
+            collisions: ocw_sim::collide::Mode::Off,
         }
     }
 

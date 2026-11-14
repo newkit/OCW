@@ -3,6 +3,7 @@
 //!
 //! - [`client::ClientCore`]: the client loop (device samples → server,
 //!   server messages → prediction and interpolation → render view),
+//! - [`collisions`]: crashes, bumps and the collision rules (spec §14 Phase 12),
 //! - [`event`]: events, standings and ghosts on the client,
 //! - [`god_state`]: god mode's flight state (spec §14 Phase 13),
 //! - [`input`]: the pure key and gamepad logic of the ride controls,
@@ -12,6 +13,7 @@
 //! `wasm32-unknown-unknown` (spec §3.5). The apps add the Bevy glue.
 
 pub mod client;
+pub mod collisions;
 pub mod event;
 pub mod god_state;
 pub mod gps;

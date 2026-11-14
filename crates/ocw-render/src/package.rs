@@ -2217,6 +2217,8 @@ mod tests {
             is_local: true,
             bike: Default::default(),
             look: None,
+            crash: None,
+            wobble: 0.0,
         });
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))

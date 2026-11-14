@@ -170,6 +170,11 @@ fn update_view(
         .and_then(|l| ocw_client::gps::position(s.client.track(), s.client.geo_origin(), &l.state));
     view.event = s.client.event_view(now);
     view.ghost = s.client.ghost_state(now);
+    // Collisions (spec §14 Phase 12C): the crash line, else the crash feed.
+    view.notice = s
+        .client
+        .crash_notice(now)
+        .or_else(|| s.client.crash_feed(now).pop());
     view.status = s.status_line();
     let position = view.position;
     view.sky = ocw_client::sky::sky_view(

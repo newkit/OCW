@@ -511,6 +511,8 @@ mod tests {
             is_local: true,
             bike: Default::default(),
             look: None,
+            crash: None,
+            wobble: 0.0,
         });
         let mut tunnels = crate::tunnel::Tunnels::default();
         tunnels.stretches = vec![(800.0, 1200.0)];

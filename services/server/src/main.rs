@@ -57,6 +57,16 @@ struct Args {
     /// session). Never during a running event.
     #[arg(long, default_value = "host", value_parser = parse_time_control)]
     god_control: ocw_server::ClockAccess,
+    /// Rider collisions (spec §14 Phase 12, on by default): soft bumps and
+    /// crashes; group rides soft bumps only.
+    #[arg(long, default_value = "on", value_parser = ["on", "off"])]
+    collisions: String,
+    /// Chaotic bots that sometimes make mistakes (Phase 12 Q3).
+    #[arg(long)]
+    chaotic_bots: bool,
+    /// Who may change the collision rules (host, anyone, nobody).
+    #[arg(long, default_value = "host", value_parser = parse_time_control)]
+    collision_control: ocw_server::ClockAccess,
     /// Free ride on the road graph of this world package (version 2,
     /// from `world-builder package`; a path or a cache id) instead of the
     /// test loop. Verified on load (spec §4.7).
@@ -320,6 +330,9 @@ fn main() {
             real_epoch_ms: None,
             allow_echo_bot: args.echo_bot,
             echo_bot_at_start: args.echo_bot,
+            collisions: args.collisions == "on",
+            chaotic_bots: args.chaotic_bots,
+            collision_access: args.collision_control,
         },
     );
     if let Some(echo) = server.session().echo_rider() {

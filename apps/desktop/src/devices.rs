@@ -158,12 +158,23 @@ pub fn control_trainer(
     client: Res<ClientState>,
     devices: Res<Devices>,
     mut trainer: ResMut<Trainer>,
+    mut last_bump: Local<Option<u64>>,
 ) {
     let c = &client.0;
     if c.rider_id().is_none() {
         return;
     }
     trainer.0.set_flying(c.god().active());
+    // Collisions (spec §14 Phase 12): SIM flat while down after a crash,
+    // a resistance pulse on a soft bump.
+    let now = time.elapsed_secs_f64();
+    trainer.0.set_down(c.own_crash(now).is_some());
+    if let Some(b) = c.rider_id().and_then(|id| c.collision_state().bump(id))
+        && *last_bump != Some(b.tick)
+    {
+        trainer.0.bump(now, b.strength);
+        *last_bump = Some(b.tick);
+    }
     if let Some(cmd) = trainer.0.update(
         time.elapsed_secs_f64(),
         c.track(),

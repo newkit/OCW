@@ -33,6 +33,9 @@ pub struct Predictor {
     /// Remaining lateral error to blend in, and its rate (m/s).
     pending_lateral: f64,
     lateral_rate: f64,
+    /// Autodrive avoidance's virtual brake (spec §14 Phase 12D), as on
+    /// the server.
+    speed_cap: Option<f64>,
 }
 
 impl Predictor {
@@ -48,7 +51,13 @@ impl Predictor {
             scraping: false,
             pending_lateral: 0.0,
             lateral_rate: 0.0,
+            speed_cap: None,
         }
+    }
+
+    /// Autodrive avoidance's speed cap for the next steps (m/s; `None`: none).
+    pub fn set_speed_cap(&mut self, cap: Option<f64>) {
+        self.speed_cap = cap;
     }
 
     /// Takes the server's state as it is, dropping pending corrections
@@ -105,6 +114,11 @@ impl Predictor {
             self.drag_factor,
             SIM_DT,
         );
+        if let Some(c) = self.speed_cap
+            && self.state.speed > c
+        {
+            self.state.speed = c;
+        }
         if self.pending_lateral != 0.0 {
             let max_step = self.lateral_rate.abs() * SIM_DT;
             let applied = self.pending_lateral.clamp(-max_step, max_step);

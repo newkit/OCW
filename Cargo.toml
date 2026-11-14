@@ -49,6 +49,11 @@ ocw-client = { path = "crates/ocw-client" }
 # Bevy is pinned to an exact version (spec §3.1). Only ocw-render and apps/desktop may use it.
 bevy = "=0.20.1"
 bevy_egui = "=0.43.1"
+# Ragdoll falls (spec §14 Phase 12C, Q5; chosen by the K2 spike): Avian, the
+# ECS-native physics engine for this Bevy version (MIT OR Apache-2.0; its
+# collision shapes come from parry3d, Apache-2.0). Only in ocw-render, for
+# visuals on the client; builds for wasm32 too.
+avian3d = { version = "=0.8.0", default-features = false, features = ["3d", "parry-f32", "xpbd_joints"] }
 # Bevy's own math and glTF crates (both MIT OR Apache-2.0), for the
 # Bevy-free asset crate ocw-assets (spec §8): no `import` feature (no image
 # decoding, no file access).

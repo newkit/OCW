@@ -730,6 +730,8 @@ mod tests {
             is_local: local,
             bike: Default::default(),
             look: None,
+            crash: None,
+            wobble: 0.0,
         }
     }
 

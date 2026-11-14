@@ -12,13 +12,16 @@ use ocw_core::{ProfileId, RiderId, RiderLook, RiderProfile, SIM_DT};
 use ocw_world::network::splitmix;
 use ocw_world::{RidePath, RoadNetwork, Route, RoutePlan, Segment, Track};
 
+use crate::avoid;
 use crate::drafting;
 use crate::event::{self, Event, EventChange, EventKind, EventSpec, Progress, Standing};
 use crate::freeride::{self, TurnChoice, UTURN_INTERVAL_S};
 use crate::physics::{self, Environment, RiderState, Steering};
 use crate::ride::{self, Controls};
 
+mod collisions;
 mod god_mode;
+pub use collisions::{CollisionStats, Crash, JOIN_GHOST_S, Stage};
 pub use god_mode::{GodLeave, GodRider};
 
 /// Latest sensor input of a rider.
@@ -81,6 +84,17 @@ struct Rider {
     /// God mode (spec §14 Phase 13): out of the physics, the road
     /// position frozen, flying as a unicorn.
     god: Option<GodRider>,
+    /// Collisions (spec §14 Phase 12): the crash under way, the last soft
+    /// bump, autodrive's passing line, a chaotic bot's (or a staged)
+    /// mistake until this tick and its drift, and when the rider joined.
+    crash: Option<Crash>,
+    bump: Option<crate::collide::Bump>,
+    avoid: crate::avoid::AvoidState,
+    mistake_until: u64,
+    mistake_drift: f64,
+    joined_tick: u64,
+    /// Takes part in collisions (bots at once; clients after joining, 12A).
+    solid: bool,
 }
 
 /// State of one rider as broadcast to clients.
@@ -98,6 +112,10 @@ pub struct RiderSnapshot {
     pub last_input_seq: u32,
     /// In god mode: the unicorn's pose (spec §14 Phase 13E).
     pub god: Option<crate::god::GodPose>,
+    /// A crash under way (spec §14 Phase 12C).
+    pub crash: Option<crate::collide::CrashView>,
+    /// The last soft bump (for the wobble and the sound).
+    pub bump: Option<crate::collide::Bump>,
 }
 
 /// Where free-ride riders start: `offset_m` along graph edge `edge` (from
@@ -124,6 +142,20 @@ pub struct PathChange {
 
 /// A point on the road graph: (edge, ridden forwards, metres from its start).
 type EdgePoint = (usize, bool, f64);
+
+/// A rider at the start of a tick, for drafting and avoidance.
+#[derive(Debug, Clone, Copy)]
+struct Pos {
+    id: RiderId,
+    distance: f64,
+    lateral: f64,
+    at: Option<EdgePoint>,
+    speed: f64,
+    /// The line it steers to.
+    target: f64,
+    /// Down after a crash: an obstacle, no draft.
+    fallen: bool,
+}
 
 /// Slowest speed a bot climbs at (m/s, 10 km/h): like real riders, easy
 /// bots push harder uphill instead of crawling.
@@ -199,6 +231,8 @@ pub struct Session {
     /// The area god mode may fly over (the road graph's or the route's
     /// box, grown), for the server's plausibility check.
     god_area: Option<crate::god::Bounds>,
+    /// Collision switches and counters (spec §14 Phase 12).
+    rules: collisions::Rules,
 }
 
 impl Session {
@@ -215,6 +249,7 @@ impl Session {
             next_event_id: 1,
             event_changes: Vec::new(),
             god_area: god_mode::route_area(&route),
+            rules: collisions::Rules::default(),
             route,
         }
     }
@@ -430,6 +465,13 @@ impl Session {
                 path_changed: None,
                 slot,
                 god: None,
+                crash: None,
+                bump: None,
+                avoid: Default::default(),
+                mistake_until: 0,
+                mistake_drift: 0.0,
+                joined_tick: self.tick,
+                solid: control != Control::Client,
             },
         );
         id
@@ -835,16 +877,36 @@ impl Session {
             .filter(|(_, r)| r.control != Control::Echo)
             .map(|(id, r)| (*id, r.state.distance))
             .collect();
-        // Drafting uses everyone's position at the start of the tick (in
-        // free ride also where on the road graph they are).
+        // Collisions (spec §14 Phase 12): the model in force, autodrive
+        // avoidance for every autodrive rider and bot, chaotic bots.
+        let mode = self.collision_mode();
+        let avoid_on = mode.on() && !held;
+        let chaotic = avoid_on && self.rules.chaotic_bots;
+        let overtake_left = self.overtake_left();
+        let tick = self.tick;
+        let loop_m = (self.free.is_none() && self.route.is_loop()).then(|| self.route.length());
+        // Drafting and avoidance use everyone's position at the start of
+        // the tick (in free ride also where on the road graph they are).
         // Riders in god mode fly: they draft nobody and nobody drafts them.
-        let positions: Vec<(RiderId, f64, f64, Option<EdgePoint>)> = self
+        let positions: Vec<Pos> = self
             .riders
             .iter()
             .filter(|(_, r)| r.god.is_none() && r.control != Control::Echo)
             .map(|(id, r)| {
                 let at = r.path.as_ref().and_then(|p| p.locate(r.state.distance));
-                (*id, r.state.distance, r.state.lateral_offset, at)
+                let lane = match r.steering {
+                    Steering::Auto(t) => t,
+                    Steering::Lean(_) => r.state.lateral_offset,
+                };
+                Pos {
+                    id: *id,
+                    distance: r.state.distance,
+                    lateral: r.state.lateral_offset,
+                    at,
+                    speed: r.state.speed,
+                    target: r.avoid.pass_m.unwrap_or(lane),
+                    fallen: r.crash.is_some(),
+                }
             })
             .collect();
         for (id, rider) in &mut self.riders {
@@ -886,16 +948,36 @@ impl Session {
                 }
                 path.trim_behind(d);
             }
-            let others = positions.iter().filter(|(other, ..)| other != id);
-            let ahead: Vec<(f64, f64)> = match &rider.path {
-                Some(p) => others
-                    .filter_map(|&(_, _, l, at)| {
-                        let (e, f, o) = at?;
-                        Some((p.distance_of(e, f, o, d)?, l))
-                    })
-                    .collect(),
-                None => others.map(|&(_, od, l, _)| (od, l)).collect(),
-            };
+            if rider.crash.is_some() {
+                // Down after a crash (spec §14 Phase 12C): power has no
+                // effect; sliding to a stop, lying, remounting.
+                let width = match &rider.path {
+                    Some(p) => p.road_width_at(d),
+                    None => self.route.road_width_at(d),
+                };
+                collisions::crash_tick(rider, tick, physics::lateral_limit(width));
+                continue;
+            }
+            // The others where this rider rides: distance along its path.
+            let mapped: Vec<(&Pos, f64)> = positions
+                .iter()
+                .filter(|p| p.id != *id)
+                .filter_map(|p| {
+                    let mine = match &rider.path {
+                        Some(path) => {
+                            let (e, f, o) = p.at?;
+                            path.distance_of(e, f, o, d)?
+                        }
+                        None => p.distance,
+                    };
+                    Some((p, mine))
+                })
+                .collect();
+            let ahead: Vec<(f64, f64)> = mapped
+                .iter()
+                .filter(|(p, _)| !p.fallen)
+                .map(|(p, m)| (*m, p.lateral))
+                .collect();
             let drag = if drafting {
                 drafting::drag_factor((d, rider.state.lateral_offset), ahead)
             } else {
@@ -919,8 +1001,65 @@ impl Session {
                 };
                 rider.input.power_w = cruising.max(bot_climb_power_w(&rider.profile, grade));
             }
+            // Autodrive avoidance (spec §14 Phase 12D): every autodrive
+            // rider and bot; manual riders get no help.
+            let mut steering = rider.steering;
+            let mut cap = None;
+            if avoid_on
+                && !rider.wild
+                && let Steering::Auto(lane) = rider.steering
+            {
+                // Joining ghosts are avoided too: they become solid soon.
+                let others: Vec<avoid::Other> = mapped
+                    .iter()
+                    .filter_map(|(p, mine)| {
+                        let mut ahead_m = mine - d;
+                        if let Some(l) = loop_m {
+                            ahead_m -= l * (ahead_m / l).round();
+                        }
+                        (ahead_m.abs() < 80.0).then(|| {
+                            if p.fallen {
+                                avoid::Other::fallen(ahead_m, p.lateral)
+                            } else {
+                                avoid::Other::rider(ahead_m, p.lateral, p.target, p.speed)
+                            }
+                        })
+                    })
+                    .collect();
+                if chaotic
+                    && matches!(rider.control, Control::Bot { .. })
+                    && collisions::mistake_starts(*id, tick)
+                {
+                    // A late reaction, drifting towards the rider ahead.
+                    rider.mistake_until = tick + (collisions::MISTAKE_S / SIM_DT) as u64;
+                    let me = rider.state.lateral_offset;
+                    rider.mistake_drift = others
+                        .iter()
+                        .filter(|o| o.ahead_m > 0.0 && o.ahead_m < 10.0)
+                        .min_by(|a, b| a.ahead_m.total_cmp(&b.ahead_m))
+                        .map_or(0.0, |o| {
+                            (o.lateral_m - me).signum() * collisions::MISTAKE_DRIFT_M
+                        });
+                }
+                if rider.mistake_until > tick {
+                    rider.avoid = Default::default();
+                    steering = Steering::Auto(lane + rider.mistake_drift);
+                } else {
+                    let width = track.road_width_at(d);
+                    let me = avoid::Me {
+                        lateral_m: rider.state.lateral_offset,
+                        speed: rider.state.speed,
+                        lane_m: lane,
+                        limit_m: physics::lateral_limit(width),
+                        road_width_m: width,
+                    };
+                    let plan = avoid::plan(&me, &others, overtake_left, &mut rider.avoid);
+                    steering = Steering::Auto(plan.target_m);
+                    cap = plan.speed_cap;
+                }
+            }
             let controls = Controls {
-                steering: rider.steering,
+                steering,
                 wild: rider.wild,
                 braking: rider.input.brake,
             };
@@ -934,6 +1073,16 @@ impl Session {
                 drag,
                 SIM_DT,
             );
+            // The virtual brake: the speed above the one in front is shed.
+            if let Some(c) = cap
+                && rider.state.speed > c
+            {
+                rider.state.speed = c;
+            }
+        }
+        // Contacts after the physics step, before the broadcast (12B).
+        if !held {
+            self.resolve_collisions(mode);
         }
         if let Some(ev) = &mut self.event {
             let progress: Vec<Progress> = before
@@ -966,6 +1115,8 @@ impl Session {
                 power_w: r.input.power_w,
                 last_input_seq: r.last_input_seq,
                 god: r.god.map(|g| g.pose),
+                crash: r.crash.and_then(|c| c.view(self.tick)),
+                bump: r.bump,
             })
             .collect()
     }
@@ -1104,8 +1255,12 @@ impl Session {
         r.wild = false;
         r.scraping = false;
         r.slot = slot;
-        // An event's start formation ends god mode.
+        // An event's start formation ends god mode and any crash.
         r.god = None;
+        r.crash = None;
+        r.bump = None;
+        r.avoid = Default::default();
+        r.mistake_until = 0;
     }
 
     /// The event's ranking now (empty without an event).

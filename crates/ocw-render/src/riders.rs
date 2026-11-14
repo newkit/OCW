@@ -129,7 +129,7 @@ fn lod_shadows(
 }
 
 #[derive(Resource, Default)]
-struct RiderEntities(BTreeMap<RiderId, Entity>);
+pub(crate) struct RiderEntities(pub(crate) BTreeMap<RiderId, Entity>);
 
 /// Despawns all avatars (a ride switch, [`crate::rebuild_scene`]): the
 /// riders of the new session are spawned afresh.
@@ -143,6 +143,7 @@ pub(crate) fn reset_avatars(world: &mut World) {
             e.despawn();
         }
     }
+    crate::ragdoll::reset(world);
 }
 
 /// The time trial's ghost (spec §2.3) is drawn as a rider with this id.
@@ -371,6 +372,7 @@ fn sync_riders(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     ground: Option<Res<Ground>>,
+    ragdolls: Option<Res<crate::ragdoll::Ragdolls>>,
     mut library: Local<Option<Library>>,
 ) {
     let lib = library.get_or_insert_with(|| Library::new(&mut meshes));
@@ -397,21 +399,28 @@ fn sync_riders(
     let all = view
         .riders
         .iter()
-        .map(|r| (r.id, r.state, r.id, r.is_local, r.bike, r.look))
+        .map(|r| (r.id, r.state, r.id, r.is_local, r.bike, r.look, r.wobble))
         .chain(ghost.and_then(|(id, state, on)| {
             let local = view.local()?;
-            Some((id, state, on, false, local.bike, None))
+            Some((id, state, on, false, local.bike, None, 0.0))
         }));
-    for (id, state, track_of, is_local, bike, look) in all {
+    for (id, state, track_of, is_local, bike, look, wobble) in all {
         let rig = &lib.bike_rigs[profile_index(bike)];
-        let t = avatar_transform(view.track(track_of), &state, ground.as_deref(), rig);
+        let mut t = avatar_transform(view.track(track_of), &state, ground.as_deref(), rig);
+        // The wobble after a soft bump (spec §14 Phase 12B): a lean swing.
+        if wobble != 0.0 {
+            t.rotation *= lean_rotation(wobble);
+        }
+        // Falling or down as a ragdoll, or remounting: the ragdoll shows
+        // the rider (spec §14 Phase 12C).
+        let ragdoll = ragdolls.as_ref().is_some_and(|r| r.hidden.contains(&id));
         let wanted = AvatarLook { bike, look };
         if let Some(e) = entities.0.get(&id).copied() {
             match avatars.get_mut(e) {
                 Ok((mut tr, built, mut vis)) if *built == wanted => {
                     *tr = t;
                     // God mode (spec §14 Phase 13C): the unicorn is the rider.
-                    let shown = if flying(&view, id) {
+                    let shown = if flying(&view, id) || ragdoll {
                         Visibility::Hidden
                     } else {
                         Visibility::Inherited
@@ -424,6 +433,10 @@ fn sync_riders(
             }
         }
         let e = spawn_avatar(&mut commands, lib, &mut materials, id, is_local, wanted, t);
+        if ragdoll {
+            // A fresh avatar for the remount: hidden until it takes over.
+            commands.entity(e).insert(Visibility::Hidden);
+        }
         entities.0.insert(id, e);
     }
 }
@@ -634,6 +647,8 @@ fn spawn_model(
                 },
                 visibility,
                 ChildOf(up),
+                // The ragdoll finds the segments by name (spec §14 Phase 12C).
+                Name::new(node.name.clone()),
             ))
             .id();
         out[i] = e;
@@ -771,7 +786,10 @@ fn spawn_avatar(
 fn animate(
     time: Res<Time>,
     view: Res<RideView>,
-    mut avatars: Query<(&Avatar, &mut AvatarRig, &GlobalTransform)>,
+    mut avatars: Query<
+        (&Avatar, &mut AvatarRig, &GlobalTransform),
+        Without<crate::ragdoll::Ragdolled>,
+    >,
     cameras: Query<&GlobalTransform, With<Camera3d>>,
     mut transforms: Query<&mut Transform>,
 ) {
@@ -879,6 +897,8 @@ mod tests {
             is_local: true,
             bike: Default::default(),
             look: None,
+            crash: None,
+            wobble: 0.0,
         };
         {
             let mut v = app.world_mut().resource_mut::<RideView>();
@@ -1010,6 +1030,8 @@ mod tests {
             is_local: false,
             bike: ProfileId::Road,
             look: None,
+            crash: None,
+            wobble: 0.0,
         });
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))
@@ -1081,6 +1103,8 @@ mod tests {
                 pattern: ocw_core::KitPattern::Band,
                 ..Default::default()
             }),
+            crash: None,
+            wobble: 0.0,
         }
     }
 

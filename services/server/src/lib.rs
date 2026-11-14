@@ -90,6 +90,17 @@ pub struct ServerConfig {
     /// Every session starts with the Echo rider at the start
     /// (`ocw-server --echo-bot`).
     pub echo_bot_at_start: bool,
+    /// `ride.collisions` of the session (spec §14 Phase 12A): the local
+    /// servers follow the rider's setting (on by default, Q1), `ocw-server
+    /// --collisions on|off`. `Default` keeps it off (tests, embeddings that
+    /// decide themselves).
+    pub collisions: bool,
+    /// `ride.chaotic_bots` (Phase 12 Q3, off by default).
+    pub chaotic_bots: bool,
+    /// Who may change them ([`v1::RulesRequest`]): the single player on
+    /// the local servers, the host of a shared session (the default),
+    /// nobody when the organizer fixed them.
+    pub collision_access: ClockAccess,
 }
 
 pub use ocw_protocol::ClockAccess;
@@ -462,6 +473,7 @@ impl GameServer {
             }
             (C::Voice(req), Some(rider)) => Some(S::Voice(self.voice_grant(conn, rider, &req))),
             (C::Echo(req), Some(rider)) => Some(self.echo_request(rider, req)),
+            (C::Rules(req), Some(rider)) => Some(self.rules_request(rider, req)),
             (C::Turn(turn), Some(rider)) => {
                 if let Some(net) = self.session.network() {
                     let choice = ocw_protocol::turn_choice(&turn, net);
@@ -574,7 +586,49 @@ impl GameServer {
             world_access: ocw_protocol::access_to_wire(self.config.world_access),
             god_access: ocw_protocol::access_to_wire(self.config.god_access),
             echo_bot: self.config.allow_echo_bot,
+            collisions: ocw_protocol::collision_mode_to_wire(self.session.collision_mode()),
+            collision_access: ocw_protocol::access_to_wire(self.config.collision_access),
+            chaotic_bots: self.session.chaotic_bots(),
         })
+    }
+
+    /// The collision rules (spec §14 Phase 12A): who may change them is
+    /// checked here (`collision_access`); everyone sees the new rules in
+    /// the next snapshot.
+    fn rules_request(&mut self, rider: RiderId, req: v1::RulesRequest) -> S {
+        let result = |ok: bool, message: String| S::DevResult(v1::DevCommandResult { ok, message });
+        if !self
+            .config
+            .collision_access
+            .allows(Some(rider), self.host())
+        {
+            return result(
+                false,
+                match self.config.collision_access {
+                    ClockAccess::Nobody => "the organizer fixed the collision rules".into(),
+                    _ => "only the host may change the collision rules".into(),
+                },
+            );
+        }
+        let mut said = Vec::new();
+        if let Some(on) = req.collisions {
+            self.session.set_collisions(on);
+            self.config.collisions = on;
+            said.push(format!("collisions {}", if on { "on" } else { "off" }));
+        }
+        if let Some(on) = req.chaotic_bots {
+            self.session.set_chaotic_bots(on);
+            self.config.chaotic_bots = on;
+            said.push(format!("chaotic bots {}", if on { "on" } else { "off" }));
+        }
+        if said.is_empty() {
+            return result(false, "empty rules request".into());
+        }
+        let mode = self.session.collision_mode();
+        if req.collisions == Some(true) && mode == ocw_sim::collide::Mode::Soft {
+            said.push("soft bumps only in this group ride".into());
+        }
+        result(true, said.join(", "))
     }
 
     /// The echo test (spec §7 *Echo bot*): the Echo rider on the road
@@ -717,6 +771,17 @@ impl GameServer {
                     result(false, "only in free ride".into())
                 }
             }
+            Some(v1::dev_command::Cmd::Stage(st)) => {
+                let what = if st.crash {
+                    ocw_sim::session::Stage::Crash
+                } else {
+                    ocw_sim::session::Stage::Bump
+                };
+                match self.session.stage(rider, what) {
+                    Ok(m) => result(true, m),
+                    Err(e) => result(false, e),
+                }
+            }
             None => result(false, "empty dev command".into()),
         }
     }
@@ -799,7 +864,12 @@ impl GameServer {
                         add_numbered_bot(&mut self.session, i);
                     }
                 }
-                match self.session.start_event(spec) {
+                let organiser = start.collisions.map(ocw_protocol::collision_mode_from_wire);
+                let started = self.session.start_event(spec).map(|e| e.id);
+                if started.is_ok() {
+                    self.session.set_event_collisions(organiser);
+                }
+                match started.map(|_| self.session.event().expect("just started")) {
                     Ok(ev) => {
                         let what = match ev.kind {
                             EventKind::GroupRide { target_w } => {
@@ -831,11 +901,15 @@ impl GameServer {
 
     /// The event state to send now.
     fn event_state(&self) -> v1::EventState {
-        ocw_protocol::event_state(
+        let mut e = ocw_protocol::event_state(
             self.session.event(),
             &self.session.event_standings(),
             self.session.tick(),
-        )
+        );
+        if self.session.event().is_some() {
+            e.collisions = ocw_protocol::collision_mode_to_wire(self.session.collision_mode());
+        }
+        e
     }
 
     /// Advances one physics tick. Returns the encoded messages to broadcast
@@ -883,6 +957,8 @@ impl GameServer {
                 .collect(),
             human_riders: self.riders.len() as u32,
             clock: Some(self.clock_message()),
+            collisions: ocw_protocol::collision_mode_to_wire(self.session.collision_mode()),
+            chaotic_bots: self.session.chaotic_bots(),
         };
         out.push(encode(&server_message(S::Snapshot(snapshot))));
         out
@@ -903,6 +979,8 @@ fn new_session(course: Course, config: &ServerConfig) -> Session {
     for i in 0..config.bots {
         add_numbered_bot(&mut session, i);
     }
+    session.set_collisions(config.collisions);
+    session.set_chaotic_bots(config.chaotic_bots);
     if config.allow_echo_bot && config.echo_bot_at_start {
         session.place_echo(ECHO_NAME, None);
     }
@@ -2245,5 +2323,127 @@ mod tests {
         assert_eq!(server.session().god(rider).unwrap().pose.pos, far.pos);
         let r = god_result(&mut server, conn, ocw_protocol::god_leave(true, 0.0, 0.0));
         assert!(r.ok && r.fly_back, "{r:?}");
+    }
+
+    /// Collision rules (spec §14 Phase 12A): in the welcome and the
+    /// snapshots; the host (here: anyone on a local server) changes them,
+    /// others may not on a shared server.
+    #[test]
+    fn collision_rules_travel_and_only_the_host_changes_them() {
+        let mut server = GameServer::new(
+            Route::test_loop(),
+            ServerConfig {
+                collisions: true,
+                ..Default::default()
+            },
+        );
+        let (host, w) = join(&mut server);
+        assert_eq!(
+            ocw_protocol::collision_mode_from_wire(w.collisions),
+            ocw_sim::collide::Mode::Full
+        );
+        assert!(!w.chaotic_bots);
+        assert_eq!(
+            ocw_protocol::access_from_wire(w.collision_access),
+            ClockAccess::Host
+        );
+        let (guest, _) = join(&mut server);
+        let ask = |server: &mut GameServer, conn, on: bool| {
+            let reply = server.handle(
+                conn,
+                &encode(&ocw_protocol::rules_request(Some(on), Some(on))),
+            );
+            match decode_server(&reply[0]).unwrap() {
+                S::DevResult(r) => (r.ok, r.message),
+                other => panic!("{other:?}"),
+            }
+        };
+        let (ok, msg) = ask(&mut server, guest, false);
+        assert!(!ok && msg.contains("host"), "{msg}");
+        let (ok, msg) = ask(&mut server, host, false);
+        assert!(ok && msg.contains("collisions off"), "{msg}");
+        let reply = server.handle(
+            host,
+            &encode(&ocw_protocol::rules_request(None, Some(true))),
+        );
+        assert!(
+            matches!(decode_server(&reply[0]).unwrap(), S::DevResult(r) if r.ok && r.message == "chaotic bots on")
+        );
+        let snap = next_snapshot(&mut server);
+        assert_eq!(
+            ocw_protocol::collision_mode_from_wire(snap.collisions),
+            ocw_sim::collide::Mode::Off
+        );
+        assert!(snap.chaotic_bots);
+        // A world switch keeps the rules.
+        server.switch_world(Route::test_loop(), v1::WorldChange::default());
+        assert!(!server.session().collisions_setting());
+        assert!(server.session().chaotic_bots());
+    }
+
+    /// A staged crash (`dev.crash`, spec §14 Phase 12H): the crash state
+    /// reaches the snapshots, the event info names the model.
+    #[test]
+    fn a_staged_crash_reaches_the_snapshots() {
+        let mut server = GameServer::new(Route::test_loop(), crate::local::local_config(3, 500.0));
+        let (conn, rider) = joined(&mut server);
+        server.handle(conn, &sample(1, 250.0));
+        for _ in 0..400 {
+            server.tick();
+        }
+        let reply = server.handle(conn, &encode(&ocw_protocol::stage_contact(true)));
+        match decode_server(&reply[0]).unwrap() {
+            S::DevResult(r) => assert!(r.ok, "{}", r.message),
+            other => panic!("{other:?}"),
+        }
+        let mut seen = None;
+        for _ in 0..4 {
+            let snap = next_snapshot(&mut server);
+            let me = snap.riders.iter().find(|u| u.rider_id == rider.0).unwrap();
+            if let Some(c) = ocw_protocol::rider_crash(me) {
+                seen = Some(c);
+                break;
+            }
+        }
+        let c = seen.expect("the crash is in a snapshot");
+        assert_eq!(c.kind, ocw_sim::collide::ContactKind::WheelTouch);
+        assert!(c.by.is_some());
+        // Remote servers refuse staging (dev commands are local only).
+        let mut remote = GameServer::new(
+            Route::test_loop(),
+            ServerConfig {
+                collisions: true,
+                bots: 2,
+                ..Default::default()
+            },
+        );
+        let (conn, _) = joined(&mut remote);
+        let reply = remote.handle(conn, &encode(&ocw_protocol::stage_contact(false)));
+        match decode_server(&reply[0]).unwrap() {
+            S::DevResult(r) => assert!(!r.ok),
+            other => panic!("{other:?}"),
+        }
+        // Group rides: soft bumps only, in the event's state.
+        let mut server = GameServer::new(Route::test_loop(), crate::local::local_config(3, 500.0));
+        let (conn, _) = joined(&mut server);
+        let start = encode(&client_message(C::Event(v1::EventRequest {
+            req: Some(v1::event_request::Req::Start(v1::EventStart {
+                kind: v1::EventKind::GroupRide as i32,
+                ..Default::default()
+            })),
+        })));
+        let replies = server.handle(conn, &start);
+        let state = replies
+            .iter()
+            .chain(server.tick().iter())
+            .find_map(|b| match decode_server(b) {
+                Ok(S::Event(e)) => Some(e),
+                _ => None,
+            })
+            .expect("an event state");
+        assert_eq!(
+            ocw_protocol::collision_mode_from_wire(state.collisions),
+            ocw_sim::collide::Mode::Soft
+        );
     }
 }

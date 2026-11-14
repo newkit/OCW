@@ -269,6 +269,32 @@ pub const SETTINGS: &[SettingDef] = &[
         scope: Scope::NextStart,
         apply: Apply::Arg("random_start"),
     },
+    // Collisions (spec §14 Phase 12A, Q1 / Q3, 12D): the session's rules
+    // (the host decides in shared rides) and an aid for manual steering.
+    SettingDef {
+        key: "ride.collisions",
+        kind: Kind::Bool,
+        default: "on",
+        description: "Rider collisions: soft bumps and crashes (group rides: soft bumps only; in shared rides the host decides)",
+        scope: Scope::Live,
+        apply: Apply::Command("ride.collisions {}"),
+    },
+    SettingDef {
+        key: "ride.chaotic_bots",
+        kind: Kind::Bool,
+        default: "off",
+        description: "Bots sometimes make mistakes (late reactions, wheel touches) that can cause crashes",
+        scope: Scope::Live,
+        apply: Apply::Command("ride.chaotic_bots {}"),
+    },
+    SettingDef {
+        key: "ride.proximity_cue",
+        kind: Kind::Bool,
+        default: "off",
+        description: "A soft sound and a HUD arrow when someone is close beside (1 m) or in front (2 m); it never steers",
+        scope: Scope::Live,
+        apply: Apply::Command("ride.proximity_cue {}"),
+    },
     SettingDef {
         key: "ride.record",
         kind: Kind::Bool,

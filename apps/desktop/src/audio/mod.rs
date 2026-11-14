@@ -47,7 +47,10 @@ use ocw_render::menu::MenuView;
 use crate::connection::ClientState;
 use crate::settings::UserSettings;
 use crate::settings::pages::AudioDevices;
-use cues::{Cue, MenuSnapshot, countdown_cue, finish_cue, menu_cue, workout_cue};
+use cues::{
+    ContactRider, ContactWatch, Cue, MenuSnapshot, contact_cues, countdown_cue, finish_cue,
+    menu_cue, workout_cue,
+};
 use engine::{AudioEngine, AudioStatus, NullBackend, Output};
 use mix::{Bus, Mix};
 use mixer::MixerMsg;
@@ -265,6 +268,8 @@ struct CueWatch {
     wing: f64,
     /// The hoof beats' phase.
     hoof: f64,
+    /// Bumps, crashes, remounts, the proximity cue (spec §14 Phase 12C).
+    contacts: ContactWatch,
 }
 
 /// UI sounds from the menu's changes, the countdown beeps and the finish
@@ -293,6 +298,21 @@ fn play_cues(
         watch.menu = now;
     }
     if let Some(r) = ride {
+        let me = r.local().map_or(0.0, |l| l.state.distance);
+        let riders: Vec<ContactRider> = r
+            .riders
+            .iter()
+            .map(|v| ContactRider {
+                id: v.id.0,
+                is_local: v.is_local,
+                distance_m: v.state.distance - me,
+                wobble: v.wobble,
+                crash: v
+                    .crash
+                    .map(|c| c.phase == ocw_sim::collide::CrashPhase::Remount),
+            })
+            .collect();
+        cues.extend(contact_cues(&mut watch.contacts, &riders, r.proximity));
         let event = r.event.as_ref();
         let countdown = event.and_then(|e| e.countdown.clone());
         cues.extend(countdown_cue(

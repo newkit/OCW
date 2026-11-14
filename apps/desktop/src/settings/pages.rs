@@ -509,6 +509,10 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
                 "Unicorn mode: invert mouse Y",
             ),
             setting_row(settings, "controls.god_flight", "Unicorn mode: flight"),
+            // Collisions (spec §14 Phase 12A, 12D).
+            setting_row(settings, "ride.collisions", "Collisions"),
+            setting_row(settings, "ride.chaotic_bots", "Chaotic bots"),
+            setting_row(settings, "ride.proximity_cue", "Proximity cue"),
         ],
         Page::Trainer => vec![
             setting_row(settings, "trainer.difficulty", "Difficulty (%)"),

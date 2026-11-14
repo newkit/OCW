@@ -23,7 +23,31 @@ message ClientMessage {
     GodRequest god = 12;
     GodPose god_pose = 13;
     EchoRequest echo = 14;
+    RulesRequest rules = 15;
   }
+}
+
+// The session's collision rules (spec §14 Phase 12A): the settings
+// `ride.collisions` and `ride.chaotic_bots`. The server decides who may
+// change them (Welcome.collision_access: the local servers' single
+// player, the host of a shared session, nobody in an organizer's session)
+// and answers with a DevCommandResult; the new rules reach everyone in
+// the next Snapshot. Reliable.
+message RulesRequest {
+  optional bool collisions = 1;
+  optional bool chaotic_bots = 2;
+}
+
+// The collision model in force (spec §14 Phase 12A, 12G).
+enum CollisionMode {
+  // Absent: an older server without collisions (= off).
+  COLLISION_MODE_UNSPECIFIED = 0;
+  // Riders pass through each other.
+  COLLISION_MODE_OFF = 1;
+  // Soft bumps only, no crashes (group rides by default, Phase 12 Q2).
+  COLLISION_MODE_SOFT = 2;
+  // Bumps and crashes (races, free riding).
+  COLLISION_MODE_FULL = 3;
 }
 
 // The echo test (spec §7 *Echo bot*): puts the session's Echo rider on the
@@ -167,6 +191,9 @@ message EventStart {
   optional uint32 bots = 4;
   // Group ride pace (W; absent = 150 W).
   optional uint32 target_w = 5;
+  // The organizer's collision rule for the event (spec §14 Phase 12A;
+  // absent: by its kind – group rides soft, races full).
+  optional CollisionMode collisions = 6;
 }
 
 // Route ride (spec §2.7, §2.2.1): back to the route after leaving it. Like
@@ -281,7 +308,15 @@ message DevCommand {
     double teleport_distance_m = 1;
     // Free ride: to the road nearest this point (local metres).
     TeleportPoint teleport_point = 2;
+    // Stage a contact for the asker (spec §14 Phase 12H, `dev.bump` /
+    // `dev.crash`): the nearest other rider bumps into them from the side
+    // or cuts in front (a wheel touch: the asker falls).
+    StageContact stage = 3;
   }
+}
+
+message StageContact {
+  bool crash = 1;
 }
 
 message TeleportPoint {
@@ -391,6 +426,9 @@ message EventState {
   // Ranking, first to last (empty for group rides).
   repeated EventStanding standings = 11;
   optional uint64 finished_tick = 12;
+  // The collision model of the event (spec §14 Phase 12A: "collisions
+  // on, damage off" in the event's info).
+  CollisionMode collisions = 13;
 }
 
 message EventStanding {
@@ -461,6 +499,11 @@ message Welcome {
   ClockAccess god_access = 12;
   // Riders may put an Echo rider on the road (EchoRequest, spec §7).
   bool echo_bot = 13;
+  // The collision model in force and the session's switches (spec §14
+  // Phase 12A), and who may change them (RulesRequest).
+  CollisionMode collisions = 14;
+  ClockAccess collision_access = 15;
+  bool chaotic_bots = 16;
 }
 
 enum ClockMode {
@@ -515,6 +558,10 @@ message Snapshot {
   uint32 human_riders = 3;
   // The world clock at server_tick (spec §14 Phase 9).
   WorldClock clock = 4;
+  // The collision model in force now and the chaotic-bots switch (spec
+  // §14 Phase 12A: the host may change them during the ride).
+  CollisionMode collisions = 5;
+  bool chaotic_bots = 6;
 }
 
 // Quantized rider state (spec §6.2).
@@ -544,6 +591,56 @@ message RiderUpdate {
   // The session's Echo rider (the echo test, spec §7 *Echo bot*): a test
   // rider standing still, never in standings, earning nothing.
   bool echo = 15;
+  // A crash under way (spec §14 Phase 12C); absent: riding.
+  CrashState crash = 16;
+  // The rider's last soft bump (the wobble and its sound, 12B).
+  Bump bump = 17;
+}
+
+enum CrashPhase {
+  CRASH_PHASE_NONE = 0;
+  // Going down (0.8 s): the ragdoll falls.
+  CRASH_PHASE_FALLING = 1;
+  // Lying on the road (2-8 s by impact energy).
+  CRASH_PHASE_DOWN = 2;
+  // Picking up the bike, clipping in (1.5 s).
+  CRASH_PHASE_REMOUNT = 3;
+}
+
+enum ContactKind {
+  CONTACT_KIND_UNSPECIFIED = 0;
+  CONTACT_KIND_SIDE = 1;
+  CONTACT_KIND_WHEEL_TO_WHEEL = 2;
+  // A front wheel into another rider's rear wheel with a lateral overlap.
+  CONTACT_KIND_WHEEL_TOUCH = 3;
+  CONTACT_KIND_REAR_END = 4;
+  CONTACT_KIND_HEAD_ON = 5;
+  // A fallen rider and bike (an obstacle).
+  CONTACT_KIND_OBJECT = 6;
+}
+
+message CrashState {
+  CrashPhase phase = 1;
+  // Since the crash began, and the time down (ms).
+  uint32 elapsed_ms = 2;
+  uint32 down_ms = 3;
+  ContactKind kind = 4;
+  // Who the rider hit (0: none).
+  uint32 by_rider = 5;
+  // The push at the contact in the rider's frame (mm/s: along the
+  // heading, to the right) and the speed when it happened: the client's
+  // ragdoll (Phase 12 Q5).
+  sint32 impulse_along_mm_s = 6;
+  sint32 impulse_right_mm_s = 7;
+  uint32 speed_mm_s = 8;
+}
+
+message Bump {
+  // The server tick of the bump.
+  uint64 tick = 1;
+  // Wobble strength (mrad) and side (+1: pushed to the right, -1: left).
+  uint32 strength_mrad = 2;
+  sint32 side = 3;
 }
 
 enum RiderMode {

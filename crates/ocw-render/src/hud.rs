@@ -1210,6 +1210,8 @@ mod tests {
                 is_local: true,
                 bike: Default::default(),
                 look: None,
+                crash: None,
+                wobble: 0.0,
             });
         app.update();
         assert_eq!(panel_display(&mut app), Display::Flex);
