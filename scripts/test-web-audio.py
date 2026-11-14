@@ -174,7 +174,11 @@ class Run:
                       {"width": int(w), "height": int(h), "deviceScaleFactor": 1, "mobile": False})
 
     def new_page(self, name):
-        tid = self.cdp.call("Target.createTarget", {"url": "about:blank"}, session=False)["targetId"]
+        # Its own window: a second tab in the same window would be hidden,
+        # and a hidden page gets no animation frames – its game loop (and
+        # with it the join, the voice controller) stands still.
+        tid = self.cdp.call("Target.createTarget", {"url": "about:blank", "newWindow": True},
+                            session=False)["targetId"]
         self.attach(name, tid)
 
     def use(self, name):
@@ -483,7 +487,10 @@ def part_voice(r, port, a, procs):
 
 
 def part_livekit(r, port, a, procs):
-    lks = shutil.which(a.livekit_server) or (a.livekit_server if os.path.exists(a.livekit_server) else None)
+    local_bin = os.path.expanduser("~/.local/bin/livekit-server")
+    lks = (shutil.which(a.livekit_server)
+           or (a.livekit_server if os.path.exists(a.livekit_server) else None)
+           or (local_bin if a.livekit_server == "livekit-server" and os.path.exists(local_bin) else None))
     if not lks:
         r.check("livekit: a livekit-server binary (skipped)", True, "not installed")
         r.summary["livekit"] = "skipped: no livekit-server"
@@ -507,6 +514,21 @@ def part_livekit(r, port, a, procs):
         url = f"http://127.0.0.1:{port}/?{info['query']}&name={name}&route=hills"
         r.cdp.call("Page.navigate", {"url": url})
         r.pump(1.0)
+    # Both pages must run their frame loops at once (a hidden page's stop:
+    # the first run of this test waited 140 s for a join that only came
+    # with the screenshot).
+    visible = {}
+    for name in names:
+        r.use(name)
+        visible[name] = r.js("document.visibilityState")
+    r.check("livekit: both pages are visible (their game loops run)",
+            all(v == "visible" for v in visible.values()), visible)
+    joined = {}
+    for name in names:
+        r.use(name)
+        joined[name] = r.wait(f"{name} joined the game server",
+                              lambda: (r.json("window.ocw && window.ocw.netStats()") or {}).get("rider_id"), 30)
+    r.check("livekit: both riders joined the game session", all(joined.values()), joined)
     ok = {}
     for name in names:
         r.use(name)
