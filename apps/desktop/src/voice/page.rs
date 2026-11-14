@@ -5,7 +5,7 @@
 use crate::settings::pages::{Activate, Page, Row, setting_row};
 use crate::settings::registry::Settings;
 
-use super::VoiceMenuInfo;
+use ocw_client::voice::VoiceMenuInfo;
 
 fn open(label: &str, value: String, page: Page) -> Row {
     Row {
@@ -173,7 +173,7 @@ pub fn rows(page: Page, settings: &Settings, info: &VoiceMenuInfo) -> Vec<Row> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::voice::MenuParticipant;
+    use ocw_client::voice::MenuParticipant;
 
     fn row<'a>(rows: &'a [Row], label: &str) -> &'a Row {
         rows.iter()

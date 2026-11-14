@@ -26,6 +26,12 @@ ocw-devices.workspace = true
 ocw-render.workspace = true
 # The client loop, shared with the desktop app.
 ocw-client.workspace = true
+# Game audio (the synthesised sounds and the mixer) and voice (the
+# controller and the browser's livekit-client backend), shared with the
+# desktop (B5).
+ocw-audio.workspace = true
+ocw-voice.workspace = true
+web-time.workspace = true
 # The GameServer as the in-browser local server (`local::FrameServer`).
 ocw-server.workspace = true
 # Worlds over HTTP (B2): range planning, verification, the chunk cache and
@@ -70,6 +76,17 @@ web-sys = { version = "0.3", features = [
     "WritableStream",
     # The remembered Bluetooth devices of this origin (B4).
     "Storage",
+    # Game audio through Web Audio, the first gesture, the outputs (B5).
+    "AudioContext",
+    "BaseAudioContext",
+    "AudioBuffer",
+    "AudioBufferSourceNode",
+    "AudioScheduledSourceNode",
+    "AudioNode",
+    "AudioDestinationNode",
+    "Event",
+    "EventTarget",
+    "MediaDevices",
 ] }
 
 [lints]

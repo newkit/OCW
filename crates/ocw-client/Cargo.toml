@@ -23,6 +23,14 @@ ocw-render.workspace = true
 # The server's shared labels (event distances); also the in-memory
 # GameServer of the tests. Its lib builds for wasm32 (no QUIC there).
 ocw-server.workspace = true
+# Game audio (the mixer's messages) and voice (the controller), shared with
+# the desktop since Phase 10 B5; both pure and wasm-safe.
+ocw-audio.workspace = true
+ocw-voice.workspace = true
+# The settings registry's file format (settings.toml; localStorage in the
+# browser).
+toml.workspace = true
+web-time.workspace = true
 
 [lints]
 workspace = true

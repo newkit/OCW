@@ -1,0 +1,23 @@
+[package]
+name = "ocw-audio"
+description = "Open Cycling World game audio (spec §3.3): the synthesised ride, rider, weather and UI sounds and the mixer, shared by the desktop and browser apps"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Pure and engine-free (spec §10): no threads, devices or files; builds for
+# wasm32-unknown-unknown (spec §3.5). The outputs live in the apps: cpal on
+# the desktop (`apps/desktop/src/audio/cpal_backend.rs`), Web Audio in the
+# browser (`apps/web/src/audio.rs`, spec §14 Phase 10 B5).
+[dependencies]
+ocw-core.workspace = true
+ocw-sim.workspace = true
+ocw-world.workspace = true
+ocw-weather.workspace = true
+# Instant that works in the browser (std's panics on wasm32-unknown-unknown).
+web-time.workspace = true
+
+[lints]
+workspace = true

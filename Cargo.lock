@@ -6062,6 +6062,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ocw-audio"
+version = "0.2.1"
+dependencies = [
+ "ocw-core",
+ "ocw-sim",
+ "ocw-weather",
+ "ocw-world",
+ "web-time",
+]
+
+[[package]]
 name = "ocw-bot"
 version = "0.2.1"
 dependencies = [
@@ -6081,6 +6092,7 @@ dependencies = [
 name = "ocw-client"
 version = "0.2.1"
 dependencies = [
+ "ocw-audio",
  "ocw-core",
  "ocw-devices",
  "ocw-protocol",
@@ -6088,8 +6100,11 @@ dependencies = [
  "ocw-server",
  "ocw-sim",
  "ocw-sky",
+ "ocw-voice",
  "ocw-weather",
  "ocw-world",
+ "toml",
+ "web-time",
 ]
 
 [[package]]
@@ -6105,6 +6120,7 @@ dependencies = [
  "cpal",
  "dirs",
  "ocw-assets",
+ "ocw-audio",
  "ocw-client",
  "ocw-core",
  "ocw-devices",
@@ -6259,6 +6275,7 @@ dependencies = [
  "ocw-core",
  "ocw-protocol",
  "ocw-server",
+ "serde_json",
  "tokio",
  "tracing",
 ]
@@ -6277,6 +6294,7 @@ dependencies = [
  "bevy",
  "clap",
  "js-sys",
+ "ocw-audio",
  "ocw-client",
  "ocw-core",
  "ocw-devices",
@@ -6285,6 +6303,7 @@ dependencies = [
  "ocw-server",
  "ocw-sim",
  "ocw-sky",
+ "ocw-voice",
  "ocw-weather",
  "ocw-world",
  "ocw-worldstore",
@@ -6292,6 +6311,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+ "web-time",
 ]
 
 [[package]]

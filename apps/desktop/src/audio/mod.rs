@@ -1,46 +1,33 @@
-//! Game audio (spec §3.3, menu increment M5 in §3.2.1).
+//! Game audio (spec §3.3, menu increment M5 in §3.2.1) on the desktop.
 //!
-//! - [`mix`]: the buses (master × music / effects / voice) and the volume
-//!   maths, pure;
-//! - [`ride`]: speed / cadence / power / surface → ride sound parameters
-//!   (pure) and their synthesis (wind, tyres, freewheel, chain);
-//! - [`spatial`]: where a sound is heard (distance, direction, air,
-//!   Doppler), pure;
-//! - [`others`]: the other riders' bikes – character per rider, nearest
-//!   voices and the group layer (pure), and their synthesis;
-//! - [`cues`]: one-shot sounds (UI, countdown, finish, workout steps, gear
-//!   shift, test tones) and when they play (pure);
-//! - [`mixer`]: renders all of it into a device buffer;
+//! The sounds, their parameters and the mixer are the shared crate
+//! `ocw-audio` (its `mix`, `ride`, `spatial`, `others`, `weather`, `cues`,
+//! `mixer` and `dsp`; [`cues`], [`mix`] and [`mixer`] re-exported); what they hear of
+//! the ride is `ocw_client::audio::AudioFeed` – both shared with the browser
+//! app (spec §14 Phase 10 B5). Desktop-only here:
+//!
 //! - [`record`]: the game sound of video recordings (device tap, or
 //!   rendered in step with game time for frame capture), WAV and mux;
 //! - [`engine`]: the output backend trait and the engine thread (device
 //!   choice by name, fallback to the default, hot-plugging); [`cpal_backend`]
 //!   is the real output, [`engine::NullBackend`] none;
-//! - this module: the Bevy glue (ride state and UI changes → mixer
-//!   messages) and the console commands `audio.*`.
+//! - this module: the Bevy glue (the feed's messages → the engine) and the
+//!   console commands `audio.*`.
 //!
-//! Every sound is synthesised in code here – our own work, no sample files
-//! and no third-party recordings (spec §13). Without an output device
+//! Every sound is synthesised in code – our own work, no sample files and
+//! no third-party recordings (spec §13). Without an output device
 //! (headless runs, CI) the app runs silently and logs one line.
 
 pub mod cpal_backend;
-pub mod cues;
-#[cfg(test)]
-mod demo;
-pub mod dsp;
 pub mod engine;
-pub mod mix;
-pub mod mixer;
-pub mod others;
 pub mod record;
-pub mod ride;
-pub mod spatial;
-pub mod weather;
+pub use ocw_audio::{cues, mix, mixer};
 
 use std::time::Instant;
 
 use bevy::prelude::*;
 use clap::{Arg, Command, value_parser};
+use ocw_client::audio::{AudioFeed, FeedFrame, mix_line, on_off};
 use ocw_render::RideView;
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, Permission};
 use ocw_render::menu::MenuView;
@@ -48,14 +35,10 @@ use ocw_render::menu::MenuView;
 use crate::connection::ClientState;
 use crate::settings::UserSettings;
 use crate::settings::pages::AudioDevices;
-use cues::{
-    ContactRider, ContactWatch, Cue, MenuSnapshot, contact_cues, countdown_cue, finish_cue,
-    menu_cue, workout_cue,
-};
+use cues::Cue;
 use engine::{AudioEngine, AudioStatus, NullBackend, Output};
 use mix::{Bus, Mix};
 use mixer::MixerMsg;
-use ride::{RideInput, RideParams, ride_params};
 
 /// Which output the plugin uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,8 +60,7 @@ impl Plugin for GameAudioPlugin {
             .add_systems(Startup, start_engine)
             .add_systems(
                 Update,
-                (sync_status, feed_ride, feed_others, feed_weather, play_cues)
-                    .run_if(resource_exists::<GameAudio>),
+                (sync_status, feed, refresh_on_audio_page).run_if(resource_exists::<GameAudio>),
             );
         register_commands(app);
     }
@@ -121,31 +103,11 @@ impl GameAudio {
     }
 }
 
-/// The mix and output from the settings (`audio.*`).
+/// The mix and output from the settings (`audio.*`; the mix is the shared
+/// `ocw_client::audio::settings_mix`).
 pub fn settings_mix(settings: &crate::settings::registry::Settings) -> (Mix, Output) {
-    let int = |key: &str| match settings.get(key) {
-        Ok(crate::settings::registry::Value::Int(v)) => v.clamp(0, 100) as u8,
-        _ => 0,
-    };
-    let mix = Mix {
-        master: int("audio.master"),
-        music: int("audio.music"),
-        effects: int("audio.effects"),
-        voice: int("audio.voice"),
-        others: int("audio.others"),
-        mute: settings
-            .get("audio.mute")
-            .ok()
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false),
-    };
-    let output = Output::from_setting(
-        &settings
-            .get("audio.output")
-            .map(|v| v.to_string())
-            .unwrap_or_default(),
-    );
-    (mix, output)
+    let (mix, output) = ocw_client::audio::settings_mix(settings);
+    (mix, Output::from_setting(&output))
 }
 
 fn start_engine(world: &mut World) {
@@ -186,258 +148,39 @@ fn sync_status(mut audio: ResMut<GameAudio>, mut devices: ResMut<AudioDeviceList
     audio.status = s;
 }
 
-/// The local rider's ride sounds, every frame (only sent when they change).
-fn feed_ride(client: Option<Res<ClientState>>, audio: Res<GameAudio>, mut last: Local<RideParams>) {
-    let params = client
-        .as_deref()
-        .filter(|c| c.0.rider_id().is_some())
-        .map_or_else(RideParams::default, |c| {
-            let core = &c.0;
-            // Unicorn mode: the wind of the flight (spec §14 Phase 13C).
-            if let Some(u) = core.god().unicorn(0.0) {
-                return ride::flight_params(u.pose.speed);
-            }
-            let state = core.state();
-            ride_params(&RideInput {
-                speed_mps: state.speed,
-                cadence_rpm: core.cadence_rpm(),
-                power_w: core.power_w(),
-                surface: ocw_sim::ride::surface(core.track(), &state),
-            })
-        });
-    if params != *last {
-        audio.engine.send(MixerMsg::Ride(params));
-        *last = params;
-    }
-}
-
-/// The other riders' sounds (spec §3.3): every rider in the view but the
-/// own (bots, remote riders; the ghost is not in `riders` and stays
-/// silent), heard at the own rider's head. Sent every frame while anyone
-/// is around, once more (empty, to fade them out) when nobody is.
-fn feed_others(
-    view: Option<Res<RideView>>,
-    audio: Res<GameAudio>,
-    mut playing: Local<Vec<ocw_core::RiderId>>,
-    mut sent_empty: Local<bool>,
-) {
-    let frame = view
-        .as_deref()
-        .and_then(|v| {
-            let me = v.local()?;
-            let listener = others::listener(v.track(me.id), &me.state);
-            let riders: Vec<others::OtherRider> = v
-                .riders
-                .iter()
-                .filter(|r| !r.is_local)
-                .map(|r| {
-                    let track = v.track(r.id);
-                    let (pos, velocity) =
-                        others::on_track(track, &r.state, others::SOURCE_HEIGHT_M);
-                    others::OtherRider {
-                        id: r.id,
-                        pos,
-                        velocity,
-                        speed_mps: r.state.speed,
-                        power_w: r.power_w,
-                        cadence_rpm: r.cadence_rpm,
-                        surface: ocw_sim::ride::surface(track, &r.state),
-                    }
-                })
-                .collect();
-            (!riders.is_empty()).then(|| others::frame(&listener, &riders, &playing))
-        })
-        .unwrap_or_default();
-    let empty = frame.voices.is_empty() && frame.group.riders == 0;
-    if empty && *sent_empty {
-        return;
-    }
-    *sent_empty = empty;
-    *playing = frame.voices.iter().map(|v| v.id).collect();
-    audio.engine.send(MixerMsg::Others(frame));
-}
-
-/// The weather's sounds (spec §14 Phase 9, S4): rain, hail, drizzle, the
-/// gusts and the wet tyres every frame (sent when they change), and each
-/// strike's thunder once it has travelled to the rider (three seconds per
-/// kilometre after the flash; in game time, so frame captures keep it).
-fn feed_weather(
+/// The game sounds' input from the ride, every frame (the shared feed:
+/// changes only).
+#[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
+fn feed(
+    time: Res<Time>,
+    client: Option<Res<ClientState>>,
     view: Option<Res<RideView>>,
     tunnels: Option<Res<ocw_render::tunnel::Tunnels>>,
-    audio: Res<GameAudio>,
-    mut last: Local<weather::WeatherParams>,
-    mut heard: Local<std::collections::BTreeSet<u32>>,
-) {
-    let Some(view) = view else { return };
-    let params = view.weather.as_ref().map_or_else(Default::default, |w| {
-        let speed = view.local().map_or(0.0, |l| l.state.speed as f32);
-        let sheltered = ocw_render::sky::daylight_at_rider(Some(&view), tunnels.as_deref()) < 0.5;
-        weather::weather_params(&w.state, w.wind_mps, w.ground.wetness(), speed, sheltered)
-    });
-    if params != *last {
-        audio.engine.send(MixerMsg::Weather(params));
-        *last = params;
-    }
-    let Some(w) = &view.weather else { return };
-    for s in &w.strikes {
-        let arrives = s.flash_at_s + s.strike.thunder_delay_s();
-        if heard.contains(&s.strike.id) || view.elapsed_s < arrives {
-            continue;
-        }
-        heard.insert(s.strike.id);
-        // Not a thunder that arrived long ago (a late join).
-        if view.elapsed_s - arrives < 2.0
-            && let Some(t) = weather::ThunderSound::of(&s.strike)
-        {
-            audio.engine.send(MixerMsg::Thunder(t));
-        }
-    }
-    if heard.len() > 4096 {
-        let keep: std::collections::BTreeSet<u32> = w.strikes.iter().map(|s| s.strike.id).collect();
-        heard.retain(|id| keep.contains(id));
-    }
-}
-
-/// What the cue detection saw last frame.
-#[derive(Default)]
-struct CueWatch {
-    menu: MenuSnapshot,
-    countdown: Option<String>,
-    results: bool,
-    workout: Option<u64>,
-    /// Unicorn mode: flying, and the wing beat's phase.
-    flying: bool,
-    wing: f64,
-    /// The hoof beats' phase.
-    hoof: f64,
-    /// Bumps, crashes, remounts, the proximity cue (spec §14 Phase 12C).
-    contacts: ContactWatch,
-    /// A buckled wheel's rub phase (spec §14 Phase 12E).
-    rub: f64,
-}
-
-/// UI sounds from the menu's changes, the countdown beeps and the finish
-/// chime from the event view, the step cue from the workout.
-fn play_cues(
-    time: Res<Time>,
     menu: Option<Res<MenuView>>,
-    ride: Option<Res<RideView>>,
     workouts: Option<Res<crate::workout::Workouts>>,
     audio: Res<GameAudio>,
-    mut watch: Local<CueWatch>,
+    mut feed: Local<AudioFeed>,
 ) {
-    let mut cues = Vec::new();
-    if let Some(m) = menu {
-        let now = MenuSnapshot {
-            open: m.open,
-            title: m.title.clone(),
-            focused: m.focused,
-            label: m.items.get(m.focused).cloned().unwrap_or_default(),
-        };
-        cues.extend(menu_cue(&watch.menu, &now));
-        // The Audio page shows the devices: read them again.
-        if now.open && now.title == "Audio" && watch.menu.title != "Audio" {
-            audio.engine.refresh();
-        }
-        watch.menu = now;
-    }
-    if let Some(r) = ride {
-        let me = r.local().map_or(0.0, |l| l.state.distance);
-        let riders: Vec<ContactRider> = r
-            .riders
-            .iter()
-            .map(|v| ContactRider {
-                id: v.id.0,
-                is_local: v.is_local,
-                distance_m: v.state.distance - me,
-                wobble: v.wobble,
-                crash: v
-                    .crash
-                    .map(|c| c.phase == ocw_sim::collide::CrashPhase::Remount),
-            })
-            .collect();
-        cues.extend(contact_cues(&mut watch.contacts, &riders, r.proximity));
-        let event = r.event.as_ref();
-        let countdown = event.and_then(|e| e.countdown.clone());
-        cues.extend(countdown_cue(
-            watch.countdown.as_deref(),
-            countdown.as_deref(),
-        ));
-        let results = event.is_some_and(|e| e.results.is_some());
-        cues.extend(finish_cue(watch.results, results));
-        watch.countdown = countdown;
-        watch.results = results;
-        // Unicorn mode: the chime of the transformation (in and out), soft
-        // wing beats while the wings beat (spec §14 Phase 13C).
-        let flying = r.flight.is_some();
-        if flying != watch.flying {
-            cues.push(Cue::GodChime);
-            watch.flying = flying;
-        }
-        let local = r.unicorns.iter().find(|u| u.is_local && !u.landing);
-        let beat = local.map_or(0.0, |u| {
-            ocw_sim::god::wing_beat_hz(u.climb_mps, u.accel, u.speed_mps)
-        });
-        if beat > 0.0 {
-            let before = watch.wing;
-            watch.wing += beat * time.delta_secs_f64();
-            if watch.wing.floor() > before.floor() {
-                cues.push(Cue::WingBeat);
-            }
-        }
-        // A buckled wheel rubs once per turn (spec §14 Phase 12E).
-        let rub = r.local().map_or(0.0, |l| {
-            let bent = l.damage.map_or(0.0, |d| d.bent[0].max(d.bent[1]));
-            cues::rub_hz(bent, l.state.speed)
-        });
-        if rub > 0.0 {
-            let before = watch.rub;
-            watch.rub += rub * time.delta_secs_f64();
-            if watch.rub.floor() > before.floor() {
-                cues.push(Cue::Rub);
-            }
-        }
-        // Muffled hooves on air while slow (spec §14 Phase 13C).
-        let hooves = local.map_or(0.0, |u| ocw_sim::god::hoof_beat_hz(u.speed_mps));
-        if hooves > 0.0 {
-            let before = watch.hoof;
-            watch.hoof += hooves * time.delta_secs_f64();
-            if watch.hoof.floor() > before.floor() {
-                cues.push(Cue::Hoof);
-            }
-        }
-    }
-    if let Some(w) = workouts {
-        let n = w.0.lap_count();
-        if let Some(prev) = watch.workout {
-            cues.extend(workout_cue(prev, n));
-        }
-        watch.workout = Some(n);
-    }
-    for c in cues {
-        audio.play(c);
+    let msgs = feed.frame(&FeedFrame {
+        client: client.as_deref().map(|c| &c.0),
+        view: view.as_deref(),
+        tunnels: tunnels.as_deref(),
+        menu: menu.as_deref(),
+        workout_laps: workouts.as_deref().map(|w| w.0.lap_count()),
+        dt_s: time.delta_secs_f64(),
+    });
+    for m in msgs {
+        audio.engine.send(m);
     }
 }
 
-fn on_off(s: &str) -> Result<Option<bool>, String> {
-    match s.to_ascii_lowercase().as_str() {
-        "on" | "true" | "yes" | "1" => Ok(Some(true)),
-        "off" | "false" | "no" | "0" => Ok(Some(false)),
-        "toggle" => Ok(None),
-        _ => Err(format!("expected on, off or toggle, not {s:?}")),
+/// The Audio page shows the devices: read them again when it opens.
+fn refresh_on_audio_page(menu: Option<Res<MenuView>>, audio: Res<GameAudio>, mut was: Local<bool>) {
+    let on = menu.is_some_and(|m| m.open && m.title == "Audio");
+    if on && !*was {
+        audio.engine.refresh();
     }
-}
-
-fn mix_line(m: &Mix) -> String {
-    format!(
-        "master {} %, effects {} %, others {} %, music {} %, voice {} %{}",
-        m.master,
-        m.effects,
-        m.others,
-        m.music,
-        m.voice,
-        if m.mute { ", muted" } else { "" }
-    )
+    *was = on;
 }
 
 fn audio_mut(world: &mut World) -> Result<Mut<'_, GameAudio>, String> {

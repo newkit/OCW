@@ -18,7 +18,9 @@
 //!   confirmation sounds,
 //! - [`echo`]: the echo test (an Echo rider plays the own microphone
 //!   back, delayed, from its place on the road),
-//! - [`controller`]: ties them together and drives a [`backend::VoiceBackend`].
+//! - [`controller`]: ties them together and drives a [`backend::VoiceBackend`];
+//! - [`web`]: the browser's backend (spec §14 Phase 10 B5): the same
+//!   controller over the page's livekit-client (JS) shim.
 //!
 //! The real backend ([`livekit`], cargo feature `livekit`) connects with the
 //! LiveKit Rust SDK and plays / captures with cpal. Without the feature,
@@ -44,6 +46,7 @@ pub mod livekit;
 pub mod mix;
 pub mod mute;
 pub mod spatial;
+pub mod web;
 
 pub use backend::{BackendCommand, BackendEvent, Levels, NullBackend, VoiceBackend};
 pub use controller::{EchoStatus, Participant, Status, VoiceController, VoiceSettings};

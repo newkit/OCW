@@ -8,7 +8,9 @@
 //! takes its input as [`MixerMsg`]s from the game.
 
 use std::sync::mpsc::{Receiver, Sender};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use web_time::Instant;
 
 use super::cues::{Cue, CueVoice};
 use super::dsp::smoothing;

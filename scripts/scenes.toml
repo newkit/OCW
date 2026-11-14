@@ -2028,6 +2028,6 @@ name = "g5-flyover-vaduz-video"
 description = "Video: a guided camera path (spec §14 Phase 13 G5, for the build diary): four keyframes (camera.path key) over the Rhine valley at Vaduz, played in 16 s with the smooth easing – a centripetal Catmull-Rom spline through the eyes, the view turning from the valley to the mountains and back, the tiles streaming around the camera; rendered with --capture (a fixed game-time step)"
 world = true
 args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "3", "--power", "200"]
-at = ["0.5=time pause", "0.5=time 2026-07-15 17:30", "0.5=hud off", "1=camera.path key -3400 1100 3600 30 -18", "1=camera.path key -2600 1000 2200 70 -16", "1=camera.path key -1500 1300 1200 115 -14", "1=camera.path key -500 1900 1900 210 -24", "1.5=camera.path play --seconds 100000", "6=camera.path play --seconds 16 --ease smooth"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 17:30", "0.5=hud off", "1=camera.path key -3400 1100 3600 30 -18", "1=camera.path key -2600 1000 2200 70 -16", "1=camera.path key -1500 1650 1200 115 -18", "1=camera.path key -500 1900 1900 210 -24", "1.5=camera.path play --seconds 100000", "6=camera.path play --seconds 16 --ease smooth"]
 warmup = 6
 video = 16
