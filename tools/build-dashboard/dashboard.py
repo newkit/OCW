@@ -1328,7 +1328,9 @@ def poll_machine(m: Machine, ctl: str | None = None, slots: int | None = None) -
 def run_ssh(m: Machine, script: str, timeout: float, stdin: str | None = None, ctl: str | None = None) -> str:
     """Runs a janitor snippet on a machine (Windows: PowerShell, encoded) and
     returns its stdout; raises RuntimeError with a masked reason."""
-    cmd = windows_command(script) if m.os == "windows" else script
+    # POSIX snippets run under /bin/sh: a login shell may be zsh (the Mac),
+    # where an unmatched glob such as /tmp/ocw-tasks/*.json aborts the command.
+    cmd = windows_command(script) if m.os == "windows" else "/bin/sh -c " + shlex.quote(script)
     try:
         r = subprocess.run(ssh_argv(m, ctl) + [cmd], capture_output=True, text=True, encoding="utf-8",
                            errors="replace", timeout=timeout, input=stdin if stdin is not None else "")
