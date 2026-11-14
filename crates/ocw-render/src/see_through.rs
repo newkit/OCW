@@ -68,6 +68,10 @@ pub struct SeeThroughFade {
     /// mesh's local y plus y (a part of a route tree).
     #[uniform(100)]
     pub sway: Vec4,
+    /// The season (spec §14 Phase 9, S8; [`crate::season::surface_uniform`]):
+    /// x, y the climatological snow ramp over the altitude, z on.
+    #[uniform(100)]
+    pub season: Vec4,
 }
 
 impl Default for SeeThroughFade {
@@ -82,6 +86,7 @@ impl Default for SeeThroughFade {
             ),
             wind: Vec4::new(1.0, 0.0, 0.0, 0.0),
             sway: Vec4::new(1.0, 0.0, 0.0, 0.0),
+            season: Vec4::ZERO,
         }
     }
 }

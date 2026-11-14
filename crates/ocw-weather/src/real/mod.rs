@@ -361,6 +361,9 @@ pub struct Obs {
     /// Where the wind comes from (°).
     pub wind_from_deg: Option<f32>,
     pub sky: Option<Sky>,
+    /// Snow lying on the ground (m of snow; Open-Meteo's `snow_depth`) –
+    /// the season's snow line follows it (spec §14 Phase 9, S8).
+    pub snow_depth_m: Option<f32>,
 }
 
 /// A provider's answer: its data over time at one elevation.
@@ -435,6 +438,7 @@ pub fn blend(a: &Obs, b: &Obs, t: f32) -> Obs {
         } else {
             b.sky.or(a.sky)
         },
+        snow_depth_m: m(a.snow_depth_m, b.snow_depth_m),
     }
 }
 
@@ -568,6 +572,7 @@ pub fn merge(a: &Obs, b: &Obs) -> Obs {
         wind_mps: a.wind_mps.or(b.wind_mps),
         gust_mps: a.gust_mps.or(b.gust_mps),
         wind_from_deg: a.wind_from_deg.or(b.wind_from_deg),
+        snow_depth_m: a.snow_depth_m.or(b.snow_depth_m),
         // A measured thunderstorm or snow shower beats the model's code;
         // the station's precipitation decides whether anything falls.
         sky: match (a.sky, b.sky) {

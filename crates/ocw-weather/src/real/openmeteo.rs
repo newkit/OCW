@@ -14,9 +14,9 @@ use serde_json::Value;
 use super::{Cell, Obs, Series, wmo_sky};
 
 /// The hourly fields of the forecast.
-pub const FORECAST_FIELDS: &str = "temperature_2m,relative_humidity_2m,dew_point_2m,surface_pressure,cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,precipitation,rain,showers,snowfall,weather_code,visibility,wind_speed_10m,wind_gusts_10m,wind_direction_10m";
+pub const FORECAST_FIELDS: &str = "temperature_2m,relative_humidity_2m,dew_point_2m,surface_pressure,cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,precipitation,rain,showers,snowfall,weather_code,visibility,wind_speed_10m,wind_gusts_10m,wind_direction_10m,snow_depth";
 /// The hourly fields ERA5 has (no visibility, no showers).
-pub const ARCHIVE_FIELDS: &str = "temperature_2m,relative_humidity_2m,dew_point_2m,surface_pressure,cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,precipitation,rain,snowfall,weather_code,wind_speed_10m,wind_gusts_10m,wind_direction_10m";
+pub const ARCHIVE_FIELDS: &str = "temperature_2m,relative_humidity_2m,dew_point_2m,surface_pressure,cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,precipitation,rain,snowfall,weather_code,wind_speed_10m,wind_gusts_10m,wind_direction_10m,snow_depth";
 
 /// Days of the past the forecast request covers (older days come from
 /// the historical API, which is about five days behind).
@@ -90,6 +90,7 @@ pub fn parse(body: &str) -> Result<Series, String> {
         c("wind_gusts_10m"),
         c("wind_direction_10m"),
     );
+    let sd = c("snow_depth");
     let pct = |col, i| val(col, i).map(|p| (p / 100.0).clamp(0.0, 1.0));
     let mut obs = Vec::with_capacity(times.len());
     for (i, t) in times.iter().enumerate() {
@@ -119,6 +120,7 @@ pub fn parse(body: &str) -> Result<Series, String> {
                 .and_then(|w| w.get(i))
                 .and_then(Value::as_i64)
                 .map(wmo_sky),
+            snow_depth_m: val(sd, i).map(|d| d.max(0.0)),
             ..Default::default()
         });
     }

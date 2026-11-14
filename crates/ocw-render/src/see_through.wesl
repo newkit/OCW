@@ -23,6 +23,9 @@ struct SeeThroughFade {
     wind: vec4<f32>,
     // x: 0 = height above the foot in uv.x, 1 = local y + y.
     sway: vec4<f32>,
+    // The season (spec §14 Phase 9, S8): x, y the climatological snow
+    // ramp over the altitude; z on.
+    season: vec4<f32>,
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100)
@@ -129,8 +132,10 @@ fn fragment(
         pbr_input.material.alpha_cutoff,
         pbr_input.material.base_color
     );
-    // Snow on the crowns' upper sides (spec §14 Phase 9, S4).
-    let snow = see_through.wind.w;
+    // Snow on the crowns' upper sides (spec §14 Phase 9, S4): the
+    // weather's or the season's (S8), whichever covers more.
+    let clim = clamp(see_through.season.x + see_through.season.y * in.world_position.y, 0.0, 1.0);
+    let snow = max(see_through.wind.w, clim);
     if snow > 0.0 {
         let up = normalize(in.world_normal).y;
         let s = smoothstep(0.05, 0.45, up) * snow * 0.85;

@@ -31,6 +31,10 @@ pub struct BuildingLook {
     /// The weather (spec §14 Phase 9, S4; [`crate::weather::surface_uniform`]):
     /// x wetness, y puddles, z snow cover, w wind sway.
     pub weather: Vec4,
+    /// The season (spec §14 Phase 9, S8; [`crate::season::surface_uniform`]):
+    /// x, y the climatological snow ramp over the altitude
+    /// (`clamp(x + y · alt)`), z on.
+    pub season: Vec4,
 }
 
 /// Distances (m) over which the textures and the windows fade out.
@@ -125,6 +129,7 @@ impl BuildingLook {
             means,
             windows,
             weather: Vec4::ZERO,
+            season: Vec4::ZERO,
         }
     }
 

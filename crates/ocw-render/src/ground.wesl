@@ -39,6 +39,13 @@ struct TerrainLook {
     ortho_blend: vec4<f32>,
     // The weather: x wetness, y puddles, z snow cover, w wind sway.
     weather: vec4<f32>,
+    // The season (spec §14 Phase 9, S8; `season::terrain_uniform`):
+    // 0 snow ramp a, b, grass green-up ramp a, b; 1 grass dormancy a, b,
+    // dryness a, b; 2 GDD a + b·alt, CDD a + b·alt; 3 on, maize share,
+    // frost lo, hi; 4-8 the cereal and maize calendars (lo, hi pairs).
+    season: array<vec4<f32>, 9>,
+    // The seasonal colours (linear, `season::ground_palette`).
+    season_colours: array<vec4<f32>, 10>,
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100)
@@ -109,6 +116,74 @@ fn vnoise(p: vec2<f32>) -> f32 {
     let c = hash2(i + vec2<f32>(0.0, 1.0));
     let d = hash2(i + vec2<f32>(1.0, 1.0));
     return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+// --- Seasons (spec §14 Phase 9, S8; CPU twins in `season.rs`) ---
+
+fn lum3(c: vec3<f32>) -> f32 {
+    return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
+}
+
+// `season::retint`: towards the hue of `want`, keeping `keep` of the
+// brightness (the imagery's seasonal tint sets it).
+fn retint(base: vec3<f32>, want: vec3<f32>, t: f32, keep: f32) -> vec3<f32> {
+    if t <= 0.0 {
+        return base;
+    }
+    let k = pow(max(lum3(base), 1e-4) / max(lum3(want), 1e-4), keep);
+    return mix(base, want * k, clamp(t, 0.0, 1.0));
+}
+
+fn alt_ramp(a: f32, b: f32, h: f32) -> f32 {
+    return clamp(a + b * h, 0.0, 1.0);
+}
+
+fn ramp01(x: f32, lohi: vec2<f32>) -> f32 {
+    if lohi.y <= lohi.x {
+        return select(0.0, 1.0, x >= lohi.x);
+    }
+    return clamp((x - lohi.x) / (lohi.y - lohi.x), 0.0, 1.0);
+}
+
+fn season_colour(i: u32) -> vec3<f32> {
+    return look.season_colours[i].rgb;
+}
+
+// `season::grass_colour`: winter straw to lush green, dry in hot summers.
+fn season_grass(base: vec3<f32>, h: f32) -> vec3<f32> {
+    let s = look.season;
+    let green = alt_ramp(s[0].z, s[0].w, h) * (1.0 - alt_ramp(s[1].x, s[1].y, h));
+    let dry = alt_ramp(s[1].z, s[1].w, h);
+    let c = retint(base, season_colour(0u), (1.0 - green) * 0.8, 0.65);
+    return retint(c, season_colour(1u), dry * 0.85, 0.52);
+}
+
+// `season::crop_path`: the stages of a crop calendar in order.
+fn crop_path(gdd: f32, cdd: f32, start: vec3<f32>, green: vec3<f32>, ripe: vec3<f32>,
+             stubble: vec3<f32>, sprout: vec2<f32>, ripen: vec2<f32>, harvest: vec2<f32>,
+             plough: vec2<f32>, sow: vec2<f32>) -> vec3<f32> {
+    var c = mix(start, green, ramp01(gdd, sprout));
+    c = mix(c, ripe, ramp01(gdd, ripen));
+    c = mix(c, stubble, ramp01(gdd, harvest));
+    c = mix(c, season_colour(2u), ramp01(gdd, plough));
+    c = mix(c, season_colour(3u), ramp01(gdd, sow));
+    let cut = ramp01(cdd, look.season[3].zw) * (1.0 - ramp01(gdd, harvest));
+    return mix(c, stubble, cut);
+}
+
+// `season::crop_colour`, with cereal and maize fields in patches.
+fn season_crop(base: vec3<f32>, p: vec3<f32>) -> vec3<f32> {
+    let s = look.season;
+    let gdd = s[2].x + s[2].y * p.y;
+    let cdd = max(s[2].z + s[2].w * p.y, 0.0);
+    let cereal = crop_path(max(gdd, 0.0), cdd, season_colour(3u), season_colour(4u),
+        season_colour(5u), season_colour(6u), s[4].xy, s[4].zw, s[5].xy, s[5].zw, s[6].xy);
+    let maize = crop_path(max(gdd, 0.0), cdd, season_colour(2u), season_colour(7u),
+        season_colour(8u), season_colour(9u), s[6].zw, s[7].xy, s[7].zw, s[8].xy, s[8].zw);
+    let n = vnoise(p.xz / 70.0 + vec2<f32>(5.3, 2.1));
+    let share = s[3].y;
+    let m = 1.0 - smoothstep(share - 0.04, share + 0.04, n);
+    return retint(base, mix(cereal, maize, m), 0.85, 0.45);
 }
 
 fn layer_size(layer: u32) -> f32 {
@@ -243,7 +318,15 @@ fn fragment(
             } else {
                 s = sample_layer(i, wp.xz, dx.xz, dy.xz, far);
             }
-            albedo = albedo + wi * s.albedo.rgb * look.material_tint[i].rgb;
+            var a = s.albedo.rgb;
+            if look.season[3].x > 0.5 {
+                if i == 0u {
+                    a = season_grass(a, wp.y);
+                } else if i == 1u {
+                    a = season_crop(a, wp);
+                }
+            }
+            albedo = albedo + wi * a * look.material_tint[i].rgb;
             rough = rough + wi * s.albedo.a;
             n = n + wi * s.n;
         }
@@ -275,7 +358,16 @@ fn fragment(
             let low = textureSampleLevel(ortho_tex, ortho_sampler, ouv, lod).rgb;
             let b = look.ortho_blend;
             let base = pbr_input.material.base_color.rgb;
-            let photo = mix(low, o.rgb, smoothstep(b.x, b.y, dist) * b.z);
+            var photo = mix(low, o.rgb, smoothstep(b.x, b.y, dist) * b.z);
+            // The photo is of one summer: the season recolours its meadows
+            // and fields like the layers (S8), by the tile's splat weights.
+            if look.season[3].x > 0.5 && look.mode.x > 0.5 {
+                let cells = look.mode.y;
+                let suv = (ouv * cells + 0.5) / (cells + 1.0);
+                let sw = textureSampleLevel(splat_a, splat_sampler, suv, 0.0);
+                photo = mix(photo, season_grass(photo, in.world_position.y), clamp(sw.x, 0.0, 1.0));
+                photo = mix(photo, season_crop(photo, in.world_position.xyz), clamp(sw.y, 0.0, 1.0));
+            }
             let lw = vec3<f32>(0.2126, 0.7152, 0.0722);
             let detail = clamp(dot(base, lw) / max(dot(colour_map, lw), 0.01), 0.4, 2.2);
             pbr_input.material.base_color = vec4<f32>(mix(base, photo * detail, w * b.w), 1.0);
@@ -284,18 +376,21 @@ fn fragment(
 
     // The weather (spec §14 Phase 9, S4; `ocw_weather::ground`): wet
     // ground darker and a little glossier; snow on the ground that faces
-    // up (not on cliffs), in patches while it is thin.
+    // up (not on cliffs), in patches while it is thin: the weather's or the
+    // season's climatological snow (S8, `season::lying_snow`), whichever
+    // covers more.
     let wx = look.weather;
-    if wx.x > 0.0 || wx.z > 0.0 {
+    let snow = max(wx.z, alt_ramp(look.season[0].x, look.season[0].y, in.world_position.y));
+    if wx.x > 0.0 || snow > 0.0 {
         let gp = in.world_position.xyz;
         let up = normalize(in.world_normal).y;
         var c = pbr_input.material.base_color.rgb;
         var r = pbr_input.material.perceptual_roughness;
         c = c * mix(1.0, 0.78, wx.x);
         r = r * mix(1.0, 0.75, wx.x);
-        if wx.z > 0.0 {
+        if snow > 0.0 {
             let patchy = vnoise(gp.xz / 6.0) * 0.6 + vnoise(gp.xz / 1.7) * 0.4;
-            let lo = 1.0 - wx.z * 1.15;
+            let lo = 1.0 - snow * 1.15;
             let s = smoothstep(0.62, 0.86, up) * smoothstep(lo, lo + 0.25, patchy + 0.1);
             c = mix(c, vec3<f32>(0.86, 0.89, 0.93), s);
             r = mix(r, 0.6, s);

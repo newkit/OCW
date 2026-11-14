@@ -1173,6 +1173,20 @@ owns the clock: solo you set it, in a shared ride only the host (the rider
 connected longest; `ocw-server --time-control host|anyone|nobody`). Each ride
 starts at the real time.
 
+**Seasons** follow the world date and the altitude (spec §14 Phase 9 S8): a
+degree-day model of the place's climate (regions: the Alpine Rhine valley, the
+Black Forest, the Canary Islands, else a climate by latitude) lets deciduous
+trees leaf out, colour and go bare (bare trees show their branches; larches
+turn golden), conifers stay green; meadows turn from winter straw to green
+(and dry out in hot dry summers), fields go through their crop calendar
+(cereals green, golden, stubble, ploughed and sown again; maize sown in May,
+harvested in October); and the climatological snow line by date and altitude
+whitens meadows, trees and roofs (the roads stay cleared) – snow the weather
+lets fall adds to it. Spring comes about four days later per 100 m: on 1 May
+Vaduz is in fresh green while Malbun (1600 m) is still bare and white in
+patches. Console: `season` (the season at the rider), `season.fx off` (summer
+without snow, for comparisons).
+
 ### Weather
 
 The session has **one weather, owned by the game server** like the world clock
@@ -1324,6 +1338,7 @@ for now).
 | `weather.real [on\|off]` \| `weather.provider [SOURCE\|next\|prev]` | Real weather in this ride and the next ones, and its data source (both saved: settings `weather.real`, `weather.provider`) |
 | `weather day NAME\|DATE [TIME]` \| `weather.days` \| `weather.day [N]` | Ride a day: the time machine to that day (`lothar`, `kyrill`, `vivian`, `heat-2003`, `snow-2019`, `today`, or `YYYY-MM-DD HH:MM`) and real weather (history from ERA5); the list; the day of the menu's row |
 | `weather.fx clouds\|particles\|spray\|bolts on\|off\|N` | What of the weather is drawn (particles: the budget, default 40000) |
+| `season` \| `season.fx on\|off` | The season at the rider (spec §14 Phase 9 S8): deciduous leaves, grass, cereal and maize stage, the climatological snow cover and snow line, the degree days; seasons drawn or not (off: summer without climatological snow) |
 | **Audio** (spec §3.3) | |
 | `audio.volume master\|effects\|others\|music\|voice PERCENT` | Set a volume for this session (`set audio.effects 60` also saves it) |
 | `audio.mute [on\|off\|toggle]` | Mute or unmute all sound (`set audio.mute on` saves it) |

@@ -857,6 +857,11 @@ message RealWeather {
   bool historic = 7;
   // The station measured at ("Vaduz (VAD)").
   string station = 8;
+  // Snow lying at the cell's altitude band (m of snow; spec §14 Phase 9,
+  // S8: the season's snow line follows it); absent: not reported.
+  optional float snow_depth_m = 9;
+  // That altitude (m).
+  float snow_alt_m = 10;
 }
 
 enum RealWeatherStatus {

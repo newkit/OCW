@@ -90,7 +90,18 @@ impl WeatherClient {
             .and_then(|i| i.real.as_ref())
             .map(|r| r.attribution.clone())
             .filter(|a| !a.is_empty());
+        // Real weather's measured snow: the season's snow line (S8).
+        let snow = self
+            .info
+            .as_ref()
+            .and_then(|i| i.real.as_ref())
+            .and_then(|r| r.snow())
+            .map(|(alt, depth)| ocw_sky::season::SnowObservation {
+                alt_m: f64::from(alt),
+                depth_m: f64::from(depth),
+            });
         Some(WeatherView {
+            snow,
             wind_mps: state.wind_mps + (state.gust_mps - state.wind_mps).max(0.0) * gust,
             gust,
             summary: state.hud(),

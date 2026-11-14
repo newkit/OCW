@@ -36,6 +36,7 @@ pub mod road_corners;
 pub mod road_material;
 pub mod road_mesh;
 pub mod road_style;
+pub mod season;
 pub mod see_through;
 pub mod sky;
 pub mod stamp;
@@ -389,6 +390,8 @@ impl Plugin for OcwRenderPlugins {
             night_sky::NightSkyPlugin,
             // Clouds, rain, snow, fog, wet roads (spec §14 Phase 9, S4).
             weather::WeatherPlugin,
+            // Seasons: leaves, meadows, fields, snow (spec §14 Phase 9, S8).
+            season::SeasonPlugin,
             street_lamps::StreetLampsPlugin,
             // World objects (spec §14 Phase 12 K3): fences, walls, posts
             // and the road barriers of `display.road_barriers`.
