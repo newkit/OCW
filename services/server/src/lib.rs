@@ -535,6 +535,16 @@ impl GameServer {
         if joined && self.session.event().is_some() {
             out.push(encode(&server_message(S::Event(self.event_state()))));
         }
+        if joined {
+            let builds: Vec<RiderId> = self
+                .session
+                .snapshot()
+                .iter()
+                .filter(|r| r.build_hash != 0)
+                .map(|r| r.id)
+                .collect();
+            out.extend(builds.into_iter().map(|id| self.build_message(id)));
+        }
         if joined && let Some(net) = self.session.network() {
             out.extend(
                 self.session
@@ -569,6 +579,12 @@ impl GameServer {
         }
         let profile = physics_profile(&hello);
         let rider = self.session.add_rider(hello.display_name.clone(), profile);
+        // The bike's parts (spec §14 Phase 4, 4G): the server's own values.
+        if !hello.parts.is_empty() {
+            let build =
+                ocw_sim::build::build(ocw_sim::PartTable::shipped(), profile.bike, &hello.parts);
+            self.session.set_bike(rider, profile, Some(build));
+        }
         // Cosmetic only (§2.5): validated, then passed through.
         if let Some(look) = &hello.look {
             self.session.set_look(rider, look.into());
@@ -641,41 +657,50 @@ impl GameServer {
         result(true, said.join(", "))
     }
 
-    /// The workshop's bike (spec §14 Phase 4, 4A, Q1): applied at once in
-    /// free ride and outside events; an entrant of an event that has not
-    /// finished keeps the bike (it applies from the next start). The
-    /// profile comes from the server's own table (unknown id: the default
-    /// road profile) with the rider's weight; the look is cosmetic; the
-    /// part ids are cosmetic until W3 (4G) and not checked yet (no
-    /// accounts before Phase 5).
+    /// The workshop's bike (spec §14 Phase 4, 4A, Q1, 4G): applied at once
+    /// in free ride and outside events; an entrant of an event that is not
+    /// over keeps the bike it started with and gets this one when the event
+    /// ends (from the next start). The profile comes from the server's own
+    /// table (unknown id: the default road profile) with the rider's
+    /// weight, the parts' physics from the server's catalogue copy
+    /// ([`ocw_sim::build`]: real weights, class steps, the build caps;
+    /// unknown or unfitting ids count as base parts; ownership is checked
+    /// with accounts, Phase 5); the look is cosmetic and applies at once.
+    /// Everyone learns the new build from a `RiderBuild` once it applies.
     fn bike_change(&mut self, rider: RiderId, change: &v1::BikeChange) -> S {
         let result = |ok: bool, message: String| S::DevResult(v1::DevCommandResult { ok, message });
-        if let Some(ev) = self.session.event()
-            && ev.phase != EventPhase::Finished
-            && ev.entrants.iter().any(|e| e.id == rider)
-        {
-            return result(
-                false,
-                "in an event: the bike changes from the next start".into(),
-            );
-        }
         let bike = ocw_core::ProfileId::from_wire(Some(&change.bike_profile));
         let kg = self
             .session
-            .rider_profile(rider)
+            .base_profile(rider)
             .map_or(ocw_core::RiderProfile::default().rider_mass_kg, |p| {
                 p.rider_mass_kg
             });
-        self.session
-            .set_profile(rider, ocw_core::RiderProfile::curated(bike, kg));
+        let build = ocw_sim::build::build(ocw_sim::PartTable::shipped(), bike, &change.parts);
+        let effect = build_line(&build);
+        let applied = self.session.set_bike(
+            rider,
+            ocw_core::RiderProfile::curated(bike, kg),
+            Some(build),
+        );
         if let Some(look) = &change.look {
             self.session.set_look(rider, look.into());
         }
-        tracing::info!(%rider, bike = bike.id(), parts = change.parts.len(), "bike changed");
-        result(
-            true,
-            format!("riding the {} ({})", bike.name(), change.bike_id),
-        )
+        tracing::info!(%rider, bike = bike.id(), parts = change.parts.len(), ?applied, "bike changed");
+        match applied {
+            Some(ocw_sim::BikeApplied::Now) => result(
+                true,
+                format!("riding the {} ({}): {effect}", bike.name(), change.bike_id),
+            ),
+            Some(ocw_sim::BikeApplied::AtNextStart) => result(
+                true,
+                format!(
+                    "in an event: the {} ({effect}) applies when it is over, from the next start",
+                    bike.name()
+                ),
+            ),
+            None => result(false, "no rider".into()),
+        }
     }
 
     /// The echo test (spec §7 *Echo bot*): the Echo rider on the road
@@ -829,8 +854,43 @@ impl GameServer {
                     Err(e) => result(false, e),
                 }
             }
+            Some(v1::dev_command::Cmd::BotBike(b)) => match self.bot_bike(&b) {
+                Ok(m) => result(true, m),
+                Err(e) => result(false, e),
+            },
             None => result(false, "empty dev command".into()),
         }
+    }
+
+    /// `dev.bot_bike` (spec §14 Phase 4, W3): a bot's bike, steady power
+    /// and lane, to compare a stock and an upgraded bike side by side.
+    fn bot_bike(&mut self, b: &v1::BotBike) -> Result<String, String> {
+        let id = RiderId(b.rider_id);
+        if !self.session.bots().contains(&id) {
+            return Err(format!("{id} is no bot of this session"));
+        }
+        let base = self.session.base_profile(id).ok_or("no such rider")?;
+        let bike = if b.bike_profile.trim().is_empty() {
+            base.bike
+        } else {
+            ocw_core::ProfileId::parse(&b.bike_profile)
+                .ok_or_else(|| format!("unknown bike profile {:?}", b.bike_profile))?
+        };
+        let profile = ocw_core::RiderProfile::curated(bike, base.rider_mass_kg);
+        let build = ocw_sim::build::build(ocw_sim::PartTable::shipped(), bike, &b.parts);
+        let effect = build_line(&build);
+        self.session.set_bike(id, profile, Some(build));
+        if !b.name.trim().is_empty() {
+            self.session.rename(id, b.name.trim());
+        }
+        if let Some(w) = b.power_w {
+            self.session.set_bot_power(id, f64::from(w), true);
+        }
+        if let Some(l) = b.lane_m {
+            self.session.set_bot_lane(id, f64::from(l));
+        }
+        tracing::info!(%id, bike = bike.id(), parts = b.parts.len(), "bot bike set");
+        Ok(format!("{id}: {} – {effect}", bike.name()))
     }
 
     /// A voice token for the rider of `conn` (spec §7), or why not.
@@ -912,9 +972,11 @@ impl GameServer {
                     }
                 }
                 let organiser = start.collisions.map(ocw_protocol::collision_mode_from_wire);
+                let physics = ocw_protocol::event_physics(&start);
                 let started = self.session.start_event(spec).map(|e| e.id);
                 if started.is_ok() {
                     self.session.set_event_collisions(organiser);
+                    self.session.set_event_physics(physics);
                 }
                 match started.map(|_| self.session.event().expect("just started")) {
                     Ok(ev) => {
@@ -932,9 +994,11 @@ impl GameServer {
                         result(
                             true,
                             format!(
-                                "{what}, {} rider{}: start in {:.0} s",
+                                "{what}, {} rider{}, {} mode ({}): start in {:.0} s",
                                 ev.entrants.len(),
                                 if ev.entrants.len() == 1 { "" } else { "s" },
+                                ev.physics.name(),
+                                ev.physics.describe(),
                                 ocw_sim::event::COUNTDOWN_S
                             ),
                         )
@@ -976,6 +1040,10 @@ impl GameServer {
         if changed || live || std::mem::take(&mut self.event_dirty) {
             out.push(encode(&server_message(S::Event(self.event_state()))));
         }
+        // Bike builds: reliable, once per change (spec §14 Phase 4, 4G).
+        for id in self.session.take_build_changes() {
+            out.push(self.build_message(id));
+        }
         if let Some(net) = self.session.network().cloned() {
             for c in self.session.take_path_changes() {
                 out.push(encode(&server_message(S::Path(ocw_protocol::path_update(
@@ -1015,6 +1083,26 @@ impl GameServer {
     pub fn connections(&self) -> impl Iterator<Item = ConnectionId> + '_ {
         self.riders.keys().copied()
     }
+
+    /// The encoded `RiderBuild` of rider `id`.
+    fn build_message(&self, id: RiderId) -> Vec<u8> {
+        let profile = self
+            .session
+            .base_profile(id)
+            .map_or_else(Default::default, |p| p.bike);
+        encode(&server_message(S::RiderBuild(ocw_protocol::rider_build(
+            id,
+            profile,
+            self.session.rider_build(id),
+        ))))
+    }
+}
+
+/// "+1.2 % flat, +0.9 % at 6 %, 7.4 kg" – a build's effect against the
+/// profile's stock bike (4G).
+pub fn build_line(b: &ocw_sim::Build) -> String {
+    let e = b.effect_from(&ocw_sim::Build::stock(b.profile));
+    format!("{}, {:.1} kg", e.line(), b.params.bike_mass_kg)
 }
 
 /// A new session on `course` with the configured bots.
@@ -1071,6 +1159,7 @@ mod tests {
             rider_weight_kg: None,
             bike_profile: None,
             look: None,
+            parts: Vec::new(),
         })))
     }
 
@@ -1086,6 +1175,7 @@ mod tests {
                 rider_weight_kg: weight,
                 bike_profile: None,
                 look: None,
+                parts: Vec::new(),
             }))),
         );
         match decode_server(&reply[0]).unwrap() {
@@ -2556,12 +2646,17 @@ mod tests {
         server.handle(conn, &start(race, Some(0)));
         server.tick();
         let r = bike_change_result(&mut server, conn, "tt");
-        assert!(!r.ok && r.message.contains("next start"), "{r:?}");
+        assert!(r.ok && r.message.contains("next start"), "{r:?}");
         assert_eq!(
             server.session().rider_profile(rider).unwrap().bike,
             ocw_core::ProfileId::Road
         );
+        // The event ends: the waiting bike applies.
         server.handle(conn, &event_msg(v1::event_request::Req::Cancel(true)));
+        assert_eq!(
+            server.session().rider_profile(rider).unwrap().bike,
+            ocw_core::ProfileId::TimeTrial
+        );
         assert!(bike_change_result(&mut server, conn, "tt").ok);
         assert_eq!(
             server.session().rider_profile(rider).unwrap().bike,
@@ -2605,5 +2700,207 @@ mod tests {
         };
         assert!(hearts(rider) >= 1, "{}", hearts(rider));
         assert_eq!(hearts(vrider), 0);
+    }
+
+    fn builds_in(msgs: &[Vec<u8>]) -> Vec<ocw_protocol::BuildInfo> {
+        msgs.iter()
+            .filter_map(|b| match decode_server(b) {
+                Ok(S::RiderBuild(r)) => Some(ocw_protocol::build_info(&r)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    const UPGRADES: [&str; 7] = [
+        "wheels.road-carbon.top",
+        "tyres.road.race",
+        "groupset.road-electronic.top",
+        "cockpit.road.integrated",
+        "saddle.road.top",
+        "seatpost.carbon",
+        "pedals.road.top",
+    ];
+
+    /// W3 (spec §14 Phase 4, 4G): a `BikeChange` applies the parts'
+    /// physics from the server's own catalogue (within the caps); everyone
+    /// gets the build once (`RiderBuild`, reliable), the snapshots only
+    /// its hash; a client joining later gets every build; the Hello's
+    /// parts are the start build.
+    #[test]
+    fn bike_change_applies_the_build_and_tells_the_others_once() {
+        let mut server = local(0);
+        let (a, ra) = joined(&mut server);
+        let (_b, rb) = joined(&mut server);
+        server.tick();
+        let msg = encode(&client_message(C::BikeChange(v1::BikeChange {
+            bike_id: "road".into(),
+            bike_profile: "road".into(),
+            look: None,
+            parts: UPGRADES.map(String::from).to_vec(),
+        })));
+        let reply = server.handle(a, &msg);
+        let S::DevResult(r) = decode_server(&reply[0]).unwrap() else {
+            panic!("a result");
+        };
+        assert!(r.ok && r.message.contains("% flat"), "{r:?}");
+        let expected = ocw_sim::build::build(
+            ocw_sim::PartTable::shipped(),
+            ocw_core::ProfileId::Road,
+            &UPGRADES.map(String::from),
+        );
+        assert_eq!(
+            server.session().rider_profile(ra).unwrap(),
+            expected.rider_profile(75.0)
+        );
+        let mut out = Vec::new();
+        for _ in 0..10 {
+            out.extend(server.tick());
+        }
+        let builds = builds_in(&out);
+        assert_eq!(builds.len(), 1, "once, not with every snapshot");
+        assert_eq!(builds[0].rider, ra);
+        assert_eq!(builds[0].parts, expected.parts);
+        assert_eq!(builds[0].hash, expected.hash());
+        assert!((builds[0].effect.flat - expected.flat_gain).abs() < 1e-4);
+        let snap = out
+            .iter()
+            .rev()
+            .find_map(|b| match decode_server(b) {
+                Ok(S::Snapshot(s)) => Some(s),
+                _ => None,
+            })
+            .unwrap();
+        let hash = |id: RiderId| {
+            snap.riders
+                .iter()
+                .find(|u| u.rider_id == id.0)
+                .unwrap()
+                .build_hash
+        };
+        assert_eq!((hash(ra), hash(rb)), (expected.hash(), 0));
+        // A client joining later gets the builds with its welcome.
+        let c = server.connect();
+        let replies = server.handle(c, &hello(PROTOCOL_VERSION));
+        let builds = builds_in(&replies);
+        assert_eq!(builds.len(), 1);
+        assert_eq!(builds[0].rider, ra);
+        // The Hello's parts: a joining rider starts on its build.
+        let d = server.connect();
+        let replies = server.handle(
+            d,
+            &encode(&client_message(C::Hello(v1::Hello {
+                protocol_version: PROTOCOL_VERSION,
+                display_name: "Fitted".into(),
+                bike_profile: Some("tt".into()),
+                parts: vec!["wheels.tt.disc".into(), "frame.mtb.upper".into()],
+                ..Default::default()
+            }))),
+        );
+        let S::Welcome(w) = decode_server(&replies[0]).unwrap() else {
+            panic!("welcome");
+        };
+        let rd = RiderId(w.rider_id);
+        let b = server.session().rider_build(rd).expect("a build");
+        assert_eq!(
+            b.parts,
+            vec!["wheels.tt.disc".to_string()],
+            "the MTB frame does not fit"
+        );
+        let tt = ocw_core::RiderProfile::curated(ocw_core::ProfileId::TimeTrial, 75.0);
+        assert!(server.session().rider_profile(rd).unwrap().cda_m2 < tt.cda_m2);
+        let builds = builds_in(&server.tick());
+        assert!(builds.iter().any(|b| b.rider == rd));
+    }
+
+    /// The sprint of a stock and an upgraded bot (spec §14 Phase 4, W3):
+    /// in *Open* the upgraded bot wins by the build's few per cent, in
+    /// *Profile* (the default for races) both ride exactly the same.
+    fn sprint(physics: Option<ocw_sim::PhysicsMode>) -> (f64, f64, String) {
+        let mut server = local(2);
+        let (conn, _) = joined(&mut server);
+        let bots = server.session().bots();
+        let bike = |id: RiderId, parts: &[&str], name: &str, lane: f32| {
+            encode(&client_message(C::Dev(v1::DevCommand {
+                cmd: Some(v1::dev_command::Cmd::BotBike(v1::BotBike {
+                    rider_id: id.0,
+                    bike_profile: "road".into(),
+                    parts: parts.iter().map(|s| s.to_string()).collect(),
+                    power_w: Some(300.0),
+                    lane_m: Some(lane),
+                    name: name.into(),
+                })),
+            })))
+        };
+        let mut said = String::new();
+        for (id, parts, name, lane) in [
+            (bots[0], &[][..], "Stock", -2.4),
+            (bots[1], &UPGRADES[..], "Upgraded", 2.4),
+        ] {
+            let reply = server.handle(conn, &bike(id, parts, name, lane));
+            let S::DevResult(r) = decode_server(&reply[0]).unwrap() else {
+                panic!("a result");
+            };
+            assert!(r.ok, "{r:?}");
+            said = r.message;
+        }
+        let start = v1::EventStart {
+            physics: physics.map(ocw_protocol::physics_mode_to_wire),
+            ..ocw_protocol::event_start(
+                &EventSpec::Race {
+                    laps: None,
+                    length_m: Some(1000.0),
+                },
+                None,
+            )
+        };
+        let reply = server.handle(
+            conn,
+            &encode(&client_message(C::Event(v1::EventRequest {
+                req: Some(v1::event_request::Req::Start(start)),
+            }))),
+        );
+        let S::DevResult(r) = decode_server(&reply[0]).unwrap() else {
+            panic!("a result");
+        };
+        assert!(r.ok, "{r:?}");
+        for _ in 0..(ocw_core::SIM_TICK_HZ * 200) {
+            server.tick();
+        }
+        let ev = server.session().event().unwrap();
+        let t = |id| ev.entrant(id).unwrap().finish_s.expect("finished");
+        assert_eq!(ev.physics, physics.unwrap_or(ocw_sim::PhysicsMode::Profile));
+        (t(bots[0]), t(bots[1]), said + " / " + &r.message)
+    }
+
+    #[test]
+    fn an_upgraded_bot_wins_in_open_mode_and_ties_in_profile_mode() {
+        let (stock, upgraded, said) = sprint(Some(ocw_sim::PhysicsMode::Open));
+        assert!(said.contains("Open mode"), "{said}");
+        let gain = stock / upgraded - 1.0;
+        assert!(
+            gain > 0.004 && gain < ocw_sim::build::FLAT_CAP + 0.004,
+            "{stock} {upgraded}"
+        );
+        for physics in [None, Some(ocw_sim::PhysicsMode::Profile)] {
+            let (stock, upgraded, said) = sprint(physics);
+            assert_eq!(stock, upgraded, "{physics:?}");
+            assert!(said.contains("Profile mode"), "{said}");
+        }
+        // The dev command is for bots on local servers only.
+        let mut server = local(1);
+        let (conn, me) = joined(&mut server);
+        let reply = server.handle(
+            conn,
+            &encode(&client_message(C::Dev(v1::DevCommand {
+                cmd: Some(v1::dev_command::Cmd::BotBike(v1::BotBike {
+                    rider_id: me.0,
+                    ..Default::default()
+                })),
+            }))),
+        );
+        let S::DevResult(r) = decode_server(&reply[0]).unwrap() else {
+            panic!("a result");
+        };
+        assert!(!r.ok, "{r:?}");
     }
 }

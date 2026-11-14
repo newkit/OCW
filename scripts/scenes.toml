@@ -1331,3 +1331,34 @@ args = ["--route", "hills", "--bots", "3", "--power", "250"]
 at = ["2=workshop open", "3.5=workshop right", "4.5=workshop right", "5.5=workshop select", "8=workshop right", "9=workshop right", "10=workshop right", "11=workshop select", "13.5=workshop select"]
 warmup = 2
 video = 14
+
+# --- Phase 4 W3: build physics, race modes ------------------------------------
+
+[[scene]]
+name = "workshop-picker-effect"
+description = "Workshop part picker (spec §14 Phase 4, W3): the road bike's tyres, the race tyres focused with the stock tyres pinned – the card's speed line from the server's build physics (+% flat, +% at 6 %), the bike's mass and speed against the stock bike, and the compare card's speed difference"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2=hearts.grant 3000", "2.2=workshop open", "2.8=workshop select", "3.8=workshop slot-next", "4.2=workshop slot-next", "4.6=workshop select", "5.6=workshop compare", "6=workshop down", "6.4=workshop down", "6.8=workshop down"]
+shot = 22
+
+[[scene]]
+name = "sprint-open-video"
+description = "Video (spec §14 Phase 4, W3): a race in Open mode on the Loop test route between two bots at a steady 300 W on the road bike – 'Stock' in the left lane and 'Upgraded' in the right lane (the capped best build: carbon wheels, race tyres, top groupset, integrated cockpit …, +1.4 % on the flat) – out of each other's draft; you ride between them at 300 W on the stock bike, and the upgraded bot pulls away"
+args = ["--route", "loop", "--bots", "2", "--power", "300"]
+at = ["1=dev.bot_bike 1 --bike road --power 300 --lane -2.4 --name Stock", "1=dev.bot_bike 2 --bike road --best --power 300 --lane 2.4 --name Upgraded", "1.5=event race --km 0.6 --physics open"]
+warmup = 2
+video = 40
+
+[[scene]]
+name = "sprint-open-results"
+description = "Results of the 0.6 km race in Open mode (spec §14 Phase 4, W3): 'Upgraded' (best build, 300 W) ahead of 'Stock' and you (stock road bikes, 300 W) by the build's speed difference"
+args = ["--route", "loop", "--bots", "2", "--power", "300"]
+at = ["1=dev.bot_bike 1 --bike road --power 300 --lane -2.4 --name Stock", "1=dev.bot_bike 2 --bike road --best --power 300 --lane 2.4 --name Upgraded", "1.5=event race --km 0.6 --physics open"]
+shot = 85
+
+[[scene]]
+name = "sprint-profile-results"
+description = "The same race in Profile mode, the default for races (spec §14 Phase 4, W3): only the frame's profile counts, so 'Upgraded' and 'Stock' finish in the same time"
+args = ["--route", "loop", "--bots", "2", "--power", "300"]
+at = ["1=dev.bot_bike 1 --bike road --power 300 --lane -2.4 --name Stock", "1=dev.bot_bike 2 --bike road --best --power 300 --lane 2.4 --name Upgraded", "1.5=event race --km 0.6"]
+shot = 85

@@ -127,6 +127,12 @@ pub fn distance_label(length_m: f64, laps: Option<u32>) -> String {
     ocw_server::distance_label(length_m, laps)
 }
 
+/// The race mode in a line: "Profile mode: only the frame's profile
+/// counts, parts are cosmetic" (spec §14 Phase 4, 4G).
+pub fn mode_line(m: ocw_sim::PhysicsMode) -> String {
+    format!("{} mode: {}", m.name(), m.describe())
+}
+
 /// The event's title: "Race - 2 laps (8.1 km)", "Group ride - 150 W".
 pub fn title(kind: &EventKind) -> String {
     match *kind {
@@ -493,6 +499,11 @@ impl EventClient {
             ..Default::default()
         };
         let mine = own.and_then(|id| info.standings.iter().find(|s| s.id == id));
+        // The race mode on the start line (spec §2.5, 4G: shown in the
+        // event's info).
+        if info.phase < EventPhase::Running {
+            view.lines.push(mode_line(info.physics));
+        }
         match info.kind {
             EventKind::GroupRide { .. } => {
                 let ahead = (!others.is_empty())
@@ -559,6 +570,7 @@ impl EventClient {
                     {
                         footer.push(outcome_line(o, t));
                     }
+                    footer.push(mode_line(info.physics));
                     footer.push("Esc / A: close".into());
                     view.results = Some(ResultsView {
                         title: format!(
@@ -621,6 +633,7 @@ mod tests {
             finished_tick: None,
             standings,
             collisions: ocw_sim::collide::Mode::Off,
+            physics: ocw_sim::PhysicsMode::Profile,
         }
     }
 
@@ -777,7 +790,14 @@ mod tests {
         assert!(!c.holds(Some(RiderId(2))), "joined later: not in it");
         let v = c.view(0.0, 10.0, Some(RiderId(1)), 100.0, &[]).unwrap();
         assert_eq!(v.countdown.as_deref(), Some("Get ready"));
-        assert_eq!(v.lines, ["1 riders on the start line"]);
+        // The race mode is in the event's info on the start line (4G).
+        assert_eq!(
+            v.lines,
+            [
+                "Profile mode: only the frame's profile counts, parts are cosmetic",
+                "1 riders on the start line"
+            ]
+        );
         let v = c
             .view(
                 0.0,

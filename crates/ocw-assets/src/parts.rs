@@ -195,7 +195,7 @@ pub struct Part {
     pub standard: Standard,
     /// Frames: the physics profile (spec §2.5).
     pub profile: Option<ProfileId>,
-    /// Class steps (4G): physics from W3.
+    /// Class steps (4G): the build physics of `ocw_sim::build` (W3).
     pub rolling: i32,
     pub aero: i32,
     pub efficiency: i32,

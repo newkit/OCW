@@ -113,9 +113,13 @@ pub fn start_session_with(world: &mut World, route: Route, keep_link: bool) {
         .get_resource::<crate::collisions::CollisionSettings>()
         .copied()
         .unwrap_or_default();
+    // The bike's parts (spec §14 Phase 4, 4G): ids only, the server has
+    // the catalogue.
+    let parts = crate::workshop::riding_parts(world, &rider.name, profile.bike);
     let mut client = client
         .with_autodrive_at_start(autodrive)
-        .with_look(rider.look());
+        .with_look(rider.look())
+        .with_parts(&parts);
     client.set_proximity_cue(rules.proximity_cue);
     let start_m = match &course {
         Course::Route(route) => crate::start_point(&args, route),
@@ -473,6 +477,10 @@ fn event_command() -> Command {
         .long("bots")
         .value_parser(value_parser!(u32).range(0..=50))
         .help("Bots in the field (default: the current ones)");
+    let physics = Arg::new("physics")
+        .long("physics")
+        .value_parser(["open", "profile", "equal"])
+        .help("Race mode: open (parts count, capped), profile (only the frame's profile; default for races and group rides), equal (one bike for all)");
     Command::new("event")
         .about("Local events: a race, group ride or time trial against your ghost (spec 2.3)")
         .subcommand_required(true)
@@ -480,7 +488,8 @@ fn event_command() -> Command {
             finish(Command::new("race").about(
                 "Race from the start formation to the finish (default: one lap of a loop, 5 km of a route that ends)",
             ))
-            .arg(bots.clone()),
+            .arg(bots.clone())
+            .arg(physics.clone()),
         )
         .subcommand(
             Command::new("group")
@@ -491,11 +500,15 @@ fn event_command() -> Command {
                         .value_parser(value_parser!(f64))
                         .help("The group's pace (W; default 150)"),
                 )
-                .arg(bots),
+                .arg(bots)
+                .arg(physics.clone()),
         )
-        .subcommand(finish(
-            Command::new("tt").about("Time trial alone against your best effort (the ghost)"),
-        ))
+        .subcommand(
+            finish(
+                Command::new("tt").about("Time trial alone against your best effort (the ghost)"),
+            )
+            .arg(physics),
+        )
         .subcommand(Command::new("cancel").about("End the current event"))
         .subcommand(Command::new("status").about("The current event and its standings"))
         .subcommand(Command::new("dismiss").about("Close the results panel"))
@@ -509,26 +522,35 @@ fn run_event(world: &mut World, m: &clap::ArgMatches) -> Result<String, String> 
     let laps = || args.get_one::<u32>("laps").copied();
     let km = || args.get_one::<f64>("km").map(|k| k * 1000.0);
     let bots = || args.get_one::<u32>("bots").copied();
+    let physics = || {
+        args.try_get_one::<String>("physics")
+            .ok()
+            .flatten()
+            .and_then(|s| ocw_sim::PhysicsMode::parse(s))
+    };
     let msg = match sub {
-        "race" => ClientCore::event_start_message(
+        "race" => ClientCore::event_start_message_with(
             &ocw_sim::EventSpec::Race {
                 laps: laps(),
                 length_m: km(),
             },
             bots(),
+            physics(),
         ),
-        "tt" => ClientCore::event_start_message(
+        "tt" => ClientCore::event_start_message_with(
             &ocw_sim::EventSpec::TimeTrial {
                 laps: laps(),
                 length_m: km(),
             },
             None,
+            physics(),
         ),
-        "group" => ClientCore::event_start_message(
+        "group" => ClientCore::event_start_message_with(
             &ocw_sim::EventSpec::GroupRide {
                 target_w: args.get_one::<f64>("watts").copied(),
             },
             bots(),
+            physics(),
         ),
         "cancel" => ClientCore::event_cancel_message(),
         "dismiss" => {
@@ -572,12 +594,83 @@ pub fn event_status(client: &ClientCore, now_s: f64) -> String {
     s
 }
 
+/// `dev.bot_bike` (spec §14 Phase 4, W3): a stock and an upgraded bot
+/// side by side for comparisons (the sprint scene).
+fn bot_bike_command() -> Command {
+    Command::new("dev.bot_bike")
+        .about("Give a bot a bike and parts, a steady power, a lane and a name (compare builds)")
+        .arg(
+            Arg::new("bot")
+                .required(true)
+                .value_parser(value_parser!(u32))
+                .help("The bot's rider id (bots get 1, 2, ... before you join)"),
+        )
+        .arg(Arg::new("bike").long("bike").help(
+            "Physics profile (road, road-aero, road-climbing, tt, gravel, mtb; default: keep)",
+        ))
+        .arg(
+            Arg::new("parts")
+                .long("parts")
+                .num_args(1..)
+                .help("Catalogue part ids (assets/parts.toml); none: the stock bike"),
+        )
+        .arg(
+            Arg::new("best")
+                .long("best")
+                .action(clap::ArgAction::SetTrue)
+                .conflicts_with("parts")
+                .help("The fastest part of every slot for the bike (the capped best build)"),
+        )
+        .arg(
+            Arg::new("power")
+                .long("power")
+                .value_parser(value_parser!(f32))
+                .help("Steady power (W)"),
+        )
+        .arg(
+            Arg::new("lane")
+                .long("lane")
+                .allow_negative_numbers(true)
+                .value_parser(value_parser!(f32))
+                .help("Fixed lane (m right of the road's centre)"),
+        )
+        .arg(Arg::new("name").long("name").help("A new name tag"))
+}
+
+fn run_bot_bike(world: &mut World, m: &clap::ArgMatches) -> Result<String, String> {
+    let link = world.get_resource::<Link>().ok_or("not riding")?;
+    let bike = m.get_one::<String>("bike").cloned().unwrap_or_default();
+    let mut parts: Vec<String> = m
+        .get_many::<String>("parts")
+        .map(|v| v.cloned().collect())
+        .unwrap_or_default();
+    if m.get_flag("best") {
+        let profile = ocw_core::ProfileId::parse(&bike).unwrap_or_default();
+        parts = ocw_sim::build::best_parts(ocw_sim::PartTable::shipped(), profile);
+    }
+    link.send_bytes(ClientCore::bot_bike_message(v1::BotBike {
+        rider_id: *m.get_one::<u32>("bot").expect("required"),
+        bike_profile: bike,
+        parts,
+        power_w: m.get_one::<f32>("power").copied(),
+        lane_m: m.get_one::<f32>("lane").copied(),
+        name: m.get_one::<String>("name").cloned().unwrap_or_default(),
+    }));
+    // The server answers with the build's effect.
+    Ok(String::new())
+}
+
 fn register_commands(app: &mut App) {
     crate::collisions::register_commands(app);
     app.console_command(ConsoleCommand::new(
         Permission::User,
         event_command(),
         run_event,
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::Dev,
+        bot_bike_command(),
+        run_bot_bike,
     ))
     .console_command(ConsoleCommand::new(
         Permission::Dev,
