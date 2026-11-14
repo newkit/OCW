@@ -100,6 +100,14 @@ pub struct ServerReport {
     /// SHA-256 of the route file (`--route-file`; empty otherwise).
     pub route_id: String,
     pub route_sha256: String,
+    /// The WebTransport endpoint (spec §14 Phase 10 B3, `--webtransport`):
+    /// sessions that came up, messages received, of those datagrams.
+    #[serde(default)]
+    pub web_sessions: u64,
+    #[serde(default)]
+    pub web_messages_in: u64,
+    #[serde(default)]
+    pub web_datagrams_in: u64,
 }
 
 impl ServerReport {

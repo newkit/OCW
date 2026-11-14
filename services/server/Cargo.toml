@@ -43,7 +43,11 @@ quinn.workspace = true
 rustls.workspace = true
 rcgen.workspace = true
 bytes.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "net", "io-util", "signal"] }
+# WebTransport for the browser app (spec §14 Phase 10 B3, `net::webtransport`).
+web-transport-quinn.workspace = true
+url.workspace = true
+time.workspace = true
+tokio ={ workspace = true, features = ["rt-multi-thread", "net", "io-util", "signal"] }
 
 # The system clock in the browser (std's panics on wasm32-unknown-unknown).
 [target.'cfg(target_arch = "wasm32")'.dependencies]

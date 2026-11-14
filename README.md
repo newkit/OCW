@@ -107,8 +107,10 @@ signature chain first, then the road graph and sections and the tiles
 around the rider with range requests, every chunk checked against its
 SHA-256, cached in the browser's Origin Private File System (a second
 visit loads from there), with the tiles kept in memory only around the
-rider. Bots and the **virtual trainer** as on the desktop (no Bluetooth,
-sound or multiplayer yet: B3–B5).
+rider. Bots and the **virtual trainer** as on the desktop. **Multiplayer**
+(B3): the page joins an `ocw-server` session over **WebTransport** together
+with desktop and bot riders (see [Browser riders](#browser-riders-webtransport)).
+No Bluetooth or sound yet (B4, B5).
 
 ```bash
 make deps-web       # once: wasm-bindgen-cli matching Cargo.lock (cargo install)
@@ -117,6 +119,7 @@ make web-worlds     # publish data/pilot/liechtenstein.ocwpkg into target/web/wo
 make web-serve      # serve it on http://127.0.0.1:8080/ (range requests; prints the world links)
 make test-web       # headless Chromium on WebGPU: load, ride, screenshot into test-output/web/
 make test-web-world # the same with Liechtenstein streamed from the dev server, then again from the cache
+make test-web-multiplayer # ocw-server + ocw-bot riders + the browser over WebTransport: ride 30 s, screenshot, timing
 ```
 
 A world: `http://127.0.0.1:8080/?world=liechtenstein&route=vaduz-malbun&trust-root=…`
@@ -1217,6 +1220,39 @@ ocw-desktop --server 127.0.0.1 --insecure-dev     # server on the same machine o
 - The server runs until Ctrl+C (or SIGTERM), then closes all connections
   ("server shutting down"); `--seconds S` stops it earlier.
 
+### Browser riders (WebTransport)
+
+```bash
+cargo run --release -p ocw-server -- --listen --webtransport --test-route hills
+```
+
+`--webtransport [ADDR]` adds a **WebTransport** endpoint (HTTP/3 over QUIC,
+**UDP 47801** by default) next to the native one: browser riders
+(`apps/web`) join the same session as desktop and bot riders, with the same
+messages (one stream for the reliable ones, datagrams for snapshots and
+samples). The server prints the page options:
+
+```text
+Browsers join with the page options:
+  ?server=https%3A%2F%2FHOST%3A47801&cert-hash=5c1e…
+```
+
+Open the web app with them (`make web-serve`, then
+`http://127.0.0.1:8080/?server=https://127.0.0.1:47801&cert-hash=5c1e…&name=Ada&route=hills`;
+the page's `route` must match the server's `--test-route`). `cert-hash` is
+the SHA-256 of the endpoint's self-signed certificate, which browsers
+accept without a CA (`serverCertificateHashes`) only if it is an ECDSA
+certificate valid for at most 14 days: the server makes one valid for 13
+days, keeps it in `--tls-dir` (`web-cert.der`, `web-key.der`,
+`web-cert.validity`) and renews it two days before it ends – then pages
+need the new hash (`--web-info-file F` writes URL and hash as JSON for
+scripts; `cert-hash=A,B` takes two). Certificates from a CA come with
+hosting (B8). Browser riders are anonymous for now: a name, the plain grey
+bike and kit, no workshop (spec §14 Phase 10 Q5; accounts come with Phase
+5). `ocw-bot --server https://HOST:47801 --server-cert HASH` rides over
+WebTransport too; the console's `net.stats` shows the link, the round trip
+and the snapshot timing.
+
 ### Voice chat
 
 Voice is **always on, like a call** (spec §2.4, §7): on a shared ride – a
@@ -1637,7 +1673,7 @@ to *Public* are the usual causes; the server log is in Event Viewer under
 |---|---|
 | `make help` | All make targets: deps, build, check, deploy and the tests (`test`, `test-wasm`, `test-kiosk`, `test-smoke`, `test-video`, `test-multiplayer`, …) |
 | `cargo run -p ocw-server -- --bots 3 --seconds 10 --fast` | Headless game server (`--world PKG [--seed N]`: free ride on a package; `--route-file F`; `--stats-file PATH`) |
-| `cargo run -p ocw-bot -- --server HOST --server-cert FP --riders N` | Headless bot riders on a remote server; `ocw-bot verdict` checks a multiplayer test run |
+| `cargo run -p ocw-bot -- --server HOST --server-cert FP --riders N` | Headless bot riders on a remote server (`--server https://HOST:47801`: over WebTransport); `ocw-bot verdict` checks a multiplayer test run |
 | `scripts/test-multiplayer.sh` | Multiplayer test across the build machines (`make test-multiplayer`) |
 | `scripts/test-kiosk.sh` | Tests the kiosk script with a fake app (`make test-kiosk`) |
 | `world-builder graph` / `route` / `package` / `check` | OSM + elevation import: road graph statistics, route files, world packages (`--bbox S,W,N,E --origin LAT,LON`: one part of a region, for neighbouring packages), package validation (`cargo run --release -p world-builder -- help`) |

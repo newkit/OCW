@@ -321,6 +321,22 @@ impl Default for RiderLook {
     }
 }
 
+impl RiderLook {
+    /// The anonymous rider's plain look (spec §14 Phase 10 Q5: riding
+    /// without an account is allowed, with a plain default bike and
+    /// character and no customization): grey frame, light grey kit,
+    /// white helmet, no pattern – unlike the app's pink, so a signed-in
+    /// rider's own look stays recognisable.
+    pub fn anonymous() -> Self {
+        Self {
+            frame: Rgb(0x6E7378),
+            jersey: Rgb(0xC9CDD2),
+            helmet: Rgb(0xF2F2EE),
+            pattern: KitPattern::Plain,
+        }
+    }
+}
+
 /// Colours offered on the Workshop's ← / → rows (any `#RRGGBB` can be set
 /// from the console).
 pub const PALETTE: [Rgb; 12] = [
@@ -352,6 +368,14 @@ pub fn palette_step(c: Rgb, dir: i32) -> Rgb {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_anonymous_look_is_plain_and_not_the_apps_pink() {
+        let a = RiderLook::anonymous();
+        assert_eq!(a.pattern, KitPattern::Plain);
+        assert_ne!(a.jersey, RiderLook::default().jersey);
+        assert!(!PALETTE.contains(&a.jersey), "not a customization colour");
+    }
 
     #[test]
     fn profiles_are_in_id_order_and_parse() {

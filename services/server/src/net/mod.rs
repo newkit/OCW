@@ -20,6 +20,12 @@
 //! connection allows (a big field's snapshot) or a peer without datagram
 //! support falls back to the stream.
 //!
+//! **Browsers (spec §14 Phase 10 B3).** [`NetServer::listen_webtransport`]
+//! adds a WebTransport endpoint (HTTP/3, [`webtransport`]) on its own UDP
+//! port feeding the same `GameServer` with the same messages; desktop,
+//! bot and browser riders share one session. [`NetClient::connect_web`]
+//! is the same client over WebTransport (tests, `ocw-bot --server https://…`).
+//!
 //! **Security (dev mode).** TLS 1.3 is always on. Until real certificates
 //! and OIDC exist, the server uses a self-signed certificate ([`tls`]) and
 //! prints its SHA-256 fingerprint; clients pin it (`--server-cert`), or, for
@@ -29,10 +35,11 @@ pub mod client;
 pub mod framing;
 pub mod server;
 pub mod tls;
+pub mod webtransport;
 
 pub use client::{ClientOptions, LinkStatus, NetClient};
-pub use server::NetServer;
-pub use tls::{ServerIdentity, ServerTrust};
+pub use server::{EndpointCounters, NetServer, Transport};
+pub use tls::{ServerIdentity, ServerTrust, WebIdentity};
 
 use std::net::{SocketAddr, ToSocketAddrs};
 
@@ -53,34 +60,7 @@ pub mod close_code {
     pub const TOO_SLOW: u32 = 2;
 }
 
-/// The field number of the `oneof` member an encoded protocol message
-/// carries (its first protobuf key), without decoding the message.
-pub fn oneof_field(bytes: &[u8]) -> Option<u32> {
-    let mut key: u64 = 0;
-    for (i, b) in bytes.iter().take(10).enumerate() {
-        key |= u64::from(b & 0x7f) << (7 * i);
-        if b & 0x80 == 0 {
-            // Wire type 2 (length-delimited): a message field.
-            return (key & 7 == 2).then_some((key >> 3) as u32);
-        }
-    }
-    None
-}
-
-/// `ServerMessage.snapshot`: superseded by the next one, sent unreliably.
-const SERVER_SNAPSHOT_FIELD: u32 = 2;
-/// `ClientMessage.sample`: superseded by the next one, sent unreliably.
-const CLIENT_SAMPLE_FIELD: u32 = 2;
-
-/// Whether an encoded `ServerMessage` may go as an unreliable datagram.
-pub fn server_unreliable(bytes: &[u8]) -> bool {
-    oneof_field(bytes) == Some(SERVER_SNAPSHOT_FIELD)
-}
-
-/// Whether an encoded `ClientMessage` may go as an unreliable datagram.
-pub fn client_unreliable(bytes: &[u8]) -> bool {
-    oneof_field(bytes) == Some(CLIENT_SAMPLE_FIELD)
-}
+pub use crate::wire::{client_unreliable, oneof_field, server_unreliable};
 
 /// A server address from the command line: `HOST:PORT`, `HOST` (default
 /// port), `IP`, `[IPv6]:PORT`. Returns the address and the TLS server name.
@@ -110,52 +90,6 @@ pub fn resolve(spec: &str) -> Result<(SocketAddr, String), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ocw_protocol::v1::{self, client_message::Msg as C, server_message::Msg as S};
-    use ocw_protocol::{client_message, encode, server_message};
-
-    #[test]
-    fn only_snapshots_and_samples_are_unreliable() {
-        let snapshot = encode(&server_message(S::Snapshot(v1::Snapshot::default())));
-        // An empty snapshot still carries its (empty) field.
-        assert!(server_unreliable(&snapshot));
-        let reliable = [
-            S::Welcome(v1::Welcome::default()),
-            S::Reject(v1::Reject::default()),
-            S::DevResult(v1::DevCommandResult::default()),
-            S::Path(v1::PathUpdate::default()),
-        ];
-        for m in reliable {
-            assert!(!server_unreliable(&encode(&server_message(m))));
-        }
-        let sample = encode(&client_message(C::Sample(v1::SensorSample {
-            seq: 7,
-            power_w: Some(250.0),
-            ..Default::default()
-        })));
-        assert!(client_unreliable(&sample));
-        let reliable = [
-            C::Hello(v1::Hello::default()),
-            C::Steer(v1::SteerIntent::default()),
-            C::Turn(v1::TurnIntent::default()),
-            C::UTurn(v1::UTurn::default()),
-            C::RouteRejoin(v1::RouteRejoin::default()),
-            C::Dev(v1::DevCommand::default()),
-        ];
-        for m in reliable {
-            assert!(!client_unreliable(&encode(&client_message(m))));
-        }
-    }
-
-    #[test]
-    fn oneof_field_reads_long_keys_and_refuses_garbage() {
-        // Field 300, wire type 2: key 2402 = 0xe2 0x12.
-        assert_eq!(oneof_field(&[0xe2, 0x12, 0x00]), Some(300));
-        assert_eq!(oneof_field(&[]), None);
-        // Wire type 0 (varint), not a message.
-        assert_eq!(oneof_field(&[0x10, 0x01]), None);
-        // Unterminated varint.
-        assert_eq!(oneof_field(&[0xff; 12]), None);
-    }
 
     #[test]
     fn resolves_addresses_with_and_without_port() {

@@ -94,6 +94,16 @@ quinn = { version = "0.11.9", default-features = false, features = ["runtime-tok
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }
 bytes = "1"
+# WebTransport endpoint for the browser app (spec §6.2, §14 Phase 10 B3):
+# web-transport-quinn (MIT OR Apache-2.0) – HTTP/3's WebTransport handshake
+# on our own quinn endpoint and rustls config (the *ring* provider, no
+# aws-lc-rs); its streams are tokio AsyncRead / AsyncWrite, so the framing
+# of the native transport is reused. url (MIT OR Apache-2.0; already in the
+# tree) for its CONNECT requests, time (MIT OR Apache-2.0; rcgen's) for the
+# 13-day validity of the certificate browsers take by hash.
+web-transport-quinn = { version = "0.13.6", default-features = false, features = ["ring"] }
+url = "2"
+time = { version = "0.3", default-features = false }
 
 # Audio output (spec §3.3), only in apps/desktop: cpal (Apache-2.0), the same
 # version Bevy's own audio links, so no second copy (and one libasound).

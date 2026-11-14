@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 
 use bevy::prelude::*;
 use ocw_client::client::ClientCore;
-use ocw_core::RiderProfile;
+use ocw_core::{RiderLook, RiderProfile};
 use ocw_render::RideView;
 use ocw_render::console::ConsoleState;
 use ocw_render::package::PackageWorld;
@@ -191,6 +191,7 @@ pub fn world_ride(
             plan.length_m() / 1000.0
         );
         let client = ClientCore::free_ride(net.clone(), name, profile)
+            .with_look(RiderLook::anonymous())
             .with_geo_origin(pkg.origin)
             .with_route_plan(plan.clone());
         return Ok(WorldRide {
@@ -202,7 +203,9 @@ pub fn world_ride(
     }
     let (edge, offset_m, forward) = net.random_start(1).ok_or("the road graph is empty")?;
     let p = net.geometry(edge).point_at(offset_m);
-    let client = ClientCore::free_ride(net.clone(), name, profile).with_geo_origin(pkg.origin);
+    let client = ClientCore::free_ride(net.clone(), name, profile)
+        .with_look(RiderLook::anonymous())
+        .with_geo_origin(pkg.origin);
     Ok(WorldRide {
         course: Course::FreeRide {
             net,
@@ -455,8 +458,13 @@ fn start_ride(world: &mut World, stream: &mut WorldStream, ride: WorldRide, now:
         set: Arc::new(WorldSet::new(&id, pkg)),
         loader: None,
     });
-    let c = &stream.session;
-    let session = WebSession::ride(ride.course, ride.client, c.bots, 0.0, c.power_w);
+    // The local server, or a remote one (B3) on the same package.
+    let transport = crate::plugin::MakeTransport::for_config(world, &stream.session);
+    let config = SessionConfig {
+        start_m: 0.0,
+        ..stream.session.clone()
+    };
+    let session = WebSession::start(ride.course, ride.client, &config, transport);
     world.insert_resource(Session(session));
     world.insert_resource(Place(zone));
     if let Some(mut view) = world.get_resource_mut::<RideView>() {

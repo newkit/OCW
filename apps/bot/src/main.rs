@@ -47,10 +47,13 @@ enum Cmd {
 
 #[derive(ClapArgs)]
 struct RideArgs {
-    /// The game server (`ocw-server --listen`): HOST[:PORT], default port 47800.
+    /// The game server (`ocw-server --listen`): HOST[:PORT], default port
+    /// 47800; or `https://HOST[:PORT]` for its WebTransport endpoint
+    /// (`--webtransport`, default port 47801), as the browser app joins.
     #[arg(long, value_name = "ADDR")]
     server: Option<String>,
-    /// SHA-256 fingerprint of the server's certificate (ocw-server prints it).
+    /// SHA-256 fingerprint of the server's certificate (ocw-server prints
+    /// it; for https:// the WebTransport certificate's `cert-hash`).
     #[arg(long, value_name = "SHA256")]
     server_cert: Option<String>,
     /// Development only: accept any certificate of a server on this machine.
@@ -168,7 +171,15 @@ fn ride(args: &RideArgs) -> i32 {
     let Some(spec) = &args.server else {
         fail("--server HOST[:PORT] is required (or use `ocw-bot verdict`)");
     };
-    let (addr, server_name) = ocw_server::net::resolve(spec).unwrap_or_else(|e| fail(e));
+    // https://…: the WebTransport endpoint (spec §14 Phase 10 B3).
+    let web = spec.starts_with("https://");
+    let (addr, server_name) = if web {
+        let (_, addr) =
+            ocw_server::net::webtransport::resolve_url(spec).unwrap_or_else(|e| fail(e));
+        (addr, String::new())
+    } else {
+        ocw_server::net::resolve(spec).unwrap_or_else(|e| fail(e))
+    };
     let trust = ServerTrust::for_server(addr, args.server_cert.as_deref(), args.insecure_dev)
         .unwrap_or_else(|e| fail(e));
     let (route, route_sha256) = load_route(args);
@@ -203,8 +214,12 @@ fn ride(args: &RideArgs) -> i32 {
                 },
             };
             let rider = BotRider::new(config, route.clone());
-            let net = NetClient::connect(addr, &server_name, &trust, ClientOptions::default())
-                .unwrap_or_else(|e| fail(e));
+            let net = if web {
+                NetClient::connect_web(spec, &trust, ClientOptions::default())
+            } else {
+                NetClient::connect(addr, &server_name, &trust, ClientOptions::default())
+            }
+            .unwrap_or_else(|e| fail(e));
             net.send(rider.hello());
             Link {
                 rider,
@@ -219,8 +234,13 @@ fn ride(args: &RideArgs) -> i32 {
         let now = start.elapsed().as_secs_f64();
         for l in &mut links {
             let Some(net) = &l.net else { continue };
-            for m in net.receive() {
-                l.rider.on_message(&m, now);
+            let received = net.receive();
+            if !received.is_empty() {
+                let unix_ms = wall_ms();
+                for m in received {
+                    l.rider.observe_timing(&m, now, unix_ms);
+                    l.rider.on_message(&m, now);
+                }
             }
             if let Some(rtt) = net.rtt() {
                 l.rider.set_snapshot_age(rtt.as_secs_f64() / 2.0);
@@ -316,6 +336,9 @@ fn ride(args: &RideArgs) -> i32 {
         if let Some(hint) = connect_hint(&closed, port) {
             println!("     {hint}");
         }
+        if let Some(t) = &r.timing {
+            println!("     timing: {}", t.line());
+        }
     }
     println!("{}", report.to_line());
     if let Some(path) = &args.report
@@ -324,6 +347,13 @@ fn ride(args: &RideArgs) -> i32 {
         eprintln!("{}: {e}", path.display());
     }
     if ok { 0 } else { 1 }
+}
+
+/// The wall clock in Unix ms (with sub-ms precision), for snapshot ages.
+fn wall_ms() -> f64 {
+    SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |d| d.as_secs_f64() * 1000.0)
 }
 
 fn run_verdict(args: &VerdictArgs) -> i32 {
