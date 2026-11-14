@@ -48,8 +48,18 @@ impl Plugin for MenuPlugin {
                     .arg(
                         Arg::new("action")
                             .value_parser([
-                                "open", "close", "toggle", "up", "down", "left", "right", "select",
-                                "back", "tab-next", "tab-prev",
+                                "open",
+                                "close",
+                                "toggle",
+                                "up",
+                                "down",
+                                "left",
+                                "right",
+                                "select",
+                                "back",
+                                "tab-next",
+                                "tab-prev",
+                                "workshop-page",
                             ])
                             .default_value("toggle"),
                     ),
@@ -67,6 +77,7 @@ impl Plugin for MenuPlugin {
                         Some("tab-prev") => Action::TabPrev,
                         Some("select") => Action::Confirm,
                         Some("back") => Action::Back,
+                        Some("workshop-page") => Action::RiderPage,
                         _ if open => Action::Close,
                         _ => Action::Open,
                     };
@@ -146,7 +157,7 @@ fn menu_input(
             console.set_open(false);
         }
         state.repeat.reset();
-    } else if !open || *context == InputContext::Menu {
+    } else if (!open && *context != InputContext::Workshop) || *context == InputContext::Menu {
         // Navigation starts once the frame began in the menu's context:
         // the key that opened the menu does not also move its focus.
         let step = if open {

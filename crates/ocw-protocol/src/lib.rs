@@ -134,6 +134,8 @@ pub fn quantize(s: &ocw_sim::RiderSnapshot) -> v1::RiderUpdate {
         // The server marks its Echo rider (spec §7 *Echo bot*).
         echo: false,
         crash: s.crash.as_ref().map(crash_to_wire),
+        // The server adds the credited hearts (spec §14 Phase 4, 4E).
+        hearts: 0,
         bump: s.bump.as_ref().map(|b| v1::Bump {
             tick: b.tick,
             strength_mrad: (b.strength * 1000.0).round().max(0.0) as u32,
@@ -628,6 +630,22 @@ pub fn echo_request(on: bool, here: bool) -> v1::ClientMessage {
     client_message(v1::client_message::Msg::Echo(v1::EchoRequest { on, here }))
 }
 
+/// The workshop's bike when the rider leaves it (spec §14 Phase 4, 4A):
+/// garage bike id, frame profile, look and the part ids on the bike.
+pub fn bike_change(
+    bike_id: &str,
+    profile: ocw_core::ProfileId,
+    look: ocw_core::RiderLook,
+    parts: &[String],
+) -> v1::ClientMessage {
+    client_message(v1::client_message::Msg::BikeChange(v1::BikeChange {
+        bike_id: bike_id.into(),
+        bike_profile: profile.id().into(),
+        look: Some(look.into()),
+        parts: parts.to_vec(),
+    }))
+}
+
 /// The session's Echo rider in a snapshot, if there is one.
 pub fn echo_rider(s: &v1::Snapshot) -> Option<RiderId> {
     s.riders
@@ -941,6 +959,7 @@ mod tests {
             cadence_rpm: Some(90.0),
             heart_rate_bpm: None,
             brake: Some(true),
+            virtual_power: None,
         };
         let bytes = encode(&client_message(Msg::Sample(sample)));
         match decode_client(&bytes).unwrap() {
@@ -1321,6 +1340,45 @@ mod tests {
             ocw_core::RiderLook::from(&back),
             ocw_core::RiderLook::default()
         );
+    }
+
+    /// The workshop's `BikeChange` and the hearts total survive the wire
+    /// (spec §14 Phase 4, 4A, 4E).
+    #[test]
+    fn bike_change_and_hearts_round_trip() {
+        let look = ocw_core::RiderLook {
+            frame: ocw_core::Rgb(0x1E88E5),
+            ..Default::default()
+        };
+        let parts = vec!["wheels.road-carbon.top".to_string(), "lights.set".into()];
+        let m = bike_change("tt", ocw_core::ProfileId::TimeTrial, look, &parts);
+        let back = decode_client(&encode(&m)).unwrap();
+        let v1::client_message::Msg::BikeChange(c) = back else {
+            panic!("{back:?}")
+        };
+        assert_eq!(c.bike_id, "tt");
+        assert_eq!(
+            ocw_core::ProfileId::from_wire(Some(&c.bike_profile)),
+            ocw_core::ProfileId::TimeTrial
+        );
+        assert_eq!(ocw_core::RiderLook::from(&c.look.unwrap()), look);
+        assert_eq!(c.parts, parts);
+        let u = v1::RiderUpdate {
+            hearts: 1239,
+            ..Default::default()
+        };
+        let snap = v1::Snapshot {
+            riders: vec![u],
+            ..Default::default()
+        };
+        let bytes = encode(&server_message(v1::server_message::Msg::Snapshot(snap)));
+        let Ok(v1::server_message::Msg::Snapshot(s)) = decode_server(&bytes) else {
+            panic!()
+        };
+        assert_eq!(s.riders[0].hearts, 1239);
+        // Old clients' samples have no virtual-power flag: real power.
+        let sample = v1::SensorSample::default();
+        assert_eq!(sample.virtual_power, None);
     }
 
     /// The echo test's messages survive the wire (spec §7 *Echo bot*).

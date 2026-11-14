@@ -21,6 +21,9 @@ ocw-world.workspace = true
 ocw-sky.workspace = true
 ocw-worldstore.workspace = true
 ocw-render.workspace = true
+# The parts catalogue, the bike generator and the workshop room (spec §14
+# Phase 4, 4A–4I).
+ocw-assets.workspace = true
 # The client loop, events, god state and key logic (shared with apps/web).
 ocw-client.workspace = true
 ocw-server.workspace = true

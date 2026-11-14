@@ -110,7 +110,7 @@ jersey_color = "#1E88E5"
 helmet_color = "#F2F2EE"
 kit = "sash"
 """
-at = ["2=menu open", "2.4=menu down", "2.8=menu down", "3.2=menu select", "3.6=menu down", "4=menu select"]
+at = ["2=menu workshop-page", "2.6=menu down", "3.2=menu select"]
 shot = 5.5
 
 [[scene]]
@@ -1293,3 +1293,41 @@ description = "Down after a crash in a bunch (spec §14 Phase 12 K2): the rider 
 args = ["--route", "loop", "--bots", "12", "--power", "230"]
 at = ["9=camera.orbit 70 18 9", "10=dev.crash"]
 shot = 12.5
+
+# --- Workshop (spec §14 Phase 4, W1 scene, W2 parts) -------------------------
+
+[[scene]]
+name = "workshop-overview"
+description = "Workshop scene (spec §14 Phase 4, W1): the generated workshop, the road bike on the repair stand, the other five starter bikes on the wall hooks with name cards, hearts balance and the live ride window"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2=workshop open"]
+shot = 6
+
+[[scene]]
+name = "workshop-wall"
+description = "Workshop scene: the camera panned along the bike wall to the third starter bike, its card grown (name, type and profile, weight, parts value)"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2=workshop open", "2.6=workshop right", "3.4=workshop right"]
+shot = 20
+
+[[scene]]
+name = "workshop-stand-hotspots"
+description = "Workshop scene: the stand view orbiting the road bike, the part hotspots (frame, wheels, tyres, groupset … lights, computer, bag, paint) with the focused one's label"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2=workshop open", "2.6=workshop select", "3.6=workshop orbit 25", "4=workshop slot-next"]
+shot = 20
+
+[[scene]]
+name = "workshop-picker"
+description = "Workshop part close-up (spec §14 Phase 4, W2): the wheels of the road bike with the part picker (equipped / shop, prices in hearts, locks) and the detail card; a carbon wheelset previewed live on the bike"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2=hearts.grant 3000", "2.2=workshop open", "2.8=workshop select", "3.8=workshop slot-next", "4.2=workshop select", "5=workshop down", "5.4=workshop down", "5.8=workshop down"]
+shot = 22
+
+[[scene]]
+name = "workshop-swap-video"
+description = "Video: the workshop scene, cycling through the starter bikes on the wall and swapping two onto the repair stand (1.2 s lift and clamp), then the stand view"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2=workshop open", "3.5=workshop right", "4.5=workshop right", "5.5=workshop select", "8=workshop right", "9=workshop right", "10=workshop right", "11=workshop select", "13.5=workshop select"]
+warmup = 2
+video = 14

@@ -4,6 +4,7 @@
 //! build for `wasm32-unknown-unknown` (spec §3.5).
 
 pub mod bike;
+pub mod hearts;
 pub mod timestamp;
 
 pub use bike::{BikeType, KitPattern, PhysicsProfile, ProfileId, Rgb, RiderLook};

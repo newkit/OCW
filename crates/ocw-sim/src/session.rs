@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use ocw_core::hearts::NoHearts;
 use ocw_core::{ProfileId, RiderId, RiderLook, RiderProfile, SIM_DT};
 use ocw_world::network::splitmix;
 use ocw_world::{RidePath, RoadNetwork, Route, RoutePlan, Segment, Track};
@@ -95,6 +96,10 @@ struct Rider {
     joined_tick: u64,
     /// Takes part in collisions (bots at once; clients after joining, 12A).
     solid: bool,
+    /// Hearts (spec §14 Phase 4, 4E): the work and climbing that count,
+    /// and whether the client says its power is virtual.
+    meter: ocw_core::hearts::HeartsMeter,
+    virtual_power: bool,
 }
 
 /// State of one rider as broadcast to clients.
@@ -394,6 +399,32 @@ impl Session {
         }
     }
 
+    /// Marks a rider's power as virtual (keyboard, `sim.power`, the virtual
+    /// trainer; spec §14 Phase 4, 4E): it earns no hearts.
+    pub fn set_virtual_power(&mut self, id: RiderId, on: bool) {
+        if let Some(r) = self.riders.get_mut(&id) {
+            r.virtual_power = on;
+        }
+    }
+
+    /// The hearts a rider earned in this session (spec §14 Phase 4, 4E);
+    /// 0 for unknown riders.
+    pub fn hearts(&self, id: RiderId) -> u32 {
+        self.riders.get(&id).map_or(0, |r| r.meter.hearts())
+    }
+
+    /// Replaces a rider's physics profile (the workshop's `BikeChange`,
+    /// spec §14 Phase 4, 4A); false for unknown riders.
+    pub fn set_profile(&mut self, id: RiderId, profile: RiderProfile) -> bool {
+        match self.riders.get_mut(&id) {
+            Some(r) => {
+                r.profile = profile;
+                true
+            }
+            None => false,
+        }
+    }
+
     fn insert(&mut self, name: String, profile: RiderProfile, control: Control) -> RiderId {
         let id = RiderId(self.next_id);
         self.next_id += 1;
@@ -472,6 +503,8 @@ impl Session {
                 mistake_drift: 0.0,
                 joined_tick: self.tick,
                 solid: control != Control::Client,
+                meter: Default::default(),
+                virtual_power: false,
             },
         );
         id
@@ -1073,6 +1106,17 @@ impl Session {
                 drag,
                 SIM_DT,
             );
+            // Hearts (spec §14 Phase 4, 4E): the accepted power's work and
+            // the climbing, for clients riding real power (god mode and
+            // crashes left the loop above).
+            let blocked = match rider.control {
+                Control::Client if rider.virtual_power => Some(NoHearts::VirtualPower),
+                Control::Client => None,
+                Control::Bot { .. } | Control::Echo => Some(NoHearts::Bot),
+            };
+            // At most 2 m a tick (100 m/s): a teleport is no climb.
+            let rise = (rider.state.distance - d).clamp(0.0, 2.0) * grade;
+            rider.meter.add(rider.input.power_w, SIM_DT, rise, blocked);
             // The virtual brake: the speed above the one in front is shed.
             if let Some(c) = cap
                 && rider.state.speed > c
@@ -1327,6 +1371,54 @@ mod tests {
         let id = s.add_rider("a", RiderProfile::default());
         let len = Route::test_loop().length();
         assert_eq!(s.teleport(id, len + 100.0), Some(len + 100.0));
+    }
+
+    /// Hearts (spec §14 Phase 4, 4E): 1 per 10 kJ of the accepted work
+    /// and 1 per 20 m climbed, for clients on real power only.
+    #[test]
+    fn hearts_count_real_work_and_climbing_only() {
+        let mut s = Session::new(Route::test_hills());
+        let real = s.add_rider("real", RiderProfile::default());
+        let fake = s.add_rider("virtual", RiderProfile::default());
+        let bot = s.add_bot("bot", 250.0);
+        let god = s.add_rider("god", RiderProfile::default());
+        s.set_virtual_power(fake, true);
+        let input = RiderInput {
+            power_w: 250.0,
+            ..Default::default()
+        };
+        for (i, id) in [real, fake, god].into_iter().enumerate() {
+            assert!(s.apply_input(id, 1 + i as u32, input));
+        }
+        s.enter_god(god).unwrap();
+        // 200 s at 250 W = 50 kJ = 5 ♥, plus the climbing of the hills.
+        for _ in 0..(ocw_core::SIM_TICK_HZ as usize * 200) {
+            s.step();
+        }
+        let work = s.hearts(real);
+        assert!(work >= 5, "{work}");
+        assert!(work < 5 + 10, "the climbing is a few hearts: {work}");
+        assert_eq!(s.hearts(fake), 0, "virtual power earns nothing");
+        assert_eq!(s.hearts(bot), 0, "bots earn nothing");
+        assert_eq!(s.hearts(god), 0, "god mode earns nothing");
+        assert_eq!(s.hearts(RiderId(999)), 0);
+        // Back to real power: it counts from now on.
+        s.set_virtual_power(fake, false);
+        for _ in 0..(ocw_core::SIM_TICK_HZ as usize * 50) {
+            s.step();
+        }
+        assert!(s.hearts(fake) >= 1);
+    }
+
+    #[test]
+    fn a_new_profile_applies_at_once() {
+        let mut s = Session::new(Route::test_loop());
+        let id = s.add_rider("a", RiderProfile::default());
+        let mtb = RiderProfile::curated(ProfileId::Mountain, 70.0);
+        assert!(s.set_profile(id, mtb));
+        assert_eq!(s.rider_profile(id), Some(mtb));
+        assert_eq!(s.snapshot()[0].bike, ProfileId::Mountain);
+        assert!(!s.set_profile(RiderId(42), mtb));
     }
 
     #[test]

@@ -55,6 +55,16 @@ impl Predictor {
         }
     }
 
+    /// A new physics profile (the workshop's bike change, spec §14 Phase 4,
+    /// 4A): the server applies the same at once.
+    pub fn set_profile(&mut self, profile: RiderProfile) {
+        self.profile = profile;
+    }
+
+    pub fn profile(&self) -> &RiderProfile {
+        &self.profile
+    }
+
     /// Autodrive avoidance's speed cap for the next steps (m/s; `None`: none).
     pub fn set_speed_cap(&mut self, cap: Option<f64>) {
         self.speed_cap = cap;

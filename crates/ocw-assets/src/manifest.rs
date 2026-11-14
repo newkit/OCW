@@ -165,7 +165,7 @@ fn check_model(e: &Entry, m: &Model) -> Vec<String> {
     let tris = m.triangles();
     match e.kind {
         Kind::Bike => {
-            for n in bike_nodes::REQUIRED {
+            for n in bike_nodes::REQUIRED.iter().chain(&bike_nodes::HOTSPOTS) {
                 if m.node(n).is_none() {
                     errors.push(format!("{f}: missing node `{n}`"));
                 }
@@ -354,5 +354,16 @@ mod tests {
                 .any(|e| e.contains("missing node `wheel_front`"))
         );
         assert!(errs.iter().any(|e| e.contains("copyright")));
+    }
+
+    /// The workshop needs a hotspot anchor per part slot (spec §14 Phase
+    /// 4, 4B): a bike without one is rejected.
+    #[test]
+    fn bikes_missing_a_hotspot_anchor_are_rejected() {
+        let mut m = glb::read(&files()[0].1).unwrap();
+        let i = m.node("hs_lights").unwrap();
+        m.nodes[i].name = "lamp".into();
+        let errs = validate(&entry("b.glb", OK), &[("b.glb".into(), glb::write(&m))]).unwrap_err();
+        assert_eq!(errs, vec!["b.glb: missing node `hs_lights`".to_string()]);
     }
 }

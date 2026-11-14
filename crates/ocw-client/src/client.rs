@@ -130,6 +130,11 @@ pub struct ClientCore {
     heart_rate_bpm: Option<f64>,
     /// Extra power from the keyboard, on top of the device power.
     key_power_w: f64,
+    /// The power device is virtual (the virtual trainer): no hearts
+    /// (spec §14 Phase 4, 4E).
+    virtual_device: bool,
+    /// Hearts the server credited the own rider in this session.
+    hearts: u32,
     braking: bool,
     last_sample_us: u64,
     seq: u32,
@@ -204,6 +209,8 @@ impl ClientCore {
             cadence_rpm: None,
             heart_rate_bpm: None,
             key_power_w: 0.0,
+            virtual_device: false,
+            hearts: 0,
             braking: false,
             last_sample_us: 0,
             seq: 0,
@@ -362,6 +369,7 @@ impl ClientCore {
             cadence_rpm: self.cadence_rpm.map(|c| c as f32),
             heart_rate_bpm: self.heart_rate_bpm.map(|h| h as f32),
             brake: Some(self.braking),
+            virtual_power: Some(self.virtual_power()),
         })))
     }
 
@@ -614,6 +622,7 @@ impl ClientCore {
                 .insert(id, (u.display_name.clone(), f64::from(u.power_w)));
             self.looks.insert(id, ocw_protocol::rider_look(u));
             if Some(id) == self.rider_id {
+                self.hearts = self.hearts.max(u.hearts);
                 self.event.on_own_snapshot(s.server_tick, state.distance);
                 if self.lateral_target.is_none() {
                     // Start steering from the lane the server assigned.
@@ -1539,6 +1548,55 @@ impl ClientCore {
     }
 
     /// Extra power from the keyboard (↑ / ↓), added to the device's.
+    /// The power device is virtual (the virtual trainer, `sim.power`):
+    /// samples say so and earn no hearts (spec §14 Phase 4, 4E).
+    pub fn set_virtual_device(&mut self, on: bool) {
+        self.virtual_device = on;
+    }
+
+    /// Whether the power sent is virtual: the virtual trainer, or keyboard
+    /// power on top of a real device.
+    pub fn virtual_power(&self) -> bool {
+        self.virtual_device || self.key_power_w > 0.0
+    }
+
+    /// Hearts the server credited the own rider in this session so far
+    /// (spec §14 Phase 4, 4E): a running total from the snapshots.
+    pub fn server_hearts(&self) -> u32 {
+        self.hearts
+    }
+
+    /// The own physics profile (weight and bike).
+    pub fn profile(&self) -> RiderProfile {
+        self.profile
+    }
+
+    /// The workshop's bike when the rider leaves it (spec §14 Phase 4,
+    /// 4A, Q1): the message to send, or `None` in an event that has not
+    /// finished (the bike then applies from the next start). The
+    /// prediction switches to the new profile at once, as the server does.
+    pub fn change_bike(
+        &mut self,
+        bike_id: &str,
+        bike: ProfileId,
+        look: RiderLook,
+        parts: &[String],
+    ) -> Option<Vec<u8>> {
+        let own = self.rider_id;
+        if let Some(info) = self.event.info()
+            && info.phase != ocw_sim::EventPhase::Finished
+            && info.standings.iter().any(|s| Some(s.id) == own)
+        {
+            return None;
+        }
+        self.profile = RiderProfile::curated(bike, self.profile.rider_mass_kg);
+        self.predictor.set_profile(self.profile);
+        self.look = look;
+        Some(encode(&ocw_protocol::bike_change(
+            bike_id, bike, look, parts,
+        )))
+    }
+
     pub fn key_power_w(&self) -> f64 {
         self.key_power_w
     }
@@ -2063,6 +2121,54 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The workshop's bike change (spec §14 Phase 4, 4A, Q1): the server
+    /// and the prediction switch together; none in a running event.
+    #[test]
+    fn a_bike_change_switches_server_and_prediction() {
+        let mut h = Harness::new(0, true);
+        let id = h.client.rider_id().unwrap();
+        let look = RiderLook {
+            frame: ocw_core::Rgb(0x1E88E5),
+            ..Default::default()
+        };
+        let msg = h
+            .client
+            .change_bike("mtb", ProfileId::Mountain, look, &["tyres.mtb.xc".into()])
+            .expect("outside events");
+        h.send(&msg);
+        let p = h.server.session().rider_profile(id).unwrap();
+        assert_eq!(p.bike, ProfileId::Mountain);
+        assert_eq!(h.client.profile(), p);
+        h.ride(250.0, 10.0);
+        let server = h.server.session().rider_state(id).unwrap();
+        assert!((h.client.state().speed - server.speed).abs() < 0.3);
+        let view = h.client.view(h.time_s, 1.0);
+        assert_eq!(view[0].bike, ProfileId::Mountain);
+        assert_eq!(view[0].look, Some(look));
+    }
+
+    /// Hearts (spec §14 Phase 4, 4E): the server's running total reaches
+    /// the client; virtual power is flagged and earns none.
+    #[test]
+    fn hearts_come_from_the_server_and_not_from_virtual_power() {
+        let mut h = Harness::new(0, true);
+        assert!(!h.client.virtual_power());
+        h.ride(400.0, 40.0);
+        let real = h.client.server_hearts();
+        assert!(real >= 1, "{real}");
+        h.client.set_virtual_device(true);
+        assert!(h.client.virtual_power());
+        h.ride(400.0, 40.0);
+        assert_eq!(
+            h.client.server_hearts(),
+            real,
+            "virtual power earns nothing"
+        );
+        h.client.set_virtual_device(false);
+        h.client.set_key_power(100.0);
+        assert!(h.client.virtual_power(), "keyboard power is virtual");
     }
 
     /// The own look goes out in the hello; the others' looks come back in

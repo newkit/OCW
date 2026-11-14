@@ -127,6 +127,29 @@ pub mod bike_nodes {
     /// rolls about (optional; see [`super::BikeRig::tyre_crown`]).
     pub const TYRE_CROWN: &str = "tyre_crown";
 
+    /// The workshop's hotspot anchors, `hs_<slot>` for every slot of
+    /// [`crate::bikes::HOTSPOT_SLOTS`] (spec §14 Phase 4, 4B): required in
+    /// every bike model.
+    pub const HOTSPOTS: [&str; 17] = [
+        "hs_frame",
+        "hs_wheels",
+        "hs_tyres",
+        "hs_groupset",
+        "hs_crankset",
+        "hs_cassette",
+        "hs_chain",
+        "hs_cockpit",
+        "hs_bar_tape",
+        "hs_saddle",
+        "hs_seatpost",
+        "hs_pedals",
+        "hs_bottle_cages",
+        "hs_lights",
+        "hs_computer",
+        "hs_bag",
+        "hs_paint",
+    ];
+
     pub const REQUIRED: [&str; 15] = [
         ROOT,
         WHEEL_FRONT,

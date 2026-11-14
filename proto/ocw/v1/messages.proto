@@ -24,7 +24,24 @@ message ClientMessage {
     GodPose god_pose = 13;
     EchoRequest echo = 14;
     RulesRequest rules = 15;
+    BikeChange bike_change = 16;
   }
+}
+
+// The workshop's bike when the rider leaves it (spec §14 Phase 4, 4A,
+// Q1): sent once, reliable. The server applies it at once in free ride
+// and outside events (an entrant of an event keeps the bike until the next
+// start) and answers with a DevCommandResult. The client never sends
+// physics or prices: the profile is looked up in the server's own table
+// (unknown = default), the parts are catalogue ids (cosmetic until W3).
+message BikeChange {
+  // The bike's id in the rider's garage (e.g. "road-aero" for a starter bike).
+  string bike_id = 1;
+  // Its frame's curated physics profile id (spec §2.5).
+  string bike_profile = 2;
+  RiderLook look = 3;
+  // The catalogue ids of the parts on the bike (assets/parts.toml).
+  repeated string parts = 4;
 }
 
 // The session's collision rules (spec §14 Phase 12A): the settings
@@ -300,6 +317,9 @@ message SensorSample {
   // Brake key held: the server stops the rider (dev/test convenience; a
   // real trainer cannot brake).
   optional bool brake = 6;
+  // The power is virtual (keyboard power, sim.power, the virtual
+  // trainer): it earns no hearts (spec §14 Phase 4, 4E).
+  optional bool virtual_power = 7;
 }
 
 // Commands that change the simulation. Only accepted by a local server (spec §2.9).
@@ -595,6 +615,11 @@ message RiderUpdate {
   CrashState crash = 16;
   // The rider's last soft bump (the wobble and its sound, 12B).
   Bump bump = 17;
+  // Hearts the server credited this rider in this session so far (spec
+  // §14 Phase 4, 4E: 1 per 10 kJ of accepted work + 1 per 20 m climbed;
+  // nothing for virtual power, god mode, while down, bots). A running
+  // total, so a lost snapshot loses nothing.
+  uint32 hearts = 18;
 }
 
 enum CrashPhase {

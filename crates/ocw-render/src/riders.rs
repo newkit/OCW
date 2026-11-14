@@ -102,7 +102,7 @@ pub fn shadow_from_far_model(distance: f32) -> bool {
 /// ([`ghost_casts_no_shadow`]).
 fn lod_shadows(
     mut commands: Commands,
-    cameras: Query<&GlobalTransform, With<Camera3d>>,
+    cameras: Query<&GlobalTransform, With<crate::camera::FollowCamera>>,
     avatars: Query<(Entity, &Avatar, &GlobalTransform, Option<&ShadowLod>)>,
     children: Query<&Children>,
     parts: Query<&LodPart>,
@@ -790,7 +790,7 @@ fn animate(
         (&Avatar, &mut AvatarRig, &GlobalTransform),
         Without<crate::ragdoll::Ragdolled>,
     >,
-    cameras: Query<&GlobalTransform, With<Camera3d>>,
+    cameras: Query<&GlobalTransform, With<crate::camera::FollowCamera>>,
     mut transforms: Query<&mut Transform>,
 ) {
     let dt = time.delta_secs();
@@ -1158,7 +1158,11 @@ mod tests {
         app.add_plugins(TransformPlugin);
         let cam = app
             .world_mut()
-            .spawn((Camera3d::default(), Transform::default()))
+            .spawn((
+                Camera3d::default(),
+                Transform::default(),
+                crate::camera::FollowCamera,
+            ))
             .id();
         app.update();
         let entities = app.world().resource::<RiderEntities>().0.clone();

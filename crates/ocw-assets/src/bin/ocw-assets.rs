@@ -8,6 +8,8 @@
 //! ocw-assets materials fetch [--manifest assets/materials.toml] [--out assets/materials]
 //! ocw-assets materials validate [--manifest assets/materials.toml] [DIR]
 //! ocw-assets materials credits [--manifest assets/materials.toml]
+//! ocw-assets parts validate [--file assets/parts.toml] [--sources assets/parts-sources.toml]
+//! ocw-assets parts reprice [--file assets/parts.toml] [--sources assets/parts-sources.toml]
 //! ```
 
 use std::path::PathBuf;
@@ -42,6 +44,95 @@ enum Cmd {
     /// The material library (spec §4.6, Phase 8 T1).
     #[command(subcommand)]
     Materials(MaterialsCmd),
+    /// The parts catalogue of the workshop (spec §14 Phase 4, 4H, 4I).
+    #[command(subcommand)]
+    Parts(PartsCmd),
+}
+
+#[derive(Subcommand)]
+enum PartsCmd {
+    /// Check the catalogue: ids, prices = ceil(median) of the sources,
+    /// base parts, brand names, model references, source age.
+    Validate {
+        #[arg(long, default_value = "assets/parts.toml")]
+        file: PathBuf,
+        #[arg(long, default_value = "assets/parts-sources.toml")]
+        sources: PathBuf,
+    },
+    /// Recompute the hearts from the sources and rewrite them in the
+    /// catalogue (comments and layout stay), printing the changes.
+    Reprice {
+        #[arg(long, default_value = "assets/parts.toml")]
+        file: PathBuf,
+        #[arg(long, default_value = "assets/parts-sources.toml")]
+        sources: PathBuf,
+    },
+}
+
+fn read_text(path: &std::path::Path) -> Result<String, ExitCode> {
+    std::fs::read_to_string(path).map_err(|e| {
+        eprintln!("{}: {e}", path.display());
+        ExitCode::FAILURE
+    })
+}
+
+fn report(errors: &[String]) -> ExitCode {
+    for e in errors {
+        eprintln!("error: {e}");
+    }
+    ExitCode::FAILURE
+}
+
+fn parts(cmd: PartsCmd) -> ExitCode {
+    use ocw_assets::parts::{self, Catalogue, Severity, Sources};
+    let (PartsCmd::Validate { file, sources } | PartsCmd::Reprice { file, sources }) = &cmd;
+    let (text, src) = match (read_text(file), read_text(sources)) {
+        (Ok(t), Ok(s)) => (t, s),
+        (Err(c), _) | (_, Err(c)) => return c,
+    };
+    let src = match Sources::parse(&src) {
+        Ok(s) => s,
+        Err(e) => return report(&e),
+    };
+    match cmd {
+        PartsCmd::Validate { .. } => {
+            let cat = match Catalogue::parse(&text) {
+                Ok(c) => c,
+                Err(e) => return report(&e),
+            };
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs() as i64);
+            let (y, m, d, ..) = ocw_core::timestamp::civil(now);
+            let problems = parts::validate(&cat, &src, (y as i32, m, d));
+            for p in &problems {
+                eprintln!("{p}");
+            }
+            let n = cat.parts.len();
+            if problems.iter().any(|p| p.severity == Severity::Error) {
+                ExitCode::FAILURE
+            } else {
+                println!("ok  {n} parts, {} price sources", src.sources.len());
+                ExitCode::SUCCESS
+            }
+        }
+        PartsCmd::Reprice { file, .. } => {
+            let (new, changes) = parts::reprice(&text, &src);
+            for c in &changes {
+                println!("{:32} {:>6} -> {:>6} hearts", c.id, c.old, c.new);
+            }
+            if changes.is_empty() {
+                println!("all prices are up to date");
+                return ExitCode::SUCCESS;
+            }
+            if let Err(e) = std::fs::write(&file, new) {
+                eprintln!("{}: {e}", file.display());
+                return ExitCode::FAILURE;
+            }
+            println!("{} prices changed in {}", changes.len(), file.display());
+            ExitCode::SUCCESS
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -175,6 +266,7 @@ fn materials(cmd: MaterialsCmd) -> ExitCode {
 fn main() -> ExitCode {
     match Cli::parse().cmd {
         Cmd::Materials(m) => materials(m),
+        Cmd::Parts(p) => parts(p),
         Cmd::Generate { out, check } => {
             let mut stale = 0;
             for (name, bytes) in ocw_assets::generate() {
