@@ -241,8 +241,19 @@ in-page local server, with 5 bots and the virtual trainer at 200 W, as
 *Dev* commands (`teleport`, `sim.power`, `dev.*`) work only with the in-page
 server, as on the desktop.
 
-Page options go in the query string, e.g.
-`http://127.0.0.1:8080/?route=loop&bots=3&power=250&start=1.5&name=Ada&ftp=250`.
+Page options go in the query string. Full examples for the built-in test
+routes (no world package needed):
+
+```text
+http://127.0.0.1:8080/?route=hills
+http://127.0.0.1:8080/?route=hills&bots=5&power=200&start=0&name=Ada&ftp=250&quality=auto
+http://127.0.0.1:8080/?route=loop&bots=3&power=250&start=1.5&name=Ada&ftp=250
+http://127.0.0.1:8080/?route=hills&gpu=webgl2&quality=low
+```
+
+The first rides the **Hills** test route with the defaults; the second
+spells every common option out; the third rides the flat **Loop**; the last
+forces the WebGL 2 build with the Low preset.
 Unknown keys and bad values are ignored, with a line in the browser
 console:
 
@@ -289,6 +300,29 @@ The root's public key goes to `target/web-keys/root.hex`. Open the link
 ```text
 http://127.0.0.1:8080/?world=liechtenstein&route=vaduz-malbun&trust-root=<the key of target/web-keys/root.hex>
 ```
+
+The key is the 64 hex digits (32 bytes) in `target/web-keys/root.hex`; it is
+created on the first `make web-worlds` and differs on every machine. A full
+URL looks like this (**example key – yours differs**, so copy your own):
+
+```text
+http://127.0.0.1:8080/?world=liechtenstein&route=vaduz-malbun&trust-root=3f9a6c0e1b7d42a8c5e0f19b6d3a7c2e8f4b0d61a9c3e5f7082b4d6e8a1c3f5e
+```
+
+Print the exact URLs for your machine (the same links `make web-serve` shows):
+
+```bash
+KEY=$(cat target/web-keys/root.hex)
+echo "http://127.0.0.1:8080/?world=liechtenstein&route=vaduz-malbun&trust-root=$KEY"
+echo "http://127.0.0.1:8080/?world=liechtenstein&route=vaduz-malbun&bots=5&power=250&name=Ada&quality=auto&trust-root=$KEY"
+echo "http://127.0.0.1:8080/?world=liechtenstein&free=1&trust-root=$KEY"   # free ride on the road network
+```
+
+Other worlds: publish them first, e.g.
+`make web-worlds WEB_WORLD_PKGS="data/pilot/liechtenstein.ocwpkg data/tenerife/tenerife.ocwpkg"`,
+then use `world=tenerife`. Without `route=` the package's first route is ridden;
+`route=` takes a route's name or its slug (`Vaduz - Malbun` → `vaduz-malbun`), and an
+unknown name makes the loading screen list the routes the package has.
 
 The loading screen shows the manifest, the base, the first tiles, the bytes
 from the cache and from the network, and the storage. The console's
