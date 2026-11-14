@@ -90,6 +90,9 @@ pub struct WeatherState {
     pub sim_seed: u64,
     /// Real weather (S7; `None`: off).
     pub real: Option<RealInfo>,
+    /// Whether the weather affects the physics now (S6, the server's rule;
+    /// `None` before its weather arrived).
+    pub physics: Option<bool>,
     pub machine: Machine,
 }
 
@@ -276,6 +279,24 @@ pub fn rows(page: Page, w: &WeatherState) -> Vec<Row> {
                     }
                 })
                 .collect();
+            if page == Page::WeatherAir {
+                // Weather physics (S6): the wind, the air and the road in
+                // the physics; the host's (the organiser's in an event).
+                let on = w.physics.unwrap_or(false);
+                let toggle = format!("weather.physics {}", if on { "off" } else { "on" });
+                let value = if on { "on" } else { "off" }.to_owned();
+                out.push(if may && w.event.is_none() {
+                    Row {
+                        label: "Weather physics".into(),
+                        value: Some(value),
+                        left: Some(toggle.clone()),
+                        right: Some(toggle.clone()),
+                        confirm: Some(Activate::Command(toggle)),
+                    }
+                } else {
+                    disabled("Weather physics", value)
+                });
+            }
             if page == Page::WeatherCustom {
                 let air = format!(
                     "{:.0} m/s {}, {:.0} °C",
@@ -598,6 +619,7 @@ fn update_weather(
         // Whole seconds: the menu's rows change once a second, not every frame.
         target: info.and_then(|i| i.target.map(|(t, left)| (t, left.ceil()))),
         sim_seed: info.map_or(0, |i| i.sim_seed),
+        physics: info.map(|i| i.physics.on),
         control,
         may_change,
         event,
@@ -922,6 +944,7 @@ mod tests {
             event: None,
             sim_seed: 0,
             real: None,
+            physics: Some(true),
             machine: Machine::default(),
         }
     }
@@ -1181,12 +1204,22 @@ mod tests {
         );
         assert_eq!(sky[5].confirm, Some(Activate::Open(Page::WeatherAir)));
         let air = rows(Page::WeatherAir, &w);
-        assert_eq!(air.len(), 4);
+        assert_eq!(air.len(), 5);
+        // Weather physics (S6): the switch, on the page of the wind.
+        assert_eq!(row_label(&air[4]), "Weather physics:  < on >");
+        assert_eq!(
+            air[4].confirm,
+            Some(Activate::Command("weather.physics off".into()))
+        );
         assert_eq!(air[0].right.as_deref(), Some("weather wind=5 gust=9 in 60"));
         assert_eq!(air[3].left.as_deref(), Some("weather temp=15 in 60"));
         // Every line parses.
         for r in sky.iter().chain(&air) {
-            for l in [&r.left, &r.right].into_iter().flatten() {
+            for l in [&r.left, &r.right]
+                .into_iter()
+                .flatten()
+                .filter(|l| l.starts_with("weather "))
+            {
                 let args: Vec<&str> = l.split_whitespace().skip(1).collect();
                 ocw_weather::command::parse(&args).unwrap_or_else(|e| panic!("{l}: {e}"));
             }
@@ -1268,7 +1301,8 @@ mod tests {
         assert_eq!(m.focus(), 4);
         m.apply_with(Action::Click(5), world_rows);
         assert_eq!(m.page(), Some(MenuPage::Sub(Page::WeatherAir)));
-        assert_eq!(m.labels().len(), 5);
+        // Wind, gust, direction, temperature, weather physics and Back.
+        assert_eq!(m.labels().len(), 6);
         m.apply_with(Action::Back, world_rows);
         m.apply_with(Action::Back, world_rows);
         // The transition and the seed.

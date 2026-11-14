@@ -895,8 +895,6 @@ mod tests {
                 || line.contains("ride.damage")
                 || line.contains("display.damage")
                 || line.contains("ride.proximity_cue")
-                // Weather physics applies through the weather plugin.
-                || line.contains("weather.physics")
             {
                 continue;
             }
