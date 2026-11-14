@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 3.27 – November 2026
+Version 3.28 – November 2026
 
 | Version | Change |
 |---|---|
+| 3.28 | Documentation catch-up (2026-11-14): the phase headings of Phases 8, 9 and 10 show what is done; build infrastructure (§11.2): POSIX snippets sent to build machines must not depend on the login shell – the Mac's is zsh, where an unmatched glob aborts the command; `remote-gc.sh` and `remote.sh` list task markers with `find`, the dashboard janitor runs its snippets under `/bin/sh` (the bug had kept the Mac's merged checkouts from being cleaned: 136 GB freed); `livekit-server` v1.13.10 on marge (user OK) for `make test-web-livekit`. |
 | 3.27 | Phase 10 **B7's WebGL 2 part built** (§14 Phase 10, 10E, 10G; the sensor bridge stays open until Phase 5): a **second browser build for WebGL 2** (`ocw-web` features `webgpu` / `webgl2`, Bevy chooses the API when it is compiled; `make web` builds both, `ocw_web_webgl2.js`); the page takes WebGPU when the browser gives an adapter, else WebGL 2 (`?gpu=` chooses); the HUD's build id and the console's `gpu` say which runs. What WebGL 2 lacks degrades by a run-time check of the adapter and changes nothing elsewhere: the simple sky instead of the atmosphere (no compute), a two-layer fallback for empty texture arrays, levels of detail without cross-fading, one shadow cascade. **Quality presets** Low / Medium / High (`ocw_render::quality`: shadow map and cascades, MSAA, view distance, tree draw distance, house LOD distances, particles, the canvas' pixel ratio; High = the look before) with one shared setting **`display.quality`** (`auto` by GPU API and device: desktop and WebGPU High, a small device Medium, WebGL 2 and phones Low; `ocw_client::quality`), console `quality`, Settings → Display → **Graphics**, page option `quality=`. Tests: preset resolution and application, `make test-web-webgl2` (headless Chromium without WebGPU falls back to WebGL 2, rides, menus, fps; WebGPU High vs WebGL 2 Low in the same view; the Graphics page; the pixel-ratio cap) |
 | 3.26 | Phase 8 **T4 open items built** (§14 Phase 8 T4, §4.6, §4.7): **pitched roofs over polygons** – new pure module `ocw_world::roof_skeleton` (straight skeleton: edge and split events, courtyards, parallel walls collapsing into their ridge; hipped, and gabled where a hip end is a triangle ending one ridge; `None` → flat) for L-, T-, U-shaped, odd and courtyard footprints, the height in the new `BTAG` field 10 (0.8 × the largest inset, tagged heights and angles), near overhang, mid and far inside; **dormers and roof windows** (gabled, shed, roof windows) from `roof:levels` and the new style field `dormers` (Alpine, Black Forest, some in the towns), closed solids near, a shader detail mid (window code 15, at most 14 window styles); **balconies** from the new style field `balconies` (Alpine, Black Forest; gable end or the south eave side, upper floors, in the gable as wide as it is), near only; **`building:part`** – read by the world builder (and `min_height`, which the area reader dropped before), placed on their building's ground, new optional section `BPRT`, drawn instead of the outline they cover (else on top, 5 cm inside), with the building's style and seed; rebuilt packages; measured fps; scenes `look-houses-*` and new ones |
 | 3.25 | Test pictures stand alone (§11.4, `art/ART-PROJECT.md` §2; decided by the user 2026-11-14): screenshots are sent to the user and archived for the art project one by one, never joined into grids or contact sheets; a joined image only to show a comparison, and then besides the single pictures. |
@@ -1972,7 +1973,7 @@ The **build dashboard** (`tools/build-dashboard/`, details in its `README.md`) i
 - **Machines:** every machine of `config/machines.toml` polled every 5 s over one SSH call (read-only snippet, shared control socket): online / unreachable with the error kind, CPU, load, memory, swap, disks (home and checkout volumes; Windows: the checkout drive and C:), uptime; the kiosk state where `/var/tmp/ocw` exists (app running, deployed build, connected Bluetooth devices by name).
 - **Jobs:** the running `remote.sh` runs (from their task markers) with checkout, command, running time, slot and the CPU / memory per process kind; the queue of runs waiting for a build slot (oldest first); the slots in use per machine. **Each job is described in one sentence by what it tries to achieve** (decided 2026-11-13, replacing the user's prompt): built by fixed rules from the command (checks, tests, wasm, release builds, deploys, world builds, renders, profiling …) and its context (the agent's task, or the latest commit / merge of the main checkout), at most 140 characters, the full breakdown as a tooltip (`--show-prompts` still puts the prompt into the JSON).
 - **Machines enabled / disabled and build slots** (v2.66): a toggle and a slot stepper (1–8) per machine card, with an optional reason and note; stored in `config/build-machines.toml`; `scripts/remote.sh` refuses `run` / `sync` on a disabled machine (deploys stay allowed) and takes the slot count from it.
-- **Disk janitor** (v2.63): disk use per machine, automatic cleanup of build output above 75 % / 85 %, a red banner above 92 %; never sources, data, test output, the sccache cache or busy checkouts; every deletion logged.
+- **Disk janitor** (v2.63): disk use per machine, automatic cleanup of build output above 75 % / 85 %, a red banner above 92 %; never sources, data, test output, the sccache cache or busy checkouts; every deletion logged. Snippets for POSIX machines run under `/bin/sh`, never the login shell (the Mac's is zsh, where an unmatched glob aborts the command; fixed v3.28).
 - **Open questions and answers** (v2.63): every question for the user in this spec, grouped by phase with its proposal and options, decided ones hidden; **answerable on the page** (text box, "Accept proposal", option buttons) with the token from `config/dashboard-token`; answers go to `test-output/answers/answers.jsonl` and `inbox.log`, which the coordinator watches and records in this spec (the question then shows as decided). Blocked milestones are listed.
 - **Build log and art project:** every `remote.sh run` is recorded in `test-output/build-log/DAY/` (`runs.jsonl` with machine, command, times, exit code, sync / cargo / slot-wait seconds, and the run's output; `machines.jsonl` and `janitor.jsonl` for machine and janitor changes) – material for the OCW Build Diary (`art/ART-PROJECT.md`).
 - **Security:** reading is open on the LAN; every change (answers, machine settings) needs the token (header `X-OCW-Token`, 403 without it); all text shown is HTML-escaped; inputs are validated (machine names only from `machines.toml`, slots 1–8).
@@ -2590,7 +2591,7 @@ The first catalogue (about 30 entries; base parts at 0 ♥ for every slot and bi
 
 **Result:** A release-ready indoor cycling platform on Linux, Windows and macOS.
 
-### Phase 8 – Textures and Regional Look (planning, 2026-11-12)
+### Phase 8 – Textures and Regional Look (planning, 2026-11-12; T1 – T7 done, T3 complete with forest type v3.20, T4 open items v3.26; open: real 3D building data, Q8 postponed)
 
 **Goal:** the world looks like the real place. Meadows, forests, roads, roofs and façades in Liechtenstein look like Liechtenstein; in the Black Forest like the Black Forest. Riders and bikes get real materials instead of flat paint slots. Everything shipped must have a licence compatible with our MIT / Apache-2.0 code, and nothing may come from proprietary map imagery (§4.6, §13).
 
@@ -2749,7 +2750,7 @@ Before a material, house style, tree, sign or bike part is designed, we look at 
 
 ---
 
-### Phase 9 – Sky, Time, Seasons and Weather (planning, 2026-11-12)
+### Phase 9 – Sky, Time, Seasons and Weather (planning, 2026-11-12; S1 – S8 done – S6 v3.19, S7 v3.16, S8 v3.18; open: the stars, Q7 postponed – see 9I)
 
 **Goal:** the world shows the **real sky, season and weather of the place the rider is riding**, at the real moment: the sun, moon and stars in the right position and moving, daylight and night, the season of the date, and today's weather there. On top, two machines let riders choose. The **time machine** sets any date and time; the **weather machine** sets any weather.
 
@@ -3060,7 +3061,7 @@ Decisions Q4 (realistic, on in solo and free ride, the organiser decides in even
 
 ---
 
-### Phase 10 – Browser App: riding in the browser (planning, 2026-11-13)
+### Phase 10 – Browser App: riding in the browser (planning, 2026-11-13; B1 – B6 done, B5 v3.21, B6 v3.24; B7 WebGL 2 part v3.27; open: the sensor bridge and B8 hosting, after Phase 5)
 
 **Goal:** ride Open Cycling World in a web browser, with no installation: the same worlds, physics, multiplayer, voice and riders as the desktop app. It complements the **web companion** (Phase 5, account / history / routes, no riding); it does not replace the desktop app. §3.5 has kept this possible from Phase 1: the core crates build for wasm, devices sit behind `DeviceBackend`, the protocol is transport-independent and packages can be streamed.
 
