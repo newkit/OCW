@@ -423,6 +423,16 @@ climb at 1.5–2.1 km) and grass beside the road roll increasingly harder
   `time 2026-01-20 12:00` in the console). `world-builder imagery-cells
   --world PKG --crs lv95` lists the cells of a package.
 
+  **Orthophoto corridor (spec §14 Phase 8 T7):** `calibrate` also cuts the
+  orthophoto along the package's roads, ±50 m beside the road edges at
+  0.5 m per pixel (the source's own size if coarser: 1 m in the Black
+  Forest and on Tenerife), shadows and cars toned down, as JPEG chunks of
+  125 m into the optional section `ORTC` (`--corridor 0` leaves it out,
+  `--corridor-pixel`, `--corridor-quality`; `world-builder check` reports
+  it). The client blends it into the ground near the road (the materials
+  tinted by the photo up close, the photo itself from about 70 m, gone by
+  950 m); `display.orthophoto off` (console `ortho off`) switches it off.
+
   The sea comes from the OSM coastline: its closed rings (islands) are cut
   out of the package area, which leaves the sea as water at 0 m (`world-builder
   package` reports `sea: …`). Islands are built with `--land-tiles`
@@ -710,6 +720,7 @@ console (saved at once), or by editing the file; `get` lists them all:
 | `display.night_brightness` | 0 to 50 (10): least light at night in % of daylight (0 = realistic darkness); Settings → Display | at once |
 | `display.sky` | atmosphere / simple (atmosphere): Bevy's physically based sky, or one plain colour for weak GPUs | at once |
 | `display.bike_lights` | auto / on / off (auto): front and rear lights of all riders from dusk to dawn | at once |
+| `display.orthophoto` | on / off (on): the real place's orthophoto on the ground near the roads, where the package has it (spec §14 Phase 8 T7) | at once |
 | `display.unicorn_trail` | on / off (on): the rainbow trail behind the unicorns of god mode (console `god.trail`; not on the full Display page) | at once |
 | `display.fullscreen` | on / off (off): borderless fullscreen (`--fullscreen`) | next start |
 | `ride.bots` | 0 to 50 (10): test riders (`--bots`) | next start |
@@ -1475,7 +1486,7 @@ to *Public* are the usual causes; the server log is in Event Viewer under
 | `scripts/world-profile.sh [--data DIR] [--ref DIR] [WORLD...]` | Build Liechtenstein / Black Forest parts / Tenerife into `test-output/world-profile/` with the stage profiles and compare them byte for byte with a reference build (`--data ~/src/OCW/data` on marge) |
 | `scripts/build-profile.sh`, `scripts/build-profile.ps1` | Rust build profile: clean / no-op / incremental builds with `--timings` (`make build-profile`) |
 | `scripts/fetch-imagery.sh REGION [PACKAGE...]` | Region calibration imagery (spec §14 Phase 8 T3): orthophoto cells over the official WMS and own Sentinel-2 seasonal median composites (`scripts/imagery.py`) for the cells a built package covers, licence rows in `SOURCES.md` |
-| `world-builder calibrate` / `imagery-cells` | Measure a package's palette, roof colours and seasonal tint maps in that imagery (sections `PALT`, `ROOF`, `SEAS`; manifest credits renewed); list the imagery cells a package covers |
+| `world-builder calibrate` / `imagery-cells` | Measure a package's palette, roof colours and seasonal tint maps in that imagery and cut the orthophoto corridor along its roads (sections `PALT`, `ROOF`, `SEAS`, `ORTC`; manifest credits renewed); list the imagery cells a package covers |
 | `world-builder dem-import` / `dem-tiles` / `dem-diff` | High-resolution DTMs: import XYZ / GeoTIFF tiles as 2 m GeoTIFFs, list the tiles of a box, compare with SRTM |
 | `scripts/remote.sh MACHINE run 'CMD'` | Copy the tree to a build machine (`config/machines.toml`) and run a command there (`sync`, `ssh`, `fetch`, `put LOCAL... DIR`: copy git-ignored files into the checkout, `field KEY`: a machine setting for scripts) |
 | `python3 tools/build-dashboard/dashboard.py` | Web page (port 8765) with the build machines' load and their running/queued tasks, disks and the janitor, and the open questions of the spec; `--once` prints it as text, `--janitor-plan` a dry run of the janitor |

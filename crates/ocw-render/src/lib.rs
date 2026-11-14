@@ -22,6 +22,7 @@ pub mod junction;
 pub mod materials;
 pub mod media;
 pub mod menu;
+pub mod ortho;
 pub mod package;
 pub mod region_look;
 pub mod riders;
@@ -336,6 +337,7 @@ impl Plugin for OcwRenderPlugins {
         .add_plugins((
             sky::SkyPlugin,
             materials::MaterialsPlugin,
+            ortho::OrthoPlugin,
             road_material::RoadMaterialPlugin,
             unicorn::UnicornPlugin,
             building_material::BuildingMaterialPlugin,

@@ -19,6 +19,8 @@ bevy_egui.workspace = true
 clap.workspace = true
 ttf-parser.workspace = true
 image.workspace = true
+# BC3 compression of the orthophoto corridor (spec §14 Phase 8 T7).
+texpresso.workspace = true
 chrono.workspace = true
 # The house styles (assets/building-styles.toml, spec §14 Phase 8 T4).
 serde.workspace = true

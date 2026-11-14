@@ -36,7 +36,9 @@
 //! spec §14 Phase 9; packages without it fall back to a zone from their
 //! origin, see `ocw_sky::zone::zone_for`); `PALT`, `ROOF`, `SEAS` – the
 //! imagery sources with the regional palette, the roof colours and the
-//! seasonal tint maps (spec §14 Phase 8 T3), see [`crate::look`]. A
+//! seasonal tint maps (spec §14 Phase 8 T3), see [`crate::look`]; `ORTC` –
+//! the orthophoto corridor along the roads (spec §14 Phase 8 T7, optional),
+//! see [`crate::ortho`]. A
 //! package without sections is written as version 1, byte for byte as before.
 //!
 //! Tile `(x, z)` covers local metres `[x·size, (x+1)·size] × [z·size, (z+1)·size]`;
@@ -58,6 +60,7 @@ use crate::look::{
     PALETTE_TAG, ROOFS_TAG, RegionLook, SEASONS_TAG, read_palette, read_roofs, read_seasons,
     write_palette, write_roofs, write_seasons,
 };
+use crate::ortho::{ORTHO_TAG, read_ortho, write_ortho};
 use crate::region::{PackageRegion, REGION_TAG, read_region, write_region};
 use crate::road_dress::{ROAD_DRESS_TAG, RoadDress, read_road_dress, write_road_dress};
 use crate::road_surface::{ROAD_SURFACE_TAG, RoadSurface, read_road_surfaces, write_road_surfaces};
@@ -372,6 +375,11 @@ impl WorldPackage {
             write_seasons(s, &mut payload);
             sections.push((SEASONS_TAG, payload));
         }
+        if let Some(o) = &self.look.ortho {
+            let mut payload = Vec::new();
+            write_ortho(o, &mut payload);
+            sections.push((ORTHO_TAG, payload));
+        }
         let mut payload = Vec::new();
         if write_road_surfaces(
             self.tiles.values().map(|t| (t.key, t.roads.as_slice())),
@@ -572,6 +580,14 @@ impl WorldPackage {
                     look.roofs = Some(read_roofs(payload)?);
                 } else if &tag == SEASONS_TAG && full {
                     look.seasons = Some(read_seasons(payload)?);
+                } else if &tag == ORTHO_TAG && full {
+                    // Optional imagery: a newer layout is skipped (the
+                    // ground keeps its materials and colour map).
+                    match read_ortho(payload) {
+                        Ok(o) => look.ortho = Some(o),
+                        Err(e) if e.contains("not supported") => {}
+                        Err(e) => return Err(e),
+                    }
                 } else if &tag == ROAD_SURFACE_TAG && full {
                     for (key, surfaces) in read_road_surfaces(payload)? {
                         let tile = tiles
@@ -1450,6 +1466,42 @@ mod tests {
             ..package()
         };
         assert_eq!(section_sizes(&plain.to_bytes()).len(), 1);
+    }
+
+    /// The orthophoto corridor (spec §14 Phase 8 T7): round trip, left out
+    /// of a skeleton, skipped by readers from before T7 and when its layout
+    /// is newer than this reader.
+    #[test]
+    fn ortho_section_round_trips_and_old_readers_skip_it() {
+        use crate::ortho::ORTHO_TAG;
+        let mut look = crate::look::tests::sample_look();
+        look.ortho = Some(crate::ortho::tests::sample_corridor());
+        let full = WorldPackage {
+            graph: Some(graph()),
+            look,
+            ..package()
+        };
+        let b = full.to_bytes();
+        assert_eq!(WorldPackage::from_bytes(&b).unwrap(), full);
+        assert!(section_sizes(&b).iter().any(|s| &s.0 == ORTHO_TAG));
+        let skel = WorldPackage::skeleton_from_bytes(&b).unwrap();
+        assert!(skel.look.ortho.is_none());
+        let without = |p: &WorldPackage| WorldPackage {
+            look: crate::look::RegionLook {
+                ortho: None,
+                ..p.look.clone()
+            },
+            ..p.clone()
+        };
+        // An old reader: an unknown tag.
+        let mut old_b = b.clone();
+        let at = old_b.windows(4).rposition(|w| w == ORTHO_TAG).unwrap();
+        old_b[at] = b'x';
+        assert_eq!(WorldPackage::from_bytes(&old_b).unwrap(), without(&full));
+        // A newer layout of the section: skipped, the rest is read.
+        let mut newer = b.clone();
+        newer[at + 12] = 9;
+        assert_eq!(WorldPackage::from_bytes(&newer).unwrap(), without(&full));
     }
 
     #[test]

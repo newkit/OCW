@@ -35,6 +35,7 @@ pub mod buildings;
 pub mod calibrate;
 pub mod chains;
 pub mod clean;
+pub mod corridor;
 pub mod crs;
 pub mod dem;
 pub mod diff;

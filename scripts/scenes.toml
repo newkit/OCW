@@ -1252,3 +1252,46 @@ world = "tenerife"
 args = ["--world", "{world}", "--free-ride", "--start", "-7500,5260", "--bots", "0", "--power", "0"]
 at = ["0.5=time pause", "0.5=time 2026-07-15 11:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 75 6 9"]
 shot = 10
+
+# --- Orthophoto corridor (spec §14 Phase 8 T7): before / after with
+# packages without and with the section ORTC (--world), or `ortho off`. ------
+
+[[scene]]
+name = "ortho-vaduz"
+description = "Orthophoto corridor: Vaduz centre from a raised camera (15 July, noon): gardens, driveways and lawns beside the streets from the Orthophoto Liechtenstein 2025"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 160 30 90"]
+shot = 12
+
+[[scene]]
+name = "ortho-triesenberg-chase"
+description = "Orthophoto corridor: the Vaduz - Malbun road at km 6.5 above Triesenberg in the chase camera: meadows, field edges and farm tracks beside the road"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 6.5"]
+shot = 12
+
+[[scene]]
+name = "ortho-malbun"
+description = "Orthophoto corridor: the alpine meadows and chalets of Malbun (1,600 m, 15 July, noon), raised camera"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "4218,6473", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 150 25 70"]
+shot = 12
+
+[[scene]]
+name = "ortho-schauinsland"
+description = "Orthophoto corridor, Black Forest: Freiburg - Schauinsland at km 4.5 (Günterstal): meadows, gardens and the town edge from the LGL DOP20 (1 m)"
+world = "blackforest"
+args = ["--world", "{world}", "--route-file", "{world_dir}/freiburg-schauinsland.route", "--no-neighbours", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 4.5", "3=camera.orbit 160 25 60"]
+shot = 14
+
+[[scene]]
+name = "ortho-tf21"
+description = "Orthophoto corridor, Tenerife: the TF-21 in Las Cañadas (2,250 m, 15 July, 11:00): lava flows and pumice fields beside the road from the IGN PNOA (1 m)"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-7500,5260", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 11:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 150 20 70"]
+shot = 12

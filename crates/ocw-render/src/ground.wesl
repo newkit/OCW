@@ -31,6 +31,12 @@ struct TerrainLook {
     params: vec4<f32>,
     // x: tile size (m); y: canopy shade (albedo factor under forest).
     tile: vec4<f32>,
+    // Orthophoto corridor (Phase 8 T7): x: bound; y: pixel size (m);
+    // z, w: view-distance fade (m).
+    ortho: vec4<f32>,
+    // x, y: the sharp photo replaces the blurred one in the tint between
+    // these distances (m); z: its share; w: the tint strength.
+    ortho_blend: vec4<f32>,
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100)
@@ -49,6 +55,10 @@ var albedo_array: texture_2d_array<f32>;
 var array_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(107)
 var normal_array: texture_2d_array<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(108)
+var ortho_tex: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(109)
+var ortho_sampler: sampler;
 
 const ROCK: u32 = 3u;
 const LAYERS: u32 = 9u;
@@ -164,6 +174,8 @@ fn fragment(
     let dy = dpdy(wp);
     let fade_start = look.mode.z;
     let fade_end = look.mode.w;
+    // The land-use colour the materials stand for (the colour map).
+    let colour_map = pbr_input.material.base_color.rgb;
     if look.mode.x > 0.5 && dist < fade_end {
         let N = normalize(in.world_normal);
         // Splat weights at the cell corners, the lookup warped by noise.
@@ -242,6 +254,30 @@ fn fragment(
         pbr_input.material.base_color = vec4<f32>(mix(albedo, pbr_input.material.base_color.rgb, t), 1.0);
         pbr_input.material.perceptual_roughness = mix(clamp(rough, 0.3, 1.0), pbr_input.material.perceptual_roughness, t);
         pbr_input.N = normalize(mix(nw, pbr_input.N, t));
+    }
+
+    // The orthophoto corridor near the roads (`ortho::blend`, `ortho::apply`):
+    // the photo's colour with the materials' brightness detail (their
+    // luminance over the colour map's), the blurred photo up close, the
+    // sharp one further away; times the corridor weight (alpha) and the
+    // view-distance fade.
+    if look.ortho.x > 0.5 && dist < look.ortho.w {
+        let tsize = look.tile.x;
+        let ouv = clamp(in.uv, vec2<f32>(0.0), vec2<f32>(1.0));
+        let o = textureSampleGrad(ortho_tex, ortho_sampler, ouv, dx.xz / tsize, dy.xz / tsize);
+        let w = o.a * (1.0 - smoothstep(look.ortho.z, look.ortho.w, dist));
+        if w > 0.002 {
+            // The blurred photo: three levels above the pixel's footprint.
+            let foot = max(length(dx.xz), length(dy.xz)) / look.ortho.y;
+            let lod = log2(max(foot, 1.0)) + 3.0;
+            let low = textureSampleLevel(ortho_tex, ortho_sampler, ouv, lod).rgb;
+            let b = look.ortho_blend;
+            let base = pbr_input.material.base_color.rgb;
+            let photo = mix(low, o.rgb, smoothstep(b.x, b.y, dist) * b.z);
+            let lw = vec3<f32>(0.2126, 0.7152, 0.0722);
+            let detail = clamp(dot(base, lw) / max(dot(colour_map, lw), 0.01), 0.4, 2.2);
+            pbr_input.material.base_color = vec4<f32>(mix(base, photo * detail, w * b.w), 1.0);
+        }
     }
 
     var out: FragmentOutput;
