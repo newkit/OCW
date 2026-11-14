@@ -98,6 +98,7 @@ impl Plugin for WebSessionPlugin {
                 Update,
                 (keys.run_if(ride_input), send_steer, update_view)
                     .chain()
+                    .in_set(ViewUpdated)
                     .run_if(riding),
             )
             .add_systems(Update, crate::console_from_page)
@@ -107,6 +108,11 @@ impl Plugin for WebSessionPlugin {
         register_commands(app);
     }
 }
+
+/// The frame's ride view is written (the audio and voice systems run
+/// after it).
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ViewUpdated;
 
 /// A ride is running (with a world package only once it is loaded).
 fn riding(session: Option<Res<Session>>, place: Option<Res<Place>>) -> bool {
@@ -123,11 +129,17 @@ fn frame(
     time: Res<Time>,
     mut session: ResMut<Session>,
     mut console: ResMut<ConsoleState>,
+    grants: Option<ResMut<crate::voice::PendingVoiceGrants>>,
     mut next_log: Local<f64>,
 ) {
     let now = time.elapsed_secs_f64();
     let remote = session.0.is_remote();
-    for notice in session.0.frame(time.delta_secs_f64(), now) {
+    let notices = session.0.frame(time.delta_secs_f64(), now);
+    // The voice token grants (spec §7) go to the voice controller.
+    if let Some(mut g) = grants {
+        g.collect(&notices);
+    }
+    for notice in notices {
         match notice {
             Notice::Joined { rider_id, route_id } if remote => {
                 info!(rider = %rider_id, route = %route_id, "joined the remote server");

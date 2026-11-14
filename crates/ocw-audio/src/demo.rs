@@ -1,10 +1,10 @@
 //! A scripted ride rendered offline through the mixer: a test of the whole
 //! chain, and a WAV to listen to.
 //!
-//! `OCW_AUDIO_DEMO=/path/ride.wav cargo test -p ocw-desktop audio::demo`
+//! `OCW_AUDIO_DEMO=/path/ride.wav cargo test -p ocw-audio demo`
 //! writes it (48 kHz, 16-bit stereo).
 
-use std::time::Instant;
+use web_time::Instant;
 
 use ocw_world::Surface;
 

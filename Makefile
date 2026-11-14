@@ -11,7 +11,7 @@ export PATH := $(OCW_CARGO_SHIM):$(PATH)
 endif
 
 CARGO ?= cargo
-WASM_CRATES := -p ocw-core -p ocw-sim -p ocw-protocol -p ocw-world -p ocw-voice -p ocw-sky -p ocw-weather -p ocw-devices -p ocw-worldstore
+WASM_CRATES := -p ocw-core -p ocw-sim -p ocw-protocol -p ocw-world -p ocw-voice -p ocw-sky -p ocw-weather -p ocw-devices -p ocw-worldstore -p ocw-audio
 # The browser app (spec §14 Phase 10): wasm-bindgen-cli must be the version
 # of the wasm-bindgen crate in Cargo.lock.
 WASM_BINDGEN_VERSION := $(shell awk '/^name = "wasm-bindgen"$$/ { getline; gsub(/version = |"/, ""); print; exit }' Cargo.lock)
@@ -81,7 +81,7 @@ VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 .DEFAULT_GOAL := help
 .PHONY: help version version-next version-bump test-release-version release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
 	clippy check run server materials deploy-test clean clean-test-output macos-app \
-	test test-unit test-wasm test-web-build test-web test-web-world test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-kiosk web web-serve web-worlds deps-web test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
+	test test-unit test-wasm test-web-build test-web test-web-world test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-kiosk web web-serve web-worlds deps-web test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
 	test-multiplayer test-multiplayer-local test-scenes test-scenes-list \
 	wasm screenshot screenshot-wayland smoke video video-wayland
 
@@ -289,6 +289,18 @@ test-web-ble-emulation: web ## Headless Chromium's own Web Bluetooth with a simu
 BLE_DEVICE ?= KICKR
 test-web-ble-real: web ## Headless Chromium rides the real trainer in range ($(BLE_DEVICE), marge's KICKR) over BlueZ: the chooser answered over DevTools, SIM, ERG
 	scripts/test-web-ble.py --out test-output/web --mode real --device $(BLE_DEVICE) --seconds 20
+
+test-web-audio: web ## Headless Chromium: the game sound locked until a click (autoplay rule), then the mixer's chunks scheduled through Web Audio with sound in them; a volume kept over a reload; screenshots into test-output/web/
+	scripts/test-web-audio.py --out test-output/web --part audio
+
+test-web-voice: web ## Headless Chromium joins ocw-server (voice tokens, Echo rider) over WebTransport with an ocw-bot; a fake LiveKit in the page: token, call, M / Shift+M, speakers, drop, rejoin, echo test on the fake microphone, reload
+	$(CARGO) build --release -p ocw-server -p ocw-bot
+	scripts/test-web-audio.py --out test-output/web --part voice
+
+LIVEKIT_SERVER ?= livekit-server
+test-web-livekit: web ## Two headless browser riders in a real `livekit-server --dev` room (the real livekit-client; skipped without the binary): join, see and hear each other, mute
+	$(CARGO) build --release -p ocw-server -p ocw-bot
+	scripts/test-web-audio.py --out test-output/web --part livekit --livekit-server $(LIVEKIT_SERVER)
 
 test-kiosk: ## Test the kiosk script with a fake app (no display or build needed)
 	scripts/test-kiosk.sh

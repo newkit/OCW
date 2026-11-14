@@ -12,10 +12,15 @@
 //! - [`trainer`]: SIM / ERG trainer control (spec §5.3) and [`workout`]:
 //!   structured workouts driving ERG (spec §2.8).
 //! - [`weather`]: the session's weather, strikes and gusts (spec §14 Phase 9, S4).
+//! - [`audio`]: what the game sounds hear of the ride (the mixer's input,
+//!   spec §3.3), [`voice`]: the voice call's per-frame logic and HUD (spec
+//!   §2.4, §7), [`settings`]: the settings registry (spec §3.2.1) – shared
+//!   with the browser app since Phase 10 B5.
 //!
 //! No threads, file system or sockets: everything here also builds for
 //! `wasm32-unknown-unknown` (spec §3.5). The apps add the Bevy glue.
 
+pub mod audio;
 pub mod client;
 pub mod collisions;
 pub mod damage;
@@ -23,7 +28,9 @@ pub mod event;
 pub mod god_state;
 pub mod gps;
 pub mod input;
+pub mod settings;
 pub mod sky;
 pub mod trainer;
+pub mod voice;
 pub mod weather;
 pub mod workout;
