@@ -37,6 +37,8 @@ struct TerrainLook {
     // x, y: the sharp photo replaces the blurred one in the tint between
     // these distances (m); z: its share; w: the tint strength.
     ortho_blend: vec4<f32>,
+    // The weather: x wetness, y puddles, z snow cover, w wind sway.
+    weather: vec4<f32>,
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100)
@@ -278,6 +280,28 @@ fn fragment(
             let detail = clamp(dot(base, lw) / max(dot(colour_map, lw), 0.01), 0.4, 2.2);
             pbr_input.material.base_color = vec4<f32>(mix(base, photo * detail, w * b.w), 1.0);
         }
+    }
+
+    // The weather (spec §14 Phase 9, S4; `ocw_weather::ground`): wet
+    // ground darker and a little glossier; snow on the ground that faces
+    // up (not on cliffs), in patches while it is thin.
+    let wx = look.weather;
+    if wx.x > 0.0 || wx.z > 0.0 {
+        let gp = in.world_position.xyz;
+        let up = normalize(in.world_normal).y;
+        var c = pbr_input.material.base_color.rgb;
+        var r = pbr_input.material.perceptual_roughness;
+        c = c * mix(1.0, 0.78, wx.x);
+        r = r * mix(1.0, 0.75, wx.x);
+        if wx.z > 0.0 {
+            let patchy = vnoise(gp.xz / 6.0) * 0.6 + vnoise(gp.xz / 1.7) * 0.4;
+            let lo = 1.0 - wx.z * 1.15;
+            let s = smoothstep(0.62, 0.86, up) * smoothstep(lo, lo + 0.25, patchy + 0.1);
+            c = mix(c, vec3<f32>(0.86, 0.89, 0.93), s);
+            r = mix(r, 0.6, s);
+        }
+        pbr_input.material.base_color = vec4<f32>(c, pbr_input.material.base_color.a);
+        pbr_input.material.perceptual_roughness = r;
     }
 
     var out: FragmentOutput;

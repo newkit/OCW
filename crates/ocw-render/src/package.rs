@@ -557,6 +557,8 @@ pub fn tree_arrays(sites: &[TreeSite]) -> MeshArrays {
                 let a = j as f32 / seg as f32 * std::f32::consts::TAU;
                 m.positions
                     .push((base + Vec3::new(r * a.cos(), y0, r * a.sin()) * s).to_array());
+                // The height above the foot: the trees sway with it.
+                m.uvs.push([y0 * s, 0.0]);
                 m.normals.push(
                     Vec3::new(a.cos(), r / (y1 - y0), a.sin())
                         .normalize()
@@ -565,6 +567,7 @@ pub fn tree_arrays(sites: &[TreeSite]) -> MeshArrays {
                 m.colors.push(colour);
             }
             m.positions.push((base + Vec3::Y * y1 * s).to_array());
+            m.uvs.push([y1 * s, 0.0]);
             m.normals.push([0.0, 1.0, 0.0]);
             m.colors.push(colour);
             for j in 0..seg {
@@ -1154,7 +1157,10 @@ fn setup_materials(
         ..default()
     };
     commands.insert_resource(PackageMaterials {
-        trees: tree_materials.add(see_through(vertex_coloured.clone())),
+        trees: tree_materials.add(crate::see_through::swaying(
+            see_through(vertex_coloured.clone()),
+            None,
+        )),
         vertex_coloured: materials.add(vertex_coloured),
         water: materials.add(StandardMaterial {
             base_color: Color::WHITE,

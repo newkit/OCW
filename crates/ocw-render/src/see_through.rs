@@ -58,6 +58,16 @@ pub struct SeeThroughFade {
     /// w: [`FADE_RAMP_M`].
     #[uniform(100)]
     pub shape: Vec4,
+    /// The weather (spec §14 Phase 9, S4; [`crate::weather::sync_surfaces`]):
+    /// x / z the wind's direction (scene axes), y how much the trees sway
+    /// (0–1), w snow on the crowns (0–1).
+    #[uniform(100)]
+    pub wind: Vec4,
+    /// How the vertex shader finds a vertex's height above the tree's foot
+    /// for the sway: x 0 = from uv.x (merged package trees), 1 = the
+    /// mesh's local y plus y (a part of a route tree).
+    #[uniform(100)]
+    pub sway: Vec4,
 }
 
 impl Default for SeeThroughFade {
@@ -70,11 +80,19 @@ impl Default for SeeThroughFade {
                 SIGHT_RADIUS_RIDER_M,
                 FADE_RAMP_M,
             ),
+            wind: Vec4::new(1.0, 0.0, 0.0, 0.0),
+            sway: Vec4::new(1.0, 0.0, 0.0, 0.0),
         }
     }
 }
 
 impl MaterialExtension for SeeThroughFade {
+    fn vertex_shader() -> ShaderRef {
+        ShaderRef::Path(
+            AssetPath::from_path_buf(embedded_path!("see_through.wesl")).with_source("embedded"),
+        )
+    }
+
     fn fragment_shader() -> ShaderRef {
         ShaderRef::Path(
             AssetPath::from_path_buf(embedded_path!("see_through.wesl")).with_source("embedded"),
@@ -88,6 +106,31 @@ pub fn see_through(base: StandardMaterial) -> SeeThroughMaterial {
         base,
         extension: SeeThroughFade::default(),
     }
+}
+
+/// A tree material that sways in the wind (spec §14 Phase 9, S4): its
+/// meshes carry the height above the tree's foot in uv.x
+/// (`package::tree_arrays`), or (`local_y_offset`) are a part of a tree
+/// whose foot lies that far below the mesh's origin.
+pub fn swaying(mut m: SeeThroughMaterial, local_y_offset: Option<f32>) -> SeeThroughMaterial {
+    m.extension.sway = match local_y_offset {
+        Some(y) => Vec4::new(1.0, y, 0.0, 0.0),
+        None => Vec4::new(0.0, 0.0, 0.0, 0.0),
+    };
+    m
+}
+
+/// How far a vertex `height_m` above the foot of a tree of `tree_m`
+/// sways at sway amount `amount` (0–1) and phase `phase` (rad), mirrored by
+/// `see_through.wesl`: a steady lean downwind growing with the square of
+/// the height, an oscillation on top, and a flutter of the twigs.
+pub fn sway_offset(height_m: f32, tree_m: f32, amount: f32, phase: f32) -> f32 {
+    if amount <= 0.0 || height_m <= 0.3 {
+        return 0.0;
+    }
+    let k = (height_m / tree_m.max(1.0)).min(1.5);
+    let bend = amount * k * k * (0.55 + 0.45 * phase.sin()) * 1.6;
+    bend + 0.06 * amount * k * (phase * 4.3).sin()
 }
 
 fn focus_uniform(focus: Option<Vec3>) -> Vec4 {

@@ -511,6 +511,7 @@ pub(crate) fn package_view(
     world: Option<Res<PackageWorld>>,
     far: Res<FarTerrain>,
     view: Option<Res<crate::RideView>>,
+    clouds: Option<Res<crate::weather::clouds::CloudState>>,
     mut cameras: Query<(&mut Projection, Option<&mut DistanceFog>), With<FollowCamera>>,
 ) {
     let p = view.as_deref().and_then(|view| {
@@ -531,6 +532,15 @@ pub(crate) fn package_view(
             crate::world::fog().falloff,
         )
     };
+    // The weather's fog (spec §14 Phase 9, S4): its visibility when it is
+    // shorter than the distance fog's reach.
+    let falloff = match view
+        .as_deref()
+        .and_then(|v| crate::weather::fog_visibility(v, clouds.as_deref()))
+    {
+        Some(vis) if vis < 0.9 * fog_reach(&falloff) => FogFalloff::from_visibility(vis),
+        _ => falloff,
+    };
     for (mut projection, fog) in &mut cameras {
         if let Projection::Perspective(pp) = &mut *projection
             && pp.far != far_m
@@ -550,7 +560,22 @@ fn same_falloff(a: &FogFalloff, b: &FogFalloff) -> bool {
         (FogFalloff::Linear { start: a, end: b }, FogFalloff::Linear { start: c, end: d }) => {
             a == c && (b - d).abs() < 1.0
         }
+        (FogFalloff::Exponential { density: a }, FogFalloff::Exponential { density: b }) => {
+            (a - b).abs() <= 0.002 * a.abs().max(b.abs())
+        }
         _ => false,
+    }
+}
+
+/// How far one sees through a fog falloff (m): a linear fog's end, an
+/// exponential fog's Koschmieder distance.
+pub fn fog_reach(f: &FogFalloff) -> f32 {
+    match f {
+        FogFalloff::Linear { end, .. } => *end,
+        FogFalloff::Exponential { density } | FogFalloff::ExponentialSquared { density } => {
+            3.0 / density.max(1e-9)
+        }
+        _ => f32::INFINITY,
     }
 }
 

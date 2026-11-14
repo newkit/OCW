@@ -11,6 +11,12 @@ pub mod v1 {
     include!(concat!(env!("OUT_DIR"), "/ocw.v1.rs"));
 }
 
+mod weather;
+pub use weather::{
+    WeatherChange, WeatherInfo, session_weather, weather_change, weather_from_wire, weather_info,
+    weather_request, weather_to_wire,
+};
+
 use ocw_core::RiderId;
 use ocw_sim::{Event, EventKind, EventPhase, EventSpec, RiderState, Standing, TurnChoice};
 use ocw_world::graph::{EdgeId, VertexId};
@@ -1222,6 +1228,7 @@ mod tests {
             }),
             collisions: v1::CollisionMode::Soft as i32,
             chaotic_bots: true,
+            weather: None,
         };
         let bytes = encode(&server_message(S::Snapshot(snapshot.clone())));
         match decode_server(&bytes).unwrap() {

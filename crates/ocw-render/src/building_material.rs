@@ -28,6 +28,9 @@ pub struct BuildingLook {
     pub means: [Vec4; 16],
     /// Four vectors per window style.
     pub windows: [Vec4; 64],
+    /// The weather (spec §14 Phase 9, S4; [`crate::weather::surface_uniform`]):
+    /// x wetness, y puddles, z snow cover, w wind sway.
+    pub weather: Vec4,
 }
 
 /// Distances (m) over which the textures and the windows fade out.
@@ -71,6 +74,7 @@ impl BuildingLook {
             sizes: [Vec4::splat(2.0); 4],
             means,
             windows,
+            weather: Vec4::ZERO,
         }
     }
 

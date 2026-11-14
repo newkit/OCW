@@ -374,16 +374,24 @@ fn spawn_trees(
         height: 7.0,
     });
     let trunk = meshes.add(Cylinder::new(0.25, 2.0));
-    let crown_mat = materials.add(see_through(StandardMaterial {
-        base_color: Color::srgb(0.13, 0.33, 0.15),
-        perceptual_roughness: 1.0,
-        ..default()
-    }));
-    let trunk_mat = materials.add(see_through(StandardMaterial {
-        base_color: Color::srgb(0.35, 0.24, 0.15),
-        perceptual_roughness: 1.0,
-        ..default()
-    }));
+    // They sway in the wind (spec §14 Phase 9, S4): the crown's origin is
+    // 5 m above the foot, the trunk's 1 m.
+    let crown_mat = materials.add(crate::see_through::swaying(
+        see_through(StandardMaterial {
+            base_color: Color::srgb(0.13, 0.33, 0.15),
+            perceptual_roughness: 1.0,
+            ..default()
+        }),
+        Some(5.0),
+    ));
+    let trunk_mat = materials.add(crate::see_through::swaying(
+        see_through(StandardMaterial {
+            base_color: Color::srgb(0.35, 0.24, 0.15),
+            perceptual_roughness: 1.0,
+            ..default()
+        }),
+        Some(1.0),
+    ));
     for &(pos, scale) in trees {
         commands
             .spawn((

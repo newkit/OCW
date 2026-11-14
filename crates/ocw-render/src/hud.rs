@@ -871,6 +871,10 @@ fn update_hud(
     // bike computer.
     if let Some(f) = &view.flight {
         let line = flight_line(f, *units);
+        let line = match &view.weather {
+            Some(w) => format!("{line}   {}", w.summary),
+            None => line,
+        };
         let line = match &view.sky {
             Some(s) => format!("{line}   {}", s.hud),
             None => line,
@@ -910,8 +914,13 @@ fn update_hud(
         local.heart_rate_bpm,
         *units,
     );
-    // The world clock of the rider's place (spec §14 Phase 9; the ISO
-    // timestamp of captures is separate, top right).
+    // The weather (spec §14 Phase 9, S4) and the world clock of the
+    // rider's place (spec §14 Phase 9; the ISO timestamp of captures is
+    // separate, top right).
+    let line = match &view.weather {
+        Some(w) => format!("{line}   {}", w.summary),
+        None => line,
+    };
     let line = match &view.sky {
         Some(s) => format!("{line}   {}", s.hud),
         None => line,

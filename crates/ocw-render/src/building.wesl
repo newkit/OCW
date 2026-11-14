@@ -29,6 +29,8 @@ struct BuildingLook {
     // 1 shutters, 2 shop front), (shutter rgb, door width), (door rgb,
     // door height).
     windows: array<vec4<f32>, 64>,
+    // The weather: x wetness, y puddles, z snow cover, w wind sway.
+    weather: vec4<f32>,
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100)
@@ -179,6 +181,20 @@ fn fragment(
         }
     }
 
+    // The weather (spec §14 Phase 9, S4): rain darkens walls and roofs a
+    // little, snow lies on the roofs (the faces looking up).
+    let wx = look.weather;
+    if wx.x > 0.0 {
+        albedo = albedo * mix(1.0, 0.82, wx.x);
+        rough = rough * mix(1.0, 0.7, wx.x);
+    }
+    if wx.z > 0.0 {
+        let up = normalize(in.world_normal).y;
+        let s = smoothstep(0.3, 0.6, up) * smoothstep(0.0, 0.6, wx.z);
+        albedo = mix(albedo, vec3<f32>(0.88, 0.9, 0.94), s);
+        rough = mix(rough, 0.6, s);
+        n = normalize(mix(n, normalize(in.world_normal), s));
+    }
     pbr_input.material.base_color = vec4<f32>(albedo, 1.0);
     pbr_input.material.perceptual_roughness = rough;
     pbr_input.material.emissive = vec4<f32>(emissive, 1.0);

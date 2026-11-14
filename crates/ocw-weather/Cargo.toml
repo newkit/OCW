@@ -1,0 +1,18 @@
+[package]
+name = "ocw-weather"
+description = "Weather state, transitions, simulation, road wetness, snow cover, lightning and precipitation maths for Open Cycling World (spec §14 Phase 9, 9E / 9G, S4)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Pure Rust without dependencies (spec §14 Phase 9, 9G: "ocw-weather:
+# weather state, transitions, stochastic simulation, physics coefficients.
+# Pure, wasm."): no Bevy, threads, files, clock reads or OS randomness –
+# session time and seeds are passed in, so the server, every client and the
+# tests compute the same weather. Builds for wasm32-unknown-unknown.
+[dependencies]
+
+[lints]
+workspace = true

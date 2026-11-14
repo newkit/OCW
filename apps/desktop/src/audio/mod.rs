@@ -35,6 +35,7 @@ pub mod others;
 pub mod record;
 pub mod ride;
 pub mod spatial;
+pub mod weather;
 
 use std::time::Instant;
 
@@ -76,7 +77,7 @@ impl Plugin for GameAudioPlugin {
             .add_systems(Startup, start_engine)
             .add_systems(
                 Update,
-                (sync_status, feed_ride, feed_others, play_cues)
+                (sync_status, feed_ride, feed_others, feed_weather, play_cues)
                     .run_if(resource_exists::<GameAudio>),
             );
         register_commands(app);
@@ -254,6 +255,47 @@ fn feed_others(
     *sent_empty = empty;
     *playing = frame.voices.iter().map(|v| v.id).collect();
     audio.engine.send(MixerMsg::Others(frame));
+}
+
+/// The weather's sounds (spec §14 Phase 9, S4): rain, hail, drizzle, the
+/// gusts and the wet tyres every frame (sent when they change), and each
+/// strike's thunder once it has travelled to the rider (three seconds per
+/// kilometre after the flash; in game time, so frame captures keep it).
+fn feed_weather(
+    view: Option<Res<RideView>>,
+    tunnels: Option<Res<ocw_render::tunnel::Tunnels>>,
+    audio: Res<GameAudio>,
+    mut last: Local<weather::WeatherParams>,
+    mut heard: Local<std::collections::BTreeSet<u32>>,
+) {
+    let Some(view) = view else { return };
+    let params = view.weather.as_ref().map_or_else(Default::default, |w| {
+        let speed = view.local().map_or(0.0, |l| l.state.speed as f32);
+        let sheltered = ocw_render::sky::daylight_at_rider(Some(&view), tunnels.as_deref()) < 0.5;
+        weather::weather_params(&w.state, w.wind_mps, w.ground.wetness(), speed, sheltered)
+    });
+    if params != *last {
+        audio.engine.send(MixerMsg::Weather(params));
+        *last = params;
+    }
+    let Some(w) = &view.weather else { return };
+    for s in &w.strikes {
+        let arrives = s.flash_at_s + s.strike.thunder_delay_s();
+        if heard.contains(&s.strike.id) || view.elapsed_s < arrives {
+            continue;
+        }
+        heard.insert(s.strike.id);
+        // Not a thunder that arrived long ago (a late join).
+        if view.elapsed_s - arrives < 2.0
+            && let Some(t) = weather::ThunderSound::of(&s.strike)
+        {
+            audio.engine.send(MixerMsg::Thunder(t));
+        }
+    }
+    if heard.len() > 4096 {
+        let keep: std::collections::BTreeSet<u32> = w.strikes.iter().map(|s| s.strike.id).collect();
+        heard.retain(|id| keep.contains(id));
+    }
 }
 
 /// What the cue detection saw last frame.

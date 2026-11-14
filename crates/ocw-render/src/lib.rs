@@ -40,6 +40,7 @@ pub mod tunnel;
 pub mod tunnel_cut;
 pub mod unicorn;
 pub mod voice;
+pub mod weather;
 #[cfg(test)]
 mod wheel_contact;
 pub mod workout;
@@ -97,6 +98,9 @@ pub struct RideView {
     /// The sky at the local rider (spec §14 Phase 9): local time, sun and
     /// light; `None` until the server's clock is known (fixed daylight).
     pub sky: Option<sky::SkyView>,
+    /// The weather at the local rider (spec §14 Phase 9, S4); `None`
+    /// until the server's weather is known (clear, nothing drawn).
+    pub weather: Option<weather::WeatherView>,
     /// God mode (spec §14 Phase 13): the local rider's flight (the flight
     /// camera and the flight HUD follow it); `None` while riding.
     pub flight: Option<FlightView>,
@@ -213,6 +217,7 @@ impl RideView {
             ghost: None,
             workout: None,
             sky: None,
+            weather: None,
             flight: None,
             unicorns: Vec::new(),
             pins: Vec::new(),
@@ -356,6 +361,8 @@ impl Plugin for OcwRenderPlugins {
         .add_plugins((
             sky::SkyPlugin,
             night_sky::NightSkyPlugin,
+            // Clouds, rain, snow, fog, wet roads (spec §14 Phase 9, S4).
+            weather::WeatherPlugin,
             street_lamps::StreetLampsPlugin,
             materials::MaterialsPlugin,
             ortho::OrthoPlugin,

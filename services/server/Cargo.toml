@@ -21,6 +21,7 @@ ocw-protocol.workspace = true
 ocw-world.workspace = true
 # The session world clock (spec §14 Phase 9).
 ocw-sky.workspace = true
+ocw-weather.workspace = true
 tracing.workspace = true
 sha2.workspace = true
 # Voice access tokens (JWT claims, spec §7) and session statistics

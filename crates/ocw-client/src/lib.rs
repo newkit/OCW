@@ -10,6 +10,7 @@
 //! - [`gps`] and [`sky`]: the rider's position and the sky for the HUD,
 //! - [`trainer`]: SIM / ERG trainer control (spec §5.3) and [`workout`]:
 //!   structured workouts driving ERG (spec §2.8).
+//! - [`weather`]: the session's weather, strikes and gusts (spec §14 Phase 9, S4).
 //!
 //! No threads, file system or sockets: everything here also builds for
 //! `wasm32-unknown-unknown` (spec §3.5). The apps add the Bevy glue.
@@ -22,4 +23,5 @@ pub mod gps;
 pub mod input;
 pub mod sky;
 pub mod trainer;
+pub mod weather;
 pub mod workout;

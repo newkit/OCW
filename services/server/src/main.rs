@@ -26,6 +26,15 @@ fn parse_time_control(s: &str) -> Result<ocw_server::ClockAccess, String> {
     }
 }
 
+fn parse_weather(s: &str) -> Result<String, String> {
+    ocw_weather::presets::preset(s)
+        .map(|_| s.to_owned())
+        .ok_or_else(|| {
+            let names: Vec<&str> = ocw_weather::presets::PRESETS.iter().map(|p| p.0).collect();
+            format!("one of {}", names.join(", "))
+        })
+}
+
 #[derive(Parser)]
 #[command(version, about = "Open Cycling World headless game server")]
 struct Args {
@@ -68,6 +77,14 @@ struct Args {
     /// Who may change the collision rules (host, anyone, nobody).
     #[arg(long, default_value = "host", value_parser = parse_time_control)]
     collision_control: ocw_server::ClockAccess,
+    /// Who may change the weather (spec §14 Phase 9, S4, Q2): the host,
+    /// anyone, or nobody (the weather stays as started).
+    #[arg(long, default_value = "host", value_parser = parse_time_control)]
+    weather_control: ocw_server::ClockAccess,
+    /// The weather the session starts with: a preset (`clear`, `rain`,
+    /// `thunderstorm`, `heavy-snow`, `fog` …; ocw_weather::presets).
+    #[arg(long, value_name = "PRESET", value_parser = parse_weather)]
+    weather: Option<String>,
     /// Free ride on the road graph of this world package (version 2,
     /// from `world-builder package`; a path or a cache id) instead of the
     /// test loop. Verified on load (spec §4.7).
@@ -347,6 +364,12 @@ fn main() {
             collisions: args.collisions == "on",
             chaotic_bots: args.chaotic_bots,
             collision_access: args.collision_control,
+            weather_access: args.weather_control,
+            weather: args
+                .weather
+                .as_deref()
+                .map(|w| ocw_weather::presets::preset(w).expect("checked by the parser")),
+            weather_seed: None,
         },
     );
     if let Some(echo) = server.session().echo_rider() {

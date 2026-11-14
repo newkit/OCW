@@ -281,6 +281,9 @@ pub struct TerrainLook {
     /// tint between these distances (m); z: its share there; w: the tint
     /// strength.
     pub ortho_blend: Vec4,
+    /// The weather (spec §14 Phase 9, S4; [`crate::weather::surface_uniform`]):
+    /// x wetness, y puddles, z snow cover, w wind sway.
+    pub weather: Vec4,
 }
 
 impl Default for TerrainLook {
@@ -294,6 +297,7 @@ impl Default for TerrainLook {
             tile: Vec4::new(1000.0, CANOPY_SHADE, 0.0, 0.0),
             ortho: ortho.0,
             ortho_blend: ortho.1,
+            weather: Vec4::ZERO,
         }
     }
 }

@@ -298,6 +298,35 @@ fn update_view(
         position,
         ocw_sky::light::DEFAULT_NIGHT_FLOOR,
     );
+    // The session's weather (spec §14 Phase 9, S4), as on the desktop.
+    view.weather = ocw_client::weather::weather_view(&mut s.client, now);
+}
+
+/// `weather …`: the session's weather, as on the desktop (spec §14 Phase
+/// 9, S4; the server decides who may change it).
+fn weather_command(world: &mut World, args: &[&str]) -> Result<String, String> {
+    use ocw_weather::command::{self, WeatherCommand};
+    let cmd = command::parse(args)?;
+    if cmd == WeatherCommand::List {
+        return Ok(command::list());
+    }
+    let now = world.resource::<Time>().elapsed_secs_f64();
+    let s = session_mut(world)?;
+    if cmd == WeatherCommand::Show {
+        return ocw_client::weather::describe(&mut s.client, now);
+    }
+    if !s.client.may_change_weather() {
+        return Err(format!(
+            "{} sets the weather of this ride",
+            s.client.weather_control()
+        ));
+    }
+    let base = ocw_client::weather::change_base(&mut s.client, now);
+    if let Some(change) = ocw_client::weather::request_for(&cmd, base) {
+        let msg = ocw_client::client::ClientCore::weather_message(&change);
+        s.send(&msg);
+    }
+    Ok(String::new())
 }
 
 /// The devices (B4): the ones the page connected start in the session;
@@ -489,6 +518,25 @@ fn register_commands(app: &mut App) {
                 .map(|v| v.map(String::as_str).collect())
                 .unwrap_or_default();
             time_command(world, &args)
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("weather")
+            .about("The weather at your place in the world; presets, fields, transitions, the simulation")
+            .long_about(ocw_weather::command::USAGE)
+            .arg(
+                Arg::new("args")
+                    .num_args(0..)
+                    .allow_hyphen_values(true)
+                    .action(clap::ArgAction::Append),
+            ),
+        |world, m| {
+            let args: Vec<&str> = m
+                .get_many::<String>("args")
+                .map(|v| v.map(String::as_str).collect())
+                .unwrap_or_default();
+            weather_command(world, &args)
         },
     ))
     .console_command(ConsoleCommand::new(

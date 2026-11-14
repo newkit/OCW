@@ -47,6 +47,8 @@ struct RoadLook {
     crossing_colour: vec4<f32>,
     // patch chance asphalt, worn; crack chance worn, asphalt.
     wear: vec4<f32>,
+    // The weather: x wetness, y puddles, z snow cover, w wind sway.
+    weather: vec4<f32>,
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100)
@@ -413,6 +415,35 @@ fn fragment(
         alpha = max(c.x, c.y) * 0.92;
         rough = 0.55;
         N = geo_n;
+    }
+    // The weather (spec §14 Phase 9, S4; `ocw_weather::ground`): a wet
+    // road is darker and glossy; when the puddles fill, water stands in
+    // the hollows (the low spots of a noise relief, the worn wheel ruts,
+    // the edges) as dark mirrors. Snow lies on the verges only (roads are
+    // cleared, spec 9C).
+    let wet = look.weather.x;
+    if wet > 0.0 && kind != 1u && kind != 5u {
+        albedo = albedo * mix(1.0, select(0.55, 0.72, kind == 2u), wet);
+        rough = mix(rough, select(0.2, 0.42, kind == 2u), wet);
+        N = normalize(mix(N, geo_n, wet * 0.6));
+        let pud = look.weather.y;
+        if pud > 0.0 && (kind == 0u || kind == 4u) {
+            var hollow = vnoise(wp.xz / 3.1) * 0.65 + vnoise(wp.xz / 0.9 + vec2<f32>(7.3, 1.9)) * 0.35;
+            if kind == 0u {
+                hollow = hollow + 0.18 * tracks(u, half, lines & 7u, (lines >> 3u) & 7u)
+                    + 0.12 * smoothstep(half * 0.7, half, abs(u));
+            }
+            let level = 1.0 - 0.5 * pud;
+            let water = smoothstep(level, level + 0.04, hollow) * smoothstep(0.0, 0.2, pud);
+            albedo = mix(albedo, albedo * 0.45, water);
+            rough = mix(rough, 0.04, water);
+            N = normalize(mix(N, geo_n, water));
+        }
+    }
+    if look.weather.z > 0.0 && kind == 2u {
+        let s = look.weather.z * (0.55 + 0.45 * vnoise(wp.xz * 0.8));
+        albedo = mix(albedo, vec3<f32>(0.86, 0.89, 0.93), s);
+        rough = mix(rough, 0.6, s);
     }
     pbr_input.material.base_color = vec4<f32>(albedo, alpha);
     pbr_input.material.perceptual_roughness = clamp(rough, 0.089, 1.0);
