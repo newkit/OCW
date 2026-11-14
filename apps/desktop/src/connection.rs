@@ -484,17 +484,21 @@ pub fn rejoin_route(world: &mut World) -> Result<String, String> {
     Ok("rejoining the route".into())
 }
 
+/// What else the view needs: the loading notice, the camera shake setting
+/// and the accessibility options (reduced motion).
+type ViewOptions<'w> = (
+    Option<Res<'w, crate::ride::Loading>>,
+    Option<Res<'w, crate::camera_path::CameraShake>>,
+    Option<Res<'w, ocw_render::access::Accessibility>>,
+);
+
 pub(crate) fn update_view(
     time: Res<Time>,
     fixed: Res<Time<Fixed>>,
     client: Res<ClientState>,
     link: Res<LinkNotice>,
     session: Option<Res<SessionStart>>,
-    (loading, shake, access): (
-        Option<Res<crate::ride::Loading>>,
-        Option<Res<crate::camera_path::CameraShake>>,
-        Option<Res<ocw_render::access::Accessibility>>,
-    ),
+    (loading, shake, access): ViewOptions,
     mut view: ResMut<RideView>,
 ) {
     let now = time.elapsed_secs_f64();

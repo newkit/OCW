@@ -93,7 +93,9 @@ pub struct Recording {
 }
 
 impl Recording {
-    /// Ends the ride and saves it; `Ok(None)` if there was nothing to save.
+    /// Ends the ride and saves it; `Ok(None)` if there was nothing to save
+    /// (the app saves with [`save_now`], which adds the training history).
+    #[cfg(test)]
     pub fn save(&mut self, min_duration_s: f64) -> Result<Option<PathBuf>, String> {
         if self.recorder.duration_s() < min_duration_s {
             return Ok(None);

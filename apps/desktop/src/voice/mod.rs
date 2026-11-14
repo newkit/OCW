@@ -20,7 +20,9 @@ use ocw_render::RideView;
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
 use ocw_render::menu::ride_input;
 use ocw_render::voice::VoiceHud;
-use ocw_voice::hotkeys::{Input, Toggle};
+#[cfg(test)]
+use ocw_voice::hotkeys::Input;
+use ocw_voice::hotkeys::Toggle;
 use ocw_voice::{MuteState, VoiceController, VoiceSettings};
 
 use ocw_client::voice::{self as voice_cmd, SettingsStore};
@@ -70,11 +72,14 @@ impl Plugin for VoicePlugin {
 // ------------------------------------------------------------- hotkeys
 
 /// The Bevy inputs of the voice hotkeys (the mapping is
-/// [`ocw_voice::hotkeys::toggle`]).
+/// [`ocw_voice::hotkeys::toggle`]; the app reads the bound keys through
+/// `ocw_ui::bindings::voice_toggles`, these stay for the mapping's tests).
+#[cfg(test)]
 pub fn key_input(m_pressed: bool, shift_held: bool) -> Option<Input> {
     m_pressed.then_some(Input::KeyM { shift: shift_held })
 }
 
+#[cfg(test)]
 pub fn pad_input(button: GamepadButton) -> Option<Input> {
     match button {
         GamepadButton::Select => Some(Input::PadSelect),

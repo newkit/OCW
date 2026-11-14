@@ -64,7 +64,6 @@ impl Plugin for InputPlugin {
 }
 
 #[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
-#[allow(clippy::too_many_arguments)]
 fn steer(
     keys: Res<ButtonInput<KeyCode>>,
     pads: Query<&Gamepad>,
