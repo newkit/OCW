@@ -461,6 +461,9 @@ fn main() -> AppExit {
         // Phase 13 G5) and the rider list (13E).
         camera_path::CameraPathPlugin,
         riders_page::RidersPagePlugin,
+        // `display.quality` and the console's `quality` / `gpu` (spec §14
+        // Phase 10 B7; auto is High here: the desktop's look).
+        ocw_ui::quality::QualityPlugin,
     ))
     .add_systems(Startup, startup_commands)
     .add_systems(Update, timed_commands);

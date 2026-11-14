@@ -82,6 +82,50 @@ impl Default for SkySettings {
     }
 }
 
+/// Whether this GPU can draw Bevy's atmosphere: compute shaders and
+/// storage textures of `Rgba16Float` (Bevy's own conditions). WebGL 2 has
+/// neither (spec §14 Phase 10 B7): there the sky is drawn simple, whatever
+/// `display.sky` says – the camera with the atmosphere would need a
+/// storage buffer in the fragment stage, which WebGL 2 lacks.
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AtmosphereSupport(pub bool);
+
+impl Default for AtmosphereSupport {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
+/// The adapter's answer to [`AtmosphereSupport`].
+pub fn atmosphere_supported(adapter: &bevy::render::renderer::RenderAdapter) -> bool {
+    use bevy::render::render_resource::{DownlevelFlags, TextureFormat, TextureUsages};
+    adapter
+        .get_downlevel_capabilities()
+        .flags
+        .contains(DownlevelFlags::COMPUTE_SHADERS)
+        && adapter
+            .get_texture_format_features(TextureFormat::Rgba16Float)
+            .allowed_usages
+            .contains(TextureUsages::STORAGE_BINDING)
+}
+
+fn detect_atmosphere_support(
+    adapter: Option<Res<bevy::render::renderer::RenderAdapter>>,
+    mut support: ResMut<AtmosphereSupport>,
+) {
+    if let Some(adapter) = adapter
+        && adapter.is_changed()
+    {
+        let ok = atmosphere_supported(&adapter);
+        if support.0 != ok {
+            if !ok {
+                info!("sky: no atmosphere on this GPU (no compute shaders): the simple sky");
+            }
+            support.0 = ok;
+        }
+    }
+}
+
 /// Marks the sun (the scene's directional light).
 #[derive(Component)]
 pub struct Sun;
@@ -113,9 +157,17 @@ impl Plugin for SkyPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SkySettings>()
             .init_resource::<ExposureState>()
+            .init_resource::<AtmosphereSupport>()
             .add_systems(
                 Update,
-                (apply_sky, atmosphere, add_bike_lamps, bike_lamps).chain(),
+                (
+                    detect_atmosphere_support,
+                    apply_sky,
+                    atmosphere,
+                    add_bike_lamps,
+                    bike_lamps,
+                )
+                    .chain(),
             );
         register_commands(app);
     }
@@ -186,6 +238,7 @@ fn apply_sky(
     clouds: Option<Res<crate::weather::clouds::CloudState>>,
     mut scene: Option<ResMut<crate::weather::SceneLight>>,
     mut commands: Commands,
+    support: Res<AtmosphereSupport>,
 ) {
     let Some(sky) = view.as_ref().and_then(|v| v.sky.as_ref()) else {
         return;
@@ -196,7 +249,7 @@ fn apply_sky(
     let light = ocw_sky::light::light(sky.sky.sun.elevation_deg, settings.night_floor);
     let moon = &sky.sky.moon;
     let moonlight = ocw_sky::night::moonlight(moon.elevation_deg, moon.phase_angle_deg);
-    let atmosphere = settings.mode == SkyMode::Atmosphere;
+    let atmosphere = settings.mode == SkyMode::Atmosphere && support.0;
     let key = key_light(&sky.sky, &light, &moonlight, atmosphere);
     // The weather (spec §14 Phase 9, S4): clouds take the direct light
     // (a passing heap in front of the sun: its shadow sweeps over the
@@ -400,9 +453,11 @@ fn atmosphere(
     media: Option<ResMut<Assets<ScatteringMedium>>>,
     existing: Query<Entity, With<SkyAtmosphere>>,
     cameras: Query<(Entity, Has<AtmosphereSettings>), With<FollowCamera>>,
+    support: Res<AtmosphereSupport>,
 ) {
-    let want =
-        settings.mode == SkyMode::Atmosphere && view.as_ref().is_some_and(|v| v.sky.is_some());
+    let want = settings.mode == SkyMode::Atmosphere
+        && support.0
+        && view.as_ref().is_some_and(|v| v.sky.is_some());
     let Some(mut media) = media else { return };
     if want && existing.is_empty() {
         let medium = media.add(ScatteringMedium::default());
@@ -726,10 +781,17 @@ fn register_commands(app: &mut App) {
                 Some(_) => s.mode = SkyMode::Simple,
                 None => {}
             }
-            Ok(format!(
-                "sky {}",
-                if s.mode == SkyMode::Atmosphere { "atmosphere" } else { "simple" }
-            ))
+            let mode = s.mode;
+            let supported = world
+                .get_resource::<AtmosphereSupport>()
+                .is_none_or(|a| a.0);
+            Ok(match mode {
+                SkyMode::Atmosphere if !supported => {
+                    "sky atmosphere (this GPU has no compute shaders – WebGL 2: drawn simple)".into()
+                }
+                SkyMode::Atmosphere => "sky atmosphere".into(),
+                SkyMode::Simple => "sky simple".into(),
+            })
         },
     ))
     .console_command(ConsoleCommand::new(

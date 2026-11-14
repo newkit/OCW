@@ -6105,6 +6105,7 @@ dependencies = [
  "ocw-weather",
  "ocw-world",
  "serde",
+ "serde_json",
  "toml",
  "web-time",
 ]

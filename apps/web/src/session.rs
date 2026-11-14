@@ -66,6 +66,9 @@ pub struct SessionConfig {
     pub record: bool,
     /// Autodrive at the start (setting `controls.autodrive`, B6).
     pub autodrive: bool,
+    /// The quality preset for this visit (page option `quality`, B7: a
+    /// temporary `display.quality`, not saved).
+    pub quality: Option<String>,
 }
 
 impl Default for SessionConfig {
@@ -82,6 +85,7 @@ impl Default for SessionConfig {
             ftp_w: ocw_client::workout::DEFAULT_FTP_W,
             record: true,
             autodrive: true,
+            quality: None,
         }
     }
 }

@@ -46,11 +46,22 @@ clap.workspace = true
 # `window.ocw.netStats()` (B3: the browser test reads the link's numbers).
 serde_json.workspace = true
 
-# In the browser only: Bevy on WebGPU (wgpu's browser backend) with the
-# web platform glue; wasm-bindgen pinned to the version in Cargo.lock,
-# which the wasm-bindgen CLI of `make web` must match exactly.
+# The browser's GPU API (spec §14 Phase 10 B7): Bevy chooses WebGPU or
+# WebGL 2 when it is compiled (its shaders and limits differ), so the page
+# has two builds and loads the one the browser can run. A wasm32 build
+# needs exactly one of them (`make web` builds both; `make test-web-build`
+# the WebGPU one). Native builds (the tests) take neither: the features
+# only reach wgpu's browser backends, and leaving them out keeps the
+# workspace's Bevy the desktop's.
+[features]
+webgpu = ["bevy/webgpu"]
+webgl2 = ["bevy/webgl2"]
+
+# In the browser only: Bevy's web platform glue; wasm-bindgen pinned to
+# the version in Cargo.lock, which the wasm-bindgen CLI of `make web` must
+# match exactly.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-bevy = { workspace = true, features = ["webgpu", "web"] }
+bevy = { workspace = true, features = ["web"] }
 wasm-bindgen = "=0.2.130"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"

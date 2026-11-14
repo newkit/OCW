@@ -1867,20 +1867,28 @@ fn upload_tile(
             // `houses`): near chunks, the tile's mid and far meshes.
             let houses = std::mem::take(&mut t.houses);
             let ranges = crate::houses::lod_ranges();
+            // (The quality preset scales the ranges: `quality::HouseLod`.)
             let parts = houses
                 .near
                 .into_iter()
-                .map(|p| (p, ranges[0].clone(), true))
-                .chain(houses.mid.map(|p| (p, ranges[1].clone(), true)))
-                .chain(houses.far.map(|p| (p, ranges[2].clone(), false)));
-            for (part, range, shadows) in parts {
+                .map(|p| (p, 0u8, true))
+                .chain(houses.mid.map(|p| (p, 1, true)))
+                .chain(houses.far.map(|p| (p, 2, false)));
+            for (part, lod, shadows) in parts {
+                let range = ranges[usize::from(lod)].clone();
                 let mesh = Mesh3d(meshes.add(part.mesh.mesh()));
                 let at = Transform::from_translation(Vec3::from(part.origin));
                 let mut e = match house {
                     Some(h) => c.spawn((mesh, MeshMaterial3d(h.clone()))),
                     None => c.spawn((mesh, MeshMaterial3d(mat.clone()))),
                 };
-                e.insert((at, range, CameraInteraction::Solid, TileDetail));
+                e.insert((
+                    at,
+                    range,
+                    CameraInteraction::Solid,
+                    TileDetail,
+                    crate::quality::HouseLod(lod),
+                ));
                 if !shadows {
                     e.insert(NotShadowCaster);
                 }
@@ -1925,6 +1933,8 @@ fn upload_tile(
                     MeshMaterial3d(materials.trees.clone()),
                     CameraInteraction::SeeThrough,
                     TileDetail,
+                    // Drawn as far as the quality preset says.
+                    crate::quality::TileTrees,
                 ));
             }
             // Street lamps (spec §14 Phase 9 S2): poles in the vertex

@@ -517,13 +517,21 @@ mod tests {
             v.items,
             ["Controls", "Trainer", "Audio", "Display", "Voice", "Back"]
         );
-        // Display without fullscreen; Controls without god mode's rows.
+        // Display → Graphics without fullscreen (B7: fullscreen moved
+        // there); Controls without god mode's rows.
         let rows = |app: &App, p| sub_rows(app.world(), p);
         let display = rows(&app, sub::Page::Display);
         assert!(!display.is_empty());
+        let graphics = rows(&app, sub::Page::Graphics);
+        assert!(
+            graphics
+                .iter()
+                .any(|r| row_setting(r) == Some("display.quality"))
+        );
         assert!(
             display
                 .iter()
+                .chain(&graphics)
                 .all(|r| row_setting(r) != Some("display.fullscreen"))
         );
         let controls = rows(&app, sub::Page::Controls);
@@ -533,7 +541,11 @@ mod tests {
                 .all(|r| !row_setting(r).is_some_and(|k| k.starts_with("controls.god")))
         );
         let desktop = for_platform(
-            sub::rows(sub::Page::Display, &Settings::default(), &Riders::default()),
+            sub::rows(
+                sub::Page::Graphics,
+                &Settings::default(),
+                &Riders::default(),
+            ),
             Platform::Desktop,
         );
         assert!(

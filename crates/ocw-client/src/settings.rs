@@ -221,6 +221,14 @@ pub const SETTINGS: &[SettingDef] = &[
         apply: Apply::Command("camera.mode {}"),
     },
     SettingDef {
+        key: "display.quality",
+        kind: Kind::Choice(crate::quality::QualitySetting::CHOICES),
+        default: "auto",
+        description: "Graphics quality: shadows, MSAA, view distance, trees, houses, particles; auto = by GPU and device (High on the desktop and WebGPU, Low on WebGL 2 and phones; spec §14 Phase 10 B7)",
+        scope: Scope::Live,
+        apply: Apply::Command("quality {}"),
+    },
+    SettingDef {
         key: "display.night_brightness",
         kind: Kind::Int {
             min: 0,

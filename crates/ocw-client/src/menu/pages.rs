@@ -87,6 +87,9 @@ pub enum Page {
     /// Controls → Riding aids (spec §14 Phase 12C / 12D): the proximity
     /// cue and arrow, the "last moment" warning, the camera shake.
     RidingAids,
+    /// Display → Graphics (spec §14 Phase 10 B7): the quality preset, the
+    /// sky, fullscreen (the Display page is full).
+    Graphics,
     /// Navi → Riders in this ride (spec §14 Phase 13E, 12F; rows from
     /// `rider_list`): who rides, where, who flies, who is hurt.
     RiderList,
@@ -139,6 +142,7 @@ impl Page {
             Self::AudioVoice => "Audio: voice",
             Self::TimeMachine => "Time machine",
             Self::RidingAids => "Riding aids",
+            Self::Graphics => "Graphics",
             Self::RiderList => "Riders in this ride",
         }
     }
@@ -209,6 +213,7 @@ impl Page {
             Self::VoiceDevices | Self::VoiceParticipants => Some(Self::Voice),
             Self::AudioVoice => Some(Self::Audio),
             Self::RidingAids => Some(Self::Controls),
+            Self::Graphics => Some(Self::Display),
             _ => None,
         }
     }
@@ -278,6 +283,9 @@ impl Page {
             ],
             Self::TimeMachine => &[
                 "Date, time and speed of the world's clock (sun and light). Solo you set it; in a shared ride the host does.",
+            ],
+            Self::Graphics => &[
+                "Quality: Low and Medium draw fewer shadows, trees and houses for weaker GPUs, WebGL 2 and phones; auto chooses by GPU and device.",
             ],
             Self::RidingAids => &[
                 "Aids that never steer: an arrow to a rider close by, a warning before a hit or a slide. Shake: off for comfort.",
@@ -811,6 +819,19 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
             setting_row(settings, "display.camera", "Camera"),
             setting_row(settings, "display.fps", "FPS counter"),
             setting_row(settings, "display.night_brightness", "Night brightness (%)"),
+            // The quality preset has its own page (spec §14 Phase 10 B7;
+            // the ten-foot rule: six rows), with fullscreen and the sky.
+            Row {
+                label: "Graphics".into(),
+                value: settings.get("display.quality").ok().map(|v| v.to_string()),
+                left: None,
+                right: None,
+                confirm: Some(Activate::Open(Page::Graphics)),
+            },
+        ],
+        Page::Graphics => vec![
+            setting_row(settings, "display.quality", "Quality"),
+            setting_row(settings, "display.sky", "Sky"),
             setting_row(settings, "display.fullscreen", "Fullscreen (next start)"),
         ],
         Page::Riders => {

@@ -199,6 +199,10 @@ def visit(cdp, url, a, base, lines, label, world, stats):
                     streaming.append(s)
                 if e["params"].get("type") == "error" and re.search(r"world|server rejected", text):
                     errors.append(text)
+                # A GPU validation error stops Bevy's renderer (B7: what
+                # WebGL 2 cannot do must never get that far).
+                if re.search(r"Caught rendering error|Quitting the application", text):
+                    errors.append(text[:400])
             elif e["method"] == "Runtime.exceptionThrown":
                 d = e["params"]["exceptionDetails"]
                 text = d.get("exception", {}).get("description") or d.get("text", "")
@@ -287,6 +291,11 @@ def main():
     p.add_argument("--size", default="1280x720")
     p.add_argument("--software", action="store_true",
                    help="SwiftShader (CPU) instead of the GPU")
+    p.add_argument("--gpu", choices=("webgpu", "webgl2"), default="webgpu",
+                   help="the GPU API (B7): webgl2 starts Chromium without WebGPU, so the page"
+                        " falls back to the WebGL 2 build")
+    p.add_argument("--fps-seconds", type=float, default=5.0,
+                   help="seconds over which the frame rate is measured after the ride")
     p.add_argument("--world", help="stream this world (id or manifest URL) from the dev server")
     p.add_argument("--route", help="a route of the world package (e.g. vaduz-malbun)")
     p.add_argument("--teleport", type=float, default=0.0,
@@ -301,8 +310,9 @@ def main():
     p.add_argument("--trust-root", default=None,
                    help="root public key (hex) the page trusts (default: target/web-keys/root.hex)")
     a = p.parse_args()
-    if not os.path.exists(os.path.join(a.dir, "ocw_web_bg.wasm")):
-        sys.exit(f"{a.dir}/ocw_web_bg.wasm missing: run `make web` first")
+    module = "ocw_web_webgl2_bg.wasm" if a.gpu == "webgl2" else "ocw_web_bg.wasm"
+    if not os.path.exists(os.path.join(a.dir, module)):
+        sys.exit(f"{a.dir}/{module} missing: run `make web` first")
     query = a.query
     if a.world:
         if not os.path.isdir(os.path.join(a.dir, "worlds")):
@@ -315,7 +325,8 @@ def main():
         query = "&".join(opts + ([query] if query else []))
     os.makedirs(a.out, exist_ok=True)
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    base = os.path.join(a.out, ("web-world-" if a.world else "web-") + stamp)
+    kind = ("web-world-" if a.world else "web-") + ("webgl2-" if a.gpu == "webgl2" else "")
+    base = os.path.join(a.out, kind + stamp)
 
     stats = {}
     httpd = web_serve().server(a.dir, stats=stats)
@@ -332,13 +343,20 @@ def main():
         # page loads.
         "--no-proxy-server", "--password-store=basic",
         f"--window-size={w},{h}", "--hide-scrollbars", "--mute-audio",
-        # WebGPU in headless Chromium on Linux: Dawn on Vulkan.
-        "--enable-unsafe-webgpu", "--ignore-gpu-blocklist",
-        "--enable-features=Vulkan,WebGPUService",
-        "--use-angle=vulkan", "--enable-gpu-rasterization",
+        "--ignore-gpu-blocklist", "--enable-gpu-rasterization",
     ]
+    if a.gpu == "webgpu":
+        # WebGPU in headless Chromium on Linux: Dawn on Vulkan.
+        flags += ["--enable-unsafe-webgpu", "--enable-features=Vulkan,WebGPUService",
+                  "--use-angle=vulkan"]
+    else:
+        # No WebGPU (B7): the page must find no navigator.gpu and load the
+        # WebGL 2 build; WebGL 2 through ANGLE on Vulkan (the GPU).
+        flags += ["--disable-features=WebGPU,WebGPUService", "--disable-blink-features=WebGPU",
+                  "--enable-features=Vulkan", "--use-angle=vulkan"]
     if a.software:
-        flags += ["--use-webgpu-adapter=swiftshader", "--enable-unsafe-swiftshader"]
+        flags += (["--use-webgpu-adapter=swiftshader"] if a.gpu == "webgpu"
+                  else ["--use-angle=swiftshader"]) + ["--enable-unsafe-swiftshader"]
     # fds 3 and 4 of the child: commands in, answers out.
     cmd_r, cmd_w = os.pipe()
     res_r, res_w = os.pipe()
@@ -371,6 +389,27 @@ def main():
                  {"width": int(w), "height": int(h), "deviceScaleFactor": 1, "mobile": False})
         first = visit(cdp, url, a, base, lines, "first", bool(a.world), stats)
         visits = [first]
+        # The GPU API the page chose (B7), the app's own word for it (the
+        # console's `gpu`) and the frame rate while riding.
+        gpu = cdp.eval("JSON.stringify(window.ocwGpu || null)")
+        summary["gpu"] = json.loads(gpu) if gpu else None
+        mark = len(cdp.events)
+        cdp.eval("window.ocw && window.ocw.console('gpu')")
+        f0 = cdp.eval("[window.ocwFrames, performance.now()]")
+        end = time.time() + a.fps_seconds
+        while time.time() < end:
+            cdp.pump(0.2)
+        f1 = cdp.eval("[window.ocwFrames, performance.now()]")
+        fps = (f1[0] - f0[0]) * 1000.0 / max(1.0, f1[1] - f0[1]) if f0 and f1 else None
+        said = [console_text(e) for e in cdp.events[mark:] if e["method"] == "Runtime.consoleAPICalled"]
+        gpu_lines = [t for t in said if "gpu:" in t or "quality" in t]
+        lines.extend(f"[gpu] {t}" for t in gpu_lines)
+        want_api = {"webgpu": "WebGPU", "webgl2": "WebGL2"}[a.gpu]
+        summary["fps"] = round(fps, 1) if fps is not None else None
+        summary["gpu_console"] = gpu_lines
+        summary["gpu_ok"] = bool(summary["gpu"] and summary["gpu"].get("api") == a.gpu
+                                 and any(want_api in t for t in gpu_lines))
+        first["ok"] = first["ok"] and summary["gpu_ok"]
         if not a.world and not a.no_ui and first["ok"]:
             sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
             import web_ui_test
@@ -449,8 +488,8 @@ def main():
     with open(base + ".json", "w") as f:
         json.dump(summary, f, indent=2)
     print("\n".join(lines[-20:]))
-    keys = ("ok", "adapter", "page_timing", "joined_s", "first_tick_s", "ticks", "last",
-            "errors", "error", "second_load")
+    keys = ("ok", "gpu", "gpu_ok", "gpu_console", "fps", "adapter", "page_timing", "joined_s",
+            "first_tick_s", "ticks", "last", "errors", "error", "second_load")
     print(json.dumps({k: summary.get(k) for k in keys}, indent=2))
     if "ui" in summary:
         for c in summary["ui"]["checks"]:

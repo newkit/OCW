@@ -30,6 +30,8 @@ ocw-voice.workspace = true
 # The settings registry's file format (settings.toml; localStorage in the
 # browser).
 toml.workspace = true
+# The page's device facts for the quality preset's `auto` (B7).
+serde_json.workspace = true
 web-time.workspace = true
 # The rider profiles (riders.toml) and the rides' sidecars (B6).
 serde.workspace = true

@@ -98,6 +98,8 @@ impl Plugin for WebUiPlugin {
             ocw_ui::riders_page::RidersPagePlugin,
             ocw_ui::collisions::CollisionsPlugin,
             ocw_ui::events::EventsPlugin,
+            // `display.quality`, `quality` and `gpu` (B7).
+            ocw_ui::quality::QualityPlugin,
         ));
         if !app.world().contains_resource::<Downloads>() {
             app.insert_resource(Downloads::page());

@@ -559,6 +559,7 @@ pub(crate) fn package_view(
     view: Option<Res<crate::RideView>>,
     clouds: Option<Res<crate::weather::clouds::CloudState>>,
     mut cameras: Query<(&mut Projection, Option<&mut DistanceFog>), With<FollowCamera>>,
+    quality: Option<Res<crate::quality::RenderQuality>>,
 ) {
     let p = view.as_deref().and_then(|view| {
         let l = view.local()?;
@@ -586,6 +587,12 @@ pub(crate) fn package_view(
     {
         Some(vis) if vis < 0.9 * fog_reach(&falloff) => FogFalloff::from_visibility(vis),
         _ => falloff,
+    };
+    // The quality preset's view distance (spec §14 Phase 10 B7; High:
+    // none).
+    let (far_m, falloff) = match quality.as_deref() {
+        Some(q) => q.0.limit_view(far_m, falloff),
+        None => (far_m, falloff),
     };
     for (mut projection, fog) in &mut cameras {
         if let Projection::Perspective(pp) = &mut *projection
