@@ -45,6 +45,7 @@ pub mod filter;
 pub mod imagery;
 pub mod landuse;
 pub mod lint;
+pub mod obstacles;
 pub mod osm;
 pub mod package;
 pub mod par;

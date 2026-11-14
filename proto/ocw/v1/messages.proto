@@ -451,6 +451,9 @@ message BotBike {
 
 message StageContact {
   bool crash = 1;
+  // `dev.tree` (Phase 12 K3): the rider in wild mode is put before the
+  // nearest tree off the road ahead, riding at it (`crash` is ignored).
+  bool tree = 2;
 }
 
 message TeleportPoint {
@@ -884,6 +887,12 @@ enum ContactKind {
   CONTACT_KIND_HEAD_ON = 5;
   // A fallen rider and bike (an obstacle).
   CONTACT_KIND_OBJECT = 6;
+  // Against the world (Phase 12 K3): a tree, building, wall, fence,
+  // barrier, bridge railing or tunnel wall – which one in
+  // CrashState.obstacle.
+  CONTACT_KIND_WORLD = 7;
+  // Into the road edge at more than 30° (a hit on a wall).
+  CONTACT_KIND_ROAD_EDGE = 8;
 }
 
 message CrashState {
@@ -900,6 +909,9 @@ message CrashState {
   sint32 impulse_along_mm_s = 6;
   sint32 impulse_right_mm_s = 7;
   uint32 speed_mm_s = 8;
+  // With CONTACT_KIND_WORLD: what was hit, the code of
+  // ocw_world::obstacles::ObstacleKind (Phase 12 K3; 0: unknown).
+  uint32 obstacle = 9;
 }
 
 message Bump {

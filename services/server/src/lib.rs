@@ -995,7 +995,9 @@ impl GameServer {
                 }
             }
             Some(v1::dev_command::Cmd::Stage(st)) => {
-                let what = if st.crash {
+                let what = if st.tree {
+                    ocw_sim::session::Stage::Tree
+                } else if st.crash {
                     ocw_sim::session::Stage::Crash
                 } else {
                     ocw_sim::session::Stage::Bump

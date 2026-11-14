@@ -722,6 +722,7 @@ mod tests {
             region: None,
             time_zone: None,
             look: Default::default(),
+            obstacles: None,
         };
         // Without a palette: nothing, with a reason.
         let s = cut_corridor(&mut pkg, &imagery, CorridorOptions::default());

@@ -238,6 +238,23 @@ enum Cmd {
         #[arg(long, value_name = "KEY")]
         sign_key: Option<PathBuf>,
     },
+    /// Static obstacles (spec §14 Phase 12 K3): the OSM barriers and posts
+    /// near the roads and the tree cells into the section OBST of an
+    /// existing package (the manifest is renewed); `package` writes it too.
+    Obstacles {
+        /// The package (rewritten in place unless --out is given).
+        #[arg(long)]
+        world: PathBuf,
+        /// OSM extracts the package was built from.
+        #[arg(long, required = true)]
+        pbf: Vec<PathBuf>,
+        /// Write the package here instead.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Sign the renewed manifest with this signing key.
+        #[arg(long, value_name = "KEY")]
+        sign_key: Option<PathBuf>,
+    },
     /// Compare the DTM grids (--dem) with SRTM (--hgt) on a lattice inside
     /// a box: where the DTM covers, how much they differ.
     DemDiff {
@@ -1540,6 +1557,15 @@ fn package(args: PackageArgs) {
             bs.length_m / 1000.0
         ));
     }
+    if !no_areas {
+        // Static obstacles near the roads (section OBST, spec §14 Phase 12
+        // K3): OSM barriers and posts, the tree cells of the final package.
+        let data = read_barriers(&src.pbf, &pkg);
+        let st = stage("obstacles (OBST)", || {
+            ocw_worldgen::obstacles::add_obstacles(&mut pkg, &data, &proj)
+        });
+        area_report.push(format!("obstacles (OBST): {}", st.summary()));
+    }
     let bytes = stage("serialise", || pkg.to_bytes());
     if let Some(dir) = out.parent() {
         let _ = std::fs::create_dir_all(dir);
@@ -1817,6 +1843,198 @@ fn calibrate(
     for a in &m.manifest.attribution {
         println!("  credit: {} ({})", a.source, a.licence);
     }
+}
+
+/// The package's box in latitude / longitude (south, west, north, east),
+/// from its region or its tiles, grown by `margin_m`.
+fn package_box(pkg: &ocw_world::WorldPackage, margin_m: f64) -> (f64, f64, f64, f64) {
+    if let Some(r) = &pkg.region {
+        let m = margin_m / 111_000.0;
+        let ml = m / r.south.to_radians().cos().max(0.1);
+        return (r.south - m, r.west - ml, r.north + m, r.east + ml);
+    }
+    let proj = ocw_world::geo::LocalProjection::new(pkg.origin.0, pkg.origin.1);
+    let size = f64::from(pkg.tile_size_m);
+    let (mut s, mut w, mut n, mut e) = (90.0f64, 180.0f64, -90.0f64, -180.0f64);
+    for k in pkg.tiles.keys() {
+        let o = k.origin(size);
+        for p in [
+            [o[0] - margin_m, o[1] - margin_m],
+            [o[0] + size + margin_m, o[1] + size + margin_m],
+        ] {
+            let (lat, lon) = proj.unproject(p);
+            s = s.min(lat);
+            n = n.max(lat);
+            w = w.min(lon);
+            e = e.max(lon);
+        }
+    }
+    (s, w, n, e)
+}
+
+/// The OSM barriers of the extracts near the package.
+fn read_barriers(
+    pbf: &[PathBuf],
+    pkg: &ocw_world::WorldPackage,
+) -> ocw_worldgen::obstacles::BarrierData {
+    let mut d = stage("read PBF barriers", || {
+        ocw_worldgen::obstacles::BarrierData::read_pbfs(pbf).unwrap_or_else(|e| {
+            eprintln!("{e}");
+            std::process::exit(1);
+        })
+    });
+    stage("retain near", || d.retain_near(package_box(pkg, 100.0)));
+    d
+}
+
+/// Where to look at the obstacles (scenes, checks): rows of road bollards
+/// (three or more within 8 m) and the longest bridges, in package metres.
+fn print_obstacle_examples(pkg: &ocw_world::WorldPackage) {
+    use ocw_world::obstacles::ObstacleKind;
+    let Some(o) = &pkg.obstacles else {
+        return;
+    };
+    let bollards: Vec<[f32; 2]> = o
+        .tiles
+        .values()
+        .flat_map(|t| &t.points)
+        .filter(|p| p.kind == ObstacleKind::Bollard && p.road_barrier())
+        .map(|p| p.pos)
+        .collect();
+    let near = |a: [f32; 2], b: [f32; 2]| (a[0] - b[0]).hypot(a[1] - b[1]);
+    let mut rows: Vec<([f32; 2], usize)> = Vec::new();
+    for b in &bollards {
+        let n = bollards.iter().filter(|c| near(*b, **c) < 8.0).count();
+        if n >= 3 && rows.iter().all(|(r, _)| near(*r, *b) > 50.0) {
+            rows.push((*b, n));
+        }
+    }
+    rows.sort_by_key(|a| std::cmp::Reverse(a.1));
+    for (p, n) in rows.iter().take(8) {
+        println!("  road bollards: {n} at {:.0},{:.0}", p[0], p[1]);
+    }
+    // What the server and the clients build from it (spec §14 Phase 12 K3).
+    let t = Instant::now();
+    if let Some(w) = ocw_world::obstacles::WorldObstacles::from_package(pkg) {
+        let load_s = t.elapsed().as_secs_f64();
+        let keys: Vec<ocw_world::TileKey> = w.tiles().collect();
+        let t = Instant::now();
+        let (mut most, mut total) = (0, 0);
+        for k in &keys {
+            let n = w.tile_index(*k).map_or(0, |i| i.len());
+            most = most.max(n);
+            total += n;
+        }
+        println!(
+            "  world obstacles: {:.1} MB in memory, {} tiles, built in {load_s:.2} s; tile index {:.2} ms per tile ({} solids on average, at most {most})",
+            w.approx_bytes() as f64 / 1e6,
+            keys.len(),
+            t.elapsed().as_secs_f64() * 1000.0 / keys.len().max(1) as f64,
+            total / keys.len().max(1)
+        );
+        // Roads through dense forest: the most trunks within 15 m of the
+        // middle of an edge (a wild ride into the trees).
+        if let Some(g) = &pkg.graph {
+            let mut best: Vec<(usize, [f64; 2])> = Vec::new();
+            let mut cache: std::collections::HashMap<ocw_world::TileKey, Option<_>> =
+                std::collections::HashMap::new();
+            let size = f64::from(pkg.tile_size_m);
+            for e in g.edges.iter().filter(|e| !e.bridge && !e.tunnel) {
+                let p = e.points[e.points.len() / 2];
+                let key = ocw_world::TileKey::containing(p, size);
+                let index = cache.entry(key).or_insert_with(|| w.tile_index(key));
+                let Some(index) = index else { continue };
+                let mut found = Vec::new();
+                index.query(
+                    [p[0] - 15.0, p[1] - 15.0],
+                    [p[0] + 15.0, p[1] + 15.0],
+                    &mut found,
+                );
+                let n = found
+                    .iter()
+                    .filter(|s| s.kind == ObstacleKind::Tree)
+                    .count();
+                best.push((n, p));
+            }
+            best.sort_by_key(|b| std::cmp::Reverse(b.0));
+            for (n, p) in best.iter().take(5) {
+                println!("  forest road: {n} trunks near {:.0},{:.0}", p[0], p[1]);
+            }
+        }
+    }
+    let mut bridges: Vec<&ocw_world::bridges::Bridge> = pkg
+        .bridges
+        .iter()
+        .flat_map(|t| t.values())
+        .flatten()
+        .collect();
+    bridges.sort_by(|a, b| b.length_m().total_cmp(&a.length_m()));
+    for b in bridges.iter().take(5) {
+        let (mid, _) = b.at(b.length_m() / 2.0);
+        println!(
+            "  bridge: {:.0} m {:?} {:?} at {:.0},{:.0} (deck {:.0} m)",
+            b.length_m(),
+            b.structure,
+            b.railing,
+            mid[0],
+            mid[2],
+            mid[1]
+        );
+    }
+}
+
+/// `world-builder obstacles` (spec §14 Phase 12 K3).
+fn obstacles(
+    world: &std::path::Path,
+    pbf: &[PathBuf],
+    out: Option<PathBuf>,
+    key: Option<&ocw_world::manifest::SigningKeyPair>,
+) {
+    let t = Instant::now();
+    let mut pkg = stage("read package", || read_package(world));
+    let before = std::fs::metadata(world).map_or(0, |m| m.len());
+    let data = read_barriers(pbf, &pkg);
+    let proj = ocw_world::geo::LocalProjection::new(pkg.origin.0, pkg.origin.1);
+    let st = stage("obstacles (OBST)", || {
+        ocw_worldgen::obstacles::add_obstacles(&mut pkg, &data, &proj)
+    });
+    println!("obstacles (OBST): {}", st.summary());
+    print_obstacle_examples(&pkg);
+    let path = out.unwrap_or_else(|| world.to_path_buf());
+    let bytes = stage("serialise", || pkg.to_bytes());
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    stage("write", || {
+        std::fs::write(&path, &bytes).unwrap_or_else(|e| {
+            eprintln!("{}: {e}", path.display());
+            std::process::exit(1);
+        })
+    });
+    print_sections(&bytes);
+    println!(
+        "{}: {:.1} MB -> {:.1} MB ({:+.2} MB), {:.1} s",
+        path.display(),
+        before as f64 / 1e6,
+        bytes.len() as f64 / 1e6,
+        (bytes.len() as f64 - before as f64) / 1e6,
+        t.elapsed().as_secs_f64()
+    );
+    if path != world {
+        let _ = std::fs::copy(dist::sidecar(world), dist::sidecar(&path));
+    }
+    stage("manifest + hash", || {
+        dist::write_manifest(
+            &path,
+            &dist::ManifestArgs {
+                id: None,
+                name: None,
+                version: None,
+                dem_attribution: Vec::new(),
+            },
+            key,
+        )
+    });
 }
 
 /// The share of each land class, largest first.
@@ -2172,6 +2390,21 @@ fn main() {
                 out,
                 key.as_ref(),
             );
+            print_stage_profile(None);
+        }
+        Cmd::Obstacles {
+            world,
+            pbf,
+            out,
+            sign_key,
+        } => {
+            let key = sign_key.map(|k| {
+                ocw_worldstore::keys::read_signing_key(&k).unwrap_or_else(|e| {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                })
+            });
+            obstacles(&world, &pbf, out, key.as_ref());
             print_stage_profile(None);
         }
         Cmd::Check { world, peak } => {

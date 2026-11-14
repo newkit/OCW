@@ -19,6 +19,13 @@ use std::collections::HashMap;
 
 use ocw_core::RiderId;
 use ocw_world::network::splitmix;
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use ocw_core::SIM_DT;
+use ocw_world::TileKey;
+pub use ocw_world::obstacles::ObstacleKind;
+use ocw_world::obstacles::{MAX_POINT_RADIUS_M, Shape, Solid, TileIndex, WorldObstacles};
 
 /// Footprint of a rider and bike (m): wheelbase plus wheels, handlebar
 /// width (12B). The default road bike; every profile uses it for now.
@@ -116,6 +123,12 @@ pub enum ContactKind {
     HeadOn,
     /// Against an obstacle: a fallen rider and bike.
     Object,
+    /// Against the world (K3): a tree, building, wall, fence, barrier,
+    /// bridge railing or tunnel wall – solid, crash at [`CRASH_OBJECT_MPS`].
+    World(ObstacleKind),
+    /// Into the road edge at more than [`EDGE_HIT_RAD`] to the road: a hit
+    /// on a wall (12B).
+    RoadEdge,
 }
 
 impl ContactKind {
@@ -127,6 +140,8 @@ impl ContactKind {
             ContactKind::RearEnd => "rear-end",
             ContactKind::HeadOn => "head-on",
             ContactKind::Object => "fallen bike",
+            ContactKind::World(k) => k.label(),
+            ContactKind::RoadEdge => "road edge",
         }
     }
 }
@@ -326,10 +341,17 @@ fn delta(a: &Body, b: &Body, frame: Frame) -> [f64; 2] {
 /// unit normal from `a` to `b` and the depth, `None` if apart. `d` is the
 /// offset of `b`'s centre from `a`'s.
 pub fn overlap(a: &Body, b: &Body, d: [f64; 2]) -> Option<([f64; 2], f64)> {
-    let (fa, fb) = (a.forward(), b.forward());
+    rect_overlap((a.forward(), a.half()), (b.forward(), b.half()), d)
+}
+
+/// Overlap of two rectangles (direction of the long side, half length and
+/// half width), `d` the offset of `b`'s centre from `a`'s (separating axes).
+fn rect_overlap(
+    (fa, (hla, hwa)): ([f64; 2], (f64, f64)),
+    (fb, (hlb, hwb)): ([f64; 2], (f64, f64)),
+    d: [f64; 2],
+) -> Option<([f64; 2], f64)> {
     let (ra, rb) = (right_of(fa), right_of(fb));
-    let (hla, hwa) = a.half();
-    let (hlb, hwb) = b.half();
     let mut best: Option<([f64; 2], f64)> = None;
     for axis in [fa, ra, fb, rb] {
         let pa = hla * dot(fa, axis).abs() + hwa * dot(ra, axis).abs();
@@ -568,7 +590,7 @@ pub fn fallers(c: &Contact, bodies: &[Body], mode: Mode, tick: u64) -> (bool, bo
     let (a, b) = (&bodies[c.a], &bodies[c.b]);
     let v = c.closing_mps;
     match c.kind {
-        ContactKind::Object => (
+        ContactKind::Object | ContactKind::World(_) | ContactKind::RoadEdge => (
             !a.fallen && v >= CRASH_OBJECT_MPS,
             !b.fallen && v >= CRASH_OBJECT_MPS,
         ),
@@ -748,6 +770,290 @@ pub fn resolve(bodies: &[Body], frame: Frame, mode: Mode, tick: u64) -> Vec<Resp
         r.heading = heading[i];
     }
     out
+}
+
+/// The road edge is hit like a wall when a rider steers into it at more
+/// than this angle to the road (rad, 30°; 12B); below it the rider
+/// scrapes along it (§5.2.1).
+pub const EDGE_HIT_RAD: f64 = std::f64::consts::FRAC_PI_6;
+
+/// A contact of a body with a solid of the world (K3).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StaticContact {
+    pub kind: ObstacleKind,
+    /// Unit normal from the body into the obstacle.
+    pub normal: [f64; 2],
+    /// Overlap along the normal (m).
+    pub depth: f64,
+    /// The body's speed into the obstacle along the normal (m/s, ≥ 0).
+    pub closing_mps: f64,
+}
+
+/// The contact of `body` (at `pos`, moving with `vel`) with `solid`.
+pub fn static_contact(
+    body: &Body,
+    pos: [f64; 2],
+    vel: [f64; 2],
+    solid: &Solid,
+) -> Option<StaticContact> {
+    let f = body.forward();
+    let r = right_of(f);
+    let (hl, hw) = body.half();
+    let (normal, depth) = match solid.shape {
+        Shape::Circle { c, r: radius } => {
+            let rel = sub(c, pos);
+            let (lx, ly) = (dot(rel, f), dot(rel, r));
+            let (qx, qy) = (lx.clamp(-hl, hl), ly.clamp(-hw, hw));
+            let (dx, dy) = (lx - qx, ly - qy);
+            let dist = dx.hypot(dy);
+            if dist > 1e-9 {
+                if dist >= radius {
+                    return None;
+                }
+                (add(scale(f, dx / dist), scale(r, dy / dist)), radius - dist)
+            } else {
+                // The centre inside the footprint: out along the shorter way.
+                let (px, py) = (hl - lx.abs(), hw - ly.abs());
+                if px < py {
+                    (scale(f, if lx >= 0.0 { 1.0 } else { -1.0 }), px + radius)
+                } else {
+                    (scale(r, if ly >= 0.0 { 1.0 } else { -1.0 }), py + radius)
+                }
+            }
+        }
+        Shape::Segment { a, b, half } => {
+            let ab = sub(b, a);
+            let len = dot(ab, ab).sqrt();
+            if len < 1e-9 {
+                return None;
+            }
+            let mid = scale(add(a, b), 0.5);
+            rect_overlap(
+                (f, (hl, hw)),
+                (scale(ab, 1.0 / len), (len / 2.0, half.max(0.02))),
+                sub(mid, pos),
+            )?
+        }
+    };
+    Some(StaticContact {
+        kind: solid.kind,
+        normal,
+        depth,
+        closing_mps: dot(vel, normal).max(0.0),
+    })
+}
+
+/// Resolves a body against the solids of the world around it (K3): it is
+/// pushed out of each (no overlap left), loses its speed into the
+/// obstacle (restitution [`RESTITUTION`], friction [`FRICTION`] along it)
+/// and rides on along it; at [`CRASH_OBJECT_MPS`] or more into it the
+/// rider crashes (in [`Mode::Full`]), else wobbles. `max_heading` bounds
+/// the heading it rides on with (wild mode's). Off: nothing.
+pub fn resolve_static(body: &Body, solids: &[Solid], mode: Mode, max_heading: f64) -> Response {
+    let mut out = Response::default();
+    if mode == Mode::Off || body.fallen || solids.is_empty() {
+        return out;
+    }
+    let (mut pos, mut vel) = (body.pos, body.velocity());
+    let mut hardest: Option<StaticContact> = None;
+    let before = vel;
+    // A few passes: a corner between two walls pushes out of both.
+    for _ in 0..3 {
+        let mut any = false;
+        for s in solids {
+            let Some(c) = static_contact(body, pos, vel, s) else {
+                continue;
+            };
+            any = true;
+            pos = sub(pos, scale(c.normal, c.depth + 0.005));
+            let vn = dot(vel, c.normal);
+            if vn > 0.0 {
+                let j = (1.0 + RESTITUTION) * vn;
+                vel = sub(vel, scale(c.normal, j));
+                let t = right_of(c.normal);
+                let vt = dot(vel, t);
+                let jt = vt.clamp(-FRICTION * j, FRICTION * j);
+                vel = sub(vel, scale(t, jt));
+            }
+            if hardest.is_none_or(|h| c.closing_mps > h.closing_mps) {
+                hardest = Some(c);
+            }
+        }
+        if !any {
+            break;
+        }
+    }
+    let Some(c) = hardest else {
+        return out;
+    };
+    let push = sub(pos, body.pos);
+    out.ds = dot(push, body.road);
+    out.dd = dot(push, body.road_right());
+    let along = dot(vel, body.road);
+    let side = dot(vel, body.road_right());
+    let speed = dot(vel, vel).sqrt();
+    if along <= 0.05 || speed < 0.05 {
+        // Stopped by it (head-on), or bounced back: standing.
+        out.speed = Some(0.0);
+    } else {
+        out.speed = Some(speed);
+        out.heading = Some(side.atan2(along).clamp(-max_heading, max_heading));
+    }
+    let away = scale(c.normal, -1.0);
+    let crash = mode == Mode::Full && c.closing_mps >= CRASH_OBJECT_MPS;
+    if crash {
+        let f = body.forward();
+        let push = add(sub(vel, before), scale(away, 0.3 * c.closing_mps));
+        out.crash = Some(Hit {
+            kind: ContactKind::World(c.kind),
+            other: RiderId(0),
+            closing_mps: c.closing_mps,
+            energy_j: 0.5 * body.mass * c.closing_mps * c.closing_mps,
+            impulse: [dot(push, f), dot(push, right_of(f))],
+        });
+    } else if c.closing_mps > 0.0 {
+        let s = dot(away, body.road_right()).signum();
+        out.bump = Some((
+            wobble_strength(c.closing_mps),
+            if s == 0.0 { 1.0 } else { s },
+        ));
+    }
+    out
+}
+
+/// Hitting the road edge (12B): a rider stopped by the edge while riding
+/// into it at `heading` (rad to the road) with `speed` (m/s). Above
+/// [`EDGE_HIT_RAD`] it is a hit on a wall: the speed into the edge is lost,
+/// a crash at [`CRASH_OBJECT_MPS`] or more (in [`Mode::Full`]), else a
+/// wobble; below it the scrape of §5.2.1 (`None`).
+pub fn edge_hit(speed: f64, heading: f64, mass: f64, mode: Mode) -> Option<Response> {
+    if mode == Mode::Off || heading.abs() <= EDGE_HIT_RAD || speed <= 0.0 {
+        return None;
+    }
+    let closing = speed * heading.abs().sin();
+    let along = speed * heading.cos();
+    // Towards the edge: + to the right (positive heading).
+    let side = heading.signum();
+    let after = (along - FRICTION * (1.0 + RESTITUTION) * closing).max(0.0);
+    let mut out = Response {
+        speed: Some(after),
+        heading: Some(0.0),
+        ..Default::default()
+    };
+    if mode == Mode::Full && closing >= CRASH_OBJECT_MPS {
+        // The push in the rider's own frame: the velocity change, at least
+        // away from the edge by a share of the closing speed.
+        let (sn, cs) = heading.sin_cos();
+        let f = [cs, sn];
+        let push = add(
+            sub([after, 0.0], scale(f, speed)),
+            [0.0, -side * 0.3 * closing],
+        );
+        out.crash = Some(Hit {
+            kind: ContactKind::RoadEdge,
+            other: RiderId(0),
+            closing_mps: closing,
+            energy_j: 0.5 * mass * closing * closing,
+            impulse: [dot(push, f), dot(push, right_of(f))],
+        });
+    } else {
+        out.bump = Some((wobble_strength(closing), -side));
+    }
+    Some(out)
+}
+
+/// Tiles of the obstacle index not used for this long are dropped (s).
+pub const WORLD_TILE_KEEP_S: f64 = 30.0;
+
+/// The world's static obstacles (spec §14 Phase 12 K3) and the spatial
+/// index of the tiles near riders in wild mode, built when first needed.
+#[derive(Debug, Clone, Default)]
+pub struct WorldCache {
+    pub world: Option<Arc<WorldObstacles>>,
+    /// Per tile its index (`None`: nothing solid) and the tick it was last
+    /// used.
+    tiles: BTreeMap<TileKey, (Option<Arc<TileIndex>>, u64)>,
+}
+
+impl WorldCache {
+    pub fn new(world: Option<Arc<WorldObstacles>>) -> Self {
+        Self {
+            world,
+            tiles: BTreeMap::new(),
+        }
+    }
+
+    /// The solids whose index cells overlap the box (lo, hi), from every
+    /// tile it touches (grown by the largest point radius: a pylon in the
+    /// next tile still counts), each once.
+    pub fn solids_near(&mut self, lo: [f64; 2], hi: [f64; 2], tick: u64, out: &mut Vec<Solid>) {
+        let Some(world) = &self.world else {
+            return;
+        };
+        let size = f64::from(world.tile_size_m());
+        let m = MAX_POINT_RADIUS_M;
+        let (lo, hi) = ([lo[0] - m, lo[1] - m], [hi[0] + m, hi[1] + m]);
+        let (a, b) = (TileKey::containing(lo, size), TileKey::containing(hi, size));
+        for x in a.x..=b.x {
+            for z in a.z..=b.z {
+                let key = TileKey { x, z };
+                let entry = self
+                    .tiles
+                    .entry(key)
+                    .or_insert_with(|| (world.tile_index(key).map(Arc::new), tick));
+                entry.1 = tick;
+                if let Some(index) = &entry.0 {
+                    let first = out.len();
+                    index.query(lo, hi, out);
+                    // A wall reaching over a tile border is in both tiles.
+                    let mut k = first;
+                    while k < out.len() {
+                        if out[..first].iter().any(|o| o.id == out[k].id) {
+                            out.swap_remove(k);
+                        } else {
+                            k += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Drops the tiles nobody used for [`WORLD_TILE_KEEP_S`].
+    pub fn sweep(&mut self, tick: u64) {
+        let keep = (WORLD_TILE_KEEP_S / SIM_DT) as u64;
+        self.tiles
+            .retain(|_, (_, used)| tick.saturating_sub(*used) <= keep);
+    }
+
+    /// Tiles with an index in memory.
+    pub fn loaded(&self) -> usize {
+        self.tiles.len()
+    }
+
+    /// Resolves `body` (its road at height `y`) against the solids around
+    /// it ([`resolve_static`]); `scratch` is reused between calls.
+    pub fn resolve(
+        &mut self,
+        body: &Body,
+        y: f64,
+        tick: u64,
+        mode: Mode,
+        max_heading: f64,
+        scratch: &mut Vec<Solid>,
+    ) -> Response {
+        let reach = BODY_LENGTH_M / 2.0 + 0.5;
+        scratch.clear();
+        self.solids_near(
+            [body.pos[0] - reach, body.pos[1] - reach],
+            [body.pos[0] + reach, body.pos[1] + reach],
+            tick,
+            scratch,
+        );
+        // Railings and tunnel walls only at the height of the own road.
+        scratch.retain(|s| s.reaches(y));
+        resolve_static(body, scratch, mode, max_heading)
+    }
 }
 
 /// A soft bump of a rider (12B), for the wobble and the sound.
@@ -1170,6 +1476,130 @@ mod tests {
             .map(|i| wobble(f64::from(i) * 0.01, 0.1, 1.0).abs())
             .fold(0.0, f64::max);
         assert!(peak > 0.04 && peak <= 0.1, "{peak}");
+    }
+
+    fn solid(shape: Shape, kind: ObstacleKind) -> Solid {
+        Solid {
+            shape,
+            kind,
+            y: None,
+            id: 1,
+        }
+    }
+
+    #[test]
+    fn static_contacts_with_circles_and_walls() {
+        let a = rider(1, 0.0, 0.0, 8.0);
+        // A trunk just touching the front: normal forwards.
+        let tree = solid(
+            Shape::Circle {
+                c: [1.0, 0.0],
+                r: 0.3,
+            },
+            ObstacleKind::Tree,
+        );
+        let c = static_contact(&a, a.pos, a.velocity(), &tree).unwrap();
+        assert!(
+            (c.depth - 0.175).abs() < 1e-9 && c.normal[0] > 0.99,
+            "{c:?}"
+        );
+        assert!((c.closing_mps - 8.0).abs() < 1e-9);
+        // Beside it: none.
+        let far = solid(
+            Shape::Circle {
+                c: [0.0, 0.6],
+                r: 0.3,
+            },
+            ObstacleKind::Tree,
+        );
+        assert!(static_contact(&a, a.pos, a.velocity(), &far).is_none());
+        // A wall along the rider's right side, overlapping 5 cm: normal to
+        // the right, no closing speed (riding along it).
+        let w = solid(
+            Shape::Segment {
+                a: [-5.0, 0.4],
+                b: [5.0, 0.4],
+                half: 0.2,
+            },
+            ObstacleKind::Wall,
+        );
+        let c = static_contact(&a, a.pos, a.velocity(), &w).unwrap();
+        assert!((c.depth - 0.05).abs() < 1e-9 && c.normal[1] > 0.99, "{c:?}");
+        assert_eq!(c.closing_mps, 0.0);
+    }
+
+    #[test]
+    fn hitting_the_world_crashes_or_bumps_by_the_closing_speed() {
+        let tree = solid(
+            Shape::Circle {
+                c: [0.95, 0.0],
+                r: 0.3,
+            },
+            ObstacleKind::Tree,
+        );
+        let fast = rider(1, 0.0, 0.0, 8.0);
+        let r = resolve_static(&fast, &[tree], Mode::Full, 1.2);
+        let hit = r.crash.expect("8 m/s into a tree");
+        assert_eq!(hit.kind, ContactKind::World(ObstacleKind::Tree));
+        assert_eq!(hit.kind.label(), "tree");
+        assert!((hit.energy_j - 0.5 * M * 64.0).abs() < 1e-6);
+        // Pushed out, stopped.
+        assert!(r.ds < 0.0 && r.speed == Some(0.0), "{r:?}");
+        let moved = Body {
+            pos: [fast.pos[0] + r.ds, fast.pos[1] + r.dd],
+            ..fast
+        };
+        assert!(static_contact(&moved, moved.pos, [0.0, 0.0], &tree).is_none());
+        // Soft bumps only: no crash; slowly (3 m/s): a bump.
+        assert!(
+            resolve_static(&fast, &[tree], Mode::Soft, 1.2)
+                .crash
+                .is_none()
+        );
+        let slow = rider(1, 0.0, 0.0, 3.0);
+        let r = resolve_static(&slow, &[tree], Mode::Full, 1.2);
+        assert!(r.crash.is_none() && r.bump.is_some());
+        // Off: nothing.
+        assert!(!resolve_static(&fast, &[tree], Mode::Off, 1.2).touched());
+        // Glancing a wall at 15° (2.1 m/s into it): rides on along it.
+        let wall = solid(
+            Shape::Segment {
+                a: [-5.0, 0.6],
+                b: [5.0, 0.6],
+                half: 0.2,
+            },
+            ObstacleKind::Wall,
+        );
+        let glance = Body {
+            heading: 0.26,
+            ..rider(1, 0.0, 0.25, 8.0)
+        };
+        let r = resolve_static(&glance, &[wall], Mode::Full, 1.2);
+        assert!(r.crash.is_none() && r.bump.is_some(), "{r:?}");
+        assert!(
+            r.speed.unwrap() > 6.5 && r.heading.unwrap().abs() < 0.05,
+            "{r:?}"
+        );
+        assert!(r.dd < 0.0, "pushed away from the wall");
+    }
+
+    #[test]
+    fn the_road_edge_is_a_wall_above_30_degrees() {
+        // Below 30°: the scrape (no hit).
+        assert!(edge_hit(10.0, 0.5, M, Mode::Full).is_none());
+        // 40° at 10 m/s: 6.4 m/s into the edge, a crash.
+        let r = edge_hit(10.0, 0.7, M, Mode::Full).unwrap();
+        let hit = r.crash.unwrap();
+        assert_eq!(hit.kind, ContactKind::RoadEdge);
+        assert!((hit.closing_mps - 10.0 * 0.7f64.sin()).abs() < 1e-9);
+        assert_eq!(r.heading, Some(0.0));
+        // Thrown back from the edge (to the left of a rider heading right).
+        assert!(hit.impulse[1] < 0.0, "{hit:?}");
+        // 40° at 4 m/s (2.6 m/s): a bump; soft bumps only: never a crash.
+        let r = edge_hit(4.0, -0.7, M, Mode::Full).unwrap();
+        assert!(r.crash.is_none() && r.bump.unwrap().1 > 0.0);
+        assert!(edge_hit(10.0, 0.7, M, Mode::Soft).unwrap().crash.is_none());
+        assert!(edge_hit(10.0, 0.7, M, Mode::Off).is_none());
     }
 
     #[test]

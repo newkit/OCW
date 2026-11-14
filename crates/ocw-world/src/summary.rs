@@ -269,6 +269,7 @@ mod tests {
             time_zone: sections.then(|| "Europe/Vaduz".into()),
             bridges: None,
             look: Default::default(),
+            obstacles: None,
         }
     }
 

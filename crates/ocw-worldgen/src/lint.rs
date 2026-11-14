@@ -301,7 +301,57 @@ pub fn lint(pkg: &WorldPackage, water: Option<&WaterBodies>) -> LintReport {
     }
     lint_buildings(pkg, &mut r);
     lint_landuse(pkg, &mut r);
+    lint_obstacles(pkg, &mut r);
     r
+}
+
+/// Barriers on a carriageway (section `OBST`, spec §14 Phase 12 12H, Q7):
+/// `obstacle.on_road.KIND`, and `obstacle.on_through_road.KIND` where the
+/// road is not a dead end – a gate across a through road is a data error,
+/// noted here and never solid.
+fn lint_obstacles(pkg: &WorldPackage, r: &mut LintReport) {
+    let Some(o) = &pkg.obstacles else {
+        return;
+    };
+    let index = pkg
+        .graph
+        .as_ref()
+        .map(|g| (g, SegmentIndex::new(g, 20.0, |_| true)));
+    for t in o.tiles.values() {
+        for p in t
+            .points
+            .iter()
+            .filter(|p| p.flags & ocw_world::obstacles::ON_ROAD != 0)
+        {
+            let at = [f64::from(p.pos[0]), f64::from(p.pos[1])];
+            let label = p.kind.label().replace(' ', "_");
+            let through = index.as_ref().and_then(|(g, idx)| {
+                let hit = idx
+                    .near(g, at, 15.0)
+                    .into_iter()
+                    .min_by(|a, b| a.dist.total_cmp(&b.dist))?;
+                let e = &g.edges[hit.edge];
+                (e.dead_end_m.is_none()).then_some(e.osm_way)
+            });
+            r.add(
+                &format!("obstacle.on_road.{label}"),
+                1.0,
+                case(at, 1.0, 0, format!("{} on the carriageway", p.kind.label())),
+            );
+            if let Some(way) = through {
+                r.add(
+                    &format!("obstacle.on_through_road.{label}"),
+                    1.0,
+                    case(
+                        at,
+                        1.0,
+                        way,
+                        format!("{} across a through road (not solid, Q7)", p.kind.label()),
+                    ),
+                );
+            }
+        }
+    }
 }
 
 fn case(at: [f64; 2], value: f64, osm: i64, note: String) -> Case {
@@ -1125,6 +1175,7 @@ mod tests {
             routes: vec![],
             region: None,
             look: Default::default(),
+            obstacles: None,
         }
     }
 

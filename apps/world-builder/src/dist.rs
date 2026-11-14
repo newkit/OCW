@@ -477,6 +477,7 @@ mod tests {
             region: None,
             time_zone: None,
             look: Default::default(),
+            obstacles: None,
         };
         std::fs::write(&path, pkg.to_bytes()).unwrap();
         // No manifest yet: nothing to refresh.
@@ -530,6 +531,7 @@ mod tests {
             region: None,
             time_zone: Some("Europe/Vaduz".into()),
             look: Default::default(),
+            obstacles: None,
         };
         std::fs::write(&path, pkg.to_bytes()).unwrap();
         let out = dir.path().join("worlds");
@@ -570,6 +572,7 @@ mod tests {
                 resolution_m: 0.5,
             };
         let pkg = ocw_world::WorldPackage {
+            obstacles: None,
             name: "Test".into(),
             origin: (47.9, 7.9),
             tile_size_m: 1000.0,

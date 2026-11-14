@@ -93,10 +93,17 @@ impl CollisionClient {
             if new {
                 self.reported.insert(id, start);
                 let km = f64::from(u.distance_cm) / 100_000.0;
-                let line = if Some(id) == own {
-                    format!("You crashed ({})", c.kind.label())
-                } else {
-                    format!("{} crashed at km {km:.1}", u.display_name)
+                let line = match (Some(id) == own, c.kind) {
+                    (true, _) => format!("You crashed ({})", c.kind.label()),
+                    // Into the world (spec §14 Phase 12 K3): what was hit.
+                    (false, collide::ContactKind::World(_) | collide::ContactKind::RoadEdge) => {
+                        format!(
+                            "{} crashed into the {} at km {km:.1}",
+                            u.display_name,
+                            c.kind.label()
+                        )
+                    }
+                    (false, _) => format!("{} crashed at km {km:.1}", u.display_name),
                 };
                 self.feed.push_back((now_s, line));
                 while self.feed.len() > FEED_LINES {

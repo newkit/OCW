@@ -1492,6 +1492,50 @@ args = ["--route", "loop", "--bots", "12", "--power", "230"]
 at = ["9=camera.orbit 70 18 9", "10=dev.crash"]
 shot = 12.5
 
+# --- World objects (spec §14 Phase 12 K3) ------------------------------------
+# Packages with the section OBST (world-builder obstacles); fixed time of day.
+
+[[scene]]
+name = "k3-road-bollards"
+description = "Road barriers shown (display.road_barriers on, spec §14 Phase 12 K3 / Q7): a row of bollards on a road in Liechtenstein (section OBST), drawn but never solid on the road"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-3386,-892", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "0.5=road_barriers on", "1=camera.orbit 150 22 14"]
+shot = 12
+
+[[scene]]
+name = "k3-road-bollards-hidden"
+description = "The same road in Liechtenstein with the default display.road_barriers off: the bollards on the road are not drawn (spec §14 Phase 12 Q7)"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-3386,-892", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 150 22 14"]
+shot = 12
+
+[[scene]]
+name = "k3-tree-crash-video"
+description = "Video: wild mode into the Black Forest beside a forest track (spec §14 Phase 12 K3): `dev.tree` puts the rider in wild mode 8 m before a trunk of the tree placement (section OBST) beside the track: the crash, the ragdoll among the trees, the remount"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-8364,-18257", "--bots", "0", "--power", "300"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "1=camera.orbit 35 20 8", "6=rider.wild on", "6.5=dev.tree"]
+warmup = 5
+video = 9
+
+[[scene]]
+name = "k3-tree-crash"
+description = "Down after a wild-mode crash into a tree in the Black Forest (spec §14 Phase 12 K3): the ragdoll among the trunks beside a forest track, the HUD line \"Crash! (tree)\""
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-8364,-18257", "--bots", "0", "--power", "300"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "1=camera.orbit 35 20 8", "6=rider.wild on", "6.5=dev.tree", "8=camera.orbit 120 28 9"]
+shot = 13
+
+[[scene]]
+name = "k3-bridge-railing"
+description = "Wild mode on a bridge in Liechtenstein (spec §14 Phase 12 K3): the rider steered into the parapet is held by it (the bridge railing from BRDG bounds riders on the deck) and slides along it"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-3909,-5590", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud.profile off", "1=camera.orbit 120 25 12", "3=rider.wild on", "3=rider.lean 12", "3.5=rider.lean 0"]
+shot = 10
+
 # --- Workshop (spec §14 Phase 4, W1 scene, W2 parts) -------------------------
 
 [[scene]]

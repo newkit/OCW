@@ -946,6 +946,7 @@ mod tests {
             routes: vec![],
             region: None,
             look: Default::default(),
+            obstacles: None,
         }
     }
 

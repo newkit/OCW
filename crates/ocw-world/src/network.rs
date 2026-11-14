@@ -181,6 +181,10 @@ pub struct RoadNetwork {
     pub package: String,
     /// [`RoadGraph::fingerprint`] of the graph.
     fingerprint: u64,
+    /// The static obstacles of the world the graph belongs to (spec §14
+    /// Phase 12 K3: trees, buildings, walls, barriers, railings, tunnel
+    /// walls), if its package has any.
+    obstacles: Option<std::sync::Arc<crate::obstacles::WorldObstacles>>,
 }
 
 impl RoadNetwork {
@@ -202,7 +206,22 @@ impl RoadNetwork {
             keep_left: false,
             package: String::new(),
             fingerprint,
+            obstacles: None,
         }
+    }
+
+    /// The same network with the static obstacles of its world.
+    pub fn with_obstacles(
+        mut self,
+        obstacles: Option<std::sync::Arc<crate::obstacles::WorldObstacles>>,
+    ) -> Self {
+        self.obstacles = obstacles;
+        self
+    }
+
+    /// The static obstacles of the world (spec §14 Phase 12 K3).
+    pub fn obstacles(&self) -> Option<&std::sync::Arc<crate::obstacles::WorldObstacles>> {
+        self.obstacles.as_ref()
     }
 
     /// The same network, named after its world package.

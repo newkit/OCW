@@ -1076,6 +1076,7 @@ mod tests {
             buildings: None,
             bridges: None,
             look: Default::default(),
+            obstacles: None,
         }
         .to_bytes()
     }

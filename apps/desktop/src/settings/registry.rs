@@ -242,6 +242,14 @@ pub const SETTINGS: &[SettingDef] = &[
         apply: Apply::Command("ortho {}"),
     },
     SettingDef {
+        key: "display.road_barriers",
+        kind: Kind::Bool,
+        default: "off",
+        description: "World: gates, bollards and barriers on the roads (never solid on the road; spec §14 Phase 12 Q7)",
+        scope: Scope::Live,
+        apply: Apply::Command("road_barriers {}"),
+    },
+    SettingDef {
         key: "display.unicorn_trail",
         kind: Kind::Bool,
         default: "on",
