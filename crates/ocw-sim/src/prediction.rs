@@ -3,7 +3,7 @@
 use ocw_core::{RiderProfile, SIM_DT};
 use ocw_world::Track;
 
-use crate::collide::{Body, Mode, WorldCache};
+use crate::collide::{Body, Mode, Skid, WorldCache};
 use crate::physics::{self, RiderState, Steering};
 use crate::ride::{self, Controls};
 
@@ -49,6 +49,9 @@ pub struct Predictor {
     /// The damage's effects the server applies to the rider (spec §14
     /// Phase 12E, K4: from `RiderUpdate.damage`).
     damage: crate::damage::Effects,
+    /// The skid of a lean beyond the wet road's grip (S6 → Phase 12: the
+    /// speed it costs, as on the server; the fall is only the server's).
+    skid: Skid,
 }
 
 impl Predictor {
@@ -70,7 +73,28 @@ impl Predictor {
             ticks: 0,
             weather: None,
             damage: crate::damage::Effects::NONE,
+            skid: Skid::default(),
         }
+    }
+
+    /// One tick of the skid after the physics step (as the server's step).
+    fn skid_tick(
+        &self,
+        skid: &mut Skid,
+        state: &mut RiderState,
+        route: &dyn Track,
+        controls: Controls,
+    ) {
+        let step = crate::collide::skid(
+            skid,
+            crate::collide::skid_lean(controls.steering, route, state.distance),
+            crate::weather::grip(self.weather.as_ref(), route, state),
+            state.speed,
+            self.profile.rider_mass_kg + self.profile.bike_mass_kg,
+            self.mode,
+            SIM_DT,
+        );
+        state.speed -= step.speed_loss;
     }
 
     /// The world's static obstacles (spec §14 Phase 12 K3).
@@ -110,6 +134,12 @@ impl Predictor {
         }
     }
 
+    /// The slip of a lean beyond the wet road's grip (S6 → Phase 12: 0 =
+    /// gripping, 1 = the fall), for the HUD's warning.
+    pub fn slip(&self) -> f64 {
+        self.skid.slip
+    }
+
     /// The collision model the server says is in force.
     pub fn set_collision_mode(&mut self, mode: Mode) {
         self.mode = mode;
@@ -134,6 +164,7 @@ impl Predictor {
             mass: self.profile.rider_mass_kg + self.profile.bike_mass_kg,
             fallen: false,
             manual: true,
+            grip: crate::weather::grip(self.weather.as_ref(), route, state),
         };
         let mut scratch = Vec::new();
         let r = self.world.resolve(
@@ -242,6 +273,10 @@ impl Predictor {
             self.weather.as_ref(),
             SIM_DT,
         );
+        let (mut skid, mut state) = (self.skid, self.state);
+        self.skid_tick(&mut skid, &mut state, route, controls);
+        self.skid = skid;
+        self.state = state;
         let mut capped = self.state;
         self.damage_cap(&mut capped);
         self.state = capped;
@@ -277,6 +312,7 @@ impl Predictor {
         let mut extrapolated = server;
         let steps = (age_s.max(0.0) / SIM_DT).round() as usize;
         let mut scraping = self.scraping;
+        let mut skid = self.skid;
         let (profile, power_w, controls) = self.damaged(power_w);
         for _ in 0..steps {
             ride::tick_in(
@@ -290,6 +326,7 @@ impl Predictor {
                 self.weather.as_ref(),
                 SIM_DT,
             );
+            self.skid_tick(&mut skid, &mut extrapolated, route, controls);
             self.damage_cap(&mut extrapolated);
             self.world_tick(&mut extrapolated, route);
         }
@@ -510,5 +547,54 @@ mod tests {
         );
         // Collisions off: through it.
         assert!(run(Mode::Off).distance > 300.0);
+    }
+
+    /// A lean beyond the wet road's grip (S6 → Phase 12 skid): the
+    /// prediction loses the same speed as the server, tick for tick.
+    #[test]
+    fn the_skid_is_predicted_as_the_server_rides_it() {
+        let w = crate::weather::WeatherPhysics {
+            wind: [0.0, 0.0],
+            temperature_c: 10.0,
+            pressure_hpa: 1013.25,
+            pressure_y_m: 0.0,
+            humidity: 0.8,
+            rolling_factor: 1.0,
+            grip: 0.75,
+        };
+        let route = flat();
+        let mut s = crate::session::Session::new(route.clone());
+        s.set_collisions(true);
+        s.set_weather(Some(w));
+        s.set_weather_physics(true);
+        let id = s.add_rider("a", RiderProfile::default());
+        for _ in 0..=110 {
+            s.step();
+        }
+        let start = RiderState {
+            distance: 100.0,
+            speed: 10.0,
+            ..Default::default()
+        };
+        s.set_rider_state(id, start);
+        s.set_wild(id, true);
+        s.set_lean(id, 1, physics::MAX_STEER_LEAN);
+        let mut p = Predictor::new(RiderProfile::default(), start);
+        p.set_weather(Some(w));
+        p.set_collision_mode(Mode::Full);
+        p.set_wild(true);
+        p.set_lean(physics::MAX_STEER_LEAN);
+        let mut free = p.clone();
+        free.set_collision_mode(Mode::Off);
+        // Before the server's fall (about 0.75 s on a wet road).
+        for _ in 0..25 {
+            s.step();
+            p.step(&route, 0.0);
+            free.step(&route, 0.0);
+        }
+        assert!(s.crash(id).is_none());
+        let server = s.rider_state(id).unwrap();
+        assert_eq!(p.state(), server);
+        assert!(server.speed < free.state().speed - 0.3, "{server:?}");
     }
 }

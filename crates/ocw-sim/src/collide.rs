@@ -129,6 +129,9 @@ pub enum ContactKind {
     /// Into the road edge at more than [`EDGE_HIT_RAD`] to the road: a hit
     /// on a wall (12B).
     RoadEdge,
+    /// The tyres let go on a slippery road (spec §14 Phase 9 S6 → 12B):
+    /// leaning further than the grip holds for too long ([`skid`]).
+    Slide,
 }
 
 impl ContactKind {
@@ -142,6 +145,7 @@ impl ContactKind {
             ContactKind::Object => "fallen bike",
             ContactKind::World(k) => k.label(),
             ContactKind::RoadEdge => "road edge",
+            ContactKind::Slide => "slid out",
         }
     }
 }
@@ -169,6 +173,11 @@ pub struct Body {
     /// Two autodrive riders never bring each other down – autodrive never
     /// causes a collision by its own move (12D) – they only bump.
     pub manual: bool,
+    /// The road's grip under the body relative to dry asphalt (spec §14
+    /// Phase 9 S6: 1 = dry, wet 0.75, snow 0.55, ice 0.4; 1 when the
+    /// weather does not affect the physics): the crash thresholds scale
+    /// with it ([`crash_scale`]).
+    pub grip: f64,
 }
 
 impl Body {
@@ -184,6 +193,7 @@ impl Body {
             mass,
             fallen: false,
             manual: false,
+            grip: 1.0,
         }
     }
 
@@ -593,17 +603,24 @@ pub fn fallers(c: &Contact, bodies: &[Body], mode: Mode, tick: u64) -> (bool, bo
     }
     let (a, b) = (&bodies[c.a], &bodies[c.b]);
     let v = c.closing_mps;
+    // A slippery road brings riders down more easily (S6's grip): every
+    // threshold scales with the grip under the riders (1 on a dry road,
+    // so the thresholds are exactly the dry ones).
+    let g = crash_scale(a.grip.min(b.grip));
     match c.kind {
-        ContactKind::Object | ContactKind::World(_) | ContactKind::RoadEdge => (
-            !a.fallen && v >= CRASH_OBJECT_MPS,
-            !b.fallen && v >= CRASH_OBJECT_MPS,
+        ContactKind::Object
+        | ContactKind::World(_)
+        | ContactKind::RoadEdge
+        | ContactKind::Slide => (
+            !a.fallen && v >= CRASH_OBJECT_MPS * crash_scale(a.grip),
+            !b.fallen && v >= CRASH_OBJECT_MPS * crash_scale(b.grip),
         ),
         _ if !(a.manual || b.manual) => (false, false),
-        ContactKind::HeadOn => (v > HEAD_ON_MPS, v > HEAD_ON_MPS),
+        ContactKind::HeadOn => (v > HEAD_ON_MPS * g, v > HEAD_ON_MPS * g),
         ContactKind::RearEnd => {
             let follower_a = c.follower == Some(c.a);
-            let f = v >= CRASH_RIDER_MPS;
-            let l = v >= REAR_END_LEADER_MPS;
+            let f = v >= CRASH_RIDER_MPS * g;
+            let l = v >= REAR_END_LEADER_MPS * g;
             if follower_a { (f, l) } else { (l, f) }
         }
         ContactKind::WheelTouch => {
@@ -617,7 +634,7 @@ pub fn fallers(c: &Contact, bodies: &[Body], mode: Mode, tick: u64) -> (bool, bo
             };
             let side = dot(to_leader, right_of(f.forward())).signum();
             let _ = l;
-            let down = v >= WHEEL_TOUCH_MPS || f.lean * side > HOOK_LEAN_RAD;
+            let down = v >= WHEEL_TOUCH_MPS * g || f.lean * side > HOOK_LEAN_RAD * g;
             // The rider hit in the rear wheel usually stays up.
             if follower_a {
                 (down, false)
@@ -626,9 +643,9 @@ pub fn fallers(c: &Contact, bodies: &[Body], mode: Mode, tick: u64) -> (bool, bo
             }
         }
         ContactKind::Side | ContactKind::WheelToWheel => {
-            if v >= BOTH_FALL_SIDE_MPS {
+            if v >= BOTH_FALL_SIDE_MPS * g {
                 (true, true)
-            } else if v >= CRASH_RIDER_MPS {
+            } else if v >= CRASH_RIDER_MPS * g {
                 // The rider who was hit falls: the one moving less towards
                 // the other; a tie by the deterministic coin.
                 // Sideways speed over the road towards the other rider.
@@ -914,7 +931,7 @@ pub fn resolve_static(body: &Body, solids: &[Solid], mode: Mode, max_heading: f6
         out.heading = Some(side.atan2(along).clamp(-max_heading, max_heading));
     }
     let away = scale(c.normal, -1.0);
-    let crash = mode == Mode::Full && c.closing_mps >= CRASH_OBJECT_MPS;
+    let crash = mode == Mode::Full && c.closing_mps >= CRASH_OBJECT_MPS * crash_scale(body.grip);
     if crash {
         let f = body.forward();
         let push = add(sub(vel, before), scale(away, 0.3 * c.closing_mps));
@@ -945,11 +962,12 @@ pub fn resolve_static(body: &Body, solids: &[Solid], mode: Mode, max_heading: f6
 }
 
 /// Hitting the road edge (12B): a rider stopped by the edge while riding
-/// into it at `heading` (rad to the road) with `speed` (m/s). Above
-/// [`EDGE_HIT_RAD`] it is a hit on a wall: the speed into the edge is lost,
-/// a crash at [`CRASH_OBJECT_MPS`] or more (in [`Mode::Full`]), else a
-/// wobble; below it the scrape of §5.2.1 (`None`).
-pub fn edge_hit(speed: f64, heading: f64, mass: f64, mode: Mode) -> Option<Response> {
+/// into it at `heading` (rad to the road) with `speed` (m/s) on a road of
+/// `grip` (S6; 1 = dry). Above [`EDGE_HIT_RAD`] it is a hit on a wall:
+/// the speed into the edge is lost, a crash at [`CRASH_OBJECT_MPS`] (× the
+/// [`crash_scale`]) or more (in [`Mode::Full`]), else a wobble; below it
+/// the scrape of §5.2.1 (`None`).
+pub fn edge_hit(speed: f64, heading: f64, mass: f64, grip: f64, mode: Mode) -> Option<Response> {
     if mode == Mode::Off || heading.abs() <= EDGE_HIT_RAD || speed <= 0.0 {
         return None;
     }
@@ -963,7 +981,7 @@ pub fn edge_hit(speed: f64, heading: f64, mass: f64, mode: Mode) -> Option<Respo
         heading: Some(0.0),
         ..Default::default()
     };
-    if mode == Mode::Full && closing >= CRASH_OBJECT_MPS {
+    if mode == Mode::Full && closing >= CRASH_OBJECT_MPS * crash_scale(grip) {
         // The push in the rider's own frame: the velocity change, at least
         // away from the edge by a share of the closing speed.
         let (sn, cs) = heading.sin_cos();
@@ -1148,6 +1166,123 @@ pub fn crash_phase(elapsed_s: f64, down_s: f64) -> Option<CrashPhase> {
         Some(CrashPhase::Remount)
     } else {
         None
+    }
+}
+
+/// The crash thresholds' factor on a road of `grip` (S6; 1 = dry): a
+/// slippery road brings riders down at lower closing speeds – linear in
+/// the grip (the sideways friction that catches a bike after a touch is
+/// μ·g), never below [`MIN_CRASH_SCALE`]. Exactly 1 on a dry road.
+pub fn crash_scale(grip: f64) -> f64 {
+    if grip >= 1.0 {
+        1.0
+    } else {
+        grip.max(MIN_CRASH_SCALE)
+    }
+}
+
+/// The lowest [`crash_scale`] (sheet ice).
+pub const MIN_CRASH_SCALE: f64 = 0.3;
+
+/// Skids (spec §14 Phase 9 S6 → Phase 12): S6 caps a leaning rider's lean
+/// at what the road's grip holds (`weather::lean_limit`). Asking for more –
+/// a too-fast corner taken by leaning harder than the wet road allows –
+/// makes the tyres slide: the excess lean builds up *slip* (this much
+/// excess for a second = 1); while sliding the rider loses speed and the
+/// bike wobbles once when the slide begins; at [`SKID_CRASH`] slip (and
+/// [`SKID_CRASH_MPS`] or faster, in [`Mode::Full`]) the rider falls
+/// ([`ContactKind::Slide`]). Leaning back within the grip recovers
+/// ([`SKID_RECOVER_PER_S`]). Only on a road with less grip than dry
+/// asphalt and with collisions on – a dry road, the weather physics off or
+/// collisions off ride exactly as without skids. Autodrive never skids (it
+/// is an aid, 12D: it never causes a crash by its own move; S6's slow-down
+/// before sharp turns brakes for the grip).
+pub const SKID_REF_RAD: f64 = 0.087;
+/// Slip at which the rider falls.
+pub const SKID_CRASH: f64 = 1.0;
+/// Slip lost per second within the grip.
+pub const SKID_RECOVER_PER_S: f64 = 2.0;
+/// No skid below this speed (m/s): a foot comes down.
+pub const SKID_MIN_MPS: f64 = 2.0;
+/// No fall from a skid below this speed (m/s).
+pub const SKID_CRASH_MPS: f64 = 3.0;
+/// Deceleration while sliding at [`SKID_REF_RAD`] of excess or more (m/s²).
+pub const SKID_DECEL_MPS2: f64 = 1.0;
+
+/// A rider's skid state (server and the client's prediction).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Skid {
+    pub slip: f64,
+}
+
+/// One tick of [`skid`].
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct SkidStep {
+    /// The speed lost this tick (m/s).
+    pub speed_loss: f64,
+    /// A slide began: the wobble (strength rad, side +1 = right).
+    pub wobble: Option<(f64, f64)>,
+    /// The rider falls (the hit for the crash sequence).
+    pub crash: Option<Hit>,
+}
+
+/// One tick of a leaning rider's skid: `lean` is the lean asked for (rad,
+/// positive = right; 0 for autodrive), `grip` the road's (S6), `speed`
+/// after the physics step. See [`SKID_REF_RAD`].
+pub fn skid(
+    state: &mut Skid,
+    lean: f64,
+    grip: f64,
+    speed: f64,
+    mass: f64,
+    mode: Mode,
+    dt: f64,
+) -> SkidStep {
+    let mut out = SkidStep::default();
+    if mode == Mode::Off || grip >= 1.0 {
+        state.slip = 0.0;
+        return out;
+    }
+    let asked = lean.abs().min(crate::physics::MAX_STEER_LEAN);
+    let excess = asked - crate::weather::lean_limit(grip);
+    if excess <= 0.0 || speed < SKID_MIN_MPS {
+        state.slip = (state.slip - SKID_RECOVER_PER_S * dt).max(0.0);
+        return out;
+    }
+    let share = (excess / SKID_REF_RAD).min(1.0);
+    // The wheels slide out of the turn: to the left in a right-hand lean.
+    let outward = -lean.signum();
+    if state.slip == 0.0 {
+        out.wobble = Some((wobble_strength(1.0 + 2.0 * share), outward));
+    }
+    state.slip += excess / SKID_REF_RAD * dt;
+    out.speed_loss = (SKID_DECEL_MPS2 * share * dt).min(speed);
+    if mode == Mode::Full && state.slip >= SKID_CRASH && speed >= SKID_CRASH_MPS {
+        // A lowside: the bike slides out sideways (about 0.3 × the speed).
+        let sideways = 0.3 * speed;
+        out.crash = Some(Hit {
+            kind: ContactKind::Slide,
+            other: RiderId(0),
+            closing_mps: sideways,
+            energy_j: 0.5 * mass * sideways * sideways,
+            impulse: [-0.1 * speed, outward * sideways],
+        });
+        state.slip = 0.0;
+    }
+    out
+}
+
+/// The lean a rider asks for, for [`skid`]: a leaning rider's (not
+/// through a U-turn loop, where the rider is steered along the
+/// centreline); 0 for autodrive.
+pub fn skid_lean(
+    steering: crate::physics::Steering,
+    track: &dyn ocw_world::Track,
+    distance: f64,
+) -> f64 {
+    match steering {
+        crate::physics::Steering::Lean(l) if !track.assisted(distance) => l,
+        _ => 0.0,
     }
 }
 
@@ -1616,9 +1751,9 @@ mod tests {
     #[test]
     fn the_road_edge_is_a_wall_above_30_degrees() {
         // Below 30°: the scrape (no hit).
-        assert!(edge_hit(10.0, 0.5, M, Mode::Full).is_none());
+        assert!(edge_hit(10.0, 0.5, M, 1.0, Mode::Full).is_none());
         // 40° at 10 m/s: 6.4 m/s into the edge, a crash.
-        let r = edge_hit(10.0, 0.7, M, Mode::Full).unwrap();
+        let r = edge_hit(10.0, 0.7, M, 1.0, Mode::Full).unwrap();
         let hit = r.crash.unwrap();
         assert_eq!(hit.kind, ContactKind::RoadEdge);
         assert!((hit.closing_mps - 10.0 * 0.7f64.sin()).abs() < 1e-9);
@@ -1626,10 +1761,194 @@ mod tests {
         // Thrown back from the edge (to the left of a rider heading right).
         assert!(hit.impulse[1] < 0.0, "{hit:?}");
         // 40° at 4 m/s (2.6 m/s): a bump; soft bumps only: never a crash.
-        let r = edge_hit(4.0, -0.7, M, Mode::Full).unwrap();
+        let r = edge_hit(4.0, -0.7, M, 1.0, Mode::Full).unwrap();
         assert!(r.crash.is_none() && r.bump.unwrap().1 > 0.0);
-        assert!(edge_hit(10.0, 0.7, M, Mode::Soft).unwrap().crash.is_none());
-        assert!(edge_hit(10.0, 0.7, M, Mode::Off).is_none());
+        assert!(
+            edge_hit(10.0, 0.7, M, 1.0, Mode::Soft)
+                .unwrap()
+                .crash
+                .is_none()
+        );
+        assert!(edge_hit(10.0, 0.7, M, 1.0, Mode::Off).is_none());
+    }
+
+    /// S6's grip in the crash rules: a touch that is only a bump on a dry
+    /// road brings a rider down on a wet one, and on ice much more easily;
+    /// a dry road (grip 1) keeps the dry thresholds exactly.
+    #[test]
+    fn a_wet_road_brings_riders_down_more_easily() {
+        let manual = |b: Body| Body { manual: true, ..b };
+        let on = |g: f64, b: Body| Body { grip: g, ..b };
+        // A rear-end at 2.0 m/s more: a bump when dry, a crash when wet.
+        let pair = |g: f64, closing: f64| {
+            resolve(
+                &[
+                    on(g, manual(rider(1, 0.0, 0.0, 7.0 + closing))),
+                    on(g, rider(2, 1.7, 0.0, 7.0)),
+                ],
+                path(),
+                Mode::Full,
+                1,
+            )
+        };
+        assert!(pair(1.0, 2.0)[0].crash.is_none());
+        assert!(pair(0.75, 2.0)[0].crash.is_some(), "wet: down");
+        // 1.2 m/s: a bump when wet, a crash on ice (0.4).
+        assert!(pair(0.75, 1.2)[0].crash.is_none());
+        assert!(pair(0.4, 1.2)[0].crash.is_some(), "ice: down");
+        // The lowest closing speed that brings the rider down, by grip.
+        let threshold = |g: f64| {
+            (1..400)
+                .map(|i| f64::from(i) * 0.01)
+                .find(|v| pair(g, *v)[0].crash.is_some())
+                .unwrap()
+        };
+        let (dry, wet, ice) = (threshold(1.0), threshold(0.75), threshold(0.4));
+        assert!((dry - CRASH_RIDER_MPS).abs() < 0.06, "{dry}");
+        assert!(wet < dry * 0.8 && ice < wet * 0.6, "{dry} {wet} {ice}");
+        // A wheel touch at 0.8 m/s: up when dry, down when wet.
+        let touch = |g: f64| {
+            resolve(
+                &[
+                    on(g, manual(rider(1, 0.0, 0.0, 7.8))),
+                    on(g, rider(2, 1.55, 0.32, 7.0)),
+                ],
+                path(),
+                Mode::Full,
+                1,
+            )
+        };
+        assert!(touch(1.0)[0].crash.is_none());
+        assert!(touch(0.75)[0].crash.is_some());
+        // Soft bumps only (group rides) never crash, wet or not.
+        let r = resolve(
+            &[
+                on(0.4, manual(rider(1, 0.0, 0.0, 10.0))),
+                on(0.4, rider(2, 1.7, 0.0, 7.0)),
+            ],
+            path(),
+            Mode::Soft,
+            1,
+        );
+        assert!(r[0].crash.is_none() && r[1].crash.is_none());
+        // Two autodrive riders still never bring each other down.
+        let r = resolve(
+            &[
+                on(0.4, rider(1, 0.0, 0.0, 10.0)),
+                on(0.4, rider(2, 1.7, 0.0, 7.0)),
+            ],
+            path(),
+            Mode::Full,
+            1,
+        );
+        assert!(r[0].crash.is_none() && r[1].crash.is_none());
+        // The scale: exactly 1 when dry, linear below, never under the floor.
+        assert_eq!(crash_scale(1.0), 1.0);
+        assert_eq!(crash_scale(0.75), 0.75);
+        assert_eq!(crash_scale(0.1), MIN_CRASH_SCALE);
+    }
+
+    #[test]
+    fn a_wet_road_edge_and_world_hits_crash_earlier() {
+        // 40° into the edge at 4.5 m/s (2.9 m/s into it): a bump when dry,
+        // a crash when wet.
+        assert!(
+            edge_hit(4.5, 0.7, M, 1.0, Mode::Full)
+                .unwrap()
+                .crash
+                .is_none()
+        );
+        assert!(
+            edge_hit(4.5, 0.7, M, 0.75, Mode::Full)
+                .unwrap()
+                .crash
+                .is_some()
+        );
+        // A post at 3 m/s: a bump when dry, a crash on ice.
+        let post = Solid {
+            id: 1,
+            kind: ObstacleKind::Post,
+            shape: Shape::Circle {
+                c: [1.0, 0.0],
+                r: 0.15,
+            },
+            y: None,
+        };
+        let body = |g: f64| Body {
+            grip: g,
+            manual: true,
+            ..rider(1, 0.0, 0.0, 3.0)
+        };
+        let dry = resolve_static(&body(1.0), &[post], Mode::Full, 1.0);
+        assert!(dry.crash.is_none() && dry.bump.is_some(), "{dry:?}");
+        let icy = resolve_static(&body(0.4), &[post], Mode::Full, 1.0);
+        assert_eq!(
+            icy.crash.unwrap().kind,
+            ContactKind::World(ObstacleKind::Post)
+        );
+        // The push is the same: only the threshold depends on the grip.
+        assert_eq!((dry.ds, dry.dd, dry.speed), (icy.ds, icy.dd, icy.speed));
+    }
+
+    /// The skid (S6 grip → 12B): leaning further than the wet road holds
+    /// slides, slows and wobbles, and held too long brings the rider down;
+    /// within the grip, on a dry road, with collisions off or slowly,
+    /// nothing happens.
+    #[test]
+    fn leaning_beyond_the_grip_skids_and_crashes() {
+        let full = crate::physics::MAX_STEER_LEAN;
+        let run = |lean: f64, grip: f64, speed: f64, mode: Mode, seconds: f64| {
+            let mut s = Skid::default();
+            let mut v = speed;
+            let (mut lost, mut wobbles, mut crash, mut t) = (0.0, 0, None, 0.0);
+            while t < seconds && crash.is_none() {
+                let step = skid(&mut s, lean, grip, v, M, mode, SIM_DT);
+                v -= step.speed_loss;
+                lost += step.speed_loss;
+                wobbles += usize::from(step.wobble.is_some());
+                crash = step.crash.map(|h| (h, t));
+                t += SIM_DT;
+            }
+            (lost, wobbles, crash, s)
+        };
+        // Wet (0.75): the cap is about 23.4°; leaning 30° skids.
+        let cap = crate::weather::lean_limit(0.75);
+        assert!(cap < full);
+        let (lost, wobbles, crash, _) = run(full, 0.75, 10.0, Mode::Full, 3.0);
+        let (hit, at) = crash.expect("down");
+        assert_eq!(hit.kind, ContactKind::Slide);
+        assert!(lost > 0.0 && wobbles == 1, "{lost} {wobbles}");
+        assert!((0.3..1.5).contains(&at), "wet: down after {at} s");
+        // The bike slides out of the turn (left in a right-hand lean).
+        assert!(hit.impulse[1] < 0.0, "{hit:?}");
+        // Ice (0.4): down much sooner.
+        let (_, _, ice, _) = run(full, 0.4, 10.0, Mode::Full, 3.0);
+        assert!(ice.unwrap().1 < at * 0.6, "{ice:?} vs {at}");
+        // Within the grip: nothing; leaving the slip recovers.
+        let (lost, wobbles, crash, s) = run(cap - 0.01, 0.75, 10.0, Mode::Full, 3.0);
+        assert_eq!(
+            (lost, wobbles, crash.is_none(), s.slip),
+            (0.0, 0, true, 0.0)
+        );
+        let mut s = Skid { slip: 0.5 };
+        skid(&mut s, 0.0, 0.75, 10.0, M, Mode::Full, 0.1);
+        assert!((s.slip - 0.3).abs() < 1e-9);
+        // Soft bumps only: it skids but never falls; slowly: no fall.
+        let (lost, _, crash, _) = run(full, 0.4, 10.0, Mode::Soft, 3.0);
+        assert!(lost > 0.0 && crash.is_none());
+        let (_, _, crash, _) = run(full, 0.4, 2.5, Mode::Full, 3.0);
+        assert!(
+            crash.is_none(),
+            "below {SKID_CRASH_MPS} m/s a foot comes down"
+        );
+        // A dry road and collisions off: exactly nothing.
+        for (grip, mode) in [(1.0, Mode::Full), (0.4, Mode::Off)] {
+            let (lost, wobbles, crash, s) = run(full, grip, 10.0, mode, 3.0);
+            assert_eq!(
+                (lost, wobbles, crash.is_none(), s.slip),
+                (0.0, 0, true, 0.0)
+            );
+        }
     }
 
     #[test]

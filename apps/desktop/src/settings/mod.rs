@@ -863,10 +863,11 @@ mod tests {
         let mut app = app(&dir);
         run(&mut app, "riders.add Alex --weight 78");
         let mut lines = Vec::new();
-        for page in pages::Page::TABS
-            .into_iter()
-            .chain([pages::Page::Rider(0), pages::Page::Bike(0)])
-        {
+        for page in pages::Page::TABS.into_iter().chain([
+            pages::Page::Rider(0),
+            pages::Page::Bike(0),
+            pages::Page::RidingAids,
+        ]) {
             let rows = {
                 let w = app.world();
                 pages::rows(
@@ -895,6 +896,8 @@ mod tests {
                 || line.contains("ride.damage")
                 || line.contains("display.damage")
                 || line.contains("ride.proximity_cue")
+                || line.contains("ride.hit_warning")
+                || line.contains("display.camera_shake")
             {
                 continue;
             }

@@ -294,6 +294,10 @@ impl SolidFootprints {
     }
 }
 
+/// A guided camera path (spec §14 Phase 13 G5) keeps at least this much
+/// above the ground and solid objects (m).
+pub const GUIDED_CLEARANCE_M: f32 = 3.0;
+
 /// Height of everything solid at (x, z): the terrain and the obstacles.
 pub fn solid_height(
     ground: Option<&crate::Ground>,
@@ -484,6 +488,34 @@ pub(crate) struct TiltState {
     outside_eye: Option<Vec3>,
     /// The smoothed eye of the tunnel camera.
     tunnel_eye: Option<Vec3>,
+    /// The shake's offset added to the eye last frame (spec §14 Phase
+    /// 12C): taken off again before the smoothing, so the shake never
+    /// drags the camera.
+    shaken: Vec3,
+}
+
+/// The chase orbit widened while the own rider is down (spec §14 Phase
+/// 12C, [`crate::CameraFx::orbit`] 0–1): up to 1.8 × as far, 0.3 rad
+/// higher and turned 0.6 rad to the side the rider fell to, so the fall
+/// and the bike lying apart are in view.
+pub fn widened(orbit: &CameraOrbit, fx: &crate::CameraFx) -> CameraOrbit {
+    let w = fx.orbit.clamp(0.0, 1.0);
+    if w == 0.0 {
+        return *orbit;
+    }
+    CameraOrbit {
+        yaw: orbit.yaw + 0.6 * w * fx.side,
+        pitch: (orbit.pitch + 0.3 * w).min(MAX_PITCH),
+        distance: (orbit.distance * (1.0 + 0.8 * w)).min(MAX_DISTANCE),
+    }
+}
+
+/// The shake's offset of the eye (world space) for a camera at `cam`
+/// (spec §14 Phase 12C: to its right, up and forwards).
+pub fn shake_offset(cam: &Transform, fx: &crate::CameraFx) -> Vec3 {
+    cam.right().as_vec3() * fx.shake[0]
+        + cam.up().as_vec3() * fx.shake[1]
+        + cam.forward().as_vec3() * fx.shake[2]
 }
 
 /// Mouse orbit (left button drag), zoom (wheel) and reset (`C`), only in
@@ -673,6 +705,34 @@ pub(crate) fn follow(
     mut tilt: Local<TiltState>,
     sky_look: Option<Res<SkyLook>>,
 ) {
+    // A guided camera path (spec §14 Phase 13 G5, flyover videos): the
+    // camera stands where the path says, whatever the rider does.
+    if let Some(g) = &view.guided_camera {
+        for mut p in &mut projections {
+            if let Projection::Perspective(pp) = &mut *p
+                && (pp.fov - DEFAULT_FOV).abs() > 1e-4
+            {
+                pp.fov = DEFAULT_FOV;
+            }
+        }
+        let Ok(mut cam) = camera.single_mut() else {
+            return;
+        };
+        // Never under the ground or a solid object (a key too low, a
+        // spline swinging into a slope).
+        let mut eye = crate::to_vec3(g.eye);
+        if let Some(h) = solid_height(ground.as_deref(), &obstacles, g.eye[0], g.eye[2]) {
+            eye.y = eye.y.max(h as f32 + GUIDED_CLEARANCE_M);
+        }
+        let look = Vec3::new(g.look[0] as f32, g.look[1] as f32, g.look[2] as f32);
+        cam.translation = eye;
+        cam.look_to(look.normalize_or(Vec3::NEG_Z), Vec3::Y);
+        focus.set_if_neq(CameraFocus(Some(eye + look * 20.0)));
+        tilt.rider = None;
+        tilt.shaken = Vec3::ZERO;
+        *smoothed_target = None;
+        return;
+    }
     // God mode (spec §14 Phase 13D): the flight camera.
     let fov = view
         .flight
@@ -701,6 +761,7 @@ pub(crate) fn follow(
         focus.set_if_neq(CameraFocus(Some(crate::to_vec3(f.pos))));
         // Back on the road the chase camera starts afresh.
         tilt.rider = None;
+        tilt.shaken = Vec3::ZERO;
         *smoothed_target = None;
         return;
     }
@@ -733,6 +794,7 @@ pub(crate) fn follow(
         cam.look_to(dir, Vec3::Y);
         focus.set_if_neq(CameraFocus(Some(rider.translation + Vec3::Y * 1.2)));
         *smoothed_target = None;
+        tilt.shaken = Vec3::ZERO;
         return;
     }
     let p = track.sample(local.state.distance);
@@ -765,7 +827,12 @@ pub(crate) fn follow(
         crate::tunnel::smooth_blend(tilt.tunnel, in_tunnel, time.delta_secs())
     };
     let (eye, target) = match *mode {
-        CameraMode::Chase => orbit.eye_and_target_tilted(rider.translation, forward, tilt.tilt),
+        // Wider while the rider is down after a crash (spec §14 Phase 12C).
+        CameraMode::Chase => widened(&orbit, &view.camera_fx).eye_and_target_tilted(
+            rider.translation,
+            forward,
+            tilt.tilt,
+        ),
         CameraMode::Side => (
             rider.translation + right * 7.0 + Vec3::Y * 1.5,
             rider.translation + Vec3::Y * 0.9,
@@ -780,7 +847,7 @@ pub(crate) fn follow(
     let k = 1.0 - (-8.0 * time.delta_secs()).exp();
     let prev = match tilt.outside_eye {
         Some(e) if was_in_tunnel => e,
-        _ => cam.translation,
+        _ => cam.translation - tilt.shaken,
     };
     cam.translation = if prev.distance(eye) > 50.0 {
         eye
@@ -833,6 +900,15 @@ pub(crate) fn follow(
         target
     };
     cam.look_at(target, Vec3::Y);
+    // The shake after a crash or a hard bump (spec §14 Phase 12C): on top
+    // of the smoothed eye, with a little roll.
+    let fx = view.camera_fx;
+    let offset = shake_offset(&cam, &fx);
+    cam.translation += offset;
+    if fx.roll != 0.0 {
+        cam.rotate_local_z(fx.roll);
+    }
+    tilt.shaken = offset;
 }
 
 #[cfg(test)]
@@ -1461,5 +1537,131 @@ mod tests {
         assert!("Top".parse::<CameraMode>().is_err());
         assert!("".parse::<CameraMode>().is_err());
         assert_eq!(CameraMode::default(), CameraMode::Chase);
+    }
+
+    #[test]
+    fn the_orbit_widens_while_down() {
+        let o = CameraOrbit::default();
+        assert_eq!(widened(&o, &crate::CameraFx::default()), o);
+        let fx = crate::CameraFx {
+            orbit: 1.0,
+            side: -1.0,
+            ..Default::default()
+        };
+        let w = widened(&o, &fx);
+        assert!((w.distance - o.distance * 1.8).abs() < 1e-5);
+        assert!(w.pitch > o.pitch && w.yaw < o.yaw);
+        let half = widened(&o, &crate::CameraFx { orbit: 0.5, ..fx });
+        assert!(half.distance > o.distance && half.distance < w.distance);
+    }
+
+    /// A straight flat road along +x, the local rider at 200 m; the real
+    /// `follow` system after `frames` updates with the camera effects of
+    /// each frame.
+    fn chase(fx: &[crate::CameraFx], guided: Option<crate::GuidedCamera>) -> Transform {
+        chase_on(fx, guided, None)
+    }
+
+    /// [`chase`] over flat ground at `ground` m (`None`: no terrain).
+    fn chase_on(
+        fx: &[crate::CameraFx],
+        guided: Option<crate::GuidedCamera>,
+        ground: Option<f64>,
+    ) -> Transform {
+        use ocw_core::RiderId;
+        use ocw_world::Route;
+        let pts: Vec<[f64; 3]> = (0..=100).map(|i| [f64::from(i) * 5.0, 0.0, 0.0]).collect();
+        let route = Route::from_points("flat", "Flat", pts, false, 6.0).unwrap();
+        let mut view = RideView::new(route);
+        view.riders.push(crate::RiderView {
+            id: RiderId(1),
+            name: "me".into(),
+            state: ocw_sim::RiderState {
+                distance: 200.0,
+                ..default()
+            },
+            power_w: 0.0,
+            cadence_rpm: None,
+            heart_rate_bpm: None,
+            is_local: true,
+            bike: Default::default(),
+            look: None,
+            parts: Vec::new(),
+            crash: None,
+            wobble: 0.0,
+            damage: None,
+        });
+        view.guided_camera = guided;
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(view)
+            .init_resource::<CameraTilt>()
+            .init_resource::<CameraMode>()
+            .init_resource::<CameraOrbit>()
+            .init_resource::<CameraObstacles>()
+            .init_resource::<CameraFocus>()
+            .add_systems(Update, follow);
+        if let Some(h) = ground {
+            app.insert_resource(crate::Ground(Arc::new(move |_: f64, _: f64| Some(h))));
+        }
+        let cam = app
+            .world_mut()
+            .spawn((Transform::from_xyz(1e4, 0.0, 1e4), FollowCamera))
+            .id();
+        for f in fx {
+            app.world_mut().resource_mut::<RideView>().camera_fx = *f;
+            app.update();
+        }
+        *app.world().get::<Transform>(cam).unwrap()
+    }
+
+    #[test]
+    fn the_chase_camera_shakes_and_comes_back_exactly() {
+        let calm = crate::CameraFx::default();
+        let shake = crate::CameraFx {
+            shake: [0.1, -0.05, 0.02],
+            roll: 0.03,
+            ..calm
+        };
+        let still = chase(&[calm, calm, calm], None);
+        let shaken = chase(&[calm, calm, shake], None);
+        // Moved by the shake in the camera's own axes, and rolled.
+        let d = shaken.translation - still.translation;
+        assert!(
+            (d.length() - Vec3::new(0.1, -0.05, 0.02).length()).abs() < 1e-3,
+            "{d}"
+        );
+        assert!((shaken.right().dot(d) - 0.1).abs() < 0.01);
+        assert!(shaken.up().y < still.up().y, "rolled");
+        // After the shake the eye is where it would have been: the shake
+        // never drags the smoothing.
+        let after = chase(&[calm, calm, shake, calm], None);
+        let ref_ = chase(&[calm, calm, calm, calm], None);
+        assert!(after.translation.distance(ref_.translation) < 1e-4);
+        assert!(after.up().distance(*ref_.up()) < 1e-5);
+        // Down after a crash: the eye further from the rider.
+        let rider = Vec3::new(200.0, 0.0, 0.0);
+        let down = crate::CameraFx {
+            orbit: 1.0,
+            side: 1.0,
+            ..calm
+        };
+        let wide = chase(&[down, down, down], None);
+        assert!(wide.translation.distance(rider) > still.translation.distance(rider) + 3.0);
+    }
+
+    #[test]
+    fn a_guided_path_puts_the_camera_where_it_says() {
+        let g = crate::GuidedCamera {
+            eye: [50.0, 300.0, -40.0],
+            look: [0.0, -0.6, -0.8],
+            velocity: [0.0, 0.0],
+        };
+        let t = chase(&[crate::CameraFx::default()], Some(g));
+        assert!(t.translation.distance(Vec3::new(50.0, 300.0, -40.0)) < 1e-4);
+        assert!(t.forward().as_vec3().distance(Vec3::new(0.0, -0.6, -0.8)) < 1e-4);
+        // Never under the ground: a key in a hill is lifted above it.
+        let t = chase_on(&[crate::CameraFx::default()], Some(g), Some(400.0));
+        assert!((t.translation.y - (400.0 + GUIDED_CLEARANCE_M)).abs() < 1e-3);
     }
 }

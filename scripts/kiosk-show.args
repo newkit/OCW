@@ -11,3 +11,6 @@
 # The show rider earns no hearts (spec §14 Phase 4, 4E: never in the kiosk /
 # show mode; the virtual trainer earns none anyway).
 --no-hearts
+# No camera shake in the show mode (spec §14 Phase 12C, motion comfort; with
+# collisions off nothing shakes it anyway).
+--cmd "camera.shake off"

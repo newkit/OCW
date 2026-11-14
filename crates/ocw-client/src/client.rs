@@ -192,6 +192,8 @@ pub struct ClientCore {
     avoid: ocw_sim::avoid::AvoidState,
     was_down: bool,
     proximity_cue: bool,
+    /// The "last moment" warning (`ride.hit_warning`, spec §14 Phase 12D).
+    hit_warning: bool,
     /// Damage (spec §14 Phase 12E / 12F): every rider's from the server,
     /// the own widget; the condition the hello carries from earlier rides
     /// (Phase 12 Q6; never for anonymous riders).
@@ -262,6 +264,7 @@ impl ClientCore {
             avoid: Default::default(),
             was_down: false,
             proximity_cue: false,
+            hit_warning: true,
             damage: Default::default(),
             carried: None,
             route,
@@ -1580,6 +1583,7 @@ impl ClientCore {
                 lane_m: base,
                 limit_m: ocw_sim::physics::lateral_limit(width),
                 road_width_m: width,
+                grip: ocw_sim::weather::grip(self.predictor.weather(), self.track(), me),
             },
             &others,
             ocw_sim::avoid::overtake_left(left),
@@ -1705,18 +1709,122 @@ impl ClientCore {
         if !self.proximity_cue || !self.collisions.mode().on() {
             return None;
         }
+        crate::collisions::proximity(
+            self.others_near()
+                .into_iter()
+                .filter(|o| !o.fallen)
+                .map(|o| (o.ahead_m, o.right_m)),
+        )
+    }
+
+    /// The proximity arrow (12D, with the proximity cue): the direction to
+    /// a rider close beside, in front or behind (rad: 0 ahead, positive to
+    /// the right).
+    pub fn proximity_arrow(&self) -> Option<f32> {
+        if !self.proximity_cue || !self.collisions.mode().on() || self.own_down() {
+            return None;
+        }
+        crate::aids::proximity_direction(&self.others_near()).map(|a| a as f32)
+    }
+
+    /// The "last moment" warning setting (`ride.hit_warning`, on by
+    /// default; spec §14 Phase 12D).
+    pub fn set_hit_warning(&mut self, on: bool) {
+        self.hit_warning = on;
+    }
+
+    pub fn hit_warning_on(&self) -> bool {
+        self.hit_warning
+    }
+
+    /// The "last moment" warning now (12D): a predicted hit within a
+    /// second, or the tyres sliding on a wet road; `None` with the
+    /// setting off, collisions off, while down or flying.
+    pub fn hit_warning(&self) -> Option<ocw_render::HitWarningView> {
+        if !self.hit_warning || !self.collisions.mode().on() || self.own_down() || self.god.active()
+        {
+            return None;
+        }
+        let me = self.predictor.state();
+        crate::aids::hit_warning(
+            crate::aids::Me {
+                speed: me.speed,
+                heading: me.heading,
+            },
+            &self.others_near(),
+            self.predictor.slip(),
+        )
+    }
+
+    /// Whether the own rider was down in the last snapshot.
+    fn own_down(&self) -> bool {
+        self.rider_id.is_some_and(|id| self.collisions.crashed(id))
+    }
+
+    /// The other riders near the own rider in its path frame (metres ahead
+    /// along its path, metres to the right; within 80 m): on a route by
+    /// the distance (a loop wraps), in free ride where the own path passes
+    /// them. Riders flying in unicorn mode are left out.
+    pub fn others_near(&self) -> Vec<crate::aids::Near> {
         let me = self.predictor.state();
         let loop_m = (self.free.is_none() && self.route.is_loop()).then(|| self.route.length());
-        crate::collisions::proximity(self.others_now.iter().filter_map(|(_, o)| {
-            if self.free.is_some() {
-                return None;
+        let own_path = self
+            .free
+            .as_ref()
+            .and_then(|f| f.own.as_ref().map(|o| (f, o)));
+        let mut out = Vec::new();
+        for (id, o) in &self.others_now {
+            if self.god_others.0.contains_key(id) {
+                continue;
             }
-            let mut ahead = o.distance - me.distance;
+            let mine = match own_path {
+                Some((fr, own)) => {
+                    let Some(p) = fr.others.get(id) else { continue };
+                    let Some((e, f, off)) = p.locate(o.distance) else {
+                        continue;
+                    };
+                    let Some(m) = own.distance_of(e, f, off, me.distance) else {
+                        continue;
+                    };
+                    m
+                }
+                None if self.free.is_some() => continue,
+                None => o.distance,
+            };
+            let mut ahead = mine - me.distance;
             if let Some(l) = loop_m {
                 ahead -= l * (ahead / l).round();
             }
-            Some((ahead, o.lateral_offset - me.lateral_offset))
-        }))
+            if ahead.abs() > 80.0 {
+                continue;
+            }
+            out.push(crate::aids::Near {
+                ahead_m: ahead,
+                right_m: o.lateral_offset - me.lateral_offset,
+                speed: o.speed,
+                heading: o.heading,
+                fallen: self.collisions.crashed(*id),
+            });
+        }
+        out
+    }
+
+    /// The chase camera's reaction (spec §14 Phase 12C) at client time
+    /// `now_s`: the shake after the own rider's crash or a hard bump
+    /// (`shake` off: motion comfort) and the wider orbit while down.
+    pub fn camera_fx(&self, now_s: f64, shake: bool) -> ocw_render::CameraFx {
+        let Some(id) = self.rider_id else {
+            return ocw_render::CameraFx::default();
+        };
+        let crash = self.collisions.crash(id, now_s);
+        let tick = self.server_tick_now(now_s);
+        let bump = self.collisions.bump(id);
+        crate::camera_fx::camera_fx(
+            crash.as_ref(),
+            bump.as_ref()
+                .map(|b| (b, (tick - b.tick as f64) * ocw_core::SIM_DT)),
+            shake,
+        )
     }
 
     /// The server tick now, estimated from the last snapshot.

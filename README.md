@@ -1019,7 +1019,9 @@ console (saved at once), or by editing the file; `get` lists them all:
 | `ride.record` | on / off (on): save rides as FIT (`--record`) | next start |
 | `ride.collisions` | on / off (on): rider collisions – soft bumps and crashes (group rides soft bumps only; in a shared ride the host decides, `ocw-server --collisions`); Settings → Controls | at once |
 | `ride.chaotic_bots` | on / off (off): bots that sometimes make mistakes (late reactions, wheel touches) that can cause crashes | at once |
-| `ride.proximity_cue` | on / off (off): a soft bell and a HUD arrow when someone is within 1 m beside or 2 m in front (an aid for manual steering; it never steers) | at once |
+| `ride.proximity_cue` | on / off (off): a soft bell and a HUD arrow pointing at someone within 1 m beside or 2 m in front or behind (an aid; it never steers); Settings → Controls → Riding aids | at once |
+| `ride.hit_warning` | on / off (on): the "last moment" warning – an amber triangle about a second before a predicted hit and when the tyres slide on a wet road (it never steers); Settings → Controls → Riding aids | at once |
+| `display.camera_shake` | on / off (on): the chase camera shakes briefly after a crash or a hard bump (off for motion comfort; console `camera.shake`) | at once |
 | `ride.damage` | on / off (off): damage – hits hurt the rider and damage the bike (only with collisions on; carried over to the next ride, repairs in the workshop; in a shared ride the host decides, `ocw-server --damage`); Settings → Controls | at once |
 | `display.damage` | on / off (on): the damage indicator in the HUD (console `hud.damage`; the effects stay when hidden) | at once |
 | `audio.master` | 0 to 100 (80): master volume in %, scales every bus | at once |
@@ -1384,6 +1386,7 @@ for now).
 | `ride.collisions on\|off` | Collisions (spec §14 Phase 12; `set ride.collisions off` keeps it); the server answers, in shared rides only the host may |
 | `ride.chaotic_bots on\|off` | Bots that sometimes make mistakes |
 | `ride.proximity_cue on\|off` | The proximity cue (bell and HUD arrow) |
+| `ride.hit_warning on\|off` | The "last moment" warning (an amber flash before a hit or a slide) |
 | `ride.crashes` | The collision rules in force, your crash state and the last crashes |
 | `ride.damage [on\|off]` | Damage on or off (spec §14 Phase 12E; the host decides in shared rides); without an argument: your rider's and bike's condition, the damaged parts |
 | `ride.repair` | Stop and mend a puncture now (30 s) instead of riding on slowly |
@@ -1419,6 +1422,8 @@ for now).
 | `camera.mode chase\|side\|top` | Camera perspective |
 | `camera.orbit YAW PITCH [DISTANCE]` | Orbit the chase camera (degrees; 0 = behind, 180 = in front; metres) |
 | `camera.tilt [on\|off\|FRACTION]` | Tilt the chase camera with the road (default on, 0.7 of the slope angle, at most 8 degrees) |
+| `camera.shake [on\|off]` | The chase camera's shake after a crash or a hard bump (spec §14 Phase 12C) |
+| `camera.path add\|key X Y Z HEADING PITCH\|list\|remove N\|clear\|save FILE\|load FILE\|play [--seconds S] [--ease linear\|smooth\|in-out]\|stop` | Guided camera paths for flyover videos (spec §14 Phase 13 G5): keyframes of the camera's pose on a smooth spline; works with `--capture` |
 | **Trainer and devices** | |
 | `trainer.mode sim\|erg\|off` | Trainer control |
 | `trainer.difficulty PERCENT` | Scale the road gradient in SIM mode |

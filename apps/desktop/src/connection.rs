@@ -128,6 +128,7 @@ pub fn start_session_with(world: &mut World, route: Route, keep_link: bool) {
         .with_parts(&parts)
         .with_damage(damage);
     client.set_proximity_cue(rules.proximity_cue);
+    client.set_hit_warning(rules.hit_warning);
     let start_m = match &course {
         Course::Route(route) => crate::start_point(&args, route),
         Course::FreeRide { .. } | Course::RouteRide { .. } => 0.0,
@@ -462,7 +463,10 @@ pub(crate) fn update_view(
     client: Res<ClientState>,
     link: Res<LinkNotice>,
     session: Option<Res<SessionStart>>,
-    loading: Option<Res<crate::ride::Loading>>,
+    (loading, shake): (
+        Option<Res<crate::ride::Loading>>,
+        Option<Res<crate::camera_path::CameraShake>>,
+    ),
     mut view: ResMut<RideView>,
 ) {
     let now = time.elapsed_secs_f64();
@@ -492,6 +496,10 @@ pub(crate) fn update_view(
     // Collisions (spec §14 Phase 12): the crash line first, then the
     // proximity cue and the crash feed (in events it is in the event panel).
     view.proximity = client.0.proximity();
+    // The aids drawn as graphics (12D) and the camera's reaction (12C).
+    view.proximity_arrow = client.0.proximity_arrow();
+    view.hit_warning = client.0.hit_warning();
+    view.camera_fx = client.0.camera_fx(now, shake.is_none_or(|s| s.0));
     // Damage (spec §14 Phase 12F): the widget; a stop's line as a notice.
     view.damage = client.0.damage_widget(now);
     if link.0.is_none() {
@@ -500,12 +508,11 @@ pub(crate) fn update_view(
         } else if let Some(line) = client.0.damage_notice() {
             view.notice = Some(line);
         } else if view.notice.is_none() {
-            view.notice = match view.proximity {
-                Some(-1) => Some("<< rider close on the left".into()),
-                Some(1) => Some("rider close on the right >>".into()),
-                Some(_) => Some("^ rider close in front".into()),
-                None if view.event.is_none() => client.0.crash_feed(now).pop(),
-                None => None,
+            // The proximity cue is an arrow now (aids_hud), not a line.
+            view.notice = if view.event.is_none() {
+                client.0.crash_feed(now).pop()
+            } else {
+                None
             };
         }
     }

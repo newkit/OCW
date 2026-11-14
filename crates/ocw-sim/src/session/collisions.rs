@@ -214,6 +214,12 @@ impl Session {
         avoid::overtake_left(self.free.as_ref().is_some_and(|(n, _)| n.keep_left))
     }
 
+    /// The road's grip under rider `id` (S6; 1 = dry, also with the
+    /// weather physics off): the crash thresholds scale with it.
+    fn grip_of(&self, id: RiderId, r: &Rider) -> f64 {
+        crate::weather::grip(self.active_weather(), self.track(id), &r.state)
+    }
+
     /// The body of a rider in the frame.
     fn body(&self, id: RiderId, r: &Rider, frame: Frame) -> Body {
         let st = &r.state;
@@ -236,6 +242,7 @@ impl Session {
             mass: r.effective.rider_mass_kg + r.effective.bike_mass_kg,
             fallen: r.crash.is_some(),
             manual: matches!(r.steering, Steering::Lean(_)) || r.wild || mistaking,
+            grip: self.grip_of(id, r),
         }
     }
 
@@ -367,6 +374,7 @@ impl Session {
                 mass,
                 fallen: false,
                 manual: true,
+                grip: self.grip_of(id, r),
             };
             let resp = self.world.resolve(
                 &body,
@@ -393,7 +401,8 @@ impl Session {
             return;
         };
         let mass = r.effective.rider_mass_kg + r.effective.bike_mass_kg;
-        if let Some(resp) = collide::edge_hit(speed, heading, mass, mode) {
+        let grip = self.grip_of(id, r);
+        if let Some(resp) = collide::edge_hit(speed, heading, mass, grip, mode) {
             self.apply_response(id, &resp);
         }
     }
@@ -1527,5 +1536,226 @@ mod world_tests {
         let per_tick_ms = t.elapsed().as_secs_f64() * 1000.0 / f64::from(n);
         println!("world collisions for 100 wild riders in a forest: {per_tick_ms:.4} ms per tick");
         assert!(per_tick_ms < budget, "{per_tick_ms} ms");
+    }
+}
+
+/// Wet roads in crashes (spec §14 Phase 9 S6 → Phase 12): the road's grip
+/// in the crash thresholds, the skids of leaning riders and autodrive's
+/// earlier reactions; collisions off or the weather physics off ride
+/// exactly as before.
+#[cfg(test)]
+mod grip_tests {
+    use super::*;
+    use crate::collide::{ContactKind, Skid};
+    use crate::weather::WeatherPhysics;
+
+    fn straight(width_m: f64) -> Route {
+        let pts = (0..=200).map(|i| [f64::from(i) * 10.0, 0.0, 0.0]).collect();
+        Route::from_points("straight", "Straight", pts, false, width_m).unwrap()
+    }
+
+    /// Calm air on a road of `grip` (only the road changes with it).
+    fn road(grip: f64) -> WeatherPhysics {
+        WeatherPhysics {
+            wind: [0.0, 0.0],
+            temperature_c: 10.0,
+            pressure_hpa: 1013.25,
+            pressure_y_m: 0.0,
+            humidity: 0.8,
+            rolling_factor: 1.0,
+            grip,
+        }
+    }
+
+    fn session(collisions: bool, weather: Option<WeatherPhysics>, physics: bool) -> Session {
+        let mut s = Session::new(straight(8.0));
+        s.set_collisions(collisions);
+        s.set_weather(weather);
+        s.set_weather_physics(physics);
+        s
+    }
+
+    fn settle(s: &mut Session) {
+        for _ in 0..=(JOIN_GHOST_S / SIM_DT) as usize {
+            s.step();
+        }
+    }
+
+    fn put(s: &mut Session, id: RiderId, distance: f64, lateral: f64, speed: f64) {
+        let r = s.riders.get_mut(&id).unwrap();
+        r.state = RiderState {
+            distance,
+            lateral_offset: lateral,
+            speed,
+            ..Default::default()
+        };
+        if let Steering::Auto(_) = r.steering {
+            r.steering = Steering::Auto(lateral);
+        }
+        r.avoid = AvoidState::default();
+    }
+
+    /// A manually steered rider runs into the back of a slower one at
+    /// 2 m/s more: whether it went down.
+    fn rear_end(grip: f64) -> Option<ContactKind> {
+        let mut s = session(true, Some(road(grip)), true);
+        let a = s.add_rider("a", RiderProfile::default());
+        let b = s.add_rider("b", RiderProfile::default());
+        settle(&mut s);
+        let seq = s.riders[&a].last_steer_seq + 1;
+        s.set_lean(a, seq, 0.0);
+        put(&mut s, a, 100.0, 0.0, 9.0);
+        put(&mut s, b, 101.7, 0.0, 7.0);
+        s.step();
+        assert!(s.collision_stats().contacts > 0);
+        s.crash(a).map(|c| c.kind)
+    }
+
+    #[test]
+    fn a_touch_on_a_wet_road_brings_the_rider_down() {
+        assert_eq!(rear_end(1.0), None, "dry: a bump");
+        assert_eq!(rear_end(0.75), Some(ContactKind::RearEnd), "wet: down");
+        assert_eq!(rear_end(0.4), Some(ContactKind::RearEnd));
+    }
+
+    /// A rider leaning hard in wild mode (room to turn) on a road of `grip`.
+    fn lean_hard(collisions: bool, grip: f64, physics: bool, seconds: f64) -> (Session, RiderId) {
+        let mut s = session(collisions, Some(road(grip)), physics);
+        let a = s.add_rider("a", RiderProfile::default());
+        settle(&mut s);
+        s.set_wild(a, true);
+        put(&mut s, a, 100.0, 0.0, 10.0);
+        let seq = s.riders[&a].last_steer_seq + 1;
+        s.set_lean(a, seq, crate::physics::MAX_STEER_LEAN);
+        s.apply_input(
+            a,
+            1,
+            RiderInput {
+                power_w: 250.0,
+                ..Default::default()
+            },
+        );
+        for _ in 0..(seconds / SIM_DT) as usize {
+            s.step();
+            if s.crash(a).is_some() {
+                break;
+            }
+        }
+        (s, a)
+    }
+
+    #[test]
+    fn leaning_too_hard_on_a_wet_road_slides_out() {
+        let (s, a) = lean_hard(true, 0.75, true, 3.0);
+        let c = s.crash(a).expect("slid out");
+        assert_eq!(c.kind, ContactKind::Slide);
+        assert_eq!(s.collision_stats().crashes, 1);
+        // On a dry road the same lean holds.
+        let (s, a) = lean_hard(true, 1.0, true, 3.0);
+        assert!(s.crash(a).is_none());
+        // Soft bumps only (a group ride) or collisions off: no fall.
+        let (s, a) = lean_hard(false, 0.4, true, 3.0);
+        assert!(s.crash(a).is_none());
+    }
+
+    /// Collisions off: a wet road rides exactly S6's physics (the lean cap,
+    /// no skid) – the same as the plain tick with the weather.
+    #[test]
+    fn collisions_off_ride_exactly_as_before() {
+        let (s, a) = lean_hard(false, 0.4, true, 2.0);
+        let mut want = RiderState {
+            distance: 100.0,
+            speed: 10.0,
+            ..Default::default()
+        };
+        let mut scraping = false;
+        let w = road(0.4);
+        for _ in 0..(2.0 / SIM_DT) as usize {
+            crate::ride::tick_in(
+                &mut want,
+                &RiderProfile::default(),
+                250.0,
+                crate::ride::Controls {
+                    steering: Steering::Lean(crate::physics::MAX_STEER_LEAN),
+                    wild: true,
+                    braking: false,
+                },
+                &mut scraping,
+                &s.route,
+                1.0,
+                Some(&w),
+                SIM_DT,
+            );
+        }
+        assert_eq!(s.rider_state(a).unwrap(), want);
+        assert_eq!(s.riders[&a].skid, Skid::default());
+    }
+
+    /// The weather physics off: a wet storm in the weather changes nothing
+    /// in a field with bumps, a hard lean and a crash – bit for bit the
+    /// session without weather.
+    #[test]
+    fn weather_physics_off_is_bit_identical() {
+        let run = |weather: Option<WeatherPhysics>| {
+            let mut s = session(true, weather, false);
+            let a = s.add_rider("a", RiderProfile::default());
+            let b = s.add_rider("b", RiderProfile::default());
+            for i in 0..6 {
+                s.add_bot(format!("bot {i}"), 150.0 + f64::from(i) * 30.0);
+            }
+            settle(&mut s);
+            let seq = s.riders[&a].last_steer_seq + 1;
+            s.set_lean(a, seq, 0.3);
+            put(&mut s, a, 100.0, 0.0, 9.0);
+            put(&mut s, b, 101.7, 0.0, 7.0);
+            for t in 0..(20.0 / SIM_DT) as u32 {
+                s.apply_input(
+                    a,
+                    t + 1,
+                    RiderInput {
+                        power_w: 300.0,
+                        ..Default::default()
+                    },
+                );
+                s.step();
+            }
+            (s.snapshot(), s.collision_stats())
+        };
+        let (plain, stats) = run(None);
+        assert!(stats.contacts > 0, "{stats:?}");
+        assert_eq!(run(Some(road(0.4))), (plain, stats));
+    }
+
+    /// A field of bots on an icy road with mixed powers: autodrive reacts
+    /// earlier, nobody crashes and nobody skids.
+    #[test]
+    fn bots_on_an_icy_road_stay_clear() {
+        let mut s = Session::new(
+            Route::from_points(
+                "loop",
+                "Loop",
+                (0..=72)
+                    .map(|i| {
+                        let a = f64::from(i) / 72.0 * std::f64::consts::TAU;
+                        [400.0 * a.cos(), 0.0, 400.0 * a.sin()]
+                    })
+                    .collect(),
+                true,
+                7.0,
+            )
+            .unwrap(),
+        );
+        s.set_collisions(true);
+        s.set_weather(Some(road(0.4)));
+        s.set_weather_physics(true);
+        for i in 0..20 {
+            s.add_bot(format!("bot {i}"), 110.0 + f64::from(i % 7) * 35.0);
+        }
+        for _ in 0..(180.0 / SIM_DT) as usize {
+            s.step();
+        }
+        let st = s.collision_stats();
+        assert_eq!(st.crashes, 0, "{st:?}");
+        assert!(s.riders.values().all(|r| r.skid == Skid::default()));
     }
 }

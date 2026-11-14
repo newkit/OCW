@@ -2044,3 +2044,44 @@ world = "tenerife"
 args = ["--world", "{world}", "--route-file", "{world_dir}/loscristianos-teide.route", "--bots", "0", "--power", "200"]
 at = ["0.5=time pause", "0.5=time 2026-11-13 11:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 24", "2.5=camera.orbit 160 25 80"]
 shot = 14
+
+# --- Phase 12 / 13 leftovers (v3.22): wet roads in crashes, the camera's
+# shake, the riding aids as graphics, the rider list, guided flyovers -----
+
+[[scene]]
+name = "k12-wet-slide-video"
+description = "Video: a slide on a wet road (spec §14 Phase 9 S6 grip → Phase 12): in the rain on the Loop test route the rider leans harder than the wet road holds – the amber warning \"Sliding - lean less\" flashes, the bike wobbles and slows, the tyres let go: the crash (\"slid out\"), the chase camera's short shake and its wider orbit while down, the remount"
+args = ["--route", "loop", "--bots", "4", "--power", "260"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=weather rain", "14=rider.lean 30"]
+warmup = 12
+video = 12
+
+[[scene]]
+name = "k12-wet-slide-down"
+description = "Down after a slide on the wet road (spec §14 Phase 9 S6 → Phase 12C): the ragdoll on the rainy Loop, the HUD line \"Crash! (slid out)\", the chase camera's wider orbit (further out, higher, turned to the side of the fall)"
+args = ["--route", "loop", "--bots", "4", "--power", "260"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=weather rain", "14=rider.lean 30"]
+shot = 17.5
+
+[[scene]]
+name = "k12d-warning-arrow"
+description = "The riding aids drawn as graphics (spec §14 Phase 12D): proximity cue on, a bot beside on the right (dev.bump) – the pale arrow on the ring around the rider points at it; leaning a little further than the wet road holds – the amber warning triangle flashes with \"Sliding - lean less\""
+args = ["--route", "loop", "--bots", "6", "--power", "240"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=weather rain", "1=ride.proximity_cue on", "6=dev.bump", "6.3=rider.lean -25"]
+shot = 7.2
+
+[[scene]]
+name = "k13-rider-list"
+description = "Navi -> Riders in this ride (spec §14 Phase 13E, 12F): the session's riders with their gaps; the own rider flies in unicorn mode (the unicorn before the name) and is badly injured with a damaged bike (the red ■ dot after it); the heading counts riders, flying and damaged"
+args = ["--route", "loop", "--bots", "5", "--power", "220"]
+at = ["1=ride.damage on", "1.5=dev.damage rider 12", "1.6=dev.damage frame 40", "3=god on", "6=menu open", "6.3=menu down", "6.6=menu down", "6.9=menu down", "7.2=menu down", "7.5=menu select", "7.9=menu down", "8.2=menu down", "8.5=menu down", "8.8=menu down", "9.1=menu select"]
+shot = 10.5
+
+[[scene]]
+name = "g5-flyover-vaduz-video"
+description = "Video: a guided camera path (spec §14 Phase 13 G5, for the build diary): four keyframes (camera.path key) over the Rhine valley at Vaduz, played in 16 s with the smooth easing – a centripetal Catmull-Rom spline through the eyes, the view turning from the valley to the mountains and back, the tiles streaming around the camera; rendered with --capture (a fixed game-time step)"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "3", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 17:30", "0.5=hud off", "1=camera.path key -3400 1100 3600 30 -18", "1=camera.path key -2600 1000 2200 70 -16", "1=camera.path key -1500 1650 1200 115 -18", "1=camera.path key -500 1900 1900 210 -24", "1.5=camera.path play --seconds 100000", "6=camera.path play --seconds 16 --ease smooth"]
+warmup = 6
+video = 16
