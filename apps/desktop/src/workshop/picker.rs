@@ -19,6 +19,10 @@
 //! glasses) list their choices ([`Kind::Free`], a `character` line, no
 //! dialog). The cards show the [`Benefit`] of an item – by speed for aero
 //! items (watts at 25 / 35 / 45 km/h), by the climb for light ones.
+//!
+//! The jersey designer (spec §14 Phase 8 T6, [`super::designer`]) is a
+//! picker too: one row per field ([`Kind::Design`]), ← / → change the
+//! focused field of a draft look (shown live), Confirm applies it.
 
 use ocw_assets::parts::{Catalogue, Part, Slot};
 use ocw_core::Rgb;
@@ -28,6 +32,7 @@ use ocw_core::hearts::format as hearts;
 use ocw_core::{BodyBuild, Character};
 use ocw_sim::build::{self as bike_build, Benefit, Build, PartTable};
 
+use super::designer::{DesignPage, Field};
 use super::wallet::{Bike, Garage, fits};
 
 /// What a picker row offers.
@@ -43,6 +48,8 @@ pub enum Kind {
     Paint(Option<Rgb>),
     /// A free character choice (spec 4C: body, skin, face, hair, glasses).
     Free(Free),
+    /// A field of the jersey designer (Phase 8 T6; free).
+    Design(Field),
 }
 
 /// A free choice of the character.
@@ -153,11 +160,13 @@ impl CharSlot {
 pub enum MirrorSlot {
     Char(CharSlot),
     Kit(Slot),
+    /// A page of the jersey designer (Phase 8 T6).
+    Design(DesignPage),
     TryOn,
 }
 
 impl MirrorSlot {
-    pub const ALL: [MirrorSlot; 14] = [
+    pub const ALL: [MirrorSlot; 16] = [
         MirrorSlot::Kit(Slot::Helmet),
         MirrorSlot::Kit(Slot::Cap),
         MirrorSlot::Char(CharSlot::Glasses),
@@ -165,11 +174,13 @@ impl MirrorSlot {
         MirrorSlot::Char(CharSlot::HairColour),
         MirrorSlot::Char(CharSlot::Face),
         MirrorSlot::Kit(Slot::Jersey),
+        MirrorSlot::Design(DesignPage::Jersey),
         MirrorSlot::Char(CharSlot::Body),
         MirrorSlot::Char(CharSlot::Skin),
         MirrorSlot::Kit(Slot::Gloves),
         MirrorSlot::Kit(Slot::Shorts),
         MirrorSlot::Kit(Slot::Socks),
+        MirrorSlot::Design(DesignPage::Kit),
         MirrorSlot::Kit(Slot::Shoes),
         MirrorSlot::TryOn,
     ];
@@ -178,6 +189,7 @@ impl MirrorSlot {
         match self {
             Self::Char(c) => c.name(),
             Self::Kit(s) => s.name(),
+            Self::Design(p) => p.name(),
             Self::TryOn => "Try on the bike",
         }
     }
@@ -190,9 +202,11 @@ impl MirrorSlot {
             | Self::Char(
                 CharSlot::Glasses | CharSlot::Hair | CharSlot::HairColour | CharSlot::Face,
             ) => Region::Head,
-            Self::Kit(Slot::Jersey) | Self::Char(CharSlot::Body | CharSlot::Skin) => Region::Torso,
+            Self::Kit(Slot::Jersey)
+            | Self::Design(DesignPage::Jersey)
+            | Self::Char(CharSlot::Body | CharSlot::Skin) => Region::Torso,
             Self::Kit(Slot::Gloves) => Region::Hands,
-            Self::Kit(Slot::Shorts | Slot::Socks) => Region::Legs,
+            Self::Kit(Slot::Shorts | Slot::Socks) | Self::Design(DesignPage::Kit) => Region::Legs,
             Self::Kit(Slot::Shoes) => Region::Feet,
             _ => return None,
         })
@@ -312,6 +326,11 @@ pub fn rows(cat: &Catalogue, garage: &Garage, bike: &Bike, slot: Slot) -> Vec<Ro
             part: None,
             kind: Kind::Paint(Some(*c)),
         }));
+        // Bare carbon under a clear coat (spec §14 Phase 8 T6).
+        out.push(Row {
+            part: None,
+            kind: Kind::Paint(Some(ocw_core::bike::BARE_CARBON)),
+        });
         // The current colour first.
         if let Some(i) = out.iter().position(|r| r.kind == Kind::Paint(now)) {
             let r = out.remove(i);
@@ -374,6 +393,7 @@ pub fn group(kind: &Kind) -> &'static str {
         Kind::Shop => "Shop",
         Kind::Paint(_) => "Paint (free)",
         Kind::Free(_) => "Free choice",
+        Kind::Design(_) => "Free design – ← / → change, Confirm applies",
     }
 }
 
@@ -381,6 +401,7 @@ pub fn group(kind: &Kind) -> &'static str {
 pub fn colour_name(c: Option<Rgb>) -> String {
     match c {
         None => "Rider's frame colour".into(),
+        Some(ocw_core::bike::BARE_CARBON) => "Bare carbon (clear coat)".into(),
         Some(c) => format!("Paint {c}"),
     }
 }
@@ -392,6 +413,9 @@ pub fn row_text(cat: &Catalogue, row: &Row, balance: i64) -> (String, String, bo
     }
     if let Kind::Free(f) = row.kind {
         return (f.name(), "free".into(), false);
+    }
+    if let Kind::Design(f) = row.kind {
+        return (f.name().into(), "free".into(), false);
     }
     let Some(p) = row.part.as_deref().and_then(|id| cat.get(id)) else {
         return ("?".into(), String::new(), false);
@@ -418,7 +442,7 @@ pub fn row_text(cat: &Catalogue, row: &Row, balance: i64) -> (String, String, bo
                 (left, hearts(price), false)
             }
         }
-        Kind::Paint(_) | Kind::Free(_) => unreachable!("handled above"),
+        Kind::Paint(_) | Kind::Free(_) | Kind::Design(_) => unreachable!("handled above"),
     }
 }
 
@@ -788,7 +812,7 @@ pub fn dialog(
             ))
         }
         Kind::Equipped { item: None } => None,
-        Kind::Paint(_) | Kind::Free(_) => None,
+        Kind::Paint(_) | Kind::Free(_) | Kind::Design(_) => None,
     }
 }
 
@@ -804,6 +828,8 @@ pub struct Picker {
     /// The row pinned as *A* for comparing.
     pub pinned: Option<Row>,
     pub dialog: Option<Dialog>,
+    /// The jersey designer: its page and the draft look (Phase 8 T6).
+    pub design: Option<(DesignPage, ocw_core::RiderLook)>,
 }
 
 impl Picker {
@@ -815,6 +841,39 @@ impl Picker {
             focus: 0,
             pinned: None,
             dialog: None,
+            design: None,
+        }
+    }
+
+    /// The jersey designer's page `page`, its draft starting from `look`.
+    pub fn designer(page: DesignPage, look: ocw_core::RiderLook) -> Self {
+        let rows = page
+            .fields()
+            .iter()
+            .map(|f| Row {
+                part: None,
+                kind: Kind::Design(*f),
+            })
+            .collect();
+        Self {
+            design: Some((page, look)),
+            ..Self::new(Slot::Paint, rows)
+        }
+    }
+
+    /// The designer's focused field.
+    pub fn design_field(&self) -> Option<Field> {
+        match self.focused()?.kind {
+            Kind::Design(f) => Some(f),
+            _ => None,
+        }
+    }
+
+    /// ← / → on the designer: the focused field of the draft.
+    pub fn step_design(&mut self, d: i32) {
+        let Some(f) = self.design_field() else { return };
+        if let Some((_, look)) = &mut self.design {
+            *look = f.step(*look, d);
         }
     }
 
@@ -1018,7 +1077,11 @@ mod tests {
             ]
         );
         let paint = rows(cat(), g, b, Slot::Paint);
-        assert_eq!(paint.len(), 13);
+        assert_eq!(
+            paint.len(),
+            14,
+            "the palette, the rider's colour, bare carbon"
+        );
         assert_eq!(paint[0].kind, Kind::Paint(None), "the current colour first");
         assert_eq!(
             lines(dialog(cat(), g, b, Slot::Paint, &paint[1], 0).unwrap()),

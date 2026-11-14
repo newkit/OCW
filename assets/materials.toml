@@ -1,5 +1,5 @@
 # The material library (spec §4.6, §13, Phase 8 T1): tiling PBR materials
-# for the ground, the roads and (Phase 8 T4) the houses.
+# for the ground, the roads, (Phase 8 T4) the houses and (T6) riders and bikes.
 #
 # The textures are not in git. Every source file is pinned here by URL (or as
 # a member of a pinned archive) and SHA-256; `scripts/fetch-materials.sh`
@@ -417,6 +417,53 @@ source = "https://polyhaven.com/a/concrete_wall_008"
 albedo = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_wall_008/concrete_wall_008_diff_1k.jpg", sha256 = "a203166d280d3cfc6a91bbc9ffdae406eb9555b4a4f658cd92619063eb17c147" }
 normal = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_wall_008/concrete_wall_008_nor_gl_1k.jpg", sha256 = "83cd3fa2c7cbf4c81402386065daf8fa6f72e1f1f77e02ccb1eedb28496909ae" }
 arm = { file = "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_wall_008/concrete_wall_008_arm_1k.jpg", sha256 = "12b8b88bd0a9b303150f45cf0080371d78b7f04744d4ab14030b8958ec7dc2e3" }
+
+# --- Riders and bikes (Phase 8 T6) -------------------------------------------
+# The gear shader's texture layers (ocw_render::gear, GEAR_IDS): tinted to the
+# garment's or part's colour, normal-mapped, fading out with distance. Metals,
+# rubber, lycra, plastics and the jersey patterns are procedural (own work).
+
+[[material]]
+id = "jersey_knit"
+name = "Jersey knit (sportswear)"
+group = "gear"
+size_m = 0.06
+license = "CC0-1.0"
+author = "Lennart Demes (ambientCG)"
+title = "Fabric 070"
+source = "https://ambientcg.com/view?id=Fabric070"
+archive = "https://ambientcg.com/get?file=Fabric070_1K-JPG.zip"
+albedo = { file = "Fabric070_1K-JPG_Color.jpg", sha256 = "f9f720705d48ccfe0a6ccbed7637a333fdc558b2c33f50dd2ee9f8371a4ad3c9" }
+normal = { file = "Fabric070_1K-JPG_NormalGL.jpg", sha256 = "8e9a5799354579966b450791e15facca8e5d052da1357d50a8fd5d84a7d0ed8e" }
+roughness = { file = "Fabric070_1K-JPG_Roughness.jpg", sha256 = "1c262a143a7c9508d81c604fe14aacae97c3336b436509aa1b94258e4765ba1c" }
+
+[[material]]
+id = "carbon_weave"
+name = "Carbon fibre twill"
+group = "gear"
+size_m = 0.04
+license = "CC0-1.0"
+author = "Lennart Demes (ambientCG)"
+title = "Fabric 004"
+source = "https://ambientcg.com/view?id=Fabric004"
+archive = "https://ambientcg.com/get?file=Fabric004_1K-JPG.zip"
+albedo = { file = "Fabric004_1K-JPG_Color.jpg", sha256 = "6f825ef50cab7a7d12af2a4726aab8311fb96d574062397c27d984cdf64652a4" }
+normal = { file = "Fabric004_1K-JPG_NormalGL.jpg", sha256 = "9f3d8162fbb58ab59a702ff74244263dcae3077f3fa9d9035f69b4b16894a38a" }
+roughness = { file = "Fabric004_1K-JPG_Roughness.jpg", sha256 = "701222c33d62245be1ea68a68fc4c0db0e3bf2bcf89eb849641b52f2074da10e" }
+
+[[material]]
+id = "saddle_leather"
+name = "Saddle leather (black, smooth)"
+group = "gear"
+size_m = 0.15
+license = "CC0-1.0"
+author = "Lennart Demes (ambientCG)"
+title = "Leather 027"
+source = "https://ambientcg.com/view?id=Leather027"
+archive = "https://ambientcg.com/get?file=Leather027_1K-JPG.zip"
+albedo = { file = "Leather027_1K-JPG_Color.jpg", sha256 = "fa8dcf2341268e0ea22f1e28d6d9eca55f3dc9f888520c058b7d200b2e680765" }
+normal = { file = "Leather027_1K-JPG_NormalGL.jpg", sha256 = "5dbbaa3d66ec814bdcea712d8e863da77d55f72afb48490fb4cb8c7f55a1e2bd" }
+roughness = { file = "Leather027_1K-JPG_Roughness.jpg", sha256 = "1c06d09b0c2c7e7076c0dd73b935c68125b6883c778f2b2af8ce124d3419b37c" }
 
 # --- Regional material sets (spec §4.6; Phase 8 T3 extends them) -------------
 # A set applies to packages whose time zone (section TZID) is listed: ground

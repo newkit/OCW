@@ -18,8 +18,14 @@
 //! comes from the rider profile) and the kit (bought and worn like parts,
 //! `workshop.buy helmet.tt.top`), *Try on the bike*; the look and the kit
 //! ids go to the server with the bike when the workshop closes.
+//!
+//! Phase 8 T6: the jersey designer ([`designer`]; `kit.design` command:
+//! pattern, three colours, race number, the pattern on the helmet, the
+//! colours of shorts, socks, shoes and gloves, helmet and shoe finish –
+//! free, saved in the rider profile, sent with the look).
 
 pub mod camera;
+pub mod designer;
 pub mod input;
 pub mod model;
 pub mod nav;
@@ -154,7 +160,7 @@ impl Plugin for WorkshopPlugin {
 }
 
 /// Console lines of the scene's actions (scripts, scenes, tests).
-const ACTIONS: [&str; 15] = [
+const ACTIONS: [&str; 16] = [
     "open",
     "close",
     "left",
@@ -169,6 +175,7 @@ const ACTIONS: [&str; 15] = [
     "action",
     "reset",
     "orbit",
+    "zoom",
     "mirror",
 ];
 
@@ -184,7 +191,7 @@ fn register_commands(app: &mut App) {
             )
             .arg(
                 Arg::new("amount")
-                    .help("orbit: degrees to turn")
+                    .help("orbit: degrees to turn; zoom: steps closer (negative: away)")
                     .allow_negative_numbers(true)
                     .value_parser(clap::value_parser!(f32)),
             ),
@@ -216,6 +223,9 @@ fn register_commands(app: &mut App) {
                         "compare" => Act::Compare,
                         "action" => Act::Action,
                         "reset" => Act::ResetView,
+                        "zoom" => {
+                            Act::Zoom(m.get_one::<f32>("amount").copied().unwrap_or(3.0))
+                        }
                         "mirror" => {
                             // Straight to the character editor (scripts).
                             let mut s = world.resource_mut::<WorkshopState>();
@@ -264,6 +274,22 @@ fn register_commands(app: &mut App) {
                 "mirror {}",
                 if on { "reflection on" } else { "off: front view" }
             ))
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        kit_design_command(),
+        |world, m| {
+            let mut l = crate::settings::local_rider(world).look();
+            let before = l;
+            apply_design_args(&mut l, m);
+            if l != before {
+                set_look(world, l)?;
+                if world.resource::<WorkshopState>().scene.is_none() {
+                    apply_bike(world);
+                }
+            }
+            Ok(design_summary(&l))
         },
     ))
     .console_command(ConsoleCommand::new(
@@ -466,13 +492,14 @@ fn register_commands(app: &mut App) {
     .console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("workshop.paint")
-            .about("Paint a bike's frame (#RRGGBB, or default: the rider's frame colour; free)")
+            .about("Paint a bike's frame (#RRGGBB, carbon: bare carbon under a clear coat, or default: the rider's frame colour; free)")
             .arg(Arg::new("colour").required(true))
             .arg(Arg::new("bike").long("bike")),
         |world, m| {
             let c = m.get_one::<String>("colour").expect("required");
             let colour = match c.as_str() {
                 "default" => None,
+                "carbon" => Some(ocw_core::bike::BARE_CARBON),
                 v => Some(Rgb::parse(v).ok_or_else(|| format!("not a colour: {v} (#RRGGBB)"))?),
             };
             garage_op(world, m, |w, name, bike| {
@@ -548,6 +575,181 @@ fn register_commands(app: &mut App) {
             Ok(format!("{} on the stand", profile.name()))
         },
     ));
+}
+
+/// `kit.design`: the jersey designer's console form (spec §14 Phase 8 T6).
+fn kit_design_command() -> Command {
+    let colour = |s: &str| Rgb::parse(s).ok_or_else(|| format!("{s:?} is not a colour #RRGGBB"));
+    // A colour, or the word that means "none" for this option.
+    let opt_colour = |none: &'static str| {
+        move |s: &str| -> Result<Option<Rgb>, String> {
+            if s.eq_ignore_ascii_case(none) {
+                Ok(None)
+            } else {
+                Rgb::parse(s)
+                    .map(Some)
+                    .ok_or_else(|| format!("{s:?} is neither a colour #RRGGBB nor {none}"))
+            }
+        }
+    };
+    let finish =
+        |s: &str| ocw_core::Finish::parse(s).ok_or_else(|| format!("{s:?}: gloss or matte"));
+    let mut c = Command::new("kit.design")
+        .about("The jersey designer (free): pattern, colours, race number, kit colours, finishes (no options: the current design)")
+        .arg(
+            Arg::new("pattern")
+                .long("pattern")
+                .value_parser(|s: &str| {
+                    ocw_core::KitPattern::parse(s).ok_or_else(|| {
+                        "plain, band, sash, stripes, chevrons or gradient".to_string()
+                    })
+                })
+                .help("plain, band, sash, stripes, chevrons, gradient"),
+        )
+        .arg(
+            Arg::new("jersey")
+                .long("jersey")
+                .value_name("#RRGGBB")
+                .value_parser(colour)
+                .help("First (main) colour"),
+        )
+        .arg(
+            Arg::new("second")
+                .long("second")
+                .value_name("#RRGGBB|auto")
+                .value_parser(opt_colour("auto"))
+                .help("The pattern's colour (auto: white on dark, black on light)"),
+        )
+        .arg(
+            Arg::new("third")
+                .long("third")
+                .value_name("#RRGGBB|none")
+                .value_parser(opt_colour("none"))
+                .help("A third colour (none: two colours)"),
+        )
+        .arg(
+            Arg::new("number")
+                .long("number")
+                .value_name("1-999|none")
+                .value_parser(|s: &str| -> Result<u16, String> {
+                    if s.eq_ignore_ascii_case("none") {
+                        return Ok(0);
+                    }
+                    match s.parse::<u16>() {
+                        Ok(n) if (1..=ocw_core::kit::MAX_RACE_NUMBER).contains(&n) => Ok(n),
+                        _ => Err(format!("{s:?}: a race number 1 to 999, or none")),
+                    }
+                })
+                .help("Race number on the back and the shorts"),
+        )
+        .arg(
+            Arg::new("helmet_pattern")
+                .long("helmet-pattern")
+                .value_parser(["on", "off"])
+                .help("The pattern on the helmet too"),
+        )
+        .arg(
+            Arg::new("helmet")
+                .long("helmet")
+                .value_name("#RRGGBB")
+                .value_parser(colour)
+                .help("Helmet colour (without the pattern)"),
+        );
+    for (id, what) in [
+        ("shorts", "Shorts"),
+        ("socks", "Socks"),
+        ("shoes", "Shoes"),
+        ("gloves", "Gloves"),
+    ] {
+        c = c.arg(
+            Arg::new(id)
+                .long(id)
+                .value_name("#RRGGBB|standard")
+                .value_parser(opt_colour("standard"))
+                .help(format!("{what} colour (standard: the kit's own)")),
+        );
+    }
+    for (id, long) in [
+        ("helmet_finish", "helmet-finish"),
+        ("shoe_finish", "shoe-finish"),
+    ] {
+        c = c.arg(
+            Arg::new(id)
+                .long(long)
+                .value_parser(finish)
+                .help("gloss or matte"),
+        );
+    }
+    c
+}
+
+/// The `kit.design` options in `m` applied to `l`.
+fn apply_design_args(l: &mut RiderLook, m: &clap::ArgMatches) {
+    if let Some(p) = m.get_one::<ocw_core::KitPattern>("pattern") {
+        l.pattern = *p;
+    }
+    if let Some(c) = m.get_one::<Rgb>("jersey") {
+        l.jersey = *c;
+    }
+    if let Some(c) = m.get_one::<Rgb>("helmet") {
+        l.helmet = *c;
+    }
+    let d = &mut l.design;
+    for (id, field) in [
+        ("second", &mut d.second),
+        ("third", &mut d.third),
+        ("shorts", &mut d.shorts),
+        ("socks", &mut d.socks),
+        ("shoes", &mut d.shoes),
+        ("gloves", &mut d.gloves),
+    ] {
+        if let Some(v) = m.get_one::<Option<Rgb>>(id) {
+            *field = *v;
+        }
+    }
+    if let Some(n) = m.get_one::<u16>("number") {
+        d.number = *n;
+    }
+    if let Some(v) = m.get_one::<String>("helmet_pattern") {
+        d.helmet_pattern = v == "on";
+    }
+    if let Some(f) = m.get_one::<ocw_core::Finish>("helmet_finish") {
+        d.helmet_finish = *f;
+    }
+    if let Some(f) = m.get_one::<ocw_core::Finish>("shoe_finish") {
+        d.shoe_finish = *f;
+    }
+}
+
+/// "Stripes, jersey #1E88E5, helmet #F2F2EE; second #FFFFFF, number 42, …".
+fn design_summary(l: &RiderLook) -> String {
+    format!(
+        "{}, jersey {}, helmet {}; {}",
+        l.pattern.name(),
+        l.jersey,
+        l.helmet,
+        l.design.summary()
+    )
+}
+
+/// Sets the riding rider's look (and the saved profile's of the same
+/// name, riders.toml): colours, pattern, kit design.
+fn set_look(world: &mut World, l: RiderLook) -> Result<(), String> {
+    let mut p = world
+        .get_resource_mut::<RiderProfiles>()
+        .ok_or("no rider profiles")?;
+    p.riding.set_look(l);
+    let name = p.riding.name.clone();
+    let saved = if let Some(i) = p.riders.find(&name) {
+        p.riders.riders[i].set_look(l);
+        true
+    } else {
+        false
+    };
+    if saved && p.path.is_some() {
+        p.save()?;
+    }
+    Ok(())
 }
 
 /// `--NAME N`: a 1-based index into a palette of `n`.
@@ -909,6 +1111,7 @@ fn workshop_input(
         .as_ref()
         .map(|r| r.riding.character())
         .unwrap_or_default();
+    let rider_look = riders.as_ref().map(|r| r.riding.look()).unwrap_or_default();
     let mirror = st.mirror;
     let scene = st.scene.as_mut().expect("open");
     scene.front_view = !mirror;
@@ -925,6 +1128,7 @@ fn workshop_input(
         anchors: &anchors,
         boxes: &boxes,
         character,
+        look: rider_look,
         rider_spots: &spots,
     };
     let mut out = scene.update(&acts, &ctx);
@@ -978,6 +1182,7 @@ fn write_view(
         Vec2::new(w.width(), w.height())
     });
     let character = rider.character();
+    let rider_look = rider.look();
     let spots = layout.rider_hotspots(character.scale()).to_vec();
     // The stand bike's look with the live preview.
     let looks0 = looks(scene, g, None);
@@ -991,6 +1196,7 @@ fn write_view(
         anchors: &anchors,
         boxes: &boxes,
         character,
+        look: rider_look,
         rider_spots: &spots,
     };
     let stand_look = scene.stand_look(&ctx);
@@ -1078,7 +1284,8 @@ fn write_view(
     // the stand bike; with the live preview of the picker.
     let rider_show = scene.dressing().then(|| {
         let (c, kit) = scene.rider_look(&ctx);
-        let mut look = rider.look();
+        // The jersey designer's draft (T6), else the rider's look.
+        let mut look = scene.design_preview().unwrap_or(rider_look);
         look.character = c;
         RiderShow {
             look,
@@ -1144,7 +1351,14 @@ fn picker_view(
             let gname = picker::group(&r.kind);
             let group = (gname != last_group).then(|| gname.to_string());
             last_group = gname;
-            let (left, right, locked) = picker::row_text(cat(), r, balance);
+            let (left, right, locked) = match (&r.kind, p.design) {
+                (picker::Kind::Design(f), Some((_, draft))) => (
+                    f.name().to_string(),
+                    format!("‹ {} ›", f.value(&draft)),
+                    false,
+                ),
+                _ => picker::row_text(cat(), r, balance),
+            };
             PickerRowView {
                 group,
                 left,
@@ -1160,6 +1374,17 @@ fn picker_view(
     };
     let focused = p.preview().and_then(|id| cat().get(id));
     let detail = match (p.slot, focused) {
+        _ if p.design.is_some() => {
+            let draft = p.design.map(|(_, l)| l).unwrap_or_default();
+            p.design_field().map_or_else(Vec::new, |f| {
+                vec![
+                    format!("{}: {}", f.name(), f.value(&draft)),
+                    f.help().to_string(),
+                    "Free – ← / → change it (live in the mirror), Confirm applies; everyone sees it."
+                        .into(),
+                ]
+            })
+        }
         _ if p.character.is_some() => {
             let f = p.preview_free();
             let mut d = vec![
@@ -1214,6 +1439,10 @@ fn picker_view(
         _ => None,
     };
     let title = match p.character {
+        _ if p.design.is_some() => format!(
+            "{} – your kit",
+            p.design.map_or("Jersey designer", |(page, _)| page.name())
+        ),
         Some(c) => format!("{} – your rider", c.name()),
         None if p.slot.is_kit() => format!("{} – your kit", p.slot.name()),
         None => format!("{} – {}", p.slot.name(), bike.map_or("", |b| b.name())),

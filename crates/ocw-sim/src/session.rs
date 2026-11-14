@@ -422,13 +422,14 @@ impl Session {
     }
 
     /// Sets a rider's cosmetic look (spec §2.5); false for unknown riders.
-    /// A rider's look (cosmetic, §2.5). A new character (spec §14 Phase
-    /// 4, 4C) goes out once in a `RiderBuild` (the snapshots carry only
-    /// the colours).
+    /// A new character (spec §14 Phase 4, 4C) or kit design (Phase 8 T6)
+    /// goes out once in a `RiderBuild` (the snapshots carry only the
+    /// colours and the pattern).
     pub fn set_look(&mut self, id: RiderId, look: RiderLook) -> bool {
         match self.riders.get_mut(&id) {
             Some(r) => {
-                r.build_changed |= r.look.character != look.character;
+                r.build_changed |=
+                    r.look.character != look.character || r.look.design != look.design;
                 r.look = look;
                 true
             }
@@ -2640,6 +2641,30 @@ mod tests {
         );
         assert_eq!(v[0], v[1]);
         assert_eq!(gap, 0.0);
+    }
+
+    /// A new character or kit design (spec §14 Phase 8 T6) is reported
+    /// once (a `RiderBuild` to the others); new colours alone are not
+    /// (the snapshots carry them).
+    #[test]
+    fn character_and_design_changes_are_reported_once() {
+        let mut s = Session::new(Route::test_loop());
+        let me = s.add_rider("me", RiderProfile::default());
+        let _ = s.take_build_changes();
+        let mut look = RiderLook {
+            jersey: ocw_core::Rgb(0x1E88E5),
+            ..Default::default()
+        };
+        assert!(s.set_look(me, look));
+        assert!(s.take_build_changes().is_empty(), "colours: snapshots");
+        look.design.number = 9;
+        s.set_look(me, look);
+        assert_eq!(s.take_build_changes(), vec![me]);
+        s.set_look(me, look);
+        assert!(s.take_build_changes().is_empty(), "once");
+        look.character.hair = 5;
+        s.set_look(me, look);
+        assert_eq!(s.take_build_changes(), vec![me]);
     }
 
     /// The workshop's bike applies at once outside events; an entrant

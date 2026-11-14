@@ -6,10 +6,12 @@
 pub mod bike;
 pub mod character;
 pub mod hearts;
+pub mod kit;
 pub mod timestamp;
 
 pub use bike::{BikeType, KitPattern, PhysicsProfile, ProfileId, Rgb, RiderLook};
 pub use character::{BodyBuild, Character};
+pub use kit::{Finish, KitDesign};
 
 /// Physics tick rate on client and server (spec §5.2).
 pub const SIM_TICK_HZ: u32 = 50;

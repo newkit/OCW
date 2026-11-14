@@ -381,13 +381,21 @@ impl ClientCore {
             .map(|l| l.character)
     }
 
-    /// A rider's look from the snapshots (colours) with the character of
-    /// their last `RiderBuild` (spec §14 Phase 4, 4C: once per change).
+    /// Another rider's kit design, from their last `RiderBuild` (spec §14
+    /// Phase 8 T6; `None`: not told yet, or an older server).
+    pub fn rider_design(&self, id: RiderId) -> Option<ocw_core::KitDesign> {
+        self.builds.get(&id).and_then(|b| b.look).map(|l| l.design)
+    }
+
+    /// A rider's look from the snapshots (colours, pattern) with the
+    /// character and the kit design of their last `RiderBuild` (spec §14
+    /// Phase 4, 4C; Phase 8 T6: once per change).
     fn with_character(&self, id: RiderId, look: Option<RiderLook>) -> Option<RiderLook> {
-        let character = self.rider_character(id);
-        match (look, character) {
-            (Some(mut l), Some(c)) => {
-                l.character = c;
+        let full = self.builds.get(&id).and_then(|b| b.look);
+        match (look, full) {
+            (Some(mut l), Some(f)) => {
+                l.character = f.character;
+                l.design = f.design;
                 Some(l)
             }
             (l, _) => l,
@@ -3983,5 +3991,66 @@ mod tests {
         }
         assert_eq!(late.rider_character(oid).map(|c| c.hair), Some(5));
         assert_eq!(late.rider_parts(oid).len(), 2);
+    }
+
+    /// Others see your kit design (spec §14 Phase 8 T6): the pattern with
+    /// the snapshots' colours, the design (second and third colour, race
+    /// number, kit colours, finishes) once per change in a RiderBuild, as
+    /// the character; a joining client gets it too.
+    #[test]
+    fn other_riders_kit_design_reaches_the_view() {
+        let mut h = Harness::new(0, true);
+        let conn = h.server.connect();
+        let design = ocw_core::KitDesign {
+            second: Some(ocw_core::Rgb(0xFDD835)),
+            third: Some(ocw_core::Rgb(0x1E1E22)),
+            number: 77,
+            helmet_pattern: true,
+            shorts: Some(ocw_core::Rgb(0x3949AB)),
+            gloves: Some(ocw_core::Rgb(0xF2F2EE)),
+            helmet_finish: ocw_core::Finish::Matte,
+            ..Default::default()
+        };
+        let look = RiderLook {
+            jersey: ocw_core::Rgb(0x1E88E5),
+            pattern: ocw_core::KitPattern::Stripes,
+            design,
+            ..Default::default()
+        };
+        let mut other = ClientCore::new(route(), "Other", RiderProfile::default()).with_look(look);
+        for reply in h.server.handle(conn, &other.hello()) {
+            other.on_server_message(&reply, 0.0);
+        }
+        let oid = other.rider_id().unwrap();
+        h.ride(200.0, 1.0);
+        let view = h.client.view(h.time_s, 1.0);
+        let o = view.iter().find(|r| r.id == oid).expect("the other rider");
+        assert_eq!(o.look, Some(look));
+        // A new design alone: once more.
+        let numbered = RiderLook {
+            design: ocw_core::KitDesign {
+                number: 5,
+                ..design
+            },
+            pattern: ocw_core::KitPattern::Gradient,
+            ..look
+        };
+        let m = other.change_bike("road", ProfileId::Road, numbered, &[]);
+        h.server.handle(conn, &m);
+        h.ride(200.0, 1.0);
+        let view = h.client.view(h.time_s, 1.0);
+        let o = view.iter().find(|r| r.id == oid).unwrap();
+        assert_eq!(o.look, Some(numbered));
+        // A newcomer: the design with the welcome (a design alone, no
+        // parts and the default character, is reason enough to send it).
+        let conn2 = h.server.connect();
+        let mut late = ClientCore::new(route(), "Late", RiderProfile::default());
+        for reply in h.server.handle(conn2, &late.hello()) {
+            late.on_server_message(&reply, 0.0);
+        }
+        for b in (0..5).flat_map(|_| h.server.tick()) {
+            late.on_server_message(&b, 0.1);
+        }
+        assert_eq!(late.rider_design(oid).map(|d| d.number), Some(5));
     }
 }

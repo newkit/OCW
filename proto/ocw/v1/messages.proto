@@ -355,6 +355,25 @@ message RiderLook {
   optional fixed32 hair_rgb = 10;
   // Glasses: 0 none, 1 sport wrap, 2 round.
   optional uint32 glasses = 11;
+  // The kit design (spec §14 Phase 8 T6; jersey designer): free looks,
+  // never physics, sent like the character (Hello, BikeChange, RiderBuild;
+  // not in the snapshots). kit_pattern above is the pattern (3 stripes,
+  // 4 chevrons, 5 gradient: older apps draw them plain). Absent fields:
+  // the default (automatic second colour, two colours, no number, the
+  // model's kit colours, gloss).
+  optional fixed32 kit_second_rgb = 12;
+  optional fixed32 kit_third_rgb = 13;
+  // Race number on the jersey's back and the shorts' hips (1-999; 0 none).
+  optional uint32 race_number = 14;
+  // The pattern on the helmet shell too.
+  optional bool helmet_pattern = 15;
+  optional fixed32 shorts_rgb = 16;
+  optional fixed32 socks_rgb = 17;
+  optional fixed32 shoes_rgb = 18;
+  optional fixed32 gloves_rgb = 19;
+  // 0 gloss, 1 matte.
+  optional uint32 helmet_finish = 20;
+  optional uint32 shoe_finish = 21;
 }
 
 // Identifies a world package's road graph: its name and a fingerprint of

@@ -239,14 +239,12 @@ pub fn optional() -> Vec<&'static str> {
 }
 
 /// The optional nodes shown for a look: the kit `variants` (rider variant
-/// ids of the worn items; slots without one wear the base item), the kit
-/// pattern and the character's hair, face and glasses (a TT helmet's
-/// visor replaces the glasses).
-pub fn visible(
-    character: &ocw_core::Character,
-    pattern: ocw_core::KitPattern,
-    variants: &[&str],
-) -> Vec<&'static str> {
+/// ids of the worn items; slots without one wear the base item) and the
+/// character's hair, face and glasses (a TT helmet's visor replaces the
+/// glasses). The kit patterns are drawn by the renderer's gear shader
+/// (spec §14 Phase 8 T6, `ocw_core::kit`): the chest band and sash nodes
+/// of W4 stay in the model for older apps but are never shown.
+pub fn visible(character: &ocw_core::Character, variants: &[&str]) -> Vec<&'static str> {
     let c = character.validated();
     let mut out: Vec<&'static str> = Vec::new();
     for slot in KIT_SLOTS {
@@ -258,11 +256,6 @@ pub fn visible(
             Some(v) => out.extend(v.nodes),
             None => out.extend(base_nodes(slot)),
         }
-    }
-    match pattern {
-        ocw_core::KitPattern::Plain => {}
-        ocw_core::KitPattern::Band => out.push(KIT_BAND),
-        ocw_core::KitPattern::Sash => out.push(KIT_SASH),
     }
     out.extend(match c.hair {
         0 => &[opt::HAIR_CAP][..],
@@ -291,11 +284,37 @@ pub fn visible(
 /// The look of the shipped model and of the far LOD: the base kit and
 /// the default character.
 pub fn base_visible() -> Vec<&'static str> {
-    visible(
-        &ocw_core::Character::default(),
-        ocw_core::KitPattern::Plain,
-        &[],
-    )
+    visible(&ocw_core::Character::default(), &[])
+}
+
+/// The body region of node `i` (spec §14 Phase 8 T6: where a garment's
+/// pattern and race number go): from the nearest rig node at or above it.
+pub fn body_region(m: &Model, i: usize) -> ocw_core::kit::BodyRegion {
+    use ocw_core::kit::BodyRegion;
+    let mut at = Some(i);
+    while let Some(n) = at {
+        let name = m.nodes[n].name.as_str();
+        let region = if name == PELVIS || name == TORSO {
+            Some(BodyRegion::Torso)
+        } else if name == HEAD {
+            Some(BodyRegion::Head)
+        } else if UPPER_ARM.contains(&name) || FOREARM.contains(&name) {
+            Some(BodyRegion::Arm)
+        } else if HAND.contains(&name) {
+            Some(BodyRegion::Hand)
+        } else if THIGH.contains(&name) || SHIN.contains(&name) {
+            Some(BodyRegion::Leg)
+        } else if FOOT.contains(&name) {
+            Some(BodyRegion::Foot)
+        } else {
+            None
+        };
+        if let Some(r) = region {
+            return r;
+        }
+        at = m.nodes[n].parent;
+    }
+    BodyRegion::Torso
 }
 
 /// The rig nodes whose meshes (and kit over them) get the body build's
@@ -1060,14 +1079,12 @@ mod tests {
         assert!(base.contains(&opt::HAIR_CAP) && base.contains(&opt::GLASSES_SPORT));
         assert!(!base.contains(&CAP) && !base.contains(&KIT_BAND));
         let c = ocw_core::Character::default();
-        let tt = visible(
-            &c,
-            ocw_core::KitPattern::Band,
-            &["helmet-tt", "shoes-race", "cap-cotton"],
-        );
+        let tt = visible(&c, &["helmet-tt", "shoes-race", "cap-cotton"]);
         assert!(tt.contains(&HELMET_AERO) && !tt.contains(&HELMET_ROAD));
         assert!(tt.contains(&opt::SHOE_RACE[1]) && !tt.contains(&opt::SHOE_ROAD[1]));
-        assert!(tt.contains(&CAP) && tt.contains(&KIT_BAND));
+        assert!(tt.contains(&CAP));
+        // The patterns are the gear shader's (T6): no band or sash nodes.
+        assert!(!tt.contains(&KIT_BAND) && !tt.contains(&KIT_SASH));
         assert!(
             !tt.contains(&opt::GLASSES_SPORT),
             "the visor replaces the glasses"
@@ -1079,15 +1096,28 @@ mod tests {
             glasses: 2,
             ..c
         };
-        let v = visible(&ch, ocw_core::KitPattern::Plain, &[]);
+        let v = visible(&ch, &[]);
         assert!(!v.iter().any(|n| n.starts_with("hair_")));
         assert!(v.contains(&opt::FACE_BEARD) && v.contains(&opt::GLASSES_ROUND));
         let none = ocw_core::Character { glasses: 0, ..c };
-        assert!(
-            !visible(&none, ocw_core::KitPattern::Plain, &[])
-                .iter()
-                .any(|n| n.starts_with("glasses"))
-        );
+        assert!(!visible(&none, &[]).iter().any(|n| n.starts_with("glasses")));
+    }
+
+    /// Every node knows its body region (T6: patterns and numbers).
+    #[test]
+    fn nodes_have_their_body_regions() {
+        use ocw_core::kit::BodyRegion::*;
+        let m = build(Detail::High);
+        let at = |n: &str| body_region(&m, m.node(n).unwrap());
+        assert_eq!(at(TORSO), Torso);
+        assert_eq!(at(opt::SUIT_PELVIS), Torso);
+        assert_eq!(at(opt::SLEEVE_LONG[0]), Arm);
+        assert_eq!(at(opt::SUIT_THIGH[1]), Leg);
+        assert_eq!(at(opt::TIGHTS_SHIN[0]), Leg);
+        assert_eq!(at(HELMET_ROAD), Head);
+        assert_eq!(at(opt::GLOVE_GEL[1]), Hand);
+        assert_eq!(at(opt::SHOE_RACE[0]), Foot);
+        assert_eq!(at("rider"), Torso);
     }
 
     /// The build widens the torso and limbs, never the head, hands, feet.

@@ -35,11 +35,11 @@ use bevy::text::FontSize;
 use bevy::window::{PrimaryWindow, WindowRef};
 use ocw_assets::model::{Model, Primitive};
 use ocw_assets::pose::bike_nodes;
-use ocw_assets::slots::{self, Tint};
 use ocw_assets::workshop::Layout;
 use ocw_core::{ProfileId, Rgb};
 
 use crate::camera::FollowCamera;
+use crate::gear::{self, GearMaterial};
 
 /// The workshop's render layer (the world is on layer 0).
 pub const LAYER: usize = 7;
@@ -326,7 +326,8 @@ struct Scene {
     /// The mirror's camera, and its picture on the glass (mesh, material).
     mirror_cam: Option<Entity>,
     mirror_quad: Option<(Handle<Mesh>, Handle<StandardMaterial>)>,
-    materials: HashMap<(String, [u8; 4]), Handle<StandardMaterial>>,
+    /// Gear materials by surface (spec §14 Phase 8 T6).
+    materials: HashMap<Vec<u32>, Handle<GearMaterial>>,
     meshes: HashMap<usize, NodeMeshes>,
     since_frame: f32,
 }
@@ -798,57 +799,48 @@ fn spawn_ui(commands: &mut Commands, image: Handle<Image>) -> Entity {
         .id()
 }
 
-/// A built bike's meshes on the GPU, per node.
-fn upload(model: &Model, meshes: &mut Assets<Mesh>) -> NodeMeshes {
+/// A built bike's (or the rider's) meshes on the GPU, per node, with the
+/// gear shader's rest coordinates (spec §14 Phase 8 T6).
+fn upload(model: &Model, meshes: &mut Assets<Mesh>, rider: bool) -> NodeMeshes {
     model
         .nodes
         .iter()
-        .map(|n| {
+        .enumerate()
+        .map(|(i, n)| {
+            let (rest, region) = gear::rest_frame(model, i, rider);
             n.primitives
                 .iter()
-                .map(|p| (meshes.add(mesh_of(p)), p.material))
+                .map(|p| (meshes.add(gear::gear_mesh(p, rest, region)), p.material))
                 .collect()
         })
         .collect()
 }
 
-fn bike_material(
-    cache: &mut HashMap<(String, [u8; 4]), Handle<StandardMaterial>>,
-    materials: &mut Assets<StandardMaterial>,
+/// The gear material of a part (spec §14 Phase 8 T6): its kind from slot
+/// and node, its colours from `colours`; the light set's lenses glow.
+fn part_material(
+    cache: &mut HashMap<Vec<u32>, Handle<GearMaterial>>,
+    materials: &mut Assets<GearMaterial>,
     slot: &str,
+    node: &str,
     model_color: [f32; 4],
-    paint: Rgb,
-) -> Handle<StandardMaterial> {
-    let s = slots::get(slot).unwrap_or(&slots::ALL[0]);
-    let color = match s.tint {
-        Tint::Frame => {
-            let [r, g, b] = paint.channels();
-            Color::srgb_u8(r, g, b)
-        }
-        _ => Color::linear_rgba(
-            model_color[0],
-            model_color[1],
-            model_color[2],
-            model_color[3],
-        ),
-    };
+    colours: &crate::riders::AvatarColours,
+) -> Handle<GearMaterial> {
     let glow = slot.starts_with("light_");
+    let s = gear::surface(slot, node, model_color, colours);
     cache
-        .entry((slot.to_string(), color.to_srgba().to_u8_array()))
-        .or_insert_with(|| {
-            materials.add(StandardMaterial {
-                base_color: color,
-                metallic: s.metallic,
-                perceptual_roughness: s.roughness,
-                emissive: if glow {
-                    LinearRgba::from(color) * 8.0
-                } else {
-                    LinearRgba::BLACK
-                },
-                ..default()
-            })
-        })
+        .entry(s.key(glow))
+        .or_insert_with(|| materials.add(s.material(glow)))
         .clone()
+}
+
+/// The colours of a bike in `paint` (the parts keep the model's).
+fn bike_colours(paint: Rgb) -> crate::riders::AvatarColours {
+    let look = ocw_core::RiderLook {
+        frame: paint,
+        ..Default::default()
+    };
+    crate::riders::avatar_colours(ocw_core::RiderId(0), true, Some(&look))
 }
 
 #[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
@@ -858,7 +850,7 @@ fn sync_bikes(
     models: Res<BikeModels>,
     mut scene: ResMut<Scene>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<GearMaterial>>,
     mut transforms: Query<&mut Transform>,
 ) {
     if !view.open || scene.root.is_none() {
@@ -886,8 +878,9 @@ fn sync_bikes(
             let handles = scene
                 .meshes
                 .entry(ptr)
-                .or_insert_with(|| upload(model, &mut meshes))
+                .or_insert_with(|| upload(model, &mut meshes, false))
                 .clone();
+            let colours = bike_colours(paint);
             let bike = commands
                 .spawn((
                     Transform::from_translation(pose.0).with_rotation(pose.1),
@@ -918,12 +911,13 @@ fn sync_bikes(
                     .id();
                 for (mesh, mat) in &handles[n] {
                     let m = &model.materials[*mat];
-                    let material = bike_material(
+                    let material = part_material(
                         &mut scene.materials,
                         &mut materials,
                         &m.name,
+                        &node.name,
                         m.color,
-                        paint,
+                        &colours,
                     );
                     commands.spawn((
                         Mesh3d(mesh.clone()),
@@ -1375,7 +1369,7 @@ fn sync_rider(
     models: Res<BikeModels>,
     mut scene: ResMut<Scene>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<GearMaterial>>,
     mut transforms: Query<&mut Transform>,
 ) {
     if !view.open || scene.root.is_none() {
@@ -1444,7 +1438,7 @@ fn sync_rider(
         let handles = scene
             .meshes
             .entry(ptr)
-            .or_insert_with(|| upload(rider_model, &mut meshes))
+            .or_insert_with(|| upload(rider_model, &mut meshes, true))
             .clone();
         let root = commands
             .spawn((Transform::default(), Visibility::default(), layer()))
@@ -1474,20 +1468,14 @@ fn sync_rider(
             let girth = ocw_assets::rider::girth(rider_model, i, c.build);
             for (mesh, mat) in &handles[i] {
                 let m = &rider_model.materials[*mat];
-                let color = crate::riders::tint_color(&m.name, m.color, &colours);
-                let s = slots::get(&m.name).unwrap_or(&slots::ALL[0]);
-                let material = scene
-                    .materials
-                    .entry((m.name.clone(), color.to_srgba().to_u8_array()))
-                    .or_insert_with(|| {
-                        materials.add(StandardMaterial {
-                            base_color: color,
-                            metallic: s.metallic,
-                            perceptual_roughness: s.roughness,
-                            ..default()
-                        })
-                    })
-                    .clone();
+                let material = part_material(
+                    &mut scene.materials,
+                    &mut materials,
+                    &m.name,
+                    &node.name,
+                    m.color,
+                    &colours,
+                );
                 commands.spawn((
                     Mesh3d(mesh.clone()),
                     MeshMaterial3d(material),

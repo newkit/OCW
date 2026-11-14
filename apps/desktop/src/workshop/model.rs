@@ -22,7 +22,9 @@
 //! opens the slot's picker (free choices apply at once as a `character`
 //! line; kit is bought / worn / sold like parts) or, on *Try on the
 //! bike*, puts the rider on the stand bike ([`View::TryOn`]); Back steps
-//! out again.
+//! out again. The jersey designer's pages (spec §14 Phase 8 T6) are slots
+//! too: ↑ / ↓ pick a field, ← / → change it on a draft shown live,
+//! Confirm applies the design (a `kit.design` line).
 
 use bevy::math::{Vec2, Vec3};
 use ocw_assets::parts::{Catalogue, Slot};
@@ -88,6 +90,8 @@ pub struct Ctx<'a> {
     pub boxes: &'a [[Vec3; 8]],
     /// The rider's character now (spec 4C).
     pub character: ocw_core::Character,
+    /// The rider's whole look now (the designer's start, Phase 8 T6).
+    pub look: ocw_core::RiderLook,
     /// The standing rider's hotspots (world; [`Region::ALL`] order).
     pub rider_spots: &'a [Vec3],
 }
@@ -219,8 +223,14 @@ impl Workshop {
                 slot,
                 picker::kit_rows(ctx.cat, ctx.garage, slot),
             )),
+            MirrorSlot::Design(page) => Some(Picker::designer(page, ctx.look)),
             MirrorSlot::TryOn => None,
         };
+    }
+
+    /// The jersey designer's draft look (shown on the rider), if open.
+    pub fn design_preview(&self) -> Option<ocw_core::RiderLook> {
+        self.picker.as_ref()?.design.map(|(_, l)| l)
     }
 
     /// The look the rider shows now (spec 4C): the character with the
@@ -435,6 +445,7 @@ impl Workshop {
             .and_then(|id| ctx.garage.bike(id));
         if let (Some(p), Some(bike)) = (&mut self.picker, bike)
             && p.character.is_none()
+            && p.design.is_none()
         {
             p.refresh(picker::rows(ctx.cat, ctx.garage, bike, p.slot));
         }
@@ -476,6 +487,29 @@ impl Workshop {
                     _ => {}
                 }
                 return None;
+            }
+            // The jersey designer: ← / → change the focused field.
+            if let Some((_, draft)) = p.design {
+                match a {
+                    Act::Left => {
+                        p.step_design(-1);
+                        return None;
+                    }
+                    Act::Right => {
+                        p.step_design(1);
+                        return None;
+                    }
+                    Act::RowClick(i) if i < p.rows.len() => {
+                        p.focus = i;
+                        p.step_design(1);
+                        return None;
+                    }
+                    Act::Confirm | Act::Action => {
+                        self.caption = Some("Design applied – free, and seen by everyone.".into());
+                        return self.line(super::designer::line(&draft));
+                    }
+                    _ => {}
+                }
             }
             match a {
                 Act::Up => p.step(-1),
@@ -827,6 +861,7 @@ pub(crate) mod tests {
                 anchors: &self.anchors,
                 boxes: &boxes,
                 character: ocw_core::Character::default(),
+                look: ocw_core::RiderLook::default(),
                 rider_spots: &self.spots,
             };
             let mut out = w.update(acts, &ctx);
@@ -854,6 +889,7 @@ pub(crate) mod tests {
                 anchors: &self.anchors,
                 boxes: &boxes,
                 character: ocw_core::Character::default(),
+                look: ocw_core::RiderLook::default(),
                 rider_spots: &self.spots,
             };
             (w.hotspot_points(&ctx), w.bike_rects(&ctx))
@@ -1061,6 +1097,7 @@ pub(crate) mod tests {
                 anchors: &world.anchors,
                 boxes: &boxes,
                 character: ocw_core::Character::default(),
+                look: ocw_core::RiderLook::default(),
                 rider_spots: &world.spots,
             };
             w.stand_look(&ctx)
@@ -1079,6 +1116,7 @@ pub(crate) mod tests {
             anchors: &world.anchors,
             boxes: &boxes,
             character: ocw_core::Character::default(),
+            look: ocw_core::RiderLook::default(),
             rider_spots: &world.spots,
         };
         let model = ocw_assets::shipped::catalogue()

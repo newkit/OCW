@@ -22,6 +22,12 @@
 //! hair = 3
 //! hair_color = "#6B4426"
 //! glasses = 2
+//! kit_second = "#FDD835"
+//! kit_third = "#1E1E22"
+//! race_number = 42
+//! helmet_pattern = true
+//! shorts_color = "#3949AB"
+//! helmet_finish = "matte"
 //! ```
 //!
 //! The bike and look keys are optional (files from before Phase 4 have
@@ -32,13 +38,17 @@
 //! bike model; the colours and kit are cosmetic only. The character keys
 //! (`body_build`, `skin`, `face`, `hair`, `hair_color`, `glasses`; with
 //! `height_cm` the body height, spec §14 Phase 4, 4C) are free looks and
-//! never physics. Bevy-free.
+//! never physics. The kit design keys (`kit_second`, `kit_third`,
+//! `race_number`, `helmet_pattern`, `shorts_color`, `socks_color`,
+//! `shoes_color`, `gloves_color`, `helmet_finish`, `shoe_finish`; spec §14
+//! Phase 8 T6, the jersey designer) are free looks too; unset: the plain
+//! kit. Bevy-free.
 
 use std::path::Path;
 
 use ocw_core::{
-    BodyBuild, Character, KitPattern, MAX_RIDER_WEIGHT_KG, MIN_RIDER_WEIGHT_KG, ProfileId, Rgb,
-    RiderLook, RiderProfile,
+    BodyBuild, Character, Finish, KitDesign, KitPattern, MAX_RIDER_WEIGHT_KG, MIN_RIDER_WEIGHT_KG,
+    ProfileId, Rgb, RiderLook, RiderProfile,
 };
 use serde::{Deserialize, Serialize};
 
@@ -84,6 +94,27 @@ pub struct Rider {
     pub hair_color: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub glasses: Option<u8>,
+    /// The kit design (spec §14 Phase 8 T6; `None` = the plain kit's).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kit_second: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kit_third: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub race_number: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub helmet_pattern: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shorts_color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub socks_color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shoes_color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gloves_color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub helmet_finish: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shoe_finish: Option<String>,
 }
 
 impl Default for Rider {
@@ -105,6 +136,16 @@ impl Default for Rider {
             hair: None,
             hair_color: None,
             glasses: None,
+            kit_second: None,
+            kit_third: None,
+            race_number: None,
+            helmet_pattern: None,
+            shorts_color: None,
+            socks_color: None,
+            shoes_color: None,
+            gloves_color: None,
+            helmet_finish: None,
+            shoe_finish: None,
         }
     }
 }
@@ -138,7 +179,45 @@ impl Rider {
                 .and_then(KitPattern::parse)
                 .unwrap_or(d.pattern),
             character: self.character(),
+            design: self.design(),
         }
+    }
+
+    /// The kit design (spec §14 Phase 8 T6): unset keys are the plain
+    /// kit's.
+    pub fn design(&self) -> KitDesign {
+        let colour = |v: &Option<String>| v.as_deref().and_then(Rgb::parse);
+        let finish = |v: &Option<String>| v.as_deref().and_then(Finish::parse).unwrap_or_default();
+        KitDesign {
+            second: colour(&self.kit_second),
+            third: colour(&self.kit_third),
+            number: self.race_number.unwrap_or(0),
+            helmet_pattern: self.helmet_pattern.unwrap_or(false),
+            shorts: colour(&self.shorts_color),
+            socks: colour(&self.socks_color),
+            shoes: colour(&self.shoes_color),
+            gloves: colour(&self.gloves_color),
+            helmet_finish: finish(&self.helmet_finish),
+            shoe_finish: finish(&self.shoe_finish),
+        }
+        .validated()
+    }
+
+    /// Sets the kit design; default values leave their keys out.
+    pub fn set_design(&mut self, d: KitDesign) {
+        let d = d.validated();
+        let colour = |c: Option<Rgb>| c.map(|c| c.to_string());
+        let finish = |f: Finish| (f != Finish::default()).then(|| f.id().to_string());
+        self.kit_second = colour(d.second);
+        self.kit_third = colour(d.third);
+        self.race_number = (d.number > 0).then_some(d.number);
+        self.helmet_pattern = d.helmet_pattern.then_some(true);
+        self.shorts_color = colour(d.shorts);
+        self.socks_color = colour(d.socks);
+        self.shoes_color = colour(d.shoes);
+        self.gloves_color = colour(d.gloves);
+        self.helmet_finish = finish(d.helmet_finish);
+        self.shoe_finish = finish(d.shoe_finish);
     }
 
     /// The character (spec 4C): the height from the profile, the rest
@@ -187,6 +266,7 @@ impl Rider {
         self.jersey_color = Some(look.jersey.to_string());
         self.helmet_color = Some(look.helmet.to_string());
         self.kit = Some(look.pattern.id().into());
+        self.set_design(look.design);
     }
 
     /// "Road - aero, frame #1E88E5, jersey #FF1472 (band)".
@@ -274,6 +354,27 @@ impl Rider {
             BodyBuild::parse(v).map(|b| b.id().into())
         });
         check(&mut self.hair_color, "hair colour", &colour);
+        for (field, what) in [
+            (&mut self.kit_second, "second kit colour"),
+            (&mut self.kit_third, "third kit colour"),
+            (&mut self.shorts_color, "shorts colour"),
+            (&mut self.socks_color, "socks colour"),
+            (&mut self.shoes_color, "shoes colour"),
+            (&mut self.gloves_color, "gloves colour"),
+        ] {
+            check(field, what, &colour);
+        }
+        let finish = |v: &str| Finish::parse(v).map(|f| f.id().to_string());
+        check(&mut self.helmet_finish, "helmet finish", &finish);
+        check(&mut self.shoe_finish, "shoe finish", &finish);
+        if let Some(n) = self.race_number
+            && n > ocw_core::kit::MAX_RACE_NUMBER
+        {
+            warnings.push(format!(
+                "rider {name:?}: race number {n} ignored (1 to 999)"
+            ));
+            self.race_number = None;
+        }
         let c = self.character();
         let v = c.validated();
         for (what, field, ok) in [
@@ -502,7 +603,7 @@ impl Riders {
                 jersey: edit.jersey.unwrap_or(l.jersey),
                 helmet: edit.helmet.unwrap_or(l.helmet),
                 pattern: edit.pattern.unwrap_or(l.pattern),
-                character: l.character,
+                ..l
             });
         }
         r.validate()?;
@@ -693,6 +794,53 @@ mod tests {
         let (again, warnings) = Riders::parse(&text).unwrap();
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(again, r);
+    }
+
+    /// The jersey designer's look is saved in the rider profile (spec
+    /// §14 Phase 8 T6): every field round-trips through riders.toml, the
+    /// plain kit writes no keys, bad values are dropped with a warning.
+    #[test]
+    fn the_kit_design_round_trips_in_the_profile() {
+        let mut r = Riders::default();
+        r.add(rider("Alex", 78.0)).unwrap();
+        let plain = r.to_toml();
+        assert!(!plain.contains("race_number") && !plain.contains("kit_second"));
+        let look = RiderLook {
+            pattern: KitPattern::Gradient,
+            design: KitDesign {
+                second: Some(Rgb(0xFDD835)),
+                third: Some(Rgb(0x1E1E22)),
+                number: 42,
+                helmet_pattern: true,
+                shorts: Some(Rgb(0x3949AB)),
+                socks: Some(Rgb(0xF2F2EE)),
+                shoes: Some(Rgb(0x1E1E22)),
+                gloves: Some(Rgb(0xE53935)),
+                helmet_finish: Finish::Matte,
+                shoe_finish: Finish::Matte,
+            },
+            ..r.active().look()
+        };
+        r.riders[0].set_look(look);
+        let text = r.to_toml();
+        assert!(text.contains("race_number = 42"), "{text}");
+        assert!(text.contains("helmet_finish = \"matte\""), "{text}");
+        assert!(text.contains("kit = \"gradient\""), "{text}");
+        let (again, warnings) = Riders::parse(&text).unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(again.active().look(), look);
+        // Back to the plain kit: the keys go.
+        let mut plain_again = again.clone();
+        plain_again.riders[0].set_look(RiderLook {
+            design: KitDesign::default(),
+            ..look
+        });
+        assert!(!plain_again.to_toml().contains("race_number"));
+        let bad = "[[rider]]\nname = \"B\"\nweight_kg = 70.0\nrace_number = 5000\n\
+                   kit_second = \"teal\"\nhelmet_finish = \"satin\"\n";
+        let (b, warnings) = Riders::parse(bad).unwrap();
+        assert_eq!(warnings.len(), 3, "{warnings:?}");
+        assert_eq!(b.active().design(), KitDesign::default());
     }
 
     /// Files from before Phase 4 parse unchanged; invalid bike and look

@@ -229,7 +229,9 @@ pub fn surface_rolling_factor(rough_surface_scale: f64, surface_factor: f64) -> 
     1.0 + (surface_factor - 1.0) * rough_surface_scale
 }
 
-/// Kit patterns of the jersey.
+/// Kit patterns of the jersey (spec §14 Phase 8 T6: the jersey
+/// designer's own procedural patterns, `crate::kit`). Wire numbers are
+/// fixed: older apps draw the newer ones plain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum KitPattern {
     #[default]
@@ -238,23 +240,55 @@ pub enum KitPattern {
     Band,
     /// A diagonal sash.
     Sash,
+    /// Vertical stripes.
+    Stripes,
+    /// Chevrons pointing down the chest.
+    Chevrons,
+    /// A vertical blend from the first to the second colour.
+    Gradient,
 }
 
 impl KitPattern {
-    pub const ALL: [KitPattern; 3] = [KitPattern::Plain, KitPattern::Band, KitPattern::Sash];
+    pub const ALL: [KitPattern; 6] = [
+        KitPattern::Plain,
+        KitPattern::Band,
+        KitPattern::Sash,
+        KitPattern::Stripes,
+        KitPattern::Chevrons,
+        KitPattern::Gradient,
+    ];
 
     pub fn id(self) -> &'static str {
         match self {
             Self::Plain => "plain",
             Self::Band => "band",
             Self::Sash => "sash",
+            Self::Stripes => "stripes",
+            Self::Chevrons => "chevrons",
+            Self::Gradient => "gradient",
         }
     }
 
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Plain => "Plain",
+            Self::Band => "Chest band",
+            Self::Sash => "Sash",
+            Self::Stripes => "Stripes",
+            Self::Chevrons => "Chevrons",
+            Self::Gradient => "Gradient",
+        }
+    }
+
+    /// Parses an id ("bands" is the band too).
     pub fn parse(s: &str) -> Option<Self> {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("bands") {
+            return Some(Self::Band);
+        }
         Self::ALL
             .into_iter()
-            .find(|p| p.id().eq_ignore_ascii_case(s.trim()))
+            .find(|p| p.id().eq_ignore_ascii_case(s))
     }
 
     /// Number on the wire (`RiderLook.kit_pattern`).
@@ -300,8 +334,9 @@ impl std::fmt::Display for Rgb {
 }
 
 /// The cosmetic look of a rider and bike (spec §2.5: never physics):
-/// the kit colours and pattern, and the character (spec §2.6, 4C: body,
-/// skin, face, hair, glasses – free).
+/// the kit colours and pattern, the character (spec §2.6, 4C: body,
+/// skin, face, hair, glasses – free) and the kit design (Phase 8 T6:
+/// the pattern's colours, race number, kit colours, finishes – free).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RiderLook {
     pub frame: Rgb,
@@ -309,6 +344,7 @@ pub struct RiderLook {
     pub helmet: Rgb,
     pub pattern: KitPattern,
     pub character: crate::character::Character,
+    pub design: crate::kit::KitDesign,
 }
 
 impl Default for RiderLook {
@@ -321,6 +357,7 @@ impl Default for RiderLook {
             helmet: Rgb(0xF2F2EE),
             pattern: KitPattern::Plain,
             character: Default::default(),
+            design: Default::default(),
         }
     }
 }
@@ -338,9 +375,15 @@ impl RiderLook {
             helmet: Rgb(0xF2F2EE),
             pattern: KitPattern::Plain,
             character: Default::default(),
+            design: Default::default(),
         }
     }
 }
+
+/// The frame "colour" that means bare carbon under a clear coat (spec
+/// §14 Phase 8 T6: a free paint choice, `workshop.paint carbon`): the
+/// renderer draws the weave; older apps draw a near-black frame.
+pub const BARE_CARBON: Rgb = Rgb(0x0C0C0E);
 
 /// Colours offered on the Workshop's ← / → rows (any `#RRGGBB` can be set
 /// from the console).
@@ -378,6 +421,7 @@ mod tests {
     fn the_anonymous_look_is_plain_and_not_the_apps_pink() {
         let a = RiderLook::anonymous();
         assert_eq!(a.pattern, KitPattern::Plain);
+        assert_eq!(a.design, Default::default(), "no design, no number");
         assert_ne!(a.jersey, RiderLook::default().jersey);
         assert!(!PALETTE.contains(&a.jersey), "not a customization colour");
     }
@@ -444,6 +488,10 @@ mod tests {
             assert_eq!(KitPattern::parse(p.id()), Some(p));
         }
         assert_eq!(KitPattern::from_wire(99), KitPattern::Plain);
+        // The wire numbers stay what older apps know.
+        assert_eq!(KitPattern::Sash.wire(), 2);
+        assert_eq!(KitPattern::Gradient.wire(), 5);
+        assert_eq!(KitPattern::parse("Bands"), Some(KitPattern::Band));
         assert_eq!(palette_step(PALETTE[0], 1), PALETTE[1]);
         assert_eq!(palette_step(PALETTE[0], -1), PALETTE[11]);
         assert_eq!(palette_step(PALETTE[11], 1), PALETTE[0]);

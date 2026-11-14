@@ -306,8 +306,14 @@ mod tests {
             parts: Vec::new(),
         }))));
         let welcome = s.drain();
-        assert_eq!(welcome.len(), 1);
+        // The welcome, then the bot's look (its kit design, spec §14
+        // Phase 8 T6: a RiderBuild once).
+        assert_eq!(welcome.len(), 2);
         assert!(matches!(decode_server(&welcome[0]).unwrap(), S::Welcome(_)));
+        assert!(matches!(
+            decode_server(&welcome[1]).unwrap(),
+            S::RiderBuild(_)
+        ));
         // No wall-clock progress: nothing happens without ticks.
         std::thread::sleep(Duration::from_millis(50));
         assert!(s.drain().is_empty());
@@ -316,8 +322,14 @@ mod tests {
             s.tick();
         }
         assert_eq!(s.server().session().tick(), 50);
-        // One snapshot per 5 ticks (10 Hz).
-        assert_eq!(s.drain().len(), 10);
+        // One snapshot per 5 ticks (10 Hz); the bot's design goes out once
+        // more to everyone (a RiderBuild).
+        let snapshots = s
+            .drain()
+            .iter()
+            .filter(|m| matches!(decode_server(m).unwrap(), S::Snapshot(_)))
+            .count();
+        assert_eq!(snapshots, 10);
     }
 
     fn hello(name: &str) -> Vec<u8> {

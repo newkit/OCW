@@ -60,9 +60,11 @@ loopback, as in CI). The old names `smoke`,
 `screenshot`, `screenshot-wayland`, `video`, `video-wayland` and `wasm` still
 work for now but are deprecated.
 
-**Ground and road textures** (spec §4.6): `make materials`
-(`scripts/fetch-materials.sh`) downloads the material library once – 21 CC0
-materials from ambientCG and Poly Haven, pinned by URL and SHA-256 in
+**Ground, road, house and gear textures** (spec §4.6): `make materials`
+(`scripts/fetch-materials.sh`) downloads the material library once – 31 CC0
+materials from ambientCG and Poly Haven (with Phase 8 T6 the jersey knit,
+the carbon twill and the saddle leather for riders and bikes), pinned by URL
+and SHA-256 in
 `assets/materials.toml` – checks every hash, converts it to KTX2 (1024², BC3 /
 BC5, mipmapped) and writes the git-ignored `assets/materials/` (about 57 MB,
 with `CREDITS.md`). The world packages are then drawn with meadow, forest
@@ -353,6 +355,37 @@ work as for parts (`workshop.buy helmet.tt.top`, `workshop.unequip helmet`,
 stand, pedalling slowly; Back stands them up again. Others see your look:
 the character and the kit go to the server when the workshop closes and to
 everyone once per change.
+
+**The jersey designer (Phase 8 T6).** Two more slots of the character corner:
+*Jersey designer* (torso) and *Kit colours* (legs). ↑ / ↓ pick a field, ← / →
+change it on a draft shown live on the rider and in the mirror, Enter applies
+it, Back discards it – **all free**. The jersey: the pattern (our own: plain,
+chest band, sash, stripes, chevrons, gradient), the first, second (*auto*:
+white on dark jerseys, black on light ones) and an optional third colour, a
+race number 1–999 (a paper bib on the back, digits on both hips of the shorts)
+and the pattern on the helmet (the shell in the jersey colours with a centre
+stripe); the shorts get side panels in the jersey colours. The kit: the
+colours of shorts, socks, shoes and gloves (*standard*: the kit's own), the
+helmet colour, gloss or matte helmet and shoes. The same from the console:
+`kit.design --pattern stripes --jersey #E53935 --second #F2F2EE --third
+#1E1E22 --number 42 --helmet-pattern on --shorts #1E1E22 --helmet-finish
+matte` (no options: the current design). Saved in the rider profile
+(`riders.toml`), sent to the others like the character, once per change.
+Anonymous riders of the browser app keep the plain default kit.
+
+**Materials on riders and bikes (Phase 8 T6).** The near models are drawn
+with real materials (`ocw-render::gear`, `gear.wesl`): painted frames and
+bare carbon under a clear coat (`workshop.paint carbon`: the twill weave),
+carbon rims, cockpits and cranks, spun cassettes and chainrings with
+anisotropic highlights, rubber tyres with a file tread, bar tape, the saddle
+leather, jersey knit with mesh side panels, lycra shorts and skinsuits,
+padded gloves, gloss or matte plastics. Knit, carbon and leather use the
+library's CC0 textures (triplanar), everything else is procedural (own
+work); without the library all of it is procedural. The detail fades with
+the pixel size, and beyond 40 m the far model keeps plain colours (the
+jersey in its pattern's dominant colour). `OCW_GEAR=off` draws the old plain
+materials (for comparisons); 30 riders near cost about 0.1–0.4 ms per frame
+more on marge's GPU.
 
 ### The World menu: changing the world without restarting
 
@@ -1174,17 +1207,18 @@ for now).
 | `riders.edit NAME [--weight KG] [--height CM] [--ftp W] [--rename NEW] [--no-height] [--no-ftp] [BIKE OPTIONS]` | Change a rider profile; bike options: `--bike road\|road-aero\|road-climbing\|tt\|gravel\|mtb`, `--frame-color`, `--jersey-color`, `--helmet-color` `#RRGGBB`, `--kit plain\|band\|sash` |
 | `riders.remove NAME` | Delete a rider profile |
 | `riders.select NAME` | Choose who rides (Workshop); applies from the next start |
-| `workshop [open\|close\|left\|right\|up\|down\|select\|back\|slot-next\|slot-prev\|compare\|action\|reset\|orbit DEG\|mirror]` | Open, close or drive the workshop scene (menu: Workshop) |
+| `workshop [open\|close\|left\|right\|up\|down\|select\|back\|slot-next\|slot-prev\|compare\|action\|reset\|orbit DEG\|zoom STEPS\|mirror]` | Open, close or drive the workshop scene (menu: Workshop) |
 | `workshop.ride_window on\|off` | The live ride window in the workshop |
 | `workshop.mirror on\|off` | The mirror's reflection in the changing corner (off: a direct front view) |
 | `character [--build B] [--skin N] [--face N] [--hair N] [--hair-colour #RRGGBB] [--glasses N]` | Your rider's character: free choices, never physics (no options: show it) |
+| `kit.design [--pattern P] [--jersey #] [--second #\|auto] [--third #\|none] [--number N\|none] [--helmet-pattern on\|off] [--shorts\|--socks\|--shoes\|--gloves #\|standard] [--helmet #] [--helmet-finish gloss\|matte] [--shoe-finish gloss\|matte]` | The jersey designer (Phase 8 T6, free): pattern (plain, band, sash, stripes, chevrons, gradient), colours, race number, kit colours, finishes (no options: show it) |
 | `hearts` | Your hearts and the last ledger lines |
 | `hearts.grant N` | *Dev:* grant hearts (tests, screenshots; local server only) |
 | `workshop.parts [SLOT] [--bike ID]` | The parts that fit a bike, with prices |
 | `workshop.buy PART [--bike ID]` | Buy a catalogue part with hearts and fit it (kit: wear it) |
 | `workshop.equip ITEM [--bike ID]` / `workshop.unequip SLOT [--bike ID]` | Fit an owned part / back to the base part |
 | `workshop.sell ITEM` | Sell a part (full price before its first ride, half after) |
-| `workshop.paint #RRGGBB\|default [--bike ID]` | Paint a frame (free) |
+| `workshop.paint #RRGGBB\|carbon\|default [--bike ID]` | Paint a frame (free; `carbon`: bare carbon under a clear coat) |
 | `bikes.list` / `bikes.select ID [--now]` | Your garage / the bike on the stand (applies when the workshop closes) |
 | `rider.gps` | Your rider's GPS position (also bottom-left in the HUD; route files and world packages only), with a copyable `lat, lon` line |
 | `teleport KM` | *Dev:* move your rider to a distance on the route (free ride: along the path, taking default exits). On a route that ends, a distance past the end moves you to the end, where riders stop, and the reply says so; a loop takes any distance (laps on) |
@@ -1967,7 +2001,7 @@ Code is dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), 
 
 Third-party assets keep their own licences, listed next to them:
 
-- Ground, road and house textures (`assets/materials.toml`, fetched into
+- Ground, road, house and rider / bike textures (`assets/materials.toml`, fetched into
   `assets/materials/`, not in git): CC0 1.0 materials from
   [ambientCG](https://ambientcg.com) (Lennart Demes) and
   [Poly Haven](https://polyhaven.com) (Rob Tuytel, Amal Kumar, Dimitrios
