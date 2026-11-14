@@ -7,6 +7,7 @@
 //! - [`buildings`]: building footprints, heights, roofs and placement
 //! - [`imagery`]: orthophotos and seasonal Sentinel-2 composites at local metres (spec §14 Phase 8 T3)
 //! - [`calibrate`]: region calibration – palettes, roof colours, seasonal tints (Phase 8 T3)
+//! - [`forest`]: forest type and tree cover density (Copernicus HRL) per cell (Phase 8 T3)
 //! - [`osm`]: OSM data in memory, PBF reading, OSM XML for fixtures
 //! - [`diff`]: which stable edge IDs survive a rebuild (route re-matching)
 //! - [`filter`]: rideable ways and road classes
@@ -14,7 +15,7 @@
 //! - [`build`]: ways → road graph with stable edge IDs, cleanup, dead ends
 //! - [`dem`]: elevation sources (SRTM tiles, DTM grid layers, feathering)
 //! - [`dtm`]: high-resolution DTM grids (GeoTIFF, XYZ, resampling)
-//! - [`crs`]: UTM and Swiss LV95 projections of the DTM grids
+//! - [`crs`]: UTM, Swiss LV95 and LAEA Europe projections of the DTM grids and land layers
 //! - [`chains`]: through-roads across the OSM way splits
 //! - [`profile`]: road elevation profiles (sampling, smoothing, limits)
 //! - [`package`]: road-conformed terrain and 1 km tiles → world package
@@ -42,6 +43,7 @@ pub mod diff;
 pub mod dress;
 pub mod dtm;
 pub mod filter;
+pub mod forest;
 pub mod imagery;
 pub mod landuse;
 pub mod lint;

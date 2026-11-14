@@ -1,0 +1,25 @@
+# Recorded forest rasters for the forest-cover tests (spec §14 Phase 8 T3;
+# crates/ocw-worldgen/src/forest.rs). A 600 m × 400 m cut of the slope
+# south-east of Vaduz (Liechtenstein), recorded on 2026-11-14 with
+# `scripts/forest.py fetch --bbox 4286000,2669600,4286600,2670000`, kept
+# unchanged. Copernicus Land Monitoring Service data policy: free, full and
+# open access; the source must be named and modifications stated.
+
+[[file]]
+path = "leaf-type.u8"
+source = "https://image.discomap.eea.europa.eu/arcgis/rest/services/GioLandPublic/HRL_DominantLeafType2018/ImageServer/exportImage?bbox=4286000,2669600,4286600,2670000&bboxSR=3035&imageSR=3035&size=60,40&format=bsq&pixelType=U8&noData=255&interpolation=RSP_NearestNeighbor&f=image"
+licence = "Copernicus Land Monitoring Service data policy (free, full and open; attribution)"
+attribution = "© European Union, Copernicus Land Monitoring Service 2018, European Environment Agency (EEA)"
+changes = "the validity mask after the values applied (255 where unset) and dropped"
+
+[[file]]
+path = "density.u8"
+source = "https://image.discomap.eea.europa.eu/arcgis/rest/services/GioLandPublic/HRL_TreeCoverDensity_2018/ImageServer/exportImage?bbox=4286000,2669600,4286600,2670000&bboxSR=3035&imageSR=3035&size=60,40&format=bsq&pixelType=U8&noData=255&interpolation=RSP_NearestNeighbor&f=image"
+licence = "Copernicus Land Monitoring Service data policy (free, full and open; attribution)"
+attribution = "© European Union, Copernicus Land Monitoring Service 2018, European Environment Agency (EEA)"
+changes = "the validity mask after the values applied (255 where unset) and dropped"
+
+[[file]]
+path = "index.json"
+source = "written by scripts/forest.py"
+licence = "MIT OR Apache-2.0"

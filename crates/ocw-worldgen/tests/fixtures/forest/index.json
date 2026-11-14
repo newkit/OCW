@@ -1,0 +1,29 @@
+{
+ "kind": "forest",
+ "crs": "laea",
+ "pixel_m": 10.0,
+ "west": 4286000.0,
+ "north": 2670000.0,
+ "width": 60,
+ "height": 40,
+ "leaf": "leaf-type.u8",
+ "density": "density.u8",
+ "sources": [
+  {
+   "id": "hrl-dlt-2018",
+   "name": "Copernicus HRL Dominant Leaf Type 2018",
+   "licence": "Copernicus Land Monitoring Service data policy (free, full and open; attribution)",
+   "notice": "© European Union, Copernicus Land Monitoring Service 2018, European Environment Agency (EEA); Dominant Leaf Type 2018, 10 m, resampled by OCW",
+   "url": "https://land.copernicus.eu/en/products/high-resolution-layer-dominant-leaf-type",
+   "date": "2018"
+  },
+  {
+   "id": "hrl-tcd-2018",
+   "name": "Copernicus HRL Tree Cover Density 2018",
+   "licence": "Copernicus Land Monitoring Service data policy (free, full and open; attribution)",
+   "notice": "© European Union, Copernicus Land Monitoring Service 2018, European Environment Agency (EEA); Tree Cover Density 2018, 10 m, resampled by OCW",
+   "url": "https://land.copernicus.eu/en/products/high-resolution-layer-tree-cover-density",
+   "date": "2018"
+  }
+ ]
+}

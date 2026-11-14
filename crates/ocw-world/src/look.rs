@@ -78,6 +78,9 @@ pub struct RegionLook {
     /// The orthophoto corridor along the roads (section `ORTC`, spec §14
     /// Phase 8 T7; optional).
     pub ortho: Option<crate::ortho::OrthoCorridor>,
+    /// The measured forest: leaf type and tree cover density (section
+    /// `FRST`, spec §14 Phase 8 T3; optional).
+    pub forest: Option<crate::forest::ForestCover>,
 }
 
 impl RegionLook {
@@ -86,6 +89,7 @@ impl RegionLook {
             && self.roofs.is_none()
             && self.seasons.is_none()
             && self.ortho.is_none()
+            && self.forest.is_none()
     }
 
     /// The imagery sources (empty without a palette section).
@@ -470,17 +474,17 @@ pub(crate) fn unpredict(res: &[u8], n: usize) -> Vec<u8> {
 
 // --- Section payloads -----------------------------------------------------
 
-fn put_str(b: &mut Vec<u8>, s: &str) {
+pub(crate) fn put_str(b: &mut Vec<u8>, s: &str) {
     b.extend((s.len() as u32).to_le_bytes());
     b.extend(s.as_bytes());
 }
 
-fn get_str(r: &mut Bytes<'_>) -> Result<String, String> {
+pub(crate) fn get_str(r: &mut Bytes<'_>) -> Result<String, String> {
     let n = r.u32()? as usize;
     String::from_utf8(r.take(n)?.to_vec()).map_err(|_| "string is not UTF-8".into())
 }
 
-fn check_version(r: &mut Bytes<'_>, want: u32, what: &str) -> Result<(), String> {
+pub(crate) fn check_version(r: &mut Bytes<'_>, want: u32, what: &str) -> Result<(), String> {
     match r.u32()? {
         v if v == want => Ok(()),
         v => Err(format!(
@@ -843,6 +847,7 @@ pub(crate) mod tests {
             roofs: Some(roofs),
             seasons: Some(seasons),
             ortho: None,
+            forest: None,
         }
     }
 
