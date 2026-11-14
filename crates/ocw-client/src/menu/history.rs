@@ -113,7 +113,14 @@ pub fn rows(page: Page, info: &HistoryInfo) -> Vec<Row> {
                     Some(format!(
                         "{}, {}",
                         distance_label(r.distance_m, imp),
-                        short_label(if r.world.is_empty() { &r.route } else { &r.world }, 18)
+                        short_label(
+                            if r.world.is_empty() {
+                                &r.route
+                            } else {
+                                &r.world
+                            },
+                            18
+                        )
                     )),
                     Page::HistoryRide(k),
                 )
@@ -242,14 +249,16 @@ pub fn status(page: Page, info: &HistoryInfo) -> String {
     let h = &info.history;
     match page {
         Page::History => info.read_only.clone().unwrap_or_default(),
-        Page::HistoryRide(k) | Page::HistoryClimbs(k) => h.nth_newest(k).map_or(String::new(), |r| {
-            let place = match (r.world.is_empty(), r.route.is_empty()) {
-                (false, false) if r.world != r.route => format!("{} - {}", r.world, r.route),
-                (false, _) => r.world.clone(),
-                (true, _) => r.route.clone(),
-            };
-            format!("{}   {}", start_label(r.start_unix_s, info.offset_s), place)
-        }),
+        Page::HistoryRide(k) | Page::HistoryClimbs(k) => {
+            h.nth_newest(k).map_or(String::new(), |r| {
+                let place = match (r.world.is_empty(), r.route.is_empty()) {
+                    (false, false) if r.world != r.route => format!("{} - {}", r.world, r.route),
+                    (false, _) => r.world.clone(),
+                    (true, _) => r.route.clone(),
+                };
+                format!("{}   {}", start_label(r.start_unix_s, info.offset_s), place)
+            })
+        }
         Page::HistoryBests => {
             let b = h.bests();
             match &b.longest_ride {
@@ -438,9 +447,15 @@ mod tests {
         assert!(r.len() < MAX_ITEMS);
         assert_eq!(r[0].confirm, Some(Activate::Open(Page::HistoryRides)));
         assert_eq!(r[0].value.as_deref(), Some("3"));
-        assert_eq!(r[1].value.as_deref(), Some("3 rides, 28.8 km, 1:00:00, 1440 m"));
+        assert_eq!(
+            r[1].value.as_deref(),
+            Some("3 rides, 28.8 km, 1:00:00, 1440 m")
+        );
         assert_eq!(r[3].value.as_deref(), Some("20 min: 247 W"));
-        assert_eq!(r[4].confirm, Some(Activate::Command("history.import".into())));
+        assert_eq!(
+            r[4].confirm,
+            Some(Activate::Command("history.import".into()))
+        );
         // Nothing yet; no import in the browser.
         let mut empty = info(0);
         empty.importable = None;
@@ -458,17 +473,36 @@ mod tests {
         assert_eq!(r[0].value.as_deref(), Some("9.6 km, Black Forest"));
         assert_eq!(r[0].confirm, Some(Activate::Open(Page::HistoryRide(0))));
         let ride = rows(Page::HistoryRide(0), &i);
-        assert_eq!(ride[0].confirm, Some(Activate::Open(Page::HistoryClimbs(0))));
-        assert_eq!(ride[1].confirm, Some(Activate::Command("history.export 1".into())));
-        assert!(rows(Page::HistoryRide(3), &i).is_empty(), "gone: back to the list");
+        assert_eq!(
+            ride[0].confirm,
+            Some(Activate::Open(Page::HistoryClimbs(0)))
+        );
+        assert_eq!(
+            ride[1].confirm,
+            Some(Activate::Command("history.export 1".into()))
+        );
+        assert!(
+            rows(Page::HistoryRide(3), &i).is_empty(),
+            "gone: back to the list"
+        );
         // Not kept: dimmed.
         let mut j = info(1);
         j.exportable.clear();
-        assert_eq!(rows(Page::HistoryRide(0), &j)[1].confirm, Some(Activate::Disabled));
+        assert_eq!(
+            rows(Page::HistoryRide(0), &j)[1].confirm,
+            Some(Activate::Disabled)
+        );
         assert!(status(Page::HistoryRide(0), &i).ends_with("Black Forest - Free ride"));
         let t = text(Page::HistoryRide(0), &i);
-        assert_eq!(t[0], "9.6 km in 20:00 (moving 20:00), 480 m up, 297 kJ, 12 hearts.");
-        assert!(t[1].starts_with("Power 24") && t[1].contains(", NP "), "{}", t[1]);
+        assert_eq!(
+            t[0],
+            "9.6 km in 20:00 (moving 20:00), 480 m up, 297 kJ, 12 hearts."
+        );
+        assert!(
+            t[1].starts_with("Power 24") && t[1].contains(", NP "),
+            "{}",
+            t[1]
+        );
         let climbs = rows(Page::HistoryClimbs(0), &i);
         assert_eq!(climbs.len(), 1);
         assert!(climbs[0].value.as_ref().unwrap().contains("480 m at 5.0 %"));

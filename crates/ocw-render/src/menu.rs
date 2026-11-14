@@ -911,7 +911,11 @@ fn draw_chart(
     let width = 100.0 / chart.bars.len().max(1) as f32;
     commands.entity(e).with_children(|c| {
         if !chart.caption.is_empty() {
-            c.spawn((Text::new(chart.caption.clone()), font(TEXT_VH), TextColor(DIM)));
+            c.spawn((
+                Text::new(chart.caption.clone()),
+                font(TEXT_VH),
+                TextColor(DIM),
+            ));
         }
         c.spawn(Node {
             flex_direction: FlexDirection::Row,
@@ -1149,10 +1153,7 @@ mod tests {
         ));
         app.init_asset::<Image>();
         app.update();
-        *app.world_mut().resource_mut::<MenuView>() = MenuView {
-            open: true,
-            ..v
-        };
+        *app.world_mut().resource_mut::<MenuView>() = MenuView { open: true, ..v };
         app.update();
         app.update();
         let bars = app

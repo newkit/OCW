@@ -99,8 +99,7 @@ pub fn transform(c: Color, a: &Accessibility, text: bool) -> Color {
         if text && grey && (0.55..0.97).contains(&s.red) {
             // Grey text: white.
             out = Srgba::new(1.0, 1.0, 1.0, s.alpha.max(0.95));
-        } else if !text && s.red.max(s.green).max(s.blue) < 0.12 && (0.2..0.85).contains(&s.alpha)
-        {
+        } else if !text && s.red.max(s.green).max(s.blue) < 0.12 && (0.2..0.85).contains(&s.alpha) {
             // A dark see-through panel: opaque.
             out.alpha = 0.92;
         }
@@ -194,7 +193,16 @@ fn apply_access(
     }
     if a.palette != Palette::Standard {
         for (e, mut c, base) in &mut borders {
-            let to = border_map(&c, |x| transform(x, &Accessibility { high_contrast: false, ..a }, false));
+            let to = border_map(&c, |x| {
+                transform(
+                    x,
+                    &Accessibility {
+                        high_contrast: false,
+                        ..a
+                    },
+                    false,
+                )
+            });
             if to != *c {
                 if base.is_none() || changed {
                     commands.entity(e).insert(BaseBorder(*c));
@@ -212,7 +220,12 @@ mod tests {
     #[test]
     fn colour_safe_twins_replace_the_standard_status_colours() {
         use ocw_sim::damage::Status;
-        let all = [Status::Good, Status::Warning, Status::Serious, Status::Critical];
+        let all = [
+            Status::Good,
+            Status::Warning,
+            Status::Serious,
+            Status::Critical,
+        ];
         let safe: Vec<[f32; 3]> = all
             .iter()
             .map(|s| status_rgb(s.rgb(), Palette::ColourSafe))
@@ -229,7 +242,10 @@ mod tests {
             assert_eq!(status_rgb(*twin, Palette::ColourSafe), *twin);
         }
         // Other colours stay.
-        assert_eq!(status_rgb([0.1, 0.2, 0.3], Palette::ColourSafe), [0.1, 0.2, 0.3]);
+        assert_eq!(
+            status_rgb([0.1, 0.2, 0.3], Palette::ColourSafe),
+            [0.1, 0.2, 0.3]
+        );
         assert_eq!(Palette::parse("Colour-Safe"), Some(Palette::ColourSafe));
         assert_eq!(Palette::parse("color-safe"), Some(Palette::ColourSafe));
         assert_eq!(Palette::parse("x"), None);
@@ -243,7 +259,10 @@ mod tests {
         };
         let panel = Color::srgba(0.0, 0.0, 0.0, 0.55);
         assert_eq!(transform(panel, &hc, false).alpha(), 0.92);
-        assert_eq!(transform(transform(panel, &hc, false), &hc, false), transform(panel, &hc, false));
+        assert_eq!(
+            transform(transform(panel, &hc, false), &hc, false),
+            transform(panel, &hc, false)
+        );
         let grey = Color::srgb(0.85, 0.85, 0.85);
         assert_eq!(transform(grey, &hc, true), Color::srgba(1.0, 1.0, 1.0, 1.0));
         // Light rows, coloured text and the opaque menu panel stay.
@@ -264,11 +283,17 @@ mod tests {
         let red = Color::srgb(0.92, 0.22, 0.20);
         let panel = app
             .world_mut()
-            .spawn((BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)), TextColor(red)))
+            .spawn((
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+                TextColor(red),
+            ))
             .id();
         let veil = app
             .world_mut()
-            .spawn((BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45)), AccessExempt))
+            .spawn((
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45)),
+                AccessExempt,
+            ))
             .id();
         app.update();
         let get = |app: &App, e| {

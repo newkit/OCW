@@ -260,6 +260,9 @@ mod tests {
         assert_eq!(actions(&p, 0, true), [Action::Confirm]);
         let mut pad = Gamepad::default();
         pad.digital_mut().press(GamepadButton::South);
-        assert_eq!(actions(&pressed(None, [&pad], true), 0, true), [Action::Back]);
+        assert_eq!(
+            actions(&pressed(None, [&pad], true), 0, true),
+            [Action::Back]
+        );
     }
 }

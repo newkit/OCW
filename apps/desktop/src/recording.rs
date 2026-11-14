@@ -202,7 +202,9 @@ fn ride_context(world: &World, hearts_start: Option<u32>, workout: Option<String
             .map(|c| crate::ride::world::current_name(&c.0))
             .filter(|n| n != "-")
             .unwrap_or_default(),
-        route: client.map(|c| c.course_name().to_string()).unwrap_or_default(),
+        route: client
+            .map(|c| c.course_name().to_string())
+            .unwrap_or_default(),
         hearts: client.map(|c| {
             if earns {
                 c.server_hearts().saturating_sub(hearts_start.unwrap_or(0))
@@ -280,7 +282,10 @@ fn ids_in_histories(world: &World) -> std::collections::BTreeSet<String> {
 
 /// The FIT files of the rides folder (stem, path), oldest first.
 fn fit_files(world: &World) -> Vec<(String, PathBuf)> {
-    let Some(dir) = world.get_resource::<Recording>().and_then(|r| r.dir.clone()) else {
+    let Some(dir) = world
+        .get_resource::<Recording>()
+        .and_then(|r| r.dir.clone())
+    else {
         return Vec::new();
     };
     let mut out: Vec<(String, PathBuf)> = std::fs::read_dir(dir)
@@ -354,7 +359,10 @@ fn import_rides(world: &mut World) -> Result<String, String> {
         .get_resource_mut::<ocw_ui::history::TrainingHistory>()
         .map(|mut h| h.save());
     refresh_history(world);
-    let mut out = format!("{added} rides imported into {}'s training history", riding_name(world));
+    let mut out = format!(
+        "{added} rides imported into {}'s training history",
+        riding_name(world)
+    );
     if let Some(Err(e)) = saved {
         out.push_str(&format!(" (not saved: {e})"));
     }
@@ -371,7 +379,10 @@ fn export_fit(world: &mut World, ride: &RideEntry, to: Option<&str>) -> Result<S
         .get_resource::<Recording>()
         .and_then(|r| r.dir.clone())
         .ok_or("no rides folder")?;
-    let name = ride.fit.as_ref().ok_or("this ride's FIT file is not kept")?;
+    let name = ride
+        .fit
+        .as_ref()
+        .ok_or("this ride's FIT file is not kept")?;
     let from = dir.join(name);
     let target = match to {
         Some(t) => PathBuf::from(t),

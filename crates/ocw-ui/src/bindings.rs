@@ -177,7 +177,11 @@ impl ActiveBindings {
     }
 
     /// The action's button went down on any pad this frame.
-    pub fn pad_just_pressed<'a>(&self, a: Action, pads: impl IntoIterator<Item = &'a Gamepad>) -> bool {
+    pub fn pad_just_pressed<'a>(
+        &self,
+        a: Action,
+        pads: impl IntoIterator<Item = &'a Gamepad>,
+    ) -> bool {
         pad_button(self.0.pad(a)).is_some_and(|b| pads.into_iter().any(|p| p.just_pressed(b)))
     }
 
@@ -209,7 +213,11 @@ impl ActiveBindings {
 
 /// Whether `a`'s key went down this frame, with `b` or (none inserted)
 /// the default bindings.
-pub fn key_just_pressed(b: Option<&ActiveBindings>, a: Action, keys: &ButtonInput<KeyCode>) -> bool {
+pub fn key_just_pressed(
+    b: Option<&ActiveBindings>,
+    a: Action,
+    keys: &ButtonInput<KeyCode>,
+) -> bool {
     match b {
         Some(b) => b.key_just_pressed(a, keys),
         None => ActiveBindings::default().key_just_pressed(a, keys),
@@ -238,7 +246,10 @@ pub fn voice_toggles<'a>(
     use ocw_voice::hotkeys::Toggle;
     let pads: Vec<&Gamepad> = pads.into_iter().collect();
     let mut out = Vec::new();
-    for (a, t) in [(Action::MuteMic, Toggle::Mic), (Action::MuteVoices, Toggle::Speaker)] {
+    for (a, t) in [
+        (Action::MuteMic, Toggle::Mic),
+        (Action::MuteVoices, Toggle::Speaker),
+    ] {
         if keys.is_some_and(|k| key_just_pressed(b, a, k))
             || pad_just_pressed(b, a, pads.iter().copied())
         {
@@ -510,7 +521,10 @@ mod tests {
         for k in KEY_CHOICES.iter().filter(|k| **k != "none") {
             assert!(key_code(k).is_some(), "{k}");
         }
-        for p in ocw_client::bindings::PAD_CHOICES.iter().filter(|p| **p != "none") {
+        for p in ocw_client::bindings::PAD_CHOICES
+            .iter()
+            .filter(|p| **p != "none")
+        {
             assert!(pad_button(p).is_some(), "{p}");
         }
         assert_eq!(key_name_of(KeyCode::Escape), None);
@@ -551,7 +565,10 @@ mod tests {
         assert!(b.key_just_pressed(Action::Autodrive, &keys));
         // A conflict is said; the camera key follows its binding.
         let out = run(&mut app, "bind camera V");
-        assert!(out.contains("conflict: V: Camera and Video recording"), "{out}");
+        assert!(
+            out.contains("conflict: V: Camera and Video recording"),
+            "{out}"
+        );
         app.update();
         assert_eq!(
             app.world().resource::<ocw_render::camera::CameraKey>().0,
@@ -575,7 +592,10 @@ mod tests {
         assert!(capture(app.world_mut()));
         assert_eq!(app.world().resource::<BindCapture>().0, None);
         app.update();
-        assert_eq!(app.world().resource::<ActiveBindings>().key(Action::Wild), "K");
+        assert_eq!(
+            app.world().resource::<ActiveBindings>().key(Action::Wild),
+            "K"
+        );
         // Shift held: the Shift binding; Esc cancels.
         run(&mut app, "bind --capture camera");
         {
@@ -586,7 +606,10 @@ mod tests {
         }
         capture(app.world_mut());
         app.update();
-        assert_eq!(app.world().resource::<ActiveBindings>().key(Action::Camera), "Shift+N");
+        assert_eq!(
+            app.world().resource::<ActiveBindings>().key(Action::Camera),
+            "Shift+N"
+        );
         run(&mut app, "bind --capture camera");
         {
             let mut k = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
@@ -596,7 +619,10 @@ mod tests {
         assert!(capture(app.world_mut()));
         assert_eq!(app.world().resource::<BindCapture>().0, None);
         app.update();
-        assert_eq!(app.world().resource::<ActiveBindings>().key(Action::Camera), "Shift+N");
+        assert_eq!(
+            app.world().resource::<ActiveBindings>().key(Action::Camera),
+            "Shift+N"
+        );
         assert!(!capture(app.world_mut()), "nothing waits");
     }
 }

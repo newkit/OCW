@@ -91,7 +91,8 @@ fn hotkeys(
     bindings: Option<Res<ocw_ui::bindings::ActiveBindings>>,
     mut console: ResMut<ConsoleState>,
 ) {
-    let toggles = ocw_ui::bindings::voice_toggles(bindings.as_deref(), keys.as_deref(), pads.iter());
+    let toggles =
+        ocw_ui::bindings::voice_toggles(bindings.as_deref(), keys.as_deref(), pads.iter());
     for t in toggles {
         console.queue(t.command());
     }

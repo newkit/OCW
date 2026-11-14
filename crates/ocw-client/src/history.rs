@@ -204,12 +204,7 @@ pub fn best_mean(watts: &[f64], s: usize) -> Option<f64> {
 pub fn power_curve(watts: &[f64]) -> Vec<CurvePoint> {
     CURVE_S
         .iter()
-        .filter_map(|&s| {
-            best_mean(watts, s as usize).map(|w| CurvePoint {
-                s,
-                w: round1(w),
-            })
-        })
+        .filter_map(|&s| best_mean(watts, s as usize).map(|w| CurvePoint { s, w: round1(w) }))
         .collect()
 }
 
@@ -260,7 +255,8 @@ pub fn climbs(records: &[Record]) -> Vec<Climb> {
                 length_m: round1(length),
                 gain_m: round1(gain),
                 time_s: round1(b.elapsed_s - a.elapsed_s),
-                avg_power_w: (!p.is_empty()).then(|| round1(p.iter().sum::<f64>() / p.len() as f64)),
+                avg_power_w: (!p.is_empty())
+                    .then(|| round1(p.iter().sum::<f64>() / p.len() as f64)),
             });
         }
     };
@@ -585,7 +581,14 @@ impl History {
     /// The personal bests over all rides (on a tie the earlier ride).
     pub fn bests(&self) -> Bests {
         let mut b = Bests::default();
-        fn better<T: Clone>(slot: &mut Option<Best<T>>, v: T, key: f64, cur: impl Fn(&T) -> f64, ride: usize, at: i64) {
+        fn better<T: Clone>(
+            slot: &mut Option<Best<T>>,
+            v: T,
+            key: f64,
+            cur: impl Fn(&T) -> f64,
+            ride: usize,
+            at: i64,
+        ) {
             if slot.as_ref().is_none_or(|s| key > cur(&s.value)) {
                 *slot = Some(Best {
                     value: v,
@@ -602,14 +605,42 @@ impl History {
                 }
             }
             for c in &r.climbs {
-                better(&mut b.biggest_climb, *c, c.gain_m, |x| x.gain_m, i, r.start_unix_s);
-                better(&mut b.fastest_climb, *c, c.vam(), Climb::vam, i, r.start_unix_s);
+                better(
+                    &mut b.biggest_climb,
+                    *c,
+                    c.gain_m,
+                    |x| x.gain_m,
+                    i,
+                    r.start_unix_s,
+                );
+                better(
+                    &mut b.fastest_climb,
+                    *c,
+                    c.vam(),
+                    Climb::vam,
+                    i,
+                    r.start_unix_s,
+                );
             }
             if r.distance_m > 0.0 {
-                better(&mut b.longest_ride, r.distance_m, r.distance_m, |x| *x, i, r.start_unix_s);
+                better(
+                    &mut b.longest_ride,
+                    r.distance_m,
+                    r.distance_m,
+                    |x| *x,
+                    i,
+                    r.start_unix_s,
+                );
             }
             if r.ascent_m > 0.0 {
-                better(&mut b.most_climbing, r.ascent_m, r.ascent_m, |x| *x, i, r.start_unix_s);
+                better(
+                    &mut b.most_climbing,
+                    r.ascent_m,
+                    r.ascent_m,
+                    |x| *x,
+                    i,
+                    r.start_unix_s,
+                );
             }
         }
         b.curve = CURVE_S
@@ -749,7 +780,18 @@ mod tests {
     #[test]
     fn the_power_curve_has_the_durations_the_ride_is_long_enough_for() {
         // 10 min: 200 W with a 30 s sprint at 600 W from minute 5.
-        let a = activity(0, 601, |i| if (300..330).contains(&i) { 600.0 } else { 200.0 }, |_| 0.0);
+        let a = activity(
+            0,
+            601,
+            |i| {
+                if (300..330).contains(&i) {
+                    600.0
+                } else {
+                    200.0
+                }
+            },
+            |_| 0.0,
+        );
         let watts = per_second(&a.records);
         assert_eq!(watts.len(), 600);
         let curve = power_curve(&watts);
@@ -778,7 +820,9 @@ mod tests {
         let steady = vec![250.0; 600];
         assert!((normalized_power(&steady).unwrap() - 250.0).abs() < 1e-9);
         // Alternating minutes of 100 and 400 W (avg 250): NP above it.
-        let blocks: Vec<f64> = (0..1200).map(|i| if i / 60 % 2 == 0 { 100.0 } else { 400.0 }).collect();
+        let blocks: Vec<f64> = (0..1200)
+            .map(|i| if i / 60 % 2 == 0 { 100.0 } else { 400.0 })
+            .collect();
         let np = normalized_power(&blocks).unwrap();
         assert!(np > 290.0 && np < 330.0, "{np}");
         assert_eq!(normalized_power(&[300.0; 29]), None);
@@ -817,7 +861,12 @@ mod tests {
 
     #[test]
     fn an_entry_sums_up_the_ride() {
-        let mut a = activity(1_762_862_400, 3601, |i| if i % 2 == 0 { 300.0 } else { 100.0 }, |i| 400.0 + i as f64 * 0.3);
+        let mut a = activity(
+            1_762_862_400,
+            3601,
+            |i| if i % 2 == 0 { 300.0 } else { 100.0 },
+            |i| 400.0 + i as f64 * 0.3,
+        );
         a.markers.push(ocw_fit::Marker {
             elapsed_s: 100.0,
             kind: MarkerKind::Crash,
@@ -827,7 +876,10 @@ mod tests {
             &a,
             RideContext {
                 hearts: Some(42),
-                damage: Some(EndDamage { rider: 0.9, bike: 0.8 }),
+                damage: Some(EndDamage {
+                    rider: 0.9,
+                    bike: 0.8,
+                }),
                 workout: Some("Sweet spot".into()),
                 fit: Some("2025-11-11_12-00-00.fit".into()),
                 ..ctx("2025-11-11_12-00-00")
@@ -839,7 +891,11 @@ mod tests {
         assert!((e.ascent_m - 1080.0).abs() < 0.2);
         assert_eq!(e.avg_power_w, Some(200.0));
         assert_eq!(e.max_power_w, Some(300.0));
-        assert_eq!(e.np_w, Some(200.0), "30 s means of 300/100 alternating are 200");
+        assert_eq!(
+            e.np_w,
+            Some(200.0),
+            "30 s means of 300/100 alternating are 200"
+        );
         assert_eq!(e.avg_hr_bpm, Some(140.0));
         assert!((e.work_kj - 720.0).abs() < 0.2);
         assert_eq!(e.crashes, 1);
@@ -898,7 +954,10 @@ mod tests {
         assert_eq!(weeks[0].rides, 2);
         assert_eq!(weeks[0].hearts, 30);
         assert!((weeks[0].distance_m - 2.0 * 9600.0).abs() < 1.0);
-        assert_eq!(weeks[1].label, "Week of 26 Oct 2026", "Sun 1 Nov is in that week");
+        assert_eq!(
+            weeks[1].label, "Week of 26 Oct 2026",
+            "Sun 1 Nov is in that week"
+        );
         let months = h.totals(Period::Month, 0);
         assert_eq!(months.len(), 1);
         assert_eq!(months[0].label, "November 2026");
@@ -907,12 +966,18 @@ mod tests {
         // The local offset moves a ride across midnight: Sun 1 Nov 09:00
         // UTC is Sat 31 Oct 23:00 at UTC-10.
         let months = h.totals(Period::Month, -10 * 3600);
-        assert_eq!(months.iter().map(|m| m.label.as_str()).collect::<Vec<_>>(), ["November 2026", "October 2026"]);
+        assert_eq!(
+            months.iter().map(|m| m.label.as_str()).collect::<Vec<_>>(),
+            ["November 2026", "October 2026"]
+        );
         // This week (Sat 14 Nov) and a week without rides.
         let now = 1_794_646_800 + 3600;
         assert_eq!(h.current(Period::Week, now, 0).rides, 2);
         let later = h.current(Period::Week, now + 14 * 86_400, 0);
-        assert_eq!((later.rides, later.label.as_str()), (0, "Week of 23 Nov 2026"));
+        assert_eq!(
+            (later.rides, later.label.as_str()),
+            (0, "Week of 23 Nov 2026")
+        );
         assert_eq!(total_summary(&later, false), "no rides");
         assert_eq!(
             total_summary(&weeks[0], false),
@@ -956,7 +1021,10 @@ mod tests {
             Err(HistoryError::TooNew(2, h2)) => assert_eq!(h2.rides.len(), 3),
             other => panic!("{other:?}"),
         }
-        assert!(matches!(History::parse("not json"), Err(HistoryError::Broken(_))));
+        assert!(matches!(
+            History::parse("not json"),
+            Err(HistoryError::Broken(_))
+        ));
         assert!(matches!(
             History::parse(r#"{"format":"other","version":1}"#),
             Err(HistoryError::Broken(_))

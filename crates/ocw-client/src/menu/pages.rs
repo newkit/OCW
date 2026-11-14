@@ -754,13 +754,8 @@ pub fn binding_rows(page: Page, settings: &Settings, desktop: bool) -> Vec<Row> 
                             ""
                         }
                     };
-                    let set = |dir| {
-                        format!(
-                            "set keys.{} {}",
-                            d.id,
-                            step_choice(KEY_CHOICES, key, dir)
-                        )
-                    };
+                    let set =
+                        |dir| format!("set keys.{} {}", d.id, step_choice(KEY_CHOICES, key, dir));
                     Row {
                         label: d.label.into(),
                         value: Some(format!(
@@ -777,10 +772,7 @@ pub fn binding_rows(page: Page, settings: &Settings, desktop: bool) -> Vec<Row> 
                 })
                 .collect()
         }
-        Page::BindReset => vec![Row::action(
-            "Reset all keys and buttons",
-            "bind --reset",
-        )],
+        Page::BindReset => vec![Row::action("Reset all keys and buttons", "bind --reset")],
         _ => Vec::new(),
     }
 }
@@ -1023,9 +1015,7 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
             setting_row(settings, "controls.invert_y", "Invert mouse Y"),
             setting_row(settings, "controls.god_flight", "Flight"),
         ],
-        Page::Bindings | Page::BindGroup(_) | Page::BindReset => {
-            binding_rows(page, settings, true)
-        }
+        Page::Bindings | Page::BindGroup(_) | Page::BindReset => binding_rows(page, settings, true),
         Page::Accessibility => vec![
             setting_row(settings, "display.ui_scale", "HUD size (%)"),
             setting_row(settings, "display.palette", "Status colours"),

@@ -266,20 +266,20 @@ mod tests {
                 _ => Vec::new(),
             };
             let chart = match page {
-                Page::Sub(settings_pages::Page::HistoryRide(_) | settings_pages::Page::HistoryBests) => {
-                    Some(ocw_render::menu::MenuChart {
-                        caption: "Power curve (W): bars this ride, lines your best".into(),
-                        bars: (0..10)
-                            .map(|i| ocw_render::menu::ChartBar {
-                                label: "60m".into(),
-                                value: 1.0 - i as f32 * 0.05,
-                                text: "1240".into(),
-                                mark: Some(1.0),
-                                best: false,
-                            })
-                            .collect(),
-                    })
-                }
+                Page::Sub(
+                    settings_pages::Page::HistoryRide(_) | settings_pages::Page::HistoryBests,
+                ) => Some(ocw_render::menu::MenuChart {
+                    caption: "Power curve (W): bars this ride, lines your best".into(),
+                    bars: (0..10)
+                        .map(|i| ocw_render::menu::ChartBar {
+                            label: "60m".into(),
+                            value: 1.0 - i as f32 * 0.05,
+                            text: "1240".into(),
+                            mark: Some(1.0),
+                            best: false,
+                        })
+                        .collect(),
+                }),
                 _ => None,
             };
             check(MenuView {

@@ -238,7 +238,11 @@ fn ride_line(n: usize, r: &RideEntry, offset_s: i32) -> String {
     format!(
         "{n:>3}. {}  {:<20} {:>9} {:>8}{}",
         start_label(r.start_unix_s, offset_s),
-        if r.world.is_empty() { &r.route } else { &r.world },
+        if r.world.is_empty() {
+            &r.route
+        } else {
+            &r.world
+        },
         distance_label(r.distance_m, false),
         hms(r.elapsed_s),
         r.avg_power_w

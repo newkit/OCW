@@ -587,7 +587,7 @@ pub const SETTINGS: &[SettingDef] = &[
         description: "Echo test: how long the Echo rider waits before playing you back (ms)",
         scope: Scope::Live,
         apply: Apply::Command("voice.apply echo_delay_ms {}"),
-    },    // Accessibility (spec §3.2.1 M9).
+    }, // Accessibility (spec §3.2.1 M9).
     SettingDef {
         key: "display.ui_scale",
         kind: Kind::Int {
@@ -635,43 +635,183 @@ pub const SETTINGS: &[SettingDef] = &[
     // Key and button bindings (spec §3.2.1 M9, `bindings`): one key and
     // one gamepad button per ride action; read by the apps' input.
     binding!("keys.faster", "Up", KEY_CHOICES, "Key: Faster (power +)"),
-    binding!("pad.faster", "DPadUp", PAD_CHOICES, "Gamepad button: Faster (power +)"),
-    binding!("keys.stop", "Down", KEY_CHOICES, "Key: Stop (power 0, brake)"),
-    binding!("pad.stop", "DPadDown", PAD_CHOICES, "Gamepad button: Stop (power 0, brake)"),
+    binding!(
+        "pad.faster",
+        "DPadUp",
+        PAD_CHOICES,
+        "Gamepad button: Faster (power +)"
+    ),
+    binding!(
+        "keys.stop",
+        "Down",
+        KEY_CHOICES,
+        "Key: Stop (power 0, brake)"
+    ),
+    binding!(
+        "pad.stop",
+        "DPadDown",
+        PAD_CHOICES,
+        "Gamepad button: Stop (power 0, brake)"
+    ),
     binding!("keys.steer_left", "Left", KEY_CHOICES, "Key: Steer left"),
-    binding!("pad.steer_left", "none", PAD_CHOICES, "Gamepad button: Steer left"),
+    binding!(
+        "pad.steer_left",
+        "none",
+        PAD_CHOICES,
+        "Gamepad button: Steer left"
+    ),
     binding!("keys.steer_right", "Right", KEY_CHOICES, "Key: Steer right"),
-    binding!("pad.steer_right", "none", PAD_CHOICES, "Gamepad button: Steer right"),
+    binding!(
+        "pad.steer_right",
+        "none",
+        PAD_CHOICES,
+        "Gamepad button: Steer right"
+    ),
     binding!("keys.power_up", "PageUp", KEY_CHOICES, "Key: Power +10 W"),
-    binding!("pad.power_up", "none", PAD_CHOICES, "Gamepad button: Power +10 W"),
-    binding!("keys.power_down", "PageDown", KEY_CHOICES, "Key: Power -10 W"),
-    binding!("pad.power_down", "none", PAD_CHOICES, "Gamepad button: Power -10 W"),
-    binding!("keys.autodrive", "A", KEY_CHOICES, "Key: Autodrive on / off"),
-    binding!("pad.autodrive", "South", PAD_CHOICES, "Gamepad button: Autodrive on / off"),
+    binding!(
+        "pad.power_up",
+        "none",
+        PAD_CHOICES,
+        "Gamepad button: Power +10 W"
+    ),
+    binding!(
+        "keys.power_down",
+        "PageDown",
+        KEY_CHOICES,
+        "Key: Power -10 W"
+    ),
+    binding!(
+        "pad.power_down",
+        "none",
+        PAD_CHOICES,
+        "Gamepad button: Power -10 W"
+    ),
+    binding!(
+        "keys.autodrive",
+        "A",
+        KEY_CHOICES,
+        "Key: Autodrive on / off"
+    ),
+    binding!(
+        "pad.autodrive",
+        "South",
+        PAD_CHOICES,
+        "Gamepad button: Autodrive on / off"
+    ),
     binding!("keys.wild", "W", KEY_CHOICES, "Key: Wild mode on / off"),
-    binding!("pad.wild", "West", PAD_CHOICES, "Gamepad button: Wild mode on / off"),
+    binding!(
+        "pad.wild",
+        "West",
+        PAD_CHOICES,
+        "Gamepad button: Wild mode on / off"
+    ),
     binding!("keys.u_turn", "U", KEY_CHOICES, "Key: U-turn (free ride)"),
-    binding!("pad.u_turn", "East", PAD_CHOICES, "Gamepad button: U-turn (free ride)"),
+    binding!(
+        "pad.u_turn",
+        "East",
+        PAD_CHOICES,
+        "Gamepad button: U-turn (free ride)"
+    ),
     binding!("keys.rejoin", "J", KEY_CHOICES, "Key: Back to the route"),
-    binding!("pad.rejoin", "North", PAD_CHOICES, "Gamepad button: Back to the route"),
-    binding!("keys.exit_left", "Q", KEY_CHOICES, "Key: Junction: the exit to the left"),
-    binding!("pad.exit_left", "DPadLeft", PAD_CHOICES, "Gamepad button: Junction: the exit to the left"),
-    binding!("keys.exit_right", "E", KEY_CHOICES, "Key: Junction: the exit to the right"),
-    binding!("pad.exit_right", "DPadRight", PAD_CHOICES, "Gamepad button: Junction: the exit to the right"),
+    binding!(
+        "pad.rejoin",
+        "North",
+        PAD_CHOICES,
+        "Gamepad button: Back to the route"
+    ),
+    binding!(
+        "keys.exit_left",
+        "Q",
+        KEY_CHOICES,
+        "Key: Junction: the exit to the left"
+    ),
+    binding!(
+        "pad.exit_left",
+        "DPadLeft",
+        PAD_CHOICES,
+        "Gamepad button: Junction: the exit to the left"
+    ),
+    binding!(
+        "keys.exit_right",
+        "E",
+        KEY_CHOICES,
+        "Key: Junction: the exit to the right"
+    ),
+    binding!(
+        "pad.exit_right",
+        "DPadRight",
+        PAD_CHOICES,
+        "Gamepad button: Junction: the exit to the right"
+    ),
     binding!("keys.camera", "C", KEY_CHOICES, "Key: Camera mode"),
-    binding!("pad.camera", "none", PAD_CHOICES, "Gamepad button: Camera mode"),
-    binding!("keys.video", "V", KEY_CHOICES, "Key: Video recording start / stop"),
-    binding!("pad.video", "none", PAD_CHOICES, "Gamepad button: Video recording start / stop"),
-    binding!("keys.fullscreen", "F11", KEY_CHOICES, "Key: Fullscreen on / off"),
-    binding!("pad.fullscreen", "none", PAD_CHOICES, "Gamepad button: Fullscreen on / off"),
+    binding!(
+        "pad.camera",
+        "none",
+        PAD_CHOICES,
+        "Gamepad button: Camera mode"
+    ),
+    binding!(
+        "keys.video",
+        "V",
+        KEY_CHOICES,
+        "Key: Video recording start / stop"
+    ),
+    binding!(
+        "pad.video",
+        "none",
+        PAD_CHOICES,
+        "Gamepad button: Video recording start / stop"
+    ),
+    binding!(
+        "keys.fullscreen",
+        "F11",
+        KEY_CHOICES,
+        "Key: Fullscreen on / off"
+    ),
+    binding!(
+        "pad.fullscreen",
+        "none",
+        PAD_CHOICES,
+        "Gamepad button: Fullscreen on / off"
+    ),
     binding!("keys.restart", "R", KEY_CHOICES, "Key: Restart"),
-    binding!("pad.restart", "none", PAD_CHOICES, "Gamepad button: Restart"),
+    binding!(
+        "pad.restart",
+        "none",
+        PAD_CHOICES,
+        "Gamepad button: Restart"
+    ),
     binding!("keys.god", "G", KEY_CHOICES, "Key: Unicorn mode on / off"),
-    binding!("pad.god", "none", PAD_CHOICES, "Gamepad button: Unicorn mode on / off"),
-    binding!("keys.mute_mic", "M", KEY_CHOICES, "Key: Mute the microphone"),
-    binding!("pad.mute_mic", "Select", PAD_CHOICES, "Gamepad button: Mute the microphone"),
-    binding!("keys.mute_voices", "Shift+M", KEY_CHOICES, "Key: Mute the voices"),
-    binding!("pad.mute_voices", "R3", PAD_CHOICES, "Gamepad button: Mute the voices"),
+    binding!(
+        "pad.god",
+        "none",
+        PAD_CHOICES,
+        "Gamepad button: Unicorn mode on / off"
+    ),
+    binding!(
+        "keys.mute_mic",
+        "M",
+        KEY_CHOICES,
+        "Key: Mute the microphone"
+    ),
+    binding!(
+        "pad.mute_mic",
+        "Select",
+        PAD_CHOICES,
+        "Gamepad button: Mute the microphone"
+    ),
+    binding!(
+        "keys.mute_voices",
+        "Shift+M",
+        KEY_CHOICES,
+        "Key: Mute the voices"
+    ),
+    binding!(
+        "pad.mute_voices",
+        "R3",
+        PAD_CHOICES,
+        "Gamepad button: Mute the voices"
+    ),
 ];
 
 /// Settings the browser app does not have (spec §14 Phase 10, B6): god
