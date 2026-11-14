@@ -59,6 +59,9 @@ pub struct WeatherView {
     pub attribution: Option<String>,
     /// The server's session time now (s).
     pub session_s: f64,
+    /// Snow measured by real weather (spec §14 Phase 9, S8): the season's
+    /// snow line follows it (`None`: not real weather or not reported).
+    pub snow: Option<ocw_sky::season::SnowObservation>,
     /// The wind relative to the own rider's heading (spec §14 Phase 9, S6:
     /// the HUD's arrow and km/h; at the rider's height, calm in a tunnel;
     /// `None` without an own rider).
@@ -362,6 +365,7 @@ pub(crate) mod tests {
             session_s: 0.0,
             rider_wind: None,
             physics: false,
+            snow: None,
             state,
         }
     }

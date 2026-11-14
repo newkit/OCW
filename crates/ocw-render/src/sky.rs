@@ -707,6 +707,7 @@ mod tests {
             parts: parts.iter().map(|p| p.to_string()).collect(),
             crash: None,
             wobble: 0.0,
+            damage: None,
         }
     }
 
@@ -857,6 +858,7 @@ mod tests {
             parts: vec!["lights.set".into()],
             crash: None,
             wobble: 0.0,
+            damage: None,
         });
         let mut tunnels = crate::tunnel::Tunnels::default();
         tunnels.stretches = vec![(800.0, 1200.0)];

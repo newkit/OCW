@@ -150,6 +150,8 @@ pub fn real_to_wire(r: &RealInfo) -> v1::RealWeather {
         data_unix_ms: r.data_ms,
         historic: r.historic,
         station: r.station.clone().unwrap_or_default(),
+        snow_depth_m: r.snow_depth_m,
+        snow_alt_m: r.snow_alt_m,
     }
 }
 
@@ -178,6 +180,15 @@ pub fn real_from_wire(r: &v1::RealWeather) -> RealInfo {
         data_ms: r.data_unix_ms,
         historic: r.historic,
         station: text(&r.station),
+        snow_depth_m: r
+            .snow_depth_m
+            .filter(|d| d.is_finite())
+            .map(|d| d.clamp(0.0, 30.0)),
+        snow_alt_m: if r.snow_alt_m.is_finite() {
+            r.snow_alt_m.clamp(-500.0, 9000.0)
+        } else {
+            0.0
+        },
     }
 }
 
@@ -541,6 +552,8 @@ mod tests {
             data_ms: 1_794_654_000_000,
             historic: false,
             station: Some("Vaduz (VAD)".into()),
+            snow_depth_m: Some(0.35),
+            snow_alt_m: 1600.0,
         };
         let back = weather_info(&session_weather_with(
             &real,
@@ -549,7 +562,9 @@ mod tests {
             Some(&ri),
         ));
         assert_eq!(back.mode, Mode::Real);
-        assert_eq!(back.real, Some(ri));
+        assert_eq!(back.real, Some(ri.clone()));
+        // The measured snow (S8) while the data is live or stale.
+        assert_eq!(ri.snow(), Some((1600.0, 0.35)));
         let off = weather_info(&session_weather(&real, 0.0, ClockAccess::Anyone));
         assert_eq!(off.real, None);
         let empty = real_from_wire(&v1::RealWeather {
@@ -561,6 +576,7 @@ mod tests {
             [Provider::MetNorway],
             "automatic and unknown dropped"
         );
+        assert_eq!((empty.snow_depth_m, empty.snow()), (None, None));
         assert_eq!((empty.note, empty.status), (None, Status::Waiting));
         // Without a transition: no target.
         let calm = SessionWeather::new(1);

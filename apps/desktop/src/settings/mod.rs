@@ -892,6 +892,8 @@ mod tests {
                 // Collisions apply through the connection's commands.
                 || line.contains("ride.collisions")
                 || line.contains("ride.chaotic_bots")
+                || line.contains("ride.damage")
+                || line.contains("display.damage")
                 || line.contains("ride.proximity_cue")
                 // Weather physics applies through the weather plugin.
                 || line.contains("weather.physics")

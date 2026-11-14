@@ -1524,6 +1524,60 @@ args = ["--route", "loop", "--bots", "12", "--power", "230"]
 at = ["9=camera.orbit 70 18 9", "10=dev.crash"]
 shot = 12.5
 
+# --- Damage (spec §14 Phase 12 K4 / K5, Phase 4 W6) --------------------------
+# `ride.damage on` (off by default, Q1); fresh data folders, so the garage
+# starts as new (`workshop.damage` stages a part's condition in it).
+
+[[scene]]
+name = "k4-damage-crash"
+description = "The damage widget just after a crash (spec §14 Phase 12 K4 / K5, 12F): ride.damage on, a bot cuts in (dev.crash) – rider and bike silhouettes with bars, the level words with their icons, the damaged parts lit on the bike icon, \"−N % rider, −N % bike\" for 2 s and the flash"
+args = ["--route", "loop", "--bots", "12", "--power", "230"]
+at = ["1=ride.damage on", "9=camera.orbit 70 18 9", "10=dev.crash"]
+shot = 11.3
+
+[[scene]]
+name = "k4-damage-crash-video"
+description = "Video: a crash with damage on (spec §14 Phase 12 K4 / K5): the wheel touch, the ragdoll, the widget's bars dropping with the loss shown, the parts lighting up, the rider back on a scuffed bike with a bent wheel"
+args = ["--route", "loop", "--bots", "12", "--power", "230"]
+at = ["1=ride.damage on", "9=camera.orbit 70 18 9", "10=dev.crash"]
+warmup = 9
+video = 12
+
+[[scene]]
+name = "k4-buckled-wheel"
+description = "A buckled rear wheel and a bent handlebar (spec §14 Phase 12 K4 / K5): the wheel wobbles as it turns, rolling resistance up, the widget's labels \"rear wheel buckled\", \"handlebar bent\" and the lit parts on the bike icon"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+at = ["1=ride.damage on", "1.5=dev.damage rear_wheel 22", "1.6=dev.damage cockpit 60", "1.7=dev.damage frame 75", "2=camera.orbit 95 8 3.2"]
+shot = 7
+
+[[scene]]
+name = "k5-visible-damage"
+description = "Visible damage (spec §14 Phase 12 K5): a hurt rider (dust on the back and the hip, the kit torn at the hips) on a scuffed bike with the chain off (a broken chain: stopped for 45 s), the widget \"hurt\" / \"badly damaged\" with \"chain broken\""
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+at = ["1=ride.damage on", "1.5=dev.damage rider 48", "1.6=dev.damage front_wheel 30", "1.7=dev.damage frame 40", "1.8=dev.damage cockpit 35", "4=dev.damage chain", "4.2=camera.orbit 80 12 2.6"]
+shot = 9
+
+[[scene]]
+name = "k4-workshop-repair"
+description = "Workshop repairs (spec §14 Phase 4 W6, Phase 12 Q6): the damaged stand bike's hotspots in their status colours, the condition card with each part's condition and repair price (ceil(price x (1 - condition) x 0.3) hearts) and Repair all; the wheels' dialog with Repair and Repair all"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["1.5=workshop.damage rear_wheel 40", "1.6=workshop.damage cockpit 55", "1.7=workshop.damage frame 72", "1.8=workshop.damage front_tyre 65", "2.2=workshop open", "2.8=workshop select", "3.8=workshop slot-next", "4.4=workshop select", "5.6=workshop action"]
+shot = 22
+
+[[scene]]
+name = "k4-workshop-repair-card"
+description = "Workshop stand view with a damaged bike (spec §14 Phase 4 W6): the condition card (bike condition, parts worst first with repair prices, Repair all) and the coloured hotspots"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["1.5=workshop.damage rear_wheel 40", "1.6=workshop.damage cockpit 55", "1.7=workshop.damage frame 72", "1.8=workshop.damage front_tyre 65", "2.2=workshop open", "2.8=workshop select", "3.6=workshop orbit 25"]
+shot = 20
+
+[[scene]]
+name = "k4-workshop-injury"
+description = "The rider's injury at the mirror (spec §14 Phase 4 W6, Phase 12 Q6): \"Rider: hurt (45 %)\" and the time to heal over real time (10 % an hour; easy riding 1 % a minute)"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["1.5=workshop.damage rider 45", "2.2=workshop open", "2.8=workshop mirror"]
+shot = 20
+
 # --- World objects (spec §14 Phase 12 K3) ------------------------------------
 # Packages with the section OBST (world-builder obstacles); fixed time of day.
 
@@ -1799,6 +1853,91 @@ world = true
 args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2421,2300", "--bots", "0", "--power", "0"]
 at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 150 55 30"]
 shot = 9
+
+# --- Seasons (spec §14 Phase 9, S8) -----------------------------------------
+# The same viewpoints on four dates (the time machine): the climb out of
+# Vaduz (km 1.6, 520 m), the Rhine valley's fields north of Vaduz, and
+# Malbun (1 600 m) against Vaduz on 1 May.
+
+[[scene]]
+name = "season-vaduz-winter"
+description = "Seasons (S8): the climb out of Vaduz on 15 January – deciduous trees bare, the meadows winter straw, snow on the mountains above about 1000 m"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-01-15 12:30", "0.5=hud.profile off", "2.5=teleport 1.6", "2.5=camera.orbit 160 18 26", "6=season"]
+shot = 16
+
+[[scene]]
+name = "season-vaduz-spring"
+description = "Seasons (S8): the climb out of Vaduz on 1 May – fresh green leaves, lush meadows, snow left high up"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-05-01 12:30", "0.5=hud.profile off", "2.5=teleport 1.6", "2.5=camera.orbit 160 18 26", "6=season"]
+shot = 16
+
+[[scene]]
+name = "season-vaduz-summer"
+description = "Seasons (S8): the climb out of Vaduz on 1 July – full green, no snow"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-07-01 12:30", "0.5=hud.profile off", "2.5=teleport 1.6", "2.5=camera.orbit 160 18 26", "6=season"]
+shot = 16
+
+[[scene]]
+name = "season-vaduz-autumn"
+description = "Seasons (S8): the climb out of Vaduz on 15 October – beeches and maples colouring, larches still green, stubble and ploughed fields"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-10-15 12:30", "0.5=hud.profile off", "2.5=teleport 1.6", "2.5=camera.orbit 160 18 26", "6=season"]
+shot = 16
+
+[[scene]]
+name = "season-fields-winter"
+description = "Seasons (S8): the Rhine valley's farmland north of Schaan from above on 15 January – sown and ploughed soil, maize stubble, straw meadows"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-3500,-3500", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-01-15 12:30", "0.5=hud.profile off", "1=camera.orbit 120 40 70", "6=season"]
+shot = 16
+
+[[scene]]
+name = "season-fields-spring"
+description = "Seasons (S8): the Rhine valley's fields on 1 May – green cereals, bare soil where the maize is about to be sown"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-3500,-3500", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-05-01 12:30", "0.5=hud.profile off", "1=camera.orbit 120 40 70", "6=season"]
+shot = 16
+
+[[scene]]
+name = "season-fields-summer"
+description = "Seasons (S8): the Rhine valley's fields on 15 July – golden cereals beside green maize"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-3500,-3500", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:30", "0.5=hud.profile off", "1=camera.orbit 120 40 70", "6=season"]
+shot = 16
+
+[[scene]]
+name = "season-fields-autumn"
+description = "Seasons (S8): the Rhine valley's fields on 15 October – ploughed and newly sown cereal fields, the maize drying, the woods colouring"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-3500,-3500", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-10-15 12:30", "0.5=hud.profile off", "1=camera.orbit 120 40 70", "6=season"]
+shot = 16
+
+[[scene]]
+name = "season-malbun-spring"
+description = "Seasons (S8): Malbun (1600 m) on 1 May, the same day as season-vaduz-spring – still bare trees, straw meadows and old snow patches"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-05-01 12:30", "0.5=hud.profile off", "2.5=teleport 13.85", "2.5=camera.orbit 15 22 18", "6=season"]
+shot = 16
+
+[[scene]]
+name = "season-malbun-winter"
+description = "Seasons (S8): Malbun (1600 m) on 15 January – deep in the climatological snow, the road cleared"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-01-15 12:30", "0.5=hud.profile off", "2.5=teleport 13.85", "2.5=camera.orbit 15 22 18", "6=season"]
+shot = 16
 
 # --- Weather physics (spec §14 Phase 9, S6) ----------------------------------
 

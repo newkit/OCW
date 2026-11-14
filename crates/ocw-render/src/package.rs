@@ -231,6 +231,12 @@ pub struct TileLook {
     pub season_weights: Vec<(usize, f32)>,
     /// The colours of the building materials (spec §14 Phase 8 T4).
     pub house: crate::house_style::HouseLook,
+    /// The season of the world date (spec §14 Phase 9, S8): trees, the
+    /// colour maps' meadows and fields, the far terrain's canopy and snow
+    /// (`None`: no world clock yet – summer without snow).
+    pub season: Option<Arc<ocw_sky::season::SeasonDay>>,
+    /// The snow ramp the far terrain bakes in (the shaders' near snow).
+    pub snow: ocw_sky::season::Ramp,
 }
 
 impl TileLook {
@@ -251,7 +257,20 @@ impl TileLook {
             house: crate::house_style::HouseLook {
                 means: lib.buildings.as_ref().map(|b| b.means),
             },
+            season: None,
+            snow: ocw_sky::season::Ramp::default(),
         }
+    }
+
+    /// The look with the season of the world date (spec §14 Phase 9, S8).
+    pub fn with_season(
+        mut self,
+        season: Option<Arc<ocw_sky::season::SeasonDay>>,
+        snow: ocw_sky::season::Ramp,
+    ) -> Self {
+        self.season = season;
+        self.snow = snow;
+        self
     }
 
     /// The look of a package with its measured region look (spec §14
@@ -533,7 +552,112 @@ pub use ocw_world::trees::{TRUNK_RADIUS_M, blocked_cells, tile_landuse, tree_den
 
 /// Tree meshes (trunk and cone crown, crown shades varying per tree).
 pub fn tree_arrays(sites: &[TreeSite]) -> MeshArrays {
+    let classed: Vec<(TreeSite, Option<LandClass>)> = sites.iter().map(|&s| (s, None)).collect();
+    seasonal_tree_arrays(None, &classed, None)
+}
+
+/// A ring-built tree part: rings of (height, radius) around `base`
+/// (scale `s`), closed by apexes where the radius is 0; normals from the
+/// part's centre at `centre_y` (squashed by `flat`: 1 a sphere, larger
+/// a cone); uv.x the height above the foot (the sway).
+#[allow(clippy::too_many_arguments)]
+fn ring_part(
+    m: &mut MeshArrays,
+    base: Vec3,
+    s: f32,
+    rings: &[(f32, f32)],
+    seg: u32,
+    colour: [f32; 4],
+    centre_y: f32,
+    flat: f32,
+    turn: f32,
+) {
+    let mut prev: Option<(u32, bool)> = None;
+    for &(y, r) in rings {
+        let b = m.positions.len() as u32;
+        let apex = r <= 1e-4;
+        let n = if apex { 1 } else { seg };
+        for j in 0..n {
+            let a = turn + j as f32 / seg as f32 * std::f32::consts::TAU;
+            let (cx, cz) = if apex { (0.0, 0.0) } else { (a.cos(), a.sin()) };
+            m.positions
+                .push((base + Vec3::new(r * cx, y, r * cz) * s).to_array());
+            m.uvs.push([y * s, 0.0]);
+            let nrm = if apex {
+                Vec3::new(0.0, (y - centre_y).signum(), 0.0)
+            } else {
+                Vec3::new(cx, (y - centre_y) * flat / r.max(0.3), cz).normalize_or(Vec3::Y)
+            };
+            m.normals.push(nrm.to_array());
+            m.colors.push(colour);
+        }
+        if let Some((pb, papex)) = prev {
+            match (papex, apex) {
+                (true, true) => {}
+                // The winding of the conifers' cones (ring, apex, next).
+                (true, false) => {
+                    for j in 0..seg {
+                        m.indices.extend([pb, b + j, b + (j + 1) % seg]);
+                    }
+                }
+                (false, true) => {
+                    for j in 0..seg {
+                        m.indices.extend([pb + j, b, pb + (j + 1) % seg]);
+                    }
+                }
+                (false, false) => {
+                    for j in 0..seg {
+                        let (a0, a1) = (pb + j, pb + (j + 1) % seg);
+                        let (b0, b1) = (b + j, b + (j + 1) % seg);
+                        m.indices.extend([a0, b0, a1, a1, b0, b1]);
+                    }
+                }
+            }
+        }
+        prev = Some((b, apex));
+    }
+}
+
+/// A thin branch: a cone from `from` to `to` (package metres).
+fn branch(m: &mut MeshArrays, from: Vec3, to: Vec3, radius: f32, foot_y: f32, colour: [f32; 4]) {
+    let d = (to - from).normalize_or(Vec3::Y);
+    let u = d.any_orthonormal_vector();
+    let v = u.cross(d);
+    let b = m.positions.len() as u32;
+    let seg = 3u32;
+    for j in 0..seg {
+        let a = j as f32 / seg as f32 * std::f32::consts::TAU;
+        let off = u * a.cos() + v * a.sin();
+        m.positions.push((from + off * radius).to_array());
+        m.uvs.push([from.y - foot_y, 0.0]);
+        m.normals.push(off.to_array());
+        m.colors.push(colour);
+    }
+    m.positions.push(to.to_array());
+    m.uvs.push([to.y - foot_y, 0.0]);
+    m.normals.push(d.to_array());
+    m.colors.push(colour);
+    for j in 0..seg {
+        m.indices.extend([b + j, b + seg, b + (j + 1) % seg]);
+    }
+}
+
+/// Tree meshes with the season (spec §14 Phase 9, S8): each tree's leaf
+/// type – measured by the package (`ocw_world::trees::measured_leaf`, the
+/// T3 hook) or the region's mix by land class and altitude – and its
+/// leaves on the world date: conifers as green cones, deciduous trees with
+/// round crowns that leaf out, green, colour and go bare (branches), larches
+/// as light cones turning golden and bare. Without a season every tree is
+/// a conifer, as before.
+pub fn seasonal_tree_arrays(
+    pkg: Option<&WorldPackage>,
+    sites: &[(TreeSite, Option<LandClass>)],
+    season: Option<&ocw_sky::season::SeasonDay>,
+) -> MeshArrays {
+    use ocw_sky::season::LeafType;
     let mut m = MeshArrays::default();
+    let rgba = |c: [f32; 3]| [c[0], c[1], c[2], 1.0];
+    let twig = rgba(crate::season::twig());
     let crowns = [
         lin(0.13, 0.33, 0.15),
         lin(0.11, 0.28, 0.13),
@@ -541,13 +665,31 @@ pub fn tree_arrays(sites: &[TreeSite]) -> MeshArrays {
         lin(0.20, 0.38, 0.17),
     ];
     let trunk = lin(0.35, 0.24, 0.15);
-    for &(base, s) in sites {
-        let pick = hash(i64::from(base.x.to_bits()), i64::from(base.z.to_bits()), 11);
+    for &((base, s), class) in sites {
+        let bits = (i64::from(base.x.to_bits()), i64::from(base.z.to_bits()));
+        let pick = hash(bits.0, bits.1, 11);
         let crown = crowns[((pick * crowns.len() as f32) as usize).min(crowns.len() - 1)];
-        for (y0, y1, r, colour, seg) in [
-            (0.0, 2.2, TRUNK_RADIUS_M as f32, trunk, 5u32),
-            (CROWN.0, CROWN.1, CROWN.2, crown, 7),
-        ] {
+        let alt = f64::from(base.y);
+        let leaf = match season {
+            Some(day) => day.climate.trees.leaf_type(
+                crate::season::tree_setting(class),
+                alt,
+                crate::season::measured(pkg.and_then(|p| {
+                    ocw_world::trees::measured_leaf(p, f64::from(base.x), f64::from(base.z))
+                })),
+                hash(bits.0, bits.1, 13),
+            ),
+            None => LeafType::Evergreen,
+        };
+        // The trunk and, for conifers, the cone crown (as before the
+        // seasons).
+        let conifer = leaf == LeafType::Evergreen || season.is_none();
+        let trunk_top = if conifer { 2.2 } else { 2.6 };
+        let mut parts = vec![(0.0, trunk_top, TRUNK_RADIUS_M as f32, trunk, 5u32)];
+        if conifer {
+            parts.push((CROWN.0, CROWN.1, CROWN.2, crown, 7));
+        }
+        for (y0, y1, r, colour, seg) in parts {
             let b = m.positions.len() as u32;
             for j in 0..seg {
                 let a = j as f32 / seg as f32 * std::f32::consts::TAU;
@@ -570,9 +712,106 @@ pub fn tree_arrays(sites: &[TreeSite]) -> MeshArrays {
                 m.indices.extend([b + j, b + seg, b + (j + 1) % seg]);
             }
         }
+        let Some(day) = season.filter(|_| !conifer) else {
+            continue;
+        };
+        let jitter = hash(bits.0, bits.1, 14) * 2.0 - 1.0;
+        let f = day.foliage(leaf, alt, jitter);
+        let colour = rgba(crate::season::tree_colour(
+            leaf,
+            &f,
+            pick,
+            hash(bits.0, bits.1, 15),
+        ));
+        let turn = pick * std::f32::consts::TAU;
+        if leaf == LeafType::Larch {
+            // A slim light cone; bare: a thin twiggy one.
+            let (k, c) = if f.leaves < 0.12 {
+                (0.5, twig)
+            } else {
+                (0.6 + 0.4 * f.leaves, colour)
+            };
+            let (y0, y1) = (1.6, 9.6);
+            let r = 1.9 * k;
+            let b = m.positions.len() as u32;
+            let seg = 7u32;
+            for j in 0..seg {
+                let a = turn + j as f32 / seg as f32 * std::f32::consts::TAU;
+                m.positions
+                    .push((base + Vec3::new(r * a.cos(), y0, r * a.sin()) * s).to_array());
+                m.uvs.push([y0 * s, 0.0]);
+                m.normals.push(
+                    Vec3::new(a.cos(), r / (y1 - y0), a.sin())
+                        .normalize()
+                        .to_array(),
+                );
+                m.colors.push(c);
+            }
+            m.positions.push((base + Vec3::Y * y1 * s).to_array());
+            m.uvs.push([y1 * s, 0.0]);
+            m.normals.push([0.0, 1.0, 0.0]);
+            m.colors.push(c);
+            for j in 0..seg {
+                m.indices.extend([b + j, b + seg, b + (j + 1) % seg]);
+            }
+            continue;
+        }
+        // A deciduous tree: a round crown that grows with the leaves;
+        // bare (and while it is thin) its branches show.
+        if f.leaves < 0.5 {
+            let from = base + Vec3::Y * 2.3 * s;
+            // Branches leaving the trunk at different heights, spreading
+            // out and up (not a broom from one point).
+            for k in 0..6 {
+                let a = turn + k as f32 * 2.4;
+                let h = 2.2 + 0.75 * k as f32;
+                let reach = 2.2 - 0.22 * k as f32;
+                let start = base + Vec3::Y * h * s;
+                let to = base + Vec3::new(reach * a.cos(), h + 2.4, reach * a.sin()) * s;
+                branch(
+                    &mut m,
+                    start,
+                    to,
+                    (0.12 - 0.012 * k as f32) * s,
+                    base.y,
+                    twig,
+                );
+            }
+            branch(
+                &mut m,
+                from,
+                base + Vec3::Y * 7.8 * s,
+                0.13 * s,
+                base.y,
+                twig,
+            );
+        }
+        if f.leaves >= 0.12 {
+            let k = 0.55 + 0.45 * f.leaves;
+            let c = DECIDUOUS_CENTRE;
+            let rings: Vec<(f32, f32)> = DECIDUOUS_CROWN
+                .iter()
+                .map(|&(y, r)| (c + (y - c) * k, r * k))
+                .collect();
+            ring_part(&mut m, base, s, &rings, 7, colour, c, 1.0, turn);
+        }
     }
     m
 }
+
+/// The round crown of a deciduous tree at scale 1 in full leaf: rings of
+/// (height, radius) from the bottom apex to the top one (m).
+pub(crate) const DECIDUOUS_CROWN: [(f32, f32); 6] = [
+    (2.0, 0.0),
+    (2.6, 1.9),
+    (4.2, 2.7),
+    (5.9, 2.5),
+    (7.2, 1.5),
+    (7.9, 0.0),
+];
+/// The crown's centre height (m): it shrinks towards it while the leaves
+/// come or go.
+pub(crate) const DECIDUOUS_CENTRE: f32 = 4.9;
 
 /// Where the trees of a tile stand: from the land use if the package has
 /// it, else provisional patches ([`ocw_world::trees::tree_sites`]).
@@ -637,7 +876,7 @@ pub fn colour_map_with(
     cells: u32,
     palette: Option<&[[f32; 3]]>,
 ) -> ColourMap {
-    colour_map_seasonal(pkg, tile, lu, cells, palette, None)
+    colour_map_seasonal(pkg, tile, lu, cells, palette, None, None)
 }
 
 /// A tile's seasonal satellite map (spec §14 Phase 8 T3): the decoded
@@ -682,7 +921,10 @@ impl SatelliteMap {
 }
 
 /// [`colour_map_with`] with the tile's seasonal satellite colour laid over
-/// the class colours ([`crate::region_look::far_colour`]).
+/// the class colours ([`crate::region_look::far_colour`]), and the meadows
+/// and fields in the colours of the `season` at each cell's altitude
+/// (spec §14 Phase 9, S8; [`crate::season::ground_colour`]). The snow is
+/// the terrain shader's (it lies on these tiles near and far).
 pub fn colour_map_seasonal(
     pkg: &WorldPackage,
     tile: &Tile,
@@ -690,6 +932,7 @@ pub fn colour_map_seasonal(
     cells: u32,
     palette: Option<&[[f32; 3]]>,
     satellite: Option<&SatelliteMap>,
+    season: Option<&ocw_sky::season::SeasonDay>,
 ) -> ColourMap {
     let n = cells as usize;
     let size = f64::from(pkg.tile_size_m);
@@ -717,6 +960,9 @@ pub fn colour_map_seasonal(
                     .unwrap_or_else(|| land_colour(c))
             };
             let mut colour = flat(class);
+            if let (Some(day), Some(y)) = (season, pkg.height(x, z)) {
+                colour = crate::season::ground_colour(class, colour, y, day);
+            }
             if !matches!(class, LandClass::Water | LandClass::Glacier) {
                 let rock = palette.map_or(ROCK, |_| flat(LandClass::Rock));
                 let t = match palette {
@@ -863,10 +1109,15 @@ pub fn build_tile_meshes_look(
     look: &TileLook,
 ) -> Option<TileMeshes> {
     let tile = pkg.tiles.get(&key)?;
-    let mut sites = tree_sites(pkg, tile);
+    let mut classed: Vec<(TreeSite, Option<LandClass>)> =
+        ocw_world::trees::classed_tree_sites(pkg, tile)
+            .into_iter()
+            .map(|((p, s), c)| ((Vec3::from_array(p), s), c))
+            .collect();
     if let Some(f) = keep {
-        sites.retain(|(p, _)| f([f64::from(p.x), f64::from(p.z)]));
+        classed.retain(|((p, _), _)| f([f64::from(p.x), f64::from(p.z)]));
     }
+    let sites: Vec<TreeSite> = classed.iter().map(|(s, _)| *s).collect();
     let lu = tile_landuse(pkg, key);
     // The kept buildings with their measured roof colours (section ROOF,
     // in the order of the tile's buildings).
@@ -927,6 +1178,7 @@ pub fn build_tile_meshes_look(
                 cells,
                 look.palette.as_deref(),
                 satellite.as_ref(),
+                look.season.as_deref(),
             )
         }),
         splat: lu.filter(|_| look.textured()).map(|(_, cells)| {
@@ -942,7 +1194,7 @@ pub fn build_tile_meshes_look(
         water: lu.map_or_else(MeshArrays::default, |(lu, _)| {
             water_arrays_kept(pkg, tile, lu, keep)
         }),
-        trees: tree_arrays(&sites),
+        trees: seasonal_tree_arrays(Some(pkg), &classed, look.season.as_deref()),
         crowns: crate::flight_world::TreeCrowns::from_sites(&sites),
         houses,
         bridges: crate::bridges::bridge_arrays(&own),
@@ -1019,6 +1271,9 @@ pub(crate) struct TileStreamer {
     /// The season bucket the loaded tiles were built for
     /// ([`crate::region_look::season_bucket`]).
     season: Option<u32>,
+    /// Whether they were built with the seasons (spec §14 Phase 9, S8;
+    /// console `season.fx`).
+    seasons_on: bool,
 }
 
 /// Neighbour tiles being loaded.
@@ -1268,6 +1523,7 @@ fn load_neighbours(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // a Bevy system
 fn stream_tiles(
     mut commands: Commands,
     world: Res<PackageWorld>,
@@ -1276,6 +1532,7 @@ fn stream_tiles(
     mut obstacles: ResMut<CameraObstacles>,
     mut flight_obstacles: ResMut<crate::flight_world::FlightObstacles>,
     library: Option<Res<MaterialLibrary>>,
+    mut seasons: Option<ResMut<crate::season::SeasonCache>>,
 ) {
     let set = &world.set;
     let Some(focus) = crate::flight_world::stream_focus(&view) else {
@@ -1292,6 +1549,11 @@ fn stream_tiles(
         ))
     });
     let day = season.map(crate::region_look::bucket_day);
+    // The season of the world date at the rider (spec §14 Phase 9, S8).
+    let (seasons_on, season_day, snow) = match seasons.as_deref_mut() {
+        Some(c) => (c.enabled, c.day(&view), c.snow(&view)),
+        None => (false, None, ocw_sky::season::Ramp::default()),
+    };
     // The look of each member package: the ground set of its region, tinted
     // by its measured look (spec §14 Phase 8 T3).
     let looks: Vec<TileLook> = set
@@ -1308,6 +1570,7 @@ fn stream_tiles(
                 Some(p) => base.with_region(&p.look, ground, day),
                 None => base,
             }
+            .with_season(season_day.clone(), snow)
         })
         .collect();
     let look = move |i: usize| looks.get(i).cloned().unwrap_or_default();
@@ -1318,10 +1581,12 @@ fn stream_tiles(
     if streamer.generation != set.generation()
         || streamer.textured != textured
         || streamer.season != season
+        || streamer.seasons_on != seasons_on
     {
         streamer.generation = set.generation();
         streamer.textured = textured;
         streamer.season = season;
+        streamer.seasons_on = seasons_on;
         streamer.building.clear();
         let loaded: Vec<TileId> = streamer.loaded.keys().copied().collect();
         for id in loaded {
@@ -1851,6 +2116,52 @@ mod tests {
     }
 
     #[test]
+    fn trees_follow_the_season() {
+        use ocw_sky::season::SeasonModel;
+        // Orchard trees (all deciduous) and forest trees at 450 m in
+        // Liechtenstein.
+        let at = |x: f32| (Vec3::new(x, 450.0, 0.0), 1.0);
+        let sites: Vec<(TreeSite, Option<LandClass>)> = (0..40)
+            .map(|i| (at(i as f32 * 7.3), Some(LandClass::Orchard)))
+            .collect();
+        let m = SeasonModel::for_place(47.14, 9.52);
+        let jan = seasonal_tree_arrays(None, &sites, Some(&m.day(15.0)));
+        let jul = seasonal_tree_arrays(None, &sites, Some(&m.day(182.0)));
+        let oct = seasonal_tree_arrays(None, &sites, Some(&m.day(300.0)));
+        // Bare in January: branches only (twig coloured, fewer vertices
+        // than the round crowns of July).
+        assert!(jan.positions.len() < jul.positions.len());
+        let twig = crate::season::twig();
+        assert!(jan.colors.iter().any(|c| (c[0] - twig[0]).abs() < 1e-6));
+        // Summer green, autumn red-gold crowns.
+        let reddest = |a: &MeshArrays| {
+            a.colors
+                .iter()
+                .map(|c| c[0] - c[1])
+                .fold(f32::MIN, f32::max)
+        };
+        assert!(reddest(&oct) > reddest(&jul) + 0.1);
+        assert_eq!(jul.uvs.len(), jul.positions.len());
+        assert_eq!(jul.normals.len(), jul.positions.len());
+        assert!(
+            jul.indices
+                .iter()
+                .all(|&i| (i as usize) < jul.positions.len())
+        );
+        // Without a season: the conifers of old, the same as tree_arrays.
+        let plain: Vec<TreeSite> = sites.iter().map(|(s, _)| *s).collect();
+        assert_eq!(
+            seasonal_tree_arrays(None, &sites, None).positions,
+            tree_arrays(&plain).positions
+        );
+        // Deterministic.
+        assert_eq!(
+            seasonal_tree_arrays(None, &sites, Some(&m.day(300.0))).colors,
+            oct.colors
+        );
+    }
+
+    #[test]
     fn trees_avoid_roads_and_are_deterministic() {
         let p = package();
         let tile = &p.tiles[&TileKey { x: 0, z: 0 }];
@@ -2131,6 +2442,7 @@ mod tests {
             parts: Vec::new(),
             crash: None,
             wobble: 0.0,
+            damage: None,
         });
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))

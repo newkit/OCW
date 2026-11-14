@@ -46,6 +46,9 @@ pub struct Predictor {
     /// The session weather's physics while it is in force (spec §14 Phase
     /// 9, S6; the server's switch), as the server rides it.
     weather: Option<crate::weather::WeatherPhysics>,
+    /// The damage's effects the server applies to the rider (spec §14
+    /// Phase 12E, K4: from `RiderUpdate.damage`).
+    damage: crate::damage::Effects,
 }
 
 impl Predictor {
@@ -66,6 +69,7 @@ impl Predictor {
             mode: Mode::Off,
             ticks: 0,
             weather: None,
+            damage: crate::damage::Effects::NONE,
         }
     }
 
@@ -75,6 +79,35 @@ impl Predictor {
         world: Option<std::sync::Arc<ocw_world::obstacles::WorldObstacles>>,
     ) {
         self.world = WorldCache::new(world);
+    }
+
+    /// The damage's effects in force (the server's, spec §14 Phase 12E).
+    pub fn set_damage(&mut self, effects: crate::damage::Effects) {
+        self.damage = effects;
+    }
+
+    pub fn damage(&self) -> crate::damage::Effects {
+        self.damage
+    }
+
+    /// The profile, power and controls the rider rides with under the
+    /// damage's effects (as the server's step).
+    fn damaged(&self, power_w: f64) -> (RiderProfile, f64, Controls) {
+        let fx = self.damage;
+        let mut controls = self.controls;
+        if let Steering::Lean(l) = controls.steering {
+            controls.steering = Steering::Lean(l * fx.lean_factor);
+        }
+        controls.braking |= fx.held;
+        (fx.profile(&self.profile), fx.power(power_w), controls)
+    }
+
+    fn damage_cap(&self, state: &mut RiderState) {
+        if let Some(c) = self.damage.speed_cap
+            && state.speed > c
+        {
+            state.speed = c;
+        }
     }
 
     /// The collision model the server says is in force.
@@ -197,17 +230,21 @@ impl Predictor {
 
     /// Advances the prediction by one physics tick with the current power.
     pub fn step(&mut self, route: &dyn Track, power_w: f64) {
+        let (profile, power_w, controls) = self.damaged(power_w);
         ride::tick_in(
             &mut self.state,
-            &self.profile,
+            &profile,
             power_w,
-            self.controls,
+            controls,
             &mut self.scraping,
             route,
             self.drag_factor,
             self.weather.as_ref(),
             SIM_DT,
         );
+        let mut capped = self.state;
+        self.damage_cap(&mut capped);
+        self.state = capped;
         let mut state = self.state;
         self.world_tick(&mut state, route);
         self.state = state;
@@ -240,18 +277,20 @@ impl Predictor {
         let mut extrapolated = server;
         let steps = (age_s.max(0.0) / SIM_DT).round() as usize;
         let mut scraping = self.scraping;
+        let (profile, power_w, controls) = self.damaged(power_w);
         for _ in 0..steps {
             ride::tick_in(
                 &mut extrapolated,
-                &self.profile,
+                &profile,
                 power_w,
-                self.controls,
+                controls,
                 &mut scraping,
                 route,
                 self.drag_factor,
                 self.weather.as_ref(),
                 SIM_DT,
             );
+            self.damage_cap(&mut extrapolated);
             self.world_tick(&mut extrapolated, route);
         }
         let error = extrapolated.distance - self.state.distance;

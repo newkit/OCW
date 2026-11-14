@@ -190,6 +190,14 @@ pub const SETTINGS: &[SettingDef] = &[
         apply: Apply::Command("hud.units {}"),
     },
     SettingDef {
+        key: "display.damage",
+        kind: Kind::Bool,
+        default: "on",
+        description: "Show the damage indicator in the HUD (with ride.damage on; the effects stay when hidden)",
+        scope: Scope::Live,
+        apply: Apply::Command("hud.damage {}"),
+    },
+    SettingDef {
         key: "display.fps",
         kind: Kind::Bool,
         default: "off",
@@ -302,6 +310,16 @@ pub const SETTINGS: &[SettingDef] = &[
         description: "Bots sometimes make mistakes (late reactions, wheel touches) that can cause crashes",
         scope: Scope::Live,
         apply: Apply::Command("ride.chaotic_bots {}"),
+    },
+    // Damage (spec §14 Phase 12A, 12E, Q1: off by default; Q6: it carries
+    // over between rides, repairs in the workshop).
+    SettingDef {
+        key: "ride.damage",
+        kind: Kind::Bool,
+        default: "off",
+        description: "Damage: hits hurt the rider and damage the bike (only with collisions on; it carries over to the next ride, repairs in the workshop)",
+        scope: Scope::Live,
+        apply: Apply::Command("ride.damage {}"),
     },
     SettingDef {
         key: "ride.proximity_cue",

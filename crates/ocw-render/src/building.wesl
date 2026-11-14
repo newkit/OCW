@@ -31,6 +31,9 @@ struct BuildingLook {
     windows: array<vec4<f32>, 64>,
     // The weather: x wetness, y puddles, z snow cover, w wind sway.
     weather: vec4<f32>,
+    // The season (spec §14 Phase 9, S8): x, y the climatological snow
+    // ramp over the altitude; z on.
+    season: vec4<f32>,
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100)
@@ -222,15 +225,17 @@ fn fragment(
     }
 
     // The weather (spec §14 Phase 9, S4): rain darkens walls and roofs a
-    // little, snow lies on the roofs (the faces looking up).
+    // little, snow lies on the roofs (the faces looking up): the weather's
+    // or the season's (S8, `season::lying_snow`), whichever covers more.
     let wx = look.weather;
     if wx.x > 0.0 {
         albedo = albedo * mix(1.0, 0.82, wx.x);
         rough = rough * mix(1.0, 0.7, wx.x);
     }
-    if wx.z > 0.0 {
+    let snow = max(wx.z, clamp(look.season.x + look.season.y * wp.y, 0.0, 1.0));
+    if snow > 0.0 {
         let up = normalize(in.world_normal).y;
-        let s = smoothstep(0.3, 0.6, up) * smoothstep(0.0, 0.6, wx.z);
+        let s = smoothstep(0.3, 0.6, up) * smoothstep(0.0, 0.6, snow);
         albedo = mix(albedo, vec3<f32>(0.88, 0.9, 0.94), s);
         rough = mix(rough, 0.6, s);
         n = normalize(mix(n, normalize(in.world_normal), s));

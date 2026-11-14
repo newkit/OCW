@@ -65,16 +65,29 @@ pub fn result_line(row: &ResultRow) -> String {
     } else {
         row.name.clone()
     };
-    format!(
+    let mut line = format!(
         "{:>3}  {:<w$}  {:>9}  {}",
         row.position,
         name,
         row.time,
         row.gap,
         w = NAME_CHARS
-    )
-    .trim_end()
-    .to_string()
+    );
+    // The damage dot (spec §14 Phase 12F: an icon, never colour alone)
+    // and the crashes.
+    let mut damage = String::new();
+    if let Some(d) = row.damage {
+        damage.push_str(d.icon());
+    }
+    match row.crashes {
+        0 => {}
+        1 => damage.push_str(" 1 crash"),
+        n => damage.push_str(&format!(" {n} crashes")),
+    }
+    if !damage.is_empty() {
+        line = format!("{}  {}", line.trim_end(), damage.trim_start());
+    }
+    line.trim_end().to_string()
 }
 
 /// The header line over the rows.
@@ -308,7 +321,23 @@ mod tests {
             time: time.into(),
             gap: gap.into(),
             is_local: false,
+            ..Default::default()
         }
+    }
+
+    #[test]
+    fn damage_dots_and_crashes_follow_the_row() {
+        let mut r = row("2", "Bot 4", "10:04.2", "+4.2 s");
+        r.damage = Some(ocw_sim::damage::Status::Critical);
+        r.crashes = 2;
+        assert!(
+            result_line(&r).ends_with("+4.2 s  ■ 2 crashes"),
+            "{}",
+            result_line(&r)
+        );
+        r.damage = None;
+        r.crashes = 1;
+        assert!(result_line(&r).ends_with("+4.2 s  1 crash"));
     }
 
     #[test]

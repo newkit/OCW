@@ -86,6 +86,8 @@ pub(super) struct Rules {
     pub on: bool,
     /// `ride.chaotic_bots` (Q3).
     pub chaotic_bots: bool,
+    /// `ride.damage` (12A, 12E; off by default, Q1).
+    pub damage: bool,
     pub stats: CollisionStats,
 }
 
@@ -296,6 +298,7 @@ impl Session {
     /// road edge, or wild mode's reach), speed, heading, a bump or a crash.
     pub(super) fn apply_response(&mut self, id: RiderId, resp: &Response) {
         let tick = self.tick;
+        let damage_on = self.damage_on();
         self.rules.stats.contacts += 1;
         let width = self
             .track(id)
@@ -325,6 +328,10 @@ impl Session {
         if let Some(hit) = resp.crash {
             start_crash(r, hit, tick);
             self.rules.stats.crashes += 1;
+        }
+        // Damage (12E): the hit takes off the meters.
+        if damage_on {
+            Session::damage_hit(r, resp, tick);
         }
     }
 

@@ -924,6 +924,17 @@ impl AvatarRig {
     pub fn params(&self) -> PoseParams {
         self.params
     }
+
+    /// The bike's anchors (the damage marks sit on them, spec §14 Phase
+    /// 12E).
+    pub fn bike_rig(&self) -> &BikeRig {
+        &self.bike
+    }
+
+    /// The entity that rocks bike and rider (the marks' parent).
+    pub fn sway_entity(&self) -> Entity {
+        self.sway
+    }
 }
 
 /// Spawns `model`'s nodes (but not the subtrees of `skip`) under `parent`;
@@ -1122,6 +1133,7 @@ fn animate(
     let dt = time.delta_secs();
     let eye = cameras.iter().next().map(GlobalTransform::translation);
     for (avatar, mut rig, at) in &mut avatars {
+        let mut bent = [0.0f32; 2];
         let input = if avatar.id == GHOST_ID {
             let Some(g) = view.ghost else { continue };
             let grade = view
@@ -1138,6 +1150,10 @@ fn animate(
             let Some(r) = view.riders.iter().find(|r| r.id == avatar.id) else {
                 continue;
             };
+            // A buckled wheel wobbles (spec §14 Phase 12E, K5).
+            if let Some(d) = r.damage {
+                bent = d.bent;
+            }
             AnimInput {
                 speed_mps: r.state.speed,
                 cadence_rpm: r.cadence_rpm,
@@ -1154,10 +1170,10 @@ fn animate(
         rig.params.crank = anim::advance_crank(rig.params.crank, cadence, dt);
         rig.wheel_angle =
             anim::advance_wheel(rig.wheel_angle, input.speed_mps, rig.bike.wheel_radius, dt);
-        let spin = Quat::from_rotation_x(-rig.wheel_angle);
-        for w in rig.wheels {
+        // Front and rear (a bent wheel swings sideways as it turns).
+        for (w, b) in rig.wheels.into_iter().zip(bent) {
             if let Ok(mut t) = transforms.get_mut(w) {
-                t.rotation = spin;
+                t.rotation = crate::damage_look::wheel_wobble(rig.wheel_angle, b);
             }
         }
         // Far away only the lod1 model shows: no pose needed.
@@ -1227,6 +1243,7 @@ mod tests {
             parts: Vec::new(),
             crash: None,
             wobble: 0.0,
+            damage: None,
         };
         {
             let mut v = app.world_mut().resource_mut::<RideView>();
@@ -1385,6 +1402,7 @@ mod tests {
             parts: Vec::new(),
             crash: None,
             wobble: 0.0,
+            damage: None,
         });
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))
@@ -1504,6 +1522,7 @@ mod tests {
             parts: Vec::new(),
             crash: None,
             wobble: 0.0,
+            damage: None,
         }
     }
 

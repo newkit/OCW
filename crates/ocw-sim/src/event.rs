@@ -219,6 +219,9 @@ pub struct Event {
     /// The organiser's rule: the weather affects the physics during the
     /// event (spec §14 Phase 9, Q4: off unless enabled).
     pub weather_physics: bool,
+    /// The organiser's damage rules (spec §14 Phase 12E, 12G): damage on
+    /// or off for the event, DNF when badly injured, neutral service.
+    pub damage: crate::damage::Rules,
 }
 
 impl Event {
@@ -241,6 +244,7 @@ impl Event {
             collisions: None,
             physics: crate::build::PhysicsMode::for_event(&kind),
             weather_physics: false,
+            damage: crate::damage::Rules::default(),
             start_line_m,
             entrants: entrants
                 .into_iter()
@@ -266,6 +270,19 @@ impl Event {
 
     pub fn entrant(&self, id: RiderId) -> Option<&Entrant> {
         self.entrants.iter().find(|e| e.id == id)
+    }
+
+    /// An entrant abandons (spec §14 Phase 12E: badly injured with the
+    /// organiser's rule, a broken bike without neutral service): DNF.
+    /// False if not riding in it (unknown, finished, already DNF).
+    pub fn abandon(&mut self, id: RiderId) -> bool {
+        match self.entrants.iter_mut().find(|e| e.id == id) {
+            Some(e) if e.finish_s.is_none() && !e.dnf && self.phase != Phase::Finished => {
+                e.dnf = true;
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Advances to `tick` (the session's tick after stepping) with the

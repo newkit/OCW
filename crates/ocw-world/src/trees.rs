@@ -291,6 +291,39 @@ pub fn tree_sites(pkg: &WorldPackage, tile: &Tile) -> Vec<TreeSite> {
     }
 }
 
+/// The trees of a tile with the land class each stands in (`None`: the
+/// provisional patches of packages without land use) – the seasons need
+/// it for the leaf type (spec §14 Phase 9, S8).
+pub fn classed_tree_sites(pkg: &WorldPackage, tile: &Tile) -> Vec<(TreeSite, Option<LandClass>)> {
+    match tile_landuse(pkg, tile.key) {
+        Some((lu, cells)) => landuse_trees(pkg, tile, lu, cells)
+            .into_iter()
+            .map(|(_, c, p, s)| ((p, s), Some(c)))
+            .collect(),
+        None => placeholder_tree_sites(pkg, tile)
+            .into_iter()
+            .map(|t| (t, None))
+            .collect(),
+    }
+}
+
+/// The dominant leaf type of the trees at a place, as measured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DominantLeaf {
+    Broadleaved,
+    Coniferous,
+}
+
+/// The measured leaf type at (x, z) (package metres): the hook for the
+/// forest type of spec §14 Phase 8 T3 (Copernicus HRL *Dominant Leaf
+/// Type*, 10 m, broadleaved / coniferous), which no package carries yet –
+/// always `None` until that section exists. The renderer then falls back
+/// to the regional mix by altitude and land use
+/// (`ocw_sky::season::LeafMix`, spec §14 Phase 9, S8).
+pub fn measured_leaf(_pkg: &WorldPackage, _x: f64, _z: f64) -> Option<DominantLeaf> {
+    None
+}
+
 /// The trees of a tile as one byte per candidate cell (row-major along
 /// +z, [`cells_per_side`]²): 0 = no tree, else the tree's land class
 /// code plus 1 (its scale range, [`tree_density`]). `keep` decides by the foot

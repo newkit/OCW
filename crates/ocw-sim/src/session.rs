@@ -22,8 +22,10 @@ use crate::physics::{self, Environment, RiderState, Steering};
 use crate::ride::{self, Controls};
 
 mod collisions;
+mod damage;
 mod god_mode;
 pub use collisions::{CollisionStats, Crash, JOIN_GHOST_S, Stage};
+pub use damage::DamageStage;
 pub use god_mode::{GodLeave, GodRider};
 
 /// Latest sensor input of a rider.
@@ -116,6 +118,10 @@ struct Rider {
     /// and whether the client says its power is virtual.
     meter: ocw_core::hearts::HeartsMeter,
     virtual_power: bool,
+    /// Damage (spec §14 Phase 12E, K4): the meters, the parts, a stop by
+    /// the road; changed since the last [`Session::take_damage_changes`].
+    damage: crate::damage::Damage,
+    damage_changed: bool,
 }
 
 /// State of one rider as broadcast to clients.
@@ -699,6 +705,8 @@ impl Session {
                 solid: control != Control::Client,
                 meter: Default::default(),
                 virtual_power: false,
+                damage: crate::damage::Damage::fresh(),
+                damage_changed: false,
             },
         );
         id
@@ -1189,6 +1197,23 @@ impl Session {
             })
             .collect();
         let mut edge_hits: Vec<(RiderId, f64, f64)> = Vec::new();
+        // Damage (spec §14 Phase 12E): its effects on the virtual rider,
+        // the stops, the recovery; the entrants of an event that is not over.
+        let damage_on = self.damage_on();
+        let damage_rules = self.event_damage_rules();
+        let entrants: Vec<RiderId> = self
+            .event
+            .as_ref()
+            .filter(|e| e.phase != event::Phase::Finished)
+            .map(|e| {
+                e.entrants
+                    .iter()
+                    .filter(|x| x.finish_s.is_none() && !x.dnf)
+                    .map(|x| x.id)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut abandons: Vec<RiderId> = Vec::new();
         for (id, rider) in &mut self.riders {
             let d = rider.state.distance;
             if rider.control == Control::Echo {
@@ -1357,16 +1382,25 @@ impl Session {
                     cap = plan.speed_cap;
                 }
             }
+            let fx = if damage_on {
+                rider.damage.effects()
+            } else {
+                crate::damage::Effects::NONE
+            };
+            // A bent handlebar: manual steering a little less precise.
+            if let Steering::Lean(l) = steering {
+                steering = Steering::Lean(l * fx.lean_factor);
+            }
             let controls = Controls {
                 steering,
                 wild: rider.wild,
-                braking: rider.input.brake,
+                braking: rider.input.brake || fx.held,
             };
             let (speed_before, heading_before) = (rider.state.speed, rider.state.heading);
             ride::tick_in(
                 &mut rider.state,
-                &rider.effective,
-                rider.input.power_w,
+                &fx.profile(&rider.effective),
+                fx.power(rider.input.power_w),
                 controls,
                 &mut rider.scraping,
                 track,
@@ -1374,11 +1408,18 @@ impl Session {
                 weather.as_ref(),
                 SIM_DT,
             );
+            if let Some(c) = fx.speed_cap
+                && rider.state.speed > c
+            {
+                rider.state.speed = c;
+            }
             // Hearts (spec §14 Phase 4, 4E): the accepted power's work and
             // the climbing, for clients riding real power (god mode and
             // crashes left the loop above).
             let blocked = match rider.control {
                 Control::Client if rider.virtual_power => Some(NoHearts::VirtualPower),
+                // Stopped by the road (a repair, a medical stop): like down.
+                Control::Client if fx.held => Some(NoHearts::Down),
                 Control::Client => None,
                 Control::Bot { .. } | Control::Echo => Some(NoHearts::Bot),
             };
@@ -1401,6 +1442,16 @@ impl Session {
                 && rider.god.is_none()
             {
                 edge_hits.push((*id, speed_before, heading_before));
+            }
+            if damage_on && damage::damage_tick(rider, entrants.contains(id), damage_rules) {
+                abandons.push(*id);
+            }
+        }
+        if let Some(ev) = &mut self.event {
+            for id in abandons {
+                if ev.abandon(id) {
+                    self.event_changes.push(event::EventChange::Dnf(id));
+                }
             }
         }
         for (id, speed, heading) in edge_hits {

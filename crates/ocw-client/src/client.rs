@@ -192,6 +192,11 @@ pub struct ClientCore {
     avoid: ocw_sim::avoid::AvoidState,
     was_down: bool,
     proximity_cue: bool,
+    /// Damage (spec §14 Phase 12E / 12F): every rider's from the server,
+    /// the own widget; the condition the hello carries from earlier rides
+    /// (Phase 12 Q6; never for anonymous riders).
+    damage: crate::damage::DamageClient,
+    carried: Option<v1::DamageState>,
 }
 
 /// Steering mode before the menu opened (spec §3.2.1), restored on closing.
@@ -257,6 +262,8 @@ impl ClientCore {
             avoid: Default::default(),
             was_down: false,
             proximity_cue: false,
+            damage: Default::default(),
+            carried: None,
             route,
         }
     }
@@ -316,6 +323,13 @@ impl ClientCore {
     }
 
     /// The same client with a cosmetic look (spec §2.5), sent in the hello.
+    /// The condition the rider brings from earlier rides (spec §14 Phase
+    /// 12 Q6), sent in the hello; `None`: fresh.
+    pub fn with_damage(mut self, carried: Option<v1::DamageState>) -> Self {
+        self.carried = carried;
+        self
+    }
+
     pub fn with_look(mut self, look: RiderLook) -> Self {
         self.look = look;
         self
@@ -465,6 +479,7 @@ impl ClientCore {
             look: Some(self.look.into()),
             // Part ids only: the server has its own catalogue (4G).
             parts: self.parts.clone(),
+            damage: self.carried.clone(),
         })))
     }
 
@@ -567,6 +582,7 @@ impl ClientCore {
                 self.world_access = Some(ocw_protocol::access_from_wire(w.world_access));
                 self.god_access = Some(ocw_protocol::access_from_wire(w.god_access));
                 self.collisions.on_welcome(&w);
+                self.damage.on_welcome(&w);
                 if let Some(c) = &w.clock {
                     self.on_clock(c, now_s);
                 }
@@ -798,6 +814,10 @@ impl ClientCore {
             self.weather.on_message(weather, now_s, self.snapshot_age_s);
         }
         self.collisions.on_snapshot(s, now_s, self.rider_id);
+        self.damage.on_snapshot(s, now_s, self.rider_id);
+        // The damage's effects: the prediction rides as the server does.
+        self.predictor
+            .set_damage(self.damage.effects(self.rider_id));
         let mut others = Vec::new();
         let mut gods = Vec::new();
         for u in &s.riders {
@@ -829,7 +849,9 @@ impl ClientCore {
                 };
                 // Down after a crash (spec §14 Phase 12C): the server's state
                 // (a crash is only shown when the server says so).
-                let down = self.collisions.crash(id, now_s).is_some();
+                // Stopped by the road (a repair, a medical stop, spec §14
+                // Phase 12E) counts the same.
+                let down = self.collisions.crash(id, now_s).is_some() || self.damage.held(Some(id));
                 if self.was_down && !down {
                     // Riding again: autodrive's line where the rider got up.
                     self.lateral_target = Some(state.lateral_offset);
@@ -1330,6 +1352,8 @@ impl ClientCore {
             return;
         }
         if self.event.holds(self.rider_id) || self.god.active() || self.was_down {
+            // (Stopped by the road after damage, spec §14 Phase 12E, is
+            // `was_down` too: the server's state.)
             // The countdown: the server holds the field at the start line;
             // god mode: the rider is out of the physics (spec §14 Phase
             // 13E); down after a crash: the server's state (Phase 12C).
@@ -1468,6 +1492,7 @@ impl ClientCore {
             parts: self.rider_parts(own),
             crash: self.collisions.crash(own, now_s),
             wobble: self.collisions.wobble(own, tick_now),
+            damage: self.damage.visible(own),
         }];
         for (id, state) in self.others.sample(now_s - INTERPOLATION_DELAY_S) {
             // Free ride: only riders whose path is known can be placed.
@@ -1491,6 +1516,7 @@ impl ClientCore {
                 look,
                 parts: self.rider_parts(id),
                 crash: self.collisions.crash(id, now_s),
+                damage: self.damage.visible(id),
                 // Others are drawn slightly in the past.
                 wobble: self
                     .collisions
@@ -1583,7 +1609,54 @@ impl ClientCore {
 
     /// The rules request (`ride.collisions`, `ride.chaotic_bots`).
     pub fn rules_message(collisions: Option<bool>, chaotic_bots: Option<bool>) -> Vec<u8> {
-        encode(&ocw_protocol::rules_request(collisions, chaotic_bots))
+        encode(&ocw_protocol::rules_request(collisions, chaotic_bots, None))
+    }
+
+    /// `ride.damage` for the server (spec §14 Phase 12A, 12E).
+    pub fn damage_rules_message(on: bool) -> Vec<u8> {
+        encode(&ocw_protocol::rules_request(None, None, Some(on)))
+    }
+
+    /// Mend a puncture now (spec §14 Phase 12E; key R while riding with a
+    /// flat, console `ride.repair`).
+    pub fn repair_message() -> Vec<u8> {
+        encode(&ocw_protocol::damage_request(true))
+    }
+
+    /// `dev.damage TARGET [PERCENT]` (local servers only).
+    pub fn stage_damage_message(target: &str, condition: f64) -> Vec<u8> {
+        encode(&ocw_protocol::stage_damage(target, condition))
+    }
+
+    /// The damage state of the client (every rider's, the switch).
+    pub fn damage_state(&self) -> &crate::damage::DamageClient {
+        &self.damage
+    }
+
+    /// Damage in force (the server says).
+    pub fn damage_on(&self) -> bool {
+        self.damage.on()
+    }
+
+    /// The own rider's damage as the server sent it last.
+    pub fn own_damage(&self) -> Option<&ocw_sim::damage::Damage> {
+        self.damage.damage(self.rider_id?)
+    }
+
+    /// Stopped by the road (a repair, a medical stop, a spare bike): SIM
+    /// flat, like down after a crash.
+    pub fn damage_held(&self) -> bool {
+        self.damage.held(self.rider_id)
+    }
+
+    /// The HUD's damage widget at client time `now_s` (spec §14 Phase 12F).
+    pub fn damage_widget(&self, now_s: f64) -> Option<ocw_render::damage_hud::DamageWidgetView> {
+        self.damage.widget(self.rider_id, now_s)
+    }
+
+    /// The HUD's damage line ("Medical stop: 42 s", "Puncture: …").
+    pub fn damage_notice(&self) -> Option<String> {
+        self.damage.notice(self.rider_id)
     }
 
     /// A staged contact (`dev.bump` / `dev.crash`, local servers only).
@@ -1664,6 +1737,18 @@ impl ClientCore {
         )?;
         // The event's feed (spec §14 Phase 12C): "R. Rider crashed at km 12.4".
         v.lines.extend(self.collisions.feed(now_s));
+        // Damage dots and crashes in the results (spec §14 Phase 12F).
+        if let Some(res) = &mut v.results {
+            let conditions = self.event.info().map(|i| &i.conditions);
+            for row in &mut res.rows {
+                let id = RiderId(row.rider);
+                row.damage = self.damage.dot(id);
+                row.crashes = conditions
+                    .and_then(|c| c.iter().find(|(r, ..)| *r == id).map(|(_, n, ..)| *n))
+                    .or_else(|| self.damage.damage(id).map(|d| d.crashes))
+                    .unwrap_or(0);
+            }
+        }
         Some(v)
     }
 
@@ -1761,23 +1846,26 @@ impl ClientCore {
         physics: Option<ocw_sim::PhysicsMode>,
         weather: Option<&ocw_weather::machine::EventWeather>,
     ) -> Vec<u8> {
-        Self::event_start_message_rules(spec, bots, physics, weather, None)
+        Self::event_start_message_rules(spec, bots, physics, weather, None, None)
     }
 
-    /// An event start with the organiser's weather and weather-physics
-    /// rule (spec §14 Phase 9, S6, Q4: `event … --weather-physics on`;
-    /// `None`: off, the default).
+    /// An event start with the organiser's weather, damage rules (spec
+    /// §14 Phase 12E, 12G: `event … --damage on|off --dnf-injured
+    /// --neutral-service`) and weather-physics rule (spec §14 Phase 9,
+    /// S6, Q4: `event … --weather-physics on`; `None`: off, the default).
     pub fn event_start_message_rules(
         spec: &ocw_sim::EventSpec,
         bots: Option<u32>,
         physics: Option<ocw_sim::PhysicsMode>,
         weather: Option<&ocw_weather::machine::EventWeather>,
+        damage: Option<ocw_sim::damage::Rules>,
         weather_physics: Option<bool>,
     ) -> Vec<u8> {
         encode(&client_message(C::Event(v1::EventRequest {
             req: Some(v1::event_request::Req::Start(v1::EventStart {
                 weather: weather.map(ocw_protocol::event_weather_to_wire),
                 weather_physics,
+                damage: damage.as_ref().map(ocw_protocol::damage_rules_to_wire),
                 ..ocw_protocol::event_start_with(spec, bots, physics)
             })),
         })))
@@ -1894,6 +1982,25 @@ impl ClientCore {
         }
         self.look = look;
         encode(&ocw_protocol::bike_change(bike_id, bike, look, parts))
+    }
+
+    /// [`Self::change_bike`] with the bike's condition from the garage
+    /// (spec §14 Phase 12 Q6, Phase 4 W6: a repair or a swap reaches the
+    /// ride).
+    pub fn change_bike_with_damage(
+        &mut self,
+        bike_id: &str,
+        bike: ProfileId,
+        look: RiderLook,
+        parts: &[String],
+        damage: Option<v1::DamageState>,
+    ) -> Vec<u8> {
+        let _ = self.change_bike(bike_id, bike, look, parts);
+        let mut m = ocw_protocol::bike_change(bike_id, bike, look, parts);
+        if let Some(v1::client_message::Msg::BikeChange(b)) = &mut m.msg {
+            b.damage = damage;
+        }
+        encode(&m)
     }
 
     pub fn key_power_w(&self) -> f64 {

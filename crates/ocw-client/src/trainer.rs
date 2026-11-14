@@ -101,7 +101,9 @@ impl TrainerControl {
         self.set_profile(c.effective_profile());
         // Collisions (spec §14 Phase 12): SIM flat while down after a
         // crash, a resistance pulse on a soft bump.
-        self.set_down(c.own_crash(now_s).is_some());
+        // Stopped by the road after damage (a repair, a medical stop, spec
+        // §14 Phase 12E): the same.
+        self.set_down(c.own_crash(now_s).is_some() || c.damage_held());
         // The weather's wind while it affects the physics (S6, Q5).
         self.set_wind(c.trainer_wind(now_s));
         if let Some(b) = c.collision_state().bump(id)

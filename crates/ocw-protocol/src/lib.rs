@@ -222,6 +222,9 @@ pub fn quantize(s: &ocw_sim::RiderSnapshot) -> v1::RiderUpdate {
         // The server adds the credited hearts (spec §14 Phase 4, 4E).
         hearts: 0,
         build_hash: s.build_hash,
+        // The server adds the damage at 2 Hz and on changes (spec §14
+        // Phase 12E).
+        damage: None,
         bump: s.bump.as_ref().map(|b| v1::Bump {
             tick: b.tick,
             strength_mrad: (b.strength * 1000.0).round().max(0.0) as u32,
@@ -343,12 +346,144 @@ pub fn rider_bump(u: &v1::RiderUpdate) -> Option<ocw_sim::collide::Bump> {
 }
 
 /// The rules request (spec §14 Phase 12A: `ride.collisions`,
-/// `ride.chaotic_bots`).
-pub fn rules_request(collisions: Option<bool>, chaotic_bots: Option<bool>) -> v1::ClientMessage {
+/// `ride.chaotic_bots`, `ride.damage`).
+pub fn rules_request(
+    collisions: Option<bool>,
+    chaotic_bots: Option<bool>,
+    damage: Option<bool>,
+) -> v1::ClientMessage {
     client_message(v1::client_message::Msg::Rules(v1::RulesRequest {
         collisions,
         chaotic_bots,
+        damage,
     }))
+}
+
+/// A rider's damage for the wire (spec §14 Phase 12E, K4).
+pub fn damage_to_wire(d: &ocw_sim::damage::Damage) -> v1::DamageState {
+    use ocw_sim::damage::per_mille as pm;
+    let hit = d.last_hit;
+    v1::DamageState {
+        rider_pm: pm(d.rider),
+        bike_pm: pm(d.bike()),
+        parts_pm: d.parts.iter().map(|c| pm(*c)).collect(),
+        affected: d.affected(),
+        injury: d.injury().code() as i32,
+        flat: u32::from(d.flat[0]) | u32::from(d.flat[1]) << 1,
+        chain_broken: d.chain_broken,
+        stop: d.stop.map_or(0, |s| s.kind.code() as i32),
+        stop_left_ms: d
+            .stop
+            .map_or(0, |s| (s.left_s.max(0.0) * 1000.0).round() as u32),
+        limited: d.limited,
+        spare: d.spare,
+        crashes: d.crashes,
+        abandoned: d.abandoned,
+        hit_tick: hit.map_or(0, |h| h.tick),
+        hit_rider_pm: hit.map_or(0, |h| pm(h.rider)),
+        hit_bike_pm: hit.map_or(0, |h| pm(h.bike)),
+        hit_parts: hit.map_or(0, |h| h.parts),
+        hit_crash: hit.is_some_and(|h| h.crash),
+    }
+}
+
+/// A received damage state (the parts missing on the wire are new).
+pub fn damage_from_wire(s: &v1::DamageState) -> ocw_sim::damage::Damage {
+    use ocw_sim::damage::{Damage, Loss, Stop, StopKind};
+    let c = |v: u32| f64::from(v.min(1000)) / 1000.0;
+    let mut d = Damage::fresh();
+    d.rider = c(s.rider_pm);
+    for (p, v) in d.parts.iter_mut().zip(&s.parts_pm) {
+        *p = c(*v);
+    }
+    d.flat = [s.flat & 1 != 0, s.flat & 2 != 0];
+    d.chain_broken = s.chain_broken;
+    d.stop = StopKind::from_code(s.stop.max(0) as u32).map(|kind| Stop {
+        kind,
+        left_s: f64::from(s.stop_left_ms) / 1000.0,
+    });
+    d.limited = s.limited;
+    d.spare = s.spare;
+    d.crashes = s.crashes;
+    d.abandoned = s.abandoned;
+    d.last_hit = (s.hit_tick != 0 || s.hit_crash).then(|| Loss {
+        tick: s.hit_tick,
+        rider: c(s.hit_rider_pm),
+        bike: c(s.hit_bike_pm),
+        parts: s.hit_parts,
+        crash: s.hit_crash,
+    });
+    d
+}
+
+/// The condition carried over from earlier rides for the hello (spec §14
+/// Phase 12 Q6): the rider's and the parts'.
+pub fn carried_damage(rider: f64, parts: &[f64; ocw_sim::damage::PARTS]) -> v1::DamageState {
+    use ocw_sim::damage::per_mille as pm;
+    v1::DamageState {
+        rider_pm: pm(rider),
+        parts_pm: parts.iter().map(|c| pm(*c)).collect(),
+        ..Default::default()
+    }
+}
+
+/// The condition a hello carries: (rider, parts).
+pub fn carried_from_wire(s: &v1::DamageState) -> (f64, [f64; ocw_sim::damage::PARTS]) {
+    let d = damage_from_wire(s);
+    (d.rider, d.parts)
+}
+
+/// A received rider's damage (`None`: not in this snapshot).
+pub fn rider_damage(u: &v1::RiderUpdate) -> Option<ocw_sim::damage::Damage> {
+    u.damage.as_ref().map(damage_from_wire)
+}
+
+/// The organiser's damage rules for the wire.
+pub fn damage_rules_to_wire(r: &ocw_sim::damage::Rules) -> v1::DamageRules {
+    v1::DamageRules {
+        damage: r.on,
+        dnf_badly_injured: r.dnf_badly_injured,
+        neutral_service: r.neutral_service,
+    }
+}
+
+pub fn damage_rules_from_wire(r: &v1::DamageRules) -> ocw_sim::damage::Rules {
+    ocw_sim::damage::Rules {
+        on: r.damage,
+        dnf_badly_injured: r.dnf_badly_injured,
+        neutral_service: r.neutral_service,
+    }
+}
+
+/// The rider asks to mend a puncture now (spec §14 Phase 12E).
+pub fn damage_request(repair: bool) -> v1::ClientMessage {
+    client_message(v1::client_message::Msg::Damage(v1::DamageRequest {
+        repair,
+    }))
+}
+
+/// `dev.damage` (local servers only): stage damage for the asker.
+pub fn stage_damage(target: &str, condition: f64) -> v1::ClientMessage {
+    client_message(v1::client_message::Msg::Dev(v1::DevCommand {
+        cmd: Some(v1::dev_command::Cmd::Damage(v1::StageDamage {
+            target: target.into(),
+            condition_pm: ocw_sim::damage::per_mille(condition),
+        })),
+    }))
+}
+
+/// What a received `dev.damage` stages (`None`: unknown target).
+pub fn damage_stage(s: &v1::StageDamage) -> Option<ocw_sim::session::DamageStage> {
+    use ocw_sim::session::DamageStage as D;
+    let c = f64::from(s.condition_pm.min(1000)) / 1000.0;
+    Some(match s.target.as_str() {
+        "rider" => D::Rider(c),
+        "puncture_front" | "puncture" => D::Puncture { rear: false },
+        "puncture_rear" => D::Puncture { rear: true },
+        "chain" => D::Chain,
+        "reset" => D::Reset,
+        part => D::Part(ocw_sim::damage::Part::from_id(part)?, c),
+    })
 }
 
 /// A staged contact (`dev.bump` / `dev.crash`, local servers only).
@@ -656,6 +791,7 @@ pub fn event_start(spec: &EventSpec, bots: Option<u32>) -> v1::EventStart {
         physics: None,
         weather: None,
         weather_physics: None,
+        damage: None,
     }
 }
 
@@ -720,6 +856,9 @@ pub fn event_state(ev: Option<&Event>, standings: &[Standing], tick: u64) -> v1:
                 finish_ms: s.finish_s.map(ms),
                 dnf: s.dnf,
                 gap_ahead_ms: s.gap_ahead_s.map(ms),
+                // Crashes and the condition: set by the server (it owns
+                // the riders' damage).
+                ..Default::default()
             })
             .collect(),
         finished_tick: ev.finished_tick,
@@ -732,6 +871,7 @@ pub fn event_state(ev: Option<&Event>, standings: &[Standing], tick: u64) -> v1:
         // The organiser's weather: set by the server (it owns the weather).
         weather: None,
         weather_physics: ev.weather_physics,
+        damage: Some(damage_rules_to_wire(&ev.damage)),
     }
 }
 
@@ -758,6 +898,11 @@ pub struct EventInfo {
     /// The weather affects the physics in this event (spec §14 Phase 9,
     /// S6, Q4: the organiser's rule).
     pub weather_physics: bool,
+    /// The organiser's damage rules (spec §14 Phase 12E).
+    pub damage: ocw_sim::damage::Rules,
+    /// Per rider: crashes and the final condition (rider, bike; spec §14
+    /// Phase 12E: the results show them).
+    pub conditions: Vec<(RiderId, u32, Option<f64>, Option<f64>)>,
 }
 
 impl EventInfo {
@@ -802,6 +947,25 @@ pub fn event_info(e: &v1::EventState) -> Option<EventInfo> {
         finished_tick: e.finished_tick,
         collisions: collision_mode_from_wire(e.collisions),
         physics: physics_mode_from_wire(e.physics).unwrap_or_default(),
+        damage: e
+            .damage
+            .as_ref()
+            .map(damage_rules_from_wire)
+            .unwrap_or_default(),
+        conditions: e
+            .standings
+            .iter()
+            .filter(|s| s.crashes > 0 || s.rider_pm.is_some() || s.bike_pm.is_some())
+            .map(|s| {
+                let c = |v: u32| f64::from(v.min(1000)) / 1000.0;
+                (
+                    RiderId(s.rider_id),
+                    s.crashes,
+                    s.rider_pm.map(c),
+                    s.bike_pm.map(c),
+                )
+            })
+            .collect(),
         weather: e
             .weather
             .as_ref()
@@ -881,6 +1045,7 @@ pub fn bike_change(
         bike_profile: profile.id().into(),
         look: Some(look.into()),
         parts: parts.to_vec(),
+        damage: None,
     }))
 }
 
@@ -1324,6 +1489,7 @@ mod tests {
             collisions: v1::CollisionMode::Soft as i32,
             chaotic_bots: true,
             weather: None,
+            damage: true,
         };
         let bytes = encode(&server_message(S::Snapshot(snapshot.clone())));
         match decode_server(&bytes).unwrap() {
@@ -1834,13 +2000,98 @@ mod tests {
         }
         assert_eq!(collision_mode_from_wire(0), Mode::Off, "older servers");
         // The rules request and the staged contact decode.
-        let m = decode_client(&encode(&rules_request(Some(true), None))).unwrap();
+        let m = decode_client(&encode(&rules_request(Some(true), None, None))).unwrap();
         assert!(
             matches!(m, v1::client_message::Msg::Rules(r) if r.collisions == Some(true) && r.chaotic_bots.is_none())
         );
         let m = decode_client(&encode(&stage_contact(true))).unwrap();
         assert!(
             matches!(m, v1::client_message::Msg::Dev(v1::DevCommand { cmd: Some(v1::dev_command::Cmd::Stage(s)) }) if s.crash)
+        );
+    }
+
+    /// K4 (spec §14 Phase 12E): a rider's damage, the carried condition of
+    /// the hello, the rules and the requests survive the wire.
+    #[test]
+    fn damage_round_trip() {
+        use ocw_sim::damage::{Damage, Loss, Part, Rules, Stop, StopKind};
+        let mut d = Damage::fresh();
+        d.rider = 0.437;
+        d.parts[Part::RearWheel.index()] = 0.25;
+        d.parts[Part::Drivetrain.index()] = 0.6;
+        d.flat = [false, true];
+        d.chain_broken = true;
+        d.stop = Some(Stop {
+            kind: StopKind::Puncture,
+            left_s: 12.5,
+        });
+        d.limited = true;
+        d.spare = true;
+        d.crashes = 3;
+        d.abandoned = true;
+        d.last_hit = Some(Loss {
+            tick: 9001,
+            rider: 0.12,
+            bike: 0.2,
+            parts: Part::RearWheel.bit(),
+            crash: true,
+        });
+        let msg = v1::RiderUpdate {
+            rider_id: 4,
+            damage: Some(damage_to_wire(&d)),
+            ..Default::default()
+        };
+        let back = v1::RiderUpdate::decode(encode(&msg).as_slice()).unwrap();
+        let got = rider_damage(&back).expect("damage in the update");
+        assert_eq!(got, d);
+        assert_eq!(
+            back.damage.as_ref().unwrap().bike_pm,
+            ocw_sim::damage::per_mille(d.bike())
+        );
+        assert_eq!(
+            rider_damage(&v1::RiderUpdate::default()),
+            None,
+            "absent: unchanged"
+        );
+        // An older server's update without parts: a fresh bike.
+        let old = damage_from_wire(&v1::DamageState {
+            rider_pm: 800,
+            ..Default::default()
+        });
+        assert_eq!(old.bike(), 1.0);
+        // The hello's carried condition.
+        let mut parts = [1.0; ocw_sim::damage::PARTS];
+        parts[Part::Frame.index()] = 0.5;
+        let (r, p) = carried_from_wire(&carried_damage(0.6, &parts));
+        assert_eq!((r, p), (0.6, parts));
+        // The organiser's rules and the requests.
+        let rules = Rules {
+            on: Some(true),
+            dnf_badly_injured: true,
+            neutral_service: true,
+        };
+        assert_eq!(damage_rules_from_wire(&damage_rules_to_wire(&rules)), rules);
+        let m = decode_client(&encode(&rules_request(None, None, Some(true)))).unwrap();
+        assert!(matches!(m, v1::client_message::Msg::Rules(r) if r.damage == Some(true)));
+        let m = decode_client(&encode(&damage_request(true))).unwrap();
+        assert!(matches!(m, v1::client_message::Msg::Damage(r) if r.repair));
+        let m = decode_client(&encode(&stage_damage("rear_wheel", 0.3))).unwrap();
+        let v1::client_message::Msg::Dev(v1::DevCommand {
+            cmd: Some(v1::dev_command::Cmd::Damage(st)),
+        }) = m
+        else {
+            panic!("a staged damage");
+        };
+        assert_eq!(
+            damage_stage(&st),
+            Some(ocw_sim::session::DamageStage::Part(Part::RearWheel, 0.3))
+        );
+        assert_eq!(
+            damage_stage(&v1::StageDamage {
+                target: "wings".into(),
+                condition_pm: 0
+            }),
+            None
         );
     }
 

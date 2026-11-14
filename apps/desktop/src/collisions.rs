@@ -2,7 +2,10 @@
 //! `ride.collisions`, `ride.chaotic_bots` (rules the server applies; the
 //! host decides in shared rides) and `ride.proximity_cue` (a client-side
 //! aid), their console commands, the staged contacts `dev.bump` /
-//! `dev.crash` (local server only) and `ride.crashes`, the crash state.
+//! `dev.crash` (local server only) and `ride.crashes`, the crash state;
+//! damage (spec §14 Phase 12E): `ride.damage` (off by default, Q1),
+//! `ride.repair` (mend a puncture now), `hud.damage` (the widget) and
+//! `dev.damage` (staged damage, local server only).
 
 use bevy::prelude::*;
 use clap::{Arg, Command};
@@ -18,6 +21,8 @@ pub struct CollisionSettings {
     pub collisions: bool,
     pub chaotic_bots: bool,
     pub proximity_cue: bool,
+    /// `ride.damage` (12E; Q1: off).
+    pub damage: bool,
 }
 
 impl Default for CollisionSettings {
@@ -27,6 +32,7 @@ impl Default for CollisionSettings {
             collisions: true,
             chaotic_bots: false,
             proximity_cue: false,
+            damage: false,
         }
     }
 }
@@ -38,6 +44,12 @@ impl CollisionSettings {
         let d = Self::default();
         (self.collisions != d.collisions || self.chaotic_bots != d.chaotic_bots)
             .then(|| ClientCore::rules_message(Some(self.collisions), Some(self.chaotic_bots)))
+    }
+
+    /// `ride.damage` for a new session's server, if on (the servers start
+    /// with it off, Q1).
+    pub fn damage_message(&self) -> Option<Vec<u8>> {
+        self.damage.then(|| ClientCore::damage_rules_message(true))
     }
 }
 
@@ -71,6 +83,67 @@ pub fn register_commands(app: &mut App) {
                 let on = on_off(m);
                 world.resource_mut::<CollisionSettings>().chaotic_bots = on;
                 rules(world, None, Some(on))
+            },
+        ))
+        .console_command(ConsoleCommand::new(
+            Permission::User,
+            Command::new("ride.damage")
+                .about("Damage on or off (only with collisions on; the host decides in shared rides); without an argument: the own condition")
+                .arg(Arg::new("on").value_parser(["on", "off"])),
+            |world, m| {
+                let Some(on) = m.get_one::<String>("on").map(|v| v == "on") else {
+                    let c = &world.resource::<ClientState>().0;
+                    return Ok(c.damage_state().summary(c.rider_id()));
+                };
+                world.resource_mut::<CollisionSettings>().damage = on;
+                let Some(link) = world.get_resource::<Link>() else {
+                    return Ok("applies to the next ride".into());
+                };
+                let c = &world.resource::<ClientState>().0;
+                if c.rider_id().is_some() && !c.may_change_rules() {
+                    return Err("only the host may change the damage rule in this ride".into());
+                }
+                link.send_bytes(ClientCore::damage_rules_message(on));
+                Ok(String::new())
+            },
+        ))
+        .console_command(ConsoleCommand::new(
+            Permission::User,
+            Command::new("ride.repair")
+                .about("Stop and mend a puncture now (30 s) instead of riding on slowly"),
+            |world, _| {
+                let link = world.get_resource::<Link>().ok_or("not riding")?;
+                link.send_bytes(ClientCore::repair_message());
+                Ok(String::new())
+            },
+        ))
+        .console_command(ConsoleCommand::new(
+            Permission::User,
+            Command::new("hud.damage")
+                .about("Show the damage indicator in the HUD (the effects stay when hidden)")
+                .arg(on_off_arg()),
+            |world, m| {
+                let on = on_off(m);
+                world.resource_mut::<ocw_render::damage_hud::ShowDamage>().0 = on;
+                Ok(format!("damage indicator {}", if on { "shown" } else { "hidden" }))
+            },
+        ))
+        .console_command(ConsoleCommand::new(
+            Permission::Dev,
+            Command::new("dev.damage")
+                .about("Stage damage: rider PCT, a part (front_wheel, rear_wheel, front_tyre, rear_tyre, drivetrain, cockpit, frame) PCT, puncture_front, puncture_rear, chain or reset")
+                .arg(Arg::new("target").required(true))
+                .arg(
+                    Arg::new("percent")
+                        .value_parser(clap::value_parser!(f64))
+                        .help("The condition in percent (0-100)"),
+                ),
+            |world, m| {
+                let target = m.get_one::<String>("target").expect("required").clone();
+                let pct = m.get_one::<f64>("percent").copied().unwrap_or(100.0);
+                let link = world.get_resource::<Link>().ok_or("not riding")?;
+                link.send_bytes(ClientCore::stage_damage_message(&target, pct / 100.0));
+                Ok(String::new())
             },
         ))
         .console_command(ConsoleCommand::new(
@@ -175,5 +248,15 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(aid.rules_message(), None, "a client-side aid");
+        assert_eq!(
+            CollisionSettings::default().damage_message(),
+            None,
+            "Q1: off"
+        );
+        let damage = CollisionSettings {
+            damage: true,
+            ..Default::default()
+        };
+        assert!(damage.damage_message().is_some());
     }
 }
