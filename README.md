@@ -101,71 +101,372 @@ ffmpeg` (`make deps-macos` prints both commands); the app also finds it in
 ### Browser app (preview)
 
 `apps/web` (`ocw-web`) is the same client in a web browser (spec §14 Phase
-10, milestone B1): Bevy on **WebGPU**, the shared renderer (`ocw-render`),
-client loop (`ocw-client`) and `GameServer` – the local server runs in the
-page's frame loop (wasm has no threads). It rides the built-in Hills test
-route, or a **world package streamed over HTTP** (B2): manifest and
-signature chain first, then the road graph and sections and the tiles
-around the rider with range requests, every chunk checked against its
-SHA-256, cached in the browser's Origin Private File System (a second
-visit loads from there), with the tiles kept in memory only around the
-rider. Bots and the **virtual trainer** as on the desktop. **Multiplayer**
-(B3): the page joins an `ocw-server` session over **WebTransport** together
-with desktop and bot riders (see [Browser riders](#browser-riders-webtransport)).
-**Trainers and sensors** (B4) over **Web Bluetooth** in Chrome / Edge (see
-[Devices in the browser](#devices-in-the-browser)). No sound yet (B5).
+10): Bevy compiled to WebAssembly, the shared renderer (`ocw-render`),
+client loop (`ocw-client`), menus (`ocw-ui`) and game server. Solo, the
+game server runs inside the page's frame loop (wasm has no threads), with
+bots and the virtual trainer as on the desktop. The page can stream a
+**world package over HTTP** (B2), join an `ocw-server` session over
+**WebTransport** together with desktop and bot riders (B3), connect
+trainers and sensors over **Web Bluetooth** (B4), play the game sound and
+join voice calls (B5), and has the desktop's menus, settings, captures and
+gamepad support (B6). It draws with **WebGPU**, or with **WebGL 2** where
+WebGPU is missing (B7). There is no public hosting yet (B8): you build it
+and serve it yourself, as below.
+
+#### 1. What you need
+
+- **Rust from rustup** with the pinned toolchain and the wasm target.
+  `rust-toolchain.toml` names both (Rust 1.99.1, `wasm32-unknown-unknown`),
+  so rustup installs them at the first `cargo` call in the checkout. By
+  hand: `rustup target add wasm32-unknown-unknown`.
+- **`wasm-bindgen-cli` at exactly the `wasm-bindgen` version in
+  `Cargo.lock`** (0.2.130 now): `make deps-web` runs `cargo install
+  wasm-bindgen-cli --version <that version> --locked` if it is missing (no
+  sudo; into `~/.cargo/bin`). `make web` stops with the command to run if
+  the version does not match.
+- **`curl`, `tar`, `gzip`, `python3`** (`make deps` installs `curl`; the
+  others come with every Linux). The build fetches LiveKit's JS SDK for voice
+  (`scripts/fetch-livekit-client.sh`: `livekit-client` 2.23.0 from the npm
+  registry, checked against its SHA-256, kept in `target/web-vendor/`).
+  Without network the build still succeeds, with a warning, and the page
+  rides without voice. `python3` also runs the dev server and the browser
+  tests.
+- **Optional:** `wasm-opt` (binaryen; `apt install binaryen`) shrinks the
+  modules when it is installed. The build machines do without it. Python's
+  `brotli` module (or the `brotli` tool) adds the brotli size to
+  `sizes.txt`.
+- **A browser.** Chrome or Edge 113+ draw with WebGPU, and they are the
+  only ones with **Web Bluetooth**, so you need one of them to ride with a
+  trainer. On Debian: `sudo apt install chromium`. Firefox and Safari should
+  run the page with WebGPU or WebGL 2 and virtual power, but nobody has
+  tried them yet. On Linux, WebGPU and Web Bluetooth are still behind flags
+  in Chromium. Start it like this (the browser tests use the same flags):
+  ```bash
+  chromium --enable-unsafe-webgpu --enable-features=Vulkan --enable-experimental-web-platform-features
+  ```
+  Without the WebGPU flags the page falls back to the WebGL 2 build. Without
+  `--enable-experimental-web-platform-features` there is no Web Bluetooth,
+  and you ride with virtual power. Windows, macOS, ChromeOS and Android have
+  both without flags.
+
+#### 2. Build
 
 ```bash
-make deps-web       # once: wasm-bindgen-cli matching Cargo.lock (cargo install)
-make web            # build into target/web/ (index.html, ocw_web.js, ocw_web_bg.wasm, sizes.txt)
-make web-worlds     # publish data/pilot/liechtenstein.ocwpkg into target/web/worlds/ (signed by a dev root)
-make web-serve      # serve it on http://127.0.0.1:8080/ (range requests; prints the world links)
-make test-web       # headless Chromium on WebGPU: load, ride, screenshot into test-output/web/
-make test-web-world # the same with Liechtenstein streamed from the dev server, then again from the cache
-make test-web-multiplayer # ocw-server + ocw-bot riders + the browser over WebTransport: ride 30 s, screenshot, timing
-make test-web-ble   # a fake Web Bluetooth FTMS trainer + HR strap: connect, power, SIM / ERG writes, drop, reload, no-Bluetooth
-make test-web-ble-emulation # Chromium's own Web Bluetooth stack with a simulated KICKR (DevTools BluetoothEmulation)
-make test-web-ble-real      # the real trainer in range (BLE_DEVICE=KICKR) from headless Chromium over BlueZ
+make deps-web    # once: wasm-bindgen-cli matching Cargo.lock
+make web         # both builds into target/web/ (scripts/build-web.sh)
 ```
 
-A world: `http://127.0.0.1:8080/?world=liechtenstein&route=vaduz-malbun&trust-root=…`
-(`make web-serve` prints the link with the dev root's key; `world=` takes an
-id, `ID@VERSION` or a manifest URL; more options: `free=1`, `tiles=3`
-(fetch radius), `keep=5`, `memory-mb=96`, `cache-mb=1024`, `cache=0`). The
-loading screen shows the manifest, the base, the first tiles, the bytes
-from the cache and from the network and the storage; the console's
-`world.info` shows the streaming while riding.
+`make web` builds the `web` profile (release, size-optimised, thin LTO) twice,
+because Bevy picks WebGPU or WebGL 2 when it is compiled:
 
-Open the page in Chrome / Edge 113+ (Safari 26 and Firefox 141+ should work
-too; a browser without WebGPU gets a message). The desktop's keys: ↑ adds
-power on top of the virtual trainer's 200 W, ↓ stops (brake), Page Up /
-Down ±10 W, A autodrive, W wild mode, ← / → the line (autodrive) or the lean, `` ` `` (or F12) the console (`sim.power 250`, `teleport 2.5`,
-`net.stats`, `hud off`, `camera …`). Page options in the query string:
-`?route=loop&bots=3&power=250&start=1.5&name=Ada&ftp=250`.
+| File in `target/web/` | What it is |
+|---|---|
+| `index.html` | The page. It picks the build, then loads it |
+| `ocw_web.js`, `ocw_web_bg.wasm` | The WebGPU build (feature `webgpu`) |
+| `ocw_web_webgl2.js`, `ocw_web_webgl2_bg.wasm` | The WebGL 2 build (feature `webgl2`) |
+| `ocw-voice.js`, `livekit-client.umd.js`, `livekit-client.LICENSE.txt` | Voice: the page's shim and LiveKit's SDK (Apache-2.0) |
+| `sizes.txt` | The modules' sizes (raw, gzip, brotli) and the build time |
+
+The page asks the browser for a WebGPU adapter. If it gets one, it loads the
+WebGPU build. With no `navigator.gpu`, no adapter or an error, it loads the
+WebGL 2 build. A browser with neither gets a message saying what it needs.
+`?gpu=webgl2` or `?gpu=webgpu` forces one build. The HUD's build id ends in
+`web WebGPU` or `web WebGL2`, and the console's `gpu` prints the API, the
+adapter and the quality preset. Each module is about 76 MiB raw, 16.9 MiB
+gzip and 10.7 MiB brotli. A browser downloads only one of them. On a
+12-core build machine `make web` in a fresh checkout took 12.5 minutes
+(WebGPU 8, WebGL 2 4.5). A rebuild after a change takes about 6 + 5
+minutes. `WEB_GPU=webgpu make web` builds only one module, and
+`WEB_PROFILE=dev make web` makes a quicker debug build with function names
+for stack traces. A new build keeps the published worlds in
+`target/web/worlds/`.
+
+#### 3. Serve it and open it
+
+```bash
+make web-serve                 # http://127.0.0.1:8080/ (WEB_PORT=8090 for another port)
+```
+
+Open <http://127.0.0.1:8080/> (or `http://localhost:8080/`), then click into
+the page or press a key to start the sound. `make web-serve` runs
+`scripts/web-serve.py`. It serves `target/web/` with what the app needs:
+`application/wasm` for the modules (streaming compilation), HTTP range
+requests for the world packages, `Cache-Control: no-store` (always the fresh
+build), and the COOP/COEP headers (`Cross-Origin-Opener-Policy:
+same-origin`, `Cross-Origin-Embedder-Policy: require-corp`), which the
+hosting will send too. The app does not need COOP/COEP yet: it uses no
+wasm threads. Any static server works for a solo ride on the test routes,
+but streaming worlds needs range requests.
+
+- **Why not `file://`:** the page loads its module as an ES module and
+  fetches the `.wasm`, which browsers refuse from `file://` URLs.
+- **Why localhost:** WebGPU, Web Bluetooth, WebTransport, the microphone
+  and the Origin Private File System (the world cache) work only in a
+  *secure context*: an `https://` page, or `http://localhost` /
+  `http://127.0.0.1`. A plain `http://` page from another machine's address
+  gets none of them: no WebGPU (so the WebGL 2 build loads), no trainer,
+  no multiplayer, no world cache. Only pages on localhost also accept the
+  dev server's trust options for world packages (`trust-root`,
+  `trust=dev`, `allow-unsigned`).
+- **From another machine on the LAN:** forward the port with SSH, so the
+  page is on localhost again:
+  ```bash
+  ssh -N -L 8080:127.0.0.1:8080 USER@BUILD-MACHINE     # then open http://localhost:8080/ here
+  ```
+  `scripts/web-serve.py --bind 0.0.0.0` serves the LAN directly, but a
+  page opened as `http://ADDRESS:8080/` is not a secure context. It loads
+  the WebGL 2 build and rides solo with virtual power, without trainers,
+  multiplayer or the world cache. Chromium's
+  `--unsafely-treat-insecure-origin-as-secure=http://ADDRESS:8080` (also
+  under `chrome://flags`) is meant to lift that, but it has not been tried
+  with OCW yet, and the world trust options still work only on localhost.
+  A real https host comes with B8.
+
+#### 4. Ride solo
+
+Without options the page rides the built-in **Hills** test route on the
+in-page local server, with 5 bots and the virtual trainer at 200 W, as
+*Rider*. The keys are the desktop's:
+
+- ↑ ramps the power up on top of the virtual trainer, ↓ stops (brake), Page
+  Up / Page Down change it by ±10 W.
+- A switches autodrive, W wild mode, ← / → move the line (autodrive) or
+  lean (manual).
+- Mouse: the camera. C resets it.
+- M / Shift+M mute the microphone / the voices.
+- Esc (gamepad Start) opens the menu. `` ` `` or F12 opens the console
+  (`help` lists the commands, e.g. `sim.power 250`, `teleport 2.5`,
+  `net.stats`, `hud off`, `camera …`, `time sunset`, `weather rain`).
+
+*Dev* commands (`teleport`, `sim.power`, `dev.*`) work only with the in-page
+server, as on the desktop.
+
+Page options go in the query string, e.g.
+`http://127.0.0.1:8080/?route=loop&bots=3&power=250&start=1.5&name=Ada&ftp=250`.
+Unknown keys and bad values are ignored, with a line in the browser
+console:
+
+| Option | Meaning |
+|---|---|
+| `route=hills\|loop` | The test route (default `hills`). With `world=`: a route of the package |
+| `bots=N` | Bots on the local server, 0–50 (default 5, or your saved `ride.bots`) |
+| `power=W` | The virtual trainer's power, 0–1500 W (default 200, or your saved `trainer.virtual_power`) |
+| `start=KM` | Start this far along the route |
+| `name=NAME` | Your rider's name (up to 32 characters) |
+| `ftp=W` | FTP for workouts' % FTP targets, 50–600 W |
+| `quality=auto\|low\|medium\|high` | The graphics preset for this visit (not saved) |
+| `gpu=webgpu\|webgl2` | Force the WebGPU or the WebGL 2 build |
+| `world=ID\|ID@VERSION\|URL` | Stream a world package (below) |
+| `free=1` | With `world=`: a free ride on its road network instead of a route (the junctions take their default exit; there are no junction keys in the browser yet) |
+| `tiles=1–8`, `keep=2–12` | With `world=`: fetch radius and keep radius in tiles around the rider |
+| `memory-mb=N`, `cache-mb=N`, `cache=0` | With `world=`: memory for loaded tiles, the browser cache's budget, no cache |
+| `trust-root=HEX`, `trust=dev`, `allow-unsigned=1` | With `world=`, on localhost pages only: trust a development root key, the dev keys, or unsigned packages (chunks are still checked) |
+| `server=https://HOST:PORT`, `cert-hash=HEX[,HEX]` | Join a game server over WebTransport (below) |
+
+#### 5. Worlds over HTTP
+
+The browser does not read files from your disk. It streams a world package
+from the web server. First the manifest and the signature chain, then the
+road graph and sections, then the tiles around the rider, fetched with range
+requests. Every chunk is checked against its SHA-256 and kept in the
+browser's **Origin Private File System**, so a second visit loads from
+there. Only the tiles around the rider stay in memory.
+
+```bash
+make web-worlds    # publish data/pilot/liechtenstein.ocwpkg into target/web/worlds/
+make web-serve     # prints a link per world, with the dev root's key
+```
+
+`make web-worlds` (`scripts/publish-web-worlds.sh PKG...`;
+`WEB_WORLD_PKGS="a.ocwpkg b.ocwpkg"` for others) builds `world-builder`,
+creates a **development signing root** in `target/web-keys/` on its first
+run (git-ignored, never for production), signs a copy of each package with
+it, and publishes it in the `world-builder publish` layout
+(`worlds/<id>/<version>/manifest.json`, the package, `worlds/<id>/latest`).
+The root's public key goes to `target/web-keys/root.hex`. Open the link
+`make web-serve` printed and add a route:
+
+```text
+http://127.0.0.1:8080/?world=liechtenstein&route=vaduz-malbun&trust-root=<the key of target/web-keys/root.hex>
+```
+
+The loading screen shows the manifest, the base, the first tiles, the bytes
+from the cache and from the network, and the storage. The console's
+`world.info` shows the streaming while you ride. Another world or route is
+another page: the browser's World page shows the world but does not switch
+it.
+
+#### 6. Ride with others (multiplayer)
+
+A browser rider joins an `ocw-server` session over **WebTransport** (HTTP/3
+over QUIC), together with desktop and bot riders:
+
+```bash
+cargo run --release -p ocw-server -- --listen --webtransport --test-route hills --tls-dir ~/.local/share/ocw-server
+```
+
+The server prints the page options with the certificate's hash, e.g.
+`?server=https%3A%2F%2FHOST%3A47801&cert-hash=5c1e…`. Replace `HOST` with
+the server's address as seen from the browser, and add `route` to match the
+server's `--test-route`:
+
+```text
+http://127.0.0.1:8080/?server=https://127.0.0.1:47801&cert-hash=5c1e…&name=Ada&route=hills
+```
+
+Desktop riders join the same server with `ocw-desktop --server HOST
+--server-cert FINGERPRINT --route hills` (UDP 47800), and bots with
+`ocw-bot`. WebTransport uses **UDP 47801**: open it in the firewall for
+riders on other machines (an SSH tunnel does not carry UDP; the page can
+still be on localhost through the tunnel). The certificate is self-signed
+and valid for 13 days. Browsers take it by hash, so a new hash means a new
+link: keep `--tls-dir` to keep the hash across restarts. See [Browser
+riders](#browser-riders-webtransport) for the details. With `world=` the
+page rides a world package. The server must ride the same one
+(`ocw-server --world …`), and the browser streams it from the web server as
+above.
 
 #### Devices in the browser
 
 The **Devices** panel (bottom right) has **+ Trainer**, **+ Power meter** and
-**+ Heart rate**: each opens the browser's Bluetooth chooser (Web
-Bluetooth needs the click). The device runs the same protocol code as on
-the desktop (`ocw-devices`: FTMS, Cycling Power, CSC, Heart Rate, Wahoo
-KICKRs) – power, cadence and heart rate go to the server, and the trainer
-gets **SIM** (the road's gradient with the rider's build: rolling and wind
-resistance, mass) or **ERG** (`erg.target 200`, workouts:
-`workout start --example sweet-spot`, `workout list|stop|skip|status`),
-`trainer.mode sim|erg|off`, `trainer.difficulty 50`. Once a trainer or
-power meter is connected the virtual power stops; a dropped device
-reconnects by itself (the HUD and the panel say "reconnecting"), with the
-last SIM / ERG target sent again. The site remembers its devices
-(`localStorage`); where Chromium keeps the permission
-(`navigator.bluetooth.getDevices()`) they reconnect after a reload without
+**+ Heart rate**. Each one opens the browser's Bluetooth chooser (Web
+Bluetooth needs the click). It steps aside while the menu is open. The
+device runs the same protocol code as on the desktop (`ocw-devices`: FTMS,
+Cycling Power, CSC, Heart Rate, Wahoo KICKRs). Power, cadence and heart rate
+go to the server. The trainer gets **SIM** (the road's gradient with the
+rider's build: rolling and wind resistance, mass, the weather's wind) or
+**ERG** (`erg.target 200`). Workouts: `workout start --example sweet-spot`,
+`workout list|stop|skip|status`. Trainer modes: `trainer.mode sim|erg|off`,
+`trainer.difficulty 50`.
+
+Once a trainer or power meter is connected, the virtual power stops. A
+dropped device reconnects by itself (the HUD and the panel say
+"reconnecting"), and the last SIM or ERG target is sent again. The site
+remembers its devices (`localStorage`). Where Chromium keeps the permission
+(`navigator.bluetooth.getDevices()`), they reconnect after a reload without
 the chooser. Console: `devices.list`, `devices.connect trainer|power|hr`,
 `devices.forget <name|all>`.
 
-**Browsers without Web Bluetooth** (Firefox, Safari, every browser on iOS):
-the panel says so and the ride uses **virtual power** (↑ / ↓); the sensor
-bridge for them comes later (spec §14 Phase 10, B7). On Linux, Chromium
-may need `--enable-experimental-web-platform-features` for Web Bluetooth.
+**Browsers without Web Bluetooth** (Firefox, Safari, every browser on iOS,
+Chromium on Linux without the flag above): the panel says so and the ride
+uses **virtual power** (↑ / ↓, Page Up / Down, `sim.power`). A bridge that
+relays a trainer through another device comes with accounts (spec §14
+Phase 10 B7, Phase 5).
+
+#### Sound and voice in the browser
+
+Browsers start sound only after a click or key press (the autoplay rule).
+Until then a hint at the top says "click or press a key", and the
+game sound (the desktop's synthesised bike, wind, tyres, weather, cues)
+starts with your first gesture. *Settings → Audio* has the volumes (with a
+test sound), Mute and the output device (Chromium). *Settings → Voice* has
+the voice switches, the voice volume, the participants, the microphone and
+speaker, spatial voice and the echo test (*Settings → Audio → Voice → Echo
+test*, or `voice.echo on`). These are the desktop's pages and settings.
+
+Voice needs a shared ride on a server that knows a LiveKit server. Solo rides
+in the page never connect. Start [LiveKit](#voice-chat) and the game server
+with its keys:
+
+```bash
+livekit-server --dev       # ws://127.0.0.1:7880, key "devkey", secret "secret"
+export OCW_LIVEKIT_URL=ws://127.0.0.1:7880 OCW_LIVEKIT_API_KEY=devkey OCW_LIVEKIT_API_SECRET=secret
+cargo run --release -p ocw-server -- --listen --webtransport --test-route hills
+```
+
+The browser gets its token over the game connection and joins the room with
+the page's LiveKit SDK. The browser asks for the microphone at the first
+call. A `ws://` LiveKit URL works only for pages on localhost (an `https://`
+page needs `wss://`, i.e. LiveKit behind TLS). For browsers on other
+machines, give the server a LiveKit URL they can reach (`--bind 0.0.0.0`,
+TCP 7880 and UDP 7881–7882 open). M / Shift+M (gamepad Select / R3) mute the
+microphone / the voices.
+
+#### Menus, settings and captures
+
+Esc (or the gamepad's Start) opens the desktop's in-game menu: *Resume, Ride,
+World, Workshop, Navi, Settings, Captures*. The browser leaves out what it
+cannot do: Quit and Restart (close or reload the tab), routes, rides, GPX
+import, Strava and rider profiles. Every setting the browser has works as
+on the desktop (`set KEY VALUE`, `get`). They are kept in the site's
+`localStorage` (`ocw-settings`, the same TOML as `settings.toml`), so they
+survive reloads. Clearing the site's data resets them.
+
+*Captures* (or the console) download files named with the time:
+- *Screenshot* (`screenshot`): a JPEG with the time in its EXIF, like the
+  desktop's.
+- *Video start / stop* (`video start|stop`): a WebM of the canvas with the
+  game sound, REC in the HUD.
+- *Download this ride (FIT)* (`ride.save`): the ride's FIT file. Browsers
+  allow no download when a tab closes, so save it before you leave.
+
+**Gamepads** work through the browser's Gamepad API. Press a button once,
+with the page focused, so the browser shows the pad. The mapping is the
+desktop's (see [Connecting a gamepad](#connecting-a-gamepad)).
+
+#### Graphics: WebGPU, WebGL 2 and the quality presets
+
+The WebGL 2 build draws the same world with what WebGL 2 lacks degraded:
+- the simple sky instead of the atmosphere;
+- levels of detail that switch instead of fading;
+- one shadow cascade.
+
+The **quality presets** Low, Medium and High trade looks for speed: shadows,
+MSAA, view distance, tree draw distance, house detail, weather particles,
+and in the browser the canvas' pixel ratio (High is the full look).
+**Auto** (the default) picks High on the desktop and on WebGPU, Medium on a
+small device (4 cores or 4 GB or less), and Low on WebGL 2 and on phones and
+tablets. Choose one in *Settings → Display → Graphics* (with *Sky* and
+*Fullscreen*). From the console: `set display.quality low` (saved), or
+`quality low` (this session). `quality` alone says what runs and why.
+`?quality=` holds for one visit. The same setting and commands work in the
+desktop app (see [Settings](#settings-and-rider-profiles)).
+
+#### Testing the browser app
+
+The browser tests start headless Chromium (on the build machines: Chromium
+156 on Vulkan), serve `target/web/` on a free local port, and drive the page
+over the DevTools protocol. They need no extra Python packages. Each
+target but `test-web-build` runs `make web` first (and `make web-worlds`,
+or the server and bot builds, where it needs them). Screenshots, logs and JSON summaries go to
+`test-output/web/` (`web-<time>.jpg`, `.log`, `.json`, and per part
+`-menu.jpg`, `-hud.jpg` …, the downloads in `web-<time>-downloads/`).
+
+| Target | What it checks |
+|---|---|
+| `make test-web-build` | Both builds compile for wasm32 (part of `make check`) |
+| `make test-web` | WebGPU: load, ride, the menus by keyboard and a fake gamepad, settings over a reload, the screenshot / video / FIT downloads, fps |
+| `make test-web-webgl2` | Chromium without WebGPU: the page falls back to the WebGL 2 build and rides. Then WebGPU High against WebGL 2 Low in the same view, and the Graphics page |
+| `make test-web-world` | Liechtenstein streamed from the dev server, a teleport, then a reload from the browser cache |
+| `make test-web-multiplayer` | `ocw-server` and `ocw-bot` riders, the browser over WebTransport, 30 s |
+| `make test-web-ble` | A fake Web Bluetooth trainer and strap: connect, power, SIM / ERG writes, a drop, a reload, no Bluetooth |
+| `make test-web-ble-emulation` / `test-web-ble-real` | Chromium's own Web Bluetooth with a simulated KICKR / the real trainer in range (`BLE_DEVICE=KICKR`) |
+| `make test-web-audio` | The sound locked until a click, then the mixer's chunks through Web Audio, a volume over a reload |
+| `make test-web-voice` | `ocw-server` with voice tokens and the Echo rider, a fake LiveKit in the page: call, mute, drop, rejoin, echo test |
+| `make test-web-livekit` | Two browser riders in a real `livekit-server --dev` room: they see and hear each other, mute. It needs `livekit-server` (v1.13.10) on the PATH or in `~/.local/bin` (`LIVEKIT_SERVER=PATH`). Without it the part is skipped |
+
+`scripts/test-web.py --help` lists the options (`--query`, `--world`,
+`--gpu`, `--software` for SwiftShader without a GPU, `--no-ui`).
+
+#### Limitations today
+
+- Trainers and sensors only in Chromium-based browsers (Chrome, Edge;
+  on Linux with the flag). Elsewhere: virtual power.
+- Safari and Firefox are untested, and so are real phones and tablets
+  (the browser matrix comes with hosting, B8).
+- No hosting or domain yet (B8): you serve the page yourself. Multiplayer
+  takes the server's self-signed certificate by hash, renewed every 11
+  days.
+- No god mode (unicorn) in the browser.
+- The workshop and the character editor are locked: browser riders are
+  anonymous ("log in to customize") and ride the plain grey bike and kit
+  until accounts come (Phase 5). Their damage is not kept.
+- No route or world switch inside a ride: another world or route is
+  another page (`?world=…&route=…`). Free ride takes the default exit at
+  every junction.
+- Real weather only on a remote server (`ocw-server --weather real`): the
+  in-page server cannot fetch the providers yet.
+- After a dropped connection to a server, reload the page.
 
 ## Controls
 
@@ -262,7 +563,8 @@ PgUp / PgDn or LB / RB switch between these pages (see
 group ride, time trial; see *Events* below), workouts and *Restart*; *World*
 changes the world and shows its data and conditions (see
 [The World menu](#the-world-menu-changing-the-world-without-restarting)),
-*Navi* lists the routes, saved rides and GPX files to import. Long lists are
+*Navi* lists the routes, saved rides and GPX files to import, and the
+riders in this ride. Long lists are
 paged (*Previous* / *Next*, or ← / → on a list row).
 
 ### The workshop: bikes, parts and hearts
@@ -310,6 +612,34 @@ selling refunds the full price until the part has been ridden 1 km, half
 after. Paint is free. **Leaving the workshop applies the bike** at once in
 free ride and outside events (in an event: when it is over, from the next
 start); the server answers with the effect it applied.
+
+**The bench: new bikes and spare parts (spec §14 Phase 4, 4D).** The
+workbench zone (↑ / ↓ to the bench, Enter), or a click or tap on the
+**"+"** hook at the end of the wall, opens the bench catalogue. Its
+pages have at most six rows, and Back goes up a page:
+- **Framesets** by bike type and tier, cheapest first. A frameset bought
+  is a **new bike** with the base parts (entry tier) on a new hook, to be
+  built up on the stand. The wall takes up to 24 bikes.
+- **Complete builds:** the frameset with the mid-tier groupset and wheels
+  (or the nearest tier the shop has), in one confirmation at the sum of the
+  prices.
+- **The shelf** (spare parts): fit one on the bike on the stand, sell it,
+  or compare it. A spare frameset can hang on a new hook as a bike.
+- **Selling a whole bike** refunds the frameset and its parts by their
+  rules (full price before the first kilometre, half after). Starter bikes
+  and your last bike cannot be sold.
+
+From the console: `bikes.buy FRAME` (e.g. `bikes.buy frame.road.upper`;
+`--with PART`, repeatable, for a complete build), `bikes.sell ID`,
+`bikes.hang ITEM` (a spare frameset). Scripts open the catalogue with
+`workshop bench` or `workshop plus`. New bikes get the ids `<profile>-2`, ….
+
+**Lights** (slot *lights*) are what the bike lights of the ride draw (spec
+§14 Phase 9 Q3). The fitted set's lamps glow on the bike model while the
+lights are on, and their beam and far glow take the brightness and colour
+of the part: the standard set has a 300 lm neutral white front and a 15 lm
+red rear lamp. A bike without a set has no lights. When they are on:
+`display.bike_lights` (auto: from dusk to dawn and in tunnels).
 
 **Parts and physics (W3, spec §14 Phase 4, 4G).** The frameset decides the
 physics profile; the other parts change the bike only a little: real weights
@@ -375,6 +705,11 @@ helmet colour, gloss or matte helmet and shoes. The same from the console:
 #1E1E22 --number 42 --helmet-pattern on --shorts #1E1E22 --helmet-finish
 matte` (no options: the current design). Saved in the rider profile
 (`riders.toml`), sent to the others like the character, once per change.
+The pickers of the shorts, socks, shoes and gloves have their own colour
+row too (← / →, live in the mirror; it writes a `kit.design` line). The
+kit's colours are kept with the garage in `workshop.toml`, also for the
+default rider without a rider profile. They are looks only and never
+change the physics.
 Anonymous riders of the browser app keep the plain default kit.
 
 **Materials on riders and bikes (Phase 8 T6).** The near models are drawn
@@ -533,6 +868,28 @@ rides are soft bumps only; races use the full model. Exempt: the time
 trial's ghost, the countdown formation, unicorns, the Echo rider and a
 client's first 2 s after joining. `ride.chaotic_bots on` lets bots make
 mistakes. `dev.bump` / `dev.crash` stage one on the local server.
+
+**Riding aids and the camera** (spec §14 Phase 12C / 12D; *Settings →
+Controls → Riding aids*). None of these aids ever steers for you:
+- **The "last moment" warning** (`ride.hit_warning`, on): a flashing amber
+  triangle with an arrow towards the hit, about a second before a
+  predicted collision, and when the tyres start to slide on a wet road.
+  It also works in free ride.
+- **The proximity arrow** (`ride.proximity_cue`, off): a pale arrow on a
+  ring around your rider points at anyone within 1 m beside you or 2 m in
+  front or behind, with a soft bell.
+- **Camera shake** (`display.camera_shake`, console `camera.shake on|off`;
+  on, off in the kiosk's show mode): after a crash or a hard bump the
+  chase camera shakes briefly. While you are down it orbits wider, turned
+  to the side of the fall.
+
+On a wet road, leaning harder than the grip allows makes the bike slide
+out (see [Weather physics](#weather)).
+
+**Who rides with you:** *Navi → Riders in this ride* lists the riders with
+their gap or distance. A unicorn marks riders flying in unicorn mode, a
+dot (▲ / ■) hurt riders or damaged bikes, and the status line has the
+count. `ride.riders` prints the same in the console.
 
 **World objects** (spec §14 Phase 12 K3): in **wild mode** trees,
 buildings, walls, fences, hedges, guard rails, posts, pylons and barriers
@@ -706,6 +1063,18 @@ climb at 1.5–2.1 km) and grass beside the road roll increasingly harder
   `time 2026-01-20 12:00` in the console). `world-builder imagery-cells
   --world PKG --crs lv95` lists the cells of a package.
 
+  **Forest type and density (spec §14 Phase 8 T3):** `scripts/fetch-forest.sh
+  REGION [PACKAGE...]` downloads the Copernicus High Resolution Layers
+  *Dominant Leaf Type* and *Tree Cover Density* (2018, 10 m; no account; "©
+  European Union, Copernicus Land Monitoring Service 2018, European
+  Environment Agency (EEA)") over the package's cells into
+  `data/<region>/forest/`. The build scripts then add them as the section
+  `FRST` (`world-builder calibrate --forest DIR`, or `world-builder forest`;
+  `OCW_NO_FOREST=1` leaves them out). Each forest then gets its measured mix
+  of broadleaf and conifer trees and its measured density, near and in the
+  far canopy. Packages without `FRST` guess the leaf type from land use and
+  altitude.
+
   **Orthophoto corridor (spec §14 Phase 8 T7):** `calibrate` also cuts the
   orthophoto along the package's roads, ±50 m beside the road edges at
   0.5 m per pixel (the source's own size if coarser: 1 m in the Black
@@ -768,8 +1137,15 @@ climb at 1.5–2.1 km) and grass beside the road roll increasingly harder
   does not say comes from the regional style presets in
   `assets/building-styles.toml` (Rhine valley and towns, Alpine villages
   above 750 m, Black Forest farms with their huge roofs, Canarian flat roofs
-  with parapets). Package section `BTAG` (optional; older apps draw flat or
-  gable roofs).
+  with parapets). Pitched roofs fit **any footprint**: L-, T- and U-shaped
+  houses, odd outlines and courtyards get a hipped or gabled roof over the
+  whole polygon (a straight skeleton; flat where none fits). **Dormers and
+  roof windows** come from `roof:levels` and the style (Alpine, Black
+  Forest, some in the towns). **Balconies** sit on the upper floors of
+  Alpine and Black Forest houses, on the gable end or the south side.
+  **`building:part`** (with `min_height`) is drawn instead of the outline it
+  covers, in its building's style (spec §14 Phase 8 T4). Package sections
+  `BTAG` and `BPRT` (optional; older apps draw flat or gable roofs).
   Roads (spec §14 Phase 8 T5) wear their markings, kerbs and sidewalks:
   centre, lane and edge lines from the road class and OSM `lanes`,
   `lanes:forward` / `backward`, `overtaking`, `lane_markings`; cycle lanes
@@ -1009,6 +1385,7 @@ console (saved at once), or by editing the file; `get` lists them all:
 | `display.camera` | chase / side / top (chase) | at once |
 | `display.night_brightness` | 0 to 50 (10): least light at night in % of daylight (0 = realistic darkness); Settings → Display | at once |
 | `display.sky` | atmosphere / simple (atmosphere): Bevy's physically based sky, or one plain colour for weak GPUs | at once |
+| `display.quality` | auto / low / medium / high (auto): the graphics preset – shadows, MSAA, view distance, tree draw distance, house detail, weather particles (and the browser's pixel ratio); auto = High on the desktop and WebGPU, Medium on small devices, Low on WebGL 2 and phones; Settings → Display → Graphics (console `quality`) | at once |
 | `display.bike_lights` | auto / on / off (auto): the front and rear lights of bikes with lights fitted (Workshop, slot lights) from dusk to dawn and in tunnels | at once |
 | `display.orthophoto` | on / off (on): the real place's orthophoto on the ground near the roads, where the package has it (spec §14 Phase 8 T7) | at once |
 | `display.road_barriers` | on / off (off): gates, bollards and barriers on the roads (section `OBST`; never solid on the road, spec §14 Phase 12 Q7) | at once |
@@ -1024,6 +1401,7 @@ console (saved at once), or by editing the file; `get` lists them all:
 | `display.camera_shake` | on / off (on): the chase camera shakes briefly after a crash or a hard bump (off for motion comfort; console `camera.shake`) | at once |
 | `ride.damage` | on / off (off): damage – hits hurt the rider and damage the bike (only with collisions on; carried over to the next ride, repairs in the workshop; in a shared ride the host decides, `ocw-server --damage`); Settings → Controls | at once |
 | `display.damage` | on / off (on): the damage indicator in the HUD (console `hud.damage`; the effects stay when hidden) | at once |
+| `weather.physics` | on / off (on): the weather changes the physics – wind, air density, wet and icy roads; the trainer gets the wind (in shared rides the host decides, in events the organiser); World → Weather → Custom | at once |
 | `audio.master` | 0 to 100 (80): master volume in %, scales every bus | at once |
 | `audio.effects` | 0 to 100 (80): game sounds (bike, wind, tyres, menu, event and workout cues) | at once |
 | `audio.others` | 0 to 100 (80): the other riders' bikes (bots, remote riders), a part of the effects (master × effects × others) | at once |
@@ -1217,6 +1595,35 @@ someone changes it (real weather comes later). What you see and hear:
 Solo you set the weather, in a shared ride only the host (`ocw-server
 --weather-control host|anyone|nobody`), in an event its organiser.
 
+**Weather physics** (spec §14 Phase 9 S6; on by default) makes the weather
+change the ride, not only its look. The game server computes it, and your
+app's prediction uses the same inputs:
+- **Wind:** the 10 m wind is brought down to rider height, with its gusts. A
+  headwind along your direction of travel slows you and a tailwind pushes;
+  a pure crosswind changes nothing along the road. Tunnels shelter you, and
+  the draft behind a rider moves to the lee side.
+- **Air density** comes from the temperature, pressure and humidity, and
+  thins with the altitude.
+- **The road:** a wet, flooded, slushy or icy road rolls heavier and grips
+  less. The grip caps your lean and your corner speed. Lean beyond it and
+  the bike skids: you slow and wobble, and at full slip the rider slides
+  out and falls ("slid out"). Crashes come at lower speeds on a slippery
+  road. Autodrive never skids and brakes earlier there.
+- **HUD:** a wind arrow and label, e.g. "↓ headwind 18 km/h" (↑ tailwind, ←
+  / → wind from the side), in the desktop and the browser app.
+- **Trainer:** in SIM mode it gets the wind. FTMS trainers with simulation
+  parameters and Wahoo trainers get the headwind and the wind coefficient.
+  Trainers with only an incline target get a gradient with the wind folded
+  in. The virtual trainer takes the wind like a real one.
+
+Switch it with `weather.physics on|off` (this ride and the next ones:
+saved as the setting `weather.physics`), `weather physics on|off` (this
+ride only) or the *Weather physics* row on *World → Weather → Custom* (the
+wind and temperature page). In a shared ride the
+host decides (`ocw-server --weather-physics on|off`, default on). In an
+event the organiser decides, and it is off unless they turn it on:
+`event race --weather-physics on`.
+
 **The weather machine** (menu *World → Weather*, spec §14 Phase 9 S5; with
 keyboard, mouse, gamepad or touch – the value rows' ‹ › arrows can be clicked
 or tapped):
@@ -1285,6 +1692,9 @@ weather day lothar            ride a day: the time machine to Storm Lothar, ERA5
 weather day 2003-08-08 15:00  any day 1940-2100 (history from ERA5; future: the forecast's end)
 weather.days                  the days of "Ride a day"
 weather.fx particles 10000    fewer particles (weak GPUs; 0 = none)
+weather physics off           the weather no longer changes the physics in this ride
+weather.physics off           ... and in the next rides (saved)
+weather.physics               on or off, and what it does at the rider now (wind, air, grip, rolling)
 ```
 
 Historic weather could also come straight from the Copernicus Climate Data
@@ -1340,6 +1750,7 @@ for now).
 | `weather.real [on\|off]` \| `weather.provider [SOURCE\|next\|prev]` | Real weather in this ride and the next ones, and its data source (both saved: settings `weather.real`, `weather.provider`) |
 | `weather day NAME\|DATE [TIME]` \| `weather.days` \| `weather.day [N]` | Ride a day: the time machine to that day (`lothar`, `kyrill`, `vivian`, `heat-2003`, `snow-2019`, `today`, or `YYYY-MM-DD HH:MM`) and real weather (history from ERA5); the list; the day of the menu's row |
 | `weather.fx clouds\|particles\|spray\|bolts on\|off\|N` | What of the weather is drawn (particles: the budget, default 40000) |
+| `weather physics [on\|off]` \| `weather.physics [on\|off]` | Whether the weather changes the physics (wind, air density, the road's grip; spec §14 Phase 9 S6): this ride / also the next ones (saved); without an argument: what it does at the rider now |
 | `season` \| `season.fx on\|off` | The season at the rider (spec §14 Phase 9 S8): deciduous leaves, grass, cereal and maize stage, the climatological snow cover and snow line, the degree days; seasons drawn or not (off: summer without climatological snow) |
 | **Audio** (spec §3.3) | |
 | `audio.volume master\|effects\|others\|music\|voice PERCENT` | Set a volume for this session (`set audio.effects 60` also saves it) |
@@ -1360,7 +1771,7 @@ for now).
 | `riders.edit NAME [--weight KG] [--height CM] [--ftp W] [--rename NEW] [--no-height] [--no-ftp] [BIKE OPTIONS]` | Change a rider profile; bike options: `--bike road\|road-aero\|road-climbing\|tt\|gravel\|mtb`, `--frame-color`, `--jersey-color`, `--helmet-color` `#RRGGBB`, `--kit plain\|band\|sash` |
 | `riders.remove NAME` | Delete a rider profile |
 | `riders.select NAME` | Choose who rides (Workshop); applies from the next start |
-| `workshop [open\|close\|left\|right\|up\|down\|select\|back\|slot-next\|slot-prev\|compare\|action\|reset\|orbit DEG\|zoom STEPS\|mirror]` | Open, close or drive the workshop scene (menu: Workshop) |
+| `workshop [open\|close\|left\|right\|up\|down\|select\|back\|slot-next\|slot-prev\|compare\|action\|reset\|orbit DEG\|zoom STEPS\|mirror\|bench\|plus]` | Open, close or drive the workshop scene (menu: Workshop; `bench` / `plus`: the bench catalogue) |
 | `workshop.ride_window on\|off` | The live ride window in the workshop |
 | `workshop.mirror on\|off` | The mirror's reflection in the changing corner (off: a direct front view) |
 | `character [--build B] [--skin N] [--face N] [--hair N] [--hair-colour #RRGGBB] [--glasses N]` | Your rider's character: free choices, never physics (no options: show it) |
@@ -1375,6 +1786,9 @@ for now).
 | `workshop.damage PART\|rider PCT [--bike ID]` | *Dev:* set a part's condition (or the injury) in the garage (tests, screenshots) |
 | `workshop.paint #RRGGBB\|carbon\|default [--bike ID]` | Paint a frame (free; `carbon`: bare carbon under a clear coat) |
 | `bikes.list` / `bikes.select ID [--now]` | Your garage / the bike on the stand (applies when the workshop closes) |
+| `bikes.buy FRAME [--with PART]...` | Buy a frameset as a new bike on a new hook (base parts); `--with`: a complete build at the sum of the prices |
+| `bikes.sell ID` | Sell a bike bought at the bench (the frameset's and its parts' refunds; not a starter bike, not the last one) |
+| `bikes.hang ITEM` | Hang a spare frameset from the shelf on a new hook, as a bike with the base parts |
 | `rider.gps` | Your rider's GPS position (also bottom-left in the HUD; route files and world packages only), with a copyable `lat, lon` line |
 | `teleport KM` | *Dev:* move your rider to a distance on the route (free ride: along the path, taking default exits). On a route that ends, a distance past the end moves you to the end, where riders stop, and the reply says so; a loop takes any distance (laps on) |
 | `teleport.xz X Z` | *Dev:* free ride: move to the road nearest local x / z metres |
@@ -1403,7 +1817,7 @@ for now).
 | `world info` | The world ridden now: package, area, elevation, data sources with their notices, routes, time zone, sun and twilight times |
 | `world switch N\|ID\|NAME\|PATH` | Ride another world without restarting (its first route, else a free ride; a test route: `hills`, `loop`); in a shared ride the host asks the server |
 | **Events** (spec §2.3) | |
-| `event race [--laps N\|--km X] [--bots N] [--physics MODE] [--weather W...] [--damage on\|off] [--dnf-injured] [--neutral-service]` | Race from the start formation to the finish (default 1 lap / 5 km; the organiser's damage rules – damage on or off, DNF when badly injured, neutral service: a spare bike and a 30 s service stop (spec §14 Phase 12E), also for `group` and `tt`; MODE: `profile` – the default, only the frame's profile counts –, `open` – parts count, capped –, `equal`; W: the organiser's weather – `PRESET [FIELD=VALUE...]`, `custom FIELD=VALUE...`, `random SEED`, `auto SEED` –, fixed for the event; also for `group` and `tt`) |
+| `event race [--laps N\|--km X] [--bots N] [--physics MODE] [--weather W...] [--weather-physics on\|off] [--damage on\|off] [--dnf-injured] [--neutral-service]` | Race from the start formation to the finish (default 1 lap / 5 km; the organiser's damage rules – damage on or off, DNF when badly injured, neutral service: a spare bike and a 30 s service stop (spec §14 Phase 12E), also for `group` and `tt`; MODE: `profile` – the default, only the frame's profile counts –, `open` – parts count, capped –, `equal`; W: the organiser's weather – `PRESET [FIELD=VALUE...]`, `custom FIELD=VALUE...`, `random SEED`, `auto SEED` –, fixed for the event; also for `group` and `tt`) |
 | `event group [--watts W] [--bots N] [--physics MODE]` | Group ride: bots hold the pace and regroup (default mode `profile`) |
 | `event tt [--laps N\|--km X] [--physics MODE]` | Time trial alone against your ghost (default mode `open`) |
 | `event status` | The event, your HUD lines and the standings |
@@ -1419,6 +1833,8 @@ for now).
 | `ride.riders` | The riders of the ride and who of them flies in god mode |
 | `god.trail on\|off`, `god.invert on\|off` | The rainbow trail; invert the mouse's Y (settings `display.unicorn_trail`, `controls.invert_y`) |
 | **Camera** | |
+| `quality [auto\|low\|medium\|high]` | The graphics preset for this session (`set display.quality` saves it); without an argument: what runs and why (spec §14 Phase 10 B7) |
+| `gpu` | The GPU API (the desktop's, WebGPU or WebGL 2), the adapter and the quality preset that runs |
 | `camera.mode chase\|side\|top` | Camera perspective |
 | `camera.orbit YAW PITCH [DISTANCE]` | Orbit the chase camera (degrees; 0 = behind, 180 = in front; metres) |
 | `camera.tilt [on\|off\|FRACTION]` | Tilt the chase camera with the road (default on, 0.7 of the slope angle, at most 8 degrees) |
@@ -1540,6 +1956,9 @@ Collisions on a server: `--collisions on|off` (on), `--chaotic-bots`,
 (`ride.collisions`, `ride.damage`): `--collision-control host|anyone|nobody`
 (host). The rules travel in the welcome, every snapshot and the event state;
 each rider's damage in the snapshots at 2 Hz and on every change.
+The weather: `--weather PRESET|real` (the start), `--weather-control
+host|anyone|nobody` (host) and `--weather-physics on|off` (on; see
+[Weather](#weather)).
 
 ### Hosting a ride over the network
 
@@ -1608,6 +2027,8 @@ bike and kit, no workshop – the mirror is locked ("log in to customize";
 Phase 5). `ocw-bot --server https://HOST:47801 --server-cert HASH` rides over
 WebTransport too; the console's `net.stats` shows the link, the round trip
 and the snapshot timing.
+Building, serving and opening the page step by step: [Browser
+app](#browser-app-preview).
 
 ### Voice chat
 
@@ -1669,6 +2090,12 @@ Voice needs three things:
 There are no accounts yet (Phase 5): a token is bound to the rider of the
 connection (`rider-<id>`), and a voice group is open to everyone on the
 server who knows its name.
+
+**Browser riders** join the same rooms with LiveKit's JS SDK, which `make
+web` fetches. They need no voice build, only a server with the three
+variables (see [Sound and voice in the
+browser](#sound-and-voice-in-the-browser)). A `ws://` LiveKit URL works only
+for pages on localhost. Pages served over https need `wss://`.
 
 **Integration test.** With a LiveKit server running and the three variables
 set, `cargo test -p ocw-voice --features livekit --test
