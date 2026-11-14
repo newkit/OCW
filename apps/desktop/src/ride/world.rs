@@ -451,7 +451,8 @@ pub fn rows(page: Page, c: &Catalog, tm: &TimeMachineInfo, weather: &WeatherStat
             }
             out
         }
-        Page::Weather => crate::weather::rows(weather),
+        // The weather machine (its own pages, spec §14 Phase 9, S5).
+        p if p.is_weather_page() => crate::weather::rows(p, weather),
         _ => Vec::new(),
     }
 }
@@ -888,7 +889,7 @@ pub(crate) mod tests {
 
     fn rows_of(c: &Catalog) -> impl Fn(Page) -> Vec<Row> + '_ {
         move |p| {
-            if p.is_world_page() {
+            if p.is_world_page() || p.is_weather_page() {
                 rows(p, c, &time_machine(), &WeatherState::default())
             } else {
                 crate::ride::pages::rows(p, c)
@@ -937,7 +938,11 @@ pub(crate) mod tests {
         assert_eq!(m.page(), Some(MenuPage::Sub(Page::TimeMachine)));
         let m = open_at(&c, &[2, 4]);
         assert_eq!(m.page(), Some(MenuPage::Sub(Page::Weather)));
-        assert_eq!(m.labels()[0], "Now:  clear (no weather from the server)");
+        assert_eq!(
+            m.labels()[0],
+            "Mode:  fixed",
+            "no weather yet: nothing to change"
+        );
     }
 
     #[test]
@@ -1122,7 +1127,6 @@ pub(crate) mod tests {
             Page::WorldSources,
             Page::WorldSource(0),
             Page::WorldSource(1),
-            Page::Weather,
         ] {
             let rows = rows(p, &c, &tm, &WeatherState::default());
             assert!(!rows.is_empty(), "{p:?}");

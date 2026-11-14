@@ -1,6 +1,8 @@
-//! The console command `weather` (spec §14 Phase 9, S4; the weather
-//! machine's menu comes with S5): parsing and applying field changes, pure
-//! so the desktop and the browser app share it and the tests run it.
+//! The console command `weather` (spec §14 Phase 9, S4; extended by the
+//! weather machine of S5: presets with field changes, a random weather
+//! from a seed, fixing a simulated weather): parsing and applying field
+//! changes, pure so the desktop and the browser app share it and the tests
+//! run it. The menu *World → Weather* sends the same lines.
 
 use crate::ground::Ground;
 use crate::presets::{PRESETS, preset};
@@ -8,16 +10,20 @@ use crate::state::{CloudType, Precip, WeatherState};
 
 /// Usage of `weather`.
 pub const USAGE: &str = "\
-weather                      the weather now
-weather list                 the presets
+weather                      the weather now (weather.status: everything)
+weather list                 the presets (weather.list: with the fields)
 weather PRESET [in T]        a preset at once, or as a transition over T (90, 30s, 5m)
+weather PRESET FIELD=VALUE... [in T]  a preset with some fields changed
+weather random [SEED] [in T] a random weather (the same seed, the same weather)
 weather auto [SEED]          the weather simulation (fronts, showers) from now
+weather fixed                stop the simulation: keep the weather it is heading to
 weather FIELD=VALUE... [in T] change fields: clouds=0-1 type=cumulus|stratus|cirrus|cb
                              base=M rain|drizzle|snow|sleet|hail=MM_H precip=none
                              fog=VISIBILITY_M wind=M_S gust=M_S dir=DEG|SW temp=C
                              humidity=0-1 pressure=HPA lightning=PER_MIN
                              ground: wet=0-1 puddles=0-1 snowcover=0-1
 weather strike [DIST_M [BEARING]] a lightning strike now (test)
+Real weather (weather real) comes with Phase 9 S7.
 Who may change it: you (solo), the host (shared ride), nobody (an organizer's event).";
 
 /// One field change.
@@ -78,6 +84,14 @@ pub enum WeatherCommand {
     Simulate {
         seed: Option<u64>,
     },
+    /// A random weather from a seed ([`crate::machine::random`]; no seed:
+    /// the client picks one).
+    Random {
+        seed: Option<u64>,
+        transition_s: f64,
+    },
+    /// Stop the simulation, keeping the weather it is heading to.
+    Fixed,
     Strike {
         distance_m: f32,
         bearing_deg: Option<f32>,
@@ -151,6 +165,19 @@ pub fn parse(args: &[&str]) -> Result<WeatherCommand, String> {
         ["auto" | "simulate", seed] => Ok(WeatherCommand::Simulate {
             seed: Some(seed.parse().map_err(|_| format!("not a seed: {seed}"))?),
         }),
+        ["fixed" | "fix"] => Ok(WeatherCommand::Fixed),
+        ["real"] => Err(
+            "real weather from the providers comes with Phase 9 S7 (now: presets, custom fields, weather auto)"
+                .into(),
+        ),
+        ["random"] => Ok(WeatherCommand::Random {
+            seed: None,
+            transition_s,
+        }),
+        ["random", seed] => Ok(WeatherCommand::Random {
+            seed: Some(seed.parse().map_err(|_| format!("not a seed: {seed}"))?),
+            transition_s,
+        }),
         ["strike", rest @ ..] => {
             let distance_m = match rest.first() {
                 Some(d) => number("distance", d)?,
@@ -162,11 +189,25 @@ pub fn parse(args: &[&str]) -> Result<WeatherCommand, String> {
                 bearing_deg,
             })
         }
-        [name] if !name.contains('=') => {
+        [name, fields @ ..] if !name.contains('=') => {
             let state = preset(name).ok_or_else(|| {
                 let names: Vec<&str> = PRESETS.iter().map(|p| p.0).collect();
                 format!("unknown weather {name:?}; presets: {}", names.join(", "))
             })?;
+            // A preset with some fields changed ("rain temp=5").
+            let state = match fields {
+                [] => state,
+                _ => match parse(fields)? {
+                    WeatherCommand::Set { fields, ground, .. } if ground.is_empty() => {
+                        apply(&fields, state)
+                    }
+                    _ => {
+                        return Err(format!(
+                            "{name} FIELD=VALUE...: fields of the weather (not the ground)"
+                        ));
+                    }
+                },
+            };
             Ok(WeatherCommand::Preset {
                 name: (*name).to_owned(),
                 state,
@@ -307,6 +348,33 @@ mod tests {
             }
         );
         assert!(parse(&["in", "5"]).is_err());
+        // S5: a preset with fields, a random weather, fixing the simulation.
+        let WeatherCommand::Preset { state, .. } =
+            parse(&["rain", "temp=5", "wind=12", "in", "1m"]).unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!((state.temperature_c, state.wind_mps), (5.0, 12.0));
+        assert_eq!(state.precip, Precip::Rain);
+        assert!(parse(&["rain", "wet=1"]).is_err(), "the ground is separate");
+        assert!(parse(&["rain", "colour=blue"]).is_err());
+        assert_eq!(
+            parse(&["random", "42", "in", "5m"]).unwrap(),
+            WeatherCommand::Random {
+                seed: Some(42),
+                transition_s: 300.0
+            }
+        );
+        assert_eq!(
+            parse(&["random"]).unwrap(),
+            WeatherCommand::Random {
+                seed: None,
+                transition_s: 0.0
+            }
+        );
+        assert!(parse(&["random", "x"]).is_err());
+        assert_eq!(parse(&["fixed"]).unwrap(), WeatherCommand::Fixed);
+        assert!(parse(&["real"]).unwrap_err().contains("S7"));
         assert_eq!(parse_duration("90").unwrap(), 90.0);
         assert_eq!(parse_duration("1h").unwrap(), 3600.0);
         assert!(parse_duration("5 parsecs").is_err());

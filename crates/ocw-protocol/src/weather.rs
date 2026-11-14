@@ -4,6 +4,7 @@
 
 use ocw_core::RiderId;
 use ocw_weather::command::GroundChange;
+use ocw_weather::machine::EventWeather;
 use ocw_weather::{CloudType, Ground, Mode, Precip, SessionWeather, Strike, WeatherState};
 
 use crate::v1;
@@ -120,6 +121,10 @@ pub fn session_weather(w: &SessionWeather, t: f64, access: ClockAccess) -> v1::S
         session_s: t,
         strikes: w.strikes().iter().map(strike_to_wire).collect(),
         target: (left > 0.0).then(|| weather_to_wire(w.target())),
+        sim_seed: match w.mode() {
+            Mode::Simulated => w.sim_seed(),
+            Mode::Fixed => 0,
+        },
     }
 }
 
@@ -138,6 +143,8 @@ pub struct WeatherInfo {
     /// Session time of the message (s).
     pub session_s: f64,
     pub strikes: Vec<Strike>,
+    /// The simulation's seed (0 when fixed; spec §14 Phase 9, S5).
+    pub sim_seed: u64,
 }
 
 impl WeatherInfo {
@@ -171,6 +178,7 @@ pub fn weather_info(w: &v1::SessionWeather) -> WeatherInfo {
         access: access_from_wire(w.access),
         seed: w.seed,
         session_s: w.session_s,
+        sim_seed: w.sim_seed,
         strikes: w
             .strikes
             .iter()
@@ -218,6 +226,42 @@ pub fn weather_request(c: &WeatherChange) -> v1::ClientMessage {
     }))
 }
 
+/// An event's weather on the wire (spec §14 Phase 9, S5).
+pub fn event_weather_to_wire(w: &EventWeather) -> v1::EventWeather {
+    match w {
+        EventWeather::Fixed { name, state } => v1::EventWeather {
+            name: name.clone(),
+            state: Some(weather_to_wire(state)),
+            simulate: false,
+            seed: 0,
+        },
+        EventWeather::Simulated { seed } => v1::EventWeather {
+            name: "simulated".into(),
+            state: None,
+            simulate: true,
+            seed: *seed,
+        },
+    }
+}
+
+/// A received event weather (clamped; `None`: neither a state nor the
+/// simulation). Names are cut to 48 characters.
+pub fn event_weather_from_wire(w: &v1::EventWeather) -> Option<EventWeather> {
+    if w.simulate {
+        return Some(EventWeather::Simulated { seed: w.seed });
+    }
+    let state = weather_from_wire(w.state.as_ref()?);
+    let name: String = w.name.chars().take(48).collect();
+    Some(EventWeather::Fixed {
+        name: if name.trim().is_empty() {
+            "custom".into()
+        } else {
+            name
+        },
+        state,
+    })
+}
+
 /// The change a [`v1::WeatherRequest`] asks for (values clamped).
 pub fn weather_change(r: &v1::WeatherRequest) -> WeatherChange {
     let share = |v: Option<f32>| v.filter(|x| x.is_finite()).map(|x| x.clamp(0.0, 1.0));
@@ -247,6 +291,46 @@ mod tests {
     use super::*;
     use crate::{decode_client, decode_server, encode, server_message};
     use ocw_weather::presets::preset;
+
+    /// An event's weather through the wire and back (spec §14 Phase 9, S5).
+    #[test]
+    fn event_weather_round_trip() {
+        let ts = EventWeather::Fixed {
+            name: "thunderstorm".into(),
+            state: preset("thunderstorm").unwrap(),
+        };
+        assert_eq!(
+            event_weather_from_wire(&event_weather_to_wire(&ts)),
+            Some(ts)
+        );
+        let sim = EventWeather::Simulated { seed: 99 };
+        assert_eq!(
+            event_weather_from_wire(&event_weather_to_wire(&sim)),
+            Some(sim)
+        );
+        // Out of range values are clamped, a missing state is no weather.
+        let mut wire = event_weather_to_wire(&EventWeather::Fixed {
+            name: String::new(),
+            state: preset("storm").unwrap(),
+        });
+        wire.state.as_mut().unwrap().wind_mps = 1e9;
+        let Some(EventWeather::Fixed { name, state }) = event_weather_from_wire(&wire) else {
+            panic!()
+        };
+        assert_eq!((name.as_str(), state.wind_mps), ("custom", 90.0));
+        wire.state = None;
+        assert_eq!(event_weather_from_wire(&wire), None);
+        // In the event's state: the label for the info.
+        let e = v1::EventState {
+            event_id: 3,
+            kind: v1::EventKind::Race as i32,
+            phase: v1::EventPhase::Countdown as i32,
+            weather: Some(event_weather_to_wire(&EventWeather::Simulated { seed: 4 })),
+            ..Default::default()
+        };
+        let info = crate::event_info(&e).unwrap();
+        assert_eq!(info.weather.as_deref(), Some("simulated (seed 4)"));
+    }
 
     /// The weather through the wire and back (spec §14 Phase 9, S4).
     #[test]

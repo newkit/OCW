@@ -1126,11 +1126,50 @@ shot = 9
 
 [[scene]]
 name = "menu-world-weather"
-description = "In-game menu: World -> Weather (clear until the weather simulation, Phase 9 S4; weather machine disabled)"
+description = "In-game menu: World -> Weather, the weather machine (Phase 9 S5): mode, real weather (coming with S7, dimmed), presets, custom, transition, random weather; the weather now and who sets it under the title"
 world = true
 args = ["--world", "{world}", "--bots", "3"]
-at = ["3=menu open", "3.4=menu down", "3.8=menu down", "4.2=menu select", "4.6=menu down", "5=menu down", "5.4=menu down", "5.8=menu down", "6.2=menu select"]
+at = ["1=time pause", "1=time 2026-06-21 15:00", "1=weather fair", "3=menu open", "3.4=menu down", "3.8=menu down", "4.2=menu select", "4.6=menu down", "5=menu down", "5.4=menu down", "5.8=menu down", "6.2=menu select"]
 shot = 8
+
+# --- Weather machine (spec §14 Phase 9, S5): presets, custom, transitions --
+# The menu's lines are console lines: `weather PRESET in 60` (the grid's
+# cells with the transition of the page), `weather FIELD=VALUE in 60` (the
+# custom editor), `weather.transition`, `weather random SEED`, `weather auto
+# SEED`; organisers give an event its weather with `event ... --weather`.
+
+[[scene]]
+name = "menu-weather-presets"
+description = "Weather machine: the 17 presets as a grid with icons (World -> Weather -> Presets), rain marked as the weather now, the focus on the thunderstorm with its description and the transition (1 min)"
+world = true
+args = ["--world", "{world}", "--bots", "3"]
+at = ["1=time pause", "1=time 2026-06-21 15:00", "1=weather rain", "3=menu open", "3.4=menu down", "3.8=menu down", "4.2=menu select", "4.6=menu down", "5=menu down", "5.4=menu down", "5.8=menu down", "6.2=menu select", "6.6=menu down", "7=menu down", "7.4=menu select", "7.8=menu down", "8.2=menu down"]
+shot = 10
+
+[[scene]]
+name = "menu-weather-custom"
+description = "Weather machine: the custom editor (World -> Weather -> Custom): cloud cover, cloud type, precipitation and intensity, fog, wind and temperature, each with its arrows; values from a light rain"
+world = true
+args = ["--world", "{world}", "--bots", "3"]
+at = ["1=time pause", "1=time 2026-06-21 15:00", "1=weather light-rain", "3=menu open", "3.4=menu down", "3.8=menu down", "4.2=menu select", "4.6=menu down", "5=menu down", "5.4=menu down", "5.8=menu down", "6.2=menu select", "6.6=menu down", "7=menu down", "7.4=menu down", "7.8=menu select", "8.2=menu down", "8.6=menu down"]
+shot = 10.5
+
+[[scene]]
+name = "event-weather-start"
+description = "A local race with the organiser's weather (event race --weather heavy-snow): on the start line the event panel names the weather set by the organizer, snow falls on the Loop test route; the weather machine is locked until the race is over"
+args = ["--route", "loop", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-01-20 13:00", "1=event race --km 2 --bots 5 --weather heavy-snow"]
+shot = 6
+
+[[scene]]
+name = "weather-clear-to-thunderstorm-video"
+description = "Video with sound: the weather machine's transition from a clear sky to a thunderstorm in one minute on the Vaduz-Malbun road (21 June 2026 15:00 CEST): cumulus grows into a dark cumulonimbus deck, the light goes flat and dark, rain sets in and becomes a cloudburst, the road gets wet, the wind rises, the first lightning and thunder"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "3", "--power", "230"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=weather clear", "2.5=teleport 1.6", "2.5=camera.orbit 160 14 14", "4=weather thunderstorm in 1m"]
+warmup = 3
+video = 64
+max_video_mb = 8
 
 [[scene]]
 name = "world-switch-blackforest"

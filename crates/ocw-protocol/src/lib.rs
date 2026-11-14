@@ -13,8 +13,8 @@ pub mod v1 {
 
 mod weather;
 pub use weather::{
-    WeatherChange, WeatherInfo, session_weather, weather_change, weather_from_wire, weather_info,
-    weather_request, weather_to_wire,
+    WeatherChange, WeatherInfo, event_weather_from_wire, event_weather_to_wire, session_weather,
+    weather_change, weather_from_wire, weather_info, weather_request, weather_to_wire,
 };
 
 use ocw_core::RiderId;
@@ -532,6 +532,12 @@ pub fn event_start_with(
     }
 }
 
+/// The organiser's weather of an event request (spec §14 Phase 9, S5;
+/// `None`: the session's weather stays).
+pub fn event_weather(s: &v1::EventStart) -> Option<ocw_weather::machine::EventWeather> {
+    s.weather.as_ref().and_then(event_weather_from_wire)
+}
+
 /// The organiser's race mode of an event request (`None`: by its kind).
 pub fn event_physics(s: &v1::EventStart) -> Option<ocw_sim::PhysicsMode> {
     s.physics.and_then(physics_mode_from_wire)
@@ -614,6 +620,7 @@ pub fn event_start(spec: &EventSpec, bots: Option<u32>) -> v1::EventStart {
         target_w,
         collisions: None,
         physics: None,
+        weather: None,
     }
 }
 
@@ -687,6 +694,8 @@ pub fn event_state(ev: Option<&Event>, standings: &[Standing], tick: u64) -> v1:
             _ => ocw_sim::collide::Mode::Full,
         })),
         physics: physics_mode_to_wire(ev.physics),
+        // The organiser's weather: set by the server (it owns the weather).
+        weather: None,
     }
 }
 
@@ -707,6 +716,9 @@ pub struct EventInfo {
     pub collisions: ocw_sim::collide::Mode,
     /// The race mode (spec §14 Phase 4, 4G; an older server: open).
     pub physics: ocw_sim::PhysicsMode,
+    /// The organiser's weather of the event, for its info ("thunderstorm";
+    /// spec §14 Phase 9, S5; `None`: the session's weather).
+    pub weather: Option<String>,
 }
 
 impl EventInfo {
@@ -751,6 +763,11 @@ pub fn event_info(e: &v1::EventState) -> Option<EventInfo> {
         finished_tick: e.finished_tick,
         collisions: collision_mode_from_wire(e.collisions),
         physics: physics_mode_from_wire(e.physics).unwrap_or_default(),
+        weather: e
+            .weather
+            .as_ref()
+            .and_then(weather::event_weather_from_wire)
+            .map(|w| w.label()),
         standings: e
             .standings
             .iter()

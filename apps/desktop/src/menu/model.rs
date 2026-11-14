@@ -43,6 +43,9 @@ pub enum Action {
     Hover(usize),
     /// Item `i` was clicked.
     Click(usize),
+    /// The ‹ (−1) or › (+1) arrow of value row `i` was clicked or tapped
+    /// (mouse and touch reach every value, spec §3.2.2).
+    Step(usize, i8),
     /// Open the menu at the rider list of the Workshop page (the scene's
     /// changing corner until the character editor, W4).
     RiderPage,
@@ -345,9 +348,19 @@ impl Menu {
         self.stack.last().map_or(0, |l| l.scroll)
     }
 
-    /// Pages of the current list (1 if it is not paged).
+    /// Columns of the current page if it is a grid (the weather presets,
+    /// spec §14 Phase 9, S5).
+    pub fn grid_columns(&self) -> Option<usize> {
+        match self.page() {
+            Some(Page::Sub(p)) => p.grid_columns(),
+            _ => None,
+        }
+    }
+
+    /// Pages of the current list (1 if it is not paged; a grid is never
+    /// paged).
     pub fn list_pages(&self) -> usize {
-        if self.rows.len() < MAX_ITEMS {
+        if self.rows.len() < MAX_ITEMS || self.grid_columns().is_some() {
             1
         } else {
             self.rows.len().div_ceil(PAGE_ROWS)
@@ -381,6 +394,22 @@ impl Menu {
         match self.page() {
             Some(Page::Sub(_)) => self.slots().len(),
             _ => self.items().len(),
+        }
+    }
+
+    /// Which items of the current page are dimmed (rows that do nothing:
+    /// not available yet, or not the rider's to change).
+    pub fn dimmed(&self) -> Vec<bool> {
+        match self.page() {
+            Some(Page::Sub(_)) => self
+                .slots()
+                .into_iter()
+                .map(|s| match s {
+                    Slot::Row(i) => self.rows[i].confirm == Some(Activate::Disabled),
+                    _ => false,
+                })
+                .collect(),
+            _ => vec![false; self.items().len()],
         }
     }
 
@@ -443,6 +472,20 @@ impl Menu {
         if let Some(l) = self.stack.last_mut() {
             l.focus = i;
         }
+    }
+
+    /// Moves the focus one row of the grid up or down (`dy` −1 / +1),
+    /// keeping the column; past the last row back to the first (and the
+    /// other way), a shorter last row's missing cells go to its last one.
+    fn move_grid(&mut self, cols: usize, dy: isize) {
+        let n = self.item_count();
+        if n == 0 {
+            return;
+        }
+        let rows = n.div_ceil(cols) as isize;
+        let (r, c) = ((self.focus() / cols) as isize, self.focus() % cols);
+        let r = (r + dy).rem_euclid(rows) as usize;
+        self.set_focus((r * cols + c).min(n - 1));
     }
 
     /// Moves the focus by `step`, wrapping around at both ends.
@@ -554,7 +597,7 @@ impl Menu {
                 self.rows.clear();
                 Effect::None
             }
-            None => Effect::None,
+            Some(Activate::Disabled) | None => Effect::None,
         }
     }
 
@@ -653,6 +696,16 @@ impl Menu {
         }
         match action {
             Action::Open | Action::RiderPage => Effect::None,
+            // A grid: the arrows move the focus in two directions.
+            Action::Left | Action::Right if self.grid_columns().is_some() => {
+                self.move_focus(if action == Action::Right { 1 } else { -1 });
+                Effect::None
+            }
+            Action::Up | Action::Down if self.grid_columns().is_some() => {
+                let cols = self.grid_columns().expect("a grid");
+                self.move_grid(cols, if action == Action::Down { 1 } else { -1 });
+                Effect::None
+            }
             Action::Left | Action::Right => {
                 if matches!(self.page(), Some(Page::Sub(_))) {
                     self.change(action == Action::Right)
@@ -682,6 +735,16 @@ impl Menu {
                 Effect::None
             }
             Action::Click(i) => self.select(i),
+            Action::Step(i, dir) => {
+                if i >= self.item_count() || self.grid_columns().is_some() {
+                    return Effect::None;
+                }
+                self.set_focus(i);
+                match self.page() {
+                    Some(Page::Sub(_)) => self.change(dir > 0),
+                    _ => Effect::None,
+                }
+            }
         }
     }
 }

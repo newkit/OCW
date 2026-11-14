@@ -255,6 +255,21 @@ message EventStart {
   optional CollisionMode collisions = 6;
   // The organizer's race mode (absent: by its kind, see PhysicsMode).
   optional PhysicsMode physics = 7;
+  // The organizer's weather for the event (spec §14 Phase 9, S5; absent:
+  // the session's weather stays and its usual rule applies). Riders cannot
+  // change it until the event is over.
+  EventWeather weather = 8;
+}
+
+// An event's weather (spec §14 Phase 9, S5, Q4: the organizer decides).
+message EventWeather {
+  // What the event info shows: a preset's name, "custom", "random 7 (rain)".
+  string name = 1;
+  // The fixed weather (absent: the simulation).
+  Weather state = 2;
+  // The simulation with this seed (the same fronts in every run).
+  bool simulate = 3;
+  uint64 seed = 4;
 }
 
 // Route ride (spec §2.7, §2.2.1): back to the route after leaving it. Like
@@ -579,6 +594,9 @@ message EventState {
   CollisionMode collisions = 13;
   // The event's race mode (spec §2.5, 4G; shown in the event's info).
   PhysicsMode physics = 14;
+  // The organizer's weather of the event (spec §14 Phase 9, S5; absent:
+  // the session's), shown in the event's info.
+  EventWeather weather = 15;
 }
 
 message EventStanding {
@@ -801,6 +819,8 @@ message SessionWeather {
   repeated LightningStrike strikes = 12;
   // The target of a transition (absent: none).
   Weather target = 13;
+  // The simulation's seed (WEATHER_MODE_SIMULATED; spec §14 Phase 9, S5).
+  uint64 sim_seed = 14;
 }
 
 // Quantized rider state (spec §6.2).

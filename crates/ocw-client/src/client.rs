@@ -698,10 +698,16 @@ impl ClientCore {
             .is_some_and(|w| w.may_change(self.rider_id, host))
     }
 
-    /// Who sets the weather, for messages: "you", "the host", "the organizer".
+    /// Who sets the weather, for messages: "you", "the host", "the
+    /// organizer", "the event's organizer" (spec §14 Phase 9, S5: an
+    /// event's weather is locked until it is over).
     pub fn weather_control(&self) -> &'static str {
+        let event = self
+            .event_info()
+            .is_some_and(|e| e.weather.is_some() && e.phase != ocw_sim::EventPhase::Finished);
         match self.weather.info().map(|w| w.access) {
             _ if self.may_change_weather() => "you",
+            Some(ocw_protocol::ClockAccess::Nobody) if event => "the event's organizer",
             Some(ocw_protocol::ClockAccess::Nobody) => "the organizer",
             _ => "the host",
         }
@@ -1689,10 +1695,22 @@ impl ClientCore {
         bots: Option<u32>,
         physics: Option<ocw_sim::PhysicsMode>,
     ) -> Vec<u8> {
+        Self::event_start_message_weather(spec, bots, physics, None)
+    }
+
+    /// An event start with the organiser's weather (spec §14 Phase 9, S5:
+    /// `event … --weather PRESET|custom …|auto SEED`).
+    pub fn event_start_message_weather(
+        spec: &ocw_sim::EventSpec,
+        bots: Option<u32>,
+        physics: Option<ocw_sim::PhysicsMode>,
+        weather: Option<&ocw_weather::machine::EventWeather>,
+    ) -> Vec<u8> {
         encode(&client_message(C::Event(v1::EventRequest {
-            req: Some(v1::event_request::Req::Start(
-                ocw_protocol::event_start_with(spec, bots, physics),
-            )),
+            req: Some(v1::event_request::Req::Start(v1::EventStart {
+                weather: weather.map(ocw_protocol::event_weather_to_wire),
+                ..ocw_protocol::event_start_with(spec, bots, physics)
+            })),
         })))
     }
 

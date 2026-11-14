@@ -175,6 +175,7 @@ fn menu_input(
         actions.extend(pointer_events.into_iter().filter_map(|e| match e {
             MenuPointerEvent::Hover(i) => moved.then_some(Action::Hover(i)),
             MenuPointerEvent::Click(i) => Some(Action::Click(i)),
+            MenuPointerEvent::Step(i, dir) => Some(Action::Step(i, dir)),
             MenuPointerEvent::Back => Some(Action::Back),
         }));
     }
@@ -226,6 +227,18 @@ pub fn status_line(view: &RideView) -> String {
 /// The control hint at the bottom of `page` (`list_pages` pages of a
 /// list, `depth` pages open).
 pub fn hint(page: Page, list_pages: usize, depth: usize) -> String {
+    let back = if depth > 1 { "back" } else { "close" };
+    match page {
+        // The preset grid (spec §14 Phase 9, S5): the arrows move.
+        Page::Sub(p) if p.grid_columns().is_some() => {
+            return format!("Arrows move   Enter/A choose   Esc/B {back}");
+        }
+        Page::Sub(p) if p.is_weather_page() => {
+            // One line at 16:9 (the generic hint is longer).
+            return format!("↑/↓ move   ←/→ change   Enter/A select   Esc/B {back}");
+        }
+        _ => {}
+    }
     format!(
         "Up/Down move   {}Enter/A select   Esc/B {}",
         match page {
@@ -234,7 +247,7 @@ pub fn hint(page: Page, list_pages: usize, depth: usize) -> String {
             Page::Sub(_) => "Left/Right change   Q/E, LB/RB tab   ",
             _ => "",
         },
-        if depth > 1 { "back" } else { "close" }
+        back
     )
 }
 
@@ -257,6 +270,10 @@ fn sub_rows(
     let time_machine = time_machine.unwrap_or(&no_time);
     if page == settings_pages::Page::TimeMachine {
         return crate::timemachine::rows(time_machine);
+    }
+    if page.is_weather_page() {
+        let clear = crate::weather::WeatherState::default();
+        return crate::weather::rows(page, weather.unwrap_or(&clear));
     }
     if page.is_world_page() {
         let empty = crate::ride::pages::Catalog::default();
@@ -344,8 +361,12 @@ fn write_view(
             MenuView {
                 open: true,
                 title: def.title.into(),
-                status: match (page, &ride) {
-                    (Page::Top, Some(r)) => status_line(r),
+                status: match (page, &ride, weather.as_deref()) {
+                    (Page::Top, Some(r), _) => status_line(r),
+                    // The weather now and who sets it (spec §14 Phase 9, S5).
+                    (Page::Sub(p), _, Some(w)) if p.is_weather_page() => {
+                        crate::weather::status(p, w, menu.focus())
+                    }
                     _ => String::new(),
                 },
                 text: def
@@ -357,6 +378,14 @@ fn write_view(
                 items: menu.labels(),
                 focused: menu.focus(),
                 hint: hint(page, menu.list_pages(), menu.depth()),
+                dimmed: menu.dimmed(),
+                grid: match (page, weather.as_deref()) {
+                    (Page::Sub(p), w) if p.grid_columns().is_some() => {
+                        let clear = crate::weather::WeatherState::default();
+                        Some(crate::weather::grid(w.unwrap_or(&clear)))
+                    }
+                    _ => None,
+                },
             }
         }
     };
@@ -405,6 +434,9 @@ mod tests {
             VoiceParticipants,
             AudioVoice,
             TimeMachine,
+            WeatherPresets,
+            WeatherCustom,
+            WeatherAir,
         ];
         for p in &all {
             match p {
@@ -412,7 +444,7 @@ mod tests {
                 | Bike(_) | WorldHome | Worlds | World(_) | WorldRoutes(_) | WorldParts(_)
                 | WorldInfo | WorldSun | WorldSources | WorldSource(_) | Weather | Routes
                 | Rides | GpxImport | Workouts | Voice | VoiceDevices | VoiceParticipants
-                | AudioVoice | TimeMachine => {}
+                | AudioVoice | TimeMachine | WeatherPresets | WeatherCustom | WeatherAir => {}
             }
         }
         all
@@ -445,7 +477,30 @@ mod tests {
         let sub = all_sub_pages().into_iter().map(Page::Sub);
         for page in pages.into_iter().chain(sub) {
             let def = page.def();
+            // The weather pages with their longest status (a storm,
+            // simulated, in a transition, set by the host).
+            let mut weather = crate::weather::WeatherState {
+                now: ocw_weather::presets::preset("storm"),
+                mode: Some(ocw_weather::Mode::Simulated),
+                sim_seed: 99_999,
+                target: Some((ocw_weather::presets::preset("heavy-snow").unwrap(), 899.0)),
+                control: "the host".into(),
+                ..Default::default()
+            };
+            weather.ground = ocw_weather::Ground::settled(&weather.now.unwrap());
+            let grid = match page {
+                Page::Sub(p) if p.grid_columns().is_some() => Some(crate::weather::grid(&weather)),
+                _ => None,
+            };
             let items: Vec<String> = match page {
+                // A grid: its cells.
+                Page::Sub(_) if grid.is_some() => grid
+                    .as_ref()
+                    .unwrap()
+                    .cells
+                    .iter()
+                    .map(|c| c.label.clone())
+                    .collect(),
                 // A full page of a paged list: rows, Previous, Next, Back.
                 Page::Sub(_) => (0..model::MAX_ITEMS)
                     .map(|i| format!("Setting {i}:  < some value >"))
@@ -459,6 +514,10 @@ mod tests {
                 title: def.title.into(),
                 status: match page {
                     Page::Top => "250 W   32.4 km/h   Trainer: virtual (SIM)".into(),
+                    Page::Sub(p) if p.is_weather_page() => (0..18)
+                        .map(|f| crate::weather::status(p, &weather, f))
+                        .max_by_key(|s| s.len())
+                        .unwrap(),
                     _ => String::new(),
                 },
                 text: def
@@ -470,6 +529,8 @@ mod tests {
                 items,
                 focused: 0,
                 hint: hint(page, 2, 3),
+                dimmed: Vec::new(),
+                grid,
             });
         }
     }
@@ -477,6 +538,11 @@ mod tests {
     /// The desktop's ride, input and menu plugins without a window: a
     /// stepped local server (as in frame capture), the virtual trainer.
     fn app() -> App {
+        app_with(|_| {})
+    }
+
+    /// [`app`] with more plugins (added before the first frame).
+    fn app_with(extra: impl FnOnce(&mut App)) -> App {
         let capture = std::env::temp_dir().join(format!("ocw-menu-test-{}", std::process::id()));
         let args = Args::parse_from([
             "ocw-desktop",
@@ -506,6 +572,7 @@ mod tests {
                 crate::input::InputPlugin,
                 MenuPlugin,
             ));
+        extra(&mut app);
         app.update();
         assert!(
             app.world().resource::<ClientState>().0.rider_id().is_some(),
@@ -765,5 +832,314 @@ mod tests {
         push(&mut app, MenuPointerEvent::Click(0));
         app.update();
         assert!(!view(&app).open);
+    }
+
+    /// The menu app with the weather machine (spec §14 Phase 9, S5).
+    fn weather_app() -> App {
+        app_with(|app| {
+            // 40 ms of game time per frame (as in frame capture): the
+            // stepped server ticks twice a frame.
+            app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                std::time::Duration::from_millis(40),
+            ))
+            .add_plugins(crate::weather::WeatherPlugin);
+        })
+    }
+
+    /// Runs `n` frames (the stepped local server ticks once per frame).
+    fn frames(app: &mut App, n: usize) {
+        for _ in 0..n {
+            app.update();
+        }
+    }
+
+    /// The target (or the weather now) of the session weather the client
+    /// has from the server.
+    fn server_weather(app: &App) -> ocw_weather::WeatherState {
+        let info = app
+            .world()
+            .resource::<ClientState>()
+            .0
+            .weather()
+            .info()
+            .cloned()
+            .expect("the server's weather");
+        info.target.map_or(info.now, |t| t.0)
+    }
+
+    fn machine(app: &App) -> crate::weather::Machine {
+        app.world()
+            .resource::<crate::weather::WeatherState>()
+            .machine
+    }
+
+    /// The weather machine with the keyboard alone: World → Weather →
+    /// Presets (a grid: the arrows move), a preset with the transition,
+    /// the custom editor's values, the transition, Back.
+    #[test]
+    fn the_weather_machine_with_the_keyboard() {
+        let mut app = weather_app();
+        frames(&mut app, 5);
+        tap(&mut app, KeyCode::Escape);
+        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(view(&app).title, "World");
+        for _ in 0..4 {
+            tap(&mut app, KeyCode::ArrowDown);
+        }
+        tap(&mut app, KeyCode::Enter);
+        let v = view(&app);
+        assert_eq!(v.title, "Weather machine");
+        assert!(v.status.ends_with("set by you"), "{}", v.status);
+        assert_eq!(v.items[1], "Real weather:  coming (Phase 9 S7)");
+        assert!(v.dimmed[1] && !v.dimmed[0]);
+        // The transition: 1 min → 5 min with →.
+        for _ in 0..4 {
+            tap(&mut app, KeyCode::ArrowDown);
+        }
+        tap(&mut app, KeyCode::ArrowRight);
+        frames(&mut app, 2);
+        assert_eq!(machine(&app).transition_s, 300.0);
+        assert_eq!(view(&app).items[4], "Transition:  < 5 min >");
+        tap(&mut app, KeyCode::ArrowLeft);
+        frames(&mut app, 2);
+        assert_eq!(machine(&app).transition_s, 60.0);
+        // Presets: the grid.
+        tap(&mut app, KeyCode::ArrowUp);
+        tap(&mut app, KeyCode::ArrowUp);
+        tap(&mut app, KeyCode::Enter);
+        let v = view(&app);
+        assert_eq!(v.title, "Weather presets");
+        let grid = v.grid.expect("a grid");
+        assert_eq!((grid.columns, grid.cells.len()), (5, 18));
+        assert!(grid.cells[0].marked, "clear now");
+        assert!(v.hint.starts_with("Arrows move"));
+        // → ↓ ↓: hail (row 3, column 2); Enter: in 1 min.
+        tap(&mut app, KeyCode::ArrowRight);
+        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::ArrowDown);
+        assert_eq!(view(&app).focused, 11);
+        assert!(
+            view(&app).status.starts_with("Hail:"),
+            "{}",
+            view(&app).status
+        );
+        tap(&mut app, KeyCode::Enter);
+        frames(&mut app, 6);
+        assert_eq!(
+            server_weather(&app),
+            ocw_weather::presets::preset("hail").unwrap()
+        );
+        let left = app
+            .world()
+            .resource::<crate::weather::WeatherState>()
+            .target
+            .map(|t| t.1);
+        assert!(left.is_some_and(|l| l > 50.0 && l <= 60.0), "{left:?}");
+        // Esc: back to the machine; Custom → cloud cover up.
+        tap(&mut app, KeyCode::Escape);
+        assert_eq!(view(&app).title, "Weather machine");
+        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(view(&app).title, "Custom weather: sky");
+        // The hail's cumulonimbus: cloud type → stratus (no lightning).
+        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::ArrowRight);
+        frames(&mut app, 6);
+        let w = server_weather(&app);
+        assert_eq!(w.cloud_type, ocw_weather::CloudType::Cumulus, "wraps round");
+        assert_eq!(w.lightning_per_min, 0.0);
+        assert_eq!(view(&app).items[1], "Cloud type:  < cumulus >");
+        assert_eq!(exits(&app), 0);
+    }
+
+    /// The same with the gamepad alone: Start, the D-pad, A and B.
+    #[test]
+    fn the_weather_machine_with_the_gamepad() {
+        use bevy::input::gamepad::{Gamepad, GamepadButton};
+        let mut app = weather_app();
+        frames(&mut app, 5);
+        let pad = app.world_mut().spawn(Gamepad::default()).id();
+        let press = |app: &mut App, b: GamepadButton| {
+            app.world_mut()
+                .get_mut::<Gamepad>(pad)
+                .unwrap()
+                .digital_mut()
+                .press(b);
+            app.update();
+            let mut g = app.world_mut().get_mut::<Gamepad>(pad).unwrap();
+            g.digital_mut().release(b);
+            g.digital_mut().clear();
+            app.update();
+        };
+        press(&mut app, GamepadButton::Start);
+        press(&mut app, GamepadButton::DPadDown);
+        press(&mut app, GamepadButton::DPadDown);
+        press(&mut app, GamepadButton::South);
+        for _ in 0..4 {
+            press(&mut app, GamepadButton::DPadDown);
+        }
+        press(&mut app, GamepadButton::South);
+        assert_eq!(view(&app).title, "Weather machine");
+        // Random weather: the seed up, then A applies it.
+        for _ in 0..5 {
+            press(&mut app, GamepadButton::DPadDown);
+        }
+        press(&mut app, GamepadButton::DPadRight);
+        frames(&mut app, 2);
+        assert_eq!(machine(&app).seed, 2);
+        press(&mut app, GamepadButton::South);
+        frames(&mut app, 6);
+        assert_eq!(server_weather(&app), ocw_weather::machine::random(2).1);
+        // Presets with the D-pad: ← from the first cell wraps to Back.
+        press(&mut app, GamepadButton::DPadUp);
+        press(&mut app, GamepadButton::DPadUp);
+        press(&mut app, GamepadButton::DPadUp);
+        press(&mut app, GamepadButton::South);
+        assert_eq!(view(&app).title, "Weather presets");
+        press(&mut app, GamepadButton::DPadLeft);
+        assert_eq!(view(&app).focused, 17);
+        press(&mut app, GamepadButton::DPadLeft);
+        press(&mut app, GamepadButton::DPadUp);
+        assert_eq!(view(&app).focused, 11);
+        // B: back.
+        press(&mut app, GamepadButton::East);
+        assert_eq!(view(&app).title, "Weather machine");
+        // The mode: A switches to the simulation with the seed.
+        press(&mut app, GamepadButton::DPadUp);
+        press(&mut app, GamepadButton::DPadUp);
+        press(&mut app, GamepadButton::South);
+        frames(&mut app, 6);
+        let c = &app.world().resource::<ClientState>().0;
+        let info = c.weather().info().unwrap();
+        assert_eq!(
+            (info.mode, info.sim_seed),
+            (ocw_weather::Mode::Simulated, 2)
+        );
+    }
+
+    /// With the mouse alone (hover moves the focus, clicks select, the
+    /// value rows' arrows step) and with touch alone (taps on the items
+    /// and the arrows, the grid's Back cell instead of Esc).
+    #[test]
+    fn the_weather_machine_with_the_mouse_and_with_touch() {
+        for touch in [false, true] {
+            let mut app = weather_app();
+            frames(&mut app, 5);
+            let push = |app: &mut App, e| {
+                app.world_mut().resource_mut::<MenuPointer>().0.push(e);
+                app.update();
+            };
+            app.world_mut()
+                .resource_mut::<ConsoleState>()
+                .queue("menu open");
+            frames(&mut app, 2);
+            if !touch {
+                app.insert_resource(AccumulatedMouseMotion {
+                    delta: Vec2::new(4.0, 2.0),
+                });
+                push(&mut app, MenuPointerEvent::Hover(2));
+                assert_eq!(view(&app).focused, 2);
+            }
+            push(&mut app, MenuPointerEvent::Click(2));
+            push(&mut app, MenuPointerEvent::Click(4));
+            assert_eq!(view(&app).title, "Weather machine");
+            // Presets: tap / click a cell.
+            push(&mut app, MenuPointerEvent::Click(2));
+            assert!(view(&app).grid.is_some());
+            push(&mut app, MenuPointerEvent::Click(4));
+            frames(&mut app, 6);
+            assert_eq!(
+                server_weather(&app),
+                ocw_weather::presets::preset("fog").unwrap()
+            );
+            // Back: the grid's Back cell (touch has no Esc), or a right click.
+            if touch {
+                push(&mut app, MenuPointerEvent::Click(17));
+            } else {
+                push(&mut app, MenuPointerEvent::Back);
+            }
+            assert_eq!(view(&app).title, "Weather machine");
+            // Custom → Wind and temperature: the › arrow of the wind.
+            push(&mut app, MenuPointerEvent::Click(3));
+            push(&mut app, MenuPointerEvent::Click(5));
+            assert_eq!(view(&app).title, "Custom: wind, temperature");
+            let wind = server_weather(&app).wind_mps;
+            push(&mut app, MenuPointerEvent::Step(0, 1));
+            frames(&mut app, 6);
+            // The fog's 0.5 m/s: up to the next whole metre per second.
+            assert_eq!(wind, 0.5);
+            assert_eq!(server_weather(&app).wind_mps, 1.0, "touch {touch}");
+            // The ‹ arrow of the temperature.
+            let temp = server_weather(&app).temperature_c;
+            push(&mut app, MenuPointerEvent::Step(3, -1));
+            frames(&mut app, 6);
+            assert_eq!(server_weather(&app).temperature_c, temp - 1.0);
+            // Back with the Back item.
+            push(&mut app, MenuPointerEvent::Click(4));
+            assert_eq!(view(&app).title, "Custom weather: sky");
+        }
+    }
+
+    /// An event's weather (spec §14 Phase 9, S5): set by the organiser
+    /// with `event … --weather`, shown, and the machine dimmed until the
+    /// event is over.
+    #[test]
+    fn an_events_weather_dims_the_machine_until_it_is_over() {
+        let mut app = weather_app();
+        frames(&mut app, 5);
+        let run = |app: &mut App, line: &str| {
+            app.world_mut().resource_mut::<ConsoleState>().queue(line);
+            frames(app, 8);
+        };
+        run(
+            &mut app,
+            "event race --km 1 --bots 0 --weather heavy-snow temp=-8",
+        );
+        let mut want = ocw_weather::presets::preset("heavy-snow").unwrap();
+        want.temperature_c = -8.0;
+        assert_eq!(server_weather(&app), want);
+        let st = app
+            .world()
+            .resource::<crate::weather::WeatherState>()
+            .clone();
+        assert!(!st.may_change);
+        assert_eq!(
+            st.event.as_deref(),
+            Some("heavy snow, changed: heavy snow -8 °C")
+        );
+        // The menu shows it dimmed.
+        run(&mut app, "menu open");
+        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::Enter);
+        for _ in 0..4 {
+            tap(&mut app, KeyCode::ArrowDown);
+        }
+        tap(&mut app, KeyCode::Enter);
+        let v = view(&app);
+        assert_eq!(v.title, "Weather machine");
+        assert!(v.dimmed[0] && v.dimmed[5], "{:?}", v.dimmed);
+        assert!(
+            v.status.ends_with("set by the event's organizer"),
+            "{}",
+            v.status
+        );
+        // The console is refused too; the weather stays.
+        run(&mut app, "weather clear");
+        assert_eq!(server_weather(&app), want);
+        // The event is cancelled: the rider's again.
+        run(&mut app, "event cancel");
+        assert!(
+            app.world()
+                .resource::<crate::weather::WeatherState>()
+                .may_change
+        );
+        run(&mut app, "weather clear");
+        assert_eq!(
+            server_weather(&app),
+            ocw_weather::presets::preset("clear").unwrap()
+        );
     }
 }

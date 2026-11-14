@@ -16,8 +16,10 @@
 pub mod command;
 pub mod follow;
 pub mod ground;
+pub mod icon;
 pub mod light;
 pub mod lightning;
+pub mod machine;
 pub mod particles;
 pub mod presets;
 pub mod session;

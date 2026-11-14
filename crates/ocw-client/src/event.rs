@@ -133,6 +133,12 @@ pub fn mode_line(m: ocw_sim::PhysicsMode) -> String {
     format!("{} mode: {}", m.name(), m.describe())
 }
 
+/// The organiser's weather in a line (spec §14 Phase 9, S5): "Weather:
+/// thunderstorm (set by the organizer)".
+pub fn weather_line(label: &str) -> String {
+    format!("Weather: {label} (set by the organizer)")
+}
+
 /// The event's title: "Race - 2 laps (8.1 km)", "Group ride - 150 W".
 pub fn title(kind: &EventKind) -> String {
     match *kind {
@@ -503,6 +509,10 @@ impl EventClient {
         // event's info).
         if info.phase < EventPhase::Running {
             view.lines.push(mode_line(info.physics));
+            // ... and the organiser's weather (spec §14 Phase 9, S5).
+            if let Some(w) = &info.weather {
+                view.lines.push(weather_line(w));
+            }
         }
         match info.kind {
             EventKind::GroupRide { .. } => {
@@ -571,6 +581,9 @@ impl EventClient {
                         footer.push(outcome_line(o, t));
                     }
                     footer.push(mode_line(info.physics));
+                    if let Some(w) = &info.weather {
+                        footer.push(weather_line(w));
+                    }
                     footer.push("Esc / A: close".into());
                     view.results = Some(ResultsView {
                         title: format!(
@@ -634,6 +647,7 @@ mod tests {
             standings,
             collisions: ocw_sim::collide::Mode::Off,
             physics: ocw_sim::PhysicsMode::Profile,
+            weather: None,
         }
     }
 
@@ -1039,5 +1053,32 @@ mod tests {
         assert!((estimate_tick(100, 10.0, 10.1) - 105.0).abs() < 1e-9);
         assert_eq!(estimate_tick(100, 10.0, 15.0), 125.0);
         assert_eq!(estimate_tick(100, 10.0, 9.0), 100.0);
+    }
+
+    /// The organiser's weather is in the event's info on the start line
+    /// and under the results (spec §14 Phase 9, S5).
+    #[test]
+    fn the_organisers_weather_shows_in_the_event_info() {
+        let mut c = EventClient::new("loop");
+        let mut i = info(
+            RACE,
+            EventPhase::Countdown,
+            vec![standing(1, 1, 0.0, None, None)],
+        );
+        i.weather = Some("thunderstorm".into());
+        c.on_state(Some(i.clone()), Some(RiderId(1)), 0.0);
+        let v = c.view(0.0, 10.0, Some(RiderId(1)), 100.0, &[]).unwrap();
+        assert!(
+            v.lines
+                .contains(&"Weather: thunderstorm (set by the organizer)".to_owned()),
+            "{:?}",
+            v.lines
+        );
+        // Without one: no line.
+        i.weather = None;
+        let mut c = EventClient::new("loop");
+        c.on_state(Some(i), Some(RiderId(1)), 0.0);
+        let v = c.view(0.0, 10.0, Some(RiderId(1)), 100.0, &[]).unwrap();
+        assert!(!v.lines.iter().any(|l| l.starts_with("Weather")));
     }
 }

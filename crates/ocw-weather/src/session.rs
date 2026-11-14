@@ -127,6 +127,11 @@ impl SessionWeather {
         self.ground
     }
 
+    /// The simulation's seed (spec §14 Phase 9, S5: `weather.status`).
+    pub fn sim_seed(&self) -> u64 {
+        self.sim_seed
+    }
+
     /// The seed of the gusts and the lightning.
     pub fn seed(&self) -> u64 {
         self.seed
