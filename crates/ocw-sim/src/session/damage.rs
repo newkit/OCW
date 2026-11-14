@@ -82,15 +82,24 @@ impl Session {
         }
     }
 
-    /// The bike's condition after a repair or a swap in the workshop (spec
-    /// §14 Phase 4 W6, the `BikeChange`): the parts as given; flats and a
-    /// broken chain on parts now as new are gone, a spare is the own bike
-    /// again. The rider's condition stays.
-    pub fn set_bike_condition(&mut self, id: RiderId, parts: [f64; damage::PARTS]) -> bool {
+    /// The garage's condition after a repair or a swap in the workshop
+    /// (spec §14 Phase 4 W6, the `BikeChange`): the parts as given; flats
+    /// and a broken chain on parts now as new are gone, a spare is the own
+    /// bike again; the rider's condition as the garage has it (`None`:
+    /// unchanged; trusted like the hello's, Phase 12 Q6).
+    pub fn set_bike_condition(
+        &mut self,
+        id: RiderId,
+        rider: Option<f64>,
+        parts: [f64; damage::PARTS],
+    ) -> bool {
         let Some(r) = self.riders.get_mut(&id) else {
             return false;
         };
         let d = &mut r.damage;
+        if let Some(c) = rider.filter(|c| c.is_finite()) {
+            d.rider = c.clamp(0.0, 1.0);
+        }
         for (p, c) in d.parts.iter_mut().zip(parts) {
             *p = if c.is_finite() {
                 c.clamp(0.0, 1.0)
@@ -430,11 +439,13 @@ mod tests {
         s.stage_damage(id, DamageStage::Puncture { rear: true })
             .unwrap();
         s.take_damage_changes();
-        assert!(s.set_bike_condition(id, [1.0; damage::PARTS]));
+        assert!(s.set_bike_condition(id, None, [1.0; damage::PARTS]));
         let d = s.damage(id).unwrap();
         assert_eq!(d.bike(), 1.0);
         assert!(!d.flat[1], "a new tyre");
         assert_eq!(d.rider, 0.6, "the rider is not repaired");
+        assert!(s.set_bike_condition(id, Some(0.7), [1.0; damage::PARTS]));
+        assert_eq!(s.damage(id).unwrap().rider, 0.7, "the garage's injury");
         assert_eq!(s.take_damage_changes(), vec![id]);
     }
 }

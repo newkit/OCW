@@ -54,9 +54,9 @@ message BikeChange {
   RiderLook look = 3;
   // The catalogue ids of the parts on the bike (assets/parts.toml).
   repeated string parts = 4;
-  // The bike's condition from the garage (spec §14 Phase 12 Q6, Phase 4
-  // W6): repairs in the workshop and a bike swap reach the ride (parts_pm
-  // only); absent: the ride's damage stays.
+  // The condition from the garage (spec §14 Phase 12 Q6, Phase 4 W6):
+  // repairs in the workshop and a bike swap reach the ride (rider_pm and
+  // parts_pm, as in the hello); absent: the ride's damage stays.
   DamageState damage = 5;
 }
 

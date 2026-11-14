@@ -878,8 +878,9 @@ impl GameServer {
         if applied == Some(ocw_sim::BikeApplied::Now)
             && let Some(d) = &change.damage
         {
-            let (_, parts) = ocw_protocol::carried_from_wire(d);
-            self.session.set_bike_condition(rider, parts);
+            let (condition, parts) = ocw_protocol::carried_from_wire(d);
+            self.session
+                .set_bike_condition(rider, Some(condition), parts);
         }
         tracing::info!(%rider, bike = bike.id(), parts = change.parts.len(), ?applied, "bike changed");
         match applied {
