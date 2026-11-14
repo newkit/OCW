@@ -54,6 +54,7 @@ impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CameraMode>()
             .init_resource::<CameraOrbit>()
+            .init_resource::<SkyLook>()
             .init_resource::<CameraObstacles>()
             .init_resource::<CameraFocus>()
             .init_resource::<CameraTilt>()
@@ -339,6 +340,20 @@ impl std::str::FromStr for CameraMode {
 
 #[derive(Component)]
 pub struct FollowCamera;
+
+/// A fixed look at the sky from just behind and above the rider
+/// (`camera.look AZ EL`, spec §14 Phase 9 S2: the moon, the planets, the
+/// Milky Way in scenes): azimuth clockwise from north and elevation, °.
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
+pub struct SkyLook(pub Option<(f32, f32)>);
+
+/// Eye and view direction of a [`SkyLook`] at the rider: 6 m behind the
+/// rider (away from the view) and 2.2 m up, looking along the direction.
+pub fn sky_look_eye(rider: Vec3, az_deg: f32, el_deg: f32) -> (Vec3, Vec3) {
+    let dir = crate::sky::sun_direction(f64::from(az_deg), f64::from(el_deg));
+    let flat = Vec3::new(dir.x, 0.0, dir.z).normalize_or(Vec3::NEG_Z);
+    (rider - flat * 6.0 + Vec3::Y * 2.2, dir)
+}
 
 /// Orbit of the chase camera around the rider, relative to the riding
 /// direction. The default reproduces the classic chase view.
@@ -655,6 +670,7 @@ pub(crate) fn follow(
     mut focus: ResMut<CameraFocus>,
     mut smoothed_target: Local<Option<Vec3>>,
     mut tilt: Local<TiltState>,
+    sky_look: Option<Res<SkyLook>>,
 ) {
     // God mode (spec §14 Phase 13D): the flight camera.
     let fov = view
@@ -703,6 +719,20 @@ pub(crate) fn follow(
         ground.as_deref(),
         &ocw_assets::shipped::bike_rig(local.bike),
     );
+    // A fixed look at the sky (scenes of the night sky, `camera.look`).
+    if let Some((az, el)) = sky_look.as_deref().and_then(|l| l.0) {
+        let (eye, dir) = sky_look_eye(rider.translation, az, el);
+        let solid = |x: f64, z: f64| solid_height(ground.as_deref(), &obstacles, x, z);
+        let eye = match solid(f64::from(eye.x), f64::from(eye.z)) {
+            Some(h) => eye.with_y(eye.y.max(h as f32 + 1.5)),
+            None => eye,
+        };
+        cam.translation = eye;
+        cam.look_to(dir, Vec3::Y);
+        focus.set_if_neq(CameraFocus(Some(rider.translation + Vec3::Y * 1.2)));
+        *smoothed_target = None;
+        return;
+    }
     let p = track.sample(local.state.distance);
     let road = Vec3::new(p.direction[0] as f32, 0.0, p.direction[1] as f32);
     // Positive heading = to the right; Bevy turns left for a positive Y rotation.

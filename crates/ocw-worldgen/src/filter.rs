@@ -91,6 +91,20 @@ pub fn way_surfaces(osm: &OsmData) -> std::collections::HashMap<i64, ocw_world::
         .collect()
 }
 
+/// Whether each rideable way of `osm` with a `lit` tag is lit at night
+/// (spec §14 Phase 9 S2), by OSM way id (for
+/// [`crate::package::apply_road_lit`]); untagged ways are left out.
+pub fn way_lit(osm: &OsmData) -> std::collections::HashMap<i64, ocw_world::RoadLit> {
+    osm.ways
+        .iter()
+        .filter(|w| rideable(w).is_some())
+        .filter_map(|w| {
+            let l = ocw_world::RoadLit::from_osm(w.tag("lit"));
+            (l != ocw_world::RoadLit::Unknown).then_some((w.id, l))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -104,6 +118,26 @@ mod tests {
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
         }
+    }
+
+    #[test]
+    fn lit_ways_by_id() {
+        let mut lit = way(&[("highway", "residential"), ("lit", "yes")]);
+        lit.id = 7;
+        let mut dark = way(&[("highway", "tertiary"), ("lit", "no")]);
+        dark.id = 8;
+        let mut untagged = way(&[("highway", "residential")]);
+        untagged.id = 9;
+        let mut footway = way(&[("highway", "footway"), ("lit", "yes")]);
+        footway.id = 10;
+        let osm = OsmData {
+            ways: vec![lit, dark, untagged, footway],
+            ..Default::default()
+        };
+        let m = way_lit(&osm);
+        assert_eq!(m.get(&7), Some(&ocw_world::RoadLit::Yes));
+        assert_eq!(m.get(&8), Some(&ocw_world::RoadLit::No));
+        assert_eq!(m.len(), 2, "untagged and unrideable ways are left out");
     }
 
     #[test]

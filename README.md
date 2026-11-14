@@ -877,7 +877,7 @@ console (saved at once), or by editing the file; `get` lists them all:
 | `display.camera` | chase / side / top (chase) | at once |
 | `display.night_brightness` | 0 to 50 (10): least light at night in % of daylight (0 = realistic darkness); Settings → Display | at once |
 | `display.sky` | atmosphere / simple (atmosphere): Bevy's physically based sky, or one plain colour for weak GPUs | at once |
-| `display.bike_lights` | auto / on / off (auto): front and rear lights of all riders from dusk to dawn | at once |
+| `display.bike_lights` | auto / on / off (auto): the front and rear lights of bikes with lights fitted (Workshop, slot lights) from dusk to dawn and in tunnels | at once |
 | `display.unicorn_trail` | on / off (on): the rainbow trail behind the unicorns of god mode (console `god.trail`; not on the full Display page) | at once |
 | `display.fullscreen` | on / off (off): borderless fullscreen (`--fullscreen`) | next start |
 | `ride.bots` | 0 to 50 (10): test riders (`--bots`) | next start |
@@ -1010,12 +1010,29 @@ set by `world-builder package`, `--time-zone` overrides); older packages and
 route files use the zone of their origin (`Europe/Vaduz` for Liechtenstein,
 `Europe/Berlin` for the Black Forest, `Atlantic/Canary` for Tenerife, else the longitude's zone), the test
 routes are in Vaduz. The sun lights the scene from its real position, warm at
-sunrise and sunset; the night is dark (`display.night_brightness`, Settings →
-Display) and every rider has front and rear lights.
+sunrise and sunset; the night is dark but never black (`display.night_brightness`,
+Settings → Display, default 10 % of daylight).
+
+The night sky has no stars (a star catalogue with a fitting licence is still
+open, spec §14 Phase 9 Q7), but everything else of it: the **moon** in its real
+place and phase (the moon's series of Meeus, within a few minutes of the
+published full and new moons), its bright limb towards the sun, earthshine on
+the dark part, rising and setting; at night it is the scene's light – bluish,
+weak at a crescent, with soft shadows around full moon. **Planets** (Mercury,
+Venus, Mars, Jupiter, Saturn, within arc minutes) appear as points of light as
+the twilight deepens, Venus first. The **Milky Way** is a procedural band along
+the galactic plane (own work, no photo), visible only in a dark, moonless sky
+away from towns. **Street lamps** stand along lit roads (OSM `lit`, section
+`LITR` of the world package; roads without the tag are lit in towns by land
+use), their heads glow at night and the nearest light the road in warm pools;
+windows light up, towns spill an orange **sky glow** above the horizon.
+**Bike lights** are a part (*Workshop*, slot *lights*): riders with lights
+fitted switch them on from dusk to dawn and in tunnels (`display.bike_lights`).
 
 *World → Time* (the time machine; and the console command `time`) sets the date and time
 (1900–2100), the time speed (paused, x1, x10, x60, x600) and presets (sunrise,
-golden hour, noon, sunset, blue hour, midnight, the solstices). The game server
+golden hour, noon, sunset, blue hour, midnight, the solstices, the nights of
+the next full and new moon). The game server
 owns the clock: solo you set it, in a shared ride only the host (the rider
 connected longest; `ocw-server --time-control host|anyone|nobody`). Each ride
 starts at the real time.
@@ -1046,13 +1063,14 @@ for now).
 | `menu [open\|close\|toggle\|up\|down\|left\|right\|select\|back\|tab-next\|tab-prev]` | Open, close or drive the in-game menu (Esc / Start) |
 | `quit` | Exit the app |
 | **Time and sky** (spec §14 Phase 9) | |
-| `time` | The world time at your place in the world (its zone and DST), the clock's mode and speed, the sun, and who sets the time |
+| `time` | The world time at your place in the world (its zone and DST), the clock's mode and speed, the sun and the moon, and who sets the time |
 | `time HH:MM` \| `time YYYY-MM-DD [HH:MM]` | Time machine: this local time today, or that date (keeping the time of day), years 1900–2100 |
 | `time +2h` \| `time -30m` \| `time +1d` | Move the world time (keeps the mode; real time becomes an offset) |
 | `time offset +3h` \| `time real` | Real time plus an offset, or back to real time |
 | `time speed 1\|10\|60\|600` \| `time pause` \| `time play` | Time speed (x600: a day in 2.4 minutes) |
-| `time sunrise\|golden-hour\|noon\|sunset\|blue-hour\|midnight\|summer-solstice\|winter-solstice` | Presets at your place on the current world date (solstices keep the time of day) |
-| `sky` | Sun azimuth / elevation and the light at the rider |
+| `time sunrise\|golden-hour\|noon\|sunset\|blue-hour\|midnight\|summer-solstice\|winter-solstice\|full-moon\|new-moon` | Presets at your place on the current world date (solstices keep the time of day; `full-moon` / `new-moon`: the local midnight nearest to the next full / new moon) |
+| `sky` | Sun azimuth / elevation, the light, the moon (phase, place), the planets above the horizon and the light pollution at the rider |
+| `camera.look AZ [EL]` \| `camera.look off` | Look at the sky from just behind the rider: azimuth (0 = north, 90 = east) and elevation in degrees (the moon, a planet, the Milky Way); `off` returns to the chase camera |
 | `sky.night PERCENT` \| `sky.mode atmosphere\|simple` \| `sky.lights auto\|on\|off` | This session's night brightness, sky and bike lights (the `display.*` settings keep them) |
 | **Audio** (spec §3.3) | |
 | `audio.volume master\|effects\|others\|music\|voice PERCENT` | Set a volume for this session (`set audio.effects 60` also saves it) |

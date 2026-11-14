@@ -1,17 +1,22 @@
-//! Sun, sky and night (spec §14 Phase 9, S1): draws the sky state the app
-//! puts into [`crate::RideView::sky`] – the sun's direction, colour and
+//! Sun, sky and night (spec §14 Phase 9, S1 / S2): draws the sky state the
+//! app puts into [`crate::RideView::sky`] – the sun's direction, colour and
 //! strength, the ambient light, the camera exposure (auto-exposure from
 //! the light model, eased like an eye), the fog colour, Bevy's physically
 //! based atmosphere (Hillaire 2020; or a plain sky colour,
-//! `display.sky simple`), shadows following the sun, and bike lights on
-//! all riders at night. The light model itself is pure (`ocw_sky::light`).
+//! `display.sky simple`), shadows following the sun; at night the same
+//! directional light is the moon (bluish, by phase and height, soft
+//! shadows when it is bright; S2), and the bike lights of the riders who
+//! fitted lights in the workshop (decision Q3). The light model itself is
+//! pure (`ocw_sky::light`, `ocw_sky::night`); moon disc, planets and Milky
+//! Way are in [`crate::night_sky`], street lamps in
+//! [`crate::street_lamps`].
 //!
 //! Without a sky state (`RideView::sky` is `None`, e.g. headless tests) the
 //! scene keeps the fixed daylight it was built with.
 
 use bevy::camera::Exposure;
 use bevy::light::atmosphere::ScatteringMedium;
-use bevy::light::{Atmosphere, GlobalAmbientLight, NotShadowCaster};
+use bevy::light::{Atmosphere, GlobalAmbientLight, NotShadowCaster, SunDisk};
 use bevy::pbr::{AtmosphereSettings, DistanceFog};
 use bevy::prelude::*;
 use clap::{Arg, Command};
@@ -40,13 +45,25 @@ pub enum SkyMode {
     Simple,
 }
 
-/// When the bike lights are on.
+/// When the bike lights are on – on bikes with lights fitted in the
+/// workshop (slot `lights`, decision Q3; bikes without have none).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LightsMode {
-    /// From dusk to dawn (the sun below 1°).
+    /// From dusk to dawn (the sun below 1°) and in tunnels.
     Auto,
     On,
     Off,
+}
+
+/// Whether a bike with these parts (catalogue ids) has lights: a part of
+/// the slot `lights` other than the base "no lights" (spec §14 Phase 4,
+/// `lights.set`).
+pub fn has_lights(parts: &[String]) -> bool {
+    let cat = ocw_assets::shipped::catalogue();
+    parts.iter().any(|id| {
+        cat.get(id)
+            .is_some_and(|p| p.slot == ocw_assets::parts::Slot::Lights && p.hearts > 0)
+    })
 }
 
 /// Sky settings (Settings → Display, `display.night_brightness`,
@@ -154,7 +171,15 @@ fn apply_sky(
     mut exposure: ResMut<ExposureState>,
     ambient: Option<ResMut<GlobalAmbientLight>>,
     clear: Option<ResMut<ClearColor>>,
-    mut suns: Query<(&mut DirectionalLight, &mut Transform), With<Sun>>,
+    mut suns: Query<
+        (
+            Entity,
+            &mut DirectionalLight,
+            &mut Transform,
+            Option<&SunDisk>,
+        ),
+        With<Sun>,
+    >,
     mut cameras: Query<CameraParts, With<FollowCamera>>,
     tunnels: Option<Res<crate::tunnel::Tunnels>>,
     mut commands: Commands,
@@ -166,27 +191,34 @@ fn apply_sky(
     // shadows in the renderer, only the thin tube would).
     let daylight = daylight_at_rider(view.as_deref(), tunnels.as_deref());
     let light = ocw_sky::light::light(sky.sky.sun.elevation_deg, settings.night_floor);
+    let moon = &sky.sky.moon;
+    let moonlight = ocw_sky::night::moonlight(moon.elevation_deg, moon.phase_angle_deg);
     let atmosphere = settings.mode == SkyMode::Atmosphere;
-    let dir = sun_direction(sky.sky.sun.azimuth_deg, sky.sky.sun.elevation_deg);
-    for (mut sun, mut transform) in &mut suns {
-        let t = sun_transform(dir);
+    let key = key_light(&sky.sky, &light, &moonlight, atmosphere);
+    for (e, mut sun, mut transform, disk) in &mut suns {
+        let t = sun_transform(key.towards);
         if transform.rotation != t.rotation {
             transform.rotation = t.rotation;
         }
-        // Bevy's atmosphere reddens and dims the light itself (its
-        // transmittance); without it the model's colour and strength.
-        let (lux, colour) = if atmosphere {
-            let up = (sky.sky.sun.elevation_deg > -1.0) as u8 as f32;
-            (light.sun_lux_space * up, Color::WHITE)
+        sun.illuminance = key.lux * daylight;
+        sun.color = key.colour;
+        sun.shadow_maps_enabled = key.shadows && daylight > 0.0;
+        // The atmosphere draws a sun disc at the light: not at the moon
+        // (it has its own disc, `night_sky`).
+        let want = if key.moon {
+            SunDisk {
+                intensity: 0.0,
+                ..SunDisk::EARTH
+            }
         } else {
-            (light.sun_lux, linear(light.sun_rgb))
+            SunDisk::EARTH
         };
-        sun.illuminance = lux * daylight;
-        sun.color = colour;
-        sun.shadow_maps_enabled = light.shadows && daylight > 0.0;
+        if disk.is_none_or(|d| d.intensity != want.intensity) {
+            commands.entity(e).insert(want);
+        }
     }
     if let Some(mut a) = ambient {
-        a.brightness = light.ambient;
+        a.brightness = light.ambient + moonlight.ambient;
         a.color = linear(light.ambient_rgb);
     }
     if let Some(mut c) = clear {
@@ -211,6 +243,58 @@ fn apply_sky(
                 commands.entity(e).insert(Exposure { ev100: ev });
             }
         }
+    }
+}
+
+/// The scene's one directional light: the sun, or at night the moon.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct KeyLight {
+    /// Unit vector towards the light (scene axes).
+    pub towards: Vec3,
+    pub lux: f32,
+    pub colour: Color,
+    pub shadows: bool,
+    /// The moon is the light.
+    pub moon: bool,
+}
+
+/// The key light for a sky: the sun while it is up (or brighter), else
+/// the moon. With Bevy's atmosphere the light is given above the
+/// atmosphere (it reddens and dims it itself).
+pub fn key_light(
+    sky: &ocw_sky::Sky,
+    light: &ocw_sky::Light,
+    moonlight: &ocw_sky::Moonlight,
+    atmosphere: bool,
+) -> KeyLight {
+    let sun_up = sky.sun.elevation_deg > -1.0;
+    let use_moon = !sun_up && moonlight.lux > 0.0 && moonlight.lux > light.sun_lux;
+    if use_moon {
+        let rgb = ocw_sky::night::MOON_RGB;
+        let (lux, colour) = if atmosphere {
+            (moonlight.lux_space, linear(rgb))
+        } else {
+            (moonlight.lux, linear(moonlight.rgb))
+        };
+        return KeyLight {
+            towards: sun_direction(sky.moon.azimuth_deg, sky.moon.elevation_deg),
+            lux,
+            colour,
+            shadows: moonlight.shadows,
+            moon: true,
+        };
+    }
+    let (lux, colour) = if atmosphere {
+        (light.sun_lux_space * sun_up as u8 as f32, Color::WHITE)
+    } else {
+        (light.sun_lux, linear(light.sun_rgb))
+    };
+    KeyLight {
+        towards: sun_direction(sky.sun.azimuth_deg, sky.sun.elevation_deg),
+        lux,
+        colour,
+        shadows: light.shadows,
+        moon: false,
     }
 }
 
@@ -243,6 +327,10 @@ fn atmosphere(
     }
 }
 
+/// Colours of the front and rear lamps (linear, above 1: they glow).
+pub const LAMP_WHITE: LinearRgba = LinearRgba::rgb(6.0, 5.7, 5.1);
+pub const LAMP_RED: LinearRgba = LinearRgba::rgb(5.0, 0.12, 0.06);
+
 /// Front lamp (white) and rear lamp (red) positions on the bike, in the
 /// avatar's frame (it faces -Z): at the handlebar and under the saddle.
 pub const FRONT_LAMP: Vec3 = Vec3::new(0.0, 0.93, -0.60);
@@ -265,16 +353,19 @@ fn add_bike_lamps(
     };
     let (mesh, white, red) = cache
         .get_or_insert_with(|| {
+            // Unlit: the base colour is what shows (an unlit material
+            // ignores the emissive – the lamps were black before S2).
             let lamp = |c: LinearRgba| StandardMaterial {
-                base_color: Color::BLACK,
+                base_color: c.into(),
                 emissive: c,
                 unlit: true,
+                fog_enabled: false,
                 ..default()
             };
             (
                 meshes.add(Cuboid::new(0.07, 0.05, 0.05)),
-                materials.add(lamp(LinearRgba::rgb(40.0, 38.0, 34.0))),
-                materials.add(lamp(LinearRgba::rgb(30.0, 0.6, 0.3))),
+                materials.add(lamp(LAMP_WHITE)),
+                materials.add(lamp(LAMP_RED)),
             )
         })
         .clone();
@@ -338,7 +429,8 @@ fn bike_lamps(
     view: Option<Res<RideView>>,
     settings: Res<SkySettings>,
     tunnels: Option<Res<crate::tunnel::Tunnels>>,
-    mut lamps: Query<&mut Visibility, With<BikeLamp>>,
+    avatars: Query<&Avatar>,
+    mut lamps: Query<(&mut Visibility, &ChildOf), With<BikeLamp>>,
 ) {
     let light = view
         .as_ref()
@@ -348,12 +440,27 @@ fn bike_lamps(
     let in_tunnel = view.as_ref().is_some_and(|v| v.sky.is_some())
         && settings.lights == LightsMode::Auto
         && daylight_at_rider(view.as_deref(), tunnels.as_deref()) < 1.0;
-    let want = if in_tunnel || lamps_on(settings.lights, light.as_ref()) {
-        Visibility::Inherited
-    } else {
-        Visibility::Hidden
-    };
-    for mut v in &mut lamps {
+    let on = in_tunnel || lamps_on(settings.lights, light.as_ref());
+    // Only the bikes with lights fitted (Q3).
+    let fitted: std::collections::HashSet<ocw_core::RiderId> = view
+        .as_ref()
+        .map(|v| {
+            v.riders
+                .iter()
+                .filter(|r| has_lights(&r.parts))
+                .map(|r| r.id)
+                .collect()
+        })
+        .unwrap_or_default();
+    for (mut v, parent) in &mut lamps {
+        let has = avatars
+            .get(parent.parent())
+            .is_ok_and(|a| fitted.contains(&a.id));
+        let want = if on && has {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
         if *v != want {
             *v = want;
         }
@@ -417,22 +524,43 @@ fn register_commands(app: &mut App) {
     ))
     .console_command(ConsoleCommand::new(
         Permission::User,
-        Command::new("sky").about("Show the sun and the light at the rider"),
+        Command::new("sky").about("Show the sun, the moon, the planets and the light at the rider"),
         |world, _| {
             let view = world.resource::<RideView>();
             let Some(s) = &view.sky else {
                 return Err("no sky yet (waiting for the server's clock)".into());
             };
             let l = &s.sky.light;
+            let planets: Vec<String> = s
+                .sky
+                .planets
+                .iter()
+                .filter(|p| p.elevation_deg > 0.0)
+                .map(|p| {
+                    format!(
+                        "{} {:.0}°/{:.0}° mag {:.1}",
+                        p.planet.name(),
+                        p.azimuth_deg,
+                        p.elevation_deg,
+                        p.magnitude()
+                    )
+                })
+                .collect();
+            let pollution = world
+                .get_resource::<crate::night_sky::LightPollution>()
+                .map_or(0.0, |p| p.0);
             Ok(format!(
-                "{} local, sun azimuth {:.1}° elevation {:.2}°, sun {:.0} lx, ambient {:.0}, EV100 {:.1}, lights {}",
+                "{} local, sun azimuth {:.1}° elevation {:.2}°, sun {:.0} lx, ambient {:.2}, EV100 {:.1}, lights {}; {}; planets up: {}; light pollution {:.0} %",
                 s.sky.local.hh_mm(),
                 s.sky.sun.azimuth_deg,
                 s.sky.sun.elevation_deg,
                 l.sun_lux,
                 l.ambient,
                 l.ev100,
-                if l.lights_on { "on" } else { "off" }
+                if l.lights_on { "on" } else { "off" },
+                s.sky.moon_line(),
+                if planets.is_empty() { "none".to_owned() } else { planets.join(", ") },
+                pollution * 100.0
             ))
         },
     ));
@@ -470,6 +598,128 @@ mod tests {
         assert!(!lamps_on(LightsMode::Auto, None));
         assert!(lamps_on(LightsMode::On, Some(&day)));
         assert!(!lamps_on(LightsMode::Off, Some(&night)));
+    }
+
+    fn rider_view(id: u32, parts: &[&str]) -> crate::RiderView {
+        crate::RiderView {
+            id: ocw_core::RiderId(id),
+            name: format!("r{id}"),
+            state: Default::default(),
+            power_w: 200.0,
+            cadence_rpm: None,
+            heart_rate_bpm: None,
+            is_local: id == 1,
+            bike: Default::default(),
+            look: None,
+            parts: parts.iter().map(|p| p.to_string()).collect(),
+            crash: None,
+            wobble: 0.0,
+        }
+    }
+
+    /// Q3: only bikes with lights fitted in the workshop have them.
+    #[test]
+    fn lights_come_with_the_fitted_part() {
+        assert!(has_lights(&["lights.set".into()]));
+        assert!(!has_lights(&[]));
+        assert!(!has_lights(&["lights.none.base".into()]));
+        let mut view = RideView::new(ocw_world::Route::test_loop());
+        view.sky = Some(sky_at("night"));
+        view.riders.push(rider_view(1, &[]));
+        view.riders.push(rider_view(2, &["lights.set"]));
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Mesh>()
+            .init_asset::<StandardMaterial>()
+            .insert_resource(view)
+            .insert_resource(GlobalAmbientLight::default())
+            .insert_resource(ClearColor::default())
+            .add_plugins(crate::console::ConsoleCorePlugin)
+            .add_plugins(SkyPlugin);
+        let bare = app
+            .world_mut()
+            .spawn((
+                Avatar {
+                    id: ocw_core::RiderId(1),
+                    is_local: true,
+                },
+                Transform::default(),
+                Visibility::default(),
+            ))
+            .id();
+        let fitted = app
+            .world_mut()
+            .spawn((
+                Avatar {
+                    id: ocw_core::RiderId(2),
+                    is_local: false,
+                },
+                Transform::default(),
+                Visibility::default(),
+            ))
+            .id();
+        app.update();
+        app.update();
+        let w = app.world_mut();
+        let lamps: Vec<(Visibility, Entity)> = w
+            .query_filtered::<(&Visibility, &ChildOf), With<BikeLamp>>()
+            .iter(w)
+            .map(|(v, c)| (*v, c.parent()))
+            .collect();
+        assert!(lamps.iter().any(|(_, p)| *p == bare), "spawned, hidden");
+        // Regression: the unlit lamps show their base colour, so it must
+        // be the lamp's (it was black).
+        let w = app.world_mut();
+        let handles: Vec<Handle<StandardMaterial>> = w
+            .query_filtered::<&MeshMaterial3d<StandardMaterial>, With<BikeLamp>>()
+            .iter(w)
+            .map(|m| m.0.clone())
+            .collect();
+        let mats = app.world().resource::<Assets<StandardMaterial>>();
+        assert!(!handles.is_empty());
+        for h in handles {
+            let m = mats.get(&h).unwrap();
+            assert!(
+                m.unlit && m.base_color.to_linear().red > 1.0,
+                "{:?}",
+                m.base_color
+            );
+        }
+        for (v, p) in lamps {
+            let want = if p == fitted {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            };
+            assert_eq!(v, want);
+        }
+    }
+
+    /// At night the one directional light is the moon: bluish, shadows
+    /// at full moon, no sun disc drawn at it; by day the sun.
+    #[test]
+    fn the_moon_is_the_key_light_at_night() {
+        let zone = ocw_sky::Zone::get("Europe/Vaduz").unwrap();
+        let place = ocw_sky::zone::DEFAULT_PLACE;
+        // The night of the full moon of 24 Nov 2026.
+        let (ms, _) = zone.instant((2026, 11, 25), (0, 0, 0)).unwrap();
+        let sky = ocw_sky::Sky::at(ms, &zone, place, 0.1);
+        let k = key_light(&sky, &sky.light, &sky.moonlight, false);
+        assert!(k.moon && k.shadows, "{k:?}");
+        assert!(k.lux > 0.5 && k.lux < 5.0, "{k:?}");
+        let c = k.colour.to_linear();
+        assert!(c.blue > c.red, "bluish");
+        let up = sun_direction(sky.moon.azimuth_deg, sky.moon.elevation_deg);
+        assert!((k.towards - up).length() < 1e-5 && k.towards.y > 0.5);
+        // The new moon of 9 Dec: no moon, a dark key light.
+        let (ms, _) = zone.instant((2026, 12, 9), (0, 0, 0)).unwrap();
+        let dark = ocw_sky::Sky::at(ms, &zone, place, 0.1);
+        let k = key_light(&dark, &dark.light, &dark.moonlight, true);
+        assert!(!k.moon && k.lux == 0.0 && !k.shadows, "{k:?}");
+        // Noon: the sun.
+        let noon = sky_at("noon").sky;
+        let k = key_light(&noon, &noon.light, &noon.moonlight, true);
+        assert!(!k.moon && k.lux > 10_000.0);
     }
 
     fn sky_at(elevation_target: &str) -> SkyView {
@@ -511,7 +761,7 @@ mod tests {
             is_local: true,
             bike: Default::default(),
             look: None,
-            parts: Vec::new(),
+            parts: vec!["lights.set".into()],
             crash: None,
             wobble: 0.0,
         });
@@ -568,6 +818,7 @@ mod tests {
     fn the_sky_state_drives_light_exposure_and_lamps() {
         let mut view = RideView::new(ocw_world::Route::test_loop());
         view.sky = Some(sky_at("noon"));
+        view.riders.push(rider_view(1, &["lights.set"]));
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))
             .init_asset::<Mesh>()
@@ -642,16 +893,17 @@ mod tests {
                 .all(|(v, p)| *v == Visibility::Hidden && *p == rider)
         );
         assert!(!l.iter().any(|(_, p)| *p == ghost));
-        // Night: no sun, darker exposure target (brighter EV) and lamps on.
+        // Night: no sun – only the dim light of the crescent moon (six
+        // days old, low in the west) –, darker exposure target (brighter
+        // EV) and lamps on.
         app.world_mut().resource_mut::<RideView>().sky = Some(sky_at("night"));
         app.update();
-        assert_eq!(
-            app.world()
-                .get::<DirectionalLight>(sun)
-                .unwrap()
-                .illuminance,
-            0.0
-        );
+        let night_lux = app
+            .world()
+            .get::<DirectionalLight>(sun)
+            .unwrap()
+            .illuminance;
+        assert!(night_lux < 1.0, "{night_lux}");
         assert!(
             !app.world()
                 .get::<DirectionalLight>(sun)

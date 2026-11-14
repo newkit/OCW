@@ -343,8 +343,9 @@ fn run_time(world: &mut World, args: &[&str]) -> Result<String, String> {
     };
     if cmd == TimeCommand::Show {
         let sun = ocw_sky::sun::position(ms, latlon.0, latlon.1);
+        let moon = ocw_sky::moon::position(ms, latlon.0, latlon.1);
         return Ok(format!(
-            "{} ({}, zone from the {}), {}; sun {:.1}° high, azimuth {:.0}°; set by {}",
+            "{} ({}, zone from the {}), {}; sun {:.1}° high, azimuth {:.0}°; moon {:.0} % ({}) {:.1}° high, azimuth {:.0}°; set by {}",
             long_time(&zone, ms),
             zone.id(),
             zone_from,
@@ -354,6 +355,10 @@ fn run_time(world: &mut World, args: &[&str]) -> Result<String, String> {
             }),
             sun.elevation_deg,
             sun.azimuth_deg,
+            moon.illuminated * 100.0,
+            moon.phase_name(),
+            moon.elevation_deg,
+            moon.azimuth_deg,
             control_label(clock.as_ref(), may)
         ));
     }
@@ -501,7 +506,7 @@ mod tests {
         assert_eq!(r[2].right.as_deref(), Some("time speed 10"));
         assert_eq!(r[2].left.as_deref(), Some("time pause"));
         assert_eq!(r[3].right.as_deref(), Some("time preset sunrise"));
-        assert_eq!(r[3].left.as_deref(), Some("time preset winter-solstice"));
+        assert_eq!(r[3].left.as_deref(), Some("time preset new-moon"));
         assert_eq!(r[4].confirm, Some(Activate::Command("time real".into())));
         i.preset = Some(Preset::Sunset);
         i.paused = true;

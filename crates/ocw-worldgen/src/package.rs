@@ -345,6 +345,7 @@ pub fn road_strips(
                         .collect(),
                     surface: RoadSurface::of_class(e.class),
                     dress,
+                    lit: ocw_world::RoadLit::Unknown,
                 },
             ));
         }
@@ -379,6 +380,35 @@ pub fn apply_road_surfaces(
         }
     }
     changed
+}
+
+/// Gives the road strips of `pkg` (built from `graph` with
+/// [`build_package`]) the lit state of their edge, `lit(edge)` (spec §14
+/// Phase 9 S2: OSM `lit`, section `LITR`). Returns the number of strips
+/// with a known state.
+pub fn apply_road_lit(
+    pkg: &mut WorldPackage,
+    graph: &RoadGraph,
+    lit: impl Fn(&ocw_world::graph::Edge) -> ocw_world::RoadLit,
+) -> usize {
+    let mut known = 0;
+    for (key, strips) in road_strips(graph, f64::from(pkg.tile_size_m)) {
+        let Some(tile) = pkg.tiles.get_mut(&key) else {
+            continue;
+        };
+        assert_eq!(
+            tile.roads.len(),
+            strips.len(),
+            "the package was not built from this graph"
+        );
+        for (road, (ei, _)) in tile.roads.iter_mut().zip(strips) {
+            road.lit = lit(&graph.edges[ei]);
+            if road.lit != ocw_world::RoadLit::Unknown {
+                known += 1;
+            }
+        }
+    }
+    known
 }
 
 /// Builds the package: tiles covering all roads plus `margin_tiles`, terrain

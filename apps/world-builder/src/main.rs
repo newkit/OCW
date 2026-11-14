@@ -1357,6 +1357,13 @@ fn package(args: PackageArgs) {
             .copied()
             .unwrap_or_else(|| ocw_world::RoadSurface::of_class(e.class))
     });
+    // Lit roads from OSM `lit` (section LITR, spec §14 Phase 9 S2): the
+    // client places street lamps along them (and on untagged roads in
+    // towns).
+    let way_lit = ocw_worldgen::filter::way_lit(&osm);
+    let lit = ocw_worldgen::package::apply_road_lit(&mut pkg, graph, |e| {
+        way_lit.get(&e.osm_way).copied().unwrap_or_default()
+    });
     let zone = package_time_zone(time_zone, region.origin()).unwrap_or_else(|e| {
         eprintln!("--time-zone: {e}");
         std::process::exit(2);
@@ -1367,6 +1374,9 @@ fn package(args: PackageArgs) {
     let mut area_report = vec![format!(
         "road surfaces (RSRF): {surfaced} strips differ from their category's default"
     )];
+    area_report.push(format!(
+        "lit roads (LITR): {lit} strips with an OSM `lit` tag"
+    ));
     // Lanes, markings, kerbs, sidewalks and crossings (section RDRS, Phase
     // 8 T5), on the strips as built.
     let dress = stage("road dress", || {
