@@ -76,18 +76,32 @@ pub const HIGHLIGHT_PULL: f32 = 0.7;
 /// blurred over 3 × 3 blocks).
 pub const TONE_BLOCK_M: f32 = 8.0;
 
-/// The toned colour of `rgb` (sRGB 0 … 255) where the local mean
-/// brightness is `mean` (same scale): the brightness ratio is compressed
-/// ([`SHADOW_LIFT`], [`HIGHLIGHT_PULL`]), the hue kept.
-pub fn tone(rgb: [f32; 3], mean: f32) -> [f32; 3] {
-    let y = 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2];
-    if y <= 0.5 || mean <= 0.5 {
+/// How far a shadow's colour moves towards the local ground colour, per
+/// unit of darkness (shadows are lit by the blue sky: brightened alone they
+/// stayed blue-green patches in the first Black Forest renders).
+pub const SHADOW_DECAST: f32 = 0.8;
+
+fn luma(c: [f32; 3]) -> f32 {
+    0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]
+}
+
+/// The toned colour of `rgb` (sRGB 0 … 255) where the local mean colour is
+/// `mean` (same scale): the brightness ratio to the local mean is
+/// compressed ([`SHADOW_LIFT`], [`HIGHLIGHT_PULL`]); highlights keep their
+/// hue, shadows also take on the local colour ([`SHADOW_DECAST`]).
+pub fn tone(rgb: [f32; 3], mean: [f32; 3]) -> [f32; 3] {
+    let (y, ym) = (luma(rgb), luma(mean));
+    if y <= 0.5 || ym <= 0.5 {
         return rgb;
     }
-    let t = y / mean;
+    let t = y / ym;
     let k = if t < 1.0 { SHADOW_LIFT } else { HIGHLIGHT_PULL };
     let s = t.powf(k) / t;
-    rgb.map(|c| (c * s).clamp(0.0, 255.0))
+    let lifted = rgb.map(|c| c * s);
+    let decast = SHADOW_DECAST * (1.0 - t).clamp(0.0, 1.0);
+    // The local colour at the lifted brightness.
+    let local = mean.map(|c| c * y * s / ym);
+    std::array::from_fn(|i| (lifted[i] + (local[i] - lifted[i]) * decast).clamp(0.0, 255.0))
 }
 
 /// Reads orthophoto pixels with bilinear filtering, best source first, with
@@ -359,7 +373,6 @@ fn cut_tile(
         }
         (wsum > 1e-4).then(|| acc.map(|v| v / wsum))
     };
-    let lum = |c: [f32; 3]| 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2];
     let mut tile = OrthoTile {
         weights: encode_weights(&quantise_weights(&w), corners as u32),
         chunks: BTreeMap::new(),
@@ -373,7 +386,7 @@ fn cut_tile(
                 let (gx, gz) = (cx * cpx + x, cz * cpx + z);
                 let local = mean_at(gx, gz);
                 let c = if valid[gz * tpx + gx] {
-                    Some(tone(img[gz * tpx + gx], local.map_or(0.0, lum)))
+                    Some(tone(img[gz * tpx + gx], local.unwrap_or([0.0; 3])))
                 } else {
                     // Roofs and gaps: the ground around them.
                     local
@@ -586,19 +599,27 @@ mod tests {
     use ocw_world::road_surface::RoadSurface;
 
     #[test]
-    fn toning_lifts_shadows_and_pulls_highlights_keeping_the_hue() {
-        let shadow = tone([40.0, 50.0, 30.0], 110.0);
+    fn toning_lifts_shadows_and_pulls_highlights() {
         let y = |c: [f32; 3]| 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2];
+        let grey = [110.0; 3];
+        let shadow = tone([40.0, 50.0, 30.0], grey);
         assert!(y(shadow) > y([40.0, 50.0, 30.0]) * 1.3);
         assert!(y(shadow) < 110.0);
-        // The hue: channels scale together.
-        assert!((shadow[0] / shadow[1] - 0.8).abs() < 1e-4);
-        let car = tone([250.0, 250.0, 250.0], 100.0);
-        assert!(y(car) < 240.0 && y(car) > 100.0);
+        // A blue sky-lit shadow on a green meadow takes on the meadow's
+        // colour.
+        let meadow = [90.0, 130.0, 50.0];
+        let blue = [35.0, 45.0, 60.0];
+        let s = tone(blue, meadow);
+        assert!(s[2] / s[1] < blue[2] / blue[1] * 0.7, "{s:?}");
+        assert!(y(s) > y(blue) * 1.3);
+        // Highlights (a white car) are pulled in, their hue kept.
+        let car = tone([250.0, 240.0, 230.0], [100.0; 3]);
+        assert!(y(car) < 235.0 && y(car) > 100.0);
+        assert!((car[0] / car[2] - 250.0 / 230.0).abs() < 1e-4);
         // At the local mean nothing changes.
-        let m = tone([100.0, 100.0, 100.0], 100.0);
+        let m = tone([100.0, 100.0, 100.0], [100.0; 3]);
         assert!((m[0] - 100.0).abs() < 1e-3);
-        assert_eq!(tone([0.0; 3], 100.0), [0.0; 3]);
+        assert_eq!(tone([0.0; 3], [100.0; 3]), [0.0; 3]);
     }
 
     #[test]

@@ -429,9 +429,9 @@ climb at 1.5–2.1 km) and grass beside the road roll increasingly harder
   Forest and on Tenerife), shadows and cars toned down, as JPEG chunks of
   125 m into the optional section `ORTC` (`--corridor 0` leaves it out,
   `--corridor-pixel`, `--corridor-quality`; `world-builder check` reports
-  it). The client blends it into the ground near the road (the materials
-  tinted by the photo up close, the photo itself from about 70 m, gone by
-  950 m); `display.orthophoto off` (console `ortho off`) switches it off.
+  it). The client blends it into the ground near the road (the photo's colour
+  with the materials' detail: blurred up close, sharp from about 15–120 m,
+  gone by 950 m); `display.orthophoto off` (console `ortho off`) switches it off.
 
   The sea comes from the OSM coastline: its closed rings (islands) are cut
   out of the package area, which leaves the sea as water at 0 m (`world-builder
