@@ -5,13 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Open Cycling World</title>
   <!--
-    The browser app (spec §14 Phase 10, B1 / B2). Served from target/web/ by
+    The browser app (spec §14 Phase 10, B1 – B4). Served from target/web/ by
     `make web-serve` (worlds from target/web/worlds/, `world-builder
     publish` layout). Hosting later (B8) adds the headers for wasm threads:
       Cross-Origin-Opener-Policy: same-origin
       Cross-Origin-Embedder-Policy: require-corp
     and a strict Content-Security-Policy ('wasm-unsafe-eval' for the module).
-    Options in the query string: ?route=loop&bots=3&power=250&start=1.5&name=Ada
+    Options in the query string: ?route=loop&bots=3&power=250&start=1.5&name=Ada&ftp=250
+    Devices (B4): the panel bottom right opens the browser's Web Bluetooth
+    chooser (Chrome / Edge); without Web Bluetooth it says so and the ride
+    uses virtual power.
     A world package: ?world=liechtenstein&route=vaduz-malbun (dev pages on
     localhost also: allow-unsigned=1, trust=dev, trust-root=HEX).
   -->
@@ -26,11 +29,39 @@
       font: 15px ui-monospace, SFMono-Regular, Menlo, monospace; }
     #ocw-status.error { color: #ffb4a8; background: rgba(16, 20, 26, 0.92); }
     #ocw-status[hidden] { display: none; }
+    /* The devices panel (B4; a page overlay until the menus come, B6). */
+    #ocw-devices { position: fixed; bottom: 28px; right: 12px; width: 340px;
+      padding: 10px 12px; border-radius: 6px; background: rgba(10, 13, 18, 0.78);
+      font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; line-height: 1.45; }
+    #ocw-devices[hidden], #ocw-devices-show[hidden] { display: none; }
+    #ocw-devices header { display: flex; justify-content: space-between; align-items: center;
+      font-weight: 600; margin-bottom: 6px; }
+    #ocw-devices button, #ocw-devices-show { font: inherit; color: #d8dee9; cursor: pointer;
+      background: #222a35; border: 1px solid #3b4656; border-radius: 4px; padding: 3px 7px; }
+    #ocw-devices button:hover:not(:disabled) { background: #2c3644; }
+    #ocw-devices button:disabled { opacity: 0.45; cursor: not-allowed; }
+    #ocw-devices .add { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+    #ocw-devices .dev { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #ocw-devices .on { color: #a3d9a5; } #ocw-devices .wait { color: #ebcb8b; }
+    #ocw-devices .note { color: #aab4c3; white-space: normal; margin-top: 4px; }
+    #ocw-devices .err { color: #ffb4a8; white-space: normal; margin-top: 4px; }
+    #ocw-devices-show { position: fixed; bottom: 28px; right: 12px; }
   </style>
 </head>
 <body>
   <canvas id="ocw-canvas" tabindex="0"></canvas>
   <div id="ocw-status">Loading Open Cycling World …</div>
+  <section id="ocw-devices" hidden aria-label="Devices">
+    <header><span>Devices</span><button id="ocw-devices-hide" title="Hide">×</button></header>
+    <div class="add">
+      <button data-kind="trainer">+ Trainer</button>
+      <button data-kind="power">+ Power meter</button>
+      <button data-kind="hr">+ Heart rate</button>
+    </div>
+    <div id="ocw-devices-list"></div>
+    <div id="ocw-devices-msg" class="note"></div>
+  </section>
+  <button id="ocw-devices-show" hidden>Devices</button>
   <script type="module">
     const status = document.getElementById("ocw-status");
     const fail = (msg) => { status.textContent = msg; status.className = "error"; console.error(msg); };
@@ -55,6 +86,63 @@
       console.log(`ocw-web: module started in ${(performance.now() - t0).toFixed(0)} ms`);
       // The app hides the status (or shows a world's loading screen in it).
       document.getElementById("ocw-canvas").focus();
+      devicesPanel();
+    }
+
+    // The devices panel (spec §14 Phase 10 B4): the buttons open the
+    // browser's chooser in their click handler (Web Bluetooth needs the
+    // user gesture); the list follows window.ocw.devices() (JSON).
+    function devicesPanel() {
+      const panel = document.getElementById("ocw-devices");
+      const show = document.getElementById("ocw-devices-show");
+      const list = document.getElementById("ocw-devices-list");
+      const msg = document.getElementById("ocw-devices-msg");
+      const canvas = document.getElementById("ocw-canvas");
+      const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+      const toggle = (on) => { panel.hidden = !on; show.hidden = on; canvas.focus(); };
+      document.getElementById("ocw-devices-hide").onclick = () => toggle(false);
+      show.onclick = () => toggle(true);
+      const hasBt = !!navigator.bluetooth;
+      for (const b of panel.querySelectorAll("button[data-kind]")) {
+        b.disabled = !hasBt;
+        b.onclick = () => {
+          try {
+            msg.className = "note";
+            msg.textContent = window.ocw.connectDevice(b.dataset.kind);
+          } catch (e) {
+            msg.className = "err";
+            msg.textContent = String(e);
+          }
+          const said = msg.textContent;
+          setTimeout(() => { if (msg.textContent === said) msg.textContent = ""; }, 8000);
+          canvas.focus();
+        };
+      }
+      if (!hasBt) {
+        msg.textContent = "This browser has no Web Bluetooth (Firefox, Safari, iOS): riding with virtual power (↑ / ↓, Page Up / Down). Trainers connect in Chrome or Edge.";
+      }
+      panel.hidden = false;
+      const render = () => {
+        let j;
+        try { j = JSON.parse(window.ocw.devices() || "null"); } catch (e) { j = null; }
+        if (!j) return;
+        const rows = [];
+        if (j.virtual) rows.push(`<div class="dev">○ Virtual power ${Math.round(j.virtual_w)} W</div>`);
+        for (const d of j.devices) {
+          const on = d.state === "connected";
+          const what = on ? (d.kind || "") : d.state + " …";
+          const value = d.power_w != null ? ` · ${Math.round(d.power_w)} W`
+            : d.heart_rate_bpm != null ? ` · ${Math.round(d.heart_rate_bpm)} bpm` : "";
+          rows.push(`<div class="dev ${on ? "on" : "wait"}" title="${esc(d.id)}">● ${esc(d.name)} – ${esc(what)}${value}</div>`);
+        }
+        rows.push(`<div class="dev">${esc(j.trainer)}</div>`);
+        if (!j.devices.length && j.remembered.length) {
+          rows.push(`<div class="note">Last used here: ${j.remembered.map((r) => esc(r.name)).join(", ")}</div>`);
+        }
+        if (j.bluetooth === "NoAdapter") rows.push(`<div class="err">No Bluetooth adapter (or Bluetooth is off).</div>`);
+        list.innerHTML = rows.join("");
+      };
+      setInterval(render, 500);
     }
   </script>
 </body>

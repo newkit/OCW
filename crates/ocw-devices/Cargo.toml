@@ -11,15 +11,28 @@ publish.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 uuid.workspace = true
+# The runner's streams and channels (no runtime: it runs on Tokio natively
+# and on the browser's event loop in the browser app).
+futures.workspace = true
+# `Instant` that works on wasm32 too (std's panics there).
+web-time.workspace = true
 
-# The Bluetooth LE stack (`ble`) and the virtual trainer's thread are
-# native only; on wasm32 (the browser app, spec §14 Phase 10) the crate
-# offers the device events, the GATT parsers (`gatt`) and the pure
-# protocol (`ble::protocol` comes with B4's Web Bluetooth link).
+# The btleplug Bluetooth LE stack and the virtual trainer's thread are
+# native only. On wasm32 (the browser app, spec §14 Phase 10 B4) the same
+# GATT codecs (`gatt`), protocol (`ble::protocol`) and runner run over the
+# browser's Web Bluetooth (`ble::web`).
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 btleplug.workspace = true
-futures.workspace = true
 tokio.workspace = true
+
+# Web Bluetooth: own bindings (web-sys has the Bluetooth classes only
+# behind `web_sys_unstable_apis`, a cfg for the whole build), as for
+# WebTransport in apps/web. Versions as in Cargo.lock (the wasm-bindgen
+# CLI of `make web` must match exactly; apps/web pins it).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2.130"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
 
 [dev-dependencies]
 tracing-subscriber.workspace = true

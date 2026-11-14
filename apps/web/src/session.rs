@@ -1,6 +1,8 @@
 //! The browser app's ride session without Bevy (spec §14 Phase 10, B1 /
-//! B3): the shared client loop ([`ClientCore`]) and the virtual trainer
-//! ([`FrameVirtualTrainer`]) with either the local server on the frame
+//! B3 / B4): the shared client loop ([`ClientCore`]), the devices
+//! ([`WebDevices`]: Web Bluetooth trainers and sensors, SIM / ERG, workouts)
+//! and the virtual trainer ([`FrameVirtualTrainer`], while no trainer or
+//! power meter is connected) with either the local server on the frame
 //! loop ([`FrameServer`]) or a remote game server over WebTransport
 //! ([`RemoteLink`]: the wire's [`ClientLink`] state machine with a
 //! [`Transport`] that moves its bytes – the browser's WebTransport, or a
@@ -23,6 +25,8 @@ use ocw_server::local::FrameServer;
 use ocw_server::timing::SnapshotTiming;
 use ocw_server::wire::{ClientLink, LinkStatus, server_unreliable};
 use ocw_world::Route;
+
+use crate::devices::WebDevices;
 
 /// Power of the virtual trainer at the start (W).
 pub const DEFAULT_POWER_W: f64 = 200.0;
@@ -56,6 +60,8 @@ pub struct SessionConfig {
     pub world: Option<crate::world::WorldOptions>,
     /// Ride on a remote game server instead of the local one (B3).
     pub remote: Option<RemoteOptions>,
+    /// FTP for workouts (W; page option `ftp`, B4).
+    pub ftp_w: f64,
 }
 
 impl Default for SessionConfig {
@@ -69,6 +75,7 @@ impl Default for SessionConfig {
             power_w: DEFAULT_POWER_W,
             world: None,
             remote: None,
+            ftp_w: ocw_client::workout::DEFAULT_FTP_W,
         }
     }
 }
@@ -112,6 +119,8 @@ pub struct WebSession {
     pub server: ServerLink,
     pub client: ClientCore,
     pub trainer: FrameVirtualTrainer,
+    /// Web Bluetooth devices, SIM / ERG control and workouts (B4).
+    pub devices: WebDevices,
     /// Server ticks run so far (for the start-up log and the tests; local
     /// server only).
     pub ticks: u64,
@@ -140,7 +149,7 @@ impl WebSession {
         config: &SessionConfig,
         transport: Option<Box<dyn Transport>>,
     ) -> Self {
-        match (&config.remote, transport) {
+        let session = match (&config.remote, transport) {
             (Some(remote), Some(t)) => Self::remote(
                 client,
                 remote.url.clone(),
@@ -149,17 +158,29 @@ impl WebSession {
                 config.power_w,
             ),
             _ => Self::ride(course, client, config.bots, config.start_m, config.power_w),
-        }
+        };
+        session.with_ftp(config.ftp_w)
+    }
+
+    /// FTP for workouts (W).
+    pub fn with_ftp(mut self, ftp_w: f64) -> Self {
+        self.devices.ftp_w = ftp_w;
+        self
     }
 
     /// A session on the local server.
     pub fn ride(course: Course, client: ClientCore, bots: u32, start_m: f64, power_w: f64) -> Self {
         let mut server = FrameServer::new(course, bots, start_m);
         server.send(&client.hello());
+        let devices = WebDevices::new(
+            client.effective_profile(),
+            ocw_client::workout::DEFAULT_FTP_W,
+        );
         Self {
             server: ServerLink::Local(Box::new(server)),
             client,
             trainer: FrameVirtualTrainer::new(power_w),
+            devices,
             ticks: 0,
         }
     }
@@ -174,6 +195,10 @@ impl WebSession {
         power_w: f64,
     ) -> Self {
         link.lock().expect("not poisoned").send(client.hello());
+        let devices = WebDevices::new(
+            client.effective_profile(),
+            ocw_client::workout::DEFAULT_FTP_W,
+        );
         Self {
             server: ServerLink::Remote(Box::new(RemoteLink {
                 url,
@@ -186,6 +211,7 @@ impl WebSession {
             })),
             client,
             trainer: FrameVirtualTrainer::new(power_w),
+            devices,
             ticks: 0,
         }
     }
@@ -202,15 +228,28 @@ impl WebSession {
     }
 
     /// One frame of `dt_s` seconds, at game time `now_s` (after the
-    /// frame's time step): the trainer's sample goes to the server, the
-    /// server runs its due ticks (local) or the transport moves the bytes
+    /// frame's time step): the devices' samples (or the virtual trainer's)
+    /// go to the server, SIM / ERG commands to the devices, the server
+    /// runs its due ticks (local) or the transport moves the bytes
     /// (remote), and the server's messages go to the client. Returns the
     /// notices for the console.
     pub fn frame(&mut self, dt_s: f64, now_s: f64) -> Vec<Notice> {
-        if let Some(event) = self.trainer.advance(dt_s)
-            && let Some(sample) = self.client.on_device_event(event)
-        {
+        for sample in self.devices.poll(&mut self.client) {
             self.send(&sample);
+        }
+        // The virtual trainer runs on (its set power is kept) but gives the
+        // power only while no trainer or power meter is connected.
+        if let Some(event) = self.trainer.advance(dt_s)
+            && self.devices.uses_virtual()
+        {
+            self.client.set_virtual_device(true);
+            if let Some(sample) = self.client.on_device_event(event) {
+                self.send(&sample);
+            }
+        }
+        if let Some(cmd) = self.devices.control(dt_s, now_s, &self.client) {
+            // ERG: the virtual trainer reports the target, as on the desktop.
+            self.trainer.command(cmd);
         }
         match &mut self.server {
             ServerLink::Local(s) => self.ticks += u64::from(s.advance(dt_s)),
@@ -317,7 +356,7 @@ impl WebSession {
         }
     }
 
-    /// The HUD's status line (device and steering).
+    /// The HUD's status line (devices, trainer and steering).
     pub fn status_line(&self) -> String {
         let brake = if self.client.braking() {
             " | BRAKE (up: ride on)"
@@ -325,8 +364,8 @@ impl WebSession {
             ""
         };
         format!(
-            "Virtual trainer {:.0} W | {}{brake}",
-            self.power_w(),
+            "{} | {}{brake}",
+            self.devices.status(self.power_w()),
             self.client.steering_status()
         )
     }
