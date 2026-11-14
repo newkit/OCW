@@ -5,3 +5,6 @@
 # replaces everything, this file included.
 --virtual
 --power 500
+# Show mode without collisions (spec §14 Phase 12, 12G): the show rider at
+# 500 W rides through the bots instead of bumping into them.
+--cmd "ride.collisions off"
