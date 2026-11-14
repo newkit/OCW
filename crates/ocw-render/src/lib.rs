@@ -30,6 +30,7 @@ pub mod package;
 pub mod ragdoll;
 pub mod region_look;
 pub mod riders;
+pub mod road_corners;
 pub mod road_material;
 pub mod road_mesh;
 pub mod road_style;
@@ -306,6 +307,13 @@ pub struct ExitView {
 /// [`camera::CameraInteraction`]).
 #[derive(Resource, Clone)]
 pub struct Ground(pub std::sync::Arc<dyn Fn(f64, f64) -> Option<f64> + Send + Sync>);
+
+/// The sidewalks' surface at local (x, z) as drawn (kerb included; spec
+/// §14 Phase 8 T5), `None` off them: riders beside the road (wild mode)
+/// roll up the kerb onto it instead of through it. Only with a world
+/// package.
+#[derive(Resource, Clone)]
+pub struct Pavement(pub std::sync::Arc<ocw_world::world_set::WorldPavement>);
 
 /// The drawn road surface lies this far above the road profile (the
 /// track's height, which the conformed terrain meets: the same height would

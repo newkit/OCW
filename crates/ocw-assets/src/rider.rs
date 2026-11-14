@@ -91,7 +91,16 @@ pub mod opt {
     pub const FACE_STUBBLE: &str = "face_stubble";
     pub const GLASSES_SPORT: &str = "glasses_sport";
     pub const GLASSES_ROUND: &str = "glasses_round";
+    /// The race number's paper plates on the hips (spec §14 Phase 8 T6),
+    /// on the pelvis: shown when the look has a race number.
+    pub const HIP_NUMBER: [&str; 2] = ["hip_number_l", "hip_number_r"];
 }
+
+/// The hip plates (spec §14 Phase 8 T6): (|x| of the outer face, its
+/// half thickness, centre (y, z), half size (y, z)). Outside the widest
+/// thigh (a skinsuit's) by a few millimetres: the thighs turn about the x
+/// axis, so they never cut through.
+pub const HIP_PLATE: (f32, f32, [f32; 2], [f32; 2]) = (0.178, 0.0015, [-0.035, 0.0], [0.03, 0.05]);
 
 /// A kit variant of the rider model: a catalogue item's `model` (spec 4C,
 /// `assets/parts.toml`, slot = a kit slot), and the nodes it shows.
@@ -232,6 +241,7 @@ pub fn optional() -> Vec<&'static str> {
             opt::GLASSES_SPORT,
             opt::GLASSES_ROUND,
         ])
+        .chain(opt::HIP_NUMBER)
         .collect();
     v.sort_unstable();
     v.dedup();
@@ -397,6 +407,19 @@ pub fn build(detail: Detail) -> Model {
     };
     seat(&mut p, "shorts", 0.0);
     p.attach(&mut m, pelvis);
+    // The race number's paper plates on the hips (in the shorts' slot: the
+    // gear shader draws the paper and the digits).
+    for (s, name) in opt::HIP_NUMBER.iter().enumerate() {
+        let sign = if s == 0 { -1.0 } else { 1.0 };
+        let (outer, half_t, [cy, cz], [hy, hz]) = HIP_PLATE;
+        opt_node(&mut m, name, pelvis, |p| {
+            p.slot("shorts").cuboid(
+                Vec3::new(sign * (outer - half_t), cy, cz),
+                Vec3::new(half_t, hy, hz),
+                Quat::IDENTITY,
+            );
+        });
+    }
     // The skinsuit over the shorts.
     opt_node(&mut m, opt::SUIT_PELVIS, pelvis, |p| {
         seat(p, "jersey", 0.005)

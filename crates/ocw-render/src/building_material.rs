@@ -36,9 +36,59 @@ pub struct BuildingLook {
 /// Distances (m) over which the textures and the windows fade out.
 pub const TEXTURE_FADE_M: [f32; 2] = [90.0, 320.0];
 pub const WINDOW_FADE_M: [f32; 2] = [420.0, 900.0];
-/// Emissive brightness of a lit window (physical units, scaled by the
-/// camera's exposure like the sky).
-pub const LIT_WINDOW: f32 = 60.0;
+/// Emissive brightness of the brightest lit window (physical units, scaled
+/// by the camera's exposure like the sky; [`window_light`] dims each
+/// window below it). 60 with every window the same warm white read as
+/// harsh white panes (spec §14 Phase 9, 9I-S2).
+pub const LIT_WINDOW: f32 = 26.0;
+
+fn pcg(v: u32) -> u32 {
+    let s = v.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
+    let w = ((s >> ((s >> 28) + 4)) ^ s).wrapping_mul(277_803_737);
+    (w >> 22) ^ w
+}
+
+fn unit(v: u32) -> f32 {
+    (v >> 8) as f32 / 16_777_216.0
+}
+
+/// The share of lit windows of the building with light seed `seed` at
+/// night (`houses::Paint::light_seed`): about one in eight buildings is
+/// dark, the others light 12–52 % of their windows.
+pub fn lit_share(seed: u32) -> f32 {
+    let b = unit(pcg(seed.wrapping_mul(3).wrapping_add(1)));
+    if b < 0.12 {
+        0.0
+    } else {
+        0.12 + 0.4 * (b - 0.12) / 0.88
+    }
+}
+
+/// The light behind window `(cell, storey)` of the building with light
+/// seed `seed` at night (the twin of `building.wesl`'s `window_light`,
+/// the same integer hash): linear rgb × relative brightness (0.3–1 of
+/// [`LIT_WINDOW`]), `None` when the room is dark. Mostly warm incandescent
+/// light, some warm white, a few cool LED / TV rooms – never white.
+pub fn window_light(seed: u32, cell: i32, storey: i32) -> Option<[f32; 3]> {
+    let share = lit_share(seed);
+    let key = pcg(seed
+        ^ pcg(
+            (cell as u32).wrapping_mul(2_654_435_761) ^ pcg((storey as u32).wrapping_add(40_503))
+        ));
+    if unit(key) >= share {
+        return None;
+    }
+    let hue = unit(pcg(key ^ 0x9E37_79B9));
+    let c = if hue >= 0.86 {
+        [0.62, 0.74, 1.0]
+    } else if hue >= 0.62 {
+        [1.0, 0.74, 0.5]
+    } else {
+        [1.0, 0.56, 0.26]
+    };
+    let k = 0.3 + 0.7 * unit(pcg(key ^ 0x85EB_CA6B));
+    Some(c.map(|v| v * k))
+}
 
 impl BuildingLook {
     /// The look without textures: the layers' fallback colours, the
@@ -233,6 +283,51 @@ mod tests {
         assert_eq!(l.windows[s * 4 + 1].w, 2.0);
         // Glass has its colour in the means (no texture).
         assert!(l.means[Layer::Glass as usize].x < 0.1);
+    }
+
+    /// Regression (spec §14 Phase 9, 9I-S2): lit windows were all the same
+    /// harsh warm white at 60; now per building a share of them, warm and
+    /// varied, dimmer, some buildings dark – deterministic.
+    #[test]
+    fn lit_windows_are_warm_varied_and_deterministic() {
+        let (mut lit, mut total, mut dark_buildings) = (0, 0, 0);
+        let (mut warm, mut cool) = (0, 0);
+        let mut bright = (f32::MAX, f32::MIN);
+        for seed in 0..800u32 {
+            let mut any = false;
+            for storey in 0..4 {
+                for cell in 0..6 {
+                    total += 1;
+                    let Some(c) = window_light(seed, cell, storey) else {
+                        continue;
+                    };
+                    assert_eq!(window_light(seed, cell, storey), Some(c), "deterministic");
+                    any = true;
+                    lit += 1;
+                    let max = c[0].max(c[1]).max(c[2]);
+                    let min = c[0].min(c[1]).min(c[2]);
+                    assert!(min < 0.8 * max, "never white: {c:?}");
+                    if c[0] > c[2] {
+                        warm += 1;
+                    } else {
+                        cool += 1;
+                    }
+                    bright = (bright.0.min(max), bright.1.max(max));
+                }
+            }
+            if lit_share(seed) == 0.0 {
+                assert!(!any);
+                dark_buildings += 1;
+            }
+        }
+        let share = lit as f32 / total as f32;
+        assert!((0.2..0.4).contains(&share), "{share}");
+        assert!((60..140).contains(&dark_buildings), "{dark_buildings}");
+        assert!(warm > 3 * cool && cool > 0, "{warm} warm, {cool} cool");
+        assert!(bright.0 < 0.4 && bright.1 > 0.95, "{bright:?}");
+        // Neighbouring windows differ (not whole floors at once).
+        let row: Vec<bool> = (0..40).map(|c| window_light(7, c, 1).is_some()).collect();
+        assert!(row.iter().any(|l| *l) && row.iter().any(|l| !*l), "{row:?}");
     }
 
     #[test]

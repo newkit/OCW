@@ -1691,3 +1691,79 @@ args = ["--route", "hills", "--bots", "3", "--power", "250"]
 at = ["2.4=workshop open", "3.4=workshop mirror", "5.2=workshop slot-next", "5.3=workshop slot-next", "5.4=workshop slot-next", "5.5=workshop slot-next", "5.6=workshop slot-next", "5.7=workshop slot-next", "5.8=workshop slot-next", "6.4=workshop select", "7.2=workshop right", "8.2=workshop right", "9.2=workshop right", "10.2=workshop right", "11=workshop down", "11.5=workshop right", "12=workshop right", "12.6=workshop down", "13.1=workshop right", "13.6=workshop down", "14.1=workshop right", "14.5=workshop right", "15.2=workshop down", "15.6=workshop right", "16=workshop right", "16.4=workshop right", "17=workshop down", "17.5=workshop right", "18.4=workshop select", "19.4=workshop slot-next", "19.6=workshop slot-next", "19.8=workshop slot-next", "20=workshop slot-next", "20.2=workshop slot-next", "20.4=workshop slot-next", "21.2=workshop right", "21.8=workshop down", "22.3=workshop right", "22.8=workshop down", "23.3=workshop right", "23.8=workshop down", "24.3=workshop right", "24.8=workshop down", "25.1=workshop down", "25.5=workshop right", "26.2=workshop select"]
 warmup = 2
 video = 26
+
+# --- Open items of Phase 4 4M, Phase 8 T5 / T6, Phase 9 9I-S2 (spec 3.15) ----
+# Render twice for before/after: with the build before 3.15, then with it.
+
+[[scene]]
+name = "fix-groupset-picker"
+description = "Workshop (spec 4B): the top road groupset bought and fitted – its picker card lists the race crankset, cassette and chain fitted with it (in its price and weight)"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+at = ["2=hearts.grant 9000", "2.1=workshop.buy crankset.road.power", "2.2=workshop.buy groupset.road-electronic.top", "2.6=workshop open", "3.2=workshop select", "4.2=workshop slot-next", "4.4=workshop slot-next", "4.6=workshop slot-next", "5=workshop select"]
+shot = 24
+
+[[scene]]
+name = "fix-groupset-crankset"
+description = "Workshop (spec 4B): after the power-meter crankset and then the top road groupset were bought, the crankset picker – the groupset's race crankset equipped 'with the groupset', the power crankset back among the owned parts"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+at = ["2=hearts.grant 9000", "2.1=workshop.buy crankset.road.power", "2.2=workshop.buy groupset.road-electronic.top", "2.6=workshop open", "3.2=workshop select", "4.2=workshop slot-next", "4.4=workshop slot-next", "4.6=workshop slot-next", "4.8=workshop slot-next", "5.2=workshop select"]
+shot = 24
+
+[[scene]]
+name = "fix-console-workshop"
+description = "The console opened in the workshop (spec 4M): drawn over the workshop scene, not into the small ride window"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2=workshop open", "3=console open", "3.2=workshop.parts groupset"]
+shot = 12
+
+[[scene]]
+name = "fix-carbon-stand"
+description = "Bare carbon in the workshop (spec §14 Phase 8 T6): the road bike painted bare carbon with carbon wheels and cockpit on the stand – near-black under the clear coat, the twill weave in the highlights"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+at = ["2=hearts.grant 9000", "2.1=workshop.buy wheels.road-carbon.top", "2.2=workshop.buy cockpit.road.carbon", "2.6=workshop.paint carbon", "3=workshop open", "3.6=workshop select", "5.2=workshop orbit -30", "5.6=workshop zoom 4"]
+shot = 30
+
+[[scene]]
+name = "fix-mtb-fork"
+description = "Brushed metal (spec §14 Phase 8 T6): the MTB on the stand – the fork stanchions brushed along their length, the cassette, chainring, hubs and rotors spun about their axles"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+at = ["2=bikes.select mtb --now", "2.6=workshop open", "3.2=workshop select", "5=workshop orbit 60", "5.4=workshop zoom 3"]
+shot = 30
+
+[[scene]]
+name = "fix-mtb-fork-front"
+description = "Brushed metal (spec §14 Phase 8 T6): the MTB's fork from the other side, closer – linear brushing on the stanchions, spun front hub and rotor"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+at = ["2=bikes.select mtb --now", "2.6=workshop open", "3.2=workshop select", "5=workshop orbit 120", "5.4=workshop zoom 5"]
+shot = 30
+
+[[scene]]
+name = "fix-hip-number"
+description = "Race number 42 on the hip (spec §14 Phase 8 T6): a paper plate on the pelvis that stays put and readable while the thigh pedals beside it, seen from the side"
+args = ["--route", "hills", "--bots", "0", "--power", "220"]
+at = ["1.5=kit.design --pattern stripes --jersey #E53935 --second #F2F2EE --number 42 --shorts #1E1E22", "2.5=camera.orbit 90 6 2.2"]
+shot = 9
+
+[[scene]]
+name = "fix-wild-kerb-vaduz"
+description = "Wild mode in Vaduz on the Vaduz-Malbun road (spec §14 Phase 8 T5): the rider steered off the road onto the sidewalk, seen from the road – the wheels up on the paving, not through the kerb"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "180"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=teleport 0.2", "1.5=rider.wild on", "2=rider.steer -5.5", "2=camera.orbit 70 7 4.5", "10=rider.state"]
+shot = 16
+
+[[scene]]
+name = "fix-sidewalk-corners-vaduz"
+description = "Sidewalk corners at junctions south of Vaduz centre (spec §14 Phase 8 T5): the kerbs and sidewalks round the corners on arcs instead of ending in wedges, seen from above"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2440,2148", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 165 62 34"]
+shot = 9
+
+[[scene]]
+name = "fix-sidewalk-corners-aeule"
+description = "Sidewalk corners along the Äulestrasse in Vaduz (spec §14 Phase 8 T5), raised camera"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2421,2300", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 150 55 30"]
+shot = 9

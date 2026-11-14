@@ -213,6 +213,29 @@ pub enum Residency {
     Unload(usize),
 }
 
+/// The sidewalks of a world set in home metres ([`WorldSet::pavement`]).
+#[derive(Debug, Clone, Default)]
+pub struct WorldPavement {
+    members: Vec<(Frame, crate::package::PavementIndex)>,
+}
+
+impl WorldPavement {
+    /// One package's sidewalks, in its own metres (tests, single packages).
+    pub fn from_index(ix: crate::package::PavementIndex) -> Self {
+        Self {
+            members: vec![(Frame::IDENTITY, ix)],
+        }
+    }
+
+    /// Height of the sidewalk surface at `p` (home metres), if there is one.
+    pub fn height(&self, p: [f64; 2]) -> Option<f64> {
+        self.members.iter().find_map(|(f, ix)| {
+            let q = f.invert(p);
+            ix.height(q[0], q[1])
+        })
+    }
+}
+
 /// The home package and its neighbours (see the module docs).
 #[derive(Debug, Clone)]
 pub struct WorldSet {
@@ -438,6 +461,22 @@ impl WorldSet {
         self.owner(p)
             .and_then(at)
             .or_else(|| (0..self.members.len()).find_map(at))
+    }
+
+    /// The sidewalks of the resident packages (spec §14 Phase 8 T5), for
+    /// [`WorldPavement::height`]; rebuilt when tiles stream in or out.
+    pub fn pavement(&self) -> WorldPavement {
+        WorldPavement {
+            members: self
+                .members
+                .iter()
+                .filter_map(|m| {
+                    let pkg = m.resident.as_ref()?;
+                    let ix = crate::package::PavementIndex::new(pkg);
+                    (!ix.is_empty()).then_some((m.frame, ix))
+                })
+                .collect(),
+        }
     }
 
     /// Whether member `i` draws the ground at `q` (in *its own* metres).
