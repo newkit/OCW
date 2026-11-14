@@ -387,7 +387,9 @@ microphone / the voices.
 Esc (or the gamepad's Start) opens the desktop's in-game menu: *Resume, Ride,
 World, Workshop, Navi, Settings, Captures*. The browser leaves out what it
 cannot do: Quit and Restart (close or reload the tab), routes, rides, GPX
-import, Strava and rider profiles. Every setting the browser has works as
+import, Strava and rider profiles. *Navi → Training history* and the key
+rebinding work as on the desktop (the history in `localStorage`,
+`ocw-history`). Every setting the browser has works as
 on the desktop (`set KEY VALUE`, `get`). They are kept in the site's
 `localStorage` (`ocw-settings`, the same TOML as `settings.toml`), so they
 survive reloads. Clearing the site's data resets them.
@@ -492,6 +494,33 @@ or the server and bot builds, where it needs them). Screenshots, logs and JSON s
 | Console (`help` lists the commands) | `` ` `` or F12 | |
 | Unicorn mode: fly as a unicorn / land on the road below | G | Select + North (Y / △) |
 | Unicorn mode: fly back to where you took off | Shift+G | Select + West (X / □) |
+
+**Rebinding keys and buttons** (spec §3.2.1 M9): every key and gamepad
+button of the table above except the menu (Esc / Start), the console (`` ` ``
+/ F12), the sticks and the triggers can be changed in *Settings → Controls →
+Keys and buttons*. Choose a group, then an action: Enter waits for the new
+key or pad button (Esc / Start cancel), ← / → step the key through the list.
+Two actions on one key are allowed but marked with "(!)" and a warning dot,
+and the page lists the conflicts; *Reset to defaults* puts everything back.
+Unicorn mode's flight keys (cursor keys, + / −, L) stay fixed – W A S D
+never fly. *Pad Confirm button* swaps the menu's Confirm and Back on a pad
+(east: the Nintendo layout). From the console:
+
+```text
+bind                      # all bindings and conflicts
+bind autodrive Z          # the key of an action (ids: bind lists them)
+bind u_turn LB --pad      # its gamepad button
+bind --capture camera     # the next key or button pressed
+bind --reset              # all defaults
+set keys.mute_voices Shift+N   # the same as settings ([keys], [pad] in settings.toml)
+```
+
+**Accessibility** (*Settings → Display → Accessibility*): *HUD size* (100 –
+200 %, the menu is sized by the window already), *Status colours*
+(colour-safe: blue, yellow, orange and purple instead of green to red, for
+red-green colour blindness; icons and words stay), *High-contrast HUD*
+(opaque panels, white text), *Reduced motion* (no camera shake, no
+flashing warnings) and *Camera shake*.
 
 **Unicorn mode** (spec §14 Phase 13; *World → Unicorn mode*, console `god`): the rider
 turns into a unicorn and flies freely over the world – like a plane: it always
@@ -1255,7 +1284,7 @@ video). The files carry it too: screenshots are JPEG (quality 90) with EXIF
 `tEXt` chunks `Creation Time` and `Software`); videos have `creation_time`
 (UTC) and the build in `comment` (`ffprobe -show_format`, `exiftool`).
 
-**FPS counter:** `fps on` (console), *Settings → Display* or `set display.fps
+**FPS counter:** `fps on` (console), *Settings → Display → Graphics* or `set display.fps
 on` shows a small green badge at the top right, e.g. `58 fps  max 21 ms`: the
 frames the app really drew in the last second (wall clock) and the longest of
 them. It is off for riders by default and on in every test picture and video
@@ -1308,7 +1337,20 @@ event status | event cancel | event dismiss
 
 - Every ride is recorded and saved as a FIT file when the app closes (rides of
   at least a minute) or with `ride.save`: `~/.local/share/ocw/rides/`
-  (`--record false` turns it off). The FIT file has a lap at each workout
+  (`--record false` turns it off).
+- **Training history** (spec §14 Phase 7; *Navi → Training history*): every
+  saved ride also goes into the riding rider's history,
+  `~/.local/share/ocw/history/<rider>.json`: date, world and route, distance,
+  time, climbing, average and normalized power, heart rate, kJ, hearts,
+  crashes and damage, the workout, the power curve (5 s – 60 min) and the
+  climbs. The pages show the rides (newest first; a ride's page has its
+  power curve as a chart against your bests, its climbs and *Export the FIT
+  file*, to the downloads folder), the weekly and monthly totals and your
+  personal bests. *Import saved rides* (`history.import`) adds older FIT
+  files of the rides folder. Console: `history`, `history.show N`,
+  `history.bests`, `history.export N [--to DIR]`. The browser keeps its
+  history in `localStorage` (`ocw-history`); its FIT files can be
+  downloaded again only while the page is open. The FIT file has a lap at each workout
   step (start, step change, end, stop) and at an event's start, each event
   lap and your finish, so Strava and analysis tools show them as laps.
 - Strava (optional; interim direct upload until the backend exists): create a
@@ -1399,6 +1441,12 @@ console (saved at once), or by editing the file; `get` lists them all:
 | `ride.proximity_cue` | on / off (off): a soft bell and a HUD arrow pointing at someone within 1 m beside or 2 m in front or behind (an aid; it never steers); Settings → Controls → Riding aids | at once |
 | `ride.hit_warning` | on / off (on): the "last moment" warning – an amber triangle about a second before a predicted hit and when the tyres slide on a wet road (it never steers); Settings → Controls → Riding aids | at once |
 | `display.camera_shake` | on / off (on): the chase camera shakes briefly after a crash or a hard bump (off for motion comfort; console `camera.shake`) | at once |
+| `display.ui_scale` | 100 to 200 (100): the HUD's size in % (console `ui.scale`); Settings → Display → Accessibility | at once |
+| `display.palette` | standard / colour-safe (standard): status colours for red-green colour blindness (console `ui.palette`) | at once |
+| `display.high_contrast` | on / off (off): opaque HUD panels with white text (console `ui.contrast`) | at once |
+| `display.reduced_motion` | on / off (off): no camera shake, no flashing warnings (console `ui.motion`) | at once |
+| `controls.pad_confirm` | south / east (south): the gamepad's Confirm button in the menu; Back is the other | at once |
+| `keys.<action>`, `pad.<action>` | a key name (`A`, `Up`, `PageUp`, `F5`, `Num+`, `Shift+M`, `none`) / a pad button (`South`, `East`, `North`, `West`, `LB`, `RB`, `Select`, `L3`, `R3`, `DPadUp` …, `none`): the bindings (`bind` lists the actions) | at once |
 | `ride.damage` | on / off (off): damage – hits hurt the rider and damage the bike (only with collisions on; carried over to the next ride, repairs in the workshop; in a shared ride the host decides, `ocw-server --damage`); Settings → Controls | at once |
 | `display.damage` | on / off (on): the damage indicator in the HUD (console `hud.damage`; the effects stay when hidden) | at once |
 | `weather.physics` | on / off (on): the weather changes the physics – wind, air density, wet and icy roads; the trainer gets the wind (in shared rides the host decides, in events the organiser); World → Weather → Custom | at once |
@@ -1859,6 +1907,13 @@ for now).
 | `devices.virtual` | Start an additional virtual trainer |
 | **Rides and Strava** | |
 | `ride.status` | The current recording |
+| `history` | The training history: this week, this month, the rides (numbered, newest first) |
+| `history.show N` | A ride in full (power curve, climbs) |
+| `history.bests` | Personal bests: the power curve 5 s – 60 min, the climbs |
+| `history.export N [--to DIR]` | Copy a ride's FIT file to the downloads folder (browser: download it again) |
+| `history.import` | Add the saved FIT files that are in no history yet to the riding rider's |
+| `bind [ACTION [KEY \| BUTTON --pad]] [--capture] [--reset]` | Show or change the key and button bindings |
+| `ui.scale P`, `ui.palette standard\|colour-safe`, `ui.contrast on\|off`, `ui.motion on\|off` | The accessibility options (the settings `display.*` run them) |
 | `ride.save` | End the ride, save it as FIT (and upload if Strava is linked); a new recording starts |
 | `ride.switch --route NAME \| --route-file FILE \| --world PKG [--free-ride] [--start X,Z] [--route NAME\|FILE] [--route-gpx FILE]` | Ride something else without restarting (the ride so far is saved, devices stay connected) |
 | `ride.restart` | Start the current ride again in the app (R after a switch) |

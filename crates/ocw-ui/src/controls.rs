@@ -39,12 +39,18 @@ pub fn keyboard(keys: &ButtonInput<KeyCode>) -> Pressed {
     }
 }
 
-/// One gamepad's menu buttons this frame.
-pub fn pad_state(p: &Gamepad) -> PadState {
+/// One gamepad's menu buttons this frame; `swap`: Confirm is East and
+/// Back South (setting `controls.pad_confirm east`, spec §3.2.1 M9).
+pub fn pad_state(p: &Gamepad, swap: bool) -> PadState {
+    let (confirm, back) = if swap {
+        (GamepadButton::East, GamepadButton::South)
+    } else {
+        (GamepadButton::South, GamepadButton::East)
+    };
     PadState {
         start: p.just_pressed(GamepadButton::Start),
-        south: p.just_pressed(GamepadButton::South),
-        east: p.just_pressed(GamepadButton::East),
+        south: p.just_pressed(confirm),
+        east: p.just_pressed(back),
         dpad_up: p.pressed(GamepadButton::DPadUp),
         dpad_down: p.pressed(GamepadButton::DPadDown),
         dpad_up_pressed: p.just_pressed(GamepadButton::DPadUp),
@@ -57,14 +63,16 @@ pub fn pad_state(p: &Gamepad) -> PadState {
     }
 }
 
-/// The keyboard and every gamepad, merged.
+/// The keyboard and every gamepad, merged (`swap`: the pads' Confirm and
+/// Back swapped).
 pub fn pressed<'a>(
     keys: Option<&ButtonInput<KeyCode>>,
     pads: impl IntoIterator<Item = &'a Gamepad>,
+    swap: bool,
 ) -> Pressed {
     pads.into_iter()
         .fold(keys.map(keyboard).unwrap_or_default(), |p, pad| {
-            p.merge(gamepad(pad_state(pad)))
+            p.merge(gamepad(pad_state(pad, swap)))
         })
 }
 
@@ -91,8 +99,19 @@ pub struct RidePads {
 }
 
 impl RidePads {
-    /// This frame's [`PadRide`] from `pads`.
+    /// This frame's [`PadRide`] from `pads` with the default buttons.
     pub fn read<'a>(&mut self, pads: impl IntoIterator<Item = (Entity, &'a Gamepad)>) -> PadRide {
+        self.read_bound(pads, &crate::bindings::ActiveBindings::default())
+    }
+
+    /// This frame's [`PadRide`]: "faster" and "stop" on the buttons of the
+    /// bindings (spec §3.2.1 M9; the stick and the triggers are fixed).
+    pub fn read_bound<'a>(
+        &mut self,
+        pads: impl IntoIterator<Item = (Entity, &'a Gamepad)>,
+        bindings: &crate::bindings::ActiveBindings,
+    ) -> PadRide {
+        use ocw_client::bindings::Action;
         use ocw_client::input::{pad_throttle, trigger_pull};
         let mut seen = Vec::new();
         let mut stick_x = 0.0f32;
@@ -110,8 +129,8 @@ impl RidePads {
             );
             let (pu, pd) = pad_throttle(
                 p.get(GamepadAxis::LeftStickY).unwrap_or(0.0),
-                p.pressed(GamepadButton::DPadUp),
-                p.pressed(GamepadButton::DPadDown),
+                bindings.pad_pressed(Action::Faster, [p]),
+                bindings.pad_pressed(Action::Stop, [p]),
                 rt,
                 lt,
             );
@@ -131,6 +150,23 @@ impl RidePads {
         };
         self.was = (up, down);
         out
+    }
+}
+
+/// The keyboard power's keys of this frame (bound: Faster, Stop,
+/// Power ±10 W) with the pads' throttle.
+pub fn throttle_keys(
+    b: &crate::bindings::ActiveBindings,
+    keys: &ButtonInput<KeyCode>,
+    pad: &PadRide,
+) -> ocw_client::input::ThrottleKeys {
+    use ocw_client::bindings::Action;
+    ocw_client::input::ThrottleKeys {
+        up_pressed: b.key_just_pressed(Action::Faster, keys) || pad.up_pressed,
+        up_held: b.key_pressed(Action::Faster, keys) || pad.up,
+        down_pressed: b.key_just_pressed(Action::Stop, keys) || pad.down_pressed,
+        page_up: b.key_just_pressed(Action::PowerUp, keys),
+        page_down: b.key_just_pressed(Action::PowerDown, keys),
     }
 }
 
@@ -207,9 +243,23 @@ mod tests {
     fn a_gamepad_entity_reads_its_buttons() {
         let mut pad = Gamepad::default();
         pad.digital_mut().press(GamepadButton::Start);
-        let p = pressed(None, [&pad]);
+        let p = pressed(None, [&pad], false);
         assert!(p.start);
         assert_eq!(actions(&p, 0, false), [Action::Open]);
-        assert_eq!(pad_state(&pad).stick_y, 0.0);
+        assert_eq!(pad_state(&pad, false).stick_y, 0.0);
+    }
+
+    /// M9: Confirm and Back swapped (a Nintendo layout).
+    #[test]
+    fn confirm_and_back_can_be_swapped() {
+        let mut pad = Gamepad::default();
+        pad.digital_mut().press(GamepadButton::East);
+        let p = pressed(None, [&pad], false);
+        assert_eq!(actions(&p, 0, true), [Action::Back]);
+        let p = pressed(None, [&pad], true);
+        assert_eq!(actions(&p, 0, true), [Action::Confirm]);
+        let mut pad = Gamepad::default();
+        pad.digital_mut().press(GamepadButton::South);
+        assert_eq!(actions(&pressed(None, [&pad], true), 0, true), [Action::Back]);
     }
 }

@@ -235,7 +235,7 @@ mod tests {
         assert_eq!(m.labels(), ["2026-11-11 17:30:  Hills - uploaded", "Back"]);
         assert_eq!(m.apply_with(Action::Click(0), rows_of), Effect::None);
         // GPX import: import and ride, after asking.
-        let mut m = open(&c, &[4, 2]);
+        let mut m = open(&c, &[4, 3]);
         assert_eq!(m.labels()[0], "morning.gpx:  import and ride");
         m.apply_with(Action::Click(0), rows_of);
         assert_eq!(
@@ -248,7 +248,7 @@ mod tests {
             Effect::Command("ride.import-gpx \"/home/u/Downloads/morning.gpx\" --ride".into())
         );
         // Strava: the account page (moved from Settings, which is full).
-        let m = open(&c, &[4, 3]);
+        let m = open(&c, &[4, 4]);
         assert_eq!(
             m.page(),
             Some(MenuPage::Sub(crate::settings::pages::Page::Strava))

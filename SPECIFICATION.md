@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 3.31 – November 2026
+Version 3.33 – November 2026
 
 | Version | Change |
 |---|---|
+| 3.33 | Phase 7 built in part (2026-11-14; §14 Phase 7, 7A / 7B; §3.2.1 M9): the **training history** – a local, versioned JSON history per rider profile (`<data dir>/ocw/history/<rider>.json`, the browser's `localStorage`) built from the FIT recordings (new FIT reader `ocw_fit::decode`, `history.import` for older rides): date, world, route, distance, time, climbing, average and normalized power, heart rate, kJ, hearts, crashes and damage, workout, the power curve 5 s – 60 min and the climbs; weekly and monthly totals, personal bests; *Navi → Training history* with a ride page and its power-curve chart, FIT export (`history.export N`). **M9**: one key and one gamepad button per ride action (19 actions, settings `keys.*` / `pad.*`), *Settings → Controls → Keys and buttons* (press-to-bind, conflicts marked, reset), `bind`; accessibility *Settings → Display → Accessibility*: HUD size, colour-safe status colours, high-contrast HUD, reduced motion, camera shake; the pad's Confirm / Back swap. Proposals (P7-1 … P7-9) in 7A / 7B. |
 | 3.31 | VR decisions by the user (2026-11-14; §14 Phase 11 Q7 / X1, Phase 14 Q3): **start with Oculus Link** – the Quest 1 first only as a **viewing device of the desktop app** (stereo view and head tracking from the desktop app on a Windows PC; inputs stay trainer, keys and gamepad); the **standalone VR app by sideloading only** for now (no store listing). Open: which Windows PC with a VR-capable GPU drives the Link. |
 | 3.30 | Decision from the build dashboard (2026-11-14): Phase 14 Q4 (BLE fallback: the sensor bridge / a phone relay app if direct BLE on the headset is limited) – **postponed**, decided when Phase 14 starts. |
 | 3.29 | VR headset corrected by the user (2026-11-14; §14 Phase 11 Q1 / 11C / X1, Phase 14 goal / 14A / Q1 / Q3): the development headset is an **Oculus Quest (first generation)**, not a Rift CV1 – focus on it, **all other models postponed**. PC VR through Quest Link / Air Link (Windows) and ALVR (sideloaded, also Linux with SteamVR); standalone: Snapdragon 835, 4 GB, 72 Hz – Meta's SDKs dropped the Quest 1 after v50 and the store takes no new Quest 1 apps since 31 Jan 2024, so the native build is sideloaded. New open question Phase 11 Q7: which PC drives the Quest 1 (proposal: marge with ALVR + SteamVR). |
@@ -805,8 +806,9 @@ One menu, reachable during a ride and (later) as the start screen, replaces comm
 | **Navi** | Routes | Route library: the package routes and the user's own routes with distance, climbing, elevation profile, region; ride, rename, delete | now (list) |
 | | GPX import | Pick a GPX file, region check, map matching with the problem sections highlighted, accept / cancel (§2.7); offers the missing package's download (after the ride, §4.2) | Phase 3 (with GPX import) |
 | | Rides and export | Saved rides (`rides/*.fit`): date, route, distance, time, Strava state; export as FIT / GPX, edit title and description, delete | now (list, FIT); GPX export with §2.8 |
+| | Training history (v3.33) | The rider's rides newest first with a ride page (numbers, power curve against the bests, climbs, FIT export), weekly and monthly totals, personal bests, import of older FIT files (§14 Phase 7, 7A) | done (Phase 7) |
 | | Strava sync | Per-ride sync state (uploaded / processing / failed / rejected), *Sync now*, *Retry failed* | now (interim upload, §2.8); backend upload Phase 5 |
-| **Settings** | Controls | Key and gamepad bindings (view now, rebinding later), autodrive on at start, steering sensitivity (lean rate, stick dead zone), power step (↑, PgUp/PgDn), invert camera, mouse orbit speed | now (view + options), rebinding Phase 7 |
+| **Settings** | Controls | Key and gamepad bindings (rebinding: *Keys and buttons*, M9, v3.33), autodrive on at start, unicorn mode's controls (a sub page), collisions, riding aids; later steering sensitivity (lean rate, stick dead zone), power step (↑, PgUp/PgDn), mouse orbit speed | now; rebinding done (M9) |
 | | Trainer | Devices: scan, connect, forget, the running devices with battery and signal; virtual trainer and its power; control mode SIM / ERG / off; trainer difficulty (§5.3); downhill handling; spin-down calibration where supported | now; calibration with §5.3 |
 | | Strava | Link / unlink, automatic upload on / off, account name, last result; without client credentials (§2.8 interim) a short explanation | now (interim), Phase 5 (via backend) |
 | | Audio | Mix: master, music, effects (bike, wind, ambience), voice; output device; later voice: microphone, microphone / speaker mute, spatial voice on / off | output + mix with game audio (see §3.3); voice Phase 6 |
@@ -885,8 +887,19 @@ The user asked for a *World* entry where the rider chooses the world they ride i
 | M6 | Workshop: bike and character pages with 3D preview; planned v2.53: the workshop scene, parts and hearts (§14 Phase 4, 4A–4K, milestones W1–W6) | 4 | L | configuration model and persistence (§14 Phase 4); cosmetic choices never change the physics profile; menu items → configuration; 4J |
 | M7 | Accounts / profile sync, Events (sessions, join), backend Strava, route sharing; start-screen dashboard (§2.1) | 5 (calendar 7) | L | API client against a mocked backend, disabled-page states offline, event list and join flow |
 | M8 | Voice settings (microphone device, microphone mute, speaker mute, voice volume, per-participant mute, spatial voice on / off) | 6 | S | device selection and mute state (§14 Phase 6) |
-| M9 | Rebinding of keys and buttons, accessibility (text size, colour-blind safe HUD, Confirm / Back swap per pad) | 7 | M | binding conflicts, persistence, defaults restore |
+| M9 | Rebinding of keys and buttons, accessibility (text size, colour-blind safe HUD, Confirm / Back swap per pad) – done v3.33, see *M9 implemented* | 7 | M | binding conflicts, persistence, defaults restore |
 | M10 | Input model for the whole UI (§3.2.2, v2.54): action mapper for keyboard, mouse, gamepad and touch, `ActiveInput` and device glyphs in a hint bar, touch mode (hit targets, gesture recogniser, emulated-mouse filter), ride touch overlay | 4 (with M6) | M | §3.2.2 tests: mapper, gestures, reachability of every page per device, hit-target sizes, overlay |
+
+**M9 implemented (Phase 7, v3.33):**
+
+- *Bindings* (`ocw_client::bindings`, pure; the Bevy keys and buttons in `ocw_ui::bindings`, shared by both apps): one keyboard key and one gamepad button for each of 19 ride actions – faster, stop, steer left / right, power ±10 W; autodrive, wild mode, U-turn, back to the route, junction exit left / right; camera, video, fullscreen, restart, unicorn mode; mute microphone, mute voices. They are settings of the registry (`keys.<id>`, `pad.<id>`; `[keys]` and `[pad]` of `settings.toml`, the browser's `localStorage`), so `set keys.autodrive Z`, the menu and `autoexec.cfg` share one path; the defaults are today's keys (README table). Key names are positions (US-layout names: `A`, `Up`, `PageUp`, `Num+`, `Shift+M`); a `Shift+X` binding needs Shift, and a plain `X` then does not fire with Shift held. Desktop-only actions (video, fullscreen, restart, unicorn mode) are not offered in the browser.
+- *Fixed (proposal P7-5):* Esc, \` and F12 (menu, console) and the pad's Start cannot be bound; the menu's own keys (arrows, Enter, Q / E …), the analog stick and triggers (steering, throttle, brake) and the pad's god mode chords (Select + North / West) stay; **unicorn mode's flight keys** (cursor keys, the + / − keys, L) are fixed and never W / A / S / D (Phase 13 Q3, decided).
+- *Conflicts (P7-4):* two actions on one key or button, or an action that also works in flight (camera, video, fullscreen, unicorn mode, the voice mutes) on a flight key. They are allowed – a rider swapping two keys passes through one – but marked: "(!)" in the row's value with the warning dot (▲), the list in the page's status line, the count on the Controls row, and `bind` prints them; both actions fire meanwhile.
+- *Menu:* Settings → Controls → *Keys and buttons* (`Page::Bindings`): the groups *Power and steering*, *Autodrive and junctions*, *Camera, video, app*, *Voice chat* (each a page of at most six actions), *Pad Confirm button* and *Reset to defaults* (a page that asks first). A group's row shows "key | button"; Enter waits for the new key or pad button (the status line says so; Esc / Start cancel), ← / → step the key through the list (no keyboard needed for a gamepad user). To make room on Controls (six rows), the two unicorn mode settings moved to *Controls → Unicorn mode* (desktop only, P7-8).
+- *Console:* `bind` (all bindings and conflicts), `bind ACTION KEY`, `bind ACTION BUTTON --pad`, `bind --capture ACTION`, `bind --reset`.
+- *Confirm / Back swap (P7-6):* `controls.pad_confirm south|east` – one setting for all pads (east = the Nintendo layout); per pad (by vendor id) later with the glyph sets of §3.2.2.
+- *Accessibility* (Settings → Display → *Accessibility*; the FPS counter moved to Display → Graphics to make room, P7-8): *HUD size* (`display.ui_scale` 100–200 %, Bevy's `UiScale`: the HUD's pixel sizes scale; the menu is sized in % of the window height already and stays, so every page still fits 16:9 – P7-7), *Status colours* (`display.palette standard|colour-safe`: the damage levels, the voice indicator and the workout zones take blue – yellow – orange – reddish purple twins after Okabe & Ito; icons and words stay, `ocw_render::access`), *High-contrast HUD* (`display.high_contrast`: the HUD's see-through panels opaque, grey text white), *Reduced motion* (`display.reduced_motion`: no camera shake, no flashing warning or damage flash), *Camera shake* (the existing `display.camera_shake`). Console: `ui.scale`, `ui.palette`, `ui.contrast`, `ui.motion` (what the settings run).
+- *Tests:* the bindings' defaults (= the registry's), reserved inputs, conflicts both ways, the no-WASD rule, the Shift rule, settings round trip and reset, the capture (key, Shift, Esc), the swap, the palette twins and their restore, high contrast, reduced motion and the shake; every new page in the 16:9 page-fit test.
 
 **M8 implemented (Phase 6, first increment):** Settings → Voice (`Page::Voice`, rows from `apps/desktop/src/voice/page.rs`): *Microphone* and *Speaker (voices)* toggles (`voice.mute-mic`, `voice.mute-speaker`), *Voice volume (%)*, *Participants (n)* (a sub page: each rider with "heard 40 %", "too far away", "microphone off" or "muted by you"; Confirm = `voice.mute IDENTITY`), *Devices and options* (a sub page: microphone and speaker – ← / → step through *default* and the present devices, a saved device that is missing shows "(not found: default)" –, *Spatial voice*, *Voices heard at most*) and *Voice chat* (on / off with the status). Settings: `voice.enabled`, `voice.mic_muted`, `voice.speaker_muted`, `voice.volume` (0–200 %), `voice.spatial`, `voice.max_voices` (1–20), `voice.input`, `voice.output` (device names; a new registry kind *text*). The Settings top page now has seven items (Riders, Controls, Trainer, Display, Strava, Voice, Back): the ten-foot maximum; Settings → Audio (M5) needs a slot (e.g. Strava, which is also under Navi, could leave Settings).
 
@@ -2574,14 +2587,14 @@ The first catalogue (about 30 entries; base parts at 0 ♥ for every slot and bi
 
 **Done so far (first increment, see §7 *Implementation*):** room and token management in the game server (`VoiceTokenRequest` / `VoiceGrant`, `Welcome.voice`, `Snapshot.human_riders`), the `ocw-voice` crate (always-on join logic, mute switches, spatial attenuation and nearest-N, device fallback, mixer, controller), the LiveKit backend behind the `voice` feature, hotkeys, console commands, HUD indicator, Settings → Voice (M8), the env-gated two-participant test; the echo test (an Echo rider plays the own microphone back, delayed, from its place on the road: local loopback on solo rides, an echo participant for a LiveKit server; v2.96). Open: CI with a LiveKit service, the Windows build of the feature, accounts-based identities (Phase 5).
 
-### Phase 7 – Production Readiness
+### Phase 7 – Production Readiness (training history and M9 rebinding / accessibility built, v3.33 – see 7A, 7B)
 
 - Performance optimization.
 - Large regions.
 - Weather and times of day (planned in detail as Phase 9: sky, time machine, weather machine, real weather).
-- Training history.
+- Training history (built v3.33, see 7A).
 - Events (menu: calendar, §3.2.1).
-- Key and button rebinding, accessibility (§3.2.1, M9).
+- Key and button rebinding, accessibility (§3.2.1, M9; built v3.33, see 7B).
 - Full workout and ERG support.
 - Web companion: events, routes, world packages.
 - Error monitoring.
@@ -2593,6 +2606,32 @@ The first catalogue (about 30 entries; base parts at 0 ♥ for every slot and bi
 - **Release tests:** performance tests against §15, security tests, installer and update tests per platform, hardware-in-the-loop protocol.
 
 **Result:** A release-ready indoor cycling platform on Linux, Windows and macOS.
+
+#### 7A – Training history (built 2026-11-14, v3.33)
+
+- **What a ride keeps** (`ocw_client::history::RideEntry`, pure, wasm): its id (the FIT file's stem), start, world and route, distance, elapsed and moving time, climbing, average / normalized (30 s rolling mean, fourth-power mean) / maximum power, average and maximum heart rate and cadence, work (kJ), the hearts it earned (the server's count at its end minus at its first record; 0 where hearts are not earned), crashes (the FIT crash markers), the rider's and bike's condition at the end (with damage on), the last workout ridden, its **power curve** (best mean power for 5 s, 10 s, 30 s, 1, 2, 5, 10, 20, 30 and 60 min, from the records resampled to one value a second) and its **climbs** (low point to high point with ≥ 30 m gain over ≥ 300 m at ≥ 3 %, ended where the road drops 10 m below the top: start, length, gain, gradient, time, VAM, average power).
+- **Built from the FIT recordings:** the desktop adds the entry when it saves a ride (exit, `ride.save`, a ride switch), the browser at `ride.save` (its download). Older rides: `history.import` (and the *Import saved rides* row) reads the rides folder's FIT files that are in no rider's history with the new reader `ocw_fit::decode` (normal and compressed-timestamp headers, both byte orders, developer fields skipped, CRCs checked) – marked *imported* (no hearts, damage, world or workout).
+- **Format (P7-1):** JSON, `{"format": "ocw-history", "version": 1, "rider": NAME, "rides": [...]}`, **one file per rider profile**: `<data dir>/ocw/history/<rider>.json` (the name made file-safe); the browser keeps its one anonymous rider's in `localStorage` (`ocw-history`). Fields are only added, with defaults; unknown fields are ignored; a file of a newer version is shown but never written (read-only, with a notice), a broken one is kept as it is and not overwritten. Phase 5 syncs this format to the account.
+- **Totals and bests:** weekly (Monday to Sunday) and monthly totals in local time (rides, distance, time, climbing, work, hearts); personal bests: the power curve's best per duration with its ride and date, the biggest climb (most gain) and the fastest climbing (highest VAM), the longest ride, the most climbing in a ride (P7-3: best times on a *named* climb need named segments in the world data, later).
+- **Menu (Navi → Training history,** both apps): *Rides* (newest first, paged; a ride's page: the date, world and route, its numbers, the **power curve as a bar chart against the personal bests** – `ocw_render::menu::MenuChart`, bars this ride, lines the bests, the bars that are bests highlighted –, *Climbs* and *Export the FIT file*), *This week* / *This month* (the lists of weeks and months), *Personal bests* (the best power curve as a chart, 5 s and 20 min, the climbs), *Import saved rides* (desktop). Every page keeps the six-row limit and fits 16:9 with its chart.
+- **Export (P7-2):** the desktop copies the ride's FIT file to the downloads folder (`history.export N [--to DIR]`, `ocw-ride-<start>.fit`); the browser downloads it again – only for the rides of the page's session, since `localStorage` keeps the entries but not the FIT files (OPFS later).
+- **Console:** `history` (totals and the rides, numbered), `history.show N`, `history.bests`, `history.export N [--to DIR]`, `history.import`.
+- **Tests:** best mean power and the curve, NP, gaps, climbs, an entry's numbers, order and replacement by id, weekly / monthly totals across a time zone, bests and ties, the format's round trip, unknown fields, a newer version read-only, the FIT reader round trip, compressed timestamps, big-endian and developer fields, broken files; the pages' rows, text, status and chart; the commands.
+- **Open:** the sync to the account (Phase 5), a ride's laps and map, deleting rides from the history, FIT files in the browser (OPFS).
+
+#### 7B – Rebinding and accessibility (M9, built 2026-11-14, v3.33)
+
+Built as §3.2.1 *M9 implemented* describes. Proposals taken where the spec gave no decision (conservative defaults; for the user to confirm):
+
+- **P7-1** history format and place: one JSON file per rider profile, versioned (7A).
+- **P7-2** the browser re-downloads a ride's FIT file only within the page's session.
+- **P7-3** climb bests: biggest gain and best VAM, not times per named climb.
+- **P7-4** conflicts allowed and marked, not refused.
+- **P7-5** fixed: menu and console keys, sticks and triggers, the pad's Start and god chords, unicorn mode's flight keys (no WASD).
+- **P7-6** the Confirm / Back swap is one setting for all pads.
+- **P7-7** *HUD size* scales the HUD only (the menu is window-sized).
+- **P7-8** room on the six-row pages: unicorn mode's controls a sub page of Controls, the FPS counter under Display → Graphics.
+- **P7-9** one key and one button per action (no second key); the key names are layout-independent positions.
 
 ### Phase 8 – Textures and Regional Look (planning, 2026-11-12; T1 – T7 done, T3 complete with forest type v3.20, T4 open items v3.26; open: real 3D building data, Q8 postponed)
 

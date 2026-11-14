@@ -27,7 +27,7 @@ use ocw_render::RideView;
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
 use ocw_render::menu::ride_input;
 use ocw_render::voice::VoiceHud;
-use ocw_voice::hotkeys::{Input, Toggle};
+use ocw_voice::hotkeys::Toggle;
 use ocw_voice::{MuteState, VoiceBackend, VoiceController, VoiceSettings};
 
 use crate::plugin::Session;
@@ -124,28 +124,15 @@ fn default_backend() -> Box<dyn VoiceBackend> {
 
 /// `M` / `Shift+M` and the gamepad's Select / R3 (the browser's Gamepad
 /// API through Bevy's gilrs, B6) → the mute commands, as on the desktop.
+/// The keys and buttons are the bindings' (spec §3.2.1 M9).
 fn hotkeys(
     keys: Option<Res<ButtonInput<KeyCode>>>,
     pads: Query<&Gamepad>,
+    bindings: Option<Res<ocw_ui::bindings::ActiveBindings>>,
     mut console: ResMut<ConsoleState>,
 ) {
-    let mut inputs = Vec::new();
-    if let Some(k) = keys
-        && k.just_pressed(KeyCode::KeyM)
-    {
-        let shift = k.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
-        inputs.push(Input::KeyM { shift });
-    }
-    for pad in &pads {
-        if pad.just_pressed(GamepadButton::Select) {
-            inputs.push(Input::PadSelect);
-        }
-        if pad.just_pressed(GamepadButton::RightThumb) {
-            inputs.push(Input::PadRightStick);
-        }
-    }
-    for c in shared::hotkey_commands(inputs) {
-        console.queue(c);
+    for t in ocw_ui::bindings::voice_toggles(bindings.as_deref(), keys.as_deref(), pads.iter()) {
+        console.queue(t.command());
     }
 }
 

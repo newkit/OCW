@@ -93,6 +93,34 @@ pub enum Page {
     /// Navi → Riders in this ride (spec §14 Phase 13E, 12F; rows from
     /// `rider_list`): who rides, where, who flies, who is hurt.
     RiderList,
+    /// Controls → Unicorn mode: invert the mouse, plane or hover (the
+    /// Controls page is full; desktop only).
+    UnicornControls,
+    /// Controls → Keys and buttons (spec §3.2.1 M9): the groups, the pad's
+    /// Confirm button, reset.
+    Bindings,
+    /// One group of bindings (index into `bindings::Group::ALL`).
+    BindGroup(usize),
+    /// Keys and buttons → Reset to defaults (asks first).
+    BindReset,
+    /// Display → Accessibility (M9): HUD size, status colours, contrast,
+    /// reduced motion, camera shake.
+    Accessibility,
+    /// Navi → Training history (spec §14 Phase 7; rows from
+    /// `menu::history`): rides, totals, personal bests.
+    History,
+    /// The rides, newest first.
+    HistoryRides,
+    /// One ride (index: 0 = the newest) with its power curve.
+    HistoryRide(usize),
+    /// The climbs of a ride.
+    HistoryClimbs(usize),
+    /// Weekly totals.
+    HistoryWeeks,
+    /// Monthly totals.
+    HistoryMonths,
+    /// Personal bests: the power curve and the climbs.
+    HistoryBests,
 }
 
 impl Page {
@@ -144,6 +172,20 @@ impl Page {
             Self::RidingAids => "Riding aids",
             Self::Graphics => "Graphics",
             Self::RiderList => "Riders in this ride",
+            Self::UnicornControls => "Unicorn mode controls",
+            Self::Bindings => "Keys and buttons",
+            Self::BindGroup(g) => crate::bindings::Group::ALL
+                .get(g)
+                .map_or("Keys", |g| g.label()),
+            Self::BindReset => "Reset keys and buttons?",
+            Self::Accessibility => "Accessibility",
+            Self::History => "Training history",
+            Self::HistoryRides => "Rides",
+            Self::HistoryRide(_) => "Ride",
+            Self::HistoryClimbs(_) => "Climbs of the ride",
+            Self::HistoryWeeks => "Weekly totals",
+            Self::HistoryMonths => "Monthly totals",
+            Self::HistoryBests => "Personal bests",
         }
     }
 
@@ -194,6 +236,30 @@ impl Page {
         }
     }
 
+    /// The training history's pages (rows from `menu::history`).
+    pub fn is_history_page(self) -> bool {
+        matches!(
+            self,
+            Self::History
+                | Self::HistoryRides
+                | Self::HistoryRide(_)
+                | Self::HistoryClimbs(_)
+                | Self::HistoryWeeks
+                | Self::HistoryMonths
+                | Self::HistoryBests
+        )
+    }
+
+    /// The Keys and buttons pages (rows from [`binding_rows`]).
+    pub fn is_binding_page(self) -> bool {
+        matches!(self, Self::Bindings | Self::BindGroup(_) | Self::BindReset)
+    }
+
+    /// Whether `platform` has this page (the browser has no unicorn mode).
+    pub fn on(self, platform: super::model::Platform) -> bool {
+        !(platform == super::model::Platform::Browser && self == Self::UnicornControls)
+    }
+
     /// The voice pages (rows from `voice::page`).
     pub fn is_voice_page(self) -> bool {
         matches!(
@@ -212,8 +278,9 @@ impl Page {
             Self::WorldSource(_) => Some(Self::WorldSources),
             Self::VoiceDevices | Self::VoiceParticipants => Some(Self::Voice),
             Self::AudioVoice => Some(Self::Audio),
-            Self::RidingAids => Some(Self::Controls),
-            Self::Graphics => Some(Self::Display),
+            Self::RidingAids | Self::UnicornControls | Self::Bindings => Some(Self::Controls),
+            Self::BindGroup(_) | Self::BindReset => Some(Self::Bindings),
+            Self::Graphics | Self::Accessibility => Some(Self::Display),
             _ => None,
         }
     }
@@ -296,6 +363,26 @@ impl Page {
             Self::Workouts => &[
                 "Structured workouts in ERG mode: yours from the workouts folder (.toml, .erg, .mrc), then the examples. % FTP targets use the rider's FTP.",
             ],
+            Self::UnicornControls => &[
+                "Unicorn mode flies with the cursor keys and + / - (never W A S D), or the gamepad.",
+            ],
+            Self::Bindings => &[
+                "One key and one gamepad button per action. The menu keys, the sticks, the triggers and unicorn mode's flight keys stay fixed.",
+            ],
+            Self::BindGroup(_) => &[
+                "Enter: press the new key or button (Esc / Start: cancel). Left / Right: step through the keys.",
+            ],
+            Self::BindReset => &["Every key and button back to its default. Back keeps them."],
+            Self::Accessibility => &[
+                "Status colours always come with an icon and a word. Reduced motion: no camera shake, no flashing warnings.",
+            ],
+            Self::History => &[
+                "Your rides (this rider profile), the totals by week and month and your personal bests. Kept on this device.",
+            ],
+            Self::HistoryRides => &["Newest first. Choose one for its details and power curve."],
+            Self::HistoryRide(_) | Self::HistoryClimbs(_) => &[],
+            Self::HistoryWeeks | Self::HistoryMonths => &[],
+            Self::HistoryBests => &[],
         }
     }
 }
@@ -560,6 +647,144 @@ fn aids_summary(settings: &Settings) -> String {
     }
 }
 
+/// The Accessibility row's value: what is on ("125 %, colour-safe").
+fn access_summary(settings: &Settings) -> String {
+    let get = |k: &str| settings.get(k).map(|v| v.to_string()).unwrap_or_default();
+    let mut out = Vec::new();
+    if get("display.ui_scale") != "100" {
+        out.push(format!("{} %", get("display.ui_scale")));
+    }
+    if get("display.palette") != "standard" {
+        out.push(get("display.palette"));
+    }
+    if get("display.high_contrast") == "on" {
+        out.push("contrast".into());
+    }
+    if get("display.reduced_motion") == "on" {
+        out.push("less motion".into());
+    }
+    if out.is_empty() {
+        "standard".into()
+    } else {
+        out.join(", ")
+    }
+}
+
+/// The Keys and buttons row's value: "defaults", "changed", "2 conflicts".
+pub fn bindings_summary(settings: &Settings, desktop: bool) -> String {
+    let b = crate::bindings::Bindings::from_settings(settings);
+    let n = b.conflicts(desktop).len();
+    match n {
+        0 if b.is_default() => "defaults".into(),
+        0 => "changed".into(),
+        1 => "1 conflict".into(),
+        n => format!("{n} conflicts"),
+    }
+}
+
+/// The rows of the Keys and buttons pages (spec §3.2.1 M9): the groups,
+/// the pad's Confirm button and reset; a group's actions, each "key |
+/// button" – ← / → step the key, Confirm waits for the new key or button
+/// (`bind --capture ID`); `desktop`: the platform has the desktop's
+/// actions (the browser leaves those out).
+pub fn binding_rows(page: Page, settings: &Settings, desktop: bool) -> Vec<Row> {
+    use crate::bindings::{
+        ACTIONS, Bindings, Device, Group, KEY_CHOICES, key_label, pad_label, step_choice,
+    };
+    let b = Bindings::from_settings(settings);
+    let conflicts = b.conflicts(desktop);
+    match page {
+        Page::Bindings => {
+            let mut out: Vec<Row> = Group::ALL
+                .iter()
+                .enumerate()
+                .map(|(i, g)| {
+                    let n = conflicts
+                        .iter()
+                        .filter(|c| c.action.def().group == *g)
+                        .count();
+                    let actions = ACTIONS
+                        .iter()
+                        .filter(|d| d.group == *g && (desktop || !d.desktop_only))
+                        .count();
+                    open_row(
+                        g.label(),
+                        Some(match n {
+                            0 => format!("{actions} actions"),
+                            1 => "1 conflict".into(),
+                            n => format!("{n} conflicts"),
+                        }),
+                        Page::BindGroup(i),
+                    )
+                })
+                .collect();
+            out.push(setting_row(
+                settings,
+                "controls.pad_confirm",
+                "Pad Confirm button",
+            ));
+            out.push(open_row(
+                "Reset to defaults",
+                Some(if b.is_default() {
+                    "nothing changed".into()
+                } else {
+                    "changed".into()
+                }),
+                Page::BindReset,
+            ));
+            out
+        }
+        Page::BindGroup(g) => {
+            let Some(group) = Group::ALL.get(g) else {
+                return Vec::new();
+            };
+            ACTIONS
+                .iter()
+                .filter(|d| d.group == *group && (desktop || !d.desktop_only))
+                .map(|d| {
+                    let key = b.key(d.action);
+                    let pad = b.pad(d.action);
+                    let marked = |dev| {
+                        if conflicts
+                            .iter()
+                            .any(|c| c.action == d.action && c.device == dev)
+                        {
+                            " (!)"
+                        } else {
+                            ""
+                        }
+                    };
+                    let set = |dir| {
+                        format!(
+                            "set keys.{} {}",
+                            d.id,
+                            step_choice(KEY_CHOICES, key, dir)
+                        )
+                    };
+                    Row {
+                        label: d.label.into(),
+                        value: Some(format!(
+                            "{}{} | {}{}",
+                            key_label(key),
+                            marked(Device::Key),
+                            pad_label(pad),
+                            marked(Device::Pad)
+                        )),
+                        left: Some(set(-1)),
+                        right: Some(set(1)),
+                        confirm: Some(Activate::Command(format!("bind --capture {}", d.id))),
+                    }
+                })
+                .collect()
+        }
+        Page::BindReset => vec![Row::action(
+            "Reset all keys and buttons",
+            "bind --reset",
+        )],
+        _ => Vec::new(),
+    }
+}
+
 /// A rider edit command line: `riders.edit "NAME" ARGS`.
 fn edit(name: &str, args: &str) -> String {
     format!("riders.edit \"{name}\" {args}")
@@ -767,12 +992,21 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         Page::Audio => audio_rows(settings, &AudioDevices::default()),
         Page::Controls => vec![
             setting_row(settings, "controls.autodrive", "Autodrive at the start"),
-            setting_row(
-                settings,
-                "controls.invert_y",
-                "Unicorn mode: invert mouse Y",
+            // Rebinding (M9) and the unicorn's controls have their own
+            // pages (the ten-foot rule: six rows).
+            open_row(
+                "Keys and buttons",
+                Some(bindings_summary(settings, true)),
+                Page::Bindings,
             ),
-            setting_row(settings, "controls.god_flight", "Unicorn mode: flight"),
+            open_row(
+                "Unicorn mode",
+                settings
+                    .get("controls.god_flight")
+                    .ok()
+                    .map(|v| v.to_string()),
+                Page::UnicornControls,
+            ),
             // Collisions (spec §14 Phase 12A, 12D).
             setting_row(settings, "ride.collisions", "Collisions"),
             setting_row(settings, "ride.chaotic_bots", "Chaotic bots"),
@@ -785,6 +1019,28 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
                 confirm: Some(Activate::Open(Page::RidingAids)),
             },
         ],
+        Page::UnicornControls => vec![
+            setting_row(settings, "controls.invert_y", "Invert mouse Y"),
+            setting_row(settings, "controls.god_flight", "Flight"),
+        ],
+        Page::Bindings | Page::BindGroup(_) | Page::BindReset => {
+            binding_rows(page, settings, true)
+        }
+        Page::Accessibility => vec![
+            setting_row(settings, "display.ui_scale", "HUD size (%)"),
+            setting_row(settings, "display.palette", "Status colours"),
+            setting_row(settings, "display.high_contrast", "High-contrast HUD"),
+            setting_row(settings, "display.reduced_motion", "Reduced motion"),
+            setting_row(settings, "display.camera_shake", "Camera shake"),
+        ],
+        // From the training history (`menu::history`).
+        Page::History
+        | Page::HistoryRides
+        | Page::HistoryRide(_)
+        | Page::HistoryClimbs(_)
+        | Page::HistoryWeeks
+        | Page::HistoryMonths
+        | Page::HistoryBests => Vec::new(),
         Page::RidingAids => vec![
             setting_row(settings, "ride.proximity_cue", "Proximity arrow and bell"),
             setting_row(settings, "ride.hit_warning", "Last-moment warning"),
@@ -817,8 +1073,13 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
             setting_row(settings, "display.hud", "HUD"),
             setting_row(settings, "display.units", "Units"),
             setting_row(settings, "display.camera", "Camera"),
-            setting_row(settings, "display.fps", "FPS counter"),
             setting_row(settings, "display.night_brightness", "Night brightness (%)"),
+            // M9 (the FPS counter moved to Graphics: six rows).
+            open_row(
+                "Accessibility",
+                Some(access_summary(settings)),
+                Page::Accessibility,
+            ),
             // The quality preset has its own page (spec §14 Phase 10 B7;
             // the ten-foot rule: six rows), with fullscreen and the sky.
             Row {
@@ -832,6 +1093,7 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         Page::Graphics => vec![
             setting_row(settings, "display.quality", "Quality"),
             setting_row(settings, "display.sky", "Sky"),
+            setting_row(settings, "display.fps", "FPS counter"),
             setting_row(settings, "display.fullscreen", "Fullscreen (next start)"),
         ],
         Page::Riders => {

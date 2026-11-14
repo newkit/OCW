@@ -20,10 +20,13 @@ ocw-sky.workspace = true
 ocw-weather.workspace = true
 ocw-render.workspace = true
 ocw-client.workspace = true
+# The voice hotkeys' toggles (pure, wasm-safe without its livekit feature).
+ocw-voice.workspace = true
 bevy.workspace = true
 clap.workspace = true
 
 [dev-dependencies]
+ocw-fit.workspace = true
 ocw-world.workspace = true
 ocw-server.workspace = true
 

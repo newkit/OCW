@@ -11,16 +11,21 @@
 //!   weather into the view and the menu, `time` / `weather …`,
 //! - [`collisions`], [`events`]: the ride's rules and local events,
 //! - [`riders_page`]: Navi → Riders in this ride,
-//! - [`controls`]: the Bevy input of the menu.
+//! - [`controls`]: the Bevy input of the menu, [`bindings`]: the
+//!   rebindable ride keys and buttons (M9), [`access`]: the accessibility
+//!   options, [`history`]: the training history (spec §14 Phase 7).
 //!
 //! The apps differ in how they hold the ride: the desktop has
 //! `ClientState` and a `Link` to its server, the browser a `WebSession`.
 //! [`RideAccess`] is the one seam: how the shared code reaches the
 //! [`ClientCore`] and sends messages to the server.
 
+pub mod access;
+pub mod bindings;
 pub mod collisions;
 pub mod controls;
 pub mod events;
+pub mod history;
 pub mod menu;
 pub mod quality;
 pub mod riders_page;

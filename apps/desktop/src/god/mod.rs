@@ -172,15 +172,20 @@ fn god_keys(
     link: Res<Link>,
     mut client: ResMut<ClientState>,
     mut console: ResMut<ConsoleState>,
+    bindings: Option<Res<ocw_ui::bindings::ActiveBindings>>,
 ) {
     if !ocw_render::menu::ride_input(context) {
         return;
     }
+    use ocw_client::bindings::Action;
     let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     let select = pads.iter().any(|p| p.pressed(GamepadButton::Select));
     let pressed = |b| pads.iter().any(|p| p.just_pressed(b));
+    // G and C, or their bound keys (spec §3.2.1 M9); the pad's chords
+    // stay fixed.
+    let bound = |a| ocw_ui::bindings::key_just_pressed(bindings.as_deref(), a, &keys);
     let key = input::god_key(
-        keys.just_pressed(KeyCode::KeyG),
+        bound(Action::GodMode),
         shift,
         select,
         pressed(GamepadButton::North),
@@ -199,7 +204,7 @@ fn god_keys(
             Err(e) => console.print(e),
         }
     }
-    if keys.just_pressed(KeyCode::KeyC) && client.0.god().active() {
+    if bound(Action::Camera) && client.0.god().active() {
         let fp = client.0.god_mut().toggle_first_person();
         info!(
             "unicorn mode: {} view",

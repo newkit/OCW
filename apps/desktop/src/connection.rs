@@ -490,9 +490,10 @@ pub(crate) fn update_view(
     client: Res<ClientState>,
     link: Res<LinkNotice>,
     session: Option<Res<SessionStart>>,
-    (loading, shake): (
+    (loading, shake, access): (
         Option<Res<crate::ride::Loading>>,
         Option<Res<crate::camera_path::CameraShake>>,
+        Option<Res<ocw_render::access::Accessibility>>,
     ),
     mut view: ResMut<RideView>,
 ) {
@@ -508,7 +509,8 @@ pub(crate) fn update_view(
             link: link.0.as_deref(),
             loading: loading.as_ref().and_then(|l| l.0.as_deref()),
         },
-        shake.is_none_or(|s| s.0),
+        // Reduced motion (spec §3.2.1 M9): no shake.
+        shake.is_none_or(|s| s.0) && !access.is_some_and(|a| a.reduced_motion),
     );
 }
 

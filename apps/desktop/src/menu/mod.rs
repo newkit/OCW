@@ -152,6 +152,21 @@ mod tests {
             RidingAids,
             Graphics,
             RiderList,
+            UnicornControls,
+            Bindings,
+            BindGroup(0),
+            BindGroup(1),
+            BindGroup(2),
+            BindGroup(3),
+            BindReset,
+            Accessibility,
+            History,
+            HistoryRides,
+            HistoryRide(0),
+            HistoryClimbs(0),
+            HistoryWeeks,
+            HistoryMonths,
+            HistoryBests,
         ];
         for p in &all {
             match p {
@@ -160,7 +175,10 @@ mod tests {
                 | WorldInfo | WorldSun | WorldSources | WorldSource(_) | Weather | Routes
                 | Rides | GpxImport | Workouts | Voice | VoiceDevices | VoiceParticipants
                 | AudioVoice | TimeMachine | WeatherPresets | WeatherCustom | WeatherAir
-                | WeatherReal | RidingAids | Graphics | RiderList => {}
+                | WeatherReal | RidingAids | Graphics | RiderList | UnicornControls | Bindings
+                | BindGroup(_) | BindReset | Accessibility | History | HistoryRides
+                | HistoryRide(_) | HistoryClimbs(_) | HistoryWeeks | HistoryMonths
+                | HistoryBests => {}
             }
         }
         all
@@ -217,6 +235,14 @@ mod tests {
                     .iter()
                     .map(|c| c.label.clone())
                     .collect(),
+                // The pages with a chart have fixed rows: a ride's (climbs,
+                // export, Back) and the bests (four and Back).
+                Page::Sub(settings_pages::Page::HistoryRide(_)) => (0..3)
+                    .map(|i| format!("Setting {i}:  < some value >"))
+                    .collect(),
+                Page::Sub(settings_pages::Page::HistoryBests) => (0..5)
+                    .map(|i| format!("Setting {i}:  < some value >"))
+                    .collect(),
                 // A full page of a paged list: rows, Previous, Next, Back.
                 Page::Sub(_) => (0..model::MAX_ITEMS)
                     .map(|i| format!("Setting {i}:  < some value >"))
@@ -229,8 +255,33 @@ mod tests {
                     .map(|i| i.label.to_string())
                     .collect(),
             };
-            // The longest dynamic text a page gets: the OSM notice.
+            // The longest dynamic text a page gets: the OSM notice; a ride
+            // of the training history: its numbers and the power curve.
             let catalog = RideCatalog(crate::ride::world::tests::catalog());
+            let history_text = match page {
+                Page::Sub(settings_pages::Page::HistoryRide(_)) => vec![
+                    "142.3 km in 10:22:05 (moving 10:20:11), 2512 m up, 4060 kJ, 1328 hearts.".to_string(),
+                    "Power 215 W, NP 231 W, max 1640 W; heart rate 142 / 171 bpm; 12 crashes; rider 92 %, bike 88 %; workout: Over-unders with a long n...".to_string(),
+                ],
+                _ => Vec::new(),
+            };
+            let chart = match page {
+                Page::Sub(settings_pages::Page::HistoryRide(_) | settings_pages::Page::HistoryBests) => {
+                    Some(ocw_render::menu::MenuChart {
+                        caption: "Power curve (W): bars this ride, lines your best".into(),
+                        bars: (0..10)
+                            .map(|i| ocw_render::menu::ChartBar {
+                                label: "60m".into(),
+                                value: 1.0 - i as f32 * 0.05,
+                                text: "1240".into(),
+                                mark: Some(1.0),
+                                best: false,
+                            })
+                            .collect(),
+                    })
+                }
+                _ => None,
+            };
             check(MenuView {
                 open: true,
                 title: def.title.into(),
@@ -240,6 +291,12 @@ mod tests {
                         .map(|f| crate::weather::status(p, &weather, f))
                         .max_by_key(|s| s.len())
                         .unwrap(),
+                    Page::Sub(settings_pages::Page::HistoryRide(_)) => {
+                        "Sat 14 Nov 2026 10:05   Black Forest - north - Route to the Feldberg".into()
+                    }
+                    Page::Sub(settings_pages::Page::BindGroup(_)) => {
+                        "Conflict: V: Camera and Video recording; L: Camera and unicorn mode's flight keys".into()
+                    }
                     _ => String::new(),
                 },
                 text: def
@@ -247,6 +304,7 @@ mod tests {
                     .iter()
                     .map(|&s| s.to_owned())
                     .chain(page_text(page, Some(&catalog), Some(&weather)))
+                    .chain(history_text)
                     .collect(),
                 items,
                 focused: 0,
@@ -254,6 +312,7 @@ mod tests {
                 dimmed: Vec::new(),
                 grid,
                 marks: Vec::new(),
+                chart,
             });
         }
     }

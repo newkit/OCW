@@ -48,7 +48,7 @@ WORLDS = {
 DEFAULT_WORLD = "liechtenstein"
 SCENE_KEYS = {
     "name", "description", "world", "args", "cmds", "at", "shot", "video",
-    "warmup", "riders", "max_video_mb", "pick",
+    "warmup", "riders", "history", "max_video_mb", "pick",
 }
 
 
@@ -177,6 +177,11 @@ def run_scene(scene: dict, world: Path | None, out: Path, mode: str) -> bool:
         os.makedirs(env["OCW_CONFIG_DIR"])
         if scene.get("riders"):
             Path(env["OCW_CONFIG_DIR"], "riders.toml").write_text(scene["riders"])
+        if scene.get("history"):
+            # The default rider's training history (spec §14 Phase 7).
+            hist = Path(env["OCW_DATA_DIR"], "history")
+            hist.mkdir(parents=True, exist_ok=True)
+            (hist / "rider.json").write_text(Path(ROOT, scene["history"]).read_text())
         for kind in scene["kinds"]:
             suffix = "" if mode == "x11" else "-wayland"
             if kind == "shot":

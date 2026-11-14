@@ -1,0 +1,597 @@
+{
+ "format": "ocw-history",
+ "version": 1,
+ "rider": "Rider",
+ "rides": [
+  {
+   "id": "2026-11-02_18-00-00",
+   "start_unix_s": 1793642400,
+   "world": "Liechtenstein",
+   "route": "Vaduz - Malbun",
+   "distance_m": 21400.0,
+   "elapsed_s": 4500.0,
+   "moving_s": 4460.0,
+   "ascent_m": 1180.0,
+   "avg_power_w": 191.1,
+   "np_w": 204.5,
+   "max_power_w": 882.0,
+   "avg_hr_bpm": 141.0,
+   "max_hr_bpm": 172.0,
+   "avg_cadence_rpm": 88.0,
+   "work_kj": 860.0,
+   "hearts": 160,
+   "crashes": 0,
+   "power_curve": [
+    {
+     "s": 5,
+     "w": 869.3
+    },
+    {
+     "s": 10,
+     "w": 780.4
+    },
+    {
+     "s": 30,
+     "w": 532.8
+    },
+    {
+     "s": 60,
+     "w": 393.1
+    },
+    {
+     "s": 120,
+     "w": 323.4
+    },
+    {
+     "s": 300,
+     "w": 265.9
+    },
+    {
+     "s": 600,
+     "w": 244.0
+    },
+    {
+     "s": 1200,
+     "w": 233.2
+    },
+    {
+     "s": 1800,
+     "w": 233.4
+    },
+    {
+     "s": 3600,
+     "w": 224.2
+    }
+   ],
+   "climbs": [
+    {
+     "start_m": 1200.0,
+     "length_m": 12840.0,
+     "gain_m": 967.6,
+     "time_s": 2700.0,
+     "avg_power_w": 220.5
+    },
+    {
+     "start_m": 14980.0,
+     "length_m": 2400.0,
+     "gain_m": 96.0,
+     "time_s": 540.0,
+     "avg_power_w": 249.9
+    }
+   ],
+   "fit": "2026-11-02_18-00-00.fit"
+  },
+  {
+   "id": "2026-11-04_07-00-00",
+   "start_unix_s": 1793775600,
+   "world": "Black Forest - north",
+   "route": "Free ride",
+   "distance_m": 48200.0,
+   "elapsed_s": 6120.0,
+   "moving_s": 6080.0,
+   "ascent_m": 610.0,
+   "avg_power_w": 179.4,
+   "np_w": 192.0,
+   "max_power_w": 828.0,
+   "avg_hr_bpm": 142.0,
+   "max_hr_bpm": 172.0,
+   "avg_cadence_rpm": 88.0,
+   "work_kj": 1097.9,
+   "hearts": 140,
+   "crashes": 1,
+   "power_curve": [
+    {
+     "s": 5,
+     "w": 848.1
+    },
+    {
+     "s": 10,
+     "w": 748.2
+    },
+    {
+     "s": 30,
+     "w": 520.4
+    },
+    {
+     "s": 60,
+     "w": 373.2
+    },
+    {
+     "s": 120,
+     "w": 296.9
+    },
+    {
+     "s": 300,
+     "w": 259.8
+    },
+    {
+     "s": 600,
+     "w": 228.5
+    },
+    {
+     "s": 1200,
+     "w": 219.9
+    },
+    {
+     "s": 1800,
+     "w": 217.8
+    },
+    {
+     "s": 3600,
+     "w": 212.9
+    }
+   ],
+   "climbs": [
+    {
+     "start_m": 33740.0,
+     "length_m": 2400.0,
+     "gain_m": 96.0,
+     "time_s": 540.0,
+     "avg_power_w": 234.6
+    }
+   ],
+   "fit": "2026-11-04_07-00-00.fit",
+   "damage": {
+    "rider": 0.93,
+    "bike": 0.86
+   }
+  },
+  {
+   "id": "2026-11-06_18-00-00",
+   "start_unix_s": 1793988000,
+   "world": "Liechtenstein",
+   "route": "Free ride",
+   "distance_m": 32000.0,
+   "elapsed_s": 3780.0,
+   "moving_s": 3740.0,
+   "ascent_m": 380.0,
+   "avg_power_w": 185.6,
+   "np_w": 198.6,
+   "max_power_w": 856.8,
+   "avg_hr_bpm": 143.0,
+   "max_hr_bpm": 172.0,
+   "avg_cadence_rpm": 88.0,
+   "work_kj": 701.6,
+   "hearts": 96,
+   "crashes": 0,
+   "power_curve": [
+    {
+     "s": 5,
+     "w": 844.1
+    },
+    {
+     "s": 10,
+     "w": 759.2
+    },
+    {
+     "s": 30,
+     "w": 517.5
+    },
+    {
+     "s": 60,
+     "w": 382.5
+    },
+    {
+     "s": 120,
+     "w": 313.8
+    },
+    {
+     "s": 300,
+     "w": 258.4
+    },
+    {
+     "s": 600,
+     "w": 237.4
+    },
+    {
+     "s": 1200,
+     "w": 226.2
+    },
+    {
+     "s": 1800,
+     "w": 227.1
+    },
+    {
+     "s": 3600,
+     "w": 217.5
+    }
+   ],
+   "climbs": [],
+   "fit": "2026-11-06_18-00-00.fit",
+   "workout": "Sweet spot 3x10"
+  },
+  {
+   "id": "2026-11-08_09-00-00",
+   "start_unix_s": 1794128400,
+   "world": "Tenerife",
+   "route": "Puerto de la Cruz - Teide",
+   "distance_m": 41700.0,
+   "elapsed_s": 11160.0,
+   "moving_s": 11120.0,
+   "ascent_m": 2290.0,
+   "avg_power_w": 173.2,
+   "np_w": 185.3,
+   "max_power_w": 799.2,
+   "avg_hr_bpm": 144.0,
+   "max_hr_bpm": 172.0,
+   "avg_cadence_rpm": 88.0,
+   "work_kj": 1932.9,
+   "hearts": 260,
+   "crashes": 0,
+   "power_curve": [
+    {
+     "s": 5,
+     "w": 818.9
+    },
+    {
+     "s": 10,
+     "w": 721.2
+    },
+    {
+     "s": 30,
+     "w": 502.3
+    },
+    {
+     "s": 60,
+     "w": 359.7
+    },
+    {
+     "s": 120,
+     "w": 287.0
+    },
+    {
+     "s": 300,
+     "w": 250.8
+    },
+    {
+     "s": 600,
+     "w": 220.2
+    },
+    {
+     "s": 1200,
+     "w": 212.6
+    },
+    {
+     "s": 1800,
+     "w": 209.9
+    },
+    {
+     "s": 3600,
+     "w": 205.8
+    }
+   ],
+   "climbs": [
+    {
+     "start_m": 1200.0,
+     "length_m": 25020.0,
+     "gain_m": 1877.8,
+     "time_s": 6696.0,
+     "avg_power_w": 199.8
+    },
+    {
+     "start_m": 29190.0,
+     "length_m": 2400.0,
+     "gain_m": 96.0,
+     "time_s": 540.0,
+     "avg_power_w": 226.4
+    }
+   ],
+   "fit": "2026-11-08_09-00-00.fit"
+  },
+  {
+   "id": "2026-11-10_18-00-00",
+   "start_unix_s": 1794333600,
+   "world": "Black Forest - middle",
+   "route": "Free ride",
+   "distance_m": 36500.0,
+   "elapsed_s": 4320.0,
+   "moving_s": 4280.0,
+   "ascent_m": 420.0,
+   "avg_power_w": 195.8,
+   "np_w": 209.5,
+   "max_power_w": 903.6,
+   "avg_hr_bpm": 145.0,
+   "max_hr_bpm": 172.0,
+   "avg_cadence_rpm": 88.0,
+   "work_kj": 845.9,
+   "hearts": 110,
+   "crashes": 0,
+   "power_curve": [
+    {
+     "s": 5,
+     "w": 889.9
+    },
+    {
+     "s": 10,
+     "w": 801.9
+    },
+    {
+     "s": 30,
+     "w": 545.7
+    },
+    {
+     "s": 60,
+     "w": 404.0
+    },
+    {
+     "s": 120,
+     "w": 330.4
+    },
+    {
+     "s": 300,
+     "w": 272.5
+    },
+    {
+     "s": 600,
+     "w": 250.8
+    },
+    {
+     "s": 1200,
+     "w": 238.2
+    },
+    {
+     "s": 1800,
+     "w": 239.9
+    },
+    {
+     "s": 3600,
+     "w": 229.0
+    }
+   ],
+   "climbs": [],
+   "fit": "2026-11-10_18-00-00.fit",
+   "workout": "VO2max 5x3"
+  },
+  {
+   "id": "2026-11-12_18-00-00",
+   "start_unix_s": 1794506400,
+   "world": "Liechtenstein",
+   "route": "Vaduz - Malbun",
+   "distance_m": 21400.0,
+   "elapsed_s": 4248.0,
+   "moving_s": 4208.0,
+   "ascent_m": 1180.0,
+   "avg_power_w": 201.2,
+   "np_w": 215.3,
+   "max_power_w": 928.8,
+   "avg_hr_bpm": 146.0,
+   "max_hr_bpm": 172.0,
+   "avg_cadence_rpm": 88.0,
+   "work_kj": 854.7,
+   "hearts": 165,
+   "crashes": 2,
+   "power_curve": [
+    {
+     "s": 5,
+     "w": 951.9
+    },
+    {
+     "s": 10,
+     "w": 836.8
+    },
+    {
+     "s": 30,
+     "w": 583.8
+    },
+    {
+     "s": 60,
+     "w": 417.3
+    },
+    {
+     "s": 120,
+     "w": 334.0
+    },
+    {
+     "s": 300,
+     "w": 291.3
+    },
+    {
+     "s": 600,
+     "w": 255.5
+    },
+    {
+     "s": 1200,
+     "w": 247.5
+    },
+    {
+     "s": 1800,
+     "w": 243.5
+    },
+    {
+     "s": 3600,
+     "w": 239.5
+    }
+   ],
+   "climbs": [
+    {
+     "start_m": 1200.0,
+     "length_m": 12840.0,
+     "gain_m": 967.6,
+     "time_s": 2548.8,
+     "avg_power_w": 232.2
+    },
+    {
+     "start_m": 14980.0,
+     "length_m": 2400.0,
+     "gain_m": 96.0,
+     "time_s": 540.0,
+     "avg_power_w": 263.2
+    }
+   ],
+   "fit": "2026-11-12_18-00-00.fit",
+   "damage": {
+    "rider": 0.93,
+    "bike": 0.86
+   }
+  },
+  {
+   "id": "2026-11-13_07-00-00",
+   "start_unix_s": 1794553200,
+   "world": "Black Forest - north",
+   "route": "Free ride",
+   "distance_m": 55900.0,
+   "elapsed_s": 7020.0,
+   "moving_s": 6980.0,
+   "ascent_m": 720.0,
+   "avg_power_w": 184.1,
+   "np_w": 197.0,
+   "max_power_w": 849.6,
+   "avg_hr_bpm": 147.0,
+   "max_hr_bpm": 172.0,
+   "avg_cadence_rpm": 88.0,
+   "work_kj": 1292.4,
+   "hearts": 160,
+   "crashes": 0,
+   "power_curve": [
+    {
+     "s": 5,
+     "w": 836.6
+    },
+    {
+     "s": 10,
+     "w": 755.1
+    },
+    {
+     "s": 30,
+     "w": 513.1
+    },
+    {
+     "s": 60,
+     "w": 380.5
+    },
+    {
+     "s": 120,
+     "w": 310.2
+    },
+    {
+     "s": 300,
+     "w": 256.4
+    },
+    {
+     "s": 600,
+     "w": 236.2
+    },
+    {
+     "s": 1200,
+     "w": 223.6
+    },
+    {
+     "s": 1800,
+     "w": 225.9
+    },
+    {
+     "s": 3600,
+     "w": 215.0
+    }
+   ],
+   "climbs": [
+    {
+     "start_m": 39130.0,
+     "length_m": 2400.0,
+     "gain_m": 96.0,
+     "time_s": 540.0,
+     "avg_power_w": 240.7
+    }
+   ],
+   "fit": "2026-11-13_07-00-00.fit"
+  },
+  {
+   "id": "2026-11-14_09-00-00",
+   "start_unix_s": 1794646800,
+   "world": "Liechtenstein",
+   "route": "Vaduz - Malbun",
+   "distance_m": 21400.0,
+   "elapsed_s": 4032.0,
+   "moving_s": 3992.0,
+   "ascent_m": 1180.0,
+   "avg_power_w": 207.5,
+   "np_w": 222.0,
+   "max_power_w": 957.6,
+   "avg_hr_bpm": 148.0,
+   "max_hr_bpm": 172.0,
+   "avg_cadence_rpm": 88.0,
+   "work_kj": 836.6,
+   "hearts": 170,
+   "crashes": 0,
+   "power_curve": [
+    {
+     "s": 5,
+     "w": 981.5
+    },
+    {
+     "s": 10,
+     "w": 861.4
+    },
+    {
+     "s": 30,
+     "w": 601.8
+    },
+    {
+     "s": 60,
+     "w": 429.5
+    },
+    {
+     "s": 120,
+     "w": 344.9
+    },
+    {
+     "s": 300,
+     "w": 300.2
+    },
+    {
+     "s": 600,
+     "w": 263.0
+    },
+    {
+     "s": 1200,
+     "w": 255.6
+    },
+    {
+     "s": 1800,
+     "w": 250.7
+    },
+    {
+     "s": 3600,
+     "w": 247.3
+    }
+   ],
+   "climbs": [
+    {
+     "start_m": 1200.0,
+     "length_m": 12840.0,
+     "gain_m": 967.6,
+     "time_s": 2419.2,
+     "avg_power_w": 239.4
+    },
+    {
+     "start_m": 14980.0,
+     "length_m": 2400.0,
+     "gain_m": 96.0,
+     "time_s": 540.0,
+     "avg_power_w": 271.3
+    }
+   ],
+   "fit": "2026-11-14_09-00-00.fit"
+  }
+ ]
+}

@@ -20,6 +20,7 @@
 #   video        record this many seconds of game time (25 fps frame capture)
 #   warmup       seconds of game time before the video starts (default 3)
 #   riders       content of riders.toml (rider profiles) for this scene
+#   history      a training history file (repo path) for the default rider
 #   max_video_mb --pick re-encodes larger videos (default 3)
 #   pick         false: never picked (--pick) for the build history
 #
@@ -126,6 +127,48 @@ description = "In-game menu: Ride page (local race, group ride, time trial, chan
 args = ["--route", "hills", "--bots", "4"]
 at = ["2=menu open", "2.4=menu down", "2.8=menu select"]
 shot = 4.5
+
+# --- Training history, rebinding, accessibility (spec §14 Phase 7, M9) ------
+
+[[scene]]
+name = "menu-history-rides"
+description = "Navi -> Training history -> Rides: the rider's rides newest first (demo history, paged)"
+args = ["--route", "hills", "--bots", "2"]
+history = "scripts/fixtures/history-demo.json"
+at = ["2=menu open", "2.4=menu down", "2.8=menu down", "3.2=menu down", "3.6=menu down", "4=menu select", "4.4=menu down", "4.8=menu down", "5.2=menu select", "5.6=menu select"]
+shot = 7
+
+[[scene]]
+name = "menu-history-ride"
+description = "Training history: a ride's page with its numbers and the power curve against the personal bests"
+args = ["--route", "hills", "--bots", "2"]
+history = "scripts/fixtures/history-demo.json"
+at = ["2=menu open", "2.4=menu down", "2.8=menu down", "3.2=menu down", "3.6=menu down", "4=menu select", "4.4=menu down", "4.8=menu down", "5.2=menu select", "5.6=menu select", "6=menu select"]
+shot = 7.5
+
+[[scene]]
+name = "menu-bindings-conflict"
+description = "Settings -> Controls -> Keys and buttons -> Camera, video, app: the camera on V, a conflict with the video key"
+args = ["--route", "hills", "--bots", "2"]
+cmds = ["set keys.camera V"]
+at = ["2=menu open", "2.4=menu down", "2.8=menu down", "3.2=menu down", "3.6=menu down", "4=menu down", "4.4=menu select", "4.8=menu down", "5.2=menu select", "5.6=menu down", "6=menu select", "6.4=menu down", "6.8=menu down", "7.2=menu select"]
+shot = 8.5
+
+[[scene]]
+name = "menu-accessibility"
+description = "Settings -> Display -> Accessibility with HUD 150 %, colour-safe colours and high contrast on"
+args = ["--route", "hills", "--bots", "2"]
+cmds = ["set display.ui_scale 150", "set display.palette colour-safe", "set display.high_contrast on"]
+at = ["2=menu open", "2.4=menu down", "2.8=menu down", "3.2=menu down", "3.6=menu down", "4=menu down", "4.4=menu select", "4.8=menu down", "5.2=menu down", "5.6=menu down", "6=menu down", "6.4=menu select", "6.8=menu down", "7.2=menu down", "7.6=menu down", "8=menu down", "8.4=menu select"]
+shot = 9.5
+
+[[scene]]
+name = "access-hud"
+description = "Accessibility in effect: HUD at 150 %, high contrast, colour-safe workout zones (sweet spot workout)"
+args = ["--route", "hills", "--bots", "4"]
+cmds = ["set display.ui_scale 150", "set display.palette colour-safe", "set display.high_contrast on"]
+at = ["1=workout start --example sweet-spot"]
+shot = 6
 
 # --- Liechtenstein world package (world = true) -----------------------------
 # Vaduz-Malbun route file: Vaduz (km 0, 458 m), Steg tunnel (km 8.75-9.4),
