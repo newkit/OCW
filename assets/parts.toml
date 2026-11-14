@@ -504,6 +504,7 @@ hearts = 951
 weight_g = 2950
 fits = ["road"]
 standard = { speeds = 11, shifting = "mech", brake = "disc", family = "road" }
+includes = ["crankset.road-compact.entry", "cassette.road-11.entry", "chain.11-speed.entry"]
 model = "groupset-mech"
 sources = "groupset.road.entry"
 priced = 2026-11-13
@@ -517,6 +518,7 @@ hearts = 1441
 weight_g = 2700
 fits = ["road", "tt"]
 standard = { speeds = 12, shifting = "mech", brake = "disc", family = "road" }
+includes = ["crankset.road-endurance.mid", "cassette.road-12.mid", "chain.12-speed.mid"]
 model = "groupset-mech"
 sources = "groupset.road.mid-mech"
 priced = 2026-11-13
@@ -530,6 +532,7 @@ hearts = 1817
 weight_g = 2850
 fits = ["road", "tt"]
 standard = { speeds = 12, shifting = "electronic", brake = "disc", family = "road" }
+includes = ["crankset.road-endurance.mid", "cassette.road-12.mid", "chain.12-speed.mid"]
 model = "groupset-electronic"
 sources = "groupset.road.mid-electronic"
 priced = 2026-11-13
@@ -544,6 +547,7 @@ weight_g = 2600
 fits = ["road", "tt"]
 standard = { speeds = 12, shifting = "electronic", brake = "disc", family = "road" }
 efficiency = 1
+includes = ["crankset.road-race.upper", "cassette.road-race.upper", "chain.12-speed-race.upper"]
 model = "groupset-electronic"
 sources = "groupset.road.upper"
 priced = 2026-11-13
@@ -558,6 +562,7 @@ weight_g = 2450
 fits = ["road", "tt"]
 standard = { speeds = 12, shifting = "electronic", brake = "disc", family = "road" }
 efficiency = 1
+includes = ["crankset.road-race.top", "cassette.road-race.top", "chain.12-speed-race.top"]
 model = "groupset-electronic-top"
 sources = "groupset.road.top"
 priced = 2026-11-13
@@ -571,6 +576,7 @@ hearts = 1415
 weight_g = 2800
 fits = ["gravel"]
 standard = { speeds = 12, shifting = "electronic", brake = "disc", family = "gravel" }
+includes = ["crankset.gravel-1x.mid", "cassette.gravel-12.mid", "chain.12-speed.mid"]
 model = "groupset-gravel-electronic"
 sources = "groupset.gravel.mid"
 priced = 2026-11-13
@@ -585,6 +591,7 @@ weight_g = 2550
 fits = ["gravel"]
 standard = { speeds = 12, shifting = "electronic", brake = "disc", family = "gravel" }
 efficiency = 1
+includes = ["crankset.gravel-1x.top", "cassette.gravel-12.top", "chain.12-speed-race.top"]
 model = "groupset-gravel-electronic"
 sources = "groupset.gravel.top"
 priced = 2026-11-13
@@ -598,6 +605,7 @@ hearts = 1240
 weight_g = 2500
 fits = ["mtb"]
 standard = { speeds = 12, shifting = "mech", brake = "disc", family = "mtb" }
+includes = ["crankset.mtb-1x.mid", "cassette.mtb-12.mid", "chain.12-speed.mid"]
 model = "groupset-mtb"
 sources = "groupset.mtb.mid"
 priced = 2026-11-13
@@ -612,6 +620,7 @@ weight_g = 2200
 fits = ["mtb"]
 standard = { speeds = 12, shifting = "electronic", brake = "disc", family = "mtb" }
 efficiency = 1
+includes = ["crankset.mtb-1x.top", "cassette.mtb-12.top", "chain.12-speed-race.top"]
 model = "groupset-mtb-electronic"
 sources = "groupset.mtb.top"
 priced = 2026-11-13
@@ -630,6 +639,231 @@ fits = ["road", "tt", "gravel"]
 model = "crank-power"
 sources = "crankset.power"
 priced = 2026-11-13
+
+# --- crankset, cassette and chain of the groupsets --------------------------
+# Fitted with their groupset (its `includes`), never sold alone: free, and
+# their weight is in the groupset's (the researched full groupset weights),
+# so they carry the base part's weight and change no physics (spec 4B, 4I).
+
+[[part]]
+id = "crankset.road-compact.entry"
+slot = "crankset"
+tier = "entry"
+name = "Endurance 11-speed compact crankset 50/34"
+hearts = 0
+weight_g = 850
+fits = ["road", "tt"]
+standard = { speeds = 11, family = "road" }
+model = "stock"
+
+[[part]]
+id = "crankset.road-endurance.mid"
+slot = "crankset"
+tier = "mid"
+name = "Endurance 12-speed crankset 50/34"
+hearts = 0
+weight_g = 850
+fits = ["road", "tt"]
+standard = { speeds = 12, family = "road" }
+model = "stock"
+
+[[part]]
+id = "crankset.road-race.upper"
+slot = "crankset"
+tier = "upper"
+name = "Race 12-speed crankset 52/36, upper tier"
+hearts = 0
+weight_g = 850
+fits = ["road", "tt"]
+standard = { speeds = 12, family = "road" }
+model = "stock"
+
+[[part]]
+id = "crankset.road-race.top"
+slot = "crankset"
+tier = "top"
+name = "Race 12-speed crankset 52/36"
+hearts = 0
+weight_g = 850
+fits = ["road", "tt"]
+standard = { speeds = 12, family = "road" }
+model = "stock"
+
+[[part]]
+id = "crankset.gravel-1x.mid"
+slot = "crankset"
+tier = "mid"
+name = "Gravel 1x12 crankset 40 t"
+hearts = 0
+weight_g = 850
+fits = ["gravel"]
+standard = { speeds = 12, family = "gravel" }
+model = "stock"
+
+[[part]]
+id = "crankset.gravel-1x.top"
+slot = "crankset"
+tier = "top"
+name = "Gravel 1x crankset 42 t, top tier"
+hearts = 0
+weight_g = 850
+fits = ["gravel"]
+standard = { speeds = 12, family = "gravel" }
+model = "stock"
+
+[[part]]
+id = "crankset.mtb-1x.mid"
+slot = "crankset"
+tier = "mid"
+name = "Trail 1x12 crankset 32 t"
+hearts = 0
+weight_g = 700
+fits = ["mtb"]
+standard = { speeds = 12, family = "mtb" }
+model = "stock"
+
+[[part]]
+id = "crankset.mtb-1x.top"
+slot = "crankset"
+tier = "top"
+name = "Cross-country 1x12 crankset 34 t"
+hearts = 0
+weight_g = 700
+fits = ["mtb"]
+standard = { speeds = 12, family = "mtb" }
+model = "stock"
+
+[[part]]
+id = "cassette.road-11.entry"
+slot = "cassette"
+tier = "entry"
+name = "11-speed road cassette 11-34"
+hearts = 0
+weight_g = 300
+fits = ["road", "tt"]
+standard = { speeds = 11, family = "road" }
+model = "stock"
+
+[[part]]
+id = "cassette.road-12.mid"
+slot = "cassette"
+tier = "mid"
+name = "12-speed road cassette 11-34"
+hearts = 0
+weight_g = 300
+fits = ["road", "tt"]
+standard = { speeds = 12, family = "road" }
+model = "stock"
+
+[[part]]
+id = "cassette.road-race.upper"
+slot = "cassette"
+tier = "upper"
+name = "12-speed race cassette 11-30, upper tier"
+hearts = 0
+weight_g = 300
+fits = ["road", "tt"]
+standard = { speeds = 12, family = "road" }
+model = "stock"
+
+[[part]]
+id = "cassette.road-race.top"
+slot = "cassette"
+tier = "top"
+name = "12-speed race cassette 11-30"
+hearts = 0
+weight_g = 300
+fits = ["road", "tt"]
+standard = { speeds = 12, family = "road" }
+model = "stock"
+
+[[part]]
+id = "cassette.gravel-12.mid"
+slot = "cassette"
+tier = "mid"
+name = "12-speed gravel cassette 10-44"
+hearts = 0
+weight_g = 300
+fits = ["gravel"]
+standard = { speeds = 12, family = "gravel" }
+model = "stock"
+
+[[part]]
+id = "cassette.gravel-12.top"
+slot = "cassette"
+tier = "top"
+name = "12-speed gravel cassette 10-46, top tier"
+hearts = 0
+weight_g = 300
+fits = ["gravel"]
+standard = { speeds = 12, family = "gravel" }
+model = "stock"
+
+[[part]]
+id = "cassette.mtb-12.mid"
+slot = "cassette"
+tier = "mid"
+name = "12-speed trail cassette 10-51"
+hearts = 0
+weight_g = 450
+fits = ["mtb"]
+standard = { speeds = 12, family = "mtb" }
+model = "stock"
+
+[[part]]
+id = "cassette.mtb-12.top"
+slot = "cassette"
+tier = "top"
+name = "12-speed cross-country cassette 10-52"
+hearts = 0
+weight_g = 450
+fits = ["mtb"]
+standard = { speeds = 12, family = "mtb" }
+model = "stock"
+
+[[part]]
+id = "chain.11-speed.entry"
+slot = "chain"
+tier = "entry"
+name = "11-speed chain"
+hearts = 0
+weight_g = 270
+fits = ["road", "tt"]
+standard = { speeds = 11 }
+model = "stock"
+
+[[part]]
+id = "chain.12-speed.mid"
+slot = "chain"
+tier = "mid"
+name = "12-speed chain"
+hearts = 0
+weight_g = 270
+fits = ["road", "tt", "gravel", "mtb"]
+standard = { speeds = 12 }
+model = "stock"
+
+[[part]]
+id = "chain.12-speed-race.upper"
+slot = "chain"
+tier = "upper"
+name = "12-speed race chain, upper tier"
+hearts = 0
+weight_g = 270
+fits = ["road", "tt"]
+standard = { speeds = 12 }
+model = "stock"
+
+[[part]]
+id = "chain.12-speed-race.top"
+slot = "chain"
+tier = "top"
+name = "12-speed race chain"
+hearts = 0
+weight_g = 270
+fits = ["road", "tt", "gravel", "mtb"]
+standard = { speeds = 12 }
+model = "stock"
 
 # --- wheels ------------------------------------------------------------------
 

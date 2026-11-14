@@ -45,7 +45,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::menu::InputContext;
-use crate::riders::avatar_transform;
+use crate::riders::avatar_transform_on;
 use crate::{RideView, world};
 
 pub struct CameraPlugin;
@@ -661,6 +661,7 @@ pub(crate) fn follow(
     mode: Res<CameraMode>,
     orbit: Res<CameraOrbit>,
     ground: Option<Res<crate::Ground>>,
+    pavement: Option<Res<crate::Pavement>>,
     obstacles: Res<CameraObstacles>,
     tilt_cfg: Res<CameraTilt>,
     tunnels: Option<Res<crate::tunnel::Tunnels>>,
@@ -713,10 +714,11 @@ pub(crate) fn follow(
     // Follow the avatar itself: on the terrain off the road (wild mode) and
     // along the rider's own heading, not the road's.
     let track = view.track(local.id);
-    let rider = avatar_transform(
+    let rider = avatar_transform_on(
         track,
         &local.state,
         ground.as_deref(),
+        pavement.as_deref(),
         &ocw_assets::shipped::bike_rig(local.bike),
     );
     // A fixed look at the sky (scenes of the night sky, `camera.look`).

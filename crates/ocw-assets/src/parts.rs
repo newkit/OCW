@@ -247,6 +247,9 @@ pub struct Part {
     pub efficiency: i32,
     /// Kit: the kit slots this item covers (a skinsuit: the bib shorts).
     pub covers: Vec<Slot>,
+    /// Groupsets: the crankset, cassette and chain fitted with it (spec
+    /// 4B *Groupset and its parts*; free parts that are never sold alone).
+    pub includes: Vec<String>,
     /// Frames: `bike-<profile>`; base parts: `stock`; else a part variant
     /// (kit: a rider variant).
     pub model: String,
@@ -287,6 +290,8 @@ struct RawPart {
     efficiency: i32,
     #[serde(default)]
     covers: Vec<String>,
+    #[serde(default)]
+    includes: Vec<String>,
     model: String,
     sources: Option<String>,
     priced: Option<toml::value::Datetime>,
@@ -386,6 +391,7 @@ impl Catalogue {
                 aero: r.aero,
                 efficiency: r.efficiency,
                 covers,
+                includes: r.includes,
                 model: r.model,
                 sources: r.sources,
                 priced: r.priced.as_ref().and_then(date_string),
@@ -400,6 +406,24 @@ impl Catalogue {
 
     pub fn get(&self, id: &str) -> Option<&Part> {
         self.parts.iter().find(|p| p.id == id)
+    }
+
+    /// The parts fitted with groupset `groupset` (spec 4B: its crankset,
+    /// cassette and chain); unknown ids are skipped.
+    pub fn included(&self, groupset: &Part) -> Vec<&Part> {
+        groupset
+            .includes
+            .iter()
+            .filter_map(|id| self.get(id))
+            .collect()
+    }
+
+    /// Whether part `id` comes only with a groupset (free, never sold
+    /// alone).
+    pub fn is_included(&self, id: &str) -> bool {
+        self.parts
+            .iter()
+            .any(|g| g.includes.iter().any(|i| i == id))
     }
 
     /// The parts of `slot` that fit `bike`: base first, then by tier and
@@ -925,11 +949,22 @@ pub fn validate(cat: &Catalogue, sources: &Sources, today: (i32, u32, u32)) -> V
             err(format!("{at}: paint colours are not catalogue parts"));
         }
         // Prices.
+        let included = cat.is_included(&p.id);
         if p.is_base() {
             if p.hearts != 0 {
                 err(format!(
                     "{at}: a base part costs 0 hearts, not {}",
                     p.hearts
+                ));
+            }
+            if included {
+                err(format!("{at}: a base part is not part of a groupset"));
+            }
+        } else if included {
+            // Fitted with its groupset (spec 4B): its price covers it.
+            if p.hearts != 0 || p.sources.is_some() {
+                err(format!(
+                    "{at}: comes with a groupset: free and without sources of its own"
                 ));
             }
         } else {
@@ -993,7 +1028,7 @@ pub fn validate(cat: &Catalogue, sources: &Sources, today: (i32, u32, u32)) -> V
             if p.profile.is_some() {
                 err(format!("{at}: only framesets have a profile"));
             }
-            if p.is_base() {
+            if p.is_base() || (included && p.model == STOCK_MODEL) {
                 if p.model != STOCK_MODEL {
                     err(format!("{at}: a base part's model is {STOCK_MODEL:?}"));
                 }
@@ -1056,6 +1091,63 @@ pub fn validate(cat: &Catalogue, sources: &Sources, today: (i32, u32, u32)) -> V
                 "{n} base items of kit slot {} (need exactly 1: the free base kit)",
                 slot.id()
             ));
+        }
+    }
+    // Groupsets and their crankset, cassette and chain (spec 4B).
+    for g in &cat.parts {
+        let at = &g.id;
+        if g.includes.is_empty() {
+            if g.slot == Slot::Groupset && !g.is_base() {
+                err(format!(
+                    "{at}: a groupset includes its crankset, cassette and chain"
+                ));
+            }
+            continue;
+        }
+        if g.slot != Slot::Groupset || g.is_base() {
+            err(format!("{at}: only bought groupsets include parts"));
+            continue;
+        }
+        let mut slots = Vec::new();
+        for id in &g.includes {
+            let Some(c) = cat.get(id) else {
+                err(format!("{at}: includes unknown part {id:?}"));
+                continue;
+            };
+            if !matches!(c.slot, Slot::Crankset | Slot::Cassette | Slot::Chain) {
+                err(format!(
+                    "{at}: includes {id}, a {} (crankset, cassette or chain only)",
+                    c.slot.id()
+                ));
+            }
+            slots.push(c.slot);
+            for b in &g.fits {
+                if !c.fits.contains(b) {
+                    err(format!("{at}: {id} does not fit {}", b.id()));
+                }
+            }
+        }
+        for s in [Slot::Crankset, Slot::Cassette, Slot::Chain] {
+            if slots.iter().filter(|x| **x == s).count() != 1 {
+                err(format!("{at}: includes exactly one {}", s.id()));
+            }
+        }
+    }
+    // An included part weighs what the base part does: the groupset's
+    // researched weight is the whole groupset's (no double counting).
+    for p in cat.parts.iter().filter(|p| cat.is_included(&p.id)) {
+        for b in &p.fits {
+            if let Some(base) = cat.base(p.slot, *b)
+                && base.weight_g != p.weight_g
+            {
+                err(format!(
+                    "{}: weighs {} g, the base part for {} {} g (its weight is in the groupset's)",
+                    p.id,
+                    p.weight_g,
+                    b.id(),
+                    base.weight_g
+                ));
+            }
         }
     }
     for prof in ProfileId::ALL {
@@ -1573,6 +1665,96 @@ mod tests {
                 .sources = Some("nope".into())
         });
         assert!(has(&e, "unknown sources \"nope\""), "{e:?}");
+    }
+
+    /// Spec 4B *Groupset and its parts*: every bought groupset includes
+    /// one crankset, cassette and chain of its tier that fit it, free and
+    /// at the base weight.
+    #[test]
+    fn groupsets_include_their_crankset_cassette_and_chain() {
+        let (c, _) = shipped();
+        let groupsets: Vec<&Part> = c
+            .parts
+            .iter()
+            .filter(|p| p.slot == Slot::Groupset && !p.is_base())
+            .collect();
+        assert_eq!(groupsets.len(), 9);
+        for g in groupsets {
+            let inc = c.included(g);
+            let slots: Vec<Slot> = inc.iter().map(|p| p.slot).collect();
+            assert_eq!(
+                slots,
+                vec![Slot::Crankset, Slot::Cassette, Slot::Chain],
+                "{}",
+                g.id
+            );
+            for p in inc {
+                assert!(c.is_included(&p.id));
+                assert_eq!(p.hearts, 0, "{}", p.id);
+                assert!(!p.is_base(), "{}", p.id);
+                assert!(g.fits.iter().all(|b| p.fits(*b)), "{} on {}", p.id, g.id);
+            }
+        }
+        let top = c.get("groupset.road-electronic.top").unwrap();
+        assert_eq!(
+            top.includes,
+            [
+                "crankset.road-race.top",
+                "cassette.road-race.top",
+                "chain.12-speed-race.top"
+            ]
+        );
+        // The power-meter crankset is sold alone.
+        assert!(!c.is_included("crankset.road.power"));
+        assert!(c.included(c.get("groupset.road.base").unwrap()).is_empty());
+        // Broken: a groupset without a chain, a heavier included part, a
+        // priced one, a groupset including a tyre.
+        let e = broken(|c| {
+            c.parts
+                .iter_mut()
+                .find(|p| p.id == "groupset.mtb.top")
+                .unwrap()
+                .includes
+                .pop();
+        });
+        assert!(
+            has(&e, "groupset.mtb.top: includes exactly one chain"),
+            "{e:?}"
+        );
+        let e = broken(|c| {
+            c.parts
+                .iter_mut()
+                .find(|p| p.id == "cassette.mtb-12.top")
+                .unwrap()
+                .weight_g = 380
+        });
+        assert!(has(&e, "its weight is in the groupset's"), "{e:?}");
+        let e = broken(|c| {
+            c.parts
+                .iter_mut()
+                .find(|p| p.id == "chain.11-speed.entry")
+                .unwrap()
+                .hearts = 30
+        });
+        assert!(has(&e, "comes with a groupset: free"), "{e:?}");
+        let e = broken(|c| {
+            c.parts
+                .iter_mut()
+                .find(|p| p.id == "groupset.gravel.mid")
+                .unwrap()
+                .includes
+                .push("tyres.gravel.fast".into());
+        });
+        assert!(has(&e, "crankset, cassette or chain only"), "{e:?}");
+        let e = broken(|c| {
+            c.parts
+                .iter_mut()
+                .find(|p| p.id == "groupset.gravel.mid")
+                .unwrap()
+                .includes
+                .clear();
+        });
+        assert!(has(&e, "a groupset includes its crankset"), "{e:?}");
     }
 
     #[test]

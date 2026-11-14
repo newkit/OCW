@@ -95,6 +95,11 @@ impl PackageWorld {
         let set = self.set.clone();
         crate::Ground(Arc::new(move |x, z| set.surface_height([x, z])))
     }
+
+    /// The sidewalks of the resident tiles (riders beside the road).
+    pub fn pavement(&self) -> crate::Pavement {
+        crate::Pavement(Arc::new(self.set.pavement()))
+    }
 }
 
 pub struct PackagePlugin;
@@ -1259,6 +1264,7 @@ fn load_neighbours(
     }
     if changed {
         commands.insert_resource(world.ground());
+        commands.insert_resource(world.pavement());
     }
 }
 

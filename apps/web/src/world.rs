@@ -443,7 +443,9 @@ fn publish(world: &mut World, pkg: WorldPackage) {
     };
     Arc::make_mut(&mut pw.set).update_tiles(0, Arc::new(pkg));
     let ground = pw.ground();
+    let pavement = pw.pavement();
     world.insert_resource(ground);
+    world.insert_resource(pavement);
 }
 
 /// Starts the ride: the session on the package's road graph, the world

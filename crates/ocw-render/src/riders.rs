@@ -34,7 +34,7 @@ use ocw_core::{ProfileId, RiderId, RiderLook};
 use ocw_world::Track;
 
 use crate::gear::{self, GearMaterial};
-use crate::{Ground, RideView, to_vec3};
+use crate::{Ground, Pavement, RideView, to_vec3};
 
 pub struct RidersPlugin;
 
@@ -213,11 +213,14 @@ pub fn lean_rotation(lean: f64) -> Quat {
 /// (along its heading): the road surface as drawn there (the profile plus
 /// [`crate::ROAD_SURFACE_LIFT_M`]), blended onto the ground beside the
 /// road over [`OFF_ROAD_BLEND_M`] (no jump at the edge, no wheels in an
-/// embankment).
+/// embankment). On a sidewalk (`pavement`, spec §14 Phase 8 T5) its
+/// surface: the wheel rolls up the kerb ([`hub_height`] finds the edge)
+/// instead of through it.
 fn contact_height(
     track: &dyn Track,
     state: &ocw_sim::RiderState,
     ground: Option<&Ground>,
+    pavement: Option<&Pavement>,
     along: f64,
 ) -> f32 {
     let d = state.distance + along * state.heading.cos();
@@ -225,6 +228,13 @@ fn contact_height(
     let p = to_vec3(track.sample(d).offset_position(lateral));
     let beyond = lateral.abs() - track.road_width_at(d) / 2.0;
     let mut y = p.y + crate::ROAD_SURFACE_LIFT_M;
+    // Only at the road's edge or beyond (riders on the road keep 0.6 m
+    // from it; the strips may be a little narrower than the track).
+    if beyond > -0.25
+        && let Some(h) = pavement.and_then(|pv| pv.0.height([f64::from(p.x), f64::from(p.z)]))
+    {
+        return (h as f32).max(y);
+    }
     if beyond > 0.0
         && let Some(h) = ground.and_then(|g| (g.0)(f64::from(p.x), f64::from(p.z)))
     {
@@ -242,12 +252,14 @@ fn hub_height(
     track: &dyn Track,
     state: &ocw_sim::RiderState,
     ground: Option<&Ground>,
+    pavement: Option<&Pavement>,
     along: f64,
     r: f64,
 ) -> f32 {
     let lift = |t: f64| {
         let dx = t - along;
-        f64::from(contact_height(track, state, ground, t)) + (r * r - dx * dx).max(0.0).sqrt()
+        f64::from(contact_height(track, state, ground, pavement, t))
+            + (r * r - dx * dx).max(0.0).sqrt()
     };
     // Coarse, then fine around the best coarse sample.
     let best = |from: f64, step: f64, n: i32| {
@@ -278,6 +290,18 @@ pub fn avatar_transform(
     ground: Option<&Ground>,
     bike: &BikeRig,
 ) -> Transform {
+    avatar_transform_on(track, state, ground, None, bike)
+}
+
+/// [`avatar_transform`] with the sidewalks (`pavement`, spec §14 Phase 8
+/// T5): beside the road the wheels roll up the kerbs onto them.
+pub fn avatar_transform_on(
+    track: &dyn Track,
+    state: &ocw_sim::RiderState,
+    ground: Option<&Ground>,
+    pavement: Option<&Pavement>,
+    bike: &BikeRig,
+) -> Transform {
     let mut t = rider_transform(track, state.distance, state.lateral_offset);
     let r = f64::from(bike.wheel_radius);
     let wheelbase = f64::from(bike.wheelbase);
@@ -287,8 +311,8 @@ pub fn avatar_transform(
     let (mut front, mut rear) = (0.0, 0.0);
     for _ in 0..3 {
         let half = 0.5 * wheelbase * pitch.cos();
-        front = hub_height(track, state, ground, half, r);
-        rear = hub_height(track, state, ground, -half, r);
+        front = hub_height(track, state, ground, pavement, half, r);
+        rear = hub_height(track, state, ground, pavement, -half, r);
         pitch = (f64::from(front - rear) / wheelbase)
             .clamp(-1.0, 1.0)
             .asin();
@@ -466,7 +490,11 @@ pub fn tint_color(slot: &str, model_color: [f32; 4], colours: &AvatarColours) ->
 pub fn hidden_rider_nodes(look: Option<&RiderLook>, kit: &[String]) -> Vec<&'static str> {
     let l = look.copied().unwrap_or_default();
     let ids: Vec<&str> = kit.iter().map(String::as_str).collect();
-    let shown = ocw_assets::rider::visible(&l.character, &ids);
+    let mut shown = ocw_assets::rider::visible(&l.character, &ids);
+    // The hip plates of the race number (spec §14 Phase 8 T6).
+    if l.design.number > 0 {
+        shown.extend(ocw_assets::rider::opt::HIP_NUMBER);
+    }
     ocw_assets::rider::optional()
         .into_iter()
         .filter(|n| !shown.contains(n))
@@ -534,6 +562,7 @@ fn sync_riders(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut gear_materials: ResMut<Assets<GearMaterial>>,
     ground: Option<Res<Ground>>,
+    pavement: Option<Res<Pavement>>,
     ragdolls: Option<Res<crate::ragdoll::Ragdolls>>,
     mut library: Local<Option<Library>>,
 ) {
@@ -584,7 +613,13 @@ fn sync_riders(
         }));
     for (id, state, track_of, is_local, bike, look, variants, kit, wobble) in all {
         let rig = &lib.bike_rigs[profile_index(bike)];
-        let mut t = avatar_transform(view.track(track_of), &state, ground.as_deref(), rig);
+        let mut t = avatar_transform_on(
+            view.track(track_of),
+            &state,
+            ground.as_deref(),
+            pavement.as_deref(),
+            rig,
+        );
         // The wobble after a soft bump (spec §14 Phase 12B): a lean swing.
         if wobble != 0.0 {
             t.rotation *= lean_rotation(wobble);
@@ -1927,6 +1962,62 @@ mod tests {
         // surface under the hubs.)
         let part = (y - crate::ROAD_SURFACE_LIFT_M) / (12.0 - crate::ROAD_SURFACE_LIFT_M);
         assert!((0.45..0.6).contains(&part), "{y}");
+    }
+
+    /// Regression (spec §14 Phase 8 T5, wild mode): riders leaving the road
+    /// went through the kerbs and the sidewalks; now the wheels roll up
+    /// the kerb and ride on the sidewalk.
+    #[test]
+    fn riders_beside_the_road_ride_up_the_kerb_onto_the_sidewalk() {
+        use ocw_world::package::{PavementIndex, RoadStrip};
+        let v = view(vec![[0.0, 0.0, 0.0], [100.0, 0.0, 0.0]]);
+        // The package's strip under the route: 6 m wide, a 2 m sidewalk on
+        // the right (+z) behind a 12 cm kerb.
+        let mut dress =
+            ocw_world::RoadDress::of_class(ocw_world::graph::RoadClass::Residential, 6.0);
+        dress.sidewalk_m = [0.0, 2.0];
+        dress.kerb_m = 0.12;
+        let strip = RoadStrip {
+            class: ocw_world::graph::RoadClass::Residential,
+            width_m: 6.0,
+            points: vec![[0.0, 0.0, 0.0], [100.0, 0.0, 0.0]],
+            surface: ocw_world::RoadSurface::Asphalt,
+            dress,
+            lit: ocw_world::RoadLit::Unknown,
+        };
+        let pavement = Pavement(std::sync::Arc::new(
+            ocw_world::world_set::WorldPavement::from_index(PavementIndex::from_strips([&strip])),
+        ));
+        let ground = Ground(std::sync::Arc::new(|_, _| Some(0.0)));
+        let at = |lateral: f64, heading: f64, pv: Option<&Pavement>| {
+            let s = ocw_sim::RiderState {
+                distance: 50.0,
+                lateral_offset: lateral,
+                heading,
+                speed: 5.0,
+                ..Default::default()
+            };
+            avatar_transform_on(&v.route, &s, Some(&ground), pv, &road_rig())
+        };
+        let lift = crate::ROAD_SURFACE_LIFT_M;
+        // On the sidewalk (1 m beyond the kerb): on its surface.
+        let top = lift + 0.12 + 0.02;
+        let y = at(4.0, 0.0, Some(&pavement)).translation.y;
+        assert!((y - top).abs() < 2e-3, "{y} vs {top}");
+        // Before the fix: down in the blend towards the ground, 12 cm inside.
+        let old = at(4.0, 0.0, None).translation.y;
+        assert!(old < top - 0.1, "{old}");
+        // On the road beside the kerb: the road.
+        let y = at(2.8, 0.0, Some(&pavement)).translation.y;
+        assert!((y - lift).abs() < 2e-3, "{y}");
+        // Crossing the kerb at 30°: the front wheel is up on the sidewalk,
+        // the rear one still on the road – the bike pitches up, by the kerb.
+        let t = at(3.0, 0.5, Some(&pavement));
+        let pitch = t.forward().as_vec3().y;
+        assert!(pitch > 0.05, "{pitch}");
+        // The left side has no sidewalk: the ground blend as before.
+        let left = at(-4.0, 0.0, Some(&pavement)).translation.y;
+        assert!((left - at(-4.0, 0.0, None).translation.y).abs() < 1e-6);
     }
 
     #[test]

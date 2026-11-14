@@ -13,6 +13,15 @@
 //! base parts and starter bikes cannot be sold. The balance is the sum of
 //! the ledger.
 //!
+//! A groupset (spec 4B *Groupset and its parts*) is fitted with the
+//! crankset, cassette and chain of its tier (the catalogue's `includes`):
+//! buying or equipping it puts them on the bike too (free items that
+//! belong to the groupset's item, [`Item::with`]); the parts they replace
+//! go to the spare parts. They can be changed alone afterwards (a power
+//! meter crankset), go with the groupset to another bike, back to the
+//! spares when it is taken off, and with it when it is sold (its refund
+//! rule is unchanged; they are never bought or sold alone).
+//!
 //! The rider's kit (spec 4C, W4) lives in the same garage: `kit` maps a
 //! kit slot to the worn item (a slot without one wears its free base
 //! item); kit items are bought, worn, taken off and sold by the same rules
@@ -43,6 +52,10 @@ pub struct Item {
     /// Metres ridden with it on the bike.
     #[serde(default)]
     pub ridden_m: f64,
+    /// The groupset item this part came with (its crankset, cassette,
+    /// chain; spec 4B).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub with: Option<u32>,
 }
 
 impl Item {
@@ -230,6 +243,58 @@ impl Garage {
         v
     }
 
+    /// The items that came with groupset item `groupset` (spec 4B).
+    pub fn with_groupset(&self, groupset: u32) -> impl Iterator<Item = &Item> {
+        self.items.iter().filter(move |i| i.with == Some(groupset))
+    }
+
+    /// Fits the crankset, cassette and chain of groupset item `gid`
+    /// (catalogue part `groupset`) on `bike`: its own items where it has
+    /// them (taken from another bike, which gets its base parts back),
+    /// new free items otherwise (a groupset bought before W2's fitting, or
+    /// one whose parts were lost). The parts they replace go to the spare
+    /// parts. Returns the fitted parts' names.
+    fn fit_included(
+        &mut self,
+        cat: &Catalogue,
+        bike: &str,
+        gid: u32,
+        groupset: &Part,
+        date: &str,
+    ) -> Result<Vec<String>, String> {
+        let mut names = Vec::new();
+        for c in cat.included(groupset) {
+            let own = self
+                .with_groupset(gid)
+                .find(|i| i.part == c.id)
+                .map(|i| i.id);
+            let id = match own {
+                Some(id) => id,
+                None => {
+                    let id = self.next_item;
+                    self.next_item += 1;
+                    self.items.push(Item {
+                        id,
+                        part: c.id.clone(),
+                        paid: 0,
+                        bought: date.into(),
+                        ridden_m: 0.0,
+                        with: Some(gid),
+                    });
+                    id
+                }
+            };
+            for b in &mut self.bikes {
+                if b.id != bike {
+                    b.parts.retain(|_, i| *i != id);
+                }
+            }
+            self.bike_mut(bike)?.parts.insert(c.slot.id().into(), id);
+            names.push(c.name.clone());
+        }
+        Ok(names)
+    }
+
     /// The spare parts (owned, on no bike; the bench's shelf, 4D).
     #[cfg(test)]
     pub fn spares(&self) -> impl Iterator<Item = &Item> {
@@ -277,6 +342,9 @@ pub struct Receipt {
     pub item: u32,
     pub paid: u32,
     pub balance: i64,
+    /// A groupset: the names of the crankset, cassette and chain fitted
+    /// with it (spec 4B).
+    pub fitted: Vec<String>,
 }
 
 /// The wallet: every rider's garage and the ledger.
@@ -438,6 +506,12 @@ impl Wallet {
         let b = garage
             .bike(bike)
             .ok_or_else(|| format!("no bike {bike} in the garage"))?;
+        if let Some(g) = cat.parts.iter().find(|g| g.includes.contains(&part.id)) {
+            return Err(format!(
+                "the {} comes with a groupset (e.g. the {}): buy the groupset",
+                part.name, g.name
+            ));
+        }
         if part.hearts == 0 {
             return Err(format!(
                 "{} is a base part: it comes with the frame",
@@ -466,19 +540,23 @@ impl Wallet {
             id,
             part: part.id.clone(),
             paid: part.hearts,
-            bought: date,
+            bought: date.clone(),
             ridden_m: 0.0,
+            with: None,
         });
+        let mut fitted = Vec::new();
         if part.slot.is_kit() {
             g.kit.insert(part.slot.id().into(), id);
         } else {
             g.bike_mut(bike)?.parts.insert(part.slot.id().into(), id);
+            fitted = g.fit_included(cat, bike, id, part, &date)?;
         }
         self.book(rider, -price, "purchase", part.id.clone());
         Ok(Receipt {
             item: id,
             paid: part.hearts,
             balance: self.balance(rider),
+            fitted,
         })
     }
 
@@ -491,6 +569,7 @@ impl Wallet {
         bike: &str,
         item: u32,
     ) -> Result<String, String> {
+        let date = self.stamp()[..10].to_string();
         let g = self
             .garages
             .get_mut(rider)
@@ -518,6 +597,10 @@ impl Wallet {
             said.push_str(&format!("; the {name} gets its base part back"));
         }
         g.bike_mut(bike)?.parts.insert(part.slot.id().into(), item);
+        let fitted = g.fit_included(cat, bike, item, part, &date)?;
+        if !fitted.is_empty() {
+            said.push_str(&format!(", with its {}", fitted.join(", ")));
+        }
         Ok(said)
     }
 
@@ -530,7 +613,14 @@ impl Wallet {
         if slot.is_kit() {
             return Ok(g.kit.remove(slot.id()));
         }
-        Ok(g.bike_mut(bike)?.parts.remove(slot.id()))
+        let off = g.bike_mut(bike)?.parts.remove(slot.id());
+        // A groupset takes its crankset, cassette and chain along (those
+        // still on the bike; spec 4B).
+        if let Some(gid) = off {
+            let with: Vec<u32> = g.with_groupset(gid).map(|i| i.id).collect();
+            g.bike_mut(bike)?.parts.retain(|_, i| !with.contains(i));
+        }
+        Ok(off)
     }
 
     /// Sells an owned part (taken off its bike first): the refund rule.
@@ -544,9 +634,24 @@ impl Wallet {
             .iter()
             .position(|i| i.id == item)
             .ok_or_else(|| format!("no item {item}"))?;
+        if let Some(gid) = g.items[at].with {
+            let name = g.item(gid).map_or("groupset".to_string(), |i| {
+                format!("groupset (item {})", i.id)
+            });
+            return Err(format!(
+                "item {item} came with a {name}: it is sold with the groupset"
+            ));
+        }
         let it = g.items.remove(at);
+        // A groupset goes with its crankset, cassette and chain (free
+        // parts, its price covered them; the refund rule is the
+        // groupset's).
+        let gone: Vec<u32> = std::iter::once(item)
+            .chain(g.with_groupset(item).map(|i| i.id))
+            .collect();
+        g.items.retain(|i| !gone.contains(&i.id));
         for b in &mut g.bikes {
-            b.parts.retain(|_, i| *i != item);
+            b.parts.retain(|_, i| !gone.contains(i));
         }
         g.kit.retain(|_, i| *i != item);
         let refund = it.refund();
@@ -793,6 +898,131 @@ mod tests {
                 .contains("does not fit")
         );
         assert_eq!(w.unequip("Ann", "road", Slot::Pedals).unwrap(), None);
+    }
+
+    /// Spec 4B *Groupset and its parts* (open since W2): buying or
+    /// equipping a groupset fits its crankset, cassette and chain, the old
+    /// ones go to the spares; they go along with it and are sold with it.
+    #[test]
+    fn a_groupset_is_fitted_with_its_crankset_cassette_and_chain() {
+        let mut w = wallet();
+        w.grant("Ann", 100_000);
+        let slots = [Slot::Crankset, Slot::Cassette, Slot::Chain];
+        let power = w
+            .buy(cat(), "Ann", "road", "crankset.road.power")
+            .unwrap()
+            .item;
+        let before = w.balance("Ann");
+        let top = cat().get("groupset.road-electronic.top").unwrap();
+        let r = w
+            .buy(cat(), "Ann", "road", "groupset.road-electronic.top")
+            .unwrap();
+        let gid = r.item;
+        assert_eq!(r.fitted.len(), 3, "{:?}", r.fitted);
+        assert_eq!(
+            w.balance("Ann"),
+            before - i64::from(top.hearts),
+            "one price"
+        );
+        let g = w.get("Ann").unwrap();
+        let fitted: Vec<String> = slots
+            .iter()
+            .map(|s| g.equipped("road", *s).unwrap().part.clone())
+            .collect();
+        assert_eq!(fitted, top.includes);
+        for s in slots {
+            let it = g.equipped("road", s).unwrap();
+            assert_eq!((it.with, it.paid), (Some(gid), 0));
+        }
+        // The power crankset it replaced is a spare part now.
+        assert!(g.spares().any(|i| i.id == power));
+        // The physics: the groupset's weight covers its parts.
+        let table = ocw_sim::build::PartTable::shipped();
+        let b = g.bike("road").unwrap();
+        let with = ocw_sim::build::build(table, ProfileId::Road, &g.part_ids(b));
+        let alone = ocw_sim::build::build(table, ProfileId::Road, std::slice::from_ref(&top.id));
+        assert_eq!(with.params.bike_mass_kg, alone.params.bike_mass_kg);
+        // Never bought or sold alone.
+        let e = w
+            .buy(cat(), "Ann", "road", "crankset.road-race.top")
+            .unwrap_err();
+        assert!(e.contains("comes with a groupset"), "{e}");
+        let crank = w
+            .get("Ann")
+            .unwrap()
+            .equipped("road", Slot::Crankset)
+            .unwrap()
+            .id;
+        let e = w.sell("Ann", crank).unwrap_err();
+        assert!(e.contains("sold with the groupset"), "{e}");
+        // Changed alone: the power crankset back on, the race one a spare.
+        w.equip(cat(), "Ann", "road", power).unwrap();
+        let g = w.get("Ann").unwrap();
+        assert!(g.spares().any(|i| i.id == crank));
+        // To another bike: the groupset takes its parts along (the road
+        // bike keeps the power crankset, gets its base cassette and chain).
+        let n = w.get("Ann").unwrap().items.len();
+        let said = w.equip(cat(), "Ann", "road-aero", gid).unwrap();
+        assert!(said.contains("with its"), "{said}");
+        let g = w.get("Ann").unwrap();
+        assert_eq!(g.items.len(), n, "its own parts, no new ones");
+        assert_eq!(g.equipped("road", Slot::Crankset).unwrap().id, power);
+        for s in [Slot::Groupset, Slot::Cassette, Slot::Chain] {
+            assert!(g.equipped("road", s).is_none(), "{s:?}");
+        }
+        for s in slots {
+            assert_eq!(g.equipped("road-aero", s).unwrap().with, Some(gid));
+        }
+        // Taken off: its parts come off with it.
+        assert_eq!(
+            w.unequip("Ann", "road-aero", Slot::Groupset).unwrap(),
+            Some(gid)
+        );
+        let g = w.get("Ann").unwrap();
+        assert!(g.bike("road-aero").unwrap().parts.is_empty());
+        assert_eq!(g.spares().count(), 4);
+        // A groupset bought before the fitting (no parts of its own) gets
+        // them when it is equipped.
+        let g = w.garages.get_mut("Ann").unwrap();
+        g.items.retain(|i| i.with != Some(gid));
+        w.equip(cat(), "Ann", "road", gid).unwrap();
+        let g = w.get("Ann").unwrap();
+        assert_eq!(g.with_groupset(gid).count(), 3);
+        assert_eq!(g.equipped("road", Slot::Chain).unwrap().with, Some(gid));
+        // Sold: the refund rule is the groupset's (in full, not ridden),
+        // its parts go with it; the power crankset stays a spare.
+        let before = w.balance("Ann");
+        assert_eq!(w.sell("Ann", gid).unwrap(), top.hearts);
+        assert_eq!(w.balance("Ann"), before + i64::from(top.hearts));
+        let g = w.get("Ann").unwrap();
+        assert_eq!(g.with_groupset(gid).count(), 0);
+        assert!(g.bike("road").unwrap().parts.is_empty());
+        assert_eq!(g.spares().map(|i| i.id).collect::<Vec<_>>(), vec![power]);
+        // Other parts and kit are not affected: a tyre buy fits nothing else.
+        let r = w.buy(cat(), "Ann", "road", "tyres.road.race").unwrap();
+        assert!(r.fitted.is_empty());
+    }
+
+    #[test]
+    fn a_groupset_parts_owner_survives_the_file() {
+        let it = Item {
+            id: 7,
+            part: "chain.12-speed.mid".into(),
+            paid: 0,
+            bought: "2026-11-14".into(),
+            ridden_m: 0.0,
+            with: Some(3),
+        };
+        let text = toml::to_string(&it).unwrap();
+        assert!(text.contains("with = 3"), "{text}");
+        assert_eq!(toml::from_str::<Item>(&text).unwrap(), it);
+        // Older files have no `with`.
+        let old: Item =
+            toml::from_str("id = 1\npart = \"lights.set\"\npaid = 80\nbought = \"2026-11-13\"\n")
+                .unwrap();
+        assert_eq!(old.with, None);
+        let plain = Item { with: None, ..it };
+        assert!(!toml::to_string(&plain).unwrap().contains("with"));
     }
 
     #[test]

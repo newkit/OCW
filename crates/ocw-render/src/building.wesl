@@ -46,6 +46,44 @@ fn hash2(p: vec2<f32>) -> f32 {
     return fract(sin(dot(p, vec2<f32>(12.9898, 78.233))) * 43758.5453);
 }
 
+// PCG hash (exact integer arithmetic: the Rust twin
+// `building_material::window_light` gives the same windows).
+fn pcg(v: u32) -> u32 {
+    let s = v * 747796405u + 2891336453u;
+    let w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
+    return (w >> 22u) ^ w;
+}
+
+fn unit(v: u32) -> f32 {
+    return f32(v >> 8u) / 16777216.0;
+}
+
+// The light behind window (cell, storey) of the building with light seed
+// `seed` at night (spec §14 Phase 9, 9I-S2): rgb × relative brightness, 0
+// when dark. Each building has its own share of lit windows (some none);
+// mostly warm incandescent light, some warm-white and a few cool LED / TV
+// rooms; each window its own brightness.
+fn window_light(seed: u32, cell: i32, storey: i32) -> vec3<f32> {
+    let b = unit(pcg(seed * 3u + 1u));
+    var share = 0.0;
+    if b >= 0.12 {
+        share = 0.12 + 0.4 * (b - 0.12) / 0.88;
+    }
+    let key = pcg(seed ^ pcg((bitcast<u32>(cell) * 2654435761u) ^ pcg(bitcast<u32>(storey) + 40503u)));
+    if unit(key) >= share {
+        return vec3<f32>(0.0);
+    }
+    let hue = unit(pcg(key ^ 0x9E3779B9u));
+    var c = vec3<f32>(1.0, 0.56, 0.26);
+    if hue >= 0.86 {
+        c = vec3<f32>(0.62, 0.74, 1.0);
+    } else if hue >= 0.62 {
+        c = vec3<f32>(1.0, 0.74, 0.5);
+    }
+    let k = 0.3 + 0.7 * unit(pcg(key ^ 0x85EBCA6Bu));
+    return c * k;
+}
+
 // Coverage of a box given its signed distance (negative inside), smoothed
 // over `aa` (anti-aliasing).
 fn cover(d: f32, aa: f32) -> f32 {
@@ -78,7 +116,9 @@ fn fragment(
     let win = fcode % 16u;
     let storey_h = f32((fcode / 16u) % 64u) / 10.0;
     let levels = fcode / 1024u;
-    let door_bay = u32(in.color.a + 0.5);
+    let alpha = u32(in.color.a + 0.5);
+    let door_bay = alpha % 64u;
+    let light_seed = alpha / 64u;
 
     // The floors above the first storey (timber upper floors).
     var layer = lower;
@@ -175,8 +215,8 @@ fn fragment(
                 albedo = mix(albedo, pane, glass * fade);
                 rough = mix(rough, 0.08, glass * fade);
                 n = normalize(mix(n, normalize(in.world_normal), whole));
-                let lit = step(h, 0.45) * look.facade.z;
-                emissive = vec3<f32>(1.0, 0.72, 0.42) * look.facade.w * lit * glass * fade;
+                let light = window_light(light_seed, i32(cell), i32(storey));
+                emissive = light * look.facade.w * look.facade.z * glass * fade;
             }
         }
     }

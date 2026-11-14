@@ -424,8 +424,13 @@ fn register_commands(app: &mut App) {
             let part = m.get_one::<String>("part").expect("required").clone();
             garage_op(world, m, |w, name, bike| {
                 let r = w.buy(cat(), name, bike, &part)?;
+                let with = if r.fitted.is_empty() {
+                    String::new()
+                } else {
+                    format!(", fitted with its {}", r.fitted.join(", "))
+                };
                 Ok(format!(
-                    "bought {} for {}; balance {}",
+                    "bought {} for {}{with}; balance {}",
                     cat().get(&part).map_or(part.as_str(), |p| p.name.as_str()),
                     hearts(i64::from(r.paid)),
                     hearts(r.balance)
@@ -1411,7 +1416,7 @@ fn picker_view(
         ],
         (_, Some(f)) => {
             let ph = bike.map(|b| picker::CardPhysics::of(cat(), g, b, f));
-            let mut d = picker::detail(f, equipped, ph.as_ref());
+            let mut d = picker::detail(cat(), f, equipped, ph.as_ref());
             // The server's word on the bike being ridden (its RiderBuild).
             if let (Some(e), Some(b)) = (server, bike)
                 && b.profile() == e.profile

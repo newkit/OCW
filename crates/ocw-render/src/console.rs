@@ -9,9 +9,14 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use bevy::app::AppExit;
+use bevy::camera::RenderTarget;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::Screenshot;
-use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
+use bevy::window::{PrimaryWindow, WindowRef};
+use bevy_egui::{
+    EguiContext, EguiContexts, EguiPlugin, EguiPrimaryContextPass, EguiSchedule,
+    PrimaryEguiContext, egui,
+};
 use clap::{Arg, ArgMatches, Command, value_parser};
 
 use crate::camera::{
@@ -29,7 +34,66 @@ impl Plugin for ConsolePlugin {
         }
         app.add_plugins(ConsoleCorePlugin)
             .add_systems(Update, toggle_console.before(run_pending_commands))
+            .add_systems(PostUpdate, console_on_top)
             .add_systems(EguiPrimaryContextPass, console_ui);
+    }
+}
+
+/// The camera the console (the primary egui context) draws on: the active
+/// camera with the highest order that renders into the primary window.
+/// While the workshop is open the world camera renders into the small ride
+/// window (an image) and the workshop camera is the one on screen, so the
+/// console is drawn over the workshop, not into the ride window (spec §14
+/// Phase 4, 4M). `cams`: (entity, order, active, renders to the primary
+/// window).
+pub fn console_host(cams: impl IntoIterator<Item = (Entity, isize, bool, bool)>) -> Option<Entity> {
+    cams.into_iter()
+        .filter(|(_, _, active, window)| *active && *window)
+        .max_by_key(|(e, order, _, _)| (*order, std::cmp::Reverse(*e)))
+        .map(|(e, ..)| e)
+}
+
+/// Keeps the primary egui context on [`console_host`]: a fresh one on the
+/// camera that becomes the one on screen (bevy_egui keeps a context's
+/// textures – the font atlas – per camera entity: a moved context only sent
+/// partial updates of an atlas the new camera never had, and drew nothing),
+/// also when its camera was despawned (the workshop's, on closing). The old
+/// camera keeps bevy_egui's (now empty) output components: its render
+/// entity links an egui view that is only refreshed while they are there
+/// (removing them left a stale link, and bevy_egui's transforms panicked).
+#[allow(clippy::type_complexity)] // a Bevy system query
+fn console_on_top(
+    mut commands: Commands,
+    cams: Query<(Entity, &Camera, Option<&RenderTarget>)>,
+    hosts: Query<Entity, With<PrimaryEguiContext>>,
+    primary: Query<Entity, With<PrimaryWindow>>,
+) {
+    let primary = primary.single().ok();
+    let to_window = |t: Option<&RenderTarget>| match t {
+        None | Some(RenderTarget::Window(WindowRef::Primary)) => true,
+        Some(RenderTarget::Window(WindowRef::Entity(e))) => Some(*e) == primary,
+        _ => false,
+    };
+    let Some(host) = console_host(
+        cams.iter()
+            .map(|(e, c, t)| (e, c.order, c.is_active, to_window(t))),
+    ) else {
+        return;
+    };
+    if hosts.iter().any(|e| e == host) && hosts.iter().count() == 1 {
+        return;
+    }
+    for e in &hosts {
+        if e != host {
+            commands
+                .entity(e)
+                .remove::<(PrimaryEguiContext, EguiContext, EguiSchedule)>();
+        }
+    }
+    if !hosts.iter().any(|e| e == host) {
+        commands
+            .entity(host)
+            .insert((EguiContext::default(), PrimaryEguiContext));
     }
 }
 
@@ -587,6 +651,79 @@ mod tests {
         );
         assert_eq!(split_line("echo \"\""), vec!["echo", ""]);
         assert!(split_line("   ").is_empty());
+    }
+
+    /// Regression (spec §14 Phase 4, 4M): while the workshop is open the
+    /// console was drawn into the ride window (the world camera renders
+    /// into an image then); it must follow the camera on screen.
+    #[test]
+    fn the_console_is_drawn_by_the_camera_on_screen() {
+        let mut ids = World::new();
+        let ids: Vec<Entity> = (0..4).map(|_| ids.spawn_empty().id()).collect();
+        let e = |i: usize| ids[i];
+        // The world camera alone; then the workshop's camera on top while
+        // the world camera renders into the ride window (an image).
+        assert_eq!(console_host([(e(1), 0, true, true)]), Some(e(1)));
+        assert_eq!(
+            console_host([
+                (e(1), 0, true, false),
+                (e(2), 1, true, true),
+                (e(3), 0, true, false)
+            ]),
+            Some(e(2))
+        );
+        assert_eq!(console_host([(e(1), 0, false, true)]), None);
+        assert_eq!(console_host([(e(1), 0, true, false)]), None);
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_systems(PostUpdate, console_on_top);
+        let world_cam = app
+            .world_mut()
+            .spawn((
+                Camera::default(),
+                RenderTarget::Window(WindowRef::Primary),
+                EguiContext::default(),
+                PrimaryEguiContext,
+            ))
+            .id();
+        app.update();
+        let has = |app: &App, cam| app.world().get::<PrimaryEguiContext>(cam).is_some();
+        assert!(has(&app, world_cam));
+        // The workshop opens: the world camera into the ride window, the
+        // workshop camera (order 1) on screen.
+        *app.world_mut().get_mut::<RenderTarget>(world_cam).unwrap() =
+            RenderTarget::Image(Handle::<Image>::default().into());
+        let workshop = app
+            .world_mut()
+            .spawn((Camera {
+                order: 1,
+                ..default()
+            },))
+            .id();
+        app.update();
+        assert!(has(&app, workshop), "the console is over the workshop");
+        assert!(!has(&app, world_cam));
+        let w = app.world();
+        assert!(w.get::<EguiContext>(world_cam).is_none());
+        assert!(w.get::<EguiSchedule>(world_cam).is_none(), "one pass only");
+        // Its (empty) output stays: bevy_egui's render view of the camera.
+        assert!(w.get::<bevy_egui::EguiRenderOutput>(world_cam).is_some());
+        assert!(w.get::<EguiContext>(workshop).is_some());
+        assert!(w.get::<EguiSchedule>(workshop).is_some());
+        // Closed: the workshop camera goes, the world camera is on screen.
+        app.world_mut().despawn(workshop);
+        *app.world_mut().get_mut::<RenderTarget>(world_cam).unwrap() =
+            RenderTarget::Window(WindowRef::Primary);
+        app.update();
+        assert!(has(&app, world_cam));
+        assert_eq!(
+            app.world_mut()
+                .query_filtered::<Entity, With<PrimaryEguiContext>>()
+                .iter(app.world())
+                .count(),
+            1
+        );
     }
 
     #[test]

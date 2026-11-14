@@ -1230,6 +1230,120 @@ impl<'a> Bytes<'a> {
     }
 }
 
+/// The sidewalks of a package's resident tiles as the client draws them
+/// (spec §14 Phase 8 T5), bucketed for lookups: riders beside the road
+/// (wild mode) roll on them – up the kerb, not through it.
+#[derive(Debug, Clone, Default)]
+pub struct PavementIndex {
+    /// Half widths and dresses of the strips with a sidewalk.
+    strips: Vec<(f64, RoadDress)>,
+    cells: std::collections::HashMap<(i64, i64), Vec<PaveSeg>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PaveSeg {
+    a: [f64; 3],
+    b: [f64; 3],
+    /// Arc length (3D, along the drawn points) at `a`, the segment's length.
+    local: f64,
+    len: f64,
+    strip: u32,
+}
+
+/// Bucket size of [`PavementIndex`] (m).
+const PAVE_CELL_M: f64 = 8.0;
+
+impl PavementIndex {
+    /// The sidewalks of every tile of `pkg` (its local metres).
+    pub fn new(pkg: &WorldPackage) -> Self {
+        Self::from_strips(pkg.tiles.values().flat_map(|t| &t.roads))
+    }
+
+    /// The sidewalks of `strips`.
+    pub fn from_strips<'a>(strips: impl IntoIterator<Item = &'a RoadStrip>) -> Self {
+        let mut ix = Self::default();
+        {
+            for r in strips {
+                let reach = r.dress.sidewalk_m.iter().copied().fold(0.0f32, f32::max);
+                if reach <= 0.0 {
+                    continue;
+                }
+                let strip = ix.strips.len() as u32;
+                let half = f64::from(r.width_m) / 2.0;
+                ix.strips.push((half, r.dress.clone()));
+                let pad = half + f64::from(reach);
+                let mut local = 0.0;
+                for w in r.points.windows(2) {
+                    let (a, b) = (w[0].map(f64::from), w[1].map(f64::from));
+                    let len =
+                        ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2) + (b[2] - a[2]).powi(2))
+                            .sqrt();
+                    let seg = PaveSeg {
+                        a,
+                        b,
+                        local,
+                        len,
+                        strip,
+                    };
+                    let k = |v: f64| (v / PAVE_CELL_M).floor() as i64;
+                    for cx in k(a[0].min(b[0]) - pad)..=k(a[0].max(b[0]) + pad) {
+                        for cz in k(a[2].min(b[2]) - pad)..=k(a[2].max(b[2]) + pad) {
+                            ix.cells.entry((cx, cz)).or_default().push(seg);
+                        }
+                    }
+                    local += len;
+                }
+            }
+        }
+        ix
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.strips.is_empty()
+    }
+
+    /// Height of the sidewalk surface at local (x, z): beside a strip with
+    /// a sidewalk on that side, from the kerb to its outer edge, the road
+    /// surface ([`ROAD_LIFT_M`] above the centre line) plus the kerb,
+    /// rising by [`crate::road_dress::SIDEWALK_FALL`] outwards (as
+    /// `ocw-render::road_mesh` draws it), tapering into junction zones like
+    /// the kerb; `None` off every sidewalk.
+    pub fn height(&self, x: f64, z: f64) -> Option<f64> {
+        let key = (
+            (x / PAVE_CELL_M).floor() as i64,
+            (z / PAVE_CELL_M).floor() as i64,
+        );
+        let mut best: Option<f64> = None;
+        for s in self.cells.get(&key)? {
+            let (a, b) = (s.a, s.b);
+            let (dx, dz) = (b[0] - a[0], b[2] - a[2]);
+            let len2 = dx * dx + dz * dz;
+            if len2 < 1e-12 {
+                continue;
+            }
+            let t = ((x - a[0]) * dx + (z - a[2]) * dz) / len2;
+            if !(0.0..=1.0).contains(&t) {
+                continue;
+            }
+            let (half, dress) = &self.strips[s.strip as usize];
+            // Right of the direction (dx, dz) is (-dz, dx).
+            let across = ((x - a[0]) * -dz + (z - a[2]) * dx) / len2.sqrt();
+            let side = usize::from(across > 0.0);
+            let (sw, kerb) = dress.kerb_at(side, (s.local + s.len * t) as f32);
+            let out = across.abs() - half;
+            if sw > 0.0 && (0.0..=f64::from(sw)).contains(&out) {
+                let y = a[1]
+                    + (b[1] - a[1]) * t
+                    + ROAD_LIFT_M
+                    + f64::from(kerb)
+                    + out * f64::from(crate::road_dress::SIDEWALK_FALL);
+                best = Some(best.map_or(y, |h: f64| h.max(y)));
+            }
+        }
+        best
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1299,6 +1413,56 @@ mod tests {
         assert_eq!(p.road_heights_along(2.5, 4.5, Some([-s, -s])).len(), 1);
         // A road crossing at right angles is another road.
         assert!(p.road_heights_along(2.5, 4.5, Some([s, -s])).is_empty());
+    }
+
+    /// Regression (spec §14 Phase 8 T5, wild mode): riders beside the road
+    /// went through the kerbs; the sidewalk's drawn height is known – on
+    /// the sidewalk only, raised by the kerb, tapering into junctions.
+    #[test]
+    fn the_sidewalk_height_is_the_kerb_above_the_road() {
+        let mut p = package();
+        let tile = p.tiles.get_mut(&TileKey { x: 0, z: 0 }).unwrap();
+        let mut dress = RoadDress::of_class(RoadClass::Residential, 6.0);
+        // A 2 m sidewalk on the left only (heading +x: left is −z).
+        dress.sidewalk_m = [2.0, 0.0];
+        dress.kerb_m = 0.12;
+        tile.roads = vec![RoadStrip {
+            class: RoadClass::Residential,
+            width_m: 6.0,
+            points: vec![[100.0, 10.0, 500.0], [200.0, 10.0, 500.0]],
+            surface: RoadSurface::Asphalt,
+            dress,
+            lit: crate::RoadLit::Unknown,
+        }];
+        let road = 10.0 + ROAD_LIFT_M;
+        let ix = PavementIndex::new(&p);
+        let h = |x: f64, z: f64| ix.height(x, z);
+        // On the carriageway and beyond the sidewalk: none.
+        assert_eq!(h(150.0, 500.0), None);
+        assert_eq!(h(150.0, 497.5), None, "still the road");
+        assert_eq!(h(150.0, 494.5), None, "beyond it");
+        // The right side has no sidewalk.
+        assert_eq!(h(150.0, 504.0), None);
+        // On it: the kerb up, then falling towards the road.
+        let at_kerb = h(150.0, 496.9).unwrap();
+        assert!(
+            (at_kerb - (road + 0.12 + 0.1 * 0.02)).abs() < 1e-6,
+            "{at_kerb}"
+        );
+        let outer = h(150.0, 495.1).unwrap();
+        assert!(outer > at_kerb && outer - road < 0.17, "{outer}");
+        // A junction zone at the start: the kerb tapers to nothing.
+        let tile = p.tiles.get_mut(&TileKey { x: 0, z: 0 }).unwrap();
+        tile.roads[0].dress.junction_m = [10.0, 0.0];
+        let ix = PavementIndex::new(&p);
+        let h = |x: f64, z: f64| ix.height(x, z);
+        assert_eq!(h(105.0, 496.5), None, "in the junction");
+        let ramp = h(111.0, 496.9).unwrap();
+        assert!(ramp - road < 0.07 && ramp > road, "{ramp}");
+        assert!((h(150.0, 496.9).unwrap() - at_kerb).abs() < 1e-9);
+        // Far from any sidewalk (another bucket): none.
+        assert_eq!(h(900.0, 100.0), None);
+        assert!(!ix.is_empty() && PavementIndex::new(&package()).is_empty());
     }
 
     /// The time zone section (spec §14 Phase 9): written, read back, and

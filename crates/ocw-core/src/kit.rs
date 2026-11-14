@@ -231,11 +231,13 @@ pub mod layout {
     pub const BIB_HALF: [f32; 2] = [0.1, 0.075];
     pub const BIB_DIGIT: f32 = 0.075;
     pub const BIB_BACK_Z: f32 = 0.07;
-    /// The hip numbers: |x| from which a point is on the hip, the
-    /// digits' centre (z, y) and height.
-    pub const HIP_X: f32 = 0.12;
-    pub const HIP_CENTRE: [f32; 2] = [0.0, -0.13];
-    pub const HIP_DIGIT: f32 = 0.05;
+    /// The hip numbers: paper plates on the pelvis' sides (the rider
+    /// model's `hip_number_*` nodes, outside every thigh at any pedal
+    /// angle: they stay put and readable while riding). |x| from which a
+    /// point is on a plate, the digits' centre (z, y) and height.
+    pub const HIP_X: f32 = 0.174;
+    pub const HIP_CENTRE: [f32; 2] = [0.0, -0.035];
+    pub const HIP_DIGIT: f32 = 0.036;
 }
 
 /// Weights of the colours `[base, first, second, third]` of a garment's
@@ -434,9 +436,9 @@ pub fn digits_ink(n: u16, u: f32, v: f32, h: f32) -> bool {
 }
 
 /// The race number's ink at the rest-pose point `p` of a garment: the
-/// paper bib with its digits on the jersey's back, the digits on both
-/// hips of the shorts (read from the side: front to back on the left
-/// hip, back to front on the right).
+/// paper bib with its digits on the jersey's back, the paper plates on
+/// both hips (on the pelvis, not the thighs: read from the side, front to
+/// back on the left hip, back to front on the right).
 pub fn number_ink(number: u16, garment: Garment, region: BodyRegion, p: [f32; 3]) -> Ink {
     use layout::*;
     if number == 0 || number > MAX_RACE_NUMBER {
@@ -455,7 +457,9 @@ pub fn number_ink(number: u16, garment: Garment, region: BodyRegion, p: [f32; 3]
                 Ink::Paper
             }
         }
-        (Garment::Shorts, BodyRegion::Torso | BodyRegion::Leg) => {
+        // Only the pelvis carries them: on a thigh they turned with the
+        // pedal stroke (unreadable).
+        (Garment::Shorts, BodyRegion::Torso) => {
             if x.abs() < HIP_X {
                 return Ink::None;
             }
@@ -463,7 +467,7 @@ pub fn number_ink(number: u16, garment: Garment, region: BodyRegion, p: [f32; 3]
             if digits_ink(number, u, y - HIP_CENTRE[1], HIP_DIGIT) {
                 Ink::Digit
             } else {
-                Ink::None
+                Ink::Paper
             }
         }
         _ => Ink::None,
@@ -696,11 +700,24 @@ mod tests {
             })
             .count();
         assert!(ink > 100, "{ink}");
-        // Hips: digits, read from the side.
-        let hip = |x: f32, z: f32| number_ink(8, Garment::Shorts, BodyRegion::Leg, [x, -0.13, z]);
-        assert_eq!(hip(-0.15, 0.0), Ink::Digit, "middle bar of the 8");
-        assert_eq!(hip(0.15, 0.0), Ink::Digit);
+        // Hips: paper plates on the pelvis with the digits, read from the
+        // side.
+        let y = layout::HIP_CENTRE[1];
+        let hip = |x: f32, z: f32| number_ink(8, Garment::Shorts, BodyRegion::Torso, [x, y, z]);
+        assert_eq!(hip(-0.178, 0.0), Ink::Digit, "middle bar of the 8");
+        assert_eq!(hip(0.178, 0.0), Ink::Digit);
+        assert_eq!(hip(0.178, 0.045), Ink::Paper, "the plate beside the digit");
         assert_eq!(hip(0.05, 0.0), Ink::None, "not on the front");
+        // Regression (spec §14 Phase 8 T6): never on the thighs, which
+        // turn with the pedals.
+        assert_eq!(
+            number_ink(8, Garment::Shorts, BodyRegion::Leg, [0.178, y, 0.0]),
+            Ink::None
+        );
+        assert_eq!(
+            number_ink(8, Garment::Shorts, BodyRegion::Leg, [-0.15, -0.13, 0.0]),
+            Ink::None
+        );
     }
 
     #[test]

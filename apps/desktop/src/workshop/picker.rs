@@ -421,11 +421,17 @@ pub fn row_text(cat: &Catalogue, row: &Row, balance: i64) -> (String, String, bo
         return ("?".into(), String::new(), false);
     };
     let left = format!("{}  [{}]  {}", p.name, p.tier.name(), grams(p.weight_g));
+    // The crankset, cassette and chain of a groupset (spec 4B).
+    let with = if cat.is_included(&p.id) {
+        ", with the groupset"
+    } else {
+        ""
+    };
     match &row.kind {
-        Kind::Equipped { .. } => (left, "equipped".into(), false),
+        Kind::Equipped { .. } => (left, format!("equipped{with}"), false),
         Kind::Owned { item: 0, .. } => (left, "base part".into(), false),
-        Kind::Owned { on: Some(b), .. } => (left, format!("owned, on the {b}"), false),
-        Kind::Owned { .. } => (left, "owned".into(), false),
+        Kind::Owned { on: Some(b), .. } => (left, format!("owned, on the {b}{with}"), false),
+        Kind::Owned { .. } => (left, format!("owned{with}"), false),
         Kind::Shop => {
             let price = i64::from(p.hearts);
             if balance < price {
@@ -571,7 +577,12 @@ pub fn bike_line(b: &Build) -> String {
 /// The detail card of `part` against the `equipped` one: the main
 /// figures and the effect lines (`physics`: the bike's build now and with
 /// the part).
-pub fn detail(part: &Part, equipped: Option<&Part>, physics: Option<&CardPhysics>) -> Vec<String> {
+pub fn detail(
+    cat: &Catalogue,
+    part: &Part,
+    equipped: Option<&Part>,
+    physics: Option<&CardPhysics>,
+) -> Vec<String> {
     let mut out = vec![
         part.name.clone(),
         format!(
@@ -596,6 +607,11 @@ pub fn detail(part: &Part, equipped: Option<&Part>, physics: Option<&CardPhysics
     effect.extend(classes(part));
     if !effect.is_empty() {
         out.push(format!("Effect: {}", effect.join(" · ")));
+    }
+    // Spec 4B: a groupset is fitted with its crankset, cassette and chain.
+    let with = included_line(cat, part);
+    if !with.is_empty() {
+        out.push(with);
     }
     if let Some(ph) = physics {
         let stock = Build::stock(ph.with.profile);
@@ -623,6 +639,25 @@ pub fn detail(part: &Part, equipped: Option<&Part>, physics: Option<&CardPhysics
     }
     out.push(WHERE_PARTS_COUNT.into());
     out
+}
+
+/// The groupset line of a card (spec 4B): "Fitted with: …" for a
+/// groupset, "Comes with the groupset …" for its crankset, cassette and
+/// chain; empty for other parts.
+pub fn included_line(cat: &Catalogue, part: &Part) -> String {
+    let inc = cat.included(part);
+    if !inc.is_empty() {
+        let names: Vec<&str> = inc.iter().map(|p| p.name.as_str()).collect();
+        return format!(
+            "Fitted with: {} (in the price and weight; the parts they replace go to your spare parts)",
+            names.join(" · ")
+        );
+    }
+    if cat.is_included(&part.id) {
+        return "Comes with its groupset (in its price and weight): fitted with it, sold with it"
+            .into();
+    }
+    String::new()
 }
 
 /// Better / worse in words (never colour alone).
@@ -739,14 +774,23 @@ pub fn dialog(
             if balance < price {
                 return None;
             }
+            let mut text = format!(
+                "For {}. Balance {} → {}",
+                hearts(price),
+                hearts(balance),
+                hearts(balance - price)
+            );
+            let inc = cat.included(p);
+            if !inc.is_empty() {
+                let names: Vec<&str> = inc.iter().map(|p| p.name.as_str()).collect();
+                text.push_str(&format!(
+                    ". Fitted with its {}; the parts they replace go to your spare parts.",
+                    names.join(", ")
+                ));
+            }
             Some(Dialog::new(
                 format!("Buy {}?", p.name),
-                format!(
-                    "For {}. Balance {} → {}",
-                    hearts(price),
-                    hearts(balance),
-                    hearts(balance - price)
-                ),
+                text,
                 vec![Button {
                     label: "Buy".into(),
                     line: Some(format!("workshop.buy {} --bike {b}", p.id)),
@@ -767,31 +811,49 @@ pub fn dialog(
                 Some(other) => format!("Now on the {other}: it gets its base part back."),
                 None => "From your spare parts.".into(),
             };
-            text.push_str(&format!(
-                " Selling gives {}.",
-                hearts(i64::from(it.refund()))
-            ));
-            Some(Dialog::new(
-                p.name.clone(),
-                text,
-                vec![
-                    Button {
-                        label: "Equip".into(),
-                        line: Some(format!("workshop.equip {item} --bike {b}")),
-                    },
-                    Button {
-                        label: format!("Sell for {}", hearts(i64::from(it.refund()))),
-                        line: Some(format!("workshop.sell {item}")),
-                    },
-                ],
-            ))
+            let mut buttons = vec![Button {
+                label: "Equip".into(),
+                line: Some(format!("workshop.equip {item} --bike {b}")),
+            }];
+            if it.with.is_some() {
+                text.push_str(" It came with a groupset and is sold with it.");
+            } else {
+                if !p.includes.is_empty() {
+                    text.push_str(" Its crankset, cassette and chain are fitted with it.");
+                }
+                text.push_str(&format!(
+                    " Selling gives {}.",
+                    hearts(i64::from(it.refund()))
+                ));
+                buttons.push(Button {
+                    label: format!("Sell for {}", hearts(i64::from(it.refund()))),
+                    line: Some(format!("workshop.sell {item}")),
+                });
+            }
+            Some(Dialog::new(p.name.clone(), text, buttons))
         }
         Kind::Equipped { item: Some(item) } => {
             let it = garage.item(*item)?;
+            let unequip = Button {
+                label: "Unequip".into(),
+                line: Some(format!("workshop.unequip {} --bike {b}", slot.id())),
+            };
+            if it.with.is_some() {
+                return Some(Dialog::new(
+                    p.name.clone(),
+                    "On the bike, with the groupset; it is sold with the groupset.".into(),
+                    vec![unequip],
+                ));
+            }
+            let with = if p.includes.is_empty() {
+                ""
+            } else {
+                " Its crankset, cassette and chain come off and are sold with it."
+            };
             Some(Dialog::new(
                 p.name.clone(),
                 format!(
-                    "On the bike{}. Selling gives {}.",
+                    "On the bike{}. Selling gives {}.{with}",
                     if it.ridden() {
                         ", ridden"
                     } else {
@@ -800,10 +862,7 @@ pub fn dialog(
                     hearts(i64::from(it.refund()))
                 ),
                 vec![
-                    Button {
-                        label: "Unequip".into(),
-                        line: Some(format!("workshop.unequip {} --bike {b}", slot.id())),
-                    },
+                    unequip,
                     Button {
                         label: format!("Sell for {}", hearts(i64::from(it.refund()))),
                         line: Some(format!("workshop.sell {item}")),
@@ -1089,6 +1148,100 @@ mod tests {
         );
     }
 
+    /// Spec 4B: the picker shows a groupset's crankset, cassette and chain
+    /// (on its card, in the buy dialog, on the rows of those slots), never
+    /// offers them alone and sells them only with the groupset.
+    #[test]
+    fn the_picker_shows_the_parts_a_groupset_fits() {
+        let mut w = wallet();
+        w.grant("Ann", 100_000);
+        let gs = "groupset.road-electronic.top";
+        let r = picker(&w, "road", Slot::Groupset);
+        let shop = r
+            .iter()
+            .find(|r| r.part.as_deref() == Some(gs))
+            .unwrap()
+            .clone();
+        {
+            let g = w.get("Ann").unwrap();
+            let b = g.bike("road").unwrap();
+            let d = dialog(cat(), g, b, Slot::Groupset, &shop, 100_000).unwrap();
+            assert!(
+                d.text
+                    .contains("Fitted with its Race 12-speed crankset 52/36"),
+                "{}",
+                d.text
+            );
+            let card = detail(cat(), cat().get(gs).unwrap(), None, None);
+            assert!(
+                card.iter().any(|l| l.starts_with("Fitted with:")
+                    && l.contains("12-speed race cassette 11-30")
+                    && l.contains("12-speed race chain")),
+                "{card:?}"
+            );
+        }
+        // The shop never offers a groupset's parts alone.
+        for slot in [Slot::Crankset, Slot::Cassette, Slot::Chain] {
+            for r in picker(&w, "road", slot) {
+                if r.kind == Kind::Shop {
+                    assert!(!cat().is_included(r.part.as_deref().unwrap()), "{r:?}");
+                }
+            }
+        }
+        let gid = w.buy(cat(), "Ann", "road", gs).unwrap().item;
+        let r = picker(&w, "road", Slot::Crankset);
+        assert_eq!(r[0].part.as_deref(), Some("crankset.road-race.top"));
+        let (_, right, _) = row_text(cat(), &r[0], 0);
+        assert_eq!(right, "equipped, with the groupset");
+        let g = w.get("Ann").unwrap();
+        let b = g.bike("road").unwrap();
+        let card = detail(
+            cat(),
+            cat().get("crankset.road-race.top").unwrap(),
+            None,
+            None,
+        );
+        assert!(
+            card.iter()
+                .any(|l| l.starts_with("Comes with its groupset")),
+            "{card:?}"
+        );
+        let lines =
+            |d: Dialog| -> Vec<String> { d.buttons.into_iter().filter_map(|b| b.line).collect() };
+        // Its crankset: unequip only (it is sold with the groupset).
+        assert_eq!(
+            lines(dialog(cat(), g, b, Slot::Crankset, &r[0], 0).unwrap()),
+            vec!["workshop.unequip crankset --bike road".to_string()]
+        );
+        // The groupset itself: unequip or sell, as any part.
+        let r = picker(&w, "road", Slot::Groupset);
+        let d = dialog(cat(), g, b, Slot::Groupset, &r[0], 0).unwrap();
+        assert!(
+            d.text.contains("come off and are sold with it"),
+            "{}",
+            d.text
+        );
+        assert_eq!(
+            lines(d),
+            vec![
+                "workshop.unequip groupset --bike road".to_string(),
+                format!("workshop.sell {gid}")
+            ]
+        );
+        // Taken off, the crankset is an owned spare without a sell button.
+        w.unequip("Ann", "road", Slot::Groupset).unwrap();
+        let g = w.get("Ann").unwrap();
+        let b = g.bike("road").unwrap();
+        let r = picker(&w, "road", Slot::Crankset);
+        let owned = r
+            .iter()
+            .find(|r| r.part.as_deref() == Some("crankset.road-race.top"))
+            .unwrap();
+        assert_eq!(row_text(cat(), owned, 0).1, "owned, with the groupset");
+        let d = dialog(cat(), g, b, Slot::Crankset, owned, 0).unwrap();
+        assert_eq!(lines(d).len(), 1, "equip only");
+    }
+
     /// The server's catalogue copy (`ocw_sim::build::PartTable`) and the
     /// workshop's catalogue read the same file the same way: the cards
     /// show what the server applies.
@@ -1125,7 +1278,7 @@ mod tests {
         let g = w.get("Ann").unwrap();
         let b = g.bike("road").unwrap();
         let ph = CardPhysics::of(cat(), g, b, fast);
-        let d = detail(fast, Some(base), Some(&ph));
+        let d = detail(cat(), fast, Some(base), Some(&ph));
         assert!(
             d.iter()
                 .any(|l| l.starts_with("Effect:") && l.contains("rolling resistance -")),
@@ -1151,7 +1304,7 @@ mod tests {
         // The equipped base part: what the bike does now.
         let now = CardPhysics::of(cat(), g, b, base);
         assert!(
-            detail(base, Some(base), Some(&now))
+            detail(cat(), base, Some(base), Some(&now))
                 .iter()
                 .any(|l| l.starts_with("On the bike now – benefit:"))
         );
@@ -1215,7 +1368,7 @@ mod tests {
         let part = cat().get("helmet.tt.top").unwrap();
         let base = cat().get("helmet.road.base").unwrap();
         let ph = CardPhysics::of(cat(), g, b, part);
-        let d = detail(part, Some(base), Some(&ph));
+        let d = detail(cat(), part, Some(base), Some(&ph));
         assert!(
             d.iter()
                 .any(|l| l.starts_with("Effect:") && l.contains("drag -0.0032 m² CdA")),
@@ -1237,6 +1390,7 @@ mod tests {
         let g = w.get("Ann").unwrap();
         let shoes = cat().get("shoes.race.top").unwrap();
         let d = detail(
+            cat(),
             shoes,
             g.kit_on(cat(), Slot::Shoes),
             Some(&CardPhysics::of(cat(), g, g.bike("road").unwrap(), shoes)),
