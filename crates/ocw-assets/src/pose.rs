@@ -660,9 +660,134 @@ pub fn pose(rider: &RiderRig, bike: &BikeRig, fit: &Fit, p: &PoseParams) -> Pose
     }
 }
 
+/// How far the hips sink in the idle stance (m): the knees a little soft.
+const IDLE_SINK: f32 = 0.012;
+
+/// The rider standing at ease (spec §14 Phase 4, 4C: the changing
+/// corner's idle animation), `t` seconds into it, in the rider's own frame
+/// (the feet where the rest pose has them, flat on the floor): the arms
+/// hang relaxed beside the body with soft elbows (not the rest pose's
+/// straight arms held out), the weight shifts slowly from foot to foot
+/// with the hips, the chest rises with the breath and the head looks
+/// about now and then. Smooth and periodic-ish (incommensurate periods),
+/// so it never visibly loops.
+pub fn idle(rider: &RiderRig, t: f32) -> Pose {
+    use std::f32::consts::TAU;
+    let wave = |period: f32, phase: f32| (TAU * t / period + phase).sin();
+    // Weight shift (+: onto the right foot), breath, a slow arm sway.
+    let shift = wave(7.3, 0.0);
+    let breath = wave(4.2, 0.6);
+    let pelvis_pos = Vec3::new(0.018 * shift, -IDLE_SINK - 0.004 * shift.abs(), 0.0);
+    // The loaded hip rises a little.
+    let pelvis_rot = Quat::from_rotation_z(0.03 * shift);
+    // The upper body stays nearly upright over the hips; the chest lifts
+    // back a touch on the breath in.
+    let torso_world = Quat::from_rotation_z(-0.012 * shift) * Quat::from_rotation_x(0.014 * breath);
+    // Legs: the feet stay where they stand (two-bone IK to the rest
+    // ankles), flat on the floor.
+    let mut thighs = [Quat::IDENTITY; 2];
+    let mut shins = [Quat::IDENTITY; 2];
+    let mut feet = [Quat::IDENTITY; 2];
+    for s in 0..2 {
+        let hip = pelvis_pos + pelvis_rot * rider.hips[s];
+        let ankle = rider.hips[s] - Vec3::Y * rider.leg();
+        let out = if s == 0 { -Vec3::X } else { Vec3::X };
+        let (knee, end) = two_bone(hip, ankle, rider.thigh, rider.shin, Vec3::NEG_Z + out * 0.1);
+        let hinge = (end - hip).cross(knee - hip).normalize_or(Vec3::X);
+        let thigh_w = segment_rotation(knee - hip, hinge);
+        let shin_w = segment_rotation(end - knee, hinge);
+        thighs[s] = pelvis_rot.inverse() * thigh_w;
+        shins[s] = thigh_w.inverse() * shin_w;
+        feet[s] = shin_w.inverse();
+    }
+    // Arms: hanging beside the body (a little away from the hips), a touch
+    // forward, the elbows soft; they sway with the breath.
+    let mut upper_arms = [Quat::IDENTITY; 2];
+    let mut forearms = [Quat::IDENTITY; 2];
+    for s in 0..2 {
+        let side = if s == 0 { -1.0 } else { 1.0 };
+        let sway = wave(6.1, 1.3 + s as f32 * 2.1);
+        let abduct = 0.11 + 0.008 * breath;
+        let forward = 0.07 + 0.025 * sway;
+        upper_arms[s] = Quat::from_rotation_z(side * abduct) * Quat::from_rotation_x(forward);
+        forearms[s] = Quat::from_rotation_x(0.26 + 0.03 * sway);
+    }
+    // The head: looking about (two slow turns) and a little down.
+    let yaw = 0.2 * wave(11.0, 0.4) + 0.07 * wave(3.7, 1.0);
+    let pitch = -0.05 + 0.025 * wave(5.3, 2.2);
+    Pose {
+        bike_roll: 0.0,
+        crank: Quat::IDENTITY,
+        pedals: [Quat::IDENTITY; 2],
+        pelvis: (pelvis_pos, pelvis_rot),
+        torso: pelvis_rot.inverse() * torso_world,
+        head: Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch),
+        thighs,
+        shins,
+        feet,
+        upper_arms,
+        forearms,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The idle stance (spec 4C): both feet stay planted and flat, the
+    /// arms hang beside the body with soft elbows (not out like the rest
+    /// pose's), and it moves – smoothly.
+    #[test]
+    fn the_idle_pose_stands_on_both_feet_with_the_arms_down() {
+        let mut m = crate::rider::build(crate::rider::Detail::High);
+        let rig = RiderRig::from_model(&m).unwrap();
+        let rest = m.clone();
+        let at =
+            |m: &Model, name: &str| m.world(m.node(name).unwrap()).transform_point3(Vec3::ZERO);
+        let ankles = nodes::FOOT.map(|f| at(&rest, f));
+        for i in 0..90 {
+            let t = i as f32 * 0.37;
+            let p = idle(&rig, t);
+            p.apply(&mut m);
+            for (s, ankle) in ankles.iter().enumerate() {
+                let a = at(&m, nodes::FOOT[s]);
+                assert!(a.distance(*ankle) < 2e-3, "t {t}: ankle {s} moved to {a}");
+                let toe = m
+                    .world(m.node(nodes::FOOT[s]).unwrap())
+                    .transform_vector3(Vec3::NEG_Z);
+                assert!(
+                    toe.y.abs() < 0.01 && toe.z < -0.99,
+                    "t {t}: foot {s} flat {toe}"
+                );
+                let shoulder = at(&m, nodes::UPPER_ARM[s]);
+                let hand = at(&m, nodes::HAND[s]);
+                assert!(hand.y < shoulder.y - 0.4, "t {t}: hand {s} hangs: {hand}");
+                // Beside the hips, not held out.
+                let x = hand.x.abs();
+                assert!((0.12..0.42).contains(&x), "t {t}: hand {s} at x {x}");
+                assert!(hand.z.abs() < 0.2, "t {t}: hand {s} at z {}", hand.z);
+                // Soft elbows.
+                let elbow = at(&m, nodes::FOREARM[s]);
+                let bend = (elbow - shoulder).angle_between(hand - elbow);
+                assert!(bend > 0.15, "t {t}: elbow {s} bent {bend}");
+            }
+        }
+        // Smooth: at 60 fps every joint turns by a hair at most.
+        for i in 0..600 {
+            let (t0, t1) = (i as f32 / 60.0, (i + 1) as f32 / 60.0);
+            let (q, p) = (idle(&rig, t0), idle(&rig, t1));
+            for ((_, a), (_, b)) in q.rotations().iter().zip(p.rotations().iter()) {
+                assert!(a.angle_between(*b) < 0.01, "t {t0}");
+            }
+            assert!(q.pelvis.0.distance(p.pelvis.0) < 1e-3);
+        }
+        // It moves: the head turns, the weight shifts.
+        let (a, b) = (idle(&rig, 0.0), idle(&rig, 3.0));
+        assert!(a.head.angle_between(idle(&rig, 5.5).head) > 0.1);
+        assert!(a.pelvis.0.distance(b.pelvis.0) > 0.005);
+        // Not the rest pose: the arms are not straight down.
+        assert!(a.upper_arms[0].angle_between(Quat::IDENTITY) > 0.1);
+    }
 
     #[test]
     fn two_bone_ik_reaches_and_bends_towards_the_pole() {

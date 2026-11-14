@@ -53,6 +53,11 @@ pub enum Act {
     Button(usize),
     /// The on-screen ‹ Back button (touch mode, spec §3.2.2).
     BackButton,
+    /// Straight to the bench catalogue (spec 4D; console scripts): from
+    /// the bench, or from the "+" hook.
+    Catalogue {
+        plus: bool,
+    },
 }
 
 /// The device of the last meaningful input: the hint bar's glyphs.

@@ -24,6 +24,7 @@
 //! colours of shorts, socks, shoes and gloves, helmet and shoe finish –
 //! free, saved in the rider profile, sent with the look).
 
+pub mod bench;
 pub mod camera;
 pub mod designer;
 pub mod input;
@@ -179,7 +180,16 @@ impl Plugin for WorkshopPlugin {
         }
         let mut state = WorkshopState::new(wallet);
         let (name, bike) = rider(app.world());
-        state.wallet.garage(&name, bike);
+        // The kit's colours live with the garage (spec 4C): also for the
+        // default rider, who has no rider profile to keep them.
+        let colours = state.wallet.garage(&name, bike).kit_colours.clone();
+        if let Some(c) = colours
+            && let Some(mut r) = app.world_mut().get_resource_mut::<RiderProfiles>()
+        {
+            let mut l = r.riding.look();
+            c.apply(&mut l.design);
+            r.riding.set_look(l);
+        }
         app.insert_resource(state).add_systems(
             Update,
             (earn_hearts, keep_damage, workshop_input, write_view).chain(),
@@ -190,7 +200,9 @@ impl Plugin for WorkshopPlugin {
 }
 
 /// Console lines of the scene's actions (scripts, scenes, tests).
-const ACTIONS: [&str; 16] = [
+const ACTIONS: [&str; 18] = [
+    "bench",
+    "plus",
     "open",
     "close",
     "left",
@@ -253,6 +265,8 @@ fn register_commands(app: &mut App) {
                         "compare" => Act::Compare,
                         "action" => Act::Action,
                         "reset" => Act::ResetView,
+                        "bench" => Act::Catalogue { plus: false },
+                        "plus" => Act::Catalogue { plus: true },
                         "zoom" => {
                             Act::Zoom(m.get_one::<f32>("amount").copied().unwrap_or(3.0))
                         }
@@ -637,7 +651,7 @@ fn register_commands(app: &mut App) {
                         "{} {:<14} {:<24} {:.2} kg, {} parts{}",
                         if b.id == g.active { "*" } else { " " },
                         b.id,
-                        b.name(),
+                        b.label(),
                         bike_kg(g, b),
                         g.part_ids(b).len(),
                         if b.starter { ", starter bike" } else { "" }
@@ -685,6 +699,95 @@ fn register_commands(app: &mut App) {
                 apply_bike(world);
             }
             Ok(format!("{} on the stand", profile.name()))
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("bikes.buy")
+            .about("Buy a frameset as a new bike on a new hook (base parts; --with: a complete build at the sum of the prices)")
+            .arg(Arg::new("frame").required(true))
+            .arg(
+                Arg::new("with")
+                    .long("with")
+                    .action(ArgAction::Append)
+                    .value_name("PART")
+                    .help("A part bought with it (groupset, wheels …)"),
+            ),
+        |world, m| {
+            let frame = m.get_one::<String>("frame").expect("required").clone();
+            let with: Vec<String> = m
+                .get_many::<String>("with")
+                .map(|v| v.cloned().collect())
+                .unwrap_or_default();
+            let (name, bike) = rider(world);
+            let mut s = world.resource_mut::<WorkshopState>();
+            s.wallet.garage(&name, bike);
+            let r = s.wallet.buy_bike(cat(), &name, &frame, &with)?;
+            s.save()?;
+            let label = s
+                .wallet
+                .get(&name)
+                .and_then(|g| g.bike(&r.bike))
+                .map_or(r.bike.clone(), |b| b.label());
+            let fitted = if r.fitted.is_empty() {
+                String::new()
+            } else {
+                format!(", with the {}", r.fitted.join(", "))
+            };
+            Ok(format!(
+                "bought the {label} ({}) for {}{fitted}; it hangs on a new hook; balance {}",
+                r.bike,
+                hearts(i64::from(r.paid)),
+                hearts(r.balance)
+            ))
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("bikes.sell")
+            .about("Sell a bike bought at the bench: the frameset's and its parts' refunds (not a starter bike, not the last)")
+            .arg(Arg::new("bike").required(true)),
+        |world, m| {
+            let id = m.get_one::<String>("bike").expect("required").clone();
+            let (name, bike) = rider(world);
+            let was_active = {
+                let mut s = world.resource_mut::<WorkshopState>();
+                s.wallet.garage(&name, bike);
+                let active = s.wallet.get(&name).is_some_and(|g| g.active == id);
+                let refund = s.wallet.sell_bike(&name, &id)?;
+                s.save()?;
+                (active, refund)
+            };
+            let (active, refund) = was_active;
+            // The stand's bike sold: the next one is ridden.
+            if active && world.resource::<WorkshopState>().scene.is_none() {
+                apply_bike(world);
+            }
+            let s = world.resource::<WorkshopState>();
+            Ok(format!(
+                "sold {id} for {}; balance {}",
+                hearts(i64::from(refund)),
+                hearts(s.wallet.balance(&name))
+            ))
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("bikes.hang")
+            .about("Hang a spare frameset (item number) on a new hook as a bike with the base parts")
+            .arg(
+                Arg::new("item")
+                    .required(true)
+                    .value_parser(clap::value_parser!(u32)),
+            ),
+        |world, m| {
+            let item = *m.get_one::<u32>("item").expect("required");
+            let (name, bike) = rider(world);
+            let mut s = world.resource_mut::<WorkshopState>();
+            s.wallet.garage(&name, bike);
+            let id = s.wallet.hang_frame(cat(), &name, item)?;
+            s.save()?;
+            Ok(format!("{id} hangs on a new hook"))
         },
     ));
 }
@@ -860,6 +963,12 @@ fn set_look(world: &mut World, l: RiderLook) -> Result<(), String> {
     };
     if saved && p.path.is_some() {
         p.save()?;
+    }
+    // The kit's colours with the garage, in workshop.toml (spec 4C).
+    if let Some(mut s) = world.get_resource_mut::<WorkshopState>()
+        && s.wallet.set_kit_colours(&name, &l.design)
+    {
+        s.save()?;
     }
     Ok(())
 }
@@ -1402,7 +1511,7 @@ fn write_view(
                 variants: all[i].0.clone(),
                 paint: all[i].1,
                 card: vec![
-                    b.name().to_string(),
+                    b.label(),
                     format!("{} · {}", b.profile().bike().name(), b.profile().id()),
                     format!("{:.2} kg", bike_kg(g, b)),
                     format!("parts {}", hearts(i64::from(bike_value(g, b)))),
@@ -1626,11 +1735,16 @@ fn picker_view(
             last_group = gname;
             let (left, right, locked) = match (&r.kind, p.design) {
                 (picker::Kind::Design(f), Some((_, draft))) => (
-                    f.name().to_string(),
+                    if p.slot.is_kit() {
+                        format!("Colour of the {}", f.name().to_lowercase())
+                    } else {
+                        f.name().to_string()
+                    },
                     format!("‹ {} ›", f.value(&draft)),
                     false,
                 ),
-                _ => picker::row_text(cat(), r, balance),
+                _ => bench::row_text(cat(), g, r, balance)
+                    .unwrap_or_else(|| picker::row_text(cat(), r, balance)),
             };
             PickerRowView {
                 group,
@@ -1647,7 +1761,14 @@ fn picker_view(
     };
     let focused = p.preview().and_then(|id| cat().get(id));
     let detail = match (p.slot, focused) {
-        _ if p.design.is_some() => {
+        _ if p.bench.is_some() => bench::card(
+            cat(),
+            g,
+            bike,
+            p.bench.unwrap_or(bench::BenchPage::Top),
+            p.focused(),
+        ),
+        _ if p.design_field().is_some() => {
             let draft = p.design.map(|(_, l)| l).unwrap_or_default();
             p.design_field().map_or_else(Vec::new, |f| {
                 vec![
@@ -1712,7 +1833,8 @@ fn picker_view(
         _ => None,
     };
     let title = match p.character {
-        _ if p.design.is_some() => format!(
+        _ if p.bench.is_some() => p.bench.map(|b| b.title()).unwrap_or_default(),
+        _ if p.is_designer() => format!(
             "{} – your kit",
             p.design.map_or("Jersey designer", |(page, _)| page.name())
         ),

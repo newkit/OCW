@@ -321,6 +321,9 @@ impl Plugin for WorkshopPlugin {
 #[derive(Resource, Default)]
 struct Scene {
     open: bool,
+    /// The number of bikes the room was built for (its hooks; a bike
+    /// bought or sold at the bench rebuilds it, spec 4D).
+    built_for: usize,
     camera: Option<Entity>,
     root: Option<Entity>,
     ui: Option<Entity>,
@@ -394,6 +397,41 @@ fn layer() -> RenderLayers {
     RenderLayers::layer(LAYER)
 }
 
+/// Despawns the open scene and gives the ride back its window and UI.
+fn close_scene(
+    commands: &mut Commands,
+    scene: &mut Scene,
+    world_cams: &mut Query<(Entity, &mut Camera, &mut RenderTarget), With<FollowCamera>>,
+) {
+    despawn_scene(commands, scene);
+    for (e, v) in scene.hidden.drain(..) {
+        if let Ok(mut c) = commands.get_entity(e) {
+            c.insert(v);
+        }
+    }
+    for (_, mut cam, mut target) in world_cams.iter_mut() {
+        *target = RenderTarget::Window(WindowRef::Primary);
+        cam.is_active = true;
+    }
+}
+
+/// Despawns the scene's cameras, room, bikes, rider and UI.
+fn despawn_scene(commands: &mut Commands, scene: &mut Scene) {
+    for e in [
+        scene.camera.take(),
+        scene.root.take(),
+        scene.ui.take(),
+        scene.mirror_cam.take(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        commands.entity(e).despawn();
+    }
+    scene.rider = None;
+    scene.bikes.clear();
+}
+
 #[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
 fn open_close(
     mut commands: Commands,
@@ -407,11 +445,18 @@ fn open_close(
     mut world_cams: Query<(Entity, &mut Camera, &mut RenderTarget), With<FollowCamera>>,
     mut hud: Option<ResMut<crate::hud::ShowHud>>,
 ) {
-    if view.open == scene.open {
+    // A bike bought or sold while open: the room again with its hooks (as
+    // if closed and opened at once; spec 4D).
+    let rebuild = view.open && scene.open && scene.built_for != view.bikes.len();
+    if view.open == scene.open && !rebuild {
         return;
     }
+    if rebuild {
+        // The ride's UI stays hidden and the HUD off meanwhile.
+        despawn_scene(&mut commands, &mut scene);
+    }
     scene.open = view.open;
-    if let Some(h) = hud.as_mut() {
+    if let Some(h) = hud.as_mut().filter(|_| !rebuild) {
         if view.open {
             scene.hud_was = Some(h.0);
             h.0 = false;
@@ -420,30 +465,10 @@ fn open_close(
         }
     }
     if !view.open {
-        for e in [
-            scene.camera.take(),
-            scene.root.take(),
-            scene.ui.take(),
-            scene.mirror_cam.take(),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            commands.entity(e).despawn();
-        }
-        scene.rider = None;
-        for (e, v) in scene.hidden.drain(..) {
-            if let Ok(mut c) = commands.get_entity(e) {
-                c.insert(v);
-            }
-        }
-        for (_, mut cam, mut target) in &mut world_cams {
-            *target = RenderTarget::Window(WindowRef::Primary);
-            cam.is_active = true;
-        }
-        scene.bikes.clear();
+        close_scene(&mut commands, &mut scene, &mut world_cams);
         return;
     }
+    scene.built_for = view.bikes.len();
     // The ride window: the world camera into a small image.
     let (w, h) = windows
         .iter()
@@ -460,10 +485,12 @@ fn open_close(
         *target = RenderTarget::Image(image.clone().into());
         cam.is_active = view.ride_window;
     }
-    // The ride's overlays hide.
-    scene.hidden = roots.iter().map(|(e, v)| (e, *v)).collect();
-    for (e, _) in &scene.hidden {
-        commands.entity(*e).insert(Visibility::Hidden);
+    // The ride's overlays hide (on a rebuild they are hidden already).
+    if !rebuild {
+        scene.hidden = roots.iter().map(|(e, v)| (e, *v)).collect();
+        for (e, _) in &scene.hidden {
+            commands.entity(*e).insert(Visibility::Hidden);
+        }
     }
     let layout = ocw_assets::workshop::layout(view.bikes.len());
     let camera = commands
@@ -1010,10 +1037,16 @@ fn draw_ui(
     cards: Query<Entity, With<Cards>>,
     markers: Query<Entity, With<Markers>>,
     mut last: Local<Option<WorkshopView>>,
+    mut last_ui: Local<Option<Entity>>,
 ) {
     if !view.open || scene.ui.is_none() {
         *last = None;
         return;
+    }
+    // A rebuilt scene (a bike bought, spec 4D): its new UI drawn whole.
+    if *last_ui != scene.ui {
+        *last_ui = scene.ui;
+        *last = None;
     }
     let font = |vh: f32| TextFont {
         font_size: FontSize::Vh(vh),
@@ -1397,15 +1430,6 @@ struct ShownRider {
     parent: Option<Entity>,
 }
 
-/// The rider's standing pose: arms a little away from the body.
-fn standing_rotations() -> [(&'static str, Quat); 2] {
-    use ocw_assets::pose::nodes::UPPER_ARM;
-    [
-        (UPPER_ARM[0], Quat::from_rotation_z(-0.12)),
-        (UPPER_ARM[1], Quat::from_rotation_z(0.12)),
-    ]
-}
-
 #[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
 fn sync_rider(
     mut commands: Commands,
@@ -1531,19 +1555,6 @@ fn sync_rider(
             }
             nodes[i] = e;
         }
-        if !show.on_stand {
-            for (name, q) in standing_rotations() {
-                if let Some(i) = rider_model.node(name)
-                    && nodes[i] != Entity::PLACEHOLDER
-                {
-                    commands.entity(nodes[i]).insert(Transform {
-                        translation: rider_model.nodes[i].translation,
-                        rotation: q,
-                        scale: Vec3::ONE,
-                    });
-                }
-            }
-        }
         scene.rider = Some(ShownRider {
             key: show.clone(),
             root,
@@ -1575,6 +1586,29 @@ fn sync_rider(
         if let Ok(mut t) = transforms.get_mut(r.root) {
             *t = Transform::from_translation(feet + Vec3::Y * sole * r.body.scale)
                 .with_rotation(rot * Quat::from_rotation_y(show.yaw));
+        }
+        // Standing at ease (spec 4C): the idle animation, not the rest
+        // pose; in the rider's own (unscaled) frame.
+        let p = ocw_assets::pose::idle(&rig, time.elapsed_secs());
+        let rider_model = ocw_assets::shipped::rider_model();
+        let node = |name: &str| {
+            rider_model
+                .node(name)
+                .map(|i| r.nodes[i])
+                .filter(|e| *e != Entity::PLACEHOLDER)
+        };
+        if let Some(e) = node(ocw_assets::pose::nodes::PELVIS)
+            && let Ok(mut t) = transforms.get_mut(e)
+        {
+            t.translation = p.pelvis.0;
+            t.rotation = p.pelvis.1;
+        }
+        for (name, q) in p.rotations() {
+            if let Some(e) = node(name)
+                && let Ok(mut t) = transforms.get_mut(e)
+            {
+                t.rotation = q;
+            }
         }
         return;
     }

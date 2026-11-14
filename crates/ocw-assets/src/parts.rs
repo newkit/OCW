@@ -223,6 +223,34 @@ pub struct Standard {
     pub family: Option<String>,
 }
 
+/// What a light set gives (spec §14 Phase 9 Q3: the ride's bike lights
+/// come from the fitted part): the front lamp's luminous flux and colour,
+/// the rear lamp's. Looks only – a light never changes the physics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LightSpec {
+    /// Front lamp (lm).
+    pub front_lm: u32,
+    /// Rear lamp (lm).
+    pub rear_lm: u32,
+    /// Colours, `#RRGGBB` (front: white, rear: red).
+    #[serde(deserialize_with = "hex_colour")]
+    pub front_colour: u32,
+    #[serde(deserialize_with = "hex_colour")]
+    pub rear_colour: u32,
+}
+
+fn hex_colour<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u32, D::Error> {
+    let s = String::deserialize(d)?;
+    s.strip_prefix('#')
+        .filter(|h| h.len() == 6)
+        .and_then(|h| u32::from_str_radix(h, 16).ok())
+        .ok_or_else(|| serde::de::Error::custom(format!("{s:?} is not a colour #RRGGBB")))
+}
+
+/// Brightest lamps a light part may claim (lm): front, rear.
+pub const LIGHT_MAX_LM: (u32, u32) = (3000, 200);
+
 /// One catalogue entry.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Part {
@@ -257,6 +285,8 @@ pub struct Part {
     pub sources: Option<String>,
     /// Date of the price research (`YYYY-MM-DD`).
     pub priced: Option<String>,
+    /// Light sets: the lamps it gives the ride (Phase 9 Q3).
+    pub light: Option<LightSpec>,
 }
 
 impl Part {
@@ -295,6 +325,7 @@ struct RawPart {
     model: String,
     sources: Option<String>,
     priced: Option<toml::value::Datetime>,
+    light: Option<LightSpec>,
 }
 
 #[derive(Deserialize)]
@@ -395,6 +426,7 @@ impl Catalogue {
                 model: r.model,
                 sources: r.sources,
                 priced: r.priced.as_ref().and_then(date_string),
+                light: r.light,
             });
         }
         if errors.is_empty() {
@@ -947,6 +979,26 @@ pub fn validate(cat: &Catalogue, sources: &Sources, today: (i32, u32, u32)) -> V
         }
         if p.slot == Slot::Paint {
             err(format!("{at}: paint colours are not catalogue parts"));
+        }
+        // Lights (Phase 9 Q3): a light set says what its lamps give the
+        // ride; nothing else has lamps, "no lights" has none.
+        match (p.slot == Slot::Lights && !p.is_base(), p.light) {
+            (true, None) => err(format!(
+                "{at}: a light set needs `light` (front_lm, rear_lm, front_colour, rear_colour)"
+            )),
+            (false, Some(_)) => err(format!("{at}: only light sets have `light`")),
+            (true, Some(l)) => {
+                if l.front_lm == 0 && l.rear_lm == 0 {
+                    err(format!("{at}: a light set with dark lamps"));
+                }
+                if l.front_lm > LIGHT_MAX_LM.0 || l.rear_lm > LIGHT_MAX_LM.1 {
+                    err(format!(
+                        "{at}: at most {} lm front and {} lm rear",
+                        LIGHT_MAX_LM.0, LIGHT_MAX_LM.1
+                    ));
+                }
+            }
+            (false, None) => {}
         }
         // Prices.
         let included = cat.is_included(&p.id);
@@ -1579,6 +1631,53 @@ mod tests {
 
     fn has(errors: &[String], needle: &str) -> bool {
         errors.iter().any(|e| e.contains(needle))
+    }
+
+    /// Phase 9 Q3: a light set says what its lamps give the ride; nothing
+    /// else has lamps; a dark or impossible lamp is refused.
+    #[test]
+    fn light_sets_have_lamps_and_nothing_else_does() {
+        let (c, _) = shipped();
+        let set = c.get("lights.set").unwrap().light.expect("lamps");
+        assert_eq!((set.front_lm, set.rear_lm), (300, 15));
+        assert_eq!((set.front_colour, set.rear_colour), (0xFFF6E8, 0xFF2614));
+        assert!(
+            c.parts
+                .iter()
+                .filter(|p| p.light.is_some())
+                .all(|p| p.slot == Slot::Lights)
+        );
+        fn lights(c: &mut Catalogue) -> &mut Part {
+            c.parts.iter_mut().find(|p| p.id == "lights.set").unwrap()
+        }
+        let e = broken(|c| lights(c).light = None);
+        assert!(has(&e, "a light set needs `light`"), "{e:?}");
+        let e = broken(|c| {
+            c.parts
+                .iter_mut()
+                .find(|p| p.id == "bag.top_tube")
+                .unwrap()
+                .light = Some(set)
+        });
+        assert!(has(&e, "only light sets have `light`"), "{e:?}");
+        let e = broken(|c| {
+            lights(c).light = Some(LightSpec {
+                front_lm: 0,
+                rear_lm: 0,
+                ..set
+            })
+        });
+        assert!(has(&e, "dark lamps"), "{e:?}");
+        let e = broken(|c| {
+            lights(c).light = Some(LightSpec {
+                front_lm: 9000,
+                ..set
+            })
+        });
+        assert!(has(&e, "at most 3000 lm"), "{e:?}");
+        // The colour keys are #RRGGBB.
+        let bad = "[[part]]\nid = \"lights.x\"\nslot = \"lights\"\ntier = \"mid\"\nname = \"x\"\nhearts = 1\nweight_g = 1\nfits = [\"road\"]\nmodel = \"lights-set\"\nlight = { front_lm = 1, rear_lm = 1, front_colour = \"white\", rear_colour = \"#FF0000\" }\n";
+        assert!(Catalogue::parse(bad).is_err());
     }
 
     #[test]

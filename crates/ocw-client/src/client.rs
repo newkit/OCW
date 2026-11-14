@@ -3984,6 +3984,170 @@ mod tests {
         assert!(h.client.state().speed > 3.0);
     }
 
+    /// The SIM parameters a fresh trainer control sends for the client
+    /// now (its first update goes out at once).
+    fn trainer_sim(h: &Harness) -> ocw_devices::SimulationParameters {
+        let mut t = crate::trainer::TrainerControl::new(RiderProfile::default());
+        match t.follow(h.time_s, &h.client) {
+            Some(ocw_devices::DeviceCommand::SetSimulation(p)) => p,
+            other => panic!("expected SIM parameters, got {other:?}"),
+        }
+    }
+
+    /// What a mock trainer is written for `p` through its own protocol
+    /// (the pure `ble::protocol` state machine; every control write
+    /// answered with success): an FTMS trainer's *Set Indoor Bike
+    /// Simulation Parameters* (Crr in 0.0001, cw in 0.01 kg/m), a Wahoo
+    /// KICKR's SIM mode (mass in 0.01 kg, Crr in 0.0001, cw in 0.001 kg/m).
+    fn mock_trainer_writes(p: ocw_devices::SimulationParameters) -> ((f64, f64), (f64, f64, f64)) {
+        use ocw_devices::ble::protocol::TrainerProtocol;
+        use ocw_devices::gatt::{ftms, uuids};
+        let run = |mut proto: TrainerProtocol, control: u16, ok: u8, want: u8| -> Vec<u8> {
+            let mut out = proto
+                .on_command(ocw_devices::DeviceCommand::SetSimulation(p), Duration::ZERO)
+                .control_writes;
+            for i in 1..8 {
+                if let Some(w) = out.iter().find(|w| w[0] == want) {
+                    return w.clone();
+                }
+                let op = out.last().expect("a control write")[0];
+                let reply = if ok == 0x80 {
+                    vec![0x80, op, 0x01]
+                } else {
+                    vec![0x01, op, 0x01]
+                };
+                out = proto
+                    .on_notification(control, &reply, Duration::from_millis(100 * i))
+                    .control_writes;
+            }
+            panic!("no SIM write");
+        };
+        let mut features = ((1u32 << 1) | (1 << 14)).to_le_bytes().to_vec();
+        features.extend(((1u32 << 3) | (1 << 13)).to_le_bytes());
+        let ftms_proto = TrainerProtocol::new(
+            &[
+                uuids::FITNESS_MACHINE_FEATURE,
+                uuids::INDOOR_BIKE_DATA,
+                uuids::FITNESS_MACHINE_CONTROL_POINT,
+            ],
+            Some(ftms::Features::parse(&features).unwrap()),
+        );
+        let w = run(ftms_proto, uuids::FITNESS_MACHINE_CONTROL_POINT, 0x80, 0x11);
+        let ftms_sent = (f64::from(w[5]) * 1e-4, f64::from(w[6]) * 0.01);
+        let wahoo_proto = TrainerProtocol::new(
+            &[
+                uuids::CYCLING_POWER_MEASUREMENT,
+                uuids::WAHOO_TRAINER_CONTROL,
+            ],
+            None,
+        );
+        let w = run(wahoo_proto, uuids::WAHOO_TRAINER_CONTROL, 0x01, 0x43);
+        let u16_at = |i: usize| f64::from(u16::from_le_bytes([w[i], w[i + 1]]));
+        let wahoo_sent = (u16_at(1) * 0.01, u16_at(3) * 1e-4, u16_at(5) * 1e-3);
+        (ftms_sent, wahoo_sent)
+    }
+
+    /// Spec §14 Phase 4 (4G) / §5.3: the trainer's SIM parameters come
+    /// from the build in force, not the profile's values – Crr, the wind
+    /// coefficient and (Wahoo) the mass of the build in free ride (Open);
+    /// the frame's curated profile in a Profile race; the `road` profile
+    /// with the rider's weight in an Equal race. Checked down to the bytes
+    /// a mock FTMS and a mock Wahoo trainer are written.
+    #[test]
+    fn the_trainer_gets_the_build_in_force_per_race_mode() {
+        let parts: Vec<String> = UPGRADES.map(String::from).to_vec();
+        let client = ClientCore::new(route(), "Fitted", RiderProfile::default()).with_parts(&parts);
+        let mut h = Harness::with(
+            GameServer::new(
+                route(),
+                ServerConfig {
+                    allow_local_events: true,
+                    ..Default::default()
+                },
+            ),
+            client,
+        );
+        h.ride(250.0, 2.0);
+        let stock = RiderProfile::default();
+        let built = h.client.effective_profile();
+        assert!(built.crr < stock.crr && built.cda_m2 < stock.cda_m2);
+        assert!(built.bike_mass_kg < stock.bike_mass_kg);
+        // Open (free ride): the build.
+        let p = trainer_sim(&h);
+        assert!(
+            (p.crr - built.crr).abs() < 1e-12,
+            "{} vs {}",
+            p.crr,
+            built.crr
+        );
+        // cw = ½ ρ CdA at the air's density (the standard one, or the
+        // weather's while it counts, S6).
+        let half_rho = p.cw_kg_per_m / built.cda_m2;
+        assert!((0.5..0.7).contains(&half_rho), "{half_rho}");
+        assert!((p.mass_kg - (built.rider_mass_kg + built.bike_mass_kg)).abs() < 1e-9);
+        let ((f_crr, _), (w_mass, w_crr, w_cw)) = mock_trainer_writes(p);
+        assert!((f_crr - built.crr).abs() < 0.6e-4, "FTMS Crr {f_crr}");
+        assert!((w_mass - p.mass_kg).abs() < 0.006, "Wahoo mass {w_mass}");
+        assert!((w_crr - built.crr).abs() < 0.6e-4 && (w_cw - p.cw_kg_per_m).abs() < 0.6e-3);
+        let open = mock_trainer_writes(p);
+        // A race in Profile mode (the default): the profile's values.
+        h.send(&ClientCore::event_start_message(
+            &ocw_sim::EventSpec::Race {
+                laps: None,
+                length_m: Some(2000.0),
+            },
+            None,
+        ));
+        h.ride(250.0, 1.0);
+        assert_eq!(h.client.physics_mode(), ocw_sim::PhysicsMode::Profile);
+        let p = trainer_sim(&h);
+        assert_eq!(p.crr, stock.crr);
+        assert!((p.cw_kg_per_m - half_rho * stock.cda_m2).abs() < 0.01 * half_rho * stock.cda_m2);
+        assert!((p.mass_kg - (stock.rider_mass_kg + stock.bike_mass_kg)).abs() < 1e-9);
+        let profile = mock_trainer_writes(p);
+        assert!(profile.0.0 > open.0.0, "FTMS: the stock tyres' Crr again");
+        assert!(
+            profile.1.0 > open.1.0 && profile.1.2 > open.1.2,
+            "Wahoo: mass and cw"
+        );
+        h.send(&ClientCore::event_cancel_message());
+        h.ride(250.0, 0.5);
+        // Equal: a gravel bike with fast tyres rides as the road profile.
+        let gravel = RiderProfile::curated(ProfileId::Gravel, 75.0);
+        let client = ClientCore::new(route(), "Gravel", gravel)
+            .with_parts(&["tyres.gravel.fast".to_string()]);
+        let mut h = Harness::with(
+            GameServer::new(
+                route(),
+                ServerConfig {
+                    allow_local_events: true,
+                    ..Default::default()
+                },
+            ),
+            client,
+        );
+        h.ride(250.0, 2.0);
+        let p = trainer_sim(&h);
+        assert!(p.crr < gravel.crr, "Open: the fast tyres");
+        h.send(&ClientCore::event_start_message_with(
+            &ocw_sim::EventSpec::Race {
+                laps: None,
+                length_m: Some(2000.0),
+            },
+            None,
+            Some(ocw_sim::PhysicsMode::Equal),
+        ));
+        h.ride(250.0, 1.0);
+        assert_eq!(h.client.physics_mode(), ocw_sim::PhysicsMode::Equal);
+        let road = RiderProfile::curated(ProfileId::Road, 75.0);
+        let p = trainer_sim(&h);
+        assert_eq!(p.crr, road.crr);
+        let half_rho = p.cw_kg_per_m / road.cda_m2;
+        assert!((0.5..0.7).contains(&half_rho), "{half_rho}");
+        let ((f_crr, _), (_, w_crr, _)) = mock_trainer_writes(p);
+        assert!((f_crr - road.crr).abs() < 0.6e-4 && (w_crr - road.crr).abs() < 0.6e-4);
+    }
+
     const UPGRADES: [&str; 4] = [
         "wheels.road-carbon.top",
         "tyres.road.race",

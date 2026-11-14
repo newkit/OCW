@@ -125,6 +125,17 @@ impl Bike {
         self.profile().name()
     }
 
+    /// The name on cards and in lists: a starter bike's profile name, a
+    /// bought one's with its number ("Road - standard 2", spec 4D).
+    pub fn label(&self) -> String {
+        match self.id.rsplit_once('-').map(|(_, n)| n) {
+            Some(n) if !self.starter && n.chars().all(|c| c.is_ascii_digit()) => {
+                format!("{} {n}", self.name())
+            }
+            _ => self.name().to_string(),
+        }
+    }
+
     /// A damage part's condition (0–1).
     pub fn condition(&self, p: DamagePart) -> f64 {
         self.condition
@@ -235,7 +246,50 @@ pub struct Garage {
     /// fine).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub injury: Option<Injury>,
+    /// The kit's own colours (shorts, socks, shoes, gloves; spec 4C, Phase
+    /// 8 T6): looks only, never physics. `None`: never set here (the rider
+    /// profile's, if any, stay).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kit_colours: Option<KitColours>,
 }
+
+/// The colours of the kit (`#RRGGBB`; `None`: the item's own colour).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KitColours {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shorts: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub socks: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shoes: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gloves: Option<String>,
+}
+
+impl KitColours {
+    /// The kit colours of a design.
+    pub fn of(d: &ocw_core::KitDesign) -> Self {
+        let s = |c: Option<Rgb>| c.map(|c| c.to_string());
+        Self {
+            shorts: s(d.shorts),
+            socks: s(d.socks),
+            shoes: s(d.shoes),
+            gloves: s(d.gloves),
+        }
+    }
+
+    /// `d` with these colours (unparsable ones: the item's own).
+    pub fn apply(&self, d: &mut ocw_core::KitDesign) {
+        let p = |c: &Option<String>| c.as_deref().and_then(Rgb::parse);
+        d.shorts = p(&self.shorts);
+        d.socks = p(&self.socks);
+        d.shoes = p(&self.shoes);
+        d.gloves = p(&self.gloves);
+    }
+}
+
+/// The most bikes a garage holds (the workshop's wall has 24 hooks, 4A).
+pub const MAX_BIKES: usize = 24;
 
 fn first_item() -> u32 {
     1
@@ -262,7 +316,54 @@ impl Garage {
             next_item: 1,
             kit: BTreeMap::new(),
             injury: None,
+            kit_colours: None,
         }
+    }
+
+    /// A new bike id for a frame of `profile`: `<profile>-2`, `-3` … (the
+    /// starter bikes have the profile's id).
+    pub fn new_bike_id(&self, profile: ProfileId) -> String {
+        (2..)
+            .map(|n| format!("{}-{n}", profile.id()))
+            .find(|id| self.bike(id).is_none())
+            .expect("an unused id")
+    }
+
+    /// Whether `bike` can be sold (spec 4D): not a starter bike, not the
+    /// last bike; the reason otherwise.
+    pub fn can_sell_bike(&self, bike: &Bike) -> Result<(), String> {
+        if bike.starter {
+            return Err(format!(
+                "the {} is a starter bike: it cannot be sold",
+                bike.name()
+            ));
+        }
+        if self.bikes.len() <= 1 {
+            return Err("your last bike cannot be sold".into());
+        }
+        Ok(())
+    }
+
+    /// What selling `bike` gives back: the frameset's and its non-base
+    /// parts' refunds (spec 4D; a groupset's own parts are free and go
+    /// with it).
+    pub fn bike_refund(&self, bike: &Bike) -> u32 {
+        bike.parts
+            .values()
+            .filter_map(|i| self.item(*i))
+            .map(Item::refund)
+            .sum()
+    }
+
+    /// The spare framesets (owned, on no bike): each can hang on a new
+    /// hook as a bike (spec 4D).
+    pub fn spare_frames<'c>(&self, cat: &'c Catalogue) -> Vec<(u32, &'c Part)> {
+        self.items
+            .iter()
+            .filter(|i| self.bike_of(i.id).is_none())
+            .filter_map(|i| cat.get(&i.part).map(|p| (i.id, p)))
+            .filter(|(_, p)| p.slot == Slot::Frame && p.profile.is_some())
+            .collect()
     }
 
     /// The rider's condition at `now_unix` (healed over real time).
@@ -343,7 +444,6 @@ impl Garage {
     }
 
     /// Whether item `item` is worn (kit).
-    #[cfg(test)]
     pub fn worn(&self, item: u32) -> bool {
         self.kit.values().any(|i| *i == item)
     }
@@ -427,8 +527,8 @@ impl Garage {
         Ok(names)
     }
 
-    /// The spare parts (owned, on no bike; the bench's shelf, 4D).
-    #[cfg(test)]
+    /// The spare parts (owned, on no bike, not worn; the bench's shelf,
+    /// 4D).
     pub fn spares(&self) -> impl Iterator<Item = &Item> {
         self.items
             .iter()
@@ -476,6 +576,19 @@ pub struct Receipt {
     pub balance: i64,
     /// A groupset: the names of the crankset, cassette and chain fitted
     /// with it (spec 4B).
+    pub fitted: Vec<String>,
+}
+
+/// What buying a bike did (spec 4D).
+#[derive(Debug, Clone, PartialEq)]
+pub struct BikeReceipt {
+    /// The new bike's garage id.
+    pub bike: String,
+    /// The sum paid (frameset and parts).
+    pub paid: u32,
+    pub balance: i64,
+    /// The parts fitted with it (a complete build; with a groupset's
+    /// crankset, cassette and chain).
     pub fitted: Vec<String>,
 }
 
@@ -816,6 +929,200 @@ impl Wallet {
             .ok_or_else(|| format!("{rider} has no garage"))?;
         g.bike_mut(bike)?.paint = colour.map(|c| c.to_string());
         Ok(())
+    }
+
+    /// Buys a frameset as a new bike (spec 4D): it comes with the base
+    /// parts (entry tier) and hangs on a new hook; `with` are parts for it
+    /// bought in the same purchase (a *complete build*, at the sum of the
+    /// prices, no discount). Everything is checked before anything is
+    /// booked: the frameset must be a paid one, every part must fit the
+    /// new bike and be sold alone, at most one per slot, the balance must
+    /// cover the sum, and the wall has at most [`MAX_BIKES`] hooks. The
+    /// active bike stays on the stand.
+    pub fn buy_bike(
+        &mut self,
+        cat: &Catalogue,
+        rider: &str,
+        frame: &str,
+        with: &[String],
+    ) -> Result<BikeReceipt, String> {
+        let f = cat
+            .get(frame)
+            .ok_or_else(|| format!("no part {frame} in the catalogue"))?;
+        let Some(profile) = f.profile.filter(|_| f.slot == Slot::Frame) else {
+            return Err(format!("{} is not a frameset", f.name));
+        };
+        if f.hearts == 0 {
+            return Err(format!(
+                "{} is a base frame: it comes with the starter bike",
+                f.name
+            ));
+        }
+        let g = self
+            .garages
+            .get(rider)
+            .ok_or_else(|| format!("{rider} has no garage"))?;
+        if g.bikes.len() >= MAX_BIKES {
+            return Err(format!(
+                "the wall is full ({MAX_BIKES} bikes): sell a bike first"
+            ));
+        }
+        let probe = Bike {
+            id: String::new(),
+            profile: profile.id().into(),
+            paint: None,
+            parts: BTreeMap::new(),
+            starter: false,
+            condition: BTreeMap::new(),
+        };
+        let mut parts: Vec<&Part> = Vec::new();
+        for id in with {
+            let p = cat
+                .get(id)
+                .ok_or_else(|| format!("no part {id} in the catalogue"))?;
+            if p.slot == Slot::Frame || p.slot.is_kit() {
+                return Err(format!("{} is not a part for the bike", p.name));
+            }
+            if p.hearts == 0 || cat.is_included(&p.id) {
+                return Err(format!("{} is not sold alone", p.name));
+            }
+            if !fits(p, &probe) {
+                return Err(format!("{} does not fit the {}", p.name, profile.name()));
+            }
+            if parts.iter().any(|q| q.slot == p.slot) {
+                return Err(format!("two parts for the {}", p.slot.name()));
+            }
+            parts.push(p);
+        }
+        let total: i64 =
+            i64::from(f.hearts) + parts.iter().map(|p| i64::from(p.hearts)).sum::<i64>();
+        let balance = self.balance(rider);
+        if balance < total {
+            return Err(format!(
+                "the {} costs {}; the balance is {} ({} more needed)",
+                if parts.is_empty() {
+                    f.name.clone()
+                } else {
+                    format!("{} with its parts", f.name)
+                },
+                ocw_core::hearts::format(total),
+                ocw_core::hearts::format(balance),
+                ocw_core::hearts::format(total - balance)
+            ));
+        }
+        let date = self.stamp()[..10].to_string();
+        let g = self.garages.get_mut(rider).expect("checked");
+        let id = g.new_bike_id(profile);
+        let item = g.next_item;
+        g.next_item += 1;
+        g.items.push(Item {
+            id: item,
+            part: f.id.clone(),
+            paid: f.hearts,
+            bought: date.clone(),
+            ridden_m: 0.0,
+            with: None,
+        });
+        g.bikes.push(Bike {
+            id: id.clone(),
+            parts: BTreeMap::from([(Slot::Frame.id().to_string(), item)]),
+            ..probe
+        });
+        self.book(rider, -i64::from(f.hearts), "purchase", f.id.clone());
+        let mut fitted = Vec::new();
+        for p in parts {
+            let r = self.buy(cat, rider, &id, &p.id)?;
+            fitted.push(p.name.clone());
+            fitted.extend(r.fitted);
+        }
+        Ok(BikeReceipt {
+            bike: id,
+            paid: total as u32,
+            balance: self.balance(rider),
+            fitted,
+        })
+    }
+
+    /// Hangs a spare frameset on a new hook as a bike with the base parts
+    /// (spec 4D: a frameset taken off a bike is not lost). Returns the new
+    /// bike's id.
+    pub fn hang_frame(
+        &mut self,
+        cat: &Catalogue,
+        rider: &str,
+        item: u32,
+    ) -> Result<String, String> {
+        let g = self
+            .garages
+            .get_mut(rider)
+            .ok_or_else(|| format!("{rider} has no garage"))?;
+        let (_, part) = g
+            .spare_frames(cat)
+            .into_iter()
+            .find(|(i, _)| *i == item)
+            .ok_or_else(|| format!("item {item} is not a spare frameset"))?;
+        if g.bikes.len() >= MAX_BIKES {
+            return Err(format!(
+                "the wall is full ({MAX_BIKES} bikes): sell a bike first"
+            ));
+        }
+        let profile = part.profile.expect("a frameset");
+        let id = g.new_bike_id(profile);
+        g.bikes.push(Bike {
+            id: id.clone(),
+            profile: profile.id().into(),
+            paint: None,
+            parts: BTreeMap::from([(Slot::Frame.id().to_string(), item)]),
+            starter: false,
+            condition: BTreeMap::new(),
+        });
+        Ok(id)
+    }
+
+    /// Sells a whole bike (spec 4D): the frameset's and its parts' refunds
+    /// (each by its own rule), the hook freed. Not a starter bike, not the
+    /// last one. The active bike sold: the first bike goes on the stand.
+    pub fn sell_bike(&mut self, rider: &str, bike: &str) -> Result<u32, String> {
+        let g = self
+            .garages
+            .get_mut(rider)
+            .ok_or_else(|| format!("{rider} has no garage"))?;
+        let b = g
+            .bike(bike)
+            .ok_or_else(|| format!("no bike {bike} in the garage"))?
+            .clone();
+        g.can_sell_bike(&b)?;
+        let refund = g.bike_refund(&b);
+        let gone: Vec<u32> = b.parts.values().copied().collect();
+        // A groupset's own parts go with it, wherever they are.
+        let with: Vec<u32> = g
+            .items
+            .iter()
+            .filter(|i| i.with.is_some_and(|w| gone.contains(&w)))
+            .map(|i| i.id)
+            .collect();
+        g.items
+            .retain(|i| !gone.contains(&i.id) && !with.contains(&i.id));
+        for other in &mut g.bikes {
+            other.parts.retain(|_, i| !with.contains(i));
+        }
+        g.bikes.retain(|x| x.id != bike);
+        if g.active == bike {
+            g.active = g.bikes[0].id.clone();
+        }
+        self.book(rider, i64::from(refund), "sale", format!("bike:{bike}"));
+        Ok(refund)
+    }
+
+    /// Keeps the kit's colours in the garage (spec 4C; looks only).
+    pub fn set_kit_colours(&mut self, rider: &str, design: &ocw_core::KitDesign) -> bool {
+        let Some(g) = self.garages.get_mut(rider) else {
+            return false;
+        };
+        let c = Some(KitColours::of(design));
+        let changed = g.kit_colours != c;
+        g.kit_colours = c;
+        changed
     }
 
     /// Metres ridden on the rider's active bike: its parts count as
@@ -1538,6 +1845,216 @@ mod tests {
         let (w3, warnings) = Wallet::load(&dir);
         assert!(warnings.is_empty(), "{warnings:?}");
         assert!(w3.get("Bo").unwrap().worn(it.item));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The bench (spec 4D): a frameset is bought as a new bike with the
+    /// base parts on a new hook; it needs the balance, a paid frameset and
+    /// room on the wall; the stand keeps its bike.
+    #[test]
+    fn a_frameset_is_bought_as_a_new_bike_with_the_base_parts() {
+        let mut w = wallet();
+        // 500 ♥ do not buy a frameset: nothing is booked.
+        let e = w
+            .buy_bike(cat(), "Ann", "frame.road.upper", &[])
+            .unwrap_err();
+        assert!(e.contains("more needed"), "{e}");
+        assert_eq!(w.balance("Ann"), 500);
+        assert_eq!(w.get("Ann").unwrap().bikes.len(), 6);
+        // Base frames and other parts are not framesets for sale.
+        assert!(w.buy_bike(cat(), "Ann", "frame.road.base", &[]).is_err());
+        assert!(w.buy_bike(cat(), "Ann", "tyres.road.race", &[]).is_err());
+        w.grant("Ann", 3_000);
+        let r = w.buy_bike(cat(), "Ann", "frame.road.upper", &[]).unwrap();
+        assert_eq!((r.bike.as_str(), r.paid), ("road-2", 2_839));
+        assert_eq!(w.balance("Ann"), 3_500 - 2_839);
+        let g = w.get("Ann").unwrap();
+        assert_eq!(g.bikes.len(), 7);
+        assert_eq!(g.active, "road", "the stand keeps its bike");
+        let b = g.bike("road-2").unwrap();
+        assert!(!b.starter);
+        assert_eq!(b.profile(), ProfileId::Road);
+        assert_eq!(
+            g.part_on(cat(), b, Slot::Frame).unwrap().id,
+            "frame.road.upper"
+        );
+        // Everything else is the base part (entry tier).
+        for slot in [Slot::Wheels, Slot::Tyres, Slot::Groupset, Slot::Saddle] {
+            assert!(g.part_on(cat(), b, slot).unwrap().is_base(), "{slot:?}");
+        }
+        assert_eq!(g.part_ids(b), vec!["frame.road.upper".to_string()]);
+        // It rides the frame's build (the server's physics, 4G).
+        assert_eq!(g.riding_ids(b), vec!["frame.road.upper".to_string()]);
+        // One ledger line per part bought.
+        assert_eq!(w.history("Ann", 1)[0].reference, "frame.road.upper");
+        // Another of the same profile: the next id.
+        w.grant("Ann", 1_390);
+        let r = w.buy_bike(cat(), "Ann", "frame.road.mid", &[]).unwrap();
+        assert_eq!(r.bike, "road-3");
+        // The wall holds 24 bikes.
+        w.grant("Ann", 1_390 * 20);
+        for _ in 0..(MAX_BIKES - 8) {
+            w.buy_bike(cat(), "Ann", "frame.road.mid", &[]).unwrap();
+        }
+        assert_eq!(w.get("Ann").unwrap().bikes.len(), MAX_BIKES);
+        let before = w.balance("Ann");
+        let e = w.buy_bike(cat(), "Ann", "frame.road.mid", &[]).unwrap_err();
+        assert!(e.contains("full"), "{e}");
+        assert_eq!(w.balance("Ann"), before);
+    }
+
+    /// A complete build (spec 4D): the frameset and its parts in one
+    /// purchase at the sum of the prices; a part that does not fit, is not
+    /// sold alone or doubles a slot stops it before anything is booked.
+    #[test]
+    fn a_complete_build_buys_the_frameset_and_its_parts_at_their_sum() {
+        let mut w = wallet();
+        w.grant("Ann", 10_000);
+        let with = vec![
+            "groupset.road-mech.mid".to_string(),
+            "wheels.road-alloy.mid".to_string(),
+        ];
+        let before = w.balance("Ann");
+        for bad in [
+            vec!["groupset.mtb.mid".to_string()],
+            vec!["chain.12-speed.mid".to_string()],
+            vec![
+                "wheels.road-alloy.mid".into(),
+                "wheels.road-carbon.mid".into(),
+            ],
+            vec!["helmet.tt.top".to_string()],
+        ] {
+            assert!(
+                w.buy_bike(cat(), "Ann", "frame.road.upper", &bad).is_err(),
+                "{bad:?}"
+            );
+        }
+        assert_eq!(w.balance("Ann"), before);
+        assert_eq!(w.get("Ann").unwrap().bikes.len(), 6);
+        let r = w.buy_bike(cat(), "Ann", "frame.road.upper", &with).unwrap();
+        let sum = 2_839 + 1_441 + 600;
+        assert_eq!(r.paid, sum, "no discount");
+        assert_eq!(w.balance("Ann"), before - i64::from(sum));
+        let g = w.get("Ann").unwrap();
+        let b = g.bike(&r.bike).unwrap();
+        assert_eq!(
+            g.part_on(cat(), b, Slot::Groupset).unwrap().id,
+            "groupset.road-mech.mid"
+        );
+        assert_eq!(
+            g.part_on(cat(), b, Slot::Wheels).unwrap().id,
+            "wheels.road-alloy.mid"
+        );
+        // The groupset came with its crankset, cassette and chain (4B).
+        assert!(r.fitted.len() > 2, "{:?}", r.fitted);
+        assert!(!g.part_on(cat(), b, Slot::Chain).unwrap().is_base());
+    }
+
+    /// Selling a whole bike (spec 4D): the frameset's and its non-base
+    /// parts' refunds by their rules, the hook freed; never a starter bike
+    /// or the last one; the stand gets another bike when its own is sold.
+    #[test]
+    fn a_bike_is_sold_whole_but_never_a_starter_or_the_last() {
+        let mut w = wallet();
+        w.grant("Ann", 10_000);
+        assert!(
+            w.sell_bike("Ann", "road")
+                .unwrap_err()
+                .contains("starter bike")
+        );
+        let r = w
+            .buy_bike(
+                cat(),
+                "Ann",
+                "frame.road.upper",
+                &["groupset.road-mech.mid".to_string()],
+            )
+            .unwrap();
+        w.select("Ann", &r.bike).unwrap();
+        // Ridden: the frameset and the groupset give half back.
+        assert!(w.ride("Ann", 2_000.0));
+        let tyres = w.buy(cat(), "Ann", &r.bike, "tyres.road.race").unwrap();
+        let g = w.get("Ann").unwrap();
+        let b = g.bike(&r.bike).unwrap();
+        let refund = g.bike_refund(b);
+        assert_eq!(refund, 2_839 / 2 + 1_441 / 2 + 190, "{refund}");
+        let before = w.balance("Ann");
+        assert_eq!(w.sell_bike("Ann", &r.bike).unwrap(), refund);
+        assert_eq!(w.balance("Ann"), before + i64::from(refund));
+        let g = w.get("Ann").unwrap();
+        assert!(g.bike(&r.bike).is_none());
+        assert_eq!(g.bikes.len(), 6);
+        assert_eq!(g.active, "road", "the first bike on the stand");
+        assert!(g.item(tyres.item).is_none(), "its parts went with it");
+        assert!(
+            g.items.iter().all(|i| i.part != "chain.12-speed.mid"),
+            "the groupset's own parts too"
+        );
+        assert_eq!(w.history("Ann", 1)[0].reference, format!("bike:{}", r.bike));
+        // The last bike cannot be sold.
+        let mut g = Garage::starter("Cy", ProfileId::Road);
+        g.bikes.truncate(1);
+        g.bikes[0].starter = false;
+        assert!(g.can_sell_bike(&g.bikes[0]).unwrap_err().contains("last"));
+    }
+
+    /// A spare frameset (taken off a bike) hangs on a new hook as a bike.
+    #[test]
+    fn a_spare_frameset_hangs_on_a_new_hook() {
+        let mut w = wallet();
+        w.grant("Ann", 10_000);
+        let r = w.buy(cat(), "Ann", "road", "frame.road.mid").unwrap();
+        w.unequip("Ann", "road", Slot::Frame).unwrap();
+        let g = w.get("Ann").unwrap();
+        assert_eq!(g.spare_frames(cat()).len(), 1);
+        let id = w.hang_frame(cat(), "Ann", r.item).unwrap();
+        let g = w.get("Ann").unwrap();
+        assert_eq!(id, "road-2");
+        assert_eq!(g.bike_of(r.item).unwrap().id, id);
+        assert!(g.spare_frames(cat()).is_empty());
+        assert!(w.hang_frame(cat(), "Ann", r.item).is_err(), "not spare now");
+    }
+
+    /// The kit's colours (spec 4C): kept in `workshop.toml` with the
+    /// garage, across a restart; looks only – the bike's and kit's
+    /// physics ids stay the same.
+    #[test]
+    fn kit_colours_persist_in_the_garage_and_never_change_the_physics() {
+        let dir = std::env::temp_dir().join(format!("ocw-kit-colours-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (mut w, _) = Wallet::load(&dir);
+        w.now_unix = Some(1_794_000_000);
+        w.garage("Ann", ProfileId::Road);
+        let g = w.get("Ann").unwrap();
+        let ids = g.riding_ids(g.active_bike());
+        let build = ocw_sim::build::build(ocw_sim::PartTable::shipped(), ProfileId::Road, &ids);
+        assert!(g.kit_colours.is_none());
+        let d = ocw_core::KitDesign {
+            shorts: Some(Rgb(0x3949AB)),
+            shoes: Some(Rgb(0xF2F2EE)),
+            gloves: Some(Rgb(0xE53935)),
+            ..Default::default()
+        };
+        assert!(w.set_kit_colours("Ann", &d));
+        assert!(!w.set_kit_colours("Ann", &d), "no change the second time");
+        w.save().unwrap();
+        let text = std::fs::read_to_string(dir.join(WORKSHOP_FILE)).unwrap();
+        assert!(text.contains("gloves = \"#E53935\""), "{text}");
+        let (w2, warnings) = Wallet::load(&dir);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let g = w2.get("Ann").unwrap();
+        let mut back = ocw_core::KitDesign::default();
+        g.kit_colours.as_ref().unwrap().apply(&mut back);
+        assert_eq!(
+            (back.shorts, back.socks, back.shoes, back.gloves),
+            (d.shorts, None, d.shoes, d.gloves)
+        );
+        // Looks only: the same ids, the same build.
+        assert_eq!(g.riding_ids(g.active_bike()), ids);
+        assert_eq!(
+            ocw_sim::build::build(ocw_sim::PartTable::shipped(), ProfileId::Road, &ids),
+            build
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
