@@ -37,6 +37,11 @@ pub fn local_config(bots: u32, start_m: f64) -> ServerConfig {
         // The echo test for the single player (spec §7).
         allow_echo_bot: true,
         echo_bot_at_start: false,
+        // Collisions on, damage off (spec §14 Phase 12 Q1); the rider's
+        // settings change them (RulesRequest), the single player decides.
+        collisions: true,
+        chaotic_bots: false,
+        collision_access: crate::ClockAccess::Anyone,
     }
 }
 

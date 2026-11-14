@@ -208,6 +208,10 @@ pub struct Event {
     /// `kind.length_m()` after it.
     pub start_line_m: f64,
     pub entrants: Vec<Entrant>,
+    /// The organiser's collision rule for this event (spec §14 Phase 12A;
+    /// `None`: by its kind – group rides soft bumps only, races the full
+    /// model, Q2).
+    pub collisions: Option<crate::collide::Mode>,
 }
 
 impl Event {
@@ -227,6 +231,7 @@ impl Event {
             countdown_tick,
             go_tick: countdown_tick + COUNTDOWN_TICKS,
             finished_tick: None,
+            collisions: None,
             start_line_m,
             entrants: entrants
                 .into_iter()

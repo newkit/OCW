@@ -337,6 +337,28 @@ Then start the app: the left stick steers, the triggers ride and stop (see
   steering mode (press A for autodrive). The HUD shows "manual | WILD". The
   camera follows over terrain and trees.
 
+**Collisions** (spec §14 Phase 12, K1 / K2; `ride.collisions`, on by
+default): riders are solid. Touching another rider from the side or the
+back is a **soft bump** – both are pushed apart, the faster one slows, the
+bikes wobble (a thud and a tyre squeak; in SIM mode a short resistance
+pulse). A hard hit is a **crash**: 2.5 m/s closing speed rider against
+rider, 3.5 m/s into a fallen bike, a front wheel touching the rear wheel
+ahead (1 m/s, or leaning into it), head-on above 1.5 m/s, a rear-end at
+speed. The rider falls as a **ragdoll** (the Avian physics engine), lies
+2–8 s by the impact, then picks the bike up and rides on from standstill;
+the HUD shows "Crash!" with the time left, other riders' crashes get a red
+marker and a feed line. While down the trainer in SIM mode rides a flat road,
+ERG keeps the workout's step running. A fallen bike is an obstacle for the
+riders behind (chain crashes). **Autodrive and every bot avoid collisions**:
+they pass slower riders on the left (on the right in left-hand traffic
+regions; on narrow roads either side) and hold back at a 0.5 m wheel gap when
+both sides are blocked; two autodrive riders never bring each other down.
+**Manual steering gets no help** (optional: `ride.proximity_cue`). Group
+rides are soft bumps only; races use the full model. Exempt: the time
+trial's ghost, the countdown formation, unicorns, the Echo rider and a
+client's first 2 s after joining. `ride.chaotic_bots on` lets bots make
+mistakes. `dev.bump` / `dev.crash` stage one on the local server.
+
 **Free ride** (spec §2.2.1, §2.2.2): ride anywhere on the world package's road
 network instead of a fixed route:
 
@@ -750,6 +772,9 @@ console (saved at once), or by editing the file; `get` lists them all:
 | `ride.bots` | 0 to 50 (10): test riders (`--bots`) | next start |
 | `ride.random_start` | on / off (on): random start point (`--random-start`) | next start |
 | `ride.record` | on / off (on): save rides as FIT (`--record`) | next start |
+| `ride.collisions` | on / off (on): rider collisions – soft bumps and crashes (group rides soft bumps only; in a shared ride the host decides, `ocw-server --collisions`); Settings → Controls | at once |
+| `ride.chaotic_bots` | on / off (off): bots that sometimes make mistakes (late reactions, wheel touches) that can cause crashes | at once |
+| `ride.proximity_cue` | on / off (off): a soft bell and a HUD arrow when someone is within 1 m beside or 2 m in front (an aid for manual steering; it never steers) | at once |
 | `audio.master` | 0 to 100 (80): master volume in %, scales every bus | at once |
 | `audio.effects` | 0 to 100 (80): game sounds (bike, wind, tyres, menu, event and workout cues) | at once |
 | `audio.others` | 0 to 100 (80): the other riders' bikes (bots, remote riders), a part of the effects (master × effects × others) | at once |
@@ -924,7 +949,7 @@ for now).
 | `audio.output NAME\|default` | Play on this output device (`set audio.output "NAME"` saves it); a missing device falls back to the default until it appears |
 | `audio.devices` | List the output devices (`*` = playing now) and read the list again |
 | `audio.status` | The output playing now and the mix |
-| `audio.play SOUND` | Play a sound: `move`, `value`, `confirm`, `back`, `beep`, `go`, `finish`, `step`, `shift`, `test`, `test-music`, `test-effects`, `test-voice`, `test-others` |
+| `audio.play SOUND` | Play a sound: `move`, `value`, `confirm`, `back`, `beep`, `go`, `finish`, `step`, `shift`, `bump`, `crash`, `remount`, `proximity`, `test`, `test-music`, `test-effects`, `test-voice`, `test-others` |
 | **Rider** | |
 | `rider.autodrive on\|off` | Autodrive (key A) |
 | `rider.wild on\|off` | Wild mode (key W; on also switches autodrive off) |
@@ -944,6 +969,12 @@ for now).
 | `ride.junction` | Free ride: show the next junction's exits (and the route's) |
 | `ride.rejoin` | Route ride: back to the route after leaving it (key J) |
 | `ride.route` | Route ride: name, progress and whether you are on the route |
+| `ride.collisions on\|off` | Collisions (spec §14 Phase 12; `set ride.collisions off` keeps it); the server answers, in shared rides only the host may |
+| `ride.chaotic_bots on\|off` | Bots that sometimes make mistakes |
+| `ride.proximity_cue on\|off` | The proximity cue (bell and HUD arrow) |
+| `ride.crashes` | The collision rules in force, your crash state and the last crashes |
+| `dev.bump` | *Dev:* the nearest other rider bumps into you from the side (a soft bump) |
+| `dev.crash` | *Dev:* the nearest other rider cuts in front of you: a wheel touch, you fall (ragdoll, remount) |
 | `net.stats` | Connection statistics |
 | `worlds.info` | The loaded world package: id, version, content hash, trust, credits |
 | `worlds.list` | World packages in the local cache, with their trust state |
@@ -1081,6 +1112,11 @@ on its own thread and talks to the client over in-process channels (spec
 program; with `--listen` desktop clients ride on it over the network (QUIC,
 the first step of Phase 5 multiplayer; accounts, sessions and the HTTPS API
 follow).
+
+Collisions on a server: `--collisions on|off` (on), `--chaotic-bots`, and who
+may change them from a client (`ride.collisions`): `--collision-control
+host|anyone|nobody` (host). The rules travel in the welcome, every snapshot
+and the event state.
 
 ### Hosting a ride over the network
 

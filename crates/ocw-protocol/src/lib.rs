@@ -133,7 +133,128 @@ pub fn quantize(s: &ocw_sim::RiderSnapshot) -> v1::RiderUpdate {
         god: s.god.as_ref().map(|g| god_pose_to_wire(g, 0, false)),
         // The server marks its Echo rider (spec §7 *Echo bot*).
         echo: false,
+        crash: s.crash.as_ref().map(crash_to_wire),
+        bump: s.bump.as_ref().map(|b| v1::Bump {
+            tick: b.tick,
+            strength_mrad: (b.strength * 1000.0).round().max(0.0) as u32,
+            side: if b.side < 0.0 { -1 } else { 1 },
+        }),
     }
+}
+
+/// The collision model on the wire (spec §14 Phase 12A).
+pub fn collision_mode_to_wire(mode: ocw_sim::collide::Mode) -> i32 {
+    use ocw_sim::collide::Mode;
+    (match mode {
+        Mode::Off => v1::CollisionMode::Off,
+        Mode::Soft => v1::CollisionMode::Soft,
+        Mode::Full => v1::CollisionMode::Full,
+    }) as i32
+}
+
+/// A received collision model (unknown or absent: an older server, off).
+pub fn collision_mode_from_wire(v: i32) -> ocw_sim::collide::Mode {
+    use ocw_sim::collide::Mode;
+    match v1::CollisionMode::try_from(v) {
+        Ok(v1::CollisionMode::Soft) => Mode::Soft,
+        Ok(v1::CollisionMode::Full) => Mode::Full,
+        _ => Mode::Off,
+    }
+}
+
+fn contact_kind_to_wire(k: ocw_sim::collide::ContactKind) -> v1::ContactKind {
+    use ocw_sim::collide::ContactKind as K;
+    match k {
+        K::Side => v1::ContactKind::Side,
+        K::WheelToWheel => v1::ContactKind::WheelToWheel,
+        K::WheelTouch => v1::ContactKind::WheelTouch,
+        K::RearEnd => v1::ContactKind::RearEnd,
+        K::HeadOn => v1::ContactKind::HeadOn,
+        K::Object => v1::ContactKind::Object,
+    }
+}
+
+fn contact_kind_from_wire(v: i32) -> ocw_sim::collide::ContactKind {
+    use ocw_sim::collide::ContactKind as K;
+    match v1::ContactKind::try_from(v) {
+        Ok(v1::ContactKind::WheelToWheel) => K::WheelToWheel,
+        Ok(v1::ContactKind::WheelTouch) => K::WheelTouch,
+        Ok(v1::ContactKind::RearEnd) => K::RearEnd,
+        Ok(v1::ContactKind::HeadOn) => K::HeadOn,
+        Ok(v1::ContactKind::Object) => K::Object,
+        _ => K::Side,
+    }
+}
+
+/// A crash for the wire (spec §14 Phase 12C).
+pub fn crash_to_wire(c: &ocw_sim::collide::CrashView) -> v1::CrashState {
+    use ocw_sim::collide::CrashPhase as P;
+    let ms = |s: f64| (s * 1000.0).round().clamp(0.0, u32::MAX as f64) as u32;
+    let mm = |v: f64| (v * 1000.0).round().clamp(i32::MIN as f64, i32::MAX as f64) as i32;
+    v1::CrashState {
+        phase: (match c.phase {
+            P::Falling => v1::CrashPhase::Falling,
+            P::Down => v1::CrashPhase::Down,
+            P::Remount => v1::CrashPhase::Remount,
+        }) as i32,
+        elapsed_ms: ms(c.elapsed_s),
+        down_ms: ms(c.down_s),
+        kind: contact_kind_to_wire(c.kind) as i32,
+        by_rider: c.by.map_or(0, |r| r.0),
+        impulse_along_mm_s: mm(c.impulse[0]),
+        impulse_right_mm_s: mm(c.impulse[1]),
+        speed_mm_s: ms(c.speed),
+    }
+}
+
+/// A received rider's crash; `None` while riding (or from older servers).
+pub fn rider_crash(u: &v1::RiderUpdate) -> Option<ocw_sim::collide::CrashView> {
+    use ocw_sim::collide::CrashPhase as P;
+    let c = u.crash.as_ref()?;
+    let phase = match v1::CrashPhase::try_from(c.phase).ok()? {
+        v1::CrashPhase::None => return None,
+        v1::CrashPhase::Falling => P::Falling,
+        v1::CrashPhase::Down => P::Down,
+        v1::CrashPhase::Remount => P::Remount,
+    };
+    Some(ocw_sim::collide::CrashView {
+        phase,
+        elapsed_s: f64::from(c.elapsed_ms) / 1000.0,
+        down_s: f64::from(c.down_ms) / 1000.0,
+        kind: contact_kind_from_wire(c.kind),
+        by: (c.by_rider != 0).then_some(RiderId(c.by_rider)),
+        impulse: [
+            f64::from(c.impulse_along_mm_s) / 1000.0,
+            f64::from(c.impulse_right_mm_s) / 1000.0,
+        ],
+        speed: f64::from(c.speed_mm_s) / 1000.0,
+    })
+}
+
+/// A received rider's last soft bump.
+pub fn rider_bump(u: &v1::RiderUpdate) -> Option<ocw_sim::collide::Bump> {
+    let b = u.bump.as_ref()?;
+    Some(ocw_sim::collide::Bump {
+        tick: b.tick,
+        strength: f64::from(b.strength_mrad) / 1000.0,
+        side: if b.side < 0 { -1.0 } else { 1.0 },
+    })
+}
+
+/// The rules request (spec §14 Phase 12A: `ride.collisions`,
+/// `ride.chaotic_bots`).
+pub fn rules_request(collisions: Option<bool>, chaotic_bots: Option<bool>) -> v1::ClientMessage {
+    client_message(v1::client_message::Msg::Rules(v1::RulesRequest {
+        collisions,
+        chaotic_bots,
+    }))
+}
+
+/// A staged contact (`dev.bump` / `dev.crash`, local servers only).
+pub fn stage_contact(crash: bool) -> v1::ClientMessage {
+    client_message(v1::client_message::Msg::Dev(v1::DevCommand {
+        cmd: Some(v1::dev_command::Cmd::Stage(v1::StageContact { crash })),
+    }))
 }
 
 /// A unicorn pose for the wire (spec §14 Phase 13E).
@@ -313,6 +434,7 @@ pub fn event_start(spec: &EventSpec, bots: Option<u32>) -> v1::EventStart {
         length_m,
         bots,
         target_w,
+        collisions: None,
     }
 }
 
@@ -380,6 +502,11 @@ pub fn event_state(ev: Option<&Event>, standings: &[Standing], tick: u64) -> v1:
             })
             .collect(),
         finished_tick: ev.finished_tick,
+        // The event's own rule (the server puts the model in force here).
+        collisions: collision_mode_to_wire(ev.collisions.unwrap_or(match ev.kind {
+            EventKind::GroupRide { .. } => ocw_sim::collide::Mode::Soft,
+            _ => ocw_sim::collide::Mode::Full,
+        })),
     }
 }
 
@@ -396,6 +523,8 @@ pub struct EventInfo {
     pub start_line_m: f64,
     pub finished_tick: Option<u64>,
     pub standings: Vec<Standing>,
+    /// The collision model of the event (spec §14 Phase 12A).
+    pub collisions: ocw_sim::collide::Mode,
 }
 
 impl EventInfo {
@@ -438,6 +567,7 @@ pub fn event_info(e: &v1::EventState) -> Option<EventInfo> {
         server_tick: e.server_tick,
         start_line_m: e.start_line_m,
         finished_tick: e.finished_tick,
+        collisions: collision_mode_from_wire(e.collisions),
         standings: e
             .standings
             .iter()
@@ -831,6 +961,7 @@ mod tests {
             riders: Vec::new(),
             human_riders: 1,
             clock: Some(msg),
+            ..Default::default()
         };
         let bytes = encode(&server_message(S::Snapshot(snap)));
         let S::Snapshot(s) = decode_server(&bytes).unwrap() else {
@@ -893,6 +1024,8 @@ mod tests {
                     power_w: 310.0,
                     last_input_seq: 77,
                     god: None,
+                    crash: None,
+                    bump: None,
                     bike: ocw_core::ProfileId::Gravel,
                     look: ocw_core::RiderLook {
                         frame: ocw_core::Rgb(0x123456),
@@ -912,6 +1045,8 @@ mod tests {
                     power_w: 0.0,
                     last_input_seq: 0,
                     god: None,
+                    crash: None,
+                    bump: None,
                     bike: Default::default(),
                     look: Default::default(),
                 }),
@@ -927,6 +1062,8 @@ mod tests {
                 access: v1::ClockAccess::Host as i32,
                 host_rider_id: 1,
             }),
+            collisions: v1::CollisionMode::Soft as i32,
+            chaotic_bots: true,
         };
         let bytes = encode(&server_message(S::Snapshot(snapshot.clone())));
         match decode_server(&bytes).unwrap() {
@@ -963,6 +1100,7 @@ mod tests {
             world_access: 2,
             god_access: 1,
             echo_bot: true,
+            ..Default::default()
         };
         let bytes = encode(&server_message(S::Welcome(welcome.clone())));
         assert_eq!(decode_server(&bytes).unwrap(), S::Welcome(welcome));
@@ -982,6 +1120,8 @@ mod tests {
             power_w: -5.0,
             last_input_seq: 0,
             god: None,
+            crash: None,
+            bump: None,
             bike: Default::default(),
             look: Default::default(),
         });
@@ -1006,6 +1146,8 @@ mod tests {
             power_w: 180.0,
             last_input_seq: 0,
             god,
+            crash: None,
+            bump: None,
             bike: Default::default(),
             look: Default::default(),
         };
@@ -1139,6 +1281,8 @@ mod tests {
             power_w: 201.6,
             last_input_seq: 9,
             god: None,
+            crash: None,
+            bump: None,
             bike: Default::default(),
             look: Default::default(),
         };
@@ -1223,5 +1367,62 @@ mod tests {
         assert!(back.echo_bot);
         // Older peers: absent means no Echo rider, no echo bot.
         assert_eq!(echo_rider(&v1::Snapshot::default()), None);
+    }
+
+    #[test]
+    fn crashes_bumps_and_collision_modes_round_trip() {
+        use ocw_sim::collide::{Bump, ContactKind, CrashPhase, CrashView, Mode};
+        let crash = CrashView {
+            phase: CrashPhase::Down,
+            elapsed_s: 1.234,
+            down_s: 4.5,
+            kind: ContactKind::WheelTouch,
+            by: Some(RiderId(7)),
+            impulse: [-1.25, 0.75],
+            speed: 9.876,
+        };
+        let snap = ocw_sim::RiderSnapshot {
+            id: RiderId(3),
+            name: "R".into(),
+            bike: ocw_core::ProfileId::default(),
+            look: ocw_core::RiderLook::default(),
+            state: RiderState::default(),
+            power_w: 0.0,
+            last_input_seq: 0,
+            god: None,
+            crash: Some(crash),
+            bump: Some(Bump {
+                tick: 99,
+                strength: 0.08,
+                side: -1.0,
+            }),
+        };
+        let bytes = encode(&quantize(&snap));
+        let u = v1::RiderUpdate::decode(bytes.as_slice()).unwrap();
+        assert_eq!(rider_crash(&u), Some(crash));
+        let b = rider_bump(&u).unwrap();
+        assert_eq!((b.tick, b.side), (99, -1.0));
+        assert!((b.strength - 0.08).abs() < 1e-9);
+        // Riding: no crash; an old server's update has none either.
+        let riding = quantize(&ocw_sim::RiderSnapshot {
+            crash: None,
+            bump: None,
+            ..snap
+        });
+        assert_eq!(rider_crash(&riding), None);
+        assert_eq!(rider_bump(&riding), None);
+        for m in [Mode::Off, Mode::Soft, Mode::Full] {
+            assert_eq!(collision_mode_from_wire(collision_mode_to_wire(m)), m);
+        }
+        assert_eq!(collision_mode_from_wire(0), Mode::Off, "older servers");
+        // The rules request and the staged contact decode.
+        let m = decode_client(&encode(&rules_request(Some(true), None))).unwrap();
+        assert!(
+            matches!(m, v1::client_message::Msg::Rules(r) if r.collisions == Some(true) && r.chaotic_bots.is_none())
+        );
+        let m = decode_client(&encode(&stage_contact(true))).unwrap();
+        assert!(
+            matches!(m, v1::client_message::Msg::Dev(v1::DevCommand { cmd: Some(v1::dev_command::Cmd::Stage(s)) }) if s.crash)
+        );
     }
 }

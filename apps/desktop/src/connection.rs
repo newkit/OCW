@@ -109,9 +109,14 @@ pub fn start_session_with(world: &mut World, route: Route, keep_link: bool) {
             ClientCore::new(route, args.name.clone(), profile),
         ),
     };
-    let client = client
+    let rules = world
+        .get_resource::<crate::collisions::CollisionSettings>()
+        .copied()
+        .unwrap_or_default();
+    let mut client = client
         .with_autodrive_at_start(autodrive)
         .with_look(rider.look());
+    client.set_proximity_cue(rules.proximity_cue);
     let start_m = match &course {
         Course::Route(route) => crate::start_point(&args, route),
         Course::FreeRide { .. } | Course::RouteRide { .. } => 0.0,
@@ -141,6 +146,10 @@ pub fn start_session_with(world: &mut World, route: Route, keep_link: bool) {
         )
     };
     server.send(client.hello());
+    // The rider's collision rules (spec §14 Phase 12A), if not the defaults.
+    if let Some(m) = rules.rules_message() {
+        server.send(m);
+    }
     let now = world
         .get_resource::<Time>()
         .map_or(0.0, |t| t.elapsed_secs_f64());
@@ -424,6 +433,22 @@ pub(crate) fn update_view(
     } else if !client.0.is_free_ride() {
         view.notice = None;
     }
+    // Collisions (spec §14 Phase 12): the crash line first, then the
+    // proximity cue and the crash feed (in events it is in the event panel).
+    view.proximity = client.0.proximity();
+    if link.0.is_none() {
+        if let Some(line) = client.0.crash_notice(now) {
+            view.notice = Some(line);
+        } else if view.notice.is_none() {
+            view.notice = match view.proximity {
+                Some(-1) => Some("<< rider close on the left".into()),
+                Some(1) => Some("rider close on the right >>".into()),
+                Some(_) => Some("^ rider close in front".into()),
+                None if view.event.is_none() => client.0.crash_feed(now).pop(),
+                None => None,
+            };
+        }
+    }
 }
 
 /// The console command `event` (spec §2.3): start a local event, cancel
@@ -548,6 +573,7 @@ pub fn event_status(client: &ClientCore, now_s: f64) -> String {
 }
 
 fn register_commands(app: &mut App) {
+    crate::collisions::register_commands(app);
     app.console_command(ConsoleCommand::new(
         Permission::User,
         event_command(),

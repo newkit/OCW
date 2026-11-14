@@ -11,6 +11,7 @@ mod argsfile;
 mod audio;
 mod automation;
 mod build_id;
+mod collisions;
 mod connection;
 mod devices;
 mod ghost;

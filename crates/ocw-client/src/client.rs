@@ -164,6 +164,13 @@ pub struct ClientCore {
     god_others: crate::god_state::OtherGods,
     /// A god-mode change found in a snapshot (the server ended it).
     god_notice: Option<crate::god_state::GodEvent>,
+    /// Collisions (spec §14 Phase 12): the rules, crashes and bumps from
+    /// the server, the own autodrive's avoidance (as the server's), the
+    /// own rider down in the last snapshot, the proximity cue setting.
+    collisions: crate::collisions::CollisionClient,
+    avoid: ocw_sim::avoid::AvoidState,
+    was_down: bool,
+    proximity_cue: bool,
 }
 
 /// Steering mode before the menu opened (spec §3.2.1), restored on closing.
@@ -216,6 +223,10 @@ impl ClientCore {
             god: Default::default(),
             god_others: Default::default(),
             god_notice: None,
+            collisions: Default::default(),
+            avoid: Default::default(),
+            was_down: false,
+            proximity_cue: false,
             route,
         }
     }
@@ -416,6 +427,7 @@ impl ClientCore {
                 self.echo_bot = w.echo_bot;
                 self.world_access = Some(ocw_protocol::access_from_wire(w.world_access));
                 self.god_access = Some(ocw_protocol::access_from_wire(w.god_access));
+                self.collisions.on_welcome(&w);
                 if let Some(c) = &w.clock {
                     self.on_clock(c, now_s);
                 }
@@ -585,6 +597,7 @@ impl ClientCore {
         if let Some(c) = &s.clock {
             self.on_clock(c, now_s);
         }
+        self.collisions.on_snapshot(s, now_s, self.rider_id);
         let mut others = Vec::new();
         let mut gods = Vec::new();
         for u in &s.riders {
@@ -612,10 +625,22 @@ impl ClientCore {
                     Some(p) => p,
                     None => &self.route,
                 };
-                if self.event.holds(self.rider_id) || god.is_some() || self.god.active() {
-                    // Held at an event's start line, or flying in god mode
+                // Down after a crash (spec §14 Phase 12C): the server's state
+                // (a crash is only shown when the server says so).
+                let down = self.collisions.crash(id, now_s).is_some();
+                if self.was_down && !down {
+                    // Riding again: autodrive's line where the rider got up.
+                    self.lateral_target = Some(state.lateral_offset);
+                    if self.lean.is_none() {
+                        self.predictor.set_lateral_target(state.lateral_offset);
+                    }
+                    self.avoid = Default::default();
+                }
+                self.was_down = down;
+                if self.event.holds(self.rider_id) || god.is_some() || self.god.active() || down {
+                    // Held at an event's start line, flying in god mode
                     // (the road position frozen, then placed by the
-                    // server): exactly the server's.
+                    // server), or down: exactly the server's.
                     self.predictor.set_state(state);
                     self.prev_state = state;
                 } else {
@@ -1102,9 +1127,10 @@ impl ClientCore {
         if self.rider_id.is_none() {
             return;
         }
-        if self.event.holds(self.rider_id) || self.god.active() {
+        if self.event.holds(self.rider_id) || self.god.active() || self.was_down {
             // The countdown: the server holds the field at the start line;
-            // god mode: the rider is out of the physics (spec §14 Phase 13E).
+            // god mode: the rider is out of the physics (spec §14 Phase
+            // 13E); down after a crash: the server's state (Phase 12C).
             self.prev_state = self.predictor.state();
             return;
         }
@@ -1152,6 +1178,7 @@ impl ClientCore {
                 .map(|(_, o)| (o.distance, o.lateral_offset))
                 .collect(),
         };
+        self.avoid_step(&me);
         let drag = ocw_sim::drafting::drag_factor((me.distance, me.lateral_offset), others);
         self.predictor.set_drag_factor(drag);
         self.prev_state = self.predictor.state();
@@ -1174,6 +1201,7 @@ impl ClientCore {
         let Some(own) = self.rider_id else {
             return Vec::new();
         };
+        let tick_now = self.server_tick_now(now_s);
         let mut riders = vec![RiderView {
             id: own,
             name: self
@@ -1189,6 +1217,8 @@ impl ClientCore {
             // The own bike and look are known locally.
             bike: self.profile.bike,
             look: Some(self.look),
+            crash: self.collisions.crash(own, now_s),
+            wobble: self.collisions.wobble(own, tick_now),
         }];
         for (id, state) in self.others.sample(now_s - INTERPOLATION_DELAY_S) {
             // Free ride: only riders whose path is known can be placed.
@@ -1209,9 +1239,155 @@ impl ClientCore {
                 is_local: false,
                 bike,
                 look,
+                crash: self.collisions.crash(id, now_s),
+                // Others are drawn slightly in the past.
+                wobble: self
+                    .collisions
+                    .wobble(id, tick_now - INTERPOLATION_DELAY_S / ocw_core::SIM_DT),
             });
         }
         riders
+    }
+
+    /// Autodrive avoidance of the own rider (spec §14 Phase 12D, the same
+    /// code as the server's): its line and virtual brake from the others'
+    /// last known positions; manual riders get no help.
+    fn avoid_step(&mut self, me: &RiderState) {
+        let base = self.lateral_target.unwrap_or(me.lateral_offset);
+        if !self.collisions.mode().on() || self.lean.is_some() || self.wild {
+            self.predictor.set_speed_cap(None);
+            if self.lean.is_none() && self.avoid.pass_m.take().is_some() {
+                self.predictor.set_lateral_target(base);
+            }
+            return;
+        }
+        let loop_m = (self.free.is_none() && self.route.is_loop()).then(|| self.route.length());
+        let own_path = self
+            .free
+            .as_ref()
+            .and_then(|f| f.own.as_ref().map(|o| (f, o)));
+        let mut others = Vec::new();
+        for (id, o) in &self.others_now {
+            let mine = match own_path {
+                Some((fr, own)) => {
+                    let Some(p) = fr.others.get(id) else { continue };
+                    let Some((e, f, off)) = p.locate(o.distance) else {
+                        continue;
+                    };
+                    let Some(m) = own.distance_of(e, f, off, me.distance) else {
+                        continue;
+                    };
+                    m
+                }
+                None => o.distance,
+            };
+            let mut ahead = mine - me.distance;
+            if let Some(l) = loop_m {
+                ahead -= l * (ahead / l).round();
+            }
+            if ahead.abs() > 80.0 {
+                continue;
+            }
+            others.push(if self.collisions.crashed(*id) {
+                ocw_sim::avoid::Other::fallen(ahead, o.lateral_offset)
+            } else {
+                ocw_sim::avoid::Other::rider(ahead, o.lateral_offset, o.lateral_offset, o.speed)
+            });
+        }
+        let width = self.track().road_width_at(me.distance);
+        let left = self.free.as_ref().is_some_and(|f| f.net.keep_left);
+        let plan = ocw_sim::avoid::plan(
+            &ocw_sim::avoid::Me {
+                lateral_m: me.lateral_offset,
+                speed: me.speed,
+                lane_m: base,
+                limit_m: ocw_sim::physics::lateral_limit(width),
+                road_width_m: width,
+            },
+            &others,
+            ocw_sim::avoid::overtake_left(left),
+            &mut self.avoid,
+        );
+        self.predictor.set_lateral_target(plan.target_m);
+        self.predictor.set_speed_cap(plan.speed_cap);
+    }
+
+    /// The collision model in force (spec §14 Phase 12A, from the server).
+    pub fn collision_mode(&self) -> ocw_sim::collide::Mode {
+        self.collisions.mode()
+    }
+
+    /// Chaotic bots on (Phase 12 Q3, from the server).
+    pub fn chaotic_bots(&self) -> bool {
+        self.collisions.chaotic_bots()
+    }
+
+    /// Whether this rider may change the collision rules (the server
+    /// checks again).
+    pub fn may_change_rules(&self) -> bool {
+        self.collisions
+            .access()
+            .is_none_or(|a| a.allows(self.rider_id, self.clock_info.and_then(|c| c.host)))
+    }
+
+    /// The rules request (`ride.collisions`, `ride.chaotic_bots`).
+    pub fn rules_message(collisions: Option<bool>, chaotic_bots: Option<bool>) -> Vec<u8> {
+        encode(&ocw_protocol::rules_request(collisions, chaotic_bots))
+    }
+
+    /// A staged contact (`dev.bump` / `dev.crash`, local servers only).
+    pub fn stage_message(crash: bool) -> Vec<u8> {
+        encode(&ocw_protocol::stage_contact(crash))
+    }
+
+    /// The own rider's crash at client time `now_s`, if down.
+    pub fn own_crash(&self, now_s: f64) -> Option<ocw_sim::collide::CrashView> {
+        self.collisions.crash(self.rider_id?, now_s)
+    }
+
+    /// The HUD's crash line ("Crash! ... back on the bike in 3.2 s").
+    pub fn crash_notice(&self, now_s: f64) -> Option<String> {
+        self.collisions.notice(self.rider_id, now_s)
+    }
+
+    /// The crash feed of the last seconds ("R. Rider crashed at km 12.4").
+    pub fn crash_feed(&self, now_s: f64) -> Vec<String> {
+        self.collisions.feed(now_s)
+    }
+
+    /// The collision state (bumps and crashes of every rider, for sounds).
+    pub fn collision_state(&self) -> &crate::collisions::CollisionClient {
+        &self.collisions
+    }
+
+    /// The proximity cue setting (`ride.proximity_cue`, off by default).
+    pub fn set_proximity_cue(&mut self, on: bool) {
+        self.proximity_cue = on;
+    }
+
+    pub fn proximity_cue_on(&self) -> bool {
+        self.proximity_cue
+    }
+
+    /// The proximity cue now (12D): the side of a rider close beside (-1
+    /// left, +1 right) or 0 in front; `None` when nobody is close, the cue
+    /// is off or there are no collisions.
+    pub fn proximity(&self) -> Option<i32> {
+        if !self.proximity_cue || !self.collisions.mode().on() {
+            return None;
+        }
+        let me = self.predictor.state();
+        let loop_m = (self.free.is_none() && self.route.is_loop()).then(|| self.route.length());
+        crate::collisions::proximity(self.others_now.iter().filter_map(|(_, o)| {
+            if self.free.is_some() {
+                return None;
+            }
+            let mut ahead = o.distance - me.distance;
+            if let Some(l) = loop_m {
+                ahead -= l * (ahead / l).round();
+            }
+            Some((ahead, o.lateral_offset - me.lateral_offset))
+        }))
     }
 
     /// The server tick now, estimated from the last snapshot.
@@ -1223,13 +1399,16 @@ impl ClientCore {
     /// The event's HUD view at client time `now_s` (spec §2.3).
     pub fn event_view(&self, now_s: f64) -> Option<ocw_render::EventView> {
         let others: Vec<f64> = self.others_now.iter().map(|(_, s)| s.distance).collect();
-        self.event.view(
+        let mut v = self.event.view(
             now_s,
             self.server_tick_now(now_s),
             self.rider_id,
             self.predictor.state().distance,
             &others,
-        )
+        )?;
+        // The event's feed (spec §14 Phase 12C): "R. Rider crashed at km 12.4".
+        v.lines.extend(self.collisions.feed(now_s));
+        Some(v)
     }
 
     /// The own rider's part of the event, for the FIT laps
@@ -2902,6 +3081,7 @@ mod tests {
             world_access: 0,
             god_access: 0,
             echo_bot: false,
+            ..Default::default()
         })));
         h.receive(&welcome);
         assert!(matches!(h.notices.last(), Some(Notice::Rejected(_))));
@@ -2945,6 +3125,7 @@ mod tests {
             riders: Vec::new(),
             human_riders: 1,
             clock: None,
+            ..Default::default()
         })));
         h.receive(&late);
         let after = h.client.stats();
@@ -3216,5 +3397,75 @@ mod tests {
             mine.position,
             at.position
         );
+    }
+
+    /// Collisions on the client (spec §14 Phase 12D, 12H): a bump the
+    /// server resolves is blended into the prediction without a visible
+    /// snap; a crash shows only once the server says so, with the HUD line
+    /// and the feed.
+    #[test]
+    fn bumps_reconcile_smoothly_and_crashes_come_only_from_the_server() {
+        let server = GameServer::new(route(), ocw_server::local::local_config(4, 0.0));
+        let client = ClientCore::new(route(), "Tester", RiderProfile::default());
+        let mut h = Harness::with(server, client);
+        h.ride(250.0, 10.0);
+        assert_eq!(h.client.collision_mode(), ocw_sim::collide::Mode::Full);
+        let stage = ClientCore::stage_message(false);
+        h.send(&stage);
+        let mut last = h.client.state();
+        let (mut lateral_jump, mut along_jump) = (0.0f64, 0.0f64);
+        for _ in 0..100 {
+            h.ride(250.0, 0.02);
+            let st = h.client.state();
+            lateral_jump = lateral_jump.max((st.lateral_offset - last.lateral_offset).abs());
+            along_jump =
+                along_jump.max((st.distance - last.distance - last.speed * ocw_core::SIM_DT).abs());
+            last = st;
+        }
+        assert!(
+            h.server.session().collision_stats().bumps > 0,
+            "{:?}",
+            h.server.session().collision_stats()
+        );
+        assert!(lateral_jump < 0.06, "no sideways snap: {lateral_jump}");
+        assert!(along_jump < 0.1, "no snap along: {along_jump}");
+        assert!(h.client.prediction_error().abs() < ocw_sim::prediction::SNAP_THRESHOLD_M);
+        assert!(h.client.own_crash(h.time_s).is_none());
+        // The staged crash: nothing on the client before a snapshot says so.
+        h.ride(250.0, 4.0);
+        let stage = ClientCore::stage_message(true);
+        for reply in h.server.handle(h.conn, &stage) {
+            h.receive(&reply);
+        }
+        assert!(
+            h.client.own_crash(h.time_s).is_none(),
+            "only from the server"
+        );
+        h.ride(250.0, 0.4);
+        let c = h.client.own_crash(h.time_s).expect("the server's crash");
+        assert_eq!(c.kind, ocw_sim::collide::ContactKind::WheelTouch);
+        let view = h.client.view(h.time_s, 0.0);
+        assert!(view[0].crash.is_some());
+        assert!(
+            h.client
+                .crash_notice(h.time_s)
+                .unwrap()
+                .starts_with("Crash!")
+        );
+        assert!(
+            h.client
+                .crash_feed(h.time_s)
+                .iter()
+                .any(|l| l.starts_with("You crashed")),
+            "{:?}",
+            h.client.crash_feed(h.time_s)
+        );
+        // While down the prediction holds the server's state; afterwards
+        // the rider rides on from where the server put them.
+        h.ride(0.0, 2.0);
+        assert!(h.client.state().speed < 0.5);
+        h.ride(250.0, 12.0);
+        assert!(h.client.own_crash(h.time_s).is_none());
+        assert!(h.client.state().speed > 3.0);
     }
 }

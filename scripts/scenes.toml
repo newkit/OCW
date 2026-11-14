@@ -1268,3 +1268,28 @@ world = "tenerife"
 args = ["--world", "{world}", "--free-ride", "--start", "-7500,5260", "--bots", "0", "--power", "0"]
 at = ["0.5=time pause", "0.5=time 2026-07-15 11:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 75 6 9"]
 shot = 10
+
+# --- Collisions (spec §14 Phase 12, K1 / K2) --------------------------------
+
+[[scene]]
+name = "collision-bump-video"
+description = "Video: a soft bump in a bunch on the Loop test route (dev.bump, spec §14 Phase 12 K1): a bot rubs shoulders with the rider, both are pushed apart and wobble, autodrive bots pass on the left"
+args = ["--route", "loop", "--bots", "12", "--power", "230"]
+at = ["9=camera.orbit 60 16 7", "10.5=dev.bump", "12.5=dev.bump"]
+warmup = 9
+video = 6
+
+[[scene]]
+name = "collision-crash-video"
+description = "Video: a crash in a bunch (dev.crash, spec §14 Phase 12 K2): a bot cuts in, wheel touch, the rider falls as an Avian ragdoll with the bike, lies, picks the bike up and rides on; the bunch steers round the fallen bike"
+args = ["--route", "loop", "--bots", "12", "--power", "230"]
+at = ["9=camera.orbit 70 18 9", "10=dev.crash"]
+warmup = 9
+video = 10
+
+[[scene]]
+name = "collision-crash"
+description = "Down after a crash in a bunch (spec §14 Phase 12 K2): the rider and bike as a ragdoll on the Loop test route, the HUD's crash line counting the time down"
+args = ["--route", "loop", "--bots", "12", "--power", "230"]
+at = ["9=camera.orbit 70 18 9", "10=dev.crash"]
+shot = 12.5

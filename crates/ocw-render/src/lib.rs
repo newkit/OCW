@@ -23,6 +23,7 @@ pub mod materials;
 pub mod media;
 pub mod menu;
 pub mod package;
+pub mod ragdoll;
 pub mod region_look;
 pub mod riders;
 pub mod road_material;
@@ -101,6 +102,9 @@ pub struct RideView {
     /// God mode's pins (P, spec §14 Phase 13D): kept for the ride, drawn
     /// as glowing beams with their number.
     pub pins: Vec<PinView>,
+    /// The proximity cue (spec §14 Phase 12D, an optional aid): someone
+    /// close on the left (-1), right (+1) or in front (0).
+    pub proximity: Option<i32>,
 }
 
 /// A pin put in god mode (spec §14 Phase 13D).
@@ -196,6 +200,7 @@ impl RideView {
             free_ride: false,
             junction: None,
             notice: None,
+            proximity: None,
             recording_s: None,
             app_message: None,
             position: None,
@@ -312,6 +317,11 @@ pub struct RiderView {
     pub bike: ocw_core::ProfileId,
     /// The rider's cosmetic look; `None` (an old server): colours by id.
     pub look: Option<ocw_core::RiderLook>,
+    /// A crash under way, from the server (spec §14 Phase 12C): the
+    /// avatar falls as a ragdoll and remounts.
+    pub crash: Option<ocw_sim::collide::CrashView>,
+    /// The wobble after a soft bump (rad of lean, positive = right, 12B).
+    pub wobble: f64,
 }
 
 /// All rendering plugins of the desktop client.
@@ -343,6 +353,8 @@ impl Plugin for OcwRenderPlugins {
             unicorn::UnicornPlugin,
             building_material::BuildingMaterialPlugin,
             inspect_hud::InspectHudPlugin,
+            // Ragdoll falls with Avian (spec §14 Phase 12C, Q5).
+            ragdoll::RagdollPlugin,
         ));
     }
 }
@@ -477,6 +489,8 @@ mod tests {
             is_local: true,
             bike: ocw_core::ProfileId::Road,
             look: None,
+            crash: None,
+            wobble: 0.0,
         });
         view.sky = Some(sky(12, 0));
         let mut app = App::new();
@@ -543,6 +557,8 @@ mod tests {
             is_local: true,
             bike: ocw_core::ProfileId::Road,
             look: None,
+            crash: None,
+            wobble: 0.0,
         });
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))
