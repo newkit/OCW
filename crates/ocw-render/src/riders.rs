@@ -698,7 +698,8 @@ fn near_range() -> VisibilityRange {
     }
 }
 
-fn far_range() -> VisibilityRange {
+/// The far model's visibility range (from [`LOD_DISTANCE_M`] on).
+pub fn far_range() -> VisibilityRange {
     VisibilityRange {
         start_margin: LOD_DISTANCE_M - LOD_FADE_M..LOD_DISTANCE_M + LOD_FADE_M,
         end_margin: 1.0e7..1.0e7,
@@ -937,8 +938,56 @@ impl AvatarRig {
     }
 }
 
+/// A lamp's lens on a bike with lights fitted (the near model's
+/// `light_front` / `light_rear` parts, spec §14 Phase 9 Q3): it glows
+/// while the lights are on ([`crate::sky`]), else keeps `off`.
+#[derive(Component, Debug, Clone)]
+pub struct BikeLens {
+    /// The avatar it belongs to.
+    pub avatar: Entity,
+    pub rear: bool,
+    /// Its material while the lights are off.
+    pub off: Handle<StandardMaterial>,
+}
+
+/// Where a fitted light set's lamps are on an avatar's bike (spec §14
+/// Phase 9 Q3): the node entity that carries each lens and the lens's
+/// centre in that node's frame. Only bikes with lights fitted have it.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct LampAnchors {
+    pub front: Option<(Entity, Vec3)>,
+    pub rear: Option<(Entity, Vec3)>,
+}
+
+/// The lenses of a bike model's near parts: (node index, centre in the
+/// node's frame, rear) for every `light_front` / `light_rear` part (none:
+/// no lights fitted).
+pub fn lamp_lenses(model: &Model) -> Vec<(usize, Vec3, bool)> {
+    let far = model.node(bike_nodes::LOD1);
+    let mut out = Vec::new();
+    for (i, node) in model.nodes.iter().enumerate() {
+        if far.is_some_and(|f| model.is_below(i, f)) {
+            continue;
+        }
+        for p in &node.primitives {
+            let rear = match model.materials[p.material].name.as_str() {
+                "light_front" => false,
+                "light_rear" => true,
+                _ => continue,
+            };
+            if p.positions.is_empty() {
+                continue;
+            }
+            let sum: Vec3 = p.positions.iter().map(|v| Vec3::from(*v)).sum();
+            out.push((i, sum / p.positions.len() as f32, rear));
+        }
+    }
+    out
+}
+
 /// Spawns `model`'s nodes (but not the subtrees of `skip`) under `parent`;
-/// returns the entity of every node (PLACEHOLDER for skipped ones).
+/// returns the entity of every node (PLACEHOLDER for skipped ones). The
+/// near lamp lenses are marked [`BikeLens`] of `owner`.
 #[allow(clippy::too_many_arguments)]
 fn spawn_model(
     commands: &mut Commands,
@@ -949,6 +998,7 @@ fn spawn_model(
     hidden: &[usize],
     far: Option<usize>,
     build: ocw_core::BodyBuild,
+    owner: Option<Entity>,
     mut material: impl FnMut(&str, &str, [f32; 4], bool) -> PartMaterial,
 ) -> Vec<Entity> {
     let mut out = vec![Entity::PLACEHOLDER; model.nodes.len()];
@@ -991,7 +1041,20 @@ fn spawn_model(
             ));
             match material(&m.name, &node.name, m.color, is_far) {
                 PartMaterial::Gear(h) => part.insert(MeshMaterial3d(h)),
-                PartMaterial::Plain(h) => part.insert(MeshMaterial3d(h)),
+                PartMaterial::Plain(h) => {
+                    let rear = m.name == "light_rear";
+                    if let Some(avatar) = owner
+                        && !is_far
+                        && (rear || m.name == "light_front")
+                    {
+                        part.insert(BikeLens {
+                            avatar,
+                            rear,
+                            off: h.clone(),
+                        });
+                    }
+                    part.insert(MeshMaterial3d(h))
+                }
             };
         }
     }
@@ -1052,8 +1115,24 @@ fn spawn_avatar(
         &[],
         far,
         ocw_core::BodyBuild::Medium,
+        (!ghost).then_some(root),
         |slot, node, c, is_far| lib.material(materials, slot, node, c, &colours, ghost, is_far),
     );
+    // A fitted light set's lamps (spec §14 Phase 9 Q3): where the lenses
+    // are, for the glow far away and the local rider's beam.
+    let lenses = lamp_lenses(bike_model);
+    if !ghost && !lenses.is_empty() {
+        let at = |rear: bool| {
+            lenses
+                .iter()
+                .find(|l| l.2 == rear)
+                .map(|(i, c, _)| (bike_nodes_e[*i], *c))
+        };
+        commands.entity(root).insert(LampAnchors {
+            front: at(false),
+            rear: at(true),
+        });
+    }
     // The saddle (and its post) at the rider's height.
     if body.saddle_offset != 0.0
         && let Some(i) = bike_model.node(bike_nodes::SADDLE)
@@ -1078,6 +1157,7 @@ fn spawn_avatar(
         &[],
         None,
         character.validated().build,
+        None,
         |slot, node, c, is_far| lib.material(materials, slot, node, c, &colours, ghost, is_far),
     );
     // The body height: the whole rider scaled about the hips.
@@ -1379,6 +1459,38 @@ mod tests {
             avatar_colours(RiderId(1), true, Some(&RiderLook::default())).jersey,
             LOCAL_JERSEY
         );
+    }
+
+    /// Spec §14 Phase 9 Q3: only a bike with the light set fitted has
+    /// lenses – the front one at the bar, ahead of and above the rear one
+    /// on the seat post – for every bike type that takes lights.
+    #[test]
+    fn fitted_lights_have_a_front_and_a_rear_lens() {
+        let low = ocw_assets::rider::build(ocw_assets::rider::Detail::Low);
+        for p in ProfileId::ALL {
+            let stock = ocw_assets::shipped::bike_model(p);
+            assert!(lamp_lenses(stock).is_empty(), "{p:?}: no lights");
+            if p.bike() == ocw_core::BikeType::TimeTrial {
+                continue; // the light set does not fit a TT bike
+            }
+            let m = ocw_assets::bikes::build_with(
+                p,
+                ocw_assets::shipped::rider_model(),
+                &low,
+                &["lights-set"],
+            );
+            let lenses = lamp_lenses(&m);
+            let world = |rear: bool| {
+                let (i, c, _) = *lenses.iter().find(|l| l.2 == rear).expect("a lens");
+                m.world(i).transform_point3(c)
+            };
+            let (front, rear) = (world(false), world(true));
+            assert!(
+                front.z < rear.z - 0.5,
+                "{p:?}: front {front} ahead of rear {rear}"
+            );
+            assert!(front.y > 0.6 && rear.y > 0.5, "{p:?}: {front} {rear}");
+        }
     }
 
     /// A changed bike or look rebuilds the avatar; the same one keeps it.

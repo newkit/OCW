@@ -31,6 +31,7 @@ use ocw_assets::parts::{Catalogue, Slot};
 use ocw_assets::workshop::Layout;
 use ocw_core::Rgb;
 
+use super::bench::{self, BenchPage};
 use super::camera::{CameraMachine, Orbit, Pose, Poses, View};
 use super::input::Act;
 use super::nav::{self, Dir, Rect};
@@ -219,9 +220,10 @@ impl Workshop {
     fn open_mirror_picker(&mut self, ctx: &Ctx) {
         self.picker = match self.dress.slot() {
             MirrorSlot::Char(c) => Some(Picker::character(c, &ctx.character)),
-            MirrorSlot::Kit(slot) => Some(Picker::new(
+            MirrorSlot::Kit(slot) => Some(Picker::kit(
                 slot,
                 picker::kit_rows(ctx.cat, ctx.garage, slot),
+                ctx.look,
             )),
             MirrorSlot::Design(page) => Some(Picker::designer(page, ctx.look)),
             MirrorSlot::TryOn => None,
@@ -346,7 +348,7 @@ impl Workshop {
             }
             Zone::Bench => {
                 self.caption = Some(
-                    "The bench: buying bikes and spare parts comes with the bench catalogue (spec 4D)."
+                    "The bench: Confirm for the catalogue – framesets as new bikes, complete builds, the spare parts on the shelf, selling a bike."
                         .into(),
                 );
                 self.go(View::Bench, layout);
@@ -438,19 +440,86 @@ impl Workshop {
                 out.push(o);
             }
         }
+        // The hooks follow the garage (a bike bought or sold at the bench).
+        self.sync_bikes(ctx.garage);
         // The picker's rows follow the garage (after a purchase …).
         let bike = self
             .bikes
             .get(self.stand)
             .and_then(|id| ctx.garage.bike(id));
-        if let (Some(p), Some(bike)) = (&mut self.picker, bike)
+        if let Some(p) = &mut self.picker
+            && let Some(page) = p.bench
+        {
+            p.refresh(bench::rows(ctx.cat, ctx.garage, page));
+        } else if let (Some(p), Some(bike)) = (&mut self.picker, bike)
             && p.character.is_none()
-            && p.design.is_none()
+            && !p.is_designer()
         {
             p.refresh(picker::rows(ctx.cat, ctx.garage, bike, p.slot));
         }
         self.hotspot = self.hotspot.min(ctx.anchors.len().saturating_sub(1));
         out
+    }
+
+    /// The hooks after the garage changed (spec 4D): a bike bought hangs on
+    /// a new hook at the end of the row (where the "+" was), a sold one's
+    /// hook goes; the stand keeps its bike (the garage's active one if its
+    /// own was sold).
+    fn sync_bikes(&mut self, g: &Garage) {
+        let ids: Vec<String> = g.bikes.iter().map(|b| b.id.clone()).collect();
+        if ids == self.bikes || self.swap.is_some() {
+            return;
+        }
+        let on_stand = self.bikes.get(self.stand).cloned();
+        let focused = self.bikes.get(self.focus).cloned();
+        let mut list: Vec<String> = self
+            .bikes
+            .iter()
+            .filter(|b| ids.contains(b))
+            .cloned()
+            .collect();
+        let new: Vec<String> = ids.iter().filter(|b| !list.contains(b)).cloned().collect();
+        list.extend(new.iter().cloned());
+        self.bikes = list;
+        let at = |id: &Option<String>| {
+            id.as_ref()
+                .and_then(|i| self.bikes.iter().position(|b| b == i))
+        };
+        self.stand = at(&on_stand)
+            .or_else(|| self.bikes.iter().position(|b| *b == g.active))
+            .unwrap_or(0);
+        self.focus = at(&focused).unwrap_or(self.stand);
+        if let Some(id) = new.last()
+            && let Some(b) = g.bike(id)
+        {
+            self.caption = Some(format!(
+                "The {} hangs on a new hook – Confirm on it to put it on the stand and build it up.",
+                b.label()
+            ));
+        }
+        self.hotspot = 0;
+    }
+
+    /// Opens a page of the bench catalogue (spec 4D).
+    fn open_bench(&mut self, page: BenchPage, ctx: &Ctx) {
+        let pinned = self.picker.as_ref().and_then(|p| p.pinned.clone());
+        let mut p = Picker::bench(page, bench::rows(ctx.cat, ctx.garage, page));
+        p.pinned = pinned;
+        self.picker = Some(p);
+    }
+
+    /// The bench's catalogue from the bench, or from the "+" hook (the
+    /// camera on the hook, where the new bike will hang).
+    fn open_catalogue(&mut self, from_plus: bool, ctx: &Ctx) {
+        self.caption = None;
+        if from_plus {
+            self.zone = Zone::Wall;
+            self.go(View::Wall(self.bikes.len()), ctx.layout);
+        } else {
+            self.zone = Zone::Bench;
+            self.go(View::Bench, ctx.layout);
+        }
+        self.open_bench(BenchPage::Top, ctx);
     }
 
     fn line(&mut self, line: String) -> Option<Out> {
@@ -471,6 +540,12 @@ impl Workshop {
             self.orbit = Orbit::default();
             return None;
         }
+        if let Act::Catalogue { plus } = a {
+            self.picker = None;
+            self.plus = plus;
+            self.open_catalogue(plus, ctx);
+            return None;
+        }
         // The picker and its dialog.
         if let Some(p) = &mut self.picker {
             if let Some(d) = &mut p.dialog {
@@ -488,24 +563,70 @@ impl Workshop {
                 }
                 return None;
             }
-            // The jersey designer: ← / → change the focused field.
-            if let Some((_, draft)) = p.design {
+            // The bench catalogue (spec 4D): pages, then the dialogs.
+            if let Some(page) = p.bench {
                 match a {
-                    Act::Left => {
+                    Act::Up => p.step(-1),
+                    Act::Down => p.step(1),
+                    Act::Row(i) if i < p.rows.len() => p.focus = i,
+                    Act::Compare => p.toggle_pin(),
+                    Act::Confirm | Act::Action | Act::RowClick(_) => {
+                        if let Act::RowClick(i) = a {
+                            if i >= p.rows.len() {
+                                return None;
+                            }
+                            p.focus = i;
+                        }
+                        if let Some(Kind::Page(next)) = p.focused().map(|r| r.kind.clone()) {
+                            self.open_bench(next, ctx);
+                        } else {
+                            self.open_dialog(ctx);
+                        }
+                    }
+                    Act::Back | Act::BackButton => match page.parent() {
+                        Some(up) => {
+                            self.open_bench(up, ctx);
+                            if let Some(p) = &mut self.picker {
+                                // The row of the page we came from.
+                                p.focus = p
+                                    .rows
+                                    .iter()
+                                    .position(|r| r.kind == Kind::Page(page))
+                                    .unwrap_or(0);
+                            }
+                        }
+                        None => self.picker = None,
+                    },
+                    _ => {}
+                }
+                return None;
+            }
+            // The jersey designer: ← / → change the focused field (also the
+            // colour row of a kit picker, spec 4C).
+            if let Some((_, draft)) = p.design {
+                let on_field = p.design_field().is_some();
+                match a {
+                    Act::Left if on_field => {
                         p.step_design(-1);
                         return None;
                     }
-                    Act::Right => {
+                    Act::Right if on_field => {
                         p.step_design(1);
                         return None;
                     }
-                    Act::RowClick(i) if i < p.rows.len() => {
+                    Act::RowClick(i)
+                        if i < p.rows.len() && matches!(p.rows[i].kind, Kind::Design(_)) =>
+                    {
                         p.focus = i;
                         p.step_design(1);
                         return None;
                     }
-                    Act::Confirm | Act::Action => {
-                        self.caption = Some("Design applied – free, and seen by everyone.".into());
+                    Act::Confirm | Act::Action if on_field => {
+                        self.caption = Some(if p.slot.is_kit() {
+                            "Colour applied – free, looks only, and seen by everyone.".into()
+                        } else {
+                            "Design applied – free, and seen by everyone.".into()
+                        });
                         return self.line(super::designer::line(&draft));
                     }
                     _ => {}
@@ -665,10 +786,10 @@ impl Workshop {
                 };
                 self.enter_zone(z, l);
             }
+            (View::Bench, Act::Confirm) => self.open_catalogue(false, ctx),
             (View::Overview | View::Wall(_), Act::Confirm) => {
                 if self.plus {
-                    self.caption =
-                        Some("More bikes: from the bench catalogue (spec 4D, later).".into());
+                    self.open_catalogue(true, ctx);
                 } else if self.focus == self.stand {
                     self.open_stand(l);
                 } else {
@@ -700,13 +821,16 @@ impl Workshop {
                     }
                 } else if self.plus_rect(ctx).is_some_and(|r| inside(r, at)) {
                     self.plus = true;
-                    self.caption =
-                        Some("More bikes: from the bench catalogue (spec 4D, later).".into());
+                    self.open_catalogue(true, ctx);
                 } else if self
                     .zone_rect(ctx, l.bench, Vec3::new(0.5, 0.6, 1.0))
                     .is_some_and(|r| inside(r, at))
                 {
-                    self.enter_zone(Zone::Bench, l);
+                    if self.view() == View::Bench {
+                        self.open_catalogue(false, ctx);
+                    } else {
+                        self.enter_zone(Zone::Bench, l);
+                    }
                 } else if self
                     .zone_rect(ctx, l.mirror, Vec3::new(0.3, 0.9, 0.6))
                     .is_some_and(|r| inside(r, at))
@@ -742,10 +866,12 @@ impl Workshop {
         let Some(row) = p.focused().cloned() else {
             return;
         };
-        p.dialog = picker::dialog(ctx.cat, ctx.garage, bike, p.slot, &row, ctx.balance);
-        if p.dialog.is_none()
-            && let Kind::Shop = row.kind
-        {
+        p.dialog = if p.bench.is_some() {
+            bench::dialog(ctx.cat, ctx.garage, Some(bike), &row, ctx.balance)
+        } else {
+            picker::dialog(ctx.cat, ctx.garage, bike, p.slot, &row, ctx.balance)
+        };
+        if p.dialog.is_none() && matches!(row.kind, Kind::Shop | Kind::Frameset | Kind::Build(_)) {
             self.caption = Some("Not enough hearts yet: they are earned by riding.".into());
         }
     }
@@ -771,7 +897,9 @@ impl Workshop {
             })
             .collect();
         let mut paint = bike.paint();
-        if let Some(p) = &self.picker {
+        // The bench's rows are no preview on the stand bike (a frameset is
+        // a new bike).
+        if let Some(p) = self.picker.as_ref().filter(|p| p.bench.is_none()) {
             if let Some(c) = p.preview_paint() {
                 paint = c;
             } else if let Some(part) = p.preview().and_then(|id| ctx.cat.get(id)) {
@@ -1071,6 +1199,127 @@ pub(crate) mod tests {
         let r = rects[3].unwrap();
         world.step(&mut w, &[Act::Activate((r.0 + r.1) / 2.0)]);
         assert_eq!(w.view(), View::Stand);
+    }
+
+    /// The bench (spec 4D): Confirm there opens the catalogue; its pages
+    /// open with Confirm and close with Back; a frameset's dialog buys it
+    /// as a new bike, which hangs on a new hook where the "+" was.
+    #[test]
+    fn the_bench_catalogue_buys_a_bike_onto_a_new_hook() {
+        let mut world = World::new();
+        world.wallet.grant("Ann", 5_000);
+        let mut w = world.open();
+        world.step(&mut w, &[Act::Down]);
+        assert_eq!(w.view(), View::Bench);
+        world.step(&mut w, &[Act::Confirm]);
+        let p = w.picker.as_ref().expect("the catalogue");
+        assert_eq!(p.bench, Some(BenchPage::Top));
+        assert!(p.rows.len() <= 6);
+        // Road bikes: the framesets page.
+        world.step(&mut w, &[Act::Confirm]);
+        let p = w.picker.as_ref().unwrap();
+        assert_eq!(p.bench, Some(BenchPage::Type(ocw_core::BikeType::Road)));
+        let carbon = p
+            .rows
+            .iter()
+            .position(|r| r.part.as_deref() == Some("frame.road.upper"))
+            .unwrap();
+        world.step(&mut w, &[Act::Row(carbon), Act::Confirm]);
+        let d = w
+            .picker
+            .as_ref()
+            .unwrap()
+            .dialog
+            .clone()
+            .expect("buy dialog");
+        assert_eq!(d.buttons[d.focus].label, "Cancel");
+        let out = world.step(&mut w, &[Act::Up, Act::Confirm]);
+        assert_eq!(out, vec![Out::Line("bikes.buy frame.road.upper".into())]);
+        // The app runs the line: the garage has the bike, the wall a hook.
+        world
+            .wallet
+            .buy_bike(
+                ocw_assets::shipped::catalogue(),
+                "Ann",
+                "frame.road.upper",
+                &[],
+            )
+            .unwrap();
+        world.step(&mut w, &[]);
+        assert_eq!(w.bikes.len(), 7);
+        assert_eq!(w.bikes[6], "road-2");
+        assert_eq!(w.stand, 0, "the stand keeps its bike");
+        assert!(w.caption.as_deref().unwrap().contains("new hook"));
+        // Back: the top page (on the Road row), Back: closed, at the bench.
+        world.step(&mut w, &[Act::Back]);
+        let p = w.picker.as_ref().unwrap();
+        assert_eq!((p.bench, p.focus), (Some(BenchPage::Top), 0));
+        world.step(&mut w, &[Act::Back]);
+        assert!(w.picker.is_none());
+        assert_eq!(w.view(), View::Bench);
+        // The "+" hook opens the same catalogue, the camera on the hook.
+        world.step(&mut w, &[Act::Catalogue { plus: true }]);
+        assert_eq!(w.view(), View::Wall(7));
+        assert_eq!(w.picker.as_ref().unwrap().bench, Some(BenchPage::Top));
+        // Selling it from the bench's last page frees the hook.
+        let sell = w.picker.as_ref().unwrap().rows.len() - 1;
+        world.step(&mut w, &[Act::RowClick(sell)]);
+        let p = w.picker.as_ref().unwrap();
+        assert_eq!(p.bench, Some(BenchPage::Sell));
+        assert_eq!(p.rows[0].kind, Kind::SellBike("road-2".into()));
+        world.step(&mut w, &[Act::Confirm, Act::Up]);
+        let out = world.step(&mut w, &[Act::Confirm]);
+        assert_eq!(out, vec![Out::Line("bikes.sell road-2".into())]);
+        world.wallet.sell_bike("Ann", "road-2").unwrap();
+        world.step(&mut w, &[]);
+        assert_eq!(w.bikes.len(), 6);
+    }
+
+    /// The kit's colours (spec 4C): the shorts, socks, shoes and gloves
+    /// pickers have a colour row; ← / → change a draft shown live,
+    /// Confirm applies it as a `kit.design` line; the other rows still buy.
+    #[test]
+    fn kit_pickers_have_their_own_colour_row() {
+        let world = World::new();
+        let mut w = world.open();
+        world.step(&mut w, &[Act::Down, Act::Down, Act::Confirm]);
+        world.settle(&mut w);
+        let gloves = MirrorSlot::ALL
+            .iter()
+            .position(|s| *s == MirrorSlot::Kit(Slot::Gloves))
+            .unwrap();
+        w.dress.slot = gloves;
+        world.step(&mut w, &[Act::Confirm]);
+        let p = w.picker.as_ref().expect("gloves picker");
+        assert_eq!(
+            p.rows[1].kind,
+            Kind::Design(super::super::designer::Field::Gloves)
+        );
+        assert!(!p.is_designer());
+        // On the worn item ← / → do nothing; on the colour row they step.
+        world.step(&mut w, &[Act::Right]);
+        assert_eq!(w.design_preview().unwrap().design.gloves, None);
+        world.step(&mut w, &[Act::Down, Act::Right]);
+        let c = w.design_preview().unwrap().design.gloves;
+        assert!(c.is_some(), "a colour shown live");
+        let out = world.step(&mut w, &[Act::Confirm]);
+        let [Out::Line(l)] = out.as_slice() else {
+            panic!("{out:?}")
+        };
+        assert!(
+            l.starts_with("kit.design ") && l.contains(&format!("--gloves {}", c.unwrap())),
+            "{l}"
+        );
+        // A shop row opens its buy dialog as before.
+        world.step(&mut w, &[Act::Down, Act::Confirm]);
+        assert!(w.picker.as_ref().unwrap().dialog.is_some());
+        // The helmet has no colour row here (its colour is the designer's).
+        let helmet = picker::kit_rows(
+            ocw_assets::shipped::catalogue(),
+            world.wallet.get("Ann").unwrap(),
+            Slot::Helmet,
+        );
+        assert!(helmet.iter().all(|r| !matches!(r.kind, Kind::Design(_))));
     }
 
     #[test]

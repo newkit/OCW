@@ -533,3 +533,59 @@ fn to_mirror_front(app: &mut App) {
     frames(app, 40);
     assert_eq!(scene(app).view(), camera::View::Dress { front: true });
 }
+
+/// The bench (spec 4D) in the app: `workshop plus` opens the catalogue on
+/// the "+" hook; `bikes.buy` hangs the new bike there – the scene and the
+/// view get a hook more –, `bikes.sell` frees it again.
+#[test]
+fn bikes_are_bought_onto_the_plus_hook_and_sold() {
+    let mut app = app();
+    run(&mut app, "hearts.grant 10000");
+    run(&mut app, "workshop open");
+    run(&mut app, "workshop plus");
+    let v = view(&app);
+    assert!(v.plus_focused);
+    let p = v.picker.expect("the catalogue");
+    assert!(p.title.starts_with("The bench"), "{}", p.title);
+    assert!(p.rows.len() <= 6);
+    run(
+        &mut app,
+        "bikes.buy frame.road-aero.top --with groupset.road-electronic.mid --with wheels.road-alloy.mid",
+    );
+    frames(&mut app, 2);
+    assert_eq!(scene(&app).bikes.len(), 7);
+    assert_eq!(view(&app).bikes.len(), 7);
+    assert_eq!(view(&app).bikes[6].profile, ProfileId::RoadAero);
+    assert_eq!(view(&app).bikes[6].card[0], "Road - aero 2");
+    assert_eq!(balance(&app), 10_500 - 5_279 - 1_817 - 600);
+    // A starter bike is never sold; the bought one is.
+    run(&mut app, "bikes.sell road");
+    assert_eq!(scene(&app).bikes.len(), 7);
+    run(&mut app, "bikes.sell road-aero-2");
+    frames(&mut app, 2);
+    assert_eq!(view(&app).bikes.len(), 6);
+    assert!(balance(&app) > 10_500 - 5_279 - 1_817 - 600);
+}
+
+/// The kit's colours (spec 4C) go into the garage with `kit.design`, also
+/// for the default rider without a rider profile; looks only.
+#[test]
+fn kit_colours_go_into_the_garage() {
+    let mut app = app();
+    let before = riding_parts(app.world(), "Rider", ProfileId::Road);
+    run(&mut app, "kit.design --shorts #3949AB --gloves #E53935");
+    let g = app
+        .world()
+        .resource::<WorkshopState>()
+        .wallet
+        .get("Rider")
+        .unwrap()
+        .clone();
+    let c = g.kit_colours.expect("kept in the garage");
+    assert_eq!(c.shorts.as_deref(), Some("#3949AB"));
+    assert_eq!(c.gloves.as_deref(), Some("#E53935"));
+    assert_eq!(c.shoes, None);
+    let look = crate::settings::local_rider(app.world()).look();
+    assert_eq!(look.design.gloves, Some(Rgb(0xE53935)));
+    assert_eq!(riding_parts(app.world(), "Rider", ProfileId::Road), before);
+}

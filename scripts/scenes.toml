@@ -1699,6 +1699,60 @@ at = ["2=hearts.grant 3000", "2.4=workshop open", "3.4=workshop mirror", "5.6=wo
 warmup = 2
 video = 22
 
+# --- Phase 4 leftovers (v3.23): the bench, fitted lights, idle, kit colours ---
+
+[[scene]]
+name = "workshop-bench-catalogue"
+description = "The bench catalogue (spec §14 Phase 4, 4D, v3.23): at the workbench the road framesets by tier, cheapest first – alloy, carbon, the climbing and the aero frameset, each a new bike with the base parts on a new hook – and the complete builds; the carbon frameset focused with its card (its effect on the profile)"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2=hearts.grant 6000", "2.2=workshop open", "2.8=workshop bench", "4.4=workshop select", "5.2=workshop down"]
+shot = 22
+
+[[scene]]
+name = "workshop-bench-plus-bought"
+description = "Buying a bike onto the + hook (spec §14 Phase 4, 4D, v3.23): the aero frameset bought as a complete build (with the mid-tier electronic groupset and alloy wheels) from the + hook's catalogue – it hangs on the new hook where the + was ('Road - aero 2'), the + one hook further right"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2=hearts.grant 9000", "2.2=workshop open", "2.8=workshop plus", "3.2=bikes.buy frame.road-aero.top --with groupset.road-electronic.mid --with wheels.road-alloy.mid", "3.6=workshop back"]
+shot = 40
+
+[[scene]]
+name = "lights-night-fitted"
+description = "Night ride with fitted lights (spec §14 Phase 9 Q3, Phase 4 v3.23): the own road bike with the workshop's light set – its own front lens glowing neutral white at the bar and the red rear lamp on the seat post, the beam on the road ahead (300 lm set) – on the Vaduz-Malbun road at 22:00, new moon"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "200"]
+at = ["1.5=hearts.grant 100", "1.6=workshop.buy lights.set", "2=time pause", "2=time 2026-11-09 22:00", "2.5=teleport 1.6", "2.5=camera.orbit 150 10 4"]
+shot = 12
+
+[[scene]]
+name = "lights-night-none"
+description = "The same night ride without lights (spec §14 Phase 9 Q3): the stock bike has no lamps at all – no glow, no beam; only the minimum night brightness lights the road"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "200"]
+at = ["2=time pause", "2=time 2026-11-09 22:00", "2.5=teleport 1.6", "2.5=camera.orbit 150 10 4"]
+shot = 12
+
+[[scene]]
+name = "workshop-mirror-idle-kit-colours"
+description = "Character corner (spec §14 Phase 4, 4C, v3.23): the rider standing at ease in front of the mirror – the idle animation (arms hanging with soft elbows, the weight on one foot, the head turned) instead of the rest pose – in kit colours of their own: indigo shorts, yellow socks, white shoes, red gloves (kept in workshop.toml)"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2=kit.design --shorts #3949AB --socks #FDD835 --shoes #F2F2EE --gloves #E53935", "2.4=workshop open", "3=workshop mirror"]
+shot = 24
+
+[[scene]]
+name = "workshop-gloves-colour"
+description = "Character corner (spec §14 Phase 4, 4C, v3.23): the gloves picker with its own colour row (‹ colour ›, ← / → live in the mirror, Confirm applies) above the shop's gloves; the rider idling at the mirror"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2.2=workshop open", "2.8=workshop mirror", "4.4=workshop slot-next", "4.6=workshop slot-next", "4.8=workshop slot-next", "5=workshop slot-next", "5.2=workshop slot-next", "5.4=workshop slot-next", "5.6=workshop slot-next", "5.8=workshop slot-next", "6=workshop slot-next", "6.2=workshop slot-next", "6.6=workshop select", "7.4=workshop down", "8=workshop right", "8.4=workshop right", "8.8=workshop right"]
+shot = 24
+
+[[scene]]
+name = "workshop-bench-video"
+description = "Video (spec §14 Phase 4, 4D, v3.23): the bench – the catalogue's pages (road framesets, complete builds), buying the carbon frameset onto the + hook, swapping the new bike onto the stand, and selling it again at the bench"
+args = ["--route", "hills", "--bots", "3", "--power", "250"]
+at = ["2=hearts.grant 6000", "2.4=workshop open", "3.4=workshop bench", "5=workshop select", "6=workshop down", "7=workshop compare", "7.6=workshop down", "8.6=workshop back", "9.6=workshop back", "10.6=workshop plus", "12=bikes.buy frame.road.upper", "14=workshop back", "15=workshop left", "16.4=workshop select", "19=workshop bench", "20=workshop up", "21=workshop select", "22.5=workshop select", "23.5=workshop up", "24.5=workshop select"]
+warmup = 2
+video = 26
+
 # --- Phase 4 W3: build physics, race modes ------------------------------------
 
 [[scene]]

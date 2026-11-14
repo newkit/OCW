@@ -548,7 +548,8 @@ mod tests {
             is_local: true,
             bike: ocw_core::ProfileId::Road,
             look: None,
-            parts: Vec::new(),
+            // Lights fitted (Phase 9 Q3): the lamps are the set's.
+            parts: vec!["lights.set".into()],
             crash: None,
             wobble: 0.0,
             damage: None,
@@ -590,7 +591,7 @@ mod tests {
                     .query_filtered::<Has<bevy::light::NotShadowCaster>, (With<sky::BikeLamp>, With<Mesh3d>)>()
                     .iter(w)
                     .collect::<Vec<_>>();
-                assert_eq!(lamp_meshes.len(), 2, "front and rear lamp");
+                assert_eq!(lamp_meshes.len(), 2, "front and rear lamp's far glow");
                 assert!(lamp_meshes.iter().all(|off| *off), "lamps cast no shadow");
             }
             // A ride switch: the old sun goes with the old world.

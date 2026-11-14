@@ -1141,6 +1141,9 @@ fits = ["road", "gravel", "mtb"]
 model = "lights-set"
 sources = "lights.set"
 priced = 2026-11-13
+# The lamps in the ride (Phase 9 Q3): a typical StVZO set – about 300 lm
+# front (neutral white), a 15 lm red rear lamp; looks only, no physics.
+light = { front_lm = 300, rear_lm = 15, front_colour = "#FFF6E8", rear_colour = "#FF2614" }
 
 # --- computer ----------------------------------------------------------------
 

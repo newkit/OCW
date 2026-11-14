@@ -127,6 +127,16 @@ pub enum Kind {
     Free(Free),
     /// A field of the jersey designer (Phase 8 T6; free).
     Design(Field),
+    /// The bench catalogue (spec 4D, [`super::bench`]): a page to open.
+    Page(super::bench::BenchPage),
+    /// A frameset to buy as a new bike (the row's part).
+    Frameset,
+    /// A complete build: the row's frameset with these parts.
+    Build(Vec<String>),
+    /// A spare part on the shelf.
+    Spare { item: u32 },
+    /// A bike to sell whole (garage id).
+    SellBike(String),
 }
 
 /// A free choice of the character.
@@ -351,6 +361,13 @@ pub fn kit_rows(cat: &Catalogue, garage: &Garage, slot: Slot) -> Vec<Row> {
             kind: Kind::Equipped { item: worn },
         });
     }
+    // The kit's own colour (free, looks only), whatever item is worn.
+    if let Some(f) = kit_colour_field(slot) {
+        out.push(Row {
+            part: None,
+            kind: Kind::Design(f),
+        });
+    }
     for it in &garage.items {
         let Some(p) = cat.get(&it.part) else { continue };
         if p.slot != slot || Some(it.id) == worn {
@@ -471,6 +488,11 @@ pub fn group(kind: &Kind) -> &'static str {
         Kind::Paint(_) => "Paint (free)",
         Kind::Free(_) => "Free choice",
         Kind::Design(_) => "Free design – ← / → change, Confirm applies",
+        Kind::Page(_) => "The bench",
+        Kind::Frameset => "Framesets – a new bike on a new hook",
+        Kind::Build(_) => "Complete builds – one purchase, the sum of the prices",
+        Kind::Spare { .. } => "On the shelf",
+        Kind::SellBike(_) => "Your bikes bought at the bench",
     }
 }
 
@@ -526,6 +548,12 @@ pub fn row_text(cat: &Catalogue, row: &Row, balance: i64) -> (String, String, bo
             }
         }
         Kind::Paint(_) | Kind::Free(_) | Kind::Design(_) => unreachable!("handled above"),
+        // The bench's rows: `super::bench::row_text`.
+        Kind::Page(_)
+        | Kind::Frameset
+        | Kind::Build(_)
+        | Kind::Spare { .. }
+        | Kind::SellBike(_) => (left, String::new(), false),
     }
 }
 
@@ -807,7 +835,7 @@ pub struct Dialog {
 }
 
 impl Dialog {
-    fn new(title: String, text: String, mut buttons: Vec<Button>) -> Self {
+    pub(crate) fn new(title: String, text: String, mut buttons: Vec<Button>) -> Self {
         buttons.push(Button {
             label: "Cancel".into(),
             line: None,
@@ -982,7 +1010,14 @@ pub fn dialog(
                 buttons,
             ))
         }
-        Kind::Paint(_) | Kind::Free(_) | Kind::Design(_) => None,
+        Kind::Paint(_)
+        | Kind::Free(_)
+        | Kind::Design(_)
+        | Kind::Page(_)
+        | Kind::Frameset
+        | Kind::Build(_)
+        | Kind::Spare { .. }
+        | Kind::SellBike(_) => None,
     }
 }
 
@@ -998,8 +1033,23 @@ pub struct Picker {
     /// The row pinned as *A* for comparing.
     pub pinned: Option<Row>,
     pub dialog: Option<Dialog>,
-    /// The jersey designer: its page and the draft look (Phase 8 T6).
+    /// The jersey designer: its page and the draft look (Phase 8 T6); on
+    /// a kit picker the draft of its colour row ([`kit_colour_field`]).
     pub design: Option<(DesignPage, ocw_core::RiderLook)>,
+    /// A page of the bench catalogue (spec 4D).
+    pub bench: Option<super::bench::BenchPage>,
+}
+
+/// The colour field of a kit slot (spec 4C: the kit's own colours, looks
+/// only): shorts, socks, shoes and gloves.
+pub fn kit_colour_field(slot: Slot) -> Option<Field> {
+    Some(match slot {
+        Slot::Shorts => Field::Shorts,
+        Slot::Socks => Field::Socks,
+        Slot::Shoes => Field::Shoes,
+        Slot::Gloves => Field::Gloves,
+        _ => return None,
+    })
 }
 
 impl Picker {
@@ -1012,7 +1062,23 @@ impl Picker {
             pinned: None,
             dialog: None,
             design: None,
+            bench: None,
         }
+    }
+
+    /// The picker of kit `slot` (spec 4C): its items and, for shorts,
+    /// socks, shoes and gloves, the colour row on a draft of `look`.
+    pub fn kit(slot: Slot, rows: Vec<Row>, look: ocw_core::RiderLook) -> Self {
+        Self {
+            design: kit_colour_field(slot).map(|_| (DesignPage::Kit, look)),
+            ..Self::new(slot, rows)
+        }
+    }
+
+    /// The jersey designer's own pages (every row a field), not a kit
+    /// picker with a colour row.
+    pub fn is_designer(&self) -> bool {
+        self.design.is_some() && !self.slot.is_kit()
     }
 
     /// The jersey designer's page `page`, its draft starting from `look`.
