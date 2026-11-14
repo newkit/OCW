@@ -7,8 +7,15 @@ use std::path::Path;
 use crate::osm::{OsmError, Tags, Way};
 
 /// Keys whose ways or relations are read as areas or water lines.
-const AREA_KEYS: [&str; 7] = [
-    "landuse", "natural", "leisure", "building", "waterway", "water", "man_made",
+const AREA_KEYS: [&str; 8] = [
+    "landuse",
+    "natural",
+    "leisure",
+    "building",
+    "building:part",
+    "waterway",
+    "water",
+    "man_made",
 ];
 
 fn wanted(tags: &Tags) -> bool {
@@ -27,7 +34,7 @@ pub fn kept_key(k: &str) -> bool {
         || k.starts_with("bridge")
         || matches!(
             k,
-            "height" | "width" | "area" | "tunnel" | "location" | "layer" | "name"
+            "height" | "min_height" | "width" | "area" | "tunnel" | "location" | "layer" | "name"
         )
 }
 
@@ -367,7 +374,13 @@ mod tests {
     /// so culverts under roads became water bands and carved holes.
     #[test]
     fn culvert_and_bridge_tags_are_kept() {
+        // `min_height` (and `building:min_level`, `building:part`) for the
+        // houses: before v3.26 `min_height` was dropped here, so canopies and
+        // parts over a passage stood on the ground.
         for k in [
+            "min_height",
+            "building:min_level",
+            "building:part",
             "tunnel",
             "location",
             "name",

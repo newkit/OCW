@@ -1166,6 +1166,7 @@ mod tests {
                         eave_y: 107.0,
                         roof: Roof::Flat,
                         tags: Default::default(),
+                        parts: Default::default(),
                     }],
                 )]
                 .into(),

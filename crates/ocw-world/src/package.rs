@@ -29,7 +29,9 @@
 //! building footprints with heights and roofs, see [`crate::buildings`];
 //! `BTAG` – the OSM facts the houses are styled by (roof shape, levels,
 //! materials, colours; spec §14 Phase 8 T4, optional), see
-//! [`crate::buildings::write_building_tags`];
+//! [`crate::buildings::write_building_tags`]; `BPRT` – the buildings'
+//! parts (OSM `building:part`: towers, wings of other heights; spec §14
+//! Phase 8 T4 v3.26, optional), see [`crate::buildings::write_building_parts`];
 //! `REGN` – the region the package was cut to (box and polygon in
 //! latitude / longitude), for neighbouring packages, see [`crate::region`];
 //! `TZID` – the IANA time zone of the package's area ("Europe/Vaduz", UTF-8,
@@ -55,8 +57,9 @@ use std::collections::BTreeMap;
 
 use crate::bridges::{BRIDGES_TAG, Bridges, read_bridges, write_bridges};
 use crate::buildings::{
-    BUILDING_TAGS_TAG, BUILDINGS_TAG, Buildings, apply_building_tags, read_building_tags,
-    read_buildings, write_building_tags, write_buildings,
+    BUILDING_PARTS_TAG, BUILDING_TAGS_TAG, BUILDINGS_TAG, Buildings, apply_building_parts,
+    apply_building_tags, read_building_parts, read_building_tags, read_buildings,
+    write_building_parts, write_building_tags, write_buildings,
 };
 use crate::forest::{FOREST_TAG, read_forest, write_forest};
 use crate::graph::{Edge, EdgeId, Oneway, RoadClass, RoadGraph, VertexId};
@@ -359,6 +362,10 @@ impl WorldPackage {
             let mut payload = Vec::new();
             if write_building_tags(t, &mut payload) {
                 sections.push((BUILDING_TAGS_TAG, payload));
+            }
+            let mut payload = Vec::new();
+            if write_building_parts(t, &mut payload) {
+                sections.push((BUILDING_PARTS_TAG, payload));
             }
         }
         if let Some(r) = &self.region {
@@ -723,6 +730,7 @@ fn read_sections(
 ) -> Result<Sections, String> {
     let mut s = Sections::default();
     let mut building_tags = None;
+    let mut building_parts = None;
     let count = r.u32()?;
     for _ in 0..count {
         if streamed && r.pos == r.b.len() {
@@ -742,6 +750,14 @@ fn read_sections(
             // is skipped (the houses get their regional defaults).
             match read_building_tags(payload) {
                 Ok(t) => building_tags = Some(t),
+                Err(e) if e.contains("not supported") => {}
+                Err(e) => return Err(e),
+            }
+        } else if &tag == BUILDING_PARTS_TAG && full {
+            // Optional (spec §14 Phase 8 T4, v3.26): a newer layout is
+            // skipped (the outline buildings are drawn alone).
+            match read_building_parts(payload) {
+                Ok(p) => building_parts = Some(p),
                 Err(e) if e.contains("not supported") => {}
                 Err(e) => return Err(e),
             }
@@ -802,6 +818,9 @@ fn read_sections(
     }
     if let (Some(b), Some(t)) = (s.buildings.as_mut(), building_tags) {
         apply_building_tags(b, t);
+    }
+    if let (Some(b), Some(p)) = (s.buildings.as_mut(), building_parts) {
+        apply_building_parts(b, p);
     }
     Ok(s)
 }
@@ -1819,6 +1838,7 @@ mod tests {
                 eave_y: 106.0,
                 roof: Roof::Gabled { height_m: 3.0 },
                 tags: Default::default(),
+                parts: Default::default(),
             }],
         )]);
         // Land use alone already makes a version 2 package.
@@ -1872,6 +1892,7 @@ mod tests {
             eave_y: 106.0,
             roof: Roof::Gabled { height_m: 3.0 },
             tags,
+            parts: Default::default(),
         };
         let hipped = BuildingTags {
             roof_shape: Some(RoofShape::Hipped),
@@ -1918,6 +1939,68 @@ mod tests {
         let q = plain(&p);
         let tags: Vec<[u8; 4]> = section_sizes(&q.to_bytes()).iter().map(|s| s.0).collect();
         assert_eq!(tags, vec![*BUILDINGS_TAG]);
+    }
+
+    /// Building parts (section `BPRT`, spec §14 Phase 8 T4 v3.26) come
+    /// back on their buildings; a reader that does not know the section
+    /// (or a newer layout of it) gets the outline buildings alone.
+    #[test]
+    fn building_parts_section_round_trips_and_old_readers_skip_it() {
+        use crate::buildings::{
+            BUILDING_PARTS_TAG, Building, BuildingKind, BuildingParts, BuildingTags, Roof,
+        };
+        let outline = Building {
+            kind: BuildingKind::Religious,
+            outline: vec![[10.0, 10.0], [40.0, 10.0], [40.0, 22.0], [10.0, 22.0]],
+            holes: vec![],
+            base_y: 99.5,
+            eave_y: 112.0,
+            roof: Roof::Gabled { height_m: 6.0 },
+            tags: BuildingTags::default(),
+            parts: Default::default(),
+        };
+        let tower = Building {
+            outline: vec![[10.0, 12.0], [16.0, 12.0], [16.0, 18.0], [10.0, 18.0]],
+            eave_y: 130.0,
+            ..outline.clone()
+        };
+        let church = Building {
+            parts: BuildingParts {
+                list: vec![tower],
+                cover: false,
+            },
+            ..outline.clone()
+        };
+        let p = WorldPackage {
+            buildings: Some(Buildings::from([(
+                TileKey { x: 0, z: 0 },
+                vec![outline.clone(), church],
+            )])),
+            ..package()
+        };
+        let b = p.to_bytes();
+        assert_eq!(WorldPackage::from_bytes(&b).unwrap(), p);
+        let tags: Vec<[u8; 4]> = section_sizes(&b).iter().map(|s| s.0).collect();
+        assert_eq!(tags, vec![*BUILDINGS_TAG, *BUILDING_PARTS_TAG]);
+        let bare = WorldPackage {
+            buildings: Some(Buildings::from([(
+                TileKey { x: 0, z: 0 },
+                vec![outline.clone(), outline],
+            )])),
+            ..package()
+        };
+        // An old reader: the section is unknown, the outline stays.
+        let mut old = b.clone();
+        let at = old
+            .windows(4)
+            .rposition(|w| w == BUILDING_PARTS_TAG)
+            .unwrap();
+        old[at] = b'x';
+        assert_eq!(WorldPackage::from_bytes(&old).unwrap(), bare);
+        // A newer layout: skipped.
+        let mut newer = b.clone();
+        newer[at + 12..at + 16].copy_from_slice(&9u32.to_le_bytes());
+        assert_eq!(WorldPackage::from_bytes(&newer).unwrap(), bare);
     }
 
     #[test]

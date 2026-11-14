@@ -715,6 +715,7 @@ mod tests {
                     eave_y: 6.0,
                     roof: ocw_world::buildings::Roof::Flat,
                     tags: Default::default(),
+                    parts: Default::default(),
                 }],
             )])),
             bridges: None,

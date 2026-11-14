@@ -1079,13 +1079,13 @@ pub fn water_arrays_kept(
 /// each house (ridge, spire or parapet, `houses`).
 pub fn building_footprints(
     buildings: &[Building],
-    specs: &[crate::house_style::HouseSpec],
+    specs: &crate::houses::TileSpecs,
 ) -> SolidFootprints {
     SolidFootprints::new(
         buildings
             .iter()
-            .zip(specs)
-            .map(|(b, h)| (b.outline.clone(), h.top())),
+            .enumerate()
+            .map(|(i, b)| (b.outline.clone(), specs.top(i))),
     )
 }
 
@@ -2225,6 +2225,7 @@ mod tests {
                 eave_y: 7.5,
                 roof: Roof::Gabled { height_m: 3.0 },
                 tags: Default::default(),
+                parts: Default::default(),
             }],
         )]));
         p

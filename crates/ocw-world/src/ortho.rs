@@ -668,6 +668,7 @@ pub(crate) mod tests {
                 eave_y: 6.0,
                 roof: Roof::Flat,
                 tags: Default::default(),
+                parts: Default::default(),
             }],
         );
         pkg.buildings = Some(b);
