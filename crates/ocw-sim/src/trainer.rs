@@ -81,6 +81,8 @@ pub struct SimController {
     current: Option<f64>,
     last_update_s: Option<f64>,
     last_sent: Option<(f64, f64, f64)>, // (time, grade, rolling factor)
+    /// The coefficients changed since the last target ([`Self::set_profile`]).
+    coefficients_changed: bool,
 }
 
 impl SimController {
@@ -92,6 +94,19 @@ impl SimController {
             current: None,
             last_update_s: None,
             last_sent: None,
+            coefficients_changed: false,
+        }
+    }
+
+    /// The rider's physics changed (another bike, parts, kit: the build in
+    /// force, spec §2.5): the trainer gets the new rolling and wind
+    /// resistance with the next update interval.
+    pub fn set_profile(&mut self, profile: &RiderProfile) {
+        let cw = 0.5 * AIR_DENSITY * profile.cda_m2;
+        if profile.crr != self.crr || cw != self.cw_kg_per_m {
+            self.crr = profile.crr;
+            self.cw_kg_per_m = cw;
+            self.coefficients_changed = true;
         }
     }
 
@@ -144,6 +159,7 @@ impl SimController {
                 since >= self.settings.update_interval_s
                     && ((current - sent).abs() >= self.settings.min_change
                         || (rolling_factor - factor).abs() > 1e-9
+                        || self.coefficients_changed
                         || since >= self.settings.keepalive_s)
             }
         };
@@ -151,6 +167,7 @@ impl SimController {
             return None;
         }
         self.last_sent = Some((now_s, current, rolling_factor));
+        self.coefficients_changed = false;
         Some(SimTarget {
             grade: current,
             wind_speed_mps: 0.0,
@@ -303,6 +320,29 @@ mod tests {
         assert!((gravel.crr - 2.5 * profile.crr).abs() < 1e-12);
         // Unchanged afterwards: nothing new to send.
         assert!(c.update_on(2.0 * dt, 0.02, 0.02, 2.5).is_none());
+    }
+
+    /// Another build (an aero helmet, other tyres): the new coefficients go
+    /// to the trainer at the next update interval, once.
+    #[test]
+    fn a_new_build_sends_its_coefficients() {
+        let profile = RiderProfile::default();
+        let mut c = SimController::new(SimSettings::default(), &profile);
+        let dt = c.settings().update_interval_s;
+        c.update(0.0, 0.02, 0.02).expect("first");
+        // The same profile: nothing to send.
+        c.set_profile(&profile);
+        assert!(c.update(dt, 0.02, 0.02).is_none());
+        let aero = RiderProfile {
+            cda_m2: profile.cda_m2 * 0.9,
+            crr: 0.003,
+            ..profile
+        };
+        c.set_profile(&aero);
+        let t = c.update(2.0 * dt, 0.02, 0.02).expect("new coefficients");
+        assert_eq!(t.crr, 0.003);
+        assert!((t.cw_kg_per_m - 0.5 * AIR_DENSITY * aero.cda_m2).abs() < 1e-12);
+        assert!(c.update(3.0 * dt, 0.02, 0.02).is_none());
     }
 
     #[test]

@@ -1,13 +1,15 @@
 //! Trainer and sensor access (spec §3.4).
 //!
 //! Every hardware stack is a [`DeviceBackend`]. Backends run on their own
-//! thread and talk to the app only through channels, so this crate never
-//! depends on the engine. Backends: the [`VirtualTrainer`] (power set by
-//! the user, e.g. via the console command `sim.power`) and the Bluetooth LE
-//! backend ([`ble`]: FTMS trainers, power meters, cadence and heart-rate
-//! sensors). ANT+ is deferred.
+//! thread (natively) or task (the browser's event loop) and talk to the app
+//! only through channels, so this crate never depends on the engine.
+//! Backends: the [`VirtualTrainer`] (power set by the user, e.g. via the
+//! console command `sim.power`; [`FrameVirtualTrainer`] on the browser's
+//! frame loop) and the Bluetooth LE backends ([`ble`]: FTMS trainers,
+//! Wahoo KICKRs, power meters, cadence and heart-rate sensors – over
+//! btleplug natively, over Web Bluetooth in the browser, spec §14 Phase 10
+//! B4, with the same protocol). ANT+ is deferred.
 
-#[cfg(not(target_arch = "wasm32"))]
 pub mod ble;
 pub mod gatt;
 pub mod virtual_power;
@@ -33,6 +35,10 @@ pub enum DeviceEvent {
     },
     /// Heart rate from a heart-rate sensor.
     HeartRate { bpm: f64, timestamp: Duration },
+    /// The device is connected and subscribed (again, after a reconnect);
+    /// `kind` says what it is ("smart trainer (FTMS)", "heart-rate
+    /// sensor", …: [`ble::protocol::TrainerProtocol::describe`]).
+    Connected { kind: &'static str },
     /// The backend lost its device.
     Disconnected,
 }
@@ -85,6 +91,7 @@ pub trait DeviceBackend: Send + 'static {
     /// Human-readable backend name, e.g. "Virtual trainer".
     fn name(&self) -> &str;
 
-    /// Starts the backend on its own thread.
+    /// Starts the backend on its own thread (in the browser: a task on the
+    /// page's event loop).
     fn start(self) -> Result<DeviceHandle, DeviceError>;
 }

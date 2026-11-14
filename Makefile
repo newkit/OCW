@@ -81,7 +81,7 @@ VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 .DEFAULT_GOAL := help
 .PHONY: help version version-next version-bump test-release-version release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
 	clippy check run server materials deploy-test clean clean-test-output macos-app \
-	test test-unit test-wasm test-web-build test-web test-web-world test-web-multiplayer test-kiosk web web-serve web-worlds deps-web test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
+	test test-unit test-wasm test-web-build test-web test-web-world test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-kiosk web web-serve web-worlds deps-web test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
 	test-multiplayer test-multiplayer-local test-scenes test-scenes-list \
 	wasm screenshot screenshot-wayland smoke video video-wayland
 
@@ -279,6 +279,16 @@ test-web-world: web web-worlds ## Headless Chromium: stream $(WEB_WORLD) from th
 test-web-multiplayer: web ## Headless Chromium joins ocw-server over WebTransport with ocw-bot riders (QUIC + WebTransport), rides 30 s; screenshot, timing into test-output/web/
 	$(CARGO) build --release -p ocw-server -p ocw-bot
 	scripts/test-web-multiplayer.py --out test-output/web --seconds 30
+
+test-web-ble: web ## Headless Chromium with a fake Web Bluetooth FTMS trainer + HR strap: connect by click, power from the device, SIM / ERG writes, drop + reconnect, reload, no-Bluetooth fallback; screenshots into test-output/web/
+	scripts/test-web-ble.py --out test-output/web --mode fake
+
+test-web-ble-emulation: web ## Headless Chromium's own Web Bluetooth with a simulated KICKR (DevTools BluetoothEmulation + DeviceAccess): chooser, connect, discovery, Wahoo control writes
+	scripts/test-web-ble.py --out test-output/web --mode emulation
+
+BLE_DEVICE ?= KICKR
+test-web-ble-real: web ## Headless Chromium rides the real trainer in range ($(BLE_DEVICE), marge's KICKR) over BlueZ: the chooser answered over DevTools, SIM, ERG
+	scripts/test-web-ble.py --out test-output/web --mode real --device $(BLE_DEVICE) --seconds 20
 
 test-kiosk: ## Test the kiosk script with a fake app (no display or build needed)
 	scripts/test-kiosk.sh

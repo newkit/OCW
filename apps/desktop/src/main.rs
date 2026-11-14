@@ -30,7 +30,6 @@ mod settings;
 mod strava;
 mod surface;
 mod timemachine;
-mod trainer;
 mod video;
 mod voice;
 mod weather;
@@ -40,7 +39,7 @@ mod worlds;
 
 // Shared with the browser app (spec §14 Phase 10): `crate::client`,
 // `crate::event` keep working for the modules here.
-use ocw_client::{client, event, gps};
+use ocw_client::{client, event, gps, trainer};
 
 use std::path::PathBuf;
 

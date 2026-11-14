@@ -19,7 +19,8 @@ ocw-sim.workspace = true
 ocw-protocol.workspace = true
 ocw-world.workspace = true
 ocw-sky.workspace = true
-# Device events and the frame-driven virtual trainer (no BLE on wasm32).
+# Devices: the frame-driven virtual trainer and, on wasm32, Web Bluetooth
+# (`ble::web`: the shared protocol over the browser's GATT objects, B4).
 ocw-devices.workspace = true
 ocw-render.workspace = true
 # The client loop, shared with the desktop app.
@@ -66,6 +67,8 @@ web-sys = { version = "0.3", features = [
     "FileSystemGetFileOptions",
     "FileSystemWritableFileStream",
     "WritableStream",
+    # The remembered Bluetooth devices of this origin (B4).
+    "Storage",
 ] }
 
 [lints]
