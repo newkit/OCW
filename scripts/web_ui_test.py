@@ -149,6 +149,33 @@ class UiTest:
                 return
             self.key("Escape")
 
+    def devices_panel_state(self):
+        """The Devices overlay (B4) on the page: shown or not, its box, its
+        chooser buttons."""
+        raw = self.cdp.eval("""JSON.stringify((() => {
+            const p = document.getElementById('ocw-devices');
+            const s = document.getElementById('ocw-devices-show');
+            const shown = (el) => el && !el.hidden && getComputedStyle(el).visibility !== 'hidden'
+                && getComputedStyle(el).display !== 'none';
+            const r = p.getBoundingClientRect();
+            return {visible: shown(p), show_button: shown(s),
+                    box: [r.left, r.top, r.right, r.bottom],
+                    width: innerWidth, height: innerHeight,
+                    buttons: p.querySelectorAll('button[data-kind]').length};
+        })())""")
+        return json.loads(raw) if raw else {}
+
+    def devices_panel_clear(self):
+        """Hidden, or not overlapping the menu's panel (the centred box of
+        the menu: 19 %–81 % of the width at 16:9)."""
+        st = self.devices_panel_state()
+        if not st:
+            return False
+        if not st["visible"] and not st["show_button"]:
+            return True
+        left = st["box"][0]
+        return left >= 0.81 * st["width"]
+
     def setting(self, key):
         return self.cdp.eval(f"window.ocw.setting({json.dumps(key)})")
 
@@ -191,6 +218,9 @@ class UiTest:
         items = m.get("items", [])
         self.check("menu: the browser's top page (Captures, no Quit)",
                    "Captures" in items and "Quit" not in items and "Settings" in items, items)
+        self.pump(0.7)  # the page's panels follow the menu twice a second
+        self.check("page: the Devices panel steps aside while the menu is open",
+                   self.devices_panel_clear(), self.devices_panel_state())
         self.shot("menu")
 
         # Settings → Display: a setting changed with →.
@@ -280,6 +310,10 @@ class UiTest:
         m = self.wait_menu(lambda m: m.get("title") == "Open Cycling World")
         self.check("gamepad: B goes back", m.get("title") == "Open Cycling World", m.get("title"))
         self.close_menu()
+        self.pump(0.7)
+        st = self.devices_panel_state()
+        self.check("page: the Devices panel is back (its buttons open the chooser) once the menu closes",
+                   st.get("visible") and st.get("buttons", 0) == 3, st)
 
         # Captures → Screenshot: a JPEG download with EXIF.
         self.key("Escape")
