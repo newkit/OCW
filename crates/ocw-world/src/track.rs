@@ -27,6 +27,11 @@ pub trait Track {
     fn assisted(&self, _distance: f64) -> bool {
         false
     }
+    /// Whether the road at `distance` is sheltered from the weather (a
+    /// tunnel): no wind, a dry road (spec §14 Phase 9, S6).
+    fn sheltered(&self, _distance: f64) -> bool {
+        false
+    }
     /// Display name (route name, or the street the rider is on).
     fn name_at(&self, _distance: f64) -> String {
         String::new()

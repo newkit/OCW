@@ -339,6 +339,16 @@ pub const SETTINGS: &[SettingDef] = &[
         scope: Scope::NextStart,
         apply: Apply::App,
     },
+    // Weather physics (spec §14 Phase 9, S6, Q4): the local rides' switch;
+    // in a shared ride the host's, in an event the organiser's applies.
+    SettingDef {
+        key: "weather.physics",
+        kind: Kind::Bool,
+        default: "on",
+        description: "The weather affects the physics: wind, air density, wet roads; the trainer gets the wind (in shared rides the host decides, in events the organizer)",
+        scope: Scope::Live,
+        apply: Apply::Command("weather.physics {}"),
+    },
     SettingDef {
         key: "weather.provider",
         kind: Kind::Choice(&["automatic", "meteoswiss", "dwd", "metno", "open-meteo"]),

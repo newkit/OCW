@@ -214,6 +214,9 @@ message WeatherRequest {
   // moment (a past date: the history, ERA5), from this data source (Q6).
   bool real = 11;
   WeatherProvider provider = 12;
+  // The session's weather-physics switch (spec §14 Phase 9, S6, Q4; absent:
+  // keep it). The same rule as the weather's: the host / organiser.
+  optional bool physics = 13;
 }
 
 // The real weather's data source (spec §14 Phase 9, S7, Q6): automatic
@@ -291,6 +294,9 @@ message EventStart {
   // The organiser's damage rules (spec §14 Phase 12E, 12G; absent:
   // the session's switch, no DNF rule, no neutral service).
   DamageRules damage = 9;
+  // The organizer's rule: the weather affects the physics during the event
+  // (spec §14 Phase 9, S6, Q4; absent: off).
+  optional bool weather_physics = 10;
 }
 
 // An event's weather (spec §14 Phase 9, S5, Q4: the organizer decides).
@@ -642,6 +648,9 @@ message EventState {
   EventWeather weather = 15;
   // The organiser's damage rules of the event (spec §14 Phase 12E).
   DamageRules damage = 16;
+  // The weather affects the physics in this event (spec §14 Phase 9, S6,
+  // Q4: the organizer's rule), shown in the event's info.
+  bool weather_physics = 17;
 }
 
 message EventStanding {
@@ -913,6 +922,23 @@ message SessionWeather {
   uint64 sim_seed = 14;
   // Real weather (spec §14 Phase 9, S7; absent: off).
   RealWeather real = 15;
+  // Whether the weather affects the physics (spec §14 Phase 9, S6; absent:
+  // an older server, it does not).
+  WeatherPhysics physics = 16;
+}
+
+// The weather's physics rule (spec §14 Phase 9, S6, Q4): wind, air density
+// and a wet road in the physics, on the server and in the client's
+// prediction alike.
+message WeatherPhysics {
+  // In force now: the event's rule during an event, else the session's
+  // switch.
+  bool on = 1;
+  // The session's switch (what the host set, World -> Weather -> Physics).
+  bool session = 2;
+  // The scene height (m) at which the weather's pressure holds: sea level
+  // for presets and the simulation, the real weather's place.
+  float pressure_y_m = 3;
 }
 
 // Quantized rider state (spec §6.2).

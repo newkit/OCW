@@ -1209,8 +1209,8 @@ mod tests {
             push(&mut app, MenuPointerEvent::Step(3, -1));
             frames(&mut app, 6);
             assert_eq!(server_weather(&app).temperature_c, temp - 1.0);
-            // Back with the Back item.
-            push(&mut app, MenuPointerEvent::Click(4));
+            // Back with the Back item (after the weather physics row, S6).
+            push(&mut app, MenuPointerEvent::Click(5));
             assert_eq!(view(&app).title, "Custom weather: sky");
         }
     }

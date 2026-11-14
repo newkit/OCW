@@ -43,6 +43,9 @@ pub struct Predictor {
     world: WorldCache,
     mode: Mode,
     ticks: u64,
+    /// The session weather's physics while it is in force (spec §14 Phase
+    /// 9, S6; the server's switch), as the server rides it.
+    weather: Option<crate::weather::WeatherPhysics>,
     /// The damage's effects the server applies to the rider (spec §14
     /// Phase 12E, K4: from `RiderUpdate.damage`).
     damage: crate::damage::Effects,
@@ -65,6 +68,7 @@ impl Predictor {
             world: WorldCache::default(),
             mode: Mode::Off,
             ticks: 0,
+            weather: None,
             damage: crate::damage::Effects::NONE,
         }
     }
@@ -208,6 +212,17 @@ impl Predictor {
         self.controls.wild = wild;
     }
 
+    /// The weather's physics in force (spec §14 Phase 9, S6; `None`: the
+    /// weather does not affect the physics), from the session weather the
+    /// server sends.
+    pub fn set_weather(&mut self, weather: Option<crate::weather::WeatherPhysics>) {
+        self.weather = weather;
+    }
+
+    pub fn weather(&self) -> Option<&crate::weather::WeatherPhysics> {
+        self.weather.as_ref()
+    }
+
     /// Sets the predicted drafting factor (from the positions of others).
     pub fn set_drag_factor(&mut self, drag_factor: f64) {
         self.drag_factor = drag_factor;
@@ -216,7 +231,7 @@ impl Predictor {
     /// Advances the prediction by one physics tick with the current power.
     pub fn step(&mut self, route: &dyn Track, power_w: f64) {
         let (profile, power_w, controls) = self.damaged(power_w);
-        ride::tick(
+        ride::tick_in(
             &mut self.state,
             &profile,
             power_w,
@@ -224,6 +239,7 @@ impl Predictor {
             &mut self.scraping,
             route,
             self.drag_factor,
+            self.weather.as_ref(),
             SIM_DT,
         );
         let mut capped = self.state;
@@ -263,7 +279,7 @@ impl Predictor {
         let mut scraping = self.scraping;
         let (profile, power_w, controls) = self.damaged(power_w);
         for _ in 0..steps {
-            ride::tick(
+            ride::tick_in(
                 &mut extrapolated,
                 &profile,
                 power_w,
@@ -271,6 +287,7 @@ impl Predictor {
                 &mut scraping,
                 route,
                 self.drag_factor,
+                self.weather.as_ref(),
                 SIM_DT,
             );
             self.damage_cap(&mut extrapolated);
