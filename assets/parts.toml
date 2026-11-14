@@ -13,7 +13,7 @@
 # wheels, tyres, pedals), fits (bike types: road, tt, gravel, mtb), standard
 # (optional: speeds, shifting, brake, wheel, width_mm, family), profile
 # (frames: the physics profile, spec §2.5), rolling / aero / efficiency
-# (class steps, 4G; physics from W3), model (frames: the bike model
+# (class steps, 4G: the server's build physics, ocw_sim::build), model (frames: the bike model
 # bike-<profile>; base parts: "stock", the frame's own part; others: a part
 # variant of the generator, crates/ocw-assets/src/bikes.rs), sources, priced.
 #

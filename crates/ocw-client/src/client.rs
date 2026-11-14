@@ -96,7 +96,20 @@ struct FreeRide {
 pub struct ClientCore {
     route: Route,
     free: Option<FreeRide>,
+    /// The own weight and the frame's curated profile (spec §2.5).
     profile: RiderProfile,
+    /// The own bike's parts and their build (spec §14 Phase 4, 4G; the
+    /// same pure code and catalogue as the server's), the server's word on
+    /// it (`RiderBuild`), and what the prediction rides with now (the race
+    /// mode in force).
+    parts: Vec<String>,
+    own_build: Option<ocw_sim::Build>,
+    own_effect: Option<ocw_protocol::BuildInfo>,
+    effective: RiderProfile,
+    /// The other riders' builds (`RiderBuild`, once per change) and the
+    /// hash each snapshot names (a build is drawn only while they agree).
+    builds: BTreeMap<RiderId, ocw_protocol::BuildInfo>,
+    build_hashes: BTreeMap<RiderId, u32>,
     /// The own cosmetic look (sent in the hello, spec §2.5).
     look: RiderLook,
     name: String,
@@ -190,6 +203,12 @@ impl ClientCore {
         Self {
             free: None,
             profile,
+            parts: Vec::new(),
+            own_build: None,
+            own_effect: None,
+            effective: profile,
+            builds: BTreeMap::new(),
+            build_hashes: BTreeMap::new(),
             look: RiderLook::default(),
             name: name.into(),
             rider_id: None,
@@ -294,6 +313,78 @@ impl ClientCore {
         self
     }
 
+    /// The same client with the bike's parts (catalogue ids, spec §14
+    /// Phase 4, 4G), sent in the hello; the prediction rides the build.
+    pub fn with_parts(mut self, parts: &[String]) -> Self {
+        self.set_own_build(self.profile.bike, parts);
+        self.refresh_physics();
+        self
+    }
+
+    fn set_own_build(&mut self, bike: ProfileId, parts: &[String]) {
+        self.parts = parts.to_vec();
+        let b = ocw_sim::build::build(ocw_sim::PartTable::shipped(), bike, parts);
+        self.own_build = (!b.is_stock()).then_some(b);
+    }
+
+    /// The race mode the own rider rides under now (spec §14 Phase 4,
+    /// 4G): the event's while entered in one that is not over, else open.
+    pub fn physics_mode(&self) -> ocw_sim::PhysicsMode {
+        match self.event.info() {
+            Some(info) if self.in_event(info) => info.physics,
+            _ => ocw_sim::PhysicsMode::Open,
+        }
+    }
+
+    fn in_event(&self, info: &ocw_protocol::EventInfo) -> bool {
+        info.phase != ocw_sim::EventPhase::Finished
+            && info.standings.iter().any(|s| Some(s.id) == self.rider_id)
+    }
+
+    /// The prediction rides what the server rides: the build under the
+    /// race mode in force.
+    fn refresh_physics(&mut self) {
+        let p =
+            ocw_sim::build::effective(self.physics_mode(), &self.profile, self.own_build.as_ref());
+        if p != self.effective {
+            self.effective = p;
+            self.predictor.set_profile(p);
+        }
+    }
+
+    /// The own bike's build as the prediction knows it (`None`: stock).
+    pub fn own_build(&self) -> Option<&ocw_sim::Build> {
+        self.own_build.as_ref()
+    }
+
+    /// The server's word on the own bike's build (its effect after the
+    /// caps), once a `RiderBuild` arrived.
+    pub fn own_effect(&self) -> Option<&ocw_protocol::BuildInfo> {
+        self.own_effect.as_ref()
+    }
+
+    /// The physics the own rider rides with now (profile, build, mode).
+    pub fn effective_profile(&self) -> RiderProfile {
+        self.effective
+    }
+
+    /// The fitted parts of a rider's bike as last told by the server
+    /// (empty: the stock bike, or the build not known yet).
+    pub fn rider_parts(&self, id: RiderId) -> Vec<String> {
+        if Some(id) == self.rider_id {
+            return self
+                .own_build
+                .as_ref()
+                .map(|b| b.parts.clone())
+                .unwrap_or_default();
+        }
+        let hash = self.build_hashes.get(&id).copied().unwrap_or(0);
+        match self.builds.get(&id) {
+            Some(b) if hash != 0 && b.hash == hash => b.parts.clone(),
+            _ => Vec::new(),
+        }
+    }
+
     /// The same client starting with autodrive off (lean steering) when
     /// `on` is false (setting `controls.autodrive`, spec §3.2.1).
     pub fn with_autodrive_at_start(mut self, on: bool) -> Self {
@@ -334,6 +425,8 @@ impl ClientCore {
             // Only the profile's id: the server has its own table (§2.5).
             bike_profile: Some(self.profile.bike.id().into()),
             look: Some(self.look.into()),
+            // Part ids only: the server has its own catalogue (4G).
+            parts: self.parts.clone(),
         })))
     }
 
@@ -486,6 +579,23 @@ impl ClientCore {
                     self.lean = None;
                     self.steer_sent = None;
                 }
+                self.refresh_physics();
+                None
+            }
+            S::RiderBuild(b) => {
+                let info = ocw_protocol::build_info(&b);
+                if Some(info.rider) == self.rider_id {
+                    // The server applied the own bike (at once, or after
+                    // an event): the prediction follows it.
+                    let kg = self.profile.rider_mass_kg;
+                    self.profile = RiderProfile::curated(info.profile, kg);
+                    let parts = info.parts.clone();
+                    self.set_own_build(info.profile, &parts);
+                    self.own_effect = Some(info);
+                    self.refresh_physics();
+                } else {
+                    self.builds.insert(info.rider, info);
+                }
                 None
             }
         }
@@ -621,6 +731,7 @@ impl ClientCore {
             self.names
                 .insert(id, (u.display_name.clone(), f64::from(u.power_w)));
             self.looks.insert(id, ocw_protocol::rider_look(u));
+            self.build_hashes.insert(id, u.build_hash);
             if Some(id) == self.rider_id {
                 self.hearts = self.hearts.max(u.hearts);
                 self.event.on_own_snapshot(s.server_tick, state.distance);
@@ -1226,6 +1337,7 @@ impl ClientCore {
             // The own bike and look are known locally.
             bike: self.profile.bike,
             look: Some(self.look),
+            parts: self.rider_parts(own),
             crash: self.collisions.crash(own, now_s),
             wobble: self.collisions.wobble(own, tick_now),
         }];
@@ -1248,6 +1360,7 @@ impl ClientCore {
                 is_local: false,
                 bike,
                 look,
+                parts: self.rider_parts(id),
                 crash: self.collisions.crash(id, now_s),
                 // Others are drawn slightly in the past.
                 wobble: self
@@ -1495,6 +1608,29 @@ impl ClientCore {
         })))
     }
 
+    /// The request to start an event with the organiser's race mode
+    /// (`None`: by its kind – Profile for races and group rides, Open for
+    /// time trials; spec §14 Phase 4, 4G).
+    pub fn event_start_message_with(
+        spec: &ocw_sim::EventSpec,
+        bots: Option<u32>,
+        physics: Option<ocw_sim::PhysicsMode>,
+    ) -> Vec<u8> {
+        encode(&client_message(C::Event(v1::EventRequest {
+            req: Some(v1::event_request::Req::Start(
+                ocw_protocol::event_start_with(spec, bots, physics),
+            )),
+        })))
+    }
+
+    /// `dev.bot_bike` (spec §14 Phase 4, W3; local servers): a bot's
+    /// bike and parts, steady power, lane and name.
+    pub fn bot_bike_message(bike: v1::BotBike) -> Vec<u8> {
+        encode(&client_message(C::Dev(v1::DevCommand {
+            cmd: Some(v1::dev_command::Cmd::BotBike(bike)),
+        })))
+    }
+
     /// The request to cancel the current event.
     pub fn event_cancel_message() -> Vec<u8> {
         encode(&client_message(C::Event(v1::EventRequest {
@@ -1571,30 +1707,33 @@ impl ClientCore {
         self.profile
     }
 
+    /// Whether a bike change now waits for the end of an event (the own
+    /// rider is entered in one that is not over: from the next start).
+    pub fn bike_change_waits(&self) -> bool {
+        self.event.info().is_some_and(|i| self.in_event(i))
+    }
+
     /// The workshop's bike when the rider leaves it (spec §14 Phase 4,
-    /// 4A, Q1): the message to send, or `None` in an event that has not
-    /// finished (the bike then applies from the next start). The
-    /// prediction switches to the new profile at once, as the server does.
+    /// 4A, Q1, 4G): the message to send. Outside events the prediction
+    /// switches to the new profile and build at once, as the server does;
+    /// in an event that is not over ([`ClientCore::bike_change_waits`])
+    /// the server applies it when the event ends and says so with a
+    /// `RiderBuild`, which the prediction then follows. The look is
+    /// cosmetic and applies at once.
     pub fn change_bike(
         &mut self,
         bike_id: &str,
         bike: ProfileId,
         look: RiderLook,
         parts: &[String],
-    ) -> Option<Vec<u8>> {
-        let own = self.rider_id;
-        if let Some(info) = self.event.info()
-            && info.phase != ocw_sim::EventPhase::Finished
-            && info.standings.iter().any(|s| Some(s.id) == own)
-        {
-            return None;
+    ) -> Vec<u8> {
+        if !self.bike_change_waits() {
+            self.profile = RiderProfile::curated(bike, self.profile.rider_mass_kg);
+            self.set_own_build(bike, parts);
+            self.refresh_physics();
         }
-        self.profile = RiderProfile::curated(bike, self.profile.rider_mass_kg);
-        self.predictor.set_profile(self.profile);
         self.look = look;
-        Some(encode(&ocw_protocol::bike_change(
-            bike_id, bike, look, parts,
-        )))
+        encode(&ocw_protocol::bike_change(bike_id, bike, look, parts))
     }
 
     pub fn key_power_w(&self) -> f64 {
@@ -2133,14 +2272,17 @@ mod tests {
             frame: ocw_core::Rgb(0x1E88E5),
             ..Default::default()
         };
+        assert!(!h.client.bike_change_waits());
         let msg = h
             .client
-            .change_bike("mtb", ProfileId::Mountain, look, &["tyres.mtb.xc".into()])
-            .expect("outside events");
+            .change_bike("mtb", ProfileId::Mountain, look, &["tyres.mtb.xc".into()]);
         h.send(&msg);
         let p = h.server.session().rider_profile(id).unwrap();
         assert_eq!(p.bike, ProfileId::Mountain);
-        assert_eq!(h.client.profile(), p);
+        // The XC tyres count (spec 4G): server and prediction alike.
+        assert!(p.crr < RiderProfile::curated(ProfileId::Mountain, 75.0).crr);
+        assert_eq!(h.client.effective_profile(), p);
+        assert_eq!(h.client.profile().bike, ProfileId::Mountain);
         h.ride(250.0, 10.0);
         let server = h.server.session().rider_state(id).unwrap();
         assert!((h.client.state().speed - server.speed).abs() < 0.3);
@@ -3573,5 +3715,128 @@ mod tests {
         h.ride(250.0, 12.0);
         assert!(h.client.own_crash(h.time_s).is_none());
         assert!(h.client.state().speed > 3.0);
+    }
+
+    const UPGRADES: [&str; 4] = [
+        "wheels.road-carbon.top",
+        "tyres.road.race",
+        "groupset.road-electronic.top",
+        "cockpit.road.integrated",
+    ];
+
+    /// W3 (spec §14 Phase 4, 4G): the own build goes out in the hello and
+    /// rides in the prediction as on the server; the server's word on it
+    /// (the effect after the caps) comes back; in a race (Profile mode by
+    /// default) the prediction drops the parts like the server.
+    #[test]
+    fn the_own_build_rides_in_the_prediction_and_the_race_mode_counts() {
+        let parts: Vec<String> = UPGRADES.map(String::from).to_vec();
+        let client = ClientCore::new(route(), "Fitted", RiderProfile::default()).with_parts(&parts);
+        let mut h = Harness::with(
+            GameServer::new(
+                route(),
+                ServerConfig {
+                    allow_local_events: true,
+                    ..Default::default()
+                },
+            ),
+            client,
+        );
+        let id = h.client.rider_id().unwrap();
+        h.ride(250.0, 2.0);
+        let server = h.server.session().rider_profile(id).unwrap();
+        assert_eq!(h.client.effective_profile(), server);
+        assert!(server.cda_m2 < RiderProfile::default().cda_m2);
+        let effect = h.client.own_effect().expect("the server's RiderBuild");
+        let b = h.client.own_build().unwrap();
+        assert!((effect.effect.flat - b.flat_gain).abs() < 1e-4);
+        assert_eq!(effect.parts, b.parts);
+        h.ride(250.0, 20.0);
+        let (c, s) = (
+            h.client.state(),
+            h.server.session().rider_state(id).unwrap(),
+        );
+        assert!(
+            (c.speed - s.speed).abs() < 0.05,
+            "{} vs {}",
+            c.speed,
+            s.speed
+        );
+        // A race: Profile mode, the parts are cosmetic on both sides.
+        h.send(&ClientCore::event_start_message(
+            &ocw_sim::EventSpec::Race {
+                laps: None,
+                length_m: Some(2000.0),
+            },
+            None,
+        ));
+        h.ride(250.0, 1.0);
+        assert_eq!(h.client.physics_mode(), ocw_sim::PhysicsMode::Profile);
+        assert_eq!(h.client.effective_profile(), RiderProfile::default());
+        assert_eq!(
+            h.server.session().rider_profile(id).unwrap(),
+            RiderProfile::default()
+        );
+        // A bike change in the race waits for its end, on both sides.
+        assert!(h.client.bike_change_waits());
+        let msg = h
+            .client
+            .change_bike("gravel", ProfileId::Gravel, RiderLook::default(), &[]);
+        h.send(&msg);
+        assert_eq!(h.client.profile().bike, ProfileId::Road);
+        assert!(
+            h.notices
+                .iter()
+                .any(|n| matches!(n, Notice::CommandResult(m) if m.contains("next start")))
+        );
+        h.send(&ClientCore::event_cancel_message());
+        h.ride(250.0, 0.5);
+        assert_eq!(
+            h.client.profile().bike,
+            ProfileId::Gravel,
+            "the server's RiderBuild"
+        );
+        assert_eq!(h.client.own_build(), None);
+        assert_eq!(
+            h.client.effective_profile(),
+            h.server.session().rider_profile(id).unwrap()
+        );
+    }
+
+    /// The others' parts (the W2 open issue): sent once per change, drawn
+    /// while the snapshots' hash matches; a joining client gets them too.
+    #[test]
+    fn other_riders_parts_reach_the_view() {
+        let mut h = Harness::new(0, true);
+        let conn = h.server.connect();
+        let parts: Vec<String> = UPGRADES.map(String::from).to_vec();
+        let mut other =
+            ClientCore::new(route(), "Other", RiderProfile::default()).with_parts(&parts);
+        for reply in h.server.handle(conn, &other.hello()) {
+            other.on_server_message(&reply, 0.0);
+        }
+        let oid = other.rider_id().unwrap();
+        h.ride(200.0, 1.0);
+        let view = h.client.view(h.time_s, 1.0);
+        let o = view.iter().find(|r| r.id == oid).expect("the other rider");
+        let expected = other.own_build().unwrap().parts.clone();
+        assert_eq!(o.parts, expected);
+        assert!(view[0].parts.is_empty(), "the own stock bike");
+        // A newcomer learns the build with its welcome.
+        let conn2 = h.server.connect();
+        let mut late = ClientCore::new(route(), "Late", RiderProfile::default());
+        for reply in h.server.handle(conn2, &late.hello()) {
+            late.on_server_message(&reply, 0.0);
+        }
+        for b in (0..5).flat_map(|_| h.server.tick()) {
+            late.on_server_message(&b, 0.1);
+        }
+        assert_eq!(late.rider_parts(oid), expected);
+        // Back to the stock bike: hash 0, nothing drawn.
+        let back = other.change_bike("road", ProfileId::Road, RiderLook::default(), &[]);
+        h.server.handle(conn, &back);
+        h.ride(200.0, 1.0);
+        let view = h.client.view(h.time_s, 1.0);
+        assert!(view.iter().find(|r| r.id == oid).unwrap().parts.is_empty());
     }
 }

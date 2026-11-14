@@ -582,6 +582,7 @@ mod tests {
             is_local: false,
             bike: ProfileId::Road,
             look: None,
+            parts: Vec::new(),
             crash: None,
             wobble: 0.0,
         });

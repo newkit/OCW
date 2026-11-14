@@ -2244,6 +2244,7 @@ mod tests {
             is_local: true,
             bike: Default::default(),
             look: None,
+            parts: Vec::new(),
             crash: None,
             wobble: 0.0,
         });

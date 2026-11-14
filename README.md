@@ -235,7 +235,7 @@ paged (*Previous* / *Next*, or ← / → on a list row).
 ### The workshop: bikes, parts and hearts
 
 *Workshop* in the menu (or `workshop open`) opens a 3D bicycle workshop over
-the running ride (spec §14 Phase 4, W1 + W2): the ride goes on in autodrive
+the running ride (spec §14 Phase 4, W1 – W3): the ride goes on in autodrive
 underneath and shows in a small live ride window (top right; `workshop.ride_window off`
 hides it). Your bike stands on the repair stand in front, your other bikes hang
 on the wall – every rider starts with six starter bikes, one per physics
@@ -262,11 +262,31 @@ bottle cages, lights, computer, bag, paint); choosing one flies to it and
 opens the **part picker**: what is fitted, what you own (spare parts or on
 another bike) and the shop (only parts that fit, by tier, cheapest first, a
 lock with the missing hearts). The focused part shows on the bike at once
-(live preview); its card shows weight, price and the effect line (W2: the
-effects are cosmetic until the build physics of W3). Buying fits the part;
+(live preview); its card shows weight, price, the part's class steps and
+**what it does to the bike's speed** ("Speed: +0.4 % flat, +0.6 % at 6 %",
+"capped" at the band's edge; the bike's mass and its speed against the stock
+bike), and the compare card (C / Y / long press pins a part) the speed
+difference of the two parts on this bike. Buying fits the part;
 selling refunds the full price until the part has been ridden 1 km, half
 after. Paint is free. **Leaving the workshop applies the bike** at once in
-free ride and outside events (in an event: from the next start). The wallet
+free ride and outside events (in an event: when it is over, from the next
+start); the server answers with the effect it applied.
+
+**Parts and physics (W3, spec §14 Phase 4, 4G).** The frameset decides the
+physics profile; the other parts change the bike only a little: real weights
+(the bike's mass = the profile's + the parts' differences to the stock parts,
+at least 6.8 kg, 9 kg for a mountain bike) and a few curated class steps –
+tyres ±4 % rolling resistance per step, aero wheels / cockpits / frames
+∓0.004 m² CdA, top groupsets +0.3 % drivetrain efficiency. The server takes
+the values from its own copy of the catalogue (the client sends part ids
+only) and **caps the whole build**: at 250 W and 75 kg the best build of a
+profile is at most **+1.5 %** faster on the flat and **+2.5 %** on a 6 %
+climb than the stock bike. Races and group rides use the ***Profile*** mode
+by default – only the frame's profile counts, parts are cosmetic; the
+organiser can choose *Open* (parts count, within the caps) or *Equal* (one
+bike for everyone): `event race --physics open|profile|equal`. Free ride,
+single player and time trials count the parts. The other riders see the
+parts on your bike (sent once per change, not in every snapshot). The wallet
 is local until the backend (`<data dir>/ocw/workshop.toml` and
 `hearts-ledger.jsonl`). The rider list and kit colours: the mirror corner, or
 `menu workshop-page`.
@@ -712,6 +732,7 @@ focused) or the console:
 event race [--laps N | --km X] [--bots N]   # default: 1 lap of a loop, 5 km of a route that ends
 event group [--watts W] [--bots N]          # bots hold W (default 150) and regroup; no ranking
 event tt [--laps N | --km X]                # alone, no drafting, against your best effort
+event race --physics open                   # race mode: open | profile (default) | equal
 event status | event cancel | event dismiss
 ```
 
@@ -1040,6 +1061,7 @@ for now).
 | `ride.crashes` | The collision rules in force, your crash state and the last crashes |
 | `dev.bump` | *Dev:* the nearest other rider bumps into you from the side (a soft bump) |
 | `dev.crash` | *Dev:* the nearest other rider cuts in front of you: a wheel touch, you fall (ragdoll, remount) |
+| `dev.bot_bike BOT [--bike P] [--parts ID… \| --best] [--power W] [--lane M] [--name N]` | *Dev:* a bot's bike and parts (`--best`: the capped best build), steady power, fixed lane and name – compare a stock and an upgraded bike side by side |
 | `net.stats` | Connection statistics |
 | `worlds.info` | The loaded world package: id, version, content hash, trust, credits |
 | `worlds.list` | World packages in the local cache, with their trust state |
@@ -1048,9 +1070,9 @@ for now).
 | `world info` | The world ridden now: package, area, elevation, data sources with their notices, routes, time zone, sun and twilight times |
 | `world switch N\|ID\|NAME\|PATH` | Ride another world without restarting (its first route, else a free ride; a test route: `hills`, `loop`); in a shared ride the host asks the server |
 | **Events** (spec §2.3) | |
-| `event race [--laps N\|--km X] [--bots N]` | Race from the start formation to the finish (default 1 lap / 5 km) |
-| `event group [--watts W] [--bots N]` | Group ride: bots hold the pace and regroup |
-| `event tt [--laps N\|--km X]` | Time trial alone against your ghost |
+| `event race [--laps N\|--km X] [--bots N] [--physics MODE]` | Race from the start formation to the finish (default 1 lap / 5 km; MODE: `profile` – the default, only the frame's profile counts –, `open` – parts count, capped –, `equal`) |
+| `event group [--watts W] [--bots N] [--physics MODE]` | Group ride: bots hold the pace and regroup (default mode `profile`) |
+| `event tt [--laps N\|--km X] [--physics MODE]` | Time trial alone against your ghost (default mode `open`) |
 | `event status` | The event, your HUD lines and the standings |
 | `event cancel` | End the event (everyone rides on) |
 | `event dismiss` | Close the results panel (Esc / A) |

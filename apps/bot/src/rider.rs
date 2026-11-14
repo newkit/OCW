@@ -74,6 +74,7 @@ impl BotRider {
             rider_weight_kg: Some(config.weight_kg as f32),
             bike_profile: Some(config.bike.id().into()),
             look: Some(config.look.into()),
+            parts: Vec::new(),
         };
         // Exactly the profile the server will use for this hello.
         let profile = ocw_server::physics_profile(&hello);

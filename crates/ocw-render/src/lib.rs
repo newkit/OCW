@@ -318,6 +318,9 @@ pub struct RiderView {
     pub bike: ocw_core::ProfileId,
     /// The rider's cosmetic look; `None` (an old server): colours by id.
     pub look: Option<ocw_core::RiderLook>,
+    /// The catalogue ids of the parts fitted on the bike (spec §14 Phase
+    /// 4, 4G; empty: the stock bike): drawn with their part variants.
+    pub parts: Vec<String>,
     /// A crash under way, from the server (spec §14 Phase 12C): the
     /// avatar falls as a ragdoll and remounts.
     pub crash: Option<ocw_sim::collide::CrashView>,
@@ -492,6 +495,7 @@ mod tests {
             is_local: true,
             bike: ocw_core::ProfileId::Road,
             look: None,
+            parts: Vec::new(),
             crash: None,
             wobble: 0.0,
         });
@@ -560,6 +564,7 @@ mod tests {
             is_local: true,
             bike: ocw_core::ProfileId::Road,
             look: None,
+            parts: Vec::new(),
             crash: None,
             wobble: 0.0,
         });

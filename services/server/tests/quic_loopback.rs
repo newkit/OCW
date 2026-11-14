@@ -98,6 +98,7 @@ fn hello(name: &str) -> Vec<u8> {
         rider_weight_kg: None,
         bike_profile: None,
         look: None,
+        parts: Vec::new(),
     })))
 }
 

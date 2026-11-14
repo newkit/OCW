@@ -266,6 +266,7 @@ mod tests {
                 rider_weight_kg: None,
                 bike_profile: None,
                 look: None,
+                parts: Vec::new(),
             }))))
             .unwrap();
         let mut welcomed = false;
@@ -298,6 +299,7 @@ mod tests {
             rider_weight_kg: None,
             bike_profile: None,
             look: None,
+            parts: Vec::new(),
         }))));
         let welcome = s.drain();
         assert_eq!(welcome.len(), 1);
@@ -323,6 +325,7 @@ mod tests {
             rider_weight_kg: None,
             bike_profile: None,
             look: None,
+            parts: Vec::new(),
         })))
     }
 

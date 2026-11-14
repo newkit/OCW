@@ -30,10 +30,13 @@ message ClientMessage {
 
 // The workshop's bike when the rider leaves it (spec §14 Phase 4, 4A,
 // Q1): sent once, reliable. The server applies it at once in free ride
-// and outside events (an entrant of an event keeps the bike until the next
-// start) and answers with a DevCommandResult. The client never sends
-// physics or prices: the profile is looked up in the server's own table
-// (unknown = default), the parts are catalogue ids (cosmetic until W3).
+// and outside events (an entrant of an event that is not over gets it when
+// the event ends: from the next start) and answers with a
+// DevCommandResult, and with a RiderBuild to everyone once it applies.
+// The client never sends physics or prices: the profile is looked up in
+// the server's own table (unknown = default), the parts are catalogue ids
+// whose weights and class steps come from the server's copy of the
+// catalogue (unknown or unfitting ids count as the base part; W3, 4G).
 message BikeChange {
   // The bike's id in the rider's garage (e.g. "road-aero" for a starter bike).
   string bike_id = 1;
@@ -53,6 +56,20 @@ message BikeChange {
 message RulesRequest {
   optional bool collisions = 1;
   optional bool chaotic_bots = 2;
+}
+
+// Whose physics count in an event (spec §2.5 *Race modes*, §14 Phase 4,
+// 4G). Free ride and single player are always open.
+enum PhysicsMode {
+  // Absent: by the event's kind (races and group rides PROFILE, time
+  // trials OPEN); an older server: open.
+  PHYSICS_MODE_UNSPECIFIED = 0;
+  // The frame's profile and the parts, within the build caps.
+  PHYSICS_MODE_OPEN = 1;
+  // Only the frame's profile; the parts are cosmetic.
+  PHYSICS_MODE_PROFILE = 2;
+  // One profile for everyone; bikes and parts only shown.
+  PHYSICS_MODE_EQUAL = 3;
 }
 
 // The collision model in force (spec §14 Phase 12A, 12G).
@@ -211,6 +228,8 @@ message EventStart {
   // The organizer's collision rule for the event (spec §14 Phase 12A;
   // absent: by its kind – group rides soft, races full).
   optional CollisionMode collisions = 6;
+  // The organizer's race mode (absent: by its kind, see PhysicsMode).
+  optional PhysicsMode physics = 7;
 }
 
 // Route ride (spec §2.7, §2.2.1): back to the route after leaving it. Like
@@ -281,6 +300,9 @@ message Hello {
   // The rider's cosmetic look (spec §2.5): passed to the other clients
   // for rendering, never used by the physics. Absent: the default look.
   RiderLook look = 7;
+  // The catalogue ids of the parts on the bike (spec §14 Phase 4, 4G; as
+  // in BikeChange.parts): the build the rider starts with.
+  repeated string parts = 8;
 }
 
 // Cosmetic look of a rider and bike (spec §2.5). Colours are sRGB
@@ -332,7 +354,23 @@ message DevCommand {
     // `dev.crash`): the nearest other rider bumps into them from the side
     // or cuts in front (a wheel touch: the asker falls).
     StageContact stage = 3;
+    // A bot's bike, power and lane (`dev.bot_bike`, spec §14 Phase 4, W3):
+    // compare a stock and an upgraded bike side by side.
+    BotBike bot_bike = 4;
   }
+}
+
+message BotBike {
+  uint32 rider_id = 1;
+  // The frame's profile (empty: keep it) and the parts, as in BikeChange.
+  string bike_profile = 2;
+  repeated string parts = 3;
+  // Steady power (W), without the bots' gentle variation.
+  optional float power_w = 4;
+  // A fixed lane (m right of the road's centre), kept in the start formation.
+  optional float lane_m = 5;
+  // A new name tag (empty: keep it).
+  string name = 6;
 }
 
 message StageContact {
@@ -357,7 +395,31 @@ message ServerMessage {
     VoiceGrant voice = 7;
     WorldChange world_change = 8;
     GodResult god = 9;
+    RiderBuild rider_build = 10;
   }
+}
+
+// A rider's bike build (spec §14 Phase 4, 4G): reliable, sent to everyone
+// when it changes (BikeChange, Hello, the end of an event for a waiting
+// change) and to a joining client for every rider with parts. The
+// snapshots carry only RiderUpdate.build_hash; a rider whose hash is not
+// the last RiderBuild's is drawn on the stock bike until it arrives.
+message RiderBuild {
+  uint32 rider_id = 1;
+  // build_hash of the build (0: the profile's stock bike).
+  fixed32 build_hash = 2;
+  string bike_profile = 3;
+  // The fitted part ids that count, in slot order (no base parts).
+  repeated string parts = 4;
+  // The server's effect of the build against the profile's stock bike at
+  // the reference ride (250 W, 75 kg; 4G), after the caps: speed on the
+  // flat and on a 6 % climb in 1e-4 (0.01 %), the bike's mass, whether the
+  // caps cut it back. Under PROFILE / EQUAL in an event the parts do not
+  // count, whatever these say.
+  sint32 flat_gain_e4 = 5;
+  sint32 climb_gain_e4 = 6;
+  uint32 bike_mass_g = 7;
+  bool capped = 8;
 }
 
 // Answer to a GodRequest (spec §14 Phase 13). Reliable.
@@ -449,6 +511,8 @@ message EventState {
   // The collision model of the event (spec §14 Phase 12A: "collisions
   // on, damage off" in the event's info).
   CollisionMode collisions = 13;
+  // The event's race mode (spec §2.5, 4G; shown in the event's info).
+  PhysicsMode physics = 14;
 }
 
 message EventStanding {
@@ -620,6 +684,9 @@ message RiderUpdate {
   // nothing for virtual power, god mode, while down, bots). A running
   // total, so a lost snapshot loses nothing.
   uint32 hearts = 18;
+  // The rider's bike build (RiderBuild.build_hash; absent/0: the
+  // profile's stock bike). The parts come once per change in RiderBuild.
+  fixed32 build_hash = 19;
 }
 
 enum CrashPhase {

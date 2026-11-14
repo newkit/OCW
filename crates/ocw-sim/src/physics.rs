@@ -315,6 +315,21 @@ pub fn steady_state_power(profile: &RiderProfile, env: &Environment, speed: f64)
     resistance(profile, env, speed).total() * speed / profile.drivetrain_efficiency
 }
 
+/// Steady speed (m/s) at which `power_w` holds under `env` (bisection of
+/// [`steady_state_power`] to well below 1 µm/s).
+pub fn steady_speed(profile: &RiderProfile, env: &Environment, power_w: f64) -> f64 {
+    let (mut lo, mut hi) = (0.0, 40.0);
+    for _ in 0..80 {
+        let v = 0.5 * (lo + hi);
+        if steady_state_power(profile, env, v) > power_w {
+            hi = v;
+        } else {
+            lo = v;
+        }
+    }
+    lo
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -720,20 +735,6 @@ mod tests {
             Environment::with_grade(0.0).with_brake(false).brake_mps2,
             0.0
         );
-    }
-
-    /// Speed (m/s) at which `power` holds steady under `env` (bisection).
-    fn steady_speed(profile: &RiderProfile, env: &Environment, power: f64) -> f64 {
-        let (mut lo, mut hi) = (0.1, 40.0);
-        for _ in 0..80 {
-            let v = 0.5 * (lo + hi);
-            if steady_state_power(profile, env, v) > power {
-                hi = v;
-            } else {
-                lo = v;
-            }
-        }
-        lo
     }
 
     /// Each profile's steady speed at 250 W relative to the road bike's.

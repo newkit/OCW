@@ -207,7 +207,7 @@ impl Session {
             heading: st.heading,
             speed: st.speed,
             lean: collide::lean_of(st.speed, st.turn_curvature),
-            mass: r.profile.rider_mass_kg + r.profile.bike_mass_kg,
+            mass: r.effective.rider_mass_kg + r.effective.bike_mass_kg,
             fallen: r.crash.is_some(),
             manual: matches!(r.steering, Steering::Lean(_)) || r.wild || mistaking,
         }

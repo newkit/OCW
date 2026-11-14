@@ -5,14 +5,19 @@
 //! effect line, compare with a pinned part, and the action dialogs (Cancel
 //! focused). Every action is a console command line, as in the menu.
 //!
-//! Effects: W2 shows the weight difference and the part's classes (4G);
-//! they stay **cosmetic** until W3 brings the build physics on the server
-//! (the card says so).
+//! Effects (W3, 4G): the card shows the weight difference, the part's
+//! class steps and what it does to the bike's speed at the reference ride
+//! (250 W, 75 kg; flat and 6 %), from the build physics the server uses
+//! (`ocw_sim::build`, the same pure code and catalogue), capped like the
+//! server caps it; the compare card shows the speed difference of the two
+//! parts on this bike. Parts count in free ride and *Open* races, not in
+//! *Profile* or *Equal* races (the default for races and group rides).
 
 use ocw_assets::parts::{Catalogue, Part, Slot};
 use ocw_core::Rgb;
 use ocw_core::bike::PALETTE;
 use ocw_core::hearts::format as hearts;
+use ocw_sim::build::{self as bike_build, Build, PartTable};
 
 use super::wallet::{Bike, Garage, fits};
 
@@ -189,9 +194,78 @@ fn classes(p: &Part) -> Vec<String> {
     out
 }
 
+/// The part ids that count on `bike` with `part` in its slot (`None`: as
+/// it is).
+pub fn ids_with(cat: &Catalogue, garage: &Garage, bike: &Bike, part: Option<&Part>) -> Vec<String> {
+    let mut ids: Vec<String> = garage
+        .part_ids(bike)
+        .into_iter()
+        .filter(|id| part.is_none_or(|p| cat.get(id).is_none_or(|q| q.slot != p.slot)))
+        .collect();
+    if let Some(p) = part
+        && !p.is_base()
+    {
+        ids.push(p.id.clone());
+    }
+    ids
+}
+
+/// The build of `bike` (with `part` in its slot), as the server makes it.
+/// The cards are drawn every frame: each build is computed once (the caps
+/// take a few hundred steady-state solutions).
+pub fn build_with(cat: &Catalogue, garage: &Garage, bike: &Bike, part: Option<&Part>) -> Build {
+    type Key = (ocw_core::ProfileId, Vec<String>);
+    static BUILDS: std::sync::Mutex<Option<std::collections::HashMap<Key, Build>>> =
+        std::sync::Mutex::new(None);
+    let mut ids = ids_with(cat, garage, bike, part);
+    ids.sort();
+    let key = (bike.profile(), ids);
+    let mut cache = BUILDS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let map = cache.get_or_insert_with(Default::default);
+    if map.len() > 512 {
+        map.clear();
+    }
+    map.entry(key)
+        .or_insert_with_key(|(profile, ids)| bike_build::build(PartTable::shipped(), *profile, ids))
+        .clone()
+}
+
+/// The physics of a card: the bike as it is and with the part fitted.
+#[derive(Debug, Clone)]
+pub struct CardPhysics {
+    pub now: Build,
+    pub with: Build,
+}
+
+impl CardPhysics {
+    pub fn of(cat: &Catalogue, garage: &Garage, bike: &Bike, part: &Part) -> Self {
+        Self {
+            now: build_with(cat, garage, bike, None),
+            with: build_with(cat, garage, bike, Some(part)),
+        }
+    }
+}
+
+/// Where parts count (the last line of a card).
+pub const WHERE_PARTS_COUNT: &str =
+    "Counts in free ride and Open races; cosmetic in Profile / Equal races (the default)";
+
+/// "Bike: 7.42 kg · +1.2 % flat, +1.9 % at 6 % vs stock, capped".
+pub fn bike_line(b: &Build) -> String {
+    let e = b.effect_from(&Build::stock(b.profile));
+    format!(
+        "Bike: {:.2} kg · {} vs stock",
+        b.params.bike_mass_kg,
+        e.line()
+    )
+}
+
 /// The detail card of `part` against the `equipped` one: the main
-/// figures and the effect line.
-pub fn detail(part: &Part, equipped: Option<&Part>) -> Vec<String> {
+/// figures and the effect lines (`physics`: the bike's build now and with
+/// the part).
+pub fn detail(part: &Part, equipped: Option<&Part>, physics: Option<&CardPhysics>) -> Vec<String> {
     let mut out = vec![
         part.name.clone(),
         format!(
@@ -217,7 +291,18 @@ pub fn detail(part: &Part, equipped: Option<&Part>) -> Vec<String> {
     if !effect.is_empty() {
         out.push(format!("Effect: {}", effect.join(" · ")));
     }
-    out.push("Cosmetic until W3 (build physics); no effect in Equal / Profile races".into());
+    if let Some(ph) = physics {
+        if ph.with.parts == ph.now.parts {
+            out.push(format!(
+                "Speed: on the bike now ({})",
+                ph.with.effect_from(&Build::stock(ph.with.profile)).line()
+            ));
+        } else {
+            out.push(format!("Speed: {}", ph.with.effect_from(&ph.now).line()));
+        }
+        out.push(bike_line(&ph.with));
+    }
+    out.push(WHERE_PARTS_COUNT.into());
     out
 }
 
@@ -230,9 +315,10 @@ fn better(lower_is_better: bool, a: i64, b: i64) -> &'static str {
     }
 }
 
-/// The comparison of the focused part `b` with the pinned `a`.
-pub fn compare(a: &Part, b: &Part) -> Vec<String> {
-    vec![
+/// The comparison of the focused part `b` with the pinned `a`
+/// (`physics`: the bike's build with `a` and with `b`).
+pub fn compare(a: &Part, b: &Part, physics: Option<(&Build, &Build)>) -> Vec<String> {
+    let mut out = vec![
         format!("A: {}", a.name),
         format!("B: {}", b.name),
         format!(
@@ -259,7 +345,18 @@ pub fn compare(a: &Part, b: &Part) -> Vec<String> {
             b.aero,
             better(false, i64::from(b.aero), i64::from(a.aero))
         ),
-    ]
+    ];
+    if let Some((with_a, with_b)) = physics {
+        let e = with_b.effect_from(with_a);
+        // Better by the speed on the flat and the climb together (0.01 %).
+        let score = ((e.flat + e.climb) * 1e4).round() as i64;
+        out.push(format!(
+            "Speed: B {} – B {}",
+            e.line(),
+            better(false, score, 0)
+        ));
+    }
+    out
 }
 
 /// A dialog button: its label and the command line it runs (none: Cancel).
@@ -608,6 +705,29 @@ mod tests {
         );
     }
 
+    /// The server's catalogue copy (`ocw_sim::build::PartTable`) and the
+    /// workshop's catalogue read the same file the same way: the cards
+    /// show what the server applies.
+    #[test]
+    fn the_server_table_matches_the_catalogue() {
+        let table = PartTable::shipped();
+        assert_eq!(table.parts().len(), cat().parts.len());
+        for p in &cat().parts {
+            let s = table.get(&p.id).expect("in the server's table");
+            assert_eq!(s.slot, p.slot.id(), "{}", p.id);
+            assert_eq!(s.base, p.is_base(), "{}", p.id);
+            assert_eq!(s.weight_g, p.weight_g, "{}", p.id);
+            assert_eq!(s.fits, p.fits, "{}", p.id);
+            assert_eq!(s.profile, p.profile, "{}", p.id);
+            assert_eq!(
+                (s.rolling, s.aero, s.efficiency),
+                (p.rolling, p.aero, p.efficiency),
+                "{}",
+                p.id
+            );
+        }
+    }
+
     #[test]
     fn detail_compare_and_preview() {
         let w = wallet();
@@ -618,14 +738,50 @@ mod tests {
             .filter_map(|r| cat().get(r.part.as_deref()?))
             .find(|p| p.rolling < 0)
             .unwrap();
-        let d = detail(fast, Some(base));
+        let g = w.get("Ann").unwrap();
+        let b = g.bike("road").unwrap();
+        let ph = CardPhysics::of(cat(), g, b, fast);
+        let d = detail(fast, Some(base), Some(&ph));
         assert!(
             d.iter()
                 .any(|l| l.starts_with("Effect:") && l.contains("rolling resistance -")),
             "{d:?}"
         );
-        assert!(d.last().unwrap().contains("Cosmetic until W3"));
-        let c = compare(base, fast);
+        // The speed from the build physics (W3): race tyres are faster.
+        let speed = d
+            .iter()
+            .find(|l| l.starts_with("Speed: +"))
+            .expect("a speed line");
+        assert!(
+            speed.contains("% flat") && speed.contains("at 6 %"),
+            "{speed}"
+        );
+        assert!(
+            d.iter()
+                .any(|l| l.starts_with("Bike: ") && l.contains("kg")),
+            "{d:?}"
+        );
+        assert_eq!(d.last().unwrap(), WHERE_PARTS_COUNT);
+        assert!(!d.iter().any(|l| l.contains("W3")), "{d:?}");
+        // The equipped base part: what the bike does now.
+        let now = CardPhysics::of(cat(), g, b, base);
+        assert!(
+            detail(base, Some(base), Some(&now))
+                .iter()
+                .any(|l| l.starts_with("Speed: on the bike now"))
+        );
+        let c = compare(base, fast, Some((&now.with, &ph.with)));
+        assert!(
+            c.iter()
+                .any(|l| l.starts_with("Speed: B +") && l.ends_with("B better")),
+            "{c:?}"
+        );
+        let back = compare(fast, base, Some((&ph.with, &now.with)));
+        assert!(
+            back.iter()
+                .any(|l| l.starts_with("Speed: B −") && l.ends_with("B worse")),
+            "{back:?}"
+        );
         assert!(
             c.iter()
                 .any(|l| l.starts_with("Rolling") && l.ends_with("B better")),

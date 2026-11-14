@@ -103,6 +103,17 @@ fn rider(world: &World) -> (String, ProfileId) {
     (r.name.clone(), r.bike())
 }
 
+/// The part ids on the bike `rider` rides (the garage's active bike, if
+/// it is of the riding `profile`), for the hello (spec §14 Phase 4, 4G).
+pub fn riding_parts(world: &World, rider: &str, profile: ProfileId) -> Vec<String> {
+    world
+        .get_resource::<WorkshopState>()
+        .and_then(|s| s.wallet.get(rider))
+        .filter(|g| g.active_bike().profile() == profile)
+        .map(|g| g.part_ids(g.active_bike()))
+        .unwrap_or_default()
+}
+
 impl Plugin for WorkshopPlugin {
     fn build(&self, app: &mut App) {
         if !app.is_plugin_added::<WorkshopCorePlugin>() {
@@ -547,20 +558,14 @@ fn apply_bike(world: &mut World) {
     if let Some(mut r) = world.get_resource_mut::<RiderProfiles>() {
         r.riding.set_bike(profile);
     }
+    // The server answers with the build's effect (printed when it
+    // arrives); in an event that is not over it applies after the event.
     let msg = world
         .get_resource_mut::<ClientState>()
-        .and_then(|mut c| c.0.change_bike(&bike_id, profile, look, &parts));
-    match (msg, world.get_resource::<Link>()) {
-        (Some(m), Some(link)) => {
-            link.send_bytes(m);
-            info!(bike = %bike_id, profile = profile.id(), "bike change sent");
-        }
-        (None, _) => {
-            world
-                .resource_mut::<ConsoleState>()
-                .print("in an event: the bike changes from the next start");
-        }
-        _ => {}
+        .map(|mut c| c.0.change_bike(&bike_id, profile, look, &parts));
+    if let (Some(m), Some(link)) = (msg, world.get_resource::<Link>()) {
+        link.send_bytes(m);
+        info!(bike = %bike_id, profile = profile.id(), parts = parts.len(), "bike change sent");
     }
 }
 
@@ -819,6 +824,7 @@ fn write_view(
     models: Res<BikeModels>,
     ride: Option<Res<RideView>>,
     riders: Option<Res<RiderProfiles>>,
+    client: Option<Res<ClientState>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut view: ResMut<WorkshopView>,
 ) {
@@ -871,6 +877,13 @@ fn write_view(
                     format!("{} · {}", b.profile().bike().name(), b.profile().id()),
                     format!("{:.2} kg", bike_kg(g, b)),
                     format!("parts {}", hearts(i64::from(bike_value(g, b)))),
+                    // The build physics (4G): what the parts do.
+                    {
+                        let built = picker::build_with(cat(), g, b, None);
+                        built
+                            .effect_from(&ocw_sim::Build::stock(built.profile))
+                            .line()
+                    },
                 ],
             })
         })
@@ -900,10 +913,10 @@ fn write_view(
     } else {
         Vec::new()
     };
-    let picker = scene
-        .picker
-        .as_ref()
-        .map(|p| picker_view(p, g, balance, &rider.name, scene));
+    let picker = scene.picker.as_ref().map(|p| {
+        let server = client.as_ref().and_then(|c| c.0.own_effect());
+        picker_view(p, g, balance, scene, server)
+    });
     let hint_ctx = if scene.picker.as_ref().is_some_and(|p| p.dialog.is_some()) {
         HintCtx::Dialog
     } else if scene.picker.is_some() {
@@ -944,8 +957,8 @@ fn picker_view(
     p: &picker::Picker,
     g: &Garage,
     balance: i64,
-    _rider: &str,
     scene: &Workshop,
+    server: Option<&ocw_protocol::BuildInfo>,
 ) -> PickerView {
     let bike = g.bike(&scene.bikes[scene.stand]);
     let mut last_group = "";
@@ -972,15 +985,33 @@ fn picker_view(
             picker::colour_name(p.preview_paint().flatten()),
             "Paint is free (special designs come later).".into(),
         ],
-        (_, Some(f)) => picker::detail(f, equipped),
+        (_, Some(f)) => {
+            let ph = bike.map(|b| picker::CardPhysics::of(cat(), g, b, f));
+            let mut d = picker::detail(f, equipped, ph.as_ref());
+            // The server's word on the bike being ridden (its RiderBuild).
+            if let (Some(e), Some(b)) = (server, bike)
+                && b.profile() == e.profile
+                && g.active_bike().id == b.id
+            {
+                d.insert(
+                    d.len() - 1,
+                    format!("Riding now (server): {}", e.effect.line()),
+                );
+            }
+            d
+        }
         _ => Vec::new(),
     };
     let compare = match (&p.pinned, focused) {
-        (Some(a), Some(b)) => a
-            .part
-            .as_deref()
-            .and_then(|id| cat().get(id))
-            .map(|a| picker::compare(a, b)),
+        (Some(a), Some(b)) => a.part.as_deref().and_then(|id| cat().get(id)).map(|a| {
+            let builds = bike.map(|bk| {
+                (
+                    picker::build_with(cat(), g, bk, Some(a)),
+                    picker::build_with(cat(), g, bk, Some(b)),
+                )
+            });
+            picker::compare(a, b, builds.as_ref().map(|(x, y)| (x, y)))
+        }),
         _ => None,
     };
     PickerView {
