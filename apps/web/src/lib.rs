@@ -9,8 +9,8 @@
 //! comes from the virtual trainer (↑ / ↓) until a Bluetooth trainer or
 //! power meter is connected (B4, below).
 //!
-//! Desktop-only parts stay in `apps/desktop` (BLE, cpal audio, QUIC,
-//! files, voice, captures, the menus' settings files); they move into the
+//! Desktop-only parts stay in `apps/desktop` (QUIC, files, captures, the
+//! menus); they move into the
 //! shared crates behind web backends milestone by milestone (B2–B6), so
 //! both apps stay one client (spec 10B, full parity).
 //!
@@ -30,19 +30,32 @@
 //! Heart Rate, Wahoo) with SIM / ERG control and workouts ([`devices`]);
 //! browsers without Web Bluetooth ride with virtual power and say so.
 //!
+//! **Audio and voice (B5):** the desktop's synthesised game sounds through
+//! Web Audio ([`audio`]: the shared `ocw-audio` mixer, started by the first
+//! click or key – the browser's autoplay rule), voice chat over LiveKit's
+//! JS SDK with the same controller, rooms and tokens as the desktop
+//! ([`voice`]), the settings in `localStorage` ([`settings`]).
+//!
 //! **Worlds over HTTP (B2):** `?world=liechtenstein&route=vaduz-malbun`
 //! streams a world package from the server ([`world`]): manifest and
 //! signature chain, then the base and the tiles around the rider with
 //! range requests, every chunk verified, cached in OPFS, the tiles kept
 //! resident around the rider within a memory budget.
 
+pub mod audio;
 #[cfg(target_arch = "wasm32")]
 mod browser;
 #[cfg(target_arch = "wasm32")]
+mod browser_audio;
+#[cfg(target_arch = "wasm32")]
 mod browser_devices;
+#[cfg(target_arch = "wasm32")]
+mod browser_voice;
 pub mod devices;
 pub mod plugin;
 pub mod session;
+pub mod settings;
+pub mod voice;
 #[cfg(target_arch = "wasm32")]
 mod webtransport;
 pub mod world;
@@ -298,7 +311,9 @@ pub fn app(config: SessionConfig) -> App {
                 meta_check: bevy::asset::AssetMetaCheck::Never,
                 ..default()
             })
-            // No game audio in B1 (Web Audio comes with B5).
+            // Bevy's audio plays sample files; OCW's sounds are
+            // synthesised by the shared mixer, played through Web Audio
+            // by `audio::WebAudioPlugin` (B5).
             .disable::<bevy::audio::AudioPlugin>(),
     )
     .insert_resource(Time::<Fixed>::from_hz(f64::from(ocw_core::SIM_TICK_HZ)))
@@ -314,7 +329,16 @@ pub fn app(config: SessionConfig) -> App {
     app.insert_resource(plugin::MakeTransport(Box::new(|r| {
         Box::new(webtransport::WebTransportLink::new(r.clone()))
     })));
+    // The page's Web Audio output and the voice shim (B5).
+    #[cfg(target_arch = "wasm32")]
+    app.insert_resource(audio::MakeAudioOut(Box::new(browser_audio::start)));
     app.add_plugins(plugin::WebSessionPlugin { config });
+    // Settings first: audio and voice start with the saved values.
+    app.add_plugins((
+        settings::WebSettingsPlugin,
+        audio::WebAudioPlugin,
+        voice::WebVoicePlugin,
+    ));
     app
 }
 
@@ -366,6 +390,22 @@ pub fn page_console(line: &str) {
 #[wasm_bindgen::prelude::wasm_bindgen(js_name = netStats)]
 pub fn page_net_stats() -> String {
     plugin::net_stats_json()
+}
+
+/// `window.ocw.audio()`: the game audio's state as JSON (locked / running,
+/// the schedule, the level, the mix; B5).
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(js_name = audio)]
+pub fn page_audio() -> String {
+    audio::audio_json()
+}
+
+/// `window.ocw.voice()`: the voice call's state as JSON (status, switches,
+/// participants, devices, the echo test; B5).
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(js_name = voice)]
+pub fn page_voice() -> String {
+    voice::page_json()
 }
 
 /// `window.ocw.wasmMemory()`: the wasm memory in bytes.

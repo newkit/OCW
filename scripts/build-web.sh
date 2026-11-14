@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Builds the browser app (spec §14 Phase 10, B1) into target/web/:
-#   ocw_web_bg.wasm, ocw_web.js (wasm-bindgen glue), index.html, sizes.txt
+#   ocw_web_bg.wasm, ocw_web.js (wasm-bindgen glue), index.html, sizes.txt,
+#   ocw-voice.js and livekit-client.umd.js (voice, B5)
 #
 #   scripts/build-web.sh            the `web` profile (release, size-optimised)
 #   WEB_PROFILE=dev scripts/build-web.sh   a quick debug build
@@ -42,7 +43,11 @@ if command -v wasm-opt >/dev/null && [ "$profile" != dev ]; then
   wasm-opt -Os --enable-bulk-memory --enable-nontrapping-float-to-int \
     -o "$out/ocw_web_bg.wasm" "$out/ocw_web_bg.wasm"
 fi
-cp apps/web/web/index.html "$out/"
+cp apps/web/web/index.html apps/web/web/ocw-voice.js "$out/"
+# Voice (B5): LiveKit's JS SDK, pinned and hash-checked; without it the
+# page rides on, voice says "unavailable".
+scripts/fetch-livekit-client.sh "$out" ||
+  echo "warning: livekit-client not fetched: voice is unavailable in this build" >&2
 
 # Sizes (spec §14 Phase 10, 10C: ≤ 30 MB compressed).
 bin=$out/ocw_web_bg.wasm

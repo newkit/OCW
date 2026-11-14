@@ -17,6 +17,8 @@ livekit = ["dep:livekit", "dep:cpal", "dep:tokio", "dep:futures"]
 ocw-core.workspace = true
 ocw-protocol.workspace = true
 tracing.workspace = true
+# The browser backend's JSON boundary to the page's livekit-client shim (`web`).
+serde_json.workspace = true
 # LiveKit Rust SDK (Apache-2.0); downloads LiveKit's prebuilt libwebrtc
 # (BSD-3-Clause) at build time. rustls with webpki roots for wss://.
 # On Linux its bindings must be compiled with clang >= 21 (the prebuilt
