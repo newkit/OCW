@@ -13,7 +13,7 @@
 //!   Every switch is the in-app ride switch (M3) after "Change the ride?".
 //! - *About this world*: package, area and elevation, sun and time at the
 //!   rider, data sources with their notices (the credits, spec §13), routes.
-//! - *Weather*: clear until Phase 9 S4 ([`crate::weather`]).
+//! - *Weather*: the session's weather (Phase 9 S4, [`crate::weather`]).
 
 use bevy::prelude::*;
 use clap::{Arg, Command};
@@ -937,7 +937,7 @@ pub(crate) mod tests {
         assert_eq!(m.page(), Some(MenuPage::Sub(Page::TimeMachine)));
         let m = open_at(&c, &[2, 4]);
         assert_eq!(m.page(), Some(MenuPage::Sub(Page::Weather)));
-        assert_eq!(m.labels()[0], "Now:  clear (no simulation yet)");
+        assert_eq!(m.labels()[0], "Now:  clear (no weather from the server)");
     }
 
     #[test]

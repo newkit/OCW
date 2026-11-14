@@ -182,6 +182,8 @@ fn apply_sky(
     >,
     mut cameras: Query<CameraParts, With<FollowCamera>>,
     tunnels: Option<Res<crate::tunnel::Tunnels>>,
+    clouds: Option<Res<crate::weather::clouds::CloudState>>,
+    mut scene: Option<ResMut<crate::weather::SceneLight>>,
     mut commands: Commands,
 ) {
     let Some(sky) = view.as_ref().and_then(|v| v.sky.as_ref()) else {
@@ -195,14 +197,46 @@ fn apply_sky(
     let moonlight = ocw_sky::night::moonlight(moon.elevation_deg, moon.phase_angle_deg);
     let atmosphere = settings.mode == SkyMode::Atmosphere;
     let key = key_light(&sky.sky, &light, &moonlight, atmosphere);
+    // The weather (spec §14 Phase 9, S4): clouds take the direct light
+    // (a passing heap in front of the sun: its shadow sweeps over the
+    // rider), overcast leaves a flat grey sky light, storms are dark.
+    let weather = view.as_ref().and_then(|v| v.weather.as_ref());
+    let cl = weather.map(|w| ocw_weather::light::cloud_light(&w.state));
+    let direct = match (weather, &cl) {
+        (Some(w), Some(cl)) => {
+            let rider = view
+                .as_deref()
+                .and_then(crate::weather::clouds::rider_position);
+            let shade = match (rider, clouds.as_deref()) {
+                (Some(r), Some(c)) => crate::weather::clouds::sun_shade(
+                    &w.state,
+                    r,
+                    c.ground_y.unwrap_or(r.y),
+                    key.towards,
+                    c.drift,
+                ),
+                _ => 1.0,
+            };
+            if shade < 1.0 || partly_cumulus(&w.state) {
+                let haze = (-3.912 * 120.0 / w.state.visibility_m().max(1.0)).exp();
+                shade * haze
+            } else {
+                cl.direct
+            }
+        }
+        _ => 1.0,
+    };
+    let (flash, flash_towards) = weather.map_or((0.0, Vec3::Y), |w| {
+        crate::weather::flash_now(w, view.as_ref().map_or(0.0, |v| v.elapsed_s))
+    });
     for (e, mut sun, mut transform, disk) in &mut suns {
         let t = sun_transform(key.towards);
         if transform.rotation != t.rotation {
             transform.rotation = t.rotation;
         }
-        sun.illuminance = key.lux * daylight;
+        sun.illuminance = key.lux * daylight * direct;
         sun.color = key.colour;
-        sun.shadow_maps_enabled = key.shadows && daylight > 0.0;
+        sun.shadow_maps_enabled = key.shadows && daylight > 0.0 && cl.is_none_or(|c| c.shadows);
         // The atmosphere draws a sun disc at the light: not at the moon
         // (it has its own disc, `night_sky`).
         let want = if key.moon {
@@ -217,25 +251,58 @@ fn apply_sky(
             commands.entity(e).insert(want);
         }
     }
+    let diffuse = cl.map_or(1.0, |c| c.diffuse);
+    let grey = cl.map_or(0.0, |c| c.grey);
+    let ambient_rgb = greyed(light.ambient_rgb, grey, 0.0);
+    let ambient_now = (light.ambient + moonlight.ambient) * diffuse;
     if let Some(mut a) = ambient {
-        a.brightness = light.ambient + moonlight.ambient;
-        a.color = linear(light.ambient_rgb);
+        a.brightness = ambient_now + flash * crate::weather::FLASH_AMBIENT;
+        a.color = linear(ambient_rgb);
     }
+    // Grey fog and plain sky under clouds, darker in a storm.
+    let fog_srgb = greyed(light.fog_srgb, grey, cl.map_or(0.0, |c| c.darkness));
+    // A flash lights the rain and the haze too.
+    let fog_srgb = flashed(fog_srgb, flash);
     if let Some(mut c) = clear {
-        let want = srgb(light.fog_srgb);
+        let want = srgb(fog_srgb);
         if c.0 != want {
             c.0 = want;
         }
     }
+    // The exposure follows part of the clouds' darkening, as the eye does.
+    let target_ev = light.ev100 + cl.map_or(0.0, |c| c.stops * 0.7);
     let ev = ocw_sky::light::adapt_ev(
-        exposure.0.unwrap_or(light.ev100),
-        light.ev100,
+        exposure.0.unwrap_or(target_ev),
+        target_ev,
         time.delta_secs(),
     );
     exposure.0 = Some(ev);
+    if let Some(scene) = scene.as_deref_mut() {
+        let (key_lux, key_rgb) = if key.moon {
+            (moonlight.lux, Vec3::from(moonlight.rgb))
+        } else {
+            (light.sun_lux, Vec3::from(light.sun_rgb))
+        };
+        let want = crate::weather::SceneLight {
+            towards: key.towards,
+            key_lux: key_lux * daylight,
+            key_rgb,
+            ambient: ambient_now,
+            ambient_rgb: Vec3::from(ambient_rgb),
+            fog: {
+                let l = srgb(fog_srgb).to_linear();
+                Vec3::new(l.red, l.green, l.blue)
+            },
+            flash,
+            flash_towards,
+        };
+        if *scene != want {
+            *scene = want;
+        }
+    }
     for (e, fog, cam_exposure) in &mut cameras {
         if let Some(mut fog) = fog {
-            fog.color = srgb(light.fog_srgb);
+            fog.color = srgb(fog_srgb);
         }
         match cam_exposure {
             Some(mut x) => x.ev100 = ev,
@@ -244,6 +311,32 @@ fn apply_sky(
             }
         }
     }
+}
+
+/// Broken heaps: the sun is either out or behind a cloud (the shade at the
+/// rider), not the average of the cover.
+fn partly_cumulus(w: &ocw_weather::WeatherState) -> bool {
+    matches!(
+        w.cloud_type,
+        ocw_weather::CloudType::Cumulus | ocw_weather::CloudType::Cumulonimbus
+    ) && w.cloud_cover > 0.02
+        && w.cloud_cover < 0.97
+}
+
+/// The fog colour during a lightning flash: towards a bluish white.
+pub fn flashed(rgb: [f32; 3], flash: f32) -> [f32; 3] {
+    let k = (flash * 0.7).clamp(0.0, 0.85);
+    let white = [0.82, 0.85, 0.95];
+    [0, 1, 2].map(|i| rgb[i] + (white[i] - rgb[i]) * k)
+}
+
+/// `rgb` towards its own grey by `grey` (0–1), darkened by `dark` (storm
+/// clouds: up to 45 %).
+pub fn greyed(rgb: [f32; 3], grey: f32, dark: f32) -> [f32; 3] {
+    let l = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+    let g = grey.clamp(0.0, 1.0);
+    let k = 1.0 - 0.45 * dark.clamp(0.0, 1.0) * g;
+    rgb.map(|c| (c + (l - c) * g) * k)
 }
 
 /// The scene's one directional light: the sun, or at night the moon.

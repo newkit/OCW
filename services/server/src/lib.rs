@@ -107,6 +107,17 @@ pub struct ServerConfig {
     /// the local servers, the host of a shared session (the default),
     /// nobody when the organizer fixed them.
     pub collision_access: ClockAccess,
+    /// Who may change the session's weather (spec §14 Phase 9, S4 / S5;
+    /// [`v1::WeatherRequest`], Q2): the single player on the local servers,
+    /// the host of a shared session (the default), nobody when the
+    /// organizer fixed it.
+    pub weather_access: ClockAccess,
+    /// The weather the session starts with (`None`: clear; real weather
+    /// is Phase 9 S7); `ocw-server --weather PRESET`.
+    pub weather: Option<ocw_weather::WeatherState>,
+    /// Seed of the gusts, the lightning and the weather simulation
+    /// (`None`: from the session's start instant; tests fix it).
+    pub weather_seed: Option<u64>,
 }
 
 pub use ocw_protocol::ClockAccess;
@@ -147,6 +158,8 @@ pub struct GameServer {
     left: Vec<String>,
     /// The session's world clock (spec §14 Phase 9), on session time.
     clock: ocw_sky::WorldClock,
+    /// The session's weather (spec §14 Phase 9, S4), on session time.
+    weather: ocw_weather::SessionWeather,
     /// Session time (s) before the current session: a world switch starts
     /// a new [`Session`] at tick 0, the clock goes on.
     time_base_s: f64,
@@ -245,9 +258,15 @@ impl GameServer {
     /// A session on `course` (a [`Route`] converts into one).
     pub fn new(course: impl Into<Course>, config: ServerConfig) -> Self {
         let session = new_session(course.into(), &config);
-        let clock = ocw_sky::WorldClock::new(config.real_epoch_ms.unwrap_or_else(unix_now_ms));
+        let epoch = config.real_epoch_ms.unwrap_or_else(unix_now_ms);
+        let clock = ocw_sky::WorldClock::new(epoch);
+        let seed = config
+            .weather_seed
+            .unwrap_or_else(|| ocw_weather::lightning::unit(epoch as u64, 1, 2).to_bits());
+        let weather = ocw_weather::SessionWeather::with(config.weather.unwrap_or_default(), seed);
         Self {
             clock,
+            weather,
             config,
             session,
             riders: BTreeMap::new(),
@@ -341,6 +360,85 @@ impl GameServer {
     /// The world clock (spec §14 Phase 9).
     pub fn clock(&self) -> &ocw_sky::WorldClock {
         &self.clock
+    }
+
+    /// The session's weather (spec §14 Phase 9, S4).
+    pub fn weather(&self) -> &ocw_weather::SessionWeather {
+        &self.weather
+    }
+
+    fn weather_message(&self) -> v1::SessionWeather {
+        ocw_protocol::session_weather(
+            &self.weather,
+            self.session_time_s(),
+            self.config.weather_access,
+        )
+    }
+
+    /// A weather request from `rider` (spec §14 Phase 9, S4; the weather
+    /// machine of S5 sends the same): checked here, on the server (§6.1,
+    /// Q2: only the host of a shared session), like the clock's.
+    fn weather_request(&mut self, rider: RiderId, req: &v1::WeatherRequest) -> S {
+        let result = |ok: bool, message: String| S::DevResult(v1::DevCommandResult { ok, message });
+        if !self.config.weather_access.allows(Some(rider), self.host()) {
+            return result(
+                false,
+                match self.config.weather_access {
+                    ClockAccess::Nobody => {
+                        "the weather of this session is set by the organizer".into()
+                    }
+                    _ => "only the host of this shared ride can change the weather".into(),
+                },
+            );
+        }
+        let c = ocw_protocol::weather_change(req);
+        let t = self.session_time_s();
+        let mut said = Vec::new();
+        if let Some(seed) = c.simulate {
+            let seed = if seed == 0 {
+                self.weather.seed().rotate_left(17) ^ t.to_bits()
+            } else {
+                seed
+            };
+            self.weather.simulate(t, seed);
+            said.push(format!("weather simulation (seed {seed})"));
+        }
+        if let Some(target) = c.target {
+            self.weather.set(t, target, c.transition_s, c.settle_ground);
+            said.push(if c.transition_s > 0.0 {
+                format!(
+                    "weather -> {} in {:.0} s",
+                    target.condition().label(),
+                    c.transition_s
+                )
+            } else {
+                format!("weather: {}", self.weather.now(t).summary())
+            });
+        }
+        if !c.ground.is_empty() {
+            let g = c.ground.apply(self.weather.ground());
+            self.weather.set_ground(g);
+            said.push(format!(
+                "ground: wet {:.0} %, puddles {:.0} %, snow {:.0} %",
+                g.wetness() * 100.0,
+                g.puddles() * 100.0,
+                g.snow_cover() * 100.0
+            ));
+        }
+        if let Some((d, b)) = c.strike {
+            let s = self.weather.strike(t, d, b);
+            said.push(format!(
+                "lightning {:.0} m away, thunder in {:.1} s",
+                s.distance_m,
+                s.thunder_delay_s()
+            ));
+        }
+        if said.is_empty() {
+            return result(false, "empty weather request".into());
+        }
+        let said = said.join("; ");
+        tracing::info!(%rider, weather = %said, "weather changed");
+        result(true, said)
     }
 
     /// The host of a shared session: the rider connected longest (lowest
@@ -467,6 +565,7 @@ impl GameServer {
             (C::Dev(cmd), Some(rider)) => Some(self.dev_command(rider, cmd)),
             (C::Event(req), Some(_)) => Some(self.event_request(req)),
             (C::Clock(req), Some(rider)) => Some(self.clock_request(rider, &req)),
+            (C::Weather(req), Some(rider)) => Some(self.weather_request(rider, &req)),
             (C::World(req), Some(rider)) => Some(self.world_request(conn, rider, req)),
             (C::God(req), Some(rider)) => Some(S::God(self.god_request(rider, req))),
             (C::GodPose(pose), Some(rider)) => {
@@ -616,6 +715,7 @@ impl GameServer {
             collisions: ocw_protocol::collision_mode_to_wire(self.session.collision_mode()),
             collision_access: ocw_protocol::access_to_wire(self.config.collision_access),
             chaotic_bots: self.session.chaotic_bots(),
+            weather: Some(self.weather_message()),
         })
     }
 
@@ -1029,6 +1129,8 @@ impl GameServer {
     /// a snapshot when one is due (every 5th tick at 50/10 Hz).
     pub fn tick(&mut self) -> Vec<Vec<u8>> {
         self.session.step();
+        let t = self.session_time_s();
+        self.weather.tick(t);
         let mut out = Vec::new();
         // The event: at once on a change, and at 2 Hz while a race or time
         // trial runs.
@@ -1076,6 +1178,7 @@ impl GameServer {
             clock: Some(self.clock_message()),
             collisions: ocw_protocol::collision_mode_to_wire(self.session.collision_mode()),
             chaotic_bots: self.session.chaotic_bots(),
+            weather: Some(self.weather_message()),
         };
         out.push(encode(&server_message(S::Snapshot(snapshot))));
         out
@@ -1748,6 +1851,108 @@ mod tests {
         let (_, _) = join(&mut solo);
         let (second, _) = join(&mut solo);
         assert!(ask_clock(&mut solo, second, K::Speed(60.0)).0);
+    }
+
+    fn weather_server(access: ClockAccess) -> GameServer {
+        GameServer::new(
+            Route::test_loop(),
+            ServerConfig {
+                weather_access: access,
+                real_epoch_ms: Some(EPOCH_MS),
+                weather_seed: Some(5),
+                ..Default::default()
+            },
+        )
+    }
+
+    fn ask_weather(
+        server: &mut GameServer,
+        conn: ConnectionId,
+        c: ocw_protocol::WeatherChange,
+    ) -> (bool, String) {
+        let reply = server.handle(conn, &encode(&ocw_protocol::weather_request(&c)));
+        match decode_server(&reply[0]).unwrap() {
+            S::DevResult(r) => (r.ok, r.message),
+            other => panic!("expected a result, got {other:?}"),
+        }
+    }
+
+    /// The weather is server state (spec §14 Phase 9, S4, §6.1): in the
+    /// welcome and every snapshot, on session time; transitions, ground
+    /// and strikes reach everyone; only the host changes it (Q2).
+    #[test]
+    fn the_weather_travels_in_snapshots_and_only_the_host_changes_it() {
+        use ocw_weather::presets::preset;
+        let mut server = weather_server(ClockAccess::Host);
+        let (host, hw) = join(&mut server);
+        let (guest, _) = join(&mut server);
+        let w = ocw_protocol::weather_info(&hw.weather.unwrap());
+        assert_eq!(w.now, preset("clear").unwrap(), "clear until S7");
+        assert_eq!((w.seed, w.access), (5, ClockAccess::Host));
+        // The guest may not; the host may: a thunderstorm over 2 s.
+        let storm = ocw_protocol::WeatherChange {
+            target: Some(preset("thunderstorm").unwrap()),
+            transition_s: 2.0,
+            ..Default::default()
+        };
+        let (ok, msg) = ask_weather(&mut server, guest, storm);
+        assert!(!ok && msg.contains("only the host"), "{msg}");
+        let (ok, msg) = ask_weather(&mut server, host, storm);
+        assert!(ok && msg.contains("thunderstorm in 2 s"), "{msg}");
+        let snap = next_snapshot(&mut server);
+        let w = ocw_protocol::weather_info(&snap.weather.unwrap());
+        assert!(w.target.is_some() && !w.immediate);
+        assert!(
+            w.now.cloud_cover > 0.05 && w.now.cloud_cover < 1.0,
+            "on its way"
+        );
+        for _ in 0..25 {
+            next_snapshot(&mut server);
+        }
+        let snap = next_snapshot(&mut server);
+        let w = ocw_protocol::weather_info(&snap.weather.unwrap());
+        assert_eq!(w.now, preset("thunderstorm").unwrap());
+        assert!(w.target.is_none());
+        assert!(w.ground.wetness() > 0.0, "the rain wets the road");
+        // A test strike reaches everyone's snapshots with its time.
+        let (ok, msg) = ask_weather(
+            &mut server,
+            host,
+            ocw_protocol::WeatherChange {
+                strike: Some((1715.0, 90.0)),
+                ..Default::default()
+            },
+        );
+        assert!(ok && msg.contains("thunder in 5.0 s"), "{msg}");
+        let snap = next_snapshot(&mut server);
+        let w = ocw_protocol::weather_info(&snap.weather.unwrap());
+        assert!(w.strikes.iter().any(|s| s.distance_m == 1715.0));
+        // Ground overrides and the simulation.
+        let (ok, _) = ask_weather(
+            &mut server,
+            host,
+            ocw_protocol::WeatherChange {
+                ground: ocw_weather::command::GroundChange {
+                    snow_cover: Some(1.0),
+                    ..Default::default()
+                },
+                simulate: Some(3),
+                ..Default::default()
+            },
+        );
+        assert!(ok);
+        assert_eq!(server.weather().ground().snow_cover(), 1.0);
+        assert_eq!(server.weather().mode(), ocw_weather::Mode::Simulated);
+        let (ok, msg) = ask_weather(&mut server, host, Default::default());
+        assert!(!ok && msg.contains("empty"), "{msg}");
+        // An organizer's session: nobody; a local server: the single player.
+        let mut fixed = weather_server(ClockAccess::Nobody);
+        let (only, _) = join(&mut fixed);
+        let (ok, msg) = ask_weather(&mut fixed, only, storm);
+        assert!(!ok && msg.contains("organizer"), "{msg}");
+        let mut solo = GameServer::new(Route::test_loop(), crate::local::local_config(0, 0.0));
+        let (me, _) = join(&mut solo);
+        assert!(ask_weather(&mut solo, me, storm).0);
     }
 
     fn world_server(access: ClockAccess) -> GameServer {

@@ -273,6 +273,9 @@ pub struct TerrainLook {
     /// splat says forest floor (the ground under the canopy gets less
     /// light than our low-poly trees' shadows give it).
     pub tile: Vec4,
+    /// The weather (spec §14 Phase 9, S4; [`crate::weather::surface_uniform`]):
+    /// x wetness, y puddles, z snow cover, w wind sway.
+    pub weather: Vec4,
 }
 
 impl Default for TerrainLook {
@@ -283,6 +286,7 @@ impl Default for TerrainLook {
             material_tint: [Vec4::ONE; GROUND_LAYERS],
             params: Vec4::new(0.8, 7.3, 0.35, 2.0),
             tile: Vec4::new(1000.0, CANOPY_SHADE, 0.0, 0.0),
+            weather: Vec4::ZERO,
         }
     }
 }

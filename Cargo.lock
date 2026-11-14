@@ -6088,6 +6088,7 @@ dependencies = [
  "ocw-server",
  "ocw-sim",
  "ocw-sky",
+ "ocw-weather",
  "ocw-world",
 ]
 
@@ -6114,6 +6115,7 @@ dependencies = [
  "ocw-sim",
  "ocw-sky",
  "ocw-voice",
+ "ocw-weather",
  "ocw-world",
  "ocw-worldstore",
  "raw-window-handle",
@@ -6153,6 +6155,7 @@ dependencies = [
  "ocw-core",
  "ocw-sim",
  "ocw-sky",
+ "ocw-weather",
  "ocw-world",
  "prost",
  "prost-build",
@@ -6174,6 +6177,7 @@ dependencies = [
  "ocw-core",
  "ocw-sim",
  "ocw-sky",
+ "ocw-weather",
  "ocw-world",
  "png",
  "serde",
@@ -6192,6 +6196,7 @@ dependencies = [
  "ocw-protocol",
  "ocw-sim",
  "ocw-sky",
+ "ocw-weather",
  "ocw-world",
  "ocw-worldstore",
  "quinn",
@@ -6252,6 +6257,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "ocw-weather"
+version = "0.2.1"
+
+[[package]]
 name = "ocw-web"
 version = "0.2.1"
 dependencies = [
@@ -6266,6 +6275,7 @@ dependencies = [
  "ocw-server",
  "ocw-sim",
  "ocw-sky",
+ "ocw-weather",
  "ocw-world",
  "ocw-worldstore",
  "serde_json",

@@ -42,6 +42,10 @@ pub fn local_config(bots: u32, start_m: f64) -> ServerConfig {
         collisions: true,
         chaotic_bots: false,
         collision_access: crate::ClockAccess::Anyone,
+        // The single player sets the weather (spec §14 Phase 9, Q2).
+        weather_access: crate::ClockAccess::Anyone,
+        weather: None,
+        weather_seed: None,
     }
 }
 

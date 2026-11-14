@@ -173,6 +173,9 @@ pub struct ClientCore {
     /// smoothly between snapshots, and its last message.
     clock: ocw_sky::ClockPredictor,
     clock_info: Option<ocw_protocol::ClockInfo>,
+    /// The session's weather (spec §14 Phase 9, S4): the server's, eased
+    /// between snapshots, and the lightning strikes.
+    weather: crate::weather::WeatherClient,
     /// Who may switch the world (from the welcome).
     world_access: Option<ocw_protocol::ClockAccess>,
     /// Who may enter god mode (spec §14 Phase 13A; `None`: not yet told).
@@ -244,6 +247,7 @@ impl ClientCore {
             echo_rider: None,
             clock: ocw_sky::ClockPredictor::default(),
             clock_info: None,
+            weather: Default::default(),
             world_access: None,
             god_access: None,
             god: Default::default(),
@@ -554,6 +558,9 @@ impl ClientCore {
                 if let Some(c) = &w.clock {
                     self.on_clock(c, now_s);
                 }
+                if let Some(weather) = &w.weather {
+                    self.weather.on_message(weather, now_s, self.snapshot_age_s);
+                }
                 if !self.autodrive_at_start {
                     self.set_autodrive(false);
                 }
@@ -665,6 +672,38 @@ impl ClientCore {
         }
     }
 
+    /// The session's weather on this client (spec §14 Phase 9, S4).
+    pub fn weather(&self) -> &crate::weather::WeatherClient {
+        &self.weather
+    }
+
+    pub fn weather_mut(&mut self) -> &mut crate::weather::WeatherClient {
+        &mut self.weather
+    }
+
+    /// Whether this rider may change the weather (the server checks it
+    /// again; Q2): anyone on a local server, the host of a shared ride.
+    pub fn may_change_weather(&self) -> bool {
+        let host = self.clock_info.and_then(|c| c.host);
+        self.weather
+            .info()
+            .is_some_and(|w| w.may_change(self.rider_id, host))
+    }
+
+    /// Who sets the weather, for messages: "you", "the host", "the organizer".
+    pub fn weather_control(&self) -> &'static str {
+        match self.weather.info().map(|w| w.access) {
+            _ if self.may_change_weather() => "you",
+            Some(ocw_protocol::ClockAccess::Nobody) => "the organizer",
+            _ => "the host",
+        }
+    }
+
+    /// The encoded weather request.
+    pub fn weather_message(change: &ocw_protocol::WeatherChange) -> Vec<u8> {
+        encode(&ocw_protocol::weather_request(change))
+    }
+
     /// The encoded time-machine request.
     pub fn clock_message(change: ocw_sky::ClockChange) -> Vec<u8> {
         encode(&ocw_protocol::clock_request(change))
@@ -736,6 +775,9 @@ impl ClientCore {
         self.echo_rider = ocw_protocol::echo_rider(s);
         if let Some(c) = &s.clock {
             self.on_clock(c, now_s);
+        }
+        if let Some(weather) = &s.weather {
+            self.weather.on_message(weather, now_s, self.snapshot_age_s);
         }
         self.collisions.on_snapshot(s, now_s, self.rider_id);
         let mut others = Vec::new();

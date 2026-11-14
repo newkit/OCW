@@ -25,6 +25,7 @@ message ClientMessage {
     EchoRequest echo = 14;
     RulesRequest rules = 15;
     BikeChange bike_change = 16;
+    WeatherRequest weather = 17;
   }
 }
 
@@ -170,6 +171,30 @@ message ClockRequest {
     float speed = 5;
     bool paused = 6;
   }
+}
+
+// The weather machine's request (spec §14 Phase 9, S4 console `weather`;
+// the menu comes with S5): answered with a DevCommandResult. The server
+// checks who may (the clock's rule: anyone on a local server, the host of a
+// shared session, nobody in an organizer's) and clamps the values.
+message WeatherRequest {
+  // Go to this weather (absent: keep it).
+  Weather target = 1;
+  // Over this many seconds (0: at once).
+  float transition_s = 2;
+  // A preset set at once also gets its ground (wet roads in rain).
+  bool settle_ground = 3;
+  // The simulation from now on (fronts, showers), with this seed (0: the
+  // server picks one).
+  bool simulate = 4;
+  uint64 seed = 5;
+  // Ground overrides (0-1).
+  optional float wetness = 6;
+  optional float puddles = 7;
+  optional float snow_cover = 8;
+  // A test strike now at this distance (m) and bearing (degrees).
+  optional float strike_distance_m = 9;
+  optional float strike_bearing_deg = 10;
 }
 
 // Voice chat (spec §7, §2.4): asks the game server for a short-lived
@@ -610,6 +635,9 @@ message Welcome {
   CollisionMode collisions = 14;
   ClockAccess collision_access = 15;
   bool chaotic_bots = 16;
+  // The session's weather (spec §14 Phase 9, S4); absent from older
+  // servers (the client then shows clear weather).
+  SessionWeather weather = 17;
 }
 
 enum ClockMode {
@@ -668,6 +696,92 @@ message Snapshot {
   // §14 Phase 12A: the host may change them during the ride).
   CollisionMode collisions = 5;
   bool chaotic_bots = 6;
+  // The session's weather at server_tick (spec §14 Phase 9, S4).
+  SessionWeather weather = 7;
+}
+
+// The weather at one moment (spec §14 Phase 9, 9E; ocw_weather::WeatherState).
+message Weather {
+  // Share of the sky covered (0-1).
+  float cloud_cover = 1;
+  CloudType cloud_type = 2;
+  // Cloud base above the ground at the rider (m).
+  float cloud_base_m = 3;
+  Precipitation precip = 4;
+  // Water equivalent (mm/h).
+  float precip_mm_h = 5;
+  // Visibility in fog / haze, without the precipitation's own (m).
+  float fog_visibility_m = 6;
+  float wind_mps = 7;
+  float gust_mps = 8;
+  // Where the wind comes from (degrees clockwise from north).
+  float wind_from_deg = 9;
+  float temperature_c = 10;
+  // Relative humidity (0-1).
+  float humidity = 11;
+  float pressure_hpa = 12;
+  float lightning_per_min = 13;
+}
+
+enum CloudType {
+  CLOUD_TYPE_CUMULUS = 0;
+  CLOUD_TYPE_STRATUS = 1;
+  CLOUD_TYPE_CIRRUS = 2;
+  CLOUD_TYPE_CUMULONIMBUS = 3;
+}
+
+enum Precipitation {
+  PRECIPITATION_NONE = 0;
+  PRECIPITATION_DRIZZLE = 1;
+  PRECIPITATION_RAIN = 2;
+  PRECIPITATION_SNOW = 3;
+  PRECIPITATION_SLEET = 4;
+  PRECIPITATION_HAIL = 5;
+}
+
+enum WeatherMode {
+  WEATHER_MODE_FIXED = 0;
+  WEATHER_MODE_SIMULATED = 1;
+}
+
+// A lightning strike (spec §14 Phase 9, S4): at a distance and bearing from
+// every rider; the thunder follows at the speed of sound.
+message LightningStrike {
+  uint32 id = 1;
+  // Session time of the flash (s).
+  double at_s = 2;
+  float distance_m = 3;
+  float bearing_deg = 4;
+  float intensity = 5;
+  uint32 seed = 6;
+}
+
+// The session's weather (spec §14 Phase 9, 9A / S4): owned by the server
+// like the world clock, in Welcome and every Snapshot. Clients approach it
+// smoothly between snapshots and take a change made at once (immediate, a
+// new revision) without easing.
+message SessionWeather {
+  // The weather now (during a transition: the eased state).
+  Weather now = 1;
+  // Seconds until a transition reaches its target (0: none).
+  float transition_left_s = 2;
+  // The ground (0-1): road wetness, puddles, snow cover.
+  float wetness = 3;
+  float puddles = 4;
+  float snow_cover = 5;
+  uint32 revision = 6;
+  bool immediate = 7;
+  WeatherMode mode = 8;
+  // Who may change it (WeatherRequest): the same rule as the clock's.
+  ClockAccess access = 9;
+  // Seed of the gusts (the same gust everywhere at the same moment).
+  uint64 seed = 10;
+  // Session time of the message (s): the strikes' time base.
+  double session_s = 11;
+  // Strikes of the last seconds (and the coming second).
+  repeated LightningStrike strikes = 12;
+  // The target of a transition (absent: none).
+  Weather target = 13;
 }
 
 // Quantized rider state (spec §6.2).

@@ -15,6 +15,7 @@ use super::dsp::smoothing;
 use super::mix::{Bus, BusGains};
 use super::others::{OthersFrame, OthersSynth};
 use super::ride::{RideParams, RideSynth};
+use super::weather::{ThunderSound, WeatherParams, WeatherSynth};
 
 /// Samples between parameter and filter updates.
 const BLOCK: usize = 32;
@@ -38,6 +39,11 @@ pub enum MixerMsg {
     Cue(Cue, Instant),
     /// New bus gains (volume or mute changed).
     Gains(BusGains),
+    /// The weather sounds' targets (spec §14 Phase 9, S4; sent when they
+    /// change).
+    Weather(WeatherParams),
+    /// A thunder arrives now.
+    Thunder(ThunderSound),
 }
 
 /// See the module docs.
@@ -47,6 +53,9 @@ pub struct Mixer {
     ride_target: RideParams,
     ride_now: RideParams,
     others: OthersSynth,
+    weather: WeatherSynth,
+    weather_target: WeatherParams,
+    weather_now: WeatherParams,
     gains_target: BusGains,
     gains_now: BusGains,
     voices: Vec<CueVoice>,
@@ -69,6 +78,9 @@ impl Mixer {
             ride_target: RideParams::default(),
             ride_now: RideParams::default(),
             others: OthersSynth::new(sr),
+            weather: WeatherSynth::new(sr),
+            weather_target: WeatherParams::default(),
+            weather_now: WeatherParams::default(),
             gains_target: gains,
             gains_now: gains,
             voices: Vec::new(),
@@ -97,6 +109,7 @@ impl Mixer {
             self.sr = sr;
             self.ride = RideSynth::new(sr);
             self.others = OthersSynth::new(sr);
+            self.weather = WeatherSynth::new(sr);
             self.smooth = smoothing(0.06, sr, BLOCK);
             self.voices.clear();
         }
@@ -107,6 +120,8 @@ impl Mixer {
             MixerMsg::Ride(p) => self.ride_target = p,
             MixerMsg::Others(f) => self.others.apply(f),
             MixerMsg::Gains(g) => self.gains_target = g,
+            MixerMsg::Weather(w) => self.weather_target = w,
+            MixerMsg::Thunder(t) => self.weather.thunder(t),
             MixerMsg::Cue(cue, at) => {
                 if at.elapsed() <= CUE_MAX_AGE {
                     self.play(cue);
@@ -191,6 +206,9 @@ impl Mixer {
                 .approach(&self.ride_target, BLOCK as f32 / self.sr);
             self.gains_now.approach(&self.gains_target, self.smooth);
             self.ride.set_filters(&self.ride_now);
+            self.weather_now
+                .approach(&self.weather_target, BLOCK as f32 / self.sr);
+            self.weather.set_filters(&self.weather_now);
             self.others.block(BLOCK);
         }
         self.phase = (self.phase + 1) % BLOCK;
@@ -215,9 +233,12 @@ impl Mixer {
             + bus[2] * g.get(Bus::Voice)
             + bus[3] * others;
         let (ol, or) = self.others.sample();
+        // The weather, on the effects bus, in stereo.
+        let (wl, wr) = self.weather.sample(&self.weather_now);
+        let fx = RIDE_LEVEL * g.get(Bus::Effects);
         (
-            soft_limit(centre + RIDE_LEVEL * others * ol),
-            soft_limit(centre + RIDE_LEVEL * others * or),
+            soft_limit(centre + RIDE_LEVEL * others * ol + fx * wl),
+            soft_limit(centre + RIDE_LEVEL * others * or + fx * wr),
         )
     }
 }

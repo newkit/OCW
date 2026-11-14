@@ -10,8 +10,8 @@ multiplayer.
 </p>
 <p align="center"><sub>Free ride with bots on the Vaduz–Malbun road (Liechtenstein, 1390 m), rendered by the app (scenes <code>readme-climb-behind</code> / <code>readme-climb-front</code> in <code>scripts/scenes.toml</code>). Map data © OpenStreetMap contributors (ODbL), elevation SRTM (NASA / USGS).</sub></p>
 
-**Status:** worlds, multiplayer, voice, the sky and the time machine work; textures,
-weather and the browser / VR versions are in progress. Phases and decisions are
+**Status:** worlds, multiplayer, voice, the sky, the time machine and the weather work;
+textures, the weather machine, real weather and the browser / VR versions are in progress. Phases and decisions are
 in [SPECIFICATION.md](SPECIFICATION.md).
 
 ## Worlds
@@ -350,8 +350,9 @@ app.
 *About this world* shows the package (id, version, build date, signature),
 the area and the elevation range, the time zone with today's sunrise, sunset
 and twilight times at your position, the data sources with their full credit
-notices, and the routes with their length and climbing. *Weather* says
-"clear" until the weather simulation exists (spec §14 Phase 9 S4).
+notices, and the routes with their length and climbing. *Weather* shows the
+session's weather (condition, wind, the road, the mode, who sets it; the
+weather machine's menu follows with spec §14 Phase 9 S5).
 
 In a shared ride (`--server`) only the host changes the world: the menu asks
 the server, which checks it, loads the package from its own installed
@@ -1037,6 +1038,45 @@ owns the clock: solo you set it, in a shared ride only the host (the rider
 connected longest; `ocw-server --time-control host|anyone|nobody`). Each ride
 starts at the real time.
 
+### Weather
+
+The session has **one weather, owned by the game server** like the world clock
+(spec §14 Phase 9 S4): clouds (cumulus heaps, a grey stratus deck, cirrus,
+thunder clouds), rain, drizzle, snow, sleet and hail with their intensity, fog,
+wind with gusts, temperature, humidity, pressure and lightning – extremes
+included (gales, cloudbursts, hail, heavy snow, dense fog). It is clear until
+someone changes it (real weather comes later). What you see and hear:
+
+- **Light:** overcast is flat light without hard shadows and a grey sky; storms
+  are dark; under broken clouds the sun comes and goes as the heaps drift by.
+- **Clouds** drawn per type in the sky, drifting with the wind; on high
+  mountains you look down on them; riding into a low cloud is fog.
+- **Fog** with its real visibility (fog plus rain or snow): dense fog swallows
+  the road after a few dozen metres.
+- **Rain, snow and hail** around you, slanted by the wind and your speed;
+  **wet roads** darker and glossy, **puddles** in the hollows in heavy rain,
+  **spray** behind the wheels; **snow** on the meadows, roofs and trees when it
+  is cold (the roads stay cleared).
+- **Trees** lean and sway in the wind and its gusts.
+- **Lightning** lights the clouds and the land, near strikes show their channel,
+  the **thunder** follows three seconds per kilometre later.
+- **Sound:** rain (louder the harder it falls), drops on the helmet, hail
+  knocking, gusts, tyres hissing on a wet road, thunder cracking and rumbling.
+
+Solo you set the weather, in a shared ride only the host (`ocw-server
+--weather-control host|anyone|nobody`). From the console:
+
+```text
+weather                       the weather now, the road, who sets it
+weather thunderstorm          a preset at once (weather list: all presets)
+weather heavy-rain in 2m      a transition over two minutes
+weather rain=6 wind=12 dir=SW clouds=90%   change fields
+weather wet=1 snowcover=0.5   the road's wetness, the snow on the ground
+weather auto                  the weather simulation: fronts and showers
+weather strike 1500           a lightning strike 1.5 km away (test)
+weather.fx particles 10000    fewer particles (weak GPUs; 0 = none)
+```
+
 ## Console commands
 
 Open the console with `` ` `` or F12; `help` lists the commands, `help NAME`
@@ -1072,6 +1112,11 @@ for now).
 | `sky` | Sun azimuth / elevation, the light, the moon (phase, place), the planets above the horizon and the light pollution at the rider |
 | `camera.look AZ [EL]` \| `camera.look off` | Look at the sky from just behind the rider: azimuth (0 = north, 90 = east) and elevation in degrees (the moon, a planet, the Milky Way); `off` returns to the chase camera |
 | `sky.night PERCENT` \| `sky.mode atmosphere\|simple` \| `sky.lights auto\|on\|off` | This session's night brightness, sky and bike lights (the `display.*` settings keep them) |
+| `weather` \| `weather list` | The weather now (condition, intensity, visibility, temperature, wind, the road's wetness, puddles, snow cover, the mode, who sets it), or the presets |
+| `weather PRESET [in T]` | A preset (`clear`, `fair`, `cloudy`, `overcast`, `fog`, `mist`, `drizzle`, `light-rain`, `rain`, `heavy-rain`, `thunderstorm`, `hail`, `snow`, `heavy-snow`, `sleet`, `windy`, `storm`) at once, or as a transition over T (`90`, `30s`, `5m`) |
+| `weather FIELD=VALUE... [in T]` | Change fields: `clouds=0-1`, `type=cumulus\|stratus\|cirrus\|cb`, `base=M`, `rain\|drizzle\|snow\|sleet\|hail=MM_H`, `precip=none`, `fog=M`, `wind=M_S`, `gust=M_S`, `dir=DEG\|SW`, `temp=C`, `humidity=0-1`, `pressure=HPA`, `lightning=PER_MIN`; the ground: `wet=0-1`, `puddles=0-1`, `snowcover=0-1` |
+| `weather auto [SEED]` \| `weather strike [DIST [BEARING]]` | The weather simulation (fronts, showers) from now; a test lightning strike |
+| `weather.fx clouds\|particles\|spray\|bolts on\|off\|N` | What of the weather is drawn (particles: the budget, default 40000) |
 | **Audio** (spec §3.3) | |
 | `audio.volume master\|effects\|others\|music\|voice PERCENT` | Set a volume for this session (`set audio.effects 60` also saves it) |
 | `audio.mute [on\|off\|toggle]` | Mute or unmute all sound (`set audio.mute on` saves it) |
@@ -1444,6 +1489,8 @@ It prints the riders' positions and speeds while it runs. Options:
 `--bots N` (test riders, default 10), `--seconds S` (0 = until stopped with
 Ctrl+C), `--fast` (no real-time pacing), `--time-control host|anyone|nobody`
 (who may change the world clock with the time machine, default the host),
+`--weather-control host|anyone|nobody` (who may change the weather, default
+the host), `--weather PRESET` (the weather the session starts with),
 `--world PKG|ID` and `--seed N` (free
 ride on a world package's road graph, start point seed; verified like in the
 desktop app, `--allow-unsigned` and `--trust-root FILE` as there), `--route NAME`

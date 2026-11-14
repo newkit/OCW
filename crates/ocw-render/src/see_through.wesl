@@ -4,8 +4,10 @@
 // `see_through_keep` mirrors `see_through::keep` in Rust.
 
 import bevy_pbr::render::{
-    forward_io::{VertexOutput, FragmentOutput},
-    mesh_view_bindings::view,
+    forward_io::{Vertex, VertexOutput, FragmentOutput, decompress_vertex},
+    mesh_functions,
+    mesh_view_bindings::{view, globals},
+    view_transformations::position_world_to_clip,
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::{alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing},
 };
@@ -17,6 +19,10 @@ struct SeeThroughFade {
     // x: near fade radius, y/z: sight radius at the eye/at the focus,
     // w: ramp width.
     shape: vec4<f32>,
+    // The weather: x / z wind direction, y sway amount (0-1), w snow.
+    wind: vec4<f32>,
+    // x: 0 = height above the foot in uv.x, 1 = local y + y.
+    sway: vec4<f32>,
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100)
@@ -57,6 +63,56 @@ fn bayer4(frag_xy: vec2<f32>) -> f32 {
     return (m[c.y * 4u + c.x] + 0.5) / 16.0;
 }
 
+// The sway (spec §14 Phase 9, S4; `see_through::sway_offset`): a lean
+// downwind and an oscillation growing with the height above the foot; the
+// phase follows the place, so gusts run through a forest as a wave. The
+// shadow pass keeps the trees still (cheap; the shadows are soft).
+fn sway_offset(height: f32, tree: f32, amount: f32, phase: f32) -> f32 {
+    if amount <= 0.0 || height <= 0.3 {
+        return 0.0;
+    }
+    let k = min(height / max(tree, 1.0), 1.5);
+    let bend = amount * k * k * (0.55 + 0.45 * sin(phase)) * 1.6;
+    return bend + 0.06 * amount * k * sin(phase * 4.3);
+}
+
+@vertex
+fn vertex(vertex_in: Vertex) -> VertexOutput {
+    var out: VertexOutput;
+    let vertex = decompress_vertex(vertex_in, vertex_in.instance_index);
+    let world_from_local = mesh_functions::get_world_from_local(vertex_in.instance_index);
+@if(VERTEX_NORMALS)
+    out.world_normal = mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex_in.instance_index);
+    var wp = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(vertex.position, 1.0));
+    var height = vertex.position.y + see_through.sway.y;
+@if(VERTEX_UVS_A) {
+    if see_through.sway.x < 0.5 {
+        height = vertex.uv.x;
+    }
+}
+    let amount = see_through.wind.y;
+    if amount > 0.0 {
+        let phase = globals.time * (1.3 + 0.8 * amount) + dot(wp.xz, vec2<f32>(0.021, 0.034));
+        let d = sway_offset(height, 9.0, amount, phase);
+        wp = vec4<f32>(wp.x + see_through.wind.x * d, wp.y - 0.08 * d * d, wp.z + see_through.wind.z * d, wp.w);
+    }
+    out.world_position = wp;
+    out.position = position_world_to_clip(wp.xyz);
+@if(VERTEX_UVS_A)
+    out.uv = vertex.uv;
+@if(VERTEX_UVS_B)
+    out.uv_b = vertex.uv_b;
+@if(VERTEX_TANGENTS)
+    out.world_tangent = mesh_functions::mesh_tangent_local_to_world(world_from_local, vertex.tangent, vertex_in.instance_index);
+@if(VERTEX_COLORS)
+    out.color = vertex.color;
+@if(VERTEX_OUTPUT_INSTANCE_INDEX)
+    out.instance_index = vertex_in.instance_index;
+@if(VISIBILITY_RANGE_DITHER)
+    out.visibility_range_dither = mesh_functions::get_visibility_range_dither_level(vertex_in.instance_index, world_from_local[3]);
+    return out;
+}
+
 @fragment
 fn fragment(
     in: VertexOutput,
@@ -73,6 +129,14 @@ fn fragment(
         pbr_input.material.alpha_cutoff,
         pbr_input.material.base_color
     );
+    // Snow on the crowns' upper sides (spec §14 Phase 9, S4).
+    let snow = see_through.wind.w;
+    if snow > 0.0 {
+        let up = normalize(in.world_normal).y;
+        let s = smoothstep(0.05, 0.45, up) * snow * 0.85;
+        let c = mix(pbr_input.material.base_color.rgb, vec3<f32>(0.85, 0.88, 0.92), s);
+        pbr_input.material.base_color = vec4<f32>(c, pbr_input.material.base_color.a);
+    }
     var out: FragmentOutput;
     out.color = apply_pbr_lighting(pbr_input);
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);

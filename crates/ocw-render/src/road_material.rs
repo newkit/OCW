@@ -63,6 +63,9 @@ pub struct RoadLook {
     /// x: patch chance on asphalt, y: on worn asphalt, z: crack chance on
     /// worn asphalt, w: on asphalt.
     pub wear: Vec4,
+    /// The weather (spec §14 Phase 9, S4; [`crate::weather::surface_uniform`]):
+    /// x wetness, y puddles, z snow cover, w wind sway.
+    pub weather: Vec4,
 }
 
 fn spec(l: LineSpec, w: f32) -> Vec4 {
@@ -96,6 +99,7 @@ impl RoadLook {
             ),
             crossing_colour: c(style.crossing_colour, 0.15),
             wear: Vec4::new(0.06, 0.22, 0.45, 0.08),
+            weather: Vec4::ZERO,
         }
     }
 }

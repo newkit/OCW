@@ -19,6 +19,7 @@ ocw-sim.workspace = true
 ocw-protocol.workspace = true
 ocw-world.workspace = true
 ocw-sky.workspace = true
+ocw-weather.workspace = true
 # Device events and the frame-driven virtual trainer (no BLE on wasm32).
 ocw-devices.workspace = true
 ocw-render.workspace = true

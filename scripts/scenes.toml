@@ -746,6 +746,78 @@ args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", 
 at = ["2=time pause", "2=time 2026-11-14 12:00", "2.5=time preset full-moon", "3=teleport 1.6", "3.5=camera.orbit 160 20 12", "4=sky"]
 shot = 9
 
+# --- Weather (spec §14 Phase 9, S4): clouds, rain, snow, fog, wet roads ------
+# `weather PRESET` sets the session weather at once (a preset's ground comes
+# with it: wet roads in rain, snow cover in heavy snow); `weather PRESET in
+# T` is a transition; `weather strike DIST BEARING` a test strike.
+
+[[scene]]
+name = "weather-light-rain-blackforest"
+description = "Light rain on the Schauinsland climb (Black Forest, km 12, 780 m; 21 June 2026 15:00 CEST): a grey stratus deck, flat light, rain streaks around the camera, the wet, darker and glossier road"
+world = "blackforest"
+args = ["--world", "{world}", "--route-file", "{world_dir}/freiburg-schauinsland.route", "--no-neighbours", "--bots", "2", "--power", "280"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=weather light-rain", "2.5=teleport 12.0", "2.5=camera.orbit 20 14 16"]
+shot = 11
+
+[[scene]]
+name = "weather-thunderstorm-tenerife"
+description = "A thunderstorm over Las Cañadas (Tenerife, 12 Aug 2026 16:00 WEST): the dark base of the cumulonimbus, a cloudburst of 30 mm/h, gusts to 22 m/s, the streaming road with spray behind the riders; lightning strikes nearby"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-7500,5260", "--bots", "3", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-08-12 16:00", "1=weather thunderstorm", "1=hud.profile off", "2=camera.orbit 200 12 14", "8.5=weather strike 1800 200", "9.3=weather strike 1200 190"]
+shot = 10
+
+[[scene]]
+name = "weather-thunderstorm-video"
+description = "Video with sound: a thunderstorm on the TF-21 in Las Cañadas (Tenerife): rain, gusts, two strikes 1.0 and 2.4 km away – the flash lights the clouds and the caldera, the thunder follows 3 and 7 seconds later"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-7500,5260", "--bots", "3", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-08-12 16:00", "1=weather thunderstorm", "1=hud.profile off", "2=camera.orbit 200 12 14", "4=weather strike 1000 200", "6=weather strike 2400 170"]
+warmup = 3
+video = 12
+
+[[scene]]
+name = "weather-fog-vaduz"
+description = "Dense fog in Vaduz (Liechtenstein, 14 Nov 2026 09:30 CET; visibility 80 m): the road and the houses fade into grey after a few dozen metres, no sun, no shadows, a grey sky"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "3", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-11-14 09:30", "1=weather fog", "2.5=teleport 0.4", "2.5=camera.orbit 160 12 12"]
+shot = 10
+
+[[scene]]
+name = "weather-heavy-snow-feldberg"
+description = "Heavy snow below the Feldberg pass (Black Forest, km 12, 1230 m; 20 Jan 2026 13:00 CET, -5 °C, 5 mm/h): snow flakes tumbling in the wind, the meadows, roofs and tree crowns white, the cleared road, visibility a few hundred metres"
+world = "blackforest"
+args = ["--world", "{world}", "--route-file", "{world_dir}/titisee-feldberg.route", "--no-neighbours", "--bots", "2", "--power", "230"]
+at = ["0.5=time pause", "0.5=time 2026-01-20 13:00", "1=weather heavy-snow", "2.5=teleport 12.0", "2.5=camera.orbit 15 18 16"]
+shot = 11
+
+[[scene]]
+name = "weather-overcast-flat-light"
+description = "Overcast on the Vaduz-Malbun road (21 June 2026, solar noon): the same place and time as sky-noon, but under a closed stratus deck – flat light without hard shadows, a grey sky, the exposure a little brighter"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "3", "--power", "200"]
+at = ["2=time pause", "2=time 2026-06-21 12:00", "2.6=time noon", "1=weather overcast", "2.5=teleport 1.6", "2.5=camera.orbit 30 20 14"]
+shot = 9
+
+[[scene]]
+name = "weather-rain-shower-video"
+description = "Video with sound: a passing rain shower on the Vaduz-Malbun road (21 June 2026 15:00 CEST): fair-weather clouds thicken, rain sets in and grows to a downpour (the road darkens, puddles, spray, the rain's hiss), then it eases off and the clouds open again"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "3", "--power", "230"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=weather fair", "2.5=teleport 1.6", "2.5=camera.orbit 160 14 14", "4=weather heavy-rain in 6", "12=weather fair in 6"]
+warmup = 3
+video = 18
+
+[[scene]]
+name = "weather-gale-video"
+description = "Video with sound: a gale with rain on the Schauinsland climb (Black Forest; mean 21 m/s, gusts to 32 m/s): the trees bend and sway in the gusts, the rain drives sideways, the wind roars"
+world = "blackforest"
+args = ["--world", "{world}", "--route-file", "{world_dir}/freiburg-schauinsland.route", "--no-neighbours", "--bots", "2", "--power", "280"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=weather storm", "2.5=teleport 12.0", "2.5=camera.orbit 100 10 20"]
+warmup = 3
+video = 8
+
 # --- Black Forest showcase (spec §4.7, v2.32): well-known places -----------
 # Render with OCW_PROFILE=release; `--only 'showcase-*'`. North package
 # (world = "blackforest-north", scripts/build-blackforest.sh north), same
