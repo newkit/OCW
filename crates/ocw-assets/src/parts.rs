@@ -539,51 +539,6 @@ impl Sources {
     }
 }
 
-/// The part variants of the bike generator a part's `model` may name:
-/// `(id, slot, fits)`. A copy of the variant table of the generator (spec
-/// §14 Phase 4, 4B); the coordinator switches the check to
-/// `crate::bikes::variant` once that table exists on this branch.
-pub const VARIANT_MODELS: &[(&str, &str, &[&str])] = &[
-    ("wheel-alloy-training", "wheels", &["road", "tt"]),
-    ("wheel-alloy-performance", "wheels", &["road", "tt"]),
-    ("wheel-carbon-45", "wheels", &["road", "tt"]),
-    ("wheel-carbon-50", "wheels", &["road", "tt"]),
-    ("wheel-disc-tt", "wheels", &["tt"]),
-    ("wheel-gravel-carbon", "wheels", &["gravel"]),
-    ("tyre-road-28-training", "tyres", &["road", "tt"]),
-    ("tyre-road-28", "tyres", &["road", "tt"]),
-    ("tyre-road-25-tt", "tyres", &["road", "tt"]),
-    ("tyre-gravel-40", "tyres", &["gravel"]),
-    ("tyre-mtb-xc", "tyres", &["mtb"]),
-    ("groupset-mech", "groupset", &["road", "tt"]),
-    ("groupset-electronic", "groupset", &["road", "tt"]),
-    ("groupset-electronic-top", "groupset", &["road", "tt"]),
-    ("groupset-gravel-electronic", "groupset", &["gravel"]),
-    ("groupset-mtb", "groupset", &["mtb"]),
-    ("groupset-mtb-electronic", "groupset", &["mtb"]),
-    ("crank-power", "crankset", &["road", "tt", "gravel"]),
-    ("cockpit-carbon", "cockpit", &["road"]),
-    ("cockpit-integrated", "cockpit", &["road"]),
-    ("cockpit-extensions", "cockpit", &["road"]),
-    ("bar-tape-tacky", "bar_tape", &["road", "gravel"]),
-    ("saddle-short-nose", "saddle", &["road", "tt", "gravel"]),
-    ("seatpost-carbon", "seatpost", &["road", "gravel", "mtb"]),
-    ("pedals-road-carbon", "pedals", &["road", "tt"]),
-    ("pedals-spd", "pedals", &["gravel", "mtb"]),
-    (
-        "cage-carbon",
-        "bottle_cages",
-        &["road", "tt", "gravel", "mtb"],
-    ),
-    ("lights-set", "lights", &["road", "gravel", "mtb"]),
-    (
-        "computer-large",
-        "computer",
-        &["road", "tt", "gravel", "mtb"],
-    ),
-    ("bag-top-tube", "bag", &["road", "gravel", "mtb"]),
-];
-
 /// The model of a base part: the frame's own (stock) part.
 pub const STOCK_MODEL: &str = "stock";
 
@@ -839,18 +794,19 @@ pub fn validate(cat: &Catalogue, sources: &Sources, today: (i32, u32, u32)) -> V
                     err(format!("{at}: a base part's model is {STOCK_MODEL:?}"));
                 }
             } else {
-                match VARIANT_MODELS.iter().find(|(id, _, _)| *id == p.model) {
+                match crate::bikes::variant(&p.model) {
                     None => err(format!("{at}: unknown model {:?}", p.model)),
-                    Some((_, slot, fits)) => {
-                        if *slot != p.slot.id() {
+                    Some(v) => {
+                        if v.slot != p.slot.id() {
                             err(format!(
-                                "{at}: model {:?} is a {slot} variant, not {}",
+                                "{at}: model {:?} is a {} variant, not {}",
                                 p.model,
+                                v.slot,
                                 p.slot.id()
                             ));
                         }
                         for b in &p.fits {
-                            if !fits.contains(&b.id()) {
+                            if !v.fits.contains(b) {
                                 err(format!(
                                     "{at}: model {:?} has no {} variant",
                                     p.model,

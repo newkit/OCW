@@ -207,7 +207,7 @@ time, the recording and a video go on, and the ride keys (↑ ↓ ← →, A, W,
 R, V, …, the mouse camera) are ignored while it is open. Steering falls back
 to autodrive and junctions take their default exit, so the rider stays on
 the road; closing the menu restores manual steering / wild mode. *Workshop*
-chooses the rider profile and their bike (*Workshop → Bike*), *Settings* has Riders, Controls, Trainer, Audio, Display
+opens the workshop scene (see [The workshop](#the-workshop-bikes-parts-and-hearts)), *Settings* has Riders, Controls, Trainer, Audio, Display
 and Strava: ← / → (D-pad left / right) change the focused value, Q / E,
 PgUp / PgDn or LB / RB switch between these pages (see
 [Settings](#settings-and-rider-profiles)); *Ride* starts local events (race,
@@ -216,6 +216,45 @@ changes the world and shows its data and conditions (see
 [The World menu](#the-world-menu-changing-the-world-without-restarting)),
 *Navi* lists the routes, saved rides and GPX files to import. Long lists are
 paged (*Previous* / *Next*, or ← / → on a list row).
+
+### The workshop: bikes, parts and hearts
+
+*Workshop* in the menu (or `workshop open`) opens a 3D bicycle workshop over
+the running ride (spec §14 Phase 4, W1 + W2): the ride goes on in autodrive
+underneath and shows in a small live ride window (top right; `workshop.ride_window off`
+hides it). Your bike stands on the repair stand in front, your other bikes hang
+on the wall – every rider starts with six starter bikes, one per physics
+profile, and **500 ♥**. Hearts are earned only by riding: **1 ♥ per 10 kJ** of
+work and **1 ♥ per 20 m** climbed, credited by the local server from the power
+it accepted – never for virtual power (the virtual trainer, keyboard power,
+`sim.power`), in god mode, while down after a crash, for bots, in captures or
+with `--no-hearts` (the kiosk's show mode). One heart is one euro of a part's
+real list price (generic parts, no brands: `assets/parts.toml`).
+
+| | Keyboard | Mouse | Gamepad | Touch |
+|---|---|---|---|---|
+| Choose a bike | ← / → | hover / click | D-pad ← / → | swipe, tap |
+| Zones (wall, stand, bench, mirror) | ↑ / ↓ | click | D-pad ↑ / ↓ | tap |
+| Swap a wall bike onto the stand / open the stand | Enter | click | A | tap |
+| Next / previous part (stand) | Q / E, or the arrows (on screen) | hover / click a marker | LB / RB, D-pad | tap a marker |
+| Orbit / zoom the stand view | I J K L or Shift + arrows, + / − | drag, wheel | right stick, LT / RT | drag, pinch |
+| Compare / buy, sell … | C / X | middle click / the dialog's buttons | Y / X | long press / the buttons |
+| Back (leaves from the overview) | Esc | right click | B | two-finger tap, ‹ Back |
+
+On the stand a marker sits on every part (frame, wheels, tyres, groupset,
+crankset, cassette, chain, cockpit, bar tape, saddle, seat post, pedals,
+bottle cages, lights, computer, bag, paint); choosing one flies to it and
+opens the **part picker**: what is fitted, what you own (spare parts or on
+another bike) and the shop (only parts that fit, by tier, cheapest first, a
+lock with the missing hearts). The focused part shows on the bike at once
+(live preview); its card shows weight, price and the effect line (W2: the
+effects are cosmetic until the build physics of W3). Buying fits the part;
+selling refunds the full price until the part has been ridden 1 km, half
+after. Paint is free. **Leaving the workshop applies the bike** at once in
+free ride and outside events (in an event: from the next start). The wallet
+is local until the backend (`<data dir>/ocw/workshop.toml` and
+`hearts-ledger.jsonl`). The rider list and kit colours: the mirror corner, or
+`menu workshop-page`.
 
 ### The World menu: changing the world without restarting
 
@@ -708,6 +747,7 @@ event status | event cancel | event dismiss
 | `--rider NAME` | Ride as this rider profile for this session (default: the one chosen in the Workshop) |
 | `--settings-file PATH` | Settings file (default `~/.config/ocw/settings.toml`; `riders.toml` is read next to it) |
 | `--power W` | Initial power of the virtual trainer (default 200) |
+| `--no-hearts` | Earn no hearts in this session (the kiosk's show mode) |
 | `--bots N` | Number of test riders (default 10; they start in rows of up to three behind you) |
 | `--server HOST[:PORT]` | Ride on a remote `ocw-server --listen` over QUIC (default port 47800) instead of the local server; see [Running the server](#running-the-server) |
 | `--server-cert SHA256` / `--insecure-dev` | Trust the server's certificate by its fingerprint / accept any (only for a server on 127.0.0.1 or ::1) |
@@ -876,8 +916,8 @@ bike rocking under them, and stop pedalling with the cranks level when they
 freewheel. Riders more than 40 m from the camera are drawn with a simpler
 model.
 
-Manage them in the in-game menu (Esc / Start): *Workshop* chooses the rider
-and opens their *Bike* page (the bike, its physics numbers, frame / jersey /
+Manage them in the in-game menu (Esc / Start): the workshop's mirror corner
+(or `menu workshop-page`) chooses the rider and opens their *Bike* page (the bike, its physics numbers, frame / jersey /
 helmet colour and kit, all with ← / →),
 *Settings → Riders* edits them (weight, height, FTP with ← / →; add, delete),
 and the other *Settings* pages (Controls, Trainer, Audio, Display, Voice; the
@@ -961,6 +1001,16 @@ for now).
 | `riders.edit NAME [--weight KG] [--height CM] [--ftp W] [--rename NEW] [--no-height] [--no-ftp] [BIKE OPTIONS]` | Change a rider profile; bike options: `--bike road\|road-aero\|road-climbing\|tt\|gravel\|mtb`, `--frame-color`, `--jersey-color`, `--helmet-color` `#RRGGBB`, `--kit plain\|band\|sash` |
 | `riders.remove NAME` | Delete a rider profile |
 | `riders.select NAME` | Choose who rides (Workshop); applies from the next start |
+| `workshop [open\|close\|left\|right\|up\|down\|select\|back\|slot-next\|slot-prev\|compare\|action\|reset\|orbit DEG]` | Open, close or drive the workshop scene (menu: Workshop) |
+| `workshop.ride_window on\|off` | The live ride window in the workshop |
+| `hearts` | Your hearts and the last ledger lines |
+| `hearts.grant N` | *Dev:* grant hearts (tests, screenshots; local server only) |
+| `workshop.parts [SLOT] [--bike ID]` | The parts that fit a bike, with prices |
+| `workshop.buy PART [--bike ID]` | Buy a catalogue part with hearts and fit it |
+| `workshop.equip ITEM [--bike ID]` / `workshop.unequip SLOT [--bike ID]` | Fit an owned part / back to the base part |
+| `workshop.sell ITEM` | Sell a part (full price before its first ride, half after) |
+| `workshop.paint #RRGGBB\|default [--bike ID]` | Paint a frame (free) |
+| `bikes.list` / `bikes.select ID [--now]` | Your garage / the bike on the stand (applies when the workshop closes) |
 | `rider.gps` | Your rider's GPS position (also bottom-left in the HUD; route files and world packages only), with a copyable `lat, lon` line |
 | `teleport KM` | *Dev:* move your rider to a distance on the route (free ride: along the path, taking default exits). On a route that ends, a distance past the end moves you to the end, where riders stop, and the reply says so; a loop takes any distance (laps on) |
 | `teleport.xz X Z` | *Dev:* free ride: move to the road nearest local x / z metres |

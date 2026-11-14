@@ -6054,6 +6054,7 @@ dependencies = [
  "clap",
  "cpal",
  "dirs",
+ "ocw-assets",
  "ocw-client",
  "ocw-core",
  "ocw-devices",

@@ -146,10 +146,20 @@ fn poll_devices(
         if event == DeviceEvent::Disconnected {
             console.print(format!("{name}: disconnected, reconnecting"));
         }
+        // Power from the virtual trainer earns no hearts (spec §14 Phase
+        // 4, 4E): the samples say so.
+        if matches!(event, DeviceEvent::Power { .. }) {
+            client.0.set_virtual_device(is_virtual(&name));
+        }
         if let Some(sample) = client.0.on_device_event(event) {
             link.send_bytes(sample);
         }
     }
+}
+
+/// Whether a device of this name is the virtual trainer.
+pub fn is_virtual(name: &str) -> bool {
+    name == ocw_devices::VirtualTrainer::new(0.0).name()
 }
 
 /// SIM/ERG control: road gradient or target power to the trainer.

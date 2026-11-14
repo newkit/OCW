@@ -309,6 +309,7 @@ impl BotRider {
             cadence_rpm: (p > 0.0).then(|| (70.0 + p / 20.0).min(105.0) as f32),
             heart_rate_bpm: None,
             brake: Some(effort.brake),
+            virtual_power: None,
         })))]
     }
 

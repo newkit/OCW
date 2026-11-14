@@ -380,6 +380,7 @@ mod tests {
             cadence_rpm: Some(90.0),
             heart_rate_bpm: None,
             brake: None,
+            virtual_power: None,
         })));
         f.send(&power);
         s.send(&power);

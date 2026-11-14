@@ -35,6 +35,7 @@ mod video;
 mod voice;
 mod weather;
 mod workout;
+mod workshop;
 mod worlds;
 
 // Shared with the browser app (spec §14 Phase 10): `crate::client`,
@@ -203,6 +204,10 @@ pub struct Args {
     /// Use the virtual trainer even if Bluetooth devices are remembered.
     #[arg(long = "virtual")]
     pub virtual_trainer: bool,
+    /// Earn no hearts in this session (kiosk / show mode, spec §14 Phase
+    /// 4, 4E); the workshop still works.
+    #[arg(long)]
+    pub no_hearts: bool,
     /// File with remembered devices (default: ~/.config/ocw/devices.toml).
     #[arg(long, value_name = "PATH")]
     pub devices_file: Option<PathBuf>,
@@ -442,6 +447,7 @@ fn main() -> AppExit {
         voice::VoicePlugin,
         timemachine::TimeMachinePlugin,
         weather::WeatherPlugin,
+        workshop::WorkshopPlugin,
     ))
     .add_systems(Startup, startup_commands)
     .add_systems(Update, timed_commands);

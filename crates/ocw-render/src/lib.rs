@@ -40,6 +40,7 @@ pub mod voice;
 #[cfg(test)]
 mod wheel_contact;
 pub mod workout;
+pub mod workshop;
 pub mod world;
 
 use std::collections::BTreeMap;
@@ -355,6 +356,8 @@ impl Plugin for OcwRenderPlugins {
             inspect_hud::InspectHudPlugin,
             // Ragdoll falls with Avian (spec §14 Phase 12C, Q5).
             ragdoll::RagdollPlugin,
+            // The workshop scene (spec §14 Phase 4, 4A).
+            workshop::WorkshopPlugin,
         ));
     }
 }
