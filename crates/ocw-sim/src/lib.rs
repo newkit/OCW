@@ -21,6 +21,7 @@ pub mod prediction;
 pub mod ride;
 pub mod session;
 pub mod trainer;
+pub mod weather;
 pub mod workout;
 
 pub use build::{Build, PartTable, PhysicsMode};

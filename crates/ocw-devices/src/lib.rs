@@ -61,6 +61,8 @@ pub enum DeviceCommand {
 pub struct SimulationParameters {
     /// Gradient as rise over run (0.05 = 5 %), after trainer difficulty.
     pub grade: f64,
+    /// Headwind along the rider's travel (m/s, negative = tailwind; spec
+    /// §14 Phase 9, S6), for trainers that simulate wind.
     pub wind_speed_mps: f64,
     /// Rolling resistance coefficient.
     pub crr: f64,
@@ -69,6 +71,24 @@ pub struct SimulationParameters {
     /// Rider + bike mass in kg (Wahoo trainers simulate inertia with it;
     /// FTMS has no field for it).
     pub mass_kg: f64,
+    /// The gradient with the wind folded in (spec §14 Phase 9, Q5), for
+    /// trainers that cannot simulate wind; `grade` in calm air.
+    pub wind_grade: f64,
+}
+
+impl SimulationParameters {
+    /// What a trainer simulates of these parameters (spec §14 Phase 9,
+    /// Q5): one that `takes_wind` (FTMS Indoor Bike Simulation, Wahoo, the
+    /// virtual trainer) the road's gradient and the headwind; one without
+    /// wind support the gradient with the wind folded in and no wind.
+    /// Returns (gradient, wind in m/s).
+    pub fn load(&self, takes_wind: bool) -> (f64, f64) {
+        if takes_wind {
+            (self.grade, self.wind_speed_mps)
+        } else {
+            (self.wind_grade, 0.0)
+        }
+    }
 }
 
 /// The app side of a running backend.

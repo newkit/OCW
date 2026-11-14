@@ -8,7 +8,7 @@
 use ocw_core::RiderProfile;
 use ocw_devices::{DeviceCommand, SimulationParameters};
 use ocw_sim::RiderState;
-use ocw_sim::trainer::{ErgController, ErgSettings, SimController, SimSettings};
+use ocw_sim::trainer::{ErgController, ErgSettings, SimController, SimSettings, TrainerWind};
 use ocw_world::Track;
 
 /// How far ahead (in seconds of riding) SIM mode looks for the gradient.
@@ -51,6 +51,10 @@ pub struct TrainerControl {
     pulse: Option<(f64, f64)>,
     /// The tick of the last bump turned into a pulse ([`Self::follow`]).
     last_bump: Option<u64>,
+    /// The weather's wind on the trainer (spec §14 Phase 9, S6, Q5).
+    wind: Option<TrainerWind>,
+    /// The headwind last sent in SIM mode (for the HUD).
+    last_wind: f64,
 }
 
 /// Phase 12 Q4 (open): while the rider is down after a crash, ERG keeps
@@ -81,6 +85,8 @@ impl TrainerControl {
             down: false,
             pulse: None,
             last_bump: None,
+            wind: None,
+            last_wind: 0.0,
         }
     }
 
@@ -98,6 +104,8 @@ impl TrainerControl {
         // Stopped by the road after damage (a repair, a medical stop, spec
         // §14 Phase 12E): the same.
         self.set_down(c.own_crash(now_s).is_some() || c.damage_held());
+        // The weather's wind while it affects the physics (S6, Q5).
+        self.set_wind(c.trainer_wind(now_s));
         if let Some(b) = c.collision_state().bump(id)
             && self.last_bump != Some(b.tick)
         {
@@ -105,6 +113,13 @@ impl TrainerControl {
             self.last_bump = Some(b.tick);
         }
         self.update(now_s, c.track(), c.state(), c.cadence_rpm())
+    }
+
+    /// The weather's load in SIM mode (spec §14 Phase 9, S6, Q5; `None`:
+    /// still air): the headwind goes to trainers that simulate wind, the
+    /// others get it folded into the gradient.
+    pub fn set_wind(&mut self, wind: Option<TrainerWind>) {
+        self.wind = wind;
     }
 
     /// Down after a crash (spec §14 Phase 12C): SIM gets a flat road and
@@ -194,16 +209,25 @@ impl TrainerControl {
                     Some((until, g)) if now_s < until && !self.down => g,
                     _ => 0.0,
                 };
-                let target = self
-                    .sim
-                    .update_on(now_s, here + extra, ahead + extra, rolling)?;
+                // Flying or down: no wind either.
+                let wind = self.wind.filter(|_| !self.flat && !self.down);
+                let target = self.sim.update_in(
+                    now_s,
+                    here + extra,
+                    ahead + extra,
+                    rolling,
+                    wind,
+                    rider.speed,
+                )?;
                 self.last_grade = Some(target.grade);
+                self.last_wind = target.wind_speed_mps;
                 Some(DeviceCommand::SetSimulation(SimulationParameters {
                     grade: target.grade,
                     wind_speed_mps: target.wind_speed_mps,
                     crr: target.crr,
                     cw_kg_per_m: target.cw_kg_per_m,
                     mass_kg: self.profile.rider_mass_kg + self.profile.bike_mass_kg,
+                    wind_grade: target.wind_grade,
                 }))
             }
             // Q4 the other way: the step waits while the rider is down.
@@ -218,6 +242,12 @@ impl TrainerControl {
     /// One line for the HUD.
     pub fn status(&self) -> String {
         match (self.mode, self.last_grade) {
+            (TrainerMode::Sim, Some(g)) if self.last_wind != 0.0 => format!(
+                "trainer SIM {:+.1} %, wind {:+.1} m/s (difficulty {:.0} %)",
+                g * 100.0,
+                self.last_wind,
+                self.difficulty() * 100.0
+            ),
             (TrainerMode::Sim, Some(g)) => format!(
                 "trainer SIM {:+.1} % (difficulty {:.0} %)",
                 g * 100.0,
@@ -275,6 +305,37 @@ mod tests {
         assert!(t.status().contains("+3.0 %"));
         // Rate limited and at most 2 Hz: nothing new 0.1 s later.
         assert_eq!(t.update(0.1, &route(), at(500.8, 8.0), Some(90.0)), None);
+    }
+
+    /// Spec §14 Phase 9, S6 / Q5: while the weather affects the physics,
+    /// SIM sends the headwind and the folded gradient (for trainers
+    /// without wind); the road's gradient stays; flying, no wind.
+    #[test]
+    fn sim_sends_the_weathers_wind() {
+        let mut t = TrainerControl::new(RiderProfile::default());
+        t.set_wind(Some(TrainerWind {
+            head_mps: 6.0,
+            air_density: 1.2,
+        }));
+        let Some(DeviceCommand::SetSimulation(p)) =
+            t.update(0.0, &route(), at(500.0, 8.0), Some(90.0))
+        else {
+            panic!("expected a SIM command");
+        };
+        assert!((p.grade - 0.03).abs() < 1e-9, "{}", p.grade);
+        assert_eq!(p.wind_speed_mps, 6.0);
+        assert!(p.wind_grade > p.grade + 0.01, "{p:?}");
+        assert_eq!(p.load(true), (p.grade, 6.0));
+        assert_eq!(p.load(false), (p.wind_grade, 0.0));
+        assert!(t.status().contains("wind +6.0 m/s"), "{}", t.status());
+        // God mode: a flat road in still air.
+        t.set_flying(true);
+        let Some(DeviceCommand::SetSimulation(p)) =
+            t.update(1.0, &route(), at(510.0, 8.0), Some(90.0))
+        else {
+            panic!("expected a SIM command");
+        };
+        assert_eq!((p.wind_speed_mps, p.wind_grade), (0.0, p.grade));
     }
 
     /// The active rider's weight plus the bike is the SIM mass (spec §3.2.1).

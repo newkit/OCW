@@ -235,6 +235,18 @@ impl Environment {
         }
     }
 
+    /// The same environment in the weather (spec §14 Phase 9, S6): the
+    /// wind against the rider (m/s, negative = tailwind), the air density
+    /// (kg/m³) and a wet road's factor on the rolling resistance.
+    pub fn in_weather(self, headwind: f64, air_density: f64, rolling_factor: f64) -> Self {
+        Self {
+            headwind,
+            air_density,
+            rolling_factor: self.rolling_factor * rolling_factor,
+            ..self
+        }
+    }
+
     /// The same environment with a drafting drag factor.
     pub fn with_drag_factor(self, drag_factor: f64) -> Self {
         Self {

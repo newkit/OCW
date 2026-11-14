@@ -592,6 +592,20 @@ impl LeafMix {
         (d, fl.min(1.0 - d))
     }
 
+    /// (deciduous, larch) share of trees in `setting` at `alt_m` where the
+    /// package measured a broadleaf share `broadleaf` (0 … 1, spec §14
+    /// Phase 8 T3): the broadleaves deciduous (evergreen where
+    /// [`LeafMix::evergreen_broadleaves`]), the conifers larches by the
+    /// region's larch share among its conifers – what [`LeafMix::leaf_type`]
+    /// gives a wood of measured trees on average (the far canopy).
+    pub fn measured_shares(&self, setting: TreeSetting, alt_m: f64, broadleaf: f64) -> (f64, f64) {
+        let (d, l) = self.shares(setting, alt_m);
+        let larch_of_conifers = (l / (1.0 - d).max(1e-6)).clamp(0.0, 1.0);
+        let b = broadleaf.clamp(0.0, 1.0);
+        let dec = if self.evergreen_broadleaves { 0.0 } else { b };
+        (dec, (1.0 - b) * larch_of_conifers)
+    }
+
     /// The leaf type of a tree: the measured type if the package has it
     /// (a coniferous tree is a larch by the larch share among the
     /// conifers), else by the shares of its setting and altitude.
@@ -1561,6 +1575,49 @@ mod tests {
                 .trees
                 .leaf_type(TreeSetting::Forest, 1200.0, None, 0.01),
             LeafType::Evergreen
+        );
+    }
+
+    /// The far canopy's shares of a measured wood (spec §14 Phase 8 T3)
+    /// are the average of the measured trees' leaf types.
+    #[test]
+    fn measured_shares_average_the_measured_trees() {
+        let mix = CENTRAL_EUROPE;
+        for (alt, b) in [(450.0, 0.7), (1300.0, 0.2), (1900.0, 0.0), (800.0, 1.0)] {
+            let (d, l) = mix.measured_shares(TreeSetting::Forest, alt, b);
+            let n = 4000;
+            let (mut dd, mut ll) = (0usize, 0usize);
+            for i in 0..n {
+                let broad = (i as f64 + 0.5) / f64::from(n) < b;
+                let m = if broad {
+                    MeasuredLeaf::Broadleaved
+                } else {
+                    MeasuredLeaf::Coniferous
+                };
+                // The pick is independent of the broadleaf choice.
+                let pick = ((i * 7919) % n) as f32 / n as f32;
+                match mix.leaf_type(TreeSetting::Forest, alt, Some(m), pick) {
+                    LeafType::Deciduous => dd += 1,
+                    LeafType::Larch => ll += 1,
+                    LeafType::Evergreen => {}
+                }
+            }
+            assert!(
+                (d - dd as f64 / f64::from(n)).abs() < 0.02,
+                "{alt} {b}: {d} vs {dd}"
+            );
+            assert!(
+                (l - ll as f64 / f64::from(n)).abs() < 0.02,
+                "{alt} {b}: {l} vs {ll}"
+            );
+        }
+        // Measured broadleaves on Tenerife stay evergreen.
+        assert_eq!(
+            CANARIES
+                .trees
+                .measured_shares(TreeSetting::Forest, 900.0, 0.8)
+                .0,
+            0.0
         );
     }
 

@@ -49,6 +49,9 @@ pub fn local_config(bots: u32, start_m: f64) -> ServerConfig {
         weather_seed: None,
         geo_origin: None,
         real_weather: None,
+        // Weather physics on in solo and free ride (spec §14 Phase 9, Q4);
+        // the rider's `weather.physics` setting changes it.
+        weather_physics: true,
     }
 }
 

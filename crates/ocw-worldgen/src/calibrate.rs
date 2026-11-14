@@ -667,6 +667,8 @@ pub fn calibrate(
         seasons,
         // The orthophoto corridor (T7) is cut by its own pass after this.
         ortho: pkg.look.ortho.take(),
+        // The forest cover (FRST) has its own pass too (`crate::forest`).
+        forest: pkg.look.forest.take(),
     };
     stats
 }

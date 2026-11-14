@@ -318,20 +318,72 @@ pub const BARE_WOOD: [f32; 3] = [0.36, 0.31, 0.26];
 /// conifers' `conifer` green with the deciduous and larch shares of the
 /// region's mix in their seasonal colour.
 pub fn canopy_colour(conifer: [f32; 3], alt_m: f64, season: &SeasonDay) -> [f32; 3] {
-    let (d, l) = season.climate.trees.shares(TreeSetting::Forest, alt_m);
-    if d + l <= 0.0 {
-        return conifer;
+    CanopyTones::new(conifer, alt_m, season).fallback()
+}
+
+/// The far canopy's colours at one altitude and date: the conifers', the
+/// deciduous trees' and the larches' (sRGB), and the region's fallback
+/// shares there; mixed per point by the measured broadleaf share where the
+/// package has the forest type (spec §14 Phase 8 T3, [`CanopyTones::at`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CanopyTones {
+    conifer: [f32; 3],
+    deciduous: [f32; 3],
+    larch: [f32; 3],
+    /// (deciduous, larch) of the fallback mix.
+    fallback: (f64, f64),
+    /// The region's larch share among its conifers at this altitude.
+    larch_of_conifers: f64,
+    evergreen_broadleaves: bool,
+}
+
+impl CanopyTones {
+    pub fn new(conifer: [f32; 3], alt_m: f64, season: &SeasonDay) -> Self {
+        let mix = &season.climate.trees;
+        let tone = |leaf: LeafType| {
+            let f = season.foliage(leaf, alt_m, 0.0);
+            let leafy = srgb_of(tree_colour(leaf, &f, 0.5, 0.35));
+            mix3(BARE_WOOD, leafy, f.leaves)
+        };
+        let fallback = mix.shares(TreeSetting::Forest, alt_m);
+        Self {
+            conifer,
+            deciduous: tone(LeafType::Deciduous),
+            larch: tone(LeafType::Larch),
+            fallback,
+            larch_of_conifers: mix.measured_shares(TreeSetting::Forest, alt_m, 0.0).1,
+            evergreen_broadleaves: mix.evergreen_broadleaves,
+        }
     }
-    let tone = |leaf: LeafType| {
-        let f = season.foliage(leaf, alt_m, 0.0);
-        let leafy = srgb_of(tree_colour(leaf, &f, 0.5, 0.35));
-        mix3(BARE_WOOD, leafy, f.leaves)
-    };
-    let dec = tone(LeafType::Deciduous);
-    let lar = tone(LeafType::Larch);
-    std::array::from_fn(|i| {
-        conifer[i] * (1.0 - d - l) as f32 + dec[i] * d as f32 + lar[i] * l as f32
-    })
+
+    fn mix(&self, (d, l): (f64, f64)) -> [f32; 3] {
+        if d + l <= 0.0 {
+            return self.conifer;
+        }
+        std::array::from_fn(|i| {
+            self.conifer[i] * (1.0 - d - l) as f32
+                + self.deciduous[i] * d as f32
+                + self.larch[i] * l as f32
+        })
+    }
+
+    /// The canopy by the region's mix (no measured forest type).
+    pub fn fallback(&self) -> [f32; 3] {
+        self.mix(self.fallback)
+    }
+
+    /// The canopy where `broadleaf` (0 … 1) of the trees were measured
+    /// broadleaved (`None`: not measured, the fallback mix).
+    pub fn at(&self, broadleaf: Option<f32>) -> [f32; 3] {
+        match broadleaf {
+            Some(b) => {
+                let b = f64::from(b.clamp(0.0, 1.0));
+                let d = if self.evergreen_broadleaves { 0.0 } else { b };
+                self.mix((d, (1.0 - b) * self.larch_of_conifers))
+            }
+            None => self.fallback(),
+        }
+    }
 }
 
 fn srgb_of(lin: [f32; 3]) -> [f32; 3] {
@@ -658,6 +710,21 @@ mod tests {
         assert!(w[0] > s[0] + 0.08, "{w:?} {s:?}");
         let high = canopy_colour(conifer, 1900.0, &m.day(15.0));
         assert!((high[1] - conifer[1]).abs() < 0.05);
+        // With the measured forest type (spec §14 Phase 8 T3): a conifer
+        // wood stays green in the valley's winter, a broadleaf wood is bare
+        // even high up; unmeasured keeps the regional mix.
+        let t = CanopyTones::new(conifer, 455.0, &m.day(15.0));
+        assert_eq!(t.at(None), w);
+        assert!((t.at(Some(0.0))[1] - conifer[1]).abs() < 0.01);
+        let bare = t.at(Some(1.0));
+        assert!(
+            (0..3).all(|i| (bare[i] - BARE_WOOD[i]).abs() < 0.03),
+            "{bare:?}"
+        );
+        let half = t.at(Some(0.5));
+        assert!(half[0] > t.at(Some(0.0))[0] && half[0] < bare[0]);
+        let high = CanopyTones::new(conifer, 1900.0, &m.day(15.0)).at(Some(1.0));
+        assert!(high[0] > conifer[0] + 0.15, "{high:?}");
         // Settings by land class.
         assert_eq!(tree_setting(Some(LandClass::Orchard)), TreeSetting::Orchard);
         assert_eq!(tree_setting(Some(LandClass::Meadow)), TreeSetting::Open);

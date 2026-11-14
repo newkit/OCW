@@ -100,6 +100,11 @@ impl Features {
     pub fn measures_power(&self) -> bool {
         bit(self.machine, 14)
     }
+    /// Accepts *Set Target Inclination* (a gradient without the other SIM
+    /// parameters).
+    pub fn supports_inclination_target(&self) -> bool {
+        bit(self.target_setting, 1)
+    }
     /// Accepts *Set Target Resistance Level* (fallback mode).
     pub fn supports_resistance_target(&self) -> bool {
         bit(self.target_setting, 2)
@@ -150,6 +155,9 @@ pub enum ControlRequest {
     /// Must be accepted before any other request.
     RequestControl,
     Reset,
+    /// Gradient as rise over run (resolution 0.1 %): trainers without the
+    /// SIM parameters (spec §14 Phase 9, Q5: the wind folded in).
+    SetTargetInclination(f64),
     /// Resistance level, 0.0–25.5 (unitless, resolution 0.1).
     SetTargetResistance(f64),
     /// ERG mode target in watts.
@@ -173,6 +181,7 @@ pub enum ControlRequest {
 pub mod op {
     pub const REQUEST_CONTROL: u8 = 0x00;
     pub const RESET: u8 = 0x01;
+    pub const SET_TARGET_INCLINATION: u8 = 0x03;
     pub const SET_TARGET_RESISTANCE: u8 = 0x04;
     pub const SET_TARGET_POWER: u8 = 0x05;
     pub const START_OR_RESUME: u8 = 0x07;
@@ -198,6 +207,7 @@ impl ControlRequest {
         match self {
             Self::RequestControl => op::REQUEST_CONTROL,
             Self::Reset => op::RESET,
+            Self::SetTargetInclination(_) => op::SET_TARGET_INCLINATION,
             Self::SetTargetResistance(_) => op::SET_TARGET_RESISTANCE,
             Self::SetTargetPower(_) => op::SET_TARGET_POWER,
             Self::StartOrResume => op::START_OR_RESUME,
@@ -214,6 +224,8 @@ impl ControlRequest {
             Self::RequestControl | Self::Reset | Self::StartOrResume => {}
             Self::Stop => out.push(0x01),
             Self::Pause => out.push(0x02),
+            // Field unit is 0.1 %; `grade` is a fraction.
+            Self::SetTargetInclination(grade) => out.extend(scaled_i16(grade, 1000.0)),
             Self::SetTargetResistance(level) => out.push(scaled_u8(level, 10.0)),
             Self::SetTargetPower(watts) => out.extend(scaled_i16(watts, 1.0)),
             Self::SetSimulation {
@@ -412,6 +424,24 @@ mod tests {
         );
         assert_eq!(ControlRequest::StartSpinDown.encode(), [0x13, 0x01]);
         assert_eq!(ControlRequest::IgnoreSpinDown.encode(), [0x13, 0x02]);
+    }
+
+    #[test]
+    fn inclination_target_encoding() {
+        // 4.5 % = 45 × 0.1 %; −2.3 % = −23 = 0xFFE9.
+        assert_eq!(
+            ControlRequest::SetTargetInclination(0.045).encode(),
+            [0x03, 0x2D, 0x00]
+        );
+        assert_eq!(
+            ControlRequest::SetTargetInclination(-0.023).encode(),
+            [0x03, 0xE9, 0xFF]
+        );
+        let f = Features {
+            machine: 0,
+            target_setting: 1 << 1,
+        };
+        assert!(f.supports_inclination_target() && !f.supports_simulation());
     }
 
     #[test]

@@ -79,6 +79,7 @@ fn run(id: &str, control: bool, duration: Duration) {
                         crr: 0.004,
                         cw_kg_per_m: 0.2,
                         mass_kg: 83.0,
+                        wind_grade: grade,
                     }));
                 next += 1;
             }

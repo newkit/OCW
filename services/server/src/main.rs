@@ -98,6 +98,11 @@ struct Args {
     /// anyone, or nobody (the weather stays as started).
     #[arg(long, default_value = "host", value_parser = parse_time_control)]
     weather_control: ocw_server::ClockAccess,
+    /// Whether the weather affects the physics (spec §14 Phase 9, S6, Q4:
+    /// wind, air density, wet roads; on by default, events follow their
+    /// organiser's rule). The host changes it like the weather.
+    #[arg(long, default_value = "on", value_parser = ["on", "off"])]
+    weather_physics: String,
     /// The weather the session starts with: a preset (`clear`, `rain`,
     /// `thunderstorm`, `heavy-snow`, `fog` …; ocw_weather::presets) or
     /// `real` (spec §14 Phase 9, S7: from the providers for the place of
@@ -407,6 +412,7 @@ fn main() {
             geo_origin,
             real_weather: (args.weather.as_deref() == Some("real"))
                 .then_some(args.weather_provider),
+            weather_physics: args.weather_physics == "on",
         },
     );
     // Real weather (spec §14 Phase 9, S7): the server asks the providers,

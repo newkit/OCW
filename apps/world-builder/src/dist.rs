@@ -95,12 +95,18 @@ pub fn dem_attribution(notice: Option<&str>) -> Attribution {
 }
 
 /// The attributions of the imagery sources in a package's palette section
-/// (spec §13, Phase 8A): one per source, its notice as given by the fetch
-/// script (licence, holder, year).
+/// and of its forest cover (spec §13, Phase 8A, T3): one per source, its
+/// notice as given by the fetch script (licence, holder, year).
 pub fn imagery_attribution(pkg: &ocw_world::WorldPackage) -> Vec<Attribution> {
+    let forest = pkg
+        .look
+        .forest
+        .as_ref()
+        .map_or(&[][..], |f| f.sources.as_slice());
     pkg.look
         .sources()
         .iter()
+        .chain(forest)
         .map(|s| Attribution {
             source: s.name.clone(),
             licence: s.licence.clone(),
@@ -603,6 +609,17 @@ mod tests {
                     ],
                     entries: vec![],
                 }),
+                // The forest cover's sources (spec §14 Phase 8 T3).
+                forest: Some(ocw_world::forest::ForestCover {
+                    cells: 1,
+                    sources: vec![source(
+                        "hrl-dlt-2018",
+                        "Copernicus HRL Dominant Leaf Type 2018",
+                        "Copernicus Land Monitoring Service data policy",
+                        "© European Union, Copernicus Land Monitoring Service 2018, European Environment Agency (EEA)",
+                    )],
+                    tiles: Default::default(),
+                }),
                 ..Default::default()
             },
         };
@@ -621,7 +638,8 @@ mod tests {
                 "OpenStreetMap",
                 "LGL DGM1 Baden-Württemberg",
                 "LGL DOP20",
-                "Copernicus Sentinel-2"
+                "Copernicus Sentinel-2",
+                "Copernicus HRL Dominant Leaf Type 2018"
             ]
         );
         assert_eq!(m.attribution[3].licence, "Copernicus Sentinel data licence");

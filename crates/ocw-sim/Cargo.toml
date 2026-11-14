@@ -10,6 +10,8 @@ publish.workspace = true
 [dependencies]
 ocw-core.workspace = true
 ocw-world.workspace = true
+# Weather physics coefficients (spec §14 Phase 9, S6); pure, wasm-clean.
+ocw-weather.workspace = true
 # Workout files (spec §2.8); both build for wasm32.
 serde.workspace = true
 toml.workspace = true

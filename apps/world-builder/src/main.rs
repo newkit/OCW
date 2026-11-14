@@ -231,6 +231,15 @@ enum Cmd {
         /// JPEG quality of the corridor chunks.
         #[arg(long, default_value_t = 80)]
         corridor_quality: u8,
+        /// Forest folder of `scripts/fetch-forest.sh` (e.g.
+        /// data/pilot/forest): the leaf type and tree cover density into
+        /// the section FRST (spec §14 Phase 8 T3); the tree cells of OBST
+        /// follow.
+        #[arg(long)]
+        forest: Option<PathBuf>,
+        /// Cells per tile side of the forest cover (50 = 20 m).
+        #[arg(long, default_value_t = ocw_world::forest::DEFAULT_CELLS)]
+        forest_cells: u32,
         /// Write the calibrated package here instead.
         #[arg(long)]
         out: Option<PathBuf>,
@@ -248,6 +257,27 @@ enum Cmd {
         /// OSM extracts the package was built from.
         #[arg(long, required = true)]
         pbf: Vec<PathBuf>,
+        /// Write the package here instead.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Sign the renewed manifest with this signing key.
+        #[arg(long, value_name = "KEY")]
+        sign_key: Option<PathBuf>,
+    },
+    /// Forest type and density (spec §14 Phase 8 T3): the Copernicus HRL
+    /// leaf type and tree cover density of `scripts/fetch-forest.sh` into
+    /// the section FRST of an existing package, the tree cells of OBST
+    /// renewed (the manifest too); `calibrate --forest` does the same.
+    Forest {
+        /// The package (rewritten in place unless --out is given).
+        #[arg(long)]
+        world: PathBuf,
+        /// Forest folder (index.json, leaf-type.u8, density.u8).
+        #[arg(long)]
+        forest: PathBuf,
+        /// Cells per tile side (50 = 20 m).
+        #[arg(long, default_value_t = ocw_world::forest::DEFAULT_CELLS)]
+        cells: u32,
         /// Write the package here instead.
         #[arg(long)]
         out: Option<PathBuf>,
@@ -1695,6 +1725,7 @@ fn calibrate(
     imagery: &std::path::Path,
     pbf: &[PathBuf],
     (season_cells, corridor): (u32, ocw_worldgen::corridor::CorridorOptions),
+    forest: Option<(&std::path::Path, u32)>,
     out: Option<PathBuf>,
     key: Option<&ocw_world::manifest::SigningKeyPair>,
 ) {
@@ -1803,6 +1834,9 @@ fn calibrate(
     } else {
         pkg.look.ortho = None;
     }
+    if let Some((dir, cells)) = forest {
+        add_forest(&mut pkg, dir, cells);
+    }
     let path = out.unwrap_or_else(|| world.to_path_buf());
     let bytes = stage("serialise", || pkg.to_bytes());
     if let Some(dir) = path.parent() {
@@ -1825,6 +1859,99 @@ fn calibrate(
         t.elapsed().as_secs_f64()
     );
     // The manifest gets the new hash and the imagery's notices.
+    if path != world {
+        let _ = std::fs::copy(dist::sidecar(world), dist::sidecar(&path));
+    }
+    let m = stage("manifest + hash", || {
+        dist::write_manifest(
+            &path,
+            &dist::ManifestArgs {
+                id: None,
+                name: None,
+                version: None,
+                dem_attribution: Vec::new(),
+            },
+            key,
+        )
+    });
+    for a in &m.manifest.attribution {
+        println!("  credit: {} ({})", a.source, a.licence);
+    }
+}
+
+/// Measures the forest of `pkg` in the rasters of `dir` (section FRST,
+/// spec §14 Phase 8 T3) and renews the tree cells of OBST, which follow
+/// the measured density.
+fn add_forest(pkg: &mut ocw_world::WorldPackage, dir: &std::path::Path, cells: u32) {
+    let raster = stage("load forest rasters", || {
+        ocw_worldgen::forest::ForestRaster::load(dir).unwrap_or_else(|e| {
+            eprintln!("{e}");
+            std::process::exit(1);
+        })
+    });
+    for s in &raster.sources {
+        println!(
+            "forest: {} ({}, {} m/px)",
+            s.name, s.licence, raster.pixel_m
+        );
+    }
+    let st = stage("forest (FRST)", || {
+        ocw_worldgen::forest::add_forest(pkg, &raster, cells)
+    });
+    println!(
+        "forest (FRST): {} tiles × {cells}² cells ({} m), {} cells with data, mean tree cover {:.0} %, broadleaved {}, {:.2} MB ({:.1} KB per tile), {} tiles outside the rasters",
+        st.tiles,
+        f64::from(pkg.tile_size_m) / f64::from(cells),
+        st.cells,
+        100.0 * st.mean_density,
+        st.broadleaf_share
+            .map_or("-".to_string(), |b| format!("{:.0} %", 100.0 * b)),
+        st.bytes as f64 / 1e6,
+        st.bytes as f64 / 1e3 / st.tiles.max(1) as f64,
+        st.tiles_outside
+    );
+    if let Some(o) = stage("obstacles: trees (OBST)", || {
+        ocw_worldgen::obstacles::refresh_trees(pkg)
+    }) {
+        println!(
+            "obstacles (OBST): {} trees in {} tiles by the measured density",
+            o.trees, o.tree_tiles
+        );
+    }
+}
+
+/// `world-builder forest` (spec §14 Phase 8 T3).
+fn forest(
+    world: &std::path::Path,
+    dir: &std::path::Path,
+    cells: u32,
+    out: Option<PathBuf>,
+    key: Option<&ocw_world::manifest::SigningKeyPair>,
+) {
+    let t = Instant::now();
+    let mut pkg = stage("read package", || read_package(world));
+    let before = std::fs::metadata(world).map_or(0, |m| m.len());
+    add_forest(&mut pkg, dir, cells);
+    let path = out.unwrap_or_else(|| world.to_path_buf());
+    let bytes = stage("serialise", || pkg.to_bytes());
+    if let Some(d) = path.parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    stage("write", || {
+        std::fs::write(&path, &bytes).unwrap_or_else(|e| {
+            eprintln!("{}: {e}", path.display());
+            std::process::exit(1);
+        })
+    });
+    print_sections(&bytes);
+    println!(
+        "{}: {:.1} MB -> {:.1} MB ({:+.2} MB), {:.1} s",
+        path.display(),
+        before as f64 / 1e6,
+        bytes.len() as f64 / 1e6,
+        (bytes.len() as f64 - before as f64) / 1e6,
+        t.elapsed().as_secs_f64()
+    );
     if path != world {
         let _ = std::fs::copy(dist::sidecar(world), dist::sidecar(&path));
     }
@@ -2367,6 +2494,8 @@ fn main() {
             corridor,
             corridor_pixel,
             corridor_quality,
+            forest,
+            forest_cells,
             out,
             sign_key,
         } => {
@@ -2387,9 +2516,26 @@ fn main() {
                 &imagery,
                 &pbf,
                 (season_cells, corridor),
+                forest.as_deref().map(|f| (f, forest_cells)),
                 out,
                 key.as_ref(),
             );
+            print_stage_profile(None);
+        }
+        Cmd::Forest {
+            world,
+            forest: dir,
+            cells,
+            out,
+            sign_key,
+        } => {
+            let key = sign_key.map(|k| {
+                ocw_worldstore::keys::read_signing_key(&k).unwrap_or_else(|e| {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                })
+            });
+            forest(&world, &dir, cells, out, key.as_ref());
             print_stage_profile(None);
         }
         Cmd::Obstacles {
@@ -2492,6 +2638,19 @@ fn main() {
                 );
             } else {
                 println!("look: none (not calibrated)");
+            }
+            match &pkg.look.forest {
+                Some(f) => {
+                    let (n, mean, broad) = f.stats();
+                    println!(
+                        "forest cover: {} tiles × {}² cells, {n} with data, mean tree cover {:.0} %, broadleaved {}",
+                        f.tiles.len(),
+                        f.cells,
+                        100.0 * mean,
+                        broad.map_or("-".to_string(), |b| format!("{:.0} %", 100.0 * b))
+                    );
+                }
+                None => println!("forest cover: none (fallback leaf mix)"),
             }
             if let Some(c) = &pkg.look.ortho {
                 println!(

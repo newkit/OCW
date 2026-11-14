@@ -90,6 +90,9 @@ pub struct WeatherState {
     pub sim_seed: u64,
     /// Real weather (S7; `None`: off).
     pub real: Option<RealInfo>,
+    /// Whether the weather affects the physics now (S6, the server's rule;
+    /// `None` before its weather arrived).
+    pub physics: Option<bool>,
     pub machine: Machine,
 }
 
@@ -276,6 +279,24 @@ pub fn rows(page: Page, w: &WeatherState) -> Vec<Row> {
                     }
                 })
                 .collect();
+            if page == Page::WeatherAir {
+                // Weather physics (S6): the wind, the air and the road in
+                // the physics; the host's (the organiser's in an event).
+                let on = w.physics.unwrap_or(false);
+                let toggle = format!("weather.physics {}", if on { "off" } else { "on" });
+                let value = if on { "on" } else { "off" }.to_owned();
+                out.push(if may && w.event.is_none() {
+                    Row {
+                        label: "Weather physics".into(),
+                        value: Some(value),
+                        left: Some(toggle.clone()),
+                        right: Some(toggle.clone()),
+                        confirm: Some(Activate::Command(toggle)),
+                    }
+                } else {
+                    disabled("Weather physics", value)
+                });
+            }
             if page == Page::WeatherCustom {
                 let air = format!(
                     "{:.0} m/s {}, {:.0} °C",
@@ -502,6 +523,49 @@ pub fn real_at_start(world: &World, args: &crate::Args) -> bool {
         .unwrap_or(setting && args.screenshot.is_none() && args.capture.is_none())
 }
 
+/// The local ride's weather-physics switch at the start (spec §14 Phase 9,
+/// S6, Q4): the local servers start with it on; the setting
+/// `weather.physics` off sends the switch.
+pub fn physics_message(world: &World) -> Option<Vec<u8>> {
+    let on = world
+        .get_resource::<crate::settings::UserSettings>()
+        .is_none_or(|us| {
+            us.value("weather.physics") == crate::settings::registry::Value::Bool(true)
+        });
+    (!on).then(|| {
+        crate::client::ClientCore::weather_message(&ocw_protocol::WeatherChange {
+            physics: Some(false),
+            ..Default::default()
+        })
+    })
+}
+
+/// `weather.physics [on|off]`: whether the weather affects the physics in
+/// this ride (asks the server: the host decides) and the next local rides
+/// (setting `weather.physics`, saved).
+fn run_physics(world: &mut World, arg: Option<&str>) -> Result<String, String> {
+    let now = world.resource::<Time>().elapsed_secs_f64();
+    let on = match arg {
+        None => {
+            return Ok(match world.get_resource::<ClientState>() {
+                Some(c) => ocw_client::weather::physics_line(&c.0, now),
+                None => "weather physics: not riding".into(),
+            });
+        }
+        Some("on" | "true" | "1") => true,
+        Some("off" | "false" | "0") => false,
+        Some(a) => return Err(format!("on or off, not {a}")),
+    };
+    save_setting(world, "weather.physics", if on { "on" } else { "off" });
+    if world.get_resource::<ClientState>().is_none() {
+        return Ok(format!(
+            "weather physics {} for the next ride",
+            if on { "on" } else { "off" }
+        ));
+    }
+    run_weather(world, &["physics", if on { "on" } else { "off" }])
+}
+
 /// The request for real weather from the machine's data source.
 pub fn real_message(world: &World) -> Vec<u8> {
     let provider = world
@@ -555,6 +619,7 @@ fn update_weather(
         // Whole seconds: the menu's rows change once a second, not every frame.
         target: info.and_then(|i| i.target.map(|(t, left)| (t, left.ceil()))),
         sim_seed: info.map_or(0, |i| i.sim_seed),
+        physics: info.map(|i| i.physics.on),
         control,
         may_change,
         event,
@@ -812,6 +877,17 @@ fn register_commands(app: &mut App) {
     ))
     .console_command(ConsoleCommand::new(
         Permission::User,
+        Command::new("weather.physics")
+            .about("Whether the weather affects the physics (wind, air density, wet roads; the trainer gets the wind), saved; the host decides in shared rides, the organizer in events")
+            .arg(opt_arg("on", "on or off (none: show it and what it does at the rider)")),
+        |world, m| {
+            let a = m.get_one::<String>("on").map(String::as_str);
+            let out = run_physics(world, a);
+            print_err(world, "weather.physics", out)
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
         Command::new("weather.provider")
             .about("The data source of real weather (saved): automatic, meteoswiss, dwd, metno, open-meteo")
             .arg(opt_arg("source", "a source, next or prev (none: show it)")),
@@ -868,6 +944,7 @@ mod tests {
             event: None,
             sim_seed: 0,
             real: None,
+            physics: Some(true),
             machine: Machine::default(),
         }
     }
@@ -1127,12 +1204,22 @@ mod tests {
         );
         assert_eq!(sky[5].confirm, Some(Activate::Open(Page::WeatherAir)));
         let air = rows(Page::WeatherAir, &w);
-        assert_eq!(air.len(), 4);
+        assert_eq!(air.len(), 5);
+        // Weather physics (S6): the switch, on the page of the wind.
+        assert_eq!(row_label(&air[4]), "Weather physics:  < on >");
+        assert_eq!(
+            air[4].confirm,
+            Some(Activate::Command("weather.physics off".into()))
+        );
         assert_eq!(air[0].right.as_deref(), Some("weather wind=5 gust=9 in 60"));
         assert_eq!(air[3].left.as_deref(), Some("weather temp=15 in 60"));
         // Every line parses.
         for r in sky.iter().chain(&air) {
-            for l in [&r.left, &r.right].into_iter().flatten() {
+            for l in [&r.left, &r.right]
+                .into_iter()
+                .flatten()
+                .filter(|l| l.starts_with("weather "))
+            {
                 let args: Vec<&str> = l.split_whitespace().skip(1).collect();
                 ocw_weather::command::parse(&args).unwrap_or_else(|e| panic!("{l}: {e}"));
             }
@@ -1214,7 +1301,8 @@ mod tests {
         assert_eq!(m.focus(), 4);
         m.apply_with(Action::Click(5), world_rows);
         assert_eq!(m.page(), Some(MenuPage::Sub(Page::WeatherAir)));
-        assert_eq!(m.labels().len(), 5);
+        // Wind, gust, direction, temperature, weather physics and Back.
+        assert_eq!(m.labels().len(), 6);
         m.apply_with(Action::Back, world_rows);
         m.apply_with(Action::Back, world_rows);
         // The transition and the seed.

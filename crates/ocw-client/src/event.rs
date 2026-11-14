@@ -139,6 +139,10 @@ pub fn weather_line(label: &str) -> String {
     format!("Weather: {label} (set by the organizer)")
 }
 
+/// The organiser's weather-physics rule in a line (spec §14 Phase 9, S6,
+/// Q4), shown only when it is on (off is the events' default).
+pub const WEATHER_PHYSICS_LINE: &str = "Weather physics on: wind, air density and wet roads count";
+
 /// The event's title: "Race - 2 laps (8.1 km)", "Group ride - 150 W".
 pub fn title(kind: &EventKind) -> String {
     match *kind {
@@ -515,6 +519,10 @@ impl EventClient {
             if let Some(w) = &info.weather {
                 view.lines.push(weather_line(w));
             }
+            // ... and its weather physics (S6, Q4).
+            if info.weather_physics {
+                view.lines.push(WEATHER_PHYSICS_LINE.into());
+            }
         }
         match info.kind {
             EventKind::GroupRide { .. } => {
@@ -586,6 +594,9 @@ impl EventClient {
                     if let Some(w) = &info.weather {
                         footer.push(weather_line(w));
                     }
+                    if info.weather_physics {
+                        footer.push(WEATHER_PHYSICS_LINE.into());
+                    }
                     footer.push("Esc / A: close".into());
                     view.results = Some(ResultsView {
                         title: format!(
@@ -650,6 +661,7 @@ mod tests {
             collisions: ocw_sim::collide::Mode::Off,
             physics: ocw_sim::PhysicsMode::Profile,
             weather: None,
+            weather_physics: false,
             damage: Default::default(),
             conditions: Vec::new(),
         }
@@ -1081,8 +1093,14 @@ mod tests {
         // Without one: no line.
         i.weather = None;
         let mut c = EventClient::new("loop");
-        c.on_state(Some(i), Some(RiderId(1)), 0.0);
+        c.on_state(Some(i.clone()), Some(RiderId(1)), 0.0);
         let v = c.view(0.0, 10.0, Some(RiderId(1)), 100.0, &[]).unwrap();
         assert!(!v.lines.iter().any(|l| l.starts_with("Weather")));
+        // The organiser's weather physics (S6, Q4): shown when on.
+        i.weather_physics = true;
+        let mut c = EventClient::new("loop");
+        c.on_state(Some(i), Some(RiderId(1)), 0.0);
+        let v = c.view(0.0, 10.0, Some(RiderId(1)), 100.0, &[]).unwrap();
+        assert!(v.lines.contains(&WEATHER_PHYSICS_LINE.to_owned()));
     }
 }

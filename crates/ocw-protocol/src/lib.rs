@@ -13,9 +13,10 @@ pub mod v1 {
 
 mod weather;
 pub use weather::{
-    WeatherChange, WeatherInfo, choice_from_wire, choice_to_wire, event_weather_from_wire,
-    event_weather_to_wire, real_from_wire, real_to_wire, session_weather, session_weather_with,
-    weather_change, weather_from_wire, weather_info, weather_request, weather_to_wire,
+    PhysicsRule, WeatherChange, WeatherInfo, choice_from_wire, choice_to_wire,
+    event_weather_from_wire, event_weather_to_wire, physics_rule_from_wire, physics_rule_to_wire,
+    real_from_wire, real_to_wire, session_weather, session_weather_with, weather_change,
+    weather_from_wire, weather_info, weather_request, weather_to_wire,
 };
 
 use ocw_core::RiderId;
@@ -700,6 +701,12 @@ pub fn event_weather(s: &v1::EventStart) -> Option<ocw_weather::machine::EventWe
     s.weather.as_ref().and_then(event_weather_from_wire)
 }
 
+/// The organiser's weather-physics rule of an event request (spec §14
+/// Phase 9, S6, Q4: absent = off).
+pub fn event_weather_physics(s: &v1::EventStart) -> bool {
+    s.weather_physics.unwrap_or(false)
+}
+
 /// The organiser's race mode of an event request (`None`: by its kind).
 pub fn event_physics(s: &v1::EventStart) -> Option<ocw_sim::PhysicsMode> {
     s.physics.and_then(physics_mode_from_wire)
@@ -783,6 +790,7 @@ pub fn event_start(spec: &EventSpec, bots: Option<u32>) -> v1::EventStart {
         collisions: None,
         physics: None,
         weather: None,
+        weather_physics: None,
         damage: None,
     }
 }
@@ -862,6 +870,7 @@ pub fn event_state(ev: Option<&Event>, standings: &[Standing], tick: u64) -> v1:
         physics: physics_mode_to_wire(ev.physics),
         // The organiser's weather: set by the server (it owns the weather).
         weather: None,
+        weather_physics: ev.weather_physics,
         damage: Some(damage_rules_to_wire(&ev.damage)),
     }
 }
@@ -886,6 +895,9 @@ pub struct EventInfo {
     /// The organiser's weather of the event, for its info ("thunderstorm";
     /// spec §14 Phase 9, S5; `None`: the session's weather).
     pub weather: Option<String>,
+    /// The weather affects the physics in this event (spec §14 Phase 9,
+    /// S6, Q4: the organiser's rule).
+    pub weather_physics: bool,
     /// The organiser's damage rules (spec §14 Phase 12E).
     pub damage: ocw_sim::damage::Rules,
     /// Per rider: crashes and the final condition (rider, bike; spec §14
@@ -959,6 +971,7 @@ pub fn event_info(e: &v1::EventState) -> Option<EventInfo> {
             .as_ref()
             .and_then(weather::event_weather_from_wire)
             .map(|w| w.label()),
+        weather_physics: e.weather_physics,
         standings: e
             .standings
             .iter()

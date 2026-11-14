@@ -45,6 +45,8 @@ weather real [SOURCE] [in T] real weather at your place and the clock's time; SO
 weather day NAME|DATE [TIME] ride a day: the time machine goes there, the weather is real
                              (history from ERA5), e.g. weather day lothar, weather day 1999-12-26 12:00
 weather.provider [SOURCE]    the real weather's data source; weather.days: the days
+weather physics [on|off]     whether the weather affects the physics: wind, air density,
+                             wet roads (on in solo and free ride; events: the organizer)
 Who may change it: you (solo), the host (shared ride), nobody (an organizer's event).";
 
 /// One field change.
@@ -129,6 +131,9 @@ pub enum WeatherCommand {
         distance_m: f32,
         bearing_deg: Option<f32>,
     },
+    /// The session's *weather affects physics* switch (S6, Q4; `None`:
+    /// show it).
+    Physics(Option<bool>),
 }
 
 /// "90", "30s", "5m", "1h" → seconds.
@@ -199,6 +204,12 @@ pub fn parse(args: &[&str]) -> Result<WeatherCommand, String> {
             seed: Some(seed.parse().map_err(|_| format!("not a seed: {seed}"))?),
         }),
         ["fixed" | "fix"] => Ok(WeatherCommand::Fixed),
+        ["physics"] => Ok(WeatherCommand::Physics(None)),
+        ["physics", v] => Ok(WeatherCommand::Physics(Some(match *v {
+            "on" | "true" | "1" => true,
+            "off" | "false" | "0" => false,
+            _ => return Err(format!("weather physics on|off, not {v}")),
+        }))),
         ["real"] => Ok(WeatherCommand::Real {
             choice: None,
             transition_s,
@@ -372,6 +383,22 @@ pub fn list() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `weather physics on|off` (spec §14 Phase 9, S6).
+    #[test]
+    fn the_physics_switch() {
+        assert_eq!(parse(&["physics"]), Ok(WeatherCommand::Physics(None)));
+        assert_eq!(
+            parse(&["physics", "on"]),
+            Ok(WeatherCommand::Physics(Some(true)))
+        );
+        assert_eq!(
+            parse(&["physics", "off"]),
+            Ok(WeatherCommand::Physics(Some(false)))
+        );
+        assert!(parse(&["physics", "maybe"]).is_err());
+        assert!(USAGE.contains("weather physics"));
+    }
 
     #[test]
     fn presets_transitions_and_simulation() {

@@ -9,7 +9,7 @@ use std::collections::VecDeque;
 
 use ocw_protocol::{WeatherInfo, v1};
 use ocw_render::weather::{StrikeView, WeatherView};
-use ocw_weather::{Ground, Strike, WeatherFollower, WeatherState};
+use ocw_weather::{Ground, Strike, WeatherFollower, WeatherPhysics, WeatherState};
 
 use crate::client::ClientCore;
 
@@ -26,6 +26,9 @@ pub struct WeatherClient {
     offset: Option<f64>,
     strikes: Vec<StrikeView>,
     seen: VecDeque<u32>,
+    /// The session time the prediction's next tick is at (s; spec §14
+    /// Phase 9, S6): from each message, then on by the ticks.
+    predict_s: Option<f64>,
 }
 
 impl WeatherClient {
@@ -55,7 +58,38 @@ impl WeatherClient {
         }
         self.strikes
             .retain(|s| s.flash_at_s > now_s - STRIKE_MEMORY_S);
+        self.predict_s = Some(info.session_s + age_s.max(0.0));
         self.info = Some(info);
+    }
+
+    /// The weather's physics for the prediction's next tick (spec §14
+    /// Phase 9, S6; `None`: the weather does not affect the physics): the
+    /// server's state, gust and ground at the session time of that tick,
+    /// which moves on by one tick.
+    pub fn physics_tick(&mut self) -> Option<WeatherPhysics> {
+        let info = self.info.as_ref()?;
+        let t = self.predict_s.unwrap_or(info.session_s);
+        self.predict_s = Some(t + ocw_core::SIM_DT);
+        info.physics_at(t)
+    }
+
+    /// The weather's physics at client time `now_s`, whether it affects the
+    /// physics or not (the HUD's wind; `None` before the first message).
+    pub fn physics_now(&self, now_s: f64) -> Option<WeatherPhysics> {
+        let info = self.info.as_ref()?;
+        let t = self.session_time(now_s).unwrap_or(info.session_s);
+        Some(WeatherPhysics::at(
+            &info.now,
+            info.seed,
+            t,
+            &info.ground,
+            info.physics.pressure_y_m,
+        ))
+    }
+
+    /// Whether the weather affects the physics now (the server's rule).
+    pub fn physics_on(&self) -> bool {
+        self.info.as_ref().is_some_and(|i| i.physics.on)
     }
 
     /// The server's last weather message.
@@ -110,14 +144,20 @@ impl WeatherClient {
             session_s,
             state,
             ground,
+            rider_wind: None,
+            physics: self.physics_on(),
         })
     }
 }
 
 /// The weather for the renderer (`RideView::weather`) at client time
-/// `now_s`; `None` until the server's weather is known.
+/// `now_s`; `None` until the server's weather is known. With the wind
+/// relative to the own rider (spec §14 Phase 9, S6: the HUD's arrow).
 pub fn weather_view(client: &mut ClientCore, now_s: f64) -> Option<WeatherView> {
-    client.weather_mut().view(now_s)
+    let rider_wind = client.rider_wind(now_s);
+    let mut v = client.weather_mut().view(now_s)?;
+    v.rider_wind = rider_wind;
+    Some(v)
 }
 
 /// The request a `weather …` command sends (`None`: nothing to ask the
@@ -130,7 +170,11 @@ pub fn request_for(
     use ocw_protocol::WeatherChange;
     use ocw_weather::command::WeatherCommand as W;
     Some(match cmd {
-        W::Show | W::List | W::Day { .. } => return None,
+        W::Show | W::List | W::Day { .. } | W::Physics(None) => return None,
+        W::Physics(Some(on)) => WeatherChange {
+            physics: Some(*on),
+            ..Default::default()
+        },
         W::Real {
             choice,
             transition_s,
@@ -249,6 +293,7 @@ pub fn run(
     match &cmd {
         W::List => return Ok((command::list(), None)),
         W::Show => return describe(client, now_s).map(|s| (s, None)),
+        W::Physics(None) => return Ok((physics_line(client, now_s), None)),
         // The app runs the day's lines (the time machine, then real).
         W::Day { title, lines } => {
             return Err(format!(
@@ -318,6 +363,7 @@ pub fn status(client: &mut ClientCore, now_s: f64) -> Result<String, String> {
     use ocw_weather::machine::{distance_label, transition_label};
     let control = client.weather_control();
     let event = client.event_info().and_then(|e| e.weather.clone());
+    let physics = physics_line(client, now_s);
     let wc = client.weather_mut();
     let Some((w, g)) = wc.now(now_s) else {
         return Err("no weather yet (the server sends it when you join)".into());
@@ -360,11 +406,45 @@ pub fn status(client: &mut ClientCore, now_s: f64) -> Result<String, String> {
         g.puddles() * 100.0,
         g.snow_cover() * 100.0
     ));
+    lines.push(physics);
     lines.push(match event {
         Some(e) => format!("set by {control}: {e} for the event"),
         None => format!("set by {control}"),
     });
     Ok(lines.join("\n"))
+}
+
+/// The weather's physics in one line (spec §14 Phase 9, S6): on or off
+/// and why, and what it does at the rider now.
+pub fn physics_line(client: &ClientCore, now_s: f64) -> String {
+    let Some(info) = client.weather().info() else {
+        return "weather physics: no weather yet".into();
+    };
+    let rule = info.physics;
+    let event = client
+        .event_info()
+        .is_some_and(|e| e.phase != ocw_sim::EventPhase::Finished);
+    let mut s = format!(
+        "weather physics {}{}",
+        if rule.on { "on" } else { "off" },
+        match (event, rule.on == rule.session) {
+            (true, _) => " (the event's organizer decides)",
+            (false, false) => " (changing)",
+            _ => "",
+        }
+    );
+    if let Some(w) = client.weather().physics_now(now_s) {
+        let state = client.state();
+        let here = ocw_sim::weather::at_rider(&w, client.track(), &state);
+        s += &format!(
+            "; at the rider: {}, air {:.3} kg/m³, road grip {:.0} %, rolling +{:.0} %",
+            here.wind.label(),
+            here.density,
+            here.weather.grip * 100.0,
+            (here.weather.rolling_factor - 1.0) * 100.0
+        );
+    }
+    s
 }
 
 /// The base a field change applies to: a transition's target, else now.
@@ -447,6 +527,70 @@ mod tests {
     use ocw_server::local::SteppedServer;
     use ocw_weather::presets::preset;
     use ocw_world::Route;
+
+    /// Weather physics end to end (spec §14 Phase 9, S6): the server's
+    /// rule reaches the client, whose prediction rides the same wind (the
+    /// error stays small in a storm), the HUD gets the wind at the rider,
+    /// the trainer the headwind; switched off, the trainer's wind goes.
+    #[test]
+    fn the_prediction_rides_the_servers_weather() {
+        fn ride(
+            client: &mut ClientCore,
+            server: &mut SteppedServer,
+            secs: f64,
+            t: &mut f64,
+            worst: &mut f64,
+        ) {
+            for _ in 0..(secs * 50.0) as usize {
+                server.tick();
+                *t += 0.02;
+                for bytes in server.drain() {
+                    client.on_server_message(&bytes, *t);
+                }
+                if let Some(bytes) = client.on_device_event(ocw_devices::DeviceEvent::Power {
+                    watts: 260.0,
+                    cadence_rpm: Some(90.0),
+                    timestamp: std::time::Duration::from_secs_f64(*t),
+                }) {
+                    server.send(&bytes);
+                }
+                client.predict_step();
+                if *t > 5.0 {
+                    *worst = worst.max(client.prediction_error().abs());
+                }
+            }
+        }
+        let mut client = ClientCore::new(Route::test_loop(), "Wind", RiderProfile::default());
+        let mut server = SteppedServer::new(Route::test_loop(), 0, 0.0);
+        server.send(&client.hello());
+        let (mut t, mut worst) = (0.0, 0.0f64);
+        ride(&mut client, &mut server, 0.2, &mut t, &mut worst);
+        assert!(client.weather().physics_on(), "solo: on (Q4)");
+        server.send(&ClientCore::weather_message(&ocw_protocol::WeatherChange {
+            target: Some(preset("storm").unwrap()),
+            settle_ground: true,
+            ..Default::default()
+        }));
+        ride(&mut client, &mut server, 40.0, &mut t, &mut worst);
+        assert!(worst < 0.5, "prediction error {worst} m in the storm");
+        let wind = client.rider_wind(t).expect("the wind at the rider");
+        assert!(wind.speed() > 5.0, "{wind:?}");
+        let v = weather_view(&mut client, t).unwrap();
+        assert!(v.physics && v.wind_hud().is_some());
+        let tw = client.trainer_wind(t).expect("the trainer's wind");
+        assert!((tw.head_mps - wind.head_mps).abs() < 1e-9);
+        assert!(tw.air_density > 1.0 && tw.air_density < 1.3);
+        // Off: no wind for the trainer, the HUD still shows it.
+        server.send(&ClientCore::weather_message(&ocw_protocol::WeatherChange {
+            physics: Some(false),
+            ..Default::default()
+        }));
+        ride(&mut client, &mut server, 0.5, &mut t, &mut worst);
+        assert!(!client.weather().physics_on());
+        assert!(client.trainer_wind(t).is_none());
+        assert!(client.rider_wind(t).is_some());
+        assert!(!weather_view(&mut client, t).unwrap().physics);
+    }
 
     /// The weather end to end (spec §14 Phase 9, S4): the server's
     /// weather reaches the client; the client's `weather` request changes

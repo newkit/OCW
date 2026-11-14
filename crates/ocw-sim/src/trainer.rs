@@ -10,7 +10,7 @@
 //! - [`ErgController`]: ERG mode. Target power with ramped steps and a
 //!   "catch-up" when the cadence drops (avoids the ERG "spiral of death").
 
-use ocw_core::{AIR_DENSITY, RiderProfile};
+use ocw_core::{AIR_DENSITY, GRAVITY, RiderProfile};
 
 /// Settings of SIM mode. Defaults follow spec §5.3.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -65,10 +65,44 @@ impl SimSettings {
 pub struct SimTarget {
     /// Gradient as rise over run.
     pub grade: f64,
+    /// Headwind along the rider's travel (m/s, negative = tailwind; spec
+    /// §14 Phase 9, S6), for trainers that simulate wind (FTMS, Wahoo).
     pub wind_speed_mps: f64,
     pub crr: f64,
     /// Wind resistance coefficient 0.5 · ρ · CdA, in kg/m.
     pub cw_kg_per_m: f64,
+    /// The gradient with the wind folded in, for trainers that cannot
+    /// simulate wind (spec §14 Phase 9, Q5): [`grade`](Self::grade) plus
+    /// the wind's extra drag as a gradient. The same as `grade` in calm air.
+    pub wind_grade: f64,
+}
+
+/// The weather's load on the trainer in SIM mode (spec §14 Phase 9, S6,
+/// Q5), while the weather affects the physics.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TrainerWind {
+    /// Headwind along the rider's travel (m/s, negative = tailwind).
+    pub head_mps: f64,
+    /// Air density at the rider (kg/m³).
+    pub air_density: f64,
+}
+
+/// Steps the trainer's wind is sent in (m/s): FTMS carries 0.001 m/s, but
+/// a gusty wind would write at every interval.
+pub const WIND_STEP_MPS: f64 = 0.5;
+/// Steps of the air density in the trainer's wind coefficient (kg/m³;
+/// FTMS carries 0.01 kg/m).
+pub const DENSITY_STEP: f64 = 0.01;
+
+/// The wind's extra drag over still air on a rider at `speed` (m/s) with
+/// wind coefficient `cw_kg_per_m` and total mass `mass_kg`, as a gradient
+/// (rise over run): what a trainer without wind support gets on top of
+/// the road's gradient (Q5). Positive in a headwind, negative in a
+/// tailwind.
+pub fn wind_as_grade(head_mps: f64, speed: f64, cw_kg_per_m: f64, mass_kg: f64) -> f64 {
+    let v = speed.max(0.0);
+    let air = v + head_mps;
+    cw_kg_per_m * (air * air.abs() - v * v) / (mass_kg.max(1.0) * GRAVITY)
 }
 
 /// Turns the road gradient into rate-limited trainer updates.
@@ -77,6 +111,12 @@ pub struct SimController {
     settings: SimSettings,
     crr: f64,
     cw_kg_per_m: f64,
+    /// The profile's CdA and total mass (the wind coefficient at the
+    /// weather's density, the wind's folded gradient).
+    cda_m2: f64,
+    mass_kg: f64,
+    /// The wind last sent (m/s, in [`WIND_STEP_MPS`]).
+    wind_sent: f64,
     /// Rate-limited gradient (what the trainer is moving towards).
     current: Option<f64>,
     last_update_s: Option<f64>,
@@ -91,6 +131,9 @@ impl SimController {
             settings,
             crr: profile.crr,
             cw_kg_per_m: 0.5 * AIR_DENSITY * profile.cda_m2,
+            cda_m2: profile.cda_m2,
+            mass_kg: profile.rider_mass_kg + profile.bike_mass_kg,
+            wind_sent: 0.0,
             current: None,
             last_update_s: None,
             last_sent: None,
@@ -102,10 +145,12 @@ impl SimController {
     /// force, spec §2.5): the trainer gets the new rolling and wind
     /// resistance with the next update interval.
     pub fn set_profile(&mut self, profile: &RiderProfile) {
-        let cw = 0.5 * AIR_DENSITY * profile.cda_m2;
-        if profile.crr != self.crr || cw != self.cw_kg_per_m {
+        self.mass_kg = profile.rider_mass_kg + profile.bike_mass_kg;
+        if profile.crr != self.crr || profile.cda_m2 != self.cda_m2 {
             self.crr = profile.crr;
-            self.cw_kg_per_m = cw;
+            // At the density in use (the standard one, or the weather's).
+            self.cw_kg_per_m *= profile.cda_m2 / self.cda_m2.max(1e-9);
+            self.cda_m2 = profile.cda_m2;
             self.coefficients_changed = true;
         }
     }
@@ -136,6 +181,37 @@ impl SimController {
         grade_ahead: f64,
         rolling_factor: f64,
     ) -> Option<SimTarget> {
+        self.update_in(now_s, grade_here, grade_ahead, rolling_factor, None, 0.0)
+    }
+
+    /// [`SimController::update_on`] in the weather (spec §14 Phase 9, S6,
+    /// Q5; `None`: still air at the standard density, as before) for a
+    /// rider at `speed` (m/s): the trainer gets the headwind (FTMS and
+    /// Wahoo simulate it) and the wind coefficient at the air's density,
+    /// both in steps ([`WIND_STEP_MPS`], [`DENSITY_STEP`]); a change of a
+    /// step is sent at the next interval. The target also carries the
+    /// gradient with the wind folded in for trainers without wind
+    /// ([`SimTarget::wind_grade`]). The gradient itself stays the road's.
+    pub fn update_in(
+        &mut self,
+        now_s: f64,
+        grade_here: f64,
+        grade_ahead: f64,
+        rolling_factor: f64,
+        wind: Option<TrainerWind>,
+        speed: f64,
+    ) -> Option<SimTarget> {
+        let density = wind.map_or(AIR_DENSITY, |w| {
+            (w.air_density / DENSITY_STEP).round() * DENSITY_STEP
+        });
+        let cw = 0.5 * density * self.cda_m2;
+        if (cw - self.cw_kg_per_m).abs() > 1e-12 {
+            self.cw_kg_per_m = cw;
+            self.coefficients_changed = true;
+        }
+        let head = wind.map_or(0.0, |w| {
+            (w.head_mps / WIND_STEP_MPS).round() * WIND_STEP_MPS
+        });
         // Look-ahead: aim between the gradient here and the one ahead, so the
         // trainer starts changing before the rider reaches a gradient change.
         let target = self
@@ -152,6 +228,7 @@ impl SimController {
         self.current = Some(current);
         self.last_update_s = Some(now_s);
 
+        let wind_changed = head != self.wind_sent;
         let send = match self.last_sent {
             None => true,
             Some((t, sent, factor)) => {
@@ -160,6 +237,7 @@ impl SimController {
                     && ((current - sent).abs() >= self.settings.min_change
                         || (rolling_factor - factor).abs() > 1e-9
                         || self.coefficients_changed
+                        || wind_changed
                         || since >= self.settings.keepalive_s)
             }
         };
@@ -168,11 +246,19 @@ impl SimController {
         }
         self.last_sent = Some((now_s, current, rolling_factor));
         self.coefficients_changed = false;
+        self.wind_sent = head;
+        let wind_grade = if head == 0.0 {
+            current
+        } else {
+            let fold = wind_as_grade(head, speed, self.cw_kg_per_m, self.mass_kg);
+            (current + fold).clamp(self.settings.downhill_limit, self.settings.uphill_limit)
+        };
         Some(SimTarget {
             grade: current,
-            wind_speed_mps: 0.0,
+            wind_speed_mps: head,
             crr: self.crr * rolling_factor,
             cw_kg_per_m: self.cw_kg_per_m,
+            wind_grade,
         })
     }
 }
@@ -343,6 +429,67 @@ mod tests {
         assert_eq!(t.crr, 0.003);
         assert!((t.cw_kg_per_m - 0.5 * AIR_DENSITY * aero.cda_m2).abs() < 1e-12);
         assert!(c.update(3.0 * dt, 0.02, 0.02).is_none());
+    }
+
+    /// Spec §14 Phase 9, S6 / Q5: the trainer gets the headwind and the
+    /// air's wind coefficient; the folded gradient for trainers without
+    /// wind; the road's gradient unchanged.
+    #[test]
+    fn the_wind_goes_to_the_trainer() {
+        let profile = RiderProfile::default();
+        let mut c = SimController::new(SimSettings::default(), &profile);
+        let dt = c.settings().update_interval_s;
+        let head = TrainerWind {
+            head_mps: 5.2,
+            air_density: 1.1,
+        };
+        let t = c.update_in(0.0, 0.04, 0.04, 1.0, Some(head), 10.0).unwrap();
+        assert!((t.grade - 0.02).abs() < 1e-12, "the road's gradient stays");
+        assert_eq!(t.wind_speed_mps, 5.0, "in steps of 0.5 m/s");
+        assert!((t.cw_kg_per_m - 0.5 * 1.1 * profile.cda_m2).abs() < 1e-12);
+        let mass = profile.rider_mass_kg + profile.bike_mass_kg;
+        let fold = wind_as_grade(5.0, 10.0, t.cw_kg_per_m, mass);
+        assert!((t.wind_grade - (0.02 + fold)).abs() < 1e-12);
+        // A 5 m/s headwind at 36 km/h is worth about 2 %.
+        assert!((0.015..0.03).contains(&fold), "{fold}");
+        // The same wind: nothing new to send.
+        assert!(c.update_in(dt, 0.04, 0.04, 1.0, Some(head), 10.0).is_none());
+        // A gust of a step: sent at the next interval.
+        let gust = TrainerWind {
+            head_mps: 6.0,
+            ..head
+        };
+        let t = c
+            .update_in(2.0 * dt, 0.04, 0.04, 1.0, Some(gust), 10.0)
+            .unwrap();
+        assert_eq!(t.wind_speed_mps, 6.0);
+        // A tailwind: negative wind, a lower folded gradient.
+        let tail = TrainerWind {
+            head_mps: -4.0,
+            ..head
+        };
+        let t = c
+            .update_in(3.0 * dt, 0.04, 0.04, 1.0, Some(tail), 10.0)
+            .unwrap();
+        assert_eq!(t.wind_speed_mps, -4.0);
+        assert!(t.wind_grade < t.grade);
+        // The folded gradient stays within the trainer's limits.
+        let gale = TrainerWind {
+            head_mps: -30.0,
+            ..head
+        };
+        let t = c
+            .update_in(4.0 * dt, 0.04, 0.04, 1.0, Some(gale), 10.0)
+            .unwrap();
+        assert_eq!(t.wind_grade, SimSettings::default().downhill_limit);
+        // The weather off again: still air at the standard density.
+        let t = c.update_in(5.0 * dt, 0.04, 0.04, 1.0, None, 10.0).unwrap();
+        assert_eq!(t.wind_speed_mps, 0.0);
+        assert_eq!(t.wind_grade, t.grade);
+        assert!((t.cw_kg_per_m - 0.5 * AIR_DENSITY * profile.cda_m2).abs() < 1e-12);
+        assert!(c.update_in(6.0 * dt, 0.04, 0.04, 1.0, None, 10.0).is_none());
+        // Calm air folds nothing.
+        assert_eq!(wind_as_grade(0.0, 10.0, 0.2, 80.0), 0.0);
     }
 
     #[test]

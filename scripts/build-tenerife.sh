@@ -26,7 +26,8 @@
 # Region calibration (spec §14 Phase 8 T3): when data/tenerife/imagery holds the
 # imagery of `scripts/fetch-imagery.sh tenerife` for this package, the package is
 # calibrated after its routes (palette, roof colours, seasonal tints and the
-# orthophoto corridor ORTC, spec §14 Phase 8 T7;
+# orthophoto corridor ORTC, spec §14 Phase 8 T7; with data/<region>/forest of
+# `scripts/fetch-forest.sh` also the forest type and density FRST, T3;
 # OCW_NO_CALIBRATE=1 skips it, OCW_SEASON_CELLS sets the tint cells per tile).
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -53,12 +54,21 @@ fi
 cargo build -q --release -p world-builder
 WB=target/release/world-builder
 # Region calibration (spec §14 Phase 8 T3) if the imagery covers the package.
+# The forest type and density (section FRST, spec §14 Phase 8 T3) of
+# `scripts/fetch-forest.sh` go in with the calibration, or alone without it
+# (OCW_NO_FOREST=1 leaves them out).
 calibrate() { # package pbf...
   local pkg=$1; shift
+  local forest=()
+  if [ -z "${OCW_NO_FOREST:-}" ] && [ -f "$D/forest/index.json" ]; then
+    forest=(--forest "$D/forest")
+  fi
   if [ -z "${OCW_NO_CALIBRATE:-}" ] && grep -qx "$(basename "$pkg")" "$D/imagery/packages.txt" 2>/dev/null; then
     local pbf=()
     for p in "$@"; do pbf+=(--pbf "$p"); done
-    $WB calibrate --world "$pkg" --imagery "$D/imagery" "${pbf[@]}" --season-cells "${OCW_SEASON_CELLS:-50}"
+    $WB calibrate --world "$pkg" --imagery "$D/imagery" "${pbf[@]}" --season-cells "${OCW_SEASON_CELLS:-50}" "${forest[@]}"
+  elif [ ${#forest[@]} -gt 0 ]; then
+    $WB forest --world "$pkg" "${forest[@]}"
   fi
 }
 out=$OUT/tenerife.ocwpkg

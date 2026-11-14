@@ -39,7 +39,9 @@
 //! seasonal tint maps (spec §14 Phase 8 T3), see [`crate::look`]; `LITR` –
 //! whether each road strip is lit at night (OSM `lit`, spec §14 Phase 9
 //! S2), see [`crate::lamps`]; `ORTC` – the orthophoto corridor along the
-//! roads (spec §14 Phase 8 T7, optional), see [`crate::ortho`]; `OBST` –
+//! roads (spec §14 Phase 8 T7, optional), see [`crate::ortho`]; `FRST` –
+//! the measured forest, leaf type and tree cover density per cell (spec
+//! §14 Phase 8 T3, optional), see [`crate::forest`]; `OBST` –
 //! static obstacles near the roads (barriers, posts, the tree cells; spec
 //! §14 Phase 12 K3, optional), see [`crate::obstacles`]. A package
 //! without sections is written as version 1, byte for byte as before.
@@ -56,6 +58,7 @@ use crate::buildings::{
     BUILDING_TAGS_TAG, BUILDINGS_TAG, Buildings, apply_building_tags, read_building_tags,
     read_buildings, write_building_tags, write_buildings,
 };
+use crate::forest::{FOREST_TAG, read_forest, write_forest};
 use crate::graph::{Edge, EdgeId, Oneway, RoadClass, RoadGraph, VertexId};
 use crate::graph_route::{GraphRoute, RouteStep};
 use crate::lamps::{ROAD_LIT_TAG, RoadLit, read_road_lit, write_road_lit};
@@ -385,6 +388,11 @@ impl WorldPackage {
             let mut payload = Vec::new();
             write_seasons(s, &mut payload);
             sections.push((SEASONS_TAG, payload));
+        }
+        if let Some(f) = &self.look.forest {
+            let mut payload = Vec::new();
+            write_forest(f, &mut payload);
+            sections.push((FOREST_TAG, payload));
         }
         if let Some(o) = &self.look.ortho {
             let mut payload = Vec::new();
@@ -754,6 +762,14 @@ fn read_sections(
             s.look.roofs = Some(read_roofs(payload)?);
         } else if &tag == SEASONS_TAG && full {
             s.look.seasons = Some(read_seasons(payload)?);
+        } else if &tag == FOREST_TAG && full {
+            // Optional (spec §14 Phase 8 T3): a newer layout is skipped (the
+            // trees keep the regional leaf mix and the land use's chances).
+            match read_forest(payload) {
+                Ok(f) => s.look.forest = Some(f),
+                Err(e) if e.contains("not supported") => {}
+                Err(e) => return Err(e),
+            }
         } else if &tag == ORTHO_TAG && full {
             // Optional imagery (spec §14 Phase 8 T7): a newer layout is
             // skipped (the ground keeps its materials and colour map).
@@ -1984,6 +2000,49 @@ mod tests {
         assert_eq!(WorldPackage::from_bytes(&newer).unwrap(), without(&full));
     }
 
+    /// The forest cover (spec §14 Phase 8 T3): round trip, left out of a
+    /// skeleton, skipped by readers from before it and when its layout is
+    /// newer than this reader; without it the trees keep the fallback.
+    #[test]
+    fn forest_section_round_trips_and_old_readers_skip_it() {
+        use crate::forest::FOREST_TAG;
+        let mut look = crate::look::tests::sample_look();
+        look.forest = Some(crate::forest::tests::sample_forest());
+        let full = WorldPackage {
+            graph: Some(graph()),
+            look,
+            ..package()
+        };
+        let b = full.to_bytes();
+        assert_eq!(WorldPackage::from_bytes(&b).unwrap(), full);
+        assert!(section_sizes(&b).iter().any(|s| &s.0 == FOREST_TAG));
+        assert!(
+            WorldPackage::skeleton_from_bytes(&b)
+                .unwrap()
+                .look
+                .forest
+                .is_none()
+        );
+        let without = |p: &WorldPackage| WorldPackage {
+            look: crate::look::RegionLook {
+                forest: None,
+                ..p.look.clone()
+            },
+            ..p.clone()
+        };
+        let mut old_b = b.clone();
+        let at = old_b.windows(4).rposition(|w| w == FOREST_TAG).unwrap();
+        old_b[at] = b'x';
+        let old = WorldPackage::from_bytes(&old_b).unwrap();
+        assert_eq!(old, without(&full));
+        let mut newer = b.clone();
+        newer[at + 12] = 9;
+        assert_eq!(WorldPackage::from_bytes(&newer).unwrap(), without(&full));
+        // Readers without the section: no measured leaf type anywhere.
+        assert_eq!(crate::trees::measured_leaf(&old, 100.0, 300.0), None);
+        assert!(crate::trees::measured_leaf(&full, 100.0, 300.0).is_some());
+    }
+
     #[test]
     fn region_section_round_trip_and_old_readers_skip_it() {
         let mut region = PackageRegion::bbox(47.0, 9.4, 47.2, 9.6);
@@ -2133,6 +2192,8 @@ mod tests {
             ..package()
         };
         p.look.ortho = Some(crate::ortho::tests::sample_corridor());
+        // The forest cover (FRST, spec §14 Phase 8 T3) streams with the base.
+        p.look.forest = Some(crate::forest::tests::sample_forest());
         p.tiles.get_mut(&TileKey { x: 1, z: 0 }).unwrap().roads[0].surface = RoadSurface::Gravel;
         // A lit road (section LITR, spec §14 Phase 9 S2): kept by streaming.
         p.tiles.get_mut(&TileKey { x: 1, z: 0 }).unwrap().roads[0].lit = crate::RoadLit::Yes;
@@ -2158,6 +2219,8 @@ mod tests {
         assert!(chunks.iter().any(|(n, _)| n == "section ORTC"));
         let s = StreamedPackage::from_parts(&bytes[header], &sections).unwrap();
         assert!(s.base().look.ortho.is_none());
+        assert_eq!(s.base().look.forest, p.look.forest);
+        assert!(chunks.iter().any(|(n, _)| n == "section FRST"));
         assert_eq!(s.base().time_zone.as_deref(), Some("Europe/Vaduz"));
         // The road surfaces (a section after ORTC) are still there.
         let tile_r = chunks

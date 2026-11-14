@@ -358,9 +358,18 @@ impl TrainerProtocol {
         out.control_writes.push(req.encode());
     }
 
+    /// Whether this trainer simulates wind (spec §14 Phase 9, Q5): Wahoo
+    /// control and FTMS trainers with the Indoor Bike Simulation
+    /// parameters (or unknown features, which are tried as such); an FTMS
+    /// trainer with only an inclination target gets the wind folded into
+    /// the gradient ([`SimulationParameters::load`]).
+    pub fn takes_wind(&self) -> bool {
+        self.wahoo.is_some() || self.features.is_none_or(|f| f.supports_simulation())
+    }
+
     fn send_command(&mut self, cmd: DeviceCommand, out: &mut Output) {
         match cmd {
-            DeviceCommand::SetSimulation(p) => self.send(
+            DeviceCommand::SetSimulation(p) if self.takes_wind() => self.send(
                 ControlRequest::SetSimulation {
                     wind_speed_mps: p.wind_speed_mps,
                     grade: p.grade,
@@ -369,6 +378,9 @@ impl TrainerProtocol {
                 },
                 out,
             ),
+            DeviceCommand::SetSimulation(p) => {
+                self.send(ControlRequest::SetTargetInclination(p.load(false).0), out)
+            }
             DeviceCommand::SetTargetPower(w) => self.send(ControlRequest::SetTargetPower(w), out),
             _ => {}
         }
@@ -383,7 +395,9 @@ impl TrainerProtocol {
             return out;
         }
         let supported = match (cmd, self.features) {
-            (DeviceCommand::SetSimulation(_), Some(f)) => f.supports_simulation(),
+            (DeviceCommand::SetSimulation(_), Some(f)) => {
+                f.supports_simulation() || f.supports_inclination_target()
+            }
             (DeviceCommand::SetTargetPower(_), Some(f)) => f.supports_power_target(),
             (DeviceCommand::SetSimulation(_) | DeviceCommand::SetTargetPower(_), None) => true,
             _ => return out, // not a trainer command
@@ -494,6 +508,7 @@ mod tests {
             crr: 0.004,
             cw_kg_per_m: 0.51,
             mass_kg: 83.0,
+            wind_grade: grade,
         })
     }
 
@@ -691,6 +706,106 @@ mod tests {
         );
     }
 
+    fn windy(grade: f64, wind_speed_mps: f64, wind_grade: f64) -> DeviceCommand {
+        DeviceCommand::SetSimulation(SimulationParameters {
+            grade,
+            wind_speed_mps,
+            crr: 0.004,
+            cw_kg_per_m: 0.51,
+            mass_kg: 83.0,
+            wind_grade,
+        })
+    }
+
+    /// Spec §14 Phase 9, S6 / Q5: an FTMS trainer with the SIM parameters
+    /// gets the headwind in its wind speed field and the road's gradient.
+    #[test]
+    fn ftms_trainer_gets_the_wind() {
+        let features = Features {
+            machine: 0,
+            target_setting: (1 << 13) | (1 << 1),
+        };
+        let mut p = TrainerProtocol::new(&TRAINER, Some(features));
+        assert!(p.takes_wind());
+        p.on_command(windy(0.03, 6.5, 0.055), s(0.0));
+        p.on_notification(uuids::FITNESS_MACHINE_CONTROL_POINT, &ok(0x00), s(0.1));
+        let out = p.on_notification(uuids::FITNESS_MACHINE_CONTROL_POINT, &ok(0x07), s(0.2));
+        // 6.5 m/s = 6500 = 0x1964; 3 % = 300 = 0x012C.
+        assert_eq!(
+            out.control_writes,
+            vec![vec![0x11, 0x64, 0x19, 0x2C, 0x01, 0x28, 0x33]]
+        );
+        p.on_notification(uuids::FITNESS_MACHINE_CONTROL_POINT, &ok(0x11), s(0.3));
+        // A tailwind: −4 m/s = −4000 = 0xF060.
+        let out = p.on_command(windy(0.03, -4.0, 0.01), s(1.0));
+        assert_eq!(
+            out.control_writes,
+            vec![vec![0x11, 0x60, 0xF0, 0x2C, 0x01, 0x28, 0x33]]
+        );
+    }
+
+    /// Q5: an FTMS trainer without the SIM parameters but with an
+    /// inclination target gets the gradient with the wind folded in.
+    #[test]
+    fn trainer_without_wind_gets_the_folded_gradient() {
+        let features = Features {
+            machine: 0,
+            target_setting: 1 << 1,
+        };
+        let mut p = TrainerProtocol::new(&TRAINER, Some(features));
+        assert!(!p.takes_wind());
+        assert_eq!(
+            p.on_command(windy(0.03, 6.5, 0.055), s(0.0)).control_writes,
+            vec![vec![ftms::op::REQUEST_CONTROL]]
+        );
+        p.on_notification(uuids::FITNESS_MACHINE_CONTROL_POINT, &ok(0x00), s(0.1));
+        let out = p.on_notification(uuids::FITNESS_MACHINE_CONTROL_POINT, &ok(0x07), s(0.2));
+        // 5.5 % = 55 × 0.1 % = 0x37.
+        assert_eq!(out.control_writes, vec![vec![0x03, 0x37, 0x00]]);
+        // Neither SIM nor inclination: a warning, nothing written.
+        let none = Features {
+            machine: 0,
+            target_setting: 1 << 3,
+        };
+        let mut q = TrainerProtocol::new(&TRAINER, Some(none));
+        let out = q.on_command(windy(0.03, 6.5, 0.055), s(0.0));
+        assert!(out.control_writes.is_empty() && !out.warnings.is_empty());
+    }
+
+    /// Q5 on a Wahoo trainer: its wind speed request when the wind changes,
+    /// before the gradient.
+    #[test]
+    fn wahoo_trainer_gets_the_wind() {
+        let mut p = TrainerProtocol::new(&WAHOO_KICKR, None);
+        assert!(p.takes_wind());
+        let reply = |p: &mut TrainerProtocol, op: u8, t: f64| {
+            p.on_notification(uuids::WAHOO_TRAINER_CONTROL, &[0x01, op, 1], s(t))
+        };
+        p.on_command(windy(0.0, 5.0, 0.02), s(0.0)); // unlock
+        assert_eq!(reply(&mut p, 0x20, 0.1).control_writes[0][0], 0x43);
+        // 5 m/s + 32.768 = 37.768 → 37768 = 0x9388.
+        assert_eq!(
+            reply(&mut p, 0x43, 0.2).control_writes,
+            vec![vec![0x47, 0x88, 0x93]]
+        );
+        assert_eq!(
+            reply(&mut p, 0x47, 0.3).control_writes,
+            vec![vec![0x46, 0x00, 0x80]]
+        );
+        reply(&mut p, 0x46, 0.4);
+        // The same wind: only the gradient.
+        assert_eq!(
+            p.on_command(windy(0.0, 5.0, 0.02), s(1.0)).control_writes,
+            vec![vec![0x46, 0x00, 0x80]]
+        );
+        reply(&mut p, 0x46, 1.1);
+        // Calm again: wind 0 = 32768 = 0x8000.
+        assert_eq!(
+            p.on_command(windy(0.0, 0.0, 0.0), s(2.0)).control_writes,
+            vec![vec![0x47, 0x00, 0x80]]
+        );
+    }
+
     #[test]
     fn dedicated_heart_rate_sensor_wins_over_ftms_field() {
         let mut p = TrainerProtocol::new(
@@ -781,6 +896,7 @@ mod tests {
                 crr: 0.004,
                 cw_kg_per_m: 0.51,
                 mass_kg,
+                wind_grade: 0.0,
             })
         };
         let reply = |p: &mut TrainerProtocol, op: u8, t: f64| {
