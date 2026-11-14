@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 3.32 – November 2026
+Version 3.33 – November 2026
 
 | Version | Change |
 |---|---|
+| 3.33 | Sign-in decided by the user (2026-11-14; §9, §9.1): **Google (OIDC) and Strava (OAuth2), brokered by our own backend** – no separate identity server for now; the backend issues OIDC-shaped tokens to the apps (desktop loopback + PKCE, browser redirect, kiosk / VR device flow); Keycloak or Authentik can replace the broker later. Registrations, secrets and a public domain come from the user; development against fake providers. |
 | 3.32 | Build infrastructure documented (§11.2, §11.2.1, §11.3; README *Build infrastructure*): an overview in §11.2 – the coordinator and the machines' roles (marge, leela excluded, macos, Win11Builder for Windows builds only), the configuration files (`machines.toml`, `config/ssh/`, `build-machines.toml`, `dashboard-token`), `remote.sh`'s actions and switches, the task markers, the slot locks per OS, deploys and kiosks, the world packages copied from marge to leela with their SHA-256 compared, the profiling tools, the test and media harness, the build log's files (with the dashboard's `servers.jsonl`) and the masking rules; §11.2.1 how the dashboard is installed, started and opened (systemd user service on port 8765, linger, by hand, `--janitor-plan`, phone) and the page's layout; §11.3 the Windows release zip. Small fixes: `make help` lists targets with digits (`test-web-webgl2` was missing), `release-publish`'s help says `vX.Y.Z`, `config/machines.example.toml` documents `jobs` and `sccache_size`, the dashboard README's slot order matches `remote.sh` (order of arrival since v2.59). |
 | 3.31 | VR decisions by the user (2026-11-14; §14 Phase 11 Q7 / X1, Phase 14 Q3): **start with Oculus Link** – the Quest 1 first only as a **viewing device of the desktop app** (stereo view and head tracking from the desktop app on a Windows PC; inputs stay trainer, keys and gamepad); the **standalone VR app by sideloading only** for now (no store listing). Open: which Windows PC with a VR-capable GPU drives the Link. |
 | 3.30 | Decision from the build dashboard (2026-11-14): Phase 14 Q4 (BLE fallback: the sensor bridge / a phone relay app if direct BLE on the headset is limited) – **postponed**, decided when Phase 14 starts. |
@@ -1783,10 +1784,18 @@ The desktop application is the actual simulation client. Server services handle 
 | Database | PostgreSQL |
 | Cache | Redis (optional) |
 | Voice | LiveKit (self-hosted) |
-| Authentication | OIDC |
+| Authentication | OIDC towards the apps; **sign-in with Google (OIDC) and Strava (OAuth2) brokered by our own backend** – no separate identity server for now (decided 2026-11-14, v3.33, §9.1) |
 | Telemetry | OpenTelemetry |
 | Containers | Docker |
 | Deployment | Linux servers, hosted in the EU |
+
+### 9.1 Sign-in (decided by the user 2026-11-14, v3.33)
+
+- **Providers:** **Google** (OpenID Connect) and **Strava** (OAuth2: athlete id and name, no e-mail) – for now the only ways to sign in. Anonymous riding stays (Phase 10 Q5). No separate identity server for now; Keycloak (recommended) or Authentik can replace the broker later without changing the apps.
+- **Our backend is the only token issuer for the apps:** it runs the provider redirects (authorization code + PKCE, state, nonce), creates or links an **OCW account** (one account can link both providers, keyed by the provider's subject / athlete id), and issues its own short-lived **access tokens** (signed JWT, keys published as JWKS) and rotating **refresh tokens** (revocable). Endpoints are shaped like an OIDC provider (`/.well-known/openid-configuration`, `authorize`, `token`, `jwks`, `device_authorization`, `revoke`, `userinfo`), so the apps speak plain OIDC and a later identity server is a drop-in.
+- **Flows per app:** desktop – system browser + loopback redirect (RFC 8252, PKCE); browser app – redirect with PKCE; kiosk and VR headset – **device authorization flow** (RFC 8628: a short code confirmed on the phone). The game server accepts the access token in the QUIC / WebTransport hello and checks it against the JWKS.
+- **Strava upload:** the Strava sign-in may also ask for `activity:write` (optional consent) so the later Strava upload (§2.8) needs no second authorization; Strava tokens are stored encrypted, server-side only.
+- **Registrations and secrets:** the Google OAuth client (Google Cloud Console, consent screen) and the Strava API application are registered by the user; client ids and secrets live in a git-ignored server config, never in the repository or the apps. Real sign-ins need a public HTTPS domain (registered redirect URIs); development and tests run on `localhost` and against **fake providers** (in-process OIDC / OAuth2 test servers).
 
 Backend modules:
 
