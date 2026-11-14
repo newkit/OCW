@@ -182,6 +182,64 @@ pub fn write_shot(image: &Image, path: &Path, meta: &ShotMeta) -> Result<(), Str
     std::fs::write(path, bytes).map_err(|e| format!("{}: {e}", path.display()))
 }
 
+/// Where screenshots go when the app has no files (the browser app, spec
+/// §14 Phase 10 B6): a download of the encoded bytes under a timestamped
+/// name. Without it `screenshot` writes a file.
+#[derive(Resource, Clone)]
+pub struct ShotSink(pub std::sync::Arc<ShotFn>);
+
+/// What a [`ShotSink`] calls: (file name, encoded bytes).
+pub type ShotFn = dyn Fn(&str, Vec<u8>) + Send + Sync;
+
+/// The name of a capture taken at `time`: `ocw-2026-11-12_22-14-05.jpg`
+/// (the local time, as the HUD's stamp; file-name safe).
+pub fn capture_name(time: &MediaTime, ext: &str) -> String {
+    let iso = time.iso_local();
+    let stamp: String = iso
+        .chars()
+        .take(19)
+        .map(|c| match c {
+            'T' => '_',
+            ':' => '-',
+            c => c,
+        })
+        .collect();
+    format!("ocw-{stamp}.{ext}")
+}
+
+/// The observer that hands a screenshot to the [`ShotSink`] as `name`
+/// (JPEG with EXIF, or PNG for a `.png` name).
+pub fn sink_shot(
+    name: String,
+    meta: ShotMeta,
+    sink: ShotSink,
+) -> impl FnMut(On<ScreenshotCaptured>) {
+    move |ev: On<ScreenshotCaptured>| {
+        let bytes = ev
+            .image
+            .clone()
+            .try_into_dynamic()
+            .map_err(|e| format!("cannot convert the screenshot: {e}"))
+            .and_then(|img| {
+                let rgb = img.to_rgb8();
+                encode_shot(
+                    rgb.as_raw(),
+                    rgb.width(),
+                    rgb.height(),
+                    Path::new(&name),
+                    &meta,
+                )
+            });
+        match bytes {
+            Ok(b) => {
+                info!("Screenshot {name}: {} bytes", b.len());
+                (sink.0)(&name, b);
+            }
+            Err(e) => error!("Cannot save screenshot: {e}"),
+        }
+    }
+}
+
 /// The observer that saves a screenshot (Bevy's `save_to_disk`, with
 /// metadata and JPEG by default).
 pub fn save_shot(path: impl Into<PathBuf>, meta: ShotMeta) -> impl FnMut(On<ScreenshotCaptured>) {
@@ -203,6 +261,16 @@ mod tests {
         },
         software: String::new(),
     };
+
+    #[test]
+    fn capture_names_carry_the_local_time() {
+        let t = MediaTime {
+            unix_s: 1_762_985_645,
+            offset_s: 3600,
+        };
+        assert_eq!(capture_name(&t, "jpg"), "ocw-2025-11-12_23-14-05.jpg");
+        assert_eq!(capture_name(&t, "webm"), "ocw-2025-11-12_23-14-05.webm");
+    }
 
     #[test]
     fn format_by_extension() {

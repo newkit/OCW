@@ -69,9 +69,9 @@ impl Plugin for GameAudioPlugin {
 #[derive(Resource)]
 struct BackendChoice(Backend);
 
-/// The output devices for the Audio page (from the engine's status).
-#[derive(Resource, Default, PartialEq)]
-pub struct AudioDeviceList(pub AudioDevices);
+/// The output devices for the Audio page (from the engine's status;
+/// shared with the browser app: `ocw_ui::menu::AudioDeviceMenu`).
+pub use ocw_ui::menu::AudioDeviceMenu as AudioDeviceList;
 
 /// The running engine and the mix it plays with.
 #[derive(Resource)]

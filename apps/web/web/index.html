@@ -20,10 +20,12 @@
     A world package: ?world=liechtenstein&route=vaduz-malbun (dev pages on
     localhost also: allow-unsigned=1, trust=dev, trust-root=HEX).
     Sound and voice (B5): the game sound starts with the first click or key
-    (the browser's autoplay rule); the "Sound & voice" panel sets the
-    volumes and the voice switches (M / Shift+M) and runs the echo test.
-    Voice uses LiveKit's JS SDK (livekit-client.umd.js, Apache-2.0, fetched
-    and hash-checked by the build) through ocw-voice.js.
+    (the browser's autoplay rule). Voice uses LiveKit's JS SDK
+    (livekit-client.umd.js, Apache-2.0, fetched and hash-checked by the
+    build) through ocw-voice.js.
+    The menus (B6): Esc or the gamepad's Start opens the desktop's in-game
+    menu (the same app: Settings → Audio / Voice replace B5's panel);
+    Captures → screenshot, video and the ride's FIT file are downloads.
   -->
   <style>
     html, body { margin: 0; height: 100%; background: #10141a; color: #d8dee9;
@@ -53,26 +55,12 @@
     #ocw-devices .note { color: #aab4c3; white-space: normal; margin-top: 4px; }
     #ocw-devices .err { color: #ffb4a8; white-space: normal; margin-top: 4px; }
     #ocw-devices-show { position: fixed; bottom: 28px; right: 12px; }
-    /* The sound & voice panel (B5; a page overlay until the menus, B6). */
-    #ocw-sound { position: fixed; bottom: 28px; right: 364px; width: 300px;
-      padding: 10px 12px; border-radius: 6px; background: rgba(10, 13, 18, 0.78);
-      font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; line-height: 1.45; }
-    #ocw-sound[hidden], #ocw-sound-show[hidden] { display: none; }
-    #ocw-sound header { display: flex; justify-content: space-between; align-items: center;
-      font-weight: 600; margin-bottom: 4px; }
-    #ocw-sound h3 { font: inherit; font-weight: 600; margin: 8px 0 2px; color: #aab4c3; }
-    #ocw-sound button, #ocw-sound-show, #ocw-sound select { font: inherit; color: #d8dee9;
-      cursor: pointer; background: #222a35; border: 1px solid #3b4656; border-radius: 4px; padding: 2px 6px; }
-    #ocw-sound select { max-width: 170px; }
-    #ocw-sound label.row { display: flex; align-items: center; gap: 6px; }
-    #ocw-sound label.row span { width: 64px; } #ocw-sound input[type=range] { flex: 1; }
-    #ocw-sound output { width: 40px; text-align: right; }
-    #ocw-sound .switches { display: flex; gap: 6px; flex-wrap: wrap; margin: 3px 0; }
-    #ocw-sound .muted { color: #ff8a80; border-color: #8a3b36; }
-    #ocw-sound .live { color: #a3d9a5; }
-    #ocw-sound .hint { color: #10141a; background: #ebcb8b; border-radius: 4px; padding: 3px 6px; margin: 2px 0 4px; }
-    #ocw-sound .note { color: #aab4c3; white-space: normal; }
-    #ocw-sound-show { position: fixed; bottom: 28px; right: 100px; }
+    /* The sound's hint (B5): until the first click or key. The volumes and
+       the voice switches are the menu's Audio and Voice pages (B6). */
+    #ocw-sound-hint { position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+      color: #10141a; background: #ebcb8b; border-radius: 4px; padding: 4px 10px;
+      font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; pointer-events: none; }
+    #ocw-sound-hint[hidden] { display: none; }
   </style>
   <!-- Voice (B5): LiveKit's JS SDK, then the shim the app talks to. -->
   <script src="livekit-client.umd.js"></script>
@@ -92,31 +80,57 @@
     <div id="ocw-devices-msg" class="note"></div>
   </section>
   <button id="ocw-devices-show" hidden>Devices</button>
-  <section id="ocw-sound" hidden aria-label="Sound and voice">
-    <header><span>Sound &amp; voice</span><button id="ocw-sound-hide" title="Hide">×</button></header>
-    <div id="ocw-sound-hint" class="hint" hidden></div>
-    <h3>Game sound</h3>
-    <label class="row"><span>Master</span><input type="range" min="0" max="100" data-set="audio.master"><output></output></label>
-    <label class="row"><span>Effects</span><input type="range" min="0" max="100" data-set="audio.effects"><output></output></label>
-    <label class="row"><span>Riders</span><input type="range" min="0" max="100" data-set="audio.others"><output></output></label>
-    <label class="row"><input type="checkbox" data-set="audio.mute"> Mute game sound</label>
-    <div id="ocw-sound-status" class="note"></div>
-    <h3>Voice</h3>
-    <div id="ocw-voice-status" class="note"></div>
-    <div class="switches">
-      <button id="ocw-mic" title="M">Mic on</button>
-      <button id="ocw-speaker" title="Shift+M">Speaker on</button>
-    </div>
-    <label class="row"><span>Voices</span><input type="range" min="0" max="200" step="5" data-set="voice.volume"><output></output></label>
-    <label class="row"><input type="checkbox" data-set="voice.enabled"> Voice chat on</label>
-    <label class="row"><input type="checkbox" data-set="voice.spatial"> Spatial (nearest riders louder)</label>
-    <label class="row"><span>Mic</span><select data-set="voice.input"></select></label>
-    <label class="row"><span>Speaker</span><select data-set="voice.output"></select></label>
-    <label class="row"><input type="checkbox" id="ocw-echo"> Echo test
-      <select id="ocw-echo-delay" title="Echo delay"><option>150</option><option>300</option><option>500</option><option>1000</option></select> ms</label>
-    <div id="ocw-voice-people" class="note"></div>
-  </section>
-  <button id="ocw-sound-show" hidden>Sound</button>
+  <div id="ocw-sound-hint" hidden></div>
+  <script>
+    // Downloads (spec §14 Phase 10 B6): the app's captures and the ride's
+    // FIT file, named by the app with the time; the list is for tests.
+    window.ocwDownloads = [];
+    window.ocwDownload = (name, mime, bytes) => {
+      const url = URL.createObjectURL(new Blob([bytes], {type: mime}));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      window.ocwDownloads.push({name, mime, size: bytes.length});
+      console.log(`ocw-web: download ${name} (${bytes.length} bytes, ${mime})`);
+    };
+    // Videos (B6): MediaRecorder on the canvas at 30 fps, with the game
+    // sound (window.ocwAudioStream, from the app's Web Audio); downloaded
+    // when it stops.
+    window.ocwVideo = (() => {
+      let rec = null, chunks = [], name = "";
+      return {
+        start(n) {
+          if (rec) throw new Error("already recording");
+          if (!window.MediaRecorder) throw new Error("no MediaRecorder in this browser");
+          const stream = document.getElementById("ocw-canvas").captureStream(30);
+          for (const t of (window.ocwAudioStream ? window.ocwAudioStream.getAudioTracks() : [])) stream.addTrack(t);
+          const type = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"]
+            .find((t) => MediaRecorder.isTypeSupported(t));
+          rec = new MediaRecorder(stream, type ? {mimeType: type, videoBitsPerSecond: 8e6} : {});
+          chunks = [];
+          name = n;
+          rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+          rec.onstop = async () => {
+            const blob = new Blob(chunks, {type: (rec && rec.mimeType) || "video/webm"});
+            rec = null;
+            window.ocwDownload(name, blob.type, new Uint8Array(await blob.arrayBuffer()));
+          };
+          rec.start(1000);
+          return true;
+        },
+        stop() {
+          if (!rec) throw new Error("no video is being recorded");
+          rec.stop();
+          return true;
+        },
+        state() { return rec ? rec.state : "inactive"; },
+      };
+    })();
+  </script>
   <script type="module">
     const status = document.getElementById("ocw-status");
     const fail = (msg) => { status.textContent = msg; status.className = "error"; console.error(msg); };
@@ -142,7 +156,7 @@
       // The app hides the status (or shows a world's loading screen in it).
       document.getElementById("ocw-canvas").focus();
       devicesPanel();
-      soundPanel();
+      soundHint();
     }
 
     // The devices panel (spec §14 Phase 10 B4): the buttons open the
@@ -179,6 +193,10 @@
       }
       panel.hidden = false;
       const render = () => {
+        // The in-game menu (B6) has the screen: the panel steps aside.
+        let menu;
+        try { menu = JSON.parse(window.ocw.menu() || "{}"); } catch (e) { menu = {}; }
+        panel.style.visibility = show.style.visibility = menu.open ? "hidden" : "";
         let j;
         try { j = JSON.parse(window.ocw.devices() || "null"); } catch (e) { j = null; }
         if (!j) return;
@@ -201,87 +219,16 @@
       setInterval(render, 500);
     }
 
-    // The sound & voice panel (spec §14 Phase 10 B5): every control runs a
-    // console command (`set audio.master 60`, `voice.mute-mic` …), so the
-    // settings are the app's (saved in localStorage); the panel follows
-    // window.ocw.audio() and window.ocw.voice() (JSON).
-    function soundPanel() {
-      const $ = (id) => document.getElementById(id);
-      const panel = $("ocw-sound"), show = $("ocw-sound-show"), canvas = $("ocw-canvas");
-      const run = (line) => { window.ocw.console(line); };
-      const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
-      const toggle = (on) => { panel.hidden = !on; show.hidden = on; canvas.focus(); };
-      $("ocw-sound-hide").onclick = () => toggle(false);
-      show.onclick = () => toggle(true);
-      for (const el of panel.querySelectorAll("[data-set]")) {
-        const key = el.dataset.set;
-        el.onchange = () => {
-          const v = el.type === "checkbox" ? (el.checked ? "on" : "off") : (el.value || "default");
-          run(`set ${key} ${v}`);
-          canvas.focus();
-        };
-        if (el.type === "range") el.oninput = () => { el.nextElementSibling.textContent = el.value + " %"; };
-      }
-      $("ocw-mic").onclick = () => { run("voice.mute-mic"); canvas.focus(); };
-      $("ocw-speaker").onclick = () => { run("voice.mute-speaker"); canvas.focus(); };
-      $("ocw-echo").onchange = (e) => { run(e.target.checked ? "voice.echo on" : "voice.echo off"); canvas.focus(); };
-      $("ocw-echo-delay").onchange = (e) => { run(`voice.echo delay ${e.target.value}`); canvas.focus(); };
-      const set = (sel, value) => {
-        const el = panel.querySelector(`[data-set="${sel}"]`);
-        if (!el || el === document.activeElement) return;
-        if (el.type === "checkbox") el.checked = !!value;
-        else if (el.tagName === "SELECT") {
-          if (el.value !== (value || "default")) el.value = value || "default";
-        } else {
-          el.value = value;
-          el.nextElementSibling.textContent = value + " %";
-        }
-      };
-      const options = (sel, names, chosen) => {
-        const el = panel.querySelector(`[data-set="${sel}"]`);
-        if (el === document.activeElement) return;
-        const want = ["default", ...names, ...(chosen && !names.includes(chosen) ? [chosen] : [])];
-        const have = [...el.options].map((o) => o.value);
-        if (want.join("\n") !== have.join("\n")) {
-          el.innerHTML = want.map((n) => `<option value="${esc(n)}">${n === "default" ? "default" : esc(n)}</option>`).join("");
-        }
-        el.value = chosen || "default";
-      };
-      panel.hidden = false;
-      const render = () => {
-        let a, v;
+    // The sound's hint (spec §14 Phase 10 B5) until the first gesture; the
+    // volumes and the voice are the menu's pages since B6.
+    function soundHint() {
+      const hint = document.getElementById("ocw-sound-hint");
+      setInterval(() => {
+        let a;
         try { a = JSON.parse(window.ocw.audio() || "null"); } catch (e) { a = null; }
-        try { v = JSON.parse(window.ocw.voice() || "null"); } catch (e) { v = null; }
-        if (a) {
-          const hint = $("ocw-sound-hint");
-          hint.hidden = !a.hint;
-          hint.textContent = a.hint ? "▶ " + a.hint : "";
-          set("audio.master", a.mix.master); set("audio.effects", a.mix.effects);
-          set("audio.others", a.mix.others); set("audio.mute", a.mix.mute);
-          $("ocw-sound-status").textContent = a.state === "running"
-            ? `playing · ${Math.round(a.sample_rate)} Hz · ${a.lead_ms} ms ahead${a.underruns ? ` · ${a.underruns} gaps` : ""}`
-            : a.state === "unavailable" ? "no Web Audio in this browser" : "waiting for a click or key";
-        }
-        if (v) {
-          $("ocw-voice-status").textContent = v.available ? `voice: ${v.hud}` : `voice ${v.status}`;
-          const mic = $("ocw-mic"), spk = $("ocw-speaker");
-          mic.textContent = v.mic_muted ? "Mic muted (M)" : "Mic on (M)";
-          mic.className = v.mic_muted ? "muted" : "live";
-          spk.textContent = v.speaker_muted ? "Speaker muted (⇧M)" : "Speaker on (⇧M)";
-          spk.className = v.speaker_muted ? "muted" : "live";
-          set("voice.volume", v.volume); set("voice.enabled", v.enabled); set("voice.spatial", v.spatial);
-          options("voice.input", v.inputs, v.input);
-          options("voice.output", v.outputs, v.output);
-          if ($("ocw-echo") !== document.activeElement) $("ocw-echo").checked = v.echo.on;
-          const d = $("ocw-echo-delay");
-          if (d !== document.activeElement && [...d.options].some((o) => o.value == v.echo.delay_ms)) d.value = String(v.echo.delay_ms);
-          const people = v.participants.map((p) => `${p.mic_muted ? "🔇" : (v.speaking.includes(p.name) ? "🗣" : "•")} ${esc(p.name)}${p.muted_by_me ? " (muted by you)" : ""}`);
-          const echo = v.echo.on ? [`echo test: ${esc(v.echo.status)}`] : [];
-          $("ocw-voice-people").innerHTML = [...people, ...echo].join("<br>");
-        }
-      };
-      setInterval(render, 500);
-      render();
+        hint.hidden = !(a && a.hint);
+        hint.textContent = a && a.hint ? "▶ " + a.hint : "";
+      }, 500);
     }
   </script>
 </body>

@@ -62,6 +62,10 @@ pub struct SessionConfig {
     pub remote: Option<RemoteOptions>,
     /// FTP for workouts (W; page option `ftp`, B4).
     pub ftp_w: f64,
+    /// Record the ride for the FIT download (setting `ride.record`, B6).
+    pub record: bool,
+    /// Autodrive at the start (setting `controls.autodrive`, B6).
+    pub autodrive: bool,
 }
 
 impl Default for SessionConfig {
@@ -76,6 +80,8 @@ impl Default for SessionConfig {
             world: None,
             remote: None,
             ftp_w: ocw_client::workout::DEFAULT_FTP_W,
+            record: true,
+            autodrive: true,
         }
     }
 }
@@ -159,7 +165,11 @@ impl WebSession {
             ),
             _ => Self::ride(course, client, config.bots, config.start_m, config.power_w),
         };
-        session.with_ftp(config.ftp_w)
+        let mut session = session.with_ftp(config.ftp_w);
+        if !config.autodrive {
+            session.client.set_autodrive(false);
+        }
+        session
     }
 
     /// FTP for workouts (W).

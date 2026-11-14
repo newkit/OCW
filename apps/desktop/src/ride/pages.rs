@@ -35,32 +35,8 @@ pub struct Catalog {
     pub workout_now: Option<(String, String)>,
 }
 
-/// A workout of the Workouts list.
-#[derive(Debug, Clone, PartialEq)]
-pub struct WorkoutEntry {
-    pub name: String,
-    /// The duration: "45:00".
-    pub detail: String,
-    pub source: WorkoutSource,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum WorkoutSource {
-    /// A file of `<data dir>/ocw/workouts`.
-    File(PathBuf),
-    /// A bundled example, by name.
-    Example(String),
-}
-
-impl WorkoutSource {
-    /// The console line that loads and starts it.
-    pub fn line(&self) -> String {
-        match self {
-            Self::File(p) => format!("workout start \"{}\"", p.display()),
-            Self::Example(name) => format!("workout start --example {name}"),
-        }
-    }
-}
+/// The Workouts list's entries (shared with the browser app).
+pub use ocw_client::menu::pages::{WorkoutEntry, WorkoutSource};
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct LoadedWorld {
@@ -95,7 +71,7 @@ fn ask(label: impl Into<String>, value: impl Into<String>, line: String) -> Row 
 
 /// A row label of at most this many characters fits in two lines.
 #[cfg(test)]
-pub const MAX_ROW_CHARS: usize = 48;
+pub use ocw_client::menu::pages::MAX_ROW_CHARS;
 
 /// The rows of a Ride / Navi list (`page.is_ride_page()`); empty for a
 /// World page whose index is no longer listed.
@@ -171,38 +147,7 @@ pub fn rows(page: Page, c: &Catalog) -> Vec<Row> {
                 .collect()
         }
         Page::Workouts => {
-            let mut out = Vec::new();
-            if let Some((name, step)) = &c.workout_now {
-                out.push(info(&short(name, 24), Some(step.clone())));
-                out.push(Row {
-                    label: "Skip step".into(),
-                    value: None,
-                    left: None,
-                    right: None,
-                    confirm: Some(Activate::Command("workout skip".into())),
-                });
-                out.push(Row {
-                    label: "Stop workout".into(),
-                    value: None,
-                    left: None,
-                    right: None,
-                    confirm: Some(Activate::Run("workout stop".into())),
-                });
-            }
-            out.extend(c.workouts.iter().map(|w| Row {
-                label: short(&w.name, 24),
-                value: Some(match w.source {
-                    WorkoutSource::File(_) => w.detail.clone(),
-                    WorkoutSource::Example(_) => format!("{}, example", w.detail),
-                }),
-                left: None,
-                right: None,
-                confirm: Some(Activate::Run(w.source.line())),
-            }));
-            if out.is_empty() {
-                out.push(info("No workouts found", Some("see README".into())));
-            }
-            out
+            ocw_client::menu::pages::workout_rows(c.workout_now.as_ref(), &c.workouts)
         }
         _ => Vec::new(),
     }

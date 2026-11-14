@@ -1,4 +1,6 @@
-//! Keys and gamepad buttons → menu [`Action`]s (spec §3.2.1).
+//! Keys and gamepad buttons → menu [`Action`]s (spec §3.2.1), Bevy-free:
+//! the apps read their keys and pads into [`Pressed`] / [`PadState`]
+//! (`ocw_ui::controls` for both).
 //!
 //! | | Keyboard / mouse | Gamepad |
 //! |---|---|---|
@@ -10,8 +12,6 @@
 //! | Switch tab (Settings, Workshop) | Q / E, PgUp / PgDn | LB / RB |
 //!
 //! Esc never quits: at the top page Back only closes the menu.
-
-use bevy::prelude::*;
 
 use super::model::Action;
 
@@ -62,40 +62,9 @@ impl Pressed {
     }
 }
 
-fn dir(up: bool, down: bool) -> i32 {
+/// −1 for up, +1 for down, 0 for both or none.
+pub fn dir(up: bool, down: bool) -> i32 {
     i32::from(down) - i32::from(up)
-}
-
-/// The keyboard's menu keys.
-pub fn keyboard(keys: &ButtonInput<KeyCode>) -> Pressed {
-    let any = |k: &[KeyCode]| keys.any_just_pressed(k.iter().copied());
-    let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
-    let tab = keys.just_pressed(KeyCode::Tab);
-    Pressed {
-        escape: keys.just_pressed(KeyCode::Escape),
-        start: false,
-        back: keys.just_pressed(KeyCode::Backspace),
-        confirm: any(&[KeyCode::Enter, KeyCode::NumpadEnter, KeyCode::Space]),
-        left: keys.just_pressed(KeyCode::ArrowLeft),
-        right: keys.just_pressed(KeyCode::ArrowRight),
-        tab: dir(
-            any(&[KeyCode::KeyQ, KeyCode::PageUp]),
-            any(&[KeyCode::KeyE, KeyCode::PageDown]),
-        ),
-        step: match (tab, shift) {
-            (false, _) => 0,
-            (true, false) => 1,
-            (true, true) => -1,
-        },
-        held: dir(
-            keys.pressed(KeyCode::ArrowUp),
-            keys.pressed(KeyCode::ArrowDown),
-        ),
-        tapped: dir(
-            keys.just_pressed(KeyCode::ArrowUp),
-            keys.just_pressed(KeyCode::ArrowDown),
-        ),
-    }
 }
 
 /// One gamepad's state, as far as the menu needs it.
@@ -114,25 +83,6 @@ pub struct PadState {
     pub lb: bool,
     pub rb: bool,
     pub stick_y: f32,
-}
-
-impl PadState {
-    pub fn of(p: &Gamepad) -> Self {
-        Self {
-            start: p.just_pressed(GamepadButton::Start),
-            south: p.just_pressed(GamepadButton::South),
-            east: p.just_pressed(GamepadButton::East),
-            dpad_up: p.pressed(GamepadButton::DPadUp),
-            dpad_down: p.pressed(GamepadButton::DPadDown),
-            dpad_up_pressed: p.just_pressed(GamepadButton::DPadUp),
-            dpad_down_pressed: p.just_pressed(GamepadButton::DPadDown),
-            dpad_left: p.just_pressed(GamepadButton::DPadLeft),
-            dpad_right: p.just_pressed(GamepadButton::DPadRight),
-            lb: p.just_pressed(GamepadButton::LeftTrigger),
-            rb: p.just_pressed(GamepadButton::RightTrigger),
-            stick_y: p.get(GamepadAxis::LeftStickY).unwrap_or(0.0),
-        }
-    }
 }
 
 /// A gamepad's menu buttons: Start, South = confirm, East = back, D-pad and
@@ -232,48 +182,6 @@ pub fn actions(p: &Pressed, step: i32, menu_open: bool) -> Vec<Action> {
 mod tests {
     use super::*;
 
-    fn keys(pressed: &[KeyCode]) -> ButtonInput<KeyCode> {
-        let mut k = ButtonInput::default();
-        for &key in pressed {
-            k.press(key);
-        }
-        k
-    }
-
-    #[test]
-    fn keys_map_to_menu_actions() {
-        use Action::*;
-        let k = |pressed: &[KeyCode], open| {
-            let p = keyboard(&keys(pressed));
-            actions(&p, p.tapped + p.step, open)
-        };
-        // Closed: Esc opens, nothing else does anything (ride keys).
-        assert_eq!(k(&[KeyCode::Escape], false), [Open]);
-        assert!(k(&[KeyCode::Enter, KeyCode::ArrowUp, KeyCode::KeyA], false).is_empty());
-        // Open.
-        assert_eq!(k(&[KeyCode::ArrowDown], true), [Down]);
-        assert_eq!(k(&[KeyCode::ArrowUp], true), [Up]);
-        assert_eq!(k(&[KeyCode::Tab], true), [Down]);
-        assert_eq!(k(&[KeyCode::ShiftLeft, KeyCode::Tab], true), [Up]);
-        assert_eq!(k(&[KeyCode::Enter], true), [Confirm]);
-        assert_eq!(k(&[KeyCode::NumpadEnter], true), [Confirm]);
-        assert_eq!(k(&[KeyCode::Space], true), [Confirm]);
-        assert_eq!(k(&[KeyCode::Escape], true), [Back]);
-        assert_eq!(k(&[KeyCode::Backspace], true), [Back]);
-        assert_eq!(k(&[KeyCode::ArrowLeft], true), [Left]);
-        assert_eq!(k(&[KeyCode::ArrowRight], true), [Right]);
-        assert_eq!(k(&[KeyCode::KeyQ], true), [TabPrev]);
-        assert_eq!(k(&[KeyCode::PageDown], true), [TabNext]);
-        assert!(
-            k(&[KeyCode::KeyE], false).is_empty(),
-            "a ride key when closed"
-        );
-        // Ride keys do nothing in the menu.
-        for key in [KeyCode::KeyA, KeyCode::KeyR, KeyCode::KeyV, KeyCode::KeyU] {
-            assert!(k(&[key], true).is_empty(), "{key:?}");
-        }
-    }
-
     #[test]
     fn gamepad_buttons_map_to_menu_actions() {
         use Action::*;
@@ -283,52 +191,52 @@ mod tests {
         };
         let start = PadState {
             start: true,
-            ..default()
+            ..Default::default()
         };
         assert_eq!(g(start, false), [Open]);
         assert_eq!(g(start, true), [Close]);
         let south = PadState {
             south: true,
-            ..default()
+            ..Default::default()
         };
         // South (autodrive in the ride) does not open the menu.
         assert!(g(south, false).is_empty());
         assert_eq!(g(south, true), [Confirm]);
         let east = PadState {
             east: true,
-            ..default()
+            ..Default::default()
         };
         assert!(g(east, false).is_empty());
         assert_eq!(g(east, true), [Back]);
         let up = PadState {
             dpad_up: true,
-            ..default()
+            ..Default::default()
         };
         assert_eq!(g(up, true), [Up]);
         let stick_down = PadState {
             stick_y: -0.9,
-            ..default()
+            ..Default::default()
         };
         assert_eq!(g(stick_down, true), [Down]);
         // Small stick deflections do not move the focus.
         let drift = PadState {
             stick_y: 0.3,
-            ..default()
+            ..Default::default()
         };
         assert!(g(drift, true).is_empty());
         let left = PadState {
             dpad_left: true,
-            ..default()
+            ..Default::default()
         };
         assert_eq!(g(left, true), [Left]);
         let rb = PadState {
             rb: true,
-            ..default()
+            ..Default::default()
         };
         assert_eq!(g(rb, true), [TabNext]);
         let lb = PadState {
             lb: true,
-            ..default()
+            ..Default::default()
         };
         assert_eq!(g(lb, true), [TabPrev]);
     }
@@ -357,7 +265,7 @@ mod tests {
         let p = Pressed {
             confirm: true,
             back: true,
-            ..default()
+            ..Default::default()
         };
         assert_eq!(actions(&p, 0, true), [Action::Confirm]);
     }

@@ -11,8 +11,6 @@
 //! the null backend: the switches, settings and menu work, the status says
 //! voice is not built in.
 
-pub mod page;
-
 use std::sync::Mutex;
 
 use bevy::prelude::*;
@@ -39,16 +37,8 @@ pub struct PendingVoiceGrants(pub Vec<v1::VoiceGrant>);
 pub struct Voice(pub Mutex<VoiceController>);
 
 /// What the menu's voice pages show, refreshed every frame (shared with
-/// the browser app: `ocw_client::voice`).
-#[derive(Resource, Debug, Clone, Default, PartialEq)]
-pub struct VoiceMenuInfo(pub ocw_client::voice::VoiceMenuInfo);
-
-impl std::ops::Deref for VoiceMenuInfo {
-    type Target = ocw_client::voice::VoiceMenuInfo;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
+/// the browser app: `ocw_ui::menu::VoiceMenu`).
+pub use ocw_ui::menu::VoiceMenu as VoiceMenuInfo;
 
 pub struct VoicePlugin;
 
@@ -162,15 +152,6 @@ fn switch_arg() -> Arg {
     Arg::new("state")
         .value_parser(["on", "off", "toggle"])
         .help("on = muted, off = not muted; none: toggle")
-}
-
-impl ocw_client::voice::SettingsStore for UserSettings {
-    fn settings_mut(&mut self) -> &mut ocw_client::settings::Settings {
-        &mut self.settings
-    }
-    fn save(&mut self) -> Result<(), String> {
-        UserSettings::save(self)
-    }
 }
 
 /// Runs `f` with the voice controller and the user's settings (if the app

@@ -25,15 +25,9 @@ use ocw_render::RideView;
 use ocw_render::camera::FollowCamera;
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, Permission};
 
-/// `display.camera_shake` (spec §14 Phase 12C): on by default.
-#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CameraShake(pub bool);
-
-impl Default for CameraShake {
-    fn default() -> Self {
-        Self(true)
-    }
-}
+/// `display.camera_shake` (spec §14 Phase 12C): shared with the browser
+/// app (`ocw_ui::collisions`, with its command `camera.shake`).
+pub use ocw_ui::collisions::CameraShake;
 
 /// The keyframes being edited and the path playing.
 #[derive(Resource, Debug, Clone, Default)]
@@ -48,24 +42,11 @@ pub struct CameraPathPlugin;
 
 impl Plugin for CameraPathPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<CameraShake>()
-            .init_resource::<GuidedPath>()
+        if !app.world().contains_resource::<CameraShake>() {
+            ocw_ui::collisions::register_camera_shake(app);
+        }
+        app.init_resource::<GuidedPath>()
             .add_systems(Update, play)
-            .console_command(ConsoleCommand::new(
-                Permission::User,
-                Command::new("camera.shake")
-                    .about("The chase camera's short shake after a crash or a hard bump (off for motion comfort)")
-                    .arg(Arg::new("state").value_parser(["on", "off"])),
-                |world, m| {
-                    let mut s = world.resource_mut::<CameraShake>();
-                    s.0 = match m.get_one::<String>("state").map(String::as_str) {
-                        Some("on") => true,
-                        Some("off") => false,
-                        _ => !s.0,
-                    };
-                    Ok(format!("camera shake {}", if s.0 { "on" } else { "off" }))
-                },
-            ))
             .console_command(ConsoleCommand::new(
                 Permission::User,
                 path_command(),

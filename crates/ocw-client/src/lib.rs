@@ -20,6 +20,9 @@
 //!   spec §3.3), [`voice`]: the voice call's per-frame logic and HUD (spec
 //!   §2.4, §7), [`settings`]: the settings registry (spec §3.2.1) – shared
 //!   with the browser app since Phase 10 B5.
+//! - [`menu`]: the in-game menu's model, pages and rows, [`riders`]: the
+//!   rider profiles, [`recording`]: the ride's FIT recording – shared with
+//!   the browser app since Phase 10 B6.
 //!
 //! No threads, file system or sockets: everything here also builds for
 //! `wasm32-unknown-unknown` (spec §3.5). The apps add the Bevy glue.
@@ -35,10 +38,14 @@ pub mod event;
 pub mod god_state;
 pub mod gps;
 pub mod input;
+pub mod menu;
+pub mod recording;
 pub mod rider_list;
+pub mod riders;
 pub mod settings;
 pub mod sky;
 pub mod trainer;
+pub mod view;
 pub mod voice;
 pub mod weather;
 pub mod workout;

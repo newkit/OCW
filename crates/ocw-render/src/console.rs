@@ -617,11 +617,25 @@ fn register_builtin_commands(app: &mut App) {
     .console_command(ConsoleCommand::new(
         User,
         Command::new("screenshot")
-            .about("Save a screenshot of the window: JPEG with its time in EXIF (a .png path: PNG)")
-            .arg(Arg::new("path").default_value("screenshot.jpg")),
+            .about("Save a screenshot of the window: JPEG with its time in EXIF (a .png path: PNG); in the browser a download named with the time")
+            .arg(Arg::new("path")),
         |world, m| {
-            let path = m.get_one::<String>("path").expect("has default").clone();
             let meta = crate::stamp::ShotMeta::of(world);
+            // The browser app (spec §14 Phase 10 B6): a download.
+            if let Some(sink) = world.get_resource::<crate::stamp::ShotSink>().cloned() {
+                let name = m.get_one::<String>("path").cloned().unwrap_or_else(|| {
+                    crate::stamp::capture_name(&meta.time, "jpg")
+                });
+                world
+                    .commands()
+                    .spawn(Screenshot::primary_window())
+                    .observe(crate::stamp::sink_shot(name.clone(), meta, sink));
+                return Ok(format!("screenshot: downloading {name}"));
+            }
+            let path = m
+                .get_one::<String>("path")
+                .cloned()
+                .unwrap_or_else(|| "screenshot.jpg".into());
             world
                 .commands()
                 .spawn(Screenshot::primary_window())

@@ -159,39 +159,18 @@ fn throttle_and_brake(
     link: Res<Link>,
     mut client: ResMut<ClientState>,
     mut key: ResMut<KeyPower>,
-    mut pad_was: Local<(bool, bool)>,
-    mut trigger_rest: Local<std::collections::HashMap<Entity, [Option<f32>; 2]>>,
+    mut ride_pads: Local<ocw_ui::controls::RidePads>,
 ) {
     let now = time.elapsed_secs_f64();
-    trigger_rest.retain(|e, _| pads.contains(*e));
-    let (pad_up, pad_down) = pads.iter().fold((false, false), |(u, d), (e, p)| {
-        let rest = trigger_rest.entry(e).or_default();
-        let rt = trigger_pull(
-            p.get(GamepadButton::RightTrigger2).unwrap_or(0.0),
-            &mut rest[0],
-        );
-        let lt = trigger_pull(
-            p.get(GamepadButton::LeftTrigger2).unwrap_or(0.0),
-            &mut rest[1],
-        );
-        let (pu, pd) = pad_throttle(
-            p.get(GamepadAxis::LeftStickY).unwrap_or(0.0),
-            p.pressed(GamepadButton::DPadUp),
-            p.pressed(GamepadButton::DPadDown),
-            rt,
-            lt,
-        );
-        (u || pu, d || pd)
-    });
-    let (pad_up_pressed, pad_down_pressed) = (pad_up && !pad_was.0, pad_down && !pad_was.1);
-    *pad_was = (pad_up, pad_down);
-    if pad_down_pressed {
+    // The pads' throttle (shared with the browser app: `ocw_ui::controls`).
+    let pad = ride_pads.read(pads.iter());
+    if pad.down_pressed {
         info!("gamepad: stop (power 0, brake)");
     }
     let throttle = ThrottleKeys {
-        up_pressed: keys.just_pressed(KeyCode::ArrowUp) || pad_up_pressed,
-        up_held: keys.pressed(KeyCode::ArrowUp) || pad_up,
-        down_pressed: keys.just_pressed(KeyCode::ArrowDown) || pad_down_pressed,
+        up_pressed: keys.just_pressed(KeyCode::ArrowUp) || pad.up_pressed,
+        up_held: keys.pressed(KeyCode::ArrowUp) || pad.up,
+        down_pressed: keys.just_pressed(KeyCode::ArrowDown) || pad.down_pressed,
         page_up: keys.just_pressed(KeyCode::PageUp),
         page_down: keys.just_pressed(KeyCode::PageDown),
     };

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Headless browser test of the web app (spec §14 Phase 10, B1 / B2; §11.4).
+"""Headless browser test of the web app (spec §14 Phase 10, B1 / B2 / B6; §11.4).
 
     scripts/test-web.py [--out test-output/web] [--seconds 12] [--query ...]
                         [--chromium chromium] [--size 1280x720] [--software]
                         [--world ID|URL [--route NAME] [--teleport KM] [--no-reload]]
+                        [--no-ui]
 
 Serves target/web/ (`make web`; with --world also the published worlds in
 target/web/worlds/, `make web-worlds`) on a free local port with range
@@ -24,6 +25,14 @@ new tiles (`-teleport.jpg`), and – unless --no-reload – loads the page a
 second time in the same browser profile: that load must come from the
 OPFS cache (no package bytes over the network) and be faster. Load times,
 bytes from cache / network and the peak wasm memory go into the summary.
+
+Without --world (and unless --no-ui) the UI part follows (B6,
+scripts/web_ui_test.py): the menus by keyboard and by a fake gamepad,
+Settings → Display, World → Weather, the rider list, the HUD with weather,
+wind and damage, Captures → screenshot / FIT downloads, a video, and a
+setting kept over a reload; screenshots OUT/web-<time>-menu.jpg,
+-settings.jpg, -weather.jpg, -hud.jpg, -riders.jpg, -gamepad.jpg and the
+downloads in OUT/web-<time>-downloads/.
 
 Exits 0 when the module loaded, the server ticked, the rider rode and no
 uncaught exception happened (with --world: both loads were ready, the
@@ -287,6 +296,8 @@ def main():
                    help="the time machine once the ride runs (console `time …`, e.g. noon)")
     p.add_argument("--no-reload", action="store_true",
                    help="with --world: no second load from the OPFS cache")
+    p.add_argument("--no-ui", action="store_true",
+                   help="no UI part (menus, settings, downloads; B6)")
     p.add_argument("--trust-root", default=None,
                    help="root public key (hex) the page trusts (default: target/web-keys/root.hex)")
     a = p.parse_args()
@@ -360,6 +371,23 @@ def main():
                  {"width": int(w), "height": int(h), "deviceScaleFactor": 1, "mobile": False})
         first = visit(cdp, url, a, base, lines, "first", bool(a.world), stats)
         visits = [first]
+        if not a.world and not a.no_ui and first["ok"]:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            import web_ui_test
+
+            def reload_and_wait():
+                mark = len(cdp.events)
+                cdp.call("Page.reload", {})
+                end = time.time() + 60
+                while time.time() < end:
+                    cdp.pump(0.2)
+                    if any(e["method"] == "Runtime.consoleAPICalled"
+                           and "local server running" in console_text(e)
+                           for e in cdp.events[mark:]):
+                        return True
+                return False
+
+            summary["ui"] = web_ui_test.run(cdp, base, lines, a.out, reload_and_wait)
         if a.world and not a.no_reload and first.get("ready_s") is not None:
             visits.append(visit(cdp, url, a, base, lines, "cached", True, stats))
         adapter = cdp.eval("""(async () => {
@@ -385,7 +413,7 @@ def main():
             "ticks": first["ticks"], "last": first["last"], "errors": first["errors"],
             "screenshot": first.get("screenshot"),
         })
-        ok = first["ok"]
+        ok = first["ok"] and summary.get("ui", {"ok": True})["ok"]
         if a.world:
             summary["visits"] = visits
             cached = visits[1] if len(visits) > 1 else None
@@ -424,6 +452,10 @@ def main():
     keys = ("ok", "adapter", "page_timing", "joined_s", "first_tick_s", "ticks", "last",
             "errors", "error", "second_load")
     print(json.dumps({k: summary.get(k) for k in keys}, indent=2))
+    if "ui" in summary:
+        for c in summary["ui"]["checks"]:
+            print(f"{'ok  ' if c['ok'] else 'FAIL'} {c['check']}: {c['detail']}")
+        print(json.dumps(summary["ui"]["screenshots"], indent=2))
     for v in summary.get("visits", []):
         print(json.dumps({k: v.get(k) for k in (
             "label", "ok", "ready_s", "ready_app_s", "cache_mb", "network_mb", "requests",

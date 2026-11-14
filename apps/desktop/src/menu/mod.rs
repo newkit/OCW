@@ -4,335 +4,83 @@
 //! falls back to autodrive and junctions take their default exit
 //! ([`ClientCore::hold_steering`]), restored on closing.
 //!
-//! [`model`] is the Bevy-free menu (pages, focus, page stack), [`controls`]
-//! maps keys and buttons onto its actions; this module is the Bevy glue:
-//! input → model → [`MenuView`] (drawn by `ocw_render::menu`), menu
-//! functions run as console command lines.
+//! Shared with the browser app since Phase 10 B6 (spec §14 Phase 10): the
+//! model and the rows are `ocw_client::menu`, the Bevy glue (input →
+//! model → `MenuView`, menu functions as console lines) `ocw_ui::menu`.
+//! This module adds the desktop's own pages through [`MenuHooks`]: the
+//! world catalog (Change world, About this world), routes, rides, GPX
+//! import, workouts from the workouts folder, the rider profiles, and god
+//! mode's captured pointer.
 //!
 //! [`ClientCore::hold_steering`]: crate::client::ClientCore::hold_steering
 
-pub mod controls;
 pub mod model;
 
-use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::prelude::*;
-use clap::{Arg, Command};
-use ocw_core::mps_to_kmh;
-use ocw_render::RideView;
-use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
-use ocw_render::menu::{InputContext, MenuCorePlugin, MenuPointer, MenuPointerEvent, MenuView};
+pub use ocw_client::menu::status_line;
+pub use ocw_ui::menu::{MenuHooks, MenuState};
 
-use crate::audio::AudioDeviceList;
-use crate::connection::ClientState;
 use crate::ride::RideCatalog;
+use crate::settings::RiderProfiles;
 use crate::settings::pages as settings_pages;
-use crate::settings::registry::Settings;
-use crate::settings::riders::Riders;
-use crate::settings::{RiderProfiles, UserSettings};
-use controls::{NavRepeat, PadState};
-use model::{Action, Effect, Menu, Page};
+use model::Page;
 
+/// The shared menu with the desktop's pages.
 pub struct MenuPlugin;
 
 impl Plugin for MenuPlugin {
     fn build(&self, app: &mut App) {
-        if !app.is_plugin_added::<MenuCorePlugin>() {
-            app.add_plugins(MenuCorePlugin);
-        }
-        app.init_resource::<MenuState>()
-            .add_systems(Update, (menu_input, write_view).chain())
-            .console_command(ConsoleCommand::new(
-                Permission::User,
-                Command::new("menu")
-                    .about("Open, close or drive the in-game menu (Esc / gamepad Start)")
-                    .arg(
-                        Arg::new("action")
-                            .value_parser([
-                                "open",
-                                "close",
-                                "toggle",
-                                "up",
-                                "down",
-                                "left",
-                                "right",
-                                "select",
-                                "back",
-                                "tab-next",
-                                "tab-prev",
-                                "workshop-page",
-                            ])
-                            .default_value("toggle"),
-                    ),
-                |world, m| {
-                    let mut state = world.resource_mut::<MenuState>();
-                    let open = state.menu.is_open();
-                    let action = match m.get_one::<String>("action").map(String::as_str) {
-                        Some("open") => Action::Open,
-                        Some("close") => Action::Close,
-                        Some("up") => Action::Up,
-                        Some("down") => Action::Down,
-                        Some("left") => Action::Left,
-                        Some("right") => Action::Right,
-                        Some("tab-next") => Action::TabNext,
-                        Some("tab-prev") => Action::TabPrev,
-                        Some("select") => Action::Confirm,
-                        Some("back") => Action::Back,
-                        Some("workshop-page") => Action::RiderPage,
-                        _ if open => Action::Close,
-                        _ => Action::Open,
-                    };
-                    state.queued.push(action);
-                    Ok(String::new())
-                },
-            ));
-    }
-}
-
-/// The menu model and its input state.
-#[derive(Resource, Default)]
-pub struct MenuState {
-    pub menu: Menu,
-    repeat: NavRepeat,
-    /// Actions from the console command `menu`, applied next frame.
-    queued: Vec<Action>,
-}
-
-/// The voice, time-machine, weather and rider-list state the menu pages
-/// show.
-type MenuInfos<'w> = (
-    Option<Res<'w, crate::voice::VoiceMenuInfo>>,
-    Option<Res<'w, crate::timemachine::TimeMachineInfo>>,
-    Option<Res<'w, crate::weather::WeatherState>>,
-    Option<Res<'w, crate::riders_page::RiderListInfo>>,
-);
-
-#[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
-fn menu_input(
-    keys: Option<Res<ButtonInput<KeyCode>>>,
-    pads: Query<&Gamepad>,
-    motion: Option<Res<AccumulatedMouseMotion>>,
-    time: Res<Time>,
-    context: Res<InputContext>,
-    mut console: ResMut<ConsoleState>,
-    mut pointer: ResMut<MenuPointer>,
-    mut state: ResMut<MenuState>,
-    client: Option<ResMut<ClientState>>,
-    settings: Option<Res<UserSettings>>,
-    riders: Option<Res<RiderProfiles>>,
-    catalog: Option<Res<RideCatalog>>,
-    audio: Option<Res<AudioDeviceList>>,
-    (voice, time_machine, weather, rider_list): MenuInfos<'_>,
-    flight: Option<ResMut<crate::god::FlightPointer>>,
-) {
-    let mut pressed = pads.iter().fold(
-        keys.map(|k| controls::keyboard(&k)).unwrap_or_default(),
-        |p, pad| p.merge(controls::gamepad(PadState::of(pad))),
-    );
-    // God mode (spec §14 Phase 13A): Esc first frees the captured pointer;
-    // the next Esc opens the menu.
-    if let Some(mut f) = flight
-        && f.captured
-        && pressed.escape
-        && !state.menu.is_open()
-        && !console.is_open()
-    {
-        f.captured = false;
-        pressed.escape = false;
-    }
-    let mut actions = std::mem::take(&mut state.queued);
-    let pointer_events = std::mem::take(&mut pointer.0);
-    let open = state.menu.is_open();
-    let mut client = client;
-    let now = time.elapsed_secs_f64();
-    let results =
-        !open && !console.is_open() && client.as_ref().is_some_and(|c| c.0.results_showing(now));
-    if results && (pressed.escape || pressed.confirm || pressed.back) {
-        // An event's results panel is up: Esc / Enter / B close it first
-        // (spec §2.3), the menu opens on the next press.
-        if let Some(c) = client.as_mut() {
-            c.0.dismiss_results(now);
-        }
-        state.repeat.reset();
-    } else if console.is_open() {
-        // The console has the keys; Esc closes it first (never the app).
-        if pressed.escape {
-            console.set_open(false);
-        }
-        state.repeat.reset();
-    } else if (!open && *context != InputContext::Workshop) || *context == InputContext::Menu {
-        // Navigation starts once the frame began in the menu's context:
-        // the key that opened the menu does not also move its focus.
-        let step = if open {
-            state
-                .repeat
-                .update(pressed.held, pressed.tapped, time.delta_secs_f64())
-                + pressed.step
-        } else {
-            0
-        };
-        actions.extend(controls::actions(&pressed, step, open));
-        // Hover only when the mouse moved: rows appearing under a resting
-        // pointer (a new page) must not take the focus.
-        let moved = motion.is_some_and(|m| m.delta != Vec2::ZERO);
-        actions.extend(pointer_events.into_iter().filter_map(|e| match e {
-            MenuPointerEvent::Hover(i) => moved.then_some(Action::Hover(i)),
-            MenuPointerEvent::Click(i) => Some(Action::Click(i)),
-            MenuPointerEvent::Step(i, dir) => Some(Action::Step(i, dir)),
-            MenuPointerEvent::Back => Some(Action::Back),
-        }));
-    }
-    let rows = |p| {
-        sub_rows(
-            p,
-            settings.as_deref(),
-            riders.as_deref(),
-            catalog.as_deref(),
-            audio.as_deref(),
-            voice.as_deref(),
-            (
-                time_machine.as_deref(),
-                weather.as_deref(),
-                rider_list.as_deref(),
-            ),
-        )
-    };
-    for action in actions {
-        if let Effect::Command(line) = state.menu.apply_with(action, rows) {
-            console.queue(line);
-        }
-    }
-    let now_open = state.menu.is_open();
-    if now_open != open {
-        if !now_open {
-            state.repeat.reset();
-        }
-        info!("menu {}", if now_open { "opened" } else { "closed" });
-        if let Some(mut c) = client {
-            if now_open {
-                c.0.hold_steering();
-            } else {
-                c.0.release_steering();
-            }
+        app.insert_resource(MenuHooks {
+            rows: desktop_rows,
+            text: |world, page| {
+                page_text(
+                    page,
+                    world.get_resource::<RideCatalog>(),
+                    world
+                        .get_resource::<crate::weather::WeatherMenu>()
+                        .map(|w| &w.0),
+                )
+            },
+            riders: |world| world.get_resource::<RiderProfiles>().map(|r| &r.riders),
+            escape: free_pointer,
+        });
+        if !app.is_plugin_added::<ocw_ui::menu::MenuPlugin>() {
+            app.add_plugins(ocw_ui::menu::MenuPlugin);
         }
     }
 }
 
-/// The status strip of the top page: power, speed, trainer and steering.
-pub fn status_line(view: &RideView) -> String {
-    match view.local() {
-        Some(r) => format!(
-            "{:.0} W   {:.1} km/h   {}",
-            r.power_w,
-            mps_to_kmh(r.state.speed),
-            view.status
-        ),
-        None => view.status.clone(),
+/// God mode (spec §14 Phase 13A): Esc first frees the captured pointer.
+fn free_pointer(world: &mut World) -> bool {
+    match world.get_resource_mut::<crate::god::FlightPointer>() {
+        Some(mut f) if f.captured => {
+            f.captured = false;
+            true
+        }
+        _ => false,
     }
 }
 
-/// The control hint at the bottom of `page` (`list_pages` pages of a
-/// list, `depth` pages open).
-pub fn hint(page: Page, list_pages: usize, depth: usize) -> String {
-    let back = if depth > 1 { "back" } else { "close" };
-    match page {
-        // The preset grid (spec §14 Phase 9, S5): the arrows move.
-        Page::Sub(p) if p.grid_columns().is_some() => {
-            return format!("Arrows move   Enter/A choose   Esc/B {back}");
-        }
-        Page::Sub(p) if p.is_weather_page() => {
-            // One line at 16:9 (the generic hint is longer).
-            return format!("↑/↓ move   ←/→ change   Enter/A select   Esc/B {back}");
-        }
-        // The rider list: information, paged with Left / Right.
-        Page::Sub(settings_pages::Page::RiderList) => {
-            return format!(
-                "Up/Down move   {}Esc/B {back}",
-                if list_pages > 1 {
-                    "Left/Right page   "
-                } else {
-                    ""
-                }
-            );
-        }
-        _ => {}
-    }
-    format!(
-        "Up/Down move   {}Enter/A select   Esc/B {}",
-        match page {
-            Page::Sub(p) if p.is_ride_page() && list_pages > 1 => "Left/Right page   ",
-            Page::Sub(p) if p.is_ride_page() => "",
-            Page::Sub(_) => "Left/Right change   Q/E, LB/RB tab   ",
-            _ => "",
-        },
-        back
-    )
-}
-
-/// The rows of a Settings sub page, the Workshop or a Ride / Navi list
-/// (defaults without the settings or ride plugin, e.g. in tests of the
-/// menu alone).
-fn sub_rows(
-    page: settings_pages::Page,
-    settings: Option<&UserSettings>,
-    riders: Option<&RiderProfiles>,
-    catalog: Option<&RideCatalog>,
-    audio: Option<&AudioDeviceList>,
-    voice: Option<&crate::voice::VoiceMenuInfo>,
-    (time_machine, weather, rider_list): (
-        Option<&crate::timemachine::TimeMachineInfo>,
-        Option<&crate::weather::WeatherState>,
-        Option<&crate::riders_page::RiderListInfo>,
-    ),
-) -> Vec<settings_pages::Row> {
-    if page == settings_pages::Page::RiderList {
-        return rider_list.map(|l| l.menu_rows()).unwrap_or_default();
-    }
-    let no_time = crate::timemachine::TimeMachineInfo::default();
-    let time_machine = time_machine.unwrap_or(&no_time);
-    if page == settings_pages::Page::TimeMachine {
-        return crate::timemachine::rows(time_machine);
-    }
-    if page.is_weather_page() {
-        let clear = crate::weather::WeatherState::default();
-        return crate::weather::rows(page, weather.unwrap_or(&clear));
-    }
+/// The rows of the desktop's own pages: the World and the Ride / Navi
+/// lists (from the ride catalog).
+fn desktop_rows(world: &World, page: settings_pages::Page) -> Option<Vec<settings_pages::Row>> {
+    let empty = crate::ride::pages::Catalog::default();
+    let catalog = world.get_resource::<RideCatalog>().map_or(&empty, |c| &c.0);
     if page.is_world_page() {
-        let empty = crate::ride::pages::Catalog::default();
-        let clear = crate::weather::WeatherState::default();
-        return crate::ride::world::rows(
-            page,
-            catalog.map_or(&empty, |c| &c.0),
-            time_machine,
-            weather.unwrap_or(&clear),
-        );
-    }
-    let default_settings = Settings::default();
-    if page.is_voice_page() {
-        let empty = crate::voice::VoiceMenuInfo::default();
-        return crate::voice::page::rows(
-            page,
-            settings.map_or(&default_settings, |s| &s.settings),
-            voice.unwrap_or(&empty),
-        );
+        let tm = world
+            .get_resource::<crate::timemachine::TimeMachine>()
+            .map(|t| t.0.clone())
+            .unwrap_or_default();
+        let weather = world
+            .get_resource::<crate::weather::WeatherMenu>()
+            .map(|w| w.0.clone())
+            .unwrap_or_default();
+        return Some(crate::ride::world::rows(page, catalog, &tm, &weather));
     }
     if page.is_ride_page() {
-        let empty = crate::ride::pages::Catalog::default();
-        return crate::ride::pages::rows(page, catalog.map_or(&empty, |c| &c.0));
+        return Some(crate::ride::pages::rows(page, catalog));
     }
-    let default_settings = Settings::default();
-    if page == settings_pages::Page::Audio {
-        let empty = settings_pages::AudioDevices::default();
-        return settings_pages::audio_rows(
-            settings.map_or(&default_settings, |s| &s.settings),
-            audio.map_or(&empty, |a| &a.0),
-        );
-    }
-    let default_riders = Riders::default();
-    settings_pages::rows(
-        page,
-        settings.map_or(&default_settings, |s| &s.settings),
-        riders.map_or(&default_riders, |r| &r.riders),
-    )
+    None
 }
 
 /// Text of a page beyond its fixed description (a data source's notice).
@@ -350,104 +98,18 @@ fn page_text(
     }
 }
 
-/// The time-machine, weather and rider-list state the view shows.
-type ViewInfos<'w> = (
-    Option<Res<'w, crate::timemachine::TimeMachineInfo>>,
-    Option<Res<'w, crate::weather::WeatherState>>,
-    Option<Res<'w, crate::riders_page::RiderListInfo>>,
-);
-
-#[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
-fn write_view(
-    mut state: ResMut<MenuState>,
-    ride: Option<Res<RideView>>,
-    settings: Option<Res<UserSettings>>,
-    riders: Option<Res<RiderProfiles>>,
-    catalog: Option<Res<RideCatalog>>,
-    // Audio and voice device lists, grouped (system parameter limit).
-    (audio, voice): (
-        Option<Res<AudioDeviceList>>,
-        Option<Res<crate::voice::VoiceMenuInfo>>,
-    ),
-    (time_machine, weather, rider_list): ViewInfos<'_>,
-    mut view: ResMut<MenuView>,
-) {
-    // Values changed by the menu's commands (or the console) show at once.
-    let rows = |p| {
-        sub_rows(
-            p,
-            settings.as_deref(),
-            riders.as_deref(),
-            catalog.as_deref(),
-            audio.as_deref(),
-            voice.as_deref(),
-            (
-                time_machine.as_deref(),
-                weather.as_deref(),
-                rider_list.as_deref(),
-            ),
-        )
-    };
-    state.menu.refresh(&rows);
-    let menu = &state.menu;
-    let new = match menu.page() {
-        None => MenuView::default(),
-        Some(page) => {
-            let def = page.def();
-            MenuView {
-                open: true,
-                title: def.title.into(),
-                status: match (page, &ride, weather.as_deref()) {
-                    (Page::Top, Some(r), _) => status_line(r),
-                    // The weather now and who sets it (spec §14 Phase 9, S5).
-                    (Page::Sub(p), _, Some(w)) if p.is_weather_page() => {
-                        crate::weather::status(p, w, menu.focus())
-                    }
-                    (Page::Sub(settings_pages::Page::RiderList), _, _) => rider_list
-                        .as_deref()
-                        .map(|l| l.summary())
-                        .unwrap_or_default(),
-                    _ => String::new(),
-                },
-                text: def
-                    .text
-                    .iter()
-                    .map(|&s| s.to_owned())
-                    .chain(page_text(page, catalog.as_deref(), weather.as_deref()))
-                    .collect(),
-                items: menu.labels(),
-                focused: menu.focus(),
-                hint: hint(page, menu.list_pages(), menu.depth()),
-                dimmed: menu.dimmed(),
-                grid: match (page, weather.as_deref()) {
-                    (Page::Sub(p), w) if p.grid_columns().is_some() => {
-                        let clear = crate::weather::WeatherState::default();
-                        Some(crate::weather::grid(w.unwrap_or(&clear)))
-                    }
-                    _ => None,
-                },
-                // The rider list's unicorns and damage dots (13E, 12F).
-                marks: match (page, rider_list.as_deref()) {
-                    (Page::Sub(settings_pages::Page::RiderList), Some(l)) => menu
-                        .shown_rows()
-                        .into_iter()
-                        .map(|r| r.and_then(|i| l.mark(i)).unwrap_or_default())
-                        .collect(),
-                    _ => Vec::new(),
-                },
-            }
-        }
-    };
-    view.set_if_neq(new);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::Args;
-    use crate::connection::ConnectionPlugin;
+    use crate::connection::{ClientState, ConnectionPlugin};
+    use bevy::input::mouse::AccumulatedMouseMotion;
     use clap::Parser;
+    use ocw_client::menu::hint;
+    use ocw_render::RideView;
     use ocw_render::console::ConsoleCorePlugin;
+    use ocw_render::console::ConsoleState;
+    use ocw_render::menu::{InputContext, MenuPointer, MenuPointerEvent, MenuView};
     use ocw_world::Route;
 
     /// Every sub page (a new one must be added here: the match below does
@@ -558,7 +220,13 @@ mod tests {
                 Page::Sub(_) => (0..model::MAX_ITEMS)
                     .map(|i| format!("Setting {i}:  < some value >"))
                     .collect(),
-                _ => def.items.iter().map(|i| i.label.to_string()).collect(),
+                // The desktop's items (the browser's are checked below).
+                _ => def
+                    .items
+                    .iter()
+                    .filter(|i| model::Platform::Desktop.shows(i))
+                    .map(|i| i.label.to_string())
+                    .collect(),
             };
             // The longest dynamic text a page gets: the OSM notice.
             let catalog = RideCatalog(crate::ride::world::tests::catalog());
@@ -923,7 +591,7 @@ mod tests {
 
     fn machine(app: &App) -> crate::weather::Machine {
         app.world()
-            .resource::<crate::weather::WeatherState>()
+            .resource::<crate::weather::WeatherMenu>()
             .machine
     }
 
@@ -987,7 +655,7 @@ mod tests {
         );
         let left = app
             .world()
-            .resource::<crate::weather::WeatherState>()
+            .resource::<crate::weather::WeatherMenu>()
             .target
             .map(|t| t.1);
         assert!(left.is_some_and(|l| l > 50.0 && l <= 60.0), "{left:?}");
@@ -1280,7 +948,7 @@ mod tests {
         assert_eq!(server_weather(&app), want);
         let st = app
             .world()
-            .resource::<crate::weather::WeatherState>()
+            .resource::<crate::weather::WeatherMenu>()
             .clone();
         assert!(!st.may_change);
         assert_eq!(
@@ -1311,7 +979,7 @@ mod tests {
         run(&mut app, "event cancel");
         assert!(
             app.world()
-                .resource::<crate::weather::WeatherState>()
+                .resource::<crate::weather::WeatherMenu>()
                 .may_change
         );
         run(&mut app, "weather clear");
