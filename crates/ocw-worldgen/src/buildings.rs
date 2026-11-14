@@ -2,9 +2,11 @@
 //! and multipolygons) with heights from `height` / `building:levels` or
 //! defaults by building type, placed on the terrain (section `BLDG`).
 
+use std::collections::{BTreeMap, HashMap};
+
 use ocw_world::buildings::{
-    Building, BuildingKind, BuildingTags, BuildingUse, Buildings, Roof, RoofMaterial, RoofShape,
-    WallMaterial, signed_area,
+    Building, BuildingKind, BuildingParts, BuildingTags, BuildingUse, Buildings, PARTS_COVER, Roof,
+    RoofMaterial, RoofShape, WallMaterial, signed_area,
 };
 use ocw_world::package::{TileKey, WorldPackage};
 
@@ -259,8 +261,42 @@ pub fn osm_facts(tags: &Tags) -> BuildingTags {
 /// `roof:direction` says otherwise. The roof height comes from
 /// `roof:height`, `roof:angle` or `roof:levels`, else 0.4 × the span (0.3
 /// for small buildings). A tagged pyramid also sits on a convex polygon
-/// (towers). Everything else gets a flat roof on its own outline.
+/// (towers). Any other footprint (L-, T-, U-shapes, courtyards) that wants
+/// a pitched roof gets one over its polygon (spec §14 Phase 8 T4, v3.26):
+/// `Roof::Flat` in `BLDG` and the roof height in `BTAG`
+/// ([`BuildingTags::skeleton_roof_m`]: tagged, else 0.8 × the largest
+/// inset of its straight skeleton – a rectangle's 0.4 × the span – 0.6 ×
+/// for small buildings); a footprint without a skeleton stays flat.
 pub fn shape(fp: &Footprint) -> Shaped {
+    shape_with(fp, false)
+}
+
+/// The largest inset of a footprint's straight skeleton (any winding).
+pub fn skeleton_offset(outer: &[[f64; 2]], holes: &[Vec<[f64; 2]>]) -> Option<f64> {
+    let mut o = outer.to_vec();
+    if signed_area(&o) < 0.0 {
+        o.reverse();
+    }
+    let hs: Vec<Vec<[f64; 2]>> = holes
+        .iter()
+        .map(|h| {
+            let mut h = h.clone();
+            if signed_area(&h) > 0.0 {
+                h.reverse();
+            }
+            h
+        })
+        .collect();
+    ocw_world::roof_skeleton::skeleton(&o, &hs)
+        .map(|s| s.max_offset)
+        .filter(|t| *t >= 0.3)
+}
+
+/// [`shape`] for a footprint or, with `part`, a `building:part`: a part's
+/// roof is flat unless tagged (OSM's Simple 3D Buildings default), and a
+/// tagged pyramid on a part over `min_height` without a roof height or
+/// levels is all roof (a spire: `height − min_height`).
+pub fn shape_with(fp: &Footprint, part: bool) -> Shaped {
     let tag = |k: &str| fp.tags.get(k).map(String::as_str);
     let kind = building_kind(&fp.tags);
     let mut facts = osm_facts(&fp.tags);
@@ -273,6 +309,7 @@ pub fn shape(fp: &Footprint) -> Shaped {
     let shape_tag = tag("roof:shape").and_then(RoofShape::from_osm);
     let canopy = facts.building_use == Some(BuildingUse::Canopy);
     let pitched_kind = !canopy
+        && !part
         && match kind {
             BuildingKind::House
             | BuildingKind::Farm
@@ -324,6 +361,12 @@ pub fn shape(fp: &Footprint) -> Shaped {
             .or_else(|| {
                 let l = facts.roof_levels.filter(|l| *l > 0)?;
                 Some(f64::from(l) * ROOF_LEVEL_M + 0.5)
+            })
+            .or_else(|| {
+                // A spire: the whole part above its `min_height` is roof.
+                let (h, m) = (height?, min_height?);
+                (part && shape_tag == Some(RoofShape::Pyramidal) && levels.is_none() && h > m + 0.5)
+                    .then_some(h - m)
             })
             .map(|h| h.clamp(0.3, 25.0))
     };
@@ -404,6 +447,28 @@ pub fn shape(fp: &Footprint) -> Shaped {
             tags: facts,
         };
     }
+    // A pitched roof over any other polygon: its straight skeleton.
+    if shape_tag.map_or(pitched_kind, RoofShape::is_pitched)
+        && area <= max_area
+        && let Some(inset) = skeleton_offset(&fp.outer, &fp.holes)
+    {
+        let small = kind == BuildingKind::Small;
+        let tagged = tagged_roof(inset);
+        let roof_h =
+            tagged.unwrap_or_else(|| (if small { 0.6 } else { 0.8 } * inset).clamp(0.5, 8.0));
+        if height.is_some() {
+            wall = (wall - roof_h).max(2.0);
+        }
+        facts.roof_shape = shape_tag;
+        facts.roof_height_m = tagged.map(|h| h as f32);
+        facts.skeleton_roof_m = Some(roof_h as f32);
+        return Shaped {
+            wall: wall.max(2.0),
+            roof: Roof::Flat,
+            ring: fp.outer.clone(),
+            tags: facts,
+        };
+    }
     // Explicitly flat stays flat for the style too.
     facts.roof_shape = shape_tag.filter(|s| *s == RoofShape::Flat);
     Shaped {
@@ -448,40 +513,22 @@ pub fn simplify(ring: &[[f64; 2]]) -> Vec<[f64; 2]> {
     pts
 }
 
-/// Places a footprint on the terrain: the walls start [`SINK_M`] below the
-/// lowest terrain under it (vertices and a 4 m grid inside) and reach the
-/// wall height above the mean terrain, at least 2 m above the highest.
-pub fn place(fp: &Footprint, ground: impl Fn(f64, f64) -> Option<f64>) -> Option<Building> {
-    let outer = simplify(&fp.outer);
-    if outer.len() < 3 || signed_area(&outer).abs() < 2.0 {
-        return None; // degenerate (< 1 m²)
-    }
-    let holes: Vec<Vec<[f64; 2]>> = fp
-        .holes
-        .iter()
-        .map(|h| simplify(h))
-        .filter(|h| h.len() >= 3)
-        .collect();
-    let Shaped {
-        wall,
-        roof,
-        ring,
-        tags,
-    } = shape(&Footprint {
-        outer: outer.clone(),
-        holes: holes.clone(),
-        ..fp.clone()
-    });
+/// The ground under a ring: (lowest, highest, mean) of the terrain at its
+/// points and on a 4 m grid inside; `None` where the terrain is missing.
+pub fn ground_under(
+    ring: &[[f64; 2]],
+    ground: &impl Fn(f64, f64) -> Option<f64>,
+) -> Option<(f64, f64, f64)> {
     let mut samples: Vec<f64> = Vec::new();
-    for p in &ring {
+    for p in ring {
         samples.push(ground(p[0], p[1])?);
     }
     let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
-    for p in &ring {
+    for p in ring {
         lo = [lo[0].min(p[0]), lo[1].min(p[1])];
         hi = [hi[0].max(p[0]), hi[1].max(p[1])];
     }
-    let rings = vec![ring.clone()];
+    let rings = vec![ring.to_vec()];
     let mut z = lo[1] + 2.0;
     while z < hi[1] {
         let mut x = lo[0] + 2.0;
@@ -498,6 +545,52 @@ pub fn place(fp: &Footprint, ground: impl Fn(f64, f64) -> Option<f64>) -> Option
     let min = samples.iter().copied().fold(f64::INFINITY, f64::min);
     let max = samples.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     let mean = samples.iter().sum::<f64>() / samples.len() as f64;
+    Some((min, max, mean))
+}
+
+/// Places a footprint on the terrain: the walls start [`SINK_M`] below the
+/// lowest terrain under it (vertices and a 4 m grid inside) and reach the
+/// wall height above the mean terrain, at least 2 m above the highest.
+pub fn place(fp: &Footprint, ground: impl Fn(f64, f64) -> Option<f64>) -> Option<Building> {
+    place_on(fp, false, |ring| ground_under(ring, &ground))
+}
+
+/// Places a `building:part` on the ground of its building (`ground`: the
+/// building's lowest, highest and mean terrain), so that the parts of one
+/// building share their foot and their heights count from the same level.
+pub fn place_part(fp: &Footprint, ground: (f64, f64, f64)) -> Option<Building> {
+    place_on(fp, true, |_| Some(ground))
+}
+
+fn place_on(
+    fp: &Footprint,
+    part: bool,
+    ground: impl Fn(&[[f64; 2]]) -> Option<(f64, f64, f64)>,
+) -> Option<Building> {
+    let outer = simplify(&fp.outer);
+    if outer.len() < 3 || signed_area(&outer).abs() < 2.0 {
+        return None; // degenerate (< 1 m²)
+    }
+    let holes: Vec<Vec<[f64; 2]>> = fp
+        .holes
+        .iter()
+        .map(|h| simplify(h))
+        .filter(|h| h.len() >= 3)
+        .collect();
+    let Shaped {
+        wall,
+        roof,
+        ring,
+        tags,
+    } = shape_with(
+        &Footprint {
+            outer: outer.clone(),
+            holes: holes.clone(),
+            ..fp.clone()
+        },
+        part,
+    );
+    let (min, max, mean) = ground(&ring)?;
     let ccw = |r: &[[f64; 2]], want_ccw: bool| -> Vec<[f32; 2]> {
         let mut v: Vec<[f32; 2]> = r.iter().map(|p| [p[0] as f32, p[1] as f32]).collect();
         if (signed_area(r) > 0.0) != want_ccw {
@@ -522,7 +615,91 @@ pub fn place(fp: &Footprint, ground: impl Fn(f64, f64) -> Option<f64>) -> Option
         eave_y: (mean + wall).max(max + 2.0) as f32,
         roof,
         tags,
+        parts: Default::default(),
     })
+}
+
+/// The `building:part` footprints of an extract (closed ways and
+/// multipolygons tagged `building:part`, spec §14 Phase 8 T4 v3.26).
+pub fn part_footprints(data: &AreaData, proj: &LocalProjection) -> Vec<Footprint> {
+    let mut out = Vec::new();
+    for a in data.areas() {
+        if a.tags.get("building:part").is_none_or(|v| v == "no") {
+            continue;
+        }
+        let project = |ring: &Vec<(f64, f64)>| -> Vec<[f64; 2]> {
+            ring.iter()
+                .map(|&(lat, lon)| proj.project(lat, lon))
+                .collect()
+        };
+        let inner: Vec<Vec<[f64; 2]>> = a.inner.iter().map(project).collect();
+        for o in &a.outer {
+            let outer = project(o);
+            let holes = inner
+                .iter()
+                .filter(|h| inside_rings(h[0], std::slice::from_ref(&outer)))
+                .cloned()
+                .collect();
+            out.push(Footprint {
+                id: a.id,
+                tags: a.tags.clone(),
+                outer,
+                holes,
+            });
+        }
+    }
+    out
+}
+
+/// A point inside a ring (the centroid of its largest triangle).
+pub fn inner_point(ring: &[[f64; 2]]) -> Option<[f64; 2]> {
+    let r32: Vec<[f32; 2]> = ring.iter().map(|p| [p[0] as f32, p[1] as f32]).collect();
+    ocw_world::buildings::triangulate(&r32, &[])
+        .iter()
+        .map(|t| {
+            let [a, b, c] = t.map(|i| ring[i as usize]);
+            let area = ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])).abs();
+            (
+                area,
+                [(a[0] + b[0] + c[0]) / 3.0, (a[1] + b[1] + c[1]) / 3.0],
+            )
+        })
+        .max_by(|x, y| x.0.total_cmp(&y.0))
+        .map(|(_, p)| p)
+}
+
+/// The share of a building's outline the parts cover (sampled on a grid).
+pub fn parts_cover(outline: &[[f64; 2]], parts: &[Vec<[f64; 2]>]) -> f64 {
+    let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+    for p in outline {
+        lo = [lo[0].min(p[0]), lo[1].min(p[1])];
+        hi = [hi[0].max(p[0]), hi[1].max(p[1])];
+    }
+    let area = signed_area(outline).abs() / 2.0;
+    let step = (area.sqrt() / 40.0).clamp(0.25, 4.0);
+    let rings = vec![outline.to_vec()];
+    let (mut all, mut covered) = (0usize, 0usize);
+    let mut z = lo[1] + step / 2.0;
+    while z < hi[1] {
+        let mut x = lo[0] + step / 2.0;
+        while x < hi[0] {
+            if inside_rings([x, z], &rings) {
+                all += 1;
+                covered += usize::from(
+                    parts
+                        .iter()
+                        .any(|r| inside_rings([x, z], std::slice::from_ref(r))),
+                );
+            }
+            x += step;
+        }
+        z += step;
+    }
+    if all == 0 {
+        0.0
+    } else {
+        covered as f64 / all as f64
+    }
 }
 
 /// What [`add_buildings`] did.
@@ -536,16 +713,31 @@ pub struct BuildingStats {
     pub tagged: usize,
     /// Of these, with a tagged roof shape (pyramids on polygons included).
     pub shaped: usize,
+    /// Pitched roofs over a polygon (straight skeleton, v3.26).
+    pub skeleton: usize,
     pub outside: usize,
+    /// `building:part` footprints, placed on a building (section `BPRT`).
+    pub part_footprints: usize,
+    pub parts: usize,
+    /// Buildings with parts, and of these the ones the parts cover.
+    pub with_parts: usize,
+    pub covered: usize,
 }
 
 /// Places the footprints on the package terrain and adds them (section
-/// `BLDG`) to the tile of their centroid.
-pub fn add_buildings(pkg: &mut WorldPackage, fps: &[Footprint]) -> BuildingStats {
+/// `BLDG`) to the tile of their centroid; the `building:part` footprints
+/// go onto the building they lie in (section `BPRT`: the smallest outline
+/// containing a point of the part, the part at most 5 % larger).
+pub fn add_buildings(
+    pkg: &mut WorldPackage,
+    fps: &[Footprint],
+    parts: &[Footprint],
+) -> BuildingStats {
     let size = f64::from(pkg.tile_size_m);
     let mut tiles = Buildings::new();
     let mut stats = BuildingStats {
         footprints: fps.len(),
+        part_footprints: parts.len(),
         ..Default::default()
     };
     for fp in fps {
@@ -568,10 +760,111 @@ pub fn add_buildings(pkg: &mut WorldPackage, fps: &[Footprint]) -> BuildingStats
         stats.with_holes += usize::from(!b.holes.is_empty());
         stats.tagged += usize::from(!b.tags.is_empty());
         stats.shaped += usize::from(b.tags.roof_shape.is_some());
+        stats.skeleton += usize::from(b.tags.skeleton_roof_m.is_some());
         tiles.entry(key).or_default().push(b);
     }
+    add_parts(pkg, &mut tiles, parts, &mut stats);
     pkg.buildings = Some(tiles);
     stats
+}
+
+/// Puts the parts on their buildings (see [`add_buildings`]).
+fn add_parts(
+    pkg: &WorldPackage,
+    tiles: &mut Buildings,
+    parts: &[Footprint],
+    stats: &mut BuildingStats,
+) {
+    if parts.is_empty() {
+        return;
+    }
+    // A grid of the buildings' boxes (50 m cells).
+    const CELL: f64 = 50.0;
+    let cell = |v: f64| (v / CELL).floor() as i64;
+    let mut grid: HashMap<(i64, i64), Vec<(TileKey, usize)>> = HashMap::new();
+    for (key, list) in tiles.iter() {
+        for (i, b) in list.iter().enumerate() {
+            let (mut lo, mut hi) = ([f32::INFINITY; 2], [f32::NEG_INFINITY; 2]);
+            for p in &b.outline {
+                lo = [lo[0].min(p[0]), lo[1].min(p[1])];
+                hi = [hi[0].max(p[0]), hi[1].max(p[1])];
+            }
+            for cx in cell(f64::from(lo[0]))..=cell(f64::from(hi[0])) {
+                for cz in cell(f64::from(lo[1]))..=cell(f64::from(hi[1])) {
+                    grid.entry((cx, cz)).or_default().push((*key, i));
+                }
+            }
+        }
+    }
+    let ring64 = |r: &[[f32; 2]]| -> Vec<[f64; 2]> {
+        r.iter()
+            .map(|p| [f64::from(p[0]), f64::from(p[1])])
+            .collect()
+    };
+    let mut found: BTreeMap<(TileKey, usize), Vec<&Footprint>> = BTreeMap::new();
+    for fp in parts {
+        let Some(p) = inner_point(&simplify(&fp.outer)) else {
+            continue;
+        };
+        let area = signed_area(&fp.outer).abs() / 2.0;
+        let host = grid
+            .get(&(cell(p[0]), cell(p[1])))
+            .into_iter()
+            .flatten()
+            .filter_map(|&(k, i)| {
+                let o = ring64(&tiles[&k][i].outline);
+                let a = signed_area(&o).abs() / 2.0;
+                (inside_rings(p, std::slice::from_ref(&o)) && area <= 1.05 * a).then_some((a, k, i))
+            })
+            .min_by(|x, y| x.0.total_cmp(&y.0).then((x.1, x.2).cmp(&(y.1, y.2))));
+        if let Some((_, k, i)) = host {
+            found.entry((k, i)).or_default().push(fp);
+        }
+    }
+    for ((k, i), fps) in found {
+        let host = &tiles[&k][i];
+        let (kind, use_) = (host.kind, host.tags.building_use);
+        let outline = ring64(&host.outline);
+        let Some(ground) = ground_under(&outline, &|x, z| pkg.surface_height(x, z)) else {
+            continue;
+        };
+        let mut placed: Vec<(Building, f64)> = fps
+            .iter()
+            .filter_map(|fp| {
+                let mut b = place_part(fp, ground)?;
+                // A part is of its building's kind and use unless it says
+                // otherwise (`building:part=roof`: a canopy).
+                if !fp.tags.contains_key("building") {
+                    b.kind = kind;
+                }
+                b.tags.building_use = fp
+                    .tags
+                    .get("building:part")
+                    .and_then(|v| BuildingUse::from_osm(v))
+                    .or(b.tags.building_use)
+                    .or(use_);
+                Some((b, signed_area(&fp.outer).abs()))
+            })
+            .collect();
+        if placed.is_empty() {
+            continue;
+        }
+        // From the ground up, the bigger first.
+        placed.sort_by(|a, b| {
+            let m = |b: &Building| b.tags.min_height_m.unwrap_or(0.0);
+            m(&a.0).total_cmp(&m(&b.0)).then(b.1.total_cmp(&a.1))
+        });
+        let rings: Vec<Vec<[f64; 2]>> = placed.iter().map(|(b, _)| ring64(&b.outline)).collect();
+        let cover = parts_cover(&outline, &rings) >= f64::from(PARTS_COVER);
+        stats.parts += placed.len();
+        stats.with_parts += 1;
+        stats.covered += usize::from(cover);
+        let b = &mut tiles.get_mut(&k).expect("tile")[i];
+        b.parts = BuildingParts {
+            list: placed.into_iter().map(|(b, _)| b).collect(),
+            cover,
+        };
+    }
 }
 
 #[cfg(test)]
@@ -680,7 +973,8 @@ mod tests {
             rect(0.0, 0.0, 10.0, 10.0),
         ));
         assert!((wall - 5.0).abs() < 1e-9);
-        // Big, L-shaped or explicitly flat buildings keep their outline.
+        // Big, L-shaped or explicitly flat buildings keep their outline (an
+        // L gets its pitched roof over the polygon in `BTAG`, v3.26).
         let l = vec![
             [0.0, 0.0],
             [10.0, 0.0],
@@ -914,7 +1208,8 @@ mod tests {
             octagon,
         ));
         assert_eq!(s.tags.roof_height_m, Some(18.0));
-        // A concave footprint stays flat without a shape.
+        // A concave footprint gets no pyramid but a hipped roof over its
+        // polygon (v3.26).
         let l = vec![
             [0.0, 0.0],
             [10.0, 0.0],
@@ -924,7 +1219,9 @@ mod tests {
             [0.0, 10.0],
         ];
         let s = shape(&fp(&[("building", "yes"), ("roof:shape", "pyramidal")], l));
-        assert_eq!((s.roof, s.tags.roof_shape), (Roof::Flat, None));
+        assert_eq!(s.roof, Roof::Flat);
+        assert_eq!(s.tags.roof_shape, Some(RoofShape::Pyramidal));
+        assert!(s.tags.skeleton_roof_m.is_some());
     }
 
     #[test]
@@ -1022,11 +1319,219 @@ mod tests {
                 fp(&[("building", "house")], rect(120.0, 10.0, 10.0, 8.0)),
                 fp(&[("building", "house")], rect(500.0, 10.0, 10.0, 8.0)), // no tile
             ],
+            &[],
         );
         assert_eq!((stats.placed, stats.outside, stats.gabled), (2, 1, 2));
         let b = p.buildings.as_ref().unwrap();
         assert_eq!(b[&TileKey { x: 0, z: 0 }].len(), 1);
         assert_eq!(b[&TileKey { x: 1, z: 0 }].len(), 1);
         assert_eq!(WorldPackage::from_bytes(&p.to_bytes()).unwrap(), p);
+    }
+
+    fn l_fp(t: &[(&str, &str)]) -> Footprint {
+        fp(
+            t,
+            vec![
+                [0.0, 0.0],
+                [10.0, 0.0],
+                [10.0, 5.0],
+                [5.0, 5.0],
+                [5.0, 10.0],
+                [0.0, 10.0],
+            ],
+        )
+    }
+
+    /// Pitched roofs over polygons (v3.26): an L-shaped house gets the
+    /// skeleton roof height in `BTAG` (0.8 × the largest inset, tagged
+    /// heights and angles over it), `BLDG` stays flat for old readers;
+    /// big untagged blocks, offices and explicitly flat roofs do not.
+    #[test]
+    fn polygons_get_skeleton_roof_heights() {
+        let s = shape(&l_fp(&[("building", "house")]));
+        assert_eq!(s.roof, Roof::Flat, "old readers: flat");
+        assert!(
+            (s.tags.skeleton_roof_m.unwrap() - 2.0).abs() < 1e-5,
+            "{:?}",
+            s.tags
+        );
+        assert_eq!((s.tags.roof_shape, s.tags.roof_height_m), (None, None));
+        let s = shape(&l_fp(&[
+            ("building", "house"),
+            ("roof:shape", "hipped"),
+            ("roof:angle", "45"),
+        ]));
+        assert_eq!(s.tags.roof_shape, Some(RoofShape::Hipped));
+        assert!((s.tags.roof_height_m.unwrap() - 2.5).abs() < 1e-4);
+        assert_eq!(s.tags.skeleton_roof_m, s.tags.roof_height_m);
+        // `height` includes the roof.
+        let s = shape(&l_fp(&[("building", "house"), ("height", "8")]));
+        assert!((s.wall - 6.0).abs() < 1e-9);
+        // Small buildings: lower roofs.
+        let s = shape(&l_fp(&[("building", "garage")]));
+        assert!((s.tags.skeleton_roof_m.unwrap() - 1.5).abs() < 1e-5);
+        for t in [
+            vec![("building", "office")],
+            vec![("building", "house"), ("roof:shape", "flat")],
+        ] {
+            assert_eq!(shape(&l_fp(&t)).tags.skeleton_roof_m, None, "{t:?}");
+        }
+        // A big L (1,200 m²): flat unless tagged.
+        let big: Vec<[f64; 2]> = l_fp(&[])
+            .outer
+            .iter()
+            .map(|p| [p[0] * 4.0, p[1] * 4.0])
+            .collect();
+        assert_eq!(
+            shape(&fp(&[("building", "house")], big.clone()))
+                .tags
+                .skeleton_roof_m,
+            None
+        );
+        assert!(
+            shape(&fp(&[("building", "house"), ("roof:shape", "gabled")], big))
+                .tags
+                .skeleton_roof_m
+                .is_some()
+        );
+        // A courtyard house with its roof shape tagged.
+        let court = Footprint {
+            holes: vec![vec![[6.0, 6.0], [6.0, 14.0], [14.0, 14.0], [14.0, 6.0]]],
+            ..fp(
+                &[("building", "farm"), ("roof:shape", "hipped")],
+                rect(0.0, 0.0, 20.0, 20.0),
+            )
+        };
+        let s = shape(&court);
+        assert!((s.tags.skeleton_roof_m.unwrap() - 0.8 * 3.0).abs() < 1e-5);
+        // Clockwise rings work the same.
+        let mut cw = l_fp(&[("building", "house")]);
+        cw.outer.reverse();
+        assert_eq!(shape(&cw).tags.skeleton_roof_m, Some(2.0));
+        // The placed building keeps it, its outline counter-clockwise.
+        let b = place(&cw, |_, _| Some(500.0)).unwrap();
+        assert_eq!(b.tags.skeleton_roof_m, Some(2.0));
+        assert!(signed_area(&b.outline) > 0.0);
+    }
+
+    fn church_parts() -> (Footprint, Vec<Footprint>) {
+        let church = fp(&[("building", "church")], rect(100.0, 40.0, 30.0, 12.0));
+        let nave = fp(
+            &[
+                ("building:part", "yes"),
+                ("building:levels", "3"),
+                ("roof:shape", "gabled"),
+            ],
+            rect(106.0, 40.0, 24.0, 12.0),
+        );
+        let tower = fp(
+            &[
+                ("building:part", "tower"),
+                ("height", "28"),
+                ("roof:shape", "pyramidal"),
+                ("roof:height", "10"),
+            ],
+            rect(100.0, 43.0, 6.0, 6.0),
+        );
+        let spire = fp(
+            &[
+                ("building:part", "yes"),
+                ("min_height", "28"),
+                ("height", "40"),
+                ("roof:shape", "pyramidal"),
+            ],
+            rect(101.0, 44.0, 4.0, 4.0),
+        );
+        (church, vec![nave, tower, spire])
+    }
+
+    /// `building:part` (v3.26): parts go onto the building they lie in,
+    /// placed on its ground with their own heights and roofs (flat unless
+    /// tagged, a spire all roof); whether they cover it; parts outside any
+    /// building are dropped; the package round trip keeps them.
+    #[test]
+    fn parts_go_onto_their_buildings() {
+        use ocw_world::package::Tile;
+        let key = TileKey { x: 0, z: 0 };
+        let mut p = WorldPackage {
+            name: "p".into(),
+            origin: (47.0, 9.0),
+            tile_size_m: 200.0,
+            samples: 2,
+            tiles: BTreeMap::from([(
+                key,
+                Tile {
+                    key,
+                    heights: vec![500.0; 4],
+                    roads: vec![],
+                },
+            )]),
+            graph: None,
+            landuse: None,
+            buildings: None,
+            bridges: None,
+            routes: Vec::new(),
+            region: None,
+            time_zone: None,
+            look: Default::default(),
+            obstacles: None,
+        };
+        let (church, mut parts) = church_parts();
+        // A stray part far from any building.
+        parts.push(fp(&[("building:part", "yes")], rect(10.0, 10.0, 5.0, 5.0)));
+        let house = fp(&[("building", "house")], rect(40.0, 40.0, 10.0, 8.0));
+        let stats = add_buildings(&mut p, &[house, church], &parts);
+        assert_eq!(
+            (
+                stats.part_footprints,
+                stats.parts,
+                stats.with_parts,
+                stats.covered
+            ),
+            (4, 3, 1, 1)
+        );
+        let list = &p.buildings.as_ref().unwrap()[&key];
+        assert!(list[0].parts.is_empty());
+        let c = &list[1];
+        assert!(c.parts.cover);
+        let [nave, tower, spire] = [0, 1, 2].map(|i| &c.parts.list[i]);
+        // From the ground up, the bigger first.
+        assert_eq!(nave.outline.len(), 4);
+        assert!(matches!(nave.roof, Roof::Gabled { .. }));
+        assert!((nave.eave_y - 509.0).abs() < 1e-3, "{}", nave.eave_y);
+        assert!((tower.eave_y - 518.0).abs() < 1e-3, "{}", tower.eave_y);
+        assert_eq!(tower.tags.roof_shape, Some(RoofShape::Pyramidal));
+        // The spire: all roof above 28 m.
+        assert_eq!(spire.tags.min_height_m, Some(28.0));
+        assert_eq!(spire.tags.roof_height_m, Some(12.0));
+        assert!((spire.eave_y - 528.0).abs() < 1e-3, "{}", spire.eave_y);
+        assert!(c.parts.list.iter().all(|q| q.base_y == c.base_y));
+        // A part without a roof shape is flat (not the house default).
+        let plain = place_part(
+            &fp(&[("building:part", "yes")], rect(0.0, 0.0, 10.0, 8.0)),
+            (500.0, 500.0, 500.0),
+        )
+        .unwrap();
+        assert_eq!((plain.roof, plain.tags.skeleton_roof_m), (Roof::Flat, None));
+        // Only the tower mapped: the outline stays.
+        let (church, parts) = church_parts();
+        let mut q = p.clone();
+        let stats = add_buildings(&mut q, &[church], &parts[1..2]);
+        assert_eq!((stats.with_parts, stats.covered), (1, 0));
+        // The package keeps the parts.
+        assert_eq!(WorldPackage::from_bytes(&p.to_bytes()).unwrap(), p);
+        // Coverage by sampling.
+        let outline = rect(0.0, 0.0, 10.0, 10.0);
+        assert!((parts_cover(&outline, &[rect(0.0, 0.0, 5.0, 10.0)]) - 0.5).abs() < 0.03);
+        assert!(parts_cover(&outline, std::slice::from_ref(&outline)) > 0.99);
+        assert!(inner_point(&l_fp(&[]).outer).is_some());
+    }
+
+    /// `building:part` areas are read, and `min_height` is kept (it was
+    /// dropped by the area reader before v3.26).
+    #[test]
+    fn part_footprints_and_min_height_are_read() {
+        use crate::areas::kept_key;
+        assert!(kept_key("min_height") && kept_key("building:part"));
     }
 }

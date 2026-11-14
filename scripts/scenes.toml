@@ -1412,6 +1412,58 @@ args = ["--world", "{world}", "--free-ride", "--start", "-31411,4859", "--bots",
 at = ["0.5=time pause", "0.5=time 2026-07-15 15:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 120 22 70"]
 shot = 10
 
+# --- Houses, the T4 open items (spec §14 Phase 8 T4, v3.26) -------------------
+# Pitched roofs over L-, T- and U-shaped footprints (straight skeleton),
+# building:part (towers, spires), dormers and balconies (Alpine, Black Forest).
+
+[[scene]]
+name = "look-houses-vaduz-polygons"
+description = "Houses: Vaduz, pitched (hipped and gabled) roofs over L-, T- and U-shaped footprints from the straight skeleton, close raised camera"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 11:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 140 30 55"]
+shot = 9
+
+[[scene]]
+name = "look-houses-vaduz-cathedral"
+description = "Houses: Vaduz, the cathedral St. Florin from its building:part pieces (tower with its spire, nave, choir) beside the Städtle"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2336,2630", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 15:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 180 12 45"]
+shot = 9
+
+[[scene]]
+name = "look-houses-triesen-church"
+description = "Houses: Triesen, the parish church St. Gallus from its building:part pieces (tower and spire, nave)"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-1740,5960", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 15:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 180 12 45"]
+shot = 9
+
+[[scene]]
+name = "look-houses-triesenberg-balconies"
+description = "Houses: Triesenberg (Alpine style), timber balconies on the gable ends and eave sides, gabled dormers and roof windows, close camera"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-840,4615", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 120 14 24"]
+shot = 9
+
+[[scene]]
+name = "look-houses-malbun-dormers"
+description = "Houses: Malbun chalets (1,600 m), balconies in the gables, dormers, close camera"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "4218,6473", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 160 14 30"]
+shot = 9
+
+[[scene]]
+name = "look-houses-bf-farms-close"
+description = "Houses, Black Forest: farms around St. Märgen up close, the long-side galleries (balconies), shed dormers in the big hipped roofs"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "9920,-9674", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 140 14 35"]
+shot = 10
+
 # --- Roads (spec §14 Phase 8 T5) ----------------------------------------------
 # Render twice for before/after: with the packages and build before T5, then
 # with the rebuilt packages (section RDRS) and the T5 build.

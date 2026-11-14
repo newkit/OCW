@@ -5,7 +5,12 @@
 // windows at night. Vertex data (ocw-render `houses`): uv = (along, up) in
 // metres; uv_b.x = lower layer + 16 × upper layer; uv_b.y = window style +
 // 1 + 16 × (storey height in dm + 64 × storeys); colour = the lower layer's
-// colour (linear), alpha = door bay + 1. Independent of the light setup.
+// colour (linear), alpha = door bay + 1. Window code 15 on roof faces: the
+// dormers' and roof windows' detail (v3.26), the storey field their foot up
+// the slope (dm), the storeys field kind (1 roof windows, 2 gabled dormers,
+// 3 shed dormers) + 4 × count + 64 × cell size (dm), uv = (along the eave
+// from the first cell, up the slope from the eaves). Independent of the
+// light setup.
 
 import bevy_pbr::render::{
     forward_io::{VertexOutput, FragmentOutput},
@@ -167,7 +172,7 @@ fn fragment(
 
     // Procedural façade: windows per bay and storey, one door.
     var emissive = vec3<f32>(0.0);
-    if win > 0u && levels > 0u && storey_h > 0.0 && dist < look.facade.y {
+    if win > 0u && win < 15u && levels > 0u && storey_h > 0.0 && dist < look.facade.y {
         let w = (win - 1u) * 4u;
         let p0 = look.windows[w];
         let p1 = look.windows[w + 1u];
@@ -221,6 +226,45 @@ fn fragment(
                 let light = window_light(light_seed, i32(cell), i32(storey));
                 emissive = light * look.facade.w * look.facade.z * glass * fade;
             }
+        }
+    }
+
+    // The roof's detail (spec §14 Phase 8 T4, v3.26): dormers and roof
+    // windows painted on the slope where the mid level stands in for the
+    // near one's geometry – a roof window's glass in its dark frame, a
+    // dormer as a shaded patch with a white-framed window.
+    if win == 15u && dist < look.facade.y {
+        let kind = levels % 4u;
+        let count = (levels / 4u) % 16u;
+        let spacing = max(f32(levels / 64u) / 10.0, 0.5);
+        let cell = floor(in.uv.x / spacing);
+        if cell >= 0.0 && cell < f32(count) {
+            let lu = in.uv.x - (cell + 0.5) * spacing;
+            let lv = in.uv.y - storey_h;
+            let fade = 1.0 - smoothstep(look.facade.x, look.facade.y, dist);
+            let aa = max(max(fw.x, fw.y), 0.01);
+            var gw = 0.4;
+            var g0 = 0.0;
+            var g1 = 1.2;
+            var frame_rgb = vec3<f32>(0.06, 0.06, 0.065);
+            if kind >= 2u {
+                let hw = select(1.3, 0.9, kind == 2u);
+                let len = select(2.8, 2.2, kind == 2u);
+                let shade = cover(max(abs(lu) - hw, max(-lv, lv - len)), aa);
+                albedo = mix(albedo, albedo * 0.45, shade * fade);
+                gw = 0.5;
+                g0 = 0.2;
+                g1 = 1.0;
+                frame_rgb = vec3<f32>(0.62, 0.61, 0.58);
+            }
+            let frame = cover(max(abs(lu) - gw - 0.07, max(g0 - 0.07 - lv, lv - g1 - 0.07)), aa);
+            let glass = cover(max(abs(lu) - gw, max(g0 - lv, lv - g1)), aa);
+            albedo = mix(albedo, frame_rgb, (frame - glass) * fade);
+            albedo = mix(albedo, vec3<f32>(0.03, 0.04, 0.05), glass * fade);
+            rough = mix(rough, 0.08, glass * fade);
+            n = normalize(mix(n, normalize(in.world_normal), frame));
+            let light = window_light(light_seed, i32(cell), 90);
+            emissive = light * look.facade.w * look.facade.z * glass * fade;
         }
     }
 

@@ -1033,6 +1033,7 @@ mod tests {
             eave_y: 6.0,
             roof: Roof::Flat,
             tags: Default::default(),
+            parts: Default::default(),
         };
         let mut graph = RoadGraph::default();
         graph.edges.push(ocw_world::graph::Edge {

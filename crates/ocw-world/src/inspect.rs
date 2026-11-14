@@ -671,6 +671,7 @@ pub(crate) mod tests {
                 roof_shape: Some(RoofShape::Hipped),
                 ..Default::default()
             },
+            parts: Default::default(),
         };
         let mut buildings = BTreeMap::new();
         buildings.insert(key, vec![house]);

@@ -23,8 +23,9 @@ use serde::Deserialize;
 
 /// The shipped style file.
 pub const STYLES_TOML: &str = include_str!("../../../assets/building-styles.toml");
-/// Window styles the shader holds.
-pub const MAX_WINDOW_STYLES: usize = 16;
+/// Window styles the shader holds (window code 15 is the roof windows'
+/// and dormers' detail on roof faces, `building.wesl`).
+pub const MAX_WINDOW_STYLES: usize = 14;
 /// Walls reach this far below the lowest ground (as the world builder's
 /// `SINK_M`): the ground floor starts this much above the wall foot.
 pub const SINK_M: f32 = 0.5;
@@ -191,6 +192,8 @@ struct PresetFile {
     roof_colours: Option<Vec<String>>,
     window: Option<String>,
     chimney: Option<f32>,
+    dormers: Option<BTreeMap<String, f32>>,
+    balconies: Option<BTreeMap<String, f32>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -256,6 +259,58 @@ pub struct Preset {
     /// Window style index (`Some(None)`: no windows).
     pub window: Option<Option<u8>>,
     pub chimney: Option<f32>,
+    /// Dormers or roof windows on untagged pitched roofs, each kind with
+    /// its probability (the kind for a tagged `roof:levels`).
+    pub dormers: Option<Mix<Dormer>>,
+    /// A balcony on the gable or the long side, with its probability.
+    pub balconies: Option<Mix<BalconySide>>,
+}
+
+/// What lights a storey in the roof (spec §14 Phase 8 T4, v3.26): near,
+/// geometry on the roof; mid, a detail the shader paints on the roof faces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Dormer {
+    /// A dormer with its own small gable roof.
+    Gabled,
+    /// A shed dormer: a wide front under a flatter slope.
+    Shed,
+    /// Roof windows in the slope.
+    Window,
+}
+
+impl Dormer {
+    pub const ALL: [Dormer; 3] = [Dormer::Gabled, Dormer::Shed, Dormer::Window];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Dormer::Gabled => "gabled",
+            Dormer::Shed => "shed",
+            Dormer::Window => "window",
+        }
+    }
+
+    pub fn from_name(s: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|d| d.name() == s)
+    }
+}
+
+/// Where a balcony runs (spec §14 Phase 8 T4, v3.26).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BalconySide {
+    /// Across a gable end (alpine chalets).
+    Gable,
+    /// Along an eave side (the Black Forest farms' gallery).
+    Long,
+}
+
+impl BalconySide {
+    pub fn from_name(s: &str) -> Option<Self> {
+        match s {
+            "gable" => Some(BalconySide::Gable),
+            "long" => Some(BalconySide::Long),
+            _ => None,
+        }
+    }
 }
 
 /// One regional style.
@@ -455,6 +510,22 @@ impl BuildingStyles {
                             .map(|v| colours(v, &format!("{what} roof_colours"), &mut errors)),
                         window,
                         chimney: p.chimney,
+                        dormers: p.dormers.as_ref().map(|m| {
+                            mix(
+                                m,
+                                &format!("{what} dormers"),
+                                Dormer::from_name,
+                                &mut errors,
+                            )
+                        }),
+                        balconies: p.balconies.as_ref().map(|m| {
+                            mix(
+                                m,
+                                &format!("{what} balconies"),
+                                BalconySide::from_name,
+                                &mut errors,
+                            )
+                        }),
                     },
                 );
             }
@@ -628,6 +699,16 @@ pub struct HouseSpec {
     pub chimney: bool,
     /// A roof on posts (`building=roof`, carports).
     pub canopy: bool,
+    /// The roof is drawn over the polygon (straight skeleton, v3.26):
+    /// `shape` is then hipped or gabled.
+    pub skeleton: bool,
+    /// Dormers or roof windows (pitched roofs; they need room in the roof).
+    pub dormers: Option<Dormer>,
+    /// A balcony (near detail; at least two storeys).
+    pub balcony: Option<BalconySide>,
+    /// The building's seed: its door, lit windows, chimney and dormers (a
+    /// part has its building's).
+    pub seed: u64,
 }
 
 impl HouseSpec {
@@ -653,6 +734,18 @@ impl HouseLook {
     }
 }
 
+/// The roof over a polygon (straight skeleton) of a shape: gable-ended
+/// shapes become gabled, the others hipped (spec §14 Phase 8 T4, v3.26).
+pub fn skeleton_shape(shape: RoofShape) -> RoofShape {
+    match shape {
+        RoofShape::Flat => RoofShape::Flat,
+        RoofShape::Gabled | RoofShape::Gambrel | RoofShape::Skillion => RoofShape::Gabled,
+        RoofShape::Hipped | RoofShape::HalfHipped | RoofShape::Pyramidal | RoofShape::Mansard => {
+            RoofShape::Hipped
+        }
+    }
+}
+
 /// Resolves a building's look from its OSM facts, its measured roof colour
 /// and the preset chain of its style (see [`BuildingStyles::chain`]).
 pub fn resolve(
@@ -662,9 +755,22 @@ pub fn resolve(
     style: usize,
     look: &HouseLook,
 ) -> HouseSpec {
+    resolve_seeded(b, seed_of(b), measured_roof, styles, style, look)
+}
+
+/// [`resolve`] with the seed of the random choices given: a part of a
+/// building (`building:part`) is resolved with its building's seed, so the
+/// parts share their plaster, tiles and timber unless OSM says otherwise.
+pub fn resolve_seeded(
+    b: &Building,
+    seed: u64,
+    measured_roof: Option<RoofColour>,
+    styles: &BuildingStyles,
+    style: usize,
+    look: &HouseLook,
+) -> HouseSpec {
     let t = &b.tags;
     let chain = styles.chain(style, b.kind, t.building_use);
-    let seed = seed_of(b);
     let r = |k: u64| chance(seed, k);
     let canopy = t.building_use == Some(BuildingUse::Canopy);
     let ground_y = b.base_y + SINK_M;
@@ -674,18 +780,27 @@ pub fn resolve(
         Roof::Gabled { height_m } => height_m,
         Roof::Flat => 0.0,
     };
-    let (mut shape, mut roof_h, tagged_h) = if rect {
+    let pitch = *field(&chain, |p| p.pitch.as_ref()).unwrap_or(&1.0);
+    let skeleton = !rect && t.skeleton_roof_m.is_some();
+    let (mut shape, mut roof_h, tagged_h) = if rect || skeleton {
         let shape = t.roof_shape.filter(|s| s.is_pitched()).unwrap_or_else(|| {
             field(&chain, |p| p.roofs.as_ref())
                 .and_then(|m| pick(m, r(1)))
                 .unwrap_or(RoofShape::Gabled)
         });
+        let shape = if skeleton {
+            skeleton_shape(shape)
+        } else {
+            shape
+        };
+        let base_h = if skeleton {
+            t.skeleton_roof_m.unwrap_or(0.0)
+        } else {
+            bldg_h
+        };
         match t.roof_height_m {
             Some(h) => (shape, h, true),
-            None => {
-                let pitch = *field(&chain, |p| p.pitch.as_ref()).unwrap_or(&1.0);
-                (shape, bldg_h * pitch.clamp(0.2, 3.0), false)
-            }
+            None => (shape, base_h * pitch.clamp(0.2, 3.0), false),
         }
     } else if t.roof_shape == Some(RoofShape::Pyramidal)
         && let Some(h) = t.roof_height_m
@@ -832,6 +947,44 @@ pub fn resolve(
             .unwrap_or(0.0)
             .clamp(0.0, 1.5)
     };
+    // Dormers and balconies where people live (spec §14 Phase 8 T4,
+    // v3.26): `roof:levels` says whether the roof has a storey (the kind
+    // then from the style, roof windows without one); untagged, the
+    // style's chance.
+    let lived_in = matches!(
+        b.kind,
+        BuildingKind::House | BuildingKind::Farm | BuildingKind::Apartments | BuildingKind::Other
+    ) && !matches!(
+        t.building_use,
+        Some(
+            BuildingUse::Barn
+                | BuildingUse::Garage
+                | BuildingUse::Shed
+                | BuildingUse::Greenhouse
+                | BuildingUse::Canopy
+                | BuildingUse::Church
+                | BuildingUse::Chapel
+        )
+    ) && !canopy;
+    let chance_of = |m: &Mix<Dormer>| m.iter().map(|(_, w)| w).sum::<f32>().min(1.0);
+    let dormer_mix = field(&chain, |p| p.dormers.as_ref());
+    let dormers = if !shape.is_pitched() || !lived_in {
+        None
+    } else {
+        match t.roof_levels {
+            Some(0) => None,
+            Some(_) => dormer_mix
+                .and_then(|m| pick(m, r(10)))
+                .or(Some(Dormer::Window)),
+            None => dormer_mix
+                .filter(|m| r(9) < chance_of(m))
+                .and_then(|m| pick(m, r(10))),
+        }
+    };
+    let balcony = field(&chain, |p| p.balconies.as_ref())
+        .filter(|_| lived_in && levels >= 2)
+        .filter(|m| r(11) < m.iter().map(|(_, w)| w).sum::<f32>().min(1.0))
+        .and_then(|m| pick(m, r(12)));
     HouseSpec {
         shape,
         roof_h,
@@ -848,6 +1001,10 @@ pub fn resolve(
         storey_h,
         chimney,
         canopy,
+        skeleton: skeleton && shape.is_pitched(),
+        dormers,
+        balcony,
+        seed,
     }
 }
 
@@ -870,6 +1027,7 @@ mod tests {
             eave_y: 456.0,
             roof: Roof::Gabled { height_m: 3.2 },
             tags,
+            parts: Default::default(),
         }
     }
 
@@ -1168,5 +1326,224 @@ mod tests {
         assert_eq!(parse_hex("#fff"), Some([1.0; 3]));
         assert_eq!(parse_hex("#000000"), Some([0.0; 3]));
         assert_eq!(parse_hex("red"), None);
+    }
+
+    fn l_shape(at: [f32; 2]) -> Building {
+        let pts = [
+            [0.0, 0.0],
+            [20.0, 0.0],
+            [20.0, 8.0],
+            [8.0, 8.0],
+            [8.0, 20.0],
+            [0.0, 20.0],
+        ];
+        Building {
+            outline: pts.iter().map(|p| [p[0] + at[0], p[1] + at[1]]).collect(),
+            roof: Roof::Flat,
+            ..house(
+                BuildingKind::House,
+                BuildingTags {
+                    skeleton_roof_m: Some(3.2),
+                    ..Default::default()
+                },
+                at,
+            )
+        }
+    }
+
+    /// A pitched roof over a polygon (v3.26): the style's or the tagged
+    /// shape, as a hipped or gabled skeleton roof; its height scaled by the
+    /// style's pitch unless tagged; flat where the style says so.
+    #[test]
+    fn polygon_roofs_take_the_style_or_the_tagged_shape() {
+        let s = &*STYLES;
+        let mut shapes = std::collections::BTreeSet::new();
+        for i in 0..40 {
+            let b = l_shape([i as f32 * 31.0, 7.0]);
+            let h = resolve(&b, None, s, 0, &LOOK);
+            assert!(h.skeleton, "{h:?}");
+            assert!(matches!(h.shape, RoofShape::Gabled | RoofShape::Hipped));
+            assert!((h.roof_h - 3.2).abs() < 1e-5, "central pitch 1");
+            shapes.insert(h.shape as u8);
+        }
+        assert_eq!(shapes.len(), 2, "both from the mix");
+        // Alpine pitch 0.6.
+        let h = resolve(&l_shape([0.0, 0.0]), None, s, style("alpine"), &LOOK);
+        assert!(h.skeleton && (h.roof_h - 3.2 * 0.6).abs() < 1e-5);
+        // Tagged: a gambrel is gable-ended, a mansard hipped; the height stays.
+        let mut b = l_shape([0.0, 0.0]);
+        b.tags.roof_shape = Some(RoofShape::Gambrel);
+        b.tags.roof_height_m = Some(4.0);
+        let h = resolve(&b, None, s, style("alpine"), &LOOK);
+        assert_eq!(
+            (h.shape, h.roof_h, h.skeleton),
+            (RoofShape::Gabled, 4.0, true)
+        );
+        b.tags.roof_shape = Some(RoofShape::Mansard);
+        assert_eq!(resolve(&b, None, s, 0, &LOOK).shape, RoofShape::Hipped);
+        assert_eq!(skeleton_shape(RoofShape::Skillion), RoofShape::Gabled);
+        // In Tenerife most of them stay flat.
+        let flat = (0..40)
+            .filter(|i| {
+                let h = resolve(
+                    &l_shape([*i as f32 * 31.0, 7.0]),
+                    None,
+                    s,
+                    style("canary"),
+                    &LOOK,
+                );
+                assert_eq!(h.skeleton, h.shape.is_pitched());
+                !h.skeleton
+            })
+            .count();
+        assert!(flat > 20, "{flat}");
+        // Without the builder's skeleton height the polygon stays flat.
+        let mut plain = l_shape([0.0, 0.0]);
+        plain.tags.skeleton_roof_m = None;
+        let h = resolve(&plain, None, s, 0, &LOOK);
+        assert_eq!((h.shape, h.skeleton), (RoofShape::Flat, false));
+    }
+
+    /// Dormers (v3.26): `roof:levels` ≥ 1 always gives some (the style's
+    /// kind, else roof windows), 0 none; untagged, the style's chance; only
+    /// on pitched roofs of buildings people live in.
+    #[test]
+    fn dormers_come_from_roof_levels_and_the_style() {
+        let s = &*STYLES;
+        let with = |levels: Option<u8>, kind, use_, st: &str, at: [f32; 2]| {
+            let tags = BuildingTags {
+                roof_levels: levels,
+                building_use: use_,
+                ..Default::default()
+            };
+            resolve(&house(kind, tags, at), None, s, style(st), &LOOK).dormers
+        };
+        for i in 0..20 {
+            let at = [i as f32 * 17.0, 3.0];
+            assert!(with(Some(1), BuildingKind::House, None, "alpine", at).is_some());
+            assert!(with(Some(2), BuildingKind::Other, None, "central", at).is_some());
+            assert_eq!(with(Some(0), BuildingKind::House, None, "alpine", at), None);
+            assert_eq!(
+                with(
+                    Some(1),
+                    BuildingKind::Small,
+                    Some(BuildingUse::Garage),
+                    "alpine",
+                    at
+                ),
+                None
+            );
+            assert_eq!(
+                with(
+                    Some(1),
+                    BuildingKind::Farm,
+                    Some(BuildingUse::Barn),
+                    "blackforest",
+                    at
+                ),
+                None
+            );
+        }
+        // Central `other` has no dormer mix: a tagged roof storey has roof windows.
+        assert_eq!(
+            with(
+                Some(1),
+                BuildingKind::Apartments,
+                None,
+                "central",
+                [0.0, 0.0]
+            ),
+            Some(Dormer::Window)
+        );
+        // Untagged: by the style's chance (alpine 35 %, none in Tenerife).
+        let count = |st: &str| {
+            (0..400)
+                .filter(|i| {
+                    with(None, BuildingKind::House, None, st, [*i as f32 * 13.0, 5.0]).is_some()
+                })
+                .count()
+        };
+        let alpine = count("alpine");
+        assert!((90..190).contains(&alpine), "{alpine}");
+        assert_eq!(count("canary"), 0);
+        // Black Forest farms: shed dormers.
+        let kinds: std::collections::BTreeSet<Dormer> = (0..200)
+            .filter_map(|i| {
+                with(
+                    Some(1),
+                    BuildingKind::Farm,
+                    None,
+                    "blackforest",
+                    [i as f32 * 9.0, 1.0],
+                )
+            })
+            .collect();
+        assert_eq!(kinds.into_iter().collect::<Vec<_>>(), vec![Dormer::Shed]);
+        // Flat roofs never.
+        let flat = Building {
+            roof: Roof::Flat,
+            ..house(
+                BuildingKind::House,
+                BuildingTags {
+                    roof_levels: Some(1),
+                    ..Default::default()
+                },
+                [0.0, 0.0],
+            )
+        };
+        assert_eq!(
+            resolve(&flat, None, s, style("alpine"), &LOOK).dormers,
+            None
+        );
+    }
+
+    /// Balconies by style (v3.26): alpine and Black Forest houses of two
+    /// storeys or more, by the preset's chances; none in the Rhine valley
+    /// towns or Tenerife, none on one-storey houses.
+    #[test]
+    fn balconies_come_from_the_style() {
+        let s = &*STYLES;
+        let share = |st: &str, levels: u8, kind: BuildingKind| {
+            let mut sides = std::collections::BTreeMap::new();
+            let n = (0..400)
+                .filter_map(|i| {
+                    let tags = BuildingTags {
+                        levels: Some(levels),
+                        ..Default::default()
+                    };
+                    let b = house(kind, tags, [i as f32 * 11.0, 2.0]);
+                    resolve(&b, None, s, style(st), &LOOK).balcony
+                })
+                .inspect(|b| *sides.entry(format!("{b:?}")).or_insert(0) += 1)
+                .count();
+            (n, sides)
+        };
+        let (alpine, sides) = share("alpine", 2, BuildingKind::House);
+        assert!((210..310).contains(&alpine), "{alpine}");
+        assert!(sides["Gable"] > sides["Long"], "{sides:?}");
+        let (bf, sides) = share("blackforest", 2, BuildingKind::Farm);
+        assert!((170..270).contains(&bf), "{bf}");
+        assert!(sides["Long"] > sides["Gable"], "{sides:?}");
+        assert_eq!(share("central", 3, BuildingKind::House).0, 0);
+        assert_eq!(share("canary", 3, BuildingKind::House).0, 0);
+        assert_eq!(share("alpine", 1, BuildingKind::House).0, 0);
+        assert_eq!(share("alpine", 2, BuildingKind::Industrial).0, 0);
+        // The style file checks the names.
+        let bad = STYLES_TOML.replace("gable = 0.5, long = 0.15", "gabel = 0.5");
+        let e = BuildingStyles::parse(&bad).unwrap_err();
+        assert!(e.iter().any(|e| e.contains("gabel")), "{e:?}");
+        let bad = STYLES_TOML.replace("gabled = 0.25, window = 0.1", "gable = 0.25");
+        assert!(BuildingStyles::parse(&bad).is_err());
+    }
+
+    /// A part takes its building's seed: the same plaster and tiles.
+    #[test]
+    fn parts_share_their_buildings_choices() {
+        let s = &*STYLES;
+        let b = house(BuildingKind::House, BuildingTags::default(), [5.0, 5.0]);
+        let part = house(BuildingKind::House, BuildingTags::default(), [9.0, 1.0]);
+        let hb = resolve(&b, None, s, style("alpine"), &LOOK);
+        let hp = resolve_seeded(&part, hb.seed, None, s, style("alpine"), &LOOK);
+        assert_eq!((hp.wall, hp.roof, hp.seed), (hb.wall, hb.roof, hb.seed));
     }
 }

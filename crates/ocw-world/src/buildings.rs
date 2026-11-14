@@ -6,7 +6,9 @@
 //! shape and height, levels, wall and roof material and colour, the finer
 //! building use – are the optional section `BTAG` ([`BuildingTags`], read
 //! into [`Building::tags`]); readers that do not know it see the plain
-//! `BLDG` buildings (flat or gable roofs).
+//! `BLDG` buildings (flat or gable roofs). Their parts (`building:part`)
+//! are the optional section `BPRT` ([`BuildingParts`], read into
+//! [`Building::parts`]).
 //!
 //! Footprints are in local metres (x, z). The outer ring winds
 //! counter-clockwise in the (x, z) plane (positive [`signed_area`]), holes
@@ -85,7 +87,31 @@ pub struct Building {
     pub roof: Roof,
     /// OSM facts for the style (section `BTAG`; default: none).
     pub tags: BuildingTags,
+    /// Its parts (OSM `building:part`, section `BPRT`; default: none).
+    pub parts: BuildingParts,
 }
+
+/// The parts of a building (OSM `building:part`: church towers, wings of
+/// other heights; spec §14 Phase 8 T4, v3.26), each drawn like a building
+/// with its own height and roof. Readers that do not know the section
+/// `BPRT` draw the outline building alone.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct BuildingParts {
+    /// The parts, from the ground up (outlines inside the building's).
+    pub list: Vec<Building>,
+    /// The parts cover the outline (at least [`PARTS_COVER`] of it): they
+    /// are drawn instead of it; else they are drawn on top of it.
+    pub cover: bool,
+}
+
+impl BuildingParts {
+    pub fn is_empty(&self) -> bool {
+        self.list.is_empty()
+    }
+}
+
+/// The share of the outline the parts must cover to replace it.
+pub const PARTS_COVER: f32 = 0.85;
 
 /// Buildings of a package by tile (a building belongs to the tile of its
 /// first outline point's centroid, see `world-builder`).
@@ -306,6 +332,13 @@ pub struct BuildingTags {
     pub roof_material: Option<RoofMaterial>,
     /// `roof:colour` (sRGB); a measured `ROOF` colour wins.
     pub roof_colour: Option<[u8; 3]>,
+    /// A pitched roof over the whole polygon (a footprint that is not
+    /// rectangular, `Roof::Flat` in `BLDG`; spec §14 Phase 8 T4, v3.26):
+    /// the builder's roof height for it (tagged, or 0.8 × the footprint's
+    /// largest inset – a rectangle's 0.4 × the span). The client draws it
+    /// with a straight skeleton (`roof_skeleton`), hipped or gabled by the
+    /// tagged shape or the regional style; old readers draw it flat.
+    pub skeleton_roof_m: Option<f32>,
 }
 
 impl BuildingTags {
@@ -326,7 +359,8 @@ impl BuildingTags {
 ///     whose flag is set, in flag order:
 ///       0 use u8, 1 roof shape u8, 2 roof height f32, 3 levels u8,
 ///       4 roof levels u8, 5 min height f32, 6 wall material u8,
-///       7 wall colour 3 × u8, 8 roof material u8, 9 roof colour 3 × u8
+///       7 wall colour 3 × u8, 8 roof material u8, 9 roof colour 3 × u8,
+///       10 skeleton roof height f32 (v3.26)
 /// ```
 ///
 /// Readers skip the flags and bytes they do not know (the record length),
@@ -356,48 +390,102 @@ pub fn write_building_tags(t: &Buildings, b: &mut Vec<u8>) -> bool {
         b.extend((recs.len() as u32).to_le_bytes());
         for (i, t) in recs {
             b.extend((i as u32).to_le_bytes());
-            let mut flags = 0u16;
-            let mut f = Vec::new();
-            let mut field = |bit: u16, bytes: &[u8]| {
-                flags |= 1 << bit;
-                f.extend_from_slice(bytes);
-            };
-            if let Some(u) = t.building_use {
-                field(0, &[u as u8]);
-            }
-            if let Some(s) = t.roof_shape {
-                field(1, &[s as u8]);
-            }
-            if let Some(h) = t.roof_height_m {
-                field(2, &h.to_le_bytes());
-            }
-            if let Some(l) = t.levels {
-                field(3, &[l]);
-            }
-            if let Some(l) = t.roof_levels {
-                field(4, &[l]);
-            }
-            if let Some(h) = t.min_height_m {
-                field(5, &h.to_le_bytes());
-            }
-            if let Some(m) = t.wall {
-                field(6, &[m as u8]);
-            }
-            if let Some(c) = t.wall_colour {
-                field(7, &c);
-            }
-            if let Some(m) = t.roof_material {
-                field(8, &[m as u8]);
-            }
-            if let Some(c) = t.roof_colour {
-                field(9, &c);
-            }
-            b.push((f.len() + 2) as u8);
-            b.extend(flags.to_le_bytes());
-            b.extend(f);
+            write_tag_record(t, b);
         }
     }
     true
+}
+
+/// One `BTAG` record after the building index: its length (u8), the flags
+/// (u16) and the flagged fields (also the tags of a part in `BPRT`).
+fn write_tag_record(t: &BuildingTags, b: &mut Vec<u8>) {
+    let mut flags = 0u16;
+    let mut f = Vec::new();
+    let mut field = |bit: u16, bytes: &[u8]| {
+        flags |= 1 << bit;
+        f.extend_from_slice(bytes);
+    };
+    if let Some(u) = t.building_use {
+        field(0, &[u as u8]);
+    }
+    if let Some(s) = t.roof_shape {
+        field(1, &[s as u8]);
+    }
+    if let Some(h) = t.roof_height_m {
+        field(2, &h.to_le_bytes());
+    }
+    if let Some(l) = t.levels {
+        field(3, &[l]);
+    }
+    if let Some(l) = t.roof_levels {
+        field(4, &[l]);
+    }
+    if let Some(h) = t.min_height_m {
+        field(5, &h.to_le_bytes());
+    }
+    if let Some(m) = t.wall {
+        field(6, &[m as u8]);
+    }
+    if let Some(c) = t.wall_colour {
+        field(7, &c);
+    }
+    if let Some(m) = t.roof_material {
+        field(8, &[m as u8]);
+    }
+    if let Some(c) = t.roof_colour {
+        field(9, &c);
+    }
+    if let Some(h) = t.skeleton_roof_m {
+        field(10, &h.to_le_bytes());
+    }
+    b.push((f.len() + 2) as u8);
+    b.extend(flags.to_le_bytes());
+    b.extend(f);
+}
+
+/// Reads one record of [`write_tag_record`]: unknown codes become `None`,
+/// unknown (later) fields are skipped with the rest of the record.
+fn read_tag_record(r: &mut Bytes) -> Result<BuildingTags, String> {
+    let len = usize::from(r.u8()?);
+    let mut f = Bytes::new(r.take(len)?);
+    let flags = u16::from_le_bytes(f.arr()?);
+    let has = |bit: u16| flags & (1 << bit) != 0;
+    let mut t = BuildingTags::default();
+    if has(0) {
+        t.building_use = BuildingUse::from_code(f.u8()?);
+    }
+    if has(1) {
+        t.roof_shape = RoofShape::from_code(f.u8()?);
+    }
+    if has(2) {
+        t.roof_height_m = Some(f.f32()?);
+    }
+    if has(3) {
+        t.levels = Some(f.u8()?);
+    }
+    if has(4) {
+        t.roof_levels = Some(f.u8()?);
+    }
+    if has(5) {
+        t.min_height_m = Some(f.f32()?);
+    }
+    if has(6) {
+        t.wall = WallMaterial::from_code(f.u8()?);
+    }
+    if has(7) {
+        t.wall_colour = Some(f.arr()?);
+    }
+    if has(8) {
+        t.roof_material = RoofMaterial::from_code(f.u8()?);
+    }
+    if has(9) {
+        t.roof_colour = Some(f.arr()?);
+    }
+    if has(10) {
+        t.skeleton_roof_m = Some(f.f32()?);
+    }
+    // Later fields (higher flags) are skipped with the rest of the record.
+    Ok(t)
 }
 
 /// Building tags per tile: (index in the tile's `BLDG` list, tags).
@@ -421,43 +509,7 @@ pub fn read_building_tags(bytes: &[u8]) -> Result<BuildingTagRecords, String> {
         let mut list = Vec::with_capacity(n.min(1 << 16) as usize);
         for _ in 0..n {
             let index = r.u32()? as usize;
-            let len = usize::from(r.u8()?);
-            let mut f = Bytes::new(r.take(len)?);
-            let flags = u16::from_le_bytes(f.arr()?);
-            let has = |bit: u16| flags & (1 << bit) != 0;
-            let mut t = BuildingTags::default();
-            if has(0) {
-                t.building_use = BuildingUse::from_code(f.u8()?);
-            }
-            if has(1) {
-                t.roof_shape = RoofShape::from_code(f.u8()?);
-            }
-            if has(2) {
-                t.roof_height_m = Some(f.f32()?);
-            }
-            if has(3) {
-                t.levels = Some(f.u8()?);
-            }
-            if has(4) {
-                t.roof_levels = Some(f.u8()?);
-            }
-            if has(5) {
-                t.min_height_m = Some(f.f32()?);
-            }
-            if has(6) {
-                t.wall = WallMaterial::from_code(f.u8()?);
-            }
-            if has(7) {
-                t.wall_colour = Some(f.arr()?);
-            }
-            if has(8) {
-                t.roof_material = RoofMaterial::from_code(f.u8()?);
-            }
-            if has(9) {
-                t.roof_colour = Some(f.arr()?);
-            }
-            // Later fields (higher flags) are skipped with the rest of the record.
-            list.push((index, t));
+            list.push((index, read_tag_record(&mut r)?));
         }
         out.insert(key, list);
     }
@@ -655,27 +707,72 @@ pub fn write_buildings(t: &Buildings, b: &mut Vec<u8>) {
         b.extend(key.z.to_le_bytes());
         b.extend((list.len() as u32).to_le_bytes());
         for bl in list {
-            b.push(bl.kind as u8);
-            match bl.roof {
-                Roof::Flat => b.push(0),
-                Roof::Gabled { height_m } => {
-                    b.push(1);
-                    b.extend(height_m.to_le_bytes());
-                }
-            }
-            b.extend(bl.base_y.to_le_bytes());
-            b.extend(bl.eave_y.to_le_bytes());
-            let rings = bl.holes.len().min(usize::from(u16::MAX) - 1) + 1;
-            b.extend((rings as u16).to_le_bytes());
-            for ring in std::iter::once(&bl.outline).chain(&bl.holes).take(rings) {
-                b.extend((ring.len() as u32).to_le_bytes());
-                for p in ring {
-                    b.extend(p[0].to_le_bytes());
-                    b.extend(p[1].to_le_bytes());
-                }
-            }
+            write_building_record(bl, b);
         }
     }
+}
+
+/// One building as in `BLDG` (also a part in `BPRT`).
+fn write_building_record(bl: &Building, b: &mut Vec<u8>) {
+    b.push(bl.kind as u8);
+    match bl.roof {
+        Roof::Flat => b.push(0),
+        Roof::Gabled { height_m } => {
+            b.push(1);
+            b.extend(height_m.to_le_bytes());
+        }
+    }
+    b.extend(bl.base_y.to_le_bytes());
+    b.extend(bl.eave_y.to_le_bytes());
+    let rings = bl.holes.len().min(usize::from(u16::MAX) - 1) + 1;
+    b.extend((rings as u16).to_le_bytes());
+    for ring in std::iter::once(&bl.outline).chain(&bl.holes).take(rings) {
+        b.extend((ring.len() as u32).to_le_bytes());
+        for p in ring {
+            b.extend(p[0].to_le_bytes());
+            b.extend(p[1].to_le_bytes());
+        }
+    }
+}
+
+fn read_building_record(r: &mut Bytes) -> Result<Building, String> {
+    let code = r.u8()?;
+    let kind = BuildingKind::from_code(code).ok_or(format!("unknown building kind {code}"))?;
+    let roof = match r.u8()? {
+        0 => Roof::Flat,
+        1 => Roof::Gabled { height_m: r.f32()? },
+        x => return Err(format!("unknown roof shape {x}")),
+    };
+    let (base_y, eave_y) = (r.f32()?, r.f32()?);
+    let rings = u16::from_le_bytes(r.arr()?);
+    if rings == 0 {
+        return Err("building without an outline".into());
+    }
+    let mut ring_list = Vec::with_capacity(usize::from(rings));
+    for _ in 0..rings {
+        let np = r.u32()?;
+        let ring = (0..np)
+            .map(|_| Ok([r.f32()?, r.f32()?]))
+            .collect::<Result<Vec<_>, String>>()?;
+        if ring.len() < 3 {
+            return Err("building ring with fewer than three points".into());
+        }
+        ring_list.push(ring);
+    }
+    let outline = ring_list.remove(0);
+    if matches!(roof, Roof::Gabled { .. }) && outline.len() != 4 {
+        return Err("gabled roof needs a rectangular footprint".into());
+    }
+    Ok(Building {
+        kind,
+        outline,
+        holes: ring_list,
+        base_y,
+        eave_y,
+        roof,
+        tags: BuildingTags::default(),
+        parts: BuildingParts::default(),
+    })
 }
 
 /// Reads a buildings section payload written by [`write_buildings`].
@@ -694,48 +791,133 @@ pub fn read_buildings(bytes: &[u8]) -> Result<Buildings, String> {
         let n = r.u32()?;
         let mut list = Vec::with_capacity(n.min(1 << 16) as usize);
         for _ in 0..n {
-            let code = r.u8()?;
-            let kind =
-                BuildingKind::from_code(code).ok_or(format!("unknown building kind {code}"))?;
-            let roof = match r.u8()? {
-                0 => Roof::Flat,
-                1 => Roof::Gabled { height_m: r.f32()? },
-                x => return Err(format!("unknown roof shape {x}")),
-            };
-            let (base_y, eave_y) = (r.f32()?, r.f32()?);
-            let rings = u16::from_le_bytes(r.arr()?);
-            if rings == 0 {
-                return Err("building without an outline".into());
-            }
-            let mut ring_list = Vec::with_capacity(usize::from(rings));
-            for _ in 0..rings {
-                let np = r.u32()?;
-                let ring = (0..np)
-                    .map(|_| Ok([r.f32()?, r.f32()?]))
-                    .collect::<Result<Vec<_>, String>>()?;
-                if ring.len() < 3 {
-                    return Err("building ring with fewer than three points".into());
-                }
-                ring_list.push(ring);
-            }
-            let outline = ring_list.remove(0);
-            if matches!(roof, Roof::Gabled { .. }) && outline.len() != 4 {
-                return Err("gabled roof needs a rectangular footprint".into());
-            }
-            list.push(Building {
-                kind,
-                outline,
-                holes: ring_list,
-                base_y,
-                eave_y,
-                roof,
-                tags: BuildingTags::default(),
-            });
+            list.push(read_building_record(&mut r)?);
         }
         out.insert(key, list);
     }
     r.finish("buildings section")?;
     Ok(out)
+}
+
+/// Section tag of the buildings' parts ([`BuildingParts`]).
+pub const BUILDING_PARTS_TAG: &[u8; 4] = b"BPRT";
+/// Layout version inside the `BPRT` section.
+const BUILDING_PARTS_VERSION: u32 = 1;
+
+/// Writes the `BPRT` payload; `false` (nothing written): no building has
+/// parts, so no section.
+///
+/// ```text
+/// layout version: u32 (1)
+/// tile count: u32, then per tile:
+///   tile x, z: i32 i32   record count: u32, then per building with parts:
+///     building index in the tile's BLDG list: u32
+///     flags: u8 (bit 0: the parts cover the outline)   part count: u16
+///     per part: length u32 (the bytes after it), the part as a BLDG
+///     building, then its tags as a BTAG record (length, flags, fields)
+/// ```
+///
+/// Readers skip what follows a part's tags (its length), so fields can be
+/// added without a new layout.
+pub fn write_building_parts(t: &Buildings, b: &mut Vec<u8>) -> bool {
+    let tiles: Vec<(&TileKey, Vec<(usize, &BuildingParts)>)> = t
+        .iter()
+        .map(|(k, list)| {
+            let recs: Vec<(usize, &BuildingParts)> = list
+                .iter()
+                .enumerate()
+                .filter(|(_, b)| !b.parts.is_empty())
+                .map(|(i, b)| (i, &b.parts))
+                .collect();
+            (k, recs)
+        })
+        .filter(|(_, v)| !v.is_empty())
+        .collect();
+    if tiles.is_empty() {
+        return false;
+    }
+    b.extend(BUILDING_PARTS_VERSION.to_le_bytes());
+    b.extend((tiles.len() as u32).to_le_bytes());
+    for (key, recs) in tiles {
+        b.extend(key.x.to_le_bytes());
+        b.extend(key.z.to_le_bytes());
+        b.extend((recs.len() as u32).to_le_bytes());
+        for (i, parts) in recs {
+            b.extend((i as u32).to_le_bytes());
+            b.push(u8::from(parts.cover));
+            let n = parts.list.len().min(usize::from(u16::MAX));
+            b.extend((n as u16).to_le_bytes());
+            for p in parts.list.iter().take(n) {
+                let mut rec = Vec::new();
+                write_building_record(p, &mut rec);
+                write_tag_record(&p.tags, &mut rec);
+                b.extend((rec.len() as u32).to_le_bytes());
+                b.extend(rec);
+            }
+        }
+    }
+    true
+}
+
+/// Building parts per tile: (index in the tile's `BLDG` list, parts).
+pub type BuildingPartRecords = BTreeMap<TileKey, Vec<(usize, BuildingParts)>>;
+
+/// Reads a `BPRT` payload written by [`write_building_parts`].
+pub fn read_building_parts(bytes: &[u8]) -> Result<BuildingPartRecords, String> {
+    let mut r = Bytes::new(bytes);
+    let version = r.u32()?;
+    if version != BUILDING_PARTS_VERSION {
+        return Err(format!("building parts layout {version} is not supported"));
+    }
+    let mut out = BuildingPartRecords::new();
+    for _ in 0..r.u32()? {
+        let key = TileKey {
+            x: r.i32()?,
+            z: r.i32()?,
+        };
+        let n = r.u32()?;
+        let mut list = Vec::with_capacity(n.min(1 << 16) as usize);
+        for _ in 0..n {
+            let index = r.u32()? as usize;
+            let cover = r.u8()? & 1 != 0;
+            let count = u16::from_le_bytes(r.arr()?);
+            let mut parts = BuildingParts {
+                list: Vec::with_capacity(usize::from(count)),
+                cover,
+            };
+            for _ in 0..count {
+                let len = r.u32()? as usize;
+                let mut p = Bytes::new(r.take(len)?);
+                let mut part = read_building_record(&mut p)?;
+                part.tags = read_tag_record(&mut p)?;
+                // Later fields are skipped with the rest of the record.
+                parts.list.push(part);
+            }
+            list.push((index, parts));
+        }
+        out.insert(key, list);
+    }
+    r.finish("building parts section")?;
+    Ok(out)
+}
+
+/// Puts the parts read from `BPRT` on their buildings; records of
+/// buildings that do not exist are dropped (returns how many).
+pub fn apply_building_parts(buildings: &mut Buildings, parts: BuildingPartRecords) -> usize {
+    let mut dropped = 0;
+    for (key, recs) in parts {
+        let Some(list) = buildings.get_mut(&key) else {
+            dropped += recs.len();
+            continue;
+        };
+        for (i, p) in recs {
+            match list.get_mut(i) {
+                Some(b) => b.parts = p,
+                None => dropped += 1,
+            }
+        }
+    }
+    dropped
 }
 
 #[cfg(test)]
@@ -836,6 +1018,7 @@ mod tests {
             eave_y: 456.0,
             roof: Roof::Gabled { height_m: 3.0 },
             tags: BuildingTags::default(),
+            parts: Default::default(),
         };
         let block = Building {
             kind: BuildingKind::Apartments,
@@ -845,6 +1028,7 @@ mod tests {
             eave_y: 465.0,
             roof: Roof::Flat,
             tags: BuildingTags::default(),
+            parts: Default::default(),
         };
         let t = Buildings::from([
             (TileKey { x: 0, z: 0 }, vec![house.clone(), block]),
@@ -877,6 +1061,7 @@ mod tests {
             eave_y: 456.0,
             roof: Roof::Gabled { height_m: 3.0 },
             tags: BuildingTags::default(),
+            parts: Default::default(),
         };
         let full = BuildingTags {
             building_use: Some(BuildingUse::Farmhouse),
@@ -889,6 +1074,7 @@ mod tests {
             wall_colour: Some([200, 180, 150]),
             roof_material: Some(RoofMaterial::Slate),
             roof_colour: Some([60, 60, 66]),
+            skeleton_roof_m: Some(7.25),
         };
         let tower = BuildingTags {
             roof_shape: Some(RoofShape::Pyramidal),
@@ -956,6 +1142,117 @@ mod tests {
         assert_eq!(RoofShape::from_code(200), None);
     }
 
+    /// Parts (section `BPRT`, v3.26) come back on their buildings with
+    /// their own heights, roofs and tags; buildings without parts are left
+    /// out; newer part fields are skipped; records of missing buildings
+    /// are dropped.
+    #[test]
+    fn building_parts_round_trip_and_skip_newer_fields() {
+        let church = Building {
+            kind: BuildingKind::Religious,
+            outline: vec![[0.0, 0.0], [30.0, 0.0], [30.0, 12.0], [0.0, 12.0]],
+            holes: vec![],
+            base_y: 449.5,
+            eave_y: 462.0,
+            roof: Roof::Gabled { height_m: 6.0 },
+            tags: BuildingTags {
+                building_use: Some(BuildingUse::Church),
+                ..Default::default()
+            },
+            parts: Default::default(),
+        };
+        let nave = Building {
+            outline: vec![[6.0, 0.0], [30.0, 0.0], [30.0, 12.0], [6.0, 12.0]],
+            ..church.clone()
+        };
+        let tower = Building {
+            outline: vec![[0.0, 2.0], [6.0, 2.0], [6.0, 8.0], [0.0, 8.0]],
+            eave_y: 480.0,
+            roof: Roof::Gabled { height_m: 12.0 },
+            tags: BuildingTags {
+                roof_shape: Some(RoofShape::Pyramidal),
+                roof_height_m: Some(12.0),
+                ..Default::default()
+            },
+            ..church.clone()
+        };
+        let spire = Building {
+            outline: vec![[1.0, 3.0], [5.0, 3.0], [5.0, 7.0], [3.0, 8.0], [1.0, 7.0]],
+            roof: Roof::Flat,
+            tags: BuildingTags {
+                min_height_m: Some(30.5),
+                roof_shape: Some(RoofShape::Pyramidal),
+                roof_height_m: Some(10.0),
+                ..Default::default()
+            },
+            ..church.clone()
+        };
+        let with_parts = Building {
+            parts: BuildingParts {
+                list: vec![nave, tower, spire],
+                cover: true,
+            },
+            ..church.clone()
+        };
+        let t = Buildings::from([
+            (
+                TileKey { x: 0, z: 0 },
+                vec![church.clone(), with_parts.clone()],
+            ),
+            (TileKey { x: 5, z: -2 }, vec![church.clone()]),
+        ]);
+        let mut b = Vec::new();
+        assert!(write_building_parts(&t, &mut b));
+        let recs = read_building_parts(&b).unwrap();
+        assert_eq!(recs.len(), 1);
+        assert_eq!(recs[&TileKey { x: 0, z: 0 }].len(), 1);
+        assert_eq!(recs[&TileKey { x: 0, z: 0 }][0].0, 1);
+        let mut bare = t.clone();
+        bare.values_mut()
+            .flatten()
+            .for_each(|b| b.parts = BuildingParts::default());
+        assert_eq!(apply_building_parts(&mut bare, recs.clone()), 0);
+        assert_eq!(bare, t);
+        assert!(read_building_parts(&b[..b.len() - 1]).is_err());
+        // Missing buildings: dropped.
+        let mut short = Buildings::from([(TileKey { x: 0, z: 0 }, vec![church.clone()])]);
+        assert_eq!(apply_building_parts(&mut short, recs), 1);
+        // No parts: no section.
+        assert!(!write_building_parts(
+            &Buildings::from([(TileKey { x: 0, z: 0 }, vec![church.clone()])]),
+            &mut Vec::new()
+        ));
+        // A newer writer's part with two more bytes after its tags.
+        let one = Buildings::from([(
+            TileKey { x: 0, z: 0 },
+            vec![Building {
+                parts: BuildingParts {
+                    list: vec![church.clone()],
+                    cover: false,
+                },
+                ..church.clone()
+            }],
+        )]);
+        let mut b = Vec::new();
+        write_building_parts(&one, &mut b);
+        // version, tiles, x, z, records, index, flags, count, then the length.
+        let at = 4 + 4 + 8 + 4 + 4 + 1 + 2;
+        let len = u32::from_le_bytes(b[at..at + 4].try_into().unwrap());
+        b[at..at + 4].copy_from_slice(&(len + 2).to_le_bytes());
+        b.extend([0xAB, 0xCD]);
+        let r = read_building_parts(&b).unwrap();
+        assert_eq!(r[&TileKey { x: 0, z: 0 }][0].1.list[0].tags, church.tags);
+        assert!(!r[&TileKey { x: 0, z: 0 }][0].1.cover);
+        // An unknown layout is an error the package reader skips.
+        let mut v2 = b.clone();
+        v2[..4].copy_from_slice(&2u32.to_le_bytes());
+        assert!(
+            read_building_parts(&v2)
+                .unwrap_err()
+                .contains("not supported")
+        );
+    }
+
     #[test]
     fn osm_values_map_to_shapes_uses_and_materials() {
         assert_eq!(RoofShape::from_osm("hipped"), Some(RoofShape::Hipped));
@@ -993,6 +1290,55 @@ mod tests {
         assert_eq!(
             RoofMaterial::from_osm("tar_paper"),
             Some(RoofMaterial::Concrete)
+        );
+    }
+
+    /// The buildings with parts and the pitched roofs over polygons of a
+    /// package, for picking scene positions (not run by default):
+    /// `OCW_PACKAGE=data/pilot/liechtenstein.ocwpkg cargo test -p ocw-world
+    /// --lib list_building_parts -- --ignored --nocapture`
+    #[test]
+    #[ignore = "needs a world package"]
+    fn list_building_parts() {
+        let path = std::env::var("OCW_PACKAGE").expect("OCW_PACKAGE");
+        let p = crate::WorldPackage::from_bytes(&std::fs::read(path).unwrap()).unwrap();
+        let proj = crate::geo::LocalProjection::new(p.origin.0, p.origin.1);
+        let (mut skeleton, mut parts, mut covered) = (0, 0, 0);
+        for list in p.buildings.as_ref().unwrap().values() {
+            for b in list {
+                skeleton += usize::from(b.tags.skeleton_roof_m.is_some());
+                if b.parts.is_empty() {
+                    continue;
+                }
+                parts += 1;
+                covered += usize::from(b.parts.cover);
+                let n = b.outline.len() as f32;
+                let c = b
+                    .outline
+                    .iter()
+                    .fold([0.0, 0.0], |a, q| [a[0] + q[0] / n, a[1] + q[1] / n]);
+                let (lat, lon) = proj.unproject([f64::from(c[0]), f64::from(c[1])]);
+                let top = b
+                    .parts
+                    .list
+                    .iter()
+                    .map(|q| q.eave_y)
+                    .fold(f32::MIN, f32::max);
+                println!(
+                    "parts {:>2} cover {} {:?} {:?} at {:.0},{:.0} ({lat:.5}, {lon:.5}) base {:.0} top eave {:.0}",
+                    b.parts.list.len(),
+                    b.parts.cover,
+                    b.kind,
+                    b.tags.building_use,
+                    c[0],
+                    c[1],
+                    b.base_y,
+                    top
+                );
+            }
+        }
+        println!(
+            "{skeleton} pitched roofs over polygons, {parts} buildings with parts ({covered} covered)"
         );
     }
 }

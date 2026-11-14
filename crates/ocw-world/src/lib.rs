@@ -29,6 +29,7 @@ pub mod path;
 pub mod region;
 pub mod road_dress;
 pub mod road_surface;
+pub mod roof_skeleton;
 mod route;
 pub mod route_file;
 pub mod route_fit;

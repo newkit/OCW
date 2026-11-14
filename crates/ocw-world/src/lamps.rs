@@ -431,6 +431,7 @@ mod tests {
             eave_y: 6.0,
             roof: Roof::Flat,
             tags: Default::default(),
+            parts: Default::default(),
         };
         pkg.buildings = Some(std::collections::BTreeMap::from([(
             TileKey { x: 0, z: 0 },

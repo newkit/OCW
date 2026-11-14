@@ -1465,7 +1465,10 @@ fn package(args: PackageArgs) {
     };
     let footprints = inputs.as_ref().filter(|_| !no_areas).map(|i| {
         stage("building footprints", || {
-            ocw_worldgen::buildings::footprints(&i.data, &proj)
+            (
+                ocw_worldgen::buildings::footprints(&i.data, &proj),
+                ocw_worldgen::buildings::part_footprints(&i.data, &proj),
+            )
         })
     });
     if let (false, Some(i)) = (no_areas, inputs.as_ref()) {
@@ -1484,7 +1487,7 @@ fn package(args: PackageArgs) {
             "areas: read {} areas, {} waterways, {} footprints in {read_s:.1} s",
             ls.areas,
             ls.water_lines,
-            footprints.as_ref().map_or(0, Vec::len)
+            footprints.as_ref().map_or(0, |f| f.0.len())
         ));
         area_report.push(format!(
             "sea: {} ({} coastline rings in the area, {} open pieces)",
@@ -1530,7 +1533,7 @@ fn package(args: PackageArgs) {
     }
     if clean {
         if let (Some(fps), Some(wt)) = (footprints.as_ref(), water_test.as_ref()) {
-            let outlines: Vec<Vec<[f64; 2]>> = fps.iter().map(|f| f.outer.clone()).collect();
+            let outlines: Vec<Vec<[f64; 2]>> = fps.0.iter().map(|f| f.outer.clone()).collect();
             let keep = |p: [f64; 2]| road_zone.covers(p, spacing) || wt.is_water(p);
             let st = stage("building sites", || {
                 ocw_worldgen::clean::level_building_sites(&mut pkg, &outlines, &keep)
@@ -1552,15 +1555,25 @@ fn package(args: PackageArgs) {
             ts.elapsed().as_secs_f64()
         ));
     }
-    if let Some(fps) = footprints.as_ref() {
+    if let Some((fps, parts)) = footprints.as_ref() {
         let tb = Instant::now();
         let bs = stage("buildings", || {
-            ocw_worldgen::buildings::add_buildings(&mut pkg, fps)
+            ocw_worldgen::buildings::add_buildings(&mut pkg, fps, parts)
         });
         let buildings_s = tb.elapsed().as_secs_f64();
         area_report.push(format!(
-            "buildings (BLDG): {} placed ({} gable roofs, {} with courtyards, BTAG: {} with OSM style facts, {} with a roof shape), {} outside the tiles; {buildings_s:.1} s",
-            bs.placed, bs.gabled, bs.with_holes, bs.tagged, bs.shaped, bs.outside
+            "buildings (BLDG): {} placed ({} gable roofs, {} with courtyards, BTAG: {} with OSM style facts, {} with a roof shape, {} pitched over a polygon), {} outside the tiles; parts (BPRT): {} of {} building:part footprints on {} buildings ({} covered by their parts); {buildings_s:.1} s",
+            bs.placed,
+            bs.gabled,
+            bs.with_holes,
+            bs.tagged,
+            bs.shaped,
+            bs.skeleton,
+            bs.outside,
+            bs.parts,
+            bs.part_footprints,
+            bs.with_parts,
+            bs.covered
         ));
     }
     if clean {

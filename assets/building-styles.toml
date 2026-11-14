@@ -37,6 +37,15 @@
 #   roof_colours   clay tile colours, one picked per building
 #   window         window style (below; "none": no windows)
 #   chimney        probability of a chimney on a pitched roof
+#   dormers        dormers or roof windows on an untagged pitched roof (gabled
+#                  dormers, shed dormers, roof windows "window"), each with
+#                  its probability; a tagged roof:levels ≥ 1 always gets one
+#                  kind picked by these weights (roof windows when none are
+#                  set), roof:levels = 0 none. Only where people live (houses,
+#                  farmhouses, apartments, other) and where the roof has room
+#   balconies      a timber balcony on an upper storey across a gable end
+#                  ("gable") or along an eave side ("long"), each with its
+#                  probability (near detail; buildings of two storeys or more)
 #
 # Colours were picked from reference photos (art/reference/<region>.md).
 
@@ -183,6 +192,7 @@ chimney = 0.0
 roofs = { gabled = 0.65, hipped = 0.25, half-hipped = 0.1 }
 overhang_m = 0.55
 chimney = 0.6
+dormers = { window = 0.15, gabled = 0.05 }
 
 [style.kind.terrace]
 roofs = { gabled = 1.0 }
@@ -291,10 +301,13 @@ roof_materials = { slate = 0.45, tiles = 0.35, metal = 0.2 }
 roof_colours = ["#6b3e2e", "#5a3a30", "#7a4a35"]
 window = "alpine"
 chimney = 0.5
+dormers = { gabled = 0.25, window = 0.1 }
+balconies = { gable = 0.5, long = 0.15 }
 
 [style.kind.apartments]
 upper = { timber = 0.3 }
 overhang_m = 1.0
+balconies = { long = 0.45, gable = 0.15 }
 
 [style.kind.hotel]
 upper = { timber = 0.5 }
@@ -305,6 +318,7 @@ walls = { timber = 0.7, plaster = 0.3 }
 upper = { timber = 0.9 }
 overhang_m = 1.0
 window = "farm"
+balconies = { gable = 0.45, long = 0.25 }
 
 [style.kind.barn]
 walls = { timber = 1.0 }
@@ -347,6 +361,8 @@ wall_colours = ["#f2eee6", "#ece5d6", "#efe7d3"]
 roof_materials = { tiles = 0.6, slate = 0.4 }
 roof_colours = ["#5b3328", "#6e3b2b", "#4f3a33", "#7c4330"]
 window = "house_shutters"
+dormers = { shed = 0.2, gabled = 0.1, window = 0.05 }
+balconies = { gable = 0.25, long = 0.1 }
 
 [style.kind.farm]
 roofs = { hipped = 0.45, half-hipped = 0.55 }
@@ -359,6 +375,8 @@ roof_materials = { slate = 0.5, tiles = 0.5 }
 roof_colours = ["#4a3229", "#5b3328", "#3f3633"]
 window = "farm"
 chimney = 0.2
+dormers = { shed = 0.25 }
+balconies = { long = 0.35, gable = 0.2 }
 
 [style.kind.farmhouse]
 roofs = { hipped = 0.45, half-hipped = 0.55 }
@@ -404,6 +422,7 @@ roof_materials = { tiles = 1.0 }
 roof_colours = ["#a14d2e", "#b05a36", "#93452c"]
 window = "canary"
 chimney = 0.0
+dormers = {}
 
 [style.kind.apartments]
 roofs = { flat = 1.0 }
