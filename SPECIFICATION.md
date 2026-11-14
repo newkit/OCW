@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 3.30 – November 2026
+Version 3.31 – November 2026
 
 | Version | Change |
 |---|---|
+| 3.31 | VR decisions by the user (2026-11-14; §14 Phase 11 Q7 / X1, Phase 14 Q3): **start with Oculus Link** – the Quest 1 first only as a **viewing device of the desktop app** (stereo view and head tracking from the desktop app on a Windows PC; inputs stay trainer, keys and gamepad); the **standalone VR app by sideloading only** for now (no store listing). Open: which Windows PC with a VR-capable GPU drives the Link. |
 | 3.30 | Decision from the build dashboard (2026-11-14): Phase 14 Q4 (BLE fallback: the sensor bridge / a phone relay app if direct BLE on the headset is limited) – **postponed**, decided when Phase 14 starts. |
 | 3.29 | VR headset corrected by the user (2026-11-14; §14 Phase 11 Q1 / 11C / X1, Phase 14 goal / 14A / Q1 / Q3): the development headset is an **Oculus Quest (first generation)**, not a Rift CV1 – focus on it, **all other models postponed**. PC VR through Quest Link / Air Link (Windows) and ALVR (sideloaded, also Linux with SteamVR); standalone: Snapdragon 835, 4 GB, 72 Hz – Meta's SDKs dropped the Quest 1 after v50 and the store takes no new Quest 1 apps since 31 Jan 2024, so the native build is sideloaded. New open question Phase 11 Q7: which PC drives the Quest 1 (proposal: marge with ALVR + SteamVR). |
 | 3.28 | Documentation catch-up (2026-11-14): the phase headings of Phases 8, 9 and 10 show what is done; build infrastructure (§11.2): POSIX snippets sent to build machines must not depend on the login shell – the Mac's is zsh, where an unmatched glob aborts the command; `remote-gc.sh` and `remote.sh` list task markers with `find`, the dashboard janitor runs its snippets under `/bin/sh` (the bug had kept the Mac's merged checkouts from being cleaned: 136 GB freed); `livekit-server` v1.13.10 on marge (user OK) for `make test-web-livekit`. |
@@ -3363,7 +3364,7 @@ Both builds run at the headless page's 60 Hz cap on this GPU, so the presets' sa
 
 #### 11D – Milestones (proposal)
 
-- **X1 – Spike:** an OpenXR session from Bevy 0.20, comparing a port of `bevy_mod_openxr` with our own thin integration. A stereo view of the test route with head tracking on the **Oculus Quest (first generation) through Quest Link / Air Link** via the Meta runtime (Windows) first, then the Quest 1 through ALVR + SteamVR (Linux) and Monado (CI) as the second runtime check. Measure the frame time. Decide on the integration (spec entry).
+- **X1 – Spike:** an OpenXR session from Bevy 0.20, comparing a port of `bevy_mod_openxr` with our own thin integration. A stereo view of the test route with head tracking on the **Oculus Quest (first generation) through Quest Link / Air Link** via the Meta runtime (Windows) first, then the Quest 1 through ALVR + SteamVR (Linux) and Monado (CI) as the second runtime check. Measure the frame time. Decide on the integration (spec entry). **First step (v3.31):** the Quest 1 over Oculus Link as a *viewing device* of the desktop app – stereo, head tracking, the desktop's inputs unchanged.
 - **X2 – Riding in VR:** `--vr`, first-person camera on the bike, own body with IK, recentre, mirror view, VR quality preset, captures from the mirror.
 - **X3 – VR HUD and menus:** bike computer on the stem, world-space menus with controller / gaze input, junction arrows in the world.
 - **X4 – Comfort:** vignette, horizon lock, fades, calibration, settings page *VR comfort*.
@@ -3395,7 +3396,7 @@ Both builds run at the headless page's 60 Hz cap on this GPU, so the presets' sa
 - **Q4 – Head-lean steering: decided (2026-11-14, dashboard):** **no head-lean steering** – steering in VR stays on the keys, the gamepad and autodrive, as on the desktop (a first answer "wanted" was replaced a few seconds later by this one).
 - **Q5 – Native standalone (Quest / Pico store) and WebXR: decided (2026-11-14, dashboard):** **yes** – planned as its own phase (§14 Phase 14 – Standalone VR), not only as the future item X8.
 - **Q6 – Priority: decided (2026-11-14, dashboard):** **at the end** – VR (Phase 11, and the standalone Phase 14) comes after the other phases.
-- **Q7 – Which PC drives the Quest 1 for PC VR?** Quest Link / Air Link need a **Windows** PC with a VR-capable GPU and the Meta Quest Link app; our Windows build machine (Win11Builder) has no known VR-capable GPU and is reserved for Windows builds. Options: (a) **marge with ALVR + SteamVR on Linux** (proposal: AMD GPU, already the main machine, no Windows needed; ALVR supports the Quest 1 sideloaded, over Wi-Fi 5 GHz or USB); (b) a Windows PC of the user with Quest Link; (c) both. Open.
+- **Q7 – How the Quest 1 is connected first: decided by the user (2026-11-14, v3.31): Oculus Link** – the first VR step uses the Quest 1 **through Quest (Oculus) Link only as a viewing device of the desktop app**: the desktop app on a Windows PC renders the stereo view to the headset with head tracking; riding input stays the trainer, keyboard and gamepad (no VR controllers, no VR menus yet). ALVR + SteamVR on Linux (marge) comes later as the second runtime. *Still to say:* which Windows PC with a VR-capable GPU the Quest 1 is plugged into (Win11Builder is reserved for Windows builds and has no known VR GPU).
 
 ### Phase 12 – Collisions, crashes and damage (planning, 2026-11-13; K1, K2 done, v2.98; K3 done, v3.14; K4, K5 done, v3.17; wet roads, the camera's shake and the aids as graphics, v3.22 – see 12I)
 
@@ -3757,7 +3758,7 @@ It builds on Phase 11 (the VR mode of the desktop app: OpenXR, the first-person 
 
 - **Q1 – First headset: decided by the user (2026-11-14, v3.29): the Oculus Quest (first generation)** – the user's headset; focus on it, the other models are postponed. (The proposal was Quest 3 / 3S.) Consequences: the standalone quality tier targets the Snapdragon 835 at 72 Hz; distribution is sideloading (see Q3).
 - **Q2 – Native or WebXR first:** native Android OpenXR first (proposal: full performance, direct BLE works on Quest, WebGPU-in-WebXR is not shipped), or WebXR first (no store, reuses the browser app, but WebGL2 only and trainers only through the sensor bridge)?
-- **Q3 – Distribution:** sideloading for testers first and then a free Meta Horizon Store listing (proposal), or sideloading only (no store review, no organisation account, no privacy-policy obligations towards Meta)? Pico Store later or not at all? *Partly answered by Q1 (v3.29):* the Horizon Store no longer accepts Quest 1 apps, so the Quest 1 build is sideloaded; a store listing only matters once newer headsets are taken up again.
+- **Q3 – Distribution: decided by the user (2026-11-14, v3.31): sideloading only for now** – the standalone app is installed by sideloading (developer mode, `adb install`); no store listing (Meta Horizon or Pico) for now. (The Horizon Store takes no new Quest 1 apps anyway.) *Earlier proposal:* sideloading for testers first, then a free Horizon Store listing.
 - **Q4 – BLE fallback: postponed (2026-11-14, dashboard: "postpone")** – decided when standalone VR (Phase 14) starts; until then the question stays as written: if direct BLE on a headset turns out limited (Pico unverified; Quest reconnects reported flaky), is the **sensor bridge** through a PC or phone acceptable as the official way – and should that include a small **phone relay app** (Android first; iOS would be the first native iOS code, §1.3), or only the desktop and the browser app as bridges (Phase 10 Q2)?
 - **Q5 – Priority:** after Phase 11 X1 – X2 (proposal: the VR mode on the desktop first, then V1 – V2 while the browser app reaches B3), or later after the browser app (Phase 10) is done?
 
