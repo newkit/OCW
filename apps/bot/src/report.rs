@@ -86,6 +86,9 @@ pub struct RiderReport {
     pub rtt_ms_max: f64,
     /// It found the rider it follows (`--follow`) in the session.
     pub following: bool,
+    /// Snapshot interval, jitter and age on arrival (spec §14 Phase 10 B3).
+    #[serde(default)]
+    pub timing: Option<ocw_server::timing::TimingSummary>,
 }
 
 impl RiderReport {

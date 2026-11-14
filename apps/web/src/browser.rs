@@ -32,7 +32,7 @@ use crate::world::{WorldOptions, WorldStream};
 pub const OPFS_DIR: &str = "ocw-worlds";
 
 /// A JS error as text.
-fn js(e: JsValue) -> String {
+pub(crate) fn js(e: JsValue) -> String {
     if let Some(err) = e.dyn_ref::<js_sys::Error>() {
         return String::from(err.message());
     }
@@ -57,13 +57,13 @@ pub fn memory_bytes() -> u64 {
 }
 
 /// Milliseconds since the page started.
-fn now_ms() -> f64 {
+pub(crate) fn now_ms() -> f64 {
     web_sys::window()
         .and_then(|w| w.performance())
         .map_or(0.0, |p| p.now())
 }
 
-async fn sleep(ms: i32) {
+pub(crate) async fn sleep(ms: i32) {
     let p = Promise::new(&mut |resolve, _| {
         if let Some(w) = web_sys::window() {
             let _ = w.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms);

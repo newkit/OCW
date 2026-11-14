@@ -1,37 +1,11 @@
 //! Length-prefixed frames on a QUIC stream: a 4-byte little-endian length,
-//! then that many bytes of one encoded protocol message.
+//! then that many bytes of one encoded protocol message. The async reader
+//! and writer over tokio streams; the frame format itself is in
+//! [`crate::wire`] (shared with the browser app).
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-/// Largest accepted frame. Protocol messages are small (a path update of a
-/// long ride is a few kB); anything near this is a broken or hostile peer.
-pub const MAX_FRAME: usize = 1 << 20;
-
-#[derive(Debug, thiserror::Error)]
-pub enum FrameError {
-    #[error("frame of {0} bytes exceeds the limit of {MAX_FRAME}")]
-    TooLarge(usize),
-    #[error("stream ended inside a frame")]
-    Truncated,
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
-}
-
-/// The frame header for a payload.
-pub fn header(len: usize) -> Result<[u8; 4], FrameError> {
-    if len > MAX_FRAME {
-        return Err(FrameError::TooLarge(len));
-    }
-    Ok((len as u32).to_le_bytes())
-}
-
-/// One whole frame: header and payload.
-pub fn encode_frame(payload: &[u8]) -> Result<Vec<u8>, FrameError> {
-    let mut out = Vec::with_capacity(payload.len() + 4);
-    out.extend_from_slice(&header(payload.len())?);
-    out.extend_from_slice(payload);
-    Ok(out)
-}
+pub use crate::wire::{FrameError, MAX_FRAME, encode_frame, header};
 
 /// Reads the next frame. `Ok(None)`: the stream ended cleanly between frames.
 pub async fn read_frame<R: AsyncRead + Unpin>(r: &mut R) -> Result<Option<Vec<u8>>, FrameError> {

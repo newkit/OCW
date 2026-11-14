@@ -1,7 +1,8 @@
-//! Bevy glue of the browser app (spec §14 Phase 10, B1): moves the frame
-//! time into the [`WebSession`] (local server + virtual trainer), runs the
-//! client prediction at 50 Hz in `FixedUpdate`, reads the keys and writes
-//! the [`RideView`] the shared renderer (`ocw-render`) draws.
+//! Bevy glue of the browser app (spec §14 Phase 10, B1 / B3): moves the
+//! frame time into the [`WebSession`] (the local server or the remote
+//! link, and the virtual trainer), runs the client prediction at 50 Hz in
+//! `FixedUpdate`, reads the keys and writes the [`RideView`] the shared
+//! renderer (`ocw-render`) draws.
 
 use bevy::prelude::*;
 use clap::{Arg, Command, value_parser};
@@ -14,7 +15,7 @@ use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permissio
 use ocw_render::menu::ride_input;
 use ocw_sky::Zone;
 
-use crate::session::{SessionConfig, WebSession};
+use crate::session::{RemoteOptions, SessionConfig, Transport, WebSession};
 
 /// The ride session (server, client, trainer) as a Bevy resource.
 #[derive(Resource)]
@@ -23,6 +24,32 @@ pub struct Session(pub WebSession);
 /// The time zone of the ride (the test routes: the default place).
 #[derive(Resource)]
 pub struct Place(pub Zone);
+
+/// Makes the transport to a remote server (`?server=`, B3): the browser's
+/// WebTransport (`crate::browser`), a fake in the tests. Without it a
+/// remote config rides on the local server.
+#[derive(Resource)]
+pub struct MakeTransport(pub TransportFactory);
+
+/// Makes a transport for a remote server's options.
+pub type TransportFactory = Box<dyn Fn(&RemoteOptions) -> Box<dyn Transport> + Send + Sync>;
+
+impl MakeTransport {
+    /// The transport for the config's server, if it has one.
+    pub fn for_config(world: &World, config: &SessionConfig) -> Option<Box<dyn Transport>> {
+        let remote = config.remote.as_ref()?;
+        let make = world.get_resource::<MakeTransport>()?;
+        Some((make.0)(remote))
+    }
+}
+
+/// The link's numbers as JSON for the page (`window.ocw.netStats()`).
+static NET_STATS: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+/// The last published connection numbers (JSON; empty before the ride).
+pub fn net_stats_json() -> String {
+    NET_STATS.lock().expect("not poisoned").clone()
+}
 
 /// Seconds between the server's progress lines in the log (the headless
 /// browser test reads them from the console).
@@ -45,12 +72,25 @@ impl Plugin for WebSessionPlugin {
             }
             None => {
                 let (zone, _) = ocw_client::sky::place_zone(None, None);
-                app.insert_resource(Session(WebSession::new(self.config.clone())))
+                let transport = MakeTransport::for_config(app.world(), &self.config);
+                if let Some(r) = &self.config.remote {
+                    if transport.is_some() {
+                        info!(url = %r.url, "connecting to the remote server (WebTransport)");
+                    } else {
+                        warn!(url = %r.url, "no WebTransport here: riding on the local server");
+                    }
+                }
+                app.insert_resource(Session(WebSession::new(self.config.clone(), transport)))
                     .insert_resource(Place(zone));
             }
         }
-        app.add_systems(Startup, enable_dev_commands)
-            .add_systems(PreUpdate, frame.run_if(riding))
+        // Dev commands (teleport …) only on the local server; a remote
+        // server refuses them anyway.
+        if self.config.remote.is_none() {
+            app.add_systems(Startup, enable_dev_commands);
+        }
+        app.add_systems(PreUpdate, frame.run_if(riding))
+            .add_systems(Last, (flush, publish_stats).run_if(riding))
             .add_systems(FixedUpdate, predict.run_if(resource_exists::<Session>))
             .add_systems(
                 Update,
@@ -81,8 +121,12 @@ fn frame(
     mut next_log: Local<f64>,
 ) {
     let now = time.elapsed_secs_f64();
+    let remote = session.0.is_remote();
     for notice in session.0.frame(time.delta_secs_f64(), now) {
         match notice {
+            Notice::Joined { rider_id, route_id } if remote => {
+                info!(rider = %rider_id, route = %route_id, "joined the remote server");
+            }
             Notice::Joined { rider_id, route_id } => {
                 info!(rider = %rider_id, route = %route_id, "joined the local server");
             }
@@ -99,6 +143,22 @@ fn frame(
         *next_log = now + TICK_LOG_INTERVAL_S;
         let s = &session.0;
         let state = s.client.state();
+        if let Some(r) = s.remote_link() {
+            let t = r.timing.summary();
+            let status = s.link_notice().unwrap_or_else(|| "connected".into());
+            info!(
+                snapshots = t.snapshots,
+                others = r.others_seen.len(),
+                acked_seq = r.acked_seq,
+                distance_m = format!("{:.1}", state.distance),
+                speed_kmh = format!("{:.1}", ocw_core::mps_to_kmh(state.speed)),
+                power_w = s.power_w(),
+                jitter_ms = format!("{:.1}", t.jitter_ms),
+                %status,
+                "remote server running"
+            );
+            return;
+        }
         info!(
             ticks = s.ticks,
             distance_m = format!("{:.1}", state.distance),
@@ -107,6 +167,23 @@ fn frame(
             "local server running"
         );
     }
+}
+
+/// Sends what the frame's systems queued for a remote server (steering,
+/// commands) without waiting for the next frame.
+fn flush(time: Res<Time>, mut session: ResMut<Session>) {
+    session.0.flush(time.elapsed_secs_f64());
+}
+
+/// Publishes the link's numbers for `window.ocw.netStats()` (twice a
+/// second).
+fn publish_stats(time: Res<Time>, session: Res<Session>, mut next: Local<f64>) {
+    let now = time.elapsed_secs_f64();
+    if now < *next {
+        return;
+    }
+    *next = now + 0.5;
+    *NET_STATS.lock().expect("not poisoned") = session.0.stats_json();
 }
 
 /// Client-side prediction of the own rider at the server's tick rate.
@@ -199,10 +276,12 @@ fn update_view(
         view.route_status = s.client.route_status();
         notice = s.client.notice();
     }
-    // Collisions (spec §14 Phase 12C): the crash line, else the crash feed.
+    // A remote link that is not up matters most (as on the desktop);
+    // then collisions (spec §14 Phase 12C): the crash line, else the
+    // crash feed.
     view.notice = s
-        .client
-        .crash_notice(now)
+        .link_notice()
+        .or_else(|| s.client.crash_notice(now))
         .or(notice)
         .or_else(|| s.client.crash_feed(now).pop());
     view.status = s.status_line();
@@ -281,7 +360,8 @@ fn register_commands(app: &mut App) {
     ))
     .console_command(ConsoleCommand::new(
         Permission::User,
-        Command::new("world.info").about("Show the streamed world: loading, tiles, memory, storage"),
+        Command::new("world.info")
+            .about("Show the streamed world: loading, tiles, memory, storage"),
         |world, _| {
             let s = world
                 .get_resource::<crate::world::WorldStream>()
@@ -313,7 +393,11 @@ fn register_commands(app: &mut App) {
         Permission::Dev,
         Command::new("teleport")
             .about("Move the local rider to a distance on the route (km)")
-            .arg(Arg::new("km").required(true).value_parser(value_parser!(f64))),
+            .arg(
+                Arg::new("km")
+                    .required(true)
+                    .value_parser(value_parser!(f64)),
+            ),
         |world, m| {
             let km = *m.get_one::<f64>("km").expect("required");
             let msg = encode(&client_message(C::Dev(v1::DevCommand {
@@ -328,12 +412,11 @@ fn register_commands(app: &mut App) {
         Permission::User,
         Command::new("net.stats").about("Show connection statistics"),
         |world, _| {
-            let s = &world.get_resource::<Session>().ok_or(NO_RIDE)?.0;
-            let st = s.client.stats();
-            Ok(format!(
-                "local (in the browser's frame loop): {} ticks, {} messages in, {} snapshots, {} samples out",
-                s.ticks, st.messages_in, st.snapshots, st.samples_out
-            ))
+            Ok(world
+                .get_resource::<Session>()
+                .ok_or(NO_RIDE)?
+                .0
+                .stats_text())
         },
     ));
 }
@@ -373,6 +456,76 @@ mod tests {
         app.update();
         app.update();
         assert_eq!(app.world().resource::<Session>().0.power_w(), 260.0);
+    }
+
+    /// A remote session (B3) through the plugin: the transport comes from
+    /// [`MakeTransport`] (here the fake over an in-memory server), the HUD
+    /// says "Connecting" until the link is up, the view gets the server's
+    /// riders, no dev commands, `net.stats` and the page's JSON.
+    #[test]
+    fn the_plugin_rides_on_a_remote_server_headless() {
+        use crate::session::tests::{FakeNet, FakeTransport};
+        let game = std::sync::Arc::new(std::sync::Mutex::new(ocw_server::GameServer::new(
+            ocw_world::Route::test_hills(),
+            ocw_server::ServerConfig {
+                bots: 2,
+                ..Default::default()
+            },
+        )));
+        let g = game.clone();
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::input::InputPlugin, ConsoleCorePlugin))
+            .insert_resource(Time::<Fixed>::from_hz(f64::from(ocw_core::SIM_TICK_HZ)))
+            .insert_resource(RideView::new(ocw_world::Route::test_hills()))
+            .insert_resource(MakeTransport(Box::new(move |_| {
+                let mut t = FakeTransport::new(g.clone(), FakeNet::Normal);
+                // Up after the first frames: "Connecting" shows first.
+                t.connect_after_s = 0.2;
+                Box::new(t)
+            })))
+            .add_plugins(WebSessionPlugin {
+                config: SessionConfig {
+                    name: "Browser".into(),
+                    remote: Some(RemoteOptions {
+                        url: "https://127.0.0.1:47801/ocw/1".into(),
+                        cert_hashes: Vec::new(),
+                    }),
+                    ..SessionConfig::default()
+                },
+            });
+        app.update();
+        assert!(app.world().resource::<Session>().0.is_remote());
+        assert_eq!(
+            app.world().resource::<RideView>().notice.as_deref(),
+            Some("Connecting to the server …")
+        );
+        let start = std::time::Instant::now();
+        while start.elapsed() < std::time::Duration::from_millis(1500) {
+            app.update();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let view = app.world().resource::<RideView>();
+        assert_eq!(view.riders.len(), 3, "the browser and two bots");
+        assert!(view.notice.is_none(), "{:?}", view.notice);
+        assert_eq!(
+            app.world().resource::<ConsoleState>().permission,
+            Permission::User
+        );
+        assert!(
+            game.lock()
+                .unwrap()
+                .session()
+                .snapshot()
+                .iter()
+                .any(|r| r.name == "Browser" && r.power_w == 200.0)
+        );
+        // The page's JSON (published twice a second; other tests publish
+        // too, so only its shape is checked here).
+        let json: serde_json::Value = serde_json::from_str(&net_stats_json()).unwrap();
+        assert!(json.get("remote").is_some());
+        let own: serde_json::Value =
+            serde_json::from_str(&app.world().resource::<Session>().0.stats_json()).unwrap();
+        assert_eq!(own["others_seen"].as_array().unwrap().len(), 2);
     }
 
     /// A world app (B2) over an in-memory server and OPFS stand-in.

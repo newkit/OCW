@@ -4,7 +4,8 @@
 //! protocol messages. The same type runs
 //! - inside the desktop app as the **local server** ([`local::LocalServer`]), and
 //! - as the headless **remote server** binary (`ocw-server`), reachable over
-//!   QUIC with [`net`] (`--listen`, spec §6.2).
+//!   QUIC with [`net`] (`--listen`, spec §6.2), and from the browser
+//!   over WebTransport (`--webtransport`, spec §14 Phase 10 B3).
 
 pub mod local;
 // QUIC (spec §6.2) and world packages from disk: native only; the browser
@@ -12,7 +13,12 @@ pub mod local;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod net;
 pub mod stats;
+// Snapshot timing at a client (interval, jitter, age; spec §14 Phase 10 B3).
+pub mod timing;
 pub mod voice;
+// The wire rules without I/O (frames, datagram rules, the client's link
+// state machine): shared with the browser app's WebTransport client.
+pub mod wire;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod worlds;
 

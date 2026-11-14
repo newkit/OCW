@@ -31,6 +31,8 @@ ocw-server.workspace = true
 ocw-worldstore.workspace = true
 bevy.workspace = true
 clap.workspace = true
+# `window.ocw.netStats()` (B3: the browser test reads the link's numbers).
+serde_json.workspace = true
 
 # In the browser only: Bevy on WebGPU (wgpu's browser backend) with the
 # web platform glue; wasm-bindgen pinned to the version in Cargo.lock,

@@ -16,6 +16,13 @@
 //! The page passes options in its query string (see [`SessionConfig`] and
 //! [`parse_query`]): `?route=loop&bots=3&power=250&name=Ada`.
 //!
+//! **Multiplayer (B3):** `?server=https://HOST:47801&cert-hash=HEX&name=Ada`
+//! joins a remote game server's session over WebTransport (`ocw-server
+//! --listen --webtransport` prints the options) – the same sessions as
+//! desktop and bot riders, with the same `ClientCore` prediction and
+//! reconciliation; the rider is the anonymous one (plain bike and look,
+//! no customization: Q5) until accounts exist (Phase 5).
+//!
 //! **Worlds over HTTP (B2):** `?world=liechtenstein&route=vaduz-malbun`
 //! streams a world package from the server ([`world`]): manifest and
 //! signature chain, then the base and the tiles around the rider with
@@ -26,6 +33,8 @@
 mod browser;
 pub mod plugin;
 pub mod session;
+#[cfg(target_arch = "wasm32")]
+mod webtransport;
 pub mod world;
 
 #[path = "../../desktop/src/build_id.rs"]
@@ -36,7 +45,51 @@ use ocw_render::hud::{AppKeys, VersionLabel};
 use ocw_render::{OcwRenderPlugins, RideView};
 use ocw_world::Route;
 
-pub use session::SessionConfig;
+pub use session::{RemoteOptions, SessionConfig};
+
+/// The default port of the server's WebTransport endpoint
+/// (`ocw_server::net::webtransport::DEFAULT_PORT`; that module is native
+/// only).
+pub const DEFAULT_WEB_PORT: u16 = 47801;
+/// The session path (`ocw_server::net::webtransport::PATH`).
+pub const WEB_PATH: &str = "/ocw/1";
+
+/// The page's `server` option as a WebTransport URL: `https://HOST[:PORT]
+/// [/PATH]`, the port defaulting to [`DEFAULT_WEB_PORT`], the path to
+/// [`WEB_PATH`].
+pub fn server_url(spec: &str) -> Result<String, String> {
+    let rest = spec
+        .trim()
+        .strip_prefix("https://")
+        .ok_or("the server must be an https:// URL (WebTransport)")?;
+    let (authority, path) = match rest.find('/') {
+        Some(i) => (&rest[..i], &rest[i..]),
+        None => (rest, ""),
+    };
+    let path = if matches!(path, "" | "/") {
+        WEB_PATH
+    } else {
+        path
+    };
+    // [IPv6]:PORT, HOST:PORT, HOST.
+    let (host, port) = if let Some(v6) = authority.strip_prefix('[') {
+        let (h, after) = v6.split_once(']').ok_or("bad IPv6 address")?;
+        (format!("[{h}]"), after.strip_prefix(':'))
+    } else {
+        match authority.rsplit_once(':') {
+            Some((h, p)) => (h.to_string(), Some(p)),
+            None => (authority.to_string(), None),
+        }
+    };
+    if host.is_empty() || host == "[]" {
+        return Err("no host".into());
+    }
+    let port = match port {
+        Some(p) => p.parse::<u16>().map_err(|_| format!("bad port {p:?}"))?,
+        None => DEFAULT_WEB_PORT,
+    };
+    Ok(format!("https://{host}:{port}{path}"))
+}
 
 /// The id of the page's canvas (`web/index.html`).
 pub const CANVAS_ID: &str = "#ocw-canvas";
@@ -90,7 +143,9 @@ fn unescape(value: &str) -> String {
 /// `keep` (keep radius), `memory-mb` (budget of the resident tiles),
 /// `cache-mb` (OPFS budget), `cache=0`. On a development page
 /// (`dev_page`: localhost) also `allow-unsigned=1`, `trust=dev` and
-/// `trust-root=HEX` (a root public key). Unknown keys and bad values are
+/// `trust-root=HEX` (a root public key). A remote server (B3): `server`
+/// (`https://HOST[:PORT]`) and `cert-hash` (its certificate's SHA-256 in
+/// hex, several separated by commas). Unknown keys and bad values are
 /// reported and ignored.
 pub fn parse_query(query: &str, dev_page: bool) -> (SessionConfig, Vec<String>) {
     let mut config = SessionConfig::default();
@@ -165,10 +220,42 @@ pub fn parse_query(query: &str, dev_page: bool) -> (SessionConfig, Vec<String>) 
             ("name", _) if !value.trim().is_empty() => {
                 config.name = value.trim().chars().take(32).collect()
             }
+            // Read below (B3).
+            ("server" | "cert-hash", _) => {}
             _ => bad(),
         }
     }
+    let mut remote: Option<RemoteOptions> = None;
+    for (key, value) in &pairs {
+        if key == "server" {
+            match server_url(value) {
+                Ok(url) => {
+                    remote = Some(RemoteOptions {
+                        url,
+                        cert_hashes: Vec::new(),
+                    })
+                }
+                Err(e) => warnings.push(format!("server={value}: {e}")),
+            }
+        }
+    }
+    for (key, value) in &pairs {
+        if key != "cert-hash" {
+            continue;
+        }
+        let Some(r) = remote.as_mut() else {
+            warnings.push(format!("cert-hash={value}: ignored (no server)"));
+            continue;
+        };
+        for h in value.split(',').map(|h| h.trim().replace(':', "")) {
+            match ocw_world::manifest::Hex::<32>::parse(&h) {
+                Ok(hash) => r.cert_hashes.push(hash.0),
+                Err(_) => warnings.push(format!("cert-hash={h}: not a SHA-256 (64 hex digits)")),
+            }
+        }
+    }
     config.world = world;
+    config.remote = remote;
     (config, warnings)
 }
 
@@ -206,8 +293,13 @@ pub fn app(config: SessionConfig) -> App {
     .add_systems(Startup, || {
         info!("Open Cycling World {} starting", build_id())
     })
-    .add_plugins(OcwRenderPlugins)
-    .add_plugins(plugin::WebSessionPlugin { config });
+    .add_plugins(OcwRenderPlugins);
+    // The browser's WebTransport for a remote server (B3).
+    #[cfg(target_arch = "wasm32")]
+    app.insert_resource(plugin::MakeTransport(Box::new(|r| {
+        Box::new(webtransport::WebTransportLink::new(r.clone()))
+    })));
+    app.add_plugins(plugin::WebSessionPlugin { config });
     app
 }
 
@@ -251,6 +343,14 @@ pub fn wasm_memory_bytes() -> Option<u64> {
 #[wasm_bindgen::prelude::wasm_bindgen(js_name = console)]
 pub fn page_console(line: &str) {
     queue_console(line);
+}
+
+/// `window.ocw.netStats()`: the connection's numbers as JSON (the remote
+/// link's state, round trip, snapshot timing, the other riders seen).
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(js_name = netStats)]
+pub fn page_net_stats() -> String {
+    plugin::net_stats_json()
 }
 
 /// `window.ocw.wasmMemory()`: the wasm memory in bytes.
@@ -351,6 +451,43 @@ mod tests {
         assert_eq!(w.len(), 2, "{w:?}");
         assert!(is_dev_host("127.0.0.1") && !is_dev_host("ocw.example"));
         assert_eq!(unescape("a%2Fb+c%zz%"), "a/b c%zz%");
+    }
+
+    /// The remote server (B3): `server` and `cert-hash`.
+    #[test]
+    fn server_options() {
+        let hash = "ab".repeat(32);
+        let q = format!("server=https%3A%2F%2F127.0.0.1%3A47801&cert-hash={hash}&name=Web");
+        let (c, w) = parse_query(&q, false);
+        assert!(w.is_empty(), "{w:?}");
+        let r = c.remote.unwrap();
+        assert_eq!(r.url, "https://127.0.0.1:47801/ocw/1");
+        assert_eq!(r.cert_hashes, [[0xab; 32]]);
+        assert_eq!(c.name, "Web");
+        // Two hashes (before and after a renewal), with colons.
+        let colons: Vec<String> = (0..32).map(|_| "CD".to_string()).collect();
+        let (c, w) = parse_query(
+            &format!(
+                "server=https://ocw.example&cert-hash={hash},{}",
+                colons.join(":")
+            ),
+            false,
+        );
+        assert!(w.is_empty(), "{w:?}");
+        let r = c.remote.unwrap();
+        assert_eq!(r.url, "https://ocw.example:47801/ocw/1");
+        assert_eq!(r.cert_hashes, [[0xab; 32], [0xcd; 32]]);
+        // Without a hash the browser checks the certificate itself (B8).
+        let (c, _) = parse_query("server=https://[::1]:9000/x", false);
+        assert_eq!(c.remote.unwrap().url, "https://[::1]:9000/x");
+        // Bad values.
+        let (c, w) = parse_query("server=http://x&cert-hash=12", false);
+        assert!(c.remote.is_none());
+        assert_eq!(w.len(), 2, "{w:?}");
+        let (c, w) = parse_query("server=https://x:99999&cert-hash=zz", false);
+        assert!(c.remote.is_none() && w.len() == 2, "{w:?}");
+        assert!(server_url("https://").is_err());
+        assert_eq!(server_url("https://h/").unwrap(), "https://h:47801/ocw/1");
     }
 
     #[test]
