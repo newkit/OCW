@@ -102,7 +102,7 @@ pub fn shadow_from_far_model(distance: f32) -> bool {
 /// ([`ghost_casts_no_shadow`]).
 fn lod_shadows(
     mut commands: Commands,
-    cameras: Query<&GlobalTransform, With<Camera3d>>,
+    cameras: Query<&GlobalTransform, With<crate::camera::FollowCamera>>,
     avatars: Query<(Entity, &Avatar, &GlobalTransform, Option<&ShadowLod>)>,
     children: Query<&Children>,
     parts: Query<&LodPart>,
@@ -129,7 +129,7 @@ fn lod_shadows(
 }
 
 #[derive(Resource, Default)]
-struct RiderEntities(BTreeMap<RiderId, Entity>);
+pub(crate) struct RiderEntities(pub(crate) BTreeMap<RiderId, Entity>);
 
 /// Despawns all avatars (a ride switch, [`crate::rebuild_scene`]): the
 /// riders of the new session are spawned afresh.
@@ -143,6 +143,7 @@ pub(crate) fn reset_avatars(world: &mut World) {
             e.despawn();
         }
     }
+    crate::ragdoll::reset(world);
 }
 
 /// The time trial's ghost (spec §2.3) is drawn as a rider with this id.
@@ -356,10 +357,28 @@ pub fn flying(view: &RideView, id: RiderId) -> bool {
 }
 
 /// What an avatar was built from: rebuilt when it changes.
-#[derive(Component, Debug, Clone, Copy, PartialEq)]
+#[derive(Component, Debug, Clone, PartialEq)]
 struct AvatarLook {
     bike: ProfileId,
     look: Option<RiderLook>,
+    /// The model variants of the fitted parts ([`part_variants`]).
+    variants: Vec<String>,
+}
+
+/// The bike model variants (`ocw_assets::bikes::VARIANTS`) of the parts
+/// `parts` (catalogue ids; spec §14 Phase 4, 4B): base parts and frames
+/// are the profile's own model; unknown ids are skipped. Sorted.
+pub fn part_variants(parts: &[String]) -> Vec<String> {
+    let cat = ocw_assets::shipped::catalogue();
+    let mut v: Vec<String> = parts
+        .iter()
+        .filter_map(|id| cat.get(id))
+        .map(|p| p.model.clone())
+        .filter(|m| m != "stock" && !m.starts_with("bike-"))
+        .collect();
+    v.sort();
+    v.dedup();
+    v
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -371,6 +390,7 @@ fn sync_riders(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     ground: Option<Res<Ground>>,
+    ragdolls: Option<Res<crate::ragdoll::Ragdolls>>,
     mut library: Local<Option<Library>>,
 ) {
     let lib = library.get_or_insert_with(|| Library::new(&mut meshes));
@@ -397,21 +417,37 @@ fn sync_riders(
     let all = view
         .riders
         .iter()
-        .map(|r| (r.id, r.state, r.id, r.is_local, r.bike, r.look))
+        .map(|r| {
+            let variants = part_variants(&r.parts);
+            (
+                r.id, r.state, r.id, r.is_local, r.bike, r.look, variants, r.wobble,
+            )
+        })
         .chain(ghost.and_then(|(id, state, on)| {
             let local = view.local()?;
-            Some((id, state, on, false, local.bike, None))
+            Some((id, state, on, false, local.bike, None, Vec::new(), 0.0))
         }));
-    for (id, state, track_of, is_local, bike, look) in all {
+    for (id, state, track_of, is_local, bike, look, variants, wobble) in all {
         let rig = &lib.bike_rigs[profile_index(bike)];
-        let t = avatar_transform(view.track(track_of), &state, ground.as_deref(), rig);
-        let wanted = AvatarLook { bike, look };
+        let mut t = avatar_transform(view.track(track_of), &state, ground.as_deref(), rig);
+        // The wobble after a soft bump (spec §14 Phase 12B): a lean swing.
+        if wobble != 0.0 {
+            t.rotation *= lean_rotation(wobble);
+        }
+        // Falling or down as a ragdoll, or remounting: the ragdoll shows
+        // the rider (spec §14 Phase 12C).
+        let ragdoll = ragdolls.as_ref().is_some_and(|r| r.hidden.contains(&id));
+        let wanted = AvatarLook {
+            bike,
+            look,
+            variants,
+        };
         if let Some(e) = entities.0.get(&id).copied() {
             match avatars.get_mut(e) {
                 Ok((mut tr, built, mut vis)) if *built == wanted => {
                     *tr = t;
                     // God mode (spec §14 Phase 13C): the unicorn is the rider.
-                    let shown = if flying(&view, id) {
+                    let shown = if flying(&view, id) || ragdoll {
                         Visibility::Hidden
                     } else {
                         Visibility::Inherited
@@ -423,7 +459,20 @@ fn sync_riders(
                 _ => commands.entity(e).despawn(),
             }
         }
-        let e = spawn_avatar(&mut commands, lib, &mut materials, id, is_local, wanted, t);
+        let e = spawn_avatar(
+            &mut commands,
+            lib,
+            &mut meshes,
+            &mut materials,
+            id,
+            is_local,
+            wanted,
+            t,
+        );
+        if ragdoll {
+            // A fresh avatar for the remount: hidden until it takes over.
+            commands.entity(e).insert(Visibility::Hidden);
+        }
         entities.0.insert(id, e);
     }
 }
@@ -501,6 +550,9 @@ struct Library {
     rider_rig: RiderRig,
     bike_rigs: Vec<BikeRig>,
     fits: Vec<Fit>,
+    /// Bikes with fitted parts (the others' and the own, spec §14 Phase 4,
+    /// 4G), built and uploaded once per profile and variant set.
+    fitted: HashMap<(ProfileId, Vec<String>), (std::sync::Arc<Model>, Meshes)>,
     materials: HashMap<(&'static str, [u8; 4]), Handle<StandardMaterial>>,
     ghost: Option<Handle<StandardMaterial>>,
 }
@@ -521,6 +573,7 @@ impl Library {
             fits: bike_rigs.iter().map(|b| Fit::new(&rider_rig, b)).collect(),
             rider_rig,
             bike_rigs,
+            fitted: HashMap::new(),
             materials: HashMap::new(),
             ghost: None,
         }
@@ -566,6 +619,39 @@ impl Library {
                 })
             })
             .clone()
+    }
+}
+
+impl Library {
+    /// The bike of `profile` with the part `variants` (none: the shipped
+    /// model) and its meshes.
+    fn bike(
+        &mut self,
+        profile: ProfileId,
+        variants: &[String],
+        meshes: &mut Assets<Mesh>,
+    ) -> (Option<std::sync::Arc<Model>>, Meshes) {
+        if variants.is_empty() {
+            return (None, Meshes(self.bikes[profile_index(profile)].0.clone()));
+        }
+        let (m, list) = self
+            .fitted
+            .entry((profile, variants.to_vec()))
+            .or_insert_with(|| {
+                static LOW: std::sync::OnceLock<Model> = std::sync::OnceLock::new();
+                let low =
+                    LOW.get_or_init(|| ocw_assets::rider::build(ocw_assets::rider::Detail::Low));
+                let ids: Vec<&str> = variants.iter().map(String::as_str).collect();
+                let m = ocw_assets::bikes::build_with(
+                    profile,
+                    ocw_assets::shipped::rider_model(),
+                    low,
+                    &ids,
+                );
+                let list = Meshes::new(&m, meshes);
+                (std::sync::Arc::new(m), list)
+            });
+        (Some(m.clone()), Meshes(list.0.clone()))
     }
 }
 
@@ -634,6 +720,8 @@ fn spawn_model(
                 },
                 visibility,
                 ChildOf(up),
+                // The ragdoll finds the segments by name (spec §14 Phase 12C).
+                Name::new(node.name.clone()),
             ))
             .id();
         out[i] = e;
@@ -657,6 +745,7 @@ fn spawn_model(
 fn spawn_avatar(
     commands: &mut Commands,
     lib: &mut Library,
+    meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
     id: RiderId,
     is_local: bool,
@@ -666,7 +755,11 @@ fn spawn_avatar(
     let colours = avatar_colours(id, is_local, built.look.as_ref());
     let ghost = id == GHOST_ID;
     let b = profile_index(built.bike);
-    let bike_model = ocw_assets::shipped::bike_model(built.bike);
+    // The fitted parts' variants (the stock bike: the shipped model).
+    let (fitted, bike_list) = lib.bike(built.bike, &built.variants, meshes);
+    let bike_model: &Model = fitted
+        .as_deref()
+        .unwrap_or_else(|| ocw_assets::shipped::bike_model(built.bike));
     let rider_model = ocw_assets::shipped::rider_model();
     let bike = lib.bike_rigs[b];
     let root = commands
@@ -674,7 +767,7 @@ fn spawn_avatar(
             transform,
             Visibility::default(),
             Avatar { id, is_local },
-            built,
+            built.clone(),
         ))
         .id();
     let sway = commands
@@ -688,7 +781,6 @@ fn spawn_avatar(
         Vec::new()
     };
     // Handles are cheap to clone; the copies free `lib` for the materials.
-    let bike_list = Meshes(lib.bikes[b].0.clone());
     let rider_list = Meshes(lib.rider.0.clone());
     let bike_nodes_e = spawn_model(
         commands,
@@ -771,8 +863,11 @@ fn spawn_avatar(
 fn animate(
     time: Res<Time>,
     view: Res<RideView>,
-    mut avatars: Query<(&Avatar, &mut AvatarRig, &GlobalTransform)>,
-    cameras: Query<&GlobalTransform, With<Camera3d>>,
+    mut avatars: Query<
+        (&Avatar, &mut AvatarRig, &GlobalTransform),
+        Without<crate::ragdoll::Ragdolled>,
+    >,
+    cameras: Query<&GlobalTransform, With<crate::camera::FollowCamera>>,
     mut transforms: Query<&mut Transform>,
 ) {
     let dt = time.delta_secs();
@@ -879,6 +974,9 @@ mod tests {
             is_local: true,
             bike: Default::default(),
             look: None,
+            parts: Vec::new(),
+            crash: None,
+            wobble: 0.0,
         };
         {
             let mut v = app.world_mut().resource_mut::<RideView>();
@@ -1010,6 +1108,9 @@ mod tests {
             is_local: false,
             bike: ProfileId::Road,
             look: None,
+            parts: Vec::new(),
+            crash: None,
+            wobble: 0.0,
         });
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))
@@ -1026,8 +1127,52 @@ mod tests {
         app.update();
         let second = entity(&app);
         assert_ne!(second, first);
-        let built = *app.world().get::<AvatarLook>(second).unwrap();
+        let built = app.world().get::<AvatarLook>(second).unwrap().clone();
         assert_eq!(built.bike, ProfileId::Mountain);
+        assert!(built.variants.is_empty());
+        // Fitted parts (spec §14 Phase 4, 4G): the others see them – a
+        // new avatar with the parts' variants, other meshes than stock.
+        let stock_meshes = shown_meshes(&mut app, second).len();
+        app.world_mut().resource_mut::<RideView>().riders[0].parts = vec![
+            "wheels.mtb.base".into(),
+            "tyres.mtb.xc".into(),
+            "lights.set".into(),
+            "nonsense".into(),
+        ];
+        app.update();
+        let third = entity(&app);
+        assert_ne!(third, second);
+        let built = app.world().get::<AvatarLook>(third).unwrap().clone();
+        assert_eq!(
+            built.variants,
+            part_variants(&app.world().resource::<RideView>().riders[0].parts)
+        );
+        assert!(!built.variants.is_empty());
+        assert_ne!(shown_meshes(&mut app, third).len(), stock_meshes);
+        // The same parts again: kept.
+        app.update();
+        assert_eq!(entity(&app), third);
+    }
+
+    /// Part ids map to the generator's variants; base parts and frames
+    /// are the profile's own model.
+    #[test]
+    fn parts_map_to_their_model_variants() {
+        let cat = ocw_assets::shipped::catalogue();
+        let v = part_variants(&[
+            "tyres.road.race".into(),
+            "tyres.road.base".into(),
+            "frame.road-aero.top".into(),
+            "wheels.road-carbon.top".into(),
+            "wheels.road-carbon.top".into(),
+            "rocket".into(),
+        ]);
+        let expect = |id: &str| cat.get(id).unwrap().model.clone();
+        let mut want = vec![expect("tyres.road.race"), expect("wheels.road-carbon.top")];
+        want.sort();
+        assert_eq!(v, want);
+        assert!(part_variants(&[]).is_empty());
+        assert!(part_variants(&["frame.road.base".into()]).is_empty());
     }
 
     /// New snapshots move the riders every frame (multiplayer: 10 Hz
@@ -1081,6 +1226,9 @@ mod tests {
                 pattern: ocw_core::KitPattern::Band,
                 ..Default::default()
             }),
+            parts: Vec::new(),
+            crash: None,
+            wobble: 0.0,
         }
     }
 
@@ -1134,7 +1282,11 @@ mod tests {
         app.add_plugins(TransformPlugin);
         let cam = app
             .world_mut()
-            .spawn((Camera3d::default(), Transform::default()))
+            .spawn((
+                Camera3d::default(),
+                Transform::default(),
+                crate::camera::FollowCamera,
+            ))
             .id();
         app.update();
         let entities = app.world().resource::<RiderEntities>().0.clone();

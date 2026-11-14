@@ -11,13 +11,11 @@ mod argsfile;
 mod audio;
 mod automation;
 mod build_id;
-mod client;
+mod collisions;
 mod connection;
 mod devices;
-mod event;
 mod ghost;
 mod god;
-mod gps;
 mod icon;
 mod input;
 mod known_devices;
@@ -37,7 +35,12 @@ mod video;
 mod voice;
 mod weather;
 mod workout;
+mod workshop;
 mod worlds;
+
+// Shared with the browser app (spec §14 Phase 10): `crate::client`,
+// `crate::event` keep working for the modules here.
+use ocw_client::{client, event, gps};
 
 use std::path::PathBuf;
 
@@ -201,6 +204,10 @@ pub struct Args {
     /// Use the virtual trainer even if Bluetooth devices are remembered.
     #[arg(long = "virtual")]
     pub virtual_trainer: bool,
+    /// Earn no hearts in this session (kiosk / show mode, spec §14 Phase
+    /// 4, 4E); the workshop still works.
+    #[arg(long)]
+    pub no_hearts: bool,
     /// File with remembered devices (default: ~/.config/ocw/devices.toml).
     #[arg(long, value_name = "PATH")]
     pub devices_file: Option<PathBuf>,
@@ -279,6 +286,11 @@ pub struct Args {
     /// whose game time does not run in real time).
     #[arg(long)]
     pub no_audio: bool,
+    /// The voice echo test (spec §7 *Echo bot*): an Echo rider stands on
+    /// the road; near it, your microphone is played back from its place
+    /// after a delay (`voice.echo`, Settings → Audio → Voice).
+    #[arg(long)]
+    pub echo_bot: bool,
 }
 
 impl Args {
@@ -435,6 +447,7 @@ fn main() -> AppExit {
         voice::VoicePlugin,
         timemachine::TimeMachinePlugin,
         weather::WeatherPlugin,
+        workshop::WorkshopPlugin,
     ))
     .add_systems(Startup, startup_commands)
     .add_systems(Update, timed_commands);

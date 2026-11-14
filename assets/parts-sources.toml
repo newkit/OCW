@@ -1,0 +1,676 @@
+# Price references of the parts catalogue (spec §14 Phase 4, 4H): the real
+# products each generic in-game part is priced from. Research data only:
+# the brand and product names here never appear in the game, the assets or
+# the UI (assets/parts.toml uses generic names; `ocw-assets parts validate`
+# checks it against a deny-list of these brands).
+#
+# Per source: `key` (named by a part's `sources`), `checked` (date of the
+# research), optional `multiply` (2 for pairs priced per piece, e.g. tyres)
+# and the references, either as one `refs` list or as several
+# `[[source.group]]`s whose medians are added (bar + stem). A part's hearts
+# are ceil(median) – of all references of a group (two references: their
+# mean), groups summed, times `multiply`, rounded up to whole hearts.
+# `cargo run -p ocw-assets -- parts reprice` rewrites assets/parts.toml
+# from this file; re-research by hand about twice a year (4H).
+#
+# kind: R = manufacturer list / launch RRP or a UVP shown by a retailer;
+# R* = list price reported by a third party, not verified on the brand's
+# page; S = street price (only where no RRP was found).
+# via: SRAM-25 = SRAM MSRP price list 2025 (EUR incl. VAT, slowtwitch.com);
+# BR = BikeRadar; bc = bike-components.de (UVP); Rose = rosebikes.de (UVP);
+# Mantel = mantel.com RRP; 99s = 99spokes; brand = the brand's own page /
+# launch price.
+
+# --- Groupsets -------------------------------------------------------------
+
+[[source]]
+key = "groupset.road.entry"
+checked = 2026-11-13
+refs = [
+  { product = "Tiagra R4000 (sum of parts, 2026)", brand = "Shimano", eur = 633.00, kind = "R", via = "BR" },
+  { product = "Apex XPLR AXS 1x12", brand = "SRAM", eur = 1269.00, kind = "R", via = "Mantel" },
+]
+
+[[source]]
+key = "groupset.road.mid-mech"
+checked = 2026-11-13
+refs = [
+  { product = "105 R7100 (parts)", brand = "Shimano", eur = 1183.00, kind = "R", via = "BR" },
+  { product = "Chorus 12", brand = "Campagnolo", eur = 1699.00, kind = "R", via = "Mantel" },
+]
+
+[[source]]
+key = "groupset.road.mid-electronic"
+checked = 2026-11-13
+refs = [
+  { product = "105 Di2 R7170", brand = "Shimano", eur = 1869.00, kind = "R", via = "Mantel" },
+  { product = "Rival AXS E1", brand = "SRAM", eur = 1765.00, kind = "R", via = "SRAM-25" },
+]
+
+[[source]]
+key = "groupset.road.upper"
+checked = 2026-11-13
+refs = [
+  { product = "Ultegra Di2 R8170", brand = "Shimano", eur = 2549.00, kind = "R", via = "Mantel" },
+  { product = "Force AXS E1", brand = "SRAM", eur = 2423.00, kind = "R", via = "SRAM-25" },
+  { product = "Record 13 (2026)", brand = "Campagnolo", eur = 2699.00, kind = "R", via = "brand" },
+]
+
+[[source]]
+key = "groupset.road.top"
+checked = 2026-11-13
+refs = [
+  { product = "Dura-Ace Di2 R9270", brand = "Shimano", eur = 3999.00, kind = "R", via = "Mantel" },
+  { product = "Red AXS E1 (2024)", brand = "SRAM", eur = 4135.00, kind = "R", via = "BR" },
+  { product = "Super Record 13 (2025)", brand = "Campagnolo", eur = 4300.00, kind = "R", via = "brand" },
+]
+
+[[source]]
+key = "groupset.gravel.mid"
+checked = 2026-11-13
+# GRX RX820 only as a street price (819-849), not counted.
+refs = [
+  { product = "Apex XPLR AXS", brand = "SRAM", eur = 1269.00, kind = "R", via = "Mantel" },
+  { product = "Rival XPLR AXS E1", brand = "SRAM", eur = 1560.00, kind = "R", via = "SRAM-25" },
+]
+
+[[source]]
+key = "groupset.gravel.top"
+checked = 2026-11-13
+refs = [
+  { product = "GRX Di2 RX825", brand = "Shimano", eur = 2479.00, kind = "R", via = "Mantel" },
+  { product = "Force XPLR AXS E1", brand = "SRAM", eur = 2135.00, kind = "R", via = "SRAM-25" },
+  { product = "Super Record X", brand = "Campagnolo", eur = 3375.00, kind = "R", via = "brand" },
+]
+
+[[source]]
+key = "groupset.mtb.entry"
+checked = 2026-11-13
+refs = [
+  { product = "Deore Di2 M6250", brand = "Shimano", eur = 650.00, kind = "R", via = "Mantel" },
+  { product = "Eagle 90 T-Type", brand = "SRAM", eur = 730.00, kind = "R", via = "bc" },
+]
+
+[[source]]
+key = "groupset.mtb.mid"
+checked = 2026-11-13
+refs = [
+  { product = "XT M8100", brand = "Shimano", eur = 980.00, kind = "R", via = "Mantel" },
+  { product = "XT Di2 M8250", brand = "Shimano", eur = 1240.00, kind = "R", via = "Mantel" },
+  { product = "GX Eagle Transmission", brand = "SRAM", eur = 1300.00, kind = "R", via = "BR" },
+]
+
+[[source]]
+key = "groupset.mtb.top"
+checked = 2026-11-13
+refs = [
+  { product = "XTR Di2 M9250", brand = "Shimano", eur = 2005.00, kind = "R", via = "Mantel" },
+  { product = "XX Transmission", brand = "SRAM", eur = 2450.00, kind = "R", via = "brand" },
+  { product = "XX SL Transmission", brand = "SRAM", eur = 2650.00, kind = "R", via = "brand" },
+]
+
+# --- Cranksets, power meters, cassettes, chains ----------------------------
+
+[[source]]
+key = "crankset.entry"
+checked = 2026-11-13
+refs = [
+  { product = "Tiagra crankset", brand = "Shimano", eur = 135.00, kind = "R", via = "Rose" },
+]
+
+[[source]]
+key = "crankset.mid"
+checked = 2026-11-13
+refs = [
+  { product = "105 FC-R7100", brand = "Shimano", eur = 175.00, kind = "R", via = "Rose" },
+  { product = "Rival E1 crankset", brand = "SRAM", eur = 220.00, kind = "R", via = "SRAM-25" },
+]
+
+[[source]]
+key = "crankset.upper"
+checked = 2026-11-13
+refs = [
+  { product = "Ultegra FC-R8100", brand = "Shimano", eur = 295.00, kind = "R", via = "Rose" },
+  { product = "Force E1 crankset", brand = "SRAM", eur = 455.00, kind = "R", via = "SRAM-25" },
+]
+
+[[source]]
+key = "crankset.top"
+checked = 2026-11-13
+refs = [
+  { product = "Dura-Ace FC-R9200", brand = "Shimano", eur = 580.00, kind = "R", via = "Rose" },
+  { product = "Red E1 crankset", brand = "SRAM", eur = 785.00, kind = "R", via = "BR" },
+]
+
+[[source]]
+key = "crankset.power"
+checked = 2026-11-13
+refs = [
+  { product = "Ultegra FC-R8100-P", brand = "Shimano", eur = 1099.00, kind = "R", via = "Rose" },
+  { product = "Precision 3+ Pro", brand = "4iiii", eur = 899.00, kind = "R", via = "Rose" },
+  { product = "Force E1 power meter spider", brand = "SRAM", eur = 855.00, kind = "R", via = "SRAM-25" },
+]
+
+[[source]]
+key = "pedals.power"
+checked = 2026-11-13
+refs = [
+  { product = "Assioma Pro RS-2", brand = "Favero", eur = 699.00, kind = "R", via = "BR" },
+  { product = "Rally 210 (2025)", brand = "Garmin", eur = 1100.00, kind = "R", via = "brand" },
+  { product = "Assioma Duo (VAT basis unclear)", brand = "Favero", eur = 388.00, kind = "R", via = "BR" },
+]
+
+[[source]]
+key = "cassette.entry"
+checked = 2026-11-13
+refs = [
+  { product = "Tiagra 11-speed cassette", brand = "Shimano", eur = 60.00, kind = "R", via = "Rose" },
+]
+
+[[source]]
+key = "cassette.mid"
+checked = 2026-11-13
+refs = [
+  { product = "105 CS-R7100", brand = "Shimano", eur = 80.00, kind = "R", via = "Rose" },
+  { product = "Rival XG-1250", brand = "SRAM", eur = 132.00, kind = "R", via = "SRAM-25" },
+]
+
+[[source]]
+key = "cassette.upper"
+checked = 2026-11-13
+refs = [
+  { product = "Ultegra cassette (unverified)", brand = "Shimano", eur = 115.00, kind = "R", via = "Rose" },
+  { product = "Force XG-1270", brand = "SRAM", eur = 215.00, kind = "R", via = "SRAM-25" },
+]
+
+[[source]]
+key = "cassette.top"
+checked = 2026-11-13
+refs = [
+  { product = "Dura-Ace CS-R9200", brand = "Shimano", eur = 340.00, kind = "R", via = "Rose" },
+]
+
+[[source]]
+key = "chain.mid"
+checked = 2026-11-13
+refs = [
+  { product = "105 CN-M7100", brand = "Shimano", eur = 37.00, kind = "R", via = "Rose" },
+  { product = "Rival E1 chain", brand = "SRAM", eur = 50.00, kind = "R", via = "SRAM-25" },
+]
+
+[[source]]
+key = "chain.top"
+checked = 2026-11-13
+refs = [
+  { product = "Dura-Ace CN-M9100", brand = "Shimano", eur = 73.00, kind = "R", via = "Rose" },
+  { product = "Red Flattop chain", brand = "SRAM", eur = 100.00, kind = "R", via = "SRAM-25" },
+]
+
+# --- Wheels ----------------------------------------------------------------
+
+[[source]]
+key = "wheels.road.alloy-entry"
+checked = 2026-11-13
+refs = [
+  { product = "Racing 5 DB", brand = "Fulcrum", eur = 400.00, kind = "R", via = "Rose" },
+  { product = "Aksium Elite UST Disc", brand = "Mavic", eur = 299.00, kind = "R", via = "Rose" },
+  { product = "Aksium", brand = "Mavic", eur = 299.00, kind = "R", via = "Rose" },
+]
+
+[[source]]
+key = "wheels.road.alloy-mid"
+checked = 2026-11-13
+refs = [
+  { product = "PR 1600 DB", brand = "DT Swiss", eur = 600.00, kind = "R", via = "Rose" },
+  { product = "Racing 3 DB", brand = "Fulcrum", eur = 620.00, kind = "R*", via = "bc" },
+  { product = "Ksyrium 30 Disc", brand = "Mavic", eur = 437.00, kind = "R", via = "Rose" },
+]
+
+[[source]]
+key = "wheels.road.carbon-mid"
+checked = 2026-11-13
+refs = [
+  { product = "ERC 1400 DB 45", brand = "DT Swiss", eur = 2050.00, kind = "R", via = "Rose" },
+  { product = "Wind 42 DB", brand = "Fulcrum", eur = 1415.00, kind = "R", via = "Mantel" },
+  { product = "303 S", brand = "Zipp", eur = 1100.00, kind = "R", via = "BR" },
+]
+
+[[source]]
+key = "wheels.road.carbon-top"
+checked = 2026-11-13
+refs = [
+  { product = "ARC 1100 DB 50", brand = "DT Swiss", eur = 2500.00, kind = "R", via = "Rose" },
+  { product = "Cosmic Ultimate 45 (2023)", brand = "Mavic", eur = 3900.00, kind = "R", via = "BR" },
+  { product = "454 NSW", brand = "Zipp", eur = 4400.00, kind = "R*", via = "BR" },
+]
+
+[[source]]
+key = "wheels.tt.disc"
+checked = 2026-11-13
+refs = [
+  { product = "Super-9 Disc (launch)", brand = "Zipp", eur = 2750.00, kind = "R", via = "BR" },
+]
+
+[[source]]
+key = "wheels.gravel.alloy"
+checked = 2026-11-13
+refs = [
+  { product = "GR 1600", brand = "DT Swiss", eur = 600.00, kind = "R", via = "Rose" },
+]
+
+[[source]]
+key = "wheels.gravel.carbon"
+checked = 2026-11-13
+refs = [
+  { product = "GRC 1400", brand = "DT Swiss", eur = 2050.00, kind = "R", via = "Rose" },
+]
+
+[[source]]
+key = "wheels.mtb.alloy"
+checked = 2026-11-13
+refs = [
+  { product = "XM 1700", brand = "DT Swiss", eur = 750.00, kind = "R", via = "Rose" },
+]
+
+# --- Tyres (priced per tyre, sold as a pair) -------------------------------
+
+[[source]]
+key = "tyres.road.training"
+checked = 2026-11-13
+multiply = 2
+refs = [
+  { product = "Ultra Sport III", brand = "Continental", eur = 30.95, kind = "R", via = "bc" },
+  { product = "Lugano II", brand = "Schwalbe", eur = 29.90, kind = "R", via = "bc" },
+]
+
+[[source]]
+key = "tyres.road.performance"
+checked = 2026-11-13
+multiply = 2
+refs = [
+  { product = "GP 5000 S TR", brand = "Continental", eur = 94.95, kind = "R*", via = "bc" },
+  { product = "Pro One Evo", brand = "Schwalbe", eur = 78.90, kind = "R", via = "bc" },
+  { product = "P Zero Race TLR", brand = "Pirelli", eur = 84.95, kind = "R", via = "bc" },
+  { product = "Corsa N.EXT", brand = "Vittoria", eur = 69.95, kind = "R", via = "bc" },
+]
+
+[[source]]
+key = "tyres.road.race"
+checked = 2026-11-13
+multiply = 2
+refs = [
+  { product = "GP 5000 TT TR", brand = "Continental", eur = 108.95, kind = "R*", via = "bc" },
+  { product = "Corsa Pro Speed", brand = "Vittoria", eur = 94.95, kind = "R", via = "bc" },
+  { product = "Pro One TT", brand = "Schwalbe", eur = 78.90, kind = "R", via = "bc" },
+]
+
+[[source]]
+key = "tyres.gravel"
+checked = 2026-11-13
+multiply = 2
+refs = [
+  { product = "G-One RS Pro", brand = "Schwalbe", eur = 78.90, kind = "R", via = "bc" },
+  { product = "Terra Speed", brand = "Continental", eur = 69.95, kind = "R", via = "bc" },
+  { product = "Cinturato Gravel H", brand = "Pirelli", eur = 70.00, kind = "R", via = "bc" },
+]
+
+[[source]]
+key = "tyres.mtb"
+checked = 2026-11-13
+multiply = 2
+refs = [
+  { product = "Rekon Race", brand = "Maxxis", eur = 59.90, kind = "R", via = "bc" },
+  { product = "Racing Ray", brand = "Schwalbe", eur = 72.90, kind = "R", via = "bc" },
+  { product = "Race King", brand = "Continental", eur = 43.95, kind = "R", via = "bc" },
+]
+
+# --- Saddles, cockpits, seat posts -----------------------------------------
+
+[[source]]
+key = "saddle.entry"
+checked = 2026-11-13
+refs = [
+  { product = "X-Bow", brand = "Selle Italia", eur = 60.00, kind = "R", via = "bc" },
+  { product = "Bridge Sport", brand = "Specialized", eur = 40.00, kind = "S", via = "bc" },
+  { product = "Vento Argo X5", brand = "Fizik", eur = 109.00, kind = "R", via = "bc" },
+]
+
+[[source]]
+key = "saddle.mid"
+checked = 2026-11-13
+refs = [
+  { product = "Vento Antares R5", brand = "Fizik", eur = 109.00, kind = "R", via = "bc" },
+  { product = "Power EVO Comp", brand = "Specialized", eur = 119.00, kind = "R", via = "bc" },
+  { product = "SLR Advan 3", brand = "Selle Italia", eur = 150.00, kind = "R", via = "bc" },
+  { product = "Scratch M5 Tirox", brand = "Prologo", eur = 129.00, kind = "R", via = "bc" },
+]
+
+[[source]]
+key = "saddle.top"
+checked = 2026-11-13
+refs = [
+  { product = "Antares R1 Adaptive", brand = "Fizik", eur = 299.00, kind = "R", via = "bc" },
+  { product = "Scratch M5 CPC Nack", brand = "Prologo", eur = 269.00, kind = "R", via = "bc" },
+  { product = "SLR Carbon 3", brand = "Selle Italia", eur = 320.00, kind = "R", via = "bc" },
+  { product = "S-Works Power EVO Mirror", brand = "Specialized", eur = 449.00, kind = "R*", via = "bc" },
+]
+
+[[source]]
+key = "cockpit.road.alloy"
+checked = 2026-11-13
+
+[[source.group]]
+name = "bar"
+refs = [
+  { product = "Service Course 70", brand = "Zipp", eur = 68.00, kind = "R", via = "bc" },
+  { product = "Zero2 bar", brand = "Deda", eur = 55.00, kind = "R", via = "bc" },
+  { product = "Comp ErgoMax", brand = "Ritchey", eur = 55.99, kind = "R", via = "bc" },
+]
+
+[[source.group]]
+name = "stem"
+refs = [
+  { product = "Comp 4-Axis", brand = "Ritchey", eur = 54.40, kind = "R", via = "bc" },
+  { product = "Zero2 stem", brand = "Deda", eur = 54.95, kind = "R", via = "bc" },
+  { product = "Vibe stem", brand = "PRO", eur = 110.00, kind = "R", via = "bc" },
+]
+
+[[source]]
+key = "cockpit.road.carbon"
+checked = 2026-11-13
+
+[[source.group]]
+name = "bar"
+refs = [
+  { product = "SL-70 Ergo", brand = "Zipp", eur = 339.00, kind = "R", via = "bc" },
+  { product = "Superzero RS", brand = "Deda", eur = 360.00, kind = "R", via = "bc" },
+  { product = "Vibe Carbon", brand = "PRO", eur = 349.95, kind = "R", via = "bc" },
+]
+
+[[source.group]]
+name = "stem"
+refs = [
+  { product = "Comp 4-Axis", brand = "Ritchey", eur = 54.40, kind = "R", via = "bc" },
+  { product = "Zero2 stem", brand = "Deda", eur = 54.95, kind = "R", via = "bc" },
+  { product = "Vibe stem", brand = "PRO", eur = 110.00, kind = "R", via = "bc" },
+]
+
+[[source]]
+key = "cockpit.road.integrated"
+checked = 2026-11-13
+refs = [
+  { product = "Bar/stem", brand = "Black Inc", eur = 679.00, kind = "R", via = "bc" },
+  { product = "Vibe Evo", brand = "PRO", eur = 800.00, kind = "R", via = "bc" },
+  { product = "Alanera RS DCR", brand = "Deda", eur = 539.00, kind = "S", via = "bc" },
+]
+
+[[source]]
+key = "cockpit.gravel"
+checked = 2026-11-13
+
+[[source.group]]
+name = "bar"
+refs = [
+  { product = "Service Course 70 XPLR", brand = "Zipp", eur = 68.00, kind = "R", via = "bc" },
+  { product = "VentureMax", brand = "Ritchey", eur = 59.00, kind = "R", via = "bc" },
+  { product = "Discover bar", brand = "PRO", eur = 70.00, kind = "R", via = "bc" },
+]
+
+[[source.group]]
+name = "stem"
+refs = [
+  { product = "Comp 4-Axis", brand = "Ritchey", eur = 54.40, kind = "R", via = "bc" },
+  { product = "Zero2 stem", brand = "Deda", eur = 54.95, kind = "R", via = "bc" },
+  { product = "Vibe stem", brand = "PRO", eur = 110.00, kind = "R", via = "bc" },
+]
+
+[[source]]
+key = "cockpit.mtb"
+checked = 2026-11-13
+
+[[source.group]]
+name = "bar"
+refs = [
+  { product = "Fatbar Lite", brand = "Renthal", eur = 95.00, kind = "R", via = "bc" },
+  { product = "Chester bar", brand = "Race Face", eur = 59.99, kind = "R", via = "bc" },
+  { product = "Comp Flat", brand = "Ritchey", eur = 40.00, kind = "R", via = "bc" },
+]
+
+[[source.group]]
+name = "stem"
+refs = [
+  { product = "Comp 4-Axis", brand = "Ritchey", eur = 54.40, kind = "R", via = "bc" },
+  { product = "Zero2 stem", brand = "Deda", eur = 54.95, kind = "R", via = "bc" },
+  { product = "Vibe stem", brand = "PRO", eur = 110.00, kind = "R", via = "bc" },
+]
+
+[[source]]
+key = "cockpit.tt.extensions"
+checked = 2026-11-13
+refs = [
+  { product = "Airstryke 2", brand = "Profile Design", eur = 198.00, kind = "R", via = "bc" },
+  { product = "Vuka Clip", brand = "Zipp", eur = 173.00, kind = "R", via = "bc" },
+  { product = "Superzero TT", brand = "Deda", eur = 220.00, kind = "R", via = "bc" },
+]
+
+[[source]]
+key = "seatpost.alloy"
+checked = 2026-11-13
+refs = [
+  { product = "Zero2 seatpost", brand = "Deda", eur = 65.00, kind = "R", via = "bc" },
+  { product = "WCS 1-Bolt", brand = "Ritchey", eur = 103.95, kind = "R", via = "bc" },
+]
+
+[[source]]
+key = "seatpost.carbon"
+checked = 2026-11-13
+refs = [
+  { product = "Service Course SL", brand = "Zipp", eur = 194.00, kind = "R", via = "bc" },
+  { product = "Alpinist seatpost", brand = "Roval", eur = 240.00, kind = "R", via = "bc" },
+  { product = "Vibe Superlight", brand = "PRO", eur = 300.00, kind = "R", via = "bc" },
+]
+
+# --- Pedals ----------------------------------------------------------------
+
+[[source]]
+key = "pedals.road.entry"
+checked = 2026-11-13
+refs = [
+  { product = "105 PD-R7000", brand = "Shimano", eur = 155.00, kind = "R", via = "bc" },
+  { product = "Keo Classic 3", brand = "Look", eur = 52.00, kind = "R", via = "bc" },
+  { product = "Xpresso", brand = "Time", eur = 105.00, kind = "R", via = "bc" },
+]
+
+[[source]]
+key = "pedals.road.mid"
+checked = 2026-11-13
+refs = [
+  { product = "Ultegra PD-R8000", brand = "Shimano", eur = 165.00, kind = "R", via = "bc" },
+  { product = "Keo 2 Max Carbon", brand = "Look", eur = 112.00, kind = "R", via = "bc" },
+  { product = "Comp", brand = "Speedplay", eur = 150.00, kind = "R", via = "bc" },
+]
+
+[[source]]
+key = "pedals.road.top"
+checked = 2026-11-13
+refs = [
+  { product = "Dura-Ace PD-R9100", brand = "Shimano", eur = 255.00, kind = "R", via = "bc" },
+  { product = "Keo Blade Carbon", brand = "Look", eur = 149.00, kind = "R", via = "bc" },
+  { product = "Zero", brand = "Speedplay", eur = 230.00, kind = "R*", via = "bc" },
+]
+
+[[source]]
+key = "pedals.spd.entry"
+checked = 2026-11-13
+refs = [
+  { product = "PD-M520", brand = "Shimano", eur = 57.00, kind = "R", via = "bc" },
+  { product = "Candy 1", brand = "Crankbrothers", eur = 65.00, kind = "R", via = "bc" },
+]
+
+[[source]]
+key = "pedals.spd.mid"
+checked = 2026-11-13
+refs = [
+  { product = "XT PD-M8100", brand = "Shimano", eur = 135.00, kind = "R", via = "bc" },
+  { product = "Candy 3", brand = "Crankbrothers", eur = 150.00, kind = "R", via = "bc" },
+  { product = "X-Track Race Carbon Ti", brand = "Look", eur = 210.00, kind = "R", via = "bc" },
+]
+
+# --- Framesets -------------------------------------------------------------
+
+[[source]]
+key = "frame.road.alloy"
+checked = 2026-11-13
+refs = [
+  { product = "CAAD14 frameset (2026)", brand = "Cannondale", eur = 1799.00, kind = "R*", via = "BR" },
+  { product = "Allez Sprint frameset", brand = "Specialized", eur = 1390.00, kind = "S", via = "bc" },
+  { product = "Road AL frameset", brand = "Blackheart", eur = 1290.00, kind = "S", via = "bc" },
+]
+
+[[source]]
+key = "frame.road.carbon-mid"
+checked = 2026-11-13
+refs = [
+  { product = "TCR Advanced Pro frameset", brand = "Giant", eur = 2499.00, kind = "R*", via = "99s" },
+  { product = "O2 Disc frameset", brand = "Factor", eur = 2839.00, kind = "R", via = "bc" },
+  { product = "Soloist frameset", brand = "Cervélo", eur = 3499.00, kind = "R*", via = "99s" },
+]
+
+[[source]]
+key = "frame.road.top"
+checked = 2026-11-13
+refs = [
+  { product = "S-Works Tarmac SL8 frameset", brand = "Specialized", eur = 5499.00, kind = "R*", via = "99s" },
+  { product = "R5 frameset", brand = "Cervélo", eur = 5699.00, kind = "R*", via = "99s" },
+  { product = "Teammachine SLR 01 frameset", brand = "BMC", eur = 4999.00, kind = "R", via = "brand" },
+  { product = "Madone SLR Gen 8 frameset", brand = "Trek", eur = 5059.00, kind = "R*", via = "99s" },
+]
+
+[[source]]
+key = "frame.tt"
+checked = 2026-11-13
+refs = [
+  { product = "P5 frameset", brand = "Cervélo", eur = 5999.00, kind = "R*", via = "99s" },
+  { product = "Speedmachine 01 Module", brand = "BMC", eur = 6499.00, kind = "R", via = "brand" },
+  { product = "Trinity Advanced Pro frameset (2022)", brand = "Giant", eur = 3499.00, kind = "R*", via = "99s" },
+]
+
+[[source]]
+key = "frame.gravel.carbon"
+checked = 2026-11-13
+refs = [
+  { product = "Scale Gravel RC frameset", brand = "Scott", eur = 2299.00, kind = "R*", via = "99s" },
+  { product = "Aspero frameset", brand = "Cervélo", eur = 2799.00, kind = "R*", via = "99s" },
+  { product = "U.P. 2.0 frameset", brand = "OPEN", eur = 4500.00, kind = "S", via = "bc" },
+]
+
+[[source]]
+key = "frame.mtb.carbon"
+checked = 2026-11-13
+refs = [
+  { product = "Podium frameset", brand = "Mondraker", eur = 2699.00, kind = "R*", via = "99s" },
+  { product = "Procaliber C Gen 3 frameset", brand = "Trek", eur = 3999.00, kind = "R*", via = "99s" },
+  { product = "Exceed CF SLX frameset (2019, stale)", brand = "Canyon", eur = 1799.00, kind = "R*", via = "99s" },
+]
+
+# --- Accessories -----------------------------------------------------------
+
+[[source]]
+key = "bar_tape.entry"
+checked = 2026-11-13
+refs = [
+  { product = "Tempo bar tape", brand = "Fizik", eur = 19.90, kind = "R", via = "bc" },
+  { product = "Comp Cork", brand = "Ritchey", eur = 19.99, kind = "R", via = "bc" },
+  { product = "Smart Tape", brand = "Selle Italia", eur = 13.00, kind = "R", via = "bc" },
+]
+
+[[source]]
+key = "bar_tape.mid"
+checked = 2026-11-13
+refs = [
+  { product = "Super Sticky Kush", brand = "Supacaz", eur = 41.90, kind = "R", via = "bc" },
+  { product = "Vento Tacky", brand = "Fizik", eur = 39.90, kind = "R", via = "bc" },
+  { product = "Service Course CX tape", brand = "Zipp", eur = 31.00, kind = "R", via = "bc" },
+]
+
+[[source]]
+key = "bottle_cages.plastic"
+checked = 2026-11-13
+refs = [
+  { product = "Custom Race", brand = "Elite", eur = 15.60, kind = "R", via = "bc" },
+  { product = "Deva", brand = "Tacx", eur = 14.99, kind = "R", via = "bc" },
+  { product = "Topcage", brand = "SKS", eur = 9.99, kind = "R", via = "bc" },
+]
+
+[[source]]
+key = "bottle_cages.alloy"
+checked = 2026-11-13
+refs = [
+  { product = "Ciussi", brand = "Elite", eur = 13.95, kind = "R", via = "bc" },
+  { product = "Power Cage", brand = "Lezyne", eur = 12.95, kind = "R", via = "bc" },
+  { product = "Fly Cage", brand = "Supacaz", eur = 24.90, kind = "R", via = "bc" },
+]
+
+[[source]]
+key = "bottle_cages.carbon"
+checked = 2026-11-13
+refs = [
+  { product = "Vico Carbon", brand = "Elite", eur = 31.00, kind = "R", via = "bc" },
+  { product = "WCS Carbon cage", brand = "Ritchey", eur = 64.40, kind = "R", via = "bc" },
+  { product = "Ciro", brand = "Tacx", eur = 17.99, kind = "R", via = "bc" },
+]
+
+[[source]]
+key = "lights.set"
+checked = 2026-11-13
+refs = [
+  { product = "Ixon Fyre + IXXI (StVZO)", brand = "busch+müller", eur = 79.90, kind = "R", via = "bc" },
+  { product = "Micro 300 + KTV Drive (StVZO)", brand = "Lezyne", eur = 74.95, kind = "R", via = "bc" },
+  { product = "Blinder 80 + Plus (StVZO)", brand = "Knog", eur = 99.99, kind = "R", via = "bc" },
+]
+
+[[source]]
+key = "computer.entry"
+checked = 2026-11-13
+refs = [
+  { product = "Edge 540", brand = "Garmin", eur = 399.99, kind = "R", via = "brand" },
+  { product = "Elemnt Bolt 3", brand = "Wahoo", eur = 329.99, kind = "R", via = "brand" },
+]
+
+[[source]]
+key = "computer.mount"
+checked = 2026-11-13
+refs = [
+  { product = "Max mount", brand = "K-Edge", eur = 65.00, kind = "R", via = "bc" },
+  { product = "Aero out-front mount", brand = "Garmin", eur = 39.99, kind = "R", via = "brand" },
+  { product = "Stem out-front mount", brand = "PRO", eur = 59.95, kind = "R", via = "bc" },
+]
+
+# The large-screen computer is sold with its out-front mount.
+[[source]]
+key = "computer.top"
+checked = 2026-11-13
+
+[[source.group]]
+name = "head unit"
+refs = [
+  { product = "Edge 1050", brand = "Garmin", eur = 749.99, kind = "R", via = "brand" },
+  { product = "Elemnt Roam 3", brand = "Wahoo", eur = 449.99, kind = "R", via = "brand" },
+]
+
+[[source.group]]
+name = "out-front mount"
+refs = [
+  { product = "Max mount", brand = "K-Edge", eur = 65.00, kind = "R", via = "bc" },
+  { product = "Aero out-front mount", brand = "Garmin", eur = 39.99, kind = "R", via = "brand" },
+  { product = "Stem out-front mount", brand = "PRO", eur = 59.95, kind = "R", via = "bc" },
+]
+
+[[source]]
+key = "bag.top_tube"
+checked = 2026-11-13
+refs = [
+  { product = "Fuel Tank", brand = "Topeak", eur = 42.95, kind = "R", via = "bc" },
+  { product = "Fuel-Pack", brand = "Ortlieb", eur = 55.00, kind = "S", via = "bc" },
+  { product = "Racing Top Tube Pack", brand = "Apidura", eur = 62.00, kind = "S", via = "brand" },
+]

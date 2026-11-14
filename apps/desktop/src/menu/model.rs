@@ -43,6 +43,9 @@ pub enum Action {
     Hover(usize),
     /// Item `i` was clicked.
     Click(usize),
+    /// Open the menu at the rider list of the Workshop page (the scene's
+    /// changing corner until the character editor, W4).
+    RiderPage,
 }
 
 /// What the app does after an action.
@@ -111,7 +114,15 @@ const TOP_ITEMS: &[Item] = &[
     item("Ride", ItemKind::Open(Page::Ride)),
     // The world, its data and its conditions (time, weather).
     item("World", ItemKind::Open(Page::Sub(sub::Page::WorldHome))),
-    item("Workshop", ItemKind::Open(Page::Sub(sub::Page::Workshop))),
+    // The workshop scene (spec §14 Phase 4, 4A): the menu closes, the
+    // scene opens; leaving it comes back to this page.
+    item(
+        "Workshop",
+        ItemKind::Command {
+            line: "workshop open",
+            close: true,
+        },
+    ),
     item("Navi", ItemKind::Open(Page::Navi)),
     item("Settings", ItemKind::Open(Page::Settings)),
     item("Quit", ItemKind::Open(Page::ConfirmQuit)),
@@ -623,6 +634,14 @@ impl Menu {
     /// Applies one action. A command item that closes the menu reports
     /// only its command; check [`Self::is_open`] for the close.
     pub fn apply(&mut self, action: Action) -> Effect {
+        if action == Action::RiderPage {
+            let opened = !self.is_open();
+            self.stack.clear();
+            self.rows.clear();
+            self.push(Page::Top);
+            self.push(Page::Sub(sub::Page::Workshop));
+            return if opened { Effect::Opened } else { Effect::None };
+        }
         if !self.is_open() {
             return match action {
                 Action::Open => {
@@ -633,7 +652,7 @@ impl Menu {
             };
         }
         match action {
-            Action::Open => Effect::None,
+            Action::Open | Action::RiderPage => Effect::None,
             Action::Left | Action::Right => {
                 if matches!(self.page(), Some(Page::Sub(_))) {
                     self.change(action == Action::Right)
@@ -925,12 +944,30 @@ mod tests {
         assert_eq!(top.apply(Action::Right), Effect::None);
     }
 
+    /// *Workshop* opens the workshop scene (spec §14 Phase 4, 4A): the
+    /// menu closes and runs `workshop open`; the rider list stays
+    /// reachable (`menu workshop-page`, the scene's changing corner).
+    #[test]
+    fn workshop_opens_the_scene() {
+        let mut m = Menu::default();
+        m.apply(Action::Open);
+        assert_eq!(m.items()[3].label, "Workshop");
+        assert_eq!(
+            m.apply(Action::Click(3)),
+            Effect::Command("workshop open".into())
+        );
+        assert!(!m.is_open());
+        assert_eq!(m.apply(Action::RiderPage), Effect::Opened);
+        assert_eq!(m.page(), Some(Page::Sub(sub::Page::Workshop)));
+        assert_eq!(m.depth(), 2);
+        assert_eq!(m.apply(Action::RiderPage), Effect::None, "already open");
+    }
+
     #[test]
     fn tabs_switch_between_the_settings_pages_and_the_workshop() {
         let (s, r) = (Settings::default(), riders());
         let mut m = Menu::default();
-        act(&mut m, Action::Open, &s, &r);
-        act(&mut m, Action::Click(3), &s, &r);
+        act(&mut m, Action::RiderPage, &s, &r);
         assert_eq!(m.page(), Some(Page::Sub(sub::Page::Workshop)));
         assert_eq!(m.depth(), 2);
         act(&mut m, Action::TabNext, &s, &r);
@@ -951,8 +988,7 @@ mod tests {
         let s = Settings::default();
         let mut r = riders();
         let mut m = Menu::default();
-        act(&mut m, Action::Open, &s, &r);
-        act(&mut m, Action::Click(3), &s, &r);
+        act(&mut m, Action::RiderPage, &s, &r);
         assert_eq!(m.labels()[0], "Alex:  78 kg - riding");
         assert_eq!(
             act(&mut m, Action::Click(1), &s, &r),
@@ -1059,8 +1095,7 @@ mod tests {
             .unwrap();
         }
         let mut m = Menu::default();
-        act(&mut m, Action::Open, &s, &r);
-        act(&mut m, Action::Click(3), &s, &r);
+        act(&mut m, Action::RiderPage, &s, &r);
         assert_eq!(m.page(), Some(Page::Sub(sub::Page::Workshop)));
         // 8 riders, Bike and Edit riders: three pages of four rows.
         let l = m.labels();

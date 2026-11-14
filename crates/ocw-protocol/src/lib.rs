@@ -131,7 +131,133 @@ pub fn quantize(s: &ocw_sim::RiderSnapshot) -> v1::RiderUpdate {
             v1::RiderMode::Riding
         } as i32,
         god: s.god.as_ref().map(|g| god_pose_to_wire(g, 0, false)),
+        // The server marks its Echo rider (spec §7 *Echo bot*).
+        echo: false,
+        crash: s.crash.as_ref().map(crash_to_wire),
+        // The server adds the credited hearts (spec §14 Phase 4, 4E).
+        hearts: 0,
+        build_hash: s.build_hash,
+        bump: s.bump.as_ref().map(|b| v1::Bump {
+            tick: b.tick,
+            strength_mrad: (b.strength * 1000.0).round().max(0.0) as u32,
+            side: if b.side < 0.0 { -1 } else { 1 },
+        }),
     }
+}
+
+/// The collision model on the wire (spec §14 Phase 12A).
+pub fn collision_mode_to_wire(mode: ocw_sim::collide::Mode) -> i32 {
+    use ocw_sim::collide::Mode;
+    (match mode {
+        Mode::Off => v1::CollisionMode::Off,
+        Mode::Soft => v1::CollisionMode::Soft,
+        Mode::Full => v1::CollisionMode::Full,
+    }) as i32
+}
+
+/// A received collision model (unknown or absent: an older server, off).
+pub fn collision_mode_from_wire(v: i32) -> ocw_sim::collide::Mode {
+    use ocw_sim::collide::Mode;
+    match v1::CollisionMode::try_from(v) {
+        Ok(v1::CollisionMode::Soft) => Mode::Soft,
+        Ok(v1::CollisionMode::Full) => Mode::Full,
+        _ => Mode::Off,
+    }
+}
+
+fn contact_kind_to_wire(k: ocw_sim::collide::ContactKind) -> v1::ContactKind {
+    use ocw_sim::collide::ContactKind as K;
+    match k {
+        K::Side => v1::ContactKind::Side,
+        K::WheelToWheel => v1::ContactKind::WheelToWheel,
+        K::WheelTouch => v1::ContactKind::WheelTouch,
+        K::RearEnd => v1::ContactKind::RearEnd,
+        K::HeadOn => v1::ContactKind::HeadOn,
+        K::Object => v1::ContactKind::Object,
+    }
+}
+
+fn contact_kind_from_wire(v: i32) -> ocw_sim::collide::ContactKind {
+    use ocw_sim::collide::ContactKind as K;
+    match v1::ContactKind::try_from(v) {
+        Ok(v1::ContactKind::WheelToWheel) => K::WheelToWheel,
+        Ok(v1::ContactKind::WheelTouch) => K::WheelTouch,
+        Ok(v1::ContactKind::RearEnd) => K::RearEnd,
+        Ok(v1::ContactKind::HeadOn) => K::HeadOn,
+        Ok(v1::ContactKind::Object) => K::Object,
+        _ => K::Side,
+    }
+}
+
+/// A crash for the wire (spec §14 Phase 12C).
+pub fn crash_to_wire(c: &ocw_sim::collide::CrashView) -> v1::CrashState {
+    use ocw_sim::collide::CrashPhase as P;
+    let ms = |s: f64| (s * 1000.0).round().clamp(0.0, u32::MAX as f64) as u32;
+    let mm = |v: f64| (v * 1000.0).round().clamp(i32::MIN as f64, i32::MAX as f64) as i32;
+    v1::CrashState {
+        phase: (match c.phase {
+            P::Falling => v1::CrashPhase::Falling,
+            P::Down => v1::CrashPhase::Down,
+            P::Remount => v1::CrashPhase::Remount,
+        }) as i32,
+        elapsed_ms: ms(c.elapsed_s),
+        down_ms: ms(c.down_s),
+        kind: contact_kind_to_wire(c.kind) as i32,
+        by_rider: c.by.map_or(0, |r| r.0),
+        impulse_along_mm_s: mm(c.impulse[0]),
+        impulse_right_mm_s: mm(c.impulse[1]),
+        speed_mm_s: ms(c.speed),
+    }
+}
+
+/// A received rider's crash; `None` while riding (or from older servers).
+pub fn rider_crash(u: &v1::RiderUpdate) -> Option<ocw_sim::collide::CrashView> {
+    use ocw_sim::collide::CrashPhase as P;
+    let c = u.crash.as_ref()?;
+    let phase = match v1::CrashPhase::try_from(c.phase).ok()? {
+        v1::CrashPhase::None => return None,
+        v1::CrashPhase::Falling => P::Falling,
+        v1::CrashPhase::Down => P::Down,
+        v1::CrashPhase::Remount => P::Remount,
+    };
+    Some(ocw_sim::collide::CrashView {
+        phase,
+        elapsed_s: f64::from(c.elapsed_ms) / 1000.0,
+        down_s: f64::from(c.down_ms) / 1000.0,
+        kind: contact_kind_from_wire(c.kind),
+        by: (c.by_rider != 0).then_some(RiderId(c.by_rider)),
+        impulse: [
+            f64::from(c.impulse_along_mm_s) / 1000.0,
+            f64::from(c.impulse_right_mm_s) / 1000.0,
+        ],
+        speed: f64::from(c.speed_mm_s) / 1000.0,
+    })
+}
+
+/// A received rider's last soft bump.
+pub fn rider_bump(u: &v1::RiderUpdate) -> Option<ocw_sim::collide::Bump> {
+    let b = u.bump.as_ref()?;
+    Some(ocw_sim::collide::Bump {
+        tick: b.tick,
+        strength: f64::from(b.strength_mrad) / 1000.0,
+        side: if b.side < 0 { -1.0 } else { 1.0 },
+    })
+}
+
+/// The rules request (spec §14 Phase 12A: `ride.collisions`,
+/// `ride.chaotic_bots`).
+pub fn rules_request(collisions: Option<bool>, chaotic_bots: Option<bool>) -> v1::ClientMessage {
+    client_message(v1::client_message::Msg::Rules(v1::RulesRequest {
+        collisions,
+        chaotic_bots,
+    }))
+}
+
+/// A staged contact (`dev.bump` / `dev.crash`, local servers only).
+pub fn stage_contact(crash: bool) -> v1::ClientMessage {
+    client_message(v1::client_message::Msg::Dev(v1::DevCommand {
+        cmd: Some(v1::dev_command::Cmd::Stage(v1::StageContact { crash })),
+    }))
 }
 
 /// A unicorn pose for the wire (spec §14 Phase 13E).
@@ -290,6 +416,92 @@ pub fn dequantize(u: &v1::RiderUpdate) -> (RiderId, RiderState) {
     )
 }
 
+/// The race mode on the wire (spec §14 Phase 4, 4G).
+pub fn physics_mode_to_wire(mode: ocw_sim::PhysicsMode) -> i32 {
+    use ocw_sim::PhysicsMode as M;
+    (match mode {
+        M::Open => v1::PhysicsMode::Open,
+        M::Profile => v1::PhysicsMode::Profile,
+        M::Equal => v1::PhysicsMode::Equal,
+    }) as i32
+}
+
+/// A received race mode (`None`: unspecified or unknown).
+pub fn physics_mode_from_wire(v: i32) -> Option<ocw_sim::PhysicsMode> {
+    use ocw_sim::PhysicsMode as M;
+    match v1::PhysicsMode::try_from(v).ok()? {
+        v1::PhysicsMode::Open => Some(M::Open),
+        v1::PhysicsMode::Profile => Some(M::Profile),
+        v1::PhysicsMode::Equal => Some(M::Equal),
+        v1::PhysicsMode::Unspecified => None,
+    }
+}
+
+/// An event request with the organiser's race mode (`None`: by its kind).
+pub fn event_start_with(
+    spec: &EventSpec,
+    bots: Option<u32>,
+    physics: Option<ocw_sim::PhysicsMode>,
+) -> v1::EventStart {
+    v1::EventStart {
+        physics: physics.map(physics_mode_to_wire),
+        ..event_start(spec, bots)
+    }
+}
+
+/// The organiser's race mode of an event request (`None`: by its kind).
+pub fn event_physics(s: &v1::EventStart) -> Option<ocw_sim::PhysicsMode> {
+    s.physics.and_then(physics_mode_from_wire)
+}
+
+/// A rider's bike build for the wire (spec §14 Phase 4, 4G).
+pub fn rider_build(
+    rider: RiderId,
+    profile: ocw_core::ProfileId,
+    build: Option<&ocw_sim::Build>,
+) -> v1::RiderBuild {
+    let stock = ocw_sim::Build::stock(profile);
+    let b = build.unwrap_or(&stock);
+    let e4 = |x: f64| (x * 1e4).round() as i32;
+    v1::RiderBuild {
+        rider_id: rider.0,
+        build_hash: b.hash(),
+        bike_profile: b.profile.id().into(),
+        parts: b.parts.clone(),
+        flat_gain_e4: e4(b.flat_gain),
+        climb_gain_e4: e4(b.climb_gain),
+        bike_mass_g: (b.params.bike_mass_kg * 1000.0).round().max(0.0) as u32,
+        capped: b.capped(),
+    }
+}
+
+/// A received bike build.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BuildInfo {
+    pub rider: RiderId,
+    pub hash: u32,
+    pub profile: ocw_core::ProfileId,
+    pub parts: Vec<String>,
+    /// The server's effect against the profile's stock bike (4G).
+    pub effect: ocw_sim::build::Effect,
+}
+
+/// Decodes a bike build.
+pub fn build_info(b: &v1::RiderBuild) -> BuildInfo {
+    BuildInfo {
+        rider: RiderId(b.rider_id),
+        hash: b.build_hash,
+        profile: ocw_core::ProfileId::from_wire(Some(&b.bike_profile)),
+        parts: b.parts.clone(),
+        effect: ocw_sim::build::Effect {
+            flat: f64::from(b.flat_gain_e4) / 1e4,
+            climb: f64::from(b.climb_gain_e4) / 1e4,
+            mass_kg: f64::from(b.bike_mass_g) / 1000.0,
+            capped: b.capped,
+        },
+    }
+}
+
 /// An event request for the wire (`bots`: the field size, if given).
 pub fn event_start(spec: &EventSpec, bots: Option<u32>) -> v1::EventStart {
     let len = |l: Option<f64>| l.map(|m| m.round().clamp(0.0, u32::MAX as f64) as u32);
@@ -311,6 +523,8 @@ pub fn event_start(spec: &EventSpec, bots: Option<u32>) -> v1::EventStart {
         length_m,
         bots,
         target_w,
+        collisions: None,
+        physics: None,
     }
 }
 
@@ -378,6 +592,12 @@ pub fn event_state(ev: Option<&Event>, standings: &[Standing], tick: u64) -> v1:
             })
             .collect(),
         finished_tick: ev.finished_tick,
+        // The event's own rule (the server puts the model in force here).
+        collisions: collision_mode_to_wire(ev.collisions.unwrap_or(match ev.kind {
+            EventKind::GroupRide { .. } => ocw_sim::collide::Mode::Soft,
+            _ => ocw_sim::collide::Mode::Full,
+        })),
+        physics: physics_mode_to_wire(ev.physics),
     }
 }
 
@@ -394,6 +614,10 @@ pub struct EventInfo {
     pub start_line_m: f64,
     pub finished_tick: Option<u64>,
     pub standings: Vec<Standing>,
+    /// The collision model of the event (spec §14 Phase 12A).
+    pub collisions: ocw_sim::collide::Mode,
+    /// The race mode (spec §14 Phase 4, 4G; an older server: open).
+    pub physics: ocw_sim::PhysicsMode,
 }
 
 impl EventInfo {
@@ -436,6 +660,8 @@ pub fn event_info(e: &v1::EventState) -> Option<EventInfo> {
         server_tick: e.server_tick,
         start_line_m: e.start_line_m,
         finished_tick: e.finished_tick,
+        collisions: collision_mode_from_wire(e.collisions),
+        physics: physics_mode_from_wire(e.physics).unwrap_or_default(),
         standings: e
             .standings
             .iter()
@@ -488,6 +714,36 @@ pub fn voice_request(channel: v1::VoiceChannel, group: &str) -> v1::ClientMessag
         channel: channel as i32,
         group: group.to_owned(),
     }))
+}
+
+/// The echo test's request (spec §7 *Echo bot*): the Echo rider on the
+/// road (`here`: 20 m ahead of the asker) or away.
+pub fn echo_request(on: bool, here: bool) -> v1::ClientMessage {
+    client_message(v1::client_message::Msg::Echo(v1::EchoRequest { on, here }))
+}
+
+/// The workshop's bike when the rider leaves it (spec §14 Phase 4, 4A):
+/// garage bike id, frame profile, look and the part ids on the bike.
+pub fn bike_change(
+    bike_id: &str,
+    profile: ocw_core::ProfileId,
+    look: ocw_core::RiderLook,
+    parts: &[String],
+) -> v1::ClientMessage {
+    client_message(v1::client_message::Msg::BikeChange(v1::BikeChange {
+        bike_id: bike_id.into(),
+        bike_profile: profile.id().into(),
+        look: Some(look.into()),
+        parts: parts.to_vec(),
+    }))
+}
+
+/// The session's Echo rider in a snapshot, if there is one.
+pub fn echo_rider(s: &v1::Snapshot) -> Option<RiderId> {
+    s.riders
+        .iter()
+        .find(|u| u.echo)
+        .map(|u| RiderId(u.rider_id))
 }
 
 /// Who may change the world clock (spec §14 Phase 9, 9D).
@@ -795,6 +1051,7 @@ mod tests {
             cadence_rpm: Some(90.0),
             heart_rate_bpm: None,
             brake: Some(true),
+            virtual_power: None,
         };
         let bytes = encode(&client_message(Msg::Sample(sample)));
         match decode_client(&bytes).unwrap() {
@@ -815,6 +1072,7 @@ mod tests {
             riders: Vec::new(),
             human_riders: 1,
             clock: Some(msg),
+            ..Default::default()
         };
         let bytes = encode(&server_message(S::Snapshot(snap)));
         let S::Snapshot(s) = decode_server(&bytes).unwrap() else {
@@ -877,12 +1135,15 @@ mod tests {
                     power_w: 310.0,
                     last_input_seq: 77,
                     god: None,
+                    crash: None,
+                    bump: None,
                     bike: ocw_core::ProfileId::Gravel,
                     look: ocw_core::RiderLook {
                         frame: ocw_core::Rgb(0x123456),
                         pattern: ocw_core::KitPattern::Sash,
                         ..Default::default()
                     },
+                    build_hash: 0,
                 }),
                 quantize(&ocw_sim::RiderSnapshot {
                     id: RiderId(2),
@@ -896,8 +1157,11 @@ mod tests {
                     power_w: 0.0,
                     last_input_seq: 0,
                     god: None,
+                    crash: None,
+                    bump: None,
                     bike: Default::default(),
                     look: Default::default(),
+                    build_hash: 0,
                 }),
             ],
             human_riders: 2,
@@ -911,6 +1175,8 @@ mod tests {
                 access: v1::ClockAccess::Host as i32,
                 host_rider_id: 1,
             }),
+            collisions: v1::CollisionMode::Soft as i32,
+            chaotic_bots: true,
         };
         let bytes = encode(&server_message(S::Snapshot(snapshot.clone())));
         match decode_server(&bytes).unwrap() {
@@ -946,6 +1212,8 @@ mod tests {
             clock: None,
             world_access: 2,
             god_access: 1,
+            echo_bot: true,
+            ..Default::default()
         };
         let bytes = encode(&server_message(S::Welcome(welcome.clone())));
         assert_eq!(decode_server(&bytes).unwrap(), S::Welcome(welcome));
@@ -965,8 +1233,11 @@ mod tests {
             power_w: -5.0,
             last_input_seq: 0,
             god: None,
+            crash: None,
+            bump: None,
             bike: Default::default(),
             look: Default::default(),
+            build_hash: 0,
         });
         assert_eq!((u.distance_cm, u.speed_mm_s, u.power_w), (0, 0, 0));
         assert_eq!(u.lateral_offset_cm, 0);
@@ -989,8 +1260,11 @@ mod tests {
             power_w: 180.0,
             last_input_seq: 0,
             god,
+            crash: None,
+            bump: None,
             bike: Default::default(),
             look: Default::default(),
+            build_hash: 0,
         };
         let u = quantize(&snap(Some(pose)));
         let bytes = encode(&u);
@@ -1122,8 +1396,11 @@ mod tests {
             power_w: 201.6,
             last_input_seq: 9,
             god: None,
+            crash: None,
+            bump: None,
             bike: Default::default(),
             look: Default::default(),
+            build_hash: 0,
         };
         let u = quantize(&snap);
         assert_eq!(u.power_w, 202);
@@ -1159,6 +1436,268 @@ mod tests {
         assert_eq!(
             ocw_core::RiderLook::from(&back),
             ocw_core::RiderLook::default()
+        );
+    }
+
+    /// The workshop's `BikeChange` and the hearts total survive the wire
+    /// (spec §14 Phase 4, 4A, 4E).
+    #[test]
+    fn bike_change_and_hearts_round_trip() {
+        let look = ocw_core::RiderLook {
+            frame: ocw_core::Rgb(0x1E88E5),
+            ..Default::default()
+        };
+        let parts = vec!["wheels.road-carbon.top".to_string(), "lights.set".into()];
+        let m = bike_change("tt", ocw_core::ProfileId::TimeTrial, look, &parts);
+        let back = decode_client(&encode(&m)).unwrap();
+        let v1::client_message::Msg::BikeChange(c) = back else {
+            panic!("{back:?}")
+        };
+        assert_eq!(c.bike_id, "tt");
+        assert_eq!(
+            ocw_core::ProfileId::from_wire(Some(&c.bike_profile)),
+            ocw_core::ProfileId::TimeTrial
+        );
+        assert_eq!(ocw_core::RiderLook::from(&c.look.unwrap()), look);
+        assert_eq!(c.parts, parts);
+        let u = v1::RiderUpdate {
+            hearts: 1239,
+            ..Default::default()
+        };
+        let snap = v1::Snapshot {
+            riders: vec![u],
+            ..Default::default()
+        };
+        let bytes = encode(&server_message(v1::server_message::Msg::Snapshot(snap)));
+        let Ok(v1::server_message::Msg::Snapshot(s)) = decode_server(&bytes) else {
+            panic!()
+        };
+        assert_eq!(s.riders[0].hearts, 1239);
+        // Old clients' samples have no virtual-power flag: real power.
+        let sample = v1::SensorSample::default();
+        assert_eq!(sample.virtual_power, None);
+    }
+
+    /// The echo test's messages survive the wire (spec §7 *Echo bot*).
+    #[test]
+    fn echo_bot_round_trip() {
+        let m = echo_request(true, true);
+        let back = decode_client(&encode(&m)).unwrap();
+        assert_eq!(
+            back,
+            v1::client_message::Msg::Echo(v1::EchoRequest {
+                on: true,
+                here: true
+            })
+        );
+        let snap = v1::Snapshot {
+            riders: vec![
+                v1::RiderUpdate {
+                    rider_id: 3,
+                    ..Default::default()
+                },
+                v1::RiderUpdate {
+                    rider_id: 7,
+                    display_name: "Echo".into(),
+                    echo: true,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let msg = server_message(v1::server_message::Msg::Snapshot(snap));
+        let Ok(v1::server_message::Msg::Snapshot(back)) = decode_server(&encode(&msg)) else {
+            panic!("no snapshot")
+        };
+        assert_eq!(echo_rider(&back), Some(RiderId(7)));
+        assert!(!back.riders[0].echo, "others are not");
+        let w = v1::Welcome {
+            echo_bot: true,
+            ..Default::default()
+        };
+        let msg = server_message(v1::server_message::Msg::Welcome(w));
+        let Ok(v1::server_message::Msg::Welcome(back)) = decode_server(&encode(&msg)) else {
+            panic!("no welcome")
+        };
+        assert!(back.echo_bot);
+        // Older peers: absent means no Echo rider, no echo bot.
+        assert_eq!(echo_rider(&v1::Snapshot::default()), None);
+    }
+
+    #[test]
+    fn crashes_bumps_and_collision_modes_round_trip() {
+        use ocw_sim::collide::{Bump, ContactKind, CrashPhase, CrashView, Mode};
+        let crash = CrashView {
+            phase: CrashPhase::Down,
+            elapsed_s: 1.234,
+            down_s: 4.5,
+            kind: ContactKind::WheelTouch,
+            by: Some(RiderId(7)),
+            impulse: [-1.25, 0.75],
+            speed: 9.876,
+        };
+        let snap = ocw_sim::RiderSnapshot {
+            id: RiderId(3),
+            name: "R".into(),
+            bike: ocw_core::ProfileId::default(),
+            look: ocw_core::RiderLook::default(),
+            state: RiderState::default(),
+            power_w: 0.0,
+            last_input_seq: 0,
+            god: None,
+            crash: Some(crash),
+            bump: Some(Bump {
+                tick: 99,
+                strength: 0.08,
+                side: -1.0,
+            }),
+            build_hash: 0,
+        };
+        let bytes = encode(&quantize(&snap));
+        let u = v1::RiderUpdate::decode(bytes.as_slice()).unwrap();
+        assert_eq!(rider_crash(&u), Some(crash));
+        let b = rider_bump(&u).unwrap();
+        assert_eq!((b.tick, b.side), (99, -1.0));
+        assert!((b.strength - 0.08).abs() < 1e-9);
+        // Riding: no crash; an old server's update has none either.
+        let riding = quantize(&ocw_sim::RiderSnapshot {
+            crash: None,
+            bump: None,
+            ..snap
+        });
+        assert_eq!(rider_crash(&riding), None);
+        assert_eq!(rider_bump(&riding), None);
+        for m in [Mode::Off, Mode::Soft, Mode::Full] {
+            assert_eq!(collision_mode_from_wire(collision_mode_to_wire(m)), m);
+        }
+        assert_eq!(collision_mode_from_wire(0), Mode::Off, "older servers");
+        // The rules request and the staged contact decode.
+        let m = decode_client(&encode(&rules_request(Some(true), None))).unwrap();
+        assert!(
+            matches!(m, v1::client_message::Msg::Rules(r) if r.collisions == Some(true) && r.chaotic_bots.is_none())
+        );
+        let m = decode_client(&encode(&stage_contact(true))).unwrap();
+        assert!(
+            matches!(m, v1::client_message::Msg::Dev(v1::DevCommand { cmd: Some(v1::dev_command::Cmd::Stage(s)) }) if s.crash)
+        );
+    }
+
+    /// W3 (spec §14 Phase 4, 4G): the race mode in the event request and
+    /// state, the build of a rider, its hash in the snapshots and the
+    /// parts in the hello survive the wire.
+    #[test]
+    fn race_modes_and_builds_round_trip() {
+        use ocw_sim::PhysicsMode as M;
+        for m in M::ALL {
+            assert_eq!(physics_mode_from_wire(physics_mode_to_wire(m)), Some(m));
+            let spec = EventSpec::Race {
+                laps: None,
+                length_m: Some(2000.0),
+            };
+            let start = event_start_with(&spec, Some(2), Some(m));
+            let back = v1::EventStart::decode(encode(&start).as_slice()).unwrap();
+            assert_eq!(event_physics(&back), Some(m));
+            assert_eq!(event_spec(&back), Some(spec));
+            let mut ev = Event::new(
+                1,
+                EventKind::Race {
+                    length_m: 2000.0,
+                    laps: None,
+                },
+                0,
+                0.0,
+                vec![],
+            );
+            ev.physics = m;
+            let state =
+                v1::EventState::decode(encode(&event_state(Some(&ev), &[], 0)).as_slice()).unwrap();
+            assert_eq!(event_info(&state).unwrap().physics, m);
+        }
+        // Absent: by the kind on the server; an older server's state: open.
+        assert_eq!(
+            event_physics(&event_start(&EventSpec::GroupRide { target_w: None }, None)),
+            None
+        );
+        let old = v1::EventState {
+            phase: v1::EventPhase::Running as i32,
+            kind: v1::EventKind::Race as i32,
+            ..Default::default()
+        };
+        assert_eq!(event_info(&old).unwrap().physics, M::Open);
+        assert_eq!(physics_mode_from_wire(99), None);
+
+        let parts: Vec<String> = ["wheels.road-carbon.top", "tyres.road.race"]
+            .map(String::from)
+            .to_vec();
+        let b = ocw_sim::build::build(
+            ocw_sim::PartTable::shipped(),
+            ocw_core::ProfileId::Road,
+            &parts,
+        );
+        let wire = rider_build(RiderId(4), ocw_core::ProfileId::Road, Some(&b));
+        let msg = server_message(v1::server_message::Msg::RiderBuild(wire));
+        let v1::server_message::Msg::RiderBuild(back) = decode_server(&encode(&msg)).unwrap()
+        else {
+            panic!("a rider build");
+        };
+        let info = build_info(&back);
+        assert_eq!(info.rider, RiderId(4));
+        assert_eq!(info.hash, b.hash());
+        assert_eq!(info.profile, ocw_core::ProfileId::Road);
+        assert_eq!(info.parts, b.parts);
+        assert!((info.effect.flat - b.flat_gain).abs() < 1e-4);
+        assert!((info.effect.climb - b.climb_gain).abs() < 1e-4);
+        assert!((info.effect.mass_kg - b.params.bike_mass_kg).abs() < 1e-3);
+        assert_eq!(info.effect.capped, b.capped());
+        // The stock bike: hash 0, no parts.
+        let stock = build_info(&rider_build(RiderId(5), ocw_core::ProfileId::Gravel, None));
+        assert_eq!((stock.hash, stock.parts.len()), (0, 0));
+        assert_eq!(stock.profile, ocw_core::ProfileId::Gravel);
+        // The hash rides in every rider update (6 bytes: a 2-byte tag and
+        // 4), the parts not.
+        let snap = ocw_sim::RiderSnapshot {
+            id: RiderId(4),
+            name: "A".into(),
+            bike: ocw_core::ProfileId::Road,
+            look: Default::default(),
+            state: RiderState::default(),
+            power_w: 0.0,
+            last_input_seq: 0,
+            god: None,
+            crash: None,
+            bump: None,
+            build_hash: b.hash(),
+        };
+        let u = quantize(&snap);
+        assert_eq!(u.build_hash, b.hash());
+        let plain = quantize(&ocw_sim::RiderSnapshot {
+            build_hash: 0,
+            ..snap
+        });
+        assert_eq!(encode(&u).len(), encode(&plain).len() + 6);
+        // Hello carries the start build.
+        let hello = v1::Hello {
+            parts: parts.clone(),
+            ..Default::default()
+        };
+        assert_eq!(
+            v1::Hello::decode(encode(&hello).as_slice()).unwrap().parts,
+            parts
+        );
+        // A bot's bike for the dev tools.
+        let dev = v1::DevCommand {
+            cmd: Some(v1::dev_command::Cmd::BotBike(v1::BotBike {
+                rider_id: 2,
+                bike_profile: "road".into(),
+                parts: parts.clone(),
+                power_w: Some(300.0),
+                lane_m: Some(-2.4),
+                name: "Stock".into(),
+            })),
+        };
+        assert_eq!(
+            v1::DevCommand::decode(encode(&dev).as_slice()).unwrap(),
+            dev
         );
     }
 }

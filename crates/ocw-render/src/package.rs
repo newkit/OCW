@@ -33,7 +33,9 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{
     Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
 };
-use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures::check_ready};
+#[cfg(not(target_arch = "wasm32"))]
+use bevy::tasks::block_on;
+use bevy::tasks::{AsyncComputeTaskPool, Task, futures::check_ready};
 use ocw_world::buildings::Building;
 use ocw_world::graph::RoadClass;
 use ocw_world::landuse::{LandClass, LandUseTile};
@@ -1331,18 +1333,43 @@ pub fn far_tiles_for<'a>(
         .collect()
 }
 
-fn build_task(set: &Arc<WorldSet>, (i, key): TileId, look: &TileLook) -> Task<Option<TileMeshes>> {
+fn build_task(set: &Arc<WorldSet>, id: TileId, look: &TileLook) -> Task<Option<TileMeshes>> {
     let set = set.clone();
     let look = look.clone();
-    AsyncComputeTaskPool::get().spawn(async move {
-        let pkg = set.members()[i].package()?.clone();
-        if set.has_seams() {
-            let keep = |q: [f64; 2]| set.draws(i, q);
-            build_tile_meshes_look(&pkg, key, Some(&keep), &look)
-        } else {
-            build_tile_meshes_look(&pkg, key, None, &look)
-        }
-    })
+    AsyncComputeTaskPool::get().spawn(async move { build_now(&set, id, &look) })
+}
+
+/// The meshes of a tile, built on this thread.
+fn build_now(set: &WorldSet, (i, key): TileId, look: &TileLook) -> Option<TileMeshes> {
+    let pkg = set.members()[i].package()?.clone();
+    if set.has_seams() {
+        let keep = |q: [f64; 2]| set.draws(i, q);
+        build_tile_meshes_look(&pkg, key, Some(&keep), look)
+    } else {
+        build_tile_meshes_look(&pkg, key, None, look)
+    }
+}
+
+/// An urgent tile (after a jump) in this frame: natively the frame waits
+/// for its task (they run in parallel); in the browser (spec §14 Phase 10
+/// B2) the task pool runs on this one thread, so waiting for it would
+/// never end – the tile is built right here instead.
+fn finish_now(
+    task: Task<Option<TileMeshes>>,
+    set: &WorldSet,
+    id: TileId,
+    look: &TileLook,
+) -> Option<TileMeshes> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = (set, id, look);
+        block_on(task)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        drop(task);
+        build_now(set, id, look)
+    }
 }
 
 /// Loads and drops neighbour tiles by the rider's distance (spec §2.2.2).
@@ -1498,7 +1525,7 @@ fn stream_tiles(
         let mut done = Vec::new();
         for id in urgent {
             if let Some(task) = streamer.building.remove(&id)
-                && let Some(meshes) = block_on(task)
+                && let Some(meshes) = finish_now(task, set, id, &look(id.0))
             {
                 done.push((id, meshes));
             }
@@ -2222,6 +2249,9 @@ mod tests {
             is_local: true,
             bike: Default::default(),
             look: None,
+            parts: Vec::new(),
+            crash: None,
+            wobble: 0.0,
         });
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))

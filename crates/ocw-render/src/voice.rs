@@ -25,6 +25,28 @@ pub struct VoiceHud {
     pub speaking: Vec<RiderId>,
     /// Their names, for the panel.
     pub speaking_names: Vec<String>,
+    /// The echo test (spec §7 *Echo bot*), while it is on.
+    pub echo: Option<EchoHud>,
+}
+
+/// The echo test's line: a hint and two level meters.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct EchoHud {
+    /// Near the Echo rider: "speak now".
+    pub near: bool,
+    /// "echo test - speak now", "Echo rider 120 m away", …
+    pub text: String,
+    /// The microphone and the echo as played (0 … 1, linear RMS).
+    pub input: f32,
+    pub echo: f32,
+}
+
+/// How full a level meter is drawn (0 … 1): −60 dBFS empty, 0 dBFS full.
+pub fn meter_fraction(level: f32) -> f32 {
+    if level <= 0.0 || !level.is_finite() {
+        return 0.0;
+    }
+    ((20.0 * level.log10() + 60.0) / 60.0).clamp(0.0, 1.0)
 }
 
 /// The panel's text lines (pure, tested).
@@ -66,6 +88,16 @@ struct MicLine;
 
 #[derive(Component)]
 struct StatusLine;
+
+#[derive(Component)]
+struct EchoLine;
+
+#[derive(Component)]
+struct EchoRow;
+
+/// The fill of a level meter: the input (false) or the echo (true).
+#[derive(Component)]
+struct MeterFill(bool);
 
 /// A marker above a talking rider's avatar.
 #[derive(Component)]
@@ -112,25 +144,116 @@ fn spawn_panel(mut commands: Commands) {
                 TextColor(Color::srgb(0.85, 0.85, 0.85)),
                 StatusLine,
             ));
+            p.spawn((
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    row_gap: px(2),
+                    display: Display::None,
+                    ..default()
+                },
+                EchoRow,
+            ))
+            .with_children(|e| {
+                e.spawn((
+                    Text::new(""),
+                    TextFont {
+                        font_size: 14.0.into(),
+                        ..default()
+                    },
+                    TextColor(LIVE),
+                    EchoLine,
+                ));
+                for (label, echo) in [("mic ", false), ("echo", true)] {
+                    e.spawn(Node {
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: px(6),
+                        ..default()
+                    })
+                    .with_children(|row| {
+                        row.spawn((
+                            Text::new(label),
+                            TextFont {
+                                font_size: 12.0.into(),
+                                ..default()
+                            },
+                            TextColor(Color::srgb(0.85, 0.85, 0.85)),
+                        ));
+                        row.spawn((
+                            Node {
+                                width: px(140),
+                                height: px(8),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.15)),
+                        ))
+                        .with_children(|bar| {
+                            bar.spawn((
+                                Node {
+                                    width: Val::Percent(0.0),
+                                    height: Val::Percent(100.0),
+                                    ..default()
+                                },
+                                BackgroundColor(if echo {
+                                    Color::srgb(0.4, 0.75, 1.0)
+                                } else {
+                                    LIVE
+                                }),
+                                MeterFill(echo),
+                            ));
+                        });
+                    });
+                }
+            });
         });
 }
 
 #[allow(clippy::type_complexity)] // a Bevy system
 fn update_panel(
     hud: Res<VoiceHud>,
-    mut panel: Query<&mut Node, With<Panel>>,
-    mut mic: Query<(&mut Text, &mut TextColor), (With<MicLine>, Without<StatusLine>)>,
-    mut status: Query<&mut Text, (With<StatusLine>, Without<MicLine>)>,
+    mut panel: Query<&mut Node, (With<Panel>, Without<EchoRow>, Without<MeterFill>)>,
+    mut mic: Query<
+        (&mut Text, &mut TextColor),
+        (With<MicLine>, Without<StatusLine>, Without<EchoLine>),
+    >,
+    mut status: Query<&mut Text, (With<StatusLine>, Without<MicLine>, Without<EchoLine>)>,
+    mut echo_text: Query<
+        (&mut Text, &mut TextColor),
+        (With<EchoLine>, Without<MicLine>, Without<StatusLine>),
+    >,
+    mut echo_row: Query<&mut Node, (With<EchoRow>, Without<Panel>, Without<MeterFill>)>,
+    mut fills: Query<(&mut Node, &MeterFill), (Without<Panel>, Without<EchoRow>)>,
 ) {
     if !hud.is_changed() {
         return;
     }
     for mut n in &mut panel {
-        n.display = if hud.visible {
+        n.display = if hud.visible || hud.echo.is_some() {
             Display::Flex
         } else {
             Display::None
         };
+    }
+    for mut n in &mut echo_row {
+        n.display = if hud.echo.is_some() {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
+    if let Some(e) = &hud.echo {
+        for (mut t, mut c) in &mut echo_text {
+            t.0 = e.text.clone();
+            c.0 = if e.near {
+                LIVE
+            } else {
+                Color::srgb(0.85, 0.85, 0.85)
+            };
+        }
+        for (mut n, m) in &mut fills {
+            let level = if m.0 { e.echo } else { e.input };
+            n.width = Val::Percent(100.0 * meter_fraction(level));
+        }
     }
     let (first, second) = lines(&hud);
     for (mut t, mut c) in &mut mic {
@@ -199,6 +322,16 @@ fn speaking_markers(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn meters_in_decibels() {
+        assert_eq!(meter_fraction(0.0), 0.0);
+        assert_eq!(meter_fraction(f32::NAN), 0.0);
+        assert_eq!(meter_fraction(1.0), 1.0);
+        assert!((meter_fraction(0.001) - 0.0).abs() < 1e-6, "-60 dB");
+        assert!((meter_fraction(0.0316) - 0.5).abs() < 0.01, "-30 dB");
+        assert!(meter_fraction(0.1) > meter_fraction(0.01));
+    }
 
     #[test]
     fn indicator_lines() {

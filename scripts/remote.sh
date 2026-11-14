@@ -16,6 +16,19 @@
 #   scripts/remote.sh MACHINE field KEY      print the machine's KEY from
 #                                            machines.toml (os, slots, …; for
 #                                            scripts: never log `host`)
+#   scripts/remote.sh MACHINE enabled        exit 0 if the machine is enabled
+#                                            for building, else print why not
+#                                            and exit 3 (no ssh)
+#   scripts/remote.sh MACHINE slots          print its effective build slots
+#
+# Machines are enabled/disabled for building and their build slots set in
+# the build dashboard (v2.66, spec §11.2): config/build-machines.toml
+# (git-ignored, written by tools/build-dashboard/build_machines.py; same
+# [[machine]] format as machines.toml, which stays untouched). `run` and
+# `sync` refuse a machine with `enabled = false` (exit 3) before anything is
+# copied; ssh, field, fetch and put stay allowed, and so do deploys:
+# scripts/deploy-test.sh sets OCW_REMOTE_DEPLOY=1 (kiosks on disabled
+# machines still get new builds). Its `slots` wins over machines.toml.
 #
 # On a branch other than main the remote checkout is REPO_PATH-BRANCH.
 #
@@ -36,12 +49,13 @@ cd "$(dirname "$0")/.."
 snap_dir=""
 trap 'if [ -n "$snap_dir" ]; then rm -rf "$snap_dir"; fi' EXIT
 
-machine=${1:?usage: remote.sh MACHINE sync|run|ssh|fetch|put|field ...}; shift
-action=${1:?usage: remote.sh MACHINE sync|run|ssh|fetch|put|field ...}; shift
+machine=${1:?usage: remote.sh MACHINE sync|run|ssh|fetch|put|field|enabled|slots ...}; shift
+action=${1:?usage: remote.sh MACHINE sync|run|ssh|fetch|put|field|enabled|slots ...}; shift
 
 # config/ is git-ignored, so another worktree uses the main checkout's copy.
-config_dir=config
-if [ ! -f "$config_dir/machines.toml" ]; then
+# OCW_REMOTE_CONFIG names another config directory (scripts/test-remote.sh).
+config_dir=${OCW_REMOTE_CONFIG:-config}
+if [ ! -f "$config_dir/machines.toml" ] && [ -z "${OCW_REMOTE_CONFIG:-}" ]; then
   common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
   [ -n "$common" ] && config_dir="$(dirname "$common")/config"
 fi
@@ -52,7 +66,7 @@ config_dir=$(cd "$config_dir" && pwd)
 conf=$config_dir/machines.toml
 
 # Minimal TOML lookup: key of the [[machine]] block with name = MACHINE,
-# falling back to [defaults].
+# falling back to [defaults]. `field KEY [FILE]` (default machines.toml).
 field() {
   awk -v want="$machine" -v key="$1" '
     /^\[\[machine\]\]/ { inm=1; ind=0; cur=""; next }
@@ -68,7 +82,28 @@ field() {
         if (ind && k==key) def=v
       }
     }
-    END { if (want in vals) print vals[want]; else print def }' "$conf"
+    END { if (want in vals) print vals[want]; else print def }' "${2:-$conf}"
+}
+
+# The dashboard's settings (see the top): `ofield KEY` from
+# build-machines.toml, empty when it or the key is missing; `ounesc`
+# undoes its string escapes (\u0023 for #, \" and \\).
+over=$config_dir/build-machines.toml
+ofield() { if [ -f "$over" ]; then field "$1" "$over"; fi; }
+ounesc() { local s=$1 b='\' q='"' h='#'; s=${s//"${b}u0023"/"$h"}; s=${s//"$b$q"/"$q"}; s=${s//"$b$b"/"$b"}; printf '%s' "$s"; }
+build_enabled=$(ofield enabled)
+build_reason=$(ounesc "$(ofield reason)")
+# `run` and `sync` on a disabled machine: refused (exit 3), unless a deploy.
+refuse_disabled() {
+  [ "$build_enabled" = false ] || return 0
+  local why=""
+  [ -n "$build_reason" ] && why=" ($build_reason)"
+  if [ "${OCW_REMOTE_DEPLOY:-0}" = 1 ]; then
+    echo "remote.sh: $machine is disabled for building$why; allowed for a deploy (OCW_REMOTE_DEPLOY=1)" >&2
+    return 0
+  fi
+  echo "remote.sh: $machine is disabled for building$why – enable it in the build dashboard" >&2
+  exit 3
 }
 
 host=$(field host); user=$(field user); port=$(field port)
@@ -213,45 +248,75 @@ sync_tree() {
 # A PowerShell script as an encoded command (no quoting issues).
 ps_encoded() { printf 'powershell -NoProfile -NonInteractive -EncodedCommand %s' "$(printf '%s' "$1" | iconv -f utf-8 -t utf-16le | base64 -w0)"; }
 
-# Windows sync state: $repo\.ocw-sync\manifest.tsv holds, per file sent,
-# its SHA-1, and the size and mtime (ticks) it got there. This prints
-# "sha<TAB>path" for the entries whose file is still unchanged there.
+# Windows sync state: $repo\.ocw-sync\manifest.tsv holds a header naming the
+# checkout ("# ocw-sync v2<TAB>REPO") and, per file sent, its SHA-1 and the
+# size and mtime (ticks) it got there. This prints "sha<TAB>path" for the
+# entries whose file still exists there, unchanged; a manifest without that
+# header (another checkout's, or the format before v2.94) counts as none.
 read -r -d '' win_manifest_ps <<'EOF' || true
 $r = @REPO@; $m = Join-Path $r '.ocw-sync\manifest.tsv'
 if (Test-Path -LiteralPath $m) {
-  foreach ($l in [IO.File]::ReadAllLines($m)) {
-    $p = $l.Split([char]9, 4); if ($p.Count -lt 4) { continue }
-    $fi = New-Object IO.FileInfo (Join-Path $r $p[3])
-    if ($fi.Exists -and $fi.Length -eq [int64]$p[1] -and $fi.LastWriteTimeUtc.Ticks -eq [int64]$p[2]) { [Console]::Out.WriteLine($p[0] + [char]9 + $p[3]) }
+  $ls = [IO.File]::ReadAllLines($m)
+  if ($ls.Count -gt 0 -and $ls[0] -eq ('# ocw-sync v2' + [char]9 + $r)) {
+    for ($i = 1; $i -lt $ls.Count; $i++) {
+      $p = $ls[$i].Split([char]9, 4); if ($p.Count -lt 4) { continue }
+      $fi = New-Object IO.FileInfo (Join-Path $r $p[3])
+      if ($fi.Exists -and $fi.Length -eq [int64]$p[1] -and $fi.LastWriteTimeUtc.Ticks -eq [int64]$p[2]) { [Console]::Out.WriteLine($p[0] + [char]9 + $p[3]) }
+    }
   }
 }
 EOF
-# After extraction: the new manifest from .ocw-sync\incoming.tsv (sha<TAB>path
-# of every file of the snapshot) and the files' size and mtime there now.
+# After a successful extraction: the new manifest from .ocw-sync\incoming.tsv
+# (sha<TAB>path of every file of the snapshot) and the files' size and mtime
+# there now. Files of the snapshot that are not there are left out and
+# reported ("@@ocw-sync missing N: ..."); sync_tree_windows then sends the
+# whole tree once.
 read -r -d '' win_manifest_write_ps <<'EOF' || true
 $r = @REPO@; $d = Join-Path $r '.ocw-sync'; $in = Join-Path $d 'incoming.tsv'
-$sb = New-Object Text.StringBuilder
+if (-not (Test-Path -LiteralPath $in)) { [Console]::Out.WriteLine('@@ocw-sync tar failed: no incoming.tsv'); exit 1 }
+$sb = New-Object Text.StringBuilder; [void]$sb.Append('# ocw-sync v2' + [char]9 + $r + [char]10)
+$miss = New-Object Collections.Generic.List[string]
 foreach ($l in [IO.File]::ReadAllLines($in)) {
   $p = $l.Split([char]9, 2); if ($p.Count -lt 2) { continue }
   $fi = New-Object IO.FileInfo (Join-Path $r $p[1])
-  if ($fi.Exists) { [void]$sb.Append($p[0] + [char]9 + $fi.Length + [char]9 + $fi.LastWriteTimeUtc.Ticks + [char]9 + $p[1] + [char]10) }
+  if ($fi.Exists) { [void]$sb.Append($p[0] + [char]9 + $fi.Length + [char]9 + $fi.LastWriteTimeUtc.Ticks + [char]9 + $p[1] + [char]10) } else { $miss.Add($p[1]) }
 }
 [IO.File]::WriteAllText((Join-Path $d 'manifest.tsv'), $sb.ToString()); Remove-Item -LiteralPath $in
+if ($miss.Count -gt 0) { [Console]::Out.WriteLine('@@ocw-sync missing ' + $miss.Count + ': ' + (@($miss | Select-Object -First 5) -join ' ')) }
 EOF
 
 # The files of the snapshot whose content is not (known to be) on the
 # machine: `win_changed VALID HASHES` prints the paths of the HASHES lines
 # (sha<TAB>path) that are not in VALID (the same format, from the machine).
-win_changed() { awk -F '\t' 'NR == FNR { v[$0] = 1; next } !($0 in v) { print $2 }' "$1" "$2"; }
+# VALID is read with getline: the `NR == FNR` idiom took HASHES for VALID
+# when VALID was empty (a new checkout), so nothing was sent (v2.94).
+win_changed() { awk -F '\t' -v vf="$1" 'BEGIN { while ((getline l < vf) > 0) v[l] = 1; close(vf) } !($0 in v) { print $2 }' "$2"; }
+
+# `win_send LIST`: sends the snapshot's files in LIST as a tar stream and
+# writes the manifest there – only if tar.exe succeeded (else incoming.tsv
+# is removed and the manifest stays as it was). Prints the machine's
+# "@@ocw-sync ..." report lines; fails when the extraction failed.
+win_send() {
+  local out rc=0
+  out=$( (cd "$snap_dir/tree" && tar -cf - -T "$1") |
+    "${SSH[@]}" "$target" "tar -xmf - -C $(psq "$repo"); if (\$LASTEXITCODE -ne 0) { '@@ocw-sync tar failed: exit ' + \$LASTEXITCODE; Remove-Item -Force -ErrorAction SilentlyContinue -LiteralPath (Join-Path $(psq "$repo") '.ocw-sync\\incoming.tsv'); exit 1 }; $(ps_encoded "${win_manifest_write_ps//@REPO@/"$(psq "$repo")"}")" |
+    tr -d '\r') || rc=$?
+  printf '%s\n' "$out" | grep '^@@ocw-sync' || true
+  case "$out" in *"@@ocw-sync tar failed"*) return 1 ;; esac
+  return "$rc"
+}
 
 # Windows has no rsync; its built-in tar.exe unpacks a tar stream. Only
-# files whose content differs from what the manifest says is there are
-# sent, and unpacked with -m (mtime = now) for the same reason as
-# rsync_sync_opts. The first sync into a checkout sends everything (it has
-# no manifest yet). Files deleted here are removed there with Remove-Item.
+# files whose content differs from what the manifest says is there (same
+# size and mtime, the file still existing) are sent, and unpacked with -m
+# (mtime = now) for the same reason as rsync_sync_opts. The first sync into
+# a checkout sends everything (it has no manifest yet). Files deleted here
+# are removed there with Remove-Item. Safety net (v2.94): when files of the
+# snapshot (e.g. Cargo.toml, rust-toolchain.toml) are missing there after
+# the sync, the whole tree is sent once more; still missing = failed sync.
 sync_tree_windows() {
-  "${SSH[@]}" "$target" "New-Item -ItemType Directory -Force -Path $(psq "$repo") | Out-Null"
-  local gone=() f list
+  "${SSH[@]}" "$target" "New-Item -ItemType Directory -Force -Path $(psq "$repo") | Out-Null" || return 1
+  local gone=() f list out
   while IFS= read -r f; do [ -e "$snap_dir/tree/$f" ] || gone+=("$(psq "$f")"); done <"$snap_dir/list"
   if [ ${#gone[@]} -gt 0 ]; then
     list=$(IFS=,; echo "${gone[*]}")
@@ -264,8 +329,15 @@ sync_tree_windows() {
   cp "$snap_dir/hashes" "$snap_dir/tree/.ocw-sync/incoming.tsv"
   { win_changed "$snap_dir/valid" "$snap_dir/hashes"; echo .ocw-sync/incoming.tsv; } >"$snap_dir/send"
   echo "remote.sh: sending $(($(wc -l <"$snap_dir/send") - 1)) changed of $(wc -l <"$snap_dir/present") files" >&2
-  (cd "$snap_dir/tree" && tar -cf - -T "$snap_dir/send") |
-    "${SSH[@]}" "$target" "tar -xmf - -C $(psq "$repo"); $(ps_encoded "${win_manifest_write_ps//@REPO@/"$(psq "$repo")"}")"
+  out=$(win_send "$snap_dir/send") || { echo "remote.sh: unpacking the tree there failed${out:+ ($out)}; manifest not updated" >&2; return 1; }
+  case "$out" in
+    *"@@ocw-sync missing"*)
+      echo "remote.sh: ${out#*@@ocw-sync } after the sync: sending the whole tree" >&2
+      { cat "$snap_dir/present"; echo .ocw-sync/incoming.tsv; } >"$snap_dir/send"
+      out=$(win_send "$snap_dir/send") || { echo "remote.sh: unpacking the tree there failed${out:+ ($out)}" >&2; return 1; }
+      case "$out" in *"@@ocw-sync missing"*) echo "remote.sh: still ${out#*@@ocw-sync } after a full send" >&2; return 1 ;; esac
+      ;;
+  esac
 }
 
 # Dev profile change (spec §11.2, v2.63): when the [profile.dev] /
@@ -350,8 +422,12 @@ sync_watch() {
 
 # Build slots: at most N commands run at once on a machine, because many
 # parallel builds of the Bevy app (~4-5 GB each) run it out of memory.
-# N = OCW_REMOTE_SLOTS, else the machine's `slots` in machines.toml (or
+# N = OCW_REMOTE_SLOTS, else the machine's `slots` in build-machines.toml
+# (set in the build dashboard), else its `slots` in machines.toml (or
 # [defaults] slots), else per OS: linux 2, windows 1, macos 1. 0 = no limit.
+# A changed N applies to runs started afterwards: they try slots 1..N, while
+# a running one keeps the slot it holds (also one above a lowered N; its
+# lock file or directory just stays unused once it ends).
 # A run that finds all slots taken marks itself "waiting" and polls every
 # second, taking whichever slot frees first – in order of arrival: while an
 # older run (by its task marker's start, then PID) is still waiting, a
@@ -362,9 +438,11 @@ sync_watch() {
 # /tmp/ocw-build-slot-N.d holding the owner's PID (taken over when that PID
 # is gone); Windows: %TEMP%\ocw-tasks\slot-N.lock opened exclusively.
 case "$os" in windows | macos) default_slots=1 ;; *) default_slots=2 ;; esac
-slots=${OCW_REMOTE_SLOTS:-$(field slots)}
-slots=${slots:-$default_slots}
-[ "$slots" -ge 0 ] 2>/dev/null || slots=$default_slots
+uint_or_empty() { case "$1" in '' | *[!0-9]*) ;; *) printf '%s' "$1" ;; esac; }
+over_slots=$(uint_or_empty "$(ofield slots)")
+conf_slots=$(uint_or_empty "$(field slots)")
+slots=$(uint_or_empty "${OCW_REMOTE_SLOTS:-}")
+slots=${slots:-${over_slots:-${conf_slots:-$default_slots}}}
 slot_list=""
 for ((i = 1; i <= slots; i++)); do slot_list+="$i "; done
 checkout_dir=${repo##*[\\/]}
@@ -525,8 +603,16 @@ logged() {
 }
 
 case "$action" in
-  sync) snapshot_tree; sync_tree ;;
+  sync) refuse_disabled; snapshot_tree; sync_tree ;;
+  enabled)
+    if [ "$build_enabled" = false ]; then
+      echo "$machine is disabled for building${build_reason:+ ($build_reason)}"
+      exit 3
+    fi
+    echo "$machine is enabled for building" ;;
+  slots) echo "$slots" ;;
   run)
+    refuse_disabled
     log_start
     # The tree as it is now (see snapshot_tree); synced once the run has its
     # build slot (with_sync, sync_watch).

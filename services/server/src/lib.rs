@@ -4,12 +4,22 @@
 //! protocol messages. The same type runs
 //! - inside the desktop app as the **local server** ([`local::LocalServer`]), and
 //! - as the headless **remote server** binary (`ocw-server`), reachable over
-//!   QUIC with [`net`] (`--listen`, spec §6.2).
+//!   QUIC with [`net`] (`--listen`, spec §6.2), and from the browser
+//!   over WebTransport (`--webtransport`, spec §14 Phase 10 B3).
 
 pub mod local;
+// QUIC (spec §6.2) and world packages from disk: native only; the browser
+// app (spec §14 Phase 10) runs the server in its frame loop.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod net;
 pub mod stats;
+// Snapshot timing at a client (interval, jitter, age; spec §14 Phase 10 B3).
+pub mod timing;
 pub mod voice;
+// The wire rules without I/O (frames, datagram rules, the client's link
+// state machine): shared with the browser app's WebTransport client.
+pub mod wire;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod worlds;
 
 use std::collections::BTreeMap;
@@ -80,14 +90,37 @@ pub struct ServerConfig {
     /// The real UTC instant (Unix ms) at the session's start; `None`: the
     /// system clock when the server is created (tests fix it).
     pub real_epoch_ms: Option<i64>,
+    /// Riders may put the Echo rider on the road ([`v1::EchoRequest`], the
+    /// echo test of spec §7): the local servers, `ocw-server --echo-bot`.
+    pub allow_echo_bot: bool,
+    /// Every session starts with the Echo rider at the start
+    /// (`ocw-server --echo-bot`).
+    pub echo_bot_at_start: bool,
+    /// `ride.collisions` of the session (spec §14 Phase 12A): the local
+    /// servers follow the rider's setting (on by default, Q1), `ocw-server
+    /// --collisions on|off`. `Default` keeps it off (tests, embeddings that
+    /// decide themselves).
+    pub collisions: bool,
+    /// `ride.chaotic_bots` (Phase 12 Q3, off by default).
+    pub chaotic_bots: bool,
+    /// Who may change them ([`v1::RulesRequest`]): the single player on
+    /// the local servers, the host of a shared session (the default),
+    /// nobody when the organizer fixed them.
+    pub collision_access: ClockAccess,
 }
 
 pub use ocw_protocol::ClockAccess;
 
 /// The system's real UTC instant (Unix ms).
 pub fn unix_now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    // std's clock panics on wasm32-unknown-unknown; web-time asks the
+    // browser (`Date.now()`).
+    #[cfg(not(target_arch = "wasm32"))]
+    use std::time::{SystemTime, UNIX_EPOCH};
+    #[cfg(target_arch = "wasm32")]
+    use web_time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as i64)
 }
 
@@ -425,6 +458,9 @@ impl GameServer {
                     brake: sample.brake.unwrap_or(false),
                 };
                 self.session.apply_input(rider, sample.seq, input);
+                // Virtual power earns no hearts (spec §14 Phase 4, 4E).
+                self.session
+                    .set_virtual_power(rider, sample.virtual_power.unwrap_or(false));
                 None
             }
             (C::Dev(cmd), Some(rider)) => Some(self.dev_command(rider, cmd)),
@@ -445,6 +481,9 @@ impl GameServer {
                 None
             }
             (C::Voice(req), Some(rider)) => Some(S::Voice(self.voice_grant(conn, rider, &req))),
+            (C::Echo(req), Some(rider)) => Some(self.echo_request(rider, req)),
+            (C::Rules(req), Some(rider)) => Some(self.rules_request(rider, req)),
+            (C::BikeChange(change), Some(rider)) => Some(self.bike_change(rider, &change)),
             (C::Turn(turn), Some(rider)) => {
                 if let Some(net) = self.session.network() {
                     let choice = ocw_protocol::turn_choice(&turn, net);
@@ -496,6 +535,16 @@ impl GameServer {
         if joined && self.session.event().is_some() {
             out.push(encode(&server_message(S::Event(self.event_state()))));
         }
+        if joined {
+            let builds: Vec<RiderId> = self
+                .session
+                .snapshot()
+                .iter()
+                .filter(|r| r.build_hash != 0)
+                .map(|r| r.id)
+                .collect();
+            out.extend(builds.into_iter().map(|id| self.build_message(id)));
+        }
         if joined && let Some(net) = self.session.network() {
             out.extend(
                 self.session
@@ -530,6 +579,12 @@ impl GameServer {
         }
         let profile = physics_profile(&hello);
         let rider = self.session.add_rider(hello.display_name.clone(), profile);
+        // The bike's parts (spec §14 Phase 4, 4G): the server's own values.
+        if !hello.parts.is_empty() {
+            let build =
+                ocw_sim::build::build(ocw_sim::PartTable::shipped(), profile.bike, &hello.parts);
+            self.session.set_bike(rider, profile, Some(build));
+        }
         // Cosmetic only (§2.5): validated, then passed through.
         if let Some(look) = &hello.look {
             self.session.set_look(rider, look.into());
@@ -556,7 +611,131 @@ impl GameServer {
             clock,
             world_access: ocw_protocol::access_to_wire(self.config.world_access),
             god_access: ocw_protocol::access_to_wire(self.config.god_access),
+            echo_bot: self.config.allow_echo_bot,
+            collisions: ocw_protocol::collision_mode_to_wire(self.session.collision_mode()),
+            collision_access: ocw_protocol::access_to_wire(self.config.collision_access),
+            chaotic_bots: self.session.chaotic_bots(),
         })
+    }
+
+    /// The collision rules (spec §14 Phase 12A): who may change them is
+    /// checked here (`collision_access`); everyone sees the new rules in
+    /// the next snapshot.
+    fn rules_request(&mut self, rider: RiderId, req: v1::RulesRequest) -> S {
+        let result = |ok: bool, message: String| S::DevResult(v1::DevCommandResult { ok, message });
+        if !self
+            .config
+            .collision_access
+            .allows(Some(rider), self.host())
+        {
+            return result(
+                false,
+                match self.config.collision_access {
+                    ClockAccess::Nobody => "the organizer fixed the collision rules".into(),
+                    _ => "only the host may change the collision rules".into(),
+                },
+            );
+        }
+        let mut said = Vec::new();
+        if let Some(on) = req.collisions {
+            self.session.set_collisions(on);
+            self.config.collisions = on;
+            said.push(format!("collisions {}", if on { "on" } else { "off" }));
+        }
+        if let Some(on) = req.chaotic_bots {
+            self.session.set_chaotic_bots(on);
+            self.config.chaotic_bots = on;
+            said.push(format!("chaotic bots {}", if on { "on" } else { "off" }));
+        }
+        if said.is_empty() {
+            return result(false, "empty rules request".into());
+        }
+        let mode = self.session.collision_mode();
+        if req.collisions == Some(true) && mode == ocw_sim::collide::Mode::Soft {
+            said.push("soft bumps only in this group ride".into());
+        }
+        result(true, said.join(", "))
+    }
+
+    /// The workshop's bike (spec §14 Phase 4, 4A, Q1, 4G): applied at once
+    /// in free ride and outside events; an entrant of an event that is not
+    /// over keeps the bike it started with and gets this one when the event
+    /// ends (from the next start). The profile comes from the server's own
+    /// table (unknown id: the default road profile) with the rider's
+    /// weight, the parts' physics from the server's catalogue copy
+    /// ([`ocw_sim::build`]: real weights, class steps, the build caps;
+    /// unknown or unfitting ids count as base parts; ownership is checked
+    /// with accounts, Phase 5); the look is cosmetic and applies at once.
+    /// Everyone learns the new build from a `RiderBuild` once it applies.
+    fn bike_change(&mut self, rider: RiderId, change: &v1::BikeChange) -> S {
+        let result = |ok: bool, message: String| S::DevResult(v1::DevCommandResult { ok, message });
+        let bike = ocw_core::ProfileId::from_wire(Some(&change.bike_profile));
+        let kg = self
+            .session
+            .base_profile(rider)
+            .map_or(ocw_core::RiderProfile::default().rider_mass_kg, |p| {
+                p.rider_mass_kg
+            });
+        let build = ocw_sim::build::build(ocw_sim::PartTable::shipped(), bike, &change.parts);
+        let effect = build_line(&build);
+        let applied = self.session.set_bike(
+            rider,
+            ocw_core::RiderProfile::curated(bike, kg),
+            Some(build),
+        );
+        if let Some(look) = &change.look {
+            self.session.set_look(rider, look.into());
+        }
+        tracing::info!(%rider, bike = bike.id(), parts = change.parts.len(), ?applied, "bike changed");
+        match applied {
+            Some(ocw_sim::BikeApplied::Now) => result(
+                true,
+                format!("riding the {} ({}): {effect}", bike.name(), change.bike_id),
+            ),
+            Some(ocw_sim::BikeApplied::AtNextStart) => result(
+                true,
+                format!(
+                    "in an event: the {} ({effect}) applies when it is over, from the next start",
+                    bike.name()
+                ),
+            ),
+            None => result(false, "no rider".into()),
+        }
+    }
+
+    /// The echo test (spec §7 *Echo bot*): the Echo rider on the road
+    /// (ahead of the asker) or away.
+    fn echo_request(&mut self, rider: RiderId, req: v1::EchoRequest) -> S {
+        let result = |ok: bool, message: String| S::DevResult(v1::DevCommandResult { ok, message });
+        if !self.config.allow_echo_bot {
+            return result(
+                false,
+                "this server has no Echo rider (ocw-server --echo-bot)".into(),
+            );
+        }
+        if !req.on {
+            return if self.session.remove_echo() {
+                tracing::info!(%rider, "echo rider removed");
+                result(true, "Echo rider gone".into())
+            } else {
+                result(true, "no Echo rider on the road".into())
+            };
+        }
+        let existed = self.session.echo_rider().is_some();
+        let near = (req.here || !existed).then_some(rider);
+        let id = self.session.place_echo(ECHO_NAME, near);
+        tracing::info!(%rider, echo = %id, here = req.here, "echo rider placed");
+        result(
+            true,
+            if near.is_some() {
+                format!(
+                    "Echo rider {:.0} m ahead: ride to it and speak",
+                    ocw_sim::session::ECHO_AHEAD_M
+                )
+            } else {
+                "Echo rider on the road".into()
+            },
+        )
     }
 
     /// A god-mode request from `rider` (spec §14 Phase 13): who may is
@@ -664,8 +843,54 @@ impl GameServer {
                     result(false, "only in free ride".into())
                 }
             }
+            Some(v1::dev_command::Cmd::Stage(st)) => {
+                let what = if st.crash {
+                    ocw_sim::session::Stage::Crash
+                } else {
+                    ocw_sim::session::Stage::Bump
+                };
+                match self.session.stage(rider, what) {
+                    Ok(m) => result(true, m),
+                    Err(e) => result(false, e),
+                }
+            }
+            Some(v1::dev_command::Cmd::BotBike(b)) => match self.bot_bike(&b) {
+                Ok(m) => result(true, m),
+                Err(e) => result(false, e),
+            },
             None => result(false, "empty dev command".into()),
         }
+    }
+
+    /// `dev.bot_bike` (spec §14 Phase 4, W3): a bot's bike, steady power
+    /// and lane, to compare a stock and an upgraded bike side by side.
+    fn bot_bike(&mut self, b: &v1::BotBike) -> Result<String, String> {
+        let id = RiderId(b.rider_id);
+        if !self.session.bots().contains(&id) {
+            return Err(format!("{id} is no bot of this session"));
+        }
+        let base = self.session.base_profile(id).ok_or("no such rider")?;
+        let bike = if b.bike_profile.trim().is_empty() {
+            base.bike
+        } else {
+            ocw_core::ProfileId::parse(&b.bike_profile)
+                .ok_or_else(|| format!("unknown bike profile {:?}", b.bike_profile))?
+        };
+        let profile = ocw_core::RiderProfile::curated(bike, base.rider_mass_kg);
+        let build = ocw_sim::build::build(ocw_sim::PartTable::shipped(), bike, &b.parts);
+        let effect = build_line(&build);
+        self.session.set_bike(id, profile, Some(build));
+        if !b.name.trim().is_empty() {
+            self.session.rename(id, b.name.trim());
+        }
+        if let Some(w) = b.power_w {
+            self.session.set_bot_power(id, f64::from(w), true);
+        }
+        if let Some(l) = b.lane_m {
+            self.session.set_bot_lane(id, f64::from(l));
+        }
+        tracing::info!(%id, bike = bike.id(), parts = b.parts.len(), "bot bike set");
+        Ok(format!("{id}: {} – {effect}", bike.name()))
     }
 
     /// A voice token for the rider of `conn` (spec §7), or why not.
@@ -746,7 +971,14 @@ impl GameServer {
                         add_numbered_bot(&mut self.session, i);
                     }
                 }
-                match self.session.start_event(spec) {
+                let organiser = start.collisions.map(ocw_protocol::collision_mode_from_wire);
+                let physics = ocw_protocol::event_physics(&start);
+                let started = self.session.start_event(spec).map(|e| e.id);
+                if started.is_ok() {
+                    self.session.set_event_collisions(organiser);
+                    self.session.set_event_physics(physics);
+                }
+                match started.map(|_| self.session.event().expect("just started")) {
                     Ok(ev) => {
                         let what = match ev.kind {
                             EventKind::GroupRide { target_w } => {
@@ -762,9 +994,11 @@ impl GameServer {
                         result(
                             true,
                             format!(
-                                "{what}, {} rider{}: start in {:.0} s",
+                                "{what}, {} rider{}, {} mode ({}): start in {:.0} s",
                                 ev.entrants.len(),
                                 if ev.entrants.len() == 1 { "" } else { "s" },
+                                ev.physics.name(),
+                                ev.physics.describe(),
                                 ocw_sim::event::COUNTDOWN_S
                             ),
                         )
@@ -778,11 +1012,15 @@ impl GameServer {
 
     /// The event state to send now.
     fn event_state(&self) -> v1::EventState {
-        ocw_protocol::event_state(
+        let mut e = ocw_protocol::event_state(
             self.session.event(),
             &self.session.event_standings(),
             self.session.tick(),
-        )
+        );
+        if self.session.event().is_some() {
+            e.collisions = ocw_protocol::collision_mode_to_wire(self.session.collision_mode());
+        }
+        e
     }
 
     /// Advances one physics tick. Returns the encoded messages to broadcast
@@ -802,6 +1040,10 @@ impl GameServer {
         if changed || live || std::mem::take(&mut self.event_dirty) {
             out.push(encode(&server_message(S::Event(self.event_state()))));
         }
+        // Bike builds: reliable, once per change (spec §14 Phase 4, 4G).
+        for id in self.session.take_build_changes() {
+            out.push(self.build_message(id));
+        }
         if let Some(net) = self.session.network().cloned() {
             for c in self.session.take_path_changes() {
                 out.push(encode(&server_message(S::Path(ocw_protocol::path_update(
@@ -816,16 +1058,23 @@ impl GameServer {
         {
             return out;
         }
+        let echo = self.session.echo_rider();
         let snapshot = v1::Snapshot {
             server_tick: self.session.tick(),
             riders: self
                 .session
                 .snapshot()
                 .iter()
-                .map(ocw_protocol::quantize)
+                .map(|r| v1::RiderUpdate {
+                    echo: Some(r.id) == echo,
+                    hearts: self.session.hearts(r.id),
+                    ..ocw_protocol::quantize(r)
+                })
                 .collect(),
             human_riders: self.riders.len() as u32,
             clock: Some(self.clock_message()),
+            collisions: ocw_protocol::collision_mode_to_wire(self.session.collision_mode()),
+            chaotic_bots: self.session.chaotic_bots(),
         };
         out.push(encode(&server_message(S::Snapshot(snapshot))));
         out
@@ -834,6 +1083,26 @@ impl GameServer {
     pub fn connections(&self) -> impl Iterator<Item = ConnectionId> + '_ {
         self.riders.keys().copied()
     }
+
+    /// The encoded `RiderBuild` of rider `id`.
+    fn build_message(&self, id: RiderId) -> Vec<u8> {
+        let profile = self
+            .session
+            .base_profile(id)
+            .map_or_else(Default::default, |p| p.bike);
+        encode(&server_message(S::RiderBuild(ocw_protocol::rider_build(
+            id,
+            profile,
+            self.session.rider_build(id),
+        ))))
+    }
+}
+
+/// "+1.2 % flat, +0.9 % at 6 %, 7.4 kg" – a build's effect against the
+/// profile's stock bike (4G).
+pub fn build_line(b: &ocw_sim::Build) -> String {
+    let e = b.effect_from(&ocw_sim::Build::stock(b.profile));
+    format!("{}, {:.1} kg", e.line(), b.params.bike_mass_kg)
 }
 
 /// A new session on `course` with the configured bots.
@@ -846,8 +1115,16 @@ fn new_session(course: Course, config: &ServerConfig) -> Session {
     for i in 0..config.bots {
         add_numbered_bot(&mut session, i);
     }
+    session.set_collisions(config.collisions);
+    session.set_chaotic_bots(config.chaotic_bots);
+    if config.allow_echo_bot && config.echo_bot_at_start {
+        session.place_echo(ECHO_NAME, None);
+    }
     session
 }
+
+/// The Echo rider's name tag (spec §7 *Echo bot*).
+pub const ECHO_NAME: &str = "Echo";
 
 /// The physics profile of a joining rider (spec §2.5, §3.2.1): the
 /// curated profile the hello names (`bike_profile`; unknown or absent:
@@ -882,6 +1159,7 @@ mod tests {
             rider_weight_kg: None,
             bike_profile: None,
             look: None,
+            parts: Vec::new(),
         })))
     }
 
@@ -897,6 +1175,7 @@ mod tests {
                 rider_weight_kg: weight,
                 bike_profile: None,
                 look: None,
+                parts: Vec::new(),
             }))),
         );
         match decode_server(&reply[0]).unwrap() {
@@ -1316,6 +1595,7 @@ mod tests {
             cadence_rpm: None,
             heart_rate_bpm: None,
             brake: None,
+            virtual_power: None,
         })))
     }
 
@@ -1780,6 +2060,84 @@ mod tests {
         )))
     }
 
+    /// The echo test's rider (spec §7 *Echo bot*): placed on request
+    /// ahead of the asker, marked in the snapshots, not a human rider;
+    /// refused where the server does not allow it.
+    #[test]
+    fn echo_rider_on_request() {
+        let snapshot = |server: &mut GameServer| {
+            (0..TICKS_PER_BROADCAST)
+                .flat_map(|_| server.tick())
+                .find_map(|b| match decode_server(&b) {
+                    Ok(S::Snapshot(s)) => Some(s),
+                    _ => None,
+                })
+                .unwrap()
+        };
+        let ask = |server: &mut GameServer, conn, on, here| {
+            let r = server.handle(conn, &encode(&ocw_protocol::echo_request(on, here)));
+            match decode_server(&r[0]).unwrap() {
+                S::DevResult(d) => d,
+                other => panic!("{other:?}"),
+            }
+        };
+        let mut server = GameServer::new(
+            Route::test_loop(),
+            ServerConfig {
+                bots: 1,
+                allow_echo_bot: true,
+                ..Default::default()
+            },
+        );
+        let conn = server.connect();
+        let welcome = server.handle(conn, &hello(PROTOCOL_VERSION));
+        let S::Welcome(w) = decode_server(&welcome[0]).unwrap() else {
+            panic!("no welcome")
+        };
+        assert!(w.echo_bot);
+        assert_eq!(ocw_protocol::echo_rider(&snapshot(&mut server)), None);
+        let r = ask(&mut server, conn, true, false);
+        assert!(r.ok && r.message.contains("ahead"), "{r:?}");
+        let snap = snapshot(&mut server);
+        let echo = ocw_protocol::echo_rider(&snap).expect("an Echo rider");
+        let me = snap
+            .riders
+            .iter()
+            .find(|u| u.rider_id == w.rider_id)
+            .unwrap();
+        let e = snap.riders.iter().find(|u| u.rider_id == echo.0).unwrap();
+        assert_eq!(e.display_name, ECHO_NAME);
+        assert!(e.distance_cm > me.distance_cm, "ahead of the asker");
+        assert_eq!(snap.riders.iter().filter(|u| u.echo).count(), 1);
+        assert_eq!(snap.human_riders, 1, "not a human rider");
+        // Asked again (not "here"): it stays; "here" moves it.
+        let at = e.distance_cm;
+        ask(&mut server, conn, true, false);
+        let snap = snapshot(&mut server);
+        let e = snap.riders.iter().find(|u| u.echo).unwrap();
+        assert_eq!(e.distance_cm, at);
+        assert_eq!(e.rider_id, echo.0, "one Echo rider");
+        assert!(ask(&mut server, conn, false, false).ok);
+        assert_eq!(ocw_protocol::echo_rider(&snapshot(&mut server)), None);
+        // Not allowed: refused.
+        let mut server = local(0);
+        server.config.allow_echo_bot = false;
+        let conn = server.connect();
+        server.handle(conn, &hello(PROTOCOL_VERSION));
+        let r = ask(&mut server, conn, true, false);
+        assert!(!r.ok && r.message.contains("--echo-bot"));
+        // `ocw-server --echo-bot`: one at the start of the session.
+        let mut server = GameServer::new(
+            Route::test_loop(),
+            ServerConfig {
+                allow_echo_bot: true,
+                echo_bot_at_start: true,
+                ..Default::default()
+            },
+        );
+        assert!(ocw_protocol::echo_rider(&snapshot(&mut server)).is_some());
+    }
+
     fn local(bots: u32) -> GameServer {
         GameServer::new(
             Route::test_loop(),
@@ -2104,5 +2462,445 @@ mod tests {
         assert_eq!(server.session().god(rider).unwrap().pose.pos, far.pos);
         let r = god_result(&mut server, conn, ocw_protocol::god_leave(true, 0.0, 0.0));
         assert!(r.ok && r.fly_back, "{r:?}");
+    }
+
+    /// Collision rules (spec §14 Phase 12A): in the welcome and the
+    /// snapshots; the host (here: anyone on a local server) changes them,
+    /// others may not on a shared server.
+    #[test]
+    fn collision_rules_travel_and_only_the_host_changes_them() {
+        let mut server = GameServer::new(
+            Route::test_loop(),
+            ServerConfig {
+                collisions: true,
+                ..Default::default()
+            },
+        );
+        let (host, w) = join(&mut server);
+        assert_eq!(
+            ocw_protocol::collision_mode_from_wire(w.collisions),
+            ocw_sim::collide::Mode::Full
+        );
+        assert!(!w.chaotic_bots);
+        assert_eq!(
+            ocw_protocol::access_from_wire(w.collision_access),
+            ClockAccess::Host
+        );
+        let (guest, _) = join(&mut server);
+        let ask = |server: &mut GameServer, conn, on: bool| {
+            let reply = server.handle(
+                conn,
+                &encode(&ocw_protocol::rules_request(Some(on), Some(on))),
+            );
+            match decode_server(&reply[0]).unwrap() {
+                S::DevResult(r) => (r.ok, r.message),
+                other => panic!("{other:?}"),
+            }
+        };
+        let (ok, msg) = ask(&mut server, guest, false);
+        assert!(!ok && msg.contains("host"), "{msg}");
+        let (ok, msg) = ask(&mut server, host, false);
+        assert!(ok && msg.contains("collisions off"), "{msg}");
+        let reply = server.handle(
+            host,
+            &encode(&ocw_protocol::rules_request(None, Some(true))),
+        );
+        assert!(
+            matches!(decode_server(&reply[0]).unwrap(), S::DevResult(r) if r.ok && r.message == "chaotic bots on")
+        );
+        let snap = next_snapshot(&mut server);
+        assert_eq!(
+            ocw_protocol::collision_mode_from_wire(snap.collisions),
+            ocw_sim::collide::Mode::Off
+        );
+        assert!(snap.chaotic_bots);
+        // A world switch keeps the rules.
+        server.switch_world(Route::test_loop(), v1::WorldChange::default());
+        assert!(!server.session().collisions_setting());
+        assert!(server.session().chaotic_bots());
+    }
+
+    /// A staged crash (`dev.crash`, spec §14 Phase 12H): the crash state
+    /// reaches the snapshots, the event info names the model.
+    #[test]
+    fn a_staged_crash_reaches_the_snapshots() {
+        let mut server = GameServer::new(Route::test_loop(), crate::local::local_config(3, 500.0));
+        let (conn, rider) = joined(&mut server);
+        server.handle(conn, &sample(1, 250.0));
+        for _ in 0..400 {
+            server.tick();
+        }
+        let reply = server.handle(conn, &encode(&ocw_protocol::stage_contact(true)));
+        match decode_server(&reply[0]).unwrap() {
+            S::DevResult(r) => assert!(r.ok, "{}", r.message),
+            other => panic!("{other:?}"),
+        }
+        let mut seen = None;
+        for _ in 0..4 {
+            let snap = next_snapshot(&mut server);
+            let me = snap.riders.iter().find(|u| u.rider_id == rider.0).unwrap();
+            if let Some(c) = ocw_protocol::rider_crash(me) {
+                seen = Some(c);
+                break;
+            }
+        }
+        let c = seen.expect("the crash is in a snapshot");
+        assert_eq!(c.kind, ocw_sim::collide::ContactKind::WheelTouch);
+        assert!(c.by.is_some());
+        // Remote servers refuse staging (dev commands are local only).
+        let mut remote = GameServer::new(
+            Route::test_loop(),
+            ServerConfig {
+                collisions: true,
+                bots: 2,
+                ..Default::default()
+            },
+        );
+        let (conn, _) = joined(&mut remote);
+        let reply = remote.handle(conn, &encode(&ocw_protocol::stage_contact(false)));
+        match decode_server(&reply[0]).unwrap() {
+            S::DevResult(r) => assert!(!r.ok),
+            other => panic!("{other:?}"),
+        }
+        // Group rides: soft bumps only, in the event's state.
+        let mut server = GameServer::new(Route::test_loop(), crate::local::local_config(3, 500.0));
+        let (conn, _) = joined(&mut server);
+        let start = encode(&client_message(C::Event(v1::EventRequest {
+            req: Some(v1::event_request::Req::Start(v1::EventStart {
+                kind: v1::EventKind::GroupRide as i32,
+                ..Default::default()
+            })),
+        })));
+        let replies = server.handle(conn, &start);
+        let state = replies
+            .iter()
+            .chain(server.tick().iter())
+            .find_map(|b| match decode_server(b) {
+                Ok(S::Event(e)) => Some(e),
+                _ => None,
+            })
+            .expect("an event state");
+        assert_eq!(
+            ocw_protocol::collision_mode_from_wire(state.collisions),
+            ocw_sim::collide::Mode::Soft
+        );
+    }
+
+    fn bike_change_result(
+        server: &mut GameServer,
+        conn: ConnectionId,
+        profile: &str,
+    ) -> v1::DevCommandResult {
+        let msg = encode(&client_message(C::BikeChange(v1::BikeChange {
+            bike_id: profile.into(),
+            bike_profile: profile.into(),
+            look: Some(v1::RiderLook {
+                frame_rgb: 0x43A047,
+                ..ocw_core::RiderLook::default().into()
+            }),
+            parts: vec!["wheels.road-carbon.top".into()],
+        })));
+        let reply = server.handle(conn, &msg);
+        match decode_server(&reply[0]).unwrap() {
+            S::DevResult(r) => r,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// The workshop's bike applies when the rider leaves it (spec §14
+    /// Phase 4, 4A, Q1): at once outside events, from the next start for
+    /// an entrant of a running event; the server's own profile table.
+    #[test]
+    fn bike_changes_apply_at_once_outside_events() {
+        let mut server = local(0);
+        let (conn, rider) = joined(&mut server);
+        let r = bike_change_result(&mut server, conn, "gravel");
+        assert!(r.ok, "{r:?}");
+        let p = server.session().rider_profile(rider).unwrap();
+        assert_eq!(
+            p,
+            ocw_core::RiderProfile::curated(ocw_core::ProfileId::Gravel, p.rider_mass_kg)
+        );
+        let snap = (0..10)
+            .flat_map(|_| server.tick())
+            .filter_map(|b| match decode_server(&b) {
+                Ok(S::Snapshot(s)) => Some(s),
+                _ => None,
+            })
+            .last()
+            .expect("a snapshot");
+        let me = snap.riders.iter().find(|u| u.rider_id == rider.0).unwrap();
+        assert_eq!(me.bike_profile, "gravel");
+        assert_eq!(me.look.unwrap().frame_rgb, 0x43A047);
+        // An unknown profile is the default one, never the client's numbers.
+        assert!(bike_change_result(&mut server, conn, "rocket").ok);
+        assert_eq!(
+            server.session().rider_profile(rider).unwrap().bike,
+            ocw_core::ProfileId::Road
+        );
+        // In a race: from the next start.
+        let race = EventSpec::Race {
+            laps: None,
+            length_m: Some(400.0),
+        };
+        server.handle(conn, &start(race, Some(0)));
+        server.tick();
+        let r = bike_change_result(&mut server, conn, "tt");
+        assert!(r.ok && r.message.contains("next start"), "{r:?}");
+        assert_eq!(
+            server.session().rider_profile(rider).unwrap().bike,
+            ocw_core::ProfileId::Road
+        );
+        // The event ends: the waiting bike applies.
+        server.handle(conn, &event_msg(v1::event_request::Req::Cancel(true)));
+        assert_eq!(
+            server.session().rider_profile(rider).unwrap().bike,
+            ocw_core::ProfileId::TimeTrial
+        );
+        assert!(bike_change_result(&mut server, conn, "tt").ok);
+        assert_eq!(
+            server.session().rider_profile(rider).unwrap().bike,
+            ocw_core::ProfileId::TimeTrial
+        );
+    }
+
+    /// Hearts in the snapshots (spec §14 Phase 4, 4E): a running total of
+    /// the server's own count; virtual power earns nothing.
+    #[test]
+    fn snapshots_carry_the_credited_hearts() {
+        let mut server = local(0);
+        let (conn, rider) = joined(&mut server);
+        let (vconn, vrider) = joined(&mut server);
+        let sample = |seq: u32, virtual_power: bool| {
+            encode(&client_message(C::Sample(v1::SensorSample {
+                seq,
+                power_w: Some(400.0),
+                virtual_power: Some(virtual_power),
+                ..Default::default()
+            })))
+        };
+        server.handle(conn, &sample(1, false));
+        server.handle(vconn, &sample(1, true));
+        // 30 s at 400 W = 12 kJ: one heart.
+        let mut last = None;
+        for _ in 0..(ocw_core::SIM_TICK_HZ * 30) {
+            for b in server.tick() {
+                if let Ok(S::Snapshot(s)) = decode_server(&b) {
+                    last = Some(s);
+                }
+            }
+        }
+        let snap = last.unwrap();
+        let hearts = |id: RiderId| {
+            snap.riders
+                .iter()
+                .find(|u| u.rider_id == id.0)
+                .unwrap()
+                .hearts
+        };
+        assert!(hearts(rider) >= 1, "{}", hearts(rider));
+        assert_eq!(hearts(vrider), 0);
+    }
+
+    fn builds_in(msgs: &[Vec<u8>]) -> Vec<ocw_protocol::BuildInfo> {
+        msgs.iter()
+            .filter_map(|b| match decode_server(b) {
+                Ok(S::RiderBuild(r)) => Some(ocw_protocol::build_info(&r)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    const UPGRADES: [&str; 7] = [
+        "wheels.road-carbon.top",
+        "tyres.road.race",
+        "groupset.road-electronic.top",
+        "cockpit.road.integrated",
+        "saddle.road.top",
+        "seatpost.carbon",
+        "pedals.road.top",
+    ];
+
+    /// W3 (spec §14 Phase 4, 4G): a `BikeChange` applies the parts'
+    /// physics from the server's own catalogue (within the caps); everyone
+    /// gets the build once (`RiderBuild`, reliable), the snapshots only
+    /// its hash; a client joining later gets every build; the Hello's
+    /// parts are the start build.
+    #[test]
+    fn bike_change_applies_the_build_and_tells_the_others_once() {
+        let mut server = local(0);
+        let (a, ra) = joined(&mut server);
+        let (_b, rb) = joined(&mut server);
+        server.tick();
+        let msg = encode(&client_message(C::BikeChange(v1::BikeChange {
+            bike_id: "road".into(),
+            bike_profile: "road".into(),
+            look: None,
+            parts: UPGRADES.map(String::from).to_vec(),
+        })));
+        let reply = server.handle(a, &msg);
+        let S::DevResult(r) = decode_server(&reply[0]).unwrap() else {
+            panic!("a result");
+        };
+        assert!(r.ok && r.message.contains("% flat"), "{r:?}");
+        let expected = ocw_sim::build::build(
+            ocw_sim::PartTable::shipped(),
+            ocw_core::ProfileId::Road,
+            &UPGRADES.map(String::from),
+        );
+        assert_eq!(
+            server.session().rider_profile(ra).unwrap(),
+            expected.rider_profile(75.0)
+        );
+        let mut out = Vec::new();
+        for _ in 0..10 {
+            out.extend(server.tick());
+        }
+        let builds = builds_in(&out);
+        assert_eq!(builds.len(), 1, "once, not with every snapshot");
+        assert_eq!(builds[0].rider, ra);
+        assert_eq!(builds[0].parts, expected.parts);
+        assert_eq!(builds[0].hash, expected.hash());
+        assert!((builds[0].effect.flat - expected.flat_gain).abs() < 1e-4);
+        let snap = out
+            .iter()
+            .rev()
+            .find_map(|b| match decode_server(b) {
+                Ok(S::Snapshot(s)) => Some(s),
+                _ => None,
+            })
+            .unwrap();
+        let hash = |id: RiderId| {
+            snap.riders
+                .iter()
+                .find(|u| u.rider_id == id.0)
+                .unwrap()
+                .build_hash
+        };
+        assert_eq!((hash(ra), hash(rb)), (expected.hash(), 0));
+        // A client joining later gets the builds with its welcome.
+        let c = server.connect();
+        let replies = server.handle(c, &hello(PROTOCOL_VERSION));
+        let builds = builds_in(&replies);
+        assert_eq!(builds.len(), 1);
+        assert_eq!(builds[0].rider, ra);
+        // The Hello's parts: a joining rider starts on its build.
+        let d = server.connect();
+        let replies = server.handle(
+            d,
+            &encode(&client_message(C::Hello(v1::Hello {
+                protocol_version: PROTOCOL_VERSION,
+                display_name: "Fitted".into(),
+                bike_profile: Some("tt".into()),
+                parts: vec!["wheels.tt.disc".into(), "frame.mtb.upper".into()],
+                ..Default::default()
+            }))),
+        );
+        let S::Welcome(w) = decode_server(&replies[0]).unwrap() else {
+            panic!("welcome");
+        };
+        let rd = RiderId(w.rider_id);
+        let b = server.session().rider_build(rd).expect("a build");
+        assert_eq!(
+            b.parts,
+            vec!["wheels.tt.disc".to_string()],
+            "the MTB frame does not fit"
+        );
+        let tt = ocw_core::RiderProfile::curated(ocw_core::ProfileId::TimeTrial, 75.0);
+        assert!(server.session().rider_profile(rd).unwrap().cda_m2 < tt.cda_m2);
+        let builds = builds_in(&server.tick());
+        assert!(builds.iter().any(|b| b.rider == rd));
+    }
+
+    /// The sprint of a stock and an upgraded bot (spec §14 Phase 4, W3):
+    /// in *Open* the upgraded bot wins by the build's few per cent, in
+    /// *Profile* (the default for races) both ride exactly the same.
+    fn sprint(physics: Option<ocw_sim::PhysicsMode>) -> (f64, f64, String) {
+        let mut server = local(2);
+        let (conn, _) = joined(&mut server);
+        let bots = server.session().bots();
+        let bike = |id: RiderId, parts: &[&str], name: &str, lane: f32| {
+            encode(&client_message(C::Dev(v1::DevCommand {
+                cmd: Some(v1::dev_command::Cmd::BotBike(v1::BotBike {
+                    rider_id: id.0,
+                    bike_profile: "road".into(),
+                    parts: parts.iter().map(|s| s.to_string()).collect(),
+                    power_w: Some(300.0),
+                    lane_m: Some(lane),
+                    name: name.into(),
+                })),
+            })))
+        };
+        let mut said = String::new();
+        for (id, parts, name, lane) in [
+            (bots[0], &[][..], "Stock", -2.4),
+            (bots[1], &UPGRADES[..], "Upgraded", 2.4),
+        ] {
+            let reply = server.handle(conn, &bike(id, parts, name, lane));
+            let S::DevResult(r) = decode_server(&reply[0]).unwrap() else {
+                panic!("a result");
+            };
+            assert!(r.ok, "{r:?}");
+            said = r.message;
+        }
+        let start = v1::EventStart {
+            physics: physics.map(ocw_protocol::physics_mode_to_wire),
+            ..ocw_protocol::event_start(
+                &EventSpec::Race {
+                    laps: None,
+                    length_m: Some(1000.0),
+                },
+                None,
+            )
+        };
+        let reply = server.handle(
+            conn,
+            &encode(&client_message(C::Event(v1::EventRequest {
+                req: Some(v1::event_request::Req::Start(start)),
+            }))),
+        );
+        let S::DevResult(r) = decode_server(&reply[0]).unwrap() else {
+            panic!("a result");
+        };
+        assert!(r.ok, "{r:?}");
+        for _ in 0..(ocw_core::SIM_TICK_HZ * 200) {
+            server.tick();
+        }
+        let ev = server.session().event().unwrap();
+        let t = |id| ev.entrant(id).unwrap().finish_s.expect("finished");
+        assert_eq!(ev.physics, physics.unwrap_or(ocw_sim::PhysicsMode::Profile));
+        (t(bots[0]), t(bots[1]), said + " / " + &r.message)
+    }
+
+    #[test]
+    fn an_upgraded_bot_wins_in_open_mode_and_ties_in_profile_mode() {
+        let (stock, upgraded, said) = sprint(Some(ocw_sim::PhysicsMode::Open));
+        assert!(said.contains("Open mode"), "{said}");
+        let gain = stock / upgraded - 1.0;
+        assert!(
+            gain > 0.004 && gain < ocw_sim::build::FLAT_CAP + 0.004,
+            "{stock} {upgraded}"
+        );
+        for physics in [None, Some(ocw_sim::PhysicsMode::Profile)] {
+            let (stock, upgraded, said) = sprint(physics);
+            assert_eq!(stock, upgraded, "{physics:?}");
+            assert!(said.contains("Profile mode"), "{said}");
+        }
+        // The dev command is for bots on local servers only.
+        let mut server = local(1);
+        let (conn, me) = joined(&mut server);
+        let reply = server.handle(
+            conn,
+            &encode(&client_message(C::Dev(v1::DevCommand {
+                cmd: Some(v1::dev_command::Cmd::BotBike(v1::BotBike {
+                    rider_id: me.0,
+                    ..Default::default()
+                })),
+            }))),
+        );
+        let S::DevResult(r) = decode_server(&reply[0]).unwrap() else {
+            panic!("a result");
+        };
+        assert!(!r.ok, "{r:?}");
     }
 }

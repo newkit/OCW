@@ -96,6 +96,47 @@ Video recording (key V) needs ffmpeg: install Homebrew, then `brew install
 ffmpeg` (`make deps-macos` prints both commands); the app also finds it in
 `/opt/homebrew/bin`, `/usr/local/bin` and `~/.local/bin` when started from Finder.
 
+### Browser app (preview)
+
+`apps/web` (`ocw-web`) is the same client in a web browser (spec §14 Phase
+10, milestone B1): Bevy on **WebGPU**, the shared renderer (`ocw-render`),
+client loop (`ocw-client`) and `GameServer` – the local server runs in the
+page's frame loop (wasm has no threads). It rides the built-in Hills test
+route, or a **world package streamed over HTTP** (B2): manifest and
+signature chain first, then the road graph and sections and the tiles
+around the rider with range requests, every chunk checked against its
+SHA-256, cached in the browser's Origin Private File System (a second
+visit loads from there), with the tiles kept in memory only around the
+rider. Bots and the **virtual trainer** as on the desktop. **Multiplayer**
+(B3): the page joins an `ocw-server` session over **WebTransport** together
+with desktop and bot riders (see [Browser riders](#browser-riders-webtransport)).
+No Bluetooth or sound yet (B4, B5).
+
+```bash
+make deps-web       # once: wasm-bindgen-cli matching Cargo.lock (cargo install)
+make web            # build into target/web/ (index.html, ocw_web.js, ocw_web_bg.wasm, sizes.txt)
+make web-worlds     # publish data/pilot/liechtenstein.ocwpkg into target/web/worlds/ (signed by a dev root)
+make web-serve      # serve it on http://127.0.0.1:8080/ (range requests; prints the world links)
+make test-web       # headless Chromium on WebGPU: load, ride, screenshot into test-output/web/
+make test-web-world # the same with Liechtenstein streamed from the dev server, then again from the cache
+make test-web-multiplayer # ocw-server + ocw-bot riders + the browser over WebTransport: ride 30 s, screenshot, timing
+```
+
+A world: `http://127.0.0.1:8080/?world=liechtenstein&route=vaduz-malbun&trust-root=…`
+(`make web-serve` prints the link with the dev root's key; `world=` takes an
+id, `ID@VERSION` or a manifest URL; more options: `free=1`, `tiles=3`
+(fetch radius), `keep=5`, `memory-mb=96`, `cache-mb=1024`, `cache=0`). The
+loading screen shows the manifest, the base, the first tiles, the bytes
+from the cache and from the network and the storage; the console's
+`world.info` shows the streaming while riding.
+
+Open the page in Chrome / Edge 113+ (Safari 26 and Firefox 141+ should work
+too; a browser without WebGPU gets a message). The desktop's keys: ↑ adds
+power on top of the virtual trainer's 200 W, ↓ stops (brake), Page Up /
+Down ±10 W, A autodrive, W wild mode, ← / → the line (autodrive) or the lean, `` ` `` (or F12) the console (`sim.power 250`, `teleport 2.5`,
+`net.stats`, `hud off`, `camera …`). Page options in the query string:
+`?route=loop&bots=3&power=250&start=1.5&name=Ada`.
+
 ## Controls
 
 | Action | Keyboard | Gamepad |
@@ -118,25 +159,29 @@ ffmpeg` (`make deps-macos` prints both commands); the app also finds it in
 | Voice: mute / unmute the speaker (all voices; game sounds stay) | Shift+M | right-stick click (R3) |
 | Next screen | F11 | |
 | Console (`help` lists the commands) | `` ` `` or F12 | |
-| God mode: fly as a unicorn / land on the road below | G | Select + North (Y / △) |
-| God mode: fly back to where you took off | Shift+G | Select + West (X / □) |
+| Unicorn mode: fly as a unicorn / land on the road below | G | Select + North (Y / △) |
+| Unicorn mode: fly back to where you took off | Shift+G | Select + West (X / □) |
 
-**God mode** (spec §14 Phase 13; *World → God mode*, console `god`): the rider
-turns into a unicorn and flies freely over the world. While flying:
+**Unicorn mode** (spec §14 Phase 13; *World → Unicorn mode*, console `god`): the rider
+turns into a unicorn and flies freely over the world – like a plane: it always
+flies forward along its heading. While flying:
 
 | Action | Keyboard / mouse | Gamepad |
 |---|---|---|
-| Look around (the pointer is captured; Esc frees it, a click captures it again) | mouse | right stick |
-| Move in the horizontal plane, relative to the view | ↑ ↓ ← → | left stick |
-| Climb / descend | + / − (main keyboard `=` `-`, or the keypad) | right / left trigger |
+| Faster / slower (the throttle; it holds when let go, ↓ slows to a slow glide, never to a stop) | ↑ / ↓ | left stick up / down |
+| Bank and turn left / right (the unicorn and the view roll into the turn; let go to level out) | ← / → | left stick left / right |
+| Climb / descend (the nose pitches up / down; let go to level off) | + / − (the keys that type `+` and `-` on your layout, e.g. `+` and `-` on a German keyboard, `=` and `-` on a US one; or the keypad) | right / left trigger |
+| Look around without changing the course (eases back to straight ahead after 1.5 s; the pointer is captured, Esc frees it, a click captures it again) | mouse | right stick |
+| Look straight ahead again | L or the middle mouse button | |
 | Boost ×4 / precise ×0.25 | Shift / Ctrl | South (A / ✕): boost |
 | Base speed ×0.25 … ×8 (in the HUD) | mouse wheel | |
 | First-person view from the unicorn's head | C | |
 | Inspection panel and crosshair on / off | I | |
 | Put a pin where the crosshair points (kept for the ride; `god.pins` lists them) | P | |
 
-Touch (spec §3.2.2): one finger dragged on the view looks around, two
-fingers move like a stick (push them up to fly forward, sideways to strafe)
+Touch (spec §3.2.2): a finger dragged on the left half of the view is the
+stick (push it up to fly faster, down to fly slower, sideways to bank and
+turn), on the right half it looks around; two fingers on one half steer too
 and spreading / pinching them changes the speed scale; the **+** / **−**
 buttons at the right edge (shown for 8 s after a touch) climb and descend.
 
@@ -150,7 +195,13 @@ elevation. P puts a magenta pin there; `god.pins` lists the pins with their
 coordinates and a `--start X,Z` to copy for a free ride from that spot.
 
 The speed grows with the height above the ground (20 m/s close to it, 400 m/s
-from 760 m up; at most 1,600 m/s with the boost). The unicorn keeps 2 m
+from 760 m up; at most 1,600 m/s with the boost); the throttle is a share of
+it (15 … 100 %, 50 % at take-off). The turn is a coordinated one: tight when
+slow, wide when fast (slow down first for a tight turn). The first model –
+moving with the arrows relative to the view and hovering when no key is
+held, the mouse turning the flight – is still there: Settings → Controls →
+*Unicorn mode: flight* = hover (`controls.god_flight`, console `god.flight
+hover`). The unicorn keeps 2 m
 above terrain, water, buildings and tree crowns and stays below 8,000 m; it is stopped
 softly 200 m outside the world. A glowing ring marks where G will land: the
 nearest road (free ride) or the nearest point of the route. The riding keys
@@ -174,7 +225,7 @@ time, the recording and a video go on, and the ride keys (↑ ↓ ← →, A, W,
 R, V, …, the mouse camera) are ignored while it is open. Steering falls back
 to autodrive and junctions take their default exit, so the rider stays on
 the road; closing the menu restores manual steering / wild mode. *Workshop*
-chooses the rider profile and their bike (*Workshop → Bike*), *Settings* has Riders, Controls, Trainer, Audio, Display
+opens the workshop scene (see [The workshop](#the-workshop-bikes-parts-and-hearts)), *Settings* has Riders, Controls, Trainer, Audio, Display
 and Strava: ← / → (D-pad left / right) change the focused value, Q / E,
 PgUp / PgDn or LB / RB switch between these pages (see
 [Settings](#settings-and-rider-profiles)); *Ride* starts local events (race,
@@ -183,6 +234,65 @@ changes the world and shows its data and conditions (see
 [The World menu](#the-world-menu-changing-the-world-without-restarting)),
 *Navi* lists the routes, saved rides and GPX files to import. Long lists are
 paged (*Previous* / *Next*, or ← / → on a list row).
+
+### The workshop: bikes, parts and hearts
+
+*Workshop* in the menu (or `workshop open`) opens a 3D bicycle workshop over
+the running ride (spec §14 Phase 4, W1 – W3): the ride goes on in autodrive
+underneath and shows in a small live ride window (top right; `workshop.ride_window off`
+hides it). Your bike stands on the repair stand in front, your other bikes hang
+on the wall – every rider starts with six starter bikes, one per physics
+profile, and **500 ♥**. Hearts are earned only by riding: **1 ♥ per 10 kJ** of
+work and **1 ♥ per 20 m** climbed, credited by the local server from the power
+it accepted – never for virtual power (the virtual trainer, keyboard power,
+`sim.power`), in god mode, while down after a crash, for bots, in captures or
+with `--no-hearts` (the kiosk's show mode). One heart is one euro of a part's
+real list price (generic parts, no brands: `assets/parts.toml`).
+
+| | Keyboard | Mouse | Gamepad | Touch |
+|---|---|---|---|---|
+| Choose a bike | ← / → | hover / click | D-pad ← / → | swipe, tap |
+| Zones (wall, stand, bench, mirror) | ↑ / ↓ | click | D-pad ↑ / ↓ | tap |
+| Swap a wall bike onto the stand / open the stand | Enter | click | A | tap |
+| Next / previous part (stand) | Q / E, or the arrows (on screen) | hover / click a marker | LB / RB, D-pad | tap a marker |
+| Orbit / zoom the stand view | I J K L or Shift + arrows, + / − | drag, wheel | right stick, LT / RT | drag, pinch |
+| Compare / buy, sell … | C / X | middle click / the dialog's buttons | Y / X | long press / the buttons |
+| Back (leaves from the overview) | Esc | right click | B | two-finger tap, ‹ Back |
+
+On the stand a marker sits on every part (frame, wheels, tyres, groupset,
+crankset, cassette, chain, cockpit, bar tape, saddle, seat post, pedals,
+bottle cages, lights, computer, bag, paint); choosing one flies to it and
+opens the **part picker**: what is fitted, what you own (spare parts or on
+another bike) and the shop (only parts that fit, by tier, cheapest first, a
+lock with the missing hearts). The focused part shows on the bike at once
+(live preview); its card shows weight, price, the part's class steps and
+**what it does to the bike's speed** ("Speed: +0.4 % flat, +0.6 % at 6 %",
+"capped" at the band's edge; the bike's mass and its speed against the stock
+bike), and the compare card (C / Y / long press pins a part) the speed
+difference of the two parts on this bike. Buying fits the part;
+selling refunds the full price until the part has been ridden 1 km, half
+after. Paint is free. **Leaving the workshop applies the bike** at once in
+free ride and outside events (in an event: when it is over, from the next
+start); the server answers with the effect it applied.
+
+**Parts and physics (W3, spec §14 Phase 4, 4G).** The frameset decides the
+physics profile; the other parts change the bike only a little: real weights
+(the bike's mass = the profile's + the parts' differences to the stock parts,
+at least 6.8 kg, 9 kg for a mountain bike) and a few curated class steps –
+tyres ±4 % rolling resistance per step, aero wheels / cockpits / frames
+∓0.004 m² CdA, top groupsets +0.3 % drivetrain efficiency. The server takes
+the values from its own copy of the catalogue (the client sends part ids
+only) and **caps the whole build**: at 250 W and 75 kg the best build of a
+profile is at most **+1.5 %** faster on the flat and **+2.5 %** on a 6 %
+climb than the stock bike. Races and group rides use the ***Profile*** mode
+by default – only the frame's profile counts, parts are cosmetic; the
+organiser can choose *Open* (parts count, within the caps) or *Equal* (one
+bike for everyone): `event race --physics open|profile|equal`. Free ride,
+single player and time trials count the parts. The other riders see the
+parts on your bike (sent once per change, not in every snapshot). The wallet
+is local until the backend (`<data dir>/ocw/workshop.toml` and
+`hearts-ledger.jsonl`). The rider list and kit colours: the mirror corner, or
+`menu workshop-page`.
 
 ### The World menu: changing the world without restarting
 
@@ -303,6 +413,28 @@ Then start the app: the left stick steers, the triggers ride and stop (see
   lean steering), so ← / → steer you off the road; switching it off keeps the
   steering mode (press A for autodrive). The HUD shows "manual | WILD". The
   camera follows over terrain and trees.
+
+**Collisions** (spec §14 Phase 12, K1 / K2; `ride.collisions`, on by
+default): riders are solid. Touching another rider from the side or the
+back is a **soft bump** – both are pushed apart, the faster one slows, the
+bikes wobble (a thud and a tyre squeak; in SIM mode a short resistance
+pulse). A hard hit is a **crash**: 2.5 m/s closing speed rider against
+rider, 3.5 m/s into a fallen bike, a front wheel touching the rear wheel
+ahead (1 m/s, or leaning into it), head-on above 1.5 m/s, a rear-end at
+speed. The rider falls as a **ragdoll** (the Avian physics engine), lies
+2–8 s by the impact, then picks the bike up and rides on from standstill;
+the HUD shows "Crash!" with the time left, other riders' crashes get a red
+marker and a feed line. While down the trainer in SIM mode rides a flat road,
+ERG keeps the workout's step running. A fallen bike is an obstacle for the
+riders behind (chain crashes). **Autodrive and every bot avoid collisions**:
+they pass slower riders on the left (on the right in left-hand traffic
+regions; on narrow roads either side) and hold back at a 0.5 m wheel gap when
+both sides are blocked; two autodrive riders never bring each other down.
+**Manual steering gets no help** (optional: `ride.proximity_cue`). Group
+rides are soft bumps only; races use the full model. Exempt: the time
+trial's ghost, the countdown formation, unicorns, the Echo rider and a
+client's first 2 s after joining. `ride.chaotic_bots on` lets bots make
+mistakes. `dev.bump` / `dev.crash` stage one on the local server.
 
 **Free ride** (spec §2.2.1, §2.2.2): ride anywhere on the world package's road
 network instead of a fixed route:
@@ -613,6 +745,7 @@ focused) or the console:
 event race [--laps N | --km X] [--bots N]   # default: 1 lap of a loop, 5 km of a route that ends
 event group [--watts W] [--bots N]          # bots hold W (default 150) and regroup; no ranking
 event tt [--laps N | --km X]                # alone, no drafting, against your best effort
+event race --physics open                   # race mode: open | profile (default) | equal
 event status | event cancel | event dismiss
 ```
 
@@ -663,6 +796,7 @@ event status | event cancel | event dismiss
 | `--rider NAME` | Ride as this rider profile for this session (default: the one chosen in the Workshop) |
 | `--settings-file PATH` | Settings file (default `~/.config/ocw/settings.toml`; `riders.toml` is read next to it) |
 | `--power W` | Initial power of the virtual trainer (default 200) |
+| `--no-hearts` | Earn no hearts in this session (the kiosk's show mode) |
 | `--bots N` | Number of test riders (default 10; they start in rows of up to three behind you) |
 | `--server HOST[:PORT]` | Ride on a remote `ocw-server --listen` over QUIC (default port 47800) instead of the local server; see [Running the server](#running-the-server) |
 | `--server-cert SHA256` / `--insecure-dev` | Trust the server's certificate by its fingerprint / accept any (only for a server on 127.0.0.1 or ::1) |
@@ -694,6 +828,7 @@ event status | event cancel | event dismiss
 | `--screenshot PATH`, `--screenshot-delay S` | Save a screenshot after S seconds (default 5), then exit (JPEG with EXIF time; `.png`: PNG) |
 | `--capture DIR`, `--capture-fps N`, `--capture-seconds S`, `--capture-warmup S` | Save every frame with a fixed game-time step (smooth videos) as `frame_NNNNN.png`, plus `audio.wav` (game sound in step with the frames), `metadata.txt` (ffmpeg metadata) and `still.jpg` (last frame), then exit |
 | `--no-audio` | No sound: open no audio output (frame capture opens none anyway; videos still get the mixer's sound) |
+| `--echo-bot` | The voice echo test: an Echo rider on the road plays your microphone back, delayed, when you are near it (`voice.echo`, see *Voice chat*) |
 | `--no-vsync` | Draw as fast as possible instead of waiting for the display's refresh (benchmarks) |
 | `--max-fps N` | Draw at most N frames per second (with `--no-vsync`: a steady rate even where the display gives no refresh, e.g. on a locked screen) |
 | `--log-fps S` | Log the real render rate every S seconds (`render rate fps=… worst_ms=…`; wall clock, also during `--capture`) |
@@ -711,6 +846,7 @@ console (saved at once), or by editing the file; `get` lists them all:
 |---|---|---|
 | `controls.autodrive` | on / off (on): autodrive at the start of a ride | next start |
 | `controls.invert_y` | on / off (off): god mode – moving the mouse up looks down | at once |
+| `controls.god_flight` | plane / hover (plane): god mode flies like a plane (always forward; ↑ ↓ throttle, ← → bank) or hovers (arrows move relative to the view, the mouse turns) | at once |
 | `trainer.difficulty` | 0 to 100 (50): % of the road gradient in SIM mode | at once |
 | `trainer.virtual_power` | 0 to 2000 W (200): the virtual trainer at the start (`--power`) | next start |
 | `display.hud` | on / off (on) | at once |
@@ -726,6 +862,9 @@ console (saved at once), or by editing the file; `get` lists them all:
 | `ride.bots` | 0 to 50 (10): test riders (`--bots`) | next start |
 | `ride.random_start` | on / off (on): random start point (`--random-start`) | next start |
 | `ride.record` | on / off (on): save rides as FIT (`--record`) | next start |
+| `ride.collisions` | on / off (on): rider collisions – soft bumps and crashes (group rides soft bumps only; in a shared ride the host decides, `ocw-server --collisions`); Settings → Controls | at once |
+| `ride.chaotic_bots` | on / off (off): bots that sometimes make mistakes (late reactions, wheel touches) that can cause crashes | at once |
+| `ride.proximity_cue` | on / off (off): a soft bell and a HUD arrow when someone is within 1 m beside or 2 m in front (an aid for manual steering; it never steers) | at once |
 | `audio.master` | 0 to 100 (80): master volume in %, scales every bus | at once |
 | `audio.effects` | 0 to 100 (80): game sounds (bike, wind, tyres, menu, event and workout cues) | at once |
 | `audio.others` | 0 to 100 (80): the other riders' bikes (bots, remote riders), a part of the effects (master × effects × others) | at once |
@@ -827,8 +966,8 @@ bike rocking under them, and stop pedalling with the cranks level when they
 freewheel. Riders more than 40 m from the camera are drawn with a simpler
 model.
 
-Manage them in the in-game menu (Esc / Start): *Workshop* chooses the rider
-and opens their *Bike* page (the bike, its physics numbers, frame / jersey /
+Manage them in the in-game menu (Esc / Start): the workshop's mirror corner
+(or `menu workshop-page`) chooses the rider and opens their *Bike* page (the bike, its physics numbers, frame / jersey /
 helmet colour and kit, all with ← / →),
 *Settings → Riders* edits them (weight, height, FTP with ← / →; add, delete),
 and the other *Settings* pages (Controls, Trainer, Audio, Display, Voice; the
@@ -900,7 +1039,7 @@ for now).
 | `audio.output NAME\|default` | Play on this output device (`set audio.output "NAME"` saves it); a missing device falls back to the default until it appears |
 | `audio.devices` | List the output devices (`*` = playing now) and read the list again |
 | `audio.status` | The output playing now and the mix |
-| `audio.play SOUND` | Play a sound: `move`, `value`, `confirm`, `back`, `beep`, `go`, `finish`, `step`, `shift`, `test`, `test-music`, `test-effects`, `test-voice`, `test-others` |
+| `audio.play SOUND` | Play a sound: `move`, `value`, `confirm`, `back`, `beep`, `go`, `finish`, `step`, `shift`, `bump`, `crash`, `remount`, `proximity`, `test`, `test-music`, `test-effects`, `test-voice`, `test-others` |
 | **Rider** | |
 | `rider.autodrive on\|off` | Autodrive (key A) |
 | `rider.wild on\|off` | Wild mode (key W; on also switches autodrive off) |
@@ -912,6 +1051,16 @@ for now).
 | `riders.edit NAME [--weight KG] [--height CM] [--ftp W] [--rename NEW] [--no-height] [--no-ftp] [BIKE OPTIONS]` | Change a rider profile; bike options: `--bike road\|road-aero\|road-climbing\|tt\|gravel\|mtb`, `--frame-color`, `--jersey-color`, `--helmet-color` `#RRGGBB`, `--kit plain\|band\|sash` |
 | `riders.remove NAME` | Delete a rider profile |
 | `riders.select NAME` | Choose who rides (Workshop); applies from the next start |
+| `workshop [open\|close\|left\|right\|up\|down\|select\|back\|slot-next\|slot-prev\|compare\|action\|reset\|orbit DEG]` | Open, close or drive the workshop scene (menu: Workshop) |
+| `workshop.ride_window on\|off` | The live ride window in the workshop |
+| `hearts` | Your hearts and the last ledger lines |
+| `hearts.grant N` | *Dev:* grant hearts (tests, screenshots; local server only) |
+| `workshop.parts [SLOT] [--bike ID]` | The parts that fit a bike, with prices |
+| `workshop.buy PART [--bike ID]` | Buy a catalogue part with hearts and fit it |
+| `workshop.equip ITEM [--bike ID]` / `workshop.unequip SLOT [--bike ID]` | Fit an owned part / back to the base part |
+| `workshop.sell ITEM` | Sell a part (full price before its first ride, half after) |
+| `workshop.paint #RRGGBB\|default [--bike ID]` | Paint a frame (free) |
+| `bikes.list` / `bikes.select ID [--now]` | Your garage / the bike on the stand (applies when the workshop closes) |
 | `rider.gps` | Your rider's GPS position (also bottom-left in the HUD; route files and world packages only), with a copyable `lat, lon` line |
 | `teleport KM` | *Dev:* move your rider to a distance on the route (free ride: along the path, taking default exits). On a route that ends, a distance past the end moves you to the end, where riders stop, and the reply says so; a loop takes any distance (laps on) |
 | `teleport.xz X Z` | *Dev:* free ride: move to the road nearest local x / z metres |
@@ -920,6 +1069,13 @@ for now).
 | `ride.junction` | Free ride: show the next junction's exits (and the route's) |
 | `ride.rejoin` | Route ride: back to the route after leaving it (key J) |
 | `ride.route` | Route ride: name, progress and whether you are on the route |
+| `ride.collisions on\|off` | Collisions (spec §14 Phase 12; `set ride.collisions off` keeps it); the server answers, in shared rides only the host may |
+| `ride.chaotic_bots on\|off` | Bots that sometimes make mistakes |
+| `ride.proximity_cue on\|off` | The proximity cue (bell and HUD arrow) |
+| `ride.crashes` | The collision rules in force, your crash state and the last crashes |
+| `dev.bump` | *Dev:* the nearest other rider bumps into you from the side (a soft bump) |
+| `dev.crash` | *Dev:* the nearest other rider cuts in front of you: a wheel touch, you fall (ragdoll, remount) |
+| `dev.bot_bike BOT [--bike P] [--parts ID… \| --best] [--power W] [--lane M] [--name N]` | *Dev:* a bot's bike and parts (`--best`: the capped best build), steady power, fixed lane and name – compare a stock and an upgraded bike side by side |
 | `net.stats` | Connection statistics |
 | `worlds.info` | The loaded world package: id, version, content hash, trust, credits |
 | `worlds.list` | World packages in the local cache, with their trust state |
@@ -928,9 +1084,9 @@ for now).
 | `world info` | The world ridden now: package, area, elevation, data sources with their notices, routes, time zone, sun and twilight times |
 | `world switch N\|ID\|NAME\|PATH` | Ride another world without restarting (its first route, else a free ride; a test route: `hills`, `loop`); in a shared ride the host asks the server |
 | **Events** (spec §2.3) | |
-| `event race [--laps N\|--km X] [--bots N]` | Race from the start formation to the finish (default 1 lap / 5 km) |
-| `event group [--watts W] [--bots N]` | Group ride: bots hold the pace and regroup |
-| `event tt [--laps N\|--km X]` | Time trial alone against your ghost |
+| `event race [--laps N\|--km X] [--bots N] [--physics MODE]` | Race from the start formation to the finish (default 1 lap / 5 km; MODE: `profile` – the default, only the frame's profile counts –, `open` – parts count, capped –, `equal`) |
+| `event group [--watts W] [--bots N] [--physics MODE]` | Group ride: bots hold the pace and regroup (default mode `profile`) |
+| `event tt [--laps N\|--km X] [--physics MODE]` | Time trial alone against your ghost (default mode `open`) |
 | `event status` | The event, your HUD lines and the standings |
 | `event cancel` | End the event (everyone rides on) |
 | `event dismiss` | Close the results panel (Esc / A) |
@@ -1058,6 +1214,11 @@ program; with `--listen` desktop clients ride on it over the network (QUIC,
 the first step of Phase 5 multiplayer; accounts, sessions and the HTTPS API
 follow).
 
+Collisions on a server: `--collisions on|off` (on), `--chaotic-bots`, and who
+may change them from a client (`ride.collisions`): `--collision-control
+host|anyone|nobody` (host). The rules travel in the welcome, every snapshot
+and the event state.
+
 ### Hosting a ride over the network
 
 ```bash
@@ -1092,6 +1253,39 @@ ocw-desktop --server 127.0.0.1 --insecure-dev     # server on the same machine o
 - The server runs until Ctrl+C (or SIGTERM), then closes all connections
   ("server shutting down"); `--seconds S` stops it earlier.
 
+### Browser riders (WebTransport)
+
+```bash
+cargo run --release -p ocw-server -- --listen --webtransport --test-route hills
+```
+
+`--webtransport [ADDR]` adds a **WebTransport** endpoint (HTTP/3 over QUIC,
+**UDP 47801** by default) next to the native one: browser riders
+(`apps/web`) join the same session as desktop and bot riders, with the same
+messages (one stream for the reliable ones, datagrams for snapshots and
+samples). The server prints the page options:
+
+```text
+Browsers join with the page options:
+  ?server=https%3A%2F%2FHOST%3A47801&cert-hash=5c1e…
+```
+
+Open the web app with them (`make web-serve`, then
+`http://127.0.0.1:8080/?server=https://127.0.0.1:47801&cert-hash=5c1e…&name=Ada&route=hills`;
+the page's `route` must match the server's `--test-route`). `cert-hash` is
+the SHA-256 of the endpoint's self-signed certificate, which browsers
+accept without a CA (`serverCertificateHashes`) only if it is an ECDSA
+certificate valid for at most 14 days: the server makes one valid for 13
+days, keeps it in `--tls-dir` (`web-cert.der`, `web-key.der`,
+`web-cert.validity`) and renews it two days before it ends – then pages
+need the new hash (`--web-info-file F` writes URL and hash as JSON for
+scripts; `cert-hash=A,B` takes two). Certificates from a CA come with
+hosting (B8). Browser riders are anonymous for now: a name, the plain grey
+bike and kit, no workshop (spec §14 Phase 10 Q5; accounts come with Phase
+5). `ocw-bot --server https://HOST:47801 --server-cert HASH` rides over
+WebTransport too; the console's `net.stats` shows the link, the round trip
+and the snapshot timing.
+
 ### Voice chat
 
 Voice is **always on, like a call** (spec §2.4, §7): on a shared ride – a
@@ -1105,9 +1299,10 @@ one rider for yourself), the microphone and speaker and spatial voice (riders
 further away on the road sound quieter; only the nearest 10 are heard).
 Console: `voice.status`, `voice.mute-mic [on|off|toggle]`,
 `voice.mute-speaker [on|off|toggle]`, `voice.mute RIDER`, `voice.group NAME`
-(a private room; `--leave` goes back), `voice.devices`; settings
-`voice.enabled`, `voice.volume`, `voice.spatial`, `voice.max_voices`,
-`voice.input`, `voice.output`.
+(a private room; `--leave` goes back), `voice.devices`, `voice.echo` (the
+echo test, below); settings `voice.enabled`, `voice.volume`,
+`voice.spatial`, `voice.max_voices`, `voice.input`, `voice.output`,
+`audio.echo_bot`, `audio.echo_delay_ms`.
 
 Voice needs three things:
 
@@ -1158,6 +1353,39 @@ livekit_two_participants -- --nocapture` connects two simulated
 participants (no sound card needed): one speaks a tone, the other must hear
 it and see the mute. Without the variables the test passes without doing
 anything, so `cargo test --workspace` stays offline.
+
+**Echo test** (spec §7 *Echo bot*). To check your microphone and voice
+alone: `voice.echo on` (or Settings → Audio → Voice → Echo test, or start
+with `--echo-bot`) puts an **Echo** rider on the road 20 m
+ahead of you, standing at the right edge. Ride up to it: within 30 m the HUD
+shows "ECHO TEST - speak now" with a microphone and an echo level meter, and
+everything you say comes back **300 ms later** from the Echo rider's place –
+attenuated by distance and panned like any rider's voice, at the voice
+volume; between 30 and 60 m less and less is recorded, so the echo fades
+out as you ride away. Muting your microphone (M) means nothing is echoed,
+muting the speaker (Shift+M) silences the echo. Console: `voice.echo
+[on|off|here|delay MS|status]` – `here` moves the Echo rider 20 m ahead of
+you again, `delay` sets 20 ms to 3 s (setting `audio.echo_delay_ms`, Echo
+delay on the same page, 100 ms steps; on / off is `audio.echo_bot`); `voice.echo` alone shows its state and levels. The
+Echo rider is in no event or standings and earns nothing.
+
+On a solo ride the app echoes by itself (the microphone through the voice
+processing – with the `voice` feature: WebRTC's noise suppression, gain
+control and echo cancellation – into a delay line and the voice mix; no
+voice server, no Opus). A shared server allows it only with `ocw-server
+--echo-bot` (an Echo rider at the start of every session). With a LiveKit
+server the echo can also go over the real voice path (Opus and the SFU): run
+the echo participant as the Echo rider (the server logs its id and the
+room):
+
+```bash
+OCW_LIVEKIT_URL=… OCW_LIVEKIT_API_KEY=… OCW_LIVEKIT_API_SECRET=… \
+  CC=clang-21 CXX=clang++-21 cargo run -p ocw-voice --features livekit --example echo_participant -- ROOM ECHO_RIDER_ID [DELAY_MS]
+```
+
+The clients then hear it like any rider and switch their own loopback off.
+`OCW_ECHO_DEMO=echo.wav cargo test -p ocw-voice --test echo_loopback`
+writes a demo of a synthetic voice riding past the Echo rider.
 
 ### Headless runs
 
@@ -1400,7 +1628,15 @@ scripts/deploy-test.sh <name>                                  # release build f
   `target/` of merged or gone agent checkouts above 75 % use, of idle
   agent checkouts above 85 %, and alerts above 92 % (`--janitor
   off|dry-run|on`, `make janitor-plan` for a dry run; every deletion is
-  logged in `test-output/build-log/DAY/janitor.jsonl`).
+  logged in `test-output/build-log/DAY/janitor.jsonl`). Each machine card
+  has an **Enabled/Disabled** toggle, a **build slots stepper** (1–8) and a
+  note (same token): stored in the git-ignored `config/build-machines.toml`
+  (`tools/build-dashboard/build_machines.py list|set` from a shell), every
+  change logged in `test-output/build-log/DAY/machines.jsonl`.
+  `scripts/remote.sh` refuses `run` and `sync` on a disabled machine (exit
+  3; ssh, fetch, put and deploys stay allowed) and takes its slot count
+  from there (over `machines.toml`; `OCW_REMOTE_SLOTS` still wins for a
+  call).
 - Branches other than `main` get their own checkout on the machine
   (`<repo_path>-<branch>`), several GB each: after merging or abandoning an
   agent branch, `scripts/remote-gc.sh --branch <branch>` (`make
@@ -1470,7 +1706,7 @@ to *Public* are the usual causes; the server log is in Event Viewer under
 |---|---|
 | `make help` | All make targets: deps, build, check, deploy and the tests (`test`, `test-wasm`, `test-kiosk`, `test-smoke`, `test-video`, `test-multiplayer`, …) |
 | `cargo run -p ocw-server -- --bots 3 --seconds 10 --fast` | Headless game server (`--world PKG [--seed N]`: free ride on a package; `--route-file F`; `--stats-file PATH`) |
-| `cargo run -p ocw-bot -- --server HOST --server-cert FP --riders N` | Headless bot riders on a remote server; `ocw-bot verdict` checks a multiplayer test run |
+| `cargo run -p ocw-bot -- --server HOST --server-cert FP --riders N` | Headless bot riders on a remote server (`--server https://HOST:47801`: over WebTransport); `ocw-bot verdict` checks a multiplayer test run |
 | `scripts/test-multiplayer.sh` | Multiplayer test across the build machines (`make test-multiplayer`) |
 | `scripts/test-kiosk.sh` | Tests the kiosk script with a fake app (`make test-kiosk`) |
 | `world-builder graph` / `route` / `package` / `check` | OSM + elevation import: road graph statistics, route files, world packages (`--bbox S,W,N,E --origin LAT,LON`: one part of a region, for neighbouring packages), package validation (`cargo run --release -p world-builder -- help`) |
@@ -1579,6 +1815,8 @@ GitHub release `build-history`. Look at every image before picking it.
 | Path | Contents |
 |---|---|
 | `apps/desktop` | Desktop client: wires devices, local server, prediction and rendering |
+| `apps/web` | Browser app (`ocw-web`, wasm32 + WebGPU): the shared client with the local server in the frame loop and the virtual trainer, worlds streamed over HTTP (`world.rs`, `browser.rs`: fetch, OPFS); `web/index.html` |
+| `crates/ocw-client` | Client logic shared by the desktop and browser apps: `ClientCore` (prediction, interpolation, view), events, god-mode state, key logic, GPS position, sky |
 | `apps/bot` | `ocw-bot`: headless bot clients for remote servers, multiplayer test verdict |
 | `services/server` | Game server logic, in-process local server, headless server binary |
 | `crates/ocw-core` | Shared types, units, constants |
@@ -1587,7 +1825,7 @@ GitHub release `build-history`. Look at every image before picking it.
 | `crates/ocw-devices` | Device backends: virtual trainer, Bluetooth trainers and sensors (FTMS, Cycling Power, CSC, Heart Rate, Wahoo) |
 | `crates/ocw-world` | Routes, road graph, terrain, world packages, surfaces |
 | `crates/ocw-worldgen`, `apps/world-builder` | OSM + elevation import: road graph, profiles, world packages |
-| `crates/ocw-worldstore` | World package files, keys, trusted roots, local cache, download |
+| `crates/ocw-worldstore` | World package files, keys, trusted roots, local cache, download; `stream`: packages streamed by chunk (range planning, verification, the chunk cache behind a trait, tile residency; also wasm) |
 | `crates/ocw-fit` | FIT activity file writer (ride export) |
 | `crates/ocw-voice` | Voice chat (always-on logic, spatial audio, mixer; LiveKit backend with the `livekit` feature) |
 | `crates/ocw-render` | Bevy plugins: world, riders, camera, HUD, console; the bundled UI font (`assets/fonts/`) |

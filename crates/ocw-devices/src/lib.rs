@@ -7,13 +7,18 @@
 //! backend ([`ble`]: FTMS trainers, power meters, cadence and heart-rate
 //! sensors). ANT+ is deferred.
 
+#[cfg(not(target_arch = "wasm32"))]
 pub mod ble;
 pub mod gatt;
+pub mod virtual_power;
+#[cfg(not(target_arch = "wasm32"))]
 mod virtual_trainer;
 
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
 
+pub use virtual_power::FrameVirtualTrainer;
+#[cfg(not(target_arch = "wasm32"))]
 pub use virtual_trainer::VirtualTrainer;
 
 /// A measurement from a device.

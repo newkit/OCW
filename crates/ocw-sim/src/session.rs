@@ -8,17 +8,22 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use ocw_core::hearts::NoHearts;
 use ocw_core::{ProfileId, RiderId, RiderLook, RiderProfile, SIM_DT};
 use ocw_world::network::splitmix;
 use ocw_world::{RidePath, RoadNetwork, Route, RoutePlan, Segment, Track};
 
+use crate::avoid;
+use crate::build::{self as bike_build, Build, PhysicsMode};
 use crate::drafting;
 use crate::event::{self, Event, EventChange, EventKind, EventSpec, Progress, Standing};
 use crate::freeride::{self, TurnChoice, UTURN_INTERVAL_S};
 use crate::physics::{self, Environment, RiderState, Steering};
 use crate::ride::{self, Controls};
 
+mod collisions;
 mod god_mode;
+pub use collisions::{CollisionStats, Crash, JOIN_GHOST_S, Stage};
 pub use god_mode::{GodLeave, GodRider};
 
 /// Latest sensor input of a rider.
@@ -36,14 +41,38 @@ pub struct RiderInput {
 enum Control {
     /// Power comes from a connected client.
     Client,
-    /// Server-side test rider with a gently varying power around `base_power_w`.
-    Bot { base_power_w: f64 },
+    /// Server-side test rider with a gently varying power around
+    /// `base_power_w` (`steady`: exactly that power, for comparisons).
+    Bot { base_power_w: f64, steady: bool },
+    /// The echo test's rider (spec §7 *Echo bot*): stands still where it
+    /// was put, out of the physics, drafting, events and standings.
+    Echo,
 }
+
+/// How far ahead of the asker the Echo rider is put (m).
+pub const ECHO_AHEAD_M: f64 = 20.0;
+/// The Echo rider stands this far right of the road's centre (m; less on
+/// narrow roads), so riders pass it on its left.
+pub const ECHO_LATERAL_M: f64 = 1.5;
 
 #[derive(Debug, Clone)]
 struct Rider {
     name: String,
+    /// The rider's weight and the frame's curated profile (spec §2.5).
     profile: RiderProfile,
+    /// The bike's build (spec §14 Phase 4, 4G; `None`: the stock bike),
+    /// and what the rider rides with now under the race mode in force
+    /// ([`crate::build::effective`], refreshed every tick).
+    build: Option<Arc<Build>>,
+    effective: RiderProfile,
+    /// A bike change in an event: it applies once the event is over
+    /// ("from the next start").
+    pending_bike: Option<(RiderProfile, Option<Arc<Build>>)>,
+    /// The build changed since the last [`Session::take_build_changes`].
+    build_changed: bool,
+    /// A bot's fixed lane (dev tools: two bikes compared side by side, out
+    /// of each other's draft), kept through an event's start formation.
+    lane: Option<f64>,
     /// Cosmetic only (spec §2.5): passed through to the snapshots.
     look: RiderLook,
     state: RiderState,
@@ -72,6 +101,21 @@ struct Rider {
     /// God mode (spec §14 Phase 13): out of the physics, the road
     /// position frozen, flying as a unicorn.
     god: Option<GodRider>,
+    /// Collisions (spec §14 Phase 12): the crash under way, the last soft
+    /// bump, autodrive's passing line, a chaotic bot's (or a staged)
+    /// mistake until this tick and its drift, and when the rider joined.
+    crash: Option<Crash>,
+    bump: Option<crate::collide::Bump>,
+    avoid: crate::avoid::AvoidState,
+    mistake_until: u64,
+    mistake_drift: f64,
+    joined_tick: u64,
+    /// Takes part in collisions (bots at once; clients after joining, 12A).
+    solid: bool,
+    /// Hearts (spec §14 Phase 4, 4E): the work and climbing that count,
+    /// and whether the client says its power is virtual.
+    meter: ocw_core::hearts::HeartsMeter,
+    virtual_power: bool,
 }
 
 /// State of one rider as broadcast to clients.
@@ -89,6 +133,20 @@ pub struct RiderSnapshot {
     pub last_input_seq: u32,
     /// In god mode: the unicorn's pose (spec §14 Phase 13E).
     pub god: Option<crate::god::GodPose>,
+    /// A crash under way (spec §14 Phase 12C).
+    pub crash: Option<crate::collide::CrashView>,
+    /// The last soft bump (for the wobble and the sound).
+    pub bump: Option<crate::collide::Bump>,
+    /// The bike's build ([`Build::hash`]; 0 = the profile's stock bike).
+    pub build_hash: u32,
+}
+
+/// When a bike change takes effect ([`Session::set_bike`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BikeApplied {
+    Now,
+    /// In an event: once it is over (from the next start).
+    AtNextStart,
 }
 
 /// Where free-ride riders start: `offset_m` along graph edge `edge` (from
@@ -115,6 +173,20 @@ pub struct PathChange {
 
 /// A point on the road graph: (edge, ridden forwards, metres from its start).
 type EdgePoint = (usize, bool, f64);
+
+/// A rider at the start of a tick, for drafting and avoidance.
+#[derive(Debug, Clone, Copy)]
+struct Pos {
+    id: RiderId,
+    distance: f64,
+    lateral: f64,
+    at: Option<EdgePoint>,
+    speed: f64,
+    /// The line it steers to.
+    target: f64,
+    /// Down after a crash: an obstacle, no draft.
+    fallen: bool,
+}
 
 /// Slowest speed a bot climbs at (m/s, 10 km/h): like real riders, easy
 /// bots push harder uphill instead of crawling.
@@ -190,6 +262,8 @@ pub struct Session {
     /// The area god mode may fly over (the road graph's or the route's
     /// box, grown), for the server's plausibility check.
     god_area: Option<crate::god::Bounds>,
+    /// Collision switches and counters (spec §14 Phase 12).
+    rules: collisions::Rules,
 }
 
 impl Session {
@@ -206,6 +280,7 @@ impl Session {
             next_event_id: 1,
             event_changes: Vec::new(),
             god_area: god_mode::route_area(&route),
+            rules: collisions::Rules::default(),
             route,
         }
     }
@@ -334,7 +409,14 @@ impl Session {
         profile: RiderProfile,
         look: RiderLook,
     ) -> RiderId {
-        let id = self.insert(name.into(), profile, Control::Bot { base_power_w });
+        let id = self.insert(
+            name.into(),
+            profile,
+            Control::Bot {
+                base_power_w,
+                steady: false,
+            },
+        );
         self.set_look(id, look);
         id
     }
@@ -350,6 +432,166 @@ impl Session {
         }
     }
 
+    /// Marks a rider's power as virtual (keyboard, `sim.power`, the virtual
+    /// trainer; spec §14 Phase 4, 4E): it earns no hearts.
+    pub fn set_virtual_power(&mut self, id: RiderId, on: bool) {
+        if let Some(r) = self.riders.get_mut(&id) {
+            r.virtual_power = on;
+        }
+    }
+
+    /// The hearts a rider earned in this session (spec §14 Phase 4, 4E);
+    /// 0 for unknown riders.
+    pub fn hearts(&self, id: RiderId) -> u32 {
+        self.riders.get(&id).map_or(0, |r| r.meter.hearts())
+    }
+
+    /// Replaces a rider's physics profile at once, with the stock bike
+    /// (no parts); false for unknown riders. The workshop's bike goes
+    /// through [`Session::set_bike`].
+    pub fn set_profile(&mut self, id: RiderId, profile: RiderProfile) -> bool {
+        let Some(r) = self.riders.get_mut(&id) else {
+            return false;
+        };
+        r.build_changed |= r.build.is_some() || r.profile.bike != profile.bike;
+        r.profile = profile;
+        r.build = None;
+        r.pending_bike = None;
+        self.refresh_physics();
+        true
+    }
+
+    /// The workshop's bike (spec §14 Phase 4, 4A, Q1, 4G): the frame's
+    /// profile with the rider's weight and the bike's `build` (from the
+    /// server's part table, [`crate::build::build`]). Applied at once
+    /// outside events; an entrant of an event that is not over keeps the
+    /// bike it started with and gets this one when the event ends (from
+    /// the next start). `None` for unknown riders.
+    pub fn set_bike(
+        &mut self,
+        id: RiderId,
+        profile: RiderProfile,
+        build: Option<Build>,
+    ) -> Option<BikeApplied> {
+        let in_event = self.in_event(id);
+        let r = self.riders.get_mut(&id)?;
+        let build = build.filter(|b| !b.is_stock()).map(Arc::new);
+        if in_event {
+            r.pending_bike = Some((profile, build));
+            return Some(BikeApplied::AtNextStart);
+        }
+        r.profile = profile;
+        r.build = build;
+        r.pending_bike = None;
+        r.build_changed = true;
+        self.refresh_physics();
+        Some(BikeApplied::Now)
+    }
+
+    /// A rider's bike build (`None`: the stock bike, or an unknown rider).
+    pub fn rider_build(&self, id: RiderId) -> Option<&Build> {
+        self.riders.get(&id)?.build.as_deref()
+    }
+
+    /// The riders whose build changed since the last call (for the
+    /// reliable `RiderBuild` messages, sent on change only).
+    pub fn take_build_changes(&mut self) -> Vec<RiderId> {
+        self.riders
+            .iter_mut()
+            .filter_map(|(id, r)| std::mem::take(&mut r.build_changed).then_some(*id))
+            .collect()
+    }
+
+    /// Whether `id` rides in an event that is not over.
+    fn in_event(&self, id: RiderId) -> bool {
+        self.event
+            .as_ref()
+            .is_some_and(|e| e.phase != event::Phase::Finished && e.entrant(id).is_some())
+    }
+
+    /// The race mode a rider rides under now: the event's for its
+    /// entrants until it is over, else *Open* (free ride, single player).
+    pub fn physics_mode(&self, id: RiderId) -> PhysicsMode {
+        match &self.event {
+            Some(e) if self.in_event(id) => e.physics,
+            _ => PhysicsMode::Open,
+        }
+    }
+
+    /// The organiser's race mode for the current event (`None`: by its
+    /// kind, [`PhysicsMode::for_event`]).
+    pub fn set_event_physics(&mut self, mode: Option<PhysicsMode>) {
+        if let Some(ev) = &mut self.event {
+            ev.physics = mode.unwrap_or_else(|| PhysicsMode::for_event(&ev.kind));
+        }
+        self.refresh_physics();
+    }
+
+    /// Every rider's physics under the mode in force; bike changes held
+    /// back by an event apply once it is over.
+    fn refresh_physics(&mut self) {
+        let event = self
+            .event
+            .as_ref()
+            .filter(|e| e.phase != event::Phase::Finished);
+        for (id, r) in self.riders.iter_mut() {
+            let entrant = event.filter(|e| e.entrant(*id).is_some());
+            if entrant.is_none()
+                && let Some((profile, build)) = r.pending_bike.take()
+            {
+                r.profile = profile;
+                r.build = build;
+                r.build_changed = true;
+            }
+            let mode = entrant.map_or(PhysicsMode::Open, |e| e.physics);
+            r.effective = bike_build::effective(mode, &r.profile, r.build.as_deref());
+        }
+    }
+
+    /// Renames a rider (dev tools; the name tag and the standings).
+    pub fn rename(&mut self, id: RiderId, name: impl Into<String>) -> bool {
+        match self.riders.get_mut(&id) {
+            Some(r) => {
+                r.name = name.into();
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Puts a bot in a fixed lane (`lateral` m from the road's centre,
+    /// within the road) at once and keeps it there, also in an event's
+    /// start formation. False for non-bots.
+    pub fn set_bot_lane(&mut self, id: RiderId, lateral: f64) -> bool {
+        let limit = physics::lateral_limit(self.start_width());
+        match self.riders.get_mut(&id) {
+            Some(r) if matches!(r.control, Control::Bot { .. }) => {
+                let lane = lateral.clamp(-limit, limit);
+                r.lane = Some(lane);
+                r.state.lateral_offset = lane;
+                r.state.heading = 0.0;
+                r.steering = Steering::Auto(lane);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Sets a bot's base power; `steady`: exactly that power, without the
+    /// gentle variation (comparisons of two bikes). False for non-bots.
+    pub fn set_bot_power(&mut self, id: RiderId, watts: f64, steady: bool) -> bool {
+        match self.riders.get_mut(&id) {
+            Some(r) if matches!(r.control, Control::Bot { .. }) => {
+                r.control = Control::Bot {
+                    base_power_w: watts.max(0.0),
+                    steady,
+                };
+                true
+            }
+            _ => false,
+        }
+    }
+
     fn insert(&mut self, name: String, profile: RiderProfile, control: Control) -> RiderId {
         let id = RiderId(self.next_id);
         self.next_id += 1;
@@ -357,21 +599,31 @@ impl Session {
         // centre is kept for a client rider, who joins after the bots.
         let first = match control {
             Control::Client => 0,
-            Control::Bot { .. } => 1,
+            Control::Bot { .. } | Control::Echo => 1,
         };
+        // The Echo rider stands apart: it takes no slot from the field.
         let slot = (first..)
-            .find(|s| !self.riders.values().any(|r| r.slot == *s))
+            .find(|s| {
+                !self
+                    .riders
+                    .values()
+                    .any(|r| r.slot == *s && r.control != Control::Echo)
+            })
             .expect("a free slot");
         let width = self.start_width();
         let (back, lateral_offset) = formation_slot(slot, width);
         // Before the ride starts, move the whole formation forward if its
         // last row would start before the road begins.
-        if self.tick == 0 {
+        if self.tick == 0 && control != Control::Echo {
             let needed = (back - self.room_behind()).min(self.room_ahead());
             if needed > self.front_shift_m {
                 self.front_shift_m = needed;
-                let spots: Vec<(RiderId, usize)> =
-                    self.riders.iter().map(|(id, r)| (*id, r.slot)).collect();
+                let spots: Vec<(RiderId, usize)> = self
+                    .riders
+                    .iter()
+                    .filter(|(_, r)| r.control != Control::Echo)
+                    .map(|(id, r)| (*id, r.slot))
+                    .collect();
                 for (other, s) in spots {
                     let (path, distance) = self.start_spot(formation_slot(s, width).0);
                     let r = self.riders.get_mut(&other).expect("listed rider");
@@ -390,6 +642,11 @@ impl Session {
             Rider {
                 name,
                 profile,
+                build: None,
+                effective: profile,
+                pending_bike: None,
+                build_changed: false,
+                lane: None,
                 look: RiderLook::default(),
                 state: RiderState {
                     distance,
@@ -411,6 +668,15 @@ impl Session {
                 path_changed: None,
                 slot,
                 god: None,
+                crash: None,
+                bump: None,
+                avoid: Default::default(),
+                mistake_until: 0,
+                mistake_drift: 0.0,
+                joined_tick: self.tick,
+                solid: control != Control::Client,
+                meter: Default::default(),
+                virtual_power: false,
             },
         );
         id
@@ -490,6 +756,84 @@ impl Session {
 
     pub fn remove_rider(&mut self, id: RiderId) -> bool {
         self.riders.remove(&id).is_some()
+    }
+
+    /// The session's Echo rider (spec §7 *Echo bot*), if one is on the road.
+    pub fn echo_rider(&self) -> Option<RiderId> {
+        self.riders
+            .iter()
+            .find(|(_, r)| r.control == Control::Echo)
+            .map(|(id, _)| *id)
+    }
+
+    /// Puts the Echo rider on the road (there is at most one): standing
+    /// [`ECHO_AHEAD_M`] ahead of `near` on their track (in free ride on
+    /// their path, which it gets a copy of), [`ECHO_LATERAL_M`] right of
+    /// the centre; without `near` (or an unknown rider) at the start, or
+    /// where it already is. Returns its id.
+    pub fn place_echo(&mut self, name: &str, near: Option<RiderId>) -> RiderId {
+        let id = match self.echo_rider() {
+            Some(id) => id,
+            None => {
+                let id = self.insert(name.into(), RiderProfile::default(), Control::Echo);
+                let start = self.riders[&id].state.distance;
+                self.stand_echo(id, None, start);
+                id
+            }
+        };
+        let Some(asker) = near.and_then(|n| self.riders.get(&n)) else {
+            return id;
+        };
+        let distance = asker.state.distance + ECHO_AHEAD_M;
+        let path = asker.path.clone();
+        self.stand_echo(id, path, distance);
+        id
+    }
+
+    /// Stands the Echo rider at `distance` (on `path` in free ride).
+    fn stand_echo(&mut self, id: RiderId, path: Option<RidePath>, distance: f64) {
+        let finish = self.route.finish();
+        let route_width = self.route.road_width_m();
+        let Some(r) = self.riders.get_mut(&id) else {
+            return;
+        };
+        let (distance, width) = match path {
+            Some(mut p) => {
+                p.extend(distance, &mut |j| j.default);
+                let w = p.road_width_at(distance);
+                r.path = Some(p);
+                r.path_reset = true;
+                r.path_changed = None;
+                (distance, w)
+            }
+            None if r.path.is_some() => {
+                let w = r
+                    .path
+                    .as_ref()
+                    .map_or(route_width, |p| p.road_width_at(distance));
+                (distance, w)
+            }
+            None => (
+                finish.map_or(distance, |end| distance.min(end)),
+                route_width,
+            ),
+        };
+        let lateral = ECHO_LATERAL_M.min((physics::lateral_limit(width) - 0.3).max(0.0));
+        r.state = RiderState {
+            distance,
+            lateral_offset: lateral,
+            ..Default::default()
+        };
+        r.steering = Steering::Auto(lateral);
+        r.input = RiderInput::default();
+    }
+
+    /// Takes the Echo rider off the road; whether there was one.
+    pub fn remove_echo(&mut self) -> bool {
+        match self.echo_rider() {
+            Some(id) => self.remove_rider(id),
+            None => false,
+        }
     }
 
     /// Applies a client input. Inputs with a sequence number not newer than the
@@ -717,6 +1061,7 @@ impl Session {
     /// Advances the session by one physics tick.
     pub fn step(&mut self) {
         self.tick += 1;
+        self.refresh_physics();
         let t = self.time_s();
         let held = self.event.as_ref().is_some_and(Event::holds);
         let drafting = self.event.as_ref().is_none_or(|e| e.kind.drafting());
@@ -725,6 +1070,7 @@ impl Session {
                 let (bots, clients): (Vec<_>, Vec<_>) = self
                     .riders
                     .values()
+                    .filter(|r| r.control != Control::Echo)
                     .partition(|r| matches!(r.control, Control::Bot { .. }));
                 let d = |v: Vec<&Rider>| v.iter().map(|r| r.state.distance).collect::<Vec<_>>();
                 event::group_anchor(&d(bots), &d(clients)).map(|a| (target_w, a))
@@ -734,22 +1080,48 @@ impl Session {
         let before: Vec<(RiderId, f64)> = self
             .riders
             .iter()
+            .filter(|(_, r)| r.control != Control::Echo)
             .map(|(id, r)| (*id, r.state.distance))
             .collect();
-        // Drafting uses everyone's position at the start of the tick (in
-        // free ride also where on the road graph they are).
+        // Collisions (spec §14 Phase 12): the model in force, autodrive
+        // avoidance for every autodrive rider and bot, chaotic bots.
+        let mode = self.collision_mode();
+        let avoid_on = mode.on() && !held;
+        let chaotic = avoid_on && self.rules.chaotic_bots;
+        let overtake_left = self.overtake_left();
+        let tick = self.tick;
+        let loop_m = (self.free.is_none() && self.route.is_loop()).then(|| self.route.length());
+        // Drafting and avoidance use everyone's position at the start of
+        // the tick (in free ride also where on the road graph they are).
         // Riders in god mode fly: they draft nobody and nobody drafts them.
-        let positions: Vec<(RiderId, f64, f64, Option<EdgePoint>)> = self
+        let positions: Vec<Pos> = self
             .riders
             .iter()
-            .filter(|(_, r)| r.god.is_none())
+            .filter(|(_, r)| r.god.is_none() && r.control != Control::Echo)
             .map(|(id, r)| {
                 let at = r.path.as_ref().and_then(|p| p.locate(r.state.distance));
-                (*id, r.state.distance, r.state.lateral_offset, at)
+                let lane = match r.steering {
+                    Steering::Auto(t) => t,
+                    Steering::Lean(_) => r.state.lateral_offset,
+                };
+                Pos {
+                    id: *id,
+                    distance: r.state.distance,
+                    lateral: r.state.lateral_offset,
+                    at,
+                    speed: r.state.speed,
+                    target: r.avoid.pass_m.unwrap_or(lane),
+                    fallen: r.crash.is_some(),
+                }
             })
             .collect();
         for (id, rider) in &mut self.riders {
             let d = rider.state.distance;
+            if rider.control == Control::Echo {
+                // The Echo rider stands where it was put.
+                rider.state.speed = 0.0;
+                continue;
+            }
             if rider.god.is_some() {
                 // God mode: out of the physics, the road position frozen.
                 rider.state.speed = 0.0;
@@ -770,7 +1142,7 @@ impl Session {
                         });
                         (changed, false)
                     }
-                    Control::Client => {
+                    Control::Client | Control::Echo => {
                         freeride::advance(path, d, rider.state.speed, rider.turn.as_ref())
                     }
                 };
@@ -782,16 +1154,36 @@ impl Session {
                 }
                 path.trim_behind(d);
             }
-            let others = positions.iter().filter(|(other, ..)| other != id);
-            let ahead: Vec<(f64, f64)> = match &rider.path {
-                Some(p) => others
-                    .filter_map(|&(_, _, l, at)| {
-                        let (e, f, o) = at?;
-                        Some((p.distance_of(e, f, o, d)?, l))
-                    })
-                    .collect(),
-                None => others.map(|&(_, od, l, _)| (od, l)).collect(),
-            };
+            if rider.crash.is_some() {
+                // Down after a crash (spec §14 Phase 12C): power has no
+                // effect; sliding to a stop, lying, remounting.
+                let width = match &rider.path {
+                    Some(p) => p.road_width_at(d),
+                    None => self.route.road_width_at(d),
+                };
+                collisions::crash_tick(rider, tick, physics::lateral_limit(width));
+                continue;
+            }
+            // The others where this rider rides: distance along its path.
+            let mapped: Vec<(&Pos, f64)> = positions
+                .iter()
+                .filter(|p| p.id != *id)
+                .filter_map(|p| {
+                    let mine = match &rider.path {
+                        Some(path) => {
+                            let (e, f, o) = p.at?;
+                            path.distance_of(e, f, o, d)?
+                        }
+                        None => p.distance,
+                    };
+                    Some((p, mine))
+                })
+                .collect();
+            let ahead: Vec<(f64, f64)> = mapped
+                .iter()
+                .filter(|(p, _)| !p.fallen)
+                .map(|(p, m)| (*m, p.lateral))
+                .collect();
             let drag = if drafting {
                 drafting::drag_factor((d, rider.state.lateral_offset), ahead)
             } else {
@@ -802,7 +1194,11 @@ impl Session {
                 None => &self.route,
             };
             let grade = track.sample(d).grade;
-            if let Control::Bot { base_power_w } = rider.control {
+            if let Control::Bot {
+                base_power_w,
+                steady,
+            } = rider.control
+            {
                 // Deterministic variation so bots don't ride in perfect lockstep.
                 let phase = id.0 as f64 * 1.7;
                 let cruising = match group {
@@ -811,18 +1207,76 @@ impl Session {
                         let personal = event::GROUP_BAND * (t * 0.05 + phase).sin();
                         event::group_power_w(target_w, personal, d - anchor)
                     }
+                    None if steady => base_power_w,
                     None => base_power_w * (1.0 + 0.1 * (t * 0.2 + phase).sin()),
                 };
-                rider.input.power_w = cruising.max(bot_climb_power_w(&rider.profile, grade));
+                rider.input.power_w = cruising.max(bot_climb_power_w(&rider.effective, grade));
+            }
+            // Autodrive avoidance (spec §14 Phase 12D): every autodrive
+            // rider and bot; manual riders get no help.
+            let mut steering = rider.steering;
+            let mut cap = None;
+            if avoid_on
+                && !rider.wild
+                && let Steering::Auto(lane) = rider.steering
+            {
+                // Joining ghosts are avoided too: they become solid soon.
+                let others: Vec<avoid::Other> = mapped
+                    .iter()
+                    .filter_map(|(p, mine)| {
+                        let mut ahead_m = mine - d;
+                        if let Some(l) = loop_m {
+                            ahead_m -= l * (ahead_m / l).round();
+                        }
+                        (ahead_m.abs() < 80.0).then(|| {
+                            if p.fallen {
+                                avoid::Other::fallen(ahead_m, p.lateral)
+                            } else {
+                                avoid::Other::rider(ahead_m, p.lateral, p.target, p.speed)
+                            }
+                        })
+                    })
+                    .collect();
+                if chaotic
+                    && matches!(rider.control, Control::Bot { .. })
+                    && collisions::mistake_starts(*id, tick)
+                {
+                    // A late reaction, drifting towards the rider ahead.
+                    rider.mistake_until = tick + (collisions::MISTAKE_S / SIM_DT) as u64;
+                    let me = rider.state.lateral_offset;
+                    rider.mistake_drift = others
+                        .iter()
+                        .filter(|o| o.ahead_m > 0.0 && o.ahead_m < 10.0)
+                        .min_by(|a, b| a.ahead_m.total_cmp(&b.ahead_m))
+                        .map_or(0.0, |o| {
+                            (o.lateral_m - me).signum() * collisions::MISTAKE_DRIFT_M
+                        });
+                }
+                if rider.mistake_until > tick {
+                    rider.avoid = Default::default();
+                    steering = Steering::Auto(lane + rider.mistake_drift);
+                } else {
+                    let width = track.road_width_at(d);
+                    let me = avoid::Me {
+                        lateral_m: rider.state.lateral_offset,
+                        speed: rider.state.speed,
+                        lane_m: lane,
+                        limit_m: physics::lateral_limit(width),
+                        road_width_m: width,
+                    };
+                    let plan = avoid::plan(&me, &others, overtake_left, &mut rider.avoid);
+                    steering = Steering::Auto(plan.target_m);
+                    cap = plan.speed_cap;
+                }
             }
             let controls = Controls {
-                steering: rider.steering,
+                steering,
                 wild: rider.wild,
                 braking: rider.input.brake,
             };
             ride::tick(
                 &mut rider.state,
-                &rider.profile,
+                &rider.effective,
                 rider.input.power_w,
                 controls,
                 &mut rider.scraping,
@@ -830,6 +1284,27 @@ impl Session {
                 drag,
                 SIM_DT,
             );
+            // Hearts (spec §14 Phase 4, 4E): the accepted power's work and
+            // the climbing, for clients riding real power (god mode and
+            // crashes left the loop above).
+            let blocked = match rider.control {
+                Control::Client if rider.virtual_power => Some(NoHearts::VirtualPower),
+                Control::Client => None,
+                Control::Bot { .. } | Control::Echo => Some(NoHearts::Bot),
+            };
+            // At most 2 m a tick (100 m/s): a teleport is no climb.
+            let rise = (rider.state.distance - d).clamp(0.0, 2.0) * grade;
+            rider.meter.add(rider.input.power_w, SIM_DT, rise, blocked);
+            // The virtual brake: the speed above the one in front is shed.
+            if let Some(c) = cap
+                && rider.state.speed > c
+            {
+                rider.state.speed = c;
+            }
+        }
+        // Contacts after the physics step, before the broadcast (12B).
+        if !held {
+            self.resolve_collisions(mode);
         }
         if let Some(ev) = &mut self.event {
             let progress: Vec<Progress> = before
@@ -862,6 +1337,9 @@ impl Session {
                 power_w: r.input.power_w,
                 last_input_seq: r.last_input_seq,
                 god: r.god.map(|g| g.pose),
+                crash: r.crash.and_then(|c| c.view(self.tick)),
+                bump: r.bump,
+                build_hash: r.build.as_ref().map_or(0, |b| b.hash()),
             })
             .collect()
     }
@@ -913,7 +1391,16 @@ impl Session {
         }
         // Formation slots: client riders first (the front row's centre),
         // then the bots, each in joining order.
-        let mut order: Vec<RiderId> = self.riders.keys().copied().collect();
+        // The Echo rider is in no event (spec §7 *Echo bot*).
+        let mut order: Vec<RiderId> = self
+            .riders
+            .iter()
+            .filter(|(_, r)| r.control != Control::Echo)
+            .map(|(id, _)| *id)
+            .collect();
+        if order.is_empty() {
+            return Err("no riders".into());
+        }
         order.sort_by_key(|id| (matches!(self.riders[id].control, Control::Bot { .. }), *id));
         let width = self.start_width();
         let last_back = formation_slot(order.len() - 1, width).0;
@@ -955,12 +1442,16 @@ impl Session {
         let mut ev = Event::new(id, kind, self.tick, start_line, entrants);
         let changes = ev.update(self.tick, &[]);
         self.event_changes.extend(changes);
-        Ok(self.event.insert(ev))
+        self.event = Some(ev);
+        self.refresh_physics();
+        Ok(self.event.as_ref().expect("just started"))
     }
 
     /// Ends the current event (riders ride on where they are).
     pub fn cancel_event(&mut self) -> Option<Event> {
-        self.event.take()
+        let ev = self.event.take();
+        self.refresh_physics();
+        ev
     }
 
     /// Moves a rider to `distance` in formation place `slot`, standing.
@@ -972,6 +1463,7 @@ impl Session {
         let Some(r) = self.riders.get_mut(&id) else {
             return;
         };
+        let lateral = r.lane.unwrap_or(lateral);
         if let Some((net, plan)) = net_plan {
             let next = r.path.as_ref().map_or(0, RidePath::next_index);
             let mut p = RidePath::on_route(net, plan, 0.0, next);
@@ -991,8 +1483,12 @@ impl Session {
         r.wild = false;
         r.scraping = false;
         r.slot = slot;
-        // An event's start formation ends god mode.
+        // An event's start formation ends god mode and any crash.
         r.god = None;
+        r.crash = None;
+        r.bump = None;
+        r.avoid = Default::default();
+        r.mistake_until = 0;
     }
 
     /// The event's ranking now (empty without an event).
@@ -1003,13 +1499,20 @@ impl Session {
         let riders: Vec<(RiderId, f64, f64)> = self
             .riders
             .iter()
+            .filter(|(_, r)| r.control != Control::Echo)
             .map(|(id, r)| (*id, r.state.distance, r.state.speed))
             .collect();
         ev.standings(&riders)
     }
 
-    /// The physics profile a rider rides with.
+    /// The physics a rider rides with now (the frame's profile, the
+    /// build and the race mode in force, spec §14 Phase 4, 4G).
     pub fn rider_profile(&self, id: RiderId) -> Option<RiderProfile> {
+        self.riders.get(&id).map(|r| r.effective)
+    }
+
+    /// The rider's weight and frame profile, without parts or race mode.
+    pub fn base_profile(&self, id: RiderId) -> Option<RiderProfile> {
         self.riders.get(&id).map(|r| r.profile)
     }
 }
@@ -1058,6 +1561,54 @@ mod tests {
         let id = s.add_rider("a", RiderProfile::default());
         let len = Route::test_loop().length();
         assert_eq!(s.teleport(id, len + 100.0), Some(len + 100.0));
+    }
+
+    /// Hearts (spec §14 Phase 4, 4E): 1 per 10 kJ of the accepted work
+    /// and 1 per 20 m climbed, for clients on real power only.
+    #[test]
+    fn hearts_count_real_work_and_climbing_only() {
+        let mut s = Session::new(Route::test_hills());
+        let real = s.add_rider("real", RiderProfile::default());
+        let fake = s.add_rider("virtual", RiderProfile::default());
+        let bot = s.add_bot("bot", 250.0);
+        let god = s.add_rider("god", RiderProfile::default());
+        s.set_virtual_power(fake, true);
+        let input = RiderInput {
+            power_w: 250.0,
+            ..Default::default()
+        };
+        for (i, id) in [real, fake, god].into_iter().enumerate() {
+            assert!(s.apply_input(id, 1 + i as u32, input));
+        }
+        s.enter_god(god).unwrap();
+        // 200 s at 250 W = 50 kJ = 5 ♥, plus the climbing of the hills.
+        for _ in 0..(ocw_core::SIM_TICK_HZ as usize * 200) {
+            s.step();
+        }
+        let work = s.hearts(real);
+        assert!(work >= 5, "{work}");
+        assert!(work < 5 + 10, "the climbing is a few hearts: {work}");
+        assert_eq!(s.hearts(fake), 0, "virtual power earns nothing");
+        assert_eq!(s.hearts(bot), 0, "bots earn nothing");
+        assert_eq!(s.hearts(god), 0, "god mode earns nothing");
+        assert_eq!(s.hearts(RiderId(999)), 0);
+        // Back to real power: it counts from now on.
+        s.set_virtual_power(fake, false);
+        for _ in 0..(ocw_core::SIM_TICK_HZ as usize * 50) {
+            s.step();
+        }
+        assert!(s.hearts(fake) >= 1);
+    }
+
+    #[test]
+    fn a_new_profile_applies_at_once() {
+        let mut s = Session::new(Route::test_loop());
+        let id = s.add_rider("a", RiderProfile::default());
+        let mtb = RiderProfile::curated(ProfileId::Mountain, 70.0);
+        assert!(s.set_profile(id, mtb));
+        assert_eq!(s.rider_profile(id), Some(mtb));
+        assert_eq!(s.snapshot()[0].bike, ProfileId::Mountain);
+        assert!(!s.set_profile(RiderId(42), mtb));
     }
 
     #[test]
@@ -1684,6 +2235,82 @@ mod tests {
         }
     }
 
+    /// The echo test's rider (spec §7 *Echo bot*): stands ahead of the
+    /// asker, takes no start slot, is no bot, in no event or standings.
+    #[test]
+    fn the_echo_rider_stands_apart() {
+        let mut s = Session::new(Route::test_loop()).with_start(100.0);
+        let bot = s.add_bot("bot", 200.0);
+        let me = s.add_rider("me", RiderProfile::default());
+        pedal(&mut s, me, 200.0);
+        steps(&mut s, 5.0);
+        assert_eq!(s.echo_rider(), None);
+        let echo = s.place_echo("Echo", Some(me));
+        assert_eq!(s.echo_rider(), Some(echo));
+        let at = s.rider_state(me).unwrap().distance;
+        let st = s.rider_state(echo).unwrap();
+        assert!((st.distance - (at + ECHO_AHEAD_M)).abs() < 1e-9);
+        assert_eq!(st.lateral_offset, ECHO_LATERAL_M);
+        // It stands; the others ride on.
+        steps(&mut s, 5.0);
+        assert_eq!(s.rider_state(echo).unwrap().distance, st.distance);
+        assert_eq!(s.rider_state(echo).unwrap().speed, 0.0);
+        assert_eq!(s.bots(), vec![bot], "not a bot");
+        // Placed again ("here"): the same rider, moved.
+        let at = s.rider_state(me).unwrap().distance;
+        assert_eq!(s.place_echo("Echo", Some(me)), echo);
+        assert!((s.rider_state(echo).unwrap().distance - (at + ECHO_AHEAD_M)).abs() < 1e-9);
+        // A new bot still gets its own slot in the formation.
+        let ev = s
+            .start_event(EventSpec::Race {
+                laps: None,
+                length_m: Some(400.0),
+            })
+            .unwrap();
+        assert!(ev.entrants.iter().all(|e| e.id != echo), "not an entrant");
+        assert_eq!(ev.entrants.len(), 2);
+        assert!(s.event_standings().iter().all(|r| r.id != echo));
+        assert!(s.remove_echo());
+        assert!(!s.remove_echo());
+        assert_eq!(s.echo_rider(), None);
+    }
+
+    #[test]
+    fn the_echo_rider_takes_no_start_slot() {
+        let mut s = Session::new(Route::test_loop()).with_start(100.0);
+        let echo = s.place_echo("Echo", None);
+        let b = s.add_bot("b", 100.0);
+        // The bot gets the first bot slot, as without the Echo rider.
+        let st = s.rider_state(b).unwrap();
+        assert_eq!((st.distance, st.lateral_offset), (100.0, -1.2));
+        assert_eq!(s.rider_state(echo).unwrap().lateral_offset, ECHO_LATERAL_M);
+    }
+
+    #[test]
+    fn the_echo_rider_follows_a_free_ride_path() {
+        let mut s = free_session();
+        let me = s.add_rider("me", RiderProfile::default());
+        pedal(&mut s, me, 250.0);
+        steps(&mut s, 10.0);
+        s.take_path_changes();
+        let echo = s.place_echo("Echo", Some(me));
+        let d = s.rider_state(echo).unwrap().distance;
+        let p = s.path(echo).expect("its own copy of the path");
+        let mine = s.path(me).unwrap();
+        let a = p.sample(d).position;
+        let b = mine.sample(d).position;
+        assert!(
+            (a[0] - b[0]).hypot(a[2] - b[2]) < 1e-6,
+            "on the asker's road ahead"
+        );
+        // The clients learn its path.
+        assert!(
+            s.take_path_changes()
+                .iter()
+                .any(|c| c.rider == echo && c.reset)
+        );
+    }
+
     #[test]
     fn race_lines_up_holds_through_the_countdown_and_ranks_the_finish() {
         use crate::event::{COUNTDOWN_S, EventChange, Phase};
@@ -1893,5 +2520,179 @@ mod tests {
         let changes = s.take_path_changes();
         assert_eq!(changes.len(), 2);
         assert!(changes.iter().all(|c| c.reset));
+    }
+
+    /// The best build the shipped catalogue allows on the road bike.
+    fn upgraded_road() -> Build {
+        let parts: Vec<String> = [
+            "wheels.road-carbon.top",
+            "tyres.road.race",
+            "groupset.road-electronic.top",
+            "cockpit.road.integrated",
+            "saddle.road.top",
+            "seatpost.carbon",
+            "pedals.road.top",
+        ]
+        .map(String::from)
+        .to_vec();
+        crate::build::build(crate::PartTable::shipped(), ProfileId::Road, &parts)
+    }
+
+    /// Two steady bots side by side (no draft) on the same road profile,
+    /// one on the stock bike, one upgraded; a race over 1 km in `mode`.
+    /// Returns their speeds after 60 s and the finish gap (s).
+    fn sprint(mode: Option<PhysicsMode>, rider_profiles: [ProfileId; 2]) -> ([f64; 2], f64) {
+        // A flat 5 km circle.
+        let pts = (0..2000)
+            .map(|i| {
+                let t = f64::from(i) / 2000.0 * std::f64::consts::TAU;
+                [800.0 * t.cos(), 0.0, 800.0 * t.sin()]
+            })
+            .collect();
+        let flat = Route::from_points("flat", "Flat", pts, true, 7.0).unwrap();
+        let mut s = Session::new(flat).with_start(300.0);
+        let stock = s.add_bot("Stock", 300.0);
+        let upgraded = s.add_bot("Upgraded", 300.0);
+        // Out of each other's draft: 4.8 m apart.
+        for ((id, p), lane) in [stock, upgraded]
+            .into_iter()
+            .zip(rider_profiles)
+            .zip([-2.4, 2.4])
+        {
+            s.set_profile(id, RiderProfile::curated(p, 75.0));
+            assert!(s.set_bot_power(id, 300.0, true));
+            assert!(s.set_bot_lane(id, lane));
+        }
+        let b = crate::build::build(
+            crate::PartTable::shipped(),
+            rider_profiles[1],
+            &upgraded_road().parts,
+        );
+        s.set_bike(
+            upgraded,
+            RiderProfile::curated(rider_profiles[1], 75.0),
+            Some(b),
+        );
+        s.start_event(EventSpec::Race {
+            laps: None,
+            length_m: Some(3000.0),
+        })
+        .unwrap();
+        s.set_event_physics(mode);
+        steps(&mut s, 90.0);
+        let v = [stock, upgraded].map(|id| s.rider_state(id).unwrap().speed);
+        steps(&mut s, 400.0);
+        let finish = |id| {
+            s.event()
+                .unwrap()
+                .entrant(id)
+                .and_then(|e| e.finish_s)
+                .expect("finished")
+        };
+        (v, finish(stock) - finish(upgraded))
+    }
+
+    /// Open: the parts count within the caps (the upgraded bot is faster,
+    /// by at most the flat cap); Profile: parts are cosmetic (identical
+    /// speeds); Equal: even different frames ride the same.
+    #[test]
+    fn race_modes_decide_whether_parts_count() {
+        let b = upgraded_road();
+        assert!(b.flat_gain > 0.005, "{b:?}");
+        let road = [ProfileId::Road, ProfileId::Road];
+        let (v, gap) = sprint(Some(PhysicsMode::Open), road);
+        let gain = v[1] / v[0] - 1.0;
+        assert!(
+            gain > 0.005 && gain <= crate::build::FLAT_CAP + 1e-3,
+            "{v:?}"
+        );
+        assert!(
+            (gain - b.flat_gain).abs() < 2e-3,
+            "{gain} vs {}",
+            b.flat_gain
+        );
+        assert!(gap > 0.5, "the upgraded bot wins by {gap} s");
+        // The default for races is Profile: identical speeds and times.
+        for mode in [None, Some(PhysicsMode::Profile)] {
+            let (v, gap) = sprint(mode, road);
+            assert_eq!(v[0], v[1], "{mode:?}");
+            assert_eq!(gap, 0.0, "{mode:?}");
+        }
+        // Profile keeps the frame's profile: a road bike still beats an MTB.
+        let (v, _) = sprint(
+            Some(PhysicsMode::Profile),
+            [ProfileId::Road, ProfileId::Mountain],
+        );
+        assert!(v[0] > v[1], "{v:?}");
+        // Equal: everyone the same, whatever the frame or the parts.
+        let (v, gap) = sprint(
+            Some(PhysicsMode::Equal),
+            [ProfileId::Road, ProfileId::Mountain],
+        );
+        assert_eq!(v[0], v[1]);
+        assert_eq!(gap, 0.0);
+    }
+
+    /// The workshop's bike applies at once outside events; an entrant
+    /// keeps the bike it started with until the event is over (from the
+    /// next start), and the change is reported once for the others.
+    #[test]
+    fn bike_changes_apply_at_once_or_after_the_event() {
+        let mut s = Session::new(Route::test_loop()).with_start(300.0);
+        let me = s.add_rider("me", RiderProfile::default());
+        let other = s.add_bot("b", 200.0);
+        let _ = s.take_build_changes();
+        let b = upgraded_road();
+        assert_eq!(
+            s.set_bike(me, RiderProfile::default(), Some(b.clone())),
+            Some(BikeApplied::Now)
+        );
+        assert_eq!(s.rider_build(me), Some(&b));
+        assert_eq!(s.rider_profile(me), Some(b.rider_profile(75.0)));
+        assert_eq!(s.physics_mode(me), PhysicsMode::Open);
+        assert_eq!(s.take_build_changes(), vec![me]);
+        assert!(s.take_build_changes().is_empty(), "once");
+        let hash = s.snapshot().iter().find(|r| r.id == me).unwrap().build_hash;
+        assert_eq!(hash, b.hash());
+        assert_ne!(hash, 0);
+        assert_eq!(
+            s.snapshot()
+                .iter()
+                .find(|r| r.id == other)
+                .unwrap()
+                .build_hash,
+            0
+        );
+        // In a race (Profile by default) the parts are cosmetic.
+        s.start_event(EventSpec::Race {
+            laps: None,
+            length_m: Some(400.0),
+        })
+        .unwrap();
+        assert_eq!(s.physics_mode(me), PhysicsMode::Profile);
+        assert_eq!(s.rider_profile(me), Some(RiderProfile::default()));
+        // A change in the race waits for its end.
+        let mtb = RiderProfile::curated(ProfileId::Mountain, 75.0);
+        assert_eq!(s.set_bike(me, mtb, None), Some(BikeApplied::AtNextStart));
+        assert_eq!(s.base_profile(me).unwrap().bike, ProfileId::Road);
+        assert!(s.take_build_changes().is_empty());
+        // Open race: the build counts while it runs.
+        s.set_event_physics(Some(PhysicsMode::Open));
+        assert_eq!(s.rider_profile(me), Some(b.rider_profile(75.0)));
+        // The race ends (cancelled here): the waiting bike applies.
+        s.cancel_event();
+        assert_eq!(s.rider_profile(me), Some(mtb));
+        assert_eq!(s.rider_build(me), None);
+        assert_eq!(s.take_build_changes(), vec![me]);
+        // Riders not in the event change at once even while it runs.
+        s.start_event(EventSpec::Race {
+            laps: None,
+            length_m: Some(400.0),
+        })
+        .unwrap();
+        let late = s.add_rider("late", RiderProfile::default());
+        assert_eq!(s.set_bike(late, mtb, None), Some(BikeApplied::Now));
+        assert_eq!(s.physics_mode(late), PhysicsMode::Open);
+        assert_eq!(s.set_bike(RiderId(99), mtb, None), None);
     }
 }

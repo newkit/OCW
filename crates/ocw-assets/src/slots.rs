@@ -41,7 +41,7 @@ const fn slot(name: &'static str, tint: Tint, color: u32, metallic: f32, roughne
 }
 
 /// All slots.
-pub const ALL: [Slot; 19] = [
+pub const ALL: [Slot; 22] = [
     slot("frame", Tint::Frame, 0x1E1E22, 0.1, 0.32),
     slot("tyre", Tint::Fixed, 0x1A1A1A, 0.0, 0.85),
     slot("tyre_wall", Tint::Fixed, 0x8A6A45, 0.0, 0.8),
@@ -61,6 +61,11 @@ pub const ALL: [Slot; 19] = [
     slot("sock", Tint::Fixed, 0xF4F4F0, 0.0, 0.8),
     slot("lens", Tint::Fixed, 0x101418, 0.6, 0.15),
     slot("hair", Tint::Fixed, 0x3B2A20, 0.0, 0.9),
+    // Part variants (spec §14 Phase 4, 4B): bare carbon, and the lenses
+    // of the light set (the renderer makes them glow).
+    slot("carbon", Tint::Fixed, 0x0C0C0E, 0.15, 0.22),
+    slot("light_front", Tint::Fixed, 0xFFF6E0, 0.0, 0.2),
+    slot("light_rear", Tint::Fixed, 0xE0201C, 0.0, 0.2),
 ];
 
 /// The slot called `name`.

@@ -37,13 +37,22 @@ pub enum Cue {
     WingBeat,
     /// A muffled hoof beat on air (the unicorn's gallop while slow).
     Hoof,
+    /// A soft bump (spec §14 Phase 12C): a body thud and a tyre squeak.
+    Bump,
+    /// A crash: the impact, the metal scrape of the sliding bike, a
+    /// fading spin of the free wheel.
+    Crash,
+    /// Back on the bike: the cleats click in.
+    Remount,
+    /// The proximity cue (12D): a soft bell.
+    Proximity,
     /// A test tone on a bus (`audio.play test-music` …).
     Test(Bus),
 }
 
 impl Cue {
     /// The names `audio.play` takes.
-    pub const NAMES: [(&'static str, Cue); 17] = [
+    pub const NAMES: [(&'static str, Cue); 21] = [
         ("move", Cue::UiMove),
         ("value", Cue::UiValue),
         ("confirm", Cue::UiConfirm),
@@ -56,6 +65,10 @@ impl Cue {
         ("chime", Cue::GodChime),
         ("wing", Cue::WingBeat),
         ("hoof", Cue::Hoof),
+        ("bump", Cue::Bump),
+        ("crash", Cue::Crash),
+        ("remount", Cue::Remount),
+        ("proximity", Cue::Proximity),
         ("test-music", Cue::Test(Bus::Music)),
         ("test-effects", Cue::Test(Bus::Effects)),
         ("test-voice", Cue::Test(Bus::Voice)),
@@ -90,6 +103,10 @@ impl Cue {
             Cue::GodChime => 1.3,
             Cue::WingBeat => 0.38,
             Cue::Hoof => 0.14,
+            Cue::Bump => 0.35,
+            Cue::Crash => 1.6,
+            Cue::Remount => 0.3,
+            Cue::Proximity => 0.5,
             Cue::Test(_) => 0.8,
         }
     }
@@ -131,7 +148,8 @@ impl CueVoice {
             noise: Noise::new(0xC0E5 + cue.duration_s().to_bits()),
             filter: match cue {
                 Cue::WingBeat => Svf::new(380.0, 0.8, sample_rate),
-                Cue::Hoof => Svf::new(240.0, 0.9, sample_rate),
+                Cue::Hoof | Cue::Bump => Svf::new(240.0, 0.9, sample_rate),
+                Cue::Crash => Svf::new(3200.0, 1.5, sample_rate),
                 _ => Svf::new(2600.0, 2.0, sample_rate),
             },
         }
@@ -194,6 +212,55 @@ impl CueVoice {
                 let env = (t / 0.004).min(1.0) * (-t / 0.03).exp();
                 tone(t, 0.0, 0.14, 75.0, 0.32) + low * 0.6 * env
             }
+            // A body thud (low knock and muffled noise) and a short tyre
+            // squeak gliding down.
+            Cue::Bump => {
+                let n = self.noise.white();
+                let low = self.filter.process(n).low;
+                let env = (t / 0.003).min(1.0) * (-t / 0.05).exp();
+                let squeak = if (0.04..0.2).contains(&t) {
+                    let x = t - 0.04;
+                    let f = 2400.0 - 2500.0 * x;
+                    0.08 * (-x / 0.06).exp() * (2.0 * PI * f * x).sin()
+                } else {
+                    0.0
+                };
+                tone(t, 0.0, 0.25, 85.0, 0.45) + low * 0.7 * env + squeak
+            }
+            // The impact, then the scrape of metal on asphalt fading, and
+            // the free wheel ticking slower and slower.
+            Cue::Crash => {
+                let n = self.noise.white();
+                let band = self.filter.process(n).band;
+                let impact = (t / 0.002).min(1.0) * (-t / 0.08).exp();
+                let scrape = if t > 0.08 {
+                    let x = t - 0.08;
+                    (x / 0.05).min(1.0)
+                        * (-x / 0.45).exp()
+                        * (1.0 + 0.4 * (2.0 * PI * 23.0 * t).sin())
+                } else {
+                    0.0
+                };
+                let rate = 14.0 * (-t / 0.9).exp() + 2.0;
+                let x = (t * rate).fract() / rate;
+                let tick = if t > 0.3 {
+                    (-x / 0.0015).exp() * 0.25
+                } else {
+                    0.0
+                };
+                tone(t, 0.0, 0.3, 60.0, 0.5) + n * 0.5 * impact + band * (0.35 * scrape + tick)
+            }
+            // Two cleats clicking in.
+            Cue::Remount => {
+                let n = self.noise.white();
+                let band = self.filter.process(n).band;
+                let click = |at: f32| {
+                    let x = t - at;
+                    if x >= 0.0 { (-x / 0.004).exp() } else { 0.0 }
+                };
+                band * 1.1 * (click(0.0) + click(0.16)) + tone(t, 0.0, 0.04, 1800.0, 0.06)
+            }
+            Cue::Proximity => bell(t, 0.0, 0.5, 1318.5, 0.12),
             Cue::Test(Bus::Music) => tone(t, 0.0, 0.8, 440.0, 0.3) + tone(t, 0.0, 0.8, 554.4, 0.2),
             Cue::Test(Bus::Effects) => tone(t, 0.0, 0.8, 660.0, 0.35),
             Cue::Test(Bus::Voice) => {
@@ -256,6 +323,72 @@ pub fn finish_cue(prev_results: bool, now_results: bool) -> Option<Cue> {
     (!prev_results && now_results).then_some(Cue::Finish)
 }
 
+/// What the contact cues watch between frames (spec §14 Phase 12C).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ContactWatch {
+    wobbling: std::collections::BTreeSet<u32>,
+    down: std::collections::BTreeMap<u32, bool>,
+    near: bool,
+}
+
+/// A rider as the contact cues see it: id, the local rider, metres from
+/// the local rider, the wobble (rad), the crash phase (remounting?).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ContactRider {
+    pub id: u32,
+    pub is_local: bool,
+    pub distance_m: f64,
+    pub wobble: f64,
+    pub crash: Option<bool>,
+}
+
+/// Bumps within this distance of the local rider are heard (m) …
+pub const BUMP_HEARD_M: f64 = 15.0;
+/// … and crashes within this one.
+pub const CRASH_HEARD_M: f64 = 40.0;
+
+/// The contact cues for this frame (spec §14 Phase 12C): a bump when a
+/// rider starts to wobble, a crash when one goes down (the own rider, or
+/// others close by), the cleats when the own rider remounts, the bell
+/// when someone comes close (the proximity cue, 12D).
+pub fn contact_cues(
+    watch: &mut ContactWatch,
+    riders: &[ContactRider],
+    proximity: Option<i32>,
+) -> Vec<Cue> {
+    let mut out = Vec::new();
+    let mut wobbling = std::collections::BTreeSet::new();
+    let mut down = std::collections::BTreeMap::new();
+    for r in riders {
+        let heard = |m: f64| r.is_local || r.distance_m.abs() < m;
+        if r.wobble != 0.0 {
+            wobbling.insert(r.id);
+            if !watch.wobbling.contains(&r.id) && heard(BUMP_HEARD_M) {
+                out.push(Cue::Bump);
+            }
+        }
+        if let Some(remounting) = r.crash {
+            down.insert(r.id, remounting);
+            match watch.down.get(&r.id) {
+                None if !remounting && heard(CRASH_HEARD_M) => out.push(Cue::Crash),
+                Some(false) if remounting && r.is_local => out.push(Cue::Remount),
+                _ => {}
+            }
+        }
+    }
+    let near = proximity.is_some();
+    if near && !watch.near {
+        out.push(Cue::Proximity);
+    }
+    out.dedup();
+    *watch = ContactWatch {
+        wobbling,
+        down,
+        near,
+    };
+    out
+}
+
 /// The workout cue: the session's change counter (starts, step changes,
 /// end, stop; `WorkoutSession::lap_count`) grew.
 pub fn workout_cue(prev_count: u64, now_count: u64) -> Option<Cue> {
@@ -267,6 +400,50 @@ mod tests {
     use super::*;
 
     const SR: f32 = 48_000.0;
+
+    #[test]
+    fn contact_cues_bump_crash_remount_and_proximity() {
+        let mut w = ContactWatch::default();
+        let r = |id, is_local, distance_m, wobble, crash| ContactRider {
+            id,
+            is_local,
+            distance_m,
+            wobble,
+            crash,
+        };
+        assert!(contact_cues(&mut w, &[r(1, true, 0.0, 0.0, None)], None).is_empty());
+        // A bump of the own rider; a far one is not heard.
+        assert_eq!(
+            contact_cues(
+                &mut w,
+                &[r(1, true, 0.0, 0.05, None), r(2, false, 90.0, 0.05, None)],
+                None
+            ),
+            vec![Cue::Bump]
+        );
+        assert!(
+            contact_cues(&mut w, &[r(1, true, 0.0, 0.03, None)], None).is_empty(),
+            "once"
+        );
+        // A crash close by, then the own rider remounting.
+        assert_eq!(
+            contact_cues(
+                &mut w,
+                &[
+                    r(1, true, 0.0, 0.0, Some(false)),
+                    r(3, false, 10.0, 0.0, Some(false))
+                ],
+                None
+            ),
+            vec![Cue::Crash]
+        );
+        assert_eq!(
+            contact_cues(&mut w, &[r(1, true, 0.0, 0.0, Some(true))], None),
+            vec![Cue::Remount]
+        );
+        assert_eq!(contact_cues(&mut w, &[], Some(1)), vec![Cue::Proximity]);
+        assert!(contact_cues(&mut w, &[], Some(-1)).is_empty());
+    }
 
     fn snap(open: bool, title: &str, focused: usize, label: &str) -> MenuSnapshot {
         MenuSnapshot {

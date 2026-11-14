@@ -137,9 +137,17 @@ pub const SETTINGS: &[SettingDef] = &[
         key: "controls.invert_y",
         kind: Kind::Bool,
         default: "off",
-        description: "God mode: moving the mouse up looks down (spec §14 Phase 13B)",
+        description: "Unicorn mode: moving the mouse up looks down (spec §14 Phase 13B)",
         scope: Scope::Live,
         apply: Apply::Command("god.invert {}"),
+    },
+    SettingDef {
+        key: "controls.god_flight",
+        kind: Kind::Choice(&["plane", "hover"]),
+        default: "plane",
+        description: "Unicorn mode: fly like a plane (always forward; arrows: throttle and bank) or hover (arrows: move, mouse: turn) (spec §14 Phase 13B)",
+        scope: Scope::Live,
+        apply: Apply::Command("god.flight {}"),
     },
     SettingDef {
         key: "trainer.difficulty",
@@ -237,7 +245,7 @@ pub const SETTINGS: &[SettingDef] = &[
         key: "display.unicorn_trail",
         kind: Kind::Bool,
         default: "on",
-        description: "Effects: the rainbow trail behind the unicorns of god mode",
+        description: "Effects: the rainbow trail behind the unicorns of unicorn mode",
         scope: Scope::Live,
         apply: Apply::Command("god.trail {}"),
     },
@@ -268,6 +276,32 @@ pub const SETTINGS: &[SettingDef] = &[
         description: "Start at a random point of the route or the road graph",
         scope: Scope::NextStart,
         apply: Apply::Arg("random_start"),
+    },
+    // Collisions (spec §14 Phase 12A, Q1 / Q3, 12D): the session's rules
+    // (the host decides in shared rides) and an aid for manual steering.
+    SettingDef {
+        key: "ride.collisions",
+        kind: Kind::Bool,
+        default: "on",
+        description: "Rider collisions: soft bumps and crashes (group rides: soft bumps only; in shared rides the host decides)",
+        scope: Scope::Live,
+        apply: Apply::Command("ride.collisions {}"),
+    },
+    SettingDef {
+        key: "ride.chaotic_bots",
+        kind: Kind::Bool,
+        default: "off",
+        description: "Bots sometimes make mistakes (late reactions, wheel touches) that can cause crashes",
+        scope: Scope::Live,
+        apply: Apply::Command("ride.chaotic_bots {}"),
+    },
+    SettingDef {
+        key: "ride.proximity_cue",
+        kind: Kind::Bool,
+        default: "off",
+        description: "A soft sound and a HUD arrow when someone is close beside (1 m) or in front (2 m); it never steers",
+        scope: Scope::Live,
+        apply: Apply::Command("ride.proximity_cue {}"),
     },
     SettingDef {
         key: "ride.record",
@@ -427,6 +461,26 @@ pub const SETTINGS: &[SettingDef] = &[
         description: "Speaker for voices by name (default: the system's)",
         scope: Scope::Live,
         apply: Apply::Command("voice.apply output {}"),
+    },
+    SettingDef {
+        key: "audio.echo_bot",
+        kind: Kind::Bool,
+        default: "off",
+        description: "Echo test: an Echo rider on the road plays your microphone back to you when you are near it",
+        scope: Scope::Live,
+        apply: Apply::Command("voice.apply echo {}"),
+    },
+    SettingDef {
+        key: "audio.echo_delay_ms",
+        kind: Kind::Int {
+            min: 20,
+            max: 3000,
+            step: 100,
+        },
+        default: "300",
+        description: "Echo test: how long the Echo rider waits before playing you back (ms)",
+        scope: Scope::Live,
+        apply: Apply::Command("voice.apply echo_delay_ms {}"),
     },
 ];
 

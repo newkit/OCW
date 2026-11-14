@@ -25,7 +25,8 @@
 #
 # Region calibration (spec §14 Phase 8 T3): when data/tenerife/imagery holds the
 # imagery of `scripts/fetch-imagery.sh tenerife` for this package, the package is
-# calibrated after its routes (palette, roof colours, seasonal tints;
+# calibrated after its routes (palette, roof colours, seasonal tints and the
+# orthophoto corridor ORTC, spec §14 Phase 8 T7;
 # OCW_NO_CALIBRATE=1 skips it, OCW_SEASON_CELLS sets the tint cells per tile).
 set -euo pipefail
 cd "$(dirname "$0")/.."

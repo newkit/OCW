@@ -7,7 +7,10 @@
 //!   no physics in cosmetic assets, required nodes, triangle budgets);
 //! - [`pose`]: rider on bike – anchors, inverse kinematics;
 //! - [`anim`]: riding state selection from cadence / speed / power / grade;
-//! - [`shipped`]: the models in `assets/models/`, embedded;
+//! - [`shipped`]: the models in `assets/models/` and the parts catalogue,
+//!   embedded;
+//! - [`parts`]: the parts catalogue of the workshop, its price sources and
+//!   validator (spec §14 Phase 4, 4H–4J);
 //! - [`licence`]: the licence rule for every shipped asset (spec Phase 8A);
 //! - [`materials`]: the material library – pinned sources, validator,
 //!   credits, loading (spec §4.6, Phase 8 T1); [`ktx2`] its texture files;
@@ -27,9 +30,11 @@ pub mod manifest;
 pub mod materials;
 pub mod mesh;
 pub mod model;
+pub mod parts;
 pub mod pose;
 pub mod rider;
 pub mod slots;
+pub mod workshop;
 
 use ocw_core::ProfileId;
 
@@ -83,6 +88,29 @@ pub mod shipped {
 
     /// The manifest (licence entries) of the shipped models.
     pub const MANIFEST: &str = include_str!("../../../assets/models/manifest.toml");
+
+    /// The parts catalogue (spec §14 Phase 4, 4I) and its price
+    /// references (4H).
+    pub const PARTS: &str = include_str!("../../../assets/parts.toml");
+    pub const PARTS_SOURCES: &str = include_str!("../../../assets/parts-sources.toml");
+
+    /// The shipped parts catalogue (parsed once).
+    pub fn catalogue() -> &'static crate::parts::Catalogue {
+        static C: OnceLock<crate::parts::Catalogue> = OnceLock::new();
+        C.get_or_init(|| {
+            crate::parts::Catalogue::parse(PARTS)
+                .unwrap_or_else(|e| panic!("shipped parts.toml: {e:?}"))
+        })
+    }
+
+    /// The shipped price references (parsed once).
+    pub fn parts_sources() -> &'static crate::parts::Sources {
+        static S: OnceLock<crate::parts::Sources> = OnceLock::new();
+        S.get_or_init(|| {
+            crate::parts::Sources::parse(PARTS_SOURCES)
+                .unwrap_or_else(|e| panic!("shipped parts-sources.toml: {e:?}"))
+        })
+    }
 
     /// Every shipped model file.
     pub const FILES: [(&str, &[u8]); 7] = [

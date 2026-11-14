@@ -16,6 +16,7 @@ ocw-sky.workspace = true
 ocw-assets.workspace = true
 bevy.workspace = true
 bevy_egui.workspace = true
+avian3d.workspace = true
 clap.workspace = true
 ttf-parser.workspace = true
 image.workspace = true
@@ -25,6 +26,12 @@ chrono.workspace = true
 # The house styles (assets/building-styles.toml, spec §14 Phase 8 T4).
 serde.workspace = true
 toml.workspace = true
+
+# The browser app (spec §14 Phase 10): the wall clock and the local UTC
+# offset of the HUD timestamp from the browser (std's clock panics there).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-time.workspace = true
+chrono = { workspace = true, features = ["wasmbind"] }
 
 [dev-dependencies]
 # Reads the PNG text chunks back in the tests (already in the tree via image).

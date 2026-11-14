@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 use ocw_core::RiderId;
 use ocw_protocol::v1;
 use ocw_protocol::{encode, god_pose_to_wire};
-use ocw_sim::god::{self, Bounds, Flight, FlightInput, Glide, GlideKind, GodPose};
+use ocw_sim::god::{self, Bounds, Flight, FlightInput, FlightModel, Glide, GlideKind, GodPose};
 
 /// Where the client is in god mode.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -54,6 +54,8 @@ pub struct GodCore {
     landing: Option<[f64; 3]>,
     /// The unicorn's speed scale survives flights.
     scale: f64,
+    /// Plane or hover (`controls.god_flight`), for the next flight too.
+    model: FlightModel,
     /// Climb rate (m/s) of the last step, for the wings.
     climb_mps: f64,
     /// Height above the ground of the last step (m).
@@ -75,6 +77,7 @@ impl Default for GodCore {
             last_pose_s: None,
             landing: None,
             scale: 1.0,
+            model: FlightModel::Plane,
             climb_mps: 0.0,
             height_m: 0.0,
             server_riding_since: None,
@@ -136,6 +139,27 @@ impl GodCore {
         self.height_m
     }
 
+    pub fn model(&self) -> FlightModel {
+        self.model
+    }
+
+    /// Plane or hover, at once (also in the air: a switch keeps the
+    /// position and the heading; the plane starts level at its throttle).
+    pub fn set_model(&mut self, model: FlightModel) {
+        self.model = model;
+        if self.flight.model != model {
+            self.flight.model = model;
+            self.flight.look = [0.0; 2];
+            self.flight.bank = 0.0;
+            self.flight.nose = 0.0;
+        }
+    }
+
+    /// Plane: the view straight ahead again (L, the middle mouse button).
+    pub fn recentre_look(&mut self) {
+        self.flight.recentre_look();
+    }
+
     /// Asks the server to enter god mode; `None` when not riding.
     pub fn request_enter(&mut self, now_s: f64) -> Option<Vec<u8>> {
         if self.phase != Phase::Riding {
@@ -182,6 +206,7 @@ impl GodCore {
                 self.takeoff = start;
                 self.flight = Flight::new(start.pos, start.yaw);
                 self.flight.scale = self.scale;
+                self.flight.model = self.model;
                 self.phase = Phase::Flying { since: now_s };
                 self.last_pose_s = None;
                 self.server_riding_since = None;
@@ -335,7 +360,7 @@ impl GodCore {
             return false;
         }
         self.flight.pos = pos;
-        self.flight.vel = [0.0; 3];
+        self.flight.stop();
         if let Some(y) = yaw {
             self.flight.yaw = y;
         }
@@ -667,6 +692,87 @@ mod tests {
             g2
         };
         assert_eq!(g2.flight().scale, s);
+    }
+
+    /// The plane is the default; `controls.god_flight hover` switches,
+    /// also for the next flight; a plane never stops without input.
+    #[test]
+    fn the_flight_model_is_kept_and_the_plane_flies_on() {
+        let mut g = entered([0.0, 50.0, 0.0]);
+        assert_eq!(g.flight().model, FlightModel::Plane);
+        let mut t = 0.0;
+        for _ in 0..120 {
+            t += 1.0 / 60.0;
+            g.step(
+                &FlightInput::default(),
+                (0.01, 0.0),
+                0.0,
+                1.0 / 60.0,
+                t,
+                &FLAT,
+                None,
+            );
+        }
+        assert!(g.flight().speed() > 10.0, "cruising without input");
+        assert_eq!(g.flight().yaw, 0.0, "the mouse looked, the course held");
+        assert!(g.flight().view_yaw() > 1.0);
+        g.recentre_look();
+        for _ in 0..180 {
+            t += 1.0 / 60.0;
+            g.step(
+                &FlightInput::default(),
+                (0.0, 0.0),
+                0.0,
+                1.0 / 60.0,
+                t,
+                &FLAT,
+                None,
+            );
+        }
+        assert!(g.flight().look[0].abs() < 0.01);
+        g.set_model(FlightModel::Hover);
+        for _ in 0..180 {
+            t += 1.0 / 60.0;
+            g.step(
+                &FlightInput::default(),
+                (0.0, 0.0),
+                0.0,
+                1.0 / 60.0,
+                t,
+                &FLAT,
+                None,
+            );
+        }
+        assert!(g.flight().speed() < 0.1, "hovering");
+        // A teleport stops the movement (and the bank).
+        g.set_model(FlightModel::Plane);
+        g.teleport([10.0, 80.0, 10.0], None, None);
+        assert_eq!((g.flight().speed(), g.flight().bank), (0.0, 0.0));
+        // The next flight keeps the choice.
+        g.set_model(FlightModel::Hover);
+        g.request_leave(true, t);
+        for k in 0..300 {
+            g.step(
+                &FlightInput::default(),
+                (0.0, 0.0),
+                0.0,
+                0.02,
+                t + k as f64 * 0.02,
+                &FLAT,
+                None,
+            );
+        }
+        g.request_enter(100.0);
+        g.on_result(
+            &v1::GodResult {
+                ok: true,
+                active: true,
+                ..Default::default()
+            },
+            100.0,
+        );
+        assert!(g.flying());
+        assert_eq!(g.flight().model, FlightModel::Hover);
     }
 
     #[test]

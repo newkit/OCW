@@ -27,15 +27,25 @@ pub enum InputContext {
     Menu,
     /// The console is open (over the ride or over the menu): it gets the keys.
     Console,
+    /// The workshop scene is open (spec §14 Phase 4, 4A): its own input.
+    Workshop,
 }
 
 impl InputContext {
     /// The context for these overlay states: the console wins over the menu.
     pub fn of(console_open: bool, menu_open: bool) -> Self {
+        Self::with_workshop(console_open, menu_open, false)
+    }
+
+    /// [`InputContext::of`] with the workshop scene: the console wins,
+    /// then the menu, then the workshop.
+    pub fn with_workshop(console_open: bool, menu_open: bool, workshop_open: bool) -> Self {
         if console_open {
             Self::Console
         } else if menu_open {
             Self::Menu
+        } else if workshop_open {
+            Self::Workshop
         } else {
             Self::Ride
         }
@@ -94,9 +104,14 @@ impl Plugin for MenuCorePlugin {
 fn update_input_context(
     console: Option<Res<ConsoleState>>,
     view: Res<MenuView>,
+    workshop: Option<Res<crate::workshop::WorkshopView>>,
     mut context: ResMut<InputContext>,
 ) {
-    let c = InputContext::of(console.is_some_and(|c| c.is_open()), view.open);
+    let c = InputContext::with_workshop(
+        console.is_some_and(|c| c.is_open()),
+        view.open,
+        workshop.is_some_and(|w| w.open),
+    );
     context.set_if_neq(c);
 }
 

@@ -47,7 +47,10 @@ use ocw_render::menu::MenuView;
 use crate::connection::ClientState;
 use crate::settings::UserSettings;
 use crate::settings::pages::AudioDevices;
-use cues::{Cue, MenuSnapshot, countdown_cue, finish_cue, menu_cue, workout_cue};
+use cues::{
+    ContactRider, ContactWatch, Cue, MenuSnapshot, contact_cues, countdown_cue, finish_cue,
+    menu_cue, workout_cue,
+};
 use engine::{AudioEngine, AudioStatus, NullBackend, Output};
 use mix::{Bus, Mix};
 use mixer::MixerMsg;
@@ -189,7 +192,7 @@ fn feed_ride(client: Option<Res<ClientState>>, audio: Res<GameAudio>, mut last: 
         .filter(|c| c.0.rider_id().is_some())
         .map_or_else(RideParams::default, |c| {
             let core = &c.0;
-            // God mode: the wind of the flight (spec §14 Phase 13C).
+            // Unicorn mode: the wind of the flight (spec §14 Phase 13C).
             if let Some(u) = core.god().unicorn(0.0) {
                 return ride::flight_params(u.pose.speed);
             }
@@ -260,11 +263,13 @@ struct CueWatch {
     countdown: Option<String>,
     results: bool,
     workout: Option<u64>,
-    /// God mode: flying, and the wing beat's phase.
+    /// Unicorn mode: flying, and the wing beat's phase.
     flying: bool,
     wing: f64,
     /// The hoof beats' phase.
     hoof: f64,
+    /// Bumps, crashes, remounts, the proximity cue (spec §14 Phase 12C).
+    contacts: ContactWatch,
 }
 
 /// UI sounds from the menu's changes, the countdown beeps and the finish
@@ -293,6 +298,21 @@ fn play_cues(
         watch.menu = now;
     }
     if let Some(r) = ride {
+        let me = r.local().map_or(0.0, |l| l.state.distance);
+        let riders: Vec<ContactRider> = r
+            .riders
+            .iter()
+            .map(|v| ContactRider {
+                id: v.id.0,
+                is_local: v.is_local,
+                distance_m: v.state.distance - me,
+                wobble: v.wobble,
+                crash: v
+                    .crash
+                    .map(|c| c.phase == ocw_sim::collide::CrashPhase::Remount),
+            })
+            .collect();
+        cues.extend(contact_cues(&mut watch.contacts, &riders, r.proximity));
         let event = r.event.as_ref();
         let countdown = event.and_then(|e| e.countdown.clone());
         cues.extend(countdown_cue(
@@ -303,7 +323,7 @@ fn play_cues(
         cues.extend(finish_cue(watch.results, results));
         watch.countdown = countdown;
         watch.results = results;
-        // God mode: the chime of the transformation (in and out), soft
+        // Unicorn mode: the chime of the transformation (in and out), soft
         // wing beats while the wings beat (spec §14 Phase 13C).
         let flying = r.flight.is_some();
         if flying != watch.flying {

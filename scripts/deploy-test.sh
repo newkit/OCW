@@ -54,7 +54,9 @@ case "$kiosk_world" in liechtenstein|blackforest|tenerife|keep) ;; *) echo "OCW_
 route_b64=$(printf '%s' "${OCW_KIOSK_ROUTE-}" | base64 -w0)
 args_set=${OCW_KIOSK_ARGS+set}
 args_b64=$(printf '%s' "${OCW_KIOSK_ARGS-}" | base64 -w0)
-scripts/remote.sh "$machine" run "
+# A deploy is allowed on a machine disabled for building in the build
+# dashboard (its kiosk still gets new builds): OCW_REMOTE_DEPLOY=1.
+OCW_REMOTE_DEPLOY=1 scripts/remote.sh "$machine" run "
   set -e
   D=$(printf '%q' "$dir")
   put() { install -m \$1 \"\$2\" \"\$D/.\$3.new\" && mv -f \"\$D/.\$3.new\" \"\$D/\$3\"; }

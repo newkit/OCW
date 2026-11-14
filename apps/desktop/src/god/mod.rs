@@ -8,47 +8,55 @@
 //! the world set's limits from the renderer's resources), the poses to the
 //! server, the pointer capture (Esc releases it first, then opens the
 //! menu), the [`RideView`]'s flight and unicorns, and the console commands
-//! `god`, `god.pose`, `god.cruise`, `god.view`, `god.trail`, `god.invert`.
+//! `god`, `god.pose`, `god.cruise`, `god.view`, `god.trail`, `god.invert`,
+//! `god.flight`.
 //! [`inspect`] is the inspection (G3: the panel and the crosshair on I,
 //! the pins on P, `god.pins`), [`touch`] the touch controls.
 
 pub mod input;
 pub mod inspect;
-pub mod state;
+pub use ocw_client::god_state as state;
 pub mod touch;
 
+use bevy::input::keyboard::KeyboardInput;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use clap::{Arg, Command, value_parser};
 use ocw_render::RideView;
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
-use ocw_sim::god::{Bounds, FlightInput};
+use ocw_sim::god::{Bounds, FlightInput, FlightModel};
 
 use self::state::Phase;
 use crate::client::ClientCore;
 use crate::connection::{ClientState, Link};
-use input::{FlightKeys, GodKey, PadFlight};
+use input::{FlightKeys, GodKey, KeyRole, LayoutKeys, PadFlight};
 
 /// Open question Q6 (spec §14 Phase 13H): the name in the menu and the
-/// HUD. The proposal: "God mode" (the console command stays `god`).
-pub const MENU_NAME: &str = "God mode";
+/// HUD. The proposal: "Unicorn mode" (the console command stays `god`).
+pub const MENU_NAME: &str = "Unicorn mode";
 
 /// The keys line of the flight HUD.
-pub const KEYS: &str = "arrows: fly, +/-: up/down, mouse: look (Esc frees the pointer), Shift: boost, Ctrl: precise, wheel: speed, G: land, Shift+G: fly back, C: first person, I: inspection, P: pin | ` or F12: console";
+pub const KEYS: &str = "Up/Down: faster/slower, Left/Right: bank, +/-: climb/descend, mouse: look around (L: ahead; Esc frees the pointer), Shift: boost, Ctrl: precise, wheel: speed, G: land, Shift+G: fly back, C: first person, I: inspection, P: pin | ` or F12: console";
+
+/// The keys line of the hover model (`controls.god_flight hover`).
+pub const KEYS_HOVER: &str = "arrows: fly, +/-: up/down, mouse: look (Esc frees the pointer), Shift: boost, Ctrl: precise, wheel: speed, G: land, Shift+G: fly back, C: first person, I: inspection, P: pin | ` or F12: console";
 
 pub struct GodPlugin;
 
 impl Plugin for GodPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<FlightPointer>()
+        app.add_message::<KeyboardInput>()
+            .init_resource::<FlightPointer>()
             .init_resource::<FlightSettings>()
             .init_resource::<Cruise>()
             .init_resource::<FlightTouch>()
+            .init_resource::<FlightLayout>()
             .init_resource::<inspect::Inspector>()
             .add_systems(
                 Update,
                 (
+                    layout_keys,
                     god_keys,
                     fly,
                     inspect::inspect,
@@ -71,10 +79,25 @@ pub struct FlightPointer {
     pub captured: bool,
 }
 
-/// Flight options: invert Y (Settings → Controls).
+/// Flight options (Settings → Controls): invert Y, plane or hover.
 #[derive(Resource, Debug, Default, Clone, Copy, PartialEq)]
 pub struct FlightSettings {
     pub invert_y: bool,
+    pub model: FlightModel,
+}
+
+/// The + / − keys of the keyboard's layout ([`LayoutKeys`]).
+#[derive(Resource, Debug, Default, Clone, PartialEq)]
+pub struct FlightLayout(pub LayoutKeys);
+
+/// Learns the + / − keys from what they type (spec §14 Phase 13B: the
+/// German `+` is the US `]`), every frame, also outside the flight.
+fn layout_keys(mut events: MessageReader<KeyboardInput>, mut layout: ResMut<FlightLayout>) {
+    for e in events.read() {
+        layout
+            .0
+            .on_key(e.key_code, &e.logical_key, e.state.is_pressed());
+    }
 }
 
 /// When the last touch was (s, game time): the touch controls are shown
@@ -114,7 +137,7 @@ pub fn ask(c: &mut ClientCore, what: Ask, now: f64) -> Result<Option<Vec<u8>>, S
                 return Err("not joined yet".into());
             }
             if !c.may_use_god() {
-                return Err("god mode: only the host of this shared ride may use it".into());
+                return Err("unicorn mode: only the host of this shared ride may use it".into());
             }
             Ok(c.god_mut().request_enter(now))
         }
@@ -124,9 +147,9 @@ pub fn ask(c: &mut ClientCore, what: Ask, now: f64) -> Result<Option<Vec<u8>>, S
             c.god_mut().set_landing(spot);
             Ok(c.god_mut().request_leave(what == Ask::Back, now))
         }
-        Ask::On => Err("already in god mode".into()),
+        Ask::On => Err("already in unicorn mode".into()),
         _ if matches!(phase, Phase::Asking(_) | Phase::Leaving { .. }) => Ok(None),
-        _ => Err("not in god mode".into()),
+        _ => Err("not in unicorn mode".into()),
     }
 }
 
@@ -179,23 +202,25 @@ fn god_keys(
     if keys.just_pressed(KeyCode::KeyC) && client.0.god().active() {
         let fp = client.0.god_mut().toggle_first_person();
         info!(
-            "god mode: {} view",
+            "unicorn mode: {} view",
             if fp { "first-person" } else { "flight" }
         );
     }
 }
 
-/// The keys of the flight.
-fn flight_keys(keys: &ButtonInput<KeyCode>) -> FlightKeys {
+/// The keys of the flight: the arrows (and W A S D, Q3) by position, + / −
+/// by what they type.
+fn flight_keys(keys: &ButtonInput<KeyCode>, layout: &LayoutKeys) -> FlightKeys {
     let any = |k: &[KeyCode]| keys.any_pressed(k.iter().copied());
+    let pressed = |k: KeyCode| keys.pressed(k);
     let wasd = input::WASD_FLIES;
     FlightKeys {
         up: any(&[KeyCode::ArrowUp]) || (wasd && any(&[KeyCode::KeyW])),
         down: any(&[KeyCode::ArrowDown]) || (wasd && any(&[KeyCode::KeyS])),
         left: any(&[KeyCode::ArrowLeft]) || (wasd && any(&[KeyCode::KeyA])),
         right: any(&[KeyCode::ArrowRight]) || (wasd && any(&[KeyCode::KeyD])),
-        plus: any(&[KeyCode::Equal, KeyCode::NumpadAdd]),
-        minus: any(&[KeyCode::Minus, KeyCode::NumpadSubtract]),
+        plus: layout.held(KeyRole::Plus, &pressed),
+        minus: layout.held(KeyRole::Minus, &pressed),
         shift: any(&[KeyCode::ShiftLeft, KeyCode::ShiftRight]),
         ctrl: any(&[KeyCode::ControlLeft, KeyCode::ControlRight]),
     }
@@ -268,7 +293,12 @@ fn fly(
     scroll: Res<AccumulatedMouseScroll>,
     pads: Query<(Entity, &Gamepad)>,
     context: Option<Res<ocw_render::menu::InputContext>>,
-    (pointer, settings, cruise): (Res<FlightPointer>, Res<FlightSettings>, Res<Cruise>),
+    (pointer, settings, cruise, layout): (
+        Res<FlightPointer>,
+        Res<FlightSettings>,
+        Res<Cruise>,
+        Res<FlightLayout>,
+    ),
     (ground, obstacles, trees, packages, view): WorldParams<'_>,
     (touches, windows, mut flight_touch): TouchParams,
     link: Res<Link>,
@@ -277,9 +307,10 @@ fn fly(
     (mut last_spot, mut trigger_rest): (Local<f64>, Local<TriggerRest>),
 ) {
     let c = &mut client.0;
+    c.god_mut().set_model(settings.model);
     if let Some(e) = c.take_god_notice() {
         console.print(match e {
-            self::state::GodEvent::Landed => "god mode ended by the server".into(),
+            self::state::GodEvent::Landed => "unicorn mode ended by the server".into(),
             other => format!("{other:?}"),
         });
     }
@@ -298,7 +329,7 @@ fn fly(
         Vec::new()
     };
     let mut flight = if riding_keys {
-        input::flight_input(&flight_keys(&keys), &pad_list)
+        input::flight_input(&flight_keys(&keys, &layout.0), &pad_list)
     } else {
         FlightInput::default()
     };
@@ -323,7 +354,7 @@ fn fly(
     });
     let by_touch = touch::touch_flight(&fingers, size, settings.invert_y);
     flight.forward = (flight.forward + by_touch.input.forward).clamp(-1.0, 1.0);
-    flight.strafe = (flight.strafe + by_touch.input.strafe).clamp(-1.0, 1.0);
+    flight.side = (flight.side + by_touch.input.side).clamp(-1.0, 1.0);
     flight.climb = (flight.climb + by_touch.input.climb).clamp(-1.0, 1.0);
     // A touch also arrives as an emulated mouse on Windows: not twice.
     let mouse = if riding_keys
@@ -337,15 +368,19 @@ fn fly(
     let mut look = input::look_delta(mouse, &pad_list, settings.invert_y, dt);
     look.0 += by_touch.look.0;
     look.1 += by_touch.look.1;
+    // L or the middle mouse button: look ahead again (plane).
+    if riding_keys
+        && (keys.just_pressed(KeyCode::KeyL) || buttons.just_pressed(MouseButton::Middle))
+    {
+        c.god_mut().recentre_look();
+    }
     if let Some((fw, climb, turn)) = cruise.0
         && flight == FlightInput::default()
     {
-        flight = FlightInput {
-            forward: fw,
-            climb,
-            ..Default::default()
-        };
-        look.0 += turn * dt;
+        flight = cruise_input(c.god().flight(), fw, climb, turn);
+        if settings.model == FlightModel::Hover {
+            look.0 += turn * dt;
+        }
     }
     let wheel = if riding_keys {
         f64::from(match scroll.unit {
@@ -371,7 +406,7 @@ fn fly(
         .step(&flight, look, wheel, dt, now, &surface, bounds)
         && let self::state::GodEvent::Refused(why) = e
     {
-        console.print(format!("god mode: {why}"));
+        console.print(format!("unicorn mode: {why}"));
     }
     if c.god().flying() && now - *last_spot >= 0.25 {
         *last_spot = now;
@@ -381,6 +416,27 @@ fn fly(
     }
     if let Some(m) = c.god_mut().pose_message(now) {
         link.send_bytes(m);
+    }
+}
+
+/// The flight input of `god.cruise FORWARD CLIMB TURN` (scenes, videos).
+/// Plane: FORWARD sets the throttle, TURN (rad/s, positive = left) banks
+/// as far as that turn needs at the speed now; hover: FORWARD moves, the
+/// caller turns the view.
+pub fn cruise_input(f: &ocw_sim::god::Flight, fw: f64, climb: f64, turn: f64) -> FlightInput {
+    use ocw_sim::god;
+    match f.model {
+        FlightModel::Plane => FlightInput {
+            set_throttle: Some(fw.abs().clamp(god::MIN_THROTTLE, 1.0)),
+            side: god::bank_for_turn(turn, f.horizontal_speed()) / god::MAX_BANK,
+            climb,
+            ..Default::default()
+        },
+        FlightModel::Hover => FlightInput {
+            forward: fw,
+            climb,
+            ..Default::default()
+        },
     }
 }
 
@@ -439,19 +495,24 @@ fn update_view(
         let f = g.flight();
         ocw_render::FlightView {
             pos: u.pose.pos,
-            yaw: if u.leaving { u.pose.yaw } else { f.yaw },
+            yaw: if u.leaving { u.pose.yaw } else { f.view_yaw() },
             pitch: if u.leaving {
-                f.pitch.min(-0.15)
+                f.view_pitch().min(-0.15)
             } else {
-                f.pitch
+                f.view_pitch()
             },
+            roll: if u.leaving { 0.0 } else { f.camera_roll() },
             speed_mps: u.pose.speed,
             height_m: g.height_m(),
             scale: f.scale,
             first_person: g.first_person(),
             landing: g.landing(),
             leaving: u.leaving,
-            keys: KEYS.into(),
+            keys: match f.model {
+                FlightModel::Plane => KEYS,
+                FlightModel::Hover => KEYS_HOVER,
+            }
+            .into(),
             velocity: if u.leaving {
                 [0.0, 0.0]
             } else {
@@ -483,7 +544,7 @@ pub fn rider_list(view: &RideView) -> Vec<String> {
             r.id.0,
             r.name,
             if r.is_local { " (you)" } else { "" },
-            if god { "  - flying (god mode)" } else { "" }
+            if god { "  - flying (unicorn mode)" } else { "" }
         ));
     }
     out
@@ -502,7 +563,7 @@ fn register_commands(app: &mut App) {
     app.console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("god")
-            .about("God mode: fly over the world as a unicorn (G; Shift+G flies back)")
+            .about("Unicorn mode: fly over the world as a unicorn (G; Shift+G flies back)")
             .arg(
                 Arg::new("action")
                     .value_parser(["on", "off", "toggle", "back", "status"])
@@ -521,14 +582,15 @@ fn register_commands(app: &mut App) {
                         Phase::Riding => format!(
                             "riding ({})",
                             if c.may_use_god() {
-                                "G enters god mode"
+                                "G enters unicorn mode"
                             } else {
-                                "god mode is not allowed here"
+                                "unicorn mode is not allowed here"
                             }
                         ),
                         Phase::Asking(_) => "asking the server ...".into(),
                         Phase::Flying { .. } => format!(
-                            "flying at x {:.0} z {:.0}, {:.0} m ({:.0} m above ground), {:.0} m/s, scale x{:.2}{}",
+                            "flying ({}) at x {:.0} z {:.0}, {:.0} m ({:.0} m above ground), {:.0} m/s, scale x{:.2}{}",
+                            g.model().name(),
                             f.pos[0],
                             f.pos[2],
                             f.pos[1],
@@ -550,7 +612,7 @@ fn register_commands(app: &mut App) {
     .console_command(ConsoleCommand::new(
         Permission::Dev,
         Command::new("god.pose")
-            .about("God mode: move the unicorn to x z (local metres; 'here' keeps the current one), HEIGHT m above the ground, looking along YAW (deg, 0 = north, 90 = east; 'here' keeps it) and PITCH (deg, up)")
+            .about("Unicorn mode: move the unicorn to x z (local metres; 'here' keeps the current one), HEIGHT m above the ground, looking along YAW (deg, 0 = north, 90 = east; 'here' keeps it) and PITCH (deg, up)")
             .arg(Arg::new("x").required(true).allow_negative_numbers(true))
             .arg(Arg::new("z").required(true).allow_negative_numbers(true))
             .arg(Arg::new("height").required(true).value_parser(value_parser!(f64)))
@@ -597,7 +659,7 @@ fn register_commands(app: &mut App) {
     .console_command(ConsoleCommand::new(
         Permission::Dev,
         Command::new("god.cruise")
-            .about("God mode: fly by itself (scenes, videos) – FORWARD and CLIMB (-1 … 1), TURN (deg/s, positive = left); 'god.cruise 0' stops")
+            .about("Unicorn mode: fly by itself (scenes, videos) – FORWARD (plane: the throttle 0 … 1; hover: -1 … 1) and CLIMB (-1 … 1), TURN (deg/s, positive = left; the plane banks into it); 'god.cruise 0' stops")
             .arg(Arg::new("forward").required(true).allow_negative_numbers(true).value_parser(value_parser!(f64)))
             .arg(Arg::new("climb").allow_negative_numbers(true).value_parser(value_parser!(f64)))
             .arg(Arg::new("turn").allow_negative_numbers(true).value_parser(value_parser!(f64))),
@@ -613,7 +675,7 @@ fn register_commands(app: &mut App) {
     .console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("god.view")
-            .about("God mode: the flight camera behind the unicorn, or first-person from its head (C)")
+            .about("Unicorn mode: the flight camera behind the unicorn, or first-person from its head (C)")
             .arg(Arg::new("view").value_parser(["flight", "first"]).required(true)),
         |world, m| {
             let first = m.get_one::<String>("view").is_some_and(|v| v == "first");
@@ -621,13 +683,13 @@ fn register_commands(app: &mut App) {
             if c.0.god().first_person() != first {
                 c.0.god_mut().toggle_first_person();
             }
-            Ok(format!("god mode view: {}", if first { "first-person" } else { "flight" }))
+            Ok(format!("unicorn mode view: {}", if first { "first-person" } else { "flight" }))
         },
     ))
     .console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("god.trail")
-            .about("God mode: the rainbow trail behind the unicorns (Settings → Display → Effects)")
+            .about("Unicorn mode: the rainbow trail behind the unicorns (Settings → Display → Effects)")
             .arg(state()),
         |world, m| {
             let on = on_off(m);
@@ -638,13 +700,29 @@ fn register_commands(app: &mut App) {
     .console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("ride.riders")
-            .about("The riders of this ride, and who of them flies in god mode"),
+            .about("The riders of this ride, and who of them flies in unicorn mode"),
         |world, _| Ok(rider_list(world.resource::<RideView>()).join("\n")),
     ))
     .console_command(ConsoleCommand::new(
         Permission::User,
+        Command::new("god.flight")
+            .about("Unicorn mode: fly like a plane (always forward; arrows: throttle and bank) or hover (arrows: move, mouse: turn) – Settings → Controls")
+            .arg(Arg::new("model").value_parser(["plane", "hover"])),
+        |world, m| {
+            let mut s = world.resource_mut::<FlightSettings>();
+            if let Some(model) = m
+                .get_one::<String>("model")
+                .and_then(|v| FlightModel::parse(v))
+            {
+                s.model = model;
+            }
+            Ok(format!("unicorn mode flight: {}", s.model.name()))
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
         Command::new("god.invert")
-            .about("God mode: invert the mouse's up / down look (Settings → Controls)")
+            .about("Unicorn mode: invert the mouse's up / down look (Settings → Controls)")
             .arg(state()),
         |world, m| {
             let on = on_off(m);
@@ -718,6 +796,9 @@ mod tests {
             is_local: local,
             bike: Default::default(),
             look: None,
+            parts: Vec::new(),
+            crash: None,
+            wobble: 0.0,
         };
         v.riders = vec![rider(1, "Host", true), rider(2, "Ada", false)];
         v.unicorns.push(ocw_render::UnicornView {
@@ -736,9 +817,9 @@ mod tests {
             colour: ocw_core::Rgb(0),
         });
         let l = rider_list(&v);
-        assert_eq!(l[0], "2 riders, 1 in god mode");
+        assert_eq!(l[0], "2 riders, 1 in unicorn mode");
         assert!(l[1].ends_with("Host (you)"), "{}", l[1]);
-        assert!(l[2].ends_with("Ada  - flying (god mode)"), "{}", l[2]);
+        assert!(l[2].ends_with("Ada  - flying (unicorn mode)"), "{}", l[2]);
     }
 
     /// G1 end to end on the local server (spec §14 Phase 13F): enter, the
@@ -777,6 +858,48 @@ mod tests {
             (p[0] - start[0]).hypot(p[2] - start[2]) > 20.0
         }));
         run(&mut app, "god.cruise 0");
+        // Bug 2026-11-13: a German keyboard's + (the US `]` position, typing
+        // "+") climbs, its − (the US `/`, typing "-") descends.
+        let altitude = |app: &App| app.world().resource::<ClientState>().0.god().flight().pos[1];
+        let german = |app: &mut App, code: KeyCode, typed: &str, down: bool| {
+            app.world_mut().write_message(KeyboardInput {
+                key_code: code,
+                logical_key: bevy::input::keyboard::Key::Character(typed.into()),
+                state: if down {
+                    bevy::input::ButtonState::Pressed
+                } else {
+                    bevy::input::ButtonState::Released
+                },
+                text: None,
+                repeat: false,
+                window: Entity::PLACEHOLDER,
+            });
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            if down {
+                keys.press(code);
+            } else {
+                keys.release(code);
+            }
+        };
+        let y0 = altitude(&app);
+        german(&mut app, KeyCode::BracketRight, "+", true);
+        for _ in 0..80 {
+            app.update();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        german(&mut app, KeyCode::BracketRight, "+", false);
+        app.update();
+        let y1 = altitude(&app);
+        assert!(y1 > y0 + 2.0, "the German + climbs: {y0} → {y1}");
+        german(&mut app, KeyCode::Slash, "-", true);
+        for _ in 0..80 {
+            app.update();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        german(&mut app, KeyCode::Slash, "-", false);
+        app.update();
+        let y2 = altitude(&app);
+        assert!(y2 < y1 - 1.0, "the German - descends: {y1} → {y2}");
         // G3: the panel and the crosshair are on, a pin goes in and is
         // listed with a --start, I (god.inspect off) hides the panel.
         for _ in 0..30 {

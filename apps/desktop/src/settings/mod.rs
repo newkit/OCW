@@ -871,6 +871,11 @@ mod tests {
             if elsewhere.iter().any(|p| line.starts_with(p))
                 || line.contains("riders.remove")
                 || line.contains("controls.invert_y")
+                || line.contains("controls.god_flight")
+                // Collisions apply through the connection's commands.
+                || line.contains("ride.collisions")
+                || line.contains("ride.chaotic_bots")
+                || line.contains("ride.proximity_cue")
             {
                 continue;
             }

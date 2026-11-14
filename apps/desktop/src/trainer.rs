@@ -42,7 +42,21 @@ pub struct TrainerControl {
     last_grade: Option<f64>,
     /// God mode (spec §14 Phase 13E): SIM simulates a flat asphalt road.
     flat: bool,
+    /// Down after a crash (spec §14 Phase 12C): SIM flat and easy.
+    down: bool,
+    /// A soft bump's resistance pulse (Phase 12B): extra gradient until then.
+    pulse: Option<(f64, f64)>,
 }
+
+/// Phase 12 Q4 (open): while the rider is down after a crash, ERG keeps
+/// the workout's step running (the proposal: the plan is the plan). `false`
+/// would pause the step until the rider rides again.
+pub const ERG_STEP_RUNS_WHILE_DOWN: bool = true;
+/// A soft bump in SIM mode (spec §14 Phase 12B): the speed loss as a
+/// brief gradient increase of this much per rad of wobble, for
+/// [`BUMP_PULSE_S`] (ERG unchanged).
+pub const BUMP_GRADE_PER_RAD: f64 = 0.6;
+pub const BUMP_PULSE_S: f64 = 0.5;
 
 /// Open question Q4 (spec §14 Phase 13H): while flying in god mode the
 /// trainer simulates a flat road (lowest resistance; the proposal). ERG
@@ -59,10 +73,24 @@ impl TrainerControl {
             erg: ErgController::new(ErgSettings::default()),
             last_grade: None,
             flat: false,
+            down: false,
+            pulse: None,
         }
     }
 
-    /// God mode: flying (SIM: a flat road while [`FLAT_WHILE_FLYING`]).
+    /// Down after a crash (spec §14 Phase 12C): SIM gets a flat road and
+    /// the lowest resistance, so the legs keep spinning easily; ERG holds.
+    pub fn set_down(&mut self, down: bool) {
+        self.down = down;
+    }
+
+    /// A soft bump at `now_s` with wobble `strength` (rad): a short
+    /// resistance pulse in SIM mode.
+    pub fn bump(&mut self, now_s: f64, strength: f64) {
+        self.pulse = Some((now_s + BUMP_PULSE_S, strength * BUMP_GRADE_PER_RAD));
+    }
+
+    /// Unicorn mode: flying (SIM: a flat road while [`FLAT_WHILE_FLYING`]).
     pub fn set_flying(&mut self, flying: bool) {
         self.flat = flying && FLAT_WHILE_FLYING;
     }
@@ -108,7 +136,7 @@ impl TrainerControl {
             TrainerMode::Off => None,
             TrainerMode::Sim => {
                 let ahead_m = (rider.speed * LOOK_AHEAD_S).max(MIN_LOOK_AHEAD_M);
-                let (here, ahead, surface) = if self.flat {
+                let (here, ahead, surface) = if self.flat || self.down {
                     (0.0, 0.0, ocw_world::Surface::Asphalt)
                 } else {
                     (
@@ -119,7 +147,13 @@ impl TrainerControl {
                 };
                 // This bike's share of the surface's rolling resistance (§2.5).
                 let rolling = self.profile.surface_factor(surface.rolling_factor());
-                let target = self.sim.update_on(now_s, here, ahead, rolling)?;
+                let extra = match self.pulse {
+                    Some((until, g)) if now_s < until && !self.down => g,
+                    _ => 0.0,
+                };
+                let target = self
+                    .sim
+                    .update_on(now_s, here + extra, ahead + extra, rolling)?;
                 self.last_grade = Some(target.grade);
                 Some(DeviceCommand::SetSimulation(SimulationParameters {
                     grade: target.grade,
@@ -129,6 +163,8 @@ impl TrainerControl {
                     mass_kg: self.profile.rider_mass_kg + self.profile.bike_mass_kg,
                 }))
             }
+            // Q4 the other way: the step waits while the rider is down.
+            TrainerMode::Erg { .. } if self.down && !ERG_STEP_RUNS_WHILE_DOWN => None,
             TrainerMode::Erg { target_w } => self
                 .erg
                 .update(now_s, target_w, cadence_rpm)
@@ -237,6 +273,55 @@ mod tests {
             panic!("expected a SIM command");
         };
         assert!(p.grade > 0.0);
+    }
+
+    /// Down after a crash (spec §14 Phase 12C): SIM a flat road, ERG keeps
+    /// its target (Q4 proposal, [`ERG_STEP_RUNS_WHILE_DOWN`]); a soft bump
+    /// is a short resistance pulse in SIM.
+    #[test]
+    fn down_after_a_crash_sim_is_flat_erg_holds_and_bumps_pulse() {
+        let flat_route = || {
+            Route::from_points(
+                "f",
+                "F",
+                (0..=100).map(|i| [f64::from(i) * 10.0, 0.0, 0.0]).collect(),
+                false,
+                6.0,
+            )
+            .unwrap()
+        };
+        let mut t = TrainerControl::new(RiderProfile::default());
+        t.set_difficulty(1.0);
+        t.set_down(true);
+        let Some(DeviceCommand::SetSimulation(p)) = t.update(0.0, &route(), at(500.0, 0.0), None)
+        else {
+            panic!("a SIM command")
+        };
+        assert_eq!(p.grade, 0.0, "flat while down on the climb");
+        t.set_down(false);
+        // A bump on a flat road: a brief climb, then flat again.
+        t.bump(10.0, 0.08);
+        let Some(DeviceCommand::SetSimulation(p)) =
+            t.update(10.1, &flat_route(), at(500.0, 8.0), None)
+        else {
+            panic!("a SIM command")
+        };
+        assert!(p.grade > 0.03, "{}", p.grade);
+        let pulse = p.grade;
+        // After the pulse the gradient eases back towards flat.
+        let Some(DeviceCommand::SetSimulation(p)) =
+            t.update(12.0, &flat_route(), at(500.0, 8.0), None)
+        else {
+            panic!("a SIM command")
+        };
+        assert!(p.grade < pulse, "{} {pulse}", p.grade);
+        const { assert!(ERG_STEP_RUNS_WHILE_DOWN) };
+        t.set_mode(TrainerMode::Erg { target_w: 200.0 });
+        t.set_down(true);
+        assert_eq!(
+            t.update(20.0, &route(), at(500.0, 0.0), Some(90.0)),
+            Some(DeviceCommand::SetTargetPower(200.0))
+        );
     }
 
     /// God mode (spec §14 Phase 13E): SIM rides a flat road while flying,

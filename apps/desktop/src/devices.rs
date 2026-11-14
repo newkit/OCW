@@ -146,10 +146,20 @@ fn poll_devices(
         if event == DeviceEvent::Disconnected {
             console.print(format!("{name}: disconnected, reconnecting"));
         }
+        // Power from the virtual trainer earns no hearts (spec §14 Phase
+        // 4, 4E): the samples say so.
+        if matches!(event, DeviceEvent::Power { .. }) {
+            client.0.set_virtual_device(is_virtual(&name));
+        }
         if let Some(sample) = client.0.on_device_event(event) {
             link.send_bytes(sample);
         }
     }
+}
+
+/// Whether a device of this name is the virtual trainer.
+pub fn is_virtual(name: &str) -> bool {
+    name == ocw_devices::VirtualTrainer::new(0.0).name()
 }
 
 /// SIM/ERG control: road gradient or target power to the trainer.
@@ -158,12 +168,23 @@ pub fn control_trainer(
     client: Res<ClientState>,
     devices: Res<Devices>,
     mut trainer: ResMut<Trainer>,
+    mut last_bump: Local<Option<u64>>,
 ) {
     let c = &client.0;
     if c.rider_id().is_none() {
         return;
     }
     trainer.0.set_flying(c.god().active());
+    // Collisions (spec §14 Phase 12): SIM flat while down after a crash,
+    // a resistance pulse on a soft bump.
+    let now = time.elapsed_secs_f64();
+    trainer.0.set_down(c.own_crash(now).is_some());
+    if let Some(b) = c.rider_id().and_then(|id| c.collision_state().bump(id))
+        && *last_bump != Some(b.tick)
+    {
+        trainer.0.bump(now, b.strength);
+        *last_bump = Some(b.tick);
+    }
     if let Some(cmd) = trainer.0.update(
         time.elapsed_secs_f64(),
         c.track(),

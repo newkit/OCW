@@ -7,14 +7,19 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
-# File system and network: desktop app, server and tools only (not wasm).
-# The pure verification lives in ocw-world::manifest.
+# File system and network: desktop app, server and tools. In the browser
+# (wasm32, spec §14 Phase 10 B2) only the pure parts build: `stream` (range
+# planning, chunk verification, the chunk cache behind a trait, residency)
+# and the trusted roots. The pure verification lives in ocw-world::manifest.
 [dependencies]
 ocw-world.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 dirs.workspace = true
 getrandom.workspace = true
-thiserror.workspace = true
-serde_json.workspace = true
 # Downloads over HTTP(S) (MIT OR Apache-2.0; rustls, no OpenSSL).
 ureq.workspace = true
 

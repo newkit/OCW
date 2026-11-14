@@ -921,7 +921,7 @@ pub(crate) mod tests {
                 "Routes:  1",
                 "Time:  14:05 CET",
                 "Weather:  clear",
-                "God mode:  fly over it (G)",
+                "Unicorn mode:  fly over it (G)",
                 "Back"
             ]
         );

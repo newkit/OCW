@@ -2,7 +2,8 @@
 //!
 //! Runs the authoritative session with test riders at the fixed tick rate and
 //! logs their progress. With `--listen` it also accepts desktop clients over
-//! QUIC (spec §6.2; `ocw-desktop --server ADDR`).
+//! QUIC (spec §6.2; `ocw-desktop --server ADDR`), with `--webtransport`
+//! also the browser app over WebTransport (spec §14 Phase 10 B3).
 
 use std::thread;
 use std::time::{Duration, Instant};
@@ -11,7 +12,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use ocw_core::{SIM_DT, SIM_TICK_HZ, mps_to_kmh};
-use ocw_server::net::{DEFAULT_PORT, NetServer, ServerIdentity};
+use ocw_server::net::{DEFAULT_PORT, NetServer, ServerIdentity, Transport, WebIdentity};
 use ocw_server::stats::{ServerReport, TickStats};
 use ocw_server::{Course, GameServer, ServerConfig};
 use ocw_world::Route;
@@ -37,6 +38,10 @@ struct Args {
     /// Simulate as fast as possible instead of in real time.
     #[arg(long)]
     fast: bool,
+    /// Put an Echo rider (the voice echo test, spec §7) at the start of
+    /// every session and let riders move it (`voice.echo here`).
+    #[arg(long)]
+    echo_bot: bool,
     /// Who may change the world clock with the time machine (spec §14
     /// Phase 9, 9D): the host (the rider connected longest), anyone, or
     /// nobody (the clock stays real time).
@@ -53,6 +58,16 @@ struct Args {
     /// session). Never during a running event.
     #[arg(long, default_value = "host", value_parser = parse_time_control)]
     god_control: ocw_server::ClockAccess,
+    /// Rider collisions (spec §14 Phase 12, on by default): soft bumps and
+    /// crashes; group rides soft bumps only.
+    #[arg(long, default_value = "on", value_parser = ["on", "off"])]
+    collisions: String,
+    /// Chaotic bots that sometimes make mistakes (Phase 12 Q3).
+    #[arg(long)]
+    chaotic_bots: bool,
+    /// Who may change the collision rules (host, anyone, nobody).
+    #[arg(long, default_value = "host", value_parser = parse_time_control)]
+    collision_control: ocw_server::ClockAccess,
     /// Free ride on the road graph of this world package (version 2,
     /// from `world-builder package`; a path or a cache id) instead of the
     /// test loop. Verified on load (spec §4.7).
@@ -99,6 +114,18 @@ struct Args {
     /// Default: a new certificate at every start.
     #[arg(long, value_name = "DIR", requires = "listen")]
     tls_dir: Option<PathBuf>,
+    /// Also accept the browser app over WebTransport (HTTP/3) on this UDP
+    /// address (default 0.0.0.0:47801 when given without a value), in the
+    /// same session (spec §14 Phase 10 B3). Its certificate is valid for
+    /// 13 days (browsers take it by hash, `cert-hash`), kept in --tls-dir
+    /// and renewed two days before it ends.
+    #[arg(long, value_name = "ADDR", num_args = 0..=1,
+          default_missing_value = DEFAULT_WEBTRANSPORT, requires = "listen")]
+    webtransport: Option<std::net::SocketAddr>,
+    /// Write the WebTransport endpoint's URL and certificate hash as JSON
+    /// to this file (and again after a renewal), for scripts and pages.
+    #[arg(long, value_name = "PATH", requires = "webtransport")]
+    web_info_file: Option<PathBuf>,
     /// LiveKit server for voice chat (spec §7), e.g. ws://127.0.0.1:7880;
     /// default: $OCW_LIVEKIT_URL. Voice is off without it.
     #[arg(long, value_name = "URL")]
@@ -110,6 +137,7 @@ struct Args {
 }
 
 const DEFAULT_LISTEN: &str = "0.0.0.0:47800";
+const DEFAULT_WEBTRANSPORT: &str = "0.0.0.0:47801";
 
 /// How world packages are loaded and verified (spec §4.7).
 fn load_options(args: &Args) -> Result<ocw_worldstore::LoadOptions, String> {
@@ -314,10 +342,24 @@ fn main() {
             world_access: args.world_control,
             god_access: args.god_control,
             real_epoch_ms: None,
+            allow_echo_bot: args.echo_bot,
+            echo_bot_at_start: args.echo_bot,
+            collisions: args.collisions == "on",
+            chaotic_bots: args.chaotic_bots,
+            collision_access: args.collision_control,
         },
     );
+    if let Some(echo) = server.session().echo_rider() {
+        tracing::info!(
+            echo = %echo,
+            identity = %ocw_protocol::voice_identity(echo),
+            "echo rider at the start (voice echo test; the echo_participant example joins as it)"
+        );
+    }
     let mut net = args.listen.map(|addr| listen(&args, addr));
     let stop = net.as_ref().map(NetServer::shutdown_on_signal);
+    // When the WebTransport certificate was last checked for renewal.
+    let mut cert_checked = Instant::now();
     let tick = Duration::from_secs_f64(SIM_DT);
     let mut next = Instant::now();
     // Time spent in the server tick (physics, bots, snapshot encoding) and
@@ -335,6 +377,12 @@ fn main() {
             net.pump(&mut server);
         }
         pump_world_switch(&args, &mut server, net.as_mut(), &mut world_load);
+        if let Some(n) = &mut net
+            && cert_checked.elapsed() >= Duration::from_secs(60)
+        {
+            cert_checked = Instant::now();
+            rotate_web_cert(&args, n);
+        }
         let broadcast = server.tick();
         if let Some(net) = &mut net {
             net.broadcast(&server, &broadcast);
@@ -386,6 +434,18 @@ fn main() {
         max_late_ms = format!("{:.1}", stats.max_late_ms()),
         "session finished"
     );
+    let web = net
+        .as_ref()
+        .map(|n| n.counters(Transport::WebTransport))
+        .unwrap_or_default();
+    if net.as_ref().is_some_and(|n| n.web_addr().is_some()) {
+        tracing::info!(
+            sessions = web.connections,
+            messages_in = web.messages_in,
+            datagrams_in = web.datagrams_in,
+            "WebTransport endpoint"
+        );
+    }
     if let Some(path) = &args.stats_file {
         // Before the shutdown: whoever is connected now stayed to the end.
         let session = server.session();
@@ -401,6 +461,9 @@ fn main() {
                 session.route().id().to_owned()
             },
             route_sha256,
+            web_sessions: web.connections,
+            web_messages_in: web.messages_in,
+            web_datagrams_in: web.datagrams_in,
             ..Default::default()
         }
         .with_timing(&stats, !args.fast);
@@ -460,5 +523,94 @@ fn listen(args: &Args, addr: std::net::SocketAddr) -> NetServer {
     if local.ip().is_loopback() || local.ip().is_unspecified() {
         println!("  (on this machine also: ocw-desktop --server 127.0.0.1{port} --insecure-dev)");
     }
+    let mut net = net;
+    if let Some(addr) = args.webtransport {
+        let now = ocw_server::unix_now_ms() / 1000;
+        let identity = match &args.tls_dir {
+            Some(dir) => WebIdentity::load_or_create(dir, now).map(|(id, _)| id),
+            None => WebIdentity::generate(now),
+        }
+        .unwrap_or_else(|e| {
+            eprintln!("WebTransport certificate: {e}");
+            std::process::exit(1);
+        });
+        let web = net
+            .listen_webtransport(addr, identity, args.tls_dir.clone())
+            .unwrap_or_else(|e| {
+                eprintln!("{e}");
+                std::process::exit(1);
+            });
+        announce_web(args, &net, web);
+    }
     net
+}
+
+/// Logs and prints how browsers join (and writes --web-info-file).
+fn announce_web(args: &Args, net: &NetServer, addr: std::net::SocketAddr) {
+    use ocw_server::net::webtransport;
+    let hash = net.web_cert_hash().unwrap_or_default();
+    let not_after = net.web_cert_not_after().unwrap_or_default();
+    let url = webtransport::url_for(addr);
+    tracing::info!(addr = %addr, cert_hash = %hash, not_after_unix_s = not_after, "listening (WebTransport, UDP)");
+    println!(
+        "Browsers join with the page options:
+  ?{}
+  (the certificate is valid until {} UTC; it is renewed two days before, then the page needs the new cert-hash)",
+        webtransport::page_query(&url, &hash),
+        utc(not_after)
+    );
+    if let Some(path) = &args.web_info_file {
+        let info = serde_json::json!({
+            "url": url,
+            "port": addr.port(),
+            "cert_hash": hash,
+            "not_after_unix_s": not_after,
+            "query": webtransport::page_query(&url, &hash),
+        });
+        if let Err(e) = std::fs::write(
+            path,
+            format!(
+                "{info:#}
+"
+            ),
+        ) {
+            eprintln!("{}: {e}", path.display());
+        }
+    }
+}
+
+/// Renews the WebTransport certificate when it nears its end.
+fn rotate_web_cert(args: &Args, net: &mut NetServer) {
+    let now = ocw_server::unix_now_ms() / 1000;
+    match net.rotate_web_cert(now) {
+        Ok(Some(hash)) => {
+            tracing::warn!(cert_hash = %hash, "WebTransport certificate renewed: pages need the new cert-hash");
+            if let Some(addr) = net.web_addr() {
+                announce_web(args, net, addr);
+            }
+        }
+        Ok(None) => {}
+        Err(e) => tracing::error!(%e, "WebTransport certificate renewal failed"),
+    }
+}
+
+/// A Unix time as `YYYY-MM-DD HH:MM` (UTC).
+fn utc(unix_s: i64) -> String {
+    let days = unix_s.div_euclid(86_400);
+    let secs = unix_s.rem_euclid(86_400);
+    // Civil date from days since 1970 (Howard Hinnant's algorithm).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!(
+        "{y:04}-{m:02}-{d:02} {:02}:{:02}",
+        secs / 3600,
+        secs % 3600 / 60
+    )
 }

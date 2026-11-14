@@ -2,6 +2,7 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::virtual_power::{VirtualPower, cadence_for};
 use crate::{DeviceBackend, DeviceCommand, DeviceError, DeviceEvent, DeviceHandle};
 
 /// A trainer without hardware: reports a power value set by the user.
@@ -24,44 +25,6 @@ impl VirtualTrainer {
             rate_hz: 4.0,
         }
     }
-}
-
-/// The virtual trainer's power: set by the user, or the ERG target.
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct VirtualPower {
-    set_w: f64,
-    erg_w: Option<f64>,
-}
-
-impl VirtualPower {
-    fn new(set_w: f64) -> Self {
-        Self {
-            set_w: set_w.max(0.0),
-            erg_w: None,
-        }
-    }
-
-    fn command(&mut self, cmd: DeviceCommand) {
-        match cmd {
-            DeviceCommand::SetVirtualPower(w) => self.set_w = w.max(0.0),
-            DeviceCommand::SetTargetPower(w) => self.erg_w = Some(w.max(0.0)),
-            DeviceCommand::SetSimulation(_) => self.erg_w = None,
-            DeviceCommand::Shutdown => {}
-        }
-    }
-
-    /// ERG: the target while the virtual rider pedals; otherwise the set power.
-    fn reported(&self) -> f64 {
-        match self.erg_w {
-            Some(t) if self.set_w > 0.0 => t,
-            _ => self.set_w,
-        }
-    }
-}
-
-/// Cadence a rider would plausibly use at a given power.
-fn cadence_for(power_w: f64) -> Option<f64> {
-    (power_w > 0.0).then(|| (70.0 + power_w / 20.0).min(105.0))
 }
 
 impl DeviceBackend for VirtualTrainer {

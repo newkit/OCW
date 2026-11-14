@@ -122,25 +122,180 @@ impl ServerIdentity {
     }
 
     fn rustls_config(&self) -> Result<rustls::ServerConfig, String> {
-        let mut cfg = rustls::ServerConfig::builder_with_provider(provider())
-            .with_protocol_versions(&[&rustls::version::TLS13])
-            .map_err(|e| e.to_string())?
-            .with_no_client_auth()
-            .with_single_cert(
-                vec![self.cert.clone()],
-                PrivateKeyDer::Pkcs8(self.key.clone_key()),
-            )
-            .map_err(|e| format!("bad server certificate or key: {e}"))?;
-        cfg.alpn_protocols = vec![ALPN.to_vec()];
-        Ok(cfg)
+        rustls_server_config(&self.cert, &self.key, ALPN)
     }
 
     pub(crate) fn server_config(&self) -> Result<quinn::ServerConfig, String> {
-        let crypto =
-            QuicServerConfig::try_from(self.rustls_config()?).map_err(|e| e.to_string())?;
-        let mut cfg = quinn::ServerConfig::with_crypto(Arc::new(crypto));
-        cfg.transport_config(transport(true));
-        Ok(cfg)
+        quinn_server_config(self.rustls_config()?)
+    }
+}
+
+fn rustls_server_config(
+    cert: &CertificateDer<'static>,
+    key: &PrivatePkcs8KeyDer<'static>,
+    alpn: &[u8],
+) -> Result<rustls::ServerConfig, String> {
+    let mut cfg = rustls::ServerConfig::builder_with_provider(provider())
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .map_err(|e| e.to_string())?
+        .with_no_client_auth()
+        .with_single_cert(vec![cert.clone()], PrivateKeyDer::Pkcs8(key.clone_key()))
+        .map_err(|e| format!("bad server certificate or key: {e}"))?;
+    cfg.alpn_protocols = vec![alpn.to_vec()];
+    Ok(cfg)
+}
+
+fn quinn_server_config(tls: rustls::ServerConfig) -> Result<quinn::ServerConfig, String> {
+    let crypto = QuicServerConfig::try_from(tls).map_err(|e| e.to_string())?;
+    let mut cfg = quinn::ServerConfig::with_crypto(Arc::new(crypto));
+    cfg.transport_config(transport(true));
+    Ok(cfg)
+}
+
+/// Seconds per day.
+const DAY_S: i64 = 86_400;
+/// Browsers accept a certificate by its hash (`serverCertificateHashes`)
+/// only if it is valid for at most 14 days (W3C WebTransport, Chrome).
+pub const WEB_CERT_MAX_VALIDITY_S: i64 = 14 * DAY_S;
+/// Validity of the WebTransport certificate: 13 days, from an hour back
+/// (clock skew), so the total stays within the browsers' 14 days.
+pub const WEB_CERT_VALIDITY_S: i64 = 13 * DAY_S;
+pub const WEB_CERT_BACKDATE_S: i64 = 3600;
+/// A new certificate is made when the current one has less than this left
+/// (at start with `--tls-dir`, and while running).
+pub const WEB_CERT_RENEW_BEFORE_S: i64 = 2 * DAY_S;
+
+/// The WebTransport endpoint's certificate (spec §14 Phase 10 B3): an
+/// ECDSA P-256 self-signed certificate valid for 13 days, which browsers
+/// accept by its SHA-256 hash (`serverCertificateHashes`, page option
+/// `cert-hash`) without a CA. It is renewed (rotated) before it expires;
+/// the page then needs the new hash. Production certificates from a CA
+/// come with hosting (B8).
+pub struct WebIdentity {
+    cert: CertificateDer<'static>,
+    key: PrivatePkcs8KeyDer<'static>,
+    not_before_unix_s: i64,
+    not_after_unix_s: i64,
+}
+
+impl WebIdentity {
+    /// A new certificate valid from `now − 1 h` for 13 days.
+    pub fn generate(now_unix_s: i64) -> Result<Self, String> {
+        let not_before_unix_s = now_unix_s - WEB_CERT_BACKDATE_S;
+        let not_after_unix_s = not_before_unix_s + WEB_CERT_VALIDITY_S;
+        let at = |s: i64| {
+            time::OffsetDateTime::from_unix_timestamp(s)
+                .map_err(|e| format!("certificate time: {e}"))
+        };
+        let names = ["localhost", "127.0.0.1", "::1"].map(String::from).to_vec();
+        let mut params = rcgen::CertificateParams::new(names)
+            .map_err(|e| format!("certificate generation failed: {e}"))?;
+        params.not_before = at(not_before_unix_s)?;
+        params.not_after = at(not_after_unix_s)?;
+        // ECDSA P-256: the only key type browsers take by hash.
+        let key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)
+            .map_err(|e| format!("key generation failed: {e}"))?;
+        let cert = params
+            .self_signed(&key)
+            .map_err(|e| format!("certificate generation failed: {e}"))?;
+        Ok(Self {
+            cert: cert.der().clone(),
+            key: PrivatePkcs8KeyDer::from(key.serialize_der()),
+            not_before_unix_s,
+            not_after_unix_s,
+        })
+    }
+
+    /// The certificate kept in `dir` (`web-cert.der`, `web-key.der`,
+    /// `web-cert.validity`), so the hash stays the same across restarts;
+    /// a new one when there is none, it is damaged, or it expires within
+    /// two days. Returns it and whether it is new.
+    pub fn load_or_create(dir: &Path, now_unix_s: i64) -> Result<(Self, bool), String> {
+        let read = || -> Option<Self> {
+            let validity = std::fs::read_to_string(dir.join("web-cert.validity")).ok()?;
+            let mut it = validity.split_whitespace().map(str::parse::<i64>);
+            let (Some(Ok(not_before_unix_s)), Some(Ok(not_after_unix_s))) = (it.next(), it.next())
+            else {
+                return None;
+            };
+            let id = Self {
+                cert: CertificateDer::from(std::fs::read(dir.join("web-cert.der")).ok()?),
+                key: PrivatePkcs8KeyDer::from(std::fs::read(dir.join("web-key.der")).ok()?),
+                not_before_unix_s,
+                not_after_unix_s,
+            };
+            id.rustls_config().ok()?;
+            Some(id)
+        };
+        if let Some(id) = read().filter(|id| id.usable(now_unix_s)) {
+            return Ok((id, false));
+        }
+        let id = Self::generate(now_unix_s)?;
+        id.store(dir)?;
+        Ok((id, true))
+    }
+
+    /// Writes the certificate into `dir`, replacing an old one.
+    pub fn store(&self, dir: &Path) -> Result<(), String> {
+        let ctx = |p: &Path, e: std::io::Error| format!("{}: {e}", p.display());
+        std::fs::create_dir_all(dir).map_err(|e| ctx(dir, e))?;
+        let (cert_path, key_path, validity_path) = (
+            dir.join("web-cert.der"),
+            dir.join("web-key.der"),
+            dir.join("web-cert.validity"),
+        );
+        for p in [&cert_path, &key_path, &validity_path] {
+            match std::fs::remove_file(p) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(ctx(p, e)),
+                _ => {}
+            }
+        }
+        std::fs::write(&cert_path, self.cert.as_ref()).map_err(|e| ctx(&cert_path, e))?;
+        write_private(&key_path, self.key.secret_pkcs8_der()).map_err(|e| ctx(&key_path, e))?;
+        std::fs::write(
+            &validity_path,
+            format!("{} {}\n", self.not_before_unix_s, self.not_after_unix_s),
+        )
+        .map_err(|e| ctx(&validity_path, e))
+    }
+
+    /// Valid now, within the browsers' 14 days, and not about to expire.
+    pub fn usable(&self, now_unix_s: i64) -> bool {
+        self.not_after_unix_s - self.not_before_unix_s <= WEB_CERT_MAX_VALIDITY_S
+            && now_unix_s >= self.not_before_unix_s
+            && !self.needs_rotation(now_unix_s)
+    }
+
+    /// Less than two days left: time for a new certificate.
+    pub fn needs_rotation(&self, now_unix_s: i64) -> bool {
+        now_unix_s >= self.not_after_unix_s - WEB_CERT_RENEW_BEFORE_S
+    }
+
+    /// The SHA-256 of the certificate as lowercase hex: the page's
+    /// `cert-hash` (`serverCertificateHashes`).
+    pub fn cert_hash(&self) -> String {
+        fingerprint(&self.cert)
+    }
+
+    pub fn not_before_unix_s(&self) -> i64 {
+        self.not_before_unix_s
+    }
+
+    pub fn not_after_unix_s(&self) -> i64 {
+        self.not_after_unix_s
+    }
+
+    /// The DER certificate (tests check its fields).
+    pub fn cert_der(&self) -> &[u8] {
+        self.cert.as_ref()
+    }
+
+    fn rustls_config(&self) -> Result<rustls::ServerConfig, String> {
+        rustls_server_config(&self.cert, &self.key, super::webtransport::ALPN)
+    }
+
+    pub(crate) fn server_config(&self) -> Result<quinn::ServerConfig, String> {
+        quinn_server_config(self.rustls_config()?)
     }
 }
 
@@ -190,6 +345,17 @@ impl ServerTrust {
         addr: SocketAddr,
         datagrams: bool,
     ) -> Result<quinn::ClientConfig, String> {
+        self.client_config_for(addr, datagrams, ALPN)
+    }
+
+    /// The client configuration for a protocol (`ocw/1`, or `h3` for
+    /// WebTransport).
+    pub(crate) fn client_config_for(
+        &self,
+        addr: SocketAddr,
+        datagrams: bool,
+        alpn: &[u8],
+    ) -> Result<quinn::ClientConfig, String> {
         let pin = match self {
             Self::Pinned(p) => Some(*p),
             // Checked again here: no path may skip verification remotely.
@@ -205,7 +371,7 @@ impl ServerTrust {
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(DevVerifier { pin, provider }))
             .with_no_client_auth();
-        cfg.alpn_protocols = vec![ALPN.to_vec()];
+        cfg.alpn_protocols = vec![alpn.to_vec()];
         let crypto = QuicClientConfig::try_from(cfg).map_err(|e| e.to_string())?;
         let mut cfg = quinn::ClientConfig::new(Arc::new(crypto));
         cfg.transport_config(transport(datagrams));
@@ -328,6 +494,99 @@ mod tests {
                 .client_config(local, true)
                 .is_ok()
         );
+    }
+
+    /// The two validity times (notBefore, notAfter) of a DER certificate:
+    /// the first two UTCTime values (tag 0x17, 13 bytes `YYMMDDHHMMSSZ`).
+    fn der_times(der: &[u8]) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i + 15 <= der.len() && out.len() < 2 {
+            if der[i] == 0x17 && der[i + 1] == 13 {
+                let t = &der[i + 2..i + 15];
+                if t[12] == b'Z' && t[..12].iter().all(u8::is_ascii_digit) {
+                    out.push(String::from_utf8_lossy(t).into_owned());
+                    i += 15;
+                    continue;
+                }
+            }
+            i += 1;
+        }
+        out
+    }
+
+    /// 2026-11-14 12:00:00 UTC.
+    const NOW: i64 = 1_794_657_600;
+
+    #[test]
+    fn the_webtransport_certificate_suits_browsers() {
+        let id = WebIdentity::generate(NOW).unwrap();
+        assert_eq!(id.not_before_unix_s(), NOW - 3600);
+        assert_eq!(id.not_after_unix_s() - id.not_before_unix_s(), 13 * DAY_S);
+        assert!(id.usable(NOW));
+        // The hash is the SHA-256 of the DER certificate, 64 hex digits.
+        assert_eq!(id.cert_hash(), fingerprint(id.cert_der()));
+        assert_eq!(parse_fingerprint(&id.cert_hash()).unwrap().len(), 32);
+        assert_ne!(
+            WebIdentity::generate(NOW).unwrap().cert_hash(),
+            id.cert_hash()
+        );
+        // The certificate itself carries that validity (≤ 14 days).
+        assert_eq!(der_times(id.cert_der()), ["261114110000Z", "261127110000Z"]);
+        // ECDSA P-256 (id-ecPublicKey 1.2.840.10045.2.1, prime256v1
+        // 1.2.840.10045.3.1.7): the only key browsers accept by hash.
+        let der = id.cert_der();
+        let has = |oid: &[u8]| der.windows(oid.len()).any(|w| w == oid);
+        assert!(has(&[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01]));
+        assert!(has(&[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07]));
+        // Expiry: renewed two days before the end, unusable after it.
+        let end = id.not_after_unix_s();
+        assert!(!id.needs_rotation(end - 2 * DAY_S - 1));
+        assert!(id.needs_rotation(end - 2 * DAY_S));
+        assert!(!id.usable(end));
+        assert!(!id.usable(id.not_before_unix_s() - 1));
+        assert!(id.server_config().is_ok());
+    }
+
+    #[test]
+    fn the_webtransport_certificate_is_kept_and_rotated() {
+        let dir = std::env::temp_dir().join(format!("ocw-webtls-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (first, new) = WebIdentity::load_or_create(&dir, NOW).unwrap();
+        assert!(new);
+        // A restart a week later: the same certificate (and hash).
+        let (again, new) = WebIdentity::load_or_create(&dir, NOW + 7 * DAY_S).unwrap();
+        assert!(!new);
+        assert_eq!(again.cert_hash(), first.cert_hash());
+        assert_eq!(again.not_after_unix_s(), first.not_after_unix_s());
+        // Eleven days later it has less than two days left: a new one.
+        let later = NOW + 11 * DAY_S;
+        let (rotated, new) = WebIdentity::load_or_create(&dir, later).unwrap();
+        assert!(new);
+        assert_ne!(rotated.cert_hash(), first.cert_hash());
+        assert_eq!(rotated.not_before_unix_s(), later - 3600);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(dir.join("web-key.der"))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o077, 0, "key readable by others: {mode:o}");
+        }
+        // A damaged file: a new certificate (only a development
+        // certificate the page gets by hash, nothing is lost).
+        std::fs::write(dir.join("web-key.der"), b"junk").unwrap();
+        let (fresh, new) = WebIdentity::load_or_create(&dir, later).unwrap();
+        assert!(new && fresh.cert_hash() != rotated.cert_hash());
+        // A validity longer than browsers accept is not reused.
+        std::fs::write(
+            dir.join("web-cert.validity"),
+            format!("{} {}", later - 3600, later + 30 * DAY_S),
+        )
+        .unwrap();
+        assert!(WebIdentity::load_or_create(&dir, later).unwrap().1);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

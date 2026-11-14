@@ -21,11 +21,11 @@ use ocw_core::RiderId;
 use ocw_protocol::v1;
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
 use ocw_render::menu::ride_input;
-use ocw_render::voice::VoiceHud;
+use ocw_render::voice::{EchoHud, VoiceHud};
 use ocw_render::{RideView, RiderView};
 use ocw_voice::hotkeys::{Input, Toggle, toggle};
 use ocw_voice::spatial::Peer;
-use ocw_voice::{MuteState, Status, Switch, VoiceController, VoiceSettings};
+use ocw_voice::{EchoStatus, MuteState, Status, Switch, VoiceController, VoiceSettings};
 use ocw_world::Track;
 
 use crate::client::ClientCore;
@@ -51,6 +51,8 @@ pub struct VoiceMenuInfo {
     pub input_missing: bool,
     pub output_missing: bool,
     pub participants: Vec<MenuParticipant>,
+    /// The echo test's short state ("speak now", "120 m away", …).
+    pub echo: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -66,11 +68,20 @@ pub struct VoicePlugin;
 
 impl Plugin for VoicePlugin {
     fn build(&self, app: &mut App) {
-        let controller = VoiceController::new(
+        let mut controller = VoiceController::new(
             ocw_voice::default_backend(),
             VoiceSettings::default(),
             MuteState::default(),
         );
+        // `--echo-bot`: the echo test from the start (the settings are
+        // applied at the start only where they differ from the defaults).
+        if app
+            .world()
+            .get_resource::<crate::Args>()
+            .is_some_and(|a| a.echo_bot)
+        {
+            controller.set_echo(true);
+        }
         app.insert_resource(Voice(Mutex::new(controller)))
             .init_resource::<PendingVoiceGrants>()
             .init_resource::<VoiceMenuInfo>()
@@ -190,6 +201,53 @@ pub fn settings_of(s: &Settings) -> (VoiceSettings, MuteState) {
     )
 }
 
+/// The echo test's settings: on (the setting or `--echo-bot`) and the
+/// delay (ms).
+pub fn echo_of(s: &Settings, args_echo_bot: bool) -> (bool, u32) {
+    let on = s
+        .get("audio.echo_bot")
+        .ok()
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let delay = match s.get("audio.echo_delay_ms") {
+        Ok(crate::settings::registry::Value::Int(i)) => i.clamp(0, i64::from(u32::MAX)) as u32,
+        _ => ocw_voice::echo::DEFAULT_DELAY_MS,
+    };
+    (on || args_echo_bot, ocw_voice::echo::clamp_delay(delay))
+}
+
+/// The echo test's short state for the menu row.
+pub fn echo_short(s: &EchoStatus) -> String {
+    match s {
+        EchoStatus::Off => String::new(),
+        EchoStatus::Unavailable(_) => "unavailable".into(),
+        EchoStatus::NoEchoRider => "no Echo rider".into(),
+        EchoStatus::Far { distance_m } => format!("{distance_m:.0} m away"),
+        EchoStatus::Near { .. } => "speak now".into(),
+        EchoStatus::Remote { .. } => "via server".into(),
+    }
+}
+
+/// The echo test's HUD line (spec §7 *Echo bot*): `None` while it is off.
+pub fn echo_hud(s: &EchoStatus, levels: ocw_voice::Levels, delay_ms: u32) -> Option<EchoHud> {
+    let text = match s {
+        EchoStatus::Off => return None,
+        EchoStatus::Near { .. } => format!("ECHO TEST - speak now ({delay_ms} ms echo)"),
+        EchoStatus::Remote { .. } if s.near() => {
+            "ECHO TEST - speak now (via the voice server)".into()
+        }
+        other => format!("echo test: {}", other.text()),
+    };
+    // Levels in 1 % steps: the HUD changes only when the meter moves.
+    let q = |l: f32| (l * 100.0).round() / 100.0;
+    Some(EchoHud {
+        near: s.near(),
+        text,
+        input: q(levels.input),
+        echo: q(levels.echo),
+    })
+}
+
 /// The HUD text of a status (with the number of others in the room).
 fn status_text(status: &Status, others: usize) -> String {
     match status {
@@ -213,6 +271,7 @@ fn drive(
     mut hud: ResMut<VoiceHud>,
     mut console: ResMut<ConsoleState>,
     mut seen: Local<Option<(u64, bool)>>,
+    mut echo_ask: Local<EchoAsk>,
 ) {
     let mut c = voice.0.lock().expect("not poisoned");
     let now = time.elapsed_secs_f64();
@@ -228,6 +287,19 @@ fn drive(
             c.new_session(client.0.voice_offered());
         }
         c.set_human_riders(client.0.human_riders());
+        c.set_echo_rider(client.0.echo_rider());
+        // The echo test: ask the server for the Echo rider once per
+        // session while it is on and none is on the road; take it away when
+        // turned off.
+        let joined = client.0.rider_id().is_some();
+        let request = echo_ask.next(c.echo_on(), *seen, joined, client.0.echo_rider().is_some());
+        match (request, &link) {
+            (Some(true), _) if !client.0.echo_bot_allowed() => {
+                console.print("echo test: this server has no Echo rider (ocw-server --echo-bot)");
+            }
+            (Some(on), Some(link)) => link.send_bytes(ClientCore::echo_request_message(on, false)),
+            _ => {}
+        }
     }
     for g in grants.0.drain(..) {
         c.on_grant(&g, now);
@@ -274,6 +346,7 @@ fn drive(
         inputs,
         outputs,
         participants,
+        echo: echo_short(&c.echo_status()),
     };
     menu.set_if_neq(info);
     let speaking = c.speaking_riders();
@@ -292,7 +365,45 @@ fn drive(
         self_speaking: c.self_speaking(),
         speaking: speaking.into_iter().filter(|r| Some(*r) != own).collect(),
         speaking_names: names,
+        echo: echo_hud(&c.echo_status(), c.levels(), c.echo_delay_ms()),
     });
+}
+
+/// When the app asks the server for the Echo rider (or to take it away).
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct EchoAsk {
+    /// The session the Echo rider was asked for.
+    asked: Option<Option<(u64, bool)>>,
+    /// The echo test was on in the last frame.
+    was_on: bool,
+}
+
+impl EchoAsk {
+    /// The request to send now: `Some(true)` put the Echo rider on the
+    /// road, `Some(false)` take it away. `session`: the current session's
+    /// key; `joined`: the server welcomed the rider; `present`: an Echo
+    /// rider is on the road.
+    pub fn next(
+        &mut self,
+        on: bool,
+        session: Option<(u64, bool)>,
+        joined: bool,
+        present: bool,
+    ) -> Option<bool> {
+        let was_on = std::mem::replace(&mut self.was_on, on);
+        if !joined {
+            return None;
+        }
+        if on && !present && self.asked != Some(session) {
+            self.asked = Some(session);
+            return Some(true);
+        }
+        if !on && was_on {
+            self.asked = None;
+            return present.then_some(false);
+        }
+        None
+    }
 }
 
 // ------------------------------------------------------------- commands
@@ -346,16 +457,110 @@ fn apply_settings(world: &mut World) {
         return;
     };
     let (settings, mute) = settings_of(&us.settings);
+    let echo_bot = world
+        .get_resource::<crate::Args>()
+        .is_some_and(|a| a.echo_bot);
+    let (echo, delay) = echo_of(&us.settings, echo_bot);
     let voice = world.resource::<Voice>();
     let mut c = voice.0.lock().expect("not poisoned");
     c.set_settings(settings);
+    c.set_echo(echo);
+    c.set_echo_delay(delay);
     let on = |b: bool| if b { Switch::On } else { Switch::Off };
     c.set_mic(on(mute.mic_muted));
     c.set_speaker(on(mute.speaker_muted));
 }
 
+/// `voice.echo [on|off|here|delay MS|status]` (spec §7 *Echo bot*).
+fn echo_command(
+    world: &mut World,
+    action: Option<&str>,
+    ms: Option<u32>,
+) -> Result<String, String> {
+    let saved = |world: &mut World, key: &str, value: String| -> String {
+        let Some(mut us) = world.get_resource_mut::<UserSettings>() else {
+            return String::new();
+        };
+        if let Err(e) = us.settings.set(key, &value) {
+            return format!(" (not saved: {e})");
+        }
+        us.save()
+            .err()
+            .map(|e| format!(" (not saved: {e})"))
+            .unwrap_or_default()
+    };
+    match action.unwrap_or("status") {
+        "on" | "off" => {
+            let on = action == Some("on");
+            let note = saved(
+                world,
+                "audio.echo_bot",
+                if on { "on" } else { "off" }.into(),
+            );
+            let voice = world.resource::<Voice>();
+            let mut c = voice.0.lock().expect("not poisoned");
+            c.set_echo(on);
+            Ok(if on {
+                format!(
+                    "echo test on ({} ms): ride to the Echo rider and speak{note}",
+                    c.echo_delay_ms()
+                )
+            } else {
+                format!("echo test off{note}")
+            })
+        }
+        "here" => {
+            let note = saved(world, "audio.echo_bot", "on".into());
+            {
+                let voice = world.resource::<Voice>();
+                voice.0.lock().expect("not poisoned").set_echo(true);
+            }
+            let link = world
+                .get_resource::<Link>()
+                .ok_or("not connected to a game server")?;
+            link.send_bytes(ClientCore::echo_request_message(true, true));
+            Ok(format!(
+                "echo test on: the Echo rider comes 20 m ahead{note}"
+            ))
+        }
+        "delay" => {
+            let ms = ms.ok_or("voice.echo delay MS (20 to 3000)")?;
+            let voice = world.resource::<Voice>();
+            let set = voice.0.lock().expect("not poisoned").set_echo_delay(ms);
+            let note = saved(world, "audio.echo_delay_ms", set.to_string());
+            Ok(format!("echo delay {set} ms{note}"))
+        }
+        _ => {
+            let voice = world.resource::<Voice>();
+            let c = voice.0.lock().expect("not poisoned");
+            let l = c.levels();
+            Ok(format!(
+                "echo test: {} (delay {} ms; microphone {:.0} %, echo {:.0} %)",
+                c.echo_status().text(),
+                c.echo_delay_ms(),
+                100.0 * ocw_render::voice::meter_fraction(l.input),
+                100.0 * ocw_render::voice::meter_fraction(l.echo),
+            ))
+        }
+    }
+}
+
 fn register_commands(app: &mut App) {
     app.console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("voice.echo")
+            .about("Echo test: an Echo rider plays your microphone back to you, delayed, when you are near it (on, off, here = 20 m ahead of you, delay MS, status)")
+            .arg(Arg::new("action").value_parser(["on", "off", "here", "delay", "status"]))
+            .arg(Arg::new("ms").value_parser(clap::value_parser!(u32))),
+        |world, m| {
+            echo_command(
+                world,
+                m.get_one::<String>("action").map(String::as_str),
+                m.get_one::<u32>("ms").copied(),
+            )
+        },
+    ))
+    .console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("voice.mute-mic")
             .about("Mute or unmute your microphone (M, gamepad Select); remembered")
@@ -525,6 +730,9 @@ mod tests {
             is_local: local,
             bike: Default::default(),
             look: None,
+            parts: Vec::new(),
+            crash: None,
+            wobble: 0.0,
         }
     }
 
@@ -624,6 +832,111 @@ mod tests {
         assert!(status.contains("microphone"), "{status}");
         assert!(run(&mut app, "voice.group Bad").contains("invalid group name"));
         assert!(run(&mut app, "voice.mute nobody").contains("nobody called"));
+    }
+
+    /// The echo test asks for the Echo rider once per session, again
+    /// after a ride switch, and takes it away when turned off.
+    #[test]
+    fn echo_rider_is_asked_for_once_per_session() {
+        let mut a = EchoAsk::default();
+        let s1 = Some((1, true));
+        assert_eq!(a.next(true, s1, false, false), None, "not joined yet");
+        assert_eq!(a.next(true, s1, true, false), Some(true));
+        assert_eq!(a.next(true, s1, true, false), None, "once");
+        assert_eq!(a.next(true, s1, true, true), None);
+        // Refused or gone in the same session: not asked again.
+        assert_eq!(a.next(true, s1, true, false), None);
+        // A new session (ride switch): asked again.
+        let s2 = Some((2, true));
+        assert_eq!(a.next(true, s2, true, false), Some(true));
+        assert_eq!(a.next(false, s2, true, true), Some(false), "taken away");
+        assert_eq!(a.next(false, s2, true, true), None);
+        assert_eq!(a.next(true, s2, true, false), Some(true), "on again");
+        // Off while none is on the road: nothing to say.
+        assert_eq!(a.next(false, s2, true, false), None);
+    }
+
+    #[test]
+    fn echo_hud_and_settings() {
+        let l = ocw_voice::Levels {
+            input: 0.123,
+            echo: 0.05,
+        };
+        assert_eq!(echo_hud(&EchoStatus::Off, l, 300), None);
+        let near = echo_hud(
+            &EchoStatus::Near {
+                distance_m: 5.0,
+                recording: 1.0,
+            },
+            l,
+            300,
+        )
+        .unwrap();
+        assert!(near.near && near.text.contains("speak now"), "{near:?}");
+        assert_eq!((near.input, near.echo), (0.12, 0.05));
+        let far = echo_hud(&EchoStatus::Far { distance_m: 120.0 }, l, 300).unwrap();
+        assert!(!far.near && far.text.contains("120 m"), "{far:?}");
+        assert_eq!(
+            echo_short(&EchoStatus::Far { distance_m: 120.0 }),
+            "120 m away"
+        );
+        let (s, _) = Settings::parse("[audio]\necho_bot = true\necho_delay_ms = 500\n").unwrap();
+        assert_eq!(echo_of(&s, false), (true, 500));
+        assert_eq!(echo_of(&Settings::default(), false), (false, 300));
+        assert_eq!(
+            echo_of(&Settings::default(), true),
+            (true, 300),
+            "--echo-bot"
+        );
+    }
+
+    #[test]
+    fn echo_console_commands() {
+        let mut app = app();
+        assert!(run(&mut app, "voice.echo on").contains("echo test on (300 ms)"));
+        let us = app.world().resource::<UserSettings>();
+        assert_eq!(
+            us.value("audio.echo_bot").as_bool(),
+            Some(true),
+            "remembered"
+        );
+        assert!(run(&mut app, "voice.echo delay 750").contains("750 ms"));
+        assert!(
+            run(&mut app, "voice.echo delay 5").contains("20 ms"),
+            "clamped"
+        );
+        assert!(run(&mut app, "voice.echo delay").contains("20 to 3000"));
+        let status = run(&mut app, "voice.echo");
+        assert!(
+            status.contains("echo test:") && status.contains("20 ms"),
+            "{status}"
+        );
+        // No server here: "here" needs one.
+        assert!(run(&mut app, "voice.echo here").contains("not connected"));
+        assert!(run(&mut app, "voice.echo off").contains("echo test off"));
+        let voice = app.world().resource::<Voice>();
+        assert!(!voice.0.lock().unwrap().echo_on());
+        app.update();
+        // The HUD shows nothing of the echo while it is off.
+        assert_eq!(app.world().resource::<VoiceHud>().echo, None);
+        run(&mut app, "voice.echo on");
+        app.update();
+        let hud = app.world().resource::<VoiceHud>().echo.clone().unwrap();
+        assert!(hud.text.starts_with("echo test:"), "{hud:?}");
+    }
+
+    /// `--echo-bot` turns the echo test on from the start.
+    #[test]
+    fn echo_bot_flag_turns_the_echo_test_on() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, ConsoleCorePlugin))
+            .insert_resource(Args::parse_from(["ocw-desktop", "--echo-bot"]))
+            .insert_resource(UserSettings::default())
+            .add_plugins((crate::settings::SettingsPlugin, VoicePlugin));
+        app.update();
+        let voice = app.world().resource::<Voice>();
+        assert!(voice.0.lock().unwrap().echo_on());
+        assert!(app.world().resource::<VoiceHud>().echo.is_some());
     }
 
     /// The hotkeys queue the mute commands while riding.

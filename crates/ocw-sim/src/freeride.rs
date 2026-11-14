@@ -91,7 +91,7 @@ pub fn others_on_path<'a>(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::sync::Arc;
 
     use super::*;

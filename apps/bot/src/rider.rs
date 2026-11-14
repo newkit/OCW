@@ -61,6 +61,9 @@ pub struct BotRider {
     next_sample_s: Option<f64>,
     snapshot_age_s: f64,
     report: RiderReport,
+    /// Snapshot interval, jitter and age (spec §14 Phase 10 B3: the same
+    /// measurement as the browser app's).
+    timing: ocw_server::timing::SnapshotTiming,
 }
 
 impl BotRider {
@@ -74,6 +77,7 @@ impl BotRider {
             rider_weight_kg: Some(config.weight_kg as f32),
             bike_profile: Some(config.bike.id().into()),
             look: Some(config.look.into()),
+            parts: Vec::new(),
         };
         // Exactly the profile the server will use for this hello.
         let profile = ocw_server::physics_profile(&hello);
@@ -99,6 +103,7 @@ impl BotRider {
             next_sample_s: None,
             snapshot_age_s: 0.0,
             report,
+            timing: Default::default(),
         }
     }
 
@@ -309,12 +314,20 @@ impl BotRider {
             cadence_rpm: (p > 0.0).then(|| (70.0 + p / 20.0).min(105.0) as f32),
             heart_rate_bpm: None,
             brake: Some(effort.brake),
+            virtual_power: None,
         })))]
     }
 
     /// The rider's report (with the other riders it saw).
+    /// Records a received message's timing (snapshots only):
+    /// `client_unix_ms` is the wall clock at arrival.
+    pub fn observe_timing(&mut self, bytes: &[u8], now_s: f64, client_unix_ms: f64) {
+        self.timing.on_message(bytes, now_s, client_unix_ms);
+    }
+
     pub fn report(&self) -> RiderReport {
         let mut r = self.report.clone();
+        r.timing = (self.timing.snapshots() > 0).then(|| self.timing.summary());
         r.others_seen = self
             .others
             .values()

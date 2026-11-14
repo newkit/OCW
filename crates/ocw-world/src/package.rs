@@ -465,186 +465,352 @@ impl WorldPackage {
 
     fn decode(bytes: &[u8], full: bool) -> Result<Self, String> {
         let mut r = Bytes { b: bytes, pos: 0 };
-        let version = match r.take(8)? {
-            m if m == MAGIC => 1,
-            m if m == MAGIC_V2 => 2,
-            m if m.starts_with(b"OCWPKG") => {
-                return Err(format!(
-                    "world package version {} is not supported (this build reads 01 and 02); please update",
-                    String::from_utf8_lossy(&m[6..])
-                ));
-            }
-            _ => return Err("not an OCW world package (OCWPKG01/02)".into()),
-        };
-        let name_len = r.u32()? as usize;
-        let name = String::from_utf8(r.take(name_len)?.to_vec()).map_err(|e| e.to_string())?;
-        let origin = (r.f64()?, r.f64()?);
-        let tile_size_m = r.f32()?;
-        let samples = r.u32()?;
-        if samples < 2 {
-            return Err("tile grid needs at least 2 samples".into());
-        }
-        let count = r.u32()?;
+        let head = read_head(&mut r)?;
         let mut tiles = BTreeMap::new();
-        for _ in 0..count {
-            let key = TileKey {
-                x: r.i32()?,
-                z: r.i32()?,
-            };
-            let n = samples as usize * samples as usize;
-            if !full {
-                r.take(n * 4)?;
-                for _ in 0..r.u32()? {
-                    r.take(5)?;
-                    let pts = r.u32()? as usize;
-                    r.take(pts * 12)?;
-                }
-                tiles.insert(
-                    key,
-                    Tile {
-                        key,
-                        heights: Vec::new(),
-                        roads: Vec::new(),
-                    },
-                );
-                continue;
-            }
-            let heights = (0..n).map(|_| r.f32()).collect::<Result<_, _>>()?;
-            let roads_n = r.u32()?;
-            let mut roads = Vec::with_capacity(roads_n as usize);
-            for _ in 0..roads_n {
-                let class = class_from(r.u8()?)?;
-                let width_m = r.f32()?;
-                let pts = r.u32()?;
-                let points = (0..pts)
-                    .map(|_| Ok([r.f32()?, r.f32()?, r.f32()?]))
-                    .collect::<Result<_, String>>()?;
-                roads.push(RoadStrip {
-                    class,
-                    width_m,
-                    points,
-                    surface: RoadSurface::of_class(class),
-                    dress: RoadDress::of_class(class, width_m),
-                });
-            }
-            tiles.insert(
-                key,
-                Tile {
-                    key,
-                    heights,
-                    roads,
-                },
-            );
+        for _ in 0..head.tile_count {
+            let tile = read_tile(&mut r, head.samples, full)?;
+            tiles.insert(tile.key, tile);
         }
-        let mut graph = None;
-        let (mut landuse, mut buildings, mut bridges) = (None, None, None);
-        let mut building_tags = None;
-        let mut routes = Vec::new();
-        let mut region = None;
-        let mut time_zone = None;
-        let mut look = RegionLook::default();
-        if version >= 2 {
-            let sections = r.u32()?;
-            for _ in 0..sections {
-                let tag: [u8; 4] = r.arr()?;
-                let len = usize::try_from(r.u64()?).map_err(|_| "section too large")?;
-                let payload = r.take(len)?;
-                if &tag == GRAPH_TAG {
-                    graph = Some(read_graph(payload)?);
-                } else if &tag == LANDUSE_TAG && full {
-                    landuse = Some(read_landuse(payload, samples)?);
-                } else if &tag == BUILDINGS_TAG && full {
-                    buildings = Some(read_buildings(payload)?);
-                } else if &tag == BUILDING_TAGS_TAG && full {
-                    // Optional styling: a layout this reader does not know
-                    // is skipped (the houses get their regional defaults).
-                    match read_building_tags(payload) {
-                        Ok(t) => building_tags = Some(t),
-                        Err(e) if e.contains("not supported") => {}
-                        Err(e) => return Err(e),
-                    }
-                } else if &tag == ROUTES_TAG {
-                    routes = read_routes(payload)?;
-                } else if &tag == REGION_TAG {
-                    region = Some(read_region(payload)?);
-                } else if &tag == BRIDGES_TAG && full {
-                    bridges = Some(read_bridges(payload)?);
-                } else if &tag == TIME_ZONE_TAG {
-                    let z = std::str::from_utf8(payload)
-                        .map_err(|_| "time zone id is not UTF-8")?
-                        .to_owned();
-                    time_zone = Some(z);
-                } else if &tag == PALETTE_TAG {
-                    look.palette = Some(read_palette(payload)?);
-                } else if &tag == ROOFS_TAG && full {
-                    look.roofs = Some(read_roofs(payload)?);
-                } else if &tag == SEASONS_TAG && full {
-                    look.seasons = Some(read_seasons(payload)?);
-                } else if &tag == ORTHO_TAG && full {
-                    // Optional imagery: a newer layout is skipped (the
-                    // ground keeps its materials and colour map).
-                    match read_ortho(payload) {
-                        Ok(o) => look.ortho = Some(o),
-                        Err(e) if e.contains("not supported") => {}
-                        Err(e) => return Err(e),
-                    }
-                } else if &tag == ROAD_SURFACE_TAG && full {
-                    for (key, surfaces) in read_road_surfaces(payload)? {
-                        let tile = tiles
-                            .get_mut(&key)
-                            .ok_or("road surfaces of a tile the package does not have")?;
-                        if surfaces.len() != tile.roads.len() {
-                            return Err("road surfaces do not match the tile's road strips".into());
-                        }
-                        for (strip, s) in tile.roads.iter_mut().zip(surfaces) {
-                            strip.surface = s;
-                        }
-                    }
-                } else if &tag == ROAD_DRESS_TAG && full {
-                    match read_road_dress(payload) {
-                        Ok(dress) => {
-                            for (key, d) in dress {
-                                let tile = tiles
-                                    .get_mut(&key)
-                                    .ok_or("road dress of a tile the package does not have")?;
-                                if d.len() != tile.roads.len() {
-                                    return Err(
-                                        "road dress does not match the tile's road strips".into()
-                                    );
-                                }
-                                for (strip, d) in tile.roads.iter_mut().zip(d) {
-                                    strip.dress = d;
-                                }
-                            }
-                        }
-                        Err(e) if e.contains("not supported") => {}
-                        Err(e) => return Err(e),
-                    }
-                }
-                // Unknown sections (from newer builders) are skipped.
-            }
-        }
+        let sections = if head.version >= 2 {
+            read_sections(&mut r, head.samples, full, false)?
+        } else {
+            Sections::default()
+        };
         if r.pos != bytes.len() {
             return Err("trailing bytes after the last tile or section".into());
         }
-        if let (Some(b), Some(t)) = (buildings.as_mut(), building_tags) {
-            apply_building_tags(b, t);
+        for (key, surfaces) in &sections.surfaces {
+            let tile = tiles
+                .get_mut(key)
+                .ok_or("road surfaces of a tile the package does not have")?;
+            apply_surfaces(tile, surfaces)?;
         }
-        Ok(Self {
-            name,
-            origin,
-            tile_size_m,
-            samples,
+        for (key, dress) in &sections.dress {
+            let tile = tiles
+                .get_mut(key)
+                .ok_or("road dress of a tile the package does not have")?;
+            apply_dress(tile, dress)?;
+        }
+        Ok(sections.into_package(head, tiles))
+    }
+
+    /// Approximate memory of the tiles' terrain and road strips (bytes):
+    /// what a streaming client counts against its memory budget.
+    pub fn tile_bytes(&self) -> u64 {
+        self.tiles.values().map(Tile::approx_bytes).sum()
+    }
+}
+
+impl Tile {
+    /// Approximate memory of the tile (heights, road points, strip
+    /// overhead) in bytes.
+    pub fn approx_bytes(&self) -> u64 {
+        let points: usize = self.roads.iter().map(|r| r.points.len()).sum();
+        (self.heights.len() * 4
+            + points * 12
+            + self.roads.len() * std::mem::size_of::<RoadStrip>()
+            + std::mem::size_of::<Tile>()) as u64
+    }
+}
+
+/// The fixed fields of a package before its tiles: what the manifest's
+/// `header` chunk holds (spec §4.7).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PackageHead {
+    /// 1 (`OCWPKG01`) or 2 (`OCWPKG02`, with sections).
+    pub version: u32,
+    pub name: String,
+    pub origin: (f64, f64),
+    pub tile_size_m: f32,
+    pub samples: u32,
+    pub tile_count: u32,
+}
+
+fn read_head(r: &mut Bytes) -> Result<PackageHead, String> {
+    let version = match r.take(8)? {
+        m if m == MAGIC => 1,
+        m if m == MAGIC_V2 => 2,
+        m if m.starts_with(b"OCWPKG") => {
+            return Err(format!(
+                "world package version {} is not supported (this build reads 01 and 02); please update",
+                String::from_utf8_lossy(&m[6..])
+            ));
+        }
+        _ => return Err("not an OCW world package (OCWPKG01/02)".into()),
+    };
+    let name_len = r.u32()? as usize;
+    let name = String::from_utf8(r.take(name_len)?.to_vec()).map_err(|e| e.to_string())?;
+    let origin = (r.f64()?, r.f64()?);
+    let tile_size_m = r.f32()?;
+    let samples = r.u32()?;
+    if samples < 2 {
+        return Err("tile grid needs at least 2 samples".into());
+    }
+    let tile_count = r.u32()?;
+    Ok(PackageHead {
+        version,
+        name,
+        origin,
+        tile_size_m,
+        samples,
+        tile_count,
+    })
+}
+
+/// One tile; without `full` only its key (the bytes are skipped).
+fn read_tile(r: &mut Bytes, samples: u32, full: bool) -> Result<Tile, String> {
+    let key = TileKey {
+        x: r.i32()?,
+        z: r.i32()?,
+    };
+    let n = samples as usize * samples as usize;
+    if !full {
+        r.take(n * 4)?;
+        for _ in 0..r.u32()? {
+            r.take(5)?;
+            let pts = r.u32()? as usize;
+            r.take(pts * 12)?;
+        }
+        return Ok(Tile {
+            key,
+            heights: Vec::new(),
+            roads: Vec::new(),
+        });
+    }
+    let heights = (0..n).map(|_| r.f32()).collect::<Result<_, _>>()?;
+    let roads_n = r.u32()?;
+    let mut roads = Vec::with_capacity(roads_n as usize);
+    for _ in 0..roads_n {
+        let class = class_from(r.u8()?)?;
+        let width_m = r.f32()?;
+        let pts = r.u32()?;
+        let points = (0..pts)
+            .map(|_| Ok([r.f32()?, r.f32()?, r.f32()?]))
+            .collect::<Result<_, String>>()?;
+        roads.push(RoadStrip {
+            class,
+            width_m,
+            points,
+            surface: RoadSurface::of_class(class),
+            dress: RoadDress::of_class(class, width_m),
+        });
+    }
+    Ok(Tile {
+        key,
+        heights,
+        roads,
+    })
+}
+
+fn apply_surfaces(tile: &mut Tile, surfaces: &[RoadSurface]) -> Result<(), String> {
+    if surfaces.len() != tile.roads.len() {
+        return Err("road surfaces do not match the tile's road strips".into());
+    }
+    for (strip, s) in tile.roads.iter_mut().zip(surfaces) {
+        strip.surface = *s;
+    }
+    Ok(())
+}
+
+fn apply_dress(tile: &mut Tile, dress: &[RoadDress]) -> Result<(), String> {
+    if dress.len() != tile.roads.len() {
+        return Err("road dress does not match the tile's road strips".into());
+    }
+    for (strip, d) in tile.roads.iter_mut().zip(dress) {
+        strip.dress = d.clone();
+    }
+    Ok(())
+}
+
+/// The tagged sections of a version 2 package, decoded; the road surfaces
+/// and dress stay per tile until their tiles are there.
+#[derive(Default)]
+struct Sections {
+    graph: Option<RoadGraph>,
+    landuse: Option<LandUse>,
+    buildings: Option<Buildings>,
+    bridges: Option<Bridges>,
+    routes: Vec<GraphRoute>,
+    region: Option<PackageRegion>,
+    time_zone: Option<String>,
+    look: RegionLook,
+    surfaces: Vec<(TileKey, Vec<RoadSurface>)>,
+    dress: Vec<(TileKey, Vec<RoadDress>)>,
+}
+
+impl Sections {
+    fn into_package(self, head: PackageHead, tiles: BTreeMap<TileKey, Tile>) -> WorldPackage {
+        WorldPackage {
+            name: head.name,
+            origin: head.origin,
+            tile_size_m: head.tile_size_m,
+            samples: head.samples,
             tiles,
-            graph,
-            landuse,
-            buildings,
-            bridges,
-            routes,
-            region,
-            time_zone,
-            look,
+            graph: self.graph,
+            landuse: self.landuse,
+            buildings: self.buildings,
+            bridges: self.bridges,
+            routes: self.routes,
+            region: self.region,
+            time_zone: self.time_zone,
+            look: self.look,
+        }
+    }
+}
+
+/// The section count and the sections (version 2); without `full` the
+/// bulk (land use, buildings, bridges, roofs, seasons, road looks, the
+/// orthophoto corridor) is skipped. `streamed`: the sections come as
+/// chunks of which a client may leave optional ones out (the orthophoto
+/// corridor, [`STREAM_SKIPPED_SECTIONS`]), so fewer than the count may
+/// follow.
+fn read_sections(
+    r: &mut Bytes,
+    samples: u32,
+    full: bool,
+    streamed: bool,
+) -> Result<Sections, String> {
+    let mut s = Sections::default();
+    let mut building_tags = None;
+    let count = r.u32()?;
+    for _ in 0..count {
+        if streamed && r.pos == r.b.len() {
+            break;
+        }
+        let tag: [u8; 4] = r.arr()?;
+        let len = usize::try_from(r.u64()?).map_err(|_| "section too large")?;
+        let payload = r.take(len)?;
+        if &tag == GRAPH_TAG {
+            s.graph = Some(read_graph(payload)?);
+        } else if &tag == LANDUSE_TAG && full {
+            s.landuse = Some(read_landuse(payload, samples)?);
+        } else if &tag == BUILDINGS_TAG && full {
+            s.buildings = Some(read_buildings(payload)?);
+        } else if &tag == BUILDING_TAGS_TAG && full {
+            // Optional styling: a layout this reader does not know
+            // is skipped (the houses get their regional defaults).
+            match read_building_tags(payload) {
+                Ok(t) => building_tags = Some(t),
+                Err(e) if e.contains("not supported") => {}
+                Err(e) => return Err(e),
+            }
+        } else if &tag == ROUTES_TAG {
+            s.routes = read_routes(payload)?;
+        } else if &tag == REGION_TAG {
+            s.region = Some(read_region(payload)?);
+        } else if &tag == BRIDGES_TAG && full {
+            s.bridges = Some(read_bridges(payload)?);
+        } else if &tag == TIME_ZONE_TAG {
+            let z = std::str::from_utf8(payload)
+                .map_err(|_| "time zone id is not UTF-8")?
+                .to_owned();
+            s.time_zone = Some(z);
+        } else if &tag == PALETTE_TAG {
+            s.look.palette = Some(read_palette(payload)?);
+        } else if &tag == ROOFS_TAG && full {
+            s.look.roofs = Some(read_roofs(payload)?);
+        } else if &tag == SEASONS_TAG && full {
+            s.look.seasons = Some(read_seasons(payload)?);
+        } else if &tag == ORTHO_TAG && full {
+            // Optional imagery (spec §14 Phase 8 T7): a newer layout is
+            // skipped (the ground keeps its materials and colour map).
+            match read_ortho(payload) {
+                Ok(o) => s.look.ortho = Some(o),
+                Err(e) if e.contains("not supported") => {}
+                Err(e) => return Err(e),
+            }
+        } else if &tag == ROAD_SURFACE_TAG && full {
+            s.surfaces.extend(read_road_surfaces(payload)?);
+        } else if &tag == ROAD_DRESS_TAG && full {
+            match read_road_dress(payload) {
+                Ok(dress) => s.dress.extend(dress),
+                Err(e) if e.contains("not supported") => {}
+                Err(e) => return Err(e),
+            }
+        }
+        // Unknown sections (from newer builders) are skipped.
+    }
+    if let (Some(b), Some(t)) = (s.buildings.as_mut(), building_tags) {
+        apply_building_tags(b, t);
+    }
+    Ok(s)
+}
+
+/// Sections a streaming client does not fetch with the base (spec §14
+/// Phase 8 T7, Phase 10 B2): the orthophoto corridor (`ORTC`) is tens to
+/// hundreds of MB in one chunk, more than the browser should load before
+/// the first tile; streamed packages are drawn without it.
+pub const STREAM_SKIPPED_SECTIONS: &[&[u8; 4]] = &[ORTHO_TAG];
+
+/// A package streamed in chunks (spec §4.5, §4.7; the browser app, spec
+/// §14 Phase 10 B2): the `header` chunk and the sections are decoded once,
+/// the tiles one by one as they arrive (each chunk verified by the caller
+/// against the manifest first). [`StreamedPackage::package`] puts the
+/// tiles that are there into a [`WorldPackage`] equal to the one
+/// [`WorldPackage::from_bytes`] gives with those tiles.
+#[derive(Debug, Clone)]
+pub struct StreamedPackage {
+    pub head: PackageHead,
+    /// The package without tiles (graph, routes, land use, buildings …).
+    base: WorldPackage,
+    surfaces: BTreeMap<TileKey, Vec<RoadSurface>>,
+    dress: BTreeMap<TileKey, Vec<RoadDress>>,
+}
+
+impl StreamedPackage {
+    /// From the `header` chunk and, for version 2, the bytes from the
+    /// `sections` chunk to the end of the file (the `section …` chunks in
+    /// file order; optional ones such as [`STREAM_SKIPPED_SECTIONS`] may be
+    /// left out).
+    pub fn from_parts(header: &[u8], sections: &[u8]) -> Result<Self, String> {
+        let mut r = Bytes::new(header);
+        let head = read_head(&mut r)?;
+        r.finish("package header")?;
+        let s = if head.version >= 2 {
+            let mut r = Bytes::new(sections);
+            let s = read_sections(&mut r, head.samples, true, true)?;
+            r.finish("package sections")?;
+            s
+        } else {
+            if !sections.is_empty() {
+                return Err("a version 1 package has no sections".into());
+            }
+            Sections::default()
+        };
+        let surfaces = s.surfaces.iter().cloned().collect();
+        let dress = s.dress.iter().cloned().collect();
+        Ok(Self {
+            base: s.into_package(head.clone(), BTreeMap::new()),
+            head,
+            surfaces,
+            dress,
         })
+    }
+
+    /// The package without its tiles.
+    pub fn base(&self) -> &WorldPackage {
+        &self.base
+    }
+
+    /// Decodes one `tile X,Z` chunk, with its road surfaces and dress.
+    pub fn read_tile(&self, bytes: &[u8]) -> Result<Tile, String> {
+        let mut r = Bytes::new(bytes);
+        let mut tile = read_tile(&mut r, self.head.samples, true)?;
+        r.finish("tile")?;
+        if let Some(s) = self.surfaces.get(&tile.key) {
+            apply_surfaces(&mut tile, s)?;
+        }
+        if let Some(d) = self.dress.get(&tile.key) {
+            apply_dress(&mut tile, d)?;
+        }
+        Ok(tile)
+    }
+
+    /// The package with these tiles.
+    pub fn package(&self, tiles: impl IntoIterator<Item = Tile>) -> WorldPackage {
+        let mut p = self.base.clone();
+        p.tiles = tiles.into_iter().map(|t| (t.key, t)).collect();
+        p
     }
 }
 
@@ -1598,5 +1764,108 @@ mod tests {
             TileKey { x: -1, z: 2 }
         );
         assert_eq!(TileKey { x: 0, z: 0 }.ring(TileKey { x: -2, z: 1 }), 2);
+    }
+
+    /// Streaming (spec §14 Phase 10 B2): the header, the sections and any
+    /// subset of the tile chunks give the package with those tiles, road
+    /// surfaces included, equal to the whole file's decode.
+    #[test]
+    fn a_streamed_package_equals_the_decoded_file() {
+        let mut p = WorldPackage {
+            time_zone: Some("Europe/Vaduz".into()),
+            ..package()
+        };
+        // A surface that differs from the class default: an RSRF section.
+        p.tiles.get_mut(&TileKey { x: 1, z: 0 }).unwrap().roads[0].surface = RoadSurface::Gravel;
+        let bytes = p.to_bytes();
+        let chunks = crate::manifest::package_chunks(&bytes).unwrap();
+        let part = |name: &str| {
+            let (_, r) = chunks.iter().find(|(n, _)| n == name).unwrap();
+            &bytes[r.clone()]
+        };
+        let sections_start = chunks
+            .iter()
+            .find(|(n, _)| n == "sections")
+            .unwrap()
+            .1
+            .start;
+        let s = StreamedPackage::from_parts(part("header"), &bytes[sections_start..]).unwrap();
+        assert_eq!(s.head.tile_count, 3);
+        assert_eq!(s.head.name, "Test");
+        assert!(s.base().tiles.is_empty());
+        assert_eq!(s.base().time_zone.as_deref(), Some("Europe/Vaduz"));
+        let tile = s.read_tile(part("tile 1,0")).unwrap();
+        assert_eq!(tile.roads[0].surface, RoadSurface::Gravel);
+        let other = s.read_tile(part("tile -1,2")).unwrap();
+        let streamed = s.package([tile, other]);
+        let mut want = WorldPackage::from_bytes(&bytes).unwrap();
+        want.tiles.remove(&TileKey { x: 0, z: 0 });
+        assert_eq!(streamed, want);
+        assert!(streamed.tile_bytes() > 2 * 9 * 4);
+        // Damaged parts are errors, not panics.
+        assert!(s.read_tile(&part("tile 1,0")[..20]).is_err());
+        assert!(StreamedPackage::from_parts(&part("header")[..10], &[]).is_err());
+        let cut = &bytes[sections_start..bytes.len() - 1];
+        assert!(StreamedPackage::from_parts(part("header"), cut).is_err());
+    }
+
+    /// A streaming client leaves the orthophoto corridor out of the base
+    /// (spec §14 Phase 8 T7): the sections without the `ORTC` chunk give
+    /// the package without the corridor.
+    #[test]
+    fn a_streamed_package_without_the_ortho_section() {
+        let mut p = WorldPackage {
+            time_zone: Some("Europe/Vaduz".into()),
+            ..package()
+        };
+        p.look.ortho = Some(crate::ortho::tests::sample_corridor());
+        p.tiles.get_mut(&TileKey { x: 1, z: 0 }).unwrap().roads[0].surface = RoadSurface::Gravel;
+        let bytes = p.to_bytes();
+        let chunks = crate::manifest::package_chunks(&bytes).unwrap();
+        let header = chunks
+            .iter()
+            .find(|(n, _)| n == "header")
+            .unwrap()
+            .1
+            .clone();
+        let mut sections = Vec::new();
+        for (name, r) in &chunks {
+            if name == "sections"
+                || (name.starts_with("section ")
+                    && !STREAM_SKIPPED_SECTIONS
+                        .iter()
+                        .any(|t| name == &format!("section {}", String::from_utf8_lossy(*t))))
+            {
+                sections.extend_from_slice(&bytes[r.clone()]);
+            }
+        }
+        assert!(chunks.iter().any(|(n, _)| n == "section ORTC"));
+        let s = StreamedPackage::from_parts(&bytes[header], &sections).unwrap();
+        assert!(s.base().look.ortho.is_none());
+        assert_eq!(s.base().time_zone.as_deref(), Some("Europe/Vaduz"));
+        // The road surfaces (a section after ORTC) are still there.
+        let tile_r = chunks
+            .iter()
+            .find(|(n, _)| n == "tile 1,0")
+            .unwrap()
+            .1
+            .clone();
+        let tile = s.read_tile(&bytes[tile_r]).unwrap();
+        assert_eq!(tile.roads[0].surface, RoadSurface::Gravel);
+        // With every chunk the corridor is there.
+        let start = chunks
+            .iter()
+            .find(|(n, _)| n == "sections")
+            .unwrap()
+            .1
+            .start;
+        let header = chunks
+            .iter()
+            .find(|(n, _)| n == "header")
+            .unwrap()
+            .1
+            .clone();
+        let all = StreamedPackage::from_parts(&bytes[header], &bytes[start..]).unwrap();
+        assert_eq!(all.base().look.ortho, p.look.ortho);
     }
 }
