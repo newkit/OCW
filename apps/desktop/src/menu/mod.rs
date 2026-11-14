@@ -150,6 +150,7 @@ mod tests {
             WeatherAir,
             WeatherReal,
             RidingAids,
+            Graphics,
             RiderList,
         ];
         for p in &all {
@@ -159,7 +160,7 @@ mod tests {
                 | WorldInfo | WorldSun | WorldSources | WorldSource(_) | Weather | Routes
                 | Rides | GpxImport | Workouts | Voice | VoiceDevices | VoiceParticipants
                 | AudioVoice | TimeMachine | WeatherPresets | WeatherCustom | WeatherAir
-                | WeatherReal | RidingAids | RiderList => {}
+                | WeatherReal | RidingAids | Graphics | RiderList => {}
             }
         }
         all

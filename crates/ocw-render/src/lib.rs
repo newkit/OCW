@@ -30,6 +30,7 @@ pub mod night_sky;
 pub mod obstacles;
 pub mod ortho;
 pub mod package;
+pub mod quality;
 pub mod ragdoll;
 pub mod region_look;
 pub mod riders;
@@ -48,6 +49,7 @@ pub mod tunnel_cut;
 pub mod unicorn;
 pub mod voice;
 pub mod weather;
+pub mod webgl;
 #[cfg(test)]
 mod wheel_contact;
 pub mod workout;
@@ -446,6 +448,10 @@ impl Plugin for OcwRenderPlugins {
             damage_look::DamageLookPlugin,
             // The warning and the proximity arrow (spec §14 Phase 12D).
             aids_hud::AidsHudPlugin,
+            // Quality presets (spec §14 Phase 10 B7).
+            quality::QualityPlugin,
+            // WebGL 2's texture arrays (B7; nothing elsewhere).
+            webgl::WebGlPlugin,
         ));
     }
 }

@@ -81,7 +81,7 @@ VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 .DEFAULT_GOAL := help
 .PHONY: help version version-next version-bump test-release-version release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
 	clippy check run server materials deploy-test clean clean-test-output macos-app \
-	test test-unit test-wasm test-web-build test-web test-web-world test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-kiosk web web-serve web-worlds deps-web test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
+	test test-unit test-wasm test-web-build test-web test-web-webgl2 test-web-world test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-kiosk web web-serve web-worlds deps-web test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
 	test-multiplayer test-multiplayer-local test-scenes test-scenes-list \
 	wasm screenshot screenshot-wayland smoke video video-wayland
 
@@ -248,8 +248,9 @@ test-wasm: ## Check that the core crates (and the server lib) build for wasm32-u
 	$(CARGO) check $(WASM_CRATES) --target wasm32-unknown-unknown
 	$(CARGO) check -p ocw-server --lib --target wasm32-unknown-unknown
 
-test-web-build: ## Build the browser app for wasm32 (spec §14 Phase 10; CI: part of check)
-	$(CARGO) build -p ocw-web --target wasm32-unknown-unknown
+test-web-build: ## Build the browser app for wasm32, the WebGPU and the WebGL 2 build (spec §14 Phase 10, B7; CI: part of check)
+	$(CARGO) build -p ocw-web --target wasm32-unknown-unknown --features webgpu
+	$(CARGO) build -p ocw-web --target wasm32-unknown-unknown --features webgl2
 
 deps-web: ## The browser app's tools: wasm-bindgen-cli matching Cargo.lock (cargo install, no sudo)
 	@if [ "$$(wasm-bindgen --version 2>/dev/null)" = "wasm-bindgen $(WASM_BINDGEN_VERSION)" ]; then \
@@ -270,6 +271,10 @@ web-worlds: ## Publish world packages for the web dev server into target/web/wor
 
 test-web: web ## Headless Chromium on WebGPU: load the web app, ride, screenshot into test-output/web/
 	scripts/test-web.py --out test-output/web
+
+test-web-webgl2: web ## Headless Chromium without WebGPU: the page falls back to the WebGL 2 build (ride, menus, fps); then WebGPU High vs WebGL 2 Low, same view, and the Graphics page (B7); into test-output/web/
+	scripts/test-web.py --out test-output/web --gpu webgl2
+	scripts/test-web-webgl2.py --out test-output/web
 
 WEB_WORLD ?= liechtenstein
 WEB_WORLD_ROUTE ?= vaduz-malbun

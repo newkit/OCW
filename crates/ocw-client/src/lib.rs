@@ -39,6 +39,7 @@ pub mod god_state;
 pub mod gps;
 pub mod input;
 pub mod menu;
+pub mod quality;
 pub mod recording;
 pub mod rider_list;
 pub mod riders;

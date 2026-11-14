@@ -72,6 +72,28 @@ pub mod world;
 #[path = "../../desktop/src/build_id.rs"]
 mod build_id;
 
+// Bevy renders with WebGPU or WebGL 2, chosen when it is compiled (spec
+// §14 Phase 10 B7): a browser build takes exactly one of the features.
+#[cfg(all(
+    target_arch = "wasm32",
+    not(any(feature = "webgpu", feature = "webgl2"))
+))]
+compile_error!(
+    "ocw-web for wasm32 needs `--features webgpu` or `--features webgl2` (scripts/build-web.sh builds both)"
+);
+#[cfg(all(target_arch = "wasm32", feature = "webgpu", feature = "webgl2"))]
+compile_error!("ocw-web: `webgpu` and `webgl2` are two builds, not one (Bevy would take WebGPU)");
+
+/// The GPU API this build renders with: "WebGPU" or "WebGL2" in the
+/// browser (spec §14 Phase 10 B7), "native" in the native tests.
+pub const GPU_API: &str = if cfg!(feature = "webgl2") {
+    "WebGL2"
+} else if cfg!(feature = "webgpu") {
+    "WebGPU"
+} else {
+    "native"
+};
+
 use bevy::prelude::*;
 use ocw_render::hud::{AppKeys, VersionLabel};
 use ocw_render::{OcwRenderPlugins, RideView};
@@ -130,10 +152,11 @@ pub const CANVAS_ID: &str = "#ocw-canvas";
 /// keys: the browser has its own fullscreen).
 pub const WEB_KEYS: &str = "mouse: camera, C: camera reset | ` or F12: console";
 
-/// This build's id: version, commit, profile, and "web".
+/// This build's id: version, commit, profile, "web" and the GPU API
+/// ([`GPU_API`], B7).
 pub fn build_id() -> String {
     format!(
-        "{} web",
+        "{} web {GPU_API}",
         build_id::build_id(
             env!("CARGO_PKG_VERSION"),
             env!("OCW_COMMIT"),
@@ -257,6 +280,13 @@ pub fn parse_query(query: &str, dev_page: bool) -> (SessionConfig, Vec<String>) 
             ("name", _) if !value.trim().is_empty() => {
                 config.name = value.trim().chars().take(32).collect()
             }
+            // The quality preset for this visit (B7).
+            ("quality", _) => match ocw_client::quality::QualitySetting::parse(value) {
+                Some(q) => config.quality = Some(q.name().into()),
+                None => bad(),
+            },
+            // The page's choice of build (index.html, B7).
+            ("gpu", _) if matches!(value.as_str(), "webgpu" | "webgl2") => {}
             // Read below (B3).
             ("server" | "cert-hash", _) => {}
             _ => bad(),
@@ -307,12 +337,18 @@ pub fn app(config: SessionConfig) -> App {
 /// read at the start to the config first).
 pub fn app_with_settings(
     config: SessionConfig,
-    settings: settings::WebSettings,
-    warnings: Vec<String>,
+    mut settings: settings::WebSettings,
+    mut warnings: Vec<String>,
 ) -> App {
     let mut app = App::new();
+    visit_quality(&config, &mut settings, &mut warnings);
     app.insert_resource(settings)
-        .insert_resource(settings::Warnings(warnings));
+        .insert_resource(settings::Warnings(warnings))
+        // What the quality preset's `auto` decides by (B7).
+        .insert_resource(ocw_ui::quality::QualityContext {
+            api: gpu_api(),
+            device: device_info(),
+        });
     let record = config.record;
     let route = config.route.clone();
     app.add_plugins(
@@ -343,6 +379,9 @@ pub fn app_with_settings(
     .insert_resource(RideView::new(route))
     .insert_resource(VersionLabel(build_id()))
     .insert_resource(AppKeys(WEB_KEYS.into()))
+    // The quality preset's pixel-ratio cap (B7): fewer pixels on HiDPI
+    // phones at Low and Medium.
+    .add_systems(PostUpdate, cap_pixel_ratio)
     .add_systems(Startup, || {
         info!("Open Cycling World {} starting", build_id())
     })
@@ -366,6 +405,68 @@ pub fn app_with_settings(
     // (B6).
     app.add_plugins(ui::WebUiPlugin { record });
     app
+}
+
+/// The canvas' scale factor for a device pixel ratio `base` under the
+/// preset's cap: `None` (the device's own) when it is within the cap.
+pub fn pixel_ratio_override(base: f32, cap: Option<f32>) -> Option<f32> {
+    cap.filter(|&c| base > c)
+}
+
+/// Applies [`pixel_ratio_override`] to the page's window when the preset
+/// or the device's pixel ratio changes (the browser only: the desktop's
+/// window keeps its own scale).
+fn cap_pixel_ratio(
+    quality: Option<Res<ocw_render::quality::RenderQuality>>,
+    mut windows: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
+) {
+    let cap = quality.and_then(|q| q.0.max_pixel_ratio);
+    for mut w in &mut windows {
+        let want = pixel_ratio_override(w.resolution.base_scale_factor(), cap);
+        if w.resolution.scale_factor_override() != want {
+            w.resolution.set_scale_factor_override(want);
+        }
+    }
+}
+
+/// `?quality=low`: `display.quality` for this visit only (B7: a temporary
+/// value, never saved).
+pub fn visit_quality(
+    config: &SessionConfig,
+    settings: &mut settings::WebSettings,
+    warnings: &mut Vec<String>,
+) {
+    if let Some(q) = &config.quality
+        && let Err(e) = settings.settings.set_temp("display.quality", q)
+    {
+        warnings.push(format!("quality={q}: {e}"));
+    }
+}
+
+/// This build's GPU API for the quality preset (the native tests count as
+/// the WebGPU build, the page's default).
+pub fn gpu_api() -> ocw_client::quality::GpuApi {
+    use ocw_client::quality::GpuApi;
+    if cfg!(feature = "webgl2") {
+        GpuApi::WebGl2
+    } else {
+        GpuApi::WebGpu
+    }
+}
+
+/// The page's facts about the device (`window.ocwDeviceInfo`, set by
+/// index.html); natively nothing known.
+pub fn device_info() -> ocw_client::quality::DeviceInfo {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let text = web_sys::window()
+            .and_then(|w| js_sys::Reflect::get(&w, &"ocwDeviceInfo".into()).ok())
+            .and_then(|v| v.as_string())
+            .unwrap_or_default();
+        ocw_client::quality::DeviceInfo::from_json(&text)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    ocw_client::quality::DeviceInfo::default()
 }
 
 /// Console lines from the page (`window.ocw.console("teleport 3")`, the
@@ -594,6 +695,51 @@ mod tests {
         assert_eq!(server_url("https://h/").unwrap(), "https://h:47801/ocw/1");
     }
 
+    /// The quality preset for one visit and the page's build choice (B7).
+    #[test]
+    fn quality_and_gpu_options() {
+        let (c, w) = parse_query("quality=low&gpu=webgl2", false);
+        assert!(w.is_empty(), "{w:?}");
+        assert_eq!(c.quality.as_deref(), Some("low"));
+        let (c, w) = parse_query("quality=ultra&gpu=vulkan", false);
+        assert_eq!(w.len(), 2, "{w:?}");
+        assert!(c.quality.is_none());
+        // `auto` here is the WebGPU build's: High on a desktop browser.
+        assert_eq!(gpu_api(), ocw_client::quality::GpuApi::WebGpu);
+        assert_eq!(device_info(), ocw_client::quality::DeviceInfo::default());
+    }
+
+    /// `?quality=low` runs Low for the visit without saving it; without
+    /// it `auto` resolves for this build (WebGPU: High).
+    #[test]
+    fn the_page_option_sets_the_quality_for_the_visit() {
+        let value = |query: &str| {
+            let (config, _) = parse_query(query, false);
+            let (mut s, mut w) = settings::WebSettings::load(None);
+            visit_quality(&config, &mut s, &mut w);
+            assert!(w.is_empty(), "{w:?}");
+            let saved = s.settings.file_value("display.quality").is_some();
+            (s.value("display.quality").to_string(), saved)
+        };
+        assert_eq!(value("quality=low"), ("low".to_string(), false));
+        assert_eq!(value(""), ("auto".to_string(), false));
+    }
+
+    /// The pixel-ratio cap: a phone at 3 draws at 1 on Low; a screen within
+    /// the cap and High keep the device's own.
+    #[test]
+    fn the_pixel_ratio_is_capped() {
+        use ocw_render::quality::{QualityLevel, QualityPreset};
+        let cap = |l| QualityPreset::of(l).max_pixel_ratio;
+        assert_eq!(pixel_ratio_override(3.0, cap(QualityLevel::Low)), Some(1.0));
+        assert_eq!(
+            pixel_ratio_override(3.0, cap(QualityLevel::Medium)),
+            Some(2.0)
+        );
+        assert_eq!(pixel_ratio_override(3.0, cap(QualityLevel::High)), None);
+        assert_eq!(pixel_ratio_override(1.0, cap(QualityLevel::Low)), None);
+    }
+
     #[test]
     fn the_hud_lists_no_desktop_only_keys() {
         for key in ["R: restart", "V: video", "F11"] {
@@ -606,6 +752,8 @@ mod tests {
     fn build_id_says_web() {
         let id = build_id();
         assert!(id.starts_with(env!("CARGO_PKG_VERSION")));
-        assert!(id.ends_with(" web"));
+        assert!(id.ends_with(&format!(" web {GPU_API}")), "{id}");
+        // Natively (the tests) neither browser build.
+        assert_eq!(GPU_API, "native");
     }
 }

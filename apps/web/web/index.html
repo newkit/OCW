@@ -134,13 +134,55 @@
   <script type="module">
     const status = document.getElementById("ocw-status");
     const fail = (msg) => { status.textContent = msg; status.className = "error"; console.error(msg); };
-    if (!navigator.gpu) {
-      fail("This browser has no WebGPU. Open Cycling World needs Chrome / Edge 113+, Safari 26 or Firefox 141+ (spec §14 Phase 10).");
+    // Frames drawn (spec §14 Phase 10 B7: the browser test's fps). Bevy
+    // draws in requestAnimationFrame on the page's thread, so a long frame
+    // of the app delays this counter too.
+    window.ocwFrames = 0;
+    const countFrames = () => { window.ocwFrames++; requestAnimationFrame(countFrames); };
+    requestAnimationFrame(countFrames);
+    // What the quality preset's `auto` needs to know about this device
+    // (B7; read by the app as JSON).
+    window.ocwDeviceInfo = JSON.stringify({
+      mobile: !!(navigator.userAgentData ? navigator.userAgentData.mobile
+        : /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)),
+      coarse_pointer: !!(window.matchMedia && matchMedia("(pointer: coarse)").matches),
+      cores: navigator.hardwareConcurrency || 0,
+      memory_gb: navigator.deviceMemory || 0,
+      screen_px: [screen.width * (devicePixelRatio || 1), screen.height * (devicePixelRatio || 1)],
+      pixel_ratio: devicePixelRatio || 1,
+    });
+    // The GPU API (B7): Bevy is compiled for WebGPU or WebGL 2, so there
+    // are two builds; WebGPU when the browser has it and gives an adapter,
+    // else WebGL 2. `?gpu=webgl2` (or `webgpu`) chooses one.
+    async function chooseGpu() {
+      const want = new URLSearchParams(location.search).get("gpu");
+      const webgl2 = () => {
+        try { return !!document.createElement("canvas").getContext("webgl2"); } catch (e) { return false; }
+      };
+      if (want === "webgl2") return {api: "webgl2", reason: "page option gpu=webgl2"};
+      let reason = "no WebGPU in this browser (navigator.gpu)";
+      if (navigator.gpu) {
+        try {
+          if (await navigator.gpu.requestAdapter()) return {api: "webgpu", reason: "WebGPU adapter found"};
+          reason = "WebGPU without an adapter (blocklisted or disabled GPU)";
+        } catch (e) {
+          reason = "WebGPU failed: " + e;
+        }
+      }
+      if (want === "webgpu") return {api: null, reason: reason + "; gpu=webgpu asked for it"};
+      if (!webgl2()) return {api: null, reason: reason + "; no WebGL 2 either"};
+      return {api: "webgl2", reason};
+    }
+    const gpu = await chooseGpu();
+    window.ocwGpu = gpu;
+    console.log(`ocw-web: GPU API ${gpu.api || "none"} (${gpu.reason})`);
+    if (!gpu.api) {
+      fail("This browser can draw neither WebGPU nor WebGL 2 (" + gpu.reason + "). Open Cycling World needs Chrome / Edge 113+, Safari 26 or Firefox 141+ (spec §14 Phase 10).");
     } else {
       const t0 = performance.now();
       performance.mark("ocw-import");
       try {
-        const ocw = await import("./ocw_web.js");
+        const ocw = await import(gpu.api === "webgl2" ? "./ocw_web_webgl2.js" : "./ocw_web.js");
         // window.ocw.console("teleport 3"), window.ocw.wasmMemory(): for tests.
         window.ocw = ocw;
         // Bevy's event loop throws a control-flow exception once it runs:

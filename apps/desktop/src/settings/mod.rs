@@ -590,6 +590,8 @@ mod tests {
             ocw_render::ortho::OrthoPlugin,
             // `road_barriers` (display.road_barriers).
             ocw_render::obstacles::ObstaclesPlugin,
+            // `quality` (display.quality).
+            ocw_ui::quality::QualityPlugin,
         ))
         .insert_resource(file_settings(Settings::default(), path.clone()))
         .insert_resource(RiderProfiles {
@@ -774,6 +776,7 @@ mod tests {
             pages::Page::Rider(0),
             pages::Page::Bike(0),
             pages::Page::RidingAids,
+            pages::Page::Graphics,
         ]) {
             let rows = {
                 let w = app.world();

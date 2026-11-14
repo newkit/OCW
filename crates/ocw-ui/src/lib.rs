@@ -22,6 +22,7 @@ pub mod collisions;
 pub mod controls;
 pub mod events;
 pub mod menu;
+pub mod quality;
 pub mod riders_page;
 pub mod settings;
 pub mod timemachine;

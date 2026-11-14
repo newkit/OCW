@@ -1,7 +1,7 @@
 //! Static world: ground, road, scenery, light (Phase 1 test route only).
 
 use bevy::asset::RenderAssetUsages;
-use bevy::light::{CascadeShadowConfigBuilder, GlobalAmbientLight, NotShadowCaster};
+use bevy::light::{GlobalAmbientLight, NotShadowCaster};
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
@@ -53,6 +53,7 @@ pub(crate) fn spawn_world(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut tree_materials: ResMut<Assets<SeeThroughMaterial>>,
+    quality: Option<Res<crate::quality::RenderQuality>>,
 ) {
     let route = &view.route;
 
@@ -70,16 +71,11 @@ pub(crate) fn spawn_world(
             ..default()
         },
         Transform::from_xyz(300.0, 600.0, 200.0).looking_at(Vec3::ZERO, Vec3::Y),
-        // Four cascades over 250 m with generous overlap: more shadow-map
-        // texels per metre near the rider, softer cascade transitions.
-        CascadeShadowConfigBuilder {
-            num_cascades: 4,
-            minimum_distance: 0.1,
-            maximum_distance: 250.0,
-            first_cascade_far_bound: 20.0,
-            overlap_proportion: 0.3,
-        }
-        .build(),
+        // High: four cascades over 250 m with generous overlap – more
+        // shadow-map texels per metre near the rider, softer cascade
+        // transitions; fewer for lower quality presets (spec §14 Phase 10
+        // B7, `quality`).
+        quality.map(|q| q.0).unwrap_or_default().cascades(),
     ));
 
     // With a world package, terrain, roads and trees are streamed from it

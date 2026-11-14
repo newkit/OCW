@@ -890,19 +890,27 @@ pub fn outline_area(outline: &[[f32; 2]]) -> f32 {
 /// than [`FAR_START_M`] its mid mesh is drawn; the near chunks only add
 /// detail on top.
 pub fn lod_ranges() -> [bevy::camera::visibility::VisibilityRange; 3] {
+    lod_ranges_scaled(1.0)
+}
+
+/// [`lod_ranges`] with every distance times `scale` (the quality preset's
+/// house LOD scale, spec §14 Phase 10 B7; 1: as above). The coverage rule
+/// holds at any scale.
+pub fn lod_ranges_scaled(scale: f32) -> [bevy::camera::visibility::VisibilityRange; 3] {
     use bevy::camera::visibility::VisibilityRange;
+    let s = |m: f32| m * scale;
     [
         VisibilityRange {
             start_margin: 0.0..0.0,
-            end_margin: NEAR_END_M[0]..NEAR_END_M[1],
+            end_margin: s(NEAR_END_M[0])..s(NEAR_END_M[1]),
             use_aabb: false,
         },
         VisibilityRange {
             start_margin: 0.0..0.0,
-            end_margin: MID_END_M[0]..MID_END_M[1],
+            end_margin: s(MID_END_M[0])..s(MID_END_M[1]),
             use_aabb: false,
         },
-        VisibilityRange::abrupt(FAR_START_M, f32::MAX),
+        VisibilityRange::abrupt(s(FAR_START_M), f32::MAX),
     ]
 }
 
