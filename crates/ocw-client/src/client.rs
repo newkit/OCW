@@ -465,7 +465,7 @@ impl ClientCore {
                 self.heart_rate_bpm = Some(bpm);
                 return None;
             }
-            DeviceEvent::Disconnected => return None,
+            DeviceEvent::Connected { .. } | DeviceEvent::Disconnected => return None,
         };
         self.power_w = watts;
         self.cadence_rpm = cadence_rpm;

@@ -54,6 +54,16 @@ pub mod uuids {
         }
         u16::from_str_radix(&head[4..], 16).ok()
     }
+
+    /// The number OCW addresses a characteristic by: its SIG number, or
+    /// [`WAHOO_TRAINER_CONTROL`] for Wahoo's 128-bit control point (any
+    /// case); `None` for everything else.
+    pub fn short_of(uuid: &str) -> Option<u16> {
+        if uuid.eq_ignore_ascii_case(super::wahoo::CONTROL_POINT_UUID) {
+            return Some(WAHOO_TRAINER_CONTROL);
+        }
+        from_uuid128(uuid)
+    }
 }
 
 /// Errors when decoding a characteristic value.
@@ -150,6 +160,15 @@ mod tests {
             None
         );
         assert_eq!(uuids::from_uuid128("short"), None);
+        assert_eq!(
+            uuids::short_of("A026E005-0A7D-4AB3-97FA-F1500F9FEB8B"),
+            Some(uuids::WAHOO_TRAINER_CONTROL)
+        );
+        assert_eq!(uuids::short_of(&s), Some(0x2AD2));
+        assert_eq!(
+            uuids::short_of("a026ee0b-0a7d-4ab3-97fa-f1500f9feb8b"),
+            None
+        );
     }
 
     #[test]

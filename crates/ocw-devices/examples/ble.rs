@@ -104,6 +104,7 @@ fn run(id: &str, control: bool, duration: Duration) {
                         println!("{t:6.1} s  heart rate {bpm:.0}");
                     }
                 }
+                DeviceEvent::Connected { kind } => println!("{t:6.1} s  connected: {kind}"),
                 DeviceEvent::Disconnected => println!("{t:6.1} s  disconnected (reconnecting)"),
             }
         }

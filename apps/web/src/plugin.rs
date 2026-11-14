@@ -1,7 +1,8 @@
-//! Bevy glue of the browser app (spec §14 Phase 10, B1 / B3): moves the
-//! frame time into the [`WebSession`] (the local server or the remote
-//! link, and the virtual trainer), runs the client prediction at 50 Hz in
-//! `FixedUpdate`, reads the keys and writes the [`RideView`] the shared
+//! Bevy glue of the browser app (spec §14 Phase 10, B1 / B3 / B4): moves
+//! the frame time into the [`WebSession`] (the local server or the remote
+//! link, the devices and the virtual trainer), runs the client prediction
+//! at 50 Hz in `FixedUpdate`, reads the keys, hands the devices the page
+//! connected to the session and writes the [`RideView`] the shared
 //! renderer (`ocw-render`) draws.
 
 use bevy::prelude::*;
@@ -15,6 +16,7 @@ use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permissio
 use ocw_render::menu::ride_input;
 use ocw_sky::Zone;
 
+use crate::devices::Bluetooth;
 use crate::session::{RemoteOptions, SessionConfig, Transport, WebSession};
 
 /// The ride session (server, client, trainer) as a Bevy resource.
@@ -98,7 +100,10 @@ impl Plugin for WebSessionPlugin {
                     .chain()
                     .run_if(riding),
             )
-            .add_systems(Update, crate::console_from_page);
+            .add_systems(Update, crate::console_from_page)
+            .add_systems(Update, devices.after(update_view).run_if(riding));
+        #[cfg(target_arch = "wasm32")]
+        app.add_systems(Startup, crate::browser_devices::start);
         register_commands(app);
     }
 }
@@ -295,6 +300,95 @@ fn update_view(
     );
 }
 
+/// The devices (B4): the ones the page connected start in the session;
+/// connects, drops and workout steps to the console; the workout panel;
+/// the devices' JSON for the page's overlay (twice a second).
+fn devices(
+    time: Res<Time>,
+    mut session: ResMut<Session>,
+    mut console: ResMut<ConsoleState>,
+    mut view: ResMut<RideView>,
+    mut said: Local<bool>,
+    mut next: Local<f64>,
+    mut loaded: Local<bool>,
+) {
+    let s = &mut session.0;
+    #[cfg(target_arch = "wasm32")]
+    {
+        use ocw_devices::DeviceBackend;
+        if !*loaded {
+            // The first frame of the ride: this origin's devices.
+            s.devices.remembered = crate::browser_devices::load_remembered();
+        }
+        s.devices.bluetooth = crate::browser_devices::bluetooth();
+        let (pending, lines) = crate::browser_devices::take_pending();
+        for line in lines {
+            console.print(line);
+        }
+        let started = !pending.is_empty();
+        for (backend, kind) in pending {
+            let id = backend.device_id().to_string();
+            let name = backend.name().to_string();
+            match backend.start() {
+                Ok(handle) => {
+                    let line = s.devices.add(handle, kind, id);
+                    info!("{line}");
+                    console.print(line);
+                }
+                Err(e) => console.print(format!("{name}: {e}")),
+            }
+        }
+        if started {
+            crate::browser_devices::save_remembered(&s.devices.remembered);
+        }
+    }
+    *loaded = true;
+    if !*said && s.devices.bluetooth != Bluetooth::Unknown {
+        *said = true;
+        match s.devices.bluetooth {
+            Bluetooth::Missing => console.print(crate::devices::NO_WEB_BLUETOOTH),
+            Bluetooth::NoAdapter => console.print(crate::devices::NO_ADAPTER),
+            _ => {}
+        }
+    }
+    for line in s.devices.take_messages() {
+        info!("{line}");
+        console.print(line);
+    }
+    let panel = s.devices.workout.panel(s.devices.ftp_w);
+    if view.workout != panel {
+        view.workout = panel;
+    }
+    let now = time.elapsed_secs_f64();
+    if now >= *next {
+        *next = now + 0.5;
+        let json = devices_json(s);
+        #[cfg(target_arch = "wasm32")]
+        crate::browser_devices::publish(json);
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = json;
+    }
+}
+
+/// The devices' JSON with the rider's power (the page's overlay and the
+/// browser test).
+pub fn devices_json(s: &WebSession) -> String {
+    let mut v = s.devices.json(s.power_w());
+    v["rider_power_w"] = s.client.power_w().into();
+    v["virtual_sample"] = s.client.virtual_power().into();
+    v["distance_m"] = s.client.state().distance.into();
+    v["joined"] = s.client.rider_id().is_some().into();
+    v.to_string()
+}
+
+/// Saves the remembered devices (the page's `localStorage`).
+fn persist(s: &WebSession) {
+    #[cfg(target_arch = "wasm32")]
+    crate::browser_devices::save_remembered(&s.devices.remembered);
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = s;
+}
+
 /// Before a streamed world is loaded there is no ride yet.
 const NO_RIDE: &str = "no ride yet (the world is still loading)";
 
@@ -336,6 +430,36 @@ fn time_command(world: &mut World, args: &[&str]) -> Result<String, String> {
         ClockChange::Fixed(_) => format!("time: {}", args.join(" ")),
         _ => String::new(),
     })
+}
+
+/// `devices.connect`: the browser's chooser (Web Bluetooth needs the key
+/// press that ran the command: a user gesture).
+fn connect_device(kind: ocw_devices::ble::web::DeviceKind) -> Result<String, String> {
+    #[cfg(target_arch = "wasm32")]
+    return crate::browser_devices::connect(kind);
+    #[cfg(not(target_arch = "wasm32"))]
+    Err(format!(
+        "no Web Bluetooth outside the browser ({})",
+        kind.label()
+    ))
+}
+
+/// `workout list`: the bundled examples (the browser has no workouts
+/// folder yet).
+fn workout_list() -> String {
+    ocw_client::workout::EXAMPLES
+        .iter()
+        .filter_map(|(file, text)| {
+            let w = ocw_sim::workout::Workout::parse_file(file, text).ok()?;
+            Some(format!(
+                "{} ({}): workout start --example {}",
+                w.name,
+                ocw_sim::workout::format_duration(w.duration_s()),
+                ocw_client::workout::example_name(file)
+            ))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The browser's rider is anonymous (spec §14 Phase 10 Q5): a plain
@@ -433,6 +557,143 @@ fn register_commands(app: &mut App) {
     ))
     .console_command(ConsoleCommand::new(
         Permission::User,
+        Command::new("devices.list")
+            .about("Show Web Bluetooth, the connected and the remembered devices"),
+        |world, _| Ok(session_mut(world)?.devices.list()),
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("devices.connect")
+            .about("Choose a Bluetooth trainer, power meter or heart-rate strap in the browser's list (Chrome / Edge; the page's buttons do the same)")
+            .arg(
+                Arg::new("kind")
+                    .required(true)
+                    .value_parser(["trainer", "power", "hr"]),
+            ),
+        |_world, m| {
+            let kind = m.get_one::<String>("kind").expect("required");
+            let kind = ocw_devices::ble::web::DeviceKind::parse(kind).expect("checked by clap");
+            connect_device(kind)
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("devices.forget")
+            .about("Disconnect and forget a device (name or id), or all")
+            .arg(Arg::new("device").required(true)),
+        |world, m| {
+            let which = m.get_one::<String>("device").expect("required");
+            let s = session_mut(world)?;
+            match s.devices.forget(which) {
+                0 => Err(format!("no device {which}")),
+                n => {
+                    persist(s);
+                    Ok(format!("forgot {n} device(s)"))
+                }
+            }
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("trainer.mode")
+            .about("Trainer control: sim (simulate the road), erg (hold a power), off")
+            .arg(
+                Arg::new("mode")
+                    .required(true)
+                    .value_parser(["sim", "erg", "off"]),
+            ),
+        |world, m| {
+            let mode = m.get_one::<String>("mode").expect("required");
+            session_mut(world)?.devices.set_mode(mode)
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("trainer.difficulty")
+            .about("Trainer difficulty in percent (scales the road gradient in SIM mode)")
+            .arg(
+                Arg::new("percent")
+                    .required(true)
+                    .value_parser(value_parser!(f64)),
+            ),
+        |world, m| {
+            let p = *m.get_one::<f64>("percent").expect("required");
+            if !(0.0..=100.0).contains(&p) {
+                return Err("difficulty must be between 0 and 100 %".into());
+            }
+            session_mut(world)?
+                .devices
+                .trainer
+                .set_difficulty(p / 100.0);
+            Ok(format!("trainer difficulty {p:.0} %"))
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("erg.target")
+            .about("ERG mode with this target power in watts")
+            .arg(
+                Arg::new("watts")
+                    .required(true)
+                    .value_parser(value_parser!(f64)),
+            ),
+        |world, m| {
+            let watts = *m.get_one::<f64>("watts").expect("required");
+            if !(0.0..=2000.0).contains(&watts) {
+                return Err("target must be between 0 and 2000 W".into());
+            }
+            session_mut(world)?
+                .devices
+                .trainer
+                .set_mode(ocw_client::trainer::TrainerMode::Erg { target_w: watts });
+            Ok(format!("trainer mode ERG {watts:.0} W"))
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("workout")
+            .about("Structured workouts in ERG mode: start --example <name>, stop, skip, pause, resume, status, list")
+            .subcommand_required(true)
+            .subcommand(
+                Command::new("start")
+                    .about("Start a bundled example (or the loaded workout again)")
+                    .arg(
+                        Arg::new("example")
+                            .long("example")
+                            .help("short-demo, sweet-spot, two-by-five, over-unders"),
+                    ),
+            )
+            .subcommand(Command::new("list").about("List the bundled examples"))
+            .subcommand(Command::new("stop").about("Stop the workout; the trainer returns to its previous mode"))
+            .subcommand(Command::new("skip").about("Skip to the next step"))
+            .subcommand(Command::new("pause").about("Pause the workout clock"))
+            .subcommand(Command::new("resume").about("Resume after workout pause"))
+            .subcommand(Command::new("status").about("Show the step, target and time left")),
+        |world, m| {
+            let d = &mut session_mut(world)?.devices;
+            let ftp = d.ftp_w;
+            let Some((sub, sm)) = m.subcommand() else {
+                return Err("expected a subcommand".into());
+            };
+            match sub {
+                "start" => {
+                    if let Some(e) = sm.get_one::<String>("example") {
+                        d.workout.load(ocw_client::workout::example(e)?)?;
+                    }
+                    d.workout.start()
+                }
+                "list" => Ok(workout_list()),
+                "stop" => d.workout.stop(&mut d.trainer),
+                "skip" => d.workout.skip(ftp),
+                "pause" => d.workout.pause(),
+                "resume" => d.workout.resume(),
+                "status" => d.workout.status(ftp),
+                other => Err(format!("unknown subcommand {other}")),
+            }
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        Permission::User,
         Command::new("net.stats").about("Show connection statistics"),
         |world, _| {
             Ok(world
@@ -472,7 +733,10 @@ mod tests {
         let view = app.world().resource::<RideView>();
         assert_eq!(view.riders.len(), 1 + crate::session::DEFAULT_BOTS as usize);
         assert!(view.sky.is_some());
-        assert!(view.status.starts_with("Virtual trainer 200 W"));
+        assert!(
+            view.status
+                .starts_with("Virtual trainer 200 W | trainer SIM")
+        );
         app.world_mut()
             .resource_mut::<ConsoleState>()
             .queue("sim.power 260");
@@ -488,6 +752,52 @@ mod tests {
         }
         let me = app.world().resource::<RideView>().riders[0].look;
         assert_eq!(me, Some(ocw_core::RiderLook::anonymous()));
+        // The trainer commands (B4), as on the desktop.
+        for (line, want) in [
+            ("erg.target 230", "trainer mode ERG 230 W"),
+            ("trainer.mode erg", "trainer mode ERG 230 W"),
+            ("trainer.difficulty 80", "trainer difficulty 80 %"),
+            ("trainer.mode sim", "trainer mode SIM"),
+            (
+                "devices.connect trainer",
+                "error: no Web Bluetooth outside the browser (trainer)",
+            ),
+            ("devices.forget nope", "error: no device nope"),
+        ] {
+            app.world_mut().resource_mut::<ConsoleState>().queue(line);
+            app.update();
+            let log = app.world().resource::<ConsoleState>().log();
+            assert_eq!(log.last().map(String::as_str), Some(want), "{line}");
+        }
+        let list = {
+            app.world_mut()
+                .resource_mut::<ConsoleState>()
+                .queue("devices.list");
+            app.update();
+            app.world().resource::<ConsoleState>().log().join("\n")
+        };
+        assert!(list.contains("running: none (virtual trainer)"), "{list}");
+        // A workout drives ERG; the panel shows in the view.
+        app.world_mut()
+            .resource_mut::<ConsoleState>()
+            .queue("workout start --example short-demo");
+        app.update();
+        app.update();
+        let s = &app.world().resource::<Session>().0;
+        assert!(
+            matches!(
+                s.devices.trainer.mode(),
+                ocw_client::trainer::TrainerMode::Erg { .. }
+            ),
+            "{}",
+            s.devices.trainer.mode()
+        );
+        assert!(app.world().resource::<RideView>().workout.is_some());
+        let json: serde_json::Value =
+            serde_json::from_str(&devices_json(&app.world().resource::<Session>().0)).unwrap();
+        assert_eq!(json["virtual"], true);
+        assert!(json["last_command"]["erg_w"].is_number(), "{json}");
+        assert!(workout_list().contains("--example sweet-spot"));
     }
 
     /// A remote session (B3) through the plugin: the transport comes from

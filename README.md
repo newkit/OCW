@@ -110,7 +110,8 @@ visit loads from there), with the tiles kept in memory only around the
 rider. Bots and the **virtual trainer** as on the desktop. **Multiplayer**
 (B3): the page joins an `ocw-server` session over **WebTransport** together
 with desktop and bot riders (see [Browser riders](#browser-riders-webtransport)).
-No Bluetooth or sound yet (B4, B5).
+**Trainers and sensors** (B4) over **Web Bluetooth** in Chrome / Edge (see
+[Devices in the browser](#devices-in-the-browser)). No sound yet (B5).
 
 ```bash
 make deps-web       # once: wasm-bindgen-cli matching Cargo.lock (cargo install)
@@ -120,6 +121,9 @@ make web-serve      # serve it on http://127.0.0.1:8080/ (range requests; prints
 make test-web       # headless Chromium on WebGPU: load, ride, screenshot into test-output/web/
 make test-web-world # the same with Liechtenstein streamed from the dev server, then again from the cache
 make test-web-multiplayer # ocw-server + ocw-bot riders + the browser over WebTransport: ride 30 s, screenshot, timing
+make test-web-ble   # a fake Web Bluetooth FTMS trainer + HR strap: connect, power, SIM / ERG writes, drop, reload, no-Bluetooth
+make test-web-ble-emulation # Chromium's own Web Bluetooth stack with a simulated KICKR (DevTools BluetoothEmulation)
+make test-web-ble-real      # the real trainer in range (BLE_DEVICE=KICKR) from headless Chromium over BlueZ
 ```
 
 A world: `http://127.0.0.1:8080/?world=liechtenstein&route=vaduz-malbun&trust-root=…`
@@ -135,7 +139,31 @@ too; a browser without WebGPU gets a message). The desktop's keys: ↑ adds
 power on top of the virtual trainer's 200 W, ↓ stops (brake), Page Up /
 Down ±10 W, A autodrive, W wild mode, ← / → the line (autodrive) or the lean, `` ` `` (or F12) the console (`sim.power 250`, `teleport 2.5`,
 `net.stats`, `hud off`, `camera …`). Page options in the query string:
-`?route=loop&bots=3&power=250&start=1.5&name=Ada`.
+`?route=loop&bots=3&power=250&start=1.5&name=Ada&ftp=250`.
+
+#### Devices in the browser
+
+The **Devices** panel (bottom right) has **+ Trainer**, **+ Power meter** and
+**+ Heart rate**: each opens the browser's Bluetooth chooser (Web
+Bluetooth needs the click). The device runs the same protocol code as on
+the desktop (`ocw-devices`: FTMS, Cycling Power, CSC, Heart Rate, Wahoo
+KICKRs) – power, cadence and heart rate go to the server, and the trainer
+gets **SIM** (the road's gradient with the rider's build: rolling and wind
+resistance, mass) or **ERG** (`erg.target 200`, workouts:
+`workout start --example sweet-spot`, `workout list|stop|skip|status`),
+`trainer.mode sim|erg|off`, `trainer.difficulty 50`. Once a trainer or
+power meter is connected the virtual power stops; a dropped device
+reconnects by itself (the HUD and the panel say "reconnecting"), with the
+last SIM / ERG target sent again. The site remembers its devices
+(`localStorage`); where Chromium keeps the permission
+(`navigator.bluetooth.getDevices()`) they reconnect after a reload without
+the chooser. Console: `devices.list`, `devices.connect trainer|power|hr`,
+`devices.forget <name|all>`.
+
+**Browsers without Web Bluetooth** (Firefox, Safari, every browser on iOS):
+the panel says so and the ride uses **virtual power** (↑ / ↓); the sensor
+bridge for them comes later (spec §14 Phase 10, B7). On Linux, Chromium
+may need `--enable-experimental-web-platform-features` for Web Bluetooth.
 
 ## Controls
 
@@ -1868,14 +1896,14 @@ GitHub release `build-history`. Look at every image before picking it.
 | Path | Contents |
 |---|---|
 | `apps/desktop` | Desktop client: wires devices, local server, prediction and rendering |
-| `apps/web` | Browser app (`ocw-web`, wasm32 + WebGPU): the shared client with the local server in the frame loop and the virtual trainer, worlds streamed over HTTP (`world.rs`, `browser.rs`: fetch, OPFS); `web/index.html` |
-| `crates/ocw-client` | Client logic shared by the desktop and browser apps: `ClientCore` (prediction, interpolation, view), events, god-mode state, key logic, GPS position, sky |
+| `apps/web` | Browser app (`ocw-web`, wasm32 + WebGPU): the shared client with the local server in the frame loop and the virtual trainer, worlds streamed over HTTP (`world.rs`, `browser.rs`: fetch, OPFS), WebTransport (`webtransport.rs`), Web Bluetooth devices (`devices.rs`, `browser_devices.rs`); `web/index.html` |
+| `crates/ocw-client` | Client logic shared by the desktop and browser apps: `ClientCore` (prediction, interpolation, view), events, god-mode state, key logic, GPS position, sky, SIM / ERG trainer control (`trainer`), workouts (`workout`) |
 | `apps/bot` | `ocw-bot`: headless bot clients for remote servers, multiplayer test verdict |
 | `services/server` | Game server logic, in-process local server, headless server binary |
 | `crates/ocw-core` | Shared types, units, constants |
 | `crates/ocw-sim` | Physics, session logic, client prediction, interpolation, trainer control, workouts (format, `.erg` / `.mrc` import, runner) |
 | `crates/ocw-protocol` | Protobuf protocol (`proto/`) and conversions |
-| `crates/ocw-devices` | Device backends: virtual trainer, Bluetooth trainers and sensors (FTMS, Cycling Power, CSC, Heart Rate, Wahoo) |
+| `crates/ocw-devices` | Device backends: virtual trainer, Bluetooth trainers and sensors (FTMS, Cycling Power, CSC, Heart Rate, Wahoo) – one protocol and runner over btleplug (desktop) and Web Bluetooth (`ble::web`, browser) |
 | `crates/ocw-world` | Routes, road graph, terrain, world packages, surfaces |
 | `crates/ocw-worldgen`, `apps/world-builder` | OSM + elevation import: road graph, profiles, world packages |
 | `crates/ocw-worldstore` | World package files, keys, trusted roots, local cache, download; `stream`: packages streamed by chunk (range planning, verification, the chunk cache behind a trait, tile residency; also wasm) |
