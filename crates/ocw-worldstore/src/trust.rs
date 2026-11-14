@@ -44,9 +44,16 @@ pub fn parse_roots(json: &str) -> Result<Vec<RootKey>, String> {
         .collect()
 }
 
-/// `<config dir>/ocw/trusted-roots`.
+/// `<config dir>/ocw/trusted-roots` (none in the browser).
+#[cfg(not(target_arch = "wasm32"))]
 pub fn user_roots_dir() -> Option<PathBuf> {
     dirs::config_dir().map(|d| d.join("ocw/trusted-roots"))
+}
+
+/// `<config dir>/ocw/trusted-roots` (none in the browser).
+#[cfg(target_arch = "wasm32")]
+pub fn user_roots_dir() -> Option<PathBuf> {
+    None
 }
 
 /// What to trust.
@@ -103,8 +110,14 @@ impl TrustConfig {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn read_root(path: &Path) -> Result<RootKey, String> {
     crate::keys::read_root_public(path)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn read_root(path: &Path) -> Result<RootKey, String> {
+    Err(format!("{}: no key files in the browser", path.display()))
 }
 
 #[cfg(test)]

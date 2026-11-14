@@ -15,9 +15,18 @@
 //!
 //! The page passes options in its query string (see [`SessionConfig`] and
 //! [`parse_query`]): `?route=loop&bots=3&power=250&name=Ada`.
+//!
+//! **Worlds over HTTP (B2):** `?world=liechtenstein&route=vaduz-malbun`
+//! streams a world package from the server ([`world`]): manifest and
+//! signature chain, then the base and the tiles around the rider with
+//! range requests, every chunk verified, cached in OPFS, the tiles kept
+//! resident around the rider within a memory budget.
 
+#[cfg(target_arch = "wasm32")]
+mod browser;
 pub mod plugin;
 pub mod session;
+pub mod world;
 
 #[path = "../../desktop/src/build_id.rs"]
 mod build_id;
@@ -48,43 +57,118 @@ pub fn build_id() -> String {
     )
 }
 
+/// Decodes `%XX` escapes and `+` of a query value.
+fn unescape(value: &str) -> String {
+    let b = value.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'+' => out.push(b' '),
+            b'%' if i + 2 < b.len() => {
+                let hex = |c: u8| (c as char).to_digit(16);
+                match (hex(b[i + 1]), hex(b[i + 2])) {
+                    (Some(h), Some(l)) => {
+                        out.push((h * 16 + l) as u8);
+                        i += 2;
+                    }
+                    _ => out.push(b'%'),
+                }
+            }
+            c => out.push(c),
+        }
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 /// The ride options from the page's query string (`?a=1&b=2`, the `?`
-/// optional): `route` (hills, loop), `bots` (0–50), `power` (W), `start`
-/// (km), `name`. Unknown keys and bad values are reported and ignored.
-pub fn parse_query(query: &str) -> (SessionConfig, Vec<String>) {
+/// optional): `route` (hills, loop; with `world` a route of the package),
+/// `bots` (0–50), `power` (W), `start` (km), `name`, and the world
+/// package (spec §14 Phase 10 B2): `world` (a manifest URL, `ID@VERSION`
+/// or `ID`), `free=1` (a free ride), `tiles` (fetch radius in tiles),
+/// `keep` (keep radius), `memory-mb` (budget of the resident tiles),
+/// `cache-mb` (OPFS budget), `cache=0`. On a development page
+/// (`dev_page`: localhost) also `allow-unsigned=1`, `trust=dev` and
+/// `trust-root=HEX` (a root public key). Unknown keys and bad values are
+/// reported and ignored.
+pub fn parse_query(query: &str, dev_page: bool) -> (SessionConfig, Vec<String>) {
     let mut config = SessionConfig::default();
     let mut warnings = Vec::new();
+    let mut pairs: Vec<(String, String)> = Vec::new();
     for pair in query.trim_start_matches('?').split('&') {
         if pair.is_empty() {
             continue;
         }
         let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-        let value = value.replace('+', " ");
+        pairs.push((key.to_string(), unescape(value)));
+    }
+    let mut world = pairs
+        .iter()
+        .find(|(k, _)| k == "world")
+        .map(|(_, v)| world::WorldOptions::new(v.trim()));
+    if world.as_ref().is_some_and(|w| w.spec.is_empty()) {
+        warnings.push("world=: ignored".into());
+        world = None;
+    }
+    for (key, value) in &pairs {
         let mut bad = || warnings.push(format!("{key}={value}: ignored"));
-        match key {
-            "route" => match value.as_str() {
+        match (key.as_str(), world.as_mut()) {
+            ("world", _) => {}
+            ("route", Some(w)) if !value.trim().is_empty() => w.route = Some(value.trim().into()),
+            ("free", Some(w)) => w.free_ride = value != "0",
+            ("tiles", Some(w)) => match value.parse::<i32>() {
+                Ok(r @ 1..=8) => {
+                    w.residency.fetch_radius = r;
+                    w.residency.keep_radius = w.residency.keep_radius.max(r + 1);
+                }
+                _ => bad(),
+            },
+            ("keep", Some(w)) => match value.parse::<i32>() {
+                Ok(r @ 2..=12) => w.residency.keep_radius = r,
+                _ => bad(),
+            },
+            ("memory-mb", Some(w)) => match value.parse::<u64>() {
+                Ok(m @ 1..=4096) => w.residency.budget_bytes = m << 20,
+                _ => bad(),
+            },
+            ("cache-mb", Some(w)) => match value.parse::<u64>() {
+                Ok(m @ 1..=65536) => w.cache_budget = m << 20,
+                _ => bad(),
+            },
+            ("cache", Some(w)) => w.use_cache = value != "0",
+            ("allow-unsigned", Some(w)) if dev_page => w.allow_unsigned = value != "0",
+            ("trust", Some(w)) if dev_page && value == "dev" => w.trust_dev = true,
+            ("trust-root", Some(w)) if dev_page => {
+                match ocw_world::manifest::Hex::<32>::parse(value.trim()) {
+                    Ok(h) => w.trust_roots.push(h.0),
+                    Err(_) => bad(),
+                }
+            }
+            ("route", None) => match value.as_str() {
                 "hills" => config.route = Route::test_hills(),
                 "loop" => config.route = Route::test_loop(),
                 _ => bad(),
             },
-            "bots" => match value.parse::<u32>() {
+            ("bots", _) => match value.parse::<u32>() {
                 Ok(n) if n <= 50 => config.bots = n,
                 _ => bad(),
             },
-            "power" => match value.parse::<f64>() {
+            ("power", _) => match value.parse::<f64>() {
                 Ok(w) if (0.0..=session::MAX_POWER_W).contains(&w) => config.power_w = w,
                 _ => bad(),
             },
-            "start" => match value.parse::<f64>() {
+            ("start", _) => match value.parse::<f64>() {
                 Ok(km) if km >= 0.0 && km.is_finite() => config.start_m = km * 1000.0,
                 _ => bad(),
             },
-            "name" if !value.trim().is_empty() => {
+            ("name", _) if !value.trim().is_empty() => {
                 config.name = value.trim().chars().take(32).collect()
             }
             _ => bad(),
         }
     }
+    config.world = world;
     (config, warnings)
 }
 
@@ -127,19 +211,82 @@ pub fn app(config: SessionConfig) -> App {
     app
 }
 
+/// Console lines from the page (`window.ocw.console("teleport 3")`, the
+/// browser test), until a frame runs them.
+static PAGE_CONSOLE: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Queues a console line from the page.
+pub fn queue_console(line: &str) {
+    PAGE_CONSOLE
+        .lock()
+        .expect("not poisoned")
+        .push(line.to_string());
+}
+
+/// Hands the page's console lines to the console.
+pub(crate) fn console_from_page(console: Option<ResMut<ocw_render::console::ConsoleState>>) {
+    let Some(mut console) = console else { return };
+    let lines = std::mem::take(&mut *PAGE_CONSOLE.lock().expect("not poisoned"));
+    for line in lines {
+        console.queue(line);
+    }
+}
+
+/// The wasm module's memory (bytes; it only grows, so this is its peak);
+/// `None` natively.
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_memory_bytes() -> Option<u64> {
+    Some(browser::memory_bytes())
+}
+
+/// The wasm module's memory: `None` natively.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn wasm_memory_bytes() -> Option<u64> {
+    None
+}
+
+/// `window.ocw.console(line)`: runs a console command (the browser test
+/// drives the ride with it).
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(js_name = console)]
+pub fn page_console(line: &str) {
+    queue_console(line);
+}
+
+/// `window.ocw.wasmMemory()`: the wasm memory in bytes.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(js_name = wasmMemory)]
+pub fn page_memory() -> f64 {
+    browser::memory_bytes() as f64
+}
+
 /// The entry point the wasm-bindgen glue calls when the module is loaded.
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    let query = web_sys::window()
-        .and_then(|w| w.location().search().ok())
+    let location = web_sys::window().map(|w| w.location());
+    let query = location
+        .as_ref()
+        .and_then(|l| l.search().ok())
         .unwrap_or_default();
-    let (config, warnings) = parse_query(&query);
+    let host = location
+        .as_ref()
+        .and_then(|l| l.hostname().ok())
+        .unwrap_or_default();
+    let (config, warnings) = parse_query(&query, is_dev_host(&host));
+    let world = config.world.clone();
     let mut app = app(config);
     for w in warnings {
         warn!("page options: {w}");
     }
+    browser::start_world(&mut app, world);
     app.run();
+}
+
+/// Development pages (the dev server): only there the page may relax
+/// the package trust (`allow-unsigned`, `trust=dev`, `trust-root`).
+pub fn is_dev_host(host: &str) -> bool {
+    matches!(host, "localhost" | "127.0.0.1" | "[::1]" | "::1")
 }
 
 #[cfg(test)]
@@ -148,20 +295,62 @@ mod tests {
 
     #[test]
     fn query_options() {
-        let (c, w) = parse_query("?route=loop&bots=3&power=250&start=1.5&name=Ada+L");
+        let (c, w) = parse_query("?route=loop&bots=3&power=250&start=1.5&name=Ada+L", false);
         assert!(w.is_empty(), "{w:?}");
         assert_eq!(c.route.length(), Route::test_loop().length());
         assert_eq!((c.bots, c.power_w, c.start_m), (3, 250.0, 1500.0));
         assert_eq!(c.name, "Ada L");
+        assert!(c.world.is_none());
         // Defaults: hills, 5 bots, 200 W.
-        let (c, w) = parse_query("");
+        let (c, w) = parse_query("", false);
         assert!(w.is_empty());
         assert_eq!(c.route.length(), Route::test_hills().length());
         assert_eq!((c.bots, c.power_w), (5, 200.0));
         // Bad values are reported and ignored.
-        let (c, w) = parse_query("bots=500&power=-3&route=moon&x=1&start=nan");
+        let (c, w) = parse_query("bots=500&power=-3&route=moon&x=1&start=nan", false);
         assert_eq!(w.len(), 5, "{w:?}");
         assert_eq!((c.bots, c.power_w, c.start_m), (5, 200.0, 0.0));
+    }
+
+    /// The world options (B2): with `world`, `route` names a package route;
+    /// the trust options only on development pages.
+    #[test]
+    fn world_options() {
+        let q = "world=liechtenstein&route=Vaduz%E2%80%93Malbun&tiles=2&keep=4&memory-mb=64&cache-mb=300&allow-unsigned=1&trust=dev";
+        let (c, w) = parse_query(q, true);
+        assert!(w.is_empty(), "{w:?}");
+        let world = c.world.unwrap();
+        assert_eq!(world.spec, "liechtenstein");
+        assert_eq!(world.route.as_deref(), Some("Vaduz–Malbun"));
+        assert_eq!(
+            (world.residency.fetch_radius, world.residency.keep_radius),
+            (2, 4)
+        );
+        assert_eq!(world.residency.budget_bytes, 64 << 20);
+        assert_eq!(world.cache_budget, 300 << 20);
+        assert!(world.allow_unsigned && world.trust_dev && world.use_cache);
+        // The test route stays the placeholder of the view.
+        assert_eq!(c.route.length(), Route::test_hills().length());
+        // Not on a development page: the trust options are ignored.
+        let (c, w) = parse_query(q, false);
+        assert_eq!(w.len(), 2, "{w:?}");
+        let world = c.world.unwrap();
+        assert!(!world.allow_unsigned && !world.trust_dev);
+        // A root key, a free ride, no cache; bad values.
+        let root = "ab".repeat(32);
+        let (c, w) = parse_query(
+            &format!("world=x/y@3&free=1&cache=0&trust-root={root}&tiles=99&keep=1"),
+            true,
+        );
+        assert_eq!(w.len(), 2, "{w:?}");
+        let world = c.world.unwrap();
+        assert!(world.free_ride && !world.use_cache);
+        assert_eq!(world.trust_roots, [[0xab; 32]]);
+        // Without a world, the world options are unknown keys.
+        let (_, w) = parse_query("tiles=2&world=", false);
+        assert_eq!(w.len(), 2, "{w:?}");
+        assert!(is_dev_host("127.0.0.1") && !is_dev_host("ocw.example"));
+        assert_eq!(unescape("a%2Fb+c%zz%"), "a/b c%zz%");
     }
 
     #[test]

@@ -30,8 +30,9 @@ dir=$profile
 [ "$profile" = dev ] && dir=debug
 wasm=target/wasm32-unknown-unknown/$dir/ocw_web.wasm
 
-rm -rf "$out"
+# A fresh build, but the published worlds (`make web-worlds`) stay.
 mkdir -p "$out"
+find "$out" -mindepth 1 -maxdepth 1 ! -name worlds -exec rm -rf {} +
 # The name section (function names for the console's stack traces) is
 # 60 % of the module: only debug builds keep it.
 strip=(--remove-name-section --remove-producers-section)

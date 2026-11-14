@@ -101,16 +101,31 @@ ffmpeg` (`make deps-macos` prints both commands); the app also finds it in
 `apps/web` (`ocw-web`) is the same client in a web browser (spec §14 Phase
 10, milestone B1): Bevy on **WebGPU**, the shared renderer (`ocw-render`),
 client loop (`ocw-client`) and `GameServer` – the local server runs in the
-page's frame loop (wasm has no threads). B1 rides the built-in Hills test
-route with bots and the **virtual trainer** (no world packages, Bluetooth,
-sound or multiplayer yet: B2–B5).
+page's frame loop (wasm has no threads). It rides the built-in Hills test
+route, or a **world package streamed over HTTP** (B2): manifest and
+signature chain first, then the road graph and sections and the tiles
+around the rider with range requests, every chunk checked against its
+SHA-256, cached in the browser's Origin Private File System (a second
+visit loads from there), with the tiles kept in memory only around the
+rider. Bots and the **virtual trainer** as on the desktop (no Bluetooth,
+sound or multiplayer yet: B3–B5).
 
 ```bash
-make deps-web     # once: wasm-bindgen-cli matching Cargo.lock (cargo install)
-make web          # build into target/web/ (index.html, ocw_web.js, ocw_web_bg.wasm, sizes.txt)
-make web-serve    # serve it on http://127.0.0.1:8080/ (WEB_PORT=…)
-make test-web     # headless Chromium on WebGPU: load, ride, screenshot into test-output/web/
+make deps-web       # once: wasm-bindgen-cli matching Cargo.lock (cargo install)
+make web            # build into target/web/ (index.html, ocw_web.js, ocw_web_bg.wasm, sizes.txt)
+make web-worlds     # publish data/pilot/liechtenstein.ocwpkg into target/web/worlds/ (signed by a dev root)
+make web-serve      # serve it on http://127.0.0.1:8080/ (range requests; prints the world links)
+make test-web       # headless Chromium on WebGPU: load, ride, screenshot into test-output/web/
+make test-web-world # the same with Liechtenstein streamed from the dev server, then again from the cache
 ```
+
+A world: `http://127.0.0.1:8080/?world=liechtenstein&route=vaduz-malbun&trust-root=…`
+(`make web-serve` prints the link with the dev root's key; `world=` takes an
+id, `ID@VERSION` or a manifest URL; more options: `free=1`, `tiles=3`
+(fetch radius), `keep=5`, `memory-mb=96`, `cache-mb=1024`, `cache=0`). The
+loading screen shows the manifest, the base, the first tiles, the bytes
+from the cache and from the network and the storage; the console's
+`world.info` shows the streaming while riding.
 
 Open the page in Chrome / Edge 113+ (Safari 26 and Firefox 141+ should work
 too; a browser without WebGPU gets a message). The desktop's keys: ↑ adds
@@ -1681,7 +1696,7 @@ GitHub release `build-history`. Look at every image before picking it.
 | Path | Contents |
 |---|---|
 | `apps/desktop` | Desktop client: wires devices, local server, prediction and rendering |
-| `apps/web` | Browser app (`ocw-web`, wasm32 + WebGPU): the shared client with the local server in the frame loop and the virtual trainer; `web/index.html` |
+| `apps/web` | Browser app (`ocw-web`, wasm32 + WebGPU): the shared client with the local server in the frame loop and the virtual trainer, worlds streamed over HTTP (`world.rs`, `browser.rs`: fetch, OPFS); `web/index.html` |
 | `crates/ocw-client` | Client logic shared by the desktop and browser apps: `ClientCore` (prediction, interpolation, view), events, god-mode state, key logic, GPS position, sky |
 | `apps/bot` | `ocw-bot`: headless bot clients for remote servers, multiplayer test verdict |
 | `services/server` | Game server logic, in-process local server, headless server binary |
@@ -1691,7 +1706,7 @@ GitHub release `build-history`. Look at every image before picking it.
 | `crates/ocw-devices` | Device backends: virtual trainer, Bluetooth trainers and sensors (FTMS, Cycling Power, CSC, Heart Rate, Wahoo) |
 | `crates/ocw-world` | Routes, road graph, terrain, world packages, surfaces |
 | `crates/ocw-worldgen`, `apps/world-builder` | OSM + elevation import: road graph, profiles, world packages |
-| `crates/ocw-worldstore` | World package files, keys, trusted roots, local cache, download |
+| `crates/ocw-worldstore` | World package files, keys, trusted roots, local cache, download; `stream`: packages streamed by chunk (range planning, verification, the chunk cache behind a trait, tile residency; also wasm) |
 | `crates/ocw-fit` | FIT activity file writer (ride export) |
 | `crates/ocw-voice` | Voice chat (always-on logic, spatial audio, mixer; LiveKit backend with the `livekit` feature) |
 | `crates/ocw-render` | Bevy plugins: world, riders, camera, HUD, console; the bundled UI font (`assets/fonts/`) |

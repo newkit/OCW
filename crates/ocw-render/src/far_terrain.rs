@@ -268,7 +268,8 @@ pub(crate) struct FarTerrain {
     /// Tile entities by tile, and their parents (one per package).
     tiles: HashMap<TileId, Entity>,
     parents: Vec<Entity>,
-    /// What they were built for: world set generation, material library,
+    /// What they were built for: world set generation, streamed tiles
+    /// ([`WorldSet::tiles_version`](ocw_world::WorldSet::tiles_version)), material library,
     /// season bucket of the world date (the region look, spec §14 Phase 8
     /// T3).
     built: Option<FarKey>,
@@ -292,7 +293,7 @@ impl FarTerrain {
 }
 
 /// What the far terrain is built for (see [`FarTerrain::built`]).
-type FarKey = (u64, bool, Option<u32>);
+type FarKey = (u64, u64, bool, Option<u32>);
 
 /// The far meshes of one package.
 struct FarPackage {
@@ -352,7 +353,12 @@ pub(crate) fn update_far_terrain(
             s.sky.local.day,
         ))
     });
-    let want: FarKey = (set.generation(), library.is_some(), season);
+    let want: FarKey = (
+        set.generation(),
+        set.tiles_version(),
+        library.is_some(),
+        season,
+    );
     let pending = far.task.as_ref().map(|t| t.0);
     if far.built != Some(want) && pending != Some(want) {
         // The class colours of the streamed tiles (the region look tinted

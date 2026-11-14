@@ -10,6 +10,7 @@ use ocw_client::client::{ClientCore, Notice};
 use ocw_client::input::{KeyThrottle, ThrottleKeys};
 use ocw_core::RiderProfile;
 use ocw_devices::{DeviceCommand, FrameVirtualTrainer};
+use ocw_server::Course;
 use ocw_server::local::FrameServer;
 use ocw_world::Route;
 
@@ -28,6 +29,9 @@ pub struct SessionConfig {
     pub bots: u32,
     pub start_m: f64,
     pub power_w: f64,
+    /// A world package streamed over HTTP (spec §14 Phase 10 B2): the
+    /// session starts once its base and first tiles are there.
+    pub world: Option<crate::world::WorldOptions>,
 }
 
 impl Default for SessionConfig {
@@ -39,6 +43,7 @@ impl Default for SessionConfig {
             bots: DEFAULT_BOTS,
             start_m: 0.0,
             power_w: DEFAULT_POWER_W,
+            world: None,
         }
     }
 }
@@ -61,9 +66,16 @@ impl WebSession {
             bots,
             start_m,
             power_w,
+            ..
         } = config;
-        let mut server = FrameServer::new(route.clone(), bots, start_m);
-        let client = ClientCore::new(route, name, RiderProfile::default());
+        let client = ClientCore::new(route.clone(), name, RiderProfile::default());
+        Self::ride(route.into(), client, bots, start_m, power_w)
+    }
+
+    /// A session on any course (a route, or a ride on a world package's
+    /// road graph) with its client.
+    pub fn ride(course: Course, client: ClientCore, bots: u32, start_m: f64, power_w: f64) -> Self {
+        let mut server = FrameServer::new(course, bots, start_m);
         server.send(&client.hello());
         Self {
             server,

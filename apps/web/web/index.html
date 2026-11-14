@@ -5,20 +5,27 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Open Cycling World</title>
   <!--
-    The browser app (spec §14 Phase 10, B1). Served from target/web/ by
-    `make web-serve`. Hosting later (B8) adds the headers for wasm threads:
+    The browser app (spec §14 Phase 10, B1 / B2). Served from target/web/ by
+    `make web-serve` (worlds from target/web/worlds/, `world-builder
+    publish` layout). Hosting later (B8) adds the headers for wasm threads:
       Cross-Origin-Opener-Policy: same-origin
       Cross-Origin-Embedder-Policy: require-corp
     and a strict Content-Security-Policy ('wasm-unsafe-eval' for the module).
     Options in the query string: ?route=loop&bots=3&power=250&start=1.5&name=Ada
+    A world package: ?world=liechtenstein&route=vaduz-malbun (dev pages on
+    localhost also: allow-unsigned=1, trust=dev, trust-root=HEX).
   -->
   <style>
     html, body { margin: 0; height: 100%; background: #10141a; color: #d8dee9;
       font: 16px system-ui, sans-serif; overflow: hidden; }
     #ocw-canvas { display: block; width: 100%; height: 100%; outline: none; }
     #ocw-status { position: fixed; inset: 0; display: flex; align-items: center;
-      justify-content: center; text-align: center; padding: 16px; pointer-events: none; }
-    #ocw-status.error { color: #ffb4a8; }
+      justify-content: center; text-align: left; padding: 16px; pointer-events: none;
+      white-space: pre-line; line-height: 1.5; }
+    #ocw-status.loading { background: rgba(16, 20, 26, 0.92);
+      font: 15px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    #ocw-status.error { color: #ffb4a8; background: rgba(16, 20, 26, 0.92); }
+    #ocw-status[hidden] { display: none; }
   </style>
 </head>
 <body>
@@ -34,6 +41,8 @@
       performance.mark("ocw-import");
       try {
         const ocw = await import("./ocw_web.js");
+        // window.ocw.console("teleport 3"), window.ocw.wasmMemory(): for tests.
+        window.ocw = ocw;
         // Bevy's event loop throws a control-flow exception once it runs:
         // that is not an error.
         await ocw.default().catch((e) => {
@@ -44,7 +53,7 @@
       }
       performance.mark("ocw-started");
       console.log(`ocw-web: module started in ${(performance.now() - t0).toFixed(0)} ms`);
-      status.remove();
+      // The app hides the status (or shows a world's loading screen in it).
       document.getElementById("ocw-canvas").focus();
     }
   </script>

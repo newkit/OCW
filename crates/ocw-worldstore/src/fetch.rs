@@ -4,9 +4,10 @@
 //! before the entry is moved into the cache.
 //!
 //! The manifest also lists every tile-sized chunk with offset, size and
-//! hash, so a later client can fetch single tiles with `Range: bytes=a-b`
-//! and verify each on its own (streaming, spec §4.5); today whole files
-//! are downloaded once, before the ride.
+//! hash, so a client can fetch single tiles with `Range: bytes=a-b` and
+//! verify each on its own: the browser app does that ([`crate::stream`],
+//! spec §14 Phase 10 B2, with the same manifest check); the desktop
+//! downloads whole files once, before the ride.
 //!
 //! `URL` is the manifest's URL; files are fetched next to it
 //! (`https://host/worlds/europe/liechtenstein/3/manifest.json` →
@@ -16,14 +17,11 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use ocw_world::manifest::{
-    SignedManifest, TrustStatus, TrustStore, UnsignedPolicy, VerifyError, apply_policy,
-};
+use ocw_world::manifest::{TrustStatus, TrustStore, UnsignedPolicy, VerifyError};
 
 use crate::cache::{CacheEntry, MANIFEST_FILE, WorldCache};
-
-/// Largest manifest accepted (a 500 MB region has ~1000 tile chunks).
-const MAX_MANIFEST_BYTES: u64 = 16 << 20;
+pub use crate::stream::sibling_url;
+use crate::stream::{MAX_MANIFEST_BYTES, accept_manifest};
 
 /// A response to a GET.
 pub struct Response {
@@ -152,24 +150,6 @@ pub struct Fetched {
     pub downloaded: u64,
 }
 
-/// URL of `file` next to the manifest at `manifest_url`.
-pub fn sibling_url(manifest_url: &str, file: &str) -> String {
-    // Windows paths (`C:\w\manifest.json`) also separate with `\`; on Unix
-    // a backslash is an ordinary file name character.
-    #[cfg(windows)]
-    let sep = if manifest_url.contains("://") && !manifest_url.starts_with("file://") {
-        manifest_url.rfind('/')
-    } else {
-        manifest_url.rfind(['/', '\\'])
-    };
-    #[cfg(not(windows))]
-    let sep = manifest_url.rfind('/');
-    match sep {
-        Some(i) => format!("{}{file}", &manifest_url[..=i]),
-        None => file.to_string(),
-    }
-}
-
 fn io(path: &Path, e: impl std::fmt::Display) -> FetchError {
     FetchError::Io(format!("{}: {e}", path.display()))
 }
@@ -196,14 +176,9 @@ pub fn fetch(
         .take(MAX_MANIFEST_BYTES + 1)
         .read_to_string(&mut text)
         .map_err(|e| FetchError::Transport(format!("{manifest_url}: {e}")))?;
-    if text.len() as u64 > MAX_MANIFEST_BYTES {
-        return Err(FetchError::Verify(VerifyError::Malformed(
-            "manifest too large".into(),
-        )));
-    }
-    let signed = SignedManifest::parse(&text)?;
-    // Refuse untrusted packages before downloading hundreds of MB.
-    let status = apply_policy(signed.verify_signature(trust, now_unix_s), policy)?;
+    // Refuse untrusted packages before downloading hundreds of MB (the
+    // same check as the streaming client's, spec §14 Phase 10 B2).
+    let (signed, status) = accept_manifest(&text, trust, policy, now_unix_s)?;
     let m = &signed.manifest;
 
     if let Some(entry) = cache.resolve(&format!("{}@{}", m.id, m.version))

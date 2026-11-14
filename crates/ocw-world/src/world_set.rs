@@ -220,6 +220,8 @@ pub struct WorldSet {
     graph: Option<RoadGraph>,
     /// Counts changes of residency (renderers re-mesh seam tiles on it).
     generation: u64,
+    /// Counts tiles streamed in or dropped ([`WorldSet::update_tiles`]).
+    tiles_version: u64,
 }
 
 fn member(id: &str, pkg: &Arc<WorldPackage>, home_origin: (f64, f64), links: usize) -> Member {
@@ -261,7 +263,41 @@ impl WorldSet {
             members: vec![member(id, &home, home.origin, 0)],
             graph,
             generation: 0,
+            tiles_version: 0,
         }
+    }
+
+    /// Streaming (spec §4.5, §14 Phase 10 B2): member `i` gets the same
+    /// package with other tiles loaded (some came, some were dropped).
+    /// Unlike a change of residency this keeps the [`generation`]
+    /// (the tiles already meshed stay); [`tiles_version`] counts it, for
+    /// what is built from all tiles (the far terrain). The member's tile
+    /// keys and box grow by the new tiles; dropped ones stay known.
+    ///
+    /// [`generation`]: Self::generation
+    /// [`tiles_version`]: Self::tiles_version
+    pub fn update_tiles(&mut self, i: usize, pkg: Arc<WorldPackage>) {
+        let home_origin = self.home().origin;
+        let Some(m) = self.members.get_mut(i) else {
+            return;
+        };
+        let fresh = member(&m.id, &pkg, home_origin, m.links);
+        m.tile_keys.extend(fresh.tile_keys);
+        m.tiles_min = [
+            m.tiles_min[0].min(fresh.tiles_min[0]),
+            m.tiles_min[1].min(fresh.tiles_min[1]),
+        ];
+        m.tiles_max = [
+            m.tiles_max[0].max(fresh.tiles_max[0]),
+            m.tiles_max[1].max(fresh.tiles_max[1]),
+        ];
+        m.resident = Some(pkg);
+        self.tiles_version += 1;
+    }
+
+    /// Counts [`update_tiles`](Self::update_tiles) calls.
+    pub fn tiles_version(&self) -> u64 {
+        self.tiles_version
     }
 
     /// Adds a neighbouring package: its roads are linked to the joined
@@ -667,6 +703,34 @@ mod tests {
         assert!(set.add_neighbour("e2", Arc::new(no_region)).is_err());
         assert_eq!(set.len(), 1);
         assert_eq!(set.generation(), 0);
+    }
+
+    /// Streaming (spec §14 Phase 10 B2): tiles come and go in the home
+    /// package without a new generation; the known tiles and the box only
+    /// grow.
+    #[test]
+    fn streamed_tiles_update_the_home_package() {
+        let (west, _) = west_east(HOME);
+        let mut few = (*west).clone();
+        few.tiles = tiles(-1, -1, -1, -1, 100.0);
+        let mut set = WorldSet::new("w", Arc::new(few.clone()));
+        assert!(!set.home().has_tile_at([-1500.0, -500.0]));
+        let mut more = few.clone();
+        more.tiles = tiles(-2, -1, -1, -1, 100.0);
+        set.update_tiles(0, Arc::new(more));
+        assert_eq!(set.generation(), 0);
+        assert_eq!(set.tiles_version(), 1);
+        assert!(set.home().has_tile_at([-1500.0, -500.0]));
+        assert_eq!(set.surface_height([-1500.0, -500.0]), Some(100.0));
+        // Dropped again: the heights are gone, the tile stays known.
+        set.update_tiles(0, Arc::new(few));
+        assert_eq!(set.surface_height([-1500.0, -500.0]), None);
+        assert!(set.home().has_tile_at([-1500.0, -500.0]));
+        assert_eq!(set.bounds().0[0], -2000.0);
+        assert_eq!(set.tiles_version(), 2);
+        // An unknown member is ignored.
+        set.update_tiles(5, west);
+        assert_eq!(set.tiles_version(), 2);
     }
 
     #[test]
