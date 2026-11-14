@@ -7,7 +7,16 @@
 //! the tree, [`tree_cells`]) and the server rebuilds their trunks from it
 //! ([`trunks_from_cells`]) – the same trees everywhere, without the land
 //! use or the terrain on the server.
+//!
+//! With the measured forest of spec §14 Phase 8 T3 (section `FRST`,
+//! [`crate::forest`]) the land use stays the outline – where woods, fields
+//! and towns are – and the measured tree cover density sets each
+//! candidate's chance inside it ([`chance_with_density`]): dense woods,
+//! clearings and open woodland, hedges and tree rows in the fields; each
+//! tree's leaf type comes from the measured broadleaf share
+//! ([`measured_leaf`]).
 
+use crate::forest::ForestTile;
 use crate::landuse::{LandClass, LandUseTile};
 use crate::package::{Tile, TileKey, WorldPackage};
 
@@ -51,6 +60,61 @@ pub fn tree_density(class: LandClass) -> (f32, f32, f32) {
         | LandClass::Glacier
         | LandClass::Bare => (0.0, 1.0, 1.0),
     }
+}
+
+/// Tree cover density at which a forest cell gets its land class's full
+/// chance (0.85 per cell; HRL tree cover of closed woods is 80 – 95 %).
+pub const FULL_COVER: f32 = 0.8;
+/// The least chance a forest cell keeps of its class's (a clearing, a
+/// fresh cut or an outline drawn too wide still has a few trees).
+pub const FOREST_FLOOR: f32 = 0.06;
+/// Chance per unit of measured cover outside forests (hedges, tree rows,
+/// gardens, unmapped copses: up to 0.6 per cell under full cover).
+pub const OPEN_PER_COVER: f32 = 0.6;
+/// The highest chance of a tree per cell.
+pub const MAX_CHANCE: f32 = 0.95;
+
+/// The chance of a tree per cell of land class `class` (its chance by
+/// land use `base`, [`tree_density`]) where the tree cover density is
+/// `density` (0 … 100 %, spec §14 Phase 8 T3): in forests proportional
+/// to the cover (full at [`FULL_COVER`], at least [`FOREST_FLOOR`] of
+/// the class's), outside forests the class's chance or more where trees
+/// were measured ([`OPEN_PER_COVER`]); never more than [`MAX_CHANCE`].
+/// Classes without trees (water, rock, vineyards …) stay without: the
+/// land use is the outline.
+pub fn chance_with_density(class: LandClass, base: f32, density: u8) -> f32 {
+    if base <= 0.0 {
+        return 0.0;
+    }
+    let d = f32::from(density.min(100)) / 100.0;
+    match class {
+        LandClass::Forest => (base * d / FULL_COVER).clamp(base * FOREST_FLOOR, MAX_CHANCE),
+        _ => base.max(OPEN_PER_COVER * d).min(MAX_CHANCE),
+    }
+}
+
+/// The chance of a tree per cell of `class` at local `(x, z)` of tile
+/// `key`: by the measured density where the package has it, else by the
+/// land use ([`tree_density`]).
+pub fn tree_chance(
+    forest: Option<(&ForestTile, u32)>,
+    key: TileKey,
+    tile_size: f64,
+    class: LandClass,
+    x: f64,
+    z: f64,
+) -> f32 {
+    let base = tree_density(class).0;
+    match forest.and_then(|(t, cells)| t.at(key, tile_size, cells, x, z)) {
+        Some(c) => chance_with_density(class, base, c.density),
+        None => base,
+    }
+}
+
+/// The measured forest of a tile, if the package has it (section `FRST`).
+pub fn tile_forest(pkg: &WorldPackage, key: TileKey) -> Option<(&ForestTile, u32)> {
+    let f = pkg.look.forest.as_ref()?;
+    Some((f.tiles.get(&key)?, f.cells))
 }
 
 /// The land use of a tile, if the package has it.
@@ -189,6 +253,7 @@ fn landuse_trees(
     let n = cells as usize;
     let cs = size / f64::from(cells);
     let blocked = blocked_cells(pkg, tile, cells);
+    let forest = tile_forest(pkg, tile.key);
     let mut sites = Vec::new();
     for k in 0..per_side {
         for i in 0..per_side {
@@ -200,7 +265,8 @@ fn landuse_trees(
                 (((z - o[1]) / cs) as usize).min(n - 1),
             );
             let class = lu.classes[r * n + c];
-            let (chance, s0, s1) = tree_density(class);
+            let (_, s0, s1) = tree_density(class);
+            let chance = tree_chance(forest, tile.key, size, class, x, z);
             if hash(gx, gz, 1) >= chance || blocked[r * n + c] {
                 continue;
             }
@@ -314,14 +380,33 @@ pub enum DominantLeaf {
     Coniferous,
 }
 
-/// The measured leaf type at (x, z) (package metres): the hook for the
-/// forest type of spec §14 Phase 8 T3 (Copernicus HRL *Dominant Leaf
-/// Type*, 10 m, broadleaved / coniferous), which no package carries yet –
-/// always `None` until that section exists. The renderer then falls back
-/// to the regional mix by altitude and land use
-/// (`ocw_sky::season::LeafMix`, spec §14 Phase 9, S8).
-pub fn measured_leaf(_pkg: &WorldPackage, _x: f64, _z: f64) -> Option<DominantLeaf> {
-    None
+/// The measured leaf type of a tree standing at (x, z) (package metres),
+/// from the forest type of spec §14 Phase 8 T3 (section `FRST`: the
+/// Copernicus HRL *Dominant Leaf Type*, 10 m, as the broadleaf share of
+/// each cell): broadleaved with the cell's share, decided by the hash of
+/// the position (seed 17, 25 cm steps), so a mixed cell gets both and every
+/// run the same. `None` – the renderer then falls back to the regional mix
+/// by altitude and land use (`ocw_sky::season::LeafMix`, spec §14 Phase 9,
+/// S8) – in packages without the section and where no trees were measured.
+pub fn measured_leaf(pkg: &WorldPackage, x: f64, z: f64) -> Option<DominantLeaf> {
+    let share = pkg
+        .look
+        .forest
+        .as_ref()?
+        .cell(f64::from(pkg.tile_size_m), x, z)?
+        .broadleaf?;
+    Some(leaf_of_share(share, x, z))
+}
+
+/// Broadleaved or coniferous for a tree at (x, z) in a cell with broadleaf
+/// share `share` (0 … 100 %).
+pub fn leaf_of_share(share: u8, x: f64, z: f64) -> DominantLeaf {
+    let pick = hash((x * 4.0).floor() as i64, (z * 4.0).floor() as i64, 17);
+    if pick * 100.0 < f32::from(share) {
+        DominantLeaf::Broadleaved
+    } else {
+        DominantLeaf::Coniferous
+    }
 }
 
 /// The trees of a tile as one byte per candidate cell (row-major along
@@ -400,6 +485,151 @@ mod tests {
             time_zone: None,
             look: Default::default(),
             obstacles: None,
+        }
+    }
+
+    /// `forest_package` with a measured forest: the west half (x < 500)
+    /// dense conifers (90 %), the north-east quarter open woodland of
+    /// broadleaves (20 %), the land use forest there; the south-east quarter
+    /// meadow without trees but for a hedge of full cover along z 100 … 120.
+    fn measured_package() -> WorldPackage {
+        let mut pkg = forest_package();
+        let key = TileKey { x: 0, z: 0 };
+        // Land use 4 × 4 cells of 250 m: the south-east quarter meadow.
+        let lu = pkg.landuse.as_mut().unwrap();
+        let t = lu.tiles.get_mut(&key).unwrap();
+        for r in 0..2 {
+            for c in 2..4 {
+                t.classes[r * 4 + c] = LandClass::Meadow;
+            }
+        }
+        let n = 50usize; // 20 m cells
+        let mut density = vec![0u8; n * n];
+        let mut broadleaf = vec![crate::forest::NO_DATA; n * n];
+        for r in 0..n {
+            for c in 0..n {
+                let i = r * n + c;
+                let v = if c < 25 {
+                    Some((90, 0))
+                } else if r >= 25 {
+                    Some((20, 100))
+                } else if r == 5 {
+                    Some((100, 100))
+                } else {
+                    None
+                };
+                if let Some((d, b)) = v {
+                    density[i] = d;
+                    broadleaf[i] = b;
+                }
+            }
+        }
+        pkg.look.forest = Some(crate::forest::ForestCover {
+            cells: n as u32,
+            sources: Vec::new(),
+            tiles: BTreeMap::from([(key, ForestTile { density, broadleaf })]),
+        });
+        pkg
+    }
+
+    fn count_in(sites: &[TreeSite], x: (f32, f32), z: (f32, f32)) -> usize {
+        sites
+            .iter()
+            .filter(|(p, _)| p[0] >= x.0 && p[0] < x.1 && p[2] >= z.0 && p[2] < z.1)
+            .count()
+    }
+
+    #[test]
+    fn density_sets_the_spacing_inside_the_outlines() {
+        // The chance by cover: forests proportional (full at 80 %), with a
+        // floor; open land the class's or more; no trees where the land
+        // use has none.
+        let f = tree_density(LandClass::Forest).0;
+        assert_eq!(chance_with_density(LandClass::Forest, f, 80), f);
+        assert!((chance_with_density(LandClass::Forest, f, 40) - f / 2.0).abs() < 1e-6);
+        assert_eq!(
+            chance_with_density(LandClass::Forest, f, 0),
+            f * FOREST_FLOOR
+        );
+        assert_eq!(chance_with_density(LandClass::Forest, f, 100), MAX_CHANCE);
+        let m = tree_density(LandClass::Meadow).0;
+        assert_eq!(chance_with_density(LandClass::Meadow, m, 0), m);
+        assert!((chance_with_density(LandClass::Meadow, m, 50) - 0.3).abs() < 1e-6);
+        assert_eq!(chance_with_density(LandClass::Rock, 0.0, 100), 0.0);
+        assert_eq!(chance_with_density(LandClass::Vineyard, 0.0, 90), 0.0);
+        for d in 0..100u8 {
+            assert!(
+                chance_with_density(LandClass::Forest, f, d)
+                    <= chance_with_density(LandClass::Forest, f, d + 1)
+            );
+        }
+
+        let plain = forest_package();
+        let pkg = measured_package();
+        let key = TileKey { x: 0, z: 0 };
+        let before = tree_sites(&plain, &plain.tiles[&key]);
+        let after = tree_sites(&pkg, &pkg.tiles[&key]);
+        // Dense conifers (90 %): a few more than before (0.95 vs 0.85).
+        let (b, a) = (
+            count_in(&before, (0.0, 500.0), (0.0, 1000.0)),
+            count_in(&after, (0.0, 500.0), (0.0, 1000.0)),
+        );
+        assert!(a > b && (a as f32) < b as f32 * 1.2, "{b} -> {a}");
+        // Open woodland (20 %): a quarter of the trees.
+        let (b, a) = (
+            count_in(&before, (500.0, 1000.0), (500.0, 1000.0)),
+            count_in(&after, (500.0, 1000.0), (500.0, 1000.0)),
+        );
+        let ratio = a as f32 / b as f32;
+        assert!((0.2..0.32).contains(&ratio), "{b} -> {a} ({ratio})");
+        // The meadow: lone trees, but a row along the hedge (z 100 … 120).
+        let hedge = count_in(&after, (500.0, 1000.0), (100.0, 120.0));
+        let field = count_in(&after, (500.0, 1000.0), (200.0, 220.0));
+        assert!(hedge > 60 && field < 10, "hedge {hedge}, field {field}");
+        // Deterministic.
+        assert_eq!(after, tree_sites(&pkg, &pkg.tiles[&key]));
+    }
+
+    #[test]
+    fn the_measured_leaf_type_follows_the_broadleaf_share() {
+        let pkg = measured_package();
+        assert_eq!(
+            measured_leaf(&pkg, 100.0, 700.0),
+            Some(DominantLeaf::Coniferous)
+        );
+        assert_eq!(
+            measured_leaf(&pkg, 700.0, 700.0),
+            Some(DominantLeaf::Broadleaved)
+        );
+        // No trees measured (the open meadow): the fallback decides.
+        assert_eq!(measured_leaf(&pkg, 700.0, 300.0), None);
+        // Outside the tiles and without the section: none.
+        assert_eq!(measured_leaf(&pkg, 1500.0, 300.0), None);
+        assert_eq!(measured_leaf(&forest_package(), 100.0, 700.0), None);
+        // A mixed cell gets both types by the share, the same each time.
+        let mut n = 0;
+        for i in 0..2000 {
+            let (x, z) = (f64::from(i % 50) * 0.37, f64::from(i / 50) * 0.41);
+            let a = leaf_of_share(30, x, z);
+            assert_eq!(a, leaf_of_share(30, x, z));
+            n += usize::from(a == DominantLeaf::Broadleaved);
+        }
+        assert!((500..700).contains(&n), "{n} of 2000 broadleaved at 30 %");
+        assert_eq!(leaf_of_share(0, 1.0, 2.0), DominantLeaf::Coniferous);
+        assert_eq!(leaf_of_share(100, 1.0, 2.0), DominantLeaf::Broadleaved);
+    }
+
+    #[test]
+    fn stored_cells_follow_the_measured_density() {
+        // The server's trunks (OBST) are the drawn trees with the density.
+        let pkg = measured_package();
+        let tile = &pkg.tiles[&TileKey { x: 0, z: 0 }];
+        let drawn = tree_sites(&pkg, tile);
+        let cells = tree_cells(&pkg, tile, |_| true).unwrap();
+        let trunks = trunks_from_cells(tile.key, pkg.tile_size_m, &cells);
+        assert_eq!(trunks.len(), drawn.len());
+        for ((p, _), (q, _)) in trunks.iter().zip(&drawn) {
+            assert!((p[0] - f64::from(q[0])).abs() < 1e-3 && (p[1] - f64::from(q[2])).abs() < 1e-3);
         }
     }
 

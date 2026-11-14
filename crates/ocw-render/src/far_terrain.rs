@@ -59,6 +59,20 @@ pub fn tree_cover(class: LandClass) -> f32 {
     (crate::package::tree_density(class).0 * 1.1).min(0.95)
 }
 
+/// [`tree_cover`] where the package measured the tree cover density
+/// (`density` 0 … 100 %, spec §14 Phase 8 T3): the chance of the near
+/// trees there (`ocw_world::trees::chance_with_density`), seen the same.
+pub fn measured_tree_cover(class: LandClass, density: Option<u8>) -> f32 {
+    match density {
+        Some(d) => {
+            (ocw_world::trees::chance_with_density(class, crate::package::tree_density(class).0, d)
+                * 1.1)
+                .min(0.95)
+        }
+        None => tree_cover(class),
+    }
+}
+
 /// Samples of the package grid per far grid step: the largest divisor of
 /// the cells per side not above [`FAR_SPACING_M`] (so the far vertices are
 /// package samples and the borders of neighbouring far tiles agree).
@@ -91,6 +105,7 @@ pub fn far_tile_arrays(pkg: &WorldPackage, tile: &Tile, look: &TileLook, keep: K
     let h =
         |i: usize, k: usize| tile.heights[(k * stride).min(n - 1) * n + (i * stride).min(n - 1)];
     let landuse = tile_landuse(pkg, tile.key);
+    let forest = ocw_world::trees::tile_forest(pkg, tile.key);
     let palette = look.palette.as_deref();
     let flat = |c: LandClass| {
         palette
@@ -125,7 +140,7 @@ pub fn far_tile_arrays(pkg: &WorldPackage, tile: &Tile, look: &TileLook, keep: K
             // woods bare or coloured), the climatological snow.
             let alt = f64::from(h(i, k));
             let day = look.season.as_deref();
-            let canopy = day.map_or(CANOPY, |d| crate::season::canopy_colour(CANOPY, alt, d));
+            let tones = day.map(|d| crate::season::CanopyTones::new(CANOPY, alt, d));
             let mut trees = 0.0f32;
             let colour = match landuse {
                 Some((lu, cells)) => {
@@ -139,6 +154,16 @@ pub fn far_tile_arrays(pkg: &WorldPackage, tile: &Tile, look: &TileLook, keep: K
                             let c = ((x / cs).floor().max(0.0) as usize).min(cells - 1);
                             let r = ((z / cs).floor().max(0.0) as usize).min(cells - 1);
                             let class = lu.classes[r * cells + c];
+                            // The measured forest (spec §14 Phase 8 T3):
+                            // the density thins or fills the crowns, the
+                            // broadleaf share colours them.
+                            let measured = forest
+                                .and_then(|(f, n)| f.at(tile.key, size, n, o[0] + x, o[1] + z));
+                            let canopy = tones.map_or(CANOPY, |t| {
+                                t.at(measured
+                                    .and_then(|m| m.broadleaf)
+                                    .map(|b| f32::from(b) / 100.0))
+                            });
                             let mut col = flat(class);
                             if let Some(d) = day {
                                 col = crate::season::ground_colour(class, col, alt, d);
@@ -148,7 +173,8 @@ pub fn far_tile_arrays(pkg: &WorldPackage, tile: &Tile, look: &TileLook, keep: K
                                 col = std::array::from_fn(|j| col[j] + (rock[j] - col[j]) * t);
                                 // The far tiles have no trees: their crowns
                                 // tint the ground (not on rock faces).
-                                let w = tree_cover(class) * (1.0 - t);
+                                let w = measured_tree_cover(class, measured.map(|m| m.density))
+                                    * (1.0 - t);
                                 col = std::array::from_fn(|j| col[j] + (canopy[j] - col[j]) * w);
                                 trees += w / 16.0;
                             }
@@ -747,6 +773,61 @@ mod tests {
             .unwrap()
             .water = vec![(5, 412.0)];
         assert!(!has_sea(&p));
+    }
+
+    /// The measured tree cover (spec §14 Phase 8 T3) thins the far canopy:
+    /// the same forest outline with 20 % cover shows more ground than
+    /// without the section (the land use's chance) or with 90 %.
+    #[test]
+    fn the_far_canopy_follows_the_measured_density() {
+        use ocw_world::forest::{ForestCover, ForestTile};
+        let mut p = package(1);
+        let key = TileKey { x: 0, z: 0 };
+        p.landuse = Some(LandUse {
+            cells: 10,
+            tiles: BTreeMap::from([(
+                key,
+                LandUseTile {
+                    classes: vec![LandClass::Forest; 100],
+                    water: Vec::new(),
+                },
+            )]),
+        });
+        let plain = far_tile_arrays(&p, &p.tiles[&key], &TileLook::default(), None);
+        let with = |density: u8| {
+            let mut q = p.clone();
+            q.look.forest = Some(ForestCover {
+                cells: 10,
+                sources: Vec::new(),
+                tiles: BTreeMap::from([(
+                    key,
+                    ForestTile {
+                        density: vec![density; 100],
+                        broadleaf: vec![0; 100],
+                    },
+                )]),
+            });
+            far_tile_arrays(&q, &q.tiles[&key], &TileLook::default(), None)
+        };
+        let (open, dense) = (with(20), with(90));
+        // Vertex (3, 3): inside, flat.
+        let v = 3 * 11 + 3;
+        let under = |w: f32| {
+            linear(std::array::from_fn(|j| {
+                land_colour(LandClass::Forest)[j] * (1.0 - w) + CANOPY[j] * w
+            }))
+        };
+        let close = |a: [f32; 4], b: [f32; 4]| (0..3).all(|j| (a[j] - b[j]).abs() < 1e-3);
+        assert!(close(plain.colors[v], under(tree_cover(LandClass::Forest))));
+        let w20 = measured_tree_cover(LandClass::Forest, Some(20));
+        assert!(w20 < 0.3, "{w20}");
+        assert!(close(open.colors[v], under(w20)));
+        assert!(close(dense.colors[v], under(0.95)));
+        assert_eq!(measured_tree_cover(LandClass::Water, Some(90)), 0.0);
+        assert_eq!(
+            measured_tree_cover(LandClass::Meadow, None),
+            tree_cover(LandClass::Meadow)
+        );
     }
 
     #[test]

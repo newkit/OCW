@@ -14,6 +14,11 @@
 //!   and Liechtenstein): swisstopo's approximate formulas including the
 //!   datum shift, accurate to about 1 m (well within the accuracy of OSM
 //!   positions and of a 2 m grid).
+//! - **ETRS89-extended / LAEA Europe** (EPSG:3035: the pan-European
+//!   Copernicus land layers, e.g. the HRL forest type and tree cover
+//!   density, spec §14 Phase 8 T3): Lambert azimuthal equal-area on GRS 80
+//!   centred on 52° N 10° E (Snyder 1987, the ellipsoidal oblique aspect),
+//!   millimetres against PROJ.
 
 /// A projected coordinate reference system of a DTM grid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -22,6 +27,8 @@ pub enum Crs {
     UtmNorth(u8),
     /// CH1903+ / LV95.
     Lv95,
+    /// ETRS89-extended / LAEA Europe (EPSG:3035).
+    Laea,
 }
 
 // GRS 80 (ETRS89); WGS 84 differs in the inverse flattening by 1e-7.
@@ -103,6 +110,62 @@ fn utm_inverse(zone: u8, x: f64, y: f64) -> (f64, f64) {
     (phi.to_degrees(), lon.to_degrees())
 }
 
+// EPSG:3035: centre 52° N 10° E, false easting 4,321,000 m, false
+// northing 3,210,000 m.
+const LAEA_LAT0: f64 = 52.0;
+const LAEA_LON0: f64 = 10.0;
+const LAEA_FE: f64 = 4_321_000.0;
+const LAEA_FN: f64 = 3_210_000.0;
+
+/// Snyder's q(φ) for the authalic latitude.
+fn laea_q(e: f64, sin_phi: f64) -> f64 {
+    let es = e * sin_phi;
+    (1.0 - e * e) * (sin_phi / (1.0 - es * es) - (1.0 / (2.0 * e)) * ((1.0 - es) / (1.0 + es)).ln())
+}
+
+/// The constants of the projection: e, qp, Rq, D, sin β1, cos β1.
+fn laea_consts() -> (f64, f64, f64, f64, f64, f64) {
+    let e = (F * (2.0 - F)).sqrt();
+    let qp = laea_q(e, 1.0);
+    let phi1 = LAEA_LAT0.to_radians();
+    let q1 = laea_q(e, phi1.sin());
+    let beta1 = (q1 / qp).asin();
+    let rq = A * (qp / 2.0).sqrt();
+    let m1 = phi1.cos() / (1.0 - e * e * phi1.sin().powi(2)).sqrt();
+    let d = A * m1 / (rq * beta1.cos());
+    (e, qp, rq, d, beta1.sin(), beta1.cos())
+}
+
+fn laea_forward(lat: f64, lon: f64) -> [f64; 2] {
+    let (e, qp, rq, d, sb1, cb1) = laea_consts();
+    let q = laea_q(e, lat.to_radians().sin());
+    let beta = (q / qp).clamp(-1.0, 1.0).asin();
+    let dl = (lon - LAEA_LON0).to_radians();
+    let b = rq * (2.0 / (1.0 + sb1 * beta.sin() + cb1 * beta.cos() * dl.cos())).sqrt();
+    let x = b * d * beta.cos() * dl.sin();
+    let y = (b / d) * (cb1 * beta.sin() - sb1 * beta.cos() * dl.cos());
+    [LAEA_FE + x, LAEA_FN + y]
+}
+
+fn laea_inverse(e_m: f64, n_m: f64) -> (f64, f64) {
+    let (e, _, rq, d, sb1, cb1) = laea_consts();
+    let (x, y) = (e_m - LAEA_FE, n_m - LAEA_FN);
+    let rho = ((x / d).powi(2) + (d * y).powi(2)).sqrt();
+    if rho < 1e-9 {
+        return (LAEA_LAT0, LAEA_LON0);
+    }
+    let c = 2.0 * (rho / (2.0 * rq)).clamp(-1.0, 1.0).asin();
+    let beta = (c.cos() * sb1 + d * y * c.sin() * cb1 / rho).asin();
+    let lon = LAEA_LON0.to_radians()
+        + (x * c.sin()).atan2(d * rho * cb1 * c.cos() - d * d * y * sb1 * c.sin());
+    let (e2, e4, e6) = (e * e, e.powi(4), e.powi(6));
+    let phi = beta
+        + (e2 / 3.0 + 31.0 * e4 / 180.0 + 517.0 * e6 / 5040.0) * (2.0 * beta).sin()
+        + (23.0 * e4 / 360.0 + 251.0 * e6 / 3780.0) * (4.0 * beta).sin()
+        + (761.0 * e6 / 45_360.0) * (6.0 * beta).sin();
+    (phi.to_degrees(), lon.to_degrees())
+}
+
 fn lv95_forward(lat: f64, lon: f64) -> [f64; 2] {
     let p = (lat * 3600.0 - 169_028.66) / 10_000.0;
     let l = (lon * 3600.0 - 26_782.5) / 10_000.0;
@@ -129,10 +192,11 @@ fn lv95_inverse(e: f64, n: f64) -> (f64, f64) {
 impl Crs {
     /// From an EPSG code (GeoTIFF `ProjectedCSTypeGeoKey`): 258zz (ETRS89
     /// UTM), 326zz (WGS 84 UTM north), 4083 (REGCAN95 / UTM 28N), 2056
-    /// (LV95).
+    /// (LV95), 3035 (LAEA Europe).
     pub fn from_epsg(code: u32) -> Option<Self> {
         match code {
             2056 => Some(Self::Lv95),
+            3035 => Some(Self::Laea),
             4083 => Some(Self::UtmNorth(28)),
             25801..=25860 => Some(Self::UtmNorth((code - 25800) as u8)),
             32601..=32660 => Some(Self::UtmNorth((code - 32600) as u8)),
@@ -144,6 +208,7 @@ impl Crs {
     pub fn epsg(&self) -> u32 {
         match self {
             Self::Lv95 => 2056,
+            Self::Laea => 3035,
             Self::UtmNorth(z) => 25800 + u32::from(*z),
         }
     }
@@ -158,11 +223,15 @@ impl Crs {
         }
     }
 
-    /// Parses `utm32`, `epsg:25832`, `lv95`, `epsg:2056`, `regcan95`.
+    /// Parses `utm32`, `epsg:25832`, `lv95`, `epsg:2056`, `regcan95`,
+    /// `laea`, `epsg:3035`.
     pub fn parse(s: &str) -> Result<Self, String> {
         let s = s.trim().to_ascii_lowercase();
         if s == "lv95" {
             return Ok(Self::Lv95);
+        }
+        if s == "laea" {
+            return Ok(Self::Laea);
         }
         if s == "regcan95" {
             return Ok(Self::UtmNorth(28));
@@ -179,7 +248,7 @@ impl Crs {
             return Ok(crs);
         }
         Err(format!(
-            "unknown CRS {s} (utm32, lv95, regcan95, epsg:25832, epsg:2056, epsg:4083)"
+            "unknown CRS {s} (utm32, lv95, regcan95, laea, epsg:25832, epsg:2056, epsg:4083, epsg:3035)"
         ))
     }
 
@@ -188,6 +257,7 @@ impl Crs {
         match *self {
             Self::UtmNorth(z) => utm_forward(z, lat, lon),
             Self::Lv95 => lv95_forward(lat, lon),
+            Self::Laea => laea_forward(lat, lon),
         }
     }
 
@@ -196,6 +266,7 @@ impl Crs {
         match *self {
             Self::UtmNorth(z) => utm_inverse(z, x, y),
             Self::Lv95 => lv95_inverse(x, y),
+            Self::Laea => laea_inverse(x, y),
         }
     }
 
@@ -270,6 +341,38 @@ mod tests {
                 "{p:?}"
             );
         }
+    }
+
+    // ETRS89-LAEA Europe (EPSG:3035) from PROJ's cs2cs (easting, northing).
+    #[test]
+    fn laea_matches_proj() {
+        let laea = Crs::from_epsg(3035).unwrap();
+        assert_eq!(laea, Crs::Laea);
+        for (xy, ll) in [
+            ([4_284_559.476_0, 2_669_722.621_3], (47.14, 9.52)),
+            ([4_171_621.121_8, 2_753_171.798_7], (47.874, 8.004)),
+            ([1_706_702.845_9, 1_039_563.992_5], (28.272, -16.642)),
+            ([4_321_000.0, 3_210_000.0], (52.0, 10.0)),
+            ([5_422_492.775_0, 4_256_803.184_5], (60.0, 30.0)),
+            (
+                [2_700_000.0, 4_300_000.0],
+                (58.777_273_254, -18.897_778_945),
+            ),
+            (
+                [1_040_000.0, 1_700_000.0],
+                (31.442_408_779, -25.305_087_770),
+            ),
+        ] {
+            close_m(laea.inverse(xy[0], xy[1]), ll, 0.01);
+            let p = laea.forward(ll.0, ll.1);
+            assert!(
+                (p[0] - xy[0]).abs() < 0.01 && (p[1] - xy[1]).abs() < 0.01,
+                "{ll:?}: {p:?}"
+            );
+        }
+        assert_eq!(Crs::parse("LAEA"), Ok(Crs::Laea));
+        assert_eq!(Crs::parse("epsg:3035"), Ok(Crs::Laea));
+        assert_eq!(Crs::Laea.epsg(), 3035);
     }
 
     #[test]

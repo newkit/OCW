@@ -389,11 +389,21 @@ pub fn build_obstacles(
         }
     }
     // Trees within the corridor.
+    set_trees(pkg, &roads, &mut o, &mut st);
+    (o, st)
+}
+
+/// Stores the tree cells within the corridor of every tile of `pkg` in
+/// `o` (replacing what it has), counted in `st`.
+fn set_trees(pkg: &WorldPackage, roads: &StripIndex, o: &mut Obstacles, st: &mut ObstacleStats) {
     let keys: Vec<TileKey> = pkg.tiles.keys().copied().collect();
     let trees = crate::par::map(&keys, crate::par::threads(), |key| {
         let tile = &pkg.tiles[key];
         ocw_world::trees::tree_cells(pkg, tile, |p| roads.nearest(p, CORRIDOR_M).is_some())
     });
+    for t in o.tiles.values_mut() {
+        t.trees.clear();
+    }
     for (key, cells) in keys.iter().zip(trees) {
         let Some(cells) = cells else { continue };
         let n = cells.iter().filter(|c| **c != 0).count();
@@ -405,7 +415,19 @@ pub fn build_obstacles(
         o.tiles.entry(*key).or_default().set_tree_cells(&cells);
     }
     o.tiles.retain(|_, t| !t.is_empty());
-    (o, st)
+}
+
+/// Recomputes the tree cells of the package's obstacles (section `OBST`)
+/// after the tree placement changed – the measured forest cover (`FRST`,
+/// spec §14 Phase 8 T3) thins and fills the trees – so the server's trunks
+/// stay the drawn trees; the barriers and posts are kept. Nothing without
+/// the section. Returns the trees stored.
+pub fn refresh_trees(pkg: &mut WorldPackage) -> Option<ObstacleStats> {
+    let mut o = pkg.obstacles.take()?;
+    let mut st = ObstacleStats::default();
+    set_trees(pkg, &StripIndex::new(pkg), &mut o, &mut st);
+    pkg.obstacles = Some(o);
+    Some(st)
 }
 
 /// Adds the section to a package (replacing one it has).
@@ -641,6 +663,41 @@ mod tests {
             assert!(d > 3.0 + 3.0 && d < CORRIDOR_M + 8.0, "{p:?}");
         }
         assert!(st.summary().contains("bollard"));
+        // A measured forest of open woodland (spec §14 Phase 8 T3) thins
+        // the trees: refreshing the cells keeps the barriers and stores
+        // the new trees, the drawn ones.
+        let mut pkg = pkg;
+        pkg.obstacles = Some(o.clone());
+        pkg.look.forest = Some(ocw_world::forest::ForestCover {
+            cells: 50,
+            sources: Vec::new(),
+            tiles: BTreeMap::from([(
+                TileKey { x: 0, z: 0 },
+                ocw_world::forest::ForestTile {
+                    density: vec![15; 2500],
+                    broadleaf: vec![100; 2500],
+                },
+            )]),
+        });
+        let st2 = refresh_trees(&mut pkg).unwrap();
+        assert!(
+            st2.trees < st.trees / 2 && st2.trees > 0,
+            "{} -> {}",
+            st.trees,
+            st2.trees
+        );
+        let t2 = &pkg.obstacles.as_ref().unwrap().tiles[&TileKey { x: 0, z: 0 }];
+        assert_eq!(t2.points, t.points);
+        assert_eq!(t2.lines, t.lines);
+        let tile = &pkg.tiles[&TileKey { x: 0, z: 0 }];
+        let want = ocw_world::trees::tree_cells(&pkg, tile, |p| {
+            StripIndex::new(&pkg).nearest(p, CORRIDOR_M).is_some()
+        })
+        .unwrap();
+        assert_eq!(t2.tree_cells(125).unwrap(), want);
+        // Without the section: nothing to refresh.
+        pkg.obstacles = None;
+        assert!(refresh_trees(&mut pkg).is_none());
     }
 
     #[test]

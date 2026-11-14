@@ -9,6 +9,7 @@
 pub mod border;
 pub mod bridges;
 pub mod buildings;
+pub mod forest;
 pub mod geo;
 pub mod gpx;
 pub mod gradient;

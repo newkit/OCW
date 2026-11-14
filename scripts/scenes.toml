@@ -1956,3 +1956,37 @@ world = true
 args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "250"]
 at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=weather windy wind=18 gust=18 dir=345", "2.5=teleport 2.4"]
 shot = 24
+
+# --- Forest type and density (Phase 8 T3, Copernicus HRL, section FRST) ---------
+
+[[scene]]
+name = "forest-vaduz-autumn"
+description = "Forest type (T3): the wooded slope above Vaduz on 15 October from above – beeches and maples colouring and conifers green where the Copernicus HRL leaf type says so, tree spacing by the measured tree cover"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-10-15 12:30", "0.5=hud.profile off", "2.5=teleport 2.4", "2.5=camera.orbit 200 28 110", "6=season"]
+shot = 24
+
+[[scene]]
+name = "forest-vaduz-winter"
+description = "Forest type (T3): the same slope above Vaduz on 15 January – the broadleaved stands bare, the conifer stands green, following the real map"
+world = true
+args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-01-15 12:30", "0.5=hud.profile off", "2.5=teleport 2.4", "2.5=camera.orbit 200 28 110", "6=season"]
+shot = 24
+
+[[scene]]
+name = "forest-bf-autumn"
+description = "Forest type (T3): the woods along the Schauinsland road above Günterstal (Freiburg) on 20 October – spruce and fir stands green, beech stands golden, open and dense woods by the measured tree cover"
+world = "blackforest"
+args = ["--world", "{world}", "--route-file", "{world_dir}/freiburg-schauinsland.route", "--no-neighbours", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-10-20 12:30", "0.5=hud.profile off", "2.5=teleport 6", "2.5=camera.orbit 200 28 110", "6=season"]
+shot = 24
+
+[[scene]]
+name = "forest-tf-pines"
+description = "Forest type (T3): the Canary pine forest above Vilaflor (Tenerife) on the road from Los Cristianos to the Teide – conifers by the HRL leaf type, the open pine woods spaced by the measured tree cover"
+world = "tenerife"
+args = ["--world", "{world}", "--route-file", "{world_dir}/loscristianos-teide.route", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-11-13 11:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 24", "2.5=camera.orbit 160 25 80"]
+shot = 14
