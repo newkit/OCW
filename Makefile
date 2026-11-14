@@ -86,7 +86,7 @@ VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 	wasm screenshot screenshot-wayland smoke video video-wayland
 
 help: ## Show this help
-	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | \
+	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-23s\033[0m %s\n", $$1, $$2}'
 	@echo "  Deprecated aliases (removed later): wasm, screenshot, screenshot-wayland, smoke, video, video-wayland"
 	@echo "  -> test-wasm, test-screenshot, test-screenshot-wayland, test-smoke, test-video, test-video-wayland"
@@ -490,7 +490,7 @@ release-prepare: ## Bump the patch version for the next GitHub release, commit "
 	  git push -q origin main; cur=$$nv; fi; \
 	echo "version: $$cur"; echo "commit:  $$(git rev-parse --short HEAD)  (build the release binaries from this commit)"
 
-release-publish: ## Tag vX.Y.0 and create the GitHub release (pre-release): make release-publish DIR=assets NOTES=notes.md
+release-publish: ## Tag vX.Y.Z and create the GitHub release (pre-release): make release-publish DIR=assets NOTES=notes.md
 	@set -e; [ -d "$(DIR)" ] && [ -f "$(NOTES)" ] || { echo "usage: make release-publish DIR=... NOTES=..." >&2; exit 2; }; \
 	cur=$$($(call version_of,.)); last=$$($(latest_release)); $(newer); \
 	if [ -n "$$last" ] && ! n "$$cur" "$$last"; then echo "version $$cur is not above the latest release $$last: make release-prepare first" >&2; exit 1; fi; \
