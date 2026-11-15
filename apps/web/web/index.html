@@ -97,7 +97,9 @@
     #ocw-start .soon { color: #c3cbd8; border-left: 3px solid #4c566a; padding: 4px 0 4px 12px; }
     #ocw-start footer { margin-top: 32px; font-size: 14px; color: #aab4c3; }
     #ocw-start a { color: #88c0d0; }
-    #ocw-preview-bar { position: fixed; left: 50%; bottom: 4px; transform: translateX(-50%);
+    /* Above the HUD's height profile (bottom left), clear of the route
+       label (bottom centre) and the devices panel (bottom right). */
+    #ocw-preview-bar { position: fixed; left: 12px; bottom: 98px;
       font: 12px system-ui, sans-serif; color: #c3cbd8; background: rgba(10, 13, 18, 0.6);
       border-radius: 4px; padding: 2px 8px; white-space: nowrap; max-width: calc(100% - 16px);
       overflow: hidden; text-overflow: ellipsis; }
@@ -304,8 +306,8 @@
     // The preview's line in the ride (B8a): back to the rides, the credits.
     function previewBar() {
       const bar = document.getElementById("ocw-preview-bar");
-      const osm = query.has("world") ? " · Map data © OpenStreetMap contributors" : "";
-      bar.innerHTML = `Open Cycling World browser preview · <a href="./">Rides</a> · <a href="credits.html">Credits</a>${osm}`;
+      const osm = query.has("world") ? " · © OpenStreetMap contributors" : "";
+      bar.innerHTML = `Browser preview · <a href="./">Rides</a> · <a href="credits.html">Credits</a>${osm}`;
       bar.hidden = false;
     }
 
