@@ -120,7 +120,7 @@ fn vr_quality(app: &mut App) {
     });
 }
 
-fn register_console(app: &mut App) {
+pub(crate) fn register_console(app: &mut App) {
     app.console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("vr")

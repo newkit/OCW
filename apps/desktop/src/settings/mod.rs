@@ -611,6 +611,8 @@ mod tests {
             ),
             |_, _| Ok(String::new()),
         ));
+        // `vr mirror` (vr.mirror), registered by `vr::add` in the app.
+        crate::vr::register_console(&mut app);
         app
     }
 

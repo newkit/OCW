@@ -548,11 +548,13 @@ fn apply_mirror(
         return;
     }
     for mut c in &mut cams {
-        // The chase view below shows through.
-        c.clear_color = match *mirror {
-            VrMirror::Chase => ClearColorConfig::None,
-            _ => ClearColorConfig::Custom(Color::BLACK),
-        };
+        // The chase view: the mirror camera steps aside (off, and below
+        // the follow camera, which then draws the desktop HUD as the
+        // highest window camera); a second camera on the window would
+        // overwrite the chase picture.
+        let chase = *mirror == VrMirror::Chase;
+        c.is_active = !chase;
+        c.order = if chase { -5 } else { 10 };
     }
     for (eye, mut n) in &mut nodes {
         let shown = match *mirror {
