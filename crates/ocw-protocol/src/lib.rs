@@ -2234,7 +2234,7 @@ mod tests {
         );
         let wire = event_state(Some(&ev), &[], 1);
         let info = event_info(&wire).unwrap();
-        assert!(!info.aids, "a race: no aids unless allowed");
+        assert!(info.aids, "a race: aids allowed by default (Phase 12 Q8)");
         assert_eq!((info.chaotic_bots, info.time_limit_s), (false, None));
         ev.set_rules(&rules);
         let info = event_info(&event_state(Some(&ev), &[], 1)).unwrap();

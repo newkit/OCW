@@ -8,6 +8,9 @@
 //!   of zero power (shifting, a short coast);
 //! - after that it pauses, and resumes as soon as power returns;
 //! - `pause` / `resume` stop and restart it by hand;
+//! - it stops while the rider is down after a crash and runs on when the
+//!   rider rides again, so a fall does not eat into an interval (decided by
+//!   the user 2026-11-15, spec §14 Phase 12 Q4; [`WorkoutRun::set_down`]);
 //! - the ride itself never pauses (spec §3.2), only the workout clock.
 //!
 //! The ERG target stays set while the clock waits or pauses, so the
@@ -29,6 +32,9 @@ pub enum RunState {
     Paused,
     /// Paused by hand (`workout pause`); resumes with `workout resume`.
     PausedByRider,
+    /// The rider is down after a crash (Phase 12 Q4); runs on when the
+    /// rider rides again.
+    PausedDown,
     Finished,
 }
 
@@ -47,6 +53,8 @@ pub struct WorkoutRun {
     elapsed_s: f64,
     idle_s: f64,
     state: RunState,
+    /// The rider is down after a crash: the clock stops.
+    down: bool,
 }
 
 /// Where the rider is in the workout, for the HUD and `workout status`.
@@ -77,6 +85,7 @@ impl WorkoutRun {
         Self {
             workout,
             elapsed_s: 0.0,
+            down: false,
             idle_s: 0.0,
             state: RunState::Waiting,
         }
@@ -91,7 +100,22 @@ impl WorkoutRun {
     }
 
     pub fn state(&self) -> RunState {
-        self.state
+        match self.state {
+            RunState::Waiting | RunState::Running | RunState::Paused if self.down => {
+                RunState::PausedDown
+            }
+            s => s,
+        }
+    }
+
+    /// The rider went down after a crash (`true`) or rides again: while
+    /// down the workout clock stops (spec §14 Phase 12 Q4: "pause the step
+    /// until you're riding again"); the step's target stays set.
+    pub fn set_down(&mut self, down: bool) {
+        if self.down && !down {
+            self.idle_s = 0.0;
+        }
+        self.down = down;
     }
 
     pub fn is_finished(&self) -> bool {
@@ -106,8 +130,11 @@ impl WorkoutRun {
     pub fn advance(&mut self, dt_s: f64, power_w: f64) -> Option<Change> {
         let dt = if dt_s.is_finite() { dt_s.max(0.0) } else { 0.0 };
         let pedalling = power_w > 0.0;
+        if self.down {
+            return None;
+        }
         match self.state {
-            RunState::Finished | RunState::PausedByRider => return None,
+            RunState::Finished | RunState::PausedByRider | RunState::PausedDown => return None,
             RunState::Waiting | RunState::Paused if !pedalling => return None,
             RunState::Waiting | RunState::Paused => {
                 self.state = RunState::Running;
@@ -194,7 +221,7 @@ impl WorkoutRun {
             )
         });
         WorkoutStatus {
-            state: self.state,
+            state: self.state(),
             elapsed_s: self.elapsed_s,
             total_s: w.duration_s(),
             index,
@@ -225,6 +252,7 @@ impl WorkoutStatus {
             RunState::Running => "",
             RunState::Paused => " (paused: not pedalling)",
             RunState::PausedByRider => " (paused; workout resume)",
+            RunState::PausedDown => " (paused: rider down)",
             RunState::Finished => " (finished)",
         };
         let mut s = format!(
@@ -350,6 +378,32 @@ mod tests {
         let s = r.status(250.0);
         assert_eq!((s.index, s.step_left_s), (5, 0.0));
         assert!(s.describe("w").contains("(finished)"));
+    }
+
+    /// Phase 12 Q4 (decided 2026-11-15): down after a crash, the step
+    /// waits – even while the legs keep spinning on the trainer – and runs
+    /// on when the rider rides again; the target stays set.
+    #[test]
+    fn the_step_waits_while_the_rider_is_down() {
+        let mut r = WorkoutRun::new(workout());
+        ride(&mut r, 10.0, 200.0);
+        let before = r.elapsed_s();
+        r.set_down(true);
+        assert_eq!(r.state(), RunState::PausedDown);
+        ride(&mut r, 30.0, 180.0);
+        assert_eq!(r.elapsed_s(), before, "no workout time while down");
+        assert!(r.target_w(200.0).is_some(), "the target stays");
+        assert!(r.status(200.0).describe("w").contains("rider down"));
+        r.set_down(false);
+        assert_eq!(r.state(), RunState::Running);
+        ride(&mut r, 1.0, 200.0);
+        assert!((r.elapsed_s() - before - 1.0).abs() < 1e-6);
+        // Down while paused by hand: still paused by hand afterwards.
+        assert!(r.pause());
+        r.set_down(true);
+        assert_eq!(r.state(), RunState::PausedByRider);
+        r.set_down(false);
+        assert_eq!(r.state(), RunState::PausedByRider);
     }
 
     #[test]

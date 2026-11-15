@@ -57,10 +57,12 @@ pub struct TrainerControl {
     last_wind: f64,
 }
 
-/// Phase 12 Q4 (open): while the rider is down after a crash, ERG keeps
-/// the workout's step running (the proposal: the plan is the plan). `false`
-/// would pause the step until the rider rides again.
-pub const ERG_STEP_RUNS_WHILE_DOWN: bool = true;
+/// Phase 12 Q4 (decided by the user 2026-11-15: "pause the step until
+/// you're riding again"): while the rider is down after a crash the
+/// workout's step waits ([`ocw_sim::workout::WorkoutRun::set_down`]) and
+/// no new ERG target is sent – the trainer keeps the last one, so the
+/// step goes on at its power when the rider rides again.
+pub const ERG_STEP_RUNS_WHILE_DOWN: bool = false;
 /// A soft bump in SIM mode (spec §14 Phase 12B): the speed loss as a
 /// brief gradient increase of this much per rad of wobble, for
 /// [`BUMP_PULSE_S`] (ERG unchanged).
@@ -126,6 +128,11 @@ impl TrainerControl {
     /// the lowest resistance, so the legs keep spinning easily; ERG holds.
     pub fn set_down(&mut self, down: bool) {
         self.down = down;
+    }
+
+    /// Whether the rider is down after a crash (for the workout clock).
+    pub fn is_down(&self) -> bool {
+        self.down
     }
 
     /// A soft bump at `now_s` with wobble `strength` (rad): a short
@@ -407,8 +414,9 @@ mod tests {
         assert!(p.grade > 0.0);
     }
 
-    /// Down after a crash (spec §14 Phase 12C): SIM a flat road, ERG keeps
-    /// its target (Q4 proposal, [`ERG_STEP_RUNS_WHILE_DOWN`]); a soft bump
+    /// Down after a crash (spec §14 Phase 12C): SIM a flat road, ERG sends
+    /// no new target while the step waits (Q4, [`ERG_STEP_RUNS_WHILE_DOWN`]);
+    /// a soft bump
     /// is a short resistance pulse in SIM.
     #[test]
     fn down_after_a_crash_sim_is_flat_erg_holds_and_bumps_pulse() {
@@ -447,11 +455,18 @@ mod tests {
             panic!("a SIM command")
         };
         assert!(p.grade < pulse, "{} {pulse}", p.grade);
-        const { assert!(ERG_STEP_RUNS_WHILE_DOWN) };
+        const { assert!(!ERG_STEP_RUNS_WHILE_DOWN) };
         t.set_mode(TrainerMode::Erg { target_w: 200.0 });
         t.set_down(true);
+        assert!(t.is_down());
         assert_eq!(
             t.update(20.0, &route(), at(500.0, 0.0), Some(90.0)),
+            None,
+            "the step waits: no new target while down"
+        );
+        t.set_down(false);
+        assert_eq!(
+            t.update(21.0, &route(), at(500.0, 0.0), Some(90.0)),
             Some(DeviceCommand::SetTargetPower(200.0))
         );
     }

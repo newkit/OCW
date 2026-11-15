@@ -72,7 +72,7 @@ pub fn event_command() -> Command {
             Arg::new("aids")
                 .long("aids")
                 .value_parser(["on", "off"])
-                .help("The riding aids (last-moment warning, proximity arrow and bell) allowed (default: not in races)"),
+                .help("The riding aids (last-moment warning, proximity arrow and bell) allowed (default: yes, races too)"),
         )
         .arg(
             Arg::new("chaotic-bots")

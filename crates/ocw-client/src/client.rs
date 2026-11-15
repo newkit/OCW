@@ -4017,9 +4017,23 @@ mod tests {
             laps: None,
             length_m: Some(200.0),
         };
+        // Allowed by default, races too (Phase 12 Q8); the organiser may
+        // forbid them.
         h.send(&ClientCore::event_start_message(&race, Some(0)));
         h.ride(200.0, 1.0);
-        assert!(!h.client.aids_allowed(), "races: not unless allowed");
+        assert!(h.client.aids_allowed(), "races too, by default");
+        let forbidden = ocw_sim::event::Rules {
+            aids: Some(false),
+            ..Default::default()
+        };
+        h.send(&ClientCore::event_start_message_organiser(
+            &race,
+            Some(0),
+            None,
+            &forbidden,
+        ));
+        h.ride(200.0, 1.0);
+        assert!(!h.client.aids_allowed(), "forbidden by the organiser");
         assert_eq!(
             (h.client.proximity(), h.client.proximity_arrow()),
             (None, None)
@@ -4037,7 +4051,12 @@ mod tests {
         h.ride(200.0, 1.0);
         assert!(h.client.aids_allowed());
         // Forbidden again; ride to the line: the winner raises the arms.
-        h.send(&ClientCore::event_start_message(&race, Some(0)));
+        h.send(&ClientCore::event_start_message_organiser(
+            &race,
+            Some(0),
+            None,
+            &forbidden,
+        ));
         let mut finished = false;
         for _ in 0..240 {
             h.ride(350.0, 0.5);

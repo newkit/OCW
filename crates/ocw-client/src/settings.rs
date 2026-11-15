@@ -412,7 +412,7 @@ pub const SETTINGS: &[SettingDef] = &[
         key: "event.aids",
         kind: Kind::Choice(&["auto", "on", "off"]),
         default: "auto",
-        description: "Riding aids (the last-moment warning, the proximity arrow and bell) allowed in the events you start: auto (not in races), on, off",
+        description: "Riding aids (the last-moment warning, the proximity arrow and bell) allowed in the events you start: auto (allowed, races too), on, off",
         scope: Scope::Live,
         apply: Apply::App,
     },

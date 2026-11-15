@@ -2693,8 +2693,8 @@ mod tests {
     }
 
     /// K6 (spec §14 Phase 12): the organiser's rules are put in force for
-    /// the event and travel in its state – the aids (not in races unless
-    /// allowed), chaotic bots over the session's switch, the time limit,
+    /// the event and travel in its state – the aids (allowed by default,
+    /// races too, Phase 12 Q8; forbidden by the organiser), chaotic bots over the session's switch, the time limit,
     /// the neutral service's wait, damage in force – and end with it.
     #[test]
     fn the_organisers_rules_are_in_force_for_the_event() {
@@ -2711,8 +2711,17 @@ mod tests {
         };
         server.handle(me, &start(&Default::default()));
         let info = ocw_protocol::event_info(&server.event_state()).unwrap();
-        assert!(!info.aids && !info.chaotic_bots && info.time_limit_s.is_none());
-        assert!(!server.session().aids_allowed());
+        assert!(info.aids && !info.chaotic_bots && info.time_limit_s.is_none());
+        assert!(server.session().aids_allowed(), "races too, by default");
+        server.handle(
+            me,
+            &start(&ocw_sim::event::Rules {
+                aids: Some(false),
+                ..Default::default()
+            }),
+        );
+        let info = ocw_protocol::event_info(&server.event_state()).unwrap();
+        assert!(!info.aids && !server.session().aids_allowed(), "forbidden");
         let rules = ocw_sim::event::Rules {
             collisions: Some(ocw_sim::collide::Mode::Full),
             aids: Some(true),

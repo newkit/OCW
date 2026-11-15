@@ -207,7 +207,7 @@ pub struct Rules {
     /// Damage on / off, DNF when badly injured, the neutral service.
     pub damage: Option<crate::damage::Rules>,
     /// The riding aids (the "last moment" warning, the proximity arrow and
-    /// bell) allowed: by default not in races, else yes (12D).
+    /// bell) allowed: by default yes, races too (Phase 12 Q8).
     pub aids: Option<bool>,
     /// Chaotic bots (Q3; the session's switch).
     pub chaotic_bots: Option<bool>,
@@ -373,11 +373,12 @@ impl Event {
     }
 
     /// Whether the riding aids are allowed: the organiser's rule, by
-    /// default not in races (spec §14 Phase 12D: "off in organiser races
-    /// unless allowed"), allowed in group rides and time trials.
+    /// default **allowed in every event, races too** (decided by the user
+    /// 2026-11-15, spec §14 Phase 12 Q8: "allow the aids in all races for
+    /// now"; before: off in races unless allowed); an organiser may still
+    /// forbid them (`Rules::aids = Some(false)`).
     pub fn aids_allowed(&self) -> bool {
-        self.aids
-            .unwrap_or(!matches!(self.kind, EventKind::Race { .. }))
+        self.aids.unwrap_or(true)
     }
 
     /// The time limit after a winner who took `winner_s` (s): the
@@ -765,7 +766,12 @@ mod tests {
     #[test]
     fn the_organisers_time_limit_aids_and_abandons() {
         let mut e = running(race(1000.0, 3));
-        assert!(!e.aids_allowed(), "races: off unless allowed (12D)");
+        assert!(e.aids_allowed(), "races too, by default (Phase 12 Q8)");
+        e.set_rules(&Rules {
+            aids: Some(false),
+            ..Default::default()
+        });
+        assert!(!e.aids_allowed(), "the organiser may forbid them");
         e.set_rules(&Rules {
             aids: Some(true),
             chaotic_bots: Some(true),
