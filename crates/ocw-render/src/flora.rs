@@ -899,8 +899,8 @@ pub fn plant(m: &mut MeshArrays, sp: Species, at: &PlantAt, look: &PlantLook, de
                     // A tuft of stiff blue-green leaves at the tip.
                     blob(
                         m,
-                        tip,
-                        Vec3::Y * 0.25,
+                        base,
+                        (tip - base) / s + Vec3::Y * 0.25,
                         Vec3::new(0.9, 0.45, 0.9),
                         s,
                         if near { 6 } else { 4 },
