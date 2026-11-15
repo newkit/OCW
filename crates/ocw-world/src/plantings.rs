@@ -1,4 +1,4 @@
-//! Plants in rows and mapped trees (spec §4.6.2, §14 Phase 8 T8): where
+//! Plants in rows and mapped trees (spec §4.6.1, §14 Phase 8 T8): where
 //! the vines, fruit trees, banana plants and avocados of the plantations of
 //! section `VEGE` ([`crate::vegetation`]) stand, and the single trees OSM
 //! maps. Pure and deterministic: the renderer draws them, the world
@@ -35,7 +35,7 @@ pub struct RowSpec {
     pub along_m: f32,
 }
 
-/// The rows of `crop` in `region` (spec §4.6.2 table 4): vineyards on wire
+/// The rows of `crop` in `region` (spec §4.6.1 table 4): vineyards on wire
 /// trellises (2.0 m × 1.1 m in the Alpine Rhine and the Black Forest,
 /// wider on Tenerife), orchards of half-standard trees, banana plants about
 /// 2 000 per hectare, avocados and citrus 6 m × 5 m, berry hedges; `None`

@@ -1,4 +1,4 @@
-//! A tile's plants (spec §4.6.2, §14 Phase 8 T8): the trees of the tree
+//! A tile's plants (spec §4.6.1, §14 Phase 8 T8): the trees of the tree
 //! grid, the mapped trees and the plantations' rows of section `VEGE`
 //! (`ocw_world::plantings`), each with its species
 //! (`ocw_world::flora::pick_species`: the measured leaf type or the

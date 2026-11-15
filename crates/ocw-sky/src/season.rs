@@ -1095,7 +1095,7 @@ pub fn foliage(p: &Phenology, leaf: LeafType, s: &State, jitter: f32) -> Foliage
 }
 
 /// When a species leafs out and turns compared with the beech the
-/// thresholds are calibrated on (spec §4.6.2 table 5): factors on the
+/// thresholds are calibrated on (spec §4.6.1 table 5): factors on the
 /// spring (growing degree days) and the autumn (cold degree days)
 /// thresholds – birches and willows early in spring, ashes and oaks late;
 /// ashes drop their leaves early, oaks and alders late.

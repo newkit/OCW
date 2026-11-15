@@ -1,4 +1,4 @@
-//! The fields, plantations and mapped trees of a package (spec §4.6.2,
+//! The fields, plantations and mapped trees of a package (spec §4.6.1,
 //! §14 Phase 8 T8): what the land use's classes do not tell – which crop
 //! grows on a field, which way the rows of a vineyard, an orchard or a
 //! banana plantation run, and the single trees and tree rows OSM maps

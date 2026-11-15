@@ -1,4 +1,4 @@
-//! The big plants, each species with its own low-poly model (spec §4.6.2,
+//! The big plants, each species with its own low-poly model (spec §4.6.1,
 //! §14 Phase 8 T8): own work generated in code, like the rider and bike
 //! models – no third-party meshes. Every model comes in two levels of
 //! detail: **near** (the tiers of a spruce, the tufts of a Canary pine, the
@@ -63,7 +63,7 @@ pub fn leaf_type(sp: Species) -> LeafType {
     }
 }
 
-/// When a species leafs out and turns (spec §4.6.2 table 5).
+/// When a species leafs out and turns (spec §4.6.1 table 5).
 pub fn timing(sp: Species) -> Timing {
     let (spring, autumn) = match sp {
         Species::Birch => (0.8, 0.95),

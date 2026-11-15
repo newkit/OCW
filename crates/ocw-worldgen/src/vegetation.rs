@@ -1,4 +1,4 @@
-//! The section `VEGE` (spec §4.6.2, §14 Phase 8 T8): fields with their
+//! The section `VEGE` (spec §4.6.1, §14 Phase 8 T8): fields with their
 //! crop, plantations with their rows and the mapped trees, from OSM.
 //!
 //! - **Fields and plantations:** every `landuse=farmland|orchard|vineyard|
@@ -162,7 +162,7 @@ fn height_tag(tags: &Tags) -> f32 {
 }
 
 /// The share of each arable crop on fields without a crop tag, by region
-/// and altitude (spec §4.6.2 table 4; proposals from the agricultural
+/// and altitude (spec §4.6.1 table 4; proposals from the agricultural
 /// statistics).
 pub fn crop_mix(region: FloraRegion, alt_m: f64) -> &'static [(FieldCrop, f32)] {
     use FieldCrop::*;
@@ -201,7 +201,7 @@ pub fn crop_mix(region: FloraRegion, alt_m: f64) -> &'static [(FieldCrop, f32)] 
 }
 
 /// The parcels big fields are cut into: (width across the main axis,
-/// length along it) in metres (spec §4.6.2: Central European fields of
+/// length along it) in metres (spec §4.6.1: Central European fields of
 /// one to three hectares, Tenerife's terraces much smaller).
 pub fn parcel_size(region: FloraRegion) -> (f64, f64) {
     match region {

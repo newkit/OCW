@@ -1189,7 +1189,7 @@ climb at 1.5–2.1 km) and grass beside the road roll increasingly harder
   far canopy. Packages without `FRST` guess the leaf type from land use and
   altitude.
 
-  **Plants, crops and plantations (spec §4.6.2, §14 Phase 8 T8):** the
+  **Plants, crops and plantations (spec §4.6.1, §14 Phase 8 T8):** the
   build scripts end with `world-builder vegetation --world PKG --pbf ...`
   (`OCW_NO_VEGETATION=1` leaves it out): the section `VEGE` with each
   field's crop (OSM `crop` / `produce` / `trees`, else the region's crop

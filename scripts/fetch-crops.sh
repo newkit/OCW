@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Downloads the measured crop map of a world region (spec §4.6.2, §14 Phase 8
+# Downloads the measured crop map of a world region (spec §4.6.1, §14 Phase 8
 # T8) into data/<region>/crops/ (git-ignored): OCW crop codes on a 10 m grid
 # in ETRS89-LAEA Europe over the 1 km cells the built packages cover. Run on
 # the build machine (GDAL Python bindings and numpy needed) after the

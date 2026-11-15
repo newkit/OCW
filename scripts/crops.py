@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measured crop maps (spec §4.6.2, §14 Phase 8 T8).
+"""Measured crop maps (spec §4.6.1, §14 Phase 8 T8).
 
 Run by scripts/fetch-crops.sh on the build machine (needs the GDAL Python
 bindings and numpy, as on marge); writes the folder that `world-builder

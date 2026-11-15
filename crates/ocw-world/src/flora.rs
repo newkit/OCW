@@ -1,4 +1,4 @@
-//! The big plants of a region (spec §4.6.2, §14 Phase 8 T8): which species
+//! The big plants of a region (spec §4.6.1, §14 Phase 8 T8): which species
 //! a tree, shrub or plantation plant is, from what OSM maps
 //! (`genus` / `species` / `taxon` / `leaf_type` of single trees and tree
 //! rows, `trees=*` / `produce=*` / `crop=*` of plantations), the measured
@@ -219,7 +219,7 @@ impl Species {
     }
 
     /// Typical height of a grown plant (m) at scale 1 (the tree placement
-    /// scales it by 0.45 … 1.5; spec §4.6.2 tables, moderated a little
+    /// scales it by 0.45 … 1.5; spec §4.6.1 tables, moderated a little
     /// below the old trees of the inventories).
     pub fn height_m(self) -> f32 {
         use Species::*;
@@ -399,7 +399,7 @@ impl OsmLeaf {
     }
 }
 
-/// A region with its own vegetation tables (spec §4.6.2).
+/// A region with its own vegetation tables (spec §4.6.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FloraRegion {
     /// Liechtenstein and the Alpine Rhine valley.
@@ -526,7 +526,7 @@ fn by_altitude<'a>(bands: &'a [(f64, &'a [(Species, f32)])], alt: f64) -> &'a [(
 
 use Species::*;
 
-// --- Liechtenstein and the Alpine Rhine (spec §4.6.2, table 1) -------------
+// --- Liechtenstein and the Alpine Rhine (spec §4.6.1, table 1) -------------
 
 const AR_CONIFERS: [(f64, &[(Species, f32)]); 5] = [
     (
@@ -695,7 +695,7 @@ const TF_SUMMIT: [(Species, f32); 1] = [(Broom, 1.0)];
 /// Whether a place (lat, lon) of Tenerife lies on the windward side of the
 /// island: north-west of the line through the Teide (28.2723 N, 16.6422
 /// W) at a bearing of 60° (the NE–SW ridge from Anaga to Teno), where the
-/// trade winds' cloud belt waters the laurel forest (spec §4.6.2).
+/// trade winds' cloud belt waters the laurel forest (spec §4.6.1).
 pub fn windward(lat: f64, lon: f64) -> bool {
     let (lat0, lon0): (f64, f64) = (28.2723, -16.6422);
     // Local km east / north of the Teide.
@@ -710,7 +710,7 @@ pub fn windward(lat: f64, lon: f64) -> bool {
 
 /// The species of a plant at `site` in leaf group `group` (decided by the
 /// measured leaf type or the seasons' regional mix), `pick` its own hash
-/// (0 … 1). Tables of spec §4.6.2.
+/// (0 … 1). Tables of spec §4.6.1.
 pub fn pick_species(site: &Site, group: LeafGroup, pick: f32) -> Species {
     let alt = site.alt_m;
     if group == LeafGroup::Larch {
