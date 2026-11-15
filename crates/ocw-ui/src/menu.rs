@@ -596,11 +596,14 @@ mod tests {
                 .all(|r| row_setting(r) != Some("display.fullscreen"))
         );
         // God mode's rows are there (spec §14 Phase 13 G5: the browser
-        // flies too).
+        // flies too), on Controls -> Unicorn mode (M9: Controls is full).
         let controls = rows(&app, sub::Page::Controls);
+        let unicorn_row = Some(sub::Activate::Open(sub::Page::UnicornControls));
+        assert!(controls.iter().any(|r| r.confirm == unicorn_row));
+        let unicorn = rows(&app, sub::Page::UnicornControls);
         for key in ["controls.god_flight", "controls.invert_y"] {
             assert!(
-                controls.iter().any(|r| row_setting(r) == Some(key)),
+                unicorn.iter().any(|r| row_setting(r) == Some(key)),
                 "{key}"
             );
         }
