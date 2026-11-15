@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 3.54 – November 2026
+Version 3.55 – November 2026
 
 | Version | Change |
 |---|---|
+| 3.55 | Phase 9 **S9 planned** (asked by the user 2026-11-15; §14 Phase 9, 9J): a **calendar** on *World → Time → Calendar* (month grid, day / week / month steps by keys, gamepad, mouse, touch; each day banded with the landscape it shows at the rider's place and altitude – fresh green, summer, autumn colours, bare, lying snow – plus moon phase and sunrise / sunset; shortcuts for the place's computed season starts, solstices and equinoxes; time of day on the same page; console `time date`; read-only without the clock right in shared sessions) and a **season override** (*World → Time → Season*: follow the date, spring … winter as representative days of the place, or a day of year): the landscape (phenology, crops and plantations, snow, seasonal imagery) follows it while sun, light and weather keep the clock's date; server-owned like the clock (`season_override` in `Welcome` / `Snapshot`, `ClockAccess`). Open: Q11 (decoupled override or only date jumps; proposal both), Q12 (remember it) |
 | 3.54 | **The coordinator and the Claude tasks on the build dashboard** (§11.2.1; asked by the user 2026-11-15: "add monitoring of deb to build dashboard", "add info to all running claude tasks to build dashboard"). A **Coordinator (deb)** card at the top of the page (and `coordinator` in `/api/status`, a block in `--once`), read locally from `/proc` and `/sys` without root: memory (total, available, used, swap), the top 5 processes by RSS (name and RSS only, never command lines) and group sums (Claude Code, cargo/rustc, ffmpeg, python, QEMU, browsers), OOM kills (the user journal's unit OOM messages, `/proc/vmstat`'s counter; the kernel log and `dmesg` need root or group `adm` and are marked "not readable"), load against the cores and pressure (PSI), the disks `/`, `/home`, `/home/claude`, `/tmp` when they are their own mounts (deduplicated by device), the sizes of the big directories (du, niced, every 10 min, 60 s limit each), activity (Claude Code sessions, worktrees, ffmpeg, QEMU VMs, the art timer, the dashboard's memory against its `MemoryMax`), and sparklines of the last 6 h (memory available, load, root disk free) from a sample per minute in `test-output/build-log/DAY/deb.jsonl`, read back on start. Alerts with thresholds in one place (`coordinator.THRESHOLDS`): red below 15 % or 2 GiB available, swap above 80 %, a disk above 90 %, an OOM kill in the last 24 h; amber at softer levels. A **Claude tasks** section next to it (`claude_tasks` in the status): the tasks of the coordinator's `agents.jsonl` (running = last event started / resumed; finished ones of the last 24 h behind a toggle), liveness only from the task files' mtime and size (never their content; idle / waiting after 20 min), the worktrees of OCW and OCW-ART with last commit, commits not in `main`, merged and pushed (no fetch), and the **cutover check** ("Cutover OK: no running tasks, no remote runs", or what still runs, with the remote runs from the job queue) for the move of the coordinator to another user |
 | 3.53 | Phase 15 Q1 – Q4 decided by the user (2026-11-15; §14 Phase 15, 15C, 15G): **keep the generators and commit Blender sources too** (every model gets a `.blend` in `artwork/3dmodels/sources/`, generated ones made from their `.glb` on marge), **Git LFS** for the model files and sources (the free quota is per account, shared with OCW-ART; CI caches the LFS objects), **third-party models whose licence only asks for attribution** (CC0, CC-BY 4.0, MIT, Apache-2.0, BSD; credits in the manifest and on the credits pages), **Blender on marge** (round-trip test, `.blend` sources). New Q5: the GPL Blender add-on (proposal: M6). The coordinator's user `claude@deb` has its own disk for its home (the user, 2026-11-15) – the art media and LFS objects move there with the user move (docs/MIGRATE-DEB-USER.md) |
 | 3.52 | Phase 11 Q9 decided (the user installed Monado on marge, 2026-11-15; §14 Phase 11, 11E): Monado 25.0.0 and the OpenXR loader 1.1.47 on marge for the VR tests with the simulated headset; new dependency targets **`make deps-vr`** and **`make deps-vr-linux`** (Debian / Fedora / Arch packages, runtime check; Windows and macOS hints), not part of `make deps` (README *Build and run*) |
@@ -2975,7 +2976,7 @@ Before a material, house style, tree, sign or bike part is designed, we look at 
 
 ---
 
-### Phase 9 – Sky, Time, Seasons and Weather (planning, 2026-11-12; S1 – S8 done – S6 v3.19, S7 v3.16, S8 v3.18; open: the stars, Q7 postponed – see 9I)
+### Phase 9 – Sky, Time, Seasons and Weather (planning, 2026-11-12; S9 calendar and season planned v3.55; S1 – S8 done – S6 v3.19, S7 v3.16, S8 v3.18; open: the stars, Q7 postponed – see 9I)
 
 **Goal:** the world shows the **real sky, season and weather of the place the rider is riding**, at the real moment: the sun, moon and stars in the right position and moving, daylight and night, the season of the date, and today's weather there. On top, two machines let riders choose. The **time machine** sets any date and time; the **weather machine** sets any weather.
 
@@ -3251,6 +3252,77 @@ Decisions Q4 (realistic, on in solo and free ride, the organiser decides in even
 - **Scenes:** `weather-physics-headwind-vaduz` and `weather-physics-tailwind-vaduz` – the same 250 W on the same 10 % climb above Vaduz (km 2.4) into and with an 18 m/s wind.
 - **Not yet:** shelter by forests, buildings and terrain; a yaw-dependent CdA; the wind's side force on steering (gusts pushing a rider sideways); spray and the wet road's look are unchanged (S4); resistance-only trainers.
 
+#### 9J – Planned: S9 (calendar and season), 2026-11-15
+
+**Asked by the user (2026-11-15):** "add a calendar for better date picking in the world section; also allow changing the season."
+
+Today, *World → Time* (9I) changes the date only one day per press (← / →) or through the solstice presets. Reaching 3 May or 12 October takes dozens of presses, and nothing shows what the landscape looks like on a given day. The season always follows the date (9C, 9I-S8).
+
+**S9a – The calendar** (a new page *World → Time → Calendar*, both apps; `ocw_client::menu` + `ocw-ui`, B6 parity):
+
+- **Layout:** a month view, a 7 × 6 grid with the week starting on Monday (from the locale later), with the month and year as the title, and ‹ › for the month and « » for the year. The range is that of the time machine (1900–2100, 9I). Today and the selected day are marked.
+- **Each day shows what it will look like at the rider's place and altitude.** It gets a small coloured band from the season model (`ocw_sky::season`, pure, the same `SeasonDay` the renderer uses), so a date is picked by its look:
+  - fresh green: budburst to full leaf;
+  - summer green;
+  - autumn colours;
+  - bare;
+  - lying snow: climatological, or the real snow when real weather with snow depth is on (S7 / S8).
+
+  It also gets a tiny moon-phase dot (S2's moon) and, on hover or focus, a tooltip line: "sunrise 06:12 · sunset 20:41 · day 14 h 29 min · beech in full leaf · snow line 1,600 m".
+- **Legend and shortcuts:** a legend row under the grid. Shortcuts:
+  - *Today*;
+  - the solstices and equinoxes;
+  - **the season starts of this place**, computed rather than fixed calendar dates: first green, full leaf, peak autumn colours, leaves gone, first lying snow at the rider's altitude.
+
+  Choosing one keeps the time of day, as the presets do (9I).
+- **Input:**
+  - keyboard and gamepad move the focus by day (← / →), by week (↑ / ↓) and by month (Page Up / Down, the shoulder buttons);
+  - Enter / South sets the date;
+  - Esc / East goes back without changing it;
+  - mouse and touch click or tap a day, and swipe a month.
+
+  Ten-foot sizes (§3.2.1): the grid is the page's content; the *six rows* rule applies to row pages, so the calendar is a grid page like the weather presets (5 × 4 grid, S5).
+- **Time of day on the same page:** an hour and minute stepper under the grid (← / → by 15 min, Shift for 1 min), so date and time are set together. The existing rows of *World → Time* stay as they are.
+- **Console:** `time date YYYY-MM-DD [HH:MM]` (fixed mode). `time` already takes an instant (9I); the console accepts the plain date form too.
+- **Shared sessions:** the server owns the date (9I, `ClockAccess`). The calendar is shown to everyone; setting a date is a `ClockRequest` (host or organiser, Q2). Riders without the right see it read-only, dimmed, with "who sets the time".
+
+**S9b – Changing the season without changing the date** (proposal; Q11):
+
+- **Purpose:** ride on today's date and time with the sun and light of the real moment, but see the landscape of another season. For example, autumn colours in Vaduz in July, or a summer Malbun in January for training. A date change (S9a) changes both; this changes only the landscape.
+- **Setting:**
+  - *World → Time → Season*, values:
+    - **follow the date** (the default; 9C as built);
+    - **spring**, **early summer**, **summer**, **autumn**, **late autumn**, **winter**: each a representative day of the place, computed per place like the shortcuts above, for example winter = the middle of the snow season at the rider's altitude;
+    - **day of year** (a slider, 1–365) for fine control.
+  - Console: `season set follow|spring|early-summer|summer|autumn|late-autumn|winter|DOY`, with `season` printing what is in effect.
+- **What follows the season override:**
+  - phenology: leaves, larches, grass;
+  - the crop calendar: fields, stands of the T8 vegetation (v3.49), orchards in blossom or fruit;
+  - the climatological snow;
+  - the seasonal imagery tints (T3);
+  - the far colour map.
+- **What does not:** the sun, moon, day length and light stay with the clock's date (9B), and the weather stays the weather's (S4 – S7). With *real* weather, a winter landscape under a July sun is allowed. The HUD clock shows a small season mark ("☼ 14:20 · autumn look") so screenshots don't mislead.
+- **How it works:**
+  - server-owned like the clock: a new optional field `season_override` (day of year, or none) in `Welcome` and `Snapshot` (§6.2, fields only added), set with a `ClockRequest` extension under the same `ClockAccess`. Every rider in a session sees the same landscape;
+  - events: the organiser may fix it, and it is shown in the event info;
+  - the client passes `season_override.unwrap_or(clock day)` to `SeasonCache` (`ocw-render::season`); `SeasonDay` and the tile rebuild per season bucket (4 days) work unchanged.
+- **Persistence:** like the time machine, every ride starts at "follow the date" (9A), unless Q12 decides otherwise.
+
+**Tests (§11.4):**
+- **The calendar model (pure, in `ocw_client::menu`):**
+  - the month grid of known months: weeks across year ends, leap years, February 2100 is not a leap year;
+  - the focus moves by day, week and month, clamped to the range;
+  - DST days;
+  - the season bands per day for Vaduz and Malbun, matching `ocw_sky::season` at the same days (15 January bare, 1 May fresh, 15 October colouring);
+  - the computed season starts lie in plausible windows for Vaduz, Malbun and Tenerife;
+  - read-only in a shared session without the right.
+- **The override:** the server keeps and sends it; a request without access is refused; the client's season day comes from the override when set and from the clock otherwise; the sun position is unchanged by it.
+- **Scenes** (`scripts/scenes.toml`):
+  - `menu-time-calendar` (desktop X11 and Wayland, browser);
+  - `season-override-vaduz-july-autumn`, compared with `season-vaduz-autumn` (15 October): the same landscape colours, a different sun;
+  - `season-override-malbun-january-summer`.
+  - Each as a single picture.
+
 #### 9H – Open questions (for the user)
 
 - **Q1 – Whose "now"? Decided (2026-11-12):** the time of the place **in the virtual world** where the rider is: its local time zone and DST, its sun, moon and stars. The real location of the person at home plays no role. A "same time as at home" preset is not planned.
@@ -3283,6 +3355,8 @@ Decisions Q4 (realistic, on in solo and free ride, the organiser decides in even
 - **Q8 – Historic weather: decided (2026-11-14, dashboard: keep it only if the data fits our licence) – kept, the data fits.** ERA5 (ECMWF / Copernicus C3S reanalysis, hourly from 1940) is published under **CC BY 4.0** for most datasets (e.g. ERA5 hourly single levels, ERA5-Land) and otherwise under the *Licence to use Copernicus products* – both are allowed by rule 8A (attribution: "Contains modified Copernicus Climate Change Service information [year]"; the exact licence is checked per dataset on its CDS page before use). Sources: the Copernicus Climate Data Store (free account needed for downloads, on our infrastructure) or Open-Meteo's historical API (ERA5-based, CC BY 4.0 data; its free API is non-commercial, which fits the decision of no commercial release); for the regions, MeteoSwiss and DWD historic station data (open data) refine it. If a dataset turns out to have an incompatible licence, that source is dropped, not the feature.
 - **Q9 – Extreme weather: decided (2026-11-12):** realistic, **no cap**. Storms, hail, heavy snow, thunderstorms with lightning, dense fog and gale-force wind are all part of the simulation, the weather machine and real weather. The only limit is the physics switch (Q4).
 - **Q10 – Priority: decided (2026-11-14):** after S1 and S3 (done), the order is **S2 → S4 → S5 → S7 → S8 → S6** (S2 done, 9I-S2; S4 done, 9I-S4; S5 done, 9I-S5; S7 done, 9I-S7).
+- **Q11 – Season override: decoupled from the date?** *(asked 2026-11-15)* The proposal (S9b) lets the landscape's season differ from the date while sun, light and weather follow the clock. Alternatively, "changing the season" could only **jump the date** to the season's representative day, keeping the time of day: simpler and always consistent, but it moves the sun as well. **Proposal: both.** The calendar's season shortcuts jump the date (S9a), and the override is a separate setting (S9b).
+- **Q12 – Remember the season choice?** Every ride starts with the season following the date (proposal, like the time machine), or the override is kept as a setting across rides?
 
 ---
 
