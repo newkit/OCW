@@ -37,7 +37,8 @@ the journal's "Incidents" section.
   patterns applied.
 - **Effect:** the tracked text files in the main checkout held the build user
   name as a word (not committed). The re-rendered day videos of that run
-  could show it in prompt bubbles, and they were published at about 07:00.
+  could show it in prompt bubbles; they were published at about 06:15 and
+  replaced at 06:43.
   No hosts and no IP addresses were affected.
 - **Fix:** `check-masked --fix` with the main checkout's tool re-masked the
   files, and the check passes again. `diary.py` now finds `config/machines.toml`
