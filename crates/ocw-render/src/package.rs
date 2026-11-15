@@ -1952,6 +1952,17 @@ fn upload_tile(
             // The plants in chunks (spec §14 Phase 8 T8): the near models
             // up to `vegetation::NEAR_FADE_M`, the far ones beyond, as far as
             // the quality preset says, cross-faded.
+            // Banana plants and vine rows: up close only.
+            for chunk in std::mem::take(&mut t.plants.details) {
+                c.spawn((
+                    Mesh3d(meshes.add(chunk.near.mesh())),
+                    MeshMaterial3d(materials.trees.clone()),
+                    Transform::from_translation(Vec3::from(chunk.origin)),
+                    CameraInteraction::SeeThrough,
+                    TileDetail,
+                    crate::quality::detail_plant_range(),
+                ));
+            }
             for chunk in std::mem::take(&mut t.plants.chunks) {
                 let at = Transform::from_translation(Vec3::from(chunk.origin));
                 if !chunk.near.indices.is_empty() {

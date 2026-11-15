@@ -252,7 +252,8 @@ pub fn bark_colour(sp: Species) -> [f32; 3] {
     match sp {
         Beech | Ash | SycamoreMaple => lin3(0.45, 0.44, 0.41),
         Birch => lin3(0.86, 0.85, 0.80),
-        ScotsPine | CanaryPine => lin3(0.50, 0.32, 0.20),
+        ScotsPine => lin3(0.50, 0.32, 0.20),
+        CanaryPine => lin3(0.38, 0.29, 0.22),
         Eucalyptus => lin3(0.70, 0.66, 0.58),
         DatePalm => lin3(0.44, 0.35, 0.24),
         SlenderPalm => lin3(0.52, 0.47, 0.40),
@@ -635,11 +636,15 @@ pub fn plant(m: &mut MeshArrays, sp: Species, at: &PlantAt, look: &PlantLook, de
                 );
                 return;
             }
-            let tufts = if sp == CanaryPine { 7 } else { 5 };
+            let tufts = if sp == CanaryPine { 9 } else { 5 };
             for i in 0..tufts {
                 let a = turn + i as f32 * 2.39;
                 let k = i as f32 / tufts as f32;
-                let y = (0.55 + 0.4 * k) * h;
+                let y = if sp == CanaryPine {
+                    (0.4 + 0.55 * k) * h
+                } else {
+                    (0.55 + 0.4 * k) * h
+                };
                 let reach = r * (0.75 - 0.45 * k) * (0.7 + 0.5 * h01(at.pick, i));
                 let c = Vec3::new(reach * a.cos(), y, reach * a.sin());
                 tube(
@@ -831,7 +836,7 @@ pub fn plant(m: &mut MeshArrays, sp: Species, at: &PlantAt, look: &PlantLook, de
             let fronds = match (slender, near) {
                 (_, false) => 6,
                 (true, true) => 12,
-                (false, true) => 22,
+                (false, true) => 26,
             };
             let len = if slender { 2.6 } else { 4.4 };
             for i in 0..fronds {
@@ -850,7 +855,7 @@ pub fn plant(m: &mut MeshArrays, sp: Species, at: &PlantAt, look: &PlantLook, de
                     dir,
                     up,
                     len * s,
-                    if slender { 0.9 } else { 0.75 } * s,
+                    if slender { 0.9 } else { 1.15 } * s,
                     (1.4 + 0.8 * tier) * s,
                     if near { 4 } else { 2 },
                     foot,
@@ -914,8 +919,8 @@ pub fn plant(m: &mut MeshArrays, sp: Species, at: &PlantAt, look: &PlantLook, de
         Banana => {
             // Banana plants are only drawn near (plantations).
             let top = base + Vec3::Y * 0.6 * h * s;
-            tube(m, base, top, 0.14 * s, 0.1 * s, 5, foot, bark);
-            let n = if near { 8 } else { 4 };
+            tube(m, base, top, 0.14 * s, 0.1 * s, 4, foot, bark);
+            let n = if near { 6 } else { 4 };
             for i in 0..n {
                 let a = turn + i as f32 * 2.39996;
                 let dir = Vec3::new(a.cos(), 0.0, a.sin());
@@ -929,11 +934,11 @@ pub fn plant(m: &mut MeshArrays, sp: Species, at: &PlantAt, look: &PlantLook, de
                     m,
                     top,
                     dir,
-                    1.4 - 0.15 * (i % 3) as f32,
-                    2.1 * s,
-                    0.7 * s,
-                    1.0 * s,
-                    if near { 3 } else { 2 },
+                    0.75 - 0.2 * (i % 3) as f32,
+                    2.2 * s,
+                    0.95 * s,
+                    1.1 * s,
+                    2,
                     foot,
                     colour,
                 );
@@ -1192,27 +1197,33 @@ pub fn vine_row(
     // A box along the row with its feet following the ground (the ends'
     // heights), split into 5 m pieces.
     let pieces = (len / 5.0).ceil().max(1.0) as u32;
-    let rgba_c = rgba(c);
+    // Each piece's own height (the canopy's ragged top) and shade.
+    let jag = |i: u32, k: u32| h01(a.x * 0.37 + b.z * 0.11 + i as f32 * 0.013, k);
+    let mid = (lo + hi) / 2.0;
     for i in 0..pieces {
         let (t0, t1) = (i as f32 / pieces as f32, (i + 1) as f32 / pieces as f32);
         let (p0, p1) = (a + (b - a) * t0, a + (b - a) * t1);
-        let corners = |p: Vec3| {
+        let top = |j: u32| hi - (hi - mid) * 0.25 * jag(j, 1);
+        let rgba_c = rgba(shade3(c, 0.9 + 0.2 * jag(i, 2)));
+        // The cross-section: foot, middle (widest), top on each side.
+        let ring = |p: Vec3, j: u32| {
             [
-                p + side * half + Vec3::Y * lo,
-                p - side * half + Vec3::Y * lo,
-                p - side * half * 0.8 + Vec3::Y * hi,
-                p + side * half * 0.8 + Vec3::Y * hi,
+                p + side * half * 0.55 + Vec3::Y * lo,
+                p + side * half + Vec3::Y * mid,
+                p + side * half * 0.45 + Vec3::Y * top(j),
+                p - side * half * 0.45 + Vec3::Y * top(j),
+                p - side * half + Vec3::Y * mid,
+                p - side * half * 0.55 + Vec3::Y * lo,
             ]
         };
-        let (q0, q1) = (corners(p0), corners(p1));
-        // Four sides (the ends are open: rows continue).
-        let faces = [
-            (0usize, 3usize, side),
-            (2, 1, -side),
-            (3, 2, Vec3::Y),
-            (1, 0, -Vec3::Y),
-        ];
-        for (i0, i1, n) in faces {
+        let (q0, q1) = (ring(p0, i), ring(p1, i + 1));
+        // Six faces around (the ends are open: rows continue).
+        for k in 0..6usize {
+            let (i0, i1) = (k, (k + 1) % 6);
+            let n = {
+                let e = q0[i1] - q0[i0];
+                e.cross(dir).normalize_or(Vec3::Y)
+            };
             let start = m.positions.len() as u32;
             for p in [q0[i0], q0[i1], q1[i0], q1[i1]] {
                 m.positions.push(p.to_array());
@@ -1549,10 +1560,10 @@ mod tests {
             vine_colour(&look, false, 0.5),
         );
         check(&m);
-        // 9 posts of 12 triangles and 9 pieces of 4 faces of 2 triangles.
-        assert_eq!(m.indices.len() / 3, 9 * 12 + 9 * 4 * 2);
+        // 9 posts of 12 triangles and 9 pieces of 6 faces of 2 triangles.
+        assert_eq!(m.indices.len() / 3, 9 * 12 + 9 * 6 * 2);
         let top = m.positions.iter().map(|p| p[1]).fold(f32::MIN, f32::max);
-        assert!(top <= 104.0 + 1.85 && top > 104.0 + 1.5);
+        assert!(top <= 104.0 + 1.85 && top > 104.0 + 1.4, "{top}");
         let mut s = MeshArrays::default();
         stand_cell(
             &mut s,

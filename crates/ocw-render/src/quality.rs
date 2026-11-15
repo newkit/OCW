@@ -279,6 +279,16 @@ pub fn near_tree_range() -> VisibilityRange {
     }
 }
 
+/// The visibility range of a detail chunk's plants (banana plants, vine
+/// rows): up to `vegetation::DETAIL_FADE_M`.
+pub fn detail_plant_range() -> VisibilityRange {
+    VisibilityRange {
+        start_margin: 0.0..0.0,
+        end_margin: crate::vegetation::DETAIL_FADE_M,
+        use_aabb: true,
+    }
+}
+
 /// The visibility range of a tile's far trees for this preset.
 pub fn tree_range(preset: &QualityPreset) -> VisibilityRange {
     far_tree_range(preset.tree_view_m)

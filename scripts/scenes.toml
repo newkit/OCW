@@ -2180,10 +2180,10 @@ shot = 10
 
 [[scene]]
 name = "veg-li-triesenberg-forest"
-description = "Vegetation: the mixed forest above Triesenberg on the Malbun road (km 7, about 1,150 m, 15 July): spruce, fir, beech and sycamore"
+description = "Vegetation: the forest above Triesenberg towards Gaflei (1,390 m, 15 July): spruce and fir with sycamores, larches light green"
 world = true
-args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", "--no-neighbours", "--bots", "0"]
-at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 7.0", "2.5=camera.orbit 70 14 22"]
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-860,2260", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 70 14 26"]
 shot = 10
 
 [[scene]]

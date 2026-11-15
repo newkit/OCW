@@ -23,6 +23,13 @@ use crate::package::{Keep, MeshArrays, TreeSite};
 
 /// Chunks per tile side (200 m chunks for 1 km tiles).
 pub const CHUNKS: u32 = 5;
+/// Detail chunks per tile side (100 m): the plants drawn only up close –
+/// banana plants, vine rows – in their own smaller chunks with a shorter
+/// range ([`DETAIL_FADE_M`]); beyond, the colour map shows the plantation.
+pub const DETAIL_CHUNKS: u32 = 10;
+/// The detail plants fade out between these distances from the camera to
+/// a detail chunk's centre (m).
+pub const DETAIL_FADE_M: std::ops::Range<f32> = 130.0..180.0;
 /// The near models give way to the far ones between these distances
 /// from the camera to a chunk's centre (m).
 pub const NEAR_FADE_M: std::ops::Range<f32> = 230.0..310.0;
@@ -42,6 +49,8 @@ pub struct TreeChunk {
 #[derive(Default)]
 pub struct TilePlants {
     pub chunks: Vec<TreeChunk>,
+    /// The detail chunks (only their `near` mesh; [`DETAIL_CHUNKS`]).
+    pub details: Vec<TreeChunk>,
     pub crowns: Vec<[f32; 4]>,
 }
 
@@ -138,25 +147,33 @@ pub fn tile_plants(
     let proj = ocw_world::geo::LocalProjection::new(pkg.origin.0, pkg.origin.1);
     let (lat, lon) = proj.unproject([o[0] + f64::from(size) / 2.0, o[1] + f64::from(size) / 2.0]);
     let windward = ocw_world::flora::windward(lat, lon);
-    let cs = size / CHUNKS as f32;
-    let n = CHUNKS as usize;
-    let mut chunks: Vec<TreeChunk> = (0..n * n)
-        .map(|i| {
-            let (c, r) = (i % n, i / n);
-            let ox = o[0] as f32 + (c as f32 + 0.5) * cs;
-            let oz = o[1] as f32 + (r as f32 + 0.5) * cs;
-            let oy = pkg.height(f64::from(ox), f64::from(oz)).unwrap_or(0.0) as f32;
-            TreeChunk {
-                origin: [ox, oy, oz],
-                ..Default::default()
-            }
-        })
-        .collect();
-    let chunk_of = |x: f32, z: f32| -> usize {
+    let grid = |per: u32| -> Vec<TreeChunk> {
+        let cs = size / per as f32;
+        let n = per as usize;
+        (0..n * n)
+            .map(|i| {
+                let (c, r) = (i % n, i / n);
+                let ox = o[0] as f32 + (c as f32 + 0.5) * cs;
+                let oz = o[1] as f32 + (r as f32 + 0.5) * cs;
+                let oy = pkg.height(f64::from(ox), f64::from(oz)).unwrap_or(0.0) as f32;
+                TreeChunk {
+                    origin: [ox, oy, oz],
+                    ..Default::default()
+                }
+            })
+            .collect()
+    };
+    let cell_of = |per: u32, x: f32, z: f32| -> usize {
+        let cs = size / per as f32;
+        let n = per as usize;
         let c = (((x - o[0] as f32) / cs).floor().max(0.0) as usize).min(n - 1);
         let r = (((z - o[1] as f32) / cs).floor().max(0.0) as usize).min(n - 1);
         r * n + c
     };
+    let mut chunks = grid(CHUNKS);
+    let mut details = grid(DETAIL_CHUNKS);
+    let chunk_of = |x: f32, z: f32| cell_of(CHUNKS, x, z);
+    let detail_of = |x: f32, z: f32| cell_of(DETAIL_CHUNKS, x, z);
     let kept = |x: f32, z: f32| keep.is_none_or(|f| f([f64::from(x), f64::from(z)]));
     let mut crowns = Vec::new();
     let site_of = |class: Option<LandClass>, x: f32, z: f32, alt: f64| Site {
@@ -184,8 +201,12 @@ pub fn tile_plants(
                scale: f32,
                bits: (i64, i64),
                near_only: bool| {
-        let i = chunk_of(base.x, base.z);
-        let ch = &mut chunks[i];
+        // Plants drawn only up close go to the detail chunks.
+        let ch = if near_only {
+            &mut chunks[detail_of(base.x, base.z)]
+        } else {
+            &mut chunks[chunk_of(base.x, base.z)]
+        };
         let origin = Vec3::from(ch.origin);
         let alt = f64::from(base.y);
         let jitter = hash(bits.0, bits.1, 14) * 2.0 - 1.0;
@@ -215,9 +236,10 @@ pub fn tile_plants(
         let leaf = leaf_of(class, base.x, base.z, alt, bits);
         let site = site_of(class, base.x, base.z, alt);
         let sp = pick_species(&site, group(leaf), hash(bits.0, bits.1, 19));
-        // The grid's scale (0.45 … 1.5 by land class) is relative to a
-        // forest tree of scale 1; shrubs keep theirs.
-        let scale = s * stature(region, sp, alt) * 0.85;
+        // The grid's scale by land class (0.35 … 1.5) around its class's
+        // mean: the species' own size varies by ±30 %.
+        let (_, s0, s1) = ocw_world::trees::tree_density(class.unwrap_or_default());
+        let scale = s / ((s0 + s1) / 2.0).max(0.1) * stature(region, sp, alt);
         put(&mut chunks, &mut crowns, sp, base, scale, bits, false);
     }
     // The mapped trees.
@@ -261,7 +283,7 @@ pub fn tile_plants(
         let bits = (i64::from(base.x.to_bits()), i64::from(base.z.to_bits()));
         let near_only = p.species == Species::Banana;
         put(
-            &mut chunks,
+            if near_only { &mut details } else { &mut chunks },
             &mut crowns,
             p.species,
             base,
@@ -284,8 +306,7 @@ pub fn tile_plants(
                 continue;
             }
             let y = |p: Vec2| pkg.height(f64::from(p.x), f64::from(p.y)).unwrap_or(0.0) as f32;
-            let i = chunk_of(mid.x, mid.y);
-            let ch = &mut chunks[i];
+            let ch = &mut details[detail_of(mid.x, mid.y)];
             let origin = Vec3::from(ch.origin);
             let (q0, q1) = (
                 Vec3::new(p0.x, y(p0), p0.y) - origin,
@@ -299,7 +320,7 @@ pub fn tile_plants(
             let height = if region == FloraRegion::Tenerife {
                 1.1
             } else {
-                1.8
+                1.6
             };
             crate::flora::vine_row(&mut ch.near, q0, q1, height, &look, colour);
         }
@@ -307,7 +328,12 @@ pub fn tile_plants(
     // The fields' stands.
     stands(pkg, key, &mut chunks, &chunk_of, keep, season);
     chunks.retain(|c| !c.near.indices.is_empty() || !c.far.indices.is_empty());
-    TilePlants { chunks, crowns }
+    details.retain(|c| !c.near.indices.is_empty());
+    TilePlants {
+        chunks,
+        details,
+        crowns,
+    }
 }
 
 /// The stands of maize, cereals, sunflowers, rapeseed and potatoes: a slab
