@@ -9,6 +9,7 @@ pub mod aids_hud;
 pub mod bridges;
 pub mod building_material;
 pub mod camera;
+pub mod completion;
 pub mod console;
 pub mod damage_hud;
 pub mod damage_look;
