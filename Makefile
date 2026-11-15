@@ -455,6 +455,7 @@ dashboard-install: ## Install and start the build dashboard as a systemd user se
 	sed 's|@REPO@|$(CURDIR)|g' tools/build-dashboard/ocw-build-dashboard.service > $(HOME)/.config/systemd/user/ocw-build-dashboard.service
 	systemctl --user daemon-reload
 	systemctl --user enable --now ocw-build-dashboard.service
+	systemctl --user restart ocw-build-dashboard.service
 	@echo "Dashboard: http://localhost:8765/  (start at boot without login: sudo loginctl enable-linger $$USER)"
 
 dashboard-uninstall: ## Stop and remove the build dashboard user service

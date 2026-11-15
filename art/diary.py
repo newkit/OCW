@@ -227,7 +227,7 @@ def day_number(day: str) -> int:
 # Text files of the archive that are tracked in git (ART-PROJECT §2): always
 # written masked; everything else in the archive is git-ignored.
 TRACKED_TOP = ("index.md", "SHA256SUMS")
-TRACKED_DAY = ("journal.md", "journal.json", "tokens.json")
+TRACKED_DAY = ("journal.md", "journal.json", "tokens.json", "incidents.md")
 
 
 def tracked_files() -> list[Path]:
@@ -483,6 +483,24 @@ PRIVATE_IP_RE = re.compile(
 _SECRETS: list[tuple[str, str]] | None = None
 
 
+def machines_conf() -> Path | None:
+    """config/machines.toml of this checkout, else of the main checkout (an
+    agent worktree has none; scripts/remote.sh looks there too). Running in
+    a worktree without this fallback once wrote journals without the users
+    masked (2026-11-15)."""
+    for root in (ROOT, main_checkout()):
+        if root is not None and (root / "config" / "machines.toml").is_file():
+            return root / "config" / "machines.toml"
+    return None
+
+
+def main_checkout() -> Path | None:
+    r = run(["git", "-C", ROOT, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            capture_output=True, text=True, check=False)
+    common = r.stdout.strip()
+    return Path(common).parent if r.returncode == 0 and common else None
+
+
 def _secrets() -> list[tuple[str, str]]:
     """(text, replacement) pairs: every build machine's host (replaced by the
     machine's name) and user ("user"; asked from scripts/remote.sh, which
@@ -492,8 +510,15 @@ def _secrets() -> list[tuple[str, str]]:
     if _SECRETS is not None:
         return _SECRETS
     out = []
-    conf = ROOT / "config" / "machines.toml"
-    names = re.findall(r'^\s*name\s*=\s*"([^"]+)"', conf.read_text(), re.M) if conf.exists() else []
+    conf = machines_conf()
+    if conf is None:
+        if os.environ.get("OCW_ART_NO_MACHINES") != "1":
+            raise SystemExit("config/machines.toml not found (here or in the main checkout): without it the "
+                             "build machines' hosts and users cannot be masked (ART-PROJECT §2.5). "
+                             "OCW_ART_NO_MACHINES=1 masks without them (tests only).")
+        names = []
+    else:
+        names = re.findall(r'^\s*name\s*=\s*"([^"]+)"', conf.read_text(), re.M)
     for name in names:
         for k in ("host", "user"):
             v = run([ROOT / "scripts" / "remote.sh", name, "field", k], capture_output=True,
@@ -861,12 +886,190 @@ def builds_of(day: str) -> dict:
     }
 
 
+# --------------------------------------------------------------- incidents
+#
+# The incident log (ART-PROJECT §2.6): what went wrong on the build
+# infrastructure, collected every hour into test-output/build-log/DAY/
+# incidents.jsonl (time, kind, source, machine, text; masked) from the
+# journal of this machine (OOM kills, failed and restarted units, read-only)
+# and from the build log (machines offline / online, disks over 90 %,
+# janitor deletions, failed remote.sh runs); plus the coordinator's
+# root-cause notes in art/build-history/DAY/incidents.md (tracked, masked).
+
+INCIDENTS_NAME = "incidents.jsonl"
+DISK_FULL_PCT = 90.0
+JOURNAL_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\S*\s+(\S+)\s+([^:]+):\s+(.*)$")
+JOURNAL_GREP = r"OOM killer|Killed process|Out of memory|Failed with result|Scheduled restart job"
+
+
+def _unit_label(unit: str) -> str:
+    """A unit's name for the log: tmux-spawn-<uuid>.scope → tmux scope."""
+    if unit.startswith("tmux-spawn-"):
+        return "tmux scope (a terminal session)"
+    return unit
+
+
+def parse_journal(lines, host="deb") -> list[dict]:
+    """Incidents from `journalctl -o short-iso` lines: OOM kills, failed and
+    restarted units. Each OOM kill of a unit is listed once per minute."""
+    out, seen = [], set()
+    for line in lines:
+        m = JOURNAL_RE.match(line.strip())
+        if not m:
+            continue
+        ts, _host, ident, msg = m.groups()
+        time_ = ts[11:19]
+        k = re.search(r"(?:Out of memory: )?Killed process (\d+) \(([^)]*)\)", msg)
+        if k and ident.startswith("kernel"):
+            kind, text = "oom-kill", f"kernel OOM killer killed {k.group(2)} (pid {k.group(1)})"
+        else:
+            u = re.match(r"(\S+\.(?:service|scope|timer)): (.*)$", msg)
+            if not u:
+                continue
+            unit, rest = u.groups()
+            label = _unit_label(unit)
+            if "killed by the OOM killer" in rest:
+                kind, text = "oom-kill", f"OOM killer stopped {label}"
+            elif rest.startswith("Failed with result"):
+                res = re.search(r"'([^']+)'", rest)
+                res = res.group(1) if res else "?"
+                if res == "oom-kill" or not unit.startswith("ocw-"):
+                    continue  # an OOM kill is already listed; only our own units fail loudly
+                kind, text = "unit-failed", f"{label} failed ({res})"
+            elif rest.startswith("Scheduled restart job"):
+                n = re.search(r"counter is at (\d+)", rest)
+                kind, text = "unit-restart", f"{label} restarted" + (f" (restart {n.group(1)})" if n else "")
+            else:
+                continue
+        key = (kind, text, time_[:5])
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"time": time_, "kind": kind, "source": "journal", "machine": host, "text": text})
+    return out
+
+
+def journal_lines(day: str) -> list[str]:
+    """This machine's journal of the day (user and system, read-only),
+    filtered to the incident messages. Empty where journalctl is missing
+    or OCW_ART_JOURNAL=0 (tests)."""
+    if os.environ.get("OCW_ART_JOURNAL") == "0":
+        return []
+    nxt =(dt.date.fromisoformat(day) + dt.timedelta(days=1)).isoformat()
+    lines = []
+    for scope in (["--user"], []):
+        try:
+            r = run(["journalctl", *scope, "--since", f"{day} 00:00:00", "--until", f"{nxt} 00:00:00",
+                     "-o", "short-iso", "--no-pager", "-q", "--grep", JOURNAL_GREP],
+                    capture_output=True, text=True, check=False, timeout=60)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        lines += r.stdout.splitlines()
+    return lines
+
+
+def _jsonl(path: Path) -> list[dict]:
+    out = []
+    if path.exists():
+        for line in path.read_text(errors="replace").splitlines():
+            try:
+                out.append(json.loads(line))
+            except ValueError:
+                pass
+    return out
+
+
+def build_log_incidents(day: str, build_log: Path) -> list[dict]:
+    """Incidents from the day's build log: machines going offline / online,
+    disks over 90 %, janitor deletions, failed remote.sh runs (a count)."""
+    out, online, full = [], {}, set()
+    for s_ in _jsonl(build_log / "servers.jsonl"):
+        t = str(s_.get("time", ""))[11:19]
+        for m in (s_.get("status") or {}).get("machines", []) or []:
+            name, on = m.get("name", "?"), bool(m.get("online"))
+            if online.get(name, True) != on:
+                out.append({"time": t, "kind": "machine-offline" if not on else "machine-online",
+                            "source": "dashboard", "machine": name,
+                            "text": f"{name} {'unreachable' if not on else 'back online'}"
+                                    + (f" ({mask(str(m.get('error')))[:60]})" if not on and m.get("error") else "")})
+            online[name] = on
+            for d in m.get("disks") or []:
+                key, pct = (name, d.get("name")), d.get("pct")
+                if pct is None:
+                    continue
+                if pct >= DISK_FULL_PCT and key not in full:
+                    full.add(key)
+                    out.append({"time": t, "kind": "disk-full", "source": "dashboard", "machine": name,
+                                "text": f"disk {d.get('name')} on {name} at {pct:.0f} %"})
+                elif pct < DISK_FULL_PCT - 5:
+                    full.discard(key)
+    for e in _jsonl(build_log / "janitor.jsonl"):
+        size = e.get("bytes") or 0
+        out.append({"time": str(e.get("time", ""))[11:19], "kind": "janitor-delete", "source": "janitor",
+                    "machine": e.get("machine", "?"),
+                    "text": f"janitor {e.get('action', 'deleted')} {e.get('path', '')} ({size / 1e9:.1f} GB)"})
+    failed = [r for r in _jsonl(build_log / "runs.jsonl") if r.get("exit", 0) != 0]
+    if failed:
+        per = {}
+        for r in failed:
+            per[r.get("machine", "?")] = per.get(r.get("machine", "?"), 0) + 1
+        out.append({"time": str(failed[-1].get("start", ""))[11:19], "kind": "runs-failed", "source": "remote.sh",
+                    "machine": ", ".join(sorted(per)),
+                    "text": f"{len(failed)} failed remote.sh runs ("
+                            + ", ".join(f"{k} {v}" for k, v in sorted(per.items())) + ")"})
+    return out
+
+
+def incidents(day: str, journal_text: list[str] | None = None) -> list[dict]:
+    """Collects the day's incidents into test-output/build-log/DAY/incidents.jsonl
+    (rewritten, masked) and returns them."""
+    build_log = TEST_OUTPUT / "build-log" / day
+    lines = journal_lines(day) if journal_text is None else journal_text
+    out = parse_journal(lines) + build_log_incidents(day, build_log)
+    out.sort(key=lambda e: e["time"])
+    secrets = _secrets()
+    text = "".join(mask(json.dumps(e, ensure_ascii=False), secrets) + "\n" for e in out)
+    build_log.mkdir(parents=True, exist_ok=True)
+    (build_log / INCIDENTS_NAME).write_text(text)
+    log(f"{day}: {len(out)} incidents")
+    return [json.loads(x) for x in text.splitlines()]
+
+
+def incidents_of(day: str) -> dict:
+    """The day's incidents for the journal: the collected ones (test-output,
+    else the archive's copy) and the coordinator's notes (incidents.md)."""
+    auto = _jsonl(TEST_OUTPUT / "build-log" / day / INCIDENTS_NAME)
+    if not auto:
+        auto = _jsonl(HIST / day / "logs" / "build-log" / INCIDENTS_NAME)
+    notes_p = HIST / day / "incidents.md"
+    notes = mask(notes_p.read_text(errors="replace")) if notes_p.exists() else ""
+    heads = [h.strip("# ").strip() for h in notes.splitlines() if h.startswith("## ")]
+    return {"auto": auto, "notes": notes, "noted": heads}
+
+
+def incident_text(j: dict, at: str, text: str | None = None) -> str:
+    """The text of an incident card: `text`, else the root-cause note whose
+    heading starts with the time `at`, else the first collected incident at
+    that time."""
+    if text:
+        return text
+    inc = j.get("incidents") or {}
+    for h in inc.get("noted") or []:
+        if h.startswith(at):
+            return h[len(at):].strip(" –-:")
+    for e in inc.get("auto") or []:
+        if str(e.get("time", "")).startswith(at):
+            return e["text"]
+    return "something went wrong"
+
+
 def journal(day: str) -> dict:
     commits = commits_of(day)
     builds = builds_of(day)
     ps = prompts(day)
     tk = tokens(day)
     media = media_of(day)
+    inc = incidents_of(day)
     spec = [
         m.group(1)
         for c in commits
@@ -889,6 +1092,7 @@ def journal(day: str) -> dict:
         "builds": {k: v for k, v in builds.items() if k not in ("longest",)},
         "prompts": ps,
         "tokens": {"total": tk["total"], "features": tk["features"]},
+        "incidents": inc,
     }
     d = HIST / day
     d.mkdir(parents=True, exist_ok=True)
@@ -950,6 +1154,21 @@ def journal(day: str) -> dict:
         md += ["", "## Prompts", "", f"{len(ps)} prompts (full text: [prompts.md](prompts.md)).", "",
                "| Time | Prompt |", "|---|---|"]
         md += [f"| {p_['time'][:5]} | {p_['text'][:140].replace('|', '/').replace(chr(10), ' ')} |" for p_ in ps]
+    if inc["auto"] or inc["notes"]:
+        kinds = {}
+        for e in inc["auto"]:
+            kinds[e["kind"]] = kinds.get(e["kind"], 0) + 1
+        md += ["", "## Incidents", "",
+               f"{len(inc['auto'])} collected ("
+               + (", ".join(f"{k} {v}" for k, v in sorted(kinds.items())) or "none")
+               + f"), {len(inc['noted'])} with root-cause notes ([incidents.md](incidents.md)).", ""]
+        if inc["auto"]:
+            md += ["| Time | Kind | Machine | What |", "|---|---|---|---|"]
+            md += [f"| {e['time'][:5]} | {e['kind']} | {e.get('machine', '')} | {str(e['text']).replace('|', '/')} |"
+                   for e in inc["auto"][:60]]
+        if inc["notes"]:
+            body = [ln for ln in inc["notes"].splitlines() if not ln.startswith("# ")]
+            md += ["", "### Root-cause notes", ""] + [("#" + ln) if ln.startswith("## ") else ln for ln in body]
     md += ["", "## Media", "", "| Time | File |", "|---|---|"]
     md += [f"| {m['time']} | [{m['file']}]({m['file']}) |" for m in media]
     write_tracked(d / "journal.md", "\n".join(md) + "\n")
@@ -1486,6 +1705,11 @@ def render(day: str) -> Path:
                       pre="{\\fad(0,200)}")
         tt = cs
         for secs, shot in ch_shots[ci]:
+            if shot.get("incident"):  # an incident card: "HH:MM" of the incident, its text centred
+                inc_txt = incident_text(j, str(shot["incident"]), shot.get("text"))
+                sub.add(tt + 0.2, tt + secs - 0.15, "Kicker",
+                        f"{{\\pos(960,380)\\fad(150,150)}}INCIDENT · {esc(str(shot['incident']))}")
+                sub.typed(tt + 0.5, tt + secs - 0.15, "Outro", esc(inc_txt), pre="{\\pos(960,560)\\fad(0,150)}")
             if shot.get("note"):
                 sub.add(tt + 0.5, tt + secs - 0.15, "Note",
                         f"{{\\pos(1860,70)\\frz{seeded(shot['note']).uniform(-5, 5):.1f}"
@@ -1722,7 +1946,7 @@ def publish(days: list[str]):
 # art-runs.jsonl (every run); the output goes to art.log next to them.
 
 STATUS_NAME = "art.json"
-COLLECTOR_FILES = {STATUS_NAME, "art-runs.jsonl", "art.log", STATUS_NAME + ".tmp"}
+COLLECTOR_FILES = {STATUS_NAME, "art-runs.jsonl", "art.log", STATUS_NAME + ".tmp", "incidents.jsonl"}
 
 
 def default_collect_days(now: dt.datetime | None = None) -> list[str]:
@@ -1764,6 +1988,7 @@ def collect(days: list[str] | None = None, sheets: bool | None = None,
         r = st["days"][day] = {"new_files": 0, "media": 0}
         try:
             r["new_files"] = gather(day) or 0
+            r["incidents"] = len(incidents(day))
             journal(day)
         except Exception as e:  # one day failing must not hide the other
             st["errors"].append(f"{day}: {type(e).__name__}: {mask(str(e))[:300]}")

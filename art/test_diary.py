@@ -94,7 +94,9 @@ class Fixture(unittest.TestCase):
         diary.TRANSCRIPTS = str(self.tmp / "no-transcripts")
         diary.WORKTREES = None  # never the real agent worktrees' test-output
         diary._SECRETS = sorted(SECRETS, key=lambda kv: -len(kv[0]))
-        self.env = mock.patch.dict(os.environ, {"OCW_TRANSCRIPTS": str(self.tmp / "no-transcripts")})
+        self.env = mock.patch.dict(os.environ, {"OCW_TRANSCRIPTS": str(self.tmp / "no-transcripts"),
+                                                  "OCW_ART_JOURNAL": "0",  # never the live journal
+                                                  "OCW_ART_NO_MACHINES": "1"})
         self.env.start()
         os.environ.pop("OCW_ART_LOCK_HELD", None)
 
@@ -144,7 +146,7 @@ class MaskTest(Fixture):
                 mock.patch.object(diary, "all_days", return_value=["2026-11-11", DAY]):
             j = diary.journal(DAY)
         self.assertEqual(j["number"], 2)
-        for name in diary.TRACKED_DAY:
+        for name in diary.TRACKED_DAY[:3]:  # (incidents.md is written by the coordinator)
             text = (self.hist / DAY / name).read_text()
             self.assert_clean(text)
         self.assertIn("~/src/OCW", (self.hist / DAY / "journal.md").read_text())
@@ -155,6 +157,33 @@ class MaskTest(Fixture):
         with mock.patch.object(diary, "all_days", return_value=["2026-11-11", "2026-11-12"]):
             self.assertEqual(diary.day_number("2026-11-12"), 2)
             self.assertEqual(diary.day_number("2026-11-13"), 3)
+
+
+class MachinesConfTest(Fixture):
+    """The mask list comes from config/machines.toml – in an agent worktree
+    from the main checkout's (regression: on 2026-11-15 a worktree run wrote
+    journals with the build users unmasked)."""
+
+    def test_falls_back_to_the_main_checkout(self):
+        here, main = self.tmp / "wt", self.tmp / "main"
+        (main / "config").mkdir(parents=True)
+        (main / "config" / "machines.toml").write_text('[[machine]]\nname = "marge"\n')
+        here.mkdir()
+        with mock.patch.object(diary, "ROOT", here), mock.patch.object(diary, "main_checkout", return_value=main):
+            self.assertEqual(diary.machines_conf(), main / "config" / "machines.toml")
+            (here / "config").mkdir()
+            (here / "config" / "machines.toml").write_text("")
+            self.assertEqual(diary.machines_conf(), here / "config" / "machines.toml")
+
+    def test_refuses_to_mask_without_a_machine_list(self):
+        with mock.patch.object(diary, "machines_conf", return_value=None), mock.patch.object(diary, "_SECRETS", None), \
+                mock.patch.dict(os.environ):
+            os.environ.pop("OCW_ART_NO_MACHINES", None)
+            with self.assertRaises(SystemExit) as e:
+                diary._secrets()
+            self.assertIn("machines.toml", str(e.exception))
+            os.environ["OCW_ART_NO_MACHINES"] = "1"
+            self.assertEqual([r for _, r in diary._secrets()], ["~"])
 
 
 class CheckMaskedTest(Fixture):
@@ -284,7 +313,7 @@ class CollectTest(Fixture):
         status = json.loads((self.out / "build-log" / DAY / "art.json").read_text())
         self.assertEqual(status, st)
         self.assertEqual(status["status"], "failed")
-        self.assertEqual(status["days"][DAY], {"new_files": 2, "media": 2})
+        self.assertEqual(status["days"][DAY], {"new_files": 2, "media": 2, "incidents": 0})
         self.assertEqual(status["new_files"], 2)
         self.assertEqual(status["media"], 2)
         self.assertEqual(status["mask_check"], "ok")
@@ -356,6 +385,104 @@ class CollectScriptTest(Fixture):
         st = json.loads((self.out / "build-log" / today / "art.json").read_text())
         self.assertEqual(st["days"][day]["new_files"], 0)
         self.assertEqual(st["days"][day]["media"], 1)
+
+
+JOURNAL_SAMPLE = [  # recorded `journalctl -o short-iso` lines (the 2026-11-15 OOM incident and others)
+    "2026-11-15T00:39:18+01:00 deb systemd[5805]: ocw-build-dashboard.service: A process of this unit has been "
+    "killed by the OOM killer.",
+    "2026-11-15T00:39:18+01:00 deb systemd[5805]: ocw-build-dashboard.service: Main process exited, code=killed, "
+    "status=9/KILL",
+    "2026-11-15T00:39:18+01:00 deb systemd[5805]: ocw-build-dashboard.service: Failed with result 'oom-kill'.",
+    "2026-11-15T00:39:29+01:00 deb systemd[5805]: ocw-build-dashboard.service: Scheduled restart job, restart "
+    "counter is at 1.",
+    "2026-11-15T00:39:47+01:00 deb systemd[5805]: tmux-spawn-75bb77d1-0461-4850-87c0-3f340ccdf0f3.scope: A process "
+    "of this unit has been killed by the OOM killer.",
+    "2026-11-15T00:39:56+01:00 deb systemd[5805]: tmux-spawn-75bb77d1-0461-4850-87c0-3f340ccdf0f3.scope: Failed "
+    "with result 'oom-kill'.",
+    "2026-11-15T00:39:50+01:00 deb kernel: Out of memory: Killed process 4242 (ffmpeg) total-vm:1234kB",
+    "2026-11-15T03:00:05+01:00 deb systemd[5805]: ocw-art-collect.service: Failed with result 'exit-code'.",
+    "2026-11-15T03:10:00+01:00 deb systemd[1]: some-other.service: Failed with result 'exit-code'.",
+    "-- Boot 1234 --",
+    "2026-11-15T04:00:00+01:00 deb systemd[5805]: Started ocw-art-collect.service.",
+]
+
+
+class IncidentTest(Fixture):
+    DAY2 = "2026-11-15"
+
+    def test_parse_journal(self):
+        got = diary.parse_journal(JOURNAL_SAMPLE)
+        self.assertEqual([(e["time"], e["kind"]) for e in got], [
+            ("00:39:18", "oom-kill"), ("00:39:29", "unit-restart"), ("00:39:47", "oom-kill"),
+            ("00:39:50", "oom-kill"), ("03:00:05", "unit-failed")])
+        self.assertEqual(got[0]["text"], "OOM killer stopped ocw-build-dashboard.service")
+        self.assertIn("tmux scope", got[2]["text"])
+        self.assertIn("ffmpeg", got[3]["text"])
+        self.assertEqual(got[4]["text"], "ocw-art-collect.service failed (exit-code)")
+        self.assertTrue(all(e["source"] == "journal" and e["machine"] == "deb" for e in got))
+
+    def test_build_log_incidents_and_masking(self):
+        bl = self.out / "build-log" / self.DAY2
+        bl.mkdir(parents=True)
+
+        def sample(t, online, pct, err=None):
+            m = {"name": "marge", "online": online, "disks": [{"name": "home", "pct": pct}]}
+            if err:
+                m["error"] = err
+            return json.dumps({"time": f"{self.DAY2}T{t}+01:00", "status": {"machines": [m]}})
+        (bl / "servers.jsonl").write_text("\n".join([
+            sample("01:00:00", True, 80), sample("01:01:00", False, 80, "ssh to buildhost.example.lan timed out"),
+            sample("01:05:00", True, 91), sample("01:06:00", True, 93), sample("01:07:00", True, 80)]) + "\n")
+        (bl / "janitor.jsonl").write_text(json.dumps(
+            {"time": f"{self.DAY2}T02:00:00+01:00", "machine": "marge", "action": "deleted",
+             "path": "/home/builder/src/OCW-worktree-agent-x/target", "bytes": 12e9}) + "\n")
+        (bl / "runs.jsonl").write_text("\n".join(json.dumps(r) for r in [
+            {"start": f"{self.DAY2}T05:00:00+01:00", "machine": "marge", "exit": 0},
+            {"start": f"{self.DAY2}T05:10:00+01:00", "machine": "marge", "exit": 101},
+            {"start": f"{self.DAY2}T05:20:00+01:00", "machine": "macos", "exit": 1}]) + "\n")
+        got = diary.incidents(self.DAY2, JOURNAL_SAMPLE[:1])
+        kinds = [e["kind"] for e in got]
+        self.assertEqual(kinds, ["oom-kill", "machine-offline", "machine-online", "disk-full", "janitor-delete",
+                                 "runs-failed"])
+        self.assertIn("2 failed remote.sh runs (macos 1, marge 1)", got[-1]["text"])
+        text = (bl / "incidents.jsonl").read_text()
+        self.assert_clean(text)
+        self.assertIn("marge", text)
+
+    def test_journal_merges_collected_and_notes(self):
+        bl = self.out / "build-log" / self.DAY2
+        bl.mkdir(parents=True)
+        diary.incidents(self.DAY2, JOURNAL_SAMPLE)
+        (self.hist / self.DAY2).mkdir(parents=True)
+        (self.hist / self.DAY2 / "incidents.md").write_text(
+            "# Incidents – 2026-11-15\n\n## 00:39 – OOM on deb\n\n- **Cause:** VMs on 10.20.30.40\n")
+        with mock.patch.object(diary, "commits_of", return_value=[]), \
+                mock.patch.object(diary, "tokens_of", return_value={"total": {}, "tasks": {}, "features": {},
+                                                                    "models": {}}), \
+                mock.patch.object(diary, "all_days", return_value=[DAY]):
+            j = diary.journal(self.DAY2)
+        self.assertEqual(len(j["incidents"]["auto"]), 5)
+        self.assertEqual(j["incidents"]["noted"], ["00:39 – OOM on deb"])
+        md = (self.hist / self.DAY2 / "journal.md").read_text()
+        self.assertIn("## Incidents", md)
+        self.assertIn("### 00:39 – OOM on deb", md)
+        self.assert_clean(md)
+        self.assertEqual(diary.incident_text(j, "00:39"), "OOM on deb")
+        self.assertEqual(diary.incident_text(j, "03:00"), "ocw-art-collect.service failed (exit-code)")
+        self.assertEqual(diary.incident_text(j, "00:39", "custom"), "custom")
+
+    def test_incidents_md_is_tracked_and_checked(self):
+        self.assertIn("incidents.md", diary.TRACKED_DAY)
+        (self.hist / self.DAY2).mkdir(parents=True)
+        (self.hist / self.DAY2 / "incidents.md").write_text("## 00:39\n\nssh builder@buildhost.example.lan\n")
+        self.assertTrue(any(f.startswith(f"{self.DAY2}/incidents.md:3:") for f in diary.check_masked()))
+        root = diary.ROOT
+        for rel, ignored in ((f"art/build-history/{self.DAY2}/incidents.md", False),
+                             (f"art/build-history/{self.DAY2}/journal.md", False),
+                             (f"art/build-history/{self.DAY2}/logs/build-log/incidents.jsonl", True),
+                             (f"art/build-history/{self.DAY2}/prompts.md", True)):
+            r = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", "--no-index", rel])
+            self.assertEqual(r.returncode == 0, ignored, rel)
 
 
 class DefaultArchiveUntouchedTest(Fixture):

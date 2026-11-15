@@ -1,6 +1,6 @@
 # OCW Build Diary – Art Project Specification
 
-Version 1.6 – 15 November 2026
+Version 1.7 – 15 November 2026
 
 | Version | Change |
 |---|---|
@@ -11,6 +11,7 @@ Version 1.6 – 15 November 2026
 | 1.4 | Token usage of the build: in total, per task and per feature (§2.4) |
 | 1.5 | The archive moved to `art/build-history/`; its text files (index, checksums, journals, token usage) are tracked in git, masked, while media stay out of git (§2, §2.5). An hourly collector on the dev machine, a systemd user timer: gather + journal of yesterday and today, the mask check, the contact sheets at 23:xx, a lock, a status file, a dashboard line (§5.1). Day videos: images stay on screen about 1.4× longer (3–5 s), and shots run in capture order within a chapter (§3, §4). All decided by the user 2026-11-14 |
 | 1.6 | Music with more variety and a style per day (user 2026-11-14): synthwave, funk, lofi, chiptune, house (`style` and `mode` in the day script, else picked by the day number). It varies within the video: a progression, drum pattern, bass line and arpeggio per chapter; fills, build-ups and stops at chapter changes; crashes, a breakdown, a bridge and a key lift in long videos; a developing lead (motif, variations, call and response); and swells. Deterministic, loudness-normalised, tested (`art/music.py`, §3.2, §4) |
+| 1.7 | Incident log (user 2026-11-15, §2.6): the hourly collector gathers OOM kills, failed and restarted units (journalctl), machines offline / online, full disks, janitor deletions and failed runs into `test-output/build-log/DAY/incidents.jsonl` (masked). The coordinator writes root-cause notes to `DAY/incidents.md` (tracked, masked). The journal merges both under "Incidents", and a day script can show an incident as a card (`incident = "HH:MM"`, §4). First entry: the 2026-11-15 00:39 OOM on deb |
 
 ## 1. The brief
 
@@ -188,6 +189,45 @@ The archive's text record is versioned with the code; its media are not.
   FIX=1`) masks the files in place, for files written before this rule
   (`index.md`, old journals). The untracked originals are left as they are.
 
+### 2.6 Incidents (decided by the user 2026-11-15)
+
+What went wrong on the build infrastructure is part of the story too: crashes,
+machines dropping out, full disks.
+
+- **Collected every hour** by the collector (§5.1), per day into
+  `test-output/build-log/DAY/incidents.jsonl`, which is rewritten on each run
+  and gathered into the day's `logs/build-log/`. Each line holds `time`,
+  `kind`, `source`, `machine` and `text`, masked like the journals (§2.5).
+  - *From the journal of the dev machine* (`journalctl`, user and system,
+    read-only; `OCW_ART_JOURNAL=0` turns it off):
+    - OOM kills (`oom-kill`: "killed by the OOM killer", the kernel's
+      "Killed process");
+    - failed OCW user units (`unit-failed`: `ocw-build-dashboard`,
+      `ocw-art-collect`, …);
+    - restarts (`unit-restart`).
+
+    A tmux scope is listed as "tmux scope (a terminal session)".
+  - *From the build log* (§2.2):
+    - a machine going offline or back online (`machine-offline`,
+      `machine-online`, from the dashboard samples);
+    - a disk over 90 % (`disk-full`, once per crossing);
+    - janitor deletions (`janitor-delete`);
+    - the failed `remote.sh` runs of the day, as a count per machine
+      (`runs-failed`).
+- **Root-cause notes** by the coordinator: `art/build-history/DAY/incidents.md`,
+  tracked in git, masked and checked by `check-masked`. It has one `## HH:MM –
+  title` section per incident, with **What happened**, **Cause**, **Effect**,
+  **Fix** and **Follow-up**. The first entry is 2026-11-15, 00:39, when deb
+  ran out of memory.
+- **Journal:** `journal.md` gets an "Incidents" section. It shows counts per
+  kind, the table of collected incidents and the root-cause notes, merged.
+  `journal.json` has `incidents`, with `auto` (the collected list), `notes`
+  (the Markdown) and `noted` (the headings).
+- **In the video:** a chapter can be about an incident: a card shot with
+  `incident = "HH:MM"` (§4) shows "INCIDENT · HH:MM" and the incident's text.
+  The text is the heading of its root-cause note, else the collected entry,
+  else the shot's `text`.
+
 ## 3. The day video
 
 About 1.5–3 minutes, 1920×1080, 30 fps, H.264 + AAC, built from these parts,
@@ -327,6 +367,8 @@ shots = [
   { file = "HHMMSS-y.mp4", seconds = 4.0, start = 2.0, speed = 2 },    # clip, 2× time-lapse
   { split = ["before.png", "after.png"], seconds = 4.9 },              # before | after
   { card = true, seconds = 2.0 },                                      # plain violet card
+  { card = true, seconds = 4.0, incident = "00:39" },                  # an incident (§2.6);
+                                                                       # optional text = "…"
 ]
 ```
 
@@ -385,7 +427,8 @@ every hour.
    midnight is not lost. Other days can be given as arguments:
    `scripts/art-collect.sh 2026-11-12`. `gather` is idempotent: sources are
    deduplicated by SHA-256, and the build log is updated in place. A day
-   that fails is reported, and the other day is still collected.
+   that fails is reported, and the other day is still collected. Each day's
+   incidents are collected too (§2.6), and the status counts them.
 2. **The mask check** (`check-masked`, §2.5) over all tracked text files.
    Any finding fails the run.
 3. **Contact sheets** (`sheet`) of today, only in the 23:xx run. They are
