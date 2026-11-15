@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 3.58 – November 2026
+Version 3.59 – November 2026
 
 | Version | Change |
 |---|---|
+| 3.59 | Decisions from the build dashboard (2026-11-15): Phase 9 Q12 – every ride starts at the real local date and time of the world's place with the season following it (the override is not remembered); Phase 16 Q1 – `ocw-studio` is its own desktop app; Q4 – the browser studio comes later; Q5 – the studio gets **simple mesh tools** (extrude, move / scale / rotate parts, normals; new stage E4b), larger shape work stays in Blender |
 | 3.58 | Decision by the user (2026-11-15): Phase 12 Q4 – a workout's **ERG step pauses while the rider is down** after a crash and runs on when the rider rides again (`ocw_sim::workout::WorkoutRun::set_down`, new state *paused: rider down*; `TrainerControl::is_down`; `ERG_STEP_RUNS_WHILE_DOWN = false`), tests updated (§14 Phase 12, 12J; §2.8) |
 | 3.57 | Decision from the build dashboard (2026-11-15): Phase 12 Q8 – the **riding aids are allowed by default in all races** for now (local and shared; the organiser may forbid them); `Event::aids_allowed` defaults to allowed, the setting `event.aids` *auto* and the console help follow, tests updated (§14 Phase 12, 12I) |
 | 3.56 | Decision from the build dashboard (2026-11-15): Phase 10 Q7 (Black Forest in the public preview) closed – the preview stays at Liechtenstein and Tenerife; the Black Forest follows with B8 stage 2 or on request |
@@ -3359,7 +3360,7 @@ Today, *World → Time* (9I) changes the date only one day per press (← / →)
 - **Q9 – Extreme weather: decided (2026-11-12):** realistic, **no cap**. Storms, hail, heavy snow, thunderstorms with lightning, dense fog and gale-force wind are all part of the simulation, the weather machine and real weather. The only limit is the physics switch (Q4).
 - **Q10 – Priority: decided (2026-11-14):** after S1 and S3 (done), the order is **S2 → S4 → S5 → S7 → S8 → S6** (S2 done, 9I-S2; S4 done, 9I-S4; S5 done, 9I-S5; S7 done, 9I-S7).
 - **Q11 – Season override: decoupled from the date?** *(asked 2026-11-15)* The proposal (S9b) lets the landscape's season differ from the date while sun, light and weather follow the clock. Alternatively, "changing the season" could only **jump the date** to the season's representative day, keeping the time of day: simpler and always consistent, but it moves the sun as well. **Proposal: both.** The calendar's season shortcuts jump the date (S9a), and the override is a separate setting (S9b).
-- **Q12 – Remember the season choice?** Every ride starts with the season following the date (proposal, like the time machine), or the override is kept as a setting across rides?
+- **Q12 – Remember the season choice? Decided (2026-11-15, dashboard: "Start with the local date and time (and season) of where the world is rendered"):** every ride starts at the real local date and time of the world's place, and the season **follows that date** – the season override (S9b) is not remembered across rides, like the time machine (9A).
 
 ---
 
@@ -4407,12 +4408,12 @@ The technical and licence check is in 16E. The editor uses the game's own render
   - LOD switch (`lod1`, billboard) with the switching distance shown;
   - **gizmos** for anchors (`anchor_*`), hotspots (`hs_*`) and collision proxies (`col_*`).
 - **Stats:** triangle and vertex counts against the kind's budget (15B), bounds, file size, and the validator's findings live (errors, warnings, and "fix" buttons where the fix is clear, for example renaming `wheel_front.001`).
-- **Edit (what the studio does; not a polygon modeller):**
+- **Edit (what the studio does; simple mesh tools since Q5, no full modeller):**
   - **Node edits:** transform nodes with a move / rotate / scale gizmo and snapping, rename nodes to contract names (a picker of the kind's required and optional names), re-parent, delete.
   - **Points and proxies:** add or move anchors, hotspots and LOD nodes; add collision proxies (box, cylinder, capsule).
   - **Materials:** assign paint slots to materials (picker of `ocw_assets::slots`), edit default colour, metallic, roughness and emissive.
   - **Metadata:** edit `extras.ocw` (kind, id, profile, species, …) and the manifest entry (licence, source, author; §13 rules).
-- **Shape editing stays in Blender.** *Open in Blender* exports an editable copy (15D `model export`) and starts Blender with it when it is installed. On return, the studio watches the file and re-imports it (15D `model import`), keeping the studio's own edits (names, slots, anchors, proxies) where the new mesh still matches them.
+- **Simple mesh tools (Q5, stage E4b):** select faces or parts, extrude, move / scale / rotate parts, delete, flip and recompute normals, merge vertices – undoable, contract and budgets checked live. **Larger shape work stays in Blender.** *Open in Blender* exports an editable copy (15D `model export`) and starts Blender with it when it is installed. On return, the studio watches the file and re-imports it (15D `model import`), keeping the studio's own edits (names, slots, anchors, proxies) where the new mesh still matches them.
 - **Try it on:**
   - a helmet or glasses on the rider, at each body build;
   - a catalogue part on each bike's hotspot (§8.2);
@@ -4565,6 +4566,7 @@ The studio makes them interactive:
 - **E2 – External planners:** the `RoutePlanner` interface, BRouter (self-hosted on marge for tests, and a configurable endpoint), GraphHopper (self-hosted or own key), and FIT / TCX / GeoJSON import and export.
 - **E3 – Models workspace (view):** the viewer, stats, validator panel and try-on (needs Phase 15 M1 and M2).
 - **E4 – Models workspace (edit):** node and anchor edits, slots, proxies, the manifest, and the Blender round trip with re-import (needs Phase 15 M2).
+- **E4b – Simple mesh tools (Q5):** face / part selection, extrude, move / scale / rotate, delete, normals, merge vertices; tests that each tool keeps the mesh valid (closed where it was, normals outward, indices in range) and undoes to the identical model.
 - **E5 – World workspace:**
   - the world patch format and its application in `world-builder` (tested first without the UI: a patch file, a build, and the effect checked);
   - then the UI: road attributes and height, objects and trees, areas, segments and start points;
@@ -4596,14 +4598,14 @@ The studio makes them interactive:
 
 #### 16H – Open questions (to the user)
 
-- **Q1 – Separate app or a mode:** `ocw-studio` as its own desktop app (proposal), or an editor mode inside `ocw-desktop`?
+- **Q1 – Separate app or a mode: decided (2026-11-15, dashboard: "ocw-studio as its own desktop app"):** `apps/studio` (`ocw-studio`), its own desktop app on the shared crates (16A).
 - **Q2 – World editing:** patches on the sources, applied at build (proposal (b), plus the "Fix in OSM" link). And should user-edited packages be shareable with others (signed with the user's key), or stay local until we review and sign them?
 - **Q3 – Planners:**
   - May we self-host BRouter (and later GraphHopper) on marge for tests and development, and later on the backend for users?
   - Which planner is the first external one? The proposal is BRouter.
   - Should we ask the brouter.de operator about using the public server?
-- **Q4 – Browser studio:** a browser version later (proposal: after E5), or desktop only?
-- **Q5 – Mesh editing:** keep all shape editing in Blender (proposal), or add simple mesh tools in the studio (extrude, scale parts)?
+- **Q4 – Browser studio: decided (2026-11-15, dashboard: "a browser version later"):** desktop first; the browser version comes later (after E5, as proposed) – the core `ocw-edit` stays wasm-safe for it.
+- **Q5 – Mesh editing: decided (2026-11-15, dashboard: "add simple mesh tools in the studio (extrude, scale parts)"):** the Models workspace (16B) gets **simple mesh tools**: select faces / parts of a node, extrude, move, scale and rotate parts, delete, flip normals, recompute normals, merge vertices – with undo, the model contract (15B) and the budgets checked live; anything beyond (sculpting, UV unwrapping, retopology, rigging) stays in Blender. A new stage **E4b** after E4.
 
 ---
 
