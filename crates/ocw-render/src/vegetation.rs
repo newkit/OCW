@@ -18,7 +18,7 @@ use ocw_world::trees::hash;
 use ocw_world::vegetation::FieldCrop;
 use ocw_world::{TileKey, WorldPackage};
 
-use crate::flora::{Detail, PlantAt, PlantLook};
+use crate::flora::{Detail, PlantAt};
 use crate::package::{Keep, MeshArrays, TreeSite};
 
 /// Chunks per tile side (200 m chunks for 1 km tiles).
@@ -67,14 +67,20 @@ fn near_water(pkg: &WorldPackage, x: f64, z: f64) -> bool {
         return false;
     };
     let size = f64::from(pkg.tile_size_m);
-    [(0.0, 0.0), (15.0, 0.0), (-15.0, 0.0), (0.0, 15.0), (0.0, -15.0)]
-        .iter()
-        .any(|(dx, dz)| {
-            matches!(
-                lu.class_at(size, x + dx, z + dz),
-                Some(LandClass::Water | LandClass::Wetland)
-            )
-        })
+    [
+        (0.0, 0.0),
+        (15.0, 0.0),
+        (-15.0, 0.0),
+        (0.0, 15.0),
+        (0.0, -15.0),
+    ]
+    .iter()
+    .any(|(dx, dz)| {
+        matches!(
+            lu.class_at(size, x + dx, z + dz),
+            Some(LandClass::Water | LandClass::Wetland)
+        )
+    })
 }
 
 /// The stand of a field crop on the day: its height (m; 0: nothing
@@ -172,12 +178,12 @@ pub fn tile_plants(
         mix.leaf_type(setting, alt, measured, hash(bits.0, bits.1, 13))
     };
     let put = |chunks: &mut Vec<TreeChunk>,
-                   crowns: &mut Vec<[f32; 4]>,
-                   sp: Species,
-                   base: Vec3,
-                   scale: f32,
-                   bits: (i64, i64),
-                   near_only: bool| {
+               crowns: &mut Vec<[f32; 4]>,
+               sp: Species,
+               base: Vec3,
+               scale: f32,
+               bits: (i64, i64),
+               near_only: bool| {
         let i = chunk_of(base.x, base.z);
         let ch = &mut chunks[i];
         let origin = Vec3::from(ch.origin);
@@ -230,7 +236,11 @@ pub fn tile_plants(
             // Mapped trees stand in towns and along roads: the town mix.
             let class = class.or(Some(LandClass::Residential));
             let leaf = leaf_of(class, base.x, base.z, alt, bits);
-            pick_species(&site_of(class, base.x, base.z, alt), group(leaf), hash(bits.0, bits.1, 19))
+            pick_species(
+                &site_of(class, base.x, base.z, alt),
+                group(leaf),
+                hash(bits.0, bits.1, 19),
+            )
         } else {
             t.species
         };
@@ -250,7 +260,15 @@ pub fn tile_plants(
         let base = Vec3::from(p.pos);
         let bits = (i64::from(base.x.to_bits()), i64::from(base.z.to_bits()));
         let near_only = p.species == Species::Banana;
-        put(&mut chunks, &mut crowns, p.species, base, p.scale * 0.8, bits, near_only);
+        put(
+            &mut chunks,
+            &mut crowns,
+            p.species,
+            base,
+            p.scale * 0.8,
+            bits,
+            near_only,
+        );
     }
     let red_vines = matches!(region, FloraRegion::AlpineRhine);
     for r in runs {
@@ -278,7 +296,11 @@ pub fn tile_plants(
             let look = crate::flora::vine_look(season, f64::from(y(mid)), jitter);
             let red = red_vines && hash(bits.0 / 400, bits.1 / 400, 44) < 0.6;
             let colour = crate::flora::vine_colour(&look, red, hash(bits.0, bits.1, 11));
-            let height = if region == FloraRegion::Tenerife { 1.1 } else { 1.8 };
+            let height = if region == FloraRegion::Tenerife {
+                1.1
+            } else {
+                1.8
+            };
             crate::flora::vine_row(&mut ch.near, q0, q1, height, &look, colour);
         }
     }
@@ -358,7 +380,13 @@ fn stands(
             let origin = Vec3::from(chunks[i].origin);
             let centre = Vec3::new(x as f32, hc, z as f32) - origin;
             let ys = ys.map(|y| y - origin.y);
-            let jitter = 0.92 + 0.16 * hash(c as i64 + key.x as i64 * 1000, r as i64 + key.z as i64 * 1000, 45);
+            let jitter = 0.92
+                + 0.16
+                    * hash(
+                        c as i64 + key.x as i64 * 1000,
+                        r as i64 + key.z as i64 * 1000,
+                        45,
+                    );
             crate::flora::stand_cell(
                 &mut chunks[i].near,
                 centre,

@@ -960,7 +960,13 @@ impl SeasonDay {
     }
 
     /// [`SeasonDay::foliage`] with a species' [`Timing`].
-    pub fn foliage_timed(&self, leaf: LeafType, alt_m: f64, jitter: f32, timing: Timing) -> Foliage {
+    pub fn foliage_timed(
+        &self,
+        leaf: LeafType,
+        alt_m: f64,
+        jitter: f32,
+        timing: Timing,
+    ) -> Foliage {
         let s = self.state(alt_m);
         foliage_timed(self.phenology(), leaf, &s, jitter, timing)
     }
@@ -1140,7 +1146,10 @@ fn foliage_k(p: &Phenology, leaf: LeafType, s: &State, k: f64, ka: f64) -> Folia
     let out = smooth(gdd, (burst * k, full * k));
     let fall = smooth(
         cdd,
-        ((p.fall_start_cdd + shift) * ka, (p.fall_end_cdd + shift) * ka),
+        (
+            (p.fall_start_cdd + shift) * ka,
+            (p.fall_end_cdd + shift) * ka,
+        ),
     );
     let fresh = out * (1.0 - smooth(gdd, (full * k, p.fresh_until_gdd * k)));
     let autumn = smooth(
@@ -1177,7 +1186,10 @@ mod tests {
     #[test]
     fn species_timing_moves_spring_and_autumn_apart() {
         let m = liechtenstein();
-        let late = Timing { spring: 1.35, autumn: 0.85 };
+        let late = Timing {
+            spring: 1.35,
+            autumn: 0.85,
+        };
         // Early May: the beech is out, the ash still bare-ish.
         let may = m.day(125.0);
         let beech = may.foliage(LeafType::Deciduous, VADUZ, 0.0);

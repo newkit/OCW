@@ -180,7 +180,11 @@ impl FieldCrop {
     /// The crop of an OSM area from its `crop=*`, `produce=*` and
     /// `trees=*` (`;`-separated lists: the first known value), `None` if
     /// they say nothing known.
-    pub fn from_osm(crop: Option<&str>, produce: Option<&str>, trees: Option<&str>) -> Option<Self> {
+    pub fn from_osm(
+        crop: Option<&str>,
+        produce: Option<&str>,
+        trees: Option<&str>,
+    ) -> Option<Self> {
         let values = [trees, produce, crop];
         for v in values.into_iter().flatten() {
             for part in v.split(';') {
@@ -205,15 +209,15 @@ impl FieldCrop {
             "grass" | "clover" | "lucerne" | "alfalfa" | "hay" | "native_pasture" | "fodder" => {
                 FieldCrop::Grass
             }
-            "vegetable" | "vegetables" | "strawberry" | "strawberries" | "flowers" | "asparagus"
-            | "tomato" | "tomatoes" | "lettuce" | "cabbage" | "onion" | "onions" | "tobacco"
-            | "hop" | "hops" | "flower" => FieldCrop::Vegetables,
+            "vegetable" | "vegetables" | "strawberry" | "strawberries" | "flowers"
+            | "asparagus" | "tomato" | "tomatoes" | "lettuce" | "cabbage" | "onion" | "onions"
+            | "tobacco" | "hop" | "hops" | "flower" => FieldCrop::Vegetables,
             "grape" | "grapes" | "wine" | "grape_vines" => FieldCrop::Vineyard,
             "apple" | "apples" | "apple_trees" | "pear" | "pears" | "pear_trees" | "cherry"
             | "cherries" | "cherry_trees" | "plum" | "plums" | "plum_trees" | "walnut"
-            | "walnut_trees" | "nut_trees" | "hazel" | "chestnut" | "chestnut_trees"
-            | "peach" | "apricot" | "fruit" | "fruit_trees" | "almond_trees" | "olive"
-            | "olive_trees" | "fig_trees" => FieldCrop::Orchard,
+            | "walnut_trees" | "nut_trees" | "hazel" | "chestnut" | "chestnut_trees" | "peach"
+            | "apricot" | "fruit" | "fruit_trees" | "almond_trees" | "olive" | "olive_trees"
+            | "fig_trees" => FieldCrop::Orchard,
             "banana" | "bananas" | "banana_plants" | "banana_trees" | "plantain" => {
                 FieldCrop::Banana
             }
@@ -519,7 +523,11 @@ pub(crate) mod tests {
         assert_eq!(read_vegetation(&b).unwrap(), v);
         let mut newer = b.clone();
         newer[0] = 9;
-        assert!(read_vegetation(&newer).unwrap_err().contains("not supported"));
+        assert!(
+            read_vegetation(&newer)
+                .unwrap_err()
+                .contains("not supported")
+        );
         assert!(read_vegetation(&b[..b.len() - 2]).is_err());
         assert!(decode_planes(&[1, 2, 3], 4).is_err());
         // Unknown species codes (from a newer builder) read as unknown.
@@ -562,15 +570,27 @@ pub(crate) mod tests {
     #[test]
     fn osm_crops_are_classified() {
         let f = FieldCrop::from_osm;
-        assert_eq!(f(None, None, Some("banana_plants")), Some(FieldCrop::Banana));
+        assert_eq!(
+            f(None, None, Some("banana_plants")),
+            Some(FieldCrop::Banana)
+        );
         assert_eq!(f(None, Some("banana"), None), Some(FieldCrop::Banana));
         assert_eq!(f(Some("grape"), None, None), Some(FieldCrop::Vineyard));
         assert_eq!(f(None, Some("apple;pear"), None), Some(FieldCrop::Orchard));
-        assert_eq!(f(None, Some("mango;orange"), None), Some(FieldCrop::Subtropical));
-        assert_eq!(f(None, None, Some("avocado_trees")), Some(FieldCrop::Subtropical));
+        assert_eq!(
+            f(None, Some("mango;orange"), None),
+            Some(FieldCrop::Subtropical)
+        );
+        assert_eq!(
+            f(None, None, Some("avocado_trees")),
+            Some(FieldCrop::Subtropical)
+        );
         assert_eq!(f(Some("maize"), None, None), Some(FieldCrop::Maize));
         assert_eq!(f(Some("Wheat"), None, None), Some(FieldCrop::Cereal));
-        assert_eq!(f(Some("native_pasture"), None, None), Some(FieldCrop::Grass));
+        assert_eq!(
+            f(Some("native_pasture"), None, None),
+            Some(FieldCrop::Grass)
+        );
         assert_eq!(f(Some("live_animal"), None, None), None);
         assert_eq!(f(None, None, None), None);
         // `trees` before `produce` before `crop`.

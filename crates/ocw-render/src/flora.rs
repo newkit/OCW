@@ -354,7 +354,11 @@ pub fn blob(
     for i in 0..=rings + 1 {
         let t = i as f32 / (rings + 1) as f32 * std::f32::consts::PI;
         let y = -t.cos() * r.y;
-        let rr = if i == 0 || i == rings + 1 { 0.0 } else { t.sin() };
+        let rr = if i == 0 || i == rings + 1 {
+            0.0
+        } else {
+            t.sin()
+        };
         prof.push((y, rr));
     }
     let k = (r.x.max(1e-3), r.z.max(1e-3));
@@ -463,6 +467,7 @@ pub fn blade(
 
 /// A drooping tier of a conifer: from the apex at `top` down to the rim
 /// of radius `r` at `bottom`, the underside back up to the trunk.
+#[allow(clippy::too_many_arguments)]
 fn tier(
     m: &mut MeshArrays,
     base: Vec3,
@@ -655,7 +660,13 @@ pub fn plant(m: &mut MeshArrays, sp: Species, at: &PlantAt, look: &PlantLook, de
                         base,
                         c - Vec3::Y * 1.6,
                         s,
-                        &[(0.0, 0.0), (0.2, rr * 0.8), (1.0, rr), (1.9, rr * 0.55), (2.3, 0.0)],
+                        &[
+                            (0.0, 0.0),
+                            (0.2, rr * 0.8),
+                            (1.0, rr),
+                            (1.9, rr * 0.55),
+                            (2.3, 0.0),
+                        ],
                         6,
                         shade3(crown, 0.92 + 0.12 * h01(at.pick, i + 9)),
                         a,
@@ -699,7 +710,11 @@ pub fn plant(m: &mut MeshArrays, sp: Species, at: &PlantAt, look: &PlantLook, de
                     );
                 }
             }
-            let leafy = if sp == Tabaiba { 1.0 - 0.6 * look.dry } else { 1.0 };
+            let leafy = if sp == Tabaiba {
+                1.0 - 0.6 * look.dry
+            } else {
+                1.0
+            };
             for i in 0..n {
                 let a = turn + i as f32 * 2.1;
                 let off = if n == 1 { 0.0 } else { 0.45 * r };
@@ -725,7 +740,11 @@ pub fn plant(m: &mut MeshArrays, sp: Species, at: &PlantAt, look: &PlantLook, de
             let n = if near { 9 } else { 3 };
             for i in 0..n {
                 let a = turn + i as f32 * 2.39;
-                let d = if i == 0 { 0.0 } else { r * (0.3 + 0.6 * h01(at.pick, i)) };
+                let d = if i == 0 {
+                    0.0
+                } else {
+                    r * (0.3 + 0.6 * h01(at.pick, i))
+                };
                 let hh = h * (0.55 + 0.45 * h01(at.pick, i + 20));
                 let p = base + Vec3::new(d * a.cos(), 0.0, d * a.sin()) * s;
                 lathe(
@@ -798,7 +817,16 @@ pub fn plant(m: &mut MeshArrays, sp: Species, at: &PlantAt, look: &PlantLook, de
             let lean = Vec3::new(0.04 * (at.pick - 0.5) * h, 0.0, 0.04 * (at.hue - 0.5) * h);
             let top = base + (Vec3::Y * h + lean) * s;
             let (r0, r1) = if slender { (0.24, 0.16) } else { (0.45, 0.4) };
-            tube(m, base, top, r0 * s, r1 * s, if near { 7 } else { 4 }, foot, bark);
+            tube(
+                m,
+                base,
+                top,
+                r0 * s,
+                r1 * s,
+                if near { 7 } else { 4 },
+                foot,
+                bark,
+            );
             // The crown: fronds radiating and arching.
             let fronds = match (slender, near) {
                 (_, false) => 6,
@@ -847,7 +875,16 @@ pub fn plant(m: &mut MeshArrays, sp: Species, at: &PlantAt, look: &PlantLook, de
         DragonTree => {
             let fork = 0.45 * h;
             let top = base + Vec3::Y * fork * s;
-            tube(m, base, top, 0.55 * s, 0.4 * s, if near { 7 } else { 5 }, foot, bark);
+            tube(
+                m,
+                base,
+                top,
+                0.55 * s,
+                0.4 * s,
+                if near { 7 } else { 5 },
+                foot,
+                bark,
+            );
             let branches = if near { 5 } else { 3 };
             for i in 0..branches {
                 let a = turn + i as f32 * std::f32::consts::TAU / branches as f32;
@@ -979,8 +1016,7 @@ fn broadleaf(
             let y0 = (trunk + (centre - trunk) * k as f32 / n as f32) * h;
             let reach = rx * r * (0.9 - 0.3 * k as f32 / n as f32);
             let from = base + Vec3::Y * y0 * s;
-            let to = base
-                + Vec3::new(reach * a.cos(), y0 + ry * h * 1.1, reach * a.sin()) * s;
+            let to = base + Vec3::new(reach * a.cos(), y0 + ry * h * 1.1, reach * a.sin()) * s;
             tube(m, from, to, 0.012 * h * s, 0.003 * h * s, 3, foot, twig());
         }
         if !near {
@@ -1126,16 +1162,33 @@ pub fn vine_row(
     let posts = (len / 5.0).floor() as u32 + 1;
     for i in 0..posts {
         let p = a + (b - a) * (i as f32 / (posts - 1).max(1) as f32);
-        tube(m, p - Vec3::Y * 0.2, p + Vec3::Y * height, 0.04, 0.04, 3, p.y, post);
+        tube(
+            m,
+            p - Vec3::Y * 0.2,
+            p + Vec3::Y * height,
+            0.04,
+            0.04,
+            3,
+            p.y,
+            post,
+        );
     }
     let leaves = look.leaves;
     let (lo, hi, half) = if leaves < 0.12 {
         // The canes on the wire.
         (0.75, 0.9, 0.06)
     } else {
-        (0.55, 0.6 + (height - 0.6) * leaves.max(0.3), 0.22 + 0.18 * leaves)
+        (
+            0.55,
+            0.6 + (height - 0.6) * leaves.max(0.3),
+            0.22 + 0.18 * leaves,
+        )
     };
-    let c = if leaves < 0.12 { lin3(0.38, 0.31, 0.24) } else { colour };
+    let c = if leaves < 0.12 {
+        lin3(0.38, 0.31, 0.24)
+    } else {
+        colour
+    };
     // A box along the row with its feet following the ground (the ends'
     // heights), split into 5 m pieces.
     let pieces = (len / 5.0).ceil().max(1.0) as u32;
@@ -1153,7 +1206,12 @@ pub fn vine_row(
         };
         let (q0, q1) = (corners(p0), corners(p1));
         // Four sides (the ends are open: rows continue).
-        let faces = [(0usize, 3usize, side), (2, 1, -side), (3, 2, Vec3::Y), (1, 0, -Vec3::Y)];
+        let faces = [
+            (0usize, 3usize, side),
+            (2, 1, -side),
+            (3, 2, Vec3::Y),
+            (1, 0, -Vec3::Y),
+        ];
         for (i0, i1, n) in faces {
             let start = m.positions.len() as u32;
             for p in [q0[i0], q0[i1], q1[i0], q1[i1]] {
@@ -1213,7 +1271,12 @@ pub fn stand_cell(
             continue;
         }
         let s = m.positions.len() as u32;
-        for (p, y) in [(foot[*ia], 0.0), (foot[*ib], 0.0), (top[*ia], height), (top[*ib], height)] {
+        for (p, y) in [
+            (foot[*ia], 0.0),
+            (foot[*ib], 0.0),
+            (top[*ia], height),
+            (top[*ib], height),
+        ] {
             m.positions.push(p.to_array());
             m.uvs.push([y, 0.0]);
             m.normals.push(n.to_array());
@@ -1285,18 +1348,40 @@ mod tests {
         assert!(closed(&m));
         // Outward: each triangle's normal points away from the axis or up/down.
         for t in m.indices.chunks(3) {
-            let p: Vec<Vec3> = t.iter().map(|i| Vec3::from(m.positions[*i as usize])).collect();
+            let p: Vec<Vec3> = t
+                .iter()
+                .map(|i| Vec3::from(m.positions[*i as usize]))
+                .collect();
             let n = (p[1] - p[0]).cross(p[2] - p[0]);
             let c = (p[0] + p[1] + p[2]) / 3.0;
             let out = Vec3::new(c.x, c.y - 2.5, c.z);
             assert!(n.dot(out) > 0.0, "inward triangle {p:?}");
         }
         let mut m = MeshArrays::default();
-        tube(&mut m, Vec3::ZERO, Vec3::new(0.5, 4.0, 0.2), 0.3, 0.1, 5, 0.0, [0.3; 3]);
+        tube(
+            &mut m,
+            Vec3::ZERO,
+            Vec3::new(0.5, 4.0, 0.2),
+            0.3,
+            0.1,
+            5,
+            0.0,
+            [0.3; 3],
+        );
         check(&m);
         assert!(closed(&m));
         let mut m = MeshArrays::default();
-        blob(&mut m, Vec3::ZERO, Vec3::Y * 3.0, Vec3::new(2.0, 1.0, 1.5), 1.0, 6, 3, [0.2; 3], 0.0);
+        blob(
+            &mut m,
+            Vec3::ZERO,
+            Vec3::Y * 3.0,
+            Vec3::new(2.0, 1.0, 1.5),
+            1.0,
+            6,
+            3,
+            [0.2; 3],
+            0.0,
+        );
         check(&m);
         assert!(closed(&m));
     }
@@ -1324,7 +1409,10 @@ mod tests {
             );
             // The sway: uv.x is the height above the foot.
             for (p, uv) in near.positions.iter().zip(&near.uvs) {
-                assert!((uv[0] - (p[1] - 100.0)).abs() < 0.6, "{sp:?}: {uv:?} at {p:?}");
+                assert!(
+                    (uv[0] - (p[1] - 100.0)).abs() < 0.6,
+                    "{sp:?}: {uv:?} at {p:?}"
+                );
             }
             // Deterministic.
             let mut again = MeshArrays::default();
@@ -1347,7 +1435,13 @@ mod tests {
         assert!(width(Species::NorwaySpruce) < width(Species::Beech) * 0.7);
         // Bigger scale: bigger plant.
         let mut a = MeshArrays::default();
-        plant(&mut a, Species::Beech, &at(1.4), &PlantLook::SUMMER, Detail::Near);
+        plant(
+            &mut a,
+            Species::Beech,
+            &at(1.4),
+            &PlantLook::SUMMER,
+            Detail::Near,
+        );
         let top = a.positions.iter().map(|p| p[1]).fold(f32::MIN, f32::max) - 100.0;
         assert!(top > Species::Beech.height_m() * 1.1);
     }
@@ -1362,7 +1456,10 @@ mod tests {
         plant(&mut m, Species::Beech, &at(1.0), &bare, Detail::Near);
         check(&m);
         let twig = twig();
-        assert!(m.colors.iter().all(|c| c[0] < 0.6), "no crown colour when bare");
+        assert!(
+            m.colors.iter().all(|c| c[0] < 0.6),
+            "no crown colour when bare"
+        );
         assert!(m.colors.iter().any(|c| (c[0] - twig[0]).abs() < 1e-6));
         // Spruces stay green in winter.
         let mut s = MeshArrays::default();
@@ -1412,7 +1509,10 @@ mod tests {
         assert!(fruit.bloom > 0.5, "{fruit:?}");
         // July: no blossom; vines in full leaf; December: bare vines.
         let jul = model.day(195.0);
-        assert_eq!(plant_look(Some(&jul), Species::FruitTree, 455.0, 0.0).bloom, 0.0);
+        assert_eq!(
+            plant_look(Some(&jul), Species::FruitTree, 455.0, 0.0).bloom,
+            0.0
+        );
         assert!(vine_look(Some(&jul), 455.0, 0.0).leaves > 0.9);
         let dec = model.day(350.0);
         assert!(vine_look(Some(&dec), 455.0, 0.0).leaves < 0.1);
@@ -1422,12 +1522,18 @@ mod tests {
         let red = vine_colour(&vine_look(Some(&oct), 455.0, 0.0), true, 0.5);
         assert!(red[0] > red[1] * 1.5);
         // Without a season: summer.
-        assert_eq!(plant_look(None, Species::Beech, 455.0, 0.0), PlantLook::SUMMER);
+        assert_eq!(
+            plant_look(None, Species::Beech, 455.0, 0.0),
+            PlantLook::SUMMER
+        );
         // The Teide broom flowers in late May.
         let tf = ocw_sky::season::SeasonModel::for_place(28.27, -16.64);
         let b = plant_look(Some(&tf.day(150.0)), Species::Broom, 2100.0, 0.0);
         assert!(b.bloom > 0.9);
-        assert_eq!(plant_look(Some(&tf.day(250.0)), Species::Broom, 2100.0, 0.0).bloom, 0.0);
+        assert_eq!(
+            plant_look(Some(&tf.day(250.0)), Species::Broom, 2100.0, 0.0).bloom,
+            0.0
+        );
     }
 
     #[test]
@@ -1448,7 +1554,15 @@ mod tests {
         let top = m.positions.iter().map(|p| p[1]).fold(f32::MIN, f32::max);
         assert!(top <= 104.0 + 1.85 && top > 104.0 + 1.5);
         let mut s = MeshArrays::default();
-        stand_cell(&mut s, Vec3::new(5.0, 0.0, 5.0), 10.0, [1.0, 1.2, 1.1, 1.3], 2.5, [true, false, false, true], [0.2, 0.4, 0.1]);
+        stand_cell(
+            &mut s,
+            Vec3::new(5.0, 0.0, 5.0),
+            10.0,
+            [1.0, 1.2, 1.1, 1.3],
+            2.5,
+            [true, false, false, true],
+            [0.2, 0.4, 0.1],
+        );
         check(&s);
         assert_eq!(s.indices.len() / 3, 2 + 2 * 2);
     }

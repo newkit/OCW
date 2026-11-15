@@ -452,14 +452,24 @@ pub fn planted_points(
     let mut out: Vec<PointObstacle> = plants
         .iter()
         .filter(|p| p.species.solid() && keep([f64::from(p.pos[0]), f64::from(p.pos[2])]))
-        .map(|p| point([p.pos[0], p.pos[2]], p.scale * 0.6, p.species.height_m() * p.scale))
+        .map(|p| {
+            point(
+                [p.pos[0], p.pos[2]],
+                p.scale * 0.6,
+                p.species.height_m() * p.scale,
+            )
+        })
         .collect();
     out.extend(
         ocw_world::plantings::mapped_trees(pkg, key)
             .into_iter()
             .filter(|(f, t)| t.species.solid() && keep([f64::from(f[0]), f64::from(f[2])]))
             .map(|(f, t)| {
-                let h = if t.height_m > 0.0 { t.height_m } else { t.species.height_m() };
+                let h = if t.height_m > 0.0 {
+                    t.height_m
+                } else {
+                    t.species.height_m()
+                };
                 point([f[0], f[2]], 1.0, h)
             }),
     );

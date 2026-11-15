@@ -119,8 +119,16 @@ impl Clearance {
     fn block_segment(&mut self, a: [f32; 2], b: [f32; 2], reach: f32) {
         let ab = [b[0] - a[0], b[1] - a[1]];
         let l2 = ab[0] * ab[0] + ab[1] * ab[1];
-        for k in self.range(a[1].min(b[1]) - reach, a[1].max(b[1]) + reach, self.origin[1]) {
-            for i in self.range(a[0].min(b[0]) - reach, a[0].max(b[0]) + reach, self.origin[0]) {
+        for k in self.range(
+            a[1].min(b[1]) - reach,
+            a[1].max(b[1]) + reach,
+            self.origin[1],
+        ) {
+            for i in self.range(
+                a[0].min(b[0]) - reach,
+                a[0].max(b[0]) + reach,
+                self.origin[0],
+            ) {
                 let p = [
                     self.origin[0] + (i as f32 + 0.5) * CLEAR_CELL_M,
                     self.origin[1] + (k as f32 + 0.5) * CLEAR_CELL_M,
@@ -204,7 +212,9 @@ fn row_groups(v: &VegetationTile, cells: usize) -> Vec<((FieldCrop, u8), [usize;
                 continue;
             };
             let dir = v.rows[i];
-            if dir == crate::vegetation::NO_ROWS || !(runs(crop) || plant_species(crop, FloraRegion::Other).is_some()) {
+            if dir == crate::vegetation::NO_ROWS
+                || !(runs(crop) || plant_species(crop, FloraRegion::Other).is_some())
+            {
                 continue;
             }
             match groups.iter_mut().find(|g| g.0 == (crop, dir)) {
@@ -237,8 +247,7 @@ pub fn tile_rows(pkg: &WorldPackage, key: TileKey) -> (Vec<RowRun>, Vec<RowPlant
     let clear = Clearance::new(pkg, tile);
     let cell_of = |x: f64, z: f64| -> Option<usize> {
         let (c, r) = ((x - o[0]) / cs, (z - o[1]) / cs);
-        (c >= 0.0 && r >= 0.0 && c < n as f64 && r < n as f64)
-            .then(|| r as usize * n + c as usize)
+        (c >= 0.0 && r >= 0.0 && c < n as f64 && r < n as f64).then(|| r as usize * n + c as usize)
     };
     for ((crop, dir), bx) in row_groups(v, n) {
         let Some(spec) = row_spec(crop, region) else {
@@ -248,22 +257,27 @@ pub fn tile_rows(pkg: &WorldPackage, key: TileKey) -> (Vec<RowRun>, Vec<RowPlant
         let d = [theta.cos(), theta.sin()];
         let nrm = [-d[1], d[0]];
         let lo = [o[0] + bx[0] as f64 * cs, o[1] + bx[2] as f64 * cs];
-        let hi = [o[0] + (bx[1] + 1) as f64 * cs, o[1] + (bx[3] + 1) as f64 * cs];
+        let hi = [
+            o[0] + (bx[1] + 1) as f64 * cs,
+            o[1] + (bx[3] + 1) as f64 * cs,
+        ];
         let corners = [lo, [hi[0], lo[1]], [lo[0], hi[1]], hi];
         let proj = |p: [f64; 2], a: [f64; 2]| p[0] * a[0] + p[1] * a[1];
         let span = |a: [f64; 2]| {
-            corners.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), c| {
-                let v = proj(*c, a);
-                (l.min(v), h.max(v))
-            })
+            corners
+                .iter()
+                .fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), c| {
+                    let v = proj(*c, a);
+                    (l.min(v), h.max(v))
+                })
         };
         let (nlo, nhi) = span(nrm);
         let (tlo, thi) = span(d);
         let between = f64::from(spec.between_m);
         let inside = |p: [f64; 2]| -> bool {
-            cell_of(p[0], p[1]).is_some_and(|i| {
-                FieldCrop::from_code(v.crops[i]) == Some(crop) && v.rows[i] == dir
-            }) && clear.free(p[0] as f32, p[1] as f32)
+            cell_of(p[0], p[1])
+                .is_some_and(|i| FieldCrop::from_code(v.crops[i]) == Some(crop) && v.rows[i] == dir)
+                && clear.free(p[0] as f32, p[1] as f32)
         };
         for k in (nlo / between).ceil() as i64..=(nhi / between).floor() as i64 {
             let off = k as f64 * between;
@@ -461,7 +475,10 @@ mod tests {
     fn vineyard_rows_follow_the_direction_and_spacing() {
         let pkg = package(false);
         let (runs, plants) = tile_rows(&pkg, TileKey { x: 0, z: 0 });
-        let vines: Vec<&RowRun> = runs.iter().filter(|r| r.crop == FieldCrop::Vineyard).collect();
+        let vines: Vec<&RowRun> = runs
+            .iter()
+            .filter(|r| r.crop == FieldCrop::Vineyard)
+            .collect();
         // Rows along +z every 2 m across the 500 m wide vineyard.
         assert!((240..=252).contains(&vines.len()), "{} rows", vines.len());
         for r in &vines {
@@ -475,7 +492,10 @@ mod tests {
             assert!((w[1] - w[0] - 2.0).abs() < 0.05, "{w:?}");
         }
         // The orchard: trees in rows at 30°, about 7 × 5.5 m.
-        let trees: Vec<&RowPlant> = plants.iter().filter(|p| p.crop == FieldCrop::Orchard).collect();
+        let trees: Vec<&RowPlant> = plants
+            .iter()
+            .filter(|p| p.crop == FieldCrop::Orchard)
+            .collect();
         let area = 500.0 * 500.0;
         let want = area / (7.0 * 5.5) * (1.0 - GAPS);
         assert!(
@@ -495,9 +515,15 @@ mod tests {
         }
         // Maize is not planted in rows here; deterministic.
         assert!(plants.iter().all(|p| p.crop != FieldCrop::Maize));
-        assert_eq!(tile_rows(&pkg, TileKey { x: 0, z: 0 }), (runs.clone(), plants.clone()));
+        assert_eq!(
+            tile_rows(&pkg, TileKey { x: 0, z: 0 }),
+            (runs.clone(), plants.clone())
+        );
         // Another tile: nothing.
-        assert_eq!(tile_rows(&pkg, TileKey { x: 5, z: 0 }), (Vec::new(), Vec::new()));
+        assert_eq!(
+            tile_rows(&pkg, TileKey { x: 5, z: 0 }),
+            (Vec::new(), Vec::new())
+        );
     }
 
     #[test]

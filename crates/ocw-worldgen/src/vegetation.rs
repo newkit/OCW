@@ -109,8 +109,10 @@ impl TreeData {
         for p in paths {
             let d = Self::read_pbf(p).map_err(|e| format!("{}: {e}", p.display()))?;
             out.nodes.extend(d.nodes);
-            out.rows.extend(d.rows.into_iter().filter(|w| rows.insert(w.0)));
-            out.trees.extend(d.trees.into_iter().filter(|t| trees.insert(t.0)));
+            out.rows
+                .extend(d.rows.into_iter().filter(|w| rows.insert(w.0)));
+            out.trees
+                .extend(d.trees.into_iter().filter(|t| trees.insert(t.0)));
         }
         Ok(out)
     }
@@ -167,9 +169,12 @@ fn height_tag(tags: &Tags) -> f32 {
 pub fn crop_mix(region: FloraRegion, alt_m: f64) -> &'static [(FieldCrop, f32)] {
     use FieldCrop::*;
     match region {
-        FloraRegion::Tenerife if alt_m < 300.0 => {
-            &[(Vegetables, 0.55), (Grass, 0.15), (Fallow, 0.2), (Potato, 0.1)]
-        }
+        FloraRegion::Tenerife if alt_m < 300.0 => &[
+            (Vegetables, 0.55),
+            (Grass, 0.15),
+            (Fallow, 0.2),
+            (Potato, 0.1),
+        ],
         FloraRegion::Tenerife => &[
             (Potato, 0.42),
             (Vegetables, 0.2),
@@ -704,8 +709,11 @@ pub fn build_vegetation(
         }
     }
     for t in tiles.values_mut() {
-        t.trees
-            .sort_by(|a, b| a.pos[0].total_cmp(&b.pos[0]).then(a.pos[1].total_cmp(&b.pos[1])));
+        t.trees.sort_by(|a, b| {
+            a.pos[0]
+                .total_cmp(&b.pos[0])
+                .then(a.pos[1].total_cmp(&b.pos[1]))
+        });
     }
     tiles.retain(|_, t| !t.is_empty());
     (
@@ -821,8 +829,7 @@ pub fn spots(pkg: &WorldPackage) -> Vec<Spot> {
         (
             "tree-line",
             Box::new(move |x, z, alt| {
-                (line - 250.0..line + 50.0).contains(&alt)
-                    && class(x, z) == Some(LandClass::Forest)
+                (line - 250.0..line + 50.0).contains(&alt) && class(x, z) == Some(LandClass::Forest)
             }),
         ),
     ];
@@ -846,7 +853,10 @@ pub fn spots(pkg: &WorldPackage) -> Vec<Spot> {
         let n = (size / 40.0) as i64;
         for k in 0..n {
             for i in 0..n {
-                let p = [o[0] + (i as f64 + 0.5) * 40.0, o[1] + (k as f64 + 0.5) * 40.0];
+                let p = [
+                    o[0] + (i as f64 + 0.5) * 40.0,
+                    o[1] + (k as f64 + 0.5) * 40.0,
+                ];
                 if roads.nearest(p, 25.0).is_some()
                     && let Some(y) = pkg.height(p[0], p[1])
                 {
@@ -890,7 +900,7 @@ pub fn spots(pkg: &WorldPackage) -> Vec<Spot> {
             }
             picked.push(p);
             out.push(Spot {
-                name,
+                name: *name,
                 at: p,
                 alt_m: y,
                 score,
@@ -984,8 +994,18 @@ mod tests {
             );
         };
         let rect = |x0: f64, z0: f64, x1: f64, z1: f64| [[x0, z0], [x1, z0], [x1, z1], [x0, z1]];
-        ring(&mut d, 10, &rect(0.0, 100.0, 600.0, 400.0), tags(&[("landuse", "farmland")]));
-        ring(&mut d, 11, &rect(1300.0, 100.0, 1400.0, 700.0), tags(&[("landuse", "vineyard")]));
+        ring(
+            &mut d,
+            10,
+            &rect(0.0, 100.0, 600.0, 400.0),
+            tags(&[("landuse", "farmland")]),
+        );
+        ring(
+            &mut d,
+            11,
+            &rect(1300.0, 100.0, 1400.0, 700.0),
+            tags(&[("landuse", "vineyard")]),
+        );
         ring(
             &mut d,
             12,
@@ -1010,13 +1030,30 @@ mod tests {
     fn trees(proj: &LocalProjection) -> TreeData {
         let mut t = TreeData::default();
         let at = |p: [f64; 2]| proj.unproject(p);
-        t.trees.push((1, at([500.0, 50.0]), tags(&[("natural", "tree"), ("species", "Tilia cordata"), ("height", "14 m")])));
-        t.trees.push((2, at([520.0, 50.0]), tags(&[("natural", "tree"), ("leaf_type", "palm")])));
-        t.trees.push((3, at([5000.0, 50.0]), tags(&[("natural", "tree")]))); // outside
+        t.trees.push((
+            1,
+            at([500.0, 50.0]),
+            tags(&[
+                ("natural", "tree"),
+                ("species", "Tilia cordata"),
+                ("height", "14 m"),
+            ]),
+        ));
+        t.trees.push((
+            2,
+            at([520.0, 50.0]),
+            tags(&[("natural", "tree"), ("leaf_type", "palm")]),
+        ));
+        t.trees
+            .push((3, at([5000.0, 50.0]), tags(&[("natural", "tree")]))); // outside
         for (i, x) in [100.0, 190.0].iter().enumerate() {
             t.nodes.insert(100 + i as i64, at([*x, 950.0]));
         }
-        t.rows.push((7, vec![100, 101], tags(&[("natural", "tree_row"), ("genus", "Populus")])));
+        t.rows.push((
+            7,
+            vec![100, 101],
+            tags(&[("natural", "tree_row"), ("genus", "Populus")]),
+        ));
         t
     }
 
@@ -1057,7 +1094,10 @@ mod tests {
         let lime = all.iter().find(|t| t.species == Species::Lime).unwrap();
         assert!((lime.height_m - 14.0).abs() < 1e-6);
         assert!(all.iter().any(|t| t.species == Species::SlenderPalm));
-        assert_eq!(all.iter().filter(|t| t.species == Species::Willow).count(), 10);
+        assert_eq!(
+            all.iter().filter(|t| t.species == Species::Willow).count(),
+            10
+        );
         assert_eq!(st.tree_rows, 1);
         // Deterministic.
         let (again, _) = build_vegetation(&pkg, &areas(&proj), &trees(&proj), &proj, None);
@@ -1069,7 +1109,12 @@ mod tests {
     /// field there), no data elsewhere.
     fn raster(proj: &LocalProjection) -> CropRaster {
         let crs = crate::crs::Crs::Laea;
-        let corners = [[-500.0, -500.0], [2500.0, -500.0], [-500.0, 1500.0], [2500.0, 1500.0]];
+        let corners = [
+            [-500.0, -500.0],
+            [2500.0, -500.0],
+            [-500.0, 1500.0],
+            [2500.0, 1500.0],
+        ];
         let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
         for c in corners {
             let (lat, lon) = proj.unproject(c);
@@ -1083,7 +1128,10 @@ mod tests {
         let mut codes = vec![255u8; width * height];
         for y in 0..height {
             for x in 0..width {
-                let (e, n) = (west + (x as f64 + 0.5) * 10.0, north - (y as f64 + 0.5) * 10.0);
+                let (e, n) = (
+                    west + (x as f64 + 0.5) * 10.0,
+                    north - (y as f64 + 0.5) * 10.0,
+                );
                 let (lat, lon) = crs.inverse(e, n);
                 let p = proj.project(lat, lon);
                 if p[0] < 300.0 {
@@ -1127,15 +1175,33 @@ mod tests {
     #[test]
     fn tenerife_plantations_by_altitude_and_palms() {
         let r = FloraRegion::Tenerife;
-        assert_eq!(plantation_default("orchard", r, 100.0), Some(FieldCrop::Banana));
-        assert_eq!(plantation_default("orchard", r, 600.0), Some(FieldCrop::Subtropical));
-        assert_eq!(plantation_default("orchard", r, 1200.0), Some(FieldCrop::Orchard));
-        assert_eq!(plantation_default("greenhouse_horticulture", r, 50.0), Some(FieldCrop::Banana));
-        assert_eq!(plantation_default("orchard", FloraRegion::AlpineRhine, 100.0), Some(FieldCrop::Orchard));
+        assert_eq!(
+            plantation_default("orchard", r, 100.0),
+            Some(FieldCrop::Banana)
+        );
+        assert_eq!(
+            plantation_default("orchard", r, 600.0),
+            Some(FieldCrop::Subtropical)
+        );
+        assert_eq!(
+            plantation_default("orchard", r, 1200.0),
+            Some(FieldCrop::Orchard)
+        );
+        assert_eq!(
+            plantation_default("greenhouse_horticulture", r, 50.0),
+            Some(FieldCrop::Banana)
+        );
+        assert_eq!(
+            plantation_default("orchard", FloraRegion::AlpineRhine, 100.0),
+            Some(FieldCrop::Orchard)
+        );
         assert_eq!(plantation_default("farmland", r, 100.0), None);
         let palm = tags(&[("leaf_type", "palm")]);
         assert_eq!(tree_species(&palm, r, 0.1), Species::DatePalm);
-        assert_eq!(tree_species(&palm, FloraRegion::BlackForest, 0.1), Species::SlenderPalm);
+        assert_eq!(
+            tree_species(&palm, FloraRegion::BlackForest, 0.1),
+            Species::SlenderPalm
+        );
         let pine = tags(&[("leaf_type", "needleleaved")]);
         assert_eq!(tree_species(&pine, r, 0.9), Species::CanaryPine);
         assert_eq!(tree_species(&tags(&[]), r, 0.9), Species::Unknown);
@@ -1152,7 +1218,10 @@ mod tests {
     #[test]
     fn main_axes_of_rings() {
         let long_x = [[0.0, 0.0], [100.0, 0.0], [100.0, 20.0], [0.0, 20.0]];
-        assert!(main_axis(&long_x).abs() < 1e-9 || (main_axis(&long_x) - std::f64::consts::PI).abs() < 1e-9);
+        assert!(
+            main_axis(&long_x).abs() < 1e-9
+                || (main_axis(&long_x) - std::f64::consts::PI).abs() < 1e-9
+        );
         let long_z = [[0.0, 0.0], [20.0, 0.0], [20.0, 100.0], [0.0, 100.0]];
         assert!((main_axis(&long_z) - std::f64::consts::FRAC_PI_2).abs() < 1e-9);
         // A rotated rectangle at 30°.

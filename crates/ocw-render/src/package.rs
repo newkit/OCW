@@ -972,7 +972,9 @@ pub fn colour_map_seasonal(
                 .as_ref()
                 .map(|v| v.at(size, x, z).0)
                 .unwrap_or_default();
-            let summer = crop.arable().then(|| if crop.summer_crop() { 1.0 } else { 0.0 });
+            let summer = crop
+                .arable()
+                .then(|| if crop.summer_crop() { 1.0 } else { 0.0 });
             if let (Some(day), Some(y)) = (season, pkg.height(x, z)) {
                 colour = match summer {
                     Some(m) => crate::season::ground_colour_with(class, colour, y, day, m),

@@ -350,7 +350,11 @@ impl Species {
             "tilia" | "platanus" | "aesculus" | "ulmus" | "carpinus" | "robinia" | "gleditsia"
             | "celtis" | "sophora" | "styphnolobium" | "liquidambar" | "liriodendron" => Lime,
             "malus" | "pyrus" | "prunus" | "juglans" | "sorbus" | "cydonia" | "mespilus"
-            | "ficus" if g != "ficus" || s == Some("carica") => FruitTree,
+            | "ficus"
+                if g != "ficus" || s == Some("carica") =>
+            {
+                FruitTree
+            }
             "castanea" => Chestnut,
             "laurus" | "persea" if s != Some("americana") => Laurel,
             "persea" => SubtropicalFruit,
@@ -359,9 +363,9 @@ impl Species {
             | "delonix" | "spathodea" | "tabebuia" | "handroanthus" => Laurel,
             "myrica" | "morella" | "erica" | "arbutus" | "viburnum" => FayaHeath,
             "phoenix" => DatePalm,
-            "washingtonia" | "roystonea" | "wodyetia" | "archontophoenix" | "areca"
-            | "dypsis" | "caryota" | "livistona" | "syagrus" | "cocos" | "trachycarpus"
-            | "chamaerops" | "howea" | "ravenea" => SlenderPalm,
+            "washingtonia" | "roystonea" | "wodyetia" | "archontophoenix" | "areca" | "dypsis"
+            | "caryota" | "livistona" | "syagrus" | "cocos" | "trachycarpus" | "chamaerops"
+            | "howea" | "ravenea" => SlenderPalm,
             "dracaena" => DragonTree,
             "spartocytisus" | "cytisus" | "adenocarpus" | "retama" | "genista" => Broom,
             "euphorbia" => match s {
@@ -415,9 +419,8 @@ impl FloraRegion {
     /// The region of a place (the same boxes as the seasons' climates,
     /// `ocw_sky::season::REGIONS`).
     pub fn at(lat: f64, lon: f64) -> Self {
-        let inside = |a: (f64, f64), b: (f64, f64)| {
-            (a.0..=a.1).contains(&lat) && (b.0..=b.1).contains(&lon)
-        };
+        let inside =
+            |a: (f64, f64), b: (f64, f64)| (a.0..=a.1).contains(&lat) && (b.0..=b.1).contains(&lon);
         if inside((46.8, 47.7), (9.2, 10.0)) {
             FloraRegion::AlpineRhine
         } else if inside((47.4, 48.9), (7.4, 8.9)) {
@@ -632,7 +635,10 @@ const TF_BROADLEAVES: [(f64, &[(Species, f32)]); 4] = [
         f64::MIN,
         &[(Laurel, 0.5), (FayaHeath, 0.3), (SubtropicalFruit, 0.2)],
     ),
-    (450.0, &[(Laurel, 0.75), (FayaHeath, 0.22), (Eucalyptus, 0.03)]),
+    (
+        450.0,
+        &[(Laurel, 0.75), (FayaHeath, 0.22), (Eucalyptus, 0.03)],
+    ),
     (
         950.0,
         &[(FayaHeath, 0.62), (Laurel, 0.3), (Eucalyptus, 0.08)],
@@ -781,7 +787,12 @@ fn central(
                     pick,
                 ),
                 Setting::Open => choose(
-                    &[(SycamoreMaple, 0.55), (Ash, 0.2), (Beech, 0.15), (Birch, 0.1)],
+                    &[
+                        (SycamoreMaple, 0.55),
+                        (Ash, 0.2),
+                        (Beech, 0.15),
+                        (Birch, 0.1),
+                    ],
                     pick,
                 ),
                 Setting::Scrub if alt > tree_line - 450.0 => GreenAlder,
@@ -817,7 +828,12 @@ fn tenerife(site: &Site, group: LeafGroup, pick: f32) -> Species {
                 } else {
                     // Thermophilous woodland and gardens of the dry side.
                     choose(
-                        &[(Laurel, 0.35), (SubtropicalFruit, 0.25), (DatePalm, 0.25), (FayaHeath, 0.15)],
+                        &[
+                            (Laurel, 0.35),
+                            (SubtropicalFruit, 0.25),
+                            (DatePalm, 0.25),
+                            (FayaHeath, 0.15),
+                        ],
                         pick,
                     )
                 }
@@ -980,7 +996,10 @@ mod tests {
         assert_eq!(f(None, Some("Fraxinus ornus")), Some(Ash));
         assert_eq!(f(None, Some("Alnus viridis")), Some(GreenAlder));
         assert_eq!(f(Some("Quercus"), None), Some(Oak));
-        assert_eq!(Species::from_osm(None, None, Some("Fagus sylvatica")), Some(Beech));
+        assert_eq!(
+            Species::from_osm(None, None, Some("Fagus sylvatica")),
+            Some(Beech)
+        );
         assert_eq!(f(None, Some("Sequoiadendron giganteum")), None);
         assert_eq!(f(None, None), None);
         assert_eq!(OsmLeaf::parse("palm"), Some(OsmLeaf::Palm));
@@ -1013,7 +1032,10 @@ mod tests {
             &site(FloraRegion::AlpineRhine, Setting::Forest, 500.0),
             LeafGroup::Evergreen,
         );
-        assert!(low[&ScotsPine] > 0.25 && low[&NorwaySpruce] > 0.4, "{low:?}");
+        assert!(
+            low[&ScotsPine] > 0.25 && low[&NorwaySpruce] > 0.4,
+            "{low:?}"
+        );
         let mid = shares(
             &site(FloraRegion::AlpineRhine, Setting::Forest, 1000.0),
             LeafGroup::Evergreen,
@@ -1102,17 +1124,32 @@ mod tests {
             s
         };
         // Measured conifers: Canary pine anywhere.
-        let s = t(Setting::Forest, 1500.0, true, Some(DominantLeaf::Coniferous));
+        let s = t(
+            Setting::Forest,
+            1500.0,
+            true,
+            Some(DominantLeaf::Coniferous),
+        );
         assert_eq!(pick_species(&s, LeafGroup::Evergreen, 0.4), CanaryPine);
         // Measured broadleaves in the north's cloud belt: laurel forest,
         // fayal-brezal above.
         let laurel = shares(
-            &t(Setting::Forest, 700.0, true, Some(DominantLeaf::Broadleaved)),
+            &t(
+                Setting::Forest,
+                700.0,
+                true,
+                Some(DominantLeaf::Broadleaved),
+            ),
             LeafGroup::Evergreen,
         );
         assert!(laurel[&Laurel] > 0.6, "{laurel:?}");
         let faya = shares(
-            &t(Setting::Forest, 1200.0, true, Some(DominantLeaf::Broadleaved)),
+            &t(
+                Setting::Forest,
+                1200.0,
+                true,
+                Some(DominantLeaf::Broadleaved),
+            ),
             LeafGroup::Evergreen,
         );
         assert!(faya[&FayaHeath] > 0.5);
@@ -1132,7 +1169,10 @@ mod tests {
         assert!(south.contains_key(&Cardon));
         let north = shares(&t(Setting::Scrub, 600.0, true, None), LeafGroup::Evergreen);
         assert!(north[&FayaHeath] > 0.5 && !north.contains_key(&Cardon));
-        let canadas = shares(&t(Setting::Scrub, 2200.0, false, None), LeafGroup::Evergreen);
+        let canadas = shares(
+            &t(Setting::Scrub, 2200.0, false, None),
+            LeafGroup::Evergreen,
+        );
         assert_eq!(canadas.get(&Broom), Some(&1.0));
         // Towns: palms on the coast.
         let town = shares(&t(Setting::Urban, 50.0, true, None), LeafGroup::Evergreen);
