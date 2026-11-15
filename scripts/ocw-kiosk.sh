@@ -27,6 +27,9 @@
 # new build or a crash of either restarts both. OCW_KIOSK_SERVER=0: no
 # server, the app rides alone as before; OCW_KIOSK_BOTS (default 10) and
 # OCW_KIOSK_SERVER_ARGS (more ocw-server options) tune it.
+# A game server already running on this machine (UDP port of
+# OCW_KIOSK_LISTEN busy, e.g. one started by hand) is joined instead of
+# starting another; OCW_KIOSK_SERVER=join always joins (waiting for it).
 set -uo pipefail
 
 dir=${OCW_KIOSK_DIR:-$(cd "$(dirname "$0")" && pwd)}
@@ -68,7 +71,13 @@ signature() {
 # kiosk start the new one (exec), so changes to the kiosk need no login.
 self_sig() { stat -c '%Y %i %s' "$dir/ocw-kiosk.sh" 2>/dev/null || echo none; }
 
-server_wanted() { [ "${OCW_KIOSK_SERVER:-1}" != 0 ] && [ -x "$server_bin" ]; }
+server_wanted() { [ "${OCW_KIOSK_SERVER:-1}" != 0 ] && { [ -x "$server_bin" ] || [ "${OCW_KIOSK_SERVER:-1}" = join ]; }; }
+
+# Whether something listens on UDP port $1 on this machine.
+udp_busy() {
+  command -v ss >/dev/null 2>&1 || return 1
+  [ -n "$(ss -Hlun "sport = :$1" 2>/dev/null)" ]
+}
 
 # The last value of OPTION in the app's ocw-desktop.args (quotes removed).
 args_value() {
@@ -81,6 +90,17 @@ args_value() {
 start_server() {
   SERVER_PID="" SERVER_ARGS=()
   server_wanted || return 0
+  local port=${listen##*:}
+  if [ "${OCW_KIOSK_SERVER:-1}" = join ] || udp_busy "$port"; then
+    local waited=0
+    until udp_busy "$port"; do
+      [ "$waited" -ge "$ready_s" ] && { say "no game server on UDP $port after ${ready_s} s; the app rides alone"; return 0; }
+      sleep 1; waited=$((waited + 1))
+    done
+    SERVER_ARGS=(--server "127.0.0.1:$port" --insecure-dev)
+    say "joining the game server already running on UDP $port (the app must ride its world and route)"
+    return 0
+  fi
   local world route course=() extra=()
   world=$(args_value --world)
   route=$(args_value --route)
@@ -115,7 +135,6 @@ start_server() {
   done
   cat "$state/server.out" >>"$serverlog"
   grep -A2 "Clients connect with" "$state/server.out" >"$state/server-connect.txt"
-  local port=${listen##*:}
   SERVER_ARGS=(--server "127.0.0.1:$port" --insecure-dev)
   say "game server ready after ${waited} s: $(sed -n 2p "$state/server-connect.txt" | sed 's/^ *//')"
 }
@@ -237,6 +256,8 @@ case "${1:-}" in
     if kill -0 "$(cat "$state/server.pid" 2>/dev/null || echo 0)" 2>/dev/null; then
       echo "game server: running; riders join with:"
       sed -n '2,3p' "$state/server-connect.txt" 2>/dev/null
+    elif udp_busy "${listen##*:}"; then
+      echo "game server: another one listens on UDP ${listen##*:} (the kiosk joins it)"
     else
       echo "game server: not running"
     fi

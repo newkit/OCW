@@ -85,6 +85,20 @@ wait_for '[ "$(runs)" -gt "$before" ]' "both restarted after a server crash"
 kill -TERM "$kiosk"; wait "$kiosk" 2>/dev/null || true
 sleep 0.5
 if pgrep -f "sleep 601" >/dev/null; then echo "FAIL: server still running"; pkill -f "sleep 601"; fail=1; fi
+# A game server already listening on the port is joined, not started again.
+python3 -c 'import socket,time; s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); s.bind(("127.0.0.1",47998)); time.sleep(30)' &
+udp=$!
+sleep 0.5
+rm -f "$t/runs" "$t/srv"
+OCW_KIOSK_LISTEN=0.0.0.0:47998 scripts/ocw-kiosk.sh run &
+kiosk=$!
+wait_for '[ "$(runs)" -ge 1 ]' "app started against the running server"
+tail -1 "$t/runs" | grep -q -- "--server 127.0.0.1:47998 --insecure-dev" || { echo "FAIL: did not join: $(tail -1 "$t/runs")"; fail=1; }
+[ ! -f "$t/srv" ] || { echo "FAIL: started a second server"; fail=1; }
+grep -q "joining the game server already running" "$XDG_STATE_HOME/ocw/kiosk.log" || { echo "FAIL: join log"; fail=1; }
+kill -TERM "$kiosk"; wait "$kiosk" 2>/dev/null || true
+kill "$udp" 2>/dev/null || true
+pkill -f "sleep 600" 2>/dev/null || true
 # OCW_KIOSK_SERVER=0: the app rides alone.
 rm -f "$t/runs"
 OCW_KIOSK_SERVER=0 scripts/ocw-kiosk.sh run &

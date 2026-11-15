@@ -3367,11 +3367,12 @@ deploys. Environment:
                                           #   ocw-desktop --server marge:47800 --server-cert 3f9a…
 ```
 
-A new build, or a crash of the server or the app, restarts both. If the server does not come up within 3 minutes, the app rides alone as before. These go into the kiosk's environment (its autostart entry):
+**If a game server already runs on the machine** (one started by hand, for example), the kiosk does not start another: when the UDP port is in use it joins that server (`--server 127.0.0.1:47800`). The server must ride the kiosk's world and route, or the app is refused with a message. A new build, or a crash of the server or the app, restarts both. If the server does not come up within 3 minutes, the app rides alone as before. These go into the kiosk's environment (its autostart entry):
 
 | Variable | Effect |
 |---|---|
 | `OCW_KIOSK_SERVER=0` | No game server: the app rides alone on its local server |
+| `OCW_KIOSK_SERVER=join` | Never start a server: wait for one on the port and join it |
 | `OCW_KIOSK_LISTEN` | The server's address and UDP port (default `0.0.0.0:47800`) |
 | `OCW_KIOSK_BOTS` | Bots on the server (default 10) |
 | `OCW_KIOSK_SERVER_ARGS` | More `ocw-server` options, e.g. `--auth-issuer https://…` |
