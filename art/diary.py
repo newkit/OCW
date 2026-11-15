@@ -4,30 +4,45 @@
     art/diary.py fetch   [DAY...]   download and unpack the day zips from the
                                     GitHub release `build-history`
     art/diary.py gather  [DAY...]   collect every image, video, sound, text and
-                                    log of the day into artwork/build-history/DAY/
+                                    log of the day into art/build-history/DAY/
     art/diary.py stamp   [DAY...]   write the ISO 8601 capture time into every
                                     archived PNG/MP4 that has none (gather does it)
     art/diary.py prompts [DAY...]   the user's prompts of the day (from the Claude
                                     Code transcripts, masked) – journal runs it
     art/diary.py journal [DAY...]   write DAY/journal.md + journal.json (commits,
-                                    merges, spec versions, tests, media)
+                                    merges, spec versions, tests, media; masked)
     art/diary.py sheet   DAY        contact sheets of the day's media (for
                                     writing the day's script)
     art/diary.py render  [DAY...]   render the day video(s) from art/days/DAY.toml
     art/diary.py diary              chain all day videos into the diary video
     art/diary.py publish [DAY...]   zip the day folders and upload zips and
                                     videos to the release `build-history`
+                                    (--videos: only the videos and SHA256SUMS)
     art/diary.py all     [DAY...]   gather + journal + render + diary
+    art/diary.py collect [--sheets|--no-sheets] [DAY...]
+                                    the hourly collector (scripts/art-collect.sh):
+                                    gather + journal of yesterday and today, the
+                                    mask check, contact sheets in the 23:xx run;
+                                    status in test-output/build-log/DAY/art.json
+    art/diary.py check-masked [--fix]
+                                    fail if a tracked text file of the archive
+                                    (index.md, SHA256SUMS, DAY/journal.*,
+                                    DAY/tokens.json) holds a private pattern;
+                                    --fix masks them in place
 
 DAY is YYYY-MM-DD; without DAY: every day that has a script in art/days/.
 Needs Python 3.11+ (tomllib), ffmpeg/ffprobe with libass, and `gh` for
-fetch/publish. Media stay out of git (spec §11.3): everything lands in the
-git-ignored artwork/build-history/.
+fetch/publish. Media stay out of git (spec §11.3): they land in the
+git-ignored art/build-history/; only its masked text files are tracked.
+Runs never overlap: every command but check-masked takes the lock
+art/build-history/.lock (scripts/art-collect.sh takes the same one).
 """
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
+import fcntl
 import hashlib
 import json
 import math
@@ -38,6 +53,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import time
 import tomllib
 import wave
 from array import array
@@ -46,10 +62,19 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 ART = ROOT / "art"
 DAYS = ART / "days"
-HIST = ROOT / "artwork" / "build-history"
+# The archive (ART-PROJECT §2): media git-ignored, masked text tracked.
+# OCW_ART_HISTORY moves it (tests); its old place was artwork/build-history/.
+HIST = Path(os.environ.get("OCW_ART_HISTORY") or ROOT / "art" / "build-history")
+OLD_HIST = ROOT / "artwork" / "build-history"
 OUT = HIST / "diary"
 WORK = HIST / ".work"
-TEST_OUTPUT = ROOT / "test-output"
+TEST_OUTPUT = Path(os.environ.get("OCW_TEST_OUTPUT") or ROOT / "test-output")
+# The agent worktrees, whose test-output/ gather collects too. With
+# OCW_TEST_OUTPUT (tests) only that folder is a source, unless
+# OCW_ART_WORKTREES names a worktrees folder ("" = none).
+_wt = os.environ.get("OCW_ART_WORKTREES")
+WORKTREES = (Path(_wt) if _wt else None) if _wt is not None else (
+    None if os.environ.get("OCW_TEST_OUTPUT") else ROOT / ".claude" / "worktrees")
 FONTS = ROOT / "crates" / "ocw-render" / "assets" / "fonts"
 RELEASE = "build-history"
 
@@ -68,6 +93,86 @@ PINK, VIOLET, GOLD, INK = "FF1472", "3A2F55", "C98A00", "2B2B3A"
 
 def log(*a):
     print(*a, file=sys.stderr, flush=True)
+
+
+def set_history(path: Path):
+    """Points the tool at another archive (tests, OCW_ART_HISTORY)."""
+    global HIST, OUT, WORK
+    HIST = Path(path)
+    OUT = HIST / "diary"
+    WORK = HIST / ".work"
+
+
+def check_old_place():
+    """The archive moved from artwork/build-history/ to art/build-history/
+    (2026-11-14): refuse to work on an empty new place while the old one
+    still holds it."""
+    if os.environ.get("OCW_ART_HISTORY") or not OLD_HIST.is_dir():
+        return
+    if not any(OLD_HIST.iterdir()):
+        return
+    rel_old, rel_new = "artwork/build-history", "art/build-history"
+    if HIST.is_dir() and any(p.name != ".lock" for p in HIST.iterdir()):
+        raise SystemExit(
+            f"The build history is in both {rel_old}/ and {rel_new}/. It lives in {rel_new}/ now "
+            f"(art/ART-PROJECT.md §2): move what is left in {rel_old}/ over by hand, then remove it.")
+    raise SystemExit(
+        f"The build history is still at its old place, {rel_old}/. It lives in {rel_new}/ now "
+        f"(art/ART-PROJECT.md §2). Move it once (same file system, instant):\n"
+        f"    rmdir {rel_new} 2>/dev/null; mv {rel_old} {rel_new}\n"
+        f"then mask and commit its text files: art/diary.py check-masked --fix")
+
+
+# ------------------------------------------------------------------- lock
+#
+# Runs never overlap (ART-PROJECT §5.1): every writing command takes an
+# exclusive flock on art/build-history/.lock. scripts/art-collect.sh takes
+# the same lock itself and sets OCW_ART_LOCK_HELD=1 for the diary.py it runs.
+
+LOCK_NAME = ".lock"
+
+
+def lock_path() -> Path:
+    return HIST / LOCK_NAME
+
+
+@contextlib.contextmanager
+def art_lock(what: str = "", wait: float | None = None):
+    """Holds the archive's lock. `wait`: seconds to wait for it (None:
+    OCW_ART_LOCK_WAIT, else forever); raises TimeoutError when it runs out."""
+    if os.environ.get("OCW_ART_LOCK_HELD") == "1":
+        yield
+        return
+    if wait is None and os.environ.get("OCW_ART_LOCK_WAIT"):
+        wait = float(os.environ["OCW_ART_LOCK_WAIT"])
+    path = lock_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a+") as f:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            f.seek(0)
+            holder = f.read().strip() or "another run"
+            log(f"waiting for the build-history lock ({holder})")
+            t0 = time.monotonic()
+            while True:
+                try:
+                    fcntl.flock(f, fcntl.LOCK_EX | (fcntl.LOCK_NB if wait is not None else 0))
+                    break
+                except BlockingIOError:
+                    if time.monotonic() - t0 >= wait:
+                        raise TimeoutError(f"build-history lock held by {holder}") from None
+                    time.sleep(0.2)
+        f.seek(0)
+        f.truncate()
+        f.write(f"pid {os.getpid()}: diary.py {what}".strip() + "\n")
+        f.flush()
+        try:
+            yield
+        finally:
+            f.seek(0)
+            f.truncate()
+            fcntl.flock(f, fcntl.LOCK_UN)
 
 
 def run(cmd, **kw):
@@ -114,7 +219,47 @@ def all_days() -> list[str]:
 
 
 def day_number(day: str) -> int:
-    return all_days().index(day) + 1
+    """The day's number in the build (1 = the first day with commits); a day
+    without commits yet (just after midnight) counts as the next one."""
+    return sum(1 for d in all_days() if d < day) + 1
+
+
+# Text files of the archive that are tracked in git (ART-PROJECT §2): always
+# written masked; everything else in the archive is git-ignored.
+TRACKED_TOP = ("index.md", "SHA256SUMS")
+TRACKED_DAY = ("journal.md", "journal.json", "tokens.json", "incidents.md")
+
+
+def tracked_files() -> list[Path]:
+    out = [HIST / n for n in TRACKED_TOP]
+    for d in sorted(HIST.glob("????-??-??")):
+        if d.is_dir() and re.fullmatch(r"\d{4}-\d{2}-\d{2}", d.name):
+            out += [d / n for n in TRACKED_DAY]
+    return [f for f in out if f.is_file()]
+
+
+def write_tracked(path: Path, text: str, secrets=None):
+    """Writes a tracked text file of the archive, masked (§2.3)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(mask(text, secrets))
+
+
+def check_masked(fix: bool = False, secrets=None) -> list[str]:
+    """Findings ("path:line: kind") in the tracked text files; with `fix`
+    the files are masked in place first. Never prints a private value."""
+    secrets = secrets if secrets is not None else _secrets()
+    out = []
+    for f in tracked_files():
+        text = f.read_text(errors="replace")
+        if fix:
+            masked = mask(text, secrets)
+            if masked != text:
+                f.write_text(masked)
+                log(f"masked {f.relative_to(HIST)}")
+                text = masked
+        for n, kind in private_findings(text, secrets):
+            out.append(f"{f.relative_to(HIST)}:{n}: {kind}")
+    return out
 
 
 # ------------------------------------------------------------------ gather
@@ -166,7 +311,8 @@ def slug(s: str) -> str:
 def sources() -> list[Path]:
     """Every checkout's test-output (main + agent worktrees)."""
     out = [TEST_OUTPUT]
-    out += sorted((ROOT / ".claude" / "worktrees").glob("*/test-output"))
+    if WORKTREES is not None:
+        out += sorted(WORKTREES.glob("*/test-output"))
     return [p for p in out if p.is_dir()]
 
 
@@ -199,7 +345,8 @@ def gather(day: str):
                 if not target.exists() or target.stat().st_size != f.stat().st_size:
                     target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(f, target)
-                    added += 1
+                    # The collector's own status and log change every run.
+                    added += f.name not in COLLECTOR_FILES
                 continue
             h = sha(f)
             if h in known:
@@ -223,6 +370,7 @@ def gather(day: str):
     stamp(day)
     media = [f for f in dest.iterdir() if f.suffix.lower() in IMAGE | VIDEO | AUDIO]
     log(f"{day}: {added} new files; {len(media)} images/videos/sounds in {dest}")
+    return added
 
 
 # ------------------------------------------------------------------- stamp
@@ -324,20 +472,53 @@ def now_meta() -> list[str]:
 
 TRANSCRIPTS = os.environ.get("OCW_TRANSCRIPTS", str(Path.home() / ".claude" / "projects"))
 REMINDER_RE = re.compile(r"<system-reminder>.*?</system-reminder>", re.S)
-EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+# user@domain.tld (not `icon@2x.png`, not `react@18.3.1`).
+EMAIL_RE = re.compile(r"[\w.+-]+@(?!\d+x\.)[\w-]+(?:\.[\w-]+)*\.[A-Za-z]{2,}\b")
 # Private network addresses (10/8, 172.16/12, 192.168/16, 100.64/10).
 PRIVATE_IP_RE = re.compile(
     r"\b(?:10\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])|192\.168|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7]))"
     r"\.\d{1,3}\.\d{1,3}\b")
 
 
+_SECRETS: list[tuple[str, str]] | None = None
+
+
+def machines_conf() -> Path | None:
+    """config/machines.toml of this checkout, else of the main checkout (an
+    agent worktree has none; scripts/remote.sh looks there too). Running in
+    a worktree without this fallback once wrote journals without the users
+    masked (2026-11-15)."""
+    for root in (ROOT, main_checkout()):
+        if root is not None and (root / "config" / "machines.toml").is_file():
+            return root / "config" / "machines.toml"
+    return None
+
+
+def main_checkout() -> Path | None:
+    r = run(["git", "-C", ROOT, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            capture_output=True, text=True, check=False)
+    common = r.stdout.strip()
+    return Path(common).parent if r.returncode == 0 and common else None
+
+
 def _secrets() -> list[tuple[str, str]]:
-    """(text, replacement) pairs: every build machine's host and user (asked
-    from scripts/remote.sh, which reads config/machines.toml) and the home
-    directory. Never printed."""
+    """(text, replacement) pairs: every build machine's host (replaced by the
+    machine's name) and user ("user"; asked from scripts/remote.sh, which
+    reads config/machines.toml) and the home directory ("~"). Asked once per
+    run. Never printed."""
+    global _SECRETS
+    if _SECRETS is not None:
+        return _SECRETS
     out = []
-    conf = ROOT / "config" / "machines.toml"
-    names = re.findall(r'^\s*name\s*=\s*"([^"]+)"', conf.read_text(), re.M) if conf.exists() else []
+    conf = machines_conf()
+    if conf is None:
+        if os.environ.get("OCW_ART_NO_MACHINES") != "1":
+            raise SystemExit("config/machines.toml not found (here or in the main checkout): without it the "
+                             "build machines' hosts and users cannot be masked (ART-PROJECT §2.5). "
+                             "OCW_ART_NO_MACHINES=1 masks without them (tests only).")
+        names = []
+    else:
+        names = re.findall(r'^\s*name\s*=\s*"([^"]+)"', conf.read_text(), re.M)
     for name in names:
         for k in ("host", "user"):
             v = run([ROOT / "scripts" / "remote.sh", name, "field", k], capture_output=True,
@@ -345,13 +526,57 @@ def _secrets() -> list[tuple[str, str]]:
             if len(v) >= 3:
                 out.append((v, name if k == "host" else "user"))
     out.append((str(Path.home()), "~"))
-    return sorted(out, key=lambda kv: -len(kv[0]))
+    # A value that is part of a replacement (a host named like its machine)
+    # is public and would never mask away.
+    reps = {r for _, r in out}
+    out = [(v, r) for v, r in out if not any(v in r_ for r_ in reps)]
+    _SECRETS = sorted(set(out), key=lambda kv: -len(kv[0]))
+    return _SECRETS
+
+
+# Any home directory (Linux, macOS, Windows; also JSON-escaped backslashes).
+HOME_RE = re.compile(r"(?<![\w.-])(?:/home|/Users)/[A-Za-z0-9._-]+"
+                     r"|\b[A-Za-z]:(?:\\\\|\\|/)Users(?:\\\\|\\|/)[A-Za-z0-9._-]+")
+
+
+def _user_re(user: str) -> re.Pattern:
+    """A build machine's user name as a word of its own (`claude@host`,
+    `"claude"`, `user claude`), not inside a path or name such as
+    `~/.claude/` or `claude.ai`."""
+    return re.compile(r"(?<![\w./\\])" + re.escape(user) + r"(?![\w/]|\.\w)")
+
+
+def _mask_steps(secrets):
+    """(kind, function) of every masking step, in order: hosts and home
+    directories first (a user name is part of both), then the users, then
+    the generic patterns."""
+    hosts = [("build-machine host", lambda t, v=v, r=r: t.replace(v, r))
+             for v, r in secrets if r not in ("user", "~")]
+    homes = [("home directory", lambda t, v=v: t.replace(v, "~")) for v, r in secrets if r == "~"]
+    homes.append(("home directory", lambda t: HOME_RE.sub("~", t)))
+    users = [("build-machine user", lambda t, rx=_user_re(v): rx.sub("user", t))
+             for v, r in secrets if r == "user"]
+    return [*hosts, *homes, *users,
+            ("e-mail address", lambda t: EMAIL_RE.sub("<e-mail>", t)),
+            ("private IP address", lambda t: PRIVATE_IP_RE.sub("<ip>", t))]
 
 
 def mask(text: str, secrets=None) -> str:
-    for v, r in (secrets if secrets is not None else _secrets()):
-        text = text.replace(v, r)
-    return PRIVATE_IP_RE.sub("<ip>", EMAIL_RE.sub("<e-mail>", text))
+    for _, f in _mask_steps(secrets if secrets is not None else _secrets()):
+        text = f(text)
+    return text
+
+
+def private_findings(text: str, secrets=None) -> list[tuple[int, str]]:
+    """(line number, kind) of every private pattern in the text: what mask()
+    would change. The values themselves are never reported."""
+    steps = _mask_steps(secrets if secrets is not None else _secrets())
+    out = []
+    for n, line in enumerate(text.splitlines(), 1):
+        for kind, f in steps:
+            if f(line) != line and (n, kind) not in out:
+                out.append((n, kind))
+    return out
 
 
 def prompt_text(raw: str) -> str | None:
@@ -374,7 +599,7 @@ def prompts_of(day: str) -> list[dict]:
     seen, out = set(), []
     files = [f for f in Path(TRANSCRIPTS).glob("*OCW*/*.jsonl")]
     for f in files:
-        for line in f.open(errors="replace"):
+        for line in f.read_text(errors="replace").splitlines():
             if '"user"' not in line and "queued_command" not in line:
                 continue
             try:
@@ -487,7 +712,7 @@ def tokens_of(day: str) -> dict:
     secrets = _secrets()
     for f, agent in sources:
         last_prompt = None
-        for line in f.open(errors="replace"):
+        for line in f.read_text(errors="replace").splitlines():
             if agent is None and ('"user"' in line or "queued_command" in line):
                 try:
                     d = json.loads(line)
@@ -541,7 +766,7 @@ def tokens(day: str) -> dict:
     t = tokens_of(day)
     d = HIST / day
     d.mkdir(parents=True, exist_ok=True)
-    (d / "tokens.json").write_text(json.dumps(t, indent=1, ensure_ascii=False))
+    write_tracked(d / "tokens.json", json.dumps(t, indent=1, ensure_ascii=False))
     log(f"{day}: {t['total'].get('total', 0):,} tokens in {t['total'].get('messages', 0)} messages")
     return t
 
@@ -661,12 +886,190 @@ def builds_of(day: str) -> dict:
     }
 
 
+# --------------------------------------------------------------- incidents
+#
+# The incident log (ART-PROJECT §2.6): what went wrong on the build
+# infrastructure, collected every hour into test-output/build-log/DAY/
+# incidents.jsonl (time, kind, source, machine, text; masked) from the
+# journal of this machine (OOM kills, failed and restarted units, read-only)
+# and from the build log (machines offline / online, disks over 90 %,
+# janitor deletions, failed remote.sh runs); plus the coordinator's
+# root-cause notes in art/build-history/DAY/incidents.md (tracked, masked).
+
+INCIDENTS_NAME = "incidents.jsonl"
+DISK_FULL_PCT = 90.0
+JOURNAL_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\S*\s+(\S+)\s+([^:]+):\s+(.*)$")
+JOURNAL_GREP = r"OOM killer|Killed process|Out of memory|Failed with result|Scheduled restart job"
+
+
+def _unit_label(unit: str) -> str:
+    """A unit's name for the log: tmux-spawn-<uuid>.scope → tmux scope."""
+    if unit.startswith("tmux-spawn-"):
+        return "tmux scope (a terminal session)"
+    return unit
+
+
+def parse_journal(lines, host="deb") -> list[dict]:
+    """Incidents from `journalctl -o short-iso` lines: OOM kills, failed and
+    restarted units. Each OOM kill of a unit is listed once per minute."""
+    out, seen = [], set()
+    for line in lines:
+        m = JOURNAL_RE.match(line.strip())
+        if not m:
+            continue
+        ts, _host, ident, msg = m.groups()
+        time_ = ts[11:19]
+        k = re.search(r"(?:Out of memory: )?Killed process (\d+) \(([^)]*)\)", msg)
+        if k and ident.startswith("kernel"):
+            kind, text = "oom-kill", f"kernel OOM killer killed {k.group(2)} (pid {k.group(1)})"
+        else:
+            u = re.match(r"(\S+\.(?:service|scope|timer)): (.*)$", msg)
+            if not u:
+                continue
+            unit, rest = u.groups()
+            label = _unit_label(unit)
+            if "killed by the OOM killer" in rest:
+                kind, text = "oom-kill", f"OOM killer stopped {label}"
+            elif rest.startswith("Failed with result"):
+                res = re.search(r"'([^']+)'", rest)
+                res = res.group(1) if res else "?"
+                if res == "oom-kill" or not unit.startswith("ocw-"):
+                    continue  # an OOM kill is already listed; only our own units fail loudly
+                kind, text = "unit-failed", f"{label} failed ({res})"
+            elif rest.startswith("Scheduled restart job"):
+                n = re.search(r"counter is at (\d+)", rest)
+                kind, text = "unit-restart", f"{label} restarted" + (f" (restart {n.group(1)})" if n else "")
+            else:
+                continue
+        key = (kind, text, time_[:5])
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"time": time_, "kind": kind, "source": "journal", "machine": host, "text": text})
+    return out
+
+
+def journal_lines(day: str) -> list[str]:
+    """This machine's journal of the day (user and system, read-only),
+    filtered to the incident messages. Empty where journalctl is missing
+    or OCW_ART_JOURNAL=0 (tests)."""
+    if os.environ.get("OCW_ART_JOURNAL") == "0":
+        return []
+    nxt =(dt.date.fromisoformat(day) + dt.timedelta(days=1)).isoformat()
+    lines = []
+    for scope in (["--user"], []):
+        try:
+            r = run(["journalctl", *scope, "--since", f"{day} 00:00:00", "--until", f"{nxt} 00:00:00",
+                     "-o", "short-iso", "--no-pager", "-q", "--grep", JOURNAL_GREP],
+                    capture_output=True, text=True, check=False, timeout=60)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        lines += r.stdout.splitlines()
+    return lines
+
+
+def _jsonl(path: Path) -> list[dict]:
+    out = []
+    if path.exists():
+        for line in path.read_text(errors="replace").splitlines():
+            try:
+                out.append(json.loads(line))
+            except ValueError:
+                pass
+    return out
+
+
+def build_log_incidents(day: str, build_log: Path) -> list[dict]:
+    """Incidents from the day's build log: machines going offline / online,
+    disks over 90 %, janitor deletions, failed remote.sh runs (a count)."""
+    out, online, full = [], {}, set()
+    for s_ in _jsonl(build_log / "servers.jsonl"):
+        t = str(s_.get("time", ""))[11:19]
+        for m in (s_.get("status") or {}).get("machines", []) or []:
+            name, on = m.get("name", "?"), bool(m.get("online"))
+            if online.get(name, True) != on:
+                out.append({"time": t, "kind": "machine-offline" if not on else "machine-online",
+                            "source": "dashboard", "machine": name,
+                            "text": f"{name} {'unreachable' if not on else 'back online'}"
+                                    + (f" ({mask(str(m.get('error')))[:60]})" if not on and m.get("error") else "")})
+            online[name] = on
+            for d in m.get("disks") or []:
+                key, pct = (name, d.get("name")), d.get("pct")
+                if pct is None:
+                    continue
+                if pct >= DISK_FULL_PCT and key not in full:
+                    full.add(key)
+                    out.append({"time": t, "kind": "disk-full", "source": "dashboard", "machine": name,
+                                "text": f"disk {d.get('name')} on {name} at {pct:.0f} %"})
+                elif pct < DISK_FULL_PCT - 5:
+                    full.discard(key)
+    for e in _jsonl(build_log / "janitor.jsonl"):
+        size = e.get("bytes") or 0
+        out.append({"time": str(e.get("time", ""))[11:19], "kind": "janitor-delete", "source": "janitor",
+                    "machine": e.get("machine", "?"),
+                    "text": f"janitor {e.get('action', 'deleted')} {e.get('path', '')} ({size / 1e9:.1f} GB)"})
+    failed = [r for r in _jsonl(build_log / "runs.jsonl") if r.get("exit", 0) != 0]
+    if failed:
+        per = {}
+        for r in failed:
+            per[r.get("machine", "?")] = per.get(r.get("machine", "?"), 0) + 1
+        out.append({"time": str(failed[-1].get("start", ""))[11:19], "kind": "runs-failed", "source": "remote.sh",
+                    "machine": ", ".join(sorted(per)),
+                    "text": f"{len(failed)} failed remote.sh runs ("
+                            + ", ".join(f"{k} {v}" for k, v in sorted(per.items())) + ")"})
+    return out
+
+
+def incidents(day: str, journal_text: list[str] | None = None) -> list[dict]:
+    """Collects the day's incidents into test-output/build-log/DAY/incidents.jsonl
+    (rewritten, masked) and returns them."""
+    build_log = TEST_OUTPUT / "build-log" / day
+    lines = journal_lines(day) if journal_text is None else journal_text
+    out = parse_journal(lines) + build_log_incidents(day, build_log)
+    out.sort(key=lambda e: e["time"])
+    secrets = _secrets()
+    text = "".join(mask(json.dumps(e, ensure_ascii=False), secrets) + "\n" for e in out)
+    build_log.mkdir(parents=True, exist_ok=True)
+    (build_log / INCIDENTS_NAME).write_text(text)
+    log(f"{day}: {len(out)} incidents")
+    return [json.loads(x) for x in text.splitlines()]
+
+
+def incidents_of(day: str) -> dict:
+    """The day's incidents for the journal: the collected ones (test-output,
+    else the archive's copy) and the coordinator's notes (incidents.md)."""
+    auto = _jsonl(TEST_OUTPUT / "build-log" / day / INCIDENTS_NAME)
+    if not auto:
+        auto = _jsonl(HIST / day / "logs" / "build-log" / INCIDENTS_NAME)
+    notes_p = HIST / day / "incidents.md"
+    notes = mask(notes_p.read_text(errors="replace")) if notes_p.exists() else ""
+    heads = [h.strip("# ").strip() for h in notes.splitlines() if h.startswith("## ")]
+    return {"auto": auto, "notes": notes, "noted": heads}
+
+
+def incident_text(j: dict, at: str, text: str | None = None) -> str:
+    """The text of an incident card: `text`, else the root-cause note whose
+    heading starts with the time `at`, else the first collected incident at
+    that time."""
+    if text:
+        return text
+    inc = j.get("incidents") or {}
+    for h in inc.get("noted") or []:
+        if h.startswith(at):
+            return h[len(at):].strip(" –-:")
+    for e in inc.get("auto") or []:
+        if str(e.get("time", "")).startswith(at):
+            return e["text"]
+    return "something went wrong"
+
+
 def journal(day: str) -> dict:
     commits = commits_of(day)
     builds = builds_of(day)
     ps = prompts(day)
     tk = tokens(day)
     media = media_of(day)
+    inc = incidents_of(day)
     spec = [
         m.group(1)
         for c in commits
@@ -689,10 +1092,11 @@ def journal(day: str) -> dict:
         "builds": {k: v for k, v in builds.items() if k not in ("longest",)},
         "prompts": ps,
         "tokens": {"total": tk["total"], "features": tk["features"]},
+        "incidents": inc,
     }
     d = HIST / day
     d.mkdir(parents=True, exist_ok=True)
-    (d / "journal.json").write_text(json.dumps(j, indent=1, ensure_ascii=False))
+    write_tracked(d / "journal.json", json.dumps(j, indent=1, ensure_ascii=False))
     md = [
         f"# OCW build diary – day {j['number']}, {day}",
         "",
@@ -750,9 +1154,24 @@ def journal(day: str) -> dict:
         md += ["", "## Prompts", "", f"{len(ps)} prompts (full text: [prompts.md](prompts.md)).", "",
                "| Time | Prompt |", "|---|---|"]
         md += [f"| {p_['time'][:5]} | {p_['text'][:140].replace('|', '/').replace(chr(10), ' ')} |" for p_ in ps]
+    if inc["auto"] or inc["notes"]:
+        kinds = {}
+        for e in inc["auto"]:
+            kinds[e["kind"]] = kinds.get(e["kind"], 0) + 1
+        md += ["", "## Incidents", "",
+               f"{len(inc['auto'])} collected ("
+               + (", ".join(f"{k} {v}" for k, v in sorted(kinds.items())) or "none")
+               + f"), {len(inc['noted'])} with root-cause notes ([incidents.md](incidents.md)).", ""]
+        if inc["auto"]:
+            md += ["| Time | Kind | Machine | What |", "|---|---|---|---|"]
+            md += [f"| {e['time'][:5]} | {e['kind']} | {e.get('machine', '')} | {str(e['text']).replace('|', '/')} |"
+                   for e in inc["auto"][:60]]
+        if inc["notes"]:
+            body = [ln for ln in inc["notes"].splitlines() if not ln.startswith("# ")]
+            md += ["", "### Root-cause notes", ""] + [("#" + ln) if ln.startswith("## ") else ln for ln in body]
     md += ["", "## Media", "", "| Time | File |", "|---|---|"]
     md += [f"| {m['time']} | [{m['file']}]({m['file']}) |" for m in media]
-    (d / "journal.md").write_text("\n".join(md) + "\n")
+    write_tracked(d / "journal.md", "\n".join(md) + "\n")
     log(f"{day}: journal – {len(commits)} commits, {len(media)} media")
     return j
 
@@ -1086,131 +1505,10 @@ class Subs:
 # ------------------------------------------------------------------- audio
 
 
-def env(n, a, r):
-    """Attack/release envelope of n samples."""
-    out = array("f", [1.0]) * n
-    for i in range(min(a, n)):
-        out[i] = i / a
-    for i in range(min(r, n)):
-        out[n - 1 - i] *= i / r
-    return out
-
-
-NOTE = {"C": 0, "C#": 1, "D": 2, "D#": 3, "E": 4, "F": 5, "F#": 6, "G": 7, "G#": 8,
-        "A": 9, "A#": 10, "B": 11}
-
-
-def hz(semitone_from_a4: float) -> float:
-    return 440.0 * 2 ** (semitone_from_a4 / 12)
-
-
-class Music:
-    """A small chiptune-pop band, synthesised (no samples, no licences):
-    kick, clap, hats, square bass, pulse arpeggio and a soft pad over a
-    vi–IV–I–V progression. Bars are rendered once per chord and variant and
-    then laid out along the timeline."""
-
-    PROG = [(-3, "m"), (-7, ""), (0, ""), (-5, "")]  # Am F C G relative to C
-
-    def __init__(self, bpm=108, key="C", seed=1):
-        self.bpm, self.root, self.rng = bpm, NOTE[key], random.Random(seed)
-        self.beat = 60.0 / bpm
-        self.bar_n = round(4 * self.beat * RATE)
-        self.cache = {}
-
-    def chord(self, idx):
-        off, q = self.PROG[idx % 4]
-        r = self.root + off - 9  # relative to A4
-        third = 3 if q == "m" else 4
-        return [r, r + third, r + 7]
-
-    def bar(self, idx, variant):
-        key = (idx % 4, variant)
-        if key in self.cache:
-            return self.cache[key]
-        n, b = self.bar_n, self.beat
-        out = array("f", [0.0]) * n
-        notes = self.chord(idx)
-        rng = random.Random(idx % 4 * 31 + hash(variant) % 97)
-
-        def put(at, samples, gain):
-            s = round(at * RATE)
-            for i, v in enumerate(samples):
-                if s + i < n:
-                    out[s + i] += v * gain
-
-        drums = variant in ("drive", "groove")
-        if drums:
-            kick = [math.sin(2 * math.pi * (45 * i / RATE + 70 * (1 - math.exp(-i / 900)) * 0.0133))
-                    * math.exp(-i / 5200) for i in range(9000)]
-            beats = [0, 1, 2, 3] if variant == "drive" else [0, 1.5, 2.5]
-            for k in beats:
-                put(k * b, kick, 0.55)
-            clap = [rng.uniform(-1, 1) * math.exp(-i / 1800) for i in range(6000)]
-            for k in (1, 3):
-                put(k * b, clap, 0.22)
-            step = 0.5 if variant == "groove" else 0.25
-            prev = 0.0
-            hat = []
-            for i in range(1400):
-                x = rng.uniform(-1, 1)
-                hat.append((x - prev) * math.exp(-i / 300))
-                prev = x
-            t = 0.0
-            while t < 4:
-                put(t * b, hat, 0.10 if (t * 2) % 1 else 0.14)
-                t += step
-        if variant != "intro" or True:
-            # Square bass, 8th notes on the root.
-            f = hz(notes[0] - 24)
-            for k in range(8):
-                ln = round(b / 2 * RATE * 0.9)
-                e = env(ln, 60, 900)
-                put(k * b / 2, [(1 if math.sin(2 * math.pi * f * i / RATE) > 0 else -1) * e[i] * 0.6
-                                + math.sin(2 * math.pi * f * i / RATE) * e[i] * 0.4
-                                for i in range(ln)], 0.16 if variant != "intro" else 0.10)
-        # Pulse arpeggio, 16ths, two octaves up.
-        arp = [notes[0], notes[1], notes[2], notes[1] + 12, notes[2] + 12, notes[0] + 12]
-        for k in range(16):
-            f = hz(arp[(k + (idx % 2) * 2) % len(arp)] + 12)
-            ln = round(b / 4 * RATE * 0.8)
-            e = env(ln, 30, 1500)
-            per = RATE / f
-            put(k * b / 4, [(0.6 if (i % per) < per * 0.25 else -0.4) * e[i] for i in range(ln)],
-                0.07 if variant != "outro" else 0.05)
-        # Soft pad: three detuned saws through a one-pole low-pass.
-        ln = n
-        e = env(ln, 9000, 9000)
-        lp, prevv = 0.0, 0.0
-        pad = []
-        fs = [hz(x) for x in notes]
-        for i in range(ln):
-            v = sum(((i * f * (1 + d) / RATE) % 1.0) * 2 - 1 for f in fs for d in (-0.003, 0.003))
-            lp += 0.04 * (v - lp)
-            pad.append(lp * e[i] / 6)
-        put(0, pad, 0.30 if variant in ("intro", "outro") else 0.18)
-        self.cache[key] = out
-        return out
-
-    def render(self, seconds, section_at, duck=()):
-        n = round(seconds * RATE)
-        out = array("f", [0.0]) * n
-        bar = 0
-        while bar * self.bar_n < n:
-            s = bar * self.bar_n
-            v = section_at(s / RATE)
-            data = self.bar(bar, v)
-            for i in range(min(self.bar_n, n - s)):
-                out[s + i] += data[i]
-            bar += 1
-        for a, b, g in duck:
-            for i in range(max(0, round(a * RATE)), min(n, round(b * RATE))):
-                out[i] *= g
-        # Fade in/out.
-        for i in range(min(n, RATE)):
-            out[i] *= i / RATE
-            out[n - 1 - i] *= i / RATE
-        return out
+# The music (ART-PROJECT §3.2): a style per day, varied within the video;
+# art/music.py.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from music import Music  # noqa: E402
 
 
 def sfx_whoosh(rng):
@@ -1407,6 +1705,11 @@ def render(day: str) -> Path:
                       pre="{\\fad(0,200)}")
         tt = cs
         for secs, shot in ch_shots[ci]:
+            if shot.get("incident"):  # an incident card: "HH:MM" of the incident, its text centred
+                inc_txt = incident_text(j, str(shot["incident"]), shot.get("text"))
+                sub.add(tt + 0.2, tt + secs - 0.15, "Kicker",
+                        f"{{\\pos(960,380)\\fad(150,150)}}INCIDENT · {esc(str(shot['incident']))}")
+                sub.typed(tt + 0.5, tt + secs - 0.15, "Outro", esc(inc_txt), pre="{\\pos(960,560)\\fad(0,150)}")
             if shot.get("note"):
                 sub.add(tt + 0.5, tt + secs - 0.15, "Note",
                         f"{{\\pos(1860,70)\\frz{seeded(shot['note']).uniform(-5, 5):.1f}"
@@ -1481,14 +1784,10 @@ def render(day: str) -> Path:
     sub.write(ass)
 
     # ---- soundtrack
-    def section_at(t):
-        for i in range(len(segs) - 1, -1, -1):
-            if t >= starts[i]:
-                return segs[i][2]
-        return "intro"
-
-    music = Music(bpm=int(sc.get("bpm", 108)), key=sc.get("key", "C"), seed=num).render(
-        total, section_at, duck)
+    band = Music(bpm=int(sc.get("bpm", 108)), key=sc.get("key", "C"), seed=num,
+                 style=sc.get("style"), mode=sc.get("mode"))
+    log(f"{day}: music {band.describe()}")
+    music = band.render(total, [(starts[i], segs[i][2]) for i in range(len(segs))], duck)
     rng = random.Random(num)
     fx = {"bell": sfx_bell(), "pop": sfx_pop(), "tick": sfx_tick(), "ding": sfx_ding()}
     for at, kind in sfx_events:
@@ -1628,27 +1927,148 @@ def publish(days: list[str]):
     files += sorted(OUT.glob("*.mp4"))
     # Checksums of every zip and video known locally (all days, not only these).
     sums = HIST / "SHA256SUMS"
-    sums.write_text("".join(f"{sha(f)}  {f.name}\n" for f in
-                            [*sorted(HIST.glob("ocw-build-history-*.zip")), *sorted(OUT.glob("*.mp4"))]))
+    write_tracked(sums, "".join(f"{sha(f)}  {f.name}\n" for f in
+                                [*sorted(HIST.glob("ocw-build-history-*.zip")), *sorted(OUT.glob("*.mp4"))]))
     files.append(sums)
     for f in files:
         log(f"upload {f.name} ({f.stat().st_size / 1e6:.1f} MB)")
     run(["gh", "release", "upload", RELEASE, "-R", "newkit/OCW", "--clobber", *files])
 
 
+# ----------------------------------------------------------------- collect
+#
+# The hourly collector (ART-PROJECT §5.1; scripts/art-collect.sh, the
+# systemd user timer ocw-art-collect.timer on the dev machine): gather +
+# journal of yesterday and today (the last hour before midnight is not
+# lost; gather is idempotent), the mask check of the tracked text files,
+# and in the 23:xx run the contact sheets of today. No render, no publish.
+# Status: test-output/build-log/DAY/art.json (the latest run of DAY) and
+# art-runs.jsonl (every run); the output goes to art.log next to them.
+
+STATUS_NAME = "art.json"
+COLLECTOR_FILES = {STATUS_NAME, "art-runs.jsonl", "art.log", STATUS_NAME + ".tmp", "incidents.jsonl"}
+
+
+def default_collect_days(now: dt.datetime | None = None) -> list[str]:
+    now = now or dt.datetime.now()
+    return [(now - dt.timedelta(days=1)).strftime("%Y-%m-%d"), now.strftime("%Y-%m-%d")]
+
+
+def status_dir(day: str) -> Path:
+    return TEST_OUTPUT / "build-log" / day
+
+
+def iso_now() -> str:
+    return dt.datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def write_status(st: dict, final: bool = False):
+    d = status_dir(st["run_day"])
+    d.mkdir(parents=True, exist_ok=True)
+    tmp = d / (STATUS_NAME + ".tmp")
+    tmp.write_text(json.dumps(st, indent=1, ensure_ascii=False) + "\n")
+    tmp.replace(d / STATUS_NAME)
+    if final:
+        with open(d / "art-runs.jsonl", "a") as f:
+            f.write(json.dumps(st, ensure_ascii=False) + "\n")
+
+
+def collect(days: list[str] | None = None, sheets: bool | None = None,
+            now: dt.datetime | None = None) -> dict:
+    """One collector run; returns its status (status "ok" or "failed")."""
+    now = now or dt.datetime.now()
+    days = days or default_collect_days(now)
+    if sheets is None:
+        sheets = now.hour == 23
+    st = {"start": iso_now(), "end": None, "status": "running", "run_day": now.strftime("%Y-%m-%d"),
+          "days": {}, "new_files": 0, "media": 0, "mask_check": None, "sheets": bool(sheets),
+          "errors": [], "log": os.environ.get("OCW_ART_LOG", "")}
+    write_status(st)
+    for day in days:
+        r = st["days"][day] = {"new_files": 0, "media": 0}
+        try:
+            r["new_files"] = gather(day) or 0
+            r["incidents"] = len(incidents(day))
+            journal(day)
+        except Exception as e:  # one day failing must not hide the other
+            st["errors"].append(f"{day}: {type(e).__name__}: {mask(str(e))[:300]}")
+        r["media"] = len(media_of(day))
+        st["new_files"] += r["new_files"]
+    st["media"] = st["days"][days[-1]]["media"]
+    try:
+        found = check_masked()
+        st["mask_check"] = "ok" if not found else f"failed: {len(found)} finding(s)"
+        for f in found:
+            log("private pattern: " + f)
+        if found:
+            st["errors"].append(f"mask check: {len(found)} finding(s) (art/diary.py check-masked)")
+    except Exception as e:
+        st["mask_check"] = "error"
+        st["errors"].append(f"mask check: {type(e).__name__}: {mask(str(e))[:300]}")
+    if sheets:
+        try:
+            sheet(days[-1])
+        except Exception as e:
+            st["errors"].append(f"sheets {days[-1]}: {type(e).__name__}: {mask(str(e))[:300]}")
+    st["end"] = iso_now()
+    st["status"] = "failed" if st["errors"] else "ok"
+    write_status(st, final=True)
+    log(f"collect: {st['status']}, {st['new_files']} new files, {st['media']} media today, "
+        f"mask check {st['mask_check']}")
+    return st
+
+
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in {"-h", "--help", "help"}:
         print(__doc__)
         return
-    cmd, days = sys.argv[1], sys.argv[2:]
-    if cmd == "diary":
-        diary()
+    cmd, args = sys.argv[1], sys.argv[2:]
+    try:
+        check_old_place()
+    except SystemExit as e:
+        if cmd == "collect":  # the dashboard shows why the collector stopped
+            now = iso_now()
+            write_status({"start": now, "end": now, "status": "failed", "run_day": now[:10], "days": {},
+                          "new_files": 0, "media": None, "mask_check": None, "sheets": False,
+                          "errors": [str(e).splitlines()[0]], "log": os.environ.get("OCW_ART_LOG", "")},
+                         final=True)
+        raise
+    flags = {a for a in args if a.startswith("--")}
+    days = [a for a in args if not a.startswith("--")]
+    if cmd == "check-masked":
+        fix = "--fix" in flags
+        with art_lock(cmd) if fix else contextlib.nullcontext():
+            found = check_masked(fix=fix)
+        for f in found:
+            print(f)
+        n = len(tracked_files())
+        if found:
+            raise SystemExit(f"check-masked: {len(found)} private pattern(s) in the tracked text files "
+                             f"(values not shown); `art/diary.py check-masked --fix` masks them")
+        log(f"check-masked: {n} tracked text files, no private patterns")
         return
-    if not days:
-        days = all_days() if cmd in {"fetch", "gather", "journal", "publish", "stamp", "prompts", "tokens"} else days_with_scripts()
     for d in days:
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", d):
             raise SystemExit(f"not a day: {d}")
+    with art_lock(" ".join(sys.argv[1:])):
+        run_command(cmd, days, flags)
+
+
+def run_command(cmd: str, days: list[str], flags: set[str] = frozenset()):
+    if cmd == "diary":
+        diary()
+        return
+    if cmd == "collect":
+        sheets = True if "--sheets" in flags else False if "--no-sheets" in flags else None
+        st = collect(days or None, sheets)
+        if st["status"] != "ok":
+            raise SystemExit("collect failed: " + "; ".join(st["errors"]))
+        return
+    if cmd == "publish" and "--videos" in flags:  # only the videos (+ SHA256SUMS), no day zips
+        publish([])
+        return
+    if not days:
+        days = all_days() if cmd in {"fetch", "gather", "journal", "publish", "stamp", "prompts", "tokens"} else days_with_scripts()
     if cmd == "all":
         for d in days:
             gather(d)
