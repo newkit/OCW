@@ -12,6 +12,8 @@ python3 tools/build-dashboard/dashboard.py --once             # print once as te
 python3 tools/build-dashboard/dashboard.py --once --json      # the same as JSON
 python3 tools/build-dashboard/dashboard.py --janitor dry-run  # log what the janitor would delete, delete nothing
 python3 tools/build-dashboard/dashboard.py --janitor-plan     # dry run on every machine now, then exit (make janitor-plan)
+python3 tools/build-dashboard/dashboard.py --no-coordinator   # without the coordinator card and the Claude tasks
+python3 tools/build-dashboard/coordinator.py                  # one sample of this machine as JSON
 curl -s localhost:8765/api/status                             # JSON for scripts
 python3 -m unittest discover tools/build-dashboard            # tests (no network)
 ```
@@ -71,10 +73,105 @@ directory, never in the repository).
   (ok / failed / locked), new files, media of today, the mask check and
   any errors; "late" when no run ended for 2.5 h (or a run never ended).
   Also in `--once` and `/api/status` (`art`).
+- **Coordinator (deb)** and **Claude tasks:** the machine the dashboard
+  runs on and the agents working there, at the top of the page (below).
 - **Open questions:** every question for the user in `SPECIFICATION.md`
   (below), grouped by phase, with its id, title, text and proposal; the
   count is in the overview. Decided ones are hidden behind "show decided".
   Milestones that name an open question are listed as blocked work.
+
+## Coordinator (deb)
+
+`coordinator.py`: a card for the machine the dashboard runs on (the
+coordinator: Claude Code sessions and their agents, the art collector,
+ffmpeg renders, git worktrees), added after deb ran out of memory on
+2026-11-15 at 00:39. Read locally, without root and cheaply: `/proc` and
+`/sys` every 10 s (one `/proc/PID/stat` read per process: name, parent and
+RSS – never `cmdline` or `environ`, which can hold secrets and paths); the
+few commands it starts are throttled and time-limited. Also in
+`/api/status` (`coordinator`) and `--once`.
+
+| Part | What | Source |
+|---|---|---|
+| Memory | total, available, used, swap; top 5 processes by RSS (name and RSS only); group sums: claude (also Claude Code's versioned binary, e.g. `2.1.325`), cargo/rustc, ffmpeg, python, qemu (VMs; `qemu-ga` is deb's own guest agent), browsers, other | `/proc/meminfo`, `/proc/PID/stat` |
+| OOM kills | time and the killed unit or process, the count since boot | user journal (systemd's unit OOM message, `MESSAGE_ID=fe6faa94…`; every 5 min and at once when the counter grows), `/proc/vmstat` `oom_kill`; the kernel log (`journalctl -k`) and `dmesg` only when readable (group `adm` / `systemd-journal`, `kernel.dmesg_restrict=0`), else "not readable" |
+| CPU | load against the cores; PSI some/full avg10/60/300 of cpu, memory, io | `/proc/loadavg`, `/proc/pressure/*` |
+| Disks | `/`, `/home`, `/home/claude`, `/tmp`, each only when it is its own mount, deduplicated by device (tmpfs: "in RAM") | `/proc/mounts`, `statvfs` |
+| Big directories | OCW's `target/`, `test-output/`, `.claude/worktrees/`; OCW-ART's `build-history/` and `.git` (with its Git LFS objects; next to the main checkout) | `nice ionice -c3 du -sx`, every 10 min, at most 60 s each, in its own thread |
+| Activity | Claude Code sessions (claude processes without a claude parent) and their RSS, OCW's worktrees (`.git/worktrees/*/gitdir`, live and stale), ffmpeg, QEMU VMs, the art timer (state, next run), the dashboard's memory (its cgroup when it runs as the unit, else RSS) against `MemoryMax` | `/proc`, `systemctl --user show ocw-art-collect.timer` every 5 min, `/proc/self/cgroup`, the unit file |
+
+**Alerts** (`coordinator.THRESHOLDS`, the one place for them; amber / red):
+
+| Alert | Amber | Red |
+|---|---|---|
+| memory available | < 25 % or < 4 GiB | < 15 % or < 2 GiB |
+| swap used | > 50 % | > 80 % |
+| a disk (df's Use%) | > 85 % | > 90 % |
+| OOM kill | in the last 7 days | in the last 24 h |
+| memory pressure (some, avg60) | > 10 % | > 30 % |
+| load per core (1 min) | > 1.5 | > 3 |
+| the dashboard / its MemoryMax | > 75 % | > 90 % |
+| cargo/rustc on the coordinator | any | – |
+
+Red ones join the disks' red banner over the page, amber ones get an
+amber banner; `--once` prints them as `ALERT` / `WARN` lines.
+
+**History:** one sample a minute, as one JSON line in
+`test-output/build-log/DAY/deb.jsonl` (the same build-log root as
+`servers.jsonl`: `--record DIR`, none with `--no-record`; `servers.jsonl`
+leaves the card out):
+
+```json
+{"time": "2026-11-15T14:35:00+01:00", "t": 1794749700.0,
+ "memory": {"total": …, "available": …, "used": …, "free": …, "shmem": …, "swap_total": …, "swap_used": …,
+            "available_pct": 82.3, "swap_pct": 95.1},
+ "load": [0.5, 0.89, 0.75], "ncpu": 4, "psi": {"cpu": 0.4, "memory": 0.0, "io": 16.7},
+ "disks": [{"mount": "/", "free": …, "pct": 94.0}, …],
+ "groups": {"claude": …, "python": …}, "top": [["claude", 723456789], …],
+ "claude_sessions": 1, "ffmpeg": 0, "qemu": 0, "oom_kill_since_boot": 2,
+ "dashboard_rss": …, "alerts": ["bad swap", "bad disk", "bad oom"]}
+```
+
+Bytes everywhere; `psi` is "some" avg60 in %. The last 24 h are kept in
+memory (read back from the day files on start, bad lines skipped); the
+page draws sparklines of the last 6 h (memory available, 1-min load, root
+disk free; inline SVG, the worst value of each bucket).
+
+## Claude tasks
+
+`claude_tasks.py`: the agents of the coordinator, next to its card (also
+`claude_tasks` in `/api/status` and in `--once`). Refreshed every 30 s by
+the coordinator thread; git at most every 2 min.
+
+- **Tasks:** `test-output/build-log/DAY/agents.jsonl` of the main checkout
+  (today and the two days before; written, masked, by OCW-ART's `diary.py
+  agent-event`): one line per event (`time`, `agent_id_short`, `task`,
+  `branch`, `event`, `commits`, `note`). The last event decides: `started`
+  / `resumed` = running (with branch, start time, running time and last
+  event); `interrupted` is listed with them; `reported`, `merged`,
+  `abandoned` in the last 24 h behind the "finished" toggle. Lines whose
+  `task` holds the agent id are understood too (the branch then names the
+  task).
+- **Liveness:** Claude Code keeps each background task's transcript as
+  `/tmp/claude-<uid>/<project>/<session>/tasks/<task id>.output` (found
+  with the glob `/tmp/claude-*/*/*/tasks/`, so also for the `claude` user).
+  Only the file's **mtime and size** are used (`os.stat`): "growing" /
+  "active", "idle / waiting" when unchanged for over 20 min, "unknown"
+  without a file. The files are full transcripts (prompts, tool output) and
+  are **never opened**; session ids (directory names) are never shown.
+- **Worktrees:** `git worktree list --porcelain` of OCW's main checkout and
+  of OCW-ART, `for-each-ref` and `branch --merged main`: per branch the last
+  commit (short hash, subject, age), the commits not in `main` (cached per
+  branch and main commit), merged into `main`, pushed (`refs/remotes/
+  origin/<branch>`, never fetched). Linked to a task by its branch or by
+  `worktree-agent-<id>`. The page lists main, unmerged branches with
+  commits and the tasks' worktrees; the rest are counts. Paths are shown as
+  `~/…`, Claude Code's session directories as `/tmp/claude-…`.
+- **Cutover check** (for the move of the coordinator to another user,
+  `docs/MIGRATE-DEB-USER.md`): "Cutover OK: no running tasks, no remote
+  runs", or the list of running tasks and of the remote runs (running and
+  queued, from the machines' job queue), with the number of Claude Code
+  sessions on the coordinator.
 
 ## Open questions
 
@@ -343,6 +440,10 @@ performance counters are denied to a non-admin build user over SSH:
   the janitor's deletions of build artefacts (`<checkout>/target` and old
   units in the main checkout's `target/`), off with `--janitor off`, only
   logged with `--janitor dry-run`.
+- The coordinator card reads only process names, parents and RSS
+  (`/proc/PID/stat`), never command lines or environments; the Claude
+  tasks only the task files' mtime and size, never their content. Neither
+  shows a token, a host from `machines.toml` or a session id.
 - Task markers hold only the checkout directory name, branch, command, start
   time, PID and state, never hosts, users or keys; the dashboard masks them
   like all other text.
