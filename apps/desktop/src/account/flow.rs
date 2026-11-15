@@ -318,6 +318,7 @@ impl AuthClient {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn userinfo(&mut self, s: &Session) -> Result<UserInfo, FlowError> {
         let d = self.discovery()?;
         let (status, body) = self.get(&d.userinfo_endpoint, Some(&s.access_token))?;

@@ -16,6 +16,9 @@ use ocw_client::account::{AccountInfo, AccountState};
 use super::flow::{AuthClient, BROWSER_TIMEOUT, FlowError, now_s};
 use super::store::TokenStore;
 
+/// Opens a URL in the browser.
+pub type OpenUrl = fn(&str) -> Result<(), String>;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     SignIn(Option<Provider>),
@@ -48,7 +51,7 @@ pub struct WorkerConfig {
     pub issuer: String,
     pub client_id: String,
     pub store: TokenStore,
-    pub open_url: fn(&str) -> Result<(), String>,
+    pub open_url: OpenUrl,
 }
 
 impl Worker {
@@ -92,7 +95,7 @@ impl Worker {
 struct Thread {
     client: AuthClient,
     store: TokenStore,
-    open_url: fn(&str) -> Result<(), String>,
+    open_url: OpenUrl,
     session: Option<Session>,
     shared: Arc<Mutex<Shared>>,
     messages: Sender<String>,

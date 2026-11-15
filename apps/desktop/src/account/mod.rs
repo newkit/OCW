@@ -36,7 +36,7 @@ pub struct AccountPlugin {
     /// Keep the session in this file instead of the keyring (tests).
     pub file: Option<PathBuf>,
     /// Opens the sign-in URL (default: the system browser; tests).
-    pub open_url: Option<fn(&str) -> Result<(), String>>,
+    pub open_url: Option<worker::OpenUrl>,
 }
 
 /// The sign-in; `worker` is `None` when no backend is configured.
