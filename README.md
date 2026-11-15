@@ -22,7 +22,10 @@ in [SPECIFICATION.md](SPECIFICATION.md).
 ## Worlds
 
 Four regions, built from OpenStreetMap and official open elevation models, ridden
-with real gradients. Download them from the
+with real gradients, with the trees, crops and plantations of each landscape:
+spruce, fir and beech forests, vineyards and orchards around Vaduz and in the
+Black Forest's foothills, Canary pines, laurel forest, palms, banana
+plantations and the Teide's broom on Tenerife. Download them from the
 [latest release](https://github.com/newkit/OCW/releases) and start the app with
 `ocw-desktop --world path/to/<world>.ocwpkg`, or switch worlds in the app
 (menu → **World**).
@@ -1317,6 +1320,22 @@ climb at 1.5–2.1 km) and grass beside the road roll increasingly harder
   of broadleaf and conifer trees and its measured density, near and in the
   far canopy. Packages without `FRST` guess the leaf type from land use and
   altitude.
+
+  **Plants, crops and plantations (spec §4.6.1, §14 Phase 8 T8):** the
+  build scripts end with `world-builder vegetation --world PKG --pbf ...`
+  (`OCW_NO_VEGETATION=1` leaves it out): the section `VEGE` with each
+  field's crop (OSM `crop` / `produce` / `trees`, else the region's crop
+  mix per parcel), the rows of vineyards, orchards, banana plantations and
+  avocado groves, and OSM's single trees and tree rows with their species;
+  the trees of `OBST` are renewed. It prints `spot` lines – free-ride
+  `--start X,Z` points beside a road for vineyards, bananas, palms, the
+  forest types, the tree line – for scenes. The client draws about thirty
+  species with their own models (spruce tiers, flat-topped firs, Scots and
+  Canary pines, beeches, maples, larches, fruit trees in blossom, laurel
+  forest, date palms, dragon trees, Teide broom, tabaibas and cardones,
+  agaves, banana plants), vine rows and stands of maize and cereals, all
+  following the seasons, near models up to about 300 m and simple ones
+  beyond.
 
   **Orthophoto corridor (spec §14 Phase 8 T7):** `calibrate` also cuts the
   orthophoto along the package's roads, ±50 m beside the road edges at

@@ -2394,3 +2394,184 @@ description = "Helmets (spec §2.6): a race start on the Hills route from behind
 args = ["--route", "hills", "--bots", "8", "--power", "250"]
 at = ["0.5=time pause", "0.5=time 2026-06-21 14:00", "2=hud off", "2.5=event race --km 3", "2.5=camera.orbit 10 16 6"]
 shot = 9
+# --- Vegetation (spec §4.6.1, §14 Phase 8 T8): species, crops, plantations ----
+# The vegetation spots that `world-builder vegetation` prints (free-ride starts
+# beside a road). Render twice for before / after: once with the deployed main
+# build and its packages (OCW_APP=…, --world NAME=…), once with this build and
+# the packages with section VEGE. Clock paused, so only the plants change.
+
+[[scene]]
+name = "veg-li-vaduz-vineyards"
+description = "Vegetation: the vineyards above Vaduz (474 m, 15 July, noon): vine rows on wire trellises down the slope, fruit trees and the town's limes"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2700,1700", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 120 18 28"]
+shot = 10
+
+[[scene]]
+name = "veg-li-vaduz-vineyards-autumn"
+description = "Vegetation: the same vineyards above Vaduz on 20 October: the Blauburgunder's red and the white varieties' yellow, the beeches copper"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2700,1700", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-10-20 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 120 18 28"]
+shot = 10
+
+[[scene]]
+name = "veg-li-vaduz-orchard"
+description = "Vegetation: an orchard and fields in the Rhine valley below Vaduz (449 m, 20 April): fruit trees in blossom in their rows"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-4340,20", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-04-20 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 100 16 30"]
+shot = 10
+
+[[scene]]
+name = "veg-li-triesenberg-forest"
+description = "Vegetation: the forest above Triesenberg towards Gaflei (1,390 m, 15 July): spruce and fir with sycamores, larches light green"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-860,2260", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 70 14 26"]
+shot = 10
+
+[[scene]]
+name = "veg-li-malbun-treeline"
+description = "Vegetation: near the tree line at Malbun (1,720 m, 15 July): stunted spruces, mountain pine and green alder above the forest"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "4100,5540", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 150 20 40"]
+shot = 10
+
+[[scene]]
+name = "veg-li-fields-summer"
+description = "Vegetation: fields in the Rhine valley (441 m, 15 July): maize standing tall, cereals ripe"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-4140,-2660", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 100 18 30"]
+shot = 10
+
+[[scene]]
+name = "veg-li-fields-harvest"
+description = "Vegetation: the same fields on 25 August after the cereal harvest: stubble beside the maize"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-4140,-2660", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-08-25 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 100 18 30"]
+shot = 10
+
+[[scene]]
+name = "veg-tf-bananas"
+description = "Vegetation, Tenerife: banana plantations on the north coast at Buenavista del Norte (113 m, 15 July)"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-33260,-8460", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 11:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 110 16 26"]
+shot = 12
+
+[[scene]]
+name = "veg-tf-canary-pine"
+description = "Vegetation, Tenerife: the Canary pine forest above Santiago del Teide (1,340 m): tall bare trunks, drooping needle tufts"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-25020,-980", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 11:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 80 12 22"]
+shot = 12
+
+[[scene]]
+name = "veg-tf-laurel-anaga"
+description = "Vegetation, Tenerife: the laurel forest of Anaga at Cruz del Carmen (TF-12, about 900 m): dense evergreen laurels and faya-heath"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "23430,-26650", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 11:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 80 12 22"]
+shot = 12
+
+[[scene]]
+name = "veg-tf-laurel-teno"
+description = "Vegetation, Tenerife: the laurel forest of Teno (725 m), measured broadleaves in the cloud belt"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-33420,-6420", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 11:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 80 12 22"]
+shot = 12
+
+[[scene]]
+name = "veg-tf-palms"
+description = "Vegetation, Tenerife: palms in town on the south coast (Los Cristianos, 36 m): OSM's mapped Canary date palms and slender palms"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-20700,23380", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 11:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 120 14 24"]
+shot = 12
+
+[[scene]]
+name = "veg-tf-broom"
+description = "Vegetation, Tenerife: Teide broom in Las Cañadas (2,310 m) on 1 June, in flower"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-9740,3820", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-06-01 11:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 120 14 24"]
+shot = 12
+
+[[scene]]
+name = "veg-tf-succulents"
+description = "Vegetation, Tenerife: succulent scrub on the dry coast near Buenavista (180 m): tabaibas, cardones, prickly pears and agaves"
+world = "tenerife"
+args = ["--world", "{world}", "--free-ride", "--start", "-31300,-9140", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 11:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 120 14 22"]
+shot = 12
+
+[[scene]]
+name = "veg-bf-spruce-fir-meadows"
+description = "Vegetation, Black Forest: meadows and the spruce and fir forest on the Titisee - Feldberg road (km 4, 15 July)"
+world = "blackforest"
+args = ["--world", "{world}", "--route-file", "{world_dir}/titisee-feldberg.route", "--no-neighbours", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "2.5=teleport 4.0", "2.5=camera.orbit 100 14 26"]
+shot = 12
+
+[[scene]]
+name = "veg-bf-schauinsland-forest"
+description = "Vegetation, Black Forest: the spruce and fir forest along the Schauinsland road (940 m, 15 July), raised camera"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-5942,568", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 150 22 45"]
+shot = 12
+
+[[scene]]
+name = "veg-bf-kaiserstuhl-vineyards"
+description = "Vegetation, Black Forest: vineyards at the Kaiserstuhl (234 m, 15 July)"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-25100,-20140", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 120 18 28"]
+shot = 12
+
+[[scene]]
+name = "veg-bf-ortenau-vineyards"
+description = "Vegetation, Black Forest: vineyards in the Ortenau foothills (257 m, 20 October): vines yellow, forest above"
+world = "blackforest-north"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "1780,-60780", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-10-20 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 120 18 28"]
+shot = 12
+
+[[scene]]
+name = "veg-bf-ortenau-orchards"
+description = "Vegetation, Black Forest: orchards in the Ortenau below Sasbachwalden (176 m, 20 April): fruit trees in blossom in their rows"
+world = "blackforest-north"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "6820,-70140", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-04-20 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 100 16 30"]
+shot = 12
+
+[[scene]]
+name = "veg-bf-fields-summer"
+description = "Vegetation, Black Forest: Rhine plain fields with EUCROPMAP 2022 crops (192 m, 15 July): maize tall, cereals ripe"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-25060,-12820", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-07-15 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 100 18 30"]
+shot = 12
+
+[[scene]]
+name = "veg-bf-fields-harvest"
+description = "Vegetation, Black Forest: the same Rhine plain fields on 25 August: cereal stubble, maize still standing"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-25060,-12820", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-08-25 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 100 18 30"]
+shot = 12
+
+[[scene]]
+name = "veg-bf-fields-autumn"
+description = "Vegetation, Black Forest: the same fields on 30 October: maize harvested, the forest edge coloured"
+world = "blackforest"
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-25060,-12820", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-10-30 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 100 18 30"]
+shot = 12

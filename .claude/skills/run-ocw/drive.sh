@@ -34,6 +34,8 @@
 #       advances 1/25 s per frame, so it is not a benchmark). Archived.
 #   drive.sh server [args...]
 #       Run the headless game server, e.g. --bots 3 --seconds 10 --fast.
+#   OCW_APP=PATH runs that ocw-desktop binary (nothing is built, not even
+#   the spike).
 #   OCW_PROFILE=release runs the release build of ocw-desktop instead of the
 #   debug build (faster rendering, e.g. for a client that records a real-time
 #   video). OCW_FPS=0 hides the FPS counter, which every run shows by default
@@ -56,6 +58,12 @@ case "${OCW_PROFILE:-debug}" in
   release) BUILD_FLAGS=(--release); APP=./target/release/ocw-desktop ;;
   *) BUILD_FLAGS=(); APP=./target/debug/ocw-desktop ;;
 esac
+# OCW_APP=PATH runs a saved ocw-desktop binary instead (no build): before /
+# after renders with another commit's build, e.g. the deployed main.
+if [ -n "${OCW_APP:-}" ]; then
+  APP=$OCW_APP
+  cargo() { :; }
+fi
 # The FPS counter (real render rate) and its log line every 5 s, in every
 # test picture unless OCW_FPS=0.
 FPS_ARGS=(--cmd "fps on" --log-fps 5)

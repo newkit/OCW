@@ -249,19 +249,49 @@ pub struct RenderQuality(pub QualityPreset);
 #[derive(Component, Debug, Clone, Copy)]
 pub struct HouseLod(pub u8);
 
-/// A tile's tree mesh (its draw distance follows the preset).
+/// A tile's far tree mesh (its draw distance follows the preset).
 #[derive(Component, Debug, Clone, Copy)]
 pub struct TileTrees;
 
-/// The visibility range of a tile's trees for this preset (`None`: no
-/// range – drawn while the tile is loaded).
-pub fn tree_range(preset: &QualityPreset) -> Option<VisibilityRange> {
-    preset.tree_view_m.map(|end| VisibilityRange {
-        start_margin: 0.0..0.0,
-        // Fade out (dithered) over the last 15 %.
+/// No end to a range (drawn while the tile is loaded).
+const ENDLESS_M: f32 = 1.0e7;
+
+/// The visibility range of a chunk's far trees (spec §14 Phase 8 T8): from
+/// where the near models fade out (`vegetation::NEAR_FADE_M`) to `end` m
+/// (`None`: while the tile is loaded), faded out (dithered) over the last
+/// 15 %.
+pub fn far_tree_range(end: Option<f32>) -> VisibilityRange {
+    let end = end.unwrap_or(ENDLESS_M);
+    VisibilityRange {
+        start_margin: crate::vegetation::NEAR_FADE_M,
         end_margin: 0.85 * end..end,
         use_aabb: true,
-    })
+    }
+}
+
+/// The visibility range of a chunk's near plants (the detailed models,
+/// vines, field stands): up to `vegetation::NEAR_FADE_M`.
+pub fn near_tree_range() -> VisibilityRange {
+    VisibilityRange {
+        start_margin: 0.0..0.0,
+        end_margin: crate::vegetation::NEAR_FADE_M,
+        use_aabb: true,
+    }
+}
+
+/// The visibility range of a detail chunk's plants (banana plants, vine
+/// rows): up to `vegetation::DETAIL_FADE_M`.
+pub fn detail_plant_range() -> VisibilityRange {
+    VisibilityRange {
+        start_margin: 0.0..0.0,
+        end_margin: crate::vegetation::DETAIL_FADE_M,
+        use_aabb: true,
+    }
+}
+
+/// The visibility range of a tile's far trees for this preset.
+pub fn tree_range(preset: &QualityPreset) -> VisibilityRange {
+    far_tree_range(preset.tree_view_m)
 }
 
 pub struct QualityPlugin;
@@ -331,18 +361,9 @@ pub fn apply_quality(
         }
     }
     let tree = tree_range(&q);
-    for (e, seen, has) in &trees {
-        if !(changed || seen.is_added()) {
-            continue;
-        }
-        match (&tree, has) {
-            (Some(r), _) => {
-                commands.entity(e).insert(r.clone());
-            }
-            (None, true) => {
-                commands.entity(e).remove::<VisibilityRange>();
-            }
-            (None, false) => {}
+    for (e, seen, _) in &trees {
+        if changed || seen.is_added() {
+            commands.entity(e).insert(tree.clone());
         }
     }
 }
@@ -380,7 +401,10 @@ mod tests {
         let c = h.cascades();
         assert_eq!(c.bounds.len(), 4);
         assert!((c.bounds[3] - 250.0).abs() < 1e-3);
-        assert!(tree_range(&h).is_none());
+        // High: the far trees from the near models' fade on, without an end.
+        let r = tree_range(&h);
+        assert_eq!(r.start_margin, crate::vegetation::NEAR_FADE_M);
+        assert!(r.end_margin.start > 1.0e6);
     }
 
     /// Each level is cheaper than the one above in every number.
@@ -477,7 +501,7 @@ mod tests {
         assert_eq!(w.resource::<crate::weather::WeatherFx>().particles, 5000);
         assert_eq!(w.get::<Msaa>(cam), Some(&Msaa::Sample4));
         assert!(same_range(w.get(house), Some(&ranges[0])));
-        assert!(w.get::<VisibilityRange>(tree).is_none());
+        assert!(same_range(w.get(tree), Some(&tree_range(&high))));
         assert_eq!(w.get::<CascadeShadowConfig>(sun).unwrap().bounds.len(), 4);
 
         app.insert_resource(RenderQuality(QualityPreset::of(QualityLevel::Low)));
@@ -494,7 +518,7 @@ mod tests {
             w.get(house),
             Some(&crate::houses::lod_ranges_scaled(0.5)[0])
         ));
-        assert!(same_range(w.get(tree), tree_range(&low).as_ref()));
+        assert!(same_range(w.get(tree), Some(&tree_range(&low))));
         assert_eq!(w.get::<CascadeShadowConfig>(sun).unwrap().bounds.len(), 1);
 
         // A tile loaded later gets the level too.
@@ -519,6 +543,6 @@ mod tests {
         );
         assert_eq!(w.get::<Msaa>(cam), Some(&Msaa::Sample4));
         assert!(same_range(w.get(house), Some(&ranges[0])));
-        assert!(w.get::<VisibilityRange>(tree).is_none());
+        assert!(same_range(w.get(tree), Some(&tree_range(&high))));
     }
 }

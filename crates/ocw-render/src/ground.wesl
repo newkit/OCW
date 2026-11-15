@@ -172,7 +172,9 @@ fn crop_path(gdd: f32, cdd: f32, start: vec3<f32>, green: vec3<f32>, ripe: vec3<
 }
 
 // `season::crop_colour`, with cereal and maize fields in patches.
-fn season_crop(base: vec3<f32>, p: vec3<f32>) -> vec3<f32> {
+// `crop_a`: the colour map's alpha – the field's share of summer crops
+// (section VEGE, `package::colour_map_seasonal`; 1: not known, the patches).
+fn season_crop(base: vec3<f32>, p: vec3<f32>, crop_a: f32) -> vec3<f32> {
     let s = look.season;
     let gdd = s[2].x + s[2].y * p.y;
     let cdd = max(s[2].z + s[2].w * p.y, 0.0);
@@ -182,7 +184,10 @@ fn season_crop(base: vec3<f32>, p: vec3<f32>) -> vec3<f32> {
         season_colour(8u), season_colour(9u), s[6].zw, s[7].xy, s[7].zw, s[8].xy, s[8].zw);
     let n = vnoise(p.xz / 70.0 + vec2<f32>(5.3, 2.1));
     let share = s[3].y;
-    let m = 1.0 - smoothstep(share - 0.04, share + 0.04, n);
+    var m = 1.0 - smoothstep(share - 0.04, share + 0.04, n);
+    if crop_a < 0.995 {
+        m = clamp(crop_a * 255.0 / 250.0, 0.0, 1.0);
+    }
     return retint(base, mix(cereal, maize, m), 0.85, 0.45);
 }
 
@@ -238,6 +243,9 @@ fn fragment(
     }
 
     var pbr_input = pbr_input_from_standard_material(in, is_front);
+    // The colour map's alpha (the crop share, read before the opaque
+    // alpha is set to 1).
+    let crop_a = pbr_input.material.base_color.a;
     pbr_input.material.base_color = alpha_discard(
         pbr_input.material.flags,
         pbr_input.material.alpha_cutoff,
@@ -323,7 +331,7 @@ fn fragment(
                 if i == 0u {
                     a = season_grass(a, wp.y);
                 } else if i == 1u {
-                    a = season_crop(a, wp);
+                    a = season_crop(a, wp, crop_a);
                 }
             }
             albedo = albedo + wi * a * look.material_tint[i].rgb;
@@ -366,7 +374,7 @@ fn fragment(
                 let suv = (ouv * cells + 0.5) / (cells + 1.0);
                 let sw = textureSampleLevel(splat_a, splat_sampler, suv, 0.0);
                 photo = mix(photo, season_grass(photo, in.world_position.y), clamp(sw.x, 0.0, 1.0));
-                photo = mix(photo, season_crop(photo, in.world_position.xyz), clamp(sw.y, 0.0, 1.0));
+                photo = mix(photo, season_crop(photo, in.world_position.xyz, crop_a), clamp(sw.y, 0.0, 1.0));
             }
             let lw = vec3<f32>(0.2126, 0.7152, 0.0722);
             let detail = clamp(dot(base, lw) / max(dot(colour_map, lw), 0.01), 0.4, 2.2);

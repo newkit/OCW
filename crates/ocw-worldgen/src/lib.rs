@@ -57,4 +57,5 @@ pub mod route;
 pub mod spatial;
 pub mod stages;
 pub mod svg;
+pub mod vegetation;
 pub mod water;

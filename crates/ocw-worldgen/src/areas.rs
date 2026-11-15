@@ -35,6 +35,8 @@ pub fn kept_key(k: &str) -> bool {
         || matches!(
             k,
             "height" | "min_height" | "width" | "area" | "tunnel" | "location" | "layer" | "name"
+                // What grows on fields and plantations (VEGE, spec §14 Phase 8 T8).
+                | "crop" | "produce" | "trees"
         )
 }
 

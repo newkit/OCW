@@ -15,6 +15,13 @@
 //! clearings and open woodland, hedges and tree rows in the fields; each
 //! tree's leaf type comes from the measured broadleaf share
 //! ([`measured_leaf`]).
+//!
+//! With the fields and mapped trees of spec §14 Phase 8 T8 (section `VEGE`,
+//! [`crate::vegetation`]) the grid leaves the cells of plantations in rows
+//! (orchards, vineyards, bananas: [`crate::plantings`]) and the 8 m cells
+//! of mapped trees empty, and nothing grows on the Teide's summit cone
+//! ([`crate::flora::alive`]); the species of each tree is the renderer's
+//! choice by the regional rules ([`crate::flora::pick_species`]).
 
 use crate::forest::ForestTile;
 use crate::landuse::{LandClass, LandUseTile};
@@ -254,6 +261,10 @@ fn landuse_trees(
     let cs = size / f64::from(cells);
     let blocked = blocked_cells(pkg, tile, cells);
     let forest = tile_forest(pkg, tile.key);
+    // The fields and mapped trees (section VEGE, spec §14 Phase 8 T8):
+    // plantations in rows and mapped trees take the place of the grid's.
+    let mapped = crate::plantings::mapped_cells(pkg, tile.key);
+    let region = crate::flora::FloraRegion::at(pkg.origin.0, pkg.origin.1);
     let mut sites = Vec::new();
     for k in 0..per_side {
         for i in 0..per_side {
@@ -270,10 +281,18 @@ fn landuse_trees(
             if hash(gx, gz, 1) >= chance || blocked[r * n + c] {
                 continue;
             }
+            if mapped.binary_search(&(gx, gz)).is_ok() || crate::plantings::planted(pkg, x, z) {
+                continue;
+            }
             let Some((y, too_steep)) = ground_and_steep(pkg, x, z) else {
                 continue;
             };
             if too_steep {
+                continue;
+            }
+            // Bare summits (the Teide's cone above 3 000 m).
+            let alive = crate::flora::alive(region, y);
+            if alive < 1.0 && hash(gx, gz, 36) >= alive {
                 continue;
             }
             let s = s0 + (s1 - s0) * hash(gx, gz, 4);

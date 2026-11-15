@@ -57,6 +57,15 @@ calibrate() { # package pbf...
   elif [ ${#forest[@]} -gt 0 ]; then
     $WB forest --world "$pkg" "${forest[@]}"
   fi
+  # The fields, plantations and mapped trees (section VEGE, spec §14 Phase 8
+  # T8; OCW_NO_VEGETATION=1 leaves them out); renews the trees of OBST.
+  if [ -z "${OCW_NO_VEGETATION:-}" ]; then
+    local vp=()
+    for p in "$@"; do vp+=(--pbf "$p"); done
+    # With the measured crop map of scripts/fetch-crops.sh where there is one.
+    [ -f "$D/crops/index.json" ] && vp+=(--crops "$D/crops")
+    $WB vegetation --world "$pkg" "${vp[@]}"
+  fi
 }
 out=$OUT/liechtenstein.ocwpkg
 # Build time and builder peak memory go to $OUT/measure.log.

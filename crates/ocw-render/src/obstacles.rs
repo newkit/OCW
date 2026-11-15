@@ -347,7 +347,11 @@ pub fn tile_obstacle_meshes(pkg: &WorldPackage, key: TileKey, keep: Keep) -> Til
         (0..n).map(|_| MeshArrays::default()).collect(),
         (0..n).map(|_| MeshArrays::default()).collect(),
     );
-    for p in t.points.iter().filter(|p| kept(p.pos)) {
+    for p in t
+        .points
+        .iter()
+        .filter(|p| kept(p.pos) && p.kind != ObstacleKind::PlantedTree)
+    {
         let target = if p.road_barrier() {
             &mut road
         } else {

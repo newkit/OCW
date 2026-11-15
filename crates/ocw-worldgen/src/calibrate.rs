@@ -669,6 +669,8 @@ pub fn calibrate(
         ortho: pkg.look.ortho.take(),
         // The forest cover (FRST) has its own pass too (`crate::forest`).
         forest: pkg.look.forest.take(),
+        // The fields and mapped trees (VEGE) too (`crate::vegetation`).
+        vegetation: pkg.look.vegetation.take(),
     };
     stats
 }

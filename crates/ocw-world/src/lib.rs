@@ -9,6 +9,7 @@
 pub mod border;
 pub mod bridges;
 pub mod buildings;
+pub mod flora;
 pub mod forest;
 pub mod geo;
 pub mod gpx;
@@ -26,6 +27,7 @@ pub mod obstacles;
 pub mod ortho;
 pub mod package;
 pub mod path;
+pub mod plantings;
 pub mod region;
 pub mod road_dress;
 pub mod road_surface;
@@ -38,6 +40,7 @@ pub mod surface;
 mod terrain;
 pub mod track;
 pub mod trees;
+pub mod vegetation;
 pub mod world_set;
 
 pub use gradient::{AVERAGE_AHEAD_M, ElevationProfile, GradeBand, ProfileSpec, average_grade};
