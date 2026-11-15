@@ -1,0 +1,575 @@
+//! Settings → Trainer → Devices (spec §3.2.1 *Devices*, §3.4), Bevy-free
+//! and shared by both apps: scan (desktop) or the browser's chooser, the
+//! devices found, connected and remembered, one page per device to
+//! connect or forget it, and the status lines.
+//!
+//! The apps fill a [`DevicesInfo`] from their own device layer (the
+//! desktop's `devices.rs` over btleplug, the browser's `WebDevices` over
+//! Web Bluetooth); every row is a console line (`devices.scan`,
+//! `devices.connect <id>`, `devices.forget <id>`), so the menu, the
+//! console and scripts share one path.
+//!
+//! The list keeps its order while it is open: the apps only append new
+//! devices (a device's page is its index), and forgetting goes back to
+//! the list.
+
+use ocw_devices::ble::Profile;
+use ocw_devices::ble::web::DeviceKind;
+
+use super::pages::{Activate, Page, Row, info_row, open_row, short_label};
+
+/// How long the menu's scan runs (s).
+pub const SCAN_SECONDS: u32 = 10;
+
+/// The Devices page's note.
+pub const NOTE: &str = "Choose a device to connect it; once connected it is remembered.";
+
+/// A device page's note.
+pub const DEVICE_NOTE: &str =
+    "Connect it in its role, or forget it: it is then not connected at the next start.";
+
+/// What a device is for the ride.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    /// A smart trainer (FTMS, or a Wahoo KICKR): power and resistance.
+    Trainer,
+    /// A power meter (Cycling Power).
+    Power,
+    /// A speed / cadence sensor (CSC).
+    Cadence,
+    HeartRate,
+}
+
+impl Role {
+    /// The name in `devices.toml` and on the console.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Trainer => "trainer",
+            Self::Power => "power",
+            Self::Cadence => "cadence",
+            Self::HeartRate => "hr",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "trainer" => Some(Self::Trainer),
+            "power" | "power-meter" => Some(Self::Power),
+            "cadence" | "speed" => Some(Self::Cadence),
+            "hr" | "heart-rate" | "heartrate" => Some(Self::HeartRate),
+            _ => None,
+        }
+    }
+
+    /// For rows and messages.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Trainer => "trainer",
+            Self::Power => "power meter",
+            Self::Cadence => "cadence / speed",
+            Self::HeartRate => "heart rate",
+        }
+    }
+
+    /// Whether it gives the rider's power (it replaces the virtual
+    /// trainer).
+    pub fn delivers_power(self) -> bool {
+        matches!(self, Self::Trainer | Self::Power)
+    }
+
+    /// From what a device advertises: FTMS is a trainer; Wahoo KICKRs
+    /// advertise only Cycling Power (their control point is found after
+    /// connecting, spec §3.4), so the name tells them apart from power
+    /// meters. `None`: no fitness profile.
+    pub fn of(name: Option<&str>, profiles: &[Profile]) -> Option<Self> {
+        let kickr = name.is_some_and(|n| n.to_ascii_uppercase().contains("KICKR"));
+        if profiles.contains(&Profile::FitnessMachine)
+            || (kickr && profiles.contains(&Profile::CyclingPower))
+        {
+            Some(Self::Trainer)
+        } else if profiles.contains(&Profile::CyclingPower) {
+            Some(Self::Power)
+        } else if profiles.contains(&Profile::SpeedCadence) {
+            Some(Self::Cadence)
+        } else if profiles.contains(&Profile::HeartRate) {
+            Some(Self::HeartRate)
+        } else {
+            None
+        }
+    }
+
+    /// The browser's chooser kinds.
+    pub fn of_kind(k: DeviceKind) -> Self {
+        match k {
+            DeviceKind::Trainer => Self::Trainer,
+            DeviceKind::PowerMeter => Self::Power,
+            DeviceKind::HeartRate => Self::HeartRate,
+        }
+    }
+
+    /// The browser's chooser for this role.
+    pub fn kind(self) -> DeviceKind {
+        match self {
+            Self::Trainer => DeviceKind::Trainer,
+            Self::Power | Self::Cadence => DeviceKind::PowerMeter,
+            Self::HeartRate => DeviceKind::HeartRate,
+        }
+    }
+}
+
+/// A device's connection.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Link {
+    /// Not connected (found by a scan, or remembered).
+    #[default]
+    Idle,
+    Connecting,
+    /// Connected: what the device turned out to be ("Wahoo KICKR (Cycling
+    /// Power + Wahoo control)").
+    Connected(String),
+    /// Lost; reconnecting.
+    Reconnecting,
+    /// The last attempt failed (why); the next one follows.
+    Failed(String),
+}
+
+impl Link {
+    pub fn text(&self) -> String {
+        match self {
+            Self::Idle => "not connected".into(),
+            Self::Connecting => "connecting ...".into(),
+            Self::Connected(k) => format!("connected, {k}"),
+            Self::Reconnecting => "reconnecting ...".into(),
+            Self::Failed(why) => format!("failed: {why}; trying again"),
+        }
+    }
+
+    /// Short, for the list.
+    fn short(&self) -> Option<&'static str> {
+        match self {
+            Self::Idle => None,
+            Self::Connecting => Some("connecting"),
+            Self::Connected(_) => Some("connected"),
+            Self::Reconnecting => Some("reconnecting"),
+            Self::Failed(_) => Some("failed"),
+        }
+    }
+
+    /// Whether a backend runs for it.
+    pub fn running(&self) -> bool {
+        !matches!(self, Self::Idle)
+    }
+}
+
+/// One device of the list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Entry {
+    /// The platform's id (`devices.connect <id>`).
+    pub id: String,
+    pub name: String,
+    pub role: Role,
+    /// Signal strength (dBm) from the last scan.
+    pub rssi: Option<i16>,
+    pub link: Link,
+    /// In the remembered devices (`devices.toml`, the browser's
+    /// `localStorage`).
+    pub remembered: bool,
+}
+
+impl Entry {
+    /// The list's value: "trainer, -61 dBm, connected, remembered".
+    pub fn summary(&self) -> String {
+        let mut parts = vec![self.role.label().to_owned()];
+        if let Some(r) = self.rssi {
+            parts.push(format!("{r} dBm"));
+        }
+        if let Some(s) = self.link.short() {
+            parts.push(s.into());
+        }
+        if self.remembered {
+            parts.push("remembered".into());
+        }
+        parts.join(", ")
+    }
+}
+
+/// How devices are found.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Scan {
+    /// Desktop: no scan running.
+    #[default]
+    Idle,
+    /// Desktop: a scan runs, this long still.
+    Scanning { left_s: u32 },
+    /// The browser: its chooser lists the devices (`None`), or there is
+    /// no Web Bluetooth (why).
+    Chooser(Option<String>),
+}
+
+/// What the Devices pages show (filled by the app).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DevicesInfo {
+    pub scan: Scan,
+    pub entries: Vec<Entry>,
+    /// The latest lines (connects, failures, scan results), oldest first.
+    pub messages: Vec<String>,
+    /// Where the remembered devices are kept.
+    pub file: Option<String>,
+    /// The virtual trainer gives the power now.
+    pub virtual_trainer: bool,
+}
+
+/// Messages a Devices page shows (the newest).
+pub const MESSAGES_SHOWN: usize = 3;
+
+impl DevicesInfo {
+    /// Keeps the newest [`MESSAGES_SHOWN`] lines.
+    pub fn push_message(&mut self, line: impl Into<String>) {
+        self.messages.push(line.into());
+        let n = self.messages.len();
+        if n > MESSAGES_SHOWN {
+            self.messages.drain(..n - MESSAGES_SHOWN);
+        }
+    }
+
+    /// The Trainer page's Devices value: the connected devices, else the
+    /// virtual trainer.
+    pub fn trainer_value(&self) -> String {
+        let connected: Vec<&str> = self
+            .entries
+            .iter()
+            .filter(|e| matches!(e.link, Link::Connected(_)))
+            .map(|e| e.name.as_str())
+            .collect();
+        match connected.as_slice() {
+            [] if matches!(self.scan, Scan::Scanning { .. }) => "scanning".into(),
+            [] if self.virtual_trainer => "virtual trainer".into(),
+            [] => "none connected".into(),
+            [one] => short_label(one, 20),
+            [one, rest @ ..] => format!("{} +{}", short_label(one, 16), rest.len()),
+        }
+    }
+}
+
+/// The rows of the Devices pages.
+pub fn rows(page: Page, info: &DevicesInfo) -> Vec<Row> {
+    match page {
+        Page::Devices => list_rows(info),
+        Page::Device(i) => match info.entries.get(i) {
+            Some(e) => device_rows(e, info),
+            None => Vec::new(),
+        },
+        _ => Vec::new(),
+    }
+}
+
+fn list_rows(info: &DevicesInfo) -> Vec<Row> {
+    let mut out = Vec::new();
+    match &info.scan {
+        Scan::Idle => {
+            let mut r = Row::action("Scan for devices", "devices.scan");
+            r.value = Some(format!("{SCAN_SECONDS} s"));
+            out.push(r);
+        }
+        Scan::Scanning { left_s } => {
+            let mut r = Row::action("Stop the scan", "devices.scan --stop");
+            r.value = Some(format!("{left_s} s left"));
+            out.push(r);
+        }
+        Scan::Chooser(missing) => {
+            for (label, role) in [
+                ("Add a trainer", Role::Trainer),
+                ("Add a power meter", Role::Power),
+                ("Add a heart-rate strap", Role::HeartRate),
+            ] {
+                out.push(match missing {
+                    None => Row::action(label, connect_kind(role)),
+                    Some(_) => Row {
+                        label: label.into(),
+                        value: Some("no Web Bluetooth".into()),
+                        left: None,
+                        right: None,
+                        confirm: Some(Activate::Disabled),
+                    },
+                });
+            }
+        }
+    }
+    out.extend(info.entries.iter().enumerate().map(|(i, e)| {
+        open_row(
+            &short_label(&e.name, 24),
+            Some(e.summary()),
+            Page::Device(i),
+        )
+    }));
+    if info.entries.is_empty() {
+        out.push(info_row(
+            "No devices yet",
+            Some(match info.scan {
+                Scan::Idle => "scan to find them".into(),
+                Scan::Scanning { .. } => "looking ...".into(),
+                Scan::Chooser(_) => "add one above".into(),
+            }),
+        ));
+    }
+    out
+}
+
+/// `devices.connect trainer|power|hr`: the browser's chooser.
+fn connect_kind(role: Role) -> String {
+    format!("devices.connect {}", role.kind().key())
+}
+
+fn device_rows(e: &Entry, info: &DevicesInfo) -> Vec<Row> {
+    let mut out = vec![
+        info_row("Kind", Some(e.role.label().into())),
+        info_row("State", Some(short_label(&e.link.text(), 40))),
+    ];
+    if !matches!(info.scan, Scan::Chooser(_)) {
+        out.push(info_row(
+            "Signal",
+            Some(e.rssi.map_or("-".into(), |r| format!("{r} dBm"))),
+        ));
+    }
+    out.push(info_row(
+        "Remembered",
+        Some(if e.remembered { "yes" } else { "no" }.into()),
+    ));
+    if matches!(e.link, Link::Idle | Link::Failed(_)) {
+        let line = match info.scan {
+            // The browser connects only from its chooser.
+            Scan::Chooser(_) => connect_kind(e.role),
+            _ => format!("devices.connect {}", e.id),
+        };
+        out.push(Row::action("Connect", line));
+    }
+    if e.remembered || e.link.running() {
+        out.push(Row {
+            label: "Disconnect and forget".into(),
+            value: None,
+            left: None,
+            right: None,
+            confirm: Some(Activate::CommandBack(format!("devices.forget {}", e.id))),
+        });
+    }
+    out
+}
+
+/// The status line over the Devices pages: the scan, else the newest
+/// message, else where the devices are remembered (a page of seven rows
+/// has no room for more text).
+pub fn status(page: Page, info: &DevicesInfo) -> String {
+    if let Scan::Scanning { left_s } = info.scan {
+        return format!("Scanning ... {left_s} s left, {} found", info.entries.len());
+    }
+    if let Page::Device(i) = page
+        && let Some(e) = info.entries.get(i)
+    {
+        return short_label(&format!("{}: {}", e.name, e.link.text()), 60);
+    }
+    match (info.messages.last(), &info.file) {
+        (Some(m), _) => short_label(m, 56),
+        (None, Some(f)) => format!("Remembered in {f}"),
+        (None, None) => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::menu::model::{Action, Effect, Menu, Page as MenuPage};
+    use crate::settings::Settings;
+
+    fn kickr(link: Link, remembered: bool) -> Entry {
+        Entry {
+            id: "hci0/dev_00_00_00_00_00_01".into(),
+            name: "Wahoo KICKR 0001".into(),
+            role: Role::Trainer,
+            rssi: Some(-61),
+            link,
+            remembered,
+        }
+    }
+
+    fn label(r: &[Row], i: usize) -> &str {
+        &r[i].label
+    }
+
+    #[test]
+    fn roles_come_from_the_advertised_profiles_and_the_name() {
+        use Profile::*;
+        assert_eq!(Role::of(None, &[FitnessMachine]), Some(Role::Trainer));
+        assert_eq!(
+            Role::of(Some("Wahoo KICKR 0001"), &[CyclingPower]),
+            Some(Role::Trainer)
+        );
+        assert_eq!(
+            Role::of(Some("Assioma"), &[CyclingPower]),
+            Some(Role::Power)
+        );
+        assert_eq!(Role::of(None, &[SpeedCadence]), Some(Role::Cadence));
+        assert_eq!(Role::of(Some("TICKR"), &[HeartRate]), Some(Role::HeartRate));
+        assert_eq!(Role::of(None, &[]), None);
+        for r in [Role::Trainer, Role::Power, Role::Cadence, Role::HeartRate] {
+            assert_eq!(Role::parse(r.key()), Some(r));
+        }
+        assert!(Role::Trainer.delivers_power() && !Role::HeartRate.delivers_power());
+    }
+
+    #[test]
+    fn the_list_has_the_scan_and_every_device() {
+        let mut info = DevicesInfo::default();
+        let r = rows(Page::Devices, &info);
+        assert_eq!(label(&r, 0), "Scan for devices");
+        assert_eq!(r[0].confirm, Some(Activate::Command("devices.scan".into())));
+        assert_eq!(label(&r, 1), "No devices yet");
+        // Scanning: the row stops it; found devices show as they come.
+        info.scan = Scan::Scanning { left_s: 7 };
+        info.entries.push(kickr(Link::Idle, false));
+        let r = rows(Page::Devices, &info);
+        assert_eq!(label(&r, 0), "Stop the scan");
+        assert_eq!(r[0].value.as_deref(), Some("7 s left"));
+        assert_eq!(
+            r[0].confirm,
+            Some(Activate::Command("devices.scan --stop".into()))
+        );
+        assert_eq!(label(&r, 1), "Wahoo KICKR 0001");
+        assert_eq!(r[1].value.as_deref(), Some("trainer, -61 dBm"));
+        assert_eq!(r[1].confirm, Some(Activate::Open(Page::Device(0))));
+        assert_eq!(r.len(), 2);
+        assert_eq!(
+            status(Page::Devices, &info),
+            "Scanning ... 7 s left, 1 found"
+        );
+        // Connected and remembered: marked.
+        info.entries[0] = kickr(Link::Connected("Wahoo KICKR".into()), true);
+        let r = rows(Page::Devices, &info);
+        assert_eq!(
+            r[1].value.as_deref(),
+            Some("trainer, -61 dBm, connected, remembered")
+        );
+        assert_eq!(info.trainer_value(), "Wahoo KICKR 0001");
+    }
+
+    #[test]
+    fn a_device_page_connects_and_forgets() {
+        let mut info = DevicesInfo {
+            entries: vec![kickr(Link::Idle, false)],
+            ..Default::default()
+        };
+        let r = rows(Page::Device(0), &info);
+        let labels: Vec<&str> = r.iter().map(|r| r.label.as_str()).collect();
+        assert_eq!(labels, ["Kind", "State", "Signal", "Remembered", "Connect"]);
+        assert_eq!(
+            r[4].confirm,
+            Some(Activate::Command(
+                "devices.connect hci0/dev_00_00_00_00_00_01".into()
+            ))
+        );
+        // Connected: forget, no connect.
+        info.entries[0] = kickr(Link::Connected("Wahoo KICKR".into()), true);
+        let r = rows(Page::Device(0), &info);
+        let last = r.last().unwrap();
+        assert_eq!(last.label, "Disconnect and forget");
+        assert_eq!(
+            last.confirm,
+            Some(Activate::CommandBack(
+                "devices.forget hci0/dev_00_00_00_00_00_01".into()
+            ))
+        );
+        assert!(!r.iter().any(|r| r.label == "Connect"));
+        // A failure says why and offers to connect again.
+        info.entries[0] = kickr(Link::Failed("not found".into()), true);
+        let r = rows(Page::Device(0), &info);
+        assert_eq!(
+            r[1].value.as_deref(),
+            Some("failed: not found; trying again")
+        );
+        assert!(r.iter().any(|r| r.label == "Connect"));
+        // Gone: no rows (the menu goes back to the list).
+        assert!(rows(Page::Device(3), &info).is_empty());
+    }
+
+    #[test]
+    fn the_browser_offers_its_chooser() {
+        let mut info = DevicesInfo {
+            scan: Scan::Chooser(None),
+            entries: vec![kickr(Link::Idle, true)],
+            ..Default::default()
+        };
+        let r = rows(Page::Devices, &info);
+        assert_eq!(label(&r, 0), "Add a trainer");
+        assert_eq!(
+            r[0].confirm,
+            Some(Activate::Command("devices.connect trainer".into()))
+        );
+        assert_eq!(
+            r[2].confirm,
+            Some(Activate::Command("devices.connect hr".into()))
+        );
+        // A remembered device connects through the chooser of its kind;
+        // no signal row.
+        let d = rows(Page::Device(0), &info);
+        assert!(!d.iter().any(|r| r.label == "Signal"));
+        assert_eq!(
+            d.iter().find(|r| r.label == "Connect").unwrap().confirm,
+            Some(Activate::Command("devices.connect trainer".into()))
+        );
+        info.scan = Scan::Chooser(Some("no Web Bluetooth".into()));
+        let r = rows(Page::Devices, &info);
+        assert_eq!(r[0].confirm, Some(Activate::Disabled));
+    }
+
+    #[test]
+    fn messages_keep_the_newest() {
+        let mut info = DevicesInfo::default();
+        for i in 0..5 {
+            info.push_message(format!("line {i}"));
+        }
+        assert_eq!(info.messages, ["line 2", "line 3", "line 4"]);
+        assert_eq!(status(Page::Devices, &info), "line 4");
+        info.messages.clear();
+        info.file = Some("~/.config/ocw/devices.toml".into());
+        assert_eq!(
+            status(Page::Devices, &info),
+            "Remembered in ~/.config/ocw/devices.toml"
+        );
+    }
+
+    /// Through the menu model: Settings → Trainer → Devices → a device →
+    /// Disconnect and forget runs the line and goes back to the list.
+    #[test]
+    fn the_menu_reaches_the_devices_and_forgetting_goes_back() {
+        let info = DevicesInfo {
+            entries: vec![kickr(Link::Connected("Wahoo KICKR".into()), true)],
+            ..Default::default()
+        };
+        let settings = Settings::default();
+        let riders = crate::riders::Riders::default();
+        let rows_of = |p: Page| match p {
+            Page::Devices | Page::Device(_) => rows(p, &info),
+            _ => super::super::pages::rows(p, &settings, &riders),
+        };
+        let mut m = Menu::default();
+        m.apply_with(Action::Open, rows_of);
+        let go = |m: &mut Menu, label: &str| {
+            let i = m
+                .labels()
+                .iter()
+                .position(|l| l.starts_with(label))
+                .unwrap_or_else(|| panic!("{label} in {:?}", m.labels()));
+            m.apply_with(Action::Click(i), rows_of)
+        };
+        go(&mut m, "Settings");
+        go(&mut m, "Trainer");
+        go(&mut m, "Devices");
+        assert_eq!(m.page(), Some(MenuPage::Sub(Page::Devices)));
+        go(&mut m, "Wahoo KICKR 0001");
+        assert_eq!(m.page(), Some(MenuPage::Sub(Page::Device(0))));
+        assert_eq!(
+            go(&mut m, "Disconnect and forget"),
+            Effect::Command("devices.forget hci0/dev_00_00_00_00_00_01".into())
+        );
+        assert_eq!(m.page(), Some(MenuPage::Sub(Page::Devices)));
+    }
+}

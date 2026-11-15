@@ -8,13 +8,15 @@
 //! - [`pages`]: the Settings / Workshop / Workouts / World rows (each a
 //!   console line), [`weather`] the weather machine, [`time`] the time
 //!   machine, [`voice`] the voice pages, [`trust`] the trust dialog and
-//!   the trusted keys (spec §4.7 *User keys*),
+//!   the trusted keys (spec §4.7 *User keys*), [`devices`] Settings →
+//!   Trainer → Devices (scan, connect, forget),
 //! - [`hint`] and [`status_line`]: the text under and over a page.
 //!
 //! The Bevy glue (input → model → `ocw_render::menu::MenuView`) is
 //! `ocw_ui::menu`, the same for both apps.
 
 pub mod controls;
+pub mod devices;
 pub mod history;
 pub mod join;
 pub mod model;

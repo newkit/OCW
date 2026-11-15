@@ -998,6 +998,11 @@ impl Menu {
             Some(Activate::Ask(line)) => self.ask(line),
             Some(Activate::AskForget(line)) => self.ask_on(Page::ConfirmForget, line),
             Some(Activate::Run(line)) => self.run_and_close(line),
+            Some(Activate::CommandBack(line)) => {
+                self.stack.pop();
+                self.rows.clear();
+                Effect::Command(line)
+            }
             Some(Activate::Open(p)) => {
                 self.push(Page::Sub(p));
                 self.rows.clear();
@@ -1057,6 +1062,7 @@ impl Menu {
                         | sub::Page::HistoryClimbs(_)
                         | sub::Page::BindGroup(_)
                         | sub::Page::TrustedKey(_)
+                        | sub::Page::Device(_)
                 ) && self.rows.is_empty()
                 {
                     self.stack.pop();
@@ -1524,17 +1530,12 @@ mod tests {
         // Back (the item) returns to Settings.
         assert_eq!(act(&mut m, Action::Confirm, &s, &r), Effect::None);
         assert_eq!(m.page(), Some(Page::Settings));
-        // Trainer: an action row runs its command.
+        // Trainer: a page row opens its page (Devices; its rows come
+        // from the app, `menu::devices`).
         act(&mut m, Action::Click(2), &s, &r);
-        let scan = m
-            .labels()
-            .iter()
-            .position(|l| l == "Scan for devices")
-            .unwrap();
-        assert_eq!(
-            act(&mut m, Action::Click(scan), &s, &r),
-            Effect::Command("devices.scan".into())
-        );
+        let devices = m.labels().iter().position(|l| l == "Devices").unwrap();
+        assert_eq!(act(&mut m, Action::Click(devices), &s, &r), Effect::None);
+        assert_eq!(m.page(), Some(Page::Sub(sub::Page::Devices)));
         // Left / right do nothing on pages without value rows.
         let mut top = Menu::default();
         top.apply(Action::Open);

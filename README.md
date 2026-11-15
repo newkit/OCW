@@ -1512,10 +1512,23 @@ package is installed only when all its files match the manifest.
 
 - Without a remembered device the app rides with a **virtual trainer**
   (`--power`, PgUp/PgDn, `sim.power`). Bluetooth trainers and sensors (FTMS,
-  Cycling Power, Cadence, Heart Rate, Wahoo trainers): `devices.scan`,
-  `devices.connect N`; connected devices are remembered
-  (`~/.config/ocw/devices.toml`) and reconnected at the next start
+  Cycling Power, Cadence, Heart Rate, Wahoo trainers) are paired in the menu
+  (below) or with `devices.scan`, `devices.connect N`; connected devices are
+  remembered (`~/.config/ocw/devices.toml`) and reconnected at the next start
   (`--virtual` ignores them).
+- **Pairing a trainer from the menu:** Esc → *Settings* → *Trainer* →
+  *Devices* → *Scan for devices*. The trainers and sensors in range show up
+  while the scan runs (10 s; *Stop the scan* ends it early), with their role
+  and signal. Choose one, then *Connect*: the device page says *connecting*,
+  *connected* or why it failed (not found: wake the trainer up by pedalling,
+  and close other apps that hold it – a trainer takes one connection). Once
+  it is connected it replaces the virtual trainer and is written to
+  `devices.toml` (or the file `--devices-file` names), so the next start
+  connects it by itself. *Disconnect and forget* on the device page removes
+  it. In the browser the page has *Add a trainer* etc. instead of the scan:
+  the browser's own list, remembered in the page's `localStorage`.
+  `scripts/test-devices-menu.sh [shot|shot-wayland] DIR` walks this page
+  headless with the real Bluetooth stack (own config dir; screenshots in DIR).
 - Trainer control: **SIM** (default; the trainer simulates the road's
   gradient, scaled by `trainer.difficulty`, default 50 %), **ERG** (holds a
   power: `erg.target 200`), or `trainer.mode off`.
@@ -2221,10 +2234,10 @@ you can run are offered (no *Dev* commands on a remote server).
 | `workout skip` | Skip to the next step |
 | `workout pause\|resume` | Pause / resume the workout clock by hand |
 | `workout status` | Step, target, time left, next step |
-| `devices.scan` | Scan for Bluetooth trainers and sensors (in the background) |
-| `devices.connect N\|ID` | Connect a device from the last scan, and remember it |
-| `devices.list` | Running and remembered devices |
-| `devices.forget ID\|all` | Forget a remembered device (from the next start) |
+| `devices.scan [SECONDS] [--stop]` | Scan for Bluetooth trainers and sensors (in the background, 10 s; each is listed as it appears; `--stop` ends it) |
+| `devices.connect N\|ID` | Connect a device from the last scan; remembered once it connected |
+| `devices.list` | Running, remembered and found devices |
+| `devices.forget ID\|NAME\|all` | Disconnect and forget a device |
 | `devices.virtual` | Start an additional virtual trainer |
 | **Rides and Strava** | |
 | `ride.status` | The current recording |

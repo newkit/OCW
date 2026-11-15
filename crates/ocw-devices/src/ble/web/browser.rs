@@ -157,6 +157,7 @@ pub fn request(
 fn err_text(e: JsValue) -> String {
     match js(e) {
         DeviceError::Bluetooth(s) | DeviceError::Start(s) => s,
+        other => other.to_string(),
     }
 }
 

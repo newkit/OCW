@@ -23,7 +23,7 @@ mod btle;
 use std::time::Duration;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use btle::{BleDevice, BtleLink, scan};
+pub use btle::{BleDevice, BtleLink, scan, scan_live};
 pub use runner::{GattLink, Notifications, RunEnd};
 
 use crate::gatt::uuids;
@@ -78,9 +78,51 @@ pub struct FoundDevice {
     pub rssi: Option<i16>,
 }
 
+/// Adds a found device to `list`, or updates the one with its id (name,
+/// profiles, signal). Returns whether anything changed (a new device, or
+/// a new name or signal to show).
+pub fn merge_found(list: &mut Vec<FoundDevice>, d: FoundDevice) -> bool {
+    match list.iter_mut().find(|f| f.id == d.id) {
+        Some(f) if *f == d => false,
+        Some(f) => {
+            // A later report without a name or signal keeps the known one.
+            let name = d.name.or_else(|| f.name.clone());
+            let rssi = d.rssi.or(f.rssi);
+            let changed = name != f.name || rssi != f.rssi || d.profiles != f.profiles;
+            *f = FoundDevice { name, rssi, ..d };
+            changed
+        }
+        None => {
+            list.push(d);
+            true
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn found_devices_merge_by_id() {
+        let d = |id: &str, name: Option<&str>, rssi| FoundDevice {
+            id: id.into(),
+            name: name.map(Into::into),
+            profiles: vec![Profile::CyclingPower],
+            rssi,
+        };
+        let mut l = Vec::new();
+        assert!(merge_found(&mut l, d("a", Some("KICKR"), None)));
+        assert!(!merge_found(&mut l, d("a", Some("KICKR"), None)));
+        // A signal arrives: an update.
+        assert!(merge_found(&mut l, d("a", None, Some(-60))));
+        assert_eq!(l[0].name.as_deref(), Some("KICKR"));
+        assert_eq!(l[0].rssi, Some(-60));
+        // Nothing new (no name, no signal): no update.
+        assert!(!merge_found(&mut l, d("a", None, None)));
+        assert!(merge_found(&mut l, d("b", None, None)));
+        assert_eq!(l.len(), 2);
+    }
 
     #[test]
     fn profiles_from_advertised_services() {
