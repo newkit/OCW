@@ -52,6 +52,7 @@ MDT05 © Instituto Geográfico Nacional (CC BY 4.0); SRTM (NASA / USGS).</sub>
 
 ```bash
 make deps     # this platform: deps-linux (detects Debian/Ubuntu, Fedora, Arch) | deps-windows | deps-macos
+make deps-vr  # only for VR work (Phase 11): the OpenXR loader + Monado on Linux (deps-vr-linux), hints on Windows
 make check    # fmt, clippy, tests, wasm build – what CI runs
 make run      # desktop client with a virtual trainer and 4 test riders
 make help     # all targets (build, release, server, deploy, the test-* targets, ...)

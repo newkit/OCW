@@ -52,6 +52,16 @@ PACMAN_PACKAGES := base-devel pkgconf curl git rsync \
 	dbus libx11 libxcursor libxrandr libxi libxcb \
 	mesa vulkan-icd-loader vulkan-tools bluez bluez-utils \
 	xorg-server-xvfb xorg-xauth weston ffmpeg fuse2 glib2
+# VR (spec §14 Phase 11, 11D): the Khronos OpenXR loader and Monado, the
+# open-source OpenXR runtime (BSL-1.0), whose simulated headset lets the VR
+# tests run without hardware. Only for VR work and its tests; not part of
+# `make deps`. Debian 13 names (marge, 2026-11-15: monado-service 25.0.0,
+# libopenxr-loader1 1.1.47).
+VR_APT_PACKAGES := libopenxr-loader1 libopenxr1-monado monado-service
+VR_DNF_PACKAGES := openxr-libs monado
+VR_PACMAN_PACKAGES := openxr monado
+# The runtime manifest the loader picks when no other runtime is active.
+MONADO_RUNTIME_JSON := /usr/share/openxr/1/openxr_monado.json
 # Linux distribution family from /etc/os-release (ID, then ID_LIKE):
 # debian (Debian, Ubuntu, Mint, …), fedora (Fedora, RHEL, Rocky, Alma, …),
 # arch (Arch, Manjaro, EndeavourOS, …), or unknown.
@@ -83,7 +93,7 @@ VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 .DEFAULT_GOAL := help
 .PHONY: help test-web-account version version-next version-bump test-release-version release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish art-collect art-check test-art art-install-timer art-uninstall-timer art-timer-status deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
 	clippy check run server materials deploy-test clean clean-test-output macos-app \
-	test test-unit test-wasm test-web-build test-web test-web-webgl2 test-web-world test-web-unicorn test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-kiosk web web-serve web-worlds web-remote web-preview web-preview-site web-preview-worlds test-web-preview deps-web deps-browser test-web-readme test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
+	test test-unit test-wasm test-web-build test-web test-web-webgl2 test-web-world test-web-unicorn test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-kiosk web web-serve web-worlds web-remote web-preview web-preview-site web-preview-worlds test-web-preview deps-web deps-browser deps-vr deps-vr-linux deps-vr-linux-debian deps-vr-linux-fedora deps-vr-linux-arch deps-vr-linux-unknown deps-vr-windows deps-vr-macostest-web-readme test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
 	test-multiplayer test-multiplayer-local test-scenes test-scenes-list \
 	wasm screenshot screenshot-wayland smoke video video-wayland
 
@@ -158,6 +168,34 @@ deps-appimage: ## Linux: appimagetool to ~/.local/bin (no sudo; used by scripts/
 		echo "The downloaded appimagetool does not run: $(APPIMAGETOOL).download" >&2; exit 1; fi; \
 	mv "$(APPIMAGETOOL).download" "$(APPIMAGETOOL)"; \
 	echo "Installed $(APPIMAGETOOL)"
+
+deps-vr: deps-vr-$(PLATFORM) ## VR (Phase 11): the OpenXR loader and a runtime for this platform (Linux: Monado; sudo)
+
+deps-vr-linux: deps-vr-linux-$(LINUX_FAMILY) ## VR on Linux: OpenXR loader + Monado (its simulated headset runs the VR tests without hardware; sudo)
+	@command -v monado-service >/dev/null 2>&1 || { echo "monado-service not found after the install" >&2; exit 1; }
+	@if [ -f $(MONADO_RUNTIME_JSON) ]; then echo "Monado runtime: $(MONADO_RUNTIME_JSON)"; \
+	else echo "No $(MONADO_RUNTIME_JSON): set XR_RUNTIME_JSON to Monado's openxr_monado.json" >&2; fi
+	@echo "Active OpenXR runtime: $$(readlink -f /etc/xdg/openxr/1/active_runtime.json 2>/dev/null || echo 'none set (the loader then needs XR_RUNTIME_JSON)')"
+
+deps-vr-linux-debian:
+	sudo apt-get install -y $(VR_APT_PACKAGES)
+
+deps-vr-linux-fedora:
+	sudo dnf install -y --skip-unavailable $(VR_DNF_PACKAGES)
+
+deps-vr-linux-arch:
+	sudo pacman -S --needed --noconfirm $(VR_PACMAN_PACKAGES)
+
+deps-vr-linux-unknown:
+	@echo "Unknown Linux distribution: install the OpenXR loader and Monado by hand (Debian names: $(VR_APT_PACKAGES))" >&2
+	@exit 1
+
+deps-vr-windows: ## VR on Windows: prints what to install (the Meta Quest Link app is not on winget)
+	@echo "Install the Meta Quest Link app (https://www.meta.com/help/quest/pcvr/) and set it as the active OpenXR runtime;"
+	@echo "the OpenXR loader comes with it. SteamVR is the alternative runtime."
+
+deps-vr-macos: ## VR on macOS: none (no OpenXR runtime for macOS, spec §14 Phase 11)
+	@echo "No VR on macOS: there is no OpenXR runtime for it (spec §14 Phase 11)."
 
 deps-windows: ## Windows: Git, VS Build Tools (C++), rustup via winget + Rust toolchain
 	winget install --id Git.Git -e --accept-source-agreements --accept-package-agreements
