@@ -23,7 +23,7 @@ cd "$(dirname "$0")/.."
 export PATH="$HOME/.cargo/bin:$PATH"
 
 profile=${WEB_PROFILE:-web-release}
-# The old name of the profile (before v3.35).
+# The old name of the profile (before v3.37).
 [ "$profile" = web ] && profile=web-release
 gpus=${WEB_GPU:-webgpu webgl2}
 out=target/web

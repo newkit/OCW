@@ -49,6 +49,10 @@ make run      # desktop client with a virtual trainer and 4 test riders
 make help     # all targets (build, release, server, deploy, the test-* targets, ...)
 ```
 
+In this project's own setup all building and testing runs on dedicated build
+machines through `scripts/remote.sh`, watched in the build dashboard: see
+[Build infrastructure](#build-infrastructure).
+
 Tests are the `test-*` targets: `make test` (= `test-unit`, all unit and
 integration tests), `test-wasm`, `test-kiosk`, `test-screenshot` /
 `test-screenshot-wayland` / `test-smoke` (both) and `test-video` /
@@ -2316,13 +2320,69 @@ test changes no firewall: if a bot gets no answer, it reports that UDP 47800
 on the server machine seems blocked from that machine – open it there for
 UDP to fix it.
 
-## Build servers
+## Build infrastructure
 
-All building and testing runs on remote machines over SSH
-(`scripts/remote.sh`), described in `config/machines.toml` (git-ignored; keys
-in `config/ssh/`). Details and background: [config/README.md](config/README.md).
+OCW is built and tested on dedicated **build machines**, never on the machine
+you work on (the *coordinator*). The coordinator holds the git checkouts (the
+main checkout and the agents' worktrees), the machine configuration and the
+build dashboard; `scripts/remote.sh` copies a working tree to a build machine
+and runs a command there. Everything is bash, PowerShell and Python 3
+(standard library only); on the coordinator nothing needs root but the
+optional `loginctl enable-linger` for the dashboard service. Spec §11.2
+has the architecture and the decisions behind it.
 
-### 1. On this machine: key and entry
+**Machines and roles** (the names are the `name`s in `config/machines.toml`):
+
+| Machine | System | Used for |
+|---|---|---|
+| `marge` | Debian, 12 cores, AMD GPU, Bluetooth with the Wahoo KICKR, kiosk screen | The main Linux machine: full checks (fmt, clippy plain and with voice, `cargo test --workspace`, `make test-wasm`), X11 / Wayland screenshots and videos, scene renders, world packages, the kiosk, BLE hardware tests, release AppImages, the multiplayer test's server |
+| `leela` | Fedora, 16 cores, AMD GPUs, second kiosk screen | **Excluded from building** (since 2026-11-13, disabled in the dashboard): only its own kiosk (Tenerife); deploys stay allowed |
+| `macos` | Mac M1, 8 cores, 16 GB | macOS builds and checks (app bundle, CoreBluetooth / CoreAudio), smaller tasks: a crate's tests, clippy, the wasm check |
+| `Win11Builder` | Windows 11, 6 cores, 8 GB | **Windows-related builds only:** Windows checks of merged code, Windows-specific fixes, Windows release zips; one slow build slot |
+
+A merge is checked fully on marge, the touched crates on the Mac, and the
+Windows check runs on Win11Builder. Which machines may build, and with how
+many slots, is set in the [build dashboard](#build-dashboard).
+
+**The tools at a glance:**
+
+| Task | Tool | Output |
+|---|---|---|
+| Set up a build machine | [Build servers](#build-servers): `make deps-*`, `scripts/setup-windows-buildserver.ps1`, `make deps-sccache` | – |
+| Build and test remotely | [`scripts/remote.sh MACHINE run 'CMD'`](#remote-builds) | the command's output; `test-output/build-log/DAY/` |
+| See and steer the machines, answer the spec's questions | [build dashboard](#build-dashboard) (`tools/build-dashboard/`, port 8765) | `config/build-machines.toml`, `test-output/answers/`, `test-output/build-log/DAY/*.jsonl` |
+| Free disk on the machines | [`scripts/remote-gc.sh`, the janitor](#disk-cleanup) | `test-output/build-log/DAY/janitor.jsonl` |
+| Put the latest build on a screen | [`scripts/deploy-test.sh MACHINE`, `scripts/ocw-kiosk.sh`](#kiosks-and-deploys) | `/var/tmp/ocw` on the machine |
+| Measure builds, world builds, frame rates | [`make build-profile`, `scripts/world-profile.sh`, `scripts/measure-fps.sh`](#profiling-and-measuring) | `test-output/build-profile/`, `test-output/world-profile/` |
+| Screenshots, videos, scenes, multiplayer and browser tests | [`make test-*`, `drive.sh`, `scripts/render-scenes.sh`](#test-and-media-harness) | `test-output/` with its `index.md` |
+| Release builds | [`scripts/build-appimage.sh`, `build-macos-app.sh`, `prepare-world-release.sh`, `make release-*`](#releases) | `target/…`, GitHub Releases |
+| World packages | [`scripts/fetch-pilot.sh`, `scripts/build-<region>.sh`](#world-builds) | `data/` on the build machine |
+| The art project (OCW Build Diary) | `make art-*` | see [art/ART-PROJECT.md](art/ART-PROJECT.md) |
+
+**Where the configuration and the results live** (all git-ignored; in a git
+worktree the tools read the main checkout's `config/` and write the main
+checkout's `test-output/`):
+
+| Path | Contents |
+|---|---|
+| `config/machines.toml` | The machines, edited by hand: a copy of the documented template `config/machines.example.toml` (`name`, `os`, `host`, `user`, `identity_file`, `shell`, `repo_path`, optional `port`, `slots`, `jobs`, `sccache_size`, …) |
+| `config/ssh/` | The private keys and `known_hosts` (connections are verified strictly) |
+| `config/build-machines.toml` | The dashboard's machine settings: enabled / disabled, build slots, reason, note – the source of truth for which machines may build |
+| `config/dashboard-token` | The dashboard's write token (random, mode 0600, created on its first start) |
+| `test-output/build-log/DAY/` | `runs.jsonl` and one `HHMMSS-MACHINE-PID.log` per `remote.sh run`, `servers.jsonl` (the dashboard's status every minute), `machines.jsonl`, `janitor.jsonl` |
+| `test-output/answers/` | `answers.jsonl` and `inbox.log`: answers given on the dashboard |
+| `test-output/YYYY-MM-DD/`, `index.md` | Every screenshot and video of the test runs, the build history (never deleted: the art project uses all of it) |
+
+Never print, copy or commit the contents of `config/machines.toml`,
+`config/ssh/` or `config/dashboard-token`; the tools mask host names, users,
+addresses and key paths in everything they log or show.
+
+### Build servers
+
+Setting up a build machine for `scripts/remote.sh`. Details and background:
+[config/README.md](config/README.md).
+
+#### 1. On this machine: key and entry
 
 ```bash
 cp config/machines.example.toml config/machines.toml      # once; then add an entry per machine
@@ -2331,10 +2391,11 @@ ssh-keygen -t ed25519 -N "" -C "ocw-build" -f config/ssh/ocw_build_ed25519   # o
 ```
 
 An entry in `config/machines.toml` needs `name`, `os` (`linux` / `macos` /
-`windows`), `host`, `user`, `identity_file`, `shell` and `repo_path`; see the
-documented template.
+`windows`), `host`, `user`, `identity_file`, `shell` and `repo_path`; `slots`
+(build slots), `jobs` (cargo jobs) and `sccache_size` are optional (`[defaults]`
+or per machine). See the documented template.
 
-### 2. On the build machine: SSH server, build user, key
+#### 2. On the build machine: SSH server, build user, key
 
 **Linux (Debian / Ubuntu):**
 
@@ -2404,14 +2465,14 @@ Check the Windows machine: a *Private* network profile, sleep disabled
 (*Settings → System → Power*), and a fixed IP address (e.g. a DHCP
 reservation) – otherwise SSH fails with *no route to host*.
 
-### 3. On this machine: host key and test
+#### 3. On this machine: host key and test
 
 ```bash
 ssh-keyscan -p 22 <host> >> config/ssh/known_hosts                  # once (connections are verified strictly)
 scripts/remote.sh <name> ssh 'uname -a'                              # Windows: '$PSVersionTable.PSVersion'
 ```
 
-### 4. Build tools on the machine
+#### 4. Build tools on the machine
 
 | OS | Command (in the copied checkout, e.g. `scripts/remote.sh <name> run 'make …'`, or locally on the machine) |
 |---|---|
@@ -2423,188 +2484,456 @@ rustup can also be installed without sudo and without touching shell
 profiles: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path --default-toolchain none`
 (`remote.sh` loads `~/.cargo/env` itself).
 
-### 5. Use it
+**Compiler cache:** `make deps-sccache` in a checkout on a Linux x86_64 or
+macOS arm64 machine (a pinned, SHA-256-checked release to `~/.local/bin`, no
+sudo); for Windows, from the coordinator: `make deps-sccache-windows
+MACHINE=Win11Builder` (`scripts/install-sccache.ps1`, the MSVC build to
+`%USERPROFILE%\.local\bin`). Installed on marge, the Mac and Win11Builder;
+`remote.sh` uses it whenever it is there.
+
+**Windows drives:** `make windows-move-toolchain MACHINE=Win11Builder` shows
+what moving `CARGO_HOME`, `RUSTUP_HOME` and the sccache cache from C: to
+`B:\toolchain` would do (sizes on C:); `APPLY=1` moves them
+(`scripts/windows-move-toolchain.ps1`: copy, user variables, `cargo
+--version` check, then the old directories go). On Windows, add the build
+user to "Performance Monitor Users" for the dashboard's processor queue
+length ([tools/build-dashboard/README.md](tools/build-dashboard/README.md#windows-permissions)).
+
+### Remote builds
+
+`scripts/remote.sh MACHINE ACTION …` is the one way builds and tests reach a
+build machine:
+
+| Action | What it does |
+|---|---|
+| `run 'CMD'` | Snapshot the working tree, wait for a build slot, sync the snapshot into the machine's checkout and run `CMD` there (`~/.cargo/env` loaded; Windows: PowerShell); copies a changed `Cargo.lock` back; exits with `CMD`'s code |
+| `sync` | Only the snapshot and the sync |
+| `ssh ['CMD']` | Plain ssh (no sync, no slot) |
+| `fetch REMOTE_PATH LOCAL_DIR` | Copy files back from the checkout (e.g. `test-output/scenes`) |
+| `put LOCAL_FILE… REMOTE_DIR` | Copy files into `REMOTE_DIR` of the checkout, also git-ignored ones (logs, world data); no sync |
+| `field KEY` | Print one of the machine's settings (`os`, `slots`, `repo_path`, …) for scripts; never log `host` |
+| `enabled` | Exit 0 if the machine is enabled for building, else print why not and exit 3 (no ssh) |
+| `slots` | Print the machine's effective build slots (no ssh) |
 
 ```bash
-scripts/remote.sh <name> run 'cargo test --workspace'        # copy the working tree, run there
-scripts/remote.sh <name> run '.claude/skills/run-ocw/drive.sh shot-wayland /tmp/ocw.jpg 6 -- --virtual'
-scripts/remote.sh <name> fetch test-output ./from-machine     # copy results back
-scripts/deploy-test.sh <name>                                  # release build for the kiosk on its screen
+scripts/remote.sh marge run 'cargo test --workspace'                  # full tests on marge
+scripts/remote.sh macos run 'cargo clippy -p ocw-sim --all-targets -- -D warnings'
+scripts/remote.sh Win11Builder run 'cargo test -p ocw-devices'        # Windows: PowerShell syntax
+scripts/remote.sh marge run '.claude/skills/run-ocw/drive.sh shot-wayland /tmp/ocw.jpg 6 -- --virtual'
+scripts/remote.sh marge fetch test-output ./from-machine               # copy results back
+scripts/remote.sh leela enabled; echo $?                              # 3: disabled in the dashboard
 ```
 
-- Build slots: only so many `remote.sh run` commands run at once per machine
-  (2 on Linux, 1 on Windows and macOS by default), because each parallel Bevy
-  build needs ~4–5 GB; the others wait and take whichever slot frees first.
-  Set `slots = N` per machine in `config/machines.toml` (or `[defaults]`), or
-  `OCW_REMOTE_SLOTS=N` for one call. Branch checkouts use 4 build jobs
-  (`OCW_REMOTE_JOBS`); `jobs = N` per machine caps them on main and branch
-  checkouts.
-- Windows (measured on 6 cores / 8 GB): the first `cargo build --workspace`
-  takes about 50 min, `cargo clippy --workspace --all-targets` 10 min, `cargo
-  test --workspace` 5 min on top. Each MSVC link of a Bevy binary (debug
-  info) needs ~5 GB, so 3 jobs ran out of memory (`LLVM ERROR: out of
-  memory`): set `jobs = 2` for an 8 GB machine. Commands run in PowerShell
-  5.1: chain with `;` (not `&&`), and leave out `2>&1` (it turns cargo's
-  stderr into error records); filter output locally instead
-  (`remote.sh … run 'cargo test --workspace' 2>&1 | grep …`). The exit code
-  is that of the last native program. GUI programs cannot open windows over
-  SSH (session 0); GUI runs need the scheduled-task approach (`display =
-  "interactive-task"`, not set up yet).
-- `python3 tools/build-dashboard/dashboard.py` shows each machine's load, its
-  running tasks, the queue of runs waiting for a slot and the slots in use
-  (every run leaves a task marker while it runs); on
-  Windows, add the build user to "Performance Monitor Users" for the
-  processor queue length ([tools/build-dashboard/README.md](tools/build-dashboard/README.md#windows-permissions)).
-  It also lists the **open questions for the user** from `SPECIFICATION.md`
-  (by phase, with the proposals; decided ones behind a toggle; milestones
-  waiting for one) – answerable on the page (also from a phone) with the
-  token of `config/dashboard-token`; answers land in
-  `test-output/answers/answers.jsonl` and `inbox.log` for the coordinator –
-  and watches the disks: its **janitor** deletes the
-  `target/` of merged or gone agent checkouts above 75 % use, of idle
-  agent checkouts above 85 %, and alerts above 92 % (`--janitor
-  off|dry-run|on`, `make janitor-plan` for a dry run; every deletion is
-  logged in `test-output/build-log/DAY/janitor.jsonl`). Each machine card
-  has an **Enabled/Disabled** toggle, a **build slots stepper** (1–8) and a
-  note (same token): stored in the git-ignored `config/build-machines.toml`
-  (`tools/build-dashboard/build_machines.py list|set` from a shell), every
-  change logged in `test-output/build-log/DAY/machines.jsonl`.
-  `scripts/remote.sh` refuses `run` and `sync` on a disabled machine (exit
-  3; ssh, fetch, put and deploys stay allowed) and takes its slot count
-  from there (over `machines.toml`; `OCW_REMOTE_SLOTS` still wins for a
-  call).
-- Branches other than `main` get their own checkout on the machine
-  (`<repo_path>-<branch>`), several GB each: after merging or abandoning an
-  agent branch, `scripts/remote-gc.sh --branch <branch>` (`make
-  remote-gc-branch BRANCH=…`) deletes its `target/` on every reachable
-  machine.
-- The tree is copied as it is when `remote.sh` is called (a snapshot); a run
-  waiting for a build slot syncs that snapshot when it gets the slot. Files
-  are compared by content and changed ones get the time of the copy (no
-  source mtimes: an older file version replacing a newer one rebuilds), so
-  unchanged files are never touched.
-- Compiler cache: with `sccache` installed on a machine (`make deps-sccache`
-  there: a pinned release to `~/.local/bin`, no sudo; Windows: `make
-  deps-sccache-windows MACHINE=<name>` from here; done on marge, the Mac and
-  Win11Builder), `remote.sh` sets `RUSTC_WRAPPER` for every run, so all
-  checkouts on the machine share compiled dependencies and a new branch
-  checkout does not compile Bevy from scratch. `OCW_SCCACHE=0` turns it off
-  for one call; `sccache_size = "30G"` per machine sets the cache size.
-- `OCW_SEED=1`: a new branch checkout on a file system with copy-on-write
-  clones (APFS on the Mac, Btrfs/XFS) starts with a clone of the main
-  checkout's `target/` (off by default: it did not save time when measured). `OCW_CARGO_SPLIT=1` gives cargo calls with the voice feature
-  their own build directory (`target/build-voice`, `scripts/cargo-shim/cargo`
-  on the remote `PATH`); off by default, as cargo already keeps plain and
-  voice artefacts apart (spec §11.2).
-- `make remote-gc` lists the `target/` of remote checkouts whose agent branch
-  is gone or merged (worktree removed) with their sizes; `make remote-gc
-  GC=1` deletes them (the checkouts, the main checkout and the cache stay).
-- Windows: `make windows-move-toolchain MACHINE=Win11Builder` shows what
-  moving `CARGO_HOME`, `RUSTUP_HOME` and the sccache cache from C: to
-  `B:\toolchain` would do (sizes on C:); `APPLY=1` moves them
-  (`scripts/windows-move-toolchain.ps1`: copy, user variables, `cargo
-  --version` check, then the old dirs go).
-- Waiting runs take a free slot in order of arrival (Linux, macOS). Each run
-  is logged with its slot wait, sync time, cargo's own build time and the
-  crates compiled (`test-output/build-log/*/runs.jsonl`).
-- Build profile: `make build-profile MACHINE=marge` (or
-  `scripts/remote.sh M run 'scripts/build-profile.sh --label L'`; Windows:
-  `powershell -ExecutionPolicy Bypass -File scripts/build-profile.ps1 -Label
-  L`) times clean, no-op and incremental builds with cargo's `--timings`
-  reports into `test-output/build-profile/L/`; `python3
-  scripts/build_profile.py compare A B` prints a before/after table.
-- Screenshots and videos on machines with a real GPU: use the Wayland modes
-  (`shot-wayland`, `video-wayland`; headless weston). Xvfb (X11) cannot
-  present a real GPU's Vulkan output (no DRI3), so `drive.sh` runs X11 modes
-  on Mesa's lavapipe (`WGPU_ADAPTER_NAME=llvmpipe`; `OCW_X11_ADAPTER=NAME`
-  picks another, `OCW_X11_ADAPTER=` leaves the choice to wgpu). Since
-  2026-11-11 the build user on marge is in the `render` group (for weston's
-  GPU renderer), so wgpu sees RADV there; without that setting every X11 run
-  panicked with "Fallback system failed to choose present mode … Options:
-  []". The app itself also no longer panics on such an adapter: it restarts
-  once on one that can present to the window (`apps/desktop/src/surface.rs`).
-- The kiosk (the app permanently on a machine's screen, restarted on every
-  deployment) is set up once on that machine's desktop: see
-  [config/README.md](config/README.md#test-app-on-a-machines-screen-kiosk).
+- **Checkouts:** `main` builds in the machine's `repo_path`; any other branch
+  in its own checkout `<repo_path>-<branch>` (`/` becomes `-`, e.g.
+  `OCW-worktree-agent-<id>` for an agent worktree), with its own `target/`, so
+  parallel work never collides (`OCW_REMOTE_DIR` picks another directory).
+  Each is several GB: clean up after merging (see [Disk cleanup](#disk-cleanup)).
+- **Snapshot and sync:** the tree (tracked and untracked files, not
+  git-ignored ones, never `config/`) is copied into a temporary snapshot the
+  moment `remote.sh` is called; a run that waits for a build slot syncs that
+  snapshot only once it holds the slot (Linux, macOS: a handshake over ssh;
+  Windows syncs at once unless `OCW_WIN_HANDSHAKE=1`). Files are compared by
+  content (rsync `--checksum`; Windows: tar with a manifest of what is
+  there), and changed ones get the time of the copy – never the source mtime,
+  so cargo never keeps a stale build after a revert or a branch switch.
+  `data/` and `target/` are git-ignored and never sent: world data is built on
+  the machine or copied there with `put`.
+- **Build slots and the queue:** only so many runs build at once per machine
+  (Linux 2, macOS 1, Windows 1 by default; marge has 3 set in the
+  dashboard), because each parallel Bevy build needs 4–5 GB. The slot count
+  is `OCW_REMOTE_SLOTS` for one call, else the dashboard's setting
+  (`config/build-machines.toml`), else `slots` in `machines.toml`, else the OS
+  default; 0 means no limit. A run that finds all slots taken prints
+  "remote.sh: waiting for a free build slot", polls every second and takes
+  the first free slot in order of arrival (Linux, macOS; Windows takes the
+  first free one). A waiting run gives up when its ssh session ends. Slot
+  locks: Linux `flock` on `/tmp/ocw-build-slot-N.lock`, macOS a `mkdir` lock
+  `/tmp/ocw-build-slot-N.d`, Windows `%TEMP%\ocw-tasks\slot-N.lock`; the OS
+  frees them when a run dies.
+- **Task markers:** while it runs, every `run` leaves
+  `/tmp/ocw-tasks/PID-START.json` on the machine (Windows:
+  `%TEMP%\ocw-tasks\`) with the checkout, branch, command (≤ 200 characters),
+  start time, PID, its state (`waiting` or `running` in slot N) and the slot
+  count – what the dashboard shows as jobs and queue, and what the cleanup
+  tools check before they touch a checkout. Stale markers (PID gone) are
+  ignored by the dashboard and swept by the next run.
+- **Cargo jobs:** branch checkouts build with 4 jobs (`CARGO_BUILD_JOBS`), the
+  main checkout with all cores; `jobs = N` in `machines.toml` caps both, and
+  `OCW_REMOTE_JOBS=N` overrides it for one call. Win11Builder needs at most 2
+  (each MSVC link of a Bevy binary takes ~5 GB, 3 jobs ran out of memory):
+  pass `OCW_REMOTE_JOBS=2`, or set `jobs = 2` in its entry.
+- **Compiler cache:** with `sccache` installed, `remote.sh` sets
+  `RUSTC_WRAPPER` for every run, so all checkouts on a machine share compiled
+  dependencies and a new agent checkout does not compile Bevy from scratch
+  (cache size `sccache_size`, default 30 GB).
+- **Build id:** remote checkouts have no `.git`, so `remote.sh` passes the
+  commit (`scripts/build-id.sh`, e.g. `63910f2-dirty`) as `OCW_BUILD_ID`; the
+  HUD and `ocw-desktop --version` show it.
+- **Dev profile change:** when the `[profile.dev*]` / `[profile.test*]`
+  sections of `Cargo.toml` change, `remote.sh` removes the checkout's
+  `target/debug` once before the build (`OCW_PROFILE_SWEEP=0` keeps it).
+- **Disabled machines:** `run` and `sync` on a machine disabled in the
+  dashboard fail at once with the reason and exit code 3; `ssh`, `field`,
+  `fetch`, `put` and deploys (`OCW_REMOTE_DEPLOY=1`, set by
+  `scripts/deploy-test.sh`) stay allowed.
+- **Build log:** every `run` is recorded in the main checkout's
+  `test-output/build-log/DAY/`: a line in `runs.jsonl` (machine, OS,
+  checkout, branch, command, start, seconds, exit code, the sync time
+  `sync_s`, cargo's own build time `cargo_s`, the crates compiled, the
+  slot wait `wait_s`) and the run's output in `HHMMSS-MACHINE-PID.log`, with
+  host, user and key path replaced by the machine name (`OCW_BUILD_LOG=0`
+  turns it off). The OCW Build Diary uses it for compile hours per machine.
+
+Environment variables of `remote.sh` (all for one call):
+
+| Variable | Effect |
+|---|---|
+| `OCW_REMOTE_SLOTS=N` | Build slots on the machine (0 = no limit) |
+| `OCW_REMOTE_JOBS=N` | Cargo jobs (empty = all cores) |
+| `OCW_REMOTE_DIR=PATH` | Use another checkout on the machine |
+| `OCW_REMOTE_DEPLOY=1` | Allowed on a machine disabled for building (deploys) |
+| `OCW_SCCACHE=0` | Build without sccache |
+| `OCW_BUILD_LOG=0` | Do not record the run in the build log |
+| `OCW_PROFILE_SWEEP=0` | Keep `target/debug` after a dev profile change |
+| `OCW_WIN_HANDSHAKE=1` | Windows: sync only once the run has its slot |
+| `OCW_SEED=1` | A new checkout starts with a copy-on-write clone of the main checkout's `target/` (APFS, Btrfs, XFS; off: no gain when measured) |
+| `OCW_CARGO_SPLIT=1` | Voice builds in their own build directory `target/build-voice` (`scripts/cargo-shim/cargo`; off: no gain when measured) |
+| `OCW_REMOTE_CONFIG=DIR` | Another config directory (used by `scripts/test-remote.sh`) |
+
+**Windows** (measured on 6 cores / 8 GB): the first `cargo build
+--workspace` takes about 50 min, `cargo clippy --workspace --all-targets` 10
+min, `cargo test --workspace` 5 min on top. Commands run in PowerShell 5.1:
+chain with `;` (not `&&`), and leave out `2>&1` (it turns cargo's stderr into
+error records); filter output locally instead (`remote.sh … run 'cargo test
+--workspace' 2>&1 | grep …`). The exit code is that of the last native
+program. GUI programs cannot open windows over SSH (session 0); GUI runs
+need the scheduled-task approach (`display = "interactive-task"`, not set
+up yet). Keep Win11Builder to Windows-related builds: its single slot is
+slow and other work queues behind it.
+
+**GPU runs:** screenshots and videos on machines with a real GPU use the
+Wayland modes (`shot-wayland`, `video-wayland`; headless weston). Xvfb (X11)
+cannot present a real GPU's Vulkan output (no DRI3), so `drive.sh` runs X11
+modes on Mesa's lavapipe (`WGPU_ADAPTER_NAME=llvmpipe`; `OCW_X11_ADAPTER=NAME`
+picks another, `OCW_X11_ADAPTER=` leaves the choice to wgpu). The build user
+on marge is in the `render` group (for weston's GPU renderer). The app itself
+restarts once on an adapter that can present to the window when the first
+one cannot (`apps/desktop/src/surface.rs`).
 
 **Troubleshooting:** `Connection refused` – no SSH server running (step 2).
 `Connection timed out during banner exchange` – the machine is overloaded or
 hanging (e.g. out of memory). `Host key verification failed` – step 3 missing
 or the machine was reinstalled (remove its old line from
-`config/ssh/known_hosts`). On Windows, a key in the wrong file for an admin
-account (`C:\ProgramData\ssh\administrators_authorized_keys`) or a network set
-to *Public* are the usual causes; the server log is in Event Viewer under
+`config/ssh/known_hosts`). Exit code 3 – the machine is disabled in the
+dashboard. On Windows, a key in the wrong file for an admin account
+(`C:\ProgramData\ssh\administrators_authorized_keys`) or a network set to
+*Public* are the usual causes; the server log is in Event Viewer under
 *Applications and Services Logs → OpenSSH*.
 
-## Tools and scripts
+### Build dashboard
 
-| Tool | Use |
-|---|---|
-| `make help` | All make targets: deps, build, check, deploy and the tests (`test`, `test-wasm`, `test-kiosk`, `test-smoke`, `test-video`, `test-multiplayer`, …) |
-| `cargo run -p ocw-server -- --bots 3 --seconds 10 --fast` | Headless game server (`--world PKG [--seed N]`: free ride on a package; `--route-file F`; `--stats-file PATH`) |
-| `cargo run -p ocw-bot -- --server HOST --server-cert FP --riders N` | Headless bot riders on a remote server (`--server https://HOST:47801`: over WebTransport); `ocw-bot verdict` checks a multiplayer test run |
-| `scripts/test-multiplayer.sh` | Multiplayer test across the build machines (`make test-multiplayer`) |
-| `scripts/test-kiosk.sh` | Tests the kiosk script with a fake app (`make test-kiosk`) |
-| `world-builder graph` / `route` / `package` / `check` | OSM + elevation import: road graph statistics, route files, world packages (`--bbox S,W,N,E --origin LAT,LON`: one part of a region, for neighbouring packages), package validation (`cargo run --release -p world-builder -- help`) |
-| `world-builder gpx --world PKG --gpx FILE [--name N] [--route-file F] [--dry-run]` | Import a GPX track: map-match it onto the package's road graph and store it as a package route (section `ROUT`; optionally also as an `ocw-graph-route` file); off-road stretches and gaps are reported |
-| `world-builder route --world PKG --from LAT,LON --to LAT,LON --name N` | Store the shortest main-road route between two points as a package route |
-| `world-builder routes --world PKG [--from OLD_PKG] [--remove N] [--export-gpx]` | List and check a package's routes; carry the routes of an older build over (by stable edge ID, re-matching broken ones); export them as GPX |
-| `world-builder keys init-root` / `keys new-signing` / `sign` / `verify` / `publish` / `diff` | Package signing and distribution, see below |
-| `scripts/fetch-pilot.sh [liechtenstein\|blackforest\|tenerife]` | Download a region's OSM extracts and elevation data (swissALTI3D, LGL DGM1, IGN MDT05, SRTM) with a licence table `SOURCES.md` |
-| `scripts/build-liechtenstein.sh`, `scripts/build-blackforest.sh [south middle north]`, `scripts/build-tenerife.sh` | Build the world packages and their routes (`OCW_SRTM_ONLY=1`: SRTM terrain, for comparisons) |
-| `scripts/prepare-world-release.sh OUT PKG...` | Release zips of packages (`ocw-world-<name>-v<N>.zip` with `LICENSE-DATA.md`, `README.md`, route files) and the OSM source zip (ODbL offer); no upload |
-| `scripts/measure.py [--label T] [--out F] -- CMD` | Wall time and peak memory of a command (package builds, client runs) |
-| `world-builder package … --profile FILE` | Every package build ends with a stage table (time, CPU, cores in use, peak memory per stage); `--profile` also writes it as JSON |
-| `scripts/world-profile.sh [--data DIR] [--ref DIR] [WORLD...]` | Build Liechtenstein / Black Forest parts / Tenerife into `test-output/world-profile/` with the stage profiles and compare them byte for byte with a reference build (`--data ~/src/OCW/data` on marge) |
-| `scripts/build-profile.sh`, `scripts/build-profile.ps1` | Rust build profile: clean / no-op / incremental builds with `--timings` (`make build-profile`) |
-| `scripts/fetch-imagery.sh REGION [PACKAGE...]` | Region calibration imagery (spec §14 Phase 8 T3): orthophoto cells over the official WMS and own Sentinel-2 seasonal median composites (`scripts/imagery.py`) for the cells a built package covers, licence rows in `SOURCES.md` |
-| `world-builder calibrate` / `imagery-cells` | Measure a package's palette, roof colours and seasonal tint maps in that imagery and cut the orthophoto corridor along its roads (sections `PALT`, `ROOF`, `SEAS`, `ORTC`; manifest credits renewed); list the imagery cells a package covers |
-| `world-builder obstacles --world PKG --pbf PBF... [--out NEW]` | Static obstacles near the roads into a built package (section `OBST`, spec §14 Phase 12 K3): OSM barriers and posts with the 2 m corridor rule, the tree cells; prints rows of road bollards and the longest bridges; manifest renewed |
-| `world-builder dem-import` / `dem-tiles` / `dem-diff` | High-resolution DTMs: import XYZ / GeoTIFF tiles as 2 m GeoTIFFs, list the tiles of a box, compare with SRTM |
-| `scripts/remote.sh MACHINE run 'CMD'` | Copy the tree to a build machine (`config/machines.toml`) and run a command there (`sync`, `ssh`, `fetch`, `put LOCAL... DIR`: copy git-ignored files into the checkout, `field KEY`: a machine setting for scripts) |
-| `python3 tools/build-dashboard/dashboard.py` | Web page (port 8765) with the build machines' load and their running/queued tasks, disks and the janitor, and the open questions of the spec; `--once` prints it as text, `--janitor-plan` a dry run of the janitor |
-| `scripts/remote-gc.sh [--branch B] [--dry-run]` | Delete the `target/` of merged / gone agent checkouts on the build machines, or of branch B's checkout (cleanup on merge) |
-| `scripts/deploy-test.sh MACHINE` | Release build on a test machine, deployed for its kiosk |
-| `scripts/collect-test-output.sh [CHECKOUT...]` | Merge screenshots and videos from agent worktrees (`.claude/worktrees/*`) into `test-output/` and its build history `test-output/index.md` |
-| `scripts/ocw-kiosk.sh install\|run\|status` | Keep the test app running on a machine's screen, restarted on each deploy |
-| `scripts/build-appimage.sh` | Linux AppImage (needs `appimagetool`: `make deps-appimage`, part of `make deps-linux`) |
-| `scripts/build-macos-app.sh` | macOS app bundle, DMG and zip, ad-hoc signed (`make macos-app`, on a Mac) |
-| `scripts/setup-windows-buildserver.ps1` | Windows build machine: OpenSSH server and a local build user |
-| `.claude/skills/run-ocw/drive.sh` | Headless screenshots and videos (X11 / Wayland) for tests |
-| `cargo run -p ocw-assets -- generate [--check]` | Regenerate the bike and rider models in `assets/models/` (glTF, own work); `--check` only compares |
-| `cargo run -p ocw-assets -- validate [DIR]` | Asset validator: licence entry (`license`, `source`, `author`) in `manifest.toml` for every model, no physics values, required nodes and paint slots, triangle budgets |
-| `cargo run -p ocw-assets -- info FILE.glb` | A model's nodes, positions, triangles and materials |
-| `scripts/fetch-materials.sh` (`make materials`) | Material library: download the pinned sources of `assets/materials.toml` (cache `~/.cache/ocw/material-sources`), check their SHA-256, convert to KTX2 into `assets/materials/` |
-| `cargo run -p ocw-assets -- materials validate [DIR]` | Material validator: `license`, `source`, `author` and a SHA-256 pin for every material, no share-alike / non-commercial / no-derivatives / unknown licence; with DIR the converted library too |
-| `cargo run -p ocw-assets -- materials credits` | The material credits (Markdown, as in `assets/materials/CREDITS.md`) |
-| `scripts/install-materials.sh DEST` | Fetch the library and copy it into a package (AppImage, macOS bundle, kiosk install) |
-| `scripts/render-scenes.sh [--list] [--only NAME,GLOB] [--remote MACHINE] [--pick DIR]` | Scene harness: renders the scenes of `scripts/scenes.toml` (screenshots, short videos) headlessly on Wayland (`make test-scenes`), see [Scene harness](#scene-harness) |
+<a id="dashboard"></a>The build dashboard (`tools/build-dashboard/`, full
+reference in its [README](tools/build-dashboard/README.md)) is a web page and
+JSON API on the coordinator that shows what every build machine is doing and
+steers them: machines, load, jobs and queue, disks and the janitor, the
+machines' build settings, and the spec's open questions with answer boxes.
+Python 3 standard library only.
 
-**Signing and publishing world packages** (spec §4.7): an offline root key
-certifies signing keys; a signing key signs package manifests. Secret keys
-(`*.key`) stay in `~/.config/ocw/keys` (`$OCW_KEY_DIR`), never in the
-repository.
+**Start it as a service** (systemd user service, no root; starts now and at
+every login, restarts on failure):
 
 ```bash
-world-builder keys init-root --name "OCW root"                  # once; keep root.key offline
-world-builder keys new-signing --name "builds 2026" --days 365  # signing key, certified by the root
-world-builder package --id europe/liechtenstein --sign-key ~/.config/ocw/keys/builds-2026.key
-world-builder sign --key ~/.config/ocw/keys/builds-2026.key data/pilot/liechtenstein.ocwpkg
-world-builder verify data/pilot/liechtenstein.ocwpkg [--trust-root root.pub.json]
-world-builder publish data/pilot/liechtenstein.ocwpkg --out /srv/worlds   # <id>/<version>/ layout
-world-builder diff old.ocwpkg new.ocwpkg                        # stable edge IDs kept / removed / added
+make dashboard-install                       # installs ~/.config/systemd/user/ocw-build-dashboard.service
+systemctl --user status ocw-build-dashboard  # running?
+systemctl --user restart ocw-build-dashboard # after updating the dashboard's code
+journalctl --user -u ocw-build-dashboard     # its log
+sudo loginctl enable-linger $USER            # once: start at boot without a login
+make dashboard-uninstall                     # stop and remove it
 ```
 
-`package` always writes the manifest (unsigned without `--sign-key`); the
-version counts up when the package content changes (`--pkg-version N` sets
-it), `--dem-attribution TEXT` replaces the SRTM notice. Clients trust a root
-by its public key file `root.pub.json`.
+The service runs `tools/build-dashboard/dashboard.py --port 8765` from the
+checkout you installed it from (the main checkout); restart it after merging
+changes to the dashboard. Keep one serving instance only (it holds the port
+and runs the janitor); `--once` and `--janitor-plan` are safe beside it.
+
+**Or run it by hand / once:**
+
+```bash
+python3 tools/build-dashboard/dashboard.py                    # serve on port 8765, all addresses
+python3 tools/build-dashboard/dashboard.py --host 127.0.0.1   # only this machine
+python3 tools/build-dashboard/dashboard.py --once             # poll every machine once, print text, exit
+python3 tools/build-dashboard/dashboard.py --once --json      # the same as JSON (= /api/status)
+make janitor-plan                                              # what the janitor would delete now (dry run)
+curl -s localhost:8765/api/status                              # JSON for scripts
+```
+
+Options: `--port N`, `--interval S` (poll interval, 5 s), `--config DIR`,
+`--spec FILE`, `--janitor off|dry-run|on` (default on), `--janitor-plan`,
+`--no-answers` and `--no-machine-settings` (read-only page), `--no-record` /
+`--record DIR` (the build log), `--no-context` (describe jobs from their
+commands only), `--show-prompts`, `--no-control-master`.
+
+**Open it** at `http://localhost:8765/` on the coordinator, or at
+`http://<coordinator>:8765/` from any device on the LAN – it works at phone
+width, with touch, keyboard and mouse, so questions can be answered from a
+phone. The page refreshes every 5 s; each machine is polled over one SSH
+call with a read-only snippet (shared control socket).
+
+**What the page shows**, top to bottom:
+
+- **Banner:** red, naming every disk above 92 % use.
+- **Overview:** machines online, running tasks, runs waiting for a slot,
+  build slots used of the total (disabled machines left out), open
+  questions.
+- **One card per machine:** online / unreachable (with the error kind),
+  CPU, load per core (Windows: runnable threads), memory, swap, disks (home
+  and the checkouts' volume; Windows: the build drive and C:, amber above
+  75 %, red above 85 %), uptime; its **build settings** (below); the slots in
+  use and who holds them; the **queue** of runs waiting for a slot, oldest
+  first; the **running tasks** – checkout (`main`, `agent <id>`, a branch),
+  command, running time, slot, and CPU and memory per process kind (cargo,
+  rustc, link, build script, test binary, the app, ffmpeg, weston, Xvfb);
+  the **kiosk** where one is installed (app running, deployed build,
+  connected Bluetooth devices by name).
+- **What each job is for:** every running and queued job gets one sentence
+  on what it tries to achieve, built by fixed rules from its command and its
+  context (the agent's task, or the latest commit or merge of the main
+  checkout), e.g. "Merge wheels on the road – checking clippy and all tests
+  on macOS"; the full breakdown is the tooltip.
+- **Open questions:** every `- **Q<n> – …**` question of
+  `SPECIFICATION.md`, grouped by phase, with its text and proposal; decided
+  ones behind "show decided"; milestones blocked by an open question under
+  *Blocked work*. The spec stays the only place where questions are written
+  and decided; the page re-reads it when it changes.
+- **Janitor:** its mode, the last pass per machine (what it deleted, or
+  would delete in dry-run mode, and why), the recent log entries, and the
+  size of `test-output/` (never deleted).
+
+**Answering a question:** type the answer in the question's box, or press
+"Accept proposal" or one of the option buttons (they fill the box), then
+"Send answer". The answer is appended to `test-output/answers/answers.jsonl`
+(with the exact question text from the spec, the time and the spec version;
+a later answer to the same question supersedes the earlier one) and as one
+line to `test-output/answers/inbox.log`, which the coordinator watches
+(`tail -n 0 -F test-output/answers/inbox.log`, or `GET
+/api/answers?since=<unix time>`). The question shows "answered – waiting for
+the coordinator" until the decision is recorded in the spec; then it is
+listed as decided.
+
+**Enabling and disabling machines, build slots:** each machine card has an
+**Enabled / Disabled** toggle (disabling asks for an optional reason), a
+**slots stepper** (− N +, 1–8) and a **Note…** button. The settings are
+stored in `config/build-machines.toml` and take effect at once:
+`scripts/remote.sh` refuses `run` / `sync` on a disabled machine (exit 3;
+deploys, `ssh`, `fetch`, `put` stay allowed; the multiplayer test skips it as
+a bot machine), and a changed slot count applies to runs started afterwards
+(a running run keeps its slot). The dashboard and the janitor still probe a
+disabled machine (read-only). From a shell:
+
+```bash
+python3 tools/build-dashboard/build_machines.py list
+python3 tools/build-dashboard/build_machines.py set leela --disable --reason "kiosk only"
+python3 tools/build-dashboard/build_machines.py set marge --slots 3 --note "full checks"
+```
+
+Every change (page or CLI) is a JSON line in
+`test-output/build-log/DAY/machines.jsonl`.
+
+**The janitor** is a thread of the dashboard that keeps the build machines'
+disks from filling up: see [Disk cleanup](#disk-cleanup).
+
+**Token and safety:**
+
+- **Writing needs the token** in `config/dashboard-token` of the main
+  checkout (git-ignored, created with a random value and mode 0600 on the
+  first start). The page asks for it once – read it on the coordinator,
+  never paste it into chats or logs – keeps it in the browser's
+  localStorage and sends it as the `X-OCW-Token` header. Answers and machine
+  settings without it, or with a wrong one, get 403 and nothing is stored.
+  The token is never logged, served or written to the answer files.
+- **Reading is open** to anyone on the LAN (the page, `/api/status`,
+  `/api/answers`): use `--host 127.0.0.1` to keep it to the coordinator.
+- **No secrets on the page:** machines appear by their config `name`; all
+  text from the machines and from ssh is masked (addresses, `user@host`,
+  home directories, MAC addresses) before it is stored or served; all text
+  is HTML-escaped; inputs are validated (machine names only from
+  `machines.toml`, slots a JSON integer 1–8, text without control
+  characters, at most 200 characters).
+- **What it changes:** only the answer files, `config/build-machines.toml`
+  and the janitor's deletions of build output. The poll snippets change
+  nothing on the machines (POSIX ones run under `/bin/sh`, never the login
+  shell).
+
+**Build log:** while it runs, the dashboard writes its masked status once a
+minute to `test-output/build-log/DAY/servers.jsonl` for the art project
+(`--no-record` turns it off), next to `remote.sh`'s `runs.jsonl` and the
+`machines.jsonl` and `janitor.jsonl` logs. The page itself does not show the
+build log.
+
+**Tests:** `python3 -m unittest discover -s tools/build-dashboard -p
+"test_*.py"` (no network; run them on a build machine via `remote.sh`).
+
+### Disk cleanup
+
+Every branch checkout on a build machine has its own `target/` (several GB to
+tens of GB). Three tools remove build output, never sources:
+
+```bash
+scripts/remote-gc.sh --branch <branch>          # after merging or abandoning a branch: its target/ on every reachable machine
+make remote-gc-branch BRANCH=<branch> [DRY=1]   # the same; DRY=1 only lists
+make remote-gc                                  # dry run: target/ of merged or gone agent checkouts, with sizes per machine
+make remote-gc GC=1 [MACHINES="marge macos"]    # delete them
+scripts/remote-gc.sh macos                      # dry run on one machine
+make janitor-plan                               # what the dashboard's janitor would delete at each threshold now
+```
+
+- `remote-gc.sh` without `GC=1` only lists; `--branch` deletes unless
+  `--dry-run` is given. Kept always: the main checkout, the sccache cache,
+  the checkouts themselves (only `target/` goes) and any checkout with a
+  running or waiting task (the machine checks the task markers again right
+  before deleting, and `target/` is renamed before it is removed).
+  Unreachable machines are skipped; only machine names are printed.
+- **The janitor** (dashboard thread, on by default) frees space when the
+  checkouts' disk of a machine is above a threshold, one machine per pass,
+  at most one pass every 10 minutes, the fullest machine first:
+  above **75 %** the `target/` of agent checkouts whose branch is merged or
+  gone and unused for 2 h, plus old replaced build units and incremental
+  directories (unused for 3 days) in the main checkout's `target/`; above
+  **85 %** also the `target/` of the least recently used agent checkouts idle
+  for more than 24 h, oldest first, until below 85 %; above **92 %** a red
+  banner. Never: sources, `data/`, `test-output/`, the sccache cache, busy
+  checkouts.
+- Every deletion (by the janitor, `remote-gc.sh` or `remote.sh`'s dev-profile
+  cleanup) is a JSON line in `test-output/build-log/DAY/janitor.jsonl`.
+- Snippets these tools send to POSIX machines run under `/bin/sh` and list
+  task markers with `find`, never with shell globs: the Mac's login shell is
+  zsh, where an unmatched glob aborts the command (spec v3.28).
+
+### Kiosks and deploys
+
+A kiosk is a build machine's screen that always shows the latest deployed
+build (marge: the Black Forest north; leela: Tenerife, Puerto de la Cruz –
+Teide), in show mode: the virtual trainer at 500 W, no collisions, no hearts,
+no camera shake (`scripts/kiosk-show.args`).
+
+```bash
+scripts/deploy-test.sh marge                        # release build there, installed to /var/tmp/ocw (atomic)
+make deploy-test MACHINE=leela                      # the same (default MACHINE=marge)
+OCW_KIOSK_WORLD=tenerife scripts/deploy-test.sh leela   # change the kiosk's world
+```
+
+`deploy-test.sh` builds `ocw-desktop` (release; with voice where clang 21 is installed) through
+`remote.sh run` with `OCW_REMOTE_DEPLOY=1` (so a machine disabled for
+building still gets its kiosk updated), installs it with the material library
+and the world packages built on that machine (their manifests and route
+files beside them) into `/var/tmp/ocw`, and writes `ocw-desktop.args` (the
+kiosk's world and route, `scripts/kiosk.args` plus `scripts/kiosk-show.args`).
+Every file is replaced by copy-then-rename, the binary last, so the kiosk
+restarts once with everything in place. Each kiosk keeps its world across
+deploys. Environment:
+
+| Variable | Effect |
+|---|---|
+| `OCW_KIOSK_WORLD` | `liechtenstein`, `blackforest` (north if installed, else south) or `tenerife`; default: keep the kiosk's current world |
+| `OCW_KIOSK_ROUTE` | Another package route |
+| `OCW_KIOSK_ARGS` | The whole content of `ocw-desktop.args` (replaces the two above and the show mode) |
+| `OCW_DEPLOY_WORLD` | `0`: no world packages; `rebuild`: build the Liechtenstein package again first |
+| `OCW_WORLD_DATA` | Folder with `pilot/`, `blackforest/`, `tenerife/` on the machine (default: `data/` of the deploying checkout) |
+| `OCW_DEPLOY_DIR` | Install directory (default `/var/tmp/ocw`; for testing the script) |
+
+**Setting up a kiosk**, once, as the user of the machine's desktop session (in
+a terminal on that desktop, not over SSH), after the first deploy:
+
+```bash
+/var/tmp/ocw/ocw-kiosk.sh install --monitor 2560x1600   # XDG autostart + start now (or an index, or a name)
+/var/tmp/ocw/ocw-kiosk.sh status                        # deployed build, autostart, recent log
+/var/tmp/ocw/ocw-kiosk.sh uninstall
+```
+
+The kiosk restarts the app on every deploy and after crashes (a 30 s pause
+after three quick crashes); logs in `~/.local/state/ocw/` (`kiosk.log`,
+`app.log`). The dashboard's machine card shows whether it runs and which
+build it has. More: [config/README.md](config/README.md#test-app-on-a-machines-screen-kiosk).
+
+**World packages on leela:** they are built on marge (leela does not build)
+and copied over unchanged; there is no script for it. From the **main
+checkout** (`put` writes into the checkout of the current branch):
+
+```bash
+mkdir -p /tmp/w
+for f in tenerife.ocwpkg tenerife.ocwpkg.manifest.json; do      # plus the region's *.route files
+  scripts/remote.sh marge fetch data/tenerife/$f /tmp/w
+done
+scripts/remote.sh leela put /tmp/w/* data/tenerife
+sha256sum /tmp/w/*                                              # compare with both machines:
+scripts/remote.sh marge ssh "cd $(scripts/remote.sh marge field repo_path)/data/tenerife && sha256sum tenerife.ocwpkg*"
+scripts/remote.sh leela ssh "cd $(scripts/remote.sh leela field repo_path)/data/tenerife && sha256sum tenerife.ocwpkg*"
+scripts/deploy-test.sh leela                                    # installs them for its kiosk
+```
+
+The checksums must be identical on both machines before the deploy.
+
+### Profiling and measuring
+
+| Tool | Measures | Output |
+|---|---|---|
+| `make build-profile MACHINE=marge [BUILD_PROFILE_LABEL=L]` (`scripts/build-profile.sh --label L [--commands build,test,clippy,release,wasm] [--steps clean,noop,touch,edit]`) | Clean, no-op, touched-file and edited-file builds of the main cargo commands, with cargo's `--timings` reports; fetched back | `test-output/build-profile/L/` (`results.jsonl`, `summary.md`, the reports) |
+| `scripts/remote.sh Win11Builder run 'powershell -ExecutionPolicy Bypass -File scripts/build-profile.ps1 -Label L'` | The same on Windows (`-Commands build,test,clippy`) | the same, then `remote.sh … fetch test-output/build-profile test-output` |
+| `python3 scripts/build_profile.py compare A B` | A before/after table of two profile runs | stdout |
+| `scripts/world-profile.sh [--data DIR] [--ref DIR] [WORLD…]` | World package builds (`liechtenstein`, `bf-south`, `bf-middle`, `bf-north`, `tenerife`) with the builder's stage profile; compared byte for byte with reference packages (`--ref`) | `test-output/world-profile/LABEL/` |
+| `scripts/world-clean-compare.sh li\|bf` | A package with and without the world cleaning (spec §4.8), both linted | `data/clean/` |
+| `scripts/measure-fps.sh [--app BIN] [--seconds N] [--label T] -- ARGS` | The render rate of an `ocw-desktop` binary on a headless weston with the GPU (no vsync); compare builds interleaved (A B A B) | one line on stdout |
+| `scripts/measure.py [--label T] [--out F] -- CMD` | Wall time and peak memory of any command | stdout / F |
+
+Run them on a build machine (`scripts/remote.sh marge run '…'`); the build
+log also keeps cargo's times and the crates compiled of every run (spec
+§11.2).
+
+### Test and media harness
+
+All test runs execute on the build machines (`scripts/remote.sh MACHINE run
+'make …'`); their screenshots and videos land in `test-output/` with a row in
+`test-output/index.md` (the build history, also for the art project).
+
+| Target | What |
+|---|---|
+| `make check` | fmt, clippy, unit tests, wasm check, browser build – what CI runs |
+| `make test` (= `test-unit`) | `cargo test --workspace` |
+| `make test-wasm`, `make test-web-build` | The core crates for wasm32, the browser app (WebGPU and WebGL 2) |
+| `make test-smoke` (`test-screenshot`, `test-screenshot-wayland`) | Headless desktop runs on X11 (Xvfb) and Wayland (weston) with a screenshot |
+| `make test-video`, `test-video-wayland` | Smooth 6 s recordings (`ocw-desktop --capture`, fixed game-time step per frame) |
+| `make test-scenes [ONLY=glob,…] [WORLD=pkg] [REMOTE=machine]`, `test-scenes-list` | The scene harness (below) |
+| `make test-multiplayer`, `test-multiplayer-local` | Server + kiosk on marge with `ocw-bot` riders on the other machines over QUIC (see [Multiplayer test](#multiplayer-test-across-machines)); or all on one machine over loopback |
+| `make test-web`, `test-web-world`, `test-web-multiplayer`, `test-web-ble*`, `test-web-audio`, `test-web-voice`, `test-web-livekit`, `test-web-webgl2` | Headless Chromium runs of the browser app (`scripts/test-web*.py`; see [Testing the browser app](#testing-the-browser-app)), into `test-output/web/` |
+| `make test-kiosk` | `scripts/test-kiosk.sh`: the kiosk script with a fake app (no display or build) |
+| `make test-remote` | `scripts/test-remote.sh`: `remote.sh`'s slot order, snapshot and sync, the Windows manifest, `remote-gc.sh`'s choice, the build-log parser (no machine needed) |
+| `make test-release-version` | `scripts/test-release-version.sh`: the version bump on a copy of the manifests |
+
+- **`.claude/skills/run-ocw/drive.sh`** runs the desktop app headlessly:
+  `shot OUT.jpg [DELAY] -- ARGS` / `shot-wayland`, `video OUT.mp4 [SECONDS]
+  -- ARGS` / `video-wayland`; every successful run is archived in
+  `test-output/YYYY-MM-DD/` with the commit and mode in the file name and a
+  row in `index.md`.
+- **`scripts/collect-test-output.sh [CHECKOUT…]`** merges the screenshots and
+  videos of agent worktrees (default: every `.claude/worktrees/*`) into the
+  main checkout's `test-output/` and its `index.md`; run it after each agent
+  or merge. It never overwrites, so running it again is harmless.
+- **The art project** (`make art-collect`, `art-gather`, `art-sheets`, `art-render`,
+  `art-diary`, `art-publish`): a video per build day from all of this; see
+  [art/ART-PROJECT.md](art/ART-PROJECT.md).
 
 Release builds are published as GitHub Releases (`release/README.md` has the
 build notes); screenshots and videos from development
-are not in the repository: they are stored as one zip per day with an index
-(`index.md`) on the GitHub release `build-history`; new test runs land in the
-git-ignored `test-output/`.
+are not in the repository: they are stored as one zip per day on the GitHub
+release `build-history`; new test runs land in the git-ignored `test-output/`.
+The art project's local archive is `art/build-history/`: its media are
+git-ignored, and its masked text files are tracked in git (`index.md`,
+`SHA256SUMS`, per day `journal.md`, `journal.json`, `tokens.json`; `make
+art-check`). An hourly systemd user timer collects yesterday and today into
+it. Install it with `make art-install-timer` from the main checkout, check it
+with `make art-timer-status`, and run `sudo loginctl enable-linger $USER` once.
+It is described in `art/ART-PROJECT.md` §5.1.
 
 ### Scene harness
 
@@ -2646,6 +2975,107 @@ are made smaller – JPEG quality ~80, older PNGs a 256-colour palette – with
 their metadata kept; videos over 3 MB are re-encoded with sound and metadata) with one row per
 file in its `index.md` (the scene's description), ready for the zip of the
 GitHub release `build-history`. Look at every image before picking it.
+
+### Releases
+
+Versions and GitHub releases (spec §11.3): every release increments the
+patch version and is tagged `vX.Y.Z`.
+
+```bash
+make release-check                          # current version, latest release, next version
+make release-prepare                        # on a clean, pushed main: bump, commit "Release X.Y.Z", push
+# ... build the release binaries from that commit (below) ...
+make release-publish DIR=assets NOTES=notes.md   # tag, push the tag, pre-release with SHA256SUMS
+make version | version-next | version-bump PART=minor   # by hand
+```
+
+| Platform | Where | How | Output |
+|---|---|---|---|
+| Linux | marge | `CC=clang-21 CXX=clang++-21 cargo build --release -p ocw-desktop -p ocw-server -p world-builder --features ocw-desktop/voice`, then `OCW_FEATURES=ocw-desktop/voice scripts/build-appimage.sh [OUT]` (needs `appimagetool`: `make deps-appimage`) | `target/OpenCyclingWorld-x86_64.AppImage` (or OUT) and a tarball of the stripped binaries |
+| macOS | macos | `OCW_SHA=<commit> OCW_FEATURES=ocw-desktop/voice scripts/build-macos-app.sh [OUT_DIR]` (`make macos-app`); ad-hoc signed, `CODESIGN_IDENTITY` signs with a Developer ID | `target/macos/Open Cycling World.app`, `OpenCyclingWorld-<version>-<sha>-macos-<arch>.dmg` and `.zip` |
+| Windows | Win11Builder | The same cargo build (static C runtime from `.cargo/config.toml`), then the three `.exe` files zipped (no script yet) | `OpenCyclingWorld-<version>-<sha>-windows-x86_64.zip` |
+| World packages | marge | `scripts/prepare-world-release.sh OUT_DIR PKG…` (no upload) | `ocw-world-<name>-v<N>.zip` (package, manifest, routes, `LICENSE-DATA.md`, `README.md`) and `<region>-osm-source.zip` (the ODbL offer) |
+
+`release/README.md` keeps the build notes of each release. Screenshots and
+videos from development are not in the repository: they are published as one
+zip per day with an index on the GitHub release `build-history`.
+
+### World builds
+
+World packages are built on marge, in its **main checkout** (`data/` is
+git-ignored and never synced, so a branch checkout has no source data):
+
+```bash
+scripts/remote.sh marge run 'scripts/fetch-pilot.sh tenerife'        # liechtenstein (default) | blackforest | tenerife
+scripts/remote.sh marge run 'scripts/build-liechtenstein.sh'         # data/pilot/liechtenstein.ocwpkg + route
+scripts/remote.sh marge run 'scripts/build-blackforest.sh north'     # south | middle | north (default: all three)
+scripts/remote.sh marge run 'scripts/build-tenerife.sh'              # data/tenerife/tenerife.ocwpkg
+scripts/remote.sh marge run 'scripts/fetch-imagery.sh tenerife'      # after a build: calibration imagery for its cells
+scripts/remote.sh marge run 'scripts/fetch-forest.sh tenerife'       # after a build: forest type and density
+```
+
+- `fetch-pilot.sh` downloads the OSM extracts and the elevation data
+  (swissALTI3D, LGL DGM1, IGN MDT05, SRTM) with a licence table `SOURCES.md`;
+  `fetch-imagery.sh` and `fetch-forest.sh` need a built package (they fetch
+  only its cells), and the next build calibrates the package with them.
+- Build scripts' environment: `OCW_SIGN_KEY` (sign the manifests),
+  `OCW_SRTM_ONLY=1` (SRTM terrain, for comparisons), `OCW_NO_CALIBRATE=1`,
+  `OCW_NO_FOREST=1`, `OCW_SEASON_CELLS`.
+- There are no `make` targets for world builds; the related ones are `make
+  materials` (the material library) and `make web-worlds` (packages for the
+  browser app's dev server).
+- After a rebuild, deploy the kiosks (`scripts/deploy-test.sh marge`) and copy
+  the packages to leela ([Kiosks and deploys](#kiosks-and-deploys)).
+  `scripts/world-profile.sh --ref DIR` checks that a builder change keeps the
+  packages byte for byte.
+
+## Tools and scripts
+
+The build infrastructure's tools (`scripts/remote.sh`, the dashboard,
+cleanup, deploys, profiling, the test harness, releases and world builds) are
+described in [Build infrastructure](#build-infrastructure). The other tools:
+
+| Tool | Use |
+|---|---|
+| `make help` | All make targets: deps, build, check, deploy and the tests (`test`, `test-wasm`, `test-kiosk`, `test-smoke`, `test-video`, `test-multiplayer`, …) |
+| `cargo run -p ocw-server -- --bots 3 --seconds 10 --fast` | Headless game server (`--world PKG [--seed N]`: free ride on a package; `--route-file F`; `--stats-file PATH`) |
+| `cargo run -p ocw-bot -- --server HOST --server-cert FP --riders N` | Headless bot riders on a remote server (`--server https://HOST:47801`: over WebTransport); `ocw-bot verdict` checks a multiplayer test run |
+| `world-builder graph` / `route` / `package` / `check` | OSM + elevation import: road graph statistics, route files, world packages (`--bbox S,W,N,E --origin LAT,LON`: one part of a region, for neighbouring packages), package validation (`cargo run --release -p world-builder -- help`) |
+| `world-builder gpx --world PKG --gpx FILE [--name N] [--route-file F] [--dry-run]` | Import a GPX track: map-match it onto the package's road graph and store it as a package route (section `ROUT`; optionally also as an `ocw-graph-route` file); off-road stretches and gaps are reported |
+| `world-builder route --world PKG --from LAT,LON --to LAT,LON --name N` | Store the shortest main-road route between two points as a package route |
+| `world-builder routes --world PKG [--from OLD_PKG] [--remove N] [--export-gpx]` | List and check a package's routes; carry the routes of an older build over (by stable edge ID, re-matching broken ones); export them as GPX |
+| `world-builder keys init-root` / `keys new-signing` / `sign` / `verify` / `publish` / `diff` | Package signing and distribution, see below |
+| `world-builder package … --profile FILE` | Every package build ends with a stage table (time, CPU, cores in use, peak memory per stage); `--profile` also writes it as JSON |
+| `world-builder calibrate` / `imagery-cells` | Measure a package's palette, roof colours and seasonal tint maps in the region's imagery and cut the orthophoto corridor along its roads (sections `PALT`, `ROOF`, `SEAS`, `ORTC`; manifest credits renewed); list the imagery cells a package covers |
+| `world-builder obstacles --world PKG --pbf PBF... [--out NEW]` | Static obstacles near the roads into a built package (section `OBST`, spec §14 Phase 12 K3): OSM barriers and posts with the 2 m corridor rule, the tree cells; prints rows of road bollards and the longest bridges; manifest renewed |
+| `world-builder dem-import` / `dem-tiles` / `dem-diff` | High-resolution DTMs: import XYZ / GeoTIFF tiles as 2 m GeoTIFFs, list the tiles of a box, compare with SRTM |
+| `cargo run -p ocw-assets -- generate [--check]` | Regenerate the bike and rider models in `assets/models/` (glTF, own work); `--check` only compares |
+| `cargo run -p ocw-assets -- validate [DIR]` | Asset validator: licence entry (`license`, `source`, `author`) in `manifest.toml` for every model, no physics values, required nodes and paint slots, triangle budgets |
+| `cargo run -p ocw-assets -- info FILE.glb` | A model's nodes, positions, triangles and materials |
+| `scripts/fetch-materials.sh` (`make materials`) | Material library: download the pinned sources of `assets/materials.toml` (cache `~/.cache/ocw/material-sources`), check their SHA-256, convert to KTX2 into `assets/materials/` |
+| `cargo run -p ocw-assets -- materials validate [DIR]` | Material validator: `license`, `source`, `author` and a SHA-256 pin for every material, no share-alike / non-commercial / no-derivatives / unknown licence; with DIR the converted library too |
+| `cargo run -p ocw-assets -- materials credits` | The material credits (Markdown, as in `assets/materials/CREDITS.md`) |
+| `scripts/install-materials.sh DEST` | Fetch the library and copy it into a package (AppImage, macOS bundle, kiosk install) |
+
+**Signing and publishing world packages** (spec §4.7): an offline root key
+certifies signing keys; a signing key signs package manifests. Secret keys
+(`*.key`) stay in `~/.config/ocw/keys` (`$OCW_KEY_DIR`), never in the
+repository.
+
+```bash
+world-builder keys init-root --name "OCW root"                  # once; keep root.key offline
+world-builder keys new-signing --name "builds 2026" --days 365  # signing key, certified by the root
+world-builder package --id europe/liechtenstein --sign-key ~/.config/ocw/keys/builds-2026.key
+world-builder sign --key ~/.config/ocw/keys/builds-2026.key data/pilot/liechtenstein.ocwpkg
+world-builder verify data/pilot/liechtenstein.ocwpkg [--trust-root root.pub.json]
+world-builder publish data/pilot/liechtenstein.ocwpkg --out /srv/worlds   # <id>/<version>/ layout
+world-builder diff old.ocwpkg new.ocwpkg                        # stable edge IDs kept / removed / added
+```
+
+`package` always writes the manifest (unsigned without `--sign-key`); the
+version counts up when the package content changes (`--pkg-version N` sets
+it), `--dem-attribution TEXT` replaces the SRTM notice. Clients trust a root
+by its public key file `root.pub.json`.
 
 ## Repository layout
 

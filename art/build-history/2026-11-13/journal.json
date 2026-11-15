@@ -1,0 +1,4440 @@
+{
+ "day": "2026-11-13",
+ "number": 3,
+ "commits": [
+  {
+   "sha": "f9ece33",
+   "time": "05:42:15",
+   "merge": true,
+   "subject": "Merge origin/main; spec row of the timestamped captures renumbered to 2.30",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "7c5d706",
+   "time": "05:42:37",
+   "merge": false,
+   "subject": "Spec 2.30: Phase 10 – browser app for riding (planning)",
+   "added": 82,
+   "removed": 2
+  },
+  {
+   "sha": "27ae1a8",
+   "time": "05:58:28",
+   "merge": false,
+   "subject": "docs/COORDINATOR-MOVE.md: plan for moving the build coordinator to marge (waiting for okay)",
+   "added": 54,
+   "removed": 0
+  },
+  {
+   "sha": "134332f",
+   "time": "06:00:17",
+   "merge": false,
+   "subject": "docs/COORDINATOR-MOVE.md: secrets are copied over SSH, never committed",
+   "added": 2,
+   "removed": 2
+  },
+  {
+   "sha": "36aa6ab",
+   "time": "06:02:10",
+   "merge": false,
+   "subject": "ocw-sky: time zones, world clock, sun position and light (spec §14 Phase 9 S1/S3)",
+   "added": 2237,
+   "removed": 0
+  },
+  {
+   "sha": "dee8a56",
+   "time": "06:07:12",
+   "merge": true,
+   "subject": "Merge timestamped captures: ISO 8601 HUD stamp, JPEG/EXIF, 1440p, game sound in videos (spec 2.31)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "05cb864",
+   "time": "06:11:24",
+   "merge": false,
+   "subject": "Build dashboard as a systemd user service (make dashboard-install / -uninstall)",
+   "added": 41,
+   "removed": 1
+  },
+  {
+   "sha": "2bbab2f",
+   "time": "06:18:08",
+   "merge": false,
+   "subject": "World builder: high-resolution DTMs, merged extracts, chains of neighbour packages",
+   "added": 2818,
+   "removed": 208
+  },
+  {
+   "sha": "f69ec68",
+   "time": "06:19:48",
+   "merge": false,
+   "subject": "World clock and time machine: server clock, sky rendering, HUD, menu, console (spec §14 Phase 9 S1/S3)",
+   "added": 1825,
+   "removed": 85
+  },
+  {
+   "sha": "3ba0548",
+   "time": "06:19:58",
+   "merge": true,
+   "subject": "Merge remote-tracking branch 'origin/main' into worktree-agent-a6af0af8d605a3782",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "4de0b1f",
+   "time": "06:20:50",
+   "merge": true,
+   "subject": "Merge branch 'main' into worktree-agent-a6af0af8d605a3782",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "cbe077c",
+   "time": "06:27:48",
+   "merge": false,
+   "subject": "Spec 2.32: Phase 9 S1/S3 implemented (9I); README, wasm check with ocw-sky, sky scenes",
+   "added": 140,
+   "removed": 8
+  },
+  {
+   "sha": "6da4fc6",
+   "time": "06:33:55",
+   "merge": false,
+   "subject": "Phase 8 T1/T2: material library and terrain / road materials (spec 2.32)",
+   "added": 4559,
+   "removed": 196
+  },
+  {
+   "sha": "fb2b635",
+   "time": "06:33:57",
+   "merge": true,
+   "subject": "Merge remote-tracking branch 'origin/main' into worktree-agent-a52ee1f13a9414383",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "f9d8d75",
+   "time": "06:34:26",
+   "merge": true,
+   "subject": "Merge main (timestamped captures, spec 2.31) into the Phase 8 T1/T2 branch",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "4f8bdd9",
+   "time": "06:37:20",
+   "merge": false,
+   "subject": "Build log for the art project: every remote.sh run and the build servers' state",
+   "added": 194,
+   "removed": 5
+  },
+  {
+   "sha": "0d1819a",
+   "time": "06:39:11",
+   "merge": false,
+   "subject": "Spec 2.32: Phase 11 – VR mode (planning)",
+   "added": 97,
+   "removed": 1
+  },
+  {
+   "sha": "6e665dc",
+   "time": "06:41:50",
+   "merge": false,
+   "subject": "Light model: optical depths of Bevy's earth atmosphere (consistent exposure at sunset); client clock end-to-end test",
+   "added": 49,
+   "removed": 4
+  },
+  {
+   "sha": "9272b3d",
+   "time": "06:42:02",
+   "merge": false,
+   "subject": "dem-import pads partial DTM tiles to whole kilometres; README: worlds and data commands",
+   "added": 117,
+   "removed": 15
+  },
+  {
+   "sha": "1c6c63d",
+   "time": "06:47:38",
+   "merge": false,
+   "subject": "Art project 1.3: the user's prompts in the archive and the videos",
+   "added": 176,
+   "removed": 3
+  },
+  {
+   "sha": "75de9c0",
+   "time": "06:47:49",
+   "merge": false,
+   "subject": "README: logo inline at the left of the heading, at the heading's height",
+   "added": 1,
+   "removed": 5
+  },
+  {
+   "sha": "23477f6",
+   "time": "06:49:31",
+   "merge": true,
+   "subject": "Merge origin/main (timestamped captures, spec 2.32) into the high-resolution terrain branch",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "d53bd4f",
+   "time": "06:53:00",
+   "merge": false,
+   "subject": "Time machine page: time and date on their own rows (one line each at 16:9); scene and spec notes on horizon blocking",
+   "added": 27,
+   "removed": 16
+  },
+  {
+   "sha": "bf5a044",
+   "time": "07:24:11",
+   "merge": true,
+   "subject": "Merge Phase 9 S1+S3: world clock, sun, day/night light, bike lights, time machine (spec 2.33)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "b3e1975",
+   "time": "07:32:45",
+   "merge": false,
+   "subject": "Spec 2.33/2.34: high-resolution terrain and the Black Forest in three packages; fast border matching",
+   "added": 124,
+   "removed": 34
+  },
+  {
+   "sha": "ede0074",
+   "time": "07:46:57",
+   "merge": false,
+   "subject": "Terrain materials: rock from 75 % slope, forests hold on steep ground, forest floor with moss and canopy shade; rustfmt",
+   "added": 210,
+   "removed": 91
+  },
+  {
+   "sha": "baad6c6",
+   "time": "07:49:22",
+   "merge": false,
+   "subject": "Other riders' bike sounds: spatial, per-rider character, group layer (spec 2.33)",
+   "added": 1641,
+   "removed": 71
+  },
+  {
+   "sha": "301aba1",
+   "time": "07:49:28",
+   "merge": false,
+   "subject": "Spec 2.33: others' level and crowd limit as implemented",
+   "added": 2,
+   "removed": 2
+  },
+  {
+   "sha": "9c6cdb4",
+   "time": "07:49:51",
+   "merge": false,
+   "subject": "docs/COORDINATOR-MOVE.md: move postponed until further notice",
+   "added": 1,
+   "removed": 1
+  },
+  {
+   "sha": "d7c9fca",
+   "time": "08:05:53",
+   "merge": false,
+   "subject": "deploy-test.sh installs all world packages side by side; OCW_KIOSK_WORLD/ROUTE pick the kiosk's world",
+   "added": 59,
+   "removed": 18
+  },
+  {
+   "sha": "08f72b9",
+   "time": "08:09:58",
+   "merge": false,
+   "subject": "Kiosk: start on the virtual trainer at 500 W, legs pedalling (kiosk.args)",
+   "added": 6,
+   "removed": 0
+  },
+  {
+   "sha": "a423260",
+   "time": "08:10:44",
+   "merge": false,
+   "subject": "Spec 2.32: measured frame rates, forest floor and canopy shade; test for the shaded forest colour",
+   "added": 6,
+   "removed": 3
+  },
+  {
+   "sha": "dff173f",
+   "time": "08:11:26",
+   "merge": false,
+   "subject": "World cleaning and bridges (spec §4.8, v2.32)",
+   "added": 5854,
+   "removed": 54
+  },
+  {
+   "sha": "afb0cb1",
+   "time": "08:24:01",
+   "merge": false,
+   "subject": "Build dashboard: the prompt each job belongs to",
+   "added": 217,
+   "removed": 3
+  },
+  {
+   "sha": "14d0250",
+   "time": "08:35:04",
+   "merge": true,
+   "subject": "Merge other riders' bike sounds: spatial placement, nearest-8 voices + group layer, others bus (spec 2.34)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "8e09d70",
+   "time": "08:35:31",
+   "merge": true,
+   "subject": "Merge high-resolution terrain (DGM1, swissALTI3D) and the middle/north Black Forest packages, routes, showcase, deploy support (spec 2.35, 2.36)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "4631ea2",
+   "time": "08:36:01",
+   "merge": false,
+   "subject": "Kiosk show mode (virtual trainer at 500 W) for every kiosk world: scripts/kiosk-show.args",
+   "added": 9,
+   "removed": 6
+  },
+  {
+   "sha": "fbdcde2",
+   "time": "08:36:01",
+   "merge": false,
+   "subject": "Build dashboard: match shortened agent ids in job labels to their prompt",
+   "added": 8,
+   "removed": 3
+  },
+  {
+   "sha": "f0041d3",
+   "time": "08:51:06",
+   "merge": false,
+   "subject": "World cleaning: retaining-wall road edges, rim water levels, covered bridges",
+   "added": 163,
+   "removed": 20
+  },
+  {
+   "sha": "c728e8c",
+   "time": "09:18:37",
+   "merge": false,
+   "subject": "World cleaning: covered=yes only on bridge ways, safe junction-mouth easing",
+   "added": 32,
+   "removed": 1
+  },
+  {
+   "sha": "bf68716",
+   "time": "10:32:23",
+   "merge": false,
+   "subject": "Rider shadows: only one LOD model casts (fixes \"two shadows of the rider\"); spec 2.34",
+   "added": 237,
+   "removed": 12
+  },
+  {
+   "sha": "b21dd57",
+   "time": "10:32:57",
+   "merge": false,
+   "subject": "World menu: change world, about this world, time, weather (spec 2.34)",
+   "added": 4322,
+   "removed": 532
+  },
+  {
+   "sha": "6923df8",
+   "time": "10:34:43",
+   "merge": true,
+   "subject": "Merge origin/main into the rider-shadow fix branch",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "5f5030f",
+   "time": "10:37:42",
+   "merge": false,
+   "subject": "Tests: time_zone in the neighbour test packages (merge of Phase 9 and the Black Forest packages)",
+   "added": 1,
+   "removed": 0
+  },
+  {
+   "sha": "8f1754f",
+   "time": "10:38:15",
+   "merge": true,
+   "subject": "Merge main (high-resolution terrain, Black Forest packages) into world cleaning",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "3607784",
+   "time": "10:40:25",
+   "merge": true,
+   "subject": "Merge origin/main (bike sounds, high-resolution terrain, Black Forest, compile fix); rider-shadow spec row is now 2.37",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "ddc79c5",
+   "time": "10:43:20",
+   "merge": true,
+   "subject": "Merge fix: one shadow per rider (only one LOD model casts)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "5f78247",
+   "time": "10:43:40",
+   "merge": false,
+   "subject": "deploy-test.sh: keep the kiosk's current world unless OCW_KIOSK_WORLD says otherwise",
+   "added": 12,
+   "removed": 7
+  },
+  {
+   "sha": "18579c3",
+   "time": "10:45:47",
+   "merge": true,
+   "subject": "Merge main (Black Forest in three packages, other riders' sounds) into the World menu; World menu is spec 2.37, the three Black Forest packages list as one world with parts",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "c46037b",
+   "time": "11:12:52",
+   "merge": false,
+   "subject": "Releases increment the minor version: make release-check / release-prepare / release-publish / version-bump (spec 2.38)",
+   "added": 102,
+   "removed": 2
+  },
+  {
+   "sha": "7aa1c51",
+   "time": "11:27:30",
+   "merge": true,
+   "subject": "Merge origin/main (c46037b) into world cleaning; spec row becomes 2.39",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "b5ea991",
+   "time": "11:28:00",
+   "merge": true,
+   "subject": "Merge origin/main (release versions, rider shadows); World menu is spec 2.39",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "20c0651",
+   "time": "11:28:20",
+   "merge": false,
+   "subject": "Spec §4.8.7: world cleaning results with the high-resolution DEMs",
+   "added": 19,
+   "removed": 2
+  },
+  {
+   "sha": "28ce17e",
+   "time": "11:30:01",
+   "merge": false,
+   "subject": "Art project 1.4: token usage in total, per task and per feature",
+   "added": 173,
+   "removed": 3
+  },
+  {
+   "sha": "33d9489",
+   "time": "11:37:19",
+   "merge": false,
+   "subject": "Kiosk fixes: no marking shadows, no sun in tunnels, route files fitted onto package roads (spec 2.39)",
+   "added": 729,
+   "removed": 8
+  },
+  {
+   "sha": "65b4e10",
+   "time": "11:41:43",
+   "merge": true,
+   "subject": "Merge World menu: change world in the app, world info, time and weather pages (spec 2.39)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "ba0270b",
+   "time": "11:50:04",
+   "merge": false,
+   "subject": "ocw-worldstore test: drop the time_zone field the merge duplicated",
+   "added": 0,
+   "removed": 1
+  },
+  {
+   "sha": "6bacb87",
+   "time": "11:59:30",
+   "merge": false,
+   "subject": "Tenerife world: island package, MDT05 terrain, sea from the coastline, routes, showcase (spec 4.7)",
+   "added": 1062,
+   "removed": 63
+  },
+  {
+   "sha": "e58e76a",
+   "time": "11:59:57",
+   "merge": true,
+   "subject": "Merge remote-tracking branch 'origin/main' into worktree-agent-ae14e7e218fa01d74",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "e167977",
+   "time": "12:02:04",
+   "merge": true,
+   "subject": "Merge world cleaning (lint, clean passes, terrain settle, water levels) and bridges (BRDG) (spec 2.40)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "b41ca82",
+   "time": "12:02:14",
+   "merge": false,
+   "subject": "Spec: world cleaning note is v2.40",
+   "added": 1,
+   "removed": 1
+  },
+  {
+   "sha": "45892db",
+   "time": "12:12:21",
+   "merge": false,
+   "subject": "Tests: bridges in the World menu's test packages (merge of World menu and world cleaning)",
+   "added": 2,
+   "removed": 0
+  },
+  {
+   "sha": "fdeab4e",
+   "time": "12:12:36",
+   "merge": true,
+   "subject": "Merge tunnel/route fix: route heights fitted onto the package roads, no sun in tunnels, flat overlays cast no shadows (spec 2.41)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "6b29709",
+   "time": "12:22:05",
+   "merge": false,
+   "subject": "Wheels on the road: riders stand on the drawn surface, wheels rest as circles (spec 2.39)",
+   "added": 756,
+   "removed": 66
+  },
+  {
+   "sha": "6247b35",
+   "time": "12:23:03",
+   "merge": true,
+   "subject": "Merge remote-tracking branch 'origin/main' into worktree-agent-ae14e7e218fa01d74",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "f8df640",
+   "time": "12:24:34",
+   "merge": true,
+   "subject": "Merge origin/main (fdeab4e): one road lift, routes fitted onto the strips to the millimetre (spec 2.42)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "bae102c",
+   "time": "12:24:40",
+   "merge": true,
+   "subject": "Merge origin/main (spec 2.33-2.41: sky, high-res terrain, cleaning, bridges, tunnel fix) into Phase 8 T1/T2",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "b57f03c",
+   "time": "12:26:57",
+   "merge": false,
+   "subject": "Release 0.2.0",
+   "added": 18,
+   "removed": 18
+  },
+  {
+   "sha": "c5649c7",
+   "time": "12:32:12",
+   "merge": false,
+   "subject": "RoadStrip literals of the merged tests get their surface",
+   "added": 2,
+   "removed": 0
+  },
+  {
+   "sha": "aa23dea",
+   "time": "12:37:44",
+   "merge": false,
+   "subject": "Tenerife: rebuilt with the world cleaning, lint numbers, sea kept at 0 m by the water levelling (spec 2.42)",
+   "added": 7,
+   "removed": 4
+  },
+  {
+   "sha": "f6e50cb",
+   "time": "12:38:19",
+   "merge": true,
+   "subject": "Merge the Tenerife world: island package (MDT05), sea from the coastline, tiles near roads, routes, showcase (spec 2.42)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "57d3956",
+   "time": "12:38:55",
+   "merge": false,
+   "subject": "Spec 2.43: Phase 8 decisions – no AI-generated textures (Q3), no real brands (Q11)",
+   "added": 4,
+   "removed": 3
+  },
+  {
+   "sha": "1633efc",
+   "time": "12:43:12",
+   "merge": false,
+   "subject": "Spec 2.44: Phase 8 decisions Q2/Q4/Q5/Q6/Q7/Q10 and the 3D building data research (Q8)",
+   "added": 9,
+   "removed": 8
+  },
+  {
+   "sha": "9bc2502",
+   "time": "12:46:14",
+   "merge": false,
+   "subject": "Spec 2.42: bridges and the material library",
+   "added": 1,
+   "removed": 0
+  },
+  {
+   "sha": "4dedc0f",
+   "time": "12:49:21",
+   "merge": false,
+   "subject": "Spec 2.45: keep MIT / Apache-2.0 (licence change declined for now)",
+   "added": 3,
+   "removed": 1
+  },
+  {
+   "sha": "fc1c355",
+   "time": "12:51:16",
+   "merge": true,
+   "subject": "Merge origin/main (spec 2.42-2.45: Tenerife, Phase 8 decisions, licences) into Phase 8 T1/T2; spec row 2.46",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "adc66a4",
+   "time": "12:55:22",
+   "merge": false,
+   "subject": "README: Worlds section with Liechtenstein, Black Forest and Tenerife highlights (images on the build-history release)",
+   "added": 25,
+   "removed": 3
+  },
+  {
+   "sha": "42f2e1c",
+   "time": "12:58:27",
+   "merge": false,
+   "subject": "Wheel contact on the real roads: fitted route file test, Vaduz scenes, spec 2.42 residuals",
+   "added": 75,
+   "removed": 13
+  },
+  {
+   "sha": "0ae3d50",
+   "time": "12:59:41",
+   "merge": false,
+   "subject": "Regional material sets; volcanic ground for Tenerife (spec 2.46)",
+   "added": 435,
+   "removed": 53
+  },
+  {
+   "sha": "bd5b4f0",
+   "time": "13:12:26",
+   "merge": true,
+   "subject": "Merge Phase 8 T1/T2: CC0 material library, textured terrain and roads, volcanic set for Tenerife (spec 2.46)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "612a871",
+   "time": "13:12:52",
+   "merge": false,
+   "subject": "Phase 8 T3: region look sections (PALT, ROOF, SEAS), imagery readers, calibration, fetch scripts",
+   "added": 3774,
+   "removed": 1
+  },
+  {
+   "sha": "57fe8b6",
+   "time": "13:13:21",
+   "merge": true,
+   "subject": "Merge origin/main (Phase 8 T1/T2 materials, road surfaces, spec 2.46) into T3",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "ef8a0d8",
+   "time": "13:26:57",
+   "merge": true,
+   "subject": "Merge wheels on the road: riders stand on the drawn surface, wheels rest as circles, routes fitted to 1 mm (spec 2.47)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "149a9a0",
+   "time": "14:04:09",
+   "merge": false,
+   "subject": "Phase 8 T3: renderer wiring – measured palette and season tint the ground, satellite far colours by the world date, sampled roof colours",
+   "added": 866,
+   "removed": 26
+  },
+  {
+   "sha": "2597a11",
+   "time": "14:09:23",
+   "merge": false,
+   "subject": "Spec 2.48: Phase 11 develops on the Oculus Rift CV1, OpenXR-only for all other headsets",
+   "added": 5,
+   "removed": 3
+  },
+  {
+   "sha": "c60a5c8",
+   "time": "14:24:52",
+   "merge": false,
+   "subject": "wheel_contact tests: RoadStrip surface field after the materials merge",
+   "added": 1,
+   "removed": 0
+  },
+  {
+   "sha": "3ae9ee5",
+   "time": "14:29:59",
+   "merge": true,
+   "subject": "Merge branch 'main' into worktree-agent-ad17650ac131c55d2",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "c3f9272",
+   "time": "14:33:23",
+   "merge": false,
+   "subject": "Releases increment the patch version (0.2.0 -> 0.2.1), spec 2.49",
+   "added": 19,
+   "removed": 15
+  },
+  {
+   "sha": "ddd7edd",
+   "time": "14:52:50",
+   "merge": false,
+   "subject": "Phase 8 T3: seasonal near tint mostly brightness (regression: winter meadows went pink); scenes",
+   "added": 20,
+   "removed": 2
+  },
+  {
+   "sha": "f866af7",
+   "time": "14:53:27",
+   "merge": false,
+   "subject": "Spec 2.49: Phase 8 T3 region calibration – sources, look sections, renderer tints, measured palettes and package cost",
+   "added": 17,
+   "removed": 7
+  },
+  {
+   "sha": "f5a7104",
+   "time": "15:01:10",
+   "merge": false,
+   "subject": "Spec 2.50: Phase 12 planned – collisions, crashes and damage",
+   "added": 109,
+   "removed": 0
+  },
+  {
+   "sha": "275aff1",
+   "time": "15:09:50",
+   "merge": false,
+   "subject": "Spec 2.51: Phase 13 planned – god mode, flying through the world as a unicorn",
+   "added": 65,
+   "removed": 0
+  },
+  {
+   "sha": "a0b1126",
+   "time": "15:09:55",
+   "merge": false,
+   "subject": "Spec 2.51: wording of the god-mode movement keys",
+   "added": 1,
+   "removed": 1
+  },
+  {
+   "sha": "af223cd",
+   "time": "15:10:15",
+   "merge": false,
+   "subject": "rustfmt",
+   "added": 229,
+   "removed": 90
+  },
+  {
+   "sha": "c231c9f",
+   "time": "15:13:00",
+   "merge": false,
+   "subject": "Spec 2.52: god mode decisions – visible unicorn, land where you are, pegasus wings",
+   "added": 8,
+   "removed": 7
+  },
+  {
+   "sha": "2c46c57",
+   "time": "15:21:29",
+   "merge": false,
+   "subject": "Build and world-build profiling, faster world builds, build caching across checkouts (spec 2.49, WIP)",
+   "added": 2051,
+   "removed": 188
+  },
+  {
+   "sha": "a4e07fc",
+   "time": "15:21:41",
+   "merge": false,
+   "subject": "Clippy: calibration and imagery readers",
+   "added": 7,
+   "removed": 4
+  },
+  {
+   "sha": "d399c07",
+   "time": "15:30:07",
+   "merge": false,
+   "subject": "README: iconic Teide rendering above the Worlds table; scene showcase-tf-teide-iconic",
+   "added": 12,
+   "removed": 0
+  },
+  {
+   "sha": "b0eaa81",
+   "time": "15:35:06",
+   "merge": false,
+   "subject": "CLAUDE.md: keep building features from the spec when all build jobs are done; ping the user with questions; project status updated",
+   "added": 7,
+   "removed": 1
+  },
+  {
+   "sha": "37b98ca",
+   "time": "15:40:18",
+   "merge": false,
+   "subject": "Build dashboard: describe what each job is trying to achieve instead of the prompt",
+   "added": 1089,
+   "removed": 44
+  },
+  {
+   "sha": "c256c08",
+   "time": "15:40:43",
+   "merge": true,
+   "subject": "Merge build dashboard: describe what each job is for instead of the prompt",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "9ec93da",
+   "time": "15:48:11",
+   "merge": false,
+   "subject": "Spec 2.53, 2.54: Phase 4 workshop scene, hearts and part catalogue; input model for the whole UI",
+   "added": 396,
+   "removed": 22
+  },
+  {
+   "sha": "bc67a63",
+   "time": "15:48:54",
+   "merge": true,
+   "subject": "Merge Phase 4 workshop, hearts economy and part prices, whole-UI input model (spec 2.53, 2.54)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "dee6740",
+   "time": "16:02:28",
+   "merge": false,
+   "subject": "README: remove the 'Teide' hero image – the summit is missing from the Tenerife package (tiles near roads only); the cone shown was a lower hill",
+   "added": 0,
+   "removed": 12
+  },
+  {
+   "sha": "bada30a",
+   "time": "16:25:14",
+   "merge": true,
+   "subject": "Merge Phase 8 T3: region calibration – orthophoto palettes, roof colours, seasonal Sentinel-2 maps (spec 2.55)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "d554051",
+   "time": "16:44:13",
+   "merge": false,
+   "subject": "World build: junction-grade sweeps skip settled edges (byte-identical); seeding and voice build-dir measured and made opt-in; spec 2.49 numbers",
+   "added": 171,
+   "removed": 34
+  },
+  {
+   "sha": "34cf16b",
+   "time": "17:04:04",
+   "merge": false,
+   "subject": "Tenerife: the Teide's summit is in the package and drawn at distance (spec 2.55)",
+   "added": 1050,
+   "removed": 25
+  },
+  {
+   "sha": "752432c",
+   "time": "18:21:13",
+   "merge": false,
+   "subject": "Spec 2.49: Windows build profile (full debug 3,673 s -> 2,564 s, edits 158 s -> 35 s, target 18 -> 5.6 GB); wording of the caching results",
+   "added": 4,
+   "removed": 4
+  },
+  {
+   "sha": "2629b79",
+   "time": "18:21:58",
+   "merge": true,
+   "subject": "Merge branch 'main' into worktree-agent-a232dd34cb256c06e",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "fb814f0",
+   "time": "18:22:28",
+   "merge": false,
+   "subject": "Far terrain: the region look's class colours at the world date, like the streamed tiles (Phase 8 T3)",
+   "added": 35,
+   "removed": 13
+  },
+  {
+   "sha": "8a7aeec",
+   "time": "18:23:18",
+   "merge": true,
+   "subject": "Merge main (bada30a: wheels, materials, T3 region calibration, dashboard; spec 2.55) into the build-profiling branch; spec row 2.49 -> 2.59, calibrate in the stage table",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "4b19939",
+   "time": "18:26:00",
+   "merge": false,
+   "subject": "Scenes: look-houses-* villages per region (spec §14 Phase 8 T4)",
+   "added": 61,
+   "removed": 0
+  },
+  {
+   "sha": "502adbb",
+   "time": "18:31:48",
+   "merge": false,
+   "subject": "far_terrain tests: the package's look (Phase 8 T3 field)",
+   "added": 1,
+   "removed": 0
+  },
+  {
+   "sha": "ba8a3c6",
+   "time": "18:41:28",
+   "merge": true,
+   "subject": "Merge build and world-build profiling: sccache on all machines, leaner dev profile, parallel world builder (byte-identical packages), remote-gc (spec 2.59)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "d93ec01",
+   "time": "18:51:06",
+   "merge": false,
+   "subject": "Far terrain: forests tinted by their tree crowns (no trees far away: they read as bare brown ground)",
+   "added": 20,
+   "removed": 2
+  },
+  {
+   "sha": "b15c1aa",
+   "time": "18:51:55",
+   "merge": true,
+   "subject": "Merge Teide summit: land tiles in island packages, far terrain to 120 km with region colours, sea plane (spec 2.56)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "fadc897",
+   "time": "19:09:19",
+   "merge": false,
+   "subject": "Phase 8 T4: houses – roof shapes and OSM facts (BTAG), regional styles, procedural façades, LOD",
+   "added": 4802,
+   "removed": 310
+  },
+  {
+   "sha": "e5c9cd3",
+   "time": "19:39:40",
+   "merge": false,
+   "subject": "God mode G1/G2 (spec 2.58, §14 Phase 13): flight, the unicorn, server God state",
+   "added": 5670,
+   "removed": 31
+  },
+  {
+   "sha": "7bc4f63",
+   "time": "19:52:09",
+   "merge": false,
+   "subject": "God mode: scenes at 14:00, no junction overlay while flying, a lighter, narrower rainbow trail",
+   "added": 10,
+   "removed": 6
+  },
+  {
+   "sha": "84a626a",
+   "time": "20:16:25",
+   "merge": true,
+   "subject": "Merge Phase 13 G1+G2 (+G4): god mode – flight, the pegasus-winged unicorn, server God state and GodPose (spec 2.58)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "6fb88e4",
+   "time": "20:21:46",
+   "merge": false,
+   "subject": "T4: flat roofs concrete, no timber on blocks, WGSL reserved word, clippy; spec 2.57 with measurements",
+   "added": 78,
+   "removed": 16
+  },
+  {
+   "sha": "715bcdb",
+   "time": "20:28:13",
+   "merge": true,
+   "subject": "Merge Phase 8 T4: houses – OSM roof shapes and tags (BTAG), regional house styles, façade shader, three LODs (spec 2.57)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "b5c01ad",
+   "time": "20:32:00",
+   "merge": false,
+   "subject": "imagery.py: rebuild a seasonal Sentinel-2 composite when the grid changed (more packages) instead of reusing the stale one",
+   "added": 5,
+   "removed": 1
+  },
+  {
+   "sha": "03c3b31",
+   "time": "20:49:54",
+   "merge": false,
+   "subject": "X11 smoke runs: lavapipe under Xvfb; restart on a presenting adapter instead of Bevy's present-mode panic",
+   "added": 329,
+   "removed": 5
+  },
+  {
+   "sha": "1739cd1",
+   "time": "20:51:49",
+   "merge": true,
+   "subject": "Merge X11 fix: llvmpipe for Xvfb runs (RADV cannot present without DRI3), surface guard restarts on a presentable adapter instead of panicking",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "7f0923d",
+   "time": "21:35:43",
+   "merge": false,
+   "subject": "README: the Teide hero image again – now the real summit (land tiles, far terrain), with the region colours",
+   "added": 4,
+   "removed": 0
+  },
+  {
+   "sha": "d635380",
+   "time": "21:41:01",
+   "merge": false,
+   "subject": "Phase 13 G3: god mode inspection – panel, crosshair, pins, look-ahead streaming; G1/G2/G4 gaps closed (spec 2.61)",
+   "added": 3178,
+   "removed": 97
+  },
+  {
+   "sha": "97ba13a",
+   "time": "22:09:01",
+   "merge": false,
+   "subject": "Phase 8 T5: roads – markings, kerbs, sidewalks, crossings, wear, road edge into the terrain (spec 2.60)",
+   "added": 4440,
+   "removed": 211
+  },
+  {
+   "sha": "2b1dc40",
+   "time": "22:12:34",
+   "merge": true,
+   "subject": "Merge Phase 13 G3: god-mode inspection – crosshair picking, flight panel, pins, look-ahead streaming, unicorn LOD, touch flight, FIT markers (spec 2.61)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "bc6364f",
+   "time": "22:19:16",
+   "merge": true,
+   "subject": "Merge Phase 8 T5: roads – markings (RDRS), kerbs and sidewalks, crossings, wear, verge instead of the floating road slab (spec 2.60)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "73a2043",
+   "time": "22:19:54",
+   "merge": false,
+   "subject": "inspect tests: RoadStrip dress field after the roads merge",
+   "added": 1,
+   "removed": 0
+  },
+  {
+   "sha": "b213d6b",
+   "time": "22:42:26",
+   "merge": false,
+   "subject": "Build dashboard: open questions from the spec, disk watcher and janitor; remote.sh snapshot at invocation and content-based sync",
+   "added": 2308,
+   "removed": 53
+  },
+  {
+   "sha": "fd14580",
+   "time": "22:45:36",
+   "merge": false,
+   "subject": "Spec 2.63 (§11.2), README, dashboard README, CLAUDE.md: open questions panel, disk watcher and janitor, cleanup on merge, remote.sh snapshot and mtime fixes, Windows toolchain move",
+   "added": 101,
+   "removed": 8
+  },
+  {
+   "sha": "cb81951",
+   "time": "23:07:18",
+   "merge": false,
+   "subject": "CLAUDE.md: build machine roles – Win11Builder only for Windows-related builds, leela back with its own kiosk",
+   "added": 50,
+   "removed": 7
+  },
+  {
+   "sha": "86c9a51",
+   "time": "23:18:50",
+   "merge": false,
+   "subject": "Build dashboard: answer the open questions on the page (token-protected), answers.jsonl + inbox.log for the coordinator, GET /api/answers",
+   "added": 609,
+   "removed": 32
+  },
+  {
+   "sha": "176498a",
+   "time": "23:23:29",
+   "merge": false,
+   "subject": "Art project: build day 3 (2026-11-13) – day script, two-row end card, masked public zips",
+   "added": 162,
+   "removed": 9
+  },
+  {
+   "sha": "387ac0e",
+   "time": "23:26:08",
+   "merge": false,
+   "subject": "test-remote: regression for remote files touched into the future, then newer content with an older local mtime (must rebuild); spec note",
+   "added": 24,
+   "removed": 1
+  },
+  {
+   "sha": "608d0c1",
+   "time": "23:32:27",
+   "merge": false,
+   "subject": "CLAUDE.md: no new builds on Win11Builder until further notice; build on marge",
+   "added": 1,
+   "removed": 1
+  },
+  {
+   "sha": "8743105",
+   "time": "23:34:48",
+   "merge": false,
+   "subject": "remote.sh: Windows slot-time handshake opt-in (OCW_WIN_HANDSHAKE=1; stuck in its first real runs), default syncs the snapshot at once; tests: Windows wrapper assembly, simulated tar -m extraction",
+   "added": 49,
+   "removed": 4
+  },
+  {
+   "sha": "0760eff",
+   "time": "23:36:22",
+   "merge": true,
+   "subject": "Merge janitor and open questions: answerable questions panel in the dashboard, disk watcher, remote-gc --branch, remote.sh snapshot at invocation and content-based mtimes (spec 2.63)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "8c85763",
+   "time": "23:37:04",
+   "merge": false,
+   "subject": "remote.sh: absolute config dir – the snapshot sync runs inside the snapshot directory, so the relative config/ssh paths of the main checkout broke every run",
+   "added": 3,
+   "removed": 0
+  },
+  {
+   "sha": "dc86fe9",
+   "time": "23:51:46",
+   "merge": false,
+   "subject": "God mode flies like a plane; + / − by what the key types; no saddle cloth (spec 2.64)",
+   "added": 1080,
+   "removed": 148
+  },
+  {
+   "sha": "02364cc",
+   "time": "23:54:42",
+   "merge": false,
+   "subject": "CLAUDE.md: leela excluded from building until further notice (kiosk only)",
+   "added": 2,
+   "removed": 2
+  }
+ ],
+ "merges": 43,
+ "lines_added": 61670,
+ "lines_removed": 3101,
+ "spec_versions": [
+  "2.30",
+  "2.31",
+  "2.32",
+  "2.32",
+  "2.31",
+  "2.32",
+  "2.32",
+  "2.33",
+  "2.33",
+  "2.33",
+  "2.33",
+  "2.32",
+  "2.34",
+  "2.35",
+  "2.34",
+  "2.34",
+  "2.37",
+  "2.38",
+  "2.39",
+  "2.39",
+  "2.39",
+  "4.7",
+  "2.40",
+  "2.41",
+  "2.39",
+  "2.42",
+  "2.33",
+  "2.42",
+  "2.42",
+  "2.43",
+  "2.44",
+  "2.42",
+  "2.45",
+  "2.42",
+  "2.42",
+  "2.46",
+  "2.46",
+  "2.46",
+  "2.47",
+  "2.48",
+  "2.49",
+  "2.49",
+  "2.50",
+  "2.51",
+  "2.51",
+  "2.52",
+  "2.49",
+  "2.53",
+  "2.53",
+  "2.55",
+  "2.49",
+  "2.55",
+  "2.49",
+  "2.55",
+  "2.59",
+  "2.56",
+  "2.58",
+  "2.58",
+  "2.57",
+  "2.57",
+  "2.61",
+  "2.60",
+  "2.61",
+  "2.60",
+  "2.63",
+  "2.63",
+  "2.64"
+ ],
+ "tests": null,
+ "media": [
+  {
+   "file": "063356-scenes-t2-before-malbun-arrival.png",
+   "time": "06:33:56",
+   "kind": "image"
+  },
+  {
+   "file": "063405-scenes-t2-before-rhine-water.png",
+   "time": "06:34:05",
+   "kind": "image"
+  },
+  {
+   "file": "063419-scenes-t2-before-far-view.png",
+   "time": "06:34:19",
+   "kind": "image"
+  },
+  {
+   "file": "063430-scenes-t2-before-mat-meadow-road.png",
+   "time": "06:34:30",
+   "kind": "image"
+  },
+  {
+   "file": "063441-scenes-t2-before-mat-forest.png",
+   "time": "06:34:41",
+   "kind": "image"
+  },
+  {
+   "file": "063452-scenes-t2-before-mat-cliff.png",
+   "time": "06:34:52",
+   "kind": "image"
+  },
+  {
+   "file": "063503-scenes-t2-before-mat-malbun.png",
+   "time": "06:35:03",
+   "kind": "image"
+  },
+  {
+   "file": "063513-scenes-t2-before-mat-rhine-gravel.png",
+   "time": "06:35:13",
+   "kind": "image"
+  },
+  {
+   "file": "063523-scenes-t2-before-mat-video.png",
+   "time": "06:35:23",
+   "kind": "image"
+  },
+  {
+   "file": "063525-scenes-t2-before-mat-video.mp4",
+   "time": "06:35:25",
+   "kind": "video"
+  },
+  {
+   "file": "063538-scenes-t2-before-bf-mat-forest.png",
+   "time": "06:35:38",
+   "kind": "image"
+  },
+  {
+   "file": "063552-scenes-t2-before-bf-mat-meadow.png",
+   "time": "06:35:52",
+   "kind": "image"
+  },
+  {
+   "file": "063616-scenes-before-sheet.png",
+   "time": "06:36:16",
+   "kind": "image"
+  },
+  {
+   "file": "063739-shot-wayland-sky-noon.jpg",
+   "time": "06:37:39",
+   "kind": "image"
+  },
+  {
+   "file": "063750-shot-wayland-sky-sunset.jpg",
+   "time": "06:37:50",
+   "kind": "image"
+  },
+  {
+   "file": "063801-shot-wayland-sky-night-lights.jpg",
+   "time": "06:38:01",
+   "kind": "image"
+  },
+  {
+   "file": "064203-shot-wayland-sky-sunrise.jpg",
+   "time": "06:42:03",
+   "kind": "image"
+  },
+  {
+   "file": "064208-agent-scenes-t2-try1-mat-meadow-road.jpg",
+   "time": "06:42:08",
+   "kind": "image"
+  },
+  {
+   "file": "064214-shot-wayland-sky-noon.jpg",
+   "time": "06:42:14",
+   "kind": "image"
+  },
+  {
+   "file": "064224-shot-wayland-sky-golden-hour.jpg",
+   "time": "06:42:24",
+   "kind": "image"
+  },
+  {
+   "file": "064235-shot-wayland-sky-sunset.jpg",
+   "time": "06:42:35",
+   "kind": "image"
+  },
+  {
+   "file": "064246-shot-wayland-sky-sunset-ridge.jpg",
+   "time": "06:42:46",
+   "kind": "image"
+  },
+  {
+   "file": "064256-shot-wayland-sky-blue-hour.jpg",
+   "time": "06:42:56",
+   "kind": "image"
+  },
+  {
+   "file": "064308-shot-wayland-sky-night-lights.jpg",
+   "time": "06:43:08",
+   "kind": "image"
+  },
+  {
+   "file": "064316-shot-wayland-menu-time-machine.jpg",
+   "time": "06:43:16",
+   "kind": "image"
+  },
+  {
+   "file": "064348-video-wayland-sky-sunset-timelapse.jpg",
+   "time": "06:43:48",
+   "kind": "image"
+  },
+  {
+   "file": "064348-video-wayland-sky-sunset-timelapse.mp4",
+   "time": "06:43:48",
+   "kind": "video"
+  },
+  {
+   "file": "065349-agent-fps-amd-off.png",
+   "time": "06:53:49",
+   "kind": "image"
+  },
+  {
+   "file": "065431-agent-fps-amd-on.png",
+   "time": "06:54:31",
+   "kind": "image"
+  },
+  {
+   "file": "065513-agent-fps-lvp-off.png",
+   "time": "06:55:13",
+   "kind": "image"
+  },
+  {
+   "file": "065556-agent-fps-lvp-on.png",
+   "time": "06:55:56",
+   "kind": "image"
+  },
+  {
+   "file": "070852-shot-wayland-menu-time-machine.jpg",
+   "time": "07:08:52",
+   "kind": "image"
+  },
+  {
+   "file": "071335-agent-fps-amd-off-1.png",
+   "time": "07:13:35",
+   "kind": "image"
+  },
+  {
+   "file": "071416-agent-fps-amd-on-1.png",
+   "time": "07:14:16",
+   "kind": "image"
+  },
+  {
+   "file": "071421-agent-scenes-wheel-contact-vaduz-before-wheel-contact-flat-contact.jpg",
+   "time": "07:14:21",
+   "kind": "image"
+  },
+  {
+   "file": "071421-agent-scenes-wheel-contact-vaduz-before-wheel-contact-mtb-steep-contact.jpg",
+   "time": "07:14:21",
+   "kind": "image"
+  },
+  {
+   "file": "071421-agent-scenes-wheel-contact-vaduz-before-wheel-contact-steep-contact.jpg",
+   "time": "07:14:21",
+   "kind": "image"
+  },
+  {
+   "file": "071457-agent-fps-amd-off-2.png",
+   "time": "07:14:57",
+   "kind": "image"
+  },
+  {
+   "file": "071539-agent-fps-amd-on-2.png",
+   "time": "07:15:39",
+   "kind": "image"
+  },
+  {
+   "file": "071552-agent-fps-cmp.png",
+   "time": "07:15:52",
+   "kind": "image"
+  },
+  {
+   "file": "071845-agent-scenes-t2-after-malbun-arrival.jpg",
+   "time": "07:18:45",
+   "kind": "image"
+  },
+  {
+   "file": "071853-agent-scenes-t2-after-rhine-water.jpg",
+   "time": "07:18:53",
+   "kind": "image"
+  },
+  {
+   "file": "071906-agent-scenes-t2-after-far-view.jpg",
+   "time": "07:19:06",
+   "kind": "image"
+  },
+  {
+   "file": "071917-agent-scenes-t2-after-mat-meadow-road.jpg",
+   "time": "07:19:17",
+   "kind": "image"
+  },
+  {
+   "file": "071927-agent-scenes-t2-after-mat-forest.jpg",
+   "time": "07:19:27",
+   "kind": "image"
+  },
+  {
+   "file": "071937-agent-scenes-t2-after-mat-cliff.jpg",
+   "time": "07:19:37",
+   "kind": "image"
+  },
+  {
+   "file": "071948-agent-scenes-t2-after-mat-malbun.jpg",
+   "time": "07:19:48",
+   "kind": "image"
+  },
+  {
+   "file": "071957-agent-scenes-t2-after-mat-rhine-gravel.jpg",
+   "time": "07:19:57",
+   "kind": "image"
+  },
+  {
+   "file": "072006-agent-scenes-t2-after-mat-video.jpg",
+   "time": "07:20:06",
+   "kind": "image"
+  },
+  {
+   "file": "072016-agent-scenes-t2-after-mat-video.mp4",
+   "time": "07:20:16",
+   "kind": "video"
+  },
+  {
+   "file": "072028-agent-scenes-t2-after-bf-mat-forest.jpg",
+   "time": "07:20:28",
+   "kind": "image"
+  },
+  {
+   "file": "072041-agent-scenes-t2-after-bf-mat-meadow.jpg",
+   "time": "07:20:41",
+   "kind": "image"
+  },
+  {
+   "file": "072056-agent-scenes-after-sheet.png",
+   "time": "07:20:56",
+   "kind": "image"
+  },
+  {
+   "file": "072414-agent-scenes-t2-after2-malbun-arrival.jpg",
+   "time": "07:24:14",
+   "kind": "image"
+  },
+  {
+   "file": "072423-agent-scenes-t2-after2-rhine-water.jpg",
+   "time": "07:24:23",
+   "kind": "image"
+  },
+  {
+   "file": "072436-agent-scenes-t2-after2-far-view.jpg",
+   "time": "07:24:36",
+   "kind": "image"
+  },
+  {
+   "file": "072447-agent-scenes-t2-after2-mat-meadow-road.jpg",
+   "time": "07:24:47",
+   "kind": "image"
+  },
+  {
+   "file": "072457-agent-scenes-t2-after2-mat-forest.jpg",
+   "time": "07:24:57",
+   "kind": "image"
+  },
+  {
+   "file": "072507-agent-scenes-t2-after2-mat-cliff.jpg",
+   "time": "07:25:07",
+   "kind": "image"
+  },
+  {
+   "file": "072518-agent-scenes-t2-after2-mat-malbun.jpg",
+   "time": "07:25:18",
+   "kind": "image"
+  },
+  {
+   "file": "072527-agent-scenes-t2-after2-mat-rhine-gravel.jpg",
+   "time": "07:25:27",
+   "kind": "image"
+  },
+  {
+   "file": "072536-agent-scenes-t2-after2-mat-video.jpg",
+   "time": "07:25:36",
+   "kind": "image"
+  },
+  {
+   "file": "072549-agent-scenes-t2-after2-mat-video.mp4",
+   "time": "07:25:49",
+   "kind": "video"
+  },
+  {
+   "file": "072601-agent-scenes-t2-after2-bf-mat-forest.jpg",
+   "time": "07:26:01",
+   "kind": "image"
+  },
+  {
+   "file": "072614-agent-scenes-t2-after2-bf-mat-meadow.jpg",
+   "time": "07:26:14",
+   "kind": "image"
+  },
+  {
+   "file": "072838-agent-scenes-after2-sheet.png",
+   "time": "07:28:38",
+   "kind": "image"
+  },
+  {
+   "file": "073323-shot-wayland-wheel-contact-flat.jpg",
+   "time": "07:33:23",
+   "kind": "image"
+  },
+  {
+   "file": "073331-shot-wayland-wheel-contact-steep.jpg",
+   "time": "07:33:31",
+   "kind": "image"
+  },
+  {
+   "file": "073339-shot-wayland-wheel-contact-lean.jpg",
+   "time": "07:33:39",
+   "kind": "image"
+  },
+  {
+   "file": "073348-shot-wayland-wheel-contact-mtb-steep.jpg",
+   "time": "07:33:48",
+   "kind": "image"
+  },
+  {
+   "file": "073622-agent-scenes-terrain-before-after-2026-11-13-freiburg-muensterplatz-dgm1.jpg",
+   "time": "07:36:22",
+   "kind": "image"
+  },
+  {
+   "file": "073622-agent-scenes-terrain-before-after-2026-11-13-freiburg-muensterplatz-srtm.jpg",
+   "time": "07:36:22",
+   "kind": "image"
+  },
+  {
+   "file": "073622-agent-scenes-terrain-before-after-2026-11-13-malbun-road-km11-srtm.png",
+   "time": "07:36:22",
+   "kind": "image"
+  },
+  {
+   "file": "073622-agent-scenes-terrain-before-after-2026-11-13-malbun-road-km11-swissalti3d-5m-grid.png",
+   "time": "07:36:22",
+   "kind": "image"
+  },
+  {
+   "file": "073622-agent-scenes-terrain-before-after-2026-11-13-malbun-road-km11-swissalti3d.png",
+   "time": "07:36:22",
+   "kind": "image"
+  },
+  {
+   "file": "073622-agent-scenes-terrain-before-after-2026-11-13-mummelsee-service-road-dgm1.jpg",
+   "time": "07:36:22",
+   "kind": "image"
+  },
+  {
+   "file": "074734-shot-wayland-showcase-mummelsee.jpg",
+   "time": "07:47:34",
+   "kind": "image"
+  },
+  {
+   "file": "074756-video-wayland-showcase-mummelsee-video.jpg",
+   "time": "07:47:56",
+   "kind": "image"
+  },
+  {
+   "file": "074756-video-wayland-showcase-mummelsee-video.mp4",
+   "time": "07:47:56",
+   "kind": "video"
+  },
+  {
+   "file": "074810-shot-wayland-showcase-hornisgrinde.jpg",
+   "time": "07:48:10",
+   "kind": "image"
+  },
+  {
+   "file": "074825-shot-wayland-showcase-hochstrasse.jpg",
+   "time": "07:48:25",
+   "kind": "image"
+  },
+  {
+   "file": "074847-video-wayland-showcase-hochstrasse-video.jpg",
+   "time": "07:48:47",
+   "kind": "image"
+  },
+  {
+   "file": "074847-video-wayland-showcase-hochstrasse-video.mp4",
+   "time": "07:48:47",
+   "kind": "video"
+  },
+  {
+   "file": "074902-shot-wayland-showcase-badenbaden.jpg",
+   "time": "07:49:02",
+   "kind": "image"
+  },
+  {
+   "file": "074924-video-wayland-showcase-badenbaden-video.jpg",
+   "time": "07:49:24",
+   "kind": "image"
+  },
+  {
+   "file": "074924-video-wayland-showcase-badenbaden-video.mp4",
+   "time": "07:49:24",
+   "kind": "video"
+  },
+  {
+   "file": "074939-shot-wayland-showcase-sasbachwalden.jpg",
+   "time": "07:49:39",
+   "kind": "image"
+  },
+  {
+   "file": "074954-shot-wayland-showcase-feldberg.jpg",
+   "time": "07:49:54",
+   "kind": "image"
+  },
+  {
+   "file": "075019-video-wayland-showcase-feldberg-video.jpg",
+   "time": "07:50:19",
+   "kind": "image"
+  },
+  {
+   "file": "075019-video-wayland-showcase-feldberg-video.mp4",
+   "time": "07:50:19",
+   "kind": "video"
+  },
+  {
+   "file": "075034-shot-wayland-showcase-titisee.jpg",
+   "time": "07:50:34",
+   "kind": "image"
+  },
+  {
+   "file": "075058-video-wayland-showcase-titisee-video.jpg",
+   "time": "07:50:58",
+   "kind": "image"
+  },
+  {
+   "file": "075058-video-wayland-showcase-titisee-video.mp4",
+   "time": "07:50:58",
+   "kind": "video"
+  },
+  {
+   "file": "075113-shot-wayland-showcase-schauinsland.jpg",
+   "time": "07:51:13",
+   "kind": "image"
+  },
+  {
+   "file": "075128-shot-wayland-showcase-freiburg.jpg",
+   "time": "07:51:28",
+   "kind": "image"
+  },
+  {
+   "file": "075144-shot-wayland-showcase-schluchsee.jpg",
+   "time": "07:51:44",
+   "kind": "image"
+  },
+  {
+   "file": "075159-shot-wayland-showcase-belchen.jpg",
+   "time": "07:51:59",
+   "kind": "image"
+  },
+  {
+   "file": "075212-shot-wayland-showcase-malbun-hairpins.jpg",
+   "time": "07:52:12",
+   "kind": "image"
+  },
+  {
+   "file": "075227-shot-wayland-showcase-feldberg-pass.jpg",
+   "time": "07:52:27",
+   "kind": "image"
+  },
+  {
+   "file": "075242-shot-wayland-showcase-schauinsland.jpg",
+   "time": "07:52:42",
+   "kind": "image"
+  },
+  {
+   "file": "075256-shot-wayland-showcase-malbun-hairpins.jpg",
+   "time": "07:52:56",
+   "kind": "image"
+  },
+  {
+   "file": "075311-shot-wayland-showcase-feldberg-pass.jpg",
+   "time": "07:53:11",
+   "kind": "image"
+  },
+  {
+   "file": "080237-fps-amd-off-1.png",
+   "time": "08:02:37",
+   "kind": "image"
+  },
+  {
+   "file": "080318-fps-amd-on-1.png",
+   "time": "08:03:18",
+   "kind": "image"
+  },
+  {
+   "file": "080400-fps-amd-off-2.png",
+   "time": "08:04:00",
+   "kind": "image"
+  },
+  {
+   "file": "080441-fps-amd-on-2.png",
+   "time": "08:04:41",
+   "kind": "image"
+  },
+  {
+   "file": "080523-agent-fps-lvp-off-1.png",
+   "time": "08:05:23",
+   "kind": "image"
+  },
+  {
+   "file": "080608-agent-fps-lvp-on-1.png",
+   "time": "08:06:08",
+   "kind": "image"
+  },
+  {
+   "file": "080653-agent-fps-lvp-off-2.png",
+   "time": "08:06:53",
+   "kind": "image"
+  },
+  {
+   "file": "080738-agent-fps-lvp-on-2.png",
+   "time": "08:07:38",
+   "kind": "image"
+  },
+  {
+   "file": "080755-agent-scenes-t2-final-malbun-arrival.jpg",
+   "time": "08:07:55",
+   "kind": "image"
+  },
+  {
+   "file": "080804-agent-scenes-t2-final-rhine-water.jpg",
+   "time": "08:08:04",
+   "kind": "image"
+  },
+  {
+   "file": "080817-agent-scenes-t2-final-far-view.jpg",
+   "time": "08:08:17",
+   "kind": "image"
+  },
+  {
+   "file": "080821-shot-wayland-before-side-0800.png",
+   "time": "08:08:21",
+   "kind": "image"
+  },
+  {
+   "file": "080828-agent-scenes-t2-final-mat-meadow-road.jpg",
+   "time": "08:08:28",
+   "kind": "image"
+  },
+  {
+   "file": "080832-shot-wayland-before-chase-0800.png",
+   "time": "08:08:32",
+   "kind": "image"
+  },
+  {
+   "file": "080838-agent-scenes-t2-final-mat-forest.jpg",
+   "time": "08:08:38",
+   "kind": "image"
+  },
+  {
+   "file": "080844-shot-wayland-before-side-1200.png",
+   "time": "08:08:44",
+   "kind": "image"
+  },
+  {
+   "file": "080848-agent-scenes-t2-final-mat-cliff.jpg",
+   "time": "08:08:48",
+   "kind": "image"
+  },
+  {
+   "file": "080855-shot-wayland-before-chase-1200.png",
+   "time": "08:08:55",
+   "kind": "image"
+  },
+  {
+   "file": "080859-agent-scenes-t2-final-mat-malbun.jpg",
+   "time": "08:08:59",
+   "kind": "image"
+  },
+  {
+   "file": "080906-shot-wayland-before-side-1730.png",
+   "time": "08:09:06",
+   "kind": "image"
+  },
+  {
+   "file": "080908-agent-scenes-t2-final-mat-rhine-gravel.jpg",
+   "time": "08:09:08",
+   "kind": "image"
+  },
+  {
+   "file": "080917-agent-scenes-t2-final-mat-video.jpg",
+   "time": "08:09:17",
+   "kind": "image"
+  },
+  {
+   "file": "080918-shot-wayland-before-chase-1730.png",
+   "time": "08:09:18",
+   "kind": "image"
+  },
+  {
+   "file": "080928-agent-scenes-t2-final-mat-video.mp4",
+   "time": "08:09:28",
+   "kind": "video"
+  },
+  {
+   "file": "080929-shot-wayland-before-side-1930.png",
+   "time": "08:09:29",
+   "kind": "image"
+  },
+  {
+   "file": "080941-agent-scenes-t2-final-bf-mat-forest.jpg",
+   "time": "08:09:41",
+   "kind": "image"
+  },
+  {
+   "file": "080941-shot-wayland-before-chase-1930.png",
+   "time": "08:09:41",
+   "kind": "image"
+  },
+  {
+   "file": "080952-shot-wayland-before-side-2045.png",
+   "time": "08:09:52",
+   "kind": "image"
+  },
+  {
+   "file": "080954-agent-scenes-t2-final-bf-mat-meadow.jpg",
+   "time": "08:09:54",
+   "kind": "image"
+  },
+  {
+   "file": "081003-shot-wayland-before-chase-2045.png",
+   "time": "08:10:03",
+   "kind": "image"
+  },
+  {
+   "file": "081013-agent-scenes-final-sheet.png",
+   "time": "08:10:13",
+   "kind": "image"
+  },
+  {
+   "file": "081024-agent-scenes-t2-compare-far-view.jpg",
+   "time": "08:10:24",
+   "kind": "image"
+  },
+  {
+   "file": "081024-agent-scenes-t2-compare-mat-cliff.jpg",
+   "time": "08:10:24",
+   "kind": "image"
+  },
+  {
+   "file": "081024-agent-scenes-t2-compare-mat-forest.jpg",
+   "time": "08:10:24",
+   "kind": "image"
+  },
+  {
+   "file": "081024-agent-scenes-t2-compare-mat-malbun.jpg",
+   "time": "08:10:24",
+   "kind": "image"
+  },
+  {
+   "file": "081024-agent-scenes-t2-compare-mat-meadow-road.jpg",
+   "time": "08:10:24",
+   "kind": "image"
+  },
+  {
+   "file": "081024-agent-scenes-t2-compare-mat-rhine-gravel.jpg",
+   "time": "08:10:24",
+   "kind": "image"
+  },
+  {
+   "file": "081024-agent-scenes-t2-compare-rhine-water.jpg",
+   "time": "08:10:24",
+   "kind": "image"
+  },
+  {
+   "file": "081025-agent-scenes-t2-compare-bf-mat-forest.jpg",
+   "time": "08:10:25",
+   "kind": "image"
+  },
+  {
+   "file": "081025-agent-scenes-t2-compare-bf-mat-meadow.jpg",
+   "time": "08:10:25",
+   "kind": "image"
+  },
+  {
+   "file": "081025-agent-scenes-t2-compare-malbun-arrival.jpg",
+   "time": "08:10:25",
+   "kind": "image"
+  },
+  {
+   "file": "081839-shot-wayland-diag-top-0800.png",
+   "time": "08:18:39",
+   "kind": "image"
+  },
+  {
+   "file": "081925-agent-shadow-before-crop-chase-0800.png",
+   "time": "08:19:25",
+   "kind": "image"
+  },
+  {
+   "file": "081925-agent-shadow-before-crop-side-0800.png",
+   "time": "08:19:25",
+   "kind": "image"
+  },
+  {
+   "file": "082158-video-wayland-ocw-others-spectrogram.png",
+   "time": "08:21:58",
+   "kind": "image"
+  },
+  {
+   "file": "082158-video-wayland-ocw-others.jpg",
+   "time": "08:21:58",
+   "kind": "image"
+  },
+  {
+   "file": "082158-video-wayland-ocw-others.mp4",
+   "time": "08:21:58",
+   "kind": "video"
+  },
+  {
+   "file": "082317-shot-wayland-before-orbit-0930-30.png",
+   "time": "08:23:17",
+   "kind": "image"
+  },
+  {
+   "file": "082328-shot-wayland-before-orbit-0930-40.png",
+   "time": "08:23:28",
+   "kind": "image"
+  },
+  {
+   "file": "082340-shot-wayland-before-orbit-1200-30.png",
+   "time": "08:23:40",
+   "kind": "image"
+  },
+  {
+   "file": "082351-shot-wayland-before-orbit-1200-40.png",
+   "time": "08:23:51",
+   "kind": "image"
+  },
+  {
+   "file": "082400-agent-shadow-lod-crop-before-orbit-0930-30.png",
+   "time": "08:24:00",
+   "kind": "image"
+  },
+  {
+   "file": "082400-agent-shadow-lod-crop-before-orbit-0930-40.png",
+   "time": "08:24:00",
+   "kind": "image"
+  },
+  {
+   "file": "082400-agent-shadow-lod-crop-before-orbit-1200-30.png",
+   "time": "08:24:00",
+   "kind": "image"
+  },
+  {
+   "file": "082400-agent-shadow-lod-crop-before-orbit-1200-40.png",
+   "time": "08:24:00",
+   "kind": "image"
+  },
+  {
+   "file": "082415-agent-shadow-lod-zoom-1200-40.png",
+   "time": "08:24:15",
+   "kind": "image"
+  },
+  {
+   "file": "082416-agent-shadow-lod-zoom-1200-30.png",
+   "time": "08:24:16",
+   "kind": "image"
+  },
+  {
+   "file": "083101-shot-wayland-kiosk-check.jpg",
+   "time": "08:31:01",
+   "kind": "image"
+  },
+  {
+   "file": "084622-agent-tunnel-repro-main-08f72b9-k-before-0820.jpg",
+   "time": "08:46:22",
+   "kind": "image"
+  },
+  {
+   "file": "084633-agent-tunnel-repro-main-08f72b9-k-entry-0820.jpg",
+   "time": "08:46:33",
+   "kind": "image"
+  },
+  {
+   "file": "084644-agent-tunnel-repro-main-08f72b9-k-inside-0820.jpg",
+   "time": "08:46:44",
+   "kind": "image"
+  },
+  {
+   "file": "084654-agent-tunnel-repro-main-08f72b9-k-before-noon.jpg",
+   "time": "08:46:54",
+   "kind": "image"
+  },
+  {
+   "file": "084705-agent-tunnel-repro-main-08f72b9-k-entry-noon.jpg",
+   "time": "08:47:05",
+   "kind": "image"
+  },
+  {
+   "file": "084715-agent-tunnel-repro-main-08f72b9-k-inside-noon.jpg",
+   "time": "08:47:15",
+   "kind": "image"
+  },
+  {
+   "file": "084726-agent-tunnel-repro-main-08f72b9-k-inside-night.jpg",
+   "time": "08:47:26",
+   "kind": "image"
+  },
+  {
+   "file": "084736-agent-tunnel-repro-main-08f72b9-r-before-0820.jpg",
+   "time": "08:47:36",
+   "kind": "image"
+  },
+  {
+   "file": "084746-agent-tunnel-repro-main-08f72b9-r-entry-0820.jpg",
+   "time": "08:47:46",
+   "kind": "image"
+  },
+  {
+   "file": "084917-agent-tunnel-repro-main-08f72b9-r-8.3-0820.jpg",
+   "time": "08:49:17",
+   "kind": "image"
+  },
+  {
+   "file": "084928-agent-tunnel-repro-main-08f72b9-r-8.5-0820.jpg",
+   "time": "08:49:28",
+   "kind": "image"
+  },
+  {
+   "file": "084938-agent-tunnel-repro-main-08f72b9-r-inside-0820.jpg",
+   "time": "08:49:38",
+   "kind": "image"
+  },
+  {
+   "file": "084949-agent-tunnel-repro-main-08f72b9-r-9.2-0820.jpg",
+   "time": "08:49:49",
+   "kind": "image"
+  },
+  {
+   "file": "084959-agent-tunnel-repro-main-08f72b9-r-before-noon.jpg",
+   "time": "08:49:59",
+   "kind": "image"
+  },
+  {
+   "file": "085009-agent-tunnel-repro-main-08f72b9-r-before-night.jpg",
+   "time": "08:50:09",
+   "kind": "image"
+  },
+  {
+   "file": "085020-agent-tunnel-repro-main-08f72b9-r-5.0-0820.jpg",
+   "time": "08:50:20",
+   "kind": "image"
+  },
+  {
+   "file": "085030-agent-tunnel-repro-main-08f72b9-r-5.0-1600.jpg",
+   "time": "08:50:30",
+   "kind": "image"
+  },
+  {
+   "file": "085041-agent-tunnel-repro-v7pkg-08f72b9-r-before-0820.jpg",
+   "time": "08:50:41",
+   "kind": "image"
+  },
+  {
+   "file": "085051-agent-tunnel-repro-v7pkg-08f72b9-r-entry-0820.jpg",
+   "time": "08:50:51",
+   "kind": "image"
+  },
+  {
+   "file": "085101-agent-tunnel-repro-v7pkg-08f72b9-r-inside-0820.jpg",
+   "time": "08:51:01",
+   "kind": "image"
+  },
+  {
+   "file": "085112-agent-tunnel-repro-v7pkg-08f72b9-r-before-noon.jpg",
+   "time": "08:51:12",
+   "kind": "image"
+  },
+  {
+   "file": "085122-agent-tunnel-repro-v7pkg-08f72b9-r-inside-night.jpg",
+   "time": "08:51:22",
+   "kind": "image"
+  },
+  {
+   "file": "085132-agent-tunnel-repro-v7pkg-08f72b9-r-5.0-0820.jpg",
+   "time": "08:51:32",
+   "kind": "image"
+  },
+  {
+   "file": "085143-agent-tunnel-repro-v7pkg-08f72b9-r-5.0-1600.jpg",
+   "time": "08:51:43",
+   "kind": "image"
+  },
+  {
+   "file": "090334-shot-wayland-+0100-before-orbit-sprint-1200-30.png",
+   "time": "09:03:34",
+   "kind": "image"
+  },
+  {
+   "file": "090435-shot-wayland-+0100-before-orbit-sprint-1200-40.png",
+   "time": "09:04:35",
+   "kind": "image"
+  },
+  {
+   "file": "090446-shot-wayland-+0100-before-orbit-sprint-1200-42.png",
+   "time": "09:04:46",
+   "kind": "image"
+  },
+  {
+   "file": "090458-shot-wayland-+0100-after-orbit-sprint-1200-30.png",
+   "time": "09:04:58",
+   "kind": "image"
+  },
+  {
+   "file": "090509-shot-wayland-+0100-after-orbit-sprint-1200-40.png",
+   "time": "09:05:09",
+   "kind": "image"
+  },
+  {
+   "file": "090520-shot-wayland-+0100-after-orbit-sprint-1200-42.png",
+   "time": "09:05:20",
+   "kind": "image"
+  },
+  {
+   "file": "090552-agent-shadow-ab-zoom-before-40.png",
+   "time": "09:05:52",
+   "kind": "image"
+  },
+  {
+   "file": "090553-agent-shadow-ab-zoom-after-40.png",
+   "time": "09:05:53",
+   "kind": "image"
+  },
+  {
+   "file": "091725-shot-wayland-clean-li-climb.jpg",
+   "time": "09:17:25",
+   "kind": "image"
+  },
+  {
+   "file": "091737-shot-wayland-clean-li-rhine-bridge.jpg",
+   "time": "09:17:37",
+   "kind": "image"
+  },
+  {
+   "file": "091748-shot-wayland-clean-li-samina-bridge.jpg",
+   "time": "09:17:48",
+   "kind": "image"
+  },
+  {
+   "file": "091800-shot-wayland-clean-li-malbun.jpg",
+   "time": "09:18:00",
+   "kind": "image"
+  },
+  {
+   "file": "091826-video-wayland-clean-li-malbun-video.jpg",
+   "time": "09:18:26",
+   "kind": "image"
+  },
+  {
+   "file": "091826-video-wayland-clean-li-malbun-video.mp4",
+   "time": "09:18:26",
+   "kind": "video"
+  },
+  {
+   "file": "091840-shot-wayland-clean-bf-dreisam.jpg",
+   "time": "09:18:40",
+   "kind": "image"
+  },
+  {
+   "file": "091854-shot-wayland-clean-bf-schauinsland.jpg",
+   "time": "09:18:54",
+   "kind": "image"
+  },
+  {
+   "file": "091916-video-wayland-clean-bf-schauinsland-video.jpg",
+   "time": "09:19:16",
+   "kind": "image"
+  },
+  {
+   "file": "091916-video-wayland-clean-bf-schauinsland-video.mp4",
+   "time": "09:19:16",
+   "kind": "video"
+  },
+  {
+   "file": "091927-shot-wayland-clean-li-climb.jpg",
+   "time": "09:19:27",
+   "kind": "image"
+  },
+  {
+   "file": "091934-agent-tunnel-repro-kiosk-08f72b9-r-before-0820.jpg",
+   "time": "09:19:34",
+   "kind": "image"
+  },
+  {
+   "file": "091938-shot-wayland-clean-li-rhine-bridge.jpg",
+   "time": "09:19:38",
+   "kind": "image"
+  },
+  {
+   "file": "091945-agent-tunnel-repro-kiosk-08f72b9-r-8.5-0820.jpg",
+   "time": "09:19:45",
+   "kind": "image"
+  },
+  {
+   "file": "091949-shot-wayland-clean-li-samina-bridge.jpg",
+   "time": "09:19:49",
+   "kind": "image"
+  },
+  {
+   "file": "091955-agent-tunnel-repro-kiosk-08f72b9-r-inside-0820.jpg",
+   "time": "09:19:55",
+   "kind": "image"
+  },
+  {
+   "file": "092001-shot-wayland-clean-li-malbun.jpg",
+   "time": "09:20:01",
+   "kind": "image"
+  },
+  {
+   "file": "092006-agent-tunnel-repro-kiosk-08f72b9-r-5.0-0820.jpg",
+   "time": "09:20:06",
+   "kind": "image"
+  },
+  {
+   "file": "092016-agent-tunnel-repro-kiosk-08f72b9-r-before-noon.jpg",
+   "time": "09:20:16",
+   "kind": "image"
+  },
+  {
+   "file": "092017-video-wayland-clean-li-malbun-video.jpg",
+   "time": "09:20:17",
+   "kind": "image"
+  },
+  {
+   "file": "092017-video-wayland-clean-li-malbun-video.mp4",
+   "time": "09:20:17",
+   "kind": "video"
+  },
+  {
+   "file": "092027-agent-tunnel-repro-kiosk-08f72b9-r-inside-night.jpg",
+   "time": "09:20:27",
+   "kind": "image"
+  },
+  {
+   "file": "092030-shot-wayland-clean-bf-dreisam.jpg",
+   "time": "09:20:30",
+   "kind": "image"
+  },
+  {
+   "file": "092041-agent-tunnel-repro-kiosk-08f72b9-tunnel-video-0820.jpg",
+   "time": "09:20:41",
+   "kind": "image"
+  },
+  {
+   "file": "092043-shot-wayland-clean-bf-schauinsland.jpg",
+   "time": "09:20:43",
+   "kind": "image"
+  },
+  {
+   "file": "092050-agent-tunnel-repro-kiosk-08f72b9-tunnel-video-0820.mp4",
+   "time": "09:20:50",
+   "kind": "video"
+  },
+  {
+   "file": "092104-video-wayland-clean-bf-schauinsland-video.jpg",
+   "time": "09:21:04",
+   "kind": "image"
+  },
+  {
+   "file": "092104-video-wayland-clean-bf-schauinsland-video.mp4",
+   "time": "09:21:04",
+   "kind": "video"
+  },
+  {
+   "file": "093121-agent-tunnel-repro-png-fbd2fce-r-before-0820.png",
+   "time": "09:31:21",
+   "kind": "image"
+  },
+  {
+   "file": "093132-agent-tunnel-repro-png-fbd2fce-r-8.5-0820.png",
+   "time": "09:31:32",
+   "kind": "image"
+  },
+  {
+   "file": "093142-agent-tunnel-repro-png-fbd2fce-r-5.0-0820.png",
+   "time": "09:31:42",
+   "kind": "image"
+  },
+  {
+   "file": "104346-shot-wayland-wheel-contact-flat.jpg",
+   "time": "10:43:46",
+   "kind": "image"
+  },
+  {
+   "file": "104355-shot-wayland-wheel-contact-steep.jpg",
+   "time": "10:43:55",
+   "kind": "image"
+  },
+  {
+   "file": "104403-shot-wayland-wheel-contact-lean.jpg",
+   "time": "10:44:03",
+   "kind": "image"
+  },
+  {
+   "file": "104411-shot-wayland-wheel-contact-mtb-steep.jpg",
+   "time": "10:44:11",
+   "kind": "image"
+  },
+  {
+   "file": "104533-agent-scenes-wheel-contact-hills-before-wheel-contact-flat-contact.jpg",
+   "time": "10:45:33",
+   "kind": "image"
+  },
+  {
+   "file": "104533-agent-scenes-wheel-contact-hills-before-wheel-contact-mtb-steep-contact.jpg",
+   "time": "10:45:33",
+   "kind": "image"
+  },
+  {
+   "file": "104533-agent-scenes-wheel-contact-hills-before-wheel-contact-steep-contact.jpg",
+   "time": "10:45:33",
+   "kind": "image"
+  },
+  {
+   "file": "104647-shot-wayland-wheel-contact-flat.jpg",
+   "time": "10:46:47",
+   "kind": "image"
+  },
+  {
+   "file": "104655-shot-wayland-wheel-contact-steep.jpg",
+   "time": "10:46:55",
+   "kind": "image"
+  },
+  {
+   "file": "104703-shot-wayland-wheel-contact-lean.jpg",
+   "time": "10:47:03",
+   "kind": "image"
+  },
+  {
+   "file": "104712-shot-wayland-wheel-contact-mtb-steep.jpg",
+   "time": "10:47:12",
+   "kind": "image"
+  },
+  {
+   "file": "112859-shot-wayland-clean-li-climb.jpg",
+   "time": "11:28:59",
+   "kind": "image"
+  },
+  {
+   "file": "112911-shot-wayland-clean-li-rhine-bridge.jpg",
+   "time": "11:29:11",
+   "kind": "image"
+  },
+  {
+   "file": "112922-shot-wayland-clean-li-samina-bridge.jpg",
+   "time": "11:29:22",
+   "kind": "image"
+  },
+  {
+   "file": "112933-shot-wayland-clean-li-malbun.jpg",
+   "time": "11:29:33",
+   "kind": "image"
+  },
+  {
+   "file": "112948-video-wayland-clean-li-malbun-video.jpg",
+   "time": "11:29:48",
+   "kind": "image"
+  },
+  {
+   "file": "112948-video-wayland-clean-li-malbun-video.mp4",
+   "time": "11:29:48",
+   "kind": "video"
+  },
+  {
+   "file": "113001-shot-wayland-clean-bf-dreisam.jpg",
+   "time": "11:30:01",
+   "kind": "image"
+  },
+  {
+   "file": "113014-shot-wayland-clean-bf-schauinsland.jpg",
+   "time": "11:30:14",
+   "kind": "image"
+  },
+  {
+   "file": "113030-video-wayland-clean-bf-schauinsland-video.jpg",
+   "time": "11:30:30",
+   "kind": "image"
+  },
+  {
+   "file": "113030-video-wayland-clean-bf-schauinsland-video.mp4",
+   "time": "11:30:30",
+   "kind": "video"
+  },
+  {
+   "file": "113040-shot-wayland-clean-li-climb.jpg",
+   "time": "11:30:40",
+   "kind": "image"
+  },
+  {
+   "file": "113051-shot-wayland-clean-li-rhine-bridge.jpg",
+   "time": "11:30:51",
+   "kind": "image"
+  },
+  {
+   "file": "113103-shot-wayland-clean-li-samina-bridge.jpg",
+   "time": "11:31:03",
+   "kind": "image"
+  },
+  {
+   "file": "113114-shot-wayland-clean-li-malbun.jpg",
+   "time": "11:31:14",
+   "kind": "image"
+  },
+  {
+   "file": "113129-video-wayland-clean-li-malbun-video.jpg",
+   "time": "11:31:29",
+   "kind": "image"
+  },
+  {
+   "file": "113129-video-wayland-clean-li-malbun-video.mp4",
+   "time": "11:31:29",
+   "kind": "video"
+  },
+  {
+   "file": "113137-shot-wayland-menu-time-machine.jpg",
+   "time": "11:31:37",
+   "kind": "image"
+  },
+  {
+   "file": "113142-shot-wayland-clean-bf-dreisam.jpg",
+   "time": "11:31:42",
+   "kind": "image"
+  },
+  {
+   "file": "113144-shot-wayland-menu-world.jpg",
+   "time": "11:31:44",
+   "kind": "image"
+  },
+  {
+   "file": "113153-shot-wayland-menu-world-change.jpg",
+   "time": "11:31:53",
+   "kind": "image"
+  },
+  {
+   "file": "113155-shot-wayland-clean-bf-schauinsland.jpg",
+   "time": "11:31:55",
+   "kind": "image"
+  },
+  {
+   "file": "113201-shot-wayland-menu-world-info.jpg",
+   "time": "11:32:01",
+   "kind": "image"
+  },
+  {
+   "file": "113210-video-wayland-clean-bf-schauinsland-video.jpg",
+   "time": "11:32:10",
+   "kind": "image"
+  },
+  {
+   "file": "113210-video-wayland-clean-bf-schauinsland-video.mp4",
+   "time": "11:32:10",
+   "kind": "video"
+  },
+  {
+   "file": "113211-shot-wayland-menu-world-sun.jpg",
+   "time": "11:32:11",
+   "kind": "image"
+  },
+  {
+   "file": "113222-shot-wayland-menu-world-source.jpg",
+   "time": "11:32:22",
+   "kind": "image"
+  },
+  {
+   "file": "113231-shot-wayland-menu-world-weather.jpg",
+   "time": "11:32:31",
+   "kind": "image"
+  },
+  {
+   "file": "113319-video-wayland-world-switch-blackforest.jpg",
+   "time": "11:33:19",
+   "kind": "image"
+  },
+  {
+   "file": "113319-video-wayland-world-switch-blackforest.mp4",
+   "time": "11:33:19",
+   "kind": "video"
+  },
+  {
+   "file": "113434-agent-tunnel-repro-after-kiosk-r-before-0820.jpg",
+   "time": "11:34:34",
+   "kind": "image"
+  },
+  {
+   "file": "113445-agent-tunnel-repro-after-kiosk-r-8.5-0820.jpg",
+   "time": "11:34:45",
+   "kind": "image"
+  },
+  {
+   "file": "113455-agent-tunnel-repro-after-kiosk-r-entry-0820.jpg",
+   "time": "11:34:55",
+   "kind": "image"
+  },
+  {
+   "file": "113505-agent-tunnel-repro-after-kiosk-r-inside-0820.jpg",
+   "time": "11:35:05",
+   "kind": "image"
+  },
+  {
+   "file": "113516-agent-tunnel-repro-after-kiosk-r-5.0-0820.jpg",
+   "time": "11:35:16",
+   "kind": "image"
+  },
+  {
+   "file": "113526-agent-tunnel-repro-after-kiosk-r-before-noon.jpg",
+   "time": "11:35:26",
+   "kind": "image"
+  },
+  {
+   "file": "113537-agent-tunnel-repro-after-kiosk-r-inside-night.jpg",
+   "time": "11:35:37",
+   "kind": "image"
+  },
+  {
+   "file": "113547-agent-tunnel-repro-after-kiosk-r-2.0-0820.jpg",
+   "time": "11:35:47",
+   "kind": "image"
+  },
+  {
+   "file": "113603-agent-tunnel-repro-after-kiosk-tunnel-video-0820.jpg",
+   "time": "11:36:03",
+   "kind": "image"
+  },
+  {
+   "file": "113616-agent-tunnel-repro-after-kiosk-tunnel-video-0820.mp4",
+   "time": "11:36:16",
+   "kind": "video"
+  },
+  {
+   "file": "113943-agent-tunnel-repro-after-kiosk-tunnel-through-0820.jpg",
+   "time": "11:39:43",
+   "kind": "image"
+  },
+  {
+   "file": "113953-agent-tunnel-repro-after-kiosk-tunnel-through-0820.mp4",
+   "time": "11:39:53",
+   "kind": "video"
+  },
+  {
+   "file": "115310-agent-scenes-tenerife-1-showcase-tf-teide.jpg",
+   "time": "11:53:10",
+   "kind": "image"
+  },
+  {
+   "file": "115322-agent-scenes-tenerife-1-showcase-tf-teide-video.jpg",
+   "time": "11:53:22",
+   "kind": "image"
+  },
+  {
+   "file": "115332-agent-scenes-tenerife-1-showcase-tf-teide-video.mp4",
+   "time": "11:53:32",
+   "kind": "video"
+  },
+  {
+   "file": "115347-agent-scenes-tenerife-1-showcase-tf-cablecar.jpg",
+   "time": "11:53:47",
+   "kind": "image"
+  },
+  {
+   "file": "115401-agent-scenes-tenerife-1-showcase-tf-teide-sunrise.jpg",
+   "time": "11:54:01",
+   "kind": "image"
+  },
+  {
+   "file": "115416-agent-scenes-tenerife-1-showcase-tf-teide-sunset.jpg",
+   "time": "11:54:16",
+   "kind": "image"
+  },
+  {
+   "file": "115430-agent-scenes-tenerife-1-showcase-tf-masca.jpg",
+   "time": "11:54:30",
+   "kind": "image"
+  },
+  {
+   "file": "115443-agent-scenes-tenerife-1-showcase-tf-masca-video.jpg",
+   "time": "11:54:43",
+   "kind": "image"
+  },
+  {
+   "file": "115454-agent-scenes-tenerife-1-showcase-tf-masca-video.mp4",
+   "time": "11:54:54",
+   "kind": "video"
+  },
+  {
+   "file": "115508-agent-scenes-tenerife-1-showcase-tf-gigantes.jpg",
+   "time": "11:55:08",
+   "kind": "image"
+  },
+  {
+   "file": "115523-agent-scenes-tenerife-1-showcase-tf-santacruz.jpg",
+   "time": "11:55:23",
+   "kind": "image"
+  },
+  {
+   "file": "115537-agent-scenes-tenerife-1-showcase-tf-orotava.jpg",
+   "time": "11:55:37",
+   "kind": "image"
+  },
+  {
+   "file": "115552-agent-scenes-tenerife-1-showcase-tf-anaga.jpg",
+   "time": "11:55:52",
+   "kind": "image"
+  },
+  {
+   "file": "115741-agent-scenes-wheel-contact-hills-after-wheel-contact-flat-contact.jpg",
+   "time": "11:57:41",
+   "kind": "image"
+  },
+  {
+   "file": "115741-agent-scenes-wheel-contact-hills-after-wheel-contact-mtb-steep-contact.jpg",
+   "time": "11:57:41",
+   "kind": "image"
+  },
+  {
+   "file": "115741-agent-scenes-wheel-contact-hills-after-wheel-contact-steep-contact.jpg",
+   "time": "11:57:41",
+   "kind": "image"
+  },
+  {
+   "file": "115829-shot-wayland-wheel-contact-flat.jpg",
+   "time": "11:58:29",
+   "kind": "image"
+  },
+  {
+   "file": "115837-shot-wayland-wheel-contact-steep.jpg",
+   "time": "11:58:37",
+   "kind": "image"
+  },
+  {
+   "file": "115845-shot-wayland-wheel-contact-lean.jpg",
+   "time": "11:58:45",
+   "kind": "image"
+  },
+  {
+   "file": "115853-shot-wayland-wheel-contact-mtb-steep.jpg",
+   "time": "11:58:53",
+   "kind": "image"
+  },
+  {
+   "file": "122457-agent-scenes-wheel-contact-vaduz2-before-wheel-contact-vaduz-flat-contact.jpg",
+   "time": "12:24:57",
+   "kind": "image"
+  },
+  {
+   "file": "122457-agent-scenes-wheel-contact-vaduz2-before-wheel-contact-vaduz-mtb-steep-contact.jpg",
+   "time": "12:24:57",
+   "kind": "image"
+  },
+  {
+   "file": "122457-agent-scenes-wheel-contact-vaduz2-before-wheel-contact-vaduz-steep-contact.jpg",
+   "time": "12:24:57",
+   "kind": "image"
+  },
+  {
+   "file": "123133-shot-wayland-wheel-contact-vaduz-flat.jpg",
+   "time": "12:31:33",
+   "kind": "image"
+  },
+  {
+   "file": "123142-shot-wayland-wheel-contact-vaduz-steep.jpg",
+   "time": "12:31:42",
+   "kind": "image"
+  },
+  {
+   "file": "123150-shot-wayland-wheel-contact-vaduz-mtb-steep.jpg",
+   "time": "12:31:50",
+   "kind": "image"
+  },
+  {
+   "file": "123249-agent-scenes-tenerife-2-showcase-tf-teide-sunset.jpg",
+   "time": "12:32:49",
+   "kind": "image"
+  },
+  {
+   "file": "123304-agent-scenes-tenerife-2-showcase-tf-masca.jpg",
+   "time": "12:33:04",
+   "kind": "image"
+  },
+  {
+   "file": "123318-agent-scenes-tenerife-2-showcase-tf-gigantes.jpg",
+   "time": "12:33:18",
+   "kind": "image"
+  },
+  {
+   "file": "123334-agent-scenes-tenerife-2-showcase-tf-santacruz.jpg",
+   "time": "12:33:34",
+   "kind": "image"
+  },
+  {
+   "file": "124050-agent-scenes-t2-merge-before-far-view.jpg",
+   "time": "12:40:50",
+   "kind": "image"
+  },
+  {
+   "file": "124100-agent-scenes-t2-merge-before-mat-meadow-road.jpg",
+   "time": "12:41:00",
+   "kind": "image"
+  },
+  {
+   "file": "124111-agent-scenes-t2-merge-before-mat-forest.jpg",
+   "time": "12:41:11",
+   "kind": "image"
+  },
+  {
+   "file": "124120-agent-scenes-t2-merge-before-mat-rhine-gravel.jpg",
+   "time": "12:41:20",
+   "kind": "image"
+  },
+  {
+   "file": "124133-agent-scenes-t2-merge-before-bf-mat-forest.jpg",
+   "time": "12:41:33",
+   "kind": "image"
+  },
+  {
+   "file": "124147-agent-scenes-t2-merge-after-far-view.jpg",
+   "time": "12:41:47",
+   "kind": "image"
+  },
+  {
+   "file": "124158-agent-scenes-t2-merge-after-mat-meadow-road.jpg",
+   "time": "12:41:58",
+   "kind": "image"
+  },
+  {
+   "file": "124208-agent-scenes-t2-merge-after-mat-forest.jpg",
+   "time": "12:42:08",
+   "kind": "image"
+  },
+  {
+   "file": "124218-agent-scenes-t2-merge-after-mat-rhine-gravel.jpg",
+   "time": "12:42:18",
+   "kind": "image"
+  },
+  {
+   "file": "124231-agent-scenes-t2-merge-after-bf-mat-forest.jpg",
+   "time": "12:42:31",
+   "kind": "image"
+  },
+  {
+   "file": "124250-agent-scenes-t2-merge-compare-far-view.jpg",
+   "time": "12:42:50",
+   "kind": "image"
+  },
+  {
+   "file": "124250-agent-scenes-t2-merge-compare-mat-forest.jpg",
+   "time": "12:42:50",
+   "kind": "image"
+  },
+  {
+   "file": "124250-agent-scenes-t2-merge-compare-mat-meadow-road.jpg",
+   "time": "12:42:50",
+   "kind": "image"
+  },
+  {
+   "file": "124250-agent-scenes-t2-merge-compare-mat-rhine-gravel.jpg",
+   "time": "12:42:50",
+   "kind": "image"
+  },
+  {
+   "file": "124251-agent-scenes-t2-merge-compare-bf-mat-forest.jpg",
+   "time": "12:42:51",
+   "kind": "image"
+  },
+  {
+   "file": "124251-agent-scenes-t2-merge-compare-sheet.jpg",
+   "time": "12:42:51",
+   "kind": "image"
+  },
+  {
+   "file": "124623-agent-scenes-wheel-contact-vaduz2-after-wheel-contact-vaduz-flat-contact.jpg",
+   "time": "12:46:23",
+   "kind": "image"
+  },
+  {
+   "file": "124623-agent-scenes-wheel-contact-vaduz2-after-wheel-contact-vaduz-mtb-steep-contact.jpg",
+   "time": "12:46:23",
+   "kind": "image"
+  },
+  {
+   "file": "124623-agent-scenes-wheel-contact-vaduz2-after-wheel-contact-vaduz-steep-contact.jpg",
+   "time": "12:46:23",
+   "kind": "image"
+  },
+  {
+   "file": "124704-shot-wayland-wheel-contact-vaduz-flat.jpg",
+   "time": "12:47:04",
+   "kind": "image"
+  },
+  {
+   "file": "124713-shot-wayland-wheel-contact-vaduz-steep.jpg",
+   "time": "12:47:13",
+   "kind": "image"
+  },
+  {
+   "file": "124721-shot-wayland-wheel-contact-vaduz-mtb-steep.jpg",
+   "time": "12:47:21",
+   "kind": "image"
+  },
+  {
+   "file": "125243-shot-wayland-readme-climb-behind.jpg",
+   "time": "12:52:43",
+   "kind": "image"
+  },
+  {
+   "file": "125259-shot-wayland-bf-schauinsland-group.jpg",
+   "time": "12:52:59",
+   "kind": "image"
+  },
+  {
+   "file": "125312-shot-wayland-clean-li-rhine-bridge.jpg",
+   "time": "12:53:12",
+   "kind": "image"
+  },
+  {
+   "file": "125322-shot-wayland-sky-golden-hour.jpg",
+   "time": "12:53:22",
+   "kind": "image"
+  },
+  {
+   "file": "125337-shot-wayland-showcase-mummelsee.jpg",
+   "time": "12:53:37",
+   "kind": "image"
+  },
+  {
+   "file": "125352-shot-wayland-showcase-hochstrasse.jpg",
+   "time": "12:53:52",
+   "kind": "image"
+  },
+  {
+   "file": "125407-shot-wayland-showcase-tf-teide-sunset.jpg",
+   "time": "12:54:07",
+   "kind": "image"
+  },
+  {
+   "file": "125422-shot-wayland-showcase-tf-masca.jpg",
+   "time": "12:54:22",
+   "kind": "image"
+  },
+  {
+   "file": "125437-shot-wayland-showcase-tf-gigantes.jpg",
+   "time": "12:54:37",
+   "kind": "image"
+  },
+  {
+   "file": "125800-agent-scenes-tf-before-showcase-tf-teide.jpg",
+   "time": "12:58:00",
+   "kind": "image"
+  },
+  {
+   "file": "125815-agent-scenes-tf-before-showcase-tf-cablecar.jpg",
+   "time": "12:58:15",
+   "kind": "image"
+  },
+  {
+   "file": "125829-agent-scenes-tf-before-showcase-tf-gigantes.jpg",
+   "time": "12:58:29",
+   "kind": "image"
+  },
+  {
+   "file": "125844-agent-scenes-tf-after-showcase-tf-teide.jpg",
+   "time": "12:58:44",
+   "kind": "image"
+  },
+  {
+   "file": "125858-agent-scenes-tf-after-showcase-tf-cablecar.jpg",
+   "time": "12:58:58",
+   "kind": "image"
+  },
+  {
+   "file": "125912-agent-scenes-tf-after-showcase-tf-gigantes.jpg",
+   "time": "12:59:12",
+   "kind": "image"
+  },
+  {
+   "file": "125930-agent-scenes-tf-compare-sheet.jpg",
+   "time": "12:59:30",
+   "kind": "image"
+  },
+  {
+   "file": "125930-agent-scenes-tf-compare-showcase-tf-cablecar.jpg",
+   "time": "12:59:30",
+   "kind": "image"
+  },
+  {
+   "file": "125930-agent-scenes-tf-compare-showcase-tf-gigantes.jpg",
+   "time": "12:59:30",
+   "kind": "image"
+  },
+  {
+   "file": "125930-agent-scenes-tf-compare-showcase-tf-teide.jpg",
+   "time": "12:59:30",
+   "kind": "image"
+  },
+  {
+   "file": "143130-shot-wayland-look-vaduz-roofs.jpg",
+   "time": "14:31:30",
+   "kind": "image"
+  },
+  {
+   "file": "143133-shot-wayland-look-bf-farms.jpg",
+   "time": "14:31:33",
+   "kind": "image"
+  },
+  {
+   "file": "143141-shot-wayland-look-malbun-meadows.jpg",
+   "time": "14:31:41",
+   "kind": "image"
+  },
+  {
+   "file": "143147-shot-wayland-look-bf-forest.jpg",
+   "time": "14:31:47",
+   "kind": "image"
+  },
+  {
+   "file": "143152-shot-wayland-look-season-summer.jpg",
+   "time": "14:31:52",
+   "kind": "image"
+  },
+  {
+   "file": "143253-shot-wayland-look-season-autumn.jpg",
+   "time": "14:32:53",
+   "kind": "image"
+  },
+  {
+   "file": "143305-shot-wayland-look-season-winter.jpg",
+   "time": "14:33:05",
+   "kind": "image"
+  },
+  {
+   "file": "143332-shot-wayland-look-tf-canadas.jpg",
+   "time": "14:33:32",
+   "kind": "image"
+  },
+  {
+   "file": "145033-shot-wayland-look-vaduz-roofs.jpg",
+   "time": "14:50:33",
+   "kind": "image"
+  },
+  {
+   "file": "145043-shot-wayland-look-malbun-meadows.jpg",
+   "time": "14:50:43",
+   "kind": "image"
+  },
+  {
+   "file": "145055-shot-wayland-look-season-summer.jpg",
+   "time": "14:50:55",
+   "kind": "image"
+  },
+  {
+   "file": "145110-shot-wayland-look-bf-farms.jpg",
+   "time": "14:51:10",
+   "kind": "image"
+  },
+  {
+   "file": "145110-shot-wayland-look-tf-canadas.jpg",
+   "time": "14:51:10",
+   "kind": "image"
+  },
+  {
+   "file": "145125-shot-wayland-look-bf-forest.jpg",
+   "time": "14:51:25",
+   "kind": "image"
+  },
+  {
+   "file": "145821-shot-wayland-teide-roques-y0.jpg",
+   "time": "14:58:21",
+   "kind": "image"
+  },
+  {
+   "file": "145838-shot-wayland-teide-roques-y180.jpg",
+   "time": "14:58:38",
+   "kind": "image"
+  },
+  {
+   "file": "145854-shot-wayland-teide-minas-y0.jpg",
+   "time": "14:58:54",
+   "kind": "image"
+  },
+  {
+   "file": "145911-shot-wayland-teide-minas-y180.jpg",
+   "time": "14:59:11",
+   "kind": "image"
+  },
+  {
+   "file": "145927-shot-wayland-teide-portillo-y0.jpg",
+   "time": "14:59:27",
+   "kind": "image"
+  },
+  {
+   "file": "145943-shot-wayland-teide-portillo-y180.jpg",
+   "time": "14:59:43",
+   "kind": "image"
+  },
+  {
+   "file": "150032-shot-wayland-look-season-summer.jpg",
+   "time": "15:00:32",
+   "kind": "image"
+  },
+  {
+   "file": "150045-shot-wayland-look-season-autumn.jpg",
+   "time": "15:00:45",
+   "kind": "image"
+  },
+  {
+   "file": "150057-shot-wayland-look-season-winter.jpg",
+   "time": "15:00:57",
+   "kind": "image"
+  },
+  {
+   "file": "151437-shot-wayland-teide2-a.jpg",
+   "time": "15:14:37",
+   "kind": "image"
+  },
+  {
+   "file": "151453-shot-wayland-teide2-b.jpg",
+   "time": "15:14:53",
+   "kind": "image"
+  },
+  {
+   "file": "151508-shot-wayland-teide2-c.jpg",
+   "time": "15:15:08",
+   "kind": "image"
+  },
+  {
+   "file": "151523-shot-wayland-teide2-d.jpg",
+   "time": "15:15:23",
+   "kind": "image"
+  },
+  {
+   "file": "151538-shot-wayland-teide2-e.jpg",
+   "time": "15:15:38",
+   "kind": "image"
+  },
+  {
+   "file": "151553-shot-wayland-teide2-f.jpg",
+   "time": "15:15:53",
+   "kind": "image"
+  },
+  {
+   "file": "152113-shot-wayland-teide3-p1.jpg",
+   "time": "15:21:13",
+   "kind": "image"
+  },
+  {
+   "file": "152128-shot-wayland-teide3-p2.jpg",
+   "time": "15:21:28",
+   "kind": "image"
+  },
+  {
+   "file": "152144-shot-wayland-teide3-m1.jpg",
+   "time": "15:21:44",
+   "kind": "image"
+  },
+  {
+   "file": "152201-shot-wayland-teide3-m2.jpg",
+   "time": "15:22:01",
+   "kind": "image"
+  },
+  {
+   "file": "152217-shot-wayland-teide3-m3.jpg",
+   "time": "15:22:17",
+   "kind": "image"
+  },
+  {
+   "file": "152233-shot-wayland-teide3-r1.jpg",
+   "time": "15:22:33",
+   "kind": "image"
+  },
+  {
+   "file": "152743-shot-wayland-teide4-a.jpg",
+   "time": "15:27:43",
+   "kind": "image"
+  },
+  {
+   "file": "152759-shot-wayland-teide4-b.jpg",
+   "time": "15:27:59",
+   "kind": "image"
+  },
+  {
+   "file": "152815-shot-wayland-teide4-c.jpg",
+   "time": "15:28:15",
+   "kind": "image"
+  },
+  {
+   "file": "152832-shot-wayland-teide4-d.jpg",
+   "time": "15:28:32",
+   "kind": "image"
+  },
+  {
+   "file": "152848-shot-wayland-teide4-e.jpg",
+   "time": "15:28:48",
+   "kind": "image"
+  },
+  {
+   "file": "152904-shot-wayland-teide4-f.jpg",
+   "time": "15:29:04",
+   "kind": "image"
+  },
+  {
+   "file": "160006-shot-wayland-teide5-a.jpg",
+   "time": "16:00:06",
+   "kind": "image"
+  },
+  {
+   "file": "160021-shot-wayland-teide5-b.jpg",
+   "time": "16:00:21",
+   "kind": "image"
+  },
+  {
+   "file": "160038-shot-wayland-teide5-c.jpg",
+   "time": "16:00:38",
+   "kind": "image"
+  },
+  {
+   "file": "160054-shot-wayland-teide5-d.jpg",
+   "time": "16:00:54",
+   "kind": "image"
+  },
+  {
+   "file": "160110-shot-wayland-teide5-e.jpg",
+   "time": "16:01:10",
+   "kind": "image"
+  },
+  {
+   "file": "160126-shot-wayland-teide5-f.jpg",
+   "time": "16:01:26",
+   "kind": "image"
+  },
+  {
+   "file": "170322-shot-wayland-showcase-tf-teide-iconic.jpg",
+   "time": "17:03:22",
+   "kind": "image"
+  },
+  {
+   "file": "170337-shot-wayland-showcase-tf-teide-km18.jpg",
+   "time": "17:03:37",
+   "kind": "image"
+  },
+  {
+   "file": "183948-agent-scenes-before-t4-2026-11-13T1830-look-houses-vaduz.jpg",
+   "time": "18:39:48",
+   "kind": "image"
+  },
+  {
+   "file": "184000-agent-scenes-before-t4-2026-11-13T1830-look-houses-triesenberg.jpg",
+   "time": "18:40:00",
+   "kind": "image"
+  },
+  {
+   "file": "184010-agent-scenes-before-t4-2026-11-13T1830-look-houses-malbun.jpg",
+   "time": "18:40:10",
+   "kind": "image"
+  },
+  {
+   "file": "184023-agent-scenes-before-t4-2026-11-13T1830-look-houses-bf-stmaergen.jpg",
+   "time": "18:40:23",
+   "kind": "image"
+  },
+  {
+   "file": "184038-agent-scenes-before-t4-2026-11-13T1830-look-houses-bf-hofsgrund.jpg",
+   "time": "18:40:38",
+   "kind": "image"
+  },
+  {
+   "file": "184050-agent-scenes-before-t4-2026-11-13T1830-look-houses-tf-orotava.jpg",
+   "time": "18:40:50",
+   "kind": "image"
+  },
+  {
+   "file": "184103-agent-scenes-before-t4-2026-11-13T1830-look-houses-tf-gigantes.jpg",
+   "time": "18:41:03",
+   "kind": "image"
+  },
+  {
+   "file": "184222-shot-wayland-showcase-mummelsee.jpg",
+   "time": "18:42:22",
+   "kind": "image"
+  },
+  {
+   "file": "184237-shot-wayland-showcase-hornisgrinde.jpg",
+   "time": "18:42:37",
+   "kind": "image"
+  },
+  {
+   "file": "184253-shot-wayland-showcase-feldberg.jpg",
+   "time": "18:42:53",
+   "kind": "image"
+  },
+  {
+   "file": "184309-shot-wayland-showcase-belchen.jpg",
+   "time": "18:43:09",
+   "kind": "image"
+  },
+  {
+   "file": "184323-shot-wayland-showcase-malbun-hairpins.jpg",
+   "time": "18:43:23",
+   "kind": "image"
+  },
+  {
+   "file": "184337-shot-wayland-showcase-tf-teide-iconic.jpg",
+   "time": "18:43:37",
+   "kind": "image"
+  },
+  {
+   "file": "184429-shot-wayland-showcase-mummelsee.jpg",
+   "time": "18:44:29",
+   "kind": "image"
+  },
+  {
+   "file": "184444-shot-wayland-showcase-hornisgrinde.jpg",
+   "time": "18:44:44",
+   "kind": "image"
+  },
+  {
+   "file": "184459-shot-wayland-showcase-feldberg.jpg",
+   "time": "18:44:59",
+   "kind": "image"
+  },
+  {
+   "file": "184515-shot-wayland-showcase-belchen.jpg",
+   "time": "18:45:15",
+   "kind": "image"
+  },
+  {
+   "file": "184528-shot-wayland-showcase-malbun-hairpins.jpg",
+   "time": "18:45:28",
+   "kind": "image"
+  },
+  {
+   "file": "184856-agent-scenes-showcase-mummelsee.jpg",
+   "time": "18:48:56",
+   "kind": "image"
+  },
+  {
+   "file": "184949-shot-wayland-showcase-hornisgrinde.jpg",
+   "time": "18:49:49",
+   "kind": "image"
+  },
+  {
+   "file": "185005-shot-wayland-showcase-feldberg.jpg",
+   "time": "18:50:05",
+   "kind": "image"
+  },
+  {
+   "file": "185020-shot-wayland-showcase-belchen.jpg",
+   "time": "18:50:20",
+   "kind": "image"
+  },
+  {
+   "file": "185034-shot-wayland-showcase-malbun-hairpins.jpg",
+   "time": "18:50:34",
+   "kind": "image"
+  },
+  {
+   "file": "194032-agent-scenes-after-t4-1-look-houses-vaduz.jpg",
+   "time": "19:40:32",
+   "kind": "image"
+  },
+  {
+   "file": "194042-agent-scenes-after-t4-1-look-houses-triesenberg.jpg",
+   "time": "19:40:42",
+   "kind": "image"
+  },
+  {
+   "file": "194053-agent-scenes-after-t4-1-look-houses-malbun.jpg",
+   "time": "19:40:53",
+   "kind": "image"
+  },
+  {
+   "file": "194107-agent-scenes-after-t4-1-look-houses-bf-stmaergen.jpg",
+   "time": "19:41:07",
+   "kind": "image"
+  },
+  {
+   "file": "194120-agent-scenes-after-t4-1-look-houses-bf-hofsgrund.jpg",
+   "time": "19:41:20",
+   "kind": "image"
+  },
+  {
+   "file": "194133-agent-scenes-after-t4-1-look-houses-tf-orotava.jpg",
+   "time": "19:41:33",
+   "kind": "image"
+  },
+  {
+   "file": "194146-agent-scenes-after-t4-1-look-houses-tf-gigantes.jpg",
+   "time": "19:41:46",
+   "kind": "image"
+  },
+  {
+   "file": "194328-shot-wayland-god-unicorn-flight.jpg",
+   "time": "19:43:28",
+   "kind": "image"
+  },
+  {
+   "file": "194338-shot-wayland-god-unicorn-side.jpg",
+   "time": "19:43:38",
+   "kind": "image"
+  },
+  {
+   "file": "194427-video-wayland-god-flight-video.jpg",
+   "time": "19:44:27",
+   "kind": "image"
+  },
+  {
+   "file": "194427-video-wayland-god-flight-video.mp4",
+   "time": "19:44:27",
+   "kind": "video"
+  },
+  {
+   "file": "194758-agent-scenes-after-t4-2-look-houses-triesenberg.jpg",
+   "time": "19:47:58",
+   "kind": "image"
+  },
+  {
+   "file": "194815-shot-wayland-god-unicorn-flight.jpg",
+   "time": "19:48:15",
+   "kind": "image"
+  },
+  {
+   "file": "194825-shot-wayland-god-unicorn-side.jpg",
+   "time": "19:48:25",
+   "kind": "image"
+  },
+  {
+   "file": "194920-agent-build-history-2026-11-13-god-flight-video.mp4",
+   "time": "19:49:20",
+   "kind": "video"
+  },
+  {
+   "file": "194920-video-wayland-god-flight-video.jpg",
+   "time": "19:49:20",
+   "kind": "image"
+  },
+  {
+   "file": "194920-video-wayland-god-flight-video.mp4",
+   "time": "19:49:20",
+   "kind": "video"
+  },
+  {
+   "file": "195008-agent-scenes-after-t4-3-look-houses-vaduz.jpg",
+   "time": "19:50:08",
+   "kind": "image"
+  },
+  {
+   "file": "195019-agent-scenes-after-t4-3-look-houses-triesenberg.jpg",
+   "time": "19:50:19",
+   "kind": "image"
+  },
+  {
+   "file": "195029-agent-scenes-after-t4-3-look-houses-malbun.jpg",
+   "time": "19:50:29",
+   "kind": "image"
+  },
+  {
+   "file": "195042-agent-scenes-after-t4-3-look-houses-bf-stmaergen.jpg",
+   "time": "19:50:42",
+   "kind": "image"
+  },
+  {
+   "file": "195056-agent-scenes-after-t4-3-look-houses-bf-hofsgrund.jpg",
+   "time": "19:50:56",
+   "kind": "image"
+  },
+  {
+   "file": "195109-agent-scenes-after-t4-3-look-houses-tf-orotava.jpg",
+   "time": "19:51:09",
+   "kind": "image"
+  },
+  {
+   "file": "195121-agent-scenes-after-t4-3-look-houses-tf-gigantes.jpg",
+   "time": "19:51:21",
+   "kind": "image"
+  },
+  {
+   "file": "202601-agent-scenes-after-t4-final-look-houses-vaduz.jpg",
+   "time": "20:26:01",
+   "kind": "image"
+  },
+  {
+   "file": "202612-agent-scenes-after-t4-final-look-houses-triesenberg.jpg",
+   "time": "20:26:12",
+   "kind": "image"
+  },
+  {
+   "file": "202622-agent-scenes-after-t4-final-look-houses-malbun.jpg",
+   "time": "20:26:22",
+   "kind": "image"
+  },
+  {
+   "file": "202636-agent-scenes-after-t4-final-look-houses-bf-stmaergen.jpg",
+   "time": "20:26:36",
+   "kind": "image"
+  },
+  {
+   "file": "202649-agent-scenes-after-t4-final-look-houses-bf-hofsgrund.jpg",
+   "time": "20:26:49",
+   "kind": "image"
+  },
+  {
+   "file": "202702-agent-scenes-after-t4-final-look-houses-tf-orotava.jpg",
+   "time": "20:27:02",
+   "kind": "image"
+  },
+  {
+   "file": "202715-agent-scenes-after-t4-final-look-houses-tf-gigantes.jpg",
+   "time": "20:27:15",
+   "kind": "image"
+  },
+  {
+   "file": "204755-shot-ocw-a3e1-x11.jpg",
+   "time": "20:47:55",
+   "kind": "image"
+  },
+  {
+   "file": "204804-shot-wayland-ocw-a3e1-wl.jpg",
+   "time": "20:48:04",
+   "kind": "image"
+  },
+  {
+   "file": "204913-shot-showcase-malbun-hairpins.jpg",
+   "time": "20:49:13",
+   "kind": "image"
+  },
+  {
+   "file": "205650-shot-ocw.jpg",
+   "time": "20:56:50",
+   "kind": "image"
+  },
+  {
+   "file": "205659-shot-wayland-ocw-wayland.jpg",
+   "time": "20:56:59",
+   "kind": "image"
+  },
+  {
+   "file": "212251-shot-wayland-god-unicorn-flight.jpg",
+   "time": "21:22:51",
+   "kind": "image"
+  },
+  {
+   "file": "212302-shot-wayland-god-inspect-vaduz.jpg",
+   "time": "21:23:02",
+   "kind": "image"
+  },
+  {
+   "file": "212315-shot-wayland-god-inspect-tenerife.jpg",
+   "time": "21:23:15",
+   "kind": "image"
+  },
+  {
+   "file": "212316-agent-scenes-t5-before-road-vaduz-aeule.jpg",
+   "time": "21:23:16",
+   "kind": "image"
+  },
+  {
+   "file": "212327-agent-scenes-t5-before-road-vaduz-zebra.jpg",
+   "time": "21:23:27",
+   "kind": "image"
+  },
+  {
+   "file": "212341-agent-scenes-t5-before-road-freiburg-centre.jpg",
+   "time": "21:23:41",
+   "kind": "image"
+  },
+  {
+   "file": "212408-agent-scenes-t5-before-road-canadas-edge.jpg",
+   "time": "21:24:08",
+   "kind": "image"
+  },
+  {
+   "file": "213237-shot-wayland-god-inspect-vaduz.jpg",
+   "time": "21:32:37",
+   "kind": "image"
+  },
+  {
+   "file": "213251-shot-wayland-god-inspect-tenerife.jpg",
+   "time": "21:32:51",
+   "kind": "image"
+  },
+  {
+   "file": "213521-shot-wayland-showcase-tf-teide-iconic.jpg",
+   "time": "21:35:21",
+   "kind": "image"
+  },
+  {
+   "file": "213559-shot-wayland-god-inspect-vaduz.jpg",
+   "time": "21:35:59",
+   "kind": "image"
+  },
+  {
+   "file": "213613-shot-wayland-god-inspect-tenerife.jpg",
+   "time": "21:36:13",
+   "kind": "image"
+  },
+  {
+   "file": "213630-agent-scenes-t5-after-li-road-vaduz-aeule.jpg",
+   "time": "21:36:30",
+   "kind": "image"
+  },
+  {
+   "file": "213641-agent-scenes-t5-after-li-road-vaduz-zebra.jpg",
+   "time": "21:36:41",
+   "kind": "image"
+  },
+  {
+   "file": "214038-agent-scenes-t5-after-tf-road-canadas-edge.jpg",
+   "time": "21:40:38",
+   "kind": "image"
+  },
+  {
+   "file": "215806-agent-scenes-t5-before-road-country.jpg",
+   "time": "21:58:06",
+   "kind": "image"
+  },
+  {
+   "file": "215845-agent-scenes-t5-after-road-vaduz-aeule.jpg",
+   "time": "21:58:45",
+   "kind": "image"
+  },
+  {
+   "file": "215856-agent-scenes-t5-after-road-vaduz-zebra.jpg",
+   "time": "21:58:56",
+   "kind": "image"
+  },
+  {
+   "file": "215909-agent-scenes-t5-after-road-freiburg-centre.jpg",
+   "time": "21:59:09",
+   "kind": "image"
+  },
+  {
+   "file": "215920-agent-scenes-t5-after-road-country.jpg",
+   "time": "21:59:20",
+   "kind": "image"
+  },
+  {
+   "file": "215933-agent-scenes-t5-after-road-canadas-edge.jpg",
+   "time": "21:59:33",
+   "kind": "image"
+  }
+ ],
+ "images": 447,
+ "videos": 28,
+ "sounds": 0,
+ "builds": {
+  "runs": 373,
+  "seconds": 257412.3,
+  "cargo_s": 2225.0,
+  "compiled": 1471,
+  "wait_s": 25124.0,
+  "failed": [
+   {
+    "start": "2026-11-13T06:34:06+01:00",
+    "seconds": 0.9,
+    "machine": "macos",
+    "os": "macos",
+    "checkout": "OCW",
+    "branch": "main",
+    "command": "echo will-fail >&2; exit 3",
+    "exit": 3,
+    "log": "063406-macos-68601.log"
+   },
+   {
+    "start": "2026-11-13T06:49:15+01:00",
+    "seconds": 213.9,
+    "machine": "macos",
+    "os": "macos",
+    "checkout": "agent-a0cf9d260fcc24662",
+    "branch": "worktree-agent-a0cf9d260fcc24662",
+    "command": "cargo run -q -p ocw-assets -- generate && cargo test -q -p ocw-assets 2>&1 | tail -30 && git status --short assets",
+    "exit": 128,
+    "log": "064915-macos-89185.log"
+   },
+   {
+    "start": "2026-11-13T09:06:08+01:00",
+    "seconds": 1639.9,
+    "machine": "macos",
+    "os": "macos",
+    "checkout": "agent-aca62f4f05d964134",
+    "branch": "worktree-agent-aca62f4f05d964134",
+    "command": "cargo test -p ocw-render 2>&1 | grep -E \"^test result|FAILED|panicked\"",
+    "exit": 1,
+    "log": "090608-macos-251497.log"
+   },
+   {
+    "start": "2026-11-13T10:33:38+01:00",
+    "seconds": 41.1,
+    "machine": "macos",
+    "os": "macos",
+    "checkout": "agent-a0cf9d260fcc24662",
+    "branch": "worktree-agent-a0cf9d260fcc24662",
+    "command": "cargo run -q -p ocw-assets -- generate && cargo test -q -p ocw-assets > /tmp/ocw-assets-test.log 2>&1; grep \"test result\" /tmp/ocw-assets-test.log",
+    "exit": 1,
+    "log": "103338-macos-330826.log"
+   },
+   {
+    "start": "2026-11-13T10:35:07+01:00",
+    "seconds": 4.3,
+    "machine": "macos",
+    "os": "macos",
+    "checkout": "agent-a7e58741f5bce8d7d",
+    "branch": "worktree-agent-a7e58741f5bce8d7d",
+    "command": "cargo fmt --all -- --check -l 2>/dev/null | sed \"s|.*agent-a7e58741f5bce8d7d/||\"; cargo fmt --all; cargo clippy -q --workspace --all-targets -- -D warnings 2>&1 | grep -E \"^(error|warning)\" -A12 | ...",
+    "exit": 2,
+    "log": "103507-macos-333140.log"
+   },
+   {
+    "start": "2026-11-13T10:45:54+01:00",
+    "seconds": 3.9,
+    "machine": "marge",
+    "os": "linux",
+    "checkout": "OCW",
+    "branch": "main",
+    "command": "scripts/test-release-version.sh",
+    "exit": 1,
+    "log": "104554-marge-346313.log"
+   },
+   {
+    "start": "2026-11-13T11:29:23+01:00",
+    "seconds": 183.2,
+    "machine": "marge",
+    "os": "linux",
+    "checkout": "agent-a0cf9d260fcc24662",
+    "branch": "worktree-agent-a0cf9d260fcc24662",
+    "command": "scripts/render-scenes.sh --out test-output/scenes/2026-11-13-112923 --only 'wheel-contact-*'",
+    "exit": 1,
+    "log": "112923-marge-388164.log"
+   },
+   {
+    "start": "2026-11-13T12:02:14+01:00",
+    "seconds": 613.7,
+    "machine": "Win11Builder",
+    "os": "windows",
+    "checkout": "OCW",
+    "branch": "main",
+    "command": "cmd /c \"cargo test -p ocw-world -p ocw-worldgen -p ocw-worldstore > wt.log 2>&1\"; $p=0; $f=0; foreach ($l in (Select-String -Path wt.log -Pattern \"^test result\")) { $w = $l.Line -split \" \"; $p += [...",
+    "exit": 101,
+    "log": "120214-Win11Builder-426589.log"
+   },
+   {
+    "start": "2026-11-13T13:45:12+01:00",
+    "seconds": 1421.8,
+    "machine": "marge",
+    "os": "linux",
+    "checkout": "agent-ad17650ac131c55d2",
+    "branch": "worktree-agent-ad17650ac131c55d2",
+    "command": "scripts/render-scenes.sh --out test-output/scenes/t3-li-before --only look-vaduz-roofs,look-malbun-meadows,look-season-summer --world data/pilot/liechtenstein-before.ocwpkg",
+    "exit": 1,
+    "log": "134512-marge-530517.log"
+   },
+   {
+    "start": "2026-11-13T15:07:00+01:00",
+    "seconds": 1433.8,
+    "machine": "macos",
+    "os": "macos",
+    "checkout": "agent-acafa3212c0c9925a",
+    "branch": "worktree-agent-acafa3212c0c9925a",
+    "command": "~/.local/bin/sccache --zero-stats >/dev/null; scripts/build-profile.sh --label macos-sccache-warm --steps clean,noop,touch,edit; ~/.local/bin/sccache --show-stats",
+    "exit": 143,
+    "log": "150700-macos-608046.log",
+    "sync_s": 44.4,
+    "cargo_s": null,
+    "cargo_builds": 0,
+    "compiled": 0,
+    "wait_s": 753
+   },
+   {
+    "start": "2026-11-13T16:39:38+01:00",
+    "seconds": 596.6,
+    "machine": "macos",
+    "os": "macos",
+    "checkout": "agent-acafa3212c0c9925a",
+    "branch": "worktree-agent-acafa3212c0c9925a",
+    "command": "cargo clippy -q -p ocw-worldgen -p world-builder --all-targets -- -D warnings 2>&1 | head -20; echo clippy-exit $?; cargo test -q -p ocw-worldgen -p world-builder 2>&1 | grep -E \"test result|FAILED...",
+    "exit": 1,
+    "log": "163938-macos-696644.log",
+    "sync_s": 1.6,
+    "cargo_s": null,
+    "cargo_builds": 0,
+    "compiled": 0,
+    "wait_s": 582
+   },
+   {
+    "start": "2026-11-13T14:23:04+01:00",
+    "seconds": 11842.1,
+    "machine": "Win11Builder",
+    "os": "windows",
+    "checkout": "agent-acafa3212c0c9925a",
+    "branch": "worktree-agent-acafa3212c0c9925a",
+    "command": "powershell -ExecutionPolicy Bypass -File scripts/build-profile.ps1 -Label win-fulldebug -FullDebug; powershell -ExecutionPolicy Bypass -File scripts/build-profile.ps1 -Label win-debuginfo; cargo te...",
+    "exit": 101,
+    "log": "142304-Win11Builder-564844.log",
+    "sync_s": 4.2,
+    "cargo_s": null,
+    "cargo_builds": 0,
+    "compiled": 0,
+    "wait_s": 4661
+   },
+   {
+    "start": "2026-11-13T18:48:56+01:00",
+    "seconds": 98.4,
+    "machine": "marge",
+    "os": "linux",
+    "checkout": "agent-a232dd34cb256c06e",
+    "branch": "worktree-agent-a232dd34cb256c06e",
+    "command": "scripts/render-scenes.sh --out test-output/scenes/2026-11-13-184856 --world ~/src/OCW/data/pilot/liechtenstein.ocwpkg --world blackforest=~/src/OCW/data/blackforest/blackfores...",
+    "exit": 1,
+    "log": "184856-marge-814338.log"
+   },
+   {
+    "start": "2026-11-13T19:49:21+01:00",
+    "seconds": 124.5,
+    "machine": "marge",
+    "os": "linux",
+    "checkout": "agent-acf229e1ec2f3ec92",
+    "branch": "worktree-agent-acf229e1ec2f3ec92",
+    "command": "scripts/render-scenes.sh --out test-output/scenes/2026-11-13-194921 --only 'god-unicorn-*' --x11",
+    "exit": 1,
+    "log": "194921-marge-871012.log"
+   },
+   {
+    "start": "2026-11-13T19:51:41+01:00",
+    "seconds": 3.8,
+    "machine": "marge",
+    "os": "linux",
+    "checkout": "agent-acf229e1ec2f3ec92",
+    "branch": "worktree-agent-acf229e1ec2f3ec92",
+    "command": "scripts/render-scenes.sh --out test-output/scenes/2026-11-13-195141 --only god-unicorn-flight,testroute-hills --x11",
+    "exit": 1,
+    "log": "195141-marge-873278.log"
+   },
+   {
+    "start": "2026-11-13T19:39:58+01:00",
+    "seconds": 2119.8,
+    "machine": "Win11Builder",
+    "os": "windows",
+    "checkout": "agent-acf229e1ec2f3ec92",
+    "branch": "worktree-agent-acf229e1ec2f3ec92",
+    "command": "cargo test -p ocw-sim -p ocw-protocol -p ocw-server -p ocw-world -p ocw-render -p ocw-desktop 2>&1 | Select-String -Pattern \"^error\",\"test result\",\"panicked\" | Select-Object -First 60",
+    "exit": 255,
+    "log": "193958-Win11Builder-862230.log"
+   },
+   {
+    "start": "2026-11-13T20:26:57+01:00",
+    "seconds": 2341.3,
+    "machine": "Win11Builder",
+    "os": "windows",
+    "checkout": "OCW",
+    "branch": "main",
+    "command": "cargo clippy --workspace --all-targets -- -D warnings; if ($LASTEXITCODE -eq 0) { cargo test -p ocw-sim -p ocw-protocol -p ocw-server -p ocw-render -p ocw-world -p ocw-worldgen -p ocw-desktop 2>&1 ...",
+    "exit": 101,
+    "log": "202657-Win11Builder-904535.log",
+    "sync_s": 4.8,
+    "cargo_s": 863.0,
+    "cargo_builds": 1,
+    "compiled": 467,
+    "wait_s": null
+   },
+   {
+    "start": "2026-11-13T21:06:15+01:00",
+    "seconds": 788.5,
+    "machine": "Win11Builder",
+    "os": "windows",
+    "checkout": "OCW",
+    "branch": "main",
+    "command": "cargo clippy --workspace --all-targets -- -D warnings; if ($LASTEXITCODE -eq 0) { cargo test -p ocw-sim -p ocw-protocol -p ocw-server -p ocw-render -p ocw-world -p ocw-worldgen -p ocw-assets -p ocw...",
+    "exit": 101,
+    "log": "210615-Win11Builder-944908.log",
+    "sync_s": 5.4,
+    "cargo_s": null,
+    "cargo_builds": 0,
+    "compiled": 1,
+    "wait_s": 701
+   }
+  ],
+  "machines": {
+   "marge": {
+    "runs": 253,
+    "seconds": 152375.30000000002,
+    "failed": 6,
+    "cargo_s": 479.99999999999994,
+    "compiled": 997,
+    "wait_s": 10639.0
+   },
+   "macos": {
+    "runs": 95,
+    "seconds": 54362.9,
+    "failed": 7,
+    "cargo_s": 156.0,
+    "compiled": 4,
+    "wait_s": 7874.0
+   },
+   "Win11Builder": {
+    "runs": 25,
+    "seconds": 50674.10000000001,
+    "failed": 5,
+    "cargo_s": 1589.0,
+    "compiled": 470,
+    "wait_s": 6611.0
+   }
+  },
+  "online": {
+   "leela": 0.0,
+   "marge": 1.0,
+   "Win11Builder": 0.7413087934560327,
+   "macos": 1.0
+  },
+  "samples": 978
+ },
+ "prompts": [
+  {
+   "time": "05:41:16",
+   "iso": "2026-11-13T05:41:16+01:00",
+   "text": "where did you sent me the mention image? i dont see it here"
+  },
+  {
+   "time": "05:41:16",
+   "iso": "2026-11-13T05:41:16+01:00",
+   "text": "Start implementing the next phases. Give me a quick summary of the open questions."
+  },
+  {
+   "time": "05:56:56",
+   "iso": "2026-11-13T05:56:56+01:00",
+   "text": "can you prepare moving from deb to marge as the build coordinator? check if user cli is availble for you on marge. wait with the actual move for my okay."
+  },
+  {
+   "time": "06:00:02",
+   "iso": "2026-11-13T06:00:02+01:00",
+   "text": "Make sure you don't add config and ssh keys to git. copy them."
+  },
+  {
+   "time": "06:03:13",
+   "iso": "2026-11-13T06:03:13+01:00",
+   "text": "done, i logged in user and gh on marge"
+  },
+  {
+   "time": "06:04:58",
+   "iso": "2026-11-13T06:04:58+01:00",
+   "text": "done, gh is logged in as user now"
+  },
+  {
+   "time": "06:10:40",
+   "iso": "2026-11-13T06:10:40+01:00",
+   "text": "can you startub the build dashboard on deb? create systemctl startup scripts for it and enable them"
+  },
+  {
+   "time": "06:19:15",
+   "iso": "2026-11-13T06:19:15+01:00",
+   "text": "also document the build status, the processes, buildtime, errors, status of build servers for the art project."
+  },
+  {
+   "time": "06:25:47",
+   "iso": "2026-11-13T06:25:47+01:00",
+   "text": "add planning for a VR mode where oculus rift and other vendor/models are supported."
+  },
+  {
+   "time": "06:31:04",
+   "iso": "2026-11-13T06:31:04+01:00",
+   "text": "bg task: plan for a cleaner wold creation. right now, there are often jumps in the road or rivers or other objects comeing from OSM data. do in the process of creating the world, do fix this irregularities. it's okay to diviate a bit from the OSM data to make a physically correct looking world."
+  },
+  {
+   "time": "06:33:00",
+   "iso": "2026-11-13T06:33:00+01:00",
+   "text": "bg task: there seems to be a small deviation: the wheels of the bike always seen to be like 1cm inside of the road. fix that."
+  },
+  {
+   "time": "06:36:09",
+   "iso": "2026-11-13T06:36:09+01:00",
+   "text": "adding to the cleaning world planning task: i've seen sometimes the road being like 1m above the ground. I see there two reasons for that. either there is a bridge, if so, than put a bridge there. bridged are mostly, but not only, where rivers, roads, tracks or deep gaps / valleys are. try to create a realistic model of the bridge. the other option for this phenomena could be that there is a deviation between road hight and terrain hight. Wdyt?"
+  },
+  {
+   "time": "06:42:41",
+   "iso": "2026-11-13T06:42:41+01:00",
+   "text": "audio: make the noise from other rides also audible. art-project: include the prompts i do also into the logfile and later on in the video."
+  },
+  {
+   "time": "06:46:54",
+   "iso": "2026-11-13T06:46:54+01:00",
+   "text": "github readme: make the OCW logo in the size of the Open Cycling World heading and make it aligned in the heading left side."
+  },
+  {
+   "time": "07:44:17",
+   "iso": "2026-11-13T07:44:17+01:00",
+   "text": "when the black forest world is ready, make it also used in the kiosk mode. add a world entry to the game menu where a user can select the world he is in, the weather and time conditions and related information. add also to specification."
+  },
+  {
+   "time": "07:49:33",
+   "iso": "2026-11-13T07:49:33+01:00",
+   "text": "postpone moving the coordinator until further notice. i noticed that there is a bug with the shadow since the sun is there ingame. i some time see two shadows of the rider. investigate and fix."
+  },
+  {
+   "time": "08:09:09",
+   "iso": "2026-11-13T08:09:09+01:00",
+   "text": "when running in kiosk mode, always start with 500W. have the rider also move it's legs eventhough it's fake"
+  },
+  {
+   "time": "08:15:52",
+   "iso": "2026-11-13T08:15:52+01:00",
+   "text": "i dont know what happend but some change in the near past has intruduced weird graphic errors in the tunnel and the road before. in the tunnel there are squares that do not belong there and the ceiling seems broken at some points before.  in the road before the tunnel. the rider immerges completely, thats wrong. i also noticed that the white marks in the center of the road create a shadow now, this is not realistic, remove that."
+  },
+  {
+   "time": "08:21:03",
+   "iso": "2026-11-13T08:21:03+01:00",
+   "text": "build dashboard: add the prompt (short version) that belongs to the job to the status as well. restart dashboard after implementing this."
+  },
+  {
+   "time": "08:49:24",
+   "iso": "2026-11-13T08:49:24+01:00",
+   "text": "create a world for tenariffa"
+  },
+  {
+   "time": "10:31:34",
+   "iso": "2026-11-13T10:31:34+01:00",
+   "text": "I hit my usage limit while you were working, but it has reset now. Please continue from where you left off."
+  },
+  {
+   "time": "10:39:45",
+   "iso": "2026-11-13T10:39:45+01:00",
+   "text": "i had to reinitialize the drive B: on w11builder. setup for building there and do a quick check."
+  },
+  {
+   "time": "10:43:37",
+   "iso": "2026-11-13T10:43:37+01:00",
+   "text": "implement a logic that everytime we release on Github, the minor version number is incremented."
+  },
+  {
+   "time": "10:50:28",
+   "iso": "2026-11-13T10:50:28+01:00",
+   "text": "instead of seperate bump and release scripts, make this part of the Makefile"
+  },
+  {
+   "time": "10:52:15",
+   "iso": "2026-11-13T10:52:15+01:00",
+   "text": "/login"
+  },
+  {
+   "time": "10:54:06",
+   "iso": "2026-11-13T10:54:06+01:00",
+   "text": "/login"
+  },
+  {
+   "time": "10:57:02",
+   "iso": "2026-11-13T10:57:02+01:00",
+   "text": "/login"
+  },
+  {
+   "time": "10:58:39",
+   "iso": "2026-11-13T10:58:39+01:00",
+   "text": "/login"
+  },
+  {
+   "time": "11:04:38",
+   "iso": "2026-11-13T11:04:38+01:00",
+   "text": "check mac build server for build artifacts that can be deleted"
+  },
+  {
+   "time": "11:15:43",
+   "iso": "2026-11-13T11:15:43+01:00",
+   "text": "what are the six finished copies on mac?"
+  },
+  {
+   "time": "11:15:54",
+   "iso": "2026-11-13T11:15:54+01:00",
+   "text": "/login"
+  },
+  {
+   "time": "11:16:58",
+   "iso": "2026-11-13T11:16:58+01:00",
+   "text": "what are the six finished copies on mac?"
+  },
+  {
+   "time": "11:26:48",
+   "iso": "2026-11-13T11:26:48+01:00",
+   "text": "can you continue the OCW session on deb?"
+  },
+  {
+   "time": "11:27:17",
+   "iso": "2026-11-13T11:27:17+01:00",
+   "text": "yes, delete the six on the mac"
+  },
+  {
+   "time": "11:28:25",
+   "iso": "2026-11-13T11:28:25+01:00",
+   "text": "for the art project, keep track of the token usage, in total and per task and feature."
+  },
+  {
+   "time": "11:29:21",
+   "iso": "2026-11-13T11:29:21+01:00",
+   "text": "use w11buildserver and macos buildserver, too"
+  },
+  {
+   "time": "12:26:36",
+   "iso": "2026-11-13T12:26:36+01:00",
+   "text": "release the new updated world files. illustrate the world in GH Readme with a couple of screenshots of the highlights"
+  },
+  {
+   "time": "12:30:54",
+   "iso": "2026-11-13T12:30:54+01:00",
+   "text": "are there open question regarding the textures?"
+  },
+  {
+   "time": "12:38:44",
+   "iso": "2026-11-13T12:38:44+01:00",
+   "text": "both questions: yes"
+  },
+  {
+   "time": "12:42:32",
+   "iso": "2026-11-13T12:42:32+01:00",
+   "text": "* Q2 – Commercial release planned? This decides how strict we are with grey-area sources, and when a lawyer reviews the licences. -> NO\n* Q4 – Package size: how much extra per region is acceptable for aerial photos draped along the roads? My estimate is 30–80 MB for Liechtenstein, much more for the Black Forest. It could also be an optional download. -> thats fine\n* Q5 – Seasons: summer only, or seasonal variants (autumn colours, snow)? Phase 9 plans seasons; this decides whether we also use season-specific imagery. -> yes, seasonal variants\n* Q6 – Your own photos: can someone take texture and reference photos in the regions (roof tiles, facades, bark, asphalt, signs)? Those make the most realistic textures. -> for now not possible. postpone-\n* Q7 – Mapillary street photos: OK as visual reference only, never copied into the game? -> whats the license situation?\n* Q8 – Official 3D building models: where they’re open, they give far better roof shapes than OSM. Baden-Württemberg’s licence for them is still unclear. -> who to ask/ elaborate license situation\n* Q10 – Priority for the next texture work: ground and roads, houses, or riders and bikes? all"
+  },
+  {
+   "time": "12:43:40",
+   "iso": "2026-11-13T12:43:40+01:00",
+   "text": "are there issues on macos or why is nothing building there?"
+  },
+  {
+   "time": "12:47:02",
+   "iso": "2026-11-13T12:47:02+01:00",
+   "text": "what would change if we switch our license from MIT/Apache to CC BY-SA?"
+  },
+  {
+   "time": "12:49:13",
+   "iso": "2026-11-13T12:49:13+01:00",
+   "text": "avoid changing the license for now"
+  },
+  {
+   "time": "12:50:04",
+   "iso": "2026-11-13T12:50:04+01:00",
+   "text": "hence stick to texture that are available under the current license. continue integrating texture feature"
+  },
+  {
+   "time": "13:05:36",
+   "iso": "2026-11-13T13:05:36+01:00",
+   "text": "add some profiling in for the building and see if the build process could be accelerated. also for building the world."
+  },
+  {
+   "time": "13:53:31",
+   "iso": "2026-11-13T13:53:31+01:00",
+   "text": "investigate the context what could be compacted and what should be kept"
+  },
+  {
+   "time": "13:54:17",
+   "iso": "2026-11-13T13:54:17+01:00",
+   "text": "/compact"
+  },
+  {
+   "time": "13:59:24",
+   "iso": "2026-11-13T13:59:24+01:00",
+   "text": "planning: regarding my VR question earlier: I have an oculus rift, first generation. hence focus on this for development. use the open framework suggestion you had to make it possible to support other headsets as well."
+  },
+  {
+   "time": "14:19:48",
+   "iso": "2026-11-13T14:19:48+01:00",
+   "text": "Try again"
+  },
+  {
+   "time": "14:21:51",
+   "iso": "2026-11-13T14:21:51+01:00",
+   "text": "put also jobs on w11builder"
+  },
+  {
+   "time": "14:23:52",
+   "iso": "2026-11-13T14:23:52+01:00",
+   "text": "what was the answer to my build performance question? can you propose a solution that efficiently uses caching between different build agents without interfering?"
+  },
+  {
+   "time": "14:28:37",
+   "iso": "2026-11-13T14:28:37+01:00",
+   "text": "yes, implement the build caching as suggested."
+  },
+  {
+   "time": "14:30:10",
+   "iso": "2026-11-13T14:30:10+01:00",
+   "text": "version bump: instead of increasing the middle number, e.g. 0.1.0 -> 0.2.0 increase only the last number, e.g. 0.1.0 -> 0.1.1"
+  },
+  {
+   "time": "14:32:14",
+   "iso": "2026-11-13T14:32:14+01:00",
+   "text": "create an iconic rendering for the readme world section of the volcan teide on tenerife. there is a road around the caldera. make an image that shows the road, the riders and the top of teide in background."
+  },
+  {
+   "time": "14:49:38",
+   "iso": "2026-11-13T14:49:38+01:00",
+   "text": "how many tokens have been used up for this OCW so far?"
+  },
+  {
+   "time": "14:51:39",
+   "iso": "2026-11-13T14:51:39+01:00",
+   "text": "explain: why have you queued this job \"/.local/bin/sccache --zero-stats >/dev/null; scripts/build-profile.sh --label macos-sccache-warm --commands build,test --steps clean; ~/.local/bin/sccache --show-stats | head -12; rm -rf ~/src/OCW...\" on mac os to answer my tokens usage question? isnt that something that should not require a build?"
+  },
+  {
+   "time": "14:58:57",
+   "iso": "2026-11-13T14:58:57+01:00",
+   "text": "planning (add as new phase to spec): design a crash and collision model with world objects and other riders. make it globally configurable (on|off). in autodrive mode avoid automatically collisions with autodrive off the user has to take care of avoiding collisions. when riders hit hard, there will be a crash and rides will fall. if it's only a soft bump, the riders are slowed down. design a damage indicator, the more you get hit/fall, you get damaged and it can happen that you are injured and your bike gets damaged. make it globally configurable if you want to have damage (on|off)."
+  },
+  {
+   "time": "15:00:58",
+   "iso": "2026-11-13T15:00:58+01:00",
+   "text": "in the build dashboard: rather than showing the prompt describe what the actual build is trying to archive."
+  },
+  {
+   "time": "15:08:39",
+   "iso": "2026-11-13T15:08:39+01:00",
+   "text": "planning (and add to spec): implement a god mode, that allows flying through the world (e.g. to inspect the map). the rider should convert into a unicorn while in god mode. add a hotkey for this function. make movements way faster and implement controlling it like a flight mode. plus / minus keys control altitude, where as moving the mouse controls where to look. cursor keys control the movement in the 2d world plane."
+  },
+  {
+   "time": "15:10:15",
+   "iso": "2026-11-13T15:10:15+01:00",
+   "text": "in which build phase are we in? what would come next?"
+  },
+  {
+   "time": "15:12:43",
+   "iso": "2026-11-13T15:12:43+01:00",
+   "text": "Regarding your god mode questions:\n\n\n* Should other riders see your unicorn? -> yes\n* Should leaving always bring you back to your spot on the road, or land you wherever you are? -> land you where you are\n* Wings, or a classic unicorn without wings? -> a classic unicorn with wings like a pegasus\n\n\nWhat are the other three questions you mentioned?"
+  },
+  {
+   "time": "15:29:11",
+   "iso": "2026-11-13T15:29:11+01:00",
+   "text": "planning for bike and character editor of phase 4: refine specifications. When selecting this menu point, the screen should change to a rendering of a bicycle workshop where you can see all actual bikes. your actual selected bike should be on a bike repair stand in the foreground. other bikes the user might own are hanging on the wall and can be selected by navigating with left/right. make it controllable by gamepad and mouse (and touch if the device has that). btw make the entire ui controllable like that (-> refine entire specification for that). the bike on the bike repair stand can be selected at the parts that can be tuned/exchanged. the user has to have hearts that can be traded for bike parts (which have a certain price). use internet data to get prices for parts. one heart = 1 eur. do round up the cents so that there are only full hearts/euro prices."
+  },
+  {
+   "time": "15:29:54",
+   "iso": "2026-11-13T15:29:54+01:00",
+   "text": "does windows also have sccache?"
+  },
+  {
+   "time": "15:34:48",
+   "iso": "2026-11-13T15:34:48+01:00",
+   "text": "whenever all build jobs are done, start implementing features from specification that are not yet implemented and where you have all information to build it. if there are questions you need to get answered before you can continue, ping me a message. add this behaviour to CLAUDE.md."
+  },
+  {
+   "time": "15:35:53",
+   "iso": "2026-11-13T15:35:53+01:00",
+   "text": "how to start manually on leela the app with black forest world?"
+  },
+  {
+   "time": "15:36:09",
+   "iso": "2026-11-13T15:36:09+01:00",
+   "text": "the tener"
+  },
+  {
+   "time": "15:42:34",
+   "iso": "2026-11-13T15:42:34+01:00",
+   "text": "i still do not see the teide in the images. do a carefull planning of where the riders have to be and move the camera so that it sees the tip of the teide. then take a screenshot."
+  },
+  {
+   "time": "18:19:54",
+   "iso": "2026-11-13T18:19:54+01:00",
+   "text": "is it easy to move the two waiting build jobs to marge (fromw11builder)"
+  },
+  {
+   "time": "18:20:50",
+   "iso": "2026-11-13T18:20:50+01:00",
+   "text": "Okay. And why aren't there any build jobs on Marge? Is everything implemented, or what's the reason?"
+  },
+  {
+   "time": "18:25:03",
+   "iso": "2026-11-13T18:25:03+01:00",
+   "text": "Would this really build artifacts that are used for caching, or is it really build data we don't need?"
+  },
+  {
+   "time": "18:27:09",
+   "iso": "2026-11-13T18:27:09+01:00",
+   "text": "Yes, delete the unnecessary build files, and think about a mechanism how to clean up the builds from unnecessary data, and also how to make scheduling more efficient to avoid that the build server is actually idling while there is still tasks to be developed. Sounds like we need a mechanism that handles that. So make a proposal for that, please."
+  },
+  {
+   "time": "18:28:38",
+   "iso": "2026-11-13T18:28:38+01:00",
+   "text": "situation. Text space. Tag builder."
+  },
+  {
+   "time": "18:30:50",
+   "iso": "2026-11-13T18:30:50+01:00",
+   "text": "on macos"
+  },
+  {
+   "time": "22:08:58",
+   "iso": "2026-11-13T22:08:58+01:00",
+   "text": "add all the open build questions into the build dashboard. Yes implement the janitor as sugested."
+  },
+  {
+   "time": "22:48:18",
+   "iso": "2026-11-13T22:48:18+01:00",
+   "text": "buildserver leela is back online. build a kiosmode for leela like you did for marge."
+  },
+  {
+   "time": "22:50:51",
+   "iso": "2026-11-13T22:50:51+01:00",
+   "text": "yes, the key is correct\nuser@leela:~$ ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub\n256 SHA256:AHd2iyMgxxfIwz4xo6g4BdyJRNl73ulHT2C0dV9DIvs no comment (ED25519)"
+  },
+  {
+   "time": "22:51:38",
+   "iso": "2026-11-13T22:51:38+01:00",
+   "text": "show tenrife teide route on leela"
+  },
+  {
+   "time": "22:54:38",
+   "iso": "2026-11-13T22:54:38+01:00",
+   "text": "where is the artwork for the art project?"
+  },
+  {
+   "time": "22:55:04",
+   "iso": "2026-11-13T22:55:04+01:00",
+   "text": "check connectivity with leela"
+  },
+  {
+   "time": "22:55:28",
+   "iso": "2026-11-13T22:55:28+01:00",
+   "text": "but where are the files, show me the location and name of the files"
+  },
+  {
+   "time": "23:01:25",
+   "iso": "2026-11-13T23:01:25+01:00",
+   "text": "where is the token usage logged?"
+  },
+  {
+   "time": "23:03:20",
+   "iso": "2026-11-13T23:03:20+01:00",
+   "text": "restart the build dashboard. whats the command you use?"
+  },
+  {
+   "time": "23:06:56",
+   "iso": "2026-11-13T23:06:56+01:00",
+   "text": "rewrite user.md the buildserver section: W11Builder should only be used for Windows related builds."
+  },
+  {
+   "time": "23:13:46",
+   "iso": "2026-11-13T23:13:46+01:00",
+   "text": "whats the status of adding the open question to the build dashboard? make it interactive, so that i can answer them there."
+  },
+  {
+   "time": "23:15:59",
+   "iso": "2026-11-13T23:15:59+01:00",
+   "text": "whats the hotkey of god mode?"
+  },
+  {
+   "time": "23:30:57",
+   "iso": "2026-11-13T23:30:57+01:00",
+   "text": "god mode: make the control like flying a plane. plus key should make you go up in the air, minus key makes you go down"
+  },
+  {
+   "time": "23:32:14",
+   "iso": "2026-11-13T23:32:14+01:00",
+   "text": "stop queueing new builds on w11builder. use marge for building."
+  },
+  {
+   "time": "23:34:18",
+   "iso": "2026-11-13T23:34:18+01:00",
+   "text": "remove the pink/yellow square on the back of the unicorn."
+  },
+  {
+   "time": "23:44:23",
+   "iso": "2026-11-13T23:44:23+01:00",
+   "text": "answering some questions:\nPhase 4 – Avatar and Bicycle Editor · 5 open · §14 4L\nQ1When changes apply\nat once when leaving the workshop (in free ride and outside events; new BikeChange message, proposal)\nQ2Physics of parts\nbounded effects (best build ≤ +1.5 % on the flat) with the new Profile mode as the default for races and group rides (proposal), or parts purely cosmetic?\nProposal: bounded effects (best build ≤ +1.5 % on the flat) with the new Profile mode as the default for races and group rides\nQ3Earning rate and start\n1 ♥ per 10 kJ + 1 ♥ per 20 m climbing, 400 ♥ per day cap, 500 ♥ start, saved rides counted once up to 2,000 ♥ (proposal) – faster, slower, or a different measure (distance)?\nProposal: 1 ♥ per 10 kJ + 1 ♥ per 20 m climbing, 400 ♥ per day cap, 500 ♥ start, saved rides counted once up to 2,000 ♥\nQ4Apparel\nkit (helmet, shoes, clothing, glasses) priced in hearts like parts (proposal; body, skin, hair always free), or all apparel free?\nProposal: kit (helmet, shoes, clothing, glasses) priced in hearts like parts (body, skin, hair always free)\nQ5Touch on the kiosk\ndoes marge's screen (or any target screen) have a touchscreen to test on, or is touch tested only with synthetic events and on a Windows tablet / Steam Deck later?"
+  },
+  {
+   "time": "23:45:08",
+   "iso": "2026-11-13T23:45:08+01:00",
+   "text": "where to get that config/token"
+  },
+  {
+   "time": "23:52:23",
+   "iso": "2026-11-13T23:52:23+01:00",
+   "text": "continue paused (bg) tasks on marge"
+  },
+  {
+   "time": "23:54:31",
+   "iso": "2026-11-13T23:54:31+01:00",
+   "text": "exclude leela from builting."
+  },
+  {
+   "time": "23:55:29",
+   "iso": "2026-11-13T23:55:29+01:00",
+   "text": "build-dashboard: make a button to enable/disable machines for building. make the amount of slots configurable."
+  },
+  {
+   "time": "23:56:21",
+   "iso": "2026-11-13T23:56:21+01:00",
+   "text": "make all the routes available on leela"
+  }
+ ],
+ "tokens": {
+  "total": {
+   "input": 12460,
+   "cache_write": 29803296,
+   "cache_read": 1937697289,
+   "output": 4542337,
+   "total": 1972055382,
+   "messages": 5945
+  },
+  "features": {
+   "Planning & spec": {
+    "input": 2640,
+    "cache_write": 6286422,
+    "cache_read": 373727911,
+    "output": 1251469,
+    "total": 381268442,
+    "messages": 1281
+   },
+   "Multiplayer & server": {
+    "input": 192,
+    "cache_write": 593972,
+    "cache_read": 56965553,
+    "output": 67254,
+    "total": 57626971,
+    "messages": 81
+   },
+   "Build, release & infra": {
+    "input": 404,
+    "cache_write": 180013,
+    "cache_read": 55440180,
+    "output": 86574,
+    "total": 55707171,
+    "messages": 168
+   },
+   "Other": {
+    "input": 924,
+    "cache_write": 1801942,
+    "cache_read": 103988545,
+    "output": 249780,
+    "total": 106041191,
+    "messages": 427
+   },
+   "UI & menus": {
+    "input": 1048,
+    "cache_write": 2496801,
+    "cache_read": 168047585,
+    "output": 387315,
+    "total": 170932749,
+    "messages": 496
+   },
+   "Art project": {
+    "input": 310,
+    "cache_write": 224002,
+    "cache_read": 37002627,
+    "output": 77261,
+    "total": 37304200,
+    "messages": 140
+   },
+   "Riders & bikes": {
+    "input": 100,
+    "cache_write": 64078,
+    "cache_read": 10485264,
+    "output": 46367,
+    "total": 10595809,
+    "messages": 40
+   },
+   "Materials & look": {
+    "input": 2566,
+    "cache_write": 9433364,
+    "cache_read": 392962340,
+    "output": 770139,
+    "total": 403168409,
+    "messages": 1228
+   },
+   "Audio & voice": {
+    "input": 260,
+    "cache_write": 1304443,
+    "cache_read": 23218101,
+    "output": 101864,
+    "total": 24624668,
+    "messages": 120
+   },
+   "Worlds & terrain": {
+    "input": 2968,
+    "cache_write": 5365507,
+    "cache_read": 541424846,
+    "output": 1059202,
+    "total": 547852523,
+    "messages": 1449
+   },
+   "Sky, time & weather": {
+    "input": 1048,
+    "cache_write": 2052752,
+    "cache_read": 174434337,
+    "output": 445112,
+    "total": 176933249,
+    "messages": 515
+   }
+  }
+ }
+}

@@ -81,14 +81,14 @@ VIDEO ?= /tmp/ocw.mp4
 VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 
 .DEFAULT_GOAL := help
-.PHONY: help version version-next version-bump test-release-version release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
+.PHONY: help version version-next version-bump test-release-version release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish art-collect art-check test-art art-install-timer art-uninstall-timer art-timer-status deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
 	clippy check run server materials deploy-test clean clean-test-output macos-app \
 	test test-unit test-wasm test-web-build test-web test-web-webgl2 test-web-world test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-kiosk web web-serve web-worlds web-remote deps-web deps-browser test-web-readme test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
 	test-multiplayer test-multiplayer-local test-scenes test-scenes-list \
 	wasm screenshot screenshot-wayland smoke video video-wayland
 
 help: ## Show this help
-	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | \
+	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-23s\033[0m %s\n", $$1, $$2}'
 	@echo "  Deprecated aliases (removed later): wasm, screenshot, screenshot-wayland, smoke, video, video-wayland"
 	@echo "  -> test-wasm, test-screenshot, test-screenshot-wayland, test-smoke, test-video, test-video-wayland"
@@ -431,6 +431,37 @@ art-diary: ## Art: join all day videos into the diary video
 art-publish: ## Art: upload day zips and videos to the GitHub release build-history
 	$(ART_PYTHON) art/diary.py publish $(DAY)
 
+art-collect: ## Art: one run of the hourly collector now (gather + journal of yesterday and today, mask check; DAY=… for other days)
+	scripts/art-collect.sh $(DAY)
+
+art-check: ## Art: fail if a tracked text file of art/build-history/ holds a private pattern (FIX=1 masks them)
+	$(ART_PYTHON) art/diary.py check-masked $(if $(FIX),--fix)
+
+test-art: ## Art: unit tests of art/diary.py and scripts/art-collect.sh (fixture archive; local Python, no Rust build)
+	$(ART_PYTHON) -m unittest discover -s art -p 'test_*.py'
+
+ART_UNITS = ocw-art-collect.service ocw-art-collect.timer
+USER_UNITS = $(HOME)/.config/systemd/user
+
+art-install-timer: ## Art: install and start the hourly collector as a systemd user timer (this checkout; art/ART-PROJECT.md §5.1)
+	mkdir -p $(USER_UNITS)
+	for u in $(ART_UNITS); do sed 's|@REPO@|$(CURDIR)|g' art/systemd/$$u > $(USER_UNITS)/$$u; done
+	systemctl --user daemon-reload
+	systemctl --user enable --now ocw-art-collect.timer
+	@echo "Art collector: hourly (make art-timer-status); to run without a login: sudo loginctl enable-linger $$USER"
+
+art-uninstall-timer: ## Art: stop and remove the hourly collector's systemd user timer
+	-systemctl --user disable --now ocw-art-collect.timer
+	-systemctl --user stop ocw-art-collect.service
+	rm -f $(USER_UNITS)/ocw-art-collect.service $(USER_UNITS)/ocw-art-collect.timer
+	systemctl --user daemon-reload
+
+art-timer-status: ## Art: the collector timer's next/last run and the last run's status file
+	-systemctl --user list-timers --all 'ocw-art-*'
+	@-systemctl --user --no-pager status ocw-art-collect.service 2>/dev/null | head -n 5
+	@f=$$(ls -1 test-output/build-log/*/art.json 2>/dev/null | sort | tail -n 1); \
+	  if [ -n "$$f" ]; then echo "Last run ($$f):"; cat "$$f"; else echo "No collector run yet (test-output/build-log/DAY/art.json)."; fi
+
 dashboard-install: ## Install and start the build dashboard as a systemd user service (port 8765, starts at login)
 	mkdir -p $(HOME)/.config/systemd/user
 	sed 's|@REPO@|$(CURDIR)|g' tools/build-dashboard/ocw-build-dashboard.service > $(HOME)/.config/systemd/user/ocw-build-dashboard.service
@@ -502,7 +533,7 @@ release-prepare: ## Bump the patch version for the next GitHub release, commit "
 	  git push -q origin main; cur=$$nv; fi; \
 	echo "version: $$cur"; echo "commit:  $$(git rev-parse --short HEAD)  (build the release binaries from this commit)"
 
-release-publish: ## Tag vX.Y.0 and create the GitHub release (pre-release): make release-publish DIR=assets NOTES=notes.md
+release-publish: ## Tag vX.Y.Z and create the GitHub release (pre-release): make release-publish DIR=assets NOTES=notes.md
 	@set -e; [ -d "$(DIR)" ] && [ -f "$(NOTES)" ] || { echo "usage: make release-publish DIR=... NOTES=..." >&2; exit 2; }; \
 	cur=$$($(call version_of,.)); last=$$($(latest_release)); $(newer); \
 	if [ -n "$$last" ] && ! n "$$cur" "$$last"; then echo "version $$cur is not above the latest release $$last: make release-prepare first" >&2; exit 1; fi; \
