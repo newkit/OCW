@@ -17,6 +17,7 @@
     art/diary.py diary              chain all day videos into the diary video
     art/diary.py publish [DAY...]   zip the day folders and upload zips and
                                     videos to the release `build-history`
+                                    (--videos: only the videos and SHA256SUMS)
     art/diary.py all     [DAY...]   gather + journal + render + diary
     art/diary.py collect [--sheets|--no-sheets] [DAY...]
                                     the hourly collector (scripts/art-collect.sh):
@@ -1285,131 +1286,10 @@ class Subs:
 # ------------------------------------------------------------------- audio
 
 
-def env(n, a, r):
-    """Attack/release envelope of n samples."""
-    out = array("f", [1.0]) * n
-    for i in range(min(a, n)):
-        out[i] = i / a
-    for i in range(min(r, n)):
-        out[n - 1 - i] *= i / r
-    return out
-
-
-NOTE = {"C": 0, "C#": 1, "D": 2, "D#": 3, "E": 4, "F": 5, "F#": 6, "G": 7, "G#": 8,
-        "A": 9, "A#": 10, "B": 11}
-
-
-def hz(semitone_from_a4: float) -> float:
-    return 440.0 * 2 ** (semitone_from_a4 / 12)
-
-
-class Music:
-    """A small chiptune-pop band, synthesised (no samples, no licences):
-    kick, clap, hats, square bass, pulse arpeggio and a soft pad over a
-    vi–IV–I–V progression. Bars are rendered once per chord and variant and
-    then laid out along the timeline."""
-
-    PROG = [(-3, "m"), (-7, ""), (0, ""), (-5, "")]  # Am F C G relative to C
-
-    def __init__(self, bpm=108, key="C", seed=1):
-        self.bpm, self.root, self.rng = bpm, NOTE[key], random.Random(seed)
-        self.beat = 60.0 / bpm
-        self.bar_n = round(4 * self.beat * RATE)
-        self.cache = {}
-
-    def chord(self, idx):
-        off, q = self.PROG[idx % 4]
-        r = self.root + off - 9  # relative to A4
-        third = 3 if q == "m" else 4
-        return [r, r + third, r + 7]
-
-    def bar(self, idx, variant):
-        key = (idx % 4, variant)
-        if key in self.cache:
-            return self.cache[key]
-        n, b = self.bar_n, self.beat
-        out = array("f", [0.0]) * n
-        notes = self.chord(idx)
-        rng = random.Random(idx % 4 * 31 + hash(variant) % 97)
-
-        def put(at, samples, gain):
-            s = round(at * RATE)
-            for i, v in enumerate(samples):
-                if s + i < n:
-                    out[s + i] += v * gain
-
-        drums = variant in ("drive", "groove")
-        if drums:
-            kick = [math.sin(2 * math.pi * (45 * i / RATE + 70 * (1 - math.exp(-i / 900)) * 0.0133))
-                    * math.exp(-i / 5200) for i in range(9000)]
-            beats = [0, 1, 2, 3] if variant == "drive" else [0, 1.5, 2.5]
-            for k in beats:
-                put(k * b, kick, 0.55)
-            clap = [rng.uniform(-1, 1) * math.exp(-i / 1800) for i in range(6000)]
-            for k in (1, 3):
-                put(k * b, clap, 0.22)
-            step = 0.5 if variant == "groove" else 0.25
-            prev = 0.0
-            hat = []
-            for i in range(1400):
-                x = rng.uniform(-1, 1)
-                hat.append((x - prev) * math.exp(-i / 300))
-                prev = x
-            t = 0.0
-            while t < 4:
-                put(t * b, hat, 0.10 if (t * 2) % 1 else 0.14)
-                t += step
-        if variant != "intro" or True:
-            # Square bass, 8th notes on the root.
-            f = hz(notes[0] - 24)
-            for k in range(8):
-                ln = round(b / 2 * RATE * 0.9)
-                e = env(ln, 60, 900)
-                put(k * b / 2, [(1 if math.sin(2 * math.pi * f * i / RATE) > 0 else -1) * e[i] * 0.6
-                                + math.sin(2 * math.pi * f * i / RATE) * e[i] * 0.4
-                                for i in range(ln)], 0.16 if variant != "intro" else 0.10)
-        # Pulse arpeggio, 16ths, two octaves up.
-        arp = [notes[0], notes[1], notes[2], notes[1] + 12, notes[2] + 12, notes[0] + 12]
-        for k in range(16):
-            f = hz(arp[(k + (idx % 2) * 2) % len(arp)] + 12)
-            ln = round(b / 4 * RATE * 0.8)
-            e = env(ln, 30, 1500)
-            per = RATE / f
-            put(k * b / 4, [(0.6 if (i % per) < per * 0.25 else -0.4) * e[i] for i in range(ln)],
-                0.07 if variant != "outro" else 0.05)
-        # Soft pad: three detuned saws through a one-pole low-pass.
-        ln = n
-        e = env(ln, 9000, 9000)
-        lp, prevv = 0.0, 0.0
-        pad = []
-        fs = [hz(x) for x in notes]
-        for i in range(ln):
-            v = sum(((i * f * (1 + d) / RATE) % 1.0) * 2 - 1 for f in fs for d in (-0.003, 0.003))
-            lp += 0.04 * (v - lp)
-            pad.append(lp * e[i] / 6)
-        put(0, pad, 0.30 if variant in ("intro", "outro") else 0.18)
-        self.cache[key] = out
-        return out
-
-    def render(self, seconds, section_at, duck=()):
-        n = round(seconds * RATE)
-        out = array("f", [0.0]) * n
-        bar = 0
-        while bar * self.bar_n < n:
-            s = bar * self.bar_n
-            v = section_at(s / RATE)
-            data = self.bar(bar, v)
-            for i in range(min(self.bar_n, n - s)):
-                out[s + i] += data[i]
-            bar += 1
-        for a, b, g in duck:
-            for i in range(max(0, round(a * RATE)), min(n, round(b * RATE))):
-                out[i] *= g
-        # Fade in/out.
-        for i in range(min(n, RATE)):
-            out[i] *= i / RATE
-            out[n - 1 - i] *= i / RATE
-        return out
+# The music (ART-PROJECT §3.2): a style per day, varied within the video;
+# art/music.py.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from music import Music  # noqa: E402
 
 
 def sfx_whoosh(rng):
@@ -1680,14 +1560,10 @@ def render(day: str) -> Path:
     sub.write(ass)
 
     # ---- soundtrack
-    def section_at(t):
-        for i in range(len(segs) - 1, -1, -1):
-            if t >= starts[i]:
-                return segs[i][2]
-        return "intro"
-
-    music = Music(bpm=int(sc.get("bpm", 108)), key=sc.get("key", "C"), seed=num).render(
-        total, section_at, duck)
+    band = Music(bpm=int(sc.get("bpm", 108)), key=sc.get("key", "C"), seed=num,
+                 style=sc.get("style"), mode=sc.get("mode"))
+    log(f"{day}: music {band.describe()}")
+    music = band.render(total, [(starts[i], segs[i][2]) for i in range(len(segs))], duck)
     rng = random.Random(num)
     fx = {"bell": sfx_bell(), "pop": sfx_pop(), "tick": sfx_tick(), "ding": sfx_ding()}
     for at, kind in sfx_events:
@@ -1962,6 +1838,9 @@ def run_command(cmd: str, days: list[str], flags: set[str] = frozenset()):
         st = collect(days or None, sheets)
         if st["status"] != "ok":
             raise SystemExit("collect failed: " + "; ".join(st["errors"]))
+        return
+    if cmd == "publish" and "--videos" in flags:  # only the videos (+ SHA256SUMS), no day zips
+        publish([])
         return
     if not days:
         days = all_days() if cmd in {"fetch", "gather", "journal", "publish", "stamp", "prompts", "tokens"} else days_with_scripts()

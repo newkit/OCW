@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 3.36 – November 2026
+Version 3.37 – November 2026
 
 | Version | Change |
 |---|---|
+| 3.37 | Art project music (decided by the user 2026-11-14: "a bit monotone … make different music for different days"; `art/ART-PROJECT.md` v1.6 §3.2, §4): each day video gets its own style – synthwave, funk, lofi, chiptune, house (band, mode, groove, progressions; `style`/`mode` in the day script, default from the day number). Within the video the music varies: a progression and patterns per chapter, fills, build-ups and stops at chapter changes, a breakdown, a bridge and key lift in long videos, a developing lead (motif, variations, call and response), swells. Still synthesised and deterministic from the seed (`art/music.py`, tested in `make test-art`); days 1–4 and the diary re-rendered |
 | 3.36 | Public preview of the browser app on GitHub Pages (decided by the user 2026-11-15; §14 Phase 10 B8a): stage 1 – solo preview with the test routes and Liechtenstein, size-optimised wasm, a preview signing root, page config, attribution page, README link under the headline; stage 2 later – an own EU server for multiplayer, voice and sign-in. |
 | 3.35 | Art project (decided by the user 2026-11-14; `art/ART-PROJECT.md` v1.5 §2.5, §5.1): the build history moved from `artwork/build-history/` to **`art/build-history/`**. Its text files (`index.md`, `SHA256SUMS`, per day `journal.md`, `journal.json`, `tokens.json`) are **tracked in git, masked**: build machines' hosts and users, home directories, e-mail and private IP addresses (`art/diary.py check-masked`, `make art-check`). Media, day zips, logs and prompts stay git-ignored (GitHub release `build-history`). An **hourly collector** runs on the dev machine (`scripts/art-collect.sh`, systemd user timer `ocw-art-collect.timer`, `make art-install-timer`): gather + journal of yesterday and today, the mask check, contact sheets in the 23:xx run, an flock shared with `art/diary.py`, status in `test-output/build-log/DAY/art.json`, shown on the build dashboard. No render or publish (§11.3) |
 | 3.34 | VR starts now (user 2026-11-14, §14 Phase 11 Q6): the X1 step begins – OpenXR in the desktop app, the headset as a viewing device through the Meta PC runtime (Oculus Link / Rift software, Windows), tested with Monado's simulated headset in CI until a headset is on a Windows PC. |

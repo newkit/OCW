@@ -425,7 +425,7 @@ art-collect: ## Art: one run of the hourly collector now (gather + journal of ye
 art-check: ## Art: fail if a tracked text file of art/build-history/ holds a private pattern (FIX=1 masks them)
 	$(ART_PYTHON) art/diary.py check-masked $(if $(FIX),--fix)
 
-test-art: ## Art: unit tests of art/diary.py and scripts/art-collect.sh (fixture archive; local Python, no Rust build)
+test-art: ## Art: unit tests of art/diary.py, art/music.py and scripts/art-collect.sh (fixture archive; local Python, no Rust build)
 	$(ART_PYTHON) -m unittest discover -s art -p 'test_*.py'
 
 ART_UNITS = ocw-art-collect.service ocw-art-collect.timer
