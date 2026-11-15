@@ -2789,8 +2789,9 @@ ocw-desktop --world europe/spain/tenerife --free-ride
 `root.pub.json` holds only the public key, so you can hand it out freely. Riders should compare its `key_id` with you over a channel they trust.
 
 **6. Riders: browser.** Give the manifest's URL as `world=`, for example `https://YOUR-APP/?world=https://worlds.example.org/worlds/europe/spain/tenerife/8/manifest.json&route=puerto-de-la-cruz-teide`.
-- **Trust in the browser:** the browser app trusts only the roots built into it. On the public preview that is the preview's own root. On a page served from `localhost` (`make web-serve`), `trust-root=HEX` adds yours: the `public_key` hex from `root.pub.json`.
-- **Coming soon:** a dialog that shows a world's key fingerprint and asks the rider to trust it (spec §14 Phase 16, 16C). Until then, a world signed with your own root needs your own build of the browser app with your root added to its trusted keys, or a localhost page.
+- **Trust in the browser:** a world signed with a key the browser doesn't know opens the **trust dialog**. It shows the claimed signer name (unverified), the key's full fingerprint, the world and its data sources. *Trust this key* remembers the key in this browser, *Load once* loads it for this visit, and *Cancel* is the default.
+- **Your own key:** sign with a user key (`world-builder keys init-user --name "…"`; the signed manifest carries its root) and tell riders your fingerprint (`world-builder keys fingerprint FILE`) over a channel they trust.
+- **On a page served from `localhost`** (`make web-serve`), `trust-root=HEX` still adds a root directly: the `public_key` hex from `root.pub.json`.
 
 **7. Licences.**
 - Packages built from OpenStreetMap contain a Derivative Database under the **ODbL**. Offer the OSM extract the package was built from next to it, as our releases do: a link or the file in the same directory is enough.
