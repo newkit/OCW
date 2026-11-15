@@ -7,7 +7,8 @@
 //!   their input into [`controls::Pressed`]),
 //! - [`pages`]: the Settings / Workshop / Workouts / World rows (each a
 //!   console line), [`weather`] the weather machine, [`time`] the time
-//!   machine, [`voice`] the voice pages,
+//!   machine, [`voice`] the voice pages, [`trust`] the trust dialog and
+//!   the trusted keys (spec §4.7 *User keys*),
 //! - [`hint`] and [`status_line`]: the text under and over a page.
 //!
 //! The Bevy glue (input → model → `ocw_render::menu::MenuView`) is
@@ -18,6 +19,7 @@ pub mod history;
 pub mod model;
 pub mod pages;
 pub mod time;
+pub mod trust;
 pub mod voice;
 pub mod weather;
 

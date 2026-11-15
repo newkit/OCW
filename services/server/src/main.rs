@@ -127,6 +127,13 @@ struct Args {
     /// Also trust this root public key file (repeatable).
     #[arg(long, value_name = "FILE")]
     trust_root: Vec<PathBuf>,
+    /// Trust this user key (spec §4.7 *User keys*: a rider's own key that
+    /// signs their unofficial worlds) – its 64 hex digits, its .pub.json
+    /// file, or a package signed with it (repeatable). The keys in this
+    /// account's <data dir>/ocw/trusted-keys.json are trusted too. Riders
+    /// never make the server trust a key.
+    #[arg(long, value_name = "KEY|FILE")]
+    trust_key: Vec<String>,
     /// Seed of the free-ride start point.
     #[arg(long, default_value_t = 1)]
     seed: u64,
@@ -389,8 +396,16 @@ const DEFAULT_WEBTRANSPORT: &str = "0.0.0.0:47801";
 
 /// How world packages are loaded and verified (spec §4.7).
 fn load_options(args: &Args) -> Result<ocw_worldstore::LoadOptions, String> {
+    let user_keys = args
+        .trust_key
+        .iter()
+        .map(|k| ocw_worldstore::userkeys::read_key(k).map_err(|e| format!("--trust-key {k}: {e}")))
+        .collect::<Result<Vec<_>, _>>()?;
     let trust = ocw_worldstore::trust::TrustConfig {
         root_files: args.trust_root.clone(),
+        user_keys,
+        // Load once is a rider's answer in an app, never the server's.
+        session_keys: false,
         ..ocw_worldstore::trust::TrustConfig::for_build()
     }
     .trust_store()?;

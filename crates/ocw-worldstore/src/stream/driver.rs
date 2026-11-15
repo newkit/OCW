@@ -9,13 +9,19 @@
 //! 2. `?world=ID`: `<base>/ID/latest` gives the version;
 //! 3. the manifest is fetched and its signature chain checked
 //!    ([`super::accept_manifest`]);
+//!    A package signed by a user key nobody here trusts (spec §4.7 *User
+//!    keys*) waits here: [`StreamShared::consent`] holds the trust
+//!    dialog's request until the app answers (trusted keys go on,
+//!    declined fails);
 //! 4. the base (header and sections) is loaded, verified and decoded;
 //! 5. then the tiles the app asks for, batch by batch.
 
 use std::sync::Mutex;
 
 use ocw_world::TileKey;
-use ocw_world::manifest::{FileEntry, Manifest, TrustStatus, TrustStore, UnsignedPolicy};
+use ocw_world::manifest::{
+    FileEntry, Manifest, RootKey, SignedManifest, TrustStatus, TrustStore, UnsignedPolicy,
+};
 use ocw_world::package::StreamedPackage;
 
 use super::cache::{ChunkCache, ChunkStore};
@@ -66,12 +72,29 @@ pub struct StreamShared {
     /// The browser's storage quota and persistence (set by the app).
     pub quota: Option<u64>,
     pub persisted: Option<bool>,
+    /// The trust dialog's question and its answer (spec §4.7 *User keys*).
+    pub consent: Consent,
+}
+
+/// A user-signed package waiting for the user (spec §4.7 *User keys*).
+#[derive(Debug, Default, Clone, PartialEq)]
+pub enum Consent {
+    #[default]
+    None,
+    /// The driver waits: ask the user this.
+    Asking(Box<crate::userkeys::TrustRequest>),
+    /// The user agreed: these keys are trusted now (the driver goes on).
+    Granted(Vec<RootKey>),
+    /// The user declined: the driver stops.
+    Declined,
 }
 
 enum State {
     Start,
     Resolve,
     Manifest(String),
+    /// Waiting for the user to trust the manifest's key.
+    AwaitTrust(String),
     Base,
     Tiles,
     Failed,
@@ -190,12 +213,35 @@ impl<F: RangeFetch, S: ChunkStore> StreamDriver<F, S> {
                 true
             }
             State::Manifest(url) => {
-                if let Err(e) = self.manifest_step(&url, shared).await {
-                    self.fail(shared, e);
-                } else {
-                    self.state = State::Base;
+                match self.manifest_step(&url, shared).await {
+                    Ok(true) => self.state = State::Base,
+                    Ok(false) => self.state = State::AwaitTrust(url),
+                    Err(e) => self.fail(shared, e),
                 }
                 true
+            }
+            State::AwaitTrust(url) => {
+                let answer = std::mem::take(&mut shared.lock().expect("not poisoned").consent);
+                match answer {
+                    Consent::Granted(keys) => {
+                        let trust = std::mem::take(&mut self.config.trust);
+                        self.config.trust = crate::userkeys::with_user_keys(trust, &keys);
+                        self.state = State::Manifest(url);
+                        true
+                    }
+                    Consent::Declined => {
+                        self.fail(
+                            shared,
+                            "not loaded: you did not trust the key that signed this world",
+                        );
+                        true
+                    }
+                    waiting => {
+                        shared.lock().expect("not poisoned").consent = waiting;
+                        self.state = State::AwaitTrust(url);
+                        false
+                    }
+                }
             }
             State::Base => {
                 match self.base_step(shared).await {
@@ -212,11 +258,12 @@ impl<F: RangeFetch, S: ChunkStore> StreamDriver<F, S> {
         }
     }
 
+    /// `Ok(false)`: waiting for the user to trust the key.
     async fn manifest_step(
         &mut self,
         url: &str,
         shared: &Mutex<StreamShared>,
-    ) -> Result<(), StreamError> {
+    ) -> Result<bool, StreamError> {
         let r = self
             .fetch
             .get(url, None)
@@ -231,7 +278,27 @@ impl<F: RangeFetch, S: ChunkStore> StreamDriver<F, S> {
         let text = String::from_utf8(r.body)
             .map_err(|_| StreamError::Decode(format!("{url}: the manifest is not UTF-8")))?;
         let c = &self.config;
-        let (signed, trust) = accept_manifest(&text, &c.trust, c.policy, c.now_unix_s)?;
+        let (signed, trust) = match accept_manifest(&text, &c.trust, c.policy, c.now_unix_s) {
+            Err(e) if e.needs_consent() => {
+                let request = SignedManifest::parse(&text)
+                    .ok()
+                    .as_ref()
+                    .and_then(crate::userkeys::TrustRequest::of)
+                    .ok_or(StreamError::Verify(e))?;
+                let mut s = shared.lock().expect("not poisoned");
+                s.progress.package = Some(format!(
+                    "{} ({}@{})",
+                    request.world, request.id, request.version
+                ));
+                s.progress.trust = Some(format!(
+                    "UNOFFICIAL: {}; waiting for you to check its key",
+                    request.claimed()
+                ));
+                s.consent = Consent::Asking(Box::new(request));
+                return Ok(false);
+            }
+            r => r?,
+        };
         let m = signed.manifest;
         let file = m
             .package_file()
@@ -261,7 +328,7 @@ impl<F: RangeFetch, S: ChunkStore> StreamDriver<F, S> {
         }
         let file_url = sibling_url(url, &file.path);
         self.manifest = Some((m, trust, file, file_url));
-        Ok(())
+        Ok(true)
     }
 
     async fn base_step(&mut self, shared: &Mutex<StreamShared>) -> Result<(), StreamError> {
@@ -562,6 +629,81 @@ mod tests {
         run(&mut d, &shared);
         let e = shared.lock().unwrap().progress.error.clone().unwrap();
         assert!(e.contains("404") && e.contains("no such world"), "{e}");
+    }
+
+    /// A world signed by a user key nobody here trusts (spec §4.7 *User
+    /// keys*): the driver waits with the trust dialog's request; trusted,
+    /// it goes on; declined, it stops before any package bytes.
+    #[test]
+    fn a_user_signed_world_waits_for_the_users_trust() {
+        use ocw_world::manifest::{RootKeyPair, SigningKeyPair};
+        let root = RootKeyPair::from_seed("Ada Rider", [101; 32]);
+        let cert = root.certify(
+            "Ada Rider",
+            SigningKeyPair::public_key_of([102; 32]),
+            0,
+            1 << 20,
+        );
+        let key = SigningKeyPair::new([102; 32], cert)
+            .unwrap()
+            .with_root(root.public())
+            .unwrap();
+        let (bytes, m) = published();
+        let dir = format!("{BASE}test/mini/3/");
+        let fetch = MemoryFetch::with([
+            (format!("{BASE}test/mini/latest"), b"3\n".to_vec()),
+            (
+                format!("{dir}manifest.json"),
+                SignedManifest::signed(&m, &key).to_json().into_bytes(),
+            ),
+            (format!("{dir}mini.ocwpkg"), bytes),
+        ]);
+        for agree in [true, false] {
+            let shared = Mutex::new(StreamShared::default());
+            // Even under the warn policy: never loaded without the user.
+            let mut d = StreamDriver::<_, MemoryStore>::new(
+                &fetch,
+                None,
+                config(UnsignedPolicy::Warn),
+                clock(),
+            );
+            run(&mut d, &shared);
+            assert!(!d.failed());
+            {
+                let s = shared.lock().unwrap();
+                let Consent::Asking(r) = &s.consent else {
+                    panic!("{:?}", s.consent);
+                };
+                assert_eq!(r.claimed_signer, "Ada Rider");
+                assert_eq!(r.fingerprint(), root.public().fingerprint());
+                assert!(s.base.is_none());
+                assert!(s.progress.trust.as_deref().unwrap().contains("UNOFFICIAL"));
+            }
+            // Idle while nobody answers.
+            assert_eq!(run(&mut d, &shared), 0);
+            shared.lock().unwrap().consent = if agree {
+                Consent::Granted(vec![root.public()])
+            } else {
+                Consent::Declined
+            };
+            run(&mut d, &shared);
+            let s = shared.lock().unwrap();
+            if agree {
+                let base = s.base.as_ref().expect("loaded once trusted");
+                assert!(base.trust.is_trusted());
+                assert!(base.trust.to_string().contains("UNOFFICIAL"));
+            } else {
+                assert!(d.failed());
+                assert!(
+                    s.progress
+                        .error
+                        .as_deref()
+                        .unwrap()
+                        .contains("did not trust")
+                );
+                assert!(s.base.is_none());
+            }
+        }
     }
 
     /// A tile damaged on the server: refetched, then reported as an

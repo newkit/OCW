@@ -128,6 +128,90 @@ pub fn key_id(public_key: &[u8; 32]) -> KeyId {
     Hex(id)
 }
 
+/// The fingerprint of an Ed25519 public key (spec §4.7, *user keys*): the
+/// SHA-256 of its 32 raw bytes, shown as 16 groups of four upper-case hex
+/// digits (`3F2A 9C11 …`). Stable for a key and the same in every app, so
+/// two people can compare it digit by digit; the key id is its first 16
+/// hex digits (the first four groups).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Fingerprint(pub [u8; 32]);
+
+/// Groups of a fingerprint.
+pub const FINGERPRINT_GROUPS: usize = 16;
+const GROUP_DIGITS: usize = 4;
+
+impl Fingerprint {
+    /// The fingerprint of `public_key`.
+    pub fn of(public_key: &[u8; 32]) -> Self {
+        Self(sha256(public_key).0)
+    }
+
+    /// The 16 groups of four hex digits.
+    pub fn groups(&self) -> Vec<String> {
+        let hex: String = self.0.iter().map(|b| format!("{b:02X}")).collect();
+        hex.as_bytes()
+            .chunks(GROUP_DIGITS)
+            .map(|c| String::from_utf8_lossy(c).into_owned())
+            .collect()
+    }
+
+    /// The fingerprint in lines of `per_line` groups (the dialog: two
+    /// lines of eight).
+    pub fn lines(&self, per_line: usize) -> Vec<String> {
+        self.groups()
+            .chunks(per_line.max(1))
+            .map(|g| g.join(" "))
+            .collect()
+    }
+
+    /// The short form: the first eight groups and an ellipsis (lists; the
+    /// full form where a key is trusted).
+    pub fn short(&self) -> String {
+        format!("{} ...", self.groups()[..8].join(" "))
+    }
+
+    /// The key id of the same key (the first 8 bytes).
+    pub fn key_id(&self) -> KeyId {
+        let mut id = [0; 8];
+        id.copy_from_slice(&self.0[..8]);
+        Hex(id)
+    }
+
+    /// Lower-case hex, no spaces (what [`Self::matches`] compares with).
+    pub fn hex(&self) -> String {
+        self.0.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    /// Whether `text` names this fingerprint: its hex digits (spaces,
+    /// colons and case ignored), all 64 or a prefix of at least 8.
+    pub fn matches(&self, text: &str) -> bool {
+        normalize_fingerprint(text).is_some_and(|t| self.hex().starts_with(&t))
+    }
+}
+
+/// The hex digits of a typed fingerprint (lower case), if it has 8 to 64
+/// of them and nothing but hex digits, spaces, colons, dashes and dots.
+pub fn normalize_fingerprint(text: &str) -> Option<String> {
+    let t: String = text
+        .chars()
+        .filter(|c| !matches!(c, ' ' | ':' | '-' | '.' | '\u{2026}'))
+        .collect::<String>()
+        .to_ascii_lowercase();
+    (t.len() >= 8 && t.len() <= 64 && t.chars().all(|c| c.is_ascii_hexdigit())).then_some(t)
+}
+
+impl fmt::Display for Fingerprint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.groups().join(" "))
+    }
+}
+
+impl fmt::Debug for Fingerprint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
+}
+
 /// A data source and the notice it requires (spec §13).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Attribution {
@@ -542,6 +626,13 @@ pub enum VerifyError {
     Unsigned,
     #[error("signed by an unknown root key {0}")]
     UnknownRoot(KeyId),
+    /// Intact and correctly signed by the key that came with it (a user's
+    /// own key, spec §4.7 *user keys*), but nobody here trusts that key:
+    /// the apps ask (the trust dialog), nothing loads it silently.
+    #[error(
+        "signed by a user key you have not trusted (key {0}); check its fingerprint with its owner and trust it first"
+    )]
+    UntrustedKey(KeyId),
     #[error("key {0} is revoked")]
     Revoked(KeyId),
     #[error(
@@ -586,9 +677,18 @@ impl VerifyError {
             self,
             Self::Unsigned
                 | Self::UnknownRoot(_)
+                | Self::UntrustedKey(_)
                 | Self::KeyNotValid { .. }
                 | Self::FromTheFuture { .. }
         )
+    }
+}
+
+impl VerifyError {
+    /// Loading needs the user's consent (the trust dialog), whatever the
+    /// unsigned-package policy says ([`apply_policy`] never lets it pass).
+    pub fn needs_consent(&self) -> bool {
+        matches!(self, Self::UntrustedKey(_))
     }
 }
 
@@ -603,6 +703,11 @@ pub struct RootKey {
     /// Development root: trusted only by development builds (spec §12).
     #[serde(default)]
     pub dev_only: bool,
+    /// A user's key the user trusted (spec §4.7 *user keys*): packages it
+    /// signs are *unofficial*. Never read from or written to a key file –
+    /// only the user key store sets it.
+    #[serde(skip)]
+    pub user: bool,
 }
 
 impl RootKey {
@@ -617,6 +722,38 @@ impl RootKey {
         }
         VerifyingKey::from_bytes(&k.public_key.0).map_err(|e| e.to_string())?;
         Ok(k)
+    }
+
+    /// The same checks on an already parsed key (one embedded in a
+    /// manifest).
+    pub fn check(&self) -> Result<(), String> {
+        if self.kind != KIND_ROOT_PUBLIC {
+            return Err(format!("not a root public key ({:?})", self.kind));
+        }
+        if key_id(&self.public_key.0) != self.key_id {
+            return Err("key id does not match the public key".into());
+        }
+        VerifyingKey::from_bytes(&self.public_key.0).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// A root public key from its 32 bytes (`world trust add HEX`).
+    pub fn from_public(name: &str, public_key: [u8; 32]) -> Result<Self, String> {
+        let k = Self {
+            kind: KIND_ROOT_PUBLIC.into(),
+            name: name.into(),
+            key_id: key_id(&public_key),
+            public_key: Hex(public_key),
+            dev_only: false,
+            user: false,
+        };
+        k.check()?;
+        Ok(k)
+    }
+
+    /// Its fingerprint (spec §4.7 *user keys*).
+    pub fn fingerprint(&self) -> Fingerprint {
+        Fingerprint::of(&self.public_key.0)
     }
 
     pub fn to_json(&self) -> String {
@@ -742,6 +879,7 @@ impl RootKeyPair {
             key_id: key_id(&public_key.0),
             public_key,
             dev_only: false,
+            user: false,
         }
     }
 
@@ -798,12 +936,20 @@ struct SigningSecretFile {
     kind: String,
     secret_key: Hex<32>,
     certificate: SigningKeyCert,
+    /// The root's public key, for a user's key (spec §4.7 *user keys*):
+    /// manifests signed with it carry the root so others can check the
+    /// signature and the fingerprint before they trust it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    root: Option<RootKey>,
 }
 
 /// An online signing key with its root-signed certificate.
 pub struct SigningKeyPair {
     key: SigningKey,
     pub cert: SigningKeyCert,
+    /// Embedded in every manifest it signs (a user's key; official keys
+    /// leave it out: clients ship their roots).
+    pub root: Option<RootKey>,
 }
 
 impl SigningKeyPair {
@@ -818,7 +964,25 @@ impl SigningKeyPair {
         if claims.public_key.0 != key.verifying_key().to_bytes() {
             return Err("the certificate is for another key".into());
         }
-        Ok(Self { key, cert })
+        Ok(Self {
+            key,
+            cert,
+            root: None,
+        })
+    }
+
+    /// Embeds `root` (the root that certified this key) in the manifests
+    /// it signs: a user's key, shared without a trusted root (spec §4.7).
+    pub fn with_root(mut self, root: RootKey) -> Result<Self, String> {
+        root.check()?;
+        if self.claims().root_key_id != root.key_id {
+            return Err("this signing key was certified by another root".into());
+        }
+        self.cert
+            .verify(&TrustStore::new([root.clone()]))
+            .map_err(|e| e.to_string())?;
+        self.root = Some(root);
+        Ok(self)
     }
 
     pub fn claims(&self) -> SigningKeyClaims {
@@ -830,6 +994,7 @@ impl SigningKeyPair {
             kind: KIND_SIGNING_SECRET.into(),
             secret_key: Hex(self.key.to_bytes()),
             certificate: self.cert.clone(),
+            root: self.root.clone(),
         };
         serde_json::to_string_pretty(&f).expect("serializable") + "\n"
     }
@@ -839,7 +1004,11 @@ impl SigningKeyPair {
         if f.kind != KIND_SIGNING_SECRET {
             return Err(format!("not a signing secret key ({:?})", f.kind));
         }
-        Self::new(f.secret_key.0, f.certificate)
+        let k = Self::new(f.secret_key.0, f.certificate)?;
+        match f.root {
+            Some(r) => k.with_root(r),
+            None => Ok(k),
+        }
     }
 }
 
@@ -847,6 +1016,10 @@ impl SigningKeyPair {
 struct ManifestSignature {
     key: SigningKeyCert,
     signature: Hex<64>,
+    /// The signing key's root, embedded by a user's key (spec §4.7 *user
+    /// keys*); older readers ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    root: Option<RootKey>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -862,6 +1035,8 @@ pub struct Signer {
     pub root_name: String,
     pub root_key_id: KeyId,
     pub root_dev_only: bool,
+    /// A user key the user trusted (an *unofficial* package, spec §4.7).
+    pub root_user: bool,
     pub signing_key: SigningKeyClaims,
 }
 
@@ -888,6 +1063,7 @@ impl SignedManifest {
         let signature = Some(ManifestSignature {
             key: key.cert.clone(),
             signature: sign(&key.key, MANIFEST_CONTEXT, raw.get()),
+            root: key.root.clone(),
         });
         Self {
             raw,
@@ -927,12 +1103,44 @@ impl SignedManifest {
         self.signature.as_ref().and_then(|s| s.key.claims().ok())
     }
 
+    /// The root public key that came with the signature (a user's key,
+    /// spec §4.7), if it is well-formed and the one that certified the
+    /// signing key. Not trusted by itself: see [`Self::verify_signature`].
+    pub fn embedded_root(&self) -> Option<&RootKey> {
+        let sig = self.signature.as_ref()?;
+        let root = sig.root.as_ref()?;
+        let claims = sig.key.claims().ok()?;
+        (root.check().is_ok() && root.key_id == claims.root_key_id).then_some(root)
+    }
+
     /// Checks the signature chain (module docs, steps 1–4) at `now_unix_s`.
+    ///
+    /// A root nobody trusts that came with the signature (a user's key) is
+    /// checked as if it were trusted: an intact chain gives
+    /// [`VerifyError::UntrustedKey`] (the apps ask the user), a broken one
+    /// its integrity error (refused, never asked about).
     pub fn verify_signature(
         &self,
         trust: &TrustStore,
         now_unix_s: i64,
     ) -> Result<Signer, VerifyError> {
+        match self.verify_chain(trust, now_unix_s) {
+            Err(VerifyError::UnknownRoot(id)) => match self.embedded_root() {
+                Some(root) if root.key_id == id => {
+                    let own = TrustStore {
+                        roots: vec![root.clone()],
+                        revoked: trust.revoked.clone(),
+                    };
+                    self.verify_chain(&own, now_unix_s)?;
+                    Err(VerifyError::UntrustedKey(id))
+                }
+                _ => Err(VerifyError::UnknownRoot(id)),
+            },
+            r => r,
+        }
+    }
+
+    fn verify_chain(&self, trust: &TrustStore, now_unix_s: i64) -> Result<Signer, VerifyError> {
         let sig = self.signature.as_ref().ok_or(VerifyError::Unsigned)?;
         let (claims, root) = sig.key.verify(trust)?;
         for id in [root.key_id, claims.key_id] {
@@ -966,6 +1174,7 @@ impl SignedManifest {
             root_name: root.name.clone(),
             root_key_id: root.key_id,
             root_dev_only: root.dev_only,
+            root_user: root.user,
             signing_key: claims,
         })
     }
@@ -999,6 +1208,11 @@ impl TrustStatus {
 impl fmt::Display for TrustStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Trusted(s) if s.root_user => write!(
+                f,
+                "UNOFFICIAL: signed by {:?} (a user key you trust; the name is not verified), key {}",
+                s.root_name, s.root_key_id
+            ),
             Self::Trusted(s) => write!(
                 f,
                 "signed by {} ({}), root {}{} ({})",
@@ -1024,7 +1238,7 @@ pub fn apply_policy(
 ) -> Result<TrustStatus, VerifyError> {
     match result {
         Ok(s) => Ok(TrustStatus::Trusted(s)),
-        Err(e) if e.is_trust_failure() && policy == UnsignedPolicy::Warn => {
+        Err(e) if e.is_trust_failure() && !e.needs_consent() && policy == UnsignedPolicy::Warn => {
             Ok(TrustStatus::Untrusted(e.to_string()))
         }
         Err(e) => Err(e),
@@ -1410,5 +1624,134 @@ mod tests {
         assert_eq!(local.id, "local/vaduz---malbun");
         validate_id(&local.id).unwrap();
         assert_eq!(PackageIdentity::local("", b"x").id, "local/world");
+    }
+
+    /// A user's own key (spec §4.7 *user keys*): a root of their own with
+    /// a signing key that embeds it. Fictional test names only.
+    fn user_keys(seed: u8) -> (RootKeyPair, SigningKeyPair) {
+        let root = RootKeyPair::from_seed("Ada Rider", [seed; 32]);
+        let s = [seed.wrapping_add(1); 32];
+        let cert = root.certify(
+            "Ada Rider",
+            SigningKeyPair::public_key_of(s),
+            T0 - DAY,
+            T0 + 3650 * DAY,
+        );
+        let key = SigningKeyPair::new(s, cert)
+            .unwrap()
+            .with_root(root.public())
+            .unwrap();
+        (root, key)
+    }
+
+    #[test]
+    fn fingerprints_are_stable_grouped_and_match_typed_forms() {
+        let pk = RootKeyPair::from_seed("x", [3; 32]).public();
+        let f = pk.fingerprint();
+        // SHA-256 of the raw 32 bytes, 16 groups of four upper-case digits.
+        assert_eq!(f.0, sha256(&pk.public_key.0).0);
+        let groups = f.groups();
+        assert_eq!(groups.len(), FINGERPRINT_GROUPS);
+        assert!(groups.iter().all(|g| {
+            g.len() == 4
+                && g.chars()
+                    .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_lowercase())
+        }));
+        let shown = f.to_string();
+        assert_eq!(shown.len(), 16 * 4 + 15);
+        assert_eq!(f.lines(8).len(), 2);
+        assert_eq!(f.lines(8).join(" "), shown);
+        assert!(f.short().starts_with(&f.lines(8)[0]));
+        // The key id is its first four groups.
+        assert_eq!(f.key_id(), pk.key_id);
+        assert_eq!(f.hex()[..16], pk.key_id.to_string());
+        // Stable: the same key, the same fingerprint, a pinned value.
+        assert_eq!(Fingerprint::of(&pk.public_key.0), f);
+        assert_eq!(
+            Fingerprint::of(&[0; 32]).to_string(),
+            "66687AAD F862BD77 6C8FC18B 8E9F8E20 08971485 6EE233B3 902A591D 0D5F2925"
+                .replace(' ', "")
+                .as_bytes()
+                .chunks(4)
+                .map(|c| std::str::from_utf8(c).unwrap())
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        // Typed forms: any case, spaces, colons, a prefix of 8+ digits.
+        assert!(f.matches(&shown));
+        assert!(f.matches(&shown.to_lowercase().replace(' ', ":")));
+        assert!(f.matches(&groups[..2].join(" ")));
+        assert!(f.matches(&f.short()));
+        assert!(!f.matches(&groups[0]), "too short");
+        assert!(!f.matches("zzzz zzzz"));
+        assert!(!Fingerprint::of(&[1; 32]).matches(&shown));
+    }
+
+    #[test]
+    fn a_user_key_is_checked_with_its_own_root_and_needs_consent() {
+        let (root, key) = user_keys(40);
+        let m = manifest(&package_bytes(true));
+        let signed = SignedManifest::signed(&m, &key);
+        // The root travels with the signature (and round-trips).
+        let text = signed.to_json();
+        assert!(text.contains("\"root\""));
+        let parsed = SignedManifest::parse(&text).unwrap();
+        assert_eq!(parsed.embedded_root(), Some(&root.public()));
+        // Nobody trusts it: intact, so the user is asked – never loaded
+        // silently, not even under the warn policy.
+        let none = TrustStore::default();
+        let err = parsed.verify_signature(&none, T0).unwrap_err();
+        assert_eq!(err, VerifyError::UntrustedKey(root.public().key_id));
+        assert!(err.is_trust_failure() && err.needs_consent());
+        assert!(apply_policy(Err(err.clone()), UnsignedPolicy::Warn).is_err());
+        // Trusted as a user key: accepted, marked unofficial.
+        let mut user = root.public();
+        user.user = true;
+        let s = parsed
+            .verify_signature(&TrustStore::new([user]), T0)
+            .unwrap();
+        assert!(s.root_user);
+        assert_eq!(s.root_name, "Ada Rider");
+        assert!(TrustStatus::Trusted(s).to_string().contains("UNOFFICIAL"));
+        // The signing key file keeps the root.
+        let again = SigningKeyPair::from_json(&key.to_json()).unwrap();
+        assert_eq!(again.root, Some(root.public()));
+        // Official keys embed nothing: their manifests stay as before.
+        let (_, official) = keys();
+        assert!(
+            !SignedManifest::signed(&m, &official)
+                .to_json()
+                .contains("\"root\"")
+        );
+        // A root that did not certify the key is not accepted.
+        let other = RootKeyPair::from_seed("Mallory", [50; 32]).public();
+        let (_, plain) = keys();
+        assert!(plain.with_root(other).is_err());
+    }
+
+    #[test]
+    fn a_broken_user_signature_is_refused_never_asked_about() {
+        let (_, key) = user_keys(60);
+        let m = manifest(&package_bytes(true));
+        let text = SignedManifest::signed(&m, &key).to_json();
+        // Change the signed part: the signature no longer matches.
+        let tampered = text.replacen("Test Region", "Test Regiom", 1);
+        let err = SignedManifest::parse(&tampered)
+            .unwrap()
+            .verify_signature(&TrustStore::default(), T0)
+            .unwrap_err();
+        assert_eq!(err, VerifyError::BadSignature("manifest"));
+        assert!(err.is_integrity_failure() && !err.needs_consent());
+        // Another root swapped in: not the certifying root, so it is
+        // ignored and the root stays unknown (refused as before).
+        let (other, _) = user_keys(70);
+        let mut v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        v["signature"]["root"] = serde_json::from_str(&other.public().to_json()).unwrap();
+        let swapped = SignedManifest::parse(&v.to_string()).unwrap();
+        assert!(swapped.embedded_root().is_none());
+        assert!(matches!(
+            swapped.verify_signature(&TrustStore::default(), T0),
+            Err(VerifyError::UnknownRoot(_))
+        ));
     }
 }

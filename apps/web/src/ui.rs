@@ -145,6 +145,22 @@ impl Plugin for WebUiPlugin {
             (record, show_video, audio_devices).after(ocw_ui::RideViewSet),
         )
         .add_systems(Last, (publish, publish_console));
+        // The trusted world keys in the page's localStorage (spec §4.7
+        // *User keys*); the built-in roots cannot be added.
+        // (Always: the menu plugin above put an empty default there.)
+        {
+            let mut builtin = ocw_worldstore::trust::TrustConfig {
+                dev_roots: true,
+                ..Default::default()
+            }
+            .builtin_store()
+            .unwrap_or_default();
+            builtin.roots.extend(ocw_worldstore::trust::preview_roots());
+            app.insert_resource(ocw_ui::trust::TrustedKeys::load(
+                crate::settings::trusted_keys_store(),
+                builtin,
+            ));
+        }
         register_commands(app);
     }
 }
@@ -183,6 +199,7 @@ pub fn view_json(v: &ocw_render::menu::MenuView) -> String {
         "focused": v.focused,
         "hint": v.hint,
         "dimmed": v.dimmed,
+        "emphasis": v.emphasis,
         "grid": v.grid.as_ref().map(|g| g.columns),
     })
     .to_string()
@@ -448,6 +465,31 @@ fn stop_video() -> Result<(), String> {
 }
 
 fn register_commands(app: &mut App) {
+    // `world trust …` (spec §4.7 *User keys*) and the trust dialog's lines
+    // for the streamed world.
+    app.console_command(ConsoleCommand::new(
+        Permission::User,
+        Command::new("world")
+            .about("The world keys you trust (the page's world: World -> About)")
+            .subcommand_required(true)
+            .subcommand(ocw_ui::trust::command())
+            .subcommand(
+                Command::new("continue")
+                    .hide(true)
+                    .about("Go on streaming the world (its key is trusted now)"),
+            )
+            .subcommand(
+                Command::new("stop")
+                    .hide(true)
+                    .about("Do not load the world (its key was not trusted)"),
+            ),
+        |world, m| match m.subcommand() {
+            Some(("trust", t)) => ocw_ui::trust::run(world, t),
+            Some(("continue", _)) => crate::world::answer_trust(world, true),
+            Some(("stop", _)) => crate::world::answer_trust(world, false),
+            _ => Err("world trust list | add KEY | remove FINGERPRINT".into()),
+        },
+    ));
     app.console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("ride.save").about(

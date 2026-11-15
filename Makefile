@@ -91,7 +91,7 @@ VIDEO ?= /tmp/ocw.mp4
 VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 
 .DEFAULT_GOAL := help
-.PHONY: help test-web-account version version-next version-bump test-release-version release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish art-collect art-check test-art art-install-timer art-uninstall-timer art-timer-status deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
+.PHONY: help test-web-account test-web-trust version version-next version-bump test-release-version release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish art-collect art-check test-art art-install-timer art-uninstall-timer art-timer-status deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
 	clippy check run server materials deploy-test clean clean-test-output macos-app \
 	test test-unit test-wasm test-web-build test-web test-web-webgl2 test-web-gpu test-web-webkit deps-webkit test-web-world test-web-unicorn test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-kiosk web web-serve web-worlds web-remote web-preview web-preview-site web-preview-worlds test-web-preview deps-web deps-browser deps-vr deps-vr-linux deps-vr-linux-debian deps-vr-linux-fedora deps-vr-linux-arch deps-vr-linux-unknown deps-vr-windows deps-vr-macostest-web-readme test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
 	test-multiplayer test-multiplayer-local test-scenes test-scenes-list \
@@ -360,6 +360,9 @@ WEB_WORLD ?= liechtenstein
 WEB_WORLD_ROUTE ?= vaduz-malbun
 test-web-world: web web-worlds ## Headless Chromium: stream $(WEB_WORLD) from the dev server, ride $(WEB_WORLD_ROUTE), teleport, reload from the OPFS cache; screenshots into test-output/web/
 	scripts/test-web.py --out test-output/web --world $(WEB_WORLD) --route $(WEB_WORLD_ROUTE) --seconds 15 --teleport 6 --time noon
+
+test-web-trust: web ## Headless Chromium: a world signed by a throwaway user key opens the trust dialog (spec §4.7 User keys): fingerprint, Cancel focused, declined, trusted, remembered; screenshots into test-output/web/
+	scripts/test-web-trust.py --out test-output/web --package $(firstword $(WEB_WORLD_PKGS))
 
 test-web-unicorn: web web-worlds ## Headless Chromium: unicorn mode over $(WEB_WORLD) from $(WEB_WORLD_ROUTE)'s start (spec §14 Phase 13 G5): G, +, inspection, a pin, the menu row, landing; screenshots into test-output/web/
 	scripts/test-web.py --out test-output/web --world $(WEB_WORLD) --route $(WEB_WORLD_ROUTE) --seconds 8 --no-reload --god --time noon

@@ -376,10 +376,22 @@ fn main() -> AppExit {
             Err(e) => warn!("desktop integration: {e}"),
         }
     }
-    let setup = ride::setup::build(&args).unwrap_or_else(|e| {
-        eprintln!("{e}");
-        std::process::exit(1);
-    });
+    // `--world` signed by a user key nobody here trusts (spec §4.7 *User
+    // keys*): start on the built-in loop with the trust dialog open; the
+    // ride switches to the world once the key is trusted.
+    let consent = worlds::startup_consent(&args);
+    let setup = {
+        let mut build = args.clone();
+        if consent.is_some() {
+            build.world = None;
+            build.route = None;
+            build.free_ride = false;
+        }
+        ride::setup::build(&build).unwrap_or_else(|e| {
+            eprintln!("{e}");
+            std::process::exit(1);
+        })
+    };
     let mut app = App::new();
     app.insert_resource(loaded.settings)
         .insert_resource(loaded.riders)
@@ -475,6 +487,11 @@ fn main() -> AppExit {
     ))
     .add_systems(Startup, startup_commands)
     .add_systems(Update, timed_commands);
+    if let Some(request) = consent {
+        let line = ride::choice::RideChoice::from_args(&args).to_line();
+        let msg = ocw_ui::trust::ask(app.world_mut(), request, Some(line), None, false);
+        eprintln!("{msg}");
+    }
     let exit = app.run();
     let surface_adapter = surface::restart_adapter();
     if surface_adapter.is_some() || restart::requested() {

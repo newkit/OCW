@@ -80,7 +80,16 @@ pub fn load_course_at(
     neighbours: bool,
     seed: u64,
 ) -> Result<(Course, v1::WorldChange, (f64, f64)), String> {
-    let world = load_world(spec, opts).map_err(|e| e.to_string())?;
+    let world = load_world(spec, opts).map_err(|e| match e {
+        // A rider's own world whose key this server was not given (spec
+        // §4.7 *User keys*): the operator decides, never a client.
+        ocw_worldstore::LoadError::Verify(_, ocw_world::manifest::VerifyError::UntrustedKey(id)) => {
+            format!(
+                "this server does not trust the user key that signed it (key {id}); its operator can trust it with `ocw-server --trust-key` (spec §4.7)"
+            )
+        }
+        e => e.to_string(),
+    })?;
     tracing::info!(world = %world.describe(), "world package");
     let hood = ocw_worldstore::neighbourhood(&world, spec, opts, neighbours);
     for line in &hood.log {
@@ -175,6 +184,125 @@ mod tests {
             parts: Vec::new(),
             also: Vec::new(),
         }
+    }
+
+    /// A package with a road graph (one straight edge, one tile).
+    fn graph_package(name: &str) -> Vec<u8> {
+        use ocw_world::graph::{Edge, EdgeId, Oneway, RoadClass, RoadGraph, VertexId};
+        use ocw_world::package::{Tile, TileKey};
+        let key = TileKey { x: 0, z: 0 };
+        ocw_world::WorldPackage {
+            name: name.into(),
+            origin: (47.14, 9.52),
+            tile_size_m: 1000.0,
+            samples: 2,
+            tiles: [(
+                key,
+                Tile {
+                    key,
+                    heights: vec![450.0; 4],
+                    roads: Vec::new(),
+                },
+            )]
+            .into(),
+            graph: Some(RoadGraph {
+                vertices: vec![[100.0, 500.0], [900.0, 500.0]],
+                edges: vec![Edge {
+                    id: EdgeId(7),
+                    from: VertexId(0),
+                    to: VertexId(1),
+                    points: vec![[100.0, 500.0], [900.0, 500.0]],
+                    class: RoadClass::Secondary,
+                    name: None,
+                    width_m: 6.0,
+                    bridge: false,
+                    tunnel: false,
+                    dead_end_m: None,
+                    boundary: false,
+                    oneway: Oneway::No,
+                    osm_way: 1,
+                    profile: Vec::new(),
+                }],
+                boundary_vertices: Default::default(),
+            }),
+            routes: Vec::new(),
+            region: None,
+            time_zone: None,
+            landuse: None,
+            buildings: None,
+            bridges: None,
+            look: Default::default(),
+            obstacles: None,
+        }
+        .to_bytes()
+    }
+
+    /// The host asks for a rider's own world (spec §4.7 *User keys*): the
+    /// server loads it only when its operator trusts the key – a client
+    /// never makes it trust one.
+    #[test]
+    fn a_user_signed_world_needs_the_servers_own_trust() {
+        use ocw_world::manifest::{
+            Attribution, Manifest, RootKeyPair, SignedManifest, SigningKeyPair, TrustStore,
+        };
+        let now = 1_800_000_000;
+        let root = RootKeyPair::from_seed("Ada Rider", [121; 32]);
+        let cert = root.certify(
+            "Ada Rider",
+            SigningKeyPair::public_key_of([122; 32]),
+            now - 10,
+            now + 1000,
+        );
+        let key = SigningKeyPair::new([122; 32], cert)
+            .unwrap()
+            .with_root(root.public())
+            .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let bytes = graph_package("Ada's Strip");
+        let mut m = Manifest::new(
+            "user/ada/strip",
+            "Ada's Strip",
+            1,
+            now,
+            "test",
+            vec![Attribution::openstreetmap()],
+        )
+        .unwrap();
+        m.add_file("strip.ocwpkg", &bytes).unwrap();
+        let p = dir.path().join("strip.ocwpkg");
+        std::fs::write(&p, &bytes).unwrap();
+        std::fs::write(
+            dir.path().join("strip.ocwpkg.manifest.json"),
+            SignedManifest::signed(&m, &key).to_json(),
+        )
+        .unwrap();
+        let opts = LoadOptions {
+            now_unix_s: now,
+            // Not even with --allow-unsigned.
+            allow_unsigned: true,
+            ..LoadOptions::new(
+                TrustStore::default(),
+                ocw_worldstore::WorldCache::new(dir.path().join("cache")),
+            )
+        };
+        let spec = p.to_str().unwrap();
+        let e = load_course(spec, None, &opts, false, 1).err().unwrap();
+        assert!(
+            e.contains("does not trust") && e.contains("--trust-key"),
+            "{e}"
+        );
+        let trusting = LoadOptions {
+            trust: ocw_worldstore::userkeys::with_user_keys(
+                TrustStore::default(),
+                &[root.public()],
+            ),
+            ..opts
+        };
+        let (_, change) = load_course(spec, None, &trusting, false, 1).unwrap();
+        assert_eq!(
+            (change.package_id.as_str(), change.version),
+            ("user/ada/strip", 1)
+        );
     }
 
     #[test]

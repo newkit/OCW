@@ -26,6 +26,8 @@
 //! - [`history`]: the training history (spec §14 Phase 7): the rides,
 //!   weekly and monthly totals, personal bests and the power curve;
 //!   [`bindings`]: the rebindable keys and buttons (M9).
+//! - [`world_trust`]: following the host to a world signed by a user key
+//!   (spec §4.7 *User keys*): load, ask (the trust dialog) or leave.
 //!
 //! No threads, file system or sockets: everything here also builds for
 //! `wasm32-unknown-unknown` (spec §3.5). The apps add the Bevy glue.
@@ -56,3 +58,4 @@ pub mod view;
 pub mod voice;
 pub mod weather;
 pub mod workout;
+pub mod world_trust;

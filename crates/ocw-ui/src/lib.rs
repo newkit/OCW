@@ -16,7 +16,9 @@
 //!   capture, inspection and pins, the HUD's flight view, `god …`,
 //! - [`controls`]: the Bevy input of the menu, [`bindings`]: the
 //!   rebindable ride keys and buttons (M9), [`access`]: the accessibility
-//!   options, [`history`]: the training history (spec §14 Phase 7).
+//!   options, [`history`]: the training history (spec §14 Phase 7),
+//! - [`trust`]: the trust dialog and the trusted world keys (spec §4.7
+//!   *User keys*), `world trust …`.
 //!
 //! The apps differ in how they hold the ride: the desktop has
 //! `ClientState` and a `Link` to its server, the browser a `WebSession`.
@@ -35,6 +37,7 @@ pub mod quality;
 pub mod riders_page;
 pub mod settings;
 pub mod timemachine;
+pub mod trust;
 pub mod weather;
 
 use bevy::prelude::*;

@@ -104,6 +104,7 @@ impl WorldOptions {
             dev_roots: self.trust_dev,
             root_files: Vec::new(),
             roots_dir: None,
+            ..Default::default()
         }
         .trust_store()
         .unwrap_or_default();
@@ -122,6 +123,7 @@ impl WorldOptions {
                 key_id: key_id(pk),
                 public_key: Hex(*pk),
                 dev_only: true,
+                user: false,
             });
         }
         trust
@@ -129,10 +131,23 @@ impl WorldOptions {
 
     /// The driver's configuration.
     pub fn stream_config(&self, now_unix_s: i64) -> Result<StreamConfig, String> {
+        self.stream_config_with(now_unix_s, &[])
+    }
+
+    /// The driver's configuration, trusting also the user keys `user`
+    /// (the browser's trusted world keys, spec §4.7 *User keys*; they
+    /// never replace a built-in root).
+    pub fn stream_config_with(
+        &self,
+        now_unix_s: i64,
+        user: &[RootKey],
+    ) -> Result<StreamConfig, String> {
+        let mut keys = user.to_vec();
+        keys.extend(ocw_worldstore::userkeys::once_roots());
         Ok(StreamConfig {
             world: self.spec.clone(),
             source: WorldRef::parse(&self.spec, &self.base)?,
-            trust: self.trust_store(),
+            trust: ocw_worldstore::userkeys::with_user_keys(self.trust_store(), &keys),
             policy: if self.allow_unsigned {
                 UnsignedPolicy::Warn
             } else {
@@ -278,6 +293,8 @@ pub struct WorldStream {
     last_log_s: f64,
     /// The loading screen's lines (shown by the page while loading).
     pub screen: Vec<String>,
+    /// The trust dialog was opened for the driver's question.
+    asked: bool,
 }
 
 impl WorldStream {
@@ -299,6 +316,7 @@ impl WorldStream {
             last_publish_s: f64::NEG_INFINITY,
             last_log_s: 0.0,
             screen: Vec::new(),
+            asked: false,
         }
     }
 
@@ -402,6 +420,23 @@ pub fn stream_world(world: &mut World) {
     let Some(mut stream) = world.remove_resource::<WorldStream>() else {
         return;
     };
+    // A world signed by a user key nobody here trusts (spec §4.7 *User
+    // keys*): the trust dialog; its answer goes back to the driver.
+    let question = match &stream.shared.lock().expect("not poisoned").consent {
+        ocw_worldstore::stream::driver::Consent::Asking(r) if !stream.asked => Some((**r).clone()),
+        _ => None,
+    };
+    if let Some(request) = question {
+        stream.asked = true;
+        let msg = ocw_ui::trust::ask(
+            world,
+            request,
+            Some("world continue".into()),
+            Some("world stop".into()),
+            false,
+        );
+        info!("{msg}");
+    }
     let base = stream.shared.lock().expect("not poisoned").base.take();
     if let Some(base) = base
         && let Err(e) = on_base(&mut stream, base)
@@ -508,6 +543,32 @@ fn start_ride(world: &mut World, stream: &mut WorldStream, ride: WorldRide, now:
     };
     info!("{summary}");
     info!("{}", stream.status_line(crate::wasm_memory_bytes()));
+}
+
+/// The trust dialog's answer for the streamed world (`world continue |
+/// stop`): the keys trusted now (the user's and those of *Load once*) go
+/// to the driver, which checks the manifest again – an untrusted key asks
+/// once more.
+pub fn answer_trust(world: &mut World, agree: bool) -> Result<String, String> {
+    use ocw_worldstore::stream::driver::Consent;
+    let keys = world
+        .get_resource::<ocw_ui::trust::TrustedKeys>()
+        .map(|k| k.roots())
+        .unwrap_or_default();
+    let mut stream = world
+        .get_resource_mut::<WorldStream>()
+        .ok_or("no world is being loaded")?;
+    stream.asked = false;
+    let mut s = stream.shared.lock().expect("not poisoned");
+    if agree {
+        let mut all = keys;
+        all.extend(ocw_worldstore::userkeys::once_roots());
+        s.consent = Consent::Granted(all);
+        Ok("loading the world".into())
+    } else {
+        s.consent = Consent::Declined;
+        Ok("the world is not loaded".into())
+    }
 }
 
 /// The world plugin: the stream resource and its system (the driver is

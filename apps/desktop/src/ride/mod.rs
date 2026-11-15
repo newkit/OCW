@@ -256,6 +256,7 @@ impl Plugin for RidePlugin {
         }
         app.init_resource::<Loading>()
             .init_resource::<Pending>()
+            .init_resource::<PendingFollow>()
             .init_resource::<RideCatalog>()
             .init_resource::<WorldMemo>()
             .add_systems(Startup, refresh_catalog)
@@ -282,6 +283,25 @@ fn refresh_on_menu_open(world: &mut World, mut was_open: Local<bool>) {
 /// Starts loading `choice` on a background thread (the ride goes on); on
 /// a remote server asks the server to switch instead (see the module docs).
 pub fn begin_switch(world: &mut World, choice: RideChoice) -> Result<String, String> {
+    // A world signed by a user key nobody here trusts (spec §4.7 *User
+    // keys*): the trust dialog first; this line runs again once the user
+    // trusted the key (or chose Load once).
+    if let RideChoice::World { world: spec, .. } = &choice {
+        let opts = crate::worlds::load_options(world.resource::<Args>())?;
+        match ocw_worldstore::consent_needed(spec, &opts) {
+            Ok(Some(request)) => {
+                return Ok(ocw_ui::trust::ask(
+                    world,
+                    request,
+                    Some(choice.to_line()),
+                    None,
+                    false,
+                ));
+            }
+            Ok(None) | Err(ocw_worldstore::LoadError::NotFound(..)) => {}
+            Err(e) => return Err(format!("REFUSED: {e}")),
+        }
+    }
     if world.resource::<Args>().server.is_some() {
         return ask_server(world, &choice);
     }
@@ -392,6 +412,34 @@ fn follow_world_change(world: &mut World) {
             WorldMode::Route(change.route.clone())
         },
     };
+    // The host chose a world signed by a user key nobody here trusts
+    // (spec §4.7 *User keys*): ask; declining leaves the shared ride.
+    let opts = crate::worlds::load_options(world.resource::<Args>());
+    match opts.map(|o| ocw_worldstore::consent_needed(&entry.spec, &o)) {
+        Ok(Ok(Some(request))) => {
+            let msg = ocw_ui::trust::ask(
+                world,
+                request,
+                Some("world follow".into()),
+                Some("world leave".into()),
+                true,
+            );
+            world.insert_resource(PendingFollow(Some(change)));
+            world.resource_mut::<ConsoleState>().print(msg);
+            return;
+        }
+        Ok(Ok(None)) => {}
+        Ok(Err(e)) => {
+            // Damaged or tampered with: never ridden, the ride is left.
+            let msg = format!(
+                "The host rides {}, but your copy is refused: {e}",
+                change.name
+            );
+            leave_with(world, msg);
+            return;
+        }
+        Err(e) => warn!("world change: {e}"),
+    }
     let follow = Follow {
         name: change.name.clone(),
         sha256: change.content_sha256.clone(),
@@ -401,6 +449,54 @@ fn follow_world_change(world: &mut World) {
             .resource_mut::<ConsoleState>()
             .print(format!("cannot follow the world change: {e}"));
     }
+}
+
+/// The host's world change waiting for the trust dialog.
+#[derive(Resource, Default)]
+pub struct PendingFollow(pub Option<ocw_protocol::v1::WorldChange>);
+
+/// `world follow`: the user trusted the key of the host's new world (or
+/// chose Load once): follow the change now.
+pub fn follow_after_trust(world: &mut World) -> Result<String, String> {
+    let change = world
+        .get_resource_mut::<PendingFollow>()
+        .and_then(|mut p| p.0.take())
+        .ok_or("no world change of the host is waiting")?;
+    let name = change.name.clone();
+    world
+        .get_resource_mut::<connection::WorldChangeInbox>()
+        .ok_or("not in a shared ride")?
+        .0 = Some(change);
+    Ok(format!("following the host to {name}"))
+}
+
+/// `world leave`: the user did not trust the key of the host's new world:
+/// leave the shared ride and ride alone (the built-in loop).
+pub fn leave_shared_ride(world: &mut World) -> Result<String, String> {
+    let name = world
+        .get_resource_mut::<PendingFollow>()
+        .and_then(|mut p| p.0.take())
+        .map_or_else(|| "its world".to_owned(), |c| c.name);
+    Ok(leave_with(
+        world,
+        ocw_client::world_trust::leave_message(&name),
+    ))
+}
+
+/// Leaves the shared ride with `why`: the connection ends, a solo ride on
+/// the built-in loop starts (no world the user did not accept is ridden).
+fn leave_with(world: &mut World, why: String) -> String {
+    world.resource_mut::<Args>().server = None;
+    let msg = format!("{why} Riding alone on the built-in loop.");
+    warn!("{msg}");
+    world.resource_mut::<ConsoleState>().print(msg.clone());
+    if let Some(mut v) = world.get_resource_mut::<RideView>() {
+        v.app_message = Some(msg.clone());
+    }
+    if let Err(e) = start_load(world, RideChoice::TestRoute("loop".into()), None) {
+        warn!("cannot start the solo ride: {e}");
+    }
+    msg
 }
 
 /// Loads `choice` on a background thread.
@@ -873,6 +969,131 @@ mod tests {
         // Without a world package there is nothing to match a GPX onto.
         let log = run(&mut app, "ride.import-gpx some.gpx");
         assert!(log.contains("no world package loaded"), "{log}");
+    }
+
+    /// A world package signed by a throwaway user key (test only; a
+    /// fictional name), written into `dir`.
+    fn user_signed_package(dir: &Path) -> PathBuf {
+        use ocw_world::manifest::{
+            Attribution, Manifest, RootKeyPair, SignedManifest, SigningKeyPair,
+        };
+        use ocw_world::package::{Tile, TileKey};
+        let now = ocw_worldstore::now_unix_s();
+        let root = RootKeyPair::from_seed("Ada Rider", [131; 32]);
+        let cert = root.certify(
+            "Ada Rider",
+            SigningKeyPair::public_key_of([132; 32]),
+            now - 3600,
+            now + 3600,
+        );
+        let key = SigningKeyPair::new([132; 32], cert)
+            .unwrap()
+            .with_root(root.public())
+            .unwrap();
+        let tile = TileKey { x: 0, z: 0 };
+        let bytes = ocw_world::WorldPackage {
+            name: "Ada's Mini".into(),
+            origin: (47.0, 9.5),
+            tile_size_m: 1000.0,
+            samples: 2,
+            tiles: [(
+                tile,
+                Tile {
+                    key: tile,
+                    heights: vec![0.0; 4],
+                    roads: Vec::new(),
+                },
+            )]
+            .into(),
+            graph: None,
+            routes: Vec::new(),
+            region: None,
+            time_zone: None,
+            landuse: None,
+            buildings: None,
+            bridges: None,
+            look: Default::default(),
+            obstacles: None,
+        }
+        .to_bytes();
+        std::fs::create_dir_all(dir).unwrap();
+        let mut m = Manifest::new(
+            "user/ada/mini",
+            "Ada's Mini",
+            1,
+            now,
+            "test",
+            vec![Attribution::openstreetmap()],
+        )
+        .unwrap();
+        m.add_file("ada-mini.ocwpkg", &bytes).unwrap();
+        let p = dir.join("ada-mini.ocwpkg");
+        std::fs::write(&p, &bytes).unwrap();
+        std::fs::write(
+            dir.join("ada-mini.ocwpkg.manifest.json"),
+            SignedManifest::signed(&m, &key).to_json(),
+        )
+        .unwrap();
+        p
+    }
+
+    /// Spec §4.7 *User keys*: a world signed by a key nobody here trusts
+    /// is not loaded; the trust dialog asks (Cancel focused), and
+    /// declining keeps the ride.
+    #[test]
+    fn a_world_by_an_unknown_user_key_asks_first() {
+        let (mut app, rides) = app("trust");
+        let pkg = user_signed_package(&rides.join("worlds"));
+        let log = run(&mut app, &format!("world switch \"{}\"", pkg.display()));
+        assert!(log.contains("(unverified name)"), "{log}");
+        let dialog = app.world().resource::<ocw_ui::trust::TrustDialog>();
+        let r = dialog.request.as_ref().expect("asks");
+        assert_eq!(r.claimed_signer, "Ada Rider");
+        assert!(!dialog.shared);
+        // Nothing is loading; the menu shows the dialog.
+        assert!(app.world().resource::<Pending>().0.is_none());
+        for _ in 0..3 {
+            app.update();
+        }
+        let menu = &app.world().resource::<crate::menu::MenuState>().menu;
+        assert_eq!(
+            menu.page(),
+            Some(ocw_client::menu::model::Page::ConfirmTrust)
+        );
+        assert_eq!(menu.focus(), 2, "Cancel");
+        // Enter on Cancel: declined, the ride goes on.
+        run(&mut app, "menu select");
+        for _ in 0..3 {
+            app.update();
+        }
+        assert!(
+            !app.world()
+                .resource::<ocw_ui::trust::TrustDialog>()
+                .is_pending()
+        );
+        assert!(app.world().resource::<Pending>().0.is_none());
+        assert!(
+            app.world()
+                .resource::<ConsoleState>()
+                .log()
+                .iter()
+                .any(|l| l.contains("did not trust")),
+            "{:?}",
+            app.world().resource::<ConsoleState>().log()
+        );
+        assert_eq!(
+            client(app.world()).route().name(),
+            Route::test_loop().name()
+        );
+        // Declining remembers nothing: the next try asks again.
+        let log = run(&mut app, &format!("world switch \"{}\"", pkg.display()));
+        assert!(log.matches("(unverified name)").count() >= 2, "{log}");
+        assert!(
+            app.world()
+                .resource::<ocw_ui::trust::TrustDialog>()
+                .is_pending()
+        );
+        let _ = std::fs::remove_dir_all(&rides);
     }
 
     #[test]
