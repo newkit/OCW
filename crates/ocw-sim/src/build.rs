@@ -1297,6 +1297,32 @@ aero = -9
         );
     }
 
+    /// The helmets' looks (spec §2.6, v3.37: sculpted shells, vents, the
+    /// TT helmet's tail and visor) never change the physics: a helmet's
+    /// build is its catalogue entry alone – the drag area by its `aero`
+    /// steps, the mass by its weight against the base helmet – on every
+    /// bike, and nothing else moves.
+    #[test]
+    fn helmet_looks_leave_the_physics_alone() {
+        let base = i64::from(t().get("helmet.road.base").unwrap().weight_g);
+        for id in ["helmet.light.top", "helmet.aero-road.top", "helmet.tt.top"] {
+            let p = t().get(id).unwrap();
+            for profile in ProfileId::ALL {
+                let stock = Build::stock(profile).raw;
+                let b = build(t(), profile, &ids(&[id])).raw;
+                let cda = stock.cda_m2 - f64::from(p.aero) * KIT_AERO_STEP_M2;
+                assert!((b.cda_m2 - cda).abs() < 1e-12, "{id} on {profile:?}");
+                let kg = (i64::from(p.weight_g) - base) as f64 / 1000.0;
+                assert!(
+                    (b.bike_mass_kg - stock.bike_mass_kg - kg).abs() < 1e-9,
+                    "{id} on {profile:?}"
+                );
+                assert_eq!(b.crr, stock.crr, "{id}");
+                assert_eq!(b.drivetrain_efficiency, stock.drivetrain_efficiency, "{id}");
+            }
+        }
+    }
+
     /// A skinsuit covers the bib shorts: aero bibs under it do not count.
     #[test]
     fn a_skinsuit_covers_the_shorts() {

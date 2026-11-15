@@ -2,6 +2,7 @@
 //!
 //! - [`bikes`], [`rider`]: the generators of the shipped low-poly glTF
 //!   models (own work, MIT OR Apache-2.0), built from [`mesh`] primitives;
+//!   [`helmet`]: the rider's helmets (sculpted shells, vents, visor);
 //! - [`glb`]: writing and reading `.glb` files ([`model::Model`]);
 //! - [`manifest`]: the asset manifest and the validator (licence entries,
 //!   no physics in cosmetic assets, required nodes, triangle budgets);
@@ -24,6 +25,7 @@ pub mod convert;
 #[cfg(feature = "tools")]
 pub mod fetch;
 pub mod glb;
+pub mod helmet;
 pub mod ktx2;
 pub mod licence;
 pub mod manifest;

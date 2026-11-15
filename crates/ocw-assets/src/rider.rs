@@ -251,7 +251,8 @@ pub fn optional() -> Vec<&'static str> {
 /// The optional nodes shown for a look: the kit `variants` (rider variant
 /// ids of the worn items; slots without one wear the base item) and the
 /// character's hair, face and glasses (a TT helmet's visor replaces the
-/// glasses). The kit patterns are drawn by the renderer's gear shader
+/// glasses, and no cap is worn under it: its brim would cut through the
+/// visor, spec §2.6 v3.37). The kit patterns are drawn by the renderer's gear shader
 /// (spec §14 Phase 8 T6, `ocw_core::kit`): the chest band and sash nodes
 /// of W4 stay in the model for older apps but are never shown.
 pub fn visible(character: &ocw_core::Character, variants: &[&str]) -> Vec<&'static str> {
@@ -281,7 +282,9 @@ pub fn visible(character: &ocw_core::Character, variants: &[&str]) -> Vec<&'stat
         3 => Some(opt::FACE_STUBBLE),
         _ => None,
     });
-    if !out.contains(&HELMET_AERO) {
+    if out.contains(&HELMET_AERO) {
+        out.retain(|n| *n != CAP);
+    } else {
         out.extend(match c.glasses {
             1 => Some(opt::GLASSES_SPORT),
             2 => Some(opt::GLASSES_ROUND),
@@ -375,6 +378,12 @@ fn opt_node(m: &mut Model, name: &str, parent: usize, f: impl FnOnce(&mut Parts)
     f(&mut p);
     p.attach(m, i);
     i
+}
+
+/// The centre of the skull (rest-pose model coordinates): what the head
+/// wear is built round.
+pub fn skull_centre() -> Vec3 {
+    v(body::TORSO_PIVOT) + Vec3::Y * (body::TORSO + 0.15) + Vec3::new(0.0, 0.0, -0.015)
 }
 
 /// Builds the rider model.
@@ -630,7 +639,7 @@ pub fn build(detail: Detail) -> Model {
         n,
         false,
     );
-    let skull = neck + Vec3::new(0.0, 0.15, -0.015);
+    let skull = skull_centre();
     p.slot("skin").ellipsoid(
         skull,
         Vec3::new(0.078, 0.105, 0.095),
@@ -679,13 +688,14 @@ pub fn build(detail: Detail) -> Model {
         );
     });
     opt_node(&mut m, opt::HAIR_TAIL, head, |p| {
+        // Out under the helmet's rim at the back (spec §2.6).
         p.slot("hair").sweep(
             &[
-                skull + Vec3::new(0.0, 0.0, 0.085),
-                skull + Vec3::new(0.0, -0.05, 0.125),
-                skull + Vec3::new(0.0, -0.15, 0.135),
+                skull + Vec3::new(0.0, -0.02, 0.084),
+                skull + Vec3::new(0.0, -0.07, 0.112),
+                skull + Vec3::new(0.0, -0.165, 0.122),
             ],
-            &[0.024, 0.026, 0.01],
+            &[0.022, 0.024, 0.01],
             if hi { 6 } else { 4 },
             true,
         );
@@ -784,112 +794,12 @@ pub fn build(detail: Detail) -> Model {
             })
             .collect()
     };
-    let hc = skull + Vec3::new(0.0, 0.0, 0.01);
-    let vented = |p: &mut Parts, vents: &[f32], width: f32| {
-        p.slot("helmet").loft(
-            &dome(0.1, 0.13, 0.135, hc, if hi { 5 } else { 3 }),
-            n + 4,
-            false,
-            Cap::Flat,
-            Cap::Point(hc + Vec3::Y * 0.135),
-        );
-        if hi {
-            // Vents: dark grooves front to back.
-            for x in vents {
-                p.slot("helmet_detail").sweep(
-                    &[
-                        hc + Vec3::new(*x, 0.07, -0.105),
-                        hc + Vec3::new(*x, 0.12, -0.03),
-                        hc + Vec3::new(*x, 0.115, 0.06),
-                    ],
-                    &[width, width + 0.002, width],
-                    4,
-                    true,
-                );
-            }
-            for s in [-1.0f32, 1.0] {
-                p.slot("helmet_detail").tube(
-                    hc + Vec3::new(s * 0.085, 0.0, -0.01),
-                    skull + Vec3::new(s * 0.05, -0.1, -0.03),
-                    0.004,
-                    0.004,
-                    3,
-                    false,
-                );
-            }
-        }
-    };
-    opt_node(&mut m, HELMET_ROAD, head, |p| {
-        vented(p, &[-0.045, 0.0, 0.045], 0.012)
-    });
-    opt_node(&mut m, opt::HELMET_LIGHT, head, |p| {
-        vented(p, &[-0.066, -0.033, 0.0, 0.033, 0.066], 0.013)
-    });
-    opt_node(&mut m, opt::HELMET_AERO_ROAD, head, |p| {
-        // A smooth, closed shell, a little longer at the back.
-        p.slot("helmet").loft(
-            &dome(
-                0.102,
-                0.13,
-                0.145,
-                hc + Vec3::Z * 0.008,
-                if hi { 5 } else { 3 },
-            ),
-            n + 4,
-            false,
-            Cap::Flat,
-            Cap::Point(hc + Vec3::new(0.0, 0.132, 0.01)),
-        );
-        if hi {
-            p.slot("helmet_detail").tube(
-                hc + Vec3::new(-0.06, 0.06, -0.122),
-                hc + Vec3::new(0.06, 0.06, -0.122),
-                0.008,
-                0.008,
-                4,
-                false,
-            );
-            for s in [-1.0f32, 1.0] {
-                p.slot("helmet_detail").tube(
-                    hc + Vec3::new(s * 0.087, 0.0, -0.01),
-                    skull + Vec3::new(s * 0.05, -0.1, -0.03),
-                    0.004,
-                    0.004,
-                    3,
-                    false,
-                );
-            }
-        }
-    });
-    opt_node(&mut m, HELMET_AERO, head, |p| {
-        let ac = skull + Vec3::new(0.0, 0.03, 0.0);
-        let a = |z: f32, hw: f32, hh: f32, dy: f32| Ring {
-            centre: ac + Vec3::new(0.0, dy, z),
-            u: Vec3::X * hw,
-            v: Vec3::Y * hh,
-        };
-        p.slot("helmet").loft(
-            &[
-                a(-0.09, 0.07, 0.07, 0.0),
-                a(-0.03, 0.1, 0.11, 0.01),
-                a(0.07, 0.095, 0.1, 0.0),
-                a(0.2, 0.05, 0.05, -0.03),
-            ],
-            n + 4,
-            false,
-            Cap::Point(ac + Vec3::new(0.0, 0.0, -0.12)),
-            Cap::Point(ac + Vec3::new(0.0, -0.06, 0.3)),
-        );
-        if hi {
-            p.slot("lens").ellipsoid(
-                skull + Vec3::new(0.0, 0.02, -0.085),
-                Vec3::new(0.088, 0.035, 0.035),
-                Quat::IDENTITY,
-                3,
-                10,
-            );
-        }
-    });
+    // The helmets (spec §2.6, v3.37): crate::helmet.
+    for h in crate::helmet::Helmet::ALL {
+        opt_node(&mut m, h.node(), head, |p| {
+            crate::helmet::build(p, h, skull, detail)
+        });
+    }
     opt_node(&mut m, CAP, head, |p| {
         let cc = skull + Vec3::new(0.0, 0.035, 0.0);
         p.slot("helmet").loft(
@@ -917,11 +827,11 @@ pub fn build(detail: Detail) -> Model {
             Cap::Open,
             Cap::Open,
         );
-        // Short brim, flipped up.
+        // Short brim, flipped up a little, out under the helmet's brow.
         p.slot("jersey").cuboid(
-            cc + Vec3::new(0.0, 0.025, -0.125),
-            Vec3::new(0.065, 0.005, 0.035),
-            Quat::from_rotation_x(0.55),
+            cc + Vec3::new(0.0, 0.012, -0.125),
+            Vec3::new(0.065, 0.004, 0.035),
+            Quat::from_rotation_x(0.35),
         );
     });
     // Arms.
@@ -1105,7 +1015,10 @@ mod tests {
         let tt = visible(&c, &["helmet-tt", "shoes-race", "cap-cotton"]);
         assert!(tt.contains(&HELMET_AERO) && !tt.contains(&HELMET_ROAD));
         assert!(tt.contains(&opt::SHOE_RACE[1]) && !tt.contains(&opt::SHOE_ROAD[1]));
-        assert!(tt.contains(&CAP));
+        // No cap under the TT helmet (its brim would cut the visor).
+        assert!(!tt.contains(&CAP));
+        let aero = visible(&c, &["helmet-aero-road", "cap-cotton"]);
+        assert!(aero.contains(&CAP) && aero.contains(&opt::HELMET_AERO_ROAD));
         // The patterns are the gear shader's (T6): no band or sash nodes.
         assert!(!tt.contains(&KIT_BAND) && !tt.contains(&KIT_SASH));
         assert!(
