@@ -28,7 +28,8 @@ Black Forest's foothills, Canary pines, laurel forest, palms, banana
 plantations and the Teide's broom on Tenerife. Download them from the
 [latest release](https://github.com/newkit/OCW/releases) and start the app with
 `ocw-desktop --world path/to/<world>.ocwpkg`, or switch worlds in the app
-(menu → **World**).
+(menu → **World**). To serve worlds to other riders, see
+[Hosting your own world server](#hosting-your-own-world-server).
 
 <img src="https://github.com/newkit/OCW/releases/download/build-history/world-tenerife-teide-iconic.jpg?v=2" alt="Riders on the TF-21 through Las Cañadas, the Teide (3,715 m) straight ahead" width="100%">
 
@@ -2658,6 +2659,100 @@ script's header and spec §11.4.1). The server's address comes from
 test changes no firewall: if a bot gets no answer, it reports that UDP 47800
 on the server machine seems blocked from that machine – open it there for
 UDP to fix it.
+
+### Hosting your own world server
+
+A world server is a **static HTTPS file server**: nginx, Caddy, Apache, an S3-style bucket or GitHub Pages (up to 1 GB). OCW needs no program of its own on the server. The desktop app downloads packages from it into its cache. The browser app streams them tile by tile.
+
+The server needs to:
+
+- **Serve HTTPS.** Browsers need it; the desktop also accepts `http://` and plain directories.
+- **Answer HTTP range requests** (`Accept-Ranges: bytes`, `206 Partial Content`). The desktop resumes interrupted downloads with them, and the browser fetches single tiles with them.
+- **Send CORS headers if browser riders open the app from another site**, for example the public preview at `newkit.github.io`:
+  - `Access-Control-Allow-Origin: *` (or the app's origin);
+  - `Access-Control-Allow-Headers: Range`;
+  - `Access-Control-Expose-Headers: Content-Range, Accept-Ranges, Content-Length`.
+
+  When the app and the worlds come from the same server, no CORS is needed.
+- **Not transform the files.** Gzip on the fly breaks byte ranges. The packages are already compressed where it helps, so turn compression off for `.ocwpkg`.
+
+**1. A package.** Build one with `world-builder package …` (see [World builds](#world-builds)) or take one from a [release](https://github.com/newkit/OCW/releases), together with its `*.ocwpkg.manifest.json`.
+
+**2. Your own keys.** A root key certifies a signing key, and the signing key signs the package. Riders trust your root by its public key. Keep `root.key` offline; the secret keys stay in `~/.config/ocw/keys` (`$OCW_KEY_DIR`) and never go on the server.
+
+```bash
+world-builder keys init-root --name "Ada's worlds"                   # once: root.key + root.pub.json
+world-builder keys new-signing --name "ada 2026" --days 365          # a signing key, certified by the root
+world-builder sign --key ~/.config/ocw/keys/ada-2026.key tenerife.ocwpkg
+world-builder verify tenerife.ocwpkg --trust-root ~/.config/ocw/keys/root.pub.json
+```
+
+**3. Publish into the server's directory.** `world-builder publish` writes the layout the apps expect:
+- `worlds/<id>/<version>/manifest.json`;
+- `worlds/<id>/<version>/<package>.ocwpkg`;
+- `worlds/<id>/latest`, which holds the newest version number.
+
+Run it once per package. A new version goes next to the old one, and `latest` moves.
+
+```bash
+world-builder publish tenerife.ocwpkg --out /srv/ocw/worlds
+# /srv/ocw/worlds/europe/spain/tenerife/8/manifest.json, …/tenerife.ocwpkg, …/tenerife/latest
+```
+
+**4. Serve it.** A minimal Caddy site (`/etc/caddy/Caddyfile`), with HTTPS certificates from Let's Encrypt. Range requests are built in:
+
+```caddyfile
+worlds.example.org {
+	root * /srv/ocw
+	file_server
+	header /worlds/* {
+		Access-Control-Allow-Origin *
+		Access-Control-Allow-Headers Range
+		Access-Control-Expose-Headers "Content-Range, Accept-Ranges, Content-Length"
+	}
+}
+```
+
+The same in nginx (inside the `server { … }` with your TLS settings):
+
+```nginx
+location /worlds/ {
+    root /srv/ocw;
+    gzip off;
+    add_header Access-Control-Allow-Origin * always;
+    add_header Access-Control-Allow-Headers Range always;
+    add_header Access-Control-Expose-Headers "Content-Range, Accept-Ranges, Content-Length" always;
+    if ($request_method = OPTIONS) { return 204; }
+}
+```
+
+Check it from a shell. The second line must answer `206` with a `Content-Range`:
+
+```bash
+curl -sI https://worlds.example.org/worlds/europe/spain/tenerife/latest
+curl -s -o /dev/null -D - -H 'Range: bytes=0-15' https://worlds.example.org/worlds/europe/spain/tenerife/8/tenerife.ocwpkg | grep -iE '^HTTP|content-range'
+```
+
+**5. Riders: desktop.** Trust your root once, then fetch and ride:
+
+```bash
+mkdir -p ~/.config/ocw/trusted-roots && cp root.pub.json ~/.config/ocw/trusted-roots/ada.pub.json   # or --trust-root root.pub.json
+ocw-desktop --fetch-world https://worlds.example.org/worlds/europe/spain/tenerife/8/manifest.json
+ocw-desktop --world europe/spain/tenerife --free-ride
+```
+
+`root.pub.json` holds only the public key, so you can hand it out freely. Riders should compare its `key_id` with you over a channel they trust.
+
+**6. Riders: browser.** Give the manifest's URL as `world=`, for example `https://YOUR-APP/?world=https://worlds.example.org/worlds/europe/spain/tenerife/8/manifest.json&route=puerto-de-la-cruz-teide`.
+- **Trust in the browser:** the browser app trusts only the roots built into it. On the public preview that is the preview's own root. On a page served from `localhost` (`make web-serve`), `trust-root=HEX` adds yours: the `public_key` hex from `root.pub.json`.
+- **Coming soon:** a dialog that shows a world's key fingerprint and asks the rider to trust it (spec §14 Phase 16, 16C). Until then, a world signed with your own root needs your own build of the browser app with your root added to its trusted keys, or a localhost page.
+
+**7. Licences.**
+- Packages built from OpenStreetMap contain a Derivative Database under the **ODbL**. Offer the OSM extract the package was built from next to it, as our releases do: a link or the file in the same directory is enough.
+- Keep the attributions of the manifest. The apps show them in the World menu and on the credits page.
+- Elevation and imagery sources have their own notices, listed in each manifest.
+
+**Multiplayer:** a game server that rides a world (`ocw-server --world …`, [Hosting a ride over the network](#hosting-a-ride-over-the-network)) loads the package from its own disk or cache. The world server only delivers packages to the riders.
 
 ## Build infrastructure
 
