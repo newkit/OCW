@@ -6726,6 +6726,8 @@ dependencies = [
  "oauth2",
  "ocw-auth",
  "openidconnect",
+ "rand 0.8.8",
+ "rsa",
  "serde",
  "serde_json",
  "sha2 0.10.9",

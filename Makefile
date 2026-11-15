@@ -81,7 +81,7 @@ VIDEO ?= /tmp/ocw.mp4
 VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 
 .DEFAULT_GOAL := help
-.PHONY: help version version-next version-bump test-release-version release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish art-collect art-check test-art art-install-timer art-uninstall-timer art-timer-status deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
+.PHONY: help test-web-account version version-next version-bump test-release-version release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish art-collect art-check test-art art-install-timer art-uninstall-timer art-timer-status deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
 	clippy check run server materials deploy-test clean clean-test-output macos-app \
 	test test-unit test-wasm test-web-build test-web test-web-webgl2 test-web-world test-web-unicorn test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-kiosk web web-serve web-worlds web-remote deps-web deps-browser test-web-readme test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
 	test-multiplayer test-multiplayer-local test-scenes test-scenes-list \
@@ -280,6 +280,10 @@ web-worlds: ## Publish world packages for the web dev server into target/web/wor
 
 test-web: web ## Headless Chromium on WebGPU: load the web app, ride, screenshot into test-output/web/
 	scripts/test-web.py --out test-output/web
+
+test-web-account: web ## Headless Chromium: sign in with the fake Google through the redirect, link Strava, sign out (ocw-server --auth-dev, spec §9.1); screenshots into test-output/web/
+	$(CARGO) build -p ocw-server
+	scripts/test-web-account.py --out test-output/web
 
 test-web-webgl2: web ## Headless Chromium without WebGPU: the page falls back to the WebGL 2 build (ride, menus, fps); then WebGPU High vs WebGL 2 Low, same view, and the Graphics page (B7); into test-output/web/
 	scripts/test-web.py --out test-output/web --gpu webgl2

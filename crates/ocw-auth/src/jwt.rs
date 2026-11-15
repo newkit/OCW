@@ -5,7 +5,7 @@
 //! algorithm, no `none`, no HMAC (no algorithm confusion). Access tokens
 //! carry `typ: at+jwt` (RFC 9068) so an ID token is never taken for one.
 
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier as _, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 

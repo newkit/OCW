@@ -28,12 +28,22 @@ use openidconnect::{JsonWebKeyId, PrivateSigningKey};
 use crate::config::{ClientConfig, Config, GoogleConfig, StravaConfig};
 use crate::service::AuthService;
 
-/// The fake Google's RSA key: a test key, public in the repository.
-const TEST_RSA_PEM: &str = include_str!("fake-google-test-key.pem");
+/// The fake Google's RSA key (RS256 like Google's ID tokens): made once
+/// per process, never stored (no private key in the repository).
+fn test_rsa_pem() -> &'static str {
+    static PEM: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    PEM.get_or_init(|| {
+        use rsa::pkcs1::EncodeRsaPrivateKey;
+        let key = rsa::RsaPrivateKey::new(&mut rand::rngs::OsRng, 2048).expect("an RSA key");
+        key.to_pkcs1_pem(rsa::pkcs1::LineEnding::LF)
+            .expect("PEM encoding")
+            .to_string()
+    })
+}
 
 type Pairs = Vec<(String, String)>;
 
-fn get<'a>(p: &'a Pairs, k: &str) -> Option<&'a str> {
+fn param<'a>(p: &'a Pairs, k: &str) -> Option<&'a str> {
     p.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str())
 }
 
@@ -110,9 +120,11 @@ impl FakeGoogle {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let base = format!("http://{}", listener.local_addr()?);
         let kid = "fake-google-1".to_owned();
-        let key =
-            CoreRsaPrivateSigningKey::from_pem(TEST_RSA_PEM, Some(JsonWebKeyId::new(kid.clone())))
-                .map_err(std::io::Error::other)?;
+        let key = CoreRsaPrivateSigningKey::from_pem(
+            test_rsa_pem(),
+            Some(JsonWebKeyId::new(kid.clone())),
+        )
+        .map_err(std::io::Error::other)?;
         let state = Arc::new(GoogleState {
             base: base.clone(),
             client_id: "fake-google-client.apps.example".into(),
@@ -187,15 +199,15 @@ async fn g_jwks(State(s): State<Arc<GoogleState>>) -> Response {
 }
 
 async fn g_authorize(State(s): State<Arc<GoogleState>>, Query(q): Query<Pairs>) -> Response {
-    let (Some(redirect_uri), Some(state)) = (get(&q, "redirect_uri"), get(&q, "state")) else {
+    let (Some(redirect_uri), Some(state)) = (param(&q, "redirect_uri"), param(&q, "state")) else {
         return (StatusCode::BAD_REQUEST, "redirect_uri and state required").into_response();
     };
-    let scopes: Vec<&str> = get(&q, "scope").unwrap_or_default().split(' ').collect();
-    if get(&q, "client_id") != Some(s.client_id.as_str())
-        || get(&q, "response_type") != Some("code")
+    let scopes: Vec<&str> = param(&q, "scope").unwrap_or_default().split(' ').collect();
+    if param(&q, "client_id") != Some(s.client_id.as_str())
+        || param(&q, "response_type") != Some("code")
         || !scopes.contains(&"openid")
-        || get(&q, "code_challenge_method") != Some("S256")
-        || get(&q, "nonce").is_none()
+        || param(&q, "code_challenge_method") != Some("S256")
+        || param(&q, "nonce").is_none()
     {
         return (StatusCode::BAD_REQUEST, "bad authorization request").into_response();
     }
@@ -210,8 +222,8 @@ async fn g_authorize(State(s): State<Arc<GoogleState>>, Query(q): Query<Pairs>) 
         code.clone(),
         GoogleCode {
             redirect_uri: redirect_uri.into(),
-            challenge: get(&q, "code_challenge").unwrap_or_default().into(),
-            nonce: get(&q, "nonce").unwrap_or_default().into(),
+            challenge: param(&q, "code_challenge").unwrap_or_default().into(),
+            nonce: param(&q, "nonce").unwrap_or_default().into(),
             user: s.user.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         },
     );
@@ -251,8 +263,8 @@ fn client_credentials(headers: &HeaderMap, form: &Pairs) -> Option<(String, Stri
         return Some((dec(id), dec(secret)));
     }
     Some((
-        get(form, "client_id")?.into(),
-        get(form, "client_secret")?.into(),
+        param(form, "client_id")?.into(),
+        param(form, "client_secret")?.into(),
     ))
 }
 
@@ -271,17 +283,17 @@ async fn g_token(
                 .into_response();
         }
     }
-    if get(&f, "grant_type") != Some("authorization_code") {
+    if param(&f, "grant_type") != Some("authorization_code") {
         return oauth_error("unsupported_grant_type");
     }
     let Some(code) =
-        get(&f, "code").and_then(|c| s.codes.lock().unwrap_or_else(|e| e.into_inner()).remove(c))
+        param(&f, "code").and_then(|c| s.codes.lock().unwrap_or_else(|e| e.into_inner()).remove(c))
     else {
         return oauth_error("invalid_grant");
     };
-    if get(&f, "redirect_uri") != Some(code.redirect_uri.as_str())
+    if param(&f, "redirect_uri") != Some(code.redirect_uri.as_str())
         || !ocw_auth::pkce::matches(
-            get(&f, "code_verifier").unwrap_or_default(),
+            param(&f, "code_verifier").unwrap_or_default(),
             &code.challenge,
         )
     {
@@ -404,15 +416,15 @@ impl FakeStrava {
 }
 
 async fn s_authorize(State(s): State<Arc<StravaState>>, Query(q): Query<Pairs>) -> Response {
-    let (Some(redirect_uri), Some(state)) = (get(&q, "redirect_uri"), get(&q, "state")) else {
+    let (Some(redirect_uri), Some(state)) = (param(&q, "redirect_uri"), param(&q, "state")) else {
         return (StatusCode::BAD_REQUEST, "bad request").into_response();
     };
-    if get(&q, "client_id") != Some(s.client_id.as_str())
-        || get(&q, "response_type") != Some("code")
+    if param(&q, "client_id") != Some(s.client_id.as_str())
+        || param(&q, "response_type") != Some("code")
     {
         return (StatusCode::BAD_REQUEST, "bad request").into_response();
     }
-    let requested = get(&q, "scope").unwrap_or("read");
+    let requested = param(&q, "scope").unwrap_or("read");
     let scope: Vec<&str> = requested
         .split(',')
         .filter(|x| *x != "activity:write" || s.grant_upload.load(Ordering::SeqCst))
@@ -423,7 +435,7 @@ async fn s_authorize(State(s): State<Arc<StravaState>>, Query(q): Query<Pairs>) 
         code.clone(),
         StravaCode {
             redirect_uri: redirect_uri.into(),
-            challenge: get(&q, "code_challenge").map(str::to_owned),
+            challenge: param(&q, "code_challenge").map(str::to_owned),
             scope: scope.clone(),
         },
     );
@@ -436,8 +448,8 @@ async fn s_authorize(State(s): State<Arc<StravaState>>, Query(q): Query<Pairs>) 
 async fn s_token(State(s): State<Arc<StravaState>>, Form(f): Form<Pairs>) -> Response {
     let n = s.requests.fetch_add(1, Ordering::SeqCst) + 1;
     let (u15, uday) = *s.usage.lock().unwrap_or_else(|e| e.into_inner());
-    let mut r = if get(&f, "client_id") != Some(s.client_id.as_str())
-        || get(&f, "client_secret") != Some(s.client_secret.as_str())
+    let mut r = if param(&f, "client_id") != Some(s.client_id.as_str())
+        || param(&f, "client_secret") != Some(s.client_secret.as_str())
     {
         (
             StatusCode::UNAUTHORIZED,
@@ -445,13 +457,13 @@ async fn s_token(State(s): State<Arc<StravaState>>, Form(f): Form<Pairs>) -> Res
         )
             .into_response()
     } else {
-        match get(&f, "code")
+        match param(&f, "code")
             .and_then(|c| s.codes.lock().unwrap_or_else(|e| e.into_inner()).remove(c))
         {
             Some(code)
-                if get(&f, "redirect_uri").is_none_or(|u| u == code.redirect_uri)
+                if param(&f, "redirect_uri").is_none_or(|u| u == code.redirect_uri)
                     && code.challenge.as_deref().is_none_or(|c| {
-                        ocw_auth::pkce::matches(get(&f, "code_verifier").unwrap_or_default(), c)
+                        ocw_auth::pkce::matches(param(&f, "code_verifier").unwrap_or_default(), c)
                     }) =>
             {
                 let (id, first, last) = s.athlete.lock().unwrap_or_else(|e| e.into_inner()).clone();
