@@ -402,25 +402,42 @@ fn stands(
                 crop_at(ci, ri - 1) != Some(code),
                 crop_at(ci, ri + 1) != Some(code),
             ];
+            // Global corner indices: neighbouring cells share their corners'
+            // heights and shades, so the canopy is one bumpy surface.
+            let (gc, gr) = (
+                c as i64 + i64::from(key.x) * n as i64,
+                r as i64 + i64::from(key.z) * n as i64,
+            );
+            let corner = |dc: i64, dr: i64, seed: u64| hash(gc + dc, gr + dr, seed);
+            let bump = |v: f32| height * (0.86 + 0.24 * v);
+            let tops = [
+                bump(corner(0, 0, 45)),
+                bump(corner(1, 0, 45)),
+                bump(corner(0, 1, 45)),
+                bump(corner(1, 1, 45)),
+                height * (0.95 + 0.2 * hash(gc, gr, 47)),
+            ];
+            let shade = |v: f32| 0.84 + 0.3 * v;
+            let shades = [
+                shade(corner(0, 0, 46)),
+                shade(corner(1, 0, 46)),
+                shade(corner(0, 1, 46)),
+                shade(corner(1, 1, 46)),
+                shade(hash(gc, gr, 48)),
+            ];
             let i = chunk_of(x as f32, z as f32);
             let origin = Vec3::from(chunks[i].origin);
             let centre = Vec3::new(x as f32, hc, z as f32) - origin;
             let ys = ys.map(|y| y - origin.y);
-            let jitter = 0.92
-                + 0.16
-                    * hash(
-                        c as i64 + key.x as i64 * 1000,
-                        r as i64 + key.z as i64 * 1000,
-                        45,
-                    );
             crate::flora::stand_cell(
                 &mut chunks[i].near,
                 centre,
                 cs as f32,
                 ys,
-                height * jitter,
+                tops,
+                shades,
                 open,
-                colour.map(|v| v * jitter),
+                colour,
             );
         }
     }

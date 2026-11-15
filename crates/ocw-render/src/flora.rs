@@ -100,7 +100,7 @@ pub fn plant_look(day: Option<&SeasonDay>, sp: Species, alt_m: f64, jitter: f32)
     let gdd = f64::from(st.gdd) * (1.0 + 0.08 * f64::from(jitter));
     let bloom = match sp {
         // Apple, pear and cherry blossom: from budburst to full leaf.
-        Species::FruitTree => bump(gdd, 70.0, 190.0),
+        Species::FruitTree => bump(gdd, 60.0, 240.0),
         // The Teide broom flowers in May and June.
         Species::Broom => bump(day.day + 6.0 * f64::from(jitter), 128.0, 178.0),
         _ => 0.0,
@@ -1139,13 +1139,20 @@ pub fn vine_look(day: Option<&SeasonDay>, alt_m: f64, jitter: f32) -> PlantLook 
 /// (`red`: a red variety such as the Blauburgunder of Vaduz).
 pub fn vine_colour(look: &PlantLook, red: bool, shade: f32) -> [f32; 3] {
     let green = lin3(0.30, 0.45, 0.17);
+    // Red varieties turn from yellow-orange to deep red, white ones yellow;
+    // never all the same: `shade` (the piece's own) holds some back.
     let autumn = if red {
-        lin3(0.62, 0.20, 0.12)
+        mix3(
+            lin3(0.72, 0.45, 0.14),
+            lin3(0.46, 0.12, 0.08),
+            0.4 + 0.6 * shade,
+        )
     } else {
-        lin3(0.80, 0.66, 0.20)
+        mix3(lin3(0.78, 0.66, 0.20), lin3(0.62, 0.55, 0.18), shade)
     };
     let c = mix3(green, lin3(0.46, 0.62, 0.24), look.fresh * 0.6);
-    shade3(mix3(c, autumn, look.autumn), 0.88 + 0.24 * shade)
+    let t = look.autumn * (0.55 + 0.45 * shade);
+    shade3(mix3(c, autumn, t), 0.88 + 0.24 * shade)
 }
 
 /// A row of vines on a wire trellis from `a` to `b` (feet on the ground,
@@ -1237,39 +1244,57 @@ pub fn vine_row(
     }
 }
 
-/// A field's stand (maize, cereal, sunflower, potato, rapeseed): a slab
-/// over one cell of `size` m at `centre` (feet at the four corners'
-/// heights `ys`), `height` m tall, its sides only where `open[side]`
-/// (x−, x+, z−, z+: the neighbour is not the same stand).
+/// A field's stand (maize, cereal, sunflower, potato, rapeseed) over one
+/// cell of `size` m at `centre`: its feet at the four corners' ground
+/// heights `ys` (x−z−, x+z−, x−z+, x+z+), its top `tops` m above the ground
+/// at those corners and the centre (a bumpy canopy: neighbouring cells
+/// share their corners), each top vertex shaded by `shades`; its sides only
+/// where `open[side]` (x−, x+, z−, z+: the neighbour is not the same
+/// stand), darker towards the ground.
+#[allow(clippy::too_many_arguments)]
 pub fn stand_cell(
     m: &mut MeshArrays,
     centre: Vec3,
     size: f32,
     ys: [f32; 4],
-    height: f32,
+    tops: [f32; 5],
+    shades: [f32; 5],
     open: [bool; 4],
     colour: [f32; 3],
 ) {
     let hs = size / 2.0;
-    let c = rgba(colour);
-    let side_c = rgba(shade3(colour, 0.8));
-    // Corners (x−z−, x+z−, x−z+, x+z+).
     let xz = [[-hs, -hs], [hs, -hs], [-hs, hs], [hs, hs]];
     let top: Vec<Vec3> = (0..4)
-        .map(|i| Vec3::new(centre.x + xz[i][0], ys[i] + height, centre.z + xz[i][1]))
+        .map(|i| Vec3::new(centre.x + xz[i][0], ys[i] + tops[i], centre.z + xz[i][1]))
         .collect();
+    let mid_y = ys.iter().sum::<f32>() / 4.0;
+    let mid = Vec3::new(centre.x, mid_y + tops[4], centre.z);
     let foot: Vec<Vec3> = (0..4)
         .map(|i| Vec3::new(centre.x + xz[i][0], ys[i] - 0.1, centre.z + xz[i][1]))
         .collect();
+    // The top: a fan of four triangles around the centre.
     let start = m.positions.len() as u32;
-    for p in &top {
+    for (k, p) in top.iter().chain(std::iter::once(&mid)).enumerate() {
         m.positions.push(p.to_array());
-        m.uvs.push([height, 0.0]);
+        m.uvs.push([tops[k], 0.0]);
         m.normals.push([0.0, 1.0, 0.0]);
-        m.colors.push(c);
+        m.colors.push(rgba(shade3(colour, shades[k])));
     }
-    m.indices
-        .extend([start, start + 2, start + 1, start + 1, start + 2, start + 3]);
+    let c = start + 4;
+    m.indices.extend([
+        c,
+        start + 1,
+        start,
+        c,
+        start + 3,
+        start + 1,
+        c,
+        start + 2,
+        start + 3,
+        c,
+        start,
+        start + 2,
+    ]);
     // Sides: (corner a, corner b, outward normal).
     let sides = [
         (2usize, 0usize, Vec3::NEG_X),
@@ -1277,21 +1302,22 @@ pub fn stand_cell(
         (0, 1, Vec3::NEG_Z),
         (3, 2, Vec3::Z),
     ];
+    let low = rgba(shade3(colour, 0.5));
     for (k, (ia, ib, n)) in sides.iter().enumerate() {
         if !open[k] {
             continue;
         }
         let s = m.positions.len() as u32;
-        for (p, y) in [
-            (foot[*ia], 0.0),
-            (foot[*ib], 0.0),
-            (top[*ia], height),
-            (top[*ib], height),
+        for (p, y, c) in [
+            (foot[*ia], 0.0, low),
+            (foot[*ib], 0.0, low),
+            (top[*ia], tops[*ia], rgba(shade3(colour, 0.8 * shades[*ia]))),
+            (top[*ib], tops[*ib], rgba(shade3(colour, 0.8 * shades[*ib]))),
         ] {
             m.positions.push(p.to_array());
             m.uvs.push([y, 0.0]);
             m.normals.push(n.to_array());
-            m.colors.push(side_c);
+            m.colors.push(c);
         }
         m.indices.extend([s, s + 1, s + 2, s + 1, s + 3, s + 2]);
     }
@@ -1570,11 +1596,15 @@ mod tests {
             Vec3::new(5.0, 0.0, 5.0),
             10.0,
             [1.0, 1.2, 1.1, 1.3],
-            2.5,
+            [2.5, 2.4, 2.6, 2.5, 2.7],
+            [1.0, 0.9, 1.1, 1.0, 1.05],
             [true, false, false, true],
             [0.2, 0.4, 0.1],
         );
         check(&s);
-        assert_eq!(s.indices.len() / 3, 2 + 2 * 2);
+        assert_eq!(s.indices.len() / 3, 4 + 2 * 2);
+        // The centre stands highest here: 1.15 (mean ground) + 2.7.
+        let top = s.positions.iter().map(|p| p[1]).fold(f32::MIN, f32::max);
+        assert!((top - 3.85).abs() < 1e-5, "{top}");
     }
 }
