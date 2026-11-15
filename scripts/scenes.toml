@@ -2196,7 +2196,7 @@ args = ["--route", "loop", "--bots", "6", "--power", "240"]
 at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=weather rain", "1=ride.proximity_cue on", "6=dev.bump", "6.3=rider.lean -25"]
 shot = 7.2
 
-# Phase 12 K6: the organiser's rules (spec §14 Phase 12, v3.46).
+# Phase 12 K6: the organiser's rules (spec §14 Phase 12, v3.47).
 [[scene]]
 name = "k6-event-rules"
 description = "The organiser's rules in the event's info (spec §14 Phase 12 K6): a race started with `--aids on --chaotic-bots on --neutral-service --service-s 20 --dnf-injured --damage on --time-limit 5` – on the start line the lines \"Rules: collisions on, damage on, riding aids allowed, chaotic bots\" and \"Neutral service (spares in 20 s), DNF when badly injured, time limit 5:00 after the winner\""
@@ -2218,17 +2218,17 @@ args = ["--route", "loop", "--bots", "0"]
 at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=event race --km 0.4 --bots 5 --neutral-service --service-s 20 --dnf-injured --time-limit 5", "1=sim.power 700"]
 shot = 50
 
-# Rider animations beyond the riding states (spec §2.6, v3.46).
+# Rider animations beyond the riding states (spec §2.6, v3.47).
 [[scene]]
 name = "a26-foot-down"
-description = "Foot down at a stop (spec §2.6, v3.46): the race's start formation holds the field still – every rider unclipped, one foot flat on the road beside the bike tilted towards it, off the saddle onto the top tube, the other pedal forward and up, ready to push off (most riders the left foot)"
+description = "Foot down at a stop (spec §2.6, v3.47): the race's start formation holds the field still – every rider unclipped, one foot flat on the road beside the bike tilted towards it, off the saddle onto the top tube, the other pedal forward and up, ready to push off (most riders the left foot)"
 args = ["--route", "loop", "--bots", "0", "--power", "200"]
 at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=event race --km 1 --bots 5", "1.2=camera.orbit -100 8 3.4", "1.3=hud off"]
 shot = 4.6
 
 [[scene]]
 name = "a26-foot-down-video"
-description = "Video: foot down and clipping back in (spec §2.6, v3.46): the field stands at the start line with a foot down through the countdown; at GO the riders push off, the foot goes back onto its pedal and they sit down"
+description = "Video: foot down and clipping back in (spec §2.6, v3.47): the field stands at the start line with a foot down through the countdown; at GO the riders push off, the foot goes back onto its pedal and they sit down"
 args = ["--route", "loop", "--bots", "0", "--power", "200"]
 at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=event race --km 1 --bots 5", "1.2=camera.orbit -100 8 3.4", "1.3=hud off"]
 warmup = 2
@@ -2236,14 +2236,14 @@ video = 7
 
 [[scene]]
 name = "a26-cornering"
-description = "Cornering beyond the lean (spec §2.6, v3.46): a tight lean-steered bend at speed, freewheeling – the head turned into the bend and held nearer level, the upper body dropped to the inside, the inside knee opened, the outside pedal down"
+description = "Cornering beyond the lean (spec §2.6, v3.47): a tight lean-steered bend at speed, freewheeling – the head turned into the bend and held nearer level, the upper body dropped to the inside, the inside knee opened, the outside pedal down"
 args = ["--route", "loop", "--bots", "0", "--power", "320"]
 at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=camera.orbit 160 4 4.2", "1.3=hud off", "9.5=sim.power 0", "10=rider.lean 24"]
 shot = 12
 
 [[scene]]
 name = "a26-uturn-video"
-description = "Video: a manual U-turn in free ride (spec §2.6, §2.2.2, v3.46): the rider slows down, looks back over the shoulder on the run-up, then rides the loop leaning in with the inside foot held out low, and rides back the other way"
+description = "Video: a manual U-turn in free ride (spec §2.6, §2.2.2, v3.47): the rider slows down, looks back over the shoulder on the run-up, then rides the loop leaning in with the inside foot held out low, and rides back the other way"
 world = true
 args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "0", "--power", "200"]
 at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=camera.orbit 120 22 7", "4=ride.uturn"]
@@ -2252,7 +2252,7 @@ video = 16
 
 [[scene]]
 name = "a26-uturn-look"
-description = "A manual U-turn in free ride (spec §2.6, v3.46): on the run-up to the loop the rider looks back over the shoulder on the side of the turn"
+description = "A manual U-turn in free ride (spec §2.6, v3.47): on the run-up to the loop the rider looks back over the shoulder on the side of the turn"
 world = true
 args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "0", "--power", "200"]
 at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=camera.orbit 160 14 5", "1.3=hud off", "4=ride.uturn"]
@@ -2260,7 +2260,7 @@ shot = 6.5
 
 [[scene]]
 name = "a26-uturn-loop"
-description = "A manual U-turn in free ride (spec §2.6, v3.46): in the loop the rider leans in, looks into the turn and holds the inside foot out low"
+description = "A manual U-turn in free ride (spec §2.6, v3.47): in the loop the rider leans in, looks into the turn and holds the inside foot out low"
 world = true
 args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "0", "--power", "200"]
 at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=camera.orbit 120 22 7", "4=ride.uturn"]
@@ -2268,7 +2268,7 @@ shot = 13
 
 [[scene]]
 name = "a26-victory-video"
-description = "Video: the finish of a race (spec §2.6, v3.46): the winner throws the bike at the line, raises both arms in a V for about three seconds, then sits up and freewheels"
+description = "Video: the finish of a race (spec §2.6, v3.47): the winner throws the bike at the line, raises both arms in a V for about three seconds, then sits up and freewheels"
 args = ["--route", "loop", "--bots", "0"]
 at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=event race --km 0.4 --bots 3", "1=sim.power 700", "2=camera.orbit 170 8 4.5", "43=event dismiss"]
 warmup = 36
@@ -2276,7 +2276,7 @@ video = 14
 
 [[scene]]
 name = "a26-victory"
-description = "Victory (spec §2.6, v3.46): the race's winner just past the finish line with both arms up in a V, sitting up and freewheeling"
+description = "Victory (spec §2.6, v3.47): the race's winner just past the finish line with both arms up in a V, sitting up and freewheeling"
 args = ["--route", "loop", "--bots", "0"]
 at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=event race --km 0.4 --bots 3", "1=sim.power 700", "2=camera.orbit 170 8 4.5", "43=event dismiss"]
 shot = 44.5

@@ -1069,7 +1069,7 @@ mod tests {
         r * p + (c - r * c)
     }
 
-    /// Foot down at a stop (spec §2.6, v3.46): on every bike, either foot,
+    /// Foot down at a stop (spec §2.6, v3.47): on every bike, either foot,
     /// the unclipped foot stands flat on the road beside the bike, the bike
     /// tilts towards it, the other foot stays on its pedal and the hands on
     /// the bars.
@@ -1154,7 +1154,7 @@ mod tests {
     }
 
     /// Victory, sitting up, the throw and cornering change the body where
-    /// they should (spec §2.6, v3.46).
+    /// they should (spec §2.6, v3.47).
     #[test]
     fn victory_finish_and_cornering_poses() {
         let mut rider = crate::rider::build(crate::rider::Detail::High);
