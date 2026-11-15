@@ -1,5 +1,5 @@
 //! The backend's configuration (`config/accounts.toml`, git-ignored; the
-//! template is `config/accounts.example.toml`). Client secrets live only
+//! template is `services/accounts/accounts.example.toml`). Client secrets live only
 //! here, never in the repository or the apps (spec §9.1).
 
 use std::fmt;
@@ -340,7 +340,7 @@ mod tests {
 
     #[test]
     fn example_config_parses() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/accounts.example.toml");
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("accounts.example.toml");
         let cfg = Config::load(&path).unwrap();
         assert!(cfg.google.is_some() && cfg.strava.is_some());
         assert_eq!(cfg.clients().len(), 3);

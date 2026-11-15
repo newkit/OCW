@@ -2126,7 +2126,7 @@ there (`make web-serve`, page `?auth=http://127.0.0.1:8480`).
    redirect URI is `https://accounts.example.org/callback/strava`. Note the
    client id and secret. Strava's default limits (200 requests per 15
    minutes, 2,000 per day) are respected by the server.
-4. **The configuration:** `cp config/accounts.example.toml
+4. **The configuration:** `cp services/accounts/accounts.example.toml
    config/accounts.toml` (git-ignored), fill in `issuer`, the `[google]` and
    `[strava]` ids and secrets, and for the browser app its page under
    `[[clients]] id = "ocw-web"` (`redirect_uris`, `origins`). Signing keys,

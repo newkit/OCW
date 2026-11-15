@@ -184,7 +184,7 @@ struct Args {
     livekit_api_key: Option<String>,
     /// Run the accounts backend (sign-in with Google and Strava, spec
     /// §9.1) in this process from this configuration (a copy of
-    /// config/accounts.example.toml, git-ignored: it holds the client
+    /// services/accounts/accounts.example.toml, git-ignored: it holds the client
     /// secrets). The hello's access tokens are checked against its keys.
     #[arg(long, value_name = "FILE", conflicts_with = "auth_dev")]
     auth_config: Option<PathBuf>,

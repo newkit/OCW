@@ -1840,7 +1840,7 @@ Access tokens live 10 minutes (`aud: ocw`), ID tokens 10 minutes. Signing keys r
 - **Linking:** a link ticket from `POST /account/link` bound to the app's PKCE challenge, committed when the app redeems the code (a stolen ticket cannot link another identity). One identity per provider: linking another Google account replaces the old one; an identity that belongs to another OCW account is refused (no automatic merge).
 - **Kiosk:** the device flow uses its own client (`ocw-kiosk`); the desktop app offers it as *Sign in with a code*.
 
-**To go live** (the user): register the Google OAuth client (web application; redirect URI `https://<domain>/callback/google`) and the Strava API application (callback domain `<domain>`), a public HTTPS domain with a TLS proxy in front of `listen`, `config/accounts.toml` from `config/accounts.example.toml`, and the apps pointed at it (`--account-server`, the browser's `auth=` and its page in `[[clients]]`). Steps: README, *Accounts and sign-in*.
+**To go live** (the user): register the Google OAuth client (web application; redirect URI `https://<domain>/callback/google`) and the Strava API application (callback domain `<domain>`), a public HTTPS domain with a TLS proxy in front of `listen`, `config/accounts.toml` from `services/accounts/accounts.example.toml`, and the apps pointed at it (`--account-server`, the browser's `auth=` and its page in `[[clients]]`). Steps: README, *Accounts and sign-in*.
 
 Backend modules:
 
