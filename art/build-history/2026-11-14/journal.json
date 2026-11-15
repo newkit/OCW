@@ -1171,6 +1171,14 @@
    "removed": 85
   },
   {
+   "sha": "c3f069a",
+   "time": "23:21:55",
+   "merge": false,
+   "subject": "Art: hourly collector (systemd user timer), archive to art/build-history/ with masked text in git (spec 3.34, ART-PROJECT 1.5)",
+   "added": 1121,
+   "removed": 52
+  },
+  {
    "sha": "a7faff9",
    "time": "23:23:22",
    "merge": false,
@@ -1201,11 +1209,43 @@
    "subject": "Untrack compiled Python files (__pycache__ is already git-ignored; running the dashboard rewrote them)",
    "added": 0,
    "removed": 0
+  },
+  {
+   "sha": "c03317c",
+   "time": "23:52:13",
+   "merge": false,
+   "subject": "Spec 3.33: sign-in with Google and Strava, brokered by our own backend (§9.1)",
+   "added": 11,
+   "removed": 2
+  },
+  {
+   "sha": "0d64c56",
+   "time": "23:53:05",
+   "merge": false,
+   "subject": "Spec 3.34: VR starts now (Phase 11 Q6), X1 first",
+   "added": 3,
+   "removed": 2
+  },
+  {
+   "sha": "4aececa",
+   "time": "23:56:46",
+   "merge": true,
+   "subject": "Merge art collector: hourly systemd user timer (art-collect), archive moved to art/build-history with masked text tracked in git, lock, status file and dashboard panel, ART-PROJECT v1.5 (spec 3.35)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "8db85b1",
+   "time": "23:57:07",
+   "merge": false,
+   "subject": "Art: the build history's masked text files in git (index, SHA256SUMS, journals and token counts of days 1–4); archive moved to art/build-history",
+   "added": 23457,
+   "removed": 1
   }
  ],
- "merges": 46,
- "lines_added": 126479,
- "lines_removed": 14693,
+ "merges": 47,
+ "lines_added": 151071,
+ "lines_removed": 14750,
  "spec_versions": [
   "2.67",
   "2.67",
@@ -1313,8 +1353,12 @@
   "3.29",
   "3.30",
   "3.31",
+  "3.34",
   "3.36",
-  "3.32"
+  "3.32",
+  "3.33",
+  "3.34",
+  "3.35"
  ],
  "tests": null,
  "media": [
@@ -4007,17 +4051,207 @@
    "file": "220337-agent-web-web-compare.jpg",
    "time": "22:03:37",
    "kind": "image"
+  },
+  {
+   "file": "234550-shot-wayland-helmet-mirror-road.jpg",
+   "time": "23:45:50",
+   "kind": "image"
+  },
+  {
+   "file": "234559-shot-helmet-mirror-road.jpg",
+   "time": "23:45:59",
+   "kind": "image"
+  },
+  {
+   "file": "234617-shot-wayland-helmet-mirror-road-side.jpg",
+   "time": "23:46:17",
+   "kind": "image"
+  },
+  {
+   "file": "234633-scenes-a26-cornering.jpg",
+   "time": "23:46:33",
+   "kind": "image"
+  },
+  {
+   "file": "234633-scenes-a26-foot-down-video.jpg",
+   "time": "23:46:33",
+   "kind": "image"
+  },
+  {
+   "file": "234633-scenes-a26-foot-down-video.mp4",
+   "time": "23:46:33",
+   "kind": "video"
+  },
+  {
+   "file": "234633-scenes-a26-foot-down.jpg",
+   "time": "23:46:33",
+   "kind": "image"
+  },
+  {
+   "file": "234633-scenes-a26-uturn-look.jpg",
+   "time": "23:46:33",
+   "kind": "image"
+  },
+  {
+   "file": "234633-scenes-a26-uturn-loop.jpg",
+   "time": "23:46:33",
+   "kind": "image"
+  },
+  {
+   "file": "234633-scenes-a26-uturn-video.jpg",
+   "time": "23:46:33",
+   "kind": "image"
+  },
+  {
+   "file": "234633-scenes-a26-uturn-video.mp4",
+   "time": "23:46:33",
+   "kind": "video"
+  },
+  {
+   "file": "234633-scenes-a26-victory-video.jpg",
+   "time": "23:46:33",
+   "kind": "image"
+  },
+  {
+   "file": "234633-scenes-a26-victory-video.mp4",
+   "time": "23:46:33",
+   "kind": "video"
+  },
+  {
+   "file": "234633-scenes-a26-victory.jpg",
+   "time": "23:46:33",
+   "kind": "image"
+  },
+  {
+   "file": "234633-scenes-k6-event-rules.jpg",
+   "time": "23:46:33",
+   "kind": "image"
+  },
+  {
+   "file": "234633-scenes-k6-organiser-rules-menu.jpg",
+   "time": "23:46:33",
+   "kind": "image"
+  },
+  {
+   "file": "234633-scenes-k6-results-rules.jpg",
+   "time": "23:46:33",
+   "kind": "image"
+  },
+  {
+   "file": "234633-shot-helmet-mirror-road-side.jpg",
+   "time": "23:46:33",
+   "kind": "image"
+  },
+  {
+   "file": "234643-shot-wayland-helmet-mirror-light.jpg",
+   "time": "23:46:43",
+   "kind": "image"
+  },
+  {
+   "file": "234710-shot-helmet-mirror-light.jpg",
+   "time": "23:47:10",
+   "kind": "image"
+  },
+  {
+   "file": "234710-shot-wayland-helmet-mirror-light-side.jpg",
+   "time": "23:47:10",
+   "kind": "image"
+  },
+  {
+   "file": "234736-shot-wayland-helmet-mirror-aero-road.jpg",
+   "time": "23:47:36",
+   "kind": "image"
+  },
+  {
+   "file": "234749-shot-helmet-mirror-light-side.jpg",
+   "time": "23:47:49",
+   "kind": "image"
+  },
+  {
+   "file": "234803-shot-wayland-helmet-mirror-aero-road-side.jpg",
+   "time": "23:48:03",
+   "kind": "image"
+  },
+  {
+   "file": "234826-shot-helmet-mirror-aero-road.jpg",
+   "time": "23:48:26",
+   "kind": "image"
+  },
+  {
+   "file": "234829-shot-wayland-helmet-mirror-tt.jpg",
+   "time": "23:48:29",
+   "kind": "image"
+  },
+  {
+   "file": "234857-shot-wayland-helmet-mirror-tt-side.jpg",
+   "time": "23:48:57",
+   "kind": "image"
+  },
+  {
+   "file": "234906-shot-helmet-mirror-aero-road-side.jpg",
+   "time": "23:49:06",
+   "kind": "image"
+  },
+  {
+   "file": "234925-shot-wayland-helmet-mirror-cap.jpg",
+   "time": "23:49:25",
+   "kind": "image"
+  },
+  {
+   "file": "234935-shot-wayland-helmet-road-behind.jpg",
+   "time": "23:49:35",
+   "kind": "image"
+  },
+  {
+   "file": "234944-shot-helmet-mirror-tt.jpg",
+   "time": "23:49:44",
+   "kind": "image"
+  },
+  {
+   "file": "234946-shot-wayland-helmet-tt-position.jpg",
+   "time": "23:49:46",
+   "kind": "image"
+  },
+  {
+   "file": "235002-shot-wayland-helmet-group-chase.jpg",
+   "time": "23:50:02",
+   "kind": "image"
+  },
+  {
+   "file": "235023-shot-helmet-mirror-tt-side.jpg",
+   "time": "23:50:23",
+   "kind": "image"
+  },
+  {
+   "file": "235112-shot-helmet-mirror-cap.jpg",
+   "time": "23:51:12",
+   "kind": "image"
+  },
+  {
+   "file": "235149-shot-helmet-road-behind.jpg",
+   "time": "23:51:49",
+   "kind": "image"
+  },
+  {
+   "file": "235224-shot-helmet-tt-position.jpg",
+   "time": "23:52:24",
+   "kind": "image"
+  },
+  {
+   "file": "235254-shot-helmet-group-chase.jpg",
+   "time": "23:52:54",
+   "kind": "image"
   }
  ],
- "images": 500,
- "videos": 36,
+ "images": 535,
+ "videos": 39,
  "sounds": 2,
  "builds": {
-  "runs": 654,
-  "seconds": 183950.8,
-  "cargo_s": 24942.9,
-  "compiled": 6125,
-  "wait_s": 23874.0,
+  "runs": 680,
+  "seconds": 211185.9,
+  "cargo_s": 26196.2,
+  "compiled": 6709,
+  "wait_s": 35623.0,
   "failed": [
    {
     "start": "2026-11-14T00:11:16+01:00",
@@ -4354,16 +4588,48 @@
     "cargo_builds": 0,
     "compiled": 0,
     "wait_s": null
+   },
+   {
+    "start": "2026-11-14T23:13:21+01:00",
+    "seconds": 1233.1,
+    "machine": "marge",
+    "os": "linux",
+    "checkout": "agent-ab2216bf39859444d",
+    "branch": "worktree-agent-ab2216bf39859444d",
+    "command": "make test-web-readme",
+    "exit": 2,
+    "log": "231321-marge-2966239.log",
+    "sync_s": 0.5,
+    "cargo_s": null,
+    "cargo_builds": 0,
+    "compiled": 0,
+    "wait_s": null
+   },
+   {
+    "start": "2026-11-14T23:34:27+01:00",
+    "seconds": 1907.2,
+    "machine": "marge",
+    "os": "linux",
+    "checkout": "agent-ab2216bf39859444d",
+    "branch": "worktree-agent-ab2216bf39859444d",
+    "command": "make test-web-readme README_FLAGS=--keep",
+    "exit": 2,
+    "log": "233427-marge-3010982.log",
+    "sync_s": 0.8,
+    "cargo_s": null,
+    "cargo_builds": 0,
+    "compiled": 0,
+    "wait_s": 933
    }
   ],
   "machines": {
    "marge": {
-    "runs": 493,
-    "seconds": 150953.6999999999,
-    "failed": 15,
-    "cargo_s": 19477.600000000002,
-    "compiled": 4123,
-    "wait_s": 20748.0
+    "runs": 510,
+    "seconds": 173719.0999999999,
+    "failed": 17,
+    "cargo_s": 20685.800000000003,
+    "compiled": 4698,
+    "wait_s": 30745.0
    },
    "Win11Builder": {
     "runs": 23,
@@ -4374,12 +4640,12 @@
     "wait_s": 751.0
    },
    "macos": {
-    "runs": 117,
-    "seconds": 18731.0,
+    "runs": 126,
+    "seconds": 23200.7,
     "failed": 1,
-    "cargo_s": 809.6999999999999,
-    "compiled": 743,
-    "wait_s": 2375.0
+    "cargo_s": 854.8,
+    "compiled": 752,
+    "wait_s": 4127.0
    },
    "leela": {
     "runs": 21,
@@ -4391,12 +4657,12 @@
    }
   },
   "online": {
-   "leela": 0.7004341534008683,
+   "leela": 0.7123002084781098,
    "marge": 1.0,
-   "Win11Builder": 0.9913169319826338,
+   "Win11Builder": 0.9916608756080612,
    "macos": 1.0
   },
-  "samples": 1382
+  "samples": 1439
  },
  "prompts": [
   {
@@ -4628,65 +4894,65 @@
    "time": "23:30:33",
    "iso": "2026-11-14T23:30:33+01:00",
    "text": "why does unicorn/god mode not work in browser mode?"
+  },
+  {
+   "time": "23:34:30",
+   "iso": "2026-11-14T23:34:30+01:00",
+   "text": "add autocompletion to the ingame console. check and restore the GPS location printing in hud."
+  },
+  {
+   "time": "23:45:57",
+   "iso": "2026-11-14T23:45:57+01:00",
+   "text": "explain why the command \"! sudo loginctl enable-linger $USER\" what it does"
+  },
+  {
+   "time": "23:46:48",
+   "iso": "2026-11-14T23:46:48+01:00",
+   "text": "this should be run on which machine?"
+  },
+  {
+   "time": "23:51:47",
+   "iso": "2026-11-14T23:51:47+01:00",
+   "text": "implement the google and strava authentication as suggested."
+  },
+  {
+   "time": "23:52:26",
+   "iso": "2026-11-14T23:52:26+01:00",
+   "text": "start with VR for oculust rift."
+  },
+  {
+   "time": "23:54:25",
+   "iso": "2026-11-14T23:54:25+01:00",
+   "text": "plan for previewing the web version on the internet. what would be required for hosting a dev build? could it be hostet on github?"
+  },
+  {
+   "time": "23:55:12",
+   "iso": "2026-11-14T23:55:12+01:00",
+   "text": "i do have  a quest 1. it should work via oculus link but also standalone."
+  },
+  {
+   "time": "23:59:14",
+   "iso": "2026-11-14T23:59:14+01:00",
+   "text": "okay, do the changes and implement the small preview hosting on github. add do readme after headline as preview. yes, record this in spec and start stage 1"
   }
  ],
  "tokens": {
   "total": {
-   "input": 17768,
-   "cache_write": 27898563,
-   "cache_read": 2995264313,
-   "output": 7588727,
-   "total": 3030769371,
-   "messages": 8511
+   "input": 18880,
+   "cache_write": 30193576,
+   "cache_read": 3138614018,
+   "output": 8070897,
+   "total": 3176897371,
+   "messages": 9044
   },
   "features": {
    "Other": {
-    "input": 2106,
-    "cache_write": 2055168,
-    "cache_read": 342687863,
-    "output": 803398,
-    "total": 345548535,
-    "messages": 969
-   },
-   "Planning & spec": {
-    "input": 7202,
-    "cache_write": 11733143,
-    "cache_read": 1304672695,
-    "output": 3241927,
-    "total": 1319654967,
-    "messages": 3517
-   },
-   "Build, release & infra": {
-    "input": 854,
-    "cache_write": 2279090,
-    "cache_read": 76247014,
-    "output": 220648,
-    "total": 78747606,
-    "messages": 394
-   },
-   "UI & menus": {
-    "input": 618,
-    "cache_write": 408237,
-    "cache_read": 111590031,
-    "output": 170314,
-    "total": 112169200,
-    "messages": 269
-   },
-   "Audio & voice": {
-    "input": 1022,
-    "cache_write": 2034168,
-    "cache_read": 169301496,
-    "output": 406995,
-    "total": 171743681,
-    "messages": 474
-   },
-   "Riders & bikes": {
-    "input": 548,
-    "cache_write": 513179,
-    "cache_read": 76610779,
-    "output": 216874,
-    "total": 77341380,
-    "messages": 248
+    "input": 2304,
+    "cache_write": 2800881,
+    "cache_read": 375133840,
+    "output": 972395,
+    "total": 378909420,
+    "messages": 1063
    },
    "Multiplayer & server": {
     "input": 420,
@@ -4696,13 +4962,53 @@
     "total": 64496925,
     "messages": 207
    },
+   "Build, release & infra": {
+    "input": 878,
+    "cache_write": 2285900,
+    "cache_read": 80675029,
+    "output": 225016,
+    "total": 83186823,
+    "messages": 401
+   },
+   "Riders & bikes": {
+    "input": 622,
+    "cache_write": 538872,
+    "cache_read": 93157112,
+    "output": 230419,
+    "total": 93927025,
+    "messages": 285
+   },
    "Art project": {
-    "input": 566,
-    "cache_write": 499471,
-    "cache_read": 60505697,
-    "output": 174134,
-    "total": 61179868,
-    "messages": 258
+    "input": 602,
+    "cache_write": 860640,
+    "cache_read": 62915508,
+    "output": 177969,
+    "total": 63954719,
+    "messages": 272
+   },
+   "Planning & spec": {
+    "input": 7668,
+    "cache_write": 12591050,
+    "cache_read": 1360212191,
+    "output": 3416666,
+    "total": 1376227575,
+    "messages": 3743
+   },
+   "UI & menus": {
+    "input": 932,
+    "cache_write": 705958,
+    "cache_read": 143570104,
+    "output": 287000,
+    "total": 144563994,
+    "messages": 424
+   },
+   "Audio & voice": {
+    "input": 1022,
+    "cache_write": 2034168,
+    "cache_read": 169301496,
+    "output": 406995,
+    "total": 171743681,
+    "messages": 474
    },
    "Sky, time & weather": {
     "input": 2796,
@@ -4729,5 +5035,10 @@
     "messages": 531
    }
   }
+ },
+ "incidents": {
+  "auto": [],
+  "notes": "",
+  "noted": []
  }
 }
