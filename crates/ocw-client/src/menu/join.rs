@@ -136,7 +136,8 @@ impl TextField {
         }
         let chars: Vec<char> = self.text.chars().collect();
         let mut shown: Vec<char> = chars.clone();
-        let mut cur = self.cursor;
+        // Not typing: the start (the host) shows.
+        let mut cur = if typing { self.cursor } else { 0 };
         if typing {
             shown.insert(cur, '|');
             cur += 1;

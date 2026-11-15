@@ -474,16 +474,31 @@ pub fn text(world: &World, page: Page) -> Vec<String> {
     match (page, world.get_resource::<Hosting>()) {
         (Page::HostLink, Some(h)) => {
             let mut out = vec![format!(
-                "{} rider(s) on UDP {}. Others join with Ride -> Join and this link:",
+                "{} rider(s) on UDP {}. Others join with Ride -> Join and this link (Copy link):",
                 riders(world),
                 h.port
             )];
-            out.extend(h.links.iter().cloned());
-            out.push(firewall_hint(h.port));
+            // The first link in full, in pieces the panel can wrap (a
+            // fingerprint has no spaces); `host status` prints them all.
+            out.extend(h.links.first().map(|l| link_lines(l)));
+            out.push(format!(
+                "Open UDP {0} in the firewall; from the internet also forward UDP {0} on the router.",
+                h.port
+            ));
             out
         }
         _ => Vec::new(),
     }
+}
+
+/// A link with spaces every 32 characters, so the panel can wrap it.
+pub fn link_lines(l: &str) -> String {
+    let chars: Vec<char> = l.chars().collect();
+    chars
+        .chunks(32)
+        .map(|c| c.iter().collect::<String>())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// A link cut for a row: host and the start of the fingerprint.
