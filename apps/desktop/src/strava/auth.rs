@@ -420,7 +420,7 @@ mod tests {
             access_token: "old-access".into(),
             refresh_token: "old-refresh".into(),
             expires_at,
-            athlete: Some("Eddy Merckx".into()),
+            athlete: Some("Bea Climber".into()),
         }
     }
 
@@ -513,7 +513,7 @@ mod tests {
         assert_eq!(t.access_token, "new-access");
         assert_eq!(t.refresh_token, "new-refresh");
         assert_eq!(t.expires_at, 30_000);
-        assert_eq!(t.athlete.as_deref(), Some("Eddy Merckx"), "kept");
+        assert_eq!(t.athlete.as_deref(), Some("Bea Climber"), "kept");
         assert_eq!(store.load().unwrap(), Some(t));
         let req = &http.requests.lock().unwrap()[0];
         assert_eq!(req.url, api::TOKEN_URL);
@@ -556,10 +556,10 @@ mod tests {
         let http = MockHttp::default();
         http.reply(
             200,
-            r#"{"access_token":"a","refresh_token":"r","expires_at":5,"athlete":{"id":1,"firstname":"Marianne","lastname":"Vos"}}"#,
+            r#"{"access_token":"a","refresh_token":"r","expires_at":5,"athlete":{"id":1,"firstname":"Ada","lastname":"Rider"}}"#,
         );
         let t = exchange_code(&http, &creds(), &store, "the-code").unwrap();
-        assert_eq!(t.athlete.as_deref(), Some("Marianne Vos"));
+        assert_eq!(t.athlete.as_deref(), Some("Ada Rider"));
         assert_eq!(store.load().unwrap(), Some(t));
         let _ = std::fs::remove_dir_all(&dir);
     }

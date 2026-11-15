@@ -157,7 +157,7 @@ mod tests {
             access_expires_at: 10,
             refresh_token: Some("rt".into()),
             account_id: "acc_1".into(),
-            name: "Eddy".into(),
+            name: "Bea".into(),
             providers: vec!["strava".into()],
         };
         assert_eq!(store.save(&s).unwrap(), "a private file");

@@ -509,7 +509,7 @@ mod tests {
                 Duration::from_secs(20),
             )
             .unwrap();
-        assert_eq!(s.name, "Marianne Vos");
+        assert_eq!(s.name, "Ada Rider");
         assert_eq!(s.providers, ["google"]);
         // The game server would accept it.
         assert!(
@@ -540,7 +540,7 @@ mod tests {
         let u = c.unlink(&r, Provider::Google).unwrap();
         assert_eq!(u.providers.len(), 1);
         assert!(c.unlink(&r, Provider::Strava).is_err(), "never the last");
-        assert!(c.export(&r).unwrap().contains("Marianne Vos"));
+        assert!(c.export(&r).unwrap().contains("Ada Rider"));
         c.revoke(&r).unwrap();
         assert!(matches!(c.refresh(&r), Err(FlowError::SignInAgain(_))));
     }
@@ -567,7 +567,7 @@ mod tests {
         let no = AtomicBool::new(false);
         // Real sleeps: the backend answers slow_down to faster polls.
         let s = c.device_wait(&d, &no, &std::thread::sleep).unwrap();
-        assert_eq!(s.name, "Eddy Merckx");
+        assert_eq!(s.name, "Bea Climber");
         assert_eq!(s.client_id, ocw_auth::CLIENT_KIOSK);
         // Its refresh uses the kiosk's client.
         assert!(c.refresh(&s).is_ok());

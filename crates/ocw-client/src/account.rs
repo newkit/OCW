@@ -219,7 +219,7 @@ mod tests {
     #[test]
     fn signed_in_links_the_other_and_never_unlinks_the_last() {
         let one = info(AccountState::SignedIn {
-            name: "Marianne Vos".into(),
+            name: "Ada Rider".into(),
             providers: vec![Provider::Google],
         });
         assert_eq!(
@@ -228,10 +228,10 @@ mod tests {
         );
         assert_eq!(
             rows(&one, false)[0].value.as_deref(),
-            Some("Marianne Vos (Google)")
+            Some("Ada Rider (Google)")
         );
         let both = info(AccountState::SignedIn {
-            name: "Marianne Vos".into(),
+            name: "Ada Rider".into(),
             providers: vec![Provider::Google, Provider::Strava],
         });
         assert_eq!(
@@ -243,7 +243,7 @@ mod tests {
                 "account signout"
             ]
         );
-        assert_eq!(both.status(), "Signed in as Marianne Vos (Google, Strava)");
+        assert_eq!(both.status(), "Signed in as Ada Rider (Google, Strava)");
     }
 
     #[test]

@@ -468,7 +468,7 @@ mod tests {
             iat: 1000,
             auth_time: 1000,
             nonce: nonce.map(str::to_owned),
-            name: "Marianne Vos".into(),
+            name: "Ada Rider".into(),
             providers: vec!["strava".into()],
         };
         sign(&c, &key, "k", TYP_ID)
@@ -495,7 +495,7 @@ mod tests {
         let s = Session::from_response(&r, 1000, iss, "ocw-desktop", Some("n"), None).unwrap();
         assert_eq!(
             (s.account_id.as_str(), s.name.as_str()),
-            ("acc_1", "Marianne Vos")
+            ("acc_1", "Ada Rider")
         );
         assert!(s.has(Provider::Strava) && !s.has(Provider::Google));
         assert_eq!(s.access_expires_at, 1600);

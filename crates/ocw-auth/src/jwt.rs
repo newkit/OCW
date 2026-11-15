@@ -236,7 +236,7 @@ mod tests {
             jti: "j".into(),
             client_id: "ocw-desktop".into(),
             scope: "openid".into(),
-            name: "Marianne".into(),
+            name: "Ada".into(),
             auth_time: 1000,
             providers: vec!["google".into()],
         }

@@ -4330,7 +4330,7 @@ mod auth_tests {
             jti: "j".into(),
             client_id: ocw_auth::CLIENT_DESKTOP.into(),
             scope: "openid".into(),
-            name: "Marianne Vos".into(),
+            name: "Ada Rider".into(),
             auth_time: now,
             providers: vec!["google".into(), "strava".into()],
         };
@@ -4385,7 +4385,7 @@ mod auth_tests {
         let a = w.account.expect("the account");
         assert_eq!(
             (a.account_id.as_str(), a.display_name.as_str()),
-            ("acc_42", "Marianne Vos")
+            ("acc_42", "Ada Rider")
         );
         assert_eq!(a.providers, ["google", "strava"]);
         assert_eq!(
@@ -4398,10 +4398,7 @@ mod auth_tests {
             .into_iter()
             .find(|r| r.id.0 == w.rider_id)
             .unwrap();
-        assert_eq!(
-            me.name, "Marianne Vos",
-            "the account's name, not the hello's"
-        );
+        assert_eq!(me.name, "Ada Rider", "the account's name, not the hello's");
         s.disconnect(conn);
         assert!(s.account(conn).is_none());
     }

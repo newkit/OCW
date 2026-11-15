@@ -133,8 +133,8 @@ impl FakeGoogle {
             kid,
             user: Mutex::new(FakeUser {
                 subject: "108234567890123456789".into(),
-                name: "Marianne Vos".into(),
-                email: "marianne@example.org".into(),
+                name: "Ada Rider".into(),
+                email: "ada@example.org".into(),
             }),
             codes: Mutex::new(HashMap::new()),
             deny: AtomicBool::new(false),
@@ -367,7 +367,7 @@ impl FakeStrava {
         let state = Arc::new(StravaState {
             client_id: "12345".into(),
             client_secret: "fake-strava-secret".into(),
-            athlete: Mutex::new((4242, "Eddy".into(), "Merckx".into())),
+            athlete: Mutex::new((4242, "Bea".into(), "Climber".into())),
             codes: Mutex::new(HashMap::new()),
             grant_upload: AtomicBool::new(true),
             requests: AtomicU32::new(0),

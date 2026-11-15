@@ -224,7 +224,7 @@ fn discovery_is_oidc_shaped() {
 fn google_sign_in_with_pkce_state_and_nonce() {
     let e = env();
     let s = e.sign_in(Provider::Google);
-    assert_eq!(s.name, "Marianne Vos");
+    assert_eq!(s.name, "Ada Rider");
     assert_eq!(s.providers, ["google"]);
     // The access token is good for the game server (signature, issuer,
     // audience) and names the account.
@@ -232,13 +232,12 @@ fn google_sign_in_with_pkce_state_and_nonce() {
     assert_eq!(claims.sub, s.account_id);
     assert_eq!(claims.client_id, CLIENT_DESKTOP);
     let u = e.userinfo(&s);
-    assert_eq!(u.email.as_deref(), Some("marianne@example.org"));
+    assert_eq!(u.email.as_deref(), Some("ada@example.org"));
     // The same Google account signs in to the same OCW account.
     let again = e.sign_in(Provider::Google);
     assert_eq!(again.account_id, s.account_id);
     // Another Google user: another account.
-    e.google
-        .set_user("999", "Annemiek van Vleuten", "a@example.org");
+    e.google.set_user("999", "Cleo Sprinter", "a@example.org");
     let other = e.sign_in(Provider::Google);
     assert_ne!(other.account_id, s.account_id);
     // The provider choice page when the app names none.
@@ -432,7 +431,7 @@ fn refresh_rotation_reuse_detection_and_revocation() {
 fn strava_sign_in_keeps_the_athlete_and_encrypted_tokens() {
     let e = env();
     let s = e.sign_in(Provider::Strava);
-    assert_eq!(s.name, "Eddy Merckx");
+    assert_eq!(s.name, "Bea Climber");
     let u = e.userinfo(&s);
     assert_eq!(u.email, None, "Strava gives no e-mail");
     assert!(u.providers[0].upload, "activity:write granted");
@@ -443,7 +442,7 @@ fn strava_sign_in_keeps_the_athlete_and_encrypted_tokens() {
     assert!(t.scope.contains(&"activity:write".to_owned()));
     // The optional consent: the athlete unticks the upload.
     e.strava.grant_upload(false);
-    e.strava.set_athlete(77, "Lizzie", "Deignan");
+    e.strava.set_athlete(77, "Dora", "Tempo");
     let s = e.sign_in(Provider::Strava);
     assert!(!e.userinfo(&s).providers[0].upload);
 }
@@ -621,14 +620,14 @@ fn device_flow_pending_slow_down_approved_denied_expired() {
         )
         .unwrap();
     assert!(
-        done.body.contains("Signed in as Eddy Merckx"),
+        done.body.contains("Signed in as Bea Climber"),
         "{}",
         done.body
     );
     e.advance(16);
     let Poll::Tokens(t) = poll() else { panic!() };
     let s = Session::from_response(&t, e.now(), &e.issuer, CLIENT_KIOSK, None, None).unwrap();
-    assert_eq!(s.name, "Eddy Merckx");
+    assert_eq!(s.name, "Bea Climber");
     assert!(e.verifier().verify(&s.access_token, e.now()).is_ok());
     // Used up.
     e.advance(30);
@@ -753,7 +752,7 @@ fn export_and_deletion() {
     let (st, b) = get(&e.url("/account/export"), Some(&s.access_token));
     assert_eq!(st, 200);
     let v: serde_json::Value = serde_json::from_str(&b).unwrap();
-    assert_eq!(v["account"]["display_name"], "Eddy Merckx");
+    assert_eq!(v["account"]["display_name"], "Bea Climber");
     assert_eq!(v["modules"]["training"]["rides"], 3);
     assert!(
         !b.contains(&s.access_token) && !b.contains("refresh"),

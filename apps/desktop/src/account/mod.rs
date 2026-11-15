@@ -314,7 +314,7 @@ mod tests {
         wait(&mut a, &|s| matches!(s, AccountState::SignedIn { .. }));
         assert_eq!(
             a.world().resource::<AccountMenu>().status(),
-            "Signed in as Marianne Vos (Google)"
+            "Signed in as Ada Rider (Google)"
         );
         let token = access_token(a.world()).expect("a token for the hello");
         assert_eq!(
@@ -323,7 +323,7 @@ mod tests {
                 .verify(&token, flow::now_s())
                 .unwrap()
                 .name,
-            "Marianne Vos"
+            "Ada Rider"
         );
         // Kept in the file (the tests' store), private.
         assert!(dir.join("account.json").exists());

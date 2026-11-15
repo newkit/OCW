@@ -168,7 +168,7 @@ mod tests {
             jti: "j1".into(),
             client_id: "ocw-desktop".into(),
             scope: String::new(),
-            name: "Eddy".into(),
+            name: "Bea".into(),
             auth_time: exp - 600,
             providers: vec![],
         }
