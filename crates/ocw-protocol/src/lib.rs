@@ -11,6 +11,7 @@ pub mod v1 {
     include!(concat!(env!("OUT_DIR"), "/ocw.v1.rs"));
 }
 
+pub mod join;
 mod weather;
 pub use weather::{
     PhysicsRule, WeatherChange, WeatherInfo, choice_from_wire, choice_to_wire,

@@ -170,6 +170,95 @@ impl LocalServer {
     }
 }
 
+/// What a hosted local server ([`LocalServer::spawn_hosting`]) counts, for
+/// the app's menu: riders connected over the network and in the session.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Default)]
+pub struct HostCounts {
+    /// Network connections (other riders' apps, bots of `ocw-bot`).
+    pub peers: std::sync::atomic::AtomicUsize,
+    /// Riders in the session: the host, the others (bots not counted).
+    pub riders: std::sync::atomic::AtomicUsize,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl LocalServer {
+    /// A local server that others join (spec §3.2.1 *Host a ride*): the
+    /// same thread and 50 Hz loop as [`LocalServer::spawn_with`], and the
+    /// QUIC endpoint `net` pumped by it – the app's own connection is the
+    /// first, so its rider is the host. Ending the thread (dropping the
+    /// connection) closes the endpoint: the others hear "server shutting
+    /// down".
+    pub fn spawn_hosting(
+        course: impl Into<Course>,
+        config: ServerConfig,
+        net: crate::net::NetServer,
+    ) -> std::io::Result<(LocalConnection, std::sync::Arc<HostCounts>)> {
+        use std::sync::atomic::Ordering;
+        let (to_server, server_rx) = mpsc::channel::<Vec<u8>>();
+        let (server_tx, from_server) = mpsc::channel::<Vec<u8>>();
+        let counts = std::sync::Arc::new(HostCounts::default());
+        let shared = counts.clone();
+        let mut server = GameServer::new(course, config)
+            .with_weather_fetcher(Box::new(crate::realweather::http::HttpFetcher::default()));
+        let mut net = net;
+        let thread = thread::Builder::new()
+            .name("ocw-host-server".into())
+            .spawn(move || {
+                let conn = server.connect();
+                let tick = Duration::from_secs_f64(SIM_DT);
+                let mut next = Instant::now();
+                'run: loop {
+                    loop {
+                        match server_rx.try_recv() {
+                            Ok(bytes) => {
+                                for reply in server.handle(conn, &bytes) {
+                                    if server_tx.send(reply).is_err() {
+                                        break 'run;
+                                    }
+                                }
+                            }
+                            Err(TryRecvError::Empty) => break,
+                            Err(TryRecvError::Disconnected) => break 'run,
+                        }
+                    }
+                    net.pump(&mut server);
+                    let out = server.tick();
+                    net.broadcast(&server, &out);
+                    // The host's own connection gets the same broadcast.
+                    if server.connections().any(|c| c == conn) {
+                        for msg in out {
+                            if server_tx.send(msg).is_err() {
+                                break 'run;
+                            }
+                        }
+                    }
+                    shared.peers.store(net.peer_count(), Ordering::Relaxed);
+                    shared
+                        .riders
+                        .store(server.connections().count(), Ordering::Relaxed);
+                    next += tick;
+                    let now = Instant::now();
+                    if next > now {
+                        thread::sleep(next - now);
+                    } else if now - next > Duration::from_secs_f64(MAX_BACKLOG_S) {
+                        next = now;
+                    }
+                }
+                server.disconnect(conn);
+                net.shutdown();
+            })?;
+        Ok((
+            LocalConnection {
+                to_server,
+                from_server,
+                thread: Some(thread),
+            },
+            counts,
+        ))
+    }
+}
+
 /// A local server that does not run on its own clock: the caller ticks it.
 ///
 /// Used for deterministic frame capture (`ocw-desktop --capture`), where game

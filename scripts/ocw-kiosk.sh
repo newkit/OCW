@@ -134,9 +134,11 @@ start_server() {
     sleep 1; waited=$((waited + 1))
   done
   cat "$state/server.out" >>"$serverlog"
-  grep -A2 "Clients connect with" "$state/server.out" >"$state/server-connect.txt"
+  # The join link(s) (Ride -> Join, ocw-desktop --join) and the command line.
+  { grep -A3 "^Join link" "$state/server.out" | grep -v "^Clients" | grep -v "ocw-desktop --server"
+    grep -A2 "Clients connect with" "$state/server.out"; } >"$state/server-connect.txt"
   SERVER_ARGS=(--server "127.0.0.1:$port" --insecure-dev)
-  say "game server ready after ${waited} s: $(sed -n 2p "$state/server-connect.txt" | sed 's/^ *//')"
+  say "game server ready after ${waited} s: $(grep -m1 "ocw://" "$state/server-connect.txt" | sed 's/^ *//')"
 }
 
 stop_app() {
@@ -255,7 +257,7 @@ case "${1:-}" in
     pgrep -af "ocw-kiosk.sh run" || echo "kiosk not running"
     if kill -0 "$(cat "$state/server.pid" 2>/dev/null || echo 0)" 2>/dev/null; then
       echo "game server: running; riders join with:"
-      sed -n '2,3p' "$state/server-connect.txt" 2>/dev/null
+      grep '^ ' "$state/server-connect.txt" 2>/dev/null
     elif udp_busy "${listen##*:}"; then
       echo "game server: another one listens on UDP ${listen##*:} (the kiosk joins it)"
     else

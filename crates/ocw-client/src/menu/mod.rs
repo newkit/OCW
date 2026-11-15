@@ -16,6 +16,7 @@
 
 pub mod controls;
 pub mod history;
+pub mod join;
 pub mod model;
 pub mod pages;
 pub mod time;

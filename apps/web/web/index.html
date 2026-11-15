@@ -341,6 +341,11 @@
         const ocw = await import(gpu.api === "webgl2" ? "./ocw_web_webgl2.js" : "./ocw_web.js");
         // window.ocw.console("teleport 3"), window.ocw.wasmMemory(): for tests.
         window.ocw = ocw;
+        // Ride -> Join: a pasted link goes to the link field (spec §3.2.1).
+        document.addEventListener("paste", (e) => {
+          const t = e.clipboardData && e.clipboardData.getData("text");
+          if (t && window.ocw && window.ocw.paste) window.ocw.paste(t);
+        });
         // Bevy's event loop throws a control-flow exception once it runs:
         // that is not an error.
         await ocw.default().catch((e) => {

@@ -133,6 +133,23 @@ pub enum Page {
     TrustedKeys,
     /// One of them (index): name, fingerprint, date; remove it.
     TrustedKey(usize),
+    /// Ride → Join (spec §3.2.1; rows from `menu::join`): the link and
+    /// fingerprint fields, Paste, Join, the recent servers.
+    Join,
+    /// Ride → Host a ride (rows from `crate::host`): the world …
+    HostWorld,
+    /// … the route or free ride …
+    HostRoute,
+    /// … date and time …
+    HostTime,
+    /// … the weather …
+    HostWeather,
+    /// … bots, access, port, sign-in …
+    HostOptions,
+    /// … and the summary with Start hosting.
+    HostSummary,
+    /// While hosting: the join link (Copy link, Stop hosting).
+    HostLink,
 }
 
 impl Page {
@@ -202,6 +219,14 @@ impl Page {
             Self::EventRules => "Organiser rules",
             Self::TrustedKeys => "Trusted world keys",
             Self::TrustedKey(_) => "Trusted key",
+            Self::Join => "Join a ride",
+            Self::HostWorld => "Host a ride: world",
+            Self::HostRoute => "Host a ride: route",
+            Self::HostTime => "Host a ride: date and time",
+            Self::HostWeather => "Host a ride: weather",
+            Self::HostOptions => "Host a ride: options",
+            Self::HostSummary => "Host a ride",
+            Self::HostLink => "Hosting: join link",
         }
     }
 
@@ -210,7 +235,12 @@ impl Page {
     pub fn is_ride_page(self) -> bool {
         matches!(
             self,
-            Self::Routes | Self::Rides | Self::GpxImport | Self::Workouts
+            Self::Routes
+                | Self::Rides
+                | Self::GpxImport
+                | Self::Workouts
+                | Self::HostWorld
+                | Self::HostRoute
         ) || self.is_world_page()
     }
 
@@ -299,6 +329,11 @@ impl Page {
             Self::BindGroup(_) | Self::BindReset => Some(Self::Bindings),
             Self::Graphics | Self::Accessibility => Some(Self::Display),
             Self::TrustedKey(_) => Some(Self::TrustedKeys),
+            Self::HostRoute => Some(Self::HostWorld),
+            Self::HostTime => Some(Self::HostRoute),
+            Self::HostWeather => Some(Self::HostTime),
+            Self::HostOptions => Some(Self::HostWeather),
+            Self::HostSummary => Some(Self::HostOptions),
             _ => None,
         }
     }
@@ -407,6 +442,26 @@ impl Page {
             Self::HistoryBests => &[],
             Self::TrustedKeys => &[super::trust::KEYS_NOTE],
             Self::TrustedKey(_) => &[super::trust::KEY_NOTE],
+            Self::Join => &[
+                "Paste or type the link the host shares (ocw://HOST:PORT?cert=...). Your ride goes on until the shared one is ready.",
+            ],
+            Self::HostWorld => &[
+                "Host a shared ride on this computer: others join with its link. First the world.",
+            ],
+            Self::HostRoute => &["The route, or a free ride on the world's roads."],
+            Self::HostTime => {
+                &["Real time, or a moment of the time machine (Left/Right step), a few days on."]
+            }
+            Self::HostWeather => {
+                &["Simulated, real weather at the place, or a preset of the weather machine."]
+            }
+            Self::HostOptions => &[
+                "Others may need UDP open in the firewall and a port forwarding on the router (README).",
+            ],
+            Self::HostSummary => &[
+                "The server runs in this app on 0.0.0.0 (all addresses); you ride on it as the host.",
+            ],
+            Self::HostLink => &[],
         }
     }
 }
@@ -610,6 +665,9 @@ pub enum Activate {
     /// Ask "Remove this key?" first, then run the line and go back
     /// (Settings → Account → Trusted world keys).
     AskForget(String),
+    /// Run a console command line, then open a page (the host wizard's
+    /// steps).
+    RunOpen(String, Page),
 }
 
 /// One row of a page.
@@ -1061,6 +1119,15 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         | Page::HistoryBests => Vec::new(),
         // From the trusted world keys (`menu::trust`).
         Page::TrustedKeys | Page::TrustedKey(_) => Vec::new(),
+        // From the join state (`menu::join`) and the host wizard (`host`).
+        Page::Join
+        | Page::HostWorld
+        | Page::HostRoute
+        | Page::HostTime
+        | Page::HostWeather
+        | Page::HostOptions
+        | Page::HostSummary
+        | Page::HostLink => Vec::new(),
         // The organiser's rules (spec §14 Phase 12 K6): six rows.
         Page::EventRules => vec![
             setting_row(settings, "event.collisions", "Collisions"),

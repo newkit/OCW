@@ -49,6 +49,9 @@ serde_json.workspace = true
 ureq.workspace = true
 # Game audio output (Apache-2.0; spec §3.3).
 cpal.workspace = true
+# The clipboard for Ride -> Join's Paste and Host's Copy link (MIT OR
+# Apache-2.0; the version egui already uses).
+arboard = { version = "3.7", default-features = false }
 # Voice chat logic (spec §7); the LiveKit backend only with `voice`.
 ocw-voice.workspace = true
 

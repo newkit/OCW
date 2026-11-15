@@ -67,7 +67,7 @@ rm -f "$OCW_KIOSK_DIR/ocw-kiosk.sh"
 # crash restarts both.
 rm -f "$t/runs" "$t/srv"
 printf '%s\n' '# test world' '--world /w/tenerife.ocwpkg' '--route "Puerto de la Cruz - Teide"' > "$OCW_KIOSK_DIR/ocw-desktop.args"
-printf '#!/bin/sh\necho "srv $*" >> %s\necho "Clients connect with:"\necho "  ocw-desktop --server host --server-cert ab12"\nexec sleep 601\n' "$t/srv" > "$OCW_KIOSK_DIR/ocw-server"
+printf '#!/bin/sh\necho "srv $*" >> %s\necho "Join link (in the app: Ride -> Join; or ocw-desktop --join LINK):"\necho "  ocw://192.0.2.7:47999?cert=ab12&route=hills"\necho "Clients connect with:"\necho "  ocw-desktop --server host --server-cert ab12"\nexec sleep 601\n' "$t/srv" > "$OCW_KIOSK_DIR/ocw-server"
 chmod 755 "$OCW_KIOSK_DIR/ocw-server"
 fake v3
 OCW_KIOSK_LISTEN=0.0.0.0:47999 OCW_KIOSK_BOTS=4 scripts/ocw-kiosk.sh run &
@@ -77,6 +77,8 @@ grep -q -- "--world /w/tenerife.ocwpkg --route Puerto de la Cruz - Teide" "$t/sr
 grep -q -- "--listen 0.0.0.0:47999" "$t/srv" && grep -q -- "--bots 4" "$t/srv" || { echo "FAIL: server options"; fail=1; }
 tail -1 "$t/runs" | grep -q -- "--server 127.0.0.1:47999 --insecure-dev" || { echo "FAIL: app not a client: $(tail -1 "$t/runs")"; fail=1; }
 grep -q "ab12" "$XDG_STATE_HOME/ocw/server-connect.txt" || { echo "FAIL: connect line"; fail=1; }
+grep -q "^  ocw://192.0.2.7:47999?cert=ab12&route=hills" "$XDG_STATE_HOME/ocw/server-connect.txt" || { echo "FAIL: join link: $(cat "$XDG_STATE_HOME/ocw/server-connect.txt")"; fail=1; }
+grep -q "ocw://192.0.2.7" "$XDG_STATE_HOME/ocw/kiosk.log" || { echo "FAIL: join link in the log"; fail=1; }
 st=$(scripts/ocw-kiosk.sh status 2>&1); echo "$st" | grep -q "game server: running" || { echo "FAIL: status: $st"; fail=1; }
 before=$(runs)
 pkill -f "sleep 601" || true

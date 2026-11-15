@@ -269,7 +269,7 @@ mod tests {
     fn workouts_start_from_the_menu_and_can_be_skipped_and_stopped() {
         let mut c = catalog();
         // Top → Ride → Workouts.
-        let mut m = open(&c, &[1, 4]);
+        let mut m = open(&c, &[1, 1]);
         assert_eq!(m.page(), Some(MenuPage::Sub(Page::Workouts)));
         assert_eq!(
             m.labels(),
@@ -285,14 +285,14 @@ mod tests {
             Effect::Command("workout start \"/home/u/ocw/workouts/my intervals.erg\"".into())
         );
         assert!(!m.is_open());
-        let mut m = open(&c, &[1, 4]);
+        let mut m = open(&c, &[1, 1]);
         assert_eq!(
             m.apply_with(Action::Click(1), |p| rows(p, &c)),
             Effect::Command("workout start --example short-demo".into())
         );
         // While one runs: its step, Skip (stays open) and Stop (closes).
         c.workout_now = Some(("Demo: 2-minute intervals".into(), "step 2/6".into()));
-        let mut m = open(&c, &[1, 4]);
+        let mut m = open(&c, &[1, 1]);
         let l = m.labels();
         assert_eq!(l[0], "Demo: 2-minute intervals:  step 2/6");
         assert_eq!(&l[1..3], ["Skip step", "Stop workout"]);
