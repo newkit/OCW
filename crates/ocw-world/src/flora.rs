@@ -697,7 +697,7 @@ const TF_SUMMIT: [(Species, f32); 1] = [(Broom, 1.0)];
 /// W) at a bearing of 60° (the NE–SW ridge from Anaga to Teno), where the
 /// trade winds' cloud belt waters the laurel forest (spec §4.6.2).
 pub fn windward(lat: f64, lon: f64) -> bool {
-    let (lat0, lon0) = (28.2723, -16.6422);
+    let (lat0, lon0): (f64, f64) = (28.2723, -16.6422);
     // Local km east / north of the Teide.
     let x = (lon - lon0) * 111.32 * lat0.to_radians().cos();
     let y = (lat - lat0) * 110.57;

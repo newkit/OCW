@@ -959,6 +959,12 @@ impl SeasonDay {
         foliage(self.phenology(), leaf, &s, jitter)
     }
 
+    /// [`SeasonDay::foliage`] with a species' [`Timing`].
+    pub fn foliage_timed(&self, leaf: LeafType, alt_m: f64, jitter: f32, timing: Timing) -> Foliage {
+        let s = self.state(alt_m);
+        foliage_timed(self.phenology(), leaf, &s, jitter, timing)
+    }
+
     /// The meadow grass at `alt_m`.
     pub fn grass(&self, alt_m: f64) -> Grass {
         let s = self.state(alt_m);
@@ -1085,7 +1091,42 @@ impl SeasonDay {
 /// The leaves of a tree of `leaf` type in state `s` (see
 /// [`SeasonDay::foliage`]).
 pub fn foliage(p: &Phenology, leaf: LeafType, s: &State, jitter: f32) -> Foliage {
-    let k = 1.0 + 0.12 * f64::from(jitter.clamp(-1.0, 1.0));
+    foliage_timed(p, leaf, s, jitter, Timing::DEFAULT)
+}
+
+/// When a species leafs out and turns compared with the beech the
+/// thresholds are calibrated on (spec §4.6.2 table 5): factors on the
+/// spring (growing degree days) and the autumn (cold degree days)
+/// thresholds – birches and willows early in spring, ashes and oaks late;
+/// ashes drop their leaves early, oaks and alders late.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Timing {
+    pub spring: f64,
+    pub autumn: f64,
+}
+
+impl Timing {
+    pub const DEFAULT: Timing = Timing {
+        spring: 1.0,
+        autumn: 1.0,
+    };
+}
+
+/// [`foliage`] with a species' [`Timing`].
+pub fn foliage_timed(
+    p: &Phenology,
+    leaf: LeafType,
+    s: &State,
+    jitter: f32,
+    timing: Timing,
+) -> Foliage {
+    let j = 1.0 + 0.12 * f64::from(jitter.clamp(-1.0, 1.0));
+    let k = j * timing.spring;
+    let ka = j * timing.autumn;
+    foliage_k(p, leaf, s, k, ka)
+}
+
+fn foliage_k(p: &Phenology, leaf: LeafType, s: &State, k: f64, ka: f64) -> Foliage {
     let (gdd, cdd) = (f64::from(s.gdd), f64::from(s.cdd));
     let (burst, full, shift) = match leaf {
         LeafType::Evergreen => return Foliage::EVERGREEN,
@@ -1099,14 +1140,14 @@ pub fn foliage(p: &Phenology, leaf: LeafType, s: &State, jitter: f32) -> Foliage
     let out = smooth(gdd, (burst * k, full * k));
     let fall = smooth(
         cdd,
-        ((p.fall_start_cdd + shift) * k, (p.fall_end_cdd + shift) * k),
+        ((p.fall_start_cdd + shift) * ka, (p.fall_end_cdd + shift) * ka),
     );
     let fresh = out * (1.0 - smooth(gdd, (full * k, p.fresh_until_gdd * k)));
     let autumn = smooth(
         cdd,
         (
-            (p.colour_start_cdd + shift) * k,
-            (p.colour_full_cdd + shift) * k,
+            (p.colour_start_cdd + shift) * ka,
+            (p.colour_full_cdd + shift) * ka,
         ),
     );
     Foliage {
@@ -1132,6 +1173,27 @@ mod tests {
     use super::*;
 
     const VADUZ: f64 = 455.0;
+
+    #[test]
+    fn species_timing_moves_spring_and_autumn_apart() {
+        let m = liechtenstein();
+        let late = Timing { spring: 1.35, autumn: 0.85 };
+        // Early May: the beech is out, the ash still bare-ish.
+        let may = m.day(125.0);
+        let beech = may.foliage(LeafType::Deciduous, VADUZ, 0.0);
+        let ash = may.foliage_timed(LeafType::Deciduous, VADUZ, 0.0, late);
+        assert!(ash.leaves < beech.leaves, "{ash:?} {beech:?}");
+        // Late October: the ash is already further on (colour / bare).
+        let oct = m.day(295.0);
+        let beech = oct.foliage(LeafType::Deciduous, VADUZ, 0.0);
+        let ash = oct.foliage_timed(LeafType::Deciduous, VADUZ, 0.0, late);
+        assert!(ash.autumn >= beech.autumn && ash.leaves <= beech.leaves);
+        // The default timing is the plain foliage.
+        assert_eq!(
+            oct.foliage_timed(LeafType::Deciduous, VADUZ, 0.3, Timing::DEFAULT),
+            oct.foliage(LeafType::Deciduous, VADUZ, 0.3)
+        );
+    }
     const MALBUN: f64 = 1600.0;
 
     fn liechtenstein() -> SeasonModel {

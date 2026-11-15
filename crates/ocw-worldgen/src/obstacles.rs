@@ -403,6 +403,20 @@ fn set_trees(pkg: &WorldPackage, roads: &StripIndex, o: &mut Obstacles, st: &mut
     });
     for t in o.tiles.values_mut() {
         t.trees.clear();
+        t.points.retain(|p| p.kind != ObstacleKind::PlantedTree);
+    }
+    // The planted trees (spec §14 Phase 8 T8): the fruit trees of the
+    // orchards' rows and the mapped trees (section VEGE) that are solid.
+    let planted = crate::par::map(&keys, crate::par::threads(), |key| {
+        planted_points(pkg, *key, |p| roads.nearest(p, CORRIDOR_M).is_some())
+    });
+    for (key, points) in keys.iter().zip(planted) {
+        if points.is_empty() {
+            continue;
+        }
+        st.trees += points.len();
+        *st.by_kind.entry(ObstacleKind::PlantedTree).or_default() += points.len();
+        o.tiles.entry(*key).or_default().points.extend(points);
     }
     for (key, cells) in keys.iter().zip(trees) {
         let Some(cells) = cells else { continue };
@@ -415,6 +429,41 @@ fn set_trees(pkg: &WorldPackage, roads: &StripIndex, o: &mut Obstacles, st: &mut
         o.tiles.entry(*key).or_default().set_tree_cells(&cells);
     }
     o.tiles.retain(|_, t| !t.is_empty());
+}
+
+/// The solid planted trees of tile `key` (orchard rows, mapped trees;
+/// [`ocw_world::plantings`]) whose foot `keep` accepts, as point obstacles:
+/// the trunk's diameter as the width, the tree's height.
+pub fn planted_points(
+    pkg: &WorldPackage,
+    key: TileKey,
+    keep: impl Fn([f64; 2]) -> bool,
+) -> Vec<PointObstacle> {
+    use ocw_world::trees::TRUNK_RADIUS_M;
+    let point = |pos: [f32; 2], scale: f32, height: f32| PointObstacle {
+        kind: ObstacleKind::PlantedTree,
+        flags: 0,
+        pos,
+        angle: 0.0,
+        width_m: (2.0 * TRUNK_RADIUS_M as f32 * scale).max(0.2),
+        height_m: height.min(25.5),
+    };
+    let (_, plants) = ocw_world::plantings::tile_rows(pkg, key);
+    let mut out: Vec<PointObstacle> = plants
+        .iter()
+        .filter(|p| p.species.solid() && keep([f64::from(p.pos[0]), f64::from(p.pos[2])]))
+        .map(|p| point([p.pos[0], p.pos[2]], p.scale * 0.6, p.species.height_m() * p.scale))
+        .collect();
+    out.extend(
+        ocw_world::plantings::mapped_trees(pkg, key)
+            .into_iter()
+            .filter(|(f, t)| t.species.solid() && keep([f64::from(f[0]), f64::from(f[2])]))
+            .map(|(f, t)| {
+                let h = if t.height_m > 0.0 { t.height_m } else { t.species.height_m() };
+                point([f[0], f[2]], 1.0, h)
+            }),
+    );
+    out
 }
 
 /// Recomputes the tree cells of the package's obstacles (section `OBST`)

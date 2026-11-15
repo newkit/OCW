@@ -193,7 +193,9 @@ pub struct TileMeshes {
     /// Crossings, stop and give-way lines over the roads (blended).
     pub overlays: MeshArrays,
     pub water: MeshArrays,
-    pub trees: MeshArrays,
+    /// The plants in chunks, near and far models (spec §14 Phase 8 T8,
+    /// `vegetation`).
+    pub plants: crate::vegetation::TilePlants,
     /// Houses in three levels of detail (`houses`, spec §14 Phase 8 T4).
     pub houses: crate::houses::HouseMeshes,
     /// Bridge structures (section `BRDG`, spec §4.8.6).
@@ -960,9 +962,25 @@ pub fn colour_map_seasonal(
                     .unwrap_or_else(|| land_colour(c))
             };
             let mut colour = flat(class);
+            // The field's crop (section VEGE, spec §14 Phase 8 T8): its own
+            // calendar instead of the region's mix, its share of summer
+            // crops in the alpha for the terrain shader (255: unknown, the
+            // shader's noise patches).
+            let crop = pkg
+                .look
+                .vegetation
+                .as_ref()
+                .map(|v| v.at(size, x, z).0)
+                .unwrap_or_default();
+            let summer = crop.arable().then(|| if crop.summer_crop() { 1.0 } else { 0.0 });
             if let (Some(day), Some(y)) = (season, pkg.height(x, z)) {
-                colour = crate::season::ground_colour(class, colour, y, day);
+                colour = match summer {
+                    Some(m) => crate::season::ground_colour_with(class, colour, y, day, m),
+                    None => crate::season::ground_colour(class, colour, y, day),
+                };
             }
+            colour = crate::season::plantation_ground(crop, colour);
+            let alpha = summer.map_or(255u8, |m| (m * 250.0f32).round() as u8);
             if !matches!(class, LandClass::Water | LandClass::Glacier) {
                 let rock = palette.map_or(ROCK, |_| flat(LandClass::Rock));
                 let t = match palette {
@@ -991,7 +1009,7 @@ pub fn colour_map_seasonal(
             for ch in colour {
                 level0.push(((ch * shade).clamp(0.0, 1.0) * 255.0).round() as u8);
             }
-            level0.push(255);
+            level0.push(alpha);
         }
     }
     let mut data = level0.clone();
@@ -1117,7 +1135,6 @@ pub fn build_tile_meshes_look(
     if let Some(f) = keep {
         classed.retain(|((p, _), _)| f([f64::from(p.x), f64::from(p.z)]));
     }
-    let sites: Vec<TreeSite> = classed.iter().map(|(s, _)| *s).collect();
     let lu = tile_landuse(pkg, key);
     // The kept buildings with their measured roof colours (section ROOF,
     // in the order of the tile's buildings).
@@ -1167,6 +1184,9 @@ pub fn build_tile_meshes_look(
         .as_deref()
         .map_or_else(SolidFootprints::default, |b| building_footprints(b, &specs));
     let roads = tile_road_meshes(pkg, tile, &near, look.road_colours.as_deref());
+    let mut plants =
+        crate::vegetation::tile_plants(pkg, key, &classed, keep, look.season.as_deref());
+    plants.crowns.shrink_to_fit();
     Some(TileMeshes {
         key,
         terrain: terrain_arrays_kept(pkg, tile, keep),
@@ -1194,8 +1214,8 @@ pub fn build_tile_meshes_look(
         water: lu.map_or_else(MeshArrays::default, |(lu, _)| {
             water_arrays_kept(pkg, tile, lu, keep)
         }),
-        trees: seasonal_tree_arrays(Some(pkg), &classed, look.season.as_deref()),
-        crowns: crate::flight_world::TreeCrowns::from_sites(&sites),
+        crowns: crate::flight_world::TreeCrowns::from_crowns(plants.crowns.clone()),
+        plants,
         houses,
         bridges: crate::bridges::bridge_arrays(&own),
         solid,
@@ -1927,15 +1947,32 @@ fn upload_tile(
                     crate::world::FlatOverlay,
                 ));
             }
-            if !t.trees.indices.is_empty() {
-                c.spawn((
-                    Mesh3d(meshes.add(t.trees.mesh())),
-                    MeshMaterial3d(materials.trees.clone()),
-                    CameraInteraction::SeeThrough,
-                    TileDetail,
-                    // Drawn as far as the quality preset says.
-                    crate::quality::TileTrees,
-                ));
+            // The plants in chunks (spec §14 Phase 8 T8): the near models
+            // up to `vegetation::NEAR_FADE_M`, the far ones beyond, as far as
+            // the quality preset says, cross-faded.
+            for chunk in std::mem::take(&mut t.plants.chunks) {
+                let at = Transform::from_translation(Vec3::from(chunk.origin));
+                if !chunk.near.indices.is_empty() {
+                    c.spawn((
+                        Mesh3d(meshes.add(chunk.near.mesh())),
+                        MeshMaterial3d(materials.trees.clone()),
+                        at,
+                        CameraInteraction::SeeThrough,
+                        TileDetail,
+                        crate::quality::near_tree_range(),
+                    ));
+                }
+                if !chunk.far.indices.is_empty() {
+                    c.spawn((
+                        Mesh3d(meshes.add(chunk.far.mesh())),
+                        MeshMaterial3d(materials.trees.clone()),
+                        at,
+                        CameraInteraction::SeeThrough,
+                        TileDetail,
+                        crate::quality::far_tree_range(None),
+                        crate::quality::TileTrees,
+                    ));
+                }
             }
             // Street lamps (spec §14 Phase 9 S2): poles in the vertex
             // colours, the heads glowing at night.
@@ -2263,10 +2300,8 @@ mod tests {
         let sites = tree_sites(&p, &p.tiles[&key]);
         let west_sites = sites.iter().filter(|(s, _)| s.x < 50.0).count();
         assert!(west_sites > 0);
-        assert_eq!(
-            half.trees.positions.len() * sites.len(),
-            full.trees.positions.len() * west_sites
-        );
+        assert_eq!(half.plants.trees(), west_sites);
+        assert_eq!(full.plants.trees(), sites.len());
         // The house (centroid x = 16) stays; the roads are always drawn.
         assert_eq!(half.houses.triangles(), full.houses.triangles());
         assert_eq!(half.roads.indices.len(), full.roads.indices.len());
@@ -2554,7 +2589,7 @@ mod tests {
             assert!(!in_house, "tree in the building at {b}");
         }
         let m = build_tile_meshes(&p, key).unwrap();
-        assert_eq!(m.trees.positions.len(), sites.len() * 14);
+        assert_eq!(m.plants.trees(), sites.len());
         // The building is camera-solid, the forest is not.
         assert_eq!(m.solid.len(), 1);
         let roof = m.solid.top_at(16.0, 74.0).expect("solid building");
@@ -2744,8 +2779,13 @@ mod tests {
             let s = t.elapsed().as_secs_f64();
             worst = worst.max(s);
             total += s;
-            trees += m.trees.positions.len() / 14;
-            verts += m.trees.positions.len()
+            trees += m.plants.trees();
+            verts += m
+                .plants
+                .chunks
+                .iter()
+                .map(|c| c.near.positions.len() + c.far.positions.len())
+                .sum::<usize>()
                 + m.houses.mid.as_ref().map_or(0, |p| p.mesh.positions.len())
                 + m.terrain.positions.len();
         }
