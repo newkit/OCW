@@ -44,6 +44,12 @@
 //! screenshots, videos and the ride's FIT file are downloads named with
 //! the time.
 //!
+//! **Unicorn mode (Phase 13 G5):** the desktop's god mode, shared as
+//! `ocw_ui::god` – G (or World → Unicorn mode) flies, + / − by what the
+//! key types, the gamepad, touch on the left half, the inspection (I, P),
+//! the mouse look in the page's Pointer Lock ([`god`]); a shared ride
+//! keeps the server's rules (the host flies).
+//!
 //! **Worlds over HTTP (B2):** `?world=liechtenstein&route=vaduz-malbun`
 //! streams a world package from the server ([`world`]): manifest and
 //! signature chain, then the base and the tiles around the rider with
@@ -61,6 +67,7 @@ mod browser_devices;
 #[cfg(target_arch = "wasm32")]
 mod browser_voice;
 pub mod devices;
+pub mod god;
 pub mod plugin;
 pub mod session;
 pub mod settings;
@@ -544,6 +551,15 @@ pub fn page_voice() -> String {
 #[wasm_bindgen::prelude::wasm_bindgen(js_name = menu)]
 pub fn page_menu() -> String {
     ui::menu_json()
+}
+
+/// `window.ocw.god()`: unicorn mode as JSON (phase, pointer, position,
+/// height, the inspection's panel and crosshair, pins; Phase 13 G5 – the
+/// browser test flies with it).
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(js_name = god)]
+pub fn page_god() -> String {
+    god::god_json()
 }
 
 /// `window.ocw.setting(key)`: a setting's value as text ("" for an unknown

@@ -40,6 +40,9 @@ import tempfile
 import threading
 import time
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import web_browser  # noqa: E402  (scripts/web_browser.py: the pinned browser)
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -136,14 +139,17 @@ def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--dir", default="target/web")
     p.add_argument("--out", default="test-output/web")
-    p.add_argument("--chromium", default=shutil.which("chromium") or "chromium")
+    p.add_argument("--chromium", default=None,
+                   help="the browser (default: OCW_BROWSER, else the pinned Chromium of `make deps-browser`,"
+                        " else the system's chromium; scripts/web_browser.py)")
     p.add_argument("--size", default="1280x720")
     p.add_argument("--start", default="1.2", help="km on the Hills route")
     a = p.parse_args()
-    for f in ("ocw_web_bg.wasm", "ocw_web_webgl2_bg.wasm"):
-        if not os.path.exists(os.path.join(a.dir, f)):
-            sys.exit(f"{a.dir}/{f} missing: run `make web` first (both builds)")
+    a.chromium = a.chromium or web_browser.find()
     tw = test_web()
+    missing = tw.web_serve().missing_build(a.dir, ["ocw_web_bg.wasm", "ocw_web_webgl2_bg.wasm"])
+    if missing:
+        sys.exit(missing + "\n  (both builds: not WEB_GPU=webgpu)")
     sys.path.insert(0, HERE)
     import web_ui_test
 
@@ -180,7 +186,7 @@ def main():
     os.close(res_w)
     cdp = tw.Cdp(proc, cmd_w, res_r)
     lines = []
-    summary = {"ok": False, "runs": []}
+    summary = {"ok": False, "runs": [], "browser": web_browser.describe(a.chromium)}
     try:
         targets = cdp.call("Target.getTargets", session=False)["targetInfos"]
         page = next(t for t in targets if t["type"] == "page")

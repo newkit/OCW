@@ -27,7 +27,20 @@ known_hosts
 !artwork/**/*.png
 # Agent worktrees.
 .claude/worktrees/
-# The build history lives on the GitHub release "build-history", not in git.
+# The build history (art/ART-PROJECT.md §2): media, day zips, diary videos,
+# logs/ (unmasked originals), prompts.* and render work files live on the
+# GitHub release "build-history", not in git. Tracked: only the masked text
+# files index.md, SHA256SUMS and per day journal.md, journal.json, tokens.json,
+# incidents.md (the root-cause notes, §2.6).
+/art/build-history/**
+!/art/build-history/????-??-??/
+!/art/build-history/index.md
+!/art/build-history/SHA256SUMS
+!/art/build-history/????-??-??/journal.md
+!/art/build-history/????-??-??/journal.json
+!/art/build-history/????-??-??/tokens.json
+!/art/build-history/????-??-??/incidents.md
+# Its old place (until the archive is moved to art/build-history/).
 /artwork/build-history/
 
 # Material library (scripts/fetch-materials.sh; spec §4.6): converted textures, not in git.

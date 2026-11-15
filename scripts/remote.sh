@@ -7,8 +7,10 @@
 #                                            (with ~/.cargo/env sourced); copies
 #                                            Cargo.lock back afterwards
 #   scripts/remote.sh MACHINE ssh [CMD...]   plain ssh (no sync)
-#   scripts/remote.sh MACHINE fetch REMOTE_PATH LOCAL_DIR
-#                                            copy files back (e.g. test-output/)
+#   scripts/remote.sh MACHINE fetch REMOTE_PATH LOCAL_DIR [RSYNC_OPT...]
+#                                            copy files back (e.g. test-output/);
+#                                            Linux/macOS: options for rsync
+#                                            (--include/--exclude, --delete)
 #   scripts/remote.sh MACHINE put LOCAL_FILE... REMOTE_DIR
 #                                            copy files (also git-ignored ones,
 #                                            e.g. logs, data) into REMOTE_DIR of
@@ -587,9 +589,12 @@ log_end() {
   fi
   # Cargo's own numbers from the output: {"cargo_s":…,…} without braces.
   extra=$(python3 scripts/build_profile.py cargo-log "$log_file" 2>/dev/null | sed -n 's/^{\(.*\)}$/,\1/p' || true)
-  printf '{"start":%s,"seconds":%s,"machine":%s,"os":%s,"checkout":%s,"branch":%s,"command":%s,"exit":%s,"log":%s,"sync_s":%s%s}\n' \
+  # commit: the build id of the tree that ran (short commit, -dirty with
+  # uncommitted changes), for the art journal's check results (§2.7).
+  printf '{"start":%s,"seconds":%s,"machine":%s,"os":%s,"checkout":%s,"branch":%s,"commit":%s,"command":%s,"exit":%s,"log":%s,"sync_s":%s%s}\n' \
     "$(json_str "$log_iso")" "$secs" "$(json_str "$machine")" "$(json_str "$os")" \
-    "$(json_str "$(basename "$PWD")")" "$(json_str "$branch")" "$(json_str "$(short_cmd "$@")")" \
+    "$(json_str "$(basename "$PWD")")" "$(json_str "$branch")" \
+    "$(json_str "${build_id:-$(scripts/build-id.sh 2>/dev/null)}")" "$(json_str "$(short_cmd "$@")")" \
     "$rc" "$(json_str "$(basename "$log_file")")" "${sync_s:-null}" "$extra" >>"$log_dir/runs.jsonl"
 }
 
@@ -691,12 +696,12 @@ case "$action" in
     fi
     ;;
   fetch)
-    src=${1:?remote path}; dst=${2:?local dir}
+    src=${1:?remote path}; dst=${2:?local dir}; shift 2
     mkdir -p "$dst"
     if [ "$os" = windows ]; then
       "${SSH[@]}" "$target" "tar -cf - -C $(psq "$repo") $(psq "$src")" | tar -xf - -C "$dst"
     else
-      rsync -a -e "${SSH[*]}" "$target:$repo/$src" "$dst/"
+      rsync -a "$@" -e "${SSH[*]}" "$target:$repo/$src" "$dst/"
     fi
     ;;
   *) echo "unknown action '$action'" >&2; exit 2 ;;

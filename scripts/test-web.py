@@ -4,7 +4,7 @@
     scripts/test-web.py [--out test-output/web] [--seconds 12] [--query ...]
                         [--chromium chromium] [--size 1280x720] [--software]
                         [--world ID|URL [--route NAME] [--teleport KM] [--no-reload]]
-                        [--no-ui]
+                        [--no-ui] [--god [--god-height M]]
 
 Serves target/web/ (`make web`; with --world also the published worlds in
 target/web/worlds/, `make web-worlds`) on a free local port with range
@@ -34,6 +34,9 @@ setting kept over a reload; screenshots OUT/web-<time>-menu.jpg,
 -settings.jpg, -weather.jpg, -hud.jpg, -riders.jpg, -gamepad.jpg and the
 downloads in OUT/web-<time>-downloads/.
 
+With --world and --god: unicorn mode over the world after the ride
+(scripts/web_ui_test.py's unicorn part; `make test-web-unicorn`).
+
 Exits 0 when the module loaded, the server ticked, the rider rode and no
 uncaught exception happened (with --world: both loads were ready, the
 second from the cache); 1 otherwise (the log says why).
@@ -53,6 +56,9 @@ import sys
 import tempfile
 import threading
 import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import web_browser  # noqa: E402  (scripts/web_browser.py: the pinned browser)
 
 
 def web_serve():
@@ -279,6 +285,55 @@ def visit(cdp, url, a, base, lines, label, world, stats):
     return r
 
 
+def chromium_flags(profile, w, h, gpu="webgpu", software=False):
+    """Headless Chromium's flags for the tests: the DevTools pipe, a fresh
+    profile, and the GPU API (B7)."""
+    flags = [
+        "--headless=new", "--remote-debugging-pipe", f"--user-data-dir={profile}",
+        "--no-first-run", "--no-default-browser-check", "--disable-extensions",
+        # No proxy detection, and no keyring over D-Bus: without a desktop
+        # session the latter waits for D-Bus' 25 s timeout before the first
+        # page loads.
+        "--no-proxy-server", "--password-store=basic",
+        f"--window-size={w},{h}", "--hide-scrollbars", "--mute-audio",
+        "--ignore-gpu-blocklist", "--enable-gpu-rasterization",
+    ]
+    if gpu == "webgpu":
+        # WebGPU in headless Chromium on Linux: Dawn on Vulkan.
+        flags += ["--enable-unsafe-webgpu", "--enable-features=Vulkan,WebGPUService",
+                  "--use-angle=vulkan"]
+    else:
+        # No WebGPU (B7): the page must find no navigator.gpu and load the
+        # WebGL 2 build; WebGL 2 through ANGLE on Vulkan (the GPU).
+        flags += ["--disable-features=WebGPU,WebGPUService", "--disable-blink-features=WebGPU",
+                  "--enable-features=Vulkan", "--use-angle=vulkan"]
+    if software:
+        flags += (["--use-webgpu-adapter=swiftshader"] if gpu == "webgpu"
+                  else ["--use-angle=swiftshader"]) + ["--enable-unsafe-swiftshader"]
+    return flags
+
+
+def start_browser(chromium, flags, log):
+    """Starts `chromium` on about:blank with the DevTools protocol on fds 3
+    (commands in) and 4 (answers out); returns (process, Cdp)."""
+    cmd_r, cmd_w = os.pipe()
+    res_r, res_w = os.pipe()
+    os.set_inheritable(cmd_r, True)
+    os.set_inheritable(res_w, True)
+
+    def child_fds():
+        os.dup2(cmd_r, 3)
+        os.dup2(res_w, 4)
+
+    # close_fds=False: the fd cleanup would run after preexec_fn and close
+    # the new 3 and 4 again.
+    proc = subprocess.Popen([chromium, *flags, "about:blank"], preexec_fn=child_fds,
+                            close_fds=False, stdout=log, stderr=subprocess.STDOUT)
+    os.close(cmd_r)
+    os.close(res_w)
+    return proc, Cdp(proc, cmd_w, res_r)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--dir", default="target/web")
@@ -287,7 +342,9 @@ def main():
                    help="seconds of riding after the server first ticks")
     p.add_argument("--timeout", type=float, default=120.0)
     p.add_argument("--query", default="", help="page options, e.g. route=loop&power=250")
-    p.add_argument("--chromium", default=shutil.which("chromium") or "chromium")
+    p.add_argument("--chromium", default=None,
+                   help="the browser (default: OCW_BROWSER, else the pinned Chromium of `make deps-browser`,"
+                        " else the system's chromium; scripts/web_browser.py)")
     p.add_argument("--size", default="1280x720")
     p.add_argument("--software", action="store_true",
                    help="SwiftShader (CPU) instead of the GPU")
@@ -305,14 +362,21 @@ def main():
                    help="the time machine once the ride runs (console `time …`, e.g. noon)")
     p.add_argument("--no-reload", action="store_true",
                    help="with --world: no second load from the OPFS cache")
+    p.add_argument("--god", action="store_true",
+                   help="with --world: fly in unicorn mode after the ride (Phase 13 G5; "
+                        "screenshots -unicorn-flight, -unicorn-inspect, -unicorn-menu)")
+    p.add_argument("--god-height", type=float, default=250.0,
+                   help="with --god: put the unicorn this high above the ground first (m)")
     p.add_argument("--no-ui", action="store_true",
                    help="no UI part (menus, settings, downloads; B6)")
     p.add_argument("--trust-root", default=None,
                    help="root public key (hex) the page trusts (default: target/web-keys/root.hex)")
     a = p.parse_args()
+    a.chromium = a.chromium or web_browser.find()
     module = "ocw_web_webgl2_bg.wasm" if a.gpu == "webgl2" else "ocw_web_bg.wasm"
-    if not os.path.exists(os.path.join(a.dir, module)):
-        sys.exit(f"{a.dir}/{module} missing: run `make web` first")
+    missing = web_serve().missing_build(a.dir, [module])
+    if missing:
+        sys.exit(missing)
     query = a.query
     if a.world:
         if not os.path.isdir(os.path.join(a.dir, "worlds")):
@@ -335,47 +399,10 @@ def main():
 
     w, h = a.size.split("x")
     profile = tempfile.mkdtemp(prefix="ocw-chromium-")
-    flags = [
-        "--headless=new", "--remote-debugging-pipe", f"--user-data-dir={profile}",
-        "--no-first-run", "--no-default-browser-check", "--disable-extensions",
-        # No proxy detection, and no keyring over D-Bus: without a desktop
-        # session the latter waits for D-Bus' 25 s timeout before the first
-        # page loads.
-        "--no-proxy-server", "--password-store=basic",
-        f"--window-size={w},{h}", "--hide-scrollbars", "--mute-audio",
-        "--ignore-gpu-blocklist", "--enable-gpu-rasterization",
-    ]
-    if a.gpu == "webgpu":
-        # WebGPU in headless Chromium on Linux: Dawn on Vulkan.
-        flags += ["--enable-unsafe-webgpu", "--enable-features=Vulkan,WebGPUService",
-                  "--use-angle=vulkan"]
-    else:
-        # No WebGPU (B7): the page must find no navigator.gpu and load the
-        # WebGL 2 build; WebGL 2 through ANGLE on Vulkan (the GPU).
-        flags += ["--disable-features=WebGPU,WebGPUService", "--disable-blink-features=WebGPU",
-                  "--enable-features=Vulkan", "--use-angle=vulkan"]
-    if a.software:
-        flags += (["--use-webgpu-adapter=swiftshader"] if a.gpu == "webgpu"
-                  else ["--use-angle=swiftshader"]) + ["--enable-unsafe-swiftshader"]
-    # fds 3 and 4 of the child: commands in, answers out.
-    cmd_r, cmd_w = os.pipe()
-    res_r, res_w = os.pipe()
-    os.set_inheritable(cmd_r, True)
-    os.set_inheritable(res_w, True)
-
-    def child_fds():
-        os.dup2(cmd_r, 3)
-        os.dup2(res_w, 4)
-
+    flags = chromium_flags(profile, w, h, a.gpu, a.software)
     log = open(base + ".log", "w")
-    # close_fds=False: the fd cleanup would run after preexec_fn and close
-    # the new 3 and 4 again.
-    proc = subprocess.Popen([a.chromium, *flags, "about:blank"], preexec_fn=child_fds,
-                            close_fds=False, stdout=log, stderr=subprocess.STDOUT)
-    os.close(cmd_r)
-    os.close(res_w)
-    cdp = Cdp(proc, cmd_w, res_r)
-    summary = {"url": url, "flags": flags, "ok": False}
+    proc, cdp = start_browser(a.chromium, flags, log)
+    summary = {"url": url, "flags": flags, "ok": False, "browser": web_browser.describe(a.chromium)}
     lines = []
     try:
         targets = cdp.call("Target.getTargets", session=False)["targetInfos"]
@@ -427,6 +454,10 @@ def main():
                 return False
 
             summary["ui"] = web_ui_test.run(cdp, base, lines, a.out, reload_and_wait)
+        if a.world and a.god and first["ok"]:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            import web_ui_test
+            summary["ui"] = web_ui_test.run_god(cdp, base, lines, a.out, height=a.god_height)
         if a.world and not a.no_reload and first.get("ready_s") is not None:
             visits.append(visit(cdp, url, a, base, lines, "cached", True, stats))
         adapter = cdp.eval("""(async () => {

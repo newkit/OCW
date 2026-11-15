@@ -60,8 +60,8 @@ pub struct MenuHooks {
     pub text: fn(&World, Page) -> Vec<String>,
     /// The rider profiles (the Riders, Rider, Bike and Workshop pages).
     pub riders: for<'w> fn(&'w World) -> Option<&'w Riders>,
-    /// Esc while the menu is closed: `true` if the app used it (the
-    /// desktop's god mode frees a captured pointer first).
+    /// Esc while the menu is closed: `true` if the app used it (after
+    /// god mode's captured pointer, `crate::god::free_pointer`).
     pub escape: fn(&mut World) -> bool,
 }
 
@@ -263,14 +263,15 @@ fn menu_input(world: &mut World) {
     };
     let console_open = world.resource::<ConsoleState>().is_open();
     let open = world.resource::<MenuState>().menu.is_open();
-    // God mode (spec §14 Phase 13A): Esc first frees the captured pointer;
-    // the next Esc opens the menu.
+    // God mode (spec §14 Phase 13A, both apps): Esc first frees the
+    // captured pointer; the next Esc opens the menu. Then the app's own
+    // use of Esc, if any.
     if pressed.escape && !open && !console_open {
         let escape = world
             .get_resource::<MenuHooks>()
             .map(|h| h.escape)
             .unwrap_or(|_| false);
-        if escape(world) {
+        if crate::god::free_pointer(world) || escape(world) {
             pressed.escape = false;
         }
     }
@@ -542,7 +543,7 @@ mod tests {
             ]
         );
         // Display → Graphics without fullscreen (B7: fullscreen moved
-        // there); Controls without god mode's rows.
+        // there).
         let rows = |app: &App, p| sub_rows(app.world(), p);
         let display = rows(&app, sub::Page::Display);
         assert!(!display.is_empty());
@@ -558,12 +559,15 @@ mod tests {
                 .chain(&graphics)
                 .all(|r| row_setting(r) != Some("display.fullscreen"))
         );
+        // God mode's rows are there (spec §14 Phase 13 G5: the browser
+        // flies too).
         let controls = rows(&app, sub::Page::Controls);
-        assert!(
-            controls
-                .iter()
-                .all(|r| !row_setting(r).is_some_and(|k| k.starts_with("controls.god")))
-        );
+        for key in ["controls.god_flight", "controls.invert_y"] {
+            assert!(
+                controls.iter().any(|r| row_setting(r) == Some(key)),
+                "{key}"
+            );
+        }
         let desktop = for_platform(
             sub::rows(
                 sub::Page::Graphics,

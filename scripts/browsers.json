@@ -1,0 +1,30 @@
+{
+  "_comment": "The browser of the browser tests (scripts/web_browser.py, make deps-browser; spec §11.4). Open-source Chromium (BSD-3-Clause; third-party licences in the build's about:credits) from Chromium's snapshot builds at a main-branch revision just before the 157 branch point (Chrome for Testing 157.0.8103.78 = branch base 1717349). The SHA-256 of each zip was computed on download (2026-11-14); the bucket publishes only MD5.",
+  "name": "chromium",
+  "version": "157.0.8103.0",
+  "licence": "BSD-3-Clause (Chromium; third-party components: about:credits)",
+  "source": "https://commondatastorage.googleapis.com/chromium-browser-snapshots/",
+  "platforms": {
+    "linux-x64": {
+      "revision": 1717344,
+      "url": "https://commondatastorage.googleapis.com/chromium-browser-snapshots/Linux_x64/1717344/chrome-linux.zip",
+      "size": 251183475,
+      "sha256": "7321fac2cbf1f38507da755cda6a02e77585cdf189602294bb45a230e36a838b",
+      "exe": "chrome-linux/chrome"
+    },
+    "mac-arm64": {
+      "revision": 1717344,
+      "url": "https://commondatastorage.googleapis.com/chromium-browser-snapshots/Mac_Arm/1717344/chrome-mac.zip",
+      "size": 176737623,
+      "sha256": "1acf18ca8134b482323183d6e8b8dd6561658071b98fc4e138900b72cf54da80",
+      "exe": "chrome-mac/Chromium.app/Contents/MacOS/Chromium"
+    },
+    "win-x64": {
+      "revision": 1717343,
+      "url": "https://commondatastorage.googleapis.com/chromium-browser-snapshots/Win_x64/1717343/chrome-win.zip",
+      "size": 362401782,
+      "sha256": "fdb6a09c42e99ad3ea11ab7f9300f35e2de23750d5d6b354dbfac2b72d528a62",
+      "exe": "chrome-win/chrome.exe"
+    }
+  }
+}

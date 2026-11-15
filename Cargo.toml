@@ -179,8 +179,11 @@ opt-level = 3
 debug = false
 
 # The browser app (`make web`, spec §14 Phase 10): release, optimised for
-# size (the download), thin LTO, no debug info.
-[profile.web]
+# size (the download), thin LTO, no debug info. Not named `web`: cargo puts
+# the host artifacts of a `--target wasm32-unknown-unknown` build (build
+# scripts, proc macros) into target/<profile>/, which would mix them into
+# the page in target/web/.
+[profile.web-release]
 inherits = "release"
 opt-level = "s"
 lto = "thin"

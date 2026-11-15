@@ -50,6 +50,9 @@ import tempfile
 import threading
 import time
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import web_browser  # noqa: E402  (scripts/web_browser.py: the pinned browser)
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -413,17 +416,21 @@ def main():
     p.add_argument("--mode", choices=["fake", "emulation", "real"], default="fake")
     p.add_argument("--device", default="KICKR", help="--mode real: a part of the device's name")
     p.add_argument("--seconds", type=float, default=12.0)
-    p.add_argument("--chromium", default=shutil.which("chromium") or "chromium")
+    p.add_argument("--chromium", default=None,
+                   help="the browser (default: OCW_BROWSER, else the pinned Chromium of `make deps-browser`,"
+                        " else the system's chromium; scripts/web_browser.py)")
     p.add_argument("--size", default="1280x720")
     p.add_argument("--flags", default="", help="extra Chromium flags (space separated)")
     a = p.parse_args()
-    if not os.path.exists(os.path.join(a.dir, "ocw_web_bg.wasm")):
-        sys.exit(f"{a.dir}/ocw_web_bg.wasm missing: run `make web` first")
+    a.chromium = a.chromium or web_browser.find()
+    missing = tw.web_serve().missing_build(a.dir, ["ocw_web_bg.wasm"])
+    if missing:
+        sys.exit(missing)
     os.makedirs(a.out, exist_ok=True)
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     base = os.path.join(a.out, f"web-ble-{a.mode}-{stamp}")
     r = Run(a, base)
-    r.summary = {"mode": a.mode}
+    r.summary = {"mode": a.mode, "browser": web_browser.describe(a.chromium)}
     r.exceptions = []
 
     stats = {}
