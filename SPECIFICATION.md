@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 3.61 – November 2026
+Version 3.62 – November 2026
 
 | Version | Change |
 |---|---|
+| 3.62 | Decision by the user (2026-11-15): Phase 16 Q2 – world edits as patches on the sources plus "Fix in OSM"; user-edited packages are signed with the user's key and shareable (shown as unofficial, trusted per key) |
 | 3.61 | Decision from the build dashboard (2026-11-15): Phase 9 Q11 – choosing a season **jumps the date** to the season's representative day of the place (time of day kept); no season override decoupled from the date (S9b reduced accordingly) |
 | 3.60 | Decision from the build dashboard (2026-11-15): Phase 14 Q2 – **WebXR first** (the browser app in the headset's browser: no store, WebGL 2, trainers through the sensor bridge), the native Android OpenXR app later |
 | 3.59 | Decisions from the build dashboard (2026-11-15): Phase 9 Q12 – every ride starts at the real local date and time of the world's place with the season following it (the override is not remembered); Phase 16 Q1 – `ocw-studio` is its own desktop app; Q4 – the browser studio comes later; Q5 – the studio gets **simple mesh tools** (extrude, move / scale / rotate parts, normals; new stage E4b), larger shape work stays in Blender |
@@ -4601,7 +4602,7 @@ The studio makes them interactive:
 #### 16H – Open questions (to the user)
 
 - **Q1 – Separate app or a mode: decided (2026-11-15, dashboard: "ocw-studio as its own desktop app"):** `apps/studio` (`ocw-studio`), its own desktop app on the shared crates (16A).
-- **Q2 – World editing:** patches on the sources, applied at build (proposal (b), plus the "Fix in OSM" link). And should user-edited packages be shareable with others (signed with the user's key), or stay local until we review and sign them?
+- **Q2 – World editing: decided (2026-11-15, the user: "(b) and (c), make world shareable with user key"):** edits are **world patches on the sources** applied by `world-builder` at build (16C (b)), plus the **"Fix in OSM"** link for real map errors (16C (c); never an automatic upload). A user-edited package is **signed with the user's own key and may be shared**: others add that key to trust it, and the World menu shows such packages as *unofficial* with the signer's name; official packages stay signed by our root after review of the patch.
 - **Q3 – Planners:**
   - May we self-host BRouter (and later GraphHopper) on marge for tests and development, and later on the backend for users?
   - Which planner is the first external one? The proposal is BRouter.
