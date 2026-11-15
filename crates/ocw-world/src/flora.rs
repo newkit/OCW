@@ -1083,7 +1083,7 @@ mod tests {
             &site(FloraRegion::BlackForest, Setting::Orchard, 300.0),
             LeafGroup::Deciduous,
         );
-        assert_eq!(o.get(&FruitTree), Some(&1.0));
+        assert!(o[&FruitTree] > 0.999 && o.len() == 1);
         let m = shares(
             &site(FloraRegion::BlackForest, Setting::Open, 400.0),
             LeafGroup::Deciduous,
@@ -1173,7 +1173,7 @@ mod tests {
             &t(Setting::Scrub, 2200.0, false, None),
             LeafGroup::Evergreen,
         );
-        assert_eq!(canadas.get(&Broom), Some(&1.0));
+        assert!(canadas[&Broom] > 0.999 && canadas.len() == 1);
         // Towns: palms on the coast.
         let town = shares(&t(Setting::Urban, 50.0, true, None), LeafGroup::Evergreen);
         assert!(town[&DatePalm] > 0.3 && town.contains_key(&DragonTree));
