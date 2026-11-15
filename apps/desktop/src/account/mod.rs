@@ -74,7 +74,12 @@ impl Plugin for AccountPlugin {
             .map(|s| s.trim().trim_end_matches('/').to_owned())
             .filter(|s| !s.is_empty());
         let worker = issuer.and_then(|issuer| {
-            let file = self.file.clone();
+            // `OCW_ACCOUNT_FILE`: a private file instead of the keyring
+            // (scripts, headless runs).
+            let file = self
+                .file
+                .clone()
+                .or_else(|| std::env::var_os("OCW_ACCOUNT_FILE").map(PathBuf::from));
             let store = match (file, crate::strava::default_config_dir()) {
                 (Some(f), _) => store::TokenStore::File(f),
                 (None, Some(dir)) => store::TokenStore::keyring(&issuer, dir.join("account.json")),
