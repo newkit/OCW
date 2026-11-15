@@ -64,6 +64,10 @@ signature() {
   echo "$(stat -c '%Y %i %s' "$bin" 2>/dev/null || echo missing) $(stat -c '%Y %i %s' "$server_bin" 2>/dev/null || echo none)"
 }
 
+# The kiosk script itself: a deploy that replaces it makes the running
+# kiosk start the new one (exec), so changes to the kiosk need no login.
+self_sig() { stat -c '%Y %i %s' "$dir/ocw-kiosk.sh" 2>/dev/null || echo none; }
+
 server_wanted() { [ "${OCW_KIOSK_SERVER:-1}" != 0 ] && [ -x "$server_bin" ]; }
 
 # The last value of OPTION in the app's ocw-desktop.args (quotes removed).
@@ -126,6 +130,7 @@ stop_app() {
 }
 
 run() {
+  local orig_args=("$@")
   parse_args "$@"
   mkdir -p "$state"
   exec 9>"$state/kiosk.lock"
@@ -141,6 +146,8 @@ run() {
   SERVER_PID="" SERVER_ARGS=()
   trap 'say "kiosk stopping"; [ -n "$child" ] && stop_app "$child"; [ -n "$SERVER_PID" ] && stop_app "$SERVER_PID"; exit 0' TERM INT
   say "kiosk started (dir $dir, args: ${APP_ARGS[*]:-none})"
+  local me
+  me=$(self_sig)
   while true; do
     until [ -x "$bin" ]; do sleep "$poll"; done
     local sig started reason=exited
@@ -172,6 +179,11 @@ run() {
     [ -n "$SERVER_PID" ] && { stop_app "$SERVER_PID"; SERVER_PID=""; }
     if [ "$reason" = update ]; then
       fails=0
+      if [ "$(self_sig)" != "$me" ] && [ -x "$dir/ocw-kiosk.sh" ]; then
+        say "new kiosk script deployed, restarting the kiosk"
+        exec 9>&-
+        exec "$dir/ocw-kiosk.sh" run "${orig_args[@]}"
+      fi
       continue
     fi
     if [ $(( $(date +%s) - started )) -lt "$quick" ]; then

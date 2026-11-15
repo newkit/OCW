@@ -44,6 +44,24 @@ if pgrep -f "sleep 600" >/dev/null; then echo "FAIL: app still running"; pkill -
 grep -q "new build deployed" "$XDG_STATE_HOME/ocw/kiosk.log" || { echo "FAIL: log"; fail=1; }
 
 
+# A new kiosk script restarts the kiosk itself (self-update).
+cp scripts/ocw-kiosk.sh "$OCW_KIOSK_DIR/ocw-kiosk.sh"
+rm -f "$t/runs"
+OCW_KIOSK_SERVER=0 "$OCW_KIOSK_DIR/ocw-kiosk.sh" run &
+kiosk=$!
+wait_for '[ "$(runs)" -ge 1 ]' "kiosk from the deploy dir"
+{ cat scripts/ocw-kiosk.sh; echo "# v2"; } > "$OCW_KIOSK_DIR/.k" && chmod 755 "$OCW_KIOSK_DIR/.k" && mv -f "$OCW_KIOSK_DIR/.k" "$OCW_KIOSK_DIR/ocw-kiosk.sh"
+fake v2b
+wait_for 'grep -q "new kiosk script deployed" "$XDG_STATE_HOME/ocw/kiosk.log"' "kiosk restarted itself"
+wait_for '[ "$(runs)" -ge 2 ]' "app started by the new kiosk"
+# Subshells of the kiosk share its command line for a moment: the fewest
+# of a few samples is the number of kiosks.
+n=9; for _ in 1 2 3 4 5; do c=$(pgrep -fc "$OCW_KIOSK_DIR/ocw-kiosk.sh run" || true); [ "$c" -lt "$n" ] && n=$c; sleep 0.1; done
+[ "$n" -le 1 ] || { echo "FAIL: $n kiosks: $(pgrep -af "$OCW_KIOSK_DIR/ocw-kiosk.sh run" | tr "\n" ";")"; fail=1; }
+kill -TERM "$kiosk"; wait "$kiosk" 2>/dev/null || true
+pkill -f "sleep 600" 2>/dev/null || true
+rm -f "$OCW_KIOSK_DIR/ocw-kiosk.sh"
+
 # Game server (2026-11-15): with ocw-server in the kiosk dir, the kiosk starts
 # it for the app's world and route, then the app as its client; a server
 # crash restarts both.
