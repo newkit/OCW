@@ -380,8 +380,108 @@ pub fn list() -> String {
         .join("\n")
 }
 
+/// The field words of `weather FIELD=VALUE` for Tab completion (the
+/// values only where the set is known).
+const FIELD_WORDS: &[&str] = &[
+    "clouds=",
+    "type=",
+    "type=cumulus",
+    "type=stratus",
+    "type=cirrus",
+    "type=cb",
+    "base=",
+    "precip=none",
+    "rain=",
+    "drizzle=",
+    "snow=",
+    "sleet=",
+    "hail=",
+    "fog=",
+    "wind=",
+    "gust=",
+    "dir=",
+    "temp=",
+    "humidity=",
+    "pressure=",
+    "lightning=",
+    "wet=",
+    "puddles=",
+    "snowcover=",
+];
+
+/// What the next word of `weather` can be after the words `before` (the
+/// console's Tab completion, spec §2.9): the presets, the subcommands and
+/// the fields first; a data source after `real`, a day after `day`, on /
+/// off after `physics`; more fields (and `in`) after a preset or a field.
+pub fn completions(before: &[&str]) -> Vec<String> {
+    let words = |w: &[&str]| w.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+    // `in T` ends the line.
+    if before.contains(&"in") {
+        return Vec::new();
+    }
+    match before {
+        [] => {
+            let mut out: Vec<String> = PRESETS.iter().map(|p| p.0.to_owned()).collect();
+            out.extend(words(&[
+                "list", "random", "auto", "fixed", "real", "day", "strike", "physics", "in",
+            ]));
+            out.extend(words(FIELD_WORDS));
+            out
+        }
+        ["real"] => {
+            let mut out: Vec<String> = Choice::ALL.iter().map(|c| c.id().to_owned()).collect();
+            out.push("in".into());
+            out
+        }
+        ["day"] => days::DAYS.iter().map(|d| d.id.to_owned()).collect(),
+        ["physics"] => words(&["on", "off"]),
+        [
+            "list" | "auto" | "simulate" | "fixed" | "fix" | "physics" | "day" | "strike",
+            ..,
+        ] => Vec::new(),
+        ["random", ..] | ["real", _] => words(&["in"]),
+        [first, ..] if preset(first).is_some() || first.contains('=') => {
+            let mut out = words(FIELD_WORDS);
+            out.push("in".into());
+            out
+        }
+        _ => Vec::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    /// Tab completion's words (spec 3.39) are the parser's: each one, with
+    /// a value where it needs one, parses.
+    #[test]
+    fn completions_parse() {
+        let first = super::completions(&[]);
+        assert!(first.iter().any(|w| w == "rain") && first.iter().any(|w| w == "clouds="));
+        for w in &first {
+            let line = match w.as_str() {
+                "in" => continue,
+                "type=" => "type=cumulus".into(),
+                w if w.ends_with('=') => format!("{w}1"),
+                "day" => "day lothar".into(),
+                w => w.to_owned(),
+            };
+            let words: Vec<&str> = line.split(' ').collect();
+            assert!(super::parse(&words).is_ok(), "{line}");
+        }
+        for w in super::completions(&["real"]) {
+            if w != "in" {
+                assert!(super::parse(&["real", &w]).is_ok(), "{w}");
+            }
+        }
+        for w in super::completions(&["day"]) {
+            assert!(super::parse(&["day", &w]).is_ok(), "{w}");
+        }
+        assert_eq!(super::completions(&["physics"]), ["on", "off"]);
+        assert!(super::completions(&["rain"]).iter().any(|w| w == "temp="));
+        assert!(super::completions(&["rain", "in"]).is_empty());
+        assert!(super::completions(&["list"]).is_empty());
+    }
+
     use super::*;
 
     /// `weather physics on|off` (spec §14 Phase 9, S6).

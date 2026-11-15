@@ -777,7 +777,21 @@ pub fn register_commands(app: &mut App) {
                 _ => Err("world list | info | switch N|ID|NAME|PATH".into()),
             }
         },
-    ));
+    ))
+    // Tab completion (spec §2.9): the world ids found and the test routes.
+    .console_values("world switch", "world", |world, _| {
+        super::refresh_catalog(world);
+        switch_words(&world.resource::<super::RideCatalog>().0)
+    });
+}
+
+/// What `world switch` completes to: the worlds' ids and the test routes.
+pub fn switch_words(c: &Catalog) -> Vec<String> {
+    c.worlds
+        .iter()
+        .map(|w| w.id.clone())
+        .chain(super::choice::TEST_ROUTES.iter().map(|r| (*r).to_owned()))
+        .collect()
 }
 
 #[cfg(test)]
@@ -924,6 +938,25 @@ pub(crate) mod tests {
             m.apply_with(Action::Click(i), &r);
         }
         m
+    }
+
+    /// Tab after `world switch` (spec 3.39): the ids `switch_choice`
+    /// takes, and the test routes.
+    #[test]
+    fn world_switch_completes_to_ids_and_test_routes() {
+        let c = catalog();
+        let words = switch_words(&c);
+        for w in &c.worlds {
+            assert!(words.contains(&w.id), "{}", w.id);
+        }
+        assert!(words.iter().any(|w| w == "hills") && words.iter().any(|w| w == "loop"));
+        for w in &words {
+            assert!(
+                switch_choice(&c, w).is_ok()
+                    || c.worlds.iter().any(|e| e.id == *w && e.blocked.is_some()),
+                "{w}"
+            );
+        }
     }
 
     #[test]

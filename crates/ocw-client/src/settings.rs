@@ -205,6 +205,14 @@ pub const SETTINGS: &[SettingDef] = &[
         apply: Apply::Command("hud.damage {}"),
     },
     SettingDef {
+        key: "display.gps",
+        kind: Kind::Bool,
+        default: "on",
+        description: "Show the GPS line in the HUD (bottom left: latitude, longitude, altitude; world packages and route files)",
+        scope: Scope::Live,
+        apply: Apply::Command("hud.gps {}"),
+    },
+    SettingDef {
         key: "display.fps",
         kind: Kind::Bool,
         default: "off",

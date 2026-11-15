@@ -628,6 +628,22 @@ fn register_commands(app: &mut App) {
             begin_switch(world, choice)
         },
     ))
+    // Tab completion (spec §2.9): the test routes and the loaded package's
+    // routes; the worlds found.
+    .console_values("ride.switch", "route", |world, _| {
+        refresh_catalog(world);
+        let c = &world.resource::<RideCatalog>().0;
+        choice::TEST_ROUTES
+            .iter()
+            .map(|r| (*r).to_owned())
+            .chain(c.world.iter().flat_map(|w| w.routes.iter().map(|r| r.name.clone())))
+            .collect()
+    })
+    .console_values("ride.switch", "world", |world, _| {
+        refresh_catalog(world);
+        let c = &world.resource::<RideCatalog>().0;
+        c.worlds.iter().map(|w| w.id.clone()).collect()
+    })
     .console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("ride.restart")

@@ -45,6 +45,20 @@ cmds = ["help", "console open"]
 shot = 6
 
 [[scene]]
+name = "console-completion"
+description = "Console Tab completion over the Hills test route (spec 3.39): `hud.` + Tab lists the candidates under the input line"
+args = ["--route", "hills", "--bots", "4"]
+at = ["2=console input hud.", "2.5=console tab"]
+shot = 5
+
+[[scene]]
+name = "console-completion-cycle"
+description = "Console Tab completion (spec 3.39): `set display.` + Tab lists the setting keys, two more Tabs insert the second one (marked in the list)"
+args = ["--route", "hills", "--bots", "4"]
+at = ["2=console input \"set display.\"", "2.5=console tab", "3=console tab", "3.5=console tab"]
+shot = 6
+
+[[scene]]
 name = "workout-erg"
 description = "Bundled sweet-spot workout in ERG mode on the Loop test route: workout HUD panel with target, step, time left and zone-coloured profile"
 args = ["--route", "loop", "--bots", "3"]
@@ -148,6 +162,13 @@ args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", 
 at = ["2.5=event race --km 3", "2.5=camera.orbit 165 22 16", "8.5=camera.orbit 140 18 12"]
 warmup = 3
 video = 8
+
+[[scene]]
+name = "hud-gps-route"
+description = "Route ride on the package's Vaduz-Malbun route (--world --route): the GPS line bottom left under the elevation profile (missing in route rides from fae1547 to spec 3.39)"
+world = true
+args = ["--world", "{world}", "--route", "vaduz-malbun", "--no-neighbours", "--bots", "2"]
+shot = 12
 
 [[scene]]
 name = "camera-chase"
