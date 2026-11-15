@@ -3361,6 +3361,8 @@ deploys. Environment:
 | `OCW_WORLD_DATA` | Folder with `pilot/`, `blackforest/`, `tenerife/` on the machine (default: `data/` of the deploying checkout) |
 | `OCW_DEPLOY_DIR` | Install directory (default `/var/tmp/ocw`; for testing the script) |
 
+**Machine-local kiosk arguments** go into `/var/tmp/ocw/kiosk-local.args` on that machine, one option per line. Every deploy keeps the file and appends it to `ocw-desktop.args`. On marge it holds `--devices-file /tmp/ocw/kickr/devices.toml`, so the kiosk rides the **Wahoo KICKR**: with a devices file there, the deploy leaves out the show mode's virtual trainer (`--virtual`, `--power`).
+
 **The kiosk's game server.** The deploy also installs `ocw-server`. The kiosk then starts it first, with the same world and route as the app (read from `ocw-desktop.args`), 10 bots, UDP **47800** and a certificate kept in `~/.local/state/ocw/server-tls`, so its fingerprint stays the same across deploys. Then it runs the app as the server's first rider (`--server 127.0.0.1:47800 --insecure-dev`). Other riders join the kiosk's ride over the network (see [Riding on a server on the internet](#riding-on-a-server-on-the-internet)) with the line the server printed. `ocw-kiosk.sh status` shows it:
 
 ```bash
