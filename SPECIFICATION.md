@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 3.66 – November 2026
+Version 3.67 – November 2026
 
 | Version | Change |
 |---|---|
+| 3.67 | Decision by the user (2026-11-15): Phase 10 Q9 – the render distance's target frame rate is the display's refresh on the desktop and 60 fps in the browser (computers and phones) |
 | 3.66 | Decision by the user (2026-11-15): Phase 10 Q8 – the render distance's **dynamic mode is on by default** on every platform |
 | 3.65 | Render distance planned (asked by the user 2026-11-15; §14 Phase 10, 10G): a **slider** for the render distance (1 – 60 km or unlimited; it drives the far plane and fog, trees, house LODs, far terrain and the tile streaming radius) and a **checkbox for a dynamic mode** that steps the distance down and up with the measured frame rate towards a target (−15 % / +10 %, dead band, ignored windows, smooth fog; the slider is the upper limit); HUD and console `view`; open: Q8 (dynamic by default where), Q9 (target frame rate) |
 | 3.64 | Rider status signs planned (asked by the user 2026-11-15; §2.6): **muted voice → big over-ear headphones** on the rider; **in the menu → the rider takes a smartphone from the back jersey pocket, looks at it while riding one-handed, and stores it again** – grab and store animated and visible to everybody (two status flags per rider in the snapshots, animated on every client by `ocw_assets::anim::Animator`; models `wear/headphones.glb`, `props/phone.glb`, a pocket anchor); looks only. Open: §2.6 Q1 (when headphones), Q2 (which screens count as the menu), Q3 (may a rider hide them) |
@@ -3467,7 +3468,7 @@ Today, *World → Time* (9I) changes the date only one day per press (← / →)
 - **Q6 – Same app or a lighter "web edition"? Decided (2026-11-14, dashboard): full parity** – the browser app is the same app with the same worlds and features as the desktop (quality presets and streaming adapt to the device, not a reduced edition).
 - **Q7 – Black Forest in the public preview: decided (2026-11-15, dashboard: "mark as fixed"):** closed for now – the preview keeps Liechtenstein and Tenerife (the user: "only Tenerife for now"); the Black Forest comes with B8 stage 2's own server or when the user reopens it. The background: GitHub Pages holds at most 1 GB per site, and release files cannot be fetched by the browser (no CORS headers; checked 2026-11-15). The preview carries Liechtenstein (88 MB) and Tenerife (500 MB) since v3.51 (the user: "only Tenerife for now"); a Black Forest package is 436–578 MB. Options: **(a)** a smaller web cut of the Black Forest (for example Freiburg – Schauinsland – Feldberg, about 250 MB) – **proposal**; **(b)** web copies of the packages with lighter orthophotos so that more fit; **(c)** an external host with CORS (a Cloudflare R2 bucket: 10 GB free, no egress fees; or B8 stage 2's own server), which needs an account and a domain from the user.
 - **Q8 – Render distance: dynamic by default? Decided (2026-11-15, the user: "make dynamic mode default: on"):** *Adjust to the frame rate* is **on by default everywhere** – desktop, browser, phones and VR; the slider's default (the preset's distance) is its upper limit.
-- **Q9 – Target frame rate:** default *the display's refresh* capped at 60 in the browser (proposal), or a fixed 60 everywhere (30 on phones)?
+- **Q9 – Target frame rate: decided (2026-11-15, the user: "target the display refresh rate; 60 on browser and phone via browser"):** the desktop targets **the display's refresh rate**; the browser app – on computers and phones alike – targets **60 fps**; VR the headset's refresh. The rider can still choose another target.
 
 
 #### 10G – Status: B1, B2, B3, B4, B5, B6 and B7's WebGL 2 part built (2026-11-14)
@@ -3614,7 +3615,7 @@ The ages carry a common offset of about −8 ms (the server's tick instant runs 
   - **Settings → Display:**
     - **Render distance** (slider `display.view_distance`: 1 – 60 km in 1 km steps, then *unlimited* = the world's reach; default = the preset's value: High unlimited, Medium 30 km, Low 8 km; moving the slider overrides the preset's `view_m`).
     - **Adjust to the frame rate** (checkbox `display.view_distance_auto`, **on by default everywhere**, Q8 decided): the distance follows the measured frame rate; the slider is then the **upper limit**.
-    - **Target frame rate** (`display.target_fps`: 30 / 45 / 60 / 72 / 90 / 120 / *display* = the monitor's refresh; default *display*, capped at 60 in the browser, Q9).
+    - **Target frame rate** (`display.target_fps`: 30 / 45 / 60 / 72 / 90 / 120 / *display* = the monitor's refresh; default **display** on the desktop, **60** in the browser on every device, Q9 decided).
   - **What the distance drives** (one number → all of them, monotone, from `ocw_render::quality`): the far plane and the fog before it (`limit_view`), the trees' range (`tree_view_m` = 10 % of it, 0.8 – 3 km, beyond the ground's forest colour), the houses' LOD scale (0.5 at 2 km … 1.0 from 20 km), the far terrain's outer ring, and the **tile streaming radius** (browser `tiles` / `keep`, desktop neighbour packages, §4.7) – so a short distance also saves memory and downloads.
   - **The dynamic mode** (`ocw_client::view_distance::Controller`, pure): reads the frame rate of the last second (`ocw_render::frame_rate::FrameRateMeter`, its average and its worst frame) and steps the distance:
     - below 90 % of the target for 2 s → −15 % (multiplicative), at once on a frame over 3 × the target's frame time;
