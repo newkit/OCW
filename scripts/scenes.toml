@@ -167,7 +167,7 @@ video = 8
 name = "hud-gps-route"
 description = "Route ride on the package's Vaduz-Malbun route (--world --route): the GPS line bottom left under the elevation profile (missing in route rides from fae1547 to spec 3.40)"
 world = true
-args = ["--world", "{world}", "--route", "vaduz-malbun", "--no-neighbours", "--bots", "2"]
+args = ["--world", "{world}", "--route", "Vaduz - Malbun", "--no-neighbours", "--bots", "2"]
 shot = 12
 
 [[scene]]
