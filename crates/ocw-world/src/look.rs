@@ -81,6 +81,10 @@ pub struct RegionLook {
     /// The measured forest: leaf type and tree cover density (section
     /// `FRST`, spec §14 Phase 8 T3; optional).
     pub forest: Option<crate::forest::ForestCover>,
+    /// The fields, plantations and mapped trees (section `VEGE`, spec §14
+    /// Phase 8 T8; optional). Not part of [`RegionLook::is_empty`]: it does
+    /// not tint the ground.
+    pub vegetation: Option<crate::vegetation::Vegetation>,
 }
 
 impl RegionLook {
@@ -848,6 +852,7 @@ pub(crate) mod tests {
             seasons: Some(seasons),
             ortho: None,
             forest: None,
+            vegetation: None,
         }
     }
 

@@ -75,6 +75,7 @@ use crate::ortho::{ORTHO_TAG, read_ortho, write_ortho};
 use crate::region::{PackageRegion, REGION_TAG, read_region, write_region};
 use crate::road_dress::{ROAD_DRESS_TAG, RoadDress, read_road_dress, write_road_dress};
 use crate::road_surface::{ROAD_SURFACE_TAG, RoadSurface, read_road_surfaces, write_road_surfaces};
+use crate::vegetation::{VEGETATION_TAG, read_vegetation, write_vegetation};
 
 pub const MAGIC: &[u8; 8] = b"OCWPKG01";
 /// Version 2: version 1 plus tagged sections (the road graph).
@@ -400,6 +401,11 @@ impl WorldPackage {
             let mut payload = Vec::new();
             write_forest(f, &mut payload);
             sections.push((FOREST_TAG, payload));
+        }
+        if let Some(v) = &self.look.vegetation {
+            let mut payload = Vec::new();
+            write_vegetation(v, &mut payload);
+            sections.push((VEGETATION_TAG, payload));
         }
         if let Some(o) = &self.look.ortho {
             let mut payload = Vec::new();
@@ -783,6 +789,14 @@ fn read_sections(
             // trees keep the regional leaf mix and the land use's chances).
             match read_forest(payload) {
                 Ok(f) => s.look.forest = Some(f),
+                Err(e) if e.contains("not supported") => {}
+                Err(e) => return Err(e),
+            }
+        } else if &tag == VEGETATION_TAG && full {
+            // Optional (spec §14 Phase 8 T8): a newer layout is skipped (the
+            // fields keep the seasons' noise patches, no mapped trees).
+            match read_vegetation(payload) {
+                Ok(v) => s.look.vegetation = Some(v),
                 Err(e) if e.contains("not supported") => {}
                 Err(e) => return Err(e),
             }
