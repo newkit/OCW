@@ -25,7 +25,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::camera::visibility::VisibilityRange;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
-use ocw_assets::anim::{self, AnimInput, Riding, Selector};
+use ocw_assets::anim::{self, AnimInput, Animator, Riding};
 use ocw_assets::model::Model;
 use ocw_assets::pose::{self, BikeRig, Fit, PoseParams, RiderRig, bike_nodes, nodes};
 use ocw_assets::slots::{self, Tint};
@@ -193,14 +193,13 @@ pub fn rider_transform(track: &dyn Track, distance: f64, lateral_offset: f64) ->
 pub const OFF_ROAD_BLEND_M: f64 = 2.0;
 
 /// Largest lean angle (radians, ~35°).
-const MAX_LEAN: f64 = 0.61;
+#[cfg(test)]
+const MAX_LEAN: f64 = anim::MAX_LEAN;
 
 /// Lean into a curve (radians, positive = to the right): a bike in a
-/// steady turn leans by atan(v² κ / g).
+/// steady turn leans by atan(v² κ / g) ([`anim::lean_angle`]).
 pub fn lean_angle(curvature: f64, speed_mps: f64) -> f64 {
-    (speed_mps * speed_mps * curvature / 9.81)
-        .atan()
-        .clamp(-MAX_LEAN, MAX_LEAN)
+    anim::lean_angle(curvature, speed_mps)
 }
 
 /// Rotation (about the travel direction) that leans the avatar; Bevy
@@ -910,8 +909,8 @@ pub struct AvatarRig {
     rider: RiderRig,
     scale: f32,
     fit: Fit,
-    selector: Selector,
-    params: PoseParams,
+    /// The riding state, the pose weights and the cranks (spec §2.6).
+    animator: Animator,
     wheel_angle: f32,
     bias: f64,
 }
@@ -919,11 +918,11 @@ pub struct AvatarRig {
 impl AvatarRig {
     /// The riding state shown (tests, HUD).
     pub fn riding(&self) -> Riding {
-        self.selector.state
+        self.animator.state()
     }
 
     pub fn params(&self) -> PoseParams {
-        self.params
+        self.animator.params
     }
 
     /// The bike's anchors (the damage marks sit on them, spec §14 Phase
@@ -1190,8 +1189,7 @@ fn spawn_avatar(
         rider: body.rider,
         scale: body.scale,
         fit: body.fit,
-        selector: Selector::default(),
-        params: PoseParams::default(),
+        animator: Animator::new(id.0),
         wheel_angle: 0.0,
         bias: anim::bias(id.0),
     };
@@ -1225,6 +1223,8 @@ fn animate(
                 power_w: if g.speed > 1.0 { 200.0 } else { 0.0 },
                 grade,
                 bias: 0.0,
+                curvature: g.turn_curvature,
+                cue: anim::Cue::default(),
             }
         } else {
             let Some(r) = view.riders.iter().find(|r| r.id == avatar.id) else {
@@ -1240,14 +1240,15 @@ fn animate(
                 power_w: r.power_w,
                 grade: view.track(r.id).sample(r.state.distance).grade,
                 bias: rig.bias,
+                curvature: r.state.turn_curvature,
+                // The U-turn, the finish (from the client, spec §2.6).
+                cue: r.cue,
             }
         };
         let rig = &mut *rig;
-        let state = rig.selector.update(&input, f64::from(dt));
-        let target = anim::targets(state, input.speed_mps, input.grade, rig.bike.aero_bars);
-        anim::blend(&mut rig.params, &target, dt);
-        let cadence = anim::cadence(state, input.cadence_rpm);
-        rig.params.crank = anim::advance_crank(rig.params.crank, cadence, dt);
+        // Cornering, the U-turn, the finish, victory and the foot at a
+        // stop: all in the animator (pure), only applied here.
+        let params = rig.animator.update(&input, rig.bike.aero_bars, dt);
         rig.wheel_angle =
             anim::advance_wheel(rig.wheel_angle, input.speed_mps, rig.bike.wheel_radius, dt);
         // Front and rear (a bent wheel swings sideways as it turns).
@@ -1260,7 +1261,7 @@ fn animate(
         if eye.is_some_and(|e| e.distance(at.translation()) > LOD_DISTANCE_M + LOD_FADE_M) {
             continue;
         }
-        let p = pose::pose(&rig.rider, &rig.bike, &rig.fit, &rig.params);
+        let p = pose::pose(&rig.rider, &rig.bike, &rig.fit, &params);
         if let Ok(mut t) = transforms.get_mut(rig.sway) {
             *t = sway_transform(p.bike_roll, &rig.bike);
         }
@@ -1324,6 +1325,7 @@ mod tests {
             crash: None,
             wobble: 0.0,
             damage: None,
+            cue: Default::default(),
         };
         {
             let mut v = app.world_mut().resource_mut::<RideView>();
@@ -1515,6 +1517,7 @@ mod tests {
             crash: None,
             wobble: 0.0,
             damage: None,
+            cue: Default::default(),
         });
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))
@@ -1635,6 +1638,7 @@ mod tests {
             crash: None,
             wobble: 0.0,
             damage: None,
+            cue: Default::default(),
         }
     }
 

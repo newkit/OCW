@@ -300,6 +300,40 @@ pub fn bot_bike(i: u32) -> (ocw_core::ProfileId, ocw_core::RiderLook) {
 /// Adds the `i`-th server bot ("Bot i+1") with its power, bike and look
 /// from [`bot_power_w`] and [`bot_bike`]: the same field for the server's
 /// startup bots and an event's bots.
+/// The organiser's rules in the event start's answer (spec §14 Phase 12
+/// K6): ", riding aids not allowed, neutral service, time limit 300 s".
+fn organiser_summary(ev: &ocw_sim::Event) -> String {
+    let mut s = String::new();
+    if let Some(m) = ev.collisions {
+        s.push_str(&format!(", collisions {}", m.label()));
+    }
+    s.push_str(if ev.aids_allowed() {
+        ", riding aids allowed"
+    } else {
+        ", riding aids not allowed"
+    });
+    if let Some(c) = ev.chaotic_bots {
+        s.push_str(if c {
+            ", chaotic bots"
+        } else {
+            ", no chaotic bots"
+        });
+    }
+    if ev.damage.neutral_service {
+        s.push_str(", neutral service");
+        if let Some(t) = ev.damage.service_s {
+            s.push_str(&format!(" (spares in {t} s)"));
+        }
+    }
+    if ev.damage.dnf_badly_injured {
+        s.push_str(", DNF when badly injured");
+    }
+    if let Some(t) = ev.time_limit_s {
+        s.push_str(&format!(", time limit {t:.0} s"));
+    }
+    s
+}
+
 fn add_numbered_bot(session: &mut Session, i: u32) -> RiderId {
     let (bike, look) = bot_bike(i);
     session.add_bot_with(
@@ -1411,21 +1445,15 @@ impl GameServer {
                         add_numbered_bot(&mut self.session, i);
                     }
                 }
-                let organiser = start.collisions.map(ocw_protocol::collision_mode_from_wire);
-                let damage = start
-                    .damage
-                    .as_ref()
-                    .map(ocw_protocol::damage_rules_from_wire)
-                    .unwrap_or_default();
-                let physics = ocw_protocol::event_physics(&start);
+                // The organiser's rules (spec §14 Phase 12 K6): collisions,
+                // race mode, weather physics, damage, the riding aids,
+                // chaotic bots, the time limit; riders cannot change them
+                // until the event is over.
+                let rules = ocw_protocol::event_rules(&start);
                 let weather = ocw_protocol::event_weather(&start);
-                let weather_physics = ocw_protocol::event_weather_physics(&start);
                 let started = self.session.start_event(spec).map(|e| e.id);
                 if let Ok(id) = started {
-                    self.session.set_event_collisions(organiser);
-                    self.session.set_event_damage(damage);
-                    self.session.set_event_physics(physics);
-                    self.session.set_event_weather_physics(weather_physics);
+                    self.session.set_event_rules(&rules);
                     self.set_event_weather(id, weather);
                 }
                 match started.map(|_| self.session.event().expect("just started")) {
@@ -1448,6 +1476,7 @@ impl GameServer {
                         if ev.weather_physics {
                             weather.push_str(", weather physics on");
                         }
+                        weather.push_str(&organiser_summary(ev));
                         result(
                             true,
                             format!(
@@ -1499,6 +1528,12 @@ impl GameServer {
         );
         if let Some(ev) = self.session.event() {
             e.collisions = ocw_protocol::collision_mode_to_wire(self.session.collision_mode());
+            // The rules in force (K6): chaotic bots and damage may come
+            // from the session's switches.
+            e.chaotic_bots = self.session.chaotic_bots_on();
+            if let Some(d) = &mut e.damage {
+                d.damage = Some(self.session.damage_on());
+            }
             e.weather = self
                 .event_weather
                 .as_ref()
@@ -2588,6 +2623,83 @@ mod tests {
         assert!(server.session().weather_physics_on());
         let state = server.event_state();
         assert!(ocw_protocol::event_info(&state).unwrap().weather_physics);
+    }
+
+    /// K6 (spec §14 Phase 12): the organiser's rules are put in force for
+    /// the event and travel in its state – the aids (not in races unless
+    /// allowed), chaotic bots over the session's switch, the time limit,
+    /// the neutral service's wait, damage in force – and end with it.
+    #[test]
+    fn the_organisers_rules_are_in_force_for_the_event() {
+        let mut server = GameServer::new(Route::test_loop(), crate::local::local_config(0, 0.0));
+        let (me, _) = join(&mut server);
+        let spec = EventSpec::Race {
+            laps: None,
+            length_m: Some(1000.0),
+        };
+        let start = |rules: &ocw_sim::event::Rules| {
+            event_msg(v1::event_request::Req::Start(
+                ocw_protocol::with_event_rules(ocw_protocol::event_start(&spec, Some(2)), rules),
+            ))
+        };
+        server.handle(me, &start(&Default::default()));
+        let info = ocw_protocol::event_info(&server.event_state()).unwrap();
+        assert!(!info.aids && !info.chaotic_bots && info.time_limit_s.is_none());
+        assert!(!server.session().aids_allowed());
+        let rules = ocw_sim::event::Rules {
+            collisions: Some(ocw_sim::collide::Mode::Full),
+            aids: Some(true),
+            chaotic_bots: Some(true),
+            time_limit_s: Some(90.0),
+            damage: Some(ocw_sim::damage::Rules {
+                on: Some(true),
+                dnf_badly_injured: true,
+                neutral_service: true,
+                service_s: Some(25),
+            }),
+            ..Default::default()
+        };
+        let reply = server.handle(me, &start(&rules));
+        let S::DevResult(r) = decode_server(&reply[0]).unwrap() else {
+            panic!("a result")
+        };
+        assert!(
+            r.ok && r.message.contains("riding aids allowed")
+                && r.message.contains("chaotic bots")
+                && r.message.contains("spares in 25 s")
+                && r.message.contains("time limit 90 s"),
+            "{}",
+            r.message
+        );
+        assert!(
+            !server.session().chaotic_bots(),
+            "the session's switch stays"
+        );
+        assert!(server.session().chaotic_bots_on() && server.session().aids_allowed());
+        assert!(server.session().damage_on());
+        let info = ocw_protocol::event_info(&server.event_state()).unwrap();
+        assert!(info.aids && info.chaotic_bots);
+        assert_eq!(info.time_limit_s, Some(90.0));
+        assert_eq!(info.damage.service_s, Some(25));
+        assert_eq!(info.damage.on, Some(true), "damage in force");
+        assert_eq!(server.session().event().unwrap().time_limit_s(1000.0), 90.0);
+        // Over: the session's own switches again.
+        server.handle(me, &event_msg(v1::event_request::Req::Cancel(true)));
+        assert!(!server.session().chaotic_bots_on() && server.session().aids_allowed());
+        // A group ride allows the aids by default.
+        let group = EventSpec::GroupRide { target_w: None };
+        server.handle(
+            me,
+            &event_msg(v1::event_request::Req::Start(ocw_protocol::event_start(
+                &group,
+                Some(1),
+            ))),
+        );
+        assert!(
+            ocw_protocol::event_info(&server.event_state())
+                .unwrap()
+                .aids
+        );
     }
 
     fn race_with_weather(w: Option<ocw_weather::machine::EventWeather>) -> Vec<u8> {
@@ -3821,6 +3933,7 @@ mod tests {
             on: Some(true),
             dnf_badly_injured: true,
             neutral_service: true,
+            service_s: None,
         };
         let start = v1::EventStart {
             kind: v1::EventKind::Race as i32,

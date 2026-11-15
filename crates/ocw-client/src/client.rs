@@ -1484,6 +1484,8 @@ impl ClientCore {
             return Vec::new();
         };
         let tick_now = self.server_tick_now(now_s);
+        let own_state = lerp_state(self.prev_state, self.predictor.state(), alpha);
+        let own_path = self.free.as_ref().and_then(|f| f.own.as_deref());
         let mut riders = vec![RiderView {
             id: own,
             name: self
@@ -1491,7 +1493,7 @@ impl ClientCore {
                 .get(&own)
                 .map(|n| n.0.clone())
                 .unwrap_or_default(),
-            state: lerp_state(self.prev_state, self.predictor.state(), alpha),
+            state: own_state,
             power_w: self.power_w(),
             cadence_rpm: self.cadence_rpm,
             heart_rate_bpm: self.heart_rate_bpm,
@@ -1503,6 +1505,7 @@ impl ClientCore {
             crash: self.collisions.crash(own, now_s),
             wobble: self.collisions.wobble(own, tick_now),
             damage: self.damage.visible(own),
+            cue: self.anim_cue(own, true, &own_state, own_path, tick_now),
         }];
         for (id, state) in self.others.sample(now_s - INTERPOLATION_DELAY_S) {
             // Free ride: only riders whose path is known can be placed.
@@ -1514,6 +1517,13 @@ impl ClientCore {
             let (name, power_w) = self.names.get(&id).cloned().unwrap_or_default();
             let (bike, look) = self.looks.get(&id).copied().unwrap_or_default();
             let look = self.with_character(id, look);
+            let others_tick = tick_now - INTERPOLATION_DELAY_S / ocw_core::SIM_DT;
+            let path = self
+                .free
+                .as_ref()
+                .and_then(|f| f.others.get(&id))
+                .map(|p| &**p);
+            let cue = self.anim_cue(id, false, &state, path, others_tick);
             riders.push(RiderView {
                 id,
                 name,
@@ -1528,12 +1538,29 @@ impl ClientCore {
                 crash: self.collisions.crash(id, now_s),
                 damage: self.damage.visible(id),
                 // Others are drawn slightly in the past.
-                wobble: self
-                    .collisions
-                    .wobble(id, tick_now - INTERPOLATION_DELAY_S / ocw_core::SIM_DT),
+                wobble: self.collisions.wobble(id, others_tick),
+                cue,
             });
         }
         riders
+    }
+
+    /// What a rider's animation needs beyond its state (spec §2.6): free
+    /// ride's U-turn loop on its path, the finish of an event and its
+    /// winner, the metres to the line; at server tick `tick`.
+    fn anim_cue(
+        &self,
+        id: RiderId,
+        own: bool,
+        state: &RiderState,
+        path: Option<&RidePath>,
+        tick: f64,
+    ) -> ocw_render::AnimCue {
+        let mut cue = self.event.anim_cue(id, own, state.distance, tick);
+        cue.uturn = path
+            .and_then(|p| p.uturn_phase(state.distance))
+            .map(|(progress, side)| ocw_render::UTurnCue { progress, side });
+        cue
     }
 
     /// Autodrive avoidance of the own rider (spec §14 Phase 12D, the same
@@ -1713,7 +1740,7 @@ impl ClientCore {
     /// left, +1 right) or 0 in front; `None` when nobody is close, the cue
     /// is off or there are no collisions.
     pub fn proximity(&self) -> Option<i32> {
-        if !self.proximity_cue || !self.collisions.mode().on() {
+        if !self.proximity_cue || !self.collisions.mode().on() || !self.aids_allowed() {
             return None;
         }
         crate::collisions::proximity(
@@ -1728,7 +1755,11 @@ impl ClientCore {
     /// a rider close beside, in front or behind (rad: 0 ahead, positive to
     /// the right).
     pub fn proximity_arrow(&self) -> Option<f32> {
-        if !self.proximity_cue || !self.collisions.mode().on() || self.own_down() {
+        if !self.proximity_cue
+            || !self.collisions.mode().on()
+            || self.own_down()
+            || !self.aids_allowed()
+        {
             return None;
         }
         crate::aids::proximity_direction(&self.others_near()).map(|a| a as f32)
@@ -1748,7 +1779,11 @@ impl ClientCore {
     /// second, or the tyres sliding on a wet road; `None` with the
     /// setting off, collisions off, while down or flying.
     pub fn hit_warning(&self) -> Option<ocw_render::HitWarningView> {
-        if !self.hit_warning || !self.collisions.mode().on() || self.own_down() || self.god.active()
+        if !self.hit_warning
+            || !self.collisions.mode().on()
+            || self.own_down()
+            || self.god.active()
+            || !self.aids_allowed()
         {
             return None;
         }
@@ -1761,6 +1796,23 @@ impl ClientCore {
             &self.others_near(),
             self.predictor.slip(),
         )
+    }
+
+    /// Whether the riding aids may be shown (spec §14 Phase 12 K6): not
+    /// while the own rider rides in an event whose organiser does not allow
+    /// them (a race by default) – until the own finish or DNF.
+    pub fn aids_allowed(&self) -> bool {
+        let Some(info) = self.event.info() else {
+            return true;
+        };
+        if info.aids || info.phase == ocw_sim::EventPhase::Finished {
+            return true;
+        }
+        !self.rider_id.is_some_and(|id| {
+            info.standings
+                .iter()
+                .any(|s| s.id == id && s.finish_s.is_none() && !s.dnf)
+        })
     }
 
     /// Whether the own rider was down in the last snapshot.
@@ -1976,12 +2028,30 @@ impl ClientCore {
         damage: Option<ocw_sim::damage::Rules>,
         weather_physics: Option<bool>,
     ) -> Vec<u8> {
+        let rules = ocw_sim::event::Rules {
+            physics,
+            weather_physics,
+            damage,
+            ..Default::default()
+        };
+        Self::event_start_message_organiser(spec, bots, weather, &rules)
+    }
+
+    /// An event start with all the organiser's rules (spec §14 Phase 12
+    /// K6: `event … --collisions --damage --aids --chaotic-bots
+    /// --time-limit --neutral-service --service-s`, the Organiser rules
+    /// page) and the organiser's weather.
+    pub fn event_start_message_organiser(
+        spec: &ocw_sim::EventSpec,
+        bots: Option<u32>,
+        weather: Option<&ocw_weather::machine::EventWeather>,
+        rules: &ocw_sim::event::Rules,
+    ) -> Vec<u8> {
+        let start = ocw_protocol::with_event_rules(ocw_protocol::event_start(spec, bots), rules);
         encode(&client_message(C::Event(v1::EventRequest {
             req: Some(v1::event_request::Req::Start(v1::EventStart {
                 weather: weather.map(ocw_protocol::event_weather_to_wire),
-                weather_physics,
-                damage: damage.as_ref().map(ocw_protocol::damage_rules_to_wire),
-                ..ocw_protocol::event_start_with(spec, bots, physics)
+                ..start
             })),
         })))
     }
@@ -3475,7 +3545,17 @@ mod tests {
             Some(true)
         );
         h.send(&msg);
-        h.ride(250.0, 25.0);
+        // The U-turn's animation cue (spec §2.6): the run-up, then the
+        // loop, in the own rider's view.
+        let mut seen = (false, false);
+        for _ in 0..100 {
+            h.ride(250.0, 0.25);
+            if let Some(u) = h.client.view(h.time_s, 0.0)[0].cue.uturn {
+                seen.0 |= u.progress < 0.0;
+                seen.1 |= u.progress > 0.3 && u.progress < 0.7;
+            }
+        }
+        assert_eq!(seen, (true, true), "the run-up and the loop");
         let (c, s) = h.positions();
         assert!(c.direction[0] < -0.99, "{c:?}");
         assert!(close(c.position, s.position, 0.5), "{c:?} vs {s:?}");
@@ -3911,6 +3991,63 @@ mod tests {
         h.send(&ClientCore::event_cancel_message());
         h.ride(200.0, 0.2);
         assert!(h.client.event_view(h.time_s).is_none());
+    }
+
+    /// K6 (spec §14 Phase 12): the organiser's aids rule reaches the
+    /// client, which turns the warning and the proximity cue off while it
+    /// races (a race by default) and on again after its finish; the
+    /// winner's finish cue drives the victory pose (spec §2.6).
+    #[test]
+    fn the_organisers_aids_rule_and_the_victory_cue() {
+        let mut h = Harness::new(0, true);
+        h.client.set_proximity_cue(true);
+        h.ride(200.0, 1.0);
+        assert!(h.client.aids_allowed());
+        let race = ocw_sim::EventSpec::Race {
+            laps: None,
+            length_m: Some(200.0),
+        };
+        h.send(&ClientCore::event_start_message(&race, Some(0)));
+        h.ride(200.0, 1.0);
+        assert!(!h.client.aids_allowed(), "races: not unless allowed");
+        assert_eq!(
+            (h.client.proximity(), h.client.proximity_arrow()),
+            (None, None)
+        );
+        let allowed = ocw_sim::event::Rules {
+            aids: Some(true),
+            ..Default::default()
+        };
+        h.send(&ClientCore::event_start_message_organiser(
+            &race,
+            Some(0),
+            None,
+            &allowed,
+        ));
+        h.ride(200.0, 1.0);
+        assert!(h.client.aids_allowed());
+        // Forbidden again; ride to the line: the winner raises the arms.
+        h.send(&ClientCore::event_start_message(&race, Some(0)));
+        let mut finished = false;
+        for _ in 0..240 {
+            h.ride(350.0, 0.5);
+            let me = h.client.rider_id().unwrap();
+            let info = h.client.event_info().unwrap();
+            if info
+                .standings
+                .iter()
+                .any(|s| s.id == me && s.finish_s.is_some())
+            {
+                finished = true;
+                break;
+            }
+        }
+        assert!(finished, "the race ends");
+        h.ride(300.0, 1.0);
+        assert!(h.client.aids_allowed(), "after the own finish");
+        let cue = h.client.view(h.time_s, 0.0)[0].cue;
+        let f = cue.finish.expect("a finish cue");
+        assert!(f.winner && (0.0..3.0).contains(&f.since_s), "{f:?}");
     }
 
     #[test]

@@ -156,6 +156,7 @@ mod tests {
             HistoryWeeks,
             HistoryMonths,
             HistoryBests,
+            EventRules,
         ];
         for p in &all {
             match p {
@@ -167,7 +168,7 @@ mod tests {
                 | WeatherReal | RidingAids | Graphics | RiderList | UnicornControls | Bindings
                 | BindGroup(_) | BindReset | Accessibility | History | HistoryRides
                 | HistoryRide(_) | HistoryClimbs(_) | HistoryWeeks | HistoryMonths
-                | HistoryBests => {}
+                | HistoryBests | EventRules => {}
             }
         }
         all

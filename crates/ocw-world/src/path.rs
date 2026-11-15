@@ -1165,6 +1165,33 @@ impl RidePath {
         let s = self.step_at(d);
         matches!(s.seg, Segment::Turnaround(_)) && d < s.end_m()
     }
+
+    /// Where `d` lies in a U-turn (spec §2.6: the U-turn animation):
+    /// `(progress, side)` with progress −1 … 0 over the run-up
+    /// ([`UTURN_RUNUP_M`] before the loop) and 0 … 1 through the loop, and
+    /// side +1 when the loop's main turn goes right (positive curvature,
+    /// as a lean to the right), −1 left. `None` elsewhere.
+    pub fn uturn_phase(&self, d: f64) -> Option<(f64, f64)> {
+        let k = self.step_index_at(d);
+        let step = self.steps[k..].iter().find(|s| {
+            matches!(s.seg, Segment::Turnaround(_))
+                && s.end_m() > d
+                && s.start_m - d <= UTURN_RUNUP_M
+        })?;
+        let progress = if d < step.start_m {
+            (d - step.start_m) / UTURN_RUNUP_M
+        } else {
+            (d - step.start_m) / step.len_m.max(1e-6)
+        };
+        // The bulb swings out a little first; its main turn is the long
+        // middle arc.
+        let side = if self.curvature(step.start_m + 0.5 * step.len_m) < 0.0 {
+            -1.0
+        } else {
+            1.0
+        };
+        Some((progress.clamp(-1.0, 1.0), side))
+    }
 }
 
 impl Track for RidePath {
@@ -1748,6 +1775,41 @@ mod tests {
         assert!(p.sample(t2).position[0] < 20.0);
         // No U-turn inside a loop.
         assert_eq!(p.u_turn(at + 2.0, 2.8), None);
+    }
+
+    /// The U-turn's phase for the animation (spec §2.6): the run-up from
+    /// −1 to 0, the loop from 0 to 1, the side of its main turn.
+    #[test]
+    fn uturn_phase_runs_through_the_run_up_and_the_loop() {
+        let v: Vec<[f64; 2]> = (0..4).map(|i| [f64::from(i) * 300.0, 0.0]).collect();
+        let mut p = RidePath::start(
+            net(graph(&v, &[(0, 1), (1, 2), (2, 3)])),
+            1,
+            0.0,
+            true,
+            0.0,
+            0,
+        );
+        p.extend(0.0, &mut straight);
+        p.u_turn(100.0, 10.0).unwrap();
+        let (at, _) = p.turnaround_ahead(100.0).unwrap();
+        assert_eq!(p.uturn_phase(at - UTURN_RUNUP_M - 1.0), None);
+        let (half, side) = p.uturn_phase(at - 0.5 * UTURN_RUNUP_M).unwrap();
+        assert!((half + 0.5).abs() < 1e-9);
+        let mut last = -1.0;
+        let mut turn = 0.0;
+        let mut d = at;
+        while let Some((q, s)) = p.uturn_phase(d) {
+            assert!(q >= last && (0.0..=1.0).contains(&q), "{q}");
+            assert_eq!(s, side);
+            last = q;
+            turn += p.curvature(d) * 0.1;
+            d += 0.1;
+        }
+        assert!(last > 0.99, "{last}");
+        // The side is the main turn's: the heading turns that way overall.
+        assert_eq!(turn.signum(), side, "{turn}");
+        assert_eq!(p.uturn_phase(d + 1.0), None);
     }
 
     /// Regression (pilot package: Fürst-Franz-Josef-Strasse in Vaduz, a

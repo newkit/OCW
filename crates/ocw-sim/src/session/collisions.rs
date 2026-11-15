@@ -111,6 +111,39 @@ impl Session {
         self.rules.chaotic_bots
     }
 
+    /// Chaotic bots in force now (spec §14 Phase 12 K6): the organiser's
+    /// rule for the current event if one was set, else the session's.
+    pub fn chaotic_bots_on(&self) -> bool {
+        self.event
+            .as_ref()
+            .filter(|e| e.phase != event::Phase::Finished)
+            .and_then(|e| e.chaotic_bots)
+            .unwrap_or(self.rules.chaotic_bots)
+    }
+
+    /// Whether the riding aids are allowed now (spec §14 Phase 12 K6,
+    /// 12D): not while an event that forbids them is under way (a race by
+    /// default); the clients switch their warning and proximity cue off.
+    pub fn aids_allowed(&self) -> bool {
+        self.event
+            .as_ref()
+            .filter(|e| e.phase != event::Phase::Finished)
+            .is_none_or(|e| e.aids_allowed())
+    }
+
+    /// The organiser's rules for the current event (spec §14 Phase 12
+    /// K6): collisions, race mode, weather physics, damage, aids, chaotic
+    /// bots, the time limit. False without an event.
+    pub fn set_event_rules(&mut self, rules: &event::Rules) -> bool {
+        match &mut self.event {
+            Some(e) => {
+                e.set_rules(rules);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// The collision model in force now (12A, 12G): the organiser's rule
     /// for the current event if one was set; else off when the session's
     /// switch is off; else by the event: group rides soft bumps only

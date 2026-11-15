@@ -321,6 +321,11 @@ const SWITCH_ITEMS: &[Item] = &[
 ];
 const EVENT_ITEMS: &[Item] = &[
     item("Start now", ItemKind::RunPending),
+    // The organiser's rules of the event (spec §14 Phase 12 K6).
+    item(
+        "Organiser rules",
+        ItemKind::Open(Page::Sub(sub::Page::EventRules)),
+    ),
     item("Cancel", ItemKind::Back),
 ];
 
@@ -414,7 +419,7 @@ impl Page {
                     "You are moved to the start line for the countdown; a running event ends. The ride recording goes on.",
                 ],
                 items: EVENT_ITEMS,
-                initial_focus: 1,
+                initial_focus: 2,
             },
         }
     }
@@ -1101,9 +1106,20 @@ mod tests {
         // An event start asks first, with Cancel focused.
         assert_eq!(m.apply(Action::Confirm), Effect::None);
         assert_eq!(m.page(), Some(Page::ConfirmEvent));
-        assert_eq!(m.labels(), ["Start now", "Cancel"]);
-        assert_eq!(m.focus(), 1);
+        assert_eq!(m.labels(), ["Start now", "Organiser rules", "Cancel"]);
+        assert_eq!(m.focus(), 2);
         assert_eq!(m.pending(), Some("event race --bots 5"));
+        // The organiser's rules (K6) and back: the question stays.
+        m.apply(Action::Click(1));
+        assert_eq!(m.page(), Some(Page::Sub(sub::Page::EventRules)));
+        m.apply(Action::Back);
+        assert_eq!(m.page(), Some(Page::ConfirmEvent));
+        assert_eq!(m.pending(), Some("event race --bots 5"));
+        m.apply(Action::Click(2));
+        assert_eq!(m.page(), Some(Page::Ride));
+        m.apply(Action::Click(0));
+        assert_eq!(m.page(), Some(Page::ConfirmEvent));
+        m.set_focus(2);
         // Cancel: back on the Ride page, nothing run.
         assert_eq!(m.apply(Action::Confirm), Effect::None);
         assert_eq!((m.page(), m.focus()), (Some(Page::Ride), 0));
