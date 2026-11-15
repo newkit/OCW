@@ -548,7 +548,7 @@ version-bump: ## Bump the workspace version in Cargo.toml and Cargo.lock (PART=p
 	@set -e; root='$(VERSION_ROOT)'; cur=$$($(call version_of,$$root)); \
 	nv=$$($(MAKE) -s --no-print-directory version-next VERSION_ROOT="$$root" PART=$(PART)); \
 	members=$$(for m in $$(find "$$root/apps" "$$root/crates" "$$root/services" "$$root/tools" -name Cargo.toml -not -path '*/target/*' 2>/dev/null); do \
-	  grep -q '^version\.workspace *= *true' "$$m" && sed -n 's/^name *= *"\([^"]*\)".*/\1/p' "$$m" | head -1; done); \
+	  if grep -q '^version\.workspace *= *true' "$$m"; then sed -n 's/^name *= *"\([^"]*\)".*/\1/p' "$$m" | head -1; fi; done); \
 	awk -v cur="$$cur" -v nv="$$nv" '/^\[/ { sec = $$0 } sec == "[workspace.package]" && $$0 ~ "^version *= *\"" cur "\"" { sub(cur, nv) } { print }' \
 	  "$$root/Cargo.toml" > "$$root/Cargo.toml.tmp" && mv "$$root/Cargo.toml.tmp" "$$root/Cargo.toml"; \
 	if [ -f "$$root/Cargo.lock" ]; then \
