@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Open Cycling World</title>
-  <!-- No favicon yet: an empty one, so the browser asks for none (no 404). -->
-  <link rel="icon" href="data:,">
+  <!-- The logo (artwork/logos/ocw.svg, copied by scripts/build-web.sh). -->
+  <link rel="icon" href="ocw.svg" type="image/svg+xml">
   <!--
     The browser app (spec §14 Phase 10, B1 – B5). Served from target/web/ by
     `make web-serve` (worlds from target/web/worlds/, `world-builder
@@ -26,6 +26,12 @@
     The menus (B6): Esc or the gamepad's Start opens the desktop's in-game
     menu (the same app: Settings → Audio / Voice replace B5's panel);
     Captures → screenshot, video and the ride's FIT file are downloads.
+    The page configuration (B8a): config.json next to this page, read
+    before the module starts (window.ocwConfig): the worlds' base, the
+    hosted server / voice / sign-in (empty: none – the preview), and for
+    the public preview (channel "preview") the start page's rides
+    ("start"). Without a ride option in the query (route, world, server)
+    the preview shows its start page instead of loading the module.
   -->
   <style>
     html, body { margin: 0; height: 100%; background: #10141a; color: #d8dee9;
@@ -62,9 +68,44 @@
       font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; pointer-events: none; }
     #ocw-sound-hint[hidden] { display: none; }
   </style>
-  <!-- Voice (B5): LiveKit's JS SDK, then the shim the app talks to. -->
-  <script src="livekit-client.umd.js"></script>
+  <!-- Voice (B5): the shim the app talks to; LiveKit's JS SDK is loaded
+       before the module unless the page configuration has no voice (B8a). -->
   <script src="ocw-voice.js"></script>
+  <style>
+    /* The public preview's start page and its line in the ride (B8a). */
+    #ocw-start { position: fixed; inset: 0; overflow-y: auto; background: #10141a; }
+    #ocw-start[hidden] { display: none; }
+    #ocw-start main { max-width: 860px; margin: 0 auto; padding: 32px 16px 48px; line-height: 1.5; }
+    #ocw-start h1 { font-size: 28px; margin: 0 0 4px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    #ocw-start h1 img { height: 40px; }
+    #ocw-start h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 0.06em;
+      color: #aab4c3; margin: 28px 0 10px; font-weight: 600; }
+    #ocw-start .lead { color: #c3cbd8; margin: 8px 0 0; }
+    #ocw-start .badge { display: inline-block; font-size: 12px; font-weight: 600; color: #10141a;
+      background: #ebcb8b; border-radius: 4px; padding: 1px 7px; }
+    #ocw-start .rides { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
+    #ocw-start a.ride { display: block; text-decoration: none; color: inherit; padding: 14px 16px;
+      background: #18202b; border: 1px solid #2c3644; border-radius: 8px; }
+    #ocw-start a.ride:hover, #ocw-start a.ride:focus { border-color: #88c0d0; background: #1d2632; outline: none; }
+    #ocw-start a.ride b { display: block; font-size: 17px; color: #e5e9f0; }
+    #ocw-start a.ride span { display: block; font-size: 14px; color: #aab4c3; margin-top: 4px; }
+    #ocw-start .opts { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 14px; color: #c3cbd8; margin-top: 12px; }
+    #ocw-start .opts input { accent-color: #88c0d0; }
+    #ocw-start ul { margin: 0; padding-left: 20px; color: #c3cbd8; }
+    #ocw-start .caps span { display: inline-block; margin-right: 14px; }
+    #ocw-start .yes { color: #a3d9a5; } #ocw-start .no { color: #ebcb8b; }
+    #ocw-start .soon { color: #c3cbd8; border-left: 3px solid #4c566a; padding: 4px 0 4px 12px; }
+    #ocw-start footer { margin-top: 32px; font-size: 14px; color: #aab4c3; }
+    #ocw-start a { color: #88c0d0; }
+    /* Above the HUD's height profile (bottom left), clear of the route
+       label (bottom centre) and the devices panel (bottom right). */
+    #ocw-preview-bar { position: fixed; left: 12px; bottom: 98px;
+      font: 12px system-ui, sans-serif; color: #c3cbd8; background: rgba(10, 13, 18, 0.6);
+      border-radius: 4px; padding: 2px 8px; white-space: nowrap; max-width: calc(100% - 16px);
+      overflow: hidden; text-overflow: ellipsis; }
+    #ocw-preview-bar a { color: #88c0d0; text-decoration: none; }
+    #ocw-preview-bar[hidden] { display: none; }
+  </style>
 </head>
 <body>
   <canvas id="ocw-canvas" tabindex="0"></canvas>
@@ -81,6 +122,37 @@
   </section>
   <button id="ocw-devices-show" hidden>Devices</button>
   <div id="ocw-sound-hint" hidden></div>
+  <div id="ocw-preview-bar" hidden></div>
+  <section id="ocw-start" hidden aria-label="Start">
+    <main>
+      <h1><img src="ocw.svg" alt="" onerror="this.remove()">Open Cycling World <span class="badge">browser preview</span></h1>
+      <p class="lead">An open-source indoor cycling simulation, in your browser: ride solo on a test
+        route or in Liechtenstein, with virtual power or your smart trainer over Bluetooth (Chrome or Edge).
+        This is a development build – expect rough edges.</p>
+      <h2>Choose a ride</h2>
+      <div class="rides" id="ocw-start-rides"></div>
+      <div class="opts">
+        <label><input type="checkbox" id="ocw-start-webgl2"> WebGL 2 with low graphics (older GPUs, phones)</label>
+      </div>
+      <h2>Riding</h2>
+      <ul>
+        <li><b>Virtual power:</b> ↑ more power, ↓ brake, Page Up / Down ±10 W; A autodrive, ← / → your line or lean.</li>
+        <li><b>Smart trainer, power meter, heart rate:</b> the Devices panel, bottom right (Web Bluetooth:
+          Chrome or Edge on Windows, macOS, ChromeOS and Android; on Linux behind a flag).</li>
+        <li><b>Menu:</b> Esc (or the gamepad's Start) – events, workouts, the time and weather machines,
+          settings, screenshots and the ride's FIT file. Mouse: the camera, C resets it.</li>
+      </ul>
+      <p class="caps" id="ocw-start-caps"></p>
+      <p class="soon">Multiplayer, voice chat and sign-in are coming in the hosted version.</p>
+      <footer>
+        <a href="credits.html">Credits and licences</a> ·
+        <a href="credits.html#privacy">Privacy</a> ·
+        <a href="https://github.com/newkit/OCW">Source code</a> (MIT / Apache-2.0) ·
+        Map data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>
+        <div id="ocw-start-build" style="margin-top: 6px; font-size: 12px"></div>
+      </footer>
+    </main>
+  </section>
   <script>
     // Downloads (spec §14 Phase 10 B6): the app's captures and the ride's
     // FIT file, named by the app with the time; the list is for tests.
@@ -173,6 +245,73 @@
       if (!webgl2()) return {api: null, reason: reason + "; no WebGL 2 either"};
       return {api: "webgl2", reason};
     }
+    // The page configuration (spec §14 Phase 10 B8a): config.json next to
+    // this page; the app reads window.ocwConfig (its text). Without the
+    // file: the empty configuration (every option, as before).
+    async function loadConfig() {
+      try {
+        const r = await fetch("config.json", {cache: "no-cache"});
+        return r.ok ? await r.text() : "";
+      } catch (e) { return ""; }
+    }
+    window.ocwConfig = await loadConfig();
+    let config = {};
+    try { config = JSON.parse(window.ocwConfig || "{}") || {}; } catch (e) { console.warn("ocw-web: config.json: " + e); }
+    const preview = config.channel === "preview";
+    const query = new URLSearchParams(location.search);
+    const riding = ["route", "world", "server"].some((k) => query.has(k));
+    const loadScript = (src) => new Promise((ok) => {
+      const el = document.createElement("script");
+      el.src = src;
+      el.onload = () => ok(true);
+      el.onerror = () => { console.warn(`ocw-web: ${src} not loaded`); ok(false); };
+      document.head.appendChild(el);
+    });
+    if (preview && !riding && Array.isArray(config.start) && config.start.length) {
+      // The preview's start page: nothing big is fetched until a ride is chosen.
+      startPage();
+    } else {
+      if (preview) previewBar();
+      // Voice (B5): LiveKit's SDK, unless this page has no voice (B8a).
+      if (config.voice !== "") await loadScript("livekit-client.umd.js");
+      await ride();
+    }
+
+    // The preview's start page (B8a): the rides of config.start.
+    function startPage() {
+      const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+      const box = document.getElementById("ocw-start-rides");
+      const webgl2 = document.getElementById("ocw-start-webgl2");
+      const href = (q) => "?" + q + (webgl2.checked ? "&gpu=webgl2&quality=low" : "");
+      const render = () => {
+        box.innerHTML = config.start.map((r) =>
+          `<a class="ride" href="${esc(href(r.query))}"><b>${esc(r.title)}</b><span>${esc(r.text || "")}</span></a>`).join("");
+      };
+      webgl2.onchange = render;
+      render();
+      const caps = [
+        ["WebGPU", !!navigator.gpu],
+        ["WebGL 2", (() => { try { return !!document.createElement("canvas").getContext("webgl2"); } catch (e) { return false; } })()],
+        ["Web Bluetooth (trainers)", !!navigator.bluetooth],
+      ];
+      document.getElementById("ocw-start-caps").innerHTML = "This browser: " + caps.map(([n, ok]) =>
+        `<span class="${ok ? "yes" : "no"}">${ok ? "✓" : "✗"} ${esc(n)}</span>`).join("");
+      if (config.build) document.getElementById("ocw-start-build").textContent = "Build " + config.build;
+      status.hidden = true;
+      document.getElementById("ocw-start").hidden = false;
+      document.title = "Open Cycling World – browser preview";
+      console.log("ocw-web: the preview's start page");
+    }
+
+    // The preview's line in the ride (B8a): back to the rides, the credits.
+    function previewBar() {
+      const bar = document.getElementById("ocw-preview-bar");
+      const osm = query.has("world") ? " · © OpenStreetMap contributors" : "";
+      bar.innerHTML = `Browser preview · <a href="./">Rides</a> · <a href="credits.html">Credits</a>${osm}`;
+      bar.hidden = false;
+    }
+
+    async function ride() {
     const gpu = await chooseGpu();
     window.ocwGpu = gpu;
     console.log(`ocw-web: GPU API ${gpu.api || "none"} (${gpu.reason})`);
@@ -199,6 +338,7 @@
       document.getElementById("ocw-canvas").focus();
       devicesPanel();
       soundHint();
+    }
     }
 
     // The devices panel (spec §14 Phase 10 B4): the buttons open the

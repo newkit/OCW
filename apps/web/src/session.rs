@@ -69,6 +69,9 @@ pub struct SessionConfig {
     /// The quality preset for this visit (page option `quality`, B7: a
     /// temporary `display.quality`, not saved).
     pub quality: Option<String>,
+    /// Why voice is off on this page (the page configuration, B8a: the
+    /// preview has no voice server); `None`: the page's voice shim.
+    pub voice_off: Option<String>,
 }
 
 impl Default for SessionConfig {
@@ -86,6 +89,7 @@ impl Default for SessionConfig {
             record: true,
             autodrive: true,
             quality: None,
+            voice_off: None,
         }
     }
 }
