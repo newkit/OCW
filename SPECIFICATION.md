@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 3.47 – November 2026
+Version 3.48 – November 2026
 
 | Version | Change |
 |---|---|
+| 3.48 | Two new phases planned (asked by the user 2026-11-15; open questions to the user): **Phase 15 – model files** (§14 Phase 15): 3D objects move from shape code to model files in **`artwork/3dmodels/`** – format proposal **glTF 2.0 / `.glb`** (compared with FBX, OBJ, USD, COLLADA, VRM, STL/PLY, `.blend`: licence, Blender, Rust/Bevy/wasm, features, efficiency, scope), the model contract (axes, origins, node names, paint slots, `extras`, budgets, deterministic files), the extended reader/writer, `ocw-assets model import|export|diff|validate`, the run-time `ModelLibrary` (embedded, dev folder with hot reload), the migration plan M1 – M6 (bikes, rider, helmets, parts, workshop pieces, unicorn, props, street lamps, flora; terrain, roads, OSM buildings, sky and weather stay procedural); Q1 – Q4. **Phase 16 – OCW Studio** (§14 Phase 16): an editor app `ocw-studio` on the game's renderer with the Bevy-free core `ocw-edit` (commands, undo/redo) – Models workspace (view, try-on, anchors, slots, proxies, Blender round trip), World workspace (edits as **world patches** on the sources applied by `world-builder`, live tile preview, user signing, ODbL), Routes workspace (GPX/FIT/TCX/GeoJSON import with map matching, drag-to-replan, profile, GPX/FIT/graph-route export), a built-in planner on the road graph plus optional **BRouter** (MIT, self-hosted), GraphHopper (Apache-2.0; hosted free API non-commercial only), Valhalla, OSRM, openrouteservice behind one `RoutePlanner` trait; bikerouter.de, Komoot and Strava by GPX import only; stages E1 – E6; Q1 – Q5. §8.1 points to Phase 15 |
 | 3.47 | The remaining rider animations (§2.6) and Phase 12 K6, the organiser's options (§14 Phase 12, 12I). **Animations** (`ocw_assets::anim::Animator`, pure, the same for others from snapshots; looks only): cornering beyond the lean (head into the bend and held nearer level, upper body to the inside, inside knee out, freewheeling the outside pedal down), free ride's U-turn (a look over the shoulder on the run-up, the inside foot held out low through the loop), the finish (every finisher sits up and freewheels; a bike throw at the line at speed) and the winner's victory (both arms up in a V), and a foot down at a stop (unclip, the foot flat on the road beside the tilted bike, off the saddle onto the top tube, the other pedal ready; clip back in when riding off). **K6:** every organiser rule in `EventStart` / `EventState` (additive: the riding aids, chaotic bots, the time limit, the neutral service's wait, why a DNF did not finish), put in force by the server, shown in the event's info and the results, set with `event … --collisions --damage --aids --chaotic-bots --neutral-service --service-s --dnf-injured --time-limit` and on the new page "Start the event?" → Organiser rules. Proposals (open to the user): 70 % of riders put the left foot down; the timings of the finish and victory poses; a time trial's new best counts as a victory; the riding aids off in races unless allowed (as 12D says), also in local races; one wait for the neutral service's spare wheel and spare bike; the time limit 30 s – 2 h; the aids are the clients' – the server only decides the rule. |
 | 3.46 | **Sign-in with Google and Strava built** (§9.1 *Build*, §14 Phase 5; decided in v3.33): the accounts backend `services/accounts` (`ocw-accounts`: Axum, OIDC-shaped endpoints, Google through `openidconnect`, Strava through `oauth2`, our EdDSA JWTs with key rotation and JWKS, rotating refresh tokens with reuse detection, the device flow with its code page, linking / unlinking, userinfo, export and deletion hooks, rate limits; in-process fake Google and Strava) run by `ocw-server --auth-config` / `--auth-dev`; the pure crate `ocw-auth` (tokens, PKCE, the apps' forms, the game server's check); the access token in the hello (`Hello.access_token`, `Welcome.account`, `Reject.auth`); Settings → **Account** on the desktop (loopback redirect, OS keyring, the code flow for kiosks) and in the browser (redirect, `auth=`). Proposals: storage behind a trait in memory or a private JSON file (PostgreSQL next), the browser's refresh token in `localStorage`, Riders moved onto the Account page. Tests against the fake providers; screenshots of the Account page and the device code. |
 | 3.45 | Phase 10 **B8a built** (§14 Phase 10, 10G): the public preview of the browser app on **GitHub Pages** (<https://newkit.github.io/OCW/>) – `make web-preview` (profile `web-preview`: fat LTO, one codegen unit, `wasm-opt -Oz` from a pinned binaryen), the **web preview's signing root** (`ocw-worldstore` `keys/preview-roots.json`, feature `preview` of `ocw-web`: the only root the preview trusts; its secret keys on marge only), the page configuration `config.json` (worlds' base; empty server / voice / sign-in: multiplayer and voice off on public pages, "coming in the hosted version"), the start page, `credits.html` (attribution, ODbL road graph, licences, privacy note), the signed Liechtenstein package on the pre-release `web-preview-worlds`, the workflow `.github/workflows/web-preview.yml` (by hand and weekly), `make test-web-preview`; README link under the headline. |
@@ -1776,7 +1777,7 @@ Features: voice rooms, participant management, audio transmission, dynamic subsc
 
 ### 8.1 Asset Pipeline
 
-3D format: **glTF 2.0**. Models are created, for example, with Blender.
+3D format: **glTF 2.0**. Models are created, for example, with Blender. Phase 15 (planned v3.48) moves the shipped models to `artwork/3dmodels/` and every fixed-shape object from code into such files; Phase 16 adds the editor (OCW Studio).
 
 Import process:
 
@@ -1919,7 +1920,7 @@ open-cycling-world/
 │   ├── ocw-fit/          # FIT activity writer (no dependencies, wasm-safe)
 │   └── ocw-voice/        # LiveKit integration behind a trait (feature "voice")
 ├── proto/                # .proto schemas
-├── artwork/              # original artwork: logos/ (app icon)
+├── artwork/              # original artwork: logos/ (app icon), 3dmodels/ (model files, Phase 15)
 ├── packaging/            # desktop entry (Linux), later installers
 ├── release/              # release builds per version and platform (+ SHA256SUMS)
 ├── scripts/              # build machines, deploy, kiosk, AppImage, Windows build server setup, multiplayer test
@@ -3938,6 +3939,509 @@ It builds on Phase 11 (the VR mode of the desktop app: OpenXR, the first-person 
 - **Q4 – BLE fallback: postponed (2026-11-14, dashboard: "postpone")** – decided when standalone VR (Phase 14) starts; until then the question stays as written: if direct BLE on a headset turns out limited (Pico unverified; Quest reconnects reported flaky), is the **sensor bridge** through a PC or phone acceptable as the official way – and should that include a small **phone relay app** (Android first; iOS would be the first native iOS code, §1.3), or only the desktop and the browser app as bridges (Phase 10 Q2)?
 - **Q5 – Priority:** after Phase 11 X1 – X2 (proposal: the VR mode on the desktop first, then V1 – V2 while the browser app reaches B3), or later after the browser app (Phase 10) is done?
 
+
+### Phase 15 – Model files: 3D objects in a standard open format (planning, 2026-11-15)
+
+**Goal (asked by the user, 2026-11-15):** stop encoding the shapes of 3D objects in code. Every object that can be a file becomes a model file in one standardised, open format, stored in **`artwork/3dmodels/`**. Artists can open these files in Blender and other tools, edit them and bring them back. The work has three parts:
+- choose the format (15A);
+- write the importer, exporter and loader (15D);
+- move the current objects into that format where feasible (15E).
+
+This revisits the Phase 4 decision "generated in code" (§2.5 *Asset decisions*). The generators may stay where a model follows from numbers (Q1), but **at run time the app reads files, not shape code.**
+
+#### 15A – The format: proposal glTF 2.0, binary `.glb` (to be confirmed, Q1 – Q4)
+
+§8.1 already names glTF 2.0, and the bikes and the rider are `.glb` files today: generated by `ocw-assets generate`, read by `ocw_assets::glb`, embedded with `include_bytes!`. Everything else is built from code at start:
+- in `ocw-render`: `unicorn.rs`, `workshop.rs`, `obstacles.rs`, `street_lamps.rs`, the trees in `package.rs`, `gear.rs`;
+- in `ocw-assets`: `helmet.rs` and the room in `workshop.rs`.
+
+The candidates:
+
+| Format | Standard / licence | Blender | Rust / Bevy / wasm | Features | Efficiency | Verdict |
+|---|---|---|---|---|---|---|
+| **glTF 2.0** (`.glb` binary, `.gltf` + `.bin` text) | Khronos open standard, royalty-free, ISO/IEC 12113:2022 | Built-in importer and exporter (the Khronos glTF-Blender-IO add-on, Apache-2.0, shipped with Blender); custom properties ↔ `extras` | `gltf` crate (MIT/Apache-2.0, already in the workspace, pure Rust, wasm-safe); Bevy's own loader uses the same crate | Node hierarchy, PBR metallic-roughness materials, textures, UVs, vertex colours, skins, morph targets, animation clips, cameras, lights (`KHR_lights_punctual`), instancing (`EXT_mesh_gpu_instancing`), `extras` for our metadata | Binary buffers are laid out as GPU vertex and index buffers, so loading is a copy, not a parse. Optional `KHR_mesh_quantization` (16-bit/8-bit attributes, about −40 %), `EXT_meshopt_compression`, `KHR_draco_mesh_compression`, `KHR_texture_basisu` (KTX2) | **Proposed** |
+| FBX | Proprietary (Autodesk), no public specification, SDK under a closed licence | Import and export, but lossy and version-dependent | No maintained pure-Rust reader | Everything, including animation | Binary, compact | Rejected: closed |
+| OBJ + MTL | De-facto standard, open, very old | Import and export | Simple crates (`tobj`) | Meshes and simple materials only: no hierarchy, rig, animation or PBR | Text: large and slow to parse | Too little: no nodes, so no anchors or hotspots |
+| USD / USDZ | Open (Pixar, Apache-2.0-style licence), AOUSD | Import and export | No mature Rust reader; the C++ library is large and not wasm-friendly | Very rich: scenes, layers, variants | Good, but heavy tooling | Too heavy for a game client; fine for film pipelines |
+| COLLADA (`.dae`) | Khronos, open, superseded by glTF | Removed from Blender 4.2+ (legacy) | Old crates only | Hierarchy, skins, animation | XML: large, slow | Obsolete |
+| VRM | Open (on glTF 2.0) for humanoid avatars | Add-on | Through glTF | Humanoid rig, expressions | As glTF | Possible later as a rider *import* profile (a glTF variant, no new reader) |
+| STL / PLY | Open | Import and export | Easy | Triangles and colours only | Compact (binary) | For 3D printing and scans only |
+| `.blend` | Blender's own (GPL tool; the file format is undocumented and changes between versions) | Native | No reader | Everything | — | Source file at most, never a shipped format (Q1) |
+
+**Why glTF – pros:**
+- **Open and free:** a royalty-free Khronos standard with ISO standing; every tool on the path is open source, under Apache-2.0 or MIT. Blender is GPL, but that does not bind the files it exports.
+- **Tools:**
+  - Blender 2.8+ imports and exports it without add-ons;
+  - other editors read it too: Godot, three.js editor, Babylon, Maya and 3ds Max (through Autodesk's glTF plug-ins), Substance;
+  - viewers: Windows 3D Viewer, macOS Quick Look (through USDZ conversion), gltf-viewer, <https://gltf-viewer.donmccurdy.com>;
+  - the Khronos **glTF-Validator** (Apache-2.0) and **glTF-Transform** (MIT; prune, dedup, quantise, meshopt, KTX2) work on the command line.
+- **Already ours:** the reader and writer exist (`ocw_assets::glb`, 370 lines), the validator exists (`ocw-assets validate`, §8.1), and the bikes and rider already ship as `.glb`. There is no new dependency.
+- **Efficient:** loading is a buffer copy. The format is web-native (it is what three.js and Babylon use), so the browser app gets the same files. `.glb` compresses well with the gzip/brotli of the web server (the Pages preview gzips, B8a).
+- **Rich enough:** rigs, morph targets and clips are in the standard, for when the rider or the unicorn gets a real skin (§2.6). Our metadata (kind, anchors, LOD, paint slots, physics profile name) fits in node names and `extras`, with no private extension.
+
+**Cons and limits, and how we handle them:**
+- **Parametric shapes:** glTF stores finished meshes, not "a frame from its geometry numbers". The bike frames, the helmets around the skull and the workshop room for N bikes follow from numbers today. Two answers:
+  - keep a generator that **exports** files (it is then a modelling tool, not run-time code);
+  - split the object into fixed pieces plus a layout in code (15E). Which one per object is Q1.
+- **Fitting variants:** body build changes girth per region today (`rider::girth`). In glTF this becomes **morph targets** (Blender shape keys) or stays a per-node scale in code. Proposal: per-node scale for now, morph targets when the rider gets a skin.
+- **No standard LOD:** `MSFT_lod` is a vendor extension that Blender does not export. We keep our convention: a `lod1` node, or separate `…-lod1` nodes per species, described in 15B.
+- **Blender round trip pitfalls:**
+  - duplicate names get `.001` suffixes;
+  - the exporter must use "+Y up" and "apply modifiers";
+  - custom properties go to `extras` only when *Include → Custom Properties* is ticked;
+  - Blender's front view looks along −Y, which becomes glTF +Z;
+  - material names must stay paint-slot names.
+
+  The importer normalises or rejects all of these (15D), and an export preset documents the settings.
+- **Compression extensions:**
+  - Draco needs a C++ decoder (not wasm-friendly for us).
+  - `EXT_meshopt_compression` needs the meshoptimizer decoder. It is C, or a Rust port that has to be checked for wasm.
+  - Proposal: **no compression extension in the first stage**. Plain `.glb` plus transport gzip, and later `KHR_mesh_quantization` (trivial to decode, pure Rust) if size matters. Our models are small: 1.9 MB for all eight files today.
+- **Textures:** today's models use only colour per material (paint slots). The reader learns embedded PNG and KTX2 textures (we already write KTX2 for the material library, §4.6, `ocw_assets::ktx2`), but shipped models stay texture-light. The look comes from slots and the material library, which keeps file sizes and the WebGL 2 limits in check (B7).
+
+**Scope of the format:**
+- **In scope:** objects with a fixed shape that are placed in the world or attached to riders:
+  - rider, bikes, parts, helmets and other wearables;
+  - the unicorn;
+  - workshop furniture;
+  - props: bollards, gates, barriers, lamps, benches, signs, later fountains and chapels;
+  - plant species and other creatures (Phase 11/14 hands later).
+- **Out of scope:** geometry computed from world data per place:
+  - terrain, roads, kerbs and corners, junctions, bridges, tunnels;
+  - OSM buildings (footprints and straight-skeleton roofs);
+  - line obstacles swept along their line (walls, hedges, fences, guard rails);
+  - sky, stars, clouds, weather particles, bolts, spray;
+  - the unicorn's trail;
+  - the HUD.
+
+  These stay procedural, though their *parts* can be files: a window, a balcony, a chimney, a fence post, a lamp head.
+
+#### 15B – The model contract (conventions every file follows)
+
+- **Units and axes:** metres, +Y up, glTF's +Z is the model's front. The reader turns it to the app's −Z, as today (`ocw_assets::model`). In Blender, the model faces −Y (the *Front* view) and is exported with "+Y up".
+- **Origin per kind:**
+
+  | Kind | Origin |
+  |---|---|
+  | bike | ground contact under the bottom bracket, as the generator does today |
+  | rider | between the sit bones |
+  | wearable | its anchor on the rider (`head`, `face`, `foot_l`, …) |
+  | prop | the foot centre, on the ground |
+  | plant | the stem base |
+  | creature | under the body's centre |
+
+  The table lives in `ocw_assets::kinds` and in `artwork/3dmodels/README.md`.
+- **Node names are the interface:**
+  - anchors `anchor_<name>`;
+  - workshop hotspots `hs_<slot>` (§8.2);
+  - moving parts by their role (`wheel_front`, `crank`, `pedal_l`, the §2.6 rig names, the unicorn's `wing_l_shoulder`, `wing_l_wrist`, …);
+  - LOD nodes `lod1` (and `lod2`, `billboard` for plants);
+  - collision proxies `col_<shape>` (boxes and cylinders for Phase 12; never drawn).
+
+  Every kind has a list of required and optional nodes, checked by the validator.
+- **Materials are paint slots:**
+  - a material's name is a slot from `ocw_assets::slots`, extended with prop slots: `wood`, `steel`, `stone`, `paint_red`, `paint_white`, `reflector`, `glass`, `bulb`, `leaf`, `blossom`, `fruit`, `bark`, `needle`, …;
+  - the app maps slots to the material library (§4.6), seasons (§9 phenology tints `leaf`, `blossom` and `fruit`), the rider's look, and emissive lights at night (`bulb`);
+  - colours in the file are the defaults.
+- **Metadata in `extras`, never physics (§2.5):**
+  - asset-level `extras.ocw = { schema = 1, kind, id }`;
+  - per kind: a bike's `profile` name, a plant's `species` and `height_m`, a prop's `osm` tags it stands for (`barrier=bollard`).
+
+  The validator rejects physics keys, as today.
+- **Budgets** (triangles; checked by the validator):
+
+  | Object | Near | Far |
+  |---|---|---|
+  | bike | 15 000 | 4 000 |
+  | rider | 8 000 | 4 000 |
+  | unicorn | 3 000 | 600 |
+  | wearable | 1 500 | — |
+  | prop | 1 500 | 300 |
+  | plant | 2 000 | 200, plus a billboard |
+  | workshop piece | 10 000 | — |
+
+  Textures: at most 1024², power of two, base colour sRGB, embedded in the `.glb`.
+- **Deterministic files:**
+  - the writer produces byte-identical output for the same model (sorted, no timestamps, no generator version in the bytes, only `asset.generator = "ocw-assets"`);
+  - a re-export without changes leaves git clean;
+  - `generate --check` keeps working.
+
+#### 15C – Storage: `artwork/3dmodels/` (decided by the user)
+
+```
+artwork/3dmodels/
+├── README.md            # the contract (15B), the Blender export preset, how to add a model
+├── manifest.toml        # one [[asset]] per file: file, kind, id, license, source, author (+ profile, species, …)
+├── riders/              # rider.glb, rider-low.glb
+├── bikes/               # bike-road.glb … bike-mtb.glb (today in assets/models/)
+├── wear/                # helmets, glasses, caps (attach to anchors)
+├── parts/               # catalogue parts by slot: wheels/, saddles/, bars/ … (assets/parts.toml `model`)
+├── workshop/            # room pieces, bench, stand, hook, tool wall, lamp
+├── creatures/           # unicorn.glb
+├── flora/               # one file per species (ocw_world::flora), with lod1 / billboard
+├── props/               # bollard, post, pylon, block, gate, lift-gate, cycle-barrier, street lamps, …
+└── sources/             # optional editable sources (.blend), not loaded (Q1)
+```
+
+- **`assets/models/` moves here.** The include paths and `generate --out` follow, and the `assets/models` folder is removed. Textures of the material library stay in `assets/materials/` (§4.6): they are not models.
+- **Plain git, no LFS for now (Q2):**
+  - binary `.glb` files diff badly but are small;
+  - the validator enforces at most **2 MB per file** and **50 MB for the folder**;
+  - beyond that we move to Git LFS.
+
+    Caveat: GitHub Pages does not serve LFS objects, but the web build embeds the models anyway, so that is no blocker.
+- **Licence:** each file has a manifest entry (`license`, `source`, `author`; §8.1, §13). Own models are MIT OR Apache-2.0 like `artwork/`. Third-party models are only CC0-1.0 or CC-BY-4.0, with the author and the source URL (Q3).
+
+#### 15D – Importer, exporter and loader
+
+All of it lives in `ocw-assets` (pure, wasm-safe except the CLI's file access) plus a thin Bevy side in `ocw-render`.
+
+- **Reader / writer (`ocw_assets::glb`, extended):**
+  - Today's limits are lifted step by step: embedded textures and UVs, vertex colours, `extras`, multiple scenes ignored (first scene), morph targets and skins read and kept (drawn when the renderer needs them), `KHR_materials_emissive_strength`, `KHR_texture_transform`, and later `KHR_mesh_quantization`.
+  - Unsupported extensions in `extensionsRequired` are a clear error that names the extension.
+  - It also reads `.gltf` with separate `.bin` files and textures (for diffs and Blender), not only `.glb`.
+- **CLI `ocw-assets model …`:**
+  - **`import SRC --kind K --id ID [--license … --source … --author …]`:**
+    - reads a `.glb` or `.gltf` from Blender or any tool, then normalises it:
+      - strips Blender's `.001` suffixes where unambiguous;
+      - checks the axes from the bounds (a model lying on its back is an error with a hint);
+      - merges primitives per material, drops unused nodes, materials and textures, and recomputes missing normals;
+    - checks it against the contract (15B);
+    - writes the canonical `.glb` to `artwork/3dmodels/<kind dir>/<id>.glb` and adds or updates the manifest entry.
+  - **`export ID [--gltf] --out DIR`:** writes an editable copy (a `.glb`, or a `.gltf` + `.bin` + PNG set with readable JSON) for Blender, with `extras` kept as custom properties.
+  - **`generate [--check]`** (exists): runs the remaining generators (Q1) and writes their files into `artwork/3dmodels/`.
+  - **`validate [DIR]`** (exists, extended):
+    - kinds, required nodes and slots per kind, `extras` schema, budgets, file and folder sizes, licences;
+    - optionally runs the Khronos `gltf_validator` when it is installed (marge).
+  - **`info FILE`** (exists): nodes, materials, triangle counts and bounds.
+  - **`diff A B`:** a structural comparison for reviews of binary files (nodes added or removed, triangle counts, bounds, materials). `make models-diff` shows it for the files changed against `main`.
+  - **`optimize FILE`** (later): quantisation and generating a `lod1` or billboard with a simplifier (a pure Rust one, checked for licence and wasm).
+- **Run-time loader (`ocw_assets::library::ModelLibrary`):**
+  - an index of the manifest, read once;
+  - `get(kind, id) -> Arc<Model>`, parsed lazily and cached.
+  - **Sources:**
+    - **embedded** (default; a `build.rs` generates the `include_bytes!` table from the manifest, so release builds, the AppImage and the browser need no asset paths, as §2.5 decided);
+    - **from a folder** in dev builds (`ocw-desktop --models artwork/3dmodels`, `OCW_MODELS=…`), with **hot reload** on the desktop: a changed file is re-read and the objects using it are rebuilt in the running app, so an artist sees an export from Blender at once.
+  - The server and headless tools use the same library for anchors, bounds and collision proxies, without Bevy.
+- **Bevy side (`ocw-render::models`):**
+  - one place turns a `Model` into meshes and materials, generalising today's `riders::plain_mesh` and `gear::gear_mesh` (slots → materials, region colours, seasons);
+  - meshes are **shared per model**: every bollard uses one mesh handle and many entities or GPU instances;
+  - placed objects that today are merged into tile meshes (trees, obstacles) keep being merged per tile from the model's arrays, so the draw-call budget (§15, Phase 14) does not grow.
+- **Why our own loader and not `bevy_gltf`:** as decided in §2.5 (synchronous spawn, no asset paths, one reader for the validator, the server and the app). Paint slots, kit regions, seasons and the `gear.wesl` material are ours anyway. Bevy's loader may still be used in a dev **model viewer**.
+- **Model viewer:**
+  - `ocw-desktop --model-viewer FILE|ID` shows one model on a turntable with the anchors and LODs switchable, under the day/night light;
+  - `drive.sh shot` takes its screenshots, which become the visual test of 15G and pictures for the art project.
+- **Blender side:**
+  - `artwork/3dmodels/README.md` gives the export settings (glTF Binary, +Y up, apply modifiers, custom properties on, no Draco, materials export, selected objects) and the import steps;
+  - optional later: a small Blender add-on (`tools/blender/ocw_models/`: an export preset, a panel that sets `kind` and `id`, a node-name picker for anchors and hotspots, a budget check). Add-ons that use `bpy` count as GPL-derived, so it would be licensed **GPL-2.0-or-later** in its own folder, separate from the MIT/Apache code (Q4).
+
+#### 15E – Migration plan: which objects move
+
+| Object | Today | Target | How | Stage |
+|---|---|---|---|---|
+| Rider (near, far) | `.glb` generated by `ocw_assets::rider` | `riders/rider.glb`, `rider-low.glb` | Move the files; the generator stays an exporter until Q1. Girth per body build stays per-node scale | M1 |
+| Bikes (6 profiles, near + `lod1`) | `.glb` generated by `ocw_assets::bikes` (frame from geometry numbers) | `bikes/*.glb` | Move the files; generator as exporter (Q1). The rig numbers (`BikeRig`) are read from the file's nodes, so a hand-made bike works too | M1 |
+| Helmets (4 styles, near / far) | Code, `ocw_assets::helmet`, fitted to the skull centre | `wear/helmet-*.glb` on `anchor_head` | Export once at the reference skull; the fit becomes the anchor's transform | M3 |
+| Glasses, caps, overshoes, … | Nodes of the rider file | Stay in the rider file, or `wear/` when they get variants | — | M3 |
+| Catalogue parts (wheels, saddles, bars, …) | Variants inside the bike generator | `parts/<slot>/<id>.glb` (`parts.toml` `model`) | Hotspots `hs_<slot>` place them (§8.2); budgets per slot | M3 |
+| Workshop room and furniture | Code, `ocw_assets::workshop::room` and `ocw-render::workshop` (≈ 2 000 lines) | `workshop/*.glb` pieces | Wall and floor segments, bench, stand, hook, tool wall and lamp as files. `workshop::layout` stays code and places them for N bikes | M3 |
+| Unicorn | Code, `ocw-render::unicorn` (≈ 2 100 lines of shapes and procedural animation) | `creatures/unicorn.glb` (near, `lod1`) | A node hierarchy with named joints (neck, legs, wing shoulder and wrist, tail and mane segments; mane bands as slots). The flight animation **stays procedural**, driving the named nodes. Later it can become a skin with clips | M4 |
+| Point obstacles (bollard, post, pylon, block, gate, lift gate, cycle barrier) | Code prisms, `ocw-render::obstacles` | `props/*.glb` | One file per kind with a `col_*` proxy (Phase 12); placement and merging per tile stay | M2 |
+| Street lamps | Code, `ocw-render::street_lamps` | `props/lamp-*.glb` | Pole and head types per region style; `bulb` slot emissive at night (§9) | M2 |
+| Trees and plants (OSM, landuse and forest trees; the 32 species of the vegetation work) | Code, `ocw-render::package` tree arrays and seasons, `flora` | `flora/<species>.glb` with `lod1` and `billboard` | Seasons tint the `leaf`, `blossom` and `fruit` slots; per-tile merging stays (draw calls). Needs the vegetation branch merged first | M5 |
+| Line obstacles, roads, terrain, bridges, tunnels, OSM houses, sky, weather, trail, wheel-contact test meshes | Code from world data | **Stay procedural** | Optional later: building details (windows, balconies, chimneys, the cathedral spire) and fence posts as kit files the generators place | M6 (optional) |
+
+**Stages (each with tests, full checks, merge and deploy as usual):**
+- **M1 – Format, folder, loader:**
+  - the reader and writer extended (textures, `extras`, `.gltf`);
+  - `ModelLibrary` with the embedded table and the dev folder;
+  - `assets/models/` moved to `artwork/3dmodels/` with the new manifest fields, the README and the contract.
+  - **No visible change:** screenshots before and after must match.
+- **M2 – Tools, first props:**
+  - `model import / export / diff`, the extended validator, and the Blender round-trip test;
+  - point obstacles and street lamps as files.
+- **M3 – Rider wear and the workshop:** helmets and parts as files, the workshop pieces, the model viewer.
+- **M4 – The unicorn as a file**, with its procedural animation on named nodes.
+- **M5 – Flora:** the species models with LODs and billboards. This comes after the vegetation merge, and is checked against the frame-time budget (§15) on marge and in the browser (WebGL 2).
+- **M6 – Optional:** the Blender add-on (Q4), building kit parts, `KHR_mesh_quantization`, `optimize`.
+
+#### 15F – Tests (§11.4)
+
+- **Reader and writer:**
+  - round trip for every feature (nodes, materials, textures, `extras`, morph targets and skins kept);
+  - byte-identical re-writes;
+  - errors for unsupported required extensions.
+- **The library:**
+  - every manifest entry loads and passes its kind's contract;
+  - the embedded table matches the folder;
+  - the dev folder's hot reload rebuilds a changed model (tested headless, with `MinimalPlugins`).
+- **The importer:**
+  - fixtures shaped like Blender exports (`.001` names, a missing normal, an extra unused material, a model lying on its back, a material that is not a slot) are normalised or rejected with the expected message;
+  - **a real Blender round trip** on marge if Blender is installed (`blender -b --python`: import our `.glb`, export it with the preset, import it back, then `model diff` shows no structural change). It is skipped with a notice where Blender is missing.
+- **Migration:** for each migrated object, the scene screenshots before and after (X11 and Wayland, the existing `drive.sh` scenes plus the model viewer) differ by less than a small threshold. They are archived in `test-output/` and sent as single pictures (v3.25). The existing tests stay green:
+  - `wheel_contact` with bikes read from files;
+  - the bike fit;
+  - the obstacle collisions (Phase 12), with their proxies from `col_*`.
+- **Web:** `make test-web-build` and `make test-web` with the embedded models, and the wasm size checked against B8a's budget.
+
+#### 15G – Open questions (to the user)
+
+- **Q1 – The source of truth for parametric models:** the bikes, the rider and the helmets follow from numbers today. Options:
+  - **(a)** the `.glb` files become the only source: export once, retire the generators, and edit in Blender from then on;
+  - **(b)** keep the generators as exporters for parametric models (bikes, rider, helmets) and use files as the source for everything else; an object switches to (a) when an artist takes it over;
+  - **(c)** commit Blender `.blend` sources in `sources/` next to every `.glb`.
+
+  **Proposal: (b).**
+- **Q2 – Git LFS:** plain git with the size limits of 15C (proposal), or LFS from the start?
+- **Q3 – Third-party models:** accept openly licensed models from outside, for example the CC0 sets of Kenney, Quaternius or Poly Haven, for props and plants? They would need a manifest entry with the author and the source, and no brands. **Proposal: yes, CC0-1.0 and CC-BY-4.0 only**, as the validator already allows.
+- **Q4 – Blender on the build machines and the add-on:**
+  - may Blender (Debian package, GPL) be installed on marge for the round-trip test?
+  - should the optional Blender add-on be built (GPL-2.0-or-later, in its own folder)?
+
+### Phase 16 – OCW Studio: the editor for models, worlds and routes (planning, 2026-11-15)
+
+**Goal (asked by the user, 2026-11-15):** an editor in which one can:
+- view and edit the 3D objects of Phase 15;
+- view and edit the **world packages** (§4);
+- **import, edit and export GPX tracks** in a world;
+- plan routes with the help of **open routing planners** (BRouter / bikerouter.de, GraphHopper and similar).
+
+The technical and licence check is in 16E. The editor uses the game's own renderer, so what one sees there is what the rider sees.
+
+#### 16A – Shape of the editor (proposal; Q1)
+
+- **A separate desktop app, `apps/studio` (`ocw-studio`).**
+  - It is built from the same crates as the game:
+    - `ocw-render` draws the models and the world exactly as in a ride;
+    - `ocw-ui` and `bevy_egui` (already in the workspace) provide the panels;
+    - `ocw-assets` handles models (Phase 15), and `ocw-world` packages, the road graph, GPX, map matching and graph routes;
+    - `world-builder`'s library builds packages.
+  - Why separate and not a mode of `ocw-desktop`:
+    - the editor needs files, many panels, a mouse workflow and long builds;
+    - the game stays small and kiosk-safe;
+    - both share every crate, so no code is duplicated.
+  - **Test ride:** a button that starts `ocw-desktop --world <edited package> [--route <edited route>]`, or the shared client in a window inside the studio, on the local server.
+- **Three workspaces** with one 3D view and a 2D map view:
+  - **Models** (16B);
+  - **World** (16C);
+  - **Routes** (16D).
+- **Navigation:**
+  - an orbit camera for models;
+  - in the world, the **unicorn flight controls** of Phase 13 (the same `ocw-ui::god` input, without the unicorn) plus a top-down 2D map (roads, land use, buildings from the package, the ortho colour map where present; never online tiles, §4).
+- **The document core is Bevy-free and tested: a new crate `ocw-edit`.**
+  - It holds the open documents, a selection, and **edit operations as commands with undo / redo** (an unlimited history per document, saved with the session).
+  - It has dirty flags, autosave to `<data dir>/ocw/studio/autosave/`, and the validators run on every change: the Phase 15 model contract, the world patch checks of 16C, and route continuity.
+  - The Bevy app only shows and sends commands, like `ClientCore` in the game (§10).
+- **Platforms:**
+  - Linux first, then Windows and macOS, like the game (§11.1).
+  - A **browser version** later (Q4): the core is wasm-safe. Files would go through the File System Access API and downloads; world builds run on the server.
+
+#### 16B – Models workspace
+
+- **View:**
+  - any model of `artwork/3dmodels/` or a `.glb` / `.gltf` file;
+  - turntable and orbit, day / night / overcast light (the Phase 9 light model), a ground plane, wireframe, normals;
+  - per-material and per-node highlighting;
+  - LOD switch (`lod1`, billboard) with the switching distance shown;
+  - **gizmos** for anchors (`anchor_*`), hotspots (`hs_*`) and collision proxies (`col_*`).
+- **Stats:** triangle and vertex counts against the kind's budget (15B), bounds, file size, and the validator's findings live (errors, warnings, and "fix" buttons where the fix is clear, for example renaming `wheel_front.001`).
+- **Edit (what the studio does; not a polygon modeller):**
+  - **Node edits:** transform nodes with a move / rotate / scale gizmo and snapping, rename nodes to contract names (a picker of the kind's required and optional names), re-parent, delete.
+  - **Points and proxies:** add or move anchors, hotspots and LOD nodes; add collision proxies (box, cylinder, capsule).
+  - **Materials:** assign paint slots to materials (picker of `ocw_assets::slots`), edit default colour, metallic, roughness and emissive.
+  - **Metadata:** edit `extras.ocw` (kind, id, profile, species, …) and the manifest entry (licence, source, author; §13 rules).
+- **Shape editing stays in Blender.** *Open in Blender* exports an editable copy (15D `model export`) and starts Blender with it when it is installed. On return, the studio watches the file and re-imports it (15D `model import`), keeping the studio's own edits (names, slots, anchors, proxies) where the new mesh still matches them.
+- **Try it on:**
+  - a helmet or glasses on the rider, at each body build;
+  - a catalogue part on each bike's hotspot (§8.2);
+  - the rider on the bike in the riding poses (`ocw_assets::pose`, the animations of §2.6);
+  - the unicorn's wing and gallop cycles on its named nodes;
+  - a prop or plant placed in a world scene, with season and weather switchable.
+- **Save:** the canonical `.glb` and manifest entry through the Phase 15 writer (deterministic bytes), and `model diff` against the last committed version.
+
+#### 16C – World workspace
+
+**How worlds are edited – proposal: edits as a patch layer on the sources, not on the package (Q2).**
+
+A world package is **built** by `world-builder` from an OSM extract and a DEM (plus forest, crop, ortho and building data; §4, Phase 8), then signed. There are three ways to edit it:
+- **(a) Edit the built package directly.** Rejected:
+  - a rebuild from a newer OSM extract would lose the edit;
+  - the result would no longer follow from its sources (§4.7 reproducibility, `scripts/world-profile.sh`);
+  - the ODbL source offer would be wrong.
+- **(b) A world patch** (`<package>.ocwpatch`, a text file, TOML), applied by `world-builder` at build time after reading OSM and before meshing. **Proposed.** Each operation is keyed to:
+  - **OSM ids** (way, node or relation), or **stable edge ids** of the road graph (§4.4);
+  - or, for new things, **geo coordinates** (lat/lon, so the edit survives a re-projection).
+
+  This makes the patch reproducible, reviewable as a diff, and valid for newer extracts (an operation whose target is gone is reported, not silently dropped).
+- **(c) Fix OSM itself.** For real errors in the map (a wrong surface, a missing bridge), the studio offers **"Fix in OSM"**: it opens iD or JOSM in the browser at the spot, with the hint. We **never upload to OSM automatically**; contributors use their own OSM account. The next extract carries the fix to everyone.
+
+**What the patch can do (operations, each with undo, a preview and a validator):**
+- **Roads:**
+  - change the surface, width, class, one-way, the bike access (closed for riding), the name;
+  - **split or join** edges;
+  - add a missing connection, for example a path through a park (a new way between geo points, joined to the graph);
+  - remove a road from the ridable graph.
+- **Road height** (the road is the elevation reference, §4.3):
+  - add, move or remove **profile control points** (fix a DEM spike, a ramp, a pass);
+  - mark a **bridge** or a **tunnel** with its ends;
+  - change the smoothing on a section;
+  - the gradient chart of the section updates live.
+- **Terrain:** local stamps (lower or raise within a radius, flatten under a place, a dam), always conformed to the road afterwards (§4.3 step 4).
+- **Areas:**
+  - paint or erase land use, forest leaf type and density (`FRST`), crops (the vegetation work's `VEGE`), water;
+  - move a tree line (the Malbun case).
+- **Objects (Phase 15 models):**
+  - place, move, rotate or delete props: benches, lamps, signs, fountains, start and finish arches, km markers;
+  - place or remove single trees and **planting rows** (`ocw_world::plantings`: orchard and vineyard rows);
+  - every placed object keeps its model id and a geo position and height, taken from `Terrain::height` and never from the road (§4.3).
+- **Buildings:** change the height, levels, roof shape, colour or material, or the `building:part` of a footprint (`BPRT`). New buildings come only from OSM.
+- **Ride metadata:**
+  - **climbs and segments** (start and end on the graph, name, category);
+  - **start points** for free ride (§2.2.1);
+  - points of interest shown in the HUD (§2.9);
+  - the package's name, description and the regional look (`region_look`).
+- **World set:** a package's bounds and tiles, and its neighbours (§4.7, geographic adjacency). Changing the bounds means a new build.
+
+**Preview and build:**
+- **Live preview:** an operation re-builds only the **tiles it touches** in-process, with `world-builder`'s library on the edited tiles and the package's other sections as they are. This takes seconds per tile, and the result is drawn at once. A full, signed build is a separate step.
+- **Full build:**
+  - *Build package* runs `world-builder` with the patch, either locally (for users) or on the build machines (for us; marge, as every world build: the rule "never build on the coordinator" holds for our infrastructure, not for users of the studio);
+  - it shows the stage profile (§4.7) and ends with a diff of the result: sections, sizes, changed tiles, and roads with changed gradients.
+- **Signing and trust (§4.7, §12):**
+  - an edited package is signed with the **user's own key** (created by the studio) and trusted only where that key is added. It is shown as *unofficial* in the World menu;
+  - official packages are signed by our root after review, when the patch is merged into our world sources (`data/<region>/patches/`, reviewed like code);
+  - in shared sessions every rider needs the same package (hash), as today.
+- **Licences (§13):**
+  - a world patch changes OSM-derived data, so the patch is part of the **Derivative Database**: it ships with the package and is offered under the **ODbL**, next to the OSM extract (the existing duty);
+  - imported data in a patch (for example GPX geometry used to add a missing path) must be the user's own or openly licensed; the studio asks for the source and records it in the patch;
+  - placed models need their manifest licence (Phase 15).
+
+#### 16D – Routes workspace: GPX import, editing and export
+
+The basis exists:
+- `ocw_world::gpx` reads GPX 1.0 / 1.1;
+- `matching` does HMM map matching onto the road graph;
+- `graph_route` stores routes as edge lists with stable ids (§2.7, `ROUT`, `ocw-graph-route 1`);
+- `route_fit` fits heights onto the road.
+
+The studio makes them interactive:
+- **Import:**
+  - GPX tracks and routes (several segments joined, or chosen);
+  - also FIT courses and activities (`ocw-fit` gains a reader), TCX, and GeoJSON LineStrings (the formats planners export);
+  - map matching runs at once: the matched path is drawn over the raw track, with **problem sections highlighted** (unmatched, off the graph, a gap, a missing package);
+  - *Which world?* finds the package or packages that cover the track (`ocw_worldstore::discover`, regions) and offers the missing ones.
+- **Edit (on the 2D map and in 3D):**
+  - **drag the route**: grab a point of the route and drop it on another road, and the section between the neighbouring via-points is re-planned (16E);
+  - insert, move or delete **via-points**;
+  - **split, join, reverse**, cut the start or end;
+  - make it a **loop** with laps, or an **out-and-back** with an explicit turnaround (§2.2.2);
+  - set start and finish (an arch model placed if wanted), name, description, tags;
+  - add **segments** (climbs, sprints, KOM; shared with 16C).
+  - Every edit keeps the route continuous on the graph: the validator of §2.7 (no dead ends without a turnaround).
+- **Views:**
+  - the **elevation profile** from the package's road profile (§2.7 step 4), with the GPX elevation as a grey comparison line;
+  - the gradient colours; distance and elevation gain; the expected time at a chosen power (the physics of §5 at the rider's profile, a pure call into `ocw-sim`);
+  - surface shares (asphalt, gravel, …);
+  - a 3D fly-along preview (the Phase 13 G5 camera path).
+- **Export:**
+  - **GPX 1.1** (track with elevation from our road profile, and optionally route points);
+  - FIT course (for head units);
+  - `ocw-graph-route` (into the package as `ROUT` through the patch, or as a standalone file);
+  - GeoJSON.
+  - Exported tracks carry "© OpenStreetMap contributors" (the geometry follows OSM roads).
+- **In the game:** routes made in the studio show up in the game's route list (Ride → Change ride) from the shared routes folder, and *Test ride* rides them at once.
+
+#### 16E – Routing planners: technical and licence feasibility (checked 2026-11-15; re-check before building)
+
+**Proposal: a built-in planner on our own road graph is the default; external planners are optional, behind one interface.**
+- **The built-in planner (`ocw_world::plan`, pure Rust, wasm-safe):**
+  - A* / bidirectional Dijkstra on the package's `RoadNetwork` between via-points;
+  - **cycling profiles** as cost models (road bike, gravel, MTB, "quiet roads"):
+    - surface and class factors;
+    - a gradient cost from the road profile;
+    - avoid or allow steps, paths and traffic classes;
+  - all inside the package, offline, no service, no extra licence;
+  - its result *is* a graph route, so no matching is needed.
+  - Limit: it only knows the package's graph (and its loaded neighbours, §4.7).
+- **External planners:**
+  - **Interface:** a `RoutePlanner` trait `plan(via_points, profile) → polyline + optional elevation`.
+  - **Implementations:** HTTP clients in the studio (and later the web companion), not in the pure crates.
+  - **After planning:** the result is **map matched onto our graph** (the existing HMM). The planner's OSM snapshot can differ from the package's, and matching absorbs that, marking sections that do not match.
+  - **Endpoints:** a planner's endpoint and key are settings. Nothing is sent anywhere until the user picks an external planner (§12: the via-points leave the device; the studio says so).
+  - **Hosted versus self-hosted:**
+    - each engine can be **self-hosted** on our infrastructure (marge, or a server when Phase 5's backend has one) from the same OSM extracts as the packages (Q3);
+    - hosted public services are used only within their terms, and none is the default.
+
+| Planner | Engine licence | How we can use it | Terms of hosted service | Feasibility |
+|---|---|---|---|---|
+| **BRouter** (engine of brouter.de, bikerouter.de, OsmAnd, Locus) | **MIT** (engine and BRouter-Web) | Self-host the Java server (Java 11+, the routing data are `rd5` segment files built from OSM + SRTM, which can be downloaded or built ourselves). HTTP API `…/brouter?lonlats=…&profile=…&alternativeidx=…&format=gpx\|geojson`. Profiles are small scripts (trekking, fastbike, MTB, gravel); the stock profiles ship with the MIT engine, and community profiles must be checked one by one | brouter.de has a public server, but **no published usage policy was found**: low-volume, user-started requests only, with a clear User-Agent, after asking the operator before we ship it as a choice | **Good:** the best bike-specific profiles (gradient, surface, elevation-aware). The self-hosted server is light (rd5 files ≈ GBs for Europe). **First external planner (proposal)** |
+| **bikerouter.de** | Front end built on BRouter-Web (MIT) by its operator; the site's own licence is **not stated** | **No API use** of its backend (no terms). Instead: its GPX export is imported (16D), and *Plan on bikerouter.de* opens the site at the area in the browser. The user plans there and imports the GPX | No public API terms | **Import only** (fully feasible) |
+| **GraphHopper** | **Apache-2.0** (engine, map matching module) | Self-host the Java server: OSM PBF import, `bike` / `racingbike` / `mtb` profiles, **custom models** (JSON cost rules), elevation; it also has its own map matching | Hosted Directions API: the **free package is non-commercial only**, with credit limits and fewer profiles; paid plans need a contract | **Good self-hosted** (heavier than BRouter: Java, RAM ≈ 8 GB+ for Germany). Hosted only with the **user's own API key**, under its terms |
+| **Valhalla** | **MIT** | Self-host (C++): bicycle costing (road, hybrid, cross, mountain), elevation-aware, `trace_route` map matching | No official free public server | **Good self-hosted** alternative; heavier to build |
+| **OSRM** | **BSD-2-Clause** | Self-host (C++), Lua bicycle profile | The FOSSGIS demo server has a usage policy: no heavy or commercial bulk use | **Possible**, but the bike profile is basic (no real gradient cost); low priority |
+| **openrouteservice** | Server **GPL-3.0** (fine as a separate service; we only call its HTTP API) | Self-host (Java), or the hosted API with a free key | The hosted API has a free tier with limits and its own terms | **Possible** with the user's own key; low priority |
+| Komoot, Strava route builder, Garmin | Proprietary | **GPX import only** (the user exports the route). Strava: the user's own routes could be fetched as GPX through the existing Strava sign-in (§9.1), if the Strava API agreement allows it (to check) | — | Import only |
+
+**Licences of the results:**
+- planned routes follow OSM roads, so the geometry is a Produced Work of ODbL data. We show "© OpenStreetMap contributors" and the planner's credit (for example "Routing: BRouter");
+- BRouter's elevation comes from SRTM (public domain), and ours from the package DEM;
+- routes are stored as **graph routes**, after matching, so what we keep is our own OSM-derived edge list.
+
+**Conclusion:**
+- **feasible technically and legally** with the built-in planner plus **self-hosted BRouter** (MIT) and GraphHopper (Apache-2.0) as optional engines;
+- hosted services only with the user's own key or after the operator's OK;
+- bikerouter.de, Komoot and others through GPX import.
+
+#### 16F – Stages (each with tests, full checks, merge and deploy as usual)
+
+- **E1 – Studio shell and routes:**
+  - `ocw-edit` (documents, commands, undo / redo, autosave), `apps/studio` with the 2D map and 3D view of a package;
+  - the **Routes workspace**: GPX import with matching and problem sections, the built-in planner with via-points and route dragging, the elevation profile;
+  - GPX / graph-route export, and *Test ride*.
+
+  This needs nothing from Phase 15.
+- **E2 – External planners:** the `RoutePlanner` interface, BRouter (self-hosted on marge for tests, and a configurable endpoint), GraphHopper (self-hosted or own key), and FIT / TCX / GeoJSON import and export.
+- **E3 – Models workspace (view):** the viewer, stats, validator panel and try-on (needs Phase 15 M1 and M2).
+- **E4 – Models workspace (edit):** node and anchor edits, slots, proxies, the manifest, and the Blender round trip with re-import (needs Phase 15 M2).
+- **E5 – World workspace:**
+  - the world patch format and its application in `world-builder` (tested first without the UI: a patch file, a build, and the effect checked);
+  - then the UI: road attributes and height, objects and trees, areas, segments and start points;
+  - live tile preview, full build, and user signing.
+- **E6 – Polish:** buildings and terrain stamps, the world set and bounds, "Fix in OSM", Windows and macOS, and the browser version (Q4).
+
+#### 16G – Tests (§11.4)
+
+- **`ocw-edit`:**
+  - every command applies and undoes to the identical document (property tests over random command sequences);
+  - autosave restores;
+  - validators run on change.
+- **Routes:**
+  - GPX fixtures (the existing ones plus planner exports from BRouter and GraphHopper, saved as files) import, match and export again with the same edge list;
+  - drag and via-point edits keep continuity;
+  - the built-in planner finds known routes in the test packages and respects the profiles (a road-bike route avoids gravel where a path exists);
+  - the GPX we write reads back in our reader and passes an XML schema check.
+- **Planners:**
+  - the HTTP clients are tested against recorded responses (no network in unit tests, §11.4);
+  - a live test against the self-hosted BRouter on marge runs in `make test-studio-planners`;
+  - the hosted services are never called by tests.
+- **World patches:**
+  - each operation on the pilot package gives the expected change: an edge's surface, a profile point's height, a placed object at `Terrain::height`;
+  - a patch survives a rebuild from a newer extract, and missing targets are reported;
+  - an identical patch gives a byte-identical package (`scripts/world-profile.sh`).
+- **The studio:**
+  - headless screenshots of each workspace (X11 and Wayland via `drive.sh`, an `ocw-studio` target) and a short video of a route being dragged;
+  - archived in `test-output/` and sent as single pictures.
+
+#### 16H – Open questions (to the user)
+
+- **Q1 – Separate app or a mode:** `ocw-studio` as its own desktop app (proposal), or an editor mode inside `ocw-desktop`?
+- **Q2 – World editing:** patches on the sources, applied at build (proposal (b), plus the "Fix in OSM" link). And should user-edited packages be shareable with others (signed with the user's key), or stay local until we review and sign them?
+- **Q3 – Planners:**
+  - May we self-host BRouter (and later GraphHopper) on marge for tests and development, and later on the backend for users?
+  - Which planner is the first external one? The proposal is BRouter.
+  - Should we ask the brouter.de operator about using the public server?
+- **Q4 – Browser studio:** a browser version later (proposal: after E5), or desktop only?
+- **Q5 – Mesh editing:** keep all shape editing in Blender (proposal), or add simple mesh tools in the studio (extrude, scale parts)?
 
 ---
 
