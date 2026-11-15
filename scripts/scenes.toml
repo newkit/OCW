@@ -2148,7 +2148,7 @@ at = ["0.5=time pause", "0.5=time 2026-07-15 17:30", "0.5=hud off", "1=camera.pa
 warmup = 6
 video = 16
 
-# --- Helmets (spec §2.6, v3.37): render before / after ----------------------
+# --- Helmets (spec §2.6, v3.40): render before / after ----------------------
 # The character corner's mirror with each helmet (front in the mirror, the back
 # over the shoulder; `-side`: the rider turned for the profile), with hair,
 # caps and glasses under them; a rider from behind, a TT rider in position and

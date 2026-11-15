@@ -1,4 +1,4 @@
-//! The generated helmets of the rider (spec §2.6, v3.37; own work, MIT OR
+//! The generated helmets of the rider (spec §2.6, v3.40; own work, MIT OR
 //! Apache-2.0, built from plain points like [`crate::mesh`]).
 //!
 //! - The road-style helmets – the vented road helmet (the base kit), the
@@ -793,7 +793,7 @@ mod tests {
     }
 
     /// Up close a helmet stays in its budget, far away it is a few dozen
-    /// triangles (the base helmet no more than before v3.37); the whole
+    /// triangles (the base helmet no more than before v3.40); the whole
     /// rider model stays in the validator's budget.
     #[test]
     fn helmets_stay_in_their_triangle_budgets() {

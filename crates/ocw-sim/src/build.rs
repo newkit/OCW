@@ -1297,7 +1297,7 @@ aero = -9
         );
     }
 
-    /// The helmets' looks (spec §2.6, v3.37: sculpted shells, vents, the
+    /// The helmets' looks (spec §2.6, v3.40: sculpted shells, vents, the
     /// TT helmet's tail and visor) never change the physics: a helmet's
     /// build is its catalogue entry alone – the drag area by its `aero`
     /// steps, the mass by its weight against the base helmet – on every

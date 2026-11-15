@@ -252,7 +252,7 @@ pub fn optional() -> Vec<&'static str> {
 /// ids of the worn items; slots without one wear the base item) and the
 /// character's hair, face and glasses (a TT helmet's visor replaces the
 /// glasses, and no cap is worn under it: its brim would cut through the
-/// visor, spec §2.6 v3.37). The kit patterns are drawn by the renderer's gear shader
+/// visor, spec §2.6 v3.40). The kit patterns are drawn by the renderer's gear shader
 /// (spec §14 Phase 8 T6, `ocw_core::kit`): the chest band and sash nodes
 /// of W4 stay in the model for older apps but are never shown.
 pub fn visible(character: &ocw_core::Character, variants: &[&str]) -> Vec<&'static str> {
@@ -794,7 +794,7 @@ pub fn build(detail: Detail) -> Model {
             })
             .collect()
     };
-    // The helmets (spec §2.6, v3.37): crate::helmet.
+    // The helmets (spec §2.6, v3.40): crate::helmet.
     for h in crate::helmet::Helmet::ALL {
         opt_node(&mut m, h.node(), head, |p| {
             crate::helmet::build(p, h, skull, detail)
