@@ -23,6 +23,13 @@ connect_timeout_s = 10
 # windows 1 (8 GB, 6 cores), macos 1. OCW_REMOTE_SLOTS overrides it per call;
 # 0 = no limit.
 # slots = 2
+# Parallel cargo jobs per build (CARGO_BUILD_JOBS); caps main and branch
+# checkouts. Without it main uses all cores, branch checkouts 4;
+# OCW_REMOTE_JOBS overrides it per call. 2 on an 8 GB Windows machine (each
+# MSVC link of a Bevy binary needs ~5 GB).
+# jobs = 2
+# sccache's cache size on the machine (SCCACHE_CACHE_SIZE, default 30G).
+# sccache_size = "30G"
 
 # One [[machine]] table per machine.
 #

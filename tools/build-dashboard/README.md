@@ -62,6 +62,12 @@ directory, never in the repository).
 - **Janitor:** its mode, the last pass per machine (what it deleted or, in
   dry-run mode, would delete, and why) and the recent log entries; the size
   of `test-output/` on this machine (never deleted).
+- **Art project:** the last run of the hourly art collector
+  (`scripts/art-collect.sh`, `art/ART-PROJECT.md` §5.1), from the newest
+  `test-output/build-log/DAY/art.json` of the main checkout: time, status
+  (ok / failed / locked), new files, media of today, the mask check and
+  any errors; "late" when no run ended for 2.5 h (or a run never ended).
+  Also in `--once` and `/api/status` (`art`).
 - **Open questions:** every question for the user in `SPECIFICATION.md`
   (below), grouped by phase, with its id, title, text and proposal; the
   count is in the overview. Decided ones are hidden behind "show decided".
@@ -270,8 +276,10 @@ reused), is stale: the dashboard ignores it (and only counts it), the next
 
 `scripts/remote.sh run` takes a build slot before it runs the command; when
 all are taken it writes a `waiting` marker, prints "remote.sh: waiting for a
-free build slot" and tries all slots again every second, so it gets whichever
-slot frees first (no strict first-come order). A waiting run whose ssh
+free build slot" and tries all slots again every second, taking whichever
+slot frees first in order of arrival: while an older run (by its marker's
+start, then PID) still waits, a waiting run leaves the free slot to it
+(Linux and macOS, since v2.59; Windows takes the first free slot). A waiting run whose ssh
 session ended (remote.sh interrupted) gives up on Linux and macOS.
 
 - Linux: `flock -n` on `/tmp/ocw-build-slot-N.lock`, held on fd 9 by the run's
@@ -346,3 +354,12 @@ failure, and serves http://localhost:8765/ (all addresses, read-only).
 Logs: `journalctl --user -u ocw-build-dashboard`. To start it at boot without
 a login, once: `sudo loginctl enable-linger $USER`. Remove it with
 `make dashboard-uninstall`.
+
+- **Restart and memory cap:** `Restart=on-failure` (after 10 s), and
+  `MemoryHigh=768M` / `MemoryMax=1G` (it needs under 400 MB). This is the
+  follow-up of the 2026-11-15 incident, when the OOM killer stopped the
+  dashboard while deb ran out of memory (`art/build-history/2026-11-15/incidents.md`).
+  The OOM kill then took it down, and the systemd restart brought it back.
+- **Changing the unit:** the running unit changes only after a reinstall:
+  `make dashboard-install` (it copies the unit again, then daemon-reload and
+  restart).
