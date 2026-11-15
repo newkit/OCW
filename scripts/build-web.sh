@@ -1,14 +1,25 @@
 #!/usr/bin/env bash
-# Builds the browser app (spec §14 Phase 10, B1 / B7) into target/web/:
+# Builds the browser app (spec §14 Phase 10, B1 / B7 / B8a) into target/web/:
 #   ocw_web_bg.wasm, ocw_web.js                 the WebGPU build
 #   ocw_web_webgl2_bg.wasm, ocw_web_webgl2.js   the WebGL 2 build (B7)
-#   index.html (loads the one the browser can run), sizes.txt,
+#   index.html (loads the one the browser can run), config.json (the page
+#   configuration, B8a), sizes.txt,
 #   ocw-voice.js and livekit-client.umd.js (voice, B5)
 #
 #   scripts/build-web.sh            the `web` profile (release, size-optimised)
+#   scripts/build-web.sh --preview  the public preview (B8a, `make web-preview`)
+#                                   into target/web-preview/: the `web-preview`
+#                                   profile (fat LTO, one codegen unit), the
+#                                   `preview` feature (worlds signed by the web
+#                                   preview's root only), wasm-opt required
+#                                   (scripts/fetch-binaryen.sh), no LiveKit
+#                                   (voice is off in the preview)
 #   WEB_PROFILE=dev scripts/build-web.sh   a quick debug build
 #   WEB_GPU=webgpu scripts/build-web.sh    only one of the builds (webgpu,
 #                                          webgl2; default: both)
+#   WEB_OUT=DIR, WEB_WASM_OPT="-O3"        another output directory, other
+#                                          wasm-opt passes (default: -Oz for
+#                                          the preview, -Os otherwise)
 #
 # Bevy chooses WebGPU or WebGL 2 when it is compiled (its shaders, limits
 # and bind group layouts differ), so there are two modules: the `webgpu` /
@@ -17,14 +28,32 @@
 # Toolchain: the rustup target wasm32-unknown-unknown (rust-toolchain.toml)
 # and wasm-bindgen-cli of exactly the wasm-bindgen version in Cargo.lock:
 #   cargo install wasm-bindgen-cli --version <version> --locked
-# (`make deps-web` does that). wasm-opt (binaryen) is used when installed.
+# (`make deps-web` does that). wasm-opt (binaryen) is used when installed,
+# and always for --preview (scripts/fetch-binaryen.sh fetches the pinned
+# release when none is installed).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PATH="$HOME/.cargo/bin:$PATH"
 
-profile=${WEB_PROFILE:-web}
+preview=0
+case ${1:-} in
+  --preview) preview=1 ;;
+  "") ;;
+  *) echo "usage: scripts/build-web.sh [--preview]" >&2; exit 2 ;;
+esac
+if [ $preview = 1 ]; then
+  profile=${WEB_PROFILE:-web-preview}
+  out=${WEB_OUT:-target/web-preview}
+  features=,preview
+  opt_default=-Oz
+else
+  profile=${WEB_PROFILE:-web}
+  out=${WEB_OUT:-target/web}
+  features=
+  opt_default=-Os
+fi
 gpus=${WEB_GPU:-webgpu webgl2}
-out=target/web
+opt_passes=${WEB_WASM_OPT:-$opt_default}
 # The version wasm-bindgen-cli must have: the crate's in Cargo.lock.
 want=$(awk '/^name = "wasm-bindgen"$/ { getline; gsub(/version = |"/, ""); print; exit }' Cargo.lock)
 have=$(wasm-bindgen --version 2>/dev/null | awk '{ print $2 }' || true)
@@ -32,6 +61,15 @@ if [ "$have" != "$want" ]; then
   echo "wasm-bindgen-cli $want needed (found: ${have:-none}):" >&2
   echo "  cargo install wasm-bindgen-cli --version $want --locked   (or: make deps-web)" >&2
   exit 1
+fi
+
+# wasm-opt: required for the preview (the pinned binaryen when none is
+# installed), else when installed.
+wasm_opt=
+if [ $preview = 1 ]; then
+  wasm_opt=$(scripts/fetch-binaryen.sh)
+elif [ "$profile" != dev ] && command -v wasm-opt >/dev/null; then
+  wasm_opt=$(command -v wasm-opt)
 fi
 
 t0=$(date +%s)
@@ -47,6 +85,7 @@ find "$out" -mindepth 1 -maxdepth 1 ! -name worlds -exec rm -rf {} +
 strip=(--remove-name-section --remove-producers-section)
 [ "$profile" = dev ] && strip=()
 names=()
+declare -A before=()
 for gpu in $gpus; do
   case $gpu in
     webgpu) name=ocw_web ;;
@@ -54,26 +93,41 @@ for gpu in $gpus; do
     *) echo "WEB_GPU: unknown $gpu (webgpu, webgl2)" >&2; exit 1 ;;
   esac
   t1=$(date +%s)
-  cargo build -p ocw-web --target wasm32-unknown-unknown --profile "$profile" --features "$gpu"
+  cargo build -p ocw-web --target wasm32-unknown-unknown --profile "$profile" --features "$gpu$features"
   # Both builds write the same file: bind each before the next build.
   wasm-bindgen --target web --no-typescript "${strip[@]}" --out-name "$name" --out-dir "$out" "$wasm"
-  if command -v wasm-opt >/dev/null && [ "$profile" != dev ]; then
-    wasm-opt -Os --enable-bulk-memory --enable-nontrapping-float-to-int \
+  before[$name]=$(stat -c %s "$out/${name}_bg.wasm")
+  if [ -n "$wasm_opt" ]; then
+    t2=$(date +%s)
+    # The features rustc's wasm32 target enables (wasm-opt refuses a
+    # module that uses one it was not told about).
+    "$wasm_opt" $opt_passes --enable-bulk-memory --enable-nontrapping-float-to-int \
+      --enable-sign-ext --enable-mutable-globals --enable-reference-types --enable-multivalue \
       -o "$out/${name}_bg.wasm" "$out/${name}_bg.wasm"
+    echo "$gpu: wasm-opt $opt_passes $(( $(date +%s) - t2 )) s"
   fi
   echo "$gpu: $(( $(date +%s) - t1 )) s"
   names+=("$name")
 done
-cp apps/web/web/index.html apps/web/web/ocw-voice.js "$out/"
-# Voice (B5): LiveKit's JS SDK, pinned and hash-checked; without it the
-# page rides on, voice says "unavailable".
-scripts/fetch-livekit-client.sh "$out" ||
-  echo "warning: livekit-client not fetched: voice is unavailable in this build" >&2
+cp apps/web/web/index.html apps/web/web/ocw-voice.js artwork/logos/ocw.svg "$out/"
+# The page configuration (B8a): the dev server's page keeps every option
+# (no server / voice / sign-in keys); the preview's site assembly
+# (scripts/web-preview-site.py) writes its own with the worlds and rides.
+if [ $preview = 1 ]; then
+  printf '{\n  "channel": "preview",\n  "worlds": "worlds/",\n  "server": "",\n  "voice": "",\n  "signin": ""\n}\n' > "$out/config.json"
+else
+  printf '{\n  "channel": "dev",\n  "worlds": "worlds/"\n}\n' > "$out/config.json"
+  # Voice (B5): LiveKit's JS SDK, pinned and hash-checked; without it the
+  # page rides on, voice says "unavailable". The preview has no voice.
+  scripts/fetch-livekit-client.sh "$out" ||
+    echo "warning: livekit-client not fetched: voice is unavailable in this build" >&2
+fi
 
 # Sizes (spec §14 Phase 10, 10C: ≤ 30 MB compressed).
 mib() { case $1 in n/a) echo n/a ;; *) awk -v b="$1" 'BEGIN { printf "%.1f MiB", b / 1048576 }' ;; esac; }
 {
-  echo "profile: $profile"
+  echo "profile: $profile${features:+ (features$features)}"
+  [ -n "$wasm_opt" ] && echo "wasm-opt: $("$wasm_opt" --version) $opt_passes"
   for name in "${names[@]}"; do
     bin=$out/${name}_bg.wasm
     raw=$(stat -c %s "$bin")
@@ -85,6 +139,7 @@ except ImportError:
     print("n/a"); sys.exit()
 print(len(brotli.compress(open(sys.argv[1], "rb").read(), quality=11)))' "$bin" 2>/dev/null || echo n/a)
     [ "$br" = n/a ] && command -v brotli >/dev/null && br=$(brotli -c -q 11 "$bin" | wc -c)
+    [ -n "$wasm_opt" ] && echo "${name}_bg.wasm before wasm-opt: ${before[$name]} bytes ($(mib "${before[$name]}"))"
     echo "${name}_bg.wasm raw: $raw bytes ($(mib "$raw"))"
     echo "${name}_bg.wasm gzip -9: $gz bytes ($(mib "$gz"))"
     echo "${name}_bg.wasm brotli -q 11: $br bytes ($(mib "$br"))"
@@ -92,4 +147,8 @@ print(len(brotli.compress(open(sys.argv[1], "rb").read(), quality=11)))' "$bin" 
   done
   echo "build: $(( $(date +%s) - t0 )) s"
 } | tee "$out/sizes.txt"
-echo "built $out/ (serve it: make web-serve)"
+if [ $preview = 1 ]; then
+  echo "built $out/ (the site: make web-preview-site)"
+else
+  echo "built $out/ (serve it: make web-serve)"
+fi

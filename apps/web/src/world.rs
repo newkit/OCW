@@ -67,7 +67,10 @@ pub struct WorldOptions {
     pub allow_unsigned: bool,
     pub trust_dev: bool,
     pub trust_roots: Vec<[u8; 32]>,
-    /// Where worlds by id are found.
+    /// The preview build (feature `preview`, spec §14 Phase 10 B8a): the
+    /// web preview's root instead of the production roots.
+    pub preview: bool,
+    /// Where worlds by id are found (the page configuration's `worlds`).
     pub base: String,
 }
 
@@ -83,13 +86,20 @@ impl WorldOptions {
             allow_unsigned: false,
             trust_dev: false,
             trust_roots: Vec::new(),
+            preview: cfg!(feature = "preview"),
             base: WORLDS_BASE.into(),
         }
     }
 
-    /// The roots this page trusts: the production roots (none yet), the
-    /// development roots and the page's extra roots (dev pages only).
+    /// The roots this page trusts: the production roots (none yet) – in
+    /// the preview build only the web preview's root instead (B8a) –, and
+    /// on dev pages the development roots and the page's extra roots.
     pub fn trust_store(&self) -> TrustStore {
+        self.trust_store_with(ocw_worldstore::trust::preview_roots())
+    }
+
+    /// [`Self::trust_store`] with `preview_roots` as the preview's roots.
+    pub fn trust_store_with(&self, preview_roots: Vec<RootKey>) -> TrustStore {
         let mut trust = ocw_worldstore::trust::TrustConfig {
             dev_roots: self.trust_dev,
             root_files: Vec::new(),
@@ -97,6 +107,14 @@ impl WorldOptions {
         }
         .trust_store()
         .unwrap_or_default();
+        if self.preview {
+            let production: Vec<_> = ocw_worldstore::trust::PRODUCTION_ROOTS
+                .iter()
+                .filter_map(|j| RootKey::parse(j).ok().map(|k| k.key_id))
+                .collect();
+            trust.roots.retain(|r| !production.contains(&r.key_id));
+            trust.roots.splice(0..0, preview_roots);
+        }
         for pk in &self.trust_roots {
             trust.roots.push(RootKey {
                 kind: "ocw-root-public-key".into(),
@@ -712,5 +730,90 @@ pub(crate) mod tests {
         assert_eq!(o.stream_config(0).unwrap().policy, UnsignedPolicy::Warn);
         o.spec = "Not An Id".into();
         assert!(o.stream_config(0).is_err());
+    }
+
+    /// The preview build (B8a) on a public page: only the web preview's
+    /// root; the page's trust options (`trust=dev`, `trust-root`,
+    /// `allow-unsigned`) are ignored there, so packages signed by the
+    /// development roots or any other root, and unsigned ones, are refused.
+    /// On localhost the dev options still add their roots.
+    #[test]
+    fn the_preview_trusts_only_its_root_on_public_pages() {
+        use ocw_world::manifest::{RootKeyPair, SigningKeyPair, VerifyError};
+        use ocw_worldstore::stream::accept_manifest;
+        use ocw_worldstore::trust::{dev_roots, preview_roots};
+
+        let other = RootKeyPair::from_seed("someone else", [9; 32]);
+        let q = format!(
+            "world=liechtenstein&trust=dev&allow-unsigned=1&trust-root={}",
+            other.public().public_key
+        );
+        let (c, w) = crate::parse_query(&q, false);
+        assert_eq!(w.len(), 3, "{w:?}");
+        let mut o = c.world.unwrap();
+        o.preview = true;
+        // The built-in store: exactly the preview root.
+        let built_in = o.trust_store();
+        assert_eq!(built_in.roots, preview_roots());
+        assert!(built_in.roots.iter().all(|r| !r.dev_only));
+        for d in dev_roots() {
+            assert!(built_in.roots.iter().all(|r| r.key_id != d.key_id));
+        }
+        let config = o.stream_config(1000).unwrap();
+        assert_eq!(config.policy, UnsignedPolicy::Refuse);
+        assert_eq!(config.trust.roots, preview_roots());
+
+        // With a stand-in for the preview root (its secret key is not
+        // here): its packages are accepted, every other root's refused.
+        let preview = RootKeyPair::from_seed("preview stand-in", [5; 32]);
+        let signed_by = |root: &RootKeyPair, seed: u8| {
+            let cert = root.certify(
+                "signer",
+                SigningKeyPair::public_key_of([seed; 32]),
+                0,
+                1 << 40,
+            );
+            let key = SigningKeyPair::new([seed; 32], cert).unwrap();
+            let mut m =
+                Manifest::new("liechtenstein", "Liechtenstein", 3, 500, "t", vec![]).unwrap();
+            m.add_file("liechtenstein.ocwpkg", b"bytes").unwrap();
+            SignedManifest::signed(&m, &key).to_json()
+        };
+        let trust = o.trust_store_with(vec![preview.public()]);
+        let ok = accept_manifest(&signed_by(&preview, 6), &trust, config.policy, 1000).unwrap();
+        assert!(ok.1.is_trusted());
+        assert!(matches!(
+            accept_manifest(&signed_by(&other, 7), &trust, config.policy, 1000),
+            Err(VerifyError::UnknownRoot(_))
+        ));
+        let unsigned = SignedManifest::unsigned(&ok.0.manifest).to_json();
+        assert!(matches!(
+            accept_manifest(&unsigned, &trust, config.policy, 1000),
+            Err(VerifyError::Unsigned)
+        ));
+
+        // A dev page (localhost) of the preview build: the dev options
+        // add their roots and the policy, as in the dev build.
+        let (c, w) = crate::parse_query(&q, true);
+        assert!(w.is_empty(), "{w:?}");
+        let mut o = c.world.unwrap();
+        o.preview = true;
+        let trust = o.trust_store_with(vec![preview.public()]);
+        assert_eq!(trust.roots.len(), 1 + dev_roots().len() + 1);
+        assert!(
+            accept_manifest(&signed_by(&other, 7), &trust, UnsignedPolicy::Refuse, 1000)
+                .unwrap()
+                .1
+                .is_trusted()
+        );
+        assert_eq!(o.stream_config(0).unwrap().policy, UnsignedPolicy::Warn);
+        // Without the feature (the dev build) the preview root is not trusted.
+        o.preview = false;
+        assert!(
+            o.trust_store()
+                .roots
+                .iter()
+                .all(|r| !preview_roots().contains(r))
+        );
     }
 }

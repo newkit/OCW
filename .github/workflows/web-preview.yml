@@ -1,0 +1,82 @@
+name: Web preview
+
+# The browser app's public preview on GitHub Pages (spec §14 Phase 10 B8a):
+# builds the preview (`make web-preview`: two size-optimised modules,
+# WebGPU and WebGL 2, trusting only the web preview's signing root),
+# downloads the signed worlds of the `web-preview-worlds` pre-release
+# (signed on the build machine that holds the keys,
+# scripts/publish-preview-worlds.sh – no secret is needed here), assembles
+# the site (scripts/web-preview-site.py: config.json, credits.html,
+# worlds/) and deploys it with actions/deploy-pages.
+#
+# Building Bevy twice for wasm32 with fat LTO takes long, so it does not run
+# on every push: by hand (Actions → Web preview → Run workflow, or
+# `gh workflow run web-preview.yml`) and once a week (Monday morning), both
+# for main (the github-pages environment deploys only from main).
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; a running one finishes.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      # Two wasm32 builds of Bevy with fat LTO need more than the runner's
+      # free disk: drop preinstalled SDKs we do not use.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: web-preview
+      - name: wasm-bindgen-cli (make deps-web)
+        run: make deps-web
+      - name: wasm-opt (binaryen, pinned and hash-checked)
+        run: scripts/fetch-binaryen.sh
+      - name: Build the preview (make web-preview)
+        run: make web-preview
+      - name: The crates in the module (for the credits page)
+        run: cargo metadata --format-version 1 --locked --filter-platform wasm32-unknown-unknown > target/web-preview-crates.json
+      - name: Fetch the signed worlds (pre-release web-preview-worlds)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download web-preview-worlds --dir target/web-preview-worlds/release --clobber
+      - name: Assemble the site (make web-preview-site)
+        run: |
+          scripts/web-preview-site.py --crates target/web-preview-crates.json \
+            --build-id "$(git rev-parse --short HEAD) ($(date -u +%Y-%m-%d))"
+          cat target/web-preview/sizes.txt
+          tail -1 target/web-preview-site/site.txt
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: target/web-preview-site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

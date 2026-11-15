@@ -161,3 +161,11 @@ opt-level = "s"
 lto = "thin"
 debug = false
 strip = "debuginfo"
+
+# The public preview of the browser app (`make web-preview`, spec §14
+# Phase 10 B8a): the `web` profile with fat LTO and one codegen unit (a
+# smaller module, a slower build), then wasm-opt -Oz.
+[profile.web-preview]
+inherits = "web"
+lto = "fat"
+codegen-units = 1

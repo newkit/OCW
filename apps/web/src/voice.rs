@@ -64,12 +64,19 @@ pub struct MakeVoiceBackend(pub Box<dyn Fn() -> Box<dyn VoiceBackend> + Send + S
 /// Why there is no voice backend (natively, outside the tests).
 pub const NO_SHIM: &str = "voice needs the page's livekit-client (the browser app)";
 
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-struct Unavailable;
+/// A backend that says why there is no voice.
+struct Unavailable(String);
+
+/// No voice on this page, saying `why` (the menu's Voice page and
+/// `voice.status` show it; B8a: the preview's "coming in the hosted
+/// version").
+pub fn unavailable(why: &str) -> Box<dyn VoiceBackend> {
+    Box::new(Unavailable(why.to_string()))
+}
 
 impl VoiceBackend for Unavailable {
     fn available(&self) -> Result<(), String> {
-        Err(NO_SHIM.into())
+        Err(self.0.clone())
     }
     fn input_devices(&mut self) -> Vec<String> {
         Vec::new()
@@ -119,7 +126,7 @@ fn default_backend() -> Box<dyn VoiceBackend> {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn default_backend() -> Box<dyn VoiceBackend> {
-    Box::new(Unavailable)
+    unavailable(NO_SHIM)
 }
 
 /// `M` / `Shift+M` and the gamepad's Select / R3 (the browser's Gamepad
@@ -571,10 +578,31 @@ mod tests {
     #[test]
     fn without_the_shim_voice_is_unavailable() {
         let c = VoiceController::new(
-            Box::new(Unavailable),
+            unavailable(NO_SHIM),
             VoiceSettings::default(),
             MuteState::default(),
         );
         assert!(c.status().text().contains("livekit-client"));
+    }
+
+    /// The preview's page (B8a): voice is off and says so.
+    #[test]
+    fn a_page_without_voice_says_why() {
+        let mut a = App::new();
+        a.add_plugins((MinimalPlugins, ConsoleCorePlugin));
+        a.insert_resource(MakeVoiceBackend(Box::new(|| {
+            unavailable("voice chat is coming in the hosted version")
+        })));
+        let mem = MemoryStore::default();
+        a.insert_resource(crate::settings::MakeStore(Box::new(move || {
+            Some(Box::new(mem.clone()) as Box<dyn crate::settings::TextStore>)
+        })));
+        a.add_plugins((crate::settings::WebSettingsPlugin, WebVoicePlugin));
+        a.update();
+        assert!(
+            run(&mut a, "voice.status").contains("coming in the hosted version"),
+            "{}",
+            run(&mut a, "voice.status")
+        );
     }
 }

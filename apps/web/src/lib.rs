@@ -60,6 +60,7 @@ mod browser_devices;
 #[cfg(target_arch = "wasm32")]
 mod browser_voice;
 pub mod devices;
+pub mod page_config;
 pub mod plugin;
 pub mod session;
 pub mod settings;
@@ -152,16 +153,21 @@ pub const CANVAS_ID: &str = "#ocw-canvas";
 /// keys: the browser has its own fullscreen).
 pub const WEB_KEYS: &str = "mouse: camera, C: camera reset | ` or F12: console";
 
-/// This build's id: version, commit, profile, "web" and the GPU API
-/// ([`GPU_API`], B7).
+/// This build's id: version, commit, profile, "web", the GPU API
+/// ([`GPU_API`], B7) and "preview" for the public preview (B8a).
 pub fn build_id() -> String {
     format!(
-        "{} web {GPU_API}",
+        "{} web {GPU_API}{}",
         build_id::build_id(
             env!("CARGO_PKG_VERSION"),
             env!("OCW_COMMIT"),
             cfg!(debug_assertions)
-        )
+        ),
+        if cfg!(feature = "preview") {
+            " preview"
+        } else {
+            ""
+        }
     )
 }
 
@@ -394,6 +400,15 @@ pub fn app_with_settings(
     // The page's Web Audio output and the voice shim (B5).
     #[cfg(target_arch = "wasm32")]
     app.insert_resource(audio::MakeAudioOut(Box::new(browser_audio::start)));
+    // No voice on this page (the page configuration, B8a): the Voice page
+    // and `voice.status` say why.
+    if let Some(why) = config.voice_off.clone()
+        && !app.world().contains_resource::<voice::MakeVoiceBackend>()
+    {
+        app.insert_resource(voice::MakeVoiceBackend(Box::new(move || {
+            voice::unavailable(&why)
+        })));
+    }
     app.add_plugins(plugin::WebSessionPlugin { config });
     // Settings first: audio and voice start with the saved values.
     app.add_plugins((
@@ -571,7 +586,13 @@ pub fn start() {
         .as_ref()
         .and_then(|l| l.hostname().ok())
         .unwrap_or_default();
-    let (mut config, warnings) = parse_query(&query, is_dev_host(&host));
+    let dev_page = is_dev_host(&host);
+    let (mut config, mut warnings) = parse_query(&query, dev_page);
+    // The page configuration (config.json, B8a): the worlds' base, and on
+    // a public page without a hosted server no multiplayer and no voice.
+    let (page, page_error) = page_config::from_page();
+    warnings.extend(page_error);
+    page.apply(&mut config, dev_page, &mut warnings);
     // The settings read at the start, where the query leaves them out.
     let (settings, settings_warnings) = settings::WebSettings::load(settings::default_store());
     settings::apply_to_config(&settings, &mut config, &settings::query_keys(&query));
@@ -579,6 +600,16 @@ pub fn start() {
     let mut app = app_with_settings(config, settings, settings_warnings);
     for w in warnings {
         warn!("page options: {w}");
+    }
+    if page.is_preview() {
+        info!(
+            "page: the public preview (worlds from {}; {}; {}; {})",
+            page.worlds.as_deref().unwrap_or(world::WORLDS_BASE),
+            page.multiplayer_off(dev_page)
+                .unwrap_or("multiplayer on".into()),
+            page.voice_off(dev_page).unwrap_or("voice on".into()),
+            page.signin_off(dev_page).unwrap_or("sign-in on".into()),
+        );
     }
     browser::start_world(&mut app, world);
     app.run();

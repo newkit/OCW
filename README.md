@@ -1,5 +1,10 @@
 # <img src="artwork/logos/ocw.svg" alt="OCW logo" height="40" align="top"> Open Cycling World
 
+**Try it in your browser: <https://newkit.github.io/OCW/>** – ride solo on the
+test routes or in Liechtenstein, with virtual power or a smart trainer over
+Bluetooth in Chrome or Edge. It is a development build (spec §14 Phase 10
+B8a); multiplayer and voice come with the hosted version.
+
 A cross-platform indoor cycling simulation in Rust: real bicycle hardware, real
 routes from OpenStreetMap, rendered locally with Bevy, with server-authoritative
 multiplayer.
@@ -114,8 +119,11 @@ bots and the virtual trainer as on the desktop. The page can stream a
 trainers and sensors over **Web Bluetooth** (B4), play the game sound and
 join voice calls (B5), and has the desktop's menus, settings, captures and
 gamepad support (B6). It draws with **WebGPU**, or with **WebGL 2** where
-WebGPU is missing (B7). There is no public hosting yet (B8): you build it
-and serve it yourself, as below.
+WebGPU is missing (B7). A **public preview** runs on GitHub Pages
+(<https://newkit.github.io/OCW/>, B8a): solo, the test routes and
+Liechtenstein; see [The public preview](#the-public-preview-github-pages)
+for how it is built and updated. Full hosting (B8) comes later; until
+then you build the app and serve it yourself, as below.
 
 #### 1. What you need
 
@@ -485,6 +493,87 @@ or the server and bot builds, where it needs them). Screenshots, logs and JSON s
 
 `scripts/test-web.py --help` lists the options (`--query`, `--world`,
 `--gpu`, `--software` for SwiftShader without a GPU, `--no-ui`).
+
+#### The public preview (GitHub Pages)
+
+<https://newkit.github.io/OCW/> is a solo preview of the browser app (spec
+§14 Phase 10 B8a): its start page offers the Hills and Loop test routes and
+Liechtenstein (Vaduz – Malbun and a free ride), with virtual power or a
+trainer over Web Bluetooth in Chromium. Multiplayer, voice and sign-in are
+off there ("coming in the hosted version"). `credits.html` has the
+attribution, the licences and the privacy note.
+
+**What is different from `make web`:**
+
+| | `make web` (dev) | `make web-preview` (the preview) |
+|---|---|---|
+| Output | `target/web/` | `target/web-preview/` |
+| Profile | `web`: `opt-level = "s"`, thin LTO | `web-preview`: the same with fat LTO and one codegen unit |
+| `wasm-opt` | `-Os`, only when installed | `-Oz`, always: `scripts/fetch-binaryen.sh` fetches the pinned binaryen (version_133, SHA-256-checked) into `~/.cache/ocw/tools/` when none is installed |
+| Trusted worlds | the production roots (none yet); on localhost also `trust-root`, `trust=dev`, `allow-unsigned` | only the **web preview's root** (`crates/ocw-worldstore/keys/preview-roots.json`, feature `preview` of `ocw-web`); the localhost-only options stay localhost-only |
+| `config.json` | `channel: dev`: changes nothing | `channel: preview`, `worlds/`, empty `server`, `voice`, `signin`: no `?server=` and no voice on a public page, the start page's rides |
+| Voice | LiveKit's SDK fetched | not included |
+
+Sizes of one module (the WebGPU build; the WebGL 2 build is about the
+same; a browser downloads only one):
+
+__SIZES__
+
+GitHub Pages compresses the modules on the fly (`content-encoding: gzip`;
+__PAGES_COMPRESSION__).
+
+**Build and try it locally:**
+
+```bash
+make web-preview          # both modules into target/web-preview/ (about __BUILD_MIN__ minutes on a 12-core machine)
+make web-preview-site     # the site into target/web-preview-site/ (with the worlds of target/web-preview-worlds/release/)
+make test-web-preview     # headless Chromium on that site, served as a public page (ocw-preview.test)
+make test-web-preview PREVIEW_URL=https://newkit.github.io/OCW/   # the same checks on the live site
+```
+
+`make web-preview-site` (`scripts/web-preview-site.py`) takes the build and
+the signed worlds and writes `config.json` (the page configuration: the
+worlds' base, no server / voice / sign-in, the start page's rides),
+`credits.html` (from the world manifests' attribution, the material and
+model manifests and, with `--crates`, the Rust crates in the module),
+`worlds/` in the `world-builder publish` layout, `.nojekyll` and
+`site.txt` (every file and the total; it fails over 1 GB, the Pages
+limit). `make test-web-preview` checks the start page, the Hills route,
+Liechtenstein from the preview root, that the dev trust options are
+ignored, the WebGL 2 fallback, the credits page and that nothing answers
+4xx/5xx; screenshots go to `test-output/web-preview/`.
+
+**The workflow** `.github/workflows/web-preview.yml` builds the preview
+on GitHub's runner (`make deps-web`, `scripts/fetch-binaryen.sh`, `make
+web-preview`), downloads the signed worlds from the pre-release
+`web-preview-worlds` (`gh release download`, no secret needed), assembles
+the site and deploys it with `actions/upload-pages-artifact` and
+`actions/deploy-pages` (Pages source: GitHub Actions). Building Bevy twice
+with fat LTO is slow, so it runs by hand (`gh workflow run web-preview.yml`
+or Actions → Web preview → Run workflow) and every Monday, both for
+`main` (the `github-pages` environment deploys only from `main`).
+
+**Updating the preview's worlds.** The preview trusts only packages signed
+by its own root. The root and the signing key live on marge in
+`~/.config/ocw/preview-keys/` (outside every checkout, mode 700): never
+copy, print or commit them, and they never go to CI. After a world
+rebuild, on marge:
+
+```bash
+make web-preview-worlds   # scripts/publish-preview-worlds.sh --upload [PKG...]
+gh workflow run web-preview.yml
+```
+
+The script signs a staged copy of each package (default
+`data/pilot/liechtenstein.ocwpkg`) with the preview's signing key, publishes
+it (`worlds/<id>/<version>/`, `<id>/latest`), verifies it against the
+preview root, writes the release assets (`liechtenstein-3.ocwpkg`,
+`liechtenstein-3.manifest.json`, `liechtenstein.latest`,
+`preview-worlds.json` with the layout, routes and hashes, `SHA256SUMS`)
+and uploads them to the pre-release `web-preview-worlds`, replacing the
+old ones. The signing key `web-preview-2026` is valid for two years;
+the script's header shows how to make the next one with `world-builder
+keys new-signing`.
 
 #### Limitations today
 
