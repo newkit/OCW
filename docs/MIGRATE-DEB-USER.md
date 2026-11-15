@@ -2,7 +2,7 @@
 
 Decided by the user on 2026-11-15:
 
-- **New checkout:** `/home/claude/OCW`, a fresh `git clone`.
+- **New checkouts:** `/home/claude/src/OCW` and, next to it, the art project's `/home/claude/src/OCW-ART` ([newkit/OCW-ART](https://github.com/newkit/OCW-ART)), fresh `git clone`s.
 - **Commit author:** unchanged. The commits keep the user's git name and e-mail, plus the Claude co-author lines.
 - **Transcripts:** the old Claude Code transcripts are copied, so the art project keeps its prompt and token history.
 
@@ -31,9 +31,13 @@ Copy them from `git config user.name` / `user.email` in the old checkout; they a
 ## 3. Clone [claude]
 
 ```bash
-git clone git@github.com:newkit/OCW.git /home/claude/OCW   # or the HTTPS URL
-cd /home/claude/OCW
+mkdir -p /home/claude/src
+git clone git@github.com:newkit/OCW.git     /home/claude/src/OCW       # or the HTTPS URLs
+git clone git@github.com:newkit/OCW-ART.git /home/claude/src/OCW-ART   # the art project, next to OCW
+cd /home/claude/src/OCW
 ```
+
+OCW-ART reads OCW from the checkout next to it (`../OCW`), so it needs no setting there.
 
 Local tools on deb only. Builds stay on the build machines.
 
@@ -50,8 +54,9 @@ sudo /home/nils/data/git/OCW/scripts/migrate-user.sh --apply    # copy
 It copies:
 
 - **`config/`:** `machines.toml`, `build-machines.toml`, `ssh/` and `dashboard-token`. Secrets stay mode 600.
-- **`test-output/`, `art/build-history/`, `target/web/`** and the dev world key.
-- **The Claude Code project folder:** transcripts and memory, into `claude`'s `~/.claude/projects/` under its old name. The art collector finds both histories through `~/.claude/projects/*OCW*/`.
+- **`test-output/`, `target/web/`** and the dev world key.
+- **The art archive's media** into `/home/claude/src/OCW-ART/build-history/` (from `/home/nils/data/git/OCW-ART/build-history/`, or from OCW's old `art/build-history/` if it has not moved yet; OCW-ART's ART-PROJECT.md §5.2).
+- **The Claude Code project folder:** transcripts and memory, into `claude`'s `~/.claude/projects/` under its old name. Its name for the new checkout is `-home-claude-src-OCW`. The art collector finds both histories through `~/.claude/projects/*OCW*/`.
 
 Re-running only copies what changed.
 
@@ -61,7 +66,7 @@ Re-running only copies what changed.
 scripts/remote.sh marge enabled && scripts/remote.sh marge run 'cargo --version'
 scripts/remote.sh macos run 'cargo --version'
 gh auth status && git push --dry-run origin main
-make art-check && make test-art
+make -C /home/claude/src/OCW-ART check && make -C /home/claude/src/OCW-ART test
 python3 tools/build-dashboard/dashboard.py --once --no-record | head
 ```
 
@@ -82,8 +87,8 @@ python3 tools/build-dashboard/dashboard.py --once --no-record | head
 3. **[claude]** Install the units from the new checkout:
 
    ```bash
-   make dashboard-install && make art-install-timer
-   systemctl --user list-timers | grep ocw-art
+   make dashboard-install && make -C /home/claude/src/OCW-ART install-timer
+   systemctl --user list-timers | grep ocw-art   # ExecStart: /home/claude/src/OCW-ART/collect.sh
    curl -s localhost:8765/api/status | head -c 200
    ```
 

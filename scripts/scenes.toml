@@ -900,7 +900,7 @@ video = 8
 # 19189,-80450, Ruhestein 20165,-71687, Bühlerhöhe 19673,-82818, Baden-Baden
 # Kurhaus 20910,-93671, Sasbachwalden 12445,-77503. South package: Freiburg
 # Münster -8033,-8406, Schluchsee 16171,11064, Belchen -9427,10842.
-# Reference photos to compare with: art/reference/black-forest.md.
+# Reference photos to compare with: docs/reference/black-forest.md.
 
 [[scene]]
 name = "showcase-mummelsee"
@@ -1046,7 +1046,7 @@ args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "5600
 at = ["0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 140 22 80"]
 shot = 12
 
-# --- Tenerife (spec §4.7, "Tenerife"; reference board art/reference/tenerife.md)
+# --- Tenerife (spec §4.7, "Tenerife"; reference board docs/reference/tenerife.md)
 # Free-ride starts in the package's metres (origin 28.29 N 16.52 W), the clock
 # fixed on 13 November 2026 (Atlantic/Canary, WET: sunrise 07:36, sunset 18:16)
 # so the light is the same on every render.

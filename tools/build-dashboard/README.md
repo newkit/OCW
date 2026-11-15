@@ -63,8 +63,11 @@ directory, never in the repository).
   dry-run mode, would delete, and why) and the recent log entries; the size
   of `test-output/` on this machine (never deleted).
 - **Art project:** the last run of the hourly art collector
-  (`scripts/art-collect.sh`, `art/ART-PROJECT.md` §5.1), from the newest
-  `test-output/build-log/DAY/art.json` of the main checkout: time, status
+  (`collect.sh` of the art project's own repository
+  [OCW-ART](https://github.com/newkit/OCW-ART), its `ART-PROJECT.md` §5.1;
+  installed there with `make install-timer`), from the newest
+  `test-output/build-log/DAY/art.json` of the main checkout, where the
+  collector still writes its status: time, status
   (ok / failed / locked), new files, media of today, the mask check and
   any errors; "late" when no run ended for 2.5 h (or a run never ended).
   Also in `--once` and `/api/status` (`art`).
@@ -358,7 +361,7 @@ a login, once: `sudo loginctl enable-linger $USER`. Remove it with
 - **Restart and memory cap:** `Restart=on-failure` (after 10 s), and
   `MemoryHigh=768M` / `MemoryMax=1G` (it needs under 400 MB). This is the
   follow-up of the 2026-11-15 incident, when the OOM killer stopped the
-  dashboard while deb ran out of memory (`art/build-history/2026-11-15/incidents.md`).
+  dashboard while deb ran out of memory (OCW-ART's `build-history/2026-11-15/incidents.md`).
   The OOM kill then took it down, and the systemd restart brought it back.
 - **Changing the unit:** the running unit changes only after a reinstall:
   `make dashboard-install` (it copies the unit again, then daemon-reload and

@@ -433,56 +433,24 @@ clean: ## Remove build artefacts
 clean-test-output: ## Delete the archived screenshots and videos in test-output/
 	rm -rf test-output
 
-# Art project: the OCW Build Diary (art/ART-PROJECT.md). DAY=YYYY-MM-DD;
-# without DAY: every day (gather/publish) or every day with a script (render).
-ART_PYTHON ?= $(firstword $(wildcard /usr/bin/python3.13 /usr/bin/python3.12 /usr/bin/python3.11 /usr/bin/python3) python3)
-
-art-gather: ## Art: collect the day's images/videos/sounds/logs and write its journal (DAY=YYYY-MM-DD)
-	$(ART_PYTHON) art/diary.py gather $(DAY)
-	$(ART_PYTHON) art/diary.py journal $(DAY)
-
-art-sheets: ## Art: contact sheets of the day's media for writing art/days/DAY.toml
-	$(ART_PYTHON) art/diary.py sheet $(DAY)
-
-art-render: ## Art: render the day video(s) from art/days/*.toml
-	$(ART_PYTHON) art/diary.py render $(DAY)
-
-art-diary: ## Art: join all day videos into the diary video
-	$(ART_PYTHON) art/diary.py diary
-
-art-publish: ## Art: upload day zips and videos to the GitHub release build-history
-	$(ART_PYTHON) art/diary.py publish $(DAY)
-
-art-collect: ## Art: one run of the hourly collector now (gather + journal of yesterday and today, mask check; DAY=… for other days)
-	scripts/art-collect.sh $(DAY)
-
-art-check: ## Art: fail if a tracked text file of art/build-history/ holds a private pattern (FIX=1 masks them)
-	$(ART_PYTHON) art/diary.py check-masked $(if $(FIX),--fix)
-
-test-art: ## Art: unit tests of art/diary.py, art/music.py and scripts/art-collect.sh (fixture archive; local Python, no Rust build)
-	$(ART_PYTHON) -m unittest discover -s art -p 'test_*.py'
-
-ART_UNITS = ocw-art-collect.service ocw-art-collect.timer
+# Art project: the OCW Build Diary moved to its own repository on 2026-11-15,
+# https://github.com/newkit/OCW-ART (a checkout next to this one, ../OCW-ART).
+# The old targets only say where they went; art-uninstall-timer still works,
+# to stop a collector timer that was installed from this checkout.
+ART_MOVED = gather sheets render diary publish collect check install-timer timer-status
+OCW_ART ?= $(abspath $(CURDIR)/../OCW-ART)
 USER_UNITS = $(HOME)/.config/systemd/user
 
-art-install-timer: ## Art: install and start the hourly collector as a systemd user timer (this checkout; art/ART-PROJECT.md §5.1)
-	mkdir -p $(USER_UNITS)
-	for u in $(ART_UNITS); do sed 's|@REPO@|$(CURDIR)|g' art/systemd/$$u > $(USER_UNITS)/$$u; done
-	systemctl --user daemon-reload
-	systemctl --user enable --now ocw-art-collect.timer
-	@echo "Art collector: hourly (make art-timer-status); to run without a login: sudo loginctl enable-linger $$USER"
+$(addprefix art-,$(ART_MOVED)) test-art:
+	@t='$@'; t=$${t#art-}; [ "$$t" != test-art ] || t=test; \
+	  echo "The art project moved to https://github.com/newkit/OCW-ART: run 'make $$t' in its checkout ($(OCW_ART))." >&2; exit 1
 
-art-uninstall-timer: ## Art: stop and remove the hourly collector's systemd user timer
+art-uninstall-timer: ## Art: stop and remove the art collector's systemd user timer (the collector lives in OCW-ART now)
 	-systemctl --user disable --now ocw-art-collect.timer
 	-systemctl --user stop ocw-art-collect.service
 	rm -f $(USER_UNITS)/ocw-art-collect.service $(USER_UNITS)/ocw-art-collect.timer
 	systemctl --user daemon-reload
-
-art-timer-status: ## Art: the collector timer's next/last run and the last run's status file
-	-systemctl --user list-timers --all 'ocw-art-*'
-	@-systemctl --user --no-pager status ocw-art-collect.service 2>/dev/null | head -n 5
-	@f=$$(ls -1 test-output/build-log/*/art.json 2>/dev/null | sort | tail -n 1); \
-	  if [ -n "$$f" ]; then echo "Last run ($$f):"; cat "$$f"; else echo "No collector run yet (test-output/build-log/DAY/art.json)."; fi
+	@echo "Removed. Install it from OCW-ART: make -C $(OCW_ART) install-timer"
 
 dashboard-install: ## Install and start the build dashboard as a systemd user service (port 8765, starts at login)
 	mkdir -p $(HOME)/.config/systemd/user

@@ -457,14 +457,14 @@ function renderJanitor(j, now) {
 }
 
 // Art project: the hourly collector's last run (test-output/build-log/DAY/art.json,
-// art/ART-PROJECT.md §5.1). `undefined`: the dashboard does not look (hidden).
+// OCW-ART's ART-PROJECT.md §5.1). `undefined`: the dashboard does not look (hidden).
 function renderArt(a) {
   const el = $("art");
   if (a === undefined) { el.style.display = "none"; return; }
   el.style.display = "";
   if (!a) {
     el.innerHTML = `<h2>Art project <span class="badge warn">no run yet</span></h2>` +
-      `<div class="empty">The hourly collector has not run yet (make art-install-timer).</div>`;
+      `<div class="empty">The hourly collector has not run yet (make install-timer in OCW-ART).</div>`;
     return;
   }
   const ok = a.status === "ok" && !a.late;
@@ -476,7 +476,7 @@ function renderArt(a) {
   if (a.sheets) bits.push("contact sheets");
   let html = `<h2>Art project <span class="badge ${ok ? "ok" : "warn"}">${esc(a.status || "?")}${a.late ? " · late" : ""}</span></h2>` +
     `<div class="line">${bits.join(" · ")}</div>`;
-  if (a.late) html += `<div class="line warnt">No collector run for over 2.5 h: check the timer (make art-timer-status).</div>`;
+  if (a.late) html += `<div class="line warnt">No collector run for over 2.5 h: check the timer (make timer-status in OCW-ART).</div>`;
   for (const e of a.errors || []) html += `<div class="cmd">${esc(e)}</div>`;
   el.innerHTML = html;
 }
