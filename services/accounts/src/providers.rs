@@ -224,6 +224,14 @@ type StravaClient = oauth2::Client<
     oauth2::EndpointNotSet,
     oauth2::EndpointSet,
 >;
+/// The same before its endpoints are set (`Client::new`).
+type StravaClientNew = oauth2::Client<
+    oauth2::basic::BasicErrorResponse,
+    StravaTokenResponse,
+    oauth2::basic::BasicTokenIntrospectionResponse,
+    oauth2::StandardRevocableToken,
+    oauth2::basic::BasicRevocationErrorResponse,
+>;
 
 /// Strava's scope separator is a comma.
 pub const STRAVA_SCOPE: &str = "read";
@@ -247,7 +255,7 @@ impl Strava {
 
     fn client(&self) -> Result<StravaClient, String> {
         Ok(
-            StravaClient::new(oauth2::ClientId::new(self.cfg.client_id.clone()))
+            StravaClientNew::new(oauth2::ClientId::new(self.cfg.client_id.clone()))
                 .set_client_secret(oauth2::ClientSecret::new(self.cfg.client_secret.clone()))
                 .set_auth_uri(
                     oauth2::AuthUrl::new(self.cfg.authorize_url.clone())
@@ -280,8 +288,8 @@ impl Upstream for Strava {
 
     fn start(&self, req: &StartRequest<'_>, _now: i64) -> Result<String, String> {
         let state = req.state.to_owned();
-        let mut auth = self
-            .client()?
+        let client = self.client()?;
+        let mut auth = client
             .authorize_url(move || oauth2::CsrfToken::new(state))
             .add_scope(oauth2::Scope::new(self.scope()))
             .add_extra_param("approval_prompt", "auto");
@@ -307,7 +315,7 @@ impl Upstream for Strava {
             .map_err(|wait| {
                 format!(
                     "Strava is busy (rate limit): try again in {} min",
-                    wait.div_ceil(60)
+                    (wait + 59) / 60
                 )
             })?;
         let hook = |h: &http::HeaderMap| {
@@ -319,9 +327,8 @@ impl Upstream for Strava {
         };
         let hook_ref: crate::http::HeaderHook<'_> = &hook;
         let http_client = |r: oauth2::HttpRequest| crate::http::call(r, Some(hook_ref));
-        let mut exchange = self
-            .client()?
-            .exchange_code(oauth2::AuthorizationCode::new(code.into()));
+        let client = self.client()?;
+        let mut exchange = client.exchange_code(oauth2::AuthorizationCode::new(code.into()));
         if self.cfg.pkce {
             exchange =
                 exchange.set_pkce_verifier(oauth2::PkceCodeVerifier::new(req.verifier.into()));

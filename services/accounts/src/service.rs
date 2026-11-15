@@ -438,10 +438,11 @@ impl AuthService {
                 }
             }
         }
+        let name = provider.provider();
         match self.start_provider(provider, Target::App(req.clone())) {
             Ok(url) => Authorize::Redirect(url),
             Err(e) => {
-                tracing::warn!(provider = %provider.provider(), error = %e, "provider sign-in failed to start");
+                tracing::warn!(provider = %name, error = %e, "provider sign-in failed to start");
                 Authorize::Redirect(self.error_to_app(&req, "temporarily_unavailable", &e))
             }
         }
