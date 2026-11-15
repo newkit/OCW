@@ -331,6 +331,10 @@ fn setup(
             Transform::default(),
             crate::world::fog(),
             bevy::light::ShadowFilteringMethod::Gaussian,
+            // HDR from the start: the atmosphere (copied from the follow
+            // camera) requires it, and switching later re-specialises every
+            // pipeline of the eye while it runs.
+            bevy::camera::Hdr,
             RenderLayers::from_layers(&[0, VR_LAYER]),
             EyeCamera(i),
         ));
