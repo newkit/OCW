@@ -532,7 +532,7 @@ fn road_style(h: Helmet, skull: Vec3) -> RoadStyle {
                 nape: PI + 0.22,
                 ears: 0.3,
             },
-            lanes: &[0.0, 0.2, 0.38, 0.52, 0.72, 0.86, 1.06, 1.22, FRAC_PI_2],
+            lanes: &[0.0, 0.2, 0.38, 0.52, 0.72, 0.86, 1.06, 1.22, 1.38, FRAC_PI_2],
             cols: 12,
             vents: &[
                 (1, 0.06, 0.3),
@@ -561,7 +561,7 @@ fn road_style(h: Helmet, skull: Vec3) -> RoadStyle {
                 nape: PI + 0.25,
                 ears: 0.3,
             },
-            lanes: &[0.0, 0.2, 0.42, 0.6, 0.85, 1.15, FRAC_PI_2],
+            lanes: &[0.0, 0.2, 0.42, 0.6, 0.85, 1.15, 1.36, FRAC_PI_2],
             cols: 12,
             vents: &[(1, 0.03, 0.2), (3, 0.06, 0.2), (1, 0.8, 0.9)],
         },
@@ -580,7 +580,7 @@ fn road_style(h: Helmet, skull: Vec3) -> RoadStyle {
                 nape: PI + 0.25,
                 ears: 0.3,
             },
-            lanes: &[0.0, 0.2, 0.42, 0.58, 0.82, 0.98, 1.22, FRAC_PI_2],
+            lanes: &[0.0, 0.2, 0.42, 0.58, 0.82, 0.98, 1.2, 1.36, FRAC_PI_2],
             cols: 12,
             vents: &[
                 (1, 0.1, 0.5),
@@ -648,9 +648,10 @@ pub fn tt_grid(skull: Vec3, detail: Detail) -> Grid {
 /// visor round the front below the brow, the face opening and the open
 /// underside down to the neck, two intakes over the brow.
 fn tt_cell(rel: Vec3, hi: bool) -> Cell {
-    if rel.y < -0.052 && rel.z < 0.14 {
+    let front = rel.z < -0.03;
+    if (rel.y < -0.052 && rel.z < 0.14) || (front && rel.y < -0.035) {
         Cell::Skip
-    } else if rel.z < -0.03 && rel.y < 0.06 {
+    } else if front && rel.y < 0.055 {
         Cell::Paint(LENS)
     } else if hi
         && (-0.115..-0.06).contains(&rel.z)
