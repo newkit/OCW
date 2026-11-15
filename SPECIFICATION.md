@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 3.65 – November 2026
+Version 3.66 – November 2026
 
 | Version | Change |
 |---|---|
+| 3.66 | Smooth junctions investigated and planned (bug report by the user, 2026-11-15; §4.8.8). Today there is no junction geometry: each road's strip runs flat across to the vertex, ends square there and overlaps the others, so the strips agree only at the vertex point. Measured on Liechtenstein / Black Forest north / Tenerife: visible steps at T junctions with a median of 0.14 / 0.11 / 0.25 m (> 10 cm at 56 / 52 / 85 %, max 1.8–2.3 m, growing with the grade); z-fighting overlaps at about 70 %; verges on the other road at 53–84 %; wedge gaps at 61–77 % of way splits (the roundabout ring in Vaduz: 66 m²). The plan: junction patches built from the road graph (an outline with kerb arcs, a C1 height field, strips trimmed at the mouths, mitred way splits, ridden heights from the same function, the outline dress, markings at the mouths); the renderer first, with no package rebuild (J1a–J1d); profile reconciliation in the builder (J2); roundabouts and complex junctions (J3). Analysis test `junction_seams`, scenes `junction-*`; open questions §4.8.8 Q1–Q5 |
 | 3.65 | Render distance planned (asked by the user 2026-11-15; §14 Phase 10, 10G): a **slider** for the render distance (1 – 60 km or unlimited; it drives the far plane and fog, trees, house LODs, far terrain and the tile streaming radius) and a **checkbox for a dynamic mode** that steps the distance down and up with the measured frame rate towards a target (−15 % / +10 %, dead band, ignored windows, smooth fog; the slider is the upper limit); HUD and console `view`; open: Q8 (dynamic by default where), Q9 (target frame rate) |
 | 3.64 | Rider status signs planned (asked by the user 2026-11-15; §2.6): **muted voice → big over-ear headphones** on the rider; **in the menu → the rider takes a smartphone from the back jersey pocket, looks at it while riding one-handed, and stores it again** – grab and store animated and visible to everybody (two status flags per rider in the snapshots, animated on every client by `ocw_assets::anim::Animator`; models `wear/headphones.glb`, `props/phone.glb`, a pocket anchor); looks only. Open: §2.6 Q1 (when headphones), Q2 (which screens count as the menu), Q3 (may a rider hide them) |
 | 3.63 | Decision by the user (2026-11-15): Phase 16 Q3 – **BRouter** is the first external route planner; its server is a setting without a default for now (no built-in server); brouter.de checked: GeoJSON API with CORS, so desktop and browser can use it; plan written (`ocw_world::plan`, BRouter client, *Navi → Plan route* in the game before the studio, privacy note, tests) – not started |
@@ -1651,7 +1652,186 @@ Reference photos (Commons links only): `docs/reference/bridges.md`.
 
 With SRTM (before v2.35) the same passes took Liechtenstein from 33.9 % to 3.9 % and the Black Forest from 28.0 % to 4.1 % floating road length. The rest is mostly where the 10 m grid cannot follow (`lower_road_nearby` 2.9 %, hairpins and steep river banks with the sharp DTM): there the road's edge face now reaches the ground as a retaining wall. Build time of the Black Forest package: 228 s, settling 26 s.
 
-**Open:** no structure of the two packages is an arch yet (OSM rarely tags `bridge:material=stone`); junction steps between a wide road drawn flat across and a steep side road remain (a junction surface would fix them, §3.2); `water.river_step` counts natural drops of steep mountain rivers; the grade limits of §4.3 are exceeded by 76 short stretches already before the cleaning (with the DTM).
+**Open:** no structure of the two packages is an arch yet (OSM rarely tags `bridge:material=stone`); junction steps between a wide road drawn flat across and a steep side road remain (measured and planned in §4.8.8); `water.river_step` counts natural drops of steep mountain rivers; the grade limits of §4.3 are exceeded by 76 short stretches already before the cleaning (with the DTM).
+
+#### 4.8.8 Smooth junctions (investigation 2026-11-15, planned)
+
+The user reported this bug on 2026-11-15: "junctions of roads are sometimes not cleanly going into one another but have bumps and quirks – the road segments just seem to be slammed together". This section has the measurements and the plan. Nothing of the plan is built yet.
+
+**How a junction is drawn today (v3.65):**
+
+- **No junction geometry.** Every graph edge becomes road strips (`ocw_worldgen::package::road_strips`), with a point every 5 m at the edge's profile height. Each strip runs **to the graph vertex** and **ends square there**, in the middle of the other road. `ocw-render::road_mesh` draws each strip **flat across**: there is no crossfall, and both edge vertices of a row sit at the centreline height. All strips lie at the same `ROAD_SURFACE_LIFT_M` with no depth offset between them, so the strips of all roads at a junction simply **overlap**.
+- **Heights.**
+  - The profiles of all roads end exactly at the shared vertex height (§4.3 pass 2, `limit_grades_across_junctions`), so they agree **at the vertex point only**.
+  - A metre away, each strip follows its own grade. Inside the main road, the side road's strip rises or falls with the side road's grade (g_side × distance). Across the main road, the flat side strip cannot follow the main road's grade (g_main × the side road's half width).
+  - Junction mouths (§4.8.3, `clean::ease_junction_mouths`) only ease the first 5 m interval of a **narrower** side road, to 0.15 m at the wider road's edge. Roads of equal width (most residential T junctions) and the main road's own grade are not handled.
+- **Verges, kerbs, walls.**
+  - Each strip keeps all its edge parts up to its end: the 3 cm lip, the shoulder (0.4 m wide in the junction zone), the skirt and, in towns, the kerb and sidewalk. Kerbs and sidewalks taper over 3 m into the junction zone (`RoadDress::junction_m`).
+  - Where one strip lies higher, its lip and shoulder (or kerb) lie on the other road's carriageway.
+  - Only sidewalk corners are rounded (`road_corners`, v3.15), and only when two roads **of the same tile** meet 20°–160° apart, both with sidewalks on the facing sides. The carriageway has **no corner radius**, and junctions cut by a tile border get no corner at all.
+- **Markings.** Each strip's longitudinal lines run to its end. A marked side road's lines therefore reach the main road's centre, and the main road's edge line runs across the side road's mouth. Both z-fight with the other strip's asphalt where the heights agree.
+- **Riders** follow the path heights: the edge profiles, blended over the rounded path corner (§5.2 `RidePath::blend_corner_heights`). They do not follow the strip drawn on top. `wheel_contact` already reports residuals "up to 0.2 m where strips overlap at junctions" (v2.47).
+
+**Measurements.** The analysis test `crates/ocw-render/tests/junction_seams.rs` meshes the strips of every junction exactly as the renderer does. It samples the junction disc (widest half width + 2.5 m) every 0.2 m from above and reports:
+
+- *visible step*: the jump of the top surface between neighbouring samples where the top carriageway changes from one road to another;
+- *z-fight*: carriageways of two roads overlapping within 1 cm;
+- *gap*: area inside a road's outline but under no carriageway;
+- *verge on road*: a shoulder, kerb or sidewalk of one road more than 1 cm above another road's carriageway.
+
+The data are the packages of 2026-11-15 on marge: every vertex on the ground, away from the region border. The test is the basis for this plan's regression test.
+
+| | Liechtenstein | Black Forest north | Tenerife |
+|---|---|---|---|
+| T / Y junctions (degree 3) | 3,247 | 39,598 | 30,752 |
+| … visible step: median / p90 / max | 0.14 / 0.48 / 1.84 m | 0.11 / 0.47 / 1.83 m | 0.25 / 0.57 / 2.28 m |
+| … step > 10 cm / > 25 cm / > 50 cm | 56 % / 31 % / 9 % | 52 % / 28 % / 9 % | 85 % / 50 % / 15 % |
+| … z-fighting overlap > 0.5 m² (mean area) | 74 % (3.0 m²) | 70 % (2.7 m²) | 69 % (1.3 m²) |
+| … a verge on the other road's carriageway | 58 % (up to 1.23 m above) | 53 % (1.70 m) | 84 % (2.06 m) |
+| … gap > 0.1 m² | 25 % | 23 % | 24 % |
+| crossings (degree 4): step median / max; z-fight | 0.07 / 0.94 m; 91 % (6.7 m²) | 0.11 / 1.70 m; 84 % (5.4 m²) | 0.31 / 1.74 m; 91 % (2.2 m²) |
+| way splits (degree 2): gap > 0.1 m² (mean / max) | 61 % (1.0 / 29 m²) | 68 % (0.9 / 26 m²) | 77 % (1.6 / 98 m²) |
+| … mean gap by bend: < 10° / 10–30° / 30–60° / > 60° | 0.6 / 1.3 / 1.4 / 2.8 m² | 0.5 / 0.9 / 1.4 / 2.9 m² | 0.7 / 1.5 / 1.9 / 3.7 m² |
+| junctions (degree ≥ 3) by their steepest road: median step at < 3 % / 3–6 / 6–10 / 10–15 / > 15 % | 2 / 17 / 26 / 38 / 53 cm | 3 / 16 / 26 / 38 / 51 cm | 8 / 18 / 28 / 39 / 54 cm |
+
+**Causes, in order of how visible they are:**
+
+1. **Steps.** The strips are drawn flat across, each at its own grade, and overlap inside the junction. The step grows with the grade: 2–3 cm at flat junctions, half a metre where a road climbs at 15 % or more, so hilly Tenerife is worst. Two suspected causes were ruled out: there is no height mismatch at the shared vertex (0 by construction), and no difference in camber (no road has camber).
+2. **Z-fighting.** Where the overlapping strips happen to agree (flat junctions, near the vertex), their asphalt and markings flicker against each other.
+3. **Verges and kerbs on the road.** The higher strip's lip, shoulder, kerb and sidewalk lie on the lower road.
+4. **Wedge gaps.**
+   - Two square strip ends at an angle leave a wedge on the outside of every bend: at way splits and on roundabout rings (the Adlerkreisel in Vaduz: 66 m²).
+   - Where the width changes, the wide road ends in a square shoulder (Avenida de La Galga, Tenerife: 19 m meets 5 m, 93 m²).
+5. **Sharp corners.** The carriageway has no corner radius; sidewalk corners are rounded only within one tile.
+6. **Kinks of a through road at a junction.** The vertical-curvature rule (§4.8.3) holds only *inside* a road, so a through road may change its grade at a junction (Valünastrasse, Liechtenstein: −3 % on one side, 25 % on the other).
+7. **Markings across the junction.** Only 0.5–2 % of junctions have a marked minor road ending in them, because most side roads are unmarked. But every marked main road's edge line crosses the mouths of its side roads.
+
+**Worst cases** (local x, z of the package, OSM ways, and the scenes below):
+
+| Package | Where | Roads | Finding |
+|---|---|---|---|
+| Liechtenstein | x −690.7 z 4555.1 (47.11855, 9.54451), Triesen | Bergstrasse (secondary, 6.5 m, ±7.5 %, w142591590), Sennwisstrasse (residential, +20 %, w329659520) | step 1.10 m, verge 1.0 m above the main road (`junction-bergstrasse-*`) |
+| Liechtenstein | x −697.9 z 4752.4 (47.11677, 9.54442), Triesen | Hagstrasse (+19 % / −9 %, w60827684, w1541258401), Rossbodastrasse (+9 %, w60827687) | step 1.28 m, verge 1.23 m (`junction-hagstrasse-*`) |
+| Liechtenstein | x −1289.5 z −1756.2 (47.17530, 9.53659), Planken road | Planknerstrasse (tertiary, ±12 %, w142596976), track (+12 %, w531242884) | step 1.09 m, 3.4 m² of verge on the road (`junction-planknerstrasse-*`) |
+| Liechtenstein | x 1904.9 z 6340.9 (47.10249, 9.57884), Valüna | Valünastrasse (track, −3 % / −25 %, w439955375), track (+25 %, w1102701128) | step 1.84 m (the worst) |
+| Liechtenstein | x −2484.2 z 2061.0 (47.14098, 9.52079), Vaduz | Adlerkreisel (roundabout, primary, 13 m, w6065796), Lettstrasse (w571067340) | gap 66 m², z-fight 14 m² (`junction-adlerkreisel-*`) |
+| Liechtenstein | x −3348.6 z 9616.2 (47.07303, 9.50936), Balzers | Landstrasse / Gagoz (primary, a way split in a bend, w677315951, w1541432291) | gap 26 m² (`junction-landstrasse-split-*`) |
+| Tenerife | x −1949.7 z −8912.5 (28.37015, −16.53991) | Carretera de las Medianías (tertiary, +2 % / +21 %, w87403847), track (−11 %, w1490975660) | step 2.28 m |
+| Tenerife | x 3139.2 z −13502.1 (28.41143, −16.48794) | Camino la Traviesa (−2 % / −21 %, w549003001), Camino de los Barriales (track, +26 %, w103563688) | step 2.14 m, verge 2.06 m |
+| Black Forest north | x 33155.7 z −90857.1 (48.73710, 8.40493) | Kaltenbronner Straße (secondary, −6 % / +10 %, w1177672294), track (w937097768) | step 1.55 m, verge 1.40 m |
+| Black Forest north | x 5236.4 z −65944.9 (48.51306, 8.03027) | Steiler Weg (track, −6 % / +25 %, w353023495), track (−16 %, w963121757) | step 1.83 m |
+
+Typical T junctions have a median step of 0.14 m in Liechtenstein. Two examples:
+
+- Vorarlberger-Strasse (primary) with Bahnweg, Nendeln (x 100.7 z −5498.0; `junction-vorarlberger-*`);
+- Schalunstrasse with Spoerryweg, Vaduz (x −3116.9 z 488.5; `junction-spoerryweg-*`).
+
+The scenes `junction-*` in `scripts/scenes.toml` are the before / after pictures. Each junction has a `-rider` scene near rider height and a `-drone` scene from a low drone angle. The first set is in `test-output/junctions-investigation/`.
+
+**Design: a junction surface (planned).**
+
+At every junction the strips stop at a **mouth line** a few metres out on each arm. **One surface** fills the junction between the mouths, bounded by the roads' edge lines and rounded corners. Its height field meets every arm's surface with the same height and slope. Nothing overlaps any more, so nothing can step, z-fight or poke through.
+
+- **Junction patch** (`ocw_world::junction`, pure, wasm). It is computed from the road graph, so the server, the client's prediction and the renderer all get the same result. There is one patch for every vertex of degree ≥ 3, and for a degree-2 vertex that bends more than 10° or changes the width.
+  - **Arms:** the incident edges sorted by angle, each with its direction, half width, class and profile.
+  - **Outline:**
+    - Between neighbouring arms, the edge lines (offset centrelines) meet in a **corner arc** tangent to both.
+    - The kerb radius depends on the smaller road's class (proposal, Q4): 8 m for primary / secondary / trunk, 6 m for tertiary / unclassified / residential, 3 m for service / track, 1.5 m for cycleway / path. It gets smaller where the arms are short or nearly parallel, as `road_corners` limits its arcs today.
+    - An arm's **mouth** lies at the farther tangent point of its two corners: at least the widest other arm's half width, at most 25 m and half the edge's length.
+    - Longer junctions, such as 10° forks, fall back to overlapping strips and use only the other parts of this plan.
+  - **Height field:**
+    - Each arm's surface is extended linearly past its mouth, with its height and grade at the mouth, flat across like the strip.
+    - Inside the patch, the extensions are blended by inverse-square distance to the mouth lines (Shepard weights with linear nodal functions). At a mouth the weight of that arm is 1 and its derivatives vanish, so the patch meets each arm **with the same height and slope** (C1): no crease, no step.
+    - Where there is a clear **through road**, the proposal (Q1) is that the **main road keeps its own surface** across the junction: its plane, along its grade. A clear through road means two arms of the highest rank less than 30° from straight; most T junctions and roundabout entries have one.
+    - The side arms meet the main road: from its mouth outwards, a side arm's heights are blended onto the main road's plane over `L = clamp(|Δh| / 0.01 per m, 5 m, 30 m)`, where 0.01 per m is the class's grade-change limit. Real side roads adapt to the main road, not the other way round.
+    - Equal crossings, Y forks and multi-way junctions use the Shepard blend.
+  - **Mesh:**
+    - The patch polygon (corner arcs every 10°, as in `road_corners`) is triangulated with an interior grid of 1 m for the height field.
+    - It is `Kind::Surface` in the main road's surface layer (`RSRF`) and colour.
+    - Its uv runs across / along the main road's axis, so asphalt textures continue.
+    - Its lines code is 0 (markings: see below).
+- **Strips trimmed.**
+  - Every strip ends at its arm's mouth: the carriageway, lip, shoulder, skirt, kerb and sidewalk.
+  - Between the mouth and the end of a side arm's blend, the strip's point heights come from the patch module (re-heighted at load).
+  - Strips are matched to their edge by geometry. The analysis test matched every strip of the three packages (0 unmatched).
+  - A junction near a tile border is drawn **whole** in the tile of its vertex. The strips of the neighbouring tile are trimmed by the same pure function, so there is no seam at the border.
+- **Way splits (degree 2).** **Mitred** strip ends (the last row of each strip lies on the bisector of the two directions) remove the wedge gaps and overlaps of small bends without a patch. Bends over 30° and width changes get a patch, and the width tapers over the patch.
+- **Verges, kerbs, walls.**
+  - The patch outline is just another edge polyline, so it gets the same lip, shoulder, skirt and retaining-wall rules as a strip edge (`road_mesh::shoulder`). Its shoulder continues the arms' shoulders at the mouths.
+  - Where an arm has a sidewalk, the corner arc gets the kerb and the sidewalk as an annular sector. This is today's `road_corners`, now on the carriageway outline and across tile borders.
+  - Kerbs no longer taper into the junction zone; they follow the arc.
+- **Markings.**
+  - The patch carries no longitudinal lines.
+  - The main road's edge lines end at the corner tangent points, so the side road's mouth is open.
+  - The main road's centre line continues across the patch, as in Swiss and German practice for a priority road (Q2).
+  - The side roads' lines end at the mouth.
+  - Stop and give-way lines stay those of OSM (`highway=stop|give_way`, today's overlays), now at the mouth line. Default give-way lines without OSM tags: Q3.
+- **Terrain.** The corner arcs reach beyond the strips' footprint, where the terrain was not settled (§4.8.3). At load, the renderer lowers the terrain mesh under each patch to 5 cm below the surface, as `tunnel_cut` does for tunnels. Later the world builder settles it in the package (J2), and the load-time step goes away.
+- **Roundabouts.**
+  - The ring is the through road at each entry: `junction=roundabout` is one-way, and each entry is a T with the ring as main road. Each entry gets a patch, and the mitred splits close the ring's wedge gaps.
+  - Small roundabouts (outer diameter < 30 m) whose entry patches overlap merge into one patch; the central island stays a hole.
+  - `highway=mini_roundabout` nodes get a painted disc later.
+- **Complex junctions.** Vertices inside one another's patch are clustered into one patch with all their arms: dual carriageways, slip roads, offset T junctions a few metres apart. The short edges between them lie inside the patch.
+- **Performance.**
+  - Patches at degree ≥ 3: about 3,700 in Liechtenstein, 45,000 in the Black Forest north and 35,000 on Tenerife.
+  - A patch has about 100–300 triangles, roughly what the overlapping strip ends had, so the triangle count stays about the same.
+  - Patches are built per tile at load, with the strips. The budget is < 3 ms per tile, measured in J1, so the tile streaming of §4.5 does not stutter.
+
+**Riders and physics.**
+
+- The junction module also gives the **ridden height**. `RidePath` takes its heights inside a patch, and along a side arm's blend, from the same function. The server's 1D physics (§5.2: grade, gravity), the client's prediction and the other riders' copies then agree.
+- The rounded path corner gets the patch's surface instead of `blend_corner_heights`, which stays for corners outside patches.
+- Inside the patch the surface is not flat across, so the rider's height is evaluated at the rider's real position (centreline point + lateral offset), not at the path centre.
+- The physics grade stays the grade along the path centreline. The difference is the patch's cross slope times the offset change per metre, which is negligible.
+- The drawn surface and the ridden height then come from one function, within the 2 mm wheel-contact rule (v2.47), at junctions too.
+
+**Profile reconciliation in the world builder (J2, a package rebuild).** The same patch surfaces are baked into the package:
+
+- the side arms' profiles follow the patch, so the package's road-graph heights are the drawn heights and the load-time re-heighting goes away;
+- the blend replaces `ease_junction_mouths`;
+- the vertical-curvature limit applies across junctions for the through pair, so there are no kinks like Valünastrasse's;
+- the terrain is settled under the patch polygons.
+
+Two optional, additive sections, which older clients skip: `JNCT` (precomputed patch outlines, saves the load time) and `RDGE` (the edge index of every strip, replaces the geometry matching). The format of existing sections does not change.
+
+**Cheaper path first.** J1 changes only the renderer and `ocw-world`, and works with the existing packages without a rebuild: the patches, trims, mitres and ridden heights are pure functions of the package's road graph and strips. J2 only moves work into the builder and fixes the remaining kinks.
+
+**Tests:**
+
+- **`ocw_world::junction` unit tests** on synthetic junctions: a T (main road at 8 %, side road at 20 %), an equal crossing, a 20° Y, a roundabout entry, a hairpin split, a width change. They check that:
+  - the outline is closed and simple;
+  - every mouth matches its arm within 1 mm in height and 0.5 % in slope;
+  - the patch and the trimmed strips do not overlap (area < 0.01 m²);
+  - heights stay between the arms' extremes;
+  - the result is the same for any edge order.
+- **`ocw-render` tests:** trimmed strips and patch meshes in the road vertex format; the patch outline's shoulder meets the arms' shoulders.
+- **`junction_seams`** (this analysis) becomes the regression test over the test packages (`OCW_JUNCTION_WORLD`). Today 56 % of Liechtenstein's T junctions have steps above 10 cm. The test requires, at every junction:
+  - no visible step above 2 cm;
+  - no z-fighting overlap;
+  - no gap over 0.05 m²;
+  - no verge on a carriageway.
+
+  A synthetic package of junction types runs without the real packages (CI).
+- **`wheel_contact`:** riders go straight on, turn left and turn right through junctions of the synthetic package and of Liechtenstein (the worst cases above). The tyres stay within 2 mm of the drawn patch, and `RidePath` heights equal the patch heights at every sample.
+- **`world-builder lint`:** `junction.seam` replaces `junction.surface_step` and measures the drawn surfaces, as the test does. J2's packages report 0.
+- **Scenes** `junction-*` before / after, on X11 and Wayland.
+
+**Milestones:**
+
+- **J1a – mitred way splits** (renderer only): closes the wedge gaps of degree-2 vertices below 30°.
+- **J1b – junction patches** (`ocw_world::junction`, renderer): outline, height field, mesh, strip trimming and re-heighting, tile borders; `junction_seams` asserts.
+- **J1c – ridden heights:** `RidePath`, the server and the prediction take heights from the patches; `wheel_contact` at junctions.
+- **J1d – outline dress:** shoulders, kerbs and sidewalks on the outline (replacing `road_corners`), markings at the mouths, terrain lowered under the patches at load.
+- **J2 – world builder:** profiles reconciled, terrain settled, no kinks across junctions, `JNCT` / `RDGE`, lint; rebuild and deploy all packages (Q5).
+- **J3 – roundabouts and complex junctions:** merged patches, clusters, mini-roundabout discs.
+
+**Open questions:**
+
+- **Q1 – Who keeps the height at a junction:** proposal – where there is a clear through road, the **main road keeps its own surface**, and the side roads adapt to it over 5–30 m, as real roads are built. A blended surface only at equal crossings, forks and multi-way junctions. Alternative: always the blended surface; the main road then gets a slight hump or dip at steep side roads.
+- **Q2 – The main road's centre line through a junction:** proposal – it **continues** across the junction (priority road), the edge lines break at the side roads' mouths, and the side roads' lines end at the mouth. Alternative: no lines at all inside the junction.
+- **Q3 – Give-way lines without OSM tags:** proposal – **only where OSM tags them** (`highway=stop|give_way`, as now). Alternative: a dashed give-way line on every marked side road that joins a marked priority road.
+- **Q4 – Kerb radii of the corners:** proposal – by the smaller road's class: 8 m for primary / secondary / trunk, 6 m for tertiary / unclassified / residential, 3 m for service / track, 1.5 m for cycleway / path. For comparison, urban junctions in Germany and Switzerland are designed with 6–12 m radii for cars.
+- **Q5 – Package rebuild for J2:** proposal – rebuild and deploy all packages (Liechtenstein, the three Black Forest packages, Tenerife) once J2 is checked. Until then J1 runs on the current packages.
 
 ---
 
