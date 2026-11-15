@@ -581,19 +581,12 @@ pub const SETTINGS: &[SettingDef] = &[
     },
 ];
 
-/// Settings the browser app does not have (spec §14 Phase 10, B6): god
-/// mode's (the unicorn flies only on the desktop so far), the window's
-/// fullscreen (the browser has its own), the random start and real
-/// weather at the start (the in-browser local server cannot fetch the
-/// providers yet).
-const NOT_IN_BROWSER: &[&str] = &[
-    "controls.invert_y",
-    "controls.god_flight",
-    "display.unicorn_trail",
-    "display.fullscreen",
-    "ride.random_start",
-    "weather.real",
-];
+/// Settings the browser app does not have (spec §14 Phase 10, B6): the
+/// window's fullscreen (the browser has its own), the random start and
+/// real weather at the start (the in-browser local server cannot fetch the
+/// providers yet). God mode's settings apply in both apps since Phase 13
+/// G5 (v3.37).
+const NOT_IN_BROWSER: &[&str] = &["display.fullscreen", "ride.random_start", "weather.real"];
 
 /// Whether `key` takes effect on `platform` (the menu hides the others,
 /// `get` lists only these, `set` keeps the rest without applying it).

@@ -634,7 +634,7 @@ fn register_commands(app: &mut App) {
             ))
         },
     ))
-    // `rider.gps` is shared (ocw_render::console, spec 3.39).
+    // `rider.gps` is shared (ocw_render::console, spec 3.40).
     .console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("rider.steer")

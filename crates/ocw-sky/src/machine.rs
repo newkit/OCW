@@ -324,7 +324,7 @@ mod tests {
     use super::*;
     use crate::time::utc_midnight;
 
-    /// Tab completion's words (spec 3.39) are the parser's.
+    /// Tab completion's words (spec 3.40) are the parser's.
     #[test]
     fn completions_parse() {
         let first = completions(&[]);

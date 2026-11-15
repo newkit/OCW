@@ -44,6 +44,12 @@
 //! screenshots, videos and the ride's FIT file are downloads named with
 //! the time.
 //!
+//! **Unicorn mode (Phase 13 G5):** the desktop's god mode, shared as
+//! `ocw_ui::god` – G (or World → Unicorn mode) flies, + / − by what the
+//! key types, the gamepad, touch on the left half, the inspection (I, P),
+//! the mouse look in the page's Pointer Lock ([`god`]); a shared ride
+//! keeps the server's rules (the host flies).
+//!
 //! **Worlds over HTTP (B2):** `?world=liechtenstein&route=vaduz-malbun`
 //! streams a world package from the server ([`world`]): manifest and
 //! signature chain, then the base and the tiles around the rider with
@@ -60,6 +66,7 @@ mod browser_devices;
 #[cfg(target_arch = "wasm32")]
 mod browser_voice;
 pub mod devices;
+pub mod god;
 pub mod plugin;
 pub mod session;
 pub mod settings;
@@ -296,7 +303,7 @@ pub fn parse_query(query: &str, dev_page: bool) -> (SessionConfig, Vec<String>) 
     }
     // A geographic origin for the test route (`origin=LAT,LON`): its
     // metres get a place on the globe, as a route file's have – the GPS
-    // line, the sun and the FIT track follow (spec 3.39; the browser
+    // line, the sun and the FIT track follow (spec 3.40; the browser
     // test's GPS check).
     if world.is_none()
         && let Some((_, value)) = pairs.iter().find(|(k, _)| k == "origin")
@@ -564,11 +571,20 @@ pub fn page_menu() -> String {
 
 /// `window.ocw.consoleState()`: the console (open, input line, completion
 /// candidates, selected, the last log lines) and the HUD's GPS line as
-/// JSON (spec 3.39).
+/// JSON (spec 3.40).
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen(js_name = consoleState)]
 pub fn page_console_state() -> String {
     ui::console_json()
+}
+
+/// `window.ocw.god()`: unicorn mode as JSON (phase, pointer, position,
+/// height, the inspection's panel and crosshair, pins; Phase 13 G5 – the
+/// browser test flies with it).
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(js_name = god)]
+pub fn page_god() -> String {
+    god::god_json()
 }
 
 /// `window.ocw.setting(key)`: a setting's value as text ("" for an unknown
@@ -643,7 +659,7 @@ mod tests {
         let (c, w) = parse_query("bots=500&power=-3&route=moon&x=1&start=nan&ftp=9", false);
         assert_eq!(w.len(), 6, "{w:?}");
         assert_eq!((c.bots, c.power_w, c.start_m), (5, 200.0, 0.0));
-        // A geographic origin for the test route (the GPS line, spec 3.39).
+        // A geographic origin for the test route (the GPS line, spec 3.40).
         let (c, w) = parse_query("route=loop&origin=47.13996,9.52151", false);
         assert!(w.is_empty(), "{w:?}");
         assert_eq!(c.route.geo_origin(), Some((47.13996, 9.52151)));

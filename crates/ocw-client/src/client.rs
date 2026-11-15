@@ -321,7 +321,7 @@ impl ClientCore {
             .expect("two distinct points");
             // The placeholder keeps the package's geographic origin: the
             // GPS line, the FIT track and the sun need it (it was lost
-            // here from fae1547 to spec 3.39: no GPS line in route rides).
+            // here from fae1547 to spec 3.40: no GPS line in route rides).
             self.route = match self.route.geo_origin() {
                 Some(origin) => route.with_geo_origin(origin),
                 None => route,
@@ -3589,7 +3589,7 @@ mod tests {
         }
     }
 
-    /// Regression (spec 3.39): `with_route_plan` replaced the route with a
+    /// Regression (spec 3.40): `with_route_plan` replaced the route with a
     /// placeholder without the package's geographic origin (since
     /// fae1547), so route rides on world packages – desktop `--world PKG
     /// --route NAME`, the browser's `?world=…&route=…` – had no GPS line.

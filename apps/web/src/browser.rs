@@ -340,3 +340,12 @@ fn loading_screen(stream: Option<Res<WorldStream>>, mut shown: Local<Option<Stri
     }
     *shown = Some(text);
 }
+
+/// Whether the page holds the Pointer Lock (`document.pointerLockElement`;
+/// unicorn mode's mouse look, spec §14 Phase 13 G5).
+pub fn pointer_locked() -> bool {
+    web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| Reflect::get(&d, &"pointerLockElement".into()).ok())
+        .is_some_and(|e| !e.is_null() && !e.is_undefined())
+}

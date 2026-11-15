@@ -1362,7 +1362,7 @@ mod tests {
         assert_eq!(super::small_chars_for(10.0), 10);
     }
 
-    /// Regression (spec 3.39): the GPS line shows while the view has a
+    /// Regression (spec 3.40): the GPS line shows while the view has a
     /// position and the line is on, bottom left under the elevation
     /// profile, and hides without a position.
     #[test]

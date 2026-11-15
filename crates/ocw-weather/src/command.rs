@@ -451,7 +451,7 @@ pub fn completions(before: &[&str]) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    /// Tab completion's words (spec 3.39) are the parser's: each one, with
+    /// Tab completion's words (spec 3.40) are the parser's: each one, with
     /// a value where it needs one, parses.
     #[test]
     fn completions_parse() {

@@ -940,7 +940,7 @@ pub(crate) mod tests {
         m
     }
 
-    /// Tab after `world switch` (spec 3.39): the ids `switch_choice`
+    /// Tab after `world switch` (spec 3.40): the ids `switch_choice`
     /// takes, and the test routes.
     #[test]
     fn world_switch_completes_to_ids_and_test_routes() {

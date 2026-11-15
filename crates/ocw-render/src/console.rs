@@ -1161,7 +1161,7 @@ mod tests {
         );
     }
 
-    /// The GPS line's commands (shared by both apps since spec 3.39):
+    /// The GPS line's commands (shared by both apps since spec 3.40):
     /// `hud.gps` switches the line, `rider.gps` prints the position.
     #[test]
     fn gps_commands() {

@@ -11,16 +11,20 @@ parity), used by scripts/test-web.py after the ride:
 - Captures → Screenshot and → Download this ride (FIT): the downloads
   (saved through CDP's download behaviour) are a JPEG with EXIF and a
   FIT file; a short video (MediaRecorder) is a WebM download;
+- unicorn mode (spec §14 Phase 13 G5): G flies, + climbs (by the
+  `KeyboardEvent.key`), I hides / shows the inspection, P puts a pin, Esc
+  opens the menu in flight (World → Unicorn mode), G lands;
 - the changed setting survives a reload (localStorage);
-- the console's Tab completion (spec 3.39): the real Tab / Shift+Tab keys
+- the console's Tab completion (spec 3.40): the real Tab / Shift+Tab keys
   complete, list and cycle (`window.ocw.consoleState()`), with the shared
   value providers (weather presets, setting keys);
-- the GPS line (spec 3.39; test-web.py gives the test route a geographic
+- the GPS line (spec 3.40; test-web.py gives the test route a geographic
   origin, `origin=`): shown in the HUD, `rider.gps`, `hud.gps off / on`.
 
 Screenshots: BASE-menu.jpg, -settings.jpg, -weather.jpg, -hud.jpg,
--console.jpg, -gps.jpg, -riders.jpg, -gamepad.jpg. Each check is a (name,
-ok, detail) row in the summary.
+-console.jpg, -gps.jpg, -riders.jpg, -gamepad.jpg, -unicorn-flight.jpg,
+-unicorn-inspect.jpg, -unicorn-menu.jpg. Each check is a (name, ok,
+detail) row in the summary.
 """
 
 import json
@@ -36,6 +40,12 @@ KEYS = {
     "ArrowRight": ("ArrowRight", 39, ""),
     "Tab": ("Tab", 9, ""),
     "Shift": ("ShiftLeft", 16, ""),
+    # Unicorn mode (spec §14 Phase 13 G5): G, I, P by position, + by what
+    # it types (the US `=` key typing "+": `KeyboardEvent.key`).
+    "g": ("KeyG", 71, "g"),
+    "i": ("KeyI", 73, "i"),
+    "p": ("KeyP", 80, "p"),
+    "+": ("Equal", 187, "+"),
 }
 
 # The standard mapping's buttons.
@@ -134,7 +144,7 @@ class UiTest:
         return st
 
     def tab_completion(self):
-        """The console's Tab completion with the real keys (spec 3.39)."""
+        """The console's Tab completion with the real keys (spec 3.40)."""
         self.console("console input hud.")
         st = self.wait_console(lambda s: s.get("open") and s.get("input") == "hud.")
         self.check("console: `console input` opens it with the line", st.get("input") == "hud.", st.get("input"))
@@ -170,7 +180,7 @@ class UiTest:
         self.check("console: Esc closes it", not st.get("open"), st.get("open"))
 
     def gps_line(self):
-        """The HUD's GPS line on a route with a geographic origin (spec 3.39)."""
+        """The HUD's GPS line on a route with a geographic origin (spec 3.40)."""
         st = self.wait_console(lambda s: s.get("gps"))
         gps = st.get("gps") or ""
         self.check("hud: the GPS line shows (lat, lon, altitude)",
@@ -187,6 +197,35 @@ class UiTest:
         st = self.wait_console(lambda s: s.get("gps"))
         self.check("hud: hud.gps on shows it again", bool(st.get("gps")), st.get("gps"))
         self.shot("gps")
+
+    def hold(self, name, seconds):
+        """Holds a key down for `seconds` (the flight's + climbs while held)."""
+        code, vk, text = KEYS[name]
+        down = {"type": "keyDown", "key": name, "code": code,
+                "windowsVirtualKeyCode": vk, "nativeVirtualKeyCode": vk}
+        if text:
+            down["text"] = text
+        self.cdp.call("Input.dispatchKeyEvent", down)
+        self.pump(seconds)
+        self.cdp.call("Input.dispatchKeyEvent", {
+            "type": "keyUp", "key": name, "code": code,
+            "windowsVirtualKeyCode": vk, "nativeVirtualKeyCode": vk})
+        self.pump(0.2)
+
+    def god(self):
+        raw = self.cdp.eval("window.ocw && window.ocw.god ? window.ocw.god() : ''")
+        try:
+            return json.loads(raw) if raw else {}
+        except ValueError:
+            return {}
+
+    def wait_god(self, pred, timeout=10.0):
+        end = time.time() + timeout
+        g = self.god()
+        while time.time() < end and not pred(g):
+            self.pump(0.1)
+            g = self.god()
+        return g
 
     def menu(self):
         raw = self.cdp.eval("window.ocw && window.ocw.menu ? window.ocw.menu() : ''")
@@ -288,6 +327,77 @@ class UiTest:
             self.pump(0.2)
         return None, None
 
+    # ------------------------------------------------------------ unicorn mode
+
+    def god_part(self, height=None):
+        """Unicorn mode (spec §14 Phase 13 G5): G flies, + climbs, I hides and
+        shows the inspection, P puts a pin, Esc (after the pointer) opens the
+        menu with World → Unicorn mode, G lands. `height`: first put the
+        unicorn that high above the ground (a dev command; the world test's
+        view over the town). Screenshots -unicorn-flight, -unicorn-inspect,
+        -unicorn-menu."""
+        self.cdp.eval("document.getElementById('ocw-canvas').focus()")
+        # The package's geographic origin reaches the browser's route ride
+        # (spec 3.40): the HUD's GPS line while riding.
+        st = self.wait_console(lambda s: s.get("gps"), timeout=5.0)
+        gps = st.get("gps") or ""
+        self.check("hud: the GPS line on the package's route (its geographic origin)",
+                   "° N" in gps and "° E" in gps, gps)
+        g = self.god()
+        self.check("unicorn: riding before G", g and not g.get("active"), g)
+        self.key("g")
+        g = self.wait_god(lambda g: g.get("flying"))
+        self.check("unicorn: G flies (World → Unicorn mode's key)", g.get("flying"), g)
+        if not g.get("flying"):
+            return
+        if height:
+            self.console(f"god.pose here here {height}")
+            self.pump(1.0)
+        y0 = (self.god().get("pos") or [0, 0, 0])[1]
+        self.hold("+", 2.5)
+        g = self.god()
+        y1 = (g.get("pos") or [0, 0, 0])[1]
+        self.check("unicorn: + climbs (by KeyboardEvent.key)", y1 > y0 + 5.0,
+                   f"{y0:.1f} → {y1:.1f} m, {g.get('height_m')} m above ground")
+        self.check("unicorn: the pointer (Pointer Lock or freed when the browser refused it)",
+                   "captured" in g, g.get("captured"))
+        # The inspection: shown by default; I hides it, I shows it again.
+        self.wait_god(lambda g: g.get("panel"), timeout=3.0)
+        self.key("i")
+        hidden = self.wait_god(lambda g: not g.get("panel"), timeout=3.0)
+        self.check("unicorn: I hides the inspection", not hidden.get("panel"), hidden.get("panel"))
+        self.shot("unicorn-flight")
+        self.key("i")
+        g = self.wait_god(lambda g: g.get("panel") and g.get("crosshair"), timeout=3.0)
+        panel = g.get("panel") or []
+        self.check("unicorn: I opens the inspection (panel and crosshair)",
+                   any(str(l).startswith("Position x") for l in panel) and g.get("crosshair"),
+                   (panel[:3], g.get("crosshair")))
+        self.check("unicorn: the inspection shows latitude / longitude (the package's origin)",
+                   any("°" in str(l) and ("N" in str(l) or "S" in str(l)) for l in panel), panel)
+        self.key("p")
+        g = self.wait_god(lambda g: g.get("pins", 0) >= 1, timeout=3.0)
+        self.check("unicorn: P puts a pin", g.get("pins", 0) >= 1, g.get("pins"))
+        self.shot("unicorn-inspect")
+        # Esc: the first may only free the pointer (and the browser ends a
+        # Pointer Lock itself); then the menu, World → Unicorn mode.
+        for _ in range(3):
+            self.key("Escape")
+            if self.wait_menu(lambda m: m.get("open"), timeout=1.5).get("open"):
+                break
+        m = self.menu()
+        self.check("unicorn: Esc opens the menu in flight", m.get("open"), m.get("title"))
+        ok = self.open_item("World", "World")
+        item = self.focus_item("Unicorn mode")
+        m = self.menu()
+        self.check("menu: World → Unicorn mode", ok and item is not None,
+                   m.get("items"))
+        self.shot("unicorn-menu")
+        self.close_menu()
+        self.key("g")
+        g = self.wait_god(lambda g: not g.get("active"), timeout=15.0)
+        self.check("unicorn: G lands on the road", not g.get("active") and g.get("pos") is None, g)
+
     # ------------------------------------------------------------ the part
 
     def run(self, reload_and_wait):
@@ -363,7 +473,7 @@ class UiTest:
         hud_log = "\n".join(self.lines[-80:])
         self.check("hud: the damage rule is on", "error: ride.damage" not in hud_log, None)
 
-        # The GPS line and the console's Tab completion (spec 3.39).
+        # The GPS line and the console's Tab completion (spec 3.40).
         self.gps_line()
         self.tab_completion()
 
@@ -446,6 +556,9 @@ class UiTest:
                    d is not None and d["name"].startswith("ocw-20") and size > 1000,
                    (rec_s, d, size))
 
+        # Unicorn mode (Phase 13 G5).
+        self.god_part()
+
         # The setting survives a reload (localStorage).
         units = self.setting("display.units")
         reload_and_wait()
@@ -464,3 +577,16 @@ def run(cdp, base, lines, out_dir, reload_and_wait):
         t.check("ui part ran", False, repr(e))
         ok = False
     return {"ok": ok, "checks": t.checks, "screenshots": t.shots, "downloads": t.downloads}
+
+
+def run_god(cdp, base, lines, out_dir, height=None):
+    """Only the unicorn-mode part (the world test: `scripts/test-web.py
+    --world … --god`, flying over the world's town)."""
+    t = UiTest(cdp, base, lines, out_dir)
+    try:
+        t.god_part(height=height)
+    except Exception as e:  # noqa: BLE001 – reported
+        t.check("unicorn part ran", False, repr(e))
+    ok = all(c["ok"] for c in t.checks) and bool(t.checks)
+    return {"ok": ok, "checks": t.checks, "screenshots": t.shots, "downloads": t.downloads}
+
