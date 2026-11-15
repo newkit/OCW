@@ -112,8 +112,9 @@ bots and the virtual trainer as on the desktop. The page can stream a
 **world package over HTTP** (B2), join an `ocw-server` session over
 **WebTransport** together with desktop and bot riders (B3), connect
 trainers and sensors over **Web Bluetooth** (B4), play the game sound and
-join voice calls (B5), and has the desktop's menus, settings, captures and
-gamepad support (B6). It draws with **WebGPU**, or with **WebGL 2** where
+join voice calls (B5), has the desktop's menus, settings, captures and
+gamepad support (B6), and flies in **Unicorn mode** like the desktop
+(Phase 13 G5). It draws with **WebGPU**, or with **WebGL 2** where
 WebGPU is missing (B7). There is no public hosting yet (B8): you build it
 and serve it yourself, as below.
 
@@ -151,7 +152,8 @@ and serve it yourself, as below.
   Without the WebGPU flags the page falls back to the WebGL 2 build. Without
   `--enable-experimental-web-platform-features` there is no Web Bluetooth,
   and you ride with virtual power. Windows, macOS, ChromeOS and Android have
-  both without flags.
+  both without flags. The browser tests use a pinned Chromium of their own
+  (`make deps-browser`, see [Testing the browser app](#testing-the-browser-app)).
 
 #### 2. Build
 
@@ -160,8 +162,24 @@ make deps-web    # once: wasm-bindgen-cli matching Cargo.lock
 make web         # both builds into target/web/ (scripts/build-web.sh)
 ```
 
-`make web` builds the `web` profile (release, size-optimised, thin LTO) twice,
-because Bevy picks WebGPU or WebGL 2 when it is compiled:
+**Building on a build machine.** In this project builds run on the build
+machines (`config/machines.toml`, see [Build servers](#build-servers)),
+not on the machine you sit at. There, instead of the two lines above:
+
+```bash
+make web-remote MACHINE=marge            # make deps-web + make web there, the page fetched into target/web/ here
+make web-remote MACHINE=marge WORLDS=1   # also make web-worlds there (step 5), with the worlds and target/web-keys/root.hex
+```
+
+`make web-remote` (`scripts/web-remote.sh`) runs the build with
+`scripts/remote.sh MACHINE run`, then fetches only what the page loads: the
+files in the table below and, when the machine has published worlds,
+`target/web/worlds/` and the dev root's public key (the private keys stay
+there). Then `make web-serve` (step 3) serves it here. Without a build,
+`make web-serve` stops and says to run `make web` or `make web-remote`.
+
+`make web` builds the `web-release` profile (release, size-optimised, thin
+LTO) twice, because Bevy picks WebGPU or WebGL 2 when it is compiled:
 
 | File in `target/web/` | What it is |
 |---|---|
@@ -191,6 +209,10 @@ for stack traces. A new build keeps the published worlds in
 make web-serve                 # http://127.0.0.1:8080/ (WEB_PORT=8090 for another port)
 ```
 
+`make web-serve` needs a build in `target/web/` (step 2). Without one it
+stops with the commands to run, instead of answering every page with
+"404 File not found".
+
 Open <http://127.0.0.1:8080/> (or `http://localhost:8080/`), then click into
 the page or press a key to start the sound. `make web-serve` runs
 `scripts/web-serve.py`. It serves `target/web/` with what the app needs:
@@ -217,10 +239,14 @@ but streaming worlds needs range requests.
   ```bash
   ssh -N -L 8080:127.0.0.1:8080 USER@BUILD-MACHINE     # then open http://localhost:8080/ here
   ```
-  `scripts/web-serve.py --bind 0.0.0.0` serves the LAN directly, but a
-  page opened as `http://ADDRESS:8080/` is not a secure context. It loads
-  the WebGL 2 build and rides solo with virtual power, without trainers,
-  multiplayer or the world cache. Chromium's
+  `make web-serve WEB_BIND=0.0.0.0` (`scripts/web-serve.py --bind
+  0.0.0.0`) serves the LAN directly. It prints a warning and this
+  machine's LAN URLs (`http://ADDRESS:8080/?route=hills`). A page opened by
+  a LAN address is not a secure context: it loads the WebGL 2 build and
+  rides solo with virtual power, without trainers (Web Bluetooth),
+  multiplayer (WebTransport) or the world cache. The world trust options
+  work only on localhost pages, so streamed worlds do not load there
+  either: use the SSH tunnel above for them. Chromium's
   `--unsafely-treat-insecure-origin-as-secure=http://ADDRESS:8080` (also
   under `chrome://flags`) is meant to lift that, but it has not been tried
   with OCW yet, and the world trust options still work only on localhost.
@@ -291,6 +317,14 @@ there. Only the tiles around the rider stay in memory.
 make web-worlds    # publish data/pilot/liechtenstein.ocwpkg into target/web/worlds/
 make web-serve     # prints a link per world, with the dev root's key
 ```
+
+The package comes from the world build (*Routes and worlds* under [Riding
+modes](#riding-modes): `scripts/fetch-pilot.sh` and
+`scripts/build-liechtenstein.sh`, on a build machine). It is not in git
+(`data/` is git-ignored). A git worktree finds it in the main checkout's
+`data/pilot/`. On a machine without a local build, `make web-remote
+MACHINE=marge WORLDS=1` publishes the build machine's package there and
+fetches the worlds and the key.
 
 `make web-worlds` (`scripts/publish-web-worlds.sh PKG...`;
 `WEB_WORLD_PKGS="a.ocwpkg b.ocwpkg"` for others) builds `world-builder`,
@@ -442,6 +476,30 @@ survive reloads. Clearing the site's data resets them.
 with the page focused, so the browser shows the pad. The mapping is the
 desktop's (see [Connecting a gamepad](#connecting-a-gamepad)).
 
+#### Unicorn mode in the browser
+
+The desktop's god mode is the same code in the page (`ocw_ui::god`): **G**
+(or *World → Unicorn mode*) turns the rider into the unicorn, **G** again
+lands on the road below, **Shift + G** flies back to the take-off spot. The
+keys are the desktop's (see [Controls](#controls)): ↑ / ↓ faster / slower,
+← / → bank, **+ / −** climb and descend – matched by the character the key
+types (the browser's `KeyboardEvent.key`), so they work on a German or any
+other layout – Shift boost, Ctrl precise, the wheel the speed, **C** first
+person, **I** the inspection (panel and crosshair), **P** a pin
+(`god.pins` lists them), **L** looks ahead again. Gamepads fly as on the
+desktop (Select + North toggles), and on a touch screen a finger on the left
+half steers, one on the right half looks, the **+ / −** buttons climb.
+
+The mouse looks around in the browser's **Pointer Lock**: the page asks for
+it when the flight starts (the key or click that started it is the user
+gesture the browser wants). **Esc** ends the lock (the browser does that
+itself), the next Esc opens the menu, a click locks the pointer again. If
+the browser refuses the lock, hold the left button to look. While flying,
+the trainer rides a flat road, and in a shared ride (WebTransport) the
+server's rules apply as on the desktop: by default only the host flies.
+The settings (*Settings → Controls*: invert Y, plane or hover; *Display*:
+the rainbow trail) and the `god …` console commands are the desktop's.
+
 #### Graphics: WebGPU, WebGL 2 and the quality presets
 
 The WebGL 2 build draws the same world with what WebGL 2 lacks degraded:
@@ -462,9 +520,19 @@ desktop app (see [Settings](#settings-and-rider-profiles)).
 
 #### Testing the browser app
 
-The browser tests start headless Chromium (on the build machines: Chromium
-156 on Vulkan), serve `target/web/` on a free local port, and drive the page
-over the DevTools protocol. They need no extra Python packages. Each
+The browser tests start headless Chromium, serve `target/web/` on a free
+local port, and drive the page over the DevTools protocol. They need no
+extra Python packages. The browser is a **pinned Chromium build**:
+`make deps-browser` (`scripts/web_browser.py fetch`) downloads open-source
+Chromium 157.0.8103.0 (BSD-3-Clause; Chromium's snapshot builds, revision
+1717344) for Linux x64, macOS arm64 or Windows x64, checks it against the
+SHA-256 in `scripts/browsers.json` and unpacks it into
+`~/.cache/ocw/browsers/chromium-157.0.8103.0/` (no sudo). The tests take
+`OCW_BROWSER` (a path) first, then the pinned build, then the system's
+`chromium` (with a warning); `--chromium PATH` overrides all of them.
+`python3 scripts/web_browser.py version` says which one they get. On the
+build machines it draws with WebGPU on Vulkan, or with WebGL 2 through
+ANGLE on Vulkan. Each
 target but `test-web-build` runs `make web` first (and `make web-worlds`,
 or the server and bot builds, where it needs them). Screenshots, logs and JSON summaries go to
 `test-output/web/` (`web-<time>.jpg`, `.log`, `.json`, and per part
@@ -472,10 +540,12 @@ or the server and bot builds, where it needs them). Screenshots, logs and JSON s
 
 | Target | What it checks |
 |---|---|
+| `make deps-browser` | Not a test: downloads the tests' pinned Chromium (above) |
 | `make test-web-build` | Both builds compile for wasm32 (part of `make check`) |
-| `make test-web` | WebGPU: load, ride, the menus by keyboard and a fake gamepad, settings over a reload, the screenshot / video / FIT downloads, fps |
+| `make test-web` | WebGPU: load, ride, the menus by keyboard and a fake gamepad, settings over a reload, the screenshot / video / FIT downloads, Unicorn mode (G, + climbs, the inspection, a pin, the menu row, landing), fps |
 | `make test-web-webgl2` | Chromium without WebGPU: the page falls back to the WebGL 2 build and rides. Then WebGPU High against WebGL 2 Low in the same view, and the Graphics page |
 | `make test-web-world` | Liechtenstein streamed from the dev server, a teleport, then a reload from the browser cache |
+| `make test-web-unicorn` | Unicorn mode over Vaduz (Liechtenstein streamed): fly up, the inspection, a pin, the menu row, landing (`--god`) |
 | `make test-web-multiplayer` | `ocw-server` and `ocw-bot` riders, the browser over WebTransport, 30 s |
 | `make test-web-ble` | A fake Web Bluetooth trainer and strap: connect, power, SIM / ERG writes, a drop, a reload, no Bluetooth |
 | `make test-web-ble-emulation` / `test-web-ble-real` | Chromium's own Web Bluetooth with a simulated KICKR / the real trainer in range (`BLE_DEVICE=KICKR`) |
@@ -483,8 +553,10 @@ or the server and bot builds, where it needs them). Screenshots, logs and JSON s
 | `make test-web-voice` | `ocw-server` with voice tokens and the Echo rider, a fake LiveKit in the page: call, mute, drop, rejoin, echo test |
 | `make test-web-livekit` | Two browser riders in a real `livekit-server --dev` room: they see and hear each other, mute. It needs `livekit-server` (v1.13.10) on the PATH or in `~/.local/bin` (`LIVEKIT_SERVER=PATH`). Without it the part is skipped |
 
+| `make test-web-readme` | This section as a new user follows it: in a fresh copy of the current commit, `make web-serve` without a build must fail with the message, then `make deps-web`, `make web`, `make web-worlds`, `make web-serve` and every URL of steps 3 – 5 (the real key for the placeholder and the example key, the one-liner's URLs, the links `make web-serve` prints) in the pinned browser: HTTP 200, the app starts, the ride moves, the expected GPU build, no HTTP errors. Then `WEB_BIND=0.0.0.0`: the warning, the LAN URLs, the WebGL 2 build by LAN address. One screenshot per URL and `verdict.json` in `test-output/web/readme-<time>/`. The world package is linked from the build machine's `data/pilot/` instead of being built. Takes about 20 minutes (a full build) |
+
 `scripts/test-web.py --help` lists the options (`--query`, `--world`,
-`--gpu`, `--software` for SwiftShader without a GPU, `--no-ui`).
+`--gpu`, `--software` for SwiftShader without a GPU, `--no-ui`, `--god`).
 
 #### Limitations today
 
@@ -495,7 +567,8 @@ or the server and bot builds, where it needs them). Screenshots, logs and JSON s
 - No hosting or domain yet (B8): you serve the page yourself. Multiplayer
   takes the server's self-signed certificate by hash, renewed every 11
   days.
-- No god mode (unicorn) in the browser.
+- Unicorn mode's touch controls are untried on real phones and tablets,
+  and so is the Pointer Lock in Safari and Firefox.
 - The workshop and the character editor are locked: browser riders are
   anonymous ("log in to customize") and ride the plain grey bike and kit
   until accounts come (Phase 5). Their damage is not kept.

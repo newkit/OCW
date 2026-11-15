@@ -40,6 +40,9 @@ import tempfile
 import threading
 import time
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import web_browser  # noqa: E402  (scripts/web_browser.py: the pinned browser)
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -177,12 +180,17 @@ def main():
     p.add_argument("--time", default="noon",
                    help="the time machine once the browser joined (console `time …`; the server "
                         "runs with --time-control anyone), '' for the real time")
-    p.add_argument("--chromium", default=shutil.which("chromium") or "chromium")
+    p.add_argument("--chromium", default=None,
+                   help="the browser (default: OCW_BROWSER, else the pinned Chromium of `make deps-browser`,"
+                        " else the system's chromium; scripts/web_browser.py)")
     p.add_argument("--size", default="1280x720")
     p.add_argument("--software", action="store_true")
     a = p.parse_args()
-    for f in (os.path.join(a.dir, "ocw_web_bg.wasm"), os.path.join(a.bin, "ocw-server"),
-              os.path.join(a.bin, "ocw-bot")):
+    a.chromium = a.chromium or web_browser.find()
+    missing = tw.web_serve().missing_build(a.dir, ["ocw_web_bg.wasm"])
+    if missing:
+        sys.exit(missing)
+    for f in (os.path.join(a.bin, "ocw-server"), os.path.join(a.bin, "ocw-bot")):
         if not os.path.exists(f):
             sys.exit(f"{f} missing: run `make web` and `cargo build --release -p ocw-server -p ocw-bot`")
     os.makedirs(a.out, exist_ok=True)
@@ -194,7 +202,8 @@ def main():
     info_file = os.path.join(work, "web.json")
     # The bots ride until the server shuts down (then they report).
     bot_seconds = 0
-    summary = {"ok": False, "seconds": a.seconds, "riders": a.riders}
+    summary = {"ok": False, "seconds": a.seconds, "riders": a.riders,
+               "browser": web_browser.describe(a.chromium)}
     lines = []
     procs = []
     server = bots = wt_bot = None

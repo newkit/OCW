@@ -66,6 +66,9 @@ import tempfile
 import threading
 import time
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import web_browser  # noqa: E402  (scripts/web_browser.py: the pinned browser)
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -566,12 +569,16 @@ def main():
     p.add_argument("--bin", default="target/release", help="where ocw-server and ocw-bot are")
     p.add_argument("--part", default="all", choices=["audio", "voice", "livekit", "all"])
     p.add_argument("--livekit-server", default="livekit-server")
-    p.add_argument("--chromium", default=shutil.which("chromium") or "chromium")
+    p.add_argument("--chromium", default=None,
+                   help="the browser (default: OCW_BROWSER, else the pinned Chromium of `make deps-browser`,"
+                        " else the system's chromium; scripts/web_browser.py)")
     p.add_argument("--size", default="1280x720")
     p.add_argument("--software", action="store_true")
     a = p.parse_args()
-    if not os.path.exists(os.path.join(a.dir, "ocw_web_bg.wasm")):
-        sys.exit(f"{a.dir}/ocw_web_bg.wasm missing: run `make web`")
+    a.chromium = a.chromium or web_browser.find()
+    missing = tw.web_serve().missing_build(a.dir, ["ocw_web_bg.wasm"])
+    if missing:
+        sys.exit(missing)
     parts = ["audio", "voice", "livekit"] if a.part == "all" else [a.part]
     if any(x in parts for x in ("voice", "livekit")):
         for b in ("ocw-server", "ocw-bot"):
@@ -611,7 +618,8 @@ def main():
         lines.extend(r.lines)
     httpd.shutdown()
     ok = all(checks.values())
-    result = {"ok": ok, "checks": checks, "parts": summary, "errors": errors}
+    result = {"ok": ok, "checks": checks, "parts": summary, "errors": errors,
+              "browser": web_browser.describe(a.chromium)}
     base = os.path.join(a.out, f"web-audio-{stamp}")
     with open(base + ".log", "w") as f:
         f.write("\n".join(lines) + "\n\n--- summary ---\n" + json.dumps(result, indent=2) + "\n")

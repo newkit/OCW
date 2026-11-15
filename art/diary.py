@@ -17,12 +17,21 @@
     art/diary.py diary              chain all day videos into the diary video
     art/diary.py publish [DAY...]   zip the day folders and upload zips and
                                     videos to the release `build-history`
+                                    (--videos: only the videos and SHA256SUMS)
     art/diary.py all     [DAY...]   gather + journal + render + diary
     art/diary.py collect [--sheets|--no-sheets] [DAY...]
                                     the hourly collector (scripts/art-collect.sh):
                                     gather + journal of yesterday and today, the
                                     mask check, contact sheets in the 23:xx run;
                                     status in test-output/build-log/DAY/art.json
+    art/diary.py agent-event --task T --branch B --event E [--agent ID]
+                 [--commits C] [--note N] [--time ISO] [--day DAY]
+                                    append an agent job event (E: started,
+                                    reported, interrupted, resumed, merged,
+                                    abandoned) to test-output/build-log/DAY/
+                                    agents.jsonl, masked (the coordinator)
+    art/diary.py agent-backfill DAY  the day's agent jobs from git (merged
+                                    agent branches) and the incident log
     art/diary.py check-masked [--fix]
                                     fail if a tracked text file of the archive
                                     (index.md, SHA256SUMS, DAY/journal.*,
@@ -68,6 +77,12 @@ OLD_HIST = ROOT / "artwork" / "build-history"
 OUT = HIST / "diary"
 WORK = HIST / ".work"
 TEST_OUTPUT = Path(os.environ.get("OCW_TEST_OUTPUT") or ROOT / "test-output")
+# The agent worktrees, whose test-output/ gather collects too. With
+# OCW_TEST_OUTPUT (tests) only that folder is a source, unless
+# OCW_ART_WORKTREES names a worktrees folder ("" = none).
+_wt = os.environ.get("OCW_ART_WORKTREES")
+WORKTREES = (Path(_wt) if _wt else None) if _wt is not None else (
+    None if os.environ.get("OCW_TEST_OUTPUT") else ROOT / ".claude" / "worktrees")
 FONTS = ROOT / "crates" / "ocw-render" / "assets" / "fonts"
 RELEASE = "build-history"
 
@@ -220,7 +235,7 @@ def day_number(day: str) -> int:
 # Text files of the archive that are tracked in git (ART-PROJECT §2): always
 # written masked; everything else in the archive is git-ignored.
 TRACKED_TOP = ("index.md", "SHA256SUMS")
-TRACKED_DAY = ("journal.md", "journal.json", "tokens.json")
+TRACKED_DAY = ("journal.md", "journal.json", "tokens.json", "incidents.md")
 
 
 def tracked_files() -> list[Path]:
@@ -304,7 +319,8 @@ def slug(s: str) -> str:
 def sources() -> list[Path]:
     """Every checkout's test-output (main + agent worktrees)."""
     out = [TEST_OUTPUT]
-    out += sorted((ROOT / ".claude" / "worktrees").glob("*/test-output"))
+    if WORKTREES is not None:
+        out += sorted(WORKTREES.glob("*/test-output"))
     return [p for p in out if p.is_dir()]
 
 
@@ -475,6 +491,24 @@ PRIVATE_IP_RE = re.compile(
 _SECRETS: list[tuple[str, str]] | None = None
 
 
+def machines_conf() -> Path | None:
+    """config/machines.toml of this checkout, else of the main checkout (an
+    agent worktree has none; scripts/remote.sh looks there too). Running in
+    a worktree without this fallback once wrote journals without the users
+    masked (2026-11-15)."""
+    for root in (ROOT, main_checkout()):
+        if root is not None and (root / "config" / "machines.toml").is_file():
+            return root / "config" / "machines.toml"
+    return None
+
+
+def main_checkout() -> Path | None:
+    r = run(["git", "-C", ROOT, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            capture_output=True, text=True, check=False)
+    common = r.stdout.strip()
+    return Path(common).parent if r.returncode == 0 and common else None
+
+
 def _secrets() -> list[tuple[str, str]]:
     """(text, replacement) pairs: every build machine's host (replaced by the
     machine's name) and user ("user"; asked from scripts/remote.sh, which
@@ -484,8 +518,15 @@ def _secrets() -> list[tuple[str, str]]:
     if _SECRETS is not None:
         return _SECRETS
     out = []
-    conf = ROOT / "config" / "machines.toml"
-    names = re.findall(r'^\s*name\s*=\s*"([^"]+)"', conf.read_text(), re.M) if conf.exists() else []
+    conf = machines_conf()
+    if conf is None:
+        if os.environ.get("OCW_ART_NO_MACHINES") != "1":
+            raise SystemExit("config/machines.toml not found (here or in the main checkout): without it the "
+                             "build machines' hosts and users cannot be masked (ART-PROJECT §2.5). "
+                             "OCW_ART_NO_MACHINES=1 masks without them (tests only).")
+        names = []
+    else:
+        names = re.findall(r'^\s*name\s*=\s*"([^"]+)"', conf.read_text(), re.M)
     for name in names:
         for k in ("host", "user"):
             v = run([ROOT / "scripts" / "remote.sh", name, "field", k], capture_output=True,
@@ -853,12 +894,375 @@ def builds_of(day: str) -> dict:
     }
 
 
+# --------------------------------------------------------------- incidents
+#
+# The incident log (ART-PROJECT §2.6): what went wrong on the build
+# infrastructure, collected every hour into test-output/build-log/DAY/
+# incidents.jsonl (time, kind, source, machine, text; masked) from the
+# journal of this machine (OOM kills, failed and restarted units, read-only)
+# and from the build log (machines offline / online, disks over 90 %,
+# janitor deletions, failed remote.sh runs); plus the coordinator's
+# root-cause notes in art/build-history/DAY/incidents.md (tracked, masked).
+
+INCIDENTS_NAME = "incidents.jsonl"
+DISK_FULL_PCT = 90.0
+JOURNAL_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\S*\s+(\S+)\s+([^:]+):\s+(.*)$")
+JOURNAL_GREP = r"OOM killer|Killed process|Out of memory|Failed with result|Scheduled restart job"
+
+
+def _unit_label(unit: str) -> str:
+    """A unit's name for the log: tmux-spawn-<uuid>.scope → tmux scope."""
+    if unit.startswith("tmux-spawn-"):
+        return "tmux scope (a terminal session)"
+    return unit
+
+
+def parse_journal(lines, host="deb") -> list[dict]:
+    """Incidents from `journalctl -o short-iso` lines: OOM kills, failed and
+    restarted units. Each OOM kill of a unit is listed once per minute."""
+    out, seen = [], set()
+    for line in lines:
+        m = JOURNAL_RE.match(line.strip())
+        if not m:
+            continue
+        ts, _host, ident, msg = m.groups()
+        time_ = ts[11:19]
+        k = re.search(r"(?:Out of memory: )?Killed process (\d+) \(([^)]*)\)", msg)
+        if k and ident.startswith("kernel"):
+            kind, text = "oom-kill", f"kernel OOM killer killed {k.group(2)} (pid {k.group(1)})"
+        else:
+            u = re.match(r"(\S+\.(?:service|scope|timer)): (.*)$", msg)
+            if not u:
+                continue
+            unit, rest = u.groups()
+            label = _unit_label(unit)
+            if "killed by the OOM killer" in rest:
+                kind, text = "oom-kill", f"OOM killer stopped {label}"
+            elif rest.startswith("Failed with result"):
+                res = re.search(r"'([^']+)'", rest)
+                res = res.group(1) if res else "?"
+                if res == "oom-kill" or not unit.startswith("ocw-"):
+                    continue  # an OOM kill is already listed; only our own units fail loudly
+                kind, text = "unit-failed", f"{label} failed ({res})"
+            elif rest.startswith("Scheduled restart job"):
+                n = re.search(r"counter is at (\d+)", rest)
+                kind, text = "unit-restart", f"{label} restarted" + (f" (restart {n.group(1)})" if n else "")
+            else:
+                continue
+        key = (kind, text, time_[:5])
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"time": time_, "kind": kind, "source": "journal", "machine": host, "text": text})
+    return out
+
+
+def journal_lines(day: str) -> list[str]:
+    """This machine's journal of the day (user and system, read-only),
+    filtered to the incident messages. Empty where journalctl is missing
+    or OCW_ART_JOURNAL=0 (tests)."""
+    if os.environ.get("OCW_ART_JOURNAL") == "0":
+        return []
+    nxt =(dt.date.fromisoformat(day) + dt.timedelta(days=1)).isoformat()
+    lines = []
+    for scope in (["--user"], []):
+        try:
+            r = run(["journalctl", *scope, "--since", f"{day} 00:00:00", "--until", f"{nxt} 00:00:00",
+                     "-o", "short-iso", "--no-pager", "-q", "--grep", JOURNAL_GREP],
+                    capture_output=True, text=True, check=False, timeout=60)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        lines += r.stdout.splitlines()
+    return lines
+
+
+def _jsonl(path: Path) -> list[dict]:
+    out = []
+    if path.exists():
+        for line in path.read_text(errors="replace").splitlines():
+            try:
+                out.append(json.loads(line))
+            except ValueError:
+                pass
+    return out
+
+
+def build_log_incidents(day: str, build_log: Path) -> list[dict]:
+    """Incidents from the day's build log: machines going offline / online,
+    disks over 90 %, janitor deletions, failed remote.sh runs (a count)."""
+    out, online, full = [], {}, set()
+    for s_ in _jsonl(build_log / "servers.jsonl"):
+        t = str(s_.get("time", ""))[11:19]
+        for m in (s_.get("status") or {}).get("machines", []) or []:
+            name, on = m.get("name", "?"), bool(m.get("online"))
+            if online.get(name, True) != on:
+                out.append({"time": t, "kind": "machine-offline" if not on else "machine-online",
+                            "source": "dashboard", "machine": name,
+                            "text": f"{name} {'unreachable' if not on else 'back online'}"
+                                    + (f" ({mask(str(m.get('error')))[:60]})" if not on and m.get("error") else "")})
+            online[name] = on
+            for d in m.get("disks") or []:
+                key, pct = (name, d.get("name")), d.get("pct")
+                if pct is None:
+                    continue
+                if pct >= DISK_FULL_PCT and key not in full:
+                    full.add(key)
+                    out.append({"time": t, "kind": "disk-full", "source": "dashboard", "machine": name,
+                                "text": f"disk {d.get('name')} on {name} at {pct:.0f} %"})
+                elif pct < DISK_FULL_PCT - 5:
+                    full.discard(key)
+    for e in _jsonl(build_log / "janitor.jsonl"):
+        size = e.get("bytes") or 0
+        out.append({"time": str(e.get("time", ""))[11:19], "kind": "janitor-delete", "source": "janitor",
+                    "machine": e.get("machine", "?"),
+                    "text": f"janitor {e.get('action', 'deleted')} {e.get('path', '')} ({size / 1e9:.1f} GB)"})
+    failed = [r for r in _jsonl(build_log / "runs.jsonl") if r.get("exit", 0) != 0]
+    if failed:
+        per = {}
+        for r in failed:
+            per[r.get("machine", "?")] = per.get(r.get("machine", "?"), 0) + 1
+        out.append({"time": str(failed[-1].get("start", ""))[11:19], "kind": "runs-failed", "source": "remote.sh",
+                    "machine": ", ".join(sorted(per)),
+                    "text": f"{len(failed)} failed remote.sh runs ("
+                            + ", ".join(f"{k} {v}" for k, v in sorted(per.items())) + ")"})
+    return out
+
+
+def incidents(day: str, journal_text: list[str] | None = None) -> list[dict]:
+    """Collects the day's incidents into test-output/build-log/DAY/incidents.jsonl
+    (rewritten, masked) and returns them."""
+    build_log = TEST_OUTPUT / "build-log" / day
+    lines = journal_lines(day) if journal_text is None else journal_text
+    out = parse_journal(lines) + build_log_incidents(day, build_log)
+    out.sort(key=lambda e: e["time"])
+    secrets = _secrets()
+    text = "".join(mask(json.dumps(e, ensure_ascii=False), secrets) + "\n" for e in out)
+    build_log.mkdir(parents=True, exist_ok=True)
+    (build_log / INCIDENTS_NAME).write_text(text)
+    log(f"{day}: {len(out)} incidents")
+    return [json.loads(x) for x in text.splitlines()]
+
+
+def incidents_of(day: str) -> dict:
+    """The day's incidents for the journal: the collected ones (test-output,
+    else the archive's copy) and the coordinator's notes (incidents.md)."""
+    auto = _jsonl(TEST_OUTPUT / "build-log" / day / INCIDENTS_NAME)
+    if not auto:
+        auto = _jsonl(HIST / day / "logs" / "build-log" / INCIDENTS_NAME)
+    notes_p = HIST / day / "incidents.md"
+    notes = mask(notes_p.read_text(errors="replace")) if notes_p.exists() else ""
+    heads = [h.strip("# ").strip() for h in notes.splitlines() if h.startswith("## ")]
+    return {"auto": auto, "notes": notes, "noted": heads}
+
+
+# ---------------------------------------------------------------- features
+#
+# The features log (ART-PROJECT §2.7): the spec rows added on the day, the
+# merge that landed each, its check run on marge (build log), the deploys
+# (deploys.jsonl, scripts/deploy-test.sh) and releases (gh, skipped when it
+# fails or OCW_ART_GH=0); the agent jobs from the coordinator's
+# test-output/build-log/DAY/agents.jsonl. Pure parts in art/features.py.
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import features as F  # noqa: E402
+
+
+def git_out(*args) -> str:
+    r = run(["git", "-C", ROOT, *args], capture_output=True, text=True, check=False)
+    return r.stdout if r.returncode == 0 else ""
+
+
+def _next_day(day: str) -> str:
+    return (dt.date.fromisoformat(day) + dt.timedelta(days=1)).isoformat()
+
+
+_BRANCHES: dict = {}
+
+
+def branch_of(sha: str) -> str | None:
+    """The agent branch (worktree-agent-…) holding a merge's second parent."""
+    if sha in _BRANCHES:
+        return _BRANCHES[sha]
+    names = [b.strip() for b in git_out("branch", "--format=%(refname:short)", "--contains", sha).splitlines()
+             if b.strip().startswith("worktree-agent-")]
+    full = git_out("rev-parse", sha).strip()
+    tips = [b for b in names if git_out("rev-parse", b).strip() == full]
+    # Every branch made from main later contains the commit too; the owner
+    # has it on its own first-parent chain.
+    own = tips or [b for b in names if full in git_out("rev-list", "--first-parent", b).split()]
+    _BRANCHES[sha] = (own or [None])[0]
+    return _BRANCHES[sha]
+
+
+def releases_of(day: str) -> list[dict]:
+    if os.environ.get("OCW_ART_GH") == "0":
+        return []
+    try:
+        r = run(["gh", "release", "list", "-R", "newkit/OCW", "--limit", "50", "--json",
+                 "tagName,name,publishedAt,isPrerelease"], capture_output=True, text=True, check=False, timeout=30)
+        rel = json.loads(r.stdout) if r.returncode == 0 else []
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return []
+    out = []
+    for x in rel:
+        t = F.when(x.get("publishedAt") or "")
+        if t and t.astimezone().strftime("%Y-%m-%d") == day:
+            out.append({"tag": x.get("tagName"), "name": x.get("name"), "time": t.astimezone().isoformat(),
+                        "prerelease": x.get("isPrerelease")})
+    return out
+
+
+def features_for(day: str) -> dict:
+    """The day's features (spec rows with their merges and checks), deploys
+    and releases. Empty parts where git or the build log have nothing."""
+    nxt = _next_day(day)
+    c0 = git_out("rev-list", "-1", "--first-parent", f"--before={day} 00:00:00", "HEAD").strip()
+    c1 = git_out("rev-list", "-1", "--first-parent", f"--before={nxt} 00:00:00", "HEAD").strip()
+    if not c1 or c1 == c0:
+        feats, merges = [], []
+    else:
+        rng = f"{c0}..{c1}" if c0 else c1
+        start = F.spec_rows(git_out("show", f"{c0}:SPECIFICATION.md")) if c0 else {}
+        end = F.spec_rows(git_out("show", f"{c1}:SPECIFICATION.md"))
+        log = git_out("log", "--first-parent", "--reverse", "-p", "--diff-merges=first-parent",
+                      f"--format={F.COMMIT_MARK}%x1f%H%x1f%h%x1f%aI%x1f%P%x1f%s", rng, "--", "SPECIFICATION.md")
+        feats = F.features_of(F.parse_spec_log(log), start, end)
+        merges = sorted(git_out("log", "--first-parent", "--merges", "--format=%aI", rng).split())
+    bl = TEST_OUTPUT / "build-log" / day
+    runs = _jsonl(bl / "runs.jsonl")
+    for f in feats:
+        if not f["merge"]:
+            continue
+        p2 = f["parents"][1]
+        f["branch"] = branch_of(p2)
+        until = next((m for m in merges if m > f["time"]), None)
+        chk = F.find_check(runs, f["time"], f["branch"], [f["sha"], p2], until)
+        if chk and chk.get("log") and (bl / chk["log"]).exists():
+            chk.update(F.parse_test_results((bl / chk["log"]).read_text(errors="replace")))
+        f["check"] = chk
+    for f in feats:
+        f.pop("parents", None)
+    return {"features": feats, "deploys": _jsonl(bl / "deploys.jsonl"), "releases": releases_of(day)}
+
+
+def agents_path(day: str) -> Path:
+    return TEST_OUTPUT / "build-log" / day / "agents.jsonl"
+
+
+def agent_event(day: str, task: str, branch: str, event: str, agent: str | None = None, commits: str = "",
+                note: str = "", time_: str | None = None) -> dict:
+    """Appends one agent event to the day's agents.jsonl (masked)."""
+    if event not in F.EVENTS:
+        raise SystemExit(f"event: one of {', '.join(F.EVENTS)}")
+    e = {"time": time_ or dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+         "agent_id_short": F.agent_id(branch, agent), "task": task, "branch": branch, "event": event,
+         "commits": commits, "note": note}
+    path = agents_path(day)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    line = mask(json.dumps(e, ensure_ascii=False))
+    with open(path, "a") as f:
+        f.write(line + "\n")
+    return json.loads(line)
+
+
+def agent_backfill(day: str) -> list[dict]:
+    """The day's agent jobs from git (merged agent branches: first and last
+    commit, the merge) and the incident log (an OOM kill of the coordinator's
+    session interrupts the jobs running then); replaces earlier backfilled
+    lines of agents.jsonl."""
+    nxt = _next_day(day)
+    c0 = git_out("rev-list", "-1", "--first-parent", f"--before={day} 00:00:00", "HEAD").strip()
+    c1 = git_out("rev-list", "-1", "--first-parent", f"--before={nxt} 00:00:00", "HEAD").strip()
+    rng = f"{c0}..{c1}" if c0 else c1
+    kills = [e for e in _jsonl(TEST_OUTPUT / "build-log" / day / INCIDENTS_NAME)
+             if e.get("kind") == "oom-kill" and "tmux" in str(e.get("text"))]
+    note = "backfilled from git"
+    out = []
+    for line in git_out("log", "--first-parent", "--merges", "--reverse", "--format=%H%x1f%h%x1f%aI%x1f%P%x1f%s",
+                        rng).splitlines():
+        full, short, iso, parents, subject = line.split("\x1f")
+        p1, p2 = parents.split()[:2]
+        # A branch that moved on (fast-forwarded to main) owns nothing any more:
+        # the job is still listed, under its merge.
+        branch = branch_of(p2) or f"merge-{short}"
+        times = sorted(git_out("log", "--format=%aI", f"{p1}..{p2}").split())
+        if not times:
+            continue
+        task = re.sub(r"^Merge (branch '[^']*' into \S+|)", "", subject).strip(" :") or branch
+        task = task[:100]
+        ev = [("started", times[0], ""), ("reported", times[-1], "")]
+        for k in kills:
+            kt = f"{day}T{k['time']}"
+            if times[0][:19] < kt < iso[:19]:
+                after = [t for t in times if t[:19] > kt]
+                ev.append(("interrupted", kt, "OOM kill of the coordinator session (incidents.md)"))
+                if after:
+                    ev.append(("resumed", after[0], ""))
+        ev.append(("merged", iso, ""))
+        for event, t, n in sorted(ev, key=lambda x: x[1][:19]):
+            out.append({"time": t, "agent_id_short": F.agent_id(branch), "task": task, "branch": branch,
+                        "event": event, "commits": short if event == "merged" else "",
+                        "note": "; ".join(x for x in (note, n) if x)})
+    # Agent branches not merged (yet) with commits of the day: still running,
+    # reported, or left; interrupted when they span the OOM kill.
+    done = {e["branch"] for e in out}
+    for b in git_out("for-each-ref", "--format=%(refname:short)", "refs/heads/worktree-agent-*").split():
+        if b in done:
+            continue
+        times = sorted(t for t in git_out("log", "--format=%aI", f"HEAD..{b}").split() if t[:10] == day)
+        if not times:
+            continue
+        subj = git_out("log", "-1", "--no-merges", "--format=%s", f"HEAD..{b}").strip()[:100] or b
+        ev = [("started", times[0], ""), ("reported", times[-1], "")]
+        for k in kills:
+            kt = f"{day}T{k['time']}"
+            if times[0][:19] < kt:
+                after = [t for t in times if t[:19] > kt]
+                ev.append(("interrupted", kt, "OOM kill of the coordinator session (incidents.md)"))
+                if after:
+                    ev.append(("resumed", after[0], ""))
+        for event, t, n in sorted(ev, key=lambda x: x[1][:19]):
+            out.append({"time": t, "agent_id_short": F.agent_id(b), "task": subj, "branch": b, "event": event,
+                        "commits": git_out("rev-parse", "--short", b).strip() if event == "reported" else "",
+                        "note": "; ".join(x for x in (note, "not merged yet", n) if x)})
+    path = agents_path(day)
+    keep = [e for e in _jsonl(path) if not str(e.get("note", "")).startswith(note)]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    secrets = _secrets()
+    path.write_text("".join(mask(json.dumps(e, ensure_ascii=False), secrets) + "\n" for e in keep + out))
+    log(f"{day}: {len(out)} backfilled agent events ({len(set(e['branch'] for e in out))} jobs)")
+    return out
+
+
+def incident_text(j: dict, at: str, text: str | None = None) -> str:
+    """The text of an incident card: `text`, else the root-cause note whose
+    heading starts with the time `at`, else the first collected incident at
+    that time."""
+    if text:
+        return text
+    inc = j.get("incidents") or {}
+    for h in inc.get("noted") or []:
+        if h.startswith(at):
+            return h[len(at):].strip(" –-:")
+    for e in inc.get("auto") or []:
+        if str(e.get("time", "")).startswith(at):
+            return e["text"]
+    return "something went wrong"
+
+
 def journal(day: str) -> dict:
     commits = commits_of(day)
     builds = builds_of(day)
     ps = prompts(day)
     tk = tokens(day)
     media = media_of(day)
+    inc = incidents_of(day)
+    try:
+        feat = features_for(day)
+    except Exception as e:  # the journal never fails on the features log
+        log(f"{day}: features log skipped ({type(e).__name__}: {e})")
+        feat = {"features": [], "deploys": [], "releases": []}
+    jobs = F.agent_jobs(_jsonl(agents_path(day)))
     spec = [
         m.group(1)
         for c in commits
@@ -881,6 +1285,11 @@ def journal(day: str) -> dict:
         "builds": {k: v for k, v in builds.items() if k not in ("longest",)},
         "prompts": ps,
         "tokens": {"total": tk["total"], "features": tk["features"]},
+        "incidents": inc,
+        "features": feat["features"],
+        "deploys": feat["deploys"],
+        "releases": feat["releases"],
+        "agent_jobs": jobs,
     }
     d = HIST / day
     d.mkdir(parents=True, exist_ok=True)
@@ -942,6 +1351,51 @@ def journal(day: str) -> dict:
         md += ["", "## Prompts", "", f"{len(ps)} prompts (full text: [prompts.md](prompts.md)).", "",
                "| Time | Prompt |", "|---|---|"]
         md += [f"| {p_['time'][:5]} | {p_['text'][:140].replace('|', '/').replace(chr(10), ' ')} |" for p_ in ps]
+    if feat["features"] or feat["deploys"] or feat["releases"]:
+        md += ["", "## Features", "",
+               f"{len(feat['features'])} spec versions added, {sum(f['merge'] for f in feat['features'])} "
+               f"landed by a merge; {len(feat['deploys'])} deploys, {len(feat['releases'])} releases.", ""]
+        if feat["features"]:
+            md += ["| Spec | Feature | Landed | Check (marge) |", "|---|---|---|---|"]
+            for f in feat["features"]:
+                landed = (f"{str(f['time'])[11:16]} `{f['commit']}`" + (" (merge)" if f["merge"] else "")
+                          if f["commit"] else "–")
+                c = f.get("check")
+                chk = "–" if not c else (
+                    f"{'ok' if c['exit'] == 0 else 'exit ' + str(c['exit'])} at {str(c['time'])[11:16]}"
+                    + (f", {c['suites']} suites, {c['passed']} passed, {c['failed']} failed" if c.get("suites") else "")
+                    + f" ({c['how']})")
+                md.append(f"| {f['version']} | {f['title'].replace('|', '/')} | {landed} | {chk} |")
+        if feat["deploys"]:
+            md += ["", "Deploys:", ""]
+            md += [f"- {str(d_.get('start', ''))[11:16]} {d_.get('machine')}: `{d_.get('commit')}` "
+                   f"({'ok' if d_.get('exit') == 0 else 'exit ' + str(d_.get('exit'))})" for d_ in feat["deploys"]]
+        if feat["releases"]:
+            md += ["", "Releases:", ""]
+            md += [f"- {r_['time'][11:16]} {r_['tag']}" + (" (pre-release)" if r_.get("prerelease") else "")
+                   for r_ in feat["releases"]]
+    if jobs:
+        md += ["", "## Agent jobs", "", f"{len(jobs)} jobs (coordinator log agents.jsonl).", "",
+               "| Task | Branch | Start | End | Status | Interrupted | Merged |", "|---|---|---|---|---|---|---|"]
+        for a in jobs:
+            md.append(f"| {str(a['task'])[:90].replace('|', '/')} | {a['agent']} | {str(a['start'] or '')[11:16]} | "
+                      f"{str(a['end'] or '')[11:16]} | {a['status']} | {a['interruptions'] or ''} | "
+                      f"{('`' + a['merged'] + '`') if a['merged'] else ''} |")
+    if inc["auto"] or inc["notes"]:
+        kinds = {}
+        for e in inc["auto"]:
+            kinds[e["kind"]] = kinds.get(e["kind"], 0) + 1
+        md += ["", "## Incidents", "",
+               f"{len(inc['auto'])} collected ("
+               + (", ".join(f"{k} {v}" for k, v in sorted(kinds.items())) or "none")
+               + f"), {len(inc['noted'])} with root-cause notes ([incidents.md](incidents.md)).", ""]
+        if inc["auto"]:
+            md += ["| Time | Kind | Machine | What |", "|---|---|---|---|"]
+            md += [f"| {e['time'][:5]} | {e['kind']} | {e.get('machine', '')} | {str(e['text']).replace('|', '/')} |"
+                   for e in inc["auto"][:60]]
+        if inc["notes"]:
+            body = [ln for ln in inc["notes"].splitlines() if not ln.startswith("# ")]
+            md += ["", "### Root-cause notes", ""] + [("#" + ln) if ln.startswith("## ") else ln for ln in body]
     md += ["", "## Media", "", "| Time | File |", "|---|---|"]
     md += [f"| {m['time']} | [{m['file']}]({m['file']}) |" for m in media]
     write_tracked(d / "journal.md", "\n".join(md) + "\n")
@@ -1007,6 +1461,7 @@ def sheet(day: str):
 # ------------------------------------------------------------------- shots
 
 XF = 0.5  # cross-transition between segments, s
+ROLL_PAGE_S = 3.6  # a page of the features roll, s
 TRANSITIONS = ["pixelize", "slideleft", "circleopen", "wipeup", "smoothleft",
                "radial", "hblur", "squeezeh", "diagtl", "slideup"]
 ENC = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p",
@@ -1278,131 +1733,10 @@ class Subs:
 # ------------------------------------------------------------------- audio
 
 
-def env(n, a, r):
-    """Attack/release envelope of n samples."""
-    out = array("f", [1.0]) * n
-    for i in range(min(a, n)):
-        out[i] = i / a
-    for i in range(min(r, n)):
-        out[n - 1 - i] *= i / r
-    return out
-
-
-NOTE = {"C": 0, "C#": 1, "D": 2, "D#": 3, "E": 4, "F": 5, "F#": 6, "G": 7, "G#": 8,
-        "A": 9, "A#": 10, "B": 11}
-
-
-def hz(semitone_from_a4: float) -> float:
-    return 440.0 * 2 ** (semitone_from_a4 / 12)
-
-
-class Music:
-    """A small chiptune-pop band, synthesised (no samples, no licences):
-    kick, clap, hats, square bass, pulse arpeggio and a soft pad over a
-    vi–IV–I–V progression. Bars are rendered once per chord and variant and
-    then laid out along the timeline."""
-
-    PROG = [(-3, "m"), (-7, ""), (0, ""), (-5, "")]  # Am F C G relative to C
-
-    def __init__(self, bpm=108, key="C", seed=1):
-        self.bpm, self.root, self.rng = bpm, NOTE[key], random.Random(seed)
-        self.beat = 60.0 / bpm
-        self.bar_n = round(4 * self.beat * RATE)
-        self.cache = {}
-
-    def chord(self, idx):
-        off, q = self.PROG[idx % 4]
-        r = self.root + off - 9  # relative to A4
-        third = 3 if q == "m" else 4
-        return [r, r + third, r + 7]
-
-    def bar(self, idx, variant):
-        key = (idx % 4, variant)
-        if key in self.cache:
-            return self.cache[key]
-        n, b = self.bar_n, self.beat
-        out = array("f", [0.0]) * n
-        notes = self.chord(idx)
-        rng = random.Random(idx % 4 * 31 + hash(variant) % 97)
-
-        def put(at, samples, gain):
-            s = round(at * RATE)
-            for i, v in enumerate(samples):
-                if s + i < n:
-                    out[s + i] += v * gain
-
-        drums = variant in ("drive", "groove")
-        if drums:
-            kick = [math.sin(2 * math.pi * (45 * i / RATE + 70 * (1 - math.exp(-i / 900)) * 0.0133))
-                    * math.exp(-i / 5200) for i in range(9000)]
-            beats = [0, 1, 2, 3] if variant == "drive" else [0, 1.5, 2.5]
-            for k in beats:
-                put(k * b, kick, 0.55)
-            clap = [rng.uniform(-1, 1) * math.exp(-i / 1800) for i in range(6000)]
-            for k in (1, 3):
-                put(k * b, clap, 0.22)
-            step = 0.5 if variant == "groove" else 0.25
-            prev = 0.0
-            hat = []
-            for i in range(1400):
-                x = rng.uniform(-1, 1)
-                hat.append((x - prev) * math.exp(-i / 300))
-                prev = x
-            t = 0.0
-            while t < 4:
-                put(t * b, hat, 0.10 if (t * 2) % 1 else 0.14)
-                t += step
-        if variant != "intro" or True:
-            # Square bass, 8th notes on the root.
-            f = hz(notes[0] - 24)
-            for k in range(8):
-                ln = round(b / 2 * RATE * 0.9)
-                e = env(ln, 60, 900)
-                put(k * b / 2, [(1 if math.sin(2 * math.pi * f * i / RATE) > 0 else -1) * e[i] * 0.6
-                                + math.sin(2 * math.pi * f * i / RATE) * e[i] * 0.4
-                                for i in range(ln)], 0.16 if variant != "intro" else 0.10)
-        # Pulse arpeggio, 16ths, two octaves up.
-        arp = [notes[0], notes[1], notes[2], notes[1] + 12, notes[2] + 12, notes[0] + 12]
-        for k in range(16):
-            f = hz(arp[(k + (idx % 2) * 2) % len(arp)] + 12)
-            ln = round(b / 4 * RATE * 0.8)
-            e = env(ln, 30, 1500)
-            per = RATE / f
-            put(k * b / 4, [(0.6 if (i % per) < per * 0.25 else -0.4) * e[i] for i in range(ln)],
-                0.07 if variant != "outro" else 0.05)
-        # Soft pad: three detuned saws through a one-pole low-pass.
-        ln = n
-        e = env(ln, 9000, 9000)
-        lp, prevv = 0.0, 0.0
-        pad = []
-        fs = [hz(x) for x in notes]
-        for i in range(ln):
-            v = sum(((i * f * (1 + d) / RATE) % 1.0) * 2 - 1 for f in fs for d in (-0.003, 0.003))
-            lp += 0.04 * (v - lp)
-            pad.append(lp * e[i] / 6)
-        put(0, pad, 0.30 if variant in ("intro", "outro") else 0.18)
-        self.cache[key] = out
-        return out
-
-    def render(self, seconds, section_at, duck=()):
-        n = round(seconds * RATE)
-        out = array("f", [0.0]) * n
-        bar = 0
-        while bar * self.bar_n < n:
-            s = bar * self.bar_n
-            v = section_at(s / RATE)
-            data = self.bar(bar, v)
-            for i in range(min(self.bar_n, n - s)):
-                out[s + i] += data[i]
-            bar += 1
-        for a, b, g in duck:
-            for i in range(max(0, round(a * RATE)), min(n, round(b * RATE))):
-                out[i] *= g
-        # Fade in/out.
-        for i in range(min(n, RATE)):
-            out[i] *= i / RATE
-            out[n - 1 - i] *= i / RATE
-        return out
+# The music (ART-PROJECT §3.2): a style per day, varied within the video;
+# art/music.py.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from music import Music  # noqa: E402
 
 
 def sfx_whoosh(rng):
@@ -1515,6 +1849,14 @@ def render(day: str) -> Path:
         segs.append((seg, sum(s for s, _ in shots), "groove"))
         ch_shots.append(shots)
 
+    # 3b. "Today's features": a paged roll of the merged spec rows (§4 features_roll).
+    roll = F.roll_pages(j.get("features") or []) if sc.get("features_roll", True) else []
+    roll_s = ROLL_PAGE_S * len(roll)
+    if roll:
+        t3 = work / "98-features.mp4"
+        card(roll_s, t3)
+        segs.append((t3, roll_s, "groove"))
+
     # 4. End card.
     end_s = float(sc.get("end_seconds", 9))
     t4 = work / "99-end.mp4"
@@ -1599,6 +1941,11 @@ def render(day: str) -> Path:
                       pre="{\\fad(0,200)}")
         tt = cs
         for secs, shot in ch_shots[ci]:
+            if shot.get("incident"):  # an incident card: "HH:MM" of the incident, its text centred
+                inc_txt = incident_text(j, str(shot["incident"]), shot.get("text"))
+                sub.add(tt + 0.2, tt + secs - 0.15, "Kicker",
+                        f"{{\\pos(960,380)\\fad(150,150)}}INCIDENT · {esc(str(shot['incident']))}")
+                sub.typed(tt + 0.5, tt + secs - 0.15, "Outro", esc(inc_txt), pre="{\\pos(960,560)\\fad(0,150)}")
             if shot.get("note"):
                 sub.add(tt + 0.5, tt + secs - 0.15, "Note",
                         f"{{\\pos(1860,70)\\frz{seeded(shot['note']).uniform(-5, 5):.1f}"
@@ -1615,6 +1962,17 @@ def render(day: str) -> Path:
         sfx_events.append((cs - XF / 2, "whoosh"))
     sfx_events.append((starts[1] - XF / 2, "whoosh"))
     sfx_events.append((starts[-1] - XF / 2, "whoosh"))
+
+    # The features roll: a kicker, then one page of lines after the other.
+    if roll:
+        rs = starts[-2]
+        sub.add(rs + 0.2, rs + roll_s - 0.2, "Kicker", "{\\pos(960,150)\\fad(200,200)}TODAY'S FEATURES")
+        for pi, page in enumerate(roll):
+            a = rs + pi * ROLL_PAGE_S
+            for li, line in enumerate(page):
+                sub.add(a + 0.15 + li * 0.12, a + ROLL_PAGE_S - 0.1, "Counter",
+                        f"{{\\an4\\pos(260,{300 + li * 100})\\fad(180,180)}}{esc(line)}")
+        sfx_events.append((rs - XF / 2, "whoosh"))
 
     # End card: count-up stats.
     es = starts[-1]
@@ -1673,14 +2031,10 @@ def render(day: str) -> Path:
     sub.write(ass)
 
     # ---- soundtrack
-    def section_at(t):
-        for i in range(len(segs) - 1, -1, -1):
-            if t >= starts[i]:
-                return segs[i][2]
-        return "intro"
-
-    music = Music(bpm=int(sc.get("bpm", 108)), key=sc.get("key", "C"), seed=num).render(
-        total, section_at, duck)
+    band = Music(bpm=int(sc.get("bpm", 108)), key=sc.get("key", "C"), seed=num,
+                 style=sc.get("style"), mode=sc.get("mode"))
+    log(f"{day}: music {band.describe()}")
+    music = band.render(total, [(starts[i], segs[i][2]) for i in range(len(segs))], duck)
     rng = random.Random(num)
     fx = {"bell": sfx_bell(), "pop": sfx_pop(), "tick": sfx_tick(), "ding": sfx_ding()}
     for at, kind in sfx_events:
@@ -1839,7 +2193,7 @@ def publish(days: list[str]):
 # art-runs.jsonl (every run); the output goes to art.log next to them.
 
 STATUS_NAME = "art.json"
-COLLECTOR_FILES = {STATUS_NAME, "art-runs.jsonl", "art.log", STATUS_NAME + ".tmp"}
+COLLECTOR_FILES = {STATUS_NAME, "art-runs.jsonl", "art.log", STATUS_NAME + ".tmp", "incidents.jsonl"}
 
 
 def default_collect_days(now: dt.datetime | None = None) -> list[str]:
@@ -1881,6 +2235,7 @@ def collect(days: list[str] | None = None, sheets: bool | None = None,
         r = st["days"][day] = {"new_files": 0, "media": 0}
         try:
             r["new_files"] = gather(day) or 0
+            r["incidents"] = len(incidents(day))
             journal(day)
         except Exception as e:  # one day failing must not hide the other
             st["errors"].append(f"{day}: {type(e).__name__}: {mask(str(e))[:300]}")
@@ -1927,6 +2282,22 @@ def main():
         raise
     flags = {a for a in args if a.startswith("--")}
     days = [a for a in args if not a.startswith("--")]
+    if cmd == "agent-event":
+        import argparse
+        ap = argparse.ArgumentParser(prog="art/diary.py agent-event")
+        ap.add_argument("--task", required=True)
+        ap.add_argument("--branch", required=True)
+        ap.add_argument("--event", required=True, choices=F.EVENTS)
+        ap.add_argument("--agent", help="agent id (default: from the branch name)")
+        ap.add_argument("--commits", default="")
+        ap.add_argument("--note", default="")
+        ap.add_argument("--time", help="ISO 8601 time (default: now)")
+        ap.add_argument("--day", help="YYYY-MM-DD (default: the time's day)")
+        a = ap.parse_args(args)
+        t = a.time or dt.datetime.now().astimezone().isoformat(timespec="seconds")
+        e = agent_event(a.day or t[:10], a.task, a.branch, a.event, a.agent, a.commits, a.note, t)
+        print(json.dumps(e, ensure_ascii=False))
+        return
     if cmd == "check-masked":
         fix = "--fix" in flags
         with art_lock(cmd) if fix else contextlib.nullcontext():
@@ -1956,6 +2327,9 @@ def run_command(cmd: str, days: list[str], flags: set[str] = frozenset()):
         if st["status"] != "ok":
             raise SystemExit("collect failed: " + "; ".join(st["errors"]))
         return
+    if cmd == "publish" and "--videos" in flags:  # only the videos (+ SHA256SUMS), no day zips
+        publish([])
+        return
     if not days:
         days = all_days() if cmd in {"fetch", "gather", "journal", "publish", "stamp", "prompts", "tokens"} else days_with_scripts()
     if cmd == "all":
@@ -1967,7 +2341,7 @@ def run_command(cmd: str, days: list[str], flags: set[str] = frozenset()):
         return
     fn = {"fetch": fetch, "gather": gather, "journal": journal, "sheet": sheet,
           "render": render, "stamp": stamp, "prompts": prompts,
-          "tokens": tokens}.get(cmd)
+          "tokens": tokens, "agent-backfill": agent_backfill}.get(cmd)
     if cmd == "publish":
         publish(days)
     elif fn:
