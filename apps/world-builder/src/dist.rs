@@ -103,10 +103,17 @@ pub fn imagery_attribution(pkg: &ocw_world::WorldPackage) -> Vec<Attribution> {
         .forest
         .as_ref()
         .map_or(&[][..], |f| f.sources.as_slice());
+    // The measured crop maps of the vegetation (section VEGE).
+    let crops = pkg
+        .look
+        .vegetation
+        .as_ref()
+        .map_or(&[][..], |v| v.sources.as_slice());
     pkg.look
         .sources()
         .iter()
         .chain(forest)
+        .chain(crops)
         .map(|s| Attribution {
             source: s.name.clone(),
             licence: s.licence.clone(),

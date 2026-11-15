@@ -75,6 +75,8 @@ calibrate() { # package pbf...
   if [ -z "${OCW_NO_VEGETATION:-}" ]; then
     local vp=()
     for p in "$@"; do vp+=(--pbf "$p"); done
+    # With the measured crop map of scripts/fetch-crops.sh where there is one.
+    [ -f "$D/crops/index.json" ] && vp+=(--crops "$D/crops")
     $WB vegetation --world "$pkg" "${vp[@]}"
   fi
 }

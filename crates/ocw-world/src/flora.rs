@@ -576,19 +576,19 @@ const BF_CONIFERS: [(f64, &[(Species, f32)]); 4] = [
     (
         f64::MIN,
         &[
-            (NorwaySpruce, 0.3),
-            (SilverFir, 0.25),
-            (DouglasFir, 0.25),
+            (NorwaySpruce, 0.4),
+            (SilverFir, 0.24),
+            (DouglasFir, 0.16),
             (ScotsPine, 0.2),
         ],
     ),
     (
         500.0,
         &[
-            (NorwaySpruce, 0.45),
-            (SilverFir, 0.35),
-            (DouglasFir, 0.15),
-            (ScotsPine, 0.05),
+            (NorwaySpruce, 0.55),
+            (SilverFir, 0.3),
+            (DouglasFir, 0.09),
+            (ScotsPine, 0.06),
         ],
     ),
     (
@@ -865,10 +865,10 @@ fn tenerife(site: &Site, group: LeafGroup, pick: f32) -> Species {
 /// heath (fayal-brezal) in the north's middle heights, dry scrub and young
 /// pines in the south's, broom in Las Cañadas.
 fn scrub_tenerife(alt: f64, north: bool, pick: f32) -> Species {
-    let coast = if north { 350.0 } else { 750.0 };
+    let coast = if north { 300.0 } else { 650.0 };
     if alt < coast {
         choose(&TF_SUCCULENTS, pick)
-    } else if alt < 1900.0 {
+    } else if alt < 1800.0 {
         if north {
             choose(&[(FayaHeath, 0.7), (Broom, 0.15), (CanaryPine, 0.15)], pick)
         } else {
@@ -1080,7 +1080,7 @@ mod tests {
             &site(FloraRegion::BlackForest, Setting::Forest, 400.0),
             LeafGroup::Evergreen,
         );
-        assert!(low[&DouglasFir] > 0.2);
+        assert!(low[&DouglasFir] > 0.1);
         let feldberg = shares(
             &site(FloraRegion::BlackForest, Setting::Forest, 1350.0),
             LeafGroup::Evergreen,

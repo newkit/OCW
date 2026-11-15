@@ -275,6 +275,11 @@ enum Cmd {
         /// OSM extracts the package was built from.
         #[arg(long, required = true)]
         pbf: Vec<PathBuf>,
+        /// A measured crop map of `scripts/fetch-crops.sh` (index.json,
+        /// crops.u8): the crops of fields OSM does not tag, and fields and
+        /// plantations OSM does not map.
+        #[arg(long)]
+        crops: Option<PathBuf>,
         /// Write the package here instead.
         #[arg(long)]
         out: Option<PathBuf>,
@@ -2035,6 +2040,7 @@ fn package_box(pkg: &ocw_world::WorldPackage, margin_m: f64) -> (f64, f64, f64, 
 fn vegetation(
     world: &std::path::Path,
     pbf: &[PathBuf],
+    crops: Option<&std::path::Path>,
     out: Option<PathBuf>,
     key: Option<&ocw_world::manifest::SigningKeyPair>,
 ) {
@@ -2057,8 +2063,16 @@ fn vegetation(
     });
     trees.retain_near(bounds);
     let proj = ocw_world::geo::LocalProjection::new(pkg.origin.0, pkg.origin.1);
+    let raster = crops.map(|dir| {
+        stage("read crop map", || {
+            ocw_worldgen::vegetation::CropRaster::load(dir).unwrap_or_else(|e| {
+                eprintln!("{e}");
+                std::process::exit(1);
+            })
+        })
+    });
     let st = stage("vegetation (VEGE)", || {
-        ocw_worldgen::vegetation::add_vegetation(&mut pkg, &areas, &trees, &proj, None)
+        ocw_worldgen::vegetation::add_vegetation(&mut pkg, &areas, &trees, &proj, raster.as_ref())
     });
     println!("vegetation (VEGE): {}", st.summary());
     // Where to look (scenes, checks): `--start X,Z` for free ride.
@@ -2655,6 +2669,7 @@ fn main() {
         Cmd::Vegetation {
             world,
             pbf,
+            crops,
             out,
             sign_key,
         } => {
@@ -2664,7 +2679,7 @@ fn main() {
                     std::process::exit(1);
                 })
             });
-            vegetation(&world, &pbf, out, key.as_ref());
+            vegetation(&world, &pbf, crops.as_deref(), out, key.as_ref());
             print_stage_profile(None);
         }
         Cmd::Obstacles {

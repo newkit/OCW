@@ -275,6 +275,196 @@ pub fn fall_line(pkg: &WorldPackage, p: [f64; 2]) -> Option<f64> {
         .then(|| gz.atan2(gx).rem_euclid(std::f64::consts::PI))
 }
 
+#[derive(Debug, Clone, serde::Deserialize)]
+struct CropIndex {
+    kind: String,
+    crs: String,
+    pixel_m: f64,
+    west: f64,
+    north: f64,
+    width: usize,
+    height: usize,
+    crops: String,
+    sources: Vec<CropSource>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct CropSource {
+    id: String,
+    name: String,
+    licence: String,
+    notice: String,
+    url: String,
+    date: String,
+}
+
+/// A measured crop map of `scripts/fetch-crops.sh` (`scripts/crops.py`):
+/// OCW crop codes ([`FieldCrop`]) on a raster in a CRS, rows from the
+/// north (0 none, 255 no data).
+#[derive(Debug, Clone)]
+pub struct CropRaster {
+    pub sources: Vec<ocw_world::look::ImagerySource>,
+    pub crs: crate::crs::Crs,
+    pub pixel_m: f64,
+    pub west: f64,
+    pub north: f64,
+    pub width: usize,
+    pub height: usize,
+    pub codes: Vec<u8>,
+}
+
+impl CropRaster {
+    /// Reads `dir/index.json` and its raster.
+    pub fn load(dir: &Path) -> Result<Self, String> {
+        let p = dir.join("index.json");
+        let text = std::fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+        let ix: CropIndex =
+            serde_json::from_str(&text).map_err(|e| format!("{}: {e}", p.display()))?;
+        if ix.kind != "crops" {
+            return Err(format!("{}: kind {} is not crops", p.display(), ix.kind));
+        }
+        let path = dir.join(&ix.crops);
+        let codes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        if codes.len() != ix.width * ix.height {
+            return Err(format!(
+                "{}: {} bytes, expected {} × {}",
+                path.display(),
+                codes.len(),
+                ix.width,
+                ix.height
+            ));
+        }
+        Ok(Self {
+            sources: ix
+                .sources
+                .iter()
+                .map(|s| ocw_world::look::ImagerySource {
+                    id: s.id.clone(),
+                    name: s.name.clone(),
+                    licence: s.licence.clone(),
+                    notice: s.notice.clone(),
+                    url: s.url.clone(),
+                    date: s.date.clone(),
+                    resolution_m: ix.pixel_m as f32,
+                })
+                .collect(),
+            crs: crate::crs::Crs::parse(&ix.crs)?,
+            pixel_m: ix.pixel_m,
+            west: ix.west,
+            north: ix.north,
+            width: ix.width,
+            height: ix.height,
+            codes,
+        })
+    }
+
+    /// The crop at CRS `(e, n)` (`None`: no crop, no data or outside).
+    pub fn crop(&self, e: f64, n: f64) -> Option<FieldCrop> {
+        let fx = (e - self.west) / self.pixel_m;
+        let fy = (self.north - n) / self.pixel_m;
+        if !(fx >= 0.0 && fy >= 0.0) {
+            return None;
+        }
+        let (x, y) = (fx as usize, fy as usize);
+        if x >= self.width || y >= self.height {
+            return None;
+        }
+        FieldCrop::from_code(self.codes[y * self.width + x]).filter(|c| *c != FieldCrop::None)
+    }
+
+    /// The crop at local metres `p` of a package projected by `proj`.
+    pub fn at(&self, proj: &LocalProjection, p: [f64; 2]) -> Option<FieldCrop> {
+        let (lat, lon) = proj.unproject(p);
+        let [e, n] = self.crs.forward(lat, lon);
+        self.crop(e, n)
+    }
+}
+
+/// The land classes a measured crop may lie on outside OSM's fields (the
+/// crop map knows plantations and fields OSM does not map): open land, and
+/// for plantations also scrub and bare ground (abandoned terraces).
+fn takes_measured(class: Option<ocw_world::landuse::LandClass>, crop: FieldCrop) -> bool {
+    use ocw_world::landuse::LandClass::*;
+    match class {
+        Some(Default | Meadow | Farmland) | None => true,
+        Some(Orchard | Vineyard | Scrub | Bare) => !crop.arable(),
+        _ => false,
+    }
+}
+
+/// The second pass of a measured crop map: its crops on the cells no OSM
+/// field covers (open land only, [`takes_measured`]), rows across the
+/// slope (terraces) or, for vineyards, down the fall line; directions per
+/// 50 m block so neighbouring rows agree. Returns the cells set.
+fn fill_measured(
+    pkg: &WorldPackage,
+    tiles: &mut BTreeMap<TileKey, VegetationTile>,
+    raster: &CropRaster,
+    proj: &LocalProjection,
+) -> usize {
+    let size = f64::from(pkg.tile_size_m);
+    let n = DEFAULT_CELLS as usize;
+    let cs = size / n as f64;
+    let keys: Vec<TileKey> = pkg.tiles.keys().copied().collect();
+    let filled = crate::par::map(&keys, crate::par::threads(), |key| {
+        let aff = crate::imagery::TileAffine::new(proj, raster.crs, *key, size);
+        let o = key.origin(size);
+        let have = tiles.get(key);
+        let mut out: Vec<(usize, u8, u8)> = Vec::new();
+        for r in 0..n {
+            for c in 0..n {
+                let i = r * n + c;
+                if have.is_some_and(|t| !t.crops.is_empty() && t.crops[i] != 0) {
+                    continue;
+                }
+                let p = [o[0] + (c as f64 + 0.5) * cs, o[1] + (r as f64 + 0.5) * cs];
+                let [e, nn] = aff.apply(p);
+                let Some(crop) = raster.crop(e, nn) else {
+                    continue;
+                };
+                if !takes_measured(class_at(pkg, p[0], p[1]), crop) {
+                    continue;
+                }
+                let block = [
+                    (p[0] / 50.0).floor() * 50.0 + 25.0,
+                    (p[1] / 50.0).floor() * 50.0 + 25.0,
+                ];
+                let dir = if !crop.in_rows() {
+                    NO_ROWS
+                } else {
+                    let fall = fall_line(pkg, block);
+                    let a = match (crop, fall) {
+                        (FieldCrop::Vineyard, Some(f)) => f,
+                        // Terraces: rows along the contour.
+                        (_, Some(f)) => f + std::f64::consts::FRAC_PI_2,
+                        (_, None) => 0.0,
+                    };
+                    encode_direction(a as f32)
+                };
+                out.push((i, crop.code(), dir));
+            }
+        }
+        out
+    });
+    let mut count = 0;
+    for (key, cells) in keys.iter().zip(filled) {
+        if cells.is_empty() {
+            continue;
+        }
+        let t = tiles.entry(*key).or_default();
+        if t.crops.is_empty() {
+            t.crops = vec![0; n * n];
+            t.rows = vec![NO_ROWS; n * n];
+        }
+        for (i, c, d) in cells {
+            t.crops[i] = c;
+            t.rows[i] = d;
+            count += 1;
+        }
+    }
+    count
+}
+
 /// A field or plantation, projected.
 struct Field {
     id: i64,
@@ -325,9 +515,6 @@ impl VegetationStats {
     }
 }
 
-/// A measured crop map: the crop at local (x, z), if it has one there.
-pub type CropMap<'a> = &'a (dyn Fn([f64; 2]) -> Option<FieldCrop> + Sync);
-
 /// Builds the section from the OSM areas and trees (and a measured crop
 /// map for fields without a crop tag).
 pub fn build_vegetation(
@@ -335,7 +522,7 @@ pub fn build_vegetation(
     areas: &AreaData,
     trees: &TreeData,
     proj: &LocalProjection,
-    crops: Option<CropMap>,
+    crops: Option<&CropRaster>,
 ) -> (Vegetation, VegetationStats) {
     let region = FloraRegion::at(pkg.origin.0, pkg.origin.1);
     let mut st = VegetationStats::default();
@@ -384,19 +571,20 @@ pub fn build_vegetation(
         st.fields += 1;
         st.tagged += usize::from(f.tagged.is_some());
         let axis = main_axis(outer);
-        let fixed = f
-            .tagged
-            .or_else(|| plantation_default(&f.landuse, region, alt));
-        let rows = match fixed {
-            Some(FieldCrop::Vineyard) => Some(fall_line(pkg, centre).unwrap_or(axis)),
-            Some(c) if c.in_rows() => Some(axis),
-            _ => None,
+        let fall = fall_line(pkg, centre);
+        let plantation = plantation_default(&f.landuse, region, alt);
+        // The rows of a crop on this field: vineyards down the fall line on
+        // slopes, the rest along the field's main axis.
+        let rows_of = |crop: FieldCrop| match crop {
+            FieldCrop::Vineyard => encode_direction(fall.unwrap_or(axis) as f32),
+            c if c.in_rows() => encode_direction(axis as f32),
+            _ => NO_ROWS,
         };
         let (d, nrm) = ([axis.cos(), axis.sin()], [-axis.sin(), axis.cos()]);
         let (pw, pl) = parcel_size(region);
         let mix = crop_mix(region, alt);
         let crop_at = |p: [f64; 2]| -> FieldCrop {
-            if let Some(c) = fixed {
+            if let Some(c) = plantation {
                 return c;
             }
             // A parcel of the field: its crop by the region's mix.
@@ -430,13 +618,16 @@ pub fn build_vegetation(
                     if !pkg.tiles.contains_key(&key) {
                         continue;
                     }
-                    let mut crop = crop_at([x, z]);
-                    if fixed.is_none()
-                        && let Some(m) = crops.and_then(|c| c([x, z]))
-                    {
-                        crop = m;
-                        st.measured_cells += 1;
-                    }
+                    // OSM's tag, else the measured map, else the region's
+                    // rule (plantations) or its crop mix (fields).
+                    let crop = match (f.tagged, crops.and_then(|c| c.at(proj, [x, z]))) {
+                        (Some(c), _) => c,
+                        (None, Some(m)) => {
+                            st.measured_cells += 1;
+                            m
+                        }
+                        (None, None) => crop_at([x, z]),
+                    };
                     let t = tiles.entry(key).or_default();
                     if t.crops.is_empty() {
                         t.crops = vec![0; n * n];
@@ -447,14 +638,14 @@ pub fn build_vegetation(
                     let r = (((z - o[1]) / cs) as usize).min(n - 1);
                     let i = r * n + c;
                     t.crops[i] = crop.code();
-                    t.rows[i] = match (rows, crop) {
-                        (Some(a), _) => encode_direction(a as f32),
-                        (None, FieldCrop::Maize) => encode_direction(axis as f32),
-                        _ => NO_ROWS,
-                    };
+                    t.rows[i] = rows_of(crop);
                 }
             }
         }
+    }
+    // The measured crops beyond OSM's fields.
+    if let Some(r) = crops {
+        st.measured_cells += fill_measured(pkg, &mut tiles, r, proj);
     }
     for t in tiles.values() {
         for c in &t.crops {
@@ -520,7 +711,7 @@ pub fn build_vegetation(
     (
         Vegetation {
             cells,
-            sources: Vec::new(),
+            sources: crops.map(|r| r.sources.clone()).unwrap_or_default(),
             tiles,
         },
         st,
@@ -535,7 +726,7 @@ pub fn add_vegetation(
     areas: &AreaData,
     trees: &TreeData,
     proj: &LocalProjection,
-    crops: Option<CropMap>,
+    crops: Option<&CropRaster>,
 ) -> VegetationStats {
     let (v, st) = build_vegetation(pkg, areas, trees, proj, crops);
     pkg.look.vegetation = Some(v);
@@ -873,16 +1064,64 @@ mod tests {
         assert_eq!(again, v);
     }
 
+    /// A crop raster in LAEA around `proj`'s origin: sunflowers west of
+    /// local x 300, bananas in the box x 1 500 … 1 600, z 800 … 900 (no OSM
+    /// field there), no data elsewhere.
+    fn raster(proj: &LocalProjection) -> CropRaster {
+        let crs = crate::crs::Crs::Laea;
+        let corners = [[-500.0, -500.0], [2500.0, -500.0], [-500.0, 1500.0], [2500.0, 1500.0]];
+        let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+        for c in corners {
+            let (lat, lon) = proj.unproject(c);
+            let p = crs.forward(lat, lon);
+            lo = [lo[0].min(p[0]), lo[1].min(p[1])];
+            hi = [hi[0].max(p[0]), hi[1].max(p[1])];
+        }
+        let (west, north) = ((lo[0] / 10.0).floor() * 10.0, (hi[1] / 10.0).ceil() * 10.0);
+        let width = ((hi[0] - west) / 10.0).ceil() as usize + 1;
+        let height = ((north - lo[1]) / 10.0).ceil() as usize + 1;
+        let mut codes = vec![255u8; width * height];
+        for y in 0..height {
+            for x in 0..width {
+                let (e, n) = (west + (x as f64 + 0.5) * 10.0, north - (y as f64 + 0.5) * 10.0);
+                let (lat, lon) = crs.inverse(e, n);
+                let p = proj.project(lat, lon);
+                if p[0] < 300.0 {
+                    codes[y * width + x] = FieldCrop::Sunflower.code();
+                } else if (1500.0..1600.0).contains(&p[0]) && (800.0..900.0).contains(&p[1]) {
+                    codes[y * width + x] = FieldCrop::Banana.code();
+                }
+            }
+        }
+        CropRaster {
+            sources: Vec::new(),
+            crs,
+            pixel_m: 10.0,
+            west,
+            north,
+            width,
+            height,
+            codes,
+        }
+    }
+
     #[test]
     fn a_crop_map_overrides_the_mix_but_not_the_tags() {
         let pkg = package((47.99, 7.85));
         let proj = LocalProjection::new(47.99, 7.85);
-        let map = |p: [f64; 2]| (p[0] < 300.0).then_some(FieldCrop::Sunflower);
-        let (v, st) = build_vegetation(&pkg, &areas(&proj), &TreeData::default(), &proj, Some(&map));
+        let r = raster(&proj);
+        let (v, st) = build_vegetation(&pkg, &areas(&proj), &TreeData::default(), &proj, Some(&r));
         assert_eq!(v.at(1000.0, 105.0, 205.0).0, FieldCrop::Sunflower);
         // The tagged maize stays maize.
         assert_eq!(v.at(1000.0, 205.0, 805.0).0, FieldCrop::Maize);
-        assert!(st.measured_cells > 0);
+        // Beyond OSM's fields the map's plantations come in, with rows.
+        let (c, rows) = v.at(1000.0, 1555.0, 855.0);
+        assert_eq!(c, FieldCrop::Banana);
+        assert!(rows.is_some());
+        // And on open land west of x 300 (no OSM field at z 50) the
+        // sunflowers too.
+        assert_eq!(v.at(1000.0, 105.0, 55.0).0, FieldCrop::Sunflower);
+        assert!(st.measured_cells > 100);
     }
 
     #[test]
