@@ -187,6 +187,11 @@ pub fn start_session_with(world: &mut World, route: Route, keep_link: bool) {
                 .expect("failed to start local server thread"),
         )
     };
+    // Signed in (spec §9.1): a shared ride gets the access token in the
+    // hello; the local servers have no sign-in (the rider is who they are).
+    if matches!(server, ServerLink::Remote(_)) {
+        client.set_access_token(crate::account::access_token(world));
+    }
     server.send(client.hello());
     // Real weather at the start of the ride (spec §14 Phase 9, 9A "default
     // = real", S7): on the local servers, by the setting `weather.real`,

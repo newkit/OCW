@@ -39,6 +39,11 @@ use crate::{Platform, UiPlatform};
 #[derive(Resource, Debug, Clone, Default, PartialEq, Deref, DerefMut)]
 pub struct VoiceMenu(pub VoiceMenuInfo);
 
+/// The sign-in state for the Account page (spec §9.1; refreshed by the
+/// app's sign-in glue).
+#[derive(Resource, Debug, Clone, Default, PartialEq, Deref, DerefMut)]
+pub struct AccountMenu(pub ocw_client::account::AccountInfo);
+
 /// The audio outputs for the Audio page (refreshed by the app's audio
 /// glue).
 #[derive(Resource, Debug, Clone, Default, PartialEq, Deref, DerefMut)]
@@ -90,6 +95,7 @@ impl Plugin for MenuPlugin {
         crate::configure_sets(app);
         app.init_resource::<MenuState>()
             .init_resource::<VoiceMenu>()
+            .init_resource::<AccountMenu>()
             .init_resource::<AudioDeviceMenu>()
             .add_systems(
                 Update,
@@ -199,6 +205,10 @@ pub fn sub_rows(world: &World, page: sub::Page) -> Vec<Row> {
             .get_resource::<RiderList>()
             .map(|l| l.menu_rows())
             .unwrap_or_default()
+    } else if page == sub::Page::Account {
+        let empty = AccountMenu::default();
+        let info = world.get_resource::<AccountMenu>().unwrap_or(&empty);
+        ocw_client::account::rows(info, platform(world) == Platform::Desktop)
     } else if page == sub::Page::TimeMachine {
         let info = world
             .get_resource::<TimeMachine>()
@@ -362,6 +372,10 @@ pub fn view_of(world: &World, menu: &Menu) -> MenuView {
             (Page::Sub(sub::Page::RiderList), _, _) => {
                 rider_list.map(|l| l.summary()).unwrap_or_default()
             }
+            (Page::Sub(sub::Page::Account), _, _) => world
+                .get_resource::<AccountMenu>()
+                .map(|a| a.status())
+                .unwrap_or_default(),
             _ => String::new(),
         },
         text: def
@@ -369,6 +383,14 @@ pub fn view_of(world: &World, menu: &Menu) -> MenuView {
             .iter()
             .map(|&s| s.to_owned())
             .chain(page_text(world, page))
+            // The device flow's code and URL, the last sign-in message.
+            .chain(match page {
+                Page::Sub(sub::Page::Account) => world
+                    .get_resource::<AccountMenu>()
+                    .map(|a| a.text())
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            })
             .collect(),
         items: menu.labels(),
         focused: menu.focus(),
@@ -515,7 +537,9 @@ mod tests {
         assert_eq!(v.title, "Settings");
         assert_eq!(
             v.items,
-            ["Controls", "Trainer", "Audio", "Display", "Voice", "Back"]
+            [
+                "Account", "Controls", "Trainer", "Audio", "Display", "Voice", "Back"
+            ]
         );
         // Display → Graphics without fullscreen (B7: fullscreen moved
         // there); Controls without god mode's rows.

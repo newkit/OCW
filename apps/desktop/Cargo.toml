@@ -52,6 +52,28 @@ cpal.workspace = true
 # Voice chat logic (spec §7); the LiveKit backend only with `voice`.
 ocw-voice.workspace = true
 
+# Sign-in (spec §9.1): the flows' forms and checks (ocw-auth), PKCE and
+# state from the OS random source (getrandom), the session in the OS
+# keyring (keyring, MIT OR Apache-2.0: the Secret Service over D-Bus on
+# Linux – libdbus is linked already by btleplug –, the Keychain on macOS,
+# the Credential Manager on Windows; a private file when none answers).
+ocw-auth.workspace = true
+getrandom.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { workspace = true, features = ["sync-secret-service", "crypto-rust"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { workspace = true, features = ["apple-native"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { workspace = true, features = ["windows-native"] }
+
+[dev-dependencies]
+# The sign-in end to end against the backend and its fake providers.
+ocw-accounts.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+
 [features]
 # Voice chat with the LiveKit Rust SDK (spec §7). Off by default; on Linux
 # build with clang >= 21: `CXX=clang++-21 cargo build --features voice`.

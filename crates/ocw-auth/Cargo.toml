@@ -1,0 +1,24 @@
+[package]
+name = "ocw-auth"
+description = "Open Cycling World sign-in (spec §9.1): our access tokens (EdDSA JWT, JWKS), PKCE, the OIDC wire types and the apps' side of the flows"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Pure and wasm-safe (spec §3.5): used by the game server (token check in
+# the hello, also in the browser's local server), the accounts backend
+# (signing), ocw-client and the apps. No clock, no randomness, no I/O: the
+# callers pass the time and random bytes.
+[dependencies]
+ed25519-dalek.workspace = true
+sha2.workspace = true
+base64.workspace = true
+form_urlencoded.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

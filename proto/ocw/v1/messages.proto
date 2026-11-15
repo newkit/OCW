@@ -386,6 +386,20 @@ message Hello {
   // client): rider_pm and parts_pm only. Absent: fresh. Anonymous riders
   // never send it.
   DamageState damage = 9;
+  // The rider's access token from our accounts backend (spec §9.1; a JWT
+  // signed with a key of the backend's JWKS). Absent: an anonymous rider
+  // (allowed, Phase 10 Q5). A server with sign-in checks signature,
+  // expiry, issuer and audience and rejects a bad token (Reject.auth);
+  // a server without it ignores the token.
+  optional string access_token = 10;
+}
+
+// The signed-in account of a rider (spec §9.1).
+message Account {
+  string account_id = 1;
+  string display_name = 2;
+  // The linked providers ("google", "strava").
+  repeated string providers = 3;
 }
 
 // Cosmetic look of a rider and bike (spec §2.5). Colours are sRGB
@@ -737,6 +751,9 @@ message Welcome {
   // Damage in force (spec §14 Phase 12E: `ride.damage`, only with
   // collisions on).
   bool damage = 18;
+  // The account the server accepted from Hello.access_token (spec §9.1);
+  // absent: the rider rides anonymously.
+  Account account = 19;
 }
 
 enum ClockMode {
@@ -775,6 +792,9 @@ message WorldClock {
 
 message Reject {
   string reason = 1;
+  // The access token was refused (expired, bad signature, another
+  // issuer): refresh it or sign in again, then reconnect (spec §9.1).
+  bool auth = 2;
 }
 
 message DevCommandResult {

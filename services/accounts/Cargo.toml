@@ -1,0 +1,34 @@
+[package]
+name = "ocw-accounts"
+description = "Open Cycling World accounts backend (spec §9.1): sign-in with Google and Strava brokered by our own OIDC-shaped token issuer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# The Authentication and User services of the modular backend (spec §9):
+# native only, run by the `ocw-server` binary (`--auth-config`). Fake
+# Google / Strava servers (`fake`) for the tests and `ocw-server --auth-dev`.
+[dependencies]
+ocw-auth.workspace = true
+axum.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "macros", "sync", "time"] }
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+openidconnect.workspace = true
+oauth2.workspace = true
+http.workspace = true
+ureq.workspace = true
+ed25519-dalek.workspace = true
+sha2.workspace = true
+getrandom.workspace = true
+chacha20poly1305.workspace = true
+base64.workspace = true
+form_urlencoded.workspace = true
+
+[lints]
+workspace = true
