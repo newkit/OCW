@@ -144,8 +144,10 @@ then you build the app and serve it yourself, as below.
   Without network the build still succeeds, with a warning, and the page
   rides without voice. `python3` also runs the dev server and the browser
   tests.
-- **Optional:** `wasm-opt` (binaryen; `apt install binaryen`) shrinks the
-  modules when it is installed. The build machines do without it. Python's
+- **Optional:** `wasm-opt` (binaryen) shrinks the modules of `make web`
+  when it is installed; `make web-preview` always uses it and fetches the
+  pinned release itself (`scripts/fetch-binaryen.sh`; Debian's
+  `apt install binaryen` is too old for today's modules). Python's
   `brotli` module (or the `brotli` tool) adds the brotli size to
   `sizes.txt`.
 - **A browser.** Chrome or Edge 113+ draw with WebGPU, and they are the
@@ -653,7 +655,8 @@ keys new-signing`.
   on Linux with the flag). Elsewhere: virtual power.
 - Safari and Firefox are untested, and so are real phones and tablets
   (the browser matrix comes with hosting, B8).
-- No hosting or domain yet (B8): you serve the page yourself. Multiplayer
+- No hosting or domain yet (B8): the public preview on GitHub Pages is
+  solo only; for anything else you serve the page yourself. Multiplayer
   takes the server's self-signed certificate by hash, renewed every 11
   days.
 - Unicorn mode's touch controls are untried on real phones and tablets,

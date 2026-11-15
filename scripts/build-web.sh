@@ -20,7 +20,8 @@
 #                                          webgl2; default: both)
 #   WEB_OUT=DIR, WEB_WASM_OPT="-O3"        another output directory, other
 #                                          wasm-opt passes (default: -Oz for
-#                                          the preview, -Os otherwise)
+#                                          the preview, -Os otherwise; off:
+#                                          none)
 #
 # Bevy chooses WebGPU or WebGL 2 when it is compiled (its shaders, limits
 # and bind group layouts differ), so there are two modules: the `webgpu` /
@@ -69,7 +70,9 @@ fi
 # wasm-opt: required for the preview (the pinned binaryen when none is
 # installed), else when installed.
 wasm_opt=
-if [ $preview = 1 ]; then
+if [ "$opt_passes" = off ]; then
+  :
+elif [ $preview = 1 ]; then
   wasm_opt=$(scripts/fetch-binaryen.sh)
 elif [ "$profile" != dev ] && command -v wasm-opt >/dev/null; then
   wasm_opt=$(command -v wasm-opt)
