@@ -24,6 +24,14 @@
                                     gather + journal of yesterday and today, the
                                     mask check, contact sheets in the 23:xx run;
                                     status in test-output/build-log/DAY/art.json
+    art/diary.py agent-event --task T --branch B --event E [--agent ID]
+                 [--commits C] [--note N] [--time ISO] [--day DAY]
+                                    append an agent job event (E: started,
+                                    reported, interrupted, resumed, merged,
+                                    abandoned) to test-output/build-log/DAY/
+                                    agents.jsonl, masked (the coordinator)
+    art/diary.py agent-backfill DAY  the day's agent jobs from git (merged
+                                    agent branches) and the incident log
     art/diary.py check-masked [--fix]
                                     fail if a tracked text file of the archive
                                     (index.md, SHA256SUMS, DAY/journal.*,
@@ -1047,6 +1055,185 @@ def incidents_of(day: str) -> dict:
     return {"auto": auto, "notes": notes, "noted": heads}
 
 
+# ---------------------------------------------------------------- features
+#
+# The features log (ART-PROJECT §2.7): the spec rows added on the day, the
+# merge that landed each, its check run on marge (build log), the deploys
+# (deploys.jsonl, scripts/deploy-test.sh) and releases (gh, skipped when it
+# fails or OCW_ART_GH=0); the agent jobs from the coordinator's
+# test-output/build-log/DAY/agents.jsonl. Pure parts in art/features.py.
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import features as F  # noqa: E402
+
+
+def git_out(*args) -> str:
+    r = run(["git", "-C", ROOT, *args], capture_output=True, text=True, check=False)
+    return r.stdout if r.returncode == 0 else ""
+
+
+def _next_day(day: str) -> str:
+    return (dt.date.fromisoformat(day) + dt.timedelta(days=1)).isoformat()
+
+
+_BRANCHES: dict = {}
+
+
+def branch_of(sha: str) -> str | None:
+    """The agent branch (worktree-agent-…) holding a merge's second parent."""
+    if sha in _BRANCHES:
+        return _BRANCHES[sha]
+    names = [b.strip() for b in git_out("branch", "--format=%(refname:short)", "--contains", sha).splitlines()
+             if b.strip().startswith("worktree-agent-")]
+    full = git_out("rev-parse", sha).strip()
+    tips = [b for b in names if git_out("rev-parse", b).strip() == full]
+    # Every branch made from main later contains the commit too; the owner
+    # has it on its own first-parent chain.
+    own = tips or [b for b in names if full in git_out("rev-list", "--first-parent", b).split()]
+    _BRANCHES[sha] = (own or [None])[0]
+    return _BRANCHES[sha]
+
+
+def releases_of(day: str) -> list[dict]:
+    if os.environ.get("OCW_ART_GH") == "0":
+        return []
+    try:
+        r = run(["gh", "release", "list", "-R", "newkit/OCW", "--limit", "50", "--json",
+                 "tagName,name,publishedAt,isPrerelease"], capture_output=True, text=True, check=False, timeout=30)
+        rel = json.loads(r.stdout) if r.returncode == 0 else []
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return []
+    out = []
+    for x in rel:
+        t = F.when(x.get("publishedAt") or "")
+        if t and t.astimezone().strftime("%Y-%m-%d") == day:
+            out.append({"tag": x.get("tagName"), "name": x.get("name"), "time": t.astimezone().isoformat(),
+                        "prerelease": x.get("isPrerelease")})
+    return out
+
+
+def features_for(day: str) -> dict:
+    """The day's features (spec rows with their merges and checks), deploys
+    and releases. Empty parts where git or the build log have nothing."""
+    nxt = _next_day(day)
+    c0 = git_out("rev-list", "-1", "--first-parent", f"--before={day} 00:00:00", "HEAD").strip()
+    c1 = git_out("rev-list", "-1", "--first-parent", f"--before={nxt} 00:00:00", "HEAD").strip()
+    if not c1 or c1 == c0:
+        feats, merges = [], []
+    else:
+        rng = f"{c0}..{c1}" if c0 else c1
+        start = F.spec_rows(git_out("show", f"{c0}:SPECIFICATION.md")) if c0 else {}
+        end = F.spec_rows(git_out("show", f"{c1}:SPECIFICATION.md"))
+        log = git_out("log", "--first-parent", "--reverse", "-p", "--diff-merges=first-parent",
+                      f"--format={F.COMMIT_MARK}%x1f%H%x1f%h%x1f%aI%x1f%P%x1f%s", rng, "--", "SPECIFICATION.md")
+        feats = F.features_of(F.parse_spec_log(log), start, end)
+        merges = sorted(git_out("log", "--first-parent", "--merges", "--format=%aI", rng).split())
+    bl = TEST_OUTPUT / "build-log" / day
+    runs = _jsonl(bl / "runs.jsonl")
+    for f in feats:
+        if not f["merge"]:
+            continue
+        p2 = f["parents"][1]
+        f["branch"] = branch_of(p2)
+        until = next((m for m in merges if m > f["time"]), None)
+        chk = F.find_check(runs, f["time"], f["branch"], [f["sha"], p2], until)
+        if chk and chk.get("log") and (bl / chk["log"]).exists():
+            chk.update(F.parse_test_results((bl / chk["log"]).read_text(errors="replace")))
+        f["check"] = chk
+    for f in feats:
+        f.pop("parents", None)
+    return {"features": feats, "deploys": _jsonl(bl / "deploys.jsonl"), "releases": releases_of(day)}
+
+
+def agents_path(day: str) -> Path:
+    return TEST_OUTPUT / "build-log" / day / "agents.jsonl"
+
+
+def agent_event(day: str, task: str, branch: str, event: str, agent: str | None = None, commits: str = "",
+                note: str = "", time_: str | None = None) -> dict:
+    """Appends one agent event to the day's agents.jsonl (masked)."""
+    if event not in F.EVENTS:
+        raise SystemExit(f"event: one of {', '.join(F.EVENTS)}")
+    e = {"time": time_ or dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+         "agent_id_short": F.agent_id(branch, agent), "task": task, "branch": branch, "event": event,
+         "commits": commits, "note": note}
+    path = agents_path(day)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    line = mask(json.dumps(e, ensure_ascii=False))
+    with open(path, "a") as f:
+        f.write(line + "\n")
+    return json.loads(line)
+
+
+def agent_backfill(day: str) -> list[dict]:
+    """The day's agent jobs from git (merged agent branches: first and last
+    commit, the merge) and the incident log (an OOM kill of the coordinator's
+    session interrupts the jobs running then); replaces earlier backfilled
+    lines of agents.jsonl."""
+    nxt = _next_day(day)
+    c0 = git_out("rev-list", "-1", "--first-parent", f"--before={day} 00:00:00", "HEAD").strip()
+    c1 = git_out("rev-list", "-1", "--first-parent", f"--before={nxt} 00:00:00", "HEAD").strip()
+    rng = f"{c0}..{c1}" if c0 else c1
+    kills = [e for e in _jsonl(TEST_OUTPUT / "build-log" / day / INCIDENTS_NAME)
+             if e.get("kind") == "oom-kill" and "tmux" in str(e.get("text"))]
+    note = "backfilled from git"
+    out = []
+    for line in git_out("log", "--first-parent", "--merges", "--reverse", "--format=%H%x1f%h%x1f%aI%x1f%P%x1f%s",
+                        rng).splitlines():
+        full, short, iso, parents, subject = line.split("\x1f")
+        p1, p2 = parents.split()[:2]
+        # A branch that moved on (fast-forwarded to main) owns nothing any more:
+        # the job is still listed, under its merge.
+        branch = branch_of(p2) or f"merge-{short}"
+        times = sorted(git_out("log", "--format=%aI", f"{p1}..{p2}").split())
+        if not times:
+            continue
+        task = re.sub(r"^Merge (branch '[^']*' into \S+|)", "", subject).strip(" :") or branch
+        task = task[:100]
+        ev = [("started", times[0], ""), ("reported", times[-1], "")]
+        for k in kills:
+            kt = f"{day}T{k['time']}"
+            if times[0][:19] < kt < iso[:19]:
+                after = [t for t in times if t[:19] > kt]
+                ev.append(("interrupted", kt, "OOM kill of the coordinator session (incidents.md)"))
+                if after:
+                    ev.append(("resumed", after[0], ""))
+        ev.append(("merged", iso, ""))
+        for event, t, n in sorted(ev, key=lambda x: x[1][:19]):
+            out.append({"time": t, "agent_id_short": F.agent_id(branch), "task": task, "branch": branch,
+                        "event": event, "commits": short if event == "merged" else "",
+                        "note": "; ".join(x for x in (note, n) if x)})
+    # Agent branches not merged (yet) with commits of the day: still running,
+    # reported, or left; interrupted when they span the OOM kill.
+    done = {e["branch"] for e in out}
+    for b in git_out("for-each-ref", "--format=%(refname:short)", "refs/heads/worktree-agent-*").split():
+        if b in done:
+            continue
+        times = sorted(t for t in git_out("log", "--format=%aI", f"HEAD..{b}").split() if t[:10] == day)
+        if not times:
+            continue
+        subj = git_out("log", "-1", "--no-merges", "--format=%s", f"HEAD..{b}").strip()[:100] or b
+        ev = [("started", times[0], ""), ("reported", times[-1], "")]
+        for k in kills:
+            kt = f"{day}T{k['time']}"
+            if times[0][:19] < kt:
+                after = [t for t in times if t[:19] > kt]
+                ev.append(("interrupted", kt, "OOM kill of the coordinator session (incidents.md)"))
+                if after:
+                    ev.append(("resumed", after[0], ""))
+        for event, t, n in sorted(ev, key=lambda x: x[1][:19]):
+            out.append({"time": t, "agent_id_short": F.agent_id(b), "task": subj, "branch": b, "event": event,
+                        "commits": git_out("rev-parse", "--short", b).strip() if event == "reported" else "",
+                        "note": "; ".join(x for x in (note, "not merged yet", n) if x)})
+    path = agents_path(day)
+    keep = [e for e in _jsonl(path) if not str(e.get("note", "")).startswith(note)]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    secrets = _secrets()
+    path.write_text("".join(mask(json.dumps(e, ensure_ascii=False), secrets) + "\n" for e in keep + out))
+    log(f"{day}: {len(out)} backfilled agent events ({len(set(e['branch'] for e in out))} jobs)")
+    return out
+
+
 def incident_text(j: dict, at: str, text: str | None = None) -> str:
     """The text of an incident card: `text`, else the root-cause note whose
     heading starts with the time `at`, else the first collected incident at
@@ -1070,6 +1257,12 @@ def journal(day: str) -> dict:
     tk = tokens(day)
     media = media_of(day)
     inc = incidents_of(day)
+    try:
+        feat = features_for(day)
+    except Exception as e:  # the journal never fails on the features log
+        log(f"{day}: features log skipped ({type(e).__name__}: {e})")
+        feat = {"features": [], "deploys": [], "releases": []}
+    jobs = F.agent_jobs(_jsonl(agents_path(day)))
     spec = [
         m.group(1)
         for c in commits
@@ -1093,6 +1286,10 @@ def journal(day: str) -> dict:
         "prompts": ps,
         "tokens": {"total": tk["total"], "features": tk["features"]},
         "incidents": inc,
+        "features": feat["features"],
+        "deploys": feat["deploys"],
+        "releases": feat["releases"],
+        "agent_jobs": jobs,
     }
     d = HIST / day
     d.mkdir(parents=True, exist_ok=True)
@@ -1154,6 +1351,36 @@ def journal(day: str) -> dict:
         md += ["", "## Prompts", "", f"{len(ps)} prompts (full text: [prompts.md](prompts.md)).", "",
                "| Time | Prompt |", "|---|---|"]
         md += [f"| {p_['time'][:5]} | {p_['text'][:140].replace('|', '/').replace(chr(10), ' ')} |" for p_ in ps]
+    if feat["features"] or feat["deploys"] or feat["releases"]:
+        md += ["", "## Features", "",
+               f"{len(feat['features'])} spec versions added, {sum(f['merge'] for f in feat['features'])} "
+               f"landed by a merge; {len(feat['deploys'])} deploys, {len(feat['releases'])} releases.", ""]
+        if feat["features"]:
+            md += ["| Spec | Feature | Landed | Check (marge) |", "|---|---|---|---|"]
+            for f in feat["features"]:
+                landed = (f"{str(f['time'])[11:16]} `{f['commit']}`" + (" (merge)" if f["merge"] else "")
+                          if f["commit"] else "–")
+                c = f.get("check")
+                chk = "–" if not c else (
+                    f"{'ok' if c['exit'] == 0 else 'exit ' + str(c['exit'])} at {str(c['time'])[11:16]}"
+                    + (f", {c['suites']} suites, {c['passed']} passed, {c['failed']} failed" if c.get("suites") else "")
+                    + f" ({c['how']})")
+                md.append(f"| {f['version']} | {f['title'].replace('|', '/')} | {landed} | {chk} |")
+        if feat["deploys"]:
+            md += ["", "Deploys:", ""]
+            md += [f"- {str(d_.get('start', ''))[11:16]} {d_.get('machine')}: `{d_.get('commit')}` "
+                   f"({'ok' if d_.get('exit') == 0 else 'exit ' + str(d_.get('exit'))})" for d_ in feat["deploys"]]
+        if feat["releases"]:
+            md += ["", "Releases:", ""]
+            md += [f"- {r_['time'][11:16]} {r_['tag']}" + (" (pre-release)" if r_.get("prerelease") else "")
+                   for r_ in feat["releases"]]
+    if jobs:
+        md += ["", "## Agent jobs", "", f"{len(jobs)} jobs (coordinator log agents.jsonl).", "",
+               "| Task | Branch | Start | End | Status | Interrupted | Merged |", "|---|---|---|---|---|---|---|"]
+        for a in jobs:
+            md.append(f"| {str(a['task'])[:90].replace('|', '/')} | {a['agent']} | {str(a['start'] or '')[11:16]} | "
+                      f"{str(a['end'] or '')[11:16]} | {a['status']} | {a['interruptions'] or ''} | "
+                      f"{('`' + a['merged'] + '`') if a['merged'] else ''} |")
     if inc["auto"] or inc["notes"]:
         kinds = {}
         for e in inc["auto"]:
@@ -1234,6 +1461,7 @@ def sheet(day: str):
 # ------------------------------------------------------------------- shots
 
 XF = 0.5  # cross-transition between segments, s
+ROLL_PAGE_S = 3.6  # a page of the features roll, s
 TRANSITIONS = ["pixelize", "slideleft", "circleopen", "wipeup", "smoothleft",
                "radial", "hblur", "squeezeh", "diagtl", "slideup"]
 ENC = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p",
@@ -1621,6 +1849,14 @@ def render(day: str) -> Path:
         segs.append((seg, sum(s for s, _ in shots), "groove"))
         ch_shots.append(shots)
 
+    # 3b. "Today's features": a paged roll of the merged spec rows (§4 features_roll).
+    roll = F.roll_pages(j.get("features") or []) if sc.get("features_roll", True) else []
+    roll_s = ROLL_PAGE_S * len(roll)
+    if roll:
+        t3 = work / "98-features.mp4"
+        card(roll_s, t3)
+        segs.append((t3, roll_s, "groove"))
+
     # 4. End card.
     end_s = float(sc.get("end_seconds", 9))
     t4 = work / "99-end.mp4"
@@ -1726,6 +1962,17 @@ def render(day: str) -> Path:
         sfx_events.append((cs - XF / 2, "whoosh"))
     sfx_events.append((starts[1] - XF / 2, "whoosh"))
     sfx_events.append((starts[-1] - XF / 2, "whoosh"))
+
+    # The features roll: a kicker, then one page of lines after the other.
+    if roll:
+        rs = starts[-2]
+        sub.add(rs + 0.2, rs + roll_s - 0.2, "Kicker", "{\\pos(960,150)\\fad(200,200)}TODAY'S FEATURES")
+        for pi, page in enumerate(roll):
+            a = rs + pi * ROLL_PAGE_S
+            for li, line in enumerate(page):
+                sub.add(a + 0.15 + li * 0.12, a + ROLL_PAGE_S - 0.1, "Counter",
+                        f"{{\\an4\\pos(260,{300 + li * 100})\\fad(180,180)}}{esc(line)}")
+        sfx_events.append((rs - XF / 2, "whoosh"))
 
     # End card: count-up stats.
     es = starts[-1]
@@ -2035,6 +2282,22 @@ def main():
         raise
     flags = {a for a in args if a.startswith("--")}
     days = [a for a in args if not a.startswith("--")]
+    if cmd == "agent-event":
+        import argparse
+        ap = argparse.ArgumentParser(prog="art/diary.py agent-event")
+        ap.add_argument("--task", required=True)
+        ap.add_argument("--branch", required=True)
+        ap.add_argument("--event", required=True, choices=F.EVENTS)
+        ap.add_argument("--agent", help="agent id (default: from the branch name)")
+        ap.add_argument("--commits", default="")
+        ap.add_argument("--note", default="")
+        ap.add_argument("--time", help="ISO 8601 time (default: now)")
+        ap.add_argument("--day", help="YYYY-MM-DD (default: the time's day)")
+        a = ap.parse_args(args)
+        t = a.time or dt.datetime.now().astimezone().isoformat(timespec="seconds")
+        e = agent_event(a.day or t[:10], a.task, a.branch, a.event, a.agent, a.commits, a.note, t)
+        print(json.dumps(e, ensure_ascii=False))
+        return
     if cmd == "check-masked":
         fix = "--fix" in flags
         with art_lock(cmd) if fix else contextlib.nullcontext():
@@ -2078,7 +2341,7 @@ def run_command(cmd: str, days: list[str], flags: set[str] = frozenset()):
         return
     fn = {"fetch": fetch, "gather": gather, "journal": journal, "sheet": sheet,
           "render": render, "stamp": stamp, "prompts": prompts,
-          "tokens": tokens}.get(cmd)
+          "tokens": tokens, "agent-backfill": agent_backfill}.get(cmd)
     if cmd == "publish":
         publish(days)
     elif fn:

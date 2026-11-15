@@ -589,9 +589,12 @@ log_end() {
   fi
   # Cargo's own numbers from the output: {"cargo_s":…,…} without braces.
   extra=$(python3 scripts/build_profile.py cargo-log "$log_file" 2>/dev/null | sed -n 's/^{\(.*\)}$/,\1/p' || true)
-  printf '{"start":%s,"seconds":%s,"machine":%s,"os":%s,"checkout":%s,"branch":%s,"command":%s,"exit":%s,"log":%s,"sync_s":%s%s}\n' \
+  # commit: the build id of the tree that ran (short commit, -dirty with
+  # uncommitted changes), for the art journal's check results (§2.7).
+  printf '{"start":%s,"seconds":%s,"machine":%s,"os":%s,"checkout":%s,"branch":%s,"commit":%s,"command":%s,"exit":%s,"log":%s,"sync_s":%s%s}\n' \
     "$(json_str "$log_iso")" "$secs" "$(json_str "$machine")" "$(json_str "$os")" \
-    "$(json_str "$(basename "$PWD")")" "$(json_str "$branch")" "$(json_str "$(short_cmd "$@")")" \
+    "$(json_str "$(basename "$PWD")")" "$(json_str "$branch")" \
+    "$(json_str "${build_id:-$(scripts/build-id.sh 2>/dev/null)}")" "$(json_str "$(short_cmd "$@")")" \
     "$rc" "$(json_str "$(basename "$log_file")")" "${sync_s:-null}" "$extra" >>"$log_dir/runs.jsonl"
 }
 

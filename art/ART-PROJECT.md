@@ -1,6 +1,6 @@
 # OCW Build Diary – Art Project Specification
 
-Version 1.7 – 15 November 2026
+Version 1.8 – 15 November 2026
 
 | Version | Change |
 |---|---|
@@ -12,6 +12,7 @@ Version 1.7 – 15 November 2026
 | 1.5 | The archive moved to `art/build-history/`; its text files (index, checksums, journals, token usage) are tracked in git, masked, while media stay out of git (§2, §2.5). An hourly collector on the dev machine, a systemd user timer: gather + journal of yesterday and today, the mask check, the contact sheets at 23:xx, a lock, a status file, a dashboard line (§5.1). Day videos: images stay on screen about 1.4× longer (3–5 s), and shots run in capture order within a chapter (§3, §4). All decided by the user 2026-11-14 |
 | 1.6 | Music with more variety and a style per day (user 2026-11-14): synthwave, funk, lofi, chiptune, house (`style` and `mode` in the day script, else picked by the day number). It varies within the video: a progression, drum pattern, bass line and arpeggio per chapter; fills, build-ups and stops at chapter changes; crashes, a breakdown, a bridge and a key lift in long videos; a developing lead (motif, variations, call and response); and swells. Deterministic, loudness-normalised, tested (`art/music.py`, §3.2, §4) |
 | 1.7 | Incident log (user 2026-11-15, §2.6): the hourly collector gathers OOM kills, failed and restarted units (journalctl), machines offline / online, full disks, janitor deletions and failed runs into `test-output/build-log/DAY/incidents.jsonl` (masked). The coordinator writes root-cause notes to `DAY/incidents.md` (tracked, masked). The journal merges both under "Incidents", and a day script can show an incident as a card (`incident = "HH:MM"`, §4). First entry: the 2026-11-15 00:39 OOM on deb |
+| 1.8 | Features and agent jobs (user 2026-11-15, §2.7): the journal lists the day's spec rows with the merge that landed each, its marge check (suites, passed, failed), deploys (`deploys.jsonl` from `deploy-test.sh`) and releases. Agent jobs come from the coordinator's `agents.jsonl` (`diary.py agent-event`, `agent-backfill`). The day video closes with a "Today's features" roll (`features_roll`, §4). `remote.sh` logs each run's commit |
 
 ## 1. The brief
 
@@ -224,9 +225,56 @@ machines dropping out, full disks.
   `journal.json` has `incidents`, with `auto` (the collected list), `notes`
   (the Markdown) and `noted` (the headings).
 - **In the video:** a chapter can be about an incident: a card shot with
-  `incident = "HH:MM"` (§4) shows "INCIDENT · HH:MM" and the incident's text.
-  The text is the heading of its root-cause note, else the collected entry,
-  else the shot's `text`.
+  `incident = "HH:MM"` (§4) shows "INCIDENT · HH:MM" and the incident's text:
+  the shot's `text` if it has one, else the heading of its root-cause note,
+  else the collected entry.
+
+### 2.7 Features and agent jobs (decided by the user 2026-11-15)
+
+What got built each day, and by which agent job, is part of the record.
+
+- **Features** (`journal.md` "Features", `journal.json` `features`, `deploys`,
+  `releases`), built automatically by `journal` (`art/features.py`):
+  - *Spec rows:* the `SPECIFICATION.md` version rows that are in the
+    end-of-day spec but were not in the start-of-day spec. Each gets its
+    number and a title: the first clause, without parentheses and bold.
+    These come from `git log --first-parent -p` of the spec over the day.
+  - *Landed by:* the first-parent commit whose diff added the final row
+    (usually the merge; a direct "Spec X.Y" commit otherwise), with its time.
+    If several commits added it, a merge naming "spec X.Y" in its subject
+    wins. That subject alone counts only when no diff shows the row.
+  - *Check:* the latest marge test run (`cargo test`, `make check|test`)
+    from the build log, found by one of three rules, best first: the merge
+    or its branch tip as the run's `commit` (`scripts/remote.sh` logs it
+    since 2026-11-15); the merged agent branch before the merge; or `main`
+    between this merge and the next. It reports the exit code and, from
+    the run's log, the test suites, passed and failed ("test result:" lines).
+  - *Deploys:* `scripts/deploy-test.sh` appends one line per deploy (start,
+    end, machine, commit, exit) to `test-output/build-log/DAY/deploys.jsonl`.
+  - *Releases:* from `gh release list`, the ones published that day. They are
+    skipped when gh fails (offline) or with `OCW_ART_GH=0`.
+- **Agent jobs** (`journal.md` "Agent jobs", `journal.json` `agent_jobs`): a
+  log the coordinator writes, `test-output/build-log/DAY/agents.jsonl`
+  (git-ignored, masked). It has one line per event: `time`,
+  `agent_id_short`, `task`, `branch`, `event` (`started`, `reported`,
+  `interrupted`, `resumed`, `merged` or `abandoned`), `commits` and `note`.
+  - Appending: `art/diary.py agent-event --task … --branch … --event …
+    [--commits …] [--note …]`. The agent id comes from the branch name
+    (`worktree-agent-<id>`).
+  - The journal shows one row per job: task, start, end, status (the last
+    event), interruptions and the merged commit.
+  - `art/diary.py agent-backfill DAY` derives a day's merged jobs from git
+    (first and last branch commit, the merge) and the incident log (an OOM
+    kill of the coordinator's session interrupts the jobs running then). It
+    replaces only its own earlier lines ("backfilled from git"). 2026-11-15
+    was backfilled this way.
+- **In the video:** a closing **"Today's features"** roll after the chapters,
+  before the end card: the merged spec rows, six per page, 3.6 s per page,
+  on a violet card under "TODAY'S FEATURES". `features_roll = false` in the
+  day script turns it off (§4).
+- Everything in these sections is masked like the journals (§2.5). The
+  journal is tracked in git; `agents.jsonl` and `deploys.jsonl` stay in the
+  git-ignored `test-output/`.
 
 ## 3. The day video
 
@@ -251,6 +299,8 @@ joined with short animated transitions (pixelize, slides, wipes …):
    - **Shots run in capture order** (decided by the user 2026-11-14): within a
      chapter the shots follow their `HHMMSS-` time, so images and videos mix
      chronologically. A card stays after the shot it follows.
+   - **Today's features** (§2.7, optional, on by default): after the
+     chapters, the merged spec rows of the day, six per page, 3.6 s per page.
 4. **End card** (≈9 s): a mosaic of the day's pictures, the numbers of the day
    counting up (commits, merges, lines written, pictures and videos, tests
    passing), a closing line and a teaser for the next day.
@@ -354,6 +404,8 @@ outro = "Closing line on the end card."
 teaser = "NEXT TIME: …"            # optional
 title_seconds = 6.5                # optional
 end_seconds = 9                    # optional
+features_roll = true               # the closing "Today's features" roll (§2.7;
+                                   # default true, false turns it off)
 
 [[chapter]]
 time = "15:02"                     # when it happened (shown in gold)
