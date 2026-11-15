@@ -1651,7 +1651,7 @@ def janitor_text(j: dict) -> list:
 
 
 # --------------------------------------------------------------------------
-# Art project: the hourly collector (art/ART-PROJECT.md §5.1)
+# Art project: the hourly collector (OCW-ART, https://github.com/newkit/OCW-ART, ART-PROJECT.md §5.1)
 # --------------------------------------------------------------------------
 
 ART_LATE_S = 2.5 * 3600  # the timer runs hourly: no run for 2.5 h is late
@@ -1660,7 +1660,7 @@ ART_STALE_S = 2 * 3600  # "running" longer than the unit's timeout: it died
 
 def art_status(build_log: Path | None, now: float | None = None) -> dict | None:
     """The art collector's latest run: the newest
-    test-output/build-log/DAY/art.json (written by scripts/art-collect.sh),
+    test-output/build-log/DAY/art.json (written by OCW-ART's collect.sh),
     with `age_s` (since its end, or start) and `late` (no run for 2.5 h, or
     a "running" run that never ended). None without any run."""
     if build_log is None or not build_log.is_dir():
@@ -1689,7 +1689,7 @@ def art_line(a) -> str:
     """"Art project: last collector run 14:02 (12m ago): ok, 3 new files,
     214 media today, mask check ok"."""
     if not a:
-        return "Art project: no collector run yet (make art-install-timer)"
+        return "Art project: no collector run yet (make install-timer in OCW-ART)"
     when = (a.get("end") or a.get("start") or "?")[11:16]
     ago = (" (%s ago)" % fmt_dur(a["age_s"])) if a.get("age_s") is not None else ""
     parts = [str(a.get("status") or "?").upper() if a.get("status") != "ok" else "ok"]
@@ -1703,7 +1703,7 @@ def art_line(a) -> str:
         parts.append("contact sheets")
     line = "Art project: last collector run %s%s: %s" % (when, ago, ", ".join(parts))
     if a.get("late"):
-        line += " - LATE: no run for over %s (make art-timer-status)" % fmt_dur(ART_LATE_S)
+        line += " - LATE: no run for over %s (make timer-status in OCW-ART)" % fmt_dur(ART_LATE_S)
     return line
 
 
@@ -2414,7 +2414,7 @@ def _classify_make(words) -> list:
 
 
 def _classify_script(name, words, env, regions, cmd) -> list:
-    """Repository scripts (scripts/*.sh, the run-ocw skill, art/diary.py)."""
+    """Repository scripts (scripts/*.sh, the run-ocw skill, OCW-ART's diary.py)."""
     args = words[1:]
     base = re.sub(r"\.(sh?|py?)$", "", name)
     if base.startswith("build-") and base not in ("build-appimage", "build-macos-app", "build-id", "build-profile"):
@@ -2499,7 +2499,7 @@ def _classify_script(name, words, env, regions, cmd) -> list:
         return [_act("route", "Building the demo GPX route", name)]
     if base == "diary":
         sub = args[0] if args else ""
-        return [_act("art", "Art project: " + (sub or "diary"), "art/diary.py " + " ".join(args))]
+        return [_act("art", "Art project: " + (sub or "diary"), "diary.py " + " ".join(args))]
     if base == "repro":
         return [_act("repro", "Reproduction run" + ((" (" + args[0] + ")") if args else ""),
                      name + " " + " ".join(args))]
@@ -2793,7 +2793,7 @@ RECORD_INTERVAL_S = 60.0
 
 def record_line(status: dict, now: float | None = None) -> str:
     """One JSON line of the build servers' state for the art project's build
-    log (art/ART-PROJECT.md §2): the dashboard's status (already masked: no
+    log (OCW-ART's ART-PROJECT.md §2): the dashboard's status (already masked: no
     host names, addresses or user names) with the time it was taken."""
     t = time.localtime(now if now is not None else time.time())
     stamp = time.strftime("%Y-%m-%dT%H:%M:%S", t)

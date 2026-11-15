@@ -47,7 +47,7 @@
 #                  ("gable") or along an eave side ("long"), each with its
 #                  probability (near detail; buildings of two storeys or more)
 #
-# Colours were picked from reference photos (art/reference/<region>.md).
+# Colours were picked from reference photos (docs/reference/<region>.md).
 
 # --- Window styles (procedural façades in building.wesl; at most 16) -------
 # One window per bay along a wall and storey; a door on the ground floor of

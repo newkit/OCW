@@ -8,14 +8,19 @@
 #
 # Environment (defaults: nils -> claude):
 #   SRC_USER, SRC_REPO   the old user and checkout (nils, /home/nils/data/git/OCW)
-#   DST_USER, DST_REPO   the new user and checkout (claude, /home/claude/OCW);
+#   DST_USER, DST_REPO   the new user and checkout (claude, /home/claude/src/OCW);
 #                        DST_REPO must already be a git clone made by DST_USER
+#   SRC_ART, DST_ART     the art project's checkouts (OCW-ART next to OCW:
+#                        /home/nils/data/git/OCW-ART, /home/claude/src/OCW-ART);
+#                        DST_ART must already be a git clone of newkit/OCW-ART
 #
 # What is copied (nothing tracked in git; the clone has that):
 #   config/                machines.toml, build-machines.toml, ssh/ (keys, known_hosts),
 #                          dashboard-token  – mode 600/700 kept, never printed
 #   test-output/           build log, answers inbox, scenes, web runs
-#   art/build-history/     the art archive (media and logs; tracked text is identical)
+#   build-history/         the art archive (media and logs; tracked text is identical)
+#                          from SRC_ART/build-history/ (or, before it moved there,
+#                          SRC_REPO/art/build-history/) into DST_ART/build-history/
 #   target/web/            the browser build and its worlds (optional, can be re-fetched)
 #   target/web-keys/root.hex
 #   Claude Code: the old project folder (transcripts for the art project's prompt and
@@ -27,14 +32,16 @@ set -euo pipefail
 SRC_USER=${SRC_USER:-nils}
 SRC_REPO=${SRC_REPO:-/home/nils/data/git/OCW}
 DST_USER=${DST_USER:-claude}
-DST_REPO=${DST_REPO:-/home/claude/OCW}
+DST_REPO=${DST_REPO:-/home/claude/src/OCW}
+SRC_ART=${SRC_ART:-$(dirname "$SRC_REPO")/OCW-ART}
+DST_ART=${DST_ART:-$(dirname "$DST_REPO")/OCW-ART}
 
 apply=0 linger=0
 for a in "$@"; do
   case $a in
     --apply) apply=1 ;;
     --linger) linger=1 ;;
-    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
     *) echo "unknown option: $a" >&2; exit 2 ;;
   esac
 done
@@ -43,6 +50,15 @@ done
 id "$DST_USER" >/dev/null 2>&1 || { echo "no user $DST_USER" >&2; exit 2; }
 [ -d "$SRC_REPO/.git" ] || [ -f "$SRC_REPO/.git" ] || { echo "$SRC_REPO is not a git checkout" >&2; exit 2; }
 [ -d "$DST_REPO/.git" ] || { echo "$DST_REPO is not a git clone yet – $DST_USER clones it first (docs/MIGRATE-DEB-USER.md, step 3)" >&2; exit 2; }
+[ -d "$DST_ART/.git" ] || { echo "$DST_ART is not a git clone of newkit/OCW-ART yet – $DST_USER clones it first (docs/MIGRATE-DEB-USER.md, step 3)" >&2; exit 2; }
+
+# The art archive: in the OCW-ART checkout since 2026-11-15 (its ART-PROJECT.md
+# §5.2), before that in OCW's art/build-history/.
+src_hist="$SRC_ART/build-history"
+# (the media's diary/ folder tells where it is: OCW-ART's clone has only the text)
+if [ ! -d "$src_hist/diary" ] && [ -d "$SRC_REPO/art/build-history/diary" ]; then
+  src_hist="$SRC_REPO/art/build-history"
+fi
 
 src_home=$(getent passwd "$SRC_USER" | cut -d: -f6)
 dst_home=$(getent passwd "$DST_USER" | cut -d: -f6)
@@ -62,10 +78,10 @@ copy() { # SRC DST [extra rsync options]
   rsync "${opts[@]}" "$@" "$s" "$d" | grep -E 'Number of (regular )?files|Total transferred|total size' || true
 }
 
-echo "OCW state: $SRC_USER ($SRC_REPO) -> $DST_USER ($DST_REPO)$([ $apply = 1 ] || echo '   [dry run]')"
+echo "OCW state: $SRC_USER ($SRC_REPO, $SRC_ART) -> $DST_USER ($DST_REPO, $DST_ART)$([ $apply = 1 ] || echo '   [dry run]')"
 copy "$SRC_REPO/config/"            "$DST_REPO/config/"
 copy "$SRC_REPO/test-output/"       "$DST_REPO/test-output/"
-copy "$SRC_REPO/art/build-history/" "$DST_REPO/art/build-history/" --exclude=.lock
+copy "$src_hist/"                   "$DST_ART/build-history/" --exclude=.lock
 copy "$SRC_REPO/target/web/"        "$DST_REPO/target/web/"
 copy "$SRC_REPO/target/web-keys/root.hex" "$DST_REPO/target/web-keys/root.hex"
 copy "$src_proj/" "$dst_proj_old/"

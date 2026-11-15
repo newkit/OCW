@@ -15,7 +15,7 @@ Environment=PYTHONDONTWRITEBYTECODE=1
 Restart=on-failure
 RestartSec=10
 # The dashboard needs < 400 MB (peak 379 MB on 2026-11-15, when the OOM killer
-# stopped it while deb ran out of memory; art/build-history/2026-11-15/incidents.md).
+# stopped it while deb ran out of memory; OCW-ART's build-history/2026-11-15/incidents.md).
 # A cap keeps a leak from taking the machine down; it restarts above.
 MemoryHigh=768M
 MemoryMax=1G

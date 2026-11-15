@@ -46,7 +46,7 @@ cd "$(dirname "$0")/.."
 machine=${1:?usage: deploy-test.sh MACHINE}
 # Same commit id as the build id in the HUD (remote.sh passes it to the build).
 version="$(scripts/build-id.sh) $(date '+%F %T')"
-# The deploy log for the art project (art/ART-PROJECT.md §2.7): one JSON line
+# The deploy log for the art project (OCW-ART's ART-PROJECT.md §2.7): one JSON line
 # per deploy in the main checkout's test-output/build-log/DAY/deploys.jsonl
 # (start, end, machine, commit, exit). OCW_BUILD_LOG=0 turns it off.
 deploy_start=$(date --iso-8601=seconds)

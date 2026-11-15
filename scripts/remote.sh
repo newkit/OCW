@@ -556,7 +556,7 @@ run_windows() {
   "${SSH[@]}" "$target" "$ps"
 }
 
-# Build log for the art project (art/ART-PROJECT.md §2): every `run` is
+# Build log for the art project (OCW-ART's ART-PROJECT.md §2): every `run` is
 # recorded in the main checkout's test-output/build-log/YYYY-MM-DD/ – one
 # JSON line per run in runs.jsonl (machine, command, start, seconds, exit
 # code; sync_s = the copy of the tree; from the output, by

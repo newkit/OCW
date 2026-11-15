@@ -10,7 +10,7 @@ build history and the GitHub CLI login. Today that is the Debian dev machine.
 | Item | State |
 |---|---|
 | Claude Code | installed (`/usr/bin/claude` 2.1.311; the dev machine has 2.1.323), **not logged in** (no `~/.claude`) |
-| git, gh, python3 3.13, ffmpeg 7.1, zip, rsync, tmux, jq, clang-21, rustup toolchain | present (`art/diary.py` works with the system python) |
+| git, gh, python3 3.13, ffmpeg 7.1, zip, rsync, tmux, jq, clang-21, rustup toolchain | present (the art project's `diary.py`, [OCW-ART](https://github.com/newkit/OCW-ART), works with the system python) |
 | GitHub | `gh` **not logged in**; no SSH key for GitHub |
 | `~/src/OCW` | the `remote.sh` sync target (overwritten on every run) with a **stale `.git` from before the history rewrite** (HEAD `f0ff0a5`); not usable as the coordinator checkout |
 | SSH to other build machines | macOS **reachable**; Windows **not reachable from marge** (no ping, port closed; reachable from the dev machine, so probably the Windows firewall / network); leela unreachable (as from the dev machine) |
@@ -32,7 +32,7 @@ build history and the GitHub CLI login. Today that is the Debian dev machine.
 3. **Copy** to marge:
    - `config/machines.toml` and `config/ssh/` by `scp`/`rsync`, never through git (step 4 above);
    - Claude memory: `~/.claude/projects/-home-nils-data-git-OCW/memory/` → `~/.claude/projects/-home-claude-coord-OCW/memory/`;
-   - `art/build-history/` (the media; its masked text files are in git; 2.6 GB);
+   - the art project: clone [OCW-ART](https://github.com/newkit/OCW-ART) next to OCW (`~/coord/OCW-ART`) and copy its `build-history/` media (its masked text files are in git; about 7 GB);
    - `test-output/` (0.6 GB);
    - `data/pilot` and `data/blackforest` (or fetch them again).
 4. **`remote.sh`:** when the target machine is the one it runs on (marge), run in place instead of ssh + rsync to itself. Machine entry `local = true` in `machines.toml`.
@@ -42,7 +42,7 @@ build history and the GitHub CLI login. Today that is the Debian dev machine.
    - `make check`;
    - `scripts/remote.sh macos run 'cargo test -p ocw-sim'` and the same for Windows;
    - `gh release list`;
-   - `art/diary.py fetch`;
+   - `make -C ~/coord/OCW-ART fetch` (the art project);
    - `make test-multiplayer` (server and kiosk are now local);
    - `scripts/deploy-test.sh marge`.
 8. **Run the session in tmux** on marge (survives disconnects). The user reaches it via ssh or Remote Control.

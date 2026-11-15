@@ -2695,7 +2695,7 @@ many slots, is set in the [build dashboard](#build-dashboard).
 | Screenshots, videos, scenes, multiplayer and browser tests | [`make test-*`, `drive.sh`, `scripts/render-scenes.sh`](#test-and-media-harness) | `test-output/` with its `index.md` |
 | Release builds | [`scripts/build-appimage.sh`, `build-macos-app.sh`, `prepare-world-release.sh`, `make release-*`](#releases) | `target/…`, GitHub Releases |
 | World packages | [`scripts/fetch-pilot.sh`, `scripts/build-<region>.sh`](#world-builds) | `data/` on the build machine |
-| The art project (OCW Build Diary) | `make art-*` | see [art/ART-PROJECT.md](art/ART-PROJECT.md) |
+| The art project (OCW Build Diary) | its own repository, [newkit/OCW-ART](https://github.com/newkit/OCW-ART) (a checkout next to this one) | OCW-ART's `build-history/` and its release `build-history` |
 
 **Where the configuration and the results live** (all git-ignored; in a git
 worktree the tools read the main checkout's `config/` and write the main
@@ -3257,21 +3257,21 @@ All test runs execute on the build machines (`scripts/remote.sh MACHINE run
   videos of agent worktrees (default: every `.claude/worktrees/*`) into the
   main checkout's `test-output/` and its `index.md`; run it after each agent
   or merge. It never overwrites, so running it again is harmless.
-- **The art project** (`make art-collect`, `art-gather`, `art-sheets`, `art-render`,
-  `art-diary`, `art-publish`): a video per build day from all of this; see
-  [art/ART-PROJECT.md](art/ART-PROJECT.md).
+- **The art project**, the OCW Build Diary: a video per build day from all of
+  this. It has its own repository, [newkit/OCW-ART](https://github.com/newkit/OCW-ART):
+  the day scripts, renders, publishing and the hourly collector live and run
+  there, from a checkout next to this one (`../OCW-ART`).
 
 Release builds are published as GitHub Releases (`release/README.md` has the
 build notes); screenshots and videos from development
-are not in the repository: they are stored as one zip per day on the GitHub
-release `build-history`; new test runs land in the git-ignored `test-output/`.
-The art project's local archive is `art/build-history/`: its media are
-git-ignored, and its masked text files are tracked in git (`index.md`,
-`SHA256SUMS`, per day `journal.md`, `journal.json`, `tokens.json`; `make
-art-check`). An hourly systemd user timer collects yesterday and today into
-it. Install it with `make art-install-timer` from the main checkout, check it
-with `make art-timer-status`, and run `sudo loginctl enable-linger $USER` once.
-It is described in `art/ART-PROJECT.md` §5.1.
+are not in the repository: the art project stores them as one zip per day on
+the release [`build-history` of OCW-ART](https://github.com/newkit/OCW-ART/releases/tag/build-history)
+(days 1–4 also still on this repository's release `build-history`, which keeps
+the images of this README); new test runs land in the git-ignored
+`test-output/`. The archive, its hourly collector (a systemd user timer,
+`make install-timer` in OCW-ART) and the masking rules are described in
+OCW-ART's `ART-PROJECT.md`. The collector still writes its status to
+`test-output/build-log/DAY/art.json` here, which the build dashboard shows.
 
 ### Scene harness
 
@@ -3311,8 +3311,8 @@ scenes always run. `--pick` copies the good renders of a folder into
 `test-output/build-history/YYYY-MM-DD/HHMMSS-NAME.jpg|mp4` (images over 600 KB
 are made smaller – JPEG quality ~80, older PNGs a 256-colour palette – with
 their metadata kept; videos over 3 MB are re-encoded with sound and metadata) with one row per
-file in its `index.md` (the scene's description), ready for the zip of the
-GitHub release `build-history`. Look at every image before picking it.
+file in its `index.md` (the scene's description), ready for the art
+project's day zip (OCW-ART). Look at every image before picking it.
 
 ### Releases
 
@@ -3335,8 +3335,9 @@ make version | version-next | version-bump PART=minor   # by hand
 | World packages | marge | `scripts/prepare-world-release.sh OUT_DIR PKG…` (no upload) | `ocw-world-<name>-v<N>.zip` (package, manifest, routes, `LICENSE-DATA.md`, `README.md`) and `<region>-osm-source.zip` (the ODbL offer) |
 
 `release/README.md` keeps the build notes of each release. Screenshots and
-videos from development are not in the repository: they are published as one
-zip per day with an index on the GitHub release `build-history`.
+videos from development are not in the repository: the art project publishes
+them as one zip per day with an index on the release `build-history` of
+[OCW-ART](https://github.com/newkit/OCW-ART).
 
 ### World builds
 
