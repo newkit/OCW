@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 3.65 – November 2026
+Version 3.66 – November 2026
 
 | Version | Change |
 |---|---|
+| 3.66 | Decision by the user (2026-11-15): Phase 10 Q8 – the render distance's **dynamic mode is on by default** on every platform |
 | 3.65 | Render distance planned (asked by the user 2026-11-15; §14 Phase 10, 10G): a **slider** for the render distance (1 – 60 km or unlimited; it drives the far plane and fog, trees, house LODs, far terrain and the tile streaming radius) and a **checkbox for a dynamic mode** that steps the distance down and up with the measured frame rate towards a target (−15 % / +10 %, dead band, ignored windows, smooth fog; the slider is the upper limit); HUD and console `view`; open: Q8 (dynamic by default where), Q9 (target frame rate) |
 | 3.64 | Rider status signs planned (asked by the user 2026-11-15; §2.6): **muted voice → big over-ear headphones** on the rider; **in the menu → the rider takes a smartphone from the back jersey pocket, looks at it while riding one-handed, and stores it again** – grab and store animated and visible to everybody (two status flags per rider in the snapshots, animated on every client by `ocw_assets::anim::Animator`; models `wear/headphones.glb`, `props/phone.glb`, a pocket anchor); looks only. Open: §2.6 Q1 (when headphones), Q2 (which screens count as the menu), Q3 (may a rider hide them) |
 | 3.63 | Decision by the user (2026-11-15): Phase 16 Q3 – **BRouter** is the first external route planner; its server is a setting without a default for now (no built-in server); brouter.de checked: GeoJSON API with CORS, so desktop and browser can use it; plan written (`ocw_world::plan`, BRouter client, *Navi → Plan route* in the game before the studio, privacy note, tests) – not started |
@@ -3465,7 +3466,7 @@ Today, *World → Time* (9I) changes the date only one day per press (← / →)
 - **Q5 – Anonymous access: decided (2026-11-14, dashboard):** **anonymous riding is allowed**, but with a plain default ("boring") bike and character and **no customization**: the workshop and the character editor are locked (shown with a "log in to customize" hint), no hearts are earned or spent, nothing is saved across visits. Only logged-in users customize their bike and character (and keep hearts, parts and kit, §14 Phase 4).
 - **Q6 – Same app or a lighter "web edition"? Decided (2026-11-14, dashboard): full parity** – the browser app is the same app with the same worlds and features as the desktop (quality presets and streaming adapt to the device, not a reduced edition).
 - **Q7 – Black Forest in the public preview: decided (2026-11-15, dashboard: "mark as fixed"):** closed for now – the preview keeps Liechtenstein and Tenerife (the user: "only Tenerife for now"); the Black Forest comes with B8 stage 2's own server or when the user reopens it. The background: GitHub Pages holds at most 1 GB per site, and release files cannot be fetched by the browser (no CORS headers; checked 2026-11-15). The preview carries Liechtenstein (88 MB) and Tenerife (500 MB) since v3.51 (the user: "only Tenerife for now"); a Black Forest package is 436–578 MB. Options: **(a)** a smaller web cut of the Black Forest (for example Freiburg – Schauinsland – Feldberg, about 250 MB) – **proposal**; **(b)** web copies of the packages with lighter orthophotos so that more fit; **(c)** an external host with CORS (a Cloudflare R2 bucket: 10 GB free, no egress fees; or B8 stage 2's own server), which needs an account and a domain from the user.
-- **Q8 – Render distance: dynamic by default?** Should *Adjust to the frame rate* be on by default **in the browser and on phones, off on the desktop** (proposal: the desktop keeps a steady look, the browser varies most), on everywhere, or off everywhere?
+- **Q8 – Render distance: dynamic by default? Decided (2026-11-15, the user: "make dynamic mode default: on"):** *Adjust to the frame rate* is **on by default everywhere** – desktop, browser, phones and VR; the slider's default (the preset's distance) is its upper limit.
 - **Q9 – Target frame rate:** default *the display's refresh* capped at 60 in the browser (proposal), or a fixed 60 everywhere (30 on phones)?
 
 
@@ -3612,7 +3613,7 @@ The ages carry a common offset of about −8 ms (the server's tick instant runs 
 - **Render distance: fixed or following the frame rate (planned 2026-11-15, asked by the user; both apps):** how far the world is drawn becomes a setting of its own instead of only a part of the preset.
   - **Settings → Display:**
     - **Render distance** (slider `display.view_distance`: 1 – 60 km in 1 km steps, then *unlimited* = the world's reach; default = the preset's value: High unlimited, Medium 30 km, Low 8 km; moving the slider overrides the preset's `view_m`).
-    - **Adjust to the frame rate** (checkbox `display.view_distance_auto`; Q8): the distance follows the measured frame rate; the slider is then the **upper limit**.
+    - **Adjust to the frame rate** (checkbox `display.view_distance_auto`, **on by default everywhere**, Q8 decided): the distance follows the measured frame rate; the slider is then the **upper limit**.
     - **Target frame rate** (`display.target_fps`: 30 / 45 / 60 / 72 / 90 / 120 / *display* = the monitor's refresh; default *display*, capped at 60 in the browser, Q9).
   - **What the distance drives** (one number → all of them, monotone, from `ocw_render::quality`): the far plane and the fog before it (`limit_view`), the trees' range (`tree_view_m` = 10 % of it, 0.8 – 3 km, beyond the ground's forest colour), the houses' LOD scale (0.5 at 2 km … 1.0 from 20 km), the far terrain's outer ring, and the **tile streaming radius** (browser `tiles` / `keep`, desktop neighbour packages, §4.7) – so a short distance also saves memory and downloads.
   - **The dynamic mode** (`ocw_client::view_distance::Controller`, pure): reads the frame rate of the last second (`ocw_render::frame_rate::FrameRateMeter`, its average and its worst frame) and steps the distance:
