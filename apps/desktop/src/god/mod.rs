@@ -1,5 +1,5 @@
 //! God mode – "Unicorn mode" (spec §14 Phase 13). Shared with the
-//! browser app since Phase 13 G5 (v3.38): the glue, the input mapping, the
+//! browser app since Phase 13 G5 (v3.37): the glue, the input mapping, the
 //! touch controls and the inspection are `ocw_ui::god`, over the desktop's
 //! ride through `ocw_ui::RideAccess` (`crate::connection`); this module
 //! keeps the desktop's names for them and the end-to-end test on the

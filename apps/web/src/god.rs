@@ -1,4 +1,4 @@
-//! Unicorn mode in the browser (spec §14 Phase 13 G5, v3.38): the
+//! Unicorn mode in the browser (spec §14 Phase 13 G5, v3.37): the
 //! desktop's god mode, shared as `ocw_ui::god` (keys by what they type –
 //! the `KeyboardEvent.key` –, gamepad, mouse, touch on the left half,
 //! inspection and pins, the HUD, the menu row and settings, the console

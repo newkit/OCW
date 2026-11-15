@@ -1,6 +1,6 @@
 //! God mode – "Unicorn mode" in the UI (spec §14 Phase 13): the rider
 //! leaves the road and flies through the world as a unicorn. Shared by the
-//! desktop and the browser app since Phase 13 G5 (v3.38; the way Phase 10
+//! desktop and the browser app since Phase 13 G5 (v3.37; the way Phase 10
 //! B6 shared the menus): both apps add [`GodPlugin`] and reach their ride
 //! through [`crate::RideAccess`].
 //!

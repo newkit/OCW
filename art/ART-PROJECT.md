@@ -1,6 +1,6 @@
 # OCW Build Diary – Art Project Specification
 
-Version 1.4 – 13 November 2026
+Version 1.5 – 14 November 2026
 
 | Version | Change |
 |---|---|
@@ -9,6 +9,7 @@ Version 1.4 – 13 November 2026
 | 1.2 | The build process itself is documented: every build/test run on the build machines and the build servers' state (§2.2) |
 | 1.3 | The user's prompts are part of the archive and the videos (§2.3) |
 | 1.4 | Token usage of the build: in total, per task and per feature (§2.4) |
+| 1.5 | The archive moved to `art/build-history/`; its text files (index, checksums, journals, token usage) are tracked in git, masked, while media stay out of git (§2, §2.5). An hourly collector on the dev machine, a systemd user timer: gather + journal of yesterday and today, the mask check, the contact sheets at 23:xx, a lock, a status file, a dashboard line (§5.1). Day videos: images stay on screen about 1.4× longer (3–5 s), and shots run in capture order within a chapter (§3, §4). All decided by the user 2026-11-14 |
 
 ## 1. The brief
 
@@ -65,8 +66,11 @@ selection happens only in the video.
   A joined image is made only to show a comparison (before / after, two settings,
   two dates or places side by side); it is kept as well, next to the single pictures,
   labelled `…-compare-….jpg`.
-- **Where:** `artwork/build-history/YYYY-MM-DD/`, which is git-ignored. Media never
-  go into git (spec §11.3; the history was rewritten on 2026-11-12 to remove them).
+- **Where:** `art/build-history/YYYY-MM-DD/` of the main checkout (until
+  2026-11-14: `artwork/build-history/`; `art/diary.py` stops with a message
+  while the archive is still there). Media never go into git (spec §11.3;
+  the history was rewritten on 2026-11-12 to remove them); its text files
+  are tracked, masked (§2.5).
 - **Published:** one zip per day, `ocw-build-history-YYYY-MM-DD.zip`, on the GitHub
   release [`build-history`](https://github.com/newkit/OCW/releases/tag/build-history),
   next to the videos. `art/diary.py fetch` restores a day on another machine.
@@ -153,6 +157,36 @@ How much model work went into the build is part of the record too.
 - Most of the total is cache reads (the conversation re-read from the cache
   on every step); output tokens are about 0.2 % of it.
 
+### 2.5 Text in git, media not (decided by the user 2026-11-14)
+
+The archive's text record is versioned with the code; its media are not.
+
+| In `art/build-history/` | Git |
+|---|---|
+| `index.md`, `SHA256SUMS` | **tracked** |
+| per day `journal.md`, `journal.json`, `tokens.json` | **tracked** |
+| media (jpg/png/mp4/wav/webm …), the day zips, `diary/*.mp4` | ignored (GitHub release `build-history`) |
+| per day `logs/` (unmasked originals), `prompts.*` (published masked in the zip), `.txt` verdicts | ignored |
+| `.work/` (render and contact-sheet files), `.lock` | ignored |
+
+- `.gitignore` ignores `/art/build-history/**` and re-includes exactly the
+  tracked files above.
+- **Masked:** the tracked files are written masked by `art/diary.py`
+  (`journal`, `tokens`, `publish`'s `SHA256SUMS`), with the same mask as the
+  zip's text (§2.3). The mask replaces each build machine's host with the
+  machine's name and its user with `user`. The host and user list comes from
+  `config/machines.toml`, read through `scripts/remote.sh … field`; its
+  values are never printed. The mask also replaces any home directory
+  (`/home/NAME`, `/Users/NAME`, `C:\Users\NAME`) with `~`, e-mail addresses
+  with `<e-mail>` and private IP addresses with `<ip>`. A user name is masked
+  as a word of its own (`claude@host`, `"claude"`). It is not masked inside a
+  path or a name such as `~/.claude/` or `claude.ai`.
+- **`art/diary.py check-masked`** (`make art-check`; the hourly collector runs
+  it too) fails if a tracked file still holds a private pattern. It prints
+  `file:line: kind`, never the value. `check-masked --fix` (`make art-check
+  FIX=1`) masks the files in place, for files written before this rule
+  (`index.md`, old journals). The untracked originals are left as they are.
+
 ## 3. The day video
 
 About 1.5–3 minutes, 1920×1080, 30 fps, H.264 + AAC, built from these parts,
@@ -170,6 +204,12 @@ joined with short animated transitions (pixelize, slides, wipes …):
    time-lapse badge) or before/after **split** shots. A yellow **sticker note**
    pops in with a joke or a pointer. A chapter can play a sound file of that day
    (e.g. the game's own audio) while the music ducks.
+   - **Images stay on screen longer** (decided by the user 2026-11-14): stills
+     and comparison splits run about 1.4× their earlier lengths, roughly
+     3–5 s each. Video clips keep their lengths.
+   - **Shots run in capture order** (decided by the user 2026-11-14): within a
+     chapter the shots follow their `HHMMSS-` time, so images and videos mix
+     chronologically. A card stays after the shot it follows.
 4. **End card** (≈9 s): a mosaic of the day's pictures, the numbers of the day
    counting up (commits, merges, lines written, pictures and videos, tests
    passing), a closing line and a teaser for the next day.
@@ -227,9 +267,9 @@ prompt = "the user's prompt that started it"   # optional, shown as a chat bubbl
 sound = "HHMMSS-audio.wav"         # optional: the day's sound file, music ducks
 sound_gain = 1.0                   # optional
 shots = [
-  { file = "HHMMSS-x.png", seconds = 3.0, note = "sticker text" },     # still: Ken Burns
+  { file = "HHMMSS-x.png", seconds = 4.2, note = "sticker text" },     # still: Ken Burns
   { file = "HHMMSS-y.mp4", seconds = 4.0, start = 2.0, speed = 2 },    # clip, 2× time-lapse
-  { split = ["before.png", "after.png"], seconds = 3.5 },              # before | after
+  { split = ["before.png", "after.png"], seconds = 4.9 },              # before | after
   { card = true, seconds = 2.0 },                                      # plain violet card
 ]
 ```
@@ -241,6 +281,10 @@ Writing guidelines:
 
 - 6–12 chapters in time order, each one thing that changed what you see or
   how it works. Use the journal (`journal.md`) and the contact sheets.
+- Shots of a chapter in capture order (their `HHMMSS-` time), images and
+  videos mixed; a card right after the shot it belongs to (§3).
+- Stills about 3–5 s (3.5–4.9 s is typical), splits about 4.5–5 s; clips as
+  long as the action needs (§3).
 - Captions ≤ 120 characters, notes ≤ 40. One joke per chapter is plenty.
 - Prefer shots that show change: first appearances, before/after, failures that
   look funny (a rider inside a tree is content).
@@ -254,19 +298,89 @@ The tool runs on the dev machine (no Rust build involved).
 
 ```bash
 make art-gather DAY=2026-11-13    # collect everything of the day, stamp times, journal
-make art-sheets DAY=2026-11-13    # contact sheets: artwork/build-history/.work/DAY/sheets/
+make art-sheets DAY=2026-11-13    # contact sheets: art/build-history/.work/DAY/sheets/
 # write art/days/2026-11-13.toml (story, shots, jokes)
-make art-render DAY=2026-11-13    # → artwork/build-history/diary/ocw-diary-day-NN-DAY.mp4
-make art-diary                    # → artwork/build-history/diary/ocw-build-diary.mp4
+make art-render DAY=2026-11-13    # → art/build-history/diary/ocw-diary-day-NN-DAY.mp4
+make art-diary                    # → art/build-history/diary/ocw-build-diary.mp4
 make art-publish DAY=2026-11-13   # day zip + all videos → release build-history
+make art-check                    # tracked text files masked? (FIX=1 masks them)
+git commit art/build-history/index.md art/build-history/SHA256SUMS \
+    art/build-history/2026-11-13/{journal.md,journal.json,tokens.json}
+make test-art                     # unit tests of the tool and the collector
 ```
 
-or directly `art/diary.py gather|journal|sheet|render|diary|publish|all [DAY…]`.
+or directly `art/diary.py gather|journal|sheet|render|diary|publish|all|collect|check-masked [DAY…]`.
 
-**At the end of every build day** (or when asked): gather, journal, write the
-day script, render the day, rebuild the diary, publish. During the day, keep
-every screenshot, video and sound in `test-output/` (the test harnesses already
-do), so the gather step finds them.
+**At the end of every build day** (or when asked): the hourly collector (§5.1)
+has already gathered the day and written its journal. The coordinator writes the
+day script, renders the day, rebuilds the diary, publishes, and commits the day's
+tracked text files (§2.5). During the day, keep every screenshot, video and sound
+in `test-output/` (the test harnesses already do), so the gather step finds them.
+
+### 5.1 The hourly collector (decided by the user 2026-11-14)
+
+Collecting no longer waits for a session. A systemd user timer on the dev machine
+(deb, the coordinator's machine with the main checkout) collects the day's data
+every hour.
+
+**Each hour** `scripts/art-collect.sh` runs `art/diary.py collect`, which does:
+
+1. **`gather` + `journal` for yesterday and today**, so the last hour before
+   midnight is not lost. Other days can be given as arguments:
+   `scripts/art-collect.sh 2026-11-12`. `gather` is idempotent: sources are
+   deduplicated by SHA-256, and the build log is updated in place. A day
+   that fails is reported, and the other day is still collected.
+2. **The mask check** (`check-masked`, §2.5) over all tracked text files.
+   Any finding fails the run.
+3. **Contact sheets** (`sheet`) of today, only in the 23:xx run. They are
+   heavier (ffmpeg); `--sheets` / `--no-sheets` force them on or off.
+
+No Claude run, no render, no publish: the coordinator writes the day script,
+renders and publishes in a session.
+
+- **Lock:** runs never overlap. The script holds an `flock` on
+  `art/build-history/.lock`. Every `art/diary.py` command takes the same lock,
+  including manual runs and `check-masked --fix`; plain `check-masked` reads
+  only and takes none. A manual run waits for the collector (it says whose
+  lock it waits for), and the collector waits up to 45 min
+  (`OCW_ART_LOCK_WAIT`, seconds) for a manual run. If the lock is still held,
+  the run gives up with status `locked` and exit 75, which is not a unit
+  failure. The script sets `OCW_ART_LOCK_HELD=1` for the `diary.py` it starts,
+  which then does not lock again.
+- **Python:** `/usr/bin/python3` (3.11+; `OCW_ART_PYTHON` overrides), never the
+  pyenv default 3.8. The script finds the repository from its own path.
+- **Status file:** `test-output/build-log/DAY/art.json` holds the latest run
+  of DAY: start, end, status (`running`, `ok`, `failed`, `locked`), new
+  files, media of today, the mask check, contact sheets yes/no, errors
+  (masked), and new files and media per day. `art-runs.jsonl` next to it
+  has one line per run. The exit code is 0 for ok, 1 for failed and 75 for
+  locked.
+- **Logs:** the output of every run is appended to `test-output/build-log/DAY/art.log`
+  (one `=== start` / `=== exit` block per run). The systemd journal has it too
+  (`journalctl --user -u ocw-art-collect`). The collector's own files are
+  gathered into the day's `logs/build-log/` like the rest of the build log,
+  but they do not count as new files.
+- **Dashboard:** the build dashboard's "Art project" panel (and `--once`,
+  `/api/status` → `art`) shows the last run from the newest `art.json`:
+  time, status, new files, media of today, the mask check and errors. It is
+  flagged **late** when no run has ended for 2.5 h.
+- **Units:** `art/systemd/ocw-art-collect.service` (oneshot, `nice`, idle I/O,
+  `TimeoutStartSec=75min`) and `ocw-art-collect.timer` (`OnCalendar=hourly`,
+  `Persistent=true`, so missed runs are made up after boot, and
+  `RandomizedDelaySec=5min`). The contact sheets are part of the 23:xx run,
+  so there is no separate sheets timer.
+
+```bash
+make art-install-timer     # units → ~/.config/systemd/user/ (this checkout's path filled in),
+                           # daemon-reload, enable --now ocw-art-collect.timer
+make art-timer-status      # list-timers + the last status file
+make art-collect           # one run now (DAY=… for other days)
+make art-uninstall-timer   # stop and remove the timer and service
+sudo loginctl enable-linger $USER   # once: user timers run without a login session
+```
+
+Install the timer from the **main checkout**, never from an agent worktree:
+the units point to the checkout they were installed from.
 
 ## 6. Future elements (ideas, not built yet)
 

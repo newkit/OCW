@@ -1,0 +1,3129 @@
+{
+ "day": "2026-11-11",
+ "number": 1,
+ "commits": [
+  {
+   "sha": "836996e",
+   "time": "00:38:08",
+   "merge": false,
+   "subject": "Add specification, proposals and CLAUDE.md",
+   "added": 1463,
+   "removed": 0
+  },
+  {
+   "sha": "2e90754",
+   "time": "00:56:27",
+   "merge": false,
+   "subject": "Add junction steering, platform rollout order and web companion",
+   "added": 168,
+   "removed": 6
+  },
+  {
+   "sha": "bd6f171",
+   "time": "00:59:50",
+   "merge": false,
+   "subject": "Merge proposals into specification v1.1",
+   "added": 659,
+   "removed": 997
+  },
+  {
+   "sha": "8c831c5",
+   "time": "08:15:54",
+   "merge": false,
+   "subject": "Add testing strategy to specification v1.2 (spec §11.4)",
+   "added": 48,
+   "removed": 1
+  },
+  {
+   "sha": "c051398",
+   "time": "08:15:54",
+   "merge": false,
+   "subject": "Phase 1 scaffolding: workspace, local client/server, test route, console",
+   "added": 11620,
+   "removed": 2
+  },
+  {
+   "sha": "05be99c",
+   "time": "08:30:55",
+   "merge": false,
+   "subject": "Complete Phase 1 unit tests and add Makefile (spec §11.4, §14)",
+   "added": 939,
+   "removed": 172
+  },
+  {
+   "sha": "8238b65",
+   "time": "08:51:10",
+   "merge": false,
+   "subject": "Add Wayland smoke test and headless video recording on X11 and Wayland",
+   "added": 303,
+   "removed": 38
+  },
+  {
+   "sha": "f6b4f30",
+   "time": "09:16:07",
+   "merge": false,
+   "subject": "Road-conformed terrain for the test loop (spec §4.3)",
+   "added": 952,
+   "removed": 45
+  },
+  {
+   "sha": "ae2f5d3",
+   "time": "09:22:57",
+   "merge": false,
+   "subject": "Smooth route heading and frame-exact video capture",
+   "added": 481,
+   "removed": 152
+  },
+  {
+   "sha": "c42d787",
+   "time": "09:27:14",
+   "merge": false,
+   "subject": "Add machine configuration template for remote build/test machines",
+   "added": 174,
+   "removed": 0
+  },
+  {
+   "sha": "8881015",
+   "time": "09:31:27",
+   "merge": false,
+   "subject": "Archive test screenshots and videos in test-output/",
+   "added": 57,
+   "removed": 4
+  },
+  {
+   "sha": "8cbd005",
+   "time": "09:41:37",
+   "merge": false,
+   "subject": "Phase 2: BLE fitness profile parsing and FTMS control point (spec §3.4, §5.3)",
+   "added": 1126,
+   "removed": 0
+  },
+  {
+   "sha": "12e4501",
+   "time": "09:43:27",
+   "merge": false,
+   "subject": "Phase 2: SIM and ERG trainer control logic (spec §5.3)",
+   "added": 447,
+   "removed": 0
+  },
+  {
+   "sha": "f0ff0a5",
+   "time": "10:01:42",
+   "merge": false,
+   "subject": "Phase 2: Bluetooth LE backend with btleplug (spec §3.4)",
+   "added": 1523,
+   "removed": 6
+  },
+  {
+   "sha": "f2dec04",
+   "time": "10:25:22",
+   "merge": false,
+   "subject": "Remote build helper and complete Linux package list",
+   "added": 99,
+   "removed": 5
+  },
+  {
+   "sha": "b7d1c87",
+   "time": "10:27:12",
+   "merge": false,
+   "subject": "Split make deps per platform: deps-linux, deps-windows, deps-macos",
+   "added": 39,
+   "removed": 11
+  },
+  {
+   "sha": "219f3ab",
+   "time": "10:40:34",
+   "merge": false,
+   "subject": "Graphics engine spike, iteration 1 (spec §3.1.1)",
+   "added": 1627,
+   "removed": 14
+  },
+  {
+   "sha": "4981909",
+   "time": "10:48:38",
+   "merge": false,
+   "subject": "remote.sh: per-branch remote checkout, config from the main worktree",
+   "added": 19,
+   "removed": 3
+  },
+  {
+   "sha": "3c00e08",
+   "time": "11:38:46",
+   "merge": false,
+   "subject": "Spike iteration 2: splat terrain material, video capture, winding road",
+   "added": 499,
+   "removed": 41
+  },
+  {
+   "sha": "38b1557",
+   "time": "11:39:13",
+   "merge": false,
+   "subject": "Spec v1.3: graphics engine spike results and decisions (§3.1.1)",
+   "added": 29,
+   "removed": 3
+  },
+  {
+   "sha": "e1b1b77",
+   "time": "11:39:23",
+   "merge": false,
+   "subject": "WIP Phase 2: device integration, trainer control loop, drafting",
+   "added": 1157,
+   "removed": 80
+  },
+  {
+   "sha": "88c4dd2",
+   "time": "11:50:25",
+   "merge": false,
+   "subject": "Phase 2: BLE hardware-in-the-loop tool (scan, services, monitor, ride)",
+   "added": 191,
+   "removed": 12
+  },
+  {
+   "sha": "7fe1b93",
+   "time": "12:07:24",
+   "merge": false,
+   "subject": "Phase 2: Wahoo trainer control for KICKRs without FTMS; one control write at a time",
+   "added": 509,
+   "removed": 25
+  },
+  {
+   "sha": "99b09aa",
+   "time": "12:18:05",
+   "merge": false,
+   "subject": "drive.sh: GPU weston renderer on machines with a GPU render node",
+   "added": 5,
+   "removed": 1
+  },
+  {
+   "sha": "5a5f9c9",
+   "time": "13:25:18",
+   "merge": false,
+   "subject": "Desktop: hilly test route, pedalling legs, mouse orbit camera, steadier shadows",
+   "added": 340,
+   "removed": 20
+  },
+  {
+   "sha": "8e30d4c",
+   "time": "13:53:10",
+   "merge": false,
+   "subject": "HUD: road gradient in the main line",
+   "added": 39,
+   "removed": 14
+  },
+  {
+   "sha": "cea04e3",
+   "time": "14:01:48",
+   "merge": true,
+   "subject": "Merge phase2-devices: Bluetooth trainers, trainer control, drafting",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "0b099c9",
+   "time": "14:11:56",
+   "merge": false,
+   "subject": "Own rider in #FF1472 with a cycling cap; smooth rendering between physics steps",
+   "added": 134,
+   "removed": 21
+  },
+  {
+   "sha": "12e57a7",
+   "time": "14:15:20",
+   "merge": false,
+   "subject": "Steer the rider with the arrow keys (spec §6.1)",
+   "added": 315,
+   "removed": 15
+  },
+  {
+   "sha": "85a7b28",
+   "time": "14:23:06",
+   "merge": false,
+   "subject": "Kiosk for test machines: --monitor, deploy script, auto-restart watchdog",
+   "added": 414,
+   "removed": 1
+  },
+  {
+   "sha": "41c0192",
+   "time": "14:38:13",
+   "merge": false,
+   "subject": "Phase 3, step 1: OSM import and road graph for the pilot region (spec §4.4)",
+   "added": 1636,
+   "removed": 0
+  },
+  {
+   "sha": "340d000",
+   "time": "14:38:45",
+   "merge": false,
+   "subject": "Cargo.lock with the dependencies resolved on marge; remote.sh copies it back after each run",
+   "added": 207,
+   "removed": 7
+  },
+  {
+   "sha": "0824035",
+   "time": "14:45:53",
+   "merge": false,
+   "subject": "Phase 3, step 2: elevation model and road profiles (spec §4.3)",
+   "added": 818,
+   "removed": 12
+  },
+  {
+   "sha": "5b26629",
+   "time": "15:02:46",
+   "merge": false,
+   "subject": "Phase 3 preview: ride a real route (Vaduz - Malbun) with its terrain",
+   "added": 826,
+   "removed": 8
+  },
+  {
+   "sha": "e6c0916",
+   "time": "15:02:58",
+   "merge": false,
+   "subject": "deploy-test.sh: also install the built route files",
+   "added": 1,
+   "removed": 0
+  },
+  {
+   "sha": "1ab675c",
+   "time": "15:09:40",
+   "merge": false,
+   "subject": "Up accelerates, down stops; fix the start arch bar",
+   "added": 278,
+   "removed": 29
+  },
+  {
+   "sha": "8d4dd3f",
+   "time": "15:13:32",
+   "merge": false,
+   "subject": "Up adds 25 W per press; F11 cycles screens",
+   "added": 92,
+   "removed": 17
+  },
+  {
+   "sha": "3dadedd",
+   "time": "15:17:10",
+   "merge": false,
+   "subject": "Phase 3, step 3: world package with road-conformed terrain, streamed in the client",
+   "added": 1291,
+   "removed": 1
+  },
+  {
+   "sha": "ffde42a",
+   "time": "15:20:02",
+   "merge": false,
+   "subject": "Up raises the rider's power with any device; camera stays above the ground",
+   "added": 121,
+   "removed": 40
+  },
+  {
+   "sha": "b6ebd62",
+   "time": "15:34:36",
+   "merge": false,
+   "subject": "World package: road strips keep the profile height on winding roads; terrain cut under roads",
+   "added": 435,
+   "removed": 35
+  },
+  {
+   "sha": "7ed34e6",
+   "time": "16:18:26",
+   "merge": false,
+   "subject": "Elevation filter along whole roads; junctions inside bridges follow the bridge",
+   "added": 702,
+   "removed": 15
+  },
+  {
+   "sha": "0baa61d",
+   "time": "16:21:32",
+   "merge": false,
+   "subject": "Riders lean into curves; bots ride at different strengths",
+   "added": 109,
+   "removed": 2
+  },
+  {
+   "sha": "2d38015",
+   "time": "16:22:00",
+   "merge": false,
+   "subject": "run-ocw skill: X11 modes fail under Xvfb on GPU machines; use Wayland",
+   "added": 3,
+   "removed": 0
+  },
+  {
+   "sha": "e71a454",
+   "time": "16:34:23",
+   "merge": false,
+   "subject": "Lean steering with the arrow keys: the rider tilts and rides a curve",
+   "added": 458,
+   "removed": 54
+  },
+  {
+   "sha": "02e4f69",
+   "time": "16:38:52",
+   "merge": false,
+   "subject": "Bots climb at least 10 km/h instead of getting stuck",
+   "added": 42,
+   "removed": 2
+  },
+  {
+   "sha": "c35cb9d",
+   "time": "16:40:24",
+   "merge": false,
+   "subject": "Random start point (on by default) for everyone on the route",
+   "added": 149,
+   "removed": 8
+  },
+  {
+   "sha": "f4b27dd",
+   "time": "16:48:09",
+   "merge": false,
+   "subject": "Autodrive, manual lean steering, road edge, wild mode, gamepad; surfaces",
+   "added": 914,
+   "removed": 211
+  },
+  {
+   "sha": "96a9178",
+   "time": "17:05:02",
+   "merge": false,
+   "subject": "Camera follows the rider off the road without clipping; bike sits on both wheels",
+   "added": 395,
+   "removed": 55
+  },
+  {
+   "sha": "afb52f3",
+   "time": "17:13:43",
+   "merge": false,
+   "subject": "App logo: a unicorn riding a bike over a rainbow; window icon, desktop entry, AppImage",
+   "added": 381,
+   "removed": 0
+  },
+  {
+   "sha": "b5b37cc",
+   "time": "17:25:14",
+   "merge": false,
+   "subject": "scripts/setup-windows-buildserver.ps1: OpenSSH server and a local build user",
+   "added": 169,
+   "removed": 1
+  },
+  {
+   "sha": "4f2353b",
+   "time": "17:36:54",
+   "merge": false,
+   "subject": "Local projection moves to ocw-world::geo; routes know their geographic origin",
+   "added": 100,
+   "removed": 39
+  },
+  {
+   "sha": "5849145",
+   "time": "17:36:54",
+   "merge": false,
+   "subject": "ocw-fit: FIT activity writer (spec §2.8, §14 Phase 2)",
+   "added": 855,
+   "removed": 0
+  },
+  {
+   "sha": "2c1aef8",
+   "time": "17:36:54",
+   "merge": false,
+   "subject": "Ride recording, FIT save and Strava upload / sync (spec §2.8, v1.6)",
+   "added": 2973,
+   "removed": 2
+  },
+  {
+   "sha": "070f184",
+   "time": "17:39:22",
+   "merge": true,
+   "subject": "Merge ride recording, FIT export and Strava upload/sync",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "7fd46d3",
+   "time": "17:46:52",
+   "merge": false,
+   "subject": "remote.sh: sync to macOS, whose openrsync lacks --delete-missing-args",
+   "added": 14,
+   "removed": 1
+  },
+  {
+   "sha": "15d89d0",
+   "time": "17:47:20",
+   "merge": true,
+   "subject": "Merge remote.sh support for macOS build machines",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "2a88575",
+   "time": "17:58:02",
+   "merge": false,
+   "subject": "CI: apt step fails fast and retries when the Ubuntu archive is unreachable",
+   "added": 16,
+   "removed": 5
+  },
+  {
+   "sha": "ffa9b12",
+   "time": "18:03:06",
+   "merge": false,
+   "subject": "Add artwork/build-history: screenshots and videos from development",
+   "added": 173,
+   "removed": 0
+  },
+  {
+   "sha": "310655b",
+   "time": "18:13:18",
+   "merge": false,
+   "subject": "README: controls and how to connect a gamepad; remote.sh caps build jobs for branch checkouts",
+   "added": 81,
+   "removed": 7
+  },
+  {
+   "sha": "ee28953",
+   "time": "18:15:33",
+   "merge": false,
+   "subject": "Add release/0.1.0-15d89d0: Linux x86_64 and macOS arm64 builds",
+   "added": 61,
+   "removed": 0
+  },
+  {
+   "sha": "add4c06",
+   "time": "18:16:08",
+   "merge": false,
+   "subject": "Desktop: gate the Linux desktop integration so macOS/Windows clippy passes",
+   "added": 9,
+   "removed": 0
+  },
+  {
+   "sha": "7928bfd",
+   "time": "18:16:08",
+   "merge": true,
+   "subject": "Merge build history (screenshots, videos) and release builds for Linux and macOS",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "7d6b8f8",
+   "time": "18:16:50",
+   "merge": true,
+   "subject": "Merge CI apt retry/timeout and the macOS/Windows clippy fix",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "aebd0c2",
+   "time": "18:18:19",
+   "merge": false,
+   "subject": "README: riding modes, trainer and devices, rides and Strava, all command-line options, console commands and tools",
+   "added": 143,
+   "removed": 0
+  },
+  {
+   "sha": "7e78642",
+   "time": "18:30:08",
+   "merge": false,
+   "subject": "World package format 2 with the road graph; one-way roads",
+   "added": 440,
+   "removed": 8
+  },
+  {
+   "sha": "a83cffa",
+   "time": "18:30:08",
+   "merge": false,
+   "subject": "Free-ride paths through the road graph: Track, RoadNetwork, RidePath",
+   "added": 1919,
+   "removed": 5
+  },
+  {
+   "sha": "117ae0d",
+   "time": "18:30:08",
+   "merge": false,
+   "subject": "Free ride in the simulation, protocol and server",
+   "added": 1211,
+   "removed": 92
+  },
+  {
+   "sha": "6bf6b4e",
+   "time": "18:30:08",
+   "merge": false,
+   "subject": "Free ride in the desktop client: junction overlay, keys, --free-ride",
+   "added": 1429,
+   "removed": 70
+  },
+  {
+   "sha": "8e915d8",
+   "time": "18:30:08",
+   "merge": false,
+   "subject": "Spec 1.6: free ride, junction keys, U-turn loop, package format 2",
+   "added": 21,
+   "removed": 3
+  },
+  {
+   "sha": "23c1880",
+   "time": "18:30:57",
+   "merge": false,
+   "subject": "Steering: stop scraping along the road edge, let the lean keys cross upright (spec §5.2.1, v1.7)",
+   "added": 326,
+   "removed": 35
+  },
+  {
+   "sha": "a1edc38",
+   "time": "18:33:38",
+   "merge": true,
+   "subject": "Merge free ride on the road graph: junctions, U-turns, dead ends (spec 1.7)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "d3da4de",
+   "time": "18:34:18",
+   "merge": true,
+   "subject": "Merge steering fixes: edge scraping only when pushing into it, lean key pauses at upright then continues (spec 1.8)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "473c91c",
+   "time": "18:35:35",
+   "merge": false,
+   "subject": "Spec 1.9: catch-up of all implemented decisions; README: free ride",
+   "added": 65,
+   "removed": 4
+  },
+  {
+   "sha": "63910f2",
+   "time": "18:50:34",
+   "merge": false,
+   "subject": "R restarts everything, C resets the camera, V records a video; gamepad up/down",
+   "added": 678,
+   "removed": 26
+  },
+  {
+   "sha": "3680f76",
+   "time": "19:18:16",
+   "merge": false,
+   "subject": "Spec: in-game menu plan (§3.2.1): menu tree, input and pause, settings file, phases; audio output device (§3.3)",
+   "added": 93,
+   "removed": 1
+  },
+  {
+   "sha": "6b0321b",
+   "time": "19:18:47",
+   "merge": true,
+   "subject": "Merge in-game menu plan (spec §3.2.1, §3.3, §14)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "2c5f020",
+   "time": "19:18:47",
+   "merge": false,
+   "subject": "Spec 2.1: version entry for the in-game menu plan",
+   "added": 2,
+   "removed": 1
+  },
+  {
+   "sha": "532c2d3",
+   "time": "19:25:58",
+   "merge": false,
+   "subject": "Spec 2.2: menu decisions (no pause, Esc never quits, rider profiles with weight)",
+   "added": 10,
+   "removed": 15
+  },
+  {
+   "sha": "3793cc8",
+   "time": "19:56:53",
+   "merge": false,
+   "subject": "Wild mode on switches autodrive off (spec §5.2.1)",
+   "added": 60,
+   "removed": 7
+  },
+  {
+   "sha": "028c1fb",
+   "time": "20:13:26",
+   "merge": false,
+   "subject": "release: macOS app (DMG) built from 532c2d3",
+   "added": 17,
+   "removed": 0
+  },
+  {
+   "sha": "539c33f",
+   "time": "20:16:54",
+   "merge": false,
+   "subject": "HUD: red \"REC m:ss\" while recording a video, \"Video saved: <file>\" after V stops it",
+   "added": 376,
+   "removed": 15
+  },
+  {
+   "sha": "edc1758",
+   "time": "20:20:28",
+   "merge": false,
+   "subject": "Gamepad triggers calibrated to their resting value: a connected pad no longer brakes the rider",
+   "added": 56,
+   "removed": 4
+  },
+  {
+   "sha": "3b1d68d",
+   "time": "20:27:10",
+   "merge": false,
+   "subject": "ocw-world: GPX import, map matching, graph routes, ROUT section, border links",
+   "added": 3319,
+   "removed": 25
+  },
+  {
+   "sha": "fae1547",
+   "time": "20:27:18",
+   "merge": false,
+   "subject": "Route rides on the road graph, rejoin, package check in Hello/Welcome",
+   "added": 1328,
+   "removed": 40
+  },
+  {
+   "sha": "61ffde3",
+   "time": "20:27:18",
+   "merge": false,
+   "subject": "Spec and README: routes on the road graph, GPX import, U-turn width, package check, borders",
+   "added": 96,
+   "removed": 7
+  },
+  {
+   "sha": "31fa7d1",
+   "time": "20:37:17",
+   "merge": false,
+   "subject": "macOS app bundle, DMG and zip (spec §11.3)",
+   "added": 278,
+   "removed": 17
+  },
+  {
+   "sha": "46edf03",
+   "time": "20:38:34",
+   "merge": true,
+   "subject": "Merge macOS app bundle packaging (scripts/build-macos-app.sh, make macos-app, CI job); spec 2.3",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "0780fe6",
+   "time": "20:49:03",
+   "merge": false,
+   "subject": "Second Linux build machine (leela, Fedora): make deps for dnf; remote.sh build slots",
+   "added": 24,
+   "removed": 7
+  },
+  {
+   "sha": "b1adff0",
+   "time": "20:51:46",
+   "merge": false,
+   "subject": "make deps-linux: per-distribution targets with detection (Debian/Ubuntu, Fedora, Arch)",
+   "added": 44,
+   "removed": 12
+  },
+  {
+   "sha": "687aaf9",
+   "time": "20:55:57",
+   "merge": false,
+   "subject": "make deps-linux-fedora: install ffmpeg without conflicting with RPM Fusion",
+   "added": 8,
+   "removed": 2
+  },
+  {
+   "sha": "afedca1",
+   "time": "21:05:19",
+   "merge": true,
+   "subject": "Merge main into routes branch",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "8f83ade",
+   "time": "21:05:43",
+   "merge": false,
+   "subject": "World package: land-use (LUSE) and buildings (BLDG) sections (spec §4.6, §4.7)",
+   "added": 934,
+   "removed": 24
+  },
+  {
+   "sha": "7652c30",
+   "time": "21:05:43",
+   "merge": false,
+   "subject": "worldgen: OSM land use, water surfaces and buildings (spec §4.6)",
+   "added": 1773,
+   "removed": 0
+  },
+  {
+   "sha": "3ae8f49",
+   "time": "21:05:43",
+   "merge": false,
+   "subject": "Render land use: colour maps, flat water, trees by land use, buildings",
+   "added": 743,
+   "removed": 25
+  },
+  {
+   "sha": "fa8b807",
+   "time": "21:05:43",
+   "merge": false,
+   "subject": "world-builder: package writes land use and buildings, check reports them; spec and README",
+   "added": 165,
+   "removed": 6
+  },
+  {
+   "sha": "e6a5141",
+   "time": "21:05:43",
+   "merge": true,
+   "subject": "Merge main into land use and buildings",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "acfb76e",
+   "time": "21:09:59",
+   "merge": false,
+   "subject": "README: build server setup (Linux, macOS, Windows incl. the PowerShell execution policy)",
+   "added": 112,
+   "removed": 1
+  },
+  {
+   "sha": "bd3784c",
+   "time": "21:31:09",
+   "merge": false,
+   "subject": "remote.sh: Windows build machines (tar sync, PowerShell run, fetch)",
+   "added": 42,
+   "removed": 1
+  },
+  {
+   "sha": "4091b74",
+   "time": "21:32:38",
+   "merge": false,
+   "subject": "Devices: a missing --devices-file falls back to the default file; log it",
+   "added": 44,
+   "removed": 4
+  },
+  {
+   "sha": "b7ca637",
+   "time": "21:45:03",
+   "merge": false,
+   "subject": "World package manifests, Ed25519 signatures, cache and download (spec §4.7, §12)",
+   "added": 3154,
+   "removed": 3
+  },
+  {
+   "sha": "7fb3cf6",
+   "time": "21:45:03",
+   "merge": false,
+   "subject": "world-builder: keys, sign, verify, publish, diff; OSM XML fixture reader",
+   "added": 871,
+   "removed": 3
+  },
+  {
+   "sha": "65c4dcf",
+   "time": "21:45:03",
+   "merge": false,
+   "subject": "Desktop and server: --world PATH|ID with verification, --fetch-world, worlds.* console commands",
+   "added": 313,
+   "removed": 28
+  },
+  {
+   "sha": "79e352f",
+   "time": "21:45:03",
+   "merge": false,
+   "subject": "End-to-end world pipeline test from checked-in OSM fixtures (spec §14 Phase 3)",
+   "added": 516,
+   "removed": 0
+  },
+  {
+   "sha": "1fef50e",
+   "time": "21:45:03",
+   "merge": false,
+   "subject": "Spec §4.7/§12, README: package signing, trust policy, cache, download",
+   "added": 73,
+   "removed": 4
+  },
+  {
+   "sha": "5e5ff14",
+   "time": "21:45:46",
+   "merge": true,
+   "subject": "Merge Phase 3 B: GPX import and map matching, routes on the road graph, route arrows with leave/rejoin, U-turn width, package check, border matching",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "600b44d",
+   "time": "21:48:09",
+   "merge": true,
+   "subject": "Merge Phase 3 C: signed, versioned, cached world packages; end-to-end test (spec 2.4, 2.5)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "5c65626",
+   "time": "21:51:43",
+   "merge": false,
+   "subject": "README: Windows build server toolchain (VS Build Tools as admin, rustup as the build user)",
+   "added": 28,
+   "removed": 0
+  },
+  {
+   "sha": "a6a3c2c",
+   "time": "21:53:14",
+   "merge": false,
+   "subject": "tools/build-dashboard: web page with build server load and tasks",
+   "added": 1631,
+   "removed": 0
+  },
+  {
+   "sha": "5fd5c71",
+   "time": "21:53:44",
+   "merge": true,
+   "subject": "Merge build server dashboard (tools/build-dashboard)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "e0b496f",
+   "time": "22:08:55",
+   "merge": false,
+   "subject": "make deps-macos: print how to install Homebrew and ffmpeg when brew is missing",
+   "added": 9,
+   "removed": 3
+  },
+  {
+   "sha": "407a769",
+   "time": "22:08:55",
+   "merge": false,
+   "subject": "Video recording: find ffmpeg outside PATH (app started from Finder)",
+   "added": 117,
+   "removed": 9
+  },
+  {
+   "sha": "c3e4624",
+   "time": "22:15:33",
+   "merge": false,
+   "subject": "make deps-macos: find brew in /opt/homebrew or /usr/local when not on PATH",
+   "added": 2,
+   "removed": 1
+  },
+  {
+   "sha": "22ca43c",
+   "time": "22:15:49",
+   "merge": false,
+   "subject": "Land use: clippy fixes, connected thin streams, greener settlements, tile meshing benchmark",
+   "added": 48,
+   "removed": 5
+  },
+  {
+   "sha": "98779cf",
+   "time": "22:20:37",
+   "merge": true,
+   "subject": "Merge main (routes ROUT, signed packages and manifest) into land use and buildings",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "52ec918",
+   "time": "22:20:57",
+   "merge": true,
+   "subject": "Merge Phase 3 A: land use, water and buildings from OSM (spec 2.6)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "6f43702",
+   "time": "22:25:36",
+   "merge": false,
+   "subject": "WIP gps",
+   "added": 169,
+   "removed": 1
+  },
+  {
+   "sha": "00ca28f",
+   "time": "22:25:49",
+   "merge": true,
+   "subject": "Merge main",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "b17141a",
+   "time": "22:32:03",
+   "merge": false,
+   "subject": "make deps-macos: skip brew when ffmpeg is installed; a failed brew install only warns",
+   "added": 5,
+   "removed": 2
+  },
+  {
+   "sha": "df28850",
+   "time": "22:42:06",
+   "merge": true,
+   "subject": "Merge main",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "aeb4f18",
+   "time": "22:42:08",
+   "merge": false,
+   "subject": "WIP build id",
+   "added": 209,
+   "removed": 3
+  },
+  {
+   "sha": "78c6341",
+   "time": "22:42:45",
+   "merge": true,
+   "subject": "Merge main",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "f4b1ffc",
+   "time": "22:42:50",
+   "merge": false,
+   "subject": "release: macOS app (DMG) built from b17141a",
+   "added": 21,
+   "removed": 0
+  },
+  {
+   "sha": "2e55b3f",
+   "time": "22:43:17",
+   "merge": true,
+   "subject": "Merge macOS: ffmpeg found from Finder, deps-macos with Homebrew, DMG 0.1.0-b17141a",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "746df95",
+   "time": "22:43:52",
+   "merge": false,
+   "subject": "WIP smooth video",
+   "added": 165,
+   "removed": 53
+  },
+  {
+   "sha": "98279b6",
+   "time": "22:44:43",
+   "merge": true,
+   "subject": "Merge main into video HUD branch",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "aebde24",
+   "time": "22:46:41",
+   "merge": false,
+   "subject": "CLAUDE.md: the Mac build machine takes platform-independent checks too",
+   "added": 1,
+   "removed": 1
+  },
+  {
+   "sha": "6c61188",
+   "time": "22:48:33",
+   "merge": false,
+   "subject": "Kiosk: default arguments file; deploy-test builds the pilot world package",
+   "added": 322,
+   "removed": 13
+  },
+  {
+   "sha": "9ba6223",
+   "time": "22:48:57",
+   "merge": true,
+   "subject": "Merge kiosk args file and world package deploy (ocw-desktop.args, deploy-test.sh)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "086a253",
+   "time": "22:54:12",
+   "merge": false,
+   "subject": "Build dashboard: task markers, Windows CPU load and build slots",
+   "added": 668,
+   "removed": 61
+  },
+  {
+   "sha": "e75af8c",
+   "time": "22:58:34",
+   "merge": false,
+   "subject": "HUD: rider GPS position bottom-left, rider.gps; wrap long HUD lines to the window (spec §3.2)",
+   "added": 100,
+   "removed": 8
+  },
+  {
+   "sha": "1d312d1",
+   "time": "22:59:46",
+   "merge": true,
+   "subject": "Merge branch 'worktree-agent-ac86d7155a2f5ab78' into worktree-agent-a92c0d2a727e217b2",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "da1e26d",
+   "time": "23:02:51",
+   "merge": false,
+   "subject": "make deps-appimage: appimagetool to ~/.local/bin; FUSE 2 in the Linux deps",
+   "added": 42,
+   "removed": 12
+  },
+  {
+   "sha": "faf8420",
+   "time": "23:05:08",
+   "merge": false,
+   "subject": "Build id in the HUD's lower right corner, --version and startup log",
+   "added": 1,
+   "removed": 0
+  },
+  {
+   "sha": "3c1df06",
+   "time": "23:05:44",
+   "merge": true,
+   "subject": "Merge HUD: rider GPS position bottom-left, rider.gps; wrap long HU",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "1177963",
+   "time": "23:05:54",
+   "merge": true,
+   "subject": "Merge wild mode turns autodrive off; appimagetool in the Linux deps",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "adab164",
+   "time": "23:06:19",
+   "merge": true,
+   "subject": "Merge build id in the HUD corner, --version, OCW_BUILD_ID through remote.sh",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "d7eaf99",
+   "time": "23:26:41",
+   "merge": false,
+   "subject": "Build slots per machine, any-slot waiting, macOS slots; dashboard queue",
+   "added": 378,
+   "removed": 113
+  },
+  {
+   "sha": "fc136b7",
+   "time": "23:28:16",
+   "merge": true,
+   "subject": "Merge build slots per machine (2 Linux, 1 Windows, 1 macOS), any-slot waiting; dashboard queue view",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "624bad2",
+   "time": "23:29:02",
+   "merge": false,
+   "subject": "WIP in-game menu M1",
+   "added": 1820,
+   "removed": 32
+  },
+  {
+   "sha": "24ced5d",
+   "time": "23:29:02",
+   "merge": true,
+   "subject": "Merge main",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "9f5e8e7",
+   "time": "23:29:42",
+   "merge": false,
+   "subject": "ocw-worldstore: resolve package files next to a Windows manifest path",
+   "added": 43,
+   "removed": 2
+  },
+  {
+   "sha": "ab4dee4",
+   "time": "23:29:55",
+   "merge": true,
+   "subject": "Merge branch 'main' into worktree-agent-a29fa2740ef9e3048",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "e8bf0c0",
+   "time": "23:32:00",
+   "merge": false,
+   "subject": "Video: per-tick screenshots in flight, never block the game (in progress)",
+   "added": 114,
+   "removed": 21
+  },
+  {
+   "sha": "5a525d3",
+   "time": "23:32:37",
+   "merge": true,
+   "subject": "Merge main (remote.sh slots) into video branch",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "857c40a",
+   "time": "23:34:25",
+   "merge": false,
+   "subject": "remote.sh: Windows exit code for failed cmdlets; per-machine build jobs",
+   "added": 18,
+   "removed": 8
+  },
+  {
+   "sha": "3c766c0",
+   "time": "23:41:50",
+   "merge": false,
+   "subject": "Camera: solid vs see-through objects; trees fade instead of moving the camera (spec §3.2)",
+   "added": 830,
+   "removed": 199
+  },
+  {
+   "sha": "196b5c0",
+   "time": "23:42:28",
+   "merge": true,
+   "subject": "Merge camera classes: trees see-through (dithered fade), buildings as solid camera obstacles",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "56d61dc",
+   "time": "23:44:44",
+   "merge": false,
+   "subject": "Video: smooth recordings – a screenshot per 1/25 s tick, placed at its request time, never blocking the game",
+   "added": 17,
+   "removed": 7
+  },
+  {
+   "sha": "f67085e",
+   "time": "23:45:24",
+   "merge": true,
+   "subject": "Merge video REC indicator in the HUD and smooth live recording (fixed-rate capture)",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "6fd9acc",
+   "time": "23:45:34",
+   "merge": false,
+   "subject": "More bots: 10 by default, start formation in rows, 12 bot strengths (spec §6.1)",
+   "added": 403,
+   "removed": 38
+  },
+  {
+   "sha": "a1df35e",
+   "time": "23:46:17",
+   "merge": true,
+   "subject": "Merge 10 bots by default, start formation in rows behind the start, 12 bot strengths",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "00b8c84",
+   "time": "23:48:21",
+   "merge": false,
+   "subject": "README: Windows build machine notes (build times, memory, jobs, PowerShell)",
+   "added": 13,
+   "removed": 1
+  },
+  {
+   "sha": "827792a",
+   "time": "23:51:23",
+   "merge": true,
+   "subject": "Merge Windows build: worldstore paths with backslashes, remote.sh Windows exit codes, per-machine jobs key",
+   "added": 0,
+   "removed": 0
+  },
+  {
+   "sha": "fe99d35",
+   "time": "23:53:40",
+   "merge": false,
+   "subject": "In-game menu M1: input contexts, menu shell, autodrive while open (spec §3.2.1)",
+   "added": 131,
+   "removed": 108
+  },
+  {
+   "sha": "c863f97",
+   "time": "23:54:11",
+   "merge": true,
+   "subject": "Merge main",
+   "added": 0,
+   "removed": 0
+  }
+ ],
+ "merges": 35,
+ "lines_added": 66673,
+ "lines_removed": 3436,
+ "spec_versions": [
+  "1.3",
+  "1.6",
+  "1.7",
+  "1.8",
+  "1.9",
+  "2.1",
+  "2.2",
+  "2.3",
+  "2.4",
+  "2.6"
+ ],
+ "tests": null,
+ "media": [
+  {
+   "file": "012829-shot1.png",
+   "time": "01:28:29",
+   "kind": "image"
+  },
+  {
+   "file": "012920-shot2.png",
+   "time": "01:29:20",
+   "kind": "image"
+  },
+  {
+   "file": "012928-shot3.png",
+   "time": "01:29:28",
+   "kind": "image"
+  },
+  {
+   "file": "013441-drv.png",
+   "time": "01:34:41",
+   "kind": "image"
+  },
+  {
+   "file": "082427-after.png",
+   "time": "08:24:27",
+   "kind": "image"
+  },
+  {
+   "file": "082507-make.png",
+   "time": "08:25:07",
+   "kind": "image"
+  },
+  {
+   "file": "083957-wl.png",
+   "time": "08:39:57",
+   "kind": "image"
+  },
+  {
+   "file": "084004-x11.png",
+   "time": "08:40:04",
+   "kind": "image"
+  },
+  {
+   "file": "084346-smoke-wayland.png",
+   "time": "08:43:46",
+   "kind": "image"
+  },
+  {
+   "file": "084346-smoke-x11.png",
+   "time": "08:43:46",
+   "kind": "image"
+  },
+  {
+   "file": "084502-ride.mp4",
+   "time": "08:45:02",
+   "kind": "video"
+  },
+  {
+   "file": "084507-ride.png",
+   "time": "08:45:07",
+   "kind": "image"
+  },
+  {
+   "file": "084508-ride-sheet.png",
+   "time": "08:45:08",
+   "kind": "image"
+  },
+  {
+   "file": "084737-cage.mp4",
+   "time": "08:47:37",
+   "kind": "video"
+  },
+  {
+   "file": "084740-cage.png",
+   "time": "08:47:40",
+   "kind": "image"
+  },
+  {
+   "file": "084745-cage-sheet.png",
+   "time": "08:47:45",
+   "kind": "image"
+  },
+  {
+   "file": "084829-cage-fs.mp4",
+   "time": "08:48:29",
+   "kind": "video"
+  },
+  {
+   "file": "084829-cage-fs.png",
+   "time": "08:48:29",
+   "kind": "image"
+  },
+  {
+   "file": "084830-cage-fs-frame.png",
+   "time": "08:48:30",
+   "kind": "image"
+  },
+  {
+   "file": "084928-ride-x11.mp4",
+   "time": "08:49:28",
+   "kind": "video"
+  },
+  {
+   "file": "084933-ride-x11.png",
+   "time": "08:49:33",
+   "kind": "image"
+  },
+  {
+   "file": "084951-ride-wayland.mp4",
+   "time": "08:49:51",
+   "kind": "video"
+  },
+  {
+   "file": "084956-ride-wayland.png",
+   "time": "08:49:56",
+   "kind": "image"
+  },
+  {
+   "file": "084958-ride-wayland-sheet.png",
+   "time": "08:49:58",
+   "kind": "image"
+  },
+  {
+   "file": "090413-base-fps.png",
+   "time": "09:04:13",
+   "kind": "image"
+  },
+  {
+   "file": "090609-terrain-top.png",
+   "time": "09:06:09",
+   "kind": "image"
+  },
+  {
+   "file": "090913-terrain-side.png",
+   "time": "09:09:13",
+   "kind": "image"
+  },
+  {
+   "file": "090923-terrain-chase.png",
+   "time": "09:09:23",
+   "kind": "image"
+  },
+  {
+   "file": "090934-terrain-before-after.png",
+   "time": "09:09:34",
+   "kind": "image"
+  },
+  {
+   "file": "090945-terrain-ride.mp4",
+   "time": "09:09:45",
+   "kind": "video"
+  },
+  {
+   "file": "090950-terrain-ride.png",
+   "time": "09:09:50",
+   "kind": "image"
+  },
+  {
+   "file": "092004-cap-hud.png",
+   "time": "09:20:04",
+   "kind": "image"
+  },
+  {
+   "file": "092004-cap.mp4",
+   "time": "09:20:04",
+   "kind": "video"
+  },
+  {
+   "file": "092105-smooth-x11.png",
+   "time": "09:21:05",
+   "kind": "image"
+  },
+  {
+   "file": "092106-smooth-x11.mp4",
+   "time": "09:21:06",
+   "kind": "video"
+  },
+  {
+   "file": "092157-smooth-wayland.mp4",
+   "time": "09:21:57",
+   "kind": "video"
+  },
+  {
+   "file": "092157-smooth-wayland.png",
+   "time": "09:21:57",
+   "kind": "image"
+  },
+  {
+   "file": "092203-wl-shot.png",
+   "time": "09:22:03",
+   "kind": "image"
+  },
+  {
+   "file": "092209-smooth-sheet.png",
+   "time": "09:22:09",
+   "kind": "image"
+  },
+  {
+   "file": "093051-a.png",
+   "time": "09:30:51",
+   "kind": "image"
+  },
+  {
+   "file": "093108-b.mp4",
+   "time": "09:31:08",
+   "kind": "video"
+  },
+  {
+   "file": "093108-b.png",
+   "time": "09:31:08",
+   "kind": "image"
+  },
+  {
+   "file": "093114-c.png",
+   "time": "09:31:14",
+   "kind": "image"
+  },
+  {
+   "file": "103908-trial.png",
+   "time": "10:39:08",
+   "kind": "image"
+  },
+  {
+   "file": "104021-check.png",
+   "time": "10:40:21",
+   "kind": "image"
+  },
+  {
+   "file": "105542-bench-instanced-40.png",
+   "time": "10:55:42",
+   "kind": "image"
+  },
+  {
+   "file": "111043-bench-merged-40.png",
+   "time": "11:10:43",
+   "kind": "image"
+  },
+  {
+   "file": "111445-bench-instanced-150.png",
+   "time": "11:14:45",
+   "kind": "image"
+  },
+  {
+   "file": "111846-bench-merged-150.png",
+   "time": "11:18:46",
+   "kind": "image"
+  },
+  {
+   "file": "112506-spike-splat.mp4",
+   "time": "11:25:06",
+   "kind": "video"
+  },
+  {
+   "file": "112506-spike-splat.png",
+   "time": "11:25:06",
+   "kind": "image"
+  },
+  {
+   "file": "112513-splat-sheet.png",
+   "time": "11:25:13",
+   "kind": "image"
+  },
+  {
+   "file": "112846-short-merged-vertex.png",
+   "time": "11:28:46",
+   "kind": "image"
+  },
+  {
+   "file": "113148-short-merged-splat.png",
+   "time": "11:31:48",
+   "kind": "image"
+  },
+  {
+   "file": "113449-short-instanced-splat.png",
+   "time": "11:34:49",
+   "kind": "image"
+  },
+  {
+   "file": "113650-stress-merged-splat.png",
+   "time": "11:36:50",
+   "kind": "image"
+  },
+  {
+   "file": "113724-spike-winding.mp4",
+   "time": "11:37:24",
+   "kind": "video"
+  },
+  {
+   "file": "113724-spike-winding.png",
+   "time": "11:37:24",
+   "kind": "image"
+  },
+  {
+   "file": "113756-spike-winding.mp4",
+   "time": "11:37:56",
+   "kind": "video"
+  },
+  {
+   "file": "113756-spike-winding.png",
+   "time": "11:37:56",
+   "kind": "image"
+  },
+  {
+   "file": "113756-winding-first.png",
+   "time": "11:37:56",
+   "kind": "image"
+  },
+  {
+   "file": "113831-spike-winding.mp4",
+   "time": "11:38:31",
+   "kind": "video"
+  },
+  {
+   "file": "113831-spike-winding.png",
+   "time": "11:38:31",
+   "kind": "image"
+  },
+  {
+   "file": "113833-winding-sheet.png",
+   "time": "11:38:33",
+   "kind": "image"
+  },
+  {
+   "file": "121747-kickr.png",
+   "time": "12:17:47",
+   "kind": "image"
+  },
+  {
+   "file": "132416-hills-chase.mp4",
+   "time": "13:24:16",
+   "kind": "video"
+  },
+  {
+   "file": "132416-hills-chase.png",
+   "time": "13:24:16",
+   "kind": "image"
+  },
+  {
+   "file": "132425-hills-orbit.mp4",
+   "time": "13:24:25",
+   "kind": "video"
+  },
+  {
+   "file": "132425-hills-orbit.png",
+   "time": "13:24:25",
+   "kind": "image"
+  },
+  {
+   "file": "132432-hills-sheet.png",
+   "time": "13:24:32",
+   "kind": "image"
+  },
+  {
+   "file": "132432-legs.png",
+   "time": "13:24:32",
+   "kind": "image"
+  },
+  {
+   "file": "132504-hills-climb.mp4",
+   "time": "13:25:04",
+   "kind": "video"
+  },
+  {
+   "file": "132504-hills-climb.png",
+   "time": "13:25:04",
+   "kind": "image"
+  },
+  {
+   "file": "132505-climb.png",
+   "time": "13:25:05",
+   "kind": "image"
+  },
+  {
+   "file": "135257-hud.png",
+   "time": "13:52:57",
+   "kind": "image"
+  },
+  {
+   "file": "140719-cap.png",
+   "time": "14:07:19",
+   "kind": "image"
+  },
+  {
+   "file": "141459-steer-sheet.png",
+   "time": "14:14:59",
+   "kind": "image"
+  },
+  {
+   "file": "141459-steer.mp4",
+   "time": "14:14:59",
+   "kind": "video"
+  },
+  {
+   "file": "141459-steer.png",
+   "time": "14:14:59",
+   "kind": "image"
+  },
+  {
+   "file": "141510-steer-trimmed.mp4",
+   "time": "14:15:10",
+   "kind": "video"
+  },
+  {
+   "file": "142250-mon.png",
+   "time": "14:22:50",
+   "kind": "image"
+  },
+  {
+   "file": "143803-graph.png",
+   "time": "14:38:03",
+   "kind": "image"
+  },
+  {
+   "file": "144332-grade-small.png",
+   "time": "14:43:32",
+   "kind": "image"
+  },
+  {
+   "file": "144332-grade.png",
+   "time": "14:43:32",
+   "kind": "image"
+  },
+  {
+   "file": "145920-lie1.png",
+   "time": "14:59:20",
+   "kind": "image"
+  },
+  {
+   "file": "145945-lie-a.mp4",
+   "time": "14:59:45",
+   "kind": "video"
+  },
+  {
+   "file": "145945-lie-a.png",
+   "time": "14:59:45",
+   "kind": "image"
+  },
+  {
+   "file": "145954-lie-b.mp4",
+   "time": "14:59:54",
+   "kind": "video"
+  },
+  {
+   "file": "145954-lie-b.png",
+   "time": "14:59:54",
+   "kind": "image"
+  },
+  {
+   "file": "150209-lie-b.mp4",
+   "time": "15:02:09",
+   "kind": "video"
+  },
+  {
+   "file": "150209-lie-b.png",
+   "time": "15:02:09",
+   "kind": "image"
+  },
+  {
+   "file": "150218-lie-c.mp4",
+   "time": "15:02:18",
+   "kind": "video"
+  },
+  {
+   "file": "150218-lie-c.png",
+   "time": "15:02:18",
+   "kind": "image"
+  },
+  {
+   "file": "150218-liechtenstein.mp4",
+   "time": "15:02:18",
+   "kind": "video"
+  },
+  {
+   "file": "150219-lie-sheet.png",
+   "time": "15:02:19",
+   "kind": "image"
+  },
+  {
+   "file": "150923-arch.png",
+   "time": "15:09:23",
+   "kind": "image"
+  },
+  {
+   "file": "151611-pkg1.png",
+   "time": "15:16:11",
+   "kind": "image"
+  },
+  {
+   "file": "151624-pkg2.png",
+   "time": "15:16:24",
+   "kind": "image"
+  },
+  {
+   "file": "151625-pkg-sheet.png",
+   "time": "15:16:25",
+   "kind": "image"
+  },
+  {
+   "file": "151649-pk-a.mp4",
+   "time": "15:16:49",
+   "kind": "video"
+  },
+  {
+   "file": "151649-pk-a.png",
+   "time": "15:16:49",
+   "kind": "image"
+  },
+  {
+   "file": "151657-package.mp4",
+   "time": "15:16:57",
+   "kind": "video"
+  },
+  {
+   "file": "151657-pk-b.mp4",
+   "time": "15:16:57",
+   "kind": "video"
+  },
+  {
+   "file": "151657-pk-b.png",
+   "time": "15:16:57",
+   "kind": "image"
+  },
+  {
+   "file": "151946-cam.png",
+   "time": "15:19:46",
+   "kind": "image"
+  },
+  {
+   "file": "152447-art-top.png",
+   "time": "15:24:47",
+   "kind": "image"
+  },
+  {
+   "file": "152454-art-side.png",
+   "time": "15:24:54",
+   "kind": "image"
+  },
+  {
+   "file": "152455-art-before.png",
+   "time": "15:24:55",
+   "kind": "image"
+  },
+  {
+   "file": "152518-art-a.png",
+   "time": "15:25:18",
+   "kind": "image"
+  },
+  {
+   "file": "152525-art-b.png",
+   "time": "15:25:25",
+   "kind": "image"
+  },
+  {
+   "file": "152526-art-before2.png",
+   "time": "15:25:26",
+   "kind": "image"
+  },
+  {
+   "file": "153344-fix-a.png",
+   "time": "15:33:44",
+   "kind": "image"
+  },
+  {
+   "file": "153352-art-after.png",
+   "time": "15:33:52",
+   "kind": "image"
+  },
+  {
+   "file": "153352-art-before-after.png",
+   "time": "15:33:52",
+   "kind": "image"
+  },
+  {
+   "file": "153352-fix-b.png",
+   "time": "15:33:52",
+   "kind": "image"
+  },
+  {
+   "file": "161747-gradient-before-after.png",
+   "time": "16:17:47",
+   "kind": "image"
+  },
+  {
+   "file": "162044-lean.mp4",
+   "time": "16:20:44",
+   "kind": "video"
+  },
+  {
+   "file": "162044-lean.png",
+   "time": "16:20:44",
+   "kind": "image"
+  },
+  {
+   "file": "162121-lean-sheet.png",
+   "time": "16:21:21",
+   "kind": "image"
+  },
+  {
+   "file": "162121-lean.mp4",
+   "time": "16:21:21",
+   "kind": "video"
+  },
+  {
+   "file": "162121-lean.png",
+   "time": "16:21:21",
+   "kind": "image"
+  },
+  {
+   "file": "163409-steer-sheet.png",
+   "time": "16:34:09",
+   "kind": "image"
+  },
+  {
+   "file": "163409-steer.mp4",
+   "time": "16:34:09",
+   "kind": "video"
+  },
+  {
+   "file": "163409-steer.png",
+   "time": "16:34:09",
+   "kind": "image"
+  },
+  {
+   "file": "164009-rs.png",
+   "time": "16:40:09",
+   "kind": "image"
+  },
+  {
+   "file": "164737-modes.mp4",
+   "time": "16:47:37",
+   "kind": "video"
+  },
+  {
+   "file": "164737-modes.png",
+   "time": "16:47:37",
+   "kind": "image"
+  },
+  {
+   "file": "164738-modes-sheet.png",
+   "time": "16:47:38",
+   "kind": "image"
+  },
+  {
+   "file": "165622-wildcam.mp4",
+   "time": "16:56:22",
+   "kind": "video"
+  },
+  {
+   "file": "165622-wildcam.png",
+   "time": "16:56:22",
+   "kind": "image"
+  },
+  {
+   "file": "165852-wildcam-before-sheet.png",
+   "time": "16:58:52",
+   "kind": "image"
+  },
+  {
+   "file": "165919-wildcam.mp4",
+   "time": "16:59:19",
+   "kind": "video"
+  },
+  {
+   "file": "165919-wildcam.png",
+   "time": "16:59:19",
+   "kind": "image"
+  },
+  {
+   "file": "165920-wildcam-sheet.png",
+   "time": "16:59:20",
+   "kind": "image"
+  },
+  {
+   "file": "165956-dbg.mp4",
+   "time": "16:59:56",
+   "kind": "video"
+  },
+  {
+   "file": "165956-dbg.png",
+   "time": "16:59:56",
+   "kind": "image"
+  },
+  {
+   "file": "170045-wildcam.mp4",
+   "time": "17:00:45",
+   "kind": "video"
+  },
+  {
+   "file": "170045-wildcam.png",
+   "time": "17:00:45",
+   "kind": "image"
+  },
+  {
+   "file": "170142-wildcam.mp4",
+   "time": "17:01:42",
+   "kind": "video"
+  },
+  {
+   "file": "170142-wildcam.png",
+   "time": "17:01:42",
+   "kind": "image"
+  },
+  {
+   "file": "170325-wildcam-end.png",
+   "time": "17:03:25",
+   "kind": "image"
+  },
+  {
+   "file": "170325-wildcam.mp4",
+   "time": "17:03:25",
+   "kind": "video"
+  },
+  {
+   "file": "170325-wildcam.png",
+   "time": "17:03:25",
+   "kind": "image"
+  },
+  {
+   "file": "170448-bump.mp4",
+   "time": "17:04:48",
+   "kind": "video"
+  },
+  {
+   "file": "170448-bump.png",
+   "time": "17:04:48",
+   "kind": "image"
+  },
+  {
+   "file": "170449-bump-sheet.png",
+   "time": "17:04:49",
+   "kind": "image"
+  },
+  {
+   "file": "181920-agent-freeride-shot-wayland-ocw-free.png",
+   "time": "18:19:20",
+   "kind": "image"
+  },
+  {
+   "file": "182034-agent-freeride-video-wayland-freeride.mp4",
+   "time": "18:20:34",
+   "kind": "video"
+  },
+  {
+   "file": "182034-agent-freeride-video-wayland-freeride.png",
+   "time": "18:20:34",
+   "kind": "image"
+  },
+  {
+   "file": "182129-agent-freeride-video-wayland-freeride.mp4",
+   "time": "18:21:29",
+   "kind": "video"
+  },
+  {
+   "file": "182129-agent-freeride-video-wayland-freeride.png",
+   "time": "18:21:29",
+   "kind": "image"
+  },
+  {
+   "file": "182325-agent-freeride-shot-wayland-smoke-wl.png",
+   "time": "18:23:25",
+   "kind": "image"
+  },
+  {
+   "file": "182407-agent-freeride-video-wayland-freeride.mp4",
+   "time": "18:24:07",
+   "kind": "video"
+  },
+  {
+   "file": "182407-agent-freeride-video-wayland-freeride.png",
+   "time": "18:24:07",
+   "kind": "image"
+  },
+  {
+   "file": "182604-agent-freeride-shot-wayland-smoke-wl.png",
+   "time": "18:26:04",
+   "kind": "image"
+  },
+  {
+   "file": "182651-agent-freeride-video-wayland-freeride.mp4",
+   "time": "18:26:51",
+   "kind": "video"
+  },
+  {
+   "file": "182651-agent-freeride-video-wayland-freeride.png",
+   "time": "18:26:51",
+   "kind": "image"
+  },
+  {
+   "file": "182849-agent-freeride-shot-wayland-smoke-wl.png",
+   "time": "18:28:49",
+   "kind": "image"
+  },
+  {
+   "file": "182936-agent-freeride-video-wayland-freeride.mp4",
+   "time": "18:29:36",
+   "kind": "video"
+  },
+  {
+   "file": "182936-agent-freeride-video-wayland-freeride.png",
+   "time": "18:29:36",
+   "kind": "image"
+  },
+  {
+   "file": "184833-shot-wayland-shot.png",
+   "time": "18:48:33",
+   "kind": "image"
+  },
+  {
+   "file": "210432-shot-wayland-ocw-leela-wl.png",
+   "time": "21:04:32",
+   "kind": "image"
+  },
+  {
+   "file": "213019-shot-wayland-ocw-route.png",
+   "time": "21:30:19",
+   "kind": "image"
+  },
+  {
+   "file": "213150-agent-routes-f06.png",
+   "time": "21:31:50",
+   "kind": "image"
+  },
+  {
+   "file": "213150-agent-routes-f14.png",
+   "time": "21:31:50",
+   "kind": "image"
+  },
+  {
+   "file": "213150-agent-routes-f30.png",
+   "time": "21:31:50",
+   "kind": "image"
+  },
+  {
+   "file": "213205-video-wayland-ocw-route-leave.mp4",
+   "time": "21:32:05",
+   "kind": "video"
+  },
+  {
+   "file": "213205-video-wayland-ocw-route-leave.png",
+   "time": "21:32:05",
+   "kind": "image"
+  },
+  {
+   "file": "221544-agent-landuse-lu-steg.png",
+   "time": "22:15:44",
+   "kind": "image"
+  },
+  {
+   "file": "221544-agent-landuse-lu-vaduz2.png",
+   "time": "22:15:44",
+   "kind": "image"
+  },
+  {
+   "file": "221544-agent-landuse-rhine-chase.png",
+   "time": "22:15:44",
+   "kind": "image"
+  },
+  {
+   "file": "221544-agent-landuse-rhine-top.png",
+   "time": "22:15:44",
+   "kind": "image"
+  },
+  {
+   "file": "221544-agent-landuse-ride.mp4",
+   "time": "22:15:44",
+   "kind": "video"
+  },
+  {
+   "file": "221544-agent-landuse-steg-stream.png",
+   "time": "22:15:44",
+   "kind": "image"
+  },
+  {
+   "file": "222113-agent-landuse-merged-steg.png",
+   "time": "22:21:13",
+   "kind": "image"
+  },
+  {
+   "file": "223903-kiosk-world-args-file.png",
+   "time": "22:39:03",
+   "kind": "image"
+  },
+  {
+   "file": "223922-kiosk-world-args-file-vaduz.png",
+   "time": "22:39:22",
+   "kind": "image"
+  },
+  {
+   "file": "224909-agent-gps-1280x720.png",
+   "time": "22:49:09",
+   "kind": "image"
+  },
+  {
+   "file": "224909-agent-gps-2560x1600.png",
+   "time": "22:49:09",
+   "kind": "image"
+  },
+  {
+   "file": "224909-agent-loop-800x600.png",
+   "time": "22:49:09",
+   "kind": "image"
+  },
+  {
+   "file": "225905-agent-gps-800x600.png",
+   "time": "22:59:05",
+   "kind": "image"
+  },
+  {
+   "file": "230444-agent-version-hud.png",
+   "time": "23:04:44",
+   "kind": "image"
+  },
+  {
+   "file": "232135-agent-rel-after-end.png",
+   "time": "23:21:35",
+   "kind": "image"
+  },
+  {
+   "file": "232251-agent-rec-leela.png",
+   "time": "23:22:51",
+   "kind": "image"
+  },
+  {
+   "file": "233031-agent-rec-marge.png",
+   "time": "23:30:31",
+   "kind": "image"
+  },
+  {
+   "file": "233403-agent-bots-formation.png",
+   "time": "23:34:03",
+   "kind": "image"
+  },
+  {
+   "file": "233700-agent-rec.png",
+   "time": "23:37:00",
+   "kind": "image"
+  },
+  {
+   "file": "233844-agent-see-through-ocw-a13997-trees-sheet.png",
+   "time": "23:38:44",
+   "kind": "image"
+  },
+  {
+   "file": "233844-agent-see-through-ocw-a13997-trees.mp4",
+   "time": "23:38:44",
+   "kind": "video"
+  },
+  {
+   "file": "233844-agent-see-through-ocw-a13997-trees.png",
+   "time": "23:38:44",
+   "kind": "image"
+  },
+  {
+   "file": "233923-agent-see-through-scan-sheet.png",
+   "time": "23:39:23",
+   "kind": "image"
+  },
+  {
+   "file": "233952-agent-see-through-ocw-a13997-forest.mp4",
+   "time": "23:39:52",
+   "kind": "video"
+  },
+  {
+   "file": "233952-agent-see-through-see-through-forest-sheet.png",
+   "time": "23:39:52",
+   "kind": "image"
+  },
+  {
+   "file": "234005-agent-see-through-ocw-a13997-km9.mp4",
+   "time": "23:40:05",
+   "kind": "video"
+  },
+  {
+   "file": "234005-agent-see-through-see-through-km9-sheet.png",
+   "time": "23:40:05",
+   "kind": "image"
+  },
+  {
+   "file": "234040-agent-see-through-ocw-a13997-houses.mp4",
+   "time": "23:40:40",
+   "kind": "video"
+  },
+  {
+   "file": "234040-agent-see-through-see-through-houses-sheet.png",
+   "time": "23:40:40",
+   "kind": "image"
+  },
+  {
+   "file": "234049-agent-see-through-smoke-wayland.png",
+   "time": "23:40:49",
+   "kind": "image"
+  },
+  {
+   "file": "234931-shot-wayland-menu-1280.png",
+   "time": "23:49:31",
+   "kind": "image"
+  },
+  {
+   "file": "234948-shot-wayland-menu-800.png",
+   "time": "23:49:48",
+   "kind": "image"
+  },
+  {
+   "file": "235006-shot-wayland-menu-quit.png",
+   "time": "23:50:06",
+   "kind": "image"
+  },
+  {
+   "file": "235130-shot-wayland-menu-1280.png",
+   "time": "23:51:30",
+   "kind": "image"
+  },
+  {
+   "file": "235147-shot-wayland-menu-800.png",
+   "time": "23:51:47",
+   "kind": "image"
+  },
+  {
+   "file": "235203-shot-wayland-menu-quit.png",
+   "time": "23:52:03",
+   "kind": "image"
+  },
+  {
+   "file": "235219-shot-wayland-menu-ride.png",
+   "time": "23:52:19",
+   "kind": "image"
+  },
+  {
+   "file": "235331-shot-wayland-m.png",
+   "time": "23:53:31",
+   "kind": "image"
+  },
+  {
+   "file": "235347-shot-wayland-m.png",
+   "time": "23:53:47",
+   "kind": "image"
+  },
+  {
+   "file": "235403-shot-wayland-m.png",
+   "time": "23:54:03",
+   "kind": "image"
+  },
+  {
+   "file": "235625-shot-wayland-m.png",
+   "time": "23:56:25",
+   "kind": "image"
+  }
+ ],
+ "images": 160,
+ "videos": 49,
+ "sounds": 0,
+ "builds": {
+  "runs": 0,
+  "seconds": 0,
+  "cargo_s": 0,
+  "compiled": 0,
+  "wait_s": 0,
+  "failed": [],
+  "machines": {},
+  "online": {},
+  "samples": 0
+ },
+ "prompts": [
+  {
+   "time": "00:21:00",
+   "iso": "2026-11-11T00:21:00+01:00",
+   "text": "analyse the specification for the OCW app as follows. translate to english and save it as specification. \n\n<pasted_content id=\"4528\">\nOpen Cycling World\n\nCross-Platform Indoor Cycling Simulation\n\nProjektbeschreibung und technische Architektur\n\nVersion 1.0 – November 2026\n\n\n1. Produktvision\n\nOpen Cycling World ist eine plattformübergreifende Indoor-Cycling-Simulation für Linux, macOS und Windows.\n\nDie Anwendung verbindet reale Fahrradhardware mit einer interaktiven virtuellen 3D-Welt. Nutzer können allein oder gemeinsam mit anderen Teilnehmern auf realen geografischen Strecken fahren, trainieren, an Rennen teilnehmen und ihre Fahrräder sowie ihre virtuellen Charaktere individuell gestalten.\n\nDie geografische Grundlage bilden OpenStreetMap-Daten. Aus diesen werden lokal verwendbare 3D-Straßen, Landschaften und Strecken erzeugt.\n\nDie Simulation orientiert sich funktional an Zwift und MyWhoosh, soll jedoch eine eigenständige, modulare und Rust-basierte Architektur besitzen.\n\n1.1 Hauptziele\n\n    Native Desktop-Anwendung für Linux, macOS und Windows.\n    Vollständige Implementierung in Rust, soweit technisch sinnvoll.\n    3D-Rendering über Bevy und wgpu.\n    Unterstützung von Bluetooth-Smart-Trainern und Fahrradsensoren.\n    Realistische Fahrrad- und Streckenphysik.\n    Echtzeit-Multiplayer mit vielen gleichzeitig fahrenden Teilnehmern.\n    Integrierte Sprachkommunikation.\n    Fahrrad- und Charaktereditor.\n    Generierung geografischer 3D-Welten aus OpenStreetMap.\n    Lokales Rendering und lokales Caching der Streckendaten.\n    Offline-fähige Einzelspielerfahrten auf heruntergeladenen Strecken.\n    Modulare Erweiterbarkeit für zukünftige Funktionen.\n\n2. Funktionsumfang\n\n2.1 Benutzerverwaltung und Startbildschirm\n\nDie Anwendung besitzt ein zentrales Dashboard.\n\nFunktionen:\n\n    Benutzerkonto und Profil.\n    Fahrerstatistiken.\n    Trainingshistorie.\n    Persönliche Bestzeiten.\n    Verfügbare Strecken.\n    Aktuelle Multiplayer-Sitzungen.\n    Freunde und Gruppen.\n    Geplante Veranstaltungen.\n    Geräteverwaltung.\n    Persönliche Einstellungen.\n\nDie Anwendung soll auch ohne Anmeldung einen lokalen Trainingsmodus ermöglichen.\n\n2.2 Virtuelle Fahrradwelt\n\nDie 3D-Welt basiert auf realen geografischen Daten.\n\nBeispiele:\n\n    Straßen in Städten.\n    Landstraßen.\n    Waldwege.\n    Radwege.\n    Bergstrecken.\n    Alpenpässe.\n    Küstenstraßen.\n    Individuell definierte Rundkurse.\n\nDie virtuelle Welt wird aus geografischen Daten rekonstruiert.\n\nDie Darstellung umfasst:\n\n    3D-Terrain.\n    Straßenoberflächen.\n    Straßenmarkierungen.\n    Kurven und Steigungen.\n    Wälder und Vegetation.\n    Gebäude und Brücken.\n    Flüsse und Seen.\n    Beleuchtung und Schatten.\n    Wetter und Tageszeiten.\n\nDie grafische Darstellung muss nicht exakt der Realität entsprechen. Die Streckenführung und die Höhenprofile sollen jedoch möglichst genau mit den geografischen Daten übereinstimmen.\n\n2.3 Echtzeit-Multiplayer\n\nMultiplayer ist ein Kernbestandteil der Anwendung und wird bereits bei der Architektur berücksichtigt.\n\nFunktionen:\n\n    Gemeinsame Fahrten.\n    Gruppenfahrten.\n    Rennen.\n    Zeitfahren.\n    Trainingsgruppen.\n    Private Sitzungen.\n    Öffentliche Veranstaltungen.\n    Freundeslisten.\n    Einladungen.\n    Live-Ranglisten.\n    Echtzeitpositionen anderer Fahrer.\n    Leistungs- und Geschwindigkeitsvergleiche.\n\nJeder Teilnehmer wird durch einen eigenen Avatar dargestellt.\n\nDie Position, Geschwindigkeit, Fahrtrichtung und Animation der anderen Teilnehmer werden kontinuierlich synchronisiert.\n\nMultiplayer-Anforderungen\n\n    Serverseitige Autorität über den Rennzustand.\n    Clientseitige Vorhersage für den eigenen Fahrer.\n    Interpolation anderer Teilnehmer.\n    Latenzkompensation.\n    Wiederverbindung nach Netzwerkunterbrechungen.\n    Schutz gegen manipulierte Leistungsdaten.\n    Trennung von Trainingsdaten und visueller Darstellung.\n\nDie Simulation darf nicht von der Bildwiederholrate des Clients abhängen.\n\n2.4 Sprachkommunikation\n\nDie Anwendung erhält integrierte Echtzeit-Sprachkommunikation.\n\nFunktionen:\n\n    Gruppen-Sprachkanäle.\n    Private Sprachräume.\n    Sprachkommunikation während gemeinsamer Fahrten.\n    Push-to-Talk.\n    Dauerhaft aktivierbares Mikrofon.\n    Mikrofon- und Lautsprecherauswahl.\n    Stummschaltung einzelner Teilnehmer.\n    Globale Stummschaltung.\n    Lautstärkeregelung.\n    Automatische Echounterdrückung.\n    Rauschunterdrückung.\n    Verbindungsstatus.\n\nZusätzlich soll räumliches Audio möglich sein.\n\nBeispielsweise können Stimmen von Fahrern, die sich virtuell hinter dem eigenen Fahrer befinden, leiser erscheinen als Stimmen von unmittelbar benachbarten Fahrern.\n\nDie Sprachkommunikation wird technisch vom eigentlichen Spielzustand getrennt.\n\n2.5 Fahrradeditor\n\nJeder Benutzer kann sein virtuelles Fahrrad konfigurieren.\n\nFunktionen:\n\n    Auswahl des Fahrradtyps.\n    Rennrad.\n    Gravelbike.\n    Mountainbike.\n    Zeitfahrrad.\n    Auswahl von Rahmen und Farbe.\n    Laufräder.\n    Reifen.\n    Lenker.\n    Sattel.\n    Anbauteile.\n    Individuelle Lackierungen.\n    Komponentenfreischaltung.\n    Vorschau in 3D.\n\nDie Fahrradkonfiguration besteht aus wiederverwendbaren Komponenten.\n\nJede Komponente erhält eigene Eigenschaften wie:\n\n    Gewicht.\n    Aerodynamik.\n    Rollwiderstand.\n    Geometrie.\n    Optische Darstellung.\n\nDie optischen Eigenschaften müssen von den physikalischen Eigenschaften getrennt sein.\n\nNicht jedes kosmetische Bauteil darf automatisch einen Leistungsvorteil erzeugen.\n\n2.6 Charaktereditor\n\nDer Benutzer kann seinen Fahrer individuell gestalten.\n\nFunktionen:\n\n    Körpermodell.\n    Geschlecht beziehungsweise Körperdarstellung.\n    Hautfarbe.\n    Gesichtsmerkmale.\n    Frisuren.\n    Kleidung.\n    Schuhe.\n    Helm.\n    Brillen.\n    Handschuhe.\n    Trikots.\n    Hosen.\n    Animationen.\n\nDie Charaktere verwenden ein gemeinsames Skelett- und Animationssystem.\n\nDie Animation wird abhängig von Trittfrequenz, Geschwindigkeit und Fahrzustand gesteuert.\n\nGeplant sind:\n\n    Normales Treten.\n    Sprint.\n    Bergfahrt.\n    Wiegetritt.\n    Ausrollen.\n    Kurvenfahrt.\n    Zieleinfahrt.\n    Siegesanimation.\n\nFahrrad und Charakter müssen in der 3D-Darstellung korrekt miteinander verbunden sein.\n\n\n3. Technischer Gesamtstack\n\n3.1 Programmiersprache und Engine\n\nPrimäre Programmiersprache: Rust\n\n3D-Engine: Bevy\n\nGrafik-Backend: wgpu\n\nBevy übernimmt:\n\n    3D-Szenen.\n    Rendering.\n    Kameras.\n    Beleuchtung.\n    Schatten.\n    Materialien.\n    Animationen.\n    Entity Component System.\n    Asset-Management.\n    Spielzustände.\n    Benutzeroberfläche.\n\nwgpu stellt die plattformübergreifende GPU-Abstraktion bereit.\n\nGrafik-Backends:\n\n    Vulkan.\n    Metal.\n    Direct3D 12.\n\n3.2 Benutzeroberfläche\n\nEmpfohlene Technologie: Bevy UI.\n\nDie Benutzeroberfläche soll möglichst direkt mit dem Engine-Zustand verbunden sein.\n\nFür komplexere Entwicklungs- und Diagnoseoberflächen kann egui ergänzend eingesetzt werden.\n\nDie Oberfläche wird in Module unterteilt:\n\n    Dashboard.\n    Trainingsansicht.\n    Multiplayer-Lobby.\n    Geräteverwaltung.\n    Fahrradeditor.\n    Charaktereditor.\n    Einstellungen.\n    Streckenauswahl.\n\n3.3 Audio\n\nZwei getrennte Audiosysteme:\n\nSpielaudio:\n\n    Hintergrundmusik.\n    Umgebungsgeräusche.\n    Fahrradgeräusche.\n    Wind.\n    Reifen.\n    Freilauf.\n    Schaltvorgänge.\n\nSprachkommunikation:\n\n    WebRTC.\n    Opus-Audiocodec.\n    LiveKit SFU.\n    Mikrofon- und Lautsprecherauswahl.\n    Echo Cancellation.\n    Noise Suppression.\n\nDie Sprachkommunikation wird über einen separaten Dienst bereitgestellt.\n\n3.4 Hardwarekommunikation\n\nBluetooth Low Energy:\n\n    Fitness Machine Service (FTMS).\n    Cycling Power Service.\n    Cycling Speed and Cadence.\n    Heart Rate Service.\n\nEmpfohlene Rust-Bibliothek: btleplug.\n\nANT+ wird über ein separates Hardware-Backend ergänzt.\n\nDie Geräteabstraktion darf keine direkte Abhängigkeit von der 3D-Engine haben.\n\n\n4. OpenStreetMap und lokale 3D-Welt\n\n4.1 Datenquelle\n\nOpenStreetMap ist die primäre Quelle für geografische Informationen.\n\nVerwendete Daten:\n\n    Straßen.\n    Radwege.\n    Wege.\n    Straßenkategorien.\n    Kreuzungen.\n    Brücken.\n    Tunnel.\n    Gebäude.\n    Gewässer.\n    Wälder.\n    Landnutzung.\n    Siedlungsflächen.\n    Ortsinformationen.\n\nDatenformat: OSM PBF.\n\nDatenquellen für regionale Ausschnitte:\n\n    Geofabrik.\n    Eigene OSM-Datenextrakte.\n    Optional weitere OSM-Datenanbieter.\n\n4.2 Lokale Datenverarbeitung\n\nDie Anwendung soll keine fertigen Kartenbilder als Grundlage der 3D-Welt verwenden.\n\nStattdessen wird eine eigene Datenpipeline entwickelt.\n\nAblauf:\n\n    Region auswählen.\n    OSM-PBF-Daten herunterladen.\n    Relevante geografische Objekte extrahieren.\n    Koordinaten transformieren.\n    Straßenverläufe rekonstruieren.\n    Straßenbreiten bestimmen oder schätzen.\n    Straßenoberflächen erzeugen.\n    Terrain erzeugen.\n    Gebäude und Vegetation platzieren.\n    Meshes und Texturen erzeugen.\n    Daten lokal speichern.\n    Welt in Bevy laden.\n\n4.3 Terrain und Höheninformationen\n\nOpenStreetMap enthält nicht flächendeckend präzise Höheninformationen.\n\nDeshalb wird eine zusätzliche digitale Höhenmodellquelle (DEM) benötigt.\n\nMögliche Quellen:\n\n    Copernicus DEM.\n    SRTM.\n    Regionale offene Höhenmodelle.\n\nAus den Höhendaten werden erzeugt:\n\n    Höhenprofile.\n    Geländemeshes.\n    Steigungen.\n    Gefälle.\n    Bergpässe.\n    Täler.\n    Höhenunterschiede.\n\nBrücken und Tunnel müssen gesondert behandelt werden, da ihre Höhe nicht einfach der Geländehöhe entsprechen darf.\n\n4.4 Straßenrekonstruktion\n\nJede Straße wird in ein 3D-Straßensegment umgewandelt.\n\nEigenschaften:\n\n    Geografische Mittellinie.\n    Straßenbreite.\n    Oberflächenmaterial.\n    Steigung.\n    Kurvenradius.\n    Straßenmarkierung.\n    Verbindungsinformationen.\n    Straßenkategorie.\n\nDie Straßenoberfläche wird aus den Liniengeometrien generiert.\n\nDie Straßenverbindungen bilden gleichzeitig die Grundlage für die Streckenführung und Navigation.\n\n4.5 Lokales Rendering\n\nDie Anwendung verwendet ein eigenes Bevy-Rendering-System.\n\nDie Geometrie wird in räumliche Kacheln unterteilt.\n\nEmpfohlene Struktur:\n\n    Region.\n    Gebiet.\n    World Tile.\n    Straßenabschnitt.\n    Terrain-Mesh.\n    Gebäudegruppe.\n    Vegetationsgruppe.\n\nNur die benötigten Bereiche werden in den Speicher geladen.\n\nBeim Fahren werden benachbarte Kacheln im Hintergrund nachgeladen und nicht mehr benötigte Bereiche entladen.\n\nZiele:\n\n    Keine permanenten Downloads während einer Fahrt.\n    Offline-Wiederverwendung heruntergeladener Regionen.\n    Begrenzter Speicherverbrauch.\n    GPU-beschleunigte Darstellung.\n    LOD für entfernte Objekte.\n    Frustum Culling.\n    Instancing für Vegetation und wiederkehrende Objekte.\n\n4.6 Datenpakete\n\nRegionen werden als eigenständige Datenpakete gespeichert.\n\nBeispiel:\n\nworlds/europe/germany/berlin/\n\nInhalt:\n\n    Geografische Quelldaten.\n    Terrain-Daten.\n    Straßen-Meshes.\n    Gebäude-Meshes.\n    Vegetation.\n    Materialien.\n    Metadaten.\n    Versionsinformationen.\n\nDie Pakete sollen signiert, versioniert und aktualisierbar sein.\n\n\n5. Fahrradphysik und Trainingssimulation\n\nDie Fahrradphysik ist ein eigenständiges Rust-Modul.\n\nEingaben:\n\n    Leistung in Watt.\n    Trittfrequenz.\n    Fahrergewicht.\n    Fahrradgewicht.\n    Steigung.\n    Geschwindigkeit.\n    Wind.\n    Rollwiderstand.\n    Luftwiderstand.\n\nAusgaben:\n\n    Geschwindigkeit.\n    Beschleunigung.\n    Position.\n    Energieverbrauch.\n    Widerstand.\n    Fahrzustand.\n\nDie grundlegenden Widerstandskräfte:\n\n    Gravitationskraft.\n    Rollwiderstand.\n    Aerodynamischer Widerstand.\n    Beschleunigungswiderstand.\n\nDie Simulation verwendet einen festen Zeitschritt.\n\nDie Trainersteuerung übersetzt die virtuelle Streckenneigung in einen passenden Widerstandswert für kompatible Smart-Trainer.\n\nDie Trainingsdaten werden unabhängig vom Rendering gespeichert.\n\n\n6. Echtzeit-Multiplayer-Architektur\n\n6.1 Client-Server-Modell\n\nDie Anwendung verwendet ein serverautoritäres Modell.\n\nDer Client übermittelt:\n\n    Leistung.\n    Trittfrequenz.\n    Geräteinformationen.\n    Eingaben.\n    Fahrzustand.\n\nDer Server berechnet beziehungsweise validiert:\n\n    Fahrerzustand.\n    Position.\n    Geschwindigkeit.\n    Rennzustand.\n    Platzierungen.\n    Gruppenzugehörigkeit.\n    Ereignisse.\n\nDer Server verteilt anschließend aktualisierte Zustände an die Teilnehmer.\n\n6.2 Netzwerkprotokoll\n\nEmpfohlene Technologien:\n\n    Tokio als asynchrone Runtime.\n    Quinn für QUIC-basierte Kommunikation.\n    Protobuf oder MessagePack für strukturierte Nachrichten.\n    Serverseitige Zustandsverwaltung.\n\nFür die Positionsübertragung können unzuverlässige Datagramme verwendet werden, während Anmeldung, Sitzungsverwaltung und wichtige Ereignisse zuverlässig übertragen werden.\n\n6.3 Synchronisierung\n\nDie Simulation muss folgende Aspekte berücksichtigen:\n\n    Unterschiedliche Bildwiederholraten.\n    Unterschiedliche Netzwerkverzögerungen.\n    Paketverlust.\n    Verbindungsabbrüche.\n    Wiederverbindung.\n    Serverseitige Zeitstempel.\n    Interpolation anderer Fahrer.\n    Clientseitige Vorhersage.\n\nDie Multiplayer-Logik wird unabhängig von der Grafikengine entwickelt.\n\n\n7. Voice-Chat\n\nEmpfohlene Infrastruktur: LiveKit.\n\nLiveKit stellt einen WebRTC-SFU-Dienst bereit.\n\nFunktionen:\n\n    Sprachräume.\n    Teilnehmerverwaltung.\n    Audioübertragung.\n    Dynamisches Abonnieren von Audiokanälen.\n    Push-to-Talk.\n    Gruppenkommunikation.\n\nDie Sprachkommunikation wird nicht über die QUIC-Spielzustandsverbindung übertragen.\n\nVoice-Chat und Spielserver erhalten getrennte Dienste und getrennte Skalierungsmechanismen.\n\nRäumliche Lautstärke und Entfernungseffekte werden auf Clientseite umgesetzt.\n\n\n8. Fahrrad- und Charaktereditor\n\n8.1 Asset-Pipeline\n\nEmpfohlenes 3D-Format: glTF 2.0.\n\nErstellung der Modelle beispielsweise mit Blender.\n\nImportprozess:\n\n    Modell erstellen.\n    Materialien definieren.\n    Skelett und Animationen erstellen.\n    glTF exportieren.\n    Assets validieren.\n    In Bevy importieren.\n    Komponenten registrieren.\n\n8.2 Fahrradkomponenten\n\nFahrräder bestehen aus modularen Teilen.\n\nBeispiel:\n\n    Rahmen.\n    Gabel.\n    Lenker.\n    Laufräder.\n    Reifen.\n    Sattel.\n    Pedale.\n    Antrieb.\n    Zubehör.\n\nJede Komponente besitzt eine eindeutige ID und eine Konfiguration.\n\n8.3 Charaktere\n\nCharaktere verwenden ein gemeinsames Rig.\n\nKörper, Kleidung und Accessoires werden modular geladen.\n\nDie Animationen werden abhängig vom Fahrzustand gesteuert.\n\n\n9. Backend und Infrastruktur\n\nDie Desktop-Anwendung ist der eigentliche Simulationsclient.\n\nServerdienste übernehmen nur Aufgaben, die zentral verwaltet oder zwischen Teilnehmern synchronisiert werden müssen.\n\nEmpfohlener Backend-Stack:\n\nBereich\n    \n\nTechnologie\n\nSprache\n    \n\nRust\n\nAsync Runtime\n    \n\nTokio\n\nHTTP API\n    \n\nAxum\n\nEchtzeit-Netzwerk\n    \n\nQuinn / QUIC\n\nDatenformat\n    \n\nProtobuf\n\nDatenbank\n    \n\nPostgreSQL\n\nCache\n    \n\nRedis, optional\n\nVoice\n    \n\nLiveKit\n\nAuthentifizierung\n    \n\nOIDC\n\nTelemetrie\n    \n\nOpenTelemetry\n\nContainer\n    \n\nDocker\n\nDeployment\n    \n\nLinux-Server\n\nBackend-Module\n\n    Authentication Service.\n    User Service.\n    Profile Service.\n    Device Service.\n    Multiplayer Session Service.\n    Race Management.\n    Friends and Groups.\n    World Metadata Service.\n    Asset Distribution.\n    Training History.\n    Voice Room Management.\n\nFür die erste Version wird ein modularer Backend-Monolith empfohlen. Eine Aufteilung in viele Microservices ist erst bei tatsächlichem Skalierungsbedarf sinnvoll.\n\n\n10. Cargo-Workspace und Repository-Struktur\n\nEmpfohlene Struktur:\n\nopen-cycling-world/\n\n│\n\n├── Cargo.toml\n\n├── Cargo.lock\n\n├── rust-toolchain.toml\n\n│\n\n├── apps/\n\n│   ├── desktop/\n\n│   └── world-builder/\n\n│\n\n├── crates/\n\n│   ├── core/\n\n│   ├── simulation/\n\n│   ├── cycling-physics/\n\n│   ├── cycling-protocol/\n\n│   ├── device-manager/\n\n│   ├── bluetooth-ftms/\n\n│   ├── ant-plus/\n\n│   ├── world/\n\n│   ├── osm-import/\n\n│   ├── terrain/\n\n│   ├── road-generator/\n\n│   ├── renderer/\n\n│   ├── avatar/\n\n│   ├── bicycle/\n\n│   ├── character-editor/\n\n│   ├── bicycle-editor/\n\n│   ├── multiplayer/\n\n│   ├── voice/\n\n│   ├── training/\n\n│   ├── telemetry/\n\n│   └── platform/\n\n│\n\n├── services/\n\n│   ├── api/\n\n│   ├── game-server/\n\n│   ├── account-service/\n\n│   └── world-distribution/\n\n│\n\n├── assets/\n\n│   ├── bicycles/\n\n│   ├── characters/\n\n│   ├── animations/\n\n│   ├── materials/\n\n│   ├── sounds/\n\n│   └── shaders/\n\n│\n\n├── worlds/\n\n│\n\n├── tools/\n\n│   ├── asset-validator/\n\n│   ├── osm-converter/\n\n│   └── performance-test/\n\n│\n\n├── infrastructure/\n\n│   ├── docker/\n\n│   └── deployment/\n\n│\n\n└── .github/\n\n    └── workflows/\n\n\n11. Cross-Platform-Build-System\n\nZielplattformen:\n\n    Linux x86_64.\n    Linux ARM64, optional.\n    macOS Apple Silicon.\n    macOS Intel, optional.\n    Windows x86_64.\n\nJede Plattform bekommt einen nativen CI-Runner.\n\nBuild-Prozess\n\n    Rust-Toolchain installieren.\n    Dependencies auflösen.\n    Code formatieren.\n    Clippy ausführen.\n    Unit-Tests ausführen.\n    Integrationstests ausführen.\n    Release-Build erstellen.\n    Assets paketieren.\n    Installer erstellen.\n    Artefakte veröffentlichen.\n\nPackaging\n\nLinux:\n\n    AppImage.\n    Flatpak.\n    Optional native Pakete.\n\nmacOS:\n\n    App Bundle.\n    Code Signing.\n    Apple Notarization.\n    DMG.\n\nWindows:\n\n    EXE/MSI.\n    Code Signing.\n    Installer.\n\nDie Build- und Release-Pipelines müssen für alle drei Betriebssysteme automatisiert sein.\n\n\n12. Sicherheit und Datenschutz\n\nBesonders wichtig bei Multiplayer und Sprachkommunikation:\n\n    Verschlüsselte Netzwerkverbindungen.\n    Authentifizierung.\n    Serverautorisierung.\n    Schutz vor manipulierten Trainingsdaten.\n    Schutz vor Replay-Angriffen.\n    Rate Limiting.\n    Sichere Tokenverwaltung.\n    Mikrofonberechtigungen.\n    Sichtbare Mikrofonaktivität.\n    Stummschaltung.\n    Datenschutzfreundliche Telemetrie.\n\nPersonenbezogene Daten, Sprachdaten und Trainingsdaten müssen getrennt behandelt werden.\n\n\n13. Lizenz- und Open-Source-Strategie\n\nBevorzugte Lizenzen:\n\n    MIT.\n    Apache 2.0.\n\nOpenStreetMap-Daten stehen unter ODbL.\n\nDaraus ergeben sich besondere Anforderungen an die Weitergabe von Datenbanken und abgeleiteten Datenbanken.\n\nDie App muss OpenStreetMap als Quelle sichtbar nennen.\n\nGeografische Daten und Rendering-Software müssen lizenztechnisch getrennt betrachtet werden.\n\nDie Nutzung öffentlicher OSM-Kachelserver darf nicht mit der kostenlosen Nutzung der Rohdaten verwechselt werden.\n\nFür die Produktion werden deshalb eigene regionale Datenpakete oder ein geeigneter eigener Datenserver vorgesehen.\n\nVor kommerzieller Veröffentlichung ist eine Prüfung der Daten- und Asset-Lizenzen erforderlich.\n\n\n14. Entwicklungsphasen\n\nPhase 1 – Technisches Grundgerüst\n\n    Cargo Workspace.\n    Bevy-Anwendung.\n    Linux/macOS/Windows-Builds.\n    Rendering.\n    Kamera.\n    Einfache Teststrecke.\n\nErgebnis: Startfähige Cross-Platform-Anwendung.\n\nPhase 2 – Fahrrad und Sensorik\n\n    Bluetooth-Scanning.\n    FTMS.\n    Leistungsmessung.\n    Trittfrequenz.\n    Herzfrequenz.\n    Fahrradphysik.\n    Virtueller Widerstand.\n\nErgebnis: Mit einem echten Smart-Trainer fahren.\n\nPhase 3 – OpenStreetMap-Welt\n\n    PBF-Import.\n    Straßenextraktion.\n    Höhenmodell.\n    Terrain-Generierung.\n    Straßen-Meshes.\n    Lokales Caching.\n    Regionale Datenpakete.\n\nErgebnis: Eine geografisch realistische Strecke lokal in 3D fahren.\n\nPhase 4 – Avatar und Fahrradeditor\n\n    Fahrradmodelle.\n    Charaktermodelle.\n    Komponenten.\n    Animationen.\n    Konfiguration und Speicherung.\n\nErgebnis: Individuell gestaltbare Fahrer.\n\nPhase 5 – Multiplayer\n\n    Accounts.\n    Sessions.\n    Echtzeit-Synchronisierung.\n    Andere Fahrer.\n    Gruppenfahrten.\n    Rennen.\n    Ranglisten.\n\nErgebnis: Gemeinsame virtuelle Fahrten.\n\nPhase 6 – Voice-Chat\n\n    LiveKit.\n    WebRTC.\n    Mikrofonverwaltung.\n    Push-to-Talk.\n    Sprachräume.\n    Räumliches Audio.\n\nErgebnis: Gemeinsame Fahrten mit Sprachkommunikation.\n\nPhase 7 – Produktreife\n\n    Performanceoptimierung.\n    Große Regionen.\n    Wetter und Tageszeiten.\n    Trainingshistorie.\n    Events.\n    Fehlerüberwachung.\n    Installer und Updates.\n    Sicherheitsprüfungen.\n\nErgebnis: Eine veröffentlichungsfähige Indoor-Cycling-Plattform.\n\n\n15. Qualitätsziele\n\nDie Anwendung soll folgende technische Ziele verfolgen:\n\n    60 FPS als Ziel auf geeigneter Desktop-Hardware.\n    Entkoppelte Physik- und Render-Zeitschritte.\n    Flüssige Darstellung anderer Fahrer.\n    Robuste Wiederverbindung.\n    Offline-Wiedergabe heruntergeladener Strecken.\n    Begrenzter Speicherverbrauch durch World Streaming.\n    Keine Abhängigkeit von einer einzigen GPU-API.\n    Einheitliches Verhalten unter Linux, macOS und Windows.\n    Automatisierte Tests auf allen drei Betriebssystemen.\n\nDiese Werte sind Entwicklungsziele und keine bereits garantierten Leistungswerte.\n\n\n16. Zusammenfassung der Architektur\n\nKomponente\n    \n\nFestgelegte Technologie\n\nProgrammiersprache\n    \n\nRust\n\n3D-Engine\n    \n\nBevy\n\nRendering\n    \n\nwgpu\n\nGUI\n    \n\nBevy UI\n\nErgänzende GUI\n    \n\negui\n\nAudio\n    \n\nBevy Audio\n\nVoice-Chat\n    \n\nWebRTC / LiveKit\n\nBluetooth\n    \n\nbtleplug\n\nANT+\n    \n\nSeparates Backend\n\nAsync\n    \n\nTokio\n\nNetzwerk\n    \n\nQUIC / Quinn\n\nAPI\n    \n\nAxum\n\nDatenformat\n    \n\nProtobuf\n\nDatenbank\n    \n\nPostgreSQL\n\nCache\n    \n\nRedis optional\n\nGeodaten\n    \n\nOpenStreetMap PBF\n\nHöhenmodell\n    \n\nCopernicus DEM / SRTM\n\n3D-Assetformat\n    \n\nglTF 2.0\n\nModellierung\n    \n\nBlender\n\nCI/CD\n    \n\nGitHub Actions\n\nDeployment\n    \n\nDocker / Linux\n\nSchlussfolgerung\n\nOpen Cycling World wird als eigenständige Rust-basierte Simulationsplattform konzipiert.\n\nDer Desktop-Client übernimmt Rendering, lokale Weltverwaltung, Fahrradphysik, Gerätekommunikation und Benutzerinteraktion.\n\nDer Backend-Bereich übernimmt Identität, Multiplayer, Synchronisierung, Gruppen, Rennen, Sprachräume und Datenverteilung.\n\nDie geografische Welt wird aus OpenStreetMap-Daten und ergänzenden Höhendaten erzeugt, lokal gespeichert und auf der jeweiligen Hardware gerendert.\n\nDie Architektur ist bewusst modular aufgebaut. So können einzelne Komponenten später ausgetauscht oder erweitert werden, ohne die gesamte Anwendung neu zu entwickeln.\n\nPrimäres Entwicklungsziel: Ein technisch eigenständiges, plattformübergreifendes Indoor-Cycling-System mit realen Strecken, realer Fahrradhardware, individueller Gestaltung und synchronisiertem Multiplayer.\n</pasted_content id=\"4528\">"
+  },
+  {
+   "time": "00:21:46",
+   "iso": "2026-11-11T00:21:46+01:00",
+   "text": "write the specification in markup language."
+  },
+  {
+   "time": "00:26:15",
+   "iso": "2026-11-11T00:26:15+01:00",
+   "text": "Save ANT+ development for later. Suggest proposals for the other open items."
+  },
+  {
+   "time": "00:29:39",
+   "iso": "2026-11-11T00:29:39+01:00",
+   "text": "Gpx import for tracks. Strave upload for finished rides. Add a in--"
+  },
+  {
+   "time": "00:31:54",
+   "iso": "2026-11-11T00:31:54+01:00",
+   "text": "gGpx import for tracks. Strave upload for finished rides. Add a ingame console to enter commands. investigate software options for 3d graphic stack. In 1.) who runs the physics? who is server, who client? is it clear that we get map data from open streetmap and render that locally? we need textures for the different landscapes. can we use satellite images?"
+  },
+  {
+   "time": "00:33:36",
+   "iso": "2026-11-11T00:33:36+01:00",
+   "text": "continue"
+  },
+  {
+   "time": "00:38:03",
+   "iso": "2026-11-11T00:38:03+01:00",
+   "text": "commit to main branch."
+  },
+  {
+   "time": "00:45:39",
+   "iso": "2026-11-11T00:45:39+01:00",
+   "text": "add usage of keys (left/right) and onscreen overlay arrows for ingame turn left right into roads. default is to right straight on / follow road if no key is pressed. how to deal with dead-end roads?"
+  },
+  {
+   "time": "00:47:53",
+   "iso": "2026-11-11T00:47:53+01:00",
+   "text": "platform implementation schedule: first linux, then windows, then mac os."
+  },
+  {
+   "time": "00:50:08",
+   "iso": "2026-11-11T00:50:08+01:00",
+   "text": "Where would a web app running in any browser fit in here? is connecting to wahoo kicker there possible or would that require a native app on IOS / Android?"
+  },
+  {
+   "time": "00:54:39",
+   "iso": "2026-11-11T00:54:39+01:00",
+   "text": "yes, the web companion, but keep 2. full web client and native mobile app for future development."
+  },
+  {
+   "time": "00:56:21",
+   "iso": "2026-11-11T00:56:21+01:00",
+   "text": "commit. then merge proposals into specification."
+  },
+  {
+   "time": "01:03:09",
+   "iso": "2026-11-11T01:03:09+01:00",
+   "text": "start phase 1 scaffolding"
+  },
+  {
+   "time": "08:15:43",
+   "iso": "2026-11-11T08:15:43+01:00",
+   "text": "commit to main"
+  },
+  {
+   "time": "08:17:07",
+   "iso": "2026-11-11T08:17:07+01:00",
+   "text": "did you add all unit tests for phase 1?"
+  },
+  {
+   "time": "08:19:00",
+   "iso": "2026-11-11T08:19:00+01:00",
+   "text": "yes, add those testss. add a makefile for installing dependencies, test and building."
+  },
+  {
+   "time": "08:30:51",
+   "iso": "2026-11-11T08:30:51+01:00",
+   "text": "yes"
+  },
+  {
+   "time": "08:31:44",
+   "iso": "2026-11-11T08:31:44+01:00",
+   "text": "If I would just add or give you SSH connections to a Windows and a macOS machine, could you test and develop also on that platforms? And additionally, I would like to know, on Linux, are you using Wayland or X11 support?"
+  },
+  {
+   "time": "08:37:07",
+   "iso": "2026-11-11T08:37:07+01:00",
+   "text": "yes do the wayland test as well"
+  },
+  {
+   "time": "08:43:31",
+   "iso": "2026-11-11T08:43:31+01:00",
+   "text": "to keep me in the loop, send me screenshots and short videos of the test output you create. save this for this project"
+  },
+  {
+   "time": "08:47:00",
+   "iso": "2026-11-11T08:47:00+01:00",
+   "text": "Yes, at Wayland recording as well."
+  },
+  {
+   "time": "08:52:36",
+   "iso": "2026-11-11T08:52:36+01:00",
+   "text": "commit the changes. Did you notice that the trees are flying up in the air? The road goes up, but the rest of the terrain just stays flat. So I think for the current version being, that's all right, but I just wanted to point this out and see if you have noticed that as well and are planning to mitigate it in a later version."
+  },
+  {
+   "time": "08:58:44",
+   "iso": "2026-11-11T08:58:44+01:00",
+   "text": "yes, do that now before phase 3."
+  },
+  {
+   "time": "09:13:10",
+   "iso": "2026-11-11T09:13:10+01:00",
+   "text": "which phase are we in?"
+  },
+  {
+   "time": "09:15:54",
+   "iso": "2026-11-11T09:15:54+01:00",
+   "text": "commit. investigate graphic spikes. i also notices the the video does not look smooth, the roade makes a slight curve and i notice a small gap/break between each frame."
+  },
+  {
+   "time": "09:20:57",
+   "iso": "2026-11-11T09:20:57+01:00",
+   "text": "<e-mail>:newkit/OCW.git"
+  },
+  {
+   "time": "09:21:21",
+   "iso": "2026-11-11T09:21:21+01:00",
+   "text": "here is an upstream github repository: add your changes there."
+  },
+  {
+   "time": "09:26:18",
+   "iso": "2026-11-11T09:26:18+01:00",
+   "text": "yes, i have those machines. create a config example that expects details for the build/test machines in a folder config/ but make sure that the actual config and ssh keys are not added to git."
+  },
+  {
+   "time": "09:30:10",
+   "iso": "2026-11-11T09:30:10+01:00",
+   "text": "okay, will do that. in the mean time, implement saving of the screenshots and test videos to disk as well."
+  },
+  {
+   "time": "09:37:55",
+   "iso": "2026-11-11T09:37:55+01:00",
+   "text": "start with phase 2 while i setup machines."
+  },
+  {
+   "time": "10:02:01",
+   "iso": "2026-11-11T10:02:01+01:00",
+   "text": "i added a linux machine with gpu and bluetooth capabilites to config/machine.toml. This machine should also see a wahoo KIcKR via bluetooth. Start with the spike test from phase 1 and once thats done, continue with phase 2."
+  },
+  {
+   "time": "10:11:54",
+   "iso": "2026-11-11T10:11:54+01:00",
+   "text": "move all building to machine marge."
+  },
+  {
+   "time": "10:24:55",
+   "iso": "2026-11-11T10:24:55+01:00",
+   "text": "make sure to add this to the make deps section for linux in makefile"
+  },
+  {
+   "time": "10:26:33",
+   "iso": "2026-11-11T10:26:33+01:00",
+   "text": "split make deps into specific make deps-linux, windows, macos per platform."
+  },
+  {
+   "time": "10:29:45",
+   "iso": "2026-11-11T10:29:45+01:00",
+   "text": "i've installed the depencencies on marge, continue"
+  },
+  {
+   "time": "10:48:20",
+   "iso": "2026-11-11T10:48:20+01:00",
+   "text": "while the spike test is running, can you continue with phase 2 implementation? develop in a seperate branch to not interfere with spike test."
+  },
+  {
+   "time": "11:17:51",
+   "iso": "2026-11-11T11:17:51+01:00",
+   "text": "does the spike test have to be so long (running)? I think we can get enough insights from a shorter running test."
+  },
+  {
+   "time": "11:18:43",
+   "iso": "2026-11-11T11:18:43+01:00",
+   "text": "do you also record a video of the spike test?"
+  },
+  {
+   "time": "11:28:38",
+   "iso": "2026-11-11T11:28:38+01:00",
+   "text": "also share the video of the spike test here"
+  },
+  {
+   "time": "11:32:09",
+   "iso": "2026-11-11T11:32:09+01:00",
+   "text": "earlier the road did have white line markings that gone missing in the spike video. add them again. also change to road to have more curves be more winding."
+  },
+  {
+   "time": "11:59:24",
+   "iso": "2026-11-11T11:59:24+01:00",
+   "text": "done?"
+  },
+  {
+   "time": "12:01:22",
+   "iso": "2026-11-11T12:01:22+01:00",
+   "text": "no, its fine implement the old path as alternative."
+  },
+  {
+   "time": "12:12:48",
+   "iso": "2026-11-11T12:12:48+01:00",
+   "text": "is the desktop app build on marge and ready to test?"
+  },
+  {
+   "time": "12:13:15",
+   "iso": "2026-11-11T12:13:15+01:00",
+   "text": "and rename the desktop app to owc-desktop"
+  },
+  {
+   "time": "12:22:34",
+   "iso": "2026-11-11T12:22:34+01:00",
+   "text": "leave it"
+  },
+  {
+   "time": "12:39:14",
+   "iso": "2026-11-11T12:39:14+01:00",
+   "text": "What is ERG?"
+  },
+  {
+   "time": "13:14:48",
+   "iso": "2026-11-11T13:14:48+01:00",
+   "text": "okay, when moving the kickr the cyclists moves. to test the resistance i need more different and changing steep profiles. also the legs of the cyclist do not move any more, that looked nice earlier, put it back. i noticed some flickering around the shadows, fix that. also make the camera move freely when flicking and moving the mouse in the window,"
+  },
+  {
+   "time": "13:52:02",
+   "iso": "2026-11-11T13:52:02+01:00",
+   "text": "print the percentage of steepness in hud"
+  },
+  {
+   "time": "14:01:30",
+   "iso": "2026-11-11T14:01:30+01:00",
+   "text": "alright, pretty cool, it works. merge and commit."
+  },
+  {
+   "time": "14:04:36",
+   "iso": "2026-11-11T14:04:36+01:00",
+   "text": "make the own rider character in color #FF1472 and give it one of the unique cyclist caps. i noticed some bouncing of the rider and the trees, investigate and fix."
+  },
+  {
+   "time": "14:06:35",
+   "iso": "2026-11-11T14:06:35+01:00",
+   "text": "also add control of the cyclist with cursor keys"
+  },
+  {
+   "time": "14:19:58",
+   "iso": "2026-11-11T14:19:58+01:00",
+   "text": "have you build a test app? how to make the testapp startup on marge ob a specific scrren and always restart when its changed? create a script for that."
+  },
+  {
+   "time": "14:29:09",
+   "iso": "2026-11-11T14:29:09+01:00",
+   "text": "what w What will be implemented in phase 3?"
+  },
+  {
+   "time": "14:29:59",
+   "iso": "2026-11-11T14:29:59+01:00",
+   "text": "Okay, start implementing phase 3. Use a small test area from the world where you start testing."
+  },
+  {
+   "time": "14:46:06",
+   "iso": "2026-11-11T14:46:06+01:00",
+   "text": "And what's still open from phase two? I thought phase two is done."
+  },
+  {
+   "time": "14:55:29",
+   "iso": "2026-11-11T14:55:29+01:00",
+   "text": "show me a video of the ride through the new terrain"
+  },
+  {
+   "time": "15:06:21",
+   "iso": "2026-11-11T15:06:21+01:00",
+   "text": "keys: pressing up should accellerate the rider, pressing down should stop."
+  },
+  {
+   "time": "15:08:16",
+   "iso": "2026-11-11T15:08:16+01:00",
+   "text": "the start portal ingame is broken, the top bar is 90 degrees wron, check and fix."
+  },
+  {
+   "time": "15:08:57",
+   "iso": "2026-11-11T15:08:57+01:00",
+   "text": "continue with phase 3"
+  },
+  {
+   "time": "15:11:57",
+   "iso": "2026-11-11T15:11:57+01:00",
+   "text": "breaking with key down works, key up accelerates only very little. add a hotkey that enables switching monitor."
+  },
+  {
+   "time": "15:17:36",
+   "iso": "2026-11-11T15:17:36+01:00",
+   "text": "when the camera is moved by mouse and comes to close to road, it's possible to watch through the road (clippimg problem), fix that. pressing up key does not reliable work, for instance the watts do not increase (stay zero). fix it in the way that pressing up key increases the watts the rider is generating"
+  },
+  {
+   "time": "15:24:11",
+   "iso": "2026-11-11T15:24:11+01:00",
+   "text": "yeah, there is an artifact in the road, investigate, screenshot and fix"
+  },
+  {
+   "time": "16:08:14",
+   "iso": "2026-11-11T16:08:14+01:00",
+   "text": "continue"
+  },
+  {
+   "time": "16:09:39",
+   "iso": "2026-11-11T16:09:39+01:00",
+   "text": "implement a filter for the road data, there are some jumps and unsteady section."
+  },
+  {
+   "time": "16:16:42",
+   "iso": "2026-11-11T16:16:42+01:00",
+   "text": "make some of the other rides slower. add tilting / leaning inwards the driver when going in curves so it looks more realistic."
+  },
+  {
+   "time": "16:27:43",
+   "iso": "2026-11-11T16:27:43+01:00",
+   "text": "when pressing cursor keys left/right, implement a more realistic turn behavior: tilt the driver and ride into a curve. you need to press the oppiste side to bring the driver straight."
+  },
+  {
+   "time": "16:33:49",
+   "iso": "2026-11-11T16:33:49+01:00",
+   "text": "implement an autodrive mode, where the driver tries to stay on the middle of the road. when not in autodrive, the user has to actively steer the driver to stay on the road. when touching the side of the road, the rider should get slowed down. also add a wild mode, where the rider is not stopped / bound to the roads but can go anywhere. implement different friction for different (road) materials reflecting that riding on tarmac is easier then riding on gravel or on the green meadows."
+  },
+  {
+   "time": "16:35:45",
+   "iso": "2026-11-11T16:35:45+01:00",
+   "text": "make  the steering controllable by a gamepad as well."
+  },
+  {
+   "time": "16:37:22",
+   "iso": "2026-11-11T16:37:22+01:00",
+   "text": "i see two riders get stuck now, fix that."
+  },
+  {
+   "time": "16:38:31",
+   "iso": "2026-11-11T16:38:31+01:00",
+   "text": "to make the testing more interesting, add a random startpoint option which is true for now."
+  },
+  {
+   "time": "16:52:03",
+   "iso": "2026-11-11T16:52:03+01:00",
+   "text": "okay commit and push"
+  },
+  {
+   "time": "16:52:16",
+   "iso": "2026-11-11T16:52:16+01:00",
+   "text": "what are next development tasks"
+  },
+  {
+   "time": "16:53:56",
+   "iso": "2026-11-11T16:53:56+01:00",
+   "text": "in wild mode, fix the following camera and fix clipping"
+  },
+  {
+   "time": "16:54:55",
+   "iso": "2026-11-11T16:54:55+01:00",
+   "text": "mac os is in, make a parallel task to build and test there."
+  },
+  {
+   "time": "17:03:19",
+   "iso": "2026-11-11T17:03:19+01:00",
+   "text": "have the rider follow the surface. make the rider tiltable so that e.g. if the rider rides up a steep bump, first the front wheel goes up, and then the back wheel so it looks realistic."
+  },
+  {
+   "time": "17:08:01",
+   "iso": "2026-11-11T17:08:01+01:00",
+   "text": "generate an appimage logo showing a  unicorn riding on a bike over a rainbow. create a folder artwork and put it there uner logos. use this for the app so that the running app shows it but also the file in file mangers."
+  },
+  {
+   "time": "17:10:00",
+   "iso": "2026-11-11T17:10:00+01:00",
+   "text": "implement the strava upload and sync function in a background task."
+  },
+  {
+   "time": "17:17:47",
+   "iso": "2026-11-11T17:17:47+01:00",
+   "text": "how to enable ssh on the windows build machine?"
+  },
+  {
+   "time": "17:18:08",
+   "iso": "2026-11-11T17:18:08+01:00",
+   "text": "and how to add a pure local build user?"
+  },
+  {
+   "time": "17:21:55",
+   "iso": "2026-11-11T17:21:55+01:00",
+   "text": "make the user creation suitable for a german windows. call the user user"
+  },
+  {
+   "time": "17:24:29",
+   "iso": "2026-11-11T17:24:29+01:00",
+   "text": "put those two steps into a script: setup-windows-buildserver.ps1"
+  },
+  {
+   "time": "17:30:10",
+   "iso": "2026-11-11T17:30:10+01:00",
+   "text": "continue implementing phase 3 in background"
+  },
+  {
+   "time": "17:48:56",
+   "iso": "2026-11-11T17:48:56+01:00",
+   "text": "a github runner jpb failed. check and fix in a background task: https://github.com/newkit/OCW/actions/runs/43039804090/job/130588241350#annotation:3:17254849"
+  },
+  {
+   "time": "17:54:11",
+   "iso": "2026-11-11T17:54:11+01:00",
+   "text": "in which phase does the multiplayer architecture come?"
+  },
+  {
+   "time": "17:55:31",
+   "iso": "2026-11-11T17:55:31+01:00",
+   "text": "whats in phase 4?"
+  },
+  {
+   "time": "17:58:58",
+   "iso": "2026-11-11T17:58:58+01:00",
+   "text": "background task: include a folder artwork/build-history that contains all the screenshots and videos created during development. add that to git. add also the build artifacts for the various platforms to the repo under release/"
+  },
+  {
+   "time": "18:09:46",
+   "iso": "2026-11-11T18:09:46+01:00",
+   "text": "background task: there is something odd when steering very much, it all of a sudden stops and then dows not allow to go back/other direction. investigate and fix."
+  },
+  {
+   "time": "18:11:52",
+   "iso": "2026-11-11T18:11:52+01:00",
+   "text": "check on the background jobs, the seem to block / wait on eachother. how to add a gamepad? describe in README."
+  },
+  {
+   "time": "18:17:25",
+   "iso": "2026-11-11T18:17:25+01:00",
+   "text": "update documentation README with all the functions/modes/internal shell commands"
+  },
+  {
+   "time": "18:32:49",
+   "iso": "2026-11-11T18:32:49+01:00",
+   "text": "make sure all the changes/additions make there way in a new version of the SPECIFICATIONS.md"
+  },
+  {
+   "time": "18:44:43",
+   "iso": "2026-11-11T18:44:43+01:00",
+   "text": "gamepad: left / right works, up/down for accellerate/break does not. make the R key reset the entire scene, like when the programm has started. add a record video function with hotkey V."
+  },
+  {
+   "time": "18:45:03",
+   "iso": "2026-11-11T18:45:03+01:00",
+   "text": "whats the status on macos?"
+  },
+  {
+   "time": "18:45:53",
+   "iso": "2026-11-11T18:45:53+01:00",
+   "text": "which port does the server use? add discription to readme on how to host and run."
+  },
+  {
+   "time": "18:48:43",
+   "iso": "2026-11-11T18:48:43+01:00",
+   "text": "make the C button the camera reset button"
+  },
+  {
+   "time": "18:51:28",
+   "iso": "2026-11-11T18:51:28+01:00",
+   "text": "build the desktop app on macos"
+  },
+  {
+   "time": "18:54:26",
+   "iso": "2026-11-11T18:54:26+01:00",
+   "text": "what are open tasks, what do you suggest to do next?"
+  },
+  {
+   "time": "19:02:37",
+   "iso": "2026-11-11T19:02:37+01:00",
+   "text": "continue in a background task with:\nPhase 3 (OpenStreetMap world, in progress):\n\n    Land use from OSM: forests, meadows, fields, built-up areas and water. Trees would stand where the real forests are, instead of today’s placeholder patches.\n    GPX import and routes inside packages: ride your own GPX track matched to the road graph. This would replace the interim route-file format.\n    Free ride gaps:\n        route-mode direction arrows and “leave the route”\n        continuing into a neighbouring package\n        the brief drop off the road during a U-turn\n        checking that the server and the app use the same package version\n    Signed, cached packages: a manifest with checksums and Ed25519 signatures, downloaded once and reused.\n    Buildings from OSM.\n    An integration test that builds a small region end to end and loads it headless."
+  },
+  {
+   "time": "19:03:07",
+   "iso": "2026-11-11T19:03:07+01:00",
+   "text": "another bg task: turning on wild mode should turn off autodrive."
+  },
+  {
+   "time": "19:03:26",
+   "iso": "2026-11-11T19:03:26+01:00",
+   "text": "add appimagetool to the build deps"
+  },
+  {
+   "time": "19:06:00",
+   "iso": "2026-11-11T19:06:00+01:00",
+   "text": "bg: have the video recording start with V key, print recording in HUD and have it stop when pressing V again."
+  },
+  {
+   "time": "19:07:37",
+   "iso": "2026-11-11T19:07:37+01:00",
+   "text": "where are the videos saved?"
+  },
+  {
+   "time": "19:08:31",
+   "iso": "2026-11-11T19:08:31+01:00",
+   "text": "why do the videos look choppy? fix that"
+  },
+  {
+   "time": "19:14:51",
+   "iso": "2026-11-11T19:14:51+01:00",
+   "text": "bg task: do planning for a in game menu. there should be (at least): settings (controls, trainer, strava, audio: mix abd also output). workshop: place where to tune / modify your bike and character. Ride: World mode, Events, Navi: place where to upload/download GPX tracks and sync with strava. See where the menu would fit in terms of project phase."
+  },
+  {
+   "time": "19:15:42",
+   "iso": "2026-11-11T19:15:42+01:00",
+   "text": "bg tasks: make more bots"
+  },
+  {
+   "time": "19:25:20",
+   "iso": "2026-11-11T19:25:20+01:00",
+   "text": "Pause on the trainer: do not change anything\n\nShould the ride timer stop during the pause (proposed)? -> No, the real riding time has to continue, imagine a multiplayer setup, where one user enters the menu, for the others it should just continue normally.\nEsc on the kiosk: is it OK that Esc never quits the app, and only “Quit” in the menu does? -> YES\nSwitching rides: restart the app with the new choice (quick to build, a few seconds’ wait), or switch inside the app from the start? -> Elaborate\nEvents before the backend: local bot races at set times on your machine now, or wait for Phase 5? -> elaborate\nRider weight: should it affect the physics and the trainer now, or stay at the fixed 75 kg until accounts exist? -> yes, rider weight should effect physics. Adding riders in Settings, make them selectable in workshop."
+  },
+  {
+   "time": "19:32:57",
+   "iso": "2026-11-11T19:32:57+01:00",
+   "text": "how to unzip the xz file on macos?"
+  },
+  {
+   "time": "19:36:18",
+   "iso": "2026-11-11T19:36:18+01:00",
+   "text": "bg task: add to mac os build workflow packaging the app into an application so it can run from gui"
+  },
+  {
+   "time": "19:42:39",
+   "iso": "2026-11-11T19:42:39+01:00",
+   "text": "bg task: add version id into lower right corner of HUD."
+  },
+  {
+   "time": "19:45:33",
+   "iso": "2026-11-11T19:45:33+01:00",
+   "text": "bg task: define objects that do not change camera. trees are such objects."
+  },
+  {
+   "time": "19:50:36",
+   "iso": "2026-11-11T19:50:36+01:00",
+   "text": "bg task: print gps coordinates of rider in HUD"
+  },
+  {
+   "time": "20:12:52",
+   "iso": "2026-11-11T20:12:52+01:00",
+   "text": "where is the appbundle on mac os? add it to the release folder"
+  },
+  {
+   "time": "20:16:43",
+   "iso": "2026-11-11T20:16:43+01:00",
+   "text": "the kickr input somehow got lost. i tested the latest linux version and turning the kickr does not have aby effect. fix that"
+  },
+  {
+   "time": "20:24:53",
+   "iso": "2026-11-11T20:24:53+01:00",
+   "text": "no, kickr does not work"
+  },
+  {
+   "time": "20:33:40",
+   "iso": "2026-11-11T20:33:40+01:00",
+   "text": "whats eating up all the memory on marge? the system in now unresponsive"
+  },
+  {
+   "time": "20:44:54",
+   "iso": "2026-11-11T20:44:54+01:00",
+   "text": "i added another linux build machine: leela. use that as well."
+  },
+  {
+   "time": "20:47:12",
+   "iso": "2026-11-11T20:47:12+01:00",
+   "text": "try now to connect with leela"
+  },
+  {
+   "time": "20:50:32",
+   "iso": "2026-11-11T20:50:32+01:00",
+   "text": "the make deps does not work on fedora, split make deps-linux into arch specific functions and add detection logic"
+  },
+  {
+   "time": "20:53:23",
+   "iso": "2026-11-11T20:53:23+01:00",
+   "text": "on fedora when make deps-linux\nroblem: problem with installed package\n  - installed package ffmpeg-libs-8.1.3-1.fc44.x86_64 conflicts with libavcodec-free provided by libavcodec-free-8.0.1-6.fc44.x86_64 from fedora\n  - package ffmpeg-libs-8.0.1-6.fc44.x86_64 from rpmfusion-free conflicts with libavcodec-free provided by libavcodec-free-8.0.1-6.fc44.x86_64 from fedora\n  - package ffmpeg-libs-8.1.3-1.fc44.x86_64 from rpmfusion-free-updates conflicts with libavcodec-free provided by libavcodec-free-8.0.1-6.fc44.x86_64 from fedora\n  - package ffmpeg-free-8.0.1-6.fc44.x86_64 from fedora requires libavcodec-free(x86-64) = 8.0.1-6.fc44, but none of the providers can be installed\n  - conflicting requests\n  - package ffmpeg-free-8.1.3-2.fc44.x86_64 from updates requires libavcodec-free(x86-64) = 8.1.3-2.fc44, but none of the providers can be installed\n  - installed package ffmpeg-libs-8.1.3-1.fc44.x86_64 conflicts with libavcodec-free provided by libavcodec-free-8.1.3-2.fc44.x86_64 from updates\n  - package ffmpeg-libs-8.0.1-6.fc44.x86_64 from rpmfusion-free conflicts with libavcodec-free provided by libavcodec-free-8.1.3-2.fc44.x86_64 from updates\n  - package ffmpeg-libs-8.1.3-1.fc44.x86_64 from rpmfusion-free-updates conflicts with libavcodec-free provided by libavcodec-free-8.1.3-2.fc44.x86_64 from updates\nYou can try to add to command line:\n  --allowerasing to allow removing of installed packages to resolve problems\n  --skip-broken to skip uninstallable packages\nmake: *** [Makefile:79: deps-linux-fedora] Error 1"
+  },
+  {
+   "time": "20:57:13",
+   "iso": "2026-11-11T20:57:13+01:00",
+   "text": "okay, try a quick smok smoke test build on Lila."
+  },
+  {
+   "time": "21:04:48",
+   "iso": "2026-11-11T21:04:48+01:00",
+   "text": "yes"
+  },
+  {
+   "time": "21:09:25",
+   "iso": "2026-11-11T21:09:25+01:00",
+   "text": "whats the command to allow powershell script execution? add this and all buildserver setup instructtions to readme."
+  },
+  {
+   "time": "21:18:20",
+   "iso": "2026-11-11T21:18:20+01:00",
+   "text": "check the windows build server"
+  },
+  {
+   "time": "21:19:08",
+   "iso": "2026-11-11T21:19:08+01:00",
+   "text": "which ip are you using? you should be using <ip>"
+  },
+  {
+   "time": "21:19:52",
+   "iso": "2026-11-11T21:19:52+01:00",
+   "text": "the ip is Win11Builder"
+  },
+  {
+   "time": "21:28:02",
+   "iso": "2026-11-11T21:28:02+01:00",
+   "text": "marge should be back online,"
+  },
+  {
+   "time": "21:29:47",
+   "iso": "2026-11-11T21:29:47+01:00",
+   "text": "start resuming the task why the kicker does not work anymore on marge now"
+  },
+  {
+   "time": "21:36:39",
+   "iso": "2026-11-11T21:36:39+01:00",
+   "text": "bg task: as a little side project: create a webapp that show the usage of the buildserver, the tasks running/queued on them."
+  },
+  {
+   "time": "21:40:04",
+   "iso": "2026-11-11T21:40:04+01:00",
+   "text": "make the buildserver dashboard listen on all adresses 0.0.0.0. make it use ssh to gather all the information from the other machines configured in machines.toml. run it."
+  },
+  {
+   "time": "21:43:18",
+   "iso": "2026-11-11T21:43:18+01:00",
+   "text": "dont run the dashboard on leela. run it on deb, the main build coordinator"
+  },
+  {
+   "time": "21:49:40",
+   "iso": "2026-11-11T21:49:40+01:00",
+   "text": "whats the issue on windows?"
+  },
+  {
+   "time": "21:51:28",
+   "iso": "2026-11-11T21:51:28+01:00",
+   "text": "add that manual setup to the readme in the windows buildserver seutp section"
+  },
+  {
+   "time": "22:03:15",
+   "iso": "2026-11-11T22:03:15+01:00",
+   "text": "windows toolchain installed. continue."
+  },
+  {
+   "time": "22:04:24",
+   "iso": "2026-11-11T22:04:24+01:00",
+   "text": "whats the status on macos? is there an appbundle?"
+  },
+  {
+   "time": "22:06:06",
+   "iso": "2026-11-11T22:06:06+01:00",
+   "text": "bg task: add the ffmpeg to the deps on macos. then build and put the bundle to release/"
+  },
+  {
+   "time": "22:06:23",
+   "iso": "2026-11-11T22:06:23+01:00",
+   "text": "bg task: continue with windows setup and first build"
+  },
+  {
+   "time": "22:15:06",
+   "iso": "2026-11-11T22:15:06+01:00",
+   "text": "ffmpeg and brew is installed on mac os"
+  },
+  {
+   "time": "22:16:30",
+   "iso": "2026-11-11T22:16:30+01:00",
+   "text": "i will turn the padel now on the kickr, look for it on marge"
+  },
+  {
+   "time": "22:21:17",
+   "iso": "2026-11-11T22:21:17+01:00",
+   "text": "okay. kickr works now. I noticed that the inclination reported by HUD and the inclinication indicated by the terrain do not mach so well in my optionen. can you elaborate where both come from and if they are correlated?"
+  },
+  {
+   "time": "22:25:14",
+   "iso": "2026-11-11T22:25:14+01:00",
+   "text": "background task: include marge to build pool. HUD fix: break line if its out of the visible area. Where is the GPS position in HUD i asked for?"
+  },
+  {
+   "time": "22:27:12",
+   "iso": "2026-11-11T22:27:12+01:00",
+   "text": "bacgrount task: update the kiosk on marge with the latest build including the world and terrain updates."
+  },
+  {
+   "time": "22:32:06",
+   "iso": "2026-11-11T22:32:06+01:00",
+   "text": "bacground task: the reporting in build dashboard for windows is poor, what would it take to display bacground task and cpu load?"
+  },
+  {
+   "time": "22:41:04",
+   "iso": "2026-11-11T22:41:04+01:00",
+   "text": "background task: start implementing and testing open tasks and phases on linux, use both build servers. where unsure, take the best guess but document your uncertainty, your options and your choice. Expect no user interaction until tomorrow 7:00. Once completed, do a build on mac and windows, too. writeup all addition and assumptions made into a new section in the SPECIFICATION."
+  },
+  {
+   "time": "22:46:31",
+   "iso": "2026-11-11T22:46:31+01:00",
+   "text": "you can outsource some smaller build tasks to macos, too"
+  },
+  {
+   "time": "22:49:53",
+   "iso": "2026-11-11T22:49:53+01:00",
+   "text": "background task: update the build dashboard to also show queued tasks. is the number of build slots correct? i thout 1 mac 2x2 linux and 1 windows, or whats the math behind?"
+  }
+ ],
+ "tokens": {
+  "total": {
+   "input": 7770,
+   "cache_write": 15163078,
+   "cache_read": 952282341,
+   "output": 3374076,
+   "total": 970827265,
+   "messages": 3497
+  },
+  "features": {
+   "Other": {
+    "input": 1854,
+    "cache_write": 2226468,
+    "cache_read": 228767573,
+    "output": 744204,
+    "total": 231740099,
+    "messages": 832
+   },
+   "Art project": {
+    "input": 280,
+    "cache_write": 296410,
+    "cache_read": 45312556,
+    "output": 85240,
+    "total": 45694486,
+    "messages": 124
+   },
+   "Planning & spec": {
+    "input": 730,
+    "cache_write": 809897,
+    "cache_read": 117560879,
+    "output": 491734,
+    "total": 118863240,
+    "messages": 345
+   },
+   "Materials & look": {
+    "input": 192,
+    "cache_write": 129049,
+    "cache_read": 42651454,
+    "output": 92263,
+    "total": 42872958,
+    "messages": 88
+   },
+   "Build, release & infra": {
+    "input": 1480,
+    "cache_write": 3214666,
+    "cache_read": 153072495,
+    "output": 580803,
+    "total": 156869444,
+    "messages": 663
+   },
+   "UI & menus": {
+    "input": 2028,
+    "cache_write": 3499905,
+    "cache_read": 178837155,
+    "output": 716386,
+    "total": 183055474,
+    "messages": 897
+   },
+   "Worlds & terrain": {
+    "input": 792,
+    "cache_write": 4221191,
+    "cache_read": 132575994,
+    "output": 504814,
+    "total": 137302791,
+    "messages": 370
+   },
+   "Riders & bikes": {
+    "input": 56,
+    "cache_write": 43236,
+    "cache_read": 19267065,
+    "output": 32784,
+    "total": 19343141,
+    "messages": 24
+   },
+   "Multiplayer & server": {
+    "input": 358,
+    "cache_write": 722256,
+    "cache_read": 34237170,
+    "output": 125848,
+    "total": 35085632,
+    "messages": 154
+   }
+  }
+ }
+}

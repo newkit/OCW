@@ -384,7 +384,7 @@ at = ["1=time 14:00", "2=god.flight hover", "3=god on", "4=god.pose here here 40
 shot = 9
 
 # Unicorn mode's menu row (spec §14 Phase 13A; shared with the browser
-# since G5, v3.38): World → Unicorn mode, focused, while flying over Vaduz.
+# since G5, v3.37): World → Unicorn mode, focused, while flying over Vaduz.
 [[scene]]
 name = "god-menu-world"
 description = "World → Unicorn mode (spec §14 Phase 13 G5: the same row in the browser): the World page over Vaduz with the row focused while the unicorn flies"
