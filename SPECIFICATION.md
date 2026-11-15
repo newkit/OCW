@@ -4,10 +4,11 @@
 
 Project Description and Technical Architecture
 
-Version 3.62 – November 2026
+Version 3.63 – November 2026
 
 | Version | Change |
 |---|---|
+| 3.63 | Decision by the user (2026-11-15): Phase 16 Q3 – **BRouter** is the first external route planner; its server is a setting without a default for now (no built-in server); brouter.de checked: GeoJSON API with CORS, so desktop and browser can use it; plan written (`ocw_world::plan`, BRouter client, *Navi → Plan route* in the game before the studio, privacy note, tests) – not started |
 | 3.62 | Decision by the user (2026-11-15): Phase 16 Q2 – world edits as patches on the sources plus "Fix in OSM"; user-edited packages are signed with the user's key and shareable (shown as unofficial, trusted per key) |
 | 3.61 | Decision from the build dashboard (2026-11-15): Phase 9 Q11 – choosing a season **jumps the date** to the season's representative day of the place (time of day kept); no season override decoupled from the date (S9b reduced accordingly) |
 | 3.60 | Decision from the build dashboard (2026-11-15): Phase 14 Q2 – **WebXR first** (the browser app in the headset's browser: no store, WebGL 2, trainers through the sensor bridge), the native Android OpenXR app later |
@@ -4603,10 +4604,12 @@ The studio makes them interactive:
 
 - **Q1 – Separate app or a mode: decided (2026-11-15, dashboard: "ocw-studio as its own desktop app"):** `apps/studio` (`ocw-studio`), its own desktop app on the shared crates (16A).
 - **Q2 – World editing: decided (2026-11-15, the user: "(b) and (c), make world shareable with user key"):** edits are **world patches on the sources** applied by `world-builder` at build (16C (b)), plus the **"Fix in OSM"** link for real map errors (16C (c); never an automatic upload). A user-edited package is **signed with the user's own key and may be shared**: others add that key to trust it, and the World menu shows such packages as *unofficial* with the signer's name; official packages stay signed by our root after review of the patch.
-- **Q3 – Planners:**
-  - May we self-host BRouter (and later GraphHopper) on marge for tests and development, and later on the backend for users?
-  - Which planner is the first external one? The proposal is BRouter.
-  - Should we ask the brouter.de operator about using the public server?
+- **Q3 – Planners: decided (2026-11-15, the user: "use brouter and leave the server to choose open for now"):** **BRouter is the first external planner** (MIT). The server is a **setting with no default** (`route.planner.brouter_url`, empty): the rider enters one – a self-hosted BRouter, a friend's, or brouter.de for personal use; no server is built in until its operator agrees (brouter.de publishes no usage policy) or we host one (B8 stage 2). Checked 2026-11-15 with one request to brouter.de: `…/brouter?lonlats=LON,LAT|LON,LAT&profile=trekking&alternativeidx=0&format=geojson` answers GeoJSON (track length, ascent, time; elevation per point) with `Access-Control-Allow-Origin: *`, so the **browser app can call it directly** as well as the desktop. Self-hosting on marge stays possible for tests (marge is not reachable from the internet). GraphHopper, Valhalla, OSRM, openrouteservice stay later options behind the same `RoutePlanner` trait. **Plan (not started):**
+  - `ocw_world::plan` – the `RoutePlanner` trait (via-points + profile → polyline with optional elevation), the built-in planner on the package's road graph (default), and the result → HMM map matching → graph route (the existing `matching`, `graph_route`); pure, wasm-safe;
+  - the BRouter client in `ocw-client` (native HTTP / browser `fetch` behind one async interface): URL and profile from settings (`route.planner`, `route.planner.brouter_url`, `route.planner.brouter_profile`: trekking, fastbike, safety, MTB, gravel as the server offers), a clear User-Agent, timeouts, at most one request at a time, GeoJSON parsing, errors shown plainly;
+  - **in the game before the studio exists:** *Navi → Plan route* next to GPX import – start, via points and end picked on the world's 2D map or by name, the planner chosen (built-in / BRouter), the result shown with its unmatched sections and profile, then ridden; console `route plan --via LAT,LON … [--planner builtin|brouter] [--profile P]`; the studio (16D, E2) reuses the same code;
+  - privacy (§12): the via-points leave the device only when the rider picks BRouter, and the app says so on first use; attribution "Routing: BRouter, © OpenStreetMap contributors" with every planned route;
+  - tests: the trait and the built-in planner on the test packages; GeoJSON parsing from recorded BRouter answers (no network in unit tests); matching a recorded Vaduz–Malbun BRouter track onto the Liechtenstein graph; a live test against a configured server only on request (`make test-planner-live URL=…`).
 - **Q4 – Browser studio: decided (2026-11-15, dashboard: "a browser version later"):** desktop first; the browser version comes later (after E5, as proposed) – the core `ocw-edit` stays wasm-safe for it.
 - **Q5 – Mesh editing: decided (2026-11-15, dashboard: "add simple mesh tools in the studio (extrude, scale parts)"):** the Models workspace (16B) gets **simple mesh tools**: select faces / parts of a node, extrude, move, scale and rotate parts, delete, flip normals, recompute normals, merge vertices – with undo, the model contract (15B) and the budgets checked live; anything beyond (sculpting, UV unwrapping, retopology, rigging) stays in Blender. A new stage **E4b** after E4.
 
