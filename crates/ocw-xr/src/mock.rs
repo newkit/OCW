@@ -41,7 +41,8 @@ pub struct MockRuntime {
     pub frame_error: Option<XrError>,
     /// The swapchain's images.
     pub images: u32,
-    next_image: u32,
+    /// The next image `acquire_image` hands out.
+    pub next_image: u32,
     /// The display period (ns): 72 Hz like the Quest 1.
     pub period_ns: i64,
     /// The runtime clock (ns): advanced a period per wait.

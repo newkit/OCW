@@ -555,8 +555,10 @@ mod tests {
 
     #[test]
     fn a_failed_begin_is_a_loss_and_the_reference_space_change_recentres() {
-        let mut rt = MockRuntime::default();
-        rt.begin_error = Some(XrError::Other("begin failed".into()));
+        let mut rt = MockRuntime {
+            begin_error: Some(XrError::Other("begin failed".into())),
+            ..Default::default()
+        };
         let mut m = SessionMachine::new();
         run(&mut m, &mut rt, &[RuntimeEvent::State(S::Ready)]);
         assert_eq!(*m.phase(), Phase::Lost { restart: false });

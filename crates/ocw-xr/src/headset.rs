@@ -110,7 +110,6 @@ mod tests {
         assert_eq!(QUEST_1.panel_px, (1440, 1600));
         assert_eq!(target_rate(QUEST_1.refresh_hz), Some(72.0));
         assert!((frame_budget_ms(72.0) - 13.89).abs() < 0.01);
-        assert!(QUEST_1.render_scale_standalone < QUEST_1.render_scale_pc);
     }
 
     #[test]

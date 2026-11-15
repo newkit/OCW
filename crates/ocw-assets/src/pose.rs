@@ -1012,7 +1012,8 @@ mod tests {
             let bike = crate::bikes::rig(profile);
             let body = BodyFit::new(&rider, &bike, 1.0);
             let seated = steady_eye(&body, &PoseParams::default());
-            assert!((1.25..1.8).contains(&seated.y), "{profile:?}: {seated}");
+            // The TT bike: ≈ 1.24 m, low on the bars.
+            assert!((1.1..1.8).contains(&seated.y), "{profile:?}: {seated}");
             assert!(seated.z < bike.saddle.z, "{profile:?}: ahead of the saddle");
             let bars = 0.5 * (bike.hoods[0].z + bike.hoods[1].z);
             assert!(

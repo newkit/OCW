@@ -6,7 +6,8 @@
 //! Bevy draws with an **infinite, reverse-Z** perspective (depth 1 at the
 //! near plane, 0 at infinity, right-handed, −Z forward), so
 //! [`clip_from_view`] builds the asymmetric version of
-//! `Mat4::perspective_infinite_reverse_rh`, which it equals for a
+//! glam's right-handed `perspective_infinite_reverse` (`bevy_math::proj`),
+//! which it equals for a
 //! symmetric field of view (tested).
 
 use glam::{Mat4, Vec3, Vec4};
@@ -136,7 +137,8 @@ mod tests {
     fn symmetric_fov_is_bevys_own_projection() {
         let (fov_y, aspect, near) = (1.2f32, 0.9f32, 0.1f32);
         let ours = clip_from_view(&Fov::symmetric(fov_y, aspect), near);
-        let bevys = Mat4::perspective_infinite_reverse_rh(fov_y, aspect, near);
+        let bevys =
+            glam::camera::rh::proj::directx::perspective_infinite_reverse(fov_y, aspect, near);
         assert!(ours.abs_diff_eq(bevys, 1e-5), "{ours} vs {bevys}");
         assert!((Fov::symmetric(fov_y, aspect).aspect() - aspect).abs() < 1e-5);
     }
