@@ -14,12 +14,17 @@ parity), used by scripts/test-web.py after the ride:
 - unicorn mode (spec §14 Phase 13 G5): G flies, + climbs (by the
   `KeyboardEvent.key`), I hides / shows the inspection, P puts a pin, Esc
   opens the menu in flight (World → Unicorn mode), G lands;
-- the changed setting survives a reload (localStorage).
+- the changed setting survives a reload (localStorage);
+- the console's Tab completion (spec 3.40): the real Tab / Shift+Tab keys
+  complete, list and cycle (`window.ocw.consoleState()`), with the shared
+  value providers (weather presets, setting keys);
+- the GPS line (spec 3.40; test-web.py gives the test route a geographic
+  origin, `origin=`): shown in the HUD, `rider.gps`, `hud.gps off / on`.
 
 Screenshots: BASE-menu.jpg, -settings.jpg, -weather.jpg, -hud.jpg,
--riders.jpg, -gamepad.jpg, -unicorn-flight.jpg, -unicorn-inspect.jpg,
--unicorn-menu.jpg. Each check is a (name, ok, detail) row in the
-summary.
+-console.jpg, -gps.jpg, -riders.jpg, -gamepad.jpg, -unicorn-flight.jpg,
+-unicorn-inspect.jpg, -unicorn-menu.jpg. Each check is a (name, ok,
+detail) row in the summary.
 """
 
 import json
@@ -33,6 +38,8 @@ KEYS = {
     "ArrowDown": ("ArrowDown", 40, ""),
     "ArrowLeft": ("ArrowLeft", 37, ""),
     "ArrowRight": ("ArrowRight", 39, ""),
+    "Tab": ("Tab", 9, ""),
+    "Shift": ("ShiftLeft", 16, ""),
     # Unicorn mode (spec §14 Phase 13 G5): G, I, P by position, + by what
     # it types (the US `=` key typing "+": `KeyboardEvent.key`).
     "g": ("KeyG", 71, "g"),
@@ -95,19 +102,101 @@ class UiTest:
         mark = "ok " if ok else "FAIL"
         self.lines.append(f"[ui] check {mark} {name}: {detail}")
 
-    def key(self, name, times=1):
+    def key(self, name, times=1, shift=False):
         code, vk, text = KEYS[name]
+        mods = 8 if shift else 0
+        if shift:
+            self.key_event("keyDown", "Shift")
         for _ in range(times):
-            down = {"type": "keyDown", "key": name, "code": code,
+            down = {"type": "keyDown", "key": name, "code": code, "modifiers": mods,
                     "windowsVirtualKeyCode": vk, "nativeVirtualKeyCode": vk}
             if text:
                 down["text"] = text
             self.cdp.call("Input.dispatchKeyEvent", down)
             self.pump(0.12)
             self.cdp.call("Input.dispatchKeyEvent", {
-                "type": "keyUp", "key": name, "code": code,
+                "type": "keyUp", "key": name, "code": code, "modifiers": mods,
                 "windowsVirtualKeyCode": vk, "nativeVirtualKeyCode": vk})
             self.pump(0.12)
+        if shift:
+            self.key_event("keyUp", "Shift")
+
+    def key_event(self, kind, name):
+        code, vk, _ = KEYS[name]
+        self.cdp.call("Input.dispatchKeyEvent", {
+            "type": kind, "key": name, "code": code, "modifiers": 8 if kind == "keyDown" else 0,
+            "windowsVirtualKeyCode": vk, "nativeVirtualKeyCode": vk})
+        self.pump(0.08)
+
+    def console_state(self):
+        raw = self.cdp.eval("window.ocw && window.ocw.consoleState ? window.ocw.consoleState() : ''")
+        try:
+            return json.loads(raw) if raw else {}
+        except ValueError:
+            return {}
+
+    def wait_console(self, pred, timeout=3.0):
+        end = time.time() + timeout
+        st = self.console_state()
+        while time.time() < end and not pred(st):
+            self.pump(0.1)
+            st = self.console_state()
+        return st
+
+    def tab_completion(self):
+        """The console's Tab completion with the real keys (spec 3.40)."""
+        self.console("console input hud.")
+        st = self.wait_console(lambda s: s.get("open") and s.get("input") == "hud.")
+        self.check("console: `console input` opens it with the line", st.get("input") == "hud.", st.get("input"))
+        self.key("Tab")
+        st = self.wait_console(lambda s: s.get("candidates"))
+        cands = st.get("candidates") or []
+        self.check("console: Tab lists the candidates under the line",
+                   "hud.gps" in cands and "hud.profile" in cands and all(c.startswith("hud.") for c in cands)
+                   and st.get("input") == "hud.", (st.get("input"), cands))
+        self.shot("console")
+        self.key("Tab")
+        st = self.wait_console(lambda s: s.get("selected") is not None)
+        self.check("console: Tab again inserts the first candidate",
+                   st.get("selected") == 0 and cands and st.get("input") == cands[0] + " ",
+                   (st.get("input"), st.get("selected")))
+        self.key("Tab", shift=True)
+        st = self.wait_console(lambda s: s.get("selected") not in (None, 0))
+        self.check("console: Shift+Tab goes back (wraps to the last)",
+                   cands and st.get("selected") == len(cands) - 1 and st.get("input") == cands[-1] + " ",
+                   (st.get("input"), st.get("selected")))
+        active = self.cdp.eval("document.activeElement && document.activeElement.id")
+        self.check("console: Tab stays in the app (the canvas keeps the focus)", active == "ocw-canvas", active)
+        for line, want in (("weather thun", "weather thunderstorm "),
+                           ("set display.gp", "set display.gps "),
+                           ("time golden", "time golden-hour ")):
+            self.console(f'console input "{line}"')
+            self.wait_console(lambda s, line=line: s.get("input") == line)
+            self.key("Tab")
+            st = self.wait_console(lambda s, want=want: s.get("input") == want)
+            self.check(f"console: Tab completes {line!r}", st.get("input") == want, st.get("input"))
+        self.key("Escape")
+        st = self.wait_console(lambda s: not s.get("open"))
+        self.check("console: Esc closes it", not st.get("open"), st.get("open"))
+
+    def gps_line(self):
+        """The HUD's GPS line on a route with a geographic origin (spec 3.40)."""
+        st = self.wait_console(lambda s: s.get("gps"))
+        gps = st.get("gps") or ""
+        self.check("hud: the GPS line shows (lat, lon, altitude)",
+                   "° N" in gps and "° E" in gps and gps.endswith(" m"), gps)
+        self.console("rider.gps")
+        st = self.wait_console(lambda s: any("° N" in l for l in s.get("log", [])))
+        self.check("console: rider.gps prints the position",
+                   any("° N" in l for l in st.get("log", [])), st.get("log", [])[-3:])
+        self.console("console close")
+        self.console("hud.gps off")
+        st = self.wait_console(lambda s: s.get("gps") is None)
+        self.check("hud: hud.gps off hides the line", st.get("gps") is None, st.get("gps"))
+        self.console("hud.gps on")
+        st = self.wait_console(lambda s: s.get("gps"))
+        self.check("hud: hud.gps on shows it again", bool(st.get("gps")), st.get("gps"))
+        self.shot("gps")
 
     def hold(self, name, seconds):
         """Holds a key down for `seconds` (the flight's + climbs while held)."""
@@ -248,6 +337,12 @@ class UiTest:
         view over the town). Screenshots -unicorn-flight, -unicorn-inspect,
         -unicorn-menu."""
         self.cdp.eval("document.getElementById('ocw-canvas').focus()")
+        # The package's geographic origin reaches the browser's route ride
+        # (spec 3.40): the HUD's GPS line while riding.
+        st = self.wait_console(lambda s: s.get("gps"), timeout=5.0)
+        gps = st.get("gps") or ""
+        self.check("hud: the GPS line on the package's route (its geographic origin)",
+                   "° N" in gps and "° E" in gps, gps)
         g = self.god()
         self.check("unicorn: riding before G", g and not g.get("active"), g)
         self.key("g")
@@ -278,6 +373,8 @@ class UiTest:
         self.check("unicorn: I opens the inspection (panel and crosshair)",
                    any(str(l).startswith("Position x") for l in panel) and g.get("crosshair"),
                    (panel[:3], g.get("crosshair")))
+        self.check("unicorn: the inspection shows latitude / longitude (the package's origin)",
+                   any("°" in str(l) and ("N" in str(l) or "S" in str(l)) for l in panel), panel)
         self.key("p")
         g = self.wait_god(lambda g: g.get("pins", 0) >= 1, timeout=3.0)
         self.check("unicorn: P puts a pin", g.get("pins", 0) >= 1, g.get("pins"))
@@ -375,6 +472,10 @@ class UiTest:
         self.shot("hud")
         hud_log = "\n".join(self.lines[-80:])
         self.check("hud: the damage rule is on", "error: ride.damage" not in hud_log, None)
+
+        # The GPS line and the console's Tab completion (spec 3.40).
+        self.gps_line()
+        self.tab_completion()
 
         # Navi → Riders in this ride.
         self.key("Escape")

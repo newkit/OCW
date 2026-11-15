@@ -144,7 +144,7 @@ impl Plugin for WebUiPlugin {
             Update,
             (record, show_video, audio_devices).after(ocw_ui::RideViewSet),
         )
-        .add_systems(Last, publish);
+        .add_systems(Last, (publish, publish_console));
         register_commands(app);
     }
 }
@@ -186,6 +186,45 @@ pub fn view_json(v: &ocw_render::menu::MenuView) -> String {
         "grid": v.grid.as_ref().map(|g| g.columns),
     })
     .to_string()
+}
+
+/// The console and the HUD's GPS line as JSON for the page
+/// (`window.ocw.consoleState()`; the browser test's Tab completion and GPS
+/// checks, spec 3.40).
+static CONSOLE_JSON: Mutex<String> = Mutex::new(String::new());
+
+/// The console's state as JSON: open, the input line, the completion
+/// candidates and the selected one, the HUD's GPS line (null: hidden).
+pub fn console_json() -> String {
+    CONSOLE_JSON.lock().expect("not poisoned").clone()
+}
+
+/// The console's JSON (see [`console_json`]).
+pub fn console_view_json(
+    console: &ocw_render::console::ConsoleState,
+    gps: Option<&ocw_render::hud::HudGpsLine>,
+) -> String {
+    let (candidates, selected) = console.candidates();
+    serde_json::json!({
+        "open": console.is_open(),
+        "input": console.input(),
+        "candidates": candidates,
+        "selected": selected,
+        "gps": gps.and_then(|g| g.0.clone()),
+        "log": console.log().iter().rev().take(20).rev().collect::<Vec<_>>(),
+    })
+    .to_string()
+}
+
+fn publish_console(
+    console: Option<Res<ocw_render::console::ConsoleState>>,
+    gps: Option<Res<ocw_render::hud::HudGpsLine>>,
+) {
+    let Some(console) = console else { return };
+    let changed = console.is_changed() || gps.as_ref().is_some_and(|g| g.is_changed());
+    if changed || CONSOLE_JSON.lock().expect("not poisoned").is_empty() {
+        *CONSOLE_JSON.lock().expect("not poisoned") = console_view_json(&console, gps.as_deref());
+    }
 }
 
 /// Publishes the menu and the settings for the page when they change.
@@ -444,6 +483,10 @@ mod tests {
     /// The browser's session and UI without a window: the menu by keys,
     /// the downloads into a list.
     fn app(log: DownloadLog) -> App {
+        app_with(log, SessionConfig::default())
+    }
+
+    fn app_with(log: DownloadLog, config: SessionConfig) -> App {
         let mut app = App::new();
         // No InputPlugin: the tests press keys between the frames (its
         // PreUpdate would clear them first).
@@ -452,12 +495,50 @@ mod tests {
             .insert_resource(Time::<Fixed>::from_hz(f64::from(ocw_core::SIM_TICK_HZ)))
             .insert_resource(RideView::new(ocw_world::Route::test_hills()))
             .insert_resource(Downloads::logged(log))
-            .add_plugins(crate::plugin::WebSessionPlugin {
-                config: SessionConfig::default(),
-            })
+            .add_plugins(crate::plugin::WebSessionPlugin { config })
             .add_plugins((crate::settings::WebSettingsPlugin, WebUiPlugin::default()));
         app.update();
         app
+    }
+
+    /// Spec 3.40: Tab completion with the shared value providers (the
+    /// browser has the desktop's `weather`, `time`, `set`), and the GPS
+    /// position of a route with a geographic origin (`?origin=`).
+    #[test]
+    fn tab_completion_and_the_gps_position_in_the_browser() {
+        let config = SessionConfig {
+            route: ocw_world::Route::test_hills().with_geo_origin((47.13996, 9.52151)),
+            ..SessionConfig::default()
+        };
+        let mut app = app_with(DownloadLog::default(), config);
+        run_for(&mut app, 600);
+        let tab = |app: &mut App, line: &str| {
+            app.world_mut()
+                .resource_mut::<ConsoleState>()
+                .set_input(line);
+            ocw_render::console::tab_complete(app.world_mut(), line.len(), false);
+            app.update();
+            let s = app.world().resource::<ConsoleState>();
+            (s.input().to_owned(), s.candidates().0.to_vec())
+        };
+        assert_eq!(tab(&mut app, "weather thunder").0, "weather thunderstorm ");
+        assert_eq!(tab(&mut app, "time golden").0, "time golden-hour ");
+        assert_eq!(tab(&mut app, "set display.gp").0, "set display.gps ");
+        assert_eq!(tab(&mut app, "set display.gps o").1, ["off", "on"]);
+        assert_eq!(tab(&mut app, "rider.g").0, "rider.gps ");
+        // Dev commands run on the browser's local server: offered.
+        assert_eq!(tab(&mut app, "telep").0, "teleport ");
+        let json: serde_json::Value = serde_json::from_str(&console_view_json(
+            app.world().resource::<ConsoleState>(),
+            None,
+        ))
+        .unwrap();
+        assert_eq!(json["input"], "teleport ");
+        // The GPS position: in the view and from `rider.gps`.
+        let (lat, lon, _) = app.world().resource::<RideView>().position.expect("GPS");
+        assert!((lat - 47.14).abs() < 0.05 && (lon - 9.52).abs() < 0.05);
+        let out = console(&mut app, "rider.gps");
+        assert!(out.contains("° N") && out.contains("° E"), "{out}");
     }
 
     fn run_for(app: &mut App, ms: u64) {

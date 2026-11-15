@@ -297,6 +297,7 @@ console:
 | `ftp=W` | FTP for workouts' % FTP targets, 50–600 W |
 | `quality=auto\|low\|medium\|high` | The graphics preset for this visit (not saved) |
 | `gpu=webgpu\|webgl2` | Force the WebGPU or the WebGL 2 build |
+| `origin=LAT,LON` | Give the test route a place on the globe (the GPS line in the HUD, the sun, the FIT track), e.g. `origin=47.13996,9.52151` |
 | `world=ID\|ID@VERSION\|URL` | Stream a world package (below) |
 | `free=1` | With `world=`: a free ride on its road network instead of a route (the junctions take their default exit; there are no junction keys in the browser yet) |
 | `tiles=1–8`, `keep=2–12` | With `world=`: fetch radius and keep radius in tiles around the rider |
@@ -1587,6 +1588,7 @@ console (saved at once), or by editing the file; `get` lists them all:
 | `keys.<action>`, `pad.<action>` | a key name (`A`, `Up`, `PageUp`, `F5`, `Num+`, `Shift+M`, `none`) / a pad button (`South`, `East`, `North`, `West`, `LB`, `RB`, `Select`, `L3`, `R3`, `DPadUp` …, `none`): the bindings (`bind` lists the actions) | at once |
 | `ride.damage` | on / off (off): damage – hits hurt the rider and damage the bike (only with collisions on; carried over to the next ride, repairs in the workshop; in a shared ride the host decides, `ocw-server --damage`); Settings → Controls | at once |
 | `display.damage` | on / off (on): the damage indicator in the HUD (console `hud.damage`; the effects stay when hidden) | at once |
+| `display.gps` | on / off (on): the GPS line in the HUD, bottom left (console `hud.gps`; world packages and route files only) | at once |
 | `weather.physics` | on / off (on): the weather changes the physics – wind, air density, wet and icy roads; the trainer gets the wind (in shared rides the host decides, in events the organiser); World → Weather → Custom | at once |
 | `audio.master` | 0 to 100 (80): master volume in %, scales every bus | at once |
 | `audio.effects` | 0 to 100 (80): game sounds (bike, wind, tyres, menu, event and workout cues) | at once |
@@ -1894,13 +1896,25 @@ free for non-commercial use) instead, which needs no account.
 
 Open the console with `` ` `` or F12; `help` lists the commands, `help NAME`
 shows one. *Dev* commands need the in-process local server (always the case
-for now).
+for now). ↑ / ↓ go through the history, Esc closes the console.
+
+**Tab completes** the word before the cursor, in the desktop and the browser
+app (spec §2.9): command names, subcommands, `--flags` and the values a command
+knows – setting keys and values (`set display.u` Tab → `set display.units `,
+Tab again → `imperial` / `metric`), world ids (`world switch`), weather presets,
+fields and data sources, time presets, `camera.path` actions and saved paths,
+quality levels, `help COMMAND`. One candidate is inserted with a space after
+it. Several: their common beginning is inserted and they are listed under the
+input line; each further Tab inserts the next one (Shift+Tab the previous),
+typing anything ends the list. Names with spaces go in quotes. Only commands
+you can run are offered (no *Dev* commands on a remote server).
 
 | Command | What it does |
 |---|---|
 | **General** | |
 | `help [COMMAND]` | List commands, or show help for one |
 | `console [open\|close\|toggle]` | Open, close or toggle the console |
+| `console input TEXT`, `console tab` | Type TEXT into the console's input line; press Tab (completion from scripts and tests) |
 | `clear` | Clear the console output |
 | `echo TEXT` | Print text |
 | `exec FILE` | Run the commands in a file, one per line |
@@ -1910,6 +1924,7 @@ for now).
 | `set [--temp] KEY VALUE` | Change a setting and save it in `settings.toml` (`--temp`: this session only); see [Settings](#settings-and-rider-profiles) |
 | `get [KEY]` | Show all settings with where their value comes from, or one with its range and description |
 | `hud.profile [on\|off]` | Show or hide the elevation profile of the road ahead (bottom left; on by default) |
+| `hud.gps [on\|off]` | Show or hide the GPS line (bottom left, under the profile; on by default; setting `display.gps`) |
 | `screenshot [PATH]` | Save a screenshot of the window (default `screenshot.jpg`: JPEG quality 90 with its time in EXIF; a `.png` path gives PNG) |
 | `reset` | Start everything again as at program start (key R); the ride is saved first |
 | `video [start\|stop\|toggle]` | Record the window as an MP4 (key V; needs `ffmpeg`) |
@@ -1975,7 +1990,7 @@ for now).
 | `bikes.buy FRAME [--with PART]...` | Buy a frameset as a new bike on a new hook (base parts); `--with`: a complete build at the sum of the prices |
 | `bikes.sell ID` | Sell a bike bought at the bench (the frameset's and its parts' refunds; not a starter bike, not the last one) |
 | `bikes.hang ITEM` | Hang a spare frameset from the shelf on a new hook, as a bike with the base parts |
-| `rider.gps` | Your rider's GPS position (also bottom-left in the HUD; route files and world packages only), with a copyable `lat, lon` line |
+| `rider.gps` | Your rider's GPS position (also bottom-left in the HUD; route files and world packages only; also in the browser), with a copyable `lat, lon` line |
 | `teleport KM` | *Dev:* move your rider to a distance on the route (free ride: along the path, taking default exits). On a route that ends, a distance past the end moves you to the end, where riders stop, and the reply says so; a loop takes any distance (laps on) |
 | `teleport.xz X Z` | *Dev:* free ride: move to the road nearest local x / z metres |
 | `ride.turn left\|right\|straight\|default\|+\|-\|N` | Free ride: choose the exit at the next junction |

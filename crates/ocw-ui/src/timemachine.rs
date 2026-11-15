@@ -199,5 +199,10 @@ fn register_commands(app: &mut App) {
             }
             out
         },
-    ));
+    ))
+    // Tab completion (spec §2.9): the presets and the time machine's words.
+    .console_values("time", "args", |_, q| {
+        let before: Vec<&str> = q.before.iter().map(String::as_str).collect();
+        ocw_sky::machine::completions(&before)
+    });
 }

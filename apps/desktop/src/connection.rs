@@ -640,17 +640,7 @@ fn register_commands(app: &mut App) {
             ))
         },
     ))
-    .console_command(ConsoleCommand::new(
-        Permission::User,
-        Command::new("rider.gps").about("Show the rider's GPS position (lat, lon, altitude)"),
-        |world, _| match world.resource::<RideView>().position {
-            Some((lat, lon, alt)) => Ok(format!(
-                "{}\n{lat:.6}, {lon:.6}",
-                ocw_render::hud::gps_line(lat, lon, alt)
-            )),
-            None => Err("no GPS position (this route has no geographic origin)".into()),
-        },
-    ))
+    // `rider.gps` is shared (ocw_render::console, spec 3.40).
     .console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("rider.steer")

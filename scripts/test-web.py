@@ -29,10 +29,12 @@ bytes from cache / network and the peak wasm memory go into the summary.
 Without --world (and unless --no-ui) the UI part follows (B6,
 scripts/web_ui_test.py): the menus by keyboard and by a fake gamepad,
 Settings → Display, World → Weather, the rider list, the HUD with weather,
-wind and damage, Captures → screenshot / FIT downloads, a video, and a
-setting kept over a reload; screenshots OUT/web-<time>-menu.jpg,
--settings.jpg, -weather.jpg, -hud.jpg, -riders.jpg, -gamepad.jpg and the
-downloads in OUT/web-<time>-downloads/.
+wind and damage, the GPS line (the test route gets `origin=` Vaduz) and
+the console's Tab completion (spec 3.40), Captures → screenshot / FIT
+downloads, a video, and a setting kept over a reload; screenshots
+OUT/web-<time>-menu.jpg, -settings.jpg, -weather.jpg, -hud.jpg,
+-gps.jpg, -console.jpg, -riders.jpg, -gamepad.jpg and the downloads in
+OUT/web-<time>-downloads/.
 
 With --world and --god: unicorn mode over the world after the ride
 (scripts/web_ui_test.py's unicorn part; `make test-web-unicorn`).
@@ -378,6 +380,10 @@ def main():
     if missing:
         sys.exit(missing)
     query = a.query
+    # The UI part checks the GPS line (spec 3.40): the test route gets a
+    # geographic origin (Vaduz), as a route file has one.
+    if not a.world and not a.no_ui and "origin=" not in query:
+        query = "&".join(q for q in (query, "origin=47.13996,9.52151") if q)
     if a.world:
         if not os.path.isdir(os.path.join(a.dir, "worlds")):
             sys.exit(f"{a.dir}/worlds missing: run `make web-worlds` first")

@@ -30,6 +30,8 @@ impl Plugin for HudPlugin {
             .init_resource::<ShowHud>()
             .init_resource::<Units>()
             .init_resource::<ShowProfile>()
+            .init_resource::<ShowGps>()
+            .init_resource::<HudGpsLine>()
             .init_resource::<LookAhead>()
             .init_resource::<AppKeys>()
             .add_systems(Startup, (spawn_hud, spawn_recording))
@@ -227,6 +229,23 @@ fn show_hud(show: Res<ShowHud>, mut panels: Query<&mut Visibility, With<HudPanel
         }
     }
 }
+
+/// Whether the GPS line is shown (console command `hud.gps`, setting
+/// `display.gps`; on by default). The line needs a position: routes
+/// without a geographic origin (the built-in test routes) have none.
+#[derive(Resource)]
+pub struct ShowGps(pub bool);
+
+impl Default for ShowGps {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
+/// The GPS line the HUD shows now (`None`: hidden) – for the browser
+/// test's page hook and the tests.
+#[derive(Resource, Default, Debug, Clone, PartialEq)]
+pub struct HudGpsLine(pub Option<String>);
 
 /// Whether the elevation profile is shown (console command `hud.profile`).
 #[derive(Resource)]
@@ -794,16 +813,23 @@ pub fn gps_line(lat: f64, lon: f64, altitude_m: f64) -> String {
     )
 }
 
-/// Shows the GPS line while the position is known (not on test routes).
+/// Shows the GPS line while the position is known (not on test routes)
+/// and the line is on ([`ShowGps`]).
 fn update_gps(
     view: Res<RideView>,
+    show: Res<ShowGps>,
+    mut shown: ResMut<HudGpsLine>,
     mut boxes: Query<&mut Node, With<HudGps>>,
     mut texts: Query<&mut Text, With<HudGpsText>>,
 ) {
     let (Ok(mut node), Ok(mut text)) = (boxes.single_mut(), texts.single_mut()) else {
         return;
     };
-    let display = if view.position.is_some() {
+    let line = view
+        .position
+        .filter(|_| show.0)
+        .map(|(lat, lon, alt)| gps_line(lat, lon, alt));
+    let display = if line.is_some() {
         Display::Flex
     } else {
         Display::None
@@ -811,11 +837,13 @@ fn update_gps(
     if node.display != display {
         node.display = display;
     }
-    if let Some((lat, lon, alt)) = view.position {
-        let line = gps_line(lat, lon, alt);
-        if text.0 != line {
-            text.0 = line;
-        }
+    if let Some(line) = &line
+        && text.0 != *line
+    {
+        text.0.clone_from(line);
+    }
+    if shown.0 != line {
+        shown.0 = line;
     }
 }
 
@@ -1414,6 +1442,65 @@ mod tests {
         assert!((75..=85).contains(&super::small_chars_for(800.0)));
         assert!(super::small_chars_for(2560.0) > 250);
         assert_eq!(super::small_chars_for(10.0), 10);
+    }
+
+    /// Regression (spec 3.40): the GPS line shows while the view has a
+    /// position and the line is on, bottom left under the elevation
+    /// profile, and hides without a position.
+    #[test]
+    fn the_gps_line_follows_the_view() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(RideView::new(Route::test_loop()))
+            .init_resource::<ShowProfile>()
+            .init_resource::<ShowGps>()
+            .init_resource::<HudGpsLine>()
+            .add_systems(Startup, spawn_hud)
+            .add_systems(Update, update_gps);
+        app.update();
+        let state = |app: &mut App| {
+            let w = app.world_mut();
+            let display = w
+                .query_filtered::<&Node, With<HudGps>>()
+                .single(w)
+                .unwrap()
+                .display;
+            let text = w
+                .query_filtered::<&Text, With<HudGpsText>>()
+                .single(w)
+                .unwrap()
+                .0
+                .clone();
+            (display, text, w.resource::<HudGpsLine>().0.clone())
+        };
+        assert_eq!(state(&mut app).0, Display::None, "no position: hidden");
+        app.world_mut().resource_mut::<RideView>().position = Some((47.139961, 9.521512, 455.2));
+        app.update();
+        let line = "47.13996° N  9.52151° E  455 m".to_string();
+        assert_eq!(
+            state(&mut app),
+            (Display::Flex, line.clone(), Some(line.clone()))
+        );
+        // hud.gps off hides it, on shows it again.
+        app.world_mut().resource_mut::<ShowGps>().0 = false;
+        app.update();
+        assert_eq!(state(&mut app).0, Display::None);
+        assert_eq!(state(&mut app).2, None);
+        app.world_mut().resource_mut::<ShowGps>().0 = true;
+        app.update();
+        assert_eq!(state(&mut app).0, Display::Flex);
+        // Its place: in the bottom-left column, after the profile.
+        let w = app.world_mut();
+        let gps = w
+            .query_filtered::<Entity, With<HudGps>>()
+            .single(w)
+            .unwrap();
+        let parent = w.get::<ChildOf>(gps).unwrap().parent();
+        let node = w.get::<Node>(parent).unwrap();
+        assert!(node.bottom != Val::Auto && node.left != Val::Auto);
+        let kids: Vec<Entity> = w.get::<Children>(parent).unwrap().iter().collect();
+        assert_eq!(kids.last(), Some(&gps), "under the elevation profile");
+        assert!(kids.iter().any(|k| w.get::<ProfilePanel>(*k).is_some()));
     }
 
     #[test]

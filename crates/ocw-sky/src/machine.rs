@@ -303,10 +303,44 @@ pub fn speed_step(speed: f64, paused: bool, dir: i32) -> ClockChange {
     }
 }
 
+/// What the next word of `time` can be after the words `before` (the
+/// console's Tab completion, spec §2.9): the presets and the words of
+/// [`USAGE`]; the speeds after `speed`; steps after `offset`.
+pub fn completions(before: &[&str]) -> Vec<String> {
+    match before {
+        [] => Preset::ALL
+            .iter()
+            .map(|p| p.id().to_owned())
+            .chain(["real", "pause", "play", "speed", "offset", "+1h", "-1h"].map(str::to_owned))
+            .collect(),
+        ["speed"] => SPEEDS.iter().map(|s| format!("{s}")).collect(),
+        ["offset"] => ["+1h", "-1h", "+30m"].map(str::to_owned).to_vec(),
+        _ => Vec::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::time::utc_midnight;
+
+    /// Tab completion's words (spec 3.40) are the parser's.
+    #[test]
+    fn completions_parse() {
+        let first = completions(&[]);
+        assert!(first.iter().any(|w| w == "golden-hour"));
+        for w in &first {
+            match w.as_str() {
+                "speed" | "offset" => {
+                    for v in completions(&[w]) {
+                        assert!(parse(&[w, &v]).is_ok(), "{w} {v}");
+                    }
+                }
+                w => assert!(parse(&[w]).is_ok(), "{w}"),
+            }
+        }
+        assert!(completions(&["noon"]).is_empty());
+    }
 
     const VADUZ: (f64, f64) = (47.141, 9.521);
 
