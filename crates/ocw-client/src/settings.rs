@@ -20,6 +20,8 @@
 //! the apply commands are the same.
 
 use std::collections::BTreeMap;
+
+use crate::bindings::{KEY_CHOICES, PAD_CHOICES};
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 
@@ -128,6 +130,21 @@ impl std::fmt::Display for Source {
             Self::CommandLine => "command line",
         })
     }
+}
+
+/// A key or button binding (spec §3.2.1 M9): one of the names of
+/// `bindings::KEY_CHOICES` / `PAD_CHOICES`.
+macro_rules! binding {
+    ($key:literal, $default:literal, $choices:expr, $desc:literal) => {
+        SettingDef {
+            key: $key,
+            kind: Kind::Choice($choices),
+            default: $default,
+            description: $desc,
+            scope: Scope::Live,
+            apply: Apply::App,
+        }
+    };
 }
 
 /// All settings, in menu order (spec §3.2.1, Settings pages).
@@ -621,21 +638,248 @@ pub const SETTINGS: &[SettingDef] = &[
         description: "Echo test: how long the Echo rider waits before playing you back (ms)",
         scope: Scope::Live,
         apply: Apply::Command("voice.apply echo_delay_ms {}"),
+    }, // Accessibility (spec §3.2.1 M9).
+    SettingDef {
+        key: "display.ui_scale",
+        kind: Kind::Int {
+            min: 100,
+            max: 200,
+            step: 25,
+        },
+        default: "100",
+        description: "Size of the HUD's text and panels in percent (the menu is sized by the window height already)",
+        scope: Scope::Live,
+        apply: Apply::Command("ui.scale {}"),
     },
+    SettingDef {
+        key: "display.palette",
+        kind: Kind::Choice(&["standard", "colour-safe"]),
+        default: "standard",
+        description: "Status colours of the HUD and the menu: standard, or colour-safe (blue to orange, for red-green colour blindness); icons and words stay",
+        scope: Scope::Live,
+        apply: Apply::Command("ui.palette {}"),
+    },
+    SettingDef {
+        key: "display.high_contrast",
+        kind: Kind::Bool,
+        default: "off",
+        description: "High-contrast HUD: opaque black panels with white text",
+        scope: Scope::Live,
+        apply: Apply::Command("ui.contrast {}"),
+    },
+    SettingDef {
+        key: "display.reduced_motion",
+        kind: Kind::Bool,
+        default: "off",
+        description: "Reduced motion: no camera shake and no flashing HUD warnings",
+        scope: Scope::Live,
+        apply: Apply::Command("ui.motion {}"),
+    },
+    SettingDef {
+        key: "controls.pad_confirm",
+        kind: Kind::Choice(&["south", "east"]),
+        default: "south",
+        description: "The gamepad's Confirm button in the menu: south (A / Cross) or east (Nintendo layout); Back is the other",
+        scope: Scope::Live,
+        apply: Apply::App,
+    },
+    // Key and button bindings (spec §3.2.1 M9, `bindings`): one key and
+    // one gamepad button per ride action; read by the apps' input.
+    binding!("keys.faster", "Up", KEY_CHOICES, "Key: Faster (power +)"),
+    binding!(
+        "pad.faster",
+        "DPadUp",
+        PAD_CHOICES,
+        "Gamepad button: Faster (power +)"
+    ),
+    binding!(
+        "keys.stop",
+        "Down",
+        KEY_CHOICES,
+        "Key: Stop (power 0, brake)"
+    ),
+    binding!(
+        "pad.stop",
+        "DPadDown",
+        PAD_CHOICES,
+        "Gamepad button: Stop (power 0, brake)"
+    ),
+    binding!("keys.steer_left", "Left", KEY_CHOICES, "Key: Steer left"),
+    binding!(
+        "pad.steer_left",
+        "none",
+        PAD_CHOICES,
+        "Gamepad button: Steer left"
+    ),
+    binding!("keys.steer_right", "Right", KEY_CHOICES, "Key: Steer right"),
+    binding!(
+        "pad.steer_right",
+        "none",
+        PAD_CHOICES,
+        "Gamepad button: Steer right"
+    ),
+    binding!("keys.power_up", "PageUp", KEY_CHOICES, "Key: Power +10 W"),
+    binding!(
+        "pad.power_up",
+        "none",
+        PAD_CHOICES,
+        "Gamepad button: Power +10 W"
+    ),
+    binding!(
+        "keys.power_down",
+        "PageDown",
+        KEY_CHOICES,
+        "Key: Power -10 W"
+    ),
+    binding!(
+        "pad.power_down",
+        "none",
+        PAD_CHOICES,
+        "Gamepad button: Power -10 W"
+    ),
+    binding!(
+        "keys.autodrive",
+        "A",
+        KEY_CHOICES,
+        "Key: Autodrive on / off"
+    ),
+    binding!(
+        "pad.autodrive",
+        "South",
+        PAD_CHOICES,
+        "Gamepad button: Autodrive on / off"
+    ),
+    binding!("keys.wild", "W", KEY_CHOICES, "Key: Wild mode on / off"),
+    binding!(
+        "pad.wild",
+        "West",
+        PAD_CHOICES,
+        "Gamepad button: Wild mode on / off"
+    ),
+    binding!("keys.u_turn", "U", KEY_CHOICES, "Key: U-turn (free ride)"),
+    binding!(
+        "pad.u_turn",
+        "East",
+        PAD_CHOICES,
+        "Gamepad button: U-turn (free ride)"
+    ),
+    binding!("keys.rejoin", "J", KEY_CHOICES, "Key: Back to the route"),
+    binding!(
+        "pad.rejoin",
+        "North",
+        PAD_CHOICES,
+        "Gamepad button: Back to the route"
+    ),
+    binding!(
+        "keys.exit_left",
+        "Q",
+        KEY_CHOICES,
+        "Key: Junction: the exit to the left"
+    ),
+    binding!(
+        "pad.exit_left",
+        "DPadLeft",
+        PAD_CHOICES,
+        "Gamepad button: Junction: the exit to the left"
+    ),
+    binding!(
+        "keys.exit_right",
+        "E",
+        KEY_CHOICES,
+        "Key: Junction: the exit to the right"
+    ),
+    binding!(
+        "pad.exit_right",
+        "DPadRight",
+        PAD_CHOICES,
+        "Gamepad button: Junction: the exit to the right"
+    ),
+    binding!("keys.camera", "C", KEY_CHOICES, "Key: Camera mode"),
+    binding!(
+        "pad.camera",
+        "none",
+        PAD_CHOICES,
+        "Gamepad button: Camera mode"
+    ),
+    binding!(
+        "keys.video",
+        "V",
+        KEY_CHOICES,
+        "Key: Video recording start / stop"
+    ),
+    binding!(
+        "pad.video",
+        "none",
+        PAD_CHOICES,
+        "Gamepad button: Video recording start / stop"
+    ),
+    binding!(
+        "keys.fullscreen",
+        "F11",
+        KEY_CHOICES,
+        "Key: Fullscreen on / off"
+    ),
+    binding!(
+        "pad.fullscreen",
+        "none",
+        PAD_CHOICES,
+        "Gamepad button: Fullscreen on / off"
+    ),
+    binding!("keys.restart", "R", KEY_CHOICES, "Key: Restart"),
+    binding!(
+        "pad.restart",
+        "none",
+        PAD_CHOICES,
+        "Gamepad button: Restart"
+    ),
+    binding!("keys.god", "G", KEY_CHOICES, "Key: Unicorn mode on / off"),
+    binding!(
+        "pad.god",
+        "none",
+        PAD_CHOICES,
+        "Gamepad button: Unicorn mode on / off"
+    ),
+    binding!(
+        "keys.mute_mic",
+        "M",
+        KEY_CHOICES,
+        "Key: Mute the microphone"
+    ),
+    binding!(
+        "pad.mute_mic",
+        "Select",
+        PAD_CHOICES,
+        "Gamepad button: Mute the microphone"
+    ),
+    binding!(
+        "keys.mute_voices",
+        "Shift+M",
+        KEY_CHOICES,
+        "Key: Mute the voices"
+    ),
+    binding!(
+        "pad.mute_voices",
+        "R3",
+        PAD_CHOICES,
+        "Gamepad button: Mute the voices"
+    ),
 ];
 
-/// Settings the browser app does not have (spec §14 Phase 10, B6): god
-/// mode's (the unicorn flies only on the desktop so far), the window's
-/// fullscreen (the browser has its own), the random start and real
-/// weather at the start (the in-browser local server cannot fetch the
-/// providers yet).
+/// Settings the browser app does not have (spec §14 Phase 10, B6): the
+/// window's fullscreen (the browser has its own), the random start and
+/// real weather at the start (the in-browser local server cannot fetch the
+/// providers yet). God mode's settings apply in both apps since Phase 13
+/// G5 (v3.37); the browser has no video, fullscreen or restart key.
 const NOT_IN_BROWSER: &[&str] = &[
-    "controls.invert_y",
-    "controls.god_flight",
-    "display.unicorn_trail",
     "display.fullscreen",
     "ride.random_start",
     "weather.real",
+    "keys.video",
+    "pad.video",
+    "keys.fullscreen",
+    "pad.fullscreen",
+    "keys.restart",
+    "pad.restart",
 ];
 
 /// Whether `key` takes effect on `platform` (the menu hides the others,

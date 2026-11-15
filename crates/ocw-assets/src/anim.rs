@@ -3,7 +3,7 @@
 //! wheels turn, and the smoothed pose weights. Pure and Bevy-free.
 //!
 //! Beyond the riding states, [`Animator`] drives the body motion the
-//! client knows from the ride (v3.37): cornering beyond the lean (from the
+//! client knows from the ride (v3.44): cornering beyond the lean (from the
 //! turn's curvature and the speed), free ride's U-turn loop (a [`Cue`]
 //! from the path), the finish and the winner's victory (from the event's
 //! results) and a foot down at a stop. Everything is a function of the
@@ -229,7 +229,7 @@ pub fn targets(state: Riding, speed_mps: f64, grade: f64, aero_bars: bool) -> Po
 }
 
 /// Moves the weights of `current` towards `target` (time constant
-/// [`BLEND_S`]; the body motions of v3.37 their own, [`BLEND_CUE_S`]);
+/// [`BLEND_S`]; the body motions of v3.44 their own, [`BLEND_CUE_S`]);
 /// the crank angle is left alone, the foot side taken over.
 pub fn blend(current: &mut PoseParams, target: &PoseParams, dt: f32) {
     let k = 1.0 - (-dt / BLEND_S).exp();
@@ -300,7 +300,7 @@ pub fn bias(id: u32) -> f64 {
 }
 
 /// The foot a rider puts down at a stop (0 left, 1 right), from the id:
-/// seven riders in ten the left (proposal v3.37), stable.
+/// seven riders in ten the left (proposal v3.44), stable.
 pub fn stop_foot(id: u32) -> usize {
     let h = id.wrapping_mul(0x9E37_79B1) >> 16;
     usize::from(h % 10 >= 7)
@@ -691,7 +691,7 @@ mod tests {
         worst
     }
 
-    /// Foot down at a stop (spec §2.6, v3.37): the foot comes off and down
+    /// Foot down at a stop (spec §2.6, v3.44): the foot comes off and down
     /// when the speed reaches 0, the rider straddles the top tube with the
     /// other pedal ready; riding off clips back in. Smooth, both ways.
     #[test]

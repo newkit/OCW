@@ -43,7 +43,8 @@ impl Plugin for HudPlugin {
                     show_hud,
                 )
                     .chain(),
-            );
+            )
+            .add_systems(PostUpdate, fit_top_panel);
         add_version_label(app);
     }
 }
@@ -159,6 +160,52 @@ impl Units {
         match self {
             Self::Metric => (m / 1000.0, "km"),
             Self::Imperial => (m / METRES_PER_MILE, "mi"),
+        }
+    }
+}
+
+/// The bike computer's panel at the top left.
+#[derive(Component)]
+pub struct HudTopPanel;
+
+/// The column at the top right: the timestamp, REC, the app message, the
+/// FPS counter.
+#[derive(Component)]
+pub struct HudTopRight;
+
+/// The margin between the HUD's top panels and the window edges (px).
+const TOP_MARGIN_PX: f32 = 12.0;
+/// The narrowest the top panel gets (px): its text wraps below that.
+const TOP_PANEL_MIN_PX: f32 = 160.0;
+
+/// The widest the top-left panel may be (in UI px, as `Val::Px`), so it
+/// ends a margin left of the top-right column: `window_px` and `right_px`
+/// are physical pixels, `inverse_scale` the UI's (window scale factor ×
+/// `UiScale`)⁻¹ – the HUD size setting (spec §3.2.1 M9) scales both
+/// panels, never into each other.
+pub fn top_panel_max_px(window_px: f32, right_px: f32, inverse_scale: f32) -> f32 {
+    ((window_px - right_px) * inverse_scale - 3.0 * TOP_MARGIN_PX).max(TOP_PANEL_MIN_PX)
+}
+
+/// Keeps the top-left panel clear of the top-right column (regression:
+/// at 150 % HUD size the bike computer ran into the FPS counter).
+fn fit_top_panel(
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    right: Query<&ComputedNode, With<HudTopRight>>,
+    mut panel: Query<&mut Node, With<HudTopPanel>>,
+) {
+    let (Ok(w), Ok(r)) = (windows.single(), right.single()) else {
+        return;
+    };
+    let max = top_panel_max_px(
+        w.resolution.physical_width() as f32,
+        r.size().x,
+        r.inverse_scale_factor(),
+    );
+    for mut n in &mut panel {
+        let want = Val::Px(max.floor());
+        if n.max_width != want {
+            n.max_width = want;
         }
     }
 }
@@ -342,7 +389,8 @@ fn spawn_hud(mut commands: Commands) {
                 top: px(12),
                 left: px(12),
                 // Never wider than the window (12 px margins at 400 px and
-                // up); Bevy wraps text that is still too long.
+                // up); Bevy wraps text that is still too long. Narrowed to
+                // the room left of the top-right column ([`fit_top_panel`]).
                 max_width: Val::Vw(94.0),
                 padding: UiRect::all(px(10)),
                 flex_direction: FlexDirection::Column,
@@ -352,6 +400,7 @@ fn spawn_hud(mut commands: Commands) {
             },
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
             HudPanel,
+            HudTopPanel,
         ))
         .with_children(|hud| {
             hud.spawn((
@@ -610,15 +659,18 @@ pub fn recording_label(seconds: f64) -> String {
 /// (e.g. "Video saved: ...") and the FPS counter.
 fn spawn_recording(mut commands: Commands) {
     commands
-        .spawn(Node {
-            position_type: PositionType::Absolute,
-            top: px(12),
-            right: px(12),
-            flex_direction: FlexDirection::Column,
-            align_items: AlignItems::FlexEnd,
-            row_gap: px(4),
-            ..default()
-        })
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                top: px(12),
+                right: px(12),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::FlexEnd,
+                row_gap: px(4),
+                ..default()
+            },
+            HudTopRight,
+        ))
         .with_children(|top| {
             top.spawn(crate::stamp::stamp_bundle());
             top.spawn((
@@ -993,6 +1045,35 @@ fn update_hud(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression (HUD at 150 %, `access-hud`): the top-left panel ran into
+    /// the FPS counter. For HUD sizes 100 – 200 %, window widths and
+    /// top-right columns of any width the panel ends a margin left of the
+    /// column (in physical pixels).
+    #[test]
+    fn the_top_panel_stays_clear_of_the_top_right_column() {
+        for window in [1280.0f32, 1920.0, 2560.0] {
+            for scale in [1.0f32, 1.25, 1.5, 1.75, 2.0] {
+                let inv = 1.0 / scale;
+                for right_logical in [120.0f32, 230.0, 320.0] {
+                    let right = right_logical * scale;
+                    let max = top_panel_max_px(window, right, inv);
+                    let panel_end = (TOP_MARGIN_PX + max) * scale;
+                    let column_start = window - TOP_MARGIN_PX * scale - right;
+                    if max > TOP_PANEL_MIN_PX {
+                        assert!(
+                            panel_end + TOP_MARGIN_PX * scale <= column_start + 0.01,
+                            "{window} px, {scale}x, column {right}: {panel_end} > {column_start}"
+                        );
+                    }
+                }
+            }
+        }
+        // The case of the picture: 2560 px at 150 %, a 345 px column.
+        assert!((top_panel_max_px(2560.0, 345.0, 1.0 / 1.5) - 1440.67).abs() < 0.01);
+        // Never narrower than its minimum (the text wraps).
+        assert_eq!(top_panel_max_px(400.0, 380.0, 1.0), TOP_PANEL_MIN_PX);
+    }
     use ocw_world::Route;
 
     /// Spec §14 Phase 9, S6: the HUD shows the wind relative to the rider

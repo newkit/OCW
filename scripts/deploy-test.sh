@@ -46,6 +46,20 @@ cd "$(dirname "$0")/.."
 machine=${1:?usage: deploy-test.sh MACHINE}
 # Same commit id as the build id in the HUD (remote.sh passes it to the build).
 version="$(scripts/build-id.sh) $(date '+%F %T')"
+# The deploy log for the art project (art/ART-PROJECT.md §2.7): one JSON line
+# per deploy in the main checkout's test-output/build-log/DAY/deploys.jsonl
+# (start, end, machine, commit, exit). OCW_BUILD_LOG=0 turns it off.
+deploy_start=$(date --iso-8601=seconds)
+deploy_log() {
+  local rc=$? common root
+  [ "${OCW_BUILD_LOG:-1}" = 0 ] && return 0
+  common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 0
+  root="$(dirname "$common")/test-output/build-log/$(date +%Y-%m-%d)"
+  mkdir -p "$root" 2>/dev/null || return 0
+  printf '{"start":"%s","end":"%s","machine":"%s","commit":"%s","exit":%s}\n' "$deploy_start" \
+    "$(date --iso-8601=seconds)" "$machine" "$(scripts/build-id.sh 2>/dev/null)" "$rc" >>"$root/deploys.jsonl" || true
+}
+trap deploy_log EXIT
 dir=${OCW_DEPLOY_DIR:-/var/tmp/ocw}
 world=${OCW_DEPLOY_WORLD:-1}
 data=${OCW_WORLD_DATA:-data}

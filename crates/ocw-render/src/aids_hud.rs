@@ -329,10 +329,16 @@ fn update(
         Option<&mut ImageNode>,
         Option<&mut Text>,
     )>,
+    access: Option<Res<crate::access::Accessibility>>,
 ) {
     let warning = view.hit_warning.filter(|_| view.flight.is_none());
     let arrow = view.proximity_arrow.filter(|_| view.flight.is_none());
-    let alpha = flash_alpha(view.elapsed_s);
+    // Reduced motion (spec §3.2.1 M9): the warning stays, without flashing.
+    let alpha = if access.is_some_and(|a| a.reduced_motion) {
+        1.0
+    } else {
+        flash_alpha(view.elapsed_s)
+    };
     for (aid, mut node, mut vis, transform, image, text) in &mut nodes {
         match aid {
             Aid::Warning => {

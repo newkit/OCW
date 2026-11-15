@@ -228,6 +228,12 @@ const NAVI_ITEMS: &[Item] = &[
         "Rides",
         ItemKind::Open(Page::Sub(sub::Page::Rides)),
     ),
+    // The training history (spec §14 Phase 7): both apps (the browser
+    // keeps it in localStorage).
+    item(
+        "Training history",
+        ItemKind::Open(Page::Sub(sub::Page::History)),
+    ),
     only(
         Platform::Desktop,
         "GPX import",
@@ -352,7 +358,7 @@ impl Page {
             Page::Navi => PageDef {
                 title: "Navi",
                 text: &[
-                    "Routes of this world, your saved rides, GPX import onto the roads of the loaded world package. The time machine: World -> Time.",
+                    "Routes of this world, your saved rides and training history, GPX import onto the roads of the loaded world package.",
                 ],
                 items: NAVI_ITEMS,
                 initial_focus: 0,
@@ -813,6 +819,9 @@ impl Menu {
                         | sub::Page::WorldRoutes(_)
                         | sub::Page::WorldParts(_)
                         | sub::Page::WorldSource(_)
+                        | sub::Page::HistoryRide(_)
+                        | sub::Page::HistoryClimbs(_)
+                        | sub::Page::BindGroup(_)
                 ) && self.rows.is_empty()
                 {
                     self.stack.pop();
@@ -1018,6 +1027,7 @@ mod tests {
             [
                 "Routes",
                 "Rides",
+                "Training history",
                 "GPX import",
                 "Strava",
                 "Riders in this ride",
@@ -1383,7 +1393,10 @@ mod tests {
         );
         m.apply(Action::Back);
         m.apply(Action::Click(4));
-        assert_eq!(labels(&m), ["Riders in this ride", "Back"]);
+        assert_eq!(
+            labels(&m),
+            ["Training history", "Riders in this ride", "Back"]
+        );
         m.apply(Action::Back);
         m.apply(Action::Click(5));
         assert_eq!(

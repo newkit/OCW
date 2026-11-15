@@ -712,15 +712,19 @@ impl Finish {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // a Bevy system
 fn video_key(
     keys: Res<ButtonInput<KeyCode>>,
+    bindings: Option<Res<ocw_ui::bindings::ActiveBindings>>,
     time: Res<Time>,
     now: Res<ocw_render::stamp::MediaNow>,
     label: Option<Res<ocw_render::hud::VersionLabel>>,
     audio: Option<Res<crate::audio::GameAudio>>,
     mut rec: ResMut<VideoRecorder>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyV) {
+    // V, or the key bound to Video (spec §3.2.1 M9).
+    use ocw_client::bindings::Action;
+    if !ocw_ui::bindings::key_just_pressed(bindings.as_deref(), Action::Video, &keys) {
         return;
     }
     let meta = ShotMeta::new(&now, label.as_deref());

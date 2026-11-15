@@ -38,11 +38,18 @@ pub fn next_monitor(current: Option<usize>, count: usize) -> Option<usize> {
 /// F11: move the window fullscreen to the next screen, or back to a window.
 fn cycle_monitor_key(
     keys: Res<ButtonInput<KeyCode>>,
+    bindings: Option<Res<ocw_ui::bindings::ActiveBindings>>,
     context: Option<Res<ocw_render::menu::InputContext>>,
     monitors: Query<(Entity, &Monitor)>,
     mut window: Query<&mut Window, With<PrimaryWindow>>,
 ) {
-    if !keys.just_pressed(KeyCode::F11) || !ocw_render::menu::ride_input(context) {
+    // F11, or the key bound to Fullscreen (spec §3.2.1 M9).
+    let pressed = ocw_ui::bindings::key_just_pressed(
+        bindings.as_deref(),
+        ocw_client::bindings::Action::Fullscreen,
+        &keys,
+    );
+    if !pressed || !ocw_render::menu::ride_input(context) {
         return;
     }
     let Ok(mut window) = window.single_mut() else {

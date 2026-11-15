@@ -1,0 +1,350 @@
+{
+ "day": "2026-11-15",
+ "number": 5,
+ "commits": [
+  {
+   "sha": "9ea2fd0",
+   "time": "00:00:29",
+   "merge": false,
+   "subject": "Spec 3.36: public preview of the browser app on GitHub Pages (B8a, stage 1)",
+   "added": 3,
+   "removed": 1
+  }
+ ],
+ "merges": 0,
+ "lines_added": 3,
+ "lines_removed": 1,
+ "spec_versions": [
+  "3.36"
+ ],
+ "tests": null,
+ "media": [
+  {
+   "file": "000004-shot-wayland-k6-organiser-rules-menu.jpg",
+   "time": "00:00:04",
+   "kind": "image"
+  },
+  {
+   "file": "000055-shot-wayland-k6-results-rules.jpg",
+   "time": "00:00:55",
+   "kind": "image"
+  },
+  {
+   "file": "000101-shot-wayland-a26-foot-down.jpg",
+   "time": "00:01:01",
+   "kind": "image"
+  },
+  {
+   "file": "000125-video-wayland-a26-foot-down-video.jpg",
+   "time": "00:01:25",
+   "kind": "image"
+  },
+  {
+   "file": "000125-video-wayland-a26-foot-down-video.mp4",
+   "time": "00:01:25",
+   "kind": "video"
+  },
+  {
+   "file": "000137-shot-wayland-a26-cornering.jpg",
+   "time": "00:01:37",
+   "kind": "image"
+  },
+  {
+   "file": "000330-video-wayland-a26-uturn-video.jpg",
+   "time": "00:03:30",
+   "kind": "image"
+  },
+  {
+   "file": "000330-video-wayland-a26-uturn-video.mp4",
+   "time": "00:03:30",
+   "kind": "video"
+  },
+  {
+   "file": "000818-shot-wayland-a26-uturn-look.jpg",
+   "time": "00:08:18",
+   "kind": "image"
+  },
+  {
+   "file": "001221-shot-wayland-a26-uturn-loop.jpg",
+   "time": "00:12:21",
+   "kind": "image"
+  },
+  {
+   "file": "001357-video-wayland-a26-victory-video.jpg",
+   "time": "00:13:57",
+   "kind": "image"
+  },
+  {
+   "file": "001357-video-wayland-a26-victory-video.mp4",
+   "time": "00:13:57",
+   "kind": "video"
+  },
+  {
+   "file": "001436-shot-wayland-a26-victory.jpg",
+   "time": "00:14:36",
+   "kind": "image"
+  },
+  {
+   "file": "001612-shot-wayland-helmet-road-behind.jpg",
+   "time": "00:16:12",
+   "kind": "image"
+  },
+  {
+   "file": "001623-shot-wayland-helmet-tt-position.jpg",
+   "time": "00:16:23",
+   "kind": "image"
+  },
+  {
+   "file": "001634-shot-wayland-helmet-group-chase.jpg",
+   "time": "00:16:34",
+   "kind": "image"
+  },
+  {
+   "file": "001713-shot-helmet-road-behind.jpg",
+   "time": "00:17:13",
+   "kind": "image"
+  },
+  {
+   "file": "001737-frames-v10.jpg",
+   "time": "00:17:37",
+   "kind": "image"
+  },
+  {
+   "file": "001737-frames-v12.jpg",
+   "time": "00:17:37",
+   "kind": "image"
+  },
+  {
+   "file": "001737-frames-v13.5.jpg",
+   "time": "00:17:37",
+   "kind": "image"
+  },
+  {
+   "file": "001738-frames-v15.jpg",
+   "time": "00:17:38",
+   "kind": "image"
+  },
+  {
+   "file": "001747-shot-helmet-tt-position.jpg",
+   "time": "00:17:47",
+   "kind": "image"
+  },
+  {
+   "file": "001756-frames-f1.jpg",
+   "time": "00:17:56",
+   "kind": "image"
+  },
+  {
+   "file": "001757-frames-f4.jpg",
+   "time": "00:17:57",
+   "kind": "image"
+  },
+  {
+   "file": "001757-frames-f6.5.jpg",
+   "time": "00:17:57",
+   "kind": "image"
+  },
+  {
+   "file": "001758-frames-u3.jpg",
+   "time": "00:17:58",
+   "kind": "image"
+  },
+  {
+   "file": "001800-frames-u6.jpg",
+   "time": "00:18:00",
+   "kind": "image"
+  },
+  {
+   "file": "001801-frames-u9.jpg",
+   "time": "00:18:01",
+   "kind": "image"
+  },
+  {
+   "file": "001802-frames-u12.jpg",
+   "time": "00:18:02",
+   "kind": "image"
+  },
+  {
+   "file": "001803-frames-u15.jpg",
+   "time": "00:18:03",
+   "kind": "image"
+  },
+  {
+   "file": "001818-shot-helmet-group-chase.jpg",
+   "time": "00:18:18",
+   "kind": "image"
+  },
+  {
+   "file": "002716-shot-wayland-god-unicorn-flight.jpg",
+   "time": "00:27:16",
+   "kind": "image"
+  },
+  {
+   "file": "003200-shot-wayland-god-inspect-vaduz.jpg",
+   "time": "00:32:00",
+   "kind": "image"
+  },
+  {
+   "file": "003211-shot-wayland-god-menu-world.jpg",
+   "time": "00:32:11",
+   "kind": "image"
+  }
+ ],
+ "images": 31,
+ "videos": 3,
+ "sounds": 0,
+ "builds": {
+  "runs": 16,
+  "seconds": 9771.1,
+  "cargo_s": 8.3,
+  "compiled": 4,
+  "wait_s": 7374.0,
+  "failed": [
+   {
+    "start": "2026-11-15T00:09:38+01:00",
+    "seconds": 356.8,
+    "machine": "macos",
+    "os": "macos",
+    "checkout": "agent-a3b9cf0b40cbf0ccc",
+    "branch": "worktree-agent-a3b9cf0b40cbf0ccc",
+    "command": "cargo fmt -p ocw-xr -p ocw-assets && cargo test -p ocw-xr 2>&1 | tail -40 && cargo test -p ocw-assets --no-default-features --lib pose 2>&1 | tail -15 && git diff --stat",
+    "exit": 129,
+    "log": "000938-macos-3079424.log",
+    "sync_s": 2.3,
+    "cargo_s": null,
+    "cargo_builds": 0,
+    "compiled": 2,
+    "wait_s": 315
+   },
+   {
+    "start": "2026-11-15T00:16:25+01:00",
+    "seconds": 8.1,
+    "machine": "macos",
+    "os": "macos",
+    "checkout": "agent-a0eb3b759feb13978",
+    "branch": "worktree-agent-a0eb3b759feb13978",
+    "command": "cd vendor && (time CARGO_TARGET_DIR=../target cargo check --workspace --examples --keep-going --message-format short) > ../vendor-check.log 2>&1; grep -E \"error|Finished|^real\" ../vendor-check.log ...",
+    "exit": 1,
+    "log": "001625-macos-3091403.log",
+    "sync_s": 0.9,
+    "cargo_s": 4.6,
+    "cargo_builds": 1,
+    "compiled": 0,
+    "wait_s": 2
+   },
+   {
+    "start": "2026-11-15T00:13:11+01:00",
+    "seconds": 1567.7,
+    "machine": "marge",
+    "os": "linux",
+    "checkout": "agent-ab2216bf39859444d",
+    "branch": "worktree-agent-ab2216bf39859444d",
+    "command": "make test-web-readme README_FLAGS=\"--keep --reuse-target\"",
+    "exit": 2,
+    "log": "001311-marge-3085504.log",
+    "sync_s": 0.6,
+    "cargo_s": null,
+    "cargo_builds": 0,
+    "compiled": 0,
+    "wait_s": 1140
+   }
+  ],
+  "machines": {
+   "macos": {
+    "runs": 11,
+    "seconds": 2440.0,
+    "failed": 2,
+    "cargo_s": 8.3,
+    "compiled": 4,
+    "wait_s": 1450.0
+   },
+   "marge": {
+    "runs": 5,
+    "seconds": 7331.099999999999,
+    "failed": 1,
+    "cargo_s": 0.0,
+    "compiled": 0,
+    "wait_s": 5924.0
+   }
+  },
+  "online": {
+   "leela": 0.019178082191780823,
+   "marge": 1.0,
+   "Win11Builder": 0.9972602739726028,
+   "macos": 1.0
+  },
+  "samples": 365
+ },
+ "prompts": [
+  {
+   "time": "00:09:06",
+   "iso": "2026-11-15T00:09:06+01:00",
+   "text": "the music of day 4 is cool, but a bit monoton. make it a bit more varied. also make different music for different days. record in spec"
+  },
+  {
+   "time": "00:17:39",
+   "iso": "2026-11-15T00:17:39+01:00",
+   "text": "make the trees and vegetation more realistic. get information about the (big) plants and crops that are in the area. analyse them and add them to the world. recreate the worlds with that. rebuilt and release, update spec."
+  }
+ ],
+ "tokens": {
+  "total": {
+   "input": 1908,
+   "cache_write": 4198229,
+   "cache_read": 254171539,
+   "output": 841430,
+   "total": 259213106,
+   "messages": 911
+  },
+  "features": {
+   "Art project": {
+    "input": 136,
+    "cache_write": 436255,
+    "cache_read": 12660992,
+    "output": 18137,
+    "total": 13115520,
+    "messages": 50
+   },
+   "Planning & spec": {
+    "input": 688,
+    "cache_write": 1249496,
+    "cache_read": 115788452,
+    "output": 440148,
+    "total": 117478784,
+    "messages": 333
+   },
+   "Worlds & terrain": {
+    "input": 20,
+    "cache_write": 15349,
+    "cache_read": 4127925,
+    "output": 5271,
+    "total": 4148565,
+    "messages": 6
+   },
+   "Other": {
+    "input": 958,
+    "cache_write": 1838922,
+    "cache_read": 98950609,
+    "output": 359326,
+    "total": 101149815,
+    "messages": 472
+   },
+   "UI & menus": {
+    "input": 26,
+    "cache_write": 586843,
+    "cache_read": 2525791,
+    "output": 1889,
+    "total": 3114549,
+    "messages": 10
+   },
+   "Riders & bikes": {
+    "input": 80,
+    "cache_write": 71364,
+    "cache_read": 20117770,
+    "output": 16659,
+    "total": 20205873,
+    "messages": 40
+   }
+  }
+ }
+}

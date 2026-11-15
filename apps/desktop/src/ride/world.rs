@@ -240,7 +240,7 @@ fn is_current(c: &Catalog, w: &WorldEntry) -> bool {
     })
 }
 
-fn current_name(c: &Catalog) -> String {
+pub(crate) fn current_name(c: &Catalog) -> String {
     match (&c.world, &c.current) {
         (Some(w), _) if !w.details.region.is_empty() => w.details.region.clone(),
         (Some(w), _) => w.name.clone(),

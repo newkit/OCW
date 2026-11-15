@@ -413,4 +413,6 @@ fi
 
 python3 scripts/test_build_profile.py >/dev/null 2>&1 && echo "ok   build_profile.py unit tests" ||
   { echo "FAIL build_profile.py unit tests (python3 scripts/test_build_profile.py)"; fail=1; }
+python3 scripts/test_web_scripts.py >/dev/null 2>&1 && echo "ok   web-serve.py, web_browser.py, test-web-readme.py unit tests" ||
+  { echo "FAIL web script unit tests (python3 scripts/test_web_scripts.py)"; fail=1; }
 exit $fail

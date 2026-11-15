@@ -5,7 +5,7 @@
 #   index.html (loads the one the browser can run), sizes.txt,
 #   ocw-voice.js and livekit-client.umd.js (voice, B5)
 #
-#   scripts/build-web.sh            the `web` profile (release, size-optimised)
+#   scripts/build-web.sh            the `web-release` profile (release, size-optimised)
 #   WEB_PROFILE=dev scripts/build-web.sh   a quick debug build
 #   WEB_GPU=webgpu scripts/build-web.sh    only one of the builds (webgpu,
 #                                          webgl2; default: both)
@@ -22,7 +22,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 export PATH="$HOME/.cargo/bin:$PATH"
 
-profile=${WEB_PROFILE:-web}
+profile=${WEB_PROFILE:-web-release}
+# The old name of the profile (before v3.37).
+[ "$profile" = web ] && profile=web-release
 gpus=${WEB_GPU:-webgpu webgl2}
 out=target/web
 # The version wasm-bindgen-cli must have: the crate's in Cargo.lock.

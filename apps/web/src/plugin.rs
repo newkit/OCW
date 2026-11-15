@@ -115,7 +115,13 @@ impl Plugin for WebSessionPlugin {
             .add_systems(FixedUpdate, predict.run_if(resource_exists::<Session>))
             .add_systems(
                 Update,
-                (keys.run_if(ride_input), send_steer, update_view)
+                // Unicorn mode (spec §14 Phase 13B): the riding keys do
+                // nothing in flight, as on the desktop.
+                (
+                    keys.run_if(ride_input).run_if(ocw_ui::god::not_flying),
+                    send_steer,
+                    update_view,
+                )
                     .chain()
                     .in_set(ViewUpdated)
                     .run_if(riding),
@@ -232,6 +238,8 @@ fn predict(mut session: ResMut<Session>) {
 /// power, ↓ / D-pad down / the left trigger stop, Page Up / Down ±10 W,
 /// A / South autodrive (South closes an event's results first), W / West
 /// wild mode, ← / → and the left stick the line (autodrive) or the lean.
+/// The keys and buttons are the bindings' (spec §3.2.1 M9, shared with the
+/// desktop: `ocw_ui::bindings`).
 #[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
 fn keys(
     keys: Res<ButtonInput<KeyCode>>,
@@ -242,24 +250,21 @@ fn keys(
     mut upright_pause: Local<f64>,
     mut ride_pads: Local<ocw_ui::controls::RidePads>,
     mut stick_was_used: Local<bool>,
+    bindings: Option<Res<ocw_ui::bindings::ActiveBindings>>,
 ) {
-    use ocw_ui::controls::any_just_pressed;
+    use ocw_client::bindings::Action;
+    let default = ocw_ui::bindings::ActiveBindings::default();
+    let b = bindings.as_deref().unwrap_or(&default);
     let s = &mut session.0;
     let dt = time.delta_secs_f64();
     let now = time.elapsed_secs_f64();
-    let pad = ride_pads.read(pads.iter());
-    let pressed = |b| any_just_pressed(pads.iter().map(|(_, p)| p), b);
-    let power_keys = ThrottleKeys {
-        up_pressed: keys.just_pressed(KeyCode::ArrowUp) || pad.up_pressed,
-        up_held: keys.pressed(KeyCode::ArrowUp) || pad.up,
-        down_pressed: keys.just_pressed(KeyCode::ArrowDown) || pad.down_pressed,
-        page_up: keys.just_pressed(KeyCode::PageUp),
-        page_down: keys.just_pressed(KeyCode::PageDown),
-    };
+    let pad = ride_pads.read_bound(pads.iter(), b);
+    let pressed = |a| b.just_pressed(a, &keys, pads.iter().map(|(_, p)| p));
+    let power_keys: ThrottleKeys = ocw_ui::controls::throttle_keys(b, &keys, &pad);
     s.throttle(&mut throttle, power_keys, dt, now);
     // An event's results panel takes A / South first (spec §2.3), as on
     // the desktop.
-    let autodrive = keys.just_pressed(KeyCode::KeyA) || pressed(GamepadButton::South);
+    let autodrive = pressed(Action::Autodrive);
     if autodrive && s.client.results_input(now) {
         s.client.dismiss_results(now);
     } else if autodrive {
@@ -267,14 +272,14 @@ fn keys(
         s.client.set_autodrive(on);
         info!("autodrive {}", if on { "on" } else { "off" });
     }
-    if keys.just_pressed(KeyCode::KeyW) || pressed(GamepadButton::West) {
+    if pressed(Action::Wild) {
         let wild = !s.client.wild();
         s.client.set_wild(wild);
         info!("wild mode {}", if wild { "on" } else { "off" });
     }
     let dir = steer_direction(
-        keys.pressed(KeyCode::ArrowLeft),
-        keys.pressed(KeyCode::ArrowRight),
+        b.pressed(Action::SteerLeft, &keys, pads.iter().map(|(_, p)| p)),
+        b.pressed(Action::SteerRight, &keys, pads.iter().map(|(_, p)| p)),
     );
     let stick_active = pad.stick_x.abs() >= ocw_client::input::STICK_DEAD_ZONE;
     if s.client.autodrive() {
@@ -325,6 +330,7 @@ fn update_view(
     fixed: Res<Time<Fixed>>,
     mut session: ResMut<Session>,
     shake: Option<Res<ocw_ui::collisions::CameraShake>>,
+    access: Option<Res<ocw_render::access::Accessibility>>,
     mut view: ResMut<RideView>,
 ) {
     let now = time.elapsed_secs_f64();
@@ -340,7 +346,8 @@ fn update_view(
             link: link.as_deref(),
             loading: None,
         },
-        shake.is_none_or(|s| s.0),
+        // Reduced motion (spec §3.2.1 M9): no shake.
+        shake.is_none_or(|s| s.0) && !access.is_some_and(|a| a.reduced_motion),
     );
     view.status = s.status_line();
 }

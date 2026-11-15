@@ -1,6 +1,6 @@
 # OCW build diary – day 3, 2026-11-13
 
-143 commits (43 merges), +61670 / −3101 lines, 447 images, 28 videos, 0 sounds.
+143 commits (43 merges), +61670 / −3101 lines, 449 images, 29 videos, 0 sounds.
 
 ## Commits
 
@@ -152,14 +152,14 @@
 
 ## Builds and build servers
 
-373 build/test runs on the build machines, 71.5 h in total, 18 failed; 978 server samples; cargo compiled 1471 crates in 0.6 h, 7.0 h waiting for build slots.
+396 build/test runs on the build machines, 74.6 h in total, 20 failed; 1039 server samples; cargo compiled 1516 crates in 0.9 h, 8.6 h waiting for build slots.
 
 | Machine | Runs | Hours | Cargo h | Crates | Waited h | Failed | Online |
 |---|---|---|---|---|---|---|---|
-| Win11Builder | 25 | 14.1 | 0.4 | 470 | 1.8 | 5 | 74% |
-| leela | 0 | 0.0 | 0.0 | 0 | 0.0 | 0 | 0% |
-| macos | 95 | 15.1 | 0.0 | 4 | 2.2 | 7 | 100% |
-| marge | 253 | 42.3 | 0.1 | 997 | 3.0 | 6 | 100% |
+| Win11Builder | 28 | 16.3 | 0.5 | 506 | 3.5 | 6 | 76% |
+| leela | 4 | 0.5 | 0.2 | 9 | 0.0 | 0 | 5% |
+| macos | 99 | 15.3 | 0.0 | 4 | 2.2 | 7 | 100% |
+| marge | 265 | 42.5 | 0.1 | 997 | 3.0 | 7 | 100% |
 
 Failed runs:
 
@@ -181,14 +181,16 @@ Failed runs:
 - 19:39 Win11Builder: `cargo test -p ocw-sim -p ocw-protocol -p ocw-server -p ocw-world -p ocw-render -` (exit 255, log `build-log/193958-Win11Builder-862230.log`)
 - 20:26 Win11Builder: `cargo clippy --workspace --all-targets -- -D warnings; if ($LASTEXITCODE -eq 0) ` (exit 101, log `build-log/202657-Win11Builder-904535.log`)
 - 21:06 Win11Builder: `cargo clippy --workspace --all-targets -- -D warnings; if ($LASTEXITCODE -eq 0) ` (exit 101, log `build-log/210615-Win11Builder-944908.log`)
+- 23:16 Win11Builder: `cargo clippy --workspace --all-targets -- -D warnings; if ($LASTEXITCODE -eq 0) ` (exit 101, log `build-log/231629-Win11Builder-1104294.log`)
+- 23:36 marge: `python3 -m unittest discover -s tools/build-dashboard -p "test_*.py" 2>&1 | tail` (exit 1, log `build-log/233629-marge-1126433.log`)
 
 Longest runs:
 
 - 197 min on Win11Builder: `powershell -ExecutionPolicy Bypass -File scripts/build-profile.ps1 -Label win-fu`
 - 126 min on Win11Builder: `cargo clippy -p ocw-render -p ocw-world -p ocw-worldgen --all-targets -- -D warn`
+- 116 min on Win11Builder: `$now = Get-Date; Get-ChildItem crates,apps,services,tools -Recurse -Include *.rs`
 - 67 min on Win11Builder: `cargo clippy -p ocw-render -p ocw-world -p ocw-desktop --all-targets -- -D warni`
 - 61 min on Win11Builder: `cargo test -q -p ocw-world -p ocw-assets 2>&1 | Select-String "test result|FAILE`
-- 60 min on marge: `set -e; D=data/blackforest; scripts/fetch-imagery.sh blackforest $D/blackforest.`
 
 ## Token usage
 
@@ -339,7 +341,7 @@ Longest runs:
 | 22:55 | but where are the files, show me the location and name of the files |
 | 23:01 | where is the token usage logged? |
 | 23:03 | restart the build dashboard. whats the command you use? |
-| 23:06 | rewrite user.md the buildserver section: W11Builder should only be used for Windows related builds. |
+| 23:06 | rewrite claude.md the buildserver section: W11Builder should only be used for Windows related builds. |
 | 23:13 | whats the status of adding the open question to the build dashboard? make it interactive, so that i can answer them there. |
 | 23:15 | whats the hotkey of god mode? |
 | 23:30 | god mode: make the control like flying a plane. plus key should make you go up in the air, minus key makes you go down |
@@ -831,3 +833,6 @@ Longest runs:
 | 21:59:09 | [215909-agent-scenes-t5-after-road-freiburg-centre.jpg](215909-agent-scenes-t5-after-road-freiburg-centre.jpg) |
 | 21:59:20 | [215920-agent-scenes-t5-after-road-country.jpg](215920-agent-scenes-t5-after-road-country.jpg) |
 | 21:59:33 | [215933-agent-scenes-t5-after-road-canadas-edge.jpg](215933-agent-scenes-t5-after-road-canadas-edge.jpg) |
+| 23:54:24 | [235424-shot-wayland-god-unicorn-side.jpg](235424-shot-wayland-god-unicorn-side.jpg) |
+| 23:55:14 | [235514-video-wayland-god-plane-video.jpg](235514-video-wayland-god-plane-video.jpg) |
+| 23:55:14 | [235514-video-wayland-god-plane-video.mp4](235514-video-wayland-god-plane-video.mp4) |

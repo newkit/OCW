@@ -6277,11 +6277,13 @@ dependencies = [
  "clap",
  "ocw-client",
  "ocw-core",
+ "ocw-fit",
  "ocw-protocol",
  "ocw-render",
  "ocw-server",
  "ocw-sim",
  "ocw-sky",
+ "ocw-voice",
  "ocw-weather",
  "ocw-world",
 ]
