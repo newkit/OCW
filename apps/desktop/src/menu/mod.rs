@@ -307,6 +307,7 @@ mod tests {
                 marks: Vec::new(),
                 chart,
                 emphasis: Vec::new(),
+                wide: false,
             });
         }
     }

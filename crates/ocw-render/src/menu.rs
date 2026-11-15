@@ -73,6 +73,9 @@ pub struct MenuView {
     /// Lines drawn large between the status and the text, never dropped
     /// for room: the trust dialog's fingerprint (spec §4.7 *User keys*).
     pub emphasis: Vec<String>,
+    /// Draw the panel wide (as a grid page): a page with long text that
+    /// must all fit (the trust dialog).
+    pub wide: bool,
     pub items: Vec<String>,
     pub focused: usize,
     /// Control hint at the bottom.
@@ -309,7 +312,7 @@ fn panel_content_vh(panel_vh: f32, aspect: f32) -> f32 {
 /// The content width of `view`'s panel (a grid's is wider).
 fn view_content_vh(view: &MenuView, aspect: f32) -> f32 {
     panel_content_vh(
-        if view.grid.is_some() {
+        if view.grid.is_some() || view.wide {
             GRID_PANEL_WIDTH_VH
         } else {
             PANEL_WIDTH_VH
@@ -884,7 +887,7 @@ fn draw_menu(
             }
         }
         if let Ok(mut p) = panel.single_mut() {
-            p.width = vh(if view.grid.is_some() {
+            p.width = vh(if view.grid.is_some() || view.wide {
                 GRID_PANEL_WIDTH_VH
             } else {
                 PANEL_WIDTH_VH

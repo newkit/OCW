@@ -147,9 +147,7 @@ impl Plugin for WebUiPlugin {
         .add_systems(Last, (publish, publish_console));
         // The trusted world keys in the page's localStorage (spec §4.7
         // *User keys*); the built-in roots cannot be added.
-        if !app
-            .world()
-            .contains_resource::<ocw_ui::trust::TrustedKeys>()
+        // (Always: the menu plugin above put an empty default there.)
         {
             let mut builtin = ocw_worldstore::trust::TrustConfig {
                 dev_roots: true,

@@ -66,15 +66,56 @@ pub fn dialog_text(r: &TrustRequest, shared: bool) -> Vec<String> {
             }
         ),
     ];
-    let sources: Vec<String> = r
-        .attributions
-        .iter()
-        .map(|a| format!("{} ({})", a.source, a.licence))
-        .collect();
-    if !sources.is_empty() {
-        out.push(format!("Data: {}.", sources.join(", ")));
+    if let Some(d) = data_line(r) {
+        out.push(d);
     }
     out
+}
+
+/// Longest data line in the dialog (characters); more sources are counted.
+pub const DATA_MAX_CHARS: usize = 170;
+
+/// "Data: OpenStreetMap (ODbL-1.0); SRTM elevation data (public-domain);
+/// … and 3 more sources": the sources with their licence's short name
+/// (up to its first parenthesis), sources under the same licence grouped,
+/// OpenStreetMap first, at most [`DATA_MAX_CHARS`] (the full notices are
+/// on World -> About -> Data sources once it is loaded).
+pub fn data_line(r: &TrustRequest) -> Option<String> {
+    let mut groups: Vec<(String, Vec<String>)> = Vec::new();
+    for a in &r.attributions {
+        let licence = a
+            .licence
+            .split(" (")
+            .next()
+            .unwrap_or(&a.licence)
+            .trim()
+            .to_owned();
+        let source = short_label(&a.source, 40);
+        match groups.iter_mut().find(|(l, _)| *l == licence) {
+            Some((_, s)) => s.push(source),
+            None => groups.push((licence, vec![source])),
+        }
+    }
+    if groups.is_empty() {
+        return None;
+    }
+    let total: usize = groups.iter().map(|(_, s)| s.len()).sum();
+    let mut line = String::from("Data:");
+    let mut shown = 0;
+    for (i, (licence, sources)) in groups.iter().enumerate() {
+        let sep = if i == 0 { "" } else { ";" };
+        let part = format!("{sep} {} ({licence})", sources.join(", "));
+        if i > 0 && line.chars().count() + part.chars().count() > DATA_MAX_CHARS {
+            break;
+        }
+        line.push_str(&part);
+        shown += sources.len();
+    }
+    Some(if shown < total {
+        format!("{line}; and {} more sources.", total - shown)
+    } else {
+        format!("{line}.")
+    })
 }
 
 /// The full fingerprint, two lines of eight groups (drawn large).
@@ -193,7 +234,22 @@ mod tests {
         assert!(
             text.last()
                 .unwrap()
-                .starts_with("Data: OpenStreetMap (ODbL")
+                .starts_with("Data: OpenStreetMap (ODbL"),
+            "{text:?}"
+        );
+        // Many sources: grouped by licence, cut with a count.
+        let mut many = r.clone();
+        for i in 0..8 {
+            let mut a = Attribution::srtm();
+            a.source = format!("Copernicus layer {i} with a long name");
+            a.licence = format!("Licence {i} (free, full and open; attribution)");
+            many.attributions.push(a);
+        }
+        let d = data_line(&many).unwrap();
+        assert!(d.starts_with("Data: OpenStreetMap (ODbL-1.0); SRTM"), "{d}");
+        assert!(
+            d.chars().count() <= DATA_MAX_CHARS + 30 && d.contains("more sources"),
+            "{d}"
         );
         assert!(!text.join(" ").contains("shared ride"));
         assert!(

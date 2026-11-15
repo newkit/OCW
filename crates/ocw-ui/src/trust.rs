@@ -416,7 +416,12 @@ mod tests {
             created_unix_s: 1_800_000_000,
             claimed_signer: "Ada Rider".into(),
             root: RootKeyPair::from_seed("Ada Rider", [seed; 32]).public(),
-            attributions: vec![Attribution::openstreetmap()],
+            // As many sources as a real package has: they must fit too.
+            attributions: vec![Attribution::openstreetmap(), Attribution::srtm(), {
+                let mut a = Attribution::srtm();
+                a.source = "swisstopo SWISSIMAGE 10 cm orthophoto".into();
+                a
+            }],
         }
     }
 
