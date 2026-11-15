@@ -592,7 +592,8 @@ mod tests {
         }
         tap(&mut app, KeyCode::Enter);
         // Display: the first row is the HUD switch.
-        for _ in 0..3 {
+        // (Account comes first since the sign-in, spec §9.1.)
+        for _ in 0..4 {
             tap(&mut app, KeyCode::ArrowDown);
         }
         tap(&mut app, KeyCode::Enter);
