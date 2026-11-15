@@ -525,7 +525,7 @@ impl EventClient {
         Some(info.start_line_m + ghost.distance_at(t))
     }
 
-    /// A rider's finish for the animation (spec §2.6, v3.33) at server
+    /// A rider's finish for the animation (spec §2.6, v3.37) at server
     /// tick `tick` (for others: the tick they are drawn at): crossed the
     /// line (the server's finish time) within [`FINISH_CUE_S`] – the
     /// winner of a race, or the own rider's new best in a time trial,
@@ -1295,7 +1295,7 @@ mod tests {
         );
     }
 
-    /// The finish and victory animations' cue (spec §2.6, v3.33): from the
+    /// The finish and victory animations' cue (spec §2.6, v3.37): from the
     /// server's finish times, in game time; the race's winner raises the
     /// arms, the others sit up; still racing, the metres to the line.
     #[test]

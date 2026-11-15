@@ -3538,7 +3538,17 @@ mod tests {
             Some(true)
         );
         h.send(&msg);
-        h.ride(250.0, 25.0);
+        // The U-turn's animation cue (spec §2.6): the run-up, then the
+        // loop, in the own rider's view.
+        let mut seen = (false, false);
+        for _ in 0..100 {
+            h.ride(250.0, 0.25);
+            if let Some(u) = h.client.view(h.time_s, 0.0)[0].cue.uturn {
+                seen.0 |= u.progress < 0.0;
+                seen.1 |= u.progress > 0.3 && u.progress < 0.7;
+            }
+        }
+        assert_eq!(seen, (true, true), "the run-up and the loop");
         let (c, s) = h.positions();
         assert!(c.direction[0] < -0.99, "{c:?}");
         assert!(close(c.position, s.position, 0.5), "{c:?} vs {s:?}");
