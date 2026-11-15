@@ -16,6 +16,8 @@ WASM_CRATES := -p ocw-core -p ocw-sim -p ocw-protocol -p ocw-world -p ocw-voice 
 # of the wasm-bindgen crate in Cargo.lock.
 WASM_BINDGEN_VERSION := $(shell awk '/^name = "wasm-bindgen"$$/ { getline; gsub(/version = |"/, ""); print; exit }' Cargo.lock)
 WEB_PORT ?= 8080
+# make web-serve's address: 127.0.0.1, or 0.0.0.0 for the LAN (no secure context there: see the README).
+WEB_BIND ?= 127.0.0.1
 # Voice chat (spec §7): the LiveKit SDK's bindings need clang >= 21 on Linux
 # (`make deps-llvm-debian`). With clang-21 installed, `build` and `release`
 # include the desktop's `voice` feature; without it they build as before.
@@ -79,9 +81,9 @@ VIDEO ?= /tmp/ocw.mp4
 VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 
 .DEFAULT_GOAL := help
-.PHONY: help version version-next version-bump test-release-version release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
+.PHONY: help version version-next version-bump test-release-version release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish art-collect art-check test-art art-install-timer art-uninstall-timer art-timer-status deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
 	clippy check run server materials deploy-test clean clean-test-output macos-app \
-	test test-unit test-wasm test-web-build test-web test-web-webgl2 test-web-world test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-kiosk web web-serve web-worlds deps-web test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
+	test test-unit test-wasm test-web-build test-web test-web-webgl2 test-web-world test-web-unicorn test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-kiosk web web-serve web-worlds web-remote deps-web deps-browser test-web-readme test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
 	test-multiplayer test-multiplayer-local test-scenes test-scenes-list test-vr-monado \
 	wasm screenshot screenshot-wayland smoke video video-wayland
 
@@ -257,11 +259,18 @@ deps-web: ## The browser app's tools: wasm-bindgen-cli matching Cargo.lock (carg
 		echo "wasm-bindgen $(WASM_BINDGEN_VERSION) installed"; \
 	else $(CARGO) install wasm-bindgen-cli --version $(WASM_BINDGEN_VERSION) --locked; fi
 
-web: ## Build the browser app into target/web/ (the `web` profile; WEB_PROFILE=dev for a debug build)
+web: ## Build the browser app into target/web/ (the `web-release` profile; WEB_PROFILE=dev for a debug build)
 	scripts/build-web.sh
 
-web-serve: ## Serve target/web/ (and its worlds/, with range requests) on http://127.0.0.1:$(WEB_PORT)/ (COOP/COEP headers; WEB_PORT)
-	scripts/web-serve.py --port $(WEB_PORT)
+web-serve: ## Serve target/web/ (and its worlds/, with range requests) on http://$(WEB_BIND):$(WEB_PORT)/ (COOP/COEP headers; WEB_PORT, WEB_BIND=0.0.0.0 for the LAN); fails without a build
+	scripts/web-serve.py --port $(WEB_PORT) --bind $(WEB_BIND)
+
+web-remote: ## Build the browser app on build machine MACHINE (make web; WORLDS=1: also make web-worlds) and fetch the page into target/web/ here (no cargo output, no private keys)
+	@[ -n "$(MACHINE)" ] || { echo "usage: make web-remote MACHINE=<build machine> [WORLDS=1]" >&2; exit 2; }
+	WORLDS=$(WORLDS) scripts/web-remote.sh $(MACHINE)
+
+deps-browser: ## The browser tests' browser: pinned Chromium (scripts/browsers.json, SHA-256 checked) into ~/.cache/ocw/browsers/ (no sudo; Linux x64, macOS arm64, Windows x64)
+	python3 scripts/web_browser.py fetch
 
 # The pilot package (git-ignored data/): a branch checkout of scripts/remote.sh
 # (REPO_PATH-BRANCH) finds it in the main checkout next to it.
@@ -280,6 +289,9 @@ WEB_WORLD ?= liechtenstein
 WEB_WORLD_ROUTE ?= vaduz-malbun
 test-web-world: web web-worlds ## Headless Chromium: stream $(WEB_WORLD) from the dev server, ride $(WEB_WORLD_ROUTE), teleport, reload from the OPFS cache; screenshots into test-output/web/
 	scripts/test-web.py --out test-output/web --world $(WEB_WORLD) --route $(WEB_WORLD_ROUTE) --seconds 15 --teleport 6 --time noon
+
+test-web-unicorn: web web-worlds ## Headless Chromium: unicorn mode over $(WEB_WORLD) from $(WEB_WORLD_ROUTE)'s start (spec §14 Phase 13 G5): G, +, inspection, a pin, the menu row, landing; screenshots into test-output/web/
+	scripts/test-web.py --out test-output/web --world $(WEB_WORLD) --route $(WEB_WORLD_ROUTE) --seconds 8 --no-reload --god --time noon
 
 test-web-multiplayer: web ## Headless Chromium joins ocw-server over WebTransport with ocw-bot riders (QUIC + WebTransport), rides 30 s; screenshot, timing into test-output/web/
 	$(CARGO) build --release -p ocw-server -p ocw-bot
@@ -307,6 +319,9 @@ test-web-livekit: web ## Two headless browser riders in a real `livekit-server -
 	$(CARGO) build --release -p ocw-server -p ocw-bot
 	scripts/test-web-audio.py --out test-output/web --part livekit --livekit-server $(LIVEKIT_SERVER)
 
+test-web-readme: deps-browser ## The README's browser walkthrough in a fresh clone: deps-web, web, web-worlds, web-serve, every README URL in the pinned browser; screenshots + verdict into test-output/web/readme-<time>/ (README_FLAGS="--keep --reuse-target": quicker reruns)
+	scripts/test-web-readme.py --out test-output/web $(README_FLAGS)
+
 test-kiosk: ## Test the kiosk script with a fake app (no display or build needed)
 	scripts/test-kiosk.sh
 
@@ -327,7 +342,7 @@ windows-move-toolchain: ## Windows MACHINE: dry run of moving CARGO_HOME, RUSTUP
 	@[ -n "$(MACHINE)" ] || { echo "usage: make windows-move-toolchain MACHINE=<windows machine> [APPLY=1]" >&2; exit 2; }
 	scripts/remote.sh $(MACHINE) run 'powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows-move-toolchain.ps1 $(if $(APPLY),-Apply)'
 
-test-remote: ## Test remote.sh's build-slot order, tree snapshot and sync, and the build-log parser (no machine needed)
+test-remote: ## Test remote.sh's build-slot order, tree snapshot and sync, the build-log parser and the web scripts (web-serve, web_browser, the README walkthrough's parser; no machine needed)
 	scripts/test-remote.sh
 
 # Build profile (spec §11.2): clean, no-op and incremental builds of the main
@@ -422,11 +437,43 @@ art-diary: ## Art: join all day videos into the diary video
 art-publish: ## Art: upload day zips and videos to the GitHub release build-history
 	$(ART_PYTHON) art/diary.py publish $(DAY)
 
+art-collect: ## Art: one run of the hourly collector now (gather + journal of yesterday and today, mask check; DAY=… for other days)
+	scripts/art-collect.sh $(DAY)
+
+art-check: ## Art: fail if a tracked text file of art/build-history/ holds a private pattern (FIX=1 masks them)
+	$(ART_PYTHON) art/diary.py check-masked $(if $(FIX),--fix)
+
+test-art: ## Art: unit tests of art/diary.py, art/music.py and scripts/art-collect.sh (fixture archive; local Python, no Rust build)
+	$(ART_PYTHON) -m unittest discover -s art -p 'test_*.py'
+
+ART_UNITS = ocw-art-collect.service ocw-art-collect.timer
+USER_UNITS = $(HOME)/.config/systemd/user
+
+art-install-timer: ## Art: install and start the hourly collector as a systemd user timer (this checkout; art/ART-PROJECT.md §5.1)
+	mkdir -p $(USER_UNITS)
+	for u in $(ART_UNITS); do sed 's|@REPO@|$(CURDIR)|g' art/systemd/$$u > $(USER_UNITS)/$$u; done
+	systemctl --user daemon-reload
+	systemctl --user enable --now ocw-art-collect.timer
+	@echo "Art collector: hourly (make art-timer-status); to run without a login: sudo loginctl enable-linger $$USER"
+
+art-uninstall-timer: ## Art: stop and remove the hourly collector's systemd user timer
+	-systemctl --user disable --now ocw-art-collect.timer
+	-systemctl --user stop ocw-art-collect.service
+	rm -f $(USER_UNITS)/ocw-art-collect.service $(USER_UNITS)/ocw-art-collect.timer
+	systemctl --user daemon-reload
+
+art-timer-status: ## Art: the collector timer's next/last run and the last run's status file
+	-systemctl --user list-timers --all 'ocw-art-*'
+	@-systemctl --user --no-pager status ocw-art-collect.service 2>/dev/null | head -n 5
+	@f=$$(ls -1 test-output/build-log/*/art.json 2>/dev/null | sort | tail -n 1); \
+	  if [ -n "$$f" ]; then echo "Last run ($$f):"; cat "$$f"; else echo "No collector run yet (test-output/build-log/DAY/art.json)."; fi
+
 dashboard-install: ## Install and start the build dashboard as a systemd user service (port 8765, starts at login)
 	mkdir -p $(HOME)/.config/systemd/user
 	sed 's|@REPO@|$(CURDIR)|g' tools/build-dashboard/ocw-build-dashboard.service > $(HOME)/.config/systemd/user/ocw-build-dashboard.service
 	systemctl --user daemon-reload
 	systemctl --user enable --now ocw-build-dashboard.service
+	systemctl --user restart ocw-build-dashboard.service
 	@echo "Dashboard: http://localhost:8765/  (start at boot without login: sudo loginctl enable-linger $$USER)"
 
 dashboard-uninstall: ## Stop and remove the build dashboard user service

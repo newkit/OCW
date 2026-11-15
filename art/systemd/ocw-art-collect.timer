@@ -1,0 +1,14 @@
+# Every hour (art/ART-PROJECT.md §5.1); missed runs (machine off or asleep)
+# are made up after boot. `make art-install-timer` installs and starts it.
+[Unit]
+Description=OCW Build Diary: hourly collector timer
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=5min
+AccuracySec=1min
+Unit=ocw-art-collect.service
+
+[Install]
+WantedBy=timers.target

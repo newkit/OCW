@@ -303,6 +303,74 @@ class GroupingTest(unittest.TestCase):
         self.assertIn("Wahoo KICKR A208", text)
 
 
+class ArtStatusTest(unittest.TestCase):
+    """The art project's collector line (test-output/build-log/DAY/art.json)."""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def write(self, day, st):
+        (self.root / day).mkdir(parents=True, exist_ok=True)
+        (self.root / day / "art.json").write_text(json.dumps(st))
+
+    def test_no_run_yet(self):
+        self.assertIsNone(d.art_status(self.root))
+        self.assertIsNone(d.art_status(self.root / "missing"))
+        self.assertIn("no collector run yet", d.art_line(None))
+
+    def test_latest_run_of_the_newest_day(self):
+        from datetime import datetime
+        self.write("2026-11-13", {"start": "2026-11-13T23:01:00+01:00", "end": "2026-11-13T23:02:00+01:00",
+                                  "status": "failed", "new_files": 9, "media": 1})
+        self.write("2026-11-14", {"start": "2026-11-14T14:02:03+01:00", "end": "2026-11-14T14:02:40+01:00",
+                                  "status": "ok", "new_files": 3, "media": 214, "mask_check": "ok",
+                                  "sheets": False, "errors": []})
+        (self.root / "2026-11-15").mkdir()
+        (self.root / "2026-11-15" / "art.json").write_text("{broken")  # skipped
+        now = datetime.fromisoformat("2026-11-14T14:14:40+01:00").timestamp()
+        a = d.art_status(self.root, now)
+        self.assertEqual(a["status"], "ok")
+        self.assertEqual(a["new_files"], 3)
+        self.assertEqual(a["media"], 214)
+        self.assertAlmostEqual(a["age_s"], 720)
+        self.assertFalse(a["late"])
+        line = d.art_line(a)
+        self.assertEqual(line, "Art project: last collector run 14:02 (12m 00s ago): ok, 3 new files, "
+                               "214 media today, mask check ok")
+        st = {"overview": {"online": 0, "machines": 0, "tasks": 0, "waiting": 0, "slots_used": 0,
+                           "slots_total": 0}, "machines": [], "art": a}
+        self.assertIn(line, d.format_text(st))
+
+    def test_late_failed_and_stale(self):
+        from datetime import datetime
+        self.write("2026-11-14", {"start": "2026-11-14T09:00:00+01:00", "status": "running", "end": None})
+        now = datetime.fromisoformat("2026-11-14T14:00:00+01:00").timestamp()
+        a = d.art_status(self.root, now)
+        self.assertEqual(a["status"], "stale")
+        self.assertTrue(a["late"])
+        self.assertIn("LATE", d.art_line(a))
+        self.write("2026-11-14", {"start": "2026-11-14T13:00:00+01:00", "end": "2026-11-14T13:01:00+01:00",
+                                  "status": "failed", "new_files": 0, "media": 5,
+                                  "mask_check": "failed: 2 finding(s)",
+                                  "errors": ["mask check: 2 finding(s) (art/diary.py check-masked)"]})
+        a = d.art_status(self.root, now)
+        self.assertFalse(a["late"])
+        text = d.art_text(a)
+        self.assertIn("FAILED", text[0])
+        self.assertIn("mask check failed: 2 finding(s)", text[0])
+        self.assertIn("check-masked", text[1])
+
+    def test_page_renders_the_art_panel(self):
+        page = (Path(d.__file__).resolve().parent / "index.html").read_text()
+        self.assertIn('id="art"', page)
+        self.assertIn("renderArt(st.art)", page)
+
+
 def marker(pid, start, state="running", slot=None, checkout="OCW", command="cargo test"):
     return json.dumps({"v": 1, "pid": pid, "state": state, "slot": slot, "start": start,
                        "checkout": checkout, "branch": "b", "command": command, "os": "linux"})
