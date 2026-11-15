@@ -2575,3 +2575,119 @@ world = "blackforest"
 args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-25060,-12820", "--bots", "0"]
 at = ["0.5=time pause", "0.5=time 2026-10-30 12:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 100 18 30"]
 shot = 12
+
+# --- Junction seams (investigation 2026-11-15, spec §4.8.8 "Smooth junctions") ---
+# Before/after scenes for the junction surface: the rider stands at the junction
+# (power 0); -rider is a low view near rider height, -drone a low drone angle.
+
+[[scene]]
+name = "junction-bergstrasse-rider"
+description = "Junction seams (near rider height): Triesen, Bergstrasse (secondary, 7.5 %) with Sennwisstrasse leaving at 20 %: worst main-road case in Liechtenstein, 1.10 m visible step between the strips, side road's verge 1.0 m above the main road"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-690.7,4555.1", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 14:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 160 6 9"]
+shot = 9
+
+[[scene]]
+name = "junction-bergstrasse-drone"
+description = "Junction seams (low drone angle): Triesen, Bergstrasse (secondary, 7.5 %) with Sennwisstrasse leaving at 20 %: worst main-road case in Liechtenstein, 1.10 m visible step between the strips, side road's verge 1.0 m above the main road"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-690.7,4555.1", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 14:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 200 38 24"]
+shot = 9
+
+[[scene]]
+name = "junction-hagstrasse-rider"
+description = "Junction seams (near rider height): Triesen, Hagstrasse / Rossbodastrasse (residential, +19 % / -9 %): 1.28 m step, the verge of one strip 1.23 m above the other's carriageway"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-697.9,4752.4", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 14:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 160 6 9"]
+shot = 9
+
+[[scene]]
+name = "junction-hagstrasse-drone"
+description = "Junction seams (low drone angle): Triesen, Hagstrasse / Rossbodastrasse (residential, +19 % / -9 %): 1.28 m step, the verge of one strip 1.23 m above the other's carriageway"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-697.9,4752.4", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 14:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 200 38 24"]
+shot = 9
+
+[[scene]]
+name = "junction-planknerstrasse-rider"
+description = "Junction seams (near rider height): Planken road, Planknerstrasse (tertiary, 12 %) with a track at +12 %: 1.09 m step, 3.4 m2 of verge on the carriageway"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-1289.5,-1756.2", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 14:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 160 6 9"]
+shot = 9
+
+[[scene]]
+name = "junction-planknerstrasse-drone"
+description = "Junction seams (low drone angle): Planken road, Planknerstrasse (tertiary, 12 %) with a track at +12 %: 1.09 m step, 3.4 m2 of verge on the carriageway"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-1289.5,-1756.2", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 14:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 200 38 24"]
+shot = 9
+
+[[scene]]
+name = "junction-adlerkreisel-rider"
+description = "Junction seams (near rider height): Vaduz, Adlerkreisel roundabout (primary, 13 m) with Lettstrasse: 66 m2 wedge gaps between the square strip ends on the ring, 14 m2 of coplanar (z-fighting) overlap"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2484.2,2061.0", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 14:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 160 6 9"]
+shot = 9
+
+[[scene]]
+name = "junction-adlerkreisel-drone"
+description = "Junction seams (low drone angle): Vaduz, Adlerkreisel roundabout (primary, 13 m) with Lettstrasse: 66 m2 wedge gaps between the square strip ends on the ring, 14 m2 of coplanar (z-fighting) overlap"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2484.2,2061.0", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 14:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 200 38 24"]
+shot = 9
+
+[[scene]]
+name = "junction-landstrasse-split-rider"
+description = "Junction seams (near rider height): Balzers, Landstrasse / Gagoz (primary, a way split in a bend): 26 m2 wedge gap on the outside of the bend between two square strip ends"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-3348.6,9616.2", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 14:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 160 6 9"]
+shot = 9
+
+[[scene]]
+name = "junction-landstrasse-split-drone"
+description = "Junction seams (low drone angle): Balzers, Landstrasse / Gagoz (primary, a way split in a bend): 26 m2 wedge gap on the outside of the bend between two square strip ends"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-3348.6,9616.2", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 14:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 200 38 24"]
+shot = 9
+
+[[scene]]
+name = "junction-vorarlberger-rider"
+description = "Junction seams (near rider height): Typical T (median step 0.14 m): Vorarlberger-Strasse (primary, 1 %) with Bahnweg, Nendeln"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "100.7,-5498.0", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 14:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 160 6 9"]
+shot = 9
+
+[[scene]]
+name = "junction-vorarlberger-drone"
+description = "Junction seams (low drone angle): Typical T (median step 0.14 m): Vorarlberger-Strasse (primary, 1 %) with Bahnweg, Nendeln"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "100.7,-5498.0", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 14:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 200 38 24"]
+shot = 9
+
+[[scene]]
+name = "junction-spoerryweg-rider"
+description = "Junction seams (near rider height): Typical T (median step 0.14 m): Schalunstrasse (residential) with Spoerryweg, Vaduz"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-3116.9,488.5", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 14:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 160 6 9"]
+shot = 9
+
+[[scene]]
+name = "junction-spoerryweg-drone"
+description = "Junction seams (low drone angle): Typical T (median step 0.14 m): Schalunstrasse (residential) with Spoerryweg, Vaduz"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-3116.9,488.5", "--bots", "0", "--power", "0"]
+at = ["0.5=time pause", "0.5=time 2026-06-20 14:00", "0.5=hud off", "0.5=hud.profile off", "1=camera.orbit 200 38 24"]
+shot = 9
