@@ -83,7 +83,7 @@ VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 .DEFAULT_GOAL := help
 .PHONY: help version version-next version-bump test-release-version release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish art-collect art-check test-art art-install-timer art-uninstall-timer art-timer-status deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
 	clippy check run server materials deploy-test clean clean-test-output macos-app \
-	test test-unit test-wasm test-web-build test-web test-web-webgl2 test-web-world test-web-unicorn test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-kiosk web web-serve web-worlds web-remote deps-web deps-browser test-web-readme test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
+	test test-unit test-wasm test-web-build test-web test-web-webgl2 test-web-world test-web-unicorn test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-kiosk web web-serve web-worlds web-remote web-preview web-preview-site web-preview-worlds test-web-preview deps-web deps-browser test-web-readme test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
 	test-multiplayer test-multiplayer-local test-scenes test-scenes-list \
 	wasm screenshot screenshot-wayland smoke video video-wayland
 
@@ -278,6 +278,18 @@ WEB_WORLD_PKGS ?= $(firstword $(wildcard data/pilot/liechtenstein.ocwpkg ../OCW/
 web-worlds: ## Publish world packages for the web dev server into target/web/worlds/, signed by a dev root in target/web-keys/ (WEB_WORLD_PKGS)
 	scripts/publish-web-worlds.sh $(WEB_WORLD_PKGS)
 
+web-preview: ## The public preview's build into target/web-preview/ (spec §14 Phase 10 B8a): fat LTO, wasm-opt -Oz (pinned binaryen), only the web preview's signing root trusted, no LiveKit
+	scripts/build-web.sh --preview
+
+web-preview-site: ## Assemble the preview's site into target/web-preview-site/ (config.json, credits.html, the signed worlds of target/web-preview-worlds/release/ or a downloaded web-preview-worlds release; PREVIEW_WORLDS)
+	scripts/web-preview-site.py --worlds $(PREVIEW_WORLDS)
+
+web-preview-worlds: ## On marge only (the preview's keys): sign the preview's worlds, publish them and upload them to the pre-release web-preview-worlds
+	scripts/publish-preview-worlds.sh --upload
+
+test-web-preview: ## Headless Chromium on the preview: the assembled site (PREVIEW_SITE, served as a public page) or the live one (PREVIEW_URL=https://newkit.github.io/OCW/); start page, Hills, Liechtenstein from the preview root, dev trust ignored, WebGL 2, credits
+	scripts/test-web-preview.py $(if $(PREVIEW_URL),--url $(PREVIEW_URL),--site $(PREVIEW_SITE)) --out test-output/web-preview
+
 test-web: web ## Headless Chromium on WebGPU: load the web app, ride, screenshot into test-output/web/
 	scripts/test-web.py --out test-output/web
 
@@ -285,6 +297,9 @@ test-web-webgl2: web ## Headless Chromium without WebGPU: the page falls back to
 	scripts/test-web.py --out test-output/web --gpu webgl2
 	scripts/test-web-webgl2.py --out test-output/web
 
+PREVIEW_WORLDS ?= target/web-preview-worlds/release
+PREVIEW_SITE ?= target/web-preview-site
+PREVIEW_URL ?=
 WEB_WORLD ?= liechtenstein
 WEB_WORLD_ROUTE ?= vaduz-malbun
 test-web-world: web web-worlds ## Headless Chromium: stream $(WEB_WORLD) from the dev server, ride $(WEB_WORLD_ROUTE), teleport, reload from the OPFS cache; screenshots into test-output/web/

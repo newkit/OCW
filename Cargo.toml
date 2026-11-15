@@ -164,3 +164,16 @@ opt-level = "s"
 lto = "thin"
 debug = false
 strip = "debuginfo"
+
+# The public preview of the browser app (`make web-preview`, spec §14
+# Phase 10 B8a): the `web-release` profile for the smallest download –
+# opt-level "z", fat LTO and one codegen unit – then wasm-opt -Oz.
+# Measured on marge (2026-11-15, WebGPU module, gzip -9): web-release
+# 17.0 MiB, this profile 12.6 MiB (13.2 MiB after wasm-opt, which cuts the
+# raw module from 51 to 42 MiB); "s" with fat LTO 14.3 MiB; the frame rate
+# showed no difference between "s" and "z".
+[profile.web-preview-release]
+inherits = "web-release"
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
