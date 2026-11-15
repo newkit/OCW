@@ -314,7 +314,7 @@ impl ClientCore {
     pub fn with_route_plan(mut self, plan: Arc<RoutePlan>) -> Self {
         if let Some(fr) = &mut self.free {
             let v = self.route.points()[0];
-            self.route = Route::from_points(
+            let route = Route::from_points(
                 plan.name.clone(),
                 plan.name.clone(),
                 vec![v, [v[0] + 1.0, v[1], v[2]]],
@@ -322,6 +322,13 @@ impl ClientCore {
                 5.0,
             )
             .expect("two distinct points");
+            // The placeholder keeps the package's geographic origin: the
+            // GPS line, the FIT track and the sun need it (it was lost
+            // here from fae1547 to spec 3.40: no GPS line in route rides).
+            self.route = match self.route.geo_origin() {
+                Some(origin) => route.with_geo_origin(origin),
+                None => route,
+            };
             self.event = EventClient::new(plan.name.clone());
             fr.plan = Some(plan);
         }
@@ -3590,6 +3597,51 @@ mod tests {
                 ClientCore::free_ride(net, "Routed", RiderProfile::default()).with_route_plan(plan),
             )
         }
+    }
+
+    /// Regression (spec 3.40): `with_route_plan` replaced the route with a
+    /// placeholder without the package's geographic origin (since
+    /// fae1547), so route rides on world packages – desktop `--world PKG
+    /// --route NAME`, the browser's `?world=…&route=…` – had no GPS line.
+    /// The view fill sets the GPS position in a route ride.
+    #[test]
+    fn a_route_ride_keeps_its_geo_origin_for_the_gps_line() {
+        let origin = (47.14, 9.52);
+        let net = Arc::new(RoadNetwork::new(grid()).with_package_name("Grid"));
+        let plan = grid_route(&net);
+        let c = ClientCore::free_ride(net.clone(), "Routed", RiderProfile::default())
+            .with_geo_origin(origin)
+            .with_route_plan(plan.clone());
+        assert_eq!(c.geo_origin(), Some(origin));
+        let server = GameServer::new(
+            ocw_server::Course::RouteRide {
+                net: net.clone(),
+                plan: plan.clone(),
+            },
+            ServerConfig {
+                bots: 0,
+                start_m: 0.0,
+                voice: None,
+                ..Default::default()
+            },
+        );
+        let mut h = Harness::with(server, c);
+        h.ride(250.0, 5.0);
+        let mut view = ocw_render::RideView::new(Route::test_loop());
+        crate::view::fill(
+            &mut view,
+            &h.client,
+            h.time_s,
+            h.time_s,
+            0.0,
+            crate::view::Notices::default(),
+            false,
+        );
+        let (lat, lon, _) = view.position.expect("a GPS position in a route ride");
+        assert!((lat - origin.0).abs() < 0.05 && (lon - origin.1).abs() < 0.05);
+        // The same rider without a geographic origin: no GPS line.
+        let c = ClientCore::free_ride(net, "Routed", RiderProfile::default()).with_route_plan(plan);
+        assert_eq!(c.geo_origin(), None);
     }
 
     /// Route ride (spec §2.7, §2.2.1): the overlay shows the route's exit

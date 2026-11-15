@@ -20,7 +20,9 @@ use ocw_render::RideView;
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
 use ocw_render::menu::ride_input;
 use ocw_render::voice::VoiceHud;
-use ocw_voice::hotkeys::{Input, Toggle, toggle};
+#[cfg(test)]
+use ocw_voice::hotkeys::Input;
+use ocw_voice::hotkeys::Toggle;
 use ocw_voice::{MuteState, VoiceController, VoiceSettings};
 
 use ocw_client::voice::{self as voice_cmd, SettingsStore};
@@ -70,11 +72,14 @@ impl Plugin for VoicePlugin {
 // ------------------------------------------------------------- hotkeys
 
 /// The Bevy inputs of the voice hotkeys (the mapping is
-/// [`ocw_voice::hotkeys::toggle`]).
+/// [`ocw_voice::hotkeys::toggle`]; the app reads the bound keys through
+/// `ocw_ui::bindings::voice_toggles`, these stay for the mapping's tests).
+#[cfg(test)]
 pub fn key_input(m_pressed: bool, shift_held: bool) -> Option<Input> {
     m_pressed.then_some(Input::KeyM { shift: shift_held })
 }
 
+#[cfg(test)]
 pub fn pad_input(button: GamepadButton) -> Option<Input> {
     match button {
         GamepadButton::Select => Some(Input::PadSelect),
@@ -83,23 +88,16 @@ pub fn pad_input(button: GamepadButton) -> Option<Input> {
     }
 }
 
+/// The bound keys and buttons (spec §3.2.1 M9; defaults M / Shift+M,
+/// Select / R3) → the mute commands.
 fn hotkeys(
     keys: Option<Res<ButtonInput<KeyCode>>>,
     pads: Query<&Gamepad>,
+    bindings: Option<Res<ocw_ui::bindings::ActiveBindings>>,
     mut console: ResMut<ConsoleState>,
 ) {
-    let mut toggles = Vec::new();
-    if let Some(k) = keys {
-        let shift = k.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
-        toggles.extend(key_input(k.just_pressed(KeyCode::KeyM), shift).map(toggle));
-    }
-    for pad in &pads {
-        for b in [GamepadButton::Select, GamepadButton::RightThumb] {
-            if pad.just_pressed(b) {
-                toggles.extend(pad_input(b).map(toggle));
-            }
-        }
-    }
+    let toggles =
+        ocw_ui::bindings::voice_toggles(bindings.as_deref(), keys.as_deref(), pads.iter());
     for t in toggles {
         console.queue(t.command());
     }
@@ -308,6 +306,7 @@ fn register_commands(app: &mut App) {
 mod tests {
     use clap::Parser;
     use ocw_render::console::ConsoleCorePlugin;
+    use ocw_voice::hotkeys::toggle;
 
     use super::*;
     use crate::Args;

@@ -14,6 +14,7 @@
 //! `ocw_ui::menu`, the same for both apps.
 
 pub mod controls;
+pub mod history;
 pub mod model;
 pub mod pages;
 pub mod time;
@@ -46,6 +47,20 @@ pub fn hint(page: Page, list_pages: usize, depth: usize) -> String {
         // The preset grid (spec §14 Phase 9, S5): the arrows move.
         Page::Sub(p) if p.grid_columns().is_some() => {
             return format!("Arrows move   Enter/A choose   Esc/B {back}");
+        }
+        // A binding row: Enter waits for the new key (spec §3.2.1 M9).
+        Page::Sub(pages::Page::BindGroup(_)) => {
+            return format!("Enter/A new key or button   Left/Right step   Esc/B {back}");
+        }
+        Page::Sub(p) if p.is_history_page() => {
+            return format!(
+                "Up/Down move   {}Enter/A select   Esc/B {back}",
+                if list_pages > 1 {
+                    "Left/Right page   "
+                } else {
+                    ""
+                }
+            );
         }
         Page::Sub(p) if p.is_weather_page() => {
             // One line at 16:9 (the generic hint is longer).

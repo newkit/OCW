@@ -5,6 +5,12 @@
 //! handler that gets exclusive access to the [`World`]. Commands can be typed in
 //! the overlay (toggle with `` ` `` or F12), queued programmatically with
 //! [`ConsoleState::queue`], or run from a file with `exec <file>`.
+//!
+//! Tab completes the word before the cursor (command names, subcommands,
+//! long flags, values; [`crate::completion`] has the rule): from the clap
+//! definitions, and from the value providers commands register with
+//! [`ConsoleAppExt::console_values`] for values only known at run time.
+//! Only commands the session may run are offered.
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -22,7 +28,8 @@ use clap::{Arg, ArgMatches, Command, value_parser};
 use crate::camera::{
     CameraMode, CameraOrbit, CameraTilt, MAX_DISTANCE, MAX_PITCH, MIN_DISTANCE, MIN_PITCH,
 };
-use crate::hud::{ShowFps, ShowHud, ShowProfile, Units};
+use crate::completion::{TabCompleter, ValueQuery};
+use crate::hud::{ShowFps, ShowGps, ShowHud, ShowProfile, Units};
 
 /// Console with its egui overlay (toggle with `` ` `` or F12).
 pub struct ConsolePlugin;
@@ -104,16 +111,18 @@ pub struct ConsoleCorePlugin;
 impl Plugin for ConsoleCorePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ConsoleCommands>()
+            .init_resource::<ConsoleValues>()
             .init_resource::<ConsoleState>()
             .init_resource::<ShowFps>()
             .init_resource::<ShowProfile>()
+            .init_resource::<ShowGps>()
             .init_resource::<ShowHud>()
             .init_resource::<Units>()
             .init_resource::<CameraMode>()
             .init_resource::<CameraOrbit>()
             .init_resource::<crate::camera::SkyLook>()
             .init_resource::<CameraTilt>()
-            .add_systems(Update, run_pending_commands);
+            .add_systems(Update, (run_tab_request, run_pending_commands).chain());
         register_builtin_commands(app);
     }
 }
@@ -152,8 +161,23 @@ impl ConsoleCommand {
 #[derive(Resource, Default)]
 pub struct ConsoleCommands(BTreeMap<String, ConsoleCommand>);
 
+/// A value provider for Tab completion: the values an argument can take
+/// now (setting keys, world ids, presets, …), unfiltered – the console
+/// keeps the ones that match the typed word. It may look at the words
+/// before ([`ValueQuery`]).
+pub type ValueProvider = fn(&mut World, &ValueQuery) -> Vec<String>;
+
+/// The value providers by (command path, argument id).
+#[derive(Resource, Default)]
+pub struct ConsoleValues(BTreeMap<(String, String), ValueProvider>);
+
 pub trait ConsoleAppExt {
     fn console_command(&mut self, command: ConsoleCommand) -> &mut Self;
+
+    /// Completes the values of argument `arg` (its clap id) of `command`
+    /// (the command with its subcommands: `"world switch"`) with
+    /// `provider` instead of the argument's `PossibleValue`s.
+    fn console_values(&mut self, command: &str, arg: &str, provider: ValueProvider) -> &mut Self;
 }
 
 impl ConsoleAppExt for App {
@@ -163,6 +187,14 @@ impl ConsoleAppExt for App {
             .get_resource_or_insert_with(ConsoleCommands::default)
             .0
             .insert(name, command);
+        self
+    }
+
+    fn console_values(&mut self, command: &str, arg: &str, provider: ValueProvider) -> &mut Self {
+        self.world_mut()
+            .get_resource_or_insert_with(ConsoleValues::default)
+            .0
+            .insert((command.to_owned(), arg.to_owned()), provider);
         self
     }
 }
@@ -177,6 +209,15 @@ pub struct ConsoleState {
     pending: VecDeque<String>,
     /// Highest permission level the current session allows.
     pub permission: Permission,
+    /// Tab completion: the cycle, the candidates listed under the input
+    /// line and the one inserted.
+    completer: TabCompleter,
+    candidates: Vec<String>,
+    selected: Option<usize>,
+    /// A Tab to complete next frame: (cursor in bytes, Shift held).
+    tab_request: Option<(usize, bool)>,
+    /// Where the input line's cursor goes (bytes) after a completion.
+    cursor_to: Option<usize>,
 }
 
 impl Default for ConsoleState {
@@ -189,6 +230,11 @@ impl Default for ConsoleState {
             history_pos: None,
             pending: VecDeque::new(),
             permission: Permission::User,
+            completer: TabCompleter::default(),
+            candidates: Vec::new(),
+            selected: None,
+            tab_request: None,
+            cursor_to: None,
         }
     }
 }
@@ -219,6 +265,85 @@ impl ConsoleState {
 
     pub fn log(&self) -> &[String] {
         &self.log
+    }
+
+    /// The command line being typed.
+    pub fn input(&self) -> &str {
+        &self.input
+    }
+
+    /// Replaces the command line (the cursor goes to its end); ends a
+    /// completion cycle.
+    pub fn set_input(&mut self, line: impl Into<String>) {
+        self.input = line.into();
+        self.cursor_to = Some(self.input.len());
+        self.end_completion();
+    }
+
+    /// The completion candidates listed under the input line, and the one
+    /// inserted while cycling through them.
+    pub fn candidates(&self) -> (&[String], Option<usize>) {
+        (&self.candidates, self.selected)
+    }
+
+    /// Tab (Shift+Tab: `backwards`) with the cursor at byte `cursor` of
+    /// the input line (`None`: at its end), completed next frame.
+    pub fn request_tab(&mut self, cursor: Option<usize>, backwards: bool) {
+        self.tab_request = Some((cursor.unwrap_or(self.input.len()), backwards));
+    }
+
+    fn end_completion(&mut self) {
+        self.completer.reset();
+        self.candidates.clear();
+        self.selected = None;
+    }
+}
+
+/// The commands this session may run (name, clap definition).
+fn allowed_commands(world: &World) -> Vec<(String, Command)> {
+    let allowed = world.resource::<ConsoleState>().permission;
+    world
+        .resource::<ConsoleCommands>()
+        .0
+        .iter()
+        .filter(|(_, c)| c.level <= allowed)
+        .map(|(n, c)| (n.clone(), c.command.clone()))
+        .collect()
+}
+
+/// Tab on the console's input line at byte `cursor` (see
+/// [`crate::completion`]): the line, the cursor and the listed candidates
+/// change in [`ConsoleState`].
+pub fn tab_complete(world: &mut World, cursor: usize, backwards: bool) {
+    let (line, mut completer) = {
+        let mut s = world.resource_mut::<ConsoleState>();
+        (s.input.clone(), std::mem::take(&mut s.completer))
+    };
+    let cursor = (0..=cursor.min(line.len()))
+        .rev()
+        .find(|&i| line.is_char_boundary(i))
+        .unwrap_or(0);
+    let r = completer.tab(&line, cursor, backwards, |before| {
+        let commands = allowed_commands(world);
+        let refs: Vec<(&str, &Command)> = commands.iter().map(|(n, c)| (n.as_str(), c)).collect();
+        let providers = world.resource::<ConsoleValues>().0.clone();
+        crate::completion::complete(before, &refs, &mut |q| {
+            let p = providers.get(&(q.path.to_owned(), q.arg.to_owned()))?;
+            Some(p(world, q))
+        })
+    });
+    let mut s = world.resource_mut::<ConsoleState>();
+    s.completer = completer;
+    s.input = r.line;
+    s.cursor_to = Some(r.cursor);
+    s.candidates = r.candidates;
+    s.selected = r.selected;
+}
+
+/// Runs the Tab the overlay saw last frame.
+fn run_tab_request(world: &mut World) {
+    if let Some((cursor, backwards)) = world.resource_mut::<ConsoleState>().tab_request.take() {
+        tab_complete(world, cursor, backwards);
     }
 }
 
@@ -300,6 +425,12 @@ fn toggle_console(keys: Res<ButtonInput<KeyCode>>, mut state: ResMut<ConsoleStat
     }
 }
 
+/// The input line's egui id (its cursor is set after a completion).
+const INPUT_ID: &str = "ocw-console-input";
+
+/// How many completion candidates the list under the input line shows.
+const MAX_LISTED: usize = 80;
+
 fn console_ui(mut contexts: EguiContexts, mut state: ResMut<ConsoleState>) -> Result {
     if !state.open {
         return Ok(());
@@ -307,11 +438,28 @@ fn console_ui(mut contexts: EguiContexts, mut state: ResMut<ConsoleState>) -> Re
     let ctx = contexts.ctx_mut()?;
     let width = ctx.content_rect().width() - 24.0;
     let state = &mut *state;
+    let listing = !state.candidates.is_empty();
+    let input_id = egui::Id::new(INPUT_ID);
+    // After a completion (or `console input`): the cursor where it ends.
+    if let Some(at) = state.cursor_to.take() {
+        let at = if state.input.is_char_boundary(at) {
+            at
+        } else {
+            state.input.len()
+        };
+        let chars = state.input[..at].chars().count();
+        let mut edit = egui::text_edit::TextEditState::load(ctx, input_id).unwrap_or_default();
+        edit.cursor
+            .set_char_range(Some(egui::text::CCursorRange::one(
+                egui::text::CCursor::new(chars),
+            )));
+        edit.store(ctx, input_id);
+    }
     egui::Window::new("Console")
         .title_bar(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_TOP, [0.0, 8.0])
-        .fixed_size([width, 300.0])
+        .fixed_size([width, if listing { 380.0 } else { 300.0 }])
         .frame(
             egui::Frame::new()
                 .fill(egui::Color32::from_black_alpha(220))
@@ -332,32 +480,59 @@ fn console_ui(mut contexts: EguiContexts, mut state: ResMut<ConsoleState>) -> Re
                         );
                     }
                 });
-            let response = ui.add(
-                egui::TextEdit::singleline(&mut state.input)
-                    .font(egui::TextStyle::Monospace)
-                    .desired_width(f32::INFINITY)
-                    .hint_text("command"),
-            );
+            // Tab and Shift+Tab stay in the line (no focus change, no tab
+            // character): they complete.
+            let output = egui::TextEdit::singleline(&mut state.input)
+                .id(input_id)
+                .font(egui::TextStyle::Monospace)
+                .desired_width(f32::INFINITY)
+                .hint_text("command (Tab completes)")
+                .event_filter(egui::EventFilter {
+                    tab: true,
+                    horizontal_arrows: true,
+                    vertical_arrows: true,
+                    escape: false,
+                })
+                .show(ui);
+            let response = &output.response.response;
             response.request_focus();
+            let typed = response.changed();
             state.input.retain(|c| c != '`');
-            let (enter, up, down) = ui.input(|i| {
+            let cursor_chars = output
+                .cursor_range
+                .map_or(usize::MAX, |r| r.primary.index.0);
+            let (enter, up, down, tab, shift) = ui.input(|i| {
                 (
                     i.key_pressed(egui::Key::Enter),
                     i.key_pressed(egui::Key::ArrowUp),
                     i.key_pressed(egui::Key::ArrowDown),
+                    i.key_pressed(egui::Key::Tab),
+                    i.modifiers.shift,
                 )
             });
+            if typed {
+                state.end_completion();
+            }
             if enter && !state.input.trim().is_empty() {
                 let line = std::mem::take(&mut state.input);
                 state.history.push(line.clone());
                 state.history_pos = None;
                 state.pending.push_back(line);
+                state.end_completion();
+            } else if tab {
+                let cursor = state
+                    .input
+                    .char_indices()
+                    .nth(cursor_chars)
+                    .map_or(state.input.len(), |(b, _)| b);
+                state.request_tab(Some(cursor), shift);
             } else if up && !state.history.is_empty() {
                 let pos = state
                     .history_pos
                     .map_or(state.history.len() - 1, |p| p.saturating_sub(1));
                 state.history_pos = Some(pos);
                 state.input = state.history[pos].clone();
+                state.end_completion();
             } else if down && let Some(p) = state.history_pos {
                 if p + 1 < state.history.len() {
                     state.history_pos = Some(p + 1);
@@ -366,9 +541,44 @@ fn console_ui(mut contexts: EguiContexts, mut state: ResMut<ConsoleState>) -> Re
                     state.history_pos = None;
                     state.input.clear();
                 }
+                state.end_completion();
+            }
+            if listing {
+                candidate_list(ui, &state.candidates, state.selected);
             }
         });
     Ok(())
+}
+
+/// The completion candidates under the input line, the inserted one
+/// highlighted.
+fn candidate_list(ui: &mut egui::Ui, candidates: &[String], selected: Option<usize>) {
+    egui::ScrollArea::vertical()
+        .id_salt("ocw-console-candidates")
+        .max_height(64.0)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 14.0;
+                for (i, c) in candidates.iter().take(MAX_LISTED).enumerate() {
+                    let text = egui::RichText::new(c).monospace();
+                    let text = if Some(i) == selected {
+                        text.color(egui::Color32::BLACK)
+                            .background_color(egui::Color32::from_rgb(240, 200, 80))
+                    } else {
+                        text.color(egui::Color32::from_rgb(150, 200, 255))
+                    };
+                    ui.label(text);
+                }
+                if candidates.len() > MAX_LISTED {
+                    ui.label(
+                        egui::RichText::new(format!("… {} more", candidates.len() - MAX_LISTED))
+                            .monospace()
+                            .color(egui::Color32::GRAY),
+                    );
+                }
+            });
+        });
 }
 
 fn register_builtin_commands(app: &mut App) {
@@ -407,17 +617,31 @@ fn register_builtin_commands(app: &mut App) {
     .console_command(ConsoleCommand::new(
         User,
         Command::new("console")
-            .about("Open, close or toggle the console overlay")
+            .about("Open, close or toggle the console overlay; 'input TEXT' types TEXT into it, 'tab' presses Tab (scripts, tests)")
             .arg(
                 Arg::new("action")
-                    .value_parser(["open", "close", "toggle"])
+                    .value_parser(["open", "close", "toggle", "input", "tab"])
                     .default_value("toggle"),
-            ),
+            )
+            .arg(Arg::new("text").help("input: the command line to type")),
         |world, m| {
+            let action = m.get_one::<String>("action").map(String::as_str);
+            if action == Some("tab") {
+                // After this command's own line went into the log.
+                let at = world.resource::<ConsoleState>().input.len();
+                tab_complete(world, at, false);
+                world.resource_mut::<ConsoleState>().open = true;
+                return Ok(String::new());
+            }
             let mut state = world.resource_mut::<ConsoleState>();
-            state.open = match m.get_one::<String>("action").map(String::as_str) {
+            state.open = match action {
                 Some("open") => true,
                 Some("close") => false,
+                Some("input") => {
+                    let text = m.get_one::<String>("text").cloned().unwrap_or_default();
+                    state.set_input(text);
+                    true
+                }
                 _ => !state.open,
             };
             Ok(String::new())
@@ -519,6 +743,36 @@ fn register_builtin_commands(app: &mut App) {
                 "elevation profile {}",
                 if show.0 { "on" } else { "off" }
             ))
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        User,
+        Command::new("hud.gps")
+            .about("Show or hide the GPS line (bottom left: latitude, longitude, altitude)")
+            .arg(Arg::new("on").value_parser(["on", "off"])),
+        |world, m| {
+            let mut show = world.resource_mut::<ShowGps>();
+            show.0 = match m.get_one::<String>("on").map(String::as_str) {
+                Some("on") => true,
+                Some(_) => false,
+                None => !show.0,
+            };
+            Ok(format!("GPS line {}", if show.0 { "on" } else { "off" }))
+        },
+    ))
+    .console_command(ConsoleCommand::new(
+        User,
+        Command::new("rider.gps")
+            .about("Show the rider's GPS position (lat, lon, altitude; the HUD's GPS line)"),
+        |world, _| match world
+            .get_resource::<crate::RideView>()
+            .and_then(|v| v.position)
+        {
+            Some((lat, lon, alt)) => Ok(format!(
+                "{}\n{lat:.6}, {lon:.6}",
+                crate::hud::gps_line(lat, lon, alt)
+            )),
+            None => Err("no GPS position (this route has no geographic origin)".into()),
         },
     ))
     .console_command(ConsoleCommand::new(
@@ -650,7 +904,18 @@ fn register_builtin_commands(app: &mut App) {
             world.write_message(AppExit::Success);
             Ok("bye".into())
         },
-    ));
+    ))
+    // `help COMMAND`: the commands this session may run.
+    .console_values("help", "command", |world, _| {
+        let allowed = world.resource::<ConsoleState>().permission;
+        world
+            .resource::<ConsoleCommands>()
+            .0
+            .iter()
+            .filter(|(_, c)| c.level <= allowed)
+            .map(|(n, _)| n.clone())
+            .collect()
+    });
 }
 
 #[cfg(test)]
@@ -816,5 +1081,101 @@ mod tests {
         assert!(!app.world().resource::<CameraTilt>().enabled);
         // help lists commands.
         assert!(run(&mut app, "help").iter().any(|l| l.starts_with("echo")));
+    }
+
+    fn tab(app: &mut App, line: &str) -> (String, Vec<String>) {
+        app.world_mut()
+            .resource_mut::<ConsoleState>()
+            .set_input(line);
+        tab_complete(app.world_mut(), line.len(), false);
+        let s = app.world().resource::<ConsoleState>();
+        (s.input().to_owned(), s.candidates().0.to_vec())
+    }
+
+    /// Tab in the console: names, values from the clap definition and
+    /// from a provider, and never a command the session may not run
+    /// (spec §2.9: no dev commands on a remote server).
+    #[test]
+    fn tab_completes_by_permission_and_providers() {
+        let mut app = app();
+        app.console_command(ConsoleCommand::new(
+            Permission::User,
+            Command::new("pick").arg(Arg::new("thing")),
+            |_, _| Ok(String::new()),
+        ))
+        .console_values("pick", "thing", |_, q| {
+            assert_eq!(q.words, ["pick"]);
+            vec!["apple".into(), "apricot".into(), "banana".into()]
+        });
+        assert_eq!(tab(&mut app, "hud.u").0, "hud.units ");
+        assert_eq!(tab(&mut app, "hud.units i").0, "hud.units imperial ");
+        assert_eq!(tab(&mut app, "pick b").0, "pick banana ");
+        let (line, listed) = tab(&mut app, "pick a");
+        assert_eq!((line.as_str(), listed.len()), ("pick ap", 2));
+        // The next Tab inserts the first of the list.
+        tab_complete(app.world_mut(), line.len(), false);
+        assert_eq!(
+            app.world().resource::<ConsoleState>().input(),
+            "pick apple "
+        );
+        assert_eq!(
+            app.world().resource::<ConsoleState>().candidates().1,
+            Some(0)
+        );
+        // Dev commands: only where they can run.
+        assert_eq!(tab(&mut app, "dev.").0, "dev.");
+        assert!(tab(&mut app, "help dev.").1.is_empty());
+        app.world_mut().resource_mut::<ConsoleState>().permission = Permission::Dev;
+        assert_eq!(tab(&mut app, "dev.").0, "dev.thing ");
+        assert_eq!(tab(&mut app, "help dev.t").0, "help dev.thing ");
+        // Typing ends the list.
+        app.world_mut()
+            .resource_mut::<ConsoleState>()
+            .set_input("x");
+        assert!(
+            app.world()
+                .resource::<ConsoleState>()
+                .candidates()
+                .0
+                .is_empty()
+        );
+        // The overlay's Tab is run the next frame; `console input` / `tab`
+        // do the same from scripts.
+        run(&mut app, "console input \"hud.p\"");
+        app.world_mut()
+            .resource_mut::<ConsoleState>()
+            .request_tab(None, false);
+        app.update();
+        assert_eq!(
+            app.world().resource::<ConsoleState>().input(),
+            "hud.profile "
+        );
+        run(&mut app, "console input hud");
+        run(&mut app, "console tab");
+        let s = app.world().resource::<ConsoleState>();
+        assert!(s.is_open());
+        assert_eq!(s.input(), "hud");
+        assert_eq!(
+            s.candidates().0,
+            ["hud", "hud.gps", "hud.profile", "hud.units"]
+        );
+    }
+
+    /// The GPS line's commands (shared by both apps since spec 3.40):
+    /// `hud.gps` switches the line, `rider.gps` prints the position.
+    #[test]
+    fn gps_commands() {
+        let mut app = app();
+        assert!(app.world().resource::<ShowGps>().0, "on by default");
+        assert_eq!(run(&mut app, "hud.gps off")[1], "GPS line off");
+        assert!(!app.world().resource::<ShowGps>().0);
+        assert_eq!(run(&mut app, "hud.gps")[1], "GPS line on");
+        assert!(run(&mut app, "rider.gps")[1].starts_with("error: no GPS position"));
+        let mut view = crate::RideView::new(ocw_world::Route::test_loop());
+        view.position = Some((47.139961, 9.521512, 455.2));
+        app.insert_resource(view);
+        let out = run(&mut app, "rider.gps");
+        assert_eq!(out[1], "47.13996° N  9.52151° E  455 m");
+        assert_eq!(out[2], "47.139961, 9.521512");
     }
 }

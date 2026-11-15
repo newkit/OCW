@@ -52,11 +52,14 @@ fn switched(world: &World) -> bool {
 
 fn reset_key(
     keys: Res<ButtonInput<KeyCode>>,
+    bindings: Option<Res<ocw_ui::bindings::ActiveBindings>>,
     current: Option<Res<crate::ride::CurrentRide>>,
     console: Option<ResMut<ocw_render::console::ConsoleState>>,
     mut exit: MessageWriter<AppExit>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyR) {
+    // R, or the key bound to Restart (spec §3.2.1 M9).
+    use ocw_client::bindings::Action;
+    if !ocw_ui::bindings::key_just_pressed(bindings.as_deref(), Action::Restart, &keys) {
         return;
     }
     if let (Some(c), Some(mut console)) = (current, console)

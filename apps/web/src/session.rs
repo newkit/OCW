@@ -72,6 +72,9 @@ pub struct SessionConfig {
     /// The signed-in rider's access token for a remote ride's hello (spec
     /// §9.1; this tab's, from the account's sign-in).
     pub access_token: Option<String>,
+    /// Why voice is off on this page (the page configuration, B8a: the
+    /// preview has no voice server); `None`: the page's voice shim.
+    pub voice_off: Option<String>,
 }
 
 impl Default for SessionConfig {
@@ -90,6 +93,7 @@ impl Default for SessionConfig {
             autodrive: true,
             quality: None,
             access_token: None,
+            voice_off: None,
         }
     }
 }

@@ -20,6 +20,7 @@
 #   video        record this many seconds of game time (25 fps frame capture)
 #   warmup       seconds of game time before the video starts (default 3)
 #   riders       content of riders.toml (rider profiles) for this scene
+#   history      a training history file (repo path) for the default rider
 #   max_video_mb --pick re-encodes larger videos (default 3)
 #   pick         false: never picked (--pick) for the build history
 #
@@ -42,6 +43,20 @@ name = "console-overlay"
 description = "Console overlay over the Hills test route: the command list from `help`"
 args = ["--route", "hills", "--bots", "4"]
 cmds = ["help", "console open"]
+shot = 6
+
+[[scene]]
+name = "console-completion"
+description = "Console Tab completion over the Hills test route (spec 3.40): `hud.` + Tab lists the candidates under the input line"
+args = ["--route", "hills", "--bots", "4"]
+at = ["2=console input hud.", "2.5=console tab"]
+shot = 5
+
+[[scene]]
+name = "console-completion-cycle"
+description = "Console Tab completion (spec 3.40): `set display.` + Tab lists the setting keys, two more Tabs insert the second one (marked in the list)"
+args = ["--route", "hills", "--bots", "4"]
+at = ["2=console input \"set display.\"", "2.5=console tab", "3=console tab", "3.5=console tab"]
 shot = 6
 
 [[scene]]
@@ -127,6 +142,48 @@ args = ["--route", "hills", "--bots", "4"]
 at = ["2=menu open", "2.4=menu down", "2.8=menu select"]
 shot = 4.5
 
+# --- Training history, rebinding, accessibility (spec §14 Phase 7, M9) ------
+
+[[scene]]
+name = "menu-history-rides"
+description = "Navi -> Training history -> Rides: the rider's rides newest first (demo history, paged)"
+args = ["--route", "hills", "--bots", "2"]
+history = "scripts/fixtures/history-demo.json"
+at = ["2=menu open", "2.4=menu down", "2.8=menu down", "3.2=menu down", "3.6=menu down", "4=menu select", "4.4=menu down", "4.8=menu down", "5.2=menu select", "5.6=menu select"]
+shot = 7
+
+[[scene]]
+name = "menu-history-ride"
+description = "Training history: a ride's page with its numbers and the power curve against the personal bests"
+args = ["--route", "hills", "--bots", "2"]
+history = "scripts/fixtures/history-demo.json"
+at = ["2=menu open", "2.4=menu down", "2.8=menu down", "3.2=menu down", "3.6=menu down", "4=menu select", "4.4=menu down", "4.8=menu down", "5.2=menu select", "5.6=menu select", "6=menu select"]
+shot = 7.5
+
+[[scene]]
+name = "menu-bindings-conflict"
+description = "Settings -> Controls -> Keys and buttons -> Camera, video, app: the camera on V, a conflict with the video key"
+args = ["--route", "hills", "--bots", "2"]
+cmds = ["set keys.camera V"]
+at = ["2=menu open", "2.4=menu down", "2.8=menu down", "3.2=menu down", "3.6=menu down", "4=menu down", "4.4=menu select", "4.8=menu down", "5.2=menu select", "5.6=menu down", "6=menu select", "6.4=menu down", "6.8=menu down", "7.2=menu select"]
+shot = 8.5
+
+[[scene]]
+name = "menu-accessibility"
+description = "Settings -> Display -> Accessibility with HUD 150 %, colour-safe colours and high contrast on"
+args = ["--route", "hills", "--bots", "2"]
+cmds = ["set display.ui_scale 150", "set display.palette colour-safe", "set display.high_contrast on"]
+at = ["2=menu open", "2.4=menu down", "2.8=menu down", "3.2=menu down", "3.6=menu down", "4=menu down", "4.4=menu select", "4.8=menu down", "5.2=menu down", "5.6=menu down", "6=menu down", "6.4=menu select", "6.8=menu down", "7.2=menu down", "7.6=menu down", "8=menu down", "8.4=menu select"]
+shot = 9.5
+
+[[scene]]
+name = "access-hud"
+description = "Accessibility in effect: HUD at 150 %, high contrast, colour-safe workout zones (sweet spot workout)"
+args = ["--route", "hills", "--bots", "4"]
+cmds = ["set display.ui_scale 150", "set display.palette colour-safe", "set display.high_contrast on"]
+at = ["1=workout start --example sweet-spot"]
+shot = 6
+
 # --- Liechtenstein world package (world = true) -----------------------------
 # Vaduz-Malbun route file: Vaduz (km 0, 458 m), Steg tunnel (km 8.75-9.4),
 # Malbun (km 14, 1607 m). Free ride: local X east, Z south of the package
@@ -148,6 +205,13 @@ args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", 
 at = ["2.5=event race --km 3", "2.5=camera.orbit 165 22 16", "8.5=camera.orbit 140 18 12"]
 warmup = 3
 video = 8
+
+[[scene]]
+name = "hud-gps-route"
+description = "Route ride on the package's Vaduz-Malbun route (--world --route): the GPS line bottom left under the elevation profile (missing in route rides from fae1547 to spec 3.40)"
+world = true
+args = ["--world", "{world}", "--route", "Vaduz - Malbun", "--no-neighbours", "--bots", "2"]
+shot = 12
 
 [[scene]]
 name = "camera-chase"
@@ -2147,3 +2211,101 @@ args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-243
 at = ["0.5=time pause", "0.5=time 2026-07-15 17:30", "0.5=hud off", "1=camera.path key -3400 1100 3600 30 -18", "1=camera.path key -2600 1000 2200 70 -16", "1=camera.path key -1500 1650 1200 115 -18", "1=camera.path key -500 1900 1900 210 -24", "1.5=camera.path play --seconds 100000", "6=camera.path play --seconds 16 --ease smooth"]
 warmup = 6
 video = 16
+
+# --- Helmets (spec §2.6, v3.40): render before / after ----------------------
+# The character corner's mirror with each helmet (front in the mirror, the back
+# over the shoulder; `-side`: the rider turned for the profile), with hair,
+# caps and glasses under them; a rider from behind, a TT rider in position and
+# a group in the chase camera on the Hills test route.
+
+[[scene]]
+name = "helmet-mirror-road"
+description = "Helmets (spec §2.6): the base vented road helmet in the character corner's mirror – red gloss shell, short hair, sport glasses"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+at = ["2=kit.design --jersey #1E88E5 --second #F2F2EE --helmet #D32F2F --helmet-finish gloss", "2.6=workshop open", "3.2=workshop mirror"]
+shot = 24
+
+[[scene]]
+name = "helmet-mirror-road-side"
+description = "Helmets (spec §2.6): the base road helmet in profile at the mirror (rider turned) – shell, vents, rear profile, retention band"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+at = ["2=kit.design --jersey #1E88E5 --second #F2F2EE --helmet #D32F2F --helmet-finish gloss", "2.6=workshop open", "3.2=workshop mirror", "6=workshop orbit 70"]
+shot = 26
+
+[[scene]]
+name = "helmet-mirror-light"
+description = "Helmets (spec §2.6): the lightweight vented road helmet at the mirror – white gloss shell, ponytail, round glasses"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+at = ["2=hearts.grant 2000", "2.1=workshop.buy helmet.light.top", "2.2=character --hair 4 --glasses 3", "2.3=kit.design --jersey #43A047 --second #1E1E22 --helmet #F2F2EE --helmet-finish gloss", "2.6=workshop open", "3.2=workshop mirror"]
+shot = 24
+
+[[scene]]
+name = "helmet-mirror-light-side"
+description = "Helmets (spec §2.6): the lightweight road helmet in profile at the mirror, the ponytail out under the retention band"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+at = ["2=hearts.grant 2000", "2.1=workshop.buy helmet.light.top", "2.2=character --hair 4 --glasses 3", "2.3=kit.design --jersey #43A047 --second #1E1E22 --helmet #F2F2EE --helmet-finish gloss", "2.6=workshop open", "3.2=workshop mirror", "6=workshop orbit 70"]
+shot = 26
+
+[[scene]]
+name = "helmet-mirror-aero-road"
+description = "Helmets (spec §2.6): the aero road helmet at the mirror – matte black shell, long hair, sport glasses"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+at = ["2=hearts.grant 2000", "2.1=workshop.buy helmet.aero-road.top", "2.2=character --hair 3", "2.3=kit.design --jersey #FDD835 --second #1E1E22 --helmet #1E1E22 --helmet-finish matte", "2.6=workshop open", "3.2=workshop mirror"]
+shot = 24
+
+[[scene]]
+name = "helmet-mirror-aero-road-side"
+description = "Helmets (spec §2.6): the aero road helmet in profile at the mirror"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+at = ["2=hearts.grant 2000", "2.1=workshop.buy helmet.aero-road.top", "2.2=character --hair 3", "2.3=kit.design --jersey #FDD835 --second #1E1E22 --helmet #1E1E22 --helmet-finish matte", "2.6=workshop open", "3.2=workshop mirror", "6=workshop orbit 70"]
+shot = 26
+
+[[scene]]
+name = "helmet-mirror-tt"
+description = "Helmets (spec §2.6): the time-trial helmet at the mirror – the jersey's stripes on the shell, the visor, a bun"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+at = ["2=hearts.grant 2000", "2.1=workshop.buy helmet.tt.top", "2.2=character --hair 5", "2.3=kit.design --pattern stripes --jersey #E53935 --second #F2F2EE --third #1E1E22 --helmet-pattern on --helmet-finish gloss", "2.6=workshop open", "3.2=workshop mirror"]
+shot = 24
+
+[[scene]]
+name = "helmet-mirror-tt-side"
+description = "Helmets (spec §2.6): the time-trial helmet in profile at the mirror – the long tail, the visor"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+at = ["2=hearts.grant 2000", "2.1=workshop.buy helmet.tt.top", "2.2=character --hair 5", "2.3=kit.design --pattern stripes --jersey #E53935 --second #F2F2EE --third #1E1E22 --helmet-pattern on --helmet-finish gloss", "2.6=workshop open", "3.2=workshop mirror", "6=workshop orbit 70"]
+shot = 26
+
+[[scene]]
+name = "helmet-mirror-cap"
+description = "Helmets (spec §2.6): the road helmet over a cotton cap at the mirror, turned a little – the brim out under the helmet's front"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+at = ["2=hearts.grant 2000", "2.1=workshop.buy cap.cotton.entry", "2.2=character --hair 2", "2.3=kit.design --jersey #8E24AA --second #F2F2EE --helmet #F2F2EE --helmet-finish matte", "2.6=workshop open", "3.2=workshop mirror", "6=workshop orbit 35"]
+shot = 26
+
+[[scene]]
+name = "helmet-road-behind"
+description = "Helmets (spec §2.6): the own rider from behind on the Hills route (orbit camera 2.6 m): the road helmet's rear – vents, retention band, straps – with the pattern on the shell"
+args = ["--route", "hills", "--bots", "0", "--power", "230"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 14:00", "1=kit.design --pattern chevrons --jersey #1E88E5 --second #F2F2EE --third #E53935 --helmet-pattern on --helmet-finish gloss", "2=hud off", "2.5=camera.orbit 12 14 2.6"]
+shot = 9
+
+[[scene]]
+name = "helmet-tt-position"
+description = "Helmets (spec §2.6): a TT rider in position on the TT bike from the side (2.6 m): the time-trial helmet's tail along the back, the visor"
+args = ["--route", "hills", "--bots", "0", "--power", "320"]
+riders = """
+active = "TT"
+
+[[rider]]
+name = "TT"
+weight_kg = 70.0
+bike = "tt"
+"""
+at = ["0.5=time pause", "0.5=time 2026-06-21 14:00", "1=hearts.grant 2000", "1.1=workshop.buy helmet.tt.top", "1.2=kit.design --jersey #E53935 --second #1E1E22 --helmet #F2F2EE --helmet-finish gloss", "2=hud off", "2.5=camera.orbit 95 4 2.6"]
+shot = 9
+
+[[scene]]
+name = "helmet-group-chase"
+description = "Helmets (spec §2.6): a race start on the Hills route from behind in the chase camera – the bots' road helmets in their colours, gloss and matte, some with the pattern"
+args = ["--route", "hills", "--bots", "8", "--power", "250"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 14:00", "2=hud off", "2.5=event race --km 3", "2.5=camera.orbit 10 16 6"]
+shot = 9

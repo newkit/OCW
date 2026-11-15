@@ -30,6 +30,8 @@ impl Plugin for HudPlugin {
             .init_resource::<ShowHud>()
             .init_resource::<Units>()
             .init_resource::<ShowProfile>()
+            .init_resource::<ShowGps>()
+            .init_resource::<HudGpsLine>()
             .init_resource::<LookAhead>()
             .init_resource::<AppKeys>()
             .add_systems(Startup, (spawn_hud, spawn_recording))
@@ -43,7 +45,8 @@ impl Plugin for HudPlugin {
                     show_hud,
                 )
                     .chain(),
-            );
+            )
+            .add_systems(PostUpdate, fit_top_panel);
         add_version_label(app);
     }
 }
@@ -163,6 +166,52 @@ impl Units {
     }
 }
 
+/// The bike computer's panel at the top left.
+#[derive(Component)]
+pub struct HudTopPanel;
+
+/// The column at the top right: the timestamp, REC, the app message, the
+/// FPS counter.
+#[derive(Component)]
+pub struct HudTopRight;
+
+/// The margin between the HUD's top panels and the window edges (px).
+const TOP_MARGIN_PX: f32 = 12.0;
+/// The narrowest the top panel gets (px): its text wraps below that.
+const TOP_PANEL_MIN_PX: f32 = 160.0;
+
+/// The widest the top-left panel may be (in UI px, as `Val::Px`), so it
+/// ends a margin left of the top-right column: `window_px` and `right_px`
+/// are physical pixels, `inverse_scale` the UI's (window scale factor ×
+/// `UiScale`)⁻¹ – the HUD size setting (spec §3.2.1 M9) scales both
+/// panels, never into each other.
+pub fn top_panel_max_px(window_px: f32, right_px: f32, inverse_scale: f32) -> f32 {
+    ((window_px - right_px) * inverse_scale - 3.0 * TOP_MARGIN_PX).max(TOP_PANEL_MIN_PX)
+}
+
+/// Keeps the top-left panel clear of the top-right column (regression:
+/// at 150 % HUD size the bike computer ran into the FPS counter).
+fn fit_top_panel(
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    right: Query<&ComputedNode, With<HudTopRight>>,
+    mut panel: Query<&mut Node, With<HudTopPanel>>,
+) {
+    let (Ok(w), Ok(r)) = (windows.single(), right.single()) else {
+        return;
+    };
+    let max = top_panel_max_px(
+        w.resolution.physical_width() as f32,
+        r.size().x,
+        r.inverse_scale_factor(),
+    );
+    for mut n in &mut panel {
+        let want = Val::Px(max.floor());
+        if n.max_width != want {
+            n.max_width = want;
+        }
+    }
+}
+
 /// The HUD's panels (hidden with `hud off`).
 #[derive(Component)]
 pub(crate) struct HudPanel;
@@ -180,6 +229,23 @@ fn show_hud(show: Res<ShowHud>, mut panels: Query<&mut Visibility, With<HudPanel
         }
     }
 }
+
+/// Whether the GPS line is shown (console command `hud.gps`, setting
+/// `display.gps`; on by default). The line needs a position: routes
+/// without a geographic origin (the built-in test routes) have none.
+#[derive(Resource)]
+pub struct ShowGps(pub bool);
+
+impl Default for ShowGps {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
+/// The GPS line the HUD shows now (`None`: hidden) – for the browser
+/// test's page hook and the tests.
+#[derive(Resource, Default, Debug, Clone, PartialEq)]
+pub struct HudGpsLine(pub Option<String>);
 
 /// Whether the elevation profile is shown (console command `hud.profile`).
 #[derive(Resource)]
@@ -342,7 +408,8 @@ fn spawn_hud(mut commands: Commands) {
                 top: px(12),
                 left: px(12),
                 // Never wider than the window (12 px margins at 400 px and
-                // up); Bevy wraps text that is still too long.
+                // up); Bevy wraps text that is still too long. Narrowed to
+                // the room left of the top-right column ([`fit_top_panel`]).
                 max_width: Val::Vw(94.0),
                 padding: UiRect::all(px(10)),
                 flex_direction: FlexDirection::Column,
@@ -352,6 +419,7 @@ fn spawn_hud(mut commands: Commands) {
             },
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
             HudPanel,
+            HudTopPanel,
         ))
         .with_children(|hud| {
             hud.spawn((
@@ -610,15 +678,18 @@ pub fn recording_label(seconds: f64) -> String {
 /// (e.g. "Video saved: ...") and the FPS counter.
 fn spawn_recording(mut commands: Commands) {
     commands
-        .spawn(Node {
-            position_type: PositionType::Absolute,
-            top: px(12),
-            right: px(12),
-            flex_direction: FlexDirection::Column,
-            align_items: AlignItems::FlexEnd,
-            row_gap: px(4),
-            ..default()
-        })
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                top: px(12),
+                right: px(12),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::FlexEnd,
+                row_gap: px(4),
+                ..default()
+            },
+            HudTopRight,
+        ))
         .with_children(|top| {
             top.spawn(crate::stamp::stamp_bundle());
             top.spawn((
@@ -742,16 +813,23 @@ pub fn gps_line(lat: f64, lon: f64, altitude_m: f64) -> String {
     )
 }
 
-/// Shows the GPS line while the position is known (not on test routes).
+/// Shows the GPS line while the position is known (not on test routes)
+/// and the line is on ([`ShowGps`]).
 fn update_gps(
     view: Res<RideView>,
+    show: Res<ShowGps>,
+    mut shown: ResMut<HudGpsLine>,
     mut boxes: Query<&mut Node, With<HudGps>>,
     mut texts: Query<&mut Text, With<HudGpsText>>,
 ) {
     let (Ok(mut node), Ok(mut text)) = (boxes.single_mut(), texts.single_mut()) else {
         return;
     };
-    let display = if view.position.is_some() {
+    let line = view
+        .position
+        .filter(|_| show.0)
+        .map(|(lat, lon, alt)| gps_line(lat, lon, alt));
+    let display = if line.is_some() {
         Display::Flex
     } else {
         Display::None
@@ -759,11 +837,13 @@ fn update_gps(
     if node.display != display {
         node.display = display;
     }
-    if let Some((lat, lon, alt)) = view.position {
-        let line = gps_line(lat, lon, alt);
-        if text.0 != line {
-            text.0 = line;
-        }
+    if let Some(line) = &line
+        && text.0 != *line
+    {
+        text.0.clone_from(line);
+    }
+    if shown.0 != line {
+        shown.0 = line;
     }
 }
 
@@ -993,6 +1073,35 @@ fn update_hud(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression (HUD at 150 %, `access-hud`): the top-left panel ran into
+    /// the FPS counter. For HUD sizes 100 – 200 %, window widths and
+    /// top-right columns of any width the panel ends a margin left of the
+    /// column (in physical pixels).
+    #[test]
+    fn the_top_panel_stays_clear_of_the_top_right_column() {
+        for window in [1280.0f32, 1920.0, 2560.0] {
+            for scale in [1.0f32, 1.25, 1.5, 1.75, 2.0] {
+                let inv = 1.0 / scale;
+                for right_logical in [120.0f32, 230.0, 320.0] {
+                    let right = right_logical * scale;
+                    let max = top_panel_max_px(window, right, inv);
+                    let panel_end = (TOP_MARGIN_PX + max) * scale;
+                    let column_start = window - TOP_MARGIN_PX * scale - right;
+                    if max > TOP_PANEL_MIN_PX {
+                        assert!(
+                            panel_end + TOP_MARGIN_PX * scale <= column_start + 0.01,
+                            "{window} px, {scale}x, column {right}: {panel_end} > {column_start}"
+                        );
+                    }
+                }
+            }
+        }
+        // The case of the picture: 2560 px at 150 %, a 345 px column.
+        assert!((top_panel_max_px(2560.0, 345.0, 1.0 / 1.5) - 1440.67).abs() < 0.01);
+        // Never narrower than its minimum (the text wraps).
+        assert_eq!(top_panel_max_px(400.0, 380.0, 1.0), TOP_PANEL_MIN_PX);
+    }
     use ocw_world::Route;
 
     /// Spec §14 Phase 9, S6: the HUD shows the wind relative to the rider
@@ -1332,6 +1441,65 @@ mod tests {
         assert!((75..=85).contains(&super::small_chars_for(800.0)));
         assert!(super::small_chars_for(2560.0) > 250);
         assert_eq!(super::small_chars_for(10.0), 10);
+    }
+
+    /// Regression (spec 3.40): the GPS line shows while the view has a
+    /// position and the line is on, bottom left under the elevation
+    /// profile, and hides without a position.
+    #[test]
+    fn the_gps_line_follows_the_view() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(RideView::new(Route::test_loop()))
+            .init_resource::<ShowProfile>()
+            .init_resource::<ShowGps>()
+            .init_resource::<HudGpsLine>()
+            .add_systems(Startup, spawn_hud)
+            .add_systems(Update, update_gps);
+        app.update();
+        let state = |app: &mut App| {
+            let w = app.world_mut();
+            let display = w
+                .query_filtered::<&Node, With<HudGps>>()
+                .single(w)
+                .unwrap()
+                .display;
+            let text = w
+                .query_filtered::<&Text, With<HudGpsText>>()
+                .single(w)
+                .unwrap()
+                .0
+                .clone();
+            (display, text, w.resource::<HudGpsLine>().0.clone())
+        };
+        assert_eq!(state(&mut app).0, Display::None, "no position: hidden");
+        app.world_mut().resource_mut::<RideView>().position = Some((47.139961, 9.521512, 455.2));
+        app.update();
+        let line = "47.13996° N  9.52151° E  455 m".to_string();
+        assert_eq!(
+            state(&mut app),
+            (Display::Flex, line.clone(), Some(line.clone()))
+        );
+        // hud.gps off hides it, on shows it again.
+        app.world_mut().resource_mut::<ShowGps>().0 = false;
+        app.update();
+        assert_eq!(state(&mut app).0, Display::None);
+        assert_eq!(state(&mut app).2, None);
+        app.world_mut().resource_mut::<ShowGps>().0 = true;
+        app.update();
+        assert_eq!(state(&mut app).0, Display::Flex);
+        // Its place: in the bottom-left column, after the profile.
+        let w = app.world_mut();
+        let gps = w
+            .query_filtered::<Entity, With<HudGps>>()
+            .single(w)
+            .unwrap();
+        let parent = w.get::<ChildOf>(gps).unwrap().parent();
+        let node = w.get::<Node>(parent).unwrap();
+        assert!(node.bottom != Val::Auto && node.left != Val::Auto);
+        let kids: Vec<Entity> = w.get::<Children>(parent).unwrap().iter().collect();
+        assert_eq!(kids.last(), Some(&gps), "under the elevation profile");
+        assert!(kids.iter().any(|k| w.get::<ProfilePanel>(*k).is_some()));
     }
 
     #[test]

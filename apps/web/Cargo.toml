@@ -59,6 +59,11 @@ serde.workspace = true
 [features]
 webgpu = ["bevy/webgpu"]
 webgl2 = ["bevy/webgl2"]
+# The public preview (spec §14 Phase 10 B8a, `make web-preview`): worlds
+# must be signed by the web preview's root (`ocw-worldstore`'s
+# keys/preview-roots.json), which replaces the production roots; the
+# localhost-only trust options stay as they are.
+preview = []
 
 # In the browser only: Bevy's web platform glue; wasm-bindgen pinned to
 # the version in Cargo.lock, which the wasm-bindgen CLI of `make web` must
