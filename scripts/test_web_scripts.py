@@ -33,6 +33,7 @@ def load(name, file):
 
 ws = load("web_serve", "web-serve.py")
 rd = load("test_web_readme", "test-web-readme.py")
+site = load("web_preview_site", "web-preview-site.py")
 KEY = "ab" * 32
 
 
@@ -239,6 +240,37 @@ class ReadmeWalkthrough(unittest.TestCase):
         self.assertEqual(rd.http_errors(ev, 2), [])
         log = '127.0.0.1 - - [x] "GET / HTTP/1.1" 200 -\n127.0.0.1 - - [x] "GET /y HTTP/1.1" 404 -\n'
         self.assertEqual(len(rd.server_errors(log)), 1)
+
+
+class PreviewRideSizes(unittest.TestCase):
+    """The start page tells the download size and load time of each ride."""
+
+    def test_load_time(self):
+        self.assertEqual(site.load_time(1e5), "under 1 s")
+        self.assertEqual(site.load_time(100e6), "about 16 s")  # 800 Mbit at 50 Mbit/s
+        self.assertEqual(site.load_time(500e6), "about 80 s")
+        self.assertEqual(site.load_time(600e6), "about 2 min")
+
+    def test_every_ride_has_a_size(self):
+        found = [{"id": "europe/spain/tenerife", "name": "Tenerife", "bytes": 500_000_000,
+                  "routes": [{"name": "Puerto - Teide", "km": 42.04, "slug": "puerto-teide"}]}]
+        rides = site.start_rides(found, app=15_000_000)
+        self.assertEqual(len(rides), len(site.TEST_RIDES) + 2)
+        for r in rides:
+            self.assertIn("MB", r["size"])
+        self.assertIn("no world data", rides[0]["size"])
+        self.assertEqual(rides[2]["size"], "Download: 15 MB app + up to 500 MB world, streamed while you ride"
+                         " (all of it: about 82 s at 50 Mbit/s); cached for the next visit.")
+        self.assertEqual(rides[2]["text"], "42.0 km on real roads.")
+        self.assertNotIn("size", site.TEST_RIDES[0])  # the constant stays untouched
+
+    def test_app_bytes(self):
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, "ocw_web_bg.wasm").write_bytes(os.urandom(4000))
+            Path(d, "ocw_web.js").write_bytes(b"x" * 100)
+            n = site.app_bytes(d)
+            self.assertGreater(n, 4000)  # random bytes do not compress
+            self.assertEqual(site.app_bytes(os.path.join(d, "none")), 0)
 
 
 if __name__ == "__main__":

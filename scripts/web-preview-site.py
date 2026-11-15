@@ -27,6 +27,7 @@ size). Fails when the site is over --max-mb (GitHub Pages: 1 GB).
 """
 
 import argparse
+import gzip
 import hashlib
 import html
 import json
@@ -94,19 +95,62 @@ def worlds(index_dir, out):
     return found
 
 
-def start_rides(found):
-    rides = list(TEST_RIDES)
+# The line speed the start page's load times are given for (a typical
+# home connection; the time scales linearly).
+LINE_MBIT = 50
+
+
+def load_time(nbytes, mbit=LINE_MBIT):
+    """How long a download takes at `mbit` Mbit/s, rounded for people."""
+    s = nbytes * 8 / (mbit * 1e6)
+    if s < 1:
+        return "under 1 s"
+    if s < 90:
+        return f"about {s:.0f} s"
+    return f"about {s / 60:.0f} min"
+
+
+def app_bytes(build):
+    """The app's first download: both wasm modules are built, the page loads
+    one, served gzip-compressed by GitHub Pages (B8a) – so the larger
+    gzipped module plus its JS glue."""
+    best = 0
+    for wasm, js in (("ocw_web_bg.wasm", "ocw_web.js"), ("ocw_web_webgl2_bg.wasm", "ocw_web_webgl2.js")):
+        w = os.path.join(build, wasm)
+        if not os.path.isfile(w):
+            continue
+        with open(w, "rb") as f:
+            n = len(gzip.compress(f.read(), 6))
+        j = os.path.join(build, js)
+        n += os.path.getsize(j) if os.path.isfile(j) else 0
+        best = max(best, n)
+    return best
+
+
+def size_line(app, world=0):
+    """The ride card's download line: what is fetched on the first visit and
+    how long it takes at LINE_MBIT; everything is cached for the next one."""
+    if not world:
+        return (f"Download: {app / 1e6:.0f} MB (the app), {load_time(app)} at {LINE_MBIT} Mbit/s;"
+                " no world data.")
+    return (f"Download: {app / 1e6:.0f} MB app + up to {world / 1e6:.0f} MB world, streamed while you ride"
+            f" (all of it: {load_time(app + world)} at {LINE_MBIT} Mbit/s); cached for the next visit.")
+
+
+def start_rides(found, app=0):
+    rides = [dict(r, size=size_line(app)) for r in TEST_RIDES]
     for w in found:
         for r in w["routes"]:
             rides.append({
                 "title": f"{w['name']}: {r['name']}",
-                "text": f"{r['km']:.1f} km on real roads, streamed into the browser"
-                        f" ({w['bytes'] / 1e6:.0f} MB at most, cached for the next visit).",
+                "text": f"{r['km']:.1f} km on real roads.",
+                "size": size_line(app, w["bytes"]),
                 "query": f"world={w['id']}&route={r['slug']}",
             })
         rides.append({
             "title": f"{w['name']}: free ride",
             "text": "Ride wherever the roads go; junctions take their default exit.",
+            "size": size_line(app, w["bytes"]),
             "query": f"world={w['id']}&free=1",
         })
     return rides
@@ -282,7 +326,7 @@ def main():
         "worlds": "worlds/",
         "server": "", "voice": "", "signin": "",
         "build": a.build_id,
-        "start": start_rides(found),
+        "start": start_rides(found, app_bytes(a.build)),
     }
     with open(os.path.join(a.out, "config.json"), "w") as f:
         json.dump(config, f, indent=2, ensure_ascii=False)

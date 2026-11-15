@@ -89,6 +89,7 @@
     #ocw-start a.ride:hover, #ocw-start a.ride:focus { border-color: #88c0d0; background: #1d2632; outline: none; }
     #ocw-start a.ride b { display: block; font-size: 17px; color: #e5e9f0; }
     #ocw-start a.ride span { display: block; font-size: 14px; color: #aab4c3; margin-top: 4px; }
+    #ocw-start a.ride span.size { font-size: 12px; color: #88c0d0; margin-top: 6px; }
     #ocw-start .opts { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 14px; color: #c3cbd8; margin-top: 12px; }
     #ocw-start .opts input { accent-color: #88c0d0; }
     #ocw-start ul { margin: 0; padding-left: 20px; color: #c3cbd8; }
@@ -285,7 +286,7 @@
       const href = (q) => "?" + q + (webgl2.checked ? "&gpu=webgl2&quality=low" : "");
       const render = () => {
         box.innerHTML = config.start.map((r) =>
-          `<a class="ride" href="${esc(href(r.query))}"><b>${esc(r.title)}</b><span>${esc(r.text || "")}</span></a>`).join("");
+          `<a class="ride" href="${esc(href(r.query))}"><b>${esc(r.title)}</b><span>${esc(r.text || "")}</span>${r.size ? `<span class="size">${esc(r.size)}</span>` : ""}</a>`).join("");
       };
       webgl2.onchange = render;
       render();
