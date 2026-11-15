@@ -100,6 +100,7 @@ fn hello(name: &str) -> Vec<u8> {
         look: None,
         parts: Vec::new(),
         damage: None,
+        access_token: None,
     })))
 }
 

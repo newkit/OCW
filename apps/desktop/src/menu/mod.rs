@@ -141,6 +141,7 @@ mod tests {
             RidingAids,
             Graphics,
             RiderList,
+            Account,
             UnicornControls,
             Bindings,
             BindGroup(0),
@@ -168,7 +169,7 @@ mod tests {
                 | WeatherReal | RidingAids | Graphics | RiderList | UnicornControls | Bindings
                 | BindGroup(_) | BindReset | Accessibility | History | HistoryRides
                 | HistoryRide(_) | HistoryClimbs(_) | HistoryWeeks | HistoryMonths
-                | HistoryBests | EventRules => {}
+                | HistoryBests | EventRules | Account => {}
             }
         }
         all

@@ -45,6 +45,9 @@ bevy.workspace = true
 clap.workspace = true
 # `window.ocw.netStats()` (B3: the browser test reads the link's numbers).
 serde_json.workspace = true
+# Sign-in (spec §9.1): the flows' forms, the kept session.
+ocw-auth.workspace = true
+serde.workspace = true
 
 # The browser's GPU API (spec §14 Phase 10 B7): Bevy chooses WebGPU or
 # WebGL 2 when it is compiled (its shaders and limits differ), so the page
@@ -107,6 +110,10 @@ web-sys = { version = "0.3", features = [
     "Event",
     "EventTarget",
     "MediaDevices",
+    # Sign-in (spec §9.1): PKCE and state from the page's random source,
+    # the code out of the address bar.
+    "Crypto",
+    "History",
 ] }
 
 [lints]

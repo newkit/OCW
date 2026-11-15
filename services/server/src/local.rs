@@ -52,6 +52,10 @@ pub fn local_config(bots: u32, start_m: f64) -> ServerConfig {
         // Weather physics on in solo and free ride (spec §14 Phase 9, Q4);
         // the rider's `weather.physics` setting changes it.
         weather_physics: true,
+        // No sign-in on the local servers (spec §9.1): the single player
+        // rides as they are; a token in the hello is ignored.
+        auth: None,
+        auth_required: false,
     }
 }
 
@@ -303,6 +307,7 @@ mod tests {
                 look: None,
                 parts: Vec::new(),
                 damage: None,
+                access_token: None,
             }))))
             .unwrap();
         let mut welcomed = false;
@@ -337,6 +342,7 @@ mod tests {
             look: None,
             parts: Vec::new(),
             damage: None,
+            access_token: None,
         }))));
         let welcome = s.drain();
         // The welcome, then the bot's look (its kit design, spec §14
@@ -376,6 +382,7 @@ mod tests {
             look: None,
             parts: Vec::new(),
             damage: None,
+            access_token: None,
         })))
     }
 

@@ -199,6 +199,8 @@ pub struct ClientCore {
     /// (Phase 12 Q6; never for anonymous riders).
     damage: crate::damage::DamageClient,
     carried: Option<v1::DamageState>,
+    /// The signed-in rider's access token for the hello (spec §9.1).
+    access_token: Option<String>,
 }
 
 /// Steering mode before the menu opened (spec §3.2.1), restored on closing.
@@ -267,6 +269,7 @@ impl ClientCore {
             hit_warning: true,
             damage: Default::default(),
             carried: None,
+            access_token: None,
             route,
         }
     }
@@ -490,7 +493,13 @@ impl ClientCore {
             // Part ids only: the server has its own catalogue (4G).
             parts: self.parts.clone(),
             damage: self.carried.clone(),
+            access_token: self.access_token.clone(),
         })))
+    }
+
+    /// The access token for the hello (spec §9.1; `None`: anonymous).
+    pub fn set_access_token(&mut self, token: Option<String>) {
+        self.access_token = token;
     }
 
     /// Handles a device event; returns the encoded sample to send, if any.
@@ -2941,6 +2950,7 @@ mod tests {
         assert_eq!(c.stats().malformed, 1);
         let reject = encode(&ocw_protocol::server_message(S::Reject(v1::Reject {
             reason: "full".into(),
+            auth: false,
         })));
         assert_eq!(
             c.on_server_message(&reject, 0.0),

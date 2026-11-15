@@ -23,6 +23,8 @@ members = [
     "crates/ocw-client",
     "crates/ocw-audio",
     "crates/ocw-ui",
+    "crates/ocw-auth",
+    "services/accounts",
 ]
 
 [workspace.package]
@@ -45,12 +47,16 @@ ocw-worldstore = { path = "crates/ocw-worldstore" }
 ocw-render = { path = "crates/ocw-render" }
 # ocw-assets without its command-line tools (`tools` feature) for the app.
 ocw-assets = { path = "crates/ocw-assets", default-features = false }
-ocw-server = { path = "services/server" }
+# Without the `backend` feature (the accounts backend, spec §9.1): the apps
+# and the bot embed only the game server; the `ocw-server` binary has it.
+ocw-server = { path = "services/server", default-features = false }
 ocw-voice = { path = "crates/ocw-voice" }
 ocw-sky = { path = "crates/ocw-sky" }
 ocw-weather = { path = "crates/ocw-weather" }
 ocw-client = { path = "crates/ocw-client" }
 ocw-audio = { path = "crates/ocw-audio" }
+ocw-auth = { path = "crates/ocw-auth" }
+ocw-accounts = { path = "services/accounts" }
 
 # Bevy is pinned to an exact version (spec §3.1). Only ocw-render and apps/desktop may use it.
 bevy = "=0.20.1"
@@ -133,6 +139,25 @@ thiserror = "2"
 # tree via bevy_platform): `Instant` / `SystemTime` from the browser.
 web-time = "1.1"
 tracing = "0.1"
+# Sign-in (spec §9.1). base64 (MIT OR Apache-2.0; already in the tree) for
+# JWTs and PKCE in ocw-auth (pure, wasm-safe); form_urlencoded (MIT OR
+# Apache-2.0; url's) for the OAuth forms.
+base64 = "0.22"
+form_urlencoded = "1"
+# The accounts backend (`services/accounts`, native only): Axum (MIT) on
+# Tokio for the OIDC-shaped endpoints; openidconnect (MIT) for Google's
+# OpenID Connect (discovery, ID-token validation, nonce) and oauth2 (MIT OR
+# Apache-2.0) for Strava, both without their reqwest client (our ureq
+# adapter); http (MIT OR Apache-2.0) is their request type;
+# chacha20poly1305 (Apache-2.0 OR MIT) encrypts the stored Strava tokens.
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "form", "query", "json"] }
+openidconnect = { version = "4.1", default-features = false }
+oauth2 = { version = "5", default-features = false }
+http = "1"
+chacha20poly1305 = "0.10"
+# The desktop's sign-in in the OS keyring (MIT OR Apache-2.0); the
+# platform stores are features of apps/desktop.
+keyring = { version = "3.6", default-features = false }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [workspace.lints.rust]

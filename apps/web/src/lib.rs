@@ -56,6 +56,7 @@
 //! range requests, every chunk verified, cached in OPFS, the tiles kept
 //! resident around the rider within a memory budget.
 
+pub mod account;
 pub mod audio;
 #[cfg(target_arch = "wasm32")]
 mod browser;
@@ -303,6 +304,8 @@ pub fn parse_query(query: &str, dev_page: bool) -> (SessionConfig, Vec<String>) 
             ("gpu", _) if matches!(value.as_str(), "webgpu" | "webgl2") => {}
             // Read below (B3; the origin after the route).
             ("server" | "cert-hash", _) => {}
+            // The accounts server (spec §9.1; `account`).
+            ("auth", _) => {}
             ("origin", None) => {}
             _ => bad(),
         }
@@ -630,8 +633,12 @@ pub fn start() {
         .as_ref()
         .and_then(|l| l.hostname().ok())
         .unwrap_or_default();
+    // Sign-in (spec §9.1): the backend's redirect brings the page back
+    // with a code; the ride's options are the query it left with.
+    let (query, account_start) = account::start_page(&query);
     let dev_page = is_dev_host(&host);
     let (mut config, mut warnings) = parse_query(&query, dev_page);
+    config.access_token = account::tab_access_token();
     // The page configuration (config.json, B8a): the worlds' base, and on
     // a public page without a hosted server no multiplayer and no voice.
     let (page, page_error) = page_config::from_page();
@@ -642,6 +649,8 @@ pub fn start() {
     settings::apply_to_config(&settings, &mut config, &settings::query_keys(&query));
     let world = config.world.clone();
     let mut app = app_with_settings(config, settings, settings_warnings);
+    app.insert_resource(account_start)
+        .add_plugins(account::WebAccountPlugin);
     for w in warnings {
         warn!("page options: {w}");
     }

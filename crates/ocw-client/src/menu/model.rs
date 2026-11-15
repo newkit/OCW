@@ -254,13 +254,10 @@ const NAVI_ITEMS: &[Item] = &[
     BACK,
 ];
 const SETTINGS_ITEMS: &[Item] = &[
-    // Rider profiles are files (riders.toml); the browser's anonymous
-    // rider has none (Q5, until accounts: Phase 5).
-    only(
-        Platform::Desktop,
-        "Riders",
-        ItemKind::Open(Page::Sub(sub::Page::Riders)),
-    ),
+    // Sign-in (spec §9.1) on both apps. The desktop's rider profiles
+    // (riders.toml) moved onto the Account page (and stay in the
+    // Workshop): the page has seven items, the ten-foot maximum.
+    item("Account", ItemKind::Open(Page::Sub(sub::Page::Account))),
     item("Controls", ItemKind::Open(Page::Sub(sub::Page::Controls))),
     item("Trainer", ItemKind::Open(Page::Sub(sub::Page::Trainer))),
     item("Audio", ItemKind::Open(Page::Sub(sub::Page::Audio))),
@@ -1401,7 +1398,9 @@ mod tests {
         m.apply(Action::Click(5));
         assert_eq!(
             labels(&m),
-            ["Controls", "Trainer", "Audio", "Display", "Voice", "Back"]
+            [
+                "Account", "Controls", "Trainer", "Audio", "Display", "Voice", "Back"
+            ]
         );
         // The desktop's are unchanged.
         let mut d = Menu::default();

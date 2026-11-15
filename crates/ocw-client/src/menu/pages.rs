@@ -93,6 +93,10 @@ pub enum Page {
     /// Navi → Riders in this ride (spec §14 Phase 13E, 12F; rows from
     /// `rider_list`): who rides, where, who flies, who is hurt.
     RiderList,
+    /// Settings → Account (spec §9.1; rows from `crate::account`): sign in
+    /// with Google or Strava, with a code on a kiosk, link the other
+    /// provider, sign out.
+    Account,
     /// Controls → Unicorn mode: invert the mouse, plane or hover (the
     /// Controls page is full).
     UnicornControls,
@@ -175,6 +179,7 @@ impl Page {
             Self::RidingAids => "Riding aids",
             Self::Graphics => "Graphics",
             Self::RiderList => "Riders in this ride",
+            Self::Account => "Account",
             Self::UnicornControls => "Unicorn mode controls",
             Self::Bindings => "Keys and buttons",
             Self::BindGroup(g) => crate::bindings::Group::ALL
@@ -371,6 +376,7 @@ impl Page {
             Self::Workouts => &[
                 "Structured workouts in ERG mode: yours from the workouts folder (.toml, .erg, .mrc), then the examples. % FTP targets use the rider's FTP.",
             ],
+            Self::Account => &[crate::account::NOTE],
             Self::UnicornControls => &[
                 "Unicorn mode flies with the cursor keys and + / - (never W A S D), or the gamepad.",
             ],
@@ -606,7 +612,8 @@ pub struct Row {
 }
 
 impl Row {
-    fn action(label: &str, line: impl Into<String>) -> Self {
+    /// A row that runs a console line.
+    pub fn action(label: &str, line: impl Into<String>) -> Self {
         Self {
             label: label.into(),
             value: None,
@@ -1055,6 +1062,8 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         ],
         // From the session (`rider_list`).
         Page::RiderList => Vec::new(),
+        // From the app's sign-in state (`crate::account::rows`).
+        Page::Account => crate::account::rows(&crate::account::AccountInfo::default(), true),
         Page::Trainer => vec![
             setting_row(settings, "trainer.difficulty", "Difficulty (%)"),
             setting_row(

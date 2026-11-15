@@ -140,6 +140,15 @@ pub struct ServerConfig {
     /// a [`v1::WeatherRequest`] under [`ServerConfig::weather_access`].
     /// `Default` keeps it off (tests: the physics without weather).
     pub weather_physics: bool,
+    /// Sign-in (spec §9.1): access tokens in the hello are checked against
+    /// the accounts backend's JWKS (signature, expiry, issuer, audience);
+    /// a signed-in rider rides under the account's name. `None`: no
+    /// sign-in on this server (the local servers): tokens are ignored and
+    /// everyone rides anonymously.
+    pub auth: Option<std::sync::Arc<ocw_auth::Verifier>>,
+    /// Refuse riders without an account (`ocw-server --auth-required`).
+    /// By default anonymous riders are allowed (Phase 10 Q5).
+    pub auth_required: bool,
 }
 
 pub use ocw_protocol::ClockAccess;
@@ -205,6 +214,8 @@ pub struct GameServer {
     /// The scene height (m) of the place real weather was last applied
     /// for: its pressure holds there (spec §14 Phase 9, S6).
     real_pressure_y_m: Option<f64>,
+    /// The accounts of signed-in riders (spec §9.1), by connection.
+    accounts: BTreeMap<ConnectionId, v1::Account>,
 }
 
 /// A world switch the host asked for (spec §3.2.1), checked and waiting
@@ -381,6 +392,7 @@ impl GameServer {
             fetcher: None,
             geo_origin,
             real_pressure_y_m: None,
+            accounts: BTreeMap::new(),
         }
     }
 
@@ -844,6 +856,7 @@ impl GameServer {
     /// Removes a connection and its rider.
     pub fn disconnect(&mut self, conn: ConnectionId) {
         self.names.remove(&conn);
+        self.accounts.remove(&conn);
         self.voice_issued.remove(&conn);
         if let Some(rider) = self.riders.remove(&conn) {
             let name = self
@@ -960,6 +973,7 @@ impl GameServer {
             }
             (_, None) => Some(S::Reject(v1::Reject {
                 reason: "send Hello first".into(),
+                auth: false,
             })),
         };
         let mut out: Vec<Vec<u8>> = reply
@@ -995,6 +1009,38 @@ impl GameServer {
         out
     }
 
+    /// The account of a hello (spec §9.1): `Ok(None)` rides anonymously,
+    /// `Err` is the reason to refuse it.
+    fn account_of(&self, hello: &v1::Hello) -> Result<Option<v1::Account>, String> {
+        let Some(verifier) = &self.config.auth else {
+            // No sign-in on this server: a token is ignored.
+            return Ok(None);
+        };
+        match hello.access_token.as_deref().filter(|t| !t.is_empty()) {
+            None if self.config.auth_required => {
+                Err("this server needs a signed-in account (Settings -> Account)".into())
+            }
+            None => Ok(None),
+            Some(token) => match verifier.verify(token, unix_now_ms().div_euclid(1000)) {
+                Ok(c) => Ok(Some(v1::Account {
+                    display_name: if c.name.trim().is_empty() {
+                        hello.display_name.clone()
+                    } else {
+                        c.name
+                    },
+                    account_id: c.sub,
+                    providers: c.providers,
+                })),
+                Err(e) => Err(format!("sign-in refused ({e}): sign in again")),
+            },
+        }
+    }
+
+    /// The account of a connection's rider, if signed in (spec §9.1).
+    pub fn account(&self, conn: ConnectionId) -> Option<&v1::Account> {
+        self.accounts.get(&conn)
+    }
+
     fn hello(&mut self, conn: ConnectionId, hello: v1::Hello) -> S {
         if hello.protocol_version != PROTOCOL_VERSION {
             return S::Reject(v1::Reject {
@@ -1002,6 +1048,7 @@ impl GameServer {
                     "protocol version {} not supported (server speaks {PROTOCOL_VERSION}); please update",
                     hello.protocol_version
                 ),
+                auth: false,
             });
         }
         // Junctions are vertex indices: both sides need the same graph.
@@ -1014,7 +1061,21 @@ impl GameServer {
                     "world package mismatch: the server rides {} ({:016x}), you have {} ({:016x}); install the same package version",
                     ours.name, ours.graph_hash, theirs.name, theirs.graph_hash
                 ),
+                auth: false,
             });
+        }
+        // Sign-in (spec §9.1): a signed-in rider rides under the
+        // account's name; a bad token is refused, no token is anonymous.
+        let account = match self.account_of(&hello) {
+            Ok(a) => a,
+            Err(reason) => {
+                tracing::info!(?conn, %reason, "hello refused");
+                return S::Reject(v1::Reject { reason, auth: true });
+            }
+        };
+        let mut hello = hello;
+        if let Some(a) = &account {
+            hello.display_name = a.display_name.clone();
         }
         let profile = physics_profile(&hello);
         let rider = self.session.add_rider(hello.display_name.clone(), profile);
@@ -1036,6 +1097,9 @@ impl GameServer {
             self.session.carry_damage(rider, condition, parts);
         }
         self.riders.insert(conn, rider);
+        if let Some(a) = &account {
+            self.accounts.insert(conn, a.clone());
+        }
         self.names.insert(conn, hello.display_name.clone());
         self.joined.push(hello.display_name.clone());
         let clock = Some(self.clock_message());
@@ -1063,6 +1127,7 @@ impl GameServer {
             chaotic_bots: self.session.chaotic_bots(),
             weather: Some(self.weather_message()),
             damage: self.session.damage_on(),
+            account,
         })
     }
 
@@ -1713,6 +1778,7 @@ mod tests {
             look: None,
             parts: Vec::new(),
             damage: None,
+            access_token: None,
         })))
     }
 
@@ -1730,6 +1796,7 @@ mod tests {
                 look: None,
                 parts: Vec::new(),
                 damage: None,
+                access_token: None,
             }))),
         );
         match decode_server(&reply[0]).unwrap() {
@@ -4337,5 +4404,198 @@ mod tests {
             panic!("a result");
         };
         assert!(!r.ok, "{r:?}");
+    }
+}
+
+/// Sign-in in the hello (spec §9.1): the game server checks the access
+/// token against the backend's keys; anonymous riders stay allowed.
+#[cfg(test)]
+mod auth_tests {
+    use super::*;
+    use ocw_auth::jwt::{AccessClaims, Jwk, Jwks, TYP_ACCESS, TYP_ID, key_id, sign};
+    use ocw_protocol::{client_message, decode_server};
+
+    const ISS: &str = "https://accounts.example.org";
+
+    fn key() -> ed25519_dalek::SigningKey {
+        ed25519_dalek::SigningKey::from_bytes(&[5; 32])
+    }
+
+    fn verifier() -> std::sync::Arc<ocw_auth::Verifier> {
+        let k = key().verifying_key();
+        std::sync::Arc::new(ocw_auth::Verifier::new(
+            ISS,
+            ocw_auth::DEFAULT_AUDIENCE,
+            Jwks {
+                keys: vec![Jwk::ed25519(&key_id(&k), &k)],
+            },
+        ))
+    }
+
+    fn token(exp_in_s: i64, tune: impl FnOnce(&mut AccessClaims)) -> String {
+        let now = unix_now_ms() / 1000;
+        let mut c = AccessClaims {
+            iss: ISS.into(),
+            sub: "acc_42".into(),
+            aud: ocw_auth::DEFAULT_AUDIENCE.into(),
+            exp: now + exp_in_s,
+            iat: now - 1,
+            jti: "j".into(),
+            client_id: ocw_auth::CLIENT_DESKTOP.into(),
+            scope: "openid".into(),
+            name: "Ada Rider".into(),
+            auth_time: now,
+            providers: vec!["google".into(), "strava".into()],
+        };
+        tune(&mut c);
+        let k = key();
+        sign(&c, &k, &key_id(&k.verifying_key()), TYP_ACCESS)
+    }
+
+    fn join(server: &mut GameServer, token: Option<String>) -> (ConnectionId, ServerMessageKind) {
+        let conn = server.connect();
+        let reply = server.handle(
+            conn,
+            &encode(&client_message(C::Hello(v1::Hello {
+                protocol_version: PROTOCOL_VERSION,
+                display_name: "Anonymous rider".into(),
+                access_token: token,
+                ..Default::default()
+            }))),
+        );
+        let kind = match decode_server(&reply[0]).unwrap() {
+            S::Welcome(w) => ServerMessageKind::Welcome(Box::new(w)),
+            S::Reject(r) => ServerMessageKind::Reject(r),
+            m => panic!("{m:?}"),
+        };
+        (conn, kind)
+    }
+
+    #[derive(Debug)]
+    enum ServerMessageKind {
+        Welcome(Box<v1::Welcome>),
+        Reject(v1::Reject),
+    }
+
+    fn server(required: bool) -> GameServer {
+        GameServer::new(
+            Route::test_loop(),
+            ServerConfig {
+                auth: Some(verifier()),
+                auth_required: required,
+                ..ServerConfig::default()
+            },
+        )
+    }
+
+    #[test]
+    fn a_good_token_names_the_rider() {
+        let mut s = server(false);
+        let (conn, k) = join(&mut s, Some(token(600, |_| {})));
+        let ServerMessageKind::Welcome(w) = k else {
+            panic!("{k:?}")
+        };
+        let a = w.account.expect("the account");
+        assert_eq!(
+            (a.account_id.as_str(), a.display_name.as_str()),
+            ("acc_42", "Ada Rider")
+        );
+        assert_eq!(a.providers, ["google", "strava"]);
+        assert_eq!(
+            s.account(conn).map(|a| a.account_id.as_str()),
+            Some("acc_42")
+        );
+        let me = s
+            .session
+            .snapshot()
+            .into_iter()
+            .find(|r| r.id.0 == w.rider_id)
+            .unwrap();
+        assert_eq!(me.name, "Ada Rider", "the account's name, not the hello's");
+        s.disconnect(conn);
+        assert!(s.account(conn).is_none());
+    }
+
+    #[test]
+    fn bad_or_expired_tokens_are_refused() {
+        let mut s = server(false);
+        let other = ed25519_dalek::SigningKey::from_bytes(&[6; 32]);
+        let forged = {
+            let now = unix_now_ms() / 1000;
+            let c = AccessClaims {
+                iss: ISS.into(),
+                sub: "acc_admin".into(),
+                aud: ocw_auth::DEFAULT_AUDIENCE.into(),
+                exp: now + 600,
+                iat: now,
+                jti: "x".into(),
+                client_id: "x".into(),
+                scope: String::new(),
+                name: "Evil".into(),
+                auth_time: now,
+                providers: vec![],
+            };
+            // Our key id, another key.
+            sign(&c, &other, &key_id(&key().verifying_key()), TYP_ACCESS)
+        };
+        let id_token = {
+            let k = key();
+            let t = token(600, |_| {});
+            let claims: AccessClaims = ocw_auth::jwt::Parsed::parse(&t)
+                .unwrap()
+                .claims_unverified()
+                .unwrap();
+            sign(&claims, &k, &key_id(&k.verifying_key()), TYP_ID)
+        };
+        for (what, t) in [
+            ("expired", token(-120, |_| {})),
+            (
+                "another issuer",
+                token(600, |c| c.iss = "https://evil.example".into()),
+            ),
+            (
+                "another audience",
+                token(600, |c| c.aud = "other-game".into()),
+            ),
+            ("forged", forged),
+            ("an ID token", id_token),
+            ("garbage", "not.a.token".into()),
+        ] {
+            let (_, k) = join(&mut s, Some(t));
+            let ServerMessageKind::Reject(r) = k else {
+                panic!("{what}: {k:?}")
+            };
+            assert!(r.auth, "{what}");
+            assert!(r.reason.contains("sign in again"), "{what}: {}", r.reason);
+        }
+        assert_eq!(s.session.snapshot().len(), 0, "nobody joined");
+    }
+
+    #[test]
+    fn anonymous_riders_stay_allowed_unless_required() {
+        let mut s = server(false);
+        let (_, k) = join(&mut s, None);
+        let ServerMessageKind::Welcome(w) = k else {
+            panic!("{k:?}")
+        };
+        assert!(w.account.is_none());
+        let mut s = server(true);
+        let (_, k) = join(&mut s, None);
+        let ServerMessageKind::Reject(r) = k else {
+            panic!("{k:?}")
+        };
+        assert!(r.auth && r.reason.contains("signed-in account"));
+        let (_, k) = join(&mut s, Some(token(600, |_| {})));
+        assert!(matches!(k, ServerMessageKind::Welcome(_)));
+    }
+
+    #[test]
+    fn servers_without_sign_in_ignore_tokens() {
+        let mut s = GameServer::new(Route::test_loop(), ServerConfig::default());
+        let (_, k) = join(&mut s, Some("anything".into()));
+        let ServerMessageKind::Welcome(w) = k else {
+            panic!("{k:?}")
+        };
+        assert!(w.account.is_none());
     }
 }

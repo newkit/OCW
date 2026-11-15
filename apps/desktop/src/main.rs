@@ -7,6 +7,7 @@
 //! - client-side prediction of the local rider and interpolation of others,
 //! - the Bevy renderer from `ocw-render`.
 
+mod account;
 mod argsfile;
 mod audio;
 mod automation;
@@ -118,6 +119,11 @@ pub struct Args {
     /// server is on this machine (127.0.0.1 / ::1).
     #[arg(long, requires = "server", conflicts_with = "server_cert")]
     pub insecure_dev: bool,
+    /// The accounts server for sign-in (spec §9.1; Settings -> Account):
+    /// its base URL, e.g. https://accounts.example.org (default:
+    /// $OCW_ACCOUNT_SERVER; none: sign-in is off, riding stays anonymous).
+    #[arg(long, value_name = "URL")]
+    pub account_server: Option<String>,
     /// Window size as WIDTHxHEIGHT.
     #[arg(long, default_value = "1280x720", value_parser = parse_size)]
     pub window: (u32, u32),
@@ -461,6 +467,8 @@ fn main() -> AppExit {
         // Phase 13 G5) and the rider list (13E).
         camera_path::CameraPathPlugin,
         riders_page::RidersPagePlugin,
+        // Sign-in with Google or Strava (spec §9.1): Settings -> Account.
+        account::AccountPlugin::default(),
         // `display.quality` and the console's `quality` / `gpu` (spec §14
         // Phase 10 B7; auto is High here: the desktop's look).
         ocw_ui::quality::QualityPlugin,

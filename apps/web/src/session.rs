@@ -69,6 +69,9 @@ pub struct SessionConfig {
     /// The quality preset for this visit (page option `quality`, B7: a
     /// temporary `display.quality`, not saved).
     pub quality: Option<String>,
+    /// The signed-in rider's access token for a remote ride's hello (spec
+    /// §9.1; this tab's, from the account's sign-in).
+    pub access_token: Option<String>,
     /// Why voice is off on this page (the page configuration, B8a: the
     /// preview has no voice server); `None`: the page's voice shim.
     pub voice_off: Option<String>,
@@ -89,6 +92,7 @@ impl Default for SessionConfig {
             record: true,
             autodrive: true,
             quality: None,
+            access_token: None,
             voice_off: None,
         }
     }
@@ -163,6 +167,10 @@ impl WebSession {
         config: &SessionConfig,
         transport: Option<Box<dyn Transport>>,
     ) -> Self {
+        let mut client = client;
+        if config.remote.is_some() {
+            client.set_access_token(config.access_token.clone());
+        }
         let session = match (&config.remote, transport) {
             (Some(remote), Some(t)) => Self::remote(
                 client,

@@ -29,6 +29,9 @@ sha2.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 serde.workspace = true
+# The access token check in the hello (spec §9.1; pure, also in the
+# browser's local server).
+ocw-auth.workspace = true
 
 # The lib also builds for wasm32-unknown-unknown: the browser app runs the
 # GameServer in its frame loop (spec §14 Phase 10, B1; `local::FrameServer`).
@@ -52,10 +55,22 @@ tokio ={ workspace = true, features = ["rt-multi-thread", "net", "io-util", "sig
 # Real weather from the providers (spec §14 Phase 9, S7; `realweather::http`):
 # HTTPS with rustls on the server, never in the clients or the wasm build.
 ureq.workspace = true
+# The accounts backend (spec §9.1), run by the binary (`--auth-config`,
+# `--auth-dev`); only with the `backend` feature (the apps leave it out).
+ocw-accounts = { workspace = true, optional = true }
 
 # The system clock in the browser (std's panics on wasm32-unknown-unknown).
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-time.workspace = true
+
+[dev-dependencies]
+# Test access tokens (spec §9.1).
+ed25519-dalek.workspace = true
+
+[features]
+default = ["backend"]
+# The accounts backend in the `ocw-server` binary (sign-in, spec §9.1).
+backend = ["dep:ocw-accounts"]
 
 [lints]
 workspace = true
