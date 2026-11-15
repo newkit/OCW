@@ -613,7 +613,7 @@ pub fn build_vegetation(
                 }
             }
             xs.sort_by(f64::total_cmp);
-            for span in xs.chunks_exact(2) {
+            for span in xs.as_chunks::<2>().0 {
                 for gx in first(span[0])..=last(span[1]) {
                     let x = (gx as f64 + 0.5) * cs;
                     if x < span[0] || x >= span[1] {
@@ -900,7 +900,7 @@ pub fn spots(pkg: &WorldPackage) -> Vec<Spot> {
             }
             picked.push(p);
             out.push(Spot {
-                name: *name,
+                name,
                 at: p,
                 alt_m: y,
                 score,
