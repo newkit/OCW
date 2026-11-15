@@ -18,7 +18,7 @@ Inputs:
              wasm32-unknown-unknown` output: the Rust crates compiled into
              the module, listed with their licences on the credits page.
 
-Writes OUT/: the build (index.html, the two modules, ocw-voice.js, the
+Writes OUT/: the build (index.html, the two modules, ocw-voice.js, ocw-gpu.js, the
 logo), worlds/ in the `world-builder publish` layout, config.json (the
 page configuration: worlds/, no server / voice / sign-in, the start page's
 rides), credits.html (attribution, licences, the privacy note),
@@ -50,7 +50,7 @@ TEST_RIDES = [
 ]
 
 BUILD_FILES = ("index.html", "ocw_web.js", "ocw_web_bg.wasm", "ocw_web_webgl2.js",
-               "ocw_web_webgl2_bg.wasm", "ocw-voice.js", "ocw.svg", "sizes.txt")
+               "ocw_web_webgl2_bg.wasm", "ocw-voice.js", "ocw-gpu.js", "ocw.svg", "sizes.txt")
 
 
 def sha256(path):

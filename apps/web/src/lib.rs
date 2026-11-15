@@ -300,8 +300,10 @@ pub fn parse_query(query: &str, dev_page: bool) -> (SessionConfig, Vec<String>) 
                 Some(q) => config.quality = Some(q.name().into()),
                 None => bad(),
             },
-            // The page's choice of build (index.html, B7).
+            // The page's choice of build (index.html, B7), and its mark of
+            // a ride reloaded on WebGL 2 after WebGPU failed (ocw-gpu.js).
             ("gpu", _) if matches!(value.as_str(), "webgpu" | "webgl2") => {}
+            ("webgpu-failed", _) => {}
             // Read below (B3; the origin after the route).
             ("server" | "cert-hash", _) => {}
             // The accounts server (spec §9.1; `account`).
@@ -410,6 +412,11 @@ pub fn app_with_settings(
             // by `audio::WebAudioPlugin` (B5).
             .disable::<bevy::audio::AudioPlugin>(),
     )
+    // A renderer error goes to the page (B7): WebGPU falls back to WebGL 2,
+    // otherwise the page shows it – never Bevy's quit with a black canvas.
+    .insert_resource(bevy::render::error_handler::RenderErrorHandler(
+        page_render_error,
+    ))
     .insert_resource(Time::<Fixed>::from_hz(f64::from(ocw_core::SIM_TICK_HZ)))
     .insert_resource(RideView::new(route))
     .insert_resource(VersionLabel(build_id()))
@@ -451,10 +458,69 @@ pub fn app_with_settings(
     app
 }
 
+/// Whether the renderer's error was already reported to the page (the
+/// handler runs every frame while rendering is stopped).
+static RENDER_ERROR_REPORTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// What the page is told of a renderer error (`window.ocwRenderFailed(kind,
+/// description)`): the error's kind and its first line, shortened.
+pub fn render_error_report(error: &bevy::render::error_handler::RenderError) -> (String, String) {
+    let first = error.description.lines().next().unwrap_or("").trim();
+    let text: String = first.chars().take(300).collect();
+    (format!("{:?}", error.ty), text)
+}
+
+/// The browser's renderer error handler (spec §14 Phase 10 B7): Bevy's
+/// default quits the app on any renderer error, which leaves a page with
+/// sound and a black canvas; here rendering stops, the app keeps running
+/// and the page is told once (`window.ocwRenderFailed`; index.html: WebGPU
+/// → the WebGL 2 build, else the error on the page).
+pub fn page_render_error(
+    error: &bevy::render::error_handler::RenderError,
+    _main: &mut World,
+    _render: &mut World,
+) -> bevy::render::error_handler::RenderErrorPolicy {
+    use std::sync::atomic::Ordering;
+    if !RENDER_ERROR_REPORTED.swap(true, Ordering::Relaxed) {
+        let (kind, text) = render_error_report(error);
+        error!("renderer stopped ({kind}): {text}; the page falls back or shows it");
+        #[cfg(target_arch = "wasm32")]
+        browser::render_failed(&kind, &text);
+    }
+    bevy::render::error_handler::RenderErrorPolicy::StopRendering
+}
+
 /// The canvas' scale factor for a device pixel ratio `base` under the
 /// preset's cap: `None` (the device's own) when it is within the cap.
 pub fn pixel_ratio_override(base: f32, cap: Option<f32>) -> Option<f32> {
     cap.filter(|&c| base > c)
+}
+
+/// The preset's pixel-ratio cap where the browser can apply it: winit sizes
+/// the canvas from `devicePixelContentBoxSize`, and without it (WebKit:
+/// Safari, every browser on iOS) the drawing buffer stays at the device's
+/// pixels while the override only shrinks the HUD and menus to a third on
+/// an iPhone (measured in WebKit, 2026-11-15) – so there no cap.
+pub fn usable_pixel_ratio_cap(cap: Option<f32>, device_pixel_box: bool) -> Option<f32> {
+    cap.filter(|_| device_pixel_box)
+}
+
+/// Whether the browser reports `devicePixelContentBoxSize` to resize
+/// observers (Chromium, Firefox; not WebKit); natively true.
+fn device_pixel_box() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        thread_local! {
+            static HAS: bool = web_sys::window()
+                .and_then(|w| js_sys::Reflect::get(&w, &"ResizeObserverEntry".into()).ok())
+                .and_then(|c| js_sys::Reflect::get(&c, &"prototype".into()).ok())
+                .is_some_and(|p| js_sys::Reflect::has(&p, &"devicePixelContentBoxSize".into()).unwrap_or(false));
+        }
+        HAS.with(|h| *h)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    true
 }
 
 /// Applies [`pixel_ratio_override`] to the page's window when the preset
@@ -464,7 +530,10 @@ fn cap_pixel_ratio(
     quality: Option<Res<ocw_render::quality::RenderQuality>>,
     mut windows: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
 ) {
-    let cap = quality.and_then(|q| q.0.max_pixel_ratio);
+    let cap = usable_pixel_ratio_cap(
+        quality.and_then(|q| q.0.max_pixel_ratio),
+        device_pixel_box(),
+    );
     for mut w in &mut windows {
         let want = pixel_ratio_override(w.resolution.base_scale_factor(), cap);
         if w.resolution.scale_factor_override() != want {
@@ -678,6 +747,36 @@ pub fn is_dev_host(host: &str) -> bool {
 mod tests {
     use super::*;
 
+    /// A renderer error stops rendering and tells the page; the app is not
+    /// quit (Bevy's default), so the page can fall back to WebGL 2 (B7).
+    #[test]
+    fn render_errors_go_to_the_page() {
+        use bevy::render::error_handler::{ErrorType, RenderError, RenderErrorPolicy};
+        let error = RenderError {
+            ty: ErrorType::Validation,
+            description: "In a set_pipeline command\n  more".into(),
+            source: None,
+        };
+        assert_eq!(
+            render_error_report(&error),
+            (
+                "Validation".to_string(),
+                "In a set_pipeline command".to_string()
+            )
+        );
+        let mut main = World::new();
+        main.init_resource::<Messages<AppExit>>();
+        let mut render = World::new();
+        for _ in 0..2 {
+            let policy = page_render_error(&error, &mut main, &mut render);
+            assert!(matches!(policy, RenderErrorPolicy::StopRendering));
+        }
+        assert!(main.resource::<Messages<AppExit>>().is_empty());
+        // The page's mark of a WebGPU fallback is a known option.
+        let (_, w) = parse_query("route=hills&gpu=webgl2&quality=low&webgpu-failed=1", false);
+        assert!(w.is_empty(), "{w:?}");
+    }
+
     #[test]
     fn query_options() {
         let (c, w) = parse_query(
@@ -829,6 +928,15 @@ mod tests {
         );
         assert_eq!(pixel_ratio_override(3.0, cap(QualityLevel::High)), None);
         assert_eq!(pixel_ratio_override(1.0, cap(QualityLevel::Low)), None);
+        // WebKit sizes the canvas without devicePixelContentBoxSize: the
+        // override would only shrink the UI (the iPhone, 2026-11-15).
+        let low = cap(QualityLevel::Low);
+        assert_eq!(usable_pixel_ratio_cap(low, true), Some(1.0));
+        assert_eq!(usable_pixel_ratio_cap(low, false), None);
+        assert_eq!(
+            pixel_ratio_override(3.0, usable_pixel_ratio_cap(low, false)),
+            None
+        );
     }
 
     #[test]
