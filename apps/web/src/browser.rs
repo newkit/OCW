@@ -83,6 +83,15 @@ pub fn download(name: &str, mime: &str, bytes: &[u8]) {
     }
 }
 
+/// Tells the page that the renderer stopped (spec §14 Phase 10 B7,
+/// `window.ocwRenderFailed(kind, description)`): on WebGPU the page falls
+/// back to the WebGL 2 build, else it shows the error.
+pub fn render_failed(kind: &str, description: &str) {
+    if let Err(e) = call_page("", "ocwRenderFailed", &[kind.into(), description.into()]) {
+        error!("the page was not told of the renderer error: {e}");
+    }
+}
+
 /// Starts the page's video recorder on the canvas (`window.ocwVideo`).
 pub fn video_start(name: &str) -> Result<(), String> {
     call_page("ocwVideo", "start", &[name.into()]).map(|_| ())

@@ -93,7 +93,7 @@ VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 .DEFAULT_GOAL := help
 .PHONY: help test-web-account version version-next version-bump test-release-version release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish art-collect art-check test-art art-install-timer art-uninstall-timer art-timer-status deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
 	clippy check run server materials deploy-test clean clean-test-output macos-app \
-	test test-unit test-wasm test-web-build test-web test-web-webgl2 test-web-world test-web-unicorn test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-kiosk web web-serve web-worlds web-remote web-preview web-preview-site web-preview-worlds test-web-preview deps-web deps-browser deps-vr deps-vr-linux deps-vr-linux-debian deps-vr-linux-fedora deps-vr-linux-arch deps-vr-linux-unknown deps-vr-windows deps-vr-macostest-web-readme test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
+	test test-unit test-wasm test-web-build test-web test-web-webgl2 test-web-gpu test-web-webkit deps-webkit test-web-world test-web-unicorn test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-kiosk web web-serve web-worlds web-remote web-preview web-preview-site web-preview-worlds test-web-preview deps-web deps-browser deps-vr deps-vr-linux deps-vr-linux-debian deps-vr-linux-fedora deps-vr-linux-arch deps-vr-linux-unknown deps-vr-windows deps-vr-macostest-web-readme test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
 	test-multiplayer test-multiplayer-local test-scenes test-scenes-list \
 	wasm screenshot screenshot-wayland smoke video video-wayland
 
@@ -310,6 +310,13 @@ web-remote: ## Build the browser app on build machine MACHINE (make web; WORLDS=
 deps-browser: ## The browser tests' browser: pinned Chromium (scripts/browsers.json, SHA-256 checked) into ~/.cache/ocw/browsers/ (no sudo; Linux x64, macOS arm64, Windows x64)
 	python3 scripts/web_browser.py fetch
 
+PLAYWRIGHT_VENV ?= $(HOME)/.cache/ocw/playwright-venv
+PLAYWRIGHT_VERSION ?= 1.65.2
+deps-webkit: ## Safari's engine for test-web-webkit: Playwright $(PLAYWRIGHT_VERSION) and its WebKit build in a venv ($(PLAYWRIGHT_VENV); no sudo; Linux needs WebKit's libraries, which Debian 13 has)
+	python3 -m venv $(PLAYWRIGHT_VENV)
+	$(PLAYWRIGHT_VENV)/bin/pip install -q playwright==$(PLAYWRIGHT_VERSION)
+	$(PLAYWRIGHT_VENV)/bin/python -m playwright install webkit
+
 # The pilot package (git-ignored data/): a branch checkout of scripts/remote.sh
 # (REPO_PATH-BRANCH) finds it in the main checkout next to it.
 WEB_WORLD_PKGS ?= $(firstword $(wildcard data/pilot/liechtenstein.ocwpkg ../OCW/data/pilot/liechtenstein.ocwpkg) data/pilot/liechtenstein.ocwpkg)
@@ -335,9 +342,16 @@ test-web-account: web ## Headless Chromium: sign in with the fake Google through
 	$(CARGO) build -p ocw-server
 	scripts/test-web-account.py --out test-output/web
 
-test-web-webgl2: web ## Headless Chromium without WebGPU: the page falls back to the WebGL 2 build (ride, menus, fps); then WebGPU High vs WebGL 2 Low, same view, and the Graphics page (B7); into test-output/web/
+test-web-webgl2: web ## Headless Chromium without WebGPU: the page falls back to the WebGL 2 build (ride, menus, fps); then WebGPU High vs WebGL 2 Low, same view, and the Graphics page (B7); the GPU choice and the WebGPU fallback (test-web-gpu); into test-output/web/
 	scripts/test-web.py --out test-output/web --gpu webgl2
 	scripts/test-web-webgl2.py --out test-output/web
+	scripts/test-web-gpu.py --out test-output/web
+
+test-web-gpu: web ## Headless Chromium: the page's GPU choice (ocw-gpu.js rules), injected WebGPU failures fall back to WebGL 2 and draw, the remembered failure, gpu=webgpu, Safari on an iPhone takes WebGL 2 (B7, the iOS 26 report); into test-output/web/
+	scripts/test-web-gpu.py --out test-output/web
+
+test-web-webkit: web ## WebKit (Safari's engine, Playwright; make deps-webkit): Safari 26 with WebGPU takes the WebGL 2 build – an iPhone 15's start page and ride, Safari on macOS; rides and draws (B7); into test-output/web/
+	scripts/test-web-webkit.py --out test-output/web
 
 PREVIEW_WORLDS ?= target/web-preview-worlds/release
 PREVIEW_SITE ?= target/web-preview-site

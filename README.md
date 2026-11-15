@@ -157,9 +157,13 @@ then you build the app and serve it yourself, as below.
   `sizes.txt`.
 - **A browser.** Chrome or Edge 113+ draw with WebGPU, and they are the
   only ones with **Web Bluetooth**, so you need one of them to ride with a
-  trainer. On Debian: `sudo apt install chromium`. Firefox and Safari should
-  run the page with WebGPU or WebGL 2 and virtual power, but nobody has
-  tried them yet. On Linux, WebGPU and Web Bluetooth are still behind flags
+  trainer. On Debian: `sudo apt install chromium`. Firefox should run the
+  page with WebGPU or WebGL 2 and virtual power, but nobody has tried it yet.
+  **Safari** (macOS, and every browser on iPhone and iPad) gets the WebGL 2
+  build: Safari 26 has WebGPU on by default, but the WebGPU build gave an
+  iPhone 15 on iOS 26 sound and no image, so the page does not use Safari's
+  WebGPU yet (`?gpu=webgpu` tries it). Phones ride with virtual power (no
+  Web Bluetooth on iOS, no touch controls for riding yet). On Linux, WebGPU and Web Bluetooth are still behind flags
   in Chromium. Start it like this (the browser tests use the same flags):
   ```bash
   chromium --enable-unsafe-webgpu --enable-features=Vulkan --enable-experimental-web-platform-features
@@ -199,6 +203,7 @@ LTO) twice, because Bevy picks WebGPU or WebGL 2 when it is compiled:
 | File in `target/web/` | What it is |
 |---|---|
 | `index.html` | The page. It picks the build, then loads it |
+| `ocw-gpu.js` | The page's GPU choice and the WebGPU watchdog (the fallback to WebGL 2) |
 | `ocw_web.js`, `ocw_web_bg.wasm` | The WebGPU build (feature `webgpu`) |
 | `ocw_web_webgl2.js`, `ocw_web_webgl2_bg.wasm` | The WebGL 2 build (feature `webgl2`) |
 | `ocw-voice.js`, `livekit-client.umd.js`, `livekit-client.LICENSE.txt` | Voice: the page's shim and LiveKit's SDK (Apache-2.0) |
@@ -207,7 +212,14 @@ LTO) twice, because Bevy picks WebGPU or WebGL 2 when it is compiled:
 The page asks the browser for a WebGPU adapter. If it gets one, it loads the
 WebGPU build. With no `navigator.gpu`, no adapter or an error, it loads the
 WebGL 2 build. A browser with neither gets a message saying what it needs.
-`?gpu=webgl2` or `?gpu=webgpu` forces one build. The HUD's build id ends in
+Safari (WebKit, also every browser on iOS and iPadOS) always gets the WebGL 2
+build. If WebGPU fails while the page runs (the device is lost, a validation
+error, no frame drawn after 20 s, or a canvas of one colour once the ride
+shows), the page remembers that in this browser (`localStorage`, until the
+browser is updated) and reloads the ride on WebGL 2 with low graphics and a
+note, instead of leaving a black screen. `?gpu=webgl2` or `?gpu=webgpu`
+forces one build (a forced WebGPU shows its error instead of falling back,
+and forgets an old failure once it draws). The HUD's build id ends in
 `web WebGPU` or `web WebGL2`, and the console's `gpu` prints the API, the
 adapter and the quality preset. Each module is about 76 MiB raw, 16.9 MiB
 gzip and 10.7 MiB brotli. A browser downloads only one of them. On a
@@ -311,7 +323,7 @@ console:
 | `name=NAME` | Your rider's name (up to 32 characters) |
 | `ftp=W` | FTP for workouts' % FTP targets, 50–600 W |
 | `quality=auto\|low\|medium\|high` | The graphics preset for this visit (not saved) |
-| `gpu=webgpu\|webgl2` | Force the WebGPU or the WebGL 2 build |
+| `gpu=webgpu\|webgl2` | Force the WebGPU or the WebGL 2 build (`webgpu-failed=1` marks the page's own fallback reload) |
 | `origin=LAT,LON` | Give the test route a place on the globe (the GPS line in the HUD, the sun, the FIT track), e.g. `origin=47.13996,9.52151` |
 | `world=ID\|ID@VERSION\|URL` | Stream a world package (below) |
 | `free=1` | With `world=`: a free ride on its road network instead of a route (the junctions take their default exit; there are no junction keys in the browser yet) |
@@ -561,7 +573,10 @@ or the server and bot builds, where it needs them). Screenshots, logs and JSON s
 | `make deps-browser` | Not a test: downloads the tests' pinned Chromium (above) |
 | `make test-web-build` | Both builds compile for wasm32 (part of `make check`) |
 | `make test-web` | WebGPU: load, ride, the menus by keyboard and a fake gamepad, settings over a reload, the screenshot / video / FIT downloads, Unicorn mode (G, + climbs, the inspection, a pin, the menu row, landing), fps |
-| `make test-web-webgl2` | Chromium without WebGPU: the page falls back to the WebGL 2 build and rides. Then WebGPU High against WebGL 2 Low in the same view, and the Graphics page |
+| `make test-web-webgl2` | Chromium without WebGPU: the page falls back to the WebGL 2 build and rides. Then WebGPU High against WebGL 2 Low in the same view, and the Graphics page. Then `test-web-gpu` |
+| `make test-web-gpu` | The page's GPU choice (`ocw-gpu.js`'s rules, pure), then WebGPU failures injected into the real app (a validation error, a refused device, no frame): each ride comes back on WebGL 2 with the note and draws; the remembered failure; `?gpu=webgpu`; a healthy WebGPU ride raises no alarm; Safari on an iPhone 15 takes WebGL 2 |
+| `make test-web-webkit` | WebKit, Safari's engine (Playwright's build, `make deps-webkit`: a venv in `~/.cache/ocw/playwright-venv`, no sudo): an iPhone 15 and Safari on macOS, with Safari 26's `navigator.gpu` faked in – the start page's WebGL 2 box ticked, the ride on WebGL 2 rides and draws |
+| `scripts/test-web-safari.py` | The real Safari on a Mac over `safaridriver` (`--gpu webgpu` tries Safari's WebGPU): the GPU the page chose, the watchdog's state, a screenshot. It needs the Mac's desktop logged in and `sudo safaridriver --enable` once |
 | `make test-web-world` | Liechtenstein streamed from the dev server, a teleport, then a reload from the browser cache |
 | `make test-web-unicorn` | Unicorn mode over Vaduz (Liechtenstein streamed): fly up, the inspection, a pin, the menu row, landing (`--god`) |
 | `make test-web-multiplayer` | `ocw-server` and `ocw-bot` riders, the browser over WebTransport, 30 s |

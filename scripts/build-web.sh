@@ -4,7 +4,8 @@
 #   ocw_web_webgl2_bg.wasm, ocw_web_webgl2.js   the WebGL 2 build (B7)
 #   index.html (loads the one the browser can run), config.json (the page
 #   configuration, B8a), sizes.txt,
-#   ocw-voice.js and livekit-client.umd.js (voice, B5)
+#   ocw-voice.js and livekit-client.umd.js (voice, B5), ocw-gpu.js (the GPU
+#   choice and the WebGPU watchdog, B7)
 #
 #   scripts/build-web.sh            the `web-release` profile (release, size-optimised)
 #   scripts/build-web.sh --preview  the public preview (B8a, `make web-preview`)
@@ -115,7 +116,7 @@ for gpu in $gpus; do
   echo "$gpu: $(( $(date +%s) - t1 )) s"
   names+=("$name")
 done
-cp apps/web/web/index.html apps/web/web/ocw-voice.js artwork/logos/ocw.svg "$out/"
+cp apps/web/web/index.html apps/web/web/ocw-voice.js apps/web/web/ocw-gpu.js artwork/logos/ocw.svg "$out/"
 # The page configuration (B8a): the dev server's page keeps every option
 # (no server / voice / sign-in keys); the preview's site assembly
 # (scripts/web-preview-site.py) writes its own with the worlds and rides.
