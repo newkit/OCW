@@ -85,13 +85,41 @@ pub fn cache(args: &Args) -> WorldCache {
     )
 }
 
-pub fn load_options(args: &Args) -> Result<LoadOptions, String> {
-    let trust = TrustConfig {
+/// What this run trusts: the built-in and extra roots, the user's trusted
+/// keys (`<data dir>/ocw/trusted-keys.json`, spec §4.7 *User keys*) and
+/// the keys accepted with *Load once*.
+pub fn trust_config(args: &Args) -> TrustConfig {
+    TrustConfig {
         dev_roots: cfg!(debug_assertions) || args.trust_dev_root,
         root_files: args.trust_root.clone(),
         ..TrustConfig::for_build()
     }
-    .trust_store()?;
+}
+
+/// The trusted world keys of the World menu and `world trust` (the file
+/// the trust store reads).
+pub fn trusted_keys(args: &Args) -> ocw_ui::trust::TrustedKeys {
+    let builtin = trust_config(args).builtin_store().unwrap_or_default();
+    let store = ocw_worldstore::userkeys::default_path()
+        .map(|p| Box::new(ocw_ui::settings::FileStore(p)) as Box<dyn ocw_ui::settings::TextStore>);
+    let keys = ocw_ui::trust::TrustedKeys::load(store, builtin);
+    if let Some(w) = &keys.warning {
+        warn!("{w}");
+    }
+    keys
+}
+
+/// `--world` signed by a user key nobody here trusts (spec §4.7 *User
+/// keys*): the trust dialog's request; the app starts on the built-in
+/// loop and switches once the user trusted the key.
+pub fn startup_consent(args: &Args) -> Option<ocw_worldstore::userkeys::TrustRequest> {
+    let spec = args.world.as_deref()?;
+    let opts = load_options(args).ok()?;
+    ocw_worldstore::consent_needed(spec, &opts).ok().flatten()
+}
+
+pub fn load_options(args: &Args) -> Result<LoadOptions, String> {
+    let trust = trust_config(args).trust_store()?;
     Ok(LoadOptions {
         allow_unsigned: args.allow_unsigned,
         require_signed: args.require_signed,
@@ -219,6 +247,11 @@ pub struct WorldsPlugin;
 
 impl Plugin for WorldsPlugin {
     fn build(&self, app: &mut App) {
+        // The trusted world keys (spec §4.7 *User keys*).
+        if let Some(args) = app.world().get_resource::<Args>() {
+            let keys = trusted_keys(args);
+            app.insert_resource(keys);
+        }
         app.console_command(ConsoleCommand::new(
             Permission::User,
             Command::new("worlds.info")

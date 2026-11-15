@@ -20,6 +20,8 @@ ocw-sky.workspace = true
 ocw-weather.workspace = true
 # God mode's inspection (the crosshair's ray, tiles, geo; Phase 13 G3).
 ocw-world.workspace = true
+# The trusted user keys (spec §4.7 *User keys*; pure on wasm32).
+ocw-worldstore.workspace = true
 ocw-render.workspace = true
 ocw-client.workspace = true
 # The voice hotkeys' toggles (pure, wasm-safe without its livekit feature).

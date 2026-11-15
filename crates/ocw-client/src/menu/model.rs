@@ -54,6 +54,10 @@ pub enum Action {
     /// Open the menu at the rider list of the Workshop page (the scene's
     /// changing corner until the character editor, W4).
     RiderPage,
+    /// Open the menu at the trust dialog ([`Page::ConfirmTrust`], spec
+    /// §4.7 *User keys*): a world signed by a key nobody here trusts was
+    /// chosen, or the host of a shared ride switched to one.
+    TrustDialog,
 }
 
 /// What the app does after an action.
@@ -88,6 +92,13 @@ pub enum Page {
     Captures,
     /// The workshop of an anonymous browser rider (Q5): locked.
     WorkshopLocked,
+    /// The trust dialog (spec §4.7 *User keys*): the world, the claimed
+    /// signer, the key's fingerprint; Trust this key, Load once, Cancel
+    /// (focused). The text comes from the app's pending request.
+    ConfirmTrust,
+    /// "Remove this key?" before a `world trust remove …` line
+    /// ([`Menu::pending`]); Cancel is focused.
+    ConfirmForget,
 }
 
 /// What an item does when selected.
@@ -105,6 +116,8 @@ pub enum ItemKind {
     AskEvent(&'static str),
     /// Run the asked line ([`Menu::pending`]) and close the menu.
     RunPending,
+    /// Run the asked line and go back one page (the list stays open).
+    RunPendingBack,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -316,6 +329,32 @@ const SWITCH_ITEMS: &[Item] = &[
     item("Ride now", ItemKind::RunPending),
     item("Cancel", ItemKind::Back),
 ];
+/// The trust dialog (spec §4.7 *User keys*). Cancel is focused: trusting
+/// a key needs a deliberate choice; Back, Esc and B cancel too. The
+/// commands close the menu themselves (leaving the dialog otherwise
+/// declines).
+const TRUST_ITEMS: &[Item] = &[
+    item(
+        "Trust this key",
+        ItemKind::Command {
+            line: "world trust accept",
+            close: false,
+        },
+    ),
+    // Loads without remembering the key (until the app quits).
+    item(
+        "Load once",
+        ItemKind::Command {
+            line: "world trust once",
+            close: false,
+        },
+    ),
+    item("Cancel", ItemKind::Back),
+];
+const FORGET_ITEMS: &[Item] = &[
+    item("Remove the key", ItemKind::RunPendingBack),
+    item("Cancel", ItemKind::Back),
+];
 const EVENT_ITEMS: &[Item] = &[
     item("Start now", ItemKind::RunPending),
     // The organiser's rules of the event (spec §14 Phase 12 K6).
@@ -409,6 +448,22 @@ impl Page {
                 text: &[ocw_core::character::LOCKED_MIRROR],
                 items: LOCKED_ITEMS,
                 initial_focus: 0,
+            },
+            Page::ConfirmTrust => PageDef {
+                title: "Trust this world's key?",
+                // The world, the signer and the fingerprint: from the
+                // app's request (`menu::trust`).
+                text: &[],
+                items: TRUST_ITEMS,
+                initial_focus: 2,
+            },
+            Page::ConfirmForget => PageDef {
+                title: "Remove this key?",
+                text: &[
+                    "Worlds signed with it are asked about again before they load. Official worlds are not affected.",
+                ],
+                items: FORGET_ITEMS,
+                initial_focus: 1,
             },
             Page::ConfirmEvent => PageDef {
                 title: "Start the event?",
@@ -716,6 +771,20 @@ impl Menu {
         Effect::Command(line)
     }
 
+    /// Shows the trust dialog over whatever is open (the menu opens at
+    /// its top page first if it was closed).
+    fn open_trust(&mut self) -> Effect {
+        let opened = !self.is_open();
+        if opened {
+            self.push(Page::Top);
+        }
+        if self.page() != Some(Page::ConfirmTrust) {
+            self.push(Page::ConfirmTrust);
+            self.rows.clear();
+        }
+        if opened { Effect::Opened } else { Effect::None }
+    }
+
     fn select(&mut self, i: usize) -> Effect {
         if let Some(Page::Sub(_)) = self.page() {
             return self.select_row(i);
@@ -742,6 +811,11 @@ impl Menu {
                 Some(line) => self.run_and_close(line),
                 None => self.back(),
             },
+            ItemKind::RunPendingBack => {
+                let line = self.pending.take();
+                self.back();
+                line.map_or(Effect::None, Effect::Command)
+            }
         }
     }
 
@@ -765,6 +839,7 @@ impl Menu {
         match self.rows[row].confirm.clone() {
             Some(Activate::Command(line)) => Effect::Command(line),
             Some(Activate::Ask(line)) => self.ask(line),
+            Some(Activate::AskForget(line)) => self.ask_on(Page::ConfirmForget, line),
             Some(Activate::Run(line)) => self.run_and_close(line),
             Some(Activate::Open(p)) => {
                 self.push(Page::Sub(p));
@@ -819,6 +894,7 @@ impl Menu {
                         | sub::Page::HistoryRide(_)
                         | sub::Page::HistoryClimbs(_)
                         | sub::Page::BindGroup(_)
+                        | sub::Page::TrustedKey(_)
                 ) && self.rows.is_empty()
                 {
                     self.stack.pop();
@@ -840,7 +916,10 @@ impl Menu {
 
     fn back(&mut self) -> Effect {
         if self.stack.len() > 1 {
-            if matches!(self.page(), Some(Page::ConfirmSwitch | Page::ConfirmEvent)) {
+            if matches!(
+                self.page(),
+                Some(Page::ConfirmSwitch | Page::ConfirmEvent | Page::ConfirmForget)
+            ) {
                 self.pending = None;
             }
             self.stack.pop();
@@ -862,6 +941,9 @@ impl Menu {
             self.push(Page::Sub(sub::Page::Workshop));
             return if opened { Effect::Opened } else { Effect::None };
         }
+        if action == Action::TrustDialog {
+            return self.open_trust();
+        }
         if !self.is_open() {
             return match action {
                 Action::Open => {
@@ -872,7 +954,7 @@ impl Menu {
             };
         }
         match action {
-            Action::Open | Action::RiderPage => Effect::None,
+            Action::Open | Action::RiderPage | Action::TrustDialog => Effect::None,
             // A grid: the arrows move the focus in two directions.
             Action::Left | Action::Right if self.grid_columns().is_some() => {
                 self.move_focus(if action == Action::Right { 1 } else { -1 });

@@ -70,6 +70,9 @@ pub struct MenuView {
     pub status: String,
     /// Description paragraphs (placeholder pages, confirmation questions).
     pub text: Vec<String>,
+    /// Lines drawn large between the status and the text, never dropped
+    /// for room: the trust dialog's fingerprint (spec §4.7 *User keys*).
+    pub emphasis: Vec<String>,
     pub items: Vec<String>,
     pub focused: usize,
     /// Control hint at the bottom.
@@ -213,6 +216,8 @@ const TITLE_VH: f32 = 6.0;
 const ITEM_VH: f32 = 4.2;
 const TEXT_VH: f32 = 3.2;
 const HINT_VH: f32 = 3.0;
+/// The emphasised lines (a fingerprint: monospaced, larger than the text).
+const EMPHASIS_VH: f32 = 4.0;
 
 /// The chart: bar area, the texts over and under the bars (vh).
 const CHART_BAR_VH: f32 = 9.0;
@@ -381,6 +386,8 @@ pub fn page_height_vh(view: &MenuView, aspect: f32, paragraphs: usize) -> f32 {
         + lines(&view.title, TITLE_VH)
         + lines(&view.status, TEXT_VH)
         + lines(&text, TEXT_VH)
+        + PANEL_GAP_VH
+        + lines(&view.emphasis.join("\n"), EMPHASIS_VH)
         + list
         + lines(&view.hint, HINT_VH)
 }
@@ -416,6 +423,8 @@ struct MenuTitle;
 struct MenuStatus;
 #[derive(Component)]
 struct MenuText;
+#[derive(Component)]
+struct MenuEmphasis;
 #[derive(Component)]
 struct MenuList;
 #[derive(Component)]
@@ -495,6 +504,16 @@ fn spawn_menu(mut commands: Commands) {
                     font(TEXT_VH),
                     TextColor(FOCUS),
                     MenuStatus,
+                ));
+                panel.spawn((
+                    Node {
+                        display: Display::None,
+                        ..default()
+                    },
+                    Text::new(""),
+                    font(EMPHASIS_VH),
+                    TextColor(TEXT),
+                    MenuEmphasis,
                 ));
                 panel.spawn((
                     Node {
@@ -766,6 +785,7 @@ type ListFilter = (
     Without<MenuRoot>,
     Without<MenuStatus>,
     Without<MenuText>,
+    Without<MenuEmphasis>,
 );
 type PanelFilter = (
     With<MenuPanel>,
@@ -773,6 +793,7 @@ type PanelFilter = (
     Without<MenuList>,
     Without<MenuStatus>,
     Without<MenuText>,
+    Without<MenuEmphasis>,
 );
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)] // a Bevy system
@@ -799,6 +820,7 @@ fn draw_menu(
         Query<(&mut Text, &mut Node), (With<MenuStatus>, Without<MenuRoot>)>,
         Query<(&mut Text, &mut Node), (With<MenuText>, Without<MenuRoot>)>,
         Query<&mut Text, With<MenuHint>>,
+        Query<(&mut Text, &mut Node), (With<MenuEmphasis>, Without<MenuRoot>)>,
     )>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     mut last_aspect: Local<f32>,
@@ -885,6 +907,7 @@ fn draw_menu(
     let shown = fitted_paragraphs(&view, aspect);
     set_text_or_hide(&mut texts.p2(), &view.text[..shown].join("\n"));
     set_text(&mut texts.p3(), &view.hint);
+    set_text_or_hide(&mut texts.p4(), &view.emphasis.join("\n"));
 }
 
 /// The chart's bars (spawned again when the chart changes).

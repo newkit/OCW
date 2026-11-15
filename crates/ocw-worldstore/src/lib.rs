@@ -5,10 +5,13 @@
 //! The verification itself is pure and lives in [`ocw_world::manifest`];
 //! this crate adds the file system, the clock and the network, so most of
 //! it is used by the desktop app, the server and the tools. The browser
-//! app (wasm32, spec §14 Phase 10 B2) uses only [`stream`] and [`trust`].
+//! app (wasm32, spec §14 Phase 10 B2) uses only [`stream`], [`trust`] and
+//! [`userkeys`].
 //!
 //! - [`keys`]: key files (secret ones readable only by their owner)
 //! - [`trust`]: which root keys a build trusts (development roots, files)
+//! - [`userkeys`]: the user keys the user trusted (shared, unofficial
+//!   worlds, spec §4.7 *User keys*), the trust dialog's decision
 //! - [`cache`]: `<cache>/<id>/<version>/{manifest.json, files}`
 //! - [`load`]: `--world PATH | ID[@VERSION]` with verify-on-load
 //! - [`fetch`]: download a package into the cache, resumable, verified
@@ -32,6 +35,7 @@ pub mod load;
 pub mod neighbours;
 pub mod stream;
 pub mod trust;
+pub mod userkeys;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use cache::{CacheEntry, WorldCache};
@@ -39,7 +43,8 @@ pub use cache::{CacheEntry, WorldCache};
 pub use fetch::{FileTransport, Transport, UreqTransport, fetch};
 #[cfg(not(target_arch = "wasm32"))]
 pub use load::{
-    LoadError, LoadOptions, LoadedWorld, load_world, load_world_skeleton, manifest_path_for,
+    LoadError, LoadOptions, LoadedWorld, consent_needed, load_world, load_world_skeleton,
+    manifest_path_for,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use neighbours::{Neighbourhood, neighbourhood};

@@ -1031,6 +1031,36 @@ In manual steering, the keys ramp the lean and it stays when released (press
 the other way to straighten up); the stick sets the lean directly, centred is
 upright. The road's bends have to be steered, see spec §5.2.1.
 
+#### Sharing a world you edited (your own key)
+
+A world you built or edited yourself is signed with **your own key** and can
+be shared (spec §4.7 *User keys*). Others see it as *unofficial* with your
+name – the name is only what your key claims; the **fingerprint** is what
+identifies it.
+
+```bash
+world-builder keys init-user --name "Ada Rider"     # once: prints your fingerprint
+world-builder sign my-alps.ocwpkg --key ~/.config/ocw/keys/user.key
+world-builder keys fingerprint my-alps.ocwpkg        # the fingerprint it carries
+```
+
+Send `my-alps.ocwpkg` and `my-alps.ocwpkg.manifest.json`. When someone opens
+it (World → Change world, `--world`, a link in the browser), a dialog shows
+the world, "signed by 'Ada Rider' (unverified name)" and the full fingerprint
+(16 groups of four hex digits). **Compare it with the owner digit by digit,
+in person or over a channel you trust** (a call, a message you know is
+theirs), then choose *Trust this key* (remembered), *Load once* (until the app
+quits) or *Cancel* (focused). Packages whose signature or files do not match
+are refused outright – no dialog.
+
+Trusted keys are listed in *Settings → Account → Trusted world keys* (remove
+one there) and in the console: `world trust list`, `world trust add
+KEY|FILE` (a `.pub.json`, a package or 64 hex digits), `world trust remove
+FINGERPRINT`. The desktop keeps them in `~/.local/share/ocw/trusted-keys.json`
+(`$OCW_TRUSTED_KEYS`), the browser in its `localStorage`. In a shared ride the
+server needs the key too (`ocw-server --trust-key FILE`); a rider who does not
+trust it leaves the ride when the host switches to that world.
+
 ## Connecting a gamepad
 
 Any controller that the operating system sees as a gamepad works (Xbox,

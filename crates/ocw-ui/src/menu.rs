@@ -104,6 +104,10 @@ impl Plugin for MenuPlugin {
         if !app.is_plugin_added::<crate::history::HistoryPlugin>() {
             app.add_plugins(crate::history::HistoryPlugin);
         }
+        // The trust dialog and the trusted world keys (spec §4.7).
+        if !app.is_plugin_added::<crate::trust::TrustPlugin>() {
+            app.add_plugins(crate::trust::TrustPlugin);
+        }
         app.init_resource::<MenuState>()
             .init_resource::<VoiceMenu>()
             .init_resource::<AccountMenu>()
@@ -168,6 +172,14 @@ pub struct MenuState {
     queued: Vec<Action>,
 }
 
+impl MenuState {
+    /// Applies `action` next frame, as if it came from the input (the
+    /// steering is held and released as the menu opens and closes).
+    pub fn queue(&mut self, action: Action) {
+        self.queued.push(action);
+    }
+}
+
 /// The settings to show (the defaults without the settings plugin).
 fn settings(world: &World) -> &Settings {
     static DEFAULT: std::sync::OnceLock<Settings> = std::sync::OnceLock::new();
@@ -224,7 +236,23 @@ pub fn sub_rows(world: &World, page: sub::Page) -> Vec<Row> {
     } else if page == sub::Page::Account {
         let empty = AccountMenu::default();
         let info = world.get_resource::<AccountMenu>().unwrap_or(&empty);
-        ocw_client::account::rows(info, platform(world) == Platform::Desktop)
+        let mut rows = ocw_client::account::rows(info, platform(world) == Platform::Desktop);
+        // The world keys this rider trusts (spec §4.7 *User keys*).
+        let n = world
+            .get_resource::<crate::trust::TrustedKeys>()
+            .map_or(0, |k| k.keys.keys.len());
+        rows.push(sub::open_row(
+            "Trusted world keys",
+            Some(n.to_string()),
+            sub::Page::TrustedKeys,
+        ));
+        rows
+    } else if matches!(page, sub::Page::TrustedKeys | sub::Page::TrustedKey(_)) {
+        let empty = crate::trust::TrustedKeys::default();
+        let k = world
+            .get_resource::<crate::trust::TrustedKeys>()
+            .unwrap_or(&empty);
+        ocw_client::menu::trust::rows(page, &k.keys.keys, k.warning.as_deref())
     } else if page == sub::Page::TimeMachine {
         let info = world
             .get_resource::<TimeMachine>()
@@ -395,10 +423,13 @@ pub fn view_of(world: &World, menu: &Menu) -> MenuView {
         (Page::Sub(p), Some(h)) => ocw_client::menu::history::text(p, h),
         _ => Vec::new(),
     };
+    let (trust_status, trust_text, emphasis) = trust_view(world, menu, page);
     MenuView {
         open: true,
         title: def.title.into(),
+        emphasis,
         status: match (page, world.get_resource::<RideView>(), weather) {
+            _ if !trust_status.is_empty() => trust_status,
             (Page::Top, Some(r), _) => ocw_client::menu::status_line(r),
             // The weather now and who sets it (spec §14 Phase 9, S5).
             (Page::Sub(p), _, Some(w)) if p.is_weather_page() => {
@@ -432,6 +463,7 @@ pub fn view_of(world: &World, menu: &Menu) -> MenuView {
                 _ => Vec::new(),
             })
             .chain(history_text)
+            .chain(trust_text)
             .collect(),
         items: menu.labels(),
         focused: menu.focus(),
@@ -473,6 +505,46 @@ pub fn view_of(world: &World, menu: &Menu) -> MenuView {
             (Page::Sub(p), Some(h)) => ocw_client::menu::history::chart(p, h),
             _ => None,
         },
+    }
+}
+
+/// The trust pages' status, text and large fingerprint (spec §4.7).
+fn trust_view(world: &World, menu: &Menu, page: Page) -> (String, Vec<String>, Vec<String>) {
+    use ocw_client::menu::trust as t;
+    let empty = crate::trust::TrustedKeys::default();
+    let keys = world
+        .get_resource::<crate::trust::TrustedKeys>()
+        .unwrap_or(&empty);
+    match page {
+        Page::ConfirmTrust => match world
+            .get_resource::<crate::trust::TrustDialog>()
+            .and_then(|d| d.request.as_ref().map(|r| (r, d.shared)))
+        {
+            Some((r, shared)) => (
+                t::dialog_status(r),
+                t::dialog_text(r, shared),
+                t::dialog_emphasis(r),
+            ),
+            None => (
+                String::new(),
+                vec!["No world is waiting for a decision.".into()],
+                Vec::new(),
+            ),
+        },
+        Page::ConfirmForget => match t::pending_key(menu.pending(), &keys.keys.keys) {
+            Some(k) => (
+                format!("'{}' (unverified name)", k.name),
+                Vec::new(),
+                k.fingerprint().lines(t::GROUPS_PER_LINE),
+            ),
+            None => Default::default(),
+        },
+        Page::Sub(p @ ocw_client::menu::pages::Page::TrustedKey(_)) => (
+            String::new(),
+            Vec::new(),
+            t::key_emphasis(p, &keys.keys.keys),
+        ),
+        _ => Default::default(),
     }
 }
 

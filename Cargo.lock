@@ -6814,6 +6814,7 @@ dependencies = [
  "ocw-voice",
  "ocw-weather",
  "ocw-world",
+ "ocw-worldstore",
  "serde",
  "serde_json",
  "toml",
@@ -6948,6 +6949,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tempfile",
  "thiserror 2.0.21",
  "time",
  "tokio",
@@ -7004,6 +7006,7 @@ dependencies = [
  "ocw-voice",
  "ocw-weather",
  "ocw-world",
+ "ocw-worldstore",
 ]
 
 [[package]]

@@ -86,6 +86,15 @@ pub fn history_store() -> Option<Box<dyn TextStore>> {
     None
 }
 
+/// The trusted world keys' store (spec §4.7 *User keys*): `localStorage`
+/// in the browser, none natively (tests).
+pub fn trusted_keys_store() -> Option<Box<dyn TextStore>> {
+    #[cfg(target_arch = "wasm32")]
+    return Some(Box::new(LocalKey(ocw_worldstore::userkeys::STORAGE_KEY)));
+    #[cfg(not(target_arch = "wasm32"))]
+    None
+}
+
 /// Makes the store when the app starts (`localStorage` on wasm32).
 #[derive(Resource)]
 pub struct MakeStore(pub Box<dyn Fn() -> Option<Box<dyn TextStore>> + Send + Sync>);

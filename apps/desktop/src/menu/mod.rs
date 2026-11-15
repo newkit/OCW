@@ -158,6 +158,8 @@ mod tests {
             HistoryMonths,
             HistoryBests,
             EventRules,
+            TrustedKeys,
+            TrustedKey(0),
         ];
         for p in &all {
             match p {
@@ -169,7 +171,7 @@ mod tests {
                 | WeatherReal | RidingAids | Graphics | RiderList | UnicornControls | Bindings
                 | BindGroup(_) | BindReset | Accessibility | History | HistoryRides
                 | HistoryRide(_) | HistoryClimbs(_) | HistoryWeeks | HistoryMonths
-                | HistoryBests | EventRules | Account => {}
+                | HistoryBests | EventRules | Account | TrustedKeys | TrustedKey(_) => {}
             }
         }
         all
@@ -304,6 +306,7 @@ mod tests {
                 grid,
                 marks: Vec::new(),
                 chart,
+                emphasis: Vec::new(),
             });
         }
     }

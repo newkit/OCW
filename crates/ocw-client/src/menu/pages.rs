@@ -128,6 +128,11 @@ pub enum Page {
     /// "Start the event?" → Organiser rules (spec §14 Phase 12 K6): the
     /// rules of the events this rider starts (the `event.*` settings).
     EventRules,
+    /// Settings → Account → Trusted world keys (spec §4.7 *User keys*;
+    /// rows from `menu::trust`): the user keys trusted here.
+    TrustedKeys,
+    /// One of them (index): name, fingerprint, date; remove it.
+    TrustedKey(usize),
 }
 
 impl Page {
@@ -195,6 +200,8 @@ impl Page {
             Self::HistoryMonths => "Monthly totals",
             Self::HistoryBests => "Personal bests",
             Self::EventRules => "Organiser rules",
+            Self::TrustedKeys => "Trusted world keys",
+            Self::TrustedKey(_) => "Trusted key",
         }
     }
 
@@ -291,6 +298,7 @@ impl Page {
             Self::RidingAids | Self::UnicornControls | Self::Bindings => Some(Self::Controls),
             Self::BindGroup(_) | Self::BindReset => Some(Self::Bindings),
             Self::Graphics | Self::Accessibility => Some(Self::Display),
+            Self::TrustedKey(_) => Some(Self::TrustedKeys),
             _ => None,
         }
     }
@@ -397,6 +405,8 @@ impl Page {
             Self::HistoryRide(_) | Self::HistoryClimbs(_) => &[],
             Self::HistoryWeeks | Self::HistoryMonths => &[],
             Self::HistoryBests => &[],
+            Self::TrustedKeys => &[super::trust::KEYS_NOTE],
+            Self::TrustedKey(_) => &[super::trust::KEY_NOTE],
         }
     }
 }
@@ -597,6 +607,9 @@ pub enum Activate {
     /// Run a console command line and close the menu (starting a workout:
     /// its panel shows at once).
     Run(String),
+    /// Ask "Remove this key?" first, then run the line and go back
+    /// (Settings → Account → Trusted world keys).
+    AskForget(String),
 }
 
 /// One row of a page.
@@ -1046,6 +1059,8 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         | Page::HistoryWeeks
         | Page::HistoryMonths
         | Page::HistoryBests => Vec::new(),
+        // From the trusted world keys (`menu::trust`).
+        Page::TrustedKeys | Page::TrustedKey(_) => Vec::new(),
         // The organiser's rules (spec §14 Phase 12 K6): six rows.
         Page::EventRules => vec![
             setting_row(settings, "event.collisions", "Collisions"),

@@ -11,6 +11,8 @@
 //! world-builder package [--id europe/liechtenstein] [--sign-key KEY] [--bbox S,W,N,E] [--origin LAT,LON]
 //! world-builder keys init-root --name "OCW root"     (once, then keep root.key offline)
 //! world-builder keys new-signing --name "builds 2026" [--days 365]
+//! world-builder keys init-user --name "Ada Rider"  (your own key for worlds you share, spec §4.7)
+//! world-builder keys fingerprint FILE               (a key file's, a package's or a manifest's)
 //! world-builder sign --key KEY PKG | verify PKG | publish PKG --out DIR | diff OLD NEW
 //! ```
 
@@ -725,6 +727,25 @@ enum KeysCmd {
         #[arg(long)]
         dir: Option<PathBuf>,
     },
+    /// Your own key for worlds you edit and share (spec §4.7 *User keys*):
+    /// a root of your own (DIR/user-root.key, DIR/user-root.pub.json) and a
+    /// signing key (DIR/user.key) that puts the root's public key into
+    /// every manifest it signs. Others trust it after comparing its
+    /// fingerprint with you.
+    InitUser {
+        /// Your name as others see it (not verified: the fingerprint is).
+        #[arg(long)]
+        name: String,
+        /// Key directory (default: $OCW_KEY_DIR or ~/.config/ocw/keys).
+        #[arg(long)]
+        dir: Option<PathBuf>,
+        /// Validity of the signing key in days.
+        #[arg(long, default_value_t = 3650)]
+        days: u32,
+    },
+    /// The fingerprint of a key: a .pub.json key file, a signing key file
+    /// (its root), a package or a manifest signed by a user key.
+    Fingerprint { file: PathBuf },
     /// Create a signing key certified by the root key.
     NewSigning {
         #[arg(long)]
@@ -2897,6 +2918,8 @@ fn main() {
         }
         Cmd::Keys { command } => match command {
             KeysCmd::InitRoot { name, dir } => dist::keys_init_root(&name, dir),
+            KeysCmd::InitUser { name, dir, days } => dist::keys_init_user(&name, dir, days),
+            KeysCmd::Fingerprint { file } => dist::keys_fingerprint(&file),
             KeysCmd::NewSigning {
                 name,
                 root,

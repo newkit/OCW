@@ -256,7 +256,13 @@ pub fn start_world(app: &mut App, world: Option<WorldOptions>) {
         return;
     };
     let now_unix_s = (js_sys::Date::now() / 1000.0) as i64;
-    let config = match opts.stream_config(now_unix_s) {
+    // The user keys this browser trusts (spec §4.7 *User keys*).
+    let user = app
+        .world()
+        .get_resource::<ocw_ui::trust::TrustedKeys>()
+        .map(|k| k.roots())
+        .unwrap_or_default();
+    let config = match opts.stream_config_with(now_unix_s, &user) {
         Ok(c) => c,
         Err(e) => {
             let mut s = shared.lock().expect("not poisoned");
@@ -314,8 +320,14 @@ async fn drive(
 
 /// The page's status element shows the loading screen until the ride
 /// starts (and the error if loading failed).
-fn loading_screen(stream: Option<Res<WorldStream>>, mut shown: Local<Option<String>>) {
+fn loading_screen(
+    stream: Option<Res<WorldStream>>,
+    dialog: Option<Res<ocw_ui::trust::TrustDialog>>,
+    mut shown: Local<Option<String>>,
+) {
     let text = match &stream {
+        // The trust dialog has the screen (spec §4.7 *User keys*).
+        _ if dialog.as_ref().is_some_and(|d| d.is_pending()) => String::new(),
         Some(s) if !s.started => s.screen.join("\n"),
         _ => String::new(),
     };

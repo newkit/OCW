@@ -13,6 +13,12 @@
 //! always refused (that is damage or tampering, not missing trust). A
 //! path without a manifest next to it (`<file>.manifest.json`) counts as
 //! unsigned.
+//!
+//! A package signed by a **user key** nobody here trusts (spec §4.7 *User
+//! keys*) is refused by both policies ([`VerifyError::UntrustedKey`]):
+//! the apps first ask with the trust dialog ([`consent_needed`] gives what
+//! it shows), and load it once the user trusted the key (or chose *Load
+//! once*).
 
 use std::path::{Path, PathBuf};
 
@@ -126,6 +132,61 @@ pub fn manifest_path_for(package: &Path) -> Option<PathBuf> {
     let text = std::fs::read_to_string(&dir_manifest).ok()?;
     let m = SignedManifest::parse(&text).ok()?;
     m.manifest.file(name).is_some().then_some(dir_manifest)
+}
+
+/// Whether loading `spec` needs the user's consent first (the trust
+/// dialog, spec §4.7 *User keys*): `Ok(Some(request))` for an intact
+/// package – its file matches the manifest – signed by a user key that
+/// `opts.trust` does not hold; `Ok(None)` when it can be loaded (or is
+/// left to the unsigned-package policy). A damaged package, a bad
+/// signature or a revoked key is an error: refused, never asked about.
+pub fn consent_needed(
+    spec: &str,
+    opts: &LoadOptions,
+) -> Result<Option<crate::userkeys::TrustRequest>, LoadError> {
+    let path = resolve(spec, opts)?;
+    let Some(mp) = manifest_path_for(&path) else {
+        return Ok(None);
+    };
+    let text =
+        std::fs::read_to_string(&mp).map_err(|e| LoadError::Io(mp.clone(), e.to_string()))?;
+    let signed = SignedManifest::parse(&text).map_err(|e| LoadError::Verify(mp.clone(), e))?;
+    match crate::userkeys::decide(&signed, &opts.trust, opts.now_unix_s) {
+        crate::userkeys::Decision::Ask(request) => {
+            // Only an intact package is offered: its file must match.
+            let bytes =
+                std::fs::read(&path).map_err(|e| LoadError::Io(path.clone(), e.to_string()))?;
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            signed
+                .manifest
+                .verify_file(name, &bytes)
+                .map_err(|e| LoadError::Verify(path.clone(), e))?;
+            Ok(Some(*request))
+        }
+        crate::userkeys::Decision::Refuse(e) => Err(LoadError::Verify(mp, e)),
+        _ => Ok(None),
+    }
+}
+
+/// The package file `spec` names: an existing path, else the newest (or
+/// the given) version of a cache id.
+fn resolve(spec: &str, opts: &LoadOptions) -> Result<PathBuf, LoadError> {
+    let path = Path::new(spec);
+    if path.is_file() {
+        return Ok(path.to_path_buf());
+    }
+    if parse_spec(spec).is_ok()
+        && let Some(entry) = opts.cache.resolve(spec)
+    {
+        return entry
+            .package_path()
+            .map_err(|e| LoadError::Io(entry.dir.clone(), e));
+    }
+    Err(LoadError::NotFound(
+        spec.into(),
+        opts.cache.root().to_path_buf(),
+        "see world list".into(),
+    ))
 }
 
 /// Loads `spec`: an existing path, else a cache id (`id` or `id@version`).
@@ -428,5 +489,75 @@ pub(crate) mod tests {
             load_world("no/such/file.ocwpkg", &o),
             Err(LoadError::NotFound(..))
         ));
+    }
+
+    /// Writes `dir/<name>.ocwpkg` signed by `key` (a user key).
+    pub(crate) fn write_user_package(dir: &Path, name: &str, key: &SigningKeyPair) -> PathBuf {
+        let bytes = package_bytes();
+        let mut m = Manifest::new(
+            &format!("user/{name}"),
+            "Ada's Mini",
+            1,
+            NOW,
+            "test",
+            vec![Attribution::openstreetmap()],
+        )
+        .unwrap();
+        let file = format!("{name}.ocwpkg");
+        m.add_file(&file, &bytes).unwrap();
+        let p = dir.join(&file);
+        std::fs::write(&p, &bytes).unwrap();
+        std::fs::write(
+            dir.join(format!("{file}.manifest.json")),
+            SignedManifest::signed(&m, key).to_json(),
+        )
+        .unwrap();
+        p
+    }
+
+    #[test]
+    fn user_keys_need_consent_and_load_when_trusted() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ada, key) = crate::userkeys::tests::user_key("Ada Rider", 61);
+        let p = write_user_package(tmp.path(), "mini-ada", &key);
+        let spec = p.to_str().unwrap();
+        let o = opts(&tmp.path().join("cache"));
+        // Unknown: refused by both policies, with a request for the dialog.
+        let e = load_world(spec, &o).unwrap_err();
+        assert!(
+            matches!(e, LoadError::Verify(_, VerifyError::UntrustedKey(_))),
+            "{e}"
+        );
+        let warn = LoadOptions {
+            allow_unsigned: true,
+            ..o.clone()
+        };
+        assert!(load_world(spec, &warn).is_err());
+        let r = consent_needed(spec, &o).unwrap().expect("asks");
+        assert_eq!(r.claimed_signer, "Ada Rider");
+        assert_eq!(r.fingerprint(), ada.public().fingerprint());
+        // Trusted: loads, unofficial; no question.
+        let trusted = LoadOptions {
+            trust: crate::userkeys::with_user_keys(o.trust.clone(), &[ada.public()]),
+            ..o.clone()
+        };
+        assert_eq!(consent_needed(spec, &trusted).unwrap(), None);
+        let w = load_world(spec, &trusted).unwrap();
+        assert!(w.trust.is_trusted());
+        assert!(w.trust.to_string().contains("UNOFFICIAL"), "{}", w.trust);
+        // A file that does not match its manifest: refused, never asked.
+        let mut bytes = std::fs::read(&p).unwrap();
+        bytes[30] ^= 1;
+        std::fs::write(&p, &bytes).unwrap();
+        assert!(matches!(
+            consent_needed(spec, &o),
+            Err(LoadError::Verify(_, VerifyError::HashMismatch(_)))
+        ));
+        // Built-in roots need no consent.
+        let official = write_package(tmp.path(), true, true, 2);
+        assert_eq!(
+            consent_needed(official.to_str().unwrap(), &o).unwrap(),
+            None
+        );
     }
 }
