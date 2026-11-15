@@ -425,7 +425,7 @@ art-collect: ## Art: one run of the hourly collector now (gather + journal of ye
 art-check: ## Art: fail if a tracked text file of art/build-history/ holds a private pattern (FIX=1 masks them)
 	$(ART_PYTHON) art/diary.py check-masked $(if $(FIX),--fix)
 
-test-art: ## Art: unit tests of art/diary.py and scripts/art-collect.sh (fixture archive; local Python, no Rust build)
+test-art: ## Art: unit tests of art/diary.py, art/music.py and scripts/art-collect.sh (fixture archive; local Python, no Rust build)
 	$(ART_PYTHON) -m unittest discover -s art -p 'test_*.py'
 
 ART_UNITS = ocw-art-collect.service ocw-art-collect.timer
@@ -455,6 +455,7 @@ dashboard-install: ## Install and start the build dashboard as a systemd user se
 	sed 's|@REPO@|$(CURDIR)|g' tools/build-dashboard/ocw-build-dashboard.service > $(HOME)/.config/systemd/user/ocw-build-dashboard.service
 	systemctl --user daemon-reload
 	systemctl --user enable --now ocw-build-dashboard.service
+	systemctl --user restart ocw-build-dashboard.service
 	@echo "Dashboard: http://localhost:8765/  (start at boot without login: sudo loginctl enable-linger $$USER)"
 
 dashboard-uninstall: ## Stop and remove the build dashboard user service
