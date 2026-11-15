@@ -5,17 +5,17 @@
 //! for the ride; `god.pins` lists them with a ready-to-copy `--start X,Z`).
 //!
 //! The texts and the pins are pure ([`panel_lines`], [`Pins`]); the Bevy
-//! system [`inspect`] casts the ray a few times a second.
+//! system [`inspect`] casts the ray a few times a second (both apps,
+//! through [`crate::RideAccess`]).
 
 use bevy::prelude::*;
 use clap::{Arg, Command};
+use ocw_client::client::ClientCore;
 use ocw_render::RideView;
-use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
+use ocw_render::console::{ConsoleAppExt, ConsoleCommand, Permission};
 use ocw_world::TileKey;
 use ocw_world::geo::LocalProjection;
 use ocw_world::inspect::{self as world_inspect, Inspection};
-
-use crate::connection::ClientState;
 
 /// The crosshair and the panel are refreshed this often (Hz).
 pub const INSPECT_HZ: f64 = 5.0;
@@ -189,21 +189,30 @@ pub fn tile_at(set: &ocw_world::WorldSet, p: [f64; 2]) -> Option<(String, TileKe
 
 /// What the world offers to the ray: terrain and buildings (the camera's
 /// solid obstacles), the water of the packages.
-type RayWorld<'w> = (
-    Option<Res<'w, ocw_render::Ground>>,
-    Res<'w, ocw_render::camera::CameraObstacles>,
-    Option<Res<'w, ocw_render::package::PackageWorld>>,
+pub type RayWorld<'a> = (
+    Option<&'a ocw_render::Ground>,
+    &'a ocw_render::camera::CameraObstacles,
+    Option<&'a ocw_render::package::PackageWorld>,
 );
+
+/// Runs `f` with the world's ray surfaces (none registered: no obstacles).
+fn with_ray_world<R>(world: &World, f: impl FnOnce(&RayWorld<'_>) -> R) -> R {
+    let none = ocw_render::camera::CameraObstacles::default();
+    let ray = (
+        world.get_resource::<ocw_render::Ground>(),
+        world
+            .get_resource::<ocw_render::camera::CameraObstacles>()
+            .unwrap_or(&none),
+        world.get_resource::<ocw_render::package::PackageWorld>(),
+    );
+    f(&ray)
+}
 
 /// Casts the crosshair's ray from the camera along the view; returns the
 /// hit and what is there.
 pub fn cast(
-    client: &crate::client::ClientCore,
-    (ground, obstacles, packages): &(
-        Option<&ocw_render::Ground>,
-        &ocw_render::camera::CameraObstacles,
-        Option<&ocw_render::package::PackageWorld>,
-    ),
+    client: &ClientCore,
+    (ground, obstacles, packages): &RayWorld<'_>,
 ) -> Option<Inspection> {
     let g = client.god();
     let f = g.flight();
@@ -247,76 +256,64 @@ pub fn cast(
 
 /// I toggles the inspection, P puts a pin; a few times a second the ray
 /// and the panel are refreshed.
-#[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
-pub(crate) fn inspect(
-    time: Res<Time>,
-    keys: Res<ButtonInput<KeyCode>>,
-    context: Option<Res<ocw_render::menu::InputContext>>,
-    (ground, obstacles, packages): RayWorld<'_>,
-    view: Res<RideView>,
-    client: Res<ClientState>,
-    mut inspector: ResMut<Inspector>,
-    mut console: ResMut<ConsoleState>,
-) {
-    let c = &client.0;
-    if !c.god().flying() {
-        inspector.crosshair = None;
-        inspector.panel.clear();
-        return;
+pub(crate) fn inspect(world: &mut World) {
+    let now = crate::now(world);
+    let keys = super::ride_keys(world)
+        .then(|| world.get_resource::<ButtonInput<KeyCode>>())
+        .flatten();
+    let toggle = keys.is_some_and(|k| k.just_pressed(KeyCode::KeyI));
+    let pin = keys.is_some_and(|k| k.just_pressed(KeyCode::KeyP));
+    let line = world.resource_scope(|world, mut inspector: Mut<Inspector>| {
+        let world: &World = world;
+        let Some(c) = crate::client(world).filter(|c| c.god().flying()) else {
+            inspector.crosshair = None;
+            inspector.panel.clear();
+            return None;
+        };
+        with_ray_world(world, |ray| {
+            if toggle {
+                inspector.shown = !inspector.shown;
+                inspector.last_s = f64::NEG_INFINITY;
+            }
+            let line = pin.then(|| put_pin(c, ray, &mut inspector));
+            if !inspector.shown {
+                inspector.crosshair = None;
+                inspector.panel.clear();
+                return line;
+            }
+            if now - inspector.last_s < 1.0 / INSPECT_HZ {
+                return line;
+            }
+            inspector.last_s = now;
+            inspector.crosshair = cast(c, ray);
+            let g = c.god();
+            let f = g.flight();
+            let facts = PanelFacts {
+                pos: f.pos,
+                height_m: g.height_m(),
+                speed_mps: f.speed(),
+                scale: f.scale,
+                heading_deg: ocw_sim::god::heading_deg(f.yaw),
+                geo_origin: c.geo_origin(),
+                tile: ray.2.and_then(|p| tile_at(&p.set, [f.pos[0], f.pos[2]])),
+                local_time: world
+                    .get_resource::<RideView>()
+                    .and_then(|v| v.sky.as_ref())
+                    .map(|s| (s.sky.local.hour, s.sky.local.minute, s.sky.local.offset_s)),
+                pins: inspector.pins.list().len(),
+            };
+            inspector.panel = panel_lines(&facts);
+            line
+        })
+    });
+    if let Some(l) = line {
+        super::print(world, l);
     }
-    let world = (ground.as_deref(), &*obstacles, packages.as_deref());
-    let now = time.elapsed_secs_f64();
-    if ocw_render::menu::ride_input(context) {
-        if keys.just_pressed(KeyCode::KeyI) {
-            inspector.shown = !inspector.shown;
-            inspector.last_s = f64::NEG_INFINITY;
-        }
-        if keys.just_pressed(KeyCode::KeyP) {
-            console.print(put_pin(c, &world, &mut inspector));
-        }
-    }
-    if !inspector.shown {
-        inspector.crosshair = None;
-        inspector.panel.clear();
-        return;
-    }
-    if now - inspector.last_s < 1.0 / INSPECT_HZ {
-        return;
-    }
-    inspector.last_s = now;
-    inspector.crosshair = cast(c, &world);
-    let g = c.god();
-    let f = g.flight();
-    let facts = PanelFacts {
-        pos: f.pos,
-        height_m: g.height_m(),
-        speed_mps: f.speed(),
-        scale: f.scale,
-        heading_deg: ocw_sim::god::heading_deg(f.yaw),
-        geo_origin: c.geo_origin(),
-        tile: packages
-            .as_deref()
-            .and_then(|p| tile_at(&p.set, [f.pos[0], f.pos[2]])),
-        local_time: view
-            .sky
-            .as_ref()
-            .map(|s| (s.sky.local.hour, s.sky.local.minute, s.sky.local.offset_s)),
-        pins: inspector.pins.list().len(),
-    };
-    inspector.panel = panel_lines(&facts);
 }
 
 /// Puts a pin where the crosshair points (below the unicorn when it
 /// points at the sky).
-fn put_pin(
-    c: &crate::client::ClientCore,
-    world: &(
-        Option<&ocw_render::Ground>,
-        &ocw_render::camera::CameraObstacles,
-        Option<&ocw_render::package::PackageWorld>,
-    ),
-    inspector: &mut Inspector,
-) -> String {
+fn put_pin(c: &ClientCore, world: &RayWorld<'_>, inspector: &mut Inspector) -> String {
     let (pos, label) = match cast(c, world) {
         Some(i) => (i.point, i.lines().first().cloned().unwrap_or_default()),
         None => {
@@ -337,7 +334,8 @@ fn put_pin(
 }
 
 /// The panel, the crosshair and the pins for the renderer.
-pub(crate) fn update_view(inspector: Res<Inspector>, mut view: ResMut<RideView>) {
+pub(crate) fn update_view(inspector: Res<Inspector>, view: Option<ResMut<RideView>>) {
+    let Some(mut view) = view else { return };
     let pins: Vec<ocw_render::PinView> = inspector
         .pins
         .list()
@@ -370,7 +368,7 @@ pub(crate) fn register_commands(app: &mut App) {
                 world.resource_mut::<Inspector>().pins.clear();
                 return Ok("pins removed".into());
             }
-            let origin = world.resource::<ClientState>().0.geo_origin();
+            let origin = crate::client(world).and_then(|c| c.geo_origin());
             Ok(world.resource::<Inspector>().pins.lines(origin).join("\n"))
         },
     ))
@@ -378,15 +376,13 @@ pub(crate) fn register_commands(app: &mut App) {
         Permission::User,
         Command::new("god.pin").about("Unicorn mode: put a pin where the crosshair points (P)"),
         |world, _| {
-            if !world.resource::<ClientState>().0.god().flying() {
+            if !crate::client(world).is_some_and(|c| c.god().flying()) {
                 return Err("not flying (god on first)".into());
             }
             let line = world.resource_scope(|world, mut inspector: Mut<Inspector>| {
-                let ground = world.get_resource::<ocw_render::Ground>();
-                let obstacles = world.resource::<ocw_render::camera::CameraObstacles>();
-                let packages = world.get_resource::<ocw_render::package::PackageWorld>();
-                let c = &world.resource::<ClientState>().0;
-                put_pin(c, &(ground, obstacles, packages), &mut inspector)
+                let world: &World = world;
+                let c = crate::client(world).expect("flying");
+                with_ray_world(world, |ray| put_pin(c, ray, &mut inspector))
             });
             Ok(line)
         },

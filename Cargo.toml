@@ -154,8 +154,11 @@ opt-level = 3
 debug = false
 
 # The browser app (`make web`, spec §14 Phase 10): release, optimised for
-# size (the download), thin LTO, no debug info.
-[profile.web]
+# size (the download), thin LTO, no debug info. Not named `web`: cargo puts
+# the host artifacts of a `--target wasm32-unknown-unknown` build (build
+# scripts, proc macros) into target/<profile>/, which would mix them into
+# the page in target/web/.
+[profile.web-release]
 inherits = "release"
 opt-level = "s"
 lto = "thin"
@@ -163,9 +166,9 @@ debug = false
 strip = "debuginfo"
 
 # The public preview of the browser app (`make web-preview`, spec §14
-# Phase 10 B8a): the `web` profile with fat LTO and one codegen unit (a
+# Phase 10 B8a): the `web-release` profile with fat LTO and one codegen unit (a
 # smaller module, a slower build), then wasm-opt -Oz.
-[profile.web-preview]
-inherits = "web"
+[profile.web-preview-release]
+inherits = "web-release"
 lto = "fat"
 codegen-units = 1

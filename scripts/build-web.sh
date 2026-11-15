@@ -6,10 +6,11 @@
 #   configuration, B8a), sizes.txt,
 #   ocw-voice.js and livekit-client.umd.js (voice, B5)
 #
-#   scripts/build-web.sh            the `web` profile (release, size-optimised)
+#   scripts/build-web.sh            the `web-release` profile (release, size-optimised)
 #   scripts/build-web.sh --preview  the public preview (B8a, `make web-preview`)
-#                                   into target/web-preview/: the `web-preview`
-#                                   profile (fat LTO, one codegen unit), the
+#                                   into target/web-preview/: the
+#                                   `web-preview-release` profile (fat LTO,
+#                                   one codegen unit), the
 #                                   `preview` feature (worlds signed by the web
 #                                   preview's root only), wasm-opt required
 #                                   (scripts/fetch-binaryen.sh), no LiveKit
@@ -42,12 +43,14 @@ case ${1:-} in
   *) echo "usage: scripts/build-web.sh [--preview]" >&2; exit 2 ;;
 esac
 if [ $preview = 1 ]; then
-  profile=${WEB_PROFILE:-web-preview}
+  profile=${WEB_PROFILE:-web-preview-release}
   out=${WEB_OUT:-target/web-preview}
   features=,preview
   opt_default=-Oz
 else
-  profile=${WEB_PROFILE:-web}
+  profile=${WEB_PROFILE:-web-release}
+  # The old name of the profile (before v3.37).
+  [ "$profile" = web ] && profile=web-release
   out=${WEB_OUT:-target/web}
   features=
   opt_default=-Os

@@ -1,6 +1,6 @@
 //! The browser app's UI (spec §14 Phase 10, B6: UI parity): the same
-//! menus, settings pages, time and weather machines, events, collisions
-//! and rider list as the desktop (`ocw_ui`, over the session's client
+//! menus, settings pages, time and weather machines, events, collisions,
+//! rider list and unicorn mode (Phase 13 G5, [`crate::god`]) as the desktop (`ocw_ui`, over the session's client
 //! through `ocw_ui::RideAccess`), with the browser's own pages through
 //! [`ocw_ui::menu::MenuHooks`] – the world of the page and the bundled
 //! workouts – and its captures as downloads instead of files:
@@ -100,6 +100,9 @@ impl Plugin for WebUiPlugin {
             ocw_ui::events::EventsPlugin,
             // `display.quality`, `quality` and `gpu` (B7).
             ocw_ui::quality::QualityPlugin,
+            // Unicorn mode (spec §14 Phase 13 G5) with the page's Pointer
+            // Lock and `window.ocw.god()`.
+            crate::god::WebGodPlugin,
         ));
         if !app.world().contains_resource::<Downloads>() {
             app.insert_resource(Downloads::page());
@@ -239,6 +242,8 @@ fn web_rows(world: &World, page: sub::Page) -> Option<Vec<Row>> {
                 .unwrap_or_default();
             let home = WorldHome {
                 name,
+                // Unicorn mode (spec §14 Phase 13 G5): as on the desktop.
+                god: Some(ocw_ui::god::MENU_NAME),
                 ..WorldHome::default()
             };
             Some(sub::world_home_rows(&home, &tm, &weather))
@@ -518,6 +523,71 @@ mod tests {
         assert_eq!(v.title, "Workouts");
         assert!(v.items[0].ends_with("example"), "{:?}", v.items);
         assert_eq!(log.lock().unwrap().len(), 0);
+    }
+
+    /// Unicorn mode in the browser (spec §14 Phase 13 G5): World →
+    /// Unicorn mode flies on the page's local server, the riding keys do
+    /// nothing in flight (↓ would stop the trainer), the HUD's flight view
+    /// with the inspection, `window.ocw.god()`'s JSON, G lands.
+    #[test]
+    fn unicorn_mode_flies_from_the_world_page() {
+        let mut app = app(DownloadLog::default());
+        run_for(&mut app, 600);
+        tap(&mut app, KeyCode::Escape);
+        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::Enter);
+        let v = view(&app);
+        assert_eq!(v.title, "World");
+        let at = v
+            .items
+            .iter()
+            .position(|i| i.starts_with(ocw_ui::god::MENU_NAME))
+            .unwrap_or_else(|| panic!("{:?}", v.items));
+        for _ in 0..at {
+            tap(&mut app, KeyCode::ArrowDown);
+        }
+        tap(&mut app, KeyCode::Enter);
+        console(&mut app, "menu close");
+        let flying = |app: &App| app.world().resource::<ocw_ui::god::GodStatus>().flying;
+        let start = std::time::Instant::now();
+        while !flying(&app) && start.elapsed() < std::time::Duration::from_secs(5) {
+            run_for(&mut app, 50);
+        }
+        assert!(flying(&app), "{}", console(&mut app, "god status"));
+        let power = app.world().resource::<Session>().0.power_w();
+        tap(&mut app, KeyCode::ArrowDown);
+        run_for(&mut app, 300);
+        assert_eq!(
+            app.world().resource::<Session>().0.power_w(),
+            power,
+            "↓ flies slower, it does not stop the trainer"
+        );
+        let rv = app.world().resource::<RideView>();
+        let f = rv.flight.as_ref().expect("the flight view");
+        assert!(f.keys.contains("+/-: climb/descend"), "{}", f.keys);
+        assert!(
+            f.panel.iter().any(|l| l.starts_with("Position x")),
+            "{:?}",
+            f.panel
+        );
+        let json = crate::god::flight_json(
+            app.world().resource::<ocw_ui::god::GodStatus>(),
+            app.world().resource::<ocw_ui::god::FlightPointer>(),
+            rv,
+        );
+        let j: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(j["flying"], true);
+        assert!(j["pos"][1].as_f64().is_some());
+        tap(&mut app, KeyCode::KeyG);
+        let start = std::time::Instant::now();
+        while app.world().resource::<ocw_ui::god::GodStatus>().active
+            && start.elapsed() < std::time::Duration::from_secs(8)
+        {
+            run_for(&mut app, 50);
+        }
+        assert!(!app.world().resource::<ocw_ui::god::GodStatus>().active);
+        assert!(app.world().resource::<RideView>().flight.is_none());
     }
 
     #[test]

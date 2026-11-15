@@ -33,7 +33,6 @@ import importlib.util
 import json
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 import threading
@@ -63,38 +62,13 @@ class Browser:
         w, h = a.size.split("x")
         self.size = (int(w), int(h))
         self.profile = tempfile.mkdtemp(prefix="ocw-chromium-")
-        flags = [
-            "--headless=new", "--remote-debugging-pipe", f"--user-data-dir={self.profile}",
-            "--no-first-run", "--no-default-browser-check", "--disable-extensions",
-            "--no-proxy-server", "--password-store=basic",
-            f"--window-size={w},{h}", "--hide-scrollbars", "--mute-audio",
-            "--ignore-gpu-blocklist", "--enable-gpu-rasterization",
-        ]
-        if gpu == "webgpu":
-            flags += ["--enable-unsafe-webgpu", "--enable-features=Vulkan,WebGPUService",
-                      "--use-angle=vulkan"]
-        else:
-            flags += ["--disable-features=WebGPU,WebGPUService", "--disable-blink-features=WebGPU",
-                      "--enable-features=Vulkan", "--use-angle=vulkan"]
+        flags = tw.chromium_flags(self.profile, w, h, gpu)
         if origin:
             # The local site under a public-looking name, as a secure origin.
             flags += [f"--host-resolver-rules=MAP {HOST} 127.0.0.1",
                       f"--unsafely-treat-insecure-origin-as-secure={origin}"]
-        cmd_r, cmd_w = os.pipe()
-        res_r, res_w = os.pipe()
-        os.set_inheritable(cmd_r, True)
-        os.set_inheritable(res_w, True)
-
-        def child_fds():
-            os.dup2(cmd_r, 3)
-            os.dup2(res_w, 4)
-
         self.log = open(os.path.join(self.profile, "chromium.log"), "w")
-        self.proc = subprocess.Popen([a.chromium, *flags, "about:blank"], preexec_fn=child_fds,
-                                     close_fds=False, stdout=self.log, stderr=subprocess.STDOUT)
-        os.close(cmd_r)
-        os.close(res_w)
-        self.cdp = tw.Cdp(self.proc, cmd_w, res_r)
+        self.proc, self.cdp = tw.start_browser(a.chromium, flags, self.log)
         targets = self.cdp.call("Target.getTargets", session=False)["targetInfos"]
         page = next(t for t in targets if t["type"] == "page")
         self.cdp.session = self.cdp.call("Target.attachToTarget",
@@ -144,7 +118,8 @@ def main():
     g.add_argument("--url", help="the live site, e.g. https://newkit.github.io/OCW/")
     g.add_argument("--site", help="an assembled site directory, served locally")
     p.add_argument("--out", default="test-output/web-preview")
-    p.add_argument("--chromium", default=shutil.which("chromium") or "chromium")
+    p.add_argument("--chromium", default=None,
+                   help="the browser (default: the pinned Chromium of `make deps-browser`; scripts/web_browser.py)")
     p.add_argument("--size", default="1280x720")
     p.add_argument("--seconds", type=float, default=10.0)
     p.add_argument("--timeout", type=float, default=180.0)
@@ -152,6 +127,7 @@ def main():
     p.add_argument("--route", default="vaduz-malbun")
     p.add_argument("--only", default="", help="comma-separated checks (default: all)")
     a = p.parse_args()
+    a.chromium = a.chromium or tw.web_browser.find()
     os.makedirs(a.out, exist_ok=True)
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     base = os.path.join(a.out, f"preview-{stamp}")
@@ -166,7 +142,8 @@ def main():
     only = set(filter(None, a.only.split(",")))
     want = lambda c: not only or c in only  # noqa: E731
     lines, checks = [], []
-    summary = {"url": url, "local_site": a.site, "checks": checks}
+    summary = {"url": url, "local_site": a.site, "checks": checks,
+               "browser": tw.web_browser.describe(a.chromium)}
 
     def check(name, ok, detail, **extra):
         checks.append({"check": name, "ok": bool(ok), "detail": detail, **extra})
