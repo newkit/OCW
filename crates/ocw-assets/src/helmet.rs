@@ -102,6 +102,13 @@ pub struct Grid {
 
 type Ix = (usize, usize);
 
+/// A slot's smooth surface while it is built: points, triangles, and the
+/// grid point each point came from.
+type SmoothShape = (Vec<Vec3>, Vec<[u32; 3]>, HashMap<Ix, u32>);
+
+/// The kind of each cell of a grid: (row, column, centre) → kind.
+pub type CellFn = Box<dyn Fn(usize, usize, Vec3) -> Cell>;
+
 impl Grid {
     fn cols(&self) -> usize {
         self.pts[0].len()
@@ -257,8 +264,7 @@ impl Grid {
         let kind = |i: Option<Ix>| i.map_or(Cell::Skip, |(r, c)| l.kinds[r][c]);
         let inner = |i: Ix, d: f32| self.at(i) - l.normals[i.0][i.1] * d;
         let area = |t: &[Vec3; 3]| (t[1] - t[0]).cross(t[2] - t[0]).length_squared() > 1e-14;
-        let mut smooth: BTreeMap<&'static str, (Vec<Vec3>, Vec<[u32; 3]>, HashMap<Ix, u32>)> =
-            BTreeMap::new();
+        let mut smooth: BTreeMap<&'static str, SmoothShape> = BTreeMap::new();
         let mut flat: Vec<[Vec3; 3]> = Vec::new();
         // A quad facing towards `towards` (two flat triangles).
         let quad = |q: [Vec3; 4], towards: Vec3, flat: &mut Vec<[Vec3; 3]>| {
@@ -658,11 +664,7 @@ fn tt_cell(rel: Vec3, hi: bool) -> Cell {
 }
 
 /// The surface of helmet `h` and its cells (the far LOD: the shell only).
-pub fn surface(
-    h: Helmet,
-    skull: Vec3,
-    detail: Detail,
-) -> (Grid, Box<dyn Fn(usize, usize, Vec3) -> Cell>) {
+pub fn surface(h: Helmet, skull: Vec3, detail: Detail) -> (Grid, CellFn) {
     let hi = detail == Detail::High;
     if h == Helmet::TimeTrial {
         return (
