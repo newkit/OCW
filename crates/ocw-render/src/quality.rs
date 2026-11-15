@@ -391,7 +391,10 @@ mod tests {
         let c = h.cascades();
         assert_eq!(c.bounds.len(), 4);
         assert!((c.bounds[3] - 250.0).abs() < 1e-3);
-        assert!(tree_range(&h).is_none());
+        // High: the far trees from the near models' fade on, without an end.
+        let r = tree_range(&h);
+        assert_eq!(r.start_margin, crate::vegetation::NEAR_FADE_M);
+        assert!(r.end_margin.start > 1.0e6);
     }
 
     /// Each level is cheaper than the one above in every number.
