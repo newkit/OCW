@@ -443,10 +443,10 @@ pub fn wait_for_code(
     ))
 }
 
-/// Opens `url` in the system browser (`OCW_BROWSER` names another command,
+/// Opens `url` in the system browser (`OCW_OPEN_URL` names another command,
 /// e.g. for tests and headless kiosks).
 pub fn open_browser(url: &str) -> Result<(), String> {
-    if let Ok(cmd) = std::env::var("OCW_BROWSER")
+    if let Ok(cmd) = std::env::var("OCW_OPEN_URL")
         && !cmd.trim().is_empty()
     {
         let mut words = cmd.split_whitespace();
@@ -459,7 +459,7 @@ pub fn open_browser(url: &str) -> Result<(), String> {
             .stderr(std::process::Stdio::null())
             .spawn()
             .map(|_| ())
-            .map_err(|e| format!("cannot run OCW_BROWSER ({prog}): {e}"));
+            .map_err(|e| format!("cannot run OCW_OPEN_URL ({prog}): {e}"));
     }
     crate::strava::auth::open_browser(url)
 }

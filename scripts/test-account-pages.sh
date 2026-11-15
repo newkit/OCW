@@ -10,7 +10,7 @@
 #   OUT/account-signed-out.jpg   Settings -> Account, not signed in
 #   OUT/account-signed-in.jpg    after `account signin google` (the "system
 #                                browser" is curl following the redirects:
-#                                OCW_BROWSER), Google linked
+#                                OCW_OPEN_URL), Google linked
 #   OUT/account-code.jpg         `account signin --code`: the kiosk's code
 #                                and URL on the Account page
 #
@@ -38,7 +38,7 @@ export OCW_SIZE=1280x720
 # The sign-in in a throwaway file, never in this machine's keyring.
 export OCW_ACCOUNT_FILE="$(mktemp -u)-ocw-account.json"
 "$drive" shot "$out/account-signed-out.jpg" 12 -- --account-server "$issuer" --bots 2 "${menu[@]}"
-OCW_BROWSER="curl -sL -o /dev/null --max-time 30" \
+OCW_OPEN_URL="curl -sL -o /dev/null --max-time 30" \
   "$drive" shot "$out/account-signed-in.jpg" 12 -- --account-server "$issuer" --bots 2 \
   --cmd "account signin google" "${menu[@]}"
 rm -f "$OCW_ACCOUNT_FILE"

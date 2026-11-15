@@ -2086,7 +2086,7 @@ gets your account's name. Until OCW's public accounts server exists, name one:
 `ocw-desktop --account-server https://accounts.example.org` (or
 `OCW_ACCOUNT_SERVER`); the browser app takes the page option
 `auth=https://accounts.example.org`. Without one, sign-in is off.
-`OCW_BROWSER="firefox --new-window"` chooses the browser the desktop opens.
+`OCW_OPEN_URL="firefox --new-window"` chooses the browser the desktop opens.
 
 ### Running the accounts server
 
