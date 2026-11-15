@@ -11,6 +11,11 @@ pub struct KnownDevice {
     /// Platform Bluetooth identifier (from `devices.scan`).
     pub id: String,
     pub name: String,
+    /// What it is (`trainer`, `power`, `cadence`, `hr`;
+    /// `ocw_client::menu::devices::Role`), for the Devices page before it
+    /// connects. Older files have none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -122,15 +127,21 @@ mod tests {
         k.remember(KnownDevice {
             id: "hci0/dev_AA_BB".into(),
             name: "KICKR CORE 1234".into(),
+            kind: Some("trainer".into()),
         });
         k.remember(KnownDevice {
             id: "hci0/dev_CC".into(),
             name: "HRM".into(),
+            kind: None,
         });
         k.save(&path).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("[[device]]") && text.contains("KICKR CORE 1234"));
+        assert!(text.contains("kind = \"trainer\""), "{text}");
         assert_eq!(KnownDevices::load(&path).unwrap(), k);
+        // A file of an older version (no kinds) still reads.
+        std::fs::write(&path, "[[device]]\nid = \"x\"\nname = \"KICKR\"\n").unwrap();
+        assert_eq!(KnownDevices::load(&path).unwrap().devices[0].kind, None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -140,6 +151,7 @@ mod tests {
         let d = |name: &str| KnownDevice {
             id: "x".into(),
             name: name.into(),
+            kind: None,
         };
         k.remember(d("old"));
         k.remember(d("new"));

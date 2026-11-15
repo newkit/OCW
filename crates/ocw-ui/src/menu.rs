@@ -49,6 +49,12 @@ pub struct AccountMenu(pub ocw_client::account::AccountInfo);
 #[derive(Resource, Debug, Clone, Default, PartialEq, Deref, DerefMut)]
 pub struct AudioDeviceMenu(pub AudioDevices);
 
+/// Settings → Trainer → Devices (spec §3.2.1 *Devices*): the trainers and
+/// sensors as the app's device layer sees them (the desktop's Bluetooth
+/// scan, the browser's Web Bluetooth devices), written by the app.
+#[derive(Resource, Debug, Clone, Default, PartialEq, Deref, DerefMut)]
+pub struct DevicesMenu(pub ocw_client::menu::devices::DevicesInfo);
+
 /// What an app adds to the shared menu: its own pages.
 #[derive(Resource, Clone, Copy)]
 pub struct MenuHooks {
@@ -112,6 +118,7 @@ impl Plugin for MenuPlugin {
             .init_resource::<VoiceMenu>()
             .init_resource::<AccountMenu>()
             .init_resource::<AudioDeviceMenu>()
+            .init_resource::<DevicesMenu>()
             .add_systems(
                 Update,
                 (menu_input, write_view).chain().after(crate::ViewExtrasSet),
@@ -269,6 +276,10 @@ pub fn sub_rows(world: &World, page: sub::Page) -> Vec<Row> {
         let empty = VoiceMenuInfo::default();
         let info = world.get_resource::<VoiceMenu>().map_or(&empty, |v| &v.0);
         ocw_client::menu::voice::rows(page, s, info)
+    } else if matches!(page, sub::Page::Devices | sub::Page::Device(_)) {
+        let empty = DevicesMenu::default();
+        let info = world.get_resource::<DevicesMenu>().unwrap_or(&empty);
+        ocw_client::menu::devices::rows(page, info)
     } else if page == sub::Page::Audio {
         let empty = AudioDevices::default();
         let devices = world
@@ -280,7 +291,17 @@ pub fn sub_rows(world: &World, page: sub::Page) -> Vec<Row> {
     } else {
         let default = Riders::default();
         let riders = (hooks.riders)(world).unwrap_or(&default);
-        sub::rows(page, s, riders)
+        let mut rows = sub::rows(page, s, riders);
+        // The Trainer page's Devices row shows what is connected.
+        if page == sub::Page::Trainer
+            && let Some(info) = world.get_resource::<DevicesMenu>()
+            && let Some(r) = rows
+                .iter_mut()
+                .find(|r| r.confirm == Some(sub::Activate::Open(sub::Page::Devices)))
+        {
+            r.value = Some(info.trainer_value());
+        }
+        rows
     };
     for_platform(rows, platform(world))
 }
@@ -447,6 +468,10 @@ pub fn view_of(world: &World, menu: &Menu) -> MenuView {
             (Page::Sub(p), _, _) if history.is_some() => {
                 ocw_client::menu::history::status(p, history.as_ref().expect("some"))
             }
+            (Page::Sub(p @ (sub::Page::Devices | sub::Page::Device(_))), _, _) => world
+                .get_resource::<DevicesMenu>()
+                .map(|d| ocw_client::menu::devices::status(p, d))
+                .unwrap_or_default(),
             (Page::Sub(sub::Page::BindGroup(g)), _, _) => crate::bindings::status(world, Some(g)),
             (Page::Sub(sub::Page::Bindings), _, _) => crate::bindings::status(world, None),
             _ => String::new(),
@@ -595,6 +620,43 @@ mod tests {
 
     fn view(app: &App) -> MenuView {
         app.world().resource::<MenuView>().clone()
+    }
+
+    /// Settings → Trainer → Devices: the rows from the app's devices
+    /// (spec §3.2.1 *Devices*), the Trainer page's row shows what is
+    /// connected.
+    #[test]
+    fn the_devices_pages_come_from_the_apps_devices() {
+        use ocw_client::menu::devices::{DevicesInfo, Entry, Link, Role, Scan};
+        let mut app = app(Platform::Desktop);
+        // Nothing yet: scan, "no devices".
+        let rows = sub_rows(app.world(), sub::Page::Devices);
+        assert_eq!(rows[0].label, "Scan for devices");
+        assert_eq!(rows[1].label, "No devices yet");
+        app.world_mut().resource_mut::<DevicesMenu>().0 = DevicesInfo {
+            scan: Scan::Scanning { left_s: 4 },
+            entries: vec![Entry {
+                id: "hci0/dev_00_00_00_00_00_01".into(),
+                name: "KICKR".into(),
+                role: Role::Trainer,
+                rssi: Some(-58),
+                link: Link::Connected("Wahoo KICKR".into()),
+                remembered: true,
+            }],
+            ..Default::default()
+        };
+        let rows = sub_rows(app.world(), sub::Page::Devices);
+        assert_eq!(rows[0].label, "Stop the scan");
+        assert_eq!(rows[1].label, "KICKR");
+        assert_eq!(
+            rows[1].confirm,
+            Some(sub::Activate::Open(sub::Page::Device(0)))
+        );
+        let trainer = sub_rows(app.world(), sub::Page::Trainer);
+        let d = trainer.iter().find(|r| r.label == "Devices").unwrap();
+        assert_eq!(d.value.as_deref(), Some("KICKR"));
+        assert!(!sub_rows(app.world(), sub::Page::Device(0)).is_empty());
+        assert!(sub_rows(app.world(), sub::Page::Device(1)).is_empty());
     }
 
     #[test]

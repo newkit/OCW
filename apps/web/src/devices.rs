@@ -17,8 +17,12 @@
 //!   target).
 //! - Browsers without Web Bluetooth (Firefox, Safari, iOS; spec §14
 //!   Phase 10 Q1) ride with virtual power and say so.
+//! - A device is remembered (this origin's `localStorage`) once it
+//!   connected, as the desktop writes `devices.toml` then (spec §3.2.1
+//!   *Devices*); [`WebDevices::menu_info`] fills the shared Devices page.
 
 use ocw_client::client::ClientCore;
+use ocw_client::menu::devices::{DevicesInfo, Entry, Link, Role, Scan};
 use ocw_client::trainer::{TrainerControl, TrainerMode};
 use ocw_client::workout::WorkoutSession;
 use ocw_core::RiderProfile;
@@ -54,6 +58,20 @@ pub enum LinkState {
     /// Connected and subscribed: what the device is.
     Connected(&'static str),
     Reconnecting,
+    /// The last attempt failed (why); the next one follows.
+    Failed(&'static str),
+}
+
+impl LinkState {
+    /// The shared Devices page's state.
+    fn link(self) -> Link {
+        match self {
+            Self::Connecting => Link::Connecting,
+            Self::Connected(k) => Link::Connected(k.into()),
+            Self::Reconnecting => Link::Reconnecting,
+            Self::Failed(why) => Link::Failed(why.into()),
+        }
+    }
 }
 
 /// One running Bluetooth device (its backend's channels; the receiver in a
@@ -93,6 +111,10 @@ pub struct WebDevices {
     pub commands_sent: u64,
     /// Lines for the console (connects, drops, workout steps).
     messages: Vec<String>,
+    /// The Devices page's latest lines (connects, failures, drops).
+    recent: DevicesInfo,
+    /// The remembered devices changed (the page saves them).
+    pub remembered_changed: bool,
 }
 
 impl WebDevices {
@@ -107,11 +129,20 @@ impl WebDevices {
             last_command: None,
             commands_sent: 0,
             messages: Vec::new(),
+            recent: DevicesInfo::default(),
+            remembered_changed: false,
         }
     }
 
+    /// A line for the console and the Devices page.
+    fn say(messages: &mut Vec<String>, recent: &mut DevicesInfo, line: String) {
+        recent.push_message(line.clone());
+        messages.push(line);
+    }
+
     /// A started backend (`WebBluetoothBackend::start`) for `kind`; it is
-    /// remembered for this origin. Returns the console line.
+    /// remembered for this origin once it connected. Returns the console
+    /// line.
     pub fn add(&mut self, handle: DeviceHandle, kind: DeviceKind, id: String) -> String {
         let name = handle.name.clone();
         self.devices.retain(|d| {
@@ -136,12 +167,9 @@ impl WebDevices {
             heart_rate_bpm: None,
             samples: 0,
         });
-        self.remembered.remember(RememberedDevice {
-            kind,
-            id,
-            name: name.clone(),
-        });
-        format!("{name}: connecting ({})", kind.label())
+        let line = format!("{name}: connecting ({})", kind.label());
+        self.recent.push_message(line.clone());
+        line
     }
 
     /// Stops and forgets devices by id or name (any case), or `all`.
@@ -156,7 +184,9 @@ impl WebDevices {
             }
             !hit
         });
-        n.max(self.remembered.forget(which))
+        let forgotten = self.remembered.forget(which);
+        self.remembered_changed |= forgotten > 0;
+        n.max(forgotten)
     }
 
     /// Whether the virtual trainer gives the power (no trainer or power
@@ -176,15 +206,40 @@ impl WebDevices {
                 match event {
                     DeviceEvent::Connected { kind } => {
                         d.state = LinkState::Connected(kind);
-                        self.messages
-                            .push(format!("{}: connected ({kind})", d.name));
+                        let mut line = format!("{}: connected ({kind})", d.name);
+                        if self.remembered.kind_of(&d.id) != Some(d.kind) {
+                            self.remembered.remember(RememberedDevice {
+                                kind: d.kind,
+                                id: d.id.clone(),
+                                name: d.name.clone(),
+                            });
+                            self.remembered_changed = true;
+                            line.push_str(", remembered in this browser");
+                        }
+                        Self::say(&mut self.messages, &mut self.recent, line);
                     }
                     DeviceEvent::Disconnected => {
-                        if d.state != LinkState::Reconnecting {
-                            self.messages
-                                .push(format!("{}: disconnected, reconnecting", d.name));
+                        if matches!(d.state, LinkState::Connected(_)) {
+                            Self::say(
+                                &mut self.messages,
+                                &mut self.recent,
+                                format!("{}: disconnected, reconnecting", d.name),
+                            );
+                            d.state = LinkState::Reconnecting;
+                        } else if d.state == LinkState::Connecting {
+                            d.state = LinkState::Reconnecting;
                         }
-                        d.state = LinkState::Reconnecting;
+                        d.power_w = None;
+                    }
+                    DeviceEvent::Failed { reason } => {
+                        if d.state != LinkState::Failed(reason.text()) {
+                            Self::say(
+                                &mut self.messages,
+                                &mut self.recent,
+                                format!("{}: {}; trying again", d.name, reason.text()),
+                            );
+                        }
+                        d.state = LinkState::Failed(reason.text());
                         d.power_w = None;
                     }
                     DeviceEvent::Power { watts, .. } => {
@@ -238,6 +293,7 @@ impl WebDevices {
             .map(|d| match (d.state, d.power_w, d.heart_rate_bpm) {
                 (LinkState::Connecting, ..) => format!("{}: connecting …", d.name),
                 (LinkState::Reconnecting, ..) => format!("{}: reconnecting …", d.name),
+                (LinkState::Failed(_), ..) => format!("{}: not connected", d.name),
                 (LinkState::Connected(_), Some(w), _) => format!("{} {w:.0} W", d.name),
                 (LinkState::Connected(_), None, Some(hr)) => {
                     format!("{} {hr:.0} bpm", d.name)
@@ -277,6 +333,7 @@ impl WebDevices {
                 LinkState::Connecting => "connecting".to_string(),
                 LinkState::Connected(k) => format!("connected, {k}"),
                 LinkState::Reconnecting => "reconnecting".to_string(),
+                LinkState::Failed(why) => format!("failed: {why}"),
             };
             out.push_str(&format!(
                 "\n  {} ({}, {state}, {} samples)",
@@ -307,6 +364,7 @@ impl WebDevices {
                     LinkState::Connecting => ("connecting", None),
                     LinkState::Connected(k) => ("connected", Some(k)),
                     LinkState::Reconnecting => ("reconnecting", None),
+                    LinkState::Failed(_) => ("failed", None),
                 };
                 serde_json::json!({
                     "name": d.name,
@@ -345,6 +403,48 @@ impl WebDevices {
             "last_command": command,
             "commands_sent": self.commands_sent,
         })
+    }
+
+    /// Settings → Trainer → Devices (the shared page, spec §3.2.1
+    /// *Devices*): the browser's chooser, the running devices, then the
+    /// remembered ones not running.
+    pub fn menu_info(&self) -> DevicesInfo {
+        let remembered = |id: &str| self.remembered.kind_of(id).is_some();
+        let mut entries: Vec<Entry> = self
+            .devices
+            .iter()
+            .map(|d| Entry {
+                id: d.id.clone(),
+                name: d.name.clone(),
+                role: Role::of_kind(d.kind),
+                rssi: None,
+                link: d.state.link(),
+                remembered: remembered(&d.id),
+            })
+            .collect();
+        for r in &self.remembered.devices {
+            if !entries.iter().any(|e| e.id == r.id) {
+                entries.push(Entry {
+                    id: r.id.clone(),
+                    name: r.name.clone(),
+                    role: Role::of_kind(r.kind),
+                    rssi: None,
+                    link: Link::Idle,
+                    remembered: true,
+                });
+            }
+        }
+        DevicesInfo {
+            scan: Scan::Chooser(match self.bluetooth {
+                Bluetooth::Missing => Some("no Web Bluetooth in this browser".into()),
+                Bluetooth::NoAdapter => Some("no Bluetooth adapter".into()),
+                Bluetooth::Unknown | Bluetooth::Available => None,
+            }),
+            entries,
+            messages: self.recent.messages.clone(),
+            file: Some("this browser (localStorage)".into()),
+            virtual_trainer: self.uses_virtual(),
+        }
     }
 
     /// `trainer.mode sim|erg|off` (ERG keeps its target, else 150 W).
@@ -456,10 +556,11 @@ mod tests {
         assert_eq!(
             d.take_messages(),
             [
-                "TICKR: connected (heart-rate sensor)",
-                "KICKR: connected (smart trainer (FTMS))"
+                "TICKR: connected (heart-rate sensor), remembered in this browser",
+                "KICKR: connected (smart trainer (FTMS)), remembered in this browser"
             ]
         );
+        assert!(d.remembered_changed);
         let status = d.status(200.0);
         assert!(
             status.starts_with("TICKR 131 bpm | KICKR 234 W | trainer"),
@@ -485,10 +586,62 @@ mod tests {
         assert_eq!(d.forget("kickr"), 1);
         assert_eq!(cmds.try_recv(), Ok(DeviceCommand::Shutdown));
         assert!(d.uses_virtual());
+        // The shared Devices page: the strap running, the KICKR gone
+        // (forgotten), the chooser rows first.
+        let info = d.menu_info();
+        assert_eq!(info.entries.len(), 1);
+        assert_eq!(info.entries[0].name, "TICKR");
+        assert!(info.entries[0].remembered);
+        assert_eq!(info.scan, Scan::Chooser(None));
+        assert!(info.virtual_trainer);
+        let rows = ocw_client::menu::devices::rows(ocw_client::menu::pages::Page::Devices, &info);
+        assert_eq!(rows[0].label, "Add a trainer");
+        assert_eq!(rows[3].label, "TICKR");
         let json = d.json(200.0);
         assert_eq!(json["virtual"], true);
         assert_eq!(json["devices"][0]["name"], "TICKR");
         assert!(json["last_command"]["sim"]["grade"].is_number());
+    }
+
+    /// Remembered only once connected (as on the desktop); a failure says
+    /// why; remembered devices show on the Devices page when not running.
+    #[test]
+    fn devices_are_remembered_once_connected() {
+        let mut d = WebDevices::new(RiderProfile::default(), 200.0);
+        let mut client = joined_client();
+        let (kickr, tx, _cmds) = backend("KICKR");
+        d.add(kickr, DeviceKind::Trainer, "k-1".into());
+        assert!(d.remembered.devices.is_empty());
+        tx.send(DeviceEvent::Failed {
+            reason: ocw_devices::FailReason::NotFound,
+        })
+        .unwrap();
+        tx.send(DeviceEvent::Disconnected).unwrap();
+        d.poll(&mut client);
+        assert!(d.remembered.devices.is_empty() && !d.remembered_changed);
+        assert_eq!(
+            d.menu_info().entries[0].link,
+            Link::Failed(ocw_devices::FailReason::NotFound.text().into())
+        );
+        assert!(d.take_messages()[0].starts_with("KICKR: not found"));
+        tx.send(DeviceEvent::Connected {
+            kind: "Wahoo KICKR",
+        })
+        .unwrap();
+        d.poll(&mut client);
+        assert_eq!(d.remembered.kind_of("k-1"), Some(DeviceKind::Trainer));
+        // Forgotten while running: off the page; a remembered one not
+        // running stays listed.
+        d.remembered.remember(RememberedDevice {
+            kind: DeviceKind::HeartRate,
+            id: "hr-9".into(),
+            name: "Old strap".into(),
+        });
+        let info = d.menu_info();
+        assert_eq!(info.entries.len(), 2);
+        assert_eq!(info.entries[1].link, Link::Idle);
+        assert_eq!(d.forget("k-1"), 1);
+        assert_eq!(d.menu_info().entries.len(), 1);
     }
 
     #[test]

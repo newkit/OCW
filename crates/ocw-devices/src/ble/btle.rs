@@ -4,6 +4,7 @@
 //! through the shared [`runner::supervise`]).
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
@@ -15,7 +16,7 @@ use futures::StreamExt;
 use uuid::Uuid;
 
 use super::runner::{self, GattLink, Notifications, TokioTimer};
-use super::{FoundDevice, Profile, RECONNECT_DELAY};
+use super::{FoundDevice, Profile, RECONNECT_DELAY, merge_found};
 use crate::gatt::uuids;
 use crate::{DeviceBackend, DeviceCommand, DeviceError, DeviceEvent, DeviceHandle};
 
@@ -39,7 +40,7 @@ async fn first_adapter() -> Result<Adapter, DeviceError> {
         .map_err(ble_err)?
         .into_iter()
         .next()
-        .ok_or_else(|| DeviceError::Bluetooth("no Bluetooth adapter found".into()))
+        .ok_or(DeviceError::NoAdapter)
 }
 
 fn scan_filter() -> ScanFilter {
@@ -68,19 +69,52 @@ async fn describe(p: &Peripheral) -> Option<FoundDevice> {
 
 /// Scans for fitness devices for `duration` (blocking; own runtime).
 pub fn scan(duration: Duration) -> Result<Vec<FoundDevice>, DeviceError> {
+    let mut found: Vec<FoundDevice> = Vec::new();
+    scan_live(duration, &AtomicBool::new(false), &mut |d| {
+        merge_found(&mut found, d);
+    })?;
+    found.sort_by_key(|d| std::cmp::Reverse(d.rssi));
+    Ok(found)
+}
+
+/// How often a live scan looks at the adapter's devices.
+const SCAN_POLL: Duration = Duration::from_millis(500);
+
+/// Scans for fitness devices for up to `duration` (blocking; own runtime)
+/// and reports each one as it appears, and again when its name or signal
+/// changes (spec §3.2.1 *Devices*: the list grows live). `stop` ends the
+/// scan early.
+pub fn scan_live(
+    duration: Duration,
+    stop: &AtomicBool,
+    on_found: &mut dyn FnMut(FoundDevice),
+) -> Result<(), DeviceError> {
     runtime()?.block_on(async {
         let adapter = first_adapter().await?;
         adapter.start_scan(scan_filter()).await.map_err(ble_err)?;
-        tokio::time::sleep(duration).await;
-        let _ = adapter.stop_scan().await;
-        let mut found = Vec::new();
-        for p in adapter.peripherals().await.map_err(ble_err)? {
-            if let Some(d) = describe(&p).await {
-                found.push(d);
+        let deadline = Instant::now() + duration;
+        let mut seen: Vec<FoundDevice> = Vec::new();
+        let result = loop {
+            match adapter.peripherals().await {
+                Ok(ps) => {
+                    for p in ps {
+                        if let Some(d) = describe(&p).await
+                            && merge_found(&mut seen, d.clone())
+                        {
+                            on_found(d);
+                        }
+                    }
+                }
+                Err(e) => break Err(ble_err(e)),
             }
-        }
-        found.sort_by_key(|d| std::cmp::Reverse(d.rssi));
-        Ok(found)
+            if stop.load(Ordering::Relaxed) || Instant::now() >= deadline {
+                break Ok(());
+            }
+            tokio::time::sleep(SCAN_POLL.min(deadline.saturating_duration_since(Instant::now())))
+                .await;
+        };
+        let _ = adapter.stop_scan().await;
+        result
     })
 }
 
@@ -226,7 +260,7 @@ async fn device_loop(id: String, commands: Receiver<DeviceCommand>, events: Send
     let connect = || async {
         let adapter = first_adapter().await?;
         let Some(p) = find(&adapter, &id).await? else {
-            return Err(DeviceError::Bluetooth(format!("device {id} not found")));
+            return Err(DeviceError::NotFound(id.clone()));
         };
         BtleLink::connect(p).await
     };

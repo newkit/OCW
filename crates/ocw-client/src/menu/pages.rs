@@ -133,6 +133,12 @@ pub enum Page {
     TrustedKeys,
     /// One of them (index): name, fingerprint, date; remove it.
     TrustedKey(usize),
+    /// Settings → Trainer → Devices (spec §3.2.1 *Devices*; rows from
+    /// `menu::devices`): scan, the devices found, connected and
+    /// remembered.
+    Devices,
+    /// One of them (index into the list): connect or forget it.
+    Device(usize),
 }
 
 impl Page {
@@ -202,6 +208,8 @@ impl Page {
             Self::EventRules => "Organiser rules",
             Self::TrustedKeys => "Trusted world keys",
             Self::TrustedKey(_) => "Trusted key",
+            Self::Devices => "Devices",
+            Self::Device(_) => "Device",
         }
     }
 
@@ -299,6 +307,8 @@ impl Page {
             Self::BindGroup(_) | Self::BindReset => Some(Self::Bindings),
             Self::Graphics | Self::Accessibility => Some(Self::Display),
             Self::TrustedKey(_) => Some(Self::TrustedKeys),
+            Self::Devices => Some(Self::Trainer),
+            Self::Device(_) => Some(Self::Devices),
             _ => None,
         }
     }
@@ -407,6 +417,8 @@ impl Page {
             Self::HistoryBests => &[],
             Self::TrustedKeys => &[super::trust::KEYS_NOTE],
             Self::TrustedKey(_) => &[super::trust::KEY_NOTE],
+            Self::Devices => &[super::devices::NOTE],
+            Self::Device(_) => &[super::devices::DEVICE_NOTE],
         }
     }
 }
@@ -610,6 +622,9 @@ pub enum Activate {
     /// Ask "Remove this key?" first, then run the line and go back
     /// (Settings → Account → Trusted world keys).
     AskForget(String),
+    /// Run a console line and go back one page (Devices → a device →
+    /// Disconnect and forget: the device may leave the list).
+    CommandBack(String),
 }
 
 /// One row of a page.
@@ -1061,6 +1076,8 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
         | Page::HistoryBests => Vec::new(),
         // From the trusted world keys (`menu::trust`).
         Page::TrustedKeys | Page::TrustedKey(_) => Vec::new(),
+        // From the app's devices (`menu::devices`).
+        Page::Devices | Page::Device(_) => Vec::new(),
         // The organiser's rules (spec §14 Phase 12 K6): six rows.
         Page::EventRules => vec![
             setting_row(settings, "event.collisions", "Collisions"),
@@ -1086,8 +1103,9 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
                 "trainer.virtual_power",
                 "Virtual trainer power (W)",
             ),
-            Row::action("Scan for devices", "devices.scan"),
-            Row::action("Show devices", "devices.list"),
+            // Scan, connect, forget (spec §3.2.1 *Devices*; the value
+            // comes from the app's devices, `ocw_ui::menu`).
+            open_row("Devices", None, Page::Devices),
             // Damage (spec §14 Phase 12E; the Controls and Display pages
             // are full).
             setting_row(settings, "ride.damage", "Damage"),
@@ -1326,8 +1344,8 @@ mod tests {
         assert_eq!(d.right.as_deref(), Some("set trainer.difficulty 55"));
         assert_eq!(d.confirm, None);
         assert_eq!(
-            row(&trainer, "Scan for devices").confirm,
-            cmd("devices.scan")
+            row(&trainer, "Devices").confirm,
+            Some(Activate::Open(Page::Devices))
         );
         let controls = rows(Page::Controls, &s, &Riders::default());
         assert_eq!(controls[0].confirm, cmd("set controls.autodrive off"));

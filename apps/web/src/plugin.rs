@@ -354,12 +354,15 @@ fn update_view(
 
 /// The devices (B4): the ones the page connected start in the session;
 /// connects, drops and workout steps to the console; the workout panel;
-/// the devices' JSON for the page's overlay (twice a second).
+/// the devices' JSON for the page's overlay (twice a second); the shared
+/// Settings → Trainer → Devices page.
+#[allow(clippy::too_many_arguments)]
 fn devices(
     time: Res<Time>,
     mut session: ResMut<Session>,
     mut console: ResMut<ConsoleState>,
     mut view: ResMut<RideView>,
+    menu: Option<ResMut<ocw_ui::menu::DevicesMenu>>,
     mut said: Local<bool>,
     mut next: Local<f64>,
     mut loaded: Local<bool>,
@@ -377,7 +380,6 @@ fn devices(
         for line in lines {
             console.print(line);
         }
-        let started = !pending.is_empty();
         for (backend, kind) in pending {
             let id = backend.device_id().to_string();
             let name = backend.name().to_string();
@@ -390,8 +392,15 @@ fn devices(
                 Err(e) => console.print(format!("{name}: {e}")),
             }
         }
-        if started {
-            crate::browser_devices::save_remembered(&s.devices.remembered);
+    }
+    // Remembered once connected (spec §3.2.1 *Devices*): saved then.
+    if std::mem::take(&mut s.devices.remembered_changed) {
+        persist(s);
+    }
+    if let Some(mut menu) = menu {
+        let info = s.devices.menu_info();
+        if menu.0 != info {
+            menu.0 = info;
         }
     }
     *loaded = true;

@@ -41,6 +41,42 @@ pub enum DeviceEvent {
     Connected { kind: &'static str },
     /// The backend lost its device.
     Disconnected,
+    /// A connection attempt failed (sent before the `Disconnected` that
+    /// starts the next attempt): why, for the menu's status line.
+    Failed { reason: FailReason },
+}
+
+/// Why a connection attempt failed (spec §3.2.1 *Devices*): what the menu
+/// tells the rider.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailReason {
+    /// No Bluetooth adapter, or Bluetooth is off.
+    NoAdapter,
+    /// The device did not show up (out of range, asleep, or connected to
+    /// another app: a trainer takes one connection per profile).
+    NotFound,
+    /// It showed up, but connecting or setting it up failed.
+    Connect,
+}
+
+impl FailReason {
+    /// Classifies a backend error.
+    pub fn of(e: &DeviceError) -> Self {
+        match e {
+            DeviceError::NoAdapter => Self::NoAdapter,
+            DeviceError::NotFound(_) => Self::NotFound,
+            DeviceError::Start(_) | DeviceError::Bluetooth(_) => Self::Connect,
+        }
+    }
+
+    /// For the menu and the console.
+    pub fn text(self) -> &'static str {
+        match self {
+            Self::NoAdapter => "no Bluetooth adapter (or Bluetooth is off)",
+            Self::NotFound => "not found (out of range, asleep, or connected to another app)",
+            Self::Connect => "the connection failed (busy with another app?)",
+        }
+    }
 }
 
 /// Commands sent from the app to a backend.
@@ -104,6 +140,10 @@ pub enum DeviceError {
     Start(String),
     #[error("Bluetooth: {0}")]
     Bluetooth(String),
+    #[error("no Bluetooth adapter found (or Bluetooth is off)")]
+    NoAdapter,
+    #[error("device {0} not found")]
+    NotFound(String),
 }
 
 /// A source of trainer / sensor data.

@@ -160,6 +160,8 @@ mod tests {
             EventRules,
             TrustedKeys,
             TrustedKey(0),
+            Devices,
+            Device(0),
         ];
         for p in &all {
             match p {
@@ -171,7 +173,8 @@ mod tests {
                 | WeatherReal | RidingAids | Graphics | RiderList | UnicornControls | Bindings
                 | BindGroup(_) | BindReset | Accessibility | History | HistoryRides
                 | HistoryRide(_) | HistoryClimbs(_) | HistoryWeeks | HistoryMonths
-                | HistoryBests | EventRules | Account | TrustedKeys | TrustedKey(_) => {}
+                | HistoryBests | EventRules | Account | TrustedKeys | TrustedKey(_) | Devices
+                | Device(_) => {}
             }
         }
         all
@@ -287,6 +290,8 @@ mod tests {
                     Page::Sub(settings_pages::Page::HistoryRide(_)) => {
                         "Sat 14 Nov 2026 10:05   Black Forest - north - Route to the Feldberg".into()
                     }
+                    // The longest device message (cut to 56).
+                    Page::Sub(settings_pages::Page::Devices) => "Wahoo KICKR 0001: connected (smart trainer (Wahoo...".into(),
                     Page::Sub(settings_pages::Page::BindGroup(_)) => {
                         "Conflict: V: Camera and Video recording; L: Camera and unicorn mode's flight keys".into()
                     }
