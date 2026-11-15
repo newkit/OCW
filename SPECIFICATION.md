@@ -1726,7 +1726,11 @@ Typical T junctions have a median step of 0.14 m in Liechtenstein. Two examples:
 - Vorarlberger-Strasse (primary) with Bahnweg, Nendeln (x 100.7 z −5498.0; `junction-vorarlberger-*`);
 - Schalunstrasse with Spoerryweg, Vaduz (x −3116.9 z 488.5; `junction-spoerryweg-*`).
 
-The scenes `junction-*` in `scripts/scenes.toml` are the before / after pictures. Each junction has a `-rider` scene near rider height and a `-drone` scene from a low drone angle. The first set is in `test-output/junctions-investigation/`.
+The scenes `junction-*` in `scripts/scenes.toml` are the before / after pictures. Each junction has a `-rider` scene near rider height and a `-drone` scene from a low drone angle. The first set is in `test-output/junctions-investigation/` (X11 on marge). What the pictures show:
+
+- Bergstrasse: Sennwisstrasse's strip lies on the main road as a tilted slab, with its gravel verge and wall face across the asphalt and its square end at the main road's centre line.
+- Adlerkreisel: jagged square strip ends and wedges around the ring, plus shoulder and kerb pieces inside it.
+- Planknerstrasse: the track's strip and verge rise above the road edge as a ramp.
 
 **Design: a junction surface (planned).**
 
