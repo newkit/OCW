@@ -32,8 +32,9 @@ for _ in $(seq 100); do [ -s "$info" ] && break; sleep 0.2; done
 issuer=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["issuer"])' "$info")
 echo "accounts backend (fake providers): $issuer"
 drive=.claude/skills/run-ocw/drive.sh
-menu=(--at "7=menu open" --at "7.5=menu down" --at "7.7=menu down" --at "7.9=menu down"
-      --at "8.1=menu down" --at "8.3=menu down" --at "8.6=menu select" --at "9.2=menu select")
+# Settings -> Account (queued at the start; the page follows the sign-in live).
+menu=(--cmd "menu open" --cmd "menu down" --cmd "menu down" --cmd "menu down"
+      --cmd "menu down" --cmd "menu down" --cmd "menu select" --cmd "menu select")
 export OCW_SIZE=1280x720
 # The sign-in in a throwaway file, never in this machine's keyring.
 export OCW_ACCOUNT_FILE="$(mktemp -u)-ocw-account.json"
