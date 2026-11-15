@@ -1,6 +1,6 @@
 # OCW build diary – day 4, 2026-11-14
 
-150 commits (46 merges), +126479 / −14693 lines, 500 images, 36 videos, 2 sounds.
+155 commits (47 merges), +151071 / −14750 lines, 535 images, 39 videos, 2 sounds.
 
 ## Commits
 
@@ -152,21 +152,26 @@
 | 22:54 | `03659d6` | README: full browser URLs for the test routes and for a streamed world (example trust-root key, a one-liner printing your own), other worlds and route names |
 | 23:13 | `d50652f` | Art: day 4 script – The weather, the seasons and the 404 |
 | 23:20 | `27ec9bc` | Art: images 40 % longer, shots in capture order (images and videos mixed) in all day scripts; day 4 gets the early-morning chapters (collisions, workshop, trees) and more clips |
+| 23:21 | `c3f069a` | Art: hourly collector (systemd user timer), archive to art/build-history/ with masked text in git (spec 3.34, ART-PROJECT 1.5) |
 | 23:23 | `a7faff9` | Docs: build infrastructure chapter in the README, spec 3.36 (§11.2 overview, §11.2.1 dashboard install and page, §11.3 Windows zip) |
 | 23:24 | `f813e5a` | README build infrastructure: root only for linger, one serving dashboard instance |
 | 23:28 | `5bf6b52` (merge) | Merge build infrastructure docs: README Build infrastructure chapter (remote builds, dashboard, cleanup, kiosks, profiling, harness, releases, world builds), spec §11.2 / §11.2.1 / §11.3 (spec 3.32); make help lists targets with digits |
 | 23:29 | `5dd86ca` | Untrack compiled Python files (__pycache__ is already git-ignored; running the dashboard rewrote them) |
+| 23:52 | `c03317c` | Spec 3.33: sign-in with Google and Strava, brokered by our own backend (§9.1) |
+| 23:53 | `0d64c56` | Spec 3.34: VR starts now (Phase 11 Q6), X1 first |
+| 23:56 | `4aececa` (merge) | Merge art collector: hourly systemd user timer (art-collect), archive moved to art/build-history with masked text tracked in git, lock, status file and dashboard panel, ART-PROJECT v1.5 (spec 3.35) |
+| 23:57 | `8db85b1` | Art: the build history's masked text files in git (index, SHA256SUMS, journals and token counts of days 1–4); archive moved to art/build-history |
 
 ## Builds and build servers
 
-654 build/test runs on the build machines, 51.1 h in total, 21 failed; 1382 server samples; cargo compiled 6125 crates in 6.9 h, 6.6 h waiting for build slots.
+680 build/test runs on the build machines, 58.7 h in total, 23 failed; 1439 server samples; cargo compiled 6709 crates in 7.3 h, 9.9 h waiting for build slots.
 
 | Machine | Runs | Hours | Cargo h | Crates | Waited h | Failed | Online |
 |---|---|---|---|---|---|---|---|
 | Win11Builder | 23 | 3.4 | 1.3 | 1259 | 0.2 | 4 | 99% |
-| leela | 21 | 0.6 | 0.0 | 0 | 0.0 | 1 | 70% |
-| macos | 117 | 5.2 | 0.2 | 743 | 0.7 | 1 | 100% |
-| marge | 493 | 41.9 | 5.4 | 4123 | 5.8 | 15 | 100% |
+| leela | 21 | 0.6 | 0.0 | 0 | 0.0 | 1 | 71% |
+| macos | 126 | 6.4 | 0.2 | 752 | 1.1 | 1 | 100% |
+| marge | 510 | 48.3 | 5.7 | 4698 | 8.5 | 17 | 100% |
 
 Failed runs:
 
@@ -191,32 +196,34 @@ Failed runs:
 - 17:59 marge: `cp apps/web/web/index.html target/web/ 2>/dev/null; ls target/web/ocw_web_bg.was` (exit 2, log `build-log/175958-marge-2470111.log`)
 - 21:12 marge: `set -o pipefail; echo "== fmt"; cargo fmt --all --check 2>&1 | head -60; echo "f` (exit 101, log `build-log/211251-marge-2753485.log`)
 - 21:21 marge: `rm -rf test-output/scenes/t4b-wayland test-output/scenes/t4b-x11 test-output/sce` (exit 1, log `build-log/212119-marge-2763843.log`)
+- 23:13 marge: `make test-web-readme` (exit 2, log `build-log/231321-marge-2966239.log`)
+- 23:34 marge: `make test-web-readme README_FLAGS=--keep` (exit 2, log `build-log/233427-marge-3010982.log`)
 
 Longest runs:
 
 - 51 min on marge: `set -o pipefail; for s in liechtenstein tenerife blackforest; do echo "== $s"; s`
+- 45 min on marge: `cargo fmt --all --check >/dev/null 2>&1 && echo FMT_OK || { echo FMT_BAD; cargo `
 - 39 min on marge: `set -e; df -h ~ | tail -1; scripts/build-liechtenstein.sh; scripts/build-tenerif`
 - 37 min on marge: `make web 2>&1 | grep -v "^\s*Compiling\|extra-filename" | tail -25; make test-we`
-- 35 min on marge: `cargo fmt --all --check && echo FMT-OK; cargo clippy -q --keep-going --workspace`
-- 34 min on marge: `readlink -f data; for r in liechtenstein tenerife blackforest; do echo "=== $r $`
+- 36 min on marge: `make web && python3 scripts/web_browser.py version && make test-web; echo "TESTW`
 
 ## Token usage
 
-3.03 B tokens in 8,511 model messages (output 7.6 M, cache reads 3.00 B, cache writes 27.9 M, uncached input 18 k). Full breakdown: [tokens.json](tokens.json).
+3.18 B tokens in 9,044 model messages (output 8.1 M, cache reads 3.14 B, cache writes 30.2 M, uncached input 19 k). Full breakdown: [tokens.json](tokens.json).
 
 | Feature | Tokens | Output | Messages |
 |---|---|---|---|
-| Planning & spec | 1.32 B | 3.2 M | 3,517 |
+| Planning & spec | 1.38 B | 3.4 M | 3,743 |
 | Sky, time & weather | 487.7 M | 1.4 M | 1,365 |
-| Other | 345.5 M | 803 k | 969 |
+| Other | 378.9 M | 972 k | 1,063 |
 | Worlds & terrain | 193.3 M | 484 k | 531 |
 | Audio & voice | 171.7 M | 407 k | 474 |
+| UI & menus | 144.6 M | 287 k | 424 |
 | Materials & look | 118.9 M | 282 k | 279 |
-| UI & menus | 112.2 M | 170 k | 269 |
-| Build, release & infra | 78.7 M | 221 k | 394 |
-| Riders & bikes | 77.3 M | 217 k | 248 |
+| Riders & bikes | 93.9 M | 230 k | 285 |
+| Build, release & infra | 83.2 M | 225 k | 401 |
 | Multiplayer & server | 64.5 M | 198 k | 207 |
-| Art project | 61.2 M | 174 k | 258 |
+| Art project | 64.0 M | 178 k | 272 |
 
 | Task | Feature | Tokens | Output |
 |---|---|---|---|
@@ -224,46 +231,46 @@ Longest runs:
 | agent: Phase 12 K4+K5: damage | Planning & spec | 137.0 M | 288 k |
 | agent: Polish: small follow-ups bundle | Other | 133.5 M | 298 k |
 | agent: Phase 4 W4: character corner | Planning & spec | 125.1 M | 286 k |
-| coordination: check for unimplemented features | Other | 122.1 M | 108 k |
 | agent: Phase 9 S4: weather rendering | Sky, time & weather | 121.2 M | 306 k |
 | agent: Phase 8 T6: rider/bike materials | Materials & look | 118.9 M | 282 k |
 | agent: Phase 12 K3: world objects | Worlds & terrain | 118.4 M | 264 k |
 | agent: Phase 10 B6: browser UI parity | Planning & spec | 107.7 M | 239 k |
 | agent: Phase 12/13 leftovers bundle | Planning & spec | 105.8 M | 229 k |
+| coordination: check for unimplemented features | Other | 101.6 M | 58 k |
 | agent: Phase 9 S7: real weather | Sky, time & weather | 97.7 M | 262 k |
 | agent: Phase 12 K1+K2: collisions | Planning & spec | 93.8 M | 278 k |
 | agent: Phase 4 W1+W2: workshop | Planning & spec | 90.2 M | 217 k |
 | agent: Phase 8 T4 leftovers: houses | Planning & spec | 86.5 M | 276 k |
 | agent: Phase 10 B5: browser audio+voice | Audio & voice | 85.5 M | 233 k |
 | agent: Phase 4 workshop leftovers | Planning & spec | 81.2 M | 182 k |
+| agent: Phase 7: training history, rebinding | Planning & spec | 79.5 M | 248 k |
 | agent: Phase 10 B2: worlds over HTTP | Worlds & terrain | 74.9 M | 220 k |
 | agent: Phase 9 S6: weather physics | Sky, time & weather | 74.1 M | 189 k |
 | agent: Phase 9 S2: night sky w/o stars | Sky, time & weather | 71.6 M | 224 k |
+| agent: Animations and K6 organiser rules | Riders & bikes | 66.0 M | 192 k |
 | agent: Phase 10 B7: WebGL2 fallback | Planning & spec | 64.9 M | 170 k |
 | agent: Phase 9 S5: weather machine | Sky, time & weather | 62.2 M | 200 k |
 | coordination: add the voice echo bot to the settings menu | UI & menus | 62.1 M | 43 k |
 | agent: Phase 10 B3: browser multiplayer | Multiplayer & server | 62.0 M | 195 k |
 | agent: Phase 9 S8: seasons | Sky, time & weather | 60.9 M | 211 k |
-| agent: Phase 7: training history, rebinding | Planning & spec | 56.7 M | 234 k |
 | agent: Phase 4 W3: parts physics | Planning & spec | 56.5 M | 153 k |
 | agent: Phase 10 B1: wasm browser build | Build, release & infra | 51.4 M | 134 k |
 | agent: Phase 10 B4: Web Bluetooth | Planning & spec | 51.2 M | 197 k |
-| agent: Animations and K6 organiser rules | Riders & bikes | 49.5 M | 178 k |
 | agent: Phase 8 T3: forest type | Planning & spec | 46.3 M | 136 k |
 | coordination: to test the voice feature, enable an echo bot that when near, records your audio… | Audio & voice | 45.3 M | 45 k |
 | agent: Voice echo bot | Audio & voice | 40.9 M | 129 k |
+| agent: Console autocomplete, GPS in HUD | UI & menus | 30.5 M | 113 k |
 | agent: God mode: plane-like controls | Planning & spec | 22.6 M | 58 k |
+| agent: God mode in the browser | Planning & spec | 20.7 M | 96 k |
+| agent: Cooler helmets | Other | 20.6 M | 159 k |
 | coordination: spec change: do not join two or more images, rather than that, send me all pictu… | Art project | 20.5 M | 23 k |
+| coordination: (session start) | Other | 19.5 M | 51 k |
 | coordination: tell me, how are the 3d models implemented for drivers, bikes etc implemented? a… | Riders & bikes | 17.3 M | 21 k |
 | agent: README: web guide and doc gaps | Art project | 16.7 M | 52 k |
-| agent: Docs: build dashboard and tools | UI & menus | 13.7 M | 61 k |
-| coordination: give me the curren specification of the charackter editor? | Planning & spec | 13.1 M | 8 k |
-| agent: Fork B: generator variants | Other | 12.0 M | 41 k |
-| agent: Art: hourly collector, move history | Other | 11.9 M | 76 k |
 
 ## Prompts
 
-46 prompts (full text: [prompts.md](prompts.md)).
+54 prompts (full text: [prompts.md](prompts.md)).
 
 | Time | Prompt |
 |---|---|
@@ -313,6 +320,14 @@ Longest runs:
 | 23:19 | cool video, make the shown images a bit longer. and mix images and videos (chronologically). rebuild the day 4 video. create systemd timer j |
 | 23:20 | make the helmets look cooler. |
 | 23:30 | why does unicorn/god mode not work in browser mode? |
+| 23:34 | add autocompletion to the ingame console. check and restore the GPS location printing in hud. |
+| 23:45 | explain why the command "! sudo loginctl enable-linger $USER" what it does |
+| 23:46 | this should be run on which machine? |
+| 23:51 | implement the google and strava authentication as suggested. |
+| 23:52 | start with VR for oculust rift. |
+| 23:54 | plan for previewing the web version on the internet. what would be required for hosting a dev build? could it be hostet on github? |
+| 23:55 | i do have  a quest 1. it should work via oculus link but also standalone. |
+| 23:59 | okay, do the changes and implement the small preview hosting on github. add do readme after headline as preview. yes, record this in spec an |
 
 ## Media
 
@@ -856,3 +871,41 @@ Longest runs:
 | 22:03:37 | [220337-agent-web-web-compare-webgl2-low.jpg](220337-agent-web-web-compare-webgl2-low.jpg) |
 | 22:03:37 | [220337-agent-web-web-compare-webgpu-high.jpg](220337-agent-web-web-compare-webgpu-high.jpg) |
 | 22:03:37 | [220337-agent-web-web-compare.jpg](220337-agent-web-web-compare.jpg) |
+| 23:45:50 | [234550-shot-wayland-helmet-mirror-road.jpg](234550-shot-wayland-helmet-mirror-road.jpg) |
+| 23:45:59 | [234559-shot-helmet-mirror-road.jpg](234559-shot-helmet-mirror-road.jpg) |
+| 23:46:17 | [234617-shot-wayland-helmet-mirror-road-side.jpg](234617-shot-wayland-helmet-mirror-road-side.jpg) |
+| 23:46:33 | [234633-scenes-a26-cornering.jpg](234633-scenes-a26-cornering.jpg) |
+| 23:46:33 | [234633-scenes-a26-foot-down-video.jpg](234633-scenes-a26-foot-down-video.jpg) |
+| 23:46:33 | [234633-scenes-a26-foot-down-video.mp4](234633-scenes-a26-foot-down-video.mp4) |
+| 23:46:33 | [234633-scenes-a26-foot-down.jpg](234633-scenes-a26-foot-down.jpg) |
+| 23:46:33 | [234633-scenes-a26-uturn-look.jpg](234633-scenes-a26-uturn-look.jpg) |
+| 23:46:33 | [234633-scenes-a26-uturn-loop.jpg](234633-scenes-a26-uturn-loop.jpg) |
+| 23:46:33 | [234633-scenes-a26-uturn-video.jpg](234633-scenes-a26-uturn-video.jpg) |
+| 23:46:33 | [234633-scenes-a26-uturn-video.mp4](234633-scenes-a26-uturn-video.mp4) |
+| 23:46:33 | [234633-scenes-a26-victory-video.jpg](234633-scenes-a26-victory-video.jpg) |
+| 23:46:33 | [234633-scenes-a26-victory-video.mp4](234633-scenes-a26-victory-video.mp4) |
+| 23:46:33 | [234633-scenes-a26-victory.jpg](234633-scenes-a26-victory.jpg) |
+| 23:46:33 | [234633-scenes-k6-event-rules.jpg](234633-scenes-k6-event-rules.jpg) |
+| 23:46:33 | [234633-scenes-k6-organiser-rules-menu.jpg](234633-scenes-k6-organiser-rules-menu.jpg) |
+| 23:46:33 | [234633-scenes-k6-results-rules.jpg](234633-scenes-k6-results-rules.jpg) |
+| 23:46:33 | [234633-shot-helmet-mirror-road-side.jpg](234633-shot-helmet-mirror-road-side.jpg) |
+| 23:46:43 | [234643-shot-wayland-helmet-mirror-light.jpg](234643-shot-wayland-helmet-mirror-light.jpg) |
+| 23:47:10 | [234710-shot-helmet-mirror-light.jpg](234710-shot-helmet-mirror-light.jpg) |
+| 23:47:10 | [234710-shot-wayland-helmet-mirror-light-side.jpg](234710-shot-wayland-helmet-mirror-light-side.jpg) |
+| 23:47:36 | [234736-shot-wayland-helmet-mirror-aero-road.jpg](234736-shot-wayland-helmet-mirror-aero-road.jpg) |
+| 23:47:49 | [234749-shot-helmet-mirror-light-side.jpg](234749-shot-helmet-mirror-light-side.jpg) |
+| 23:48:03 | [234803-shot-wayland-helmet-mirror-aero-road-side.jpg](234803-shot-wayland-helmet-mirror-aero-road-side.jpg) |
+| 23:48:26 | [234826-shot-helmet-mirror-aero-road.jpg](234826-shot-helmet-mirror-aero-road.jpg) |
+| 23:48:29 | [234829-shot-wayland-helmet-mirror-tt.jpg](234829-shot-wayland-helmet-mirror-tt.jpg) |
+| 23:48:57 | [234857-shot-wayland-helmet-mirror-tt-side.jpg](234857-shot-wayland-helmet-mirror-tt-side.jpg) |
+| 23:49:06 | [234906-shot-helmet-mirror-aero-road-side.jpg](234906-shot-helmet-mirror-aero-road-side.jpg) |
+| 23:49:25 | [234925-shot-wayland-helmet-mirror-cap.jpg](234925-shot-wayland-helmet-mirror-cap.jpg) |
+| 23:49:35 | [234935-shot-wayland-helmet-road-behind.jpg](234935-shot-wayland-helmet-road-behind.jpg) |
+| 23:49:44 | [234944-shot-helmet-mirror-tt.jpg](234944-shot-helmet-mirror-tt.jpg) |
+| 23:49:46 | [234946-shot-wayland-helmet-tt-position.jpg](234946-shot-wayland-helmet-tt-position.jpg) |
+| 23:50:02 | [235002-shot-wayland-helmet-group-chase.jpg](235002-shot-wayland-helmet-group-chase.jpg) |
+| 23:50:23 | [235023-shot-helmet-mirror-tt-side.jpg](235023-shot-helmet-mirror-tt-side.jpg) |
+| 23:51:12 | [235112-shot-helmet-mirror-cap.jpg](235112-shot-helmet-mirror-cap.jpg) |
+| 23:51:49 | [235149-shot-helmet-road-behind.jpg](235149-shot-helmet-road-behind.jpg) |
+| 23:52:24 | [235224-shot-helmet-tt-position.jpg](235224-shot-helmet-tt-position.jpg) |
+| 23:52:54 | [235254-shot-helmet-group-chase.jpg](235254-shot-helmet-group-chase.jpg) |

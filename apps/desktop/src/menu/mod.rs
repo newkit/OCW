@@ -9,8 +9,8 @@
 //! model → `MenuView`, menu functions as console lines) `ocw_ui::menu`.
 //! This module adds the desktop's own pages through [`MenuHooks`]: the
 //! world catalog (Change world, About this world), routes, rides, GPX
-//! import, workouts from the workouts folder, the rider profiles, and god
-//! mode's captured pointer.
+//! import, workouts from the workouts folder, the rider profiles (god
+//! mode's captured pointer is the shared menu's, `ocw_ui::god`).
 //!
 //! [`ClientCore::hold_steering`]: crate::client::ClientCore::hold_steering
 
@@ -42,22 +42,11 @@ impl Plugin for MenuPlugin {
                 )
             },
             riders: |world| world.get_resource::<RiderProfiles>().map(|r| &r.riders),
-            escape: free_pointer,
+            ..MenuHooks::default()
         });
         if !app.is_plugin_added::<ocw_ui::menu::MenuPlugin>() {
             app.add_plugins(ocw_ui::menu::MenuPlugin);
         }
-    }
-}
-
-/// God mode (spec §14 Phase 13A): Esc first frees the captured pointer.
-fn free_pointer(world: &mut World) -> bool {
-    match world.get_resource_mut::<crate::god::FlightPointer>() {
-        Some(mut f) if f.captured => {
-            f.captured = false;
-            true
-        }
-        _ => false,
     }
 }
 

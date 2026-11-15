@@ -18,6 +18,8 @@ ocw-sim.workspace = true
 ocw-protocol.workspace = true
 ocw-sky.workspace = true
 ocw-weather.workspace = true
+# God mode's inspection (the crosshair's ray, tiles, geo; Phase 13 G3).
+ocw-world.workspace = true
 ocw-render.workspace = true
 ocw-client.workspace = true
 # The voice hotkeys' toggles (pure, wasm-safe without its livekit feature).
@@ -27,7 +29,6 @@ clap.workspace = true
 
 [dev-dependencies]
 ocw-fit.workspace = true
-ocw-world.workspace = true
 ocw-server.workspace = true
 
 [lints]

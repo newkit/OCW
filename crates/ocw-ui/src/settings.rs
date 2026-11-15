@@ -331,14 +331,16 @@ mod tests {
             "{cmds:?}"
         );
         assert!(cmds.contains(&"hud.units imperial".to_string()), "{cmds:?}");
-        assert!(
-            !cmds.iter().any(|c| c.starts_with("god.")),
-            "god mode is not in the browser: {cmds:?}"
-        );
+        // God mode's settings apply in both apps (spec §14 Phase 13 G5).
+        assert!(cmds.contains(&"god.invert on".to_string()), "{cmds:?}");
         assert!(
             again
                 .startup_commands(Platform::Desktop)
                 .contains(&"god.invert on".to_string())
+        );
+        assert!(
+            !cmds.iter().any(|c| c.contains("fullscreen")),
+            "the browser has its own fullscreen: {cmds:?}"
         );
     }
 

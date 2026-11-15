@@ -81,7 +81,7 @@ VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 .DEFAULT_GOAL := help
 .PHONY: help version version-next version-bump test-release-version release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish art-collect art-check test-art art-install-timer art-uninstall-timer art-timer-status deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
 	clippy check run server materials deploy-test clean clean-test-output macos-app \
-	test test-unit test-wasm test-web-build test-web test-web-webgl2 test-web-world test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-kiosk web web-serve web-worlds deps-web test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
+	test test-unit test-wasm test-web-build test-web test-web-webgl2 test-web-world test-web-unicorn test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-kiosk web web-serve web-worlds deps-web test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
 	test-multiplayer test-multiplayer-local test-scenes test-scenes-list \
 	wasm screenshot screenshot-wayland smoke video video-wayland
 
@@ -281,6 +281,9 @@ WEB_WORLD_ROUTE ?= vaduz-malbun
 test-web-world: web web-worlds ## Headless Chromium: stream $(WEB_WORLD) from the dev server, ride $(WEB_WORLD_ROUTE), teleport, reload from the OPFS cache; screenshots into test-output/web/
 	scripts/test-web.py --out test-output/web --world $(WEB_WORLD) --route $(WEB_WORLD_ROUTE) --seconds 15 --teleport 6 --time noon
 
+test-web-unicorn: web web-worlds ## Headless Chromium: unicorn mode over $(WEB_WORLD) from $(WEB_WORLD_ROUTE)'s start (spec §14 Phase 13 G5): G, +, inspection, a pin, the menu row, landing; screenshots into test-output/web/
+	scripts/test-web.py --out test-output/web --world $(WEB_WORLD) --route $(WEB_WORLD_ROUTE) --seconds 8 --no-reload --god --time noon
+
 test-web-multiplayer: web ## Headless Chromium joins ocw-server over WebTransport with ocw-bot riders (QUIC + WebTransport), rides 30 s; screenshot, timing into test-output/web/
 	$(CARGO) build --release -p ocw-server -p ocw-bot
 	scripts/test-web-multiplayer.py --out test-output/web --seconds 30
@@ -425,7 +428,7 @@ art-collect: ## Art: one run of the hourly collector now (gather + journal of ye
 art-check: ## Art: fail if a tracked text file of art/build-history/ holds a private pattern (FIX=1 masks them)
 	$(ART_PYTHON) art/diary.py check-masked $(if $(FIX),--fix)
 
-test-art: ## Art: unit tests of art/diary.py and scripts/art-collect.sh (fixture archive; local Python, no Rust build)
+test-art: ## Art: unit tests of art/diary.py, art/music.py and scripts/art-collect.sh (fixture archive; local Python, no Rust build)
 	$(ART_PYTHON) -m unittest discover -s art -p 'test_*.py'
 
 ART_UNITS = ocw-art-collect.service ocw-art-collect.timer
@@ -455,6 +458,7 @@ dashboard-install: ## Install and start the build dashboard as a systemd user se
 	sed 's|@REPO@|$(CURDIR)|g' tools/build-dashboard/ocw-build-dashboard.service > $(HOME)/.config/systemd/user/ocw-build-dashboard.service
 	systemctl --user daemon-reload
 	systemctl --user enable --now ocw-build-dashboard.service
+	systemctl --user restart ocw-build-dashboard.service
 	@echo "Dashboard: http://localhost:8765/  (start at boot without login: sudo loginctl enable-linger $$USER)"
 
 dashboard-uninstall: ## Stop and remove the build dashboard user service

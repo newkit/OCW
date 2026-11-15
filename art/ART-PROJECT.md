@@ -1,6 +1,6 @@
 # OCW Build Diary – Art Project Specification
 
-Version 1.5 – 14 November 2026
+Version 1.7 – 15 November 2026
 
 | Version | Change |
 |---|---|
@@ -10,6 +10,8 @@ Version 1.5 – 14 November 2026
 | 1.3 | The user's prompts are part of the archive and the videos (§2.3) |
 | 1.4 | Token usage of the build: in total, per task and per feature (§2.4) |
 | 1.5 | The archive moved to `art/build-history/`; its text files (index, checksums, journals, token usage) are tracked in git, masked, while media stay out of git (§2, §2.5). An hourly collector on the dev machine, a systemd user timer: gather + journal of yesterday and today, the mask check, the contact sheets at 23:xx, a lock, a status file, a dashboard line (§5.1). Day videos: images stay on screen about 1.4× longer (3–5 s), and shots run in capture order within a chapter (§3, §4). All decided by the user 2026-11-14 |
+| 1.6 | Music with more variety and a style per day (user 2026-11-14): synthwave, funk, lofi, chiptune, house (`style` and `mode` in the day script, else picked by the day number). It varies within the video: a progression, drum pattern, bass line and arpeggio per chapter; fills, build-ups and stops at chapter changes; crashes, a breakdown, a bridge and a key lift in long videos; a developing lead (motif, variations, call and response); and swells. Deterministic, loudness-normalised, tested (`art/music.py`, §3.2, §4) |
+| 1.7 | Incident log (user 2026-11-15, §2.6): the hourly collector gathers OOM kills, failed and restarted units (journalctl), machines offline / online, full disks, janitor deletions and failed runs into `test-output/build-log/DAY/incidents.jsonl` (masked). The coordinator writes root-cause notes to `DAY/incidents.md` (tracked, masked). The journal merges both under "Incidents", and a day script can show an incident as a card (`incident = "HH:MM"`, §4). First entry: the 2026-11-15 00:39 OOM on deb |
 
 ## 1. The brief
 
@@ -187,6 +189,45 @@ The archive's text record is versioned with the code; its media are not.
   FIX=1`) masks the files in place, for files written before this rule
   (`index.md`, old journals). The untracked originals are left as they are.
 
+### 2.6 Incidents (decided by the user 2026-11-15)
+
+What went wrong on the build infrastructure is part of the story too: crashes,
+machines dropping out, full disks.
+
+- **Collected every hour** by the collector (§5.1), per day into
+  `test-output/build-log/DAY/incidents.jsonl`, which is rewritten on each run
+  and gathered into the day's `logs/build-log/`. Each line holds `time`,
+  `kind`, `source`, `machine` and `text`, masked like the journals (§2.5).
+  - *From the journal of the dev machine* (`journalctl`, user and system,
+    read-only; `OCW_ART_JOURNAL=0` turns it off):
+    - OOM kills (`oom-kill`: "killed by the OOM killer", the kernel's
+      "Killed process");
+    - failed OCW user units (`unit-failed`: `ocw-build-dashboard`,
+      `ocw-art-collect`, …);
+    - restarts (`unit-restart`).
+
+    A tmux scope is listed as "tmux scope (a terminal session)".
+  - *From the build log* (§2.2):
+    - a machine going offline or back online (`machine-offline`,
+      `machine-online`, from the dashboard samples);
+    - a disk over 90 % (`disk-full`, once per crossing);
+    - janitor deletions (`janitor-delete`);
+    - the failed `remote.sh` runs of the day, as a count per machine
+      (`runs-failed`).
+- **Root-cause notes** by the coordinator: `art/build-history/DAY/incidents.md`,
+  tracked in git, masked and checked by `check-masked`. It has one `## HH:MM –
+  title` section per incident, with **What happened**, **Cause**, **Effect**,
+  **Fix** and **Follow-up**. The first entry is 2026-11-15, 00:39, when deb
+  ran out of memory.
+- **Journal:** `journal.md` gets an "Incidents" section. It shows counts per
+  kind, the table of collected incidents and the root-cause notes, merged.
+  `journal.json` has `incidents`, with `auto` (the collected list), `notes`
+  (the Markdown) and `noted` (the headings).
+- **In the video:** a chapter can be about an incident: a card shot with
+  `incident = "HH:MM"` (§4) shows "INCIDENT · HH:MM" and the incident's text.
+  The text is the heading of its root-cause note, else the collected entry,
+  else the shot's `text`.
+
 ## 3. The day video
 
 About 1.5–3 minutes, 1920×1080, 30 fps, H.264 + AAC, built from these parts,
@@ -230,12 +271,63 @@ day is the same as appending the new day to the previous diary.
 
 ### 3.2 Sound
 
-- **Music**: synthesised by the tool itself (no samples, no licences):
-  a chiptune-pop band (kick, clap, hats, square bass, pulse arpeggio, soft
-  pad) over a vi–IV–I–V progression. Sections follow the video: *intro*
-  (no drums) under the title, *drive* (four-on-the-floor) under the
-  time-lapse, *groove* under the chapters, *outro* under the end card.
-  Tempo and key per day (`bpm`, `key`).
+- **Music** (`art/music.py`): synthesised by the tool itself (no samples, no
+  licences), deterministic from the day's seed. The same seed gives the same
+  samples, in every process.
+- **A style per day** (decided by the user 2026-11-14: "make different music
+  for different days"). Each day has its own musical identity: a band
+  (timbres), a mode, a groove (swing), a drum kit and its own chord
+  progressions.
+
+  | Style | Mode | Band | Groove |
+  |---|---|---|---|
+  | `synthwave` | minor | detuned super-saw pad, saw bass in 16ths, triangle arpeggio with a dotted-8th echo, saw lead with vibrato, big gated snare | motorik, gated, half-time |
+  | `funk` | dorian | filter-wah bass (syncopated 16ths, octave slaps), plucked clavinet stabs, FM lead, organ, ghost notes | swung 16ths |
+  | `lofi` | major with 7th chords | FM electric-piano chords, round sine bass (lazy, walking), soft triangle lead, dusty kit, vinyl crackle | boom-bap and half-time, swung |
+  | `chiptune` | major | square bass, pulse arpeggio, pulse lead, saw pad, chip kit (the band every day had until v1.6) | four-on-the-floor, half-time, breaks |
+  | `house` | mixolydian with 7ths | sine sub bass on the off-beats, piano stabs, plucked lead, organ, clap, open hats, shaker | four-on-the-floor |
+
+  By default the day number picks the style. Days 1–5 are synthwave, funk,
+  lofi, chiptune and house, then the cycle starts again. A day script can
+  choose one (`style`) and a mode (`mode`: `major`, `minor`, `dorian`,
+  `mixolydian`, `lydian`; §4).
+- **Sections follow the video:** *intro* under the title, *drive* under the
+  time-lapse, one *groove* per chapter, *outro* under the end card. A bar
+  belongs to the segment that holds its middle.
+- **Variation within a day** (decided by the user 2026-11-14: "a bit
+  monotone, make it a bit more varied"):
+  - *Intro:* no drums, the pad's filter opens and the volume swells, the motif
+    enters, and a riser leads into the drive.
+  - *Drive:* the style's drive pattern, the motif stated as call and response
+    in its second phrase, and a build-up at the end.
+  - *Chapters:* each chapter picks its own progression (never the previous
+    one), drum pattern (e.g. half-time, breakbeat, four-on-the-floor), bass
+    line and arpeggio or stab pattern, and the lead plays in most of them.
+    The 4-bar phrases swell slightly.
+  - *Chapter changes:* the last bar of a chapter is a fill (toms), a build-up
+    (snare roll crescendo and a noise riser) or a stop (everything breaks off
+    at the half bar). The new chapter starts with a crash.
+  - *Breakdown:* with 4 chapters or more, one chapter in the middle drops the
+    drums and the bass.
+  - *Bridge and key lift:* in videos over 90 s with 5 chapters or more, the
+    chapter before the last third plays the bridge progression. From there
+    on, including the end card, the key goes up 1–3 semitones (the style's
+    lift).
+  - *Outro:* a cadence (e.g. IV–V–I–I, VI–VII–i–i, ii–V–I–I) and the last
+    answer ending on the root, while drums, bass and arpeggio thin out.
+- **Melody:** a two-bar motif from the seed, with degrees relative to each
+  bar's chord, so it follows the harmony. It develops over the video: every
+  second chapter adds a variation (sequence, inversion, syncopation,
+  ornament, thinning). Each phrase is a call (the motif or its variation)
+  and a response (the same first bar, then a second bar moved to end on the
+  root, held).
+- **Levels:** the music is normalised to an RMS of about −19 dBFS, with peaks
+  at most −2.5 dBFS (headroom for the effects). Chapters with game audio
+  duck it. `music.stats` reports peak, RMS, brightness, zero-crossing rate
+  and onsets per second. The tests (`art/test_music.py`, in `make test-art`)
+  check determinism, that the days sound different, that nothing clips, the
+  loudness, and the variation.
+- Tempo and key per day (`bpm`, `key`).
 - **Effects**, also synthesised: bicycle bell (title), whooshes (transitions),
   pops (sticker notes), ticks (counters), a ding (end card).
 - **Game audio** from the day's archive (e.g. the freehub demo) can be mixed in
@@ -251,7 +343,11 @@ title = "A one-line title of the day"
 tagline = "In which … (typed out on the title)"
 hero = "HHMMSS-label.png"          # title background
 bpm = 108                          # music tempo (optional)
-key = "C"                          # music key (optional)
+key = "C"                          # music key, the tonic (optional)
+style = "funk"                     # music style (optional; default from the day
+                                   # number): synthwave, funk, lofi, chiptune, house
+mode = "dorian"                    # music mode (optional; default the style's):
+                                   # major, minor, dorian, mixolydian, lydian
 tests = 903                        # tests passing at the end of the day (optional;
                                    # else the highest "N tests" in a commit message)
 outro = "Closing line on the end card."
@@ -271,6 +367,8 @@ shots = [
   { file = "HHMMSS-y.mp4", seconds = 4.0, start = 2.0, speed = 2 },    # clip, 2× time-lapse
   { split = ["before.png", "after.png"], seconds = 4.9 },              # before | after
   { card = true, seconds = 2.0 },                                      # plain violet card
+  { card = true, seconds = 4.0, incident = "00:39" },                  # an incident (§2.6);
+                                                                       # optional text = "…"
 ]
 ```
 
@@ -329,7 +427,8 @@ every hour.
    midnight is not lost. Other days can be given as arguments:
    `scripts/art-collect.sh 2026-11-12`. `gather` is idempotent: sources are
    deduplicated by SHA-256, and the build log is updated in place. A day
-   that fails is reported, and the other day is still collected.
+   that fails is reported, and the other day is still collected. Each day's
+   incidents are collected too (§2.6), and the status counts them.
 2. **The mask check** (`check-masked`, §2.5) over all tracked text files.
    Any finding fails the run.
 3. **Contact sheets** (`sheet`) of today, only in the 23:xx run. They are
@@ -349,6 +448,13 @@ renders and publishes in a session.
   which then does not lock again.
 - **Python:** `/usr/bin/python3` (3.11+; `OCW_ART_PYTHON` overrides), never the
   pyenv default 3.8. The script finds the repository from its own path.
+- **Overrides (tests):** `OCW_ART_HISTORY` replaces the archive. `OCW_TEST_OUTPUT`
+  replaces `test-output/`: it is then the only source of `gather`, without
+  the agent worktrees' `test-output/` (`OCW_ART_WORKTREES` names a worktrees
+  folder, `""` none). `OCW_TRANSCRIPTS` replaces the Claude Code transcripts.
+  `make test-art` checks that a real archive at the default place stays
+  untouched (it holds that archive's lock and compares every file's size and
+  mtime).
 - **Status file:** `test-output/build-log/DAY/art.json` holds the latest run
   of DAY: start, end, status (`running`, `ok`, `failed`, `locked`), new
   files, media of today, the mask check, contact sheets yes/no, errors

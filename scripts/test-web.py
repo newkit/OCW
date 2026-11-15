@@ -4,7 +4,7 @@
     scripts/test-web.py [--out test-output/web] [--seconds 12] [--query ...]
                         [--chromium chromium] [--size 1280x720] [--software]
                         [--world ID|URL [--route NAME] [--teleport KM] [--no-reload]]
-                        [--no-ui]
+                        [--no-ui] [--god [--god-height M]]
 
 Serves target/web/ (`make web`; with --world also the published worlds in
 target/web/worlds/, `make web-worlds`) on a free local port with range
@@ -33,6 +33,9 @@ wind and damage, Captures → screenshot / FIT downloads, a video, and a
 setting kept over a reload; screenshots OUT/web-<time>-menu.jpg,
 -settings.jpg, -weather.jpg, -hud.jpg, -riders.jpg, -gamepad.jpg and the
 downloads in OUT/web-<time>-downloads/.
+
+With --world and --god: unicorn mode over the world after the ride
+(scripts/web_ui_test.py's unicorn part; `make test-web-unicorn`).
 
 Exits 0 when the module loaded, the server ticked, the rider rode and no
 uncaught exception happened (with --world: both loads were ready, the
@@ -305,6 +308,11 @@ def main():
                    help="the time machine once the ride runs (console `time …`, e.g. noon)")
     p.add_argument("--no-reload", action="store_true",
                    help="with --world: no second load from the OPFS cache")
+    p.add_argument("--god", action="store_true",
+                   help="with --world: fly in unicorn mode after the ride (Phase 13 G5; "
+                        "screenshots -unicorn-flight, -unicorn-inspect, -unicorn-menu)")
+    p.add_argument("--god-height", type=float, default=250.0,
+                   help="with --god: put the unicorn this high above the ground first (m)")
     p.add_argument("--no-ui", action="store_true",
                    help="no UI part (menus, settings, downloads; B6)")
     p.add_argument("--trust-root", default=None,
@@ -427,6 +435,10 @@ def main():
                 return False
 
             summary["ui"] = web_ui_test.run(cdp, base, lines, a.out, reload_and_wait)
+        if a.world and a.god and first["ok"]:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            import web_ui_test
+            summary["ui"] = web_ui_test.run_god(cdp, base, lines, a.out, height=a.god_height)
         if a.world and not a.no_reload and first.get("ready_s") is not None:
             visits.append(visit(cdp, url, a, base, lines, "cached", True, stats))
         adapter = cdp.eval("""(async () => {

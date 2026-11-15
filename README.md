@@ -112,8 +112,9 @@ bots and the virtual trainer as on the desktop. The page can stream a
 **world package over HTTP** (B2), join an `ocw-server` session over
 **WebTransport** together with desktop and bot riders (B3), connect
 trainers and sensors over **Web Bluetooth** (B4), play the game sound and
-join voice calls (B5), and has the desktop's menus, settings, captures and
-gamepad support (B6). It draws with **WebGPU**, or with **WebGL 2** where
+join voice calls (B5), has the desktop's menus, settings, captures and
+gamepad support (B6), and flies in **Unicorn mode** like the desktop
+(Phase 13 G5). It draws with **WebGPU**, or with **WebGL 2** where
 WebGPU is missing (B7). There is no public hosting yet (B8): you build it
 and serve it yourself, as below.
 
@@ -444,6 +445,30 @@ survive reloads. Clearing the site's data resets them.
 with the page focused, so the browser shows the pad. The mapping is the
 desktop's (see [Connecting a gamepad](#connecting-a-gamepad)).
 
+#### Unicorn mode in the browser
+
+The desktop's god mode is the same code in the page (`ocw_ui::god`): **G**
+(or *World → Unicorn mode*) turns the rider into the unicorn, **G** again
+lands on the road below, **Shift + G** flies back to the take-off spot. The
+keys are the desktop's (see [Controls](#controls)): ↑ / ↓ faster / slower,
+← / → bank, **+ / −** climb and descend – matched by the character the key
+types (the browser's `KeyboardEvent.key`), so they work on a German or any
+other layout – Shift boost, Ctrl precise, the wheel the speed, **C** first
+person, **I** the inspection (panel and crosshair), **P** a pin
+(`god.pins` lists them), **L** looks ahead again. Gamepads fly as on the
+desktop (Select + North toggles), and on a touch screen a finger on the left
+half steers, one on the right half looks, the **+ / −** buttons climb.
+
+The mouse looks around in the browser's **Pointer Lock**: the page asks for
+it when the flight starts (the key or click that started it is the user
+gesture the browser wants). **Esc** ends the lock (the browser does that
+itself), the next Esc opens the menu, a click locks the pointer again. If
+the browser refuses the lock, hold the left button to look. While flying,
+the trainer rides a flat road, and in a shared ride (WebTransport) the
+server's rules apply as on the desktop: by default only the host flies.
+The settings (*Settings → Controls*: invert Y, plane or hover; *Display*:
+the rainbow trail) and the `god …` console commands are the desktop's.
+
 #### Graphics: WebGPU, WebGL 2 and the quality presets
 
 The WebGL 2 build draws the same world with what WebGL 2 lacks degraded:
@@ -475,9 +500,10 @@ or the server and bot builds, where it needs them). Screenshots, logs and JSON s
 | Target | What it checks |
 |---|---|
 | `make test-web-build` | Both builds compile for wasm32 (part of `make check`) |
-| `make test-web` | WebGPU: load, ride, the menus by keyboard and a fake gamepad, settings over a reload, the screenshot / video / FIT downloads, fps |
+| `make test-web` | WebGPU: load, ride, the menus by keyboard and a fake gamepad, settings over a reload, the screenshot / video / FIT downloads, Unicorn mode (G, + climbs, the inspection, a pin, the menu row, landing), fps |
 | `make test-web-webgl2` | Chromium without WebGPU: the page falls back to the WebGL 2 build and rides. Then WebGPU High against WebGL 2 Low in the same view, and the Graphics page |
 | `make test-web-world` | Liechtenstein streamed from the dev server, a teleport, then a reload from the browser cache |
+| `make test-web-unicorn` | Unicorn mode over Vaduz (Liechtenstein streamed): fly up, the inspection, a pin, the menu row, landing (`--god`) |
 | `make test-web-multiplayer` | `ocw-server` and `ocw-bot` riders, the browser over WebTransport, 30 s |
 | `make test-web-ble` | A fake Web Bluetooth trainer and strap: connect, power, SIM / ERG writes, a drop, a reload, no Bluetooth |
 | `make test-web-ble-emulation` / `test-web-ble-real` | Chromium's own Web Bluetooth with a simulated KICKR / the real trainer in range (`BLE_DEVICE=KICKR`) |
@@ -486,7 +512,7 @@ or the server and bot builds, where it needs them). Screenshots, logs and JSON s
 | `make test-web-livekit` | Two browser riders in a real `livekit-server --dev` room: they see and hear each other, mute. It needs `livekit-server` (v1.13.10) on the PATH or in `~/.local/bin` (`LIVEKIT_SERVER=PATH`). Without it the part is skipped |
 
 `scripts/test-web.py --help` lists the options (`--query`, `--world`,
-`--gpu`, `--software` for SwiftShader without a GPU, `--no-ui`).
+`--gpu`, `--software` for SwiftShader without a GPU, `--no-ui`, `--god`).
 
 #### Limitations today
 
@@ -497,7 +523,8 @@ or the server and bot builds, where it needs them). Screenshots, logs and JSON s
 - No hosting or domain yet (B8): you serve the page yourself. Multiplayer
   takes the server's self-signed certificate by hash, renewed every 11
   days.
-- No god mode (unicorn) in the browser.
+- Unicorn mode's touch controls are untried on real phones and tablets,
+  and so is the Pointer Lock in Safari and Firefox.
 - The workshop and the character editor are locked: browser riders are
   anonymous ("log in to customize") and ride the plain grey bike and kit
   until accounts come (Phase 5). Their damage is not kept.

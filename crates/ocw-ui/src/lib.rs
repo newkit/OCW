@@ -11,6 +11,9 @@
 //!   weather into the view and the menu, `time` / `weather …`,
 //! - [`collisions`], [`events`]: the ride's rules and local events,
 //! - [`riders_page`]: Navi → Riders in this ride,
+//! - [`god`]: god mode – "Unicorn mode" (spec §14 Phase 13; shared since
+//!   G5, v3.37): the flight's keys, gamepad, mouse and touch, the pointer
+//!   capture, inspection and pins, the HUD's flight view, `god …`,
 //! - [`controls`]: the Bevy input of the menu, [`bindings`]: the
 //!   rebindable ride keys and buttons (M9), [`access`]: the accessibility
 //!   options, [`history`]: the training history (spec §14 Phase 7).
@@ -25,6 +28,7 @@ pub mod bindings;
 pub mod collisions;
 pub mod controls;
 pub mod events;
+pub mod god;
 pub mod history;
 pub mod menu;
 pub mod quality;
