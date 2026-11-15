@@ -249,14 +249,14 @@ pub const ACTIONS: [ActionDef; 19] = [
         "R",
         "none",
     )),
-    desktop(flying(def(
+    flying(def(
         Action::GodMode,
         "god",
         "Unicorn mode",
         Group::App,
         "G",
         "none",
-    ))),
+    )),
     flying(def(
         Action::MuteMic,
         "mute_mic",
@@ -597,7 +597,7 @@ impl Bindings {
                         });
                     }
                 }
-                if device == Device::Key && a.in_flight && desktop && GOD_KEYS.contains(&input) {
+                if device == Device::Key && a.in_flight && GOD_KEYS.contains(&input) {
                     out.push(Conflict {
                         action: a.action,
                         device,
@@ -782,8 +782,8 @@ mod tests {
         let c = b.conflict_of(Action::Camera, Device::Key, true).unwrap();
         assert_eq!(c.with, None);
         assert_eq!(c.describe(), "L: Camera and unicorn mode's flight keys");
-        // The browser has no unicorn mode.
-        assert_eq!(b.conflict_of(Action::Camera, Device::Key, false), None);
+        // The browser flies too (Phase 13 G5).
+        assert!(b.conflict_of(Action::Camera, Device::Key, false).is_some());
     }
 
     #[test]

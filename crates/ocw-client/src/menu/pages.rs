@@ -94,7 +94,7 @@ pub enum Page {
     /// `rider_list`): who rides, where, who flies, who is hurt.
     RiderList,
     /// Controls → Unicorn mode: invert the mouse, plane or hover (the
-    /// Controls page is full; desktop only).
+    /// Controls page is full).
     UnicornControls,
     /// Controls → Keys and buttons (spec §3.2.1 M9): the groups, the pad's
     /// Confirm button, reset.
@@ -255,9 +255,10 @@ impl Page {
         matches!(self, Self::Bindings | Self::BindGroup(_) | Self::BindReset)
     }
 
-    /// Whether `platform` has this page (the browser has no unicorn mode).
-    pub fn on(self, platform: super::model::Platform) -> bool {
-        !(platform == super::model::Platform::Browser && self == Self::UnicornControls)
+    /// Whether `platform` has this page (both have every page since the
+    /// browser flies too, Phase 13 G5; kept for pages one app lacks).
+    pub fn on(self, _platform: super::model::Platform) -> bool {
+        true
     }
 
     /// The voice pages (rows from `voice::page`).
