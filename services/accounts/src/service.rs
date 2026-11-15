@@ -773,21 +773,16 @@ impl AuthService {
         verifier: &str,
     ) -> Result<TokenResponse, OAuthError> {
         let hash = token_hash(code);
-        let rec = {
-            let mut eph = self.eph();
-            match eph.codes.remove(&hash) {
-                Some(r) => r,
-                None => {
-                    // A code used twice: revoke what the first use gave
-                    // (RFC 6749 §4.1.2, RFC 9700 §4.5).
-                    if let Some((family, _)) = eph.redeemed.remove(&hash) {
-                        drop(eph);
-                        tracing::warn!("authorization code reused: tokens revoked");
-                        let _ = self.store.revoke_family(&family);
-                    }
-                    return Err(invalid_grant("unknown or used code"));
-                }
+        let removed = self.eph().codes.remove(&hash);
+        let Some(rec) = removed else {
+            // A code used twice: revoke what the first use gave (RFC 6749
+            // §4.1.2, RFC 9700 §4.5).
+            let first = self.eph().redeemed.remove(&hash);
+            if let Some((family, _)) = first {
+                tracing::warn!("authorization code reused: tokens revoked");
+                let _ = self.store.revoke_family(&family);
             }
+            return Err(invalid_grant("unknown or used code"));
         };
         if rec.client_id != client_id || rec.redirect_uri != redirect_uri {
             return Err(invalid_grant(
