@@ -1617,7 +1617,7 @@ model.
 Manage them in the in-game menu (Esc / Start): the workshop's mirror corner
 (or `menu workshop-page`) chooses the rider and opens their *Bike* page (the bike, its physics numbers, frame / jersey /
 helmet colour and kit, all with ← / →),
-*Settings → Riders* edits them (weight, height, FTP with ← / →; add, delete),
+*Settings → Account → Rider profiles* (or *Workshop → Edit riders*) edits them (weight, height, FTP with ← / →; add, delete),
 and the other *Settings* pages (Controls, Trainer, Audio, Display, Voice; the
 Strava account page is under *Navi → Strava*, also reachable as a tab) change the
 settings above with ← / → (D-pad) and Enter (A); Q / E (LB / RB) switch between
@@ -2006,7 +2006,7 @@ your progress.
   the workout ends or is stopped. With a power meter or a trainer without
   control the targets are guidance only. The virtual trainer holds the ERG
   target while its power is above 0.
-- **FTP:** targets in % FTP use the riding profile's FTP (Settings → Riders,
+- **FTP:** targets in % FTP use the riding profile's FTP (Settings → Account → Rider profiles,
   `riders.edit NAME --ftp W`); `--ftp W` on the command line overrides it;
   without either, 200 W.
 
@@ -2051,6 +2051,99 @@ twice is a step. The `MINUTES WATTS` / `MINUTES PERCENT` header line decides
 the unit (without it: the file extension). Comments (`;`, `#`), blank lines,
 CRLF and extra columns are accepted; distance-based (slope) courses are not
 workouts and are refused. FIT workout files are not imported yet.
+
+## Accounts and sign-in
+
+Riding needs no account: without one you ride anonymously (in the browser
+with the plain bike and character). Signing in keeps an **Open Cycling World
+account** across devices (spec §9.1). You sign in with **Google** or
+**Strava**; OCW's own accounts server brokers the sign-in and keeps only your
+name, the provider's account id (and your e-mail with Google). One account
+can have both linked.
+
+**Settings → Account** (console: `account …`):
+
+- *Sign in with Google* / *Sign in with Strava*: the desktop app opens your
+  browser; after the sign-in the browser tab says you can close it and the
+  page shows *Signed in as …*. In the browser app the page goes to the sign-in
+  and comes back.
+- *Sign in with a code (kiosk)*: for a kiosk, a trainer PC without a keyboard
+  or a headset. The page shows a URL and a code like `BCDF-GHJK`; open the URL
+  on your phone, check that the code matches, sign in there.
+- Signed in: *Link Strava* / *Link Google* adds the other provider to the same
+  account, *Unlink* removes one (never the last), *Sign out* ends the sign-in
+  on the server too. Strava asks whether OCW may upload activities: allow it
+  and the later Strava upload needs no second consent.
+- `account status`, `account export ocw-account.json` (your data as JSON),
+  `account delete --yes` (deletes the account; needs a sign-in in the last
+  15 minutes), `account cancel`.
+
+The desktop keeps the sign-in in the system keyring (Secret Service on
+Linux, the Keychain on macOS, the Credential Manager on Windows), or in a
+private file `~/.config/ocw/account.json` (mode 0600) when no keyring answers,
+and renews it in the background. On a shared ride (`--server`) the server
+gets your account's name. Until OCW's public accounts server exists, name one:
+`ocw-desktop --account-server https://accounts.example.org` (or
+`OCW_ACCOUNT_SERVER`); the browser app takes the page option
+`auth=https://accounts.example.org`. Without one, sign-in is off.
+`OCW_BROWSER="firefox --new-window"` chooses the browser the desktop opens.
+
+### Running the accounts server
+
+The accounts server is part of `ocw-server` (crate `services/accounts`). It
+speaks OpenID Connect towards the apps (`/.well-known/openid-configuration`,
+`/authorize`, `/token`, `/jwks`, `/device_authorization`, `/revoke`,
+`/userinfo`, `/account/…`), so Keycloak or Authentik could replace it later.
+
+**Try it locally with fake providers** (no registration, every sign-in
+succeeds as a test user; never for real riders):
+
+```bash
+cargo run -p ocw-server -- --auth-dev 127.0.0.1:8480 --bots 0
+cargo run -p ocw-desktop -- --account-server http://127.0.0.1:8480
+# With a shared ride on the same server (tokens checked in the hello):
+cargo run -p ocw-server -- --auth-dev --listen 127.0.0.1:47800 --bots 3
+cargo run -p ocw-desktop -- --account-server http://127.0.0.1:8480 --server 127.0.0.1:47800 --insecure-dev
+```
+
+`--auth-dev-web http://127.0.0.1:8000/` also allows the browser app served
+there (`make web-serve`, page `?auth=http://127.0.0.1:8480`).
+
+**Going live** needs, from the operator:
+
+1. **A public HTTPS domain** for the accounts server, e.g.
+   `accounts.example.org`, with a TLS reverse proxy (Caddy, nginx) in front of
+   the server's `listen` address (default `127.0.0.1:8480`). This URL is the
+   `issuer`.
+2. **A Google OAuth client:** Google Cloud Console → *APIs & Services* →
+   *OAuth consent screen* (app name Open Cycling World, scopes `openid`,
+   `profile`, `email`) → *Credentials* → *Create credentials* → *OAuth client
+   ID* → type **Web application**; *Authorized redirect URI*
+   `https://accounts.example.org/callback/google` (exactly). Note the client
+   id and secret.
+3. **A Strava API application:** <https://www.strava.com/settings/api>;
+   *Authorization Callback Domain* `accounts.example.org`. The server's
+   redirect URI is `https://accounts.example.org/callback/strava`. Note the
+   client id and secret. Strava's default limits (200 requests per 15
+   minutes, 2,000 per day) are respected by the server.
+4. **The configuration:** `cp config/accounts.example.toml
+   config/accounts.toml` (git-ignored), fill in `issuer`, the `[google]` and
+   `[strava]` ids and secrets, and for the browser app its page under
+   `[[clients]] id = "ocw-web"` (`redirect_uris`, `origins`). Signing keys,
+   the account store and the key that encrypts Strava's tokens are created
+   on first start under `config/accounts/` (mode 0600; back them up, never
+   commit them).
+5. **Run it:** `ocw-server --auth-config config/accounts.toml --listen …`
+   (the game server checks the tokens with the same keys). A game server
+   elsewhere checks them with `--auth-issuer https://accounts.example.org`;
+   `--auth-required` refuses anonymous riders.
+
+Redirect URIs at a glance: Google `https://<domain>/callback/google`, Strava
+callback domain `<domain>`; the desktop app uses a loopback redirect
+`http://127.0.0.1:<any port>/callback` (nothing to register), the browser app
+its exact page, kiosks the device code (`https://<domain>/device`). Accounts
+are kept in one private JSON file for now (`[storage] kind = "file"`);
+PostgreSQL follows with the hosted backend.
 
 ## Running the server
 
