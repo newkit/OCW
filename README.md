@@ -3360,6 +3360,24 @@ deploys. Environment:
 | `OCW_WORLD_DATA` | Folder with `pilot/`, `blackforest/`, `tenerife/` on the machine (default: `data/` of the deploying checkout) |
 | `OCW_DEPLOY_DIR` | Install directory (default `/var/tmp/ocw`; for testing the script) |
 
+**The kiosk's game server.** The deploy also installs `ocw-server`. The kiosk then starts it first, with the same world and route as the app (read from `ocw-desktop.args`), 10 bots, UDP **47800** and a certificate kept in `~/.local/state/ocw/server-tls`, so its fingerprint stays the same across deploys. Then it runs the app as the server's first rider (`--server 127.0.0.1:47800 --insecure-dev`). Other riders join the kiosk's ride over the network (see [Riding on a server on the internet](#riding-on-a-server-on-the-internet)) with the line the server printed. `ocw-kiosk.sh status` shows it:
+
+```bash
+/var/tmp/ocw/ocw-kiosk.sh status          # … game server: running; riders join with:
+                                          #   ocw-desktop --server marge:47800 --server-cert 3f9a…
+```
+
+A new build, or a crash of the server or the app, restarts both. If the server does not come up within 3 minutes, the app rides alone as before. These go into the kiosk's environment (its autostart entry):
+
+| Variable | Effect |
+|---|---|
+| `OCW_KIOSK_SERVER=0` | No game server: the app rides alone on its local server |
+| `OCW_KIOSK_LISTEN` | The server's address and UDP port (default `0.0.0.0:47800`) |
+| `OCW_KIOSK_BOTS` | Bots on the server (default 10) |
+| `OCW_KIOSK_SERVER_ARGS` | More `ocw-server` options, e.g. `--auth-issuer https://…` |
+
+The server's log is `~/.local/state/ocw/server.log`. Open UDP 47800 in the machine's firewall for riders on other machines.
+
 **Setting up a kiosk**, once, as the user of the machine's desktop session (in
 a terminal on that desktop, not over SSH), after the first deploy:
 

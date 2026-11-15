@@ -80,6 +80,8 @@ OCW_REMOTE_DEPLOY=1 scripts/remote.sh "$machine" run "
   else
     cargo build -q --release -p ocw-desktop
   fi
+  # The kiosk's game server (ocw-kiosk.sh starts it; user 2026-11-15).
+  cargo build -q --release -p ocw-server
   W=$(printf '%q' "$data")
   if [ '$world' != 0 ] && { [ '$world' = rebuild ] || [ ! -f \"\$W/pilot/liechtenstein.ocwpkg\" ]; } && [ -f \"\$W/pilot/liechtenstein.osm.pbf\" ]; then
     echo 'building the pilot world package'
@@ -125,6 +127,7 @@ OCW_REMOTE_DEPLOY=1 scripts/remote.sh "$machine" run "
   # Material library (spec §4.6) beside the binary, before it (the kiosk
   # restarts on the binary).
   OCW_MATERIALS_OPTIONAL=1 scripts/install-materials.sh \"\$D/materials\"
+  put 755 target/release/ocw-server ocw-server
   put 755 target/release/ocw-desktop ocw-desktop
   echo \"deployed \$(cat \"\$D/VERSION\") to \$D\"
 "

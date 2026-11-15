@@ -3,7 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 t=$(mktemp -d)
-trap 'kill $kiosk 2>/dev/null || true; rm -rf "$t"' EXIT
+trap 'kill $kiosk 2>/dev/null || true; pkill -f "sleep 60[01]" 2>/dev/null || true; rm -rf "$t"' EXIT
 export OCW_KIOSK_DIR=$t/deploy HOME=$t/home XDG_STATE_HOME=$t/state XDG_CONFIG_HOME=$t/config
 export OCW_KIOSK_POLL_S=0.2 OCW_KIOSK_SETTLE_S=0.2 OCW_KIOSK_QUICK_S=1
 mkdir -p "$OCW_KIOSK_DIR" "$HOME"
@@ -43,4 +43,36 @@ sleep 0.5
 if pgrep -f "sleep 600" >/dev/null; then echo "FAIL: app still running"; pkill -f "sleep 600"; fail=1; fi
 grep -q "new build deployed" "$XDG_STATE_HOME/ocw/kiosk.log" || { echo "FAIL: log"; fail=1; }
 
+
+# Game server (2026-11-15): with ocw-server in the kiosk dir, the kiosk starts
+# it for the app's world and route, then the app as its client; a server
+# crash restarts both.
+rm -f "$t/runs" "$t/srv"
+printf '%s\n' '# test world' '--world /w/tenerife.ocwpkg' '--route "Puerto de la Cruz - Teide"' > "$OCW_KIOSK_DIR/ocw-desktop.args"
+printf '#!/bin/sh\necho "srv $*" >> %s\necho "Clients connect with:"\necho "  ocw-desktop --server host --server-cert ab12"\nexec sleep 601\n' "$t/srv" > "$OCW_KIOSK_DIR/ocw-server"
+chmod 755 "$OCW_KIOSK_DIR/ocw-server"
+fake v3
+OCW_KIOSK_LISTEN=0.0.0.0:47999 OCW_KIOSK_BOTS=4 scripts/ocw-kiosk.sh run &
+kiosk=$!
+wait_for '[ "$(runs)" -ge 1 ]' "app started with the server"
+grep -q -- "--world /w/tenerife.ocwpkg --route Puerto de la Cruz - Teide" "$t/srv" || { echo "FAIL: server course: $(cat "$t/srv")"; fail=1; }
+grep -q -- "--listen 0.0.0.0:47999" "$t/srv" && grep -q -- "--bots 4" "$t/srv" || { echo "FAIL: server options"; fail=1; }
+tail -1 "$t/runs" | grep -q -- "--server 127.0.0.1:47999 --insecure-dev" || { echo "FAIL: app not a client: $(tail -1 "$t/runs")"; fail=1; }
+grep -q "ab12" "$XDG_STATE_HOME/ocw/server-connect.txt" || { echo "FAIL: connect line"; fail=1; }
+st=$(scripts/ocw-kiosk.sh status 2>&1); echo "$st" | grep -q "game server: running" || { echo "FAIL: status: $st"; fail=1; }
+before=$(runs)
+pkill -f "sleep 601" || true
+wait_for '[ "$(runs)" -gt "$before" ]' "both restarted after a server crash"
+[ "$(wc -l < "$t/srv")" -ge 2 ] || { echo "FAIL: server restarted"; fail=1; }
+kill -TERM "$kiosk"; wait "$kiosk" 2>/dev/null || true
+sleep 0.5
+if pgrep -f "sleep 601" >/dev/null; then echo "FAIL: server still running"; pkill -f "sleep 601"; fail=1; fi
+# OCW_KIOSK_SERVER=0: the app rides alone.
+rm -f "$t/runs"
+OCW_KIOSK_SERVER=0 scripts/ocw-kiosk.sh run &
+kiosk=$!
+wait_for '[ "$(runs)" -ge 1 ]' "app started without the server"
+if grep -q -- "--server" "$t/runs"; then echo "FAIL: --server without a server"; fail=1; fi
+kill -TERM "$kiosk"; wait "$kiosk" 2>/dev/null || true
+pkill -f "sleep 600" 2>/dev/null || true
 [ "$fail" -eq 0 ] && echo "kiosk tests passed" || exit 1
