@@ -1242,7 +1242,7 @@ Ground textures are needed for different landscapes (meadow, field, forest floor
    - noise for natural variation.
 3. **Mid and far distance: satellite color tint.** A low-resolution color map (Sentinel-2 at 10 m) modulates the tiling materials, so fields, forests and villages get their real patchwork look from a distance without blur up close. 1 km² at 10 m is only 100 × 100 pixels (about 30 KB uncompressed), so even a 1,000 km² region adds only tens of MB.
 4. **Optional orthophotos:** high-resolution orthophotos only for selected regions, used for the measured palettes and roof colours at build time (Phase 8 T3) and as an **orthophoto corridor** of ±50 m along the roads that colours the ground near the rider (Phase 8 T7, below); never as the close-up texture.
-5. **Vegetation:** instanced tree, bush and grass models placed by land cover and density, so the 3D look comes from geometry rather than textures.
+5. **Vegetation:** instanced tree, bush and grass models placed by land cover and density, so the 3D look comes from geometry rather than textures. The species, crops and plantations per region and their data: §4.6.1 (Phase 8 T8).
 6. **Roads:** material from the OSM `surface` tag (asphalt, gravel, paving stones, …), with a fallback per road category. Markings are generated from `lanes` and the road category.
 
 **Why satellite imagery is not the main ground texture:**
@@ -2708,7 +2708,7 @@ The first catalogue (about 30 entries; base parts at 0 ♥ for every slot and bi
 
 **Result:** A release-ready indoor cycling platform on Linux, Windows and macOS.
 
-### Phase 8 – Textures and Regional Look (planning, 2026-11-12; T1 – T7 done, T3 complete with forest type v3.20, T4 open items v3.26; open: real 3D building data, Q8 postponed)
+### Phase 8 – Textures and Regional Look (planning, 2026-11-12; T1 – T7 done, T8 realistic vegetation v3.42, T3 complete with forest type v3.20, T4 open items v3.26; open: real 3D building data, Q8 postponed)
 
 **Goal:** the world looks like the real place. Meadows, forests, roads, roofs and façades in Liechtenstein look like Liechtenstein; in the Black Forest like the Black Forest. Riders and bikes get real materials instead of flat paint slots. Everything shipped must have a licence compatible with our MIT / Apache-2.0 code, and nothing may come from proprietary map imagery (§4.6, §13).
 
