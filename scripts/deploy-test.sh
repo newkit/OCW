@@ -119,7 +119,19 @@ OCW_REMOTE_DEPLOY=1 scripts/remote.sh "$machine" run "
     rm -f \"\$D/ocw-desktop.args\"
   fi
   # Show mode (scripts/kiosk-show.args: virtual trainer at 500 W) for every world.
-  [ '$args_set' = set ] || { [ -f \"\$D/.args.tmp\" ] && grep -v '^#' scripts/kiosk-show.args >> \"\$D/.args.tmp\"; } || true
+  # Machine-local additions (kept across deploys): \$D/kiosk-local.args, e.g. the
+  # trainer at marge (--devices-file …). With a devices file there the show
+  # mode's virtual trainer (--virtual, --power) is left out, so the real
+  # trainer rides.
+  if [ '$args_set' != set ] && [ -f \"\$D/.args.tmp\" ]; then
+    if grep -q '^--devices-file' \"\$D/kiosk-local.args\" 2>/dev/null; then
+      grep -v '^#' scripts/kiosk-show.args | grep -vE '^--(virtual|power)' >> \"\$D/.args.tmp\"
+    else
+      grep -v '^#' scripts/kiosk-show.args >> \"\$D/.args.tmp\"
+    fi
+    [ -f \"\$D/kiosk-local.args\" ] && grep -v '^#' \"\$D/kiosk-local.args\" >> \"\$D/.args.tmp\"
+  fi
+  true
   if [ -f \"\$D/.args.tmp\" ]; then
     chmod 644 \"\$D/.args.tmp\" && mv -f \"\$D/.args.tmp\" \"\$D/ocw-desktop.args\"
     echo \"default arguments (\$D/ocw-desktop.args):\"; grep -v '^#' \"\$D/ocw-desktop.args\" | sed 's/^/  /'
