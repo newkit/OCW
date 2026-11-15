@@ -157,8 +157,63 @@ pub struct Entrant {
     pub name: String,
     /// Seconds from GO to crossing the finish line.
     pub finish_s: Option<f64>,
-    /// Did not finish (left the session, or over the time limit).
+    /// Did not finish (left the session, over the time limit, abandoned).
     pub dnf: bool,
+    /// Why (spec §14 Phase 12 K6: the results say it).
+    pub dnf_reason: Option<DnfReason>,
+}
+
+/// Why an entrant did not finish (spec §14 Phase 12 K6, the DNF rules).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DnfReason {
+    /// Left the session.
+    Left,
+    /// Over the time limit after the winner.
+    TimeLimit,
+    /// Badly injured, with the organiser's rule "DNF when badly injured".
+    Injured,
+    /// The bike broken and no neutral service in the event.
+    BikeBroken,
+}
+
+impl DnfReason {
+    /// "over the time limit" – the results' "DNF (…)".
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Left => "left",
+            Self::TimeLimit => "over the time limit",
+            Self::Injured => "badly injured",
+            Self::BikeBroken => "bike broken",
+        }
+    }
+}
+
+/// The organiser's time limit after the winner (s): at least this, at
+/// most [`MAX_TIME_LIMIT_S`].
+pub const MIN_TIME_LIMIT_S: f64 = 30.0;
+pub const MAX_TIME_LIMIT_S: f64 = 7200.0;
+
+/// The organiser's rules of an event (spec §14 Phase 12 K6), as requested:
+/// every field `None` = the default (by the event's kind, or the session's
+/// switch). Riders cannot change them until the event is over.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Rules {
+    /// The collision model (group rides soft, races full, Q2).
+    pub collisions: Option<crate::collide::Mode>,
+    /// The race mode ([`crate::build::PhysicsMode::for_event`]).
+    pub physics: Option<crate::build::PhysicsMode>,
+    /// The weather affects the physics (off).
+    pub weather_physics: Option<bool>,
+    /// Damage on / off, DNF when badly injured, the neutral service.
+    pub damage: Option<crate::damage::Rules>,
+    /// The riding aids (the "last moment" warning, the proximity arrow and
+    /// bell) allowed: by default not in races, else yes (12D).
+    pub aids: Option<bool>,
+    /// Chaotic bots (Q3; the session's switch).
+    pub chaotic_bots: Option<bool>,
+    /// The time limit after the winner (s; [`DNF_GRACE_MIN_S`] or
+    /// [`DNF_GRACE_SHARE`] of the winner's time).
+    pub time_limit_s: Option<f64>,
 }
 
 /// A rider's place in the standings.
@@ -172,6 +227,8 @@ pub struct Standing {
     pub progress_m: f64,
     pub finish_s: Option<f64>,
     pub dnf: bool,
+    /// Why not finished (`None`: finished, still riding, or not known).
+    pub dnf_reason: Option<DnfReason>,
     /// Time to the rider ranked one place ahead (s): the difference of the
     /// finish times, or for riders still riding the gap in metres at their
     /// speed. `None` for the leader and DNFs.
@@ -222,6 +279,14 @@ pub struct Event {
     /// The organiser's damage rules (spec §14 Phase 12E, 12G): damage on
     /// or off for the event, DNF when badly injured, neutral service.
     pub damage: crate::damage::Rules,
+    /// The organiser's rule on the riding aids (spec §14 Phase 12 K6,
+    /// 12D; `None`: by its kind, [`Event::aids_allowed`]).
+    pub aids: Option<bool>,
+    /// The organiser's chaotic bots (Q3; `None`: the session's switch).
+    pub chaotic_bots: Option<bool>,
+    /// The organiser's time limit after the winner (s; `None`: the
+    /// default rule, [`Event::time_limit_s`]).
+    pub time_limit_s: Option<f64>,
 }
 
 impl Event {
@@ -245,6 +310,9 @@ impl Event {
             physics: crate::build::PhysicsMode::for_event(&kind),
             weather_physics: false,
             damage: crate::damage::Rules::default(),
+            aids: None,
+            chaotic_bots: None,
+            time_limit_s: None,
             start_line_m,
             entrants: entrants
                 .into_iter()
@@ -253,6 +321,7 @@ impl Event {
                     name,
                     finish_s: None,
                     dnf: false,
+                    dnf_reason: None,
                 })
                 .collect(),
         }
@@ -275,14 +344,48 @@ impl Event {
     /// An entrant abandons (spec §14 Phase 12E: badly injured with the
     /// organiser's rule, a broken bike without neutral service): DNF.
     /// False if not riding in it (unknown, finished, already DNF).
-    pub fn abandon(&mut self, id: RiderId) -> bool {
+    pub fn abandon(&mut self, id: RiderId, reason: DnfReason) -> bool {
         match self.entrants.iter_mut().find(|e| e.id == id) {
             Some(e) if e.finish_s.is_none() && !e.dnf && self.phase != Phase::Finished => {
                 e.dnf = true;
+                e.dnf_reason = Some(reason);
                 true
             }
             _ => false,
         }
+    }
+
+    /// Puts the organiser's rules in force (spec §14 Phase 12 K6); the
+    /// time limit within [`MIN_TIME_LIMIT_S`] … [`MAX_TIME_LIMIT_S`].
+    pub fn set_rules(&mut self, r: &Rules) {
+        self.collisions = r.collisions;
+        if let Some(p) = r.physics {
+            self.physics = p;
+        }
+        self.weather_physics = r.weather_physics.unwrap_or(false);
+        self.damage = r.damage.unwrap_or_default();
+        self.aids = r.aids;
+        self.chaotic_bots = r.chaotic_bots;
+        self.time_limit_s = r
+            .time_limit_s
+            .filter(|t| t.is_finite())
+            .map(|t| t.clamp(MIN_TIME_LIMIT_S, MAX_TIME_LIMIT_S));
+    }
+
+    /// Whether the riding aids are allowed: the organiser's rule, by
+    /// default not in races (spec §14 Phase 12D: "off in organiser races
+    /// unless allowed"), allowed in group rides and time trials.
+    pub fn aids_allowed(&self) -> bool {
+        self.aids
+            .unwrap_or(!matches!(self.kind, EventKind::Race { .. }))
+    }
+
+    /// The time limit after a winner who took `winner_s` (s): the
+    /// organiser's, else [`DNF_GRACE_MIN_S`] or [`DNF_GRACE_SHARE`] of the
+    /// winner's time, whichever is longer.
+    pub fn time_limit_s(&self, winner_s: f64) -> f64 {
+        self.time_limit_s
+            .unwrap_or_else(|| DNF_GRACE_MIN_S.max(DNF_GRACE_SHARE * winner_s))
     }
 
     /// Advances to `tick` (the session's tick after stepping) with the
@@ -313,6 +416,7 @@ impl Event {
             match riders.iter().find(|p| p.id == e.id) {
                 None => {
                     e.dnf = true;
+                    e.dnf_reason = Some(DnfReason::Left);
                     out.push(EventChange::Dnf(e.id));
                 }
                 Some(p) if p.after_m >= finish => {
@@ -341,11 +445,12 @@ impl Event {
             .filter_map(|e| e.finish_s)
             .min_by(f64::total_cmp)
         {
-            let limit = winner + DNF_GRACE_MIN_S.max(DNF_GRACE_SHARE * winner);
+            let limit = winner + self.time_limit_s(winner);
             if self.race_time_s(tick) > limit {
                 for e in &mut self.entrants {
                     if e.finish_s.is_none() && !e.dnf {
                         e.dnf = true;
+                        e.dnf_reason = Some(DnfReason::TimeLimit);
                         out.push(EventChange::Dnf(e.id));
                     }
                 }
@@ -379,6 +484,7 @@ impl Event {
                     progress_m: progress,
                     finish_s: e.finish_s,
                     dnf: e.dnf,
+                    dnf_reason: e.dnf_reason,
                     gap_ahead_s: None,
                 }
             })
@@ -644,6 +750,64 @@ mod tests {
         // ... after it, DNF, and the race is over.
         let ch = e.update(t1 + limit_ticks + 10, &[at(2, 700.0, 701.0)]);
         assert!(ch.contains(&EventChange::Dnf(RiderId(2))));
+        assert_eq!(e.phase, Phase::Finished);
+        // The reasons, for the results (K6).
+        let reason = |id| e.entrant(RiderId(id)).unwrap().dnf_reason;
+        assert_eq!(reason(3), Some(DnfReason::Left));
+        assert_eq!(reason(2), Some(DnfReason::TimeLimit));
+        assert_eq!(reason(1), None);
+        let s = e.standings(&[]);
+        assert_eq!(s[2].dnf_reason, Some(DnfReason::Left));
+    }
+
+    /// The organiser's rules (spec §14 Phase 12 K6): the time limit after
+    /// the winner, the aids by the event's kind, abandoning with a reason.
+    #[test]
+    fn the_organisers_time_limit_aids_and_abandons() {
+        let mut e = running(race(1000.0, 3));
+        assert!(!e.aids_allowed(), "races: off unless allowed (12D)");
+        e.set_rules(&Rules {
+            aids: Some(true),
+            chaotic_bots: Some(true),
+            time_limit_s: Some(45.0),
+            ..Default::default()
+        });
+        assert!(e.aids_allowed() && e.chaotic_bots == Some(true));
+        assert_eq!(e.time_limit_s(100.0), 45.0);
+        // Out of range: clamped.
+        let mut f = race(1000.0, 1);
+        f.set_rules(&Rules {
+            time_limit_s: Some(1.0),
+            ..Default::default()
+        });
+        assert_eq!(f.time_limit_s, Some(MIN_TIME_LIMIT_S));
+        f.set_rules(&Rules::default());
+        assert_eq!(f.time_limit_s(1000.0), 250.0, "the default: 25 % here");
+        // A group ride and a time trial allow the aids by default.
+        let g = Event::new(2, EventKind::GroupRide { target_w: 150.0 }, 0, 0.0, ids(1));
+        assert!(g.aids_allowed());
+        let go = e.go_tick;
+        // Rider 3 abandons (badly injured); rider 1 wins after 100 s; the
+        // organiser's 45 s pass for rider 2.
+        assert!(e.abandon(RiderId(3), DnfReason::Injured));
+        assert!(!e.abandon(RiderId(3), DnfReason::BikeBroken), "once");
+        let t1 = go + 5000;
+        e.update(
+            t1,
+            &[at(1, 1049.0, 1051.0), at(2, 500.0, 501.0), at(3, 0.0, 0.0)],
+        );
+        let limit = (45.0 / SIM_DT) as u64;
+        e.update(t1 + limit - 10, &[at(2, 600.0, 601.0), at(3, 0.0, 0.0)]);
+        assert!(!e.entrant(RiderId(2)).unwrap().dnf);
+        e.update(t1 + limit + 10, &[at(2, 700.0, 701.0), at(3, 0.0, 0.0)]);
+        assert_eq!(
+            e.entrant(RiderId(2)).unwrap().dnf_reason,
+            Some(DnfReason::TimeLimit)
+        );
+        assert_eq!(
+            e.entrant(RiderId(3)).unwrap().dnf_reason,
+            Some(DnfReason::Injured)
+        );
         assert_eq!(e.phase, Phase::Finished);
     }
 

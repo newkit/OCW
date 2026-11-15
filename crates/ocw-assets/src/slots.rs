@@ -67,7 +67,7 @@ pub const ALL: [Slot; 27] = [
     slot("shorts", Tint::Shorts, 0x141416, 0.0, 0.7),
     slot("skin", Tint::Skin, 0xD9A98C, 0.0, 0.65),
     slot("helmet", Tint::Helmet, 0xF2F2EE, 0.1, 0.4),
-    slot("helmet_detail", Tint::Fixed, 0x1C1C20, 0.0, 0.6),
+    slot("helmet_detail", Tint::Fixed, 0x18181B, 0.0, 0.8),
     slot("shoe", Tint::Shoes, 0xEDEDE8, 0.0, 0.5),
     slot("sock", Tint::Socks, 0xF4F4F0, 0.0, 0.8),
     slot("lens", Tint::Fixed, 0x101418, 0.6, 0.15),

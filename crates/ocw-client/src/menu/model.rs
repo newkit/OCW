@@ -228,6 +228,12 @@ const NAVI_ITEMS: &[Item] = &[
         "Rides",
         ItemKind::Open(Page::Sub(sub::Page::Rides)),
     ),
+    // The training history (spec §14 Phase 7): both apps (the browser
+    // keeps it in localStorage).
+    item(
+        "Training history",
+        ItemKind::Open(Page::Sub(sub::Page::History)),
+    ),
     only(
         Platform::Desktop,
         "GPX import",
@@ -315,6 +321,11 @@ const SWITCH_ITEMS: &[Item] = &[
 ];
 const EVENT_ITEMS: &[Item] = &[
     item("Start now", ItemKind::RunPending),
+    // The organiser's rules of the event (spec §14 Phase 12 K6).
+    item(
+        "Organiser rules",
+        ItemKind::Open(Page::Sub(sub::Page::EventRules)),
+    ),
     item("Cancel", ItemKind::Back),
 ];
 
@@ -347,7 +358,7 @@ impl Page {
             Page::Navi => PageDef {
                 title: "Navi",
                 text: &[
-                    "Routes of this world, your saved rides, GPX import onto the roads of the loaded world package. The time machine: World -> Time.",
+                    "Routes of this world, your saved rides and training history, GPX import onto the roads of the loaded world package.",
                 ],
                 items: NAVI_ITEMS,
                 initial_focus: 0,
@@ -408,7 +419,7 @@ impl Page {
                     "You are moved to the start line for the countdown; a running event ends. The ride recording goes on.",
                 ],
                 items: EVENT_ITEMS,
-                initial_focus: 1,
+                initial_focus: 2,
             },
         }
     }
@@ -808,6 +819,9 @@ impl Menu {
                         | sub::Page::WorldRoutes(_)
                         | sub::Page::WorldParts(_)
                         | sub::Page::WorldSource(_)
+                        | sub::Page::HistoryRide(_)
+                        | sub::Page::HistoryClimbs(_)
+                        | sub::Page::BindGroup(_)
                 ) && self.rows.is_empty()
                 {
                     self.stack.pop();
@@ -1013,6 +1027,7 @@ mod tests {
             [
                 "Routes",
                 "Rides",
+                "Training history",
                 "GPX import",
                 "Strava",
                 "Riders in this ride",
@@ -1091,9 +1106,20 @@ mod tests {
         // An event start asks first, with Cancel focused.
         assert_eq!(m.apply(Action::Confirm), Effect::None);
         assert_eq!(m.page(), Some(Page::ConfirmEvent));
-        assert_eq!(m.labels(), ["Start now", "Cancel"]);
-        assert_eq!(m.focus(), 1);
+        assert_eq!(m.labels(), ["Start now", "Organiser rules", "Cancel"]);
+        assert_eq!(m.focus(), 2);
         assert_eq!(m.pending(), Some("event race --bots 5"));
+        // The organiser's rules (K6) and back: the question stays.
+        m.apply(Action::Click(1));
+        assert_eq!(m.page(), Some(Page::Sub(sub::Page::EventRules)));
+        m.apply(Action::Back);
+        assert_eq!(m.page(), Some(Page::ConfirmEvent));
+        assert_eq!(m.pending(), Some("event race --bots 5"));
+        m.apply(Action::Click(2));
+        assert_eq!(m.page(), Some(Page::Ride));
+        m.apply(Action::Click(0));
+        assert_eq!(m.page(), Some(Page::ConfirmEvent));
+        m.set_focus(2);
         // Cancel: back on the Ride page, nothing run.
         assert_eq!(m.apply(Action::Confirm), Effect::None);
         assert_eq!((m.page(), m.focus()), (Some(Page::Ride), 0));
@@ -1367,7 +1393,10 @@ mod tests {
         );
         m.apply(Action::Back);
         m.apply(Action::Click(4));
-        assert_eq!(labels(&m), ["Riders in this ride", "Back"]);
+        assert_eq!(
+            labels(&m),
+            ["Training history", "Riders in this ride", "Back"]
+        );
         m.apply(Action::Back);
         m.apply(Action::Click(5));
         assert_eq!(

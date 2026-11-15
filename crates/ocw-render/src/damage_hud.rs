@@ -351,7 +351,10 @@ fn update_widget(
         Without<DamageWidget>,
     >,
     mut texts: Query<(&Line, &mut Text, &mut TextColor)>,
+    access: Option<Res<crate::access::Accessibility>>,
 ) {
+    // Reduced motion (spec §3.2.1 M9): no flashing after a hit.
+    let still = access.is_some_and(|a| a.reduced_motion);
     let w = view.damage.as_ref().filter(|_| show.0);
     for mut n in &mut root {
         let want = if w.is_some() {
@@ -392,7 +395,7 @@ fn update_widget(
                     &w.bike
                 };
                 if let Some(mut bg) = bg {
-                    bg.0 = if m.flash > 0.0 {
+                    bg.0 = if m.flash > 0.0 && !still {
                         status_color(m.status.max(Status::Warning)).with_alpha(0.55 * m.flash)
                     } else {
                         Color::NONE

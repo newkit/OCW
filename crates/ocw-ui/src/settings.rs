@@ -9,7 +9,7 @@
 
 use bevy::prelude::*;
 use clap::{Arg, ArgAction, Command};
-use ocw_client::settings::{SETTINGS, Scope, Settings, Value, applies, def};
+use ocw_client::settings::{Kind, SETTINGS, Scope, Settings, Value, applies, def};
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, ConsoleState, Permission};
 
 use crate::{Platform, UiPlatform};
@@ -275,7 +275,39 @@ fn register_commands(app: &mut App) {
             );
             Ok(out.join("\n"))
         },
-    ));
+    ))
+    // Tab completion (spec §2.9): the keys of this app, a key's values.
+    .console_values("set", "key", setting_keys)
+    .console_values("get", "key", setting_keys)
+    .console_values("set", "value", |world, q| {
+        let key = q.words[1..].iter().find(|w| !w.starts_with("--"));
+        match key.and_then(|k| def(k)) {
+            Some(d) => match d.kind {
+                Kind::Bool => vec!["on".into(), "off".into()],
+                Kind::Choice(c) => c.iter().map(|s| (*s).to_owned()).collect(),
+                Kind::Int { .. } => {
+                    let now = world
+                        .get_resource::<UserSettings>()
+                        .map(|s| s.value(d.key).to_string());
+                    now.into_iter()
+                        .chain([d.default.to_owned()])
+                        .collect()
+                }
+                Kind::Text => Vec::new(),
+            },
+            None => Vec::new(),
+        }
+    });
+}
+
+/// The setting keys that apply in this app (Tab completion of `set`, `get`).
+fn setting_keys(world: &mut World, _: &ocw_render::completion::ValueQuery) -> Vec<String> {
+    let platform = platform(world);
+    SETTINGS
+        .iter()
+        .filter(|d| applies(d.key, platform))
+        .map(|d| d.key.to_owned())
+        .collect()
 }
 
 #[cfg(test)]

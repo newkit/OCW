@@ -8,6 +8,12 @@
 //!
 //! Pure and dependency-free, so it also builds for `wasm32-unknown-unknown`
 //! (the web companion can offer FIT downloads with the same code).
+//!
+//! [`decode`] reads such files back (the training history's import of
+//! rides saved before it existed, spec §14 Phase 7).
+
+mod decode;
+pub use decode::{DecodeError, decode};
 
 /// Seconds between the Unix epoch and the FIT epoch (1989-12-31 00:00 UTC).
 pub const FIT_EPOCH_OFFSET_S: i64 = 631_065_600;

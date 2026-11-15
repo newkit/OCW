@@ -484,16 +484,21 @@ pub fn rejoin_route(world: &mut World) -> Result<String, String> {
     Ok("rejoining the route".into())
 }
 
+/// What else the view needs: the loading notice, the camera shake setting
+/// and the accessibility options (reduced motion).
+type ViewOptions<'w> = (
+    Option<Res<'w, crate::ride::Loading>>,
+    Option<Res<'w, crate::camera_path::CameraShake>>,
+    Option<Res<'w, ocw_render::access::Accessibility>>,
+);
+
 pub(crate) fn update_view(
     time: Res<Time>,
     fixed: Res<Time<Fixed>>,
     client: Res<ClientState>,
     link: Res<LinkNotice>,
     session: Option<Res<SessionStart>>,
-    (loading, shake): (
-        Option<Res<crate::ride::Loading>>,
-        Option<Res<crate::camera_path::CameraShake>>,
-    ),
+    (loading, shake, access): ViewOptions,
     mut view: ResMut<RideView>,
 ) {
     let now = time.elapsed_secs_f64();
@@ -508,7 +513,8 @@ pub(crate) fn update_view(
             link: link.0.as_deref(),
             loading: loading.as_ref().and_then(|l| l.0.as_deref()),
         },
-        shake.is_none_or(|s| s.0),
+        // Reduced motion (spec §3.2.1 M9): no shake.
+        shake.is_none_or(|s| s.0) && !access.is_some_and(|a| a.reduced_motion),
     );
 }
 
@@ -634,17 +640,7 @@ fn register_commands(app: &mut App) {
             ))
         },
     ))
-    .console_command(ConsoleCommand::new(
-        Permission::User,
-        Command::new("rider.gps").about("Show the rider's GPS position (lat, lon, altitude)"),
-        |world, _| match world.resource::<RideView>().position {
-            Some((lat, lon, alt)) => Ok(format!(
-                "{}\n{lat:.6}, {lon:.6}",
-                ocw_render::hud::gps_line(lat, lon, alt)
-            )),
-            None => Err("no GPS position (this route has no geographic origin)".into()),
-        },
-    ))
+    // `rider.gps` is shared (ocw_render::console, spec 3.40).
     .console_command(ConsoleCommand::new(
         Permission::User,
         Command::new("rider.steer")

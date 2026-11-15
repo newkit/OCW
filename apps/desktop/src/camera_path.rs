@@ -51,7 +51,15 @@ impl Plugin for CameraPathPlugin {
                 Permission::User,
                 path_command(),
                 path_action,
-            ));
+            ))
+            // Tab completion (spec §2.9): `load` takes a saved path's name.
+            .console_values("camera.path", "args", |_, q| {
+                if q.before.is_empty() && q.words.get(1).is_some_and(|a| a == "load") {
+                    saved_paths()
+                } else {
+                    Vec::new()
+                }
+            });
     }
 }
 
@@ -98,6 +106,26 @@ pub fn path_file(name: &str) -> Option<PathBuf> {
         file.set_extension("campath");
     }
     Some(file)
+}
+
+/// The names of the saved camera paths (`camera.path load NAME`).
+fn saved_paths() -> Vec<String> {
+    let Some(dir) = crate::ride::data_dir().map(|d| d.join("camera-paths")) else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|e| {
+            let p = e.path();
+            if p.extension()? != "campath" {
+                return None;
+            }
+            Some(p.file_stem()?.to_string_lossy().into_owned())
+        })
+        .collect()
 }
 
 /// The follow camera's pose now.

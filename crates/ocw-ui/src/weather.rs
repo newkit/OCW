@@ -436,5 +436,10 @@ fn register_commands(app: &mut App) {
             let out = run_seed(world, a);
             print_err(world, "weather.seed", out)
         },
-    ));
+    ))
+    // Tab completion (spec §2.9): presets, subcommands, fields, sources.
+    .console_values("weather", "args", |_, q| {
+        let before: Vec<&str> = q.before.iter().map(String::as_str).collect();
+        ocw_weather::command::completions(&before)
+    });
 }

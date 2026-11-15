@@ -67,6 +67,7 @@ mod browser_devices;
 mod browser_voice;
 pub mod devices;
 pub mod god;
+pub mod page_config;
 pub mod plugin;
 pub mod session;
 pub mod settings;
@@ -159,16 +160,21 @@ pub const CANVAS_ID: &str = "#ocw-canvas";
 /// keys: the browser has its own fullscreen).
 pub const WEB_KEYS: &str = "mouse: camera, C: camera reset | ` or F12: console";
 
-/// This build's id: version, commit, profile, "web" and the GPU API
-/// ([`GPU_API`], B7).
+/// This build's id: version, commit, profile, "web", the GPU API
+/// ([`GPU_API`], B7) and "preview" for the public preview (B8a).
 pub fn build_id() -> String {
     format!(
-        "{} web {GPU_API}",
+        "{} web {GPU_API}{}",
         build_id::build_id(
             env!("CARGO_PKG_VERSION"),
             env!("OCW_COMMIT"),
             cfg!(debug_assertions)
-        )
+        ),
+        if cfg!(feature = "preview") {
+            " preview"
+        } else {
+            ""
+        }
     )
 }
 
@@ -208,8 +214,9 @@ fn unescape(value: &str) -> String {
 /// (`dev_page`: localhost) also `allow-unsigned=1`, `trust=dev` and
 /// `trust-root=HEX` (a root public key). A remote server (B3): `server`
 /// (`https://HOST[:PORT]`) and `cert-hash` (its certificate's SHA-256 in
-/// hex, several separated by commas). Unknown keys and bad values are
-/// reported and ignored.
+/// hex, several separated by commas). `origin=LAT,LON` gives the test
+/// route a geographic origin (the GPS line). Unknown keys and bad values
+/// are reported and ignored.
 pub fn parse_query(query: &str, dev_page: bool) -> (SessionConfig, Vec<String>) {
     let mut config = SessionConfig::default();
     let mut warnings = Vec::new();
@@ -294,9 +301,27 @@ pub fn parse_query(query: &str, dev_page: bool) -> (SessionConfig, Vec<String>) 
             },
             // The page's choice of build (index.html, B7).
             ("gpu", _) if matches!(value.as_str(), "webgpu" | "webgl2") => {}
-            // Read below (B3).
+            // Read below (B3; the origin after the route).
             ("server" | "cert-hash", _) => {}
+            ("origin", None) => {}
             _ => bad(),
+        }
+    }
+    // A geographic origin for the test route (`origin=LAT,LON`): its
+    // metres get a place on the globe, as a route file's have – the GPS
+    // line, the sun and the FIT track follow (spec 3.40; the browser
+    // test's GPS check).
+    if world.is_none()
+        && let Some((_, value)) = pairs.iter().find(|(k, _)| k == "origin")
+    {
+        match value
+            .split_once(',')
+            .and_then(|(a, b)| Some((a.trim().parse::<f64>().ok()?, b.trim().parse::<f64>().ok()?)))
+        {
+            Some((lat, lon)) if lat.abs() <= 85.0 && lon.abs() <= 180.0 => {
+                config.route = config.route.clone().with_geo_origin((lat, lon));
+            }
+            _ => warnings.push(format!("origin={value}: ignored")),
         }
     }
     let mut remote: Option<RemoteOptions> = None;
@@ -401,6 +426,15 @@ pub fn app_with_settings(
     // The page's Web Audio output and the voice shim (B5).
     #[cfg(target_arch = "wasm32")]
     app.insert_resource(audio::MakeAudioOut(Box::new(browser_audio::start)));
+    // No voice on this page (the page configuration, B8a): the Voice page
+    // and `voice.status` say why.
+    if let Some(why) = config.voice_off.clone()
+        && !app.world().contains_resource::<voice::MakeVoiceBackend>()
+    {
+        app.insert_resource(voice::MakeVoiceBackend(Box::new(move || {
+            voice::unavailable(&why)
+        })));
+    }
     app.add_plugins(plugin::WebSessionPlugin { config });
     // Settings first: audio and voice start with the saved values.
     app.add_plugins((
@@ -550,6 +584,15 @@ pub fn page_menu() -> String {
     ui::menu_json()
 }
 
+/// `window.ocw.consoleState()`: the console (open, input line, completion
+/// candidates, selected, the last log lines) and the HUD's GPS line as
+/// JSON (spec 3.40).
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(js_name = consoleState)]
+pub fn page_console_state() -> String {
+    ui::console_json()
+}
+
 /// `window.ocw.god()`: unicorn mode as JSON (phase, pointer, position,
 /// height, the inspection's panel and crosshair, pins; Phase 13 G5 – the
 /// browser test flies with it).
@@ -587,7 +630,13 @@ pub fn start() {
         .as_ref()
         .and_then(|l| l.hostname().ok())
         .unwrap_or_default();
-    let (mut config, warnings) = parse_query(&query, is_dev_host(&host));
+    let dev_page = is_dev_host(&host);
+    let (mut config, mut warnings) = parse_query(&query, dev_page);
+    // The page configuration (config.json, B8a): the worlds' base, and on
+    // a public page without a hosted server no multiplayer and no voice.
+    let (page, page_error) = page_config::from_page();
+    warnings.extend(page_error);
+    page.apply(&mut config, dev_page, &mut warnings);
     // The settings read at the start, where the query leaves them out.
     let (settings, settings_warnings) = settings::WebSettings::load(settings::default_store());
     settings::apply_to_config(&settings, &mut config, &settings::query_keys(&query));
@@ -595,6 +644,16 @@ pub fn start() {
     let mut app = app_with_settings(config, settings, settings_warnings);
     for w in warnings {
         warn!("page options: {w}");
+    }
+    if page.is_preview() {
+        info!(
+            "page: the public preview (worlds from {}; {}; {}; {})",
+            page.worlds.as_deref().unwrap_or(world::WORLDS_BASE),
+            page.multiplayer_off(dev_page)
+                .unwrap_or("multiplayer on".into()),
+            page.voice_off(dev_page).unwrap_or("voice on".into()),
+            page.signin_off(dev_page).unwrap_or("sign-in on".into()),
+        );
     }
     browser::start_world(&mut app, world);
     app.run();
@@ -631,6 +690,13 @@ mod tests {
         let (c, w) = parse_query("bots=500&power=-3&route=moon&x=1&start=nan&ftp=9", false);
         assert_eq!(w.len(), 6, "{w:?}");
         assert_eq!((c.bots, c.power_w, c.start_m), (5, 200.0, 0.0));
+        // A geographic origin for the test route (the GPS line, spec 3.40).
+        let (c, w) = parse_query("route=loop&origin=47.13996,9.52151", false);
+        assert!(w.is_empty(), "{w:?}");
+        assert_eq!(c.route.geo_origin(), Some((47.13996, 9.52151)));
+        assert_eq!(c.route.length(), Route::test_loop().length());
+        let (c, w) = parse_query("origin=north", false);
+        assert_eq!((w.len(), c.route.geo_origin()), (1, None));
     }
 
     /// The world options (B2): with `world`, `route` names a package route;

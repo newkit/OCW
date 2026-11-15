@@ -1170,7 +1170,7 @@ impl Session {
         // avoidance for every autodrive rider and bot, chaotic bots.
         let mode = self.collision_mode();
         let avoid_on = mode.on() && !held;
-        let chaotic = avoid_on && self.rules.chaotic_bots;
+        let chaotic = avoid_on && self.chaotic_bots_on();
         let overtake_left = self.overtake_left();
         let tick = self.tick;
         let loop_m = (self.free.is_none() && self.route.is_loop()).then(|| self.route.length());
@@ -1219,7 +1219,7 @@ impl Session {
                     .collect()
             })
             .unwrap_or_default();
-        let mut abandons: Vec<RiderId> = Vec::new();
+        let mut abandons: Vec<(RiderId, event::DnfReason)> = Vec::new();
         for (id, rider) in &mut self.riders {
             let d = rider.state.distance;
             if rider.control == Control::Echo {
@@ -1472,13 +1472,16 @@ impl Session {
             {
                 edge_hits.push((*id, speed_before, heading_before));
             }
-            if damage_on && damage::damage_tick(rider, entrants.contains(id), damage_rules) {
-                abandons.push(*id);
+            if damage_on
+                && let Some(reason) =
+                    damage::damage_tick(rider, entrants.contains(id), damage_rules)
+            {
+                abandons.push((*id, reason));
             }
         }
         if let Some(ev) = &mut self.event {
-            for id in abandons {
-                if ev.abandon(id) {
+            for (id, reason) in abandons {
+                if ev.abandon(id, reason) {
                     self.event_changes.push(event::EventChange::Dnf(id));
                 }
             }

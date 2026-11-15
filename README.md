@@ -1,5 +1,10 @@
 # <img src="artwork/logos/ocw.svg" alt="OCW logo" height="40" align="top"> Open Cycling World
 
+**Try it in your browser: <https://newkit.github.io/OCW/>** – ride solo on the
+test routes or in Liechtenstein, with virtual power or a smart trainer over
+Bluetooth in Chrome or Edge. It is a development build (spec §14 Phase 10
+B8a); multiplayer and voice come with the hosted version.
+
 A cross-platform indoor cycling simulation in Rust: real bicycle hardware, real
 routes from OpenStreetMap, rendered locally with Bevy, with server-authoritative
 multiplayer.
@@ -118,8 +123,11 @@ trainers and sensors over **Web Bluetooth** (B4), play the game sound and
 join voice calls (B5), has the desktop's menus, settings, captures and
 gamepad support (B6), and flies in **Unicorn mode** like the desktop
 (Phase 13 G5). It draws with **WebGPU**, or with **WebGL 2** where
-WebGPU is missing (B7). There is no public hosting yet (B8): you build it
-and serve it yourself, as below.
+WebGPU is missing (B7). A **public preview** runs on GitHub Pages
+(<https://newkit.github.io/OCW/>, B8a): solo, the test routes and
+Liechtenstein; see [The public preview](#the-public-preview-github-pages)
+for how it is built and updated. Full hosting (B8) comes later; until
+then you build the app and serve it yourself, as below.
 
 #### 1. What you need
 
@@ -139,8 +147,10 @@ and serve it yourself, as below.
   Without network the build still succeeds, with a warning, and the page
   rides without voice. `python3` also runs the dev server and the browser
   tests.
-- **Optional:** `wasm-opt` (binaryen; `apt install binaryen`) shrinks the
-  modules when it is installed. The build machines do without it. Python's
+- **Optional:** `wasm-opt` (binaryen) shrinks the modules of `make web`
+  when it is installed; `make web-preview` always uses it and fetches the
+  pinned release itself (`scripts/fetch-binaryen.sh`; Debian's
+  `apt install binaryen` is too old for today's modules). Python's
   `brotli` module (or the `brotli` tool) adds the brotli size to
   `sizes.txt`.
 - **A browser.** Chrome or Edge 113+ draw with WebGPU, and they are the
@@ -300,6 +310,7 @@ console:
 | `ftp=W` | FTP for workouts' % FTP targets, 50–600 W |
 | `quality=auto\|low\|medium\|high` | The graphics preset for this visit (not saved) |
 | `gpu=webgpu\|webgl2` | Force the WebGPU or the WebGL 2 build |
+| `origin=LAT,LON` | Give the test route a place on the globe (the GPS line in the HUD, the sun, the FIT track), e.g. `origin=47.13996,9.52151` |
 | `world=ID\|ID@VERSION\|URL` | Stream a world package (below) |
 | `free=1` | With `world=`: a free ride on its road network instead of a route (the junctions take their default exit; there are no junction keys in the browser yet) |
 | `tiles=1–8`, `keep=2–12` | With `world=`: fetch radius and keep radius in tiles around the rider |
@@ -462,7 +473,9 @@ microphone / the voices.
 Esc (or the gamepad's Start) opens the desktop's in-game menu: *Resume, Ride,
 World, Workshop, Navi, Settings, Captures*. The browser leaves out what it
 cannot do: Quit and Restart (close or reload the tab), routes, rides, GPX
-import, Strava and rider profiles. Every setting the browser has works as
+import, Strava and rider profiles. *Navi → Training history* and the key
+rebinding work as on the desktop (the history in `localStorage`,
+`ocw-history`). Every setting the browser has works as
 on the desktop (`set KEY VALUE`, `get`). They are kept in the site's
 `localStorage` (`ocw-settings`, the same TOML as `settings.toml`), so they
 survive reloads. Clearing the site's data resets them.
@@ -561,13 +574,105 @@ or the server and bot builds, where it needs them). Screenshots, logs and JSON s
 `scripts/test-web.py --help` lists the options (`--query`, `--world`,
 `--gpu`, `--software` for SwiftShader without a GPU, `--no-ui`, `--god`).
 
+#### The public preview (GitHub Pages)
+
+<https://newkit.github.io/OCW/> is a solo preview of the browser app (spec
+§14 Phase 10 B8a): its start page offers the Hills and Loop test routes and
+Liechtenstein (Vaduz – Malbun and a free ride), with virtual power or a
+trainer over Web Bluetooth in Chromium. Multiplayer, voice and sign-in are
+off there ("coming in the hosted version"). `credits.html` has the
+attribution, the licences and the privacy note.
+
+**What is different from `make web`:**
+
+| | `make web` (dev) | `make web-preview` (the preview) |
+|---|---|---|
+| Output | `target/web/` | `target/web-preview/` |
+| Profile | `web-release`: `opt-level = "s"`, thin LTO | `web-preview-release`: the same with fat LTO and one codegen unit |
+| `wasm-opt` | `-Os`, only when installed | `-Oz`, always: `scripts/fetch-binaryen.sh` fetches the pinned binaryen (version_133, SHA-256-checked) into `~/.cache/ocw/tools/` when none is installed |
+| Trusted worlds | the production roots (none yet); on localhost also `trust-root`, `trust=dev`, `allow-unsigned` | only the **web preview's root** (`crates/ocw-worldstore/keys/preview-roots.json`, feature `preview` of `ocw-web`); the localhost-only options stay localhost-only |
+| `config.json` | `channel: dev`: changes nothing | `channel: preview`, `worlds/`, empty `server`, `voice`, `signin`: no `?server=` and no voice on a public page, the start page's rides |
+| Voice | LiveKit's SDK fetched | not included |
+
+Sizes of one module (the WebGPU build; the WebGL 2 build is about the
+same; a browser downloads only one):
+
+| Build | raw | gzip | brotli |
+|---|---|---|---|
+| `make web` (`web-release`) | 76.3 MiB | 17.0 MiB | 10.7 MiB |
+| `make web-preview` before `wasm-opt` | 51.0 MiB | 12.6 MiB | 8.5 MiB |
+| `make web-preview` (after `wasm-opt -Oz`) | 42.2 MiB | 13.2 MiB | 8.8 MiB |
+
+`wasm-opt` makes the module much smaller but the compressed download a
+little larger; the preview keeps it for the smaller module the browser
+compiles (spec §14 Phase 10, 10G *B8a* has all the variants measured).
+
+GitHub Pages cannot serve precompressed files, but it gzips the modules on
+the fly: the live site serves the WebGPU module with `content-encoding: gzip`
+(14.1 MB instead of 42 MB; measured 2026-11-15 with `make test-web-preview
+PREVIEW_URL=https://newkit.github.io/OCW/`).
+
+**Build and try it locally:**
+
+```bash
+make web-preview          # both modules into target/web-preview/ (about 14 minutes on marge, 12 cores)
+make web-preview-site     # the site into target/web-preview-site/ (with the worlds of target/web-preview-worlds/release/)
+make test-web-preview     # headless Chromium on that site, served as a public page (ocw-preview.test)
+make test-web-preview PREVIEW_URL=https://newkit.github.io/OCW/   # the same checks on the live site
+```
+
+`make web-preview-site` (`scripts/web-preview-site.py`) takes the build and
+the signed worlds and writes `config.json` (the page configuration: the
+worlds' base, no server / voice / sign-in, the start page's rides),
+`credits.html` (from the world manifests' attribution, the material and
+model manifests and, with `--crates`, the Rust crates in the module),
+`worlds/` in the `world-builder publish` layout, `.nojekyll` and
+`site.txt` (every file and the total; it fails over 1 GB, the Pages
+limit). `make test-web-preview` checks the start page, the Hills route,
+Liechtenstein from the preview root, that the dev trust options are
+ignored, the WebGL 2 fallback, the credits page and that nothing answers
+4xx/5xx; screenshots go to `test-output/web-preview/`.
+
+**The workflow** `.github/workflows/web-preview.yml` builds the preview
+on GitHub's runner (`make deps-web`, `scripts/fetch-binaryen.sh`, `make
+web-preview`), downloads the signed worlds from the pre-release
+`web-preview-worlds` (`gh release download`, no secret needed), assembles
+the site and deploys it with `actions/upload-pages-artifact` and
+`actions/deploy-pages` (Pages source: GitHub Actions). Building Bevy twice
+with fat LTO is slow, so it runs by hand (`gh workflow run web-preview.yml`
+or Actions → Web preview → Run workflow) and every Monday, both for
+`main` (the `github-pages` environment deploys only from `main`).
+
+**Updating the preview's worlds.** The preview trusts only packages signed
+by its own root. The root and the signing key live on marge in
+`~/.config/ocw/preview-keys/` (outside every checkout, mode 700): never
+copy, print or commit them, and they never go to CI. After a world
+rebuild, on marge:
+
+```bash
+make web-preview-worlds   # scripts/publish-preview-worlds.sh --upload [PKG...]
+gh workflow run web-preview.yml
+```
+
+The script signs a staged copy of each package (default
+`data/pilot/liechtenstein.ocwpkg`) with the preview's signing key, publishes
+it (`worlds/<id>/<version>/`, `<id>/latest`), verifies it against the
+preview root, writes the release assets (`liechtenstein-3.ocwpkg`,
+`liechtenstein-3.manifest.json`, `liechtenstein.latest`,
+`preview-worlds.json` with the layout, routes and hashes, `SHA256SUMS`)
+and uploads them to the pre-release `web-preview-worlds`, replacing the
+old ones. The signing key `web-preview-2026` is valid for two years;
+the script's header shows how to make the next one with `world-builder
+keys new-signing`.
+
 #### Limitations today
 
 - Trainers and sensors only in Chromium-based browsers (Chrome, Edge;
   on Linux with the flag). Elsewhere: virtual power.
 - Safari and Firefox are untested, and so are real phones and tablets
   (the browser matrix comes with hosting, B8).
-- No hosting or domain yet (B8): you serve the page yourself. Multiplayer
+- No hosting or domain yet (B8): the public preview on GitHub Pages is
+  solo only; for anything else you serve the page yourself. Multiplayer
   takes the server's self-signed certificate by hash, renewed every 11
   days.
 - Unicorn mode's touch controls are untried on real phones and tablets,
@@ -606,6 +711,33 @@ or the server and bot builds, where it needs them). Screenshots, logs and JSON s
 | Console (`help` lists the commands) | `` ` `` or F12 | |
 | Unicorn mode: fly as a unicorn / land on the road below | G | Select + North (Y / △) |
 | Unicorn mode: fly back to where you took off | Shift+G | Select + West (X / □) |
+
+**Rebinding keys and buttons** (spec §3.2.1 M9): every key and gamepad
+button of the table above except the menu (Esc / Start), the console (`` ` ``
+/ F12), the sticks and the triggers can be changed in *Settings → Controls →
+Keys and buttons*. Choose a group, then an action: Enter waits for the new
+key or pad button (Esc / Start cancel), ← / → step the key through the list.
+Two actions on one key are allowed but marked with "(!)" and a warning dot,
+and the page lists the conflicts; *Reset to defaults* puts everything back.
+Unicorn mode's flight keys (cursor keys, + / −, L) stay fixed – W A S D
+never fly. *Pad Confirm button* swaps the menu's Confirm and Back on a pad
+(east: the Nintendo layout). From the console:
+
+```text
+bind                      # all bindings and conflicts
+bind autodrive Z          # the key of an action (ids: bind lists them)
+bind u_turn LB --pad      # its gamepad button
+bind --capture camera     # the next key or button pressed
+bind --reset              # all defaults
+set keys.mute_voices Shift+N   # the same as settings ([keys], [pad] in settings.toml)
+```
+
+**Accessibility** (*Settings → Display → Accessibility*): *HUD size* (100 –
+200 %, the menu is sized by the window already), *Status colours*
+(colour-safe: blue, yellow, orange and purple instead of green to red, for
+red-green colour blindness; icons and words stay), *High-contrast HUD*
+(opaque panels, white text), *Reduced motion* (no camera shake, no
+flashing warnings) and *Camera shake*.
 
 **Unicorn mode** (spec §14 Phase 13; *World → Unicorn mode*, console `god`): the rider
 turns into a unicorn and flies freely over the world – like a plane: it always
@@ -1385,7 +1517,7 @@ video). The files carry it too: screenshots are JPEG (quality 90) with EXIF
 `tEXt` chunks `Creation Time` and `Software`); videos have `creation_time`
 (UTC) and the build in `comment` (`ffprobe -show_format`, `exiftool`).
 
-**FPS counter:** `fps on` (console), *Settings → Display* or `set display.fps
+**FPS counter:** `fps on` (console), *Settings → Display → Graphics* or `set display.fps
 on` shows a small green badge at the top right, e.g. `58 fps  max 21 ms`: the
 frames the app really drew in the last second (wall clock) and the longest of
 them. It is off for riders by default and on in every test picture and video
@@ -1406,8 +1538,35 @@ event group [--watts W] [--bots N]          # bots hold W (default 150) and regr
 event tt [--laps N | --km X]                # alone, no drafting, against your best effort
 event race --physics open                   # race mode: open | profile (default) | equal
 event race --weather thunderstorm           # the organiser's weather, fixed for the event
+event race --aids on --chaotic-bots on      # the organiser's rules (below)
 event status | event cancel | event dismiss
 ```
+
+- **The organiser's rules** (spec §14 Phase 12 K6): you start the event, so
+  you set its rules; nobody can change them until it is over. All of them
+  work for `race`, `group` and `tt`:
+
+  | Option | Rule (default) |
+  |---|---|
+  | `--collisions off\|soft\|full` | collisions (group rides soft bumps only, races the full model) |
+  | `--damage on\|off` | damage (your `ride.damage`) |
+  | `--aids on\|off` | the riding aids – the last-moment warning, the proximity arrow and bell – allowed (not in races, else yes) |
+  | `--chaotic-bots on\|off` | bots that make mistakes (your `ride.chaotic_bots`) |
+  | `--neutral-service [--service-s S]` | a spare bike for a broken one (else DNF), a 30 s stop restores the bike; S: the wait for a spare wheel or bike (a puncture 30 s, a spare bike 60 s) |
+  | `--dnf-injured` | a badly injured rider is DNF |
+  | `--time-limit MIN` | time limit after the winner, 0.5–120 min (2 min or a quarter of the winner's time) |
+
+  The menu's *Ride* items use the page **"Start the event?" → Organiser
+  rules** (collisions, damage, riding aids, chaotic bots, neutral service,
+  DNF when badly injured; `auto` = the default); the console options win
+  over it. The rules show on the start line and under the results
+  ("Rules: collisions on, damage off, riding aids not allowed"), and a DNF
+  row says why (badly injured, bike broken, over the time limit, left).
+- **Animations** (spec §2.6): riders put a foot down when they stop (the
+  start formation shows it) and clip back in when they ride off, corner
+  with the head and the inside knee, look over the shoulder before a free
+  ride U-turn and hold the inside foot out in the loop, throw the bike at
+  the line, sit up after the finish – and the winner raises both arms.
 
 - Everyone (you and the bots) lines up in the start formation behind the
   start line - at the start / finish arch on a loop, at the beginning of a
@@ -1438,7 +1597,20 @@ event status | event cancel | event dismiss
 
 - Every ride is recorded and saved as a FIT file when the app closes (rides of
   at least a minute) or with `ride.save`: `~/.local/share/ocw/rides/`
-  (`--record false` turns it off). The FIT file has a lap at each workout
+  (`--record false` turns it off).
+- **Training history** (spec §14 Phase 7; *Navi → Training history*): every
+  saved ride also goes into the riding rider's history,
+  `~/.local/share/ocw/history/<rider>.json`: date, world and route, distance,
+  time, climbing, average and normalized power, heart rate, kJ, hearts,
+  crashes and damage, the workout, the power curve (5 s – 60 min) and the
+  climbs. The pages show the rides (newest first; a ride's page has its
+  power curve as a chart against your bests, its climbs and *Export the FIT
+  file*, to the downloads folder), the weekly and monthly totals and your
+  personal bests. *Import saved rides* (`history.import`) adds older FIT
+  files of the rides folder. Console: `history`, `history.show N`,
+  `history.bests`, `history.export N [--to DIR]`. The browser keeps its
+  history in `localStorage` (`ocw-history`); its FIT files can be
+  downloaded again only while the page is open. The FIT file has a lap at each workout
   step (start, step change, end, stop) and at an event's start, each event
   lap and your finish, so Strava and analysis tools show them as laps.
 - Strava (optional; interim direct upload until the backend exists): create a
@@ -1529,8 +1701,15 @@ console (saved at once), or by editing the file; `get` lists them all:
 | `ride.proximity_cue` | on / off (off): a soft bell and a HUD arrow pointing at someone within 1 m beside or 2 m in front or behind (an aid; it never steers); Settings → Controls → Riding aids | at once |
 | `ride.hit_warning` | on / off (on): the "last moment" warning – an amber triangle about a second before a predicted hit and when the tyres slide on a wet road (it never steers); Settings → Controls → Riding aids | at once |
 | `display.camera_shake` | on / off (on): the chase camera shakes briefly after a crash or a hard bump (off for motion comfort; console `camera.shake`) | at once |
+| `display.ui_scale` | 100 to 200 (100): the HUD's size in % (console `ui.scale`); Settings → Display → Accessibility | at once |
+| `display.palette` | standard / colour-safe (standard): status colours for red-green colour blindness (console `ui.palette`) | at once |
+| `display.high_contrast` | on / off (off): opaque HUD panels with white text (console `ui.contrast`) | at once |
+| `display.reduced_motion` | on / off (off): no camera shake, no flashing warnings (console `ui.motion`) | at once |
+| `controls.pad_confirm` | south / east (south): the gamepad's Confirm button in the menu; Back is the other | at once |
+| `keys.<action>`, `pad.<action>` | a key name (`A`, `Up`, `PageUp`, `F5`, `Num+`, `Shift+M`, `none`) / a pad button (`South`, `East`, `North`, `West`, `LB`, `RB`, `Select`, `L3`, `R3`, `DPadUp` …, `none`): the bindings (`bind` lists the actions) | at once |
 | `ride.damage` | on / off (off): damage – hits hurt the rider and damage the bike (only with collisions on; carried over to the next ride, repairs in the workshop; in a shared ride the host decides, `ocw-server --damage`); Settings → Controls | at once |
 | `display.damage` | on / off (on): the damage indicator in the HUD (console `hud.damage`; the effects stay when hidden) | at once |
+| `display.gps` | on / off (on): the GPS line in the HUD, bottom left (console `hud.gps`; world packages and route files only) | at once |
 | `weather.physics` | on / off (on): the weather changes the physics – wind, air density, wet and icy roads; the trainer gets the wind (in shared rides the host decides, in events the organiser); World → Weather → Custom | at once |
 | `audio.master` | 0 to 100 (80): master volume in %, scales every bus | at once |
 | `audio.effects` | 0 to 100 (80): game sounds (bike, wind, tyres, menu, event and workout cues) | at once |
@@ -1838,13 +2017,25 @@ free for non-commercial use) instead, which needs no account.
 
 Open the console with `` ` `` or F12; `help` lists the commands, `help NAME`
 shows one. *Dev* commands need the in-process local server (always the case
-for now).
+for now). ↑ / ↓ go through the history, Esc closes the console.
+
+**Tab completes** the word before the cursor, in the desktop and the browser
+app (spec §2.9): command names, subcommands, `--flags` and the values a command
+knows – setting keys and values (`set display.u` Tab → `set display.units `,
+Tab again → `imperial` / `metric`), world ids (`world switch`), weather presets,
+fields and data sources, time presets, `camera.path` actions and saved paths,
+quality levels, `help COMMAND`. One candidate is inserted with a space after
+it. Several: their common beginning is inserted and they are listed under the
+input line; each further Tab inserts the next one (Shift+Tab the previous),
+typing anything ends the list. Names with spaces go in quotes. Only commands
+you can run are offered (no *Dev* commands on a remote server).
 
 | Command | What it does |
 |---|---|
 | **General** | |
 | `help [COMMAND]` | List commands, or show help for one |
 | `console [open\|close\|toggle]` | Open, close or toggle the console |
+| `console input TEXT`, `console tab` | Type TEXT into the console's input line; press Tab (completion from scripts and tests) |
 | `clear` | Clear the console output |
 | `echo TEXT` | Print text |
 | `exec FILE` | Run the commands in a file, one per line |
@@ -1854,6 +2045,7 @@ for now).
 | `set [--temp] KEY VALUE` | Change a setting and save it in `settings.toml` (`--temp`: this session only); see [Settings](#settings-and-rider-profiles) |
 | `get [KEY]` | Show all settings with where their value comes from, or one with its range and description |
 | `hud.profile [on\|off]` | Show or hide the elevation profile of the road ahead (bottom left; on by default) |
+| `hud.gps [on\|off]` | Show or hide the GPS line (bottom left, under the profile; on by default; setting `display.gps`) |
 | `screenshot [PATH]` | Save a screenshot of the window (default `screenshot.jpg`: JPEG quality 90 with its time in EXIF; a `.png` path gives PNG) |
 | `reset` | Start everything again as at program start (key R); the ride is saved first |
 | `video [start\|stop\|toggle]` | Record the window as an MP4 (key V; needs `ffmpeg`) |
@@ -1919,7 +2111,7 @@ for now).
 | `bikes.buy FRAME [--with PART]...` | Buy a frameset as a new bike on a new hook (base parts); `--with`: a complete build at the sum of the prices |
 | `bikes.sell ID` | Sell a bike bought at the bench (the frameset's and its parts' refunds; not a starter bike, not the last one) |
 | `bikes.hang ITEM` | Hang a spare frameset from the shelf on a new hook, as a bike with the base parts |
-| `rider.gps` | Your rider's GPS position (also bottom-left in the HUD; route files and world packages only), with a copyable `lat, lon` line |
+| `rider.gps` | Your rider's GPS position (also bottom-left in the HUD; route files and world packages only; also in the browser), with a copyable `lat, lon` line |
 | `teleport KM` | *Dev:* move your rider to a distance on the route (free ride: along the path, taking default exits). On a route that ends, a distance past the end moves you to the end, where riders stop, and the reply says so; a loop takes any distance (laps on) |
 | `teleport.xz X Z` | *Dev:* free ride: move to the road nearest local x / z metres |
 | `ride.turn left\|right\|straight\|default\|+\|-\|N` | Free ride: choose the exit at the next junction |
@@ -1947,7 +2139,7 @@ for now).
 | `world info` | The world ridden now: package, area, elevation, data sources with their notices, routes, time zone, sun and twilight times |
 | `world switch N\|ID\|NAME\|PATH` | Ride another world without restarting (its first route, else a free ride; a test route: `hills`, `loop`); in a shared ride the host asks the server |
 | **Events** (spec §2.3) | |
-| `event race [--laps N\|--km X] [--bots N] [--physics MODE] [--weather W...] [--weather-physics on\|off] [--damage on\|off] [--dnf-injured] [--neutral-service]` | Race from the start formation to the finish (default 1 lap / 5 km; the organiser's damage rules – damage on or off, DNF when badly injured, neutral service: a spare bike and a 30 s service stop (spec §14 Phase 12E), also for `group` and `tt`; MODE: `profile` – the default, only the frame's profile counts –, `open` – parts count, capped –, `equal`; W: the organiser's weather – `PRESET [FIELD=VALUE...]`, `custom FIELD=VALUE...`, `random SEED`, `auto SEED` –, fixed for the event; also for `group` and `tt`) |
+| `event race [--laps N\|--km X] [--bots N] [--physics MODE] [--weather W...] [--weather-physics on\|off] [--damage on\|off] [--dnf-injured] [--neutral-service] [--service-s S] [--collisions off\|soft\|full] [--aids on\|off] [--chaotic-bots on\|off] [--time-limit MIN]` | Race from the start formation to the finish (default 1 lap / 5 km; the organiser's rules (spec §14 Phase 12 K6, see *Events*): collisions, riding aids, chaotic bots, the time limit, the neutral service's wait S; the organiser's damage rules – damage on or off, DNF when badly injured, neutral service: a spare bike and a 30 s service stop (spec §14 Phase 12E), also for `group` and `tt`; MODE: `profile` – the default, only the frame's profile counts –, `open` – parts count, capped –, `equal`; W: the organiser's weather – `PRESET [FIELD=VALUE...]`, `custom FIELD=VALUE...`, `random SEED`, `auto SEED` –, fixed for the event; also for `group` and `tt`) |
 | `event group [--watts W] [--bots N] [--physics MODE]` | Group ride: bots hold the pace and regroup (default mode `profile`) |
 | `event tt [--laps N\|--km X] [--physics MODE]` | Time trial alone against your ghost (default mode `open`) |
 | `event status` | The event, your HUD lines and the standings |
@@ -1989,6 +2181,13 @@ for now).
 | `devices.virtual` | Start an additional virtual trainer |
 | **Rides and Strava** | |
 | `ride.status` | The current recording |
+| `history` | The training history: this week, this month, the rides (numbered, newest first) |
+| `history.show N` | A ride in full (power curve, climbs) |
+| `history.bests` | Personal bests: the power curve 5 s – 60 min, the climbs |
+| `history.export N [--to DIR]` | Copy a ride's FIT file to the downloads folder (browser: download it again) |
+| `history.import` | Add the saved FIT files that are in no history yet to the riding rider's |
+| `bind [ACTION [KEY \| BUTTON --pad]] [--capture] [--reset]` | Show or change the key and button bindings |
+| `ui.scale P`, `ui.palette standard\|colour-safe`, `ui.contrast on\|off`, `ui.motion on\|off` | The accessibility options (the settings `display.*` run them) |
 | `ride.save` | End the ride, save it as FIT (and upload if Strava is linked); a new recording starts |
 | `ride.switch --route NAME \| --route-file FILE \| --world PKG [--free-ride] [--start X,Z] [--route NAME\|FILE] [--route-gpx FILE]` | Ride something else without restarting (the ride so far is saved, devices stay connected) |
 | `ride.restart` | Start the current ride again in the app (R after a switch) |

@@ -20,6 +20,7 @@
 #   video        record this many seconds of game time (25 fps frame capture)
 #   warmup       seconds of game time before the video starts (default 3)
 #   riders       content of riders.toml (rider profiles) for this scene
+#   history      a training history file (repo path) for the default rider
 #   max_video_mb --pick re-encodes larger videos (default 3)
 #   pick         false: never picked (--pick) for the build history
 #
@@ -42,6 +43,20 @@ name = "console-overlay"
 description = "Console overlay over the Hills test route: the command list from `help`"
 args = ["--route", "hills", "--bots", "4"]
 cmds = ["help", "console open"]
+shot = 6
+
+[[scene]]
+name = "console-completion"
+description = "Console Tab completion over the Hills test route (spec 3.40): `hud.` + Tab lists the candidates under the input line"
+args = ["--route", "hills", "--bots", "4"]
+at = ["2=console input hud.", "2.5=console tab"]
+shot = 5
+
+[[scene]]
+name = "console-completion-cycle"
+description = "Console Tab completion (spec 3.40): `set display.` + Tab lists the setting keys, two more Tabs insert the second one (marked in the list)"
+args = ["--route", "hills", "--bots", "4"]
+at = ["2=console input \"set display.\"", "2.5=console tab", "3=console tab", "3.5=console tab"]
 shot = 6
 
 [[scene]]
@@ -127,6 +142,48 @@ args = ["--route", "hills", "--bots", "4"]
 at = ["2=menu open", "2.4=menu down", "2.8=menu select"]
 shot = 4.5
 
+# --- Training history, rebinding, accessibility (spec §14 Phase 7, M9) ------
+
+[[scene]]
+name = "menu-history-rides"
+description = "Navi -> Training history -> Rides: the rider's rides newest first (demo history, paged)"
+args = ["--route", "hills", "--bots", "2"]
+history = "scripts/fixtures/history-demo.json"
+at = ["2=menu open", "2.4=menu down", "2.8=menu down", "3.2=menu down", "3.6=menu down", "4=menu select", "4.4=menu down", "4.8=menu down", "5.2=menu select", "5.6=menu select"]
+shot = 7
+
+[[scene]]
+name = "menu-history-ride"
+description = "Training history: a ride's page with its numbers and the power curve against the personal bests"
+args = ["--route", "hills", "--bots", "2"]
+history = "scripts/fixtures/history-demo.json"
+at = ["2=menu open", "2.4=menu down", "2.8=menu down", "3.2=menu down", "3.6=menu down", "4=menu select", "4.4=menu down", "4.8=menu down", "5.2=menu select", "5.6=menu select", "6=menu select"]
+shot = 7.5
+
+[[scene]]
+name = "menu-bindings-conflict"
+description = "Settings -> Controls -> Keys and buttons -> Camera, video, app: the camera on V, a conflict with the video key"
+args = ["--route", "hills", "--bots", "2"]
+cmds = ["set keys.camera V"]
+at = ["2=menu open", "2.4=menu down", "2.8=menu down", "3.2=menu down", "3.6=menu down", "4=menu down", "4.4=menu select", "4.8=menu down", "5.2=menu select", "5.6=menu down", "6=menu select", "6.4=menu down", "6.8=menu down", "7.2=menu select"]
+shot = 8.5
+
+[[scene]]
+name = "menu-accessibility"
+description = "Settings -> Display -> Accessibility with HUD 150 %, colour-safe colours and high contrast on"
+args = ["--route", "hills", "--bots", "2"]
+cmds = ["set display.ui_scale 150", "set display.palette colour-safe", "set display.high_contrast on"]
+at = ["2=menu open", "2.4=menu down", "2.8=menu down", "3.2=menu down", "3.6=menu down", "4=menu down", "4.4=menu select", "4.8=menu down", "5.2=menu down", "5.6=menu down", "6=menu down", "6.4=menu select", "6.8=menu down", "7.2=menu down", "7.6=menu down", "8=menu down", "8.4=menu select"]
+shot = 9.5
+
+[[scene]]
+name = "access-hud"
+description = "Accessibility in effect: HUD at 150 %, high contrast, colour-safe workout zones (sweet spot workout)"
+args = ["--route", "hills", "--bots", "4"]
+cmds = ["set display.ui_scale 150", "set display.palette colour-safe", "set display.high_contrast on"]
+at = ["1=workout start --example sweet-spot"]
+shot = 6
+
 # --- Liechtenstein world package (world = true) -----------------------------
 # Vaduz-Malbun route file: Vaduz (km 0, 458 m), Steg tunnel (km 8.75-9.4),
 # Malbun (km 14, 1607 m). Free ride: local X east, Z south of the package
@@ -148,6 +205,13 @@ args = ["--world", "{world}", "--route-file", "{world_dir}/vaduz-malbun.route", 
 at = ["2.5=event race --km 3", "2.5=camera.orbit 165 22 16", "8.5=camera.orbit 140 18 12"]
 warmup = 3
 video = 8
+
+[[scene]]
+name = "hud-gps-route"
+description = "Route ride on the package's Vaduz-Malbun route (--world --route): the GPS line bottom left under the elevation profile (missing in route rides from fae1547 to spec 3.40)"
+world = true
+args = ["--world", "{world}", "--route", "Vaduz - Malbun", "--no-neighbours", "--bots", "2"]
+shot = 12
 
 [[scene]]
 name = "camera-chase"
@@ -2132,6 +2196,91 @@ args = ["--route", "loop", "--bots", "6", "--power", "240"]
 at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=weather rain", "1=ride.proximity_cue on", "6=dev.bump", "6.3=rider.lean -25"]
 shot = 7.2
 
+# Phase 12 K6: the organiser's rules (spec §14 Phase 12, v3.47).
+[[scene]]
+name = "k6-event-rules"
+description = "The organiser's rules in the event's info (spec §14 Phase 12 K6): a race started with `--aids on --chaotic-bots on --neutral-service --service-s 20 --dnf-injured --damage on --time-limit 5` – on the start line the lines \"Rules: collisions on, damage on, riding aids allowed, chaotic bots\" and \"Neutral service (spares in 20 s), DNF when badly injured, time limit 5:00 after the winner\""
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=event race --km 1 --bots 5 --aids on --chaotic-bots on --neutral-service --service-s 20 --dnf-injured --damage on --time-limit 5"]
+shot = 3.5
+
+[[scene]]
+name = "k6-organiser-rules-menu"
+description = "Ride -> Race -> \"Start the event?\" -> Organiser rules (spec §14 Phase 12 K6): the six rules of the events this rider starts – collisions, damage, riding aids allowed, chaotic bots, neutral service, DNF when badly injured (auto: by the kind of event)"
+args = ["--route", "loop", "--bots", "3", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=set event.aids on", "1=set event.neutral_service on", "2=menu open", "2.3=menu down", "2.6=menu select", "2.9=menu select", "3.2=menu up", "3.5=menu select"]
+shot = 5
+
+[[scene]]
+name = "k6-results-rules"
+description = "The results of a race with the organiser's rules (spec §14 Phase 12 K6): under the table the race mode and the lines \"Rules: …\" and \"Neutral service (spares in 20 s), DNF when badly injured, time limit 5:00 after the winner\""
+args = ["--route", "loop", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=event race --km 0.4 --bots 5 --neutral-service --service-s 20 --dnf-injured --time-limit 5", "1=sim.power 700"]
+shot = 50
+
+# Rider animations beyond the riding states (spec §2.6, v3.47).
+[[scene]]
+name = "a26-foot-down"
+description = "Foot down at a stop (spec §2.6, v3.47): the race's start formation holds the field still – every rider unclipped, one foot flat on the road beside the bike tilted towards it, off the saddle onto the top tube, the other pedal forward and up, ready to push off (most riders the left foot)"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=event race --km 1 --bots 5", "1.2=camera.orbit -100 8 3.4", "1.3=hud off"]
+shot = 4.6
+
+[[scene]]
+name = "a26-foot-down-video"
+description = "Video: foot down and clipping back in (spec §2.6, v3.47): the field stands at the start line with a foot down through the countdown; at GO the riders push off, the foot goes back onto its pedal and they sit down"
+args = ["--route", "loop", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=event race --km 1 --bots 5", "1.2=camera.orbit -100 8 3.4", "1.3=hud off"]
+warmup = 2
+video = 7
+
+[[scene]]
+name = "a26-cornering"
+description = "Cornering beyond the lean (spec §2.6, v3.47): a tight lean-steered bend at speed, freewheeling – the head turned into the bend and held nearer level, the upper body dropped to the inside, the inside knee opened, the outside pedal down"
+args = ["--route", "loop", "--bots", "0", "--power", "320"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=camera.orbit 160 4 4.2", "1.3=hud off", "9.5=sim.power 0", "10=rider.lean 24"]
+shot = 12
+
+[[scene]]
+name = "a26-uturn-video"
+description = "Video: a manual U-turn in free ride (spec §2.6, §2.2.2, v3.47): the rider slows down, looks back over the shoulder on the run-up, then rides the loop leaning in with the inside foot held out low, and rides back the other way"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=camera.orbit 120 22 7", "4=ride.uturn"]
+warmup = 4
+video = 16
+
+[[scene]]
+name = "a26-uturn-look"
+description = "A manual U-turn in free ride (spec §2.6, v3.47): on the run-up to the loop the rider looks back over the shoulder on the side of the turn"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=camera.orbit 160 14 5", "1.3=hud off", "4=ride.uturn"]
+shot = 6.5
+
+[[scene]]
+name = "a26-uturn-loop"
+description = "A manual U-turn in free ride (spec §2.6, v3.47): in the loop the rider leans in, looks into the turn and holds the inside foot out low"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "0", "--power", "200"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=camera.orbit 120 22 7", "4=ride.uturn"]
+shot = 13
+
+[[scene]]
+name = "a26-victory-video"
+description = "Video: the finish of a race (spec §2.6, v3.47): the winner throws the bike at the line, raises both arms in a V for about three seconds, then sits up and freewheels"
+args = ["--route", "loop", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=event race --km 0.4 --bots 3", "1=sim.power 700", "2=camera.orbit 170 8 4.5", "43=event dismiss"]
+warmup = 36
+video = 14
+
+[[scene]]
+name = "a26-victory"
+description = "Victory (spec §2.6, v3.47): the race's winner just past the finish line with both arms up in a V, sitting up and freewheeling"
+args = ["--route", "loop", "--bots", "0"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 15:00", "1=event race --km 0.4 --bots 3", "1=sim.power 700", "2=camera.orbit 170 8 4.5", "43=event dismiss"]
+shot = 44.5
+
 [[scene]]
 name = "k13-rider-list"
 description = "Navi -> Riders in this ride (spec §14 Phase 13E, 12F): the session's riders with their gaps; the own rider flies in unicorn mode (the unicorn before the name) and is badly injured with a damaged bike (the red ■ dot after it); the heading counts riders, flying and damaged"
@@ -2148,6 +2297,103 @@ at = ["0.5=time pause", "0.5=time 2026-07-15 17:30", "0.5=hud off", "1=camera.pa
 warmup = 6
 video = 16
 
+# --- Helmets (spec §2.6, v3.40): render before / after ----------------------
+# The character corner's mirror with each helmet (front in the mirror, the back
+# over the shoulder; `-side`: the rider turned for the profile), with hair,
+# caps and glasses under them; a rider from behind, a TT rider in position and
+# a group in the chase camera on the Hills test route.
+
+[[scene]]
+name = "helmet-mirror-road"
+description = "Helmets (spec §2.6): the base vented road helmet in the character corner's mirror – red gloss shell, short hair, sport glasses"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+at = ["2=kit.design --jersey #1E88E5 --second #F2F2EE --helmet #D32F2F --helmet-finish gloss", "2.6=workshop open", "3.2=workshop mirror"]
+shot = 24
+
+[[scene]]
+name = "helmet-mirror-road-side"
+description = "Helmets (spec §2.6): the base road helmet in profile at the mirror (rider turned) – shell, vents, rear profile, retention band"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+at = ["2=kit.design --jersey #1E88E5 --second #F2F2EE --helmet #D32F2F --helmet-finish gloss", "2.6=workshop open", "3.2=workshop mirror", "6=workshop orbit 70"]
+shot = 26
+
+[[scene]]
+name = "helmet-mirror-light"
+description = "Helmets (spec §2.6): the lightweight vented road helmet at the mirror – white gloss shell, ponytail, round glasses"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+at = ["2=hearts.grant 2000", "2.1=workshop.buy helmet.light.top", "2.2=character --hair 4 --glasses 3", "2.3=kit.design --jersey #43A047 --second #1E1E22 --helmet #F2F2EE --helmet-finish gloss", "2.6=workshop open", "3.2=workshop mirror"]
+shot = 24
+
+[[scene]]
+name = "helmet-mirror-light-side"
+description = "Helmets (spec §2.6): the lightweight road helmet in profile at the mirror, the ponytail out under the retention band"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+at = ["2=hearts.grant 2000", "2.1=workshop.buy helmet.light.top", "2.2=character --hair 4 --glasses 3", "2.3=kit.design --jersey #43A047 --second #1E1E22 --helmet #F2F2EE --helmet-finish gloss", "2.6=workshop open", "3.2=workshop mirror", "6=workshop orbit 70"]
+shot = 26
+
+[[scene]]
+name = "helmet-mirror-aero-road"
+description = "Helmets (spec §2.6): the aero road helmet at the mirror – matte black shell, long hair, sport glasses"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+at = ["2=hearts.grant 2000", "2.1=workshop.buy helmet.aero-road.top", "2.2=character --hair 3", "2.3=kit.design --jersey #FDD835 --second #1E1E22 --helmet #1E1E22 --helmet-finish matte", "2.6=workshop open", "3.2=workshop mirror"]
+shot = 24
+
+[[scene]]
+name = "helmet-mirror-aero-road-side"
+description = "Helmets (spec §2.6): the aero road helmet in profile at the mirror"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+at = ["2=hearts.grant 2000", "2.1=workshop.buy helmet.aero-road.top", "2.2=character --hair 3", "2.3=kit.design --jersey #FDD835 --second #1E1E22 --helmet #1E1E22 --helmet-finish matte", "2.6=workshop open", "3.2=workshop mirror", "6=workshop orbit 70"]
+shot = 26
+
+[[scene]]
+name = "helmet-mirror-tt"
+description = "Helmets (spec §2.6): the time-trial helmet at the mirror – the jersey's stripes on the shell, the visor, a bun"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+at = ["2=hearts.grant 2000", "2.1=workshop.buy helmet.tt.top", "2.2=character --hair 5", "2.3=kit.design --pattern stripes --jersey #E53935 --second #F2F2EE --third #1E1E22 --helmet-pattern on --helmet-finish gloss", "2.6=workshop open", "3.2=workshop mirror"]
+shot = 24
+
+[[scene]]
+name = "helmet-mirror-tt-side"
+description = "Helmets (spec §2.6): the time-trial helmet in profile at the mirror – the long tail, the visor"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+at = ["2=hearts.grant 2000", "2.1=workshop.buy helmet.tt.top", "2.2=character --hair 5", "2.3=kit.design --pattern stripes --jersey #E53935 --second #F2F2EE --third #1E1E22 --helmet-pattern on --helmet-finish gloss", "2.6=workshop open", "3.2=workshop mirror", "6=workshop orbit 70"]
+shot = 26
+
+[[scene]]
+name = "helmet-mirror-cap"
+description = "Helmets (spec §2.6): the road helmet over a cotton cap at the mirror, turned a little – the brim out under the helmet's front"
+args = ["--route", "hills", "--bots", "0", "--power", "200"]
+at = ["2=hearts.grant 2000", "2.1=workshop.buy cap.cotton.entry", "2.2=character --hair 2", "2.3=kit.design --jersey #8E24AA --second #F2F2EE --helmet #F2F2EE --helmet-finish matte", "2.6=workshop open", "3.2=workshop mirror", "6=workshop orbit 35"]
+shot = 26
+
+[[scene]]
+name = "helmet-road-behind"
+description = "Helmets (spec §2.6): the own rider from behind on the Hills route (orbit camera 2.6 m): the road helmet's rear – vents, retention band, straps – with the pattern on the shell"
+args = ["--route", "hills", "--bots", "0", "--power", "230"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 14:00", "1=kit.design --pattern chevrons --jersey #1E88E5 --second #F2F2EE --third #E53935 --helmet-pattern on --helmet-finish gloss", "2=hud off", "2.5=camera.orbit 12 14 2.6"]
+shot = 9
+
+[[scene]]
+name = "helmet-tt-position"
+description = "Helmets (spec §2.6): a TT rider in position on the TT bike from the side (2.6 m): the time-trial helmet's tail along the back, the visor"
+args = ["--route", "hills", "--bots", "0", "--power", "320"]
+riders = """
+active = "TT"
+
+[[rider]]
+name = "TT"
+weight_kg = 70.0
+bike = "tt"
+"""
+at = ["0.5=time pause", "0.5=time 2026-06-21 14:00", "1=hearts.grant 2000", "1.1=workshop.buy helmet.tt.top", "1.2=kit.design --jersey #E53935 --second #1E1E22 --helmet #F2F2EE --helmet-finish gloss", "2=hud off", "2.5=camera.orbit 95 4 2.6"]
+shot = 9
+
+[[scene]]
+name = "helmet-group-chase"
+description = "Helmets (spec §2.6): a race start on the Hills route from behind in the chase camera – the bots' road helmets in their colours, gloss and matte, some with the pattern"
+args = ["--route", "hills", "--bots", "8", "--power", "250"]
+at = ["0.5=time pause", "0.5=time 2026-06-21 14:00", "2=hud off", "2.5=event race --km 3", "2.5=camera.orbit 10 16 6"]
+shot = 9
 # --- Vegetation (spec §4.6.1, §14 Phase 8 T8): species, crops, plantations ----
 # The vegetation spots that `world-builder vegetation` prints (free-ride starts
 # beside a road). Render twice for before / after: once with the deployed main

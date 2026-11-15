@@ -5,6 +5,10 @@
 //! - **Development roots** (`keys/dev-roots.json`, public keys only, marked
 //!   `dev_only`): trusted by debug builds, and by release builds only with
 //!   `--trust-dev-root`. Their secret keys stay on the developers' machines.
+//! - **The web preview root** (`keys/preview-roots.json`, spec §14 Phase 10
+//!   B8a): the only root the browser app's preview build (GitHub Pages)
+//!   trusts. Its secret keys stay on the build machine that signs the
+//!   preview's worlds, never in the repository or CI.
 //! - **Extra roots:** `--trust-root FILE` and every `*.pub.json` in
 //!   `~/.config/ocw/trusted-roots/` (for private servers and own builds).
 //! - **Revoked keys** ([`REVOKED_KEY_IDS`]) are refused even if a trusted
@@ -16,6 +20,10 @@ use ocw_world::manifest::{Hex, RootKey, TrustStore};
 
 /// Development root public keys (a JSON array of root public key objects).
 pub const DEV_ROOTS_JSON: &str = include_str!("../keys/dev-roots.json");
+
+/// The web preview's root public keys (spec §14 Phase 10 B8a; a JSON array
+/// like [`DEV_ROOTS_JSON`]).
+pub const PREVIEW_ROOTS_JSON: &str = include_str!("../keys/preview-roots.json");
 
 /// Production root public keys shipped with the client (none yet).
 pub const PRODUCTION_ROOTS: &[&str] = &[];
@@ -33,6 +41,12 @@ pub fn dev_roots() -> Vec<RootKey> {
             k
         })
         .collect()
+}
+
+/// The web preview's roots (B8a): not development roots, not production
+/// roots – trusted only by the preview build of the browser app.
+pub fn preview_roots() -> Vec<RootKey> {
+    parse_roots(PREVIEW_ROOTS_JSON).expect("keys/preview-roots.json is valid")
 }
 
 /// Parses a JSON array of root public keys.
@@ -136,6 +150,19 @@ mod tests {
         }
         for h in REVOKED_KEY_IDS {
             Hex::<8>::parse(h).unwrap();
+        }
+        // The web preview's root (B8a): one key, not a development root,
+        // none of the development or production keys.
+        let preview = preview_roots();
+        assert_eq!(preview.len(), 1);
+        for k in &preview {
+            assert!(!k.dev_only && k.name.contains("preview"), "{}", k.name);
+            assert!(dev_roots().iter().all(|d| d.key_id != k.key_id));
+            assert!(
+                PRODUCTION_ROOTS
+                    .iter()
+                    .all(|j| RootKey::parse(j).unwrap().key_id != k.key_id)
+            );
         }
     }
 
