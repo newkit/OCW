@@ -7,7 +7,7 @@
 
 use bevy::prelude::*;
 use clap::{Arg, Command};
-use ocw_client::quality::{DeviceInfo, GpuApi, QualitySetting, resolve};
+use ocw_client::quality::{DeviceInfo, GpuApi, QualitySetting, resolve_vr};
 use ocw_render::console::{ConsoleAppExt, ConsoleCommand, Permission};
 use ocw_render::quality::{QualityLevel, QualityPreset, RenderQuality};
 
@@ -17,6 +17,8 @@ use ocw_render::quality::{QualityLevel, QualityPreset, RenderQuality};
 pub struct QualityContext {
     pub api: GpuApi,
     pub device: DeviceInfo,
+    /// A VR headset runs (spec §14 Phase 11): `auto` is the `vr` preset.
+    pub vr: bool,
 }
 
 /// The chosen setting and the level it resolved to.
@@ -47,7 +49,7 @@ impl Plugin for QualityPlugin {
             .console_command(ConsoleCommand::new(
                 Permission::User,
                 Command::new("quality")
-                    .about("Graphics quality: auto (by GPU and device), low, medium or high; without an argument: what runs (spec §14 Phase 10 B7)")
+                    .about("Graphics quality: auto (by GPU and device; vr in a headset), low, medium, high or vr; without an argument: what runs (spec §14 Phase 10 B7, Phase 11)")
                     .arg(Arg::new("level").value_parser(QualitySetting::CHOICES.to_vec())),
                 |world, m| {
                     if let Some(word) = m.get_one::<String>("level") {
@@ -84,7 +86,7 @@ pub fn set_quality(world: &mut World, setting: QualitySetting) {
         .get_resource::<QualityContext>()
         .cloned()
         .unwrap_or_default();
-    let (level, reason) = resolve(setting, ctx.api, &ctx.device);
+    let (level, reason) = resolve_vr(setting, ctx.api, &ctx.device, ctx.vr);
     world.insert_resource(QualityChoice {
         setting,
         level,
@@ -164,6 +166,7 @@ mod tests {
         let mut web = app(QualityContext {
             api: GpuApi::WebGl2,
             device: DeviceInfo::default(),
+            vr: false,
         });
         let out = run(&mut web, "quality auto");
         assert!(out.contains("quality: low (auto: WebGL 2)"), "{out}");

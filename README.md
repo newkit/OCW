@@ -869,6 +869,60 @@ under *Game Controllers* in System Settings.
 Then start the app: the left stick steers, the triggers ride and stop (see
 [Controls](#controls)).
 
+## Riding in VR (preview)
+
+The first VR step (spec §14 Phase 11, X1): the headset is a **viewing device
+of the desktop app** – you see the ride in stereo from the saddle, with head
+tracking; you still ride with the trainer, the keyboard and the gamepad (no VR
+controllers or VR menus yet). The monitor keeps a mirror. VR needs the app
+**built with VR** (`--features vr`) and an **OpenXR runtime** with a headset;
+without them the app runs as always and says why at the top of the screen.
+
+**Windows with an Oculus / Meta Quest over Oculus Link** (the development
+headset is a Quest 1):
+
+1. Install the **Meta Quest Link** app (the former "Oculus" PC app – the same
+   software as for the Rift) and sign in; connect the Quest with a USB 3 cable
+   (or Air Link) and allow Link in the headset.
+2. In the Link app: *Settings → General → OpenXR Runtime → Set Meta Quest Link
+   as active*. (If SteamVR was the active OpenXR runtime, this switches it.)
+3. Build OCW with VR (on the Windows machine, from the repository):
+   ```powershell
+   cargo build --release -p ocw-desktop --features vr
+   ```
+4. Put `openxr_loader.dll` (Khronos OpenXR loader, Apache-2.0: the `x64/bin`
+   folder of `openxr_loader_windows-*.zip` from the
+   [OpenXR-SDK-Source releases](https://github.com/KhronosGroup/OpenXR-SDK-Source/releases))
+   next to `ocw-desktop.exe` – the Link app has the runtime, apps bring the
+   loader.
+5. Start the ride with the headset:
+   ```powershell
+   target\release\ocw-desktop.exe --vr
+   ```
+   or turn on *Settings → Display → Graphics → VR headset (next start)*
+   (`vr.enabled`). The app runs at the headset's rate (72 Hz on the Quest 1).
+
+**Linux** (second runtime, Q2): install the OpenXR loader (`libopenxr-loader1`)
+and a runtime – SteamVR with ALVR for a Quest, or Monado – and set it active
+(`~/.config/openxr/1/active_runtime.json`, or `XR_RUNTIME_JSON=…`), then
+`ocw-desktop --vr` from a `--features vr` build.
+
+**In VR:** `C` recentres (look straight ahead, press `C`: that is now the
+rider's eye on the bike; it also recentres by itself after the head stayed
+half a metre away for 5 s). A panel below the road ahead shows power, speed,
+cadence, heart rate, gradient, distance and time. The view keeps the horizon
+level in corners and on climbs. The console's `vr status` shows the session,
+the headset, the IPD and the frame times (time per frame against the
+headset's 13.9 ms at 72 Hz, the latency, missed frames); `vr mirror eye|both|chase`
+sets what the monitor shows (one eye, both eyes, or the chase camera for
+spectators – it costs a third view); `vr reconnect` after the runtime went
+away. The quality preset `vr` (`quality vr`, picked by `auto` in VR) trims
+shadows, view distance and trees for the headset's frame rate.
+
+**Without a headset:** `ocw-desktop --vr-sim` renders both eyes from a
+simulated head that looks around, side by side on the monitor, with the HUD
+panel – every build, no OpenXR needed (screenshots, tests).
+
 ## Riding modes
 
 **Steering** (spec §5.2.1; HUD shows the mode and the surface)

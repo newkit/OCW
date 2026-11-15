@@ -28,6 +28,17 @@ chrono.workspace = true
 # The house styles (assets/building-styles.toml, spec §14 Phase 8 T4).
 serde.workspace = true
 toml.workspace = true
+# VR (spec §14 Phase 11, X1): the pure maths and state machine (`vr`).
+ocw-xr.workspace = true
+# The headset backend (`openxr` feature, native only): our own thin
+# OpenXR layer and the wgpu types it hands over.
+ocw-xr-openxr = { workspace = true, optional = true }
+wgpu = { version = "=30.0.1", default-features = false, optional = true }
+
+[features]
+# A headset through OpenXR (`ocw-desktop --features vr`); without it the
+# `vr` module only runs the simulated head (`--vr-sim`).
+openxr = ["dep:ocw-xr-openxr", "dep:wgpu"]
 
 # The browser app (spec §14 Phase 10): the wall clock and the local UTC
 # offset of the HUD timestamp from the browser (std's clock panics there).

@@ -51,11 +51,19 @@ ureq.workspace = true
 cpal.workspace = true
 # Voice chat logic (spec §7); the LiveKit backend only with `voice`.
 ocw-voice.workspace = true
+# VR (spec §14 Phase 11, X1): the pure parts; the OpenXR layer only with
+# `vr`.
+ocw-xr.workspace = true
+ocw-xr-openxr = { workspace = true, optional = true }
 
 [features]
 # Voice chat with the LiveKit Rust SDK (spec §7). Off by default; on Linux
 # build with clang >= 21: `CXX=clang++-21 cargo build --features voice`.
 voice = ["ocw-voice/livekit"]
+# VR headsets over OpenXR (spec §14 Phase 11, X1): our own thin layer
+# (openxr + a Vulkan device made through OpenXR, wrapped for wgpu). Off by
+# default; `--vr-sim` works without it.
+vr = ["ocw-render/openxr", "dep:ocw-xr-openxr"]
 
 [lints]
 workspace = true

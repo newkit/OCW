@@ -23,6 +23,8 @@ members = [
     "crates/ocw-client",
     "crates/ocw-audio",
     "crates/ocw-ui",
+    "crates/ocw-xr",
+    "crates/ocw-xr-openxr",
 ]
 
 [workspace.package]
@@ -51,6 +53,8 @@ ocw-sky = { path = "crates/ocw-sky" }
 ocw-weather = { path = "crates/ocw-weather" }
 ocw-client = { path = "crates/ocw-client" }
 ocw-audio = { path = "crates/ocw-audio" }
+ocw-xr = { path = "crates/ocw-xr" }
+ocw-xr-openxr = { path = "crates/ocw-xr-openxr" }
 
 # Bevy is pinned to an exact version (spec §3.1). Only ocw-render and apps/desktop may use it.
 bevy = "=0.20.1"

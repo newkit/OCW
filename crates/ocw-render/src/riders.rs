@@ -936,6 +936,25 @@ impl AvatarRig {
     pub fn sway_entity(&self) -> Entity {
         self.sway
     }
+
+    /// The rider's head node (VR hides it: the eyes are inside it).
+    pub fn head_entity(&self) -> Option<Entity> {
+        // The order of `Pose::rotations`: torso, head, …
+        self.posed.get(1).copied()
+    }
+
+    /// Where the rider's eyes are, steadily (no pedal-stroke bob), in the
+    /// avatar's frame: the VR anchor (spec §14 Phase 11B).
+    pub fn steady_eye(&self) -> Vec3 {
+        let body = pose::BodyFit {
+            scale: self.scale,
+            rider: self.rider,
+            bike: self.bike,
+            fit: self.fit,
+            saddle_offset: 0.0,
+        };
+        pose::steady_eye(&body, &self.params)
+    }
 }
 
 /// A lamp's lens on a bike with lights fitted (the near model's
@@ -1200,7 +1219,7 @@ fn spawn_avatar(
 }
 
 /// Animates the avatars from the ride: riding state, cranks, wheels, pose.
-fn animate(
+pub(crate) fn animate(
     time: Res<Time>,
     view: Res<RideView>,
     mut avatars: Query<

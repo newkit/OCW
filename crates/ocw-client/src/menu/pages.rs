@@ -833,6 +833,9 @@ pub fn rows(page: Page, settings: &Settings, riders: &Riders) -> Vec<Row> {
             setting_row(settings, "display.quality", "Quality"),
             setting_row(settings, "display.sky", "Sky"),
             setting_row(settings, "display.fullscreen", "Fullscreen (next start)"),
+            // VR (spec §14 Phase 11, X1): the headset switch and the mirror.
+            setting_row(settings, "vr.enabled", "VR headset (next start)"),
+            setting_row(settings, "vr.mirror", "VR mirror"),
         ],
         Page::Riders => {
             let mut out: Vec<Row> = riders

@@ -348,6 +348,7 @@ pub fn app_with_settings(
         .insert_resource(ocw_ui::quality::QualityContext {
             api: gpu_api(),
             device: device_info(),
+            vr: false,
         });
     let record = config.record;
     let route = config.route.clone();

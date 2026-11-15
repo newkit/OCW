@@ -660,6 +660,33 @@ pub fn pose(rider: &RiderRig, bike: &BikeRig, fit: &Fit, p: &PoseParams) -> Pose
     }
 }
 
+/// The point between the eyes in the head frame, from the head's pivot
+/// (the neck), for the 1.78 m rider (m): up and forward.
+pub const EYES_FROM_NECK: Vec3 = Vec3::new(0.0, 0.115, -0.085);
+
+/// Where the rider's eyes are (bike frame) in pose `p`: the first-person
+/// anchor of VR (spec §14 Phase 11B, `ocw_xr::anchor`). `scale`: the
+/// body scale of the fit ([`BodyFit::scale`]).
+pub fn eye_point(rider: &RiderRig, p: &Pose, scale: f32) -> Vec3 {
+    let (pelvis_pos, pelvis_rot) = p.pelvis;
+    let torso_world = pelvis_rot * p.torso;
+    let neck = pelvis_pos + pelvis_rot * rider.torso + torso_world * rider.neck;
+    neck + torso_world * p.head * (EYES_FROM_NECK * scale)
+}
+
+/// The steady seated (or standing) eye for VR: the pose without the
+/// pedal strokes' rocking (no head bob, spec 11B *Comfort*) – the crank
+/// at rest and no bike rock; the slow blends (standing, hands, tuck) stay.
+pub fn steady_eye(body: &BodyFit, params: &PoseParams) -> Vec3 {
+    let calm = PoseParams {
+        crank: 0.0,
+        rock: 0.0,
+        ..*params
+    };
+    let p = pose(&body.rider, &body.bike, &body.fit, &calm);
+    eye_point(&body.rider, &p, body.scale)
+}
+
 /// How far the hips sink in the idle stance (m): the knees a little soft.
 const IDLE_SINK: f32 = 0.012;
 
@@ -971,6 +998,49 @@ mod tests {
             assert!((e - EXTENSION_SEATED).abs() < 0.01, "{profile:?}: {e}");
             let e = leg_extension(&rig, &bike, fit.hip_standing);
             assert!((e - EXTENSION_STANDING).abs() < 0.01, "{profile:?}: {e}");
+        }
+    }
+
+    /// The VR anchor (spec §14 Phase 11B): the eyes sit above and ahead of
+    /// the saddle, behind the bars' far side, at a rider's eye height;
+    /// standing lifts them; the pedal strokes do not move them (no head
+    /// bob).
+    #[test]
+    fn eyes_sit_where_a_riders_eyes_are() {
+        let rider = RiderRig::from_model(&crate::rider::build(crate::rider::Detail::High)).unwrap();
+        for profile in ocw_core::ProfileId::ALL {
+            let bike = crate::bikes::rig(profile);
+            let body = BodyFit::new(&rider, &bike, 1.0);
+            let seated = steady_eye(&body, &PoseParams::default());
+            assert!((1.25..1.8).contains(&seated.y), "{profile:?}: {seated}");
+            assert!(seated.z < bike.saddle.z, "{profile:?}: ahead of the saddle");
+            let bars = 0.5 * (bike.hoods[0].z + bike.hoods[1].z);
+            assert!(
+                seated.z > bars - 0.25,
+                "{profile:?}: not far beyond the bars"
+            );
+            assert!(seated.x.abs() < 1e-3, "{profile:?}: centred");
+            let up = steady_eye(
+                &body,
+                &PoseParams {
+                    stand: 1.0,
+                    ..Default::default()
+                },
+            );
+            assert!(
+                up.y > seated.y + 0.03,
+                "{profile:?}: standing {up} vs {seated}"
+            );
+            // The crank and the rock change nothing.
+            let pedalling = PoseParams {
+                crank: 1.3,
+                rock: 0.05,
+                ..Default::default()
+            };
+            assert!((steady_eye(&body, &pedalling) - seated).length() < 1e-6);
+            // A taller rider sees from higher up.
+            let tall = BodyFit::new(&rider, &bike, 1.1);
+            assert!(steady_eye(&tall, &PoseParams::default()).y > seated.y + 0.05);
         }
     }
 }

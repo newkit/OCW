@@ -1,0 +1,35 @@
+[package]
+name = "ocw-xr-openxr"
+description = "Our own thin OpenXR layer for Open Cycling World (spec §14 Phase 11, X1 variant B): the openxr crate, a Vulkan device made through OpenXR and wrapped for wgpu, the swapchain and the frame calls behind ocw-xr's traits"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Native only (Linux, Windows; Android for Phase 14). Bevy-free: the
+# renderer (ocw-render's `openxr` feature) takes the wgpu device it makes.
+[dependencies]
+ocw-xr.workspace = true
+# Khronos OpenXR bindings (MIT OR Apache-2.0); `loaded`: the loader
+# library (libopenxr_loader.so.1 / openxr_loader.dll) is opened at run
+# time, so a missing loader is a message, not a failed start.
+openxr = { version = "=0.21.1", default-features = false, features = ["loaded"] }
+# Vulkan bindings (MIT OR Apache-2.0), the version wgpu-hal uses; loads
+# the Vulkan loader at run time.
+ash = "0.38"
+# The wgpu Bevy 0.20 uses (MIT OR Apache-2.0), with its Vulkan backend,
+# and its hal for the raw-handle interop.
+wgpu = { version = "=30.0.1", default-features = false, features = ["vulkan"] }
+wgpu-hal = { version = "=30.0.1", features = ["vulkan"] }
+tracing.workspace = true
+
+# The only crate of ours with `unsafe` (spec §14 Phase 11, X1): the
+# OpenXR / Vulkan / wgpu-hal handle interop cannot be written without it.
+# It is denied everywhere and allowed only in `vulkan.rs` and the few
+# calls marked with a SAFETY comment.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

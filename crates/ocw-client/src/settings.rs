@@ -288,6 +288,24 @@ pub const SETTINGS: &[SettingDef] = &[
         scope: Scope::NextStart,
         apply: Apply::Arg("fullscreen"),
     },
+    // VR (spec §14 Phase 11, X1): the headset as a viewing device of the
+    // desktop app (the `vr` build; `--vr` for one session).
+    SettingDef {
+        key: "vr.enabled",
+        kind: Kind::Bool,
+        default: "off",
+        description: "Ride in a VR headset over OpenXR (Oculus Link, SteamVR, Monado); without a headset the app runs as before (desktop app built with VR)",
+        scope: Scope::NextStart,
+        apply: Apply::Arg("vr"),
+    },
+    SettingDef {
+        key: "vr.mirror",
+        kind: Kind::Choice(&["eye", "both", "chase"]),
+        default: "eye",
+        description: "What the monitor shows in VR: one eye, both eyes side by side, or the chase camera (for spectators; costs a third view)",
+        scope: Scope::Live,
+        apply: Apply::Command("vr mirror {}"),
+    },
     SettingDef {
         key: "ride.bots",
         kind: Kind::Int {

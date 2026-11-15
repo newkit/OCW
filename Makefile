@@ -11,7 +11,7 @@ export PATH := $(OCW_CARGO_SHIM):$(PATH)
 endif
 
 CARGO ?= cargo
-WASM_CRATES := -p ocw-core -p ocw-sim -p ocw-protocol -p ocw-world -p ocw-voice -p ocw-sky -p ocw-weather -p ocw-devices -p ocw-worldstore -p ocw-audio
+WASM_CRATES := -p ocw-core -p ocw-sim -p ocw-protocol -p ocw-world -p ocw-voice -p ocw-sky -p ocw-weather -p ocw-devices -p ocw-worldstore -p ocw-audio -p ocw-xr
 # The browser app (spec §14 Phase 10): wasm-bindgen-cli must be the version
 # of the wasm-bindgen crate in Cargo.lock.
 WASM_BINDGEN_VERSION := $(shell awk '/^name = "wasm-bindgen"$$/ { getline; gsub(/version = |"/, ""); print; exit }' Cargo.lock)
@@ -82,7 +82,7 @@ VIDEO_WAYLAND ?= /tmp/ocw-wayland.mp4
 .PHONY: help version version-next version-bump test-release-version release-check release-prepare release-publish dashboard-install dashboard-uninstall art-gather art-sheets art-render art-diary art-publish deps deps-linux deps-linux-packages deps-linux-debian deps-llvm-debian deps-linux-fedora deps-linux-arch deps-linux-unknown deps-appimage deps-windows deps-macos deps-rust deps-sccache deps-sccache-windows build release lint fmt fmt-check \
 	clippy check run server materials deploy-test clean clean-test-output macos-app \
 	test test-unit test-wasm test-web-build test-web test-web-webgl2 test-web-world test-web-multiplayer test-web-ble test-web-ble-emulation test-web-ble-real test-web-audio test-web-voice test-web-livekit test-kiosk web web-serve web-worlds deps-web test-remote build-profile remote-gc remote-gc-branch janitor-plan windows-move-toolchain test-screenshot test-screenshot-wayland test-smoke test-video test-video-wayland \
-	test-multiplayer test-multiplayer-local test-scenes test-scenes-list \
+	test-multiplayer test-multiplayer-local test-scenes test-scenes-list test-vr-monado \
 	wasm screenshot screenshot-wayland smoke video video-wayland
 
 help: ## Show this help
@@ -309,6 +309,9 @@ test-web-livekit: web ## Two headless browser riders in a real `livekit-server -
 
 test-kiosk: ## Test the kiosk script with a fake app (no display or build needed)
 	scripts/test-kiosk.sh
+
+test-vr-monado: ## VR: `ocw-desktop --vr` (vr build) against Monado's simulated headset, headless (spec §14 Phase 11 X1; skipped while Monado and the OpenXR loader are not installed)
+	scripts/test-vr-monado.sh
 
 remote-gc: ## Build machines: list the target/ of merged or gone agent checkouts and their size (GC=1 deletes them; MACHINES="a b" limits)
 	GC=$(GC) scripts/remote-gc.sh $(MACHINES)

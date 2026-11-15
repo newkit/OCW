@@ -29,21 +29,30 @@ pub enum QualityLevel {
     /// The renderer's own look (the default).
     #[default]
     High,
+    /// A VR headset (spec §14 Phase 11, X1): two eyes at the headset's
+    /// rate (72 Hz on the Oculus Quest 1, 13.9 ms for both views) – fewer
+    /// shadows, a shorter view and fewer trees, MSAA kept (no TAA smear
+    /// in VR). Not in [`Self::ALL`] (the flat screen's ladder).
+    Vr,
 }
 
 impl QualityLevel {
+    /// The ladder of the flat screen, cheapest first.
     pub const ALL: [Self; 3] = [Self::Low, Self::Medium, Self::High];
+    /// Every level by name (the console's and the setting's words).
+    pub const NAMED: [Self; 4] = [Self::Low, Self::Medium, Self::High, Self::Vr];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Low => "low",
             Self::Medium => "medium",
             Self::High => "high",
+            Self::Vr => "vr",
         }
     }
 
     pub fn parse(s: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|l| l.name() == s.trim())
+        Self::NAMED.into_iter().find(|l| l.name() == s.trim())
     }
 }
 
@@ -118,6 +127,24 @@ impl QualityPreset {
                 house_lod_scale: 0.75,
                 particle_share: 0.5,
                 max_pixel_ratio: Some(2.0),
+            },
+            // VR (Phase 11): each eye costs about a flat frame, at 72–90 Hz.
+            // Two cascades over the near road, MSAA 4× (sharp edges without
+            // TAA), the view and the trees between Medium and Low. The same
+            // numbers suit the standalone Quest (Phase 14) with its own
+            // render scale.
+            QualityLevel::Vr => Self {
+                level,
+                shadow_map_px: 2048,
+                shadow_cascades: 2,
+                shadow_distance_m: 90.0,
+                first_cascade_m: 20.0,
+                msaa_samples: 4,
+                view_m: Some(12_000.0),
+                tree_view_m: Some(1_500.0),
+                house_lod_scale: 0.6,
+                particle_share: 0.35,
+                max_pixel_ratio: None,
             },
             // WebGL 2 and phones: one cascade (WebGL 2 has no more) over
             // the rider's surroundings, no MSAA.
@@ -381,6 +408,26 @@ mod tests {
         assert_eq!(c.bounds.len(), 4);
         assert!((c.bounds[3] - 250.0).abs() < 1e-3);
         assert!(tree_range(&h).is_none());
+    }
+
+    /// VR: cheaper than Medium where the GPU pays per pixel and view
+    /// (shadows, view distance, trees), MSAA kept; named, not on the ladder.
+    #[test]
+    fn the_vr_preset_fits_two_eyes_at_72_hz() {
+        let vr = QualityPreset::of(QualityLevel::Vr);
+        let medium = QualityPreset::of(QualityLevel::Medium);
+        let low = QualityPreset::of(QualityLevel::Low);
+        assert!(vr.shadow_map_px <= medium.shadow_map_px);
+        assert!(vr.shadow_cascades < medium.shadow_cascades);
+        assert!(vr.shadow_distance_m < medium.shadow_distance_m);
+        assert!(vr.view_m.unwrap() < medium.view_m.unwrap());
+        assert!(vr.tree_view_m.unwrap() < medium.tree_view_m.unwrap());
+        assert!(vr.view_m.unwrap() > low.view_m.unwrap());
+        assert_eq!(vr.msaa(), Msaa::Sample4);
+        assert_eq!(vr.max_pixel_ratio, None);
+        assert_eq!(QualityLevel::parse("vr"), Some(QualityLevel::Vr));
+        assert!(!QualityLevel::ALL.contains(&QualityLevel::Vr));
+        assert!(vr.summary().contains("× 2 over 90 m"), "{}", vr.summary());
     }
 
     /// Each level is cheaper than the one above in every number.

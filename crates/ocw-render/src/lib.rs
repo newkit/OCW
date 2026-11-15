@@ -48,6 +48,9 @@ pub mod tunnel;
 pub mod tunnel_cut;
 pub mod unicorn;
 pub mod voice;
+// VR (spec §14 Phase 11, X1): eye cameras, the HUD panel, the mirror;
+// added by the app only when VR runs (`--vr`, `--vr-sim`).
+pub mod vr;
 pub mod weather;
 pub mod webgl;
 #[cfg(test)]

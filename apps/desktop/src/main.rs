@@ -34,6 +34,7 @@ mod surface;
 mod timemachine;
 mod video;
 mod voice;
+mod vr;
 mod weather;
 mod workout;
 mod workshop;
@@ -298,6 +299,17 @@ pub struct Args {
     /// after a delay (`voice.echo`, Settings → Audio → Voice).
     #[arg(long)]
     pub echo_bot: bool,
+    /// Ride in a VR headset (spec §14 Phase 11, X1): an OpenXR session
+    /// (Oculus Link with the Meta Quest Link app as the OpenXR runtime,
+    /// SteamVR, Monado); the monitor keeps a mirror (`vr mirror`). Needs
+    /// the `vr` build; without a runtime or headset the app runs as before
+    /// and says why. Also the setting `vr.enabled`.
+    #[arg(long, conflicts_with = "vr_sim")]
+    pub vr: bool,
+    /// VR without a headset: both eye views from a simulated head, side by
+    /// side on the monitor, with the HUD panel (tests, screenshots).
+    #[arg(long)]
+    pub vr_sim: bool,
 }
 
 impl Args {
@@ -374,6 +386,9 @@ fn main() -> AppExit {
         eprintln!("{e}");
         std::process::exit(1);
     });
+    // VR (spec §14 Phase 11): OpenXR makes the GPU device, so it starts
+    // before the renderer.
+    let mut vr_start = vr::prepare(&args);
     let mut app = App::new();
     app.insert_resource(loaded.settings)
         .insert_resource(loaded.riders)
@@ -381,92 +396,97 @@ fn main() -> AppExit {
     let (route, terrain_base) = (setup.route.clone(), setup.terrain_base.clone());
     ride::insert_setup(app.world_mut(), setup);
     let free_ride = app.world().contains_resource::<connection::FreeRideSetup>();
-    app.add_plugins(
-        DefaultPlugins
-            // macOS app bundle: log to ~/Library/Logs/OCW (no terminal).
-            .set(bevy::log::LogPlugin {
-                fmt_layer: logfile::fmt_layer,
+    // With a headset the frames are paced by the headset, not the monitor.
+    let vsync = !args.no_vsync && !vr_start.paced_by_headset();
+    let mut plugins = DefaultPlugins
+        // macOS app bundle: log to ~/Library/Logs/OCW (no terminal).
+        .set(bevy::log::LogPlugin {
+            fmt_layer: logfile::fmt_layer,
+            ..default()
+        })
+        .set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "Open Cycling World".into(),
+                // App id (Wayland) / WM_CLASS (X11): the desktop entry and its icon.
+                name: Some(icon::APP_ID.into()),
+                resolution: WindowResolution::new(args.window.0, args.window.1),
+                present_mode: if vsync {
+                    PresentMode::AutoVsync
+                } else {
+                    PresentMode::AutoNoVsync
+                },
+                mode: if args.fullscreen {
+                    WindowMode::BorderlessFullscreen(MonitorSelection::Current)
+                } else {
+                    WindowMode::Windowed
+                },
                 ..default()
-            })
-            .set(WindowPlugin {
-                primary_window: Some(Window {
-                    title: "Open Cycling World".into(),
-                    // App id (Wayland) / WM_CLASS (X11): the desktop entry and its icon.
-                    name: Some(icon::APP_ID.into()),
-                    resolution: WindowResolution::new(args.window.0, args.window.1),
-                    present_mode: if args.no_vsync {
-                        PresentMode::AutoNoVsync
-                    } else {
-                        PresentMode::AutoVsync
-                    },
-                    mode: if args.fullscreen {
-                        WindowMode::BorderlessFullscreen(MonitorSelection::Current)
-                    } else {
-                        WindowMode::Windowed
-                    },
-                    ..default()
-                }),
-                ..default()
-            })
-            // Bevy's own audio (rodio) only plays on the default device and
-            // has no bus mixer; game audio is `audio::GameAudioPlugin`.
-            .disable::<bevy::audio::AudioPlugin>(),
-    )
-    // The client prediction runs in FixedUpdate at the same rate as the server tick.
-    .insert_resource(Time::<Fixed>::from_hz(f64::from(SIM_TICK_HZ)))
-    .insert_resource(RideView {
-        terrain_base,
-        free_ride,
-        ..RideView::new(route.clone())
-    })
-    .insert_resource(args.clone())
-    .insert_resource(VersionLabel(build_id().to_string()))
-    .insert_resource(ocw_render::frame_rate::FrameLimit::new(args.max_fps))
-    .insert_resource(ocw_render::frame_rate::LogRenderRate(
-        args.log_fps.filter(|s| *s > 0.0),
-    ))
-    .add_systems(Startup, || info!("Open Cycling World {}", build_id()))
-    .add_plugins(OcwRenderPlugins)
-    .add_plugins(settings::SettingsPlugin)
-    .add_plugins(audio::GameAudioPlugin {
-        backend: args.audio_backend(),
-    })
-    .add_plugins((
-        connection::ConnectionPlugin { route },
-        devices::DevicesPlugin,
-        input::InputPlugin,
-        god::GodPlugin,
-        automation::AutomationPlugin,
-        platform::PlatformPlugin,
-        monitor::MonitorPlugin,
-        icon::IconPlugin,
-    ))
-    .add_plugins((
-        recording::RecordingPlugin::default(),
-        strava::StravaPlugin::default(),
-        restart::RestartPlugin,
-        surface::SurfaceGuardPlugin,
-        video::VideoPlugin,
-        worlds::WorldsPlugin,
-        menu::MenuPlugin,
-        workout::WorkoutPlugin,
-        ride::RidePlugin,
-        voice::VoicePlugin,
-        timemachine::TimeMachinePlugin,
-        weather::WeatherPlugin,
-        workshop::WorkshopPlugin,
-    ))
-    .add_plugins((
-        // The camera's shake setting and guided paths (spec §14 Phase 12C,
-        // Phase 13 G5) and the rider list (13E).
-        camera_path::CameraPathPlugin,
-        riders_page::RidersPagePlugin,
-        // `display.quality` and the console's `quality` / `gpu` (spec §14
-        // Phase 10 B7; auto is High here: the desktop's look).
-        ocw_ui::quality::QualityPlugin,
-    ))
-    .add_systems(Startup, startup_commands)
-    .add_systems(Update, timed_commands);
+            }),
+            ..default()
+        })
+        // Bevy's own audio (rodio) only plays on the default device and
+        // has no bus mixer; game audio is `audio::GameAudioPlugin`.
+        .disable::<bevy::audio::AudioPlugin>();
+    if let Some(render) = vr_start.render_plugin() {
+        plugins = plugins.set(render);
+    }
+    app.add_plugins(plugins)
+        // The client prediction runs in FixedUpdate at the same rate as the server tick.
+        .insert_resource(Time::<Fixed>::from_hz(f64::from(SIM_TICK_HZ)))
+        .insert_resource(RideView {
+            terrain_base,
+            free_ride,
+            ..RideView::new(route.clone())
+        })
+        .insert_resource(args.clone())
+        .insert_resource(VersionLabel(build_id().to_string()))
+        .insert_resource(ocw_render::frame_rate::FrameLimit::new(args.max_fps))
+        .insert_resource(ocw_render::frame_rate::LogRenderRate(
+            args.log_fps.filter(|s| *s > 0.0),
+        ))
+        .add_systems(Startup, || info!("Open Cycling World {}", build_id()))
+        .add_plugins(OcwRenderPlugins)
+        .add_plugins(settings::SettingsPlugin)
+        .add_plugins(audio::GameAudioPlugin {
+            backend: args.audio_backend(),
+        })
+        .add_plugins((
+            connection::ConnectionPlugin { route },
+            devices::DevicesPlugin,
+            input::InputPlugin,
+            god::GodPlugin,
+            automation::AutomationPlugin,
+            platform::PlatformPlugin,
+            monitor::MonitorPlugin,
+            icon::IconPlugin,
+        ))
+        .add_plugins((
+            recording::RecordingPlugin::default(),
+            strava::StravaPlugin::default(),
+            restart::RestartPlugin,
+            surface::SurfaceGuardPlugin,
+            video::VideoPlugin,
+            worlds::WorldsPlugin,
+            menu::MenuPlugin,
+            workout::WorkoutPlugin,
+            ride::RidePlugin,
+            voice::VoicePlugin,
+            timemachine::TimeMachinePlugin,
+            weather::WeatherPlugin,
+            workshop::WorkshopPlugin,
+        ))
+        .add_plugins((
+            // The camera's shake setting and guided paths (spec §14 Phase 12C,
+            // Phase 13 G5) and the rider list (13E).
+            camera_path::CameraPathPlugin,
+            riders_page::RidersPagePlugin,
+            // `display.quality` and the console's `quality` / `gpu` (spec §14
+            // Phase 10 B7; auto is High here: the desktop's look).
+            ocw_ui::quality::QualityPlugin,
+        ))
+        .add_systems(Startup, startup_commands)
+        .add_systems(Update, timed_commands);
+    vr::add(&mut app, vr_start);
     let exit = app.run();
     let surface_adapter = surface::restart_adapter();
     if surface_adapter.is_some() || restart::requested() {

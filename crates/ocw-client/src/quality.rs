@@ -29,7 +29,7 @@ pub enum QualitySetting {
 
 impl QualitySetting {
     /// The setting's words (`display.quality`'s choices).
-    pub const CHOICES: &'static [&'static str] = &["auto", "low", "medium", "high"];
+    pub const CHOICES: &'static [&'static str] = &["auto", "low", "medium", "high", "vr"];
 
     pub fn parse(s: &str) -> Option<Self> {
         match s.trim() {
@@ -109,6 +109,20 @@ impl DeviceInfo {
     }
 }
 
+/// The level that runs in VR (spec §14 Phase 11): `auto` is the `vr`
+/// preset; a level chosen by name still wins.
+pub fn resolve_vr(
+    setting: QualitySetting,
+    api: GpuApi,
+    device: &DeviceInfo,
+    vr: bool,
+) -> (QualityLevel, &'static str) {
+    match setting {
+        QualitySetting::Auto if vr => (QualityLevel::Vr, "auto: VR headset"),
+        _ => resolve(setting, api, device),
+    }
+}
+
 /// The level that runs, and why (for the console and the menu).
 pub fn resolve(
     setting: QualitySetting,
@@ -174,6 +188,23 @@ mod tests {
             resolve(auto, GpuApi::WebGpu, &DeviceInfo::default()).0,
             High
         );
+    }
+
+    #[test]
+    fn auto_in_vr_is_the_vr_preset() {
+        let pc = desktop_browser();
+        let auto = QualitySetting::Auto;
+        assert_eq!(
+            resolve_vr(auto, GpuApi::Native, &pc, true),
+            (Vr, "auto: VR headset")
+        );
+        assert_eq!(resolve_vr(auto, GpuApi::Native, &pc, false).0, High);
+        // Chosen by name: as chosen, also in VR.
+        assert_eq!(
+            resolve_vr(QualitySetting::Fixed(Medium), GpuApi::Native, &pc, true).0,
+            Medium
+        );
+        assert_eq!(QualitySetting::parse("vr"), Some(QualitySetting::Fixed(Vr)));
     }
 
     #[test]
