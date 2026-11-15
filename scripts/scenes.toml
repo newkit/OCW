@@ -383,6 +383,16 @@ args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-243
 at = ["1=time 14:00", "2=god.flight hover", "3=god on", "4=god.pose here here 40 here -55", "5.5=god.pin", "6=god.pose here here 60 here -35", "7.5=god.inspect", "7.6=god.pins"]
 shot = 9
 
+# Unicorn mode's menu row (spec §14 Phase 13A; shared with the browser
+# since G5, v3.38): World → Unicorn mode, focused, while flying over Vaduz.
+[[scene]]
+name = "god-menu-world"
+description = "World → Unicorn mode (spec §14 Phase 13 G5: the same row in the browser): the World page over Vaduz with the row focused while the unicorn flies"
+world = true
+args = ["--world", "{world}", "--no-neighbours", "--free-ride", "--start", "-2430,2220", "--bots", "0"]
+at = ["1=time 14:00", "3=god on", "4=god.pose here here 250 here -20", "5=menu open", "5.3=menu down", "5.6=menu down", "5.9=menu select", "6.2=menu down", "6.5=menu down", "6.8=menu down", "7.1=menu down", "7.4=menu down"]
+shot = 8.5
+
 [[scene]]
 name = "god-inspect-tenerife"
 description = "God mode inspection over Las Cañadas on Tenerife (G3): the crosshair on the TF-21 below the Teide, the panel with position, latitude / longitude, tile and the local time (WET)"

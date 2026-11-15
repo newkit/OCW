@@ -11,6 +11,9 @@
 //!   weather into the view and the menu, `time` / `weather …`,
 //! - [`collisions`], [`events`]: the ride's rules and local events,
 //! - [`riders_page`]: Navi → Riders in this ride,
+//! - [`god`]: god mode – "Unicorn mode" (spec §14 Phase 13; shared since
+//!   G5, v3.38): the flight's keys, gamepad, mouse and touch, the pointer
+//!   capture, inspection and pins, the HUD's flight view, `god …`,
 //! - [`controls`]: the Bevy input of the menu.
 //!
 //! The apps differ in how they hold the ride: the desktop has
@@ -21,6 +24,7 @@
 pub mod collisions;
 pub mod controls;
 pub mod events;
+pub mod god;
 pub mod menu;
 pub mod quality;
 pub mod riders_page;
