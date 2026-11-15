@@ -96,7 +96,7 @@ class Fixture(unittest.TestCase):
         diary._SECRETS = sorted(SECRETS, key=lambda kv: -len(kv[0]))
         self.env = mock.patch.dict(os.environ, {"OCW_TRANSCRIPTS": str(self.tmp / "no-transcripts"),
                                                   "OCW_ART_JOURNAL": "0",  # never the live journal
-                                                  "OCW_ART_NO_MACHINES": "1"})
+                                                  "OCW_ART_NO_MACHINES": "1", "OCW_ART_GH": "0"})
         self.env.start()
         os.environ.pop("OCW_ART_LOCK_HELD", None)
 
@@ -495,13 +495,13 @@ class DefaultArchiveUntouchedTest(Fixture):
         repo = self.tmp / "repo"
         (repo / "art").mkdir(parents=True)
         (repo / "scripts").mkdir()
-        for rel in ("art/diary.py", "art/music.py", "scripts/art-collect.sh"):
+        for rel in ("art/diary.py", "art/music.py", "art/features.py", "scripts/art-collect.sh"):
             (repo / rel).write_bytes((HERE.parent / rel).read_bytes())
             (repo / rel).chmod(0o755)
         env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.org",
                "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.org",
                "GIT_AUTHOR_DATE": f"{DAY}T10:00:00", "GIT_COMMITTER_DATE": f"{DAY}T10:00:00"}
-        for cmd in (["init", "-q"], ["add", "art/diary.py", "art/music.py", "scripts/art-collect.sh"],
+        for cmd in (["init", "-q"], ["add", "art/diary.py", "art/music.py", "art/features.py", "scripts/art-collect.sh"],
                     ["commit", "-q", "-m", "fixture"]):
             subprocess.run(["git", "-C", str(repo), *cmd], env=env, check=True, capture_output=True)
         # The real-looking archive at the default place, with its lock file.
