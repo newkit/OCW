@@ -218,9 +218,13 @@ impl Session {
 }
 
 /// One damage tick of a riding rider (not down after a crash): the stops,
-/// the recovery, the neutral service. Returns whether the rider abandons
-/// the event.
-pub(super) fn damage_tick(r: &mut Rider, in_event: bool, rules: DamageRules) -> bool {
+/// the recovery, the neutral service. Returns why the rider abandons the
+/// event, if so (spec §14 Phase 12 K6: the results say it).
+pub(super) fn damage_tick(
+    r: &mut Rider,
+    in_event: bool,
+    rules: DamageRules,
+) -> Option<event::DnfReason> {
     let ctx = TickCtx {
         dt: SIM_DT,
         speed: r.state.speed,
@@ -239,7 +243,13 @@ pub(super) fn damage_tick(r: &mut Rider, in_event: bool, rules: DamageRules) -> 
     {
         r.steering = Steering::Auto(r.state.lateral_offset);
     }
-    out == TickOut::Abandon
+    (out == TickOut::Abandon).then(|| {
+        if r.damage.broken() {
+            event::DnfReason::BikeBroken
+        } else {
+            event::DnfReason::Injured
+        }
+    })
 }
 
 #[cfg(test)]
@@ -399,6 +409,7 @@ mod tests {
             on: Some(true),
             dnf_badly_injured: true,
             neutral_service: false,
+            service_s: None,
         });
         ride(&mut s, me, 200.0, crate::event::COUNTDOWN_S + 3.0);
         s.stage_damage(me, DamageStage::Rider(0.1)).unwrap();

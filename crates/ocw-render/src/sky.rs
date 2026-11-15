@@ -910,6 +910,7 @@ mod tests {
             crash: None,
             wobble: 0.0,
             damage: None,
+            cue: Default::default(),
         }
     }
 
@@ -1171,6 +1172,7 @@ mod tests {
             crash: None,
             wobble: 0.0,
             damage: None,
+            cue: Default::default(),
         });
         let mut tunnels = crate::tunnel::Tunnels::default();
         tunnels.stretches = vec![(800.0, 1200.0)];
